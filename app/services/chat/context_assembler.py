@@ -138,6 +138,7 @@ class ChatContextAssembler:
         org_id: Optional[int] = None,
         tools_payload_chars: int = 0,
         tools_payload: Optional[str] = None,
+        include_plan_block: bool = True,
     ) -> ContextAssemblyResult:
         """
         Assemble the complete LLM request message list from session state,
@@ -160,6 +161,12 @@ class ChatContextAssembler:
 
         ``tools_payload_chars``（兼容旧调用——测试/benchmark 传字符数）：仅在
         ``tools_payload`` 未提供时使用 chars/4 近似，语义不变。
+
+        ``include_plan_block``（#436）：False 时跳过活跃计划块的注入。子代理
+        引擎复用父 session_id，若不关闭会把**父会话**的活跃计划（含"未完成
+        步骤"警告、子代理未必可见的工具族提示）注入子代理上下文 —— 计划推进
+        属于主代理（输出侧 #407 已隔离），输入侧同样不得继承。主引擎保持
+        默认 True，行为不变。
         """
         if not messages:
             return ContextAssemblyResult(
@@ -243,7 +250,7 @@ class ChatContextAssembler:
         from app.services.chat.planner import get_plan
 
         plan = get_plan(session_id)
-        if plan is not None:
+        if plan is not None and include_plan_block:
             # design-v3 §4：计划块单一渲染来源（plan_orchestrator.render_plan_block）。
             from app.services.chat.plan_orchestrator import render_plan_block
             head.append({"role": "system", "content": render_plan_block(plan)})

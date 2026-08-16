@@ -71,6 +71,17 @@ _LLM_TOKEN_KEEPALIVE_S = 15.0
 _KEEPALIVE_EVENT: tuple[str, dict] = ("keep_alive", {"message": "ping"})
 _QUEUE_END = object()  # pump-completed sentinel
 
+# ── #435: planner-phase heartbeat ─────────────────────────────────────────────
+# The planning turn makes a NON-streaming LLM call (llm_client flat 120s
+# timeout). Between the task_start event and the first token/tool event the
+# stream used to be fully silent — idle-timeout proxies (~30-60s) reset such
+# connections and the resume path reconnect-looped until the planner
+# returned. #409 covered the token stream (15s pump) and the parallel tool
+# wave (5s pump); this budget covers the planner await. 10s keeps several
+# heartbeats under any plausible proxy idle timeout while staying far below
+# the 120s planner ceiling.
+_PLANNER_KEEPALIVE_S = 10.0
+
 
 async def _stream_with_token_keepalive(
     stream: AsyncGenerator[tuple[str, dict], None],
@@ -488,6 +499,9 @@ class ChatExecutionEngine:
             project_id=project_id,
             user_id=user_id,
             tools_payload=tools_payload,
+            # #436：子代理不继承父会话的活跃计划块（输出侧 #407 已隔离，这里
+            # 切掉输入侧）。getattr 兜底：__new__ 构造的测试引擎无该属性。
+            include_plan_block=not getattr(self, "is_subagent_engine", False),
         )
         return res.to_messages()
 
@@ -536,6 +550,17 @@ class ChatExecutionEngine:
         async with lock:
             if session_id in self._sessions:
                 return self._sessions[session_id]
+            if getattr(self, "is_subagent_engine", False):
+                # #436：子代理上下文输入侧隔离。子引擎复用父 session_id（refs /
+                # map_state 工作区互通，by design），但父会话的持久化历史绝不
+                # 载入子代理消息列表 —— 否则预算截断后的父 transcript（~6000
+                # tokens）每轮重编码，且父 tool_result 中的不可信网页内容扩大
+                # 子代理的注入面。输出侧（子代理回写父库）已由 #407 抑制；这里
+                # 切掉读取侧。子代理上下文 = system prompt + 自己的任务（+ 自己
+                # 的轮次，缓存在子引擎自己的 _sessions LRU 里）。
+                fresh = [{"role": "system", "content": self._build_system_prompt()}]
+                self._sessions[session_id] = fresh
+                return fresh
             loaded = await self._load_session_from_db(session_id, user_id=user_id)
             if loaded is None:
                 # F23: DB 抖动时本轮降级为仅 system prompt 的临时历史，
@@ -1322,7 +1347,30 @@ class ChatExecutionEngine:
                     task_start_data["owner_token"] = owner_token
                 yield sse_event("task_start", task_start_data)
 
-                plan = await self._maybe_plan(session_id, message, messages)
+                # #435: 规划阶段是一次非流式 LLM 调用（最长 120s）。裸 await
+                # 会让 task_start 与首个 token/tool 事件之间完全静默，空闲
+                # 超时代理掐断连接（#409 只覆盖 token 流与工具波）。这里把
+                # 等待放进带心跳的泵：每 _PLANNER_KEEPALIVE_S 秒无结果就发一个
+                # keep_alive（经 sse_event 生成，invariant #6）。_maybe_plan
+                # 自身不抛异常（内部兜底降级返回 None）；消费方断开时取消
+                # 等待任务，保持与裸 await 相同的取消语义。
+                plan_wait = asyncio.create_task(
+                    self._maybe_plan(session_id, message, messages)
+                )
+                try:
+                    while not plan_wait.done():
+                        await asyncio.wait({plan_wait}, timeout=_PLANNER_KEEPALIVE_S)
+                        if not plan_wait.done():
+                            yield sse_event("keep_alive", {"message": "ping"})
+                            logger.debug("SSE Heartbeat sent for planner phase")
+                    plan = plan_wait.result()
+                finally:
+                    if not plan_wait.done():
+                        plan_wait.cancel()
+                        try:
+                            await plan_wait
+                        except BaseException:  # noqa: BLE001 — consumer already exiting
+                            pass
                 plan_existed_this_turn = plan is not None
                 if not plan_existed_this_turn:
                     from app.services.chat import planner as _planner_ctx

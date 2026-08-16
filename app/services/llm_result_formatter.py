@@ -37,6 +37,80 @@ _PRESERVED_META_KEYS = (
 )
 
 
+# ── #439: 最终体积闸（Zero-Big-Data-Context 的最后一道防线） ──────────────────
+# slim_tool_result 是工具结果进入 LLM 上下文前的唯一闸口
+# (tool_dispatch_service.llm_payload)。旧实现只对特定形状/键
+# (geojson/image/features) 做了削减：
+#   (a) 纯字符串结果超长时原样返回（return result_str 兜底）；
+#   (b) dict 分支里 data/rows/chart 等非 geojson 键全量保留
+#       （web_search 每次就这样塞进 ~10KB snippets）。
+# 这里加一道与形状/键名无关的总量钳制：任何 LLM-bound payload ≤ MSG_MAX_CHARS。
+_SLIM_KEY_VALUE_MAX_CHARS = 600   # 非保留字符串值的初始钳制长度
+_SLIM_LIST_MAX_ITEMS = 20         # 列表初始保留条数
+_SLIM_DICT_MAX_KEYS = 30          # dict 初始保留键数（与 _truncate_properties 同思路）
+_SLIM_HARD_FLOOR = 40             # 折半下限；到顶仍超预算则硬切并打标
+_SLIM_TRUNCATION_SUFFIX = "…[已截断]"
+_SLIM_MAX_DEPTH = 8
+
+
+def _clamp_sized_value(v: Any, str_limit: int, list_limit: int, depth: int = 0) -> Any:
+    """递归钳制一个 JSON-ish 值：字符串→str_limit，列表→list_limit 条
+    （省略数打标），dict→前 list 个键（省略数打标）。数值/布尔/None 原样。
+    正常大小的元数据（bbox 四元组、feature_count、短 message 等）在任何
+    轮次都不会被触碰。
+    """
+    if depth > _SLIM_MAX_DEPTH:
+        return _SLIM_TRUNCATION_SUFFIX
+    if isinstance(v, str):
+        if len(v) > str_limit:
+            return v[: str_limit - 1] + "…"
+        return v
+    if isinstance(v, list):
+        out = [
+            _clamp_sized_value(item, str_limit, list_limit, depth + 1)
+            for item in v[:list_limit]
+        ]
+        omitted = len(v) - list_limit
+        if omitted > 0:
+            out.append(f"(…另有 {omitted} 项因上下文预算省略)")
+        return out
+    if isinstance(v, dict):
+        out = {}
+        for i, (k, val) in enumerate(v.items()):
+            if i >= _SLIM_DICT_MAX_KEYS:
+                out["__more_keys__"] = len(v) - _SLIM_DICT_MAX_KEYS
+                break
+            out[k] = _clamp_sized_value(val, str_limit, list_limit, depth + 1)
+        return out
+    return v
+
+
+def _serialize_under_budget(value: Any) -> str:
+    """序列化并强制 ≤ MSG_MAX_CHARS（#439 总量闸）。
+
+    策略：先用宽松钳制（600 字符/20 条/30 键）序列化——常规结果完全不受
+    影响；仍超预算则对字符串/列表限额逐轮折半（JSON 始终保持合法），
+    到下限仍超（病态宽而浅的结构）才硬切并追加截断标记，保证不变量
+    绝对成立。
+    """
+    str_limit = _SLIM_KEY_VALUE_MAX_CHARS
+    list_limit = _SLIM_LIST_MAX_ITEMS
+    while True:
+        try:
+            payload = json.dumps(
+                _clamp_sized_value(value, str_limit, list_limit),
+                ensure_ascii=False,
+            )
+        except (TypeError, ValueError):
+            return str(value)[: MSG_MAX_CHARS - len(_SLIM_TRUNCATION_SUFFIX)] + _SLIM_TRUNCATION_SUFFIX
+        if len(payload) <= MSG_MAX_CHARS:
+            return payload
+        if str_limit <= _SLIM_HARD_FLOOR and list_limit <= 1:
+            return payload[: MSG_MAX_CHARS - len(_SLIM_TRUNCATION_SUFFIX)] + _SLIM_TRUNCATION_SUFFIX
+        str_limit = max(_SLIM_HARD_FLOOR, str_limit // 2)
+        list_limit = max(1, list_limit // 2)
+
+
 def _slim_cartographic_review(value: Any) -> Optional[dict]:
     """Keep actionable review evidence bounded for the agent/frontend."""
     if not isinstance(value, dict):
@@ -128,7 +202,9 @@ def slim_tool_result(result: Any, result_str: str, session_geojson_ref: Optional
         review = _slim_cartographic_review(result.get("cartographic_review"))
         if review is not None:
             slim["cartographic_review"] = review
-        return json.dumps(slim, ensure_ascii=False)
+        # #439：summary 分支同样过总量闸 —— 病态超长的 summary/保留键也不能
+        # 突破上下文预算。
+        return _serialize_under_budget(slim)
 
     if len(result_str) <= MSG_MAX_CHARS:
         return result_str
@@ -169,9 +245,14 @@ def slim_tool_result(result: Any, result_str: str, session_geojson_ref: Optional
         elif result.get("type") == "heatmap_raster":
             slim["note"] = "栅格热力图已推送至前端，bbox=" + str(result.get("bbox"))
 
-        return json.dumps(slim, ensure_ascii=False)
+        # #439：非 geojson 键（data/rows/chart/untrusted blocks…）不再全量放行，
+        # 统一过总量闸；geojson 摘要路径行为不变（正常大小不触发钳制）。
+        return _serialize_under_budget(slim)
 
-    return result_str
+    # #439 (a)：纯字符串/裸列表兜底 —— 超长时也必须截断到预算内。
+    if isinstance(result, str):
+        return result[: MSG_MAX_CHARS - len(_SLIM_TRUNCATION_SUFFIX)] + _SLIM_TRUNCATION_SUFFIX
+    return _serialize_under_budget(result)
 
 
 def slim_event_result(result: Any) -> Any:

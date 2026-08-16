@@ -119,35 +119,33 @@ async def test_spatial_reasoning_tool_output_format():
     assert isinstance(result["recommendations"], list)
 
 
-# ─── _call_llm default (mock) tests ─────────────────────────────
+# ─── _call_llm default (real reasoning disabled) tests ──────────
 
 
-def test_call_llm_default_returns_mock():
-    """Without feature flag, _call_llm returns the deterministic mock."""
-    from app.tools.spatial_reasoning import _mock_result
+def test_call_llm_default_returns_honest_unavailable():
+    """Without the feature flag, _call_llm returns an explicitly marked
+    unavailable result (#437) — never an unmarked canned conclusion."""
+    from app.tools.spatial_reasoning import _unavailable_result
 
-    result = _mock_result()
-    assert result["type"] == "spatial_reasoning"
-    assert result["confidence"] == 0.75
-    assert len(result["reasoning_chain"]) == 2
-    assert "商业选址" in result["conclusion"]
+    result = _unavailable_result()
+    assert result.get("success") is False
+    assert result.get("code") == "TOOL_UNAVAILABLE"
+    assert "correction_hint" in result
+    assert "confidence" not in result  # no fabricated confidence
+    assert "商业选址" not in str(result)  # no canned conclusion text
 
 
 @pytest.mark.asyncio
-async def test_call_llm_mock_without_env_flag():
-    """Default path uses mock regardless of LLM service availability."""
+async def test_call_llm_unavailable_without_env_flag(monkeypatch):
+    """Default path returns the honest unavailable marker regardless of LLM
+    service availability (#437)."""
     from app.tools.spatial_reasoning import _call_llm
 
-    # Ensure flag is NOT set
-    import os
-    old = os.environ.pop("SPATIAL_REASONING_USE_REAL_LLM", None)
-    try:
-        result = await _call_llm("system", "user")
-        assert result["confidence"] == 0.75
-        assert "商业选址" in result["conclusion"]
-    finally:
-        if old is not None:
-            os.environ["SPATIAL_REASONING_USE_REAL_LLM"] = old
+    monkeypatch.delenv("SPATIAL_REASONING_USE_REAL_LLM", raising=False)
+    result = await _call_llm("system", "user")
+    assert result.get("success") is False
+    assert result.get("code") == "TOOL_UNAVAILABLE"
+    assert "confidence" not in result
 
 
 # ─── _call_llm_real integration tests (feature-flagged) ──────────
