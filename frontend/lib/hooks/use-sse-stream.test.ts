@@ -595,3 +595,101 @@ describe('useSSEStream — turn-scoped tool-arg evidence (#466)', () => {
     );
   });
 });
+
+describe('useSSEStream — plan approval rollback (#468)', () => {
+  function fire(event: string, data: Record<string, unknown>) {
+    act(() => {
+      bridgeMock.onEventCallback?.({ event, data });
+    });
+  }
+
+  beforeEach(() => {
+    bridgeMock.send.mockReset();
+    bridgeMock.send.mockResolvedValue(undefined);
+    bridgeMock.aiStatus = 'idle';
+    useHudStore.setState({ aiStatus: 'idle' });
+  });
+
+  async function renderWithApprovedPlan() {
+    const { result } = renderStream();
+    await act(async () => {
+      await result.current.handleSend('给我一个分析计划');
+    });
+    // propose_plan step_result attaches the plan card to the thinking message.
+    fire('step_result', {
+      step_id: 's-plan',
+      tool: 'propose_plan',
+      session_id: 'sid-fe4',
+      result: {
+        success: true,
+        plan_id: 'plan-1',
+        title: '学校密度分析',
+        summary: '三步',
+        step_count: 3,
+        destructive_steps: [],
+        steps_preview: [],
+      },
+    });
+    const withPlan = result.current.messages.find((m) => (m as any).plan);
+    expect((withPlan as any)?.plan.status).toBe('pending');
+    return { result };
+  }
+
+  it('reverts the optimistic approval when the follow-up send fails', async () => {
+    const { result } = await renderWithApprovedPlan();
+
+    // The deferred send fails like a dead stream: the bridge resolves with the
+    // store's aiStatus left at 'error' (useMapBridge's terminal handling).
+    bridgeMock.send.mockImplementation(async () => {
+      useHudStore.setState({ aiStatus: 'error' });
+    });
+
+    act(() => {
+      result.current.handlePlanAction('plan-1', 'approve');
+    });
+    // Optimistic lock applied immediately…
+    const planMsg = () =>
+      (result.current.messages.find((m) => (m as any).plan) as any)?.plan;
+    expect(planMsg().status).toBe('approved');
+
+    // …then the deferred send runs and fails → the card must roll back to
+    // pending (actionable again), not stay locked forever.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(planMsg().status).toBe('pending');
+  });
+
+  it('keeps the approval when the follow-up send succeeds', async () => {
+    const { result } = await renderWithApprovedPlan();
+    bridgeMock.send.mockImplementation(async () => {
+      useHudStore.setState({ aiStatus: 'done' });
+    });
+
+    act(() => {
+      result.current.handlePlanAction('plan-1', 'approve');
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    const planMsg = (result.current.messages.find((m) => (m as any).plan) as any)?.plan;
+    expect(planMsg.status).toBe('approved');
+  });
+
+  it('reject path also rolls back (send throws)', async () => {
+    const { result } = await renderWithApprovedPlan();
+    bridgeMock.send.mockRejectedValue(new Error('network down'));
+
+    act(() => {
+      result.current.handlePlanAction('plan-1', 'reject');
+    });
+    const planMsg = () =>
+      (result.current.messages.find((m) => (m as any).plan) as any)?.plan;
+    expect(planMsg().status).toBe('rejected');
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(planMsg().status).toBe('pending');
+  });
+});
