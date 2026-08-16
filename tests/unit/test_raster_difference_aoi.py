@@ -9,6 +9,8 @@
 All tests use small synthetic GeoTIFFs written to a tmp dir — no real data.
 """
 
+import math
+
 import numpy as np
 import pytest
 import rasterio
@@ -216,3 +218,94 @@ def test_raster_trend_over_aoi_accepts_precomputed_stats(raster_pair, tmp_path):
     assert with_precomputed["slope"] == self_computed["slope"]
     assert with_precomputed["direction"] == self_computed["direction"]
     assert with_precomputed["means"] == self_computed["means"]
+
+
+# ─── #448: no silent 1024×1024 truncation (block-looped full window) ────────
+
+
+def test_raster_difference_window_larger_than_1024_not_truncated(tmp_path):
+    """Issue #448: the difference window must cover the FULL overlap, not the
+    top-left 1024×1024 crop. The change here lives entirely outside that crop
+    (rows/cols ≥ 1024): the old truncation reported mean 0.0 over 1,048,576
+    pixels; the true statistics cover all 4,000,000 pixels."""
+    n = 2000
+    arr1 = np.zeros((n, n))
+    arr2 = np.zeros((n, n))
+    arr2[1024:, 1024:] = 10.0
+    p1 = _write_raster(str(tmp_path / "big1.tif"), arr1, height=n, width=n)
+    p2 = _write_raster(str(tmp_path / "big2.tif"), arr2, height=n, width=n)
+
+    engine = TemporalRasterEngine()
+    res = engine.raster_difference(p1, p2)
+
+    diff = arr2 - arr1
+    assert res["pixel_count"] == diff.size  # 4,000,000 — not 1,048,576
+    assert res["mean_difference"] == pytest.approx(float(np.nanmean(diff)))
+    assert res["min_difference"] == pytest.approx(float(np.nanmin(diff)))
+    assert res["max_difference"] == pytest.approx(float(np.nanmax(diff)))
+    assert res["std_difference"] == pytest.approx(float(np.nanstd(diff)))
+    # Result metadata records the true analyzed extent.
+    assert res["analyzed_window"] == {
+        "col_off": 0, "row_off": 0, "width": n, "height": n,
+    }
+
+
+def test_raster_difference_large_window_equals_bruteforce_with_nans(tmp_path):
+    """Equivalence vs brute-force full-window reference on a non-square
+    window that spans multiple (partial) blocks, with NaN nodata cells in
+    both rasters."""
+    rng = np.random.default_rng(42)
+    n, m = 1300, 1500
+    arr1 = rng.normal(100.0, 5.0, (n, m))
+    arr2 = rng.normal(101.5, 5.0, (n, m))
+    arr1[rng.random((n, m)) < 0.1] = np.nan  # nodata in t1
+    arr2[rng.random((n, m)) < 0.1] = np.nan  # nodata in t2 (partially disjoint)
+    p1 = _write_raster(str(tmp_path / "r1.tif"), arr1, height=n, width=m)
+    p2 = _write_raster(str(tmp_path / "r2.tif"), arr2, height=n, width=m)
+
+    engine = TemporalRasterEngine()
+    res = engine.raster_difference(p1, p2)
+
+    diff = arr2 - arr1
+    assert res["pixel_count"] == diff.size
+    assert res["mean_difference"] == pytest.approx(float(np.nanmean(diff)), rel=1e-9)
+    assert res["min_difference"] == pytest.approx(float(np.nanmin(diff)))
+    assert res["max_difference"] == pytest.approx(float(np.nanmax(diff)))
+    assert res["std_difference"] == pytest.approx(float(np.nanstd(diff)), rel=1e-6)
+
+
+def test_raster_difference_large_aoi_window_full_coverage(tmp_path):
+    """An AOI larger than 1024 px per side (anchored away from the origin)
+    must be fully analyzed — the old code kept the anchor but truncated the
+    size, dropping the far side of the AOI."""
+    n = 2200
+    arr1 = np.zeros((n, n))
+    arr2 = np.zeros((n, n))
+    arr2[n - 200:, n - 200:] = 5.0  # change in the AOI's far corner only
+    p1 = _write_raster(str(tmp_path / "a1.tif"), arr1, height=n, width=n)
+    p2 = _write_raster(str(tmp_path / "a2.tif"), arr2, height=n, width=n)
+
+    engine = TemporalRasterEngine()
+    aoi = _aoi(0.0, 0.0, float(n), float(n))  # full extent → 2200×2200 window
+    res = engine.raster_difference(p1, p2, aoi_geometry=aoi)
+
+    diff = arr2 - arr1
+    assert res["pixel_count"] == diff.size
+    assert res["mean_difference"] == pytest.approx(float(np.nanmean(diff)))
+    assert res["analyzed_window"]["width"] == n
+    assert res["analyzed_window"]["height"] == n
+
+
+def test_raster_difference_all_nan_large_window(tmp_path):
+    """Adversarial: a large window whose diff is entirely NaN must not crash
+    the block loop (NaN stats, full pixel count)."""
+    n = 1200
+    arr = np.full((n, n), np.nan)
+    p1 = _write_raster(str(tmp_path / "nan1.tif"), arr, height=n, width=n)
+    p2 = _write_raster(str(tmp_path / "nan2.tif"), arr, height=n, width=n)
+
+    engine = TemporalRasterEngine()
+    res = engine.raster_difference(p1, p2)
+
+    assert res["pixel_count"] == n * n
+    assert math.isnan(res["mean_difference"])

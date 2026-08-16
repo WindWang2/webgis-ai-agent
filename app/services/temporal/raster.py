@@ -139,11 +139,12 @@ class TemporalRasterEngine:
         Performs pixel/zonal raster difference (T2 - T1).
 
         The comparison window is derived from the AOI (or, without an AOI, the
-        overlapping bounds of the two rasters) instead of a fixed top-left
-        1024×1024 crop, and the two rasters must be CRS/transform aligned —
-        otherwise the subtraction would silently compare misregistered pixels
-        (previously it read the top-left megapixel of src1 only, ignoring both
-        the AOI and src2's grid).
+        overlapping bounds of the two rasters) and covers that window in FULL —
+        statistics are accumulated block-by-block (bounded memory, #448), never
+        by truncating large windows. The two rasters must be CRS/transform
+        aligned — otherwise the subtraction would silently compare
+        misregistered pixels (previously it read the top-left megapixel of
+        src1 only, ignoring both the AOI and src2's grid).
         """
         p1 = raster_t1 if isinstance(raster_t1, str) else raster_t1.get("path", "")
         p2 = raster_t2 if isinstance(raster_t2, str) else raster_t2.get("path", "")
@@ -172,22 +173,91 @@ class TemporalRasterEngine:
                     if window is None or window.width <= 0 or window.height <= 0:
                         # AOI / overlap does not intersect either raster.
                         return self._empty_difference()
-                    b1 = src1.read(1, window=window).astype(float)
-                    b2 = src2.read(1, window=window).astype(float)
-                    diff = b2 - b1
-                    return {
-                        "mean_difference": float(np.nanmean(diff)),
-                        "min_difference": float(np.nanmin(diff)),
-                        "max_difference": float(np.nanmax(diff)),
-                        "std_difference": float(np.nanstd(diff)),
-                        "pixel_count": int(diff.size),
+                    result = self._streamed_difference_stats(src1, src2, window)
+                    result["analyzed_window"] = {
+                        "col_off": int(window.col_off),
+                        "row_off": int(window.row_off),
+                        "width": int(window.width),
+                        "height": int(window.height),
                     }
+                    return result
             except ValueError:
                 raise
             except Exception as e:
                 logger.warning(f"Error computing raster difference: {e}")
 
         return self._empty_difference()
+
+    # Per-side block size for difference reads (#448): the FULL AOI∩overlap
+    # window is processed block-by-block so peak memory stays
+    # O(_DIFF_BLOCK_SIZE²) even for windows far larger than 1024×1024 —
+    # no silent truncation of large windows.
+    _DIFF_BLOCK_SIZE = 1024
+
+    @classmethod
+    def _streamed_difference_stats(cls, src1, src2, window) -> Dict[str, Any]:
+        """NaN-aware difference statistics over the full window, accumulated
+        over fixed-size rasterio sub-windows (bounded memory, #448).
+
+        Moments are combined with Chan's parallel algorithm so the streamed
+        mean/std match a brute-force full-window np.nanmean/np.nanstd; an
+        entirely-NaN window yields NaN stats (same as the previous
+        full-array behavior) without per-block RuntimeWarnings.
+        """
+        from rasterio.windows import Window
+
+        bs = cls._DIFF_BLOCK_SIZE
+        row0, col0 = int(window.row_off), int(window.col_off)
+        width, height = int(window.width), int(window.height)
+
+        total = 0
+        n = 0
+        mean = 0.0
+        m2 = 0.0  # Σ (x − running_mean)²
+        mn: Optional[float] = None
+        mx: Optional[float] = None
+
+        for r in range(row0, row0 + height, bs):
+            for c in range(col0, col0 + width, bs):
+                w = Window(c, r, min(bs, col0 + width - c), min(bs, row0 + height - r))
+                b1 = src1.read(1, window=w).astype(float)
+                b2 = src2.read(1, window=w).astype(float)
+                diff = b2 - b1
+                total += diff.size
+                valid = diff[~np.isnan(diff)]
+                if valid.size == 0:
+                    continue
+                b_n = int(valid.size)
+                b_mean = float(valid.mean())
+                b_m2 = float(((valid - b_mean) ** 2).sum())
+                # Chan et al. parallel combine of (n, mean, m2) with this block.
+                delta = b_mean - mean
+                combined = n + b_n
+                mean += delta * (b_n / combined)
+                m2 += b_m2 + delta * delta * (n * b_n / combined)
+                n = combined
+                b_mn = float(valid.min())
+                b_mx = float(valid.max())
+                mn = b_mn if mn is None or b_mn < mn else mn
+                mx = b_mx if mx is None or b_mx > mx else mx
+
+        if n == 0:
+            nan = float("nan")
+            return {
+                "mean_difference": nan,
+                "min_difference": nan,
+                "max_difference": nan,
+                "std_difference": nan,
+                "pixel_count": total,
+            }
+        variance = max(m2 / n, 0.0)
+        return {
+            "mean_difference": float(mean),
+            "min_difference": float(mn),
+            "max_difference": float(mx),
+            "std_difference": float(math.sqrt(variance)),
+            "pixel_count": total,
+        }
 
     @staticmethod
     def _empty_difference() -> Dict[str, Any]:
@@ -198,11 +268,6 @@ class TemporalRasterEngine:
             "std_difference": 0.0,
             "pixel_count": 0,
         }
-
-    # Max window dimension (per side) used to bound memory for a single
-    # difference read. The window is still anchored at the AOI/overlap origin
-    # (unlike the old fixed top-left crop).
-    _DIFF_MAX_WINDOW = 1024
 
     @staticmethod
     def _validate_alignment(src1, src2) -> None:
@@ -296,8 +361,12 @@ class TemporalRasterEngine:
         if col_max <= col_min or row_max <= row_min:
             return None
 
-        width = min(int(math.ceil(col_max - col_min)), self._DIFF_MAX_WINDOW)
-        height = min(int(math.ceil(row_max - row_min)), self._DIFF_MAX_WINDOW)
+        # #448: the FULL window — no size cap. Memory is bounded instead by
+        # block-looped reads in _streamed_difference_stats; truncating here
+        # silently reported statistics for a top-left megapixel crop of large
+        # AOIs.
+        width = int(math.ceil(col_max - col_min))
+        height = int(math.ceil(row_max - row_min))
         return Window(int(math.floor(col_min)), int(math.floor(row_min)), width, height)
 
     def raster_trend_over_aoi(
