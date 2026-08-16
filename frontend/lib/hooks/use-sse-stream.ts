@@ -668,6 +668,10 @@ export function useSSEStream(
           });
         }
       } else if (event.event === 'task_cancelled') {
+        // #466: the cancelled task's tool calls never emit their
+        // step_result/step_cancelled — their queued args must not leak into
+        // the next turn's workbench evidence.
+        useHudStore.getState().resetPendingToolArgs();
         setMessages((prev) =>
           prev.map((m) => {
             if (m.id !== thinkingId) return m;
@@ -693,6 +697,10 @@ export function useSSEStream(
         if (event.event === 'step_error' && typeof data?.tool === 'string' && data.tool) {
           useHudStore.getState().discardPendingToolArgs(data.tool);
           markToolCallStatus(data.tool, 'failed', typeof data?.error === 'string' ? data.error : undefined);
+        } else if (event.event === 'error' || event.event === 'task_error') {
+          // #466: a stream-level death ends the turn — remaining queued args
+          // have no step_result coming and must not leak into the next turn.
+          useHudStore.getState().resetPendingToolArgs();
         }
         const raw = data?.error;
         const detail =
@@ -776,6 +784,12 @@ export function useSSEStream(
   const handleSend = useCallback(
     async (userMsg: string) => {
       if (!userMsg || isLoadingRef.current || sendingRef.current) return;
+
+      // #466: pending tool-arg evidence is TURN-scoped. Args queued by an
+      // interrupted previous turn (stream cut, task_cancelled without
+      // step_cancelled, exhausted reconnects) must never be FIFO-consumed by
+      // THIS turn's step_results as wrong input evidence.
+      useHudStore.getState().resetPendingToolArgs();
 
       const { viewport, baseLayer, is3D, layers: hudLayers, selectedFeature, focusLayerId } = useHudStore.getState();
       const liveSnapshot = getMapSnapshot();

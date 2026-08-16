@@ -95,6 +95,15 @@ export const createResultsSlice: StateCreator<HudState, [], [], Partial<HudState
       pendingArgs = rest;
     },
 
+    resetPendingToolArgs: () => {
+      // #466: the queue is TURN-scoped. When a stream dies without terminal
+      // events for its tool calls (cut connection, task_cancelled without
+      // step_cancelled, exhausted reconnects), the stale args must not leak
+      // into the NEXT turn's results as wrong input evidence. Called at every
+      // turn start (handleSend) and on stream-level termination.
+      pendingArgs = {};
+    },
+
     captureStepResult: (stepInput: StepResultEvent) => {
       // Ignore pure orchestration/map-action events that carry no inspectable result.
       const step = stepInput as StepResultEvent;

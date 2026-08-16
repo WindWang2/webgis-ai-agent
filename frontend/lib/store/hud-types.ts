@@ -318,6 +318,11 @@ export interface HudState {
   captureToolCallArgs: (tool: string, argsStr: string) => void;
   /** Discard the oldest queued args for a tool (its call failed or was cancelled). */
   discardPendingToolArgs: (tool: string) => void;
+  /**
+   * #466: drop every queued tool-arg entry (turn boundary / stream death) —
+   * pending evidence is TURN-scoped, never carried into the next turn.
+   */
+  resetPendingToolArgs: () => void;
   /** Normalize + record a step_result event; returns the result id (or undefined if ignored). */
   captureStepResult: (step: StepResultEvent) => string | undefined;
   /** Merge lazy /layers/descriptor metadata into a result's output (no CRS fabrication). */

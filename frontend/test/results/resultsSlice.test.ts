@@ -85,6 +85,42 @@ describe('resultsSlice — capture + bounded history', () => {
     expect(r.inputs[0].ref).toBe('ref:geojson-in');
     expect(r.parameters).toEqual(expect.arrayContaining([expect.objectContaining({ source: 'distance', value: 300 })]));
   });
+
+  // ── #466: pending args are TURN-scoped, not session-scoped ──────────────
+
+  it('turn-start reset discards an interrupted turn\'s args so the next turn pairs with its own', () => {
+    // Turn A: tool_call captured, stream dies before any step_result.
+    useHudStore.getState().captureToolCallArgs('buffer_analysis', JSON.stringify({ distance: 300 }));
+    // Turn B starts (handleSend) → reset; then B's own tool_call.
+    useHudStore.getState().resetPendingToolArgs();
+    useHudStore.getState().captureToolCallArgs('buffer_analysis', JSON.stringify({ distance: 900 }));
+    useHudStore.getState().captureStepResult({
+      step_id: 's-b2',
+      tool: 'buffer_analysis',
+      result: { success: true, summary: 'ok' },
+    });
+    const r = useHudStore.getState().results[0];
+    // WITHOUT the reset the FIFO would hand Turn B's result Turn A's args.
+    expect(r.parameters).toEqual(expect.arrayContaining([expect.objectContaining({ source: 'distance', value: 900 })]));
+    expect(r.parameters).toEqual(expect.not.arrayContaining([expect.objectContaining({ value: 300 })]));
+  });
+
+  it('resetPendingToolArgs clears queued args for every tool without touching recorded results', () => {
+    useHudStore.getState().captureStepResult(hotspotStep());
+    useHudStore.getState().captureToolCallArgs('hotspot_analysis', JSON.stringify({ a: 1 }));
+    useHudStore.getState().captureToolCallArgs('buffer_analysis', JSON.stringify({ b: 2 }));
+    useHudStore.getState().resetPendingToolArgs();
+    expect(useHudStore.getState().results).toHaveLength(1); // registry intact
+    // A later result for the same tool carries NO stale captured args.
+    const id = useHudStore.getState().captureStepResult({
+      step_id: 's-after',
+      tool: 'buffer_analysis',
+      result: { success: true },
+    });
+    expect(id).toBe('s-after');
+    const r = useHudStore.getState().results.find((x) => x.id === 's-after')!;
+    expect(r.inputs).toEqual([]);
+  });
 });
 
 describe('resultsSlice — enrich + select + clear', () => {

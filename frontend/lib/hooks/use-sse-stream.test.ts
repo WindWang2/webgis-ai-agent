@@ -528,3 +528,70 @@ describe('canonical MapSpec runtime patch', () => {
 });
 
 
+
+describe('useSSEStream — turn-scoped tool-arg evidence (#466)', () => {
+  beforeEach(() => {
+    bridgeMock.send.mockClear();
+    bridgeMock.aiStatus = 'idle';
+    useHudStore.getState().clearResults();
+  });
+
+  function fire(event: string, data: Record<string, unknown>) {
+    act(() => {
+      bridgeMock.onEventCallback?.({ event, data });
+    });
+  }
+
+  it('a turn start clears the previous interrupted turn\'s pending tool args', async () => {
+    const { result } = renderStream();
+
+    // Turn A: tool_call captured, stream cut before step_result/task end.
+    fire('tool_call', { name: 'buffer_analysis', arguments: '{"distance":300}' });
+
+    // Turn B starts (the production handleSend path).
+    await act(async () => {
+      await result.current.handleSend('重试缓冲区分析');
+    });
+
+    // Turn B: same tool runs to completion.
+    fire('tool_call', { name: 'buffer_analysis', arguments: '{"distance":900}' });
+    fire('step_result', { step_id: 's-b2', tool: 'buffer_analysis', session_id: 'sid-fe4', result: { success: true, summary: 'ok' } });
+
+    const r = useHudStore.getState().results.find((x) => x.id === 's-b2');
+    expect(r).toBeDefined();
+    // WITHOUT the turn-start reset the FIFO hands Turn B's result Turn A's args.
+    expect(r!.parameters).toEqual(
+      expect.arrayContaining([expect.objectContaining({ source: 'distance', value: 900 })]),
+    );
+    expect(r!.parameters).toEqual(
+      expect.not.arrayContaining([expect.objectContaining({ value: 300 })]),
+    );
+  });
+
+  it('task_cancelled drops remaining pending args (a retry pairs with its own)', async () => {
+    const { result } = renderStream();
+    await act(async () => {
+      await result.current.handleSend('分析');
+    });
+
+    fire('tool_call', { name: 'hotspot_analysis', arguments: '{"distance":100}' });
+    fire('tool_call', { name: 'hotspot_analysis', arguments: '{"distance":200}' }); // queued, never ran
+    fire('task_cancelled', { session_id: 'sid-fe4', task_id: 't1' });
+
+    // Retry turn: fresh args only.
+    await act(async () => {
+      await result.current.handleSend('重试');
+    });
+    fire('tool_call', { name: 'hotspot_analysis', arguments: '{"distance":950}' });
+    fire('step_result', { step_id: 's-r', tool: 'hotspot_analysis', session_id: 'sid-fe4', result: { success: true } });
+
+    const r = useHudStore.getState().results.find((x) => x.id === 's-r');
+    expect(r).toBeDefined();
+    expect(r!.parameters).toEqual(
+      expect.arrayContaining([expect.objectContaining({ source: 'distance', value: 950 })]),
+    );
+    expect(r!.parameters).toEqual(
+      expect.not.arrayContaining([expect.objectContaining({ value: 100 })]),
+    );
+  });
+});
