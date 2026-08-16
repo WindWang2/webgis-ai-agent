@@ -499,6 +499,9 @@ class ChatExecutionEngine:
             project_id=project_id,
             user_id=user_id,
             tools_payload=tools_payload,
+            # #436：子代理不继承父会话的活跃计划块（输出侧 #407 已隔离，这里
+            # 切掉输入侧）。getattr 兜底：__new__ 构造的测试引擎无该属性。
+            include_plan_block=not getattr(self, "is_subagent_engine", False),
         )
         return res.to_messages()
 
@@ -547,6 +550,17 @@ class ChatExecutionEngine:
         async with lock:
             if session_id in self._sessions:
                 return self._sessions[session_id]
+            if getattr(self, "is_subagent_engine", False):
+                # #436：子代理上下文输入侧隔离。子引擎复用父 session_id（refs /
+                # map_state 工作区互通，by design），但父会话的持久化历史绝不
+                # 载入子代理消息列表 —— 否则预算截断后的父 transcript（~6000
+                # tokens）每轮重编码，且父 tool_result 中的不可信网页内容扩大
+                # 子代理的注入面。输出侧（子代理回写父库）已由 #407 抑制；这里
+                # 切掉读取侧。子代理上下文 = system prompt + 自己的任务（+ 自己
+                # 的轮次，缓存在子引擎自己的 _sessions LRU 里）。
+                fresh = [{"role": "system", "content": self._build_system_prompt()}]
+                self._sessions[session_id] = fresh
+                return fresh
             loaded = await self._load_session_from_db(session_id, user_id=user_id)
             if loaded is None:
                 # F23: DB 抖动时本轮降级为仅 system prompt 的临时历史，
