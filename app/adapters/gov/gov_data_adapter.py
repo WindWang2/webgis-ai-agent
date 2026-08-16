@@ -4,7 +4,7 @@ import logging
 import aiohttp
 import csv
 import io
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from app.adapters.base import BaseDataAdapter, DataSource
 from app.services.explorer.models import (
@@ -262,12 +262,21 @@ class GovDataAdapter(BaseDataAdapter):
 
     @staticmethod
     def _parse_date(date_str: str) -> Optional[datetime]:
-        """解析日期字符串"""
+        """解析日期字符串
+
+        Gov platform publish_time strings carry no UTC offset, so the parsed
+        value is normalized to timezone-aware UTC (issue #482): a naive
+        datetime later reaches ``datetime.now(timezone.utc) - published_at``
+        in QualityEngine.calc_temporal_score and raises TypeError, killing
+        the discover task (and the whole chain) after its retries. House
+        convention for offset-less inputs (services/temporal/*, services/
+        jobs/*): assume UTC.
+        """
         if not date_str:
             return None
         for fmt in ("%Y-%m-%d", "%Y-%m", "%Y/%m/%d", "%Y%m%d"):
             try:
-                return datetime.strptime(date_str, fmt)
+                return datetime.strptime(date_str, fmt).replace(tzinfo=timezone.utc)
             except ValueError:
                 continue
         return None
