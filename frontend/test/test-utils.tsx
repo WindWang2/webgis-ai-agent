@@ -84,8 +84,6 @@ export function createMockStoreState(overrides?: Partial<HudState>): Record<stri
     setRagSpatial: vi.fn(),
     ragSemantic: [],
     setRagSemantic: vi.fn(),
-    mapStyles: [],
-    setMapStyles: vi.fn(),
     llmConfigFull: { baseUrl: 'https://api.openai.com/v1', apiKey: '', model: 'gpt-4o', caching: true },
     setLlmConfigFull: vi.fn(),
     // 审计 PR 4: session 切换状态清理用到这些 setter —— mock 必须暴露

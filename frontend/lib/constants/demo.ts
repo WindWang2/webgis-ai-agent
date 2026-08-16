@@ -57,10 +57,4 @@ export const DEFAULT_SKILLS = [
   { id: 'choropleth', name: '专题地图', desc: '分位数、自然断点等方法的分级设色', enabled: true, calls: 0, category: '制图' },
 ];
 
-export const DEFAULT_MAP_STYLES = [
-  { id: 0, name: 'OSM Voyager', desc: '清晰浅色地图' },
-  { id: 1, name: 'OSM Dark', desc: '深色街道地图' },
-  { id: 2, name: 'Satellite', desc: '卫星影像底图' },
-  { id: 3, name: 'Topo', desc: '地形晕渲底图' },
-  { id: 4, name: 'Blank White', desc: '空白白色画布' },
-];
+

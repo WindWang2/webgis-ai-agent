@@ -26,11 +26,27 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
 
   const currentLabel = TILE_PROVIDERS[selectedBaseLayer]?.name || baseLayer || 'Carto 浅色';
 
-  // Sync index from session-loaded baseLayer name (async SDM sets the name; index defaults to 1)
+  // Sync index from session-loaded baseLayer name (async SDM sets the name; index defaults to 1).
+  // #550: baseLayer can carry a STALE legacy name (pre-fix demo vocabulary like
+  // 'OSM Voyager' persisted in localStorage). findIndex returns -1 and the old
+  // code silently swallowed it — name/index desync healed nowhere. Now a mismatch
+  // heals to a canonical provider so label and rendered tiles agree again.
   useEffect(() => {
     if (!baseLayer) return;
     const idx = TILE_PROVIDERS.findIndex((p) => p.name === baseLayer);
-    if (idx !== -1 && idx !== selectedBaseLayer) {
+    if (idx === -1) {
+      const fallbackIdx = Math.max(
+        0,
+        TILE_PROVIDERS.findIndex((p) => p.name === 'Carto 深色')
+      );
+      const fallback = TILE_PROVIDERS[fallbackIdx];
+      if (fallback) {
+        setSelectedBaseLayer(fallbackIdx);
+        setBaseLayer(fallback.name);
+      }
+      return;
+    }
+    if (idx !== selectedBaseLayer) {
       setSelectedBaseLayer(idx);
     }
   }, [baseLayer]); // eslint-disable-line react-hooks/exhaustive-deps

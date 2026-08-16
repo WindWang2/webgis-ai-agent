@@ -108,13 +108,6 @@ export interface RagConfig {
   collection: string;
 }
 
-export interface MapStyleEntry {
-  id: number;
-  name: string;
-  desc: string;
-  url?: string;
-}
-
 export interface AnalysisAsset {
   id: number | string;
   filename?: string;
@@ -294,8 +287,6 @@ export interface HudState {
   setRagSpatial: (docs: RagSpatialDoc[]) => void;
   ragSemantic: RagSemanticDoc[];
   setRagSemantic: (docs: RagSemanticDoc[]) => void;
-  mapStyles: MapStyleEntry[];
-  setMapStyles: (styles: MapStyleEntry[]) => void;
   llmConfigFull: LlmConfig;
   setLlmConfigFull: (config: Partial<LlmConfig>) => void;
 

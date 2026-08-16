@@ -2,10 +2,7 @@
  * Settings slice — 应用级配置：内置 skill / RAG / 地图样式 / LLM。
  */
 import type { StateCreator } from 'zustand';
-import {
-  DEFAULT_SKILLS,
-  DEFAULT_MAP_STYLES,
-} from '../../constants/demo';
+import { DEFAULT_SKILLS } from '../../constants/demo';
 import type { HudState } from '../hud-types';
 
 export const createSettingsSlice: StateCreator<HudState, [], [], Partial<HudState>> = (set) => ({
@@ -36,10 +33,6 @@ export const createSettingsSlice: StateCreator<HudState, [], [], Partial<HudStat
   setRagSpatial: (docs) => set({ ragSpatial: docs }),
   ragSemantic: [],
   setRagSemantic: (docs) => set({ ragSemantic: docs }),
-
-  /* ─── Map Styles ─── */
-  mapStyles: DEFAULT_MAP_STYLES,
-  setMapStyles: (styles) => set({ mapStyles: styles }),
 
   /* ─── LLM ─── */
   llmConfigFull: {

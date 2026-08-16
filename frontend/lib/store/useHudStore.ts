@@ -70,7 +70,6 @@ export const useHudStore = create<HudState>()(
       partialize: (state) => ({
         skills: state.skills,
         ragConfig: state.ragConfig,
-        mapStyles: state.mapStyles,
         baseLayer: state.baseLayer,
         // 审计 F29：accentColor 之前未持久化 -> 用户选的颜色刷新后丢失。
         accentColor: state.accentColor,
