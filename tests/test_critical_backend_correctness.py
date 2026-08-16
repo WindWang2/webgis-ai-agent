@@ -478,10 +478,16 @@ async def test_c5_dispatch_task_cancelled_on_disconnect(monkeypatch):
 
     reached_wait = asyncio.Event()
 
+    real_wait = asyncio.wait
+
     async def fast_wait(fs, timeout=None, return_when=None):
         # 标记已进入 dispatch 等待，并立即返回（done 为空，模拟工具仍在跑）。
         # ADR-0052：并行 wave 现在用 return_when=FIRST_COMPLETED 并把取消 token 的
         # 等待任务一起放进 wait 集合（抢占式取消），替身必须接受该参数。
+        # #435：planner 阶段的心跳泵也走 asyncio.wait（只传 timeout）——那种
+        # 调用放行给真实实现，否则 reached_wait 会在派发波之前提前点燃。
+        if return_when is None:
+            return await real_wait(fs, timeout=timeout)
         reached_wait.set()
         return set(), set(fs)
     monkeypatch.setattr(asyncio, "wait", fast_wait)
