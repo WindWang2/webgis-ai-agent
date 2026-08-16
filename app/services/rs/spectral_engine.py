@@ -292,11 +292,24 @@ class SpectralRasterEngine:
         res = await self.compute_index(bbox, date_from, date_to, index_type="ndvi")
         if res.is_error:
             return {"error": res.error_msg}
+
+        # #442: coverage = vegetation pixels / *valid* pixels. NaN is the NDVI
+        # nodata convention (denominator <= 0 → NaN, band_math INDEX_FORMULAS),
+        # so it must be excluded from the denominator — else coverage is
+        # systematically understated by the nodata fraction. Mirrors the
+        # ~np.isnan masking in compute_raster_stats.
+        vegetation_coverage = 0.0
+        if res.array is not None:
+            valid_pixels = int(np.isfinite(res.array).sum())
+            if valid_pixels > 0:
+                veg_pixels = int((res.array > 0.3).sum())  # NaN > 0.3 is False
+                vegetation_coverage = round(veg_pixels / valid_pixels * 100, 1)
+
         return {
             "status": "ok",
             "bbox": bbox,
             "ndvi_stats": res.stats,
-            "vegetation_coverage": round(float((res.array > 0.3).sum() / res.array.size * 100), 1) if res.array is not None else 0.0,
+            "vegetation_coverage": vegetation_coverage,
             "raster_source": {
                 "array": res.array,
                 "bounds": res.bounds,

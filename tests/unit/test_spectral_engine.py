@@ -82,3 +82,73 @@ async def test_spectral_engine_unsupported_index():
     res = await engine.compute_index([116.0, 39.0, 116.5, 39.5], "2026-05-01", "2026-06-01", index_type="unknown")
     assert res.is_error is True
     assert "不支持的指数类型" in res.error_msg
+
+
+# ─── #442: NDVI coverage denominator ─────────────────────────────────────────
+
+
+def _fake_index_result(arr):
+    from app.services.rs.band_math import compute_raster_stats
+
+    return RasterAnalysisResult(
+        index_type="ndvi",
+        array=arr,
+        bounds=[116.0, 39.0, 116.5, 39.5],
+        stats=compute_raster_stats(arr),
+        is_error=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_compute_ndvi_coverage_excludes_nodata(monkeypatch):
+    """Issue #442: coverage must be vegetation / *valid* pixels, not
+    vegetation / all pixels. NaN is the NDVI nodata convention (denominator
+    <= 0), so counting it in the denominator understates coverage."""
+    arr = np.array([
+        [0.5, 0.6, np.nan],
+        [0.2, np.nan, 0.8],
+        [np.nan, np.nan, 0.4],
+    ])  # 4 vegetation pixels (>0.3), 5 valid, 4 nodata
+    engine = SpectralRasterEngine()
+
+    async def fake_compute_index(bbox, date_from, date_to, index_type="ndvi"):
+        assert index_type == "ndvi"
+        return _fake_index_result(arr)
+
+    monkeypatch.setattr(engine, "compute_index", fake_compute_index)
+    res = await engine.compute_ndvi([116.0, 39.0, 116.5, 39.5], "2026-05-01", "2026-06-01")
+
+    assert res["status"] == "ok"
+    # 4/5 = 80.0 — the old total-pixel denominator reported 4/9 = 44.4.
+    assert res["vegetation_coverage"] == 80.0
+
+
+@pytest.mark.asyncio
+async def test_compute_ndvi_coverage_all_nodata(monkeypatch):
+    """Adversarial: entirely-nodata NDVI → coverage 0.0, no ZeroDivisionError."""
+    arr = np.full((3, 3), np.nan)
+    engine = SpectralRasterEngine()
+
+    async def fake_compute_index(bbox, date_from, date_to, index_type="ndvi"):
+        return _fake_index_result(arr)
+
+    monkeypatch.setattr(engine, "compute_index", fake_compute_index)
+    res = await engine.compute_ndvi([116.0, 39.0, 116.5, 39.5], "2026-05-01", "2026-06-01")
+
+    assert res["status"] == "ok"
+    assert res["vegetation_coverage"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_compute_ndvi_coverage_no_nodata_unchanged(monkeypatch):
+    """No nodata → coverage identical to the previous (correct) behavior."""
+    arr = np.array([[0.1, 0.4], [0.35, 0.9]])  # 3 vegetation of 4 valid
+    engine = SpectralRasterEngine()
+
+    async def fake_compute_index(bbox, date_from, date_to, index_type="ndvi"):
+        return _fake_index_result(arr)
+
+    monkeypatch.setattr(engine, "compute_index", fake_compute_index)
+    res = await engine.compute_ndvi([116.0, 39.0, 116.5, 39.5], "2026-05-01", "2026-06-01")
+
+    assert res["vegetation_coverage"] == 75.0
