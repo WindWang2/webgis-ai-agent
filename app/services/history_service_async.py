@@ -33,7 +33,7 @@ from app.services.history_store_protocol import HistoryContext, HistoryStoreProt
 
 logger = logging.getLogger(__name__)
 
-MAX_SESSIONS = 1000  # 会话数上限；多租户下按 user 分桶执行（见 _enforce_cap）
+MAX_SESSIONS = 1000  # 会话数上限；多租户下按 user 分桶，匿名按 owner_token 分桶（见 _enforce_cap）
 
 
 def _is_anonymous(user_id: Optional[str]) -> bool:
@@ -228,8 +228,15 @@ class AsyncHistoryService(HistoryStoreProtocol):
                 )
                 self.db.add(conv)
                 await self.db.flush()
-                await self._enforce_cap(owner)
+                evicted = await self._enforce_cap(owner, owner_token=new_owner_token)
                 await self.db.commit()
+                # #522: cap-evicted sessions must go through the clear_session
+                # protocol (cancel in-flight turn + reclaim session data), NOT a
+                # bare delete. Runs AFTER the evicting transaction committed so a
+                # failed create (rolled back below) never tears down a session
+                # whose row survived.
+                for evicted_id in evicted:
+                    await self._run_eviction_protocol(evicted_id)
                 # 重新查询以确保加载了关系
                 result = await self.db.execute(stmt)
                 return result.scalar_one(), True
@@ -371,19 +378,38 @@ class AsyncHistoryService(HistoryStoreProtocol):
         await self.db.commit()
         return True
 
-    async def _enforce_cap(self, user_id: Optional[str] = None) -> None:
+    async def _enforce_cap(
+        self, user_id: Optional[str] = None, owner_token: Optional[str] = None
+    ) -> list[str]:
         """会话数上限驱逐 —— 按 user 分桶（多租户隔离）。
 
-        只统计并驱逐当前调用方自己桶内（user_id 相同，匿名调用方为 NULL 桶）
-        最旧的会话，因此其他用户新建会话绝不会驱逐另一用户的历史。
+        只统计并驱逐当前调用方自己桶内最旧的会话，因此其他用户新建会话绝不
+        会驱逐另一用户的历史。匿名调用方按 SEC-08 的 ``owner_token`` 分桶：
+        同一个 owner_token 下（同一匿名会话链）才共享 1000 槽；不同匿名用户
+        各占自己的桶。NULL-token 的历史匿名会话（SEC-08 之前的旧记录）落在
+        独立的 legacy 桶里，同样不会被新匿名会话驱逐。
+
+        返回被驱逐的 session_id 列表（调用方在提交事务后执行
+        clear_session 协议清理这些会话）。删除仍在当前事务内，与新建行原子
+        生效；失败回滚时驱逐也一并回滚，不会发生"行还在、缓存已清"的撕裂。
         """
-        bucket = Conversation.user_id == user_id  # == None 时生成 IS NULL
+        if user_id is not None:
+            bucket = Conversation.user_id == user_id
+        elif owner_token:
+            bucket = (Conversation.user_id.is_(None)) & (
+                Conversation.owner_token == owner_token
+            )
+        else:
+            # legacy 匿名会话（SEC-08 之前签发，owner_token 为 NULL）
+            bucket = (Conversation.user_id.is_(None)) & (
+                Conversation.owner_token.is_(None)
+            )
         total_result = await self.db.execute(
             select(func.count()).select_from(Conversation).where(bucket)
         )
         total = total_result.scalar_one()
         if total <= MAX_SESSIONS:
-            return
+            return []
         overflow = total - MAX_SESSIONS
         stmt = (
             select(Conversation)
@@ -393,6 +419,53 @@ class AsyncHistoryService(HistoryStoreProtocol):
         )
         result = await self.db.execute(stmt)
         oldest = result.scalars().all()
+        evicted: list[str] = []
         for conv in oldest:
+            evicted.append(conv.id)
             await self.db.delete(conv)
         # No commit here — caller commits
+        return evicted
+
+    async def _run_eviction_protocol(self, session_id: str) -> None:
+        """#522: cap 驱逐必须走 clear_session 协议，而不是裸 delete。
+
+        RedisSessionStore.cleanup_idle_sessions 走的是完整 clear_session
+        （取消在途 turn + 回收 session-data/disk）；此前的 _enforce_cap 裸
+        delete 绕过了它 —— 被驱逐会话的在途 turn 之后写 Message 时 Postgres
+        FK IntegrityError 被 _save_msg_async 的宽 except 静默吞掉，历史静默
+        丢失。这里的协议：置 clearing 标记（抑制在途 turn 的 DB 写）→ 取消并
+        有界 quiesce 在途 turn → 回收 session-data（Redis 键 + 盘上 mapspec/
+        checkpoint）→ 清标记。调用方必须在该会话的驱逐事务提交之后再调用，
+        保证失败的 create 回滚驱逐时不会先清掉还在的会话状态。每一步独立
+        容错：Redis 抖动 / 引擎未初始化都不能让会话创建失败。
+        """
+        try:
+            from app.services.chat.execution_engine import ChatExecutionEngine
+
+            # 标记是 class 级共享的（#407）：任一引擎实例的 _save_msg_async /
+            # _reject_if_clearing 都会读到，在途 turn 的写被抑制而非撞 FK。
+            ChatExecutionEngine._clearing_sessions.add(session_id)
+            try:
+                from app.api.routes import chat as chat_route
+
+                engine = chat_route.engine
+                if engine is not None:
+                    await engine.cancel_inflight_turn(session_id)
+            except Exception as e:  # noqa: BLE001 清理失败不阻断会话创建
+                logger.warning(
+                    "cap eviction: in-flight turn cancellation failed for %s: %s",
+                    session_id, e,
+                )
+            try:
+                from app.services.session_data import session_data_manager
+
+                await session_data_manager.clear_session(session_id)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "cap eviction: session-data cleanup failed for %s: %s",
+                    session_id, e,
+                )
+        finally:
+            from app.services.chat.execution_engine import ChatExecutionEngine
+
+            ChatExecutionEngine._clearing_sessions.discard(session_id)

@@ -1991,6 +1991,36 @@ class ChatExecutionEngine:
         """
         return await self._dispatch_tool(tc, session_id, executed_tools)
 
+    async def cancel_inflight_turn(self, session_id: str) -> None:
+        """#522: cancel + bounded-quiesce the in-flight turn of a session whose
+        lifecycle is being torn down. Shared by ``clear_session`` and the
+        history-service cap eviction path so both use the same protocol.
+
+        Caller is responsible for setting/clearing the ``_clearing_sessions``
+        marker around this call (write suppression must be active while the
+        cancelled turn's cleanup drains).
+        """
+        # F1: 先取消该 session 的在途 turn —— 否则持有会话锁的 turn 会在
+        # 会话删除后继续往 messages/DB 追加（消息复活、重复工具执行）。
+        for task_info in self.tracker.list_by_session(session_id):
+            if task_info.status == TaskStatus.running:
+                self.tracker.cancel(task_info.id)
+        # P1: 有界 quiesce —— 在清标记之前等被取消 turn 的清理排空
+        # （cancel 点燃 token → wave 抢占在飞工具 → repair → turn 结束）。
+        # 不等待的话，turn 的 repair/save 可能与标记清除竞态、复活行。
+        turn_task = self._active_turn_tasks.get(session_id)
+        if (
+            turn_task is not None
+            and not turn_task.done()
+            and turn_task is not asyncio.current_task()
+        ):
+            try:
+                await asyncio.wait(
+                    {turn_task}, timeout=self._clear_quiesce_timeout
+                )
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+
     async def clear_session(
         self,
         session_id: str,
@@ -2016,24 +2046,10 @@ class ChatExecutionEngine:
             if deleted:
                 # F1: 先取消该 session 的在途 turn —— 否则持有会话锁的 turn 会在
                 # 会话删除后继续往 messages/DB 追加（消息复活、重复工具执行）。
-                for task_info in self.tracker.list_by_session(session_id):
-                    if task_info.status == TaskStatus.running:
-                        self.tracker.cancel(task_info.id)
                 # P1: 有界 quiesce —— 在清标记之前等被取消 turn 的清理排空
                 # （cancel 点燃 token → wave 抢占在飞工具 → repair → turn 结束）。
                 # 不等待的话，turn 的 repair/save 可能与标记清除竞态、复活行。
-                turn_task = self._active_turn_tasks.get(session_id)
-                if (
-                    turn_task is not None
-                    and not turn_task.done()
-                    and turn_task is not asyncio.current_task()
-                ):
-                    try:
-                        await asyncio.wait(
-                            {turn_task}, timeout=self._clear_quiesce_timeout
-                        )
-                    except (asyncio.TimeoutError, asyncio.CancelledError):
-                        pass
+                await self.cancel_inflight_turn(session_id)
                 self._sessions.pop(session_id, None)
                 # F1: 锁被在途 turn 持有（或有等待者）时不能丢弃 —— 丢弃后下一个
                 # 并发请求拿到的是新锁，会与旧锁并行，破坏按会话串行化。
