@@ -358,6 +358,117 @@ def test_temporal_trend_engine_linear_and_anomalies():
 
 
 # ---------------------------------------------------------------------------
+# 5b. #452: NaN handling in the trend pipeline
+# ---------------------------------------------------------------------------
+
+
+def test_trend_single_nan_matches_cleaned_series():
+    """Issue #452: a single NaN made compute_sens_slope return NaN, the OLS
+    r² clamp turn NaN into a perfect 1.0 fit, direction fall to "stable", and
+    anomalies vanish. [1,2,NaN,4,5,6] must yield the same slope/r²/direction
+    as [1,2,4,5,6] plus a dropped_nan count."""
+    trend_engine = TemporalTrendEngine()
+
+    result = trend_engine.analyze_trend([1.0, 2.0, float("nan"), 4.0, 5.0, 6.0])
+    ref = trend_engine.analyze_trend([1.0, 2.0, 4.0, 5.0, 6.0])
+
+    assert result.slope == ref.slope
+    assert result.intercept == ref.intercept
+    assert result.r_squared == ref.r_squared
+    assert result.direction == ref.direction == "increasing"
+    assert result.slope == result.slope  # finite, not NaN
+    assert 0.0 <= result.r_squared < 1.0  # not the spurious perfect fit
+    assert result.dropped_nan == 1
+    assert result.total_points == 5
+    assert result.values == [1.0, 2.0, 4.0, 5.0, 6.0]
+
+
+def test_trend_all_nan_returns_explicit_empty():
+    """Adversarial: all-NaN input → explicit empty result with the dropped
+    count, not NaN stats dressed as a confident fit."""
+    trend_engine = TemporalTrendEngine()
+    result = trend_engine.analyze_trend([float("nan")] * 4)
+
+    assert result.total_points == 0
+    assert result.dropped_nan == 4
+    assert result.slope == 0.0
+    assert result.direction == "stable"
+
+
+def test_trend_single_finite_value_after_drop():
+    """Adversarial: one finite value survives → stable, no crash."""
+    trend_engine = TemporalTrendEngine()
+    result = trend_engine.analyze_trend([5.0, float("nan"), float("nan")])
+
+    assert result.total_points == 1
+    assert result.dropped_nan == 2
+    assert result.direction == "stable"
+    assert result.r_squared == 0.0
+
+
+def test_trend_drops_inf_too():
+    """Adversarial: ±Inf values are non-finite and must be dropped like NaN."""
+    trend_engine = TemporalTrendEngine()
+    result = trend_engine.analyze_trend([1.0, float("inf"), 3.0, float("-inf"), 5.0])
+
+    assert result.dropped_nan == 2
+    assert result.values == [1.0, 3.0, 5.0]
+    assert result.direction == "increasing"
+
+
+def test_trend_dict_series_with_nan_metric_values():
+    """Dict input shape (temporal_trend tool): NaN metric values dropped with
+    timestamps kept aligned to the surviving points."""
+    trend_engine = TemporalTrendEngine()
+    data = [
+        {"timestamp": "2026-01-01T00:00:00Z", "temp": 10.0},
+        {"timestamp": "2026-01-02T00:00:00Z", "temp": float("nan")},
+        {"timestamp": "2026-01-03T00:00:00Z", "temp": 12.0},
+    ]
+    result = trend_engine.analyze_trend(data=data, metric_name="temp")
+
+    assert result.dropped_nan == 1
+    assert result.total_points == 2
+    assert result.values == [10.0, 12.0]
+    assert result.timestamps == ["2026-01-01T00:00:00+00:00", "2026-01-03T00:00:00+00:00"]
+
+
+def test_compute_sens_slope_direct_nan_input():
+    """Direct seam calls with NaN behave like the cleaned input."""
+    from app.services.temporal.trend import TemporalTrendEngine as TTE
+
+    dirty = TTE.compute_sens_slope([1.0, float("nan"), 3.0, 5.0, 7.0, 9.0])
+    clean = TTE.compute_sens_slope([1.0, 3.0, 5.0, 7.0, 9.0])
+    assert dirty == clean
+    assert dirty == 2.0  # not NaN
+
+
+def test_compute_linear_regression_direct_nan_input():
+    """Direct seam: NaN input yields finite (slope, intercept, r²); the old
+    clamp turned the NaN r² into a perfect 1.0."""
+    from app.services.temporal.trend import TemporalTrendEngine as TTE
+
+    slope, intercept, r2 = TTE.compute_linear_regression([1.0, float("nan"), 2.9, 4.2, 4.8])
+    ref_slope, ref_intercept, ref_r2 = TTE.compute_linear_regression([1.0, 2.9, 4.2, 4.8])
+    assert (slope, intercept, r2) == (ref_slope, ref_intercept, ref_r2)
+    assert slope == slope  # not NaN
+    assert 0.0 <= r2 <= 1.0 and r2 != 1.0
+
+
+def test_detect_anomalies_with_nan_keeps_original_indices():
+    """Anomalies are computed over the valid subset while reported indices
+    stay those of the original series."""
+    from app.services.temporal.trend import TemporalTrendEngine as TTE
+
+    values = [10.0] * 10 + [float("nan")] + [100.0]  # outlier at index 11
+    anomalies = TTE.detect_anomalies(values, z_threshold=2.0)
+
+    assert len(anomalies) == 1
+    assert anomalies[0]["index"] == 11
+    assert anomalies[0]["value"] == 100.0
+
+
+# ---------------------------------------------------------------------------
 # 6. SpatiotemporalClusterEngine Tests
 # ---------------------------------------------------------------------------
 
