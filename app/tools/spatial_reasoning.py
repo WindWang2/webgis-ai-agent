@@ -6,6 +6,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field, ValidationError
 
 from app.tools.registry import ToolRegistry, tool
+from app.tools._utils import std_error_response
 from app.services.chat.llm_client import LLMConfig, call_llm
 from app.core.config import settings
 from app.lib.geo_processor.core import _repair_json
@@ -157,22 +158,45 @@ def _build_user_prompt(query: str, context: dict, depth: str) -> str:
     return "\n".join(lines)
 
 
+def _real_llm_enabled() -> bool:
+    import os
+    return os.environ.get("SPATIAL_REASONING_USE_REAL_LLM", "").lower() == "true"
+
+
+def _unavailable_result() -> dict:
+    """#437：真实推演未启用时的诚实结果。
+
+    旧实现默认返回一条与查询无关的编造结论（confidence=0.75、无 mock 标记），
+    经 plan-mode execute_plan / admin /tools/execute（tier-3 门控路径）持久化
+    进历史后会驱动用户可见的结论，且 is_suspicious_result 无法识别。现在默认
+    返回显式标记的「不可用」错误（success=False → is_suspicious_result 命中，
+    计划步骤不会据此打勾），并带 correction_hint 引导下一步（Exception As
+    Thought）。真实推演只在 SPATIAL_REASONING_USE_REAL_LLM=true 时发生。
+    """
+    return std_error_response(
+        "spatial_reasoning 真实推演未启用（SPATIAL_REASONING_USE_REAL_LLM 未设置为 true），"
+        "无法对该查询给出可靠结论；本工具不会在未启用时编造结论。",
+        code="TOOL_UNAVAILABLE",
+        error_type="FeatureDisabled",
+        correction_hint=(
+            "如需规则推演，请设置环境变量 SPATIAL_REASONING_USE_REAL_LLM=true "
+            "（并配置 LLM_API_KEY / LLM_BASE_URL）后重试；或改用基于真实图层的 "
+            "数据工具（如 buffer_analysis / nearest_facility / spatial_query）完成分析。"
+        ),
+    )
+
+
 async def _call_llm(system_prompt: str, user_prompt: str) -> dict:
     """空间推理 LLM 调用。
 
-    默认返回结构化 mock 响应（符合 spec "mock in place"）。
-    当环境变量 SPATIAL_REASONING_USE_REAL_LLM=true 时，
-    调用真实 LLM 服务（app.services.chat.llm_client.call_llm）。
+    #437：未启用真实 LLM 时返回显式标记的「不可用」结果，绝不返回编造的
+    模拟结论。启用（SPATIAL_REASONING_USE_REAL_LLM=true）后调用真实 LLM
+    服务（app.services.chat.llm_client.call_llm）。
     """
-    # Feature flag: real LLM integration is ready but disabled by default
-    # per spec ("planned, mock in place"). Set SPATIAL_REASONING_USE_REAL_LLM=true
-    # to enable production LLM calls.
-    import os
-    if os.environ.get("SPATIAL_REASONING_USE_REAL_LLM", "").lower() == "true":
-        return await _call_llm_real(system_prompt, user_prompt)
-
-    logger.debug("_call_llm using mock response (SPATIAL_REASONING_USE_REAL_LLM not set)")
-    return _mock_result()
+    if not _real_llm_enabled():
+        logger.debug("_call_llm real reasoning disabled (SPATIAL_REASONING_USE_REAL_LLM not set)")
+        return _unavailable_result()
+    return await _call_llm_real(system_prompt, user_prompt)
 
 
 def _parse_llm_json(content: str) -> Optional[dict]:
@@ -238,21 +262,6 @@ async def _call_llm_real(system_prompt: str, user_prompt: str) -> dict:
         return _error_result(f"LLM 调用失败: {type(e).__name__}")
 
 
-def _mock_result() -> dict:
-    """Structured mock response for spatial reasoning (default path)."""
-    return {
-        "type": "spatial_reasoning",
-        "conclusion": "基于现有规则库，该位置适合商业选址，但需考虑竞争饱和度。",
-        "reasoning_chain": [
-            {"step": 1, "fact": "社区店辐射半径 500-800m", "source": "commercial"},
-            {"step": 2, "fact": "便利店竞争饱和度超过 3 家后盈利能力下降", "source": "commercial"},
-        ],
-        "confidence": 0.75,
-        "uncertainty": "缺乏具体人流量数据，竞争饱和度基于周边POI估算",
-        "recommendations": ["进一步获取周边 exact 人流量数据", "分析工作日午餐客流与办公人口比例"],
-    }
-
-
 def _error_result(message: str) -> dict:
     """Return a structured error response matching SpatialReasoningResult schema."""
     return {
@@ -279,6 +288,11 @@ async def spatial_reasoning(
 
     try:
         llm_result = await _call_llm(system_prompt, user_prompt)
+        # #437：诚实错误（success=False，含 correction_hint）直通 —— 不进
+        # SpatialReasoningResult 校验（那会丢掉 correction_hint 并把「不可用」
+        # 包装成一条空壳结论）。
+        if isinstance(llm_result, dict) and llm_result.get("success") is False:
+            return llm_result
         result = SpatialReasoningResult.model_validate(llm_result)
         return result.model_dump()
     except (ValueError, TypeError, RuntimeError, OSError) as e:
