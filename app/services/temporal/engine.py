@@ -159,13 +159,18 @@ class TemporalEngine:
         start_time: Optional[Union[str, datetime]] = None,
         end_time: Optional[Union[str, datetime]] = None,
         aoi_geometry: Optional[Dict[str, Any]] = None,
+        operation: str = "all",
     ) -> TemporalRasterResult:
-        """Executes windowed raster time series analysis."""
+        """Executes windowed raster time series analysis.
+
+        ``operation`` selects the analysis branches (#454): all (default) /
+        difference / mean / trend."""
         return self.raster_engine.execute_raster_analysis(
             raster_series=raster_series,
             start_time=start_time,
             end_time=end_time,
             aoi_geometry=aoi_geometry,
+            operation=operation,
         )
 
     # --- High-level Async Tool/Harness Seam Interfaces ---
@@ -354,15 +359,20 @@ class TemporalEngine:
         self,
         raster_series: List[Any],
         aoi_geometry: Optional[Dict[str, Any]] = None,
-        operation: str = "difference",
+        operation: str = "all",
         session_id: str = "",
     ) -> Any:
-        """High level temporal raster wrapper."""
+        """High level temporal raster wrapper.
+
+        ``operation`` (#454) was previously accepted but never forwarded —
+        every value silently ran the same fixed pipeline. It now selects the
+        analysis branches in analyze_raster_series."""
         def _sync_run():
             from app.services.temporal.models import TemporalAnalysisResult
             raster_res = self.analyze_raster_series(
                 raster_series=raster_series,
                 aoi_geometry=aoi_geometry,
+                operation=operation,
             )
 
             return TemporalAnalysisResult(

@@ -141,7 +141,13 @@ class SpatiotemporalHotspotArgs(BaseModel):
 class TemporalRasterArgs(BaseModel):
     raster_series: List[Any] = Field(..., description="List of raster refs or COG URLs with timestamps")
     aoi_geometry: Optional[Dict[str, Any]] = Field(default=None, description="Optional Area of Interest polygon GeoJSON")
-    operation: str = Field(default="difference", description="Raster temporal operation: difference, mean, trend")
+    operation: str = Field(
+        default="all",
+        description=(
+            "Raster temporal operation: all (default: statistics + difference + trend), "
+            "difference (T2-T1 pixel difference), mean (per-slice statistics), trend (slope over series means)"
+        ),
+    )
 
 
 def register_temporal_tools(registry: ToolRegistry):
@@ -329,7 +335,11 @@ def register_temporal_tools(registry: ToolRegistry):
     @tool(
         registry,
         name="temporal_raster",
-        description="遥感/栅格时间序列分析：在指定 AOI 区域内，执行多时相栅格切片提取、栅格统计差异与变化趋势分析（采用窗口化流式读取，不装载整幅大图到内存）。",
+        description=(
+            "遥感/栅格时间序列分析：在指定 AOI 区域内，执行多时相栅格切片提取、栅格统计差异与变化趋势分析"
+            "（采用窗口化流式读取，不装载整幅大图到内存）。"
+            "operation 可选 all（默认，统计+差异+趋势）/ difference / mean / trend。"
+        ),
         tier=3,
         domains=["temporal", "raster"],
         args_model=TemporalRasterArgs,
@@ -337,7 +347,7 @@ def register_temporal_tools(registry: ToolRegistry):
     async def temporal_raster(
         raster_series: List[Any],
         aoi_geometry: Optional[Dict[str, Any]] = None,
-        operation: str = "difference",
+        operation: str = "all",
         session_id: str = "",
     ) -> dict:
         try:

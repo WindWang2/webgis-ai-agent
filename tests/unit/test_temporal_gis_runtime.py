@@ -519,6 +519,61 @@ def test_temporal_raster_engine_mock():
 
 
 # ---------------------------------------------------------------------------
+# 7b. #454: temporal_raster operation wiring / #458: skipped slices
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execute_temporal_raster_operation_selects_pipeline():
+    """Issue #454: the temporal_raster tool's `operation` argument was
+    accepted by the schema and engine wrapper but never consumed — every
+    value produced the identical full pipeline. Distinct operations must now
+    select distinct branches."""
+    engine = TemporalEngine()
+    series = [
+        {"timestamp": "2026-01-01T00:00:00Z", "data": [[10.0, 10.0], [10.0, 10.0]]},
+        {"timestamp": "2026-02-01T00:00:00Z", "data": [[20.0, 20.0], [20.0, 20.0]]},
+        {"timestamp": "2026-03-01T00:00:00Z", "data": [[30.0, 30.0], [30.0, 30.0]]},
+    ]
+
+    res_diff = await engine.execute_temporal_raster(raster_series=series, operation="difference")
+    res_trend = await engine.execute_temporal_raster(raster_series=series, operation="trend")
+    res_mean = await engine.execute_temporal_raster(raster_series=series, operation="mean")
+    res_all = await engine.execute_temporal_raster(raster_series=series, operation="all")
+
+    payload_diff = res_diff.raster_series[0]
+    payload_trend = res_trend.raster_series[0]
+    payload_mean = res_mean.raster_series[0]
+    payload_all = res_all.raster_series[0]
+
+    # difference: stats + difference, no trend
+    assert payload_diff["raster_difference"] is not None
+    assert payload_diff["raster_difference"]["mean_difference"] == 20.0
+    assert payload_diff["raster_trend"] is None
+    # trend: stats + trend, no difference
+    assert payload_trend["raster_trend"] is not None
+    assert payload_trend["raster_trend"]["direction"] == "increasing"
+    assert payload_trend["raster_difference"] is None
+    # mean: statistics only
+    assert payload_mean["raster_statistics"] is not None
+    assert payload_mean["raster_difference"] is None
+    assert payload_mean["raster_trend"] is None
+    # all: the full pipeline (previous effective behavior)
+    assert payload_all["raster_difference"] is not None
+    assert payload_all["raster_trend"] is not None
+    # Two different operation values produce different results.
+    assert payload_diff != payload_trend
+
+
+@pytest.mark.asyncio
+async def test_execute_temporal_raster_invalid_operation_raises():
+    engine = TemporalEngine()
+    series = [{"timestamp": "2026-01-01T00:00:00Z", "data": [[1.0]]}]
+    with pytest.raises(ValueError, match="operation"):
+        await engine.execute_temporal_raster(raster_series=series, operation="quantum")
+
+
+# ---------------------------------------------------------------------------
 # 8. Unified TemporalEngine Orchestrator Seam Tests
 # ---------------------------------------------------------------------------
 

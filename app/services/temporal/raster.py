@@ -414,26 +414,47 @@ class TemporalRasterEngine:
             "direction": trend_res.direction,
         }
 
+    # #454: the temporal_raster tool's `operation` argument selects the
+    # analysis branches. "all" (the previous unconditional pipeline) stays the
+    # default so existing callers keep their result shape.
+    _RASTER_OPERATIONS = ("all", "difference", "mean", "trend")
+
     def execute_raster_analysis(
         self,
         raster_series: List[Dict[str, Any]],
         start_time: Optional[Union[str, datetime]] = None,
         end_time: Optional[Union[str, datetime]] = None,
         aoi_geometry: Optional[Dict[str, Any]] = None,
+        operation: str = "all",
     ) -> TemporalRasterResult:
         """
         High-level raster analysis pipeline.
+
+        ``operation`` selects the branches (#454): "all" (default) runs the
+        full statistics + trend + difference pipeline; "difference", "trend"
+        and "mean" run only the requested analysis (statistics are always
+        computed — the trend branch reuses them).
         """
+        op = (operation or "all").strip().lower()
+        if op not in self._RASTER_OPERATIONS:
+            raise ValueError(
+                f"Unsupported temporal raster operation '{operation}'. "
+                f"Available operations: {list(self._RASTER_OPERATIONS)}"
+            )
+
         selected_slices = self.select_time_slice(raster_series, start_time, end_time)
         # Single statistics pass; the trend step reuses these results instead of
         # re-opening every raster and recomputing the zonal statistics.
         stats = self.temporal_raster_statistics(selected_slices, aoi_geometry=aoi_geometry)
-        trend = self.raster_trend_over_aoi(
-            selected_slices, aoi_geometry=aoi_geometry, stats_info=stats
-        )
+
+        trend = None
+        if op in ("all", "trend"):
+            trend = self.raster_trend_over_aoi(
+                selected_slices, aoi_geometry=aoi_geometry, stats_info=stats
+            )
 
         diff = None
-        if len(selected_slices) >= 2:
+        if op in ("all", "difference") and len(selected_slices) >= 2:
             diff = self.raster_difference(selected_slices[0], selected_slices[-1], aoi_geometry)
 
         return TemporalRasterResult(
