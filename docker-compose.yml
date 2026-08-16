@@ -114,9 +114,16 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # #471（#394 的 compose 兄弟项）：celery 任务按本地路径打开 api 写入的
+    # 上传文件（run_ndvi_analysis → rasterio.open(raster_path)）。worker 在
+    # 独立容器/独立文件系统层里，不挂同一个卷就只能看到空的容器层目录 ——
+    # 上传成功的 raster 分析在 worker 侧"No such file"。与 api 挂同一个
+    # uploads 卷；dev 栈 DATA_DIR 默认 ./data → 上传落在 /app/data/uploads。
+    # （与 api 服务结构一致：WEBGIS_DEV_MOUNT 展开后紧跟固定挂载项。）
     volumes:
       # 审计 INF-003：bind-mount 改为显式 opt-in，与 api 服务一致。
       ${WEBGIS_DEV_MOUNT:+- ${WEBGIS_DEV_MOUNT}:/app/app}
+      - uploads:/app/data
     env_file:
       - .env
     command: celery -A app.services.task_queue worker -l info

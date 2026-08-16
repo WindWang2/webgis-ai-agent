@@ -9,6 +9,18 @@
 # 使用: docker-compose -f docker-compose.prod.secure.yml up -d
 #
 # ⚠️ 部署前必须创建 .env.Priv 文件（见 .env.Priv.example 模板）。
+#
+# #472 部署契约（deploy-prod 只 scp 本文件 + deploy/redis*.conf + 镜像 tar +
+# .env.Priv 到主机，主机上没有源码/构建上下文）：
+# - api / celery-worker 的镜像经 ${WEBGIS_IMAGE:-webgis-ai-agent:local} 引用：
+#   CI 侧 deploy/ci-generate-env-priv.sh 把 WEBGIS_IMAGE=ghcr.io/<repo>:<sha>
+#   写入 .env.Priv（与 docker load 出的 tar 同名），compose --env-file 解析；
+#   本地检出则保留 build: 回退（打为 webgis-ai-agent:local）。
+# - nginx 的配置/证书用内联 configs 分发（见文件尾 configs:），不依赖任何
+#   未随部署分发的 bind-mount 路径。真实证书：复制本文件为 override，把
+#   webgis_ssl_scaffold_cert / webgis_ssl_scaffold_key 两个 config 换成
+#   `file: ./deploy/nginx/ssl/server.crt` 形式的源，并
+#   `docker compose -f docker-compose.prod.secure.yml -f <override> up -d`。
 # ============================================================
 
 services:
@@ -85,6 +97,12 @@ services:
           cpus: "0.25"
 
   api:
+    # #472: 镜像优先、build 兜底。deploy-prod 主机上没有构建上下文 —— 仅
+    # build: 会让 `up` 构建失败（或静默复用过期本地镜像，CI 加载的 tar 从未被
+    # 引用）。WEBGIS_IMAGE 由 deploy/ci-generate-env-priv.sh 在 CI 写入
+    # .env.Priv，与 docker load 出的 ghcr.io/<repo>:<sha> 完全一致；本地检出
+    # 未设 WEBGIS_IMAGE 时走 build:（镜像打为 webgis-ai-agent:local）。
+    image: ${WEBGIS_IMAGE:-webgis-ai-agent:local}
     build:
       context: .
       dockerfile: Dockerfile.prod
@@ -104,8 +122,12 @@ services:
       DATA_DIR: /app
     env_file:
       - .env.Priv
-    expose:
-      - "8000"
+    # #472: 健康检查必须在主机上可达。之前只有 expose（仅容器网络内可见），
+    # deploy-prod 在主机上 curl http://localhost:8000/... 必然 connection
+    # refused（或被无关的 :8000 占用者误判为绿）。改为发布到主机 loopback ——
+    # 公网入口仍然只有 nginx 的 80/443，与 db/redis 不暴露端口的姿态一致。
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
     depends_on:
       db:
         condition: service_healthy
@@ -115,8 +137,12 @@ services:
       - uploads:/app/uploads
     # 审计 P0：api healthcheck 使用 wget，但 Dockerfile.prod runner 不装 wget。
     # 改用 python3 urllib（已修复 Dockerfile.prod HEALTHCHECK，此处同步）。
+    # #474：compose 的 service healthcheck 会完全覆盖镜像 HEALTHCHECK —— 之前
+    # 这里只探 uvicorn:8000，与 #400 的双进程镜像 HEALTHCHECK 相比是退化：
+    # node frontend/.next/standalone/server.js 挂掉时容器仍"healthy"，nginx
+    # 对 / 502 而编排层（depends_on/CI 探针）毫无感知。与镜像保持一致的双探测。
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/live', timeout=5)\" || exit 1"]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request as u; u.urlopen('http://localhost:8000/api/v1/health/live', timeout=5); u.urlopen('http://localhost:3000/', timeout=5)\" || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -133,6 +159,8 @@ services:
           cpus: "0.5"
 
   celery-worker:
+    # #472: 与 api 相同的镜像引用契约（见 api 服务的注释）。
+    image: ${WEBGIS_IMAGE:-webgis-ai-agent:local}
     build:
       context: .
       dockerfile: Dockerfile.prod
@@ -148,6 +176,11 @@ services:
     env_file:
       - .env.Priv
     command: celery -A app.services.task_queue worker --loglevel=info --concurrency=2
+    volumes:
+      # #471（#394 的 compose 兄弟项）：worker 必须看到 api 写入的上传文件
+      # （celery 任务按本地路径打开 raster/shapefile）。与 api 挂同一个
+      # uploads 卷，否则上传成功的分析任务在 worker 侧"No such file"。
+      - uploads:/app/uploads
     depends_on:
       db:
         condition: service_healthy
@@ -179,9 +212,21 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./deploy/nginx/ssl:/etc/nginx/ssl:ro
-      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - nginx_logs_secure:/var/log/nginx
+    # #472: nginx 配置与证书随本文件内联分发（见文件尾 configs:）。之前
+    # bind-mount ./deploy/nginx/nginx.conf 与 ./deploy/nginx/ssl —— 两者都不在
+    # deploy-prod 的 scp 清单里（ssl 甚至未被 git 追踪），Docker 会把缺失的
+    # 挂载源创建为空目录，nginx 启动即死（"nginx.conf failed: Is a directory"）。
+    # 内容与 deploy/nginx/nginx.conf 逐字节一致，由
+    # tests/test_nginx_security.py 的 parity 测试强制防漂移。真实证书的替换
+    # 方式见文件头注释。
+    configs:
+      - source: webgis_nginx_conf
+        target: /etc/nginx/nginx.conf
+      - source: webgis_ssl_scaffold_cert
+        target: /etc/nginx/ssl/server.crt
+      - source: webgis_ssl_scaffold_key
+        target: /etc/nginx/ssl/server.key
     depends_on:
       - api
     networks:
@@ -230,3 +275,355 @@ volumes:
 networks:
   webgis-internal:
     driver: bridge
+
+# ============================================================================
+# #472: 内联分发的 nginx 传输配置与 TLS scaffold（部署工件自包含）。
+# deploy-prod 只把 compose 文件 + deploy/redis*.conf + 镜像 tar + .env.Priv
+# scp 到主机 —— nginx 的配置/证书不能再依赖未随部署分发的 bind-mount 路径。
+# 真实证书替换方式见文件头注释。
+# 注意：content 内的 nginx 变量（$remote_addr 等）必须双写为 $$ —— compose
+# 渲染时会把单 $ 视作插值变量并置空；parity 测试按 $$→$ 还原后比对。
+# ============================================================================
+configs:
+  webgis_nginx_conf:
+    # 与 deploy/nginx/nginx.conf 逐字节一致（$$ 按 compose 转义规则双写）；
+    # parity 由 tests/test_nginx_security.py 强制（deploy-config CI 门的
+    # nginx -t 只校验仓库文件，此内联副本靠 parity 测试锁定同一份语法/语义）。
+    content: |
+      # ============================================================
+      # WebGIS AI Agent 生产环境 Nginx 配置
+      # 支持 HTTPS、静态资源缓存、API 路由转发、CORS 处理
+      # ============================================================
+
+      # 运行用户
+      user nginx;
+      worker_processes auto;
+      error_log /var/log/nginx/error.log warn;
+      pid /var/run/nginx.pid;
+
+      events {
+          worker_connections 1024;
+          use epoll;
+          multi_accept on;
+      }
+
+      http {
+          # CORS allow-list: only echo approved origins
+          map $$http_origin $$allowed_origin {
+              default "";
+              "~^https://your-domain\.com$$" $$http_origin;
+              "~^https://www\.your-domain\.com$$" $$http_origin;
+              "~^http://localhost:" $$http_origin;
+          }
+
+          # Connection upgrade map (transport goal E-F-7/E-F-8): canonical nginx
+          # pattern so non-upgrade requests keep upstream connections reusable.
+          # Without this, every proxied request opened a fresh TCP connection to
+          # uvicorn/node (the `keepalive 32/16` directives were a no-op because no
+          # location ever cleared the Connection header, and `location /` hard-coded
+          # `Connection 'upgrade'` for all frontend traffic).
+          map $$http_upgrade $$connection_upgrade {
+              default upgrade;
+              ''      close;
+          }
+
+          include /etc/nginx/mime.types;
+          default_type application/octet-stream;
+
+          # 日志格式
+          log_format main '$$remote_addr - $$remote_user [$$time_local] "$$request" '
+                          '$$status $$body_bytes_sent "$$http_referer" '
+                          '"$$http_user_agent" "$$http_x_forwarded_for"';
+
+          access_log /var/log/nginx/access.log main;
+
+          # 性能优化
+          sendfile on;
+          tcp_nopush on;
+          tcp_nodelay on;
+          keepalive_timeout 65;
+          types_hash_max_size 2048;
+
+          # Gzip 压缩
+          gzip on;
+          gzip_vary on;
+          gzip_proxied any;
+          gzip_comp_level 6;
+          gzip_min_length 1024;
+          gzip_types text/plain text/css text/xml application/json application/javascript
+                     application/rss+xml application/atom+xml image/svg+xml;
+
+          # 上游服务
+          upstream api_backend {
+              server api:8000;
+              keepalive 32;
+          }
+
+          upstream frontend_backend {
+              server api:3000;
+              keepalive 16;
+          }
+
+          # ======== HTTP 服务器 ========
+          server {
+              listen 80;
+              server_name _;
+              return 301 https://$$host$$request_uri;
+          }
+
+          # ======== HTTPS 服务器 ========
+          server {
+              listen 443 ssl http2;
+              server_name _;
+
+              # SSL 证书配置（使用自签名证书示例）
+              ssl_certificate /etc/nginx/ssl/server.crt;
+              ssl_certificate_key /etc/nginx/ssl/server.key;
+
+              # SSL 安全配置
+              ssl_protocols TLSv1.2 TLSv1.3;
+              ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+              ssl_prefer_server_ciphers off;
+              ssl_session_cache shared:SSL:10m;
+              ssl_session_timeout 1d;
+
+              # 安全头
+              server_tokens off;
+              add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+              add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' ws: wss:" always;
+              add_header X-Frame-Options "SAMEORIGIN" always;
+              add_header X-Content-Type-Options "nosniff" always;
+              add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+              # ======== 静态资源缓存（顶层 regex 匹配，必须在 location / 之前）========
+              # 审计 P0：之前嵌套在 location / 内的 location ~* 被 nginx 忽略（嵌套
+              # regex location 无效），导致静态资源永不过期缓存未生效。提取到 server 顶层。
+
+              # JS / CSS — 1 年强缓存
+              location ~* \.(js|css)$$ {
+                  proxy_pass http://frontend_backend;
+                  proxy_http_version 1.1;
+                  proxy_set_header Host $$host;
+                  proxy_set_header X-Real-IP $$remote_addr;
+                  proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $$scheme;
+                  expires 1y;
+                  add_header Cache-Control "public, max-age=31536000, immutable" always;
+                  add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+                  add_header X-Content-Type-Options "nosniff" always;
+              }
+
+              # 图片 / 字体 / SVG — 1 年强缓存
+              location ~* \.(png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$$ {
+                  proxy_pass http://frontend_backend;
+                  proxy_http_version 1.1;
+                  proxy_set_header Host $$host;
+                  proxy_set_header X-Real-IP $$remote_addr;
+                  proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $$scheme;
+                  expires 1y;
+                  add_header Cache-Control "public, max-age=31536000, immutable" always;
+                  add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+                  add_header X-Content-Type-Options "nosniff" always;
+              }
+
+              # ======== 前端（SPA + Next.js standalone server）========
+              # 不匹配上述 regex 的请求全部转发给 Node.js standalone server。
+              location / {
+                  proxy_pass http://frontend_backend;
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade $$http_upgrade;
+                  proxy_set_header Connection $$connection_upgrade;
+                  proxy_set_header Host $$host;
+                  proxy_set_header X-Real-IP $$remote_addr;
+                  proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $$scheme;
+                  proxy_cache_bypass $$http_upgrade;
+              }
+
+              # ======== API 路由 ========
+              location /api/ {
+                  proxy_pass http://api_backend;
+                  proxy_http_version 1.1;
+                  proxy_set_header Connection "";
+                  proxy_set_header Host $$host;
+                  proxy_set_header X-Real-IP $$remote_addr;
+                  proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $$scheme;
+
+                  # 超时配置（transport goal E-F-5）：普通 API 调用也可能较重
+                  # （报告生成、重型工具 dispatch、非流式 /chat），60s 会把合法长
+                  # 调用 504。提升到 300s（与 upload 一致）。SSE 流有独立 location
+                  # 用 3600s。
+                  proxy_connect_timeout 60s;
+                  proxy_send_timeout 300s;
+                  proxy_read_timeout 300s;
+
+                  # CORS 头
+                  add_header Access-Control-Allow-Origin $$allowed_origin always;
+                  add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+                  add_header Access-Control-Allow-Headers "Authorization, Content-Type, X-Requested-With" always;
+                  add_header Access-Control-Allow-Credentials "true" always;
+                  # 安全头（nginx add_header 会覆盖父级，必须重复）
+                  add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+                  add_header X-Frame-Options "SAMEORIGIN" always;
+                  add_header X-Content-Type-Options "nosniff" always;
+                  add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+                  # 处理预检请求
+                  if ($$request_method = 'OPTIONS') {
+                      return 204;
+                  }
+              }
+
+              # ======== SSE 流式端点（必须在 /api/ 之前匹配） ========
+              # proxy_buffering 默认开启会把 SSE chunk 攒在 nginx 缓冲区里再批量下发，
+              # 用户感受到的是"卡顿 + 一次性涌出"。关闭后才能逐 chunk 转发。
+              location = /api/v1/chat/stream {
+                  proxy_pass http://api_backend;
+                  proxy_http_version 1.1;
+                  proxy_set_header Connection "";
+                  proxy_set_header Host $$host;
+                  proxy_set_header X-Real-IP $$remote_addr;
+                  proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $$scheme;
+
+                  # 关键：SSE 必须关闭缓冲
+                  proxy_buffering off;
+                  proxy_cache off;
+                  chunked_transfer_encoding on;
+                  add_header X-Accel-Buffering no;
+
+                  # 长连接：工具链可能跑数分钟
+                  proxy_connect_timeout 10s;
+                  proxy_send_timeout 3600s;
+                  proxy_read_timeout 3600s;
+              }
+
+              # ======== Explorer SSE 流（transport goal E-F-1，P0 修复） ========
+              # 之前的 regex `^/api/v1/stream/` 匹配不到任何真实路由（实际路由是
+              # /api/v1/explorer/stream/{task_id}，explorer.py:15,90），导致 explorer
+              # 的进度流落到 `location /api/`：proxy_buffering 默认 ON（chunk 攒到
+              # ~32KB 才下发）+ proxy_read_timeout 60s（空闲>60s 直接 504）。修正为
+              # 匹配真实路径，并同样关闭缓冲 / 拉长超时。
+              location ~ ^/api/v1/explorer/stream/ {
+                  proxy_pass http://api_backend;
+                  proxy_http_version 1.1;
+                  proxy_set_header Connection "";
+                  proxy_set_header Host $$host;
+                  proxy_set_header X-Real-IP $$remote_addr;
+                  proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $$scheme;
+
+                  proxy_buffering off;
+                  proxy_cache off;
+                  chunked_transfer_encoding on;
+                  add_header X-Accel-Buffering no;
+
+                  proxy_connect_timeout 10s;
+                  proxy_send_timeout 3600s;
+                  proxy_read_timeout 3600s;
+              }
+
+              # ======== 上传文件 ========
+              location /api/v1/upload {
+                  proxy_pass http://api_backend;
+                  proxy_http_version 1.1;
+                  proxy_set_header Connection "";
+                  proxy_set_header Host $$host;
+                  proxy_set_header X-Real-IP $$remote_addr;
+                  proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+
+                  # 大文件上传配置
+                  client_max_body_size 100M;
+                  proxy_connect_timeout 300s;
+                  proxy_send_timeout 300s;
+                  proxy_read_timeout 300s;
+              }
+
+              # ======== WebSocket 支持 ========
+              location /ws/ {
+                  proxy_pass http://api_backend;
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade $$http_upgrade;
+                  proxy_set_header Connection "upgrade";
+                  proxy_set_header Host $$host;
+                  proxy_set_header X-Real-IP $$remote_addr;
+                  proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+                  proxy_read_timeout 86400s;
+              }
+
+              # ======== 健康检查端点 ========
+              location /health {
+                  access_log off;
+                  return 200 "healthy\n";
+                  add_header Content-Type text/plain;
+                  add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+                  add_header X-Frame-Options "SAMEORIGIN" always;
+                  add_header X-Content-Type-Options "nosniff" always;
+              }
+
+              # ======== 错误页面 ========
+              error_page 500 502 503 504 /50x.html;
+              location = /50x.html {
+                  root /usr/share/nginx/html;
+              }
+          }
+      }
+  webgis_ssl_scaffold_cert:
+    # 自签名 scaffold（CN=webgis-deploy-scaffold，仅保证 nginx 能以 TLS 启动，
+    # 浏览器会告警不受信）。部署真实证书：override 文件把本 config 换成
+    # `file: ./deploy/nginx/ssl/server.crt` 形式的源。
+    content: |
+      -----BEGIN CERTIFICATE-----
+      MIIDcTCCAlmgAwIBAgIURO8NpbclSV5UlCmv0VXqHEPIvWMwDQYJKoZIhvcNAQEL
+      BQAwSDFGMEQGA1UEAww9d2ViZ2lzLWRlcGxveS1zY2FmZm9sZCAoc2VsZi1zaWdu
+      ZWQ7IHJlcGxhY2Ugd2l0aCByZWFsIGNlcnRzKTAeFw0yNjA4MTYwMjIxNTlaFw0z
+      NjA4MTMwMjIxNTlaMEgxRjBEBgNVBAMMPXdlYmdpcy1kZXBsb3ktc2NhZmZvbGQg
+      KHNlbGYtc2lnbmVkOyByZXBsYWNlIHdpdGggcmVhbCBjZXJ0cykwggEiMA0GCSqG
+      SIb3DQEBAQUAA4IBDwAwggEKAoIBAQCyIUX+w1GQOWoiHd4IC4SHPw9q4NnhE9+l
+      KBOqDXXDj748yvXPg6tTKou7zdjNklQCUbOsCJlLIjqcGi0VvO115FDchsc0fQ36
+      K+KGW6vMGPxvCt81/XqFymaJSgqttw6QaqD3WOqnt24xhtQri53TpBIiLhR9kqoZ
+      brzlkRm0fzpzKZlwDNBUAK9YnsWl0wrYhrIYqV48eW+Xs0MXqtiCzRfxsfr60/yV
+      NpjCla3UPaKXVGnYSkWT6ww6vl+Wr86TxAXgTZ+3l8EcJ6/szz0kNk9e21he7LA3
+      TWgYHIkOnsxZCHlCyT5XnmQz23d8tQV1h0J7buPZ8sIVLB8RX/rVAgMBAAGjUzBR
+      MB0GA1UdDgQWBBRrJl+GZE81KGYYV4W1xuR6YL8majAfBgNVHSMEGDAWgBRrJl+G
+      ZE81KGYYV4W1xuR6YL8majAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUA
+      A4IBAQAcY/ordhga0sI2VbiaHf1sYLYxntR15O5r5EDB9ICZ77uUPnnV8XmZAX+q
+      NSXV5IvB4FNMWdByJuWPN1gpHWr06RYQg+vrKf/ETcjlMma35Pej1OqqUzf2yziV
+      pnpKkNzgvQxzcpsYleIoXn/lW/eJYdiZtYY3e7STIggL5u62Xntdzg/xTAFrL51W
+      wmFE8ke52ZBA0VbG6hqL+G9/wOllGolU3mcOyLYt/mgm1tNGOjZOdFCy+ouB0DNK
+      XKbn2c4EXDCAWyDOmdVJi26XsE2rlCWhZwzSVtcT79DC2oqE9DD3Vsk/bb4D2SpA
+      6jLpV2z2jp2zzA0iz1jAwAVaD3wq
+      -----END CERTIFICATE-----
+  webgis_ssl_scaffold_key:
+    # 对应 scaffold 私钥（占位用途，非生产凭据 —— 与证书一并被 override 替换）。
+    content: |
+      -----BEGIN PRIVATE KEY-----
+      MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCyIUX+w1GQOWoi
+      Hd4IC4SHPw9q4NnhE9+lKBOqDXXDj748yvXPg6tTKou7zdjNklQCUbOsCJlLIjqc
+      Gi0VvO115FDchsc0fQ36K+KGW6vMGPxvCt81/XqFymaJSgqttw6QaqD3WOqnt24x
+      htQri53TpBIiLhR9kqoZbrzlkRm0fzpzKZlwDNBUAK9YnsWl0wrYhrIYqV48eW+X
+      s0MXqtiCzRfxsfr60/yVNpjCla3UPaKXVGnYSkWT6ww6vl+Wr86TxAXgTZ+3l8Ec
+      J6/szz0kNk9e21he7LA3TWgYHIkOnsxZCHlCyT5XnmQz23d8tQV1h0J7buPZ8sIV
+      LB8RX/rVAgMBAAECggEAAL3INYr5Di1a/nja2XQ40TpHNWXpqjjjs6OCz3CeZpm0
+      zDp5AuvUnPQ+oCG3bwWWoWrXIVZo0un5zfgC64X9hAHW/0/1SMfjdMDVgMMlaCRL
+      eqfULXyYU7G3swcSm834+stiz5y4X0nRZNXfkK3UUpLqe2dvMOWZHSF7mkX8Eib6
+      nl7RhLg6t6XcPvk1XyxYDDEqGr3k4vyEYBmDP/URVTAxSlUePC+GRQjqxmgp5J5E
+      vKgleaixAcT7b1080w1Ps1xaV44+RVjC0etbKQBijFDNXSF9FFrvrXTudIP0fzyx
+      EooVdGlW8PwLkTWAbxg36LrE4UwjduRfWVm3S5302QKBgQDlNxc9XryNBnp5dfiT
+      Z/VMFcjzDO7Lk0r4shL87LJ8VQPsh22vlX2m00v8/eGuQGND2uwxZa8HllwH9VJ/
+      jkBq0e3B0hVvSQbMTSjMSA1l1t9IRoleqhPVziEB127984w5763yOKazFfm16YMV
+      gD5WTOu0Ir5pQPVFR+l8T2/ZuQKBgQDG8ft39HQ5F/On2F4R+K1vaoypT8cfj7H/
+      HgviPIFbPBNWkRHILXtzgIJedL762sypbIB/9o5qYB7l6UcX14BIJFapgkovaKuM
+      sMupWaC1jy6AAEpE8KrU4TXeNQei3AKPYP6NJRPmOtnlqcgs3ZTzQVAhpHaCjADH
+      6g+Umc/H/QKBgGT+XRMBRvqsPBKAVEI+r+oSPzQ4Io84GvRxIcSnVg1KOCxjj4Sp
+      zW9P8k9KXcG1RQeE0kUBlJk3Ot2Wzf694swuKyAXPLKH7qLd7Hf111Fj14W07pnz
+      PkIaTJjPH2xtfv+YB4COTYTizd/FP6idlNnZkpEQLe2aXXdlNA89wP6hAoGAffKg
+      MvbtxV9mf/I4y8PVeN3Joz7AXzjHhS1udJG9ixbjX0CEM2in6R2Ia2gZqBJw0ym/
+      yEM9MhccOI2Q1oU1z3ZB7xpvAMiRIoaiyNnXJlo5JAwK+M4sOI1DXyPPa8lBTago
+      Pw8kI/NKE12DPvQg4keNBV9rL4aWz/lcV8Vwh7kCgYAQL7pOGVEfCkB8uHGgPXMP
+      hdVu4lA2uzpt6bV8Wsf9ho6+x7HGNp7BCRkQi1QIsZUW16095eyIfvbx2RYD6jA5
+      U+uWihYqmPW0vnHyY3L+mdgz1jwrBOjaRwdt6IzwYR0CD7ZEnnU1eJjsTEcTY9Xp
+      1PTPIcu6RoWfbptRXuIv4A==
+      -----END PRIVATE KEY-----

@@ -141,3 +141,60 @@ class TestK8sResumeStickyRouting:
             assert "nginx.ingress.kubernetes.io/session-cookie-name" in ann, (
                 "webgis-ingress must name its session affinity cookie"
             )
+
+
+class TestK8sIngressSSETransport:
+    """#475: k8s ingress 的 SSE 传输行为必须与 compose nginx 契约一致。
+
+    deploy/nginx/nginx.conf（deploy-config CI 门用 nginx -t 校验的传输层）对
+    两个流式 location（/api/v1/chat/stream、/api/v1/explorer/stream/）设置
+    proxy_buffering off + proxy_read/send_timeout 3600s。ingress 缺少等价配置
+    时，k8s 部署得到的是被缓冲的 SSE（延迟尖峰 + chunk 突发）和 300s 硬切断
+    —— 前端被迫走 Last-Event-ID 重连，压测 #377 的进程本地 resume 注册表。
+    """
+
+    def _ingress_annotations(self):
+        ingresses = [
+            doc for doc in _load_k8s("deploy/k8s/04-ingress.yaml")
+            if doc and doc.get("kind") == "Ingress"
+        ]
+        assert ingresses, "no Ingress found in 04-ingress.yaml"
+        ann = ingresses[0]["metadata"].get("annotations", {})
+        assert "nginx.ingress.kubernetes.io" in " ".join(ann) or ann, (
+            "webgis-ingress has no annotations"
+        )
+        return ann
+
+    def test_ingress_disables_proxy_buffering(self):
+        ann = self._ingress_annotations()
+        assert ann.get("nginx.ingress.kubernetes.io/proxy-buffering") == "off", (
+            "webgis-ingress 必须 proxy-buffering: off —— ingress-nginx 默认缓冲"
+            "会把 SSE chunk 攒批下发（compose nginx 契约是 proxy_buffering off）"
+        )
+
+    def test_ingress_read_timeout_not_cutting_sse_turns(self):
+        ann = self._ingress_annotations()
+        for key in ("proxy-read-timeout", "proxy-send-timeout"):
+            value = ann.get(f"nginx.ingress.kubernetes.io/{key}", "0")
+            assert int(value) >= 3600, (
+                f"webgis-ingress {key}={value} 会在多分钟工具链轮次中途切断 "
+                "SSE（compose nginx 流式 location 契约是 3600s）"
+            )
+
+    def test_compose_nginx_sse_contract_still_holds(self):
+        """契约源头：compose nginx.conf 的流式 location 必须保持不缓冲 +
+        3600s —— ingress 注解与之对齐（防止一边漂移后另一边失去参照）。"""
+        with open("deploy/nginx/nginx.conf") as f:
+            conf = f.read()
+        assert "proxy_buffering off;" in conf, (
+            "deploy/nginx/nginx.conf 丢失 SSE 不缓冲契约（proxy_buffering off）"
+        )
+        for stream_loc in ("location = /api/v1/chat/stream", "~ ^/api/v1/explorer/stream/"):
+            assert stream_loc in conf, (
+                f"deploy/nginx/nginx.conf 缺少 SSE location: {stream_loc}"
+            )
+            # 每个 SSE location 块内都有 3600s 读超时
+            block = conf.split(stream_loc, 1)[1].split("location", 1)[0]
+            assert "proxy_read_timeout 3600s;" in block, (
+                f"{stream_loc}: 丢失 proxy_read_timeout 3600s 契约"
+            )
