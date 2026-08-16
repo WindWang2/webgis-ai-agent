@@ -63,12 +63,17 @@ LEGACY_TOOL_NAME_MAP: dict[str, str] = {
     "add_layer": "webgis_layer_upsert",
     "set_layer_style": "webgis_layer_upsert",
     "update_layer": "webgis_layer_upsert",
-    "remove_layer": "webgis_layer_remove",
+    # remove_layer 不在别名表：#516 其已是 registry 现役工具
+    # (app/tools/layer_manager.py，参数 layer_ref)。别名改写会把合法调用
+    # 重定向到 webgis_layer_remove (layer_id schema)，导致校验失败——
+    # LLM 按目录可见名调用即命中现役工具。
     "delete_layer": "webgis_layer_remove",
     # 视角与导航
     "set_view": "webgis_view_set",
     "move_view": "webgis_view_set",
-    "zoom_to_layer": "webgis_view_set",
+    # zoom_to_layer 不在别名表：#516 其已是 registry 现役工具
+    # (app/tools/map_view.py，参数 layer_ref/padding)。改写为全可选
+    # webgis_view_set 会吞掉 layer_ref 参数使缩放命令永不触发。
     # MapSpec 生命周期与检验
     "init_project": "webgis_project_init",
     "get_state": "webgis_state_get",

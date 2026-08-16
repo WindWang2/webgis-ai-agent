@@ -11,6 +11,7 @@ import shutil
 from unittest.mock import AsyncMock, MagicMock
 
 from app.services.tool_dispatch_service import (
+    LEGACY_TOOL_NAME_MAP,
     ToolDispatchResult,
     ToolDispatchService,
     normalize_tool_name,
@@ -377,13 +378,82 @@ async def test_failed_dispatch_does_not_occupy_dedup_slot(service, fake_registry
 
 
 def test_tool_name_normalization_table():
-    """断言 legacy 工具名被正确映射为 webgis_* canonical 名称。"""
+    """断言 legacy 工具名被正确映射为 webgis_* canonical 名称。
+
+    #516：remove_layer / zoom_to_layer 已是 registry 现役工具，别名表不得
+    再改写它们（schema 不兼容：layer_ref vs layer_id / 全可选 view args），
+    否则 LLM 的合法调用被重定向后校验失败或静默无操作。LLM 按目录可见名
+    调用即命中现役工具。
+    """
     assert normalize_tool_name("add_layer") == "webgis_layer_upsert"
     assert normalize_tool_name("set_layer_style") == "webgis_layer_upsert"
     assert normalize_tool_name("set_view") == "webgis_view_set"
-    assert normalize_tool_name("remove_layer") == "webgis_layer_remove"
+    # #516：现役工具名不再被别名表改写
+    assert normalize_tool_name("remove_layer") == "remove_layer"
+    assert normalize_tool_name("zoom_to_layer") == "zoom_to_layer"
     assert normalize_tool_name("init_project") == "webgis_project_init"
     assert normalize_tool_name("unknown_tool") == "unknown_tool"
+
+
+def test_legacy_alias_map_never_shadows_registered_tool_names():
+    """契约：别名表键 ∩ registry 注册名 == ∅（防 #516 复发）。
+
+    别名表只应包含不再注册的旧名；一旦某工具以现役名注册
+    （remove_layer / zoom_to_layer），dispatch 入口的 normalize 会把
+    LLM 对现役工具的合法调用重写为 schema 不兼容的 webgis_* 工具。
+    """
+    from app.tools import init_tools
+    from app.tools.registry import ToolRegistry
+
+    r = ToolRegistry()
+    init_tools(r)
+    registered = set(r.all_metadata().keys())
+    conflict = set(LEGACY_TOOL_NAME_MAP.keys()) & registered
+    assert conflict == set(), (
+        f"LEGACY_TOOL_NAME_MAP 键与 registry 注册名冲突，会被 normalize "
+        f"错误改写: {conflict}"
+    )
+    # #516 的两个现役工具必须在 registry 中且不在别名表中
+    assert "remove_layer" in registered
+    assert "zoom_to_layer" in registered
+    assert "remove_layer" not in LEGACY_TOOL_NAME_MAP
+    assert "zoom_to_layer" not in LEGACY_TOOL_NAME_MAP
+
+
+@pytest.mark.asyncio
+async def test_dispatch_does_not_rewrite_active_tool_names(
+    service, fake_registry, clean_session,
+):
+    """#516：现役工具 remove_layer / zoom_to_layer 经 dispatch 不被改写，
+    且参数 schema 按现役定义校验（layer_ref 必须原样到达 registry）。"""
+    fake_registry.dispatch.return_value = {"summary": "removed"}
+    tc = _tc("remove_layer", {"layer_ref": "ref:geojson-1"})
+
+    result = await service.dispatch(tc, clean_session, set())
+
+    assert result.status == "ok"
+    fake_registry.dispatch.assert_called_once()
+    called_name, called_args = fake_registry.dispatch.call_args[0][0], fake_registry.dispatch.call_args[0][1]
+    assert called_name == "remove_layer"
+    assert called_args == {"layer_ref": "ref:geojson-1"}
+
+
+@pytest.mark.asyncio
+async def test_dispatch_zoom_to_layer_passes_padding_through(
+    service, fake_registry, clean_session,
+):
+    """#516：zoom_to_layer 的 layer_ref/padding 原样到达 registry（改写为
+    webgis_view_set 会吞掉这两个参数，缩放命令永不触发）。"""
+    fake_registry.dispatch.return_value = {"summary": "zoomed"}
+    tc = _tc("zoom_to_layer", {"layer_ref": "ref:geojson-2", "padding": 120})
+
+    result = await service.dispatch(tc, clean_session, set())
+
+    assert result.status == "ok"
+    fake_registry.dispatch.assert_called_once()
+    called_name, called_args = fake_registry.dispatch.call_args[0][0], fake_registry.dispatch.call_args[0][1]
+    assert called_name == "zoom_to_layer"
+    assert called_args == {"layer_ref": "ref:geojson-2", "padding": 120}
 
 
 @pytest.mark.asyncio
