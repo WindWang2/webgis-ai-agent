@@ -411,3 +411,113 @@ def test_write_lock_blocks_concurrent_writers():
     finally:
         import shutil
         shutil.rmtree(dir_, ignore_errors=True)
+
+
+# ── #544: cross-process index staleness ─────────────────────────────────
+
+
+def test_get_index_refreshes_when_file_mtime_changes(patch_embed):
+    """#544: 另一实例重写 index.faiss（mtime 变化）后，已预加载实例的
+    _get_index 必须重读磁盘，返回新的 ntotal，而不是永久的旧内存索引。"""
+    store_a, dir_ = _tmp_store()
+    try:
+        store_b = FaissVectorStore(index_dir=dir_)
+
+        store_a.add_vectors(_fake_vectors(2), [
+            {"document_id": "d1", "content": "a"},
+            {"document_id": "d2", "content": "b"},
+        ])
+        assert store_b._get_index().ntotal == 2
+
+        # A 追加 1 条 → index.faiss mtime 变化
+        store_a.add_vectors(_fake_vectors(1), [{"document_id": "d3", "content": "c"}])
+
+        assert store_b._get_index().ntotal == 3, (
+            "mtime 变化后必须重读索引；旧代码永久缓存第一个加载的索引"
+        )
+    finally:
+        import shutil
+        shutil.rmtree(dir_, ignore_errors=True)
+
+
+def test_cross_instance_search_refreshes_after_compact(patch_embed):
+    """#544 动态复现（两实例）：A compact 后，B 的下一次 search 必须基于
+    新索引 —— 只能返回保留语料 gamma/delta，不得返回错位内容或复活
+    已删除文档（alpha/beta）的内容。旧行为按旧位置检索 → 返回 delta/复活
+    已删内容。"""
+    store_a, dir_ = _tmp_store()
+    try:
+        store_b = FaissVectorStore(index_dir=dir_)
+
+        store_a.add_vectors(_fake_vectors(4), [
+            {"document_id": "d1", "content": "alpha"},
+            {"document_id": "d2", "content": "beta"},
+            {"document_id": "d3", "content": "gamma"},
+            {"document_id": "d4", "content": "delta"},
+        ])
+        # B 冷加载 4 向量索引
+        assert store_b._get_index().ntotal == 4
+
+        # A 软删 d1/d2 并 compact → 磁盘 2 向量（gamma@0, delta@1）
+        store_a.mark_deleted("d1")
+        store_a.mark_deleted("d2")
+        store_a.compact()
+        assert [c["document_id"] for c in store_a.load_metadata()["chunks"]] == ["d3", "d4"]
+
+        # B 的下一次 search 必须命中新索引：内容只可能是 gamma/delta，
+        # 且位置与 metadata 对齐（最多 2 条）。
+        results = store_b.search(_fake_vectors(1), top_k=5)
+        contents = {r["content"] for r in results}
+        assert contents <= {"gamma", "delta"}, (
+            f"stale index surfaced wrong content: {contents}"
+        )
+        assert "alpha" not in contents and "beta" not in contents
+        assert len(results) <= 2, (
+            f"positions misaligned: index refreshed but metadata mismatch -> {len(results)} rows"
+        )
+    finally:
+        import shutil
+        shutil.rmtree(dir_, ignore_errors=True)
+
+
+def test_stale_add_vectors_does_not_clobber_compacted_index(patch_embed):
+    """#544: 持有 compact 前旧索引的实例 add_vectors，不得用旧索引覆盖
+    磁盘（旧行为：4 向量旧索引 + 2 新向量写盘 → ntotal=6 而 metadata 只有
+    4 chunks，位置永久错配，且复活已删除向量）。新行为：锁内按 mtime 重读
+    compact 后的索引 → 最终磁盘 ntotal == len(chunks) == 4。"""
+    import faiss
+
+    store_a, dir_ = _tmp_store()
+    try:
+        store_b = FaissVectorStore(index_dir=dir_)
+
+        store_a.add_vectors(_fake_vectors(4), [
+            {"document_id": "d1", "content": "alpha"},
+            {"document_id": "d2", "content": "beta"},
+            {"document_id": "d3", "content": "gamma"},
+            {"document_id": "d4", "content": "delta"},
+        ])
+        assert store_b._get_index().ntotal == 4  # B 持有 compact 前索引
+
+        store_a.mark_deleted("d1")
+        store_a.mark_deleted("d2")
+        store_a.compact()  # 磁盘：2 向量（gamma/delta）
+
+        # B 带着旧内存索引写新向量 —— 必须先重读 compact 结果
+        store_b.add_vectors(_fake_vectors(2), [
+            {"document_id": "d5", "content": "epsilon"},
+            {"document_id": "d6", "content": "zeta"},
+        ])
+
+        meta = store_b.load_metadata()
+        assert [c["document_id"] for c in meta["chunks"]] == ["d3", "d4", "d5", "d6"], (
+            f"metadata chunks wrong after stale add: {[c['document_id'] for c in meta['chunks']]}"
+        )
+        disk_idx = faiss.read_index(os.path.join(dir_, "index.faiss"))
+        assert disk_idx.ntotal == len(meta["chunks"]) == 4, (
+            f"stale add_vectors clobbered the compacted index: disk ntotal="
+            f"{disk_idx.ntotal}, metadata chunks={len(meta['chunks'])}"
+        )
+    finally:
+        import shutil
+        shutil.rmtree(dir_, ignore_errors=True)
