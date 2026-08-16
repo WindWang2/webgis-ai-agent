@@ -1,9 +1,12 @@
 """Security: docker-compose files must follow secure defaults."""
+import os
+import subprocess
 import yaml
 
 
 DOCKER_COMPOSE = "docker-compose.yml"
 DOCKER_COMPOSE_PROD = "docker-compose.prod.yml"
+DOCKER_COMPOSE_PROD_SECURE = "docker-compose.prod.secure.yml"
 
 
 def _load_compose(path):
@@ -182,3 +185,109 @@ class TestComposeDualProcessHealthcheck:
                     f"{path}: compose healthcheck 缺少 {probe} 探测（与镜像 "
                     "HEALTHCHECK 契约不一致）"
                 )
+
+
+class TestProdDeployTransport:
+    """#472: deploy-prod 的工件集（compose + redis 配置 + 镜像 tar + .env.Priv）
+    必须能在一个干净主机上产出可用部署。
+
+    - 镜像：api/celery 引用 ${WEBGIS_IMAGE:-...}（CI 写入 .env.Priv 解析为
+      `docker load` 出的 ghcr.io/<repo>:<sha>），本地检出保留 build: 兜底。
+    - 健康检查：api 端口发布到主机 loopback —— deploy-prod 在主机上
+      curl http://localhost:8000，仅 expose 的端口对主机不可达。
+    - nginx：配置/证书内联为 configs（见 test_nginx_security.py 的 parity）。
+    """
+
+    def test_secure_compose_references_ci_image(self):
+        compose = _load_compose(DOCKER_COMPOSE_PROD_SECURE)
+        for svc in ("api", "celery-worker"):
+            image = compose["services"][svc].get("image", "")
+            assert image.startswith("${WEBGIS_IMAGE:") and ":-" in image, (
+                f"{DOCKER_COMPOSE_PROD_SECURE} {svc}: image={image!r} 未参数化 —— "
+                "deploy-prod 主机上没有构建上下文，仅 build: 会让 compose 构建失败"
+                "或静默复用过期本地镜像（CI 加载的 tar 从未被引用）"
+            )
+
+    def test_secure_compose_keeps_local_build_fallback(self):
+        compose = _load_compose(DOCKER_COMPOSE_PROD_SECURE)
+        for svc in ("api", "celery-worker"):
+            assert "build" in compose["services"][svc], (
+                f"{DOCKER_COMPOSE_PROD_SECURE} {svc}: 丢失 build: —— 本地检出"
+                "（未设 WEBGIS_IMAGE）将无法构建镜像"
+            )
+
+    def test_secure_api_port_published_on_loopback(self):
+        compose = _load_compose(DOCKER_COMPOSE_PROD_SECURE)
+        api = compose["services"]["api"]
+        assert "expose" not in api, (
+            "api 仍用 expose（仅容器网络可见）—— 主机侧健康检查不可达"
+        )
+        ports = api.get("ports", [])
+        assert any(
+            str(p).startswith("127.0.0.1:") and str(p).endswith(":8000")
+            for p in ports
+        ), (
+            f"api 必须把 8000 发布到主机 loopback（deploy-prod 在主机上探测），"
+            f"且不得暴露到非 loopback 地址：ports={ports}"
+        )
+        for p in ports:
+            assert str(p).startswith("127.0.0.1:"), f"端口暴露到网络: {p}"
+
+
+class TestCiEnvPrivScript:
+    """#472: deploy/ci-generate-env-priv.sh 必须把 CI 镜像 tag 写进 .env.Priv。"""
+
+    SCRIPT = os.path.join(
+        os.path.dirname(__file__), os.pardir, "deploy", "ci-generate-env-priv.sh"
+    )
+
+    def _run(self, tmp_path, extra_env):
+        env = {
+            "DB_PWD": "db",
+            "REDIS_PASSWORD": "redis",
+            "JWT_SECRET_KEY": "jwt",
+            "LLM_API_KEY": "llm",
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        }
+        env.update(extra_env)
+        proc = subprocess.run(
+            ["sh", self.SCRIPT],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert proc.returncode == 0, f"script failed: {proc.stderr}"
+        return (tmp_path / ".env.Priv").read_text()
+
+    def test_emits_webgis_image_from_github_env(self, tmp_path):
+        content = self._run(
+            tmp_path,
+            {
+                "GITHUB_REPOSITORY": "WindWang2/webgis-ai-agent",
+                "GITHUB_SHA": "abc123def",
+            },
+        )
+        # docker tag 要求全小写 —— 与 build job 的 Lowercase IMAGE_NAME 步骤一致
+        assert "WEBGIS_IMAGE=ghcr.io/windwang2/webgis-ai-agent:abc123def" in content, (
+            f".env.Priv 缺少与 docker load 出的 tar 同名的 WEBGIS_IMAGE: {content!r}"
+        )
+
+    def test_env_webgis_image_override_wins(self, tmp_path):
+        content = self._run(
+            tmp_path,
+            {
+                "GITHUB_REPOSITORY": "WindWang2/webgis-ai-agent",
+                "GITHUB_SHA": "abc123def",
+                "WEBGIS_IMAGE": "ghcr.io/windwang2/webgis-ai-agent:rollback",
+            },
+        )
+        assert "WEBGIS_IMAGE=ghcr.io/windwang2/webgis-ai-agent:rollback" in content
+
+    def test_no_webgis_image_outside_ci(self, tmp_path):
+        content = self._run(tmp_path, {})
+        assert "WEBGIS_IMAGE" not in content, (
+            "非 CI 环境（无 GITHUB_SHA）不应写入 WEBGIS_IMAGE —— 本地走 "
+            "${WEBGIS_IMAGE:-webgis-ai-agent:local} 的 build: 兜底"
+        )
