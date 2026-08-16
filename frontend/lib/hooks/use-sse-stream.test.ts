@@ -691,5 +691,82 @@ describe('useSSEStream — plan approval rollback (#468)', () => {
       await new Promise((r) => setTimeout(r, 20));
     });
     expect(planMsg().status).toBe('pending');
+describe('useSSEStream explorer_progress（回归：任务条目首见插入，进度可见）', () => {
+  beforeEach(() => {
+    bridgeMock.onEventCallback = null;
+    useHudStore.setState({ explorerTasks: [] });
+  });
+
+  function emitExplorer(data: Record<string, unknown>) {
+    act(() => {
+      bridgeMock.onEventCallback?.({ event: 'explorer_progress', data });
+    });
+  }
+
+  it('首次见到 task_id 插入任务条目（字段来自事件），后续事件只更新', () => {
+    renderStream();
+    emitExplorer({
+      session_id: 'sid-fe4',
+      task_id: 'exp-1',
+      stage: 'discover',
+      status: 'progress',
+      context: { progress: 30, query: '北京学校分布' },
+    });
+    let tasks = useHudStore.getState().explorerTasks;
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({
+      taskId: 'exp-1',
+      stage: 'discover',
+      status: 'discovering',
+      progress: 30,
+      query: '北京学校分布',
+    });
+
+    emitExplorer({
+      session_id: 'sid-fe4',
+      task_id: 'exp-1',
+      stage: 'geocode',
+      status: 'progress',
+      context: { progress: 80 },
+    });
+    tasks = useHudStore.getState().explorerTasks;
+    expect(tasks).toHaveLength(1); // 更新而非重复插入
+    expect(tasks[0]).toMatchObject({ stage: 'geocode', status: 'geocoding', progress: 80 });
+
+    emitExplorer({
+      session_id: 'sid-fe4',
+      task_id: 'exp-1',
+      stage: 'validate',
+      status: 'completed',
+      context: { progress: 100 },
+    });
+    tasks = useHudStore.getState().explorerTasks;
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].status).toBe('completed');
+  });
+
+  it('Celery PENDING 首帧（stage=pending）插入 idle 条目而不是非法 stage', () => {
+    renderStream();
+    emitExplorer({
+      session_id: 'sid-fe4',
+      task_id: 'exp-2',
+      stage: 'pending',
+      status: 'started',
+      context: { progress: 0 },
+    });
+    const tasks = useHudStore.getState().explorerTasks;
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].stage).toBe('discover');
+    expect(tasks[0].status).toBe('idle');
+  });
+
+  it('第二个 task_id 各自插入，互不覆盖', () => {
+    renderStream();
+    emitExplorer({ session_id: 'sid-fe4', task_id: 'exp-a', stage: 'fetch', status: 'progress', context: { progress: 10 } });
+    emitExplorer({ session_id: 'sid-fe4', task_id: 'exp-b', stage: 'parse', status: 'progress', context: { progress: 50 } });
+    const tasks = useHudStore.getState().explorerTasks;
+    expect(tasks).toHaveLength(2);
+    expect(tasks.map((t) => t.taskId)).toEqual(['exp-a', 'exp-b']);
+)
   });
 });

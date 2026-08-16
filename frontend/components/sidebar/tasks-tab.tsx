@@ -22,6 +22,7 @@ import { useHudStore } from '@/lib/store/useHudStore';
 import { EmptyState } from '@/components/shared/empty-state';
 import { IconButton } from '@/components/shared/icon-button';
 import { InlineNotice } from '@/components/shared/inline-notice';
+import { ExplorerProgressPanel } from '@/components/explorer/explorer-progress-panel';
 import { LoadingState } from '@/components/shared/loading-state';
 import { StatusBadge } from '@/components/shared/status-badge';
 
@@ -224,6 +225,9 @@ export function TasksTab({ sessionId, ownerToken }: TasksTabProps) {
       )}
 
       <div className="flex-1 space-y-2 overflow-y-auto px-panel py-2">
+        {/* 深度探索（explorer_progress SSE 驱动，任务条目由 use-sse-stream 首见
+            插入 store）；无任务时组件自渲染 null，不影响空态展示。 */}
+        <ExplorerProgressPanel />
         {jobs.length === 0 && loading ? (
           <LoadingState label="加载任务…" />
         ) : jobs.length === 0 ? (

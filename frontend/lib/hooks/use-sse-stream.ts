@@ -721,22 +721,56 @@ export function useSSEStream(
           }),
         );
       } else if (event.event === 'explorer_progress') {
+        // 后端事件字段（orchestrator.stream_progress）：task_id / stage
+        // （含 "pending"，Celery PENDING 时 meta 为空）/ status（started |
+        // progress | decision_point | completed | failed）/ context.progress。
+        // 首次见到 task_id 时先插入任务条目（explorerTasks 此前恒空导致进度
+        // 永不可见），后续更新走 updateExplorerTask。
         const taskId = data.task_id as string;
-        const stage = data.stage as import('@/lib/types/explorer').ExplorerStage;
+        if (typeof taskId !== 'string' || !taskId) return;
+        const rawStage = typeof data.stage === 'string' ? data.stage : 'pending';
+        const stage = (rawStage === 'pending' ? 'discover' : rawStage) as import('@/lib/types/explorer').ExplorerStage;
         const status = data.status as string;
         const context = (data.context as Record<string, unknown>) || {};
-        useHudStore.getState().updateExplorerTask(taskId, {
-          stage,
-          status:
-            status === 'completed'
-              ? 'completed'
-              : status === 'failed'
-              ? 'failed'
-              : status === 'decision_point'
-              ? 'decision_required'
-              : (`${stage}ing` as any),
-          progress: (context?.progress as number) || 0,
-        });
+        // stage → 进行时状态（geocode/validate 需去 e，不能裸拼 +ing）
+        const ACTIVE_STATUS: Record<string, import('@/lib/types/explorer').ExplorerStatus> = {
+          discover: 'discovering',
+          fetch: 'fetching',
+          parse: 'parsing',
+          geocode: 'geocoding',
+          validate: 'validating',
+        };
+        const nextStatus: import('@/lib/types/explorer').ExplorerStatus =
+          status === 'completed'
+            ? 'completed'
+            : status === 'failed'
+            ? 'failed'
+            : status === 'decision_point'
+            ? 'decision_required'
+            : rawStage === 'pending'
+            ? 'idle'
+            : (ACTIVE_STATUS[rawStage] ?? 'idle');
+        const progress = (context?.progress as number) || 0;
+        const store = useHudStore.getState();
+        if (!store.explorerTasks.some((tk) => tk.taskId === taskId)) {
+          store.addExplorerTask({
+            taskId,
+            status: nextStatus,
+            stage,
+            progress,
+            query:
+              (typeof context.query === 'string' && context.query) ||
+              `深度探索 ${taskId.slice(0, 8)}`,
+            startedAt: Date.now(),
+            updatedAt: Date.now(),
+          });
+        } else {
+          store.updateExplorerTask(taskId, {
+            stage,
+            status: nextStatus,
+            progress,
+          });
+        }
       }
     },
     [setSessionId, sessionIdRef, sessionTokenRef, rememberSessionToken, markToolCallStatus]
