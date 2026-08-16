@@ -54,7 +54,7 @@ async def test_get_or_create_recovers_from_integrity_conflict(monkeypatch):
             raise IntegrityError("stmt", {}, Exception("UNIQUE constraint failed"))
         return _FakeResult([winner])  # SELECT after conflict: found
 
-    async def _fake_enforce_cap():
+    async def _fake_enforce_cap(user_id=None):
         pass
 
     svc.db = _fake_db(_fake_execute)
@@ -81,7 +81,7 @@ async def test_get_or_create_raises_after_exhausting_retries(monkeypatch):
     async def _fake_execute(stmt, *a, **k):
         raise IntegrityError("stmt", {}, Exception("UNIQUE constraint failed"))
 
-    async def _fake_enforce_cap():
+    async def _fake_enforce_cap(user_id=None):
         pass
 
     svc.db = _fake_db(_fake_execute)

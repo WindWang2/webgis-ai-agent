@@ -33,7 +33,7 @@ from app.services.history_store_protocol import HistoryContext, HistoryStoreProt
 
 logger = logging.getLogger(__name__)
 
-MAX_SESSIONS = 1000
+MAX_SESSIONS = 1000  # 会话数上限；多租户下按 user 分桶执行（见 _enforce_cap）
 
 
 def _is_anonymous(user_id: Optional[str]) -> bool:
@@ -228,7 +228,7 @@ class AsyncHistoryService(HistoryStoreProtocol):
                 )
                 self.db.add(conv)
                 await self.db.flush()
-                await self._enforce_cap()
+                await self._enforce_cap(owner)
                 await self.db.commit()
                 # 重新查询以确保加载了关系
                 result = await self.db.execute(stmt)
@@ -307,7 +307,6 @@ class AsyncHistoryService(HistoryStoreProtocol):
             select(Conversation)
             .where(Conversation.user_id == user_id)
             .order_by(Conversation.updated_at.desc())
-            .options(selectinload(Conversation.messages))
             .offset(offset)
             .limit(limit)
         )
@@ -372,14 +371,23 @@ class AsyncHistoryService(HistoryStoreProtocol):
         await self.db.commit()
         return True
 
-    async def _enforce_cap(self) -> None:
-        total_result = await self.db.execute(select(func.count()).select_from(Conversation))
+    async def _enforce_cap(self, user_id: Optional[str] = None) -> None:
+        """会话数上限驱逐 —— 按 user 分桶（多租户隔离）。
+
+        只统计并驱逐当前调用方自己桶内（user_id 相同，匿名调用方为 NULL 桶）
+        最旧的会话，因此其他用户新建会话绝不会驱逐另一用户的历史。
+        """
+        bucket = Conversation.user_id == user_id  # == None 时生成 IS NULL
+        total_result = await self.db.execute(
+            select(func.count()).select_from(Conversation).where(bucket)
+        )
         total = total_result.scalar_one()
         if total <= MAX_SESSIONS:
             return
         overflow = total - MAX_SESSIONS
         stmt = (
             select(Conversation)
+            .where(bucket)
             .order_by(Conversation.updated_at.asc())
             .limit(overflow)
         )
