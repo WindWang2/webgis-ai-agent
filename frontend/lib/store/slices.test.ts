@@ -84,12 +84,11 @@ describe('task slice', () => {
 
 
 describe('settings slice', () => {
-  it('skill toggle 翻转 enabled', () => {
+  it('setSkills 整表替换（toggleSkill 已随 #551 移除 —— enabled 无消费方）', () => {
     const s = useHudStore.getState();
-    const first = useHudStore.getState().skills[0];
-    s.toggleSkill(first.id);
-    const next = useHudStore.getState().skills.find((sk) => sk.id === first.id)!;
-    expect(next.enabled).toBe(!first.enabled);
+    s.setSkills([{ id: 'poi', name: 'POI 查询', desc: 'desc', category: '数据获取' }]);
+    expect(useHudStore.getState().skills).toHaveLength(1);
+    expect(useHudStore.getState().skills[0].name).toBe('POI 查询');
   });
 
   it('llmConfigFull 合并不丢字段', () => {
@@ -102,9 +101,9 @@ describe('settings slice', () => {
 
   it('ragConfig 部分更新合并', () => {
     const s = useHudStore.getState();
-    s.setRagConfig({ topK: 9 });
-    expect(useHudStore.getState().ragConfig.topK).toBe(9);
-    expect(useHudStore.getState().ragConfig.spatialWeight).toBe(60); // 未传仍是默认
+    s.setRagConfig({ vectorDb: 'http://localhost:19530' });
+    expect(useHudStore.getState().ragConfig.vectorDb).toBe('http://localhost:19530');
+    expect(useHudStore.getState().ragConfig.collection).toBe('geoagent'); // 未传仍是默认
   });
 });
 

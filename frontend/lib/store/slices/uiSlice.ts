@@ -143,10 +143,6 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
   setTheme: (theme) => set({ theme }),
   fontSize: 15,
   setFontSize: (size) => set({ fontSize: size }),
-  density: 'compact' as const,
-  setDensity: (density) => set({ density }),
-  showGrid: true,
-  setShowGrid: (show) => set({ showGrid: show }),
   sidebarWidth: 330,
   // UI V3 review：280–420 clamp 收敛到 setter（之前只在 context panel 的拖拽
   // 手柄处 clamp，tweaks 滑杆 240–480 可绕过并使 separator 的 aria-min/max 失真）。

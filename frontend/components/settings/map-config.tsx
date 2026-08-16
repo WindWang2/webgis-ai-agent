@@ -1,17 +1,11 @@
 'use client';
 
-import React, { useState } from 'react';
+import React from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useMapAction } from '@/lib/contexts/map-action-context';
 import { TILE_PROVIDERS } from '@/lib/providers';
 import { STitle } from '@/components/shared/section-title';
 import { Check } from 'lucide-react';
-
-const CRS_OPTIONS = [
-  { code: 'EPSG:4326', label: 'WGS 84' },
-  { code: 'EPSG:3857', label: 'Web Mercator' },
-  { code: 'EPSG:4490', label: 'CGCS2000' },
-];
 
 /** 卡片副标题由 provider 元数据派生（TILE_PROVIDERS 无独立 desc 字段）。 */
 function providerDesc(provider: (typeof TILE_PROVIDERS)[number]): string {
@@ -36,8 +30,6 @@ export function MapConfig() {
   const baseLayer = useHudStore((s) => s.baseLayer);
   const setBaseLayer = useHudStore((s) => s.setBaseLayer);
   const { selectedBaseLayer, setSelectedBaseLayer } = useMapAction();
-
-  const [crs, setCrs] = useState('EPSG:3857');
 
   return (
     <div className="flex flex-col gap-5">
@@ -101,50 +93,6 @@ export function MapConfig() {
                 </span>
                 <span className="text-body leading-tight text-ink-muted">
                   {providerDesc(provider)}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* CRS selection */}
-      <div>
-        <div className="text-heading uppercase tracking-wider text-ink-muted font-semibold mb-3">
-          Coordinate Reference System
-        </div>
-        <div className="flex gap-2">
-          {CRS_OPTIONS.map((opt) => {
-            const isActive = crs === opt.code;
-            return (
-              <button
-                key={opt.code}
-                onClick={() => setCrs(opt.code)}
-                className="flex flex-1 flex-col items-center gap-0.5 rounded-md border-2 px-2 py-2 transition-all"
-                style={{
-                  borderColor: isActive
-                    ? 'var(--agent-accent, #16a34a)'
-                    : 'var(--border-subtle)',
-                  backgroundColor: isActive
-                    ? 'color-mix(in srgb, var(--agent-accent, #16a34a) 4%, transparent)'
-                    : 'var(--surface-raised)',
-                }}
-              >
-                <span
-                  className="text-title font-mono font-semibold"
-                  style={{
-                    color: isActive ? 'var(--agent-accent)' : 'var(--text-secondary)',
-                  }}
-                >
-                  {opt.code}
-                </span>
-                <span
-                  className="text-body"
-                  style={{
-                    color: isActive ? 'var(--agent-accent)' : 'var(--text-muted)',
-                  }}
-                >
-                  {opt.label}
                 </span>
               </button>
             );

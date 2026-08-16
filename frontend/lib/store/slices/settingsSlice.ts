@@ -19,20 +19,12 @@ export const createSettingsSlice: StateCreator<HudState, [], [], Partial<HudStat
   /* ─── 持久化配置 ─── */
   skills: DEFAULT_SKILLS,
   setSkills: (skills) => set({ skills }),
-  toggleSkill: (id: string) =>
-    set((s) => ({
-      skills: s.skills.map((sk) => (sk.id === id ? { ...sk, enabled: !sk.enabled } : sk)),
-    })),
 
   /* ─── RAG ─── */
   ragInsight: null,
   setRagInsight: (insight) => set({ ragInsight: insight }),
-  ragConfig: { spatialWeight: 60, topK: 5, rerank: true, vectorDb: '', collection: 'geoagent' },
+  ragConfig: { vectorDb: '', collection: 'geoagent' },
   setRagConfig: (config) => set((s) => ({ ragConfig: { ...s.ragConfig, ...config } })),
-  ragSpatial: [],
-  setRagSpatial: (docs) => set({ ragSpatial: docs }),
-  ragSemantic: [],
-  setRagSemantic: (docs) => set({ ragSemantic: docs }),
 
   /* ─── LLM ─── */
   llmConfigFull: {

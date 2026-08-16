@@ -45,16 +45,16 @@ export const DEMO_CAUSAL_CHAIN = [
 ];
 
 export const DEFAULT_SKILLS = [
-  { id: 'poi', name: 'POI 查询', desc: '通过 Overpass 查询兴趣点，支持多种分类', enabled: true, calls: 0, category: '数据获取' },
-  { id: 'ndvi', name: 'NDVI 植被分析', desc: '基于遥感影像计算归一化植被指数', enabled: true, calls: 0, category: '遥感分析' },
-  { id: 'heatmap', name: '人口密度热力图', desc: '核密度估计 (KDE) 生成连续密度表面', enabled: true, calls: 0, category: '空间分析' },
-  { id: 'buffer', name: '缓冲区分析', desc: '生成点线面的等距缓冲区', enabled: true, calls: 0, category: '空间分析' },
-  { id: 'network', name: '路网分析', desc: '最短路径、服务区、行驶时间等图论分析', enabled: false, calls: 0, category: '网络分析' },
-  { id: 'overlay', name: '叠加分析', desc: '空间相交、联合、裁切等拓扑运算', enabled: true, calls: 0, category: '空间分析' },
-  { id: 'viewshed', name: '可视域分析', desc: '基于 DEM 计算观测点可见范围', enabled: false, calls: 0, category: '地形分析' },
-  { id: 'grid', name: '格网统计', desc: '渔网格网生成与属性聚合统计', enabled: true, calls: 0, category: '空间分析' },
-  { id: 'report', name: '报告生成', desc: '一键生成带图表的 PDF/HTML 分析报告', enabled: true, calls: 0, category: '输出' },
-  { id: 'choropleth', name: '专题地图', desc: '分位数、自然断点等方法的分级设色', enabled: true, calls: 0, category: '制图' },
+  { id: 'poi', name: 'POI 查询', desc: '通过 Overpass 查询兴趣点，支持多种分类', category: '数据获取' },
+  { id: 'ndvi', name: 'NDVI 植被分析', desc: '基于遥感影像计算归一化植被指数', category: '遥感分析' },
+  { id: 'heatmap', name: '人口密度热力图', desc: '核密度估计 (KDE) 生成连续密度表面', category: '空间分析' },
+  { id: 'buffer', name: '缓冲区分析', desc: '生成点线面的等距缓冲区', category: '空间分析' },
+  { id: 'network', name: '路网分析', desc: '最短路径、服务区、行驶时间等图论分析', category: '网络分析' },
+  { id: 'overlay', name: '叠加分析', desc: '空间相交、联合、裁切等拓扑运算', category: '空间分析' },
+  { id: 'viewshed', name: '可视域分析', desc: '基于 DEM 计算观测点可见范围', category: '地形分析' },
+  { id: 'grid', name: '格网统计', desc: '渔网格网生成与属性聚合统计', category: '空间分析' },
+  { id: 'report', name: '报告生成', desc: '一键生成带图表的 PDF/HTML 分析报告', category: '输出' },
+  { id: 'choropleth', name: '专题地图', desc: '分位数、自然断点等方法的分级设色', category: '制图' },
 ];
 
 
