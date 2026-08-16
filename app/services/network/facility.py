@@ -3,6 +3,7 @@ Network Closest Facility Service Component.
 Finds nearest facilities for demand incidents based on network travel cost.
 """
 from __future__ import annotations
+import math
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import networkx as nx
@@ -110,9 +111,14 @@ class NetworkClosestFacilityService:
                     o_id, d_id = dem.demand_id, fac.facility_id
 
                 info = od["pairs"].get((o_label, d_label))
+                # Issue #456: a demand point located exactly AT a facility has
+                # distance_m == 0 — a perfectly valid (zero-cost) match. The
+                # old `distance_m <= 0` guard dropped those pairs entirely;
+                # filter only non-finite sentinel values (unreachable legs).
                 if (
                     info is None or not info["reachable"]
-                    or info["cost"] >= float("inf") or info["distance_m"] <= 0
+                    or not math.isfinite(info["cost"])
+                    or not math.isfinite(info["distance_m"])
                 ):
                     continue
                 if cutoff_cost is not None and info["cost"] > cutoff_cost:

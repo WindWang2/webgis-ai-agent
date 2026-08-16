@@ -13,7 +13,7 @@ from collections import OrderedDict
 
 import networkx as nx
 from shapely import STRtree
-from shapely.geometry import shape, LineString, MultiLineString, Point, MultiPoint, mapping
+from shapely.geometry import shape, LineString, MultiLineString, Point, MultiPoint, GeometryCollection, mapping
 from shapely.ops import unary_union, split
 
 from app.services.network.models import (
@@ -246,42 +246,54 @@ class NetworkGraphBuilder:
                 elif isinstance(one_way_raw, (int, float)):
                     is_one_way = bool(one_way_raw)
 
-            # Add u -> v edge
-            edge_id_uv = f"e{edge_counter}"
-            edge_counter += 1
-            geom_dict_uv = mapping(line_geom)
+            # Add u -> v edge.
+            #
+            # #457: the DiGraph holds exactly ONE edge per directed (u, v)
+            # pair — a second add with the same pair used to silently REPLACE
+            # the first in the graph while the dataset kept both ids,
+            # desyncing dataset edge ids from the graph (the snapper returns
+            # dataset edge ids that routing then looks up in the graph).
+            # Duplicate/parallel linework between the same node pair is now
+            # deduplicated in BOTH structures, keeping them 1:1 (the first
+            # geometry wins). The check is per DIRECTED pair so a two-way
+            # duplicate still contributes the v->u direction when the first
+            # line was one-way.
+            if not graph.has_edge(u_id, v_id):
+                edge_id_uv = f"e{edge_counter}"
+                edge_counter += 1
+                geom_dict_uv = mapping(line_geom)
 
-            graph.add_edge(
-                u_id,
-                v_id,
-                id=edge_id_uv,
-                u=u_id,
-                v=v_id,
-                length_m=length_m,
-                speed_kmh=speed,
-                travel_time_s=travel_time_s,
-                highway_type=hw_type,
-                geometry=geom_dict_uv,
-                one_way=is_one_way,
-                properties=props,
-            )
+                graph.add_edge(
+                    u_id,
+                    v_id,
+                    id=edge_id_uv,
+                    u=u_id,
+                    v=v_id,
+                    length_m=length_m,
+                    speed_kmh=speed,
+                    travel_time_s=travel_time_s,
+                    highway_type=hw_type,
+                    geometry=geom_dict_uv,
+                    one_way=is_one_way,
+                    properties=props,
+                )
 
-            edge_obj_uv = Edge(
-                id=edge_id_uv,
-                u=u_id,
-                v=v_id,
-                length_m=length_m,
-                speed_kmh=speed,
-                travel_time_s=travel_time_s,
-                highway_type=hw_type,
-                geometry=geom_dict_uv,
-                one_way=is_one_way,
-                properties=props,
-            )
-            edges_list.append(edge_obj_uv)
+                edge_obj_uv = Edge(
+                    id=edge_id_uv,
+                    u=u_id,
+                    v=v_id,
+                    length_m=length_m,
+                    speed_kmh=speed,
+                    travel_time_s=travel_time_s,
+                    highway_type=hw_type,
+                    geometry=geom_dict_uv,
+                    one_way=is_one_way,
+                    properties=props,
+                )
+                edges_list.append(edge_obj_uv)
 
             # Add reverse v -> u edge if not one-way
-            if not is_one_way:
+            if not is_one_way and not graph.has_edge(v_id, u_id):
                 edge_id_vu = f"e{edge_counter}"
                 edge_counter += 1
                 rev_line = LineString(list(reversed(coords)))
@@ -391,7 +403,16 @@ class NetworkGraphBuilder:
         line_items: List[Tuple[LineString, Dict[str, Any]]],
         split_intersections: bool,
     ) -> List[Tuple[LineString, Dict[str, Any]]]:
-        """Splits lines at intersection points while maintaining line directionality."""
+        """Splits lines at intersection points while maintaining line directionality.
+
+        Issue #457: COLLILINEAR OVERLAPS are split too. The previous code
+        collected only Point/MultiPoint intersections, so a pair of overlapping
+        lines — whose intersection is a LineString (or a GeometryCollection
+        containing one) — was silently never split, leaving the shared
+        sub-segment as a disconnected parallel edge. Now the overlap's
+        ENDPOINTS join the cutter set, cutting both lines where the shared run
+        begins/ends so it becomes real junction-connected edges.
+        """
         if not split_intersections or len(line_items) <= 1:
             return line_items
 
@@ -404,6 +425,25 @@ class NetworkGraphBuilder:
         # test to bounding-box-overlapping pairs (typically a handful per
         # line), giving the exact same point set with a fraction of the work.
         intersection_points: List[Point] = []
+
+        def _collect_split_points(inter: Any) -> None:
+            """Add every split-worthy location of an intersection geometry."""
+            if isinstance(inter, Point):
+                intersection_points.append(inter)
+            elif isinstance(inter, MultiPoint):
+                intersection_points.extend(inter.geoms)
+            elif isinstance(inter, LineString):
+                # Collinear overlap (#457): cut at both ends of the shared run.
+                if not inter.is_empty and len(inter.coords) >= 2:
+                    intersection_points.append(Point(inter.coords[0]))
+                    intersection_points.append(Point(inter.coords[-1]))
+            elif isinstance(inter, MultiLineString):
+                for part in inter.geoms:
+                    _collect_split_points(part)
+            elif isinstance(inter, GeometryCollection):
+                for part in inter.geoms:
+                    _collect_split_points(part)
+
         tree = STRtree(lines)
         for i, line in enumerate(lines):
             for j in tree.query(line, predicate="intersects"):
@@ -414,10 +454,7 @@ class NetworkGraphBuilder:
                     continue
                 inter = line.intersection(lines[j])
                 if not inter.is_empty:
-                    if isinstance(inter, Point):
-                        intersection_points.append(inter)
-                    elif isinstance(inter, MultiPoint):
-                        intersection_points.extend(list(inter.geoms))
+                    _collect_split_points(inter)
 
         if not intersection_points:
             return line_items

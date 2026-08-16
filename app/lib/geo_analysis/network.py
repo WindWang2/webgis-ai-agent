@@ -3,7 +3,7 @@ import networkx as nx
 import geopandas as gpd
 import numpy as np
 from shapely.geometry import Point, LineString, MultiLineString, mapping
-from shapely.ops import unary_union
+from shapely.ops import unary_union, substring
 from app.lib.geo_processor.core import GeoAnalysisResult
 from app.lib.geo_processor.core import to_utm_gdf
 # ADR-0052: 协作式取消检查点。cancellable() 在 chunk 边界读一次 contextvar，
@@ -49,11 +49,13 @@ def calculate_isochrones(network_geojson: dict | str, facility_points: dict | st
         if utm_crs != fac_crs:
             gdf_facilities = gdf_facilities.to_crs(utm_crs)
         
-        # Build NetworkX graph (MultiGraph to preserve parallel edges)
+        # Build NetworkX graph (MultiGraph to preserve parallel edges).
+        # #443: iterate the geometry GeoSeries directly — the previous
+        # ``iterrows()`` materialized a pandas (Geo)Series per feature, which
+        # dominated the call on 20k+ feature networks (only .geometry is used).
         G = nx.MultiGraph()
-        
-        for idx, row in gdf_network.iterrows():
-            geom = row.geometry
+
+        for geom in gdf_network.geometry:
             # GIS-P3-4: MultiLineString roads must contribute every part —
             # skipping them silently understated isochrone coverage.
             if isinstance(geom, MultiLineString):
@@ -91,6 +93,10 @@ def calculate_isochrones(network_geojson: dict | str, facility_points: dict | st
         from scipy.spatial import cKDTree
         node_tree = cKDTree(nodes_arr)
 
+        # EdgeView-parity lookup (see the per-facility scan below): node ->
+        # insertion order. Built once — it is invariant across facilities.
+        node_order = {n: i for i, n in enumerate(G.nodes)}
+
         # Road-width buffer for the network-constrained polygonization. The
         # previous ``MultiPoint(reachable_nodes).convex_hull`` enclosed rivers,
         # parks and any road-network hole in the convex envelope of reachable
@@ -124,42 +130,71 @@ def calculate_isochrones(network_geojson: dict | str, facility_points: dict | st
             # edges (one endpoint beyond the cutoff) are clipped at the
             # travel-budget fraction so the polygon does not over-extend past
             # the last reachable point (review C).
-            from shapely.ops import substring
+            #
+            # Issue #443: this used to scan ALL E graph edges per facility
+            # (O(F x E) Python-level iteration plus per-edge shapely substring
+            # clipping on boundary edges; measured 7.2 s for a tiny-budget
+            # query over a 19.8k-edge grid with F=2, dominated by that scan
+            # plus the iterrows() graph build). An edge is reachable iff at
+            # least one endpoint is in the cutoff-bounded Dijkstra set, so
+            # the scan walks the adjacency of the reachable nodes only — in
+            # G.nodes order with undirected-(u, v, key) dedup, reproducing
+            # networkx's EdgeView traversal exactly, so the reachable-edge
+            # sets, clipping and polygons are IDENTICAL to the full scan.
+            # Per-facility Dijkstra trees are kept deliberately: the output
+            # is one polygon per facility, which a merged multi-source tree
+            # cannot produce.
             reachable_edges = []
-            for u, v, edata in cancellable(G.edges(data=True), every=1024):
-                eg = edata.get("geometry")
-                if eg is None:
-                    continue
-                du = lengths.get(u)
-                dv = lengths.get(v)
-                if du is None and dv is None:
-                    continue
-                du_ok = du is not None and du <= max_dist
-                dv_ok = dv is not None and dv <= max_dist
-                if du_ok and dv_ok:
-                    reachable_edges.append(eg)  # fully within budget
-                    continue
-                # Partially reachable: clip at the budget fraction(s).
-                try:
-                    w = edata.get("weight") or eg.length
-                    if w <= 0:
-                        w = eg.length or 1.0
-                    if du_ok:
-                        frac = min(1.0, max(0.0, (max_dist - du) / w))
-                        if frac > 0:
-                            seg = substring(eg, 0.0, frac, normalized=True)
-                            if not seg.is_empty:
-                                reachable_edges.append(seg)
-                    if dv_ok:
-                        frac = min(1.0, max(0.0, (max_dist - dv) / w))
-                        if frac > 0:
-                            seg = substring(eg, 1.0 - frac, 1.0, normalized=True)
-                            if not seg.is_empty:
-                                reachable_edges.append(seg)
-                except Exception:
-                    # Clipping failed (degenerate geometry / topology): fall
-                    # back to the full edge rather than drop it.
-                    reachable_edges.append(eg)
+            seen_edge = set()
+            # EdgeView-parity: networkx yields each undirected edge as
+            # (earlier-in-node-order endpoint, later) on first encounter; the
+            # clipping below assumes u is the geometry's start node, so the
+            # orientation must match the pre-fix G.edges scan exactly.
+            reachable_nodes_ordered = [n for n in G.nodes if n in lengths]
+            for u0 in cancellable(reachable_nodes_ordered, every=1024):
+                for v0, keys in G[u0].items():
+                    for key, edata in keys.items():
+                        if (u0, v0, key) in seen_edge:
+                            continue
+                        seen_edge.add((u0, v0, key))
+                        seen_edge.add((v0, u0, key))
+                        eg = edata.get("geometry")
+                        if eg is None:
+                            continue
+                        if node_order[u0] < node_order[v0]:
+                            u, v = u0, v0
+                        else:
+                            u, v = v0, u0
+                        du = lengths.get(u)
+                        dv = lengths.get(v)
+                        if du is None and dv is None:
+                            continue
+                        du_ok = du is not None and du <= max_dist
+                        dv_ok = dv is not None and dv <= max_dist
+                        if du_ok and dv_ok:
+                            reachable_edges.append(eg)  # fully within budget
+                            continue
+                        # Partially reachable: clip at the budget fraction(s).
+                        try:
+                            w = edata.get("weight") or eg.length
+                            if w <= 0:
+                                w = eg.length or 1.0
+                            if du_ok:
+                                frac = min(1.0, max(0.0, (max_dist - du) / w))
+                                if frac > 0:
+                                    seg = substring(eg, 0.0, frac, normalized=True)
+                                    if not seg.is_empty:
+                                        reachable_edges.append(seg)
+                            if dv_ok:
+                                frac = min(1.0, max(0.0, (max_dist - dv) / w))
+                                if frac > 0:
+                                    seg = substring(eg, 1.0 - frac, 1.0, normalized=True)
+                                    if not seg.is_empty:
+                                        reachable_edges.append(seg)
+                        except Exception:
+                            # Clipping failed (degenerate geometry / topology): fall
+                            # back to the full edge rather than drop it.
+                            reachable_edges.append(eg)
 
             reachable = True
             if reachable_edges:

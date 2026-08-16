@@ -5,6 +5,8 @@ Supports custom impedance metrics, turn penalties, point and polygon barrier avo
 route GeoJSON line generation, and turn-by-turn directions.
 """
 from __future__ import annotations
+import heapq
+import itertools
 import math
 import uuid
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -23,13 +25,36 @@ from app.services.network.models import (
 from app.services.network.snapping import PointSnappingService
 from app.services.network.graph_builder import haversine_distance
 
+# Issue #455: a vertex counts as an actual TURN when the incoming/outgoing
+# bearings differ by more than this threshold. Same boundary as
+# ``_calculate_turn_type``'s "Continue straight" band, so a step is charged a
+# turn penalty exactly when the turn-by-turn directions call it a turn.
+_TURN_STRAIGHT_THRESHOLD_DEG = 25.0
 
-def build_weight_func(cost_field: str, turn_penalty: float = 0.0):
+
+def build_weight_func(cost_field: str):
     """Edge weight function factory shared by routing and OD-matrix analyses.
 
-    Keeps the cost semantics (barrier factors, turn penalties) identical
-    between direct ``network_shortest_path`` and batch multi-source Dijkstra
-    (closest facility / VRP reuse the OD service's shortest-path trees).
+    Cost semantics (#455): the weight is the pure edge cost — the impedance
+    field adjusted for barrier factors. TURN PENALTIES ARE NOT PART OF IT:
+
+    an edge-local weight cannot see the preceding edge, so the old per-edge
+    ``+turn_penalty`` charged the departure edge and every straight-through
+    continuation, overcounting each path by ~1 penalty and biasing selection
+    toward fewer-edge paths. Turn penalties are now applied only where the
+    full path is known:
+
+    * point-to-point routing (``network_shortest_path``) charges the penalty
+      at interior vertices whose bearing change exceeds the straight threshold
+      — both during search (edge-state Dijkstra/A*, see
+      ``_turn_aware_shortest_path``) and when reporting ``total_cost``;
+    * OD-family trees (closest facility / VRP / accessibility) resolve pure
+      edge costs: a turn penalty depends on path context that a shortest-path
+      tree does not have, so penalties do not influence batch tree selection.
+
+    The penalty is a DURATION and therefore applies only to the
+    ``travel_time_s`` impedance; under length/custom impedance it does not
+    affect selection or cost.
     """
     def weight_func(u: Any, v: Any, edge_data: Dict[str, Any]) -> float:
         base_w = edge_data.get(cost_field, edge_data.get("length_m", 1.0))
@@ -37,8 +62,6 @@ def build_weight_func(cost_field: str, turn_penalty: float = 0.0):
             base_w = 0.001
         barrier_factor = edge_data.get("_barrier_factor", 1.0)
         w = base_w * barrier_factor
-        if turn_penalty > 0 and cost_field == "travel_time_s":
-            w += turn_penalty
         return max(0.0001, float(w))
     return weight_func
 
@@ -79,6 +102,14 @@ class NetworkRoutingService:
         Mutates ``graph`` in place (callers pass a working copy). Handles both
         directions when the edge is bidirectional. Returns the virtual node id.
 
+        ``fraction`` is defined along the (edge_u→edge_v) ORIENTATION. Issue
+        #446: the reverse graph edge (edge_v→edge_u) has reversed geometry, so
+        the same physical split point sits at ``1 - fraction`` along it —
+        applying ``fraction`` to both orientations swapped the sub-edge
+        lengths/times and produced reverse sub-geometries that missed the
+        virtual node (a mid-edge route to the near endpoint reported (1−f)·L
+        instead of f·L).
+
         Handles the case where the target edge was ALREADY split by an earlier
         virtual-node insertion (origin and destination snapping to the same
         edge): the walk follows the sub-edge chain from u to v, accumulates
@@ -90,17 +121,23 @@ class NetworkRoutingService:
 
         fraction = max(0.0, min(1.0, fraction))
 
-        for u, v in ((edge_u, edge_v), (edge_v, edge_u)):
+        # Each graph edge's own geometry runs from its u to its v (the builder
+        # stores a reversed LineString for the v→u edge), so the fraction must
+        # be re-expressed in each orientation's own frame: 1−f for the reverse.
+        for u, v, frac in (
+            (edge_u, edge_v, fraction),
+            (edge_v, edge_u, 1.0 - fraction),
+        ):
             if not graph.has_edge(u, v):
                 continue
             data = graph[u][v]
             length_m = float(data.get("length_m", 0.0))
             time_s = float(data.get("travel_time_s", 0.0))
 
-            sub_len_1 = length_m * fraction
-            sub_len_2 = length_m * (1.0 - fraction)
-            sub_time_1 = time_s * fraction
-            sub_time_2 = time_s * (1.0 - fraction)
+            sub_len_1 = length_m * frac
+            sub_len_2 = length_m * (1.0 - frac)
+            sub_time_1 = time_s * frac
+            sub_time_2 = time_s * (1.0 - frac)
 
             # Subdivide the geometry (if present) at the split point.
             geom_dict = data.get("geometry")
@@ -111,7 +148,7 @@ class NetworkRoutingService:
                     geom = shape(geom_dict)
                     if isinstance(geom, LineString):
                         coords = list(geom.coords)
-                        split_pt = geom.interpolate(fraction, normalized=True)
+                        split_pt = geom.interpolate(frac, normalized=True)
                         # Split the coordinate sequence at the projected split
                         # point: vertices before it go to sub1, the split point
                         # joins them, and the remainder goes to sub2.
@@ -188,16 +225,23 @@ class NetworkRoutingService:
                 break
 
         fraction = max(0.0, min(1.0, fraction))
-        target_dist = orig_length * fraction
 
-        for start_u, start_v in ((orig_u, orig_v), (orig_v, orig_u)):
+        # The fraction is measured along the dataset edge's (orig_u→orig_v)
+        # orientation. Walking from orig_v (issue #446) the same physical
+        # position sits at 1−f, so each direction gets its own target distance
+        # and its own fraction when the original edge is still unsplit.
+        for start_u, start_v, dir_frac in (
+            (orig_u, orig_v, fraction),
+            (orig_v, orig_u, 1.0 - fraction),
+        ):
+            target_dist = orig_length * dir_frac
             if not graph.has_edge(start_u, start_v) and start_u not in graph:
                 continue
             # If the original edge still exists directly, split it — the common
             # first-snap case.
             if graph.has_edge(start_u, start_v):
                 return self._split_edge_at_fraction(
-                    graph, start_u, start_v, fraction, snapped_coord
+                    graph, start_u, start_v, dir_frac, snapped_coord
                 )
             # Otherwise walk the sub-edge chain created by a previous split.
             # REVIEWER BLOCKING FIX: the previous walk used nx.has_path on
@@ -343,19 +387,57 @@ class NetworkRoutingService:
         if profile and profile.turn_penalty_s:
             turn_penalty = max(turn_penalty, profile.turn_penalty_s)
 
-        weight_func = build_weight_func(cost_field, turn_penalty)
+        weight_func = build_weight_func(cost_field)
+
+        # Issue #455: with a time impedance and a turn penalty, the cost of a
+        # path depends on the EDGES it follows (turns at shared vertices), so
+        # the search runs over edge states instead of nodes. Without a penalty
+        # this reduces to the plain node search.
+        use_turn_aware = turn_penalty > 0 and cost_field == "travel_time_s"
 
         # Run Pathfinding
         try:
-            if algorithm.lower() == "astar":
+            if use_turn_aware:
+                heuristic = None
+                if algorithm.lower() == "astar":
+                    min_cost_per_m = self._min_cost_per_meter(graph_view, weight_func)
+                    if min_cost_per_m is not None:
+                        def heuristic(u: Any, v: Any) -> float:
+                            u_data = graph_view.nodes[u]
+                            v_data = graph_view.nodes[v]
+                            dist_m = haversine_distance(
+                                (u_data["x"], u_data["y"]), (v_data["x"], v_data["y"])
+                            )
+                            return dist_m * min_cost_per_m
+                path_nodes = self._turn_aware_shortest_path(
+                    graph_view, start_node_id, end_node_id,
+                    weight_func, turn_penalty, heuristic=heuristic,
+                )
+            elif algorithm.lower() == "astar":
+                # Issue #447: the heuristic previously divided the
+                # straight-line distance by the PROFILE default speed
+                # (driving 40 km/h / walking 4.8 km/h). The builder assigns
+                # per-edge speeds of 60-100+ km/h with no clamp, so on any
+                # network with edges faster than the default the heuristic
+                # OVERESTIMATED the remaining cost — inadmissible, and A*
+                # could settle the goal via a suboptimal path (measured +2.0%
+                # travel time; ~8-20x overestimate for walking profiles).
+                #
+                # The bound is now derived from the graph itself: the minimum
+                # edge cost per meter of length under the active weight
+                # function. Any u→v path has network length ≥ haversine(u, v)
+                # and every meter costs at least that ratio, so
+                # h = haversine * ratio ≤ true remaining cost for ANY cost
+                # field (time, length, custom), staying conservative.
+                min_cost_per_m = self._min_cost_per_meter(graph_view, weight_func)
+
                 def heuristic(u: Any, v: Any) -> float:
+                    if min_cost_per_m is None:
+                        return 0.0
                     u_data = graph_view.nodes[u]
                     v_data = graph_view.nodes[v]
                     dist_m = haversine_distance((u_data["x"], u_data["y"]), (v_data["x"], v_data["y"]))
-                    if cost_field == "travel_time_s":
-                        speed = profile.speed_kmh if profile else 40.0
-                        return dist_m / ((speed * 1000.0) / 3600.0)
-                    return dist_m
+                    return dist_m * min_cost_per_m
 
                 path_nodes = nx.astar_path(graph_view, start_node_id, end_node_id, heuristic=heuristic, weight=weight_func)
             else:
@@ -383,7 +465,117 @@ class NetworkRoutingService:
             graph_view, path_nodes,
             origin_label=origin_id_str, destination_label=dest_id_str,
             profile_name=profile_name, route_id=route_id, weight_func=weight_func,
+            turn_penalty=turn_penalty if use_turn_aware else 0.0,
         )
+
+    @staticmethod
+    def _min_cost_per_meter(graph: nx.DiGraph, weight_func) -> Optional[float]:
+        """Smallest per-meter edge cost under ``weight_func`` (issue #447).
+
+        Used as the A* heuristic scale: h(u, v) = haversine(u, v) * ratio is a
+        guaranteed lower bound of the remaining path cost because network path
+        length ≥ straight-line distance and each meter of any edge costs at
+        least the minimum ratio. Returns None when the graph has no usable
+        positive lengths (callers fall back to h = 0, i.e. Dijkstra behavior —
+        always admissible).
+        """
+        min_ratio: Optional[float] = None
+        for u, v, data in graph.edges(data=True):
+            length_m = data.get("length_m")
+            if not isinstance(length_m, (int, float)) or length_m <= 0:
+                continue
+            ratio = weight_func(u, v, data) / float(length_m)
+            if min_ratio is None or ratio < min_ratio:
+                min_ratio = ratio
+        return min_ratio
+
+    @staticmethod
+    def _bearing_change_deg(graph: nx.DiGraph, node_a: Any, node_b: Any, node_c: Any) -> float:
+        """Absolute bearing change (deg, [0, 180]) of the a→b→c polyline."""
+        data_a = graph.nodes[node_a]
+        data_b = graph.nodes[node_b]
+        data_c = graph.nodes[node_c]
+        v1 = (data_b["x"] - data_a["x"], data_b["y"] - data_a["y"])
+        v2 = (data_c["x"] - data_b["x"], data_c["y"] - data_b["y"])
+        bearing1 = math.atan2(v1[1], v1[0])
+        bearing2 = math.atan2(v2[1], v2[0])
+        diff_deg = math.degrees(bearing2 - bearing1)
+        while diff_deg > 180:
+            diff_deg -= 360
+        while diff_deg <= -180:
+            diff_deg += 360
+        return abs(diff_deg)
+
+    def _turn_aware_shortest_path(
+        self,
+        graph: nx.DiGraph,
+        start: Any,
+        goal: Any,
+        weight_func,
+        turn_penalty: float,
+        heuristic=None,
+    ) -> List[Any]:
+        """Edge-state Dijkstra/A* charging ``turn_penalty`` at real turns (#455).
+
+        The cost of ENTERING an edge depends on the edge it follows (the turn
+        at the shared vertex), so plain node-state search cannot apply turn
+        costs. Search states are therefore directed edges ``(u, v)``:
+        transitioning ``(a, b) → (b, c)`` costs ``w(b→c)`` plus the penalty
+        when the bearing change at ``b`` exceeds the straight threshold. The
+        DEPARTURE edge follows no other edge, so it never carries a penalty.
+
+        ``heuristic(u, v)`` (optional, must be admissible on node pairs, e.g.
+        the #447 min-cost-per-meter bound) is applied to each state's head
+        node; penalties only ADD cost, so admissibility is preserved.
+        """
+        if start not in graph:
+            raise nx.NodeNotFound(f"Node {start} not in graph")
+        if goal not in graph:
+            raise nx.NodeNotFound(f"Node {goal} not in graph")
+        if start == goal:
+            return [start]
+
+        best_g: Dict[Tuple[Any, Any], float] = {}
+        parent: Dict[Tuple[Any, Any], Optional[Tuple[Any, Any]]] = {}
+        counter = itertools.count()
+        heap: List[Tuple[float, int, float, Tuple[Any, Any]]] = []
+
+        def push(state: Tuple[Any, Any], g: float) -> None:
+            best_g[state] = g
+            h = heuristic(state[1], goal) if heuristic is not None else 0.0
+            heapq.heappush(heap, (g + h, next(counter), g, state))
+
+        # Departure edges: no penalty (no preceding edge).
+        for nbr, edata in graph[start].items():
+            push((start, nbr), weight_func(start, nbr, edata))
+
+        goal_state: Optional[Tuple[Any, Any]] = None
+        while heap:
+            _, _, g, state = heapq.heappop(heap)
+            if g > best_g.get(state, float("inf")):
+                continue  # stale heap entry
+            u, v = state
+            if v == goal:
+                goal_state = state
+                break
+            for nbr, edata in graph[v].items():
+                ng = g + weight_func(v, nbr, edata)
+                if self._bearing_change_deg(graph, u, v, nbr) > _TURN_STRAIGHT_THRESHOLD_DEG:
+                    ng += turn_penalty
+                if ng < best_g.get((v, nbr), float("inf")):
+                    parent[(v, nbr)] = state
+                    push((v, nbr), ng)
+
+        if goal_state is None:
+            raise nx.NetworkXNoPath(f"Node {goal} not reachable from {start}")
+
+        states: List[Tuple[Any, Any]] = []
+        s: Optional[Tuple[Any, Any]] = goal_state
+        while s is not None:
+            states.append(s)
+            s = parent.get(s)
+        states.reverse()
+        return [states[0][0]] + [st[1] for st in states]
 
     def build_route_from_path(
         self,
@@ -394,6 +586,7 @@ class NetworkRoutingService:
         profile_name: str,
         route_id: str,
         weight_func,
+        turn_penalty: float = 0.0,
     ) -> Route:
         """Build a Route (geometry, totals, directions) from a node path.
 
@@ -401,6 +594,14 @@ class NetworkRoutingService:
         analyses (closest facility / VRP), so path → route shaping stays
         identical everywhere and routes can be reconstructed from
         multi-source Dijkstra predecessor trees without per-call graph copies.
+
+        Cost composition (#455): ``total_cost`` = Σ per-edge ``weight_func``
+        costs + ``turn_penalty`` at each interior vertex whose bearing change
+        exceeds the straight threshold. For an unbarriered ``travel_time_s``
+        impedance that equals ``total_time_s + actual_turn_penalties`` — the
+        documented composition. Callers resolving pure OD trees pass the
+        default 0 (batch trees carry no turn penalties; see
+        ``build_weight_func``).
         """
         path_edges: List[str] = []
         route_coords: List[Tuple[float, float]] = []
@@ -437,6 +638,15 @@ class NetworkRoutingService:
                 if not route_coords:
                     route_coords.append((u_data["x"], u_data["y"]))
                 route_coords.append((v_data["x"], v_data["y"]))
+
+        # #455: charge the turn penalty at interior vertices that are actual
+        # turns (bearing change > the straight threshold). The departure edge
+        # has no preceding edge and straight-through vertices are free.
+        if turn_penalty > 0 and len(path_nodes) >= 3:
+            for i in range(1, len(path_nodes) - 1):
+                change = self._bearing_change_deg(graph, path_nodes[i - 1], path_nodes[i], path_nodes[i + 1])
+                if change > _TURN_STRAIGHT_THRESHOLD_DEG:
+                    total_cost += turn_penalty
 
         directions = self._generate_directions(graph, path_nodes)
 
@@ -546,33 +756,31 @@ class NetworkRoutingService:
 
     def _calculate_turn_type(self, graph: nx.DiGraph, node_a: Any, node_b: Any, node_c: Any) -> str:
         """Computes turn bearing angle and categorizes turn movement."""
+        diff_deg = self._bearing_change_deg(graph, node_a, node_b, node_c)
+        # bearing_change is absolute; recover the signed direction for the
+        # left/right classification from the raw bearings.
         data_a = graph.nodes[node_a]
         data_b = graph.nodes[node_b]
         data_c = graph.nodes[node_c]
-
         v1 = (data_b["x"] - data_a["x"], data_b["y"] - data_a["y"])
         v2 = (data_c["x"] - data_b["x"], data_c["y"] - data_b["y"])
+        signed = math.degrees(math.atan2(v2[1], v2[0]) - math.atan2(v1[1], v1[0]))
+        while signed > 180:
+            signed -= 360
+        while signed <= -180:
+            signed += 360
 
-        bearing1 = math.atan2(v1[1], v1[0])
-        bearing2 = math.atan2(v2[1], v2[0])
-
-        diff_deg = math.degrees(bearing2 - bearing1)
-        while diff_deg > 180:
-            diff_deg -= 360
-        while diff_deg <= -180:
-            diff_deg += 360
-
-        if abs(diff_deg) <= 25:
+        if diff_deg <= 25:
             return "Continue straight"
-        elif 25 < diff_deg <= 65:
+        elif 25 < signed <= 65:
             return "Turn slight right"
-        elif 65 < diff_deg <= 125:
+        elif 65 < signed <= 125:
             return "Turn right"
-        elif diff_deg > 125:
+        elif signed > 125:
             return "Make a U-turn right"
-        elif -65 <= diff_deg < -25:
+        elif -65 <= signed < -25:
             return "Turn slight left"
-        elif -125 <= diff_deg < -65:
+        elif -125 <= signed < -65:
             return "Turn left"
         else:
             return "Make a U-turn left"

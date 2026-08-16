@@ -129,7 +129,12 @@ def _build_grid():
 def test_closest_facility_no_graph_copy(monkeypatch):
     """closest_facility with coordinate inputs must not copy the graph per
     demand×facility pair (the old code ran network_shortest_path per pair,
-    which copied the whole graph for every call)."""
+    which copied the whole graph for every call).
+
+    #453 amendment: the OD pass now makes ONE working copy per analysis to
+    insert virtual mid-edge nodes (the same GIS-01 semantics as routing), so
+    the bound is "no PER-PAIR copies" — a bounded constant, not zero.
+    """
     graph, dataset = _build_grid()
     copies = []
 
@@ -142,7 +147,10 @@ def test_closest_facility_no_graph_copy(monkeypatch):
     monkeypatch.setattr(nx.DiGraph, "copy", counting_copy)
 
     svc = NetworkClosestFacilityService()
-    demands = [DemandPoint(demand_id="d1", weight=1.0, geometry={"type": "Point", "coordinates": [116.01, 39.005]})]
+    demands = [
+        DemandPoint(demand_id="d1", weight=1.0, geometry={"type": "Point", "coordinates": [116.01, 39.005]}),
+        DemandPoint(demand_id="d2", weight=1.0, geometry={"type": "Point", "coordinates": [116.02, 39.015]}),
+    ]
     facilities = [
         Facility(facility_id="f_far", geometry={"type": "Point", "coordinates": [116.03, 39.03]}),
         Facility(facility_id="f_near", geometry={"type": "Point", "coordinates": [116.02, 39.005]}),
@@ -151,9 +159,13 @@ def test_closest_facility_no_graph_copy(monkeypatch):
         demand_points=demands, facilities=facilities,
         graph=graph, network_dataset=dataset, target_facility_count=1,
     )
-    assert copies == [], f"graph.copy called {len(copies)} times during closest_facility"
-    assert len(res.routes) == 1
-    assert res.routes[0].destination_id == "f_near"
+    # 2 demands x 2 facilities = 4 pairs: per-pair copying would make >= 4
+    # copies; the #453 working copy is a single per-analysis constant.
+    assert len(copies) <= 1, (
+        f"graph.copy called {len(copies)} times during closest_facility — "
+        f"per-pair copying regressed"
+    )
+    assert len(res.routes) == 2
     assert res.routes[0].total_distance_m > 0
     assert res.routes[0].geometry["type"] == "LineString"
     assert len(res.routes[0].path_node_ids) >= 2
