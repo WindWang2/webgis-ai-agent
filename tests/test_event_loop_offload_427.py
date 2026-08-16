@@ -17,6 +17,7 @@ faked with a sync ``time.sleep`` that records its thread id, and the test
 asserts the main event loop stays responsive *while* the work is running.
 """
 import asyncio
+import gc
 import json
 import threading
 import time
@@ -133,14 +134,28 @@ async def test_geojson_large_payload_no_loop_lag(monkeypatch, tmp_path):
         return max(gaps) if gaps else 0.0
 
     idle_gap = await _max_ticker_gap(None)
-    export_gap = await _max_ticker_gap(
-        lambda: map_mod.export_geojson(_req(payload), _user={"user_id": "u1"})
-    )
+
+    # Measure twice and keep the MINIMUM gap. The regression this guards
+    # (#427: one GIL-holding json.dumps chunk for the full ~45 MB body) is
+    # deterministic — it stalls EVERY attempt for ~1 s. A one-off pause
+    # (gen-2 GC over a heap grown by earlier tests in the full --cov suite,
+    # CI scheduler noise) hits only one attempt, so min() filters it without
+    # weakening the guard. Triggering a collection up front also moves any
+    # pending GC work out of the measured window.
+    gc.collect()
+    export_gaps = [
+        await _max_ticker_gap(
+            lambda: map_mod.export_geojson(_req(payload), _user={"user_id": "u1"})
+        )
+        for _ in range(2)
+    ]
+    export_gap = min(export_gaps)
 
     bound = max(idle_gap, 0.1) + 0.05
     assert export_gap < bound, (
         f"loop stalled {export_gap * 1000:.0f} ms during GeoJSON export "
-        f"(idle noise {idle_gap * 1000:.0f} ms, bound {bound * 1000:.0f} ms) — "
+        f"(idle noise {idle_gap * 1000:.0f} ms, bound {bound * 1000:.0f} ms, "
+        "min of 2 attempts) — "
         "serialization must not run as one GIL-holding chunk on/over the loop"
     )
 
