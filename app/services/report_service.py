@@ -2,6 +2,7 @@
 报告生成服务 - 从会话历史生成 PDF/HTML/Markdown 报告
 使用 Jinja2 模板渲染 HTML，WeasyPrint 转换为 PDF
 """
+import asyncio
 import html as html_mod
 import json
 import os
@@ -225,7 +226,32 @@ class ReportService:
 
         Returns:
             生成是否成功
+
+        计算隔离不变式 1（#426，沿用 #386/d8c0ab1 卸载模式）：渲染体是
+        纯同步的 CPU/IO 密集操作——Jinja2 全量历史模板、MapSpec→SVG 编译、
+        同步文件写与 WeasyPrint ``write_pdf()`` 均在 worker 线程执行，
+        避免阻塞事件循环上所有并发 SSE 流。异常原样向调用方传播，
+        saga（create_and_generate / 工具路径）负责落 failed 终态。
         """
+        return await asyncio.to_thread(
+            self._generate_report_sync,
+            session_id=session_id,
+            session_title=session_title,
+            messages=messages,
+            output_path=output_path,
+            format=format,
+            mapspec=mapspec,
+        )
+
+    def _generate_report_sync(
+        self,
+        session_id: str,
+        session_title: str,
+        messages: list[dict[str, Any]],
+        output_path: str,
+        format: str = "pdf",
+        mapspec: Optional[dict[str, Any]] = None,
+    ) -> bool:
         try:
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
