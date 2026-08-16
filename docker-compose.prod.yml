@@ -1,6 +1,10 @@
 # ============================================================
 # WebGIS AI Agent 生产环境 Docker Compose
-# 使用: docker-compose -f docker-compose.prod.yml up -d
+# 使用: docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+#
+# 凭证放 .env.prod（gitignored，从入库模板 .env.prod.example 复制后填写，
+# 真实密码严禁写进 .env.prod.example 等可提交文件）。
+# --env-file .env.prod 同时供 ${VAR} 插值（env_file 只传容器，不参与插值）。
 # ============================================================
 services:
   # PostgreSQL 数据库（含 PostGIS）
@@ -10,7 +14,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USER:-webgis_prod}
-      POSTGRES_PASSWORD: ${DB_PWD:?Set DB_PWD in .env.prod.example}
+      POSTGRES_PASSWORD: ${DB_PWD:?Set DB_PWD in .env.prod}
       POSTGRES_DB: ${DB_NAME:-webgis_prod}
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
@@ -45,7 +49,7 @@ services:
       --appendonly
       --maxmemory 256mb
       --maxmemory-policy noeviction
-      --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.prod.example}
+      --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.prod}
     volumes:
       - redis_prod_data:/data
     healthcheck:
@@ -92,7 +96,8 @@ services:
       # 之前 mount /app/frontend/out/uploads 但应用写 ./data/uploads/，导致上传丢失。
       - DATA_DIR=/app
     env_file:
-      - .env.prod.example
+      # .env.prod 不入库（.gitignore 已忽略）；入库的只有 .env.prod.example 模板。
+      - .env.prod
     depends_on:
       db:
         condition: service_healthy
@@ -140,7 +145,8 @@ services:
       - LOG_LEVEL=INFO
       - PYTHONUNBUFFERED=1
     env_file:
-      - .env.prod.example
+      # .env.prod 不入库（.gitignore 已忽略）；入库的只有 .env.prod.example 模板。
+      - .env.prod
     depends_on:
       db:
         condition: service_healthy
@@ -179,7 +185,11 @@ services:
       - "${HTTPS_PORT:-443}:443"
     volumes:
       - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./deploy/ssl:/etc/nginx/ssl:ro
+      # 审计 P2：与 secure 版和 nginx.conf 期望一致 —— nginx.conf 引用
+      # /etc/nginx/ssl/server.crt|server.key。请把 server.crt / server.key
+      # 放到 ./deploy/nginx/ssl/（.gitignore 已忽略 *.crt/*.key），否则
+      # nginx 启动即 crash（找不到证书）。之前误挂 ./deploy/ssl。
+      - ./deploy/nginx/ssl:/etc/nginx/ssl:ro
       - nginx_log:/var/log/nginx
     depends_on:
       - api

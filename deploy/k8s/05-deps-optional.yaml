@@ -158,8 +158,14 @@ spec:
               name: webgis-secret
               key: REDIS_PASSWORD
         livenessProbe:
+          # 审计 P1：kubelet 只在容器的 command/args 里展开 $(VAR_NAME)，
+          # exec 探针的 command 不做展开 —— 之前的
+          # ["redis-cli","-a","$(REDIS_PASSWORD)","ping"] 把字面量
+          # $(REDIS_PASSWORD) 当密码，探针必败 → 容器被反复杀死重启。
+          # 改用 sh -c 由容器 shell 展开 REDISCLI_AUTH（同 compose 侧写法，
+          # 也避免 -a 把密码暴露在进程列表）。
           exec:
-            command: ["redis-cli", "-a", "$(REDIS_PASSWORD)", "ping"]
+            command: ["sh", "-c", "REDISCLI_AUTH=$REDIS_PASSWORD redis-cli ping"]
           initialDelaySeconds: 10
           periodSeconds: 5
         volumeMounts:

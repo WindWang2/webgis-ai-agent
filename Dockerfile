@@ -54,9 +54,11 @@ ENV PYTHONPATH=/app
 # 镜像减小 + 攻击面缩小。
 # 注：使用 bookworm 包名（libgdal32 libgeos-c1v5 libproj25），与 Dockerfile.prod 一致；
 # 之前误用 trixie 的 t64 后缀包名（libgdal32t64 libgeos3.11.1t64）在 bookworm 上不存在。
+# 审计 P2：运行时只需 nodejs（Next standalone server），无 npm 调用
+# （与 Dockerfile.prod 一致），不装 npm 以减小镜像与攻击面。
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libexpat1 libgdal32 libgeos-c1v5 libproj25 \
-    nodejs npm && rm -rf /var/lib/apt/lists/*
+    nodejs && rm -rf /var/lib/apt/lists/*
 
 # Copy frontend standalone output
 COPY --from=frontend-builder /app/frontend/.next/standalone ./frontend/.next/standalone
