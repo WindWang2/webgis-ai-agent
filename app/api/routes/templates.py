@@ -152,9 +152,12 @@ async def list_templates(
     elif source == "user":
         stmt = stmt.where(CartographyTemplate.is_builtin.is_(False))
 
-    # Apply pagination at the DB level (no Python .all()).
-    page_stmt = stmt.limit(limit).offset(offset)
-    result = await db.execute(page_stmt)
+    # The template table is small (seed builtins + user saves), so fetch all
+    # rows matching the scope/kind/source filters and paginate ONCE in Python
+    # after merging seeds and applying q. Paginating here as well (limit/
+    # offset at the DB) applied the offset twice and dropped rows from page 2
+    # onward; filtering q after DB pagination shrank pages the same way.
+    result = await db.execute(stmt)
     db_templates = list(result.scalars().all())
     total_stmt = select(func.count()).select_from(stmt.subquery())
     total = (await db.execute(total_stmt)).scalar_one() or 0
@@ -185,8 +188,8 @@ async def list_templates(
             or any(keyword in kw.lower() for kw in t.get("keywords", []))
         ]
 
-    # Final post-pagination slice so the merged list doesn't exceed the
-    # requested page (built-in seeds are pre-DB and out of `total`).
+    # Single pagination slice over the fully filtered merged list (seeds are
+    # pre-DB and intentionally out of `total`).
     page_slice = results[offset:offset + limit]
 
     if summary:

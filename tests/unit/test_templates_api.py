@@ -307,3 +307,74 @@ async def test_unauthenticated_list_hides_user_templates(client):
     allowed = await client.get(f"/api/v1/templates/{tmpl_id}", headers=user_headers)
     assert allowed.status_code == 200
     assert allowed.json()["name"] == "他人模板"
+
+
+async def _create_layout_templates(client, names):
+    """Save layout templates as user_123 and return their ids."""
+    ids = []
+    for name in names:
+        res = await client.post(
+            "/api/v1/templates",
+            json={"name": name, "kind": "layout", "payload": _LAYOUT_PAYLOAD},
+            headers=user_headers,
+        )
+        assert res.status_code == 201, res.text
+        ids.append(res.json()["id"])
+    return ids
+
+
+@pytest.mark.asyncio
+async def test_list_templates_page2_continuity(client):
+    """Regression: offset must be applied exactly once.
+
+    The old path paginated at the DB (limit/offset) and then sliced the
+    seed-merged list by the same offset again, so page 2 came back empty
+    and rows were silently dropped.
+    """
+    created_ids = await _create_layout_templates(
+        client, [f"分页模板{i}" for i in range(1, 8)]
+    )
+
+    pages = []
+    for offset in (0, 3, 6):
+        res = await client.get(
+            f"/api/v1/templates?source=user&kind=layout&limit=3&offset={offset}",
+            headers=user_headers,
+        )
+        assert res.status_code == 200
+        pages.append([t["id"] for t in res.json()["items"]])
+
+    assert [len(p) for p in pages] == [3, 3, 1]
+    flat = [tid for p in pages for tid in p]
+    assert len(flat) == len(set(flat)) == len(created_ids)
+    assert set(flat) == set(created_ids)
+
+
+@pytest.mark.asyncio
+async def test_list_templates_q_filter_before_pagination(client):
+    """Regression: q must filter the full set before the page slice.
+
+    Previously q ran on the DB page after limit/offset, so a page could
+    shrink below `limit` and later matches never appeared on any page.
+    """
+    match_ids = await _create_layout_templates(
+        client, [f"检索模板{i}" for i in range(1, 7)]
+    )
+    await _create_layout_templates(client, ["无关模板甲", "无关模板乙"])
+
+    page1 = await client.get(
+        "/api/v1/templates?source=user&kind=layout&q=检索&limit=4&offset=0",
+        headers=user_headers,
+    )
+    page2 = await client.get(
+        "/api/v1/templates?source=user&kind=layout&q=检索&limit=4&offset=4",
+        headers=user_headers,
+    )
+    assert page1.status_code == 200 and page2.status_code == 200
+
+    ids1 = [t["id"] for t in page1.json()["items"]]
+    ids2 = [t["id"] for t in page2.json()["items"]]
+    assert len(ids1) == 4
+    assert len(ids2) == 2
+    assert set(ids1) | set(ids2) == set(match_ids)
+    assert not set(ids1) & set(ids2)
