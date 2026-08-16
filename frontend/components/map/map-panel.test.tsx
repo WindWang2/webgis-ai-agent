@@ -7,6 +7,7 @@ import { MapPanel } from './map-panel';
 import type { Layer } from '@/lib/types/layer';
 import { makeMockMaplibreMap } from '../../test/__mocks__/maplibre-map';
 import { isUserGesturing, _resetCameraArbitrationForTests } from '@/lib/map-commands/camera-arbitration';
+import * as renderer from '@/lib/map-kit/renderer';
 
 /**
  * FE-3 (design §7) MapPanel interaction UX tests.
@@ -554,12 +555,18 @@ describe('MapPanel — FE-3 interaction UX', () => {
     const view = await renderPanel([pointLayer('poi', 'POI')]);
     await settleInteractive(['poi__point']);
 
-    // Imperative add_layer command output: source + layer on top at mount.
-    rmg.map.addSource('custom-poi', {
-      type: 'geojson',
-      data: { type: 'FeatureCollection', features: [] },
+    // Imperative add_layer command output: source + layer on top at mount
+    // (through the production helpers the command uses).
+    renderer.addGeoJsonSource(rmg.map, 'custom-poi', {
+      type: 'FeatureCollection',
+      features: [],
     });
-    rmg.map.addLayer({ id: 'custom-poi', type: 'circle', source: 'custom-poi' });
+    renderer.addVectorLayer(rmg.map, {
+      id: 'custom-poi',
+      type: 'circle',
+      source: 'custom-poi',
+      paint: {},
+    });
 
     // Layer-changing reconcile (visibility toggle → recompile → z-order sync
     // stacks the spec sublayers on top of the custom overlay).

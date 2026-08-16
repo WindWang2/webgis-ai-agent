@@ -1,4 +1,5 @@
 import type { GeoJSONSource, Map } from 'maplibre-gl';
+import { noteStyleLayerAdded } from './renderer';
 
 /**
  * Selection highlight overlay (Harness–Map Interaction V3, FE-3).
@@ -53,6 +54,10 @@ export function ensureSelectionHighlightLayers(map: Map): void {
       },
     });
   }
+  // #462: keep the renderer's layer-id order registry exact for these adds.
+  noteStyleLayerAdded(map, `${SELECTION_HIGHLIGHT_SOURCE_ID}-fill`);
+  noteStyleLayerAdded(map, `${SELECTION_HIGHLIGHT_SOURCE_ID}-line`);
+  noteStyleLayerAdded(map, `${SELECTION_HIGHLIGHT_SOURCE_ID}-circle`);
 }
 
 /**

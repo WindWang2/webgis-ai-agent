@@ -1,5 +1,6 @@
 import type { GeoJSONSource, Map } from 'maplibre-gl';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { noteStyleLayerAdded } from '@/lib/map-kit/renderer';
 
 // R8 annotation source: 单一 FeatureCollection 收纳 add_marker / draw_measurement 输出。
 // Zustand 状态迁移：将原本模块级的 mutable array 迁移至 Zustand，支持多组件共享、响应式更新和一致的生命周期管理。
@@ -77,6 +78,11 @@ export function ensureAnnotationLayers(map: Map) {
       },
     });
   }
+  // #462: keep the renderer's layer-id order registry exact for these adds.
+  noteStyleLayerAdded(map, `${ANNOTATION_SOURCE_ID}-fill`);
+  noteStyleLayerAdded(map, `${ANNOTATION_SOURCE_ID}-line`);
+  noteStyleLayerAdded(map, `${ANNOTATION_SOURCE_ID}-circle`);
+  noteStyleLayerAdded(map, `${ANNOTATION_SOURCE_ID}-label`);
 }
 
 /**
@@ -138,7 +144,9 @@ export function raiseAnnotationLayers(map: Map): void {
   if (!stackMounted) {
     // Post-wipe state: only remount when there is annotation data to show —
     // maps that never used annotations stay free of the (empty) stack.
-    if (useHudStore.getState().annotations.length === 0) return;
+    // (Defensive read: partial store harnesses may not carry the field.)
+    const annotations = useHudStore.getState().annotations ?? [];
+    if (annotations.length === 0) return;
     ensureAnnotationLayers(map);
     refreshAnnotations(map);
   }

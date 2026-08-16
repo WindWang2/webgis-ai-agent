@@ -69,6 +69,14 @@ export class MapSpecRuntime {
    * stale basis and emits an empty (heal-nothing) patch.
    */
   private styleEpoch = 0;
+  /**
+   * #462: layerId → sourceId for every layer this runtime added. MapLibre
+   * offers no "layers of source" query without cloning the whole style via
+   * getStyle(); the index answers removeSourceSafe's straggler scrub with
+   * plain Map lookups instead. Maintained by addLayerSafe/removeLayerSafe and
+   * cleared alongside appliedSpec on a style wipe.
+   */
+  private layerSourceIndex = new Map<string, string>();
 
   constructor(map: any, options: MapSpecRuntimeOptions = {}) {
     this.map = map;
@@ -89,6 +97,11 @@ export class MapSpecRuntime {
     // completion marker checks this token before advancing appliedSpec.
     this.styleEpoch++;
     this.appliedSpec = null;
+    // #462: setStyle dropped every layer without passing through any removal
+    // site — drop the runtime's layer→source index and the renderer's
+    // layer-id order registry for this map (next read re-seeds cold).
+    this.layerSourceIndex.clear();
+    renderer.clearStyleLayerIds(this.map);
     // FE-P3-5: a base-style change wipes every source WITHOUT going through
     // removeSourceSafe — prune the inline-GeoJSON registry so the viewport
     // refresher stops probing ids that no longer exist (never converged).
@@ -517,6 +530,9 @@ export class MapSpecRuntime {
         this.removeLayerSafe(layer.id);
       }
       this.map.addLayer(def);
+      // #462: keep the layer→source index + renderer id-order registry exact.
+      this.layerSourceIndex.set(layer.id, layer.source);
+      renderer.noteStyleLayerAdded(this.map, layer.id);
     } catch (err) {
       // Defensive: a recompile that races with a style swap may find the layer
       // already re-added by the styledata path. Log and continue rather than
@@ -531,17 +547,20 @@ export class MapSpecRuntime {
     if (this.map.getLayer(id)) {
       try { this.map.removeLayer(id); } catch { /* already gone */ }
     }
+    this.layerSourceIndex.delete(id);
+    renderer.noteStyleLayerRemoved(this.map, id);
   }
 
   private removeSourceSafe(id: string): void {
     // Must remove all layers referencing this source first. diffSpecs already
     // reported dependent layer removes, but defensive: scrub any stragglers.
-    const style = this.map.getStyle();
-    if (style?.layers) {
-      for (const l of style.layers) {
-        if (l.source === id && this.map.getLayer(l.id)) {
-          try { this.map.removeLayer(l.id); } catch { /* silent */ }
-        }
+    // #462: the runtime's own layer→source index replaces the per-removal
+    // getStyle() deep clone (a patch removing N sources cloned the style N
+    // times); the index covers every layer this runtime added, which is
+    // exactly the population that can reference a spec source.
+    for (const [layerId, sourceId] of Array.from(this.layerSourceIndex)) {
+      if (sourceId === id) {
+        this.removeLayerSafe(layerId);
       }
     }
     if (this.map.getSource(id)) {

@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MapPanel } from './map-panel';
 import type { Layer } from '@/lib/types/layer';
 import { makeMockMaplibreMap } from '../../test/__mocks__/maplibre-map';
+import * as renderer from '@/lib/map-kit/renderer';
 
 /**
  * Combined MapLibre lifecycle scenario for issues #459 / #460 / #461:
@@ -289,12 +290,18 @@ describe('MapPanel — basemap switch during in-flight reconcile (#459/#460/#461
 
     // ── #461: custom-* overlay re-added after recovery stays above spec ──
     // (the add_layer command path re-runs on the new style; the next
-    // layer-changing reconcile must not bury it again).
-    rmg.map.addSource('custom-poi', {
-      type: 'geojson',
-      data: { type: 'FeatureCollection', features: [] },
+    // layer-changing reconcile must not bury it again). Added through the
+    // production helper the command uses, so the layer-id registry sees it.
+    renderer.addGeoJsonSource(rmg.map as any, 'custom-poi', {
+      type: 'FeatureCollection',
+      features: [],
     });
-    rmg.map.addLayer({ id: 'custom-poi', type: 'circle', source: 'custom-poi' });
+    renderer.addVectorLayer(rmg.map as any, {
+      id: 'custom-poi',
+      type: 'circle',
+      source: 'custom-poi',
+      paint: {},
+    });
     rerenderPanel(view, [...changedLayers, pointLayer('hospital', 'Hospital')]);
     await drainRuntime();
 
