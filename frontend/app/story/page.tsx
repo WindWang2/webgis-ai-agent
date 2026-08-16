@@ -121,10 +121,6 @@ function StoryPageInner() {
     setActiveIndex((cur) => Math.max(0, cur - 1));
   }, []);
 
-  const handleNext = useCallback(() => {
-    setActiveIndex((cur) => Math.min(messages.length - 1, cur + 1));
-  }, [messages.length]);
-
   const togglePlay = useCallback(() => {
     if (playing) {
       setPlaying(false);

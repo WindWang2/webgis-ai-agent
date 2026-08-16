@@ -81,7 +81,10 @@ export async function* streamChat(
   signal?: AbortSignal,
   skillName?: string,
   ownerToken?: string | null,
-  lastEventId?: string | number | null
+  lastEventId?: string | number | null,
+  /** #558: 当前选中的项目 workspace id —— 有项目时才携带，请求体 project_id
+   * 后端据此渲染项目上下文摘要块。不猜、不空发。 */
+  projectId?: string | null
 ): AsyncGenerator<SSEEvent> {
   const response = await openStream('/api/v1/chat/stream', {
     method: "POST",
@@ -89,7 +92,8 @@ export async function* streamChat(
       message,
       session_id: sessionId,
       map_state: mapState,
-      skill_name: skillName
+      skill_name: skillName,
+      ...(projectId ? { project_id: projectId } : {}),
     },
     signal,
     ownerToken,
@@ -126,13 +130,20 @@ export async function sendChat(
   message: string,
   sessionId?: string,
   mapState?: Record<string, unknown>,
-  ownerToken?: string | null
+  ownerToken?: string | null,
+  /** #558: 当前选中的项目 workspace id（有项目时才携带，见 streamChat）。 */
+  projectId?: string | null
 ): Promise<{ content: string; session_id: string; owner_token?: string }> {
   return apiFetch<{ content: string; session_id: string; owner_token?: string }>(
     '/api/v1/chat/completions',
     {
       method: "POST",
-      body: { message, session_id: sessionId, map_state: mapState },
+      body: {
+        message,
+        session_id: sessionId,
+        map_state: mapState,
+        ...(projectId ? { project_id: projectId } : {}),
+      },
       ownerToken,
       label: "Chat API error",
     }

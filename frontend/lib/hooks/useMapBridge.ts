@@ -317,6 +317,9 @@ export function useMapBridge(
             // DUP-1: attempts after the first carry the last received event id
             // (or "0" if the drop happened before any event — replay from the
             // buffered start) so the backend resumes instead of re-executing.
+            // #558: 项目上下文注入 —— 项目 tab 的选择镜像在 store（activeProjectId），
+            // 发送时读取并携带 project_id；未选项目时保持缺省（后端 ContextAssembler
+            // 不渲染项目块）。读取 getState() 而非闭包，send 依赖保持稳定。
             for await (const event of streamChat(
               content,
               sessionIdRef.current,
@@ -325,6 +328,7 @@ export function useMapBridge(
               undefined,
               sessionTokenRef?.current ?? null,
               attempt > 0 ? (lastEventId ?? "0") : undefined,
+              useHudStore.getState().activeProjectId ?? null,
             )) {
               if (controller.signal.aborted || streamEpoch !== streamEpochRef.current) break;
               const currentSessionId = sessionIdRef.current;

@@ -46,6 +46,30 @@ describe('Chat API', () => {
       const body = JSON.parse(mockFetch.mock.calls[0][1].body);
       expect(body.session_id).toBe('sess-123');
     });
+
+    it('#558: includes project_id when an active project is supplied', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: () => Promise.resolve(JSON.stringify({ content: 'hi', session_id: 's1' })),
+      });
+      await sendChat('hello', 'sess-1', undefined, null, 'proj-42');
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.project_id).toBe('proj-42');
+    });
+
+    it('#558: omits project_id when no project is active', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: () => Promise.resolve(JSON.stringify({ content: 'hi', session_id: 's1' })),
+      });
+      await sendChat('hello');
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.project_id).toBeUndefined();
+    });
   });
 
   describe('getSessionList', () => {
@@ -238,6 +262,20 @@ describe('Chat API', () => {
       const body = JSON.parse(mockFetch.mock.calls[0][1].body);
       expect(body.session_id).toBe('sess-1');
       expect(body.map_state).toEqual({ zoom: 10 });
+    });
+
+    it('#558: carries project_id in the stream request body when a project is active', async () => {
+      mockFetch.mockResolvedValueOnce(makeSSEStream([]));
+      for await (const _ of streamChat('hello', 's1', {}, undefined, undefined, null, undefined, 'proj-7')) { /* drain */ }
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.project_id).toBe('proj-7');
+    });
+
+    it('#558: omits project_id from the body when no project is active', async () => {
+      mockFetch.mockResolvedValueOnce(makeSSEStream([]));
+      for await (const _ of streamChat('hello', 's1')) { /* drain */ }
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.project_id).toBeUndefined();
     });
 
     it('sends Last-Event-ID header when lastEventId is provided (DUP-1 resume)', async () => {

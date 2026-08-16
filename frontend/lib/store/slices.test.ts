@@ -169,6 +169,15 @@ describe('ui slice', () => {
     s.pushOpLog({ id: '2', type: 'add', label: 'L2', time: 't', detail: 'd' });
     expect(useHudStore.getState().opsLog[0].id).toBe('2');
   });
+
+  it('#558: activeProjectId round-trips (project tab mirror for chat context)', () => {
+    const s = useHudStore.getState();
+    expect(s.activeProjectId).toBeNull();
+    s.setActiveProjectId('proj-1');
+    expect(useHudStore.getState().activeProjectId).toBe('proj-1');
+    s.setActiveProjectId(null);
+    expect(useHudStore.getState().activeProjectId).toBeNull();
+  });
 });
 
 
