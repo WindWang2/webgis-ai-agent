@@ -144,6 +144,11 @@ services:
       - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD}@redis:6379/1
       - LOG_LEVEL=INFO
       - PYTHONUNBUFFERED=1
+      # #519: worker 必须与 api 使用同一 DATA_DIR 语义（= /app，api 的
+      # 静态/下载路由按 DATA_DIR 解析）。默认 "./data" 在 WORKDIR /app/backend
+      # 下展开 → worker 把 /app/backend/data/... 写进 DB，api 从 /app/... 下发，
+      # 记录路径 404 且 worker 重启即丢。
+      - DATA_DIR=/app
       # #476：镜像 entrypoint 现在会先跑 alembic upgrade head —— api 与
       # celery-worker 同时 up 会并发 upgrade 竞争 alembic_version 表。
       # 迁移的唯一所有者是 api 容器；worker 跳过。

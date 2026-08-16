@@ -66,6 +66,7 @@ npm run dev
 | `JWT_SECRET_KEY` | JWT 签名密钥（留空则自动生成，重启后失效） | 是 |
 | `LLM_API_KEY` | 支持工具调用的 LLM 密钥 | 是 |
 | `LLM_MODEL` | 默认模型（如 deepseek-v4-flash） | 否 |
+| `DATA_DIR` | 数据根目录（上传/exports/报告/会话数据）。compose 生产栈统一设 `/app`，k8s 设 `/app/data`（可写挂载）；默认 `./data` 相对 WORKDIR 展开，跨容器/只读 rootfs 会出错（见 #519） | 生产建议显式设置 |
 
 ## 排障雷达 (Troubleshooting)
 - **前端白屏/不显示建筑物**：按下 F12 查看网络。如果 `/api/v1/layers/data/{ref_id}?session_id=xxx` 报 404，极大概率是您的 Redis 没有启动或容积超标。

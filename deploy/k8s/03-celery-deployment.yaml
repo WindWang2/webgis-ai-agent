@@ -78,6 +78,11 @@ spec:
           mountPath: /app/data
         - name: uploads-volume
           mountPath: /app/uploads
+        # #519: worker 的 DATA_DIR=/app/data（见 01-configmap.yaml）。
+        # DATA_DIR/uploads 必须与 api 侧一样落到 uploads PVC（而非 emptyDir），
+        # 否则 worker 重启后已上传文件消失、任务按本地路径打开即 No such file。
+        - name: uploads-volume
+          mountPath: /app/data/uploads
         - name: app-pi
           mountPath: /app/.pi
       volumes:

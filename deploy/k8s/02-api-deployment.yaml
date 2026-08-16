@@ -147,6 +147,12 @@ spec:
         volumeMounts:
         - name: uploads-volume
           mountPath: /app/uploads
+        # #519: 应用把所有文件解析到 settings.DATA_DIR（= /app/data，见
+        # 01-configmap.yaml）。DATA_DIR/uploads 若落在 emptyDir，上传在
+        # pod 重建后即消失；把 uploads PVC 也挂到 /app/data/uploads，让
+        # 上传与 celery（同挂此 PVC）继续共享持久化。
+        - name: uploads-volume
+          mountPath: /app/data/uploads
         # readOnlyRootFilesystem: true 需要显式挂载可写路径为 emptyDir
         - name: tmp
           mountPath: /tmp

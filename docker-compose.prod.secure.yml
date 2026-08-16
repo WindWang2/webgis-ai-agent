@@ -177,6 +177,10 @@ services:
       # celery-worker 同时 up 会并发 upgrade 竞争 alembic_version 表。
       # 迁移的唯一所有者是 api 容器；worker 跳过。
       SKIP_DB_MIGRATIONS: "true"
+      # #519: 与 api 同一 DATA_DIR 语义（api 侧为 /app，见上方 api 服务）。
+      # 默认 "./data" 在 WORKDIR /app/backend 下展开 → worker 写
+      # /app/backend/data/... 而 api 从 /app/... 下发，产物跨容器 404。
+      DATA_DIR: /app
     env_file:
       - .env.Priv
     command: celery -A app.services.task_queue worker --loglevel=info --concurrency=2
