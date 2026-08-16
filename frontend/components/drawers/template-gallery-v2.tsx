@@ -33,12 +33,13 @@ import React, {
   useState,
 } from 'react';
 import { Loader2, ChevronLeft, ChevronRight, Layers, Map as MapIcon, Palette, Layout as LayoutIcon, BarChart3, Sparkles, X } from 'lucide-react';
-import { templatesApi, type TemplateKind, type TemplateSummary } from '@/lib/api/templates';
+import { templatesApi, type TemplateDetail, type TemplateKind, type TemplateSummary } from '@/lib/api/templates';
 import { isApiError } from '@/lib/api/transport';
-import { applyBaseline, type BasemapPayload } from '@/lib/basemap-apply';
-import { applySymbology, type SymbologyPayload } from '@/lib/symbology-apply';
-import { resolveThematicPreset } from '@/lib/thematic-apply';
-import { resolveStyle } from '@/lib/map-kit/layout-style';
+import { applySymbology, type SymbologySinglePayload } from '@/lib/symbology-apply';
+import { useMapAction } from '@/lib/contexts/map-action-context';
+import { useHudStore } from '@/lib/store/useHudStore';
+import { TILE_PROVIDERS } from '@/lib/providers';
+import { useToastStore } from '@/components/ui/toast';
 import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
 import { LoadingState } from '@/components/shared/loading-state';
 import { InlineNotice } from '@/components/shared/inline-notice';
@@ -61,7 +62,117 @@ const KIND_TABS: Array<{ kind: TemplateKind | 'all'; label: string; Icon: React.
 export interface TemplateGalleryV2Props {
   open: boolean;
   onClose: () => void;
+  /** Fired only when an apply actually landed (parent shows the success toast). */
   onApply?: (t: TemplateSummary) => void;
+}
+
+// ============================================================================
+// Apply pipeline (issue #465). Each kind lands somewhere real:
+//   basemap   → BASE_LAYER_CHANGE through the shared map action queue (the
+//               same path the agent chat uses; swaps the actual base layer
+//               and syncs the HUD store label)
+//   symbology → LAYER_STYLE_UPDATE on the active layer through the queue
+//   layout    → export settings store (consumed by the map exporter)
+//   thematic/composite → cannot land from the gallery (need a data field /
+//               the full agent pipeline) → explicit error, never false success
+// ============================================================================
+
+type DispatchAction = ReturnType<typeof useMapAction>['dispatchAction'];
+
+interface HudApplyState {
+  layers?: Array<{ id: string }>;
+  focusLayerId?: string | null;
+  updateExportSettings?: (updates: Record<string, unknown>) => void;
+}
+
+type ApplyOutcome = { ok: true; detail: TemplateDetail } | { ok: false; error: string };
+
+/** Resolve a template providerId to a TILE_PROVIDERS entry (mirrors the
+ * base_layer_change matcher: exact id/name, then keyword containment). */
+function resolveBasemapProvider(providerId: string) {
+  const pid = providerId.trim().toLowerCase();
+  if (!pid) return undefined;
+  return (
+    TILE_PROVIDERS.find((p) => p.id.toLowerCase() === pid) ??
+    TILE_PROVIDERS.find((p) => p.name.toLowerCase() === pid) ??
+    TILE_PROVIDERS.find((p) =>
+      p.keywords.some((k) => {
+        const kl = k.toLowerCase();
+        return kl === pid || pid.includes(kl);
+      })
+    )
+  );
+}
+
+/** The layer a gallery symbology pass targets: the focused layer, else first. */
+function activeLayerId(hud: HudApplyState): string | undefined {
+  const focused = hud.focusLayerId;
+  if (focused && hud.layers?.some((l) => l.id === focused)) return focused;
+  return hud.layers?.[0]?.id;
+}
+
+function applyBasemapTemplate(
+  detail: TemplateDetail,
+  dispatchAction: DispatchAction
+): ApplyOutcome {
+  const providerId = detail.payload?.providerId;
+  if (typeof providerId !== 'string' || !providerId) {
+    return { ok: false, error: `模板「${detail.name}」缺少底图 providerId，无法应用` };
+  }
+  const provider = resolveBasemapProvider(providerId);
+  if (!provider) {
+    return { ok: false, error: `未知底图提供者：${providerId}` };
+  }
+  // Canonical provider name → the queue's base_layer_change exact-matches it,
+  // swaps the live map style and syncs the HUD baseLayer label.
+  dispatchAction({ command: 'BASE_LAYER_CHANGE', params: { name: provider.name } });
+  return { ok: true, detail };
+}
+
+function applySymbologyTemplate(
+  detail: TemplateDetail,
+  dispatchAction: DispatchAction,
+  hud: HudApplyState
+): ApplyOutcome {
+  const layerId = activeLayerId(hud);
+  if (!layerId) {
+    return { ok: false, error: '当前地图没有可应用样式的图层，请先加载数据' };
+  }
+  const payload = detail.payload;
+  // Categorical symbology needs a field chosen at apply time — the gallery
+  // pass has no field picker, so it cannot land here.
+  if (!payload || payload.mode !== 'single') {
+    return { ok: false, error: '分类符号化需要在图层上选择字段，请通过 Agent 对话应用' };
+  }
+  const result = applySymbology(payload as unknown as SymbologySinglePayload, layerId);
+  dispatchAction({
+    command: result.command,
+    params: { layer_id: layerId, style: result.params.style_applied },
+  });
+  return { ok: true, detail };
+}
+
+function applyLayoutTemplate(detail: TemplateDetail, hud: HudApplyState): ApplyOutcome {
+  const payload = detail.payload as Record<string, unknown> | undefined;
+  if (!payload) {
+    return { ok: false, error: `模板「${detail.name}」缺少版式配置，无法应用` };
+  }
+  // Map the layout template's payload onto the export settings the map
+  // exporter consumes (paper/legend/compass/scale/graticule toggles).
+  const updates: Record<string, unknown> = {};
+  if (typeof payload.paperSize === 'string') updates.paperSize = payload.paperSize;
+  if (payload.orientation === 'landscape' || payload.orientation === 'portrait') {
+    updates.orientation = payload.orientation;
+  }
+  if (typeof payload.showLegend === 'boolean') updates.showLegend = payload.showLegend;
+  if (typeof payload.showNorthArrow === 'boolean') updates.showCompass = payload.showNorthArrow;
+  if (typeof payload.showScaleBar === 'boolean') updates.showScale = payload.showScaleBar;
+  if (typeof payload.showGrid === 'boolean') updates.showGraticules = payload.showGrid;
+  if (Object.keys(updates).length === 0) {
+    return { ok: false, error: `模板「${detail.name}」不包含可应用的版式字段` };
+  }
+  hud.updateExportSettings?.(updates);
+  return { ok: true, detail };
 }
 
 export function TemplateGalleryV2({ open, onClose, onApply }: TemplateGalleryV2Props) {
@@ -74,6 +185,8 @@ export function TemplateGalleryV2({ open, onClose, onApply }: TemplateGalleryV2P
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTemplate, setActiveTemplate] = useState<TemplateSummary | null>(null);
+  const [applyingId, setApplyingId] = useState<string | null>(null);
+  const { dispatchAction } = useMapAction();
   const abortRef = useRef<AbortController | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
 
@@ -106,13 +219,14 @@ export function TemplateGalleryV2({ open, onClose, onApply }: TemplateGalleryV2P
         offset: page * PAGE_SIZE,
         signal: controller.signal,
       })
-      .then((data) => {
+      .then((result) => {
         if (controller.signal.aborted) return;
-        setTemplates(data as unknown as TemplateSummary[]);
-        // The backend Page envelope includes total; apiFetch unwraps to the
-        // bare list, so we use the page length as a fallback upper bound
-        // for "more pages exist" and the user-visible "page X / Y".
-        setTotal(data.length === PAGE_SIZE ? (page + 1) * PAGE_SIZE + 1 : page * PAGE_SIZE + data.length);
+        // Issue #464: the backend returns the Page envelope {items, total,
+        // ...} — consume items/total from it. (The old code treated the
+        // envelope as a bare array: templates.map threw on every success and
+        // the whole-app ErrorBoundary surfaced a System Error page.)
+        setTemplates(result.items);
+        setTotal(result.total);
       })
       .catch((err: unknown) => {
         if (controller.signal.aborted) return;
@@ -141,88 +255,53 @@ export function TemplateGalleryV2({ open, onClose, onApply }: TemplateGalleryV2P
     setActiveTemplate(t);
   }, []);
 
+  // Issue #465: list items are summary DTOs — the backend strips `payload`
+  // from GET /templates (summary=true default), so reading payload off the
+  // card always saw undefined and every apply silently no-opped while the
+  // parent still fired a success toast. The apply now (1) fetches the full
+  // detail via GET /templates/{id}, (2) only reports success through
+  // onApply when the apply actually landed (dispatched to the map action
+  // queue / export settings store), and (3) raises an error toast otherwise.
   const handleApply = useCallback(
-    (t: TemplateSummary) => {
+    async (t: TemplateSummary) => {
+      if (applyingId) return;
+      setApplyingId(t.id);
       try {
-        switch (t.kind) {
-          case 'basemap': {
-            const payload = (t as unknown as { payload?: BasemapPayload }).payload;
-            if (payload?.providerId) {
-              applyBaseline(payload);
-            }
+        const detail = await templatesApi.get(t.id);
+        const hud = useHudStore.getState();
+        let outcome: ApplyOutcome;
+        switch (detail.kind) {
+          case 'basemap':
+            outcome = applyBasemapTemplate(detail, dispatchAction);
             break;
-          }
-          case 'symbology': {
-            const payload = (t as unknown as { payload?: SymbologyPayload }).payload;
-            if (payload) {
-              // The gallery pass doesn't bind a specific layer; the renderer
-              // dispatches to the active layer or surfaces a picker.
-              applySymbology(payload, '');
-            }
+          case 'symbology':
+            outcome = applySymbologyTemplate(detail, dispatchAction, hud);
             break;
-          }
-          case 'thematic': {
-            const payload = (t as unknown as { payload?: Record<string, unknown> }).payload ?? {};
-            // Gallery pass: no active field — empty string signals the
-            // renderer to surface a field picker.
-            type ThematicMethod = 'quantiles' | 'equal_interval' | 'natural_breaks' | 'lisa';
-            const method = payload.method as ThematicMethod | undefined;
-            // Thematic preset dispatch is a discriminated union (choropleth
-            // vs heatmap) with different optional fields. Branch on variant
-            // to give TS the right shape.
-            const variant = (payload.variant as 'choropleth' | 'heatmap') ?? 'choropleth';
-            if (variant === 'heatmap') {
-              resolveThematicPreset(
-                {
-                  variant: 'heatmap',
-                  intensity: (payload as { intensity?: number }).intensity,
-                  radius: (payload as { radius?: number }).radius,
-                  heatPalette: (payload as { heatPalette?: string[] }).heatPalette,
-                },
-                ''
-              );
-            } else {
-              const k = (payload as { k?: number }).k;
-              const palette = (payload as { palette?: string }).palette;
-              // Build the choropleth payload with only the keys the type
-              // actually allows (omit `method` entirely when missing — the
-              // TypeAdapter treats undefined as invalid).
-              const choroplethPayload: {
-                variant: 'choropleth';
-                method?: 'quantiles' | 'equal_interval' | 'natural_breaks' | 'lisa';
-                k?: number;
-                palette?: string;
-              } = { variant: 'choropleth' };
-              if (method) (choroplethPayload as { method: typeof method }).method = method;
-              if (k !== undefined) choroplethPayload.k = k;
-              if (palette !== undefined) choroplethPayload.palette = palette;
-              resolveThematicPreset(
-                choroplethPayload as unknown as Parameters<typeof resolveThematicPreset>[0],
-                ''
-              );
-            }
+          case 'layout':
+            outcome = applyLayoutTemplate(detail, hud);
             break;
-          }
-          case 'layout': {
-            const payload = (t as unknown as { payload?: { style?: Record<string, unknown> } }).payload;
-            if (payload?.style) {
-              resolveStyle(payload.style as never);
-            }
-            break;
-          }
-          case 'composite': {
-            // Composite templates bundle the other 4 kinds; the agent
-            // dispatch pipeline resolves them. Surface a hint for the user.
-            console.info('[TemplateGalleryV2] composite apply — use the Agent chat for full pipeline.');
-            break;
-          }
+          default:
+            // thematic needs a data field + geojson; composite bundles the
+            // full agent pipeline — neither can land from the gallery.
+            outcome = {
+              ok: false,
+              error: '专题/复合模板需要数据字段与渲染流水线，请通过 Agent 对话应用',
+            };
         }
-        onApply?.(t);
+        if (outcome.ok) {
+          onApply?.(outcome.detail);
+        } else {
+          useToastStore.getState().addToast(outcome.error, 'error');
+        }
       } catch (err) {
         console.warn('[TemplateGalleryV2] apply failed:', err);
+        const reason = err instanceof Error ? err.message : '未知错误';
+        useToastStore.getState().addToast(`模板「${t.name}」应用失败：${reason}`, 'error');
+      } finally {
+        setApplyingId(null);
       }
     },
-    [onApply],
+    [applyingId, dispatchAction, onApply]
   );
 
   if (!open) return null;
@@ -272,6 +351,8 @@ export function TemplateGalleryV2({ open, onClose, onApply }: TemplateGalleryV2P
                   key={t.id}
                   template={t}
                   selected={activeTemplate?.id === t.id}
+                  applying={applyingId === t.id}
+                  applyDisabled={applyingId !== null}
                   onSelect={handleSelect}
                   onApply={handleApply}
                 />
@@ -368,11 +449,17 @@ function KindTabs({
 const TemplateCard = React.memo(function TemplateCard({
   template,
   selected,
+  applying,
+  applyDisabled,
   onSelect,
   onApply,
 }: {
   template: TemplateSummary;
   selected: boolean;
+  /** This card's apply fetch is in flight (loading state on the button). */
+  applying: boolean;
+  /** Any card's apply is in flight — one detail fetch at a time. */
+  applyDisabled: boolean;
   onSelect: (t: TemplateSummary) => void;
   onApply: (t: TemplateSummary) => void;
 }) {
@@ -419,12 +506,14 @@ const TemplateCard = React.memo(function TemplateCard({
             e.stopPropagation();
             handleApplyClick();
           }}
-          className="rounded-sm px-2 py-1 text-caption font-medium text-agent-accent transition-opacity hover:opacity-80"
+          disabled={applyDisabled}
+          aria-busy={applying}
+          className="rounded-sm px-2 py-1 text-caption font-medium text-agent-accent transition-opacity hover:opacity-80 disabled:opacity-50"
           style={{
             background: 'color-mix(in srgb, var(--agent-accent) 12%, transparent)',
           }}
         >
-          应用
+          {applying ? '应用中…' : '应用'}
         </button>
       </div>
     </div>
