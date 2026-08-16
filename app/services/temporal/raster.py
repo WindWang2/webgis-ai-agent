@@ -394,18 +394,48 @@ class TemporalRasterEngine:
 
         timestamps = []
         means = []
+        skipped: List[Dict[str, Any]] = []
 
         for idx, entry in enumerate(stats_info["series_statistics"]):
-            m_val = entry["statistics"].get("mean", 0.0)
+            # #458: a missing/failed raster yields empty statistics — it must
+            # be SKIPPED and reported, not contribute a fabricated mean 0.0
+            # that drags the trend toward a confident "stable" verdict.
+            m_val = (entry.get("statistics") or {}).get("mean")
+            if m_val is None:
+                skipped.append({
+                    "index": idx,
+                    "timestamp": entry.get("timestamp"),
+                    "path": entry.get("path"),
+                    "reason": "missing_or_failed_statistics",
+                })
+                continue
+            try:
+                m_val = float(m_val)
+            except (TypeError, ValueError):
+                skipped.append({
+                    "index": idx,
+                    "timestamp": entry.get("timestamp"),
+                    "path": entry.get("path"),
+                    "reason": "non_numeric_mean",
+                })
+                continue
+            if not math.isfinite(m_val):
+                skipped.append({
+                    "index": idx,
+                    "timestamp": entry.get("timestamp"),
+                    "path": entry.get("path"),
+                    "reason": "non_finite_mean",
+                })
+                continue
             t_val = entry.get("timestamp") or f"t_{idx}"
             timestamps.append(str(t_val))
-            means.append(float(m_val))
+            means.append(m_val)
 
         from app.services.temporal.trend import TemporalTrendEngine
         trend_eng = TemporalTrendEngine()
         trend_res = trend_eng.analyze_trend(data=means, metric_name="raster_mean")
 
-        return {
+        result = {
             "timestamps": timestamps,
             "means": means,
             "slope": trend_res.slope,
@@ -413,6 +443,9 @@ class TemporalRasterEngine:
             "r_squared": trend_res.r_squared,
             "direction": trend_res.direction,
         }
+        if skipped:
+            result["skipped_slices"] = skipped
+        return result
 
     # #454: the temporal_raster tool's `operation` argument selects the
     # analysis branches. "all" (the previous unconditional pipeline) stays the

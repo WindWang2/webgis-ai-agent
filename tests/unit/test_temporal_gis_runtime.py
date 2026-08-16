@@ -573,6 +573,85 @@ async def test_execute_temporal_raster_invalid_operation_raises():
         await engine.execute_temporal_raster(raster_series=series, operation="quantum")
 
 
+def test_raster_trend_over_aoi_skips_missing_slices(tmp_path):
+    """Issue #458: a missing/failed raster contributed mean 0.0 to the trend
+    (`.get("mean", 0.0)` on empty statistics) — fabricating points that drag
+    the slope toward 0 and dress a real decline as 'stable'. Missing slices
+    must be skipped and listed."""
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+
+    def _write(path, value):
+        with rasterio.open(
+            path, "w", driver="GTiff", height=4, width=4, count=1, dtype="float64",
+            crs="EPSG:4326", transform=from_origin(0.0, 4.0, 1.0, 1.0),
+        ) as dst:
+            dst.write(np.full((4, 4), value), 1)
+        return path
+
+    p1 = _write(str(tmp_path / "s1.tif"), 10.0)
+    p2 = str(tmp_path / "missing.tif")  # never written → failed statistics
+    p3 = _write(str(tmp_path / "s3.tif"), 30.0)
+
+    series = [
+        {"timestamp": "2026-01-01T00:00:00Z", "path": p1},
+        {"timestamp": "2026-02-01T00:00:00Z", "path": p2},
+        {"timestamp": "2026-03-01T00:00:00Z", "path": p3},
+    ]
+    engine = TemporalRasterEngine()
+    stats = engine.temporal_raster_statistics(series)
+    assert stats["series_statistics"][1]["statistics"] == {}  # the failed slice
+
+    res = engine.raster_trend_over_aoi(series, stats_info=stats)
+
+    # Trend computed over the 2 valid slices only (means 10 → 30, slope 20).
+    assert res["means"] == [10.0, 30.0]
+    assert res["slope"] == 20.0
+    assert res["direction"] == "increasing"
+    # The skip is listed explicitly.
+    assert len(res["skipped_slices"]) == 1
+    assert res["skipped_slices"][0]["index"] == 1
+    assert res["skipped_slices"][0]["path"] == p2
+
+
+def test_raster_trend_over_aoi_all_slices_missing():
+    """Adversarial: every slice failed → empty series, no fabricated zeros."""
+    series = [
+        {"timestamp": "2026-01-01T00:00:00Z", "path": "/nonexistent/a.tif"},
+        {"timestamp": "2026-02-01T00:00:00Z", "path": "/nonexistent/b.tif"},
+    ]
+    engine = TemporalRasterEngine()
+    res = engine.raster_trend_over_aoi(series)
+
+    assert res["means"] == []
+    assert res["slope"] == 0.0
+    assert len(res["skipped_slices"]) == 2
+
+
+def test_raster_trend_over_aoi_all_valid_no_skips(tmp_path):
+    """No missing slices → no skipped_slices key noise, identical means."""
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+
+    series = []
+    for i, value in enumerate((10.0, 12.0, 14.0)):
+        path = str(tmp_path / f"v{i}.tif")
+        with rasterio.open(
+            path, "w", driver="GTiff", height=4, width=4, count=1, dtype="float64",
+            crs="EPSG:4326", transform=from_origin(0.0, 4.0, 1.0, 1.0),
+        ) as dst:
+            dst.write(np.full((4, 4), value), 1)
+        series.append({"timestamp": f"2026-0{i+1}-01T00:00:00Z", "path": path})
+
+    engine = TemporalRasterEngine()
+    res = engine.raster_trend_over_aoi(series)
+
+    assert res["means"] == [10.0, 12.0, 14.0]
+    assert "skipped_slices" not in res
+
+
 # ---------------------------------------------------------------------------
 # 8. Unified TemporalEngine Orchestrator Seam Tests
 # ---------------------------------------------------------------------------
