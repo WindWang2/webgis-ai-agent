@@ -88,6 +88,28 @@ async def add_document(
         # Vectors are already indexed; surface the failure rather than reporting
         # success for a document that will never appear in list_documents.
         logger.error(f"[RAG] add_document metadata persistence failed: {e}", exc_info=True)
+        # #545（#485 的 add 侧镜像）：向量已在 engine.index_document 提交，
+        # 而 DB 行没写进去 —— 若不补偿，这些向量成为永久可检索孤儿：
+        #   - 无 DB 行 → API delete_document 的所有权检查查不到 → 删不掉
+        #   - 无 deleted 标记 → compact 永远不会清理
+        # 补偿用与删除同源的幂等原语（engine.delete_document → mark_deleted），
+        # 只在向量确实已提交的路径执行（本 except 仅在 index_document 成功之后）。
+        try:
+            await engine.delete_document(doc_id, tenant=tenant)
+            logger.warning(
+                "[RAG] add_document compensation: soft-deleted orphan vectors for %s", doc_id
+            )
+        except Exception as comp_e:
+            # 补偿也失败：向量仍然可检索。显式标记，绝不静默成功。
+            logger.error(
+                "[RAG] add_document compensation FAILED for %s — orphan vectors remain "
+                "retrievable: %s", doc_id, comp_e,
+                exc_info=True,
+            )
+            return {
+                "error": f"document indexed but metadata persistence failed: {e}",
+                "orphan_possible": True,
+            }
         return {"error": f"document indexed but metadata persistence failed: {e}"}
 
     return {

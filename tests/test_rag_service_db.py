@@ -282,3 +282,109 @@ async def test_list_documents_pagination_math(rag_db, tmp_path):
     assert len(page1["items"]) == 2
     assert page2["total"] == 3
     assert len(page2["items"]) == 1
+
+
+# ── #545: add_document 的 add 侧补偿（#485 的镜像）────────────────────────
+
+
+async def test_add_document_db_failure_compensates_orphan_vectors(rag_db, monkeypatch):
+    """#545 单元：index_document 成功后 DB 写失败 → 必须调用
+    engine.delete_document（幂等软删）补偿已提交的向量，并返回 error。"""
+    from app.services import rag_service
+    from app.services.rag import engine as engine_mod
+
+    indexed = {
+        "document_id": "doc_deadbeef",
+        "chunks": [{"content": "orphan content", "chunk_index": 0,
+                    "start_char": 0, "end_char": 5}],
+        "status": "indexed",
+    }
+    deleted: list[str] = []
+
+    class FakeEngine:
+        async def index_document(self, **kwargs):
+            return dict(indexed)
+
+        async def delete_document(self, doc_id, tenant=None):
+            deleted.append(doc_id)
+            return True
+
+    # DB 写入必然失败（#545 的复现方式：async_db_session 抛异常）
+    import app.tools._utils as utils_mod
+
+    @asynccontextmanager
+    async def boom():
+        raise RuntimeError("simulated DB outage")
+        yield  # pragma: no cover — async gen 形态（保证 __aenter__ 才抛）
+
+    monkeypatch.setattr(utils_mod, "async_db_session", boom)
+
+    with patch.object(engine_mod, "get_knowledge_engine", return_value=FakeEngine()):
+        result = await rag_service.add_document(title="t", content="orphan content")
+
+    assert "error" in result, "DB 失败必须上报 error，不得假装成功"
+    assert deleted == ["doc_deadbeef"], (
+        f"补偿未触发：engine.delete_document 应被调用，实际 {deleted}"
+    )
+
+
+async def test_add_document_db_failure_leaves_no_searchable_orphan(rag_db, tmp_path, monkeypatch):
+    """#545 集成（真实 FaissVectorStore + 补丁 embed）：DB 失败后向量被软删，
+    语义搜索不再返回孤儿内容；重试成功入库，索引/元数据无双重拷贝。"""
+    from contextlib import asynccontextmanager
+
+    import numpy as np
+
+    from app.services import rag_service
+    from app.services.rag import engine as engine_mod
+    from app.services.rag.engine import KnowledgeEngine
+    from app.services.rag.faiss_store import FaissVectorStore
+    from app.tools import _utils
+
+    store = FaissVectorStore(index_dir=str(tmp_path / "vectors"))
+
+    def fake_embed(self, texts):
+        rng = np.random.default_rng(seed=7)
+        # 与 _get_index 默认 dim=384 保持一致（空索引/查询向量同维）
+        return np.array(rng.random((len(texts), 384)), dtype=np.float32)
+
+    monkeypatch.setattr(FaissVectorStore, "embed_texts", fake_embed)
+    real_engine = KnowledgeEngine(vector_store=store)
+
+    # rag_db fixture 已把 _utils.async_db_session 换成真实 sqlite；包一层：
+    # 第一次调用抛异常，后续放行。
+    original_session = _utils.async_db_session
+    fails = {"n": 0}
+
+    @asynccontextmanager
+    async def flaky_session():
+        fails["n"] += 1
+        if fails["n"] == 1:
+            raise RuntimeError("simulated DB outage")
+        async with original_session() as s:
+            yield s
+
+    monkeypatch.setattr(_utils, "async_db_session", flaky_session)
+
+    with patch.object(engine_mod, "get_knowledge_engine", return_value=real_engine):
+        # 第一次 add：向量已提交，DB 失败 → 补偿软删
+        result = await rag_service.add_document(title="t1", content="orphan content")
+        assert "error" in result
+
+        # 孤儿不得再可检索
+        found = await rag_service.semantic_search(query="orphan content", top_k=5)
+        assert found == [], f"孤儿向量仍可检索: {found}"
+
+        # 第二次 add：DB 恢复 → 成功；向量库 chunk 数与 DB 上报一致（无双重拷贝）
+        ok = await rag_service.add_document(title="t2", content="real content")
+        assert "error" not in ok
+
+        meta = store.load_metadata()
+        assert len(meta["chunks"]) == ok["chunk_count"], (
+            f"重试后向量库 chunk 数（{len(meta['chunks'])}）与 DB 上报（{ok['chunk_count']}）"
+            "不一致 —— 孤儿残留或双重拷贝"
+        )
+        assert all(c["document_id"] == ok["document_id"] for c in meta["chunks"]), (
+            f"向量库出现非本次文档的 chunk（孤儿未清干净）: "
+            f"{[c['content'] for c in meta['chunks']]}"
+        )
