@@ -18,6 +18,29 @@ from app.services.temporal.profiler import parse_value_to_instant
 logger = logging.getLogger(__name__)
 
 
+def _nodata_valid_mask(arr: np.ndarray, nodata) -> np.ndarray:
+    """Boolean mask of *valid* (non-nodata) pixels.
+
+    Handles the NaN-nodata case correctly: ``arr != NaN`` is all-True
+    (``NaN != NaN``), so a naive value comparison would treat every pixel as
+    valid. Float arrays also exclude *undeclared* NaN pixels. Mirrors
+    ``app/lib/geo_analysis/raster_math.py::_nodata_valid_mask`` — the in-repo
+    reference implementation (issue #523).
+    """
+    if nodata is None:
+        base = np.ones(arr.shape, dtype=bool)
+    elif isinstance(nodata, float) and np.isnan(nodata):
+        base = ~np.isnan(arr)
+    elif isinstance(nodata, str) and nodata.strip().lower() == "nan":
+        # Dict-contract nodata may arrive as the string "nan".
+        base = ~np.isnan(arr)
+    else:
+        base = arr != nodata
+    if np.issubdtype(arr.dtype, np.floating):
+        base = base & ~np.isnan(arr)
+    return base
+
+
 class TemporalRasterEngine:
     """
     Executes windowed raster time series operations.
@@ -107,16 +130,22 @@ class TemporalRasterEngine:
                 except Exception as e:
                     logger.warning(f"Error computing zonal stats on {rpath}: {e}")
 
-            # Fallback or mock data embedded in item for testing / in-memory raster series
+            # Fallback or mock data embedded in item for testing / in-memory raster series.
+            # Issue #523: honor the declared nodata sentinel (and NaN) instead of
+            # feeding raw sentinels into nanmean/nanmin/nanmax/nanstd; an all-invalid
+            # array leaves stats_res empty (same shape as a failed file-path slice,
+            # which the trend step skips).
             if not stats_res and "data" in item:
                 arr = np.array(item["data"], dtype=float)
                 if arr.size > 0:
-                    stats_res = {
-                        "mean": float(np.nanmean(arr)),
-                        "min": float(np.nanmin(arr)),
-                        "max": float(np.nanmax(arr)),
-                        "std": float(np.nanstd(arr)),
-                    }
+                    valid = arr[_nodata_valid_mask(arr, item.get("nodata"))]
+                    if valid.size > 0:
+                        stats_res = {
+                            "mean": float(np.mean(valid)),
+                            "min": float(np.min(valid)),
+                            "max": float(np.max(valid)),
+                            "std": float(np.std(valid)),
+                        }
 
             series_stats.append({
                 "timestamp": str(t_val) if t_val else None,
@@ -155,12 +184,32 @@ class TemporalRasterEngine:
         if d1 is not None and d2 is not None:
             arr1 = np.array(d1, dtype=float)
             arr2 = np.array(d2, dtype=float)
+            # Issue #523: the in-memory contract optionally carries declared
+            # nodata per side ("nodata" key); mask those sentinels so a nodata
+            # pixel cannot masquerade as diff=0 or pollute min/max with
+            # (nodata - value) garbage. Pure-NaN inputs behave as before.
+            nodata1 = raster_t1.get("nodata") if isinstance(raster_t1, dict) else None
+            nodata2 = raster_t2.get("nodata") if isinstance(raster_t2, dict) else None
             diff = arr2 - arr1
+            valid = diff[
+                _nodata_valid_mask(arr1, nodata1)
+                & _nodata_valid_mask(arr2, nodata2)
+                & ~np.isnan(diff)
+            ]
+            if valid.size == 0:
+                nan = float("nan")
+                return {
+                    "mean_difference": nan,
+                    "min_difference": nan,
+                    "max_difference": nan,
+                    "std_difference": nan,
+                    "pixel_count": int(diff.size),
+                }
             return {
-                "mean_difference": float(np.nanmean(diff)),
-                "min_difference": float(np.nanmin(diff)),
-                "max_difference": float(np.nanmax(diff)),
-                "std_difference": float(np.nanstd(diff)),
+                "mean_difference": float(np.mean(valid)),
+                "min_difference": float(np.min(valid)),
+                "max_difference": float(np.max(valid)),
+                "std_difference": float(np.std(valid)),
                 "pixel_count": int(diff.size),
             }
 
@@ -196,15 +245,26 @@ class TemporalRasterEngine:
 
     @classmethod
     def _streamed_difference_stats(cls, src1, src2, window) -> Dict[str, Any]:
-        """NaN-aware difference statistics over the full window, accumulated
+        """Nodata-aware difference statistics over the full window, accumulated
         over fixed-size rasterio sub-windows (bounded memory, #448).
 
+        A pixel counts only when both sides hold real data: the declared
+        nodata sentinels of either raster (``src*.nodata``) and any NaN are
+        excluded from the difference statistics (issue #523) — previously only
+        NaN was masked, so a two-nodata pixel contributed diff=0 and a
+        one-nodata pixel contributed ``nodata - value`` garbage to
+        mean/min/max/std. ``pixel_count`` stays the total analyzed pixels.
+
         Moments are combined with Chan's parallel algorithm so the streamed
-        mean/std match a brute-force full-window np.nanmean/np.nanstd; an
-        entirely-NaN window yields NaN stats (same as the previous
+        mean/std match a brute-force full-window masked np.mean/np.std; an
+        entirely-invalid window yields NaN stats (same as the previous
         full-array behavior) without per-block RuntimeWarnings.
         """
         from rasterio.windows import Window
+
+        # Nodata is raster-wide; read it once per file, not per block.
+        nodata1 = src1.nodata
+        nodata2 = src2.nodata
 
         bs = cls._DIFF_BLOCK_SIZE
         row0, col0 = int(window.row_off), int(window.col_off)
@@ -224,7 +284,11 @@ class TemporalRasterEngine:
                 b2 = src2.read(1, window=w).astype(float)
                 diff = b2 - b1
                 total += diff.size
-                valid = diff[~np.isnan(diff)]
+                valid = diff[
+                    _nodata_valid_mask(b1, nodata1)
+                    & _nodata_valid_mask(b2, nodata2)
+                    & ~np.isnan(diff)
+                ]
                 if valid.size == 0:
                     continue
                 b_n = int(valid.size)
