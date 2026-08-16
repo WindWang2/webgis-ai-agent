@@ -443,7 +443,6 @@ def _pixel_change_classification(t1: Dict, t2: Dict, change_threshold: float) ->
     if sub1.shape != sub2.shape:
         # Different resolutions → resample T2 onto T1's common-window grid.
         try:
-            import rasterio
             from rasterio.transform import from_origin
             from rasterio.warp import Resampling, reproject
 

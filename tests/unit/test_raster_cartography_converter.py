@@ -2,7 +2,6 @@
 import io
 
 import numpy as np
-import pytest
 from PIL import Image
 
 from app.services.raster_cartography_converter import (
