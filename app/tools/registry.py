@@ -15,6 +15,7 @@ from app.services.session_data import session_data_manager
 from app.lib.geo_processor.core import GeoAnalysisResult
 
 from app.services.jobs.cancellation import OperationCancelled
+from app.services.llm_result_formatter import is_error_like_result
 
 logger = logging.getLogger(__name__)
 
@@ -388,8 +389,17 @@ class ToolRegistry:
             raise
         finally:
             duration_ms = int((_time.perf_counter() - start) * 1000)
-            if isinstance(result, dict) and result.get("success") is False:
-                error_cls = error_cls or result.get("error_type") or result.get("code")
+            # #529: {"error": <str>} normal-return failures must be classified
+            # as errors in the metrics row too (not silently "no error class").
+            if isinstance(result, dict) and (
+                result.get("success") is False or is_error_like_result(result)
+            ):
+                error_cls = (
+                    error_cls
+                    or result.get("error_type")
+                    or result.get("code")
+                    or "tool_error"
+                )
             # PERF-01: avoid a second full json.dumps of large tool results
             # (e.g. a 10k-feature GeoJSON) purely to record a byte metric. The
             # dispatch service already serializes for the LLM payload; here we
