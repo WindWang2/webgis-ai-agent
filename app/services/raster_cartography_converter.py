@@ -133,6 +133,12 @@ def render_array_to_png(array: np.ndarray, palette: str = DEFAULT_RASTER_PALETTE
   # NaN/nodata cells render as transparent (alpha=0) instead of leaking
   # palette[0] garbage from floor(NaN).
   nodata_mask = ~np.isfinite(arr)
+  # #480: NaN must be zeroed BEFORE the integer stop indexing below —
+  # np.clip does not remove NaN (NaN comparisons are False), so
+  # floor(NaN).astype(int) yields INT64_MIN on x86-64 and rgb_stops[lower]
+  # raises IndexError. Color value is irrelevant for masked cells; the alpha
+  # channel keeps them transparent.
+  norm = np.where(nodata_mask, 0.0, norm)
 
   # Map normalized [0,1] → index into rgb_stops, with linear interp between stops.
   n_stops = len(rgb_stops)
