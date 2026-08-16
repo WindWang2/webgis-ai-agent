@@ -50,10 +50,6 @@ class Chunk(Base):
     chunk_index = Column(Integer, nullable=False)  # 在原文档中的顺序
     start_char = Column(Integer, nullable=True)  # 原文起始位置
     end_char = Column(Integer, nullable=True)  # 原文结束位置
-    
-    __table_args__ = (
-        Index("idx_chunk_document", "document_id"),
-    )
 
 
 __all__ = ["Document", "Chunk"]
