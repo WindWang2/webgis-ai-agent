@@ -217,3 +217,42 @@ def test_manage_asset_owner_delete_removes_file_and_row(upload_db, tmp_path, mon
 
     with upload_db() as s:
         assert s.get(UploadRecord, 2) is None, "DB 行应被删除"
+
+
+# ── list_analysis_assets（review：#543 同一泄漏类的收紧）───────────────
+
+
+def _list_assets_tool_fn():
+    from app.tools.nature_resources import register_nature_resource_tools
+    from app.tools.registry import ToolRegistry
+
+    registry = ToolRegistry()
+    register_nature_resource_tools(registry)
+    return registry._tools["list_analysis_assets"]
+
+
+def test_list_assets_owner_returns_own_raster_only(upload_db):
+    """拥有者会话：只返回本会话的 raster_analysis 资产（id=2），
+    不包含非光栅上传（id=3）与 NULL-session 记录（id=4）。"""
+    fn = _list_assets_tool_fn()
+    result = fn(session_id="session-ALICE")
+    assert result["success"] is True
+    assert [a["id"] for a in result["assets"]] == [2]
+
+
+def test_list_assets_cross_session_isolated(upload_db):
+    """跨会话：BOB 只能看到自己的资产（id=1），看不到 ALICE 的资产（id=2）。"""
+    fn = _list_assets_tool_fn()
+    result = fn(session_id="session-BOB")
+    assert result["success"] is True
+    assert [a["id"] for a in result["assets"]] == [1]
+
+
+def test_list_assets_denied_without_session(upload_db):
+    """匿名/无会话（None-session 派发路径）：拒绝并返回空，
+    绝不回退成返回全库资产列表（旧代码 if session_id: 条件过滤）。"""
+    fn = _list_assets_tool_fn()
+    result = fn(session_id=None)
+    assert "error" in result, "无会话调用必须显式拒绝"
+    assert result["assets"] == []
+    assert result["count"] == 0

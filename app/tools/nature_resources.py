@@ -60,14 +60,28 @@ def register_nature_resource_tools(registry: ToolRegistry):
     def list_analysis_assets(session_id: Optional[str] = None) -> dict:
         from app.models.upload import UploadRecord
 
-        with db_session() as db:
-            query = db.query(UploadRecord).filter(UploadRecord.geometry_type == "raster_analysis")
-            if session_id:
-                query = query.filter(UploadRecord.session_id == session_id)
+        # #543：与会话工具同款语义 —— 无解析会话（匿名/上下文缺失/伪造 id）
+        # 一律拒绝，绝不跨会话返回全库资产列表（旧代码 if session_id: 是
+        # 条件过滤，None-session 时直接返回全局 top-100 资产名/路径/bbox）。
+        resolved_session = _resolve_session_id(session_id)
+        if not resolved_session:
+            return {
+                "error": "未检测到有效的会话上下文，无法列出分析资产",
+                "assets": [],
+                "count": 0,
+            }
 
-            # #543 配套：无上限的 .all() 允许 LLM 一次拉取全库分析资产列表；
-            # 与 list_uploaded_data 的 50 条上限同款，取 100 条封顶。
-            records = query.order_by(UploadRecord.upload_time.desc()).limit(100).all()
+        with db_session() as db:
+            records = (
+                db.query(UploadRecord)
+                .filter(
+                    UploadRecord.geometry_type == "raster_analysis",
+                    UploadRecord.session_id == resolved_session,
+                )
+                .order_by(UploadRecord.upload_time.desc())
+                .limit(100)
+                .all()
+            )
             assets = [{
                 "id": r.id,
                 "name": r.original_name,
