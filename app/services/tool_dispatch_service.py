@@ -327,6 +327,17 @@ class ToolDispatchService:
                 target_data = result["geojson"]
             elif result.get("type") == "FeatureCollection" and "features" in result:
                 target_data = result
+            elif (
+                isinstance(result.get("data"), dict)
+                and result["data"].get("type") == "FeatureCollection"
+                and "features" in result["data"]
+            ):
+                # #517：to_llm_response() 工具族（~29 站点）返回
+                # {success, summary, data: FeatureCollection, ...} 形状，
+                # data 包裹的 FC 同样要入 ref store —— 否则分析结果永远
+                # 不挂载到地图上，LLM 载荷被裁剪到只剩 summary。
+                # 与 kde_contours（顶层 FC）保持同一挂载契约。
+                target_data = result["data"]
             if target_data is not None:
                 geojson_ref = await session_data_manager.store(session_id, target_data, prefix="geojson")
             if result.get("type") == "heatmap_raster":

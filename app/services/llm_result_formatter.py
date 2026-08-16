@@ -275,7 +275,7 @@ def slim_event_result(result: Any) -> Any:
             west, south, east, north = parts
             bbox = [west, south, east, north]
 
-    exclude = {"geojson", "features", "data_list", "grid"}
+    exclude = {"geojson", "features", "data_list", "grid", "data"}
     slim = {k: v for k, v in result.items() if k not in exclude}
 
     if isinstance(result.get("mapspec"), dict):
