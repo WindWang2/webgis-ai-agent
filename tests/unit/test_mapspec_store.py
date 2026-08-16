@@ -295,7 +295,12 @@ async def test_auto_checkpoint_fails_truthfully_when_live_ref_was_evicted(clean_
   checkpoint = await snapshot(
       mapspec, session_dir, session_data_manager, checkpoint_id=None
   )
-  await session_data_manager.clear_session(clean_session)
+  # Simulate eviction of the session's in-memory live refs only (what a
+  # process restart or LRU memory eviction leaves behind). Since #505
+  # clear_session() also purges on-disk state (checkpoints included, #470),
+  # so it can no longer model "live refs gone but checkpoint metadata
+  # intact" — that contract is exactly what this test pins down.
+  session_data_manager._store.pop(clean_session, None)
 
   restored = await rollback(
       session_dir, checkpoint["checkpoint_id"], session_data_manager
