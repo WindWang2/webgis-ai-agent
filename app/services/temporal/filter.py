@@ -48,8 +48,11 @@ class TemporalFilterEngine:
 
         clean_str = window_str.strip().lower().replace("-", "_")
 
-        # Regex for patterns like last_7_days, past_3_months, last_24_hours, past_1_year
-        m = re.match(r"^(last|past)_(\d+)\b_*(day|days|hour|hours|month|months|year|years|week|weeks)$", clean_str)
+        # Regex for patterns like last_7_days, past_3_months, last_24_hours, past_1_year.
+        # (\d+) is followed directly by _+(unit): a \b here would never match
+        # (digit and '_' are both word chars), which made arbitrary N values
+        # like last_2_days fall through to the preset fallbacks and raise (#507).
+        m = re.match(r"^(last|past)_(\d+)_+(day|days|hour|hours|month|months|year|years|week|weeks)$", clean_str)
         if m:
             val = int(m.group(2))
             unit = m.group(3)
