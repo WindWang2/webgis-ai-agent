@@ -16,6 +16,13 @@ data:
   # 配合 allow_credentials=True 的 CSRF 攻击面。
   CORS_ORIGINS: "https://webgis.example.com"
   CELERY_CONCURRENCY: "2"
+  # #519: DATA_DIR 必须指向可写挂载路径。config.py 默认 "./data"（相对
+  # WORKDIR /app/backend），而 k8s rootfs 只读 + 未设此变量 → import 期
+  # os.makedirs 抛 Read-only file system → CrashLoopBackOff。两个 Deployment
+  # 都把共享 RWX PVC webgis-uploads-pvc 挂在 /app/data（见 02/03 的
+  # volumeMounts）—— 整个 DATA_DIR 子树（uploads/analysis_results/
+  # monitoring_reports/exports）跨 api/celery pod 共享。
+  DATA_DIR: "/app/data"
 ---
 # ⚠️ 审计 I4：Secret 资源已从此文件移除。
 #
@@ -31,6 +38,13 @@ data:
 #     --from-literal=REDIS_URL='redis://:PWD@redis:6379/0' \
 #     --from-literal=CELERY_BROKER_URL='redis://:PWD@redis:6379/0' \
 #     --from-literal=CELERY_RESULT_BACKEND='redis://:PWD@redis:6379/1'
+#   # #561: 启用 05-deps-optional.yaml（可选内部 postgres/redis）时还需
+#   # 组件键（值必须与上面 URL 内嵌的 user/password/db 一致，否则
+#   # postgres 初始化的账号与 DATABASE_URL 对不上）：
+#   #   --from-literal=DB_USER='USER' \
+#   #   --from-literal=DB_PASSWORD='PWD' \
+#   #   --from-literal=DB_NAME='DB' \
+#   #   --from-literal=REDIS_PASSWORD='PWD'
 #
 # 或更安全：用 SealedSecrets / External Secrets / Vault 配合 GitOps。
 # 详见 docs/DEPLOYMENT.md 的 "Secret Management" 章节。

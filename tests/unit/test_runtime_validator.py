@@ -5,7 +5,12 @@ Two layers:
 - The full `validate_runtime` flow drives real headless Chromium over compiled
   output → marked `heavy` (opt-in, needs the Playwright browser + network for
   the MapLibre CDN). This mirrors how Seam C is gated per the spec.
+
+#532: the heavy flow self-skips unless REQUIRE_BROWSER=1 (set by the nightly
+`runtime-validator` CI lane, which installs playwright + chromium). In that
+lane a missing browser is a hard FAIL, not a green SKIPPED.
 """
+import os
 import shutil
 import uuid
 from pathlib import Path
@@ -162,6 +167,18 @@ def test_scores_low_for_empty_mapspec():
 
 # ─── full browser-driven flow (heavy, opt-in) ─────────────────────────────────
 
+REQUIRE_BROWSER = os.environ.get("REQUIRE_BROWSER") == "1"
+
+
+def _browser_guard(message: str) -> None:
+    """#532：浏览器依赖缺失时的处置 —— REQUIRE_BROWSER=1 的 lane 硬失败，
+    其余上下文（本地开发 / PR lane）跳过。修复前这里永远 skip：没有任何 lane
+    安装 playwright，真实 MapLibre 渲染门在 CI 里从未执行。"""
+    if REQUIRE_BROWSER:
+        pytest.fail(message)
+    pytest.skip(message)
+
+
 @pytest.mark.heavy
 @pytest.mark.asyncio
 async def test_runtime_validator_full_flow(clean_session):
@@ -171,16 +188,16 @@ async def test_runtime_validator_full_flow(clean_session):
   CDN (the compiled HTML loads maplibre-gl from unpkg). Run with: pytest -m heavy
   """
   # The validator drives a Node subprocess (npx tsx runtime-validate.ts, cwd=frontend)
-  # that launches Playwright Chromium and loads maplibre-gl from a CDN. The Backend
-  # Tests CI job never runs `npm ci`, so frontend/node_modules/playwright is absent
-  # and the subprocess fails with `mapLoaded: False`. Skip gracefully rather than
-  # fail with a misleading assertion. Mirrors the skipif(weasyprint is None) guard
-  # in test_report_service_vector_svg.py.
+  # that launches Playwright Chromium and loads maplibre-gl from a CDN. PR lanes
+  # never run `npm ci` for the backend test jobs, so frontend/node_modules/playwright
+  # is absent and the subprocess would report `mapLoaded: False`. In non-browser
+  # contexts skip; in the runtime-validator lane (REQUIRE_BROWSER=1) a missing
+  # browser must fail the lane loudly instead of silently self-skipping (#532).
   import subprocess
   from app.services.mapspec_store import PROJECT_ROOT
 
   if not (PROJECT_ROOT / "frontend" / "node_modules" / "playwright").exists():
-    pytest.skip("requires Playwright (run `npm ci` in frontend/ first)")
+    _browser_guard("requires Playwright (run `npm ci` in frontend/ first)")
 
   try:
     check_proc = subprocess.run(
@@ -194,9 +211,9 @@ async def test_runtime_validator_full_flow(clean_session):
         timeout=5,
     )
     if check_proc.returncode != 0:
-      pytest.skip("requires Playwright Chromium binary (run `npx playwright install` in frontend/)")
+      _browser_guard("requires Playwright Chromium binary (run `npx playwright install` in frontend/)")
   except Exception:
-    pytest.skip("requires Playwright Chromium binary")
+    _browser_guard("requires Playwright Chromium binary")
 
   from app.services.runtime_validator import runtime_validator
 

@@ -17,7 +17,17 @@ export default defineConfig({
         '.next/',
         'test/',
         '*.config.*'
-      ]
+      ],
+      // #564：此前只有 reporter/exclude，无 thresholds —— 覆盖闸是装饰性的
+      // （任何覆盖率都能绿）。按当前基线（~78% lines / ~72% functions，
+      // 2026-08 在 master bb09e8c 上实测）ratchet，略低于实测值留出抖动
+      // 余量；随测试补充逐步调高。branches 在 jsdom 下计数不完整，下限放宽。
+      thresholds: {
+        lines: 75,
+        functions: 70,
+        statements: 75,
+        branches: 60
+      }
     }
   },
   resolve: {

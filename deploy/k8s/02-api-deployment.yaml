@@ -61,7 +61,10 @@ spec:
       # 滚动更新期间新副本不会带着旧 schema 接流量。
       initContainers:
       - name: db-migration
-        image: webgis-prod:v0.1.2
+        # #559: CI 推送 ghcr.io/windwang2/webgis-ai-agent:<sha>（production.yml
+        # build job，IMAGE_NAME 小写化）。部署时用 kustomize edit set image
+        # 把 tag 钉到 CI sha；此处 registry 已是真实坐标（raw apply 也可拉取）。
+        image: ghcr.io/windwang2/webgis-ai-agent:v0.1.2
         imagePullPolicy: Always
         command: ["alembic", "upgrade", "head"]
         # 与应用容器同一 config/secret 来源（DATABASE_URL 在其中）。
@@ -89,7 +92,9 @@ spec:
           mountPath: /tmp
       containers:
       - name: webgis-api
-        image: webgis-prod:v0.1.2
+        # #559: CI 推送坐标 ghcr.io/windwang2/webgis-ai-agent:<sha>；tag 由
+        # kustomize edit set image 在部署时钉到 CI sha（见 kustomization.yaml）。
+        image: ghcr.io/windwang2/webgis-ai-agent:v0.1.2
         imagePullPolicy: Always
         # 审计 I25：容器安全上下文 — 禁止权限提升，丢弃所有 capabilities
         securityContext:
@@ -147,11 +152,16 @@ spec:
         volumeMounts:
         - name: uploads-volume
           mountPath: /app/uploads
+        # #519: DATA_DIR（= /app/data，见 01-configmap.yaml）的整个子树落在
+        # 共享 RWX PVC webgis-uploads-pvc 上 —— uploads/analysis_results/
+        # monitoring_reports/exports 跨 pod 可见（api 有 2 副本 + celery worker）。
+        # 修复前 DATA_DIR 挂的是 per-pod emptyDir：celery 写入的结果 api pod
+        # 读不到，pod 重建即丢。
+        - name: uploads-volume
+          mountPath: /app/data
         # readOnlyRootFilesystem: true 需要显式挂载可写路径为 emptyDir
         - name: tmp
           mountPath: /tmp
-        - name: app-data
-          mountPath: /app/data
         - name: app-pi
           mountPath: /app/.pi
       volumes:
@@ -160,8 +170,6 @@ spec:
           claimName: webgis-uploads-pvc
       # 可写路径 emptyDir（rootfs 只读）
       - name: tmp
-        emptyDir: {}
-      - name: app-data
         emptyDir: {}
       - name: app-pi
         emptyDir: {}

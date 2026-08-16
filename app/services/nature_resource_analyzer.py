@@ -135,8 +135,11 @@ class NatureResourceAnalyzer:
 
                 # 计算 NDVI (处理除零)
                 denom = nir + red
-                # 避免除以零且处理无效数据
-                ndvi = np.divide((nir - red), denom, out=np.zeros_like(nir), where=denom != 0)
+                # Issue #537: denom==0 pixels (undeclared-zero borders / S2
+                # nodata) keep NaN, not a valid-looking 0.0 — 0.0 was counted
+                # as valid data and halved the reported mean. `invalid` pixels
+                # are re-masked to NaN right after.
+                ndvi = np.divide((nir - red), denom, out=np.full_like(nir, np.nan), where=denom != 0)
                 ndvi = np.where(invalid, np.nan, ndvi)
                 
                 # 获取元数据以便保存
@@ -153,11 +156,17 @@ class NatureResourceAnalyzer:
                 filename = f"NDVI_{int(time.time())}_{uuid.uuid4().hex[:6]}.tif"
                 result_path = os.path.join(output_dir, filename)
 
+                # Issue #537: header and bytes must agree — the header declares
+                # nodata=-9999, so invalid (NaN) pixels are written as -9999.0
+                # (was: raw NaN cells under a -9999 header; consumers masking
+                # the declared nodata by value never masked them).
+                out_ndvi = np.where(np.isnan(ndvi), -9999.0, ndvi)
+
                 # ADR-0052: 先写临时文件再原子 os.replace —— 取消/崩溃不会留下一个
                 # 看起来正常、其实只写了一半的 NDVI GeoTIFF（规范 §23）。
                 with atomic_output(result_path) as tmp_path:
                     with rasterio.open(tmp_path, 'w', **meta) as dst:
-                        dst.write(ndvi.astype(np.float32), 1)
+                        dst.write(out_ndvi.astype(np.float32), 1)
 
                 finite_ndvi = ndvi[np.isfinite(ndvi)]
                 stats = (

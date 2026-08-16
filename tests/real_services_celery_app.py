@@ -5,6 +5,11 @@ tests/test_real_services_smoke.py 启动的 worker 子进程通过本模块拿�
 任务必须在这里静态定义：worker 按名字查任务，测试进程里动态装饰的任务
 对 worker 是"unregistered"。
 
+#531：本模块是 **library 层** smoke（broker 投递/chain/revoke 语义）；
+production 层由 tests/test_real_services_smoke.py 的
+``production_celery_worker`` fixture 覆盖 —— 用 app.services.task_queue 的
+生产 app 在真实 Redis 上投递生产任务并取回结果。
+
 broker/backend 用真实 Redis（db 5，与会话数据隔离），由环境变量
 REAL_SMOKE_BROKER_URL / REAL_SMOKE_RESULT_BACKEND 注入（默认 localhost）。
 """

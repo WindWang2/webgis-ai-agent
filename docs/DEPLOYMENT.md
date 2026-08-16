@@ -66,6 +66,7 @@ npm run dev
 | `JWT_SECRET_KEY` | JWT 签名密钥（留空则自动生成，重启后失效） | 是 |
 | `LLM_API_KEY` | 支持工具调用的 LLM 密钥 | 是 |
 | `LLM_MODEL` | 默认模型（如 deepseek-v4-flash） | 否 |
+| `DATA_DIR` | 数据根目录（上传/uploads、analysis_results、monitoring_reports、exports、会话数据）。compose 生产栈统一设 `/app/data`（api 与 celery-worker 挂同一共享命名卷 `webgis_data`），k8s 设 `/app/data`（共享 RWX PVC）；默认 `./data` 相对 WORKDIR 展开，跨容器不可见且只读 rootfs 崩溃（见 #519） | 生产建议显式设置 |
 
 ## 排障雷达 (Troubleshooting)
 - **前端白屏/不显示建筑物**：按下 F12 查看网络。如果 `/api/v1/layers/data/{ref_id}?session_id=xxx` 报 404，极大概率是您的 Redis 没有启动或容积超标。
@@ -85,6 +86,12 @@ kubectl create secret generic webgis-secret --namespace=webgis-prod \
   --from-literal=REDIS_URL='redis://:PWD@redis:6379/0' \
   --from-literal=CELERY_BROKER_URL='redis://:PWD@redis:6379/0' \
   --from-literal=CELERY_RESULT_BACKEND='redis://:PWD@redis:6379/1'
+# #561: 启用 deploy/k8s/05-deps-optional.yaml（可选内部 postgres/redis）时，
+# 还需组件键（值必须与上面 URL 内嵌的 user/password/db 一致）：
+#   --from-literal=DB_USER='USER' \
+#   --from-literal=DB_PASSWORD='PWD' \
+#   --from-literal=DB_NAME='DB' \
+#   --from-literal=REDIS_PASSWORD='PWD'
 ```
 
 更安全：SealedSecrets / External Secrets / Vault。

@@ -1,0 +1,17 @@
+# Grafana 文件型 dashboard 预置（#562）。
+# 之前 dashboards/ 里只有 dashboard.json 导出，没有 provider 描述 —— Grafana
+# 默认忽略 provisioning 目录里未知的 JSON，面板永远不加载（datasources 侧有
+# 同款 provider 约定且工作正常）。本文件把 Grafana 指向同目录扫描 dashboard。
+# 由 docker-compose.prod.yml grafana 服务以只读挂载
+# ./deploy/grafana/provisioning → /etc/grafana/provisioning 交付。
+apiVersion: 1
+providers:
+  - name: webgis-dashboards
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/provisioning/dashboards

@@ -44,6 +44,57 @@ def test_compute_index_array_nodata_is_nan_not_zero():
     assert np.isnan(result[1])  # nodata pixel, not 0.0
 
 
+# ── Issue #537: EVI/NDVI all-zero inputs must stay NaN like the other
+#    indices (the EVI +1 denominator constant let all-zero bands through) ──
+
+_ZERO_8 = np.zeros((8, 8))
+
+
+@pytest.mark.parametrize("index", ["ndvi", "ndwi", "nbr", "evi"])
+def test_all_indices_all_zero_bands_are_nan(index):
+    """All-zero input (S2 L2A zero nodata) → NaN for every index, so
+    compute_raster_stats excludes the pixels instead of counting a plausible
+    0.0 as valid data (issue #537)."""
+    bands = {
+        "ndvi": {"red": _ZERO_8, "nir": _ZERO_8},
+        "ndwi": {"green": _ZERO_8, "nir": _ZERO_8},
+        "nbr": {"nir": _ZERO_8, "swir12": _ZERO_8},
+        "evi": {"blue": _ZERO_8, "red": _ZERO_8, "nir": _ZERO_8},
+    }[index]
+    result = compute_index_array(index, **bands)
+    assert np.all(np.isnan(result))
+
+
+def test_evi_partial_zero_rows_only_zero_rows_are_nan():
+    """Mixed image: only the all-zero row (nodata) must be NaN; the valid row
+    keeps its EVI value. DN inputs (1000/3000/800) are rescaled to reflectance
+    first (#382): EVI = 2.5·0.2/(0.3+0.6−0.6+1) = 0.5/1.3."""
+    red = np.array([[0.0, 1000.0]])   # row0 = nodata, row1 = DN 1000
+    nir = np.array([[0.0, 3000.0]])
+    blue = np.array([[0.0, 800.0]])
+    result = compute_index_array("evi", blue=blue, red=red, nir=nir)
+    assert np.isnan(result[0, 0])
+    assert result[0, 1] == pytest.approx(0.5 / 1.3, rel=1e-6)
+
+
+def test_compute_raster_stats_valid_pct_masks_zero_filled_index():
+    """Issue #537: an EVI image with a half all-zero (nodata) block reports
+    valid_pixel_pct == 50.0% (the masked truth), not 100%."""
+    from app.services.rs.band_math import compute_raster_stats
+
+    n = 8
+    blue = np.zeros((n, n))
+    red = np.full((n, n), 1000.0)
+    nir = np.full((n, n), 3000.0)
+    red[n // 2:] = 0.0
+    nir[n // 2:] = 0.0
+    evi = compute_index_array("evi", blue=blue, red=red, nir=nir)
+
+    stats = compute_raster_stats(evi)
+    assert stats["valid_pixels"] == n * n // 2
+    assert stats["valid_pixel_pct"] == "50.0%"
+
+
 def test_compute_slope_horn_matches_known_plane():
     """Reference: a plane tilted only in x at a known angle must recover that
     angle exactly (guards the Horn weights against inversion — audit B-F10
