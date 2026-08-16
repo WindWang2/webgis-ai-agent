@@ -539,7 +539,9 @@ async def _guard_body_session(
     if deleted_state.get("_cartographic_deleted") is True:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    owned = await AsyncHistoryService(db).get_session(
+    # #525: guard-only variant — no message-collection selectinload on the
+    # request-admission path.
+    owned = await AsyncHistoryService(db).get_session_meta(
         session_id, user_id=user_id, owner_token=owner_token
     )
     if owned is not None:
@@ -848,8 +850,16 @@ async def list_sessions(
 async def get_session_detail(
     session_id: str,
     conv: Conversation = Depends(require_owned_session),
+    db: AsyncSession = Depends(get_async_db),
 ):
-    """获取会话详情（只读）— 受所有权检查保护（A2 + SEC-08）。"""
+    """获取会话详情（只读）— 受所有权检查保护（A2 + SEC-08）。
+
+    #525: the ownership guard (require_owned_session → get_session_meta)
+    returns a metadata-only Conversation without the message collection; this
+    route is the one consumer that needs messages, so load them explicitly
+    here instead of riding every guard call.
+    """
+    await db.refresh(conv, attribute_names=["messages"])
     return {
         "id": conv.id,
         "title": conv.title,

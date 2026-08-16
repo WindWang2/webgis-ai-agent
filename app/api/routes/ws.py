@@ -75,7 +75,9 @@ async def websocket_endpoint(
 
     try:
         async with async_db_session() as db:
-            conv = await AsyncHistoryService(db).get_session(session_id, user_id)
+            # #525: ownership-only variant — WS connect must not load the full
+            # message collection for every reconnect.
+            conv = await AsyncHistoryService(db).get_session_meta(session_id, user_id)
         if conv is None:
             await websocket.close(code=4003, reason="Session not found or not owned by user")
             return

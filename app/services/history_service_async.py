@@ -320,13 +320,14 @@ class AsyncHistoryService(HistoryStoreProtocol):
         result = await self.db.execute(stmt)
         return result.scalars().all()
 
-    async def get_session(
-        self,
-        session_id: str,
-        user_id: Optional[str] = None,
-        owner_token: Optional[str] = None,
+    @staticmethod
+    def _authorize(
+        conv: Optional[Conversation],
+        user_id: Optional[str],
+        owner_token: Optional[str],
     ) -> Optional[Conversation]:
-        """带所有权检查的会话取回。
+        """SEC-08/S31/S32 ownership predicate shared by ``get_session`` and
+        ``get_session_meta`` so the guard semantics can never diverge.
 
         - 会话 user_id 已绑定：仅原用户可见（认证用户校验）
         - 会话 user_id IS NULL（匿名会话）：
@@ -335,9 +336,6 @@ class AsyncHistoryService(HistoryStoreProtocol):
             否则视为不存在（防止 session_id 泄漏后被任意人读取）
         - 不存在或越权：均返回 None（统一处理为 404，避免存在性泄露）
         """
-        stmt = select(Conversation).where(Conversation.id == session_id).options(selectinload(Conversation.messages))
-        result = await self.db.execute(stmt)
-        conv = result.scalar_one_or_none()
         if conv is None:
             return None
         if conv.user_id is None:
@@ -345,6 +343,7 @@ class AsyncHistoryService(HistoryStoreProtocol):
             # 使用 hmac.compare_digest 做常量时间比较以防时序侧信道。
             if conv.owner_token is not None:
                 import hmac
+
                 if not owner_token or not hmac.compare_digest(conv.owner_token, owner_token):
                     return None
             return conv
@@ -353,6 +352,39 @@ class AsyncHistoryService(HistoryStoreProtocol):
         if conv.user_id != user_id:
             return None
         return conv
+
+    async def get_session(
+        self,
+        session_id: str,
+        user_id: Optional[str] = None,
+        owner_token: Optional[str] = None,
+    ) -> Optional[Conversation]:
+        """带所有权检查的会话取回（含消息集合，用于需要完整历史的调用方）。"""
+        stmt = select(Conversation).where(Conversation.id == session_id).options(selectinload(Conversation.messages))
+        result = await self.db.execute(stmt)
+        conv = result.scalar_one_or_none()
+        return self._authorize(conv, user_id, owner_token)
+
+    async def get_session_meta(
+        self,
+        session_id: str,
+        user_id: Optional[str] = None,
+        owner_token: Optional[str] = None,
+    ) -> Optional[Conversation]:
+        """#525: 所有权守卫专用变体 —— 只取 Conversation 行（id/user_id/
+        owner_token 等元数据列），绝不 selectinload messages 集合。
+
+        守卫路径（verify_session_owner 及其 ~30 个调用点、任务中心 3s 轮询）
+        只关心"存在且属于调用方"，为 O(messages) 的全行传输 + JSON 解码付费
+        纯属浪费：会话越长每次轮询越重。返回的 Conversation 不带 .messages
+        惰性加载（async 下会 MissingGreenlet），需要消息的调用方必须显式加载
+        （见 chat.get_session_detail）。安全语义与 get_session 完全一致
+        （共享 _authorize）。
+        """
+        stmt = select(Conversation).where(Conversation.id == session_id)
+        result = await self.db.execute(stmt)
+        conv = result.scalar_one_or_none()
+        return self._authorize(conv, user_id, owner_token)
 
     async def delete_session(
         self,
