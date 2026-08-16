@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { ReportPreview } from './report-preview'
 
@@ -7,6 +7,22 @@ vi.mock('@/lib/api/report', () => ({
   getReportDownloadUrl: vi.fn(() => 'http://localhost:8000/api/v1/reports/test-id/download'),
   getSharedReportUrl: vi.fn((code: string) => `http://localhost:8000/api/v1/reports/shared/${code}`),
 }))
+
+// #515: the HTML preview now fetches the report blob through the transport
+// (iframe src must carry Bearer → object URL). Stub it in tests.
+const apiFetchBlobMock = vi.fn()
+vi.mock('@/lib/api/transport', () => ({
+  apiFetchBlob: (...args: unknown[]) => apiFetchBlobMock(...args),
+}))
+
+function htmlBlob(): Blob {
+  return new Blob(['<html><body>report</body></html>'], { type: 'text/html' })
+}
+
+beforeEach(() => {
+  apiFetchBlobMock.mockReset()
+  apiFetchBlobMock.mockResolvedValue({ blob: htmlBlob(), filename: 'report_test.html' })
+})
 
 describe('ReportPreview', () => {
   it('shows empty state when no report', () => {
@@ -42,7 +58,7 @@ describe('ReportPreview', () => {
     expect(screen.getByText('下载查看')).toBeInTheDocument()
   })
 
-  it('shows iframe for HTML format', () => {
+  it('shows iframe for HTML format', async () => {
     const report = {
       id: 'test-id',
       session_id: 'session-1',
@@ -53,6 +69,10 @@ describe('ReportPreview', () => {
       created_at: new Date().toISOString(),
     }
     render(<ReportPreview report={report} />)
-    expect(screen.getByTitle('报告预览')).toBeInTheDocument()
+    // 等待 blob 拉取完成并渲染出 iframe（objectURL 驱动）。
+    await screen.findByTitle('报告预览')
+    expect(apiFetchBlobMock).toHaveBeenCalledWith(
+      'http://localhost:8000/api/v1/reports/test-id/download'
+    )
   })
 })

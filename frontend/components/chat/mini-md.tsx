@@ -3,6 +3,9 @@
 import React from 'react';
 import ReactMarkdown, { type UrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { downloadWithAuth, isProtectedDownloadUrl } from '@/lib/api/authenticated-download';
+import { devOnly } from '@/lib/utils/logger';
+import { AuthImage } from './auth-image';
 
 interface MiniMdProps {
   text: string;
@@ -82,12 +85,39 @@ export default function MiniMd({ text }: MiniMdProps) {
               properties: {},
               children: [],
             });
+            // #515: 导出/报告下载链接是受保护路由，裸 <a target=_blank>
+            // 打开的新标签页无法携带 Bearer → 恒 401。拦截点击，改走
+            // transport 的鉴权 blob 下载。
+            const protectedHref = typeof safeHref === 'string' && isProtectedDownloadUrl(safeHref)
+              ? safeHref
+              : null;
+            if (protectedHref) {
+              return (
+                <a
+                  href={safeHref ?? undefined}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-status-accent underline hover:text-status-accent"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    downloadWithAuth(protectedHref).catch((err) => {
+                      devOnly.warn('[MiniMd] 鉴权下载失败:', err);
+                    });
+                  }}
+                >
+                  {children}
+                </a>
+              );
+            }
             return (
               <a href={safeHref ?? undefined} target="_blank" rel="noopener noreferrer" className="text-status-accent underline hover:text-status-accent">
                 {children}
               </a>
             );
           },
+          img: ({ src, alt }) => (
+            <AuthImage src={src ?? ''} alt={alt ?? ''} className="max-w-full h-auto my-2 rounded-md" />
+          ),
           table: ({ children }) => (
             <div className="overflow-x-auto my-2 rounded-md border border-edge-subtle">
               <table className="w-full text-body">{children}</table>

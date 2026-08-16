@@ -110,8 +110,14 @@ describe('ChatTab render scope (D-F8)', () => {
     const { rerender } = renderWithStore(tree);
 
     // Settle: dynamic MiniMd resolves; `mounted` effect flips. Only priorMsg
-    // has non-empty content at mount → exactly one markdown parse.
-    await waitFor(() => expect(document.querySelectorAll('[data-testid="mini-md"]')).toHaveLength(1));
+    // has non-empty content at mount → exactly one markdown parse. Explicit
+    // generous timeout: mini-md's import graph grew (#515 auth download
+    // helpers), so under parallel test load resolution can exceed the 1s
+    // default waitFor window — the settle must not race the count below.
+    await waitFor(
+      () => expect(document.querySelectorAll('[data-testid="mini-md"]')).toHaveLength(1),
+      { timeout: 5000 },
+    );
     await act(async () => {});
     md.count = 0;
     md.texts = [];

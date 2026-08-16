@@ -344,6 +344,52 @@ async function apiFetchAttempt<T = unknown>(
 }
 
 /**
+ * Fetch a binary payload (file download) with the transport's auth and
+ * 401-refresh recovery, resolving to the response blob. The JSON parse path
+ * of `apiFetch` cannot return binary bodies, so downloads (export files,
+ * report files) go through here. Reads the server's Content-Disposition
+ * filename when present so the caller can name the saved file correctly.
+ */
+export async function apiFetchBlob(
+  path: string,
+  options: ApiFetchOptions = {},
+): Promise<{ blob: Blob; filename: string | null }> {
+  const attempt = async (): Promise<{ blob: Blob; filename: string | null }> => {
+    const method = (options.method ?? 'GET').toUpperCase();
+    const requestId = options.requestId ?? newRequestId();
+    const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const { url, init } = buildRequest(path, options, method, requestId);
+    const response = await timedFetch(url, init, timeoutMs, requestId);
+    if (!response.ok) throw await toApiError(response, options.label, requestId);
+    const blob = await response.blob();
+    const disposition = response.headers?.get?.('content-disposition') ?? null;
+    return { blob, filename: dispositionFilename(disposition) };
+  };
+
+  try {
+    return await attempt();
+  } catch (err) {
+    if (
+      !options.skipAuth &&
+      err instanceof ApiError &&
+      err.status === 401 &&
+      getRefreshToken() !== null
+    ) {
+      const refreshed = await refreshAuthToken();
+      if (refreshed) return attempt();
+    }
+    throw err;
+  }
+}
+
+/** Extract `filename="..."` from a Content-Disposition header, if present. */
+function dispositionFilename(disposition: string | null): string | null {
+  if (!disposition) return null;
+  const match = /filename="?([^";]+)"?/.exec(disposition);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+/**
  * Open a streaming (SSE) request: resolves with the Response once headers
  * arrive (connect timeout applied), throwing ApiError on a non-ok status. The
  * caller owns the body lifecycle — stream it and drive it with its own
