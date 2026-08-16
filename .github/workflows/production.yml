@@ -124,8 +124,11 @@ jobs:
           echo "LLM_API_KEY=test-key-not-real" >> $GITHUB_ENV
 
       - name: Run Tests with Coverage
-        # 现实基线 ~10%；以 ratchet 模式推进，每次提升后同步调高此闸值。
-        # 闸值暂设为 10（接近当前实际覆盖率），让覆盖检查真正生效而不是被忽略。
+        # #564：旧注释宣称"现实基线 ~10%"是失真的 —— 本地全量实测
+        # （master bb09e8c + 本批修复后）TOTAL 82.16%（37299 stmts）。闸值
+        # 10 因此是装饰性的（任何覆盖率都能绿）。按 ratchet 模式设为 75：
+        # 真实可执行（覆盖大幅回退即红），但留出 CI 环境（Py3.12 vs 本地
+        # 3.13 / 依赖版本）的抖动余量；每次提升后同步调高此闸值。
         #
         # 不加 -x：保留所有失败用例的输出，便于一次看到全部问题。
         # 不加 || true：测试失败应阻断 CI，这才是 gate 的意义。
@@ -146,7 +149,7 @@ jobs:
         #
         # #477：real_services marker 同理排除 —— 由独立 real-services-smoke
         # job（postgis + redis service containers + 真实 celery worker）拥有。
-        run: pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=10 --timeout=60 --timeout-method=thread -m "not perf and not cartography and not real_services" -v
+        run: pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=75 --timeout=60 --timeout-method=thread -m "not perf and not cartography and not real_services" -v
 
       - name: Upload Coverage Report
         uses: codecov/codecov-action@v7.0.0
@@ -212,7 +215,7 @@ jobs:
           JWT_SECRET_KEY: ci-test-secret-key-32-chars-ok
         run: pytest tests/test_deploy_migration_wiring.py::test_migrated_schema_matches_models --no-cov -q
 
-  # ============ Stage 2a-2: 真实服务 smoke lane (#477) ============
+  # ============ Stage 2a-2: 真实服务 smoke lane (#477, #531) ============
   # test-backend 配了 postgis + redis service container，但套件实际跑
   # SQLite / fakeredis / eager-celery（conftest 强制 USE_REDIS=false +
   # CELERY_BROKER_URL=memory://）—— asyncpg 驱动行为、PostGIS 类型、真实
@@ -220,6 +223,11 @@ jobs:
   # provisioned 容器跑定向 smoke 子集（-m real_services；服务不可达时
   # self-skip，本地无容器不红）。不把整套测试搬到真实后端 —— 目标是
   # prod-backend 回归在 CI 有真实覆盖。
+  #
+  # #531：lane 显式导出 USE_REDIS=true + CELERY_BROKER_URL/RESULT_BACKEND，
+  # 使 production celery app（app.services.task_queue）脱离 conftest 的
+  # eager/memory 钉扎 —— 真实 worker（-A app.services.task_queue）投递生产
+  # 任务并取回结果，不再只验证 toy app。
   real-services-smoke:
     name: Real Services Smoke (PostGIS + Redis + Celery)
     runs-on: ubuntu-latest
@@ -267,6 +275,14 @@ jobs:
           echo "JWT_SECRET_KEY=ci-test-secret-key-32-chars-ok" >> $GITHUB_ENV
           echo "ENV=development" >> $GITHUB_ENV
           echo "LLM_API_KEY=test-key-not-real" >> $GITHUB_ENV
+          # #531：conftest.py 用 setdefault 强制 USE_REDIS=false +
+          # CELERY_BROKER_URL=memory://（测试进程离线）—— 已设置的变量不会被
+          # setdefault 覆盖。这里显式打开真实 Redis 线协议：production celery app
+          # （app.services.task_queue）在 broker db 6 / result backend db 7 上走
+          # 真实投递，worker 由 fixture 以 -A app.services.task_queue 启动。
+          echo "USE_REDIS=true" >> $GITHUB_ENV
+          echo "CELERY_BROKER_URL=redis://localhost:6379/6" >> $GITHUB_ENV
+          echo "CELERY_RESULT_BACKEND=redis://localhost:6379/7" >> $GITHUB_ENV
 
       - name: Run Real-Services Smoke
         # 与 test-backend 同批 service container：asyncpg 真实往返、PostGIS
@@ -292,7 +308,11 @@ jobs:
         # pytest-cov 必须安装：pytest.ini 的 addopts 声明了 --cov=app，缺它则
         # 整个 pytest 启动直接报 "unrecognized arguments: --cov"。--no-cov 在
         # 命令行覆盖 addopts，确保 harness 在无覆盖率下运行。
-        run: pip install -r requirements.txt pytest pytest-timeout pytest-cov
+        # pytest-asyncio 必须安装：test_job_runtime_perf.py 在模块层
+        # `import pytest_asyncio`（pytest.ini 的 asyncio_mode=auto 依赖它），
+        # 缺了收集期直接 ImportError → lane 红。pin 与 requirements-dev.txt
+        # 保持一致（>=1.4.0），改动时两处同步。
+        run: pip install -r requirements.txt pytest pytest-asyncio>=1.4.0 pytest-timeout pytest-cov
 
       - name: Run Performance Harness (no coverage)
         # 性能门控：在无 coverage 干扰的环境下跑确定性 harness（compute 11 个
@@ -300,7 +320,12 @@ jobs:
         # （1.75x-4x）即失败，让真实回归在 CI 可见；基线刷新需显式
         # PERF_UPDATE_BASELINES=1。与主测试 job 的 `-m "not perf"` 互斥，避免双重
         # 执行 + 覆盖率失真。
-        run: pytest tests/benchmarks/test_perf_harness.py tests/benchmarks/test_transport_perf.py -m perf --no-cov --timeout=180 --timeout-method=thread -q
+        #
+        # #564：把三个 perf-marked 的"行为量"基准（durable job runtime 语义、
+        # provenance 指纹复杂度、bench_runner 可复现 smoke）纳入 PR 门 —— 它们
+        # 是确定性/快子集（无墙钟紧断言），补上此前"perf 文件在 PR 零执行"的
+        # 缺口。perf_harness_v2 的 event-loop lag（墙钟断言）保持 nightly 专属。
+        run: pytest tests/benchmarks/test_perf_harness.py tests/benchmarks/test_transport_perf.py tests/benchmarks/test_job_runtime_perf.py tests/benchmarks/test_provenance_perf.py tests/benchmarks/test_bench_runner_478.py -m perf --no-cov --timeout=180 --timeout-method=thread -q
 
   # ============ Stage 2c: 制图 / Harness 闭环 smoke（确定性，release-blocking）============
   cartography-smoke:
@@ -329,7 +354,8 @@ jobs:
       - name: Install Dependencies
         # 仅装核心依赖 + 测试工具（无需 Postgres service）。cartography smoke
         # 走纯 Python 语义校验 + Harness V2 evidence model + ref 真实解析，
-        # 不依赖 Node / Chromium（那部分在 nightly cartography-matrix）。
+        # 不依赖 Node / Chromium（浏览器 runtime 门在独立 runtime-validator
+        # lane，#532）。
         run: pip install -r requirements-dev.txt
 
       - name: Set Environment Variables
@@ -346,13 +372,69 @@ jobs:
         #   - MapSpecValidity evidence ladder（no evidence ≠ success）
         #   - 制图语义 deterministic checks（bbox overlap / geom-type / field-stops / legend）
         #   - 故障注入子集（Redis/compiler/checkpoint failure 不产生 false-success）
-        # 完整 Playwright runtime + 5~6 类 E2E 场景在 nightly cartography-matrix。
+        # Playwright runtime（真实 MapLibre 渲染门）在独立的 runtime-validator
+        # lane（nightly + 手动，#532）；5~6 类 E2E 场景仍待建。
         run: pytest -m cartography --no-cov --timeout=120 --timeout-method=thread -q
+
+  # ============ Stage 2c-2: Playwright runtime validator（#532；nightly + 手动）============
+  # test_runtime_validator_full_flow 之前在**所有** lane 都 self-skip：没有任何 lane
+  # 安装 frontend/node_modules（playwright）+ chromium，真实 MapLibre 渲染门从未
+  # 执行（#404 那类 mock-vs-real 语义漂移零 CI 覆盖）。此 lane 安装两者并以
+  # REQUIRE_BROWSER=1 硬失败模式运行 —— 缺浏览器 = 失败，不再是绿色 SKIPPED。
+  # Chromium 下载 + MapLibre CDN (unpkg) 依赖外网，放 nightly / 手动触发，不进
+  # PR 阻塞路径（PR 各 lane 里该测试仍按文档 self-skip）。
+  runtime-validator:
+    name: Playwright Runtime Validator (nightly)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Frontend Deps
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        # playwright 包来自 npm ci；chromium 二进制需显式安装
+        # （--with-deps 拉系统库，ubuntu-latest runner 有 sudo）。
+        working-directory: ./frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Provision Compiler Runtime (tsx)
+        # 编译器/验证器子进程以 `npx tsx cli.ts` / `npx tsx runtime-validate.ts`
+        # 运行；tsx 只是前端工具链的 optional peer dep，npm ci 不装它 ——
+        # 显式装上（--no-save/--no-package-lock 不碰 package.json / lockfile），
+        # 否则子进程 CLI_UNAVAILABLE。
+        working-directory: ./frontend
+        run: npm install --no-save --no-package-lock tsx@^4.8.1
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install Python Deps
+        run: pip install -r requirements-dev.txt
+
+      - name: Run Runtime Validator (hard-fail on missing browser)
+        env:
+          REQUIRE_BROWSER: '1'
+        run: pytest tests/unit/test_runtime_validator.py -m heavy --no-cov --timeout=180 --timeout-method=thread -q
 
   # ============ Nightly 重矩阵（schedule / 手动；非 PR-blocking）============
   # 审计 REL-01：PR 路径只跑确定性 fast gate（cartography-smoke）。更重的矩阵
-  # （全量 cartography + perf + event-loop lag + 并发负载 + 未来 Playwright runtime）
-  # 放到 nightly，不阻塞 PR，但能在 schedule 暴露慢漂移 / 间歇性故障。
+  # （全量 cartography + perf + event-loop lag + 并发负载 + Playwright runtime ——
+  # 后者在独立 runtime-validator lane，#532）放到 nightly，不阻塞 PR，但能在
+  # schedule 暴露慢漂移 / 间歇性故障。
   nightly-matrix:
     name: Nightly Heavy Matrix
     runs-on: ubuntu-latest
@@ -381,11 +463,11 @@ jobs:
           echo "LLM_API_KEY=test-key-not-real" >> $GITHUB_ENV
       - name: Full cartography + perf + event-loop matrix
         # Nightly 跑完整确定性矩阵：cartography（含并发 + 故障注入）+ perf
-        # （11 microbenchmarks + 3 e2e）+ perf_harness_v2 event-loop lag。无 Node
-        # 依赖部分全跑；需要 Node/Playwright 的 runtime 验证 self-skip（待 future）。
+        # （11 microbenchmarks + 3 e2e + job_runtime/provenance/bench_runner/
+        # perf_harness_v2 —— #564 给 v2 补上 perf marker 后由 -m perf 统一收集）。
+        # 无 Node 依赖部分全跑；需要 Node/Playwright 的 runtime 验证在独立
+        # runtime-validator lane（REQUIRE_BROWSER=1 硬失败，#532）。
         run: pytest -m "cartography or perf" --no-cov --timeout=180 --timeout-method=thread -q
-      - name: Event-loop lag & data-plane v2
-        run: pytest tests/benchmarks/test_perf_harness_v2.py --no-cov --timeout=120 -q
 
   test-frontend:
     name: Frontend Tests
@@ -643,6 +725,19 @@ jobs:
         # working dir only has the downloaded image tar, so the step failed
         # at "缺少 .env.Priv.example".
         uses: actions/checkout@v7
+        with:
+          # #520：vendor/pi 是 git submodule（Dockerfile.prod COPY vendor/）。
+          # 预览必须校验**完整源码**的产物 —— 与 build job（submodules: recursive）
+          # 一致，否则 build 兜底路径会构建缺 vendor/pi 的镜像却静默通过。
+          submodules: recursive
+
+      - name: Lowercase IMAGE_NAME
+        # #520：docker tag 要求全小写。workflow 级 env.IMAGE_NAME = github.repository
+        # 是混合大小写（WindWang2/...），build job 已在自身环境小写化后 docker load
+        # 的镜像 tag 是全小写 —— preview 若不小写，compose 引用混合大小写 tag 找不到
+        # 已 load 镜像，会静默落入 build 兜底（校验的就不是 CI 产物）。与
+        # deploy-prod/rollback 的同名步骤一致。
+        run: echo "IMAGE_NAME=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
       - name: Download Image Artifact
         uses: actions/download-artifact@v8
@@ -679,6 +774,7 @@ jobs:
             -e "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=${RANDOM_REDIS_PWD}|" \
             -e "s|^JWT_SECRET_KEY=.*|JWT_SECRET_KEY=${RANDOM_JWT}|" \
             -e "s|^LLM_API_KEY=.*|LLM_API_KEY=${RANDOM_LLM_KEY}|" \
+            -e "s|^WEBGIS_IMAGE=.*|WEBGIS_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}|" \
             .env.Priv
 
           # settings.CORS_ORIGINS 是 List[str]，环境变量必须是 JSON 数组格式
@@ -702,6 +798,12 @@ jobs:
             -out deploy/nginx/ssl/server.crt \
             -subj "/CN=localhost" >/dev/null 2>&1
 
+          # #520：compose 的 image: ${WEBGIS_IMAGE:-webgis-ai-agent:local} 必须解析到
+          # 本步骤开头 docker load 出的 ghcr.io/<repo>:<sha> 镜像 —— 上面 sed 已把
+          # 模板里的 WEBGIS_IMAGE 替换为该 tag。否则 compose 落入 build 兜底，在
+          # runner 上从源码重建，校验的就不是 CI 构建产物（且缺 vendor/pi）。
+          # 此前的 IMAGE_TAG 步骤环境变量只出现在 PR 评论文本里，从未被消费，已删。
+
           # docker compose resolves ${DB_PWD:?...} / ${REDIS_PASSWORD:?...} /
           # ${JWT_SECRET_KEY:?...} from the shell env OR its --env-file. The
           # api/celery services load .env.Priv via `env_file:`, but db/redis
@@ -709,8 +811,6 @@ jobs:
           # "required variable DB_PWD is missing a value". Point compose at
           # .env.Priv explicitly (its default is plain `.env`).
           docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml up -d
-        env:
-          IMAGE_TAG: ${{ github.sha }}
 
       - name: Verify Preview Stack Health
         run: |
@@ -832,6 +932,11 @@ jobs:
           ssh ${{ vars.SSH_HOST }} 'mkdir -p ~/deploy'
           scp docker-compose.prod.secure.yml ${{ vars.SSH_HOST }}:~/
           scp deploy/redis.conf deploy/redis-entrypoint.sh ${{ vars.SSH_HOST }}:~/deploy/
+          # #530：prometheus 服务 bind-mount ./deploy/prometheus.yml 与
+          # ./deploy/alerts-rules.json —— 不随部署送达主机时，Docker 把缺失的
+          # 挂载源创建为空目录，prometheus 把目录当 config 加载即 crash-loop、
+          # 告警全哑（nginx 在 #472 已内联修复，prometheus 走 scp 传输）。
+          scp deploy/prometheus.yml deploy/alerts-rules.json ${{ vars.SSH_HOST }}:~/deploy/
           scp .env.Priv ${{ vars.SSH_HOST }}:~/
           scp webgis-image.tar ${{ vars.SSH_HOST }}:~/
 
@@ -975,6 +1080,13 @@ jobs:
           JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           CORS_ORIGINS: ${{ secrets.CORS_ORIGINS }}
+          # #520：compose 的 api/celery 用 `image: ${WEBGIS_IMAGE:-webgis-ai-agent:local}`
+          # 插值，必须解析到主机上 docker load 出的镜像 tag。回滚镜像（registry pull
+          # 或源码 rebuild）统一打为 :rollback（见上方 Pull/Rebuild 步骤）。显式导出
+          # 让共享脚本 ci-generate-env-priv.sh 的"已导出 WEBGIS_IMAGE 优先"分支写入
+          # .env.Priv。此前未导出 → 脚本回落到 GITHUB_SHA = 当前坏 HEAD，回滚实际
+          # 重跑了坏镜像。
+          WEBGIS_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:rollback
         run: |
           if [ -f deploy/ci-generate-env-priv.sh ]; then
             sh deploy/ci-generate-env-priv.sh
@@ -982,6 +1094,9 @@ jobs:
             printf 'DB_PWD=%s\nREDIS_PASSWORD=%s\nJWT_SECRET_KEY=%s\nLLM_API_KEY=%s\nCORS_ORIGINS=%s\n' \
               "$DB_PWD" "$REDIS_PASSWORD" "$JWT_SECRET_KEY" "$LLM_API_KEY" \
               "${CORS_ORIGINS:-[\"https://your-domain.com\"]}" > .env.Priv
+            # 回退树（早于脚本）同样必须写入 WEBGIS_IMAGE，否则 compose 落到
+            # webgis-ai-agent:local（主机上无该 tag）→ up 失败。
+            printf 'WEBGIS_IMAGE=%s\n' "$WEBGIS_IMAGE" >> .env.Priv
           fi
           docker save ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:rollback > /tmp/rollback-image.tar
           ssh ${{ vars.SSH_HOST }} 'mkdir -p ~/deploy'
@@ -990,6 +1105,12 @@ jobs:
           # 可能早于 redis.conf / redis-entrypoint.sh 的存在（本分支新增），且该
           # 路径的旧 compose 也不挂载 redis 配置——文件缺失时跳过 scp。
           for f in deploy/redis.conf deploy/redis-entrypoint.sh; do
+            [ -f "$f" ] && scp "$f" ${{ vars.SSH_HOST }}:~/deploy/
+          done
+          # #530：与 deploy-prod 一致，prometheus 配置必须随回滚送达主机（否则
+          # 空目录 bind-mount 让 prometheus crash-loop）。回退构建路径检出的
+          # PREV_SHA 可能早于这些文件，同样用存在性守卫跳过。
+          for f in deploy/prometheus.yml deploy/alerts-rules.json; do
             [ -f "$f" ] && scp "$f" ${{ vars.SSH_HOST }}:~/deploy/
           done
           scp .env.Priv ${{ vars.SSH_HOST }}:~/

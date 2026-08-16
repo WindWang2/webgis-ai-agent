@@ -28,6 +28,11 @@ from app.services.data_fabric.adapters import (
     STACAdapter,
     WFSAdapter,
 )
+
+# #564：此前本文件没有 perf marker → 被 test-backend（-m "not perf"）收集，在
+# --cov 拖慢的墙钟 lag 断言（max_lag_ms < 25）下 flaky-by-construction。标记
+# perf 后由 test-perf（PR，--no-cov）与 nightly（-m "cartography or perf"）执行。
+pytestmark = pytest.mark.perf
 from app.services.data_fabric.errors import UnsupportedSourceError
 from app.schemas.data_fabric_schema import ConnectionProfile
 from app.services.raster_tile_service import render_raster_tile

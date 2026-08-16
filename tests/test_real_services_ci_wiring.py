@@ -1,9 +1,12 @@
-"""Issue #477：CI 的 real-services smoke lane 结构守卫。
+"""Issue #477+#531：CI 的 real-services smoke lane 结构守卫。
 
 CI 一直在 test-backend lane 里配 postgis + redis service container，但套件
 跑的是 SQLite / fakeredis / eager-celery —— 容器基本闲置。#477 的修复是
 新增 real-services-smoke lane 真正消费这些服务（asyncpg / PostGIS / 真实
 Redis 线协议 / 真实 celery broker 投递），本文件守住这条 lane 不被悄悄拆掉。
+#531 补充：lane 必须导出 USE_REDIS=true + CELERY_BROKER_URL/RESULT_BACKEND，
+让生产 celery app（app.services.task_queue）走真实 broker，而不是继续钉在
+conftest 的 eager/memory。
 """
 from pathlib import Path
 
@@ -73,3 +76,26 @@ def test_smoke_module_self_skips_without_services():
     smoke = (REPO_ROOT / "tests" / "test_real_services_smoke.py").read_text(encoding="utf-8")
     assert "pytest.skip" in smoke
     assert "pytestmark = pytest.mark.real_services" in smoke
+
+
+def test_real_services_lane_enables_production_celery_config():
+    """#531：lane 必须导出 USE_REDIS=true + CELERY_BROKER_URL/RESULT_BACKEND，
+    否则 conftest 的 setdefault 把生产 app 钉在 eager/memory，lane 只验证 toy app。"""
+    jobs = _workflow()["jobs"]
+    run_text = "\n".join(str(s.get("run", "")) for s in jobs["real-services-smoke"].get("steps", []))
+    assert "USE_REDIS=true" in run_text, "lane 必须导出 USE_REDIS=true"
+    assert "CELERY_BROKER_URL=redis://" in run_text, (
+        "lane 必须把 CELERY_BROKER_URL 指到 provisioned Redis"
+    )
+    assert "CELERY_RESULT_BACKEND=redis://" in run_text, (
+        "lane 必须把 CELERY_RESULT_BACKEND 指到 provisioned Redis"
+    )
+
+
+def test_real_services_smoke_exercises_production_celery_app():
+    """#531：smoke 必须经生产 app（app.services.task_queue）投递生产任务。"""
+    smoke = (REPO_ROOT / "tests" / "test_real_services_smoke.py").read_text(encoding="utf-8")
+    assert "app.services.task_queue" in smoke, "smoke 必须 import 生产 task_queue app"
+    assert "-A" in smoke and '"app.services.task_queue"' in smoke, (
+        "worker 必须以生产 app 启动（-A app.services.task_queue）"
+    )
