@@ -140,11 +140,14 @@ def stats_registry():
 
 @pytest.mark.asyncio
 async def test_kde_contours_emits_continuous_legend_spec(stats_registry):
+    # 非退化点集：x/y 双向离散展开（旧 fixture 是 20 个严格共线点
+    # [104+i*0.001, 30+i*0.001]，KDE 带宽估计在该退化输入上数值脆弱）。
     pts = {
         "type": "FeatureCollection",
         "features": [
             {"type": "Feature",
-             "geometry": {"type": "Point", "coordinates": [104.0 + i*0.001, 30.0 + i*0.001]},
+             "geometry": {"type": "Point",
+                          "coordinates": [104.0 + (i % 5) * 0.02, 30.0 + i * 0.015]},
              "properties": {}}
             for i in range(20)
         ],
@@ -152,8 +155,9 @@ async def test_kde_contours_emits_continuous_legend_spec(stats_registry):
     out = await stats_registry.dispatch("kde_contours", {
         "geojson": pts, "levels": 6,
     })
-    if "error" in out:  # scipy / matplotlib not available — skip
-        pytest.skip(out["error"])
+    # 无 skip guard（#564）：scipy/matplotlib 是 requirements.txt 硬依赖，
+    # 且 std_error_response 从不输出 "error" 键 —— 旧守卫是死代码且注释误导
+    # （真实算法回归应让断言如实失败，而不是伪装成 SKIPPED）。
     spec = out.get("legend_spec")
     assert spec is not None
     assert spec["type"] == "continuous"

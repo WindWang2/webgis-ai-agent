@@ -124,8 +124,11 @@ jobs:
           echo "LLM_API_KEY=test-key-not-real" >> $GITHUB_ENV
 
       - name: Run Tests with Coverage
-        # 现实基线 ~10%；以 ratchet 模式推进，每次提升后同步调高此闸值。
-        # 闸值暂设为 10（接近当前实际覆盖率），让覆盖检查真正生效而不是被忽略。
+        # #564：旧注释宣称"现实基线 ~10%"是失真的 —— 本地全量实测
+        # （master bb09e8c + 本批修复后）TOTAL 82.16%（37299 stmts）。闸值
+        # 10 因此是装饰性的（任何覆盖率都能绿）。按 ratchet 模式设为 75：
+        # 真实可执行（覆盖大幅回退即红），但留出 CI 环境（Py3.12 vs 本地
+        # 3.13 / 依赖版本）的抖动余量；每次提升后同步调高此闸值。
         #
         # 不加 -x：保留所有失败用例的输出，便于一次看到全部问题。
         # 不加 || true：测试失败应阻断 CI，这才是 gate 的意义。
@@ -146,7 +149,7 @@ jobs:
         #
         # #477：real_services marker 同理排除 —— 由独立 real-services-smoke
         # job（postgis + redis service containers + 真实 celery worker）拥有。
-        run: pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=10 --timeout=60 --timeout-method=thread -m "not perf and not cartography and not real_services" -v
+        run: pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=75 --timeout=60 --timeout-method=thread -m "not perf and not cartography and not real_services" -v
 
       - name: Upload Coverage Report
         uses: codecov/codecov-action@v7.0.0
@@ -305,7 +308,11 @@ jobs:
         # pytest-cov 必须安装：pytest.ini 的 addopts 声明了 --cov=app，缺它则
         # 整个 pytest 启动直接报 "unrecognized arguments: --cov"。--no-cov 在
         # 命令行覆盖 addopts，确保 harness 在无覆盖率下运行。
-        run: pip install -r requirements.txt pytest pytest-timeout pytest-cov
+        # pytest-asyncio 必须安装：test_job_runtime_perf.py 在模块层
+        # `import pytest_asyncio`（pytest.ini 的 asyncio_mode=auto 依赖它），
+        # 缺了收集期直接 ImportError → lane 红。pin 与 requirements-dev.txt
+        # 保持一致（>=1.4.0），改动时两处同步。
+        run: pip install -r requirements.txt pytest pytest-asyncio>=1.4.0 pytest-timeout pytest-cov
 
       - name: Run Performance Harness (no coverage)
         # 性能门控：在无 coverage 干扰的环境下跑确定性 harness（compute 11 个
@@ -313,7 +320,12 @@ jobs:
         # （1.75x-4x）即失败，让真实回归在 CI 可见；基线刷新需显式
         # PERF_UPDATE_BASELINES=1。与主测试 job 的 `-m "not perf"` 互斥，避免双重
         # 执行 + 覆盖率失真。
-        run: pytest tests/benchmarks/test_perf_harness.py tests/benchmarks/test_transport_perf.py -m perf --no-cov --timeout=180 --timeout-method=thread -q
+        #
+        # #564：把三个 perf-marked 的"行为量"基准（durable job runtime 语义、
+        # provenance 指纹复杂度、bench_runner 可复现 smoke）纳入 PR 门 —— 它们
+        # 是确定性/快子集（无墙钟紧断言），补上此前"perf 文件在 PR 零执行"的
+        # 缺口。perf_harness_v2 的 event-loop lag（墙钟断言）保持 nightly 专属。
+        run: pytest tests/benchmarks/test_perf_harness.py tests/benchmarks/test_transport_perf.py tests/benchmarks/test_job_runtime_perf.py tests/benchmarks/test_provenance_perf.py tests/benchmarks/test_bench_runner_478.py -m perf --no-cov --timeout=180 --timeout-method=thread -q
 
   # ============ Stage 2c: 制图 / Harness 闭环 smoke（确定性，release-blocking）============
   cartography-smoke:
@@ -451,12 +463,11 @@ jobs:
           echo "LLM_API_KEY=test-key-not-real" >> $GITHUB_ENV
       - name: Full cartography + perf + event-loop matrix
         # Nightly 跑完整确定性矩阵：cartography（含并发 + 故障注入）+ perf
-        # （11 microbenchmarks + 3 e2e）+ perf_harness_v2 event-loop lag。无 Node
-        # 依赖部分全跑；需要 Node/Playwright 的 runtime 验证在独立
+        # （11 microbenchmarks + 3 e2e + job_runtime/provenance/bench_runner/
+        # perf_harness_v2 —— #564 给 v2 补上 perf marker 后由 -m perf 统一收集）。
+        # 无 Node 依赖部分全跑；需要 Node/Playwright 的 runtime 验证在独立
         # runtime-validator lane（REQUIRE_BROWSER=1 硬失败，#532）。
         run: pytest -m "cartography or perf" --no-cov --timeout=180 --timeout-method=thread -q
-      - name: Event-loop lag & data-plane v2
-        run: pytest tests/benchmarks/test_perf_harness_v2.py --no-cov --timeout=120 -q
 
   test-frontend:
     name: Frontend Tests
