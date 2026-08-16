@@ -150,31 +150,49 @@ class SpectralRasterEngine:
                 cell_size = fetch_res.get("cell_size_m", 30.0)
                 cell_size_x = fetch_res.get("cell_size_x_m")
 
-                # GIS-06: the default products = ["slope", "aspect", "hillshade"]
-                # but the previous if/elif chain (in a fixed branch order) only
-                # ever returned ONE product ("aspect", the first matching branch),
-                # silently dropping the others, and mislabeled it as "dem".
-                # Derivatives map to a single label deterministically: iterate
-                # the requested products in order and pick the first supported.
+                # #444: the tool contract promises EVERY requested product
+                # ("products 可选 slope/aspect/hillshade，默认全部"、"一步生成
+                # 多产品"). The GIS-06 interim fix (after the old if/elif chain
+                # returned one mislabeled product) returned only the FIRST
+                # supported product, silently dropping the rest. All
+                # derivatives share one masked-DEM gradient basis, so each is a
+                # single vectorized pass — compute the full requested set.
+                # `array`/`stats`/`index_type` stay the PRIMARY (first
+                # requested) product for backwards compatibility with
+                # emit_raster_layer and single-product consumers.
                 derivators = {
                     "slope": lambda d: compute_slope(d, cell_size, cell_size_x=cell_size_x),
                     "aspect": lambda d: compute_aspect(d, cell_size, cell_size_x=cell_size_x),
                     "hillshade": lambda d: compute_hillshade(d, cell_size, cell_size_x=cell_size_x),
                 }
-                chosen = next((p for p in products if p in derivators), None)
-                if chosen is None:
+                requested = list(dict.fromkeys(p for p in products if p in derivators))
+                product_arrays: Dict[str, np.ndarray] = {}
+                product_stats: Dict[str, Dict[str, Any]] = {}
+                for p in requested:
+                    arr = derivators[p](dem)
+                    product_arrays[p] = arr
+                    product_stats[p] = compute_raster_stats(arr)
+
+                if requested:
+                    label = requested[0]
+                    target_arr = product_arrays[label]
+                    # Stats must describe the returned array, not the raw DEM.
+                    stats = compute_raster_stats(target_arr)
+                    stats["terrain_product"] = label
+                    stats["products"] = list(requested)
+                    stats["terrain_products"] = product_stats
+                    unsupported = [p for p in products if p not in derivators]
+                    if unsupported:
+                        stats["unsupported_products"] = unsupported
+                else:
                     target_arr = dem
                     label = "dem"
-                else:
-                    target_arr = derivators[chosen](dem)
-                    label = chosen
+                    stats = compute_raster_stats(target_arr)
+                    stats.setdefault("terrain_product", label)
 
-                # Stats must describe the returned array, not the raw DEM.
-                stats = compute_raster_stats(target_arr)
-                stats.setdefault("terrain_product", label)
-                return target_arr, label, stats
+                return target_arr, label, stats, product_arrays
 
-            target_arr, label, stats = await asyncio.to_thread(_compute_terrain)
+            target_arr, label, stats, product_arrays = await asyncio.to_thread(_compute_terrain)
 
             return RasterAnalysisResult(
                 index_type=label,
@@ -184,6 +202,7 @@ class SpectralRasterEngine:
                 bounds=fetch_res.get("bounds") or list(bbox),
                 stats=stats,
                 is_error=False,
+                product_arrays=product_arrays,
             )
         except Exception as e:
             logger.error(f"Failed to compute terrain derivatives: {e}")
