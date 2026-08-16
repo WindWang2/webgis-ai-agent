@@ -9,7 +9,9 @@ Redis 线协议、真实 broker 投递从未被验证过（prod-only 回归只�
   - Postgres/asyncpg：异步引擎真实往返 + 服务端版本；
   - PostGIS：geometry 列建/插/查（真实 PostGIS 类型，0011 迁移的前提）；
   - Redis：真实线协议的 SET/GET/EXPIRE/TTL/pipeline 语义；
-  - Celery：真实 broker 投递 + chain + 真实 result backend + revoke 丢弃。
+  - Celery：真实 broker 投递 + chain + 真实 result backend + revoke 丢弃
+    （toy app 的 library 层语义），以及生产 app（app.services.task_queue）
+    的任务经真实 broker/backend 往返（#531）。
 
 全部用 @pytest.mark.real_services 标记，由 CI 的 real-services-smoke lane
 （postgis + redis service containers）执行。服务不可达时逐条 self-skip
@@ -313,3 +315,137 @@ async def test_celery_revoke_discards_pending_task(celery_worker):
     assert result.status in ("PENDING", "REVOKED"), (
         f"被 revoke 的任务不应执行，实际状态: {result.status}"
     )
+
+
+# ── 生产 celery app（app.services.task_queue）真实投递（#531）────────────────
+
+# 生产 app 的 broker/backend 用独立 db（6/7），与会话数据（db 0）、toy app
+# （db 5）隔离；与 real-services-smoke lane 的 GITHUB_ENV 导出值一致。
+PROD_BROKER_DB = 6
+PROD_BACKEND_DB = 7
+
+
+@pytest.fixture(scope="module")
+def production_celery_worker():
+    """启动一个跑**生产** celery app 的真实 worker（-A app.services.task_queue）。
+
+    #531：real-services lane 之前只验证 toy celery app（tests/real_services_
+    celery_app）—— production task_queue / config 从未碰到真实 broker。本
+    fixture 用与生产相同的 app（broker/backend 来自 settings.USE_REDIS +
+    CELERY_* 环境变量、task_always_eager=False）在真实 Redis 上投递/执行/取回。
+    """
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[1]
+    redis_url = _redis_url()
+    base = f"redis://{urlparse(redis_url).netloc}"
+    broker = f"{base}/{PROD_BROKER_DB}"
+    backend = f"{base}/{PROD_BACKEND_DB}"
+
+    _saved = {
+        k: os.environ.get(k)
+        for k in ("USE_REDIS", "CELERY_BROKER_URL", "CELERY_RESULT_BACKEND")
+    }
+    env = {
+        **os.environ,
+        "USE_REDIS": "true",
+        "CELERY_BROKER_URL": broker,
+        "CELERY_RESULT_BACKEND": backend,
+    }
+    # conftest 的 setdefault 只补不覆盖；toy fixture 在 setup 期 pop 掉 CELERY_*
+    # —— 必须在 import 生产 app 前设回真实 URL（否则 singleton 以 memory:// 钉死）。
+    os.environ["USE_REDIS"] = "true"
+    os.environ["CELERY_BROKER_URL"] = broker
+    os.environ["CELERY_RESULT_BACKEND"] = backend
+
+    proc = subprocess.Popen(
+        [
+            sys.executable, "-m", "celery",
+            "-A", "app.services.task_queue",
+            "worker", "--pool=solo", "--concurrency=1",
+            "--loglevel=WARNING", "--without-gossip", "--without-mingle",
+        ],
+        env=env,
+        cwd=str(repo_root),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        from app.services.task_queue import celery_app as prod_app
+
+        assert prod_app.conf.broker_url == broker, (
+            f"生产 celery app broker 配置错误: {prod_app.conf.broker_url} != {broker}"
+            " —— real-services lane 必须设置 USE_REDIS=true + CELERY_BROKER_URL"
+        )
+        assert prod_app.conf.task_always_eager is False, (
+            "生产 celery app 处于 eager 模式 —— USE_REDIS=true 未生效"
+        )
+        deadline = time.monotonic() + 60
+        ready = False
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                out = proc.stdout.read() if proc.stdout else ""
+                pytest.fail(f"生产 celery worker 提前退出:\n{out[-2000:]}")
+            try:
+                reply = prod_app.control.ping(timeout=2)
+            except Exception:  # noqa: BLE001
+                reply = None
+            if reply:
+                ready = True
+                break
+            time.sleep(1)
+        assert ready, "生产 celery worker 60s 内未就绪（ping 无响应）"
+        yield prod_app
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        import asyncio
+
+        import redis.asyncio as aioredis
+
+        async def _flush() -> None:
+            for u in (broker, backend):
+                r = aioredis.from_url(u)
+                await r.flushdb()
+                await r.aclose()
+
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(_flush())
+        finally:
+            loop.close()
+        for k, v in _saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+@pytest.mark.asyncio
+async def test_production_celery_app_delivers_real_task(production_celery_worker):
+    """生产 task_queue 的 app 经真实 broker 投递生产任务并取回结果（#531）。
+
+    选 run_heatmap_generation（render_type=grid）：无 DB / LLM / 网络依赖的纯
+    计算任务，是生产注册表里唯一能 hermetic 验证 broker round-trip 的任务。
+    """
+    features = [
+        {"type": "Feature", "geometry": {"type": "Point", "coordinates": [104.0, 30.0]}, "properties": {}},
+        {"type": "Feature", "geometry": {"type": "Point", "coordinates": [104.02, 30.01]}, "properties": {}},
+        {"type": "Feature", "geometry": {"type": "Point", "coordinates": [104.01, 30.005]}, "properties": {}},
+    ]
+    task = production_celery_worker.send_task(
+        "app.services.spatial_tasks.run_heatmap_generation",
+        args=[features],
+        kwargs={"render_type": "grid"},
+    )
+    result = task.get(timeout=60)
+    assert result is not None and result.get("success") is True, (
+        f"生产任务未在真实 worker 上成功执行: {result!r}"
+    )
+    assert result["data"]["type"] == "FeatureCollection"
+    assert result["data"]["features"], "grid 模式应产出热力格子要素"
+

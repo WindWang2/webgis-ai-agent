@@ -212,7 +212,7 @@ jobs:
           JWT_SECRET_KEY: ci-test-secret-key-32-chars-ok
         run: pytest tests/test_deploy_migration_wiring.py::test_migrated_schema_matches_models --no-cov -q
 
-  # ============ Stage 2a-2: 真实服务 smoke lane (#477) ============
+  # ============ Stage 2a-2: 真实服务 smoke lane (#477, #531) ============
   # test-backend 配了 postgis + redis service container，但套件实际跑
   # SQLite / fakeredis / eager-celery（conftest 强制 USE_REDIS=false +
   # CELERY_BROKER_URL=memory://）—— asyncpg 驱动行为、PostGIS 类型、真实
@@ -220,6 +220,11 @@ jobs:
   # provisioned 容器跑定向 smoke 子集（-m real_services；服务不可达时
   # self-skip，本地无容器不红）。不把整套测试搬到真实后端 —— 目标是
   # prod-backend 回归在 CI 有真实覆盖。
+  #
+  # #531：lane 显式导出 USE_REDIS=true + CELERY_BROKER_URL/RESULT_BACKEND，
+  # 使 production celery app（app.services.task_queue）脱离 conftest 的
+  # eager/memory 钉扎 —— 真实 worker（-A app.services.task_queue）投递生产
+  # 任务并取回结果，不再只验证 toy app。
   real-services-smoke:
     name: Real Services Smoke (PostGIS + Redis + Celery)
     runs-on: ubuntu-latest
@@ -267,6 +272,14 @@ jobs:
           echo "JWT_SECRET_KEY=ci-test-secret-key-32-chars-ok" >> $GITHUB_ENV
           echo "ENV=development" >> $GITHUB_ENV
           echo "LLM_API_KEY=test-key-not-real" >> $GITHUB_ENV
+          # #531：conftest.py 用 setdefault 强制 USE_REDIS=false +
+          # CELERY_BROKER_URL=memory://（测试进程离线）—— 已设置的变量不会被
+          # setdefault 覆盖。这里显式打开真实 Redis 线协议：production celery app
+          # （app.services.task_queue）在 broker db 6 / result backend db 7 上走
+          # 真实投递，worker 由 fixture 以 -A app.services.task_queue 启动。
+          echo "USE_REDIS=true" >> $GITHUB_ENV
+          echo "CELERY_BROKER_URL=redis://localhost:6379/6" >> $GITHUB_ENV
+          echo "CELERY_RESULT_BACKEND=redis://localhost:6379/7" >> $GITHUB_ENV
 
       - name: Run Real-Services Smoke
         # 与 test-backend 同批 service container：asyncpg 真实往返、PostGIS
