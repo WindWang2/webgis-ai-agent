@@ -49,8 +49,8 @@
       },
       "targets": [
         {
-          "expr": "rate(http_requests_total[5m])",
-          "legendFormat": "{{method}} {{path}}",
+          "expr": "sum by (handler, method, status) (rate(http_requests_total{job=\"webgis-api\"}[5m]))",
+          "legendFormat": "{{method}} {{handler}} [{{status}}]",
           "refId": "A"
         }
       ],
@@ -71,7 +71,7 @@
               {"color": "red", "value": 500}
             ]
           },
-          "unit": "ms"
+          "unit": "s"
         },
         "overrides": []
       },
@@ -88,17 +88,17 @@
       "pluginVersion": "10.3.3",
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_highr_seconds_bucket{job=\"webgis-api\"}[5m])))",
           "legendFormat": "p95",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_highr_seconds_bucket{job=\"webgis-api\"}[5m])))",
           "legendFormat": "p99",
           "refId": "B"
         }
       ],
-      "title": "响应延迟 (ms)",
+      "title": "响应延迟 (s)",
       "type": "stat"
     },
     {
@@ -131,7 +131,7 @@
       "pluginVersion": "10.3.3",
       "targets": [
         {
-          "expr": "(1 - rate(http_requests_success_total[5m]) / rate(http_requests_total[5m])) * 100",
+          "expr": "(sum(rate(http_requests_total{job=\"webgis-api\",status=~\"5..\"}[5m])) / sum(rate(http_requests_total{job=\"webgis-api\"}[5m]))) * 100",
           "legendFormat": "错误率",
           "refId": "A"
         }
@@ -143,17 +143,17 @@
       "datasource": "Prometheus",
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "palette-classic"},
+          "color": {"mode": "thresholds"},
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {"color": "green", "value": null},
-              {"color": "yellow", "value": 70},
-              {"color": "red", "value": 85}
+              {"color": "yellow", "value": 1000000000},
+              {"color": "red", "value": 1700000000}
             ]
           },
-          "unit": "percent"
+          "unit": "bytes"
         },
         "overrides": []
       },
@@ -170,12 +170,12 @@
       "pluginVersion": "10.3.3",
       "targets": [
         {
-          "expr": "container_memory_usage_bytes / container_spec_memory_limit_bytes * 100",
-          "legendFormat": "内存使用率",
+          "expr": "process_resident_memory_bytes{job=\"webgis-api\"}",
+          "legendFormat": "rss",
           "refId": "A"
         }
       ],
-      "title": "内存使用率 (%)",
+      "title": "API 进程内存 (RSS)",
       "type": "stat"
     }
   ],

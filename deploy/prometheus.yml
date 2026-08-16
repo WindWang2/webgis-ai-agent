@@ -10,6 +10,9 @@ alerting:
         - targets: []
 
 # 加载仓库内已跟踪的告警规则（deploy/alerts-rules.json，compose 中挂载）。
+# #473：规则表达式引用的指标与下面的 scrape job 一一对应 ——
+# tests/test_alerts_metrics_consistency.py 会在 CI 里校验这种对应关系，
+# 引用无数据源指标的规则会让构建失败。
 rule_files:
   - /etc/prometheus/alerts-rules.json
 
@@ -26,12 +29,21 @@ scrape_configs:
     metrics_path: '/metrics'
     scrape_interval: 30s
 
-  # Redis 监控（需要 redis_exporter）
-  # - job_name: 'redis'
-  #   static_configs:
-  #     - targets: ['redis-exporter:9121']
+  # PostgreSQL exporter（#473：pg_up 的数据源，Database_Connection_Failure 告警）。
+  # 服务定义在 docker-compose.prod*.yml 的 postgres-exporter。
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
 
-  # Node Exporter（宿主机器指标）
-  # - job_name: 'node'
-  #   static_configs:
-  #     - targets: ['node-exporter:9100']
+  # Redis exporter（#473：redis_memory_* 与 redis_key_size 的数据源，
+  # Redis_Memory_High / Celery_Task_Backlog 告警）。check-keys=celery 让
+  # exporter 额外导出 celery 默认队列（Redis list key "celery"）的长度。
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+
+  # Node exporter（#473：node_filesystem_* 的数据源，Disk_Space_Low 告警）。
+  # 只读挂载宿主 /proc /sys /，监控宿主机（容器所在物理机）的磁盘/负载。
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']

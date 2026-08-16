@@ -211,11 +211,18 @@ def verify_token(token: str) -> Optional[dict]:
 
     注意：本函数只做密码学校验，**不检查 `ver` 是否与 DB 一致**。
     需要 ver 校验的路径用 `get_current_user_with_version` 依赖。
+
+    #473：校验失败（签名/exp/格式错误）会递增
+    auth_jwt_validation_errors_total —— Auth_JWT_Errors 告警的真实数据源；
+    之前该指标从未被暴露，告警是永久静默的。
     """
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return payload
     except jwt.PyJWTError:
+        from app.core.auth_metrics import inc_jwt_validation_error
+
+        inc_jwt_validation_error()
         return None
 
 
