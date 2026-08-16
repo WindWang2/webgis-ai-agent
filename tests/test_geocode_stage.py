@@ -432,3 +432,267 @@ def test_geocode_stage_dedup_preserves_result_mapping():
     assert result.rows[0]["_lon"] == 116.4
     assert result.rows[1]["_lat"] == 39.9
     assert result.rows[1]["_lon"] == 116.4
+
+
+# ─── Issue #483: bounded geocode work vs the hard Celery time limit ─────────
+#
+# explorer_geocode_task runs under soft_time_limit=290 / time_limit=300; the
+# stage used to iterate every row of every source with no bound, so large
+# datasets hard-killed the worker mid-run. The stage now takes a time budget:
+# unique addresses are dispatched in ≤BATCH_SIZE partitions, the deadline is
+# checked before each partition, un-dispatched rows are marked "skipped", and
+# the summary carries honest partial-completion metadata — the task finishes
+# gracefully before the soft limit instead of being killed.
+
+from app.services.explorer.geocode_stage import GeocodeSummary
+
+
+class _FakeClock:
+    """Deterministic clock advanced manually by the fake geocoder."""
+
+    def __init__(self):
+        self.now = 1000.0
+
+    def monotonic(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
+def _ok_batch_response(addresses, provider="amap"):
+    return {
+        "total": len(addresses),
+        "success_count": len(addresses),
+        "error_count": 0,
+        "results": [
+            {"index": i, "status": "ok", "address": a,
+             "results": [{"location": [116.0 + i * 0.001, 39.9]}]}
+            for i, a in enumerate(addresses)
+        ],
+        "errors": [],
+        "provider": provider,
+    }
+
+
+def test_geocode_stage_zero_budget_skips_all_rows():
+    """time_budget=0: no provider calls at all, every row honestly skipped,
+    rows still carried (partial checkpoint for validate), metadata set."""
+    rows = [{"name": f"r{i}", "addr": f"地址{i}"} for i in range(5)]
+    parsed_sources = [{"ref_id": "ref_z", "row_count": len(rows),
+                       "mapping": {"address": "addr"}}]
+
+    async def batch_geocode(addresses, provider="amap", max_concurrency=3):
+        pytest.fail("batch_geocode must not run with an exhausted budget")
+
+    result = _run(geocode_stage(
+        parsed_sources,
+        load_ref=lambda ref_id: {"rows": rows, "mapping": {"address": "addr"}},
+        batch_geocode=batch_geocode,
+        time_budget=0,
+        clock=lambda: 0.0,
+    ))
+
+    assert result.summary.deadline_exceeded is True
+    assert result.summary.skipped == 5
+    assert result.summary.total == 5
+    assert result.summary.success == 0
+    assert all(r["_geocode_status"] == "skipped" for r in result.rows)
+    assert all(r["_lat"] is None for r in result.rows)
+    assert "budget" in result.rows[0]["_geocode_error"]
+
+
+def test_geocode_stage_stops_dispatching_at_deadline():
+    """250 unique addresses, 100 per partition, 50s per partition, budget 75s:
+    partition 1 dispatches (elapsed 0 < 75), partition 2 dispatches
+    (elapsed 50 < 75), partition 3 is skipped (elapsed 100 >= 75) — 200
+    geocoded, 50 honestly reported as skipped."""
+    from app.services.geocode_strategy import BATCH_SIZE
+    rows = [{"name": f"r{i}", "addr": f"地址{i}"} for i in range(250)]
+    parsed_sources = [{"ref_id": "ref_d", "row_count": len(rows),
+                       "mapping": {"address": "addr"}}]
+
+    clock = _FakeClock()
+    dispatched: list[int] = []
+
+    async def batch_geocode(addresses, provider="amap", max_concurrency=3):
+        assert len(addresses) <= BATCH_SIZE
+        dispatched.append(len(addresses))
+        clock.advance(50.0)
+        return _ok_batch_response(addresses)
+
+    result = _run(geocode_stage(
+        parsed_sources,
+        load_ref=lambda ref_id: {"rows": rows, "mapping": {"address": "addr"}},
+        batch_geocode=batch_geocode,
+        time_budget=75.0,
+        clock=clock.monotonic,
+    ))
+
+    assert dispatched == [100, 100], f"unexpected dispatch pattern: {dispatched}"
+    assert result.summary.success == 200
+    assert result.summary.skipped == 50
+    assert result.summary.deadline_exceeded is True
+    statuses = [r["_geocode_status"] for r in result.rows]
+    assert statuses.count("ok") == 200
+    assert statuses.count("skipped") == 50
+    # success_rate covers the rows actually attempted, not budget skips.
+    assert result.summary.success_rate == 1.0
+
+
+def test_geocode_stage_no_budget_processes_everything():
+    """time_budget=None keeps the historical unbounded behavior (no skips) —
+    the in-process pipeline path stays unchanged."""
+    rows = [{"name": f"r{i}", "addr": f"地址{i}"} for i in range(3)]
+    parsed_sources = [{"ref_id": "ref_n", "row_count": 3,
+                       "mapping": {"address": "addr"}}]
+
+    async def batch_geocode(addresses, provider="amap", max_concurrency=3):
+        return _ok_batch_response(addresses)
+
+    result = _run(geocode_stage(
+        parsed_sources,
+        load_ref=lambda ref_id: {"rows": rows, "mapping": {"address": "addr"}},
+        batch_geocode=batch_geocode,
+        time_budget=None,
+        clock=lambda: 0.0,
+    ))
+
+    assert result.summary.skipped == 0
+    assert result.summary.deadline_exceeded is False
+    assert result.summary.success == 3
+
+
+def test_geocode_stage_deadline_mid_second_source():
+    """Budget exhausted while source 2 is queued: source 2 rows load and are
+    marked skipped; source 1 results survive; summary reports both."""
+    rows_1 = [{"name": "a1", "addr": "地址一"}, {"name": "a2", "addr": "地址二"}]
+    rows_2 = [{"name": "b1", "addr": "地址三"}, {"name": "b2", "addr": "地址四"}]
+    parsed_sources = [
+        {"ref_id": "ref_s1", "row_count": 2, "mapping": {"address": "addr"}},
+        {"ref_id": "ref_s2", "row_count": 2, "mapping": {"address": "addr"}},
+    ]
+    store = {}
+    refs = {"ref_s1": {"rows": rows_1, "mapping": {"address": "addr"}},
+            "ref_s2": {"rows": rows_2, "mapping": {"address": "addr"}}}
+
+    clock = _FakeClock()
+    progress: list[int] = []
+
+    async def batch_geocode(addresses, provider="amap", max_concurrency=3):
+        clock.advance(200.0)
+        return _ok_batch_response(addresses)
+
+    result = _run(geocode_stage(
+        parsed_sources,
+        load_ref=lambda ref_id: refs[ref_id],
+        batch_geocode=batch_geocode,
+        store_ref=lambda payload: store.update(payload) or "ref_out",
+        on_progress=progress.append,
+        time_budget=150.0,
+        clock=clock.monotonic,
+    ))
+
+    assert result.summary.success == 2
+    assert result.summary.skipped == 2
+    assert result.summary.deadline_exceeded is True
+    # Partial checkpoint: store received the annotated rows + honest summary.
+    assert len(store["rows"]) == 4
+    assert store["summary"]["skipped"] == 2
+    assert store["summary"]["deadline_exceeded"] is True
+    # Progress was still reported while work happened.
+    assert progress
+
+
+def test_geocode_stage_summary_dict_carries_partial_metadata():
+    """GeocodeSummary.as_dict exposes skipped + deadline_exceeded so the task
+    handoff can surface honest partial-completion metadata."""
+    s = GeocodeSummary(total=10, success=6, failed=1, predefined=1, skipped=2,
+                       success_rate=6 / 7, deadline_exceeded=True)
+    d = s.as_dict()
+    assert d["skipped"] == 2
+    assert d["deadline_exceeded"] is True
+
+
+def test_geocode_stage_predefined_rows_not_counted_skipped():
+    """Adversarial: rows with coordinates are predefined regardless of budget;
+    only un-dispatched geocode rows count as skipped."""
+    rows = [
+        {"name": "p", "addr": "x", "lat": 39.9, "lon": 116.4},
+        {"name": "q", "addr": "y"},
+    ]
+    parsed_sources = [{"ref_id": "ref_p", "row_count": 2,
+                       "mapping": {"address": "addr", "lat": "lat", "lon": "lon"}}]
+
+    async def batch_geocode(addresses, provider="amap", max_concurrency=3):
+        pytest.fail("must not dispatch with zero budget")
+
+    result = _run(geocode_stage(
+        parsed_sources,
+        load_ref=lambda ref_id: {"rows": rows,
+                                 "mapping": {"address": "addr", "lat": "lat", "lon": "lon"}},
+        batch_geocode=batch_geocode,
+        time_budget=0,
+        clock=lambda: 0.0,
+    ))
+
+    assert result.summary.predefined == 1
+    assert result.summary.skipped == 1
+    assert result.rows[0]["_geocode_status"] == "predefined"
+    assert result.rows[1]["_geocode_status"] == "skipped"
+    assert result.summary.success_rate == 0.0
+
+
+def test_geocode_task_bounded_by_time_budget_and_reports_partial_completion(monkeypatch):
+    """The Celery adapter passes GEOCODE_STAGE_TIME_BUDGET into the stage and
+    surfaces skipped_rows/deadline_exceeded in the validate-stage handoff."""
+    from app.services.explorer import geocode_stage as gs_mod
+    from app.services.session_data_protocol import set_active_session_store
+    from app.services.session_data import MemorySessionStore
+    from app.tasks.explorer import task_chain
+    import asyncio as _asyncio
+
+    captured: dict = {}
+
+    class _FakeResult:
+        rows = [{"name": "A", "_geocode_status": "ok"},
+                {"name": "B", "_geocode_status": "skipped"}]
+        summary = gs_mod.GeocodeSummary(
+            total=2, success=1, skipped=1, success_rate=1.0,
+            deadline_exceeded=True,
+        )
+
+    async def fake_stage(parsed_sources, *, load_ref, batch_geocode,
+                         on_progress=None, **kwargs):
+        captured.update(kwargs)
+        return _FakeResult()
+
+    monkeypatch.setattr(gs_mod, "geocode_stage", fake_stage)
+
+    def fake_run_async(coro):
+        loop = _asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
+    monkeypatch.setattr(task_chain, "_run_async", fake_run_async)
+
+    store = MemorySessionStore()
+    set_active_session_store(store)
+    try:
+        out = task_chain.explorer_geocode_task.apply(
+            args=[{
+                "task_id": "t-483",
+                "parsed_results": [{"ref_id": "r1", "row_count": 2, "mapping": {}}],
+            }]
+        )
+    finally:
+        set_active_session_store(None)
+
+    assert captured.get("time_budget") == gs_mod.GEOCODE_STAGE_TIME_BUDGET
+    assert out.successful()
+    assert out.result["skipped_rows"] == 1
+    assert out.result["deadline_exceeded"] is True
+    assert out.result["total_rows"] == 2
+    assert out.result["geocoded_ref_id"]

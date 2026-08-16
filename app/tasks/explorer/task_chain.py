@@ -130,9 +130,20 @@ def explorer_parse_task(self, prev_result: dict):
 # idempotency guard.
 @celery_app.task(bind=True, soft_time_limit=290, time_limit=300)
 def explorer_geocode_task(self, prev_result: dict):
-    """地理编码阶段 - thin Celery adapter over the pure :func:`geocode_stage`."""
+    """地理编码阶段 - thin Celery adapter over the pure :func:`geocode_stage`.
+
+    Issue #483: the stage is bounded by :data:`GEOCODE_STAGE_TIME_BUDGET`
+    (230 s vs the 290 s soft / 300 s hard limits): it stops dispatching new
+    address partitions once the budget is spent and finishes gracefully with
+    honest partial-completion metadata (``skipped_rows`` /
+    ``deadline_exceeded``) instead of being hard-killed mid-run, which would
+    take sibling tasks on the worker down with it.
+    """
     from app.tools.chinese_maps import batch_geocode_cn
-    from app.services.explorer.geocode_stage import geocode_stage
+    from app.services.explorer.geocode_stage import (
+        geocode_stage,
+        GEOCODE_STAGE_TIME_BUDGET,
+    )
 
     task_id = prev_result["task_id"]
     logger.info(f"[Explorer:{task_id}] Starting geocode stage")
@@ -145,11 +156,14 @@ def explorer_geocode_task(self, prev_result: dict):
         load_ref=lambda ref_id: _load_ref(ref_id, task_id=task_id),
         batch_geocode=batch_geocode_cn,
         on_progress=_on_progress,
+        time_budget=GEOCODE_STAGE_TIME_BUDGET,
     ))
 
     # Fail-fast: if there were rows to geocode but none survived (every parsed
     # ref unresolved), the handoff is broken — fail loudly rather than handing
-    # an empty geocoded_ref_id to validate and reporting success.
+    # an empty geocoded_ref_id to validate and reporting success. Deadline
+    # truncation does NOT trip this: budget-skipped rows are still carried in
+    # result.rows with an honest "skipped" status.
     expected_rows = sum(s.get("row_count", 0) for s in prev_result["parsed_results"])
     if expected_rows > 0 and not result.rows:
         raise RuntimeError(
@@ -172,6 +186,8 @@ def explorer_geocode_task(self, prev_result: dict):
         "geocoded_ref_id": geocoded_ref_id,
         "total_rows": result.summary.total,
         "success_rate": result.summary.success_rate,
+        "skipped_rows": result.summary.skipped,
+        "deadline_exceeded": result.summary.deadline_exceeded,
     }
 
 
