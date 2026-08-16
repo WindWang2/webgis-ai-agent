@@ -200,7 +200,6 @@ async def test_start_exploration_registers_session_task():
 async def test_bridge_skips_owner_registered_tasks():
     """#518: 已注册 owner 的任务（登录会话）不走聊天流桥接 —— 独立流负责。"""
     from app.services.explorer.orchestrator import (
-        ExplorerOrchestrator,
         bridge_session_explorer_progress,
         register_session_task,
     )
