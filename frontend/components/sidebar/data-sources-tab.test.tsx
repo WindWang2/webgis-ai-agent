@@ -192,8 +192,8 @@ const fetchRef = () => vi.mocked(dataFabricApi.fetchRefGeoJSON);
 const GEOJSON = {
   type: 'FeatureCollection' as const,
   features: [
-    { type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [116.4, 39.9] } },
-    { type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [116.5, 39.95] } },
+    { type: 'Feature' as const, properties: {}, geometry: { type: 'Point', coordinates: [116.4, 39.9] } },
+    { type: 'Feature' as const, properties: {}, geometry: { type: 'Point', coordinates: [116.5, 39.95] } },
   ],
 };
 
