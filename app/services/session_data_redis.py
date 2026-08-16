@@ -240,7 +240,12 @@ class RedisSessionStore(BaseSessionStore):
         from app.schemas.ref_descriptor import compute_descriptor
         descriptor = await asyncio.to_thread(compute_descriptor, ref_id, data)
         descriptor_key = self._descriptor_key(session_id, ref_id)
-        
+
+        # P1: 大 GeoJSON 的 json.dumps 在事件循环上要 0.6-4s（同
+        # tool_dispatch_service 的论证），必须在 pipe 外先线程化序列化，
+        # pipe 事务内只做 set。
+        payload_json = await asyncio.to_thread(json.dumps, data, ensure_ascii=False)
+
         try:
             # Insert first. Evicting before the write used to delete live refs
             # and then return an unavailable sentinel if the insert pipeline
@@ -255,7 +260,7 @@ class RedisSessionStore(BaseSessionStore):
                 )
                 pipe.expire(self._state_key(session_id), STATE_TTL)
                 pipe.sadd(self._active_key(), session_id)
-                pipe.set(data_key, json.dumps(data, ensure_ascii=False), ex=DATA_TTL)
+                pipe.set(data_key, payload_json, ex=DATA_TTL)
                 pipe.set(descriptor_key, json.dumps(descriptor.to_dict(), ensure_ascii=False), ex=DATA_TTL)
                 pipe.zadd(order_key, {ref_id: time.time()})
                 pipe.sadd(self._index_key(session_id), ref_id)
@@ -441,7 +446,8 @@ class RedisSessionStore(BaseSessionStore):
 
             raw_str = raw.decode() if isinstance(raw, bytes) else raw
             try:
-                return json.loads(raw_str)
+                # P1: 大 GeoJSON 反序列化同样离线到工作线程（同 store 的 dumps）。
+                return await asyncio.to_thread(json.loads, raw_str)
             except Exception:
                 return raw_str
         except aioredis.RedisError as e:
