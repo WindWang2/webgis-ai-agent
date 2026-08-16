@@ -83,6 +83,28 @@ _QUEUE_END = object()  # pump-completed sentinel
 _PLANNER_KEEPALIVE_S = 10.0
 
 
+class _AcquiredLock:
+    """Adapter presenting an already-acquired asyncio.Lock to ``async with``.
+
+    Used by :meth:`ChatEngine.chat_stream` (#554 defect 1, legacy sibling):
+    the per-session turn lock is acquired by a keepalive polling loop so bytes
+    flow on the wire while a same-session concurrent second request waits for
+    the previous turn to release it. The adapter then presents the lock to the
+    existing ``async with lock:`` block unchanged, preserving its
+    release-on-any-exit semantics (including ``GeneratorExit`` on client
+    disconnect) without re-indenting the ~650-line turn body.
+    """
+
+    def __init__(self, lock: asyncio.Lock) -> None:
+        self._lock = lock
+
+    async def __aenter__(self) -> "_AcquiredLock":
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        self._lock.release()
+
+
 async def _stream_with_token_keepalive(
     stream: AsyncGenerator[tuple[str, dict], None],
     timeout_s: float = _LLM_TOKEN_KEEPALIVE_S,
@@ -1307,7 +1329,21 @@ class ChatExecutionEngine:
         # (asyncio.Lock is not reentrant; acquiring it twice deadlocks).
         messages = await self._get_or_create_session(session_id, user_id=user_id)
         lock = self._get_session_lock(session_id)
-        async with lock:
+        # #554 defect 1 (legacy sibling): the per-session lock is held for the
+        # ENTIRE turn (RUN-03 above), so a same-session concurrent second
+        # request blocks here with zero bytes on the wire — the SSE headers
+        # already flushed, and idle-timeout proxies reset the silent
+        # connection. Poll the lock and emit the engine's established
+        # keep_alive event at the planner keepalive cadence until acquired;
+        # the pre-acquired adapter below keeps the ``async with`` semantics.
+        while True:
+            try:
+                await asyncio.wait_for(lock.acquire(), timeout=_PLANNER_KEEPALIVE_S)
+                break
+            except asyncio.TimeoutError:
+                yield sse_event("keep_alive", {"message": "ping"})
+
+        async with _AcquiredLock(lock):
             self._reject_if_clearing(session_id)
             _task = asyncio.current_task()
             if _task is not None:

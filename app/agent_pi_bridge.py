@@ -190,6 +190,29 @@ def get_tool_registry() -> "ToolRegistry":
 # deliberate rendezvous between the Pi HTTP-callback and SSE adapters.
 _dispatch_result_cache: dict[tuple[str, str], "ToolDispatchResult"] = {}
 
+# #554 defect 3: ONE long-lived ToolDispatchService shared by every Pi HTTP
+# callback dispatch (mirrors the legacy engine's RUN-01 pattern — a fresh
+# service per callback carried a fresh instance-level _completed_keys set, so
+# a repeat call within the same turn ALWAYS got the "still in flight" message
+# even after the first call had long since completed; post-success dedup
+# semantics were permanently dead on the Pi path). The bridge is a singleton
+# and turns are strictly serial, so a module-level instance is the correct
+# scope. The registry is injected once at startup; tests replace it via
+# set_tool_registry, so the cache re-keys when the registry object changes.
+_dispatch_service: "Optional[ToolDispatchService]" = None
+_dispatch_service_registry: "Optional[ToolRegistry]" = None
+
+
+def _get_shared_dispatch_service() -> "ToolDispatchService":
+    """Return the bridge-wide ToolDispatchService (rebuilt only if the
+    injected registry was replaced — e.g. per-test set_tool_registry swaps)."""
+    global _dispatch_service, _dispatch_service_registry
+    registry = get_tool_registry()
+    if _dispatch_service is None or _dispatch_service_registry is not registry:
+        _dispatch_service = ToolDispatchService(registry=registry)
+        _dispatch_service_registry = registry
+    return _dispatch_service
+
 
 def cache_dispatch_result(
     tool_call_id: str,
@@ -286,7 +309,9 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
 
     # 统一调度：委托给 ToolDispatchService（票据 01 引入）。
     # executed_tools 复用一个 session 级 set，让重复调用拦截在 service 内生效。
-    service = ToolDispatchService(registry=registry)
+    # 服务实例按 bridge 复用（#554 缺陷 3）：每回调新建实例会让 _completed_keys
+    # 永远为空，同回合内已完成调用的重复调用被误报为"仍在执行中"。
+    service = _get_shared_dispatch_service()
     tc = {"id": request.toolCallId, "function": {"name": tool_name, "arguments": request.arguments or {}}}
     executed = _session_executed_sets.setdefault(session_id, set())
     # 防御上限：turn 末清理兜底正常路径，此上限兜住跨会话无 turn 的病态累积
@@ -1547,6 +1572,8 @@ class PiBridge:
         _clear_dispatch_cache()
         with rt_ctx.bind_runtime_context(turn_id=turn_id, run_id=run_id), bind_turn_evidence(rt_ev):
             TURN_EVIDENCE.register(rt_ev)
+            cancelled = False
+            timed_out = False
             try:
                 # F5/F24: publish the active turn's identity + cancellation token
                 # while the lock is held — abort() reads the sid for session
@@ -1579,20 +1606,52 @@ class PiBridge:
                         if text:
                             content_parts.append(text)
                     except asyncio.TimeoutError:
+                        timed_out = True
                         break
                 # Best-effort: drain any leftover events so the next turn starts clean.
                 await self._drain_remaining_turn_events()
-                # A drain that timed out without agent_end is a PARTIAL turn, not a
-                # clean success (the agent may not have finished).
-                rt_ev.settle(Outcome.SUCCEEDED if _drained_complete else Outcome.PARTIAL,
-                             failure_class=None if _drained_complete else "drain_timeout")
+                if timed_out:
+                    # #554 defect 2: a drain that timed out without agent_end is
+                    # a PARTIAL turn. Previously the caller received a 200 with
+                    # truncated content and NO abort RPC — Pi kept generating
+                    # tokens and executing tools (up to the 300s RPC timeout)
+                    # while the client believed the turn succeeded. Surface an
+                    # error instead; the finally below sends the abort RPC
+                    # (mirrors stream_prompt's stall handling). First-wins settle
+                    # keeps this "drain_timeout" classification over the generic
+                    # failure_class in the except handler below.
+                    rt_ev.settle(Outcome.FAILED, failure_class="drain_timeout")
+                    raise PiRpcError(
+                        f"Pi agent did not emit agent_end within {PI_EVENT_DRAIN_TIMEOUT}s "
+                        "(event-drain timeout); the turn has been aborted."
+                    )
+                # Only a clean agent_end reaches this point — a timeout already
+                # raised above, so PARTIAL is no longer reachable.
+                rt_ev.settle(Outcome.SUCCEEDED)
             except asyncio.CancelledError:
+                cancelled = True
                 rt_ev.settle(Outcome.CANCELLED)
                 raise
             except Exception as exc:  # noqa: BLE001
                 rt_ev.settle(Outcome.FAILED, failure_class=type(exc).__name__, detail=str(exc)[:200])
                 raise
             finally:
+                if cancelled or timed_out:
+                    # #554 defect 2: tell Pi to stop generating tokens / executing
+                    # tools when the non-streaming turn ends without a clean
+                    # agent_end (drain timeout) or is cancelled mid-drain — a
+                    # retry otherwise duplicates side effects. Mirrors
+                    # stream_prompt's finally guard; abort() is lock-free by
+                    # design, so it is safe to call while the lock is still held.
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.shield(self._abort_on_disconnect(turn_sid)),
+                            timeout=5.0,
+                        )
+                    except (asyncio.TimeoutError, asyncio.CancelledError):
+                        pass
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("[PiBridge] abort-on-failed-turn (turn=%s): %s", turn_sid, e)
                 _cleanup_turn_state(turn_sid)
                 # Clear the active-turn markers before releasing the lock.
                 self._active_turn_sid = None
@@ -1664,7 +1723,21 @@ class PiBridge:
         # Abort deliberately bypasses this lock (see abort()).
         with rt_ctx.bind_runtime_context(turn_id=turn_id, run_id=run_id), bind_turn_evidence(rt_ev):
             TURN_EVIDENCE.register(rt_ev)
-            await self._lock.acquire()
+            # #554 defect 1: the turn lock is held across the ENTIRE previous
+            # turn (send + drain + cleanup), so a concurrent second stream
+            # blocks here for up to the holder's whole turn (PI_RPC_TIMEOUT=300s
+            # worst case). The SSE headers have already flushed by this point
+            # (StreamingResponse starts iterating), yet ZERO bytes flowed while
+            # waiting — proxies/LBs with shorter idle timeouts dropped user 2's
+            # connection before their turn even started. Poll the lock and emit
+            # a keepalive SSE comment (ignored by the client parser, bytes on
+            # the wire) at the heartbeat cadence until acquired.
+            while True:
+                try:
+                    await asyncio.wait_for(self._lock.acquire(), timeout=PI_HEARTBEAT_INTERVAL)
+                    break
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
             _session_executed_sets.pop(turn_sid, None)
             _clear_dispatch_cache()
             cancelled = False

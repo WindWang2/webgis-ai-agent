@@ -220,18 +220,24 @@ async def test_chat_no_deadlock_on_session_creation(monkeypatch):
 
 def test_chat_stream_lock_scope_comment():
     """Assert the chat_stream source actually wraps the loop in the lock (a
-    structural guard against future refactors moving the lock back)."""
+    structural guard against future refactors moving the lock back).
+
+    #554: the lock is now acquired by a keepalive polling loop and presented to
+    the turn body through the pre-acquired ``_AcquiredLock`` adapter — the
+    whole-loop-inside-the-lock invariant is unchanged, only the spelling is
+    ``async with _AcquiredLock(lock):``.
+    """
     import inspect
     from app.services.chat import execution_engine
 
     src = inspect.getsource(execution_engine.ChatExecutionEngine.chat_stream)
     # The lock must be acquired once and the whole loop body must be inside it:
-    # count occurrences of 'async with lock' — should be exactly 1 in chat_stream,
-    # and the loop 'for round_index in range' must appear AFTER it.
-    lock_occurrences = src.count("async with lock:")
+    # exactly one 'async with _AcquiredLock(lock):' in chat_stream, and the
+    # loop 'for round_index in range' must appear AFTER it.
+    lock_occurrences = src.count("async with _AcquiredLock(lock):")
     assert lock_occurrences == 1, f"chat_stream lock count={lock_occurrences}"
     loop_pos = src.find("for round_index in range(self.max_rounds):")
-    lock_pos = src.find("async with lock:")
+    lock_pos = src.find("async with _AcquiredLock(lock):")
     assert lock_pos != -1 and loop_pos != -1
     assert lock_pos < loop_pos, (
         "RUN-03 regression: chat_stream loop is outside the session lock"
