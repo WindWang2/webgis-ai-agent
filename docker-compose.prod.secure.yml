@@ -148,6 +148,11 @@ services:
     env_file:
       - .env.Priv
     command: celery -A app.services.task_queue worker --loglevel=info --concurrency=2
+    volumes:
+      # #471（#394 的 compose 兄弟项）：worker 必须看到 api 写入的上传文件
+      # （celery 任务按本地路径打开 raster/shapefile）。与 api 挂同一个
+      # uploads 卷，否则上传成功的分析任务在 worker 侧"No such file"。
+      - uploads:/app/uploads
     depends_on:
       db:
         condition: service_healthy
