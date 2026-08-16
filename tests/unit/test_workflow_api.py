@@ -15,6 +15,14 @@ client = TestClient(app)
 @pytest.fixture(autouse=True)
 def setup_db():
     Base.metadata.create_all(bind=Engine)
+    # CI 跑真 Postgres：写路径落库表对 users 有外键约束，必须先落 users 行，
+    # 否则令牌里的 "wf-runner" 违反外键（SQLite 不查所以本地过）。merge 幂等。
+    from app.core.database import SessionLocal
+    from app.models.db_model import User
+    with SessionLocal() as db:
+        db.merge(User(id="wf-runner", username="wf-runner", email="wf-runner@example.com",
+                      password_hash="not-a-real-hash", role="viewer", is_active=True))
+        db.commit()
     yield
 
 
@@ -53,7 +61,8 @@ def _auth_headers():
 
 
 def _make_project(name):
-    res = client.post("/api/v1/projects", json={"name": name})
+    res = client.post("/api/v1/projects", json={"name": name},
+                      headers=_auth_headers())
     assert res.status_code == 201, res.text
     return res.json()["id"]
 
@@ -61,7 +70,7 @@ def _make_project(name):
 def _make_workflow(proj_id, wf_name, steps):
     res = client.post(f"/api/v1/projects/{proj_id}/workflows", json={
         "name": wf_name, "graph_spec": {"steps": steps},
-    })
+    }, headers=_auth_headers())
     assert res.status_code == 200, res.text
     return res.json()["id"]
 
@@ -72,14 +81,16 @@ def test_revisions_list_and_detail(fake_registry):
         {"step_id": "s1", "tool_name": "t_a", "dependencies": []}])
 
     # revision 1 is published at save time.
-    rev = client.get(f"/api/v1/projects/{proj_id}/workflows/{wf_id}/revisions")
+    rev = client.get(f"/api/v1/projects/{proj_id}/workflows/{wf_id}/revisions",
+                     headers=_auth_headers())
     assert rev.status_code == 200
     items = rev.json()["items"]
     assert len(items) == 1
     rev_id = items[0]["id"]
 
     detail = client.get(
-        f"/api/v1/projects/{proj_id}/workflows/{wf_id}/revisions/{rev_id}")
+        f"/api/v1/projects/{proj_id}/workflows/{wf_id}/revisions/{rev_id}",
+        headers=_auth_headers())
     assert detail.status_code == 200
     assert detail.json()["revision_no"] == 1
 
@@ -100,7 +111,8 @@ def test_run_detail_replay_compare(fake_registry):
     assert run["run_manifest"]["graph_fingerprint"]
 
     # Run detail endpoint.
-    detail = client.get(f"/api/v1/projects/{proj_id}/runs/{run_id}")
+    detail = client.get(f"/api/v1/projects/{proj_id}/runs/{run_id}",
+                        headers=_auth_headers())
     assert detail.status_code == 200
     assert detail.json()["run_fingerprint"] == run["run_fingerprint"]
 
@@ -114,7 +126,8 @@ def test_run_detail_replay_compare(fake_registry):
     # Compare surfaces the new shape.
     cmp = client.post(
         f"/api/v1/projects/{proj_id}/runs/compare",
-        params={"run_a_id": run_id, "run_b_id": replay_run["id"]})
+        params={"run_a_id": run_id, "run_b_id": replay_run["id"]},
+        headers=_auth_headers())
     assert cmp.status_code == 200, cmp.text
     body = cmp.json()
     assert body["run_a_id"] == run_id

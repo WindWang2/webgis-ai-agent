@@ -72,16 +72,6 @@ async def get_raster_png(
       db, session_id, user_id=user_id, owner_token=owner_token or token
   )
 
-  # Both path segments are filesystem-interpolated; validate both to a plain
-  # identifier charset BEFORE any disk access. Crucially, session_id must NOT
-  # allow `.`/`..` — those would defeat the resolve()-based escape check below
-  # (the prior looser regex admitted them; the strict check here is the real
-  # defense). Same charset as raster_id.
-  if not _RASTER_ID_RE.match(raster_id):
-    raise HTTPException(status_code=400, detail="Invalid raster_id")
-  if not _RASTER_ID_RE.match(session_id):
-    raise HTTPException(status_code=400, detail="Invalid session_id")
-
   png_path = BASE_STORAGE_DIR / session_id / "raster" / f"{raster_id}.png"
   if not png_path.exists():
     raise HTTPException(status_code=404, detail="Raster image not found")

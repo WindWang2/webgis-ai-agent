@@ -55,7 +55,9 @@ async def _run_workflow_engine(engine_method, **kwargs) -> Any:
 def create_project(
     data: ProjectCreate,
     db: Session = Depends(get_db),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    # 写路径须认证 (data_fabric.py '状态变更须认证' 原则): 匿名不可建
+    # ownerless 项目（否则全体可写）。
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
     user_id, org_id = actor_ids(user)
     project = ProjectService.create_project(
@@ -116,7 +118,7 @@ def update_project(
     project_id: str,
     data: ProjectUpdate,
     db: Session = Depends(get_db),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
     user_id, org_id = actor_ids(user)
     project = ProjectService.update_project(db=db, project_id=project_id, data=data, user_id=user_id, org_id=org_id)
@@ -130,7 +132,7 @@ def attach_dataset(
     project_id: str,
     data: DatasetAttach,
     db: Session = Depends(get_db),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
     user_id, org_id = actor_ids(user)
     dataset = ProjectService.attach_dataset(db=db, project_id=project_id, attach_data=data, user_id=user_id, org_id=org_id)
@@ -144,7 +146,7 @@ def detach_dataset(
     project_id: str,
     dataset_id: str,
     db: Session = Depends(get_db),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
     user_id, org_id = actor_ids(user)
     success = ProjectService.detach_dataset(db=db, project_id=project_id, dataset_id=dataset_id, user_id=user_id, org_id=org_id)
@@ -196,7 +198,7 @@ def save_workflow(
     project_id: str,
     data: WorkflowCreate,
     db: Session = Depends(get_db),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
     user_id, org_id = actor_ids(user)
     try:
@@ -275,8 +277,8 @@ async def run_workflow(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        logger.error(f"Workflow execution failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Workflow execution failed: %s", e)
+        raise HTTPException(status_code=500, detail="Workflow execution failed")
 
 
 @router.get("/{project_id}/runs", response_model=Page[WorkflowRunSummary])
