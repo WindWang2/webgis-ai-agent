@@ -498,12 +498,16 @@ class ChatRequest(BaseModel):
         # #521: map_state is client-controlled and persisted via set_map_state
         # per key; without a bound a multi-MB payload stalls the event loop on
         # every turn start (and is capped nowhere else). Reject truthfully —
-        # never silent truncation — with the same 256KB budget as the
-        # cartographic-observation DTO below.
+        # never silent truncation. NOTE: the bound is measured on the WHOLE
+        # serialized request (model_dump_json, mirroring the
+        # cartographic-observation DTO), not map_state alone — message is
+        # bounded at 5000 chars, so this is the map_state budget with a small
+        # constant slack, but the error text must not claim map_state itself
+        # exceeded the limit.
         if self.map_state is not None and (
             len(self.model_dump_json().encode("utf-8")) > 256 * 1024
         ):
-            raise ValueError("serialized map_state exceeds 256KB")
+            raise ValueError("serialized chat request exceeds 256KB (map_state budget)")
         return self
 
 

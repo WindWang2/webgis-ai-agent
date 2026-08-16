@@ -176,7 +176,7 @@ def is_error_dict(result: Any) -> bool:
 
 
 def is_error_like_result(result: Any) -> bool:
-    """#529: the ``{"error": <non-empty string>}`` normal-return failure shape.
+    """#529: the ``{"error": <string>}`` normal-return failure shape.
 
     ~139 tool sites return ``{"error": "<msg>"}`` dicts instead of raising or
     returning the canonical ``std_error_response`` shape — only the latter was
@@ -187,9 +187,10 @@ def is_error_like_result(result: Any) -> bool:
     Conservative by design (mirrors ``chinese_maps/http.py``'s
     ``_is_provider_error_dict``): only a **string** ``error`` value classifies,
     so business payloads that merely carry an ``error`` key (``None``, numeric,
-    nested error info) are not reclassified. An explicit ``success=True`` also
-    shields partial-success payloads (e.g. geocode returning results alongside
-    an error note).
+    nested error info) are not reclassified. The string may be empty — an
+    ``{"error": ""}`` result is still an error channel, not a success. An
+    explicit ``success=True`` also shields partial-success payloads (e.g.
+    geocode returning results alongside an error note).
     """
     return (
         isinstance(result, dict)

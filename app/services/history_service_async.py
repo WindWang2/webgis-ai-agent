@@ -33,7 +33,16 @@ from app.services.history_store_protocol import HistoryContext, HistoryStoreProt
 
 logger = logging.getLogger(__name__)
 
-MAX_SESSIONS = 1000  # 会话数上限；多租户下按 user 分桶，匿名按 owner_token 分桶（见 _enforce_cap）
+# 会话数上限（多租户隔离，见 _enforce_cap）。认证用户按 user_id 分桶；
+# 匿名会话按 SEC-08 的 owner_token 分桶 —— 而每个新匿名会话都签发一个
+# 新鲜 token，因此匿名桶恒为 1，上限对匿名会话实际上永不触发：匿名会话
+# 数量无界增长（每次只占自己的桶，从不清算他人）。这是刻意的取舍：没有
+# 匿名身份标识就无法在 1000 槽内做公平的多匿名者配额；宁可让匿名会话不
+# 受行数上限约束，也绝不能让任一匿名者触发全局驱逐、删掉另一个匿名用户
+# 的会话（#522 的核心缺陷）。匿名增长的兜底在别处：session-data 的 TTL/
+# LRU 与 idle 清扫（DATA_TTL / cleanup_idle_sessions）回收存储，请求级限流
+# 约束创建速率 —— 而非会话行数。
+MAX_SESSIONS = 1000
 
 
 def _is_anonymous(user_id: Optional[str]) -> bool:
