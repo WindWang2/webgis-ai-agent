@@ -58,7 +58,8 @@ services:
       target: backend-builder
     container_name: webgis-api
     ports:
-      - "${API_PORT:-18000}:8000"
+      # 审计 P2：无鉴权 API / metrics 不应暴露给局域网（db/redis 已限 127.0.0.1）。
+      - "127.0.0.1:${API_PORT:-18000}:8000"
     environment:
       # 方式1: 通过完整 DATABASE_URL（推荐）
       - DATABASE_URL=${DATABASE_URL:-}
@@ -66,12 +67,12 @@ services:
       - DB_HOST=${DB_HOST:-db}
       - DB_PORT=${DB_PORT:-5432}
       - DB_USER=${DB_USER:-postgres}
-      - DB_PASSWORD=${DB_PASSWORD:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD:?Set DB_PASSWORD in .env}
       - DB_NAME=${DB_NAME:-webgis}
       # Redis 配置
       - REDIS_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@${REDIS_HOST:-redis}:${REDIS_PORT:-6379}/0
       - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@${REDIS_HOST:-redis}:${REDIS_PORT:-6379}/0
-      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-dev_redis_pass}@${REDIS_HOST:-redis}:${REDIS_PORT:-6379}/1
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@${REDIS_HOST:-redis}:${REDIS_PORT:-6379}/1
     depends_on:
       db:
         condition: service_healthy
@@ -104,7 +105,7 @@ services:
       - DB_HOST=${DB_HOST:-db}
       - DB_PORT=${DB_PORT:-5432}
       - DB_USER=${DB_USER:-postgres}
-      - DB_PASSWORD=${DB_PASSWORD:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD:?Set DB_PASSWORD in .env}
       - DB_NAME=${DB_NAME:-webgis}
       # Redis 配置
       - REDIS_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@${REDIS_HOST:-redis}:${REDIS_PORT:-6379}/0

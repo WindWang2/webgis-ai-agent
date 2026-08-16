@@ -96,7 +96,7 @@ kubectl create secret generic webgis-secret --namespace=webgis-prod \
 | Compose 文件 | 凭证文件 | 用途 |
 |--------------|----------|------|
 | `docker-compose.yml` | `.env`（从 `.env.example` 复制） | 本地开发 |
-| `docker-compose.prod.yml` | `.env.production`（gitignored） | 标准生产 |
+| `docker-compose.prod.yml` | `.env.prod`（从 `.env.prod.example` 复制，gitignored；`--env-file .env.prod` 供 `${VAR}` 插值） | 标准生产 |
 | `docker-compose.prod.secure.yml` | `.env.Priv`（从 `.env.Priv.example` 复制，gitignored） | 加固生产（推荐） |
 
 所有变体的 `${VAR:?...}` 语法会在关键凭证缺失时强制 fail，拒绝用弱默认值启动。
