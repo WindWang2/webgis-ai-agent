@@ -1,15 +1,25 @@
 'use client';
 
-import { useState, useEffect, useId, type ReactNode } from 'react';
+import { useState, useEffect, useId, useSyncExternalStore, type ReactNode } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { ExportItem, ExportSettings } from '@/lib/store/hud-types';
 import { useMapAction } from '@/lib/contexts/map-action-context';
-import { Download, Printer, History, ChevronDown } from 'lucide-react';
+import { Download, Printer, History, ChevronDown, Lock } from 'lucide-react';
 import { API_BASE } from '@/lib/api/config';
+import { getAuthUser, subscribeAuth } from '@/lib/auth/tokenStore';
 import { IconButton } from '@/components/shared/icon-button';
 import { ConfirmAction } from '@/components/shared/confirm-action';
 import { EmptyState } from '@/components/shared/empty-state';
 import { devOnly } from '@/lib/utils/logger';
+
+/** #469：导出走 tokenStore 的响应式登录态（登录/登出即时刷新按钮门控）。 */
+function useAuthUser() {
+  return useSyncExternalStore(
+    subscribeAuth,
+    getAuthUser,
+    () => null,
+  );
+}
 
 const iconForType: Record<string, string> = {
   png: '🖼',
@@ -109,6 +119,7 @@ export function MapStudioTab() {
   const exports = useHudStore((s) => s.exports);
   const setExports = useHudStore((s) => s.setExports);
   const { dispatchAction } = useMapAction();
+  const authUser = useAuthUser();
 
   // Helper to update specific fields
   const handleChange = (key: keyof typeof exportSettings, value: string | number | boolean) => {
@@ -476,21 +487,39 @@ export function MapStudioTab() {
       {/* Action Footer for layout */}
       {activeSubTab === 'layout' && (
         <div className="shrink-0 border-t border-edge-subtle bg-transparent p-3">
+          {/* #469：POST /api/v1/export 需要认证。匿名（默认模式）点击必定 401
+              且此前静默失败 —— 未登录时禁用按钮并给出可见的登录引导，
+              而不是让每次导出无声地失败。 */}
           <button
-            className="w-full rounded-md py-1.5 text-body font-semibold text-ink-on-accent transition-opacity hover:opacity-90"
+            className="w-full rounded-md py-1.5 text-body font-semibold text-ink-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
             style={{
               background: 'linear-gradient(135deg, var(--agent-accent), color-mix(in srgb, var(--agent-accent) 87%, transparent))',
               boxShadow: '0 4px 12px color-mix(in srgb, var(--agent-accent) 15%, transparent)'
             }}
+            disabled={!authUser}
+            title={authUser ? undefined : '导出功能需要登录账号（设置 → 账户）'}
             onClick={() => {
+              if (!authUser) return;
               dispatchAction({
                 command: 'export_map',
                 params: { ...exportSettings }
               });
             }}
           >
-            发布并导出 {exportSettings.format.toUpperCase()}
+            {authUser ? (
+              <>发布并导出 {exportSettings.format.toUpperCase()}</>
+            ) : (
+              <span className="inline-flex items-center justify-center gap-1.5">
+                <Lock size={13} aria-hidden />
+                登录后可导出 {exportSettings.format.toUpperCase()}
+              </span>
+            )}
           </button>
+          {!authUser && (
+            <p className="mt-1.5 text-center text-caption text-ink-muted">
+              导出需要登录账号 — 请先在 设置 → 账户 登录
+            </p>
+          )}
         </div>
       )}
     </div>

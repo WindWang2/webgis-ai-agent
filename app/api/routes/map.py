@@ -169,8 +169,10 @@ async def upload_map_export(
 
         # /review P1-5: SVGs can carry <script>/event-handlers/javascript: hrefs.
         # Parse with defusedxml (XXE-safe), strip dangerous elements/attrs.
+        # PERF #427: defusedxml DOM 解析最多 50MB —— 在 worker 线程执行，
+        # 避免阻塞事件循环上所有并发 SSE 流（#386 同类遗留）。
         if ext == ".svg":
-            content = _sanitize_svg(content)
+            content = await asyncio.to_thread(_sanitize_svg, content)
 
         # 写入临时文件再原子移动，防止进程崩溃留下残缺文件
         with tempfile.NamedTemporaryFile(dir=EXPORT_DIR, delete=False, suffix=ext) as tmp:
@@ -301,6 +303,93 @@ class GeoJSONExportRequest(BaseModel):
     filename: str = "export"
 
 
+def _dumps_pretty(obj: Any) -> str:
+    """Canonical GeoJSON export serialization format (single-value fragment)."""
+    return json.dumps(obj, ensure_ascii=False, indent=2)
+
+
+def _reindent(text: str, pad: str) -> str:
+    """Shift a serialized JSON fragment one indent level deeper (all lines
+    after the first get `pad` prefixed) — exactly how json.dumps(indent=2)
+    lays out nested values."""
+    if "\n" not in text:
+        return text
+    first, *rest = text.split("\n")
+    return first + "".join("\n" + pad + line for line in rest)
+
+
+# Top-level lists bigger than this are encoded in bounded worker-thread batches
+# (below it a single dumps is cheaper than the thread dispatches).
+_GEOJSON_CHUNK_MIN_ITEMS = 2000
+_GEOJSON_BATCH_ITEMS = 512
+
+
+def _encode_batch(elements: list, pad: str) -> list:
+    """Serialize one batch of top-level list elements at one indent level.
+
+    Runs in a worker thread: each C-encoder call holds the GIL for only a few
+    ms, so the event loop can keep servicing timers/SSE between batches."""
+    return [_reindent(_dumps_pretty(el), pad) for el in elements]
+
+
+def _encode_value(value: Any, pad: str) -> str:
+    """Serialize a non-chunked top-level value at one indent level."""
+    return _reindent(_dumps_pretty(value), pad)
+
+
+async def _serialize_geojson(data: Any) -> bytes:
+    """Chunked, byte-identical replacement for json.dumps(data, indent=2).
+
+    #427: Python 3.13's C JSON encoder holds the GIL for the WHOLE encode, so
+    even ``asyncio.to_thread(json.dumps, ...)`` leaves the event loop stalled
+    for the full duration (measured: 26 MB body → 0.5 s loop gap; 45 MB →
+    2.3 s). Top-level list values (GeoJSON ``features``) are therefore encoded
+    in bounded batches in a worker thread with an await between batches: each
+    batch holds the GIL for only a few ms, keeping loop gaps <100 ms.
+
+    Output is byte-identical to ``json.dumps(data, ensure_ascii=False,
+    indent=2)`` — pinned by tests/test_event_loop_offload_427.py across
+    FeatureCollections (chunked and small), empty containers, non-ASCII,
+    floats and nested shapes.
+    """
+    if not isinstance(data, dict) or not data:
+        return (await asyncio.to_thread(_dumps_pretty, data)).encode("utf-8")
+
+    parts: list = ["{"]
+    items = list(data.items())
+    for idx, (key, val) in enumerate(items):
+        comma = "," if idx < len(items) - 1 else ""
+        key_frag = json.dumps(key, ensure_ascii=False)
+        if isinstance(val, list) and len(val) > _GEOJSON_CHUNK_MIN_ITEMS:
+            # Chunked path: elements live at indent depth 2 (4 spaces).
+            parts.append(f"\n  {key_frag}: [")
+            total = len(val)
+            for start in range(0, total, _GEOJSON_BATCH_ITEMS):
+                batch = await asyncio.to_thread(
+                    _encode_batch, val[start : start + _GEOJSON_BATCH_ITEMS], "    "
+                )
+                for j, frag in enumerate(batch):
+                    pos = start + j
+                    parts.append(
+                        "\n    " + frag + ("," if pos < total - 1 else "")
+                    )
+            parts.append(f"\n  ]{comma}")
+        else:
+            vfrag = await asyncio.to_thread(_encode_value, val, "  ")
+            parts.append(f"\n  {key_frag}: {vfrag}{comma}")
+    parts.append("\n}")
+
+    body = await asyncio.to_thread(lambda: "".join(parts).encode("utf-8"))
+    return body
+
+
+def _write_export_file(filepath: str, content: bytes) -> None:
+    """同步文件写 —— 与序列化一样移出事件循环。"""
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    with open(filepath, "wb") as f:
+        f.write(content)
+
+
 @router.post("/export/geojson", tags=["地图制图"])
 async def export_geojson(req: GeoJSONExportRequest, _user: dict = Depends(get_current_user)):
     """接收 GeoJSON 数据并持久化为可下载文件。"""
@@ -313,18 +402,24 @@ async def export_geojson(req: GeoJSONExportRequest, _user: dict = Depends(get_cu
     if not geo_type:
         raise HTTPException(status_code=400, detail="GeoJSON 缺少 type 字段")
 
+    # PERF #427: GeoJSON 体无界且可达数十 MB —— 分块序列化在 worker 线程执行
+    #（C encoder 整体持有 GIL，to_thread 单次调用仍会阻塞事件循环 ~秒级），
+    # 每块仅持有 GIL 数毫秒，事件循环间隙 <100ms（#386 同类遗留）。
     try:
-        content = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+        content = await _serialize_geojson(data)
     except (TypeError, ValueError) as e:
         raise HTTPException(status_code=400, detail=f"GeoJSON 序列化失败: {e}")
+
+    # PERF #427: GeoJSON 导出体此前完全无界（文件上传分支有 50MB 上限）。
+    # 对序列化结果施加同一 MAX_EXPORT_SIZE 预算，超限返回 413。
+    if len(content) > MAX_EXPORT_SIZE:
+        raise HTTPException(status_code=413, detail="GeoJSON 过大，上限 50MB")
 
     safe_name = os.path.basename(req.filename).replace(" ", "_")
     filename = f"{safe_name}_{uuid.uuid4().hex[:12]}.geojson"
     filepath = os.path.join(EXPORT_DIR, filename)
 
-    os.makedirs(EXPORT_DIR, exist_ok=True)
-    with open(filepath, "wb") as f:
-        f.write(content)
+    await asyncio.to_thread(_write_export_file, filepath, content)
 
     # 审计 P0：记录文件所有权
     _set_export_owner(filename, _user.get("user_id", "unknown"))
