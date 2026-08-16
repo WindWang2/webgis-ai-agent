@@ -79,7 +79,7 @@ def register_map_view_tools(registry: ToolRegistry):
             "\n何时用：用户说『把地图移到 XX』『定位到 XX』『看一下 XX 周边』，已经知道目标坐标。"
             "\n何时不用：(1) 想看某一个图层的范围 — 用 zoom_to_layer；"
             "(2) 只想改俯仰/旋转角度 — 用 set_map_view；"
-            "(3) 不知道目标坐标 — 先 geocode_address 拿到坐标再调本工具。"
+            "(3) 不知道目标坐标 — 先 geocode_cn 拿到坐标再调本工具。"
             "\n关键约束：经纬度必须是十进制度数；zoom 推荐 10-14（城市级），16+ 街区级。"
         ),
         args_model=FlyToLocationArgs,

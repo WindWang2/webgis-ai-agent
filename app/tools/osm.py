@@ -321,7 +321,7 @@ def register_osm_tools(registry: ToolRegistry):
            description=(
                "OSM 道路网络查询：按区域+道路等级拉取 LineString 路网 GeoJSON。"
                "\n何时用：路径规划/可达性分析需要路网底图；按等级筛选 (highway/primary 主干道) 做密度统计。"
-               "\n何时不用：仅需路径规划终端结果 — 用 search_route_cn (高德路径) 或 isochrone_analysis (等时圈)；"
+               "\n何时不用：仅需路径规划终端结果 — 用 plan_route (高德路径) 或 isochrone_analysis (等时圈)；"
                "需要实时路况 — 用 get_traffic_status。"
                "\n关键约束：road_type 是 OSM highway tag 值，常见: motorway/primary/secondary/tertiary/residential/footway。"
            ),
