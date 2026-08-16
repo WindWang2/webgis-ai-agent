@@ -174,15 +174,24 @@ async def list_documents(
     from app.tools._utils import async_db_session
 
     async with async_db_session() as db:
+        # #484：count 与 items 必须共享同一租户过滤 —— 之前 count 是全表
+        # `count(Document)`，导致分页 total 按全局文档数计算（翻页越界），
+        # 并向每个租户泄露全平台文档总量。过滤条件单源化为一个 where 列表，
+        # 两边引用同一份，杜绝再次漂移。
+        tenant_filters = []
+        if org_id is not None:
+            tenant_filters.append(Document.org_id == org_id)
+        elif user_id is not None:
+            tenant_filters.append(Document.creator_id == user_id)
+
         count_stmt = select(func.count()).select_from(Document)
-        total_result = await db.execute(count_stmt)
-        total = total_result.scalar_one()
+        if tenant_filters:
+            count_stmt = count_stmt.where(*tenant_filters)
+        total = (await db.execute(count_stmt)).scalar_one()
 
         stmt = select(Document).order_by(Document.created_at.desc()).offset(offset).limit(limit)
-        if org_id is not None:
-            stmt = stmt.where(Document.org_id == org_id)
-        elif user_id is not None:
-            stmt = stmt.where(Document.creator_id == user_id)
+        if tenant_filters:
+            stmt = stmt.where(*tenant_filters)
         result = await db.execute(stmt)
         items = result.scalars().all()
         return {
