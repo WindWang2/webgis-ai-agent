@@ -342,7 +342,8 @@ jobs:
       - name: Install Dependencies
         # 仅装核心依赖 + 测试工具（无需 Postgres service）。cartography smoke
         # 走纯 Python 语义校验 + Harness V2 evidence model + ref 真实解析，
-        # 不依赖 Node / Chromium（那部分在 nightly cartography-matrix）。
+        # 不依赖 Node / Chromium（浏览器 runtime 门在独立 runtime-validator
+        # lane，#532）。
         run: pip install -r requirements-dev.txt
 
       - name: Set Environment Variables
@@ -359,13 +360,69 @@ jobs:
         #   - MapSpecValidity evidence ladder（no evidence ≠ success）
         #   - 制图语义 deterministic checks（bbox overlap / geom-type / field-stops / legend）
         #   - 故障注入子集（Redis/compiler/checkpoint failure 不产生 false-success）
-        # 完整 Playwright runtime + 5~6 类 E2E 场景在 nightly cartography-matrix。
+        # Playwright runtime（真实 MapLibre 渲染门）在独立的 runtime-validator
+        # lane（nightly + 手动，#532）；5~6 类 E2E 场景仍待建。
         run: pytest -m cartography --no-cov --timeout=120 --timeout-method=thread -q
+
+  # ============ Stage 2c-2: Playwright runtime validator（#532；nightly + 手动）============
+  # test_runtime_validator_full_flow 之前在**所有** lane 都 self-skip：没有任何 lane
+  # 安装 frontend/node_modules（playwright）+ chromium，真实 MapLibre 渲染门从未
+  # 执行（#404 那类 mock-vs-real 语义漂移零 CI 覆盖）。此 lane 安装两者并以
+  # REQUIRE_BROWSER=1 硬失败模式运行 —— 缺浏览器 = 失败，不再是绿色 SKIPPED。
+  # Chromium 下载 + MapLibre CDN (unpkg) 依赖外网，放 nightly / 手动触发，不进
+  # PR 阻塞路径（PR 各 lane 里该测试仍按文档 self-skip）。
+  runtime-validator:
+    name: Playwright Runtime Validator (nightly)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Frontend Deps
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        # playwright 包来自 npm ci；chromium 二进制需显式安装
+        # （--with-deps 拉系统库，ubuntu-latest runner 有 sudo）。
+        working-directory: ./frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Provision Compiler Runtime (tsx)
+        # 编译器/验证器子进程以 `npx tsx cli.ts` / `npx tsx runtime-validate.ts`
+        # 运行；tsx 只是前端工具链的 optional peer dep，npm ci 不装它 ——
+        # 显式装上（--no-save/--no-package-lock 不碰 package.json / lockfile），
+        # 否则子进程 CLI_UNAVAILABLE。
+        working-directory: ./frontend
+        run: npm install --no-save --no-package-lock tsx@^4.8.1
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install Python Deps
+        run: pip install -r requirements-dev.txt
+
+      - name: Run Runtime Validator (hard-fail on missing browser)
+        env:
+          REQUIRE_BROWSER: '1'
+        run: pytest tests/unit/test_runtime_validator.py -m heavy --no-cov --timeout=180 --timeout-method=thread -q
 
   # ============ Nightly 重矩阵（schedule / 手动；非 PR-blocking）============
   # 审计 REL-01：PR 路径只跑确定性 fast gate（cartography-smoke）。更重的矩阵
-  # （全量 cartography + perf + event-loop lag + 并发负载 + 未来 Playwright runtime）
-  # 放到 nightly，不阻塞 PR，但能在 schedule 暴露慢漂移 / 间歇性故障。
+  # （全量 cartography + perf + event-loop lag + 并发负载 + Playwright runtime ——
+  # 后者在独立 runtime-validator lane，#532）放到 nightly，不阻塞 PR，但能在
+  # schedule 暴露慢漂移 / 间歇性故障。
   nightly-matrix:
     name: Nightly Heavy Matrix
     runs-on: ubuntu-latest
@@ -395,7 +452,8 @@ jobs:
       - name: Full cartography + perf + event-loop matrix
         # Nightly 跑完整确定性矩阵：cartography（含并发 + 故障注入）+ perf
         # （11 microbenchmarks + 3 e2e）+ perf_harness_v2 event-loop lag。无 Node
-        # 依赖部分全跑；需要 Node/Playwright 的 runtime 验证 self-skip（待 future）。
+        # 依赖部分全跑；需要 Node/Playwright 的 runtime 验证在独立
+        # runtime-validator lane（REQUIRE_BROWSER=1 硬失败，#532）。
         run: pytest -m "cartography or perf" --no-cov --timeout=180 --timeout-method=thread -q
       - name: Event-loop lag & data-plane v2
         run: pytest tests/benchmarks/test_perf_harness_v2.py --no-cov --timeout=120 -q
