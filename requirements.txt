@@ -25,6 +25,10 @@ pydantic-settings>=2.14.2
 python-dotenv>=1.0.0
 httpx>=0.26.0
 pyyaml>=6.0.3
+# rich: manage.py（ops CLI：create-admin / check / dev）模块级 import
+# Console/Table/Panel。此前漏列导致干净环境任何 `python manage.py …`
+# 都 ModuleNotFoundError（与下方 redis/psycopg2 同类依赖漂移）。
+rich>=13.0.0
 
 # Logging & Monitoring
 structlog>=26.1.0
