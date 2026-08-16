@@ -1131,6 +1131,20 @@ class SpatialIndexCache:
         with self._lock:
             return self._total_bytes
 
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._entries)
+
+    def __iter__(self):
+        """Snapshot iteration over the cached entries (read-only introspection)."""
+        with self._lock:
+            return iter(list(self._entries.values()))
+
+    def keys(self):
+        """Snapshot of the cache keys (read-only introspection)."""
+        with self._lock:
+            return list(self._entries.keys())
+
     def get(self, key) -> Optional[SpatialIndexEntry]:
         with self._lock:
             entry = self._entries.get(key)
@@ -1221,6 +1235,10 @@ class TileLRUCache:
         with self._lock:
             return self._total_bytes
 
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._cache)
+
     def get(self, key) -> Optional[bytes]:
         with self._lock:
             value = self._cache.get(key)
@@ -1295,6 +1313,11 @@ class SingleFlightManager:
         self._inflight: Dict[Any, "asyncio.Future"] = {}
         self._waiter_counts: Dict[Any, int] = {}
         self._lock = threading.Lock()
+
+    def __len__(self) -> int:
+        """Number of keys currently in flight (read-only introspection)."""
+        with self._lock:
+            return len(self._inflight)
 
     async def run(self, key, coro_factory) -> Any:
         """Run a coroutine once per key; concurrent same-key callers await it.
