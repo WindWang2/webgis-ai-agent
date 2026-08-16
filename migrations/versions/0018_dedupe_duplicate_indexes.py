@@ -83,9 +83,8 @@ def downgrade() -> None:
     else:
         for name, table, column in _DUP_INDEXES:
             op.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({column})")
-        op.execute("""
-            ALTER TABLE layers
-                DROP CONSTRAINT IF EXISTS layers_creator_id_fkey,
-                ADD CONSTRAINT layers_creator_id_fkey FOREIGN KEY (creator_id) REFERENCES users(id),
-                ALTER COLUMN creator_id SET NOT NULL
-        """)
+        # PG 分支的 0018 upgrade 对 layers 不做任何修改（e46935 早已把
+        # creator_id 放松为 nullable 并建立 ON DELETE SET NULL 的 FK），因此
+        # PG downgrade 也绝不能碰 layers —— 否则一次 0018 downgrade 会把 FK
+        # 换成无 ON DELETE SET NULL 的版本并重新 SET NOT NULL，永久丢失
+        # 用户删除级联语义（review B1 / #547）。

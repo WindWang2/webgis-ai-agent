@@ -126,3 +126,143 @@ def test_sqlite_migrated_layers_accept_null_creator_id(migrated_sqlite):
         row = s.query(Layer).filter_by(name="layer-null-creator").one()
         assert row.creator_id is None
     engine.dispose()
+
+
+# ── review B1 / #547：0018 的 PG downgrade 不得破坏 layers FK 语义 ───────
+#
+# 0018 的 PG upgrade 分支对 layers 不做任何修改（e46935 早已把 creator_id
+# 放松为 nullable 并建立 ON DELETE SET NULL 的 layers_creator_id_fkey）。
+# 修复前的 PG downgrade 会 DROP + 重建该 FK（不带 ON DELETE SET NULL）并
+# ALTER COLUMN creator_id SET NOT NULL —— 一次 downgrade/upgrade 循环就
+# 永久丢失"删除用户即置空 creator_id"的级联语义。
+
+
+def test_0018_pg_downgrade_preserves_layer_fk_semantics_static():
+    """静态守卫（无 DB，任何环境都跑）：0018 源文件里，PG downgrade 分支
+    不得重新断言 layers.creator_id NOT NULL；若未来重建 layers_creator_id_fkey
+    必须带 ON DELETE SET NULL。"""
+    src = (REPO_ROOT / "migrations/versions/0018_dedupe_duplicate_indexes.py").read_text(encoding="utf-8")
+    assert "ALTER COLUMN creator_id SET NOT NULL" not in src, (
+        "0018 的 PG downgrade 不得重新断言 layers.creator_id NOT NULL（会回退 e46935）"
+    )
+    downgrade_section = src.split("def downgrade", 1)[1]
+    if "ADD CONSTRAINT layers_creator_id_fkey" in downgrade_section:
+        assert "ON DELETE SET NULL" in downgrade_section, (
+            "0018 的 PG downgrade 若重建 layers_creator_id_fkey 必须带 ON DELETE SET NULL"
+        )
+
+
+def _pg_base_url():
+    """可用则返回本地 PG 连接串，否则 None（test 自跳过）。"""
+    import os as _os
+
+    import sqlalchemy as _sa
+
+    url = _os.environ.get("MIGRATION_DRIFT_DB_URL") or (
+        "postgresql://test_user:test_pass@localhost:5432/test_db"
+    )
+    try:
+        engine = _sa.create_engine(url, connect_args={"connect_timeout": 3})
+        with engine.connect() as conn:
+            conn.execute(_sa.text("SELECT 1"))
+        engine.dispose()
+        return url
+    except Exception:  # noqa: BLE001 — unreachable PG: skip the behavioral test
+        return None
+
+
+def test_0018_pg_downgrade_upgrade_cycle_preserves_layer_fk():
+    """行为回归（PG 可用时）：scratch schema 上跑 upgrade head → downgrade
+    0017 → upgrade head 的完整循环，每一步断言 layers.creator_id 的 FK 仍为
+    ON DELETE SET NULL（pg_constraint.confdeltype='n'）且列可空。"""
+    import os as _os
+    import subprocess as _sp
+    import sys as _sys
+
+    import sqlalchemy as _sa
+
+    base_url = _pg_base_url()
+    if base_url is None:
+        pytest.skip("PostgreSQL 不可用，跳过 0018 PG 循环行为测试")
+
+    schema = f"b08_review_{_os.getpid()}"
+    sep = "&" if "?" in base_url else "?"
+    # 用裸 '=' 而不用 %3D：DATABASE_URL 会经 alembic 的 configparser
+    # （默认 BasicInterpolation）落盘，'%' 会被当成插值字符报
+    # "invalid interpolation syntax"。查询值里的第二个 '=' 对 SQLAlchemy 的
+    # URL 解析是合法的（options=-csearch_path=<schema>），schema 名仅含
+    # [a-zA-Z0-9_]，无需额外转义。
+    scoped_url = f"{base_url}{sep}options=-csearch_path={schema}"
+    env = {
+        "PATH": _os.environ.get("PATH", "/usr/bin:/bin"),
+        "DATABASE_URL": scoped_url,
+        "JWT_SECRET_KEY": "test-secret-migration-32-chars-okay",
+        "USE_REDIS": "false",
+        "HOME": str(Path.home()),
+    }
+    engine = None
+    try:
+        # 准备独立 schema（不碰 test_db 的既有数据）
+        admin = _sa.create_engine(base_url, connect_args={"connect_timeout": 3})
+        with admin.connect() as conn:
+            conn.execute(_sa.text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+            conn.execute(_sa.text(f'CREATE SCHEMA "{schema}"'))
+            conn.commit()
+        admin.dispose()
+
+        def _run(*args: str) -> None:
+            result = _sp.run(
+                [_sys.executable, "-m", "alembic", *args],
+                cwd=str(REPO_ROOT),
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=600,
+            )
+            assert result.returncode == 0, f"alembic {args} 失败:\n{result.stdout}\n{result.stderr}"
+
+        def _fk_and_nullable() -> tuple[str, bool]:
+            nonlocal engine
+            engine = _sa.create_engine(scoped_url)
+            with engine.connect() as conn:
+                deltype = conn.execute(
+                    _sa.text(
+                        "SELECT confdeltype FROM pg_constraint "
+                        "WHERE conname = 'layers_creator_id_fkey' "
+                        "AND connamespace = (SELECT oid FROM pg_namespace WHERE nspname = :s)"
+                    ),
+                    {"s": schema},
+                ).scalar()
+                nullable = conn.execute(
+                    _sa.text(
+                        "SELECT is_nullable FROM information_schema.columns "
+                        "WHERE table_schema = :s AND table_name = 'layers' AND column_name = 'creator_id'"
+                    ),
+                    {"s": schema},
+                ).scalar()
+            engine.dispose()
+            engine = None
+            return deltype, nullable == "YES"
+
+        _run("upgrade", "head")
+        assert _fk_and_nullable() == ("n", True), "head(0018) 后 FK 必须是 ON DELETE SET NULL 且列可空"
+
+        _run("downgrade", "0017_close_model_migration_drift")
+        assert _fk_and_nullable() == ("n", True), (
+            "downgrade 0018→0017 后 FK 仍是 ON DELETE SET NULL 且列可空"
+            "（修复前 downgrade 重建 FK 丢失 SET NULL 并 SET NOT NULL）"
+        )
+
+        _run("upgrade", "head")
+        assert _fk_and_nullable() == ("n", True), "再 upgrade 0017→0018 后语义仍保持"
+    finally:
+        if engine is not None:
+            engine.dispose()
+        try:
+            admin = _sa.create_engine(base_url, connect_args={"connect_timeout": 3})
+            with admin.connect() as conn:
+                conn.execute(_sa.text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+                conn.commit()
+            admin.dispose()
+        except Exception:  # noqa: BLE001 — best-effort cleanup
+            pass
