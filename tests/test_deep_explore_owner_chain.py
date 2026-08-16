@@ -150,3 +150,132 @@ async def test_explorer_stream_owner_gating_http():
             app.dependency_overrides[get_current_user] = lambda: {"user_id": "intruder"}
             resp2 = client.get("/api/v1/explorer/stream/exp-task-1")
             assert resp2.status_code == 404
+
+
+# ─── #518 (blocker round): post-turn chat-stream bridge for owner-less tasks ──
+
+
+@pytest.fixture(autouse=True)
+def _clean_session_tasks():
+    import app.services.explorer.orchestrator as orch_mod
+    orch_mod._session_tasks.clear()
+    yield
+    orch_mod._session_tasks.clear()
+
+
+@pytest.mark.asyncio
+async def test_start_exploration_registers_session_task():
+    """#518: start_exploration 带 session_id 时登记会话→任务映射（匿名也登记），
+    post-turn 聊天流桥接据此发现该任务。"""
+    from app.services.explorer.orchestrator import (
+        ExplorerOrchestrator, get_session_tasks,
+    )
+    from app.services.explorer.models import SearchContext
+
+    orchestrator = ExplorerOrchestrator()
+    mock_result = MagicMock()
+    mock_result.id = "final_task_id"
+    node = mock_result
+    for _ in range(4):
+        parent = MagicMock()
+        parent.parent = None
+        node.parent = parent
+        node = parent
+    node.id = "first_task_id"
+
+    with patch("app.services.explorer.orchestrator.chain") as mock_chain:
+        mock_chain.return_value.apply_async.return_value = mock_result
+        # 匿名会话：user_id ""，session_id 非空 → 登记但无 owner registration
+        await orchestrator.start_exploration(
+            query="q",
+            context=SearchContext(query="q"),
+            session_id="sess-anon",
+        )
+
+    tasks = get_session_tasks("sess-anon")
+    assert ("final_task_id", "") in tasks
+
+
+@pytest.mark.asyncio
+async def test_bridge_skips_owner_registered_tasks():
+    """#518: 已注册 owner 的任务（登录会话）不走聊天流桥接 —— 独立流负责。"""
+    from app.services.explorer.orchestrator import (
+        ExplorerOrchestrator,
+        bridge_session_explorer_progress,
+        register_session_task,
+    )
+
+    register_session_task("sess-owned", "task-1", "owner-u1")
+    TaskQueueService.register_owner("task-1", "owner-u1")
+
+    events = [
+        ev async for ev in bridge_session_explorer_progress("sess-owned", "owner-u1")
+    ]
+    assert events == []
+    # 任务仍在登记表中（等独立流侧完成；桥接不越权消费）
+    from app.services.explorer.orchestrator import get_session_tasks
+    assert get_session_tasks("sess-owned") == [("task-1", "owner-u1")]
+
+
+@pytest.mark.asyncio
+async def test_bridge_streams_ownerless_task_to_terminal():
+    """#518: 匿名（无 owner）任务经聊天流桥接推送 explorer_progress 至终态，
+    完成后从会话登记表剔除。"""
+    import app.services.explorer.orchestrator as orch_mod
+    from app.services.explorer.orchestrator import (
+        bridge_session_explorer_progress,
+        get_session_tasks,
+        register_session_task,
+    )
+
+    register_session_task("sess-anon", "task-anon-1", "")
+
+    async def fake_status(task_id):
+        return {
+            "task_id": task_id,
+            "status": "SUCCESS",
+            "stage": "validate",
+            "progress": 100,
+            "result": {"meta": {}},
+        }
+
+    with patch.object(orch_mod._bridge_orchestrator, "get_task_status", fake_status):
+        events = [
+            ev async for ev in bridge_session_explorer_progress("sess-anon", None)
+        ]
+
+    assert any("explorer_progress" in ev and '"completed"' in ev for ev in events)
+    assert get_session_tasks("sess-anon") == []
+
+
+@pytest.mark.asyncio
+async def test_bridge_caps_stuck_task_with_terminal_event():
+    """#518: 卡死任务（永在 PROGRESS）不能挂住聊天流 —— 有界 cap 后发显式
+    failed 终态，不静默丢弃。"""
+    import app.services.explorer.orchestrator as orch_mod
+    from app.services.explorer.orchestrator import (
+        bridge_session_explorer_progress,
+        register_session_task,
+    )
+
+    register_session_task("sess-stuck", "task-stuck-1", "")
+
+    async def fake_status(task_id):
+        return {
+            "task_id": task_id,
+            "status": "PROGRESS",
+            "stage": "fetch",
+            "progress": 10,
+            "result": {"meta": {}},
+        }
+
+    with patch.object(orch_mod, "_EXPLORER_BRIDGE_MAX_SECONDS", 0.05), \
+         patch.object(orch_mod._bridge_orchestrator, "get_task_status", fake_status):
+        events = [
+            ev async for ev in bridge_session_explorer_progress("sess-stuck", None)
+        ]
+
+    assert any('"failed"' in ev for ev in events), (
+        "stuck task must receive an explicit terminal event, not a silent hang"
+    )
+    assert any('"bridge timeout"' in ev for ev in events)

@@ -14,6 +14,7 @@ import { createMessageIdGenerator } from './use-message-id';
 import { TokenBatcher } from './token-batcher';
 import { IncrementalThinkParser, parseThink } from './incremental-think';
 import { streamExplorerProgress } from '@/lib/api/explorer';
+import { getAccessToken, getRefreshToken } from '@/lib/auth/tokenStore';
 import type { ExplorerStage, ExplorerStatus } from '@/lib/types/explorer';
 
 
@@ -389,8 +390,14 @@ export function useSSEStream(
   // #518: 深度探索任务在后台跑数分钟，聊天 SSE 连接在 done 后关闭，进度
   // 必须经独立 /explorer/stream/{task_id}（owner-verified）推送到同一个
   // explorerTasks store。deep_explore 返回 explorer_task 结果时启动。
+  // 匿名会话无 Bearer → 独立流端点 401 不可达，其进度由后端 post-turn
+  // 聊天流桥接（bridge_session_explorer_progress）推送；此处跳过独立流，
+  // 避免 401 噪音 —— 聊天流 handler 与独立流消费者共用同一归一化逻辑。
   const startExplorerProgressStream = useCallback((taskId: string) => {
     if (explorerStreamsRef.current.has(taskId)) return;
+    // 已登录会话（有 access 或 refresh token）走 owner-verified 独立流；
+    // 匿名（两者皆无）依赖聊天流桥接。
+    if (!getAccessToken() && !getRefreshToken()) return;
     explorerStreamsRef.current.add(taskId);
     const signal = explorerAbortRef.current?.signal;
     (async () => {
@@ -398,6 +405,11 @@ export function useSSEStream(
         for await (const ev of streamExplorerProgress(taskId, signal)) {
           if (ev.event === 'explorer_progress' && ev.data && typeof ev.data === 'object') {
             applyExplorerProgressToStore(ev.data as Record<string, unknown>);
+            // 终态后释放 per-task 槽位：未来可重开流（断线恢复），且不再去重拦截。
+            const status = (ev.data as Record<string, unknown>).status;
+            if (status === 'completed' || status === 'failed') {
+              explorerStreamsRef.current.delete(taskId);
+            }
           }
         }
       } catch (err) {

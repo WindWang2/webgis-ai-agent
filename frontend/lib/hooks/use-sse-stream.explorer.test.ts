@@ -35,6 +35,15 @@ vi.mock('@/lib/utils/logger', () => ({
 }));
 vi.mock('@/lib/api/config', () => ({ API_BASE: 'http://localhost:8000' }));
 
+// #518: the independent stream is owner-verified (Bearer) — anonymous
+// sessions (no tokens) rely on the post-turn chat-stream bridge instead.
+let mockAccessToken: string | null = 'jwt-test';
+let mockRefreshToken: string | null = 'refresh-test';
+vi.mock('@/lib/auth/tokenStore', () => ({
+  getAccessToken: () => mockAccessToken,
+  getRefreshToken: () => mockRefreshToken,
+}));
+
 const streamExplorerProgressMock = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/api/explorer', () => ({
   streamExplorerProgress: (...args: unknown[]) => streamExplorerProgressMock(...args),
@@ -63,6 +72,9 @@ beforeEach(() => {
   bridgeMock.onEventCallback = null;
   streamExplorerProgressMock.mockReset();
   useHudStore.setState({ explorerTasks: [] });
+  // 默认已登录（有 tokens）→ 独立流可达
+  mockAccessToken = 'jwt-test';
+  mockRefreshToken = 'refresh-test';
 });
 
 describe('applyExplorerProgressToStore (normalization shared by chat + independent stream)', () => {
@@ -176,5 +188,44 @@ describe('useSSEStream — independent explorer progress stream (#518)', () => {
   it('does not start a stream for non-explorer results', async () => {
     await emitStepResult({ result: { type: 'FeatureCollection', features: [] } });
     expect(streamExplorerProgressMock).not.toHaveBeenCalled();
+  });
+
+  it('skips the independent stream for anonymous sessions (chat-stream bridge delivers)', async () => {
+    mockAccessToken = null;
+    mockRefreshToken = null;
+    await emitStepResult({});
+    expect(streamExplorerProgressMock).not.toHaveBeenCalled();
+    // 匿名会话不触发独立流 —— 进度改由聊天流桥接（不会 401 噪音）。
+    expect(useHudStore.getState().explorerTasks).toHaveLength(0);
+  });
+
+  it('chat-stream and independent-stream events for the same task do not double-apply', async () => {
+    // 独立流正常到达……
+    streamExplorerProgressMock.mockImplementation(async function* () {
+      yield { event: 'explorer_progress', data: { stage: 'validate', task_id: 'exp-task-y', status: 'completed', context: { progress: 100 } } };
+    });
+    renderStream();
+    await act(async () => {
+      bridgeMock.onEventCallback?.({
+        event: 'step_result',
+        data: {
+          session_id: 'sid-explorer',
+          tool: 'deep_explore',
+          result: { type: 'explorer_task', task_id: 'exp-task-y', status: 'started' },
+        },
+      });
+    });
+    // ……同一任务的聊天流事件（如后端桥接也发了）再到达
+    await act(async () => {
+      bridgeMock.onEventCallback?.({
+        event: 'explorer_progress',
+        data: { stage: 'validate', task_id: 'exp-task-y', status: 'completed', context: { progress: 100 } },
+      });
+    });
+
+    const tasks = useHudStore.getState().explorerTasks;
+    expect(tasks).toHaveLength(1); // 不重复插入
+    expect(tasks[0].taskId).toBe('exp-task-y');
+    expect(tasks[0].status).toBe('completed');
   });
 });

@@ -24,6 +24,7 @@ from app.models.db_model import Conversation
 from app.services.chat.event_resume import TurnEventBuffer, TurnResumeRegistry
 from app.services.chat_engine import ChatEngine
 from app.services.history_service_async import AsyncHistoryService
+from app.services.explorer.orchestrator import bridge_session_explorer_progress
 from app.services.distributed_lock import session_lock_registry
 from app.services.session_data import session_data_manager
 from app.tools._utils import async_db_session
@@ -745,6 +746,12 @@ async def chat_stream(
                 finally:
                     if not buffer.ended:
                         buffer.mark_ended(aborted=True)
+            # #518 post-turn bridge: 匿名（无 owner）探索任务经聊天流推送进度。
+            # done/error 之后保持连接，直到任务终态（有界，见 bridge 实现）。
+            async for event in bridge_session_explorer_progress(
+                session_key, user_id
+            ):
+                yield event
 
         return StreamingResponse(
             pi_event_generator(),
@@ -780,6 +787,13 @@ async def chat_stream(
             finally:
                 if not buffer.ended:
                     buffer.mark_ended(aborted=True)
+            # #518 post-turn bridge: 匿名（无 owner）探索任务经聊天流推送进度。
+            # done/error 之后保持连接，直到任务终态（有界，见 bridge 实现）。
+            # 位于 sse_event_id_scope 内，事件带 id（前端去重）。
+            async for event in bridge_session_explorer_progress(
+                session_key, user_id
+            ):
+                yield event
 
     return StreamingResponse(
         event_generator(),
