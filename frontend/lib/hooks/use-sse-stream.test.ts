@@ -502,7 +502,7 @@ describe('canonical MapSpec runtime patch', () => {
       )
     );
 
-    let sendPromise: Promise<void> | undefined;
+    let sendPromise: Promise<boolean> | undefined;
     act(() => {
       sendPromise = result.current.handleSend('cancel me');
     });

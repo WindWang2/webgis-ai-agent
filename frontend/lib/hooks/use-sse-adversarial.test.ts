@@ -75,7 +75,7 @@ describe('Frontend SSE Adversarial Stress Tests', () => {
     );
 
     // 1. Start send on session A
-    let sendPromiseA: Promise<void> | undefined;
+    let sendPromiseA: Promise<boolean> | undefined;
     act(() => {
       sendPromiseA = result.current.handleSend('hello session A');
     });
