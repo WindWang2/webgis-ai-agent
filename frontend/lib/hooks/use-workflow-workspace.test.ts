@@ -321,6 +321,95 @@ describe('useWorkflowWorkspace — bounded poll', () => {
   });
 });
 
+describe('useWorkflowWorkspace — hidden-tab polling resume (#549)', () => {
+  let hidden = false;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    hidden = false;
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+    api.fetchWorkflowRun.mockResolvedValue(detail({ status: 'running' }));
+  });
+
+  it('resumes polling on visibilitychange after a hidden-tab poll stalled the scheduler', async () => {
+    const { result } = renderHook(() => useWorkflowWorkspace());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      result.current.openWorkflow('wf1');
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      result.current.openRun('r1');
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(api.fetchWorkflowRun).toHaveBeenCalledTimes(1);
+
+    // Tab 隐藏：已排好的下一次轮询仍会完成一次（在飞定时器），但随后因
+    // document.hidden 提前返回而不排下一次 —— 调度器停摆，不会继续打后端。
+    hidden = true;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(RUN_POLL_INTERVAL_MS);
+    });
+    expect(api.fetchWorkflowRun).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(RUN_POLL_INTERVAL_MS * 5);
+    });
+    expect(api.fetchWorkflowRun).toHaveBeenCalledTimes(2); // 停摆：隐藏期间 0 轮询
+
+    // 重新可见：visibilitychange → 立即补拉（finally bump pollTick 重启调度）。
+    hidden = false;
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(api.fetchWorkflowRun).toHaveBeenCalledTimes(3);
+
+    // 恢复后按原间隔继续轮询（不会一次打爆后端）。
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(RUN_POLL_INTERVAL_MS);
+    });
+    expect(api.fetchWorkflowRun).toHaveBeenCalledTimes(4);
+  });
+
+  it('does not resume on visibility when the run is no longer active', async () => {
+    api.fetchWorkflowRun.mockResolvedValue(detail({ status: 'completed' }));
+    const { result } = renderHook(() => useWorkflowWorkspace());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      result.current.openWorkflow('wf1');
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      result.current.openRun('r1');
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const before = api.fetchWorkflowRun.mock.calls.length;
+
+    hidden = true;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(RUN_POLL_INTERVAL_MS);
+    });
+    hidden = false;
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(api.fetchWorkflowRun.mock.calls.length).toBe(before);
+  });
+});
+
 describe('useWorkflowWorkspace — compare binding', () => {
   it('clears a previous compare verdict when the peer changes', async () => {
     api.fetchRunComparison.mockResolvedValue({

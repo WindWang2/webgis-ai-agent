@@ -324,6 +324,37 @@ export function useWorkflowWorkspace(): UseWorkflowWorkspaceResult {
     };
   }, [selectedProjectId, selectedRunId, runDetail?.status, pollTick, loadRunDetail]);
 
+  // #549: the polling effect's document.hidden guard schedules NOTHING while
+  // the tab is hidden, and pollTick only advances from poll completion — so a
+  // poll completing in a hidden tab left the scheduler with no future re-run
+  // trigger (polling died permanently until manual re-selection). Mirror the
+  // use-job-center resume pattern (#389): on visibilitychange → visible,
+  // refetch once (its finally bumps pollTick, which re-arms the scheduler and
+  // clears any stale pending timer). Hidden does nothing — the poll effect's
+  // own guard already keeps background polling paused.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const onVisibility = () => {
+      if (document.hidden) return;
+      if (!selectedProjectId || !selectedRunId) return;
+      if (!isActiveRunStatus(runDetail?.status)) return;
+      if (pollCount.current >= RUN_POLL_MAX) return;
+      const ac = new AbortController();
+      runAbort.current = ac;
+      const gen = runGen.current;
+      void loadRunDetail(selectedProjectId, selectedRunId, ac.signal, gen)
+        .catch((err: unknown) => {
+          if (ac.signal.aborted || isAbortError(err) || gen !== runGen.current) return;
+          setError(parseApiErrorDetail(err, '刷新运行状态失败'));
+        })
+        .finally(() => {
+          setPollTick((tick) => tick + 1);
+        });
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [selectedProjectId, selectedRunId, runDetail?.status, loadRunDetail]);
+
   const back = useCallback(() => {
     setActionError(null);
     if (view === 'compare') {
