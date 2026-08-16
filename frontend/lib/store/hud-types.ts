@@ -319,6 +319,10 @@ export interface HudState {
   removeExplorerTask: (taskId: string) => void;
   /** #548: session-scoped — cleared on session switch / new session. */
   clearExplorerTasks: () => void;
+  /** #548 polish: 已关闭卡片的 task_id 记忆（有界）—— 进度事件继续到达时
+   * 不得复活已关闭的卡片。 */
+  dismissedExplorerTaskIds: string[];
+  dismissExplorerTask: (taskId: string) => void;
 
   /* ─── Analysis Results Workbench (session-scoped, bounded, non-persisted) ─── */
   results: AnalysisResult[];

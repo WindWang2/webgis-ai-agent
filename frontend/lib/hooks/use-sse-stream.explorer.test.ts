@@ -172,6 +172,44 @@ describe('applyExplorerProgressToStore (normalization shared by chat + independe
     expect(tasks.length).toBe(50); // 不超限
     expect(tasks.filter((t) => t.taskId === 'exp-re-0')).toHaveLength(1);
   });
+
+  it('#548 polish: a dismissed in-flight task stays dismissed while its progress events continue', () => {
+    // 用户关闭卡片（dismiss）后，后续进度事件不得把任务插回任务 tab。
+    applyExplorerProgressToStore({
+      stage: 'fetch',
+      task_id: 'exp-dismiss-1',
+      status: 'progress',
+      context: { progress: 20 },
+    });
+    expect(useHudStore.getState().explorerTasks).toHaveLength(1);
+
+    useHudStore.getState().dismissExplorerTask('exp-dismiss-1');
+    expect(useHudStore.getState().explorerTasks).toHaveLength(0);
+
+    // 同任务的进度继续到达（聊天流 / 独立流都可能）→ 不复活
+    applyExplorerProgressToStore({
+      stage: 'validate',
+      task_id: 'exp-dismiss-1',
+      status: 'completed',
+      context: { progress: 100 },
+    });
+    applyExplorerProgressToStore({
+      stage: 'validate',
+      task_id: 'exp-dismiss-1',
+      status: 'completed',
+      context: { progress: 100 },
+    });
+    expect(useHudStore.getState().explorerTasks).toHaveLength(0);
+    // 其它任务不受影响
+    applyExplorerProgressToStore({
+      stage: 'discover',
+      task_id: 'exp-dismiss-2',
+      status: 'started',
+      context: { progress: 0 },
+    });
+    expect(useHudStore.getState().explorerTasks).toHaveLength(1);
+    expect(useHudStore.getState().explorerTasks[0].taskId).toBe('exp-dismiss-2');
+  });
 });
 
 describe('useSSEStream — independent explorer progress stream (#518)', () => {

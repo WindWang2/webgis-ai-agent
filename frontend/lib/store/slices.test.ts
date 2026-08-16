@@ -116,6 +116,39 @@ describe('task slice', () => {
     s.clearExplorerTasks();
     expect(useHudStore.getState().explorerTasks).toHaveLength(0);
   });
+
+  it('#548 polish: dismissing a task removes the card and keeps it dismissed while its events continue', () => {
+    const s = useHudStore.getState();
+    s.addExplorerTask({ taskId: 'EX-LIVE', status: 'fetching', stage: 'fetch', progress: 10, query: 'q', startedAt: 1, updatedAt: 1 });
+    expect(useHudStore.getState().explorerTasks).toHaveLength(1);
+
+    s.dismissExplorerTask('EX-LIVE');
+    expect(useHudStore.getState().explorerTasks).toHaveLength(0);
+    expect(useHudStore.getState().dismissedExplorerTaskIds).toEqual(['EX-LIVE']);
+
+    // 同一任务的后续进度事件（applyExplorerProgressToStore → addExplorerTask）
+    // 不得把卡片复活；其它任务不受影响。
+    s.addExplorerTask({ taskId: 'EX-LIVE', status: 'fetching', stage: 'fetch', progress: 50, query: 'q', startedAt: 2, updatedAt: 2 });
+    expect(useHudStore.getState().explorerTasks).toHaveLength(0);
+    s.addExplorerTask({ taskId: 'EX-OTHER', status: 'fetching', stage: 'fetch', progress: 10, query: 'q2', startedAt: 3, updatedAt: 3 });
+    expect(useHudStore.getState().explorerTasks).toHaveLength(1);
+    expect(useHudStore.getState().explorerTasks[0].taskId).toBe('EX-OTHER');
+  });
+
+  it('#548 polish: dismissal memory is bounded and reset with the session', () => {
+    const s = useHudStore.getState();
+    for (let i = 0; i < 60; i++) {
+      s.dismissExplorerTask(`ex-${i}`);
+    }
+    expect(useHudStore.getState().dismissedExplorerTaskIds.length).toBe(50);
+    expect(useHudStore.getState().dismissedExplorerTaskIds[0]).toBe('ex-10');
+
+    // 会话切换：记忆随 clearExplorerTasks 清空，任务可再次插入。
+    s.clearExplorerTasks();
+    expect(useHudStore.getState().dismissedExplorerTaskIds).toHaveLength(0);
+    s.addExplorerTask({ taskId: 'ex-10', status: 'fetching', stage: 'fetch', progress: 1, query: 'q', startedAt: 1, updatedAt: 1 });
+    expect(useHudStore.getState().explorerTasks).toHaveLength(1);
+  });
 });
 
 

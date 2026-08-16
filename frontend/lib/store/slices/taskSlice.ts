@@ -39,8 +39,14 @@ export const createTaskSlice: StateCreator<HudState, [], [], Partial<HudState>> 
 
   /* ─── Explorer Tasks ─── */
   explorerTasks: [],
+  // #548 polish: 用户主动关闭的卡片记忆。in-flight 任务的进度事件会持续到达，
+  // 只 remove 卡片会让下一次事件把它重新插回；登记进有界记忆后，后续事件对
+  // 该 task_id 不再复活卡片。随 clearExplorerTasks（会话切换）一起清空。
+  dismissedExplorerTaskIds: [],
   addExplorerTask: (task) =>
     set((state) => {
+      // 已关闭的卡片保持关闭（进度事件继续到达也不复活）。
+      if (state.dismissedExplorerTaskIds.includes(task.taskId)) return state;
       const next = [...state.explorerTasks, task];
       return {
         explorerTasks: next.length > MAX_EXPLORER_TASKS ? evictExplorerTask(next) : next,
@@ -56,5 +62,17 @@ export const createTaskSlice: StateCreator<HudState, [], [], Partial<HudState>> 
     set((state) => ({
       explorerTasks: state.explorerTasks.filter((t) => t.taskId !== taskId),
     })),
-  clearExplorerTasks: () => set({ explorerTasks: [] }),
+  dismissExplorerTask: (taskId) =>
+    set((state) => {
+      const next = state.dismissedExplorerTaskIds.includes(taskId)
+        ? state.dismissedExplorerTaskIds
+        : [...state.dismissedExplorerTaskIds, taskId];
+      return {
+        explorerTasks: state.explorerTasks.filter((t) => t.taskId !== taskId),
+        dismissedExplorerTaskIds: next.length > MAX_EXPLORER_TASKS
+          ? next.slice(next.length - MAX_EXPLORER_TASKS)
+          : next,
+      };
+    }),
+  clearExplorerTasks: () => set({ explorerTasks: [], dismissedExplorerTaskIds: [] }),
 });

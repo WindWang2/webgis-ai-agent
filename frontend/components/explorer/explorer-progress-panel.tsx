@@ -93,7 +93,7 @@ function TaskCard({ task, onClose }: { task: ExplorerTask; onClose: () => void }
 
 export function ExplorerProgressPanel() {
   const tasks = useHudStore((s) => s.explorerTasks);
-  const removeExplorerTask = useHudStore((s) => s.removeExplorerTask);
+  const dismissExplorerTask = useHudStore((s) => s.dismissExplorerTask);
 
   if (tasks.length === 0) return null;
 
@@ -106,7 +106,9 @@ export function ExplorerProgressPanel() {
         <TaskCard
           key={task.taskId}
           task={task}
-          onClose={() => removeExplorerTask(task.taskId)}
+          // #548 polish: dismiss（而非 remove）—— in-flight 任务的进度事件
+          // 仍会持续到达，remove 只移卡片、下一事件又把它插回。
+          onClose={() => dismissExplorerTask(task.taskId)}
         />
       ))}
     </div>
