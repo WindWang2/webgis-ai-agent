@@ -6,6 +6,7 @@
 
 LLM 拿到 snippets 后自己提取地名/事件，再调 geocode_cn 之类的工具落到地图上。
 """
+import asyncio
 import json
 import logging
 from pydantic import BaseModel, Field
@@ -91,11 +92,15 @@ async def _baidu_qianfan_search(query: str, limit: int) -> dict:
 
 
 def _ddg_search(query: str, limit: int) -> dict:
+    """同步 DuckDuckGo 搜索。#434：只允许在 worker 线程内运行（见 _ddg_search_async），
+    禁止在事件循环上直接调用 —— DDGS 底层是同步 HTTP 客户端，一次往返 1-5s+，
+    会冻结所有并发 SSE 流。
+    """
     if DDGS is None:
         return {"error": "duckduckgo_search 库未安装"}
     try:
         results = []
-        with DDGS() as ddgs:
+        with DDGS(timeout=_DDG_TIMEOUT_S) as ddgs:
             for r in ddgs.text(keywords=query, region="cn-zh", max_results=limit):
                 results.append({
                     "title": r.get("title", ""),
@@ -111,6 +116,33 @@ def _ddg_search(query: str, limit: int) -> dict:
         }
     except (ConnectionError, TimeoutError, RuntimeError) as e:
         return {"error": f"DuckDuckGo 调用失败: {e}"}
+
+
+# #434 网络隔离：DuckDuckGo 兜底通路卸载到 worker 线程 + 真实超时预算。
+# - _DDG_TIMEOUT_S：传给 DDGS 客户端的单请求超时（秒）；
+# - _DDG_WALL_CLOCK_S：外层硬性墙钟预算，覆盖库内部的重试/退避 —— 同步
+#   worker 线程无法被终止，超预算后放弃等待返回错误（与 registry #406 的
+#   线程槽位语义一致），避免一次挂死的搜索无界占用回合。
+_DDG_TIMEOUT_S = 10.0
+_DDG_WALL_CLOCK_S = 20.0
+
+
+async def _ddg_search_async(query: str, limit: int) -> dict:
+    """#434 计算隔离：DDG 兜底必须 off-loop。"""
+    try:
+        async with asyncio.timeout(_DDG_WALL_CLOCK_S):
+            return await asyncio.to_thread(_ddg_search, query, limit)
+    except TimeoutError:
+        logger.warning(
+            "[web_search] DuckDuckGo exceeded wall-clock budget %.0fs, abandoning wait",
+            _DDG_WALL_CLOCK_S,
+        )
+        return {
+            "error": (
+                f"DuckDuckGo 搜索超时（>{_DDG_WALL_CLOCK_S:.0f}s），已放弃等待。"
+                "请缩小搜索词后重试，或配置 BAIDU_QIANFAN_TOKEN 后改用 provider='baidu'。"
+            )
+        }
 
 
 _UNTRUSTED_OPEN = "<UNTRUSTED_WEB_CONTENT>"
@@ -212,7 +244,7 @@ def register_crawler_tools(registry: ToolRegistry):
         if chosen == "baidu":
             result = await _baidu_qianfan_search(query, limit)
         else:
-            result = _ddg_search(query, limit)
+            result = await _ddg_search_async(query, limit)
         return _wrap_payload(result)
 
     @tool(registry, name="search_and_extract_poi",
@@ -228,7 +260,7 @@ def register_crawler_tools(registry: ToolRegistry):
         if settings.BAIDU_QIANFAN_TOKEN:
             result = await _baidu_qianfan_search(query, limit)
         else:
-            result = _ddg_search(query, limit)
+            result = await _ddg_search_async(query, limit)
 
         # 兼容旧 schema：保留 type=poi_web_search 标识 + message 引导
         if "error" in result:
