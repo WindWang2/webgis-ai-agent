@@ -120,13 +120,27 @@ class TemporalRasterEngine:
             stats_res: Dict[str, Any] = {}
 
             if rpath and isinstance(rpath, str) and os.path.exists(rpath):
-                # Use windowed rasterstats zonal_stats
+                # Use windowed rasterstats zonal_stats. Issue #541: without an
+                # AOI the analysis must cover the raster's OWN extent (a
+                # scene-covering polygon in the raster's CRS), not a fixed
+                # unit square at (0,0)-(1,1) — the square misses most rasters
+                # and rasterstats returned all-zero fabricated stats that were
+                # fed to the trend as if real. A user-supplied AOI that does
+                # not intersect the raster is treated as missing (stats stay
+                # empty and the trend step skips the slice) instead of
+                # producing zero-value statistics.
                 try:
                     from app.lib.geo_analysis.raster_ops import zonal_statistics
-                    polys = aoi_geometry or {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]]}}
-                    z_res = zonal_statistics(polys, rpath, stats=metrics)
-                    if z_res and len(z_res) > 0:
-                        stats_res = z_res[0]
+                    if aoi_geometry is None:
+                        polys = self._scene_aoi(rpath)
+                    elif self._aoi_intersects_raster(aoi_geometry, rpath):
+                        polys = aoi_geometry
+                    else:
+                        polys = None
+                    if polys is not None:
+                        z_res = zonal_statistics(polys, rpath, stats=metrics)
+                        if z_res and len(z_res) > 0:
+                            stats_res = z_res[0]
                 except Exception as e:
                     logger.warning(f"Error computing zonal stats on {rpath}: {e}")
 
@@ -157,6 +171,52 @@ class TemporalRasterEngine:
             "total_rasters": len(raster_series),
             "series_statistics": series_stats,
         }
+
+    @staticmethod
+    def _scene_aoi(rpath: str) -> Optional[Dict[str, Any]]:
+        """Scene-covering AOI polygon for a raster, in the raster's own CRS.
+
+        Issue #541: when no AOI is supplied the statistics must cover the
+        whole scene. The polygon's CRS is declared so ``zonal_statistics``'
+        reprojection is an identity instead of interpreting scene bounds as
+        EPSG:4326.
+        """
+        try:
+            import rasterio
+            with rasterio.open(rpath) as src:
+                b = src.bounds
+                crs = str(src.crs) if src.crs is not None else "EPSG:4326"
+        except Exception:
+            return None
+        ring = [[b.left, b.bottom], [b.right, b.bottom],
+                [b.right, b.top], [b.left, b.top], [b.left, b.bottom]]
+        return {
+            "type": "Feature",
+            "properties": {},
+            "crs": {"type": "name", "properties": {"name": crs}},
+            "geometry": {"type": "Polygon", "coordinates": [ring]},
+        }
+
+    def _aoi_intersects_raster(self, aoi_geometry: Dict[str, Any], rpath: str) -> bool:
+        """True when the AOI (in its own CRS) intersects the raster extent.
+
+        Guards against a non-intersecting AOI producing all-zero zonal
+        statistics that get treated as real data (issue #541). On any CRS
+        ambiguity, returns True (let ``zonal_statistics`` decide/raise).
+        """
+        try:
+            import rasterio
+            with rasterio.open(rpath) as src:
+                aoi_bounds = self._aoi_bounds_in_crs(src, aoi_geometry)
+                if aoi_bounds is None:
+                    return True
+                rb = src.bounds
+                return not (
+                    aoi_bounds[2] <= rb[0] or aoi_bounds[0] >= rb[2]
+                    or aoi_bounds[3] <= rb[1] or aoi_bounds[1] >= rb[3]
+                )
+        except Exception:
+            return True
 
     def raster_difference(
         self,
@@ -497,6 +557,19 @@ class TemporalRasterEngine:
 
         from app.services.temporal.trend import TemporalTrendEngine
         trend_eng = TemporalTrendEngine()
+        # Issue #541: zero data points must not produce a confident "stable"
+        # verdict (slope 0.0, r_squared 1.0 for fabricated zeros). Report
+        # direction "unknown" instead — the analysis had nothing to fit.
+        if not means:
+            return {
+                "timestamps": timestamps,
+                "means": means,
+                "slope": 0.0,
+                "intercept": 0.0,
+                "r_squared": 0.0,
+                "direction": "unknown",
+                "skipped_slices": skipped,
+            }
         trend_res = trend_eng.analyze_trend(data=means, metric_name="raster_mean")
 
         result = {

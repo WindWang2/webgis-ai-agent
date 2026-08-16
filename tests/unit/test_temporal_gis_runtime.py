@@ -616,7 +616,8 @@ def test_raster_trend_over_aoi_skips_missing_slices(tmp_path):
 
 
 def test_raster_trend_over_aoi_all_slices_missing():
-    """Adversarial: every slice failed → empty series, no fabricated zeros."""
+    """Adversarial: every slice failed → empty series, no fabricated zeros,
+    and direction "unknown" (not "stable" — nothing was fit)."""
     series = [
         {"timestamp": "2026-01-01T00:00:00Z", "path": "/nonexistent/a.tif"},
         {"timestamp": "2026-02-01T00:00:00Z", "path": "/nonexistent/b.tif"},
@@ -626,6 +627,7 @@ def test_raster_trend_over_aoi_all_slices_missing():
 
     assert res["means"] == []
     assert res["slope"] == 0.0
+    assert res["direction"] == "unknown"  # pre-#541: fabricated "stable"
     assert len(res["skipped_slices"]) == 2
 
 
@@ -650,6 +652,82 @@ def test_raster_trend_over_aoi_all_valid_no_skips(tmp_path):
 
     assert res["means"] == [10.0, 12.0, 14.0]
     assert "skipped_slices" not in res
+
+
+# ── Issue #541: no-AOI default must cover the scene, not a unit square ───────
+
+
+def _write_constant_raster(path, value, origin=(116.0, 40.0), size=4):
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+
+    with rasterio.open(
+        path, "w", driver="GTiff", height=size, width=size, count=1,
+        dtype="float64", crs="EPSG:4326",
+        transform=from_origin(origin[0], origin[1], 1.0, 1.0),
+    ) as dst:
+        dst.write(np.full((size, size), float(value)), 1)
+    return path
+
+
+def test_temporal_raster_statistics_no_aoi_covers_scene(tmp_path):
+    """Issue #541: without an AOI the statistics must cover the raster's OWN
+    scene (true mean 42.0) — the old (0,0)-(1,1) unit-square default missed
+    this 116-117E/39-40N raster entirely and fabricated all-zero stats."""
+    path = _write_constant_raster(str(tmp_path / "scene.tif"), 42.0)
+    engine = TemporalRasterEngine()
+    res = engine.temporal_raster_statistics([
+        {"timestamp": "2026-01-01T00:00:00Z", "path": path},
+    ])
+
+    stats = res["series_statistics"][0]["statistics"]
+    assert stats["mean"] == pytest.approx(42.0, abs=1e-9)
+    assert stats["min"] == pytest.approx(42.0, abs=1e-9)
+    assert stats["max"] == pytest.approx(42.0, abs=1e-9)
+    assert stats["std"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_raster_trend_no_aoi_uses_scene_means(tmp_path):
+    """Issue #541: end-to-end trend without an AOI fits the SCENE means
+    (42 → 52 → 62), not fabricated zeros; direction is increasing with the
+    true slope 10."""
+    paths = [_write_constant_raster(str(tmp_path / f"s{i}.tif"), v)
+             for i, v in enumerate((42.0, 52.0, 62.0))]
+    series = [
+        {"timestamp": f"2026-0{i+1}-01T00:00:00Z", "path": p}
+        for i, p in enumerate(paths)
+    ]
+    engine = TemporalRasterEngine()
+    res = engine.raster_trend_over_aoi(series)
+
+    assert res["means"] == [42.0, 52.0, 62.0]
+    assert res["direction"] == "increasing"
+    assert res["slope"] == pytest.approx(10.0, abs=1e-6)
+
+
+def test_temporal_raster_non_intersecting_aoi_skips_not_fabricates(tmp_path):
+    """Issue #541: an AOI disjoint from the raster must behave like a missing
+    slice (empty stats, skip in the trend) — not produce all-zero statistics
+    that the old code fed to the trend as real data."""
+    path = _write_constant_raster(str(tmp_path / "far.tif"), 42.0)
+    series = [{"timestamp": "2026-01-01T00:00:00Z", "path": path}]
+    away_aoi = {
+        "type": "Feature",
+        "properties": {},
+        "geometry": {"type": "Polygon",
+                     "coordinates": [[[200.0, 200.0], [210.0, 200.0],
+                                      [210.0, 210.0], [200.0, 210.0], [200.0, 200.0]]]},
+    }
+    engine = TemporalRasterEngine()
+
+    stats = engine.temporal_raster_statistics(series, aoi_geometry=away_aoi)
+    assert stats["series_statistics"][0]["statistics"] == {}
+
+    trend = engine.raster_trend_over_aoi(series, aoi_geometry=away_aoi)
+    assert trend["means"] == []
+    assert trend["direction"] == "unknown"
+    assert len(trend["skipped_slices"]) == 1
 
 
 # ---------------------------------------------------------------------------

@@ -191,13 +191,14 @@ def test_execute_raster_analysis_single_stats_pass(tmp_path, monkeypatch):
     assert result.raster_trend["direction"] == "increasing"
     # statistics computed exactly once (trend reuses it)
     assert len(stats_calls) == 1
-    # per-raster opens: 2 for the zonal statistics pass (CRS check + rasterstats
-    # internal open) + 1 for the difference read on the two endpoint rasters.
-    # The middle raster is NOT opened by the trend step — before the fix it was
-    # opened twice more (4 total).
-    assert opens[paths[0]] == 3, opens
-    assert opens[paths[1]] == 2, opens
-    assert opens[paths[2]] == 3, opens
+    # per-raster opens: 3 for the zonal statistics path (AOI∩scene preflight
+    # open (#541) + CRS check + rasterstats internal open) + 1 for the
+    # difference read on the two endpoint rasters. The middle raster is NOT
+    # opened by the trend step — before the fix it was opened twice more
+    # (4 total beyond the stats pass).
+    assert opens[paths[0]] == 4, opens
+    assert opens[paths[1]] == 3, opens
+    assert opens[paths[2]] == 4, opens
 
 
 def test_raster_trend_over_aoi_accepts_precomputed_stats(raster_pair, tmp_path):
