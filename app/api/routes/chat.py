@@ -493,6 +493,19 @@ class ChatRequest(BaseModel):
         ),
     )
 
+    @model_validator(mode="after")
+    def _cap_map_state_size(self):
+        # #521: map_state is client-controlled and persisted via set_map_state
+        # per key; without a bound a multi-MB payload stalls the event loop on
+        # every turn start (and is capped nowhere else). Reject truthfully —
+        # never silent truncation — with the same 256KB budget as the
+        # cartographic-observation DTO below.
+        if self.map_state is not None and (
+            len(self.model_dump_json().encode("utf-8")) > 256 * 1024
+        ):
+            raise ValueError("serialized map_state exceeds 256KB")
+        return self
+
 
 class ChatResponse(BaseModel):
     """聊天响应"""
@@ -885,11 +898,21 @@ async def get_session_map_state(
 
 class MapStatePushRequest(BaseModel):
     viewport: Optional[dict] = None
-    layers: Optional[list] = None
-    base_layer: Optional[str] = None
+    layers: Optional[list] = Field(default=None, max_length=128)
+    base_layer: Optional[str] = Field(default=None, max_length=500)
     # F4: monotonic client seq for the viewport write — an out-of-order older
     # POST landing after the turn-start write is rejected as stale.
     seq: Optional[int] = None
+
+    @model_validator(mode="after")
+    def _cap_serialized_size(self):
+        # #521: viewport/layers are client-controlled and persisted verbatim via
+        # set_map_state; bound the serialized body (same 256KB budget as
+        # CartographicRuntimeObservationRequest) so a multi-MB push cannot stall
+        # the event loop's per-key json.dumps.
+        if len(self.model_dump_json().encode("utf-8")) > 256 * 1024:
+            raise ValueError("serialized map state push exceeds 256KB")
+        return self
 
 
 @router.post("/sessions/{session_id}/map-state", status_code=204)
