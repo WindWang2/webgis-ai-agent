@@ -2,6 +2,7 @@
 
 M2: 从单体 chinese_maps.py 抽出。register_chinese_map_tools 仍在 __init__.py。
 """
+import asyncio
 import json
 import logging
 
@@ -51,16 +52,34 @@ def _speed_mps(mode: str) -> float:
 # ── Provider fallback dispatch ───────────────────────────────────
 
 
-# The set of transport/parse errors that should trigger fallback to the next
-# provider rather than propagating to the LLM. Matches the per-tool except
-# clauses the 9 LLM tools previously inlined (architecture-review F1).
+# The TRANSIENT provider-failure errors that trigger fallback to the next
+# provider (unified semantics, issues #432 + #479):
+# - transport failures: the aiohttp ClientError family (connect resets,
+#   ServerTimeoutError for connect/sock-read timeouts, …)
+# - total timeouts: asyncio.TimeoutError — on py3.11+ the builtin TimeoutError
+#   (an OSError subclass), NOT a ClientError, so it must be listed explicitly
+# - response parse failures: json.JSONDecodeError
+# Our own programming/schema errors (KeyError/ValueError/TypeError) deliberately
+# do NOT trigger fallback: they must propagate and surface as code bugs instead
+# of being misclassified as provider failures (#479).
 _FALLBACK_ERRORS = (
     aiohttp.ClientError,
+    asyncio.TimeoutError,
     json.JSONDecodeError,
-    KeyError,
-    ValueError,
-    TypeError,
 )
+
+
+def _is_provider_error_dict(result: object) -> bool:
+    """True only for genuine provider-level failure payloads.
+
+    tracked_provider_get returns ``{"error": "<message>"}`` (never raises) for
+    HTTP != 200 / WAF 418 / quota / business-check failures. Requires a
+    non-empty **string** error value: business payloads that merely happen to
+    carry an ``error`` key (``None``, numeric, nested) are not provider
+    failures and must not trigger fallback (#479).
+    """
+    err = result.get("error") if isinstance(result, dict) else None
+    return isinstance(err, str) and bool(err)
 
 
 async def with_fallback(
@@ -76,10 +95,19 @@ async def with_fallback(
     Collapses the 9× ``_dispatch + _fallback_order + try/except`` scaffold that
     was duplicated across ``register_chinese_map_tools``. For each provider in
     fallback order, skips it when its API key is absent, otherwise invokes
-    ``await call(provider)``; on a transport/parse error OR a provider-level
-    ``{"error": ...}`` result (tracked GET 对 HTTP 418 WAF 拦截 / 配额超限 /
-    业务失败返回 error dict 而非异常), logs and tries the next provider.
-    Returns the first successful result, or ``{"error": ...}`` when no
+    ``await call(provider)``.
+
+    Fallback fires ONLY on transient provider failures:
+
+    - ``_FALLBACK_ERRORS`` exceptions (transport / total timeout / JSON parse);
+    - a provider-level ``{"error": "<non-empty str>"}`` result — tracked GET
+      对 HTTP 418 WAF 拦截 / 配额超限 / 业务失败返回 error dict 而非异常
+      (f545d7c; narrowed to non-empty string values in #479).
+
+    Our own code bugs (KeyError/ValueError/TypeError, business payloads with a
+    benign ``error`` field) do NOT fall back — they propagate / return as-is so
+    schema drift surfaces as itself instead of a misleading provider failure
+    (#479). Returns the first successful result, or ``{"error": ...}`` when no
     configured provider succeeded.
 
     Args:
@@ -112,7 +140,7 @@ async def with_fallback(
             logger.warning(f"{label}{p} failed: {e}")
             _note_failure(str(e))
             continue
-        if isinstance(result, dict) and "error" in result:
+        if _is_provider_error_dict(result):
             # 天地图 WAF 频控返回 HTTP 418、配额/业务失败走 business_checker —
             # 这些在 tracked_provider_get 里是正常返回的 error dict，不抛异常。
             # 不在此触发回退的话，首选 provider 被频控时整项能力直接不可用。

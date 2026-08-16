@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import deque
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -15,7 +16,10 @@ PROVIDER_NAMES = frozenset({"amap", "baidu", "tianditu", "overpass", "nominatim"
 class _State:
     consecutive_errors: int = 0
     last_failure_ts: float = 0.0
-    call_timestamps: list[float] = field(default_factory=list)
+    # 60s 滑动窗口（issue #433）：deque 按 append 顺序（≈时间升序）存放被
+    # **放行**的调用时间戳；过期项从左端弹出，均摊 O(1)，长度恒 ≤ 限流阈值，
+    # 失败/被拒路径不再无界增长。
+    call_timestamps: deque = field(default_factory=deque)
     circuit_open: bool = False
 
 
@@ -42,6 +46,7 @@ class ProviderHealthTracker:
     DEFAULT_RATE_LIMIT: int = 60
     DEFAULT_ERROR_THRESHOLD: int = 5  # 连续这么多次错误后短路
     DEFAULT_RECOVERY_SECONDS: int = 300  # 5 分钟冷静期后恢复尝试
+    _WINDOW_SECONDS: int = 60  # 速率窗口宽度（calls_per_minute 对应的秒数）
 
     def __init__(
         self,
@@ -56,37 +61,63 @@ class ProviderHealthTracker:
         self._state: dict[str, _State] = {}
         self._lock = asyncio.Lock()
 
+    # ── Internal helpers（调用方必须已持有 self._lock）───────────────────────
+
+    def _prune_window(self, s: _State, now: float) -> None:
+        """弹出窗外时间戳。append 顺序 ≈ 时间升序 → 左端弹出，均摊 O(1)。"""
+        cutoff = now - self._WINDOW_SECONDS
+        while s.call_timestamps and s.call_timestamps[0] <= cutoff:
+            s.call_timestamps.popleft()
+
+    def _circuit_gates(self, s: _State, now: float) -> bool:
+        """熔断检查；冷静期已过则悄悄复位（原 can_call 语义）。"""
+        if not s.circuit_open:
+            return True
+        if now - s.last_failure_ts < self._recovery_seconds:
+            return False
+        s.circuit_open = False
+        s.consecutive_errors = 0
+        return True
+
     # ── Public API ────────────────────────────────────────────────────────────
 
     async def can_call(self, provider: str) -> bool:
         """如果被速率限制或熔断（仍在冷静期内）则返回 False。"""
         async with self._lock:
-            s = self._state.get(provider, _State())
-            if s.circuit_open:
-                if time.time() - s.last_failure_ts < self._recovery_seconds:
-                    return False
-                # 冷静期已过，悄悄复位
-                s.circuit_open = False
-                s.consecutive_errors = 0
-            recent = [ts for ts in s.call_timestamps if time.time() - ts < 60]
-            return len(recent) < self._calls_per_minute
+            s = self._state.get(provider)
+            if s is None:
+                return True
+            now = time.time()
+            if not self._circuit_gates(s, now):
+                return False
+            self._prune_window(s, now)
+            return len(s.call_timestamps) < self._calls_per_minute
 
     async def record_attempt(self, provider: str) -> bool:
-        """记录一次调用意图，返回 True 表示允许调用，False 代表被限制。"""
+        """记录一次调用意图，返回 True 表示允许调用，False 代表被限制。
+
+        被拒（熔断/限流）的尝试**不写入**窗口：写入会让持续打点把限流窗
+        无限向后推、且窗口随失败路径无界增长（issue #433）。窗口在每次
+        检查前按 60s 剪枝，长度恒 ≤ calls_per_minute。
+        """
         ts = time.time()
         async with self._lock:
             s = self._state.setdefault(provider, _State())
+            if not self._circuit_gates(s, ts):
+                return False
+            self._prune_window(s, ts)
+            if len(s.call_timestamps) >= self._calls_per_minute:
+                return False
             s.call_timestamps.append(ts)
-        return await self.can_call(provider)
+            return True
 
     async def record_success(self, provider: str) -> None:
-        """请求成功：重置错误计数器，清除熔断标记。"""
+        """请求成功：重置错误计数器，清除熔断标记，并剪枝窗口。"""
         async with self._lock:
             s = self._state.setdefault(provider, _State())
             s.consecutive_errors = 0
             s.circuit_open = False
-            cutoff = time.time() - 60
-            s.call_timestamps = [ts for ts in s.call_timestamps if ts >= cutoff]
+            self._prune_window(s, time.time())
 
     async def record_error(self, provider: str, exc: Exception | None = None) -> None:
         """请求出错：累加连续错误计数，达到阈值后打开熔断。"""
@@ -116,15 +147,16 @@ class ProviderHealthTracker:
         """
         now = time.time()
         async with self._lock:
-            return {
-                p: {
+            out: dict[str, dict] = {}
+            for p, s in self._state.items():
+                self._prune_window(s, now)
+                out[p] = {
                     "consecutive_errors": s.consecutive_errors,
                     "last_failure_ts": s.last_failure_ts,
                     "circuit_open": s.circuit_open,
-                    "calls_last_minute": sum(1 for ts in s.call_timestamps if now - ts < 60),
+                    "calls_last_minute": len(s.call_timestamps),
                 }
-                for p, s in list(self._state.items())  # list() copy 防迭代中 mutate
-            }
+            return out
 
 
 from typing import Callable, Any

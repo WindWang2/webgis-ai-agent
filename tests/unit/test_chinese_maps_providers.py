@@ -185,24 +185,168 @@ async def test_district_amap_point_mode():
     assert out["features"][0]["geometry"]["type"] == "Point"
 
 
-# ── distance_matrix: batch path (driving) ────────────────────────────────────
+# ── distance_matrix: the REAL /v3/distance contract (driving/walking) ────────
+#
+# Issue #440: the driving/walking branch was written against an imagined N×M
+# batch API. The real contract (lbs.amap.com webservice direction#t7):
+#   - origins: |-separated, at most 100 points per request
+#   - destination: a SINGLE coordinate point (multi-destination unsupported)
+#   - results: one entry per origin, origin_id 1-based within the request,
+#     dest_id always "1"
+# So an N×M matrix = one request per destination; each request's results fill
+# exactly one matrix column. The old test mocked a multi-dest_id shape the API
+# never returns, keeping CI green while the feature was broken.
+
+from app.utils.coord_transform import wgs84_to_gcj02
+
+_ORIGINS_3 = [[116.0, 39.0], [116.1, 39.1], [116.2, 39.2]]
+_DESTS_3 = [[117.0, 40.0], [118.0, 41.0], [119.0, 42.0]]
 
 
-async def test_distance_matrix_amap_driving_batch():
-    fake = FakeGet({
-        "/distance": {
+def _dest_index_of(dest_str: str, wgs_dests: list) -> int:
+    """Map a request's single `destination` param back to its WGS84 index."""
+    lng, lat = map(float, dest_str.split(","))
+    for di, (w_lng, w_lat) in enumerate(wgs_dests):
+        gx, gy = wgs84_to_gcj02(w_lng, w_lat)
+        if abs(gx - lng) < 1e-9 and abs(gy - lat) < 1e-9:
+            return di
+    raise AssertionError(f"unknown destination param: {dest_str}")
+
+
+class DistanceContractFakeGet:
+    """Fake GET that ENFORCES the documented /v3/distance request contract.
+
+    Every request must carry a single destination and |-separated origins
+    (≤100); the response uses the real shape (per-origin results, dest_id=1).
+    """
+
+    def __init__(self, wgs_dests: list, dist_fn, n_origins: int):
+        self.calls: list[tuple[str, dict]] = []
+        self._wgs_dests = wgs_dests
+        self._dist_fn = dist_fn
+        self._n_origins = n_origins
+        self._seen_origins: dict[int, int] = {}  # per-destination chunk offset
+
+    async def __call__(self, endpoint: str, params: dict) -> dict:
+        assert endpoint == "/distance", f"wrong endpoint: {endpoint}"
+        self.calls.append((endpoint, dict(params)))
+        # contract: single destination, |-joined origins, ≤100 per request
+        assert "|" not in params["destination"] and ";" not in params["destination"], (
+            f"destination must be a single point, got: {params['destination']}"
+        )
+        origins = params["origins"].split("|")
+        assert ";" not in params["origins"], (
+            f"origins must be |-separated, got: {params['origins']}"
+        )
+        assert 1 <= len(origins) <= 100, f"origins per request must be ≤100, got {len(origins)}"
+        di = _dest_index_of(params["destination"], self._wgs_dests)
+        base = self._seen_origins.get(di, 0)
+        self._seen_origins[di] = base + len(origins)
+        return {
+            "status": "1",
             "results": [
-                {"origin_id": 1, "dest_id": 1, "distance": "1000", "duration": "60"},
-                {"origin_id": 1, "dest_id": 2, "distance": "2000", "duration": "120"},
+                {
+                    # origin_id is chunk-local (1-based); dist_fn gets the global index
+                    "origin_id": str(i + 1),
+                    "dest_id": "1",
+                    "distance": str(self._dist_fn(base + i, di)),
+                    "duration": str(60 * (base + i + 1)),
+                }
+                for i in range(len(origins))
             ],
-        },
-    })
+        }
+
+
+async def test_distance_matrix_amap_driving_matches_v3_distance_contract():
+    """3×3 driving matrix via one single-destination request per destination."""
+    fake = DistanceContractFakeGet(
+        _DESTS_3, dist_fn=lambda oi, di: 1000 * (oi + 1) + 100 * (di + 1), n_origins=3,
+    )
     prov = AmapProvider(get=fake)
-    out = await prov.distance_matrix([[116.0, 39.0]], [[117.0, 40.0], [118.0, 41.0]], "driving")
+    out = await prov.distance_matrix(_ORIGINS_3, _DESTS_3, "driving")
+
+    # one request per destination — multi-destination calls must split
+    assert len(fake.calls) == 3
     assert out["mode"] == "driving"
     assert out["provider"] == "amap"
+    assert out["origins_count"] == 3
+    assert out["dests_count"] == 3
+    assert out["matrix"][0][1] is not None
+    # every cell present and correctly placed (distance encodes (oi, di))
+    for oi in range(3):
+        for di in range(3):
+            cell = out["matrix"][oi][di]
+            assert cell is not None, f"cell [{oi}][{di}] missing"
+            assert cell["origin_index"] == oi
+            assert cell["dest_index"] == di
+            assert cell["distance_km"] == (1000 * (oi + 1) + 100 * (di + 1)) / 1000.0
+            assert cell["duration_sec"] == 60 * (oi + 1)
+    # each request carried 3 |-joined origins and driving type=1
+    for _, params in fake.calls:
+        assert len(params["origins"].split("|")) == 3
+        assert params["type"] == "1"
+
+
+async def test_distance_matrix_amap_walking_uses_type_3():
+    fake = DistanceContractFakeGet(_DESTS_3[:1], dist_fn=lambda oi, di: 500, n_origins=2)
+    prov = AmapProvider(get=fake)
+    out = await prov.distance_matrix(_ORIGINS_3[:2], _DESTS_3[:1], "walking")
+    assert out["mode"] == "walking"
+    assert fake.calls[0][1]["type"] == "3"
+    assert out["matrix"][0][0]["distance_km"] == 0.5
+
+
+async def test_distance_matrix_amap_chunks_over_100_origins():
+    """>100 origins must split into ≤100-origin requests (contract cap)."""
+    origins = [[116.0 + i * 0.001, 39.0] for i in range(150)]
+    dests = [[117.0, 40.0]]
+    # local origin index per request; single destination → local == global
+    fake = DistanceContractFakeGet(dests, dist_fn=lambda oi, di: 100 * (oi + 1), n_origins=150)
+    prov = AmapProvider(get=fake)
+    out = await prov.distance_matrix(origins, dests, "driving")
+
+    sizes = [len(params["origins"].split("|")) for _, params in fake.calls]
+    assert sizes == [100, 50], f"expected 100+50 chunking, got {sizes}"
+    assert len(out["matrix"]) == 150
+    # chunk-local origin_id maps back to the correct global row
+    for oi in range(150):
+        cell = out["matrix"][oi][0]
+        assert cell is not None, f"row {oi} missing"
+        assert cell["distance_km"] == 100 * (oi + 1) / 1000.0
+
+
+async def test_distance_matrix_amap_all_destinations_error_returns_error():
+    """Every per-destination request failed → the error dict surfaces."""
+    async def fake(endpoint, params):
+        return {"error": "Amap API HTTP 418"}
+
+    prov = AmapProvider(get=fake)
+    out = await prov.distance_matrix(_ORIGINS_3[:1], _DESTS_3[:2], "driving")
+    assert out == {"error": "Amap API HTTP 418"}
+
+
+async def test_distance_matrix_amap_partial_failure_surfaces_errors():
+    """One destination failing must not discard the successful columns."""
+    wgs_dests = _DESTS_3[:2]
+
+    async def fake(endpoint, params):
+        di = _dest_index_of(params["destination"], wgs_dests)
+        if di == 1:
+            return {"error": "Amap API HTTP 429"}
+        return {
+            "status": "1",
+            "results": [
+                {"origin_id": "1", "dest_id": "1", "distance": "1000", "duration": "60"},
+            ],
+        }
+
+    prov = AmapProvider(get=fake)
+    out = await prov.distance_matrix(_ORIGINS_3[:1], wgs_dests, "driving")
+    # column 0 filled, column 1 None, failure surfaced
+    assert out["matrix"][0][0] is not None
     assert out["matrix"][0][0]["distance_km"] == 1.0
-    assert out["matrix"][0][1]["distance_km"] == 2.0
+    assert out["matrix"][0][1] is None
+    assert any("429" in e for e in out["errors"])
 
 
 # ── NameError regression: isochrone concurrency + except branches ────────────

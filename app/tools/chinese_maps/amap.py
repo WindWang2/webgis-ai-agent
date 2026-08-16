@@ -261,51 +261,88 @@ class AmapProvider:
             return data
         return self._shape_district(data.get("districts", []), return_geometry)
 
+    # /v3/distance 契约：origins 用 "|" 分隔且每请求最多 100 个点；destination
+    # 只接受单个坐标点；返回 results 按请求内 origin_id（1 起）排列，dest_id
+    # 恒为 "1"（单终点）。多终点矩阵必须拆成每终点一次请求（issue #440）。
+    _DISTANCE_MAX_ORIGINS = 100
+
     async def distance_matrix(
         self, origins: list[list], destinations: list[list], mode: str,
     ) -> dict:
         """Amap 距离矩阵。
 
-        - driving / walking 走 ``/v3/distance``（一次请求完成全量 OD 计算）
+        - driving / walking 走 ``/v3/distance``：
             - type=1 驾车，type=3 步行
+            - 契约限制 destination 为单点 → 每个终点一次请求，该请求的
+              results 填入矩阵的一列；origins > 100 时按 100 分块
         - riding 该批量接口不支持，回退到 N×M 并发调用 /direction/bicycling
 
         所有坐标在请求前 WGS84 → GCJ-02。
         """
-        # ── driving / walking：批量接口
+        # ── driving / walking：批量接口（每终点一次请求）
         if mode in ("driving", "walking"):
-            origin_str = ";".join(
-                f"{self._to_src(lng, lat)[0]},{self._to_src(lng, lat)[1]}"
-                for lng, lat in origins
-            )
-            dest_str = ";".join(
-                f"{self._to_src(lng, lat)[0]},{self._to_src(lng, lat)[1]}"
-                for lng, lat in destinations
-            )
-            params = {
-                "origins": origin_str,
-                "destination": dest_str,
-                "type": "1" if mode == "driving" else "3",
-            }
-            data = await self._get("/distance", params)
-            if "error" in data:
-                return data
-
-            results = data.get("results", [])
+            type_param = "1" if mode == "driving" else "3"
             matrix: list[list[dict | None]] = [
                 [None] * len(destinations) for _ in range(len(origins))
             ]
-            for item in results:
-                # Amap origin_id/dest_id 从 1 开始计数
-                oi = int(item.get("origin_id", 0)) - 1
-                di = int(item.get("dest_id", 0)) - 1
-                if 0 <= oi < len(origins) and 0 <= di < len(destinations):
-                    matrix[oi][di] = {
-                        "origin_index": oi,
-                        "dest_index": di,
-                        "distance_km": float(item.get("distance", 0)) / 1000.0,
-                        "duration_sec": int(item.get("duration", 0)),
+            semaphore = asyncio.Semaphore(6)
+
+            async def _one_dest(di: int) -> str | None:
+                """单终点（可能多个 origins 分块）请求；结果填矩阵第 di 列。
+
+                返回 error 描述（该终点请求失败时），否则 None。
+                """
+                d_gcj = self._to_src(destinations[di][0], destinations[di][1])
+                for chunk_start in range(0, len(origins), self._DISTANCE_MAX_ORIGINS):
+                    chunk = origins[chunk_start:chunk_start + self._DISTANCE_MAX_ORIGINS]
+                    origin_str = "|".join(
+                        f"{gx},{gy}"
+                        for gx, gy in (self._to_src(o[0], o[1]) for o in chunk)
+                    )
+                    params = {
+                        "origins": origin_str,
+                        "destination": f"{d_gcj[0]},{d_gcj[1]}",
+                        "type": type_param,
                     }
+                    async with semaphore:
+                        data = await self._get("/distance", params)
+                    if "error" in data:
+                        return str(data["error"])
+                    for item in data.get("results", []):
+                        # origin_id 是请求内 1 起编号，分块时补回全局行号；
+                        # dest_id 恒为 "1"（单终点），列号直接用本请求的 di。
+                        try:
+                            oi = int(item.get("origin_id", 0)) - 1 + chunk_start
+                        except (TypeError, ValueError):
+                            continue
+                        if 0 <= oi < len(origins):
+                            matrix[oi][di] = {
+                                "origin_index": oi,
+                                "dest_index": di,
+                                "distance_km": float(item.get("distance", 0)) / 1000.0,
+                                "duration_sec": int(item.get("duration", 0)),
+                            }
+                return None
+
+            errors = await asyncio.gather(*[
+                _one_dest(di) for di in range(len(destinations))
+            ])
+            failed = [di for di, err in enumerate(errors) if err]
+            if failed:
+                if all(cell is None for row in matrix for cell in row):
+                    # 全部终点都失败 → 与单请求时代行为一致，整体报错
+                    return {"error": errors[failed[0]]}
+                # 部分失败：保留成功的列，失败列置 None 并显式列出（issue #440：
+                # 不再静默丢弃，旧实现会返回全 None 矩阵）
+                return {
+                    "matrix": matrix,
+                    "origins_count": len(origins),
+                    "dests_count": len(destinations),
+                    "mode": mode,
+                    "provider": "amap",
+                    "errors": [f"dest_index {di}: {errors[di]}" for di in failed],
+                    "note": f"{len(failed)}/{len(destinations)} 个终点请求失败，对应矩阵列为 None",
+                }
             return {
                 "matrix": matrix,
                 "origins_count": len(origins),

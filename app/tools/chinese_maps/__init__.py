@@ -14,11 +14,8 @@
 写法尽量少改，本 __init__.py 一次性把三个 provider 模块所有 _xxx 函数 import 进来。
 """
 import asyncio
-import json
 import logging
 from typing import Any, Optional
-
-import aiohttp
 
 from app.tools.registry import ToolRegistry, tool
 from app.utils.coord_transform import (
@@ -27,6 +24,7 @@ from app.utils.coord_transform import (
 
 # HTTP + provider 路由（_amap_get/_baidu_get/_tianditu_get 由各 provider 模块自行导入）
 from app.tools.chinese_maps.http import (
+    _FALLBACK_ERRORS,
     _has_provider,
     _VALID_PROVIDERS,
     with_fallback,
@@ -99,7 +97,7 @@ class ChineseMapsEngine:
         async def _call(p):
             try:
                 return await _dispatch[p](keyword, city, limit)
-            except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
+            except _FALLBACK_ERRORS as e:
                 errors.append(f"{p}: {e}")
                 raise
         return await with_fallback(
@@ -150,7 +148,9 @@ async def batch_geocode_cn(
                 if "error" in result:
                     return {"index": idx, "status": "error", "address": addr, "error": str(result["error"])}
                 return {"index": idx, "status": "ok", "address": addr, **result}
-            except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
+            except _FALLBACK_ERRORS as e:
+                # 仅隔离瞬时 provider 失败（transport/timeout/parse，统一回退语义
+                # #479）；自身代码 bug（KeyError/ValueError/TypeError）直接穿透。
                 return {"index": idx, "status": "error", "address": addr, "error": str(e)}
 
     results = await asyncio.gather(*[_one(i, a) for i, a in enumerate(addresses)])
@@ -184,7 +184,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
         async def _call(p):
             try:
                 return await _dispatch[p](keyword, city, limit)
-            except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
+            except _FALLBACK_ERRORS as e:
                 errors.append(f"{p}: {e}")
                 raise
 

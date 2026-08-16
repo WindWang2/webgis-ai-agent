@@ -104,6 +104,70 @@ async def test_tracked_provider_get_circuit_breaker(monkeypatch):
     assert "暂时不可用" in res["error"]
 
 
+# ── Issue #433: bounded sliding window under sustained failure ───────────────
+
+
+@pytest.mark.asyncio
+async def test_call_timestamps_bounded_under_sustained_failure():
+    """持续失败（熔断打开后仍不停打点）不得让 call_timestamps 无界增长。
+
+    旧实现只在 record_success 里剪枝：失败/被拒路径只 append 不清理，
+    长时间故障下窗口按原始尝试速率增长（86,400 次/天 ≈ 3.5MB/provider/天）。
+    """
+    tracker = ProviderHealthTracker(calls_per_minute=60, error_threshold=5, recovery_seconds=300)
+    for _ in range(3000):
+        await tracker.record_attempt("amap")
+        await tracker.record_error("amap", Exception("down"))
+    window = tracker._state["amap"].call_timestamps
+    assert len(window) <= 60, f"call_timestamps unbounded: {len(window)} entries"
+
+
+@pytest.mark.asyncio
+async def test_call_timestamps_bounded_under_rate_limit_saturation():
+    """纯限流饱和（无熔断）：被拒尝试不写入窗口，长度恒 ≤ calls_per_minute。"""
+    tracker = ProviderHealthTracker(calls_per_minute=60)
+    denials = 0
+    for _ in range(3000):
+        if not await tracker.record_attempt("amap"):
+            denials += 1
+    assert denials > 0, "limiter never tripped — test is vacuous"
+    window = tracker._state["amap"].call_timestamps
+    assert len(window) <= 60, f"call_timestamps unbounded: {len(window)} entries"
+
+
+@pytest.mark.asyncio
+async def test_rate_window_allows_limit_then_denies_then_expires(monkeypatch):
+    """限流边界与过窗放行；被拒尝试不得延长锁定窗（#433）。"""
+    tracker = ProviderHealthTracker(calls_per_minute=3)
+    fake_now = 1000.0
+    monkeypatch.setattr("app.services.provider_health.time.time", lambda: fake_now)
+
+    for _ in range(3):
+        assert await tracker.record_attempt("amap") is True
+    assert await tracker.record_attempt("amap") is False
+    # 持续被拒的打点不应把窗口无限向后推
+    for _ in range(100):
+        assert await tracker.record_attempt("amap") is False
+    # 60s 窗口过期后重新放行
+    fake_now += 61
+    assert await tracker.record_attempt("amap") is True
+
+
+@pytest.mark.asyncio
+async def test_can_call_prunes_expired_timestamps(monkeypatch):
+    """can_call 剪枝过期时间戳（不再全量 O(n) 扫描复制）。"""
+    tracker = ProviderHealthTracker(calls_per_minute=5)
+    fake_now = 1000.0
+    monkeypatch.setattr("app.services.provider_health.time.time", lambda: fake_now)
+    for _ in range(4):
+        await tracker.record_attempt("baidu")
+    window = tracker._state["baidu"].call_timestamps
+    assert len(window) == 4
+    fake_now += 120  # all expired
+    assert await tracker.can_call("baidu") is True
+    assert len(window) == 0, "expired timestamps must be pruned, not just filtered"
+
+
 @pytest.mark.asyncio
 async def test_tracked_provider_get_post(monkeypatch):
     """POST 分支：Overpass 风格查询体经 session.post 提交（issue #310）。"""
