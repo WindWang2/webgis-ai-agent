@@ -839,6 +839,19 @@ export function useSSEStream(
             };
           }),
         );
+      } else if (event.event === 'done' || event.event === 'task_complete') {
+        // #518: 聊天流 post-turn 桥接（匿名 deep_explore）在 done 之后连接
+        // 仍保持打开最多 600s（explorer 进度推送）—— handleSend 的 await
+        // 要等连接关闭才返回，isThinking 必须在终态事件到达时就翻转，
+        // 否则已完成的回答一直藏在 ThinkingDots 后面。幂等：随后 handleSend
+        // 的后置翻转只处理仍为 isThinking 的消息。
+        if (thinkingId) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === thinkingId && m.isThinking ? { ...m, isThinking: false } : m
+            )
+          );
+        }
       } else if (event.event === 'explorer_progress') {
         // #518: 归一化逻辑抽到 applyExplorerProgressToStore（与独立
         // /explorer/stream/{task_id} 消费者共用），聊天流与独立流一致。

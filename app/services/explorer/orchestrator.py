@@ -455,8 +455,13 @@ class ExplorerOrchestrator:
                             },
                         ))
         finally:
+            # 取消在飞 worker 并等待其结束：只 cancel() 不 await 会让
+            # 事件循环在 generator 关闭后仍持有 pending task →
+            # "Task was destroyed but it is pending" 警告。gather 吞掉
+            # CancelledError（return_exceptions=True）。
             for worker in workers:
                 worker.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
 
 
 async def bridge_session_explorer_progress(

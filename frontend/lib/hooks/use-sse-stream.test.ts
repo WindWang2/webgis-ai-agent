@@ -527,6 +527,66 @@ describe('canonical MapSpec runtime patch', () => {
   });
 });
 
+describe('useSSEStream — isThinking flips on done/task_complete, not on stream close (#518)', () => {
+  it('flips isThinking:false when done arrives even while the connection stays open', async () => {
+    // The post-turn explorer bridge keeps the chat SSE open up to 600s after
+    // `done` (anonymous deep_explore) — bridge.send only resolves when the
+    // connection physically closes. The thinking indicator must flip when the
+    // terminal event is processed, not when handleSend's await returns.
+    let closeStream: (() => void) | undefined;
+    const connectionOpen = new Promise<void>((resolve) => {
+      closeStream = resolve;
+    });
+    bridgeMock.send.mockReturnValueOnce(connectionOpen as never);
+
+    const { result } = renderStream();
+    let sendPromise: Promise<boolean> | undefined;
+    act(() => {
+      sendPromise = result.current.handleSend('深度搜索');
+    });
+
+    const thinkingMsg = () => {
+      const msgs = result.current.messages;
+      return msgs[msgs.length - 1];
+    };
+    expect(thinkingMsg().isThinking).toBe(true);
+
+    // Terminal event arrives while the connection is STILL OPEN.
+    act(() => {
+      bridgeMock.onEventCallback?.({
+        event: 'done',
+        data: { session_id: 'sid-fe4' },
+      });
+    });
+    expect(thinkingMsg().isThinking).toBe(false);
+
+    // Only now does the connection close; handleSend's own post-await flip
+    // is a no-op (already false).
+    await act(async () => {
+      closeStream?.();
+      await sendPromise;
+    });
+    expect(thinkingMsg().isThinking).toBe(false);
+  });
+
+  it('flips isThinking:false on task_complete too', () => {
+    const { result } = renderStream();
+    act(() => {
+      void result.current.handleSend('深度搜索');
+    });
+    const thinkingMsg = () => result.current.messages[result.current.messages.length - 1];
+    expect(thinkingMsg().isThinking).toBe(true);
+
+    act(() => {
+      bridgeMock.onEventCallback?.({
+        event: 'task_complete',
+        data: { session_id: 'sid-fe4', task_id: 't-1' },
+      });
+    });
+    expect(thinkingMsg().isThinking).toBe(false);
+  });
+});
+
 
 
 describe('useSSEStream — turn-scoped tool-arg evidence (#466)', () => {
