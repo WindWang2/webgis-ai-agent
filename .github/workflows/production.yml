@@ -143,7 +143,10 @@ jobs:
         # 审计 REL-01：cartography marker（@pytest.mark.cartography）同样排除 ——
         # 该集合由独立 cartography-smoke job（确定性 release-blocking gate）拥有，
         # 避免双重执行 + 让 gate scope 显式。
-        run: pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=10 --timeout=60 --timeout-method=thread -m "not perf and not cartography" -v
+        #
+        # #477：real_services marker 同理排除 —— 由独立 real-services-smoke
+        # job（postgis + redis service containers + 真实 celery worker）拥有。
+        run: pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=10 --timeout=60 --timeout-method=thread -m "not perf and not cartography and not real_services" -v
 
       - name: Upload Coverage Report
         uses: codecov/codecov-action@v7.0.0
@@ -208,6 +211,68 @@ jobs:
           MIGRATION_DRIFT_DB_URL: postgresql://test_user:test_pass@localhost:5432/test_db
           JWT_SECRET_KEY: ci-test-secret-key-32-chars-ok
         run: pytest tests/test_deploy_migration_wiring.py::test_migrated_schema_matches_models --no-cov -q
+
+  # ============ Stage 2a-2: 真实服务 smoke lane (#477) ============
+  # test-backend 配了 postgis + redis service container，但套件实际跑
+  # SQLite / fakeredis / eager-celery（conftest 强制 USE_REDIS=false +
+  # CELERY_BROKER_URL=memory://）—— asyncpg 驱动行为、PostGIS 类型、真实
+  # Redis 线协议、真实 broker 投递/撤销从未被验证。此 lane 用同一批
+  # provisioned 容器跑定向 smoke 子集（-m real_services；服务不可达时
+  # self-skip，本地无容器不红）。不把整套测试搬到真实后端 —— 目标是
+  # prod-backend 回归在 CI 有真实覆盖。
+  real-services-smoke:
+    name: Real Services Smoke (PostGIS + Redis + Celery)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:15-3.4
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_pass
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Set Environment Variables
+        run: |
+          echo "DATABASE_URL=postgresql://test_user:test_pass@localhost:5432/test_db" >> $GITHUB_ENV
+          echo "REDIS_URL=redis://localhost:6379/0" >> $GITHUB_ENV
+          echo "JWT_SECRET_KEY=ci-test-secret-key-32-chars-ok" >> $GITHUB_ENV
+          echo "ENV=development" >> $GITHUB_ENV
+          echo "LLM_API_KEY=test-key-not-real" >> $GITHUB_ENV
+
+      - name: Run Real-Services Smoke
+        # 与 test-backend 同批 service container：asyncpg 真实往返、PostGIS
+        # geometry 类型、真实 Redis SET/GET/EXPIRE/TTL/pipeline、真实 celery
+        # worker（broker 投递 + chain + result backend + revoke 丢弃）。
+        run: pytest -m real_services --no-cov --timeout=180 --timeout-method=thread -q
 
   test-perf:
     name: Performance Regression Gate
@@ -474,7 +539,9 @@ jobs:
     # 否则坏的 location 正则可以带着绿色 release-gate 上生产。
     # #476: db-migrations（PostGIS 上执行迁移链 + drift check）同理 ——
     # 迁移跑不通 / 模型与迁移漂移的 PR 不能进入 build→deploy。
-    needs: [lint, test-backend, test-frontend, security, test-perf, cartography-smoke, deploy-config, db-migrations]
+    # #477: real-services-smoke（真实 PostGIS/Redis/celery 投递 smoke）同理
+    # —— prod-backend 回归不能带着绿色 gate 上生产。
+    needs: [lint, test-backend, test-frontend, security, test-perf, cartography-smoke, deploy-config, db-migrations, real-services-smoke]
     steps:
       - name: Release gate passed
         run: echo "All release-blocking checks (quality, backend, frontend, security, perf, cartography) passed."
