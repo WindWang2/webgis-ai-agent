@@ -34,6 +34,7 @@ from app.services.chat.context import (
     TAG_UNTRUSTED_BASE_LAYER,
     TAG_UNTRUSTED_LAYER_NAME,
     TAG_UNTRUSTED_USER_ACTION,
+    TAG_UNTRUSTED_TOOL_EVENT,
     format_selected_feature,
     format_style_summary,
     _bbox_intersects,
@@ -108,7 +109,15 @@ def _split_events(event_log: list[dict]) -> tuple[list[dict], list[dict], list[d
 
 
 def _format_tool_event(evt: dict) -> str:
-    """格式化一条 tool_executed 事件，把关键字段拼到一行。"""
+    """格式化一条 tool_executed 事件，把关键字段拼到一行。
+
+    #555: the whole rendered line is wrapped in the untrusted-tool-event XML
+    fence with HTML escaping. ``alias`` (user-assigned / LLM free text),
+    ``error_msg`` (str(exc), may embed user data), ``command`` (can embed
+    layer names) and ``status`` all flow here from tool results; fencing the
+    completed line (rather than per-field) makes the boundary escape-proof
+    even if a future field is added without its own escaping.
+    """
     data = evt.get("data") or {}
     tool = data.get("tool", "?")
     parts = [tool]
@@ -120,17 +129,26 @@ def _format_tool_event(evt: dict) -> str:
             v = data.get(k)
             if v is not None:
                 parts.append(f"{k}={v}")
-    return " ".join(parts)
+    return _xml_fence(TAG_UNTRUSTED_TOOL_EVENT, " ".join(parts))
 
 
 def _format_pending_event(evt: dict) -> str:
-    """格式化一条进行中后台任务事件，提示 LLM 不要重复触发。"""
+    """格式化一条进行中后台任务事件，提示 LLM 不要重复触发。
+
+    #555: only the data part (tool / status / command — command may embed
+    user-derived layer names) is fenced; the system instruction suffix stays
+    outside the untrusted boundary so it keeps its directive force.
+    """
     data = evt.get("data") or {}
     tool = data.get("tool", "?")
     status = data.get("status", "pending")
     cmd = data.get("command") or ""
     tail = f" → {cmd}" if cmd else ""
-    return f"{tool} ({status}){tail} —— 等待前端完成后会通过 [系统通知] 回传，不要重复触发"
+    data_part = f"{tool} ({status}){tail}"
+    return (
+        f"{_xml_fence(TAG_UNTRUSTED_TOOL_EVENT, data_part)} "
+        "—— 等待前端完成后会通过 [系统通知] 回传，不要重复触发"
+    )
 
 
 async def build_map_state_summary(

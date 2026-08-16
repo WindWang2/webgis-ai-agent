@@ -37,6 +37,7 @@ NON_TOOL_BACKTICKED_TERMS = {
     "untrusted_base_layer",
     "untrusted_region_name",
     "untrusted_user_action",
+    "untrusted_tool_event",
     "tool_executed",
     "tool_failed",
     "layer_toggled",
