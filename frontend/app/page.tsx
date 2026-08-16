@@ -216,6 +216,7 @@ export default function Home() {
               onViewportChange={bridge.onViewportChange}
               sessionId={sessionId}
               ownerToken={activeSessionToken}
+              sessionTokenRef={sessionTokenRef}
             />
             <ExportMask />
             <MemoSpatialCrosshair />

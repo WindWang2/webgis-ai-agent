@@ -49,6 +49,10 @@ const stream = vi.hoisted(() => {
     setMessages: noop,
     handleSend: noop,
     handlePlanAction: noop,
+    // The real useWorkspaceSession returns a stable useRef object for
+    // sessionTokenRef (MapPanel consumes it as a prop; a fresh literal per
+    // render would defeat MemoMapPanel).
+    sessionTokenRef: { current: null } as { current: string | null },
   };
 });
 
@@ -69,7 +73,7 @@ vi.mock('@/lib/hooks/use-workspace-session', () => ({
     sessionId: 's1',
     setSessionId: stream.setMessages,
     sessionIdRef: { current: 's1' },
-    sessionTokenRef: { current: null },
+    sessionTokenRef: stream.sessionTokenRef,
     sessions: [],
     selectSession: stream.handleSend,
     startNewSession: stream.handleSend,

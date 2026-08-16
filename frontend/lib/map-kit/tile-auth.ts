@@ -1,6 +1,6 @@
 import type { RequestParameters } from 'maplibre-gl';
-import { API_BASE } from '@/lib/api/config';
 import { getAccessToken } from '@/lib/auth/tokenStore';
+import { isFirstPartyUrl } from '@/lib/api/first-party';
 
 /**
  * Data-plane credential injection for MapLibre browser-native fetches.
@@ -17,26 +17,34 @@ import { getAccessToken } from '@/lib/auth/tokenStore';
  * Mirrors the credential injection `apiFetch` performs (`transport.ts`):
  * - logged-in sessions → `Authorization: Bearer <JWT>` (read fresh per
  *   request so a rotated access token is picked up),
- * - anonymous sessions → `X-Session-Token: <owner_token>`.
+ * - anonymous sessions → `X-Session-Token: <owner_token>` (read LIVE via the
+ *   `getSessionToken` getter: the owner_token arrives via SSE after the map
+ *   is constructed, and @vis.gl/react-maplibre never re-applies a
+ *   transformRequest when props change — a snapshot captured at construction
+ *   would be permanently stale and session switches would keep the old
+ *   token).
  * When both exist, both are sent — identical to `apiFetch`, and the backend
  * resolves whichever applies to the session.
  *
- * Credentials are ONLY attached to first-party URLs under `API_BASE`.
- * Third-party tile servers (OSM basemap, fonts, sprites) never see a session
+ * Credentials are ONLY attached to first-party URLs (`isFirstPartyUrl`):
+ * third-party tile servers (OSM basemap, fonts, sprites) never see a session
  * credential — leaking the anonymous owner_token to a third party would be a
- * cross-origin secret exposure.
+ * cross-origin secret exposure. Handles the production same-origin build
+ * (`API_BASE === ''` → relative URLs) and dev's absolute origin, comparing
+ * origins exactly (never a prefix match).
  */
 export function buildTileTransformRequest(
-  ownerToken: string | null,
+  getSessionToken: () => string | null,
 ): (url: string, resourceType?: string) => RequestParameters {
   return (url: string): RequestParameters => {
-    if (!API_BASE || !url.startsWith(API_BASE)) {
+    if (!isFirstPartyUrl(url)) {
       // Third-party or unknown host: never forward session credentials.
       return { url };
     }
     const headers: Record<string, string> = {};
     const accessToken = getAccessToken();
     if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
+    const ownerToken = getSessionToken();
     if (ownerToken) headers['X-Session-Token'] = ownerToken;
     return Object.keys(headers).length > 0 ? { url, headers } : { url };
   };
