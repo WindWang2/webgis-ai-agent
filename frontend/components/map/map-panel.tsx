@@ -25,6 +25,7 @@ import {
 import { raiseAnnotationLayers } from "@/lib/map-commands/annotationHelpers"
 import { notifyUserGestureStart, notifyUserGestureEnd } from "@/lib/map-commands/camera-arbitration"
 import { devOnly } from "@/lib/utils/logger"
+import { buildTileTransformRequest } from "@/lib/map-kit/tile-auth"
 
 interface MapPanelProps {
   layers: Layer[]
@@ -33,6 +34,14 @@ interface MapPanelProps {
   onViewportChange?: (center: [number, number], zoom: number, bearing: number, pitch: number) => void
   sessionId?: string | null
   ownerToken?: string | null
+  /**
+   * SEC-08 anonymous owner_token source (stable ref, read LIVE per request).
+   * The token arrives via SSE after the map is constructed and @vis.gl/
+   * react-maplibre never re-applies transformRequest on prop change, so the
+   * transformRequest closure must read the ref's current value instead of
+   * capturing a snapshot.
+   */
+  sessionTokenRef?: React.MutableRefObject<string | null>
 }
 
 import { useMapAction } from "@/lib/contexts/map-action-context"
@@ -82,6 +91,7 @@ export function MapPanel({
   onViewportChange,
   sessionId,
   ownerToken,
+  sessionTokenRef,
 }: MapPanelProps) {
   void _onRemoveLayer;
   void _onToggleLayer;
@@ -108,6 +118,18 @@ export function MapPanel({
   const currentMapStyle = useMemo(
     () => getMapStyle(MAP_STYLES[selectedBaseLayer], selectedBaseLayer),
     [selectedBaseLayer]
+  )
+
+  // #514: MapLibre tile/image fetches are browser-native and cannot carry
+  // headers on their own — inject the same credentials apiFetch sends
+  // (Bearer for logged-in, X-Session-Token for anonymous owner_token).
+  // The owner_token is read LIVE per request from the stable sessionTokenRef
+  // (SSE owner_token arrival + session switch must take effect without a
+  // MapLibre transformRequest re-apply).
+  const transformRequest = useCallback(
+    (url: string, resourceType?: string) =>
+      buildTileTransformRequest(() => sessionTokenRef?.current ?? ownerToken ?? null)(url, resourceType),
+    [ownerToken, sessionTokenRef],
   )
 
   const handleFilterChange = useCallback((layerId: string, ranges: number[][]) => {
@@ -805,6 +827,7 @@ export function MapPanel({
         style={{ position: "absolute", inset: 0 }}
         mapStyle={currentMapStyle}
         attributionControl={false}
+        transformRequest={transformRequest}
         {...({ preserveDrawingBuffer: true } as any)}
       >
         <MapActionHandler />

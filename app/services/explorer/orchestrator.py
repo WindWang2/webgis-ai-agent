@@ -71,6 +71,59 @@ def get_chain_run(final_task_id: str) -> Optional[ExplorerChainRun]:
     return run
 
 
+# ─── Issue #518: session → active explorer tasks (post-turn chat-stream bridge) ─
+#
+# Anonymous sessions (no owner registration, S42) can never reach the
+# owner-verified /explorer/stream/{task_id} endpoint. Their only progress
+# channel is the chat SSE stream, which is session-isolated by construction —
+# the post-turn bridge (bridge_session_explorer_progress) streams these
+# owner-less tasks there. The registry is keyed by session_id and LRU-bounded
+# like _chain_runs; entries are pruned once the bridge sees them terminal.
+_session_tasks: "OrderedDict[str, list[tuple[str, str]]]" = OrderedDict()
+_SESSION_TASKS_MAX_ENTRIES = 20_000
+
+# Bounded wall-clock cap for the post-turn bridge: never hold the chat SSE
+# open forever for a stuck task. On expiry the bridge emits an explicit
+# failed terminal event for still-unfinished tasks (no silent hangs).
+_EXPLORER_BRIDGE_MAX_SECONDS = 600
+
+
+def register_session_task(session_id: str, task_id: str, user_id: str) -> None:
+    """Record an explorer task under its session for the post-turn bridge."""
+    if not session_id or not task_id:
+        return
+    entry = _session_tasks.get(session_id)
+    if entry is None:
+        _session_tasks[session_id] = []
+    if not any(tid == task_id for tid, _ in _session_tasks[session_id]):
+        _session_tasks[session_id].append((task_id, user_id))
+    _session_tasks.move_to_end(session_id)
+    while len(_session_tasks) > _SESSION_TASKS_MAX_ENTRIES:
+        _session_tasks.popitem(last=False)
+
+
+def get_session_tasks(session_id: str) -> list[tuple[str, str]]:
+    """Active (task_id, user_id) pairs registered under a session."""
+    if not session_id:
+        return []
+    entry = _session_tasks.get(session_id)
+    if entry:
+        _session_tasks.move_to_end(session_id)
+    return list(entry or [])
+
+
+def remove_session_task(session_id: str, task_id: str) -> None:
+    """Drop a task from the session registry (called once it reaches terminal)."""
+    entry = _session_tasks.get(session_id)
+    if entry is None:
+        return
+    remaining = [(t, u) for t, u in entry if t != task_id]
+    if remaining:
+        _session_tasks[session_id] = remaining
+    else:
+        del _session_tasks[session_id]
+
+
 def collect_stage_ids(result: Any) -> list[str]:
     """Collect every stage task id of a chain result, ordered first→last.
 
@@ -153,6 +206,11 @@ class ExplorerOrchestrator:
         stage_ids = await asyncio.to_thread(_submit_chain)
         celery_task_id = stage_ids[-1]
         register_chain_run(celery_task_id, stage_ids)
+
+        # #518: 会话 → 任务登记（post-turn chat-stream bridge 用）。匿名
+        # 会话没有 owner registration，独立流端点不可达，靠聊天流桥接。
+        if session_id:
+            register_session_task(session_id, celery_task_id, user_id)
 
         # 审计 S42：记录任务所有权 — on the whole-chain id the client polls.
         if user_id:
@@ -324,3 +382,113 @@ class ExplorerOrchestrator:
                 last_heartbeat = now
 
             await asyncio.sleep(1)
+
+    async def stream_session_progress(
+        self,
+        task_ids: list[str],
+    ) -> AsyncGenerator[str, None]:
+        """Merge per-task progress streams (post-turn chat-stream bridge).
+
+        Completes when every task reached a terminal state. A bounded wall-
+        clock cap (`_EXPLORER_BRIDGE_MAX_SECONDS`) force-terminates stragglers
+        with an explicit `failed` terminal event so the chat SSE never hangs
+        open silently. Every event carries its task_id, so the frontend tracks
+        each task independently.
+        """
+        if not task_ids:
+            return
+        import time as _time
+
+        queue: "asyncio.Queue[object]" = asyncio.Queue()
+        sentinel = object()
+
+        async def _push(task_id: str) -> None:
+            try:
+                async for event in self.stream_progress(task_id):
+                    await queue.put(event)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # 单任务进度流异常 → 显式失败终态（不静默丢弃）。
+                await queue.put(
+                    sse_event("explorer_progress", ExplorerPerceptionEvent(
+                        stage="validate",
+                        task_id=task_id,
+                        status="failed",
+                        context={"final_status": "FAILURE", "error": "progress stream error"},
+                    ))
+                )
+            finally:
+                await queue.put(sentinel)
+
+        workers = [asyncio.create_task(_push(tid)) for tid in task_ids]
+        finished = 0
+        try:
+            deadline = _time.monotonic() + _EXPLORER_BRIDGE_MAX_SECONDS
+            while finished < len(workers):
+                remaining = deadline - _time.monotonic()
+                if remaining <= 0:
+                    break
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=remaining)
+                except asyncio.TimeoutError:
+                    break
+                if item is sentinel:
+                    finished += 1
+                    continue
+                yield item
+            # 有界兜底：超时后为仍未终态的任务发显式 failed 终态。
+            if finished < len(workers):
+                for task_id in task_ids:
+                    try:
+                        status = await self.get_task_status(task_id)
+                    except Exception:
+                        status = {}
+                    if status.get("status") not in ("SUCCESS", "FAILURE", "REVOKED"):
+                        yield sse_event("explorer_progress", ExplorerPerceptionEvent(
+                            stage=status.get("stage") or "validate",
+                            task_id=task_id,
+                            status="failed",
+                            context={
+                                "final_status": "FAILURE",
+                                "error": "bridge timeout",
+                            },
+                        ))
+        finally:
+            # 取消在飞 worker 并等待其结束：只 cancel() 不 await 会让
+            # 事件循环在 generator 关闭后仍持有 pending task →
+            # "Task was destroyed but it is pending" 警告。gather 吞掉
+            # CancelledError（return_exceptions=True）。
+            for worker in workers:
+                worker.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
+
+
+async def bridge_session_explorer_progress(
+    session_id: str,
+    user_id: Optional[str],
+) -> AsyncGenerator[str, None]:
+    """#518 post-turn chat-stream bridge for owner-less explorer tasks.
+
+    Anonymous sessions (no owner registration, S42) can never reach the
+    owner-verified /explorer/stream endpoint; the chat SSE stream is
+    session-isolated by construction, so their progress is bridged here.
+    Tasks with a registered owner keep the independent stream and are
+    skipped. Completed tasks are pruned from the session registry.
+    """
+    tasks = get_session_tasks(session_id)
+    if not tasks:
+        return
+    ownerless = [
+        task_id for task_id, owner in tasks
+        if not TaskQueueService.verify_owner(task_id, user_id or "")
+    ]
+    if not ownerless:
+        return
+    async for event in _bridge_orchestrator.stream_session_progress(ownerless):
+        yield event
+    for task_id in ownerless:
+        remove_session_task(session_id, task_id)
+
+
+_bridge_orchestrator = ExplorerOrchestrator()

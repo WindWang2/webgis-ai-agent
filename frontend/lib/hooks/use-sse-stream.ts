@@ -13,6 +13,9 @@ import type { MapActionPayload } from '@/lib/types';
 import { createMessageIdGenerator } from './use-message-id';
 import { TokenBatcher } from './token-batcher';
 import { IncrementalThinkParser, parseThink } from './incremental-think';
+import { streamExplorerProgress } from '@/lib/api/explorer';
+import { getAccessToken, getRefreshToken } from '@/lib/auth/tokenStore';
+import type { ExplorerStage, ExplorerStatus } from '@/lib/types/explorer';
 
 
 import { devOnly } from "@/lib/utils/logger";
@@ -204,6 +207,64 @@ function extractEventSessionId(data: unknown): string | undefined {
   return undefined;
 }
 
+// stage → 进行时状态（geocode/validate 需去 e，不能裸拼 +ing）
+const EXPLORER_ACTIVE_STATUS: Record<string, ExplorerStatus> = {
+  discover: 'discovering',
+  fetch: 'fetching',
+  parse: 'parsing',
+  geocode: 'geocoding',
+  validate: 'validating',
+};
+
+/**
+ * #518: 将一条 explorer_progress 事件（后端 orchestrator.stream_progress
+ * 的 ExplorerPerceptionEvent 形状：task_id / stage / status / context）应用到
+ * explorerTasks store。聊天流 handler 与独立 /explorer/stream/{task_id}
+ * 消费者共用同一归一化逻辑，保证两条到达路径产生一致的 UI 状态。
+ */
+export function applyExplorerProgressToStore(
+  data: Record<string, unknown> | undefined | null,
+): void {
+  if (!data || typeof data !== 'object') return;
+  const taskId = data.task_id as string;
+  if (typeof taskId !== 'string' || !taskId) return;
+  const rawStage = typeof data.stage === 'string' ? data.stage : 'pending';
+  const stage = (rawStage === 'pending' ? 'discover' : rawStage) as ExplorerStage;
+  const status = data.status as string;
+  const context = (data.context as Record<string, unknown>) || {};
+  const nextStatus: ExplorerStatus =
+    status === 'completed'
+      ? 'completed'
+      : status === 'failed'
+        ? 'failed'
+        : status === 'decision_point'
+          ? 'decision_required'
+          : rawStage === 'pending'
+            ? 'idle'
+            : (EXPLORER_ACTIVE_STATUS[rawStage] ?? 'idle');
+  const progress = (context?.progress as number) || 0;
+  const store = useHudStore.getState();
+  if (!store.explorerTasks.some((tk) => tk.taskId === taskId)) {
+    store.addExplorerTask({
+      taskId,
+      status: nextStatus,
+      stage,
+      progress,
+      query:
+        (typeof context.query === 'string' && context.query) ||
+        `深度探索 ${taskId.slice(0, 8)}`,
+      startedAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+  } else {
+    store.updateExplorerTask(taskId, {
+      stage,
+      status: nextStatus,
+      progress,
+    });
+  }
+}
+
 export function useSSEStream(
   sessionId: string | undefined,
   setSessionId: (sid: string) => void,
@@ -249,6 +310,11 @@ export function useSSEStream(
   ).current; // stable identity: created once per hook instance
   const msgIdGen = useRef(createMessageIdGenerator());
   const layerFetchAbortRef = useRef<AbortController | null>(null);
+  // #518: 独立 /explorer/stream/{task_id} 消费者。deep_explore 返回的探索
+  // 任务在后台跑数分钟，聊天 SSE 在 done 后即关闭——进度必须经独立流推送。
+  // 会话切换/卸载时 abort 全部在飞流；同一 task_id 只开一条流。
+  const explorerAbortRef = useRef<AbortController | null>(null);
+  const explorerStreamsRef = useRef<Set<string>>(new Set());
 
   // D-F7 / F-FE-4: incremental think-block tracking. The batcher still
   // delivers full snapshots per flush, but instead of re-parsing the whole
@@ -308,6 +374,50 @@ export function useSSEStream(
       layerFetchAbortRef.current?.abort();
     };
   }, [sessionId]);
+
+  // #518: 会话切换/卸载时终止独立 explorer 进度流（任务归属随会话）。
+  useEffect(() => {
+    if (explorerAbortRef.current) {
+      explorerAbortRef.current.abort();
+    }
+    explorerAbortRef.current = new AbortController();
+    explorerStreamsRef.current.clear();
+    return () => {
+      explorerAbortRef.current?.abort();
+    };
+  }, [sessionId]);
+
+  // #518: 深度探索任务在后台跑数分钟，聊天 SSE 连接在 done 后关闭，进度
+  // 必须经独立 /explorer/stream/{task_id}（owner-verified）推送到同一个
+  // explorerTasks store。deep_explore 返回 explorer_task 结果时启动。
+  // 匿名会话无 Bearer → 独立流端点 401 不可达，其进度由后端 post-turn
+  // 聊天流桥接（bridge_session_explorer_progress）推送；此处跳过独立流，
+  // 避免 401 噪音 —— 聊天流 handler 与独立流消费者共用同一归一化逻辑。
+  const startExplorerProgressStream = useCallback((taskId: string) => {
+    if (explorerStreamsRef.current.has(taskId)) return;
+    // 已登录会话（有 access 或 refresh token）走 owner-verified 独立流；
+    // 匿名（两者皆无）依赖聊天流桥接。
+    if (!getAccessToken() && !getRefreshToken()) return;
+    explorerStreamsRef.current.add(taskId);
+    const signal = explorerAbortRef.current?.signal;
+    (async () => {
+      try {
+        for await (const ev of streamExplorerProgress(taskId, signal)) {
+          if (ev.event === 'explorer_progress' && ev.data && typeof ev.data === 'object') {
+            applyExplorerProgressToStore(ev.data as Record<string, unknown>);
+            // 终态后释放 per-task 槽位：未来可重开流（断线恢复），且不再去重拦截。
+            const status = (ev.data as Record<string, unknown>).status;
+            if (status === 'completed' || status === 'failed') {
+              explorerStreamsRef.current.delete(taskId);
+            }
+          }
+        }
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        devOnly.warn('[useSSEStream] explorer progress stream failed:', err);
+      }
+    })();
+  }, []);
 
   const onEvent = useCallback(
     (event: SSEEvent) => {
@@ -405,6 +515,15 @@ export function useSSEStream(
             status: 'pending',
           };
           setMessages((prev) => prev.map((m) => (m.id === thinkingId ? { ...m, plan } : m)));
+        }
+        // #518: deep_explore 返回 explorer_task —— 任务在后台跑数分钟，聊天流
+        // 无法覆盖全生命周期。启动独立 /explorer/stream/{task_id} 消费进度。
+        if (
+          data.result?.type === 'explorer_task'
+          && typeof data.result?.task_id === 'string'
+          && data.result.task_id
+        ) {
+          startExplorerProgressStream(data.result.task_id);
         }
         // Layer auto-mount — hidden by default; AI calls display_layer to show final results
         if (data.geojson_ref || data.result?.image) {
@@ -720,60 +839,26 @@ export function useSSEStream(
             };
           }),
         );
-      } else if (event.event === 'explorer_progress') {
-        // 后端事件字段（orchestrator.stream_progress）：task_id / stage
-        // （含 "pending"，Celery PENDING 时 meta 为空）/ status（started |
-        // progress | decision_point | completed | failed）/ context.progress。
-        // 首次见到 task_id 时先插入任务条目（explorerTasks 此前恒空导致进度
-        // 永不可见），后续更新走 updateExplorerTask。
-        const taskId = data.task_id as string;
-        if (typeof taskId !== 'string' || !taskId) return;
-        const rawStage = typeof data.stage === 'string' ? data.stage : 'pending';
-        const stage = (rawStage === 'pending' ? 'discover' : rawStage) as import('@/lib/types/explorer').ExplorerStage;
-        const status = data.status as string;
-        const context = (data.context as Record<string, unknown>) || {};
-        // stage → 进行时状态（geocode/validate 需去 e，不能裸拼 +ing）
-        const ACTIVE_STATUS: Record<string, import('@/lib/types/explorer').ExplorerStatus> = {
-          discover: 'discovering',
-          fetch: 'fetching',
-          parse: 'parsing',
-          geocode: 'geocoding',
-          validate: 'validating',
-        };
-        const nextStatus: import('@/lib/types/explorer').ExplorerStatus =
-          status === 'completed'
-            ? 'completed'
-            : status === 'failed'
-            ? 'failed'
-            : status === 'decision_point'
-            ? 'decision_required'
-            : rawStage === 'pending'
-            ? 'idle'
-            : (ACTIVE_STATUS[rawStage] ?? 'idle');
-        const progress = (context?.progress as number) || 0;
-        const store = useHudStore.getState();
-        if (!store.explorerTasks.some((tk) => tk.taskId === taskId)) {
-          store.addExplorerTask({
-            taskId,
-            status: nextStatus,
-            stage,
-            progress,
-            query:
-              (typeof context.query === 'string' && context.query) ||
-              `深度探索 ${taskId.slice(0, 8)}`,
-            startedAt: Date.now(),
-            updatedAt: Date.now(),
-          });
-        } else {
-          store.updateExplorerTask(taskId, {
-            stage,
-            status: nextStatus,
-            progress,
-          });
+      } else if (event.event === 'done' || event.event === 'task_complete') {
+        // #518: 聊天流 post-turn 桥接（匿名 deep_explore）在 done 之后连接
+        // 仍保持打开最多 600s（explorer 进度推送）—— handleSend 的 await
+        // 要等连接关闭才返回，isThinking 必须在终态事件到达时就翻转，
+        // 否则已完成的回答一直藏在 ThinkingDots 后面。幂等：随后 handleSend
+        // 的后置翻转只处理仍为 isThinking 的消息。
+        if (thinkingId) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === thinkingId && m.isThinking ? { ...m, isThinking: false } : m
+            )
+          );
         }
+      } else if (event.event === 'explorer_progress') {
+        // #518: 归一化逻辑抽到 applyExplorerProgressToStore（与独立
+        // /explorer/stream/{task_id} 消费者共用），聊天流与独立流一致。
+        applyExplorerProgressToStore(data as Record<string, unknown>);
       }
     },
-    [setSessionId, sessionIdRef, sessionTokenRef, rememberSessionToken, markToolCallStatus]
+    [setSessionId, sessionIdRef, sessionTokenRef, rememberSessionToken, markToolCallStatus, startExplorerProgressStream]
   );
 
   // DUP-1: bounded auto-reconnect for the chat stream. Opt-in by explicit

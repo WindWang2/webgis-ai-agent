@@ -6,6 +6,7 @@ import type { ExportItem, ExportSettings } from '@/lib/store/hud-types';
 import { useMapAction } from '@/lib/contexts/map-action-context';
 import { Download, Printer, History, ChevronDown, Lock } from 'lucide-react';
 import { API_BASE } from '@/lib/api/config';
+import { downloadWithAuth } from '@/lib/api/authenticated-download';
 import { getAuthUser, subscribeAuth } from '@/lib/auth/tokenStore';
 import { IconButton } from '@/components/shared/icon-button';
 import { ConfirmAction } from '@/components/shared/confirm-action';
@@ -141,7 +142,7 @@ export function MapStudioTab() {
     };
   }, [activeSubTab, leftPanelOpen, updateExportSettings]);
 
-  const handleDownload = (item: ExportItem) => {
+  const handleDownload = async (item: ExportItem) => {
     // 审计 F37：downloadName 来自后端响应，但防御性校验路径穿越/特殊字符。
     // 只允许字母数字 + . _ -，拒绝 ../ ? # 等。
     const downloadName = item.filename || item.name;
@@ -149,10 +150,17 @@ export function MapStudioTab() {
       devOnly.warn('[MapStudioTab] 拒绝非法 download filename:', downloadName);
       return;
     }
-    const a = document.createElement('a');
-    a.href = `${API_BASE}/api/v1/export/download/${encodeURIComponent(downloadName)}`;
-    a.download = downloadName;
-    a.click();
+    // #515: 下载端点只认 Bearer；裸 <a> 导航无法携带 header → 恒 401。
+    // 改走 transport 的鉴权 blob 下载（含 401 刷新），文件名以后端
+    // Content-Disposition 为准，fallback 到校验过的 downloadName。
+    try {
+      await downloadWithAuth(
+        `${API_BASE}/api/v1/export/download/${encodeURIComponent(downloadName)}`,
+        { filename: downloadName },
+      );
+    } catch (err) {
+      devOnly.warn('[MapStudioTab] 导出下载失败:', err);
+    }
   };
 
   const handleDelete = (id: string) => {

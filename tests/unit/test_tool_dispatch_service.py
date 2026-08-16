@@ -11,6 +11,7 @@ import shutil
 from unittest.mock import AsyncMock, MagicMock
 
 from app.services.tool_dispatch_service import (
+    LEGACY_TOOL_NAME_MAP,
     ToolDispatchResult,
     ToolDispatchService,
     normalize_tool_name,
@@ -128,6 +129,120 @@ async def test_geojson_result_produces_ref(service, fake_registry, clean_session
     assert result.map_actions[0]["command"] == "add_layer"
     persisted = await mapspec_store_instance.get_mapspec(clean_session)
     assert persisted["layers"][0]["provenance"]["result_ref"] == result.geojson_ref
+
+
+# ─── #517 回归锁定：to_llm_response() 的 data 包裹 FC 形状 ──────────
+
+
+@pytest.mark.asyncio
+async def test_data_wrapped_fc_produces_ref(service, fake_registry, clean_session):
+    """#517：to_llm_response() 形状 {success, summary, data: FeatureCollection}
+    必须走与顶层 FC 相同的挂载管线 → geojson_ref 非空且 mapspec 落库。"""
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "geometry": {"type": "Point", "coordinates": [116.4, 39.9]}, "properties": {"v": 1}},
+        ],
+    }
+    fake_registry.dispatch.return_value = {
+        "success": True,
+        "summary": "1 point buffered",
+        "data": fc,
+        "bbox": "116.4,39.9,116.4,39.9",
+    }
+    result = await service.dispatch(_tc("buffer_analysis", {"radius": 100}, tc_id="call_517_1"), clean_session, set())
+    assert result.status == "ok"
+    assert result.geojson_ref is not None
+    assert result.geojson_ref.startswith("ref:geojson-")
+    # data 包裹的 FC 也要经过 MapSpec authoring（前端靠 runtime_patch/挂载）
+    assert result.raw_result["runtime_patch"]["result_ref"] == result.geojson_ref
+    assert result.map_actions[0]["command"] == "add_layer"
+
+
+@pytest.mark.asyncio
+async def test_data_wrapped_fc_geometry_persisted(service, fake_registry, clean_session):
+    """#517 几何真值：data 包裹 FC 落 ref 后可从 session_data_manager 读回，
+    要素数与几何类型与输入一致（不是"不抛异常"的假通过）。"""
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 0]]]}, "properties": {}},
+            {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [[[2, 2], [3, 2], [3, 3], [2, 2]]]}, "properties": {}},
+        ],
+    }
+    fake_registry.dispatch.return_value = {
+        "success": True,
+        "summary": "2 polygons",
+        "data": fc,
+    }
+    result = await service.dispatch(_tc("buffer_analysis", {"radius": 50}, tc_id="call_517_2"), clean_session, set())
+    assert result.status == "ok" and result.geojson_ref
+
+    res = await session_data_manager.get_ref_data(clean_session, result.geojson_ref)
+    assert res.success and res.data
+    persisted = res.data
+    assert persisted.get("type") == "FeatureCollection"
+    assert len(persisted["features"]) == 2
+    assert {f["geometry"]["type"] for f in persisted["features"]} == {"Polygon"}
+
+
+@pytest.mark.asyncio
+async def test_llm_payload_carries_ref_id_for_data_wrapped_fc(service, fake_registry, clean_session):
+    """#517：summary 分支的 LLM 载荷必须携带 ref_id == geojson_ref，
+    LLM 才拿得到 ref 去 display_layer。"""
+    fc = {
+        "type": "FeatureCollection",
+        "features": [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [0, 0]}, "properties": {}}],
+    }
+    fake_registry.dispatch.return_value = {
+        "success": True,
+        "summary": "done",
+        "data": fc,
+    }
+    result = await service.dispatch(_tc("kde_surface", {"bandwidth": 5}, tc_id="call_517_3"), clean_session, set())
+    assert result.status == "ok" and result.geojson_ref
+    assert '"ref_id"' in result.llm_payload
+    import json as _json
+    payload = _json.loads(result.llm_payload)
+    assert payload.get("ref_id") == result.geojson_ref
+
+
+@pytest.mark.asyncio
+async def test_slim_event_excludes_data_key(service, fake_registry, clean_session):
+    """#517 性能面 sibling：slim_event（SSE 事件载荷）不得再携带未裁剪的
+    data FC 全量传输。"""
+    big_fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "geometry": {"type": "Point", "coordinates": [i, i]}, "properties": {"p": i}}
+            for i in range(100)
+        ],
+    }
+    fake_registry.dispatch.return_value = {
+        "success": True,
+        "summary": "big",
+        "data": big_fc,
+    }
+    result = await service.dispatch(_tc("spatial_stats", {}, tc_id="call_517_4"), clean_session, set())
+    assert result.status == "ok"
+    slim = result.slim_event
+    assert isinstance(slim, dict)
+    assert "data" not in slim
+    assert "geojson" not in slim
+    assert "features" not in slim
+
+
+@pytest.mark.asyncio
+async def test_data_wrapped_non_fc_produces_no_ref(service, fake_registry, clean_session):
+    """#517 守卫：data 不是 FC dict（list / 普通 dict）时不得误挂载。"""
+    fake_registry.dispatch.return_value = {
+        "success": True,
+        "summary": "tabular",
+        "data": [{"a": 1}, {"a": 2}],
+    }
+    result = await service.dispatch(_tc("some_table_tool", {}, tc_id="call_517_5"), clean_session, set())
+    assert result.status == "ok"
+    assert result.geojson_ref is None
 
 
 @pytest.mark.asyncio
@@ -377,13 +492,82 @@ async def test_failed_dispatch_does_not_occupy_dedup_slot(service, fake_registry
 
 
 def test_tool_name_normalization_table():
-    """断言 legacy 工具名被正确映射为 webgis_* canonical 名称。"""
+    """断言 legacy 工具名被正确映射为 webgis_* canonical 名称。
+
+    #516：remove_layer / zoom_to_layer 已是 registry 现役工具，别名表不得
+    再改写它们（schema 不兼容：layer_ref vs layer_id / 全可选 view args），
+    否则 LLM 的合法调用被重定向后校验失败或静默无操作。LLM 按目录可见名
+    调用即命中现役工具。
+    """
     assert normalize_tool_name("add_layer") == "webgis_layer_upsert"
     assert normalize_tool_name("set_layer_style") == "webgis_layer_upsert"
     assert normalize_tool_name("set_view") == "webgis_view_set"
-    assert normalize_tool_name("remove_layer") == "webgis_layer_remove"
+    # #516：现役工具名不再被别名表改写
+    assert normalize_tool_name("remove_layer") == "remove_layer"
+    assert normalize_tool_name("zoom_to_layer") == "zoom_to_layer"
     assert normalize_tool_name("init_project") == "webgis_project_init"
     assert normalize_tool_name("unknown_tool") == "unknown_tool"
+
+
+def test_legacy_alias_map_never_shadows_registered_tool_names():
+    """契约：别名表键 ∩ registry 注册名 == ∅（防 #516 复发）。
+
+    别名表只应包含不再注册的旧名；一旦某工具以现役名注册
+    （remove_layer / zoom_to_layer），dispatch 入口的 normalize 会把
+    LLM 对现役工具的合法调用重写为 schema 不兼容的 webgis_* 工具。
+    """
+    from app.tools import init_tools
+    from app.tools.registry import ToolRegistry
+
+    r = ToolRegistry()
+    init_tools(r)
+    registered = set(r.all_metadata().keys())
+    conflict = set(LEGACY_TOOL_NAME_MAP.keys()) & registered
+    assert conflict == set(), (
+        f"LEGACY_TOOL_NAME_MAP 键与 registry 注册名冲突，会被 normalize "
+        f"错误改写: {conflict}"
+    )
+    # #516 的两个现役工具必须在 registry 中且不在别名表中
+    assert "remove_layer" in registered
+    assert "zoom_to_layer" in registered
+    assert "remove_layer" not in LEGACY_TOOL_NAME_MAP
+    assert "zoom_to_layer" not in LEGACY_TOOL_NAME_MAP
+
+
+@pytest.mark.asyncio
+async def test_dispatch_does_not_rewrite_active_tool_names(
+    service, fake_registry, clean_session,
+):
+    """#516：现役工具 remove_layer / zoom_to_layer 经 dispatch 不被改写，
+    且参数 schema 按现役定义校验（layer_ref 必须原样到达 registry）。"""
+    fake_registry.dispatch.return_value = {"summary": "removed"}
+    tc = _tc("remove_layer", {"layer_ref": "ref:geojson-1"})
+
+    result = await service.dispatch(tc, clean_session, set())
+
+    assert result.status == "ok"
+    fake_registry.dispatch.assert_called_once()
+    called_name, called_args = fake_registry.dispatch.call_args[0][0], fake_registry.dispatch.call_args[0][1]
+    assert called_name == "remove_layer"
+    assert called_args == {"layer_ref": "ref:geojson-1"}
+
+
+@pytest.mark.asyncio
+async def test_dispatch_zoom_to_layer_passes_padding_through(
+    service, fake_registry, clean_session,
+):
+    """#516：zoom_to_layer 的 layer_ref/padding 原样到达 registry（改写为
+    webgis_view_set 会吞掉这两个参数，缩放命令永不触发）。"""
+    fake_registry.dispatch.return_value = {"summary": "zoomed"}
+    tc = _tc("zoom_to_layer", {"layer_ref": "ref:geojson-2", "padding": 120})
+
+    result = await service.dispatch(tc, clean_session, set())
+
+    assert result.status == "ok"
+    fake_registry.dispatch.assert_called_once()
+    called_name, called_args = fake_registry.dispatch.call_args[0][0], fake_registry.dispatch.call_args[0][1]
+    assert called_name == "zoom_to_layer"
+    assert called_args == {"layer_ref": "ref:geojson-2", "padding": 120}
 
 
 @pytest.mark.asyncio

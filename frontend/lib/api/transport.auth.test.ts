@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
-import { apiFetch, ApiError } from './transport';
+import { apiFetch, apiFetchBlob, ApiError } from './transport';
 import { setAuth, clearAuth, getAccessToken } from '../auth/tokenStore';
 import { installInMemoryLocalStorage } from '../../test/in-memory-local-storage';
 
@@ -154,5 +154,55 @@ describe('transport auth (Bearer attach + 401 recovery)', () => {
     const err = (await apiFetch('/x').catch((e: unknown) => e)) as ApiError;
     expect(err.status).toBe(500);
     expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('transport apiFetchBlob (#515: authenticated downloads)', () => {
+  const blobOk = (body = 'file-bytes', disposition: string | null = null) => ({
+    ok: true,
+    status: 200,
+    statusText: 'OK',
+    headers: { get: (name: string) => (name === 'content-disposition' ? disposition : null) },
+    blob: () => Promise.resolve(new Blob([body])),
+  });
+
+  it('fetches the blob with the Bearer header attached', async () => {
+    setAuth({ accessToken: 'acc-dl', refreshToken: null }, null);
+    mockFetch.mockResolvedValueOnce(blobOk());
+
+    const out = await apiFetchBlob('/api/v1/export/download/x.png');
+    const [, init] = mockFetch.mock.calls[0];
+    expect(init.headers.Authorization).toBe('Bearer acc-dl');
+    expect(out.filename).toBeNull();
+    expect(out.blob).toBeInstanceOf(Blob);
+  });
+
+  it('parses the Content-Disposition filename when present', async () => {
+    setAuth({ accessToken: 'acc-dl', refreshToken: null }, null);
+    mockFetch.mockResolvedValueOnce(blobOk('x', 'attachment; filename="map_export_1.png"'));
+
+    const out = await apiFetchBlob('/api/v1/export/download/map_export_1.png');
+    expect(out.filename).toBe('map_export_1.png');
+  });
+
+  it('surfaces a non-ok status as ApiError (401 → caller shows login prompt)', async () => {
+    setAuth({ accessToken: 'stale-dl', refreshToken: null }, null);
+    mockFetch.mockResolvedValueOnce(errResponse(401));
+
+    const err = (await apiFetchBlob('/api/v1/export/download/x.png').catch((e: unknown) => e)) as ApiError;
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(401);
+  });
+
+  it('recovers ONCE from a 401 via the refresh token like apiFetch', async () => {
+    setAuth({ accessToken: 'stale-dl', refreshToken: 'ref-dl' }, null);
+    mockFetch
+      .mockResolvedValueOnce(errResponse(401))
+      .mockResolvedValueOnce(jsonOk({ access_token: 'fresh-dl', refresh_token: 'ref-2' }))
+      .mockResolvedValueOnce(blobOk('bytes'));
+
+    const out = await apiFetchBlob('/api/v1/export/download/x.png');
+    expect(out.blob).toBeInstanceOf(Blob);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 });
