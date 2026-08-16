@@ -3,10 +3,9 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { apiFetch, isApiError } from '@/lib/api/transport';
-import { API_BASE } from '@/lib/api/config';
-import type { GeoJSONFeatureCollection } from '@/lib/types';
 import type { ChatSession } from '@/lib/types/chat';
 import type { MapActionPayload } from '@/lib/types';
+import { restoreSessionMapLayers } from '@/lib/session/map-state-restore';
 
 
 import { devOnly } from "@/lib/utils/logger";
@@ -231,97 +230,9 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
             }
           }
           if (state.base_layer) store.setBaseLayer(state.base_layer);
-          const observation = state._cartographic_observation;
-          const observationIsCurrent = (
-            typeof state._current_cartographic_fingerprint === 'string'
-            && typeof observation?.mapspec_fingerprint === 'string'
-            && observation.mapspec_fingerprint
-              === state._current_cartographic_fingerprint
-          );
-          const observedLayers = observationIsCurrent && Array.isArray(observation?.layers)
-            ? observation.layers
-            : [];
-          const runtimeLayers = observedLayers.map((observed: any) => {
-            const refId = observed._refId;
-            const runtimeId = observed.runtime_store_id ?? refId ?? observed.id;
-            const rasterSource = (
-              typeof observed.raster_image === 'string'
-              && Array.isArray(observed.raster_bbox)
-              && observed.raster_bbox.length === 4
-            ) ? {
-                image: observed.raster_image,
-                bbox: observed.raster_bbox,
-              } : null;
-            return {
-              id: runtimeId,
-              name: observed.name ?? `分析结果: ${observed.id}`,
-              type: rasterSource
-                ? 'heatmap'
-                : ['vector', 'raster', 'tile', 'heatmap'].includes(observed.type)
-                  ? observed.type
-                  : 'vector',
-              visible: observed.visible !== false,
-              opacity: typeof observed.opacity === 'number' ? observed.opacity : 1,
-              group: observed.group ?? 'analysis',
-              source: rasterSource ?? ({
-                type: 'FeatureCollection',
-                features: [],
-                metadata: { ref_id: refId },
-              } as GeoJSONFeatureCollection),
-              style: observed.style,
-              legend_spec: observed.legend_spec,
-              _refId: refId,
-              _descriptor: observed._descriptor,
-              _tileUrl: refId
-                ? `${API_BASE}/api/v1/layers/data/${refId}/tiles/{z}/{x}/{y}.mvt?session_id=${sid}`
-                : undefined,
-              _mapspecFingerprint: observation.mapspec_fingerprint,
-              _mapspecLayerId: observed.id,
-              _mapspecProjectionFingerprint: observed.projection_fingerprint,
-              _mapspecRepairActionId: observed.repair_action_id,
-              _intentGeneration: typeof observed.intent_generation === 'number'
-                ? observed.intent_generation
-                : undefined,
-            };
-          });
-          // The live post-reconcile observation is the final-map snapshot. It
-          // outranks the turn-start `layers` state, which may predate the GIS
-          // result. Legacy sessions without runtime evidence keep the old path.
-          const layersToRestore = runtimeLayers.length > 0
-            ? runtimeLayers
-            : (state.layers || []);
-          for (const layer of layersToRestore) {
-            store.addLayer(layer);
-            if (
-              layer._refId
-              && layer._refId.startsWith('ref:')
-              && !(
-                layer._descriptor?.mvt_capable
-                && layer._descriptor?.feature_count > 5000
-              )
-              && !(layer.source && typeof layer.source === 'object' && 'image' in layer.source)
-            ) {
-              // SEC-08：匿名会话的图层引用数据同样受 owner_token 保护。
-              apiFetch<GeoJSONFeatureCollection>(
-                `/api/v1/layers/data/${encodeURIComponent(layer._refId)}?session_id=${encodeURIComponent(sid)}`,
-                { signal, ownerToken: token, label: 'Layer data error' }
-              )
-                .then((geojson) => {
-                  if (signal.aborted) return;
-                  if (geojson && (geojson.type === 'FeatureCollection' || geojson.features)) {
-                    const current = useHudStore.getState().layers.find(
-                      (candidate) => candidate.id === layer.id
-                    );
-                    if (current?._refId === layer._refId) {
-                      useHudStore.getState().updateLayer(layer.id, { source: geojson });
-                    }
-                  }
-                })
-                .catch((err) => {
-                  if (!isApiError(err)) devOnly.error('[LayerFetch]', err);
-                });
-            }
-          }
+          // #552: 图层还原逻辑抽到 lib/session/map-state-restore（观察态优先 +
+          // ref 数据回填），会话切换与 /story 分享页共用同一份实现。
+          await restoreSessionMapLayers(state, { sessionId: sid, token, signal });
         }
 
         // 审计 F39：切换会话后必须刷新分析资产列表，否则 session A 的资产
