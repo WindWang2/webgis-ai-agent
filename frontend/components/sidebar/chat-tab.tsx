@@ -99,6 +99,12 @@ interface ChatTabProps {
   onSend: (text: string) => void;
   /** Plan Mode: 用户在卡片上点按钮时回调，由父组件发送对应 chat 消息并更新 plan.status */
   onPlanAction?: (planId: string, action: 'approve' | 'revise' | 'reject') => void;
+  /**
+   * #467: 当前会话 id —— 中途切换会话（History 抽屉 / 新会话）会把 aiStatus
+   * 强制置 idle，但那是旧会话回合的中止而非完成；播报器据此抑制错误的
+   * 「回复已完成」。
+   */
+  sessionId?: string | null;
 }
 
 /* ─── Memoized message bubble ───
@@ -248,7 +254,7 @@ const ChatMessageItem = memo(function ChatMessageItem({
   );
 });
 
-export function ChatTab({ messages, aiStatus, onSend, onPlanAction }: ChatTabProps) {
+export function ChatTab({ messages, aiStatus, onSend, onPlanAction, sessionId }: ChatTabProps) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -350,7 +356,7 @@ export function ChatTab({ messages, aiStatus, onSend, onPlanAction }: ChatTabPro
       </div>
 
       {/* Input area */}
-      <ChatAnnouncer messages={messages} aiStatus={aiStatus} />
+      <ChatAnnouncer messages={messages} aiStatus={aiStatus} sessionId={sessionId} />
 
       {/* 不透明底 + 去掉 blur(12px)：composer 压在地图上，半透明会让输入文字
           与底图细节互相干扰，而 backdrop-filter 又是最贵的那类合成。 */}
