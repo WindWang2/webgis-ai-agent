@@ -122,6 +122,20 @@ async def delete_document(
     """
     删除指定文档的所有chunk和相关向量。
     审计 S41：先校验所有权，非本人/本组织的文档拒绝删除。
+
+    #485 删除顺序与补偿语义（vector-first）：
+
+    1. 只读所有权校验（不改任何状态）。
+    2. **先**清理向量索引（engine.delete_document：软删标记 + 可能的压缩）。
+       - 失败 → 记日志并返回 False，**DB 行原样保留**，调用方重试即可恢复
+         （owner_check 仍能找到行，重新走一遍同样的流程）。
+    3. 向量清理成功后**再**删除 DB 行（Chunk → Document）。
+       - 此时若 DB 删除失败 → 返回 False；搜索结果已不含该文档（向量已软删），
+         DB 行仍在，重试依然安全：FaissVectorStore.mark_deleted 对已清理的
+         document_id 是幂等 no-op，不会破坏状态。
+
+    旧实现的顺序相反（先删 DB 行、后清理向量且不受保护）：向量清理一旦失败，
+    向量永久孤儿化，且重试会因 owner_check 查不到行而直接 False —— 不可恢复。
     """
     from sqlalchemy import delete, select
 
@@ -129,19 +143,21 @@ async def delete_document(
     from app.services.rag.engine import TenantContext, get_knowledge_engine
     from app.tools._utils import async_db_session
 
+    # ── 1. 只读所有权校验 ────────────────────────────────────────────────
+    # Delete is creator-only (docstring: "仅删除属于自己的文档"). The
+    # previous org-scoped check let any member of an org delete another
+    # member's document — inconsistent with templates/projects, which
+    # are creator-or-admin. org_id stays on the TenantContext below for
+    # the vector-store cleanup, but it must NOT broaden the SQL guard.
+    if user_id is None:
+        # No authenticated creator identity -> cannot authorize delete.
+        return False
+
     try:
         async with async_db_session() as db:
-            # Delete is creator-only (docstring: "仅删除属于自己的文档"). The
-            # previous org-scoped check let any member of an org delete another
-            # member's document — inconsistent with templates/projects, which
-            # are creator-or-admin. org_id stays on the TenantContext below for
-            # the vector-store cleanup, but it must NOT broaden the SQL guard.
-            owner_check = select(Document).where(Document.id == document_id)
-            if user_id is not None:
-                owner_check = owner_check.where(Document.creator_id == user_id)
-            else:
-                # No authenticated creator identity -> cannot authorize delete.
-                return False
+            owner_check = select(Document.id).where(
+                Document.id == document_id, Document.creator_id == user_id
+            )
             existing = (await db.execute(owner_check)).scalar_one_or_none()
             if existing is None:
                 logger.warning(
@@ -149,16 +165,44 @@ async def delete_document(
                     document_id, user_id, org_id,
                 )
                 return False
+    except Exception as e:
+        logger.error(f"[RAG] delete_document owner check failed: {e}", exc_info=True)
+        return False
 
+    # ── 2. 向量清理先行：失败则 DB 行保留，可重试 ─────────────────────────
+    tenant = TenantContext(user_id=user_id, org_id=str(org_id) if org_id is not None else None)
+    engine = get_knowledge_engine()
+    try:
+        vector_ok = await engine.delete_document(document_id, tenant=tenant)
+    except Exception as e:
+        # DB rows are untouched — the caller can retry the whole delete.
+        logger.error(
+            f"[RAG] delete_document vector cleanup failed for {document_id}; "
+            f"DB rows kept for retry: {e}",
+            exc_info=True,
+        )
+        return False
+    if vector_ok is False:
+        logger.warning(
+            "[RAG] delete_document vector cleanup returned False for %s; DB rows kept for retry",
+            document_id,
+        )
+        return False
+
+    # ── 3. DB 行删除（向量已清理；失败可安全重试，mark_deleted 幂等）──────
+    try:
+        async with async_db_session() as db:
             await db.execute(delete(Chunk).where(Chunk.document_id == document_id))
             await db.execute(delete(Document).where(Document.id == document_id))
     except Exception as e:
-        logger.error(f"[RAG] delete_document failed: {e}", exc_info=True)
+        logger.error(
+            f"[RAG] delete_document DB cleanup failed for {document_id} after vector "
+            f"cleanup succeeded; retry is safe (mark_deleted is idempotent): {e}",
+            exc_info=True,
+        )
         return False
 
-    tenant = TenantContext(user_id=user_id, org_id=str(org_id) if org_id is not None else None)
-    engine = get_knowledge_engine()
-    return await engine.delete_document(document_id, tenant=tenant)
+    return True
 
 
 async def list_documents(

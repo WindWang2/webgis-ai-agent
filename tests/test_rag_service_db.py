@@ -8,6 +8,7 @@ runs against a real (file-backed) database without Postgres.
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock, patch
 
 import pytest_asyncio
 
@@ -71,6 +72,148 @@ async def _seed_document(db_sessionmaker, *, org_id=None, creator_id=None, title
         s.add(Chunk(id=str(uuid.uuid4()), document_id=doc_id, content="c", chunk_index=0))
         await s.commit()
     return doc_id
+
+
+def _engine_stub(delete_result=True):
+    """Minimal KnowledgeEngine stand-in whose delete_document is a mock."""
+    stub = type("EngineStub", (), {})()
+    stub.delete_document = AsyncMock(return_value=delete_result)
+    return stub
+
+
+# ── #485: delete ordering / vector failure compensation ──────────────────
+
+
+async def test_delete_document_vector_failure_keeps_rows_and_retry_succeeds(rag_db, tmp_path):
+    """#485: 向量清理失败时 DB 行必须仍在（可重试），重试后两端都删净。"""
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.models.knowledge_base import Chunk, Document
+    from app.services import rag_service
+    from app.services.rag import engine as engine_mod
+
+    session = async_sessionmaker(
+        bind=create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'rag_service.db'}"),
+        expire_on_commit=False,
+    )
+    doc_id = await _seed_document(session, creator_id="alice")
+
+    calls = {"n": 0}
+
+    async def flaky_engine_delete(doc_id_arg, tenant=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("vector store metadata I/O failed")
+        return True
+
+    stub = type("E", (), {})()
+    stub.delete_document = flaky_engine_delete
+    with patch.object(engine_mod, "get_knowledge_engine", return_value=stub):
+        # First attempt: vector cleanup fails -> delete must NOT report
+        # success and DB rows must survive for a retry.
+        ok = await rag_service.delete_document(doc_id, user_id="alice")
+        assert ok is False, "vector failure must not report success"
+
+        async with session() as s:
+            doc_row = (await s.execute(select(Document).where(Document.id == doc_id))).scalar_one_or_none()
+            chunk_rows = (await s.execute(select(Chunk).where(Chunk.document_id == doc_id))).scalars().all()
+        assert doc_row is not None, "DB document row must survive vector-cleanup failure"
+        assert len(chunk_rows) == 1, "DB chunk rows must survive vector-cleanup failure"
+
+        # Retry after the transient vector failure succeeds and clears both stores.
+        ok2 = await rag_service.delete_document(doc_id, user_id="alice")
+        assert ok2 is True
+        async with session() as s:
+            doc_row2 = (await s.execute(select(Document).where(Document.id == doc_id))).scalar_one_or_none()
+            chunk_rows2 = (await s.execute(select(Chunk).where(Chunk.document_id == doc_id))).scalars().all()
+        assert doc_row2 is None
+        assert chunk_rows2 == []
+    assert calls["n"] == 2, "retry must reach vector cleanup again"
+
+
+async def test_delete_document_removes_vectors_before_db_rows(rag_db, tmp_path):
+    """#485: 排序契约 —— engine.delete_document 运行时 DB 行必须还在。
+
+    若先删 DB 行，向量清理一旦失败 owner_check 将永远查不到行，重试不可能。
+    """
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.models.knowledge_base import Document
+    from app.services import rag_service
+    from app.services.rag import engine as engine_mod
+
+    session = async_sessionmaker(
+        bind=create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'rag_service.db'}"),
+        expire_on_commit=False,
+    )
+    doc_id = await _seed_document(session, creator_id="alice")
+
+    seen_row_at_vector_time = {}
+
+    async def probe_engine_delete(doc_id_arg, tenant=None):
+        async with session() as s:
+            row = (await s.execute(select(Document).where(Document.id == doc_id))).scalar_one_or_none()
+        seen_row_at_vector_time["row_present"] = row is not None
+        return True
+
+    stub = type("E", (), {})()
+    stub.delete_document = probe_engine_delete
+    with patch.object(engine_mod, "get_knowledge_engine", return_value=stub):
+        ok = await rag_service.delete_document(doc_id, user_id="alice")
+
+    assert ok is True
+    assert seen_row_at_vector_time.get("row_present") is True, (
+        "vector cleanup ran after the DB rows were already deleted — a vector "
+        "failure there would be unretryable (#485)"
+    )
+
+
+async def test_delete_document_success_clears_both_stores(rag_db, tmp_path):
+    """Happy path: both the vector engine and the DB rows are cleaned."""
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.models.knowledge_base import Document
+    from app.services import rag_service
+    from app.services.rag import engine as engine_mod
+
+    session = async_sessionmaker(
+        bind=create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'rag_service.db'}"),
+        expire_on_commit=False,
+    )
+    doc_id = await _seed_document(session, creator_id="alice")
+
+    stub = _engine_stub(delete_result=True)
+    with patch.object(engine_mod, "get_knowledge_engine", return_value=stub):
+        ok = await rag_service.delete_document(doc_id, user_id="alice")
+
+    assert ok is True
+    assert stub.delete_document.await_count == 1
+    async with session() as s:
+        assert (await s.execute(select(Document).where(Document.id == doc_id))).scalar_one_or_none() is None
+
+
+async def test_delete_document_denied_for_non_owner(rag_db, tmp_path):
+    """Owner check still holds: a different user's delete must not touch the engine."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.services import rag_service
+    from app.services.rag import engine as engine_mod
+
+    session = async_sessionmaker(
+        bind=create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'rag_service.db'}"),
+        expire_on_commit=False,
+    )
+    doc_id = await _seed_document(session, creator_id="alice")
+
+    stub = _engine_stub(delete_result=True)
+    with patch.object(engine_mod, "get_knowledge_engine", return_value=stub):
+        ok = await rag_service.delete_document(doc_id, user_id="mallory")
+
+    assert ok is False
+    stub.delete_document.assert_not_awaited()
 
 
 # ── #484: tenant-scoped total ────────────────────────────────────────────
