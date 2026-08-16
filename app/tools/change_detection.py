@@ -7,6 +7,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 from app.tools.registry import ToolRegistry, tool
 from app.services.spatial_tasks import run_change_detection
+from app.services.jobs.submit import submit_durable_job
 from app.tools._utils import parse_bbox
 
 logger = logging.getLogger(__name__)
@@ -66,32 +67,26 @@ def register_change_detection_tools(registry: ToolRegistry):
                 "error": f"不支持的指数类型 '{index_type}'，可用: {', '.join(valid_indices)}"
             }
 
-        # 触发 Celery 异步任务
-        task = run_change_detection.delay(
-            bbox=parts,
-            t1_from=t1_from,
-            t1_to=t1_to,
-            t2_from=t2_from,
-            t2_to=t2_to,
-            index_type=index_type.lower(),
-            change_threshold=change_threshold,
-            session_id=session_id,
-        )
-
-        return {
-            "status": "change_detection_task_started",
-            "task_id": task.id,
-            "message": (
-                f"{index_type.upper()} 双时相变化检测任务已启动。"
-                f"T1: {t1_from}~{t1_to} vs T2: {t2_from}~{t2_to}。"
-                "后台正在自动获取 Sentinel-2 影像并计算差异，"
-                "完成后结果将自动推送到地图并进入资产库。"
-            ),
-            "parameters": {
+        # ADR-0052：走 durable job 投递 -- 任务注册进任务中心（进度/取消/
+        # 结果可查，celery_task_id 回填后 /tasks/status/glm-5.3_common 也可查），统计结果由
+        # worker 落为 GeoJSON 资产。此前 .delay 火忘投递：任务不注册资产、状态
+        # 404，返回消息却承诺「自动推送到地图并进入资产库」。
+        return submit_durable_job(
+            celery_task=run_change_detection,
+            task_type="change_detection",
+            display_name=f"{index_type.upper()} 双时相变化检测",
+            params={
                 "bbox": parts,
-                "t1_period": f"{t1_from} to {t1_to}",
-                "t2_period": f"{t2_from} to {t2_to}",
+                "t1_from": t1_from,
+                "t1_to": t1_to,
+                "t2_from": t2_from,
+                "t2_to": t2_to,
                 "index_type": index_type.lower(),
                 "change_threshold": change_threshold,
             },
-        }
+            task_args=(
+                parts, t1_from, t1_to, t2_from, t2_to,
+                index_type.lower(), change_threshold, session_id,
+            ),
+            session_id=session_id,
+        )
