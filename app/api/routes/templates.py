@@ -6,7 +6,7 @@ import logging
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, TypeAdapter
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import actor_ids, get_current_user, get_current_user_optional
@@ -137,6 +137,21 @@ async def list_templates(
     user_id, user_org_id = actor_ids(_user if isinstance(_user, dict) else None)
     role = _user.get("role") if isinstance(_user, dict) else None
 
+    # Merged catalog = built-in seeds (static order, always first) + DB rows
+    # (newest first). Build the full filtered catalog, then paginate ONCE.
+    # Issue #428: the old code paginated twice — `.limit/.offset` on the DB
+    # query and then a second `[offset:offset+limit]` slice of the merged
+    # (seed + DB-page) list — so the offset skipped seed+DB rows twice, deep
+    # pages ran empty while `has_more` was still true, and without an
+    # ORDER BY the row order was nondeterministic across requests.
+    seed_list = list(SEED_TEMPLATES)
+    if kind:
+        seed_list = [t for t in seed_list if t.get("kind") == kind]
+    if source == "user":
+        seed_list = [t for t in seed_list if not t.get("is_builtin")]
+    elif source == "builtin":
+        seed_list = [t for t in seed_list if t.get("is_builtin")]
+
     # DB-stored templates: builtins + caller's own (and org, when the JWT
     # actually carries org_id). Do not use org_id IS NULL as "public".
     stmt = select(CartographyTemplate)
@@ -152,42 +167,32 @@ async def list_templates(
     elif source == "user":
         stmt = stmt.where(CartographyTemplate.is_builtin.is_(False))
 
-    # Apply pagination at the DB level (no Python .all()).
-    page_stmt = stmt.limit(limit).offset(offset)
-    result = await db.execute(page_stmt)
-    db_templates = list(result.scalars().all())
-    total_stmt = select(func.count()).select_from(stmt.subquery())
-    total = (await db.execute(total_stmt)).scalar_one() or 0
+    # A DB row carrying a seed id is the seeded copy of that built-in — the
+    # seed entry above already represents it, so exclude it here instead of
+    # de-duplicating page-by-page (which only saw the current page's ids).
+    seed_ids = [s.get("id") for s in SEED_TEMPLATES if s.get("id")]
+    if seed_ids:
+        stmt = stmt.where(CartographyTemplate.id.not_in(seed_ids))
 
-    db_dicts = [_template_to_dict(t) for t in db_templates]
-    db_ids = {t["id"] for t in db_dicts}
+    # Deterministic paging order (created_at alone can tie on fast inserts).
+    stmt = stmt.order_by(CartographyTemplate.created_at.desc(), CartographyTemplate.id)
 
-    # SEED_TEMPLATES are global built-ins; merge in (deduped) so the gallery
-    # always shows the full set even when the DB row is missing.
-    seed_list = list(SEED_TEMPLATES)
-    if kind:
-        seed_list = [t for t in seed_list if t.get("kind") == kind]
-    seed_dicts = [t for t in seed_list if t.get("id") not in db_ids]
+    result = await db.execute(stmt)
+    db_dicts = [_template_to_dict(t) for t in result.scalars().all()]
 
-    results = seed_dicts + db_dicts
-    if source == "user":
-        # When the caller asks for user templates only, drop the seeds.
-        results = [t for t in results if not t.get("is_builtin")]
-    elif source == "builtin":
-        results = [t for t in results if t.get("is_builtin")]
+    merged = seed_list + db_dicts
 
     if q:
         keyword = q.lower()
-        results = [
-            t for t in results
+        merged = [
+            t for t in merged
             if keyword in t.get("name", "").lower()
             or keyword in (t.get("description") or "").lower()
             or any(keyword in kw.lower() for kw in t.get("keywords", []))
         ]
 
-    # Final post-pagination slice so the merged list doesn't exceed the
-    # requested page (built-in seeds are pre-DB and out of `total`).
-    page_slice = results[offset:offset + limit]
+    total = len(merged)
+    page_slice = merged[offset:offset + limit]
 
     if summary:
         page_slice = [_to_summary(t) for t in page_slice]

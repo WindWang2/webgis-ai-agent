@@ -269,6 +269,266 @@ async def test_setup_purge_deletes_non_builtin_templates():
         assert probe is None
 
 
+# ============================================================================
+# Issue #428: GET /templates double-applied the pagination offset (DB-level
+# .offset + a second Python slice of the merged seed+DB list), had no ORDER BY,
+# and counted only DB rows in `total`. These tests pin the corrected contract:
+# sequential pages form a contiguous, gap-free, duplicate-free union of the
+# merged catalog and has_more flips exactly at the end.
+# ============================================================================
+
+from datetime import datetime, timedelta, timezone
+
+from app.schemas.template_schema import SEED_TEMPLATES
+
+_SYM_PAYLOAD = {
+    "mode": "single",
+    "geometry": "Polygon",
+    "style": {"fill_color": "#1d4ed8", "opacity": 0.85},
+}
+
+
+async def _insert_user_templates(
+    count: int, kind: str = "symbology", creator: str = "user_123", prefix: str = "tmpl_user_pg"
+):
+    """Insert `count` user templates with strictly staggered created_at values.
+
+    ids are {prefix}_000..N-1 with created_at ascending in i, so the
+    deterministic (created_at DESC, id) order is i = N-1 .. 0.
+    """
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    async with _TestSession() as s:
+        for i in range(count):
+            s.add(
+                CartographyTemplate(
+                    id=f"{prefix}_{i:03d}",
+                    creator_id=creator,
+                    org_id=None,
+                    kind=kind,
+                    name=f"分页模板 {i:03d}",
+                    category=kind,
+                    keywords=[],
+                    description=f"pagination probe {i:03d}",
+                    payload=dict(_SYM_PAYLOAD),
+                    is_builtin=False,
+                    version=1,
+                    created_at=base + timedelta(minutes=i),
+                    updated_at=base + timedelta(minutes=i),
+                )
+            )
+        await s.commit()
+
+
+@pytest.mark.asyncio
+async def test_templates_list_pagination_contiguous_user_source(client):
+    """Sequential offsets must yield every user template exactly once (#428).
+
+    150 user rows, source=user (seeds dropped), limit=100: page 1 → 100 rows,
+    page 2 → the remaining 50, page 3 → empty. Old code applied the offset at
+    both the SQL layer and the merged-list re-slice, so offset=100 returned an
+    empty page while 50 rows existed.
+    """
+    await _insert_user_templates(150)
+
+    seen: list[str] = []
+    page_specs = [(0, 100, True), (100, 50, False), (200, 0, False)]
+    for offset, expect_len, expect_more in page_specs:
+        res = await client.get(
+            f"/api/v1/templates?source=user&summary=false&limit=100&offset={offset}",
+            headers=user_headers,
+        )
+        assert res.status_code == 200
+        body = res.json()
+        assert body["total"] == 150, f"total at offset={offset}"
+        assert body["limit"] == 100
+        assert body["offset"] == offset
+        assert body["has_more"] is expect_more, f"has_more at offset={offset}"
+        items = body["items"]
+        assert len(items) == expect_len, f"page size at offset={offset}"
+        seen.extend(t["id"] for t in items)
+
+    expected = [f"tmpl_user_pg_{i:03d}" for i in range(149, -1, -1)]
+    assert seen == expected
+
+
+@pytest.mark.asyncio
+async def test_templates_list_pagination_merged_catalog_seeds_first(client):
+    """Default source: seeds lead the merged catalog, DB rows follow (#428).
+
+    The test DB starts empty, so the merged catalog = all SEED_TEMPLATES plus
+    the 10 inserted user rows (newest first). Paging at an awkward page size
+    (13) must cover the union exactly once, contiguously across page bounds.
+    """
+    await _insert_user_templates(10)
+
+    seed_count = len(SEED_TEMPLATES)
+    total = seed_count + 10
+    limit = 13
+
+    seen: list[str] = []
+    offset = 0
+    pages = 0
+    while True:
+        res = await client.get(
+            f"/api/v1/templates?summary=false&limit={limit}&offset={offset}",
+            headers=user_headers,
+        )
+        assert res.status_code == 200
+        body = res.json()
+        assert body["total"] == total
+        items = body["items"]
+        seen.extend(t["id"] for t in items)
+        pages += 1
+        if not body["has_more"]:
+            break
+        offset += limit
+        assert pages < 20, "pagination did not terminate"
+
+    assert pages == 6  # 72 items / 13 per page
+    expected = [s["id"] for s in SEED_TEMPLATES] + [
+        f"tmpl_user_pg_{i:03d}" for i in range(9, -1, -1)
+    ]
+    assert seen == expected
+    # Duplicate-free: a DB row carrying a seed id must not appear twice.
+    assert len(seen) == len(set(seen)) == total
+
+
+@pytest.mark.asyncio
+async def test_templates_list_pagination_beyond_range(client):
+    """An offset past the end returns an empty page with has_more=False."""
+    await _insert_user_templates(3)
+    res = await client.get(
+        "/api/v1/templates?summary=false&limit=50&offset=10000",
+        headers=user_headers,
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["items"] == []
+    assert body["has_more"] is False
+    assert body["total"] == len(SEED_TEMPLATES) + 3
+
+
+@pytest.mark.asyncio
+async def test_templates_list_pagination_single_page(client):
+    """One page spanning the whole catalog: has_more flips off exactly."""
+    await _insert_user_templates(5)
+    res = await client.get(
+        "/api/v1/templates?summary=false&limit=200&offset=0",
+        headers=user_headers,
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["total"] == len(SEED_TEMPLATES) + 5
+    assert len(body["items"]) == body["total"]
+    assert body["has_more"] is False
+
+
+@pytest.mark.asyncio
+async def test_templates_list_pagination_seed_db_dedupe(client):
+    """A DB row shadowing a seed id appears exactly once (seed version wins)."""
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    async with _TestSession() as s:
+        s.add(
+            CartographyTemplate(
+                id=SEED_TEMPLATES[0]["id"],
+                creator_id="user_123",
+                org_id=None,
+                kind=SEED_TEMPLATES[0]["kind"],
+                name="DB copy of a seed",
+                category=SEED_TEMPLATES[0]["kind"],
+                keywords=[],
+                description=None,
+                payload=dict(_SYM_PAYLOAD),
+                is_builtin=True,
+                version=1,
+                created_at=base,
+                updated_at=base,
+            )
+        )
+        await s.commit()
+
+    res = await client.get(
+        "/api/v1/templates?summary=false&limit=200", headers=user_headers
+    )
+    assert res.status_code == 200
+    body = res.json()
+    ids = [t["id"] for t in body["items"]]
+    assert ids.count(SEED_TEMPLATES[0]["id"]) == 1
+    # The seed representation is canonical (not the stale DB copy).
+    first = next(t for t in body["items"] if t["id"] == SEED_TEMPLATES[0]["id"])
+    assert first["name"] == SEED_TEMPLATES[0]["name"]
+    assert body["total"] == len(SEED_TEMPLATES)
+
+
+@pytest.mark.asyncio
+async def test_templates_list_pagination_deterministic_order(client):
+    """No ORDER BY made paging nondeterministic across requests (#428)."""
+    await _insert_user_templates(40)
+    orders = []
+    for _ in range(2):
+        res = await client.get(
+            "/api/v1/templates?source=user&summary=false&limit=20&offset=0",
+            headers=user_headers,
+        )
+        assert res.status_code == 200
+        orders.append([t["id"] for t in res.json()["items"]])
+    assert orders[0] == orders[1]
+    # Newest-first ordering among DB rows.
+    assert orders[0][0] == "tmpl_user_pg_039"
+
+
+@pytest.mark.asyncio
+async def test_templates_list_pagination_with_search(client):
+    """q-filtered pages stay contiguous; total reflects the filtered catalog."""
+    await _insert_user_templates(150)
+    res = await client.get(
+        "/api/v1/templates?source=user&summary=false&limit=100&offset=0&q=probe 14",
+        headers=user_headers,
+    )
+    assert res.status_code == 200
+    body = res.json()
+    # ids 140-149 match "probe 14"; keyword search also matches names
+    # ("分页模板 14x") via the shared description/name filter.
+    assert body["total"] == 10
+    assert len(body["items"]) == 10
+    assert body["has_more"] is False
+    ids = {t["id"] for t in body["items"]}
+    assert ids == {f"tmpl_user_pg_{i:03d}" for i in range(140, 150)}
+
+
+@pytest.mark.asyncio
+async def test_templates_list_pagination_anonymous(client):
+    """Anonymous listing is seeds+builtin DB rows only, still contiguous."""
+    await _insert_user_templates(5, creator="user_123")
+    res = await client.get("/api/v1/templates?summary=false&limit=200")
+    assert res.status_code == 200
+    body = res.json()
+    ids = [t["id"] for t in body["items"]]
+    # Anonymous scope: builtins only — user rows invisible, seeds present.
+    assert body["total"] == len(SEED_TEMPLATES)
+    assert not any(i.startswith("tmpl_user_pg_") for i in ids)
+    assert len(ids) == len(set(ids))
+
+
+@pytest.mark.asyncio
+async def test_templates_list_pagination_kind_filter(client):
+    """kind-scoped paging: total matches the filtered catalog, pages contiguous."""
+    await _insert_user_templates(30, kind="symbology", prefix="tmpl_user_sym")
+    await _insert_user_templates(20, kind="basemap", prefix="tmpl_user_bm")
+    sym_seeds = [s for s in SEED_TEMPLATES if s.get("kind") == "symbology"]
+    res = await client.get(
+        "/api/v1/templates?kind=symbology&summary=false&limit=40",
+        headers=user_headers,
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["total"] == len(sym_seeds) + 30
+    assert len(body["items"]) == 40
+    assert body["has_more"] is True
+    # All items are symbology (seeds first, then user rows newest-first).
+    assert all(t["kind"] == "symbology" for t in body["items"])
+
+
 _LAYOUT_PAYLOAD = {
     "paperSize": "A4",
     "orientation": "landscape",
