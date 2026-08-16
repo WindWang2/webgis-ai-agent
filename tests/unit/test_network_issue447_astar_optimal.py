@@ -157,11 +157,9 @@ class TestHeuristicBound:
         """h(u, goal) <= shortest-path cost for a sample of (u, goal) pairs."""
         g, nodes, ods = _random_graph(99, n_nodes=50)
         router = NetworkRoutingService()
-        profile = TravelProfile(name="driving")
 
-        weight_func = router.build_weight_func("travel_time_s", 0.0) if hasattr(router, "build_weight_func") else None
         from app.services.network.routing import build_weight_func
-        wf = weight_func or build_weight_func("travel_time_s", 0.0)
+        wf = build_weight_func("travel_time_s")
 
         mrpm = router._min_cost_per_meter(g, wf)
         assert mrpm is not None and mrpm > 0

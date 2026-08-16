@@ -17,8 +17,6 @@ import pytest
 import networkx as nx
 
 from app.services.network.engine import NetworkGraphEngine
-from app.services.network.graph_builder import NetworkGraphBuilder
-from app.services.network.models import TravelProfile
 from app.services.network.od_matrix import NetworkODMatrixService
 
 
