@@ -86,6 +86,12 @@ kubectl create secret generic webgis-secret --namespace=webgis-prod \
   --from-literal=REDIS_URL='redis://:PWD@redis:6379/0' \
   --from-literal=CELERY_BROKER_URL='redis://:PWD@redis:6379/0' \
   --from-literal=CELERY_RESULT_BACKEND='redis://:PWD@redis:6379/1'
+# #561: 启用 deploy/k8s/05-deps-optional.yaml（可选内部 postgres/redis）时，
+# 还需组件键（值必须与上面 URL 内嵌的 user/password/db 一致）：
+#   --from-literal=DB_USER='USER' \
+#   --from-literal=DB_PASSWORD='PWD' \
+#   --from-literal=DB_NAME='DB' \
+#   --from-literal=REDIS_PASSWORD='PWD'
 ```
 
 更安全：SealedSecrets / External Secrets / Vault。
