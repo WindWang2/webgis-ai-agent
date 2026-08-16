@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
-from app.core.database import get_db
+from app.core.database import get_db, SessionLocal
 from app.core.auth import get_current_user, get_current_user_optional
 from app.models.data_fabric import DataSourceModel, CatalogItemModel
 from app.schemas.data_fabric_schema import (
@@ -146,6 +146,44 @@ def _require_existing_session_owner(
         raise HTTPException(status_code=404, detail="Session not found")
 
 
+# ── #565: sync SQLAlchemy off the event loop ──────────────────────────────
+# These routes are async yet previously ran sync Session ORM directly on the
+# event loop — under DB latency / pool contention a sync pool acquire can
+# stall the loop up to pool_timeout=30s, freezing every concurrent SSE/WS
+# stream (the same failure mode #386/#421/#425 eliminated elsewhere). The
+# sync Session is not thread-safe, so each offload creates its own
+# SessionLocal() INSIDE the worker thread (the _run_workflow_engine pattern);
+# the injected request-scoped session never crosses threads. Tenant-guard
+# semantics (SEC-03/DATA-02 in _require_tenant_owned / _authorize_catalog_item)
+# are unchanged — only the execution thread moves.
+
+
+def _run_sync_orm(fn):
+    """Run ``fn(session)`` — a route's sync ORM work — in a worker thread
+    with its own SessionLocal(). Returns the plain data the closure builds."""
+    def _worker():
+        with SessionLocal() as thread_db:
+            return fn(thread_db)
+
+    return asyncio.to_thread(_worker)
+
+
+def _run_async_manager(fn):
+    """Run an async data_fabric manager call (``fn(session) -> coroutine``) in
+    a worker thread's own event loop with its own SessionLocal().
+
+    Mirrors project.py's _run_workflow_engine (#386): the manager methods do
+    sync SQLAlchemy I/O on the session (lookups / commit), so they must not
+    run on the app event loop; the session-data store is loop-change resilient
+    by design (session_data_redis recreates its client when the loop changes).
+    """
+    def _worker():
+        with SessionLocal() as thread_db:
+            return asyncio.run(fn(thread_db))
+
+    return asyncio.to_thread(_worker)
+
+
 class CreateDataSourceRequest(BaseModel):
     name: str = Field(..., description="Data source display name")
     source_type: str = Field(..., description="Source adapter type (postgis, ogc_api, wfs, wms, wmts, arcgis)")
@@ -174,9 +212,9 @@ async def create_data_source(
 
     Event-loop safety (#425, sibling of #386): the manager call drives a sync
     remote probe AND an automatic full catalog sync (requests with 5-15s
-    timeouts). It runs in a worker thread via asyncio.to_thread — the injected
-    request-scoped Session is used only from that thread while awaited, the
-    same execution model FastAPI uses for plain ``def`` handlers.
+    timeouts). It runs in a worker thread via asyncio.to_thread with a
+    thread-local SessionLocal() (#565: the injected sync Session is not
+    thread-safe and must never cross threads).
     """
     try:
         # SSRF is always enforced at registration (ADR-0050 §5 P0). A previous
@@ -188,17 +226,20 @@ async def create_data_source(
         # unauthenticated requests — never persist it as an owner_id (no users
         # row with that id → FK violation on Postgres).
         user_id = _real_user_id(user)
-        source = await asyncio.to_thread(
-            data_fabric_manager.create_data_source,
-            db=db,
-            name=req.name,
-            source_type=req.source_type,
-            endpoint_url=req.endpoint_url,
-            profile_options=req.options,
-            allow_private=False,
-            org_id=org_id,
-            owner_id=user_id,
-        )
+
+        def _create(session: Session):
+            return data_fabric_manager.create_data_source(
+                db=session,
+                name=req.name,
+                source_type=req.source_type,
+                endpoint_url=req.endpoint_url,
+                profile_options=req.options,
+                allow_private=False,
+                org_id=org_id,
+                owner_id=user_id,
+            )
+
+        source = await _run_sync_orm(_create)
         return {
             "success": True,
             "data_source": {
@@ -227,12 +268,14 @@ async def list_data_sources(
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     """获取所有已注册的地理空间数据源列表"""
-    query = db.query(DataSourceModel)
-    query = _tenant_filter(query, user)
-    if source_type:
-        query = query.filter(DataSourceModel.source_type == source_type)
+    def _load(session: Session):
+        query = session.query(DataSourceModel)
+        query = _tenant_filter(query, user)
+        if source_type:
+            query = query.filter(DataSourceModel.source_type == source_type)
+        return query.order_by(DataSourceModel.created_at.desc()).all()
 
-    sources = query.order_by(DataSourceModel.created_at.desc()).all()
+    sources = await _run_sync_orm(_load)
     return {
         "sources": [
             {
@@ -257,19 +300,21 @@ async def get_data_source(
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     """获取指定数据源详情"""
-    s = db.query(DataSourceModel).filter(DataSourceModel.id == source_id).first()
-    _require_tenant_owned(s, user)
+    def _load(session: Session):
+        s = session.query(DataSourceModel).filter(DataSourceModel.id == source_id).first()
+        _require_tenant_owned(s, user)
+        return {
+            "id": s.id,
+            "name": s.name,
+            "source_type": s.source_type,
+            "endpoint_url": DataFabricSecurity.redact_url(s.endpoint_url),
+            "status": s.status,
+            "capabilities": s.capabilities_json,
+            "connection_profile": DataFabricSecurity.sanitize_profile_dict(s.connection_profile or {}),
+            "last_health_check": s.last_health_check.isoformat() if s.last_health_check else None,
+        }
 
-    return {
-        "id": s.id,
-        "name": s.name,
-        "source_type": s.source_type,
-        "endpoint_url": DataFabricSecurity.redact_url(s.endpoint_url),
-        "status": s.status,
-        "capabilities": s.capabilities_json,
-        "connection_profile": DataFabricSecurity.sanitize_profile_dict(s.connection_profile or {}),
-        "last_health_check": s.last_health_check.isoformat() if s.last_health_check else None,
-    }
+    return await _run_sync_orm(_load)
 
 
 @router.delete("/data-fabric/sources/{source_id}", tags=["Data Fabric / 数据织网"])
@@ -285,11 +330,13 @@ async def delete_data_source(
     GLOBAL sources (org_id/owner_id both NULL), making them deletable by any
     unauthenticated caller.
     """
-    s = db.query(DataSourceModel).filter(DataSourceModel.id == source_id).first()
-    _require_tenant_owned(s, user)
+    def _delete(session: Session) -> None:
+        s = session.query(DataSourceModel).filter(DataSourceModel.id == source_id).first()
+        _require_tenant_owned(s, user)
+        session.delete(s)
+        session.commit()
 
-    db.delete(s)
-    db.commit()
+    await _run_sync_orm(_delete)
     return {"success": True, "message": f"Data source '{source_id}' deleted successfully"}
 
 
@@ -305,26 +352,29 @@ async def probe_data_source(
     to the source endpoint — anonymous callers must not be able to initiate
     arbitrary outbound requests.
 
-    Event-loop safety (#425): the sync adapter probe (requests, 5s timeout)
-    runs in a worker thread; only the cheap DB read/commit stay on the loop.
+    Event-loop safety (#425/#565): the sync adapter probe (requests, 5s
+    timeout) AND the DB read/commit now all run in one worker thread with its
+    own session — nothing synchronous stays on the event loop.
     """
-    s = db.query(DataSourceModel).filter(DataSourceModel.id == source_id).first()
-    _require_tenant_owned(s, user)
+    def _probe(session: Session) -> dict:
+        s = session.query(DataSourceModel).filter(DataSourceModel.id == source_id).first()
+        _require_tenant_owned(s, user)
 
-    profile = ConnectionProfile(
-        id=s.id,
-        name=s.name,
-        source_type=s.source_type,
-        url=s.endpoint_url,
-        options=s.connection_profile.get("options", {}),
-        allow_private=s.connection_profile.get("allow_private", False),
-    )
+        profile = ConnectionProfile(
+            id=s.id,
+            name=s.name,
+            source_type=s.source_type,
+            url=s.endpoint_url,
+            options=s.connection_profile.get("options", {}),
+            allow_private=s.connection_profile.get("allow_private", False),
+        )
 
-    health_res = await asyncio.to_thread(data_fabric_manager.probe_profile, profile)
-    s.status = health_res.status
-    db.commit()
+        health_res = data_fabric_manager.probe_profile(profile)
+        s.status = health_res.status
+        session.commit()
+        return health_res.model_dump()
 
-    return health_res.model_dump()
+    return await _run_sync_orm(_probe)
 
 
 @router.post("/data-fabric/sources/{source_id}/sync", tags=["Data Fabric / 数据织网"])
@@ -338,17 +388,22 @@ async def sync_data_source_catalog(
     Requires authentication: sync triggers outbound requests against the source
     endpoint; anonymous callers must not initiate them.
 
-    Event-loop safety (#425): a full catalog sync blocks for its entire
+    Event-loop safety (#425/#565): a full catalog sync blocks for its entire
     duration (list_datasets at a 10s timeout plus a bounded describe pool
     whose shutdown waits on the calling thread — minutes at thousands of
-    datasets). The whole manager call runs in a worker thread; the
-    request-scoped Session is used only from that thread while awaited (same
-    model FastAPI uses for plain ``def`` handlers).
+    datasets). The whole manager call runs in a worker thread with its own
+    thread-local session; the ownership gate runs in a separate worker so its
+    404 propagates outside the try/except below (unchanged semantics).
     """
-    s = db.query(DataSourceModel).filter(DataSourceModel.id == source_id).first()
-    _require_tenant_owned(s, user)
+    def _authorize(session: Session) -> None:
+        s = session.query(DataSourceModel).filter(DataSourceModel.id == source_id).first()
+        _require_tenant_owned(s, user)
+
+    await _run_sync_orm(_authorize)
     try:
-        items = await asyncio.to_thread(data_fabric_manager.sync_catalog, db, source_id)
+        items = await _run_sync_orm(
+            lambda session: data_fabric_manager.sync_catalog(session, source_id)
+        )
         return {
             "success": True,
             "synced_count": len(items),
@@ -384,64 +439,73 @@ async def list_spatial_catalog(
     full payload on demand. Pass ``?summary=false`` to opt into the legacy
     shape with both fields populated.
     """
-    from app.models.data_fabric import DataSourceModel as _DS
-    from sqlalchemy.orm import defer
+    def _load(session: Session) -> dict:
+        from app.models.data_fabric import DataSourceModel as _DS
+        from sqlalchemy.orm import defer
 
-    query = db.query(CatalogItemModel).join(
-        _DS, _DS.id == CatalogItemModel.source_id
-    )
-    # Same tenant/owner filter as GET /data-fabric/sources. JWT has no org_id,
-    # so the old `if user.get("org_id")` join never ran and dumped the catalog.
-    query = _tenant_filter(query, user)
-
-    if source_id:
-        query = query.filter(CatalogItemModel.source_id == source_id)
-    if geometry_type:
-        query = query.filter(CatalogItemModel.geometry_type.ilike(f"%{geometry_type}%"))
-    if feature_type:
-        query = query.filter(CatalogItemModel.feature_type == feature_type)
-    if q:
-        kw = f"%{q}%"
-        query = query.filter(
-            (CatalogItemModel.name.ilike(kw)) |
-            (CatalogItemModel.title.ilike(kw)) |
-            (CatalogItemModel.description.ilike(kw))
+        query = session.query(CatalogItemModel).join(
+            _DS, _DS.id == CatalogItemModel.source_id
         )
+        # Same tenant/owner filter as GET /data-fabric/sources. JWT has no org_id,
+        # so the old `if user.get("org_id")` join never ran and dumped the catalog.
+        query = _tenant_filter(query, user)
 
-    # Defer the heavy JSON columns at the ORM level so the list query
-    # doesn't hydrate them; the summary path then never needs to load them.
-    if summary:
-        query = query.options(
-            defer(CatalogItemModel.descriptor_json),
-            defer(CatalogItemModel.meta_profile_json),
-        )
+        if source_id:
+            query = query.filter(CatalogItemModel.source_id == source_id)
+        if geometry_type:
+            query = query.filter(CatalogItemModel.geometry_type.ilike(f"%{geometry_type}%"))
+        if feature_type:
+            query = query.filter(CatalogItemModel.feature_type == feature_type)
+        if q:
+            kw = f"%{q}%"
+            query = query.filter(
+                (CatalogItemModel.name.ilike(kw)) |
+                (CatalogItemModel.title.ilike(kw)) |
+                (CatalogItemModel.description.ilike(kw))
+            )
 
-    total = query.count()
-    items = query.order_by(CatalogItemModel.updated_at.desc()).offset(offset).limit(limit).all()
+        # Defer the heavy JSON columns at the ORM level so the list query
+        # doesn't hydrate them; the summary path then never needs to load them.
+        if summary:
+            query = query.options(
+                defer(CatalogItemModel.descriptor_json),
+                defer(CatalogItemModel.meta_profile_json),
+            )
 
-    def _row(item):
-        base = {
-            "id": item.id,
-            "source_id": item.source_id,
-            "name": item.name,
-            "title": item.title,
-            "description": item.description,
-            "geometry_type": item.geometry_type,
-            "feature_type": item.feature_type,
-            "crs": item.crs,
-            "bbox": item.bbox_json,
-            "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+        def _row(item):
+            base = {
+                "id": item.id,
+                "source_id": item.source_id,
+                "name": item.name,
+                "title": item.title,
+                "description": item.description,
+                "geometry_type": item.geometry_type,
+                "feature_type": item.feature_type,
+                "crs": item.crs,
+                "bbox": item.bbox_json,
+                "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+            }
+            if not summary:
+                base["meta_profile"] = item.meta_profile_json
+                base["descriptor"] = item.descriptor_json
+            return base
+
+        total = query.count()
+        items = query.order_by(CatalogItemModel.updated_at.desc()).offset(offset).limit(limit).all()
+        # Serialize inside the worker: with summary=false the deferred JSON
+        # columns are only loadable while the session is open.
+        return {
+            "total": total,
+            "rows": [_row(item) for item in items],
         }
-        if not summary:
-            base["meta_profile"] = item.meta_profile_json
-            base["descriptor"] = item.descriptor_json
-        return base
+
+    data = await _run_sync_orm(_load)
 
     return {
-        "total": total,
+        "total": data["total"],
         "limit": limit,
         "offset": offset,
-        "items": [_row(item) for item in items],
+        "items": data["rows"],
     }
 
 
@@ -452,22 +516,24 @@ async def get_catalog_item(
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     """获取指定 Spatial Catalog 项元数据"""
-    item = _authorize_catalog_item(db, item_id, user)
+    def _get(session: Session) -> dict:
+        item = _authorize_catalog_item(session, item_id, user)
+        return {
+            "id": item.id,
+            "source_id": item.source_id,
+            "name": item.name,
+            "title": item.title,
+            "description": item.description,
+            "geometry_type": item.geometry_type,
+            "feature_type": item.feature_type,
+            "crs": item.crs,
+            "bbox": item.bbox_json,
+            "meta_profile": item.meta_profile_json,
+            "descriptor": item.descriptor_json,
+            "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+        }
 
-    return {
-        "id": item.id,
-        "source_id": item.source_id,
-        "name": item.name,
-        "title": item.title,
-        "description": item.description,
-        "geometry_type": item.geometry_type,
-        "feature_type": item.feature_type,
-        "crs": item.crs,
-        "bbox": item.bbox_json,
-        "meta_profile": item.meta_profile_json,
-        "descriptor": item.descriptor_json,
-        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
-    }
+    return await _run_sync_orm(_get)
 
 
 @router.get("/data-fabric/catalog/{item_id}/descriptor", tags=["Data Fabric / 数据织网"])
@@ -477,16 +543,18 @@ async def get_catalog_item_descriptor(
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     """获取完整的 DatasetDescriptor 契约元数据"""
-    item = _authorize_catalog_item(db, item_id, user)
+    def _get(session: Session) -> dict:
+        item = _authorize_catalog_item(session, item_id, user)
+        return item.descriptor_json or {
+            "id": item.name,
+            "title": item.title,
+            "description": item.description,
+            "geometry_type": item.geometry_type,
+            "srs": item.crs,
+            "bbox": item.bbox_json,
+        }
 
-    return item.descriptor_json or {
-        "id": item.name,
-        "title": item.title,
-        "description": item.description,
-        "geometry_type": item.geometry_type,
-        "srs": item.crs,
-        "bbox": item.bbox_json,
-    }
+    return await _run_sync_orm(_get)
 
 
 @router.get("/data-fabric/catalog/{item_id}/preview", tags=["Data Fabric / 数据织网"])
@@ -501,14 +569,18 @@ async def preview_catalog_item(
     Requires authentication: preview triggers a server-side remote fetch against
     the source endpoint, so anonymous callers must not be able to initiate it.
 
-    Event-loop safety (#425): uses query_catalog_item_async so the blocking
-    adapter fetch runs off the loop (same pattern as materialize). Oversized
-    remote results surface as an actionable 413, not an unbounded payload.
+    Event-loop safety (#425/#565): the whole manager call (ownership gate +
+    DB lookups + blocking adapter fetch) runs in a worker thread's own event
+    loop with a thread-local session. Oversized remote results surface as an
+    actionable 413, not an unbounded payload.
     """
     try:
-        _authorize_catalog_item(db, item_id, user)
-        q_spec = QuerySpec(limit=limit)
-        q_res = await data_fabric_manager.query_catalog_item_async(db, item_id, q_spec)
+        async def _preview(session: Session):
+            _authorize_catalog_item(session, item_id, user)
+            q_spec = QuerySpec(limit=limit)
+            return await data_fabric_manager.query_catalog_item_async(session, item_id, q_spec)
+
+        q_res = await _run_async_manager(_preview)
         return {
             "dataset_id": item_id,
             "features": q_res.features,
@@ -539,13 +611,17 @@ async def query_catalog_item(
     Requires authentication: query runs a remote fetch against the source
     endpoint, so anonymous callers must not be able to initiate it.
 
-    Event-loop safety (#425): uses query_catalog_item_async so the blocking
-    adapter fetch runs off the loop (same pattern as materialize). Oversized
-    remote results surface as an actionable 413, not an unbounded payload.
+    Event-loop safety (#425/#565): the whole manager call (ownership gate +
+    DB lookups + blocking adapter fetch) runs in a worker thread's own event
+    loop with a thread-local session. Oversized remote results surface as an
+    actionable 413, not an unbounded payload.
     """
     try:
-        _authorize_catalog_item(db, item_id, user)
-        q_res = await data_fabric_manager.query_catalog_item_async(db, item_id, query_spec)
+        async def _query(session: Session):
+            _authorize_catalog_item(session, item_id, user)
+            return await data_fabric_manager.query_catalog_item_async(session, item_id, query_spec)
+
+        q_res = await _run_async_manager(_query)
         return q_res.model_dump()
     except HTTPException:
         raise
@@ -571,15 +647,18 @@ async def materialize_catalog_item(
     store refs, so anonymous callers must not be able to initiate it.
     """
     try:
-        _authorize_catalog_item(db, req.catalog_item_id, user)
-        _require_existing_session_owner(db, req.session_id, user, owner_token)
-        res = await data_fabric_manager.materialize_catalog_item(
-            db=db,
-            session_id=req.session_id,
-            item_id=req.catalog_item_id,
-            query_spec=req.query_spec,
-            owner_token=owner_token,
-        )
+        async def _materialize(session: Session):
+            _authorize_catalog_item(session, req.catalog_item_id, user)
+            _require_existing_session_owner(session, req.session_id, user, owner_token)
+            return await data_fabric_manager.materialize_catalog_item(
+                db=session,
+                session_id=req.session_id,
+                item_id=req.catalog_item_id,
+                query_spec=req.query_spec,
+                owner_token=owner_token,
+            )
+
+        res = await _run_async_manager(_materialize)
         # The manager now carries its own truth flag. A store-unavailable or
         # audit-commit failure is a transient infra problem (503), not a bad
         # request; the structured body lets the agent/tool retry or degrade.
