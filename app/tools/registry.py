@@ -321,6 +321,29 @@ class ToolRegistry:
     def get_schemas(self) -> list[dict]:
         return self._schemas
 
+    def update_args_model(self, name: str, args_model: Type[BaseModel]) -> None:
+        """Replace a registered tool's args model and rebuild its schema in place,
+        preserving the tool description / tier / domains metadata.
+
+        #556: ``list_available_tools`` registers before the network/temporal/
+        data_fabric modules, so its domain vocabulary (derived from the live
+        registry) was an incomplete snapshot. After ALL modules register,
+        init_tools calls refresh_list_available_tools_args → this method so the
+        published schema reflects the final domain set (single source of truth).
+        """
+        if name not in self._tools:
+            raise KeyError(f"tool {name!r} not registered")
+        self._models[name] = args_model
+        schema_json = args_model.model_json_schema()
+        new_params: dict[str, Any] = {
+            "type": "object",
+            "properties": schema_json.get("properties", {}),
+            "required": schema_json.get("required", []),
+        }
+        for s in self._schemas:
+            if s["function"]["name"] == name:
+                s["function"]["parameters"] = new_params
+
     def get_schemas_subset(self, names: set[str]) -> list[dict]:
         """按名称白名单返回 schema 子集；用于 ToolCatalog 分层选择。"""
         return [s for s in self._schemas if s["function"]["name"] in names]
