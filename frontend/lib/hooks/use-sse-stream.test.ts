@@ -691,6 +691,9 @@ describe('useSSEStream — plan approval rollback (#468)', () => {
       await new Promise((r) => setTimeout(r, 20));
     });
     expect(planMsg().status).toBe('pending');
+  });
+});
+
 describe('useSSEStream explorer_progress（回归：任务条目首见插入，进度可见）', () => {
   beforeEach(() => {
     bridgeMock.onEventCallback = null;
@@ -767,6 +770,5 @@ describe('useSSEStream explorer_progress（回归：任务条目首见插入，�
     const tasks = useHudStore.getState().explorerTasks;
     expect(tasks).toHaveLength(2);
     expect(tasks.map((t) => t.taskId)).toEqual(['exp-a', 'exp-b']);
-)
   });
 });
