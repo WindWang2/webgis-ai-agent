@@ -36,6 +36,25 @@ def _is_sqlite() -> bool:
 
 
 def upgrade() -> None:
+    # DB Migration Gate blocker / #547-adjacent: alembic 自动建的
+    # alembic_version.version_num 是硬编码 VARCHAR(32)，而本仓库的 revision id
+    # 很长（'0011_enterprise_geospatial_data_fabric' 38 字符）。任何全新 PG 库
+    # 走到本迁移、alembic 记录版本号时都会 StringDataRightTruncation ——
+    # 迁移链在 0011 之后全部无法执行（CI db-migrations lane 失败根因）。
+    # 先加宽版本列（后续 0014/0015 的 id 也超 32 字符）；PVC 已有宽列时幂等。
+    if _is_sqlite():
+        with op.batch_alter_table("alembic_version") as batch_op:
+            batch_op.alter_column(
+                "version_num",
+                existing_type=sa.String(32),
+                type_=sa.String(255),
+                existing_nullable=False,
+            )
+    else:
+        op.execute(
+            "ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255)"
+        )
+
     if _is_sqlite():
         op.create_table(
             'data_sources',

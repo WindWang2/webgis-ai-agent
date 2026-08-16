@@ -295,6 +295,10 @@ def test_migrated_schema_matches_models(tmp_path):
     import sqlite3
     import subprocess
 
+    # alembic 的书签表 + PostGIS 扩展自带表不属于 Base.metadata —— 任何方言的
+    # 迁移产物比对都必须排除，否则 PG 路径（CI db-migrations lane）永远误报漂移。
+    EXCLUDED_MIGRATED_TABLES = {"alembic_version", "spatial_ref_sys"}
+
     override = os.environ.get("MIGRATION_DRIFT_DB_URL")
     if override:
         from sqlalchemy import create_engine, inspect
@@ -302,7 +306,7 @@ def test_migrated_schema_matches_models(tmp_path):
         engine = create_engine(override)
         insp = inspect(engine)
         try:
-            migrated_tables = set(insp.get_table_names())
+            migrated_tables = set(insp.get_table_names()) - EXCLUDED_MIGRATED_TABLES
             columns_of = lambda t: {c["name"] for c in insp.get_columns(t)}  # noqa: E731
             index_cols_of = lambda t: {tuple(c["column_names"]) for c in insp.get_indexes(t)}  # noqa: E731
         finally:
@@ -328,7 +332,7 @@ def test_migrated_schema_matches_models(tmp_path):
         migrated_tables = {
             r[0]
             for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        } - {"alembic_version"}
+        } - EXCLUDED_MIGRATED_TABLES
         conn.close()
         from sqlalchemy import create_engine, inspect
 
