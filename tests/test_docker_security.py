@@ -65,63 +65,92 @@ class TestProdComposeSecurity:
             )
 
 
-def _uploads_mounts(service):
-    """The `uploads:` named-volume mounts (target paths) of a compose service."""
+def _named_volume_mounts(service, volume_name):
+    """The `<volume_name>:` named-volume mounts (target paths) of a compose service."""
     return [
         v
         for v in service.get("volumes", [])
-        if isinstance(v, str) and v.startswith("uploads:")
+        if isinstance(v, str) and v.startswith(f"{volume_name}:")
     ]
 
 
-class TestComposeUploadsVolumeParity:
-    """#471（#394 的 compose 兄弟项）：每个 compose 栈里 celery-worker 都必须
-    与 api 挂同一个 uploads 卷。
+class TestComposeDataDirVolumeParity:
+    """#471 + #519：每个 compose 栈里 celery-worker 必须与 api 挂同一个共享卷
+    覆盖 DATA_DIR（=/app/data）。
 
-    celery 任务按本地路径打开 api 写入的上传文件（spatial_tasks.py 的
-    run_ndvi_analysis → rasterio.open(raster_path)）。worker 在独立容器文件
-    系统层里 —— 不挂同一个卷，上传成功的 raster/shapefile 分析任务在 worker
-    侧必然 "No such file"。#394 已为 k8s 修复（celery deployment 挂同一 PVC），
-    这里守住 compose 路径。
+    #471 原契约（`uploads` 命名卷挂 /app/uploads）被 #519 的共享数据卷取代：
+    应用把所有文件解析到 DATA_DIR 下（get_upload_dir → DATA_DIR/uploads，
+    spatial_tasks → DATA_DIR/analysis_results，monitoring_report →
+    DATA_DIR/monitoring_reports，map → DATA_DIR/exports）。共享整个 DATA_DIR
+    子树（而非只共享 uploads）才是 api/celery 都能看到对方文件的正确做法 ——
+    worker 在独立容器文件系统层里，不挂同一个卷，上传成功的 raster/shapefile
+    分析任务在 worker 侧必然 "No such file"，worker 登记的产物 api 侧 404。
     """
 
     CASES = [
-        # docker-compose.yml 的 volumes 是 `${WEBGIS_DEV_MOUNT:+...}` 可选展开
-        # 块（审计 INF-003），yaml.safe_load 折叠成 plain scalar —— 由独立的
-        # 文本断言用例覆盖，见 test_dev_celery_uploads_mount_present_textually。
-        ("docker-compose.prod.yml", "/app/uploads"),
-        ("docker-compose.prod.secure.yml", "/app/uploads"),
+        ("docker-compose.prod.yml", "/app/data", "webgis_data"),
+        ("docker-compose.prod.secure.yml", "/app/data", "webgis_data"),
     ]
 
-    def test_celery_mounts_same_uploads_volume_as_api(self):
-        for path, target in self.CASES:
+    def test_celery_mounts_same_data_dir_volume_as_api(self):
+        for path, target, volume in self.CASES:
             compose = _load_compose(path)
             services = compose["services"]
             assert "celery-worker" in services, f"{path}: no celery-worker service"
 
-            api_mounts = _uploads_mounts(services["api"])
-            celery_mounts = _uploads_mounts(services["celery-worker"])
-            assert api_mounts, f"{path}: api mounts no uploads volume"
+            api_mounts = _named_volume_mounts(services["api"], volume)
+            celery_mounts = _named_volume_mounts(services["celery-worker"], volume)
+            assert api_mounts, f"{path}: api mounts no {volume} volume"
             assert celery_mounts, (
-                f"{path}: celery-worker mounts no uploads volume — celery tasks "
+                f"{path}: celery-worker mounts no {volume} volume — celery tasks "
                 "open uploaded files by local path in a separate container "
-                "filesystem; uploaded-raster analysis fails with 'No such file'"
+                "filesystem; unsized results/uploaded files would be invisible"
             )
             assert celery_mounts == api_mounts, (
-                f"{path}: celery-worker uploads mount {celery_mounts} != api "
-                f"{api_mounts} — the worker would not see the api's uploads"
+                f"{path}: celery-worker {volume} mount {celery_mounts} != api "
+                f"{api_mounts} — the worker would not see the api's data"
             )
-            assert celery_mounts == [f"uploads:{target}"], (
-                f"{path}: expected uploads volume at {target} "
-                f"(the stack's DATA_DIR uploads path), got {celery_mounts}"
+            assert celery_mounts == [f"{volume}:{target}"], (
+                f"{path}: expected {volume} volume at {target} "
+                f"(the stack's DATA_DIR path), got {celery_mounts}"
             )
 
-    def test_uploads_volume_declared(self):
-        for path, _ in self.CASES:
+    def test_data_dir_env_matches_shared_mount_target(self):
+        """DATA_DIR 必须等于共享卷挂载目标 —— 整棵子树才共享（否则产物落容器层）。"""
+        for path, target, volume in self.CASES:
             compose = _load_compose(path)
-            assert "uploads" in compose.get("volumes", {}), (
-                f"{path}: top-level `uploads` volume not declared"
+            for svc in ("api", "celery-worker"):
+                env = compose["services"][svc].get("environment", {})
+                if isinstance(env, list):
+                    env = dict(e.split("=", 1) for e in env if "=" in e)
+                assert env.get("DATA_DIR") == target, (
+                    f"{path} {svc}: DATA_DIR={env.get('DATA_DIR')!r} 必须等于共享"
+                    f"卷挂载目标 {target}"
+                )
+
+    def test_data_dir_volume_declared(self):
+        for path, _, volume in self.CASES:
+            compose = _load_compose(path)
+            assert volume in compose.get("volumes", {}), (
+                f"{path}: top-level `{volume}` volume not declared"
             )
+
+    def test_no_legacy_uploads_volume(self):
+        """旧设计（uploads 命名卷挂 /app/uploads）已被共享数据卷取代 —— 残留
+        会制造两个存储位置，上传/产物再次分裂。"""
+        for path, _, volume in self.CASES:
+            compose = _load_compose(path)
+            assert "uploads" not in compose.get("volumes", {}), (
+                f"{path}: 旧 `uploads` 卷残留 —— 应统一用 {volume}"
+            )
+            for svc in ("api", "celery-worker"):
+                vols = "\n".join(
+                    v if isinstance(v, str) else str(v)
+                    for v in compose["services"][svc].get("volumes", [])
+                )
+                assert "/app/uploads" not in vols, (
+                    f"{path} {svc}: 残留 /app/uploads 挂载 —— 应用不再写该路径"
+                )
 
     def test_dev_celery_uploads_mount_present_textually(self):
         """docker-compose.yml 的 volumes 块含 `${WEBGIS_DEV_MOUNT:+...}` 可选

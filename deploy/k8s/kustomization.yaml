@@ -27,10 +27,19 @@ configMapGenerator:
   - DEBUG=false
 
 # 替换镜像名称
+# #559: images 转换器的 name 必须与 Deployment 镜像的「仓库部分」（不含 tag）
+# 精确匹配。之前写成 webgis-prod:latest（name 里带 tag）永远匹配不上
+# webgis-prod:v0.1.2（新版本 kustomize 还直接拒绝 name 带 tag），且 newName
+# 是占位符 your-registry.com —— 没有任何 pipeline 推送过该坐标。
+# 现在 Deployment 直接用 CI 推送的仓库坐标 ghcr.io/windwang2/webgis-ai-agent
+# （production.yml build job：env.REGISTRY=ghcr.io + IMAGE_NAME 小写化），
+# images 转换器保持匹配（name == 仓库部分）并作为部署时钉 tag 的锚点。
+# 部署时把 tag 钉到 CI 实际推送的 sha（与 docker-compose.prod.secure.yml 的
+# WEBGIS_IMAGE 契约同理）：
+#   kustomize edit set image ghcr.io/windwang2/webgis-ai-agent=ghcr.io/windwang2/webgis-ai-agent:<CI sha>
 images:
-- name: webgis-prod:latest
-  newName: your-registry.com/webgis-prod
-  newTag: v1.0.0
+- name: ghcr.io/windwang2/webgis-ai-agent
+  newName: ghcr.io/windwang2/webgis-ai-agent
 
 # 标签生成器
 # 注意：不使用 namePrefix/nameSuffix —— Kustomize 不会改写
