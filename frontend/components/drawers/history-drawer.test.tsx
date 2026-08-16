@@ -181,11 +181,16 @@ describe('HistoryDrawer session delete (#553)', () => {
     );
 
     await screen.findByRole('dialog');
+    // 防抖竞态：useDialogFocus 挂载后 50ms 才做初始聚焦 —— 若在第一击之前
+    // 触发，会把已 armed 的 ConfirmAction 失焦（onBlur 重置确认态），第二击
+    // 变成重新 arm 而非确认。先等焦点落位再交互（与 focus-trap 测试同一 helper）。
+    await waitForInitialFocus();
     const deleteBtn = screen.getByRole('button', { name: '删除会话 会话一' });
 
-    // 第一击：进入确认态（不会立即删除）
+    // 第一击：进入确认态（不会立即删除）；读屏可感知状态切换 —— 可访问名
+    // 从「删除会话 …」换成「确认删除？」（confirm-state label wins）。
     await user.click(deleteBtn);
-    expect(screen.getByText('确认删除？')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '确认删除？' })).toBeInTheDocument();
     expect(onDeleteSession).not.toHaveBeenCalled();
 
     // ConfirmAction 的 MIN_ARM_MS=250 防双击：等过窗口后第二击才执行
@@ -209,6 +214,7 @@ describe('HistoryDrawer session delete (#553)', () => {
     );
 
     await screen.findByRole('dialog');
+    await waitForInitialFocus();
     const deleteBtn = screen.getByRole('button', { name: '删除会话 会话一' });
     await user.click(deleteBtn);
     // 立即（<250ms）再点一下 —— 被 MIN_ARM_MS 拦下
