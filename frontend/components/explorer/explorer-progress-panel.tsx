@@ -11,17 +11,19 @@ const STAGE_LABELS: Record<string, string> = {
   validate: "质量验证",
 };
 
+// #518: 原实现用 text-white/* 等暗色玻璃样式，浅色主题下文字几乎不可读。
+// 改为主题 token（ink/status-*），深浅主题都自适应。
 const STATUS_COLORS: Record<ExplorerStatus, string> = {
-  idle: "text-gray-400",
-  discovering: "text-blue-400",
-  fetching: "text-blue-400",
-  parsing: "text-blue-400",
-  geocoding: "text-blue-400",
-  validating: "text-blue-400",
-  decision_required: "text-yellow-400",
-  completed: "text-green-400",
-  failed: "text-red-400",
-  aborted: "text-gray-400",
+  idle: "text-status-neutral",
+  discovering: "text-status-info",
+  fetching: "text-status-info",
+  parsing: "text-status-info",
+  geocoding: "text-status-info",
+  validating: "text-status-info",
+  decision_required: "text-status-warning",
+  completed: "text-status-success",
+  failed: "text-status-critical",
+  aborted: "text-status-neutral",
 };
 
 function TaskCard({ task }: { task: ExplorerTask }) {
@@ -29,9 +31,9 @@ function TaskCard({ task }: { task: ExplorerTask }) {
   const stageLabel = STAGE_LABELS[task.stage] || task.stage;
 
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-3 backdrop-blur-sm">
+    <div className="rounded-lg border border-edge-subtle bg-surface-sunken p-3">
       <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-white/90">{task.query}</span>
+        <span className="text-sm font-medium text-ink">{task.query}</span>
         <span className={`text-xs ${STATUS_COLORS[task.status]}`}>
           {task.status === "completed" ? "完成" :
            task.status === "failed" ? "失败" :
@@ -43,7 +45,7 @@ function TaskCard({ task }: { task: ExplorerTask }) {
       {task.status !== "completed" && task.status !== "failed" && (
         <div className="mt-2">
           <div
-            className="h-1.5 rounded-full bg-white/10 overflow-hidden"
+            className="h-1.5 rounded-full bg-status-neutral-soft overflow-hidden"
             role="progressbar"
             aria-valuenow={progress}
             aria-valuemin={0}
@@ -51,11 +53,11 @@ function TaskCard({ task }: { task: ExplorerTask }) {
             aria-label={`${stageLabel} 进度`}
           >
             <div
-              className="h-1.5 rounded-full bg-blue-400 transition-all duration-500"
+              className="h-1.5 rounded-full bg-status-info transition-all duration-500"
               style={{ width: `${progress}%` }}
             />
           </div>
-          <div className="mt-1 flex justify-between text-xs text-white/50">
+          <div className="mt-1 flex justify-between text-xs text-ink-muted">
             <span>{stageLabel}</span>
             <span>{progress}%</span>
           </div>
@@ -63,14 +65,14 @@ function TaskCard({ task }: { task: ExplorerTask }) {
       )}
 
       {task.rowCount !== undefined && task.status === "completed" && (
-        <div className="mt-2 text-xs text-white/60">
+        <div className="mt-2 text-xs text-ink-muted">
           共 {task.rowCount} 条数据
           {task.successRate !== undefined && ` · 编码成功率 ${(task.successRate * 100).toFixed(0)}%`}
         </div>
       )}
 
       {task.error && (
-        <div className="mt-2 text-xs text-red-400">{task.error}</div>
+        <div className="mt-2 text-xs text-status-critical">{task.error}</div>
       )}
     </div>
   );
@@ -83,7 +85,7 @@ export function ExplorerProgressPanel() {
 
   return (
     <div className="space-y-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-white/40">
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-ink-disabled">
         深度搜索
       </h3>
       {tasks.map((task) => (
