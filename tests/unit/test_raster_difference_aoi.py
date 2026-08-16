@@ -191,13 +191,14 @@ def test_execute_raster_analysis_single_stats_pass(tmp_path, monkeypatch):
     assert result.raster_trend["direction"] == "increasing"
     # statistics computed exactly once (trend reuses it)
     assert len(stats_calls) == 1
-    # per-raster opens: 2 for the zonal statistics pass (CRS check + rasterstats
-    # internal open) + 1 for the difference read on the two endpoint rasters.
-    # The middle raster is NOT opened by the trend step — before the fix it was
-    # opened twice more (4 total).
-    assert opens[paths[0]] == 3, opens
-    assert opens[paths[1]] == 2, opens
-    assert opens[paths[2]] == 3, opens
+    # per-raster opens: 3 for the zonal statistics path (AOI∩scene preflight
+    # open (#541) + CRS check + rasterstats internal open) + 1 for the
+    # difference read on the two endpoint rasters. The middle raster is NOT
+    # opened by the trend step — before the fix it was opened twice more
+    # (4 total beyond the stats pass).
+    assert opens[paths[0]] == 4, opens
+    assert opens[paths[1]] == 3, opens
+    assert opens[paths[2]] == 4, opens
 
 
 def test_raster_trend_over_aoi_accepts_precomputed_stats(raster_pair, tmp_path):
@@ -309,3 +310,148 @@ def test_raster_difference_all_nan_large_window(tmp_path):
 
     assert res["pixel_count"] == n * n
     assert math.isnan(res["mean_difference"])
+
+
+# ─── #523: declared nodata sentinels must be masked, not counted ────────────
+
+
+def _write_raster_nodata(path, values, nodata):
+    """Write a GeoTIFF whose header declares ``nodata`` (raw values kept)."""
+    rows, cols = np.asarray(values).shape
+    with rasterio.open(
+        path, "w", driver="GTiff", height=rows, width=cols, count=1,
+        dtype="float64", crs="EPSG:4326",
+        transform=from_origin(0.0, float(rows), 1.0, 1.0),
+        nodata=nodata,
+    ) as dst:
+        dst.write(np.asarray(values, dtype="float64"), 1)
+    return path
+
+
+def _half_nodata_pair(tmp_path, nodata, tag):
+    """Two 16×16 aligned rasters: top half real, bottom half nodata.
+
+    arr1 top = base, arr2 top = base+1 → truth diff = 1 over the 128 valid
+    pixels; bottom halves carry the declared sentinel in both files. The base
+    is chosen to differ from the sentinel (nodata=0 case must not collide).
+    """
+    n = 16
+    base = 100.0 if nodata == 0 else 0.0
+    a1 = np.full((n, n), base)
+    a2 = np.full((n, n), base + 1.0)
+    a1[n // 2:] = nodata
+    a2[n // 2:] = nodata
+    p1 = _write_raster_nodata(str(tmp_path / f"{tag}_t1.tif"), a1, nodata)
+    p2 = _write_raster_nodata(str(tmp_path / f"{tag}_t2.tif"), a2, nodata)
+    return p1, p2, a1, a2
+
+
+def _brute_force_diff_truth(a1, a2, nodata):
+    """Reference masked diff stats over pixels valid in BOTH rasters."""
+    valid = (a1 != nodata) & (a2 != nodata) & ~np.isnan(a1 - a2)
+    diff = a2 - a1
+    return diff[valid], valid
+
+
+@pytest.mark.parametrize("nodata", [-9999.0, 0.0])
+def test_raster_difference_streamed_masks_declared_nodata(tmp_path, nodata):
+    """Issue #523: with half of each raster declared nodata, the difference
+    statistics must equal the brute-force truth over the valid half only —
+    not the polluted mean 0.5 / min 0.0 the NaN-only mask produced (two-nodata
+    pixels counted as diff=0)."""
+    p1, p2, a1, a2 = _half_nodata_pair(tmp_path, nodata, "s")
+    engine = TemporalRasterEngine()
+    res = engine.raster_difference(p1, p2)
+
+    valid_diff, valid = _brute_force_diff_truth(a1, a2, nodata)
+    assert res["pixel_count"] == a1.size  # total pixels (documented semantics)
+    assert res["mean_difference"] == pytest.approx(float(np.mean(valid_diff)), abs=1e-12)
+    assert res["min_difference"] == pytest.approx(float(np.min(valid_diff)), abs=1e-12)
+    assert res["max_difference"] == pytest.approx(float(np.max(valid_diff)), abs=1e-12)
+    assert res["std_difference"] == pytest.approx(float(np.std(valid_diff)), abs=1e-12)
+
+
+def test_raster_difference_in_memory_honors_nodata_key():
+    """Issue #523: the in-memory dict contract accepts a per-side ``nodata``
+    key; sentinel pixels are masked the same way as the streamed branch."""
+    n = 16
+    nodata = -9999.0
+    a1 = np.zeros((n, n))
+    a2 = np.ones((n, n))
+    a1[n // 2:] = nodata
+    a2[n // 2:] = nodata
+
+    engine = TemporalRasterEngine()
+    res = engine.raster_difference(
+        {"data": a1.tolist(), "nodata": nodata},
+        {"data": a2.tolist(), "nodata": nodata},
+    )
+
+    valid_diff, _ = _brute_force_diff_truth(a1, a2, nodata)
+    assert res["pixel_count"] == a1.size
+    assert res["mean_difference"] == pytest.approx(float(np.mean(valid_diff)), abs=1e-12)
+    assert res["min_difference"] == pytest.approx(float(np.min(valid_diff)), abs=1e-12)
+    assert res["max_difference"] == pytest.approx(float(np.max(valid_diff)), abs=1e-12)
+    assert res["std_difference"] == pytest.approx(float(np.std(valid_diff)), abs=1e-12)
+
+
+def test_raster_difference_single_side_nodata_no_garbage(tmp_path):
+    """Issue #523: a pixel whose SECOND raster is nodata (arr2=-9999, arr1=1)
+    previously contributed -9999 - 1 = -10000 to min; the nodata mask must
+    keep min/max within the valid region's range."""
+    n = 16
+    nodata = -9999.0
+    a1 = np.zeros((n, n))
+    a2 = np.zeros((n, n))
+    a1[n // 2:] = 1.0          # t1 bottom = real value 1
+    a2[n // 2:] = nodata       # t2 bottom = nodata → those pixels are invalid
+    p1 = _write_raster_nodata(str(tmp_path / "ss_t1.tif"), a1, nodata)
+    p2 = _write_raster_nodata(str(tmp_path / "ss_t2.tif"), a2, nodata)
+
+    engine = TemporalRasterEngine()
+    res = engine.raster_difference(p1, p2)
+
+    valid_diff, _ = _brute_force_diff_truth(a1, a2, nodata)
+    # top half: diff 0 everywhere → truth min == max == 0
+    assert valid_diff.size == n * n // 2
+    assert res["min_difference"] == pytest.approx(0.0, abs=1e-12)
+    assert res["max_difference"] == pytest.approx(0.0, abs=1e-12)
+    assert res["mean_difference"] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_raster_difference_streamed_in_memory_agree_with_nodata(tmp_path):
+    """Issue #523: the streamed (GeoTIFF) and in-memory (dict) branches must
+    agree on sentinel-masked statistics for the same logical arrays."""
+    p1, p2, a1, a2 = _half_nodata_pair(tmp_path, -9999.0, "par")
+    engine = TemporalRasterEngine()
+
+    streamed = engine.raster_difference(p1, p2)
+    in_memory = engine.raster_difference(
+        {"data": a1.tolist(), "nodata": -9999.0},
+        {"data": a2.tolist(), "nodata": -9999.0},
+    )
+
+    for key in ("mean_difference", "min_difference", "max_difference", "std_difference"):
+        assert streamed[key] == pytest.approx(in_memory[key], abs=1e-12), key
+    assert streamed["pixel_count"] == in_memory["pixel_count"]
+
+
+def test_temporal_raster_statistics_in_memory_masks_nodata():
+    """Issue #523 sibling: temporal_raster_statistics' in-memory fallback must
+    exclude declared nodata from the stats (was nan-only)."""
+    engine = TemporalRasterEngine()
+    data = [[1.0, 1.0], [-9999.0, -9999.0]]
+    res = engine.temporal_raster_statistics([
+        {"timestamp": "2026-01-01T00:00:00Z", "data": data, "nodata": -9999.0},
+    ])
+    stats = res["series_statistics"][0]["statistics"]
+    assert stats["mean"] == pytest.approx(1.0, abs=1e-12)
+    assert stats["min"] == pytest.approx(1.0, abs=1e-12)
+    assert stats["max"] == pytest.approx(1.0, abs=1e-12)
+    assert stats["std"] == pytest.approx(0.0, abs=1e-12)
+
+    # all-invalid array → empty statistics (skipped downstream, not zeros)
+    res_all = engine.temporal_raster_statistics([
+        {"timestamp": "2026-01-01T00:00:00Z", "data": [[-9999.0, -9999.0]], "nodata": -9999.0},
+    ])
+    assert res_all["series_statistics"][0]["statistics"] == {}

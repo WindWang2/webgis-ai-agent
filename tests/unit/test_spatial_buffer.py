@@ -1,6 +1,7 @@
 """
 单元测试：缓冲区分析 CRS 投影转换测试
 """
+import math
 import pytest
 from shapely.geometry import shape
 
@@ -198,6 +199,121 @@ def test_buffer_smart_projected_crs_preservation():
     assert res.success is True
     assert res.data["stats"]["reprojected"] is False
     assert res.data["stats"]["working_crs"] == "EPSG:3857"
+
+
+# ── Issue #524: unit conversion direction for non-metre projected CRS ────────
+#
+# to_utm_gdf returns an already-projected input UNCHANGED (state-plane feet
+# stays in feet), so a "meters" distance must be converted to CRS units by
+# DIVIDING by the axis unit_conversion_factor (metres-per-unit). The old code
+# multiplied, shrinking a 1000 m buffer in a US-survey-foot CRS to ~92.8 m
+# (factor² ≈ 0.093). These tests assert the TRUE geometric radius in metres.
+
+
+def _ft_to_m_factor(crs_epsg: int) -> float:
+    from pyproj import CRS
+    axis = CRS.from_epsg(crs_epsg).axis_info[0]
+    return float(axis.unit_conversion_factor)
+
+
+def _area_equivalent_radius_m(res) -> float:
+    from shapely.geometry import shape
+    geom = shape(res.data["features"][0]["geometry"])
+    radius_crs_units = (geom.area / math.pi) ** 0.5
+    return radius_crs_units * _ft_to_m_factor(2263)
+
+
+# (EPSG, a point inside the CRS's area of use, in CRS units)
+_FOOT_CRS_POINTS = [
+    (2263, [986705.5, 211835.6]),   # NAD83 / New York Long Island (ftUS)
+    (2264, [1277217.5, 263201.1]),  # NAD83 / North Carolina (ftUS)
+]
+
+
+@pytest.mark.parametrize("crs_epsg,point", _FOOT_CRS_POINTS)
+def test_buffer_smart_state_plane_feet_distance_in_meters(crs_epsg, point):
+    """A 1000 m buffer on a foot-based state-plane CRS must yield a circle
+    whose area-equivalent radius is ~1000 m (±1%) — pre-#524 it was ~92.8 m."""
+    from app.lib.geo_processor.geometry import buffer_smart
+    feature = {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": point},
+        "properties": {},
+    }
+    res = buffer_smart(feature, 1000, unit="m", source_crs=f"EPSG:{crs_epsg}")
+
+    assert res.success is True, res.summary
+    assert res.data["stats"]["reprojected"] is False  # projected input kept
+    geom = shape(res.data["features"][0]["geometry"])
+    radius_crs_units = (geom.area / math.pi) ** 0.5
+    radius_m = radius_crs_units * _ft_to_m_factor(crs_epsg)
+    assert 990.0 <= radius_m <= 1010.0, f"radius {radius_m} m outside 1000±1%"
+
+
+def test_buffer_smart_state_plane_feet_legacy_crs_member():
+    """Same contract via the legacy GeoJSON ``crs`` member (no source_crs=)."""
+    from app.lib.geo_processor.geometry import buffer_smart
+    fc = {
+        "type": "FeatureCollection",
+        "crs": {"type": "name", "properties": {"name": "EPSG:2263"}},
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [986705.5, 211835.6]},
+            "properties": {},
+        }],
+    }
+    res = buffer_smart(fc, 1000, unit="m")
+
+    assert res.success is True, res.summary
+    radius_m = _area_equivalent_radius_m(res)
+    assert 990.0 <= radius_m <= 1010.0, f"radius {radius_m} m outside 1000±1%"
+
+
+def test_buffer_smart_state_plane_feet_km_unit():
+    """1 km on the same foot CRS → ~1000 m radius (km→m conversion still ok)."""
+    from app.lib.geo_processor.geometry import buffer_smart
+    point = {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [986705.5, 211835.6]},
+        "properties": {},
+    }
+    res = buffer_smart(point, 1, unit="km", source_crs="EPSG:2263")
+
+    assert res.success is True, res.summary
+    radius_m = _area_equivalent_radius_m(res)
+    assert 990.0 <= radius_m <= 1010.0, f"radius {radius_m} m outside 1000±1%"
+
+
+def test_buffer_smart_state_plane_feet_polygon_ring_width():
+    """Polygon buffered by 1000 m in a foot CRS: the output area must match a
+    reference shapely buffer of the same polygon by exactly (1000 m converted
+    to CRS units) — pre-#524 the area was ~factor² smaller."""
+    from app.lib.geo_processor.geometry import buffer_smart
+
+    epsg = 2263
+    factor = _ft_to_m_factor(epsg)
+    half = 500.0  # ftUS
+    polygon = {
+        "type": "Feature",
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[
+                [986705.5 - half, 211835.6 - half],
+                [986705.5 + half, 211835.6 - half],
+                [986705.5 + half, 211835.6 + half],
+                [986705.5 - half, 211835.6 + half],
+                [986705.5 - half, 211835.6 - half],
+            ]],
+        },
+        "properties": {},
+    }
+    res = buffer_smart(polygon, 1000, unit="m", source_crs=f"EPSG:{epsg}")
+    assert res.success is True, res.summary
+
+    out_geom = shape(res.data["features"][0]["geometry"])
+    # Reference: the same square buffered by the true 1000 m width in ftUS.
+    reference = shape(polygon["geometry"]).buffer(1000.0 / factor)
+    assert out_geom.area == pytest.approx(reference.area, rel=0.01)
 
 
 if __name__ == "__main__":

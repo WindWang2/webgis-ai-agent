@@ -260,7 +260,20 @@ class BaiduProvider:
     async def distance_matrix(
         self, origins: list[list], destinations: list[list], mode: str,
     ) -> dict:
-        """Baidu v2 direction Matrix API — 一次请求完成全量 OD 计算。"""
+        """Baidu Route Matrix v2 API — one request for the whole OD batch.
+
+        Issue #542: the previous implementation called a non-existent
+        ``/direction/v2/matrix`` with singular ``origin``/``destination`` params
+        and parsed a ``rows[].elements[]`` shape the API never returns. The real
+        contract is ``GET /routematrix/v2/{driving|riding|walking}`` with
+        |-joined plural ``origins``/``destinations`` (BD-09, "lat,lng"), and the
+        response ``result`` is a FLAT array in row-major origins×destinations
+        order — element ``k = origin k//n_dest, destination k%n_dest`` with
+        ``{distance.value (m), duration.value (s)}``.
+
+        Output shape matches :meth:`AmapProvider.distance_matrix`
+        (``distance_km``/``duration_sec`` cell dicts; missing cells → None).
+        """
 
         def _bd_fmt(lng: float, lat: float) -> str:
             # WGS84 → BD09，然后按"纬度,经度"格式提交给百度
@@ -269,29 +282,27 @@ class BaiduProvider:
 
         origin_str = "|".join(_bd_fmt(lo, la) for lo, la in origins)
         dest_str = "|".join(_bd_fmt(ld, la) for ld, la in destinations)
-        mode_map = {"driving": "car", "walking": "foot", "riding": "bike"}
-        params = {
-            "origin": origin_str,
-            "destination": dest_str,
-            "mode": mode_map.get(mode, "car"),
-        }
-        data = await self._get("/direction/v2/matrix", params)
+        endpoint = f"/routematrix/v2/{mode if mode in ('driving', 'riding', 'walking') else 'driving'}"
+        params = {"origins": origin_str, "destinations": dest_str}
+        data = await self._get(endpoint, params)
         if "error" in data:
             return data
 
-        result = data.get("result", {})
-        rows = result.get("rows", [])
-        matrix = []
-        for ri, row in enumerate(rows):
-            row_dist = []
-            for ci, elem in enumerate(row.get("elements", [])):
-                row_dist.append({
-                    "origin_index": ri,
-                    "dest_index": ci,
-                    "distance_km": elem.get("distance", {}).get("value", 0) / 1000.0,
-                    "duration_sec": elem.get("duration", {}).get("value", 0),
-                })
-            matrix.append(row_dist)
+        flat = data.get("result", [])
+        n_dest = len(destinations)
+        matrix: list[list[dict | None]] = [[None] * n_dest for _ in range(len(origins))]
+        for k, elem in enumerate(flat):
+            oi, di = divmod(k, n_dest)
+            if oi >= len(origins) or di >= n_dest:
+                continue
+            distance_value = (elem.get("distance") or {}).get("value", 0)
+            duration_value = (elem.get("duration") or {}).get("value", 0)
+            matrix[oi][di] = {
+                "origin_index": oi,
+                "dest_index": di,
+                "distance_km": float(distance_value) / 1000.0,
+                "duration_sec": int(duration_value),
+            }
         return {
             "matrix": matrix,
             "origins_count": len(origins),
