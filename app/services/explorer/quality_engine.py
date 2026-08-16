@@ -29,9 +29,21 @@ class QualityEngine:
     }
 
     def calc_temporal_score(self, data_type: str, published_at: datetime) -> float:
-        """计算时效性分数"""
+        """计算时效性分数
+
+        Issue #482: ``published_at`` may arrive naive (offset-less gov
+        ``publish_time`` strings, or any adapter that skipped UTC
+        normalization) — subtracting it from an aware ``now`` raises
+        TypeError and kills the discover stage. Normalize naive values to
+        UTC per house convention (services/temporal/*, services/jobs/*).
+        A future timestamp (clock skew / bad data) clamps to age 0 so the
+        score stays within [0, 1] instead of exceeding 1 via exp(+x).
+        """
         lambda_val = self.TEMPORAL_LAMBDA.get(data_type, self.TEMPORAL_LAMBDA["default"])
-        delta_months = (datetime.now(timezone.utc) - published_at).days / 30.0
+        if published_at.tzinfo is None:
+            published_at = published_at.replace(tzinfo=timezone.utc)
+        age_days = (datetime.now(timezone.utc) - published_at).days
+        delta_months = max(age_days, 0) / 30.0
         score = math.exp(-lambda_val * delta_months)
         return round(score, 4)
 

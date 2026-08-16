@@ -63,3 +63,33 @@ def test_field_score_partial():
         actual_fields=["name", "address"],
     )
     assert score == 0.5
+
+
+def test_temporal_score_naive_datetime_does_not_crash():
+    """Issue #482: a naive published_at (e.g. from a source that skipped the
+    adapter's UTC normalization) must not raise TypeError in the scoring
+    path — it is treated as UTC per house convention."""
+    engine = QualityEngine()
+    published = datetime(2024, 3, 15)  # naive
+    score = engine.calc_temporal_score("education", published)
+    assert 0.0 <= score <= 1.0
+
+
+def test_temporal_score_naive_equals_aware_utc():
+    """A naive datetime and its UTC-aware equivalent must score identically
+    (naive is interpreted as UTC, not local time)."""
+    engine = QualityEngine()
+    naive = datetime(2024, 3, 15)
+    aware = naive.replace(tzinfo=timezone.utc)
+    assert engine.calc_temporal_score("education", naive) == engine.calc_temporal_score(
+        "education", aware
+    )
+
+
+def test_temporal_score_future_timestamp_is_clamped_sane():
+    """Adversarial: a publish time in the future (clock skew / bad data) must
+    produce a bounded score, not an error or an explosion."""
+    engine = QualityEngine()
+    future = datetime.now(timezone.utc) + timedelta(days=365)
+    score = engine.calc_temporal_score("education", future)
+    assert 0.0 <= score <= 1.0
