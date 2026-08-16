@@ -239,6 +239,10 @@ class TemporalTrendResult(BaseModel):
     anomalies: List[Dict[str, Any]] = Field(default_factory=list)
     values: List[float] = Field(default_factory=list)
     timestamps: List[str] = Field(default_factory=list)
+    # #452: non-finite (NaN/Inf) points dropped from the input before the
+    # trend math — previously a single NaN poisoned slope to NaN, clamped
+    # r² to a spurious 1.0, and silenced anomaly detection.
+    dropped_nan: int = 0
 
 
 class SpatiotemporalHotspotResult(BaseModel):

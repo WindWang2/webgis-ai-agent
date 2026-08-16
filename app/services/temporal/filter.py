@@ -27,6 +27,15 @@ class TemporalFilterEngine:
     """
 
     @staticmethod
+    def _coerce_instant(value: Optional[Union[str, datetime, TimeInstant]]) -> Optional[TimeInstant]:
+        """Coerces a str/datetime/TimeInstant bound into a TimeInstant (None
+        if absent or unparseable)."""
+        if value is None or isinstance(value, TimeInstant):
+            return value
+        parsed = parse_value_to_instant(value)
+        return parsed[0] if parsed else None
+
+    @staticmethod
     def parse_relative_window(window_str: str, ref_time: Optional[datetime] = None) -> TimeInterval:
         """
         Parses relative window strings such as 'last_7_days', 'past_3_months', 'last_24_hours', 'past_1_year'
@@ -110,25 +119,41 @@ class TemporalFilterEngine:
                 logger.warning("No temporal field found or provided for filtering.")
                 return features_or_records
 
-        # Handle filter spec or relative window or start/end/instant
+        # Handle relative window, then explicit start/end bounds, then a
+        # filter spec, then a discrete instant — in that precedence order.
         target_interval: Optional[TimeInterval] = None
         target_instant: Optional[TimeInstant] = None
 
         if relative_window:
             target_interval = self.parse_relative_window(relative_window, ref_time=ref_time)
             operator = TemporalOperator.BETWEEN
+        elif start is not None or end is not None:
+            # #451: explicit bounds must WIN over the filter_spec. The engine's
+            # execute_filter forwards BOTH the spec and its start_time/end_time
+            # fields; the previous `elif filter_spec:` precedence let the
+            # interval-less spec shadow the explicit bounds, so BETWEEN ran
+            # with no interval and matched nothing — every explicit-range
+            # temporal_filter silently returned an empty success.
+            # A single bound filters as an open-ended range.
+            operator = TemporalOperator.BETWEEN
+            start_inst = self._coerce_instant(start)
+            end_inst = self._coerce_instant(end)
+            if start_inst and end_inst:
+                target_interval = TimeInterval(start=start_inst, end=end_inst)
+            elif start_inst:
+                target_interval = TimeInterval(
+                    start=start_inst,
+                    end=TimeInstant.from_datetime(datetime.max.replace(tzinfo=timezone.utc)),
+                )
+            elif end_inst:
+                target_interval = TimeInterval(
+                    start=TimeInstant.from_datetime(datetime.min.replace(tzinfo=timezone.utc)),
+                    end=end_inst,
+                )
         elif filter_spec:
             operator = filter_spec.operator
             target_instant = filter_spec.instant
             target_interval = filter_spec.interval
-        elif start is not None and end is not None:
-            operator = TemporalOperator.BETWEEN
-            s_parsed = parse_value_to_instant(start) if not isinstance(start, TimeInstant) else (start, None, True)
-            e_parsed = parse_value_to_instant(end) if not isinstance(end, TimeInstant) else (end, None, True)
-            start_inst = s_parsed[0] if s_parsed else None
-            end_inst = e_parsed[0] if e_parsed else None
-            if start_inst and end_inst:
-                target_interval = TimeInterval(start=start_inst, end=end_inst)
         elif instant is not None:
             if not operator:
                 operator = TemporalOperator.EQUALS

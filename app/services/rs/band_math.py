@@ -18,6 +18,10 @@ class RasterAnalysisResult:
     is_error: bool = False
     error_msg: str = ""
     correction_hint: str = ""
+    # #444: multi-product terrain requests carry every requested product's
+    # array here (array/stats above stay the PRIMARY product for backwards
+    # compatibility with emit_raster_layer and single-product consumers).
+    product_arrays: Dict[str, np.ndarray] = field(default_factory=dict)
 
     def to_llm_response(self) -> Dict[str, Any]:
         """格式化供 LLM 上下文阅读的精简响应 payload"""

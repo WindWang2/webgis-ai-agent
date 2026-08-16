@@ -306,7 +306,7 @@ def profile_temporal_dataset(
         return TemporalDatasetProfile(overall_confidence=0.0)
 
     # Parse all values for primary field to build extent & detect gaps
-    p_vals = field_values.get(selected_primary.field_name, [])
+    p_vals_all = field_values.get(selected_primary.field_name, [])
     total_records = len(records)
     valid_instants: List[TimeInstant] = []
 
@@ -314,8 +314,8 @@ def profile_temporal_dataset(
     # parsed sample avoids an O(F) python parse + O(F log F) sort per layer
     # upsert on 100k-feature layers.
     _MAX_TEMPORAL_SAMPLE = 5000
-    if len(p_vals) > _MAX_TEMPORAL_SAMPLE:
-        p_vals = p_vals[:_MAX_TEMPORAL_SAMPLE]
+    sampled_count = min(len(p_vals_all), _MAX_TEMPORAL_SAMPLE)
+    p_vals = p_vals_all[:_MAX_TEMPORAL_SAMPLE]
 
     for v in p_vals:
         res = parse_value_to_instant(v, field_name_hint=selected_primary.field_name)
@@ -323,13 +323,23 @@ def profile_temporal_dataset(
             valid_instants.append(res[0])
 
     valid_count = len(valid_instants)
-    missing_count = total_records - valid_count
 
     if not valid_instants:
         return TemporalDatasetProfile(
             primary_time_field=selected_primary,
             overall_confidence=0.0,
         )
+
+    # #450: valid/missing/confidence must share ONE count basis. The parse
+    # sample above is capped; computing missing against the FULL record count
+    # overstated missing by exactly the unsampled remainder (a 6000/6000-valid
+    # layer reported missing_time_records=1000). Extrapolate the sampled
+    # validity ratio to the full time-value population instead, and document
+    # the sample cap in the profile metadata.
+    field_total = len(p_vals_all)
+    if field_total > sampled_count and sampled_count > 0:
+        valid_count = int(round(valid_count * field_total / sampled_count))
+    missing_count = max(0, total_records - valid_count)
 
     valid_instants.sort(key=lambda x: x.epoch_seconds)
     min_time = valid_instants[0]
@@ -357,6 +367,8 @@ def profile_temporal_dataset(
         metadata={
             "total_candidates_found": len(candidate_fields),
             "parsed_instants_count": len(valid_instants),
+            "time_values_sampled": sampled_count,
+            "time_sample_truncated": field_total > sampled_count,
         },
     )
 

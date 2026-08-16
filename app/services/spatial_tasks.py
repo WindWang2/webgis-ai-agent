@@ -363,6 +363,162 @@ def _run_ndvi_legacy(
         return {"success": False, "error": str(e)}
 
 
+_CHANGE_CLASSES = (
+    "significant_improvement",
+    "slight_improvement",
+    "no_change",
+    "slight_degradation",
+    "significant_degradation",
+)
+
+
+def _classify_delta(delta: float, thr: float) -> str:
+    """5-way change category for a single delta (T2 − T1) at threshold thr."""
+    if delta >= 2 * thr:
+        return "significant_improvement"  # 显著改善
+    if delta >= thr:
+        return "slight_improvement"  # 轻微改善
+    if delta > -thr:
+        return "no_change"  # 无变化
+    if delta > -2 * thr:
+        return "slight_degradation"  # 轻微退化
+    return "significant_degradation"  # 显著退化
+
+
+def _array_window_for_bounds(arr: np.ndarray, arr_bounds, common_bounds):
+    """Row/col slice of `arr` (gridded over `arr_bounds`) covering `common_bounds`.
+
+    Returns (row0, col0, row1, col1) or None when the intersection holds no
+    complete pixel. Assumes a north-up WGS84 grid, matching the #381 window
+    bounds returned by the STAC band reader.
+    """
+    w, s, e, n = arr_bounds
+    cw, cs, ce, cn = common_bounds
+    res_x = (e - w) / arr.shape[1]
+    res_y = (n - s) / arr.shape[0]
+    if res_x <= 0 or res_y <= 0:
+        return None
+    col0 = max(0, int(math.floor((cw - w) / res_x)))
+    col1 = min(arr.shape[1], int(math.ceil((ce - w) / res_x)))
+    row0 = max(0, int(math.floor((n - cn) / res_y)))
+    row1 = min(arr.shape[0], int(math.ceil((n - cs) / res_y)))
+    if col1 <= col0 or row1 <= row0:
+        return None
+    return row0, col0, row1, col1
+
+
+def _pixel_change_classification(t1: Dict, t2: Dict, change_threshold: float) -> Optional[Dict]:
+    """Pixel-level change classification on the two epochs' COMMON footprint.
+
+    #445: the two acquisitions come from independent STAC searches whose
+    #381 read windows (raster_source.bounds) can cover different footprints —
+    scene-level means are then not comparable. This computes the per-pixel
+    difference on the intersection grid, classifies every valid pixel into
+    the 5-way scheme, and renders a compact preview PNG. Returns None when a
+    pixel comparison is impossible (no arrays / no common footprint).
+    """
+    rs1 = t1.get("raster_source") or {}
+    rs2 = t2.get("raster_source") or {}
+    a1, b1 = rs1.get("array"), rs1.get("bounds")
+    a2, b2 = rs2.get("array"), rs2.get("bounds")
+    if not (
+        isinstance(a1, np.ndarray) and isinstance(a2, np.ndarray)
+        and isinstance(b1, (list, tuple)) and len(b1) == 4
+        and isinstance(b2, (list, tuple)) and len(b2) == 4
+    ):
+        return None
+
+    common = [max(b1[0], b2[0]), max(b1[1], b2[1]), min(b1[2], b2[2]), min(b1[3], b2[3])]
+    if common[2] <= common[0] or common[3] <= common[1]:
+        return None  # disjoint footprints
+
+    w1 = _array_window_for_bounds(a1, b1, common)
+    w2 = _array_window_for_bounds(a2, b2, common)
+    if w1 is None or w2 is None:
+        return None
+
+    sub1 = a1[w1[0]:w1[2], w1[1]:w1[3]].astype(float)
+    sub2 = a2[w2[0]:w2[2], w2[1]:w2[3]].astype(float)
+
+    if sub1.shape != sub2.shape:
+        # Different resolutions → resample T2 onto T1's common-window grid.
+        try:
+            from rasterio.transform import from_origin
+            from rasterio.warp import Resampling, reproject
+
+            def _window_transform(arr, bounds, win):
+                bw, bs_, be, bn = bounds
+                res_x = (be - bw) / arr.shape[1]
+                res_y = (bn - bs_) / arr.shape[0]
+                return from_origin(
+                    bw + res_x * win[1], bn - res_y * win[0], res_x, res_y
+                )
+
+            dst = np.full(sub1.shape, np.nan)
+            reproject(
+                source=sub2,
+                destination=dst,
+                src_transform=_window_transform(a2, b2, w2),
+                src_crs="EPSG:4326",
+                dst_transform=_window_transform(a1, b1, w1),
+                dst_crs="EPSG:4326",
+                src_nodata=float("nan"),
+                dst_nodata=float("nan"),
+                resampling=Resampling.bilinear,
+            )
+            sub2 = dst
+        except Exception as e:
+            logger.warning(f"change-detection grid alignment failed: {e}")
+            return None
+
+    diff = sub2 - sub1
+    valid = np.isfinite(diff)
+    valid_pixels = int(valid.sum())
+    vals = diff[valid]
+
+    class_counts = {c: 0 for c in _CHANGE_CLASSES}
+    if vals.size:
+        cls_arr = np.select(
+            [vals >= 2 * change_threshold, vals >= change_threshold,
+             vals > -change_threshold, vals > -2 * change_threshold],
+            ["significant_improvement", "slight_improvement",
+             "no_change", "slight_degradation"],
+            default="significant_degradation",
+        )
+        names, counts = np.unique(cls_arr, return_counts=True)
+        class_counts.update(dict(zip(names.tolist(), (int(c) for c in counts))))
+
+    class_percentages = {
+        c: (round(v / valid_pixels * 100, 1) if valid_pixels else 0.0)
+        for c, v in class_counts.items()
+    }
+    delta_mean = float(np.mean(vals)) if vals.size else None
+    category = _classify_delta(delta_mean, change_threshold) if delta_mean is not None else "unknown"
+
+    # Compact preview PNG of the difference field (NaN → transparent, #480).
+    preview_png_b64 = None
+    try:
+        from app.services.raster_cartography_converter import render_array_to_png
+
+        step = max(1, math.ceil(max(diff.shape) / 256))
+        png = render_array_to_png(diff[::step, ::step], palette="Viridis")
+        preview_png_b64 = base64.b64encode(png).decode("ascii")
+    except Exception as e:
+        logger.warning(f"change-detection preview render failed: {e}")
+
+    return {
+        "method": "pixel_common_footprint",
+        "common_bounds": [round(c, 6) for c in common],
+        "valid_pixels": valid_pixels,
+        "total_pixels": int(diff.size),
+        "class_counts": class_counts,
+        "class_percentages": class_percentages,
+        "delta_mean": delta_mean,
+        "category": category,
+        "preview_png_b64": preview_png_b64,
+    }
+
+
 @celery_app.task(name="app.services.spatial_tasks.run_change_detection", bind=True)
 def run_change_detection(
     self,
@@ -378,7 +534,8 @@ def run_change_detection(
     """双时相植被/水体/燃烧指数变化检测。
 
     对同一 bbox 在两个时间窗口分别获取 Sentinel-2 影像并计算指定指数，
-    汇总均值差异并按 ±change_threshold 分类为 5 档。
+    在两期足迹的公共栅格上做像元级差异，按 ±change_threshold 分类为 5 档，
+    输出分类统计与差异预览图。
 
     实现策略：复用 SpectralRasterEngine.compute_vegetation_index（异步）
     通过新建事件循环在 Celery worker 进程内顺序执行两次，避免重复实现
@@ -392,8 +549,11 @@ def run_change_detection(
         return t1, t2
 
     try:
-        self.update_state(state='PROGRESS', meta={'progress': 5, 'message': '初始化遥感服务'})
-        self.update_state(state='PROGRESS', meta={'progress': 20, 'message': f'拉取 T1 ({t1_from}~{t1_to}) Sentinel-2'})
+        # 直接调用（测试/shell）时 request.id 可能为 None，update_state 会抛
+        # "task_id must not be empty"（同 _run_ndvi_legacy 的回退处理）。
+        _task_id = self.request.id or f"legacy-change-{os.getpid()}"
+        self.update_state(task_id=_task_id, state='PROGRESS', meta={'progress': 5, 'message': '初始化遥感服务'})
+        self.update_state(task_id=_task_id, state='PROGRESS', meta={'progress': 20, 'message': f'拉取 T1 ({t1_from}~{t1_to}) Sentinel-2'})
 
         # 使用新事件循环执行 async 代码，兼容 prefork / gevent 池
         loop = asyncio.new_event_loop()
@@ -409,24 +569,30 @@ def run_change_detection(
         if "error" in t2:
             return {"success": False, "error": f"T2 计算失败: {t2['error']}"}
 
-        self.update_state(state='PROGRESS', meta={'progress': 80, 'message': '计算变化分类'})
+        self.update_state(task_id=_task_id, state='PROGRESS', meta={'progress': 80, 'message': '计算变化分类'})
 
-        mean_t1 = t1.get("stats", {}).get("mean")
-        mean_t2 = t2.get("stats", {}).get("mean")
+        # #445: pixel-level difference on the two epochs' common footprint —
+        # the two scene means come from independent acquisitions whose read
+        # windows (#381) may cover different footprints, so they are not
+        # directly comparable. Only fall back to the scene-mean comparison
+        # when no pixel comparison is possible.
         delta_mean = None
         category = "unknown"
-        if mean_t1 is not None and mean_t2 is not None:
-            delta_mean = round(mean_t2 - mean_t1, 4)
-            if delta_mean >= 2 * change_threshold:
-                category = "significant_improvement"  # 显著改善
-            elif delta_mean >= change_threshold:
-                category = "slight_improvement"  # 轻微改善
-            elif delta_mean > -change_threshold:
-                category = "no_change"  # 无变化
-            elif delta_mean > -2 * change_threshold:
-                category = "slight_degradation"  # 轻微退化
-            else:
-                category = "significant_degradation"  # 显著退化
+        method = "scene_mean_fallback"
+        classification: Optional[Dict] = None
+
+        pixel = _pixel_change_classification(t1, t2, change_threshold)
+        if pixel is not None:
+            method = pixel["method"]
+            delta_mean = pixel["delta_mean"]
+            category = pixel["category"]
+            classification = pixel
+        else:
+            mean_t1 = t1.get("stats", {}).get("mean")
+            mean_t2 = t2.get("stats", {}).get("mean")
+            if mean_t1 is not None and mean_t2 is not None:
+                delta_mean = round(mean_t2 - mean_t1, 4)
+                category = _classify_delta(delta_mean, change_threshold)
 
         return {
             "success": True,
@@ -447,6 +613,8 @@ def run_change_detection(
                     "delta_mean": delta_mean,
                     "category": category,
                     "threshold": change_threshold,
+                    "method": method,
+                    "classification": classification,
                 },
             },
             "status_desc": f"{index_type.upper()} 变化检测完成：{category}（Δmean={delta_mean}）",

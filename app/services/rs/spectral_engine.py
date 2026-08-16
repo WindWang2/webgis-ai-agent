@@ -150,31 +150,49 @@ class SpectralRasterEngine:
                 cell_size = fetch_res.get("cell_size_m", 30.0)
                 cell_size_x = fetch_res.get("cell_size_x_m")
 
-                # GIS-06: the default products = ["slope", "aspect", "hillshade"]
-                # but the previous if/elif chain (in a fixed branch order) only
-                # ever returned ONE product ("aspect", the first matching branch),
-                # silently dropping the others, and mislabeled it as "dem".
-                # Derivatives map to a single label deterministically: iterate
-                # the requested products in order and pick the first supported.
+                # #444: the tool contract promises EVERY requested product
+                # ("products 可选 slope/aspect/hillshade，默认全部"、"一步生成
+                # 多产品"). The GIS-06 interim fix (after the old if/elif chain
+                # returned one mislabeled product) returned only the FIRST
+                # supported product, silently dropping the rest. All
+                # derivatives share one masked-DEM gradient basis, so each is a
+                # single vectorized pass — compute the full requested set.
+                # `array`/`stats`/`index_type` stay the PRIMARY (first
+                # requested) product for backwards compatibility with
+                # emit_raster_layer and single-product consumers.
                 derivators = {
                     "slope": lambda d: compute_slope(d, cell_size, cell_size_x=cell_size_x),
                     "aspect": lambda d: compute_aspect(d, cell_size, cell_size_x=cell_size_x),
                     "hillshade": lambda d: compute_hillshade(d, cell_size, cell_size_x=cell_size_x),
                 }
-                chosen = next((p for p in products if p in derivators), None)
-                if chosen is None:
+                requested = list(dict.fromkeys(p for p in products if p in derivators))
+                product_arrays: Dict[str, np.ndarray] = {}
+                product_stats: Dict[str, Dict[str, Any]] = {}
+                for p in requested:
+                    arr = derivators[p](dem)
+                    product_arrays[p] = arr
+                    product_stats[p] = compute_raster_stats(arr)
+
+                if requested:
+                    label = requested[0]
+                    target_arr = product_arrays[label]
+                    # Stats must describe the returned array, not the raw DEM.
+                    stats = compute_raster_stats(target_arr)
+                    stats["terrain_product"] = label
+                    stats["products"] = list(requested)
+                    stats["terrain_products"] = product_stats
+                    unsupported = [p for p in products if p not in derivators]
+                    if unsupported:
+                        stats["unsupported_products"] = unsupported
+                else:
                     target_arr = dem
                     label = "dem"
-                else:
-                    target_arr = derivators[chosen](dem)
-                    label = chosen
+                    stats = compute_raster_stats(target_arr)
+                    stats.setdefault("terrain_product", label)
 
-                # Stats must describe the returned array, not the raw DEM.
-                stats = compute_raster_stats(target_arr)
-                stats.setdefault("terrain_product", label)
-                return target_arr, label, stats
+                return target_arr, label, stats, product_arrays
 
-            target_arr, label, stats = await asyncio.to_thread(_compute_terrain)
+            target_arr, label, stats, product_arrays = await asyncio.to_thread(_compute_terrain)
 
             return RasterAnalysisResult(
                 index_type=label,
@@ -184,6 +202,7 @@ class SpectralRasterEngine:
                 bounds=fetch_res.get("bounds") or list(bbox),
                 stats=stats,
                 is_error=False,
+                product_arrays=product_arrays,
             )
         except Exception as e:
             logger.error(f"Failed to compute terrain derivatives: {e}")
@@ -292,11 +311,24 @@ class SpectralRasterEngine:
         res = await self.compute_index(bbox, date_from, date_to, index_type="ndvi")
         if res.is_error:
             return {"error": res.error_msg}
+
+        # #442: coverage = vegetation pixels / *valid* pixels. NaN is the NDVI
+        # nodata convention (denominator <= 0 → NaN, band_math INDEX_FORMULAS),
+        # so it must be excluded from the denominator — else coverage is
+        # systematically understated by the nodata fraction. Mirrors the
+        # ~np.isnan masking in compute_raster_stats.
+        vegetation_coverage = 0.0
+        if res.array is not None:
+            valid_pixels = int(np.isfinite(res.array).sum())
+            if valid_pixels > 0:
+                veg_pixels = int((res.array > 0.3).sum())  # NaN > 0.3 is False
+                vegetation_coverage = round(veg_pixels / valid_pixels * 100, 1)
+
         return {
             "status": "ok",
             "bbox": bbox,
             "ndvi_stats": res.stats,
-            "vegetation_coverage": round(float((res.array > 0.3).sum() / res.array.size * 100), 1) if res.array is not None else 0.0,
+            "vegetation_coverage": vegetation_coverage,
             "raster_source": {
                 "array": res.array,
                 "bounds": res.bounds,

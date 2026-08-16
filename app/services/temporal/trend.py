@@ -59,13 +59,16 @@ class TemporalTrendEngine:
         Vectorized over all pairs for n ≤ ``_SENS_SLOPE_MAX_N``; larger series
         are evenly subsampled to that cap (with a warning) so the computation
         stays bounded instead of materializing ~n²/2 Python floats.
-        """
-        n = len(values)
-        if n < 2:
-            return 0.0
 
+        #452: non-finite (NaN/Inf) points are dropped first — np.median over
+        NaN-containing pairwise slopes returned NaN.
+        """
         import numpy as np
         arr = np.asarray(values, dtype=float)
+        arr = arr[np.isfinite(arr)]
+        n = int(arr.size)
+        if n < 2:
+            return 0.0
 
         if n > TemporalTrendEngine._SENS_SLOPE_MAX_N:
             logger.warning(
@@ -95,13 +98,18 @@ class TemporalTrendEngine:
     def compute_linear_regression(values: List[float]) -> Tuple[float, float, float]:
         """
         Computes OLS linear regression (slope, intercept, r_squared) for x = 0..n-1.
+
+        #452: non-finite (NaN/Inf) points are dropped first — with NaN in the
+        sums the slope came back NaN and the [0,1] clamp silently turned the
+        NaN r_squared into a spurious perfect fit of 1.0.
         """
-        n = len(values)
+        finite = [float(v) for v in values if math.isfinite(v)]
+        n = len(finite)
         if n < 2:
-            return 0.0, values[0] if values else 0.0, 0.0
+            return 0.0, finite[0] if finite else 0.0, 0.0
 
         x = list(range(n))
-        y = values
+        y = finite
 
         sum_x = sum(x)
         sum_y = sum(y)
@@ -121,6 +129,8 @@ class TemporalTrendEngine:
         ss_res = sum((y[i] - (slope * x[i] + intercept)) ** 2 for i in range(n))
 
         r_squared = (1.0 - (ss_res / ss_tot)) if ss_tot > 0 else 1.0
+        if not math.isfinite(r_squared):  # NaN must not clamp to 1.0
+            r_squared = 0.0
         r_squared = max(0.0, min(1.0, r_squared))
 
         return round(slope, 6), round(intercept, 4), round(r_squared, 4)
@@ -133,20 +143,26 @@ class TemporalTrendEngine:
     ) -> List[Dict[str, Any]]:
         """
         Detects anomalies using Z-score thresholding.
+
+        #452: mean/std are computed over the finite subset only (NaN inputs
+        previously made std_dev NaN, silently suppressing every anomaly);
+        reported indices remain those of the original series.
         """
-        n = len(values)
+        finite = [(i, v) for i, v in enumerate(values)
+                  if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)]
+        n = len(finite)
         if n < 3:
             return []
 
-        mean_val = sum(values) / n
-        variance = sum((x - mean_val) ** 2 for x in values) / n
+        mean_val = sum(v for _, v in finite) / n
+        variance = sum((v - mean_val) ** 2 for _, v in finite) / n
         std_dev = math.sqrt(variance)
 
         if std_dev == 0:
             return []
 
         anomalies = []
-        for i, v in enumerate(values):
+        for i, v in finite:
             z_score = (v - mean_val) / std_dev
             if abs(z_score) >= z_threshold:
                 t_str = timestamps[i] if timestamps and i < len(timestamps) else f"index_{i}"
@@ -173,10 +189,16 @@ class TemporalTrendEngine:
         """
         values: List[float] = []
         timestamps: List[str] = []
+        dropped_nan = 0
 
         if isinstance(data, list):
             for i, item in enumerate(data):
                 if isinstance(item, (int, float)) and not isinstance(item, bool):
+                    # #452: NaN/Inf points (missing period, failed raster
+                    # slice) are dropped, not fed into the trend math.
+                    if not math.isfinite(item):
+                        dropped_nan += 1
+                        continue
                     values.append(float(item))
                     timestamps.append(f"t_{i}")
                 elif isinstance(item, dict):
@@ -185,6 +207,9 @@ class TemporalTrendEngine:
                     if val is None:
                         val = item.get("value")
                     if isinstance(val, (int, float)) and not isinstance(val, bool):
+                        if not math.isfinite(val):
+                            dropped_nan += 1
+                            continue
                         values.append(float(val))
 
                         # Extract time
@@ -196,7 +221,7 @@ class TemporalTrendEngine:
                             timestamps.append(f"t_{i}")
 
         if not values:
-            return TemporalTrendResult(metric_name=metric_name, total_points=0)
+            return TemporalTrendResult(metric_name=metric_name, total_points=0, dropped_nan=dropped_nan)
 
         # 1. Moving average
         ma = self.compute_moving_average(values, window_size=moving_avg_window)
@@ -228,4 +253,5 @@ class TemporalTrendEngine:
             anomalies=anomalies,
             values=values,
             timestamps=timestamps,
+            dropped_nan=dropped_nan,
         )

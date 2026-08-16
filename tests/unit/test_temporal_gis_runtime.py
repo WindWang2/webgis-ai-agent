@@ -23,6 +23,7 @@ from app.services.temporal import (
     SpatiotemporalClusterEngine,
     TemporalRasterEngine,
     TemporalEngine,
+    TemporalFilter,
     TemporalGranularity,
     TemporalFieldType,
     TemporalUnit,
@@ -159,6 +160,105 @@ def test_temporal_filter_relative_window(sample_temporal_geojson):
 
 
 # ---------------------------------------------------------------------------
+# 2b. #451: explicit-bounds precedence (tool's spec construction)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execute_filter_explicit_start_end_returns_matching_features(sample_temporal_geojson):
+    """Issue #451: temporal_filter with explicit start_time/end_time built the
+    spec WITHOUT an interval; the spec branch shadowed the explicit bounds in
+    filter_dataset, so BETWEEN never matched — an always-empty success.
+    Constructed exactly as app/tools/temporal_tools.temporal_filter does."""
+    engine = TemporalEngine()
+    t_filter = TemporalFilter(
+        filter_type="range",
+        start_time="2026-08-03T00:00:00Z",
+        end_time="2026-08-06T12:00:00Z",
+    )
+
+    res = await engine.execute_filter(
+        dataset=sample_temporal_geojson,
+        temporal_field="timestamp",
+        t_filter=t_filter,
+    )
+
+    feats = res.result_geojson["features"]
+    # Daily-noon features 08-03 .. 08-06 inclusive → 4 (was 0 before the fix).
+    assert len(feats) == 4
+    assert {f["properties"]["id"] for f in feats} == {"feat_2", "feat_3", "feat_4", "feat_5"}
+
+
+@pytest.mark.asyncio
+async def test_execute_filter_start_only(sample_temporal_geojson):
+    """Start-only range keeps every feature at/after the start instant."""
+    engine = TemporalEngine()
+    t_filter = TemporalFilter(filter_type="range", start_time="2026-08-08T00:00:00Z")
+
+    res = await engine.execute_filter(
+        dataset=sample_temporal_geojson, temporal_field="timestamp", t_filter=t_filter
+    )
+
+    feats = res.result_geojson["features"]
+    assert len(feats) == 3  # 08-08, 08-09, 08-10
+    assert all(f["properties"]["timestamp"] >= "2026-08-08" for f in feats)
+
+
+@pytest.mark.asyncio
+async def test_execute_filter_end_only(sample_temporal_geojson):
+    """End-only range keeps every feature at/before the end instant."""
+    engine = TemporalEngine()
+    t_filter = TemporalFilter(filter_type="range", end_time="2026-08-03T12:00:00Z")
+
+    res = await engine.execute_filter(
+        dataset=sample_temporal_geojson, temporal_field="timestamp", t_filter=t_filter
+    )
+
+    feats = res.result_geojson["features"]
+    assert len(feats) == 3  # 08-01, 08-02, 08-03 (daily noon)
+    assert {f["properties"]["id"] for f in feats} == {"feat_0", "feat_1", "feat_2"}
+
+
+def test_filter_dataset_relative_window_with_spec(sample_temporal_geojson):
+    """The relative_window path (previously the only working shape) must keep
+    working when the spec is also present, as execute_filter forwards both."""
+    engine = TemporalEngine()
+    t_filter = TemporalFilter(filter_type="relative_window", relative_window="last_7_days")
+    ref = datetime(2026, 8, 10, 12, 0, 0, tzinfo=timezone.utc)
+
+    res = engine.filter(
+        features_or_records=sample_temporal_geojson,
+        time_field="timestamp",
+        relative_window="last_7_days",
+        ref_time=ref,
+        filter_spec=t_filter,
+    )
+
+    assert len(res["features"]) == 8  # 08-03 12:00 .. 08-10 12:00 inclusive
+
+
+def test_filter_dataset_spec_with_interval_still_honored(sample_temporal_geojson):
+    """A filter_spec that DOES carry an interval (no explicit start/end args)
+    must keep filtering via the spec branch."""
+    from app.services.temporal.models import TimeInterval, TimeInstant
+
+    filter_engine = TemporalFilterEngine()
+    spec = TemporalFilter(
+        filter_type="range",
+        interval=TimeInterval(
+            start=TimeInstant.from_datetime(datetime(2026, 8, 3, tzinfo=timezone.utc)),
+            end=TimeInstant.from_datetime(datetime(2026, 8, 6, 12, 0, 0, tzinfo=timezone.utc)),
+        ),
+    )
+
+    res = filter_engine.filter_dataset(
+        sample_temporal_geojson, time_field="timestamp", filter_spec=spec
+    )
+
+    assert len(res["features"]) == 4
+
+
+# ---------------------------------------------------------------------------
 # 3. TemporalAggregationEngine Tests
 # ---------------------------------------------------------------------------
 
@@ -258,6 +358,117 @@ def test_temporal_trend_engine_linear_and_anomalies():
 
 
 # ---------------------------------------------------------------------------
+# 5b. #452: NaN handling in the trend pipeline
+# ---------------------------------------------------------------------------
+
+
+def test_trend_single_nan_matches_cleaned_series():
+    """Issue #452: a single NaN made compute_sens_slope return NaN, the OLS
+    r² clamp turn NaN into a perfect 1.0 fit, direction fall to "stable", and
+    anomalies vanish. [1,2,NaN,4,5,6] must yield the same slope/r²/direction
+    as [1,2,4,5,6] plus a dropped_nan count."""
+    trend_engine = TemporalTrendEngine()
+
+    result = trend_engine.analyze_trend([1.0, 2.0, float("nan"), 4.0, 5.0, 6.0])
+    ref = trend_engine.analyze_trend([1.0, 2.0, 4.0, 5.0, 6.0])
+
+    assert result.slope == ref.slope
+    assert result.intercept == ref.intercept
+    assert result.r_squared == ref.r_squared
+    assert result.direction == ref.direction == "increasing"
+    assert result.slope == result.slope  # finite, not NaN
+    assert 0.0 <= result.r_squared < 1.0  # not the spurious perfect fit
+    assert result.dropped_nan == 1
+    assert result.total_points == 5
+    assert result.values == [1.0, 2.0, 4.0, 5.0, 6.0]
+
+
+def test_trend_all_nan_returns_explicit_empty():
+    """Adversarial: all-NaN input → explicit empty result with the dropped
+    count, not NaN stats dressed as a confident fit."""
+    trend_engine = TemporalTrendEngine()
+    result = trend_engine.analyze_trend([float("nan")] * 4)
+
+    assert result.total_points == 0
+    assert result.dropped_nan == 4
+    assert result.slope == 0.0
+    assert result.direction == "stable"
+
+
+def test_trend_single_finite_value_after_drop():
+    """Adversarial: one finite value survives → stable, no crash."""
+    trend_engine = TemporalTrendEngine()
+    result = trend_engine.analyze_trend([5.0, float("nan"), float("nan")])
+
+    assert result.total_points == 1
+    assert result.dropped_nan == 2
+    assert result.direction == "stable"
+    assert result.r_squared == 0.0
+
+
+def test_trend_drops_inf_too():
+    """Adversarial: ±Inf values are non-finite and must be dropped like NaN."""
+    trend_engine = TemporalTrendEngine()
+    result = trend_engine.analyze_trend([1.0, float("inf"), 3.0, float("-inf"), 5.0])
+
+    assert result.dropped_nan == 2
+    assert result.values == [1.0, 3.0, 5.0]
+    assert result.direction == "increasing"
+
+
+def test_trend_dict_series_with_nan_metric_values():
+    """Dict input shape (temporal_trend tool): NaN metric values dropped with
+    timestamps kept aligned to the surviving points."""
+    trend_engine = TemporalTrendEngine()
+    data = [
+        {"timestamp": "2026-01-01T00:00:00Z", "temp": 10.0},
+        {"timestamp": "2026-01-02T00:00:00Z", "temp": float("nan")},
+        {"timestamp": "2026-01-03T00:00:00Z", "temp": 12.0},
+    ]
+    result = trend_engine.analyze_trend(data=data, metric_name="temp")
+
+    assert result.dropped_nan == 1
+    assert result.total_points == 2
+    assert result.values == [10.0, 12.0]
+    assert result.timestamps == ["2026-01-01T00:00:00+00:00", "2026-01-03T00:00:00+00:00"]
+
+
+def test_compute_sens_slope_direct_nan_input():
+    """Direct seam calls with NaN behave like the cleaned input."""
+    from app.services.temporal.trend import TemporalTrendEngine as TTE
+
+    dirty = TTE.compute_sens_slope([1.0, float("nan"), 3.0, 5.0, 7.0, 9.0])
+    clean = TTE.compute_sens_slope([1.0, 3.0, 5.0, 7.0, 9.0])
+    assert dirty == clean
+    assert dirty == 2.0  # not NaN
+
+
+def test_compute_linear_regression_direct_nan_input():
+    """Direct seam: NaN input yields finite (slope, intercept, r²); the old
+    clamp turned the NaN r² into a perfect 1.0."""
+    from app.services.temporal.trend import TemporalTrendEngine as TTE
+
+    slope, intercept, r2 = TTE.compute_linear_regression([1.0, float("nan"), 2.9, 4.2, 4.8])
+    ref_slope, ref_intercept, ref_r2 = TTE.compute_linear_regression([1.0, 2.9, 4.2, 4.8])
+    assert (slope, intercept, r2) == (ref_slope, ref_intercept, ref_r2)
+    assert slope == slope  # not NaN
+    assert 0.0 <= r2 <= 1.0 and r2 != 1.0
+
+
+def test_detect_anomalies_with_nan_keeps_original_indices():
+    """Anomalies are computed over the valid subset while reported indices
+    stay those of the original series."""
+    from app.services.temporal.trend import TemporalTrendEngine as TTE
+
+    values = [10.0] * 10 + [float("nan")] + [100.0]  # outlier at index 11
+    anomalies = TTE.detect_anomalies(values, z_threshold=2.0)
+
+    assert len(anomalies) == 1
+    assert anomalies[0]["index"] == 11
+    assert anomalies[0]["value"] == 100.0
+
+
+# ---------------------------------------------------------------------------
 # 6. SpatiotemporalClusterEngine Tests
 # ---------------------------------------------------------------------------
 
@@ -305,6 +516,140 @@ def test_temporal_raster_engine_mock():
     assert result.raster_difference["mean_difference"] == 10.0
     assert result.raster_trend is not None
     assert result.raster_trend["direction"] == "increasing"
+
+
+# ---------------------------------------------------------------------------
+# 7b. #454: temporal_raster operation wiring / #458: skipped slices
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execute_temporal_raster_operation_selects_pipeline():
+    """Issue #454: the temporal_raster tool's `operation` argument was
+    accepted by the schema and engine wrapper but never consumed — every
+    value produced the identical full pipeline. Distinct operations must now
+    select distinct branches."""
+    engine = TemporalEngine()
+    series = [
+        {"timestamp": "2026-01-01T00:00:00Z", "data": [[10.0, 10.0], [10.0, 10.0]]},
+        {"timestamp": "2026-02-01T00:00:00Z", "data": [[20.0, 20.0], [20.0, 20.0]]},
+        {"timestamp": "2026-03-01T00:00:00Z", "data": [[30.0, 30.0], [30.0, 30.0]]},
+    ]
+
+    res_diff = await engine.execute_temporal_raster(raster_series=series, operation="difference")
+    res_trend = await engine.execute_temporal_raster(raster_series=series, operation="trend")
+    res_mean = await engine.execute_temporal_raster(raster_series=series, operation="mean")
+    res_all = await engine.execute_temporal_raster(raster_series=series, operation="all")
+
+    payload_diff = res_diff.raster_series[0]
+    payload_trend = res_trend.raster_series[0]
+    payload_mean = res_mean.raster_series[0]
+    payload_all = res_all.raster_series[0]
+
+    # difference: stats + difference, no trend
+    assert payload_diff["raster_difference"] is not None
+    assert payload_diff["raster_difference"]["mean_difference"] == 20.0
+    assert payload_diff["raster_trend"] is None
+    # trend: stats + trend, no difference
+    assert payload_trend["raster_trend"] is not None
+    assert payload_trend["raster_trend"]["direction"] == "increasing"
+    assert payload_trend["raster_difference"] is None
+    # mean: statistics only
+    assert payload_mean["raster_statistics"] is not None
+    assert payload_mean["raster_difference"] is None
+    assert payload_mean["raster_trend"] is None
+    # all: the full pipeline (previous effective behavior)
+    assert payload_all["raster_difference"] is not None
+    assert payload_all["raster_trend"] is not None
+    # Two different operation values produce different results.
+    assert payload_diff != payload_trend
+
+
+@pytest.mark.asyncio
+async def test_execute_temporal_raster_invalid_operation_raises():
+    engine = TemporalEngine()
+    series = [{"timestamp": "2026-01-01T00:00:00Z", "data": [[1.0]]}]
+    with pytest.raises(ValueError, match="operation"):
+        await engine.execute_temporal_raster(raster_series=series, operation="quantum")
+
+
+def test_raster_trend_over_aoi_skips_missing_slices(tmp_path):
+    """Issue #458: a missing/failed raster contributed mean 0.0 to the trend
+    (`.get("mean", 0.0)` on empty statistics) — fabricating points that drag
+    the slope toward 0 and dress a real decline as 'stable'. Missing slices
+    must be skipped and listed."""
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+
+    def _write(path, value):
+        with rasterio.open(
+            path, "w", driver="GTiff", height=4, width=4, count=1, dtype="float64",
+            crs="EPSG:4326", transform=from_origin(0.0, 4.0, 1.0, 1.0),
+        ) as dst:
+            dst.write(np.full((4, 4), value), 1)
+        return path
+
+    p1 = _write(str(tmp_path / "s1.tif"), 10.0)
+    p2 = str(tmp_path / "missing.tif")  # never written → failed statistics
+    p3 = _write(str(tmp_path / "s3.tif"), 30.0)
+
+    series = [
+        {"timestamp": "2026-01-01T00:00:00Z", "path": p1},
+        {"timestamp": "2026-02-01T00:00:00Z", "path": p2},
+        {"timestamp": "2026-03-01T00:00:00Z", "path": p3},
+    ]
+    engine = TemporalRasterEngine()
+    stats = engine.temporal_raster_statistics(series)
+    assert stats["series_statistics"][1]["statistics"] == {}  # the failed slice
+
+    res = engine.raster_trend_over_aoi(series, stats_info=stats)
+
+    # Trend computed over the 2 valid slices only (means 10 → 30, slope 20).
+    assert res["means"] == [10.0, 30.0]
+    assert res["slope"] == 20.0
+    assert res["direction"] == "increasing"
+    # The skip is listed explicitly.
+    assert len(res["skipped_slices"]) == 1
+    assert res["skipped_slices"][0]["index"] == 1
+    assert res["skipped_slices"][0]["path"] == p2
+
+
+def test_raster_trend_over_aoi_all_slices_missing():
+    """Adversarial: every slice failed → empty series, no fabricated zeros."""
+    series = [
+        {"timestamp": "2026-01-01T00:00:00Z", "path": "/nonexistent/a.tif"},
+        {"timestamp": "2026-02-01T00:00:00Z", "path": "/nonexistent/b.tif"},
+    ]
+    engine = TemporalRasterEngine()
+    res = engine.raster_trend_over_aoi(series)
+
+    assert res["means"] == []
+    assert res["slope"] == 0.0
+    assert len(res["skipped_slices"]) == 2
+
+
+def test_raster_trend_over_aoi_all_valid_no_skips(tmp_path):
+    """No missing slices → no skipped_slices key noise, identical means."""
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+
+    series = []
+    for i, value in enumerate((10.0, 12.0, 14.0)):
+        path = str(tmp_path / f"v{i}.tif")
+        with rasterio.open(
+            path, "w", driver="GTiff", height=4, width=4, count=1, dtype="float64",
+            crs="EPSG:4326", transform=from_origin(0.0, 4.0, 1.0, 1.0),
+        ) as dst:
+            dst.write(np.full((4, 4), value), 1)
+        series.append({"timestamp": f"2026-0{i+1}-01T00:00:00Z", "path": path})
+
+    engine = TemporalRasterEngine()
+    res = engine.raster_trend_over_aoi(series)
+
+    assert res["means"] == [10.0, 12.0, 14.0]
+    assert "skipped_slices" not in res
 
 
 # ---------------------------------------------------------------------------
