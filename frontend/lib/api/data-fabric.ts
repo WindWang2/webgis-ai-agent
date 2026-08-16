@@ -13,6 +13,7 @@
 
 import { apiFetch } from './transport';
 import { fastGet, invalidateCache } from './get-fast-path';
+import type { GeoJSONFeatureCollection } from '../types';
 
 const DF_CREDENTIALS: RequestCredentials = 'include';
 const DF_LABEL = 'DataFabric API error';
@@ -286,5 +287,27 @@ export const dataFabricApi = {
       timeoutMs: 60_000,
       label: DF_LABEL,
     });
+  },
+
+  /**
+   * Fetch-on-demand for a materialized ref (#463): hydrate a `df-*` layer with
+   * the FeatureCollection stored in the session store under `refId`. Same
+   * endpoint/ownership model as the workspace-session layer-restore path
+   * (`use-workspace-session.ts`): session-scoped, owner-token protected.
+   */
+  async fetchRefGeoJSON(
+    refId: string,
+    sessionId: string,
+    opts?: { ownerToken?: string | null; signal?: AbortSignal }
+  ): Promise<GeoJSONFeatureCollection> {
+    return apiFetch<GeoJSONFeatureCollection>(
+      `/api/v1/layers/data/${encodeURIComponent(refId)}?session_id=${encodeURIComponent(sessionId)}`,
+      {
+        credentials: DF_CREDENTIALS,
+        ownerToken: opts?.ownerToken,
+        signal: opts?.signal,
+        label: DF_LABEL,
+      }
+    );
   },
 };

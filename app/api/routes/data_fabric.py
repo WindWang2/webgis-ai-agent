@@ -1,6 +1,7 @@
 """
 Enterprise Geospatial Data Fabric REST Routes
 """
+import asyncio
 import logging
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Header
@@ -170,6 +171,12 @@ async def create_data_source(
     GLOBAL source (org_id NULL, owner_id NULL) that then appeared in every
     anonymous user's list and was probe/sync-able by anyone. State-changing +
     outbound-request-triggering endpoints must not be unauthenticated.
+
+    Event-loop safety (#425, sibling of #386): the manager call drives a sync
+    remote probe AND an automatic full catalog sync (requests with 5-15s
+    timeouts). It runs in a worker thread via asyncio.to_thread — the injected
+    request-scoped Session is used only from that thread while awaited, the
+    same execution model FastAPI uses for plain ``def`` handlers.
     """
     try:
         # SSRF is always enforced at registration (ADR-0050 §5 P0). A previous
@@ -181,7 +188,8 @@ async def create_data_source(
         # unauthenticated requests — never persist it as an owner_id (no users
         # row with that id → FK violation on Postgres).
         user_id = _real_user_id(user)
-        source = data_fabric_manager.create_data_source(
+        source = await asyncio.to_thread(
+            data_fabric_manager.create_data_source,
             db=db,
             name=req.name,
             source_type=req.source_type,
@@ -295,6 +303,9 @@ async def probe_data_source(
     Requires authentication: probe triggers a server-side outbound HTTP request
     to the source endpoint — anonymous callers must not be able to initiate
     arbitrary outbound requests.
+
+    Event-loop safety (#425): the sync adapter probe (requests, 5s timeout)
+    runs in a worker thread; only the cheap DB read/commit stay on the loop.
     """
     s = db.query(DataSourceModel).filter(DataSourceModel.id == source_id).first()
     _require_tenant_owned(s, user)
@@ -308,7 +319,7 @@ async def probe_data_source(
         allow_private=s.connection_profile.get("allow_private", False),
     )
 
-    health_res = data_fabric_manager.probe_profile(profile)
+    health_res = await asyncio.to_thread(data_fabric_manager.probe_profile, profile)
     s.status = health_res.status
     db.commit()
 
@@ -325,11 +336,18 @@ async def sync_data_source_catalog(
 
     Requires authentication: sync triggers outbound requests against the source
     endpoint; anonymous callers must not initiate them.
+
+    Event-loop safety (#425): a full catalog sync blocks for its entire
+    duration (list_datasets at a 10s timeout plus a bounded describe pool
+    whose shutdown waits on the calling thread — minutes at thousands of
+    datasets). The whole manager call runs in a worker thread; the
+    request-scoped Session is used only from that thread while awaited (same
+    model FastAPI uses for plain ``def`` handlers).
     """
     s = db.query(DataSourceModel).filter(DataSourceModel.id == source_id).first()
     _require_tenant_owned(s, user)
     try:
-        items = data_fabric_manager.sync_catalog(db, source_id)
+        items = await asyncio.to_thread(data_fabric_manager.sync_catalog, db, source_id)
         return {
             "success": True,
             "synced_count": len(items),
@@ -480,11 +498,15 @@ async def preview_catalog_item(
 
     Requires authentication: preview triggers a server-side remote fetch against
     the source endpoint, so anonymous callers must not be able to initiate it.
+
+    Event-loop safety (#425): uses query_catalog_item_async so the blocking
+    adapter fetch runs off the loop (same pattern as materialize). Oversized
+    remote results surface as an actionable 413, not an unbounded payload.
     """
     try:
         _authorize_catalog_item(db, item_id, user)
         q_spec = QuerySpec(limit=limit)
-        q_res = data_fabric_manager.query_catalog_item(db, item_id, q_spec)
+        q_res = await data_fabric_manager.query_catalog_item_async(db, item_id, q_spec)
         return {
             "dataset_id": item_id,
             "features": q_res.features,
@@ -494,6 +516,9 @@ async def preview_catalog_item(
         }
     except HTTPException:
         raise
+    except ResultTooLargeError as e:
+        # Oversized remote result — actionable 413 with the shrink hint.
+        return JSONResponse(status_code=413, content={"success": False, **e.to_dict()})
     except Exception as e:
         logger.error(f"Catalog item preview failed for '{item_id}': {e}", exc_info=True)
         raise HTTPException(status_code=400, detail=str(e))
@@ -510,13 +535,20 @@ async def query_catalog_item(
 
     Requires authentication: query runs a remote fetch against the source
     endpoint, so anonymous callers must not be able to initiate it.
+
+    Event-loop safety (#425): uses query_catalog_item_async so the blocking
+    adapter fetch runs off the loop (same pattern as materialize). Oversized
+    remote results surface as an actionable 413, not an unbounded payload.
     """
     try:
         _authorize_catalog_item(db, item_id, user)
-        q_res = data_fabric_manager.query_catalog_item(db, item_id, query_spec)
+        q_res = await data_fabric_manager.query_catalog_item_async(db, item_id, query_spec)
         return q_res.model_dump()
     except HTTPException:
         raise
+    except ResultTooLargeError as e:
+        # Oversized remote result — actionable 413 with the shrink hint.
+        return JSONResponse(status_code=413, content={"success": False, **e.to_dict()})
     except Exception as e:
         logger.error(f"Catalog item query failed for '{item_id}': {e}", exc_info=True)
         raise HTTPException(status_code=400, detail=str(e))

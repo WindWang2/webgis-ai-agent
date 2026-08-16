@@ -5,10 +5,10 @@ spatial/temporal pushdown filtering, and lazy streaming.
 """
 import time
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from urllib.parse import urljoin
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
-from app.services.data_fabric.errors import classify_http_status
+from app.services.data_fabric.errors import SOURCE_UNREACHABLE, classify_http_status
 from app.services.data_fabric.security import DataFabricSecurity, make_safe_session
 from app.schemas.data_fabric_schema import (
     DatasetDescriptor,
@@ -160,7 +160,16 @@ class STACAdapter(GeospatialDataSourceAdapter):
         ]
 
     def list_datasets(self) -> List[Dict[str, Any]]:
-        """List available STAC collections."""
+        """List available STAC collections.
+
+        Truthfulness contract (#430): when a real endpoint is configured, any
+        discovery failure — unreachable, non-200, unparseable body, or a root
+        catalog without child links — returns an EMPTY list (mirroring the
+        ogc/wfs/arcgis adapters and this adapter's own query() path). The
+        synthetic fixtures are served ONLY on the explicit no-endpoint demo
+        path, and every entry is labeled ``source="synthetic-demo"`` so no
+        caller can mistake demo data for the remote's real datasets.
+        """
         if not self.endpoint:
             return self._list_synthetic_collections()
 
@@ -201,12 +210,19 @@ class STACAdapter(GeospatialDataSourceAdapter):
                         for cid in child_ids
                     ]
 
-            return self._list_synthetic_collections()
+            # Real endpoint configured but discovery yielded nothing
+            # truthful — empty list, NO synthetic fallback (#430).
+            logger.warning(
+                f"STAC list_datasets for '{self.endpoint}' returned no collections; "
+                f"registering an empty catalog"
+            )
+            return []
         except Exception as e:
-            logger.warning(f"STAC list_datasets fallback due to error: {e}")
-            return self._list_synthetic_collections()
+            logger.warning(f"STAC list_datasets failed for '{self.endpoint}': {e}")
+            return []
 
     def _list_synthetic_collections(self) -> List[Dict[str, Any]]:
+        """Explicit no-endpoint DEMO mode — labeled as such on every entry."""
         return [
             {
                 "id": coll_id,
@@ -214,13 +230,23 @@ class STACAdapter(GeospatialDataSourceAdapter):
                 "description": fixture["description"],
                 "license": fixture["license"],
                 "source_type": "stac",
+                # Explicit label so callers never mistake demo data for
+                # remote data (same contract as query()'s demo path).
+                "source": "synthetic-demo",
             }
             for coll_id, fixture in SYNTHETIC_STAC_FIXTURES.items()
         ]
 
     def describe(self, dataset_id: str) -> DatasetDescriptor:
-        """Fetch STAC collection descriptor metadata."""
-        if not self.endpoint or dataset_id in SYNTHETIC_STAC_FIXTURES:
+        """Fetch STAC collection descriptor metadata.
+
+        Truthfulness contract (#430): the synthetic fixtures are used ONLY in
+        explicit no-endpoint demo mode (and then labeled in metadata). With a
+        real endpoint configured, a failed descriptor fetch returns an honest
+        stub carrying a typed error and NO fabricated feature count — never
+        fixture metadata presented as the remote's data.
+        """
+        if not self.endpoint:
             fixture = SYNTHETIC_STAC_FIXTURES.get(dataset_id, SYNTHETIC_STAC_FIXTURES["landsat-8-c2-l2"])
             spatial_bbox = fixture["extent"]["spatial"]["bbox"][0]
             return DatasetDescriptor(
@@ -237,9 +263,13 @@ class STACAdapter(GeospatialDataSourceAdapter):
                     "extent": fixture["extent"],
                     "license": fixture["license"],
                     "item_count": fixture.get("item_count"),
+                    # Explicit label: this is demo data, not remote data.
+                    "source": "synthetic-demo",
                 },
             )
 
+        error_type: Optional[str] = None
+        error_message: Optional[str] = None
         try:
             safe_url = DataFabricSecurity.validate_url(self.endpoint, allow_private=self.allow_private)
             import requests
@@ -251,6 +281,11 @@ class STACAdapter(GeospatialDataSourceAdapter):
                 bbox = c.get("extent", {}).get("spatial", {}).get("bbox", [[-180.0, -90.0, 180.0, 90.0]])[0]
                 summaries = c.get("summaries", {})
                 fields = [{"name": k, "type": "property"} for k in summaries.keys()]
+                # Feature count: only what the source actually reports
+                # (`item_count`, used by several STAC implementations).
+                # Never fabricate a count the endpoint did not provide.
+                raw_count = c.get("item_count")
+                feature_count = int(raw_count) if isinstance(raw_count, (int, float)) else None
                 return DatasetDescriptor(
                     id=dataset_id,
                     title=c.get("title", dataset_id),
@@ -259,26 +294,29 @@ class STACAdapter(GeospatialDataSourceAdapter):
                     geometry_type="Polygon",
                     srs="EPSG:4326",
                     bbox=bbox,
-                    feature_count=10000,
+                    feature_count=feature_count,
                     fields=fields,
                     metadata={"extent": c.get("extent"), "license": c.get("license")},
                 )
+            error_type = classify_http_status(resp.status_code)
+            error_message = f"STAC collection fetch returned HTTP {resp.status_code}"
+            logger.warning(f"STAC describe for '{dataset_id}' failed: {error_message}")
         except Exception as e:
+            error_type = SOURCE_UNREACHABLE
+            error_message = f"STAC collection fetch failed: {e}"
             logger.warning(f"STAC describe error for '{dataset_id}': {e}")
 
-        # Fallback
-        fixture = SYNTHETIC_STAC_FIXTURES.get("landsat-8-c2-l2")
+        # Honest failure stub: no fixture fallback, no fabricated counts
+        # (#430). The typed error lets callers distinguish an unreachable
+        # source from an empty one.
         return DatasetDescriptor(
             id=dataset_id,
-            title=f"STAC Collection {dataset_id}",
-            description="STAC collection descriptor",
+            title=dataset_id,
+            description=f"STAC Collection {dataset_id} (descriptor unavailable)",
             source_type="stac",
-            geometry_type="Polygon",
-            srs="EPSG:4326",
-            bbox=fixture["extent"]["spatial"]["bbox"][0],
-            feature_count=100,
+            feature_count=None,
             fields=[],
-            metadata={},
+            metadata={"error_type": error_type, "error": error_message},
         )
 
     def preview(self, dataset_id: str, limit: int = 10) -> Dict[str, Any]:

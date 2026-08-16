@@ -28,6 +28,14 @@ MAX_QUERY_LIMIT = 10000
 # silently degrading to a no-op filter or splicing raw SQL.
 _SAFE_WHERE_OPS = ("LIKE", ">=", "<=", "!=", ">", "<", "=")
 _SAFE_WHERE_COLUMN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# #431: tokenize `identifier op value` from the left. The column prefix regex
+# (start-anchored, no $) grabs the identifier token, then the operator regex
+# (longest-first alternation so ">=" wins over ">") must immediately follow it.
+# Anchoring here — instead of scanning the whole expression with str.find — is
+# what keeps operator characters inside quoted VALUES (`name = 'a>b'`) from
+# capturing the operator scan.
+_SAFE_WHERE_COLUMN_PREFIX = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_SAFE_WHERE_OP_ANCHORED = re.compile(r"\s*(>=|<=|!=|>|<|=|LIKE)")
 
 
 def _parse_safe_where(expr: str) -> Tuple[str, List[Any]]:
@@ -42,29 +50,29 @@ def _parse_safe_where(expr: str) -> Tuple[str, List[Any]]:
         raise ValueError("Empty where expression")
 
     stripped = expr.strip()
-    # Find the operator by scanning left-to-right for the FIRST token that is
-    # an allowlisted operator. This avoids regex ambiguity with value content.
-    op_found = None
-    op_pos = None
-    for op in sorted(_SAFE_WHERE_OPS, key=len, reverse=True):
-        idx = stripped.find(op)
-        if idx > 0:
-            op_found = op
-            op_pos = idx
-            break
-    if op_found is None or op_pos is None:
+    # Tokenize from the LEFT: leading identifier, then the operator that must
+    # immediately follow it, then everything else is the value. The operator
+    # position is therefore determined by the COLUMN region only — a value
+    # containing `<`, `>`, `>=`, `<=` (e.g. `name = 'a>b'`) can no longer
+    # anchor the operator inside the quoted value and false-reject the filter
+    # (#431). Values are bound parameters, so this is purely a parse fix.
+    col_match = _SAFE_WHERE_COLUMN_PREFIX.match(stripped)
+    if col_match is None:
+        first_token = stripped.split()[0] if stripped.split() else stripped
+        raise ValueError(
+            f"Unsafe column name '{first_token}' in where expression: only [A-Za-z0-9_]+ allowed"
+        )
+    column = col_match.group(0)
+
+    op_match = _SAFE_WHERE_OP_ANCHORED.match(stripped[col_match.end():])
+    if op_match is None:
         raise ValueError(
             f"Unsupported where expression '{expr}': expected '<column> <op> <value>' "
             f"with op in {_SAFE_WHERE_OPS}"
         )
+    op_found = op_match.group(1)
+    value_raw = stripped[col_match.end() + op_match.end():].strip()
 
-    column = stripped[:op_pos].strip()
-    value_raw = stripped[op_pos + len(op_found):].strip()
-
-    if not _SAFE_WHERE_COLUMN.match(column):
-        raise ValueError(
-            f"Unsafe column name '{column}' in where expression: only [A-Za-z0-9_]+ allowed"
-        )
     if not value_raw:
         raise ValueError(f"Missing value in where expression '{expr}'")
 

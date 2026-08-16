@@ -354,7 +354,10 @@ export function ContextPanel({
         {activeTab === 'project' && <ProjectTab />}
         {activeTab === 'layers' && <PanelErrorBoundary label="图层"><LayersTab /></PanelErrorBoundary>}
         {activeTab === 'analysis' && <AnalysisTab onSend={onSend} />}
-        {activeTab === 'data_sources' && <DataSourcesTab />}
+        {/* #463: sessionId/ownerToken are threaded into the Data Sources tab so
+            实例化至图层 materializes into the REAL conversation session instead of
+            the phantom 'default_session' (and the layer's ref is fetchable). */}
+        {activeTab === 'data_sources' && <DataSourcesTab sessionId={sessionId} ownerToken={ownerToken} />}
         {(activeTab === 'export_layout' || activeTab === 'exports') && <MapStudioTab />}
         {activeTab === 'tasks' && (
           <PanelErrorBoundary label="任务">
