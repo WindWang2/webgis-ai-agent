@@ -216,7 +216,8 @@ async def create_data_source(
         }
     except Exception as e:
         logger.error(f"Failed to create data source: {e}", exc_info=True)
-        raise HTTPException(status_code=400, detail=str(e))
+        # 不回显原始异常（可能含连接串/内网地址）；全文仅在服务端日志。
+        raise HTTPException(status_code=400, detail="数据源创建失败")
 
 
 @router.get("/data-fabric/sources", tags=["Data Fabric / 数据织网"])
@@ -355,7 +356,8 @@ async def sync_data_source_catalog(
         }
     except Exception as e:
         logger.error(f"Catalog sync failed for source '{source_id}': {e}", exc_info=True)
-        raise HTTPException(status_code=400, detail=str(e))
+        # 不回显原始异常；全文仅在服务端日志。
+        raise HTTPException(status_code=400, detail="数据源目录同步失败")
 
 
 @router.get("/data-fabric/catalog", tags=["Data Fabric / 数据织网"])
@@ -521,7 +523,8 @@ async def preview_catalog_item(
         return JSONResponse(status_code=413, content={"success": False, **e.to_dict()})
     except Exception as e:
         logger.error(f"Catalog item preview failed for '{item_id}': {e}", exc_info=True)
-        raise HTTPException(status_code=400, detail=str(e))
+        # 不回显原始异常；全文仅在服务端日志。
+        raise HTTPException(status_code=400, detail="目录项预览失败")
 
 
 @router.post("/data-fabric/catalog/{item_id}/query", tags=["Data Fabric / 数据织网"])
@@ -551,7 +554,8 @@ async def query_catalog_item(
         return JSONResponse(status_code=413, content={"success": False, **e.to_dict()})
     except Exception as e:
         logger.error(f"Catalog item query failed for '{item_id}': {e}", exc_info=True)
-        raise HTTPException(status_code=400, detail=str(e))
+        # 不回显原始异常；全文仅在服务端日志。
+        raise HTTPException(status_code=400, detail="目录项查询失败")
 
 
 @router.post("/data-fabric/materialize", tags=["Data Fabric / 数据织网"])
@@ -589,4 +593,5 @@ async def materialize_catalog_item(
         return JSONResponse(status_code=413, content={"success": False, **e.to_dict()})
     except Exception as e:
         logger.error(f"Materialization failed for catalog item '{req.catalog_item_id}': {e}", exc_info=True)
-        raise HTTPException(status_code=400, detail=str(e))
+        # 不回显原始异常（可能含连接串/内网地址）；全文仅在服务端日志。
+        raise HTTPException(status_code=400, detail="目录项实例化失败")
