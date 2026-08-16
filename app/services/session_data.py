@@ -326,6 +326,22 @@ class MemorySessionStore(BaseSessionStore):
         from app.services.mvt import spatial_index_cache, tile_lru_cache
         spatial_index_cache.invalidate_session(session_id)
         tile_lru_cache.invalidate_session(session_id)
+        # #470：会话没了，盘上状态（mapspec revisions/checkpoints/raster PNGs）
+        # 一并回收。失败容忍（purge 内部记日志不抛）—— 磁盘清理失败不得阻断
+        # 上面的内存清理或调用方（idle 淘汰 / DELETE 会话）的语义。
+        try:
+            from app.services.mapspec.store import purge_session_disk_state
+            await purge_session_disk_state(session_id)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Session {session_id}: disk state purge failed: {e}")
+
+    def is_session_active(self, session_id: str) -> bool:
+        """会话是否仍在本 store 中持有状态（供磁盘清扫判断存活性）。"""
+        return (
+            session_id in self._store
+            or session_id in self._map_state
+            or session_id in self._session_order
+        )
 
     async def cleanup_idle_sessions(self, max_sessions: int = 100) -> None:
         """Evict least-recently-touched sessions when total exceeds max_sessions."""

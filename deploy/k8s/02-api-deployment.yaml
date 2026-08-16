@@ -55,6 +55,38 @@ spec:
           matchLabels:
             app: webgis-ai-agent
             component: api
+      # #476：k8s 的 `command:` 覆盖镜像 ENTRYPOINT —— 镜像的
+      # docker-entrypoint.sh（启动前 alembic upgrade head）在 k8s 不生效，
+      # 必须显式用 initContainer 执行迁移。Pod Ready 之前 schema 已就绪，
+      # 滚动更新期间新副本不会带着旧 schema 接流量。
+      initContainers:
+      - name: db-migration
+        image: webgis-prod:v0.1.2
+        imagePullPolicy: Always
+        command: ["alembic", "upgrade", "head"]
+        # 与应用容器同一 config/secret 来源（DATABASE_URL 在其中）。
+        envFrom:
+        - configMapRef:
+            name: webgis-config
+        - secretRef:
+            name: webgis-secret
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+              - ALL
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "1"
+            memory: "1Gi"
+        volumeMounts:
+        # readOnlyRootFilesystem 下 psycopg/SQLAlchemy 需要可写 /tmp
+        - name: tmp
+          mountPath: /tmp
       containers:
       - name: webgis-api
         image: webgis-prod:v0.1.2

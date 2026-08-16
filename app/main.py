@@ -151,6 +151,12 @@ async def _periodic_session_cleanup(interval_seconds: int = 600) -> None:
     session_data_manager.cleanup_idle_sessions 已存在但从未被调用。
     此任务每 interval_seconds 秒跑一次；失败仅 warning 不抛（不能让后台任务
     崩了影响主服务）。
+
+    #470：cleanup_idle_sessions 之外还跑 sweep_expired_session_files ——
+    Redis 的 4h TTL 是服务端静默过期（键消失无回调，clear_session 不会触发），
+    没有这层兜底，TTL 过期会话的磁盘目录（mapspec revisions / checkpoints /
+    raster PNGs）永远无人回收。清扫带 liveness 检查：store 里仍有状态的
+    会话（TTL 被聊天活动续期）跳过。
     """
     import asyncio
     import logging
@@ -161,6 +167,13 @@ async def _periodic_session_cleanup(interval_seconds: int = 600) -> None:
         try:
             await asyncio.sleep(interval_seconds)
             await session_data_manager.cleanup_idle_sessions()
+            try:
+                from app.services.mapspec.store import sweep_expired_session_files
+                await sweep_expired_session_files(
+                    liveness=getattr(session_data_manager, "is_session_active", None)
+                )
+            except Exception as sweep_error:  # noqa: BLE001
+                logger.warning(f"[lifespan] session disk sweep failed: {sweep_error}")
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001

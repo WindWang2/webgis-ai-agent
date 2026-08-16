@@ -139,6 +139,10 @@ services:
       - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD}@redis:6379/1
       - LOG_LEVEL=INFO
       - PYTHONUNBUFFERED=1
+      # #476：镜像 entrypoint 现在会先跑 alembic upgrade head —— api 与
+      # celery-worker 同时 up 会并发 upgrade 竞争 alembic_version 表。
+      # 迁移的唯一所有者是 api 容器；worker 跳过。
+      - SKIP_DB_MIGRATIONS=true
     env_file:
       - .env.prod.example
     depends_on:

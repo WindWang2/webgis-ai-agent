@@ -941,6 +941,27 @@ class RedisSessionStore(BaseSessionStore):
         from app.services.mvt import spatial_index_cache, tile_lru_cache
         spatial_index_cache.invalidate_session(session_id)
         tile_lru_cache.invalidate_session(session_id)
+        # #470：与 Redis 键删除同语义 —— 会话没了，盘上 mapspec revisions/
+        # checkpoints/raster PNGs 一并回收（idle 淘汰 + 显式删除共用此路径）。
+        # 失败容忍：磁盘清理失败不得让 Redis 清理回滚或抛给调用方。
+        try:
+            from app.services.mapspec.store import purge_session_disk_state
+            await purge_session_disk_state(session_id)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Session %s: disk state purge failed: %s", session_id, e)
+
+    async def is_session_active(self, session_id: str) -> bool:
+        """会话是否仍在 active 集（供磁盘清扫判断存活性）。
+
+        Redis 不可达时返回 True（按"仍活跃"处理）—— 宁可漏回收也不误删
+        活会话的磁盘状态。
+        """
+        try:
+            await self._ensure_connected()
+            return bool(await self._r.sismember(self._active_key(), session_id))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("is_session_active(%s) failed (%s) — assuming active", session_id, e)
+            return True
 
     async def cleanup_idle_sessions(self, max_sessions: int = 100) -> None:
         await self._ensure_connected()

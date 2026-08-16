@@ -88,18 +88,34 @@ def _read_json_sync(path: Path) -> Optional[Any]:
 class MapSpecStore:
     """MapSpec JSON 文件持久化与 Revision 管理服务"""
 
-    def get_session_dir(self, session_id: str) -> Path:
+    def _session_dir_path(self, session_id: str) -> Path:
+        """会话目录路径（只算路径，不创建目录）。"""
         base = BASE_STORAGE_DIR.resolve()
         session_dir = (base / session_id).resolve()
         if session_dir.parent != base:
             raise ValueError("invalid session id for MapSpec storage")
+        return session_dir
+
+    def get_session_dir(self, session_id: str) -> Path:
+        session_dir = self._session_dir_path(session_id)
         session_dir.mkdir(parents=True, exist_ok=True)
         return session_dir
 
     async def clear_session_files(self, session_id: str) -> None:
-        """Purge durable MapSpec/checkpoint/revision state for one session."""
-        session_dir = self.get_session_dir(session_id)
-        await asyncio.to_thread(shutil.rmtree, session_dir)
+        """Purge durable MapSpec/checkpoint/revision state for one session.
+
+        #470：目录缺失时静默返回（幂等）—— 清除是"尽力回收"，不是前置条件；
+        也不得像旧实现那样先 mkdir 再 rmtree（读路径才需要 mkdir 语义）。
+        """
+        session_dir = self._session_dir_path(session_id)
+
+        def _rmtree() -> None:
+            try:
+                shutil.rmtree(session_dir)
+            except FileNotFoundError:
+                pass
+
+        await asyncio.to_thread(_rmtree)
 
     async def discard_mapspec(self, session_id: str) -> None:
         """Remove a first-mutation MapSpec that must not survive rollback.
@@ -187,3 +203,123 @@ class MapSpecStore:
 
 
 mapspec_store_instance = MapSpecStore()
+
+
+# ── #470：会话磁盘生命周期 ────────────────────────────────────────────────
+#
+# 会话磁盘状态（mapspec.json + revisions/ + checkpoints/ + raster/）此前
+# 唯一的清除入口是 clear_session_files，唯一调用方是 DELETE /sessions/{id}。
+# TTL 过期、idle 淘汰、周期清理都只删 Redis/内存 —— 磁盘无限累积。下面的
+# 两个函数是给 session 存储层（clear_session / cleanup_idle_sessions）和
+# 周期任务（main._periodic_session_cleanup）复用的失败容忍入口。
+
+
+async def purge_session_disk_state(session_id: str) -> None:
+    """尽力清除一个会话的磁盘状态：目录缺失 OK，失败记日志、绝不抛出。
+
+    供 session_data 的 clear_session（内存 + Redis 两个后端）在淘汰/删除
+    会话时联动调用 —— 与"Redis 键被删除"同语义：会话没了，盘上状态也回收。
+    """
+    try:
+        await mapspec_store_instance.clear_session_files(session_id)
+    except FileNotFoundError:
+        pass
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[mapspec] disk purge failed for session %s: %s", session_id, e)
+
+
+def _session_storage_entries(base: Path):
+    """BASE_STORAGE_DIR 的直接子目录（跳过非目录/隐藏/危险名字）。
+
+    安全边界：只处理名字形如常规会话 id（[A-Za-z0-9._-]+ 且非 . / .. 开头）
+    的目录。名字异常的条目不属于会话布局，不猜语义、不碰。
+    """
+    import re
+
+    valid = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    try:
+        entries = list(os.scandir(base))
+    except FileNotFoundError:
+        return []
+    for entry in entries:
+        if not entry.is_dir():
+            continue
+        name = entry.name
+        if name.startswith(".") or not valid.match(name):
+            continue
+        yield Path(entry.path)
+
+
+def _newest_mtime(session_dir: Path) -> float:
+    """目录树内（含目录自身）最新的 mtime —— "最近一次磁盘写入"的时间。"""
+    newest = session_dir.stat().st_mtime
+    for root, _dirs, files in os.walk(session_dir):
+        mtime = os.stat(root).st_mtime
+        if mtime > newest:
+            newest = mtime
+        for f in files:
+            try:
+                mtime = os.stat(os.path.join(root, f)).st_mtime
+            except OSError:
+                continue
+            if mtime > newest:
+                newest = mtime
+    return newest
+
+
+async def sweep_expired_session_files(
+    liveness=None,
+    max_age_seconds: Optional[int] = None,
+) -> list[str]:
+    """按 mtime 清扫过期会话目录（TTL 过期的磁盘兜底），返回被清除的会话 id。
+
+    背景：Redis 的 4h SESSION_TTL 是服务端静默过期 —— 键消失没有任何回调，
+    clear_session 永远不会被触发，磁盘目录成为孤儿。这里按"最近一次磁盘
+    写入"兜底回收：
+
+    - ``max_age_seconds`` 默认 SESSION_TTL + 1h slack（从 session_data_redis
+      读，库缺失时用等价字面量）—— 磁盘比 Redis 键还新的会话不会被动到；
+    - ``liveness``（可选，``is_session_active`` 协程或函数）：store 里仍有
+      状态的会话跳过 —— 会话可能只在聊天（续 Redis TTL）而多日无制图写盘，
+      仅凭 mtime 清它的盘会丢 mapspec。liveness 抛错按"仍活跃"处理（宁可不
+      回收也不误删）。
+    """
+    import inspect
+
+    if max_age_seconds is None:
+        try:
+            from app.services.session_data_redis import SESSION_TTL
+
+            ttl = SESSION_TTL
+        except Exception:  # noqa: BLE001 — redis 库缺失时用等价默认
+            ttl = 4 * 60 * 60
+        max_age_seconds = ttl + 3600
+
+    async def _is_live(sid: str) -> bool:
+        if liveness is None:
+            return False
+        try:
+            result = liveness(sid)
+            if inspect.isawaitable(result):
+                result = await result
+            return bool(result)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[mapspec] liveness check failed for %s (%s) — skipping sweep of it", sid, e)
+            return True
+
+    cutoff = time.time() - max_age_seconds
+    purged: list[str] = []
+    base = BASE_STORAGE_DIR.resolve()
+    for session_dir in _session_storage_entries(base):
+        try:
+            if _newest_mtime(session_dir) > cutoff:
+                continue
+            if await _is_live(session_dir.name):
+                continue
+            await purge_session_disk_state(session_dir.name)
+            purged.append(session_dir.name)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[mapspec] session sweep failed for %s: %s", session_dir, e)
+    if purged:
+        logger.info("[mapspec] swept %d expired session dir(s): %s", len(purged), purged)
+    return purged
