@@ -25,6 +25,7 @@ import {
 import { raiseAnnotationLayers } from "@/lib/map-commands/annotationHelpers"
 import { notifyUserGestureStart, notifyUserGestureEnd } from "@/lib/map-commands/camera-arbitration"
 import { devOnly } from "@/lib/utils/logger"
+import { buildTileTransformRequest } from "@/lib/map-kit/tile-auth"
 
 interface MapPanelProps {
   layers: Layer[]
@@ -108,6 +109,15 @@ export function MapPanel({
   const currentMapStyle = useMemo(
     () => getMapStyle(MAP_STYLES[selectedBaseLayer], selectedBaseLayer),
     [selectedBaseLayer]
+  )
+
+  // #514: MapLibre tile/image fetches are browser-native and cannot carry
+  // headers on their own — inject the same credentials apiFetch sends
+  // (Bearer for logged-in, X-Session-Token for anonymous owner_token).
+  const transformRequest = useCallback(
+    (url: string, resourceType?: string) =>
+      buildTileTransformRequest(ownerToken ?? null)(url, resourceType),
+    [ownerToken],
   )
 
   const handleFilterChange = useCallback((layerId: string, ranges: number[][]) => {
@@ -805,6 +815,7 @@ export function MapPanel({
         style={{ position: "absolute", inset: 0 }}
         mapStyle={currentMapStyle}
         attributionControl={false}
+        transformRequest={transformRequest}
         {...({ preserveDrawingBuffer: true } as any)}
       >
         <MapActionHandler />

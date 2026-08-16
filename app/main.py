@@ -299,7 +299,11 @@ app.add_middleware(
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "Accept"],
+    # X-Session-Token: the anonymous session owner_token credential
+    # (SEC-08). apiFetch sends it today, and MapLibre tile requests
+    # (transformRequest, #514) attach it too — the header must be
+    # preflight-legal for cross-origin dev setups.
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Session-Token"],
     expose_headers=["X-Request-ID"],
 )
 
