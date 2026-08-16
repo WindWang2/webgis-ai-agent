@@ -106,13 +106,14 @@ export function TemplateGalleryV2({ open, onClose, onApply }: TemplateGalleryV2P
         offset: page * PAGE_SIZE,
         signal: controller.signal,
       })
-      .then((data) => {
+      .then((result) => {
         if (controller.signal.aborted) return;
-        setTemplates(data as unknown as TemplateSummary[]);
-        // The backend Page envelope includes total; apiFetch unwraps to the
-        // bare list, so we use the page length as a fallback upper bound
-        // for "more pages exist" and the user-visible "page X / Y".
-        setTotal(data.length === PAGE_SIZE ? (page + 1) * PAGE_SIZE + 1 : page * PAGE_SIZE + data.length);
+        // Issue #464: the backend returns the Page envelope {items, total,
+        // ...} — consume items/total from it. (The old code treated the
+        // envelope as a bare array: templates.map threw on every success and
+        // the whole-app ErrorBoundary surfaced a System Error page.)
+        setTemplates(result.items);
+        setTotal(result.total);
       })
       .catch((err: unknown) => {
         if (controller.signal.aborted) return;
