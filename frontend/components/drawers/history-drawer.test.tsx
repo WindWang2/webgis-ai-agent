@@ -167,6 +167,65 @@ describe('HistoryDrawer keyboard focus trap', () => {
   });
 });
 
+describe('HistoryDrawer session delete (#553)', () => {
+  it('deletes a session through the two-step ConfirmAction (arm → confirm)', async () => {
+    const user = userEvent.setup();
+    const onDeleteSession = vi.fn();
+    render(
+      <HistoryDrawer
+        open
+        onClose={vi.fn()}
+        onSelect={vi.fn()}
+        onDeleteSession={onDeleteSession}
+      />,
+    );
+
+    await screen.findByRole('dialog');
+    const deleteBtn = screen.getByRole('button', { name: '删除会话 会话一' });
+
+    // 第一击：进入确认态（不会立即删除）
+    await user.click(deleteBtn);
+    expect(screen.getByText('确认删除？')).toBeInTheDocument();
+    expect(onDeleteSession).not.toHaveBeenCalled();
+
+    // ConfirmAction 的 MIN_ARM_MS=250 防双击：等过窗口后第二击才执行
+    await new Promise((r) => setTimeout(r, 300));
+    await user.click(deleteBtn);
+
+    expect(onDeleteSession).toHaveBeenCalledTimes(1);
+    expect(onDeleteSession).toHaveBeenCalledWith(SESSIONS[0]);
+  });
+
+  it('does not delete when the second click lands inside the anti-double-click window', async () => {
+    const user = userEvent.setup();
+    const onDeleteSession = vi.fn();
+    render(
+      <HistoryDrawer
+        open
+        onClose={vi.fn()}
+        onSelect={vi.fn()}
+        onDeleteSession={onDeleteSession}
+      />,
+    );
+
+    await screen.findByRole('dialog');
+    const deleteBtn = screen.getByRole('button', { name: '删除会话 会话一' });
+    await user.click(deleteBtn);
+    // 立即（<250ms）再点一下 —— 被 MIN_ARM_MS 拦下
+    await user.click(deleteBtn);
+    expect(onDeleteSession).not.toHaveBeenCalled();
+  });
+
+  it('does not render delete controls when onDeleteSession is absent (backward compat)', async () => {
+    render(
+      <HistoryDrawer open onClose={vi.fn()} onSelect={vi.fn()} />,
+    );
+
+    await screen.findByRole('dialog');
+    expect(screen.queryByRole('button', { name: '删除会话 会话一' })).toBeNull();
+  });
+});
+
 // 工具：获取容器内 tab 顺序的可聚焦元素（与浏览器 Tab 行为一致）。
 // 注意：jsdom 不计算布局，getClientRects() 恒为空，故不能用可见性过滤 —— 这里只按
 // 选择器与 DOM 顺序返回，符合浏览器对可见元素的默认 Tab 顺序。

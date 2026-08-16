@@ -4,15 +4,18 @@ import { useState, useMemo, useRef } from 'react';
 import { History, X, Plus, Search } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
+import { ConfirmAction } from '@/components/shared/confirm-action';
 import type { SessionSummary } from '@/lib/store/hud-types';
 
 interface HistoryDrawerProps {
   open: boolean;
   onClose: () => void;
   onSelect: (session: SessionSummary | null) => void;
+  /** #553: 删除会话（服务端 DELETE /sessions/{id}，owner-token 由调用方提供）。 */
+  onDeleteSession?: (session: SessionSummary) => void;
 }
 
-export function HistoryDrawer({ open, onClose, onSelect }: HistoryDrawerProps) {
+export function HistoryDrawer({ open, onClose, onSelect, onDeleteSession }: HistoryDrawerProps) {
   const sessions = useHudStore((s) => s.sessions);
   const [search, setSearch] = useState('');
 
@@ -129,45 +132,61 @@ export function HistoryDrawer({ open, onClose, onSelect }: HistoryDrawerProps) {
           ) : (
             <div className="px-2 py-1.5 space-y-0.5">
               {filtered.map((session) => (
-                <button
+                <div
                   key={session.id}
-                  onClick={() => handleSelect(session)}
-                  className="w-full text-left px-3 py-2.5 rounded-md hover:bg-surface-hover transition-colors group"
                   role="listitem"
+                  className="group flex items-center gap-1 rounded-md py-1 pl-1 pr-1.5 transition-colors hover:bg-surface-hover"
                 >
-                  {/* Title */}
-                  <p className="text-meta font-medium text-ink-secondary truncate group-hover:text-ink">
-                    {session.title || '未命名会话'}
-                  </p>
+                  <button
+                    onClick={() => handleSelect(session)}
+                    className="min-w-0 flex-1 rounded-md px-2 py-2 text-left transition-colors hover:bg-surface-sunken"
+                  >
+                    {/* Title */}
+                    <p className="text-meta font-medium text-ink-secondary truncate group-hover:text-ink">
+                      {session.title || '未命名会话'}
+                    </p>
 
-                  {/* Meta */}
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <span className="text-micro text-ink-muted">{session.time}</span>
-                    {session.msgs > 0 && (
-                      <span className="text-micro text-ink-muted">
-                        {session.msgs} 条消息
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Tags */}
-                  {session.tags && session.tags.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-1.5">
-                      {session.tags.map((tag: string) => (
-                        <span
-                          key={tag}
-                          className="inline-flex px-1.5 py-0.5 rounded-pill text-body font-medium"
-                          style={{
-                            backgroundColor: 'color-mix(in srgb, var(--agent-accent) 7%, transparent)',
-                            color: 'var(--agent-accent)',
-                          }}
-                        >
-                          {tag}
+                    {/* Meta */}
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-micro text-ink-muted">{session.time}</span>
+                      {session.msgs > 0 && (
+                        <span className="text-micro text-ink-muted">
+                          {session.msgs} 条消息
                         </span>
-                      ))}
+                      )}
                     </div>
+
+                    {/* Tags */}
+                    {session.tags && session.tags.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {session.tags.map((tag: string) => (
+                          <span
+                            key={tag}
+                            className="inline-flex px-1.5 py-0.5 rounded-pill text-body font-medium"
+                            style={{
+                              backgroundColor: 'color-mix(in srgb, var(--agent-accent) 7%, transparent)',
+                              color: 'var(--agent-accent)',
+                            }}
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </button>
+
+                  {/* #553: per-row delete — two-step ConfirmAction (全站删除惯例)。
+                      仅在有回调时渲染，避免破坏既有 drawer 的 tab 顺序测试。 */}
+                  {onDeleteSession && (
+                    <ConfirmAction
+                      label="删除"
+                      confirmLabel="确认删除？"
+                      onConfirm={() => onDeleteSession(session)}
+                      aria-label={`删除会话 ${session.title || session.id}`}
+                      className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                    />
                   )}
-                </button>
+                </div>
               ))}
             </div>
           )}
