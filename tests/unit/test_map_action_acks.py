@@ -288,9 +288,11 @@ async def client(app):
 
 
 def _pass_ownership():
-    """让 require_owned_session 通过（跨租户 e2e 由 test_cross_tenant_isolation 覆盖）。"""
+    """让 require_owned_session 通过（跨租户 e2e 由 test_cross_tenant_isolation 覆盖）。
+
+    #525: the ownership guard now uses the metadata-only get_session_meta."""
     return patch.object(
-        _chat_mod.AsyncHistoryService, "get_session", AsyncMock(return_value=MagicMock())
+        _chat_mod.AsyncHistoryService, "get_session_meta", AsyncMock(return_value=MagicMock())
     )
 
 
@@ -372,10 +374,10 @@ async def test_ack_endpoint_session_isolation(client):
 
 @pytest.mark.asyncio
 async def test_ack_endpoint_rejects_foreign_session(client):
-    """所有权校验：get_session 返回 None（不存在或非本人/owner_token 不匹配）-> 404。"""
+    """所有权校验：get_session_meta 返回 None（不存在或非本人/owner_token 不匹配）-> 404。"""
     store = MemorySessionStore()
     with patch("app.services.session_data.session_data_manager", new=store), patch.object(
-        _chat_mod.AsyncHistoryService, "get_session", AsyncMock(return_value=None)
+        _chat_mod.AsyncHistoryService, "get_session_meta", AsyncMock(return_value=None)
     ):
         resp = await client.post(_url("sess-foreign"), json={"acks": [_ack("ma-1")]})
     assert resp.status_code == 404
@@ -389,12 +391,12 @@ async def test_ack_endpoint_owner_token_mismatch_rejected(client):
     store = MemorySessionStore()
     conv = MagicMock()
 
-    async def _get_session(self_or_db, session_id, *, user_id=None, owner_token=None):
+    async def _get_session_meta(self_or_db, session_id, *, user_id=None, owner_token=None):
         # 模拟 AsyncHistoryService：仅携带匹配的 owner_token 才视为已授权
         return conv if owner_token == "correct-token" else None
 
     with patch("app.services.session_data.session_data_manager", new=store), patch.object(
-        _chat_mod.AsyncHistoryService, "get_session", _get_session
+        _chat_mod.AsyncHistoryService, "get_session_meta", _get_session_meta
     ):
         wrong = await client.post(
             _url("sess-owner"),
