@@ -115,8 +115,12 @@ services:
       - uploads:/app/uploads
     # 审计 P0：api healthcheck 使用 wget，但 Dockerfile.prod runner 不装 wget。
     # 改用 python3 urllib（已修复 Dockerfile.prod HEALTHCHECK，此处同步）。
+    # #474：compose 的 service healthcheck 会完全覆盖镜像 HEALTHCHECK —— 之前
+    # 这里只探 uvicorn:8000，与 #400 的双进程镜像 HEALTHCHECK 相比是退化：
+    # node frontend/.next/standalone/server.js 挂掉时容器仍"healthy"，nginx
+    # 对 / 502 而编排层（depends_on/CI 探针）毫无感知。与镜像保持一致的双探测。
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/live', timeout=5)\" || exit 1"]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request as u; u.urlopen('http://localhost:8000/api/v1/health/live', timeout=5); u.urlopen('http://localhost:3000/', timeout=5)\" || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

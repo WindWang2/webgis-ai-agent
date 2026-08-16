@@ -131,3 +131,54 @@ class TestComposeUploadsVolumeParity:
                 f"docker-compose.yml {svc}: volumes={volumes!r} 缺少 "
                 "`- uploads:/app/data` —— celery 必须与 api 共享 uploads 卷"
             )
+
+
+class TestComposeDualProcessHealthcheck:
+    """#474（#400 的 compose-override 兄弟项）：api 的 compose healthcheck
+    不得退化成 api-only 探测。
+
+    compose service healthcheck 会完全覆盖镜像 HEALTHCHECK。Dockerfile.prod
+    （#400）的双进程 HEALTHCHECK 同时探测 uvicorn:8000 与 node:3000 —— 若
+    compose 覆盖成只探 :8000，node 前端进程死亡时容器仍 "healthy"，nginx 对
+    / 502 而编排层与 CI 探针毫无感知。
+    """
+
+    PROD_FILES = ["docker-compose.prod.yml", "docker-compose.prod.secure.yml"]
+
+    def test_api_healthcheck_probes_both_processes(self):
+        for path in self.PROD_FILES:
+            compose = _load_compose(path)
+            hc = compose["services"]["api"].get("healthcheck", {})
+            test = hc.get("test", [])
+            cmd = " ".join(test) if isinstance(test, list) else str(test)
+            assert ":8000/api/v1/health/live" in cmd, (
+                f"{path}: api healthcheck 未探测 uvicorn:8000 健康端点: {cmd}"
+            )
+            assert "localhost:3000" in cmd, (
+                f"{path}: api healthcheck 只探测 uvicorn:8000 —— node 前端进程"
+                "死亡时容器仍 healthy（覆盖了 #400 的镜像双进程 HEALTHCHECK）"
+            )
+
+    def test_compose_healthcheck_matches_image_healthcheck_contract(self):
+        """compose 探测必须与 Dockerfile.prod 的镜像 HEALTHCHECK 同步（双端口）。"""
+        with open("Dockerfile.prod") as f:
+            lines = f.read().splitlines()
+        idx = next(
+            (i for i, ln in enumerate(lines) if ln.startswith("HEALTHCHECK")), None
+        )
+        assert idx is not None, "Dockerfile.prod has no HEALTHCHECK directive"
+        # HEALTHCHECK 指令跨行（续行是 CMD python3 -c "..."）
+        image_hc = "\n".join(lines[idx : idx + 2])
+        assert ":8000" in image_hc and ":3000" in image_hc, (
+            "Dockerfile.prod 镜像 HEALTHCHECK 不再是双进程探测？本测试的契约"
+            "前提变了，需同步更新"
+        )
+        for path in self.PROD_FILES:
+            compose = _load_compose(path)
+            test = compose["services"]["api"]["healthcheck"]["test"]
+            cmd = " ".join(test) if isinstance(test, list) else str(test)
+            for probe in ("localhost:8000", "localhost:3000"):
+                assert probe in cmd, (
+                    f"{path}: compose healthcheck 缺少 {probe} 探测（与镜像 "
+                    "HEALTHCHECK 契约不一致）"
+                )

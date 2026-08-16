@@ -100,8 +100,12 @@ services:
         condition: service_healthy
     volumes:
       - uploads:/app/uploads
+    # #474：compose 的 service healthcheck 会完全覆盖镜像 HEALTHCHECK —— 之前
+    # 这里只探 uvicorn:8000，与 #400 的双进程镜像 HEALTHCHECK（Dockerfile.prod，
+    # 同时探测 :8000 与 node :3000）相比是退化：node 前端进程挂掉时容器仍
+    # "healthy"，nginx 对 / 502 而编排层毫无感知。与镜像保持一致的双探测。
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/live', timeout=5)"]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request as u; u.urlopen('http://localhost:8000/api/v1/health/live', timeout=5); u.urlopen('http://localhost:3000/', timeout=5)\" || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
