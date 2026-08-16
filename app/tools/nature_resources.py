@@ -9,6 +9,7 @@ from app.tools.registry import ToolRegistry, tool
 from app.services.spatial_tasks import run_ndvi_analysis
 from app.services.jobs.submit import submit_durable_job
 from app.tools._utils import db_session
+from app.tools.upload_tools import _resolve_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,9 @@ def register_nature_resource_tools(registry: ToolRegistry):
             if session_id:
                 query = query.filter(UploadRecord.session_id == session_id)
 
-            records = query.order_by(UploadRecord.upload_time.desc()).all()
+            # #543 配套：无上限的 .all() 允许 LLM 一次拉取全库分析资产列表；
+            # 与 list_uploaded_data 的 50 条上限同款，取 100 条封顶。
+            records = query.order_by(UploadRecord.upload_time.desc()).limit(100).all()
             assets = [{
                 "id": r.id,
                 "name": r.original_name,
@@ -104,12 +107,23 @@ def register_nature_resource_tools(registry: ToolRegistry):
         from app.core.config import settings
 
         with db_session() as db:
-            record = db.query(UploadRecord).filter(UploadRecord.id == asset_id).first()
+            # #543: 查询同时限定 geometry_type（本工具契约只管 raster_analysis）——
+            # 之前仅按自增 id 查找，任何上传记录都能被改名/删除。
+            record = db.query(UploadRecord).filter(
+                UploadRecord.id == asset_id,
+                UploadRecord.geometry_type == "raster_analysis",
+            ).first()
             if not record:
                 return {"error": "未找到对应的分析资产记录"}
 
-            # 审计 S43：asset 必须属于当前 session（防跨 session IDOR）
-            if session_id and record.session_id and record.session_id != session_id:
+            # 审计 S43 + #543：asset 必须属于当前 session（防跨 session IDOR）。
+            # 会话校验无条件化：record.session_id 为 NULL 的旧匿名记录同样拒绝
+            # —— 与 upload 路由层 _verify_session_owner（session_id 缺省即 404）
+            # 的守卫层级对齐，NULL 记录的删除必须走上传路由。
+            resolved_session = _resolve_session_id(session_id)
+            if record.session_id is None:
+                return {"error": "该资产未关联会话，无法通过工具管理（请通过上传接口处理）"}
+            if not resolved_session or record.session_id != resolved_session:
                 return {"error": "该资产不属于当前会话，无权操作"}
 
             if action == "rename" and new_name:
