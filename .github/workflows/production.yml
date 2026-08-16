@@ -850,6 +850,11 @@ jobs:
           ssh ${{ vars.SSH_HOST }} 'mkdir -p ~/deploy'
           scp docker-compose.prod.secure.yml ${{ vars.SSH_HOST }}:~/
           scp deploy/redis.conf deploy/redis-entrypoint.sh ${{ vars.SSH_HOST }}:~/deploy/
+          # #530：prometheus 服务 bind-mount ./deploy/prometheus.yml 与
+          # ./deploy/alerts-rules.json —— 不随部署送达主机时，Docker 把缺失的
+          # 挂载源创建为空目录，prometheus 把目录当 config 加载即 crash-loop、
+          # 告警全哑（nginx 在 #472 已内联修复，prometheus 走 scp 传输）。
+          scp deploy/prometheus.yml deploy/alerts-rules.json ${{ vars.SSH_HOST }}:~/deploy/
           scp .env.Priv ${{ vars.SSH_HOST }}:~/
           scp webgis-image.tar ${{ vars.SSH_HOST }}:~/
 
@@ -1018,6 +1023,12 @@ jobs:
           # 可能早于 redis.conf / redis-entrypoint.sh 的存在（本分支新增），且该
           # 路径的旧 compose 也不挂载 redis 配置——文件缺失时跳过 scp。
           for f in deploy/redis.conf deploy/redis-entrypoint.sh; do
+            [ -f "$f" ] && scp "$f" ${{ vars.SSH_HOST }}:~/deploy/
+          done
+          # #530：与 deploy-prod 一致，prometheus 配置必须随回滚送达主机（否则
+          # 空目录 bind-mount 让 prometheus crash-loop）。回退构建路径检出的
+          # PREV_SHA 可能早于这些文件，同样用存在性守卫跳过。
+          for f in deploy/prometheus.yml deploy/alerts-rules.json; do
             [ -f "$f" ] && scp "$f" ${{ vars.SSH_HOST }}:~/deploy/
           done
           scp .env.Priv ${{ vars.SSH_HOST }}:~/
