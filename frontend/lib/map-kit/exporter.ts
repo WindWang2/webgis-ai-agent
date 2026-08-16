@@ -2,7 +2,7 @@ import type { Map } from 'maplibre-gl';
 import type { LegendSpec } from './types';
 import { resolveStyle, type LayoutStyle } from './layout-style';
 import { API_BASE } from '@/lib/api/config';
-import { apiFetch } from '@/lib/api/transport';
+import { apiFetch, isApiError } from '@/lib/api/transport';
 import { devOnly } from '@/lib/utils/logger';
 // Re-export the shared oversample helper so existing callers importing from
 // './exporter' keep working, while the single source of truth lives in
@@ -1252,9 +1252,18 @@ export async function runExport(
     }
   } catch (e) {
     devOnly.error('[MapExporter] Canvas extraction/export failed', e);
-    const errorMsg = e instanceof Error ? e.message : String(e);
+    // #469：上传接口需要认证 —— 会话过期/token 失效时给出明确的登录指引，
+    // 而不是把 401 淹没在通用失败文案里（匿名路径已由导出按钮门控）。
+    const authRequired = isApiError(e) && (e.status === 401 || e.status === 403);
+    const errorMsg = authRequired
+      ? '导出需要登录（认证失败或会话已过期）'
+      : e instanceof Error
+        ? e.message
+        : String(e);
     getHudState().setPendingSystemMessage(
-      `[系统通知] 专题地图排版合成失败。错误原因: ${e}。请向用户致歉并结束流程。`,
+      authRequired
+        ? '[系统通知] 导出失败：导出功能需要登录账号（认证失败或会话已过期）。请到 设置 → 账户 重新登录后再导出。'
+        : `[系统通知] 专题地图排版合成失败。错误原因: ${e}。请向用户致歉并结束流程。`,
     );
     return { ok: false, format: (format ?? 'png').toLowerCase(), error: errorMsg };
   } finally {
