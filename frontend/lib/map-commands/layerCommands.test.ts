@@ -326,3 +326,110 @@ describe('reorder_layer (issue #393: MapSpec `${id}__` layers reorder durably)',
     expect(map.moveLayer).toHaveBeenCalledWith('custom-target-outline', undefined);
   });
 });
+
+// ─── #557: layer_style_update contract (params.style flat paint + categorical) ───
+
+function styleCtx(map: any, layers: any[] = []) {
+  const updateLayer = vi.fn();
+  const hud = { layers, updateLayer };
+  const ctx = {
+    map,
+    popAction: () => {},
+    setDeferredPop: () => {},
+    safePop: () => {},
+    getHudState: () => hud,
+    setSelectedBaseLayer: () => {},
+    command: 'layer_style_update',
+    params: {},
+  } as unknown as MapCommandContext;
+  return { ctx, updateLayer, hud };
+}
+
+describe('layer_style_update (#557 contract)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('#557 断点 5: forwards fillOpacity to the renderer and store (0.4 seed reaches paint)', () => {
+    const map = makeMockMaplibreMap();
+    map.addLayer({ id: 'result__fill', type: 'fill' });
+    const { ctx, updateLayer } = styleCtx(map, [{ id: 'result', style: { color: '#3b82f6' } }]);
+    ctx.params = {
+      layer_id: 'result',
+      style: { color: '#3b82f6', fill: '#3b82f6', fillOpacity: 0.4, strokeColor: '#1d4ed8', strokeWidth: 1.5 },
+    };
+
+    const result = layerCommands.layer_style_update.run(ctx);
+
+    expect(result).toEqual({ status: 'succeeded', result: { confirmed: true } });
+    expect(renderer.updateLayerStyle).toHaveBeenCalledWith(
+      map,
+      'result__fill',
+      expect.objectContaining({ fillOpacity: 0.4, color: '#3b82f6' }),
+    );
+    expect(updateLayer).toHaveBeenCalledWith(
+      'result',
+      expect.objectContaining({
+        style: expect.objectContaining({ fillOpacity: 0.4, strokeWidth: 1.5 }),
+      }),
+    );
+  });
+
+  it('#557 断点 1/3: categorical (field+colorMap, no style) applies a match paint and syncs the store', () => {
+    const map = makeMockMaplibreMap();
+    map.addLayer({ id: 'result__fill', type: 'fill' });
+    const { ctx, updateLayer } = styleCtx(map, [{ id: 'result', style: {} }]);
+    ctx.params = {
+      layer_id: 'result',
+      field: 'landuse',
+      colorMap: { residential: '#fca5a5', commercial: '#93c5fd' },
+      baseStyle: { fillOpacity: 0.75, strokeWidth: 0.5 },
+    } as any;
+
+    const result = layerCommands.layer_style_update.run(ctx);
+
+    expect(result).toEqual({ status: 'succeeded', result: { confirmed: true } });
+    expect(renderer.updateLayerStyle).toHaveBeenCalledWith(
+      map,
+      'result__fill',
+      expect.objectContaining({
+        categorical: expect.objectContaining({
+          field: 'landuse',
+          colorMap: { residential: '#fca5a5', commercial: '#93c5fd' },
+          fillOpacity: 0.75,
+        }),
+      }),
+    );
+    expect(updateLayer).toHaveBeenCalledWith(
+      'result',
+      expect.objectContaining({
+        style: expect.objectContaining({
+          categorical: { field: 'landuse', colorMap: { residential: '#fca5a5', commercial: '#93c5fd' } },
+          fillOpacity: 0.75,
+        }),
+      }),
+    );
+  });
+
+  it('still rejects a style-less single emission (no field/colorMap) with invalid_params', () => {
+    const map = makeMockMaplibreMap();
+    map.addLayer({ id: 'result__fill', type: 'fill' });
+    const { ctx } = styleCtx(map, [{ id: 'result' }]);
+    ctx.params = { layer_id: 'result' };
+
+    const result = layerCommands.layer_style_update.run(ctx);
+
+    expect(result).toEqual({ status: 'failed', error: 'invalid_params' });
+  });
+
+  it('#557 断点 1: legacy top-level style_applied emission (no params.style) is rejected honestly', () => {
+    // SSE 工具路径修复前：emitter 把 style_applied 放顶层，useMapBridge 落入 rest
+    // → params.style 缺失 → invalid_params。此测试守住"样式必须经 params.style 到达"。
+    const map = makeMockMaplibreMap();
+    map.addLayer({ id: 'result__fill', type: 'fill' });
+    const { ctx } = styleCtx(map, [{ id: 'result' }]);
+    ctx.params = { layer_id: 'result', style_applied: { color: '#3b82f6' } } as any;
+
+    const result = layerCommands.layer_style_update.run(ctx);
+
+    expect(result).toEqual({ status: 'failed', error: 'invalid_params' });
+  });
+});

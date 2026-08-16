@@ -81,6 +81,14 @@ async def test_apply_template_symbology_single(registry):
     assert result["template_id"] == "tmpl_sym_admin_blue"
     assert "geojson" in result
     assert result["geojson"]["features"][0]["properties"]["fill_color"] == "#3b82f6"
+    # #557 断点 1：前端 layer_style_update 期望 params.style（flat paint 键），
+    # 不再是顶层 style_applied。
+    assert "style_applied" not in result
+    assert result["command"] == "LAYER_STYLE_UPDATE"
+    assert result["params"]["layer_id"] is None  # caller-provided (absent here)
+    assert result["params"]["style"]["color"] == "#3b82f6"
+    assert result["params"]["style"]["fill"] == "#3b82f6"
+    assert result["params"]["style"]["strokeWidth"] == 1.5
 
 
 @pytest.mark.asyncio
@@ -94,8 +102,10 @@ async def test_apply_template_basemap(registry):
     assert result["status"] == "template_applied"
     assert result["kind"] == "basemap"
     assert result["command"] == "BASE_LAYER_CHANGE"
-    assert result["params"]["providerId"] == "carto-positron"
-    assert "vectorStyleUrl" in result["params"]
+    # #557 断点 2：前端 base_layer_change 期望 params.name（TILE_PROVIDERS 规范名），
+    # 不再是模板载荷里的 providerId。
+    assert "providerId" not in result["params"]
+    assert result["params"]["name"] == "Carto Positron 矢量"
 
 
 @pytest.mark.asyncio
@@ -141,14 +151,27 @@ async def test_apply_template_thematic_choropleth(registry):
     assert result["style"] is not None
     assert result["legend_spec"] is not None
     assert result["legend_spec"]["type"] == "graduated"
+    # #557 断点 1（同族）：create_thematic_map 前端 run 需要 params.geojson +
+    # params.style —— 显式 params 携带完整契约键（useMapBridge 优先用显式 params）。
+    assert result["params"]["geojson"] == sample_geojson
+    assert result["params"]["style"] is not None
+    assert result["params"]["legend_spec"]["type"] == "graduated"
 
 
 @pytest.mark.asyncio
 async def test_apply_template_thematic_heatmap(registry):
     """Test apply_template with a thematic heatmap preset template ID."""
+    sample_geojson = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {"density": 10}},
+            {"type": "Feature", "properties": {"density": 50}},
+        ]
+    }
     result = await registry.dispatch("apply_template", {
         "template_id": "tmpl_th_heatmap",
-        "field": "density"
+        "field": "density",
+        "geojson": sample_geojson,
     })
 
     assert "error" not in result
@@ -158,6 +181,20 @@ async def test_apply_template_thematic_heatmap(registry):
     assert result["command"] == "add_native_heatmap"
     assert result["field"] == "density"
     assert result["params"]["radius"] == 30
+    # #557 断点 1（同族）：add_native_heatmap 前端 run 需要 params.geojson。
+    assert result["params"]["geojson"] == sample_geojson
+    assert result["params"]["intensity"] == 0.85
+
+
+@pytest.mark.asyncio
+async def test_apply_template_heatmap_without_data_errors(registry):
+    """#557 断点 3/4：热力专题图无 geojson 显式报错（旧实现假成功）。"""
+    result = await registry.dispatch("apply_template", {
+        "template_id": "tmpl_th_heatmap",
+        "field": "density",
+    })
+    assert "error" in result
+    assert "geojson" in result["error"]
 
 
 @pytest.mark.asyncio

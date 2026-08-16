@@ -409,11 +409,10 @@ export const layerCommands: Record<string, CommandEntry> = {
     requiredParams: (p) => typeof p.layer_id === 'string' || typeof p.id === 'string',
     run(ctx) {
       const { map, params, getHudState } = ctx;
-      const { layer_id, style } = params || {};
+      const p = params as any;
+      const { layer_id, style, field, colorMap, baseStyle } = p || {};
       // V3: silent no-ops become explicit failed results (design §6).
       if (!layer_id) return { status: 'failed', error: 'target_not_found' };
-      if (!style) return { status: 'failed', error: 'invalid_params' };
-      const s = style as any;
 
       // V3 round-2 FIX-B: resolve across BOTH id schemes (custom-… + store …__…).
       const matched = matchMapLayers(map, layer_id);
@@ -425,9 +424,45 @@ export const layerCommands: Record<string, CommandEntry> = {
       // Store-layer sublayers are owned by the async MapSpecRuntime reconcile.
       const storeMatched = matched.filter((id) => isStoreSchemeMatch(layer_id, id));
 
+      // #557 断点 1/3：categorical 符号化（SSE apply_template mode=categorical
+      // 发出 field+colorMap+baseStyle，没有 style 键）—— 走 match 表达式。
+      // 修复前 `if (!style) invalid_params` 让整条分类符号化路径静默失败。
+      if (field && colorMap) {
+        const catStyle: Record<string, unknown> = {
+          categorical: {
+            field,
+            colorMap,
+            fillOpacity: (baseStyle as any)?.fillOpacity,
+            strokeWidth: (baseStyle as any)?.strokeWidth,
+          },
+        };
+        for (const id of matched) {
+          renderer.updateLayerStyle(map, id, { categorical: catStyle.categorical as any });
+        }
+        const existing = getHudState().layers.find((l: any) => l.id === layer_id) as any;
+        getHudState().updateLayer(layer_id, {
+          style: {
+            ...(existing?.style ?? {}),
+            categorical: { field, colorMap },
+            ...((baseStyle as any)?.fillOpacity !== undefined && { fillOpacity: (baseStyle as any).fillOpacity }),
+          },
+        });
+        if (matched.length === 0) {
+          return { status: 'succeeded', result: { store_updated: true } };
+        }
+        for (const id of matched) {
+          if (!map.getLayer?.(id)) return nonConfirmableAck(storeMatched);
+        }
+        return { status: 'succeeded', result: { confirmed: true } };
+      }
+
+      if (!style) return { status: 'failed', error: 'invalid_params' };
+      const s = style as any;
+
       // Sync style changes back to store so LayersTab swatch stays in sync
       const styleUpdates: Record<string, any> = {};
-      for (const key of ['color', 'strokeColor', 'strokeWidth', 'pointSize', 'dashArray', 'fill']) {
+      // #557 断点 5：fillOpacity 加入转发键集（此前在 3 处前端链路被丢弃）。
+      for (const key of ['color', 'strokeColor', 'strokeWidth', 'pointSize', 'dashArray', 'fill', 'fillOpacity']) {
         if (s[key] !== undefined && s[key] !== null) styleUpdates[key] = s[key];
       }
 
@@ -450,6 +485,7 @@ export const layerCommands: Record<string, CommandEntry> = {
           pointSize: s.pointSize,
           dashArray: s.dashArray,
           fill: s.fill,
+          fillOpacity: s.fillOpacity,
         });
       }
       if (Object.keys(styleUpdates).length > 0) {

@@ -96,6 +96,12 @@ class CartographyService:
             return np.linspace(arr.min(), arr.max(), k + 1).tolist()
         elif method == "natural_breaks":
             return cls._jenks_natural_breaks(arr, k)
+        # #557 断点 3：categorical 不是数值断点方法 —— classify 只做数值分级，
+        # categorical 由 build_thematic_style 的分支处理（返回类别→色表）。
+        logger.warning(
+            "classify: 未知分类方法 %s，按 equal_interval 兜底（categorical 不应到达此处）",
+            method,
+        )
         return np.linspace(arr.min(), arr.max(), k + 1).tolist()
 
     @classmethod
@@ -116,11 +122,32 @@ class CartographyService:
 
         values = []
         lisa_values = []
+        categorical_values: list = []
+        seen_categories: set = set()
         for f in features:
             val = f.get("properties", {}).get(field)
             if method == "lisa":
                 if val in ["HH", "LL", "HL", "LH", "NS"]:
                     lisa_values.append(val)
+            elif method == "categorical":
+                # #557 断点 3：categorical 收集去重类别（字符串或数值），
+                # 不做 NaN/Inf 过滤之外的数值约束 —— 分类字段本来就是离散值。
+                if val is None:
+                    continue
+                if isinstance(val, bool):
+                    marker = val
+                else:
+                    try:
+                        marker = float(val)
+                        if not np.isfinite(marker):
+                            continue
+                    except (TypeError, ValueError):
+                        marker = val
+                if marker not in seen_categories:
+                    seen_categories.add(marker)
+                    categorical_values.append(marker)
+                    if len(categorical_values) >= k:
+                        break
             else:
                 # Filter NaN/Inf/bool once at the value-collection seam so a
                 # stray null in the column can no longer poison the quantile/
@@ -148,6 +175,32 @@ class CartographyService:
                 "categories": ["HH", "LL", "HL", "LH", "NS"],
                 "colors": lisa_colors,
                 "legend_labels": ["High-High", "Low-Low", "High-Low", "Low-High", "Not Significant"]
+            }
+
+        if method == "categorical":
+            # #557 断点 3：categorical 模板（tmpl_th_zoning/soil_type/…）此前
+            # 落入 classify 的 equal_interval 兜底 —— 对字符串分类字段产生
+            # 数值断点，完全错误。这里按类别数 k 上限收集去重类别，给每个类别
+            # 从调色板顺序取色（颜色循环），保持值类型（数值类别保留数值键，
+            # 前端 match 表达式才能命中）。
+            if not categorical_values:
+                logger.warning(f"字段 {field} 未发现有效的分类值")
+                return None
+            from app.lib.cartography.palettes import resolve_palette_colors as _resolve_palette_colors
+            colors = _resolve_palette_colors(palette)
+            entries = [
+                {
+                    "key": v,
+                    "color": colors[i % len(colors)],
+                    "label": str(v),
+                }
+                for i, v in enumerate(categorical_values)
+            ]
+            return {
+                "type": "categorical",
+                "field": field,
+                "categories": entries,
+                "legend_labels": [e["label"] for e in entries],
             }
 
         if not values:
@@ -209,6 +262,22 @@ class CartographyService:
                 "type": "categorical",
                 "field": style_def.get("field", ""),
                 "categories": categories,
+            }
+        if t == "categorical":
+            # #557 断点 3：categorical style_def 的 categories 是 [{key,color,label}]
+            # 列表（保留数值/字符串值类型），映射为与 lisa 相同的 legend 契约。
+            entries = style_def.get("categories", []) or []
+            return {
+                "type": "categorical",
+                "field": style_def.get("field", ""),
+                "categories": [
+                    {
+                        "key": str(c.get("key")),
+                        "color": c.get("color", "#999999"),
+                        "label": c.get("label", str(c.get("key"))),
+                    }
+                    for c in entries
+                ],
             }
         return None
 

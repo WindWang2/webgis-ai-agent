@@ -11,13 +11,14 @@ export interface MapKitOptions {
 }
 
 export interface ThematicStyleDef {
-  type: 'choropleth' | 'lisa';
+  type: 'choropleth' | 'lisa' | 'categorical';
   field: string;
   breaks?: number[];
   colors?: string[];
   palette?: string[];
   legend_labels?: string[];
-  categories?: Record<string, string>;
+  /** lisa：{value: color}；categorical：#557 为 [{key,color,label}] 列表（保留键类型）。 */
+  categories?: Record<string, string> | Array<{ key: string | number; color: string; label?: string }>;
   geometry_type?: 'Polygon' | 'Point';
 }
 

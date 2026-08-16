@@ -309,6 +309,19 @@ export function addThematicLayer(map: Map, id: string, data: any, styleDef: Them
     
     // Add default color for unmatched values
     colorExpression.push('#cccccc');
+  } else if (styleDef.type === 'categorical') {
+    // #557 断点 3：categorical style_def 的 categories 是 [{key,color,label}]
+    // 列表（后端保留数值键类型，数值类别在此原样进入 match 表达式才能命中）。
+    const categories = (styleDef.categories || []) as Array<{ key: string | number; color: string }>;
+    colorExpression = ['match', ['get', styleDef.field]];
+    
+    for (const c of categories) {
+      colorExpression.push(c.key);
+      colorExpression.push(c.color);
+    }
+    
+    // Add default color for unmatched values
+    colorExpression.push('#cccccc');
   } else {
     colorExpression = '#cccccc';
   }
@@ -486,17 +499,27 @@ export function removeLayerStack(map: Map, id: string, prefix: boolean = false):
 export interface StyleUpdateOptions {
   visibility?: 'visible' | 'none';
   opacity?: number;
+  /** #557 断点 5：模板 fillOpacity 直达 fill-opacity paint（此前被丢弃）。 */
+  fillOpacity?: number;
   color?: string;
   strokeColor?: string;
   strokeWidth?: number;
   pointSize?: number;
   dashArray?: string;
   fill?: boolean;
+  /** #557 断点 3：categorical 符号化 —— colorMap 生成 match 表达式。 */
+  categorical?: {
+    field: string;
+    colorMap: Record<string, string>;
+    fillOpacity?: number;
+    strokeWidth?: number;
+  };
 }
 
 /**
  * Updates a layer's style properties.
- * Supports visibility, opacity, color, strokeColor, strokeWidth, pointSize, dashArray, fill.
+ * Supports visibility, opacity, fillOpacity, color, strokeColor, strokeWidth,
+ * pointSize, dashArray, fill, and categorical match-expression paints.
  */
 export function updateLayerStyle(map: Map, id: string, style: StyleUpdateOptions) {
   if (!map.getLayer(id)) return;
@@ -507,6 +530,34 @@ export function updateLayerStyle(map: Map, id: string, style: StyleUpdateOptions
 
   const layer = map.getLayer(id);
   if (!layer) return;
+
+  // #557 断点 5：fillOpacity 单独键 → fill-opacity（fill 图层）。
+  if (style.fillOpacity !== undefined && layer.type === 'fill') {
+    map.setPaintProperty(id, 'fill-opacity', style.fillOpacity);
+  }
+
+  // #557 断点 3：categorical 分支 —— ['match', ['get', field], v1, c1, …, fallback]。
+  if (style.categorical) {
+    const { field, colorMap, fillOpacity: catFillOpacity } = style.categorical;
+    if (field && colorMap) {
+      const match: any[] = ['match', ['get', field]];
+      for (const [key, color] of Object.entries(colorMap)) {
+        match.push(key, color);
+      }
+      match.push('#cccccc');
+      const colorProp =
+        layer.type === 'fill' ? 'fill-color'
+        : layer.type === 'circle' ? 'circle-color'
+        : layer.type === 'line' ? 'line-color'
+        : null;
+      if (colorProp) {
+        map.setPaintProperty(id, colorProp, match);
+      }
+    }
+    if (catFillOpacity !== undefined && layer.type === 'fill') {
+      map.setPaintProperty(id, 'fill-opacity', catFillOpacity);
+    }
+  }
 
   if (style.opacity !== undefined) {
     let opacityProp = '';
