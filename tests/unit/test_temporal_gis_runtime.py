@@ -23,6 +23,7 @@ from app.services.temporal import (
     SpatiotemporalClusterEngine,
     TemporalRasterEngine,
     TemporalEngine,
+    TemporalFilter,
     TemporalGranularity,
     TemporalFieldType,
     TemporalUnit,
@@ -156,6 +157,105 @@ def test_temporal_filter_relative_window(sample_temporal_geojson):
     )
 
     assert len(res["features"]) >= 7
+
+
+# ---------------------------------------------------------------------------
+# 2b. #451: explicit-bounds precedence (tool's spec construction)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execute_filter_explicit_start_end_returns_matching_features(sample_temporal_geojson):
+    """Issue #451: temporal_filter with explicit start_time/end_time built the
+    spec WITHOUT an interval; the spec branch shadowed the explicit bounds in
+    filter_dataset, so BETWEEN never matched — an always-empty success.
+    Constructed exactly as app/tools/temporal_tools.temporal_filter does."""
+    engine = TemporalEngine()
+    t_filter = TemporalFilter(
+        filter_type="range",
+        start_time="2026-08-03T00:00:00Z",
+        end_time="2026-08-06T12:00:00Z",
+    )
+
+    res = await engine.execute_filter(
+        dataset=sample_temporal_geojson,
+        temporal_field="timestamp",
+        t_filter=t_filter,
+    )
+
+    feats = res.result_geojson["features"]
+    # Daily-noon features 08-03 .. 08-06 inclusive → 4 (was 0 before the fix).
+    assert len(feats) == 4
+    assert {f["properties"]["id"] for f in feats} == {"feat_2", "feat_3", "feat_4", "feat_5"}
+
+
+@pytest.mark.asyncio
+async def test_execute_filter_start_only(sample_temporal_geojson):
+    """Start-only range keeps every feature at/after the start instant."""
+    engine = TemporalEngine()
+    t_filter = TemporalFilter(filter_type="range", start_time="2026-08-08T00:00:00Z")
+
+    res = await engine.execute_filter(
+        dataset=sample_temporal_geojson, temporal_field="timestamp", t_filter=t_filter
+    )
+
+    feats = res.result_geojson["features"]
+    assert len(feats) == 3  # 08-08, 08-09, 08-10
+    assert all(f["properties"]["timestamp"] >= "2026-08-08" for f in feats)
+
+
+@pytest.mark.asyncio
+async def test_execute_filter_end_only(sample_temporal_geojson):
+    """End-only range keeps every feature at/before the end instant."""
+    engine = TemporalEngine()
+    t_filter = TemporalFilter(filter_type="range", end_time="2026-08-03T12:00:00Z")
+
+    res = await engine.execute_filter(
+        dataset=sample_temporal_geojson, temporal_field="timestamp", t_filter=t_filter
+    )
+
+    feats = res.result_geojson["features"]
+    assert len(feats) == 3  # 08-01, 08-02, 08-03 (daily noon)
+    assert {f["properties"]["id"] for f in feats} == {"feat_0", "feat_1", "feat_2"}
+
+
+def test_filter_dataset_relative_window_with_spec(sample_temporal_geojson):
+    """The relative_window path (previously the only working shape) must keep
+    working when the spec is also present, as execute_filter forwards both."""
+    engine = TemporalEngine()
+    t_filter = TemporalFilter(filter_type="relative_window", relative_window="last_7_days")
+    ref = datetime(2026, 8, 10, 12, 0, 0, tzinfo=timezone.utc)
+
+    res = engine.filter(
+        features_or_records=sample_temporal_geojson,
+        time_field="timestamp",
+        relative_window="last_7_days",
+        ref_time=ref,
+        filter_spec=t_filter,
+    )
+
+    assert len(res["features"]) == 8  # 08-03 12:00 .. 08-10 12:00 inclusive
+
+
+def test_filter_dataset_spec_with_interval_still_honored(sample_temporal_geojson):
+    """A filter_spec that DOES carry an interval (no explicit start/end args)
+    must keep filtering via the spec branch."""
+    from app.services.temporal.models import TimeInterval, TimeInstant
+
+    filter_engine = TemporalFilterEngine()
+    spec = TemporalFilter(
+        filter_type="range",
+        interval=TimeInterval(
+            start=TimeInstant.from_datetime(datetime(2026, 8, 3, tzinfo=timezone.utc)),
+            end=TimeInstant.from_datetime(datetime(2026, 8, 6, 12, 0, 0, tzinfo=timezone.utc)),
+        ),
+    )
+
+    res = filter_engine.filter_dataset(
+        sample_temporal_geojson, time_field="timestamp", filter_spec=spec
+    )
+
+    assert len(res["features"]) == 4
 
 
 # ---------------------------------------------------------------------------
