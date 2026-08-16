@@ -476,24 +476,123 @@ async def test_route_baidu_polyline_normalized():
         assert abs(lng - 116.40) > 1e-3 or abs(lat - 39.90) > 1e-3
 
 
-async def test_distance_matrix_baidu_batch():
+# ── route transit: the REAL /direction/transit/integrated contract ──────────
+#
+# Issue #542: route(mode="transit") read ``route.paths``, but the transit
+# endpoint returns plans under ``route.transits`` — the branch was dead code
+# that always returned 未找到路线. It must now shape the first transit plan.
+
+
+async def test_route_amap_transit_reads_transits_key():
     fake = FakeGet({
-        "/direction/v2/matrix": {
-            "result": {
-                "rows": [
-                    {"elements": [
-                        {"distance": {"value": 1000}, "duration": {"value": 60}},
-                        {"distance": {"value": 2000}, "duration": {"value": 120}},
-                    ]},
-                ],
+        "/direction/transit/integrated": {
+            "route": {
+                "transits": [{
+                    "distance": "5000",
+                    "duration": "1500",
+                    "cost": "4",
+                    "segments": [
+                        {
+                            "walking": {"steps": [
+                                {"polyline": "116.40,39.90;116.41,39.91"},
+                            ]},
+                            "bus": {"buslines": [
+                                {"name": "320路", "distance": "4200", "duration": "1200",
+                                 "polyline": "116.41,39.91;116.42,39.92"},
+                            ]},
+                        },
+                    ],
+                }],
             },
         },
     })
+    prov = AmapProvider(get=fake)
+    out = await prov.route([116.0, 39.0], [117.0, 40.0], "transit", "北京")
+    assert out["provider"] == "amap"
+    assert out["distance_m"] == 5000
+    assert out["duration_s"] == 1500
+    # polyline assembled from walking steps + bus buslines, normalized to WGS84
+    assert len(out["polyline"]) == 4
+    for lng, lat in out["polyline"]:
+        assert abs(lng - 116.40) > 1e-6 or abs(lat - 39.90) > 1e-6
+    assert out["steps"][0]["instruction"] == "320路"
+    # the caller's city reached the request params
+    assert fake.calls[0][1]["city"] == "北京"
+
+
+async def test_route_amap_transit_empty_transits_returns_error():
+    fake = FakeGet({"/direction/transit/integrated": {"route": {"transits": []}}})
+    prov = AmapProvider(get=fake)
+    out = await prov.route([116.0, 39.0], [117.0, 40.0], "transit", "北京")
+    assert out == {"error": "未找到路线"}
+
+
+# ── Baidu distance_matrix: the REAL /routematrix/v2 contract ─────────────────
+#
+# Issue #542: the old test mocked a made-up ``/direction/v2/matrix`` with
+# ``rows[].elements[]`` — an endpoint and response shape the Baidu API never
+# returns. The real contract: GET /routematrix/v2/{driving|riding|walking}
+# with plural pipe-joined origins/destinations, flat row-major ``result``.
+
+
+async def _baidu_matrix_response(distances: list[float], durations: list[int]) -> dict:
+    return {
+        "status": 0,
+        "message": "ok",
+        "result": [
+            {"distance": {"text": "x", "value": d}, "duration": {"text": "x", "value": t}}
+            for d, t in zip(distances, durations)
+        ],
+    }
+
+
+async def test_distance_matrix_baidu_route_matrix_contract_and_params():
+    """Request contract: routematrix/v2/{mode} endpoint, plural origins/
+    destinations params; response: flat row-major elements → correct matrix."""
+    fake = FakeGet({
+        "/routematrix/v2/driving": await _baidu_matrix_response(
+            [1000.0, 2000.0, 3000.0, 4000.0], [60, 120, 180, 240],
+        ),
+    })
     prov = BaiduProvider(get=fake)
-    out = await prov.distance_matrix([[116.0, 39.0]], [[117.0, 40.0], [118.0, 41.0]], "driving")
+    out = await prov.distance_matrix(
+        [[116.0, 39.0], [116.1, 39.1]],
+        [[117.0, 40.0], [118.0, 41.0]],
+        "driving",
+    )
+
     assert out["provider"] == "baidu"
+    assert out["origins_count"] == 2
+    assert out["dests_count"] == 2
+    # row-major: [o0d0=1km, o0d1=2km, o1d0=3km, o1d1=4km]
     assert out["matrix"][0][0]["distance_km"] == 1.0
+    assert out["matrix"][0][0]["duration_sec"] == 60
     assert out["matrix"][0][1]["distance_km"] == 2.0
+    assert out["matrix"][1][0]["distance_km"] == 3.0
+    assert out["matrix"][1][1]["distance_km"] == 4.0
+
+    endpoint, params = fake.calls[0]
+    assert "routematrix/v2/driving" in endpoint
+    assert "origin" not in params and "destination" not in params  # singular gone
+    assert "mode" not in params  # no car/foot/bike mode param
+    assert "|" in params["origins"] and "|" in params["destinations"]
+    assert params["origins"].count("|") == 1
+    assert params["destinations"].count("|") == 1
+
+
+async def test_distance_matrix_baidu_missing_cells_are_none():
+    """A truncated (missing-element) response → None cells, not a crash."""
+    fake = FakeGet({
+        "/routematrix/v2/walking": await _baidu_matrix_response([500.0], [90]),
+    })
+    prov = BaiduProvider(get=fake)
+    out = await prov.distance_matrix(
+        [[116.0, 39.0]], [[117.0, 40.0], [118.0, 41.0]], "walking",
+    )
+    assert "routematrix/v2/walking" in fake.calls[0][0]
+    assert out["matrix"][0][0]["distance_km"] == 0.5
+    assert out["matrix"][0][1] is None
+    assert out["provider"] == "baidu"
 
 
 # ── Tianditu provider: representative capability coverage (WGS84 identity) ───
