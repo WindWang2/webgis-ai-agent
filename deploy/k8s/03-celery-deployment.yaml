@@ -76,26 +76,24 @@ spec:
         # readOnlyRootFilesystem: true 需要显式挂载可写路径为 emptyDir
         - name: tmp
           mountPath: /tmp
-        - name: app-data
+        # #519: DATA_DIR（= /app/data，见 01-configmap.yaml）整个子树落在共享
+        # RWX PVC webgis-uploads-pvc（与 api 同 PVC 同路径）—— worker 写的
+        # analysis_results/monitoring_reports、读的上传文件，api 各 pod 都能
+        # 看到。修复前是 per-pod emptyDir：结果跨 pod 读不到、重启即丢。
+        - name: uploads-volume
           mountPath: /app/data
         - name: uploads-volume
           mountPath: /app/uploads
-        # #519: worker 的 DATA_DIR=/app/data（见 01-configmap.yaml）。
-        # DATA_DIR/uploads 必须与 api 侧一样落到 uploads PVC（而非 emptyDir），
-        # 否则 worker 重启后已上传文件消失、任务按本地路径打开即 No such file。
-        - name: uploads-volume
-          mountPath: /app/data/uploads
         - name: app-pi
           mountPath: /app/.pi
       volumes:
       # 可写路径 emptyDir（rootfs 只读）
       - name: tmp
         emptyDir: {}
-      - name: app-data
-        emptyDir: {}
-      # #394: worker 必须看到 API 写入的上传文件（shapefile/raster 任务）。
-      # 与 02-api-deployment.yaml 挂同一个 PVC —— emptyDir 会让每个 worker
-      # 只看到自己的空目录，上传文件在 worker 侧"不存在"。
+      # #394+#519: worker 必须看到 API 写入的上传文件（shapefile/raster 任务）
+      # 且自己的产物必须让 api 可读 —— 与 02-api-deployment.yaml 挂同一个
+      # webgis-uploads-pvc（RWX）到同一 DATA_DIR 路径；emptyDir 会让每个 pod
+      # 只看到自己的空目录。
       - name: uploads-volume
         persistentVolumeClaim:
           claimName: webgis-uploads-pvc

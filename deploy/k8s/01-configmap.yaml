@@ -19,8 +19,9 @@ data:
   # #519: DATA_DIR 必须指向可写挂载路径。config.py 默认 "./data"（相对
   # WORKDIR /app/backend），而 k8s rootfs 只读 + 未设此变量 → import 期
   # os.makedirs 抛 Read-only file system → CrashLoopBackOff。两个 Deployment
-  # 都把可写 emptyDir 挂在 /app/data（见 02/03 的 volumeMounts），uploads 经
-  # 同一 PVC 的第二个挂载点落到 /app/data/uploads（不落 emptyDir，见 02/03）。
+  # 都把共享 RWX PVC webgis-uploads-pvc 挂在 /app/data（见 02/03 的
+  # volumeMounts）—— 整个 DATA_DIR 子树（uploads/analysis_results/
+  # monitoring_reports/exports）跨 api/celery pod 共享。
   DATA_DIR: "/app/data"
 ---
 # ⚠️ 审计 I4：Secret 资源已从此文件移除。

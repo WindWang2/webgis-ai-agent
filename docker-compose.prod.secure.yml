@@ -118,8 +118,10 @@ services:
       CELERY_RESULT_BACKEND: "redis://:${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}@redis:6379/1"
       CORS_ORIGINS: "${CORS_ORIGINS}"
       LOG_LEVEL: INFO
-      # 审计 P1：统一上传路径为 /app/uploads（与 Dockerfile.prod 创建的一致）。
-      DATA_DIR: /app
+      # #519: DATA_DIR=/app/data —— 整个数据目录（uploads/analysis_results/
+      # monitoring_reports/exports/.pi_bridge_secret）落在共享命名卷 webgis_data
+      # （api 与 celery-worker 挂同一卷），跨容器路径一致。
+      DATA_DIR: /app/data
     env_file:
       - .env.Priv
     # #472: 健康检查必须在主机上可达。之前只有 expose（仅容器网络内可见），
@@ -134,7 +136,10 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - uploads:/app/uploads
+      # #519: 共享命名卷覆盖整个 DATA_DIR（/app/data）。uploads 由应用解析到
+      # DATA_DIR/uploads（get_upload_dir → Path(DATA_DIR)/"uploads"/<id>），
+      # 与分析结果/报告/导出同卷 —— 与 celery-worker 同一卷同一路径。
+      - webgis_data:/app/data
     # 审计 P0：api healthcheck 使用 wget，但 Dockerfile.prod runner 不装 wget。
     # 改用 python3 urllib（已修复 Dockerfile.prod HEALTHCHECK，此处同步）。
     # #474：compose 的 service healthcheck 会完全覆盖镜像 HEALTHCHECK —— 之前
@@ -177,18 +182,20 @@ services:
       # celery-worker 同时 up 会并发 upgrade 竞争 alembic_version 表。
       # 迁移的唯一所有者是 api 容器；worker 跳过。
       SKIP_DB_MIGRATIONS: "true"
-      # #519: 与 api 同一 DATA_DIR 语义（api 侧为 /app，见上方 api 服务）。
-      # 默认 "./data" 在 WORKDIR /app/backend 下展开 → worker 写
+      # #519: 与 api 同一 DATA_DIR（/app/data）+ 同一共享卷 webgis_data ——
+      # worker 写 analysis_results/monitoring_reports 落共享卷，api 按 DATA_DIR
+      # 下发同卷路径。默认 "./data" 在 WORKDIR /app/backend 下展开 → worker 写
       # /app/backend/data/... 而 api 从 /app/... 下发，产物跨容器 404。
-      DATA_DIR: /app
+      DATA_DIR: /app/data
     env_file:
       - .env.Priv
     command: celery -A app.services.task_queue worker --loglevel=info --concurrency=2
     volumes:
-      # #471（#394 的 compose 兄弟项）：worker 必须看到 api 写入的上传文件
-      # （celery 任务按本地路径打开 raster/shapefile）。与 api 挂同一个
-      # uploads 卷，否则上传成功的分析任务在 worker 侧"No such file"。
-      - uploads:/app/uploads
+      # #471+#519：worker 必须与 api 看到同一批文件（celery 任务按本地路径打开
+      # raster/shapefile 与写产物）。挂同一个 webgis_data 卷到同一 DATA_DIR 路径
+      # —— 上传、分析结果、报告全部共享；否则上传成功/产物登记的分析任务在
+      # worker 侧"No such file"，api 侧 404。
+      - webgis_data:/app/data
     depends_on:
       db:
         condition: service_healthy
@@ -351,7 +358,10 @@ volumes:
   redis_data_secure:
   nginx_logs_secure:
   prometheus_data_secure:
-  uploads:
+  # #519: 共享数据卷 —— 覆盖 api + celery-worker 的 DATA_DIR（/app/data）。
+  # 迁移注意：旧栈的 uploads 卷（原挂 /app/uploads）数据不会自动搬过来，
+  # 如需保留历史上传，把旧卷内容拷入本卷的 uploads/ 子目录。
+  webgis_data:
 
 networks:
   webgis-internal:

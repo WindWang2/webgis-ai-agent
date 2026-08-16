@@ -152,17 +152,16 @@ spec:
         volumeMounts:
         - name: uploads-volume
           mountPath: /app/uploads
-        # #519: 应用把所有文件解析到 settings.DATA_DIR（= /app/data，见
-        # 01-configmap.yaml）。DATA_DIR/uploads 若落在 emptyDir，上传在
-        # pod 重建后即消失；把 uploads PVC 也挂到 /app/data/uploads，让
-        # 上传与 celery（同挂此 PVC）继续共享持久化。
+        # #519: DATA_DIR（= /app/data，见 01-configmap.yaml）的整个子树落在
+        # 共享 RWX PVC webgis-uploads-pvc 上 —— uploads/analysis_results/
+        # monitoring_reports/exports 跨 pod 可见（api 有 2 副本 + celery worker）。
+        # 修复前 DATA_DIR 挂的是 per-pod emptyDir：celery 写入的结果 api pod
+        # 读不到，pod 重建即丢。
         - name: uploads-volume
-          mountPath: /app/data/uploads
+          mountPath: /app/data
         # readOnlyRootFilesystem: true 需要显式挂载可写路径为 emptyDir
         - name: tmp
           mountPath: /tmp
-        - name: app-data
-          mountPath: /app/data
         - name: app-pi
           mountPath: /app/.pi
       volumes:
@@ -171,8 +170,6 @@ spec:
           claimName: webgis-uploads-pvc
       # 可写路径 emptyDir（rootfs 只读）
       - name: tmp
-        emptyDir: {}
-      - name: app-data
         emptyDir: {}
       - name: app-pi
         emptyDir: {}
