@@ -131,6 +131,47 @@ describe('applyExplorerProgressToStore (normalization shared by chat + independe
     applyExplorerProgressToStore({ task_id: 42, stage: 'x', status: 'y' });
     expect(useHudStore.getState().explorerTasks).toHaveLength(0);
   });
+
+  it('#548: keeps the task list bounded across many distinct Celery task ids', () => {
+    // Celery task_id is unique per task, so the SSE writer's per-task dedupe
+    // never bounds the array — the store cap is the only bound. Feed 60 fresh
+    // terminal tasks and assert the list stays at the cap.
+    for (let i = 0; i < 60; i++) {
+      applyExplorerProgressToStore({
+        stage: 'validate',
+        task_id: `exp-cap-${i}`,
+        status: 'completed',
+        context: { progress: 100 },
+      });
+    }
+    const tasks = useHudStore.getState().explorerTasks;
+    expect(tasks.length).toBe(50);
+    // 最旧的 10 条被逐出，最近的保留
+    expect(tasks[0].taskId).toBe('exp-cap-10');
+    expect(tasks[tasks.length - 1].taskId).toBe('exp-cap-59');
+  });
+
+  it('#548: a fresh insert after eviction still updates in place when re-seen', () => {
+    // 一条被逐出的任务不会在 UI 上复活成「新任务」：若它已不在列表，
+    // 首见时重新插入并保持单条（不重复）。
+    for (let i = 0; i < 60; i++) {
+      applyExplorerProgressToStore({
+        stage: 'validate',
+        task_id: `exp-re-${i}`,
+        status: 'completed',
+        context: { progress: 100 },
+      });
+    }
+    applyExplorerProgressToStore({
+      stage: 'validate',
+      task_id: 'exp-re-0', // 已被逐出的旧任务再次发来进度
+      status: 'completed',
+      context: { progress: 100 },
+    });
+    const tasks = useHudStore.getState().explorerTasks;
+    expect(tasks.length).toBe(50); // 不超限
+    expect(tasks.filter((t) => t.taskId === 'exp-re-0')).toHaveLength(1);
+  });
 });
 
 describe('useSSEStream — independent explorer progress stream (#518)', () => {

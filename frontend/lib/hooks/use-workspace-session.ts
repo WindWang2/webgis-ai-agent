@@ -67,6 +67,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
   const setSelectedFeature = useHudStore((s) => s.setSelectedFeature);
   const setAiStatus = useHudStore((s) => s.setAiStatus);
   const clearTask = useHudStore((s) => s.clearTask);
+  const clearExplorerTasks = useHudStore((s) => s.clearExplorerTasks);
   const clearResults = useHudStore((s) => s.clearResults);
   // #392: History 抽屉开关信号 —— 打开时触发会话列表刷新（见下方 effect）。
   const historyOpen = useHudStore((s) => s.historyOpen);
@@ -143,6 +144,9 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       setSelectedFeature(null);
       setAiStatus('idle');
       clearTask();
+      // #548: explorer task cards are session-scoped — a session switch must not
+      // leak the previous session's cards into the new session's task tab.
+      clearExplorerTasks();
       // Result Workbench: results reference session-scoped ref: cursors that are
       // dead in the new session — clear the registry to avoid stale inspection.
       clearResults();
@@ -342,7 +346,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
         }
       }
     },
-    [clearLayers, clearAnnotations, clearTask, clearResults, setSelectedFeature, setAiStatus, dispatchAction]
+    [clearLayers, clearAnnotations, clearTask, clearExplorerTasks, clearResults, setSelectedFeature, setAiStatus, dispatchAction]
   );
 
   const startNewSession = useCallback(
@@ -370,6 +374,9 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       setSelectedFeature(null);
       setAiStatus('idle');
       clearTask();
+      // #548: new session = fresh explorer task tab (same session-scope rule as
+      // selectSession, this path had no clear at all before).
+      clearExplorerTasks();
       // F-4: the result registry references session-scoped ``ref:`` cursors that
       // are dead in the new session — clear it (selectSession does; this path
       // did not), so a stale Result Workbench does not persist into the new
@@ -381,7 +388,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       // (session ID 从未写入 localStorage，此 removeItem 是 no-op)
       onClearMessages();
     },
-    [clearLayers, clearAnnotations, clearOpsLog, clearCausalChain, setSelectedFeature, setAiStatus, clearTask, clearResults]
+    [clearLayers, clearAnnotations, clearOpsLog, clearCausalChain, setSelectedFeature, setAiStatus, clearTask, clearExplorerTasks, clearResults]
   );
 
   const rememberSessionToken = useCallback((sid: string, token: string) => {

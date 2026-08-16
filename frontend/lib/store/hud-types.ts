@@ -310,6 +310,8 @@ export interface HudState {
   addExplorerTask: (task: ExplorerTask) => void;
   updateExplorerTask: (taskId: string, updates: Partial<ExplorerTask>) => void;
   removeExplorerTask: (taskId: string) => void;
+  /** #548: session-scoped — cleared on session switch / new session. */
+  clearExplorerTasks: () => void;
 
   /* ─── Analysis Results Workbench (session-scoped, bounded, non-persisted) ─── */
   results: AnalysisResult[];

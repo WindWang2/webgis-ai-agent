@@ -1,5 +1,6 @@
 "use client";
 
+import { X } from "lucide-react";
 import { useHudStore } from "@/lib/store/useHudStore";
 import type { ExplorerTask, ExplorerStatus } from "@/lib/types/explorer";
 
@@ -26,19 +27,31 @@ const STATUS_COLORS: Record<ExplorerStatus, string> = {
   aborted: "text-status-neutral",
 };
 
-function TaskCard({ task }: { task: ExplorerTask }) {
+function TaskCard({ task, onClose }: { task: ExplorerTask; onClose: () => void }) {
   const progress = task.progress || 0;
   const stageLabel = STAGE_LABELS[task.stage] || task.stage;
 
   return (
     <div className="rounded-lg border border-edge-subtle bg-surface-sunken p-3">
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-ink">{task.query}</span>
-        <span className={`text-xs ${STATUS_COLORS[task.status]}`}>
-          {task.status === "completed" ? "完成" :
-           task.status === "failed" ? "失败" :
-           task.status === "aborted" ? "已中止" :
-           `${stageLabel}...`}
+      <div className="flex items-center justify-between gap-2">
+        <span className="min-w-0 truncate text-sm font-medium text-ink">{task.query}</span>
+        <span className="flex shrink-0 items-center gap-1.5">
+          <span className={`text-xs ${STATUS_COLORS[task.status]}`}>
+            {task.status === "completed" ? "完成" :
+             task.status === "failed" ? "失败" :
+             task.status === "aborted" ? "已中止" :
+             `${stageLabel}...`}
+          </span>
+          {/* #548: per-card close — removeExplorerTask existed but had no
+              production caller, so users could never dismiss a card. */}
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={`关闭任务 ${task.query}`}
+            className="rounded-sm p-0.5 text-ink-disabled transition-colors hover:bg-surface-hover hover:text-ink-secondary"
+          >
+            <X size={12} aria-hidden />
+          </button>
         </span>
       </div>
 
@@ -80,6 +93,7 @@ function TaskCard({ task }: { task: ExplorerTask }) {
 
 export function ExplorerProgressPanel() {
   const tasks = useHudStore((s) => s.explorerTasks);
+  const removeExplorerTask = useHudStore((s) => s.removeExplorerTask);
 
   if (tasks.length === 0) return null;
 
@@ -89,7 +103,11 @@ export function ExplorerProgressPanel() {
         深度搜索
       </h3>
       {tasks.map((task) => (
-        <TaskCard key={task.taskId} task={task} />
+        <TaskCard
+          key={task.taskId}
+          task={task}
+          onClose={() => removeExplorerTask(task.taskId)}
+        />
       ))}
     </div>
   );

@@ -80,6 +80,42 @@ describe('task slice', () => {
     s.removeExplorerTask('EX1');
     expect(useHudStore.getState().explorerTasks).toHaveLength(0);
   });
+
+  it('#548: caps explorer tasks at MAX_EXPLORER_TASKS, evicting the oldest terminal card first', () => {
+    const s = useHudStore.getState();
+    // 前 10 条是已完成（terminal），其余保持 in-flight —— 驱逐必须优先丢终态，
+    // 让活跃任务在超限后仍全部可见。
+    for (let i = 0; i < 10; i++) {
+      s.addExplorerTask({ taskId: `done-${i}`, status: 'completed', stage: 'validate', progress: 100, query: `done-${i}`, startedAt: i, updatedAt: i });
+    }
+    for (let i = 10; i < 60; i++) {
+      s.addExplorerTask({ taskId: `run-${i}`, status: 'fetching', stage: 'fetch', progress: 10, query: `run-${i}`, startedAt: i, updatedAt: i });
+    }
+    const tasks = useHudStore.getState().explorerTasks;
+    expect(tasks.length).toBe(50);
+    // 全部 10 条终态被逐出，50 条 in-flight 完整保留
+    expect(tasks.some((t) => t.status === 'completed')).toBe(false);
+    expect(tasks.every((t) => t.status === 'fetching')).toBe(true);
+    expect(tasks[0].taskId).toBe('run-10');
+  });
+
+  it('#548: evicts the oldest entry when the list is all in-flight', () => {
+    const s = useHudStore.getState();
+    for (let i = 0; i < 51; i++) {
+      s.addExplorerTask({ taskId: `t-${i}`, status: 'discovering', stage: 'discover', progress: 1, query: `t-${i}`, startedAt: i, updatedAt: i });
+    }
+    const tasks = useHudStore.getState().explorerTasks;
+    expect(tasks.length).toBe(50);
+    expect(tasks[0].taskId).toBe('t-1'); // 最旧的 t-0 被逐出
+    expect(tasks[tasks.length - 1].taskId).toBe('t-50');
+  });
+
+  it('#548: clearExplorerTasks empties the list (session-switch reset)', () => {
+    const s = useHudStore.getState();
+    s.addExplorerTask({ taskId: 'EX1', status: 'completed', stage: 'validate', progress: 100, query: 'q', startedAt: 1, updatedAt: 1 });
+    s.clearExplorerTasks();
+    expect(useHudStore.getState().explorerTasks).toHaveLength(0);
+  });
 });
 
 
