@@ -143,3 +143,38 @@ async def test_anonymous_string_is_treated_as_anonymous(session_factory):
     async with session_factory() as db:
         sessions = await AsyncHistoryService(db).list_sessions(user_id="anonymous")
     assert sessions == []
+
+
+@pytest.mark.asyncio
+async def test_enforce_cap_buckets_by_user(session_factory):
+    """会话数上限驱逐按 user 分桶：user-a 触发上限只删自己最旧的，不动 user-b。"""
+    from datetime import datetime, timedelta
+
+    from app.models.db_model import Conversation
+    from app.services.history_service_async import MAX_SESSIONS
+
+    base = datetime(2024, 1, 1)
+    async with session_factory() as db:
+        db.add_all(
+            Conversation(
+                id=f"s-a-{i}",
+                user_id="user-a",
+                title="t",
+                updated_at=base + timedelta(minutes=i),
+            )
+            for i in range(MAX_SESSIONS + 2)
+        )
+        # user-b 的会话是全局最旧的 —— 旧的全局驱逐语义会删掉它
+        db.add(
+            Conversation(id="s-b-old", user_id="user-b", title="t", updated_at=base - timedelta(days=1))
+        )
+        await db.commit()
+
+        svc = AsyncHistoryService(db)
+        await svc._enforce_cap(user_id="user-a")
+        await db.commit()
+
+        assert await db.get(Conversation, "s-a-0") is None
+        assert await db.get(Conversation, "s-a-1") is None
+        assert await db.get(Conversation, "s-a-2") is not None
+        assert await db.get(Conversation, "s-b-old") is not None

@@ -13,10 +13,12 @@ class Report(Base):
     __tablename__ = "reports"
 
     id = Column(String(36), primary_key=True)
-    session_id = Column(String(255), nullable=False, index=True)
+    # 索引只在 __table_args__ 的显式 Index 声明（idx_report_*），不再加
+    # index=True —— 否则 create_all 路径会对同列建出两份索引。
+    session_id = Column(String(255), nullable=False)
     title = Column(String(500), nullable=False, default="分析报告")
     format = Column(String(20), nullable=False, default="pdf")
-    status = Column(String(20), nullable=False, default="pending", index=True)
+    status = Column(String(20), nullable=False, default="pending")
     file_path = Column(Text, nullable=True)
     file_size = Column(Integer, nullable=True)
     share_code = Column(String(32), unique=True, nullable=True, index=True)
