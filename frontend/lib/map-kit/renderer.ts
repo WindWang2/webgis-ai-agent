@@ -155,6 +155,81 @@ export function unregisterGeoJsonSource(id: string) {
 }
 
 /**
+ * #462: per-map layer-id ORDER registry. MapLibre has no public cheap
+ * layer-order accessor — `map.getStyle()` deep-clones every layer (paint/layout
+ * expressions included), which is multi-millisecond at 50+ sublayers. Hot paths
+ * (per-reconcile z-order sync, per-command layer matching) only need the id
+ * sequence, so we maintain it ourselves:
+ *
+ *  - `getStyleLayerIds(map)` seeds from ONE cold getStyle() the first time a
+ *    map is seen, then serves the registry (no cloning).
+ *  - Every mutation site we own calls noteStyleLayerAdded/Removed alongside
+ *    its maplibre add/remove (renderer helpers, MapSpecRuntime, annotation +
+ *    selection stacks, layer commands). `clearStyleLayerIds` is called on a
+ *    base-style swap (setStyle drops everything without passing through any
+ *    removal site — MapSpecRuntime.invalidateStyle).
+ *  - Consumers must tolerate stale ids defensively (guard with map.getLayer /
+ *    try-catch), mirroring what they already do for ids the style may have
+ *    dropped mid-flight.
+ */
+const _styleLayerIdOrder = new WeakMap<object, string[]>();
+
+/** Record a layer id as added (appended to the top of the z-order). */
+export function noteStyleLayerAdded(map: object | null | undefined, id: string): void {
+  if (!map) return;
+  const ids = _styleLayerIdOrder.get(map);
+  if (ids) {
+    if (!ids.includes(id)) ids.push(id);
+    return;
+  }
+  // Map not seeded yet: leave the cold seed to getStyleLayerIds — appending to
+  // an unknown baseline could reorder unknown layers.
+}
+
+/** Record a layer id as removed from the style. */
+export function noteStyleLayerRemoved(map: object | null | undefined, id: string): void {
+  if (!map) return;
+  const ids = _styleLayerIdOrder.get(map);
+  if (!ids) return;
+  const i = ids.indexOf(id);
+  if (i >= 0) ids.splice(i, 1);
+}
+
+/** Record a layer id as moved to the top (anchorless moveLayer). */
+export function noteStyleLayerMovedToTop(map: object | null | undefined, id: string): void {
+  if (!map) return;
+  const ids = _styleLayerIdOrder.get(map);
+  if (!ids) return;
+  const i = ids.indexOf(id);
+  if (i >= 0) {
+    ids.splice(i, 1);
+    ids.push(id);
+  }
+}
+
+/** Drop the registry for a map whose style was wholesale replaced (setStyle). */
+export function clearStyleLayerIds(map: object | null | undefined): void {
+  if (!map) return;
+  _styleLayerIdOrder.delete(map);
+}
+
+/**
+ * The style's layer ids in z-order (bottom → top). Registry-backed; the first
+ * call for a map pays ONE cold getStyle() clone to seed, everything after is
+ * maintained by the note* hooks. Returns an empty list for maps without a
+ * style accessor.
+ */
+export function getStyleLayerIds(map: any): string[] {
+  if (!map) return [];
+  let ids = _styleLayerIdOrder.get(map);
+  if (!ids) {
+    ids = ((map.getStyle?.()?.layers ?? []) as any[]).map((l) => l.id as string);
+    _styleLayerIdOrder.set(map, ids);
+  }
+  return ids;
+}
+
+/**
  * FE-P3-5: drop ALL registry entries (base-style reload wipes every source
  * without passing through removeSourceSafe). Reconcile re-registers the
  * sources it re-adds.
@@ -181,6 +256,7 @@ export interface VectorLayerOptions {
 export function addVectorLayer(map: Map, options: VectorLayerOptions, beforeId?: string) {
   if (map.getLayer(options.id)) {
     map.removeLayer(options.id);
+    noteStyleLayerRemoved(map, options.id);
   }
 
   map.addLayer({
@@ -193,6 +269,7 @@ export function addVectorLayer(map: Map, options: VectorLayerOptions, beforeId?:
     ...(options.maxzoom !== undefined && { maxzoom: options.maxzoom }),
     ...(options.filter && { filter: options.filter }),
   } as any, beforeId);
+  noteStyleLayerAdded(map, options.id);
 }
 
 /**
@@ -305,6 +382,7 @@ export interface HeatmapOptions {
 export function addNativeHeatmap(map: Map, options: HeatmapOptions) {
   if (map.getLayer(options.id)) {
     map.removeLayer(options.id);
+    noteStyleLayerRemoved(map, options.id);
   }
 
   const palette = HEATMAP_PALETTES[options.palette || 'classic'];
@@ -326,6 +404,7 @@ export function addNativeHeatmap(map: Map, options: HeatmapOptions) {
       'heatmap-opacity': options.opacity || 1
     }
   });
+  noteStyleLayerAdded(map, options.id);
 }
 
 /**
@@ -389,6 +468,7 @@ export function removeLayerStack(map: Map, id: string, prefix: boolean = false):
   targetLayerIds.forEach((lid) => {
     if (!map.getLayer?.(lid) && !styleLayerIds.has(lid)) return; // already gone
     try { map.removeLayer(lid); } catch { ok = false; }
+    noteStyleLayerRemoved(map, lid);
   });
 
   // 2. Remove target sources and cleanup any registered image textures
@@ -533,6 +613,7 @@ export function addVectorTileSource(map: Map, id: string, tiles: string[], minzo
     for (const l of style?.layers ?? []) {
       if ((l as any).source === id && map.getLayer(l.id)) {
         try { map.removeLayer(l.id); } catch { /* already gone */ }
+        noteStyleLayerRemoved(map, l.id);
       }
     }
     try { map.removeSource(id); } catch { /* already gone */ }
@@ -545,13 +626,12 @@ export function addVectorTileSource(map: Map, id: string, tiles: string[], minzo
  * 等价于：遍历 style.layers，凡 id.startsWith(prefix) 的就 setLayoutProperty。
  */
 export function setLayerStackVisibility(map: Map, prefix: string, visible: boolean) {
-  const style = map.getStyle();
-  if (!style?.layers) return;
   const value = visible ? 'visible' : 'none';
-  for (const l of style.layers) {
-    if (l.id.startsWith(prefix)) {
+  // #462: id list from the maintained registry — no style deep-clone per toggle.
+  for (const id of getStyleLayerIds(map)) {
+    if (id.startsWith(prefix)) {
       try {
-        map.setLayoutProperty(l.id, 'visibility', value);
+        map.setLayoutProperty(id, 'visibility', value);
       } catch {
         /* layer 可能在迭代过程中被另一个 effect 移走，吃掉 */
       }
@@ -615,6 +695,9 @@ export function addProcessLayerStack(
       'circle-stroke-color': color,
     },
   });
+  noteStyleLayerAdded(map, `process-${stepId}-fill`);
+  noteStyleLayerAdded(map, `process-${stepId}-line`);
+  noteStyleLayerAdded(map, `process-${stepId}-point`);
 }
 
 /**
@@ -650,9 +733,11 @@ export function removeOrphanCustomLayers(
       const base = extractBaseId(l.id.slice(prefix.length));
       if (!knownIds.has(base) || (lSource && orphanSourceIds.has(lSource))) {
         try { map.removeLayer(l.id); } catch { /* silent */ }
+        noteStyleLayerRemoved(map, l.id);
       }
     } else if (lSource && orphanSourceIds.has(lSource)) {
       try { map.removeLayer(l.id); } catch { /* silent */ }
+      noteStyleLayerRemoved(map, l.id);
     }
   }
 
@@ -703,19 +788,66 @@ export function disable3DTerrain(map: Map) {
  * orderedBaseIds 即可让最后被 move 的（数组首）落在最顶。
  */
 export function syncLayerZOrder(map: Map, prefix: string, orderedBaseIds: string[]) {
-  const style = map.getStyle();
-  if (!style?.layers) return;
+  // #462: the id ORDER comes from the maintained registry — MapSpecRuntime
+  // calls this after every layer-changing patch, and map.getStyle() would
+  // deep-clone the whole style each time. Consumers guard with getLayer for
+  // ids the style may have dropped since the last note.
+  const layerIds = getStyleLayerIds(map);
+  if (layerIds.length === 0) return;
   // 反向：希望数组首的图层最终在最上面
   for (const baseId of [...orderedBaseIds].reverse()) {
     const fullPrefix = prefix ? `${prefix}${baseId}` : baseId;
-    const sub = style.layers.filter((sl: any) => {
-      const id = sl.id as string;
+    const sub = layerIds.filter((id) => {
       return id === fullPrefix || id.startsWith(`${fullPrefix}__`) || id.startsWith(`${fullPrefix}-`);
     });
-    for (const sl of sub) {
+    for (const id of sub) {
       try {
-        if (map.getLayer(sl.id)) map.moveLayer(sl.id);
+        if (map.getLayer(id)) {
+          map.moveLayer(id);
+          noteStyleLayerMovedToTop(map, id);
+        }
       } catch { /* silent */ }
     }
+  }
+}
+
+/**
+ * #461: z-band prefix of the imperative command overlays (`add_layer`,
+ * `add_native_heatmap`, `create_thematic_map`, `add_heatmap_raster`,
+ * `add_raster_layer` all mint `custom-*` ids — see layerCommands.ts /
+ * heatmapCommands.ts).
+ */
+export const CUSTOM_OVERLAY_PREFIX = 'custom-';
+
+/**
+ * #461 (sibling of #401): re-raise the imperative `custom-*` overlays above
+ * the spec-derived layers after every layer-changing reconcile.
+ *
+ * syncLayerZOrder moves every MapSpec sublayer to the TOP of the stack on any
+ * non-empty layer patch, burying the command-added overlays under
+ * 0.3-opacity fills. #401 fixed that class of bug for the annotation stack
+ * only — the custom band had no post-reconcile restoration. Because
+ * useMapBridge dispatches imperative commands BEFORE the same step_result's
+ * store layer mount, a command emitted alongside an auto-mount is buried by
+ * that very reconcile; nothing ever lifted it again.
+ *
+ * Call after a reconcile settles (alongside the highlight/annotation raises).
+ * Iteration in style order preserves the overlays' relative z among
+ * themselves; moveLayer is guarded + wrapped so a layer that vanished
+ * mid-reconcile is skipped silently.
+ */
+export function raiseCustomOverlayLayers(map: Map): void {
+  // #462: id list from the maintained registry (runs after every reconcile —
+  // no style deep-clone on the hot path). Snapshot before mutating: moveLayer
+  // reorders the sequence being scanned.
+  const customIds = getStyleLayerIds(map).filter((id) =>
+    id.startsWith(CUSTOM_OVERLAY_PREFIX),
+  );
+  for (const id of customIds) {
+    if (!map.getLayer(id)) continue;
+    try {
+      map.moveLayer(id);
+      noteStyleLayerMovedToTop(map, id);
+    } catch { /* silent */ }
   }
 }

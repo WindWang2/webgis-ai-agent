@@ -7,6 +7,7 @@ import {
   notifyUserGestureStart,
   _resetCameraArbitrationForTests,
 } from '@/lib/map-commands/camera-arbitration';
+import { clearStyleLayerIds } from '@/lib/map-kit/renderer';
 
 const mockFlyTo = vi.fn();
 const mapMockInstance = {
@@ -175,6 +176,9 @@ describe('MapActionHandler', () => {
     // not reset implementations, so re-establish the default explicitly.
     mockGetMap.mockImplementation(() => mapMockInstance);
     _resetCameraArbitrationForTests();
+    // #462: the renderer's per-map layer-id registry must not leak a seed
+    // across tests on the shared singleton map (each test re-mocks getStyle).
+    clearStyleLayerIds(mapMockInstance);
   });
 
   afterEach(() => {

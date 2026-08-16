@@ -7,6 +7,7 @@ import { MapPanel } from './map-panel';
 import type { Layer } from '@/lib/types/layer';
 import { makeMockMaplibreMap } from '../../test/__mocks__/maplibre-map';
 import { isUserGesturing, _resetCameraArbitrationForTests } from '@/lib/map-commands/camera-arbitration';
+import * as renderer from '@/lib/map-kit/renderer';
 
 /**
  * FE-3 (design §7) MapPanel interaction UX tests.
@@ -39,6 +40,8 @@ const hud = vi.hoisted(() => {
     selectedFeature: null as any,
     mapLoaded: false,
     layers: [] as any[],
+    // raiseAnnotationLayers (#460 remount) reads this from the store.
+    annotations: [] as any[],
   });
   const actions = {
     setMapLoaded: (v: boolean) => hud.setState({ mapLoaded: v }),
@@ -542,6 +545,36 @@ describe('MapPanel — FE-3 interaction UX', () => {
       ).toBe(true);
     }
     expect(annotationMoves[annotationMoves.length - 1].beforeId).toBeNull();
+  });
+
+  // #461 (sibling of #401): imperative `custom-*` overlays (add_layer /
+  // heatmap / thematic-map commands) are mounted once outside MapSpecRuntime;
+  // every layer-changing reconcile buries them under the spec sublayers via
+  // syncLayerZOrder. The panel must re-raise the custom band after the patch.
+  it('keeps custom-* overlays above spec layers after a layer-changing reconcile', async () => {
+    const view = await renderPanel([pointLayer('poi', 'POI')]);
+    await settleInteractive(['poi__point']);
+
+    // Imperative add_layer command output: source + layer on top at mount
+    // (through the production helpers the command uses).
+    renderer.addGeoJsonSource(rmg.map, 'custom-poi', {
+      type: 'FeatureCollection',
+      features: [],
+    });
+    renderer.addVectorLayer(rmg.map, {
+      id: 'custom-poi',
+      type: 'circle',
+      source: 'custom-poi',
+      paint: {},
+    });
+
+    // Layer-changing reconcile (visibility toggle → recompile → z-order sync
+    // stacks the spec sublayers on top of the custom overlay).
+    rerenderPanel(view, [{ ...pointLayer('poi', 'POI'), visible: false }]);
+    await drainRuntime();
+
+    const order = rmg.map._layers.map((l: any) => l.id);
+    expect(order.indexOf('custom-poi')).toBeGreaterThan(order.indexOf('poi__point'));
   });
 
   // FIX-3-9 (#402): a basemap switch (setStyle diff) wipes the imperative

@@ -12,6 +12,14 @@ interface AnnounceableMessage {
 interface Props {
   messages: readonly AnnounceableMessage[];
   aiStatus: AiStatus;
+  /**
+   * #467: the session the streaming turn belongs to. Switching sessions
+   * mid-stream forces aiStatus to idle (use-workspace-session.selectSession),
+   * which is an ABORT of the old session's turn — not a completion. The
+   * announcer must not read the (new/restored) transcript as a finished
+   * reply, so a sessionId change resets the transition tracker silently.
+   */
+  sessionId?: string | null;
 }
 
 /**
@@ -29,11 +37,21 @@ interface Props {
  * that work started, know when it ended, then read the result at their own pace
  * with normal browse-mode navigation.
  */
-export function ChatAnnouncer({ messages, aiStatus }: Props) {
+export function ChatAnnouncer({ messages, aiStatus, sessionId }: Props) {
   const [message, setMessage] = useState('');
   const lastStatus = useRef<AiStatus | null>(null);
+  const lastSessionRef = useRef<typeof sessionId>(sessionId);
 
   useEffect(() => {
+    // #467: session boundary (switch via History drawer / new session). The
+    // thinking/acting → idle transition that arrives in the same render is an
+    // abort of the OLD session's turn, and whatever transcript is current
+    // belongs to the NEW session — never announce a completion across it.
+    if (sessionId !== lastSessionRef.current) {
+      lastSessionRef.current = sessionId;
+      lastStatus.current = null;
+      return;
+    }
     if (aiStatus === lastStatus.current) return;
     const previous = lastStatus.current;
     lastStatus.current = aiStatus;
@@ -56,7 +74,7 @@ export function ChatAnnouncer({ messages, aiStatus }: Props) {
       const text = last?.role === 'assistant' ? (last.content ?? '').trim() : '';
       setMessage(text ? `回复已完成：${text}` : '回复已完成');
     }
-  }, [aiStatus, messages]);
+  }, [aiStatus, messages, sessionId]);
 
   return (
     <div

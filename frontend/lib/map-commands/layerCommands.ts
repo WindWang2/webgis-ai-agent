@@ -37,9 +37,10 @@ function isStoreSchemeMatch(target: string, id: string): boolean {
 
 /** All map layer ids matching the target across both schemes (style index). */
 function matchMapLayers(map: any, target: string): string[] {
-  const style = map?.getStyle?.();
-  return ((style?.layers ?? []) as any[])
-    .map((l: any) => l.id as string)
+  // #462: id list from the maintained registry — getStyle() here deep-cloned
+  // the whole style on every map command (matchMapLayers runs 2-3×/command).
+  return renderer
+    .getStyleLayerIds(map)
     .filter((id: string) => isCustomSchemeMatch(target, id) || isStoreSchemeMatch(target, id));
 }
 
@@ -269,6 +270,7 @@ export const layerCommands: Record<string, CommandEntry> = {
       for (const id of storeMatched) {
         if (map.getLayer?.(id)) {
           try { map.removeLayer(id); } catch { /* already gone */ }
+          renderer.noteStyleLayerRemoved(map, id);
         }
       }
       if (map.getSource?.(target)) {
@@ -280,7 +282,8 @@ export const layerCommands: Record<string, CommandEntry> = {
       // 4. V3 round-2 FIX-B: post-mutation verification — the resolved stack
       //    must be gone from the map (getLayer/getSource absent OR the style
       //    layer set no longer contains any of the target's sublayers).
-      const layersAfter = ((map.getStyle?.()?.layers ?? []) as any[]).map((l: any) => l.id as string);
+      //    (#462: registry read — no per-command style deep-clone.)
+      const layersAfter = renderer.getStyleLayerIds(map);
       const stillPresent = matched.some(
         (id) => !!map.getLayer?.(id) || !!map.getSource?.(id) || layersAfter.includes(id),
       );
@@ -499,12 +502,9 @@ export const layerCommands: Record<string, CommandEntry> = {
       //    custom stack (the runtime does not own these layers).
       let customMoved = false;
       if (customMatched.length > 0) {
-        const style = map.getStyle();
-        const allLayers = style.layers || [];
-
-        // Snapshot custom layer IDs only (we ignore base style layers)
-        const customIds = allLayers
-          .map((l: any) => l.id as string)
+        // #462: registry read — no per-command style deep-clone.
+        const customIds = renderer
+          .getStyleLayerIds(map)
           .filter((id: string) => id.startsWith('custom-'));
 
         const firstSubIdx = customIds.indexOf(customMatched[0]);
@@ -541,6 +541,10 @@ export const layerCommands: Record<string, CommandEntry> = {
             map.moveLayer(id, beforeAnchor);
           }
           customMoved = true;
+          // #462: anchored moves are not mirrored by the registry's note
+          // hooks — drop it so the next read re-seeds from one cold getStyle
+          // (reorders are rare commands; the cold re-seed is the budget).
+          renderer.clearStyleLayerIds(map);
         } catch (e) {
           devOnly.warn('[MapActionHandler] REORDER_LAYER failed:', e);
           return { status: 'failed', error: 'reorder_failed' };
@@ -581,10 +585,11 @@ export const layerCommands: Record<string, CommandEntry> = {
 
       // V3 round-2 FIX-B: post-mutation verification — the target sublayers
       // must still exist on the map (moveLayer on a stale style index is a
-      // silent no-op otherwise).
-      const layersAfter = ((map.getStyle?.()?.layers ?? []) as any[]).map((l: any) => l.id as string);
+      // silent no-op otherwise). (#462: registry read; after the anchored-move
+      // clear above this re-seeds cold from the live style — truthful.)
+      const layersAfter = renderer.getStyleLayerIds(map);
       const targetGone = matched.some(
-        (id: string) => !map.getLayer?.(id) && !layersAfter.includes(id),
+        (id) => !map.getLayer?.(id) && !layersAfter.includes(id),
       );
       if (targetGone) return nonConfirmableAck(storeMatched);
 

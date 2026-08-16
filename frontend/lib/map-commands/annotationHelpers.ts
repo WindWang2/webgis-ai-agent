@@ -1,5 +1,6 @@
 import type { GeoJSONSource, Map } from 'maplibre-gl';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { noteStyleLayerAdded } from '@/lib/map-kit/renderer';
 
 // R8 annotation source: 单一 FeatureCollection 收纳 add_marker / draw_measurement 输出。
 // Zustand 状态迁移：将原本模块级的 mutable array 迁移至 Zustand，支持多组件共享、响应式更新和一致的生命周期管理。
@@ -77,6 +78,11 @@ export function ensureAnnotationLayers(map: Map) {
       },
     });
   }
+  // #462: keep the renderer's layer-id order registry exact for these adds.
+  noteStyleLayerAdded(map, `${ANNOTATION_SOURCE_ID}-fill`);
+  noteStyleLayerAdded(map, `${ANNOTATION_SOURCE_ID}-line`);
+  noteStyleLayerAdded(map, `${ANNOTATION_SOURCE_ID}-circle`);
+  noteStyleLayerAdded(map, `${ANNOTATION_SOURCE_ID}-label`);
 }
 
 /**
@@ -104,7 +110,7 @@ export function refreshAnnotations(map: Map): boolean {
  * mount order: fill → line → circle → label). Moving each to the top in this
  * order ends with label on top.
  */
-const ANNOTATION_LAYER_IDS = [
+export const ANNOTATION_LAYER_IDS = [
   `${ANNOTATION_SOURCE_ID}-fill`,
   `${ANNOTATION_SOURCE_ID}-line`,
   `${ANNOTATION_SOURCE_ID}-circle`,
@@ -125,9 +131,25 @@ const ANNOTATION_LAYER_IDS = [
  * no-op when the stack isn't mounted, and moveLayer is wrapped so a layer
  * that vanished mid-reconcile is skipped silently. Callers run it after a
  * reconcile settles, alongside the selection-highlight re-raise.
+ *
+ * #460: a basemap setStyle wipes the whole imperative stack while nothing
+ * re-creates it — the MapActionHandler refresh effect deps ([mapInstance,
+ * annotations]) don't change on a style swap because the map instance is
+ * stable across setStyle. Mirror #402's selection-highlight remount: when
+ * every annotation layer is gone but annotations exist in the store, RE-MOUNT
+ * the source + layers and push the data instead of early-returning.
  */
 export function raiseAnnotationLayers(map: Map): void {
-  if (!ANNOTATION_LAYER_IDS.some((id) => map.getLayer(id))) return;
+  const stackMounted = ANNOTATION_LAYER_IDS.some((id) => map.getLayer(id));
+  if (!stackMounted) {
+    // Post-wipe state: only remount when there is annotation data to show —
+    // maps that never used annotations stay free of the (empty) stack.
+    // (Defensive read: partial store harnesses may not carry the field.)
+    const annotations = useHudStore.getState().annotations ?? [];
+    if (annotations.length === 0) return;
+    ensureAnnotationLayers(map);
+    refreshAnnotations(map);
+  }
   for (const id of ANNOTATION_LAYER_IDS) {
     if (!map.getLayer(id)) continue;
     try {

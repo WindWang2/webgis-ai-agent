@@ -349,6 +349,7 @@ export function ContextPanel({
             aiStatus={aiStatus}
             onSend={onSend}
             onPlanAction={onPlanAction}
+            sessionId={sessionId}
           />
         )}
         {activeTab === 'project' && <ProjectTab />}

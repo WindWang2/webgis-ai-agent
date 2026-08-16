@@ -38,6 +38,11 @@ function makeMockMap() {
       calls.removeSource.push(id);
     },
     addLayer(def: any) {
+      // MapLibre semantics: adding a duplicate id throws (the runtime's
+      // addLayerSafe must be idempotent to survive style-swap races).
+      if (layers.some((l) => l.id === def.id)) {
+        throw new Error(`Layer with id ${def.id} already exists on this map`);
+      }
       layers.push(def);
       calls.addLayer.push({ def });
     },
@@ -557,6 +562,109 @@ describe("MapSpecRuntime (ADR-0036)", () => {
       expect(map._calls.addSource).toEqual([]);
       expect(map._calls.addLayer).toEqual([]);
       expect(consumeDiffLastFailed()).toBe(false); // flag was consumed
+    });
+
+    // ── #459: basemap setStyle during an in-flight debounced patch ─────────
+
+    /** Yield ONLY microtasks: lets reconcileAsync's chained processOne run
+     * (diff + enqueue) while the debouncer's rAF/setTimeout op frame stays
+     * pending — the exact "ops queued but not yet executed" race window. */
+    async function pumpMicrotasks(ticks = 12) {
+      for (let i = 0; i < ticks; i++) await Promise.resolve();
+    }
+
+    it("a stale completion marker must not resurrect appliedSpec after a mid-flight style wipe", async () => {
+      _resetWorkerBridgeForTests(); // drop any worker cached by a prior test
+      consumeDiffLastFailed();
+      const specA: MapSpec = {
+        version: "1.0",
+        sources: {
+          A: { type: "geojson", inlineData: { type: "FeatureCollection", features: [] } },
+          B: { type: "geojson", inlineData: { type: "FeatureCollection", features: [] } },
+        },
+        layers: [
+          { id: "A__point", source: "A", type: "circle", paint: { "circle-radius": 6 } },
+          { id: "B__point", source: "B", type: "circle", paint: { "circle-radius": 6 } },
+        ],
+      };
+      const rt = new MapSpecRuntime(map);
+      const p0 = rt.reconcileAsync(specA);
+      rt.flush();
+      await p0;
+      expect(rt.getAppliedSpec()).toEqual(specA);
+
+      // Partial patch: only A's paint changes — the diff does not touch B, so
+      // a wipe between enqueue and execution loses B unless a FULL reapply
+      // runs afterwards (the exact #459 partial-layer-loss shape).
+      const specB: MapSpec = {
+        version: "1.0",
+        sources: specA.sources,
+        layers: [
+          { id: "A__point", source: "A", type: "circle", paint: { "circle-radius": 99 } },
+          specA.layers[1],
+        ],
+      };
+      const p1 = rt.reconcileAsync(specB); // ops enqueued, NOT yet executed
+      await pumpMicrotasks(); // processOne ran: patch ops sit in the debouncer
+
+      // Basemap setStyle fires mid-patch: MapLibre drops every source+layer
+      // without going through the runtime, then the panel invalidates.
+      for (const l of map.getStyle().layers.slice()) map.removeLayer(l.id);
+      for (const id of Object.keys(map._sources)) map.removeSource(id);
+      rt.invalidateStyle();
+
+      rt.flush();
+      await p1;
+
+      // The stale patch's z-order completion marker must NOT advance
+      // appliedSpec — the map was wiped since enqueue, so whatever subset of
+      // the patch ran landed on (or was erased by) the new style.
+      expect(rt.getAppliedSpec()).toBeNull();
+
+      // Recovery reconcile (map-panel re-issues it on style change): diffs
+      // against null → full re-add of every source+layer.
+      const p2 = rt.reconcileAsync(specB);
+      rt.flush();
+      await p2;
+      expect(map.getLayer("A__point")).toBeTruthy();
+      expect(map.getLayer("B__point")).toBeTruthy();
+      expect(rt.getAppliedSpec()).toEqual(specB);
+      expect(rt.getLastError()).toBeNull();
+    });
+
+    it("rapid double style switches during in-flight patches still end at the spec (adversarial)", async () => {
+      _resetWorkerBridgeForTests(); // drop any worker cached by a prior test
+      consumeDiffLastFailed();
+      const rt = new MapSpecRuntime(map);
+      const spec = pointSpec("L1");
+      let p = rt.reconcileAsync(spec);
+      rt.flush();
+      await p;
+
+      for (let round = 0; round < 2; round++) {
+        // Layer-changing patch (id-only recompile) races a style switch.
+        const next: MapSpec = {
+          version: "1.0",
+          sources: spec.sources,
+          layers: [
+            { id: "L1__point", source: "L1", type: "circle", paint: { "circle-radius": 6 + round } },
+          ],
+        };
+        p = rt.reconcileAsync(next);
+        await pumpMicrotasks(); // ops queued, debouncer frame still pending
+        for (const l of map.getStyle().layers.slice()) map.removeLayer(l.id);
+        for (const id of Object.keys(map._sources)) map.removeSource(id);
+        rt.invalidateStyle();
+        rt.flush();
+        await p;
+        expect(rt.getAppliedSpec()).toBeNull(); // never resurrected
+
+        p = rt.reconcileAsync(next); // recovery
+        rt.flush();
+        await p;
+        expect(map.getLayer("L1__point")).toBeTruthy();
+        expect(rt.getAppliedSpec()).toEqual(next);
+      }
     });
 
     // ── FIX-3-7: perf counters count real work, not no-op churn ────────────

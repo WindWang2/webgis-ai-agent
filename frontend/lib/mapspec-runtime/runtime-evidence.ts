@@ -124,6 +124,11 @@ export function collectCartographicRuntimeObservation(
   applied: MapSpec | null = null,
 ): Record<string, unknown> {
   const styleLoaded = !!map?.isStyleLoaded?.();
+  // #462: hoisted OUT of the per-candidate convergence check — the old
+  // `map.getStyle()` inside `expected.every` deep-cloned the whole style once
+  // per candidate layer (worst site: layers × sublayers clones per round).
+  // One clone per observation round is the accepted budget.
+  const liveStyleSources = map.getStyle?.()?.sources;
   const layers = hudLayers.map((hud) => {
     const attested = hud._mapspecFingerprint === mapspecFingerprint;
     const expected = desired.layers.filter(
@@ -141,8 +146,7 @@ export function collectCartographicRuntimeObservation(
       const desiredSource = desired.sources[candidate.source];
       const appliedSource = applied?.sources[candidate.source];
       const liveSource = map.getSource?.(candidate.source);
-      const liveStyleSource = map.getStyle?.()?.sources?.[candidate.source];
-      const liveType = liveStyleSource?.type ?? liveSource?.type;
+      const liveType = liveStyleSources?.[candidate.source]?.type ?? liveSource?.type;
       const expectedLiveType = desiredSource?.type === "raster"
         ? "image"
         : desiredSource?.type;

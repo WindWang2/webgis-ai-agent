@@ -4,7 +4,10 @@ import type { MapCommandContext } from './types';
 import * as renderer from '@/lib/map-kit/renderer';
 import { makeMockMaplibreMap } from '@/test/__mocks__/maplibre-map';
 
-vi.mock('@/lib/map-kit/renderer', () => ({
+// #462: keep the real layer-id registry exports (matchMapLayers reads them);
+// only the style-mutating helpers are stubbed for call assertions.
+vi.mock('@/lib/map-kit/renderer', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/map-kit/renderer')>()),
   updateLayerStyle: vi.fn(),
   addGeoJSONLayer: vi.fn(),
   removeLayer: vi.fn(),

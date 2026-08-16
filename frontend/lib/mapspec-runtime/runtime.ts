@@ -60,6 +60,23 @@ export class MapSpecRuntime {
   private styleRecoveryHandler: (() => void) | null = null;
   private pendingRecoverySpec: MapSpec | null = null;
   private readonly onStyleRecovery?: () => void;
+  /**
+   * #459: style generation token. Bumped by invalidateStyle() (basemap
+   * setStyle). A debounced patch captures the token at ENQUEUE time and its
+   * z-order completion marker may only advance `appliedSpec` when the token is
+   * unchanged — a patch that started before the wipe must never claim the map
+   * reflects its spec, or the recovery reconcile diffs against a resurrected
+   * stale basis and emits an empty (heal-nothing) patch.
+   */
+  private styleEpoch = 0;
+  /**
+   * #462: layerId → sourceId for every layer this runtime added. MapLibre
+   * offers no "layers of source" query without cloning the whole style via
+   * getStyle(); the index answers removeSourceSafe's straggler scrub with
+   * plain Map lookups instead. Maintained by addLayerSafe/removeLayerSafe and
+   * cleared alongside appliedSpec on a style wipe.
+   */
+  private layerSourceIndex = new Map<string, string>();
 
   constructor(map: any, options: MapSpecRuntimeOptions = {}) {
     this.map = map;
@@ -76,7 +93,15 @@ export class MapSpecRuntime {
    * Next reconcile will treat all sources/layers as new and re-apply them.
    */
   invalidateStyle(): void {
+    // #459: invalidate any patch whose ops are still queued/running — its
+    // completion marker checks this token before advancing appliedSpec.
+    this.styleEpoch++;
     this.appliedSpec = null;
+    // #462: setStyle dropped every layer without passing through any removal
+    // site — drop the runtime's layer→source index and the renderer's
+    // layer-id order registry for this map (next read re-seeds cold).
+    this.layerSourceIndex.clear();
+    renderer.clearStyleLayerIds(this.map);
     // FE-P3-5: a base-style change wipes every source WITHOUT going through
     // removeSourceSafe — prune the inline-GeoJSON registry so the viewport
     // refresher stops probing ids that no longer exist (never converged).
@@ -307,6 +332,10 @@ export class MapSpecRuntime {
     // compared against the last EXECUTED order at op-run time (queued patches
     // run sequentially, so each comparison sees the previous patch's outcome).
     const orderKey = orderedIds.join("\u0000");
+    // #459: generation token captured at enqueue. setStyle → invalidateStyle()
+    // bumps it; a patch whose ops execute after a wipe must not be recorded as
+    // applied (the map no longer reflects whatever subset of it had run).
+    const epochAtEnqueue = this.styleEpoch;
     const zorderId = `zorder:sync:${++this.applySeq}`; // unique per patch — never coalesced
     ops.push({
       id: zorderId,
@@ -318,8 +347,14 @@ export class MapSpecRuntime {
           this.lastLayerOrderKey = orderKey;
         }
         // All ops of this patch have now run (z-order is enqueued last in the
-        // high-priority FIFO). appliedSpec may now legitimately equal the map.
-        if (!this.lastError) this.appliedSpec = nextSpec;
+        // high-priority FIFO). appliedSpec may now legitimately equal the map —
+        // UNLESS the style was invalidated since enqueue (#459): the patch ran
+        // across a setStyle wipe, so claiming it applied would resurrect a
+        // pre-wipe basis and the recovery reconcile would diff to an empty
+        // patch, leaving wiped layers gone forever.
+        if (!this.lastError && epochAtEnqueue === this.styleEpoch) {
+          this.appliedSpec = nextSpec;
+        }
         const resolve = this.currentApplyResolve;
         this.currentApplyResolve = null;
         if (resolve) resolve();
@@ -485,7 +520,19 @@ export class MapSpecRuntime {
     // Some layer types carry maxzoom (native heatmap). MapSpecLayer doesn't
     // model that today; if needed, extend the type. For now omit.
     try {
+      // #459: idempotent add. A stale in-flight patch can re-add this very
+      // layer onto the freshly-wiped style moments before the recovery patch's
+      // full re-apply reaches it — MapLibre throws on a duplicate id, which
+      // used to poison `lastError` and block the recovery's appliedSpec
+      // advancement. Drop any survivor first so the final definition is
+      // exactly the spec's.
+      if (this.map.getLayer(layer.id)) {
+        this.removeLayerSafe(layer.id);
+      }
       this.map.addLayer(def);
+      // #462: keep the layer→source index + renderer id-order registry exact.
+      this.layerSourceIndex.set(layer.id, layer.source);
+      renderer.noteStyleLayerAdded(this.map, layer.id);
     } catch (err) {
       // Defensive: a recompile that races with a style swap may find the layer
       // already re-added by the styledata path. Log and continue rather than
@@ -500,17 +547,20 @@ export class MapSpecRuntime {
     if (this.map.getLayer(id)) {
       try { this.map.removeLayer(id); } catch { /* already gone */ }
     }
+    this.layerSourceIndex.delete(id);
+    renderer.noteStyleLayerRemoved(this.map, id);
   }
 
   private removeSourceSafe(id: string): void {
     // Must remove all layers referencing this source first. diffSpecs already
     // reported dependent layer removes, but defensive: scrub any stragglers.
-    const style = this.map.getStyle();
-    if (style?.layers) {
-      for (const l of style.layers) {
-        if (l.source === id && this.map.getLayer(l.id)) {
-          try { this.map.removeLayer(l.id); } catch { /* silent */ }
-        }
+    // #462: the runtime's own layer→source index replaces the per-removal
+    // getStyle() deep clone (a patch removing N sources cloned the style N
+    // times); the index covers every layer this runtime added, which is
+    // exactly the population that can reference a spec source.
+    for (const [layerId, sourceId] of Array.from(this.layerSourceIndex)) {
+      if (sourceId === id) {
+        this.removeLayerSafe(layerId);
       }
     }
     if (this.map.getSource(id)) {

@@ -668,6 +668,10 @@ export function useSSEStream(
           });
         }
       } else if (event.event === 'task_cancelled') {
+        // #466: the cancelled task's tool calls never emit their
+        // step_result/step_cancelled — their queued args must not leak into
+        // the next turn's workbench evidence.
+        useHudStore.getState().resetPendingToolArgs();
         setMessages((prev) =>
           prev.map((m) => {
             if (m.id !== thinkingId) return m;
@@ -693,6 +697,10 @@ export function useSSEStream(
         if (event.event === 'step_error' && typeof data?.tool === 'string' && data.tool) {
           useHudStore.getState().discardPendingToolArgs(data.tool);
           markToolCallStatus(data.tool, 'failed', typeof data?.error === 'string' ? data.error : undefined);
+        } else if (event.event === 'error' || event.event === 'task_error') {
+          // #466: a stream-level death ends the turn — remaining queued args
+          // have no step_result coming and must not leak into the next turn.
+          useHudStore.getState().resetPendingToolArgs();
         }
         const raw = data?.error;
         const detail =
@@ -761,10 +769,32 @@ export function useSSEStream(
         : action === 'revise'
         ? `修改计划 ${planId}（说说哪里需要调整）`
         : `取消计划 ${planId}`;
-    setTimeout(() => handleSendRef.current?.(text), 0);
+    setTimeout(() => {
+      // #468: the optimistic status above is only honest once the follow-up
+      // send actually went through. A failed send (network death, exhausted
+      // stream) left the card locked forever with the plan unexecuted — roll
+      // it back to pending so the buttons are actionable again (the stream
+      // error itself is surfaced separately by the bridge/chat error UI).
+      const sent = handleSendRef.current?.(text);
+      if (!sent || typeof sent.then !== 'function') return;
+      const revert = () => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.plan?.plan_id === planId
+              ? { ...m, plan: { ...m.plan, status: 'pending' } }
+              : m
+          )
+        );
+      };
+      sent.then((ok) => {
+        if (!ok) revert();
+      }).catch(revert);
+    }, 0);
   }, []);
 
-  const handleSendRef = useRef<((text: string) => void) | null>(null);
+  // #468: the ref carries handleSend's success signal (true = the turn
+  // completed; false/rejection = failed) so plan approval can roll back.
+  const handleSendRef = useRef<((text: string) => Promise<boolean>) | null>(null);
   const isLoadingRef = useRef(isLoading);
   isLoadingRef.current = isLoading;
   // F-5: synchronous in-flight guard. ``isLoadingRef`` is only refreshed during
@@ -774,8 +804,14 @@ export function useSSEStream(
   const sendingRef = useRef(false);
 
   const handleSend = useCallback(
-    async (userMsg: string) => {
-      if (!userMsg || isLoadingRef.current || sendingRef.current) return;
+    async (userMsg: string): Promise<boolean> => {
+      if (!userMsg || isLoadingRef.current || sendingRef.current) return false;
+
+      // #466: pending tool-arg evidence is TURN-scoped. Args queued by an
+      // interrupted previous turn (stream cut, task_cancelled without
+      // step_cancelled, exhausted reconnects) must never be FIFO-consumed by
+      // THIS turn's step_results as wrong input evidence.
+      useHudStore.getState().resetPendingToolArgs();
 
       const { viewport, baseLayer, is3D, layers: hudLayers, selectedFeature, focusLayerId } = useHudStore.getState();
       const liveSnapshot = getMapSnapshot();
@@ -865,6 +901,11 @@ export function useSSEStream(
               : m
           )
         );
+        // #468: turn outcome for optimistic-UI callers (plan approval). The
+        // bridge resolves even when the stream died — the store's terminal
+        // aiStatus (synced by useMapBridge before the send promise settles)
+        // is the truthful signal.
+        return useHudStore.getState().aiStatus !== 'error';
       } finally {
         // F-5: release the synchronous in-flight guard only after the send has
         // committed (success or error); by then isLoading governs re-entry.
