@@ -719,3 +719,44 @@ export function syncLayerZOrder(map: Map, prefix: string, orderedBaseIds: string
     }
   }
 }
+
+/**
+ * #461: z-band prefix of the imperative command overlays (`add_layer`,
+ * `add_native_heatmap`, `create_thematic_map`, `add_heatmap_raster`,
+ * `add_raster_layer` all mint `custom-*` ids — see layerCommands.ts /
+ * heatmapCommands.ts).
+ */
+export const CUSTOM_OVERLAY_PREFIX = 'custom-';
+
+/**
+ * #461 (sibling of #401): re-raise the imperative `custom-*` overlays above
+ * the spec-derived layers after every layer-changing reconcile.
+ *
+ * syncLayerZOrder moves every MapSpec sublayer to the TOP of the stack on any
+ * non-empty layer patch, burying the command-added overlays under
+ * 0.3-opacity fills. #401 fixed that class of bug for the annotation stack
+ * only — the custom band had no post-reconcile restoration. Because
+ * useMapBridge dispatches imperative commands BEFORE the same step_result's
+ * store layer mount, a command emitted alongside an auto-mount is buried by
+ * that very reconcile; nothing ever lifted it again.
+ *
+ * Call after a reconcile settles (alongside the highlight/annotation raises).
+ * Iteration in style order preserves the overlays' relative z among
+ * themselves; moveLayer is guarded + wrapped so a layer that vanished
+ * mid-reconcile is skipped silently.
+ */
+export function raiseCustomOverlayLayers(map: Map): void {
+  const style = map.getStyle();
+  if (!style?.layers) return;
+  // Snapshot before mutating: moveLayer reorders the style's layer sequence,
+  // and iterating a mutating sequence can skip entries.
+  const customIds = (style.layers as any[])
+    .map((l) => l.id as string)
+    .filter((id) => id.startsWith(CUSTOM_OVERLAY_PREFIX));
+  for (const id of customIds) {
+    if (!map.getLayer(id)) continue;
+    try {
+      map.moveLayer(id);
+    } catch { /* silent */ }
+  }
+}

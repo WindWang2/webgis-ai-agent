@@ -326,10 +326,16 @@ export function MapPanel({
     void runtimeRef.current.reconcileAsync(spec)
       .then(() => {
         syncInteractiveIds()
+        const map = mapRef.current?.getMap()
+        // #461 (sibling of #401): the imperative `custom-*` overlays
+        // (add_layer / heatmap / thematic-map commands) are buried by every
+        // layer-changing reconcile — syncLayerZOrder stacks all spec sublayers
+        // on top and nothing re-raises the custom band. Restore it FIRST so
+        // the ephemeral UX stacks below stay topmost.
+        if (map) renderer.raiseCustomOverlayLayers(map)
         // FIX-3-2: syncLayerZOrder buried the selection highlight under the
         // spec sublayers — put it back on top now that the reconcile settled.
         raiseSelectionHighlight()
-        const map = mapRef.current?.getMap()
         // FIX-3-9 (#401): the imperative annotation stack (markers /
         // measurements / labels) suffers the same burying — syncLayerZOrder
         // stacks every spec sublayer above it on any layer-changing patch.
