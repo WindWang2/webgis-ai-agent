@@ -1,6 +1,6 @@
 """用户上传数据模型"""
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, BigInteger, String, DateTime, JSON, CheckConstraint
+from sqlalchemy import Column, Integer, BigInteger, String, DateTime, JSON, CheckConstraint, Index
 from app.core.database import Base
 
 
@@ -24,6 +24,11 @@ class UploadRecord(Base):
     __table_args__ = (
         CheckConstraint("file_type IN ('vector', 'raster')", name="ck_upload_file_type"),
         CheckConstraint("format IN ('geojson', 'shapefile', 'geotiff', 'csv', 'gpkg', 'kml')", name="ck_upload_format"),
+        # #429：list_uploads 热路径是 WHERE session_id = ? ORDER BY upload_time
+        # DESC + COUNT —— 无索引时每次面板打开都是全表扫描 + 排序，代价随全局
+        # uploads 行数（而非单会话行数）线性增长。复合索引让按会话过滤 + 排序
+        # 都走索引扫描。迁移 0015 为存量库补建同名索引。
+        Index("ix_uploads_session_time", "session_id", "upload_time"),
     )
 
 
