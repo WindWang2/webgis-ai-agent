@@ -16,6 +16,17 @@ vi.mock('@/lib/api/authenticated-download', () => ({
   downloadWithAuth: (...args: unknown[]) => downloadWithAuthMock(...args),
 }));
 
+// AuthImage imports the URL guards from first-party (shared with tile-auth).
+vi.mock('@/lib/api/first-party', () => ({
+  isFirstPartyUrl: (url: string) => typeof url === 'string' && !url.startsWith('https://'),
+  toApiPath: (url: string) => {
+    const u = new URL(url, 'http://localhost:8000');
+    return u.pathname + u.search;
+  },
+  isProtectedDownloadUrl: (url: string) =>
+    typeof url === 'string' && url.includes('/api/v1/export/download/'),
+}));
+
 const apiFetchBlobMock = vi.fn();
 vi.mock('@/lib/api/transport', () => ({
   apiFetchBlob: (...args: unknown[]) => apiFetchBlobMock(...args),

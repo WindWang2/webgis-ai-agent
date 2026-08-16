@@ -1,5 +1,6 @@
-import { API_BASE } from './config';
-import { apiFetchBlob, type ApiFetchOptions } from './transport';
+import type { ApiFetchOptions } from './transport';
+import { apiFetchBlob } from './transport';
+import { isFirstPartyUrl, toApiPath } from './first-party';
 
 /**
  * Authenticated download + preview of protected file endpoints.
@@ -13,10 +14,7 @@ import { apiFetchBlob, type ApiFetchOptions } from './transport';
  * the upload side.
  */
 
-/** True when `url` points at a first-party protected download route. */
-export function isProtectedDownloadUrl(url: string): boolean {
-  if (!url || !API_BASE || !url.startsWith(API_BASE)) return false;
-  const path = url.slice(API_BASE.length);
+function isProtectedPath(path: string): boolean {
   // /api/v1/export/download/{filename}
   if (path.startsWith('/api/v1/export/download/')) return true;
   // /api/v1/reports/{id}/download
@@ -24,10 +22,22 @@ export function isProtectedDownloadUrl(url: string): boolean {
   return false;
 }
 
+/** True when `url` points at a first-party protected download route. */
+export function isProtectedDownloadUrl(url: string): boolean {
+  if (!url) return false;
+  if (!isFirstPartyUrl(url)) return false;
+  const clean = url.split('#')[0] ?? url;
+  const path = clean.split('?')[0] ?? clean;
+  // isFirstPartyUrl already rejected protocol-relative and foreign hosts;
+  // strip any origin so the path predicates see only the API path.
+  return isProtectedPath(toApiPath(path));
+}
+
 /** Extract a file name from a download URL path (last non-empty segment). */
 export function filenameFromUrl(url: string): string {
   const cleaned = url.split('?')[0] ?? url;
-  const segments = cleaned.split('/').filter(Boolean);
+  const path = toApiPath(cleaned);
+  const segments = path.split('/').filter(Boolean);
   const last = segments[segments.length - 1] ?? 'download';
   return decodeURIComponent(last);
 }
@@ -41,7 +51,9 @@ export async function downloadWithAuth(
   url: string,
   options: ApiFetchOptions & { filename?: string } = {},
 ): Promise<void> {
-  const path = isProtectedDownloadUrl(url) ? url.slice(API_BASE.length) : url;
+  // apiFetchBlob's buildRequest prepends API_BASE — hand it the origin-
+  // relative path, never the absolute URL (double-prefix bug).
+  const path = toApiPath(url);
   const { blob, filename: dispositionName } = await apiFetchBlob(path, options);
   const finalName =
     options.filename ??

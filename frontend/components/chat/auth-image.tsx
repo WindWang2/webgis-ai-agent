@@ -1,9 +1,9 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { API_BASE } from '@/lib/api/config';
 import { apiFetchBlob } from '@/lib/api/transport';
 import { isProtectedDownloadUrl } from '@/lib/api/authenticated-download';
+import { toApiPath } from '@/lib/api/first-party';
 
 interface AuthImageProps {
   src: string;
@@ -26,7 +26,9 @@ export function AuthImage({ src, alt, className }: AuthImageProps) {
   const objectUrlRef = useRef<string | null>(null);
 
   const needsAuth = isProtectedDownloadUrl(src);
-  const path = needsAuth && src.startsWith(API_BASE) ? src.slice(API_BASE.length) : src;
+  // apiFetchBlob's buildRequest prepends API_BASE — hand it the origin-
+  // relative path (production builds use relative URLs with API_BASE === '').
+  const path = needsAuth ? toApiPath(src) : src;
 
   useEffect(() => {
     if (!needsAuth) return;

@@ -145,10 +145,11 @@ export function ReportGenerator({ sessionId, onReportGenerated }: ReportGenerato
 
           <div className="flex gap-2">
             <a
-              href={getReportDownloadUrl(report.id)}
+              // #515: href 指向受保护下载端点，保留 href 会让中键/Ctrl+点击
+              // 绕过鉴权导航到 401 —— 去掉 href，只走鉴权 blob 下载。
               target="_blank"
               rel="noopener noreferrer"
-              className="flex-1 flex items-center justify-center gap-2 rounded-lg bg-green-600 text-white py-2 text-sm font-medium hover:bg-green-700 transition-colors"
+              className="flex-1 flex cursor-pointer items-center justify-center gap-2 rounded-lg bg-green-600 text-white py-2 text-sm font-medium hover:bg-green-700 transition-colors"
               onClick={(e) => {
                 e.preventDefault();
                 handleDownloadReport();

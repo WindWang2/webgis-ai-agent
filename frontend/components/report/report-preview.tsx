@@ -10,6 +10,7 @@ import { FileText, ExternalLink, Loader2 } from "lucide-react";
 import type { ReportInfo } from "@/lib/types/report";
 import { getReportDownloadUrl, getSharedReportUrl } from "@/lib/api/report";
 import { apiFetchBlob } from "@/lib/api/transport";
+import { toApiPath } from "@/lib/api/first-party";
 import { downloadWithAuth } from "@/lib/api/authenticated-download";
 import { devOnly } from "@/lib/utils/logger";
 
@@ -40,8 +41,10 @@ export function ReportPreview({ report, shareCode }: ReportPreviewProps) {
         // #515: /api/v1/reports/{id}/download 只认 Bearer，iframe 的
         // 原生请求无法携带 header → 恒 401 白屏。先经 transport 取
         // blob（含鉴权/401 刷新），再以 objectURL 喂给 iframe。
+        // buildRequest 会前置 API_BASE —— 必须传 origin-relative path，
+        // 绝对 URL 会双前缀（API_BASE + 绝对 URL）导致 404/白屏。
         setLoading(true);
-        apiFetchBlob(getReportDownloadUrl(report.id))
+        apiFetchBlob(toApiPath(getReportDownloadUrl(report.id)))
           .then(({ blob }) => {
             if (cancelled) return;
             objectUrl = URL.createObjectURL(blob);
