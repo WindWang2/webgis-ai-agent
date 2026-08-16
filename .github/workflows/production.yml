@@ -643,6 +643,19 @@ jobs:
         # working dir only has the downloaded image tar, so the step failed
         # at "缺少 .env.Priv.example".
         uses: actions/checkout@v7
+        with:
+          # #520：vendor/pi 是 git submodule（Dockerfile.prod COPY vendor/）。
+          # 预览必须校验**完整源码**的产物 —— 与 build job（submodules: recursive）
+          # 一致，否则 build 兜底路径会构建缺 vendor/pi 的镜像却静默通过。
+          submodules: recursive
+
+      - name: Lowercase IMAGE_NAME
+        # #520：docker tag 要求全小写。workflow 级 env.IMAGE_NAME = github.repository
+        # 是混合大小写（WindWang2/...），build job 已在自身环境小写化后 docker load
+        # 的镜像 tag 是全小写 —— preview 若不小写，compose 引用混合大小写 tag 找不到
+        # 已 load 镜像，会静默落入 build 兜底（校验的就不是 CI 产物）。与
+        # deploy-prod/rollback 的同名步骤一致。
+        run: echo "IMAGE_NAME=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
       - name: Download Image Artifact
         uses: actions/download-artifact@v8
@@ -679,6 +692,7 @@ jobs:
             -e "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=${RANDOM_REDIS_PWD}|" \
             -e "s|^JWT_SECRET_KEY=.*|JWT_SECRET_KEY=${RANDOM_JWT}|" \
             -e "s|^LLM_API_KEY=.*|LLM_API_KEY=${RANDOM_LLM_KEY}|" \
+            -e "s|^WEBGIS_IMAGE=.*|WEBGIS_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}|" \
             .env.Priv
 
           # settings.CORS_ORIGINS 是 List[str]，环境变量必须是 JSON 数组格式
@@ -702,6 +716,12 @@ jobs:
             -out deploy/nginx/ssl/server.crt \
             -subj "/CN=localhost" >/dev/null 2>&1
 
+          # #520：compose 的 image: ${WEBGIS_IMAGE:-webgis-ai-agent:local} 必须解析到
+          # 本步骤开头 docker load 出的 ghcr.io/<repo>:<sha> 镜像 —— 上面 sed 已把
+          # 模板里的 WEBGIS_IMAGE 替换为该 tag。否则 compose 落入 build 兜底，在
+          # runner 上从源码重建，校验的就不是 CI 构建产物（且缺 vendor/pi）。
+          # 此前的 IMAGE_TAG 步骤环境变量只出现在 PR 评论文本里，从未被消费，已删。
+
           # docker compose resolves ${DB_PWD:?...} / ${REDIS_PASSWORD:?...} /
           # ${JWT_SECRET_KEY:?...} from the shell env OR its --env-file. The
           # api/celery services load .env.Priv via `env_file:`, but db/redis
@@ -709,8 +729,6 @@ jobs:
           # "required variable DB_PWD is missing a value". Point compose at
           # .env.Priv explicitly (its default is plain `.env`).
           docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml up -d
-        env:
-          IMAGE_TAG: ${{ github.sha }}
 
       - name: Verify Preview Stack Health
         run: |
@@ -975,6 +993,13 @@ jobs:
           JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           CORS_ORIGINS: ${{ secrets.CORS_ORIGINS }}
+          # #520：compose 的 api/celery 用 `image: ${WEBGIS_IMAGE:-webgis-ai-agent:local}`
+          # 插值，必须解析到主机上 docker load 出的镜像 tag。回滚镜像（registry pull
+          # 或源码 rebuild）统一打为 :rollback（见上方 Pull/Rebuild 步骤）。显式导出
+          # 让共享脚本 ci-generate-env-priv.sh 的"已导出 WEBGIS_IMAGE 优先"分支写入
+          # .env.Priv。此前未导出 → 脚本回落到 GITHUB_SHA = 当前坏 HEAD，回滚实际
+          # 重跑了坏镜像。
+          WEBGIS_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:rollback
         run: |
           if [ -f deploy/ci-generate-env-priv.sh ]; then
             sh deploy/ci-generate-env-priv.sh
@@ -982,6 +1007,9 @@ jobs:
             printf 'DB_PWD=%s\nREDIS_PASSWORD=%s\nJWT_SECRET_KEY=%s\nLLM_API_KEY=%s\nCORS_ORIGINS=%s\n' \
               "$DB_PWD" "$REDIS_PASSWORD" "$JWT_SECRET_KEY" "$LLM_API_KEY" \
               "${CORS_ORIGINS:-[\"https://your-domain.com\"]}" > .env.Priv
+            # 回退树（早于脚本）同样必须写入 WEBGIS_IMAGE，否则 compose 落到
+            # webgis-ai-agent:local（主机上无该 tag）→ up 失败。
+            printf 'WEBGIS_IMAGE=%s\n' "$WEBGIS_IMAGE" >> .env.Priv
           fi
           docker save ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:rollback > /tmp/rollback-image.tar
           ssh ${{ vars.SSH_HOST }} 'mkdir -p ~/deploy'
