@@ -63,3 +63,28 @@ class TestGeoJSONExportEndpoint:
         )
         # Should accept any valid GeoJSON, not just FeatureCollections
         assert resp.status_code == 200
+
+    def test_geojson_export_rejects_oversized_payload(self):
+        """Serialized GeoJSON above MAX_EXPORT_SIZE (50MB) must 413, not write to disk."""
+        import uuid
+        from unittest.mock import patch
+        from fastapi.testclient import TestClient
+        import app.api.routes.map as map_mod
+        app.dependency_overrides[get_current_user] = lambda: _mock_user
+        client = TestClient(app)
+
+        geojson = {
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [116.4, 39.9]},
+                "properties": {"blob": "x" * 4096},
+            }],
+        }
+        # Shrink the cap so the test doesn't build a 50MB payload in memory.
+        with patch.object(map_mod, "MAX_EXPORT_SIZE", 1024):
+            resp = client.post(
+                "/api/v1/export/geojson",
+                json={"geojson": geojson, "filename": f"big_{uuid.uuid4().hex[:6]}"},
+            )
+        assert resp.status_code == 413
