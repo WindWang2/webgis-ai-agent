@@ -168,6 +168,8 @@ class AnalysisTask(Base):
         # ADR-0052: 任务中心的三条主查询路径
         Index("idx_task_session_created", "session_id", "created_at"),
         Index("idx_task_creator_created", "creator_id", "created_at"),
+        # SEC-08: 匿名归属路径（_ownership_predicate 的 OR 分支）—— 无索引会全表扫描
+        Index("idx_task_owner_token", "owner_token"),
         Index("idx_task_status_heartbeat", "status", "heartbeat_at"),
         Index("idx_task_agent_task", "agent_task_id"),
         CheckConstraint(
