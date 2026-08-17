@@ -92,6 +92,30 @@ describe('renderer', () => {
         }
       }, undefined);
     });
+
+    it('#557 断点 3: categorical style (list categories) → match expression, numeric keys preserved', () => {
+      mapMock.getLayer.mockReturnValue(undefined);
+      addThematicLayer(mapMock, 'cat-layer', { type: 'FeatureCollection', features: [] }, {
+        type: 'categorical',
+        field: 'code',
+        categories: [
+          { key: 1, color: '#fca5a5', label: '1' },
+          { key: 2, color: '#93c5fd', label: '2' },
+        ],
+        geometry_type: 'Polygon'
+      });
+
+      expect(mapMock.addLayer).toHaveBeenCalledWith({
+        id: 'cat-layer',
+        type: 'fill',
+        source: 'cat-layer',
+        layout: {},
+        paint: {
+          'fill-color': ['match', ['get', 'code'], 1, '#fca5a5', 2, '#93c5fd', '#cccccc'],
+          'fill-opacity': 0.8
+        }
+      }, undefined);
+    });
   });
 
   describe('addGeoJsonSource', () => {
@@ -328,6 +352,33 @@ describe('renderer', () => {
       mapMock.getLayer.mockReturnValue({ type: 'fill' });
       updateLayerStyle(mapMock, 'test-layer', { visibility: 'none' });
       expect(mapMock.setLayoutProperty).toHaveBeenCalledWith('test-layer', 'visibility', 'none');
+    });
+
+    it('#557 断点 5: fillOpacity → fill-opacity paint (fill layer)', () => {
+      mapMock.getLayer.mockReturnValue({ type: 'fill' });
+      updateLayerStyle(mapMock, 'test-layer', { fillOpacity: 0.4 });
+      expect(mapMock.setPaintProperty).toHaveBeenCalledWith('test-layer', 'fill-opacity', 0.4);
+    });
+
+    it('#557 断点 3: categorical colorMap → match expression on fill-color', () => {
+      mapMock.getLayer.mockReturnValue({ type: 'fill' });
+      updateLayerStyle(mapMock, 'test-layer', {
+        categorical: { field: 'landuse', colorMap: { residential: '#fca5a5', commercial: '#93c5fd' } },
+      });
+      expect(mapMock.setPaintProperty).toHaveBeenCalledWith('test-layer', 'fill-color', [
+        'match', ['get', 'landuse'],
+        'residential', '#fca5a5',
+        'commercial', '#93c5fd',
+        '#cccccc',
+      ]);
+    });
+
+    it('#557 断点 3+5: categorical baseStyle.fillOpacity → fill-opacity too', () => {
+      mapMock.getLayer.mockReturnValue({ type: 'fill' });
+      updateLayerStyle(mapMock, 'test-layer', {
+        categorical: { field: 'landuse', colorMap: { R: '#f00' }, fillOpacity: 0.75 },
+      });
+      expect(mapMock.setPaintProperty).toHaveBeenCalledWith('test-layer', 'fill-opacity', 0.75);
     });
 
     it('should update opacity based on layer type (fill)', () => {

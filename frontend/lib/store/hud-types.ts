@@ -78,8 +78,6 @@ export interface SkillEntry {
   id: string;
   name: string;
   desc: string;
-  enabled: boolean;
-  calls: number;
   category: string;
 }
 
@@ -92,27 +90,9 @@ export interface RagSpatialDoc {
   size: string;
 }
 
-export interface RagSemanticDoc {
-  id: string;
-  name: string;
-  chunks: number;
-  indexed: boolean;
-  size: string;
-}
-
 export interface RagConfig {
-  spatialWeight: number;
-  topK: number;
-  rerank: boolean;
   vectorDb: string;
   collection: string;
-}
-
-export interface MapStyleEntry {
-  id: number;
-  name: string;
-  desc: string;
-  url?: string;
 }
 
 export interface AnalysisAsset {
@@ -260,10 +240,6 @@ export interface HudState {
   setTheme: (theme: 'light' | 'dark') => void;
   fontSize: number;
   setFontSize: (size: number) => void;
-  density: 'compact' | 'comfortable';
-  setDensity: (density: 'compact' | 'comfortable') => void;
-  showGrid: boolean;
-  setShowGrid: (show: boolean) => void;
   sidebarWidth: number;
   setSidebarWidth: (width: number) => void;
 
@@ -287,15 +263,8 @@ export interface HudState {
   /* ─── Settings Data ─── */
   skills: SkillEntry[];
   setSkills: (skills: SkillEntry[]) => void;
-  toggleSkill: (id: string) => void;
   ragConfig: RagConfig;
   setRagConfig: (config: Partial<RagConfig>) => void;
-  ragSpatial: RagSpatialDoc[];
-  setRagSpatial: (docs: RagSpatialDoc[]) => void;
-  ragSemantic: RagSemanticDoc[];
-  setRagSemantic: (docs: RagSemanticDoc[]) => void;
-  mapStyles: MapStyleEntry[];
-  setMapStyles: (styles: MapStyleEntry[]) => void;
   llmConfigFull: LlmConfig;
   setLlmConfigFull: (config: Partial<LlmConfig>) => void;
 

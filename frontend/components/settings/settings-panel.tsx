@@ -111,10 +111,11 @@ export function SettingsPanel() {
 
   if (!settingsOpen) return null;
 
-  const enabledSkillCount = skills.filter((s) => s.enabled).length;
+  // #551：skills[].enabled 假开关已移除（无消费方）—— 徽标改为真实技能总数。
+  const skillCount = skills.length;
 
   const navWithCounts: NavItem[] = NAV_ITEMS.map((item) => {
-    if (item.key === 'skills') return { ...item, count: enabledSkillCount };
+    if (item.key === 'skills') return { ...item, count: skillCount };
     return item;
   });
 

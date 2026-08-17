@@ -8,6 +8,7 @@ import {
   Plus,
   History,
   Settings,
+  Sliders,
 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { usePrefersReducedMotion } from '@/lib/hooks/use-prefers-reduced-motion';
@@ -24,6 +25,7 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
   const aiStatus = useHudStore((s) => s.aiStatus);
   const setSettingsOpen = useHudStore((s) => s.setSettingsOpen);
   const setHistoryOpen = useHudStore((s) => s.setHistoryOpen);
+  const setTweaksOpen = useHudStore((s) => s.setTweaksOpen);
   const is3D = useHudStore((s) => s.is3D);
   const setIs3D = useHudStore((s) => s.setIs3D);
 
@@ -184,6 +186,17 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
         </button>
 
         <span aria-hidden className="mx-1 h-4 w-px bg-edge-subtle" />
+
+        {/* #551：Tweaks 面板此前没有任何生产入口调用 setTweaksOpen(true) ——
+            面板永远不可达。这里补上真实 opener（顶栏 UI 调整按钮）。 */}
+        <button
+          onClick={() => setTweaksOpen(true)}
+          aria-label="UI 调整"
+          title="UI 调整"
+          className="flex h-control-md w-control-md items-center justify-center rounded-sm text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+        >
+          <Sliders size={14} aria-hidden />
+        </button>
 
         <button
           onClick={() => setSettingsOpen(true)}

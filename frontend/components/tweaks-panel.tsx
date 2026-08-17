@@ -116,14 +116,10 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
   const setTheme = useHudStore((s) => s.setTheme);
   const fontSize = useHudStore((s) => s.fontSize);
   const setFontSize = useHudStore((s) => s.setFontSize);
-  const density = useHudStore((s) => s.density);
-  const setDensity = useHudStore((s) => s.setDensity);
   const hudOpen = useHudStore((s) => s.hudOpen);
   const setHudOpen = useHudStore((s) => s.setHudOpen);
   const ragPanelOpen = useHudStore((s) => s.ragPanelOpen);
   const setRagPanelOpen = useHudStore((s) => s.setRagPanelOpen);
-  const showGrid = useHudStore((s) => s.showGrid);
-  const setShowGrid = useHudStore((s) => s.setShowGrid);
   const sidebarWidth = useHudStore((s) => s.sidebarWidth);
   const setSidebarWidth = useHudStore((s) => s.setSidebarWidth);
 
@@ -221,19 +217,6 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
             />
           </div>
 
-          <div>
-            <div className="eyebrow mb-1.5">信息密度</div>
-            <SegmentedControl
-              label="信息密度"
-              value={density}
-              options={[
-                { value: 'compact' as const, label: '紧凑' },
-                { value: 'comfortable' as const, label: '舒适' },
-              ]}
-              onChange={setDensity}
-            />
-          </div>
-
           <SliderRow
             label="侧边栏宽度"
             value={sidebarWidth}
@@ -252,7 +235,6 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
                   可访问名称由它的必填 prop 强制。 */}
               <ToggleRow label="Agent 环境 HUD" value={hudOpen} onChange={setHudOpen} />
               <ToggleRow label="RAG 独立面板" value={ragPanelOpen} onChange={setRagPanelOpen} />
-              <ToggleRow label="显示地图网格" value={showGrid} onChange={setShowGrid} />
             </div>
           </div>
         </div>

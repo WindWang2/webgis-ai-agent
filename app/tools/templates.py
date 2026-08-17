@@ -5,6 +5,7 @@ import logging
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
+from app.core.base_layers import resolve_provider_id_to_name
 from app.schemas.template_schema import SEED_TEMPLATES
 from app.tools.registry import ToolRegistry, tool
 
@@ -22,6 +23,38 @@ def _safe_parse_geojson(geojson: Any) -> dict | None:
         return json.loads(geojson)
     except (json.JSONDecodeError, ValueError, TypeError):
         return None
+
+
+def _normalize_symbology_style(style: dict) -> dict:
+    """把模板 style 载荷归一为前端 layer_style_update 消费的 flat paint 键集。
+
+    #557 断点 1：前端 run 读取 color/strokeColor/strokeWidth/pointSize/dashArray/
+    fill/fillOpacity（camelCase）。模板载荷可能用 snake_case（stroke_color /
+    stroke_width）或只给 fillOpacity —— 这里做一次轻量归一，避免前端拿到
+    不认识的键继续 invalid_params / 丢透明度（断点 5 的发射端）。
+    """
+    out: Dict[str, Any] = {}
+    color = style.get("color")
+    if color is not None:
+        out["color"] = color
+        out["fill"] = color
+    fill_opacity = style.get("fillOpacity")
+    if fill_opacity is None:
+        fill_opacity = style.get("opacity")
+    if fill_opacity is not None:
+        out["fillOpacity"] = fill_opacity
+    stroke_color = style.get("strokeColor") or style.get("stroke_color")
+    if stroke_color is not None:
+        out["strokeColor"] = stroke_color
+    stroke_width = style.get("strokeWidth")
+    if stroke_width is None:
+        stroke_width = style.get("stroke_width")
+    if stroke_width is not None:
+        out["strokeWidth"] = stroke_width
+    for key in ("pointSize", "dashArray"):
+        if style.get(key) is not None:
+            out[key] = style[key]
+    return out
 
 
 class ListTemplatesArgs(BaseModel):
@@ -198,14 +231,21 @@ def register_template_tools(registry: ToolRegistry):
                         parsed_geojson, color, opacity, stroke_width
                     )
 
+                # #557 断点 1：前端 layer_style_update 期望 params.style（flat paint
+                # 键），不是顶层 style_applied —— 旧形状经 bridge rest 落入 params 后
+                # `if (!style) invalid_params` 直接失败。style 键名归一为前端消费的
+                # camelCase 集合（fillOpacity/strokeColor/strokeWidth）。
+                normalized_style = _normalize_symbology_style(style)
                 return {
                     "status": "template_applied",
                     "kind": "symbology",
                     "template_id": template_id,
                     "template_name": target_tmpl["name"],
                     "command": "LAYER_STYLE_UPDATE",
-                    "layer_id": layer_id,
-                    "style_applied": style,
+                    "params": {
+                        "layer_id": layer_id,
+                        "style": normalized_style,
+                    },
                     "geojson": output_geojson or parsed_geojson,
                 }
 
@@ -217,21 +257,34 @@ def register_template_tools(registry: ToolRegistry):
                     "template_id": template_id,
                     "template_name": target_tmpl["name"],
                     "command": "LAYER_STYLE_UPDATE",
-                    "layer_id": layer_id,
-                    "field": target_field,
-                    "colorMap": payload.get("colorMap", {}),
-                    "baseStyle": payload.get("baseStyle", {}),
+                    # #557 断点 1（categorical 侧）：前端 layer_style_update 的
+                    # categorical 分支消费 params.field + params.colorMap +
+                    # params.baseStyle（与 frontend applySymbology 同形）。
+                    "params": {
+                        "layer_id": layer_id,
+                        "field": target_field,
+                        "colorMap": payload.get("colorMap", {}),
+                        "baseStyle": payload.get("baseStyle", {}),
+                    },
                     "geojson": parsed_geojson,
                 }
+            else:
+                return {"error": f"不支持的符号化 mode: {mode!r}（模板 {template_id}）"}
 
         elif kind == "basemap":
+            # #557 断点 2：模板载荷携带 providerId，前端 base_layer_change 期望
+            # params.name（TILE_PROVIDERS[].name）。providerId → 规范名解析失败时
+            # 显式报错，绝不把 providerId 当 name 发出去（旧形状 invalid_params）。
+            canonical_name = resolve_provider_id_to_name(payload.get("providerId", ""))
+            if canonical_name is None:
+                return {"error": f"底图提供者无法解析为已知底图: {payload.get('providerId', '')!r}（模板 {template_id}）"}
             return {
                 "status": "template_applied",
                 "kind": "basemap",
                 "template_id": template_id,
                 "template_name": target_tmpl["name"],
                 "command": "BASE_LAYER_CHANGE",
-                "params": payload,
+                "params": {"name": canonical_name},
             }
 
         elif kind == "layout":
@@ -250,6 +303,10 @@ def register_template_tools(registry: ToolRegistry):
             parsed_geojson = _safe_parse_geojson(geojson)
 
             if variant == "heatmap":
+                if parsed_geojson is None:
+                    # #557 断点 3/4：add_native_heatmap 前端 run 需要 params.geojson，
+                    # 缺数据时显式报错（旧实现假成功，params 无 geojson → invalid_params）。
+                    return {"error": f"热力专题图需要 geojson 数据（模板 {template_id}）"}
                 return {
                     "status": "template_applied",
                     "kind": "thematic",
@@ -258,7 +315,10 @@ def register_template_tools(registry: ToolRegistry):
                     "template_name": target_tmpl["name"],
                     "command": "add_native_heatmap",
                     "field": target_field,
+                    # #557 断点 1 同族：geojson 必须进 params —— useMapBridge 优先用
+                    # 显式 params，顶层 geojson 会被 rest 丢弃 → invalid_params。
                     "params": {
+                        "geojson": parsed_geojson,
                         "field": target_field,
                         "intensity": payload.get("intensity", 0.8),
                         "radius": payload.get("radius", 25),
@@ -266,39 +326,63 @@ def register_template_tools(registry: ToolRegistry):
                     },
                     "geojson": parsed_geojson,
                 }
-            else:
-                # choropleth variant
-                style_def = None
-                legend_spec = None
-                if parsed_geojson and target_field:
-                    from app.services.cartography_service import CartographyService
-                    style_def = CartographyService.build_thematic_style(
-                        geojson=parsed_geojson,
-                        field=target_field,
-                        method=payload.get("method", "quantiles"),
-                        k=payload.get("k", 5),
-                        palette=payload.get("palette", "YlOrRd"),
-                    )
-                    if style_def:
-                        legend_spec = CartographyService.build_legend_spec(
-                            style_def, palette=payload.get("palette", "YlOrRd")
-                        )
+            if variant != "choropleth":
+                return {"error": f"不支持的专题图 variant: {variant!r}（模板 {template_id}）"}
 
-                return {
-                    "status": "template_applied",
-                    "kind": "thematic",
-                    "variant": "choropleth",
-                    "template_id": template_id,
-                    "template_name": target_tmpl["name"],
-                    "command": "create_thematic_map",
+            # choropleth variant（含 method="categorical"，#557 断点 3）
+            style_def = None
+            legend_spec = None
+            if parsed_geojson and target_field:
+                from app.services.cartography_service import CartographyService
+                style_def = CartographyService.build_thematic_style(
+                    geojson=parsed_geojson,
+                    field=target_field,
+                    method=payload.get("method", "quantiles"),
+                    k=payload.get("k", 5),
+                    palette=payload.get("palette", "YlOrRd"),
+                )
+                if style_def:
+                    legend_spec = CartographyService.build_legend_spec(
+                        style_def, palette=payload.get("palette", "YlOrRd")
+                    )
+
+            if style_def is None:
+                # #557 断点 3/4：无数据/字段不支持时显式报错 —— 旧实现返回
+                # status:"template_applied" + style:null 的假成功。
+                if not parsed_geojson:
+                    return {"error": f"专题图需要 geojson 数据（模板 {template_id}）"}
+                return {"error": f"字段 {target_field!r} 无法构建专题样式（无有效数值/分类值）（模板 {template_id}）"}
+
+            return {
+                "status": "template_applied",
+                "kind": "thematic",
+                "variant": "choropleth",
+                "template_id": template_id,
+                "template_name": target_tmpl["name"],
+                "command": "create_thematic_map",
+                # #557 断点 1 同族：create_thematic_map 前端 run 需要 params.geojson
+                # + params.style —— 显式 params 携带完整契约键。
+                "params": {
+                    "geojson": parsed_geojson,
+                    "style": style_def,
+                    "legend_spec": legend_spec,
                     "field": target_field,
                     "method": payload.get("method", "quantiles"),
                     "k": payload.get("k", 5),
                     "palette": payload.get("palette", "YlOrRd"),
-                    "style": style_def,
-                    "legend_spec": legend_spec,
-                    "geojson": parsed_geojson,
-                }
+                },
+                "field": target_field,
+                "method": payload.get("method", "quantiles"),
+                "k": payload.get("k", 5),
+                "palette": payload.get("palette", "YlOrRd"),
+                "style": style_def,
+                "legend_spec": legend_spec,
+                "geojson": parsed_geojson,
+            }
+
+        # #557 断点 4：任何未覆盖的 kind 都显式报错 —— 旧实现静默落到函数末尾
+        # 返回 None，dispatch 视作成功 + 空 payload 喂给 LLM。
+        return {"error": f"不支持的模板 kind: {kind!r}（模板 {template_id}）"}
 
     @tool(
         registry,

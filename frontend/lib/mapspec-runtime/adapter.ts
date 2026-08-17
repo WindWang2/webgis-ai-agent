@@ -290,7 +290,7 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
           "fill-color": (fillEnabled
             ? (thematicColor ?? ["coalesce", ["get", "fill_color"], color])
             : "rgba(0,0,0,0)") as any,
-          "fill-opacity": fillEnabled ? (layer.opacity || 1) * 0.3 : (0 as any),
+          "fill-opacity": fillEnabled ? (layer.style?.fillOpacity ?? (layer.opacity || 1) * 0.3) : (0 as any),
         }, buildLayerFilter("Polygon"));
 
         // Conditional fill-extrusion when 3D (map-panel.tsx:306-317)
