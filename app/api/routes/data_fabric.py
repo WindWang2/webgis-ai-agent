@@ -227,8 +227,8 @@ async def create_data_source(
         # row with that id → FK violation on Postgres).
         user_id = _real_user_id(user)
 
-        def _create(session: Session):
-            return data_fabric_manager.create_data_source(
+        def _create(session: Session) -> dict:
+            source = data_fabric_manager.create_data_source(
                 db=session,
                 name=req.name,
                 source_type=req.source_type,
@@ -238,11 +238,12 @@ async def create_data_source(
                 org_id=org_id,
                 owner_id=user_id,
             )
-
-        source = await _run_sync_orm(_create)
-        return {
-            "success": True,
-            "data_source": {
+            # Serialize INSIDE the worker: create_data_source commits internally
+            # (and the auto catalog sync commits again), and SessionLocal has
+            # expire_on_commit=True — reading source.* after the worker session
+            # closes raises DetachedInstanceError, which the catch-all below
+            # misreports as 400 on success (#565 review).
+            return {
                 "id": source.id,
                 "name": source.name,
                 "source_type": source.source_type,
@@ -253,8 +254,10 @@ async def create_data_source(
                 # (needed for later probe/sync/query) — always sanitize on
                 # egress, including this create response.
                 "connection_profile": DataFabricSecurity.sanitize_profile_dict(source.connection_profile or {}),
-            },
-        }
+            }
+
+        data_source = await _run_sync_orm(_create)
+        return {"success": True, "data_source": data_source}
     except Exception as e:
         logger.error(f"Failed to create data source: {e}", exc_info=True)
         # 不回显原始异常（可能含连接串/内网地址）；全文仅在服务端日志。
@@ -268,16 +271,16 @@ async def list_data_sources(
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     """获取所有已注册的地理空间数据源列表"""
-    def _load(session: Session):
+    def _load(session: Session) -> list[dict]:
         query = session.query(DataSourceModel)
         query = _tenant_filter(query, user)
         if source_type:
             query = query.filter(DataSourceModel.source_type == source_type)
-        return query.order_by(DataSourceModel.created_at.desc()).all()
-
-    sources = await _run_sync_orm(_load)
-    return {
-        "sources": [
+        rows = query.order_by(DataSourceModel.created_at.desc()).all()
+        # Serialize INSIDE the worker: rows are ORM instances bound to the
+        # worker session; never read their attributes after it closes
+        # (#565 review — same rule as create/sync/get).
+        return [
             {
                 "id": s.id,
                 "name": s.name,
@@ -288,9 +291,11 @@ async def list_data_sources(
                 "connection_profile": DataFabricSecurity.sanitize_profile_dict(s.connection_profile or {}),
                 "last_health_check": s.last_health_check.isoformat() if s.last_health_check else None,
             }
-            for s in sources
+            for s in rows
         ]
-    }
+
+    sources = await _run_sync_orm(_load)
+    return {"sources": sources}
 
 
 @router.get("/data-fabric/sources/{source_id}", tags=["Data Fabric / 数据织网"])
@@ -402,12 +407,20 @@ async def sync_data_source_catalog(
     await _run_sync_orm(_authorize)
     try:
         items = await _run_sync_orm(
-            lambda session: data_fabric_manager.sync_catalog(session, source_id)
+            lambda session: [
+                # Serialize INSIDE the worker: sync_catalog commits before
+                # returning, and SessionLocal has expire_on_commit=True —
+                # reading item.* after the worker session closes raises
+                # DetachedInstanceError, which the catch-all below misreports
+                # as 400 on success (#565 review).
+                {"id": item.id, "name": item.name, "title": item.title}
+                for item in data_fabric_manager.sync_catalog(session, source_id)
+            ]
         )
         return {
             "success": True,
             "synced_count": len(items),
-            "items": [{"id": item.id, "name": item.name, "title": item.title} for item in items],
+            "items": items,
         }
     except Exception as e:
         logger.error(f"Catalog sync failed for source '{source_id}': {e}", exc_info=True)
