@@ -212,6 +212,14 @@ class AmapProvider:
         if "error" in data:
             return data
         route = data.get("route", {})
+        if mode == "transit":
+            # Issue #542: /direction/transit/integrated returns plans under
+            # ``route.transits``, not ``route.paths`` — reading paths made the
+            # transit branch dead code that always returned 未找到路线.
+            transits = route.get("transits", []) or []
+            if not transits:
+                return {"error": "未找到路线"}
+            return self._shape_transit(transits[0])
         paths = route.get("paths", [])
         if not paths:
             return {"error": "未找到路线"}
@@ -672,6 +680,49 @@ class AmapProvider:
         return {
             "distance_m": int(path.get("distance", 0)),
             "duration_s": int(path.get("duration", 0)),
+            "polyline": polyline,
+            "steps": steps_out,
+            "provider": "amap",
+        }
+
+    def _shape_transit(self, plan: dict) -> dict:
+        """Shape the first Amap transit plan into the route result dict.
+
+        Transit plans nest the polyline in ``walking.steps[].polyline`` and
+        ``bus.buslines[].polyline`` (issue #542); both are assembled in GCJ-02
+        and normalized to WGS84 via a single :func:`transform_geojson` pass,
+        mirroring the driving/walking/cycling shape.
+        """
+        gcj_polyline: list[list[float]] = []
+        steps_out = []
+        for seg in plan.get("segments", []) or []:
+            for step in seg.get("walking", {}).get("steps", []) or []:
+                for loc in (step.get("polyline", "") or "").split(";"):
+                    parts = loc.split(",")
+                    if len(parts) == 2:
+                        gcj_polyline.append([float(parts[0]), float(parts[1])])
+            for bl in seg.get("bus", {}).get("buslines", []) or []:
+                steps_out.append({
+                    "instruction": bl.get("name", ""),
+                    "distance": bl.get("distance", "0"),
+                    "duration": bl.get("duration", "0"),
+                })
+                for loc in (bl.get("polyline", "") or "").split(";"):
+                    parts = loc.split(",")
+                    if len(parts) == 2:
+                        gcj_polyline.append([float(parts[0]), float(parts[1])])
+
+        # One CRS pass: GCJ-02 → WGS84 over the whole polyline.
+        if gcj_polyline:
+            line_fc = {"type": "Feature", "geometry": {"type": "LineString", "coordinates": gcj_polyline}}
+            wgs = transform_geojson(line_fc, self.SRC_CRS, "wgs84")
+            polyline = wgs["geometry"]["coordinates"]
+        else:
+            polyline = []
+
+        return {
+            "distance_m": int(plan.get("distance", 0) or 0),
+            "duration_s": int(plan.get("duration", 0) or 0),
             "polyline": polyline,
             "steps": steps_out,
             "provider": "amap",

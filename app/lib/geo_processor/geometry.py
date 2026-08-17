@@ -43,12 +43,16 @@ def buffer_smart(
         # GIS-P3-8: to_utm_gdf returns an already-projected input UNCHANGED —
         # if that CRS is not metre-based (state-plane feet etc.), the
         # "meters" distance must be converted to the CRS's linear unit.
+        # unit_conversion_factor is "metres per CRS unit" (pyproj axis
+        # semantics): a 1000 m buffer in a US-survey-foot CRS needs
+        # 1000 / 0.3048 ≈ 3280.8 CRS units. Multiplying (the pre-#524 bug)
+        # shrank the radius by factor² (~0.093 → ~10.8× too small).
         if gdf.crs is not None and gdf.crs.is_projected:
             try:
                 axis = gdf.crs.axis_info[0]
                 factor = float(getattr(axis, "unit_conversion_factor", 1.0) or 1.0)
                 if axis.unit_name and "metre" not in axis.unit_name and "meter" not in axis.unit_name and factor != 1.0:
-                    dist = dist * factor
+                    dist = dist / factor
             except Exception:
                 pass
 

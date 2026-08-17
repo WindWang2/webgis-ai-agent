@@ -493,6 +493,23 @@ class ChatRequest(BaseModel):
         ),
     )
 
+    @model_validator(mode="after")
+    def _cap_map_state_size(self):
+        # #521: map_state is client-controlled and persisted via set_map_state
+        # per key; without a bound a multi-MB payload stalls the event loop on
+        # every turn start (and is capped nowhere else). Reject truthfully —
+        # never silent truncation. NOTE: the bound is measured on the WHOLE
+        # serialized request (model_dump_json, mirroring the
+        # cartographic-observation DTO), not map_state alone — message is
+        # bounded at 5000 chars, so this is the map_state budget with a small
+        # constant slack, but the error text must not claim map_state itself
+        # exceeded the limit.
+        if self.map_state is not None and (
+            len(self.model_dump_json().encode("utf-8")) > 256 * 1024
+        ):
+            raise ValueError("serialized chat request exceeds 256KB (map_state budget)")
+        return self
+
 
 class ChatResponse(BaseModel):
     """聊天响应"""
@@ -526,7 +543,9 @@ async def _guard_body_session(
     if deleted_state.get("_cartographic_deleted") is True:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    owned = await AsyncHistoryService(db).get_session(
+    # #525: guard-only variant — no message-collection selectinload on the
+    # request-admission path.
+    owned = await AsyncHistoryService(db).get_session_meta(
         session_id, user_id=user_id, owner_token=owner_token
     )
     if owned is not None:
@@ -835,8 +854,16 @@ async def list_sessions(
 async def get_session_detail(
     session_id: str,
     conv: Conversation = Depends(require_owned_session),
+    db: AsyncSession = Depends(get_async_db),
 ):
-    """获取会话详情（只读）— 受所有权检查保护（A2 + SEC-08）。"""
+    """获取会话详情（只读）— 受所有权检查保护（A2 + SEC-08）。
+
+    #525: the ownership guard (require_owned_session → get_session_meta)
+    returns a metadata-only Conversation without the message collection; this
+    route is the one consumer that needs messages, so load them explicitly
+    here instead of riding every guard call.
+    """
+    await db.refresh(conv, attribute_names=["messages"])
     return {
         "id": conv.id,
         "title": conv.title,
@@ -885,11 +912,21 @@ async def get_session_map_state(
 
 class MapStatePushRequest(BaseModel):
     viewport: Optional[dict] = None
-    layers: Optional[list] = None
-    base_layer: Optional[str] = None
+    layers: Optional[list] = Field(default=None, max_length=128)
+    base_layer: Optional[str] = Field(default=None, max_length=500)
     # F4: monotonic client seq for the viewport write — an out-of-order older
     # POST landing after the turn-start write is rejected as stale.
     seq: Optional[int] = None
+
+    @model_validator(mode="after")
+    def _cap_serialized_size(self):
+        # #521: viewport/layers are client-controlled and persisted verbatim via
+        # set_map_state; bound the serialized body (same 256KB budget as
+        # CartographicRuntimeObservationRequest) so a multi-MB push cannot stall
+        # the event loop's per-key json.dumps.
+        if len(self.model_dump_json().encode("utf-8")) > 256 * 1024:
+            raise ValueError("serialized map state push exceeds 256KB")
+        return self
 
 
 @router.post("/sessions/{session_id}/map-state", status_code=204)

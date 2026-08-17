@@ -30,7 +30,7 @@ class TestSessionMapStateAPI:
         })
         # 让所有权校验通过：AsyncHistoryService(...).get_session 返回 truthy
         mock_conv = MagicMock()
-        with patch.object(_chat_mod.AsyncHistoryService, "get_session", AsyncMock(return_value=mock_conv)):
+        with patch.object(_chat_mod.AsyncHistoryService, "get_session_meta", AsyncMock(return_value=mock_conv)):
             resp = client.get("/api/v1/chat/sessions/sess-123/map-state")
         assert resp.status_code == 200
         data = resp.json()
@@ -41,7 +41,7 @@ class TestSessionMapStateAPI:
     def test_get_map_state_empty(self, mock_sdm, client):
         mock_sdm.get_map_state = AsyncMock(return_value={})
         mock_conv = MagicMock()
-        with patch.object(_chat_mod.AsyncHistoryService, "get_session", AsyncMock(return_value=mock_conv)):
+        with patch.object(_chat_mod.AsyncHistoryService, "get_session_meta", AsyncMock(return_value=mock_conv)):
             resp = client.get("/api/v1/chat/sessions/sess-404/map-state")
         assert resp.status_code == 200
         assert resp.json()["map_state"] == {}
@@ -65,7 +65,7 @@ class TestSessionMapStateAPI:
         mock_conv = MagicMock()
         with patch.object(
             _chat_mod.AsyncHistoryService,
-            "get_session",
+            "get_session_meta",
             AsyncMock(return_value=mock_conv),
         ):
             resp = client.get("/api/v1/chat/sessions/sess-current/map-state")
@@ -83,7 +83,7 @@ class TestSessionMapStateAPI:
         the turn-start write."""
         mock_sdm.set_map_state = AsyncMock(return_value=True)
         mock_conv = MagicMock()
-        with patch.object(_chat_mod.AsyncHistoryService, "get_session", AsyncMock(return_value=mock_conv)):
+        with patch.object(_chat_mod.AsyncHistoryService, "get_session_meta", AsyncMock(return_value=mock_conv)):
             resp = client.post(
                 "/api/v1/chat/sessions/sess-123/map-state",
                 json={"viewport": {"center": [116.4, 39.9], "zoom": 10, "bearing": 0, "pitch": 0}, "seq": 3},
@@ -101,7 +101,7 @@ class TestSessionMapStateAPI:
         an unsequenced (always-apply) write."""
         mock_sdm.set_map_state = AsyncMock(return_value=True)
         mock_conv = MagicMock()
-        with patch.object(_chat_mod.AsyncHistoryService, "get_session", AsyncMock(return_value=mock_conv)):
+        with patch.object(_chat_mod.AsyncHistoryService, "get_session_meta", AsyncMock(return_value=mock_conv)):
             resp = client.post(
                 "/api/v1/chat/sessions/sess-123/map-state",
                 json={"viewport": {"center": [116.4, 39.9], "zoom": 10}},

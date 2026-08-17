@@ -26,7 +26,7 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field
 
 from app.services.session_data import session_data_manager
-from app.services.llm_result_formatter import MSG_MAX_CHARS
+from app.services.llm_result_formatter import MSG_MAX_CHARS, is_error_like_result
 from app.services.planning.deps import MissingRefError, resolve_arg_refs
 from app.services.jobs.cancellation import OperationCancelled
 from app.services.distributed_lock import session_lock_registry
@@ -1021,8 +1021,12 @@ async def _execute_plan_locked(
                         # step_results whenever the failing task iterated
                         # first (non-deterministic set order).
                         continue
-                    # 工具返回 success=False（V3.x Exception As Thought 包装）也视为失败
-                    if isinstance(result, dict) and result.get("success") is False:
+                    # 工具返回 success=False（V3.x Exception As Thought 包装）
+                    # 或 {"error": <str>}（#529：此前未识别 → 计划跨失败推进）
+                    # 均视为失败
+                    if isinstance(result, dict) and (
+                        result.get("success") is False or is_error_like_result(result)
+                    ):
                         err = result.get("message") or result.get("error", "tool failed")
                         fc, ra = _classify_failure(result=result)
                         if failure is None:
