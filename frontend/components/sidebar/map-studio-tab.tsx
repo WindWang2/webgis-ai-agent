@@ -1,26 +1,17 @@
 'use client';
 
-import { useState, useEffect, useId, useSyncExternalStore, type ReactNode } from 'react';
+import { useState, useEffect, useId, type ReactNode } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { ExportItem, ExportSettings } from '@/lib/store/hud-types';
 import { useMapAction } from '@/lib/contexts/map-action-context';
 import { Download, Printer, History, ChevronDown, Lock } from 'lucide-react';
 import { API_BASE } from '@/lib/api/config';
 import { downloadWithAuth } from '@/lib/api/authenticated-download';
-import { getAuthUser, subscribeAuth } from '@/lib/auth/tokenStore';
+import { useAuthUser } from '@/lib/auth/use-auth-user';
 import { IconButton } from '@/components/shared/icon-button';
 import { ConfirmAction } from '@/components/shared/confirm-action';
 import { EmptyState } from '@/components/shared/empty-state';
 import { devOnly } from '@/lib/utils/logger';
-
-/** #469：导出走 tokenStore 的响应式登录态（登录/登出即时刷新按钮门控）。 */
-function useAuthUser() {
-  return useSyncExternalStore(
-    subscribeAuth,
-    getAuthUser,
-    () => null,
-  );
-}
 
 const iconForType: Record<string, string> = {
   png: '🖼',

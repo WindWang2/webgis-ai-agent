@@ -24,6 +24,14 @@ const api = vi.hoisted(() => ({
 
 vi.mock('@/lib/api/project', () => api);
 
+// #528: 项目写路径（创建/重新运行/回放/续跑）登录门控 —— 默认已登录使既有
+// 写路径用例不变；匿名用例显式置空 mockUser。
+let mockUser: { id: string; username: string } | null = { id: 'u1', username: 'ops' };
+vi.mock('@/lib/auth/tokenStore', () => ({
+  getAuthUser: () => mockUser,
+  subscribeAuth: () => () => {},
+}));
+
 import { ProjectTab } from './project-tab';
 import { ApiError } from '@/lib/api/transport';
 import type { Project, WorkflowSummary } from '@/lib/api/project';
@@ -91,6 +99,7 @@ function makeRun(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockUser = { id: 'u1', username: 'ops' };
   api.fetchProjects.mockResolvedValue([]);
   api.fetchProjectDatasets.mockResolvedValue([]);
   api.fetchProjectWorkflows.mockResolvedValue([]);
@@ -294,5 +303,58 @@ describe('ProjectTab — run inspector / recovery', () => {
     expect(back).toHaveFocus();
     fireEvent.click(back);
     expect(await screen.findByText('不可变修订')).toBeInTheDocument();
+  });
+});
+
+// #528: 匿名用户的项目写路径门控 —— 后端 #501 已强制认证，前端补 #469 式
+// 门控：禁用写控件并给出可见登录提示，而不是裸 401 toast。
+describe('ProjectTab — 匿名登录门控 (#528)', () => {
+  beforeEach(() => {
+    mockUser = null;
+    api.fetchProjects.mockResolvedValue([makeProject()]);
+    api.fetchWorkflowRuns.mockResolvedValue(page([]));
+    api.fetchWorkflowRevisions.mockResolvedValue(page([]));
+    api.fetchProjectWorkflows.mockResolvedValue([makeWorkflow()]);
+  });
+
+  it('匿名时新建项目 toggle 禁用、登录提示可见；恢复登录后可用', async () => {
+    api.fetchProjectDatasets.mockResolvedValue([]);
+    render(<ProjectTab />);
+    await screen.findByText('暂无挂载数据集');
+    // 可见的登录引导（不是只有 title tooltip）
+    expect(screen.getByText(/设置 → 账户 登录/)).toBeInTheDocument();
+    const toggle = screen.getByRole('button', { name: '新建项目' });
+    expect(toggle).toBeDisabled();
+    // 禁用 toggle 打不开创建表单（创建按钮因此对匿名用户不可达）
+    fireEvent.click(toggle);
+    expect(screen.queryByRole('button', { name: '创建项目' })).not.toBeInTheDocument();
+  });
+
+  it('匿名时重新运行禁用，点击不触发 runWorkflow', async () => {
+    api.fetchProjectDatasets.mockResolvedValue([]);
+    render(<ProjectTab />);
+    const rerun = await screen.findByRole('button', { name: '重新运行' });
+    expect(rerun).toBeDisabled();
+    fireEvent.click(rerun);
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 260));
+    });
+    expect(api.runWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('匿名时 run inspector 内回放/续跑禁用（RunInspector → RecoveryActions 门控）', async () => {
+    api.fetchProjectDatasets.mockResolvedValue([]);
+    api.fetchWorkflowRuns.mockResolvedValue(
+      page([{ id: 'run1', workflow_id: 'wf1', workflow_version: 1, status: 'failed', created_at: '' }]),
+    );
+    api.fetchWorkflowRun.mockResolvedValue(makeRun());
+    render(<ProjectTab />);
+    fireEvent.click(await screen.findByRole('button', { name: /洪水风险分析/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /run1/ }));
+    const replay = await screen.findByRole('button', { name: '精确回放' });
+    expect(replay).toBeDisabled();
+    expect(screen.getByRole('button', { name: '尝试续跑' })).toBeDisabled();
+    expect(api.replayWorkflowRun).not.toHaveBeenCalled();
+    expect(api.resumeWorkflowRun).not.toHaveBeenCalled();
   });
 });

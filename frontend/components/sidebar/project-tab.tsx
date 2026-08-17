@@ -8,6 +8,7 @@ import {
   Database,
   Workflow as WorkflowIcon,
   ChevronRight,
+  Lock,
 } from 'lucide-react';
 import { ConfirmAction } from '@/components/shared/confirm-action';
 import { EmptyState } from '@/components/shared/empty-state';
@@ -17,6 +18,7 @@ import { LoadingState } from '@/components/shared/loading-state';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { useToastStore } from '@/components/ui/toast';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useAuthUser } from '@/lib/auth/use-auth-user';
 import { useWorkflowWorkspace } from '@/lib/hooks/use-workflow-workspace';
 import { formatCrs, formatOutcomeMessage, outcomeToastVariant, shortId } from '@/lib/workflow/recovery';
 import { RunInspector } from './workflow/run-inspector';
@@ -28,6 +30,10 @@ export function ProjectTab() {
   const addToast = useToastStore((s) => s.addToast);
   const ws = useWorkflowWorkspace();
   const setActiveProjectId = useHudStore((s) => s.setActiveProjectId);
+  // #528：项目写路径（创建/重新运行/回放/续跑）后端要求认证（#501）。
+  // 匿名默认模式下点击会裸 401 —— 参照 #469 导出门控，未登录时禁用写控件
+  // 并给出可见的登录引导。
+  const authUser = useAuthUser();
 
   // #558: 把项目 tab 的选择镜像进 HUD store —— chat 发送时据此在请求体携带
   // project_id（后端 context assembler 注入项目摘要）。workspace 级选择，
@@ -82,6 +88,7 @@ export function ProjectTab() {
             icon={Plus}
             iconSize={15}
             active={showCreate}
+            disabled={!authUser}
             onClick={() => setShowCreate(!showCreate)}
           />
         )}
@@ -96,6 +103,12 @@ export function ProjectTab() {
 
             {ws.view === 'project' && (
               <>
+                {!authUser && (
+                  <p className="flex items-center gap-1.5 text-caption text-ink-muted">
+                    <Lock size={12} aria-hidden />
+                    创建项目 / 运行工作流需要登录账号 — 请先在 设置 → 账户 登录
+                  </p>
+                )}
                 {showCreate && (
                   <div className="space-y-2 rounded-md border border-edge-subtle bg-surface-raised px-panel py-2.5">
                     <label
@@ -115,7 +128,8 @@ export function ProjectTab() {
                     <button
                       type="button"
                       onClick={handleCreateProject}
-                      className="w-full rounded-sm bg-status-accent py-1.5 text-meta font-medium text-ink-on-accent transition-opacity hover:opacity-90"
+                      disabled={!authUser}
+                      className="w-full rounded-sm bg-status-accent py-1.5 text-meta font-medium text-ink-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       创建项目
                     </button>
@@ -203,7 +217,8 @@ export function ProjectTab() {
                               onConfirm={() => {
                                 void handleRerunWorkflow(w.id);
                               }}
-                              disabled={ws.actionBusy}
+                              disabled={ws.actionBusy || !authUser}
+                              title={authUser ? undefined : '需要登录账号（设置 → 账户）'}
                               className="border border-edge-subtle bg-surface-raised text-ink hover:bg-surface-sunken"
                             />
                           </div>
