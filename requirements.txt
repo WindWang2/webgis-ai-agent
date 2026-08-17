@@ -79,7 +79,7 @@ asyncpg>=0.29.0
 # 连 postgresql:// URL，SQLAlchemy 默认选 psycopg2 驱动；生产镜像此前漏装导致
 # API 容器启动 ModuleNotFoundError: No module named 'psycopg2'（preview 栈 502）。
 # psycopg2-binary 是生产/CI 的二进制 wheel（无需 pg_config 编译）。
-psycopg2-binary>=2.9.9
+psycopg2-binary>=2.9.12
 matplotlib>=3.8.0
 
 # RAG & Vector Search
