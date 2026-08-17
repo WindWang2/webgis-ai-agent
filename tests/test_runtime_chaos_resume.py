@@ -227,7 +227,8 @@ def _pass_ownership(monkeypatch):
     tests/unit/test_map_action_acks.py::_pass_ownership)."""
     monkeypatch.setattr(
         chat_route.AsyncHistoryService,
-        "get_session",
+        # #525: the body-session guard now uses the metadata-only variant.
+        "get_session_meta",
         AsyncMock(return_value=MagicMock()),
     )
 

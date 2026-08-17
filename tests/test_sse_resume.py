@@ -136,7 +136,8 @@ def _fresh_resume_registry(monkeypatch):
     monkeypatch.setattr(chat_route, "_turn_resume_registry", TurnResumeRegistry())
     monkeypatch.setattr(
         chat_route.AsyncHistoryService,
-        "get_session",
+        # #525: the body-session guard now uses the metadata-only variant.
+        "get_session_meta",
         AsyncMock(return_value=MagicMock()),
     )
     yield

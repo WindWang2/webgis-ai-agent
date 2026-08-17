@@ -133,6 +133,12 @@ class FaissVectorStore:
         # (mtime_ns, parsed_dict) cache for load_metadata. None until first
         # load. See load_metadata docstring for invalidation semantics.
         self._metadata_cache: Optional[tuple] = None
+        # (index_file mtime_ns) of the last loaded index.faiss, None when no
+        # file backs the in-memory index. #544: _get_index refreshes the
+        # in-memory index on this signal (same protocol as load_metadata),
+        # so a cross-process compact/rewrite is picked up before search or
+        # add_vectors use stale positions.
+        self._index_sig: Optional[int] = None
 
     def _get_embedding_model(self):
         """Lazy load sentence transformer model."""
@@ -152,15 +158,45 @@ class FaissVectorStore:
         vectors = model.encode(texts, normalize_embeddings=True)
         return np.array(vectors, dtype=np.float32)
 
+    def _stamp_index_sig(self) -> None:
+        """Record the index.faiss mtime backing ``self._index``.
+
+        Called after every successful in-process write of index.faiss so the
+        mtime signature tracks the file the in-memory index was built from.
+        """
+        index_file = os.path.join(self.index_dir, "index.faiss")
+        try:
+            st = os.stat(index_file)
+        except OSError:
+            self._index_sig = None
+            return
+        self._index_sig = st.st_mtime_ns
+
     def _get_index(self, dim: int = 384):
-        """Get or initialize FAISS index."""
-        if self._index is None:
+        """Get or initialize FAISS index.
+
+        #544 cross-process staleness: the in-memory index is refreshed on
+        the same mtime signal that ``load_metadata`` uses. Any writer (this
+        process, another uvicorn worker, a Celery compact task) rewrites
+        index.faiss atomically (tempfile + os.replace), so a changed mtime
+        means the cached index is stale — positions no longer match
+        metadata, and search would return wrong-document content or surface
+        deleted content. The mtime check is a single stat() syscall on the
+        hot path; the re-read happens only when the file actually changed.
+        Writers are serialized by ``_write_lock``, so a lock-free stat+swap
+        is safe (no read flock needed).
+        """
+        index_file = os.path.join(self.index_dir, "index.faiss")
+        try:
+            file_sig = os.stat(index_file).st_mtime_ns
+        except FileNotFoundError:
+            file_sig = None
+
+        if self._index is None or self._index_sig != file_sig:
             try:
                 import faiss
-                self._index = faiss.IndexFlatIP(dim)
-                index_file = os.path.join(self.index_dir, "index.faiss")
                 meta_file = os.path.join(self.index_dir, "metadata.json")
-                if os.path.exists(index_file) and os.path.exists(meta_file):
+                if file_sig is not None and os.path.exists(meta_file):
                     self._index = faiss.read_index(index_file)
                     logger.info("[RAG] Loaded existing FAISS index")
                     # REVIEW-P0-PROMOTED, faiss_store startup recovery:
@@ -168,8 +204,12 @@ class FaissVectorStore:
                     # (or vice versa) the on-disk state is inconsistent.
                     # Trust the index, drop metadata entries that have no
                     # matching vector. Survives the partial-write case
-                    # that used to silently corrupt results.
+                    # that used to silently corrupt results. Runs on every
+                    # mtime-triggered reload too (#544).
                     self._recover_index_metadata_consistency()
+                else:
+                    self._index = faiss.IndexFlatIP(dim)
+                self._index_sig = file_sig
             except Exception as e:
                 logger.error(f"[RAG] Failed to init FAISS: {e}")
                 raise
@@ -233,6 +273,7 @@ class FaissVectorStore:
                 _atomic_write_faiss(
                     os.path.join(self.index_dir, "index.faiss"), self._index
                 )
+                self._stamp_index_sig()
                 logger.info("[RAG] Saved FAISS index to disk")
             except Exception as e:
                 logger.warning(f"[RAG] Failed to save index: {e}")
@@ -319,14 +360,18 @@ class FaissVectorStore:
         new chunks (the index is older, the metadata references
         chunks the index doesn't have, and the next load truncates
         them — see _recover_index_metadata_consistency).
-        """
-        idx = self._get_index(vectors.shape[1])
-        idx.add(vectors)
 
+        #544: the index is resolved INSIDE the lock, via the mtime-refreshing
+        _get_index. A cross-process compact that happened after a stale
+        in-memory load is therefore re-read first, so this call never
+        overwrites index.faiss with an index missing other writers' state.
+        """
         index_path = os.path.join(self.index_dir, "index.faiss")
         meta_path = os.path.join(self.index_dir, "metadata.json")
 
         with _write_lock(self.index_dir):
+            idx = self._get_index(vectors.shape[1])
+            idx.add(vectors)
             try:
                 meta = self.load_metadata()
                 base_idx = len(meta.get("chunks", []))
@@ -343,6 +388,9 @@ class FaissVectorStore:
                 raise RagPersistenceError(
                     f"add_vectors persistence failed: {e}"
                 ) from e
+            # In-memory index now matches disk — refresh the signature so
+            # the next _get_index is a cache hit, not a wasteful re-read.
+            self._stamp_index_sig()
 
     def search(
         self,
@@ -465,6 +513,7 @@ class FaissVectorStore:
 
             # Update in-memory state to match.
             self._index = new_index
+            self._stamp_index_sig()
 
         logger.info(
             f"[FaissVectorStore] Compacted index: purged {purged_count} "

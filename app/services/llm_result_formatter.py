@@ -175,6 +175,38 @@ def is_error_dict(result: Any) -> bool:
     return isinstance(result, dict) and result.get("success") is False and "code" in result
 
 
+def is_error_like_result(result: Any) -> bool:
+    """#529: the ``{"error": <string>}`` normal-return failure shape.
+
+    ~139 tool sites return ``{"error": "<msg>"}`` dicts instead of raising or
+    returning the canonical ``std_error_response`` shape — only the latter was
+    recognized, so these were classified as success (marked completed, same-args
+    retries intercepted with a fabricated "已成功执行", plans advanced past
+    failures).
+
+    Conservative by design (mirrors ``chinese_maps/http.py``'s
+    ``_is_provider_error_dict``): only a **string** ``error`` value classifies,
+    so business payloads that merely carry an ``error`` key (``None``, numeric,
+    nested error info) are not reclassified. The string may be empty — an
+    ``{"error": ""}`` result is still an error channel, not a success. An
+    explicit ``success=True`` also shields partial-success payloads (e.g.
+    geocode returning results alongside an error note).
+    """
+    return (
+        isinstance(result, dict)
+        and isinstance(result.get("error"), str)
+        and result.get("success") is not True
+    )
+
+
+def is_tool_error_result(result: Any) -> bool:
+    """#529: unified tool-failure classification — canonical
+    ``std_error_response`` shape OR the ``{"error": <str>}`` normal-return
+    shape. Use this everywhere a consumer classifies a tool result as failed.
+    """
+    return is_error_dict(result) or is_error_like_result(result)
+
+
 def wrap_error_dict_for_llm(tool_name: str, result: dict) -> str:
     from app.services.chat.prompt import construct_self_healing_message
     code = result.get("code", "TOOL_ERROR")

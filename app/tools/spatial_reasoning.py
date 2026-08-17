@@ -263,9 +263,18 @@ async def _call_llm_real(system_prompt: str, user_prompt: str) -> dict:
 
 
 def _error_result(message: str) -> dict:
-    """Return a structured error response matching SpatialReasoningResult schema."""
+    """Return a structured error response matching SpatialReasoningResult schema.
+
+    #529: carries the canonical failure markers (success=False + code +
+    message) so the dispatch error path classifies it as a failure — the
+    pre-fix shape had no success/code keys and was treated as success
+    (marked completed, retries lied "已成功执行", plans advanced past it).
+    """
     return {
         "type": "spatial_reasoning",
+        "success": False,
+        "code": "spatial_reasoning_error",
+        "message": message,
         "conclusion": "推演过程中发生错误",
         "reasoning_chain": [],
         "confidence": 0.0,

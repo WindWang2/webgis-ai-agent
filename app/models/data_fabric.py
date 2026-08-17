@@ -3,7 +3,7 @@ PostgreSQL + PostGIS Domain Models for Enterprise Geospatial Data Fabric.
 """
 from datetime import datetime, timezone
 from sqlalchemy import (
-    Column, Integer, String, Text, DateTime, ForeignKey, Index, JSON
+    Column, Integer, String, Text, DateTime, ForeignKey, Index, JSON, UniqueConstraint
 )
 from sqlalchemy.orm import relationship, backref
 from app.core.database import Base
@@ -26,9 +26,14 @@ class DataSource(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
+    # #547：status 索引只保留 index=True 生成的 ix_data_sources_status ——
+    # 之前 __table_args__ 里 idx_datasource_status 是同列第二份重复索引
+    # （0011 建 idx_datasource_status、0017 又补了 ix_data_sources_status）。
+    # uq_datasource_org_name 是迁移（0011）早已存在、模型此前缺漏的
+    # 唯一约束 —— 补上让 ORM 识别、autogenerate 不再反复想 drop 它。
     __table_args__ = (
         Index("idx_datasource_org_type", "org_id", "source_type"),
-        Index("idx_datasource_status", "status"),
+        UniqueConstraint("org_id", "name", name="uq_datasource_org_name"),
     )
 
 

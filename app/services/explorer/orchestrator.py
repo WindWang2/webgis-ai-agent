@@ -1,10 +1,15 @@
 """探索任务编排器"""
+import json
 import logging
 import asyncio
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import AsyncGenerator, Optional, Any
+
+import redis as _redis
 from celery import chain
+
+from app.core.config import settings
 from app.services.explorer.models import SearchContext, ExplorerPerceptionEvent
 from app.services.explorer.intent_detector import IntentDetector, ExploreDecision
 from app.services.task_queue import TaskQueueService
@@ -36,6 +41,20 @@ EXPLORER_STAGES = ("discover", "fetch", "parse", "geocode", "validate")
 # owner map (F29): entries are only useful while a run is live/queried.
 _CHAIN_RUNS_MAX_ENTRIES = 20_000
 
+# ─── Issue #526: durable chain-run registry ────────────────────────────────
+#
+# ``_chain_runs`` is process-local: on restart/pod-swap the fallbacks degraded
+# to polling/revoking ONLY the final stage id, resurrecting the #481 failure
+# modes (mid-chain-failed runs stuck PENDING forever + infinite SSE + no-op
+# abort) for chains in flight during the deploy window. The registry is
+# therefore ALSO written to Redis (`explorer:chain:<final_id>` → JSON
+# {stage_ids, owner}) with a TTL covering the exploration horizon; the
+# in-process dict stays as the L1 fast path, Redis is the authority on L1
+# miss. Ownership is stored in the same record so the owner-verified
+# status/abort/stream endpoints keep working after restart (the
+# TaskQueueService._task_owners map is process-local too).
+_CHAIN_RUNS_TTL_SECONDS = 24 * 60 * 60
+
 
 @dataclass
 class ExplorerChainRun:
@@ -43,18 +62,50 @@ class ExplorerChainRun:
 
     ``stage_ids[-1]`` is the whole-chain handle returned to the client; the
     ids before it are the predecessors walked via ``AsyncResult.parent``.
+    ``owner`` is the user_id the run was registered under (durable copy of
+    the TaskQueueService._task_owners mapping for chain runs).
     """
 
     stage_ids: list[str]
+    owner: str = ""
 
 
 _chain_runs: "OrderedDict[str, ExplorerChainRun]" = OrderedDict()
 
+# Lazy sync Redis client for the durable registry (mirrors
+# app/lib/tool_cache.py's singleton pattern).
+_chain_redis: Optional["_redis.Redis"] = None
 
-def register_chain_run(final_task_id: str, stage_ids: list[str]) -> ExplorerChainRun:
+
+def _get_chain_redis() -> "_redis.Redis":
+    global _chain_redis
+    if _chain_redis is None:
+        _chain_redis = _redis.Redis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            socket_timeout=2.0,
+            socket_connect_timeout=2.0,
+        )
+    return _chain_redis
+
+
+def reset_chain_redis_for_tests() -> None:
+    """仅供测试使用：清空 Redis 客户端单例。"""
+    global _chain_redis
+    _chain_redis = None
+
+
+def clear_chain_registry() -> None:
+    """Drop the in-process L1 registry (test seam for restart simulation)."""
+    _chain_runs.clear()
+
+
+def register_chain_run(
+    final_task_id: str, stage_ids: list[str], owner: str = ""
+) -> ExplorerChainRun:
     """Record the stage task ids of a submitted exploration under its final
     (whole-chain) id, so status/abort/stream can act on the whole chain."""
-    run = ExplorerChainRun(stage_ids=list(stage_ids))
+    run = ExplorerChainRun(stage_ids=list(stage_ids), owner=owner or "")
     _chain_runs[final_task_id] = run
     _chain_runs.move_to_end(final_task_id)
     while len(_chain_runs) > _CHAIN_RUNS_MAX_ENTRIES:
@@ -69,6 +120,58 @@ def get_chain_run(final_task_id: str) -> Optional[ExplorerChainRun]:
         # Refresh recency so a live run is never LRU-evicted mid-flight.
         _chain_runs.move_to_end(final_task_id)
     return run
+
+
+# ─── Durable registry helpers (sync Redis, called inside to_thread) ────────
+
+
+def _chain_key(final_task_id: str) -> str:
+    return f"explorer:chain:{final_task_id}"
+
+
+def persist_chain_run_sync(
+    final_task_id: str, stage_ids: list[str], owner: str = ""
+) -> None:
+    """Write the chain-run record to Redis (call inside a worker thread)."""
+    try:
+        payload = json.dumps(
+            {"stage_ids": list(stage_ids), "owner": owner or ""},
+            ensure_ascii=False,
+        )
+        _get_chain_redis().set(
+            _chain_key(final_task_id), payload, ex=_CHAIN_RUNS_TTL_SECONDS
+        )
+    except Exception as e:  # noqa: BLE001 Redis 不可达 → 仅内存，下次轮询降级
+        logger.warning(
+            "[Explorer] durable chain-run persist failed for %s: %s",
+            final_task_id, e,
+        )
+
+
+def load_chain_run_sync(final_task_id: str) -> Optional[ExplorerChainRun]:
+    """Read the chain-run record from Redis (call inside a worker thread)."""
+    try:
+        raw = _get_chain_redis().get(_chain_key(final_task_id))
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "[Explorer] durable chain-run read failed for %s: %s",
+            final_task_id, e,
+        )
+        return None
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+        return ExplorerChainRun(
+            stage_ids=list(data.get("stage_ids") or []),
+            owner=str(data.get("owner") or ""),
+        )
+    except (TypeError, ValueError, json.JSONDecodeError) as e:
+        logger.warning(
+            "[Explorer] corrupt durable chain-run record for %s: %s",
+            final_task_id, e,
+        )
+        return None
 
 
 # ─── Issue #518: session → active explorer tasks (post-turn chat-stream bridge) ─
@@ -205,7 +308,13 @@ class ExplorerOrchestrator:
 
         stage_ids = await asyncio.to_thread(_submit_chain)
         celery_task_id = stage_ids[-1]
-        register_chain_run(celery_task_id, stage_ids)
+        register_chain_run(celery_task_id, stage_ids, owner=user_id)
+        # #526: write the chain-run record durably (Redis) so status/abort/
+        # stream/ownership survive process restart. Best-effort: Redis down →
+        # in-process only, next polls degrade to the single-id fallback.
+        await asyncio.to_thread(
+            persist_chain_run_sync, celery_task_id, stage_ids, user_id
+        )
 
         # #518: 会话 → 任务登记（post-turn chat-stream bridge 用）。匿名
         # 会话没有 owner registration，独立流端点不可达，靠聊天流桥接。
@@ -278,6 +387,15 @@ class ExplorerOrchestrator:
         # keep a safe default rather than returning None.
         return {"task_id": final_id, "status": "UNKNOWN", "result": None, "progress": 0}
 
+    async def _load_chain_run_durable(self, final_task_id: str) -> Optional[ExplorerChainRun]:
+        """#526: on L1 miss, recover the chain-run record from the durable
+        Redis registry (survives process restart) and rehydrate the L1 fast
+        path so the per-second SSE poll does not hit Redis every tick."""
+        run = await asyncio.to_thread(load_chain_run_sync, final_task_id)
+        if run is not None:
+            register_chain_run(final_task_id, run.stage_ids, owner=run.owner)
+        return run
+
     async def get_task_status(self, task_id: str) -> dict:
         """查询任务状态 — AsyncResult 读 result backend 是 socket I/O，
         SSE stream_progress 每秒轮询，必须 offload（#386）。
@@ -285,8 +403,12 @@ class ExplorerOrchestrator:
         For a registered chain run this aggregates ALL stage ids (issue #481):
         polling the final id alone cannot see mid-chain failures (they leave
         it PENDING forever), and polling the first id fakes SUCCESS early.
+        #526: the registry is durable — on L1 miss the stage list is recovered
+        from Redis instead of degrading to single-id polling.
         """
         run = get_chain_run(task_id)
+        if run is None:
+            run = await self._load_chain_run_durable(task_id)
         if run is not None:
             return await asyncio.to_thread(self._aggregate_chain_status, run)
         return await asyncio.to_thread(self.task_queue.get_task_status, task_id)
@@ -296,9 +418,12 @@ class ExplorerOrchestrator:
 
         For a chain run every stage id is revoked (issue #481): revoking only
         the first id is a no-op once discover succeeded, and revoking only the
-        final id is a no-op while earlier stages run.
+        final id is a no-op while earlier stages run. #526: the registry is
+        durable, so abort still finds every stage id after a restart.
         """
         run = get_chain_run(task_id)
+        if run is None:
+            run = await self._load_chain_run_durable(task_id)
         if run is None:
             return await asyncio.to_thread(self.task_queue.revoke_task, task_id)
 
@@ -316,6 +441,22 @@ class ExplorerOrchestrator:
             return all(outcomes)
 
         return await asyncio.to_thread(_revoke_all)
+
+    async def verify_chain_owner(self, task_id: str, user_id: str) -> bool:
+        """#526: owner check for chain runs that survives process restart.
+
+        The TaskQueueService._task_owners map is process-local — after a pod
+        swap it is empty and the owner-verified status/abort/stream endpoints
+        would 404 even for the legit owner. The durable chain-run record
+        carries the owner; the in-process map stays as the same-process fast
+        path (and the fallback for chain runs without a durable record).
+        """
+        run = get_chain_run(task_id)
+        if run is None:
+            run = await self._load_chain_run_durable(task_id)
+        if run is not None and run.owner:
+            return run.owner == (user_id or "")
+        return TaskQueueService.verify_owner(task_id, user_id or "")
 
     async def stream_progress(
         self,

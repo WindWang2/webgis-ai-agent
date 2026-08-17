@@ -7,28 +7,19 @@ import logging
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import Optional, List
-from pydantic import BaseModel, Field
+from typing import List, Optional
 from app.tools.registry import ToolRegistry, tool
 from app.core.config import settings
 from app.tools._utils import db_session
+from app.tools.upload_tools import _resolve_session_id
 from app.models.upload import UploadRecord
 
 logger = logging.getLogger(__name__)
 
 REPORT_OUTPUT_DIR = os.path.join(settings.DATA_DIR, "monitoring_reports")
 
-
-class MonitoringReportArgs(BaseModel):
-    title: str = Field(..., description="报告标题")
-    region_name: str = Field(..., description="监测区域名称，如'成都市锦江区'")
-    period: str = Field(..., description="监测时期描述，如'2024年1月-2024年12月'")
-    analysis_assets: List[int] = Field(..., description="分析资产ID列表（来自资产库）")
-    report_template: str = Field("natural_resources", description="报告模板: natural_resources(自然资源), vegetation(植被专项), water(水体专项), fire(火灾监测)")
-    format: str = Field("html", description="输出格式: html, pdf, markdown")
-    summary_text: Optional[str] = Field(None, description="AI 撰写的执行摘要（可选，由 Agent 生成）")
-    conclusions: Optional[str] = Field(None, description="结论与建议（可选，由 Agent 生成）")
-    session_id: Optional[str] = Field(None, description="会话 ID")
+#: 单次报告可引用的资产上限 —— 防 LLM 一次拉取海量 UploadRecord 详情（审计 #543）。
+MAX_REPORT_ASSETS = 100
 
 
 def _get_template_name(template_key: str) -> str:
@@ -42,10 +33,24 @@ def _get_template_name(template_key: str) -> str:
     return mapping.get(template_key, "monitoring_report.html")
 
 
-def _load_assets(asset_ids: List[int]) -> List[dict]:
-    """从数据库加载分析资产详情"""
+def _load_assets(asset_ids: List[int], session_id: Optional[str] = None) -> List[dict]:
+    """从数据库加载分析资产详情（#543：查询必须限定到调用方会话）。
+
+    UploadRecord.id 是顺序自增整数、易枚举；session_id 是唯一的归属令牌。
+    与 list_uploaded_data / get_upload_info 同款语义：
+      - 先经 _resolve_session_id 用运行时已验证的会话 id 校验/覆盖调用方传入值；
+      - 解析后无会话 id（匿名/上下文缺失）→ 直接返回空，绝不跨会话读取；
+      - 仅返回本会话的 raster_analysis 资产（与 list_analysis_assets 契约一致）。
+    """
+    session_id = _resolve_session_id(session_id)
+    if not session_id:
+        return []
     with db_session() as db:
-        records = db.query(UploadRecord).filter(UploadRecord.id.in_(asset_ids)).all()
+        records = db.query(UploadRecord).filter(
+            UploadRecord.id.in_(asset_ids),
+            UploadRecord.session_id == session_id,
+            UploadRecord.geometry_type == "raster_analysis",
+        ).all()
         return [
             {
                 "id": r.id,
@@ -78,8 +83,12 @@ def _render_monitoring_report_html(
             autoescape=jinja2.select_autoescape(["html", "xml"]),
         )
         template = env.get_template(template_name)
-    except (jinja2.TemplateNotFound, ImportError):
-        # 使用内联 fallback 模板
+    except ImportError:
+        # jinja2 未安装 —— 回到内联 fallback（先捕获 ImportError，
+        # 再捕获 jinja2.TemplateNotFound，避免 jinja2 名未绑定时的 NameError）。
+        return _fallback_monitoring_html(title, region_name, period, assets, summary_text, conclusions)
+    except jinja2.TemplateNotFound:
+        # 模板文件缺失 —— 同样走 fallback。
         return _fallback_monitoring_html(title, region_name, period, assets, summary_text, conclusions)
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -195,8 +204,13 @@ def register_monitoring_report_tools(registry: ToolRegistry):
         try:
             os.makedirs(REPORT_OUTPUT_DIR, exist_ok=True)
 
-            # 加载资产详情
-            assets = _load_assets(analysis_assets)
+            # #543: 单次报告引用资产数设上限 —— 防 LLM 借工具枚举任意 UploadRecord。
+            if len(analysis_assets) > MAX_REPORT_ASSETS:
+                return {"error": f"分析资产数量超过上限（{MAX_REPORT_ASSETS}），请分批生成报告"}
+
+            # 加载资产详情 — session_id 由 registry 注入（或经 _resolve_session_id 校验），
+            # _load_assets 仅返回本会话的资产，跨会话 ID 返回空（#543）。
+            assets = _load_assets(analysis_assets, session_id=session_id)
             if not assets:
                 return {"error": "未找到指定的分析资产，请确认 asset_id 正确且资产存在于资产库中"}
 
@@ -261,7 +275,6 @@ def register_monitoring_report_tools(registry: ToolRegistry):
                 "format": format.lower(),
                 "file_size_kb": round(file_size / 1024, 1),
                 "file_path": file_path,
-                "download_url": f"/api/v1/reports/monitoring/{report_id}/download",
                 "asset_count": len(assets),
                 "assets_included": [{"id": a["id"], "name": a["name"]} for a in assets],
                 "message": (
