@@ -34,6 +34,9 @@ import pytest
 import rasterio
 from rasterio.transform import from_origin
 
+import networkx as nx
+from shapely.geometry import LineString
+
 from app.lib.tool_cache import _reset_redis_client_for_tests
 from app.services import tool_metrics
 from app.tools.registry import ToolRegistry
@@ -374,6 +377,183 @@ def _raster_tile_streaming_ms() -> float:
     return elapsed
 
 
+def _quality_audit_topology_ms() -> float:
+    """Issue #539 workload: bounded pairwise topology audit on 200 concentric
+    bbox-nested rings (degenerate all-pairs case on master: ~1.05 s, quadratic —
+    400 rings ~4.2 s). Guards the cap+truncation fix against a regression that
+    reintroduces the unbounded O(P²) scan."""
+    import math
+
+    from app.services.spatial_quality_service import SpatialQualityEngine
+
+    n_pts = 24
+    features = []
+    for i in range(1, 201):
+        r = 1.0 + 0.02 * i
+        ring = []
+        for a in range(n_pts):
+            ang = 2.0 * math.pi * a / n_pts
+            ring.append([round(r * math.cos(ang), 6), round(r * math.sin(ang), 6)])
+        ring.append(ring[0])
+        features.append({
+            "type": "Feature",
+            "properties": {"id": i},
+            "geometry": {"type": "Polygon", "coordinates": [ring]},
+        })
+    geojson = {"type": "FeatureCollection", "features": features}
+
+    t0 = time.perf_counter()
+    report = SpatialQualityEngine.audit_dataset(geojson, crs="EPSG:4326")
+    dt = (time.perf_counter() - t0) * 1000
+    assert report.total_features == 200
+    topo = [i for i in report.issues if i.dimension == "topology"]
+    assert len(topo) == SpatialQualityEngine.MAX_TOPOLOGY_ISSUES, "audit must stop at the issue budget"
+    assert report.truncated is True
+    return dt
+
+
+def _two_opt_ladder_ms() -> float:
+    """Issue #540 workload: 2-opt on the adversarial interleaved ladder at
+    n=160 (master: ~3.1 s, ~n^3.9). Guards the O(1)-delta scan."""
+    import math
+
+    from app.services.network.vrp import NetworkRouteOptimizationService
+
+    half = 80
+    pts = []
+    for i in range(half):
+        pts.append((0.0, float(i)))
+        pts.append((1.0, float(i)))
+    cost = [[math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1]) for j in range(160)] for i in range(160)]
+
+    svc = NetworkRouteOptimizationService()
+    t0 = time.perf_counter()
+    tour = svc._two_opt(list(range(160)), cost, is_roundtrip=False)  # noqa: SLF001
+    dt = (time.perf_counter() - t0) * 1000
+    assert len(tour) == 160
+    return dt
+
+
+_PERF_GRID_112: Optional[Any] = None
+
+
+def _perf_grid_112():
+    """~50k-directed-edge grid, built once; _apply_barriers works on a copy so
+    the source graph is never mutated. Excludes the ~0.66 s graph build (equal
+    before/after) so the workload measures the barrier-application hotspot."""
+    global _PERF_GRID_112
+    if _PERF_GRID_112 is None:
+        n = 112
+        g = nx.DiGraph()
+        for r in range(n):
+            for c in range(n):
+                g.add_node((r, c), x=116.0 + c * 0.001, y=39.0 + r * 0.001)
+        eid = 0
+        for r in range(n):
+            for c in range(n):
+                for dr, dc in ((0, 1), (1, 0)):
+                    nr, nc = r + dr, c + dc
+                    if nr >= n or nc >= n:
+                        continue
+                    geom = LineString([(116.0 + c * 0.001, 39.0 + r * 0.001),
+                                       (116.0 + nc * 0.001, 39.0 + nr * 0.001)])
+                    for u, v in (((r, c), (nr, nc)), ((nr, nc), (r, c))):
+                        g.add_edge(u, v, id=eid, length_m=100.0, travel_time_s=60.0,
+                                   geometry=geom.__geo_interface__)
+                        eid += 1
+        _PERF_GRID_112 = g
+    return _PERF_GRID_112
+
+
+def _barriers_indexed_ms() -> float:
+    """Issue #540 workload: 3 polygon barriers over a ~50k-directed-edge grid
+    (master: barrier scan ~1.4 s after removing the ~0.66 s graph build; the
+    STRtree index makes it ~0.5 s). Guards the indexed barrier lookup."""
+    from app.services.network.models import Barrier
+    from app.services.network.routing import NetworkRoutingService
+
+    g = _perf_grid_112()
+    n = 112
+    span = n * 0.001
+    barriers = []
+    for i in range(3):
+        frac = 0.25 + 0.1 * i
+        x0, y0 = 116.0 + span * 0.1, 39.0 + span * 0.1
+        x1, y1 = x0 + span * frac, y0 + span * frac
+        barriers.append(Barrier(
+            barrier_id=f"b{i}", barrier_type="polygon",
+            geometry={"type": "Polygon", "coordinates": [[[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]]]},
+            impedance_factor=float("inf"),
+        ))
+    router = NetworkRoutingService()
+    t0 = time.perf_counter()
+    view = router._apply_barriers(g, barriers)  # noqa: SLF001
+    dt = (time.perf_counter() - t0) * 1000
+    assert view is not g
+    assert len(set(g.edges()) - set(view.edges())) > 0
+    return dt
+
+
+_PERF_CF_GRID: Optional[Any] = None
+
+
+def _perf_cf_grid():
+    """20×20 grid graph+dataset built once; closest_facility never mutates the
+    caller's graph here (node-exact snaps, no barriers), so sharing is safe and
+    the ~1.1 s graph build is excluded from the measured analysis time."""
+    from app.services.network.graph_builder import NetworkGraphBuilder
+
+    global _PERF_CF_GRID
+    if _PERF_CF_GRID is None:
+        step = 0.001
+        n = 20
+        features = []
+        for r in range(n):
+            features.append({"type": "Feature", "properties": {"id": f"h{r}"},
+                             "geometry": {"type": "LineString", "coordinates": [
+                                 [116.0, 39.0 + r * step], [116.0 + (n - 1) * step, 39.0 + r * step]]}})
+        for c in range(n):
+            features.append({"type": "Feature", "properties": {"id": f"v{c}"},
+                             "geometry": {"type": "LineString", "coordinates": [
+                                 [116.0 + c * step, 39.0], [116.0 + c * step, 39.0 + (n - 1) * step]]}})
+        _PERF_CF_GRID = NetworkGraphBuilder().build_graph({"type": "FeatureCollection", "features": features})
+    return _PERF_CF_GRID
+
+
+def _closest_facility_routes_ms() -> float:
+    """Issue #540 workload: 30 demands × 40 facilities, top-3 (master built a
+    Route for all 1200 reachable pairs; the analysis was ~0.5 s + ~1.1 s graph
+    build). Guards top-K-first Route construction (≤ D×K builds)."""
+    from app.services.network.facility import NetworkClosestFacilityService
+    from app.services.network.models import DemandPoint, Facility
+
+    step = 0.001
+    n = 20
+    g, ds = _perf_cf_grid()
+
+    def coord(i):
+        r, c = divmod(i, n)
+        return [116.0 + c * step, 39.0 + r * step]
+
+    rng = np.random.default_rng(11)
+    nodes = list(range(n * n))
+    rng.shuffle(nodes)
+    demands = [DemandPoint(demand_id=f"d{i}", weight=1.0,
+                           geometry={"type": "Point", "coordinates": coord(x)})
+               for i, x in enumerate(nodes[:30])]
+    facilities = [Facility(facility_id=f"f{i}", geometry={"type": "Point", "coordinates": coord(x)})
+                  for i, x in enumerate(nodes[30:70])]
+    svc = NetworkClosestFacilityService()
+    t0 = time.perf_counter()
+    res = svc.network_closest_facility(
+        demand_points=demands, facilities=facilities, graph=g, network_dataset=ds,
+        target_facility_count=3,
+    )
+    dt = (time.perf_counter() - t0) * 1000
+    assert len(res.routes) == 30 * 3
+    return dt
+
+
 WORKLOADS = {
     "raster_guard_rejection": _raster_guard_rejection_ms,
     "ref_resolution_batch": _ref_resolution_batch_ms,
@@ -387,6 +567,11 @@ WORKLOADS = {
     "network_snapping_cached": _network_snapping_cached_ms,
     "geojson_bbox_large": _geojson_bbox_large_ms,
     "metric_byte_estimate": _metric_byte_estimate_ms,
+    # issues #539/#540 regression guards (see each workload docstring)
+    "audit_topology_200rings": _quality_audit_topology_ms,
+    "two_opt_ladder_160": _two_opt_ladder_ms,
+    "barriers_indexed_50kE_x3": _barriers_indexed_ms,
+    "closest_facility_30x40": _closest_facility_routes_ms,
 }
 
 
