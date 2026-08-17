@@ -221,3 +221,74 @@ describe('runExport', () => {
     expect(mockMap.setPixelRatio).toHaveBeenCalledWith(1);
   });
 });
+
+// #527: 高 DPI 导出路径的 map.once('idle') 等待必须有界 —— WebGL 上下文丢失
+// 或画布隐藏时 idle 永不触发，无界等待会让 finally 里的 pixelRatio 恢复不可达
+// （3.125x @300DPI → ~10x backing store 泄漏）且导出进程永久挂起。
+describe('runExport — bounded idle wait (#527)', () => {
+  it('idle 永不触发时在 deadline 内失败、恢复 pixelRatio 并给出如实文案', async () => {
+    // once('idle') 永不回调（模拟 WebGL 上下文丢失后的挂起状态）
+    const mockMap = createMockMap({
+      once: vi.fn(() => {}),
+    });
+    const hudState = createMockHudState();
+    const deps: ExportDeps = {
+      map: mockMap as any,
+      getHudState: () => hudState,
+      // 测试注入：把 30s 默认截止压到 20ms，避免测试真等 30 秒
+      idleTimeoutMs: 20,
+    };
+
+    const outcome = await runExport(deps, { dpi: 192 });
+
+    // 失败的"真实性"：typed error 文案说明是 idle 等待超时，而不是泛化失败
+    expect(outcome.ok).toBe(false);
+    expect(outcome.error).toContain('idle');
+    // pixelRatio 已在 finally 恢复（set 2 → restore 1）
+    expect(mockMap.setPixelRatio).toHaveBeenCalledWith(2);
+    expect(mockMap.setPixelRatio).toHaveBeenCalledWith(1);
+    // 用户可见的失败消息同样如实（不是"排版合成失败"泛化文案）
+    const msg = hudState.setPendingSystemMessage.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(msg).toContain('idle');
+  });
+
+  it('idle 在超时之后才触发：失败先行，pixelRatio 只恢复一次，无二次结算副作用', async () => {
+    let idleCb: (() => void) | null = null;
+    const mockMap = createMockMap({
+      once: vi.fn((_event: string, cb: () => void) => {
+        idleCb = cb;
+      }),
+    });
+    const hudState = createMockHudState();
+    const deps: ExportDeps = {
+      map: mockMap as any,
+      getHudState: () => hudState,
+      idleTimeoutMs: 20,
+    };
+
+    const outcome = await runExport(deps, { dpi: 192 });
+    expect(outcome.ok).toBe(false);
+    expect(outcome.error).toContain('idle');
+
+    // 超时后 idle 才姗姗来迟 → 已结算的 promise 忽略它，恢复次数不增加
+    expect(idleCb).not.toBeNull();
+    idleCb!();
+    expect(mockMap.setPixelRatio).toHaveBeenCalledTimes(2); // 2 + restore 1，无第三次
+    expect(mockMap.setPixelRatio).toHaveBeenLastCalledWith(1);
+  });
+
+  it('dpi=96（targetPixelRatio=1）时不设置也不等待，pixelRatio 原样', async () => {
+    const mockMap = createMockMap({
+      once: vi.fn(() => {}), // 若被调用会挂死 —— 好路径绝不能走到
+    });
+    mockFetchUpload('/exports/map.png', 'map.png');
+    const deps = createDeps();
+    (deps as any).map = mockMap;
+
+    const outcome = await runExport(deps, { dpi: 96, format: 'png' });
+
+    expect(outcome.ok).toBe(true);
+    expect(mockMap.once).not.toHaveBeenCalled();
+    expect(mockMap.setPixelRatio).not.toHaveBeenCalled();
+  });
+});
