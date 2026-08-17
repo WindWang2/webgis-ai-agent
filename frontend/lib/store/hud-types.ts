@@ -225,6 +225,13 @@ export interface HudState {
   sessions: SessionSummary[];
   setSessions: (sessions: SessionSummary[]) => void;
 
+  /* --- Active Project Workspace (#558) --- */
+  // 用户当前选中的项目（项目 tab 的 selectedProjectId 镜像），聊天请求借此
+  // 携带 project_id，后端 context assembler 渲染项目摘要块。workspace 级状态：
+  // 跨会话存活（项目 tab 的选择不因新会话而清空，清空会造成 UI 与请求不一致）。
+  activeProjectId: string | null;
+  setActiveProjectId: (projectId: string | null) => void;
+
   /* ─── v2 Panel Visibility ─── */
   hudOpen: boolean;
   setHudOpen: (open: boolean) => void;
@@ -279,6 +286,12 @@ export interface HudState {
   addExplorerTask: (task: ExplorerTask) => void;
   updateExplorerTask: (taskId: string, updates: Partial<ExplorerTask>) => void;
   removeExplorerTask: (taskId: string) => void;
+  /** #548: session-scoped — cleared on session switch / new session. */
+  clearExplorerTasks: () => void;
+  /** #548 polish: 已关闭卡片的 task_id 记忆（有界）—— 进度事件继续到达时
+   * 不得复活已关闭的卡片。 */
+  dismissedExplorerTaskIds: string[];
+  dismissExplorerTask: (taskId: string) => void;
 
   /* ─── Analysis Results Workbench (session-scoped, bounded, non-persisted) ─── */
   results: AnalysisResult[];

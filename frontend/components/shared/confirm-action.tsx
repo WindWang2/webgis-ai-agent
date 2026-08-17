@@ -28,6 +28,7 @@ export function ConfirmAction({
   confirmLabel = '确认？',
   onConfirm,
   timeoutMs = 3000,
+  'aria-label': ariaLabel,
   className,
   ...rest
 }: ConfirmActionProps) {
@@ -49,7 +50,11 @@ export function ConfirmAction({
   return (
     <button
       type="button"
-      aria-label={confirming ? confirmLabel : label}
+      // #553 审计：`{...rest}` 若展开在 computed aria-label 之后会覆盖它 ——
+      // 调用方传了 aria-label 后，确认态下读屏听到的仍是初始名，两段式状态
+      // 无从感知。这里把调用方 label 拆出来：确认态恒用 confirmLabel，
+      // 非确认态优先调用方显式 aria-label，否则回退初始 label。
+      aria-label={confirming ? confirmLabel : (ariaLabel ?? label)}
       className={clsx(
         'rounded-sm px-2 py-0.5 text-caption font-medium transition-colors',
         confirming

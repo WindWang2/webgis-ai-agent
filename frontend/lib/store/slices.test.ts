@@ -80,6 +80,75 @@ describe('task slice', () => {
     s.removeExplorerTask('EX1');
     expect(useHudStore.getState().explorerTasks).toHaveLength(0);
   });
+
+  it('#548: caps explorer tasks at MAX_EXPLORER_TASKS, evicting the oldest terminal card first', () => {
+    const s = useHudStore.getState();
+    // 前 10 条是已完成（terminal），其余保持 in-flight —— 驱逐必须优先丢终态，
+    // 让活跃任务在超限后仍全部可见。
+    for (let i = 0; i < 10; i++) {
+      s.addExplorerTask({ taskId: `done-${i}`, status: 'completed', stage: 'validate', progress: 100, query: `done-${i}`, startedAt: i, updatedAt: i });
+    }
+    for (let i = 10; i < 60; i++) {
+      s.addExplorerTask({ taskId: `run-${i}`, status: 'fetching', stage: 'fetch', progress: 10, query: `run-${i}`, startedAt: i, updatedAt: i });
+    }
+    const tasks = useHudStore.getState().explorerTasks;
+    expect(tasks.length).toBe(50);
+    // 全部 10 条终态被逐出，50 条 in-flight 完整保留
+    expect(tasks.some((t) => t.status === 'completed')).toBe(false);
+    expect(tasks.every((t) => t.status === 'fetching')).toBe(true);
+    expect(tasks[0].taskId).toBe('run-10');
+  });
+
+  it('#548: evicts the oldest entry when the list is all in-flight', () => {
+    const s = useHudStore.getState();
+    for (let i = 0; i < 51; i++) {
+      s.addExplorerTask({ taskId: `t-${i}`, status: 'discovering', stage: 'discover', progress: 1, query: `t-${i}`, startedAt: i, updatedAt: i });
+    }
+    const tasks = useHudStore.getState().explorerTasks;
+    expect(tasks.length).toBe(50);
+    expect(tasks[0].taskId).toBe('t-1'); // 最旧的 t-0 被逐出
+    expect(tasks[tasks.length - 1].taskId).toBe('t-50');
+  });
+
+  it('#548: clearExplorerTasks empties the list (session-switch reset)', () => {
+    const s = useHudStore.getState();
+    s.addExplorerTask({ taskId: 'EX1', status: 'completed', stage: 'validate', progress: 100, query: 'q', startedAt: 1, updatedAt: 1 });
+    s.clearExplorerTasks();
+    expect(useHudStore.getState().explorerTasks).toHaveLength(0);
+  });
+
+  it('#548 polish: dismissing a task removes the card and keeps it dismissed while its events continue', () => {
+    const s = useHudStore.getState();
+    s.addExplorerTask({ taskId: 'EX-LIVE', status: 'fetching', stage: 'fetch', progress: 10, query: 'q', startedAt: 1, updatedAt: 1 });
+    expect(useHudStore.getState().explorerTasks).toHaveLength(1);
+
+    s.dismissExplorerTask('EX-LIVE');
+    expect(useHudStore.getState().explorerTasks).toHaveLength(0);
+    expect(useHudStore.getState().dismissedExplorerTaskIds).toEqual(['EX-LIVE']);
+
+    // 同一任务的后续进度事件（applyExplorerProgressToStore → addExplorerTask）
+    // 不得把卡片复活；其它任务不受影响。
+    s.addExplorerTask({ taskId: 'EX-LIVE', status: 'fetching', stage: 'fetch', progress: 50, query: 'q', startedAt: 2, updatedAt: 2 });
+    expect(useHudStore.getState().explorerTasks).toHaveLength(0);
+    s.addExplorerTask({ taskId: 'EX-OTHER', status: 'fetching', stage: 'fetch', progress: 10, query: 'q2', startedAt: 3, updatedAt: 3 });
+    expect(useHudStore.getState().explorerTasks).toHaveLength(1);
+    expect(useHudStore.getState().explorerTasks[0].taskId).toBe('EX-OTHER');
+  });
+
+  it('#548 polish: dismissal memory is bounded and reset with the session', () => {
+    const s = useHudStore.getState();
+    for (let i = 0; i < 60; i++) {
+      s.dismissExplorerTask(`ex-${i}`);
+    }
+    expect(useHudStore.getState().dismissedExplorerTaskIds.length).toBe(50);
+    expect(useHudStore.getState().dismissedExplorerTaskIds[0]).toBe('ex-10');
+
+    // 会话切换：记忆随 clearExplorerTasks 清空，任务可再次插入。
+    s.clearExplorerTasks();
+    expect(useHudStore.getState().dismissedExplorerTaskIds).toHaveLength(0);
+    s.addExplorerTask({ taskId: 'ex-10', status: 'fetching', stage: 'fetch', progress: 1, query: 'q', startedAt: 1, updatedAt: 1 });
+    expect(useHudStore.getState().explorerTasks).toHaveLength(1);
+  });
 });
 
 
@@ -131,6 +200,15 @@ describe('ui slice', () => {
     s.pushOpLog({ id: '1', type: 'add', label: 'L1', time: 't', detail: 'd' });
     s.pushOpLog({ id: '2', type: 'add', label: 'L2', time: 't', detail: 'd' });
     expect(useHudStore.getState().opsLog[0].id).toBe('2');
+  });
+
+  it('#558: activeProjectId round-trips (project tab mirror for chat context)', () => {
+    const s = useHudStore.getState();
+    expect(s.activeProjectId).toBeNull();
+    s.setActiveProjectId('proj-1');
+    expect(useHudStore.getState().activeProjectId).toBe('proj-1');
+    s.setActiveProjectId(null);
+    expect(useHudStore.getState().activeProjectId).toBeNull();
   });
 });
 

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useId, useState } from 'react';
+import React, { useEffect, useId, useState } from 'react';
 import {
   Plus,
   Layers,
@@ -16,6 +16,7 @@ import { InlineNotice } from '@/components/shared/inline-notice';
 import { LoadingState } from '@/components/shared/loading-state';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { useToastStore } from '@/components/ui/toast';
+import { useHudStore } from '@/lib/store/useHudStore';
 import { useWorkflowWorkspace } from '@/lib/hooks/use-workflow-workspace';
 import { formatCrs, formatOutcomeMessage, outcomeToastVariant, shortId } from '@/lib/workflow/recovery';
 import { RunInspector } from './workflow/run-inspector';
@@ -26,6 +27,14 @@ export function ProjectTab() {
   const [showCreate, setShowCreate] = useState(false);
   const addToast = useToastStore((s) => s.addToast);
   const ws = useWorkflowWorkspace();
+  const setActiveProjectId = useHudStore((s) => s.setActiveProjectId);
+
+  // #558: 把项目 tab 的选择镜像进 HUD store —— chat 发送时据此在请求体携带
+  // project_id（后端 context assembler 注入项目摘要）。workspace 级选择，
+  // 不随会话切换清空（项目 tab 的 select 始终显示当前选择，请求须与 UI 一致）。
+  useEffect(() => {
+    setActiveProjectId(ws.selectedProjectId || null);
+  }, [ws.selectedProjectId, setActiveProjectId]);
 
   const handleCreateProject = async () => {
     if (!newProjName.trim()) return;

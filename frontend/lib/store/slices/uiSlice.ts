@@ -126,6 +126,9 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
   setSettingsTab: (tab: SettingsTab) => set({ settingsTab: tab }),
   sessions: [],
   setSessions: (sessions) => set({ sessions }),
+  // #558: 项目 tab 选择的镜像（chat 请求携带 project_id 的 producer）。
+  activeProjectId: null as string | null,
+  setActiveProjectId: (projectId) => set({ activeProjectId: projectId }),
 
   /* ─── v2 Panel Visibility ─── */
   hudOpen: false,

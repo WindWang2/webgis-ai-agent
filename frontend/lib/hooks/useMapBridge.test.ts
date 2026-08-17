@@ -14,6 +14,7 @@ import { devOnly } from '@/lib/utils/logger';
 
 const hudState = vi.hoisted(() => ({
   layers: [] as Array<{ _mapspecFingerprint?: string }>,
+  activeProjectId: null as string | null,
 }));
 
 vi.mock('@/lib/store/useHudStore', () => ({
@@ -21,6 +22,7 @@ vi.mock('@/lib/store/useHudStore', () => ({
     getState: () => ({
       setAiStatus: vi.fn(),
       layers: hudState.layers,
+      activeProjectId: hudState.activeProjectId,
     }),
   },
 }));
@@ -99,6 +101,7 @@ describe('useMapBridge', () => {
     vi.useFakeTimers();
     resetViewportSeq();
     hudState.layers = [];
+    hudState.activeProjectId = null;
   });
 
   afterEach(() => {
@@ -114,7 +117,7 @@ describe('useMapBridge', () => {
       await result.current.send('hello', {});
     });
     expect(mockStreamChat).toHaveBeenCalledWith(
-      'hello', undefined, { viewport_seq: 1 }, expect.any(AbortSignal), undefined, null, undefined
+      'hello', undefined, { viewport_seq: 1 }, expect.any(AbortSignal), undefined, null, undefined, null
     );
   });
 
@@ -127,8 +130,23 @@ describe('useMapBridge', () => {
       await result.current.send('hello', { zoom: 10 });
     });
     expect(mockStreamChat).toHaveBeenCalledWith(
-      'hello', 'sid-123', { zoom: 10, viewport_seq: 1 }, expect.any(AbortSignal), undefined, null, undefined
+      'hello', 'sid-123', { zoom: 10, viewport_seq: 1 }, expect.any(AbortSignal), undefined, null, undefined, null
     );
+  });
+
+  it('#558: passes the store activeProjectId into streamChat (project context injection)', async () => {
+    hudState.activeProjectId = 'proj-7';
+    mockStreamChat.mockReturnValue(makeAsyncGen([]));
+    const { result } = renderHook(() =>
+      useMapBridge('sid-123', dispatchAction, onEvent)
+    );
+    await act(async () => {
+      await result.current.send('hello', {});
+    });
+    expect(mockStreamChat).toHaveBeenCalledWith(
+      'hello', 'sid-123', expect.anything(), expect.any(AbortSignal), undefined, null, undefined, 'proj-7'
+    );
+    hudState.activeProjectId = null;
   });
 
   it('calls onEvent for each SSEEvent in the stream', async () => {
@@ -330,7 +348,7 @@ describe('useMapBridge', () => {
     // send() stamp comes first (seq 1) — the turn-start write outranks any
     // in-flight POST that predates it.
     expect(mockStreamChat).toHaveBeenCalledWith(
-      'q', 's1', expect.objectContaining({ viewport_seq: 1 }), expect.any(AbortSignal), undefined, null, undefined
+      'q', 's1', expect.objectContaining({ viewport_seq: 1 }), expect.any(AbortSignal), undefined, null, undefined, null
     );
 
     // throttled POST #1 → seq 2
@@ -356,7 +374,7 @@ describe('useMapBridge', () => {
     mockStreamChat.mockReturnValue(hangingTurn());
     act(() => { result2.current.send('x', {}); });
     expect(mockStreamChat).toHaveBeenLastCalledWith(
-      'x', 's2', expect.objectContaining({ viewport_seq: 1 }), expect.any(AbortSignal), undefined, null, undefined
+      'x', 's2', expect.objectContaining({ viewport_seq: 1 }), expect.any(AbortSignal), undefined, null, undefined, null
     );
     vi.unstubAllGlobals();
   });
@@ -479,7 +497,7 @@ describe('useMapBridge', () => {
     // The reconnect re-POSTs the same turn with the last received id as
     // Last-Event-ID (7th arg) so the backend replays only the missed events.
     expect(mockStreamChat.mock.calls[1]).toEqual([
-      'q', 's1', expect.anything(), expect.any(AbortSignal), undefined, null, '3',
+      'q', 's1', expect.anything(), expect.any(AbortSignal), undefined, null, '3', null,
     ]);
     expect(onEvent).toHaveBeenCalledWith({ event: 'done', data: {} });
   });

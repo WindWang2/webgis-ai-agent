@@ -17,6 +17,7 @@ const hudState = vi.hoisted(() => ({
   setSelectedFeature: vi.fn(),
   setAiStatus: vi.fn(),
   clearTask: vi.fn(),
+  clearExplorerTasks: vi.fn(),
   setBaseLayer: vi.fn(),
   addLayer: vi.fn(),
   fetchAnalysisAssets: vi.fn().mockResolvedValue(undefined),
@@ -327,6 +328,27 @@ describe('useWorkspaceSession selectSession (F-09)', () => {
     expect(onRestore).not.toHaveBeenCalled();
     // F-4: the result registry must also be cleared for the fresh session.
     expect(vi.mocked(hudState.clearResults)).toHaveBeenCalled();
+  });
+
+  it('#548: startNewSession clears explorer task cards', () => {
+    const { result } = renderHook(() => useWorkspaceSession(vi.fn()));
+    act(() => {
+      result.current.startNewSession(vi.fn());
+    });
+    expect(vi.mocked(hudState.clearExplorerTasks)).toHaveBeenCalled();
+  });
+
+  it('#548: selectSession clears explorer task cards on session switch', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonOk({ sessions: [] }))
+      .mockResolvedValueOnce(jsonOk({ title: 'S', messages: [] }))
+      .mockResolvedValueOnce(jsonOk({ map_state: null }));
+
+    const { result } = renderHook(() => useWorkspaceSession(vi.fn()));
+    await act(async () => {
+      await result.current.selectSession('sid-explorer', vi.fn());
+    });
+    expect(vi.mocked(hudState.clearExplorerTasks)).toHaveBeenCalled();
   });
 
   it('#392: History 抽屉打开信号触发 refreshSessions（不再只 mount 拉一次）', async () => {

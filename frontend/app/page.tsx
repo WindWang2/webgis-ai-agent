@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useCallback, useEffect } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useGeolocation } from '@/lib/hooks/use-geolocation';
@@ -9,6 +9,12 @@ import { useMapAction } from '@/lib/contexts/map-action-context';
 // Refactored custom hooks
 import { useWorkspaceSession } from '@/lib/hooks/use-workspace-session';
 import { useSSEStream } from '@/lib/hooks/use-sse-stream';
+
+// #553: 会话删除客户端 + 新会话确认守卫
+import { deleteSession } from '@/lib/api/chat';
+import { describeApiError } from '@/lib/api/transport';
+import { hasWorkspaceContent } from '@/lib/utils/workspace-content';
+import { ConfirmDialog } from '@/components/shared/confirm-dialog';
 
 // New layout components
 import TopBar from '@/components/layout/top-bar';
@@ -85,6 +91,7 @@ export default function Home() {
     sessions,
     selectSession,
     startNewSession,
+    refreshSessions,
   } = useWorkspaceSession(dispatchAction);
 
   // 3. SSE Stream and Event Bridge Hook
@@ -130,13 +137,19 @@ export default function Home() {
     [selectSession, setMessages, setHistoryOpen]
   );
 
+  // #553: 新会话确认守卫读取最新 messages（ref 镜像，避免让 handleNewSession
+  // 的引用随每个流式 token 批次变化 —— MemoTopBar 的 memo 依赖 props 稳定）。
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  const [confirmNewSession, setConfirmNewSession] = useState(false);
+
   // 稳定引用：内联箭头会让 RagIndependentPanel 的 Escape 监听在 Home 每次
   // 重渲染（即每个流式 token 批次）时反复解绑/重绑。
   const handleCloseRagPanel = useCallback(() => setRagPanelOpen(false), [setRagPanelOpen]);
   const handleCloseHistory = useCallback(() => setHistoryOpen(false), [setHistoryOpen]);
   const handleCloseTemplates = useCallback(() => setTemplatesOpen(false), [setTemplatesOpen]);
 
-  const handleNewSession = useCallback(() => {
+  const startFreshSession = useCallback(() => {
     startNewSession(() => {
       setMessages([
         {
@@ -148,7 +161,39 @@ export default function Home() {
       ]);
     });
     setHistoryOpen(false);
+    setConfirmNewSession(false);
   }, [startNewSession, setMessages, setHistoryOpen]);
+
+  const handleNewSession = useCallback(() => {
+    // #553: 新会话会清空工作区（图层/标注/日志/结果/transcript）。仅当确实
+    // 有内容可丢时弹确认；否则（初始欢迎气泡或全空工作区）直接开始。
+    const store = useHudStore.getState();
+    if (hasWorkspaceContent(messagesRef.current, store.layers, store.annotations, store.opsLog, store.results)) {
+      setConfirmNewSession(true);
+      return;
+    }
+    startFreshSession();
+  }, [startFreshSession]);
+
+  const handleDeleteSession = useCallback(
+    async (sid: string) => {
+      try {
+        // SEC-08：匿名会话必须带 ownerToken（X-Session-Token），否则后端 404。
+        await deleteSession(sid, getSessionTokenFor(sid));
+        await refreshSessions();
+        if (sessionId === sid) {
+          // 删除的是当前会话：重置为新会话，避免 UI 指向服务端已删的会话。
+          startFreshSession();
+        }
+      } catch (err) {
+        useToastStore.getState().addToast(
+          `删除会话失败：${describeApiError(err, '删除会话失败')}`,
+          'error'
+        );
+      }
+    },
+    [sessionId, getSessionTokenFor, refreshSessions, startFreshSession]
+  );
 
   // Theme + accent drive CSS custom properties (see the effects below); the
   // shell itself styles from tokens rather than JS colour objects.
@@ -271,6 +316,19 @@ export default function Home() {
             handleNewSession();
           }
         }}
+        onDeleteSession={(session) => {
+          void handleDeleteSession(session.id);
+        }}
+      />
+
+      {/* #553: 新建会话确认 —— 仅当工作区有内容可丢时由 handleNewSession 打开。 */}
+      <ConfirmDialog
+        open={confirmNewSession}
+        title="开始新对话？"
+        description="开始新对话将清空当前工作区（地图图层、对话记录）。历史会话仍可在右上角历史记录中找回。"
+        confirmLabel="开始新对话"
+        onConfirm={startFreshSession}
+        onCancel={() => setConfirmNewSession(false)}
       />
 
       {settingsOpen && <SettingsPanel />}
