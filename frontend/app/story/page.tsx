@@ -14,39 +14,15 @@ import { devOnly } from "@/lib/utils/logger";
 import { useHudStore } from "@/lib/store/useHudStore";
 import { apiFetch, describeApiError } from "@/lib/api/transport";
 import { useMapAction } from "@/lib/contexts/map-action-context";
-import { restoreSessionMapLayers, type SessionMapState } from "@/lib/session/map-state-restore";
+// #552: 地图还原（视口 + 底图 + 图层）在 lib/session/map-state-restore ——
+// Next.js 页面文件只允许导出 page 组件与 route-segment 配置，helper 不得
+// 作为页面导出（CI `next build` 会拒绝非 Page 导出字段）。
+import { applyStoryMapState, type SessionMapState } from "@/lib/session/map-state-restore";
 import { useToastStore } from "@/components/ui/toast";
 import { Pause, Play, SkipBack, Share2 } from "lucide-react"
-import type { MapActionPayload } from "@/lib/types";
 
 /** 播放模式下逐条消息推进的间隔（ms）。 */
 const PLAY_INTERVAL_MS = 2500;
-
-/**
- * #552 分享页地图还原：与主应用 selectSession 同一份图层恢复逻辑，另加
- * 视口 / 底图。只读回放页无在飞节流写入，直接 fly_to 即可（无需 seq 合并）。
- */
-export async function applyStoryMapState(
-  state: SessionMapState,
-  sessionId: string,
-  signal: AbortSignal,
-  dispatchAction: (action: MapActionPayload) => void,
-): Promise<void> {
-  const store = useHudStore.getState();
-  if (state.base_layer) store.setBaseLayer(state.base_layer);
-  if (state.viewport) {
-    dispatchAction({
-      command: 'fly_to',
-      params: {
-        center: state.viewport.center,
-        zoom: state.viewport.zoom,
-        bearing: state.viewport.bearing,
-        pitch: state.viewport.pitch,
-      },
-    });
-  }
-  await restoreSessionMapLayers(state, { sessionId, token: null, signal });
-}
 
 export default function StoryPage() {
   return (

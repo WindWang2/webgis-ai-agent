@@ -14,7 +14,7 @@
  */
 import { apiFetch, isApiError } from '@/lib/api/transport';
 import { API_BASE } from '@/lib/api/config';
-import type { GeoJSONFeatureCollection } from '@/lib/types';
+import type { GeoJSONFeatureCollection, MapActionPayload } from '@/lib/types';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { devOnly } from '@/lib/utils/logger';
 
@@ -159,4 +159,31 @@ export async function restoreSessionMapLayers(
         });
     }
   }
+}
+
+/**
+ * 完整应用一份会话 map-state（视口 + 底图 + 图层）。分享回放页（/story）用：
+ * 只读页面无在飞节流写入，直接 fly_to 即可（无需主应用 selectSession 的
+ * viewport-seq 合并）；图层部分与主应用共用 restoreSessionMapLayers。
+ */
+export async function applyStoryMapState(
+  state: SessionMapState,
+  sessionId: string,
+  signal: AbortSignal,
+  dispatchAction: (action: MapActionPayload) => void,
+): Promise<void> {
+  const store = useHudStore.getState();
+  if (state.base_layer) store.setBaseLayer(state.base_layer);
+  if (state.viewport) {
+    dispatchAction({
+      command: 'fly_to',
+      params: {
+        center: state.viewport.center,
+        zoom: state.viewport.zoom,
+        bearing: state.viewport.bearing,
+        pitch: state.viewport.pitch,
+      },
+    });
+  }
+  await restoreSessionMapLayers(state, { sessionId, token: null, signal });
 }

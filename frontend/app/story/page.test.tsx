@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useHudStore } from '@/lib/store/useHudStore';
-import { applyStoryMapState } from './page';
+import { applyStoryMapState } from '@/lib/session/map-state-restore';
 
 // next/navigation：固定回放 session。
 vi.mock('next/navigation', () => ({
