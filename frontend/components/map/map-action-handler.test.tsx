@@ -389,6 +389,53 @@ describe('MapActionHandler', () => {
     );
   });
 
+  it('#534: bearing-only set_map_view passes the validator and flies (was invalid_params)', async () => {
+    actions = [{
+      command: 'set_map_view',
+      params: { bearing: 30 },
+    }];
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    // 校验器放行 —— 不再以 invalid_params 失败（此前后端成功、前端立刻拒绝）
+    expect(reportTerminalFn).not.toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'set_map_view' }),
+      'failed',
+      expect.objectContaining({ error: 'invalid_params' }),
+    );
+    // 只改 bearing：center/zoom/pitch 保持当前值
+    expect(mockFlyTo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        center: [116.4, 39.9],
+        zoom: 10,
+        bearing: 30,
+        pitch: 0,
+      })
+    );
+  });
+
+  it('#534: pitch-only set_map_view passes the validator and flies', async () => {
+    actions = [{
+      command: 'set_map_view',
+      params: { pitch: 60 },
+    }];
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(reportTerminalFn).not.toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'set_map_view' }),
+      'failed',
+      expect.objectContaining({ error: 'invalid_params' }),
+    );
+    expect(mockFlyTo).toHaveBeenCalledWith(
+      expect.objectContaining({ center: [116.4, 39.9], zoom: 10, bearing: 0, pitch: 60 })
+    );
+  });
+
   it('calls removeLayerStack when executing remove_layer', async () => {
     actions = [{
       command: 'remove_layer',

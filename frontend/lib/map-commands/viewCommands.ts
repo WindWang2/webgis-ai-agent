@@ -234,7 +234,16 @@ export const viewCommands: Record<string, CommandEntry> = {
   },
 
   set_map_view: {
-    requiredParams: (p) => Array.isArray(p.center) || typeof p.zoom === 'number',
+    // #534: run body 支持任意组合的部分相机参数（center/zoom/bearing/pitch，
+    // 三者皆可选 —— map_view.py 描述与 params 构造也是如此）。former 校验器
+    // 只认 center/zoom，把 bearing-only / pitch-only（"倾斜看 3D"/"把北朝上"）
+    // 的自然语言请求拒绝成 invalid_params —— 后端成功、前端立刻失败的矛盾。
+    // 任一命名维度有效即放行（无有效参数的 no-op 快路径在 run 体内处理）。
+    requiredParams: (p) =>
+      Array.isArray(p.center) ||
+      typeof p.zoom === 'number' ||
+      typeof p.bearing === 'number' ||
+      typeof p.pitch === 'number',
     run(ctx) {
       const { map, params } = ctx;
       const { center, zoom, bearing, pitch } = params || {};
