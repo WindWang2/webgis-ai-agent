@@ -292,3 +292,93 @@ describe('runExport — bounded idle wait (#527)', () => {
     expect(mockMap.setPixelRatio).not.toHaveBeenCalled();
   });
 });
+
+// #614：export_map 参数契约 —— dark_mode 请求参数必须优先于 HUD 主题，
+// 浅色 HUD + 默认参数（dark_mode=True）也要产出暗色成品。
+// runExport 经 MapExporterEngine.composeLayout 调合成器（与 exportToPDF 同款
+// 路由），spyOn 静态方法即可断言收到的 theme 选项。
+describe('runExport — dark_mode 桥接 (#614)', () => {
+  function spyCompose() {
+    return vi.spyOn(MapExporterEngine, 'composeLayout').mockImplementation(() => {});
+  }
+
+  it('浅色 HUD + dark_mode=true → composeLayout 收到 theme=dark', async () => {
+    const deps = createDeps({}, { theme: 'light' });
+    mockFetchSuccess();
+    const compose = spyCompose();
+
+    const outcome = await runExport(deps, { format: 'png', dark_mode: true });
+
+    expect(outcome.ok).toBe(true);
+    expect(compose).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ theme: 'dark' }),
+    );
+  });
+
+  it('浅色 HUD + 未传 dark_mode → 跟随 HUD，theme=light', async () => {
+    const deps = createDeps({}, { theme: 'light' });
+    mockFetchSuccess();
+    const compose = spyCompose();
+
+    await runExport(deps, { format: 'png' });
+
+    expect(compose).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ theme: 'light' }),
+    );
+  });
+
+  it('暗色 HUD + dark_mode=false → 显式覆盖为 theme=light', async () => {
+    const deps = createDeps({}, { theme: 'dark' });
+    mockFetchSuccess();
+    const compose = spyCompose();
+
+    await runExport(deps, { format: 'png', dark_mode: false });
+
+    expect(compose).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ theme: 'light' }),
+    );
+  });
+
+  it('暗色 HUD + 未传 dark_mode → 跟随 HUD，theme=dark', async () => {
+    const deps = createDeps({}, { theme: 'dark' });
+    mockFetchSuccess();
+    const compose = spyCompose();
+
+    await runExport(deps, { format: 'png' });
+
+    expect(compose).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ theme: 'dark' }),
+    );
+  });
+
+  it('PDF 导出 paperSize=A3 直达 exportToPDF，不被折叠为 A4', async () => {
+    const deps = createDeps();
+    mockFetchUpload('/exports/map.pdf', 'map.pdf');
+    const exportToPDFSpy = vi
+      .spyOn(MapExporterEngine, 'exportToPDF')
+      .mockResolvedValue(new Blob(['pdf-data'], { type: 'application/pdf' }));
+
+    const outcome = await runExport(deps, { title: 'A3', format: 'pdf', paperSize: 'A3' });
+    if (!outcome.ok) throw new Error(`[PDF TEST ERROR]: ${outcome.error}`);
+
+    expect(outcome.ok).toBe(true);
+    expect(exportToPDFSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      'A3',
+      undefined,
+      expect.objectContaining({ paperSize: 'A3' }),
+    );
+  });
+});

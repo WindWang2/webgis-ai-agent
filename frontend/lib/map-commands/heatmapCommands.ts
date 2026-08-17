@@ -57,17 +57,28 @@ export const heatmapCommands: Record<string, CommandEntry> = {
     run(ctx) {
       const { map, params } = ctx;
       const { geojson, layerId, palette, radius } = params || {};
+      // #611: 后端模板（app/tools/templates.py apply_template heatmap variant）发射
+      // 的 params 含 heatPalette/intensity/field（未列入 MapActionPayload 类型收窄）。
+      const { heatPalette, intensity, field } = (params ?? {}) as Partial<{
+        heatPalette: string[];
+        intensity: number;
+        field: string;
+      }>;
       // V3: missing payload data → explicit failed result (was a silent return).
       if (!geojson) return { status: 'failed', error: 'invalid_params' };
 
-      const id = `custom-${layerId || 'native-heatmap-' + Date.now()}`;
+      // heatPalette 颜色数组（新后端形态）与 palette 命名键（老调用方）都读，自定义
+      // 配色不再静默丢失。layerId 缺失时用 field 派生稳定 id（Date.now() 会让同模板
+      // 每次应用叠加一个匿名层且无法被 layer_ref/removeOrphanCustomLayers 命中）。
+      const id = `custom-${layerId || 'native-heatmap-' + (field || 'default')}`;
 
       renderer.addGeoJsonSource(map, id, geojson);
       renderer.addNativeHeatmap(map, {
         id,
         source: id,
-        palette: palette as any,
+        palette: (heatPalette ?? palette) as any,
         radius,
+        intensity,
         opacity: 0.8
       });
       // V3 round-2 FIX-B (issue #393): post-mutation verification — both the

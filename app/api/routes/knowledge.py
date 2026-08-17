@@ -6,7 +6,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.auth import get_current_user_with_version
 from app.models.api_response import ApiResponse, ErrCode
@@ -17,10 +17,15 @@ router = APIRouter(prefix="/knowledge", tags=["知识库管理"])
 
 # ── Schemas ──────────────────────────────────────────────────────────
 
+# 应用级 content 上限，与 nginx client_max_body_size 100M
+# (deploy/nginx/nginx.conf) 对齐。分块/嵌入对 content 做 O(content) 的
+# CPU/IO 工作，无界请求体可被单用户放大，拖垮 RAG 入库管线 (#591)。
+MAX_CONTENT_LENGTH = 100 * 1024 * 1024
+
 
 class AddDocumentRequest(BaseModel):
     title: str
-    content: str
+    content: str = Field(..., max_length=MAX_CONTENT_LENGTH)
     file_type: str = "text"  # text/markdown/json
 
 

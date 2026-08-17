@@ -103,3 +103,35 @@ def test_profile_geojson_json_string(tmp_path: Path):
   assert profile["featureCount"] == 1
   assert profile["geometryTypes"] == ["Polygon"]
   assert profile["bbox"] == [0.0, 0.0, 1.0, 1.0]
+
+
+def test_suggested_zoom_antimeridian_normalized():
+  """Issue #598: a declared wrap-around bbox (west > east, e.g. 170..-170)
+  crosses the antimeridian — the naive |east-west| = 340° maps every
+  AM-crossing extent to zoom 1 despite a real 20° span. The true arc through
+  ±180 is east+360-west = 20° → zoom 4, matching an ordinary 20° bbox."""
+  am = {
+      "type": "FeatureCollection",
+      "bbox": [170.0, -10.0, -170.0, 10.0],
+      "crs": {"type": "name", "properties": {"name": "EPSG:4326"}},
+      "features": [
+          {"type": "Feature", "properties": {}, "geometry": {"type": "Point", "coordinates": [170.0, 0.0]}},
+          {"type": "Feature", "properties": {}, "geometry": {"type": "Point", "coordinates": [-170.0, 0.0]}},
+      ],
+  }
+  normal = {
+      "type": "FeatureCollection",
+      "bbox": [-10.0, -10.0, 10.0, 10.0],
+      "crs": {"type": "name", "properties": {"name": "EPSG:4326"}},
+      "features": [
+          {"type": "Feature", "properties": {}, "geometry": {"type": "Point", "coordinates": [-10.0, 0.0]}},
+          {"type": "Feature", "properties": {}, "geometry": {"type": "Point", "coordinates": [10.0, 0.0]}},
+      ],
+  }
+  sv_am = profile_geojson_source(am)["suggestedView"]
+  sv_norm = profile_geojson_source(normal)["suggestedView"]
+  assert sv_am, "wrap-around geographic bbox must produce a suggested view"
+  assert sv_norm, "plain 20° bbox must produce a suggested view"
+  assert sv_am["zoom"] == sv_norm["zoom"] == 4, (
+      f"AM-crossing 20° span must zoom like a plain 20° span: {sv_am['zoom']} vs {sv_norm['zoom']}"
+  )

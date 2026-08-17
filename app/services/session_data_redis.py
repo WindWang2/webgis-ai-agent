@@ -282,13 +282,25 @@ class RedisSessionStore(BaseSessionStore):
             if current_count > self.capacity:
                 overflow = current_count - self.capacity
                 oldest = await self._r.zrange(order_key, 0, overflow - 1)
-                async with self._r.pipeline() as evict_pipe:
-                    for old_ref_bytes in oldest:
-                        old_ref = old_ref_bytes.decode() if isinstance(old_ref_bytes, bytes) else old_ref_bytes
-                        if old_ref == ref_id:
-                            continue
-                        await self._evict_ref(evict_pipe, session_id, old_ref)
-                    await evict_pipe.execute()
+                old_refs = []
+                for old_ref_bytes in oldest:
+                    old_ref = old_ref_bytes.decode() if isinstance(old_ref_bytes, bytes) else old_ref_bytes
+                    if old_ref == ref_id:
+                        continue
+                    old_refs.append(old_ref)
+                if old_refs:
+                    # #618-7: 一次 HMGET 取全部待驱逐 ref 的 alias（resolve_aliases
+                    # 同款批量模式），替代逐 ref 串行 HGET。
+                    alias_values = await self._r.hmget(self._refs_key(session_id), old_refs)
+                    aliases = {
+                        ref: (al.decode() if isinstance(al, bytes) else al)
+                        for ref, al in zip(old_refs, alias_values)
+                        if al is not None
+                    }
+                    async with self._r.pipeline() as evict_pipe:
+                        for old_ref in old_refs:
+                            self._evict_ref(evict_pipe, session_id, old_ref, aliases.get(old_ref))
+                        await evict_pipe.execute()
         except aioredis.RedisError as e:
             logger.error(
                 "Redis post-store eviction failed for session %s: %s — new ref kept",
@@ -995,9 +1007,23 @@ class RedisSessionStore(BaseSessionStore):
         if not active or len(active) <= max_sessions:
             return
         scored = []
+        # #618-7: 单次 ZRANGE withscores 取回 activity 全集分数，替代逐会话
+        # 串行 ZSCORE（每 600s 清扫 100+ 会话时省去等量 RTT）。
+        activity_scores = await self._r.zrange(self._activity_key(), 0, -1, withscores=True)
+        if isinstance(activity_scores, dict):
+            score_map = {
+                (k.decode() if isinstance(k, bytes) else k): float(v)
+                for k, v in activity_scores.items()
+            }
+        else:
+            score_map = {}
+            for member, ts in activity_scores or []:
+                m = member.decode() if isinstance(member, bytes) else member
+                score_map[m] = float(ts)
         for sid_bytes in active:
             sid = sid_bytes.decode() if isinstance(sid_bytes, bytes) else sid_bytes
-            raw_score = await self._r.zscore(self._activity_key(), sid)
+            # activity 集缺条目（如旧会话从未写 activity）时退回 refs_order 首条时间
+            raw_score = score_map.get(sid)
             if raw_score is None:
                 earliest = await self._r.zrange(self._refs_order_key(sid), 0, 0, withscores=True)
                 raw_score = earliest[0][1] if earliest else 0
@@ -1010,18 +1036,18 @@ class RedisSessionStore(BaseSessionStore):
             await self.clear_session(sid)
         logger.info("Cleaned up %d idle sessions", min(to_remove, len(scored)))
 
-    async def _evict_ref(self, pipe, session_id: str, ref_id: str) -> None:
-        """Add eviction commands to an open pipeline. Alias hget needs immediate await."""
-        # 调用方（store）已 _ensure_connected()；这里防御性再确认一次。
-        await self._ensure_connected()
-        alias = await self._r.hget(self._refs_key(session_id), ref_id)
+    def _evict_ref(self, pipe, session_id: str, ref_id: str, alias: Optional[str] = None) -> None:
+        """Add eviction commands to an open pipeline.
+
+        #618-7: alias 由调用方在进入 pipeline 前一次性 HMGET 批量解析，这里
+        不再执行串行 await —— 命令全部入管道，一次 execute 往返完成。
+        """
         pipe.delete(self._data_key(session_id, ref_id))
         pipe.delete(self._descriptor_key(session_id, ref_id))  # V3: evict descriptor too
         pipe.zrem(self._refs_order_key(session_id), ref_id)
         pipe.srem(self._index_key(session_id), ref_id)
         if alias:
-            alias_str = alias.decode() if isinstance(alias, bytes) else alias
-            pipe.hdel(self._aliases_key(session_id), alias_str)
+            pipe.hdel(self._aliases_key(session_id), alias)
         pipe.hdel(self._refs_key(session_id), ref_id)
 
     async def get_ref_descriptor(self, session_id: str, ref_id: str) -> "Optional[dict]":
@@ -1036,12 +1062,17 @@ class RedisSessionStore(BaseSessionStore):
         try:
             raw = await self._r.get(descriptor_key)
             if raw:
-                return json.loads(raw)
+                # 小对象，但为对称性仍在线程解析（避免任何量级的 GIL 停顿）。
+                return await asyncio.to_thread(json.loads, raw)
             # Fallback: compute from raw data if descriptor missing
             data_key = self._data_key(session_id, ref_id)
             data_raw = await self._r.get(data_key)
             if data_raw:
-                data = json.loads(data_raw)
+                # #590：50k 特征 payload 的 json.loads 是数 MB 级 C 解析 ——
+                # 必须在线程执行（与 compute_descriptor 的 to_thread 对称），
+                # 否则 overwrite 删 descriptor 键 / 键 TTL 先过期时每次回退
+                # 都会冻结事件循环数百 ms-秒级。
+                data = await asyncio.to_thread(json.loads, data_raw)
                 from app.schemas.ref_descriptor import compute_descriptor
                 descriptor = await asyncio.to_thread(compute_descriptor, ref_id, data)
                 d = descriptor.to_dict()

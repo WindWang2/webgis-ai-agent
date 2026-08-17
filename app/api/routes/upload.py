@@ -7,13 +7,14 @@ from pathlib import Path
 from typing import List, Optional
 
 import ijson
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Response, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import settings
 from app.core.auth import authorize_session_write, get_current_user, verify_session_owner
+from app.lib.geojson_serializer import serialize_geojson
 from app.tools._utils import async_db_session
 from app.models.upload import UploadRecord
 from app.services.data_parser import (
@@ -37,6 +38,14 @@ def _load_geojson_features(path: Path) -> list:
     必须在 worker 线程执行（计算隔离不变式 1）。"""
     with open(path, "rb") as f:
         return list(ijson.items(f, "features.item"))
+
+
+def _write_upload_bytes(path: Path, content: bytes) -> None:
+    """同步写盘（栅格上限 200MB）—— 必须在 worker 线程执行（#592：
+    与紧随其后的 parse 走 run_in_executor 同款纪律；慢盘/NFS 上内联写
+    会冻结事件循环上全部并发 SSE/WS 流）。"""
+    with open(path, "wb") as f:
+        f.write(content)
 
 
 async def _verify_session_owner(db, session_id: Optional[str], user_id) -> None:
@@ -155,8 +164,8 @@ async def upload_files(
             upload_root = Path(upload_dir).resolve()
             if upload_root not in resolved.parents:
                 raise HTTPException(status_code=400, detail="路径越界")
-            with open(temp_path, "wb") as f:
-                f.write(content)
+            # #592：200MB 同步写盘移出事件循环（与下方 parse 的 executor 对称）。
+            await asyncio.to_thread(_write_upload_bytes, temp_path, content)
         except OSError as e:
             logger.error(f"文件保存失败: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail="文件保存失败")
@@ -351,7 +360,10 @@ async def get_upload_geojson(upload_id: int, _user: dict = Depends(get_current_u
     # run_in_executor 模式，把解析扔到默认 threadpool。
     loop = asyncio.get_running_loop()
     features = await loop.run_in_executor(None, _load_geojson_features, geojson_path)
-    return {"type": "FeatureCollection", "features": features}
+    # #590：响应侧序列化同样不能由默认 JSONResponse 在事件循环上整包编码
+    # —— 与 /layers/data 一致，分块 + to_thread 序列化后以 bytes 返回。
+    body = await serialize_geojson({"type": "FeatureCollection", "features": features})
+    return Response(content=body, media_type="application/json")
 
 
 @router.delete("/uploads/{upload_id}")

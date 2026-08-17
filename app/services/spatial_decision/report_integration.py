@@ -108,7 +108,13 @@ def generate_comparison_report_markdown(comparison: ScenarioComparisonResult) ->
     lines.append(sep)
 
     for m_key, scen_dict in comparison.metric_matrix.items():
-        vals = [f"{scen_dict.get(sid, 0.0):.2f}" for sid in scen_ids]
+        # GIS-03 sibling: unsimulated metrics (simulated=None) must render "—"
+        # instead of crashing on f"{None:.2f}" — mirrors the single-scenario
+        # guard above.
+        vals = []
+        for sid in scen_ids:
+            v = scen_dict.get(sid, 0.0)
+            vals.append(f"{v:.2f}" if isinstance(v, (int, float)) else "—")
         lines.append(f"| {m_key} | " + " | ".join(vals) + " |")
     lines.append("")
 

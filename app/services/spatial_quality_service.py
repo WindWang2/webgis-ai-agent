@@ -29,6 +29,34 @@ from shapely.strtree import STRtree
 logger = logging.getLogger(__name__)
 
 
+def _crs_is_geographic(crs: str) -> bool:
+    """Issue #597: geographic-vs-projected must come from the CRS database,
+    not a name whitelist. A whitelist like {EPSG:4326, WGS84, CRS84, EPSG:4490}
+    silently treats EPSG:4269 and other geographic CRSs as projected, so their
+    degree-based distances hit meter thresholds (kilometer-scale false
+    positives). pyproj is imported lazily (an undeclared optional dependency
+    in this codebase, see app/services/network); when it is unavailable, fall
+    back to the legacy whitelist.
+    """
+    if not crs:
+        return False
+    raw = str(crs).strip()
+    alias = {"CRS84": "OGC:CRS84", "CRS:84": "OGC:CRS84"}.get(raw.upper())
+    try:
+        import pyproj
+    except ImportError:
+        return raw.upper() in {"EPSG:4326", "WGS84", "CRS84", "EPSG:4490"}
+    for candidate in (raw, alias):
+        if not candidate:
+            continue
+        try:
+            return bool(pyproj.CRS.from_user_input(candidate).is_geographic)
+        except Exception:  # noqa: BLE001 unknown/shorthand CRS strings
+            continue
+    # Unrecognized CRS: preserve legacy behavior (treated as projected).
+    return False
+
+
 class QualityIssue(BaseModel):
     dimension: str      # "geometry", "topology", "crs", "attributes", "spatial_sanity"
     code: str           # Issue identification code
@@ -110,7 +138,7 @@ class SpatialQualityEngine:
             )
             crs = "EPSG:4326"
 
-        is_geographic = crs.upper() in ["EPSG:4326", "WGS84", "CRS84", "EPSG:4490"]
+        is_geographic = _crs_is_geographic(crs)
         if is_geographic:
             issues.append(
                 QualityIssue(
@@ -425,6 +453,24 @@ class SpatialQualityEngine:
             tree = STRtree(valid_shapes)
             line_endpoints: List[Tuple[Point, int]] = []
 
+            # GIS-16 (deep-audit round 4): the gap thresholds were absolute
+            # DEGREES (1e-5 ≈ 1.1 m at the equator), which became a no-op for
+            # projected CRS (1e-5 m = 10 microns never matches). Scale by CRS:
+            # geographic keeps degree thresholds (~1.1 m gap / ~0.11 m
+            # near-duplicate); a projected CRS uses the equivalent METER
+            # thresholds. Computed once here — the pair loop and the candidate
+            # query below both need them.
+            gap_threshold = 1e-5 if is_geographic else 1.0  # ~1.1 m at equator
+            dup_threshold = 1e-6 if is_geographic else 0.1  # ~0.11 m at equator
+            # Issue #597: the overlap-area filter must also be an absolute
+            # value in the CRS's native units. The old 1e-7 was unit-blind:
+            # 1e-7 deg² ≈ 1239 m² at the equator silently skipped nested
+            # polygons under ~0.1 ha, while 1e-7 m² is effectively zero (any
+            # numeric-noise sliver reported). Express the threshold in m² and
+            # convert per CRS (1° ≈ 111320 m at the equator — same
+            # approximation the gap thresholds use).
+            overlap_area_threshold = 1.0 / (111320.0 ** 2) if is_geographic else 1.0
+
             issue_cap_hit = False
             for i, (f_idx_i, geom_i, props_i) in enumerate(parsed_geometries):
                 # Collect line endpoints for dangling endpoint checks
@@ -440,7 +486,16 @@ class SpatialQualityEngine:
                             line_endpoints.append((Point(coords[0]), f_idx_i))
                             line_endpoints.append((Point(coords[-1]), f_idx_i))
 
-                candidates = tree.query(geom_i)
+                # Issue #597: query with the geometry buffered by the gap
+                # threshold, not the bare geometry. STRtree.query() is a
+                # bbox-only filter (it compares bounding boxes), so "parallel
+                # adjacent" geometries — bboxes separated by a small gap with
+                # no overlap — were never candidates and the TOPOLOGY_GAP /
+                # NEAR_DUPLICATE checks were dead code for exactly the common
+                # adjacent-parcel case (the #538 sibling fix applied the same
+                # buffered-query principle to dangling endpoints). The precise
+                # distance re-check below stays the final filter.
+                candidates = tree.query(geom_i.buffer(gap_threshold))
                 examined_for_i = 0
                 for cand_pos in candidates:
                     j = int(cand_pos)
@@ -480,7 +535,7 @@ class SpatialQualityEngine:
 
                     # Topology: Overlap check for Polygons
                     if isinstance(geom_i, (Polygon, MultiPolygon)) and isinstance(geom_j, (Polygon, MultiPolygon)):
-                        if geom_i.overlaps(geom_j) or (geom_i.intersects(geom_j) and geom_i.intersection(geom_j).area > 1e-7):
+                        if geom_i.overlaps(geom_j) or (geom_i.intersects(geom_j) and geom_i.intersection(geom_j).area > overlap_area_threshold):
                             issues.append(
                                 QualityIssue(
                                     dimension="topology",
@@ -497,15 +552,8 @@ class SpatialQualityEngine:
                                 break
 
                     # Topology: Gap check (adjacent polygons with tiny gap)
-                    # GIS-16 (deep-audit round 4): the thresholds were absolute
-                    # DEGREES (1e-5 ≈ 1.1 m at the equator), which became a
-                    # no-op for projected CRS (1e-5 m = 10 microns never
-                    # matches). Scale by CRS: geographic keeps degree
-                    # thresholds (~1.1 m gap / ~0.11 m near-duplicate); a
-                    # projected CRS uses the equivalent METER thresholds.
+                    # GIS-16: thresholds are precomputed per CRS (see above).
                     dist = geom_i.distance(geom_j)
-                    gap_threshold = 1e-5 if is_geographic else 1.0  # ~1.1 m at equator
-                    dup_threshold = 1e-6 if is_geographic else 0.1  # ~0.11 m at equator
                     if 0 < dist < gap_threshold:
                         issues.append(
                             QualityIssue(
@@ -550,8 +598,8 @@ class SpatialQualityEngine:
             if line_endpoints:
                 pt_geoms = [pt for pt, _ in line_endpoints]
                 pt_tree = STRtree(pt_geoms)
-                # GIS-16: same CRS-aware threshold as the gap checks.
-                dup_threshold = 1e-6 if is_geographic else 0.1
+                # dup_threshold: the CRS-aware value hoisted above (same one
+                # the pair loop and the buffered candidate query use).
                 for pt_idx, (pt, f_idx) in enumerate(line_endpoints):
                     # Issue #538: querying with the bare Point made the
                     # tolerance dead code — a point's bounding box is

@@ -48,10 +48,9 @@ async def test_dissolve_without_field_merges_all(registry):
     }
     result = await registry.dispatch("dissolve_layer", {"geojson": geojson})
     # 工具返回 GeoAnalysisResult.to_llm_response()，成功路径含 data
-    assert result.get("success") is True or "data" in result
+    assert result.get("success") is True, result
     data = result.get("data", result)
-    if isinstance(data, dict) and "features" in data:
-        assert len(data["features"]) == 1
+    assert len(data["features"]) == 1
 
 
 @pytest.mark.heavy
@@ -73,10 +72,10 @@ async def test_dissolve_with_field_groups(registry):
         ],
     }
     result = await registry.dispatch("dissolve_layer", {"geojson": geojson, "field": "kind"})
+    assert result.get("success") is True, result
     data = result.get("data", result)
-    if isinstance(data, dict) and "features" in data:
-        # 两组：A 合并成 1 个 + B 独立 1 个 = 2 个
-        assert len(data["features"]) == 2
+    # 两组：A 合并成 1 个 + B 独立 1 个 = 2 个
+    assert len(data["features"]) == 2
 
 
 # ─── nearest_facility ──────────────────────────────────────────
@@ -110,15 +109,15 @@ async def test_nearest_facility_finds_nearest(registry):
         "nearest_facility",
         {"source_points": sources, "target_points": targets},
     )
+    assert result.get("success") is True, result
     data = result.get("data", result)
-    if isinstance(data, dict) and "features" in data:
-        features = data["features"]
-        assert len(features) == 2
-        for feat in features:
-            props = feat["properties"]
-            assert "distance_m" in props
-            assert props["distance_m"] >= 0
-            assert "nearest_target_id" in props
+    features = data["features"]
+    assert len(features) == 2
+    for feat in features:
+        props = feat["properties"]
+        assert "distance_m" in props
+        assert props["distance_m"] >= 0
+        assert "nearest_target_id" in props
 
 
 # ─── transform_coordinates ─────────────────────────────────────

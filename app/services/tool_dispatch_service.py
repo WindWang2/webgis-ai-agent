@@ -294,18 +294,26 @@ class ToolDispatchService:
             )
             self._release_key(executed_tools, tool_key)
 
-        # 3. (#529) 归一化：~139 个工具点以 {"error": "<msg>"} 正常返回失败
-        # （不抛异常、不返回 std_error_response 形状），此前只有后者被
+        # 3. (#529/#589) 归一化：~160 个工具点以失败形状正常返回（不抛异常、
+        # 不返回 std_error_response 形状），此前只有 std_error_response 被
         # is_error_dict 识别 → 被当成功处理：标记 completed、同参重试被
-        # "已成功执行"谎言拦截、计划跨失败推进。在统一错误分支之前把该形状
-        # 折叠成 canonical 失败形状（success=False + code），让下面的错误路径
-        # 统一接管（释放 dedup 槽位 → 诚实重试 + 自愈消息）。只折叠 error 为
-        # 字符串且非显式 success=True 的结果（is_error_like_result），业务
-        # 载荷里嵌套/非字符串的 error 键不受影响。
+        # "已成功执行"谎言拦截、计划跨失败推进。在统一错误分支之前把失败
+        # 形状折叠成 canonical 失败形状（success=False + code），让下面的
+        # 错误路径统一接管（释放 dedup 槽位 → 诚实重试 + 自愈消息）。
+        # 识别三族错误形态（is_error_like_result）：{"error": <str>}（#529）、
+        # {"type": "error", ...} 与 {"status": "error"|"failed", ...}（#589，
+        # network/temporal/spatial_decision/project 等站点的正常返回失败）。
+        # message 从各形态的 message/error 字段取——type/status 形态不带
+        # "error" 键，不得下标访问。
         if is_error_like_result(result):
             result = dict(result)
             result.setdefault("code", "tool_error")
-            result.setdefault("message", result["error"])
+            result.setdefault(
+                "message",
+                result.get("error")
+                or result.get("error_message")
+                or f"{tool_name} 执行失败",
+            )
             result["success"] = False
 
         # 3. registry 返回 std_error_response dict 的统一错误路径

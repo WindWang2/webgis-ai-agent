@@ -182,14 +182,20 @@ def register_layer_management_tools(registry: ToolRegistry):
         if err:
             return err
 
+        # #609: 未传的 Optional 字段必须从 params 省略（而非序列化为 JSON null）。
+        # JSON null 曾被前端 `!== undefined` 判存在性、把 null 当 falsy → 图层被
+        # 隐藏 + 后验证假收敛。省略键 = 前端看到"该属性未被请求"。display_layer
+        # 早已如此（只发 visible+name，不带 opacity）。
+        params: dict = {"layer_id": id_to_use}
+        if visible is not None:
+            params["visible"] = visible
+        if opacity is not None:
+            params["opacity"] = opacity
+
         return {
             "success": True,
             "command": "LAYER_VISIBILITY_UPDATE",
-            "params": {
-                "layer_id": id_to_use,
-                "visible": visible,
-                "opacity": opacity
-            },
+            "params": params,
             "message": f"已向地图发送指令：更新图层 {layer_ref} (目标 ID: {id_to_use}) 的显示设置。"
         }
 

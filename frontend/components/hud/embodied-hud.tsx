@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { 
-  Cpu, Activity, Compass, Layers, Terminal, Sun, Moon, 
-  ChevronUp, ChevronDown, Database, CheckCircle2
+  Cpu, Activity, Compass, Layers, Sun, Moon, 
+  ChevronUp, ChevronDown, CheckCircle2
 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { usePrefersReducedMotion } from '@/lib/hooks/use-prefers-reduced-motion';
@@ -57,9 +57,6 @@ export function EmbodiedHud() {
   const setTheme = useHudStore((s) => s.setTheme);
   const aiStatus = useHudStore((s) => s.aiStatus);
   const is3D = useHudStore((s) => s.is3D);
-  const opsLog = useHudStore((s) => s.opsLog) || [];
-  const causalChain = useHudStore((s) => s.causalChain) || [];
-  const ragResults = useHudStore((s) => s.ragResults) || [];
 
   const isDark = theme === 'dark';
 
@@ -223,9 +220,11 @@ export function EmbodiedHud() {
         </div>
       </div>
 
-      {/* EXPANDED TELEMETRY BAY (3 columns) */}
+      {/* EXPANDED TELEMETRY BAY (2 columns) —— #607：第 3 列 ACTION STREAM
+          （opsLog/causalChain 展示）已移除：两路 state 全仓零生产者，面板永远
+          空态，属于假数据面板（对齐 #551 诚实性原则）。 */}
       {hudOpen && (
-        <div className="grid min-h-0 flex-1 grid-cols-[1fr_1.1fr_1.2fr] gap-4 px-4 py-3 text-body">
+        <div className="grid min-h-0 flex-1 grid-cols-[1fr_1.1fr] gap-4 px-4 py-3 text-body">
           {/* COLUMN 1: SENSORY PERCEPTION (感知系统) */}
           <div className="flex min-h-0 flex-col gap-2 border-r border-edge-subtle pr-3">
             <div className="flex items-center gap-1.5 font-semibold text-ink-secondary" style={{ letterSpacing: '0.04em' }}>
@@ -316,15 +315,9 @@ export function EmbodiedHud() {
                   )}
                 </div>
 
-                {/* Cognitive Active Tools */}
-                {isThinking && opsLog.length > 0 && (
-                  <span
-                    className="animate-pulse font-mono text-caption font-medium uppercase text-agent-accent"
-                    style={{ letterSpacing: '0.04em' }}
-                  >
-                    RUNNING: {opsLog[0].type}
-                  </span>
-                )}
+                {/* Cognitive Active Tools —— #607：opsLog/causalChain 零生产者（唯一
+          pushOpLog 调用点在零挂载的 use-map-control.ts），"RUNNING: …" 永远
+          不出现；连同假面板一并移除，不再渲染无数据的运行指示。 */}
               </div>
 
               {/* Dynamic Waveform Graph & Memory count */}
@@ -334,11 +327,7 @@ export function EmbodiedHud() {
                 </svg>
 
                 <div className="flex flex-col gap-3 font-mono text-caption">
-                  <div className="flex items-center gap-1">
-                    <Database size={10} className="text-ink-disabled" />
-                    <span className="text-ink-muted">RAG MEM:</span>
-                    <span className="text-ink-secondary">{ragResults.length} SLOTS</span>
-                  </div>
+                  {/* #607：RAG MEM 行已移除 —— ragResults 零生产者，永远 0 SLOTS。 */}
                   <div className="flex items-center gap-1">
                     <Layers size={10} className="text-ink-disabled" />
                     <span className="text-ink-muted">SPATIAL REF:</span>
@@ -415,57 +404,6 @@ export function EmbodiedHud() {
                   );
                 })}
               </div>
-            </div>
-          </div>
-
-          {/* COLUMN 3: ACTION STREAM (执行通道) */}
-          <div className="flex min-h-0 flex-col gap-2">
-            <div className="flex items-center gap-1.5 font-semibold text-ink-secondary" style={{ letterSpacing: '0.04em' }}>
-              <Terminal size={13} style={{ color: isThinking ? 'var(--agent-accent)' : 'var(--text-disabled)' }} />
-              <span>执行通道 / ACTION LOG & CAUSAL CHAIN</span>
-            </div>
-
-            {/* scrolling log window */}
-            <div
-              className="custom-scrollbar flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto rounded-md border border-edge-subtle bg-surface-sunken p-1.5 px-2 font-mono text-caption"
-            >
-              {/* Combine opsLog and causalChain */}
-              {causalChain.length === 0 && opsLog.length === 0 ? (
-                <div className="m-auto text-center italic text-ink-muted">
-                  AWAITING SPATIAL AI COMMANDS...
-                </div>
-              ) : (
-                <>
-                  {causalChain.map((entry) => (
-                    <div
-                      key={entry.id}
-                      className="mb-0.5 flex flex-col gap-0.5 pl-1.5"
-                      style={{ borderLeft: '1.5px solid color-mix(in srgb, var(--agent-accent) 73%, transparent)' }}
-                    >
-                      <div className="flex justify-between font-semibold text-agent-accent">
-                        <span>[CAUSAL] {entry.tool}</span>
-                        <span className="text-micro text-ink-muted">{entry.time}</span>
-                      </div>
-                      {entry.toolInput && <div className="text-ink-secondary">IN: {entry.toolInput}</div>}
-                      {entry.mapEffect && <div className="text-ink-muted">OUT: {entry.mapEffect}</div>}
-                    </div>
-                  ))}
-
-                  {opsLog.map((entry) => (
-                    <div
-                      key={entry.id}
-                      className="mb-0.5 flex flex-col gap-0.5 pl-1.5"
-                      style={{ borderLeft: '1.5px solid var(--border-strong)' }}
-                    >
-                      <div className="flex justify-between font-medium text-ink-secondary">
-                        <span>[OP] {entry.label}</span>
-                        <span className="text-micro text-ink-muted">{entry.time}</span>
-                      </div>
-                      <div className="text-ink-muted">{entry.detail}</div>
-                    </div>
-                  ))}
-                </>
-              )}
             </div>
           </div>
         </div>

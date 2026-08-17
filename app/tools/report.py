@@ -131,11 +131,19 @@ def register_report_tools(registry: ToolRegistry):
     async def generate_analysis_report(
         format: str = "markdown",
         title: Optional[str] = None,
-        _session_id: Optional[str] = None,
-        **kwargs,
+        session_id: str = "",
     ) -> dict:
-        """Agent 调用此工具主动生成分析报告"""
-        session_id = _session_id or kwargs.get("session_id")
+        """Agent 调用此工具主动生成分析报告
+
+        Issue #584: 形参名必须精确为 ``session_id``——registry 的会话注入探针
+        （inspect.signature 精确匹配）只认这个名字。旧形参 ``_session_id`` 收
+        不到注入，agent 路径恒失败，唯一兜底是 **kwargs 里由 LLM 编造的
+        ``session_id`` 实参——正是注入设计要封杀的不可信输入，构成跨会话读取
+        面（读取/落盘任意会话的对话消息）。注册用的显式 parameters= schema 只
+        暴露 format/title，session_id 不进 LLM 目录；registry 注入发生在函数
+        执行前，会用可信 session_id 覆盖 LLM 传入的任何同名实参，因此这里不
+        再接收 kwargs（多余实参直接 TypeErrors，被 registry 捕获为诚实错误）。
+        """
         if not session_id:
             return {"error": "无法确定当前会话 ID，请在对话中重试。"}
 

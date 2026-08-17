@@ -161,6 +161,109 @@ def to_feature_collection(data: Any) -> dict:
 
     return {"type": "FeatureCollection", "features": []}
 
+
+# ---------------------------------------------------------------------------
+# GeoJSON `crs` member contract (audit #599)
+#
+# A legacy RFC 7946 `crs` member declares the coordinate system of the raw
+# coordinates. to_utm_gdf reads it; the other operators previously hardcoded
+# EPSG:4326 and silently misinterpreted projected input (empty results /
+# misplaced geometry). These helpers are the single source of truth for that
+# contract: read the member, build GeoDataFrames that honor it (unifying the
+# working frame to WGS84), declare it on output, and warn when an absent
+# member leaves coordinates that clearly are not WGS84.
+# ---------------------------------------------------------------------------
+def extract_declared_crs(geojson: Any) -> Optional[str]:
+    """Read the GeoJSON top-level ``crs`` member (legacy RFC 7946) as a CRS
+    string, or None when absent. Accepts the string form (``"EPSG:3857"``)
+    and the object form (``{"type": "name", "properties": {"name": ...}}``
+    or ``{"properties": {"code": 3857}}``) written by reproject_coordinates
+    (GIS-22). Single source of truth shared by to_utm_gdf and the operators.
+    """
+    if not isinstance(geojson, dict):
+        return None
+    crs_obj = geojson.get("crs")
+    if isinstance(crs_obj, str):
+        return crs_obj.strip() or None
+    if isinstance(crs_obj, dict):
+        props = crs_obj.get("properties", {})
+        if isinstance(props, dict):
+            name = props.get("name")
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+            code = props.get("code")
+            if code is not None and str(code).strip():
+                return f"EPSG:{str(code).strip()}"
+    return None
+
+
+def warn_if_non_wgs84_coordinates(gdf: Optional[gpd.GeoDataFrame], context: str) -> None:
+    """Log a warning when a GeoDataFrame built from an UNDECLARED input has
+    coordinates outside the WGS84 envelopes — a strong sign the data is in a
+    projected CRS whose ``crs`` member was dropped, so interpreting it as
+    EPSG:4326 silently misplaces or drops data (audit #599)."""
+    try:
+        if gdf is None or len(gdf) == 0 or gdf.crs is None:
+            return
+        minx, miny, maxx, maxy = gdf.total_bounds
+    except Exception:
+        return
+    if minx < -180.0 or maxx > 180.0 or miny < -90.0 or maxy > 90.0:
+        logger.warning(
+            "%s: bounds [%.2f, %.2f, %.2f, %.2f] exceed the WGS84 envelope but "
+            "the input declares no `crs` member — treating the coordinates as "
+            "EPSG:4326 may silently misplace or drop data. Declare the CRS via "
+            "the FeatureCollection `crs` member or reproject to EPSG:4326.",
+            context, minx, miny, maxx, maxy,
+        )
+
+
+def gdf_from_features(fc: dict | list, context: str = "") -> gpd.GeoDataFrame:
+    """Build a GeoDataFrame from a FeatureCollection, honoring a declared
+    top-level ``crs`` member (falling back to EPSG:4326 when absent or
+    invalid). A declared non-geographic CRS is reprojected to EPSG:4326 so the
+    operator's WGS84 working frame sees correct coordinates (audit #599:
+    hardcoding EPSG:4326 silently dropped declared projected input); an absent
+    member with suspicious coordinates only logs a warning.
+    """
+    declared = extract_declared_crs(fc)
+    try:
+        gdf = gpd.GeoDataFrame.from_features(fc, crs=declared or "EPSG:4326")
+    except Exception:
+        gdf = gpd.GeoDataFrame.from_features(fc, crs="EPSG:4326")
+    if declared is None:
+        warn_if_non_wgs84_coordinates(gdf, context or "geo_processor")
+    else:
+        try:
+            if gdf.crs is not None and not gdf.crs.is_geographic:
+                gdf = gdf.to_crs("EPSG:4326")
+        except Exception:
+            pass
+    return gdf
+
+
+# Geographic CRS spellings whose coordinates are longitude/latitude and need no
+# ``crs`` member on output (RFC 7946 forbids the member for EPSG:4326).
+_WGS84_CRS_NAMES = frozenset({
+    "EPSG:4326", "CRS:84", "OGC:CRS84", "WGS84",
+})
+
+
+def declare_crs(fc: dict, crs: Any) -> dict:
+    """Attach a legacy GeoJSON ``crs`` member to an output FeatureCollection
+    when its coordinates are NOT WGS84, so consumers that read the member
+    (to_utm_gdf, zonal_statistics, …) do not misread projected output as
+    EPSG:4326 (audit #599). Returns the input unchanged when the CRS is
+    WGS84 or absent — the member must not be emitted for EPSG:4326.
+    """
+    if not isinstance(fc, dict) or not crs:
+        return fc
+    if str(crs).strip().upper().replace(" ", "") in _WGS84_CRS_NAMES:
+        return fc
+    out = dict(fc)
+    out["crs"] = {"type": "name", "properties": {"name": str(crs)}}
+    return out
+
 # ---------------------------------------------------------------------------
 # to_utm_gdf memoization (Phase 4 perf)
 #
@@ -266,16 +369,8 @@ def to_utm_gdf(geojson: Any, source_crs: Optional[str] = None) -> tuple[gpd.GeoD
     if not features:
         return None, None
 
-    if source_crs is None and isinstance(fc, dict) and "crs" in fc:
-        crs_obj = fc["crs"]
-        if isinstance(crs_obj, str):
-            source_crs = crs_obj
-        elif isinstance(crs_obj, dict):
-            props = crs_obj.get("properties", {})
-            if "name" in props:
-                source_crs = props["name"]
-            elif "code" in props:
-                source_crs = f"EPSG:{props['code']}"
+    if source_crs is None:
+        source_crs = extract_declared_crs(fc)
 
     rows = []
     for f in features:

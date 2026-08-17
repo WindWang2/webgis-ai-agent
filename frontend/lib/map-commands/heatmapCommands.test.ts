@@ -133,6 +133,49 @@ describe('heatmap commands (issue #393: post-state verification, no fake success
       expect(heatmapCommands.add_native_heatmap.run(makeCtx(makeMockMaplibreMap(), {})))
         .toEqual({ status: 'failed', error: 'invalid_params' });
     });
+
+    it('#611: backend template emission — heatPalette/field/intensity are consumed and the id is stable across re-applies (no Date.now() stacking)', () => {
+      // app/tools/templates.py apply_template heatmap variant 发射的形状：
+      // params = {geojson, field, intensity, radius, heatPalette}（无 layerId）
+      const map = makeMockMaplibreMap();
+      const backendParams = {
+        geojson: { type: 'FeatureCollection', features: [] },
+        field: 'pop',
+        intensity: 0.6,
+        radius: 25,
+        heatPalette: ['#0000ff', '#00ff00', '#ffff00', '#ff0000'],
+      };
+
+      const result = heatmapCommands.add_native_heatmap.run(makeCtx(map, backendParams));
+      expect(result).toEqual({ status: 'succeeded', result: { confirmed: true } });
+
+      const id = 'custom-native-heatmap-pop';
+      expect(map.getSource(id)).toBeTruthy();
+      const layer = map.getLayer(id);
+      expect(layer).toBeTruthy();
+      // 后端一等参数 intensity 进了 heatmap paint
+      expect(layer.paint['heatmap-intensity']).toBe(0.6);
+      // heatPalette 颜色数组进了 heatmap-color（不再是默认 classic 调色板）
+      expect(JSON.stringify(layer.paint['heatmap-color'])).toContain('#0000ff');
+      expect(JSON.stringify(layer.paint['heatmap-color'])).not.toContain('33,102,172');
+
+      // 同模板应用两次 → 稳定 id 原地更新：source 复用（setData），不叠层
+      const srcAddsBefore = map._calls.addSource.length;
+      const result2 = heatmapCommands.add_native_heatmap.run(makeCtx(map, backendParams));
+      expect(result2).toEqual({ status: 'succeeded', result: { confirmed: true } });
+      expect(map._calls.addSource.length).toBe(srcAddsBefore);
+      expect(map._layers.filter((l: any) => l.id === id).length).toBe(1);
+    });
+
+    it('#611: older palette named-key callers still work (fallback path)', () => {
+      const map = makeMockMaplibreMap();
+      const result = heatmapCommands.add_native_heatmap.run(
+        makeCtx(map, { geojson: { type: 'FeatureCollection', features: [] }, field: 'pop', palette: 'viridis', intensity: 1.2 }),
+      );
+      expect(result).toEqual({ status: 'succeeded', result: { confirmed: true } });
+      const layer = map.getLayer('custom-native-heatmap-pop');
+      expect(JSON.stringify(layer.paint['heatmap-color'])).toContain('68,1,84'); // viridis 首色
+    });
   });
 
   describe('create_thematic_map', () => {

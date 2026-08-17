@@ -467,15 +467,21 @@ class ProjectService:
             return [], 0
 
         from sqlalchemy import func
+        from sqlalchemy.orm import noload
 
         # NOTE: list views emit ArtifactSummary (no storage_ref / metadata_json),
-        # so the lineage / upload_record / layer eager-loads are no longer
-        # needed in the hot path. The lineage endpoint still loads them.
+        # so the upload_record / layer lazy="selectin" eager loads are dead
+        # weight here — every batch would fire up to 4 extra IN-queries (layers
+        # → organization/creator) that are discarded. noload suppresses them.
         base = select(Artifact).where(Artifact.project_id == project_id)
         count_stmt = select(func.count()).select_from(base.subquery())
         total = int(db.execute(count_stmt).scalar_one() or 0)
 
-        page_stmt = base.order_by(Artifact.created_at.desc()).limit(limit).offset(offset)
+        page_stmt = (
+            base.order_by(Artifact.created_at.desc())
+            .options(noload(Artifact.upload_record), noload(Artifact.layer))
+            .limit(limit).offset(offset)
+        )
         rows = list(db.execute(page_stmt).scalars().all())
         return rows, total
 

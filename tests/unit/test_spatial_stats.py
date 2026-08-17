@@ -44,11 +44,11 @@ async def test_spatial_cluster_dbscan(stats_tools):
         "eps": 2000,
         "min_samples": 2,
     })
-    assert result.get("success") is True or "error" not in result
+    assert result.get("success") is True, result
     data = result.get("data", result)
-    if isinstance(data, dict) and "features" in data:
-        labels = [f["properties"].get("cluster_label") for f in data["features"]]
-        assert len(labels) == 4
+    # cluster_narrated 写入的是 cluster_id（不是 cluster_label）
+    labels = [f["properties"].get("cluster_id") for f in data["features"]]
+    assert len(labels) == 4
 
 
 @pytest.mark.asyncio
@@ -60,7 +60,7 @@ async def test_spatial_cluster_kmeans(stats_tools):
         "method": "kmeans",
         "n_clusters": 2,
     })
-    assert result.get("success") is True or "error" not in result
+    assert result.get("success") is True, result
 
 
 @pytest.mark.asyncio
@@ -90,10 +90,12 @@ async def test_standard_deviational_ellipse(stats_tools):
     result = await stats_tools.dispatch("standard_deviational_ellipse", {
         "geojson": _fc(features),
     })
-    assert result.get("success") is True or "error" not in result
+    assert result.get("success") is True, result
     data = result.get("data", result)
-    if isinstance(data, dict) and "features" in data:
-        assert len(data["features"]) >= 1
+    # SDE 成功时 data 是 Feature（椭圆多边形 + 方向性属性），不是 FeatureCollection
+    assert data["geometry"]["type"] == "Polygon"
+    assert data["properties"]["angle_deg"] is not None
+    assert data["properties"]["area_km2"] is not None
 
 
 # ─── moran_i ─────────────────────────────────────────────────────
@@ -103,18 +105,19 @@ async def test_standard_deviational_ellipse(stats_tools):
 async def test_moran_i_clustered(stats_tools):
     """Moran's I should detect spatial clustering in high-value points."""
     # Two clusters: (0,0) high values, (10,10) low values
+    # （低值簇纬度用 10+0.01i：10.01*i 会在 i=9 时算出 90.09>90 的非法纬度，
+    # 使 to_utm_gdf 的 make_valid 抛 GEOSException → success=False → 恒真断言掩盖）
     features = (
         [_point(0, 0.01 * i, {"val": 100}) for i in range(10)]
-        + [_point(10, 10.01 * i, {"val": 1}) for i in range(10)]
+        + [_point(10, 10 + 0.01 * i, {"val": 1}) for i in range(10)]
     )
     result = await stats_tools.dispatch("moran_i", {
         "geojson": _fc(features),
         "value_field": "val",
     })
-    assert result.get("success") is True or "error" not in result
+    assert result.get("success") is True, result
     data = result.get("data", result)
-    if isinstance(data, dict):
-        assert "moran_i" in data or "stats" in data or "summary" in data
+    assert "moran_i" in data or "stats" in data or "summary" in data
 
 
 @pytest.mark.asyncio
@@ -136,17 +139,16 @@ async def test_hotspot_analysis(stats_tools):
     """Hotspot analysis should identify high-value clusters."""
     features = (
         [_point(0, 0.01 * i, {"val": 100}) for i in range(10)]
-        + [_point(10, 10.01 * i, {"val": 1}) for i in range(10)]
+        + [_point(10, 10 + 0.01 * i, {"val": 1}) for i in range(10)]
     )
     result = await stats_tools.dispatch("hotspot_analysis", {
         "geojson": _fc(features),
         "value_field": "val",
         "distance_band": 50000,
     })
-    assert result.get("success") is True or "error" not in result
+    assert result.get("success") is True, result
     data = result.get("data", result)
-    if isinstance(data, dict) and "features" in data:
-        assert len(data["features"]) == 20
+    assert len(data["features"]) == 20
 
 
 # ─── kde_surface ─────────────────────────────────────────────────
@@ -189,7 +191,7 @@ async def test_kde_surface_with_value_field(stats_tools):
         "cell_size": 1000,
         "value_field": "weight",
     })
-    assert result.get("success") is True or "error" not in result
+    assert result.get("success") is True, result
 
 
 @pytest.mark.asyncio
@@ -206,7 +208,7 @@ async def test_kde_surface_with_custom_bounds(stats_tools):
         "cell_size": 500,
         "bounds": [0, 0, 0.1, 0.05],
     })
-    assert result.get("success") is True or "error" not in result
+    assert result.get("success") is True, result
 
 
 @pytest.mark.asyncio
@@ -222,7 +224,7 @@ async def test_kde_surface_explicit_bandwidth(stats_tools):
         "bandwidth": 2000,
         "cell_size": 1000,
     })
-    assert result.get("success") is True or "error" not in result
+    assert result.get("success") is True, result
 
 
 # ─── Additional edge cases ───────────────────────────────────────

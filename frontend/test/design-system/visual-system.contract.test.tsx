@@ -394,7 +394,10 @@ describe('density is token-driven', () => {
     // children is an ARIA violation — keyboard users tab into invisible
     // controls that announce nothing. `inert` removes focus, hit-testing and
     // the a11y subtree together.
-    for (const file of ['components/tweaks-panel.tsx', 'components/panel/rag-independent-panel.tsx']) {
+    // (#607: rag-independent-panel was removed at the source — zero-producer
+    // fake-data panel stubbed to render null; it no longer has an inert/a11y
+    // contract to hold.)
+    for (const file of ['components/tweaks-panel.tsx']) {
       const src = readCode(file);
       expect(src, `${file} should use useInertWhenClosed`).toContain('useInertWhenClosed');
       expect(src).toMatch(/aria-hidden=\{!/);
@@ -511,7 +514,8 @@ describe('no unnecessary compositing over the map', () => {
     'components/layout/top-bar.tsx',
     'components/sidebar/chat-tab.tsx',
     'components/drawers/history-drawer.tsx',
-    'components/panel/rag-independent-panel.tsx',
+    // #607: rag-independent-panel removed (stubbed to render null) — a
+    // null stub cannot composite, no contract to assert.
     'components/tweaks-panel.tsx',
     'components/map/legends/legend-card.tsx',
   ];

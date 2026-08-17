@@ -430,12 +430,25 @@ class FaissVectorStore:
         return results
 
     def mark_deleted(self, document_id: str) -> None:
-        """Mark chunks of document as deleted in metadata."""
-        meta = self.load_metadata()
-        for ch in meta.get("chunks", []):
-            if ch.get("document_id") == document_id:
-                ch["deleted"] = True
-        self.save_metadata(meta)
+        """Mark chunks of document as deleted in metadata.
+
+        Issue #601: the load+modify+save RMW must happen entirely under
+        _write_lock, matching add_vectors/compact. The previous code read
+        metadata OUTSIDE the lock and only wrapped the save — a concurrent
+        add_vectors (or a compact on a worker thread) could interleave
+        between the read and the save, and the stale snapshot then
+        overwrote the other writer's state: a concurrent add's new chunks
+        vanished from metadata (index kept the vectors, search silently
+        skipped them), or a compact's renumbered metadata was clobbered and
+        a deleted document resurrected. save_metadata re-enters the
+        (thread-local) lock, so nesting is safe.
+        """
+        with _write_lock(self.index_dir):
+            meta = self.load_metadata()
+            for ch in meta.get("chunks", []):
+                if ch.get("document_id") == document_id:
+                    ch["deleted"] = True
+            self.save_metadata(meta)
 
     def compact(self) -> Dict[str, Any]:
         """Compact index by purging deleted chunks and rebuilding FAISS index.

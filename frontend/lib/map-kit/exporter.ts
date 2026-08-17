@@ -1047,6 +1047,7 @@ export interface ExportRequest {
   include_legend?: boolean;
   include_compass?: boolean;
   include_scale?: boolean;
+  dark_mode?: boolean;
 }
 
 export interface ExportDeps {
@@ -1192,6 +1193,7 @@ export async function runExport(
     showScale = (req.showScale ?? req.include_scale ?? true) as boolean,
     showMetadata = true,
     showGraticules = false,
+    dark_mode,
     format = 'png',
     paperSize = 'screen',
     orientation = 'landscape',
@@ -1206,7 +1208,11 @@ export async function runExport(
     /* defensive */
   }
 
-  const theme = getHudState().theme;
+  const hudTheme = getHudState().theme;
+  // #614：dark_mode 请求参数必须优先于 HUD 主题 —— 浅色 HUD 下默认参数
+  // (dark_mode=True) 也应产出暗色成品，与后端回告 Agent 的口径一致。
+  const theme: 'light' | 'dark' =
+    (dark_mode ?? hudTheme === 'dark') ? 'dark' : 'light';
   const origPixelRatio = map.getPixelRatio();
   const targetPixelRatio = dpi / 96;
   try {
@@ -1230,7 +1236,9 @@ export async function runExport(
       storeState.layers,
     );
 
-    composeLayout(exportCanvas, title || '', subtitle || '', {
+    // #614：经 MapExporterEngine 调 composeLayout（与 exportToPDF 同款路由），
+    // 便于测试 spyOn 断言 theme 选项（模块内直接绑定无法被 mock 拦截）。
+    MapExporterEngine.composeLayout(exportCanvas, title || '', subtitle || '', {
       dpi,
       theme,
       showScale,

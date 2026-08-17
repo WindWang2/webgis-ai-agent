@@ -10,4 +10,6 @@ omit =
 exclude_lines =
     pragma: no cover
     if __name__ == .__main__.
-    pass
+    # 锚定到整行才是"裸 pass 占位"，避免把含 pass 子串的代码行
+    # （password/overpass/passed 等敏感标识符行）整块排除出覆盖率分母。
+    ^\s*pass\s*$

@@ -364,6 +364,21 @@ export function MapPanel({
         // Re-raise it alongside the selection highlight (no-op when the
         // stack isn't mounted, so reconcile-only patches stay cheap).
         if (map) raiseAnnotationLayers(map)
+        // #605: a basemap switch (setStyle) sweeps the raster-dem source +
+        // setTerrain along with every other imperative layer, but the 3D
+        // effect (deps [is3D, mapReady]) never re-runs — mapReady stays true
+        // after onLoad. Re-mount terrain at this same style-settled point
+        // where the sibling stacks are restored: the reconcile only resolves
+        // once the new style is loaded (setTerrain throws mid-load via
+        // Style._checkLoaded, so this cannot run earlier). Idempotent — plain
+        // reconciles re-assert the same source/terrain.
+        if (map) {
+          if (is3D) {
+            renderer.enable3DTerrain(map, { exaggeration: 1.5 })
+          } else {
+            renderer.disable3DTerrain(map)
+          }
+        }
         const generation = layers.reduce<Layer | null>((latest, layer) => {
           if (!layer._mapspecFingerprint) return latest
           if (!latest) return layer

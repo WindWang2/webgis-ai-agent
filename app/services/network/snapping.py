@@ -61,9 +61,12 @@ class PointSnappingService:
     of the NetworkDataset (id()), NOT by (dataset_id, edge_count, node_count).
     The previous key collided across distinct datasets with equal cardinality
     (dataset_id is itself only a hash of edge_count in graph_builder), which
-    silently returned the wrong network's STRtree. Object identity is a sound
-    memoization key (matches the pattern in geo_processor/core.py to_utm_gdf)
-    and is invalidated automatically when a new NetworkDataset is built.
+    silently returned the wrong network's STRtree. Issue #580: object identity
+    is only stable while the object lives, so each cache entry PINs the
+    dataset (first tuple element) — a freed dataset's id() cannot be recycled
+    for a later dataset while its entry is live — and the lookup re-checks
+    identity so a stale key hit rebuilds instead of returning the old
+    network's STRtree.
 
     Thread-safety: the shared snapper instance is called from multiple worker
     threads (network tools run under ToolExecutionPolicy.THREAD). The cache is
@@ -78,28 +81,59 @@ class PointSnappingService:
     """
 
     def __init__(self) -> None:
-        # id(dataset) -> (STRtree, edge_refs list, node_by_id dict, proj_to_utm, proj_to_wgs, utm_crs)
+        # id(dataset) -> (dataset pin, STRtree, edge_refs list, node_by_id dict,
+        #                 proj_to_utm, proj_to_wgs, utm_crs)
+        # The dataset itself is pinned (strong ref) as the first tuple element:
+        # id() is only stable while the object is alive — a freed dataset's
+        # address can be recycled by CPython for a NEW dataset, which would
+        # otherwise hit this entry and silently snap onto the OLD network's
+        # geometry. Same pinning argument as NetworkGraphBuilder's caches
+        # (N-F05 / issue #580).
         self._index_cache: Dict[
-            int, Tuple[STRtree, List[Edge], Dict[object, Node], Any, Any, Optional[str]]
+            int,
+            Tuple[
+                NetworkDataset,
+                STRtree,
+                List[Edge],
+                Dict[object, Node],
+                Any,
+                Any,
+                Optional[str],
+            ],
         ] = {}
         self._cache_lock = threading.Lock()
 
     def _get_index(
         self, network_dataset: NetworkDataset
-    ) -> Optional[Tuple[STRtree, List[Edge], Dict[object, Node], Any, Any, Optional[str]]]:
+    ) -> Optional[
+        Tuple[
+            NetworkDataset,
+            STRtree,
+            List[Edge],
+            Dict[object, Node],
+            Any,
+            Any,
+            Optional[str],
+        ]
+    ]:
         """Build (and cache) the STRtree over edges + a node-id lookup map.
 
-        Returns (tree, edge_refs, node_by_id, to_utm, to_wgs, utm_crs); tree is
-        built in UTM meters when a zone can be determined, else in degrees.
+        Returns (dataset pin, tree, edge_refs, node_by_id, to_utm, to_wgs,
+        utm_crs); tree is built in UTM meters when a zone can be determined,
+        else in degrees. The dataset pin keeps id(dataset) from being recycled
+        while the entry is live (#580).
         """
         if not network_dataset.edges:
             return None
         # Object-identity key: a rebuilt/changed dataset is a new object → new
-        # key → no stale collision. id() is stable for the object's lifetime.
+        # key → no stale collision. The entry pins the dataset (first tuple
+        # element), so id() cannot be recycled for a different dataset while
+        # the entry is live; the identity re-check turns any leftover stale
+        # hit into a rebuild instead of a wrong-network result (#580).
         cache_key = id(network_dataset)
         with self._cache_lock:
             cached = self._index_cache.get(cache_key)
-        if cached is not None:
+        if cached is not None and cached[0] is network_dataset:
             return cached
 
         # GIS-02: project to local UTM so the STRtree measures real meters.
@@ -117,6 +151,11 @@ class PointSnappingService:
                 to_wgs = None
                 utm_crs = None
 
+        # PERF (#600): the node-id lookup map is built once BEFORE the edge
+        # loop; the previous code linear-scanned ALL dataset nodes per
+        # geometry-less edge (two O(N) generator scans per edge → O(E·N),
+        # measured ~5 s on an 8k-node chain).
+        node_by_id = {n.id: n for n in network_dataset.nodes}
         lines: List[LineString] = []
         edge_refs: List[Edge] = []
         for edge in network_dataset.edges:
@@ -129,8 +168,8 @@ class PointSnappingService:
                     lines.append(LineString(coords))
                     edge_refs.append(edge)
             else:
-                u_node = next((n for n in network_dataset.nodes if n.id == edge.u), None)
-                v_node = next((n for n in network_dataset.nodes if n.id == edge.v), None)
+                u_node = node_by_id.get(edge.u)
+                v_node = node_by_id.get(edge.v)
                 if u_node and v_node:
                     coords = [(u_node.x, u_node.y), (v_node.x, v_node.y)]
                     if to_utm is not None:
@@ -138,9 +177,8 @@ class PointSnappingService:
                     lines.append(LineString(coords))
                     edge_refs.append(edge)
 
-        node_by_id = {n.id: n for n in network_dataset.nodes}
         tree = STRtree(lines)
-        entry = (tree, edge_refs, node_by_id, to_utm, to_wgs, utm_crs)
+        entry = (network_dataset, tree, edge_refs, node_by_id, to_utm, to_wgs, utm_crs)
         with self._cache_lock:
             # Bound the cache to avoid unbounded growth across many datasets.
             if len(self._index_cache) >= 32:
@@ -202,7 +240,7 @@ class PointSnappingService:
                 correction_hint=None,
             )
 
-        tree, edge_refs, node_by_id, to_utm, to_wgs, utm_crs = index
+        _, tree, edge_refs, node_by_id, to_utm, to_wgs, utm_crs = index
 
         # GIS-02: query the tree in the same space it was built in (UTM meters
         # when available, degrees otherwise).

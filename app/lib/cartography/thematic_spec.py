@@ -167,7 +167,14 @@ def build_graduated_spec(
         return None
 
     breaks = CartographyService.classify(values, method, k)
-    if not breaks or len(breaks) < 2:
+    if not breaks:
+        return None
+    # #618-19: 全等数值列（常量字段）在 n>k 时 classify 返回单断点 [v]，与
+    # n≤k 分支的 [v, v] 形状不一致 —— 归一化为 [v, v] 产出合法的单级 graduated
+    # spec（此前 create_thematic_map 对常量字段静默 style:None）。
+    if len(breaks) == 1:
+        breaks = [breaks[0], breaks[0]]
+    if len(breaks) < 2:
         return None
 
     min_val, max_val = min(values), max(values)

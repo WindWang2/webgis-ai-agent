@@ -288,6 +288,12 @@ class NetworkRoutingService:
         truly starts/ends there (GIS-01). For node ids and pre-snapped
         PointSnappingResults the existing node is used (callers that already
         have a snapped result should pass it to avoid a second snap).
+
+        The returned label carries the FULL-PRECISION coordinate repr (issue
+        #581): OD-family pair dicts are keyed by these labels, and the old
+        4-decimal formatting (1e-4° ≈ 8-11 m) made distinct points ~10 m apart
+        share one label — the later pair write silently overwrote the earlier
+        one's reachability and cost.
         """
         if isinstance(target, str):
             return target, target, None
@@ -301,9 +307,9 @@ class NetworkRoutingService:
                         target.fraction_along_edge, target.snapped_point,
                     )
                     if vt is not None:
-                        return vt, f"pt_{target.snapped_point[0]:.4f}_{target.snapped_point[1]:.4f}", target
+                        return vt, f"pt_{target.snapped_point[0]!r}_{target.snapped_point[1]!r}", target
             return str(target.nearest_node_id), (
-                f"pt_{target.snapped_point[0]:.4f}_{target.snapped_point[1]:.4f}"
+                f"pt_{target.snapped_point[0]!r}_{target.snapped_point[1]!r}"
             ), target
         if isinstance(target, (tuple, list)) and len(target) >= 2:
             snap_res = self.snapper.snap_point((float(target[0]), float(target[1])), network_dataset)
@@ -315,8 +321,8 @@ class NetworkRoutingService:
                         snap_res.fraction_along_edge, snap_res.snapped_point,
                     )
                     if vt is not None:
-                        return vt, f"pt_{target[0]:.4f}_{target[1]:.4f}", snap_res
-            return str(snap_res.nearest_node_id), f"pt_{target[0]:.4f}_{target[1]:.4f}", snap_res
+                        return vt, f"pt_{target[0]!r}_{target[1]!r}", snap_res
+            return str(snap_res.nearest_node_id), f"pt_{target[0]!r}_{target[1]!r}", snap_res
         raise ValueError(f"Invalid target location format: {target}")
 
     @staticmethod

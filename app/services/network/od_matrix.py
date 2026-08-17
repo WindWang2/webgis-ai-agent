@@ -239,7 +239,9 @@ class NetworkODMatrixService:
         node, O(V²) worst case, which the old code then re-walked in Python
         to re-sum distance/time). ``need_paths=True`` keeps networkx's
         path-returning variant (closest-facility / VRP reconstruct routes
-        from the trees) and forwards the cutoff to it.
+        from the trees) and forwards the cutoff to it, but distance/time are
+        accumulated along each node's predecessor edge in O(V) per origin
+        instead of re-walking the full paths edge-by-edge (#600).
         """
         # #453: coordinate / PointSnappingResult inputs are resolved on a
         # single working-copy graph with the SAME virtual-node mid-edge
@@ -304,28 +306,31 @@ class NetworkODMatrixService:
                 dijkstra_paths[o_node] = {}
             else:
                 # Path variant: networkx returns (dist_dict, path_dict); the
-                # cutoff keeps nodes beyond it out of both maps.
+                # cutoff keeps nodes beyond it out of both maps. The full path
+                # materialization is unavoidable (consumers reconstruct routes
+                # from the trees), but distance/time accumulate along the
+                # predecessor tree in O(V) instead of re-walking every node's
+                # full path edge-by-edge — O(sum|path|) ≈ O(V²) on a path
+                # graph (#600, sibling of #449).
                 dists, paths = nx.single_source_dijkstra(
                     graph_view, o_node, weight=weight_func, cutoff=cutoff_s
                 )
                 dijkstra_results[o_node] = dists
                 dijkstra_paths[o_node] = paths
 
-                distances: Dict[str, float] = {}
-                times: Dict[str, float] = {}
-                for node, path in paths.items():
-                    if node == o_node or len(path) < 2:
-                        distances[node] = 0.0
-                        times[node] = 0.0
+                distances: Dict[str, float] = {o_node: 0.0}
+                times: Dict[str, float] = {o_node: 0.0}
+                # Each node's predecessor on the tree is its path's penultimate
+                # element. Weights are positive, so cost strictly increases
+                # along tree edges — processing nodes in cost order guarantees
+                # every node's parent is accumulated before it.
+                for node in sorted(paths, key=lambda n: dists[n]):
+                    if node == o_node:
                         continue
-                    dist_acc = 0.0
-                    time_acc = 0.0
-                    for i in range(len(path) - 1):
-                        edge_data = graph_view[path[i]][path[i + 1]]
-                        dist_acc += float(edge_data.get("length_m", 0.0))
-                        time_acc += float(edge_data.get("travel_time_s", 0.0))
-                    distances[node] = dist_acc
-                    times[node] = time_acc
+                    parent = paths[node][-2]
+                    edge_data = graph_view[parent][node]
+                    distances[node] = distances[parent] + float(edge_data.get("length_m", 0.0))
+                    times[node] = times[parent] + float(edge_data.get("travel_time_s", 0.0))
                 dijkstra_dist[o_node] = distances
                 dijkstra_time[o_node] = times
 

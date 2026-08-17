@@ -51,10 +51,9 @@ async def test_buffer_analysis_points(spatial_tools):
         "distance": 100,
         "unit": "m",
     })
-    assert result.get("success") is True or "error" not in result
+    assert result.get("success") is True, result
     data = result.get("data", result)
-    if isinstance(data, dict) and "features" in data:
-        assert len(data["features"]) == 2
+    assert len(data["features"]) == 2
 
 
 @pytest.mark.asyncio
@@ -88,10 +87,9 @@ async def test_spatial_stats_points(spatial_tools):
     result = await spatial_tools.dispatch("spatial_stats", {
         "geojson": _fc(features),
     })
-    assert result.get("success") is True or "error" not in result
+    assert result.get("success") is True, result
     data = result.get("data", result)
-    if isinstance(data, dict):
-        assert data.get("count") == 3 or "summary" in data
+    assert data.get("count") == 3 or "summary" in data
 
 
 @pytest.mark.asyncio
@@ -104,7 +102,7 @@ async def test_spatial_stats_polygons(spatial_tools):
     result = await spatial_tools.dispatch("spatial_stats", {
         "geojson": _fc(features),
     })
-    assert result.get("success") is True or "error" not in result
+    assert result.get("success") is True, result
 
 
 @pytest.mark.asyncio
@@ -113,7 +111,7 @@ async def test_spatial_stats_empty_input(spatial_tools):
     result = await spatial_tools.dispatch("spatial_stats", {
         "geojson": _fc([]),
     })
-    assert result.get("success") is True or "error" not in result
+    assert result.get("success") is True, result
 
 
 @pytest.mark.asyncio
@@ -166,4 +164,7 @@ async def test_heatmap_data_grid_render(spatial_tools):
         "radius": 1000,
         "render_type": "grid",
     })
-    assert result.get("success") is True or "error" not in result
+    # heatmap_data 对非 native 渲染直接返回 FeatureCollection 载荷（无 success 键），
+    # 失败路径会以异常方式抛出 —— 用载荷结构本身作为成功断言。
+    assert result.get("type") == "FeatureCollection", result
+    assert len(result.get("features", [])) > 0

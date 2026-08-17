@@ -433,3 +433,105 @@ describe('layer_style_update (#557 contract)', () => {
     expect(result).toEqual({ status: 'failed', error: 'invalid_params' });
   });
 });
+
+// ─── #609: layer_visibility_update null 语义 ───
+// 后端 set_layer_status 的 Optional 参数未传时可能以 JSON null 到达（旧版
+// layer_manager 直接序列化 None）。null 在 JS 里 `!== undefined` 为真、
+// falsy 分支会把图层隐藏；且后验证读到 'none' 与"预期"一致 → 假收敛 confirmed。
+// 修复后 null 一律视为"该属性未被请求"：跳过 mutation、跳过 store 写入、
+// 跳过对该属性的读回比对。命令单测即 issue 要求的回归测试。
+
+function visCtx(map: any, layers: any[] = []) {
+  const updateLayer = vi.fn();
+  const hud = { layers, updateLayer };
+  const ctx = {
+    map,
+    popAction: () => {},
+    setDeferredPop: () => {},
+    safePop: () => {},
+    getHudState: () => hud,
+    setSelectedBaseLayer: () => {},
+    command: 'layer_visibility_update',
+    params: {},
+  } as unknown as MapCommandContext;
+  return { ctx, updateLayer, hud };
+}
+
+describe('layer_visibility_update (#609 null semantics)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('treats visible:null as "不修改该属性" — 只传 opacity 时图层不被隐藏、store 不写 null', () => {
+    const map = makeMockMaplibreMap();
+    map.addLayer({ id: 'result__fill', type: 'fill' });
+    map.addLayer({ id: 'result__line', type: 'line' });
+    const { ctx, updateLayer } = visCtx(map, [{ id: 'result' }]);
+    ctx.params = { layer_id: 'result', visible: null, opacity: 0.5 } as any;
+
+    const result = layerCommands.layer_visibility_update.run(ctx);
+
+    expect(result).toEqual({ status: 'succeeded', result: { confirmed: true } });
+    // 透明度照常应用；可见性必须是"未请求"（undefined），绝不能是 'none'
+    expect(renderer.updateLayerStyle).toHaveBeenCalledWith(
+      map,
+      'result__fill',
+      expect.objectContaining({ opacity: 0.5, visibility: undefined }),
+    );
+    expect(renderer.updateLayerStyle).toHaveBeenCalledWith(
+      map,
+      'result__line',
+      expect.objectContaining({ opacity: 0.5, visibility: undefined }),
+    );
+    expect(renderer.updateLayerStyle).not.toHaveBeenCalledWith(
+      map,
+      expect.anything(),
+      expect.objectContaining({ visibility: 'none' }),
+    );
+    // store 同步只写 opacity，visible:null 不得落进 store
+    expect(updateLayer).toHaveBeenCalledWith('result', { opacity: 0.5 });
+  });
+
+  it('visible:null + opacity:null 整体视为无请求 — 不改 map、不写 store、ack 收敛', () => {
+    const map = makeMockMaplibreMap();
+    map.addLayer({ id: 'result__fill', type: 'fill' });
+    const { ctx, updateLayer } = visCtx(map, [{ id: 'result' }]);
+    ctx.params = { layer_id: 'result', visible: null, opacity: null } as any;
+
+    const result = layerCommands.layer_visibility_update.run(ctx);
+
+    expect(result).toEqual({ status: 'succeeded', result: { confirmed: true } });
+    // opacity 必须归一为 undefined：renderer 以 `opacity !== undefined` 判断，
+    // 原样传 null 会走 setPaintProperty(prop, null) 重置为默认值。
+    expect(renderer.updateLayerStyle).toHaveBeenCalledWith(
+      map,
+      'result__fill',
+      expect.objectContaining({ visibility: undefined, opacity: undefined }),
+    );
+    expect(renderer.updateLayerStyle).not.toHaveBeenCalledWith(
+      map,
+      expect.anything(),
+      expect.objectContaining({ opacity: null }),
+    );
+    expect(updateLayer).not.toHaveBeenCalled();
+  });
+
+  it('explicit visible:false 仍然隐藏图层并落 store（null 只跳过、不改语义）', () => {
+    const map = makeMockMaplibreMap();
+    map.addLayer({ id: 'result__fill', type: 'fill' });
+    const { ctx, updateLayer } = visCtx(map, [{ id: 'result' }]);
+    ctx.params = { layer_id: 'result', visible: false };
+
+    // renderer.updateLayerStyle 在本测试被 mock——模拟真实 renderer 落盘可见性，
+    // 让 FIX-B 后验证能读到迁移后的值（否则 honest ack 是 store_updated）。
+    map.setLayoutProperty('result__fill', 'visibility', 'none');
+
+    const result = layerCommands.layer_visibility_update.run(ctx);
+
+    expect(result).toEqual({ status: 'succeeded', result: { confirmed: true } });
+    expect(renderer.updateLayerStyle).toHaveBeenCalledWith(
+      map,
+      'result__fill',
+      expect.objectContaining({ visibility: 'none' }),
+    );
+    expect(updateLayer).toHaveBeenCalledWith('result', { visible: false });
+  });
+});

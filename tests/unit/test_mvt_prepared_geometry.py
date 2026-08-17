@@ -404,9 +404,10 @@ def test_index_path_line_poly_degrades_to_pure_python_on_shapely_failure(monkeyp
     def _raising(gtype, geom_lonlat, geom_z0, z, x, y):
         raise RuntimeError("simulated GEOS failure")
 
-    # the fallback in encode_tile_from_index routes through _encode_geometry,
-    # which retries shapely (raising again) then uses the pure-python encoder.
-    # Make the *coordinate* shapely path also raise so the pure fallback is hit.
+    # the fallback in encode_tile_from_index routes through
+    # _encode_geometry_pieces, which retries shapely (raising again) then uses
+    # the pure-python encoder. Make the *coordinate* shapely path also raise
+    # so the pure fallback is hit.
     def _raising_shapely(gtype, coords, z, x, y):
         raise RuntimeError("simulated GEOS failure")
 

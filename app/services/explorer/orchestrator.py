@@ -190,6 +190,15 @@ _SESSION_TASKS_MAX_ENTRIES = 20_000
 # failed terminal event for still-unfinished tasks (no silent hangs).
 _EXPLORER_BRIDGE_MAX_SECONDS = 600
 
+# Issue #593: the INDEPENDENT /explorer/stream endpoint has the same liveness
+# hazard — a chain stuck in PENDING/UNKNOWN (broker restart, expired result,
+# unreachable result backend) otherwise polls at 1 Hz + 15 s heartbeat forever.
+# Bound it with a wall-clock cap like the bridge's. Worst-case legitimate chain
+# duration is ~480 s (stage limits 30+60+60+300+30 s); 900 s comfortably covers
+# it, and any still-unfinished chain at the cap gets an explicit failed
+# terminal event (no silent hang, no permanent zombie connection).
+_EXPLORER_STREAM_MAX_SECONDS = 900
+
 
 def register_session_task(session_id: str, task_id: str, user_id: str) -> None:
     """Record an explorer task under its session for the post-turn bridge."""
@@ -467,7 +476,9 @@ class ExplorerOrchestrator:
         Issue #481: ``task_id`` is the whole-chain handle; status comes from
         the per-stage aggregate, so the stream stays open through validate,
         reports real stage events (including late-stage failures), and only
-        terminates on whole-chain completion/failure/revocation.
+        terminates on whole-chain completion/failure/revocation. Issue #593:
+        bounded overall — a chain stuck in PENDING/UNKNOWN closes with an
+        explicit failed event after ``_EXPLORER_STREAM_MAX_SECONDS``.
         """
         import time
 
@@ -475,8 +486,25 @@ class ExplorerOrchestrator:
         last_stage = None
         heartbeat_interval = 15  # seconds
         last_heartbeat = time.time()
+        # Issue #593: overall wall-clock bound. Without it a chain stuck in
+        # PENDING/UNKNOWN (broker restart / expired result / unreachable result
+        # backend) keeps this generator alive forever at 1 Hz + heartbeat.
+        deadline = time.monotonic() + _EXPLORER_STREAM_MAX_SECONDS
 
         while True:
+            if time.monotonic() >= deadline:
+                # 有界兜底：链状态停滞到 deadline（如后端全 UNKNOWN）——发
+                # 显式 failed 终态并关闭，绝不静默挂住连接。
+                yield sse_event("explorer_progress", ExplorerPerceptionEvent(
+                    stage="validate",
+                    task_id=task_id,
+                    status="failed",
+                    context={
+                        "final_status": "FAILURE",
+                        "error": "stream timeout",
+                    },
+                ))
+                break
             status = await self.get_task_status(task_id)
             current_state = status.get("status")
             current_stage = status.get("stage") or "pending"

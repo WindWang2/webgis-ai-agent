@@ -122,7 +122,11 @@ async def test_export_pdf_invalid_image(client):
 
 @pytest.mark.asyncio
 async def test_download_pdf_media_type(tmp_path):
-    """Download endpoint returns application/pdf for .pdf files."""
+    """Download endpoint returns application/pdf for .pdf files.
+
+    #616: 下载前必须登记所有权（LRU 或侧车）—— 无法证明归属的下载 fail-closed
+    404。这里登记用户归属后验证 media_type 行为。
+    """
     pdf_file = tmp_path / "test.pdf"
     pdf_file.write_bytes(b"%PDF-1.4 test")
 
@@ -132,6 +136,11 @@ async def test_download_pdf_media_type(tmp_path):
         app.include_router(_mod.router, prefix="/api/v1")
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as c:
-            resp = await c.get("/api/v1/export/download/test.pdf")
+            # 登记所有权（内存 LRU；file_owner == _mock_user.user_id）
+            _mod._EXPORT_OWNERS["test.pdf"] = _mock_user["user_id"]
+            try:
+                resp = await c.get("/api/v1/export/download/test.pdf")
+            finally:
+                _mod._EXPORT_OWNERS.clear()
     assert resp.status_code == 200
     assert "pdf" in resp.headers["content-type"]

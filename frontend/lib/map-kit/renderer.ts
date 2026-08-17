@@ -382,7 +382,7 @@ const HEATMAP_PALETTES = {
 export interface HeatmapOptions {
   id: string;
   source: string;
-  palette?: keyof typeof HEATMAP_PALETTES;
+  palette?: keyof typeof HEATMAP_PALETTES | string[];
   radius?: number;
   weight?: any;
   intensity?: number;
@@ -398,7 +398,14 @@ export function addNativeHeatmap(map: Map, options: HeatmapOptions) {
     noteStyleLayerRemoved(map, options.id);
   }
 
-  const palette = HEATMAP_PALETTES[options.palette || 'classic'];
+  // #611: 后端模板的 heatPalette 是自定义颜色数组 —— 均分铺到热度密度 0..1；
+  // 命名键（classic/viridis/...）走预置调色板表。
+  const palette = Array.isArray(options.palette)
+    ? options.palette.flatMap((color, i, arr) => [
+        arr.length > 1 ? i / (arr.length - 1) : 0,
+        color,
+      ])
+    : HEATMAP_PALETTES[options.palette || 'classic'];
 
   map.addLayer({
     id: options.id,

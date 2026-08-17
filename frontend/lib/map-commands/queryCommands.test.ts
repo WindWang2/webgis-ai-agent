@@ -55,8 +55,11 @@ describe('query_features command (#535 ghost command landed)', () => {
     expect(result).toMatchObject({ status: 'succeeded' });
     // 查询以包围 buffer 的像素 bbox 执行（数值真值，非仅 ack）
     const call = map._calls.queryRenderedFeatures[0];
+    // #606: bbox 必须是 [PointLike, PointLike] 嵌套数组 —— 平面四元组会被
+    // MapLibre 当成单点（只取前两个元素）→ 缓冲半径静默失效。
     expect(Array.isArray(call?.geometry)).toBe(true);
-    const [x0, y0, x1, y1] = call.geometry as number[];
+    expect(Array.isArray(call.geometry[0])).toBe(true);
+    const [[x0, y0], [x1, y1]] = call.geometry as [[number, number], [number, number]];
     expect(x0).toBeLessThan(128);
     expect(x1).toBeGreaterThan(128);
     expect(y0).toBeLessThan(128);
@@ -86,6 +89,29 @@ describe('query_features command (#535 ghost command landed)', () => {
     const msg = hud.setPendingSystemMessage.mock.calls[0][0] as string;
     expect(msg).toContain('未查询到已渲染要素');
     expect(msg).not.toContain('0 个已渲染要素');
+  });
+
+  it('#606: passes the buffer as a NESTED bbox so an off-center feature inside the radius is queryable', () => {
+    // 圆心 (128,128)，buffer 20m（pxRadius ≥ 1）。目标偏右/偏下在 (129,129) 处：
+    // 平面四元组 `[x-w, y-h, x+w, y+h]` 会被 Point.convert 只取前两个元素 →
+    // 退化为 (127,127) 单点查询，永远查不到 (129,129)；嵌套形状是命中前提。
+    const map = makeMockMaplibreMap({ project: () => ({ x: 128, y: 128 }) });
+    const result = queryCommands.query_features.run(
+      makeCtx(map, { location: [116.4, 39.9], buffer_m: 20 }),
+    );
+    expect(result).toMatchObject({ status: 'succeeded' });
+
+    const call = map._calls.queryRenderedFeatures[0];
+    expect(call?.geometry).toEqual([
+      [expect.any(Number), expect.any(Number)],
+      [expect.any(Number), expect.any(Number)],
+    ]);
+    const [[x0, y0], [x1, y1]] = call.geometry as [[number, number], [number, number]];
+    // bbox 必须包围偏右/偏下的目标 (129,129) —— 缓冲语义回归的数值锚点
+    expect(x0).toBeLessThanOrEqual(129);
+    expect(x1).toBeGreaterThanOrEqual(129);
+    expect(y0).toBeLessThanOrEqual(129);
+    expect(y1).toBeGreaterThanOrEqual(129);
   });
 
   it('fails invalid_params for a non-numeric or malformed location', () => {

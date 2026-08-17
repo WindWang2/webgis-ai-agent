@@ -320,6 +320,9 @@ class TemporalEngine:
                     "intercept": trend_res.intercept,
                     "r_squared": trend_res.r_squared,
                     "direction": getattr(trend_res, "direction", getattr(trend_res, "trend_direction", "stable")),
+                    # #594: disclose the slope axis ("per_year" on real time,
+                    # "per_step" when the series carried no parseable times).
+                    "slope_unit": getattr(trend_res, "slope_unit", "per_step"),
                 },
             )
 

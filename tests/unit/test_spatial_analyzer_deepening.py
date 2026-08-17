@@ -47,6 +47,81 @@ def test_spatial_join_operator():
     assert res.data["features"][0]["properties"]["district"] == "Central"
 
 
+def test_spatial_join_honors_declared_crs_member():
+    """#599: spatial join must honor a declared GeoJSON `crs` member — a
+    declared-EPSG:3857 left layer joined to a declared-EPSG:3857 right layer
+    pre-fix was read as WGS84 and silently missed every match."""
+    x, y = 12958175.0, 4852050.0  # ~ Beijing (116.4, 39.9) in EPSG:3857
+    left_3857 = {
+        "type": "FeatureCollection",
+        "crs": {"type": "name", "properties": {"name": "EPSG:3857"}},
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [x, y]},
+            "properties": {"name": "P1"},
+        }],
+    }
+    right_3857 = {
+        "type": "FeatureCollection",
+        "crs": {"type": "name", "properties": {"name": "EPSG:3857"}},
+        "features": [{
+            "type": "Feature",
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[
+                    [x - 5000, y - 5000], [x + 5000, y - 5000],
+                    [x + 5000, y + 5000], [x - 5000, y + 5000],
+                    [x - 5000, y - 5000],
+                ]],
+            },
+            "properties": {"district": "Central"},
+        }],
+    }
+
+    res = SpatialAnalyzer.spatial_join(left_3857, right_3857, join_type="inner", predicate="intersects")
+
+    assert isinstance(res, GeoAnalysisResult)
+    assert res.success is True, res.summary
+    assert len(res.data.get("features", [])) == 1
+    assert res.data["features"][0]["properties"]["district"] == "Central"
+
+
+def test_spatial_join_mixed_declared_crs_alignment():
+    """#599: left declared EPSG:3857, right declared EPSG:4326 — the right
+    layer must be reprojected to the left's frame before joining."""
+    x, y = 12958175.0, 4852050.0  # ~ Beijing (116.4, 39.9) in EPSG:3857
+    left_3857 = {
+        "type": "FeatureCollection",
+        "crs": {"type": "name", "properties": {"name": "EPSG:3857"}},
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [x, y]},
+            "properties": {"name": "P1"},
+        }],
+    }
+    right_wgs84 = {
+        "type": "FeatureCollection",
+        "crs": {"type": "name", "properties": {"name": "EPSG:4326"}},
+        "features": [{
+            "type": "Feature",
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[
+                    [116.39, 39.89], [116.41, 39.89], [116.41, 39.91],
+                    [116.39, 39.91], [116.39, 39.89],
+                ]],
+            },
+            "properties": {"district": "Central"},
+        }],
+    }
+
+    res = SpatialAnalyzer.spatial_join(left_3857, right_wgs84, join_type="inner", predicate="intersects")
+
+    assert res.success is True, res.summary
+    assert len(res.data.get("features", [])) == 1
+    assert res.data["features"][0]["properties"]["district"] == "Central"
+
+
 def test_zonal_stats_path_traversal_protection():
     """Test that zonal_stats rejects path traversal attempts."""
     poly = {

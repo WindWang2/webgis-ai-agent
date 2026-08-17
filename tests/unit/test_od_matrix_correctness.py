@@ -80,12 +80,12 @@ def test_od_matrix_matches_direct_dijkstra_lengths(grid_network):
     orig_nodes = [svc.router._resolve_node(o, dataset)[0] for o in origins]
     dest_nodes = [svc.router._resolve_node(d, dataset)[0] for d in dests]
 
-    for o_node, o_label in zip(orig_nodes, ["pt_116.0050_39.0050", "pt_116.0080_39.0080"]):
+    for o_node, o_label in zip(orig_nodes, ["pt_116.005_39.005", "pt_116.008_39.008"]):
         if o_node not in graph:
             continue
         ref_dist = nx.single_source_dijkstra_path_length(graph, o_node, weight="length_m")
         ref_time = nx.single_source_dijkstra_path_length(graph, o_node, weight="travel_time_s")
-        for d_node, d_label in zip(dest_nodes, ["pt_116.0100_39.0100"]):
+        for d_node, d_label in zip(dest_nodes, ["pt_116.01_39.01"]):
             pair = next(p for p in pairs if p.origin_id == o_label and p.destination_id == d_label)
             if d_node in ref_dist:
                 assert pair.reachable

@@ -76,6 +76,43 @@ async def test_target_resolver_geojson_string():
 
 
 @pytest.mark.asyncio
+async def test_target_resolver_geojson_declared_projected_crs():
+    """#599: a GeoJSON FeatureCollection declaring a projected CRS (EPSG:3857)
+    must resolve center/bbox in WGS84 degrees, not raw projected metres
+    (pre-fix: center ≈ (12.96e6, 4.85e6))."""
+    resolver = TargetAreaResolver()
+    x, y = 12958175.0, 4852050.0  # ~ Beijing (116.4, 39.9) in EPSG:3857
+    fc = {
+        "type": "FeatureCollection",
+        "crs": {"type": "name", "properties": {"name": "EPSG:3857"}},
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[
+                        [x - 5000, y - 5000], [x + 5000, y - 5000],
+                        [x + 5000, y + 5000], [x - 5000, y + 5000],
+                        [x - 5000, y - 5000],
+                    ]],
+                },
+                "properties": {"name": "3857 Area"},
+            }
+        ],
+    }
+    result = await resolver.resolve(fc)
+
+    assert result.source == "geojson"
+    assert result.confidence == 1.0
+    assert result.geometry_type == "Polygon"
+    # center/bbox must be WGS84 degrees around Beijing (116.4, 39.9).
+    assert 116.0 < result.center[0] < 117.0
+    assert 39.5 < result.center[1] < 40.5
+    assert result.bbox[0] > 100.0 and result.bbox[2] < 130.0
+    assert result.bbox[1] > 30.0 and result.bbox[3] < 50.0
+
+
+@pytest.mark.asyncio
 async def test_target_resolver_bbox_string():
     resolver = TargetAreaResolver()
     

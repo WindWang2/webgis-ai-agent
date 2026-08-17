@@ -43,6 +43,28 @@ async def test_export_thematic_map_normalizes_invalid_values(registry):
 
 
 @pytest.mark.asyncio
+async def test_export_thematic_map_supports_a3(registry):
+    out = await registry.dispatch("export_thematic_map", {
+        "title": "t",
+        "format": "pdf",
+        "paper_size": "A3",
+        "orientation": "portrait",
+        "dpi": 300,
+    })
+    assert out["params"]["format"] == "pdf"
+    assert out["params"]["paperSize"] == "A3"
+    assert out["params"]["orientation"] == "portrait"
+
+
+@pytest.mark.asyncio
+async def test_export_thematic_map_passes_dark_mode(registry):
+    out = await registry.dispatch("export_thematic_map", {"title": "t", "dark_mode": False})
+    assert out["params"]["dark_mode"] is False
+    out_default = await registry.dispatch("export_thematic_map", {"title": "t"})
+    assert out_default["params"]["dark_mode"] is True
+
+
+@pytest.mark.asyncio
 async def test_export_thematic_map_supports_svg(registry):
     out = await registry.dispatch("export_thematic_map", {"title": "t", "format": "svg"})
     assert out["params"]["format"] == "svg"
@@ -69,6 +91,16 @@ async def test_export_batch_maps_emits_command_list(registry):
         assert cmd["params"]["title"] in ("总览", "北部", "南部")
         assert cmd["params"]["paperSize"] == "A4"
         assert cmd["params"]["dpi"] == 200
+
+
+@pytest.mark.asyncio
+async def test_export_batch_maps_supports_a3(registry):
+    out = await registry.dispatch("export_batch_maps", {
+        "titles": ["图1"],
+        "paper_size": "a3",
+    })
+    assert out["commands"][0]["command"] == "export_map"
+    assert out["commands"][0]["params"]["paperSize"] == "A3"
 
 
 @pytest.mark.asyncio

@@ -363,10 +363,12 @@ export const layerCommands: Record<string, CommandEntry> = {
       // Store-layer sublayers are owned by the async MapSpecRuntime reconcile.
       const storeMatched = matched.filter((id) => isStoreSchemeMatch(layer_id, id));
 
-      // Sync visibility/opacity/name/color back to store so LayersTab stays in sync
+      // #609: 后端 Python Optional 未传序列化为 JSON null，语义是"不修改该属性"。
+      // 判存在性必须用 `!= null` 而非 `!== undefined`——否则 null 走 falsy 分支
+      // 会把图层隐藏，且后验证读到 'none' 与"预期"一致 → 假收敛 confirmed。
       const storeUpdates: Record<string, unknown> = {};
-      if (visible !== undefined) storeUpdates.visible = visible;
-      if (opacity !== undefined) storeUpdates.opacity = opacity;
+      if (visible != null) storeUpdates.visible = visible;
+      if (opacity != null) storeUpdates.opacity = opacity;
       if (name !== undefined) storeUpdates.name = name;
       if (color !== undefined) storeUpdates.style = { ...(getHudState().layers.find((l: any) => l.id === layer_id)?.style ?? {}), color };
 
@@ -380,8 +382,10 @@ export const layerCommands: Record<string, CommandEntry> = {
 
       for (const id of matched) {
         renderer.updateLayerStyle(map, id, {
-          visibility: visible !== undefined ? (visible ? 'visible' : 'none') : undefined,
-          opacity,
+          visibility: visible != null ? (visible ? 'visible' : 'none') : undefined,
+          // null 必须归一为 undefined：renderer 以 `opacity !== undefined` 判断，
+          // 原样传 null 会走 setPaintProperty(prop, null) 重置为默认值。
+          opacity: opacity != null ? opacity : undefined,
           color: color as string | undefined,
         });
       }
@@ -390,7 +394,9 @@ export const layerCommands: Record<string, CommandEntry> = {
       }
       // V3 round-2 FIX-B: post-mutation verification — the matched layer exists
       // on the map AND (visibility) getLayoutProperty reflects the new value.
-      const wantVisibility = visible !== undefined ? (visible ? 'visible' : 'none') : undefined;
+      // #609: 只对"本次请求要改的属性"读回比对——visible=null 时未请求改可见性，
+      // 不得拿当前 'visible'/'none' 状态去凑 confirmed。
+      const wantVisibility = visible != null ? (visible ? 'visible' : 'none') : undefined;
       for (const id of matched) {
         if (!map.getLayer?.(id)) return nonConfirmableAck(storeMatched);
         if (

@@ -220,6 +220,97 @@ def test_crs_alignment():
     res_over = overlay_smart(poly_a, layer_b_3857, how="intersection")
     assert res_over.success is True
 
+
+# ── Issue #599: operators must honor a declared GeoJSON `crs` member ────────
+#
+# reproject_coordinates (GIS-22) writes a legacy `crs` member on transformed
+# output. clip/overlay/dissolve previously hardcoded EPSG:4326, so a declared
+# projected input (EPSG:3857 metres) was misread as WGS84 and silently dropped
+# (0 features). These tests assert the result matches explicitly reprojecting
+# the input to WGS84 first.
+
+
+def _beijing_3857_fc(radius: float = 30000.0) -> dict:
+    """A FeatureCollection declaring EPSG:3857 around Beijing (116.4, 39.9)."""
+    x, y = 12958175.0, 4852050.0  # ~ Beijing (116.4, 39.9) in EPSG:3857
+    return {
+        "type": "FeatureCollection",
+        "crs": {"type": "name", "properties": {"name": "EPSG:3857"}},
+        "features": [{
+            "type": "Feature",
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[
+                    [x - radius, y - radius], [x + radius, y - radius],
+                    [x + radius, y + radius], [x - radius, y + radius],
+                    [x - radius, y - radius],
+                ]],
+            },
+            "properties": {"zone": "A"},
+        }],
+    }
+
+
+_BEIJING_MASK = {
+    "type": "FeatureCollection",
+    "features": [{
+        "type": "Feature",
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[
+                [116.2, 39.7], [116.6, 39.7], [116.6, 40.1], [116.2, 40.1],
+                [116.2, 39.7],
+            ]],
+        },
+        "properties": {},
+    }],
+}
+
+
+def test_clip_smart_honors_declared_crs_member():
+    """#599: clip of a declared-EPSG:3857 layer against a WGS84 mask must keep
+    features — pre-fix the projected coordinates were read as WGS84 and the
+    clip silently returned 0 features."""
+    from app.lib.geo_processor.geometry import clip_smart
+    from app.utils.coord_transform import transform_geojson
+
+    res = clip_smart(_beijing_3857_fc(), _BEIJING_MASK)
+    assert res.success is True, res.summary
+    assert len(res.data["features"]) >= 1
+
+    # Equivalent to explicitly reprojecting the input to WGS84 first.
+    ref = clip_smart(
+        transform_geojson(_beijing_3857_fc(), "EPSG:3857", "EPSG:4326"),
+        _BEIJING_MASK,
+    )
+    assert ref.success is True
+    assert len(ref.data["features"]) == len(res.data["features"])
+
+
+def test_overlay_smart_honors_declared_crs_member():
+    """#599: overlay of a declared-EPSG:3857 layer and a WGS84 mask must not
+    silently drop the intersection (pre-fix hardcoded EPSG:4326 → 0 rows)."""
+    from app.lib.geo_processor.overlay import overlay_smart
+
+    res = overlay_smart(_beijing_3857_fc(), _BEIJING_MASK, how="intersection")
+    assert res.success is True, res.summary
+    assert len(res.data["features"]) >= 1
+
+
+def test_dissolve_smart_honors_declared_crs_member():
+    """#599: dissolve of a declared-EPSG:3857 layer must reproject to the WGS84
+    working frame instead of dissolving raw projected metres as degrees."""
+    from app.lib.geo_processor.geometry import dissolve_smart
+
+    res = dissolve_smart(_beijing_3857_fc())
+    assert res.success is True, res.summary
+    assert len(res.data["features"]) == 1
+    # Output coordinates are WGS84 degrees, not raw projected metres.
+    from shapely.geometry import shape
+    bounds = shape(res.data["features"][0]["geometry"]).bounds
+    assert -180.0 <= bounds[0] and bounds[2] <= 180.0
+    assert -90.0 <= bounds[1] and bounds[3] <= 90.0
+
 def test_validation_errors():
     from app.lib.geo_processor.geometry import dissolve_smart
     from app.lib.geo_processor.overlay import overlay_smart

@@ -63,6 +63,30 @@ async def test_add_document_service_error(client):
         assert data["success"] is False
 
 
+def test_add_document_content_max_length_in_schema():
+    """Issue #591: content must carry an app-level cap (aligned with nginx
+    client_max_body_size 100M) so a single request can't force unbounded
+    chunking/embedding work. Pins the schema constraint without shipping a
+    100MB payload through the test client."""
+    schema = _mod.AddDocumentRequest.model_json_schema()
+    assert schema["properties"]["content"]["maxLength"] == _mod.MAX_CONTENT_LENGTH, (
+        f"content maxLength = {schema['properties']['content']['maxLength']}, "
+        f"expected {_mod.MAX_CONTENT_LENGTH}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_add_document_content_too_long_returns_422(client):
+    """Issue #591 acceptance: an oversized content body must be rejected at
+    the validation layer (422), not accepted and driven through the
+    O(content) chunker/embedder."""
+    resp = await client.post("/api/v1/knowledge/documents", json={
+        "title": "Huge",
+        "content": "x" * (_mod.MAX_CONTENT_LENGTH + 1),
+    })
+    assert resp.status_code == 422
+
+
 @pytest.mark.asyncio
 async def test_semantic_search_success(client):
     mock_results = [{"text": "result 1", "score": 0.9}]

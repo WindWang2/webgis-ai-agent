@@ -7,8 +7,10 @@ import json
 import re
 import logging
 from typing import Any, Dict, List, Optional, Tuple
-from shapely.geometry import shape
+import geopandas as gpd
+from shapely.geometry import shape, mapping
 
+from app.lib.geo_processor.core import extract_declared_crs
 from app.services.spatial_decision.models import TargetAreaSpec
 
 logger = logging.getLogger(__name__)
@@ -183,6 +185,22 @@ class TargetAreaResolver:
 
         if not geometry or not isinstance(geometry, dict):
             return None
+
+        # GIS-599: honor a declared non-geographic CRS — otherwise the center /
+        # bbox of projected input (e.g. EPSG:3857 metres) would be reported as
+        # if they were WGS84 degrees (TargetAreaSpec expects WGS84).
+        declared_crs = extract_declared_crs(data)
+        if declared_crs:
+            try:
+                _ser = gpd.GeoSeries([shape(geometry)], crs=declared_crs)
+                if not _ser.crs.is_geographic:
+                    _ser = _ser.to_crs("EPSG:4326")
+                    geometry = mapping(_ser.iloc[0])
+            except Exception:
+                logger.debug(
+                    "target_resolver: failed to reproject declared CRS %s; using raw coordinates",
+                    declared_crs,
+                )
 
         try:
             geom_dict, geom_type, center, bbox = _process_shapely_geometry(geometry)

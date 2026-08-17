@@ -4,6 +4,11 @@ Synthetic point fixtures - no network, no tool layer. Asserts the
 GeoAnalysisResult return contract and algorithm correctness (coverage,
 containment, ring count).
 """
+import math
+
+import geopandas as gpd
+import pytest
+from pyproj import CRS
 from shapely.geometry import shape, Point
 
 from app.lib.geo_processor.core import GeoAnalysisResult
@@ -171,3 +176,48 @@ def test_multi_ring_buffer_default_distances():
     fc = res.data
     assert fc["count"] == 3
     assert [f["properties"]["distance_m"] for f in fc["features"]] == [500.0, 1000.0, 1500.0]
+
+
+# ── Issue #588: unit conversion for non-metre projected CRS ────────────────
+#
+# to_utm_gdf returns an already-projected input UNCHANGED (state-plane feet
+# stays in feet), so a "meters" distance must be converted to CRS units by
+# DIVIDING by the axis unit_conversion_factor (metres-per-unit) and the
+# area_km2 must be converted back by factor². Pre-fix a 1000 m ring in
+# EPSG:2263 became 1000 ft (304.8 m) and area_km2 overreported by ~10.76×.
+# Mirrors the #524 buffer_smart regression-test shape.
+
+
+def _ft_us_to_m_factor(crs_epsg: int) -> float:
+    axis = CRS.from_epsg(crs_epsg).axis_info[0]
+    return float(axis.unit_conversion_factor)
+
+
+def test_multi_ring_buffer_state_plane_feet_distance_in_meters():
+    """A 1000 m ring on a foot-based state-plane CRS must be ~1000 m on the
+    ground with a true metric area_km2 (pre-#588: 304.8 m ring, 10.76× area)."""
+    factor = _ft_us_to_m_factor(2263)
+    fc = {
+        "type": "FeatureCollection",
+        "crs": {"type": "name", "properties": {"name": "EPSG:2263"}},
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [986705.5, 211835.6]},
+            "properties": {},
+        }],
+    }
+    res = multi_ring_buffer(fc, distances=[1000])
+    assert res.success, res.summary
+    assert res.data["count"] == 1
+    feat = res.data["features"][0]
+    assert feat["properties"]["distance_m"] == 1000.0
+
+    # Ring radius measured back in the source CRS must be ~1000 m (±1%).
+    geom_wgs84 = shape(feat["geometry"])
+    geom_ft = gpd.GeoSeries([geom_wgs84], crs="EPSG:4326").to_crs("EPSG:2263").iloc[0]
+    radius_m = (float(geom_ft.area) / math.pi) ** 0.5 * factor
+    assert 990.0 <= radius_m <= 1010.0, f"radius {radius_m} m outside 1000±1%"
+
+    # area_km2 must be the true metric area (π km² for a 1 km radius), not the
+    # ft² figure divided by 1e6 (~10.76× overreport pre-fix).
+    assert feat["properties"]["area_km2"] == pytest.approx(math.pi, abs=0.05)

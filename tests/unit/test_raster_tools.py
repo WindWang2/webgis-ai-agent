@@ -50,7 +50,7 @@ def _assert_error(result):
 
 
 def _assert_ok(result):
-    assert result.get("success") is True or "error" not in result
+    assert result.get("success") is True, result
 
 
 @pytest.mark.asyncio
@@ -67,8 +67,7 @@ async def test_raster_reclassify_basic(advanced_tools, tmp_raster):
     })
     _assert_ok(result)
     data = result.get("data", result)
-    if isinstance(data, dict):
-        assert "output_path" in data or "pixel_count" in data
+    assert "output_path" in data or "pixel_count" in data
 
 
 @pytest.mark.asyncio
@@ -101,10 +100,9 @@ async def test_raster_calculator_constant(advanced_tools, tmp_raster):
         "raster_a": tmp_raster,
         "expression": "A * 2",
     })
-    assert result.get("success") is True or "error" not in result
+    _assert_ok(result)
     data = result.get("data", result)
-    if isinstance(data, dict):
-        assert "output_path" in data or "min" in data
+    assert "output_path" in data or "min" in data
 
 
 @pytest.mark.asyncio
@@ -124,10 +122,9 @@ async def test_raster_calculator_two_rasters(advanced_tools, tmp_raster):
             "raster_b": raster_b_path,
             "expression": "A + B",
         })
-        assert result.get("success") is True or "error" not in result
+        _assert_ok(result)
         data = result.get("data", result)
-        if isinstance(data, dict):
-            assert "output_path" in data
+        assert "output_path" in data
     finally:
         try:
             os.unlink(raster_b_path)
@@ -166,10 +163,9 @@ async def test_raster_resample_basic(advanced_tools, tmp_raster):
         "target_resolution": 2.0,
         "resampling": "nearest",
     })
-    assert result.get("success") is True or "error" not in result
+    _assert_ok(result)
     data = result.get("data", result)
-    if isinstance(data, dict):
-        assert "output_path" in data or "new_shape" in data
+    assert "output_path" in data or "new_shape" in data
 
 
 @pytest.mark.asyncio

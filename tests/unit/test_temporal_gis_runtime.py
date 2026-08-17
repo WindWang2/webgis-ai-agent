@@ -605,9 +605,12 @@ def test_raster_trend_over_aoi_skips_missing_slices(tmp_path):
 
     res = engine.raster_trend_over_aoi(series, stats_info=stats)
 
-    # Trend computed over the 2 valid slices only (means 10 → 30, slope 20).
+    # Trend computed over the 2 valid slices only (means 10 → 30). The slope
+    # is now fit on REAL time, not slice indices (#594): Jan 1 → Mar 1 2026
+    # is 59 days, so 20 units / (59/365.25 yr) ≈ 123.81 per year.
     assert res["means"] == [10.0, 30.0]
-    assert res["slope"] == 20.0
+    assert res["slope"] == pytest.approx(20.0 * 365.25 / 59.0)
+    assert res["slope_unit"] == "per_year"
     assert res["direction"] == "increasing"
     # The skip is listed explicitly.
     assert len(res["skipped_slices"]) == 1
@@ -654,6 +657,53 @@ def test_raster_trend_over_aoi_all_valid_no_skips(tmp_path):
     assert "skipped_slices" not in res
 
 
+# ── Issue #594: trend fits REAL time, not slice indices ──────────────────────
+
+
+def test_raster_trend_real_time_axis_uneven_slices(tmp_path):
+    """Issue #594: the raster trend slope must be fit against real timestamps
+    — a 2015/2016/2024 series with means [0.40, 0.41, 0.50] regresses to
+    ≈0.0111/year (hand-computed OLS on years: ≈0.01116), NOT the increment
+    per slice index of 0.05/step that the old index axis reported (4.48x
+    inflated). The unit is disclosed as per_year."""
+    paths = [_write_constant_raster(str(tmp_path / f"y{x}.tif"), v)
+             for x, v in enumerate((0.40, 0.41, 0.50))]
+    series = [
+        {"timestamp": f"{yr}-01-01T00:00:00Z", "path": p}
+        for yr, p in zip((2015, 2016, 2024), paths)
+    ]
+    engine = TemporalRasterEngine()
+    res = engine.raster_trend_over_aoi(series)
+
+    assert res["means"] == [0.40, 0.41, 0.50]
+    assert res["direction"] == "increasing"
+    # Index-axis value was 0.05/step (4.48x the truth); real-time fit is
+    # ~0.0111/year (epoch-day basis vs the integer-year hand calc 0.01116).
+    assert res["slope"] == pytest.approx(0.0111, abs=2e-4)
+    assert res["slope_unit"] == "per_year"
+
+
+def test_analyze_trend_engine_real_time_axis_vs_index():
+    """Issue #594 at the engine seam: the same values give a per-year slope
+    when timestamps are supplied and a per-step slope without them, with the
+    unit disclosed on TemporalTrendResult."""
+    from app.services.temporal.trend import TemporalTrendEngine
+
+    eng = TemporalTrendEngine()
+    real = eng.analyze_trend(
+        [0.40, 0.41, 0.50],
+        timestamps=["2015-01-01T00:00:00Z", "2016-01-01T00:00:00Z", "2024-01-01T00:00:00Z"],
+    )
+    stepped = eng.analyze_trend([0.40, 0.41, 0.50])
+
+    assert real.slope_unit == "per_year"
+    assert real.slope == pytest.approx(0.0111, abs=2e-4)
+    assert stepped.slope_unit == "per_step"
+    assert stepped.slope == pytest.approx(0.05)
+    # The two axes disagree substantially (the bug being fixed: 4.48x).
+    assert real.slope < stepped.slope
+
+
 # ── Issue #541: no-AOI default must cover the scene, not a unit square ───────
 
 
@@ -690,8 +740,9 @@ def test_temporal_raster_statistics_no_aoi_covers_scene(tmp_path):
 
 def test_raster_trend_no_aoi_uses_scene_means(tmp_path):
     """Issue #541: end-to-end trend without an AOI fits the SCENE means
-    (42 → 52 → 62), not fabricated zeros; direction is increasing with the
-    true slope 10."""
+    (42 → 52 → 62), not fabricated zeros; direction is increasing. The slope
+    is per YEAR now (real-time axis, #594): Jan/Feb/Mar 2026 slices span 59
+    days and the exact linear rise of 10/step regresses to 123.81/year."""
     paths = [_write_constant_raster(str(tmp_path / f"s{i}.tif"), v)
              for i, v in enumerate((42.0, 52.0, 62.0))]
     series = [
@@ -703,7 +754,8 @@ def test_raster_trend_no_aoi_uses_scene_means(tmp_path):
 
     assert res["means"] == [42.0, 52.0, 62.0]
     assert res["direction"] == "increasing"
-    assert res["slope"] == pytest.approx(10.0, abs=1e-6)
+    assert res["slope"] == pytest.approx(123.813559, rel=1e-5)
+    assert res["slope_unit"] == "per_year"
 
 
 def test_temporal_raster_non_intersecting_aoi_skips_not_fabricates(tmp_path):
