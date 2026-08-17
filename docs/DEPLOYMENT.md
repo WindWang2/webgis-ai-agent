@@ -68,6 +68,41 @@ npm run dev
 | `LLM_MODEL` | 默认模型（如 deepseek-v4-flash） | 否 |
 | `DATA_DIR` | 数据根目录（上传/uploads、analysis_results、monitoring_reports、exports、会话数据）。compose 生产栈统一设 `/app/data`（api 与 celery-worker 挂同一共享命名卷 `webgis_data`），k8s 设 `/app/data`（共享 RWX PVC）；默认 `./data` 相对 WORKDIR 展开，跨容器不可见且只读 rootfs 崩溃（见 #519） | 生产建议显式设置 |
 
+> **从旧 `uploads` 卷迁移（compose）**：2026-08 前 `uploads` 独立卷挂 `/app/uploads`。
+> 升级后上传与全部产物统一在 `webgis_data:/app/data` 下。保留旧数据请在升级前执行：
+> `docker run --rm -v <old_uploads_vol>:/from -v webgis_data:/to alpine sh -c 'mkdir -p /to/uploads && cp -a /from/. /to/uploads/'`
+
+## ☸️ K8s 部署 (deploy/k8s)
+
+清单经 kustomize 组织（`deploy/k8s/kustomization.yaml`）。镜像坐标已对齐 CI
+（`ghcr.io/windwang2/webgis-ai-agent`，CI 只推 sha 标签），**部署时必须显式钉 tag**：
+
+```bash
+cd deploy/k8s
+kustomize edit set image ghcr.io/windwang2/webgis-ai-agent=ghcr.io/windwang2/webgis-ai-agent:<ci-pushed-sha>
+kubectl apply -k .
+```
+
+裸 `kubectl apply -k` 不指定 tag 会拉取不存在的标签（清单中的占位 tag 仅作锚点）。
+api/celery 均挂共享 RWX PVC 于 `/app/data`（`readOnlyRootFilesystem` 保持 true，
+可写面仅为挂载点）。可选内部 postgres/redis（`05-deps-optional.yaml`）默认不启用，
+启用前按上文 Secret Management 一节补齐组件键。
+
+### Redis 驱逐策略
+
+secure 栈的 Redis 同时承担 broker / result backend / 会话缓存，`deploy/redis.conf`
+固定 `maxmemory-policy noeviction`（与标准 prod compose CLI 及 k8s 可选 Redis 一致）：
+broker/result 键无 TTL，任何 `allkeys-lru` 类策略都会在内存压力下静默丢任务。
+会话与工具缓存键自带 TTL，内存耗尽时写操作会显式报错（`Redis_Memory_High` 告警
+此时 actionable），这是有意为之的响亮失败。
+
+### Grafana 可观测性
+
+`deploy/grafana/provisioning/dashboards/provider.yml`（file provider）使
+`dashboard.json` 随容器启动自动加载；datasource provisioning 已含 Prometheus。
+secure 栈 Prometheus 所需的 `deploy/prometheus.yml` 与 `deploy/alerts-rules.json`
+由 CI 部署任务随 scp 一并传输（#530，缺失曾导致空目录 crash-loop）。
+
 ## 排障雷达 (Troubleshooting)
 - **前端白屏/不显示建筑物**：按下 F12 查看网络。如果 `/api/v1/layers/data/{ref_id}?session_id=xxx` 报 404，极大概率是您的 Redis 没有启动或容积超标。
 - **对话框没反应**：去终端看看是不是 `celery worker` 压根没开，大模型把计算扔给后台后一直处于 Pending 等待中。

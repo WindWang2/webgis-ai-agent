@@ -1,5 +1,86 @@
 # Changelog
 
+## [Unreleased] - 2026-08-17
+
+### Issue-resolution wave: 52 open issues (#514–#565) fixed root-cause-first (PRs #566–#576)
+
+Every open issue at the time was re-verified against master, fixed at the root
+(no symptom suppression), covered by regression tests, independently reviewed,
+and merged in 11 scoped PRs. Highlights by theme:
+
+- **Auth & contract (P1).** MVT tiles for >5000-feature layers 404'd in every
+  session because browser-native MapLibre fetches can't attach headers — fixed
+  via `transformRequest` credential injection with live token reads and
+  origin-exact first-party matching (#514). Export/report downloads and
+  chat-embedded links/images always 401'd on bare `<a>`/`<img>` — all routed
+  through a new authenticated blob transport (#515). `LEGACY_TOOL_NAME_MAP`
+  shadowed the live `remove_layer`/`zoom_to_layer` tools (#516). ~30
+  `to_llm_response()` tool sites bypassed geojson-ref mounting, so analysis
+  results never reached the map (#517). `explorer_progress` had no reachable
+  producer: logged-in sessions now use the owner-verified independent stream,
+  anonymous sessions get progress bridged into their session-isolated chat
+  stream with a bounded, explicit-terminal lifecycle (#518).
+- **Session & agent runtime.** Session-store serialization moved off the event
+  loop with request DTO caps (#521); anonymous sessions bucket per
+  `owner_token`, eliminating cross-user cap evictions and their FK-swallow
+  cascade (#522); the ownership guard no longer selectinloads all messages on
+  every 3s poll (#525); explorer chain-run state is durable across restarts
+  (status/abort/stream all work post-restart) (#526); `{"error": ...}` tool
+  results are classified as failures across dispatch, plan mode, and metrics —
+  plans no longer advance past failures and retries no longer lie "已成功执行"
+  (#529).
+- **GIS numeric truth.** `raster_difference`/`temporal_raster` honor declared
+  nodata in streamed and in-memory stats (#523); `buffer_smart` divides by the
+  metres-per-unit factor instead of multiplying — foot-CRS buffers were ~10.8×
+  too small (#524); EVI/NDVI stop counting nodata zero-pixels as valid and the
+  output header matches the bytes (#537); DANGLING_ENDPOINT tolerance is live
+  again via buffered STRtree queries (#538); no-AOI temporal analysis covers
+  the scene instead of a unit square, and zero-data trends report "unknown"
+  instead of a fabricated "stable" (#541); Amap transit and Baidu
+  distance-matrix read the real response contracts (#542).
+- **Performance.** Quality-audit topology checks are budgeted with explicit
+  truncation reporting (400 rings: 4116ms → 286ms) (#539); network engine:
+  indexed barriers, top-K-first closest facility (D×K route builds), O(1)
+  2-opt delta (320 stops: 51.1s → 572ms), conditional service-area graph copy
+  (#540). Equivalence to the naive paths is proven by randomized tests;
+  persistent perf gates have floors at the pre-fix numbers.
+- **Frontend contract & UI.** Export idle-wait is bounded with pixelRatio
+  restore (#527); project writes are auth-gated in the UI (#528); heatmap
+  raster results carry an addressable image through authoring → validator →
+  mount (#533); `set_map_view` accepts bearing/pitch-only (#534); the ghost
+  `query_features` command is implemented and a backend⊆frontend catalogue
+  invariant test guards the whole command family (#535); OpenTopoMap's
+  unexpanded `{s}` placeholder is fixed (#536). Explorer tasks are capped,
+  dismissible, and cleared on session switch (#548); workflow polling resumes
+  on visibilitychange (#549); the story page shows honest errors and renders
+  shared content (#552); sessions can be deleted with a two-step confirm and
+  new-session wipes are guarded (#553); chat requests carry the active
+  `project_id` (#558). Settings basemap cards bind to the real TILE_PROVIDERS
+  catalogue (#550); fake settings controls were wired or removed one by one
+  (#551); the apply_template contract's five breakpoints are fixed at the
+  emitter (#557).
+- **Security, RAG & data lifecycle.** Monitoring/asset tools scope UploadRecord
+  queries to the calling session (#543); FAISS indexes invalidate on the same
+  mtime signal as metadata (#544); `add_document` compensates vectors when the
+  DB write fails — no more permanent orphans (#545); upload failure branches
+  clean their directories (#546); duplicate indexes dropped, model↔migration
+  drift closed — including the root cause of the long-red DB Migration Gate:
+  `alembic_version.version_num` was VARCHAR(32) but the chain's revision ids
+  exceed it (#547).
+- **Deploy & CI.** `DATA_DIR` is set across the whole matrix with shared
+  api/celery storage (#519); rollback/preview pin `WEBGIS_IMAGE` (#520);
+  Prometheus configs are transported to the prod host (#530); the
+  real-services lane exercises the production Celery app (#531); the
+  Playwright runtime validator runs nightly with `REQUIRE_BROWSER=1` (#532);
+  kustomize image coordinates match CI pushes (#559); secure-stack Redis stops
+  evicting broker keys (#560); k8s secret keys match the documented contract
+  (#561); Grafana dashboards actually load via provisioning (#562); `rich`
+  (and `networkx`) are declared dependencies (#563); PR perf smoke and real
+  coverage ratchets (backend 75, frontend thresholds) (#564); async routes no
+  longer run sync ORM on the event loop (#565); Pi bridge lock/drain/dispatch
+  defects fixed (#554); tool-event lines are escape-before-wrap fenced against
+  injection (#555); tool vocabulary derives from the live registry (#556).
+
 ## [Unreleased] - 2026-08-12
 
 ### Unified durable job runtime & cancellation lifecycle (ADR-0052)

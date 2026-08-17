@@ -58,10 +58,15 @@ from app.main import app
 | `zoom_to_bbox` | `bbox, padding` | 缩放至包围盒 |
 | `zoom_to_layer` | `layer_ref, padding` | 缩放至图层范围 |
 | `reset_map_view` | - | 重置为全国默认视角 |
-| `set_map_view` | `zoom, bearing, pitch` | 精确设定视角 |
+| `set_map_view` | `center, zoom, bearing, pitch` (任一) | 精确设定视角（可仅调 bearing/pitch） |
 | `reorder_layer` | `layer_id, new_index` | 图层排序 |
 | `remove_layer` | `layer_id` | 移除图层 |
 | `display_layer` | `layer_id, visible` | 图层显隐控制 |
+| `query_features` | `location, buffer_m` | 查询指定坐标周边已渲染要素 |
+
+> **指令目录不变量**：后端发射的全部地图指令必须存在于前端 `COMMAND_CATALOGUE`
+> （`frontend/lib/map-commands/catalogue-contract.test.ts` 强制扫描 `app/**/*.py`
+> 的 `command` 字面量）。新增指令需两侧同步落地。
 
 ### SSE 事件类型
 
@@ -79,6 +84,7 @@ from app.main import app
 | `plan_ready` | `{session_id, task_id, intent, domains, steps}` | Plan-First 模式生成计划 |
 | `plan_step_done` | `{session_id, task_id, step_n}` | 计划步骤完成 |
 | `plan_finalized` | `{session_id, task_id, skipped}` | 计划终态 |
+| `explorer_progress` | `{task_id, stage, progress, message, ...}` | 深度探索各阶段进度/终态（登录会话同时可经 `/explorer/stream/{task_id}` 独立流获取；匿名会话由聊天流桥接，终态事件显式发出，流不会悬挂） |
 
 #### SSE 流 Heartbeat 规范
 当 Agent 在后台调用 Celery 进行长耗时计算时，SSE 网关每 **5 秒**推送一条隐式心跳：
@@ -89,6 +95,28 @@ from app.main import app
 前端解析流时需自动跳过此类占位符。
 
 ---
+
+## T003b 探索引擎 (Deep Explorer)
+
+| 方法 | 路径 | 认证 | 说明 |
+|------|-----|------|-----|
+| POST | /api/v1/explorer/start | optional | 启动深度探索链（Agent 工具 `deep_explore` 内部调用同一链路） |
+| GET | /api/v1/explorer/status/{task_id} | required | 链状态（属主校验；状态跨重启持久，重启后中链失败不再滞留 PENDING） |
+| POST | /api/v1/explorer/abort/{task_id} | required | 中止链（撤销全部阶段任务，重启后仍有效） |
+| GET | /api/v1/explorer/stream/{task_id} | required | 独立进度流 (SSE `explorer_progress`，Bearer + 属主校验；匿名会话无属主，进度由聊天流桥接) |
+
+### 浏览器原生请求的凭据契约 (瓦片 / 下载 / 图片)
+
+浏览器原生请求（MapLibre 瓦片拉取、`<a>` 下载、`<img>`/`<iframe>` 嵌入）**无法携带
+请求头**，而这些端点只做 header 鉴权（`Authorization: Bearer` 或 `X-Session-Token`）。
+前端已统一解决，API 直连消费者需遵守同一契约：
+
+- **MVT/栅格瓦片**：前端经 MapLibre `transformRequest` 对 first-party 请求注入与
+  `apiFetch` 相同的凭据（逐请求读取最新 token）。
+- **导出/报告下载与聊天内嵌图片**：一律走认证 blob 传输层（`apiFetchBlob`，401 自动
+  refresh + Content-Disposition 文件名），不使用裸 `<a href>`。
+- **匿名会话图片类 URL**：可附 `?token=<owner_token>`（与 `webgis_layer_upsert`
+  栅格接缝同一先例；仅限图片类资源，owner_token 不进入聊天文本）。
 
 ## T004 零拷贝提取层 (Fetch-on-Demand)
 
