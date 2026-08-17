@@ -283,6 +283,29 @@ describe('renderer', () => {
       // Viridis starts with rgb(68,1,84)
       expect(JSON.stringify(layerArg.paint['heatmap-color'])).toContain('68,1,84');
     });
+
+    it('#611: accepts a custom color array palette (backend heatPalette) spread across density stops', () => {
+      mapMock.getLayer.mockReturnValue(undefined);
+      addNativeHeatmap(mapMock, {
+        id: 'heatmap-layer',
+        source: 'test-source',
+        palette: ['#0000ff', '#ff0000'],
+        intensity: 0.6,
+        radius: 20,
+      });
+      const layerArg = mapMock.addLayer.mock.calls[0][0];
+      // 数组被均分铺到密度 0..1（interpolate stops），而不是落回默认 classic 调色板
+      expect(layerArg.paint['heatmap-color']).toEqual([
+        'interpolate',
+        ['linear'],
+        ['heatmap-density'],
+        0, '#0000ff',
+        1, '#ff0000',
+      ]);
+      // 一等参数 intensity/radius 直达 paint
+      expect(layerArg.paint['heatmap-intensity']).toBe(0.6);
+      expect(layerArg.paint['heatmap-radius']).toBe(20);
+    });
   });
 
   describe('removeLayerStack', () => {

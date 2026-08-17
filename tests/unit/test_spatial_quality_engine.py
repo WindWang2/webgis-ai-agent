@@ -268,3 +268,88 @@ def test_repair_pipeline_snap_after_reproject_gis17():
     assert abs(round(x / 10.0) * 10.0 - x) < 1e-6, f"x={x} not on 10 m grid"
     assert abs(round(y / 10.0) * 10.0 - y) < 1e-6, f"y={y} not on 10 m grid"
     assert any("target CRS units" in log for log in logs), "log should document target-CRS tolerance semantics"
+
+
+# ── Issue #597: bbox-only candidate query + CRS whitelist + unit-blind area ─
+
+
+def _pair(geojson_a, geojson_b) -> dict:
+    return {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {"id": 1}, "geometry": geojson_a},
+            {"type": "Feature", "properties": {"id": 2}, "geometry": geojson_b},
+        ],
+    }
+
+
+def _poly(coords) -> dict:
+    return {"type": "Polygon", "coordinates": [coords]}
+
+
+def _topology_codes(report) -> list:
+    return [i.code for i in report.issues if i.dimension == "topology"]
+
+
+def test_parallel_adjacent_polygons_gap_reported():
+    """Two rectangles separated by a 5e-6° gap (below the 1e-5° threshold).
+    Their bounding boxes do NOT overlap, so the bbox-only STRtree query never
+    returned them as candidates and TOPOLOGY_GAP was dead code for exactly this
+    common adjacent-parcel case. The buffered query must surface the pair and
+    the precise distance re-check must fire (Issue #597)."""
+    a = _poly([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], [0.0, 0.0]])
+    b = _poly([[1.000005, 0.0], [2.0, 0.0], [2.0, 1.0], [1.000005, 1.0], [1.000005, 0.0]])
+    report = SpatialQualityEngine.audit_dataset(_pair(a, b), crs="EPSG:4326")
+    codes = _topology_codes(report)
+    assert "TOPOLOGY_GAP" in codes, f"parallel adjacent gap must be caught: {codes}"
+    gap = next(i for i in report.issues if i.code == "TOPOLOGY_GAP")
+    assert abs(gap.details["gap_distance"] - 5e-6) < 1e-12
+
+
+def test_epsg4269_not_whitelisted_no_false_positives():
+    """EPSG:4269 (NAD83 — geographic) was outside the string whitelist, so its
+    degree-based distances hit METER thresholds and two polygons ~0.005°
+    (~540 m) apart were flagged TOPOLOGY_GAP + NEAR_DUPLICATE_VERTICES. The
+    pyproj-based check knows it is geographic: 540 m is not '< 1e-5°' and the
+    pair must stay clean — while the same data under a genuinely projected CRS
+    (EPSG:3857) still reports the (metric) gap."""
+    a = _poly([[0.0, 0.0], [10.0, 1.0], [10.0, 1.05], [0.0, 0.05], [0.0, 0.0]])
+    b = _poly([[-0.00543, 0.0543], [9.99457, 1.0543], [9.99457, 1.1043],
+               [-0.00543, 0.1043], [-0.00543, 0.0543]])
+    for crs in ("EPSG:4269", "EPSG:4326"):
+        report = SpatialQualityEngine.audit_dataset(_pair(a, b), crs=crs)
+        codes = _topology_codes(report)
+        assert "TOPOLOGY_GAP" not in codes, f"{crs}: gap false positive: {codes}"
+        assert "NEAR_DUPLICATE_VERTICES" not in codes, f"{crs}: near-dup false positive: {codes}"
+    report_proj = SpatialQualityEngine.audit_dataset(_pair(a, b), crs="EPSG:3857")
+    proj_codes = _topology_codes(report_proj)
+    assert any("TOPOLOGY_GAP" in c or "NEAR_DUPLICATE_VERTICES" in c for c in proj_codes), (
+        f"projected CRS must still catch the metric gap: {proj_codes}"
+    )
+
+
+def test_overlap_area_threshold_is_crs_aware():
+    """The 1e-7 overlap-area filter was an absolute CRS-unit value: as degrees²
+    it is ≈1239 m² at the equator (nested polygons under ~0.1 ha were silently
+    skipped) and as m² it is effectively zero (sub-m² containment slivers
+    reported). The threshold is now expressed in m² and converted per CRS."""
+    # geographic: inner polygon of ~4e-8 deg² ≈ 123 m² must be reported
+    # (pre-#597: 4e-8 < 1e-7 → TOPOLOGY_OVERLAP suppressed)
+    outer = _poly([[-0.01, -0.01], [0.01, -0.01], [0.01, 0.01], [-0.01, 0.01], [-0.01, -0.01]])
+    inner_deg = _poly([[-0.0001, -0.0001], [0.0001, -0.0001],
+                       [0.0001, 0.0001], [-0.0001, 0.0001], [-0.0001, -0.0001]])
+    r_geo = SpatialQualityEngine.audit_dataset(_pair(outer, inner_deg), crs="EPSG:4326")
+    assert "TOPOLOGY_OVERLAP" in _topology_codes(r_geo), (
+        f"small geographic containment must be reported: {_topology_codes(r_geo)}"
+    )
+    # projected: a 0.75 m² containment sliver must NOT be reported
+    # (pre-#597: 0.75 > 1e-7 m² → false positive); a 25 m² one must
+    outer_m = _poly([[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0], [0.0, 0.0]])
+    tiny_m = _poly([[10.0, 10.0], [10.5, 10.0], [10.5, 11.5], [10.0, 11.5], [10.0, 10.0]])  # 0.75 m²
+    big_m = _poly([[10.0, 10.0], [15.0, 10.0], [15.0, 15.0], [10.0, 15.0], [10.0, 10.0]])  # 25 m²
+    r_tiny = SpatialQualityEngine.audit_dataset(_pair(outer_m, tiny_m), crs="EPSG:3857")
+    r_big = SpatialQualityEngine.audit_dataset(_pair(outer_m, big_m), crs="EPSG:3857")
+    assert "TOPOLOGY_OVERLAP" not in _topology_codes(r_tiny), (
+        f"sub-m² containment sliver must be filtered: {_topology_codes(r_tiny)}"
+    )
+    assert "TOPOLOGY_OVERLAP" in _topology_codes(r_big)

@@ -5,7 +5,7 @@ bounded memory stream reading, and multi-cloud object store reachability checks.
 """
 import time
 import logging
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Optional, Tuple
 from urllib.parse import urlparse
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.security import DataFabricSecurity, make_safe_session
@@ -107,8 +107,28 @@ class S3StorageSeam(GeospatialDataSourceAdapter):
             "range_request",
         ]
 
+    def _s3_client(self):
+        """Build a boto3 S3 client bound to this profile's endpoint/creds."""
+        import boto3
+
+        return boto3.client(
+            "s3",
+            aws_access_key_id=self.access_key,
+            aws_secret_access_key=self.secret_key,
+            endpoint_url=self.endpoint if self.endpoint.startswith("http") else None,
+            region_name=self.region,
+        )
+
     def list_datasets(self) -> List[Dict[str, Any]]:
-        """Discover available geospatial objects in S3 bucket."""
+        """Discover available geospatial objects in S3 bucket.
+
+        Truthfulness contract (#430): synthetic fixtures are served ONLY on the
+        explicit no-endpoint demo path, and every entry is labeled
+        ``source="synthetic-demo"``. With a real endpoint configured, any
+        discovery failure — auth error, unreachable endpoint, or a bucket
+        without geospatial objects — returns an EMPTY list with a typed warning
+        instead of silently registering demo data as the remote's contents.
+        """
         if not self.endpoint or self.endpoint.startswith("s3://"):
             return [
                 {
@@ -117,21 +137,15 @@ class S3StorageSeam(GeospatialDataSourceAdapter):
                     "bucket": item["bucket"],
                     "size_bytes": item["size_bytes"],
                     "source_type": "s3",
+                    # Explicit label: demo data, never mistaken for remote data.
+                    "source": "synthetic-demo",
                 }
                 for item in SYNTHETIC_S3_FIXTURES.values()
             ]
 
         try:
-            import boto3
-
             bucket_name = self.profile.options.get("bucket", "geo-bucket")
-            s3_client = boto3.client(
-                "s3",
-                aws_access_key_id=self.access_key,
-                aws_secret_access_key=self.secret_key,
-                endpoint_url=self.endpoint if self.endpoint.startswith("http") else None,
-                region_name=self.region,
-            )
+            s3_client = self._s3_client()
             response = s3_client.list_objects_v2(Bucket=bucket_name, MaxKeys=100)
             contents = response.get("Contents", [])
             results = []
@@ -148,24 +162,56 @@ class S3StorageSeam(GeospatialDataSourceAdapter):
                     })
             if results:
                 return results
+            # Real endpoint configured but bucket yielded no geospatial objects
+            # — truthful empty result, NO synthetic fallback (#430).
+            logger.warning(
+                f"S3 list_datasets for '{self.endpoint}' bucket '{bucket_name}' "
+                f"returned no geospatial objects; registering an empty catalog"
+            )
         except Exception as e:
-            logger.warning(f"S3 list_datasets fallback due to driver exception: {type(e).__name__}")
-
-        return [
-            {
-                "id": item["s3_uri"],
-                "title": item["key"],
-                "bucket": item["bucket"],
-                "size_bytes": item["size_bytes"],
-                "source_type": "s3",
-            }
-            for item in SYNTHETIC_S3_FIXTURES.values()
-        ]
+            # Typed failure: the caller must see the real error, not pretend the
+            # sync succeeded with demo fixtures masquerading as remote data.
+            logger.warning(
+                f"S3 list_datasets failed for '{self.endpoint}': "
+                f"{type(e).__name__}: {e}"
+            )
+        return []
 
     def describe(self, dataset_id: str) -> DatasetDescriptor:
-        """Fetch S3 object descriptor metadata without downloading the full object."""
+        """Fetch S3 object descriptor metadata without downloading the full object.
+
+        Truthfulness contract (#430): fixture metadata (size_bytes / bbox from
+        SYNTHETIC_S3_FIXTURES) is used ONLY in explicit no-endpoint demo mode,
+        and is labeled ``source="synthetic-demo"``. With a real endpoint
+        configured, the descriptor comes from the actual object (head_object);
+        on failure an honest stub with a typed error is returned — never
+        fixture metadata presented as the remote's data.
+        """
         target_uri = dataset_id if dataset_id.startswith("s3://") else f"s3://geo-data-bucket/{dataset_id}"
-        fixture = SYNTHETIC_S3_FIXTURES.get(target_uri, list(SYNTHETIC_S3_FIXTURES.values())[0])
+
+        if not self.endpoint or self.endpoint.startswith("s3://"):
+            fixture = SYNTHETIC_S3_FIXTURES.get(target_uri, list(SYNTHETIC_S3_FIXTURES.values())[0])
+            bucket, key = fixture["bucket"], fixture["key"]
+            return DatasetDescriptor(
+                id=target_uri,
+                title=key,
+                description=f"S3 Object {bucket}/{key}",
+                source_type="s3",
+                geometry_type="ObjectStream",
+                srs="EPSG:4326",
+                bbox=fixture.get("bbox", [-180.0, -90.0, 180.0, 90.0]),
+                feature_count=0,
+                fields=[{"name": "size_bytes", "type": "int"}, {"name": "content_type", "type": "string"}],
+                metadata={
+                    "bucket": bucket,
+                    "key": key,
+                    "size_bytes": fixture.get("size_bytes", 1048576),
+                    "content_type": fixture.get("content_type", "application/octet-stream"),
+                    "sanitized_credentials": True,
+                    # Explicit label: demo metadata, never mistaken for remote.
+                    "source": "synthetic-demo",
+                },
+            )
 
         bucket, key = "geo-data-bucket", dataset_id
         if target_uri.startswith("s3://"):
@@ -174,41 +220,88 @@ class S3StorageSeam(GeospatialDataSourceAdapter):
             except ValueError:
                 pass
 
+        error_type: Optional[str] = None
+        error_message: Optional[str] = None
+        try:
+            head = self._s3_client().head_object(Bucket=bucket, Key=key)
+            return DatasetDescriptor(
+                id=target_uri,
+                title=key,
+                description=f"S3 Object {bucket}/{key}",
+                source_type="s3",
+                geometry_type="ObjectStream",
+                srs="EPSG:4326",
+                # No real bbox without downloading the object — report world
+                # bounds plus the actual object size; no fabricated values.
+                bbox=[-180.0, -90.0, 180.0, 90.0],
+                feature_count=0,
+                fields=[{"name": "size_bytes", "type": "int"}, {"name": "content_type", "type": "string"}],
+                metadata={
+                    "bucket": bucket,
+                    "key": key,
+                    "size_bytes": head.get("ContentLength"),
+                    "content_type": head.get("ContentType", "application/octet-stream"),
+                    "sanitized_credentials": True,
+                },
+            )
+        except Exception as e:
+            error_type = type(e).__name__
+            error_message = f"S3 describe for '{target_uri}' failed: {e}"
+            logger.warning(error_message)
+
+        # Honest failure stub: no fixture fallback, no fabricated size/bbox
+        # (#430). The typed error lets callers distinguish an unreachable or
+        # misconfigured object from a real one.
         return DatasetDescriptor(
             id=target_uri,
             title=key,
-            description=f"S3 Object {bucket}/{key}",
+            description=f"S3 Object {bucket}/{key} (descriptor unavailable)",
             source_type="s3",
-            geometry_type="ObjectStream",
-            srs="EPSG:4326",
-            bbox=fixture.get("bbox", [-180.0, -90.0, 180.0, 90.0]),
-            feature_count=0,
-            fields=[{"name": "size_bytes", "type": "int"}, {"name": "content_type", "type": "string"}],
-            metadata={
-                "bucket": bucket,
-                "key": key,
-                "size_bytes": fixture.get("size_bytes", 1048576),
-                "content_type": fixture.get("content_type", "application/octet-stream"),
-                "sanitized_credentials": True,
-            },
+            feature_count=None,
+            fields=[],
+            metadata={"error_type": error_type, "error": error_message},
         )
 
     def preview(self, dataset_id: str, limit: int = 10) -> Dict[str, Any]:
-        """Fetch bounded sample preview bytes using chunked streaming."""
-        target_uri = dataset_id if dataset_id.startswith("s3://") else f"s3://geo-data-bucket/{dataset_id}"
-        fixture = SYNTHETIC_S3_FIXTURES.get(target_uri, list(SYNTHETIC_S3_FIXTURES.values())[0])
+        """Fetch bounded sample preview bytes using chunked streaming.
 
-        sample_data = fixture.get("sample_lines", ["s3_object_preview_chunk"])
+        Demo mode (no endpoint) serves labeled synthetic sample lines. With a
+        real endpoint configured, the preview reflects the actual object
+        metadata (via describe()) and returns NO fabricated sample lines —
+        an unavailable object previews as empty, not as demo data.
+        """
+        target_uri = dataset_id if dataset_id.startswith("s3://") else f"s3://geo-data-bucket/{dataset_id}"
+
+        if not self.endpoint or self.endpoint.startswith("s3://"):
+            fixture = SYNTHETIC_S3_FIXTURES.get(target_uri, list(SYNTHETIC_S3_FIXTURES.values())[0])
+            sample_data = fixture.get("sample_lines", ["s3_object_preview_chunk"])
+            return {
+                "schema": {"s3_uri": target_uri, "bucket": fixture["bucket"], "key": fixture["key"]},
+                "properties": {
+                    "size_bytes": fixture["size_bytes"],
+                    "content_type": fixture["content_type"],
+                    "last_modified": fixture["last_modified"],
+                    "sanitized_profile": self.sanitized_profile,
+                    "source": "synthetic-demo",
+                },
+                "features": [{"type": "Feature", "properties": {"line": line}} for line in sample_data[:limit]],
+                "bbox": fixture.get("bbox", [-180.0, -90.0, 180.0, 90.0]),
+            }
+
+        desc = self.describe(target_uri)
+        meta = desc.metadata
+        bucket = meta.get("bucket", "geo-data-bucket")
+        key = meta.get("key", dataset_id)
         return {
-            "schema": {"s3_uri": target_uri, "bucket": fixture["bucket"], "key": fixture["key"]},
+            "schema": {"s3_uri": target_uri, "bucket": bucket, "key": key},
             "properties": {
-                "size_bytes": fixture["size_bytes"],
-                "content_type": fixture["content_type"],
-                "last_modified": fixture["last_modified"],
+                "size_bytes": meta.get("size_bytes"),
+                "content_type": meta.get("content_type"),
                 "sanitized_profile": self.sanitized_profile,
             },
-            "features": [{"type": "Feature", "properties": {"line": line}} for line in sample_data[:limit]],
-            "bbox": fixture.get("bbox", [-180.0, -90.0, 180.0, 90.0]),
+            "features": [],
+            "bbox": [-180.0, -90.0, 180.0, 90.0],
+            "error": meta.get("error"),
         }
 
     def query(self, dataset_id: str, query_spec: QuerySpec) -> QueryResult:
@@ -223,27 +316,36 @@ class S3StorageSeam(GeospatialDataSourceAdapter):
         exec_time = round((time.time() - start_time) * 1000, 2)
         # Demo vs remote label: with no real endpoint configured the metadata is
         # served from SYNTHETIC_S3_FIXTURES — callers must not mistake it for a
-        # probed remote object.
+        # probed remote object. With an endpoint configured, describe() is honest
+        # (real head_object or a typed error), so "remote" is accurate — never
+        # demo fixtures masquerading as remote data (#430).
         src = "synthetic-demo" if (not self.endpoint or self.endpoint.startswith("s3://")) else "remote"
+        metadata = {
+            "exec_time_ms": exec_time,
+            "bounded_memory_stream": True,
+            "chunk_size_bytes": DEFAULT_CHUNK_SIZE,
+            "source": src,
+        }
+        if meta.get("error"):
+            # Surface the honest failure — empty result + typed error, no fake
+            # bytes count presented as a successful read.
+            metadata["error_type"] = meta.get("error_type")
+            metadata["error"] = meta.get("error")
+            metadata["success"] = False
         return QueryResult(
             dataset_id=target_uri,
             features=[],
             data={
                 "s3_uri": target_uri,
-                "bucket": meta["bucket"],
-                "key": meta["key"],
+                "bucket": meta.get("bucket", "geo-data-bucket"),
+                "key": meta.get("key", target_uri),
                 "bytes_read": max_bytes,
                 "chunk_size": DEFAULT_CHUNK_SIZE,
                 "secret_sanitization": True,
             },
             total_count=1,
             returned_count=1,
-            metadata={
-                "exec_time_ms": exec_time,
-                "bounded_memory_stream": True,
-                "chunk_size_bytes": DEFAULT_CHUNK_SIZE,
-                "source": src,
-            },
+            metadata=metadata,
         )
 
     def health(self) -> DataFabricHealth:

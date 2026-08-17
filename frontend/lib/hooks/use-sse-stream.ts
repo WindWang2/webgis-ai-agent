@@ -64,12 +64,16 @@ type ToolCallStatus = 'completed' | 'failed';
  * FE-P3-3: terminal transition for a ToolCallChain row, matched by tool name
  * (the SSE tool_call payload carries no call id). Mutates messages via the
  * hook's setMessages; must be created inside the hook (closure over it).
+ *
+ * #608: terminal transitions also stamp completedAt (duration badge) and can
+ * carry extra display fields (e.g. hasGeojson when step_result mounts a
+ * geojson_ref layer).
  */
 function makeToolCallStatusMarker(
   thinkingMsgIdRef: { current: string },
   setMessages: (updater: (prev: any[]) => any[]) => void,
 ) {
-  return (tool: string, status: ToolCallStatus, error?: string): void => {
+  return (tool: string, status: ToolCallStatus, error?: string, extra?: Partial<ToolCallEntry>): void => {
     if (!tool) return;
     setMessages((prev) => {
       const tid = thinkingMsgIdRef.current;
@@ -81,9 +85,51 @@ function makeToolCallStatusMarker(
       const next = calls.map((c: ToolCallEntry) => {
         if (c.tool !== tool || c.status !== 'running') return c;
         changed = true;
-        return { ...c, status, ...(status === 'failed' && error ? { error } : {}) };
+        return {
+          ...c,
+          status,
+          ...(status === 'failed' && error ? { error } : {}),
+          ...(extra ?? {}),
+          completedAt: Date.now(),
+        };
       });
       if (!changed) return prev;
+      const copy = [...prev];
+      copy[idx] = { ...prev[idx], toolCalls: next };
+      return copy;
+    });
+  };
+}
+
+/**
+ * #608: stream-level terminal fallback — when the turn dies (error /
+ * task_error / task_cancelled) or ends (done / task_complete) without the
+ * per-tool step_result/step_error/step_cancelled ever arriving, every still-
+ * running ToolCallChain row would keep its spinner forever. Finalize all
+ * remaining running rows of the current thinking message in one pass.
+ */
+function makeToolCallsFinalizer(
+  thinkingMsgIdRef: { current: string },
+  setMessages: (updater: (prev: any[]) => any[]) => void,
+) {
+  return (status: ToolCallStatus, error?: string): void => {
+    setMessages((prev) => {
+      const tid = thinkingMsgIdRef.current;
+      const idx = tid ? prev.findIndex((m) => m.id === tid) : -1;
+      if (idx === -1) return prev;
+      const calls = prev[idx].toolCalls;
+      if (!calls || calls.length === 0) return prev;
+      if (!calls.some((c: ToolCallEntry) => c.status === 'running')) return prev;
+      const next = calls.map((c: ToolCallEntry) =>
+        c.status === 'running'
+          ? {
+              ...c,
+              status,
+              ...(status === 'failed' && error ? { error } : {}),
+              completedAt: Date.now(),
+            }
+          : c,
+      );
       const copy = [...prev];
       copy[idx] = { ...prev[idx], toolCalls: next };
       return copy;
@@ -308,6 +354,10 @@ export function useSSEStream(
   const markToolCallStatus = useRef(
     makeToolCallStatusMarker(thinkingMsgIdRef, setMessages),
   ).current; // stable identity: created once per hook instance
+  // #608: stream-level terminal fallback for still-running rows.
+  const finalizeToolCalls = useRef(
+    makeToolCallsFinalizer(thinkingMsgIdRef, setMessages),
+  ).current;
   const msgIdGen = useRef(createMessageIdGenerator());
   const layerFetchAbortRef = useRef<AbortController | null>(null);
   // #518: 独立 /explorer/stream/{task_id} 消费者。deep_explore 返回的探索
@@ -501,8 +551,10 @@ export function useSSEStream(
         // id lets the chat layer-added chip deep-link to the same result.
         const workbenchResultId = useHudStore.getState().captureStepResult(data);
         // FE-P3-3: terminal transition for the ToolCallChain row (matched by
-        // tool name — the SSE payload carries no call id).
-        markToolCallStatus(String(data.tool ?? ''), 'completed');
+        // tool name — the SSE payload carries no call id). #608: stamp
+        // completedAt (duration badge) and hasGeojson when the result mounts
+        // a geojson_ref layer.
+        markToolCallStatus(String(data.tool ?? ''), 'completed', undefined, data.geojson_ref ? { hasGeojson: true } : undefined);
         // Plan Mode：propose_plan 返回的 plan 摘要挂到当前消息，由 PlanProposalCard 渲染
         if (data.tool === 'propose_plan' && data.result?.success && data.result?.plan_id) {
           const plan: PlanProposalPayload = {
@@ -697,7 +749,10 @@ export function useSSEStream(
                         n: s.n,
                         goal: s.goal,
                         tool_family: s.tool_family,
-                        status: 'pending' as const,
+                        // #615: restored plans carry done:bool per step
+                        // (backend P3-2/P2-6) — map it to the status the
+                        // PlanCard renders, don't hardcode pending.
+                        status: s.done ? ('done' as const) : ('pending' as const),
                       })),
                       finalized: false,
                     },
@@ -755,14 +810,14 @@ export function useSSEStream(
         // 行标记为已取消（复用 ToolCallEntry 的 failed 形态），否则该行会一直
         // 停在 running 直到流结束。已到终态的行绝不覆盖；未匹配时原样返回 prev，
         // 保持 message 对象身份不变。
-        const stepId = data.step_id;
+        // #608: 前端行 id 是自造 tc-N、后端 step_id 是 step-{n} 两个永不
+        // 相交的 id 空间——按 step_id 匹配是死分支。改按工具名匹配（与
+        // step_result 的终态匹配一致），行 id 只用于 React key/aria。
         const tool = data.tool;
         // R2F-2: the cancelled call will never emit its step_result — drop its
         // queued args so the retry's step_result pairs with the retry's args.
         if (typeof tool === 'string' && tool) {
           useHudStore.getState().discardPendingToolArgs(tool);
-        }
-        if (typeof stepId === 'string' && stepId) {
           setMessages((prev) => {
             const msgIdx = prev.findIndex(
               (m) => m.id === thinkingId && Array.isArray(m.toolCalls),
@@ -772,13 +827,10 @@ export function useSSEStream(
             if (!toolCalls || toolCalls.length === 0) return prev;
             let changed = false;
             const nextCalls = toolCalls.map((c) => {
-              const matches =
-                c.id === stepId &&
-                (tool === undefined || c.tool === tool) &&
-                c.status === 'running';
+              const matches = c.tool === tool && c.status === 'running';
               if (!matches) return c;
               changed = true;
-              return { ...c, status: 'failed' as const, error: '已取消' };
+              return { ...c, status: 'failed' as const, error: '已取消', completedAt: Date.now() };
             });
             if (!changed) return prev;
             const next = [...prev];
@@ -791,6 +843,9 @@ export function useSSEStream(
         // step_result/step_cancelled — their queued args must not leak into
         // the next turn's workbench evidence.
         useHudStore.getState().resetPendingToolArgs();
+        // #608: 抢占取消同样不会给每条 tool-call 发 step_cancelled —— 兜底把
+        // 全部 running 行终结为已取消，否则 spinner 永远旋转。
+        finalizeToolCalls('failed', '已取消');
         setMessages((prev) =>
           prev.map((m) => {
             if (m.id !== thinkingId) return m;
@@ -828,6 +883,12 @@ export function useSSEStream(
             : event.event === "step_error"
               ? "工具执行失败。"
               : "请求失败，请重试。";
+        // #608: 流级死亡（error/task_error）不会为每条 in-flight 工具补发
+        // step_error/step_cancelled —— 兜底终结全部 running 行，spinner 不再
+        // 永久旋转。
+        if (event.event === 'error' || event.event === 'task_error') {
+          finalizeToolCalls('failed', detail);
+        }
         setMessages((prev) =>
           prev.map((m) => {
             if (m.id !== thinkingId) return m;
@@ -845,6 +906,9 @@ export function useSSEStream(
         // 要等连接关闭才返回，isThinking 必须在终态事件到达时就翻转，
         // 否则已完成的回答一直藏在 ThinkingDots 后面。幂等：随后 handleSend
         // 的后置翻转只处理仍为 isThinking 的消息。
+        // #608: 正常收官时所有工具行都已有 step_result/step_error 终态；
+        // 若有残留 running 行（结果丢失），兜底终结，避免 spinner 永转。
+        finalizeToolCalls('failed', '未收到执行结果');
         if (thinkingId) {
           setMessages((prev) =>
             prev.map((m) =>
@@ -858,7 +922,7 @@ export function useSSEStream(
         applyExplorerProgressToStore(data as Record<string, unknown>);
       }
     },
-    [setSessionId, sessionIdRef, sessionTokenRef, rememberSessionToken, markToolCallStatus, startExplorerProgressStream]
+    [setSessionId, sessionIdRef, sessionTokenRef, rememberSessionToken, markToolCallStatus, finalizeToolCalls, startExplorerProgressStream]
   );
 
   // DUP-1: bounded auto-reconnect for the chat stream. Opt-in by explicit

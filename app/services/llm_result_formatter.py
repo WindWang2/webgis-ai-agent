@@ -176,27 +176,39 @@ def is_error_dict(result: Any) -> bool:
 
 
 def is_error_like_result(result: Any) -> bool:
-    """#529: the ``{"error": <string>}`` normal-return failure shape.
+    """#529/#589: normal-return failure shapes.
 
-    ~139 tool sites return ``{"error": "<msg>"}`` dicts instead of raising or
-    returning the canonical ``std_error_response`` shape — only the latter was
+    Tool sites return failure dicts instead of raising or returning the
+    canonical ``std_error_response`` shape; only the canonical shape was
     recognized, so these were classified as success (marked completed, same-args
     retries intercepted with a fabricated "已成功执行", plans advanced past
     failures).
+
+    Recognized error-as-value key shapes:
+      - ``{"error": <str>}``                — the #529 family (~139 sites),
+      - ``{"type": "error", ...}``          — network/temporal/spatial_decision,
+      - ``{"status": "error"|"failed"}``    — project/workflow/explorer.
 
     Conservative by design (mirrors ``chinese_maps/http.py``'s
     ``_is_provider_error_dict``): only a **string** ``error`` value classifies,
     so business payloads that merely carry an ``error`` key (``None``, numeric,
     nested error info) are not reclassified. The string may be empty — an
-    ``{"error": ""}`` result is still an error channel, not a success. An
-    explicit ``success=True`` also shields partial-success payloads (e.g.
-    geocode returning results alongside an error note).
+    ``{"error": ""}`` result is still an error channel, not a success. ``type``
+    and ``status`` only classify at their canonical error values, so legitimate
+    uses of those keys (``{"type": "FeatureCollection"}``, ``{"status": "ok"}``,
+    ``{"status": "template_applied"}``, ...) are never reclassified. An explicit
+    ``success=True`` shields partial-success payloads (e.g. geocode returning
+    results alongside an error note).
     """
-    return (
-        isinstance(result, dict)
-        and isinstance(result.get("error"), str)
-        and result.get("success") is not True
-    )
+    if not isinstance(result, dict) or result.get("success") is True:
+        return False
+    if isinstance(result.get("error"), str):
+        return True
+    if result.get("type") == "error":
+        return True
+    if result.get("status") in ("error", "failed"):
+        return True
+    return False
 
 
 def is_tool_error_result(result: Any) -> bool:

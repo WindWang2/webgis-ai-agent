@@ -43,9 +43,9 @@ class ExportMapArgs(BaseModel):
     include_compass: bool = Field(default=True, description="是否在导出图中绘制指北针")
     include_scale: bool = Field(default=True, description="是否在导出图中绘制比例尺")
     dark_mode: bool = Field(default=True, description="强制使用暗色现代高斯模糊底纹")
-    format: str = Field(default="png", description="导出格式: png (位图) / pdf (A4 排版) / svg (位图嵌入 SVG 容器，可在 Illustrator/Inkscape 打开)")
-    paper_size: str = Field(default="screen", description="纸张尺寸: screen (按当前屏幕宽高比) 或 A4")
-    orientation: str = Field(default="landscape", description="方向: landscape (横向) / portrait (纵向)，仅 paper_size=A4 时生效")
+    format: str = Field(default="png", description="导出格式: png (位图) / pdf (A4/A3 排版) / svg (位图嵌入 SVG 容器，可在 Illustrator/Inkscape 打开)")
+    paper_size: str = Field(default="screen", description="纸张尺寸: screen (按当前屏幕宽高比) / A4 / A3")
+    orientation: str = Field(default="landscape", description="方向: landscape (横向) / portrait (纵向)，仅 paper_size=A4/A3 时生效")
     dpi: int = Field(default=96, ge=72, le=600, description="导出 DPI，96 为屏幕级，300 为印刷级；>300 文件会很大")
 
 
@@ -56,7 +56,7 @@ class ExportBatchMapsArgs(BaseModel):
     include_compass: bool = Field(default=True, description="是否绘制指北针")
     include_scale: bool = Field(default=True, description="是否绘制比例尺")
     format: str = Field(default="png", description="导出格式: png / pdf / svg")
-    paper_size: str = Field(default="screen", description="纸张尺寸: screen / A4")
+    paper_size: str = Field(default="screen", description="纸张尺寸: screen / A4 / A3")
     orientation: str = Field(default="landscape", description="方向: landscape / portrait")
     dpi: int = Field(default=96, ge=72, le=600, description="导出 DPI")
 
@@ -159,7 +159,7 @@ def register_cartography_tools(registry: ToolRegistry):
            description=(
                "当用户请求导出精美地图、制图排版、保存当前地图视图为图片或 PDF 时调用。"
                "该工具会指挥前端抽取当前地图画面，叠加指北针、比例尺、图例，并合成带标题的高质量图件。"
-               "支持 PNG / PDF / SVG 三种格式，可指定 A4 纸张方向和高 DPI（300 即印刷级）。"
+               "支持 PNG / PDF / SVG 三种格式，可指定 A4/A3 纸张方向和高 DPI（300 即印刷级）。"
                "\n何时用：用户说『导出』『保存地图』『出一张高清图』『打印用的 A4』。"
                "\n何时不用：要批量导出多张图 — 用 export_batch_maps。"
                "\n关键约束：dpi>300 文件会非常大；svg 是把 PNG 嵌入 SVG 容器（兼容 Illustrator/Inkscape）。"
@@ -181,10 +181,10 @@ def register_cartography_tools(registry: ToolRegistry):
         if fmt not in ("png", "pdf", "svg"):
             fmt = "png"
         ps = (paper_size or "screen").lower().strip()
-        if ps not in ("screen", "a4"):
+        if ps not in ("screen", "a4", "a3"):
             ps = "screen"
-        # 前端 ExportOptions.paperSize 类型是 'screen' | 'A4'，标准化大小写
-        ps_frontend = "A4" if ps == "a4" else "screen"
+        # 前端 ExportOptions.paperSize 类型是 'screen' | 'A4' | 'A3'，标准化大小写
+        ps_frontend = {"a4": "A4", "a3": "A3"}.get(ps, "screen")
         ori = (orientation or "landscape").lower().strip()
         if ori not in ("landscape", "portrait"):
             ori = "landscape"
@@ -238,7 +238,9 @@ def register_cartography_tools(registry: ToolRegistry):
         if fmt not in ("png", "pdf", "svg"):
             fmt = "png"
         ps = (paper_size or "screen").lower().strip()
-        ps_frontend = "A4" if ps == "a4" else "screen"
+        if ps not in ("screen", "a4", "a3"):
+            ps = "screen"
+        ps_frontend = {"a4": "A4", "a3": "A3"}.get(ps, "screen")
         ori = (orientation or "landscape").lower().strip()
         if ori not in ("landscape", "portrait"):
             ori = "landscape"

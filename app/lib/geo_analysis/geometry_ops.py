@@ -276,12 +276,28 @@ def multi_ring_buffer(
         )
 
     distances = sorted([float(d) for d in distances])
+    # GIS-P3-8 sibling (#588): to_utm_gdf returns an already-projected input
+    # UNCHANGED — in a non-metre CRS (state-plane feet etc.) the "meters"
+    # distances must be converted to the CRS's linear unit (see buffer_smart,
+    # #524) and areas converted back, or a 1000 m ring becomes 1000 ft
+    # (304.8 m) and area_km2 overreports the ft² figure as km² (10.76×).
+    # crs_unit_factor is "metres per CRS unit" (pyproj axis semantics).
+    crs_unit_factor = 1.0
+    if gdf.crs is not None and gdf.crs.is_projected:
+        try:
+            axis = gdf.crs.axis_info[0]
+            factor = float(getattr(axis, "unit_conversion_factor", 1.0) or 1.0)
+            if axis.unit_name and "metre" not in axis.unit_name and "meter" not in axis.unit_name and factor != 1.0:
+                crs_unit_factor = factor
+        except Exception:
+            pass
+
     union_geom = gdf.geometry.union_all()
     out_features = []
 
     prev_buffer = None
     for dist in distances:
-        buf = union_geom.buffer(dist, quad_segs=32)
+        buf = union_geom.buffer(dist / crs_unit_factor, quad_segs=32)
 
         if merge_rings and prev_buffer is not None:
             ring = buf.difference(prev_buffer)
@@ -297,7 +313,7 @@ def multi_ring_buffer(
             "geometry": mapping(ring_wgs84),
             "properties": {
                 "distance_m": dist,
-                "area_km2": round(float(ring.area) / 1e6, 4),
+                "area_km2": round(float(ring.area) * crs_unit_factor * crs_unit_factor / 1e6, 4),
             },
         })
         prev_buffer = buf

@@ -6,6 +6,7 @@ import {
   DEFAULT_MAX_QUEUE,
 } from './map-action-acks';
 import type { MapActionAck } from './map-action-acks';
+import { clearAuth, setAuth } from '@/lib/auth/tokenStore';
 import { devOnly } from '@/lib/utils/logger';
 
 function ack(actionId: string, extras: Partial<MapActionAck> = {}): MapActionAck {
@@ -86,6 +87,59 @@ describe('map action ACK follow-up', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(fetchImpl.mock.calls[0][1].headers['X-Session-Token']).toBe('owner-a');
     expect(onResponse).toHaveBeenCalledWith('session-a', body);
+    sender.dispose();
+  });
+
+  it('#610 injects Authorization Bearer for signed-in sessions (anonymous keeps none)', async () => {
+    // 登录会话：require_owned_session 按 user_id 匹配（X-Session-Token 只对
+    // 匿名会话有效），ACK 必须携带 Bearer，此前裸 fetch 恒 404 被永久丢弃。
+    setAuth({ accessToken: 'jwt-acc-1', refreshToken: 'jwt-ref-1' }, null);
+    try {
+      const fetchImpl = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ accepted: 1, duplicates: 0 }),
+      });
+      const sender = createMapActionAckSender({
+        getSessionId: () => 'session-a',
+        getToken: () => 'owner-a',
+        debounceMs: 1,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      });
+
+      sender.sink(ack('ma-auth'));
+      sender.flush();
+      await flushMicrotasks();
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(fetchImpl.mock.calls[0][1].headers['Authorization']).toBe('Bearer jwt-acc-1');
+      expect(fetchImpl.mock.calls[0][1].headers['X-Session-Token']).toBe('owner-a');
+      sender.dispose();
+    } finally {
+      clearAuth();
+    }
+  });
+
+  it('#610 attaches no Authorization header when signed out', async () => {
+    clearAuth();
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ accepted: 1, duplicates: 0 }),
+    });
+    const sender = createMapActionAckSender({
+      getSessionId: () => 'session-anon',
+      getToken: () => 'owner-anon',
+      debounceMs: 1,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    sender.sink(ack('ma-anon'));
+    sender.flush();
+    await flushMicrotasks();
+
+    expect(fetchImpl.mock.calls[0][1].headers['Authorization']).toBeUndefined();
+    expect(fetchImpl.mock.calls[0][1].headers['X-Session-Token']).toBe('owner-anon');
     sender.dispose();
   });
 

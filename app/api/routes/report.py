@@ -7,7 +7,7 @@ import secrets
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -162,8 +162,10 @@ async def view_shared_report(share_code: str, db: AsyncSession = Depends(get_asy
         raise HTTPException(status_code=400, detail="非法文件路径")
 
     if report.format == "html":
-        with open(report.file_path, "r", encoding="utf-8") as f:
-            return Response(content=f.read(), media_type="text/html")
+        # #592：同步 read 整个 HTML（长会话报告可达数 MB）不能内联在事件循环。
+        # 与下载路径一致走 FileResponse —— 文件体在 worker 线程分块读取；
+        # 不传 filename，保持 inline 渲染语义（浏览器直接展示而非触发下载）。
+        return FileResponse(report.file_path, media_type="text/html")
 
     return FileResponse(
         report.file_path,

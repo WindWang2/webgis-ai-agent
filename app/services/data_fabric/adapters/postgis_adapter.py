@@ -565,15 +565,17 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                         col_srid = -1  # sentinel: unknown
 
                     # GIS-P2-2: bbox pushdown must be expressed in the COLUMN's
-                    # SRID. The old hardcoded 4326 envelope silently returned
-                    # empty results for any projected table (3857/UTM/state
-                    # plane — the tables this adapter exists for): [-180..180]
-                    # in meters is a sliver at the origin.
-                    if col_srid not in (-1, 4326) and query_spec.bbox and len(query_spec.bbox) == 4:
+                    # SRID. EPSG:4326 tables need no transform — the envelope
+                    # is already WGS84; projected tables (3857/UTM/state plane
+                    # — the tables this adapter exists for) transform the 4326
+                    # envelope into the column SRID, because [-180..180] in
+                    # meters is a sliver at the origin. Unknown SRID (-1)
+                    # cannot push down: there is no source CRS to express the
+                    # envelope in.
+                    bbox_pushed_down = False
+                    if col_srid != -1 and query_spec.bbox and len(query_spec.bbox) == 4:
                         minx, miny, maxx, maxy = query_spec.bbox
-                        if col_srid == -1:
-                            where_clauses.append("TRUE")  # unknown SRID: no pushdown
-                        elif col_srid == 4326:
+                        if col_srid == 4326:
                             envelope_sql = "ST_MakeEnvelope(%s, %s, %s, %s, 4326)"
                             env_params = [minx, miny, maxx, maxy]
                         else:
@@ -585,6 +587,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                             f'ST_Intersects("{geom_col}", {envelope_sql})'
                         )
                         params.extend(env_params)
+                        bbox_pushed_down = True
 
                     where_text = getattr(query_spec, "where", None) or getattr(query_spec, "filter_expr", None) or getattr(query_spec, "filter", None)
                     if where_text and isinstance(where_text, str):
@@ -643,7 +646,14 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                         features=features,
                         total_count=len(features),
                         schema_info={"columns": [c for c in columns if c != "_geojson"]},
-                        metadata={"exec_time_ms": exec_time, "pushdown_bbox": bool(query_spec.bbox)},
+                        metadata={
+                            "exec_time_ms": exec_time,
+                            # Report what was ACTUALLY pushed down, not just
+                            # what the caller asked for: an unknown-SRID table
+                            # cannot receive a spatial predicate, and a query
+                            # without bbox has nothing to push.
+                            "pushdown_bbox": bbox_pushed_down,
+                        },
                     )
         except Exception as e:
             # SEC-06 (deep-audit round 2): the previous error path returned a

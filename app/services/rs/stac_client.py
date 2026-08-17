@@ -6,7 +6,7 @@
 import asyncio
 import logging
 from functools import lru_cache
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -131,69 +131,111 @@ class StacClientPrimitive:
                         return win
 
                     with rasterio_env():
-                        for name, asset_key in band_mapping.items():
-                            if asset_key not in item.assets:
-                                logger.warning(f"Asset '{asset_key}' not found in STAC item {item.id}")
-                                continue
-                            href = item.assets[asset_key].href
-                            with rasterio.open(href) as ds:
+                        # #577: 单次计算的多波段必须落在统一的目标网格上 —— NBR
+                        # 混合 10m B08 与 20m B12,若逐波段按各自窗口推导
+                        # out_shape,两数组形状不同 (或形状偶合但网格错位),波段
+                        # 代数必然失败。第一遍开全部波段求裁剪窗口与原生像元大小,
+                        # 以最高分辨率波段为参考网格;第二遍所有波段读取时统一
+                        # 重采样到该网格。
+                        opened: List[Tuple[str, Any]] = []
+                        try:
+                            band_windows: Dict[str, Any] = {}
+                            ref_name: Optional[str] = None
+                            ref_px_area: Optional[float] = None
+                            for name, asset_key in band_mapping.items():
+                                if asset_key not in item.assets:
+                                    logger.warning(f"Asset '{asset_key}' not found in STAC item {item.id}")
+                                    continue
+                                href = item.assets[asset_key].href
+                                ds = rasterio.open(href)
+                                opened.append((name, ds))
                                 if ds.crs is not None:
                                     crs_s = ds.crs.to_string()
                                     if first_crs is None:
                                         first_crs = crs_s
                                     elif crs_s != first_crs:
-                                        # 同景各波段应同 CRS；不同时按各自窗口读取
+                                        # 同景各波段应同 CRS;不同时按各自窗口读取
                                         logger.warning(
                                             f"Band '{name}' CRS {crs_s} 与首波段 "
                                             f"{first_crs} 不同，按各自窗口读取")
                                 win = _crop_window(ds)
-                                out_h = max(1, int(win.height) // ds_factor)
-                                out_w = max(1, int(win.width) // ds_factor)
-                                data = ds.read(
-                                    1,
-                                    window=win,
-                                    out_shape=(out_h, out_w),
-                                    resampling=Resampling.bilinear,
-                                ).astype(float)
-                                bands_dict[name] = data
-                                if data_bounds is None:
-                                    # 输出网格足迹 = 窗口 transform 按
-                                    # out_shape 比例缩放后的外边界 (非请求 bbox)。
-                                    wt = ds.window_transform(win)
-                                    raw_bounds = [
-                                        wt.c, wt.f + wt.e * win.height,
-                                        wt.c + wt.a * win.width, wt.f,
-                                    ]
-                                    if ds.crs is not None and not ds.crs.is_geographic:
-                                        raw_bounds = transform_bounds(
-                                            ds.crs, CRS.from_epsg(4326),
-                                            *raw_bounds, densify_pts=21)
-                                    data_bounds = [float(v) for v in raw_bounds]
-                                # Effective pixel size after windowed
-                                # downsampling, in metres (R-F02): terrain
-                                # derivatives (compute_slope/hillshade) need
-                                # the *actual* pixel size of the array they
-                                # receive (window width / out_w, not ds_factor
-                                # outright, so flooring of out_shape stays
-                                # exact). Geographic DEMs report pixel size in
-                                # degrees -> convert at the equator rate
-                                # (~111320 m/deg, matching the Copernicus
-                                # GLO-30 "30 m" label convention).
-                                if cell_size_m is None and ds.transform.a:
-                                    px_y = abs(ds.transform.e) * (win.height / out_h)
-                                    px_x = abs(ds.transform.a) * (win.width / out_w)
-                                    if ds.crs is not None and ds.crs.is_geographic:
-                                        # #379: 地理 CRS 下经度向地面尺寸随
-                                        # cos(lat) 收缩 —— 赤道比例会把东西向
-                                        # 坡度低估 ~cos(lat)；用读取窗口中心
-                                        # 纬度校正 x 方向，y (经线) 不受影响。
-                                        # 投影 CRS 两方向同为米，不设置
-                                        # cell_size_x_m (派生函数回退 cell_size)。
-                                        lat = (data_bounds[1] + data_bounds[3]) / 2.0
-                                        px_y *= 111320.0
-                                        px_x *= 111320.0 * abs(np.cos(np.radians(lat)))
-                                        cell_size_x_m = float(px_x)
-                                    cell_size_m = float(px_y)
+                                band_windows[name] = win
+                                # 参考网格 = 原生像元面积最小的 (最高分辨率) 波段;
+                                # 缺 transform 元数据时退回首波段。
+                                if ds.transform.a:
+                                    px_area = abs(ds.transform.a * ds.transform.e)
+                                    if ref_px_area is None or px_area < ref_px_area:
+                                        ref_name, ref_px_area = name, px_area
+                                elif ref_name is None:
+                                    ref_name = name
+
+                            if ref_name is not None:
+                                ref_win = band_windows[ref_name]
+                                out_h = max(1, int(ref_win.height) // ds_factor)
+                                out_w = max(1, int(ref_win.width) // ds_factor)
+                                for name, ds in opened:
+                                    win = band_windows[name]
+                                    # #578: nodata 哨兵必须在重采样之前剔除 ——
+                                    # bilinear 会把 -9999 与相邻有效高程平均成
+                                    # "看似合法" 的中间值,重采样后才做 <= 哨兵掩码
+                                    # 拦不住 (如 -1599.75 通过 -9999 判定)。数据集
+                                    # 声明 nodata 时改用 GDAL nodata-aware 的
+                                    # average 重采样 (只对有效像元加权平均;整窗全
+                                    # nodata 时输出哨兵值供下游掩码);未声明时退回
+                                    # bilinear 保持原行为。
+                                    resampling = (
+                                        Resampling.average
+                                        if ds.nodata is not None
+                                        else Resampling.bilinear
+                                    )
+                                    data = ds.read(
+                                        1,
+                                        window=win,
+                                        out_shape=(out_h, out_w),
+                                        resampling=resampling,
+                                    ).astype(float)
+                                    bands_dict[name] = data
+                                    if name == ref_name:
+                                        # 输出网格足迹 = 参考窗口 transform 按
+                                        # out_shape 比例缩放后的外边界 (非请求 bbox)。
+                                        wt = ds.window_transform(win)
+                                        raw_bounds = [
+                                            wt.c, wt.f + wt.e * win.height,
+                                            wt.c + wt.a * win.width, wt.f,
+                                        ]
+                                        if ds.crs is not None and not ds.crs.is_geographic:
+                                            raw_bounds = transform_bounds(
+                                                ds.crs, CRS.from_epsg(4326),
+                                                *raw_bounds, densify_pts=21)
+                                        data_bounds = [float(v) for v in raw_bounds]
+                                        # Effective pixel size after windowed
+                                        # downsampling, in metres (R-F02): terrain
+                                        # derivatives (compute_slope/hillshade) need
+                                        # the *actual* pixel size of the array they
+                                        # receive (window width / out_w, not ds_factor
+                                        # outright, so flooring of out_shape stays
+                                        # exact). Geographic DEMs report pixel size in
+                                        # degrees -> convert at the equator rate
+                                        # (~111320 m/deg, matching the Copernicus
+                                        # GLO-30 "30 m" label convention).
+                                        if ds.transform.a:
+                                            px_y = abs(ds.transform.e) * (win.height / out_h)
+                                            px_x = abs(ds.transform.a) * (win.width / out_w)
+                                            if ds.crs is not None and ds.crs.is_geographic:
+                                                # #379: 地理 CRS 下经度向地面尺寸随
+                                                # cos(lat) 收缩 —— 赤道比例会把东西向
+                                                # 坡度低估 ~cos(lat);用读取窗口中心
+                                                # 纬度校正 x 方向,y (经线) 不受影响。
+                                                # 投影 CRS 两方向同为米,不设置
+                                                # cell_size_x_m (派生函数回退 cell_size)。
+                                                lat = (data_bounds[1] + data_bounds[3]) / 2.0
+                                                px_y *= 111320.0
+                                                px_x *= 111320.0 * abs(np.cos(np.radians(lat)))
+                                                cell_size_x_m = float(px_x)
+                                            cell_size_m = float(px_y)
+                        finally:
+                            for _, ds in opened:
+                                ds.close()
                     return bands_dict, cell_size_m, cell_size_x_m, data_bounds
 
             bands_dict, cell_size_m, cell_size_x_m, data_bounds = await asyncio.to_thread(_read_bands)

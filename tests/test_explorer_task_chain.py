@@ -530,3 +530,52 @@ async def test_status_backend_unavailable_degrades_to_unknown(monkeypatch):
     orch = ExplorerOrchestrator()
     status = await orch.get_task_status(final_id)
     assert status["status"] == "UNKNOWN"
+
+
+@pytest.mark.asyncio
+async def test_stream_stuck_chain_closes_at_deadline(monkeypatch):
+    """Issue #593: a chain stuck in UNKNOWN (broker restart / expired result /
+    unreachable result backend) must NOT stream forever on the independent
+    /explorer/stream endpoint — the generator closes with an explicit failed
+    terminal event after the wall-clock deadline instead of polling at 1 Hz
+    + heartbeat indefinitely."""
+    final_id = "fin-deadline-593"
+    stage_ids = ["dd-1", "dd-2", "dd-3", "dd-4", final_id]
+    orchestrator_mod.register_chain_run(final_id, stage_ids)
+    polls = {"n": 0}
+
+    def stuck_status(task_id):
+        polls["n"] += 1
+        return {"task_id": task_id, "status": "UNKNOWN", "result": None, "progress": 0}
+
+    monkeypatch.setattr(TaskQueueService, "get_task_status", staticmethod(stuck_status))
+    # Polls as fast as the loop runs (no real 1 s sleeps). Drive the deadline
+    # deterministically: running the wall-clock cap down to real 0.05 s makes
+    # the fast-spin poll count machine-dependent, so instead advance
+    # time.monotonic() artificially (asyncio itself calls it per loop turn,
+    # so the exact count also has an asyncio component — the assertions only
+    # pin the ORDER of magnitude).
+    import time as _time_mod
+    clock = {"t": 0.0}
+    def _fake_monotonic():
+        clock["t"] += 0.01
+        return clock["t"]
+    monkeypatch.setattr(_time_mod, "monotonic", _fake_monotonic)
+    async def _no_sleep(_s):
+        return None
+    monkeypatch.setattr("app.services.explorer.orchestrator.asyncio.sleep", _no_sleep)
+    # shrink the wall-clock cap so the deadline trips within the test
+    monkeypatch.setattr(orchestrator_mod, "_EXPLORER_STREAM_MAX_SECONDS", 0.05)
+
+    events = [e async for e in ExplorerOrchestrator().stream_progress(final_id)]
+    payloads = [_parse_sse(e) for e in events if e.startswith("event: explorer_progress")]
+    assert payloads, "stuck stream must emit events before closing"
+    assert payloads[-1]["status"] == "failed", (
+        f"stuck chain must close with an explicit failed event: {payloads[-1]}"
+    )
+    assert payloads[-1]["context"].get("error") == "stream timeout"
+    assert payloads[-1]["context"].get("final_status") == "FAILURE"
+    # Bounded: a deadline-less loop would never return (the async-for above
+    # would hang). The simulated 0.05 s cap must stop it after a handful of
+    # polls — nothing like the ~900 polls a real 900 s / 1 Hz run implies.
+    assert 1 <= polls["n"] <= 60, f"deadline did not bound the polls: {polls['n']}"

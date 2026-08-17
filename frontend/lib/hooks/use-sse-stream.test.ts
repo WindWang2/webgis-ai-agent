@@ -257,7 +257,7 @@ describe('useSSEStream mapState snapshot (FE-4 design §7)', () => {
   });
 });
 
-describe('useSSEStream step_cancelled', () => {
+describe('useSSEStream step_cancelled (#608)', () => {
   beforeEach(() => {
     bridgeMock.send.mockClear();
     bridgeMock.onEventCallback = null;
@@ -293,39 +293,45 @@ describe('useSSEStream step_cancelled', () => {
     });
   }
 
-  it('marks a matching running row failed/已取消, preserving other fields and sibling rows', async () => {
+  it('matches by TOOL NAME, not the id space — frontend rows are tc-N, backend step_id is step-{n}', async () => {
     const hook = await renderWithToolCalls([
-      { id: 'step-1', tool: 'search_poi', arguments: '{"q":"school"}', status: 'running', startedAt: 1 },
-      { id: 'step-2', tool: 'heatmap_data', status: 'running', startedAt: 2 },
+      { id: 'tc-1', tool: 'search_poi', arguments: '{"q":"school"}', status: 'running', startedAt: 1 },
+      { id: 'tc-2', tool: 'heatmap_data', status: 'running', startedAt: 2 },
     ]);
+    // step_id never equals any tc-N row id — the old id-space match was a dead
+    // branch; the terminal transition must come from the tool name.
     emitStepCancelled({
       task_id: 't1',
       step_id: 'step-1',
       tool: 'search_poi',
       session_id: 'sid-fe4',
     });
-    const msg = hook.result.current.messages[hook.result.current.messages.length - 1];
-    expect(msg.toolCalls).toEqual([
-      { id: 'step-1', tool: 'search_poi', arguments: '{"q":"school"}', status: 'failed', error: '已取消', startedAt: 1 },
-      { id: 'step-2', tool: 'heatmap_data', status: 'running', startedAt: 2 },
-    ]);
+    const calls = hook.result.current.messages[hook.result.current.messages.length - 1].toolCalls!;
+    expect(calls[0]).toMatchObject({
+      id: 'tc-1',
+      tool: 'search_poi',
+      status: 'failed',
+      error: '已取消',
+    });
+    expect(calls[0].completedAt).toBeTypeOf('number');
+    expect(calls[1]).toMatchObject({ id: 'tc-2', tool: 'heatmap_data', status: 'running' });
   });
 
-  it('no-ops on unknown step_id, preserving message object identity', async () => {
+  it('no-ops when no running row matches the tool, preserving message object identity', async () => {
     const hook = await renderWithToolCalls([
-      { id: 'step-1', tool: 'search_poi', status: 'running', startedAt: 1 },
+      { id: 'tc-1', tool: 'search_poi', status: 'running', startedAt: 1 },
     ]);
     const messagesBefore = hook.result.current.messages;
     const msgBefore = messagesBefore[messagesBefore.length - 1];
-    emitStepCancelled({ task_id: 't1', step_id: 'nope', tool: 'search_poi', session_id: 'sid-fe4' });
+    emitStepCancelled({ task_id: 't1', step_id: 'step-9', tool: 'unknown_tool', session_id: 'sid-fe4' });
     expect(hook.result.current.messages).toBe(messagesBefore);
     expect(hook.result.current.messages[hook.result.current.messages.length - 1]).toBe(msgBefore);
   });
 
   it('never overwrites an already-terminal row while cancelling a running row in the same batch', async () => {
     const hook = await renderWithToolCalls([
-      { id: 'step-1', tool: 'search_poi', status: 'completed', result: 'ok', completedAt: 5 },
-      { id: 'step-2', tool: 'heatmap_data', status: 'running', startedAt: 2 },
+      { id: 'tc-1', tool: 'search_poi', status: 'completed', result: 'ok', completedAt: 5 },
+      { id: 'tc-2', tool: 'heatmap_data', status: 'running', startedAt: 2 },
     ]);
     emitStepCancelled({ task_id: 't1', step_id: 'step-1', tool: 'search_poi', session_id: 'sid-fe4' });
     let calls = hook.result.current.messages[hook.result.current.messages.length - 1].toolCalls!;
@@ -333,19 +339,183 @@ describe('useSSEStream step_cancelled', () => {
     expect(calls[0].result).toBe('ok');
     expect(calls[0].error).toBeUndefined();
     expect(calls[1].status).toBe('running');
-    // a later step_cancelled for the running row still lands
+    // a later step_cancelled for the still-running row lands
     emitStepCancelled({ task_id: 't1', step_id: 'step-2', tool: 'heatmap_data', session_id: 'sid-fe4' });
     calls = hook.result.current.messages[hook.result.current.messages.length - 1].toolCalls!;
-    expect(calls[1]).toMatchObject({ id: 'step-2', status: 'failed', error: '已取消' });
+    expect(calls[1]).toMatchObject({ id: 'tc-2', status: 'failed', error: '已取消' });
+  });
+});
+
+describe('useSSEStream ToolCallChain terminal fallback (#608)', () => {
+  beforeEach(() => {
+    bridgeMock.send.mockClear();
+    bridgeMock.onEventCallback = null;
+    useHudStore.setState({
+      selectedFeature: null,
+      focusLayerId: null,
+      layers: [],
+      baseLayer: 'OSM 地图',
+      viewport: { center: [0, 0], zoom: 5, bearing: 0, pitch: 0 },
+      is3D: false,
+    });
   });
 
-  it('leaves a row running when data.tool mismatches on the same step_id', async () => {
+  async function renderWithToolCalls(toolCalls: ToolCallEntry[]) {
+    const hook = renderStream();
+    await act(async () => {
+      await hook.result.current.handleSend('hi');
+    });
+    act(() => {
+      hook.result.current.setMessages((prev) => {
+        const idx = prev.length - 1;
+        return [...prev.slice(0, idx), { ...prev[idx], toolCalls }];
+      });
+    });
+    return hook;
+  }
+
+  function fire(event: string, data: Record<string, unknown>) {
+    act(() => {
+      bridgeMock.onEventCallback?.({ event, data });
+    });
+  }
+
+  it('stream error finalizes ALL still-running rows (spinner cannot linger)', async () => {
     const hook = await renderWithToolCalls([
-      { id: 'step-1', tool: 'search_poi', status: 'running', startedAt: 1 },
+      { id: 'tc-1', tool: 'search_poi', status: 'completed', completedAt: 5 },
+      { id: 'tc-2', tool: 'buffer_analysis', status: 'running', startedAt: 2 },
+      { id: 'tc-3', tool: 'heatmap_data', status: 'running', startedAt: 3 },
     ]);
-    emitStepCancelled({ task_id: 't1', step_id: 'step-1', tool: 'other_tool', session_id: 'sid-fe4' });
+    fire('error', { session_id: 'sid-fe4', error: 'connection lost' });
     const calls = hook.result.current.messages[hook.result.current.messages.length - 1].toolCalls!;
-    expect(calls[0]).toMatchObject({ id: 'step-1', status: 'running' });
+    expect(calls[0]).toMatchObject({ status: 'completed' }); // terminal rows untouched
+    expect(calls[1]).toMatchObject({ status: 'failed', error: 'connection lost' });
+    expect(calls[2]).toMatchObject({ status: 'failed', error: 'connection lost' });
+    expect(calls[1].completedAt).toBeTypeOf('number');
+    expect(calls[2].completedAt).toBeTypeOf('number');
+  });
+
+  it('task_error finalizes still-running rows with the reported detail', async () => {
+    const hook = await renderWithToolCalls([
+      { id: 'tc-1', tool: 'search_poi', status: 'running', startedAt: 1 },
+    ]);
+    fire('task_error', { session_id: 'sid-fe4', task_id: 't1', error: 'execution pipeline failed' });
+    const calls = hook.result.current.messages[hook.result.current.messages.length - 1].toolCalls!;
+    expect(calls[0]).toMatchObject({ status: 'failed', error: 'execution pipeline failed' });
+  });
+
+  it('task_cancelled finalizes still-running rows as 已取消', async () => {
+    const hook = await renderWithToolCalls([
+      { id: 'tc-1', tool: 'search_poi', status: 'running', startedAt: 1 },
+      { id: 'tc-2', tool: 'heatmap_data', status: 'completed', completedAt: 3 },
+    ]);
+    fire('task_cancelled', { session_id: 'sid-fe4', task_id: 't1' });
+    const calls = hook.result.current.messages[hook.result.current.messages.length - 1].toolCalls!;
+    expect(calls[0]).toMatchObject({ status: 'failed', error: '已取消' });
+    expect(calls[1]).toMatchObject({ status: 'completed' });
+  });
+
+  it('done finalizes residual running rows (lost results) without touching terminal ones', async () => {
+    const hook = await renderWithToolCalls([
+      { id: 'tc-1', tool: 'search_poi', status: 'completed', completedAt: 5 },
+      { id: 'tc-2', tool: 'buffer_analysis', status: 'running', startedAt: 2 },
+    ]);
+    fire('done', { session_id: 'sid-fe4', task_id: 't1' });
+    const calls = hook.result.current.messages[hook.result.current.messages.length - 1].toolCalls!;
+    expect(calls[0]).toMatchObject({ status: 'completed' });
+    expect(calls[1]).toMatchObject({ status: 'failed', error: '未收到执行结果' });
+  });
+
+  it('step_result stamps completedAt and hasGeojson when the result mounts a geojson_ref layer', async () => {
+    const hook = await renderWithToolCalls([
+      { id: 'tc-1', tool: 'search_poi', status: 'running', startedAt: 100 },
+    ]);
+    fire('step_result', {
+      step_id: 'step-1',
+      tool: 'search_poi',
+      session_id: 'sid-fe4',
+      geojson_ref: 'ref:poi-1',
+      name: '搜索结果',
+      result: { type: 'FeatureCollection', features: [] },
+    });
+    const calls = hook.result.current.messages[hook.result.current.messages.length - 1].toolCalls!;
+    expect(calls[0]).toMatchObject({ status: 'completed', hasGeojson: true });
+    expect(calls[0].completedAt).toBeTypeOf('number');
+    expect(calls[0].completedAt!).toBeGreaterThanOrEqual(calls[0].startedAt!);
+  });
+
+  it('step_result without geojson_ref still terminates with completedAt but no hasGeojson flag', async () => {
+    const hook = await renderWithToolCalls([
+      { id: 'tc-1', tool: 'generate_chart', status: 'running', startedAt: 100 },
+    ]);
+    fire('step_result', {
+      step_id: 'step-1',
+      tool: 'generate_chart',
+      session_id: 'sid-fe4',
+      result: { chart: [1, 2] },
+    });
+    const calls = hook.result.current.messages[hook.result.current.messages.length - 1].toolCalls!;
+    expect(calls[0]).toMatchObject({ status: 'completed' });
+    expect(calls[0].hasGeojson).toBeUndefined();
+    expect(calls[0].completedAt).toBeTypeOf('number');
+  });
+});
+
+describe('useSSEStream plan_ready restored done steps (#615)', () => {
+  beforeEach(() => {
+    bridgeMock.onEventCallback = null;
+  });
+
+  it('maps step.done from the restored plan to status done, not hardcoded pending', async () => {
+    const { result } = renderStream();
+    await act(async () => {
+      await result.current.handleSend('继续恢复出来的计划');
+    });
+    act(() => {
+      bridgeMock.onEventCallback?.({
+        event: 'plan_ready',
+        data: {
+          session_id: 'sid-fe4',
+          task_id: 't1',
+          intent: '继续执行',
+          domains: ['spatial'],
+          steps: [
+            { n: 1, goal: '已完成的步骤', tool_family: 'spatial', done: true },
+            { n: 2, goal: '未完成的步骤', tool_family: 'spatial', done: false },
+          ],
+        },
+      });
+    });
+    const msg = result.current.messages[result.current.messages.length - 1];
+    expect((msg as any).agentPlan).toMatchObject({
+      finalized: false,
+      steps: [
+        { n: 1, goal: '已完成的步骤', tool_family: 'spatial', status: 'done' },
+        { n: 2, goal: '未完成的步骤', tool_family: 'spatial', status: 'pending' },
+      ],
+    });
+  });
+
+  it('planner-only turns keep every step pending when done is absent', async () => {
+    const { result } = renderStream();
+    await act(async () => {
+      await result.current.handleSend('给我个计划');
+    });
+    act(() => {
+      bridgeMock.onEventCallback?.({
+        event: 'plan_ready',
+        data: {
+          session_id: 'sid-fe4',
+          task_id: 't1',
+          intent: '新计划',
+          domains: [],
+          steps: [{ n: 1, goal: '第一步', tool_family: 'core' }],
+        },
+      });
+    });
+    const msg = result.current.messages[result.current.messages.length - 1];
+    const steps = (msg as any).agentPlan?.steps;
+    expect(steps).toEqual([{ n: 1, goal: '第一步', tool_family: 'core', status: 'pending' }]);
   });
 });
 

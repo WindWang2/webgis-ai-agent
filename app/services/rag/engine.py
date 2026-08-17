@@ -47,11 +47,14 @@ class KnowledgeEngine:
         if not content.strip():
             return {"error": "Document content is empty"}
 
+        # Issue #591: the pure-Python sliding-window chunker is O(content)
+        # CPU work on a document that can be tens of MB. Run it in the worker
+        # thread pool alongside embed_texts/add_vectors below.
         if file_type == "markdown":
-            sections = split_markdown_sections(content)
+            sections = await asyncio.to_thread(split_markdown_sections, content)
             chunk_list = [{"content": sec.strip(), "chunk_index": i} for i, sec in enumerate(sections) if sec.strip()]
         else:
-            chunk_list = split_into_chunks(content)
+            chunk_list = await asyncio.to_thread(split_into_chunks, content)
 
         if not chunk_list:
             return {"error": "No valid text chunks generated from document"}
@@ -92,7 +95,12 @@ class KnowledgeEngine:
             for text in texts
         ]
 
-        self._store.add_vectors(embeddings, chunks_meta)
+        # Issue #591: add_vectors rewrites the ENTIRE on-disk knowledge base
+        # under flock — full FAISS index write + fsync + rename, then a full
+        # metadata JSON dump + fsync — O(total chunks) disk work. It must not
+        # run on the event loop any more than embed_texts above, or a large
+        # upload stalls every concurrent request until the write lands.
+        await asyncio.to_thread(self._store.add_vectors, embeddings, chunks_meta)
         logger.info(f"KnowledgeEngine: indexed doc_id={doc_id} title='{title}' chunks={len(chunk_list)}")
         return {
             "document_id": doc_id,

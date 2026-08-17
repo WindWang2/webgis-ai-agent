@@ -180,3 +180,63 @@ async def test_missing_metric_in_comparison_does_not_crash():
     )
     assert len(result.scenarios) == 2
     assert result.recommended_scenario_id in {"A", "B"}
+
+
+@pytest.mark.asyncio
+async def test_comparison_report_unsimulated_metrics_renders_placeholder():
+    """P1 (#579): comparison report must not crash on f"{None:.2f}".
+
+    With the default tool params there is no baseline data, so every metric is
+    unsimulated (simulated=None). The metric matrix must render a "—"
+    placeholder instead of raising TypeError, and the report must still be
+    produced end to end (engine -> report).
+    """
+    from app.services.spatial_decision.comparison_engine import ScenarioComparisonEngine
+    from app.services.spatial_decision.models import (
+        SpatialDecisionResult,
+        ScenarioSpec,
+    )
+    from app.services.spatial_decision.report_integration import (
+        generate_comparison_report_markdown,
+    )
+
+    def _make_unsimulated_result(sid: str):
+        return SpatialDecisionResult(
+            decision_id=sid,
+            scenario=ScenarioSpec(
+                scenario_id=sid,
+                scenario_type="subway",
+                name=f"Scenario {sid}",
+                description="d",
+                target_area=_target_area(),
+            ),
+            target_area=_target_area(),
+            metrics={
+                "housing_price": MetricDeltaV2(
+                    metric_key="housing_price",
+                    metric_name="Housing Price",
+                    baseline=None,
+                    simulated=None,
+                    delta_abs=None,
+                    delta_pct=None,
+                    missing_baseline=True,
+                ),
+            },
+            spatial_impacts=[],
+            simulation_geojson={"type": "FeatureCollection", "features": []},
+            simulation_ref_id="",
+            confidence=0.8,
+            uncertainty_description="test",
+        )
+
+    cmp = ScenarioComparisonEngine()
+    result = await cmp.compare_scenarios(
+        results=[_make_unsimulated_result("A"), _make_unsimulated_result("B")]
+    )
+    # Every matrix cell is None — must render "—", never raise TypeError.
+    report = generate_comparison_report_markdown(result)
+    assert "housing_price" in report
+    assert "—" in report
+    # And the report still names both scenarios in the matrix header.
+    assert "Scenario A" in report
+    assert "Scenario B" in report

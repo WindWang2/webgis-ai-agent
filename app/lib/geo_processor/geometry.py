@@ -2,7 +2,7 @@ import json
 import logging
 from typing import Union, Optional
 import geopandas as gpd
-from app.lib.geo_processor.core import to_utm_gdf, safe_parse, to_feature_collection, GeoAnalysisResult
+from app.lib.geo_processor.core import to_utm_gdf, safe_parse, to_feature_collection, GeoAnalysisResult, gdf_from_features, declare_crs
 
 logger = logging.getLogger(__name__)
 
@@ -73,9 +73,11 @@ def buffer_smart(
         
         summary = f"Buffered {len(gdf)} features by {distance}{unit} using UTM projection ({utm_crs})."
         
-        return GeoAnalysisResult(
-            success=True,
-            data={
+        # GIS-599: the output keeps the ORIGINAL CRS coordinates for projected
+        # input, so it must declare that CRS — otherwise downstream consumers
+        # (MVT/geojson_bbox/frontend) misread, e.g., EPSG:3857 metres as WGS84.
+        out_fc = declare_crs(
+            {
                 "type": "FeatureCollection",
                 "features": json.loads(res_gdf.to_json())["features"],
                 "stats": {
@@ -86,6 +88,12 @@ def buffer_smart(
                     "dissolve": dissolve
                 }
             },
+            original_crs,
+        )
+
+        return GeoAnalysisResult(
+            success=True,
+            data=out_fc,
             summary=summary
         )
     except Exception as e:
@@ -112,8 +120,11 @@ def clip_smart(target_layer: Union[dict, str, list], mask_layer: Union[dict, str
         t_fc = to_feature_collection(t_parsed)
         m_fc = to_feature_collection(m_parsed)
         
-        tgdf = gpd.GeoDataFrame.from_features(t_fc, crs="EPSG:4326")
-        mgdf = gpd.GeoDataFrame.from_features(m_fc, crs="EPSG:4326")
+        # GIS-599: honor a declared `crs` member instead of hardcoding
+        # EPSG:4326 — a declared projected input (e.g. EPSG:3857) was
+        # previously misinterpreted as WGS84 and silently dropped.
+        tgdf = gdf_from_features(t_fc, "clip_smart target layer")
+        mgdf = gdf_from_features(m_fc, "clip_smart mask layer")
         
         if tgdf.empty or mgdf.empty:
             return GeoAnalysisResult(True, {"type": "FeatureCollection", "features": []}, "Input layer(s) empty, nothing to clip.")
@@ -157,7 +168,9 @@ def dissolve_smart(geojson: Union[dict, str, list], field: Union[str, list, None
         if not fc.get("features"):
             return GeoAnalysisResult(True, {"type": "FeatureCollection", "features": []}, "Layer empty, nothing to dissolve.")
 
-        gdf = gpd.GeoDataFrame.from_features(fc, crs="EPSG:4326")
+        # GIS-599: honor a declared `crs` member instead of hardcoding
+        # EPSG:4326 — a declared projected input was silently misread as WGS84.
+        gdf = gdf_from_features(fc, "dissolve_smart layer")
         
         if gdf.empty:
             return GeoAnalysisResult(True, {"type": "FeatureCollection", "features": []}, "Layer empty, nothing to dissolve.")

@@ -104,6 +104,26 @@ def test_h3_binning(sample_points):
     assert "sum" in result_sum.data["features"][0]["properties"]
 
 
+def test_h3_binning_honors_declared_crs_member(sample_points):
+    """#599: a declared-EPSG:3857 FeatureCollection must bin to the SAME H3
+    cells as its WGS84 original — pre-fix the projected metres were fed
+    straight into latitude/longitude H3 lookups (silent misplacement)."""
+    from app.utils.coord_transform import transform_geojson
+
+    transformed = transform_geojson(sample_points, "EPSG:4326", "EPSG:3857")
+    transformed["crs"] = {"type": "name", "properties": {"name": "EPSG:3857"}}
+
+    ref = h3_binning(sample_points, resolution=8)
+    res = h3_binning(transformed, resolution=8)
+
+    assert ref.success is True
+    assert res.success is True, res.summary
+    assert len(res.data["features"]) > 0
+    ref_bins = sorted(f["properties"]["h3_index"] for f in ref.data["features"])
+    res_bins = sorted(f["properties"]["h3_index"] for f in res.data["features"])
+    assert res_bins == ref_bins
+
+
 def test_h3_lisa():
     pytest.importorskip("esda", exc_type=ImportError)
     pytest.importorskip("libpysal", exc_type=ImportError)

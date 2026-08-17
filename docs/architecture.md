@@ -1,178 +1,141 @@
-# WebGIS AI Agent 技术架构设计文档 (v0.1.2 + V2 UI)
-> 版本：v3.2 + V2 UI | 日期：2026-05 | 状态：正式版
+# WebGIS AI Agent 架构文档
 
-## 0. V2 UI 更新速览 (2026-05)
+系统分层架构、核心数据链路与扩展纪律。
 
-在 V3.2 核心功能稳定的基础上，我们完成了 **V2 UI 玻璃拟态重新设计**：
+> **版本**: v0.1.3 · **状态**: 活文档 · **最后更新**: 2026-08-17
+>
+> 配套阅读:[技术方案说明书](./技术方案说明书.md)(概念域与演进)、[API 文档](./api-docs.md)(接口契约)、[数据库设计](./database-design.md)(存储)。
 
-| 组件 | 说明 |
-|------|------|
-| **玻璃拟态系统** | `--agent-panel`, `--agent-glass`, `--agent-border` CSS 变量统一管理 |
-| **双主题支持** | Light / Dark 完整主题切换，所有组件适配 `isDark` prop |
-| **状态可视化** | 思考时扫描线动画，感知环涟漪效果，完成时脉冲反馈 |
-| **多标签侧边栏** | 聊天、图层管理、操作日志、导出文件在同一侧边栏内切换 |
-| **演示模式** | 无需后端即可体验完整的 Agent 交互流程 |
+## 目录
 
-相关文档：
-- [前端 V2 设计文档](../frontend/README.md)
-- [技术方案说明书](./技术方案说明书.md)
+- [1. 设计原则](#1-设计原则)
+- [2. 分层架构](#2-分层架构)
+- [3. 核心链路](#3-核心链路)
+- [4. 关键子系统](#4-关键子系统)
+- [5. 稳定性机制](#5-稳定性机制)
+- [6. 部署拓扑](#6-部署拓扑)
+- [7. 扩展纪律](#7-扩展纪律)
 
----
+## 1. 设计原则
 
-## 1. 架构概述与设计原则：一切皆 Agent (Everything is Agent)
-本项目不仅是 WebGIS 工具，而是一个**主权级空间智能体 (Sovereign Spatial Agent)**。我们遵循“Agent 即系统”的哲学：
--   **中枢神经系统 (Agent CNS)**：AI 不再是外部插件，而是系统的逻辑核心。它拥有对数据、渲染和交互的绝对主权。
--   **具身感知 (Embodied Perception)**：前端 MapLibre 实例是 Agent 的感官延伸。通过实时状态回传（Map State Sync），Agent 能“感知”用户正在看的分辨率、范围和活跃图层。
--   **思维外化 (Externalized Thought)**：UI 的每一次变化、图层的每一次叠加，都是 Agent 思维过程的实体化。
--   **极致的计算隔离**：FastAPI 只负责神经信号传输，Celery Worker 是 Agent 强大的“肌肉”，负责处理 GeoPandas 裁剪、遥感影像掩膜等高密计算。
--   **数据主权存储 (Data Sovereignty)**：大数据传输通过 `ref_id` 提货券流转，确保 Agent 内存（上下文）只保留本质的逻辑关联。
--   **防旁路纪律 (Anti-Bypass Discipline)**：严禁绕过 Agent 的端点或交互逻辑。即使是传统的文件上传或地图操作，也必须通过“感知-上报”机制同步给 Agent，确保 Agent 是系统中唯一的真理来源。
+本项目把 LLM Agent 当作系统的逻辑核心,而不是外挂插件。四条不变式贯穿全部代码:
 
----
+1. **Agent 是唯一真理来源**:上传、地图操作等传统交互也必须通过感知-上报机制同步给 Agent;禁止绕过 Agent 的旁路端点。
+2. **具身感知**:前端 MapLibre 实例是 Agent 的感官。每次聊天请求携带 `map_state`(视口、活跃图层),后端将其注入 LLM 上下文,使 Agent 的决策基于用户当前所见。
+3. **计算隔离**:FastAPI 只做信号传输;GeoPandas 连接、rasterio 掩膜级别的重计算一律投递 Celery worker 执行,事件循环上不允许出现秒级阻塞。
+4. **上下文只装逻辑,不装数据**:大尺寸计算结果通过 `ref:` 提货券流转(见 [Fetch-on-Demand](./data-fetcher.md)),LLM 只看到 `{"layer_id", "render_type"}` 级别的虚壳签名。
 
-## 2. 整体立体分层流转架构
+## 2. 分层架构
 
 ```mermaid
 graph TD
-    A[用户态 User] -->|自然语言/上传文件| B(前端渲染枢纽 Next.js)
-    
-    subgraph 前端渲染枢纽 ["具身感官与外化层 (Next.js + MapLibre)"]
-    B1[React Chat/StoryMap 引擎] --> |解析拦截| B2[MapPanel 原生渲染层]
-    B2 --> |3D/GPU Shader 补帧| B3[热力图/实体模型]
-    B4[Agentic HUD / Narrative UI] --> |反应式反馈/状态灯语| B1
+    A[用户] -->|自然语言 / 上传 / 地图操作| B(前端工作台 Next.js + MapLibre)
+
+    subgraph 前端 ["具身感官层"]
+        B1[SSE 流解析 use-sse-stream] --> B2[MapPanel / map-kit 渲染内核]
+        B2 -->|map_state 感官回传| B3[Chat UI / 任务中心 / HUD]
     end
     B --> B1
 
-    
-    subgraph 边界网关 ["非阻塞 API 护城河 (FastAPI)"]
-    C{SSE 流推网关} -.-> |保活检测 :keep-alive| B1
-    C1[Chat 路由进程] --> C
-    C2[空间取件路由 fetch] --> B2
-    C3[WebSocket 感知通道] -.-> |实时双向| B1
+    subgraph 网关 ["API 网关 (FastAPI, /api/v1)"]
+        C1[chat 路由 SSE 流]
+        C2[layers 数据取件 / MVT 瓦片]
+        C3[jobs / explorer / upload / auth ...]
+        C4[限流 · JWT · Prometheus /metrics]
     end
     B1 -->|POST /chat/stream| C1
-    
-    subgraph 大脑中枢 ["AI Agent 调度层"]
-    D[Orchestrator 编排器] --> |Tool 调用指令| D1(LLM API — 兼容 OpenAI 格式)
-    D1 --> |生成 JSON 架子| D
+    B2 -->|GET /layers/data/ref| C2
+
+    subgraph Agent ["Agent 调度层"]
+        D[ChatEngine: planner → execution_engine → tool_pipeline → 观察/反思]
+        D1[Pi agent 桥 USE_NEW_AGENT<br/>JSON-RPC 子进程,失败回退 ChatEngine]
+        D -->|OpenAI 兼容 API| E[LLM]
     end
     C1 --> D
-    
-    subgraph 重算隔离区 ["Celery 分布式超算群"]
-    E[Worker: GeoPandas 交集计算] 
-    E1[Worker: 遥感掩膜获取]
+
+    subgraph 计算 ["计算隔离区 (Celery Workers)"]
+        F[GeoPandas 空间算子]
+        F1[rasterio 遥感计算]
+        F2[网络分析 / 制图分类 / Explorer 任务链]
     end
-    D -->|异步投递算子| E
-    
-    subgraph 数据弹药库 ["海量时空与流存储"]
-    F[(Redis 集群)] --> |Celery 结果后端 & 会话缓存| C2
-    F1[(PostGIS / SQLite)] --> |落盘长期存储| E
+    D -->|异步投递| F
+
+    subgraph 存储 ["存储层"]
+        G[(Redis: broker + 会话数据<br/>SessionDataManager)]
+        H[(PostgreSQL/PostGIS 或 SQLite:<br/>22 张表 + durable job 事实源)]
     end
-    E --> F
-    E --> F1
+    D -.-> G
+    F --> G
+    F --> H
+    C2 -.-> G
 ```
 
----
+## 3. 核心链路
 
-## 3. 核心流链路解析
+### 3.1 一次对话的完整生命周期
 
-### 3.1 Fetch-on-Demand (按需提件流)
-在传统的 LLM+GIS 应用中，由于大模型需要输出计算结果，常常会导致上下文被 50MB 的 GeoJSON 所撑爆。
-**V2.0 解决方案**：
-1. **Tool 层封箱**：当后端 Python 函数运行完毕获得大尺寸 `FeatureCollection` 时，生成一个唯一随机签名，如 `ref_id: ref:geojson-a1b2c3d4`。数据本体被存入内存 `SessionDataManager`（LRU 淘汰策略，每 session 最多 200 条）。
-2. **LLM 传输层**：大模型仅看到 `{"layer_id": "geojson_09a8b7c", "render_type": "heatmap"}` 这样的虚壳签名，立刻返回给主路由。
-3. **SSE 极简下发**：网关实时推送提货码，前端 HUD 同步展示任务进度。
-4. **前端提货**：客户端 React 拦截器拼装出 `ref_id` 后，通过 `/api/v1/layers/data/{ref_id}?session_id=xxx` 发起独立的 HTTP 拉取任务。
-5. **挂载**：获取的巨量点位直接绕过 React State，注入 `mapRef` 实例底层源生绘制。
+1. 前端采集 `map_state`(视口中心、zoom、图层显隐)随 `POST /api/v1/chat/stream` 上行。
+2. `ChatEngine`(`app/services/chat/`)组装上下文:系统提示 + 会话历史 + 当前地图状态 + 项目上下文(`project_id`)。
+3. **规划-执行循环**:planner 产出计划 → execution_engine 逐个调度工具 → 工具结果(含失败)作为观察回填 → LLM 反思决定下一步。`{"error": ...}` 的工具返回被统一识别为失败,计划不会跨过失败推进。
+4. 工具产出的大结果挂载为 `ref:geojson-*` 提货券,SSE 只下发引用与渲染指令(20 个地图指令,如 `fly_to` / `add_layer` / `zoom_to_bbox`);前端 `map-action-handler` 分发渲染。
+5. 全程 SSE 流式:思考 token、工具进度、结果卡片、心跳帧按序下发;消息按同步写入保证自增 ID 与时间轴一致。
 
-### 3.2 SSE Keep-Alive 心跳保活阵列
-在进行动辄数分钟的全国级道路网相交测算时，前端与 FastAPI 极易因为长时间无响应而发生 `ERR_CONNECTION_RESET`。
-**V2.0 解决方案**（两种互补实现）：
-- **`chat_engine.py`**：在工具执行阻塞等待期间，事件驱动地发送 SSE 注释帧 `": keep-alive\n\n"`（无固定间隔，按需触发）。
-- **`explorer/orchestrator.py`**：独立看门狗循环，每隔 **15 秒**发送 `sse_event("heartbeat", {"ts": ...})` 数据帧。
+### 3.2 Fetch-on-Demand 与 MVT(数据平面)
 
-此机制从硬件网关（Nginx等）层面维系了通道常开。
+- 小数据(阈值以下)整包 GeoJSON 下发;`use-sse-stream.ts` 以 `VECTOR_TILE_THRESHOLD = 5000` 分流。
+- 大数据:>5000 要素图层走 **MVT 矢量瓦片**(`/layers/{id}/tiles/{z}/{x}/{y}`,ETag/304 + single-flight),MapLibre `transformRequest` 注入会话凭据加载;要素级数据走 `ref:` 提货券按需拉取。
+- 详见 [data-fetcher.md](./data-fetcher.md)。
 
-3.3 Map State & Sensory Integration (感官与状态同步)
-为了实现“一切皆 Agent”，我们构建了双向的感官反馈闭环：
-1. **主动感知 (Proactive Perception)**：
-   - 每一次聊天请求发起时，前端会自动采集当前的 `viewport`（中心点、Zoom）和 `layers`（显隐状态、透明度）。
-   - 这些数据作为 `map_state` 发送至后端，并持久化到 `SessionDataManager`。
-2. **实时 HUD 注入与双源算法**：
-   - `ChatEngine` 会将上述数据转化为 `[当前地图状态 (实时感知)]` 块，作为系统观测注入 AI 的 Context。
-   - **双源感知策略 (Strategy 2)**：当后端 Session 数据过期或重置时，Agent 会回退到前端实时上报的图层 ID 进行“具身感知”。这种自愈能力允许 Agent 控制由于页面刷新或 Session 过期遗留的“客场图层”，实现跨 Session 的操控主权。
-3. **闭环稳定性**：AI 被约束在单轮交互中通过“执行-观察-感知”完成逻辑缝合，极大减少了由于视角不匹配导致的盲目重复调用。
+### 3.3 统一 Durable Job 运行时(ADR-0052)
 
-### 3.4 破网抓取 (Sub-Agent)
-1. **破网爬行者 (Crawler)**：在 Tool 层嵌入 `duckduckgo-search` 组件。当 AI 在本地数据库寻址失败时，隐秘释放探测器向外网请求当前地理百科或新闻流。
+所有长任务(空间分析、Explorer 链、制图)进入同一 job 生命周期:状态落库(`analysis_tasks` 表,含 `job_kind` / `session_id` / `owner_token` / `heartbeat_at` / `attempt` 等列)、心跳续约、两段式取消(先落 `cancel_requested_at`,再触发进程内 token)、失败可幂等重试。前端任务中心经 `GET /api/v1/tasks/jobs` 统一查看 durable job 与内存态 agent task。跨重启后任务状态依然可查、可取消。
 
-### 3.4 Operational Stability & State Resilience (操作稳定性与状态自愈)
-为了确保 Agent 在复杂的网络和浏览器环境下依然稳健，引入了以下硬化指标：
-1. **Hydration Integrity (水合完整性)**：React 界面中，我们将 `ReactMarkdown` 的段落标签 (`p`) 语义化映射为除块级元素之外的 `div`，彻底杜绝了由于内容嵌套非法（如 `div` 嵌套在 `p` 中）导致的前端 Hydration 警告。
-2. **Image Safety Guards (图片渲染护城河)**：通过自定义渲染器强制过滤非法的或由模型幻觉产生的图片地址。仅允许合规的 `http(s)` 或 `data:` 协议，且阻断任何非预期的本地占位符（如 `![Status](Message)`），有效消灭了控制台中的 404 资源错误。
-3. **Sequence-Guaranteed Persistence (序贯持久化)**：后端 `Message` 的数据库写入由“异步 background”改为“同步 await”。这确保了 auto-increment ID 严格遵循对话的时间轴，彻底解决了并发写入可能导致的会话历史重构混乱（Context Corruption）问题。
+### 3.4 空间探索引擎 Explorer
 
-### 3.5 Agentic Cartography & Professional Synthesis (Agent 主导制图与合成)
-**V3.0 创新点**：
-1. **Canvas 重绘合成器**：Agent 不再只是被动的截图者。它能调用 `export_thematic_map` 指令，驱动前端拦截 WebGL 画布，并利用 Canvas 2D API 叠加”玻璃质感”标题、动态水印及渐变遮罩，生成符合现代设计审美的专题地图母带。
-2. **隐式感知回路 (Implicit Feedback Loop)**：制图落盘后，前端通过隐式系统消息（System Callback）告知 Agent 具体的存储 URL，Agent 再通过对话交付下载直链，实现了”制图-交付-存档”的完整权利闭环。
+六阶段流水线(`app/services/explorer/`):意图识别 → 数据发现 → 抓取 → 解析 → 验证 → 地理编码,以 Celery 任务链(`app/tasks/explorer/task_chain.py`)执行。进度经 `explorer_progress` 事件推送:登录会话走属主校验的独立流,匿名会话桥接进会话隔离的聊天流。任务有并发上限、可关闭、随会话切换清理,链运行状态跨重启持久。
 
-**V3.2 标准制图饰件 + PDF 输出**：
-3. **标准地图饰件 (Cartographic Elements)**：前端 Canvas 2D 渲染流水线新增三类专业地图饰件——
-   - **指北针**：红/白双色四方向箭头，旋转角自动与 MapLibre `bearing` 同步；
-   - **比例尺**：4 段交替刻度尺，根据 `156543 × cos(lat) / 2^zoom` 公式动态计算像素宽度，单位自适应（m / km）；
-   - **图例**：自动检测当前可见 choropleth 图层的 `metadata`，渲染色块 + 数值区间面板。
-   其中指北针/比例尺/图例在前端 Canvas 2D 完成叠加渲染，数据分类则由后端 `CartographyService.classify()` (Fisher-Jenks O(n²k) 动态规划实现，含 1000 样本上限) 提供。
-4. **PDF 专业输出流水线**：`export_thematic_map` 新增 `format: “pdf”` 选项。PNG 合成完成后由 FastAPI `/api/v1/export/pdf` 接口接收，后端使用 matplotlib 排版为标准 A4 横向版式（页眉含标题/副标题，页脚含制图日期/制图者/比例尺文本），并将 PDF 元数据（Title/Author/Subject）写入文件头。
-5. **Jenks 自然断点算法 (Fisher-Jenks Natural Breaks)**：`CartographyService.classify()` 的 `natural_breaks` 方法从”等间距兜底”升级为真正的 Fisher-Jenks O(n²k) 动态规划实现，并内置 1 000 样本上限以防大数据集性能衰退。配合 `spatial_join` 的 STRtree 索引修正（`valid_right[c_idx][0]` 原始下标），专题图分类精度和空间连接正确性均显著提升。
+### 3.5 制图闭环(MapSpec)
 
-### 3.6 Nature Resource Intelligence & Persistent Assets (自然资源智能与持久化资产)
-**V3.1 & V3.2 核心能力**：
-1. **遥感算子下沉**：深度集成 `rasterio`，支持 NDVI (归一化植被指数) 等专业算子的秒级计算。支持对 Sentinel-2, Landsat 等多波段数据的智能波段识别 (Smart Band Detection)。
-2. **分析资产管理 (Asset Management)**：突破了“Session 消失即数据丢失”的限制。分析产生的 GeoTIFF 结果将被永久保存并注册到 `uploads` 数据库。
-3. **高特权指令集**：Agent 获得了对这些数字资产的“自主意志”，能够执行 `manage_analysis_asset`（重命名、永久删除等）指令，成为真正的云端资源管家。
+Agent 产出 MapSpec(制图规范)→ 后端分类(Fisher-Jenks,千样本上限)→ 前端 Canvas 合成(指北针随 bearing 旋转、比例尺按 `156543·cos(lat)/2^zoom` 动态计算、图例自动检测图层 metadata)→ PNG/PDF 落盘(A4 版式、300 DPI 重采样)→ 隐式系统消息回告 Agent 存储路径,形成"制图-交付-存档"闭环。质量分级见 [cartographic-closed-loop.md](./cartographic-closed-loop.md)。
 
-### 3.7 Spatial Intelligence Hub (工具体系增强)
-**V3.2 创新点**：
-1. **专业算子库**：新增 `analyze_terrain`（地形特征）、`detect_raster_change`（时序对比）和 `calculate_zonal_stats`（区域分区分级统计）等工业级算子。
-2. **智能解引用桥接 (Magic Resolving Bridge)**：工具注册中心实现自动参数转换。当 Agent 发起 `ref:xxx` ID 调用工具时，会自动解析为物理路径或缓存的 GeoJSON 对象。
+## 4. 关键子系统
 
+| 子系统 | 位置 | 职责 |
+|---|---|---|
+| ChatEngine | `app/services/chat/` | 规划-执行-反思循环、上下文组装、SSE 事件 |
+| Pi agent 桥 | `app/agent_pi_bridge.py` | `USE_NEW_AGENT` 开启后以 JSON-RPC 子进程驱动 Pi agent,工具经 `/pi-tools/execute` 回调分发;初始化失败自动回退 ChatEngine |
+| 工具注册中心 | `app/tools/registry.py` + `app/tools/__init__.py` | 34 组静态注册 + `app/skills/*.md` 动态技能;`ref:` 参数自动解引用 |
+| Durable Jobs | `app/services/jobs/` | 统一任务运行时:提交/生命周期/取消/进度/产物 |
+| Explorer | `app/services/explorer/` | 六阶段数据探索流水线 |
+| Data Fabric | `app/services/data_fabric/` | 外部数据源目录、适配器、断路器、物化 |
+| MapSpec | `app/services/mapspec/` + `frontend/lib/mapspec-compiler/` | 制图规范编译(服务端分类 + 前端 Canvas 合成) |
+| RAG | `app/services/rag/` | 文档分块、sentence-transformers 嵌入、FAISS 检索 |
+| 会话数据 | `app/services/session_data.py` | Redis 后端的提货券存取,每 session LRU 上限 200 条 |
+| 任务队列 | `app/services/task_queue.py` | Celery app:acks_late、1h 硬超时、无 Redis 时 eager 兜底 |
+| 中文地图源 | `app/tools/chinese_maps/` | 天地图 / 高德 / 百度协议适配 |
 
----
+## 5. 稳定性机制
 
-## 4. 异常自理机制 (Exception As Thought)
+- **SSE 心跳**:工具阻塞期间事件驱动下发注释帧 `: keep-alive`;Explorer 看门狗每 15s 发 `heartbeat` 数据帧,防中间网关掐断长连接。
+- **Exception-as-Thought**:工具异常不抛 500,而是打包为"失败原因 + 纠错建议(如调用 `fix_crs`)"的伪用户消息回流 LLM 反思重试。
+- **所有权与隔离**:任务/上传/探索按 `session_id` + `owner_token` 作用域;匿名会话按 owner_token 分桶,消除跨用户驱逐。
+- **限流**:登录接口与全局 API 限流(见 [rate-limiting.md](./rate-limiting.md))。
+- **健康探针**:`/api/v1/health/live`(liveness)与 `/api/v1/ready`(readiness,DB+LLM+Redis+Celery)。
 
-GIS 时空框架的冲突是编程中极难枚举完的边界问题。
-**防死磕策略：**
-```python
-# Tool Use 外包装的伪代码规范
-try:
-    result = perform_heavy_spatial_cut(gdf_a, gdf_b)
-    return success_pack(result)
-except Exception as e:
-    # 决不能 raise Http500!
-    error_trace = f"Tool Execution Failed. Reason: {str(e)}. Please consider call 'fix_crs' tool or change parameters."
-    return as_pseudo_user_message(error_trace)
-```
-系统截获这类物理异常后，将其打包为“下一步该怎么走”的建议文本，再次输送给大模型的会话历史栈。由大模型经过反思（Reflection）决定是否纠错重跑，从而缔造一种“永不宕机”的自驱动观感。
+## 6. 部署拓扑
 
----
+- **本地开发**:SQLite + 本地/容器 Redis,Celery eager 或本机 worker(`manage.py dev`)。
+- **Docker Compose**:开发栈 4 服务(db/redis/api/celery);生产栈 10 服务(+nginx/Prometheus/Grafana/exporters);安全栈 9 服务(db/redis 不暴露端口,nginx 唯一公网入口)。详见 [DEPLOYMENT.md](./DEPLOYMENT.md)。
+- **Kubernetes**(`deploy/k8s/`):initContainer 执行 `alembic upgrade head`,HPA 按 CPU/内存伸缩,PDB 保可用。
+- **CI/CD**:PR 9 项门禁 → release-gate → 镜像推送 ghcr.io → PR 预览 / 生产部署 / 一键回滚。
 
-## 5. 项目部署架构体系
+## 7. 扩展纪律
 
-- **单机实验级 (Local Dev)**: 使用 `/scratch` 或 `sqlite` 进行极轻量降级挂载。
-- **标准容器级 (Docker Compose)**: 推荐形态。一键拉起 `Web` (FastAPI), `Worker` (Celery), `Redis`, `DB`。
-- **无限伸缩级 (Kubernetes)**: 
-  - `Ingress` 处理万级客户端 SSE 长连接黏性路由。
-  - `Worker Pods` 依据高密计算列队的堆积厚度完成自动弹性（HPA）扩展。 
-  - `PostGIS` 做主从高可用解构读写分离。
+新增空间算子、爬虫组件或工具时的红线(与 [CODE_REVIEW.md](../CODE_REVIEW.md) 一致):
 
----
-
-## 6. 工具与模块扩展纪律 (Contributing Guide)
-
-未来所有新增的空间算子、爬虫组件必须遵循以下红线：
-1. **Pydantic Type Guard**：必须使用最严苛的 `pydantic.Field` 进行 Tool args 强约束验证。
-2. **Zero Big Data in Context**：绝对禁止 `return { "type": "Feature", ... }` 交往大模型脑端。
-3. **Celery First**：但凡使用到 `pd.read_csv`, `gpd.sjoin`, `rasterio.open` 的接口，必须打上 `@celery_task` 修饰印记，扔出主干道外执行。 
-4. **No Raster Push**：不要再尝试后端生图片！向前端投递纯净的源数据特征，配以规范的 `metadata.color_ramp`，在前端运用 `MapLibre` 原生能力完成极致渲染。
+1. **Pydantic Type Guard** — 工具入参用最严格的 `pydantic.Field` 约束,拒绝裸 dict。
+2. **Zero Big Data in Context** — 禁止把 FeatureCollection 交给 LLM;一律挂 `ref:` 提货券。
+3. **Celery First** — 凡用到 `gpd.sjoin` / `rasterio.open` / `pd.read_csv` 的路径必须投递 Celery,不得阻塞事件循环。
+4. **No Raster Push** — 后端不生图片;交付源数据 + `metadata.color_ramp`,渲染交给前端 MapLibre。
+5. **失败要诚实** — 工具失败必须以 `{"error": ...}` 显式返回并计入失败分类;禁止吞异常伪装成功。
+6. **架构级变更先写 ADR** — `docs/adr/` 已有 54 篇决策记录,新决策先立字据再动代码。

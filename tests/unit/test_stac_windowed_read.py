@@ -19,14 +19,18 @@ _SCENE_BOUNDS = [_WEST, _NORTH - _PX * _SCENE_HEIGHT,
                  _WEST + _PX * _SCENE_WIDTH, _NORTH]
 
 
-def _write_scene(path, values):
+def _write_scene(path, values, px=_PX, nodata=None):
     import rasterio
     from rasterio.transform import from_origin
-    transform = from_origin(_WEST, _NORTH, _PX, _PX)
-    with rasterio.open(
-        str(path), "w", driver="GTiff", height=_SCENE_HEIGHT, width=_SCENE_WIDTH,
-        count=1, dtype="float64", crs="EPSG:4326", transform=transform,
-    ) as dst:
+    height, width = values.shape
+    transform = from_origin(_WEST, _NORTH, px, px)
+    open_kwargs = dict(
+        driver="GTiff", height=height, width=width, count=1,
+        dtype="float64", crs="EPSG:4326", transform=transform,
+    )
+    if nodata is not None:
+        open_kwargs["nodata"] = nodata
+    with rasterio.open(str(path), "w", **open_kwargs) as dst:
         dst.write(values, 1)
 
 
@@ -262,3 +266,212 @@ async def test_engine_compute_terrain_uses_data_bounds(monkeypatch):
     res = await engine.compute_terrain([10.0, 59.9, 10.2, 60.1], products=["slope"])
     assert res.is_error is False
     assert res.bounds == data_bounds
+
+
+# ─── Issue #577: mixed-resolution bands (NBR = 10m B08 + 20m B12) must be
+#    read onto ONE common target grid ─────────────────────────────────────
+
+# Fine scene = 10m-equivalent (px 0.0001°) and coarse scene = 20m-equivalent
+# (px 0.0002°) sharing the same origin and footprint; coarse = fine / 2 per side.
+_FINE_PX, _COARSE_PX = 0.0001, 0.0002
+
+
+def _mixed_resolution_scenes(tmp_path):
+    """Write a 60x80 fine (nir) + 30x40 coarse (swir22) scene pair (both with
+    nodata metadata so reads use nodata-aware resampling) and return paths."""
+    fine = _fake_band_values(31)[:60, :80]
+    coarse = _fake_band_values(47)[:30, :40]
+    fine_path = tmp_path / "fine_nir.tif"
+    coarse_path = tmp_path / "coarse_swir.tif"
+    _write_scene(fine_path, fine, px=_FINE_PX, nodata=-9999.0)
+    _write_scene(coarse_path, coarse, px=_COARSE_PX, nodata=-9999.0)
+    return fine, coarse, fine_path, coarse_path
+
+
+def test_mixed_resolution_bands_align_on_reference_grid(monkeypatch, tmp_path):
+    """#577 acceptance: per-band out_shape used to yield different-shaped
+    arrays for 10m/20m bands (or coincidentally equal shapes on misaligned
+    grids). All bands must now land on the highest-resolution band's grid."""
+    from app.services.rs.stac_client import StacClientPrimitive
+
+    fine, coarse, fine_path, coarse_path = _mixed_resolution_scenes(tmp_path)
+    # Scene footprint [10.0, 59.994, 10.008, 60.0] for both bands.
+    footprint = [10.0, 60.0 - 60 * _FINE_PX, 10.0 + 80 * _FINE_PX, 60.0]
+    item = _FakeItem("s2-mixed", footprint,
+                     {"nir": str(fine_path), "swir22": str(coarse_path)})
+    monkeypatch.setattr(StacClientPrimitive, "_get_catalog",
+                        lambda self: _FakeCatalog([item]))
+
+    # bbox aligned to BOTH grids (fine col 24..52 / row 0..14; coarse col
+    # 12..26 / row 0..7). ds_factor=2 -> fine 2x2 block means, coarse 1:1.
+    bbox = [10.0 + 24 * _FINE_PX, 60.0 - 14 * _FINE_PX,
+            10.0 + 52 * _FINE_PX, 60.0]
+    res = _fetch(monkeypatch, item, bbox, {"nir": "nir", "swir12": "swir22"},
+                 ds_factor=2)
+    assert "error" not in res, res.get("error")
+
+    nir = res["bands"]["nir"]
+    swir = res["bands"]["swir12"]
+    # Same shape — the broadcast error class is gone.
+    assert nir.shape == (7, 14)
+    assert swir.shape == nir.shape
+
+    # Values on the common grid match hand-computed truths: the 10m band is
+    # downsampled 2x (nodata-aware block mean), the 20m band is 1:1.
+    truth_nir = fine[0:14, 24:52].reshape(7, 2, 14, 2).mean(axis=(1, 3))
+    np.testing.assert_allclose(nir, truth_nir, rtol=1e-9, atol=1e-9)
+    np.testing.assert_array_equal(swir, coarse[0:7, 12:26])
+
+    # NBR on the aligned bands must compute without broadcast errors.
+    nbr = compute_index_array("nbr", nir=nir, swir12=swir)
+    assert nbr.shape == nir.shape
+    assert np.all(np.isfinite(nbr))
+
+
+def test_mixed_resolution_bands_equal_shape_at_ds_factor_1(monkeypatch, tmp_path):
+    """#577: at ds_factor=1 (the fine 10m grid is the target) the coarse 20m
+    band must be resampled up to the same shape as the fine band."""
+    from app.services.rs.stac_client import StacClientPrimitive
+
+    fine, coarse, fine_path, coarse_path = _mixed_resolution_scenes(tmp_path)
+    footprint = [10.0, 60.0 - 60 * _FINE_PX, 10.0 + 80 * _FINE_PX, 60.0]
+    item = _FakeItem("s2-mixed", footprint,
+                     {"nir": str(fine_path), "swir22": str(coarse_path)})
+    monkeypatch.setattr(StacClientPrimitive, "_get_catalog",
+                        lambda self: _FakeCatalog([item]))
+
+    bbox = [10.0 + 24 * _FINE_PX, 60.0 - 14 * _FINE_PX,
+            10.0 + 52 * _FINE_PX, 60.0]
+    res = _fetch(monkeypatch, item, bbox, {"nir": "nir", "swir12": "swir22"},
+                 ds_factor=1)
+    assert "error" not in res, res.get("error")
+    assert res["bands"]["nir"].shape == (14, 28)
+    assert res["bands"]["swir12"].shape == (14, 28)
+    nbr = compute_index_array("nbr", nir=res["bands"]["nir"],
+                              swir12=res["bands"]["swir12"])
+    assert nbr.shape == (14, 28)
+    assert np.all(np.isfinite(nbr))
+
+
+# ─── Issue #578: DEM nodata sentinel must be excluded BEFORE resampling ───
+
+
+def test_dem_nodata_excluded_before_resampling(monkeypatch, tmp_path):
+    """#578 acceptance: a 2x2 block [10,14;11,-9999] downsampled by bilinear
+    mixes the sentinel into -1599.75-like "legal" values that pass a post-hoc
+    `<= -9999` mask. Nodata-aware average resampling must return the mean of
+    the VALID pixels only (10+14+11)/3."""
+    from app.services.rs.stac_client import StacClientPrimitive
+
+    dem = np.array([
+        [0.0, 4.0, 8.0, 12.0],
+        [1.0, 5.0, 9.0, 13.0],
+        [2.0, 6.0, 10.0, 14.0],
+        [3.0, 7.0, 11.0, -9999.0],
+    ])
+    dem_path = tmp_path / "dem_nodata.tif"
+    _write_scene(dem_path, dem, nodata=-9999.0)
+    item = _FakeItem("dem-item", [10.0, 59.996, 10.004, 60.0],
+                     {"data": str(dem_path)})
+    monkeypatch.setattr(StacClientPrimitive, "_get_catalog",
+                        lambda self: _FakeCatalog([item]))
+
+    res = _fetch(monkeypatch, item, [10.0, 59.996, 10.004, 60.0],
+                 {"dem": "data"}, ds_factor=2)
+    assert "error" not in res, res.get("error")
+    assert res["bands"]["dem"].shape == (2, 2)
+    truth = np.array([
+        [2.5, 10.5],
+        [4.5, (10.0 + 14.0 + 11.0) / 3.0],
+    ])
+    np.testing.assert_allclose(res["bands"]["dem"], truth, rtol=1e-9, atol=1e-9)
+    # The bilinear-polluted value 10.51 for the mixed window must NOT appear.
+    assert not np.any(np.isclose(res["bands"]["dem"], 10.51020408, atol=1e-3))
+
+
+def test_dem_all_nodata_block_keeps_sentinel_for_late_masking(monkeypatch, tmp_path):
+    """#578: a window of ALL nodata must stay sentinel after resampling so the
+    consumer-side `<= -9999` mask (spectral_engine) can still null it out."""
+    from app.services.rs.stac_client import StacClientPrimitive
+
+    dem = np.array([
+        [0.0, 4.0, 8.0, 12.0],
+        [1.0, 5.0, 9.0, 13.0],
+        [2.0, 6.0, -9999.0, -9999.0],
+        [3.0, 7.0, -9999.0, -9999.0],
+    ])
+    dem_path = tmp_path / "dem_allnodata.tif"
+    _write_scene(dem_path, dem, nodata=-9999.0)
+    item = _FakeItem("dem-item", [10.0, 59.996, 10.004, 60.0],
+                     {"data": str(dem_path)})
+    monkeypatch.setattr(StacClientPrimitive, "_get_catalog",
+                        lambda self: _FakeCatalog([item]))
+
+    res = _fetch(monkeypatch, item, [10.0, 59.996, 10.004, 60.0],
+                 {"dem": "data"}, ds_factor=2)
+    assert "error" not in res, res.get("error")
+    assert res["bands"]["dem"].shape == (2, 2)
+    assert res["bands"]["dem"][1, 1] == -9999.0  # 全 nodata 窗口保留哨兵
+    assert res["bands"]["dem"][0, 0] == pytest.approx(2.5)
+
+
+@pytest.mark.asyncio
+async def test_compute_terrain_dem_nodata_edge_no_sentinel_pollution(monkeypatch, tmp_path):
+    """#578 end-to-end: compute_terrain over a DEM with a -9999 corner must
+    yield sane slopes (no phantom 87.7° from sentinel-averaged pseudo-elevation)
+    and 100% valid pixels."""
+    from app.services.rs.stac_client import StacClientPrimitive
+    from app.services.rs.spectral_engine import SpectralRasterEngine
+
+    dem = np.array([
+        [0.0, 4.0, 8.0, 12.0],
+        [1.0, 5.0, 9.0, 13.0],
+        [2.0, 6.0, 10.0, 14.0],
+        [3.0, 7.0, 11.0, -9999.0],
+    ])
+    dem_path = tmp_path / "dem_e2e.tif"
+    _write_scene(dem_path, dem, nodata=-9999.0)
+    item = _FakeItem("dem-item", [10.0, 59.996, 10.004, 60.0],
+                     {"data": str(dem_path)})
+    monkeypatch.setattr(StacClientPrimitive, "_get_catalog",
+                        lambda self: _FakeCatalog([item]))
+
+    engine = SpectralRasterEngine()
+    res = await engine.compute_terrain([10.0, 59.996, 10.004, 60.0],
+                                       products=["slope"])
+    assert res.is_error is False, res.error_msg
+    assert res.stats["valid_pixel_pct"] == "100.0%"
+    # No polluted pseudo-elevation -> no phantom near-vertical slope.
+    assert res.stats["max"] < 30.0
+    assert res.stats["min"] >= 0.0
+
+
+@pytest.mark.asyncio
+async def test_compute_terrain_all_nodata_block_masked_to_nan(monkeypatch, tmp_path):
+    """#578: an all-nodata 2x2 block survives resampling as the sentinel, then
+    the engine's `<= -9999` mask turns it (and its derivative neighborhood)
+    into NaN instead of an extreme value."""
+    from app.services.rs.stac_client import StacClientPrimitive
+    from app.services.rs.spectral_engine import SpectralRasterEngine
+
+    dem = np.array([
+        [0.0, 4.0, 8.0, 12.0],
+        [1.0, 5.0, 9.0, 13.0],
+        [2.0, 6.0, -9999.0, -9999.0],
+        [3.0, 7.0, -9999.0, -9999.0],
+    ])
+    dem_path = tmp_path / "dem_e2e_allnodata.tif"
+    _write_scene(dem_path, dem, nodata=-9999.0)
+    item = _FakeItem("dem-item", [10.0, 59.996, 10.004, 60.0],
+                     {"data": str(dem_path)})
+    monkeypatch.setattr(StacClientPrimitive, "_get_catalog",
+                        lambda self: _FakeCatalog([item]))
+
+    engine = SpectralRasterEngine()
+    res = await engine.compute_terrain([10.0, 59.996, 10.004, 60.0],
+                                       products=["slope"])
+    assert res.is_error is False, res.error_msg
+    # 2x2 slope from a 2x2 dem whose bottom-right block is nodata -> the Horn
+    # window touches NaN everywhere, so no pixel can claim a valid slope.
+    assert np.all(np.isnan(res.array))
+    assert res.stats["valid_pixels"] == 0

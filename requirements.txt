@@ -24,6 +24,10 @@ pydantic>=2.13.4
 pydantic-settings>=2.14.2
 python-dotenv>=1.0.0
 httpx>=0.26.0
+# requests: app/services/data_fabric/security.py、data_fabric/adapters/stac_adapter.py
+# 等直接 import（#618-35）。此前仅靠其他包传递依赖引入 —— 直接使用的库必须
+# 直接声明（同类问题见下方 #563 rich 注释）。
+requests>=2.31.0
 pyyaml>=6.0.3
 # rich: manage.py（ops CLI：create-admin / check / dev）模块级 import
 # Console/Table/Panel。此前漏列导致干净环境任何 `python manage.py …`
@@ -103,3 +107,6 @@ networkx>=3.6.1
 # Prometheus metrics (审计 I11: exposes /metrics for prometheus scrape)
 # >=7.0.0 required for FastAPI ≥0.115 / starlette ≥0.40 compat (_IncludedRouter fix)
 prometheus-fastapi-instrumentator>=7.0.0
+# prometheus-client: app/core/auth_metrics.py 直接 import（#618-35）。
+# instrumentator 的传递依赖可随时被上游调整 —— 直接使用的库必须直接声明。
+prometheus-client>=0.20.0

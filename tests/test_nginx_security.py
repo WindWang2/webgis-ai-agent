@@ -78,3 +78,45 @@ class TestSecureComposeInlineNginxParity:
             assert "deploy/" not in str(v), (
                 f"nginx 仍 bind-mount 未随部署分发的路径: {v}"
             )
+
+
+class TestNginxApiRoutingAndBodySizeGuards:
+    """#585/#586：静态资源 regex location 不得劫持 /api/ 路由；上传体积上限
+    需在 server 级设全局基线（不能只设在 /api/v1/upload）。"""
+
+    NGINX = "deploy/nginx/nginx.conf"
+
+    def _read(self):
+        with open(self.NGINX) as f:
+            return f.read()
+
+    def test_static_regex_locations_exclude_api_prefix(self):
+        """regex location 必须用 ^(?!/api/) 把 /api/ 前缀排除在静态缓存外。
+
+        nginx 的 regex location 匹配优先级高于普通前缀 location /api/（/api/ 无
+        ^~ 修饰）——导出的 /api/v1/export/download/*.png 与 /api/v1/static/* 若
+        命中静态 regex 会被改发到 frontend 而 404（#585）。
+        """
+        content = self._read()
+        assert "^(?!/api/).*\\.(js|css)$" in content, (
+            "JS/CSS 静态 regex 未排除 /api/ 前缀 —— /api/v1/static/*.js|css 会被劫持到 frontend"
+        )
+        assert "^(?!/api/).*\\.(png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$" in content, (
+            "图片静态 regex 未排除 /api/ 前缀 —— /api/v1/export/download/*.png、"
+            "/api/v1/static/* 会被劫持到 frontend 404（#585）"
+        )
+        assert "location ~* \\.(png|jpg|jpeg" not in content, (
+            "图片静态 regex 仍是旧的无 /api/ 排除形式（#585 回归）"
+        )
+
+    def test_client_max_body_size_set_at_server_level(self):
+        """server 级必须有全局 client_max_body_size，不能只设在 /api/v1/upload。
+
+        否则 /api/v1/export（应用侧上限 50MB）、/api/v1/export/pdf、
+        /api/v1/skills/upload 落入 nginx 内置默认 1M 上限（#586）。
+        """
+        content = self._read()
+        # 至少两处：server 级全局基线（100M）+ location /api/v1/upload 冗余显式值
+        assert content.count("client_max_body_size 100M;") >= 2, (
+            "client_max_body_size 100M 应有 server 级全局基线 + /upload 冗余两处"
+        )

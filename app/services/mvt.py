@@ -253,6 +253,226 @@ def _geometry_parts(gtype: str, coords) -> List[Tuple[str, Optional[str], List[T
     return []
 
 
+# ─── antimeridian splitting (Issue #598) ────────────────────────────────────
+#
+# RFC 7946 §3.1.9: geometries whose edges wrap the antimeridian (a longitude
+# jump > 180°) must be split at ±180 before encoding. ``_project`` is linear
+# in longitude (lon 170 → z0 x≈248.9px, lon −170 → 7.1px), so an unsplit
+# AM-crossing polygon projects as a ~242px horizontal jump and renders as a
+# world-spanning arc instead of hugging the world edge. The splitter unwraps
+# longitudes along each ring/line (each vertex snapped to the 360°-shift
+# nearest its predecessor), cuts at the ±180 meridian, and rewraps the pieces
+# back into [−180, 180). Non-crossing input is returned unchanged.
+
+
+def _ring_crosses_am(pts) -> bool:
+    """True if a closed ring wraps the antimeridian (closing edge included).
+
+    ``pts`` may or may not repeat the first vertex as the last; the closing
+    edge (last → first) is always examined.
+    """
+    if len(pts) < 3:
+        return False
+    pairs = list(zip(pts, pts[1:])) + [(pts[-1], pts[0])]
+    return any(abs(b[0] - a[0]) > 180.0 for a, b in pairs)
+
+
+def _polyline_crosses_am(pts) -> bool:
+    """True if an open polyline has any AM-wrapping edge."""
+    return len(pts) >= 2 and any(
+        abs(b[0] - a[0]) > 180.0 for a, b in zip(pts, pts[1:])
+    )
+
+
+def _unwrap_along(pts, closed: bool):
+    """Longitude-unwrap a point list along its walk: each vertex's lon is
+    snapped to the 360°-shift nearest its predecessor's unwrapped lon, making
+    edges continuous. Returns None when a closed walk does not return to its
+    own frame (pathological input) — callers then leave the geometry as-is.
+    """
+    unwrapped = [(pts[0][0], pts[0][1])]
+    for a, b in zip(pts, pts[1:]):
+        ua = unwrapped[-1][0]
+        ub = min(
+            (b[0] + 360.0 * k for k in (-1, 0, 1)),
+            key=lambda v: abs(v - ua),
+        )
+        unwrapped.append((ub, b[1]))
+    if closed and abs(unwrapped[-1][0] - unwrapped[0][0]) > 180.0:
+        return None
+    return unwrapped
+
+
+def _rewrap(seg):
+    """Shift a split piece's longitudes back into [−180, 180).
+
+    A split piece spans at most ~180°, so the 360°-band that brings the
+    WHOLE piece into [−180, 180) is unique; the band is derived from the
+    piece's mid-range longitude (ceil(mid/360 − 0.5) puts the ±180 meridian
+    into the lower band, so an east-side piece at [170..180] stays east while
+    a west-side piece at [180..190] wraps to [−180..−170]).
+    """
+    if not seg:
+        return seg
+    lons = [p[0] for p in seg]
+    mid = (max(lons) + min(lons)) / 2.0
+    band = math.ceil(mid / 360.0 - 0.5)
+    shift = 360.0 * band
+    return [(lon - shift, lat) for lon, lat in seg]
+
+
+def _split_line(coords):
+    """Split a LineString crossing the antimeridian into non-crossing pieces."""
+    pts = [tuple(c) for c in coords]
+    if len(pts) < 2:
+        return [coords]
+    if not _polyline_crosses_am(pts):
+        return [coords]
+    unwrapped = _unwrap_along(pts, closed=False)
+    if unwrapped is None:
+        return [coords]
+    pieces = []
+    cur = [unwrapped[0]]
+    for a, b in zip(unwrapped, unwrapped[1:]):
+        lo, hi = min(a[0], b[0]), max(a[0], b[0])
+        # a boundary meridian (≡ 180 mod 360) lies strictly inside [lo, hi]?
+        if hi - lo > 1e-9 and math.floor((lo + 180.0) / 360.0) != math.floor((hi + 180.0) / 360.0):
+            bd = 360.0 * math.floor((hi + 180.0) / 360.0) - 180.0
+            t = (bd - a[0]) / (b[0] - a[0])
+            cut = (bd, a[1] + t * (b[1] - a[1]))
+            cur.append(cut)
+            pieces.append(cur)
+            cur = [cut, b]
+        else:
+            cur.append(b)
+    if len(cur) >= 2:
+        pieces.append(cur)
+    out = [_rewrap(p) for p in pieces if len(p) >= 2]
+    return out or [coords]
+
+
+def _split_ring(ring):
+    """Split a closed ring crossing the antimeridian into closed sub-rings.
+
+    The ring is cut at the ±180 meridian crossings; each sub-ring is the arc
+    between two consecutive cuts, closed back along the meridian. Non-crossing
+    or degenerate rings are returned unchanged (or dropped by the caller's
+    ring normalization).
+    """
+    pts = [tuple(c) for c in ring]
+    if pts and pts[0] == pts[-1]:
+        pts = pts[:-1]
+    if len(pts) < 3:
+        return [ring]
+    if not _ring_crosses_am(pts):
+        return [ring]
+    unwrapped = _unwrap_along(pts, closed=True)
+    if unwrapped is None:
+        return [ring]
+    closed = unwrapped + [unwrapped[0]]
+    # insert cut vertices into the closed walk, remembering their positions
+    walk = [closed[0]]
+    cut_pos = []
+    for a, b in zip(closed, closed[1:]):
+        lo, hi = min(a[0], b[0]), max(a[0], b[0])
+        if hi - lo > 1e-9 and math.floor((lo + 180.0) / 360.0) != math.floor((hi + 180.0) / 360.0):
+            bd = 360.0 * math.floor((hi + 180.0) / 360.0) - 180.0
+            t = (bd - a[0]) / (b[0] - a[0])
+            cut = (bd, a[1] + t * (b[1] - a[1]))
+            walk.append(cut)
+            cut_pos.append(len(walk) - 1)
+        walk.append(b)
+    if len(cut_pos) < 2:
+        # the ring merely touches the meridian — no split needed
+        return [ring]
+    subs = []
+    for m in range(len(cut_pos)):
+        s = cut_pos[m]
+        e = cut_pos[(m + 1) % len(cut_pos)]
+        seg = (walk[s:] + walk[:e + 1]) if e < s else walk[s:e + 1]
+        rewrapped = _rewrap(seg)
+        ring_closed = _normalize_ring(rewrapped)
+        if ring_closed is not None:
+            subs.append(ring_closed)
+    return subs or [ring]
+
+
+def _split_polygon(coords):
+    """Split a Polygon (exterior + holes) crossing the antimeridian into
+    Polygon coordinate lists. Hole pieces are attributed to the exterior piece
+    on the same side of the meridian (their median longitude matches)."""
+    ext_pieces = _split_ring(coords[0])
+    hole_pieces = [h for hole in coords[1:] for h in _split_ring(hole)]
+    if len(ext_pieces) == 1 and not hole_pieces:
+        return [coords]
+
+    def _side(seg) -> str:
+        med = sorted(p[0] for p in seg)[len(seg) // 2]
+        return "e" if med > 0 else "w"
+
+    def _median_lon(seg) -> float:
+        return sorted(p[0] for p in seg)[len(seg) // 2]
+
+    def _assign(hole):
+        side = _side(hole)
+        candidates = [e for e in ext_pieces if _side(e) == side]
+        if not candidates:
+            return None
+        h_med = _median_lon(hole)
+        return min(candidates, key=lambda e: abs(_median_lon(e) - h_med))
+
+    polys = []
+    for ext in ext_pieces:
+        if _normalize_ring(ext) is None:
+            continue
+        polys.append([ext] + [h for h in hole_pieces if _assign(h) is ext])
+    return polys or [coords]
+
+
+def _antimeridian_pieces(gtype, coords):
+    """Split an AM-crossing geometry into (piece_gtype, piece_coords) pieces.
+
+    Polygon/MultiPolygon pieces are emitted as ``Polygon`` and
+    MultiLineString pieces as ``LineString`` (flattening the multi-member
+    coordinate structure, exactly how the encoder already emits
+    MultiPolygon/MultiLineString). Non-crossing input yields the original
+    geometry unchanged — a single piece, byte-identical to the pre-split
+    encoding.
+    """
+    if not _crosses_antimeridian(gtype, coords):
+        return [(gtype, coords)]
+    if gtype == "Polygon":
+        return [("Polygon", p) for p in _split_polygon(coords)]
+    if gtype == "MultiPolygon":
+        return [
+            ("Polygon", p)
+            for poly in coords
+            for p in _split_polygon(poly)
+        ]
+    if gtype == "LineString":
+        return [("LineString", p) for p in _split_line(coords)]
+    if gtype == "MultiLineString":
+        return [
+            ("LineString", p)
+            for line in coords
+            for p in _split_line(line)
+        ]
+    return [(gtype, coords)]
+
+
+def _crosses_antimeridian(gtype, coords) -> bool:
+    """True if any ring/line of the geometry wraps the antimeridian."""
+    if gtype not in _IS_LINE and gtype not in _IS_POLY:
+        return False
+    for _kind, role, part in _geometry_parts(gtype, coords):
+        pts = [tuple(c) for c in part]
+        if _polyline_crosses_am(pts) or (
+            role is not None and _ring_crosses_am(pts)
+        ):
+            return True
+    return False
+
+
 def _shapely_geom_from_coords(gtype: str, coords) -> Optional[Any]:
     """Build a shapely geometry (lon/lat space) from GeoJSON coordinates."""
     try:
@@ -613,8 +833,8 @@ def _simplify_and_project(gtype: str, geom_lonlat, geom_z0, z: int):
         return None
     if z >= _SIMPLIFY_MAX_ZOOM:
         # no simplification: reuse the cached z0 geometry (or rebuild it once).
-        # An exception here propagates to ``_encode_geometry``'s guard, which
-        # falls back to the pure-python encoder — matching the pre-refactor
+        # An exception here propagates to the encode guards above, which
+        # fall back to the pure-python encoder — matching the pre-refactor
         # behavior exactly. (Index callers never reach this line: they pass a
         # cached geom_z0 and return above.)
         if geom_z0 is not None:
@@ -707,19 +927,40 @@ def _encode_line_polygon_pure(gtype: str, coords, z: int, x: int, y: int) -> Opt
     return bytes(out) if wrote else None
 
 
-def _encode_geometry(gtype: str, coords, z: int, x: int, y: int) -> Optional[bytes]:
-    """Encode one feature geometry; None if nothing lies inside the tile."""
+def _encode_line_polygon_piece(gtype, coords, z: int, x: int, y: int) -> Optional[bytes]:
+    """Encode one line/polygon piece via the shapely or pure-python path."""
+    if _SHAPELY:
+        try:
+            return _encode_line_polygon_shapely(gtype, coords, z, x, y)
+        except Exception:
+            logger.warning("mvt: shapely encode failed, using pure-python fallback", exc_info=True)
+    return _encode_line_polygon_pure(gtype, coords, z, x, y)
+
+
+def _encode_geometry_pieces(gtype: str, coords, z: int, x: int, y: int) -> List[bytes]:
+    """Encode one feature geometry into one or more MVT geometry byte groups.
+
+    Issue #598: AM-crossing lines/polygons are split at the antimeridian
+    first (RFC 7946 §3.1.9) so each piece projects onto its own side of the
+    world instead of a world-spanning arc. Each piece is returned as its own
+    byte group so the caller can emit it as a separate feature record — MVT
+    MoveTo deltas are relative to the feature's cursor, and concatenating
+    pieces into one geometry would make the second piece's commands decode
+    relative to the first piece's cursor position. Non-crossing input yields
+    a single group, byte-identical to the pre-split encoding.
+    """
     if gtype in _IS_POINT:
         pts = coords if gtype == "MultiPoint" else [coords]
-        return _encode_points(pts, z, x, y)
+        gb = _encode_points(pts, z, x, y)
+        return [gb] if gb else []
     if gtype in _IS_LINE or gtype in _IS_POLY:
-        if _SHAPELY:
-            try:
-                return _encode_line_polygon_shapely(gtype, coords, z, x, y)
-            except Exception:
-                logger.warning("mvt: shapely encode failed, using pure-python fallback", exc_info=True)
-        return _encode_line_polygon_pure(gtype, coords, z, x, y)
-    return None
+        out = []
+        for piece_gtype, piece_coords in _antimeridian_pieces(gtype, coords):
+            gb = _encode_line_polygon_piece(piece_gtype, piece_coords, z, x, y)
+            if gb:
+                out.append(gb)
+        return out
+    return []
 
 
 # ─── public encode API ──────────────────────────────────────────────────────
@@ -864,13 +1105,14 @@ def encode_tile(features_data, z: int, x: int, y: int) -> bytes:
             continue
         if gtype not in _SUPPORTED_TYPES:
             continue
-        geom_bytes = _encode_geometry(gtype, coords, z, x, y)
-        if geom_bytes is None:
-            continue
         type_id = _type_id_for(gtype)
         if type_id is None:
             continue
-        records.append((type_id, geom_bytes, f.get("properties") or {}))
+        props = f.get("properties") or {}
+        # Issue #598: an AM-crossing geometry may yield several pieces; each
+        # is emitted as its own feature record (cursor-relative MVT commands).
+        for geom_bytes in _encode_geometry_pieces(gtype, coords, z, x, y):
+            records.append((type_id, geom_bytes, props))
     return _assemble_mvt(records)
 
 
@@ -913,26 +1155,43 @@ def encode_tile_from_index(entry: "SpatialIndexEntry", z: int, x: int, y: int) -
         # which receives arbitrary user input).
         if gtype == "GeometryCollection" or gtype not in _SUPPORTED_TYPES:
             continue
+        type_id = _type_id_for(gtype)
+        if type_id is None:
+            continue
+        props = feature.get("properties") or {}
         if gtype in _IS_POINT:
             coords = geometry.get("coordinates")
             pts = coords if gtype == "MultiPoint" else [coords]
             geom_bytes = _encode_points(pts, z, x, y)
+            if geom_bytes is not None:
+                records.append((type_id, geom_bytes, props))
         else:
-            try:
-                geom_bytes = _encode_line_polygon_from_geoms(gtype, geom_lonlat, geom_z0, z, x, y)
-            except Exception:
-                # Mirror _encode_geometry's resilience: a pathological geometry
-                # that survives index build but fails shapely simplify/intersect
-                # falls back to the coordinate path (which itself degrades to the
-                # pure-python encoder) rather than failing the whole tile.
-                logger.warning("mvt: shapely encode failed, using pure-python fallback", exc_info=True)
-                geom_bytes = _encode_geometry(gtype, geometry.get("coordinates"), z, x, y)
-        if geom_bytes is None:
-            continue
-        type_id = _type_id_for(gtype)
-        if type_id is None:
-            continue
-        records.append((type_id, geom_bytes, feature.get("properties") or {}))
+            coords = geometry.get("coordinates") if isinstance(geometry, dict) else None
+            if coords is not None and _crosses_antimeridian(gtype, coords):
+                # Issue #598: the cached z0 projection of an unsplit
+                # AM-crossing geometry is unusable (it spans the world
+                # interior and renders as a world-spanning arc). Route through
+                # the coordinate path, which splits at the meridian
+                # (RFC 7946 §3.1.9) and may emit several records. Only
+                # affects the rare AM-crossing features; the cached-geometry
+                # fast path below is unchanged.
+                for geom_bytes in _encode_geometry_pieces(gtype, coords, z, x, y):
+                    records.append((type_id, geom_bytes, props))
+            else:
+                try:
+                    geom_bytes = _encode_line_polygon_from_geoms(gtype, geom_lonlat, geom_z0, z, x, y)
+                except Exception:
+                    # Mirror _encode_geometry_pieces' resilience: a pathological
+                    # geometry that survives index build but fails shapely
+                    # simplify/intersect falls back to the coordinate path
+                    # (which itself degrades to the pure-python encoder) rather
+                    # than failing the whole tile.
+                    logger.warning("mvt: shapely encode failed, using pure-python fallback", exc_info=True)
+                    geom_bytes = None
+                    for gb in _encode_geometry_pieces(gtype, coords, z, x, y):
+                        records.append((type_id, gb, props))
+                if geom_bytes is not None:
+                    records.append((type_id, geom_bytes, props))
     return _assemble_mvt(records)
 
 

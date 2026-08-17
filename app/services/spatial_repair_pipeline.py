@@ -54,15 +54,11 @@ class SpatialRepairPipeline:
         # Operation: crs_transform
         # ----------------------------------------------------
         transformer = None
+        crs_transform_failures = 0
         if "crs_transform" in active_ops and source_crs != target_crs:
             try:
                 from pyproj import Transformer
                 transformer = Transformer.from_crs(source_crs, target_crs, always_xy=True)
-                repaired_geojson["crs"] = {
-                    "type": "name",
-                    "properties": {"name": target_crs},
-                }
-                logs.append(f"crs_transform: Updated dataset CRS definition from {source_crs} to {target_crs}")
             except Exception as e:
                 logs.append(f"crs_transform: Failed to initialize transformer from {source_crs} to {target_crs}: {e}")
 
@@ -137,6 +133,7 @@ class SpatialRepairPipeline:
                     geom = transform(transformer.transform, geom)
                     logs.append(f"crs_transform: Reprojected geometry at feature index {idx}")
                 except Exception as e:
+                    crs_transform_failures += 1
                     logs.append(f"crs_transform: Failed to reproject feature index {idx}: {e}")
 
             # ----------------------------------------------------
@@ -153,6 +150,22 @@ class SpatialRepairPipeline:
 
             feat["geometry"] = mapping(geom)
             cleaned_features.append(feat)
+
+        # #618-15: 数据集级 CRS 声明必须在「所有要素都成功投影」之后才更新。
+        # 只要有任一要素投影失败（坐标停留在源 CRS），把数据集标记成目标 CRS
+        # 就会让下游按错误基准解释这些坐标 —— 部分失败时保持源 CRS 声明并披露。
+        if transformer is not None:
+            if crs_transform_failures == 0:
+                repaired_geojson["crs"] = {
+                    "type": "name",
+                    "properties": {"name": target_crs},
+                }
+                logs.append(f"crs_transform: Updated dataset CRS definition from {source_crs} to {target_crs}")
+            else:
+                logs.append(
+                    f"crs_transform: {crs_transform_failures} feature(s) failed to reproject — "
+                    f"dataset CRS definition left as {source_crs}"
+                )
 
         # ----------------------------------------------------
         # Operation: deduplicate

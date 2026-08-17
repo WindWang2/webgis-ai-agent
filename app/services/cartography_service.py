@@ -35,6 +35,13 @@ class CartographyService:
             return uniq if len(uniq) >= 2 else [uniq[0], uniq[0]]
         # Cap sample size for performance (Jenks is O(n²k))
         if n > 1000:
+            # #618-19: 披露降采样 —— 断点基于均匀抽样的 1000 个样本计算，
+            # 对极端分布可能与全量断点有偏差，调用方需要知情。
+            logger.info(
+                "_jenks_natural_breaks: n=%d > 1000 — uniform-subsampling to 1000 "
+                "samples (seed=42) for the O(n²k) DP (#441 perf cap)",
+                len(values),
+            )
             rng = np.random.default_rng(42)
             arr = np.sort(rng.choice(arr, size=1000, replace=False))
             n = 1000
@@ -209,6 +216,11 @@ class CartographyService:
 
         # 计算间断点
         breaks = cls.classify(values, method, k)
+        # #618-19: 全等数值列（常量字段）在 n>k 时 classify 返回单断点 [v]
+        # （_jenks 的 n≤k 分支返回 [v, v]）——两种路径形状不一致会让下游
+        # 拿不到合法的 2 断点数组。统一归一化为 [v, v]（单类、两相同边界）。
+        if len(breaks) == 1:
+            breaks = [breaks[0], breaks[0]]
         min_val, max_val = min(values), max(values)
 
         # ADR-0052: resolve palette colors through the single midpoint-sampling

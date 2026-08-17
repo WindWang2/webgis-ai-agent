@@ -47,6 +47,27 @@ _CRS_LESS_WARNED: "set[str]" = set()
 _CRS_LESS_WARNED_MAX = 4096
 
 
+def _channel_valid_mask(arr: np.ndarray, nodata_val) -> np.ndarray:
+    """Boolean mask of *renderable* pixels for one band of the reprojected tile.
+
+    A declared nodata sentinel excludes matching pixels; float arrays also
+    exclude NaN/Inf (``NaN != NaN`` would otherwise make every pixel "valid"
+    and feed NaN into the stretch, GIS-P3-5).
+
+    #596: with NO declared nodata the sentinel is NOT 0. Treating 0 as nodata
+    made legitimate zero-valued pixels (0°C, 0m sea level, flat 0° slope,
+    NDVI 0 at the water boundary) render transparent and fall out of the
+    stretch. So every pixel counts as valid except non-finite floats.
+    """
+    if nodata_val is None:
+        valid = np.ones(arr.shape, dtype=bool)
+    else:
+        valid = arr != nodata_val
+    if np.issubdtype(arr.dtype, np.floating):
+        valid = valid & np.isfinite(arr)
+    return valid
+
+
 def _normalize_channel(
     arr: np.ndarray,
     valid_mask: np.ndarray,
@@ -214,8 +235,24 @@ def render_raster_tile(
             # full-band read decoded every band of a >3-band raster (~2x waste).
             count = min(src.count, 3)
             indexes = tuple(range(1, count + 1))
-            win_transform = rasterio.windows.transform(win, src.transform)
-            win_data = src.read(indexes=indexes, window=win)
+            # #595: decimate the read to ~the destination resolution. A low-zoom
+            # tile's window can cover the WHOLE raster (10000×10000 uint16 × 3
+            # bands ≈ 600MB decoded per request) just to reproject it down to
+            # 256×256 — GDAL only consults overviews when the buffer is smaller
+            # than the window, so a native-resolution read decoded everything.
+            # out_shape scales each axis by min(1, tile_size / window) — GDAL
+            # then picks the appropriate overview level. High-zoom windows
+            # (≤ tile_size px) keep scale 1 → native read, unchanged behavior.
+            win_bounds = rasterio.windows.bounds(win, src.transform)
+            scale = min(1.0, tile_size / float(win.width), tile_size / float(win.height))
+            out_h = max(1, int(round(win.height * scale)))
+            out_w = max(1, int(round(win.width * scale)))
+            out_shape = (count, out_h, out_w)
+            win_data = src.read(indexes=indexes, window=win, out_shape=out_shape)
+            # The decimated read covers exactly the window's geographic extent
+            # at out_shape resolution — its transform is from_bounds of those
+            # bounds, not the native-grid window transform.
+            win_transform = rasterio.transform.from_bounds(*win_bounds, out_w, out_h)
 
             # Dataset-global stretch bounds (per band) so adjacent tiles share
             # one normalization instead of per-tile min/max (seam fix, #410).
@@ -242,33 +279,36 @@ def render_raster_tile(
                 dst_crs="EPSG:3857",
                 resampling=Resampling.bilinear,
                 src_nodata=src.nodata,
-                dst_nodata=src.nodata or 0,
+                # #596: with no declared nodata, `or 0` conflated "0 is
+                # nodata" with "0 is data". dst_nodata=None leaves the
+                # destination buffer's zero init for genuinely uncovered
+                # cells instead of marking every 0 as fill.
+                dst_nodata=src.nodata,
             )
 
             # Format to RGBA image
             if count >= 3:
                 rgb = np.zeros((tile_size, tile_size, 3), dtype=np.uint8)
-                nodata_val = src.nodata if src.nodata is not None else 0
-                # GIS-P3-5: exclude non-finite pixels like the 1-band path —
-                # NaN-declared nodata made NaN != NaN True, so every pixel was
-                # "valid" and _normalize_channel got NaN min/max (garbage RGBA).
-                finite_any = np.isfinite(dst_data) if np.issubdtype(dst_data.dtype, np.floating) else None
+                # #596: no declared nodata → no 0-sentinel; real 0-value
+                # pixels (pure black shadows, 0°C, water at 0) must render
+                # and take part in the stretch.
+                nodata_val = src.nodata  # may be None
                 for c in range(3):
                     arr = dst_data[c]
-                    valid_mask = np.isfinite(arr) & (arr != nodata_val) if np.issubdtype(arr.dtype, np.floating) else (arr != nodata_val)
+                    valid_mask = _channel_valid_mask(arr, nodata_val)
                     stretch = stats[c] if stats is not None else ()
                     rgb[:, :, c] = np.where(valid_mask, _normalize_channel(arr, valid_mask, *stretch), 0)
 
-                band_valid = (dst_data != nodata_val)
-                if finite_any is not None:
-                    band_valid = band_valid & finite_any
-                alpha = np.where(band_valid.any(axis=0), 255, 0).astype(np.uint8)
+                band_valid = _channel_valid_mask(dst_data, nodata_val).any(axis=0)
+                alpha = np.where(band_valid, 255, 0).astype(np.uint8)
                 rgba = np.dstack([rgb, alpha])
                 img = Image.fromarray(rgba, "RGBA")
             else:
                 arr = dst_data[0]
-                nodata_val = src.nodata if src.nodata is not None else 0
-                valid_mask = np.isfinite(arr) & (arr != nodata_val)
+                # #596: no 0-sentinel when the raster declares no nodata —
+                # a true 0-valued flat region must stay visible.
+                nodata_val = src.nodata  # may be None
+                valid_mask = _channel_valid_mask(arr, nodata_val)
 
                 if not valid_mask.any():
                     res = _transparent_tile_png(tile_size)

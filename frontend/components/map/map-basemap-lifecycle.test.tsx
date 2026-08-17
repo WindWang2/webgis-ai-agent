@@ -316,4 +316,45 @@ describe('MapPanel — basemap switch during in-flight reconcile (#459/#460/#461
       finalOrder.indexOf('custom-poi'),
     );
   });
+
+  it('#605: 3D terrain survives a basemap switch (style-epoch re-mount)', async () => {
+    const specLayers = [pointLayer('poi', 'POI')];
+    const view = render(
+      <MapPanel layers={specLayers} onRemoveLayer={noop} onToggleLayer={noop} onViewportChange={noop} />,
+    );
+    // renderPanel 辅助函数硬编码双图层 waitFor —— 本测试单图层，手动等收敛
+    await waitFor(() => expect(rmg.interactiveLayerIds).toEqual(['poi__point']), {
+      timeout: 3000,
+    });
+    await drainRuntime();
+
+    // 开启 3D → terrain source + setTerrain 落地
+    act(() => hud.setState({ is3D: true }));
+    await drainRuntime();
+    expect(rmg.map.getSource('terrain-aws')).toBeTruthy();
+    expect(rmg.map._calls.setTerrain.at(-1)?.options).toMatchObject({
+      source: 'terrain-aws',
+    });
+
+    // 切换底图：setStyle 冲掉 source + layer（地形一并被丢）
+    basemap.index = 0;
+    rerenderPanel(view, specLayers);
+    // MapMock 同步清空后，恢复 reconcile 仍在跑 —— 此刻 terrain 应已被清空
+    expect(rmg.map.getSource('terrain-aws')).toBeNull();
+
+    // style 恢复完成（reconcile .then —— #605 重挂点）后 terrain 重新挂载
+    await drainRuntime();
+    expect(rmg.map.getSource('terrain-aws')).toBeTruthy();
+    const lastTerrain = rmg.map._calls.setTerrain.at(-1)?.options as any;
+    expect(lastTerrain).toMatchObject({ source: 'terrain-aws' });
+
+    // 同风格再切一次，terrain 依然保持
+    basemap.index = 1;
+    rerenderPanel(view, specLayers);
+    await drainRuntime();
+    expect(rmg.map.getSource('terrain-aws')).toBeTruthy();
+    expect(rmg.map._calls.setTerrain.at(-1)?.options).toMatchObject({
+      source: 'terrain-aws',
+    });
+  });
 });

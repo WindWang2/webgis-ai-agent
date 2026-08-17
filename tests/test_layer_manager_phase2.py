@@ -221,6 +221,38 @@ async def test_set_layer_status_accepts_session_owned_ref(registry, session_with
 
 
 @pytest.mark.asyncio
+async def test_set_layer_status_omits_unset_keys(registry, session_with_layer):
+    """#609: 未传的 Optional 参数必须从 params 省略，而不是序列化为 JSON null。
+
+    旧行为把 visible=None 一起发出去 → 前端 `null !== undefined` 判真、
+    null 走 falsy 分支把图层隐藏，且后验证读到 'none' 与"预期"一致 → 假收敛
+    confirmed。省略键 = 前端看到"该属性未被请求"，只改透明度不会隐藏图层。
+    """
+    sid, ref = session_with_layer
+
+    # 只传 opacity：visible 键必须整体缺席
+    out = await registry.dispatch(
+        "set_layer_status",
+        {"layer_ref": "我的层", "opacity": 0.5},
+        session_id=sid,
+    )
+    assert out.get("success") is True, f"expected success, got {out}"
+    assert out["params"]["layer_id"] == ref
+    assert out["params"].get("opacity") == 0.5
+    assert "visible" not in out["params"], f"visible=null must be omitted, got {out['params']}"
+
+    # 只传 visible：opacity 键必须整体缺席
+    out2 = await registry.dispatch(
+        "set_layer_status",
+        {"layer_ref": "我的层", "visible": False},
+        session_id=sid,
+    )
+    assert out2.get("success") is True, f"expected success, got {out2}"
+    assert out2["params"].get("visible") is False
+    assert "opacity" not in out2["params"], f"opacity=null must be omitted, got {out2['params']}"
+
+
+@pytest.mark.asyncio
 async def test_remove_layer_accepts_valid_session_ref(registry, session_with_layer):
     sid, _ref = session_with_layer
     out = await registry.dispatch(

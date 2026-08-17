@@ -125,6 +125,28 @@ class AsyncHistoryService(HistoryStoreProtocol):
     def __init__(self, db: Optional[AsyncSession] = None):
         self.db = db
 
+    async def _get_or_create_with_messages(
+        self,
+        session_id: str,
+        user_id: Optional[str] = None,
+    ) -> Conversation:
+        """get_or_create_conversation + 显式补载 messages（#618-8）。
+
+        创建/取回路径已不再 selectinload 全量消息（Pi 流只需要 owner_token）；
+        load_context 是唯一需要消息快照的消费方，在这里补一次带
+        selectinload 的查询（与 get_session 的取数方式一致）。
+        """
+        # get_or_create 确保行存在（建行或取回同一行）；消息在下面的
+        # selectinload 查询中一并取回，返回值无需使用。
+        await self.get_or_create_conversation(session_id, user_id=user_id)
+        stmt = (
+            select(Conversation)
+            .where(Conversation.id == session_id)
+            .options(selectinload(Conversation.messages))
+        )
+        result = await self.db.execute(stmt)
+        return result.scalar_one()
+
     async def load_context(
         self,
         session_id: str,
@@ -134,17 +156,29 @@ class AsyncHistoryService(HistoryStoreProtocol):
     ) -> HistoryContext:
         """Deep seam method: load conversation, validate SEC-08 owner_token, and format LLM messages."""
         if self.db is not None:
-            conv = await self.get_or_create_conversation(session_id, user_id=user_id)
+            conv = await self._get_or_create_with_messages(session_id, user_id=user_id)
         else:
             async with async_db_session() as db:
                 svc = AsyncHistoryService(db)
-                conv = await svc.get_or_create_conversation(session_id, user_id=user_id)
+                conv = await svc._get_or_create_with_messages(session_id, user_id=user_id)
 
-        # Validate owner_token if set and user is anonymous
+        # #618-12: owner_token 失配按 SEC-08 契约 fail-closed，与 _authorize
+        # 的语义一致（「否则视为不存在」）—— 不得 warning 后仍返回全量消息
+        # 与真实 owner_token（失配方拿到真实 token 即可冒充会话所有者）。
         if conv.user_id is None and conv.owner_token is not None and owner_token:
             import hmac
             if not hmac.compare_digest(conv.owner_token, owner_token):
-                logger.warning(f"Owner token mismatch for session {session_id}")
+                logger.warning(
+                    "Owner token mismatch for session %s — returning empty context (fail-closed)",
+                    session_id,
+                )
+                return HistoryContext(
+                    session_id=session_id,
+                    owner_token=None,
+                    user_id=None,
+                    llm_messages=[],
+                    raw_conversation=None,
+                )
 
         llm_messages = []
         if system_prompt:
@@ -221,7 +255,12 @@ class AsyncHistoryService(HistoryStoreProtocol):
         new_owner_token = secrets.token_urlsafe(32) if owner is None else None
         for attempt in range(3):
             try:
-                stmt = select(Conversation).where(Conversation.id == session_id).options(selectinload(Conversation.messages))
+                # #618-8: 不 selectinload messages —— 唯一直接消费方（Pi 流
+                # chat.py）只读取 owner_token；需要消息快照的 load_context
+                # 通过 _get_or_create_with_messages 显式补载。与 #525
+                # get_session_meta 的降载同族：避免每次轮询/建会话都付出
+                # O(messages) 的全量水合成本。
+                stmt = select(Conversation).where(Conversation.id == session_id)
                 result = await self.db.execute(stmt)
                 conv = result.scalar_one_or_none()
                 if conv:
@@ -246,7 +285,8 @@ class AsyncHistoryService(HistoryStoreProtocol):
                 # whose row survived.
                 for evicted_id in evicted:
                     await self._run_eviction_protocol(evicted_id)
-                # 重新查询以确保加载了关系
+                # 提交后重新 SELECT：返回事务收敛后的行（并发 cap 驱逐等状态的
+                # 最新视图）。同样不加载 messages —— 需要消息的调用方显式补载。
                 result = await self.db.execute(stmt)
                 return result.scalar_one(), True
             except Exception as e:

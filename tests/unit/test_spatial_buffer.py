@@ -316,6 +316,32 @@ def test_buffer_smart_state_plane_feet_polygon_ring_width():
     assert out_geom.area == pytest.approx(reference.area, rel=0.01)
 
 
+# ── Issue #599: output must declare its CRS for projected input ────────────
+#
+# buffer_smart returns projected input in its ORIGINAL CRS (EPSG:3857 metres
+# stay metres). Downstream consumers (MVT/geojson_bbox/frontend) read bare
+# GeoJSON as WGS84, so the output FeatureCollection must carry a legacy `crs`
+# member — pre-fix the projected coordinates were emitted undecorated and
+# silently misplaced. WGS84 output must NOT carry the member (RFC 7946).
+
+
+def test_buffer_smart_output_declares_crs_for_projected_input():
+    from app.lib.geo_processor.geometry import buffer_smart
+    point = {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [13523282, 3662284]},
+        "properties": {},
+    }
+    res = buffer_smart(point, 50, source_crs="EPSG:3857")
+    assert res.success is True
+    assert res.data["crs"] == {"type": "name", "properties": {"name": "EPSG:3857"}}
+
+    # WGS84 input/output must not gain a crs member (RFC 7946).
+    res2 = buffer_smart({"type": "Point", "coordinates": [116.4, 39.9]}, 100)
+    assert res2.success is True
+    assert "crs" not in res2.data
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 

@@ -38,11 +38,12 @@ export const queryCommands: Record<string, CommandEntry> = {
         const metersPerPixel =
           (40075016.686 * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, zoom + 8);
         const pxRadius = Math.max(1, Math.round(bufferM / Math.max(metersPerPixel, 1e-9)));
-        const geometry: [number, number, number, number] = [
-          pixel.x - pxRadius,
-          pixel.y - pxRadius,
-          pixel.x + pxRadius,
-          pixel.y + pxRadius,
+        // #606: queryRenderedFeatures 的 bbox 签名是 [PointLike, PointLike] 嵌套数组；
+        // 平面四元组会被 Point.convert 只取前两个元素 → 退化为 bbox 左上角单点查询，
+        // 缓冲半径静默失效。嵌套形状才能让偏右/偏下的要素被命中。
+        const geometry: [[number, number], [number, number]] = [
+          [pixel.x - pxRadius, pixel.y - pxRadius],
+          [pixel.x + pxRadius, pixel.y + pxRadius],
         ];
         const features: any[] = map.queryRenderedFeatures(geometry);
         const names = features

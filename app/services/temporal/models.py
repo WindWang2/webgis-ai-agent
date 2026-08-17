@@ -243,6 +243,10 @@ class TemporalTrendResult(BaseModel):
     # trend math — previously a single NaN poisoned slope to NaN, clamped
     # r² to a spurious 1.0, and silenced anomaly detection.
     dropped_nan: int = 0
+    # #594: "per_year" when slope/intercept were fit on a real-time axis
+    # (x normalized to years), "per_step" when they fell back to slice
+    # indices (no parseable timestamps in the series).
+    slope_unit: str = "per_step"
 
 
 class SpatiotemporalHotspotResult(BaseModel):

@@ -688,3 +688,59 @@ def test_pure_python_fallback_index_query(monkeypatch):
     entry = build_spatial_index_entry(("s", "r"), fc)
     assert {f["properties"]["id"] for f in entry.query_tile(1, 0, 0)} == {"west"}
     assert {f["properties"]["id"] for f in entry.query_tile(1, 1, 0)} == {"east"}
+
+
+# ─── antimeridian (Issue #598) ──────────────────────────────────────────────
+
+
+def test_antimeridian_crossing_triangle_split():
+    """A triangle whose edges wrap the antimeridian (170° → −170° via ±180)
+    must encode as two pieces pinned at the world edges — not the pre-fix
+    242px horizontal jump (lon 170 → z0 x 248.9px, lon −170 → 7.1px) that
+    rendered as one world-spanning arc."""
+    tri = [[[170.0, 10.0], [-170.0, 10.0], [180.0, 20.0], [170.0, 10.0]]]
+    tile = encode_tile([_feature("Polygon", tri, {"id": "am"})], 0, 0, 0)
+    layer = _decode_tile(tile)[0]
+    polys = [f for f in layer["features"] if f["type"] == 3]
+    assert len(polys) == 2, f"expected one piece per antimeridian side, got {len(polys)}"
+    lons = []
+    for feat in polys:
+        props = dict(zip((layer["keys"][k] for k, _ in feat["tags"]),
+                         (layer["values"][v] for _, v in feat["tags"])))
+        assert props["id"] == "am"  # every split piece keeps the properties
+        for ring in _parts_to_rings(feat["geometry_parts"]):
+            xs = [p[0] for p in ring]
+            # a 14.2px (~227 extent units) piece hugs ONE edge; it must never
+            # span the tile interior (the old artifact was ~3868 units wide)
+            assert max(xs) - min(xs) < 2048, f"world-spanning arc: {min(xs)}..{max(xs)}"
+            ll = _extent_to_lonlat(ring, 0, 0, 0)
+            lons.extend(p[0] for p in ll)
+            assert _shoelace(ll) > 0, "split exterior must stay CCW (geographic)"
+    # the two pieces sit on opposite edges of the world
+    assert min(lons) <= -170.0 and max(lons) >= 170.0, f"pieces not at the edges: {lons}"
+
+
+def test_antimeridian_triangle_index_path_split():
+    """The spatial-index encode path must split AM-crossing features the same
+    way: the west piece lands in the west tile, the east piece in the east
+    tile (z=1), each hugging its tile edge."""
+    from app.services.mvt import encode_tile_from_index
+
+    tri = [[[170.0, 10.0], [-170.0, 10.0], [180.0, 20.0], [170.0, 10.0]]]
+    fc = {"type": "FeatureCollection", "features": [_feature("Polygon", tri, {"id": "am"})]}
+    entry = build_spatial_index_entry(("s", "am_ref"), fc)
+
+    west = _decode_tile(encode_tile_from_index(entry, 1, 0, 0))
+    east = _decode_tile(encode_tile_from_index(entry, 1, 1, 0))
+    assert west and east, "both AM edge tiles must contain geometry"
+    for tile, x in ((west, 0), (east, 1)):
+        polys = [f for f in tile[0]["features"] if f["type"] == 3]
+        for feat in polys:
+            for ring in _parts_to_rings(feat["geometry_parts"]):
+                xs = [p[0] for p in ring]
+                assert max(xs) - min(xs) < 2048, f"world-spanning arc in tile x={x}"
+                ll = _extent_to_lonlat(ring, 1, x, 0)
+                if x == 0:
+                    assert all(p[0] <= 0 for p in ll), "west tile must hold west-lon pieces"
+                else:
+                    assert all(p[0] >= 0 for p in ll), "east tile must hold east-lon pieces"

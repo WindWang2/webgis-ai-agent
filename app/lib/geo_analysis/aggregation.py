@@ -4,7 +4,7 @@ import pandas as pd
 import geopandas as gpd
 from shapely.geometry import box, Polygon
 from app.lib.geo_processor.core import GeoAnalysisResult
-from app.lib.geo_processor.core import to_utm_gdf
+from app.lib.geo_processor.core import to_utm_gdf, gdf_from_features
 # ADR-0052: 协作式取消检查点。cancellable() 在 chunk 边界读一次 contextvar，
 # 未绑定 token 时开销为零；用户取消后长循环立即抛 OperationCancelled 退出，
 # 真正释放 CPU 而不是只改 UI 状态。
@@ -210,7 +210,10 @@ def h3_binning(geojson: dict | str, resolution: int | None = None, stat_field: s
         import h3
         import math
         if isinstance(geojson, dict) and 'features' in geojson:
-            gdf = gpd.GeoDataFrame.from_features(geojson['features'], crs="EPSG:4326")
+            # GIS-599: honor a declared `crs` member instead of hardcoding
+            # EPSG:4326 — a declared projected input (e.g. EPSG:3857 metres)
+            # would otherwise be fed to latitude/longitude H3 lookups.
+            gdf = gdf_from_features(geojson, "h3_binning")
         else:
             return GeoAnalysisResult(success=False, data=None, summary="Invalid geojson input.")
             
@@ -245,9 +248,6 @@ def h3_binning(geojson: dict | str, resolution: int | None = None, stat_field: s
         # Ensure point geometry
         if not all(geom.geom_type == 'Point' for geom in gdf.geometry):
             gdf['geometry'] = gdf.geometry.centroid
-            
-        if gdf.crs != "EPSG:4326":
-            gdf = gdf.to_crs("EPSG:4326")
             
         # Assign H3 index (向量化：避免 O(n) apply lambda)
         lats = gdf.geometry.y.values

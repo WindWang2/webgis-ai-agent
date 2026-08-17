@@ -19,6 +19,7 @@ tests/unit/test_execution_offload.py).
 Run cost: ~1s per test (0.8s fake sleep), no network, no heavy deps.
 """
 import asyncio
+import json
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -97,8 +98,10 @@ async def test_upload_geojson_parse_off_loop(monkeypatch, tmp_path):
         lambda: upload_mod.get_upload_geojson(1, {"user_id": "test-user"})
     )
     assert observed["thread"] != _main_thread, "ijson parse ran on the event loop thread"
-    assert result["type"] == "FeatureCollection"
-    assert len(result["features"]) == 1
+    # #590：响应侧序列化也移出事件循环，端点现在返回已编码 bytes 的 Response。
+    payload = json.loads(result.body)
+    assert payload["type"] == "FeatureCollection"
+    assert len(payload["features"]) == 1
 
 
 # ─── Site 2: map.py export_map_as_pdf (reportlab render + sync file write) ────

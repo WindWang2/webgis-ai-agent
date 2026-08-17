@@ -15,6 +15,7 @@
 
 import { API_BASE } from './config';
 import { apiFetch } from './transport';
+import { getAccessToken } from '../auth/tokenStore';
 import { fastGet, invalidateCache } from './get-fast-path';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
 
@@ -65,6 +66,13 @@ export async function uploadFile(
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${API_BASE}/api/v1/upload`);
     xhr.setRequestHeader("X-Request-ID", requestId);
+    // #610: 后端 upload 强制 get_current_user（Bearer）—— XHR 通道此前只带
+    // owner_token，登录用户上传恒 401。与 transport 的 buildRequest 一致注入
+    // Bearer；匿名会话无 access token 时不加。
+    const accessToken = getAccessToken();
+    if (accessToken) {
+      xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+    }
     if (opts?.ownerToken) {
       xhr.setRequestHeader("X-Session-Token", opts.ownerToken);
     }

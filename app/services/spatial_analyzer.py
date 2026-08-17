@@ -7,7 +7,7 @@ import logging
 import re
 from typing import Dict, List, Any, Optional, Callable
 
-from app.lib.geo_processor.core import GeoAnalysisResult, to_utm_gdf, to_feature_collection
+from app.lib.geo_processor.core import GeoAnalysisResult, to_utm_gdf, to_feature_collection, gdf_from_features
 from app.lib.geo_processor.geometry import buffer_smart, clip_smart
 from app.lib.geo_processor.overlay import overlay_smart
 from app.lib.geo_analysis.statistics import (
@@ -343,8 +343,16 @@ class SpatialAnalyzer:
             return GeoAnalysisResult(False, None, "Empty features in left or right layer for spatial join")
 
         import geopandas as gpd
-        gdf_left = gpd.GeoDataFrame.from_features(feats_left, crs="EPSG:4326")
-        gdf_right = gpd.GeoDataFrame.from_features(feats_right, crs="EPSG:4326")
+        # GIS-599: honor a declared `crs` member instead of hardcoding
+        # EPSG:4326 — a declared projected input was previously
+        # misinterpreted as WGS84, silently dropping join matches.
+        gdf_left = gdf_from_features(left_features, "spatial join left layer")
+        gdf_right = gdf_from_features(right_features, "spatial join right layer")
+
+        # Align CRS of the right layer to match the left (previously both were
+        # assumed EPSG:4326, so a mismatched declared CRS joined garbage).
+        if gdf_right.crs != gdf_left.crs:
+            gdf_right = gdf_right.to_crs(gdf_left.crs)
 
         joined = gpd.sjoin(gdf_left, gdf_right, how=join_type, predicate=predicate)
         if "index_right" in joined.columns:

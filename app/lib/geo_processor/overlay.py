@@ -2,7 +2,7 @@ import json
 import logging
 from typing import Union
 import geopandas as gpd
-from app.lib.geo_processor.core import safe_parse, to_feature_collection, GeoAnalysisResult
+from app.lib.geo_processor.core import safe_parse, to_feature_collection, GeoAnalysisResult, gdf_from_features
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +37,11 @@ def overlay_smart(
         fc_a = to_feature_collection(t_parsed)
         fc_b = to_feature_collection(m_parsed)
 
-        gdf_a = gpd.GeoDataFrame.from_features(fc_a, crs="EPSG:4326")
-        gdf_b = gpd.GeoDataFrame.from_features(fc_b, crs="EPSG:4326")
+        # GIS-599: honor a declared `crs` member instead of hardcoding
+        # EPSG:4326 — a declared projected input (e.g. EPSG:3857) was
+        # previously misinterpreted as WGS84 and silently dropped.
+        gdf_a = gdf_from_features(fc_a, "overlay_smart layer_a")
+        gdf_b = gdf_from_features(fc_b, "overlay_smart layer_b")
         
         if gdf_a.empty or gdf_b.empty:
             return GeoAnalysisResult(True, {"type": "FeatureCollection", "features": []}, "Input layer(s) empty, nothing to overlay.")

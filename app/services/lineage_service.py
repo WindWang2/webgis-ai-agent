@@ -14,7 +14,7 @@ import logging
 from typing import Optional, List, Dict, Any, Set
 from collections import deque
 from datetime import datetime, timezone
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, noload
 from sqlalchemy import select
 
 from app.models.project import ArtifactLineage, Artifact
@@ -212,7 +212,17 @@ class LineageService:
                 break
             rows = list(
                 db.execute(
-                    select(ArtifactLineage).where(ArtifactLineage.artifact_id.in_(level))
+                    select(ArtifactLineage)
+                    .where(ArtifactLineage.artifact_id.in_(level))
+                    # _parent_dict/_consumer_dict only read scalar columns — the
+                    # artifact / parent_artifact / workflow_run lazy="selectin"
+                    # eager loads are discarded whole, so suppress them to keep
+                    # each BFS level at one query regardless of batch size.
+                    .options(
+                        noload(ArtifactLineage.artifact),
+                        noload(ArtifactLineage.parent_artifact),
+                        noload(ArtifactLineage.workflow_run),
+                    )
                 ).scalars().all()
             )
             for rec in rows:
@@ -234,7 +244,13 @@ class LineageService:
                 break
             rows = list(
                 db.execute(
-                    select(ArtifactLineage).where(ArtifactLineage.parent_artifact_id.in_(level))
+                    select(ArtifactLineage)
+                    .where(ArtifactLineage.parent_artifact_id.in_(level))
+                    .options(
+                        noload(ArtifactLineage.artifact),
+                        noload(ArtifactLineage.parent_artifact),
+                        noload(ArtifactLineage.workflow_run),
+                    )
                 ).scalars().all()
             )
             for rec in rows:

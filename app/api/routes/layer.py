@@ -18,6 +18,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 
 from app.core.auth import require_owned_session, verify_session_owner
+from app.lib.geojson_serializer import serialize_geojson
 from app.models.db_model import Conversation
 from app.services.mvt import (
     RefDataUnavailableError,
@@ -61,7 +62,11 @@ async def get_session_layer_data(
     if not res.success:
         status_code = 403 if res.error_type == "PermissionDenied" else 404
         raise HTTPException(status_code=status_code, detail=res.error or "数据不可用")
-    return res.data
+    # #590：数据面响应侧序列化（多 MB GeoJSON）不能由默认 JSONResponse 在
+    # 事件循环上整包编码 —— 与 #427/#499 同族，走分块 + to_thread 序列化
+    #（C 编码器分批持有 GIL，事件循环间隙保持毫秒级），再以 bytes 响应返回。
+    body = await serialize_geojson(res.data)
+    return Response(content=body, media_type="application/json")
 
 
 def _extract_points(data) -> list[tuple[tuple[float, float], dict]]:
@@ -182,6 +187,35 @@ async def get_mvt_tile(
     return _tile_response(body, if_none_match)
 
 
+def _compute_descriptor_fallback(data) -> dict:
+    """同步计算 descriptor 回退字段（pre-V3 ref / descriptor 键缺失时）。
+
+    全要素扫描（_extract_points / _feature_collection_bbox）+ ``len(str(data))``
+    在 50k 特征量级可达数百 ms —— 与存储侧 compute_descriptor 的 to_thread
+    对称（#590），必须在 worker 线程执行，不能占用事件循环。
+    """
+    points = _extract_points(data)
+    fc = data if isinstance(data, dict) and data.get("type") == "FeatureCollection" else (data.get("geojson") if isinstance(data, dict) else {})
+    features = fc.get("features", []) if isinstance(fc, dict) else []
+
+    geom_types = set()
+    for f in features:
+        if isinstance(f, dict) and "geometry" in f and isinstance(f["geometry"], dict):
+            geom_types.add(f["geometry"].get("type", "Unknown"))
+
+    from app.tools._utils import _feature_collection_bbox
+    bbox = _feature_collection_bbox(fc if isinstance(fc, dict) else {"type": "FeatureCollection", "features": []})
+
+    return {
+        "points": points,
+        "features": features,
+        "geom_types": list(geom_types),
+        "bbox": bbox,
+        "raster_capable": isinstance(data, dict) and ("file_path" in data or "path" in data),
+        "estimated_bytes": len(str(data)),
+    }
+
+
 @router.get("/layers/descriptor/{ref_id}", tags=["图层数据"])
 async def get_layer_descriptor(
     ref_id: str,
@@ -227,18 +261,14 @@ async def get_layer_descriptor(
         status_code = 403 if res.error_type == "PermissionDenied" else 404
         raise HTTPException(status_code=status_code, detail=res.error or "数据不可用")
 
-    data = res.data
-    points = _extract_points(data)
-    fc = data if isinstance(data, dict) and data.get("type") == "FeatureCollection" else (data.get("geojson") if isinstance(data, dict) else {})
-    features = fc.get("features", []) if isinstance(fc, dict) else []
-
-    geom_types = set()
-    for f in features:
-        if isinstance(f, dict) and "geometry" in f and isinstance(f["geometry"], dict):
-            geom_types.add(f["geometry"].get("type", "Unknown"))
-
-    from app.tools._utils import _feature_collection_bbox
-    bbox = _feature_collection_bbox(fc if isinstance(fc, dict) else {"type": "FeatureCollection", "features": []})
+    # #590：回退计算（全要素扫描 + len(str(data))）整块移入 worker 线程。
+    computed = await asyncio.to_thread(_compute_descriptor_fallback, res.data)
+    points = computed["points"]
+    features = computed["features"]
+    geom_types = computed["geom_types"]
+    bbox = computed["bbox"]
+    raster_capable = computed["raster_capable"]
+    estimated_bytes = computed["estimated_bytes"]
 
     return {
         "ref_id": ref_id,
@@ -248,8 +278,8 @@ async def get_layer_descriptor(
         "geometry_types": list(geom_types),
         "bbox": bbox,
         "mvt_capable": len(points) > 0,
-        "raster_capable": isinstance(data, dict) and ("file_path" in data or "path" in data),
-        "estimated_bytes": len(str(data)),
+        "raster_capable": raster_capable,
+        "estimated_bytes": estimated_bytes,
     }
 
 

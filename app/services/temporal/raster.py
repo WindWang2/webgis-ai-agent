@@ -570,7 +570,9 @@ class TemporalRasterEngine:
                 "direction": "unknown",
                 "skipped_slices": skipped,
             }
-        trend_res = trend_eng.analyze_trend(data=means, metric_name="raster_mean")
+        trend_res = trend_eng.analyze_trend(
+            data=means, metric_name="raster_mean", timestamps=timestamps
+        )
 
         result = {
             "timestamps": timestamps,
@@ -579,6 +581,9 @@ class TemporalRasterEngine:
             "intercept": trend_res.intercept,
             "r_squared": trend_res.r_squared,
             "direction": trend_res.direction,
+            # #594: slope is fit on real time (per year) when the slice
+            # timestamps parse — never a bare per-step number without a unit.
+            "slope_unit": trend_res.slope_unit,
         }
         if skipped:
             result["skipped_slices"] = skipped

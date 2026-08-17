@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 from typing import Optional, Any
 import asyncio
-import json
+import json  # noqa: F401  (kept: tests/test_event_loop_offload_427 monkeypatches map_mod.json.dumps)
 import logging
 import os
 import uuid
@@ -18,6 +18,7 @@ import tempfile
 from fastapi.responses import FileResponse
 from app.core.config import settings
 from app.core.auth import get_current_user
+from app.lib.geojson_serializer import serialize_geojson as _serialize_geojson
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,8 @@ _MEDIA_TYPES = {
 # 审计 P0：导出文件所有权追踪（防止 IDOR — 任意认证用户通过猜文件名下载他人导出）
 # key = filename, value = user_id。
 # ⚠️ SEC-10: 这是进程内 dict，进程重启后丢失。生产环境应替换为数据库表
-# （exports 表含 user_id 外键），届时 owner 为 None 的分支可移除。
+# （exports 表含 user_id 外键）。#616：owner 缺失（LRU 重启清空 + 侧车丢失）
+# 时下载路由 fail-closed（404），不再对全体认证用户放行。
 # PERF-F6: bounded LRU (was an unbounded process-lifetime dict — one entry
 # per export forever). Rereads fall back to the .owner sidecar file.
 from collections import OrderedDict as _OD
@@ -174,11 +176,9 @@ async def upload_map_export(
         if ext == ".svg":
             content = await asyncio.to_thread(_sanitize_svg, content)
 
-        # 写入临时文件再原子移动，防止进程崩溃留下残缺文件
-        with tempfile.NamedTemporaryFile(dir=EXPORT_DIR, delete=False, suffix=ext) as tmp:
-            tmp.write(content)
-            tmp_path = tmp.name
-        os.replace(tmp_path, os.path.join(EXPORT_DIR, filename))
+        # 写入临时文件再原子移动，防止进程崩溃留下残缺文件 —— 同步写盘移出
+        # 事件循环（#592：≤50MB 写入内联在 async def 会冻结全部并发流）。
+        await asyncio.to_thread(_persist_export_file, filename, content, ext)
     except HTTPException:
         raise
     except Exception as e:
@@ -279,12 +279,15 @@ def download_map_export(filename: str, _user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="地图文件不存在或已过期失效")
 
     # 审计 P0：防止 IDOR — 验证请求用户是文件所有者。
-    # SEC-10: _EXPORT_OWNERS 是进程内 dict，重启后 owner 为 None。
-    # 此时无法证明归属，但端点已要求认证 (get_current_user)，因此允许
-    # 任意 *已认证* 用户下载，并依赖文件名高熵（48 位）阻止枚举。
-    # TODO: 迁移到 DB-backed 所有权 (exports.user_id)，届时移除此兜底。
+    # SEC-10 / #616: _EXPORT_OWNERS 是进程内 dict（重启即空），.owner 侧车
+    # 是持久化兜底。两者都拿不到 owner（进程重启 + 侧车写失败/丢失/多 worker
+    # NFS 未同步）时 **fail-closed**：拒绝而非对全体认证用户放行 —— 与
+    # layer/raster 路由的 fail-closed 语义一致；返回 404（与文件不存在同响应）
+    # 不泄漏文件存在性。DB-backed 所有权（exports.user_id）落地后可移除兜底。
     owner = _get_export_owner(safe_filename)
-    if owner is not None and owner != _user.get("user_id"):
+    if owner is None:
+        raise HTTPException(status_code=404, detail="地图文件存在性无法验证，拒绝下载")
+    if owner != _user.get("user_id"):
         raise HTTPException(status_code=403, detail="无权下载此文件")
 
     ext = os.path.splitext(safe_filename)[1].lower()
@@ -303,88 +306,18 @@ class GeoJSONExportRequest(BaseModel):
     filename: str = "export"
 
 
-def _dumps_pretty(obj: Any) -> str:
-    """Canonical GeoJSON export serialization format (single-value fragment)."""
-    return json.dumps(obj, ensure_ascii=False, indent=2)
-
-
-def _reindent(text: str, pad: str) -> str:
-    """Shift a serialized JSON fragment one indent level deeper (all lines
-    after the first get `pad` prefixed) — exactly how json.dumps(indent=2)
-    lays out nested values."""
-    if "\n" not in text:
-        return text
-    first, *rest = text.split("\n")
-    return first + "".join("\n" + pad + line for line in rest)
-
-
-# Top-level lists bigger than this are encoded in bounded worker-thread batches
-# (below it a single dumps is cheaper than the thread dispatches).
-_GEOJSON_CHUNK_MIN_ITEMS = 2000
-_GEOJSON_BATCH_ITEMS = 512
-
-
-def _encode_batch(elements: list, pad: str) -> list:
-    """Serialize one batch of top-level list elements at one indent level.
-
-    Runs in a worker thread: each C-encoder call holds the GIL for only a few
-    ms, so the event loop can keep servicing timers/SSE between batches."""
-    return [_reindent(_dumps_pretty(el), pad) for el in elements]
-
-
-def _encode_value(value: Any, pad: str) -> str:
-    """Serialize a non-chunked top-level value at one indent level."""
-    return _reindent(_dumps_pretty(value), pad)
-
-
-async def _serialize_geojson(data: Any) -> bytes:
-    """Chunked, byte-identical replacement for json.dumps(data, indent=2).
-
-    #427: Python 3.13's C JSON encoder holds the GIL for the WHOLE encode, so
-    even ``asyncio.to_thread(json.dumps, ...)`` leaves the event loop stalled
-    for the full duration (measured: 26 MB body → 0.5 s loop gap; 45 MB →
-    2.3 s). Top-level list values (GeoJSON ``features``) are therefore encoded
-    in bounded batches in a worker thread with an await between batches: each
-    batch holds the GIL for only a few ms, keeping loop gaps <100 ms.
-
-    Output is byte-identical to ``json.dumps(data, ensure_ascii=False,
-    indent=2)`` — pinned by tests/test_event_loop_offload_427.py across
-    FeatureCollections (chunked and small), empty containers, non-ASCII,
-    floats and nested shapes.
-    """
-    if not isinstance(data, dict) or not data:
-        return (await asyncio.to_thread(_dumps_pretty, data)).encode("utf-8")
-
-    parts: list = ["{"]
-    items = list(data.items())
-    for idx, (key, val) in enumerate(items):
-        comma = "," if idx < len(items) - 1 else ""
-        key_frag = json.dumps(key, ensure_ascii=False)
-        if isinstance(val, list) and len(val) > _GEOJSON_CHUNK_MIN_ITEMS:
-            # Chunked path: elements live at indent depth 2 (4 spaces).
-            parts.append(f"\n  {key_frag}: [")
-            total = len(val)
-            for start in range(0, total, _GEOJSON_BATCH_ITEMS):
-                batch = await asyncio.to_thread(
-                    _encode_batch, val[start : start + _GEOJSON_BATCH_ITEMS], "    "
-                )
-                for j, frag in enumerate(batch):
-                    pos = start + j
-                    parts.append(
-                        "\n    " + frag + ("," if pos < total - 1 else "")
-                    )
-            parts.append(f"\n  ]{comma}")
-        else:
-            vfrag = await asyncio.to_thread(_encode_value, val, "  ")
-            parts.append(f"\n  {key_frag}: {vfrag}{comma}")
-    parts.append("\n}")
-
-    body = await asyncio.to_thread(lambda: "".join(parts).encode("utf-8"))
-    return body
+def _persist_export_file(filename: str, content: bytes, ext: str) -> None:
+    """同步 IO：写临时文件 + 原子 replace —— 移出事件循环（#592 与 #427 的
+    _write_export_file 同款纪律：上传分支此前把 ≤50MB 的写入内联在 async def，
+    慢盘/NFS 上会冻结全部并发 SSE 流）。"""
+    with tempfile.NamedTemporaryFile(dir=EXPORT_DIR, delete=False, suffix=ext) as tmp:
+        tmp.write(content)
+        tmp_path = tmp.name
+    os.replace(tmp_path, os.path.join(EXPORT_DIR, filename))
 
 
 def _write_export_file(filepath: str, content: bytes) -> None:
-    """同步文件写 —— 与序列化一样移出事件循环。"""
+    """同步文件写 —— 与序列化一样移出事件循环（#427）。"""
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     with open(filepath, "wb") as f:
         f.write(content)

@@ -15,12 +15,16 @@ import {
 } from "lucide-react"
 import { motion } from "framer-motion"
 import { API_BASE } from '@/lib/api/config';
+import { downloadWithAuth } from '@/lib/api/authenticated-download';
+import { devOnly } from '@/lib/utils/logger';
 
 interface AssetCardProps {
   asset: any
   onLoad: (asset: any) => void
   onDelete: (id: number) => void
   onRename: (id: number, newName: string) => void
+  sessionId?: string
+  ownerToken?: string | null
 }
 
 function formatFileSize(bytes: number): string {
@@ -52,7 +56,7 @@ function getAssetTypeInfo(asset: any): { icon: React.ReactNode; label: string; c
   return { icon: <FileText className="h-4 w-4" />, label: '分析成果', color: 'text-hud-cyan' };
 }
 
-export function AssetCard({ asset, onLoad, onDelete, onRename }: AssetCardProps) {
+export function AssetCard({ asset, onLoad, onDelete, onRename, sessionId, ownerToken }: AssetCardProps) {
   const [isEditing, setIsEditing] = useState(false)
   const [tempName, setTempName] = useState(asset.original_name)
 
@@ -61,6 +65,22 @@ export function AssetCard({ asset, onLoad, onDelete, onRename }: AssetCardProps)
   const handleSaveRename = () => {
     onRename(asset.id, tempName)
     setIsEditing(false)
+  }
+
+  const handleDownload = () => {
+    // #610: 裸 window.open 无法携带 Bearer 且缺后端必填的 session_id（恒 422），
+    // `download=true` 是后端不存在的幻影参数。改走鉴权通道 downloadWithAuth
+    //（transport Bearer + 401 刷新，与 #515 下载修复同族），URL 附 session_id。
+    const refId = asset.ref_id ?? asset.id;
+    const params = new URLSearchParams();
+    if (sessionId) params.set('session_id', sessionId);
+    const qs = params.toString();
+    const url =
+      `${API_BASE}/api/v1/layers/data/${encodeURIComponent(String(refId))}` +
+      (qs ? `?${qs}` : '');
+    downloadWithAuth(url, { ownerToken: ownerToken ?? undefined }).catch((err) => {
+      devOnly.warn('[AssetCard] 资产下载失败:', err);
+    });
   }
 
   return (
@@ -142,7 +162,7 @@ export function AssetCard({ asset, onLoad, onDelete, onRename }: AssetCardProps)
               <Edit size={11} />
             </button>
             <button
-              onClick={() => window.open(`${API_BASE}/api/v1/layers/data/${encodeURIComponent(asset.id)}?download=true`)}
+              onClick={handleDownload}
               aria-label="下载资产"
               className="p-1.5 rounded-md hover:bg-white/[0.04] text-white/20 hover:text-white/50 transition-all"
               title="下载"

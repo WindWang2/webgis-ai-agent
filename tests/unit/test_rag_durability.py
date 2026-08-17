@@ -413,6 +413,107 @@ def test_write_lock_blocks_concurrent_writers():
         shutil.rmtree(dir_, ignore_errors=True)
 
 
+# ── #601: mark_deleted RMW must hold _write_lock ──────────────────────
+
+
+def test_mark_deleted_locked_against_concurrent_add(monkeypatch):
+    """Issue #601: mark_deleted used to read metadata OUTSIDE _write_lock
+    and only wrapped the save. A concurrent add_vectors (another worker,
+    or a compact on a worker thread) could interleave between the read and
+    the save; the stale snapshot then overwrote the add's fresh chunk
+    index — the vector landed in index.faiss but its metadata entry
+    vanished, so search silently skipped it (index ntotal > len(chunks)).
+
+    The fix moves the whole load+modify+save under _write_lock (same RMW
+    discipline as add_vectors/compact). Choreographed deterministically,
+    with the add thread parked mid-write while still holding the lock:
+
+      1. T_add acquires the lock, computes base_idx from current metadata,
+         appends chunk B in memory, then blocks inside the gated index
+         write while still holding the lock.
+      2. T_mark starts mark_deleted("A") — with the fix it must block at
+         lock ACQUISITION (before its read), then see the post-add
+         metadata; without it, it reads the pre-add disk state and later
+         overwrites B with its stale snapshot.
+      3. Release T_add; both finish. Final state must contain both A
+         (deleted) and B, with index ntotal == len(chunks).
+    """
+    import threading
+
+    import app.services.rag.faiss_store as mod
+
+    store_add, dir_ = _tmp_store()
+    try:
+        store_add.add_vectors(_fake_vectors(1), [{"document_id": "A", "content": "alpha"}])
+        store_mark = FaissVectorStore(index_dir=dir_)
+
+        add_in_flight = threading.Event()
+        allow_add_finish = threading.Event()
+        original_faiss_write = mod._atomic_write_faiss
+
+        def gated_faiss_write(*a, **kw):
+            # Only the add thread hits this gate; mark_deleted never writes
+            # the index. Park the add thread while it holds the lock.
+            add_in_flight.set()
+            assert allow_add_finish.wait(timeout=10), (
+                "main thread never released the parked add_vectors"
+            )
+            return original_faiss_write(*a, **kw)
+
+        monkeypatch.setattr(mod, "_atomic_write_faiss", gated_faiss_write)
+
+        results: list[Exception | None] = [None, None]
+
+        def run_add():
+            try:
+                store_add.add_vectors(
+                    _fake_vectors(1), [{"document_id": "B", "content": "beta"}]
+                )
+            except Exception as e:  # pragma: no cover - failure path
+                results[0] = e
+
+        def run_mark():
+            try:
+                store_mark.mark_deleted("A")
+            except Exception as e:  # pragma: no cover - failure path
+                results[1] = e
+
+        t_add = threading.Thread(target=run_add)
+        t_mark = threading.Thread(target=run_mark)
+        t_add.start()
+        # T_add now holds the sidecar lock, parked mid add_vectors.
+        assert add_in_flight.wait(timeout=10), (
+            "add_vectors never reached the write barrier"
+        )
+        t_mark.start()
+        # Let the add finish. With the fix, T_mark is blocked at lock
+        # acquisition and will read the POST-add metadata; without it, T_mark
+        # already captured the pre-add snapshot and will clobber B.
+        allow_add_finish.set()
+        t_add.join(timeout=10)
+        t_mark.join(timeout=10)
+
+        assert results == [None, None], f"a concurrent writer failed: {results}"
+        assert not t_add.is_alive() and not t_mark.is_alive(), "worker threads hung"
+
+        meta = store_mark.load_metadata()
+        ids = [c["document_id"] for c in meta["chunks"]]
+        assert ids == ["A", "B"], (
+            "#601: mark_deleted's stale snapshot dropped the concurrent add; "
+            f"metadata chunks={ids}"
+        )
+        assert meta["chunks"][0]["deleted"] is True, (
+            "expected A to carry the deferred deleted flag"
+        )
+        assert store_mark._get_index().ntotal == len(meta["chunks"]) == 2, (
+            "index ntotal and metadata chunks diverged after concurrent "
+            "add + mark_deleted"
+        )
+    finally:
+        import shutil
+        shutil.rmtree(dir_, ignore_errors=True)
+
+
 # ── #544: cross-process index staleness ─────────────────────────────────
 
 

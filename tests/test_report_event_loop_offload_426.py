@@ -289,7 +289,7 @@ async def test_tool_sync_db_off_loop(monkeypatch, tmp_path):
     monkeypatch.setattr(tool_mod.spatial_report_engine, "generate_report", fake_render)
 
     result = await _assert_loop_responsive_while(
-        lambda: tool_fn(format="markdown", _session_id="sess-tool")
+        lambda: tool_fn(format="markdown", session_id="sess-tool")
     )
     assert observed_threads and all(
         t != _main_thread for t in observed_threads
@@ -383,7 +383,7 @@ async def test_tool_render_failure_marks_failed(monkeypatch, tmp_path):
 
     monkeypatch.setattr(tool_mod.spatial_report_engine, "generate_report", failing_render)
 
-    result = await tool_fn(format="markdown", _session_id="sess-tool")
+    result = await tool_fn(format="markdown", session_id="sess-tool")
     assert "error" in result
     (report_row,) = report_rows.values()
     assert report_row.status == "failed"

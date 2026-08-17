@@ -20,6 +20,12 @@ logger = logging.getLogger(__name__)
 # engine API stays uncapped for programmatic callers.
 MAX_OPTIMIZE_STOPS = 200
 
+# Issue #582: the OD matrix is O(origins × destinations) — an unbounded product
+# (e.g. 300×300 = 90000 rows) serializes to a multi-MB payload that goes
+# straight into the LLM context. Requests beyond this cap are rejected with an
+# EXPLICIT error (never silently truncated), mirroring MAX_OPTIMIZE_STOPS.
+MAX_OD_MATRIX_PAIRS = 10_000
+
 
 def _geometry_descriptor(geom: Any, max_features: int = 50) -> Dict[str, Any]:
     """Collapse a heavy geometry field into a Fetch-on-Demand descriptor.
@@ -113,24 +119,118 @@ def trim_network_result(payload: Dict[str, Any], max_features: int = 50) -> Dict
     if out.get("result_geojson"):
         out["result_geojson"] = _geometry_descriptor(out["result_geojson"], max_features=max_features)
 
+    # Issue #582: the >40k-character last-resort truncation used to clear only
+    # ``features`` keys while attaching a "Payload truncated for context safety"
+    # notice unconditionally — network payloads bloat in ``od_matrix`` rows,
+    # ``routes[].coordinates`` and per-route ``directions`` instead, so the
+    # notice LIED (payload stayed multi-MB while claiming it was trimmed). The
+    # fallback now compresses those shapes for real, records explicit
+    # ``_*_trimmed`` summaries, and only claims truncation when it happened.
     try:
         import json
         if len(json.dumps(out)) > 40000:
-            out["_payload_notice"] = "Payload truncated for context safety (>40,000 chars). Use layer endpoints for full GeoJSON access."
-            def _truncate_features(obj: Any):
-                if isinstance(obj, dict):
-                    if "features" in obj and isinstance(obj["features"], list):
-                        obj["features"] = []
-                    for v in obj.values():
-                        _truncate_features(v)
-                elif isinstance(obj, list):
-                    for item in obj:
-                        _truncate_features(item)
-            _truncate_features(out)
+            truncated = _truncate_network_fallback(out)
+            if truncated:
+                out["_payload_notice"] = (
+                    "Payload exceeded the context budget and was trimmed to summaries "
+                    "(see _*_trimmed keys for original counts). "
+                    "Use layer endpoints for full geometry access."
+                )
+            elif len(json.dumps(out)) > 40000:
+                out["_payload_notice"] = (
+                    "Payload exceeds the context budget with no further compressible "
+                    "fields; narrow the analysis scope and retry."
+                )
     except Exception:
         pass
 
     return out
+
+
+# 兜底截断的逐形状上限（Issue #582）：od 行/路由/每段 directions 超过即裁，
+# 计数保留在 _*_trimmed 汇总里，绝不静默丢数据。兜底分支里 route 几何直接
+# 压成纯摘要（坐标预览也裁掉——超预算时 LLM 该推理的是 total_distance/time
+# 等指标，完整坐标走图层端点）。
+_FALLBACK_MAX_ROWS = 50
+_FALLBACK_MAX_ROUTE_COORDS = 50
+_FALLBACK_MAX_DIRECTIONS = 5
+
+
+def _truncate_network_fallback(out: Dict[str, Any]) -> bool:
+    """Force-compress a network result that still exceeds the context budget.
+
+    Handles the non-features shapes network payloads actually bloat on:
+    ``od_matrix`` rows, the ``routes`` list (route geometry coordinates and
+    per-route ``directions``), plus a defensive ``features``-array pass (the
+    pre-fix behavior, kept for untrimmed FeatureCollections nested elsewhere).
+    Returns True if anything was actually removed — the caller only attaches an
+    honest truncation notice in that case.
+    """
+    truncated = False
+
+    od = out.get("od_matrix")
+    if isinstance(od, list) and len(od) > _FALLBACK_MAX_ROWS:
+        out["od_matrix"] = od[:_FALLBACK_MAX_ROWS]
+        out["_od_matrix_trimmed"] = {
+            "original_pair_count": len(od),
+            "kept_pair_count": _FALLBACK_MAX_ROWS,
+        }
+        truncated = True
+
+    routes = out.get("routes")
+    if isinstance(routes, list):
+        if len(routes) > _FALLBACK_MAX_ROWS:
+            original_route_count = len(routes)
+            routes = routes[:_FALLBACK_MAX_ROWS]
+            out["routes"] = routes
+            out["_routes_trimmed"] = {
+                "original_route_count": original_route_count,
+                "kept_route_count": _FALLBACK_MAX_ROWS,
+            }
+            truncated = True
+        for route in routes:
+            if not isinstance(route, dict):
+                continue
+            geometry = route.get("geometry")
+            if (
+                isinstance(geometry, dict)
+                and isinstance(geometry.get("coordinates"), list)
+                and _count_coords(geometry["coordinates"]) > _FALLBACK_MAX_ROUTE_COORDS
+            ):
+                route["geometry"] = {
+                    "type": geometry.get("type"),
+                    "coordinate_count": _count_coords(geometry["coordinates"]),
+                    "note": "Coordinates trimmed in the fallback; full geometry available via layer endpoints.",
+                }
+                truncated = True
+            directions = route.get("directions")
+            if isinstance(directions, list) and len(directions) > _FALLBACK_MAX_DIRECTIONS:
+                route["directions"] = directions[:_FALLBACK_MAX_DIRECTIONS]
+                route["_directions_trimmed"] = {
+                    "original_count": len(directions),
+                    "kept_count": _FALLBACK_MAX_DIRECTIONS,
+                }
+                truncated = True
+
+    # Defensive pass: drop any remaining full ``features`` arrays (e.g. inside
+    # an untrimmed nested payload) — mirrors the pre-fix behavior.
+    def _clear_features(obj: Any) -> bool:
+        hit = False
+        if isinstance(obj, dict):
+            if isinstance(obj.get("features"), list) and obj["features"]:
+                obj["features"] = []
+                hit = True
+            for v in obj.values():
+                hit = _clear_features(v) or hit
+        elif isinstance(obj, list):
+            for item in obj:
+                hit = _clear_features(item) or hit
+        return hit
+
+    if _clear_features(out):
+        truncated = True
+
+    return truncated
 
 
 # --- Pydantic Args Models ---
@@ -146,8 +246,8 @@ class NetworkShortestPathArgs(BaseModel):
 
 class NetworkODMatrixArgs(BaseModel):
     network: Any = Field(..., description="Network GeoJSON dataset, ref ID, or 'osm_road'")
-    origins: List[Any] = Field(..., description="List of origin points or features")
-    destinations: List[Any] = Field(..., description="List of destination points or features")
+    origins: List[Any] = Field(..., description=f"List of origin points or features（起终点组合数上限 {MAX_OD_MATRIX_PAIRS}，超限请求必须拆分）")
+    destinations: List[Any] = Field(..., description=f"List of destination points or features（起终点组合数上限 {MAX_OD_MATRIX_PAIRS}，超限请求必须拆分）")
     profile: str = Field(default="driving", description="Travel profile: walking, driving, cycling, custom")
     cutoff_s: Optional[float] = Field(default=None, description="Maximum travel time cutoff in seconds")
 
@@ -250,6 +350,19 @@ def register_network_tools(registry: ToolRegistry):
         session_id: str = "",
     ) -> dict:
         try:
+            # Issue #582: bound the O(origins × destinations) matrix at the
+            # agent-facing surface. Explicit rejection — never silently
+            # truncate the rest (mirrors MAX_OPTIMIZE_STOPS in optimize_route).
+            pair_count = len(origins) * len(destinations)
+            if pair_count > MAX_OD_MATRIX_PAIRS:
+                return {
+                    "type": "error",
+                    "message": (
+                        f"network_od_matrix 最多支持 {MAX_OD_MATRIX_PAIRS} 个起终点组合"
+                        f"（origins {len(origins)} × destinations {len(destinations)} = {pair_count}）；"
+                        f"请拆分起点/终点或缩小范围后重试。"
+                    ),
+                }
             travel_profile = TravelProfile(name=profile)
             res = await engine.solve_od_matrix(
                 network=network,

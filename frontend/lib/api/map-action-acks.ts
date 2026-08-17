@@ -21,6 +21,7 @@
  */
 
 import { API_BASE } from '@/lib/api/config';
+import { getAccessToken } from '@/lib/auth/tokenStore';
 import { devOnly } from '@/lib/utils/logger';
 import type { MapActionCorrelation, MapActionTerminalStatus } from '@/lib/types';
 
@@ -328,6 +329,11 @@ export function createMapActionAckSender(options: MapActionAckSenderOptions): Ma
     }
     const doFetch = fetchImpl ?? fetch;
     const acks = items.map((item) => item.ack);
+    // #610: 登录会话的 ACK 必须带 Bearer —— require_owned_session 对登录会话
+    // 按 user_id 匹配（X-Session-Token 只对匿名会话的 owner_token 有意义），
+    // 此前裸 fetch 只带 X-Session-Token，登录用户的 ACK 恒 404 被永久丢弃。
+    // 与 apiFetch 一致：Bearer（登录）+ X-Session-Token（匿名持有者）双头。
+    const accessToken = getAccessToken();
     const controller = new AbortController();
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
     if (requestTimeoutMs > 0) {
@@ -347,6 +353,7 @@ export function createMapActionAckSender(options: MapActionAckSenderOptions): Ma
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { 'X-Session-Token': token } : {}),
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         },
         body: JSON.stringify({ acks }),
         signal: controller.signal,

@@ -42,7 +42,13 @@ def _is_explicit_geographic_crs(crs: Optional[str]) -> bool:
 
 
 def _calculate_suggested_zoom(west: float, south: float, east: float, north: float) -> int:
-  dx = abs(east - west)
+  # Issue #598: a wrap-around bbox (west > east, e.g. 170..-170) crosses the
+  # antimeridian — the true longitudinal span is the arc through ±180
+  # (east+360-west), not the naive |east-west| = 340°, which mapped every
+  # AM-crossing extent to zoom 1 (whole world). Mirrors the GIS-P3-7 center
+  # fix: only wrap bboxes normalize, and the [-180, 180] full-world bbox keeps
+  # its 360° span.
+  dx = (east + 360.0 - west) if west > east else (east - west)
   dy = abs(north - south)
   span = max(dx, dy)
 
