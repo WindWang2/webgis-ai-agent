@@ -46,12 +46,26 @@ class SpatialQualityReport(BaseModel):
     )
     issues: List[QualityIssue] = Field(default_factory=list)
     overall_status: str = "passed"  # "passed", "warning", "blocking"
+    # Issue #539: the topology (pairwise) dimension is bounded; when a budget
+    # binds, the report says so explicitly instead of silently skipping checks.
+    # Consumers asserting "all issues" must honor `truncated`/`truncated_count`.
+    truncated: bool = False
+    truncated_count: int = 0
+    truncation_details: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return self.model_dump()
 
 
 class SpatialQualityEngine:
+    # Issue #539: bounds for the O(P²)-degenerate pairwise topology audit.
+    # Class attributes so tests/reviewers can tune. When a budget binds the
+    # returned report carries `truncated=True` + truncation_details; results
+    # are NEVER silently dropped.
+    MAX_CANDIDATES_PER_FEATURE = 300   # candidate pairs (j>i) examined per feature
+    MAX_TOPOLOGY_ISSUES = 5000         # global topology-dimension issue budget
+    MAX_DANGLING_CANDIDATES = 200      # endpoints scanned per dangling check
+
     @classmethod
     def audit_dataset(
         cls,
@@ -390,6 +404,19 @@ class SpatialQualityEngine:
         # ----------------------------------------------------
         # Dimension 2: Topology Checks
         # ----------------------------------------------------
+        # PERF (#539): candidates come from a bbox-only STRtree, so bbox-nested
+        # data (concentric rings / nested buffers) degenerates to an all-pairs
+        # scan with up to 5 GEOS predicates per pair and up to 3 issues per
+        # pair — O(P²) with no bound (measured 33 s @ 800 rings; ~quadratic).
+        # The work is bounded by class-level budgets (see class docstring);
+        # when a budget binds, truncation facts are recorded and reported below
+        # (report.truncated / truncated_count / truncation_details).
+        truncation_reasons: List[str] = []
+        topology_issues_reported = 0
+        topology_pairs_examined = 0
+        candidates_skipped = 0
+        dangling_undetermined = 0
+
         if parsed_geometries:
             valid_shapes = [g for _, g, _ in parsed_geometries]
             idx_map = [idx for idx, _, _ in parsed_geometries]
@@ -398,6 +425,7 @@ class SpatialQualityEngine:
             tree = STRtree(valid_shapes)
             line_endpoints: List[Tuple[Point, int]] = []
 
+            issue_cap_hit = False
             for i, (f_idx_i, geom_i, props_i) in enumerate(parsed_geometries):
                 # Collect line endpoints for dangling endpoint checks
                 if isinstance(geom_i, LineString):
@@ -413,10 +441,21 @@ class SpatialQualityEngine:
                             line_endpoints.append((Point(coords[-1]), f_idx_i))
 
                 candidates = tree.query(geom_i)
+                examined_for_i = 0
                 for cand_pos in candidates:
                     j = int(cand_pos)
                     if j <= i:
                         continue
+                    if issue_cap_hit:
+                        break
+                    # Per-feature pair budget: after this feature's allotment
+                    # is spent, the rest of its candidates are skipped (and
+                    # counted — never silently).
+                    if examined_for_i >= cls.MAX_CANDIDATES_PER_FEATURE:
+                        candidates_skipped += 1
+                        continue
+                    examined_for_i += 1
+                    topology_pairs_examined += 1
                     f_idx_j = idx_map[j]
                     geom_j = valid_shapes[j]
                     props_j = props_map[j]
@@ -434,6 +473,10 @@ class SpatialQualityEngine:
                                     details={"duplicate_of": f_idx_i},
                                 )
                             )
+                            topology_issues_reported += 1
+                            if topology_issues_reported >= cls.MAX_TOPOLOGY_ISSUES:
+                                issue_cap_hit = True
+                                break
 
                     # Topology: Overlap check for Polygons
                     if isinstance(geom_i, (Polygon, MultiPolygon)) and isinstance(geom_j, (Polygon, MultiPolygon)):
@@ -448,6 +491,10 @@ class SpatialQualityEngine:
                                     details={"overlaps_with": f_idx_j},
                                 )
                             )
+                            topology_issues_reported += 1
+                            if topology_issues_reported >= cls.MAX_TOPOLOGY_ISSUES:
+                                issue_cap_hit = True
+                                break
 
                     # Topology: Gap check (adjacent polygons with tiny gap)
                     # GIS-16 (deep-audit round 4): the thresholds were absolute
@@ -470,6 +517,10 @@ class SpatialQualityEngine:
                                 details={"gap_distance": dist, "adjacent_feature": f_idx_j},
                             )
                         )
+                        topology_issues_reported += 1
+                        if topology_issues_reported >= cls.MAX_TOPOLOGY_ISSUES:
+                            issue_cap_hit = True
+                            break
 
                     # Topology: Near-duplicate vertices between features
                     if 0 < dist < dup_threshold:
@@ -483,6 +534,17 @@ class SpatialQualityEngine:
                                 details={"distance": dist, "other_feature": f_idx_j},
                             )
                         )
+                        topology_issues_reported += 1
+                        if topology_issues_reported >= cls.MAX_TOPOLOGY_ISSUES:
+                            issue_cap_hit = True
+                            break
+                if issue_cap_hit:
+                    break
+
+            if topology_pairs_examined > 0 and candidates_skipped > 0:
+                truncation_reasons.append("candidates_budget")
+            if issue_cap_hit:
+                truncation_reasons.append("max_issues")
 
             # Dangling endpoints check
             if line_endpoints:
@@ -501,14 +563,25 @@ class SpatialQualityEngine:
                     # distance re-check below stays the final filter.
                     near_pts = pt_tree.query(pt.buffer(dup_threshold))
                     connected = False
+                    inspected = 0
                     for candidate_idx in near_pts:
                         cand_idx_int = int(candidate_idx)
                         if cand_idx_int == pt_idx:
                             continue
+                        # PERF (#539): when many endpoints coincide (hub-and-
+                        # spoke data), a point's candidate set is O(L) and the
+                        # distance recheck is O(L²) overall — bounded scan. If
+                        # the budget is spent WITHOUT a verdict, do NOT guess:
+                        # the endpoint stays unflagged and is counted as
+                        # undetermined (a false "dangling" would be worse).
+                        if inspected >= cls.MAX_DANGLING_CANDIDATES:
+                            dangling_undetermined += 1
+                            break
+                        inspected += 1
                         if pt.distance(pt_geoms[cand_idx_int]) < dup_threshold:
                             connected = True
                             break
-                    if not connected:
+                    if not connected and inspected < cls.MAX_DANGLING_CANDIDATES:
                         issues.append(
                             QualityIssue(
                                 dimension="topology",
@@ -519,6 +592,8 @@ class SpatialQualityEngine:
                                 details={"endpoint": (pt.x, pt.y)},
                             )
                         )
+                if dangling_undetermined > 0:
+                    truncation_reasons.append("dangling_budget")
 
         # ----------------------------------------------------
         # Dimension 4: Attributes Checks
@@ -653,10 +728,24 @@ class SpatialQualityEngine:
         else:
             overall_status = "passed"
 
+        truncated = bool(truncation_reasons)
+        truncation_details = None
+        if truncated:
+            truncation_details = {
+                "reasons": truncation_reasons,
+                "topology_pairs_examined": topology_pairs_examined,
+                "topology_issues_reported": topology_issues_reported,
+                "candidates_skipped_by_budget": candidates_skipped,
+                "dangling_endpoints_undetermined": dangling_undetermined,
+            }
+
         return SpatialQualityReport(
             dataset_id=dataset_id,
             total_features=total_features,
             overall_status=overall_status,
             issue_summary=summary,
             issues=issues,
+            truncated=truncated,
+            truncated_count=candidates_skipped + dangling_undetermined,
+            truncation_details=truncation_details,
         )

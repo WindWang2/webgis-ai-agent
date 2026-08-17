@@ -3,6 +3,21 @@
     "iterations": 7,
     "median_ms": 0.066
   },
+  "audit_topology_200rings": {
+    "floor_ms": 1021.0,
+    "iterations": 7,
+    "median_ms": 264.755
+  },
+  "barriers_indexed_50kE_x3": {
+    "floor_ms": 1400.0,
+    "iterations": 7,
+    "median_ms": 594.686
+  },
+  "closest_facility_30x40": {
+    "floor_ms": 530.0,
+    "iterations": 7,
+    "median_ms": 128.481
+  },
   "dispatch_overhead": {
     "iterations": 7,
     "median_ms": 0.897
@@ -45,5 +60,10 @@
   "ref_resolution_batch": {
     "iterations": 7,
     "median_ms": 1.501
+  },
+  "two_opt_ladder_160": {
+    "floor_ms": 3060.0,
+    "iterations": 7,
+    "median_ms": 66.317
   }
 }
