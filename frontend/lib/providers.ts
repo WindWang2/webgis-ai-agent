@@ -90,7 +90,11 @@ export const TILE_PROVIDERS: TileProvider[] = [
   {
     id: "opentopomap",
     name: "OpenTopoMap",
-    url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+    // #536: `{s}`（Leaflet 时代子域占位符）MapLibre 不展开 —— 其
+    // CanonicalTileID.url() 只处理 {prefix}/{z}/{x}/{y}/{ratio}/{quadkey}/
+    // {bbox-epsg-3857}；`{s}` 会原样进 hostname → DNS 失败 → 底图空白且无
+    // 可见错误。展开为具体子域（保留 CDN 分布）。
+    url: "https://a.tile.opentopomap.org/{z}/{x}/{y}.png",
     type: "raster",
     keywords: ["opentopomap", "山体", "等高线"],
   },
