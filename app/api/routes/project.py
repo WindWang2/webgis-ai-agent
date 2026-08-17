@@ -51,6 +51,32 @@ async def _run_workflow_engine(engine_method, **kwargs) -> Any:
     return await asyncio.to_thread(_worker)
 
 
+async def _get_project_with_auth_offloaded(
+    project_id: str,
+    user_id: Optional[str] = None,
+    org_id: Optional[int] = None,
+) -> Any:
+    """#565: offload the pre-engine ownership lookup (sync SQLAlchemy) into a
+    worker thread with its own SessionLocal().
+
+    The engine body itself is already offloaded via ``_run_workflow_engine``
+    (#386), but its ``get_project_with_auth`` precondition ran on the event
+    loop first — a sync pool acquire there can stall the loop up to
+    pool_timeout=30s during DB contention (the same failure mode #386/#421/
+    #425 eliminated for the engine body). Only the returned row's truthiness
+    is consumed by callers, so the worker-closed session leaves no lazy-load
+    hazard.
+    """
+    def _worker() -> Any:
+        with SessionLocal() as thread_db:
+            return ProjectService.get_project_with_auth(
+                db=thread_db, project_id=project_id,
+                user_id=user_id, org_id=org_id,
+            )
+
+    return await asyncio.to_thread(_worker)
+
+
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 def create_project(
     data: ProjectCreate,
@@ -254,7 +280,9 @@ async def run_workflow(
     user: Dict[str, Any] = Depends(get_current_user),
 ):
     user_id, org_id = actor_ids(user)
-    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    project = await _get_project_with_auth_offloaded(
+        project_id=project_id, user_id=user_id, org_id=org_id
+    )
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -411,7 +439,9 @@ async def replay_run(
     Re-authorizes project ownership (INV-AUTH1): replay cannot bypass access.
     """
     user_id, org_id = actor_ids(user)
-    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    project = await _get_project_with_auth_offloaded(
+        project_id=project_id, user_id=user_id, org_id=org_id
+    )
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     tool_registry = get_tool_registry()
@@ -443,7 +473,9 @@ async def resume_run(
     preconditions fail unless ``allow_rerun=True``.
     """
     user_id, org_id = actor_ids(user)
-    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    project = await _get_project_with_auth_offloaded(
+        project_id=project_id, user_id=user_id, org_id=org_id
+    )
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     tool_registry = get_tool_registry()

@@ -41,7 +41,7 @@ function defineWebgisExecuteTool(): ToolDefinition<TSchema> {
 		].join("\n"),
 		promptSnippet: "Use webgis_execute(toolName, arguments) for GIS operations.",
 		parameters: Type.Object({
-			toolName: Type.String({ description: "Name of the GIS tool to execute (e.g., spatial_analyze, raster_ndvi)" }),
+			toolName: Type.String({ description: "Name of the GIS tool to execute (e.g., spatial_aggregate, compute_ndvi)" }),
 			arguments: Type.Record(Type.String(), Type.Any(), { description: "Tool-specific arguments as a JSON object" }),
 		}),
 		async execute(toolCallId, params, _signal, _onUpdate, ctx) {

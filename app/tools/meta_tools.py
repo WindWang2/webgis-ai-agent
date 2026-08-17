@@ -4,20 +4,44 @@
 「自救」——查询某个领域下当前未推送到 schema 子集里的工具（含 tier 3）。
 """
 import logging
+from typing import Type
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, create_model
 
 from app.tools.registry import ToolRegistry, tool, ToolExecutionPolicy
 
 logger = logging.getLogger(__name__)
 
 
-class ListAvailableToolsArgs(BaseModel):
-    domain: str = Field(
-        ...,
-        description=(
-            "要查询的领域，取值之一：core / chinese / osm / raster / "
-            "network / statistics / report / what_if / meta"
+def _live_domain_vocab(registry: ToolRegistry) -> str:
+    """Derive the domain vocabulary from the live registry — the single source
+    of truth. The previous static description listed domains that don't exist
+    in the registry (``core`` / ``report`` have zero tools, a dead end) while
+    omitting four real ones (``temporal`` / ``data_fabric`` / ``spatial_catalog``
+    / ``dataset``), so the LLM's discovery vocabulary drifted from reality
+    (#556). Contract: every domain this tool advertises must return ≥1 tool.
+    """
+    domains = sorted(
+        {
+            d
+            for meta in registry.all_metadata().values()
+            for d in meta.get("domains", [])
+        }
+    )
+    return " / ".join(domains)
+
+
+def _build_list_available_tools_args_model(registry: ToolRegistry) -> Type[BaseModel]:
+    """Args model for list_available_tools, generated from the live registry
+    domains so the advertised vocabulary can never drift from reality again."""
+    return create_model(
+        "ListAvailableToolsArgs",
+        domain=(
+            str,
+            Field(
+                ...,
+                description=f"要查询的领域，取值之一：{_live_domain_vocab(registry)}",
+            ),
         ),
     )
 
@@ -33,7 +57,7 @@ def register_meta_tools(registry: ToolRegistry) -> None:
             "✅ 用于：当你判断需要某类能力、但本轮工具列表里没有合适工具时，"
             "调用本工具发现该领域的全部工具（包括默认未推送的重型工具）。"
         ),
-        args_model=ListAvailableToolsArgs,
+        args_model=_build_list_available_tools_args_model(registry),
         tier=1,
         execution_policy=ToolExecutionPolicy.INLINE,
     )
@@ -51,3 +75,19 @@ def register_meta_tools(registry: ToolRegistry) -> None:
                     "tier": meta.get("tier", 1),
                 })
         return {"domain": domain, "count": len(matched), "tools": matched}
+
+
+def refresh_list_available_tools_args(registry: ToolRegistry) -> None:
+    """Rebuild list_available_tools' domain vocabulary after ALL tool modules
+    have registered (#556).
+
+    meta_tools registers early in init_tools (before network_tools /
+    temporal_tools / data_fabric_tools), so the args model built at
+    registration time derived its domain list from an incomplete registry
+    (missing temporal / data_fabric / spatial_catalog / dataset). Called once
+    at the end of init_tools so the published schema always matches the final
+    registry — the single source of truth.
+    """
+    registry.update_args_model(
+        "list_available_tools", _build_list_available_tools_args_model(registry)
+    )

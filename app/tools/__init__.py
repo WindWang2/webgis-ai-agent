@@ -67,4 +67,14 @@ def init_tools(registry: "ToolRegistry") -> None:
     except Exception as e:
         logger.warning(f"[ToolInit] Failed to load dynamic skills: {e}")
 
+    # #556: rebuild list_available_tools' domain vocabulary from the FINAL
+    # registry (meta_tools registered before network/temporal/data_fabric, so
+    # its registration-time snapshot missed those domains). Best-effort: a
+    # failure must not block startup.
+    try:
+        from app.tools.meta_tools import refresh_list_available_tools_args
+        refresh_list_available_tools_args(registry)
+    except Exception as e:
+        logger.warning(f"[ToolInit] Failed to refresh list_available_tools args: {e}")
+
     logger.info(f"[ToolInit] Registered {len(registry.list_tools())} tools")

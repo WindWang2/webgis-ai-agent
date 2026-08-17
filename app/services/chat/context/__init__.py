@@ -17,6 +17,7 @@ from .formatters import (
     TAG_UNTRUSTED_BASE_LAYER,
     TAG_UNTRUSTED_REGION_NAME,
     TAG_UNTRUSTED_USER_ACTION,
+    TAG_UNTRUSTED_TOOL_EVENT,
 )
 from .geometry import (
     _bbox_intersects,
@@ -58,6 +59,7 @@ __all__ = [
     "TAG_UNTRUSTED_BASE_LAYER",
     "TAG_UNTRUSTED_REGION_NAME",
     "TAG_UNTRUSTED_USER_ACTION",
+    "TAG_UNTRUSTED_TOOL_EVENT",
     "_bbox_intersects",
     "_bbox_contains",
     "viewport_layer_relation",

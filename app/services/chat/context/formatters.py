@@ -10,6 +10,10 @@ TAG_UNTRUSTED_LAYER_TYPE = "untrusted_layer_type"
 TAG_UNTRUSTED_BASE_LAYER = "untrusted_base_layer"
 TAG_UNTRUSTED_REGION_NAME = "untrusted_region_name"
 TAG_UNTRUSTED_USER_ACTION = "untrusted_user_action"
+# #555: tool_event lines carry alias / error_msg / command / status / layer_id —
+# all potentially user-influenced values spliced into [环境感知] — so the whole
+# rendered line is fenced exactly like the other untrusted sites.
+TAG_UNTRUSTED_TOOL_EVENT = "untrusted_tool_event"
 
 
 def _untrusted(v: object, max_len: int = _UNTRUSTED_MAX_LEN) -> str:

@@ -77,6 +77,10 @@ def _fake_source_row():
 def _fake_db_for_source():
     db = MagicMock()
     db.query.return_value.filter.return_value.first.return_value = _fake_source_row()
+    # #565: routes now build their own SessionLocal() inside the worker and
+    # enter it as a context manager — the fake must return ITSELF (with the
+    # configured query chain), not a fresh MagicMock, from __enter__.
+    db.__enter__.return_value = db
     return db
 
 
@@ -99,7 +103,17 @@ def _fake_db_for_catalog_item():
         return m
 
     db.query.side_effect = _q
+    db.__enter__.return_value = db
     return db
+
+
+def _patch_route_session(monkeypatch, db_factory):
+    """#565: routes now create their own thread-local SessionLocal() inside
+    the offload worker; patch that factory so the fake db (with its configured
+    query chain) is what the worker runs against."""
+    from app.api.routes import data_fabric as route_mod
+
+    monkeypatch.setattr(route_mod, "SessionLocal", db_factory)
 
 
 _USER = {"user_id": "u1", "org_id": None}
@@ -164,9 +178,10 @@ async def test_probe_data_source_off_loop(monkeypatch):
         return DataFabricHealth(status="healthy", message="OK", latency_ms=10.0)
 
     monkeypatch.setattr(DataFabricManager, "probe_profile", staticmethod(_slow_probe))
+    _patch_route_session(monkeypatch, _fake_db_for_source)
 
     res = await _assert_loop_responsive_while(
-        lambda: route_mod.probe_data_source("ds_test", db=_fake_db_for_source(), user=dict(_USER))
+        lambda: route_mod.probe_data_source("ds_test", db=None, user=dict(_USER))
     )
     assert observed["thread"] != _main_thread, "probe ran on the event loop thread"
     assert res["status"] == "healthy"
@@ -190,9 +205,10 @@ async def test_sync_data_source_catalog_off_loop(monkeypatch):
         return []
 
     monkeypatch.setattr(DataFabricManager, "sync_catalog", staticmethod(_slow_sync))
+    _patch_route_session(monkeypatch, _fake_db_for_source)
 
     res = await _assert_loop_responsive_while(
-        lambda: route_mod.sync_data_source_catalog("ds_test", db=_fake_db_for_source(), user=dict(_USER))
+        lambda: route_mod.sync_data_source_catalog("ds_test", db=None, user=dict(_USER))
     )
     assert observed["thread"] != _main_thread, "catalog sync ran on the event loop thread"
     assert res["synced_count"] == 0
@@ -227,10 +243,11 @@ async def test_preview_catalog_item_off_loop(monkeypatch):
 
     observed = {}
     _patch_query_paths(monkeypatch, observed)
+    _patch_route_session(monkeypatch, _fake_db_for_catalog_item)
 
     res = await _assert_loop_responsive_while(
         lambda: route_mod.preview_catalog_item(
-            "cat_ds_test_layer", limit=10, db=_fake_db_for_catalog_item(), user=dict(_USER)
+            "cat_ds_test_layer", limit=10, db=None, user=dict(_USER)
         )
     )
     assert observed["thread"] != _main_thread, "preview query ran on the event loop thread"
@@ -244,12 +261,13 @@ async def test_query_catalog_item_route_off_loop(monkeypatch):
 
     observed = {}
     _patch_query_paths(monkeypatch, observed)
+    _patch_route_session(monkeypatch, _fake_db_for_catalog_item)
 
     res = await _assert_loop_responsive_while(
         lambda: route_mod.query_catalog_item(
             "cat_ds_test_layer",
             QuerySpec(limit=10),
-            db=_fake_db_for_catalog_item(),
+            db=None,
             user=dict(_USER),
         )
     )
@@ -354,8 +372,9 @@ async def test_preview_route_maps_result_too_large_to_413(monkeypatch):
         DataFabricManager, "query_catalog_item_async", classmethod(_raise_async)
     )
     monkeypatch.setattr(DataFabricManager, "query_catalog_item", staticmethod(_inert_sync))
+    _patch_route_session(monkeypatch, _fake_db_for_catalog_item)
     res = await route_mod.preview_catalog_item(
-        "cat_ds_test_layer", limit=10, db=_fake_db_for_catalog_item(), user=dict(_USER)
+        "cat_ds_test_layer", limit=10, db=None, user=dict(_USER)
     )
     assert isinstance(res, JSONResponse)
     assert res.status_code == 413
@@ -380,10 +399,11 @@ async def test_query_route_maps_result_too_large_to_413(monkeypatch):
         DataFabricManager, "query_catalog_item_async", classmethod(_raise_async)
     )
     monkeypatch.setattr(DataFabricManager, "query_catalog_item", staticmethod(_inert_sync))
+    _patch_route_session(monkeypatch, _fake_db_for_catalog_item)
     res = await route_mod.query_catalog_item(
         "cat_ds_test_layer",
         QuerySpec(limit=10),
-        db=_fake_db_for_catalog_item(),
+        db=None,
         user=dict(_USER),
     )
     assert isinstance(res, JSONResponse)

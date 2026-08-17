@@ -46,7 +46,7 @@ export default function webgisToolsExtension(pi) {
       properties: {
         toolName: {
           type: "string",
-          description: "Name of the GIS tool to execute (e.g., spatial_analyze, raster_ndvi)",
+          description: "Name of the GIS tool to execute (e.g., spatial_aggregate, compute_ndvi)",
         },
         arguments: {
           type: "object",

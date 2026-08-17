@@ -176,3 +176,112 @@ async def test_mapspec_lifecycle_engine_data_fabric_source():
     assert is_data_fabric_entry(source_entry) is True
     assert source_entry.get("type") == "data_fabric"
     assert source_entry.get("ref_id") == "ref:df-water12345"
+
+
+# ─── #565 review: post-close ORM serialization (real SessionLocal) ─────────
+# The offloaded workers use their own SessionLocal() (expire_on_commit=True);
+# managers that COMMIT inside the worker leave returned ORM rows expired, so
+# the route must serialize them into plain dicts INSIDE the worker. Reading
+# them after the worker session closes raised DetachedInstanceError, which the
+# routes' catch-all misreported as HTTP 400 ON SUCCESS. These tests run the
+# REAL manager flow (real create/sync code + real commit) against the real
+# SQLite DB — only the network adapter seam (get_adapter) is faked.
+
+
+class _FakeSyncAdapter:
+    """Adapter stand-in for the network seam: the manager's real
+    probe/capabilities/list_datasets/describe flow runs without HTTP."""
+
+    def health(self):
+        return DataFabricHealth(status="healthy", message="OK", latency_ms=1.0)
+
+    def capabilities(self):
+        return ["catalog"]
+
+    def list_datasets(self):
+        return [{"id": "roads", "title": "Roads"}]
+
+    def describe(self, dataset_id: str):
+        from app.schemas.data_fabric_schema import DatasetDescriptor
+        return DatasetDescriptor(
+            id=dataset_id,
+            title="Roads",
+            source_type="ogc_api",
+            geometry_type="LineString",
+        )
+
+
+def _df_auth_headers():
+    from app.core.auth import create_access_token
+    token = create_access_token({"sub": "df-user", "username": "df", "role": "editor"})
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_create_data_source_2xx_with_real_commit():
+    """create_data_source commits inside the worker (create + auto catalog
+    sync) — the response must still be 200 with the row serialized inside the
+    worker, not a 400 from DetachedInstanceError on success."""
+    client = TestClient(app)
+    headers = _df_auth_headers()
+    payload = {
+        "name": "Real-Commit Source",
+        "source_type": "ogc_api",
+        "endpoint_url": "https://example.com/ogc/collections",
+        "options": {},
+    }
+    with patch(
+        "app.services.data_fabric.manager.DataFabricManager.get_adapter",
+        staticmethod(lambda profile: _FakeSyncAdapter()),
+    ):
+        res = client.post("/api/v1/data-fabric/sources", json=payload, headers=headers)
+
+    assert res.status_code == 200, f"expected 200, got {res.status_code}: {res.text}"
+    body = res.json()
+    assert body["success"] is True
+    assert body["data_source"]["id"].startswith("ds_")
+    assert body["data_source"]["status"] == "healthy"
+
+    # The row AND its auto-synced catalog item were really committed by the
+    # worker (real SessionLocal + real manager flow, only the adapter faked).
+    from app.models.data_fabric import CatalogItemModel, DataSourceModel
+
+    with SessionLocal() as db:
+        row = db.get(DataSourceModel, body["data_source"]["id"])
+        assert row is not None, "create worker did not commit the source row"
+        assert row.status == "healthy"
+        assert (
+            db.query(CatalogItemModel)
+            .filter(CatalogItemModel.source_id == row.id)
+            .count()
+        ) >= 1, "auto catalog sync did not commit an item"
+
+
+def test_sync_data_source_catalog_2xx_with_existing_dataset():
+    """sync_catalog commits before returning — the route must serialize the
+    items inside the worker (post-close reads previously → 400 on success)."""
+    client = TestClient(app)
+    headers = _df_auth_headers()
+    payload = {
+        "name": "Re-Sync Source",
+        "source_type": "ogc_api",
+        "endpoint_url": "https://example.com/ogc/collections",
+        "options": {},
+    }
+    with patch(
+        "app.services.data_fabric.manager.DataFabricManager.get_adapter",
+        staticmethod(lambda profile: _FakeSyncAdapter()),
+    ):
+        create_res = client.post("/api/v1/data-fabric/sources", json=payload, headers=headers)
+        assert create_res.status_code == 200, create_res.text
+        source_id = create_res.json()["data_source"]["id"]
+
+        # Re-sync over the auto-synced catalog: ≥1 existing dataset, real commit.
+        sync_res = client.post(f"/api/v1/data-fabric/sources/{source_id}/sync", headers=headers)
+
+    assert sync_res.status_code == 200, (
+        f"expected 200, got {sync_res.status_code}: {sync_res.text}"
+    )
+    body = sync_res.json()
+    assert body["success"] is True
+    assert body["synced_count"] >= 1
+    assert body["items"][0]["id"].startswith("cat_")
