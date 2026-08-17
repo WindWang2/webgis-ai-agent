@@ -262,7 +262,10 @@ class NetworkODMatrixService:
             for d in destinations
         ]
 
-        graph_view = self.router._apply_barriers(graph_work, barriers)
+        # PERF (#540): ``graph_work`` is already a private copy when coordinate
+        # inputs needed a virtual-node split, so barriers apply in place —
+        # no second graph copy per analysis.
+        graph_view = self.router._apply_barriers(graph_work, barriers, copy_graph=not needs_split)
 
         cost_field = "travel_time_s"
         if impedance and impedance.name:

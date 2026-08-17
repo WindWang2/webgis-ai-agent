@@ -428,6 +428,7 @@ class NetworkGraphEngine:
         facilities: List[Any],
         profile: Optional[TravelProfile] = None,
         number_to_find: int = 1,
+        cutoff_cost: Optional[float] = None,
         session_id: str = "",
     ) -> NetworkAnalysisResult:
         """High level closest facility solver working with raw GeoJSON/dict inputs."""
@@ -442,6 +443,7 @@ class NetworkGraphEngine:
                 facilities=fac_objs,
                 network_dataset=net_ds,
                 graph=graph,
+                cutoff_cost=cutoff_cost,
                 target_facility_count=number_to_find,
                 profile=prof,
             )

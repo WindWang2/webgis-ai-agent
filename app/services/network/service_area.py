@@ -75,19 +75,44 @@ class NetworkServiceAreaService:
         # same virtual-node mid-edge splitting routing uses — the isochrone
         # must be rooted at the facility's snapped position, not at the
         # nearest edge endpoint (up to a full edge-length away).
-        graph_work = graph.copy() if graph is not None else graph
-        resolved_starts: List[Tuple[str, Tuple[float, float]]] = []
+        # PERF (#540): the previous code copied the whole graph per call even
+        # when NO facility snapped mid-edge (node-exact snaps insert no virtual
+        # node). Snap once against the DATASET (the snapper's STRtree is cached
+        # across calls — PERF-02), then copy the working graph only when at
+        # least one facility actually needs a virtual-node split.
+        coords_snaps: List[Tuple[Tuple[float, float], Any]] = []
+        needs_split = False
         for fac in normalized_facilities:
-            fac_coords = (fac.geometry["coordinates"][0], fac.geometry["coordinates"][1])
-            if graph_work is not None:
+            coords = (fac.geometry["coordinates"][0], fac.geometry["coordinates"][1])
+            if graph is not None:
+                snap_res = self.snapper.snap_point(coords, network_dataset)
+                if (snap_res.nearest_edge_id is not None
+                        and 1e-6 < snap_res.fraction_along_edge < 1.0 - 1e-6):
+                    needs_split = True
+            else:
+                snap_res = None
+            coords_snaps.append((coords, snap_res))
+
+        graph_work = graph.copy() if needs_split else graph
+        resolved_starts: List[Tuple[str, Tuple[float, float]]] = []
+        for coords, snap_res in coords_snaps:
+            if needs_split:
                 node_id, _ = self.router._resolve_with_snap(
-                    fac_coords, network_dataset, graph=graph_work
+                    snap_res, network_dataset, graph=graph_work
+                )[:2]
+            elif graph is not None:
+                # node-exact snap (no split needed): resolve WITHOUT a working
+                # graph so the caller's graph is never touched.
+                node_id, _ = self.router._resolve_with_snap(
+                    snap_res, network_dataset, graph=None
                 )[:2]
             else:
-                node_id, _ = self.router._resolve_node(fac_coords, network_dataset)
-            resolved_starts.append((node_id, fac_coords))
+                node_id, _ = self.router._resolve_node(coords, network_dataset)
+            resolved_starts.append((node_id, coords))
 
-        graph_view = self.router._apply_barriers(graph_work, barriers)
+        # PERF (#540): ``graph_work`` is already a private copy when a split was
+        # needed, so barriers apply in place — no second graph copy.
+        graph_view = self.router._apply_barriers(graph_work, barriers, copy_graph=not needs_split)
 
         cost_field = "travel_time_s" if break_unit == "minutes" else "length_m"
         if impedance and impedance.name:
