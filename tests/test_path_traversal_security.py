@@ -73,6 +73,7 @@ class TestNatureResourcesPathTraversal:
         mock_record.original_name = "evil"
         mock_record.filename = "../../etc/crontab"
         mock_record.geometry_type = "raster_analysis"
+        mock_record.session_id = "sess-1"
 
         mock_db = MagicMock()
         mock_db.query.return_value.filter.return_value.first.return_value = mock_record
@@ -83,6 +84,8 @@ class TestNatureResourcesPathTraversal:
         register_nature_resource_tools(registry)
         fn = registry._tools["manage_analysis_asset"]
 
-        result = fn(asset_id=1, action="delete")
+        # #543：会话校验无条件化（先于文件操作）—— 传合法 owner session 以
+        # 让测试命中路径校验；无 session 的调用会先在所有权检查被拒。
+        result = fn(asset_id=1, action="delete", session_id="sess-1")
         assert result.get("error"), "Path traversal delete was not blocked"
         assert "校验失败" in result["error"]

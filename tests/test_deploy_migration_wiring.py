@@ -288,12 +288,81 @@ def test_k8s_celery_has_no_migration_init_container():
 # 不碰 CI 的共享 DATABASE_URL）。CI 的 db-migrations lane 会对真实
 # PostGIS 先 `alembic upgrade head`，再设 MIGRATION_DRIFT_DB_URL 让本测试
 # 比对真实 PG schema —— 模型与迁移的漂移因此在两条路径都被拦下。
+#
+# PG 路径的排除集由数据库自述（pg_depend），不硬编码扩展/表名：CI 镜像
+# postgis/postgis:15-3.4 的 initdb-postgis.sh 会在 $POSTGRES_DB 里安装
+# postgis / postgis_topology / fuzzystrmatch / postgis_tiger_geocoder，
+# 后两者的安装脚本还会 ALTER DATABASE ... SET search_path 把 tiger/topology
+# 加进搜索路径 —— SQLAlchemy 反射（pg_table_is_visible）于是能看到这些
+# 扩展表（本地 PG 不装 tiger 扩展就不存在该现象：#547 的 CI-only 差异，
+# 具体表如 addr/county/zip_lookup_base 等）。它们不是迁移链产物，一律排除；
+# 将来镜像多装扩展也自动覆盖。
+
+
+def _extension_owned_table_names(conn) -> set[str]:
+    """PG 专属：pg_depend 中所有「扩展持有的基表」名（跨 schema）。
+
+    排除规则必须是"属于某个扩展"，而不是"任何 unknown 表"——迁移独立新建、
+    模型又没有、且不属任何扩展的表仍要报漂移（见
+    test_drift_check_still_flags_migration_only_table）。
+    """
+    from sqlalchemy import text
+
+    rows = conn.execute(
+        text(
+            "SELECT c.relname "
+            "FROM pg_catalog.pg_class c "
+            "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
+            "JOIN pg_catalog.pg_depend d "
+            "  ON d.classid = 'pg_catalog.pg_class'::regclass "
+            " AND d.objid = c.oid "
+            " AND d.refclassid = 'pg_catalog.pg_extension'::regclass "
+            " AND d.deptype = 'e' "
+            "WHERE c.relkind IN ('r', 'p')"
+        )
+    ).scalars().all()
+    return set(rows)
+
+
+def _drift_report(migrated_tables, columns_of, index_cols_of, model_tables) -> list[str]:
+    """逐表比对模型↔迁移产物，返回漂移描述列表（空 = 无漂移）。"""
+    from app.core.database import Base
+
+    import app.models.db_model  # noqa: F401  (registers tables)
+    import app.models.report  # noqa: F401
+    import app.models.upload  # noqa: F401
+
+    drift = []
+    for t in sorted(model_tables - migrated_tables):
+        drift.append(f"模型有表但迁移链没建: {t}")
+    for t in sorted(migrated_tables - model_tables):
+        drift.append(f"迁移链建了表但模型没有: {t}")
+    for t in sorted(model_tables & migrated_tables):
+        mig_cols = columns_of(t)
+        model_cols = {c.name for c in Base.metadata.tables[t].columns}
+        if mig_cols != model_cols:
+            drift.append(
+                f"{t}: 迁移列={sorted(mig_cols)} 模型列={sorted(model_cols)}"
+            )
+        # 索引按列元组比对（create_all 与迁移的索引命名不同）。只断言
+        # "模型声明的索引迁移链必须建出"这一方向 —— 迁移多建的历史索引
+        # 不构成运行期漂移。
+        mig_idx = index_cols_of(t)
+        for model_idx in Base.metadata.tables[t].indexes:
+            cols = tuple(c.name for c in model_idx.columns)
+            if cols not in mig_idx:
+                drift.append(f"{t}: 模型索引 {model_idx.name}{cols} 未被迁移链创建")
+    return drift
 
 
 def test_migrated_schema_matches_models(tmp_path):
     import os
     import sqlite3
     import subprocess
+
+    # alembic 的书签表不属于 Base.metadata —— 任何方言都排除；PG 的扩展表
+    # 由 _extension_owned_table_names 从库内派生（SQLite 链不建扩展表）。
+    EXCLUDED_MIGRATED_TABLES = {"alembic_version"}
 
     override = os.environ.get("MIGRATION_DRIFT_DB_URL")
     if override:
@@ -302,7 +371,13 @@ def test_migrated_schema_matches_models(tmp_path):
         engine = create_engine(override)
         insp = inspect(engine)
         try:
-            migrated_tables = set(insp.get_table_names())
+            with engine.connect() as conn:
+                extension_tables = _extension_owned_table_names(conn)
+            migrated_tables = (
+                set(insp.get_table_names())
+                - EXCLUDED_MIGRATED_TABLES
+                - extension_tables
+            )
             columns_of = lambda t: {c["name"] for c in insp.get_columns(t)}  # noqa: E731
             index_cols_of = lambda t: {tuple(c["column_names"]) for c in insp.get_indexes(t)}  # noqa: E731
         finally:
@@ -328,7 +403,7 @@ def test_migrated_schema_matches_models(tmp_path):
         migrated_tables = {
             r[0]
             for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        } - {"alembic_version"}
+        } - EXCLUDED_MIGRATED_TABLES
         conn.close()
         from sqlalchemy import create_engine, inspect
 
@@ -346,28 +421,43 @@ def test_migrated_schema_matches_models(tmp_path):
 
     model_tables = set(Base.metadata.tables.keys())
 
-    drift = []
-    for t in sorted(model_tables - migrated_tables):
-        drift.append(f"模型有表但迁移链没建: {t}")
-    for t in sorted(migrated_tables - model_tables):
-        drift.append(f"迁移链建了表但模型没有: {t}")
-    for t in sorted(model_tables & migrated_tables):
-        mig_cols = columns_of(t)
-        model_cols = {c.name for c in Base.metadata.tables[t].columns}
-        if mig_cols != model_cols:
-            drift.append(
-                f"{t}: 迁移列={sorted(mig_cols)} 模型列={sorted(model_cols)}"
-            )
-        # 索引按列元组比对（create_all 与迁移的索引命名不同）。只断言
-        # "模型声明的索引迁移链必须建出"这一方向 —— 迁移多建的历史索引
-        # 不构成运行期漂移。
-        mig_idx = index_cols_of(t)
-        for model_idx in Base.metadata.tables[t].indexes:
-            cols = tuple(c.name for c in model_idx.columns)
-            if cols not in mig_idx:
-                drift.append(f"{t}: 模型索引 {model_idx.name}{cols} 未被迁移链创建")
-
+    drift = _drift_report(migrated_tables, columns_of, index_cols_of, model_tables)
     assert not drift, "模型与迁移 schema 漂移:\n" + "\n".join(drift)
+
+
+def test_drift_check_still_flags_migration_only_table():
+    """排除必须限定在"扩展持有的表"，而不是放过任何 unknown 表——否则 gate
+    形同虚设。模拟一个迁移独立建出、模型没有、不属任何扩展的表（如误加的表），
+    _drift_report 必须把它报为漂移。"""
+    from app.core.database import Base
+
+    import app.models.db_model  # noqa: F401  (registers tables)
+    import app.models.report  # noqa: F401
+    import app.models.upload  # noqa: F401
+
+    marker = "migration_orphan_table_marker"
+    model_tables = set(Base.metadata.tables)
+
+    def columns_of(t):
+        if t == marker:
+            return {"id"}
+        return {c.name for c in Base.metadata.tables[t].columns}
+
+    def index_cols_of(t):
+        if t not in Base.metadata.tables:
+            return set()
+        return {
+            tuple(c.name for c in ix.columns)
+            for ix in Base.metadata.tables[t].indexes
+        }
+
+    drift = _drift_report(
+        model_tables | {marker},
+        columns_of,
+        index_cols_of,
+        model_tables,
+    )
+    assert any(marker in d for d in drift), drift
 
 
 # ── 6b. CI：db-migrations lane（对真实 PostGIS 执行迁移链）─────────────

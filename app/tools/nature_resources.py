@@ -9,6 +9,7 @@ from app.tools.registry import ToolRegistry, tool
 from app.services.spatial_tasks import run_ndvi_analysis
 from app.services.jobs.submit import submit_durable_job
 from app.tools._utils import db_session
+from app.tools.upload_tools import _resolve_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -59,12 +60,28 @@ def register_nature_resource_tools(registry: ToolRegistry):
     def list_analysis_assets(session_id: Optional[str] = None) -> dict:
         from app.models.upload import UploadRecord
 
-        with db_session() as db:
-            query = db.query(UploadRecord).filter(UploadRecord.geometry_type == "raster_analysis")
-            if session_id:
-                query = query.filter(UploadRecord.session_id == session_id)
+        # #543：与会话工具同款语义 —— 无解析会话（匿名/上下文缺失/伪造 id）
+        # 一律拒绝，绝不跨会话返回全库资产列表（旧代码 if session_id: 是
+        # 条件过滤，None-session 时直接返回全局 top-100 资产名/路径/bbox）。
+        resolved_session = _resolve_session_id(session_id)
+        if not resolved_session:
+            return {
+                "error": "未检测到有效的会话上下文，无法列出分析资产",
+                "assets": [],
+                "count": 0,
+            }
 
-            records = query.order_by(UploadRecord.upload_time.desc()).all()
+        with db_session() as db:
+            records = (
+                db.query(UploadRecord)
+                .filter(
+                    UploadRecord.geometry_type == "raster_analysis",
+                    UploadRecord.session_id == resolved_session,
+                )
+                .order_by(UploadRecord.upload_time.desc())
+                .limit(100)
+                .all()
+            )
             assets = [{
                 "id": r.id,
                 "name": r.original_name,
@@ -104,12 +121,23 @@ def register_nature_resource_tools(registry: ToolRegistry):
         from app.core.config import settings
 
         with db_session() as db:
-            record = db.query(UploadRecord).filter(UploadRecord.id == asset_id).first()
+            # #543: 查询同时限定 geometry_type（本工具契约只管 raster_analysis）——
+            # 之前仅按自增 id 查找，任何上传记录都能被改名/删除。
+            record = db.query(UploadRecord).filter(
+                UploadRecord.id == asset_id,
+                UploadRecord.geometry_type == "raster_analysis",
+            ).first()
             if not record:
                 return {"error": "未找到对应的分析资产记录"}
 
-            # 审计 S43：asset 必须属于当前 session（防跨 session IDOR）
-            if session_id and record.session_id and record.session_id != session_id:
+            # 审计 S43 + #543：asset 必须属于当前 session（防跨 session IDOR）。
+            # 会话校验无条件化：record.session_id 为 NULL 的旧匿名记录同样拒绝
+            # —— 与 upload 路由层 _verify_session_owner（session_id 缺省即 404）
+            # 的守卫层级对齐，NULL 记录的删除必须走上传路由。
+            resolved_session = _resolve_session_id(session_id)
+            if record.session_id is None:
+                return {"error": "该资产未关联会话，无法通过工具管理（请通过上传接口处理）"}
+            if not resolved_session or record.session_id != resolved_session:
                 return {"error": "该资产不属于当前会话，无权操作"}
 
             if action == "rename" and new_name:
