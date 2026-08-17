@@ -69,7 +69,11 @@ INDEX_FORMULAS: Dict[str, Tuple[List[str], Callable[..., np.ndarray]]] = {
     "evi": (["blue", "red", "nir"], lambda b, r, nir: 2.5 * np.divide(
         nir - r, nir + 6 * r - 7.5 * b + 1,
         out=np.full_like(nir - r, np.nan, dtype=float),
-        where=(nir + 6 * r - 7.5 * b + 1) > 0,
+        # Issue #537: the +1 constant makes the guard pass for all-zero bands
+        # (denominator 1 > 0) where every other index yields NaN — Sentinel-2
+        # L2A nodata bands are 0, so those pixels must stay NaN, not become
+        # plausible-looking 0.0 indices. Explicitly exclude the all-zero input.
+        where=((nir + 6 * r - 7.5 * b + 1) > 0) & ~((b == 0) & (r == 0) & (nir == 0)),
     )),
 }
 

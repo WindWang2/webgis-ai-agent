@@ -53,6 +53,19 @@ def test_get_session_detail(client):
     msg.tool_result = None
     msg.created_at = datetime(2026, 4, 10)
     conv.messages = [msg]
+
+    # #525: the guard returns a metadata-only Conversation; the route loads
+    # messages explicitly via db.refresh — stub that refresh here.
+    from app.core.database import get_async_db
+
+    class _FakeDb:
+        async def refresh(self, instance, attribute_names=None):
+            return instance
+
+    async def _override_db():
+        yield _FakeDb()
+
+    client.app.dependency_overrides[get_async_db] = _override_db
     with patch("app.core.auth.verify_session_owner", AsyncMock(return_value=conv)):
         resp = client.get(f"{BASE}/sessions/s1")
     assert resp.status_code == 200

@@ -106,6 +106,8 @@ from app.services.llm_result_formatter import (
     _truncate_properties,
     normalize_tool_args,
     is_error_dict,
+    is_error_like_result,
+    is_tool_error_result,
     wrap_error_dict_for_llm,
     slim_tool_result,
     slim_event_result,
@@ -291,6 +293,20 @@ class ToolDispatchService:
                 correction_hint=f"Execution error: {error_msg}",
             )
             self._release_key(executed_tools, tool_key)
+
+        # 3. (#529) 归一化：~139 个工具点以 {"error": "<msg>"} 正常返回失败
+        # （不抛异常、不返回 std_error_response 形状），此前只有后者被
+        # is_error_dict 识别 → 被当成功处理：标记 completed、同参重试被
+        # "已成功执行"谎言拦截、计划跨失败推进。在统一错误分支之前把该形状
+        # 折叠成 canonical 失败形状（success=False + code），让下面的错误路径
+        # 统一接管（释放 dedup 槽位 → 诚实重试 + 自愈消息）。只折叠 error 为
+        # 字符串且非显式 success=True 的结果（is_error_like_result），业务
+        # 载荷里嵌套/非字符串的 error 键不受影响。
+        if is_error_like_result(result):
+            result = dict(result)
+            result.setdefault("code", "tool_error")
+            result.setdefault("message", result["error"])
+            result["success"] = False
 
         # 3. registry 返回 std_error_response dict 的统一错误路径
         if is_error_dict(result):
@@ -953,7 +969,11 @@ def is_suspicious_result(result: Any) -> bool:
     if not result:
         return True
     if isinstance(result, dict):
-        if result.get("success") is False:
+        # #529: the {"error": <str>} shape is a failure, not an empty/suspicious
+        # success — classify it so standalone consumers (engine
+        # _detect_suspicious_result / decision logging) don't treat it as
+        # success. (The dispatch error branch handles it before this point.)
+        if is_tool_error_result(result):
             return True
         if result.get("type") == "FeatureCollection" and not result.get("features"):
             return True

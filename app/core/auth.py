@@ -439,7 +439,9 @@ async def verify_session_owner(
     """
     from app.services.history_service_async import AsyncHistoryService
 
-    conv = await AsyncHistoryService(db).get_session(
+    # #525: guard uses the metadata-only query — the ~30 guard call sites
+    # (incl. the 3s task-center poll) must not pay O(messages) full-row loads.
+    conv = await AsyncHistoryService(db).get_session_meta(
         session_id, user_id=user_id, owner_token=owner_token
     )
     if not conv:

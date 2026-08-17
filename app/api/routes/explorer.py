@@ -8,7 +8,6 @@ from typing import Optional
 from app.api.routes.layer import _verify_session_owner
 from app.services.explorer.orchestrator import ExplorerOrchestrator
 from app.services.explorer.models import SearchContext
-from app.services.task_queue import TaskQueueService
 from app.core.auth import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -63,7 +62,9 @@ async def start_exploration(req: StartExploreRequest, _user: dict = Depends(get_
 @router.get("/status/{task_id}")
 async def get_task_status(task_id: str, _user: dict = Depends(get_current_user)) -> ExploreStatusResponse:
     """查询探索任务状态（审计 S42：校验任务所有权）"""
-    if not TaskQueueService.verify_owner(task_id, _user.get("user_id", "")):
+    # #526: durable owner check — the in-process _task_owners map dies with the
+    # process, so a post-restart poll would 404 a legit owner's chain.
+    if not await orchestrator.verify_chain_owner(task_id, _user.get("user_id", "")):
         raise HTTPException(status_code=404, detail="Task not found")
     try:
         status = await orchestrator.get_task_status(task_id)
@@ -81,7 +82,7 @@ async def get_task_status(task_id: str, _user: dict = Depends(get_current_user))
 @router.post("/abort/{task_id}")
 async def abort_task(task_id: str, _user: dict = Depends(get_current_user)) -> dict:
     """中止探索任务（审计 S42：校验任务所有权）"""
-    if not TaskQueueService.verify_owner(task_id, _user.get("user_id", "")):
+    if not await orchestrator.verify_chain_owner(task_id, _user.get("user_id", "")):
         raise HTTPException(status_code=404, detail="Task not found")
     success = await orchestrator.abort_task(task_id)
     return {"task_id": task_id, "aborted": success}
@@ -90,7 +91,7 @@ async def abort_task(task_id: str, _user: dict = Depends(get_current_user)) -> d
 @router.get("/stream/{task_id}")
 async def stream_progress(task_id: str, _user: dict = Depends(get_current_user)):
     """SSE 实时进度流（审计 S42：校验任务所有权）"""
-    if not TaskQueueService.verify_owner(task_id, _user.get("user_id", "")):
+    if not await orchestrator.verify_chain_owner(task_id, _user.get("user_id", "")):
         raise HTTPException(status_code=404, detail="Task not found")
     async def event_generator():
         async for event in orchestrator.stream_progress(task_id):

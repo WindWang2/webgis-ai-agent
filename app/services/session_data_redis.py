@@ -309,9 +309,13 @@ class RedisSessionStore(BaseSessionStore):
         """
         await self._ensure_connected()
         data_key = self._data_key(session_id, ref_id)
+        # P1 (#521): same as store() — checkpoint rollback overwrites
+        # multi-MB materialized blobs per ref; serializing inline would block
+        # the event loop for the whole dump.
+        payload_json = await asyncio.to_thread(json.dumps, data, ensure_ascii=False)
         try:
             async with self._r.pipeline() as pipe:
-                pipe.set(data_key, json.dumps(data, ensure_ascii=False), ex=DATA_TTL)
+                pipe.set(data_key, payload_json, ex=DATA_TTL)
                 # D-4: the payload changed, so the cached descriptor (bbox /
                 # feature_count / geometry_types from the OLD payload) is stale.
                 # Drop it so the next get_ref_descriptor recomputes from the new
@@ -486,6 +490,14 @@ class RedisSessionStore(BaseSessionStore):
 
     async def set_map_state(self, session_id: str, key: str, value: Any, seq: Optional[int] = None) -> bool:
         await self._ensure_connected()
+        # P1 (#521): serialize off the event loop (same as store()). The map_state
+        # entry points are client-controlled and only capped at the DTO layer, so
+        # a multi-MB value must not stall the loop for the whole dump.
+        try:
+            payload_json = await asyncio.to_thread(json.dumps, value, ensure_ascii=False)
+        except (TypeError, ValueError) as e:
+            logger.warning("set_map_state un-serializable value for %s %s: %s", session_id, key, e)
+            return False
         # F4: same dual-writer sequencing as the memory store. The seq check is
         # a read-modify-write, so guard it with WATCH/MULTI (like
         # update_layer_in_state) — otherwise two in-flight POSTs could both pass
@@ -507,7 +519,7 @@ class RedisSessionStore(BaseSessionStore):
                         # BUG-09：直接存 ISO 字符串，不双重编码。
                         datetime.now(timezone.utc).isoformat(),
                     )
-                    pipe.hset(state_key, key, json.dumps(value, ensure_ascii=False))
+                    pipe.hset(state_key, key, payload_json)
                     if seq is not None:
                         # Unsequenced writes (server-side truth) leave the
                         # stored seq untouched so the client's next write passes.
@@ -633,9 +645,12 @@ class RedisSessionStore(BaseSessionStore):
                             break
                     else:
                         layers.append({"id": layer_id, **updates})
+                    # P1 (#521): serialize the (possibly large) layers list off
+                    # the event loop before entering the transaction.
+                    payload_json = await asyncio.to_thread(json.dumps, layers, ensure_ascii=False)
                     # 写回
                     pipe.multi()
-                    pipe.hset(state_key, "layers", json.dumps(layers, ensure_ascii=False))
+                    pipe.hset(state_key, "layers", payload_json)
                     pipe.expire(state_key, STATE_TTL)
                     pipe.sadd(self._active_key(), session_id)
                     # D-2: a layer edit is session activity — refresh the whole
@@ -686,8 +701,10 @@ class RedisSessionStore(BaseSessionStore):
                     else:
                         layers = []
                     new_layers = [layer for layer in layers if layer.get("id") != layer_id]
+                    # P1 (#521): serialize off the event loop (see update_layer_in_state).
+                    payload_json = await asyncio.to_thread(json.dumps, new_layers, ensure_ascii=False)
                     pipe.multi()
-                    pipe.hset(state_key, "layers", json.dumps(new_layers, ensure_ascii=False))
+                    pipe.hset(state_key, "layers", payload_json)
                     pipe.expire(state_key, STATE_TTL)
                     pipe.sadd(self._active_key(), session_id)
                     # D-2: same rationale as update_layer_in_state.
@@ -716,7 +733,9 @@ class RedisSessionStore(BaseSessionStore):
         的上下文注入和前端 SSE 回放，缺一条不会破坏正确性。
         """
         await self._ensure_connected()
-        entry = json.dumps(
+        # P1 (#521): tool-result event payloads can be large; serialize off-loop.
+        entry = await asyncio.to_thread(
+            json.dumps,
             {"event": event, "data": data, "timestamp": datetime.now(timezone.utc).isoformat()},
             ensure_ascii=False,
         )
@@ -777,7 +796,8 @@ class RedisSessionStore(BaseSessionStore):
         await self._ensure_connected()
         actions_key = self._map_actions_key(session_id)
         order_key = self._map_actions_order_key(session_id)
-        payload = json.dumps(event, ensure_ascii=False)
+        # P1 (#521): ACK payloads are bounded but serialize off-loop for consistency.
+        payload = await asyncio.to_thread(json.dumps, event, ensure_ascii=False)
         for attempt in range(3):
             try:
                 async with self._r.pipeline(transaction=True) as pipe:

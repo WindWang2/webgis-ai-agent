@@ -491,7 +491,15 @@ class SpatialQualityEngine:
                 # GIS-16: same CRS-aware threshold as the gap checks.
                 dup_threshold = 1e-6 if is_geographic else 0.1
                 for pt_idx, (pt, f_idx) in enumerate(line_endpoints):
-                    near_pts = pt_tree.query(pt)
+                    # Issue #538: querying with the bare Point made the
+                    # tolerance dead code — a point's bounding box is
+                    # degenerate (zero area), so bbox-only STRtree.query()
+                    # only ever returned bit-identical endpoints and
+                    # near-but-not-identical shared endpoints were falsely
+                    # reported dangling. A buffered query geometry expands the
+                    # bbox to "everything within dup_threshold"; the precise
+                    # distance re-check below stays the final filter.
+                    near_pts = pt_tree.query(pt.buffer(dup_threshold))
                     connected = False
                     for candidate_idx in near_pts:
                         cand_idx_int = int(candidate_idx)
