@@ -13,6 +13,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import networkx as nx
 from shapely.geometry import LineString, shape
+from shapely.prepared import prep
+from shapely.strtree import STRtree
 
 from app.services.network.models import (
     NetworkDataset,
@@ -373,8 +375,9 @@ class NetworkRoutingService:
             destination, network_dataset, graph=graph_work
         )
 
-        # Apply barriers to graph copy
-        graph_view = self._apply_barriers(graph_work, barriers)
+        # Apply barriers to graph copy (when the graph is already a private
+        # working copy from snapping, barriers apply in place — no second copy).
+        graph_view = self._apply_barriers(graph_work, barriers, copy_graph=not needs_snap)
 
         # Determine weight field
         cost_field = "travel_time_s"
@@ -677,34 +680,71 @@ class NetworkRoutingService:
         """
         return self._resolve_with_snap(target, network_dataset, graph=None)[:2]
 
-    def _apply_barriers(self, graph: nx.DiGraph, barriers: Optional[List[Barrier]]) -> nx.DiGraph:
-        """Applies barriers to a graph copy, removing or penalizing blocked edges."""
+    def _apply_barriers(
+        self,
+        graph: nx.DiGraph,
+        barriers: Optional[List[Barrier]],
+        copy_graph: bool = True,
+    ) -> nx.DiGraph:
+        """Applies barriers to a graph copy, removing or penalizing blocked edges.
+
+        ``copy_graph=False`` lets callers that ALREADY hold a private working
+        copy (coordinate snapping / virtual-node insertion) skip the redundant
+        second copy — PERF (#540): a routing call with barriers used to pay TWO
+        full graph copies (snap copy + barrier copy). Never pass ``False`` for
+        a graph the caller still owns.
+        """
         # PERF-03: the common case (no barriers) previously paid a full graph
         # deep-copy (nodes + per-edge geometry dicts) per routing call. Return
         # the original graph directly when there is nothing to apply.
         if not barriers:
             return graph
-        graph_copy = graph.copy()
+        graph_copy = graph.copy() if copy_graph else graph
+
+        # PERF (#540): the previous implementation scanned EVERY edge per
+        # barrier and rebuilt each edge geometry with ``shape()`` (B×E GEOS
+        # work, plus B full geometry reconstructions). Now one STRtree is built
+        # over the edge geometries ONCE per call and each barrier queries only
+        # bbox-candidate edges, with the barrier prepared for fast repeated
+        # predicates. O(B×E) → O(E log E + B·k·GEOS).
+        edge_items: List[Tuple[Any, Any]] = []
+        edge_geoms: List[Any] = []
+        for u, v, data in graph_copy.edges(data=True):
+            edge_geom_dict = data.get("geometry")
+            try:
+                if edge_geom_dict:
+                    edge_geoms.append(shape(edge_geom_dict))
+                else:
+                    u_data = graph_copy.nodes[u]
+                    v_data = graph_copy.nodes[v]
+                    edge_geoms.append(
+                        LineString([(u_data["x"], u_data["y"]), (v_data["x"], v_data["y"])])
+                    )
+            except Exception:
+                # Edge without usable geometry/node coords: cannot be tested;
+                # the old code would have raised on such an edge, so skipping
+                # it strictly widens robustness without changing valid inputs.
+                continue
+            edge_items.append((u, v))
+        edge_tree = STRtree(edge_geoms)
 
         for barrier in barriers:
-            b_geom = shape(barrier.geometry)
+            raw_geom = shape(barrier.geometry)
+            b_geom = prep(raw_geom)
             factor = barrier.impedance_factor
 
             # Identify edges intersecting barrier (penalize their impedance).
             edges_to_penalize = []
-
-            for u, v, data in graph_copy.edges(data=True):
-                edge_geom_dict = data.get("geometry")
-                if edge_geom_dict:
-                    edge_shape = shape(edge_geom_dict)
-                    if b_geom.intersects(edge_shape):
-                        edges_to_penalize.append((u, v))
-                else:
-                    u_data = graph_copy.nodes[u]
-                    v_data = graph_copy.nodes[v]
-                    segment = LineString([(u_data["x"], u_data["y"]), (v_data["x"], v_data["y"])])
-                    if b_geom.intersects(segment):
-                        edges_to_penalize.append((u, v))
+            for pos in edge_tree.query(raw_geom):
+                idx = int(pos)
+                u, v = edge_items[idx]
+                if not graph_copy.has_edge(u, v):
+                    # Edge removed by an earlier blocking barrier — same
+                    # semantics as the old per-barrier rescan (removed edges are
+                    # gone from the working copy and cannot be re-penalized).
+                    continue
+                if b_geom.intersects(edge_geoms[idx]):
+                    edges_to_penalize.append((u, v))
 
             if math.isinf(factor) or factor >= 1e6:
                 graph_copy.remove_edges_from(edges_to_penalize)

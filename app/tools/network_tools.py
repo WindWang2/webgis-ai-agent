@@ -14,6 +14,12 @@ from app.services.network.models import TravelProfile
 
 logger = logging.getLogger(__name__)
 
+# Issue #540: 2-opt local search is super-linear per stop count and the tool
+# receives unbounded `stops` lists from the agent. Requests beyond this cap are
+# rejected with an EXPLICIT error (never silently truncated); the underlying
+# engine API stays uncapped for programmatic callers.
+MAX_OPTIMIZE_STOPS = 200
+
 
 def _geometry_descriptor(geom: Any, max_features: int = 50) -> Dict[str, Any]:
     """Collapse a heavy geometry field into a Fetch-on-Demand descriptor.
@@ -152,6 +158,10 @@ class NetworkClosestFacilityArgs(BaseModel):
     facilities: List[Any] = Field(..., description="Facility locations")
     profile: str = Field(default="driving", description="Travel profile: walking, driving, cycling, custom")
     number_to_find: int = Field(default=1, description="Number of closest facilities to return per incident")
+    cutoff_cost: Optional[float] = Field(
+        default=None,
+        description="Maximum travel cost cutoff (in the active impedance's units: seconds for travel_time_s, meters for length_m). Pairs beyond it are excluded from both the routing and the results — bound the analysis before Routes are built.",
+    )
 
 
 class NetworkServiceAreaArgs(BaseModel):
@@ -181,7 +191,7 @@ class LocationAllocationArgs(BaseModel):
 class OptimizeRouteArgs(BaseModel):
     network: Any = Field(..., description="Network GeoJSON dataset, ref ID, or 'osm_road'")
     depot: Any = Field(..., description="Starting depot point")
-    stops: List[Any] = Field(..., description="Intermediate stops to visit")
+    stops: List[Any] = Field(..., description=f"Intermediate stops to visit (max {MAX_OPTIMIZE_STOPS} — the 2-opt local search is super-linear; larger requests must be split into smaller tours)")
     profile: str = Field(default="driving", description="Travel profile")
 
 
@@ -269,6 +279,7 @@ def register_network_tools(registry: ToolRegistry):
         facilities: List[Any],
         profile: str = "driving",
         number_to_find: int = 1,
+        cutoff_cost: Optional[float] = None,
         session_id: str = "",
     ) -> dict:
         try:
@@ -279,6 +290,7 @@ def register_network_tools(registry: ToolRegistry):
                 facilities=facilities,
                 profile=travel_profile,
                 number_to_find=number_to_find,
+                cutoff_cost=cutoff_cost,
                 session_id=session_id,
             )
             return trim_network_result(res.model_dump())
@@ -401,6 +413,16 @@ def register_network_tools(registry: ToolRegistry):
         session_id: str = "",
     ) -> dict:
         try:
+            # Issue #540: bound the super-linear 2-opt scan at the agent-facing
+            # surface. Explicit rejection — never silence/truncate the rest.
+            if len(stops) > MAX_OPTIMIZE_STOPS:
+                return {
+                    "type": "error",
+                    "message": (
+                        f"optimize_route 最多支持 {MAX_OPTIMIZE_STOPS} 个 stops "
+                        f"(收到 {len(stops)})；请拆分路线或减少停靠点。"
+                    ),
+                }
             travel_profile = TravelProfile(name=profile)
             res = await engine.solve_optimize_route(
                 network=network,
