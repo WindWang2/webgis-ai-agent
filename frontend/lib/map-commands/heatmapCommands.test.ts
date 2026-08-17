@@ -42,6 +42,38 @@ describe('heatmap commands (issue #393: post-state verification, no fake success
       expect(map.getLayer('custom-rain')).toBeTruthy();
     });
 
+    it('#533 accepts the backend-authored image URL shape and fits the exact bbox', () => {
+      // 后端 _author_raster_display_result 发射的形状：
+      // params = {layerId, result_ref, mapspec_fingerprint, bbox, image: URL}
+      const map = makeMockMaplibreMap();
+      const urlParams = {
+        layerId: 'raster-heat_1-source',
+        result_ref: 'ref:raster/raster-heat_1-source',
+        mapspec_fingerprint: 'carto-sha256:abc',
+        image: '/api/v1/sessions/s1/raster/raster-heat_1-source.png',
+        bbox: [116.5, 39.5, 117.5, 40.5],
+      };
+      // 校验器（requiredParams）必须放行 URL 形态
+      expect(heatmapCommands.add_heatmap_raster.requiredParams(urlParams)).toBe(true);
+
+      const result = heatmapCommands.add_heatmap_raster.run(makeCtx(map, urlParams));
+
+      expect(result).toEqual({ status: 'succeeded', result: { confirmed: true } });
+      expect(map.getSource('custom-raster-heat_1-source')).toBeTruthy();
+      expect(map.getLayer('custom-raster-heat_1-source')).toBeTruthy();
+      // fitBounds 收到与后端 bbox 完全一致的 4 元素数值数组（数值真值，非仅 ack）
+      const fitCalls = (map.fitBounds as ReturnType<typeof vi.fn>).mock.calls;
+      expect(fitCalls.length).toBeGreaterThan(0);
+      expect(fitCalls[0][0]).toEqual([116.5, 39.5, 117.5, 40.5]);
+    });
+
+    it('requiredParams rejects params without url/image (validator contract)', () => {
+      expect(heatmapCommands.add_heatmap_raster.requiredParams({ bbox: [1, 2, 3, 4] })).toBe(false);
+      expect(heatmapCommands.add_heatmap_raster.requiredParams({})).toBe(false);
+      expect(heatmapCommands.add_heatmap_raster.requiredParams({ url: 'x' })).toBe(true);
+      expect(heatmapCommands.add_heatmap_raster.requiredParams({ image: 'x' })).toBe(true);
+    });
+
     it('fails mutation_failed when the map never registers the mount', () => {
       // getSource/getLayer always null — the renderer calls no-op → old code
       // returned void → dispatcher acked succeeded. Now it must fail honestly.
