@@ -33,6 +33,9 @@ const mapMockInstance = {
   setPaintProperty: vi.fn(),
   // V3 camera commands call map.stop() before starting a new animation (design §6)
   stop: vi.fn(),
+  // #535: query_features 用到 project（lng/lat → 像素）与 queryRenderedFeatures
+  project: vi.fn(() => ({ x: 128, y: 128 })),
+  queryRenderedFeatures: vi.fn(() => []),
 };
 
 const mockGetMap = vi.fn(() => mapMockInstance);
@@ -433,6 +436,34 @@ describe('MapActionHandler', () => {
     );
     expect(mockFlyTo).toHaveBeenCalledWith(
       expect.objectContaining({ center: [116.4, 39.9], zoom: 10, bearing: 0, pitch: 60 })
+    );
+  });
+
+  it('#535: query_features dispatches, runs the rendered-feature query and acks succeeded (was unknown_command)', async () => {
+    actions = [{
+      command: 'query_features',
+      params: { location: [116.4, 39.9], buffer_m: 10 },
+    }];
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    // 不在目录里注册前，这里以 unknown_command 失败且没有任何执行副作用。
+    expect(reportTerminalFn).not.toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'query_features' }),
+      'failed',
+      expect.objectContaining({ error: 'unknown_command' }),
+    );
+    // 查询真实执行（lng/lat 投影 → queryRenderedFeatures）
+    expect(mapMockInstance.queryRenderedFeatures).toHaveBeenCalledTimes(1);
+    // 终端状态是 succeeded（0 个要素也如实成功、带 count）
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'query_features' }),
+      'succeeded',
+      expect.objectContaining({
+        actual: expect.objectContaining({ featureCount: 0, summary: expect.stringContaining('未查询到已渲染要素') }),
+      }),
     );
   });
 
