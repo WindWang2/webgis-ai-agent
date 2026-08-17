@@ -407,10 +407,72 @@ async def test_heatmap_raster_enters_mapspec_review(service, fake_registry, clea
         "passed", "passed_with_warnings", "failed_repairable",
         "failed_unrepairable", "repair_exhausted", "not_evaluated",
     }
-    assert "image" not in result.raw_result
+    # #533: authoring 必须把可寻址 image URL 放回 raw_result 与命令 params。
+    # 此前的实现把 producer 的 data-URL 剥掉（_DISPLAY_RESULT_METADATA_KEYS
+    # 不含 image），命令 params 无 image → 前端 add_heatmap_raster 校验器拒绝
+    # （invalid_params）且 auto-mount gate 不满足，图层永不挂载。
+    commands = result.raw_result["commands"]
+    assert len(commands) == 1
+    assert commands[0]["command"] == "add_heatmap_raster"
+    params = commands[0]["params"]
+    image_url = result.raw_result["image"]
+    assert image_url.startswith(f"/api/v1/sessions/{clean_session}/raster/")
+    assert image_url.endswith("/raster/raster-heat_1-source.png")
+    assert params["image"] == image_url
+    assert params["bbox"] == [116.0, 39.0, 117.0, 40.0]
+    # 命令必须被铸成 SSE map action（前端经此消费执行）。
+    assert any(ma["command"] == "add_heatmap_raster" for ma in result.map_actions)
     persisted = await mapspec_store_instance.get_mapspec(clean_session)
     assert persisted["layers"][0]["type"] == "raster"
     assert persisted["layers"][0]["provenance"]["result_ref"] == result.raw_result["result_ref"]
+
+
+@pytest.mark.asyncio
+async def test_heatmap_raster_command_satisfies_frontend_contract(
+    service, fake_registry, clean_session,
+):
+    """#533 契约（producer → authoring → 前端消费）：发射的命令参数必须满足
+    前端 add_heatmap_raster 校验器与 run gate 的真实形状：
+    - requiredParams: typeof p.image === 'string'（或 p.url）→ image 必须为 URL 串；
+    - run gate: image 与 bbox 都必须 truthy；
+    - bbox 为 4 元素数值列表（[w,s,e,n]，MapLibre coords 换算依赖）；
+    - auto-mount gate: data.result.image truthy。
+    （#535 的"命令名 ∈ catalogue"不变量抓不到 #533 —— 命令名存在、参数形状
+    错误，需要本形状测试兜底。）
+    """
+    png = (
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQ"
+        "AAAABJRU5ErkJggg=="
+    )
+    fake_registry.dispatch.return_value = {
+        "type": "heatmap_raster",
+        "image": f"data:image/png;base64,{png}",
+        "bbox": [116.5, 39.5, 117.5, 40.5],
+        "legend_spec": {"type": "continuous", "field": "density"},
+        "command": "add_heatmap_raster",
+    }
+
+    result = await service.dispatch(
+        _tc("heatmap_data", {"render_type": "raster"}, tc_id="heat_2"),
+        clean_session,
+        set(),
+    )
+
+    assert result.status == "ok"
+    command = result.raw_result["commands"][0]
+    assert command["command"] == "add_heatmap_raster"
+    params = command["params"]
+    # 前端校验器 predicate（heatmapCommands.ts requiredParams 镜像）
+    assert isinstance(params.get("image"), str), "params.image 必须是字符串（URL）"
+    assert params.get("image"), "params.image 必须 truthy（run gate）"
+    assert params.get("bbox"), "params.bbox 必须 truthy（run gate）"
+    bbox = params["bbox"]
+    assert isinstance(bbox, list) and len(bbox) == 4
+    assert all(isinstance(v, (int, float)) and v == float(v) for v in bbox)
+    assert bbox == [116.5, 39.5, 117.5, 40.5]
+    # auto-mount gate（use-sse-stream: data.geojson_ref || data.result?.image）
+    assert result.raw_result.get("image"), "raw_result.image 必须 truthy（auto-mount gate）"
+    assert result.raw_result["image"] == params["image"]
 
 
 @pytest.mark.asyncio

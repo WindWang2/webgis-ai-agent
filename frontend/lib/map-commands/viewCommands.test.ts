@@ -266,4 +266,45 @@ describe('viewCommands camera commands (V3 Promise<MapCommandResult> contract)',
 
     await expect(promise).resolves.toMatchObject({ status: 'succeeded' });
   });
+
+  // ─── #534: set_map_view 校验器必须覆盖 bearing/pitch-only（与 run body 同宽）──
+
+  it('validator #534: bearing-only / pitch-only / any named dimension pass; empty rejected', () => {
+    const { requiredParams } = viewCommands.set_map_view;
+    // run body 支持的全部有效形状都要放行（否则后端成功、前端 invalid_params）
+    expect(requiredParams({ bearing: 30 })).toBe(true);
+    expect(requiredParams({ pitch: 60 })).toBe(true);
+    expect(requiredParams({ bearing: 30, pitch: 60 })).toBe(true);
+    expect(requiredParams({ zoom: 5 })).toBe(true);
+    expect(requiredParams({ center: [116, 39] })).toBe(true);
+    expect(requiredParams({ center: [116, 39], zoom: 5, bearing: 30, pitch: 60 })).toBe(true);
+    // 无有效参数的 no-op（run body 快路径处理）不经过校验器放行即可
+    expect(requiredParams({})).toBe(false);
+    expect(requiredParams({ opacity: 0.5 })).toBe(false);
+  });
+
+  it('run #534: bearing-only actually flies to the requested bearing and converges', async () => {
+    const map = makeMockMaplibreMap({ center: [100, 20], zoom: 5, bearing: 10, pitch: 20 });
+    const promise = viewCommands.set_map_view.run(makeCtx(map, { bearing: 30 }));
+
+    expect(map._calls.flyTo).toHaveLength(1);
+    expect(map._calls.flyTo[0]).toMatchObject({ center: [100, 20], zoom: 5, bearing: 30, pitch: 20 });
+    // 相机真正到达请求的 bearing（数值真值，非仅 ack）
+    map._setViewport({ bearing: 30 });
+    map._fire('moveend');
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(promise).resolves.toMatchObject({ status: 'succeeded' });
+  });
+
+  it('run #534: pitch-only preserves current center/zoom/bearing and converges', async () => {
+    const map = makeMockMaplibreMap({ center: [100, 20], zoom: 5, bearing: 10, pitch: 0 });
+    const promise = viewCommands.set_map_view.run(makeCtx(map, { pitch: 60 }));
+
+    expect(map._calls.flyTo).toHaveLength(1);
+    expect(map._calls.flyTo[0]).toMatchObject({ center: [100, 20], zoom: 5, bearing: 10, pitch: 60 });
+    map._setViewport({ pitch: 60 });
+    map._fire('moveend');
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(promise).resolves.toMatchObject({ status: 'succeeded' });
+  });
 });

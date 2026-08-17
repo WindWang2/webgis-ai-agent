@@ -1052,6 +1052,8 @@ export interface ExportRequest {
 export interface ExportDeps {
   map: Map;
   getHudState: () => any;
+  /** #527：高 DPI 分支的 idle 等待截止毫秒（测试注入用），默认 EXPORT_IDLE_TIMEOUT_MS。 */
+  idleTimeoutMs?: number;
 }
 
 export interface ExportOutcome {
@@ -1142,6 +1144,38 @@ function buildSvgWrapper(
   return new Blob([svg], { type: 'image/svg+xml' });
 }
 
+/**
+ * #527：高 DPI 分支在 `map.once('idle')` 上无界等待 —— WebGL 上下文丢失或画布
+ * 隐藏时 idle 永不触发，finally 里的 pixelRatio 恢复永远不可达（3.125x @300DPI
+ * → ~10x backing store 泄漏）。这里给等待加 deadline：超时抛类型化错误，走既有
+ * catch（如实的失败文案）+ finally（恢复原始 pixelRatio）。exportCommands.ts 的
+ * EXPORT_RENDER_TIMEOUT_MS 是队列级兜底（覆盖 render 不触发等路径），与内层
+ * 截止互不替代。
+ */
+export const EXPORT_IDLE_TIMEOUT_MS = 30_000;
+
+/** #527：idle 等待超时的类型化错误 —— catch 可识别并给出如实的失败文案。 */
+export class MapIdleTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(
+      `导出中止：地图在 ${timeoutMs}ms 内未进入 idle 状态` +
+        `（可能 WebGL 上下文已丢失或画布被隐藏）`,
+    );
+    this.name = 'MapIdleTimeoutError';
+  }
+}
+
+/** 有界等待 `map.once('idle')`：idle 触发即 resolve，截止前未触发即 reject。 */
+async function waitForMapIdle(map: Map, timeoutMs: number): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new MapIdleTimeoutError(timeoutMs)), timeoutMs);
+    map.once('idle', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
 export async function runExport(
   deps: ExportDeps,
   req: ExportRequest,
@@ -1178,7 +1212,10 @@ export async function runExport(
   try {
     if (targetPixelRatio > 1) {
       map.setPixelRatio(targetPixelRatio);
-      await new Promise<void>((resolve) => map.once('idle', () => resolve()));
+      // #527: 有界 idle 等待 —— 超时抛 MapIdleTimeoutError，让下方 catch
+      // 给出如实的失败文案、finally 恢复原始 pixelRatio（此前无界等待在
+      // WebGL 上下文丢失时挂死并泄漏 pixelRatio）。
+      await waitForMapIdle(map, deps.idleTimeoutMs ?? EXPORT_IDLE_TIMEOUT_MS);
     }
 
     const baseCanvas = map.getCanvas();
@@ -1252,18 +1289,25 @@ export async function runExport(
     }
   } catch (e) {
     devOnly.error('[MapExporter] Canvas extraction/export failed', e);
+    // #527：idle 超时是类型化错误 —— 给出如实的失败原因（而不是把超时淹在
+    // 泛化的"排版合成失败"里），并说明像素比已恢复。
+    const idleTimeout = e instanceof MapIdleTimeoutError;
     // #469：上传接口需要认证 —— 会话过期/token 失效时给出明确的登录指引，
     // 而不是把 401 淹没在通用失败文案里（匿名路径已由导出按钮门控）。
     const authRequired = isApiError(e) && (e.status === 401 || e.status === 403);
-    const errorMsg = authRequired
-      ? '导出需要登录（认证失败或会话已过期）'
-      : e instanceof Error
-        ? e.message
-        : String(e);
+    const errorMsg = idleTimeout
+      ? e.message
+      : authRequired
+        ? '导出需要登录（认证失败或会话已过期）'
+        : e instanceof Error
+          ? e.message
+          : String(e);
     getHudState().setPendingSystemMessage(
-      authRequired
-        ? '[系统通知] 导出失败：导出功能需要登录账号（认证失败或会话已过期）。请到 设置 → 账户 重新登录后再导出。'
-        : `[系统通知] 专题地图排版合成失败。错误原因: ${e}。请向用户致歉并结束流程。`,
+      idleTimeout
+        ? `[系统通知] ${e.message}。已恢复原始分辨率。请告知用户并结束流程。`
+        : authRequired
+          ? '[系统通知] 导出失败：导出功能需要登录账号（认证失败或会话已过期）。请到 设置 → 账户 重新登录后再导出。'
+          : `[系统通知] 专题地图排版合成失败。错误原因: ${e}。请向用户致歉并结束流程。`,
     );
     return { ok: false, format: (format ?? 'png').toLowerCase(), error: errorMsg };
   } finally {

@@ -80,6 +80,8 @@ export interface MakeMockMaplibreMapOptions {
   /** `queryRenderedFeatures()` results. Pass an array (fixed) or a zero-arg
    *  function (lazy — re-read on every call, e.g. a mutable test registry). */
   renderedFeatures?: unknown[] | (() => unknown[]);
+  /** `project()` results — `{x, y}` pixel coords. Default `{x: 128, y: 128}`. */
+  project?: (lngLat: [number, number]) => { x: number; y: number };
   /** `getBounds()` corners as [west, south, east, north]. Default derives from
    *  center ± 0.1°, so the default viewport yields [116.3, 39.8, 116.5, 40.0]. */
   bounds?: [number, number, number, number];
@@ -159,6 +161,7 @@ export function makeMockMaplibreMap(options: MakeMockMaplibreMapOptions = {}) {
   ];
   const styleLoaded = options.styleLoaded ?? true;
   const renderedFeatures = options.renderedFeatures ?? [];
+  const projectResolver = options.project ?? (() => ({ x: 128, y: 128 }));
   let terrain: { source: string; exaggeration?: number } | null = null;
   let pixelRatio = 1;
   const images = new Set<string>();
@@ -302,6 +305,8 @@ export function makeMockMaplibreMap(options: MakeMockMaplibreMapOptions = {}) {
         typeof renderedFeatures === 'function' ? renderedFeatures() : renderedFeatures;
       return Array.isArray(features) ? features : [];
     }),
+    // Standard MapLibre API: lng/lat → screen pixel {x, y}.
+    project: vi.fn((lngLat: [number, number]) => projectResolver(lngLat)),
     getCanvas: vi.fn(() => makeCanvasLike()),
     hasImage: vi.fn((id: string) => images.has(id)),
     removeImage: vi.fn((id: string) => {

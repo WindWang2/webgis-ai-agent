@@ -1,14 +1,10 @@
 'use client';
 
-import React, { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { STitle } from '@/components/shared/section-title';
 import { login, logout } from '@/lib/api/auth';
-import {
-  getAuthUser,
-  setAuth,
-  subscribeAuth,
-  type AuthUser,
-} from '@/lib/auth/tokenStore';
+import { setAuth } from '@/lib/auth/tokenStore';
+import { useAuthUser } from '@/lib/auth/use-auth-user';
 
 /**
  * 账户设置：登录 / 登出（JWT）。
@@ -23,14 +19,6 @@ import {
  * - 匿名用户不受影响：所有原有匿名功能照旧，只是数据源管理等写操作
  *   需要登录。
  */
-
-function useAuthUser(): AuthUser | null {
-  return useSyncExternalStore(
-    subscribeAuth,
-    getAuthUser,
-    () => null,
-  );
-}
 
 export function AccountSection() {
   const user = useAuthUser();

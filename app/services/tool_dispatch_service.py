@@ -741,6 +741,24 @@ class ToolDispatchService:
                 image_ref = result_ref
             else:
                 raise RuntimeError("raster display result has no addressable image")
+            # #533: 把可寻址的 image URL 放回 authored + 命令 params。此前
+            # authoring 把 producer 的 data-URL image 剥掉后，命令 params 里
+            # 没有 image → 前端 add_heatmap_raster 校验器拒绝（invalid_params）
+            # 且 auto-mount gate 不满足，图层永不挂载。复用 webgis_layer_upsert
+            # 的同一 seam：ref:raster/<id> → /api/v1/sessions/{sid}/raster/<id>.png
+            # （匿名会话的 owner_token 以查询参数附加 —— MapLibre 图片请求带不了
+            # 请求头，路由要求所有权校验）。
+            image_url = None
+            if isinstance(image_ref, str) and image_ref.startswith("ref:raster/"):
+                raster_id = image_ref[len("ref:raster/"):]
+                image_url = f"/api/v1/sessions/{session_id}/raster/{raster_id}.png"
+                try:
+                    from app.api.routes.raster import lookup_session_owner_token
+                    session_token = await lookup_session_owner_token(session_id)
+                except Exception:
+                    session_token = None
+                if session_token:
+                    image_url = f"{image_url}?token={session_token}"
             layer = {
                 "id": layer_id,
                 "source": source_id,
@@ -788,6 +806,8 @@ class ToolDispatchService:
                 for key in (*_DISPLAY_RESULT_METADATA_KEYS, "bbox", "bounds", "total_points")
                 if key in result
             }
+            if image_url is not None:
+                authored["image"] = image_url
             authored.update({
                 "type": result.get("type") or "heatmap_raster",
                 "success": True,
@@ -803,6 +823,7 @@ class ToolDispatchService:
                         "result_ref": image_ref,
                         "mapspec_fingerprint": lifecycle.get("mapspec_fingerprint"),
                         "bbox": authored.get("bbox") or authored.get("bounds"),
+                        **({"image": image_url} if image_url is not None else {}),
                     },
                 }],
             })
