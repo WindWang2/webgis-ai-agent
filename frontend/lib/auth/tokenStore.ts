@@ -18,6 +18,18 @@
 
 const STORAGE_KEY = 'webgis_auth';
 
+// 测试阶段免登录（与后端 AUTH_DISABLED 配对）：开启时未登录也视为
+// test-admin(admin)，登录态门控的 UI（#469 导出、#528 项目 tab 等）全部
+// 放行。真实登录（localStorage 有凭证）始终优先于合成身份。
+const AUTH_BYPASS = process.env.NEXT_PUBLIC_AUTH_DISABLED === 'true';
+const AUTH_BYPASS_USER: AuthUser = {
+  id: 'test-admin',
+  username: 'test-admin',
+  email: 'test-admin@local.test',
+  full_name: '测试管理员（免登录）',
+  role: 'admin',
+};
+
 export interface AuthUser {
   id: string;
   username: string;
@@ -121,7 +133,9 @@ export function getRefreshToken(): string | null {
 
 /** The signed-in user profile from the last login/refresh, if any. */
 export function getAuthUser(): AuthUser | null {
-  return load()?.user ?? null;
+  const stored = load()?.user ?? null;
+  if (stored) return stored;
+  return AUTH_BYPASS ? AUTH_BYPASS_USER : null;
 }
 
 /** Persist a login/refresh result and notify listeners. */

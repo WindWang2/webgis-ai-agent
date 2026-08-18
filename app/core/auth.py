@@ -34,6 +34,58 @@ security = HTTPBearer(auto_error=False)
 # Never persist these as owner_id / user_id (no matching users row).
 _ANONYMOUS_USER_IDS = frozenset({"anonymous", "anon"})
 
+# ── 测试阶段免登录（AUTH_DISABLED=true）─────────────────────────────────
+# 所有受保护依赖退化为固定 admin 身份：不校验 Bearer token，无需登录。
+# bypass 身份是一个真实 User 行（test-admin, role=admin），使会话归属、
+# ver 校验契约（"user" ORM 键）与正常登录路径一致；密码为随机值——登录
+# 通道不因 bypass 开启而多出一个可爆破账号。
+AUTH_BYPASS_USER_ID = "test-admin"
+AUTH_BYPASS_PROFILE = {
+    "user_id": AUTH_BYPASS_USER_ID,
+    "role": "admin",
+    "org_id": None,
+}
+
+
+def auth_bypass_enabled() -> bool:
+    """测试阶段免登录开关（settings.AUTH_DISABLED）。"""
+    return bool(getattr(settings, "AUTH_DISABLED", False))
+
+
+async def _get_or_create_bypass_user(db: AsyncSession) -> Optional[User]:
+    """惰性确保 test-admin 用户行存在（with_version 路径的 ver/ORM 契约）。
+
+    每请求一次 indexed PK lookup（与正常 ver 校验同量级）；创建只发生在
+    首次。DB 不可用时返回 None——依赖仍返回 bypass dict，仅缺 ORM 键。
+    """
+    try:
+        result = await db.execute(
+            select(User).where(User.id == AUTH_BYPASS_USER_ID)
+        )
+        user = result.scalar_one_or_none()
+        if user is None:
+            user = User(
+                id=AUTH_BYPASS_USER_ID,
+                username=AUTH_BYPASS_USER_ID,
+                email="test-admin@local.test",
+                # 随机密码：/auth/login 无法登录该账号（bypass 才是入口）。
+                password_hash=hash_password(secrets.token_urlsafe(32)),
+                role="admin",
+                is_active=True,
+                email_verified=True,
+            )
+            db.add(user)
+            await db.commit()
+            await db.refresh(user)
+        return user
+    except Exception as exc:  # noqa: BLE001 - bypass 必须比 DB 更可用（测试阶段）
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "[auth-bypass] test-admin row unavailable: %s", exc
+        )
+        return None
+
 
 def actor_ids(user: Optional[dict]) -> tuple[Optional[str], Optional[object]]:
     """Normalize the auth-dependency dict to (user_id, org_id).
@@ -238,6 +290,9 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
 
     back-compat: 无 `type` claim 的旧 token 视为 access token (ver=0)。
     """
+    if auth_bypass_enabled():
+        return dict(AUTH_BYPASS_PROFILE)
+
     if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -287,6 +342,11 @@ async def get_current_user_optional(credentials: HTTPAuthorizationCredentials = 
     不查 DB，不校验 ver。用于性能敏感的公开端点 (e.g. /sessions 列表)。
     若要 ver 校验，用 `Depends(get_current_user_with_version)` + 兜底逻辑。
     """
+    if auth_bypass_enabled():
+        # bypass 身份而非匿名哨兵：会话归属/所有权守卫与受保护端点一致，
+        # 避免"同一请求在 A 端点是 test-admin、在 B 端点是 anonymous"。
+        return dict(AUTH_BYPASS_PROFILE)
+
     if credentials is None:
         return {"user_id": "anonymous", "role": "anonymous"}
 
@@ -327,6 +387,13 @@ async def get_current_user_with_version(
     back-compat: 无 `ver` claim 的旧 token 视为 ver=0；只要用户的
     `token_version` 还是 0 (即未 logout 过)，旧 token 仍可通过。
     """
+    if auth_bypass_enabled():
+        profile = dict(AUTH_BYPASS_PROFILE)
+        user = await _get_or_create_bypass_user(db)
+        if user is not None:
+            profile["user"] = user
+        return profile
+
     if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

@@ -181,3 +181,39 @@ describe('refreshAuthToken', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
+
+// ─── 测试阶段免登录（NEXT_PUBLIC_AUTH_DISABLED）────────────────────────
+
+describe('auth bypass (NEXT_PUBLIC_AUTH_DISABLED=true)', () => {
+  afterEach(() => {
+    delete process.env.NEXT_PUBLIC_AUTH_DISABLED;
+    vi.resetModules();
+  });
+
+  it('returns the synthetic test-admin when not signed in', async () => {
+    process.env.NEXT_PUBLIC_AUTH_DISABLED = 'true';
+    vi.resetModules();
+    const store = await import('./tokenStore');
+    const user = store.getAuthUser();
+    expect(user?.id).toBe('test-admin');
+    expect(user?.role).toBe('admin');
+  });
+
+  it('a real login takes precedence over the bypass identity', async () => {
+    process.env.NEXT_PUBLIC_AUTH_DISABLED = 'true';
+    vi.resetModules();
+    const store = await import('./tokenStore');
+    store.setAuth(
+      { accessToken: 'at', refreshToken: 'rt' },
+      { id: 'u1', username: 'real-user', role: 'viewer' },
+    );
+    expect(store.getAuthUser()?.id).toBe('u1');
+  });
+
+  it('bypass off (default) keeps anonymous null', async () => {
+    delete process.env.NEXT_PUBLIC_AUTH_DISABLED;
+    vi.resetModules();
+    const store = await import('./tokenStore');
+    expect(store.getAuthUser()).toBeNull();
+  });
+});

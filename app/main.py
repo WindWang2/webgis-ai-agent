@@ -36,6 +36,13 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期：启动时初始化工具注册中心 + DB schema 守卫迁移。"""
+    # 测试阶段免登录：开着的每一秒都要在日志里可见，防止误带到生产。
+    from app.core.auth import auth_bypass_enabled
+    if auth_bypass_enabled():
+        logger.warning(
+            "[auth-bypass] AUTH_DISABLED=true — 所有受保护端点免登录放行"
+            "（身份 test-admin / admin 角色）。仅限测试环境；生产请立即关闭。"
+        )
     # 守卫式 SQLite 迁移（_apply_runtime_migrations 内部已做 SQLite 检测）；
     # 没这一行新增/重命名字段就只能靠手动 ALTER，跑久了必出 "no such column"。
     try:

@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api"
     ENV: str = "development"
 
+
+    # 测试阶段免登录开关：true 时所有受保护端点按 "test-admin"（admin 角色）
+    # 放行，无需 Bearer token。仅限本地/测试环境；生产启动会打警告。
+    AUTH_DISABLED: bool = False
+
     def is_production(self) -> bool:
         """判断是否为生产环境"""
         return self.ENV.lower() == "production"
