@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     # 放行，无需 Bearer token。仅限本地/测试环境；生产启动会打警告。
     AUTH_DISABLED: bool = False
 
+    # 本地地理数据根目录：行政区 SHP（ChinaAdminDivisonSHP/）与 OSM 预处理
+    # 产物（osm_gpkg/）从这里解析。空串回退仓库内 data/ 旧布局。
+    LOCAL_GEODATA_DIR: str = ""
+
     def is_production(self) -> bool:
         """判断是否为生产环境"""
         return self.ENV.lower() == "production"

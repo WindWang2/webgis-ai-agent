@@ -110,3 +110,4 @@ prometheus-fastapi-instrumentator>=7.0.0
 # prometheus-client: app/core/auth_metrics.py 直接 import（#618-35）。
 # instrumentator 的传递依赖可随时被上游调整 —— 直接使用的库必须直接声明。
 prometheus-client>=0.20.0
+osmium>=3.7

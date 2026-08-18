@@ -13,6 +13,7 @@ Usage:
 """
 import sys
 import os
+import json
 import argparse
 import asyncio
 import subprocess
@@ -194,6 +195,53 @@ def run_dev():
             p.wait()
         console.print("[bold green]All services stopped.[/bold green]")
 
+def cmd_osm_ingest(pbf, themes, force, limit, flush_rows, idx):
+    """一次性 OSM PBF → 主题 GPKG 预处理（本地资源查询的数据底座）。"""
+    from pathlib import Path
+    from app.services.local_osm import THEME_SPECS, default_pbf_path, ingest_pbf
+
+    pbf_path = Path(pbf).expanduser() if pbf else default_pbf_path()
+    if not pbf_path or not pbf_path.exists():
+        console.print("[bold red]未找到 china-*.osm.pbf[/bold red] "
+                      "（--pbf 指定路径，或将其放在 LOCAL_GEODATA_DIR 下）")
+        sys.exit(1)
+    theme_list = [t.strip() for t in themes.split(",") if t.strip()]
+    unknown = [t for t in theme_list if t not in THEME_SPECS]
+    if unknown:
+        console.print(f"[bold red]未知主题: {unknown}（可选 {list(THEME_SPECS)}）[/bold red]")
+        sys.exit(1)
+
+    console.print(Panel.fit(
+        f"[bold]OSM 预处理[/bold]\nPBF: {pbf_path}\n主题: {theme_list}"
+        + (f"\n调试 limit: {limit}" if limit else ""),
+        title="local-geodata"))
+    from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
+
+    with Progress(
+        SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
+        BarColumn(), TextColumn("{task.completed:,} rows"),
+        TimeElapsedColumn(), console=console,
+    ) as progress:
+        tasks = {t: progress.add_task(t, total=None) for t in theme_list}
+
+        def _cb(theme: str, delta: int) -> None:
+            if theme in tasks:
+                progress.advance(tasks[theme], delta)
+
+        result = ingest_pbf(
+            pbf_path, theme_list, force=force,
+            limit_objects=limit, flush_rows=flush_rows, progress_cb=_cb, idx=idx,
+        )
+    console.print_json(json.dumps(result, ensure_ascii=False, default=str))
+
+
+def cmd_osm_status():
+    """列出本地 OSM 主题库状态（是否已 ingest、行数）。"""
+    import json as _json
+    from app.services.local_osm import catalog
+    console.print_json(_json.dumps(catalog(), ensure_ascii=False, default=str))
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="manage.py",
@@ -222,6 +270,18 @@ def main():
     # worker
     subparsers.add_parser("worker", help="Start Celery worker")
 
+    # osm-ingest
+    p_oi = subparsers.add_parser("osm-ingest", help="One-off OSM PBF -> themed GPKG preprocessing for local resource queries")
+    p_oi.add_argument("--pbf", default=None, help="china-*.osm.pbf 路径（缺省自动在 LOCAL_GEODATA_DIR 下发现）")
+    p_oi.add_argument("--themes", default="pois,roads,railways,waterways", help=f"逗号分隔主题（可选: pois/roads/railways/waterways）")
+    p_oi.add_argument("--force", action="store_true", help="覆盖已存在的主题 GPKG（默认跳过）")
+    p_oi.add_argument("--limit", type=int, default=0, help="调试：仅扫描前 N 个对象")
+    p_oi.add_argument("--flush-rows", type=int, default=100_000, help="分块写库行数")
+    p_oi.add_argument("--idx", default="dense_file_array", choices=["dense_file_array", "sparse_file_array", "flex_mem", "dense_mem_array"], help="节点位置索引（默认磁盘索引防 OOM；小数据集可换 dense_mem_array 提速）")
+
+    # osm-status
+    subparsers.add_parser("osm-status", help="List local OSM theme catalog and row counts")
+
     args = parser.parse_args()
 
     if args.command == "init-db":
@@ -236,6 +296,10 @@ def main():
         subprocess.run([sys.executable, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "18000", "--reload"])
     elif args.command == "worker":
         subprocess.run(["celery", "-A", "app.services.task_queue.celery_app", "worker", "--loglevel=info"])
+    elif args.command == "osm-ingest":
+        cmd_osm_ingest(args.pbf, args.themes, args.force, args.limit, args.flush_rows, args.idx)
+    elif args.command == "osm-status":
+        cmd_osm_status()
     else:
         parser.print_help()
         sys.exit(1)
