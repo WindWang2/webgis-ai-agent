@@ -243,6 +243,41 @@ async def _record_frontend_cartographic_observation(
         )
 
 
+async def _build_cartography_turn_context(session_id: Optional[str]) -> str:
+    """Assemble the bounded harness verdict block for the next Pi turn.
+
+    只读：不触发重评估/修复——新用户消息不应在 agent 回应前就产生修复
+    副作用。verdict 由既有事件源刷新（mutation 后评估、观测/ACK 端点），
+    agent 在 turn 内可经 ``webgis_cartography_status`` 主动查询。
+    """
+    if not session_id:
+        return ""
+    try:
+        from app.lib.cartography.quality_loop import cartographic_fingerprint
+        from app.lib.cartography.verdict_summary import (
+            render_verdict_for_llm,
+            should_inject_verdict,
+        )
+        from app.services.mapspec.store import mapspec_store_instance
+
+        state, mapspec = await asyncio.gather(
+            session_data_manager.get_map_state(session_id),
+            mapspec_store_instance.get_mapspec(session_id),
+        )
+        review = state.get("_cartographic_review")
+        current_fingerprint = (
+            cartographic_fingerprint(mapspec) if isinstance(mapspec, dict) else None
+        )
+        if not should_inject_verdict(review, current_fingerprint):
+            return ""
+        return render_verdict_for_llm(review)
+    except Exception as e:  # noqa: BLE001 — 注入是增值上下文，失败不阻断对话
+        logger.warning(
+            "[chat] cartography turn context unavailable for %s: %s", session_id, e
+        )
+        return ""
+
+
 def get_registry() -> ToolRegistry:
     """Return the ToolRegistry instance, raising 503 if not yet initialized."""
     if registry is None:
@@ -596,7 +631,12 @@ async def chat_completions(
         if _use_pi_bridge():
             try:
                 await _record_frontend_cartographic_observation(req.session_id, req.map_state)
-                result = await pi_bridge.prompt(req.message, session_id=req.session_id)
+                cartography_context = await _build_cartography_turn_context(req.session_id)
+                result = await pi_bridge.prompt(
+                    req.message,
+                    session_id=req.session_id,
+                    cartography_context=cartography_context,
+                )
                 return ChatResponse(session_id=result.get("sessionId", req.session_id or ""), content=result.get("content", ""))
             except PiRpcError as e:
                 logger.error(f"Pi bridge error: {e}", exc_info=True)
@@ -727,6 +767,7 @@ async def chat_stream(
     if use_pi:
         assert pi_session_id
         await _record_frontend_cartographic_observation(pi_session_id, req.map_state)
+        cartography_context = await _build_cartography_turn_context(pi_session_id)
         async def pi_event_generator():
             buffer = TurnEventBuffer(session_key, req.message)
             _turn_resume_registry.register(session_key, buffer)
@@ -751,7 +792,9 @@ async def chat_stream(
                     async for chunk in _recorded(
                         _sse_batched(
                             pi_bridge.stream_prompt(
-                                req.message, session_id=pi_session_id
+                                req.message,
+                                session_id=pi_session_id,
+                                cartography_context=cartography_context,
                             ),
                         ),
                         buffer,

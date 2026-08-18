@@ -176,6 +176,10 @@ class WebgisRuntimeValidateArgs(BaseModel):
   pass
 
 
+class WebgisCartographyStatusArgs(BaseModel):
+  pass
+
+
 def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
   """注册 MapSpec Harness 规范化 webgis_* 工具。"""
 
@@ -583,3 +587,33 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
     if not session_id:
       return {"success": False, "message": "Missing session_id"}
     return await runtime_validator.validate_runtime(session_id)
+
+  @tool(
+      registry,
+      name="webgis_cartography_status",
+      description="查询制图 harness 对当前地图状态的服务端验证结论（desired↔runtime 收敛判定、失败检查项与修复进度）。只读，不触发重评估或修复。",
+      args_model=WebgisCartographyStatusArgs,
+      tier=1,
+  )
+  async def webgis_cartography_status(session_id: Optional[str] = None) -> dict:
+    if not session_id:
+      return {"success": False, "message": "Missing session_id"}
+    from app.lib.cartography.verdict_summary import render_verdict_for_llm
+    state = await session_data_manager.get_map_state(session_id)
+    review = state.get("_cartographic_review")
+    if not isinstance(review, dict):
+      return {
+          "success": True,
+          "summary": "No cartography harness verdict yet (no MapSpec mutation evaluated).",
+          "cartography": {"status": "not_evaluated", "termination_reason": "no_session_harness"},
+          "overall_passed": False,
+      }
+    cartography = review.get("cartography") if isinstance(review.get("cartography"), dict) else {}
+    return {
+        "success": True,
+        # summary 驱动 slim LLM payload；渲染器已封顶，不会搬运数据体。
+        "summary": render_verdict_for_llm(review),
+        "cartography": cartography,
+        "gate": review.get("gate"),
+        "overall_passed": bool(review.get("overall_passed")),
+    }

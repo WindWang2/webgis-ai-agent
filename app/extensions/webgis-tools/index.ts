@@ -38,8 +38,10 @@ function defineWebgisExecuteTool(): ToolDefinition<TSchema> {
 			"Use this when the user's request requires spatial analysis, raster operations,",
 			"geocoding, routing, or other GIS-specific capabilities.",
 			"The tool name must match a registered Python GIS tool.",
+			"After display-producing map changes, verify the server-side cartography verdict",
+			"by executing the read-only tool 'webgis_cartography_status'.",
 		].join("\n"),
-		promptSnippet: "Use webgis_execute(toolName, arguments) for GIS operations.",
+		promptSnippet: "Use webgis_execute(toolName, arguments) for GIS operations; verify map convergence with webgis_execute('webgis_cartography_status', {}).",
 		parameters: Type.Object({
 			toolName: Type.String({ description: "Name of the GIS tool to execute (e.g., spatial_aggregate, compute_ndvi)" }),
 			arguments: Type.Record(Type.String(), Type.Any(), { description: "Tool-specific arguments as a JSON object" }),

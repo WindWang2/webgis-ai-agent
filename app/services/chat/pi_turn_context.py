@@ -87,10 +87,18 @@ def verify_turn_token(
         return None
 
 
-def attach_turn_context(message: str, token: str) -> str:
-    """Attach the capability to the turn for the extension's local session view."""
-    return (
-        f"{message}\n\n"
-        f"[{TURN_CONTEXT_MARKER}:{token}]\n"
-        "(Internal routing context; do not quote or modify this marker.)"
-    )
+def attach_turn_context(
+    message: str, token: str, cartography_block: str = ""
+) -> str:
+    """Attach the capability to the turn for the extension's local session view.
+
+    ``cartography_block``（可选）是 harness 制图 verdict 的有界投影，插在
+    用户消息与 turn marker 之间；marker 必须保持最后——扩展的
+    ``currentTurnToken`` 取最新 entry 的最后一个匹配。
+    """
+    parts = [message]
+    if cartography_block:
+        parts.append(cartography_block)
+    parts.append(f"[{TURN_CONTEXT_MARKER}:{token}]")
+    parts.append("(Internal routing context; do not quote or modify this marker.)")
+    return "\n\n".join(parts)

@@ -532,3 +532,86 @@ async def test_spatial_decision_runtime_validated_fallback_to_success(
     spatial_mocks.setattr(runtime_validator, "validate_runtime", _success_only)
     res = await _run_spatial_tool(spatial_registry, clean_session)
     assert res["runtime_validated"] is True
+
+
+# ─── webgis_cartography_status: read-only harness verdict query ──────────
+
+
+def _seed_review(sid, status="failed_repairable", reason="desired_quality_failed"):
+    review = {
+        "session_id": sid,
+        "cartography": {
+            "status": status,
+            "termination_reason": reason,
+            "mapspec_fingerprint": "carto-sha256:seed",
+            "checks": [
+                {"rule": "PAINT_LEGEND_EQUIVALENCE", "status": "fail",
+                 "message": "legend labels diverge from paint domain"},
+            ],
+            "repair_attempts": [],
+        },
+        "gate": {"passed": False},
+        "overall_passed": False,
+    }
+    return review
+
+
+@pytest.mark.asyncio
+async def test_cartography_status_reads_stored_review(registry, clean_session):
+    review = _seed_review(clean_session)
+    await session_data_manager.set_map_state(
+        clean_session, "_cartographic_review", review
+    )
+    res = await registry.dispatch(
+        "webgis_cartography_status", {}, session_id=clean_session
+    )
+    assert res["success"] is True
+    assert res["summary"].startswith("[CARTOGRAPHY_VERDICT]")
+    assert '"failed_repairable"' in res["summary"]
+    assert res["cartography"]["status"] == "failed_repairable"
+    assert res["overall_passed"] is False
+
+
+@pytest.mark.asyncio
+async def test_cartography_status_without_review_reports_not_evaluated(
+    registry, clean_session,
+):
+    res = await registry.dispatch(
+        "webgis_cartography_status", {}, session_id=clean_session
+    )
+    assert res["success"] is True
+    assert "No cartography harness verdict" in res["summary"]
+    assert res["cartography"]["status"] == "not_evaluated"
+
+
+@pytest.mark.asyncio
+async def test_cartography_status_requires_session(registry):
+    res = await registry.dispatch("webgis_cartography_status", {})
+    assert res["success"] is False
+    assert "session_id" in res["message"]
+
+
+@pytest.mark.asyncio
+async def test_cartography_status_is_non_display_via_dispatch_service(
+    registry, clean_session,
+):
+    """经 ToolDispatchService 走完整调度链：纯查询工具不得产生 map_actions
+    （无 commands → _mint_map_action_ids 为空），也不得产生 geojson ref。"""
+    from app.services.tool_dispatch_service import ToolDispatchService
+
+    await session_data_manager.set_map_state(
+        clean_session, "_cartographic_review", _seed_review(clean_session)
+    )
+    svc = ToolDispatchService(registry=registry)
+    result = await svc.dispatch(
+        {
+            "id": "tc-status-1",
+            "function": {"name": "webgis_cartography_status", "arguments": {}},
+        },
+        clean_session,
+        set(),
+    )
+    assert result.status == "ok"
+    assert result.map_actions == []
+    assert result.geojson_ref is None
+    assert "[CARTOGRAPHY_VERDICT]" in result.llm_payload

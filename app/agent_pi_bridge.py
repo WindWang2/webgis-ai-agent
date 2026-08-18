@@ -1519,12 +1519,19 @@ class PiBridge:
         except Exception as e:  # noqa: BLE001 — abort failure must not break cleanup
             logger.warning("[PiBridge] abort-on-disconnect failed (turn=%s): %s", turn_sid, e)
 
-    async def prompt(self, message: str, session_id: Optional[str] = None) -> dict:
+    async def prompt(
+        self,
+        message: str,
+        session_id: Optional[str] = None,
+        cartography_context: Optional[str] = None,
+    ) -> dict:
         """Send a prompt to Pi agent (non-streaming).
 
         Args:
             message: User message
             session_id: Optional session ID
+            cartography_context: Optional bounded harness verdict block,
+                prepended ahead of the turn marker (see attach_turn_context).
 
         Returns:
             Response dict with session_id and content
@@ -1543,7 +1550,7 @@ class PiBridge:
         turn_id = _mint_turn_id()
         turn_token = issue_turn_token(get_bridge_secret(), turn_sid, turn_id)
         data: dict[str, Any] = {
-            "message": attach_turn_context(message, turn_token),
+            "message": attach_turn_context(message, turn_token, cartography_context or ""),
         }
         if turn_sid:
             data["sessionId"] = turn_sid
@@ -1672,13 +1679,18 @@ class PiBridge:
         }
 
     async def stream_prompt(
-        self, message: str, session_id: Optional[str] = None
+        self,
+        message: str,
+        session_id: Optional[str] = None,
+        cartography_context: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """Stream a prompt to Pi agent, yielding SSE events.
 
         Args:
             message: User message
             session_id: Optional session ID
+            cartography_context: Optional bounded harness verdict block,
+                prepended ahead of the turn marker (see attach_turn_context).
 
         Yields:
             SSE-formatted event strings
@@ -1696,7 +1708,7 @@ class PiBridge:
         turn_id = _mint_turn_id()
         turn_token = issue_turn_token(get_bridge_secret(), turn_sid, turn_id)
         data: dict[str, Any] = {
-            "message": attach_turn_context(message, turn_token),
+            "message": attach_turn_context(message, turn_token, cartography_context or ""),
         }
         if turn_sid:
             data["sessionId"] = turn_sid
