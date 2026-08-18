@@ -83,4 +83,47 @@ describe('raiseAnnotationLayers — basemap setStyle wipe (#460)', () => {
     });
     expect(() => raiseAnnotationLayers(map)).not.toThrow();
   });
+
+  // ─── style-load race: "Style is not done loading." ─────────────────────
+  // The #460 remount runs right after a basemap setStyle, while the style is
+  // mid-reload. Mounting then throws (MapLibre rejects style mutations before
+  // the style is usable); the remount must defer until the style is ready.
+
+  it('defers the post-wipe remount while the style is reloading, mounts on load', () => {
+    useHudStore.setState({ annotations: [markerFeature] as any });
+    const reloading = makeMockMaplibreMap({ styleLoaded: false });
+
+    expect(() => raiseAnnotationLayers(reloading)).not.toThrow();
+    expect(reloading.getSource(ANNOTATION_SOURCE_ID)).toBeNull();
+    expect(reloading.getStyle().layers).toEqual([]);
+
+    reloading._fire('load');
+
+    for (const id of ANNOTATION_LAYER_IDS) {
+      expect(reloading.getLayer(id)).toBeTruthy();
+    }
+    const dataCalls = reloading._calls.setData.filter(
+      (c: { id: string }) => c.id === ANNOTATION_SOURCE_ID,
+    );
+    expect(dataCalls.length).toBeGreaterThan(0);
+    expect(dataCalls[dataCalls.length - 1].data.features).toEqual([markerFeature]);
+  });
+
+  it('skips the deferred remount when another path mounted the stack meanwhile', () => {
+    useHudStore.setState({ annotations: [markerFeature] as any });
+    const reloading = makeMockMaplibreMap({ styleLoaded: false });
+
+    raiseAnnotationLayers(reloading); // schedules the deferred remount
+    // MapActionHandler's style-gated refresh effect wins the race and mounts
+    // first (the mock, unlike real MapLibre, tolerates the pre-load window).
+    ensureAnnotationLayers(reloading);
+    const addSourceCallsBefore = reloading._calls.addSource.length;
+
+    reloading._fire('load');
+
+    expect(reloading._calls.addSource.length).toBe(addSourceCallsBefore); // no double mount
+    expect(
+      reloading._layers.filter((l: any) => l.id.startsWith(ANNOTATION_SOURCE_ID)),
+    ).toHaveLength(4);
+  });
 });

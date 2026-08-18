@@ -1633,4 +1633,57 @@ describe('MapActionHandler', () => {
     );
     expect(popAction).toHaveBeenCalled();
   });
+
+  // ─── style-load race: "Style is not done loading." ─────────────────────
+  // useMap() yields the instance at React-mount time, before the async style
+  // load finishes; mutating the style in that window throws. Both the
+  // annotation refresh effect and the queue-head execution must wait.
+
+  it('defers the annotation-stack mount until the style loads (no pre-load addSource)', async () => {
+    const map = makeMockMaplibreMap({ styleLoaded: false });
+    mockGetMap.mockImplementation(() => map);
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(map._calls.addSource).toHaveLength(0); // would throw on real MapLibre
+
+    await act(async () => {
+      map._fire('load');
+    });
+
+    expect(map._calls.addSource.length).toBeGreaterThan(0);
+    expect(map.getSource('claude-annotations')).toBeTruthy();
+  });
+
+  it('queue head waits for the style before running — no fake failure, runs on load', async () => {
+    actions = [{ command: 'export_map', params: { format: 'png' } }];
+    const map = makeMockMaplibreMap({ styleLoaded: false });
+    mockGetMap.mockImplementation(() => map);
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    // Not run, not failed-acked — the action is waiting on the style.
+    expect(mockExport).not.toHaveBeenCalled();
+    expect(reportTerminalFn).not.toHaveBeenCalled();
+    expect(popAction).not.toHaveBeenCalled();
+
+    await act(async () => {
+      map._fire('load');
+      // export_map settles after its render-callback work (map.once('render'))
+      // — the shared mock only fires events the test drives.
+      map._fire('render');
+    });
+
+    expect(mockExport).toHaveBeenCalledTimes(1);
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'export_map' }),
+      'succeeded',
+      expect.any(Object),
+    );
+    expect(popAction).toHaveBeenCalled();
+  });
 });
