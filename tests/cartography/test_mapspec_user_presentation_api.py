@@ -132,3 +132,24 @@ async def test_stale_user_mutation_is_conflict(client, session_id):
     stored = await mapspec_store_instance.get_mapspec(session_id)
     layer = next(lyr for lyr in stored["layers"] if lyr["id"] == "L1")
     assert (layer.get("layout") or {}).get("visibility") != "none"
+
+
+@pytest.mark.cartography
+@pytest.mark.asyncio
+async def test_user_set_view_via_http_marks_framed(client, session_id):
+    engine = MapSpecLifecycleEngine()
+    seeded = await engine.apply_mutation(session_id, InitProjectIntent())
+    resp = await client.post(
+        f"/api/v1/chat/sessions/{session_id}/mapspec/mutations",
+        json={
+            "intent": "set_view",
+            "expected_revision": seeded.mutation_revision,
+            "center": [114.3, 30.5],
+            "zoom": 11,
+        },
+    )
+    assert resp.status_code == 200
+    stored = await mapspec_store_instance.get_mapspec(session_id)
+    assert stored["view"]["center"] == [114.3, 30.5]
+    assert stored["view"]["zoom"] == 11
+    assert stored["view"]["framed"] is True

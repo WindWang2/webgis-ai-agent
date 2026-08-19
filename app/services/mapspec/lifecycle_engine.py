@@ -428,7 +428,9 @@ class MapSpecLifecycleEngine:
                     old_mapspec_snapshot = None
                     mapspec = {
                         "version": "1.0",
-                        "view": intent.view or {},
+                        "view": (
+                            {**intent.view, "framed": True} if intent.view else {}
+                        ),
                         "sources": {},
                         "layers": [],
                         "layout": {
@@ -451,6 +453,7 @@ class MapSpecLifecycleEngine:
                         view["pitch"] = intent.pitch
                     if intent.bearing is not None:
                         view["bearing"] = intent.bearing
+                    view["framed"] = True
                     mapspec["view"] = view
 
                 elif isinstance(intent, UpsertLayerIntent):
@@ -477,7 +480,7 @@ class MapSpecLifecycleEngine:
                     source_id = processed_layer.get("source", "default_source")
                     mapspec["sources"][source_id] = source_entry
 
-                    if suggested_view:
+                    if suggested_view and not mapspec.get("view", {}).get("framed"):
                         mapspec["view"]["center"] = suggested_view["center"]
                         mapspec["view"]["zoom"] = suggested_view["zoom"]
 

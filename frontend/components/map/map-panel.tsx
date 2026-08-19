@@ -22,6 +22,7 @@ import { raiseAnnotationLayers } from "@/lib/map-commands/annotationHelpers"
 import { notifyUserGestureStart, notifyUserGestureEnd } from "@/lib/map-commands/camera-arbitration"
 import { devOnly } from "@/lib/utils/logger"
 import { buildTileTransformRequest } from "@/lib/map-kit/tile-auth"
+import { commitExplicitView } from "@/lib/mapspec/user-mutation"
 
 interface MapPanelProps {
   layers: Layer[]
@@ -166,7 +167,19 @@ export function MapPanel({
 
       if (cancelled) return
       if (bbox) {
-        try { navFitBounds(map, bbox, 80) } catch (err) {
+        try {
+          navFitBounds(map, bbox, 80)
+          const center = map.getCenter?.()
+          const zoom = map.getZoom?.()
+          if (center && typeof zoom === 'number') {
+            void commitExplicitView({
+              center: [center.lng, center.lat],
+              zoom,
+              bearing: map.getBearing?.(),
+              pitch: map.getPitch?.(),
+            })
+          }
+        } catch (err) {
           devOnly.warn("[map-panel] focusLayer fitBounds failed:", err)
         }
       }

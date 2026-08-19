@@ -6,6 +6,7 @@ import { devOnly } from '@/lib/utils/logger';
 import {
   buildLayerFromRestored,
   restoreSessionMapLayers,
+  selectCameraToRestore,
   selectLayersToRestore,
 } from './map-state-restore';
 
@@ -50,6 +51,25 @@ describe('selectLayersToRestore', () => {
     };
     expect(selectLayersToRestore(stale as any).map((l: any) => l.id)).toEqual(['legacy']);
     expect(selectLayersToRestore({ layers: [{ id: 'legacy' }] } as any).map((l: any) => l.id)).toEqual(['legacy']);
+  });
+});
+
+describe('selectCameraToRestore', () => {
+  it('returns MapSpec.view only when it was explicit framing', () => {
+    expect(selectCameraToRestore({
+      viewport: { center: [1, 2], zoom: 8 },
+      mapspec: { view: { center: [114.3, 30.5], zoom: 10, framed: true } },
+    })).toEqual({ center: [114.3, 30.5], zoom: 10, bearing: undefined, pitch: undefined });
+  });
+
+  it('ignores viewport hints and unframed suggested views', () => {
+    expect(selectCameraToRestore({
+      viewport: { center: [1, 2], zoom: 8 },
+      mapspec: { view: { center: [0, 0], zoom: 2 } },
+    })).toBeNull();
+    expect(selectCameraToRestore({
+      viewport: { center: [1, 2], zoom: 8 },
+    })).toBeNull();
   });
 });
 

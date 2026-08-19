@@ -4,6 +4,7 @@
 所有工具不修改图层数据，只发出前端命令控制相机。
 """
 import logging
+import math
 from typing import Any, List, Optional
 from pydantic import BaseModel, Field
 
@@ -23,6 +24,20 @@ DEFAULT_VIEW = {
 
 
 from app.utils.geojson import geojson_bbox as _extract_bbox_from_geojson
+
+
+async def _commit_framed_view(session_id: str, bbox: List[float]) -> None:
+    """Persist an explicit fit as MapSpec.view (ADR-0057 / #640)."""
+    try:
+        from app.services.mapspec_store import mapspec_store
+
+        west, south, east, north = (float(x) for x in bbox[:4])
+        center = [(west + east) / 2.0, (south + north) / 2.0]
+        span = max(east - west, north - south, 1e-9)
+        zoom = max(1.0, min(18.0, math.log2(360.0 / span)))
+        await mapspec_store.set_view(session_id, center=center, zoom=zoom)
+    except Exception:
+        logger.warning("framed MapSpec.view write failed for session %s", session_id, exc_info=True)
 
 
 class FlyToLocationArgs(BaseModel):
@@ -180,6 +195,8 @@ def register_map_view_tools(registry: ToolRegistry):
 
         if not bbox:
             return {"error": f"无法获取图层 {layer_ref} 的范围，请先确认图层存在或直接用 zoom_to_bbox 指定 bbox"}
+
+        await _commit_framed_view(session_id, bbox)
 
         return {
             "success": True,

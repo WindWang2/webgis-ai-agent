@@ -43,7 +43,16 @@ export interface SessionMapState {
     pitch?: number;
   } | null;
   layers?: any[];
-  mapspec?: { layers?: any[] };
+  mapspec?: {
+    layers?: any[];
+    view?: {
+      center?: number[];
+      zoom?: number;
+      bearing?: number;
+      pitch?: number;
+      framed?: boolean;
+    };
+  };
   _cartographic_mutation_revision?: number;
   _current_cartographic_fingerprint?: string;
   _cartographic_observation?: { mapspec_fingerprint?: string; layers?: any[] };
@@ -71,6 +80,28 @@ export function selectLayersToRestore(state: SessionMapState): any[] {
 }
 
 /** 单条观察图层 → HUD Layer（字段映射与 selectSession 原实现一致）。 */
+/** Desired camera only when MapSpec.view was an explicit frame (ADR-0057). */
+export function selectCameraToRestore(
+  state: SessionMapState,
+): {
+  center: [number, number];
+  zoom?: number;
+  bearing?: number;
+  pitch?: number;
+} | null {
+  const view = state.mapspec?.view;
+  if (!view || view.framed !== true) return null;
+  const center = view.center;
+  if (!Array.isArray(center) || center.length < 2) return null;
+  if (typeof center[0] !== 'number' || typeof center[1] !== 'number') return null;
+  return {
+    center: [center[0], center[1]],
+    zoom: typeof view.zoom === 'number' ? view.zoom : undefined,
+    bearing: typeof view.bearing === 'number' ? view.bearing : undefined,
+    pitch: typeof view.pitch === 'number' ? view.pitch : undefined,
+  };
+}
+
 export function presentationFromMapSpec(
   mapspec: { layers?: any[] } | undefined,
   layerId: string,
@@ -226,15 +257,11 @@ export async function applyStoryMapState(
 ): Promise<void> {
   const store = useHudStore.getState();
   if (state.base_layer) store.setBaseLayer(state.base_layer);
-  if (state.viewport) {
+  const framed = selectCameraToRestore(state);
+  if (framed) {
     dispatchAction({
       command: 'fly_to',
-      params: {
-        center: state.viewport.center,
-        zoom: state.viewport.zoom,
-        bearing: state.viewport.bearing,
-        pitch: state.viewport.pitch,
-      },
+      params: framed,
     });
   }
   await restoreSessionMapLayers(state, { sessionId, token: null, signal });

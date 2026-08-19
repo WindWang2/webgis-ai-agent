@@ -60,6 +60,35 @@ export async function toggleLayerAndCommit(layerId: string): Promise<void> {
   }
 }
 
+export async function commitExplicitView(view: {
+  center: [number, number];
+  zoom?: number;
+  bearing?: number;
+  pitch?: number;
+}): Promise<void> {
+  const { sessionId, revision, ownerToken } = getMapSpecSessionCursor();
+  if (!sessionId) return;
+  const data = await apiFetch<MutationResponse>(
+    `/api/v1/chat/sessions/${sessionId}/mapspec/mutations`,
+    {
+      method: 'POST',
+      body: {
+        intent: 'set_view',
+        expected_revision: revision,
+        center: view.center,
+        zoom: view.zoom,
+        pitch: view.pitch,
+        bearing: view.bearing,
+      },
+      ownerToken,
+      label: 'MapSpec set_view mutation',
+    },
+  );
+  if (typeof data.mutation_revision === 'number') {
+    setMapSpecRevision(data.mutation_revision);
+  }
+}
+
 export async function setLayerOpacityAndCommit(layerId: string, opacity: number): Promise<void> {
   const layer = useHudStore.getState().layers.find((item) => item.id === layerId);
   const previous = layer?.opacity ?? 1;
