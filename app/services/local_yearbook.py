@@ -343,7 +343,7 @@ def _open_db(path: Path) -> sqlite3.Connection:
     return conn
 
 
-def _excel_sheets(data_or_path: Union[bytes, Path, str, BytesIO]) -> pd.ExcelFile:
+def _excel_sheets(data_or_path: bytes | Path | str | BytesIO) -> pd.ExcelFile:
     target = BytesIO(data_or_path) if isinstance(data_or_path, bytes) else data_or_path
     try:
         return pd.ExcelFile(target, engine="calamine")
