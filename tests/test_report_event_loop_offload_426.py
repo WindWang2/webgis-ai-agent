@@ -186,7 +186,9 @@ async def test_route_post_reports_render_off_loop(monkeypatch, tmp_path):
 
     req = route_mod.GenerateReportRequest(session_id="sess-1", format="pdf")
     resp = await _assert_loop_responsive_while(
-        lambda: route_mod.create_report(req, db=db, _user={"user_id": "u1"})
+        lambda: route_mod.create_report(
+            req, db=db, _user={"user_id": "u1"}, owner_token=None
+        )
     )
     assert observed["thread"] != _main_thread, "WeasyPrint render ran on the event loop thread"
     assert resp.success
@@ -328,7 +330,9 @@ async def test_render_failure_marks_failed_not_500(monkeypatch, tmp_path):
     db = _make_async_db(Conversation(id="sess-2", title="t"), [_msg()], created)
 
     req = route_mod.GenerateReportRequest(session_id="sess-2", format="pdf")
-    resp = await route_mod.create_report(req, db=db, _user={"user_id": "u1"})
+    resp = await route_mod.create_report(
+        req, db=db, _user={"user_id": "u1"}, owner_token=None
+    )
 
     assert resp.success is False
     assert resp.code == ErrCode.SERVER_ERROR
