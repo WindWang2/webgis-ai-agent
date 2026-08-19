@@ -1,7 +1,7 @@
 # 0051. Harness Evaluation V2 + MapSpec Reliability + Multi-Worker Decision
 
 **Date:** 2026-08-11
-**Status:** Accepted
+**Status:** Accepted (MapSpecValidity ladder ceiling superseded by ADR-0060)
 
 ## Context
 
@@ -31,11 +31,11 @@ audit found four classes of false-success / reliability defects:
 ### 1. Harness Evaluation V2 (evidence-driven, no false success)
 
 - `MapSpecValidity` is a **tiered ladder** from real evidence:
-  `NOT_EVALUATED → MUTATION_REJECTED → MUTATION_ACCEPTED → SEMANTIC_VALID →
-  COMPILE_VALID → RUNTIME_VALID`. "Didn't error" is only `MUTATION_ACCEPTED`,
-  not valid. `is_compiled` (the real `validate()` outcome from the lifecycle
-  engine) lifts a mutation to `SEMANTIC_VALID`. Missing evidence = 0.0, never
-  100.0.
+  `NOT_EVALUATED → MUTATION_REJECTED → MUTATION_ACCEPTED → SEMANTIC_VALID`
+  (COMPILE_VALID and RUNTIME_VALID removed by ADR-0060). "Didn't error" is only
+  `MUTATION_ACCEPTED`, not valid. `is_compiled` (the real `validate()` outcome
+  from the lifecycle engine) lifts a mutation to `SEMANTIC_VALID`. Missing
+  evidence = 0.0, never 100.0.
 - `CursorResolutionRate` resolves refs against the real `SessionStore`
   (`ref_resolver.make_session_store_resolver`): exists + session-scoped +
   typed-prefix match. Cross-session / nonexistent refs do not count. Fixed the

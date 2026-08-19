@@ -225,12 +225,13 @@ _Avoid_: “HUD is the source of truth” (ADR-0036 decision 2, superseded by AD
 keeping a private desired map in Zustand; leaving a rejected optimistic edit on screen.
 
 ### Observed Map
-What MapLibre actually has right now, read back from the map instance. Includes live
-camera, loaded sources/layers, and transient indication (hover, highlight, popup).
-Observation never overwrites MapSpec; a user or agent who wants intent changed issues
-a MapSpec Mutation.
+What MapLibre actually has right now, read back from the map instance (live workbench
+or headless Playwright). Includes live camera, loaded sources/layers, and transient
+indication (hover, highlight, popup). Observation never overwrites MapSpec; a user or
+agent who wants intent changed issues a MapSpec Mutation. Harness runtime evidence is
+this readout, not a MapSpecValidity rung.
 _Avoid_: ObservedGISState as a stored document; treating HUD or Redis `map_state` as
-observation.
+observation; RUNTIME_VALID as a MapSpecValidity tier.
 
 ### Selection
 The Session's current picked features or refs. Observed-side working memory the Agent
@@ -301,16 +302,19 @@ The distributed per-session lock registry (`app/services/distributed_lock.py`, A
 
 ### PiAgentHarness (V2)
 The evidence-driven **evaluation** harness for the cartographic closed loop (L1–L5). It is
-not Pi's agent host and not the GIS Harness. Name stays this round.
-_Avoid_: GISHarness as a rename of this module; treating “didn't error” as runtime success.
+not Pi's agent host and not the GIS Harness. Name stays this round. MapSpecValidity stops
+at SEMANTIC_VALID (ADR-0060).
+_Avoid_: GISHarness as a rename of this module; treating “didn't error” as runtime success;
+COMPILE_VALID / RUNTIME_VALID as MapSpecValidity tiers.
 
 ### EvaluationEvidence
-Proof that a GIS/map change actually happened: ref resolution, MapSpec validity ladder,
-tool-call correlation, and actual-runtime review. Missing evidence is `not_evaluated` / 0.0
-— never pass, never 100, never a production exemption. L1 “tool did not error” is not
-“the map is correct.”
+Proof that a GIS/map change actually happened: ref resolution, MapSpec validity ladder
+(`NOT_EVALUATED → MUTATION_REJECTED → MUTATION_ACCEPTED → SEMANTIC_VALID`), tool-call
+correlation, and actual-runtime review of the Observed Map. Missing evidence is
+`not_evaluated` / 0.0 — never pass, never 100, never a production exemption. L1 “tool
+did not error” is not “the map is correct.”
 _Avoid_: GISEvidence; collapsing this into Decision Intelligence **Evidence**; treating
-`MUTATION_ACCEPTED` as runtime success.
+`MUTATION_ACCEPTED` as runtime success; COMPILE_VALID / RUNTIME_VALID as validity tiers.
 
 ### CartographySemanticChecks
 Deterministic cartographic semantic checks (`app/lib/cartography/semantic_checks.py`, ADR-0051) connecting the GIS data profile ↔ MapSpec: `SOURCE_LAYER_REF`/`EMPTY_DATA` (errors), `GEOMETRY_LAYER_TYPE`/`STOPS_DATA_RANGE`/`INTERPOLATE_NUMERIC_FIELD`/`LEGEND_FIELD_CONSISTENCY` (warnings). Missing profile → `not_evaluated`, never a fake pass. Empty-data (zero features) is an error, not a silent map success.
