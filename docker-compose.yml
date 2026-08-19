@@ -31,6 +31,8 @@ services:
     ports:
       - "127.0.0.1:${REDIS_PORT:-16379}:6379"
     # 审计 P1：开发环境也拒绝弱默认密码。之前 dev_redis_pass 硬编码且多处重复。
+    # Dev Redis is cache-only (allkeys-lru). Prod/k8s use noeviction — see
+    # docs/DEPLOYMENT.md "Redis 驱逐策略". Do not "fix" this to noeviction.
     command: redis-server --appendonly --maxmemory 256mb --maxmemory-policy allkeys-lru --bind 0.0.0.0 --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
     environment:
       # 审计 P0：healthcheck 不直接暴露密码。通过 REDISCLI_AUTH 环境变量传递，
@@ -61,14 +63,10 @@ services:
       # 审计 P2：无鉴权 API / metrics 不应暴露给局域网（db/redis 已限 127.0.0.1）。
       - "127.0.0.1:${API_PORT:-18000}:8000"
     environment:
-      # 方式1: 通过完整 DATABASE_URL（推荐）
-      - DATABASE_URL=${DATABASE_URL:-}
-      # 方式2: 通过单独组件环境变量
-      - DB_HOST=${DB_HOST:-db}
-      - DB_PORT=${DB_PORT:-5432}
-      - DB_USER=${DB_USER:-postgres}
-      - DB_PASSWORD=${DB_PASSWORD:?Set DB_PASSWORD in .env}
-      - DB_NAME=${DB_NAME:-webgis}
+      # Settings only reads DATABASE_URL (no DB_HOST field). Pin to the
+      # compose `db` service so api/celery do not inherit host-side sqlite
+      # from .env and concurrently write one SQLite file (#618-32).
+      - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:?Set DB_PASSWORD in .env}@db:5432/${DB_NAME:-webgis}
       # Redis 配置
       - REDIS_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@${REDIS_HOST:-redis}:${REDIS_PORT:-6379}/0
       - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@${REDIS_HOST:-redis}:${REDIS_PORT:-6379}/0
@@ -99,14 +97,8 @@ services:
     build: .
     container_name: webgis-celery
     environment:
-      # 方式1: 通过完整 DATABASE_URL
-      - DATABASE_URL=${DATABASE_URL:-}
-      # 方式2: 通过单独组件环境变量
-      - DB_HOST=${DB_HOST:-db}
-      - DB_PORT=${DB_PORT:-5432}
-      - DB_USER=${DB_USER:-postgres}
-      - DB_PASSWORD=${DB_PASSWORD:?Set DB_PASSWORD in .env}
-      - DB_NAME=${DB_NAME:-webgis}
+      # Same PostGIS URL as api (Settings reads DATABASE_URL only; #618-32).
+      - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:?Set DB_PASSWORD in .env}@db:5432/${DB_NAME:-webgis}
       # Redis 配置
       - REDIS_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@${REDIS_HOST:-redis}:${REDIS_PORT:-6379}/0
       - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@${REDIS_HOST:-redis}:${REDIS_PORT:-6379}/0

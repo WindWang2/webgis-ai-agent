@@ -50,6 +50,10 @@ class SessionStoreProtocol(Protocol):
     async def overwrite(self, session_id: str, ref_id: str, data: Any) -> None:
         ...
 
+    async def delete_ref(self, session_id: str, ref_id: str) -> bool:
+        """Drop one stored ref (and alias/descriptor). False if missing."""
+        ...
+
     async def set_alias(self, session_id: str, ref_id: str, alias: str) -> None:
         ...
 

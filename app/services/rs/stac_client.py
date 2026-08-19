@@ -46,23 +46,43 @@ class StacClientPrimitive:
             catalog = await self.open_catalog()
             datetime_param = f"{date_from}/{date_to}" if date_from and date_to else None
 
+            def _cloud_cover(item) -> float:
+                props = getattr(item, "properties", None) or {}
+                cc = props.get("eo:cloud_cover") if hasattr(props, "get") else None
+                try:
+                    return float(cc) if cc is not None else float("inf")
+                except (TypeError, ValueError):
+                    return float("inf")
+
             def _do_search():
-                search = catalog.search(
-                    collections=[collection],
-                    bbox=bbox,
-                    datetime=datetime_param,
-                    max_items=max_items,
-                )
-                return list(search.items())
+                # #618-18: ask the catalog for the least-cloudy scene; fall
+                # back to a local sort when the client rejects sortby.
+                kwargs: Dict[str, Any] = {
+                    "collections": [collection],
+                    "bbox": bbox,
+                    "datetime": datetime_param,
+                    "max_items": max_items,
+                    "sortby": [{"field": "properties.eo:cloud_cover", "direction": "asc"}],
+                }
+                try:
+                    search = catalog.search(**kwargs)
+                except TypeError:
+                    kwargs.pop("sortby", None)
+                    search = catalog.search(**kwargs)
+                found = list(search.items())
+                found.sort(key=_cloud_cover)
+                return found
 
             items = await asyncio.to_thread(_do_search)
             if not items:
                 return {"error": empty_error_msg, "items": []}
 
+            cc = _cloud_cover(items[0])
             result: Dict[str, Any] = {
                 "items": items,
                 "first_item": items[0],
                 "bands": {},
+                "cloud_cover": None if cc == float("inf") else cc,
             }
 
             if bands_needed:
@@ -238,14 +258,14 @@ class StacClientPrimitive:
                                 ds.close()
                     return bands_dict, cell_size_m, cell_size_x_m, data_bounds
 
-            bands_dict, cell_size_m, cell_size_x_m, data_bounds = await asyncio.to_thread(_read_bands)
-            result["bands"] = bands_dict
-            if cell_size_m is not None:
-                result["cell_size_m"] = cell_size_m
-            if cell_size_x_m is not None:
-                result["cell_size_x_m"] = cell_size_x_m
-            if data_bounds is not None:
-                result["bounds"] = data_bounds
+                bands_dict, cell_size_m, cell_size_x_m, data_bounds = await asyncio.to_thread(_read_bands)
+                result["bands"] = bands_dict
+                if cell_size_m is not None:
+                    result["cell_size_m"] = cell_size_m
+                if cell_size_x_m is not None:
+                    result["cell_size_x_m"] = cell_size_x_m
+                if data_bounds is not None:
+                    result["bounds"] = data_bounds
 
             return result
         except Exception as e:

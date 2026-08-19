@@ -54,4 +54,11 @@ describe('TweaksPanel fake children (#551)', () => {
     expect(screen.getByText('Agent 环境 HUD')).toBeInTheDocument();
     expect(screen.getByText('RAG 独立面板')).toBeInTheDocument();
   });
+
+  it('sidebar width slider min/max matches the setter clamp (280–420)', () => {
+    render(<TweaksPanel />);
+    const slider = screen.getByLabelText('侧边栏宽度');
+    expect(slider).toHaveAttribute('min', '280');
+    expect(slider).toHaveAttribute('max', '420');
+  });
 });

@@ -23,6 +23,20 @@ export interface ChatMessage {
   }>;
 }
 
+/**
+ * Chat/explorer SSE event names.
+ *
+ * Real backend emitters (app/services/chat + chat.py + event_resume,
+ * explorer orchestrator): token, content, tool_call, tool_result, step_*,
+ * task_*, session, plan_*, done, error, keep_alive, resume_gap,
+ * explorer_progress, heartbeat.
+ *
+ * Ghost names kept because tests / historical clients still emit them:
+ * message, thinking, planning, acting, observing, end, tool_error, task_plan.
+ *
+ * keep_alive / heartbeat are pings — no handler (skip). tool_result and
+ * resume_gap are handled in use-sse-stream.
+ */
 export type SSEEventType =
   | 'message'
   | 'thinking'
@@ -50,7 +64,10 @@ export type SSEEventType =
   | 'explorer_progress'
   | 'plan_ready'
   | 'plan_step_done'
-  | 'plan_finalized';
+  | 'plan_finalized'
+  | 'keep_alive'
+  | 'resume_gap'
+  | 'heartbeat';
 
 export interface SSEEvent {
   event: SSEEventType;

@@ -42,11 +42,13 @@ class DataFabricDataset(Base):
     __tablename__ = "spatial_catalog_items"
 
     id = Column(String(255), primary_key=True)
-    source_id = Column(String(255), ForeignKey("data_sources.id", ondelete="CASCADE"), nullable=False, index=True)
+    # #618-4: source_id / geometry_type 不再 index=True —— 左前缀已被
+    # idx_catalog_source_name / idx_catalog_geom_feature 覆盖（0020 删 ix_*）。
+    source_id = Column(String(255), ForeignKey("data_sources.id", ondelete="CASCADE"), nullable=False)
     name = Column(String(255), nullable=False, index=True)
     title = Column(String(255), nullable=True)
     description = Column(Text, nullable=True)
-    geometry_type = Column(String(50), nullable=True, index=True)
+    geometry_type = Column(String(50), nullable=True)
     feature_type = Column(String(50), default="vector", index=True)
     crs = Column(String(50), default="EPSG:4326")
     bbox_json = Column(JSON, nullable=True)
@@ -77,7 +79,8 @@ class DataMaterializationRecord(Base):
     __tablename__ = "materializations"
 
     id = Column(String(255), primary_key=True)
-    dataset_id = Column(String(255), nullable=False, index=True)
+    # #618-4: dataset_id 不再 index=True —— 左前缀已被 idx_mat_dataset_ref 覆盖。
+    dataset_id = Column(String(255), nullable=False)
     source_id = Column(String(255), ForeignKey("data_sources.id", ondelete="SET NULL"), nullable=True)
     ref_id = Column(String(255), nullable=False, index=True)
     query_spec_json = Column(JSON, nullable=False, default=dict)

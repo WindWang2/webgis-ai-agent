@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { sendChat, getSessionList, deleteSession, executeToolDirect, streamChat } from './chat';
-import type { SSEEvent } from './chat';
+import type { SSEEvent, SSEEventType } from './chat';
 
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
@@ -189,6 +189,18 @@ describe('Chat API', () => {
         },
       } as unknown as Response;
     }
+
+    it('SSEEventType includes backend-emitted resume_gap / keep_alive / heartbeat', () => {
+      // Compile-time guard: assigning these names to SSEEventType fails if the
+      // union is missing the real backend event names (#618 item 25).
+      const backendEvents: SSEEventType[] = [
+        'resume_gap',
+        'keep_alive',
+        'heartbeat',
+        'tool_result',
+      ];
+      expect(backendEvents).toEqual(['resume_gap', 'keep_alive', 'heartbeat', 'tool_result']);
+    });
 
     it('yields parsed SSEEvents from well-formed SSE stream', async () => {
       mockFetch.mockResolvedValueOnce(makeSSEStream([

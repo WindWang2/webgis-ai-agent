@@ -12,7 +12,7 @@ class LayerService:
     def __init__(self, db: Session):
         self.db = db
 
-    def create(self, layer_data: LayerCreate, creator_id: str) -> Layer:
+    def create(self, layer_data: LayerCreate, creator_id: str, org_id: int) -> Layer:
         """创建图层"""
         layer = Layer(
             name=layer_data.name,
@@ -20,9 +20,9 @@ class LayerService:
             source_url=layer_data.source_url,
             bounds=layer_data.extent,
             creator_id=creator_id,
-            org_id=1,  # Default org ID placeholder
+            org_id=org_id,
             visibility="public" if layer_data.is_public else "private",
-            status="active"
+            status="ready",
         )
         self.db.add(layer)
         self.db.commit()
@@ -31,7 +31,7 @@ class LayerService:
 
     def list_all(self, limit: int = 100, offset: int = 0, search: str = None, layer_type: str = None, is_public: bool = None):
         """列出所有图层"""
-        query = self.db.query(Layer).filter(Layer.status == "active")
+        query = self.db.query(Layer).filter(Layer.status == "ready")
         if search:
             query = query.filter(Layer.name.ilike(f"%{search}%"))
         if layer_type:
@@ -67,11 +67,11 @@ class LayerService:
         return layer
 
     def delete(self, layer_id: int) -> bool:
-        """删除图层（改为设置为inactive）"""
+        """删除图层"""
         layer = self.get_by_id(layer_id)
         if not layer:
             return False
-        layer.status = "inactive"
+        self.db.delete(layer)
         self.db.commit()
         return True
 

@@ -6,6 +6,7 @@ import {
   resolveParentLayerId,
 } from './use-sse-stream';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useToastStore } from '@/components/ui/toast';
 import type { SelectedFeatureInfo, ToolCallEntry } from '@/lib/store/hud-types';
 
 // ── Mocks ────────────────────────────────────────────────────────────────
@@ -921,6 +922,129 @@ describe('useSSEStream — plan approval rollback (#468)', () => {
       await new Promise((r) => setTimeout(r, 20));
     });
     expect(planMsg().status).toBe('pending');
+  });
+
+  it('revise is optimistic revising, not rejected', async () => {
+    const { result } = await renderWithApprovedPlan();
+    bridgeMock.send.mockImplementation(async () => {
+      useHudStore.setState({ aiStatus: 'done' });
+    });
+
+    act(() => {
+      result.current.handlePlanAction('plan-1', 'revise');
+    });
+    const planMsg = () =>
+      (result.current.messages.find((m) => (m as any).plan) as any)?.plan;
+    expect(planMsg().status).toBe('revising');
+    expect(planMsg().status).not.toBe('rejected');
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(planMsg().status).toBe('revising');
+  });
+
+  it('revise rolls back to pending when the follow-up send fails', async () => {
+    const { result } = await renderWithApprovedPlan();
+    bridgeMock.send.mockRejectedValue(new Error('network down'));
+
+    act(() => {
+      result.current.handlePlanAction('plan-1', 'revise');
+    });
+    const planMsg = () =>
+      (result.current.messages.find((m) => (m as any).plan) as any)?.plan;
+    expect(planMsg().status).toBe('revising');
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(planMsg().status).toBe('pending');
+  });
+});
+
+describe('useSSEStream tool_result + resume_gap (#618)', () => {
+  beforeEach(() => {
+    bridgeMock.send.mockReset();
+    bridgeMock.send.mockResolvedValue(undefined);
+    bridgeMock.onEventCallback = null;
+    useToastStore.setState({ toasts: [] });
+    useHudStore.setState({
+      selectedFeature: null,
+      focusLayerId: null,
+      layers: [],
+      baseLayer: 'OSM 地图',
+      viewport: { center: [0, 0], zoom: 5, bearing: 0, pitch: 0 },
+      is3D: false,
+    });
+  });
+
+  async function renderWithToolCalls(toolCalls: ToolCallEntry[]) {
+    const hook = renderStream();
+    await act(async () => {
+      await hook.result.current.handleSend('hi');
+    });
+    act(() => {
+      hook.result.current.setMessages((prev) => {
+        const idx = prev.length - 1;
+        return [...prev.slice(0, idx), { ...prev[idx], toolCalls }];
+      });
+    });
+    return hook;
+  }
+
+  it('tool_result marks a still-running matching tool call completed', async () => {
+    const hook = await renderWithToolCalls([
+      { id: 'tc-1', tool: 'buffer_analysis', status: 'running', startedAt: 1 },
+      { id: 'tc-2', tool: 'heatmap_data', status: 'running', startedAt: 2 },
+    ]);
+    act(() => {
+      bridgeMock.onEventCallback?.({
+        event: 'tool_result',
+        data: { name: 'buffer_analysis', result: 'ok', session_id: 'sid-fe4' },
+      });
+    });
+    const calls = hook.result.current.messages[hook.result.current.messages.length - 1].toolCalls!;
+    expect(calls[0]).toMatchObject({ id: 'tc-1', status: 'completed' });
+    expect(calls[0].completedAt).toBeTypeOf('number');
+    expect(calls[1]).toMatchObject({ id: 'tc-2', status: 'running' });
+  });
+
+  it('tool_result does not overwrite an already-terminal row', async () => {
+    const hook = await renderWithToolCalls([
+      { id: 'tc-1', tool: 'buffer_analysis', status: 'completed', completedAt: 5 },
+    ]);
+    act(() => {
+      bridgeMock.onEventCallback?.({
+        event: 'tool_result',
+        data: { name: 'buffer_analysis', result: 'late', session_id: 'sid-fe4' },
+      });
+    });
+    const calls = hook.result.current.messages[hook.result.current.messages.length - 1].toolCalls!;
+    expect(calls[0]).toMatchObject({ status: 'completed', completedAt: 5 });
+  });
+
+  it('resume_gap surfaces a non-blocking truncated-replay notice', async () => {
+    const hook = await renderWithToolCalls([
+      { id: 'tc-1', tool: 'search_poi', status: 'running', startedAt: 1 },
+    ]);
+    act(() => {
+      bridgeMock.onEventCallback?.({
+        event: 'resume_gap',
+        data: {
+          session_id: 'sid-fe4',
+          resumed: true,
+          gap: true,
+          missing_from: 2,
+          missing_to: 10,
+        },
+      });
+    });
+    const toast = useToastStore.getState().toasts.find((t) => /截断|回放/.test(t.message));
+    expect(toast).toBeTruthy();
+    // stream must keep going — running tool rows stay running, no error banner
+    const last = hook.result.current.messages[hook.result.current.messages.length - 1];
+    expect(last.toolCalls?.[0].status).toBe('running');
+    expect(String(last.content ?? '')).not.toMatch(/⚠️/);
   });
 });
 

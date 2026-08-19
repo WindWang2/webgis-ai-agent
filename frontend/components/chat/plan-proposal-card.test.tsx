@@ -76,4 +76,23 @@ describe('PlanProposalCard', () => {
     render(<PlanProposalCard {...baseProps} status="rejected" onApprove={() => {}} onRevise={() => {}} onReject={() => {}} />);
     expect(screen.getByText(/已取消/)).toBeInTheDocument();
   });
+
+  it('shows 修改中 as a non-terminal badge and keeps 修改 actionable', () => {
+    const onRevise = vi.fn();
+    render(
+      <PlanProposalCard
+        {...baseProps}
+        status="revising"
+        onApprove={() => {}}
+        onRevise={onRevise}
+        onReject={() => {}}
+      />,
+    );
+    expect(screen.getByText(/修改中/)).toBeInTheDocument();
+    expect(screen.queryByText(/已取消/)).not.toBeInTheDocument();
+    const reviseBtn = screen.getByRole('button', { name: /修改/ });
+    expect(reviseBtn).not.toBeDisabled();
+    fireEvent.click(reviseBtn);
+    expect(onRevise).toHaveBeenCalledWith('ref:plan-abc');
+  });
 });

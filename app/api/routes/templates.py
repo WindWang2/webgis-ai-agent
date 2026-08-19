@@ -6,7 +6,7 @@ import logging
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, TypeAdapter
-from sqlalchemy import or_, select
+from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import actor_ids, get_current_user, get_current_user_optional
@@ -74,6 +74,50 @@ def _template_scope_clause(user_id: Optional[str], org_id, role: Optional[str]):
     if org_id is not None:
         clauses.append(CartographyTemplate.org_id == org_id)
     return or_(*clauses)
+
+
+def _seed_db_page_window(seed_count: int, offset: int, limit: int) -> tuple[int, int, int, int]:
+    """One-shot pagination over concatenated (seeds, DB rows).
+
+    Seeds occupy ``[0, seed_count)``; DB rows follow. Returns
+    ``(seed_start, seed_end, db_offset, db_limit)`` so the handler can slice
+    the in-memory seed list and SQL-``LIMIT`` the remainder instead of
+    hydrating every matching row (#618-9 / #428 merge semantics).
+    """
+    seed_start = min(offset, seed_count)
+    seed_end = min(offset + limit, seed_count)
+    remaining = limit - (seed_end - seed_start)
+    db_offset = max(0, offset - seed_count)
+    db_limit = remaining if remaining > 0 else 0
+    return seed_start, seed_end, db_offset, db_limit
+
+
+def _sql_ilike_pattern(raw: str) -> str:
+    """Escape LIKE wildcards so ``q`` stays a literal substring match."""
+    escaped = raw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def _template_search_clause(q: str):
+    pattern = _sql_ilike_pattern(q)
+    return or_(
+        CartographyTemplate.name.ilike(pattern, escape="\\"),
+        CartographyTemplate.description.ilike(pattern, escape="\\"),
+        # keywords is JSON; CAST to text is a practical ILIKE stand-in for
+        # ``any(q in kw)`` without hydrating the table.
+        cast(CartographyTemplate.keywords, String).ilike(pattern, escape="\\"),
+    )
+
+
+def _filter_seeds_by_q(seed_list: List[dict], q: str) -> List[dict]:
+    keyword = q.lower()
+    return [
+        t
+        for t in seed_list
+        if keyword in t.get("name", "").lower()
+        or keyword in (t.get("description") or "").lower()
+        or any(keyword in kw.lower() for kw in t.get("keywords", []))
+    ]
 
 
 def _template_visible(tmpl: CartographyTemplate, user_id: Optional[str], org_id, role: Optional[str]) -> bool:
@@ -174,25 +218,28 @@ async def list_templates(
     if seed_ids:
         stmt = stmt.where(CartographyTemplate.id.not_in(seed_ids))
 
-    # Deterministic paging order (created_at alone can tie on fast inserts).
-    stmt = stmt.order_by(CartographyTemplate.created_at.desc(), CartographyTemplate.id)
-
-    result = await db.execute(stmt)
-    db_dicts = [_template_to_dict(t) for t in result.scalars().all()]
-
-    merged = seed_list + db_dicts
-
     if q:
-        keyword = q.lower()
-        merged = [
-            t for t in merged
-            if keyword in t.get("name", "").lower()
-            or keyword in (t.get("description") or "").lower()
-            or any(keyword in kw.lower() for kw in t.get("keywords", []))
-        ]
+        seed_list = _filter_seeds_by_q(seed_list, q)
+        stmt = stmt.where(_template_search_clause(q))
 
-    total = len(merged)
-    page_slice = merged[offset:offset + limit]
+    # Count + SQL offset/limit the remainder. Do not hydrate the whole table
+    # and Python-slice (#618-9). Merge order is still seeds-then-DB (#428).
+    db_total = (
+        await db.execute(select(func.count()).select_from(stmt.subquery()))
+    ).scalar_one()
+    seed_count = len(seed_list)
+    total = seed_count + int(db_total or 0)
+
+    seed_start, seed_end, db_offset, db_limit = _seed_db_page_window(
+        seed_count, offset, limit
+    )
+    page_slice: List[dict] = list(seed_list[seed_start:seed_end])
+    if db_limit > 0 and db_total:
+        page_stmt = stmt.order_by(
+            CartographyTemplate.created_at.desc(), CartographyTemplate.id
+        ).offset(db_offset).limit(db_limit)
+        result = await db.execute(page_stmt)
+        page_slice.extend(_template_to_dict(t) for t in result.scalars().all())
 
     if summary:
         page_slice = [_to_summary(t) for t in page_slice]

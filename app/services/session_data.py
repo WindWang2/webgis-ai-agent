@@ -110,6 +110,20 @@ class MemorySessionStore(BaseSessionStore):
         self._touch_session(session_id)
         return True
 
+    async def delete_ref(self, session_id: str, ref_id: str) -> bool:
+        """Drop one stored ref (and its descriptor/alias). Returns False if missing."""
+        session_cache = self._store.get(session_id)
+        if not session_cache or ref_id not in session_cache:
+            return False
+        session_cache.pop(ref_id, None)
+        self._remove_alias_by_ref(session_id, ref_id)
+        if session_id in self._descriptors:
+            self._descriptors[session_id].pop(ref_id, None)
+        from app.services.mvt import spatial_index_cache, tile_lru_cache
+        spatial_index_cache.invalidate_ref(session_id, ref_id)
+        tile_lru_cache.invalidate_ref(session_id, ref_id)
+        return True
+
     async def set_alias(self, session_id: str, ref_id: str, alias: str) -> None:
         """为引用 ID 设置别名"""
         if session_id not in self._aliases:

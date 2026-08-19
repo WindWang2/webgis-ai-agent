@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user, verify_session_owner
+from app.core.auth import get_current_user, get_owner_token, verify_session_owner
 from app.core.database import get_async_db
 from app.models.api_response import ApiResponse, ErrCode
 from app.models.report import Report
@@ -72,10 +72,13 @@ async def create_report(
     request: GenerateReportRequest,
     db: AsyncSession = Depends(get_async_db),
     _user: dict = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
 ):
     """从会话历史生成报告（ADR-0023: 状态 Saga 已收敛至 ReportService）"""
     user_id = _user.get("user_id")
-    await verify_session_owner(db, request.session_id, user_id=user_id)
+    await verify_session_owner(
+        db, request.session_id, user_id=user_id, owner_token=owner_token
+    )
 
     svc = ReportService()
     # P0-1 fix: forward the session's MapSpec so WeasyPrint can inject crisp
@@ -106,6 +109,7 @@ async def list_reports(
     session_id: Optional[str] = Query(None, description="按会话 ID 筛选（必填，否则跨租户泄漏）"),
     db: AsyncSession = Depends(get_async_db),
     _user: dict = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
 ):
     """列出报告
 
@@ -119,7 +123,7 @@ async def list_reports(
             message="session_id 为必填，避免跨租户泄漏",
         )
     user_id = _user.get("user_id")
-    await verify_session_owner(db, session_id, user_id=user_id)
+    await verify_session_owner(db, session_id, user_id=user_id, owner_token=owner_token)
 
     stmt = select(Report).where(Report.session_id == session_id).order_by(Report.created_at.desc())
     result = await db.execute(stmt.limit(100))
@@ -174,30 +178,48 @@ async def view_shared_report(share_code: str, db: AsyncSession = Depends(get_asy
     )
 
 
-async def _check_report_owner(db: AsyncSession, report_id: str, user_id) -> Report:
+async def _check_report_owner(
+    db: AsyncSession, report_id: str, user_id, owner_token: Optional[str] = None
+) -> Report:
     """跨租户守卫：report 必须属于调用方（审计 S35）。
 
     Report 表通过 session_id 关联到会话；通过 conversation.user_id 解析归属。
-    不存在或越权均 404（避免存在性泄露）。
+    不存在或越权均 404（避免存在性泄露）。SEC-08：匿名会话需匹配 owner_token。
     """
     report = await db.get(Report, report_id)
     if not report:
         raise HTTPException(status_code=404, detail="报告不存在")
-    await verify_session_owner(db, report.session_id, user_id=user_id)
+    await verify_session_owner(
+        db, report.session_id, user_id=user_id, owner_token=owner_token
+    )
     return report
 
 
 @router.get("/{report_id}", response_model=ApiResponse)
-async def get_report(report_id: str, db: AsyncSession = Depends(get_async_db), _user: dict = Depends(get_current_user)):
+async def get_report(
+    report_id: str,
+    db: AsyncSession = Depends(get_async_db),
+    _user: dict = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+):
     """获取报告详情"""
-    report = await _check_report_owner(db, report_id, _user.get("user_id"))
+    report = await _check_report_owner(
+        db, report_id, _user.get("user_id"), owner_token=owner_token
+    )
     return ApiResponse.ok(data=_serialize_report(report))
 
 
 @router.get("/{report_id}/download")
-async def download_report(report_id: str, db: AsyncSession = Depends(get_async_db), _user: dict = Depends(get_current_user)):
+async def download_report(
+    report_id: str,
+    db: AsyncSession = Depends(get_async_db),
+    _user: dict = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+):
     """下载报告文件"""
-    report = await _check_report_owner(db, report_id, _user.get("user_id"))
+    report = await _check_report_owner(
+        db, report_id, _user.get("user_id"), owner_token=owner_token
+    )
     if report.status != "completed":
         raise HTTPException(status_code=400, detail="报告未生成完成")
     if not report.file_path or not os.path.exists(report.file_path):
@@ -219,9 +241,12 @@ async def create_share_link(
     body: ShareRequest = ShareRequest(),
     db: AsyncSession = Depends(get_async_db),
     _user: dict = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
 ):
     """生成分享链接"""
-    report = await _check_report_owner(db, report_id, _user.get("user_id"))
+    report = await _check_report_owner(
+        db, report_id, _user.get("user_id"), owner_token=owner_token
+    )
     if report.status != "completed":
         return ApiResponse.fail(code=ErrCode.VALIDATE_ERROR, message="报告未生成完成，无法分享")
 

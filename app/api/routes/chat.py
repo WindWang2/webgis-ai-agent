@@ -8,6 +8,7 @@ from typing import Annotated, Any, Literal, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import (
@@ -20,7 +21,7 @@ from app.core.auth import (
 )
 from app.core.database import get_async_db
 from app.core.rate_limiter import get_rate_limiter
-from app.models.db_model import Conversation
+from app.models.db_model import Conversation, Message
 from app.services.chat.event_resume import TurnEventBuffer, TurnResumeRegistry
 from app.services.chat_engine import ChatEngine
 from app.services.history_service_async import AsyncHistoryService
@@ -898,6 +899,13 @@ async def get_session_detail(
     session_id: str,
     conv: Conversation = Depends(require_owned_session),
     db: AsyncSession = Depends(get_async_db),
+    limit: int = Query(
+        200,
+        ge=1,
+        le=200,
+        description="每页消息数。默认 200（前端会话恢复期望完整历史；超长会话只取最新一页）",
+    ),
+    offset: int = Query(0, ge=0, description="从最新消息一端的偏移"),
 ):
     """获取会话详情（只读）— 受所有权检查保护（A2 + SEC-08）。
 
@@ -905,13 +913,41 @@ async def get_session_detail(
     returns a metadata-only Conversation without the message collection; this
     route is the one consumer that needs messages, so load them explicitly
     here instead of riding every guard call.
+
+    #618-9: paginate Message rows (conversation_id + order + limit) instead of
+    ``refresh``-ing the whole relationship. Offset is from the newest end;
+    ``messages`` is returned chronological (oldest-first) so existing frontend
+    restore can render the page as a transcript. Default limit=200 covers a
+    typical session; longer histories page with ``offset``.
     """
-    await db.refresh(conv, attribute_names=["messages"])
+    visible = Message.role.in_(("user", "assistant"))
+    total = (
+        await db.execute(
+            select(func.count())
+            .select_from(Message)
+            .where(Message.conversation_id == conv.id, visible)
+        )
+    ).scalar_one()
+
+    result = await db.execute(
+        select(Message)
+        .where(Message.conversation_id == conv.id, visible)
+        .order_by(Message.created_at.desc(), Message.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    page = list(result.scalars().all())
+    page.reverse()
+
     return {
         "id": conv.id,
         "title": conv.title,
         "createdAt": conv.created_at.timestamp() * 1000,
         "updatedAt": conv.updated_at.timestamp() * 1000,
+        "limit": limit,
+        "offset": offset,
+        "total": int(total or 0),
+        "has_more": (offset + limit) < int(total or 0),
         "messages": [
             {
                 "id": str(m.id),
@@ -919,8 +955,7 @@ async def get_session_detail(
                 "content": m.content,
                 "timestamp": m.created_at.timestamp() * 1000,
             }
-            for m in conv.messages
-            if m.role in ("user", "assistant")
+            for m in page
         ],
     }
 

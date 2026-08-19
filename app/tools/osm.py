@@ -1,6 +1,7 @@
 """OSM 数据查询工具 - Overpass API (修复版)"""
 import json
 import logging
+import math
 from typing import Optional
 from pydantic import BaseModel, Field
 
@@ -122,11 +123,13 @@ async def _geocode_bbox(query: str, expand_km: float = 0) -> Optional[str]:
         west, east = lon - 0.05, lon + 0.05
 
     if expand_km > 0:
-        delta = expand_km / 111.0
-        south -= delta
-        north += delta
-        west -= delta
-        east += delta
+        # #618-14: longitude degrees shrink by cos(lat); latitude stays ~111 km/°.
+        lat_delta = expand_km / 111.0
+        lon_delta = expand_km / (111.0 * max(math.cos(math.radians(lat)), 0.01))
+        south -= lat_delta
+        north += lat_delta
+        west -= lon_delta
+        east += lon_delta
 
     return f"{south},{west},{north},{east}"
 

@@ -197,7 +197,7 @@ async def test_compute_terrain_default_returns_all_three_products(monkeypatch):
     expected_slope = compute_raster_stats(compute_slope(dem_nan, 30.0))
     assert res.stats["terrain_products"]["slope"] == expected_slope
     assert res.stats["terrain_products"]["aspect"] == compute_raster_stats(
-        compute_aspect(dem_nan, 30.0)
+        compute_aspect(dem_nan, 30.0), circular=True
     )
     assert res.stats["terrain_products"]["hillshade"] == compute_raster_stats(
         compute_hillshade(dem_nan, 30.0)

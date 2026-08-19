@@ -3,7 +3,10 @@
 #
 # I22: PodDisruptionBudget + topologySpreadConstraints（在 api deployment 内）
 # I23: Postgres/Redis resources（在 05-deps-optional.yaml 内补）
-# I24: ServiceAccount + RoleBinding（least privilege）
+# I24: ServiceAccount for API pods (do not inherit namespace default SA).
+# No Role/RoleBinding: the app does not call the k8s API
+# (automountServiceAccountToken: false). #618-36 removed the unused
+# webgis-celery-sa (never mounted; inventing RBAC would be worse).
 # ============================================================
 ---
 # ServiceAccount for API pods
@@ -16,17 +19,6 @@ metadata:
     app: webgis-ai-agent
     component: api
 automountServiceAccountToken: false  # app 不需访问 k8s API
----
-# ServiceAccount for Celery pods
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: webgis-celery-sa
-  namespace: webgis-prod
-  labels:
-    app: webgis-ai-agent
-    component: celery
-automountServiceAccountToken: false
 ---
 # PodDisruptionBudget for API - 保证滚动维护期间至少 1 个 pod 可用
 apiVersion: policy/v1

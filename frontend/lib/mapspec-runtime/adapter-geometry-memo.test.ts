@@ -110,4 +110,31 @@ describe("hudStateToMapSpec geometry-mix memo (FE-3)", () => {
     expect(out.layers.length).toBe(1); // raster tile sublayer emitted
     expect(_geometryProfileStats.scanCount).toBe(0);
   });
+
+  it("MVT-backed descriptor path does not scan features", () => {
+    // #618-30: V3 MVT layers carry geometry_types on the descriptor so
+    // geometryProfileOf never walks the FeatureCollection (0 scans vs 4×
+    // .some() on inline GeoJSON).
+    const src = fcWith("Point", "Point", "Polygon");
+    const layer = baseLayer(src, {
+      _descriptor: {
+        ref_id: "ref:mvt",
+        feature_count: 3,
+        point_count: 2,
+        geometry_types: ["Point", "Polygon"],
+        bbox: [0, 0, 1, 1],
+        mvt_capable: true,
+        estimated_bytes: 100,
+      },
+    });
+    toSpec([layer]);
+    toSpec([layer]);
+    expect(_geometryProfileStats.scanCount).toBe(0);
+  });
+
+  it("inline GeoJSON without descriptor scans once per new FC reference", () => {
+    const src = fcWith("Point", "Polygon");
+    toSpec([baseLayer(src)]);
+    expect(_geometryProfileStats.scanCount).toBe(1);
+  });
 });

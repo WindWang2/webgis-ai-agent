@@ -298,9 +298,37 @@ def test_tile_encode_cold_vs_warm():
 
 
 def test_feature_scan_count_mvt_vs_geojson():
-    """Measure: adapter geometry profile scan count."""
-    # This would require frontend integration; documented as invariant:
-    # - V3 MVT-backed layer: adapter reads descriptor, 0 feature scans
-    # - pre-V3 or inline GeoJSON: adapter scans features 4× (hasPolygons/hasLines/hasPoints/hasWeight)
-    # The COW test `test_set_view_no_spec_deepcopy` already guards the "no sources deepcopy" invariant.
-    pass
+    """Adapter geometry-profile: descriptor path must not scan features.
+
+    Frontend invariant (frontend/lib/mapspec-runtime/adapter.ts):
+    - V3 MVT-backed layer: geometryProfileOf reads ``_descriptor.geometry_types``,
+      0 feature scans (``_geometryProfileStats.scanCount`` stays 0).
+    - pre-V3 / inline GeoJSON: one profile computation runs four ``features.some``
+      passes (hasPolygons/hasLines/hasPoints/hasWeight).
+
+    Behavioral coverage lives in adapter-geometry-memo.test.ts. This test
+    pins the two-branch source shape so a refactor cannot drop the
+    descriptor short-circuit without turning this red (#618-30).
+    """
+    from pathlib import Path
+
+    src = (
+        Path(__file__).resolve().parents[2]
+        / "frontend"
+        / "lib"
+        / "mapspec-runtime"
+        / "adapter.ts"
+    ).read_text(encoding="utf-8")
+    desc_idx = src.find("layer._descriptor && layer._descriptor.geometry_types")
+    assert desc_idx != -1, (
+        "geometryProfileOf must short-circuit on _descriptor.geometry_types "
+        "(MVT-backed: 0 feature scans)"
+    )
+    poly_scan = src.find('features.some((f) => f.geometry?.type?.includes("Polygon"))')
+    line_scan = src.find('features.some((f) => f.geometry?.type?.includes("Line"))')
+    point_scan = src.find('features.some((f) => f.geometry?.type?.includes("Point"))')
+    weight_scan = src.find("features.some((f) => (f as any).properties?.weight != null)")
+    assert min(poly_scan, line_scan, point_scan, weight_scan) > desc_idx, (
+        "inline-GeoJSON 4× feature scans must come after the descriptor short-circuit"
+    )
+    assert "_geometryProfileStats.scanCount" in src

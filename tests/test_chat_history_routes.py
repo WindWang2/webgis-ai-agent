@@ -54,13 +54,27 @@ def test_get_session_detail(client):
     msg.created_at = datetime(2026, 4, 10)
     conv.messages = [msg]
 
-    # #525: the guard returns a metadata-only Conversation; the route loads
-    # messages explicitly via db.refresh — stub that refresh here.
+    # #525/#618-9: the guard returns a metadata-only Conversation; the route
+    # loads a page of Message rows via db.execute — stub that query here.
     from app.core.database import get_async_db
 
+    class _FakeResult:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def scalars(self):
+            return self
+
+        def all(self):
+            return self._rows
+
+        def scalar_one(self):
+            return len(self._rows)
+
     class _FakeDb:
-        async def refresh(self, instance, attribute_names=None):
-            return instance
+        async def execute(self, stmt):
+            rows = [m for m in conv.messages if m.role in ("user", "assistant")]
+            return _FakeResult(rows)
 
     async def _override_db():
         yield _FakeDb()

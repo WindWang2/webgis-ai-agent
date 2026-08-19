@@ -330,6 +330,8 @@ export interface ToolCallEntry {
   completedAt?: number;
 }
 
+export type PlanProposalStatus = 'pending' | 'approved' | 'rejected' | 'revising';
+
 export interface PlanProposalPayload {
   plan_id: string;
   title: string;
@@ -337,5 +339,5 @@ export interface PlanProposalPayload {
   step_count: number;
   destructive_steps?: string[];
   steps_preview?: Array<{ id: string; tool: string; purpose?: string; destructive?: boolean }>;
-  status: 'pending' | 'approved' | 'rejected';
+  status: PlanProposalStatus;
 }

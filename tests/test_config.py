@@ -59,6 +59,16 @@ def test_nasa_settings():
     assert hasattr(s, "NASA_EARTHDATA_PASSWORD")
 
 
+def test_settings_does_not_read_db_host_components():
+    """#618-32: compose '方式2' DB_HOST/DB_USER/… 是死键 —— Settings 只读 DATABASE_URL。"""
+    fields = Settings.model_fields
+    for name in ("DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME", "DB_PWD"):
+        assert name not in fields, (
+            f"Settings.{name} would make decomposed DB_* keys real; "
+            "the app only reads DATABASE_URL"
+        )
+
+
 def test_database_url():
     """DATABASE_URL must be a non-empty valid URL (sqlite or postgresql).
 

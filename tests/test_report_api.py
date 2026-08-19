@@ -100,6 +100,16 @@ def test_generate_report_request_title_defaults_none():
     assert req.title is None
 
 
+def test_report_routes_forward_owner_token():
+    """#618-13: verify_session_owner must receive the X-Session-Token value."""
+    import inspect
+
+    assert "owner_token=owner_token" in inspect.getsource(_mod.create_report)
+    assert "owner_token=owner_token" in inspect.getsource(_mod.list_reports)
+    assert "owner_token=owner_token" in inspect.getsource(_mod._check_report_owner)
+    assert "get_owner_token" in inspect.getsource(_mod)
+
+
 def test_validate_file_path_no_dead_code():
     """_validate_file_path returns a bool, no unreachable code after return."""
     import inspect

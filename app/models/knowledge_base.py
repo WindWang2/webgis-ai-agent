@@ -32,6 +32,7 @@ class Document(Base):
     __table_args__ = (
         Index("idx_document_status", "status"),
         Index("idx_document_org", "org_id"),
+        Index("ix_knowledge_documents_creator_id", "creator_id"),
     )
 
 

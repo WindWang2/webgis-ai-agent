@@ -23,8 +23,11 @@ function makeCtx(map: any, params: Record<string, unknown> = {}): MapCommandCont
 }
 
 describe('exportCommands export_map (V3 Promise<MapCommandResult> contract)', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.useFakeTimers();
+    const { MapExporterEngine } = await import('@/lib/map-kit/exporter');
+    (MapExporterEngine.export as ReturnType<typeof vi.fn>).mockReset();
+    (MapExporterEngine.export as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true });
   });
 
   afterEach(() => {
@@ -65,13 +68,30 @@ describe('exportCommands export_map (V3 Promise<MapCommandResult> contract)', ()
   });
 
   it('ignores a render callback that arrives after the timeout (first settle wins)', async () => {
+    const { MapExporterEngine } = await import('@/lib/map-kit/exporter');
+    const exportFn = MapExporterEngine.export as ReturnType<typeof vi.fn>;
+    const setPendingSystemMessage = vi.fn();
+    exportFn.mockImplementation(async () => {
+      setPendingSystemMessage('[系统通知] 专题地图已成功排版合成');
+      return { ok: true };
+    });
+
     const map = makeMockMaplibreMap();
-    const promise = exportCommands.export_map.run(makeCtx(map, {}));
+    const promise = exportCommands.export_map.run({
+      ...makeCtx(map, {}),
+      getHudState: () => ({ setPendingSystemMessage }),
+    } as MapCommandContext);
 
     await vi.advanceTimersByTimeAsync(30_000);
     map._fire('render'); // late render must not flip the already-settled timeout
     await vi.advanceTimersByTimeAsync(0);
+    await Promise.resolve();
+    await Promise.resolve();
 
     await expect(promise).resolves.toEqual({ status: 'failed', error: 'timeout' });
+    // #618 item 21: timeout already acked failure — do not run the export
+    // pipeline or emit a user-facing success system message.
+    expect(exportFn).not.toHaveBeenCalled();
+    expect(setPendingSystemMessage).not.toHaveBeenCalled();
   });
 });

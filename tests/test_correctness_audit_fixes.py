@@ -11,7 +11,8 @@ Each test fails on the pre-fix code:
   sessions persisted specs missing version/layout/thresholds.
 - CORR-3 (P2): the store-level SEC-08 owner-token guard never engaged (no
   writer); it now reads a SHA-256 digest persisted at conversation mint.
-- CORR-5 (P3): LayerService.list_all filtered on a nonexistent column.
+- CORR-5 (P3): LayerService.list_all filtered on a nonexistent column
+  and an invalid status ('active' vs CHECK-legal 'ready').
 - CORR-6 (P3): cleanup_idle_sessions evicted max-10 sessions (and everything
   when max_sessions < 10).
 """
@@ -161,14 +162,17 @@ async def test_CORR3_owner_token_digest_guard_engages():
 
 def test_CORR5_list_all_public_filter_compiles():
     """The filter must reference an existing column (pre-fix: AttributeError
-    at query build time on any is_public call)."""
+    at query build time on any is_public call) and CHECK-legal status."""
     from app.services.layer_service import LayerService
     from app.models.db_model import Layer
+
+    captured = []
 
     class _Q:
         def filter(self, *a, **k):
             # SQLAlchemy expression build happens here — a bogus attribute
             # would raise before this point.
+            captured.extend(a)
             return self
 
         def order_by(self, *a, **k):
@@ -196,6 +200,15 @@ def test_CORR5_list_all_public_filter_compiles():
     Layer.visibility  # attribute exists
     _layers, _total = svc.list_all(is_public=True)
     assert _total == 0
+    compiled = []
+    for c in captured:
+        try:
+            compiled.append(str(c.compile(compile_kwargs={"literal_binds": True})))
+        except Exception:
+            compiled.append(str(c))
+    blob = " ".join(compiled)
+    assert "ready" in blob
+    assert "'active'" not in blob and '"active"' not in blob
 
 
 # ── CORR-6: cleanup evicts only the overflow ────────────────────────────────
