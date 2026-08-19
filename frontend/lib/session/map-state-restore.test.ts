@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useToastStore } from '@/components/ui/toast';
+import { ApiError } from '@/lib/api/transport';
+import { devOnly } from '@/lib/utils/logger';
 import {
   buildLayerFromRestored,
   restoreSessionMapLayers,
@@ -19,6 +22,8 @@ beforeEach(() => {
   fetchMock.mockReset();
   useHudStore.getState().clearLayers();
   useHudStore.setState({ baseLayer: 'Carto 深色' });
+  useToastStore.setState({ toasts: [] });
+  vi.mocked(devOnly.error).mockClear();
 });
 
 describe('selectLayersToRestore', () => {
@@ -147,5 +152,40 @@ describe('restoreSessionMapLayers', () => {
 
     expect(useHudStore.getState().layers).toHaveLength(1);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('logs ApiError and toasts when ref data fetch fails, without dropping the layer', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      statusText: 'Not Found',
+      text: () => Promise.resolve(JSON.stringify({ detail: 'layer gone' })),
+    });
+
+    await restoreSessionMapLayers(
+      {
+        layers: [
+          {
+            id: 'L1',
+            name: '学校分布',
+            type: 'vector',
+            visible: true,
+            opacity: 1,
+            _refId: 'ref:missing',
+            source: { type: 'FeatureCollection', features: [] },
+          },
+        ],
+      },
+      { sessionId: 'sid-1' }
+    );
+
+    await vi.waitFor(() => {
+      expect(devOnly.error).toHaveBeenCalledWith('[LayerFetch]', expect.any(ApiError));
+    });
+    expect(useHudStore.getState().layers).toHaveLength(1);
+    expect(useHudStore.getState().layers[0]._refId).toBe('ref:missing');
+    const toast = useToastStore.getState().toasts.find((t) => t.type === 'error');
+    expect(toast?.message).toContain('学校分布');
+    expect(toast?.message).toMatch(/加载失败/);
   });
 });

@@ -12,11 +12,26 @@
  *   - ref 图层：MVT-capable 且超阈值 → 由瓦片端点显示（_tileUrl），否则整包
  *     GeoJSON 拉取回填（SEC-08：匿名会话带 ownerToken）。
  */
-import { apiFetch, isApiError } from '@/lib/api/transport';
+import { apiFetch } from '@/lib/api/transport';
 import { API_BASE } from '@/lib/api/config';
 import type { GeoJSONFeatureCollection, MapActionPayload } from '@/lib/types';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useToastStore } from '@/components/ui/toast';
 import { devOnly } from '@/lib/utils/logger';
+
+function isAbortError(err: unknown): boolean {
+  return (err instanceof DOMException && err.name === 'AbortError')
+    || (err instanceof Error && err.name === 'AbortError');
+}
+
+export function reportLayerFetchFailure(context: string, layerLabel: string, err: unknown): void {
+  if (isAbortError(err)) return;
+  devOnly.error(context, err);
+  useToastStore.getState().addToast(
+    `图层「${layerLabel}」数据加载失败，地图上可能显示为空。请稍后重试或刷新会话`,
+    'error',
+  );
+}
 
 /** 持久化 map-state 中 restore 消费的形状。 */
 export interface SessionMapState {
@@ -155,7 +170,10 @@ export async function restoreSessionMapLayers(
           }
         })
         .catch((err) => {
-          if (!isApiError(err)) devOnly.error('[LayerFetch]', err);
+          const label = typeof layer.name === 'string' && layer.name
+            ? layer.name
+            : String(layer.id ?? layer._refId ?? '图层');
+          reportLayerFetchFailure('[LayerFetch]', label, err);
         });
     }
   }

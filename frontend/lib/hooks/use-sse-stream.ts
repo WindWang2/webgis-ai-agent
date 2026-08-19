@@ -3,11 +3,13 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useMapBridge } from './useMapBridge';
 import { useHudStore } from '@/lib/store/useHudStore';
-import { apiFetch, isApiError } from '@/lib/api/transport';
+import { apiFetch } from '@/lib/api/transport';
 import { API_BASE } from '@/lib/api/config';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
 import type { SSEEvent } from '@/lib/api/chat';
-import type { ToolCallEntry, PlanProposalPayload, SelectedFeatureInfo } from '@/lib/store/hud-types';
+import type { ToolCallEntry, PlanProposalPayload, PlanProposalStatus, SelectedFeatureInfo } from '@/lib/store/hud-types';
+import { reportLayerFetchFailure } from '@/lib/session/map-state-restore';
+import { useToastStore } from '@/components/ui/toast';
 import type { AgentPlanState } from '@/lib/types/agent-plan';
 import type { MapActionPayload } from '@/lib/types';
 import { createMessageIdGenerator } from './use-message-id';
@@ -711,12 +713,11 @@ export function useSSEStream(
               .catch((err) => {
                 // transport 约定：调用方主动 abort 以原生 AbortError 直通（会话切换/
                 // 组件卸载会 abort 本 fetch）。这是预期控制流，不是错误，不进 console。
-                const isAbort =
-                  (err instanceof DOMException && err.name === 'AbortError') ||
-                  (err instanceof Error && err.name === 'AbortError');
-                if (!isAbort && !isApiError(err)) {
-                  devOnly.error('[LiveLayerFetch] Failed to fetch geojson_ref:', err);
-                }
+                reportLayerFetchFailure(
+                  '[LiveLayerFetch] Failed to fetch geojson_ref:',
+                  layerName,
+                  err,
+                );
               });
           }
 
@@ -920,6 +921,19 @@ export function useSSEStream(
             )
           );
         }
+      } else if (event.event === 'tool_result') {
+        // Legacy engine emits tool_result after step_result; Pi path may omit
+        // it. Mark a still-running matching row completed if step_result
+        // never arrived. Already-terminal rows are left untouched.
+        const name = typeof data?.name === 'string' ? data.name : '';
+        if (name) markToolCallStatus(name, 'completed');
+      } else if (event.event === 'resume_gap') {
+        // Replay buffer evicted the head of the turn (#398). Non-blocking:
+        // keep the stream going and tell the user some events were skipped.
+        useToastStore.getState().addToast(
+          '对话回放被截断，部分中间事件未能重放。',
+          'warning',
+        );
       } else if (event.event === 'explorer_progress') {
         // #518: 归一化逻辑抽到 applyExplorerProgressToStore（与独立
         // /explorer/stream/{task_id} 消费者共用），聊天流与独立流一致。
@@ -940,12 +954,14 @@ export function useSSEStream(
   const isLoading = bridge.aiStatus === 'thinking' || bridge.aiStatus === 'acting';
 
   const handlePlanAction = useCallback((planId: string, action: 'approve' | 'revise' | 'reject') => {
+    const nextStatus: PlanProposalStatus =
+      action === 'approve' ? 'approved' : action === 'revise' ? 'revising' : 'rejected';
     setMessages((prev) =>
       prev.map((m) =>
         m.plan?.plan_id === planId
           ? {
               ...m,
-              plan: { ...m.plan, status: action === 'approve' ? 'approved' : 'rejected' },
+              plan: { ...m.plan, status: nextStatus },
             }
           : m
       )

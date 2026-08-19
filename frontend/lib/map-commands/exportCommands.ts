@@ -32,13 +32,17 @@ export const exportCommands: Record<string, CommandEntry> = {
       return new Promise<MapCommandResult>((resolve) => {
         let settled = false;
         // Holder object instead of `let` bindings (matches runCameraCommand's
-        // pattern): `timer` is assigned after `settle` is defined.
-        const handles: { timer?: ReturnType<typeof setTimeout> } = {};
+        // pattern): `timer` / `onRender` are assigned after `settle` is defined.
+        const handles: {
+          timer?: ReturnType<typeof setTimeout>;
+          onRender?: () => void;
+        } = {};
 
         const settle = (result: MapCommandResult) => {
           if (settled) return;
           settled = true;
           if (handles.timer) clearTimeout(handles.timer);
+          if (handles.onRender) map.off('render', handles.onRender);
           resolve(result);
         };
 
@@ -52,15 +56,20 @@ export const exportCommands: Record<string, CommandEntry> = {
         // F5: 异步 export 必须等 map.once('render') 真正回调完再 settle，否则
         // 连续触发 export 会让后一次在前一次还没合成完时覆盖 canvas。Handler
         // 在 promise settle 后才 popAction（设计 §6）。
-        map.once('render', async () => {
+        // #618: if the timeout already settled, a late render must not run the
+        // export pipeline (upload + success system message after a failure ack).
+        handles.onRender = async () => {
+          if (settled) return;
           try {
             // Dynamic import: the exporter engine is heavy (canvas composition,
             // DPI/oversample, vector SVG/PDF generation, layout). Load on demand.
             const { MapExporterEngine } = await import('@/lib/map-kit/exporter');
+            if (settled) return;
             const outcome = await MapExporterEngine.export(
               { map, getHudState },
               (params || {}) as ExportRequest,
             );
+            if (settled) return;
             if (!outcome.ok) {
               devOnly.error('[export_map] Export failed:', outcome.error);
               settle({ status: 'failed', error: 'export_failed' });
@@ -68,6 +77,7 @@ export const exportCommands: Record<string, CommandEntry> = {
               settle({ status: 'succeeded' });
             }
           } catch (e) {
+            if (settled) return;
             devOnly.error('[export_map] Unexpected error:', e);
             try {
               getHudState().setPendingSystemMessage(
@@ -78,7 +88,8 @@ export const exportCommands: Record<string, CommandEntry> = {
             }
             settle({ status: 'failed', error: 'export_error' });
           }
-        });
+        };
+        map.once('render', handles.onRender);
         map.triggerRepaint();
       });
     },

@@ -8,11 +8,13 @@
  *  - 默认 status='pending' 展示步骤列表 + 「执行 / 修改 / 取消」三按钮；
  *  - 用户点击「执行」→ 父组件通过 onApprove(plan_id) 触发一条 chat 消息让 LLM 调 execute_plan；
  *  - 「修改」/「取消」类似，分别发送让 LLM 改计划/放弃的指令；
- *  - 点击后切换到 status='approved'|'rejected' 锁住卡片，避免重复点击。
+ *  - 「执行」/「取消」后切到 approved/rejected 锁住卡片；「修改」切到
+ *    revising（修改中，非终态，按钮仍可点）。
  */
 
 import { useState } from 'react';
 import { CheckCircle2, AlertTriangle, Play, X, Edit3, Lock, ListTodo } from 'lucide-react';
+import type { PlanProposalStatus } from '@/lib/store/hud-types';
 
 export interface PlanStepPreview {
   id: string;
@@ -28,7 +30,7 @@ export interface PlanProposalCardProps {
   stepCount: number;
   destructiveSteps?: string[];
   stepsPreview?: PlanStepPreview[];
-  status: 'pending' | 'approved' | 'rejected';
+  status: PlanProposalStatus;
   /** 执行确认 — 父组件应触发一条 chat 让 LLM 调 execute_plan(plan_id)。 */
   onApprove: (planId: string) => void;
   /** 让 LLM 修改计划 */
@@ -53,7 +55,7 @@ export function PlanProposalCard(props: PlanProposalCardProps) {
 
   const [expanded, setExpanded] = useState(true);
   const hasDestructive = destructiveSteps.length > 0;
-  const locked = status !== 'pending';
+  const locked = status === 'approved' || status === 'rejected';
 
   /* V4（D）：卡片表面/文字全部走语义 token（随主题翻转），不再按 isDark 手工
      二选一 —— 原来暗色下的 subText #94a3b8 只有 2.45:1。accent 作文字一律用
@@ -91,6 +93,11 @@ export function PlanProposalCard(props: PlanProposalCardProps) {
             {status === 'rejected' && (
               <span className="inline-flex items-center gap-1 rounded-pill bg-status-critical-soft px-2 py-px text-meta text-status-critical">
                 <X size={10} /> 已取消
+              </span>
+            )}
+            {status === 'revising' && (
+              <span className="inline-flex items-center gap-1 rounded-pill bg-status-info-soft px-2 py-px text-meta text-status-info">
+                <Edit3 size={10} /> 修改中
               </span>
             )}
           </div>

@@ -2,6 +2,7 @@ import { it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useSSEStream } from './use-sse-stream';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useToastStore } from '@/components/ui/toast';
 import { devOnly } from '@/lib/utils/logger';
 
 /**
@@ -57,6 +58,7 @@ function emitStepResult() {
 beforeEach(() => {
   vi.clearAllMocks();
   useHudStore.setState({ layers: [], results: [] });
+  useToastStore.setState({ toasts: [] });
   renderHook(() =>
     useSSEStream(
       'sid-abort',
@@ -99,4 +101,23 @@ it('still logs genuine layer fetch failures', async () => {
     '[LiveLayerFetch] Failed to fetch geojson_ref:',
     expect.any(TypeError),
   );
+  expect(useToastStore.getState().toasts.some((t) => t.type === 'error')).toBe(true);
+});
+
+it('logs ApiError and toasts instead of swallowing the failure', async () => {
+  const apiErr = Object.assign(new Error('Layer data error: 403'), {
+    name: 'ApiError',
+    status: 403,
+  });
+  apiFetchMock.mockRejectedValueOnce(apiErr);
+
+  emitStepResult();
+  await flushFetch();
+
+  expect(devOnly.error).toHaveBeenCalledWith(
+    '[LiveLayerFetch] Failed to fetch geojson_ref:',
+    apiErr,
+  );
+  const toast = useToastStore.getState().toasts.find((t) => t.type === 'error');
+  expect(toast?.message).toMatch(/加载失败/);
 });

@@ -68,6 +68,9 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
   const clearTask = useHudStore((s) => s.clearTask);
   const clearExplorerTasks = useHudStore((s) => s.clearExplorerTasks);
   const clearResults = useHudStore((s) => s.clearResults);
+  const clearProcessLayers = useHudStore((s) => s.clearProcessLayers);
+  const setCartographyTitle = useHudStore((s) => s.setCartographyTitle);
+  const focusLayer = useHudStore((s) => s.focusLayer);
   // #392: History 抽屉开关信号 —— 打开时触发会话列表刷新（见下方 effect）。
   const historyOpen = useHudStore((s) => s.historyOpen);
 
@@ -140,6 +143,11 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       // 推理），旧 task 卡片/annotation 也会残留在新会话 UI 上。
       clearLayers();
       clearAnnotations();
+      clearOpsLog();
+      clearCausalChain();
+      clearProcessLayers();
+      setCartographyTitle(null);
+      focusLayer(null);
       setSelectedFeature(null);
       setAiStatus('idle');
       clearTask();
@@ -257,7 +265,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
         }
       }
     },
-    [clearLayers, clearAnnotations, clearTask, clearExplorerTasks, clearResults, setSelectedFeature, setAiStatus, dispatchAction]
+    [clearLayers, clearAnnotations, clearOpsLog, clearCausalChain, clearProcessLayers, setCartographyTitle, focusLayer, clearTask, clearExplorerTasks, clearResults, setSelectedFeature, setAiStatus, dispatchAction]
   );
 
   const startNewSession = useCallback(
@@ -282,6 +290,9 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       clearAnnotations();
       clearOpsLog();
       clearCausalChain();
+      clearProcessLayers();
+      setCartographyTitle(null);
+      focusLayer(null);
       setSelectedFeature(null);
       setAiStatus('idle');
       clearTask();
@@ -299,7 +310,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       // (session ID 从未写入 localStorage，此 removeItem 是 no-op)
       onClearMessages();
     },
-    [clearLayers, clearAnnotations, clearOpsLog, clearCausalChain, setSelectedFeature, setAiStatus, clearTask, clearExplorerTasks, clearResults]
+    [clearLayers, clearAnnotations, clearOpsLog, clearCausalChain, clearProcessLayers, setCartographyTitle, focusLayer, setSelectedFeature, setAiStatus, clearTask, clearExplorerTasks, clearResults]
   );
 
   const rememberSessionToken = useCallback((sid: string, token: string) => {

@@ -221,8 +221,8 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
             label="侧边栏宽度"
             value={sidebarWidth}
             suffix="px"
-            min={240}
-            max={480}
+            min={280}
+            max={420}
             step={10}
             onChange={(v) => setSidebarWidth(Math.round(v))}
           />

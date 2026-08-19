@@ -22,6 +22,9 @@ const hudState = vi.hoisted(() => ({
   addLayer: vi.fn(),
   fetchAnalysisAssets: vi.fn().mockResolvedValue(undefined),
   clearResults: vi.fn(),
+  clearProcessLayers: vi.fn(),
+  setCartographyTitle: vi.fn(),
+  focusLayer: vi.fn(),
   historyOpen: false,
 }));
 
@@ -336,6 +339,36 @@ describe('useWorkspaceSession selectSession (F-09)', () => {
       result.current.startNewSession(vi.fn());
     });
     expect(vi.mocked(hudState.clearExplorerTasks)).toHaveBeenCalled();
+  });
+
+  it('#618: selectSession clears leftover session-scoped HUD fields', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonOk({ sessions: [] }))
+      .mockResolvedValueOnce(jsonOk({ title: 'S', messages: [] }))
+      .mockResolvedValueOnce(jsonOk({ map_state: null }));
+
+    const { result } = renderHook(() => useWorkspaceSession(vi.fn()));
+    await act(async () => {
+      await result.current.selectSession('sid-leftover', vi.fn());
+    });
+
+    expect(vi.mocked(hudState.clearOpsLog)).toHaveBeenCalled();
+    expect(vi.mocked(hudState.clearCausalChain)).toHaveBeenCalled();
+    expect(vi.mocked(hudState.clearProcessLayers)).toHaveBeenCalled();
+    expect(vi.mocked(hudState.focusLayer)).toHaveBeenCalledWith(null);
+    expect(vi.mocked(hudState.setCartographyTitle)).toHaveBeenCalledWith(null);
+  });
+
+  it('#618: startNewSession also clears cartography leftovers', () => {
+    const { result } = renderHook(() => useWorkspaceSession(vi.fn()));
+    act(() => {
+      result.current.startNewSession(vi.fn());
+    });
+    expect(vi.mocked(hudState.clearOpsLog)).toHaveBeenCalled();
+    expect(vi.mocked(hudState.clearCausalChain)).toHaveBeenCalled();
+    expect(vi.mocked(hudState.clearProcessLayers)).toHaveBeenCalled();
+    expect(vi.mocked(hudState.focusLayer)).toHaveBeenCalledWith(null);
+    expect(vi.mocked(hudState.setCartographyTitle)).toHaveBeenCalledWith(null);
   });
 
   it('#548: selectSession clears explorer task cards on session switch', async () => {
