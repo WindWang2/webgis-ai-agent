@@ -24,6 +24,7 @@ const mapMockInstance = {
   getBearing: vi.fn(() => 0),
   getPitch: vi.fn(() => 0),
   once: vi.fn((_e: string, cb: () => void) => cb()),
+  off: vi.fn(),
   triggerRepaint: vi.fn(),
   removeLayer: vi.fn(),
   removeSource: vi.fn(),

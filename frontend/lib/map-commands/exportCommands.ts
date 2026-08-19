@@ -42,7 +42,9 @@ export const exportCommands: Record<string, CommandEntry> = {
           if (settled) return;
           settled = true;
           if (handles.timer) clearTimeout(handles.timer);
-          if (handles.onRender) map.off('render', handles.onRender);
+          if (handles.onRender && typeof map.off === 'function') {
+            map.off('render', handles.onRender);
+          }
           resolve(result);
         };
 
