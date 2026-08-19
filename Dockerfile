@@ -40,6 +40,12 @@ COPY --from=backend-deps /usr/local/bin /usr/local/bin
 COPY requirements.txt ./
 COPY main.py ./
 COPY app/ ./app/
+# #618-37: Pi RPC entry is vendor/pi/packages/coding-agent/dist/rpc-entry.js
+# (pi_rpc_client.PI_RPC_ENTRY). compose api uses this stage as target and
+# celery defaults to runner (COPY --from=backend-builder /app). Without this
+# COPY, USE_NEW_AGENT cannot find the entry and silently falls back.
+# Same path Dockerfile.prod copies; runtime needs vendor/ (submodule).
+COPY vendor/ ./vendor/
 
 # Stage 5: Runner
 FROM python:3.12-slim AS runner

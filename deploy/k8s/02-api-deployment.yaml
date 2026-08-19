@@ -61,12 +61,19 @@ spec:
       # 滚动更新期间新副本不会带着旧 schema 接流量。
       initContainers:
       - name: db-migration
-        # #559: CI 推送 ghcr.io/windwang2/webgis-ai-agent:<sha>（production.yml
-        # build job，IMAGE_NAME 小写化）。部署时用 kustomize edit set image
-        # 把 tag 钉到 CI sha；此处 registry 已是真实坐标（raw apply 也可拉取）。
-        image: ghcr.io/windwang2/webgis-ai-agent:v0.1.2
+        # #559 / #618-37: CI 推送 ghcr.io/windwang2/webgis-ai-agent:<sha>
+        # （production.yml build job）。metadata-action 另有 type=ref,event=branch
+        # (`master`) 与无 `v` 前缀的 semver。默认 tag 用 `master`，避免 raw
+        # apply 去拉从未推送的 `v0.1.2`。生产部署必须钉 CI sha：
+        #   kustomize edit set image ghcr.io/windwang2/webgis-ai-agent=ghcr.io/windwang2/webgis-ai-agent:<sha>
+        image: ghcr.io/windwang2/webgis-ai-agent:master
         imagePullPolicy: Always
-        command: ["alembic", "upgrade", "head"]
+        # #618-33: k8s `command:` 覆盖镜像 ENTRYPOINT，裸 `alembic upgrade
+        # head` 不会 stamp 收编 pre-alembic / create_all 库（CrashLoop）。
+        # 复用 docker-entrypoint.sh 的 legacy-db 探测 + stamp head + upgrade
+        # （幂等）。`true` 是迁移成功后的 CMD，initContainer 以 0 退出。
+        command: ["/usr/local/bin/docker-entrypoint.sh"]
+        args: ["true"]
         # 与应用容器同一 config/secret 来源（DATABASE_URL 在其中）。
         envFrom:
         - configMapRef:
@@ -92,9 +99,9 @@ spec:
           mountPath: /tmp
       containers:
       - name: webgis-api
-        # #559: CI 推送坐标 ghcr.io/windwang2/webgis-ai-agent:<sha>；tag 由
-        # kustomize edit set image 在部署时钉到 CI sha（见 kustomization.yaml）。
-        image: ghcr.io/windwang2/webgis-ai-agent:v0.1.2
+        # #618-37: default tag `master` matches CI branch tag. Pin sha at
+        # deploy time (kustomize edit set image …:<sha>).
+        image: ghcr.io/windwang2/webgis-ai-agent:master
         imagePullPolicy: Always
         # 审计 I25：容器安全上下文 — 禁止权限提升，丢弃所有 capabilities
         securityContext:

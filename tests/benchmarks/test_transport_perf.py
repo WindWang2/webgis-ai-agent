@@ -21,12 +21,12 @@ median <= max(floor_ms, baseline * WARN_FACTOR) PASS; * WARN_FACTOR soft-fail;
 Usage:
     pytest tests/benchmarks/test_transport_perf.py -m perf --no-cov --timeout=180 -q
     PERF_UPDATE_BASELINES=1 pytest tests/benchmarks/test_transport_perf.py -m perf --no-cov -q
+    ALLOW_MISSING_PERF_BASELINE=1 pytest tests/benchmarks/test_transport_perf.py -m perf --no-cov -q
 """
 from __future__ import annotations
 
 import asyncio
 import json
-import os
 import statistics
 import time
 from pathlib import Path
@@ -40,9 +40,9 @@ from app.api.routes import chat as chat_route
 from app.core.auth import get_current_user_optional, get_owner_token
 from app.core.database import get_async_db
 from app.utils.sse import SSEBatcher, sse_event
+from tests.benchmarks._baseline_policy import decide_baseline_action
 
 BASELINES_PATH = Path(__file__).parent / "transport_baselines.json"
-UPDATE_BASELINES = os.environ.get("PERF_UPDATE_BASELINES") == "1"
 
 WARN_FACTOR = 1.75
 FAIL_FACTOR = 4.0
@@ -348,7 +348,7 @@ def test_transport_perf_workload(name):
     measured = statistics.median(WORKLOADS[name]() for _ in range(ITERATIONS))
     baselines = _load_baselines()
 
-    if UPDATE_BASELINES or name not in baselines:
+    if decide_baseline_action(name, baselines) == "record":
         baseline = {"median_ms": round(measured, 3), "iterations": ITERATIONS}
         all_baselines = dict(baselines)
         all_baselines[name] = baseline

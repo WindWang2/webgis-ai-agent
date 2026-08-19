@@ -67,6 +67,8 @@ docker-compose logs -f celery-worker
 
 说明：api 与 worker 必须挂同一数据卷（celery 按本地路径打开上传的 raster/shapefile，分卷即 "No such file"）。可选设置 `WEBGIS_DEV_MOUNT=./app` 把源码 bind-mount 进容器实现热重载（默认关闭，避免覆盖镜像代码）。
 
+`.env.example` 的 `DATABASE_URL=sqlite:///./data/webgis.db` 只给本机 pytest / `manage.py` 用。compose 的 api/celery **忽略**该 sqlite 值，把 `DATABASE_URL` 钉成 `postgresql://postgres:${DB_PASSWORD}@db:5432/webgis`（`app/core/config.py` 只读 `DATABASE_URL`，没有 `DB_HOST`）。本机进程要连 compose 里的 PostGIS 时，另设 `DATABASE_URL=postgresql://postgres:<DB_PASSWORD>@localhost:15432/webgis`。
+
 ## 形态二：本地手工开发流
 
 按计算隔离原则，后端分三个必须组件（默认 `.env.example` 的 Redis 指向 `redis://localhost:16379/0`，即开发栈暴露的端口）：
@@ -124,7 +126,7 @@ docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml up -d
 
 ## 形态五：Kubernetes（deploy/k8s）
 
-清单经 kustomize 组织（namespace `webgis-prod`）：`00-namespace` / `01-configmap` / `02-api-deployment` / `03-celery-deployment`（含 50Gi PVC） / `04-ingress`（TLS） / `06-hpa-pdb-rbac`（SA + RBAC + PDB） / `07-hpa`。`05-deps-optional.yaml`（内部 postgres/redis）**默认不在资源列表中**，生产建议用外部托管服务。
+清单经 kustomize 组织（namespace `webgis-prod`）：`00-namespace` / `01-configmap` / `02-api-deployment` / `03-celery-deployment`（含 50Gi PVC） / `04-ingress`（TLS） / `06-hpa-pdb-rbac`（API ServiceAccount + PDB） / `07-hpa`。`05-deps-optional.yaml`（内部 postgres/redis）**默认不在资源列表中**，生产建议用外部托管服务。
 
 ```bash
 cd deploy/k8s
@@ -136,7 +138,7 @@ kubectl apply -k .
 裸 `kubectl apply -k` 不钉 tag 会拉取不存在的占位标签。清单内建行为：
 
 - api `replicas: 2` + `sessionAffinity: ClientIP` + ingress nginx cookie（SSE turn-resume 缓冲是进程内的，重连需落回同一 pod）。
-- initContainer 在 Pod Ready 前执行 `alembic upgrade head`（k8s `command:` 覆盖镜像 ENTRYPOINT，entrypoint 内的迁移不生效）。
+- initContainer 在 Pod Ready 前执行镜像内的 `docker-entrypoint.sh true`（k8s `command:` 覆盖镜像 ENTRYPOINT，所以必须显式调用同一脚本：对无 `alembic_version` 的存量 create_all 库先 `alembic stamp head`，再 `upgrade head`；幂等）。默认镜像 tag 是 CI 的 branch tag `master`；生产必须 `kustomize edit set image …:<ci-sha>`。
 - api pod 注解 `prometheus.io/scrape: "true"`、`prometheus.io/path: "/metrics"`、`prometheus.io/port: "8000"`。
 - 非 root（runAsUser 1001）、readOnlyRootFilesystem（可写面仅为挂载点）、专用 ServiceAccount、topologySpread 跨节点分散。
 - HPA `minReplicas: 2 / maxReplicas: 10`。
@@ -184,7 +186,7 @@ kubectl create secret generic webgis-secret --namespace=webgis-prod \
 
 | 变量 | 说明 | 必须 |
 |------|------|------|
-| `DATABASE_URL` | PostGIS 或 SQLite 地址（dev 默认 `sqlite:///./data/webgis.db`） | 是 |
+| `DATABASE_URL` | 本机 pytest / `manage.py` 默认 `sqlite:///./data/webgis.db`；dev compose api/celery 钉到 PostGIS `db` 服务；生产必须 `postgresql://` | 是 |
 | `REDIS_URL` | 数据枢纽（会话态 + Celery）；dev 默认 `redis://localhost:16379/0` | 是 |
 | `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND` | broker db0 / result db1 | 是 |
 | `JWT_SECRET_KEY` | JWT 签名密钥（留空则每次启动随机生成，重启后失效） | 是 |

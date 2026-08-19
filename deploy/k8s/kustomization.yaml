@@ -10,7 +10,7 @@ resources:
 - 02-api-deployment.yaml
 - 03-celery-deployment.yaml
 - 04-ingress.yaml
-# 审计 PR H: PDB + ServiceAccount + RBAC
+# 审计 PR H: PDB + API ServiceAccount（无 Role — app 不调 k8s API）
 - 06-hpa-pdb-rbac.yaml
 # 审计 K8S-06: HPA 从 04-ingress.yaml 拆出，独立成文件便于单独调参。
 - 07-hpa.yaml

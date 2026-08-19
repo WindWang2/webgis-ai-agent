@@ -16,12 +16,14 @@ Usage:
     # refresh baselines after an intentional, measured improvement
     PERF_UPDATE_BASELINES=1 uv run python -m pytest tests/benchmarks/test_perf_harness.py -m perf -q
 
+    # new workload with no committed baseline fails closed unless:
+    # ALLOW_MISSING_PERF_BASELINE=1 pytest tests/benchmarks/test_perf_harness.py -m perf -q
+
 Baselines are medians of N iterations; factors are generous (1.75x warn /
 4x fail with an absolute floor) so ordinary CI noise never fails the gate.
 """
 import asyncio
 import json
-import os
 import statistics
 import time
 import uuid
@@ -40,9 +42,9 @@ from shapely.geometry import LineString
 from app.lib.tool_cache import _reset_redis_client_for_tests
 from app.services import tool_metrics
 from app.tools.registry import ToolRegistry
+from tests.benchmarks._baseline_policy import decide_baseline_action
 
 BASELINES_PATH = Path(__file__).parent / "baselines.json"
-UPDATE_BASELINES = os.environ.get("PERF_UPDATE_BASELINES") == "1"
 
 # The raster workloads write temp .tif files under <repo>/data/. That dir is
 # gitignored and does not exist on a fresh CI checkout (the main Backend Tests
@@ -603,7 +605,7 @@ def test_perf_workload(name):
     measured = statistics.median(WORKLOADS[name]() for _ in range(ITERATIONS))
     baselines = _load_baselines()
 
-    if UPDATE_BASELINES or name not in baselines:
+    if decide_baseline_action(name, baselines) == "record":
         baseline = {"median_ms": round(measured, 3), "iterations": ITERATIONS}
         all_baselines = dict(baselines)
         all_baselines[name] = baseline

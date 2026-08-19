@@ -33,9 +33,9 @@ spec:
         fsGroup: 1001
       containers:
       - name: webgis-celery
-        # #559: CI 推送坐标 ghcr.io/windwang2/webgis-ai-agent:<sha>；tag 由
-        # kustomize edit set image 在部署时钉到 CI sha（见 kustomization.yaml）。
-        image: ghcr.io/windwang2/webgis-ai-agent:v0.1.2
+        # #618-37: default tag `master` matches CI branch tag. Pin sha at
+        # deploy time (kustomize edit set image …:<sha>).
+        image: ghcr.io/windwang2/webgis-ai-agent:master
         imagePullPolicy: Always
         # 审计 I25：容器安全上下文 — 禁止权限提升，丢弃所有 capabilities
         securityContext:

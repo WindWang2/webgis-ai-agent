@@ -35,6 +35,50 @@ class TestDevComposeSecurity:
             f"Redis has no authentication. Command: {cmd}"
         )
 
+    def test_api_and_celery_use_compose_postgis_not_sqlite(self):
+        """#618-32: Settings only reads DATABASE_URL. compose must pin
+        api/celery to the PostGIS `db` service — interpolating host .env
+        sqlite would let two containers write one SQLite file.
+        """
+        compose = _load_compose(DOCKER_COMPOSE)
+        for svc in ("api", "celery-worker"):
+            env = compose["services"][svc].get("environment") or []
+            if isinstance(env, dict):
+                mapping = env
+            else:
+                mapping = {}
+                for e in env:
+                    if isinstance(e, str) and "=" in e:
+                        k, v = e.split("=", 1)
+                        mapping[k] = v
+            url = mapping.get("DATABASE_URL", "")
+            assert url.startswith("postgresql://"), (
+                f"docker-compose.yml {svc} DATABASE_URL must be PostGIS, got {url!r}"
+            )
+            assert "@db:5432/" in url, (
+                f"docker-compose.yml {svc} DATABASE_URL must target service db, got {url!r}"
+            )
+            assert "DB_HOST" not in mapping, (
+                f"docker-compose.yml {svc} still injects dead DB_HOST "
+                "(Settings has no such field)"
+            )
+
+    def test_env_example_keeps_sqlite_for_pytest_and_compose_secrets(self):
+        """#618-32: .env.example sqlite is for local pytest; compose secrets exist."""
+        with open(".env.example", encoding="utf-8") as f:
+            text = f.read()
+        assert "DATABASE_URL=sqlite:///./data/webgis.db" in text
+        assert "DB_PASSWORD=" in text
+        assert "REDIS_PASSWORD=" in text
+        live_keys = [
+            line.split("=", 1)[0].strip()
+            for line in text.splitlines()
+            if line.strip() and not line.lstrip().startswith("#") and "=" in line
+        ]
+        assert "DB_HOST" not in live_keys, (
+            ".env.example must not declare live DB_HOST (Settings ignores it)"
+        )
+
 
 class TestProdComposeSecurity:
     def test_db_port_binds_localhost(self):

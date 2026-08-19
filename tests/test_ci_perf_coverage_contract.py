@@ -22,7 +22,21 @@ PR_LANE_PERF_FILES = (
     "test_job_runtime_perf.py",
     "test_provenance_perf.py",
     "test_bench_runner_478.py",
+    "test_llm_http_pooling_perf.py",
 )
+
+# Perf-marked files that stay nightly-only. They are collected by
+# nightly-matrix ``-m "cartography or perf"`` and must NOT join the PR
+# test-perf file list: they are wall-clock / large-N and trip the PR
+# 180s thread timeout (or flake under shared runners).
+NIGHTLY_ONLY_PERF_FILES = {
+    "test_perf_harness_v2.py": (
+        "event-loop lag is a wall-clock assertion; flaky under PR load / --cov"
+    ),
+    "test_perf_mapspec_e2e.py": (
+        "1k/10k/50k MapSpec upsert + lag monitor exceeds the PR 180s budget"
+    ),
+}
 
 _STDLIB = set(sys.stdlib_module_names)
 
@@ -125,16 +139,38 @@ def test_every_perf_marked_file_is_wired_into_a_lane():
 def test_test_perf_pr_lane_runs_fast_subset_no_cov():
     run = _job_run_text("test-perf")
     assert "--no-cov" in run
-    for f in (
-        "test_perf_harness.py",
-        "test_transport_perf.py",
-        "test_job_runtime_perf.py",
-        "test_provenance_perf.py",
-        "test_bench_runner_478.py",
-    ):
+    for f in PR_LANE_PERF_FILES:
         assert f in run, f"test-perf PR lane 缺少 {f}"
     # v2 的 event-loop lag 是墙钟断言，保持 nightly 专属，不进 PR
     assert "test_perf_harness_v2.py" not in run
+
+
+def test_nightly_only_perf_files_are_documented_and_excluded_from_pr():
+    """#618-29: remaining perf-marked files stay nightly because of timeouts.
+
+    PR lane is an explicit file list (fast / structural). Nightly
+    ``-m "cartography or perf"`` owns the wall-clock subset.
+    """
+    pr_run = _job_run_text("test-perf")
+    nightly_run = _job_run_text("nightly-matrix")
+    assert '-m "cartography or perf"' in nightly_run
+    marked = _perf_marked_files()
+    for name, reason in NIGHTLY_ONLY_PERF_FILES.items():
+        assert name in marked, f"{name} is documented nightly-only but lost its perf mark"
+        assert name not in pr_run, (
+            f"{name} must stay nightly-only ({reason}) — do not add it to "
+            "the PR test-perf file list"
+        )
+        assert reason.strip()
+    unmarked_nightly = (
+        marked
+        - set(PR_LANE_PERF_FILES)
+        - set(NIGHTLY_ONLY_PERF_FILES)
+    )
+    assert not unmarked_nightly, (
+        "perf-marked file is neither on the PR lane nor documented as "
+        f"nightly-only (timeouts): {sorted(unmarked_nightly)}"
+    )
 
 
 def test_backend_lane_excludes_perf_marker():
@@ -153,10 +189,17 @@ def test_perf_harness_v2_is_perf_marked_and_nightly_runs_it_no_cov():
 
 
 def test_backend_coverage_gate_is_non_decorative():
+    """#618-29: contract must match production.yml's ratchet (75), not a
+    decorative floor of 10. Do not raise this number independently of
+    the workflow — if CI moves the gate, move both together.
+    """
     run = _job_run_text("test-backend")
     m = re.search(r"--cov-fail-under=(\d+)", run)
     assert m, "test-backend 必须带 --cov-fail-under"
-    assert int(m.group(1)) >= 10, "覆盖闸不能是装饰性的低值"
+    assert int(m.group(1)) >= 75, (
+        "test-backend --cov-fail-under must match production.yml "
+        f"(ratchet 75); got {m.group(1)}"
+    )
 
 
 def test_frontend_vitest_has_real_coverage_thresholds():

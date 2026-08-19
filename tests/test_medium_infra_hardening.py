@@ -123,6 +123,33 @@ def test_i24_api_deployment_uses_service_account():
     """I24：api deployment 应指定 serviceAccountName。"""
     deploy = (REPO / "deploy" / "k8s" / "02-api-deployment.yaml").read_text()
     assert "serviceAccountName:" in deploy
+    assert "webgis-api-sa" in deploy
+
+
+def test_i24_no_orphan_celery_service_account():
+    """#618-36: 未挂载的 webgis-celery-sa 已删除（无配套 Role/RoleBinding）。"""
+    import yaml
+
+    docs = list(
+        yaml.safe_load_all(
+            (REPO / "deploy" / "k8s" / "06-hpa-pdb-rbac.yaml").read_text()
+        )
+    )
+    sa_names = [
+        d["metadata"]["name"]
+        for d in docs
+        if d and d.get("kind") == "ServiceAccount"
+    ]
+    assert "webgis-api-sa" in sa_names
+    assert "webgis-celery-sa" not in sa_names
+    celery_docs = list(
+        yaml.safe_load_all(
+            (REPO / "deploy" / "k8s" / "03-celery-deployment.yaml").read_text()
+        )
+    )
+    for d in celery_docs:
+        if d and d.get("kind") == "Deployment":
+            assert "serviceAccountName" not in d["spec"]["template"]["spec"]
 
 
 # ── I27: rollback pinned commit ─────────────────────────────────────────

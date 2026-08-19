@@ -45,7 +45,7 @@ cp .env.example .env
 | `DEBUG` | 代码默认 `false` | 本地开发请在 `.env` 显式设 `true`；缺省 `false` 避免泄漏堆栈/凭证 |
 | `ENV` | `development` | 设为 `production` 会启用一组生产校验（见第 9 节） |
 | `JWT_SECRET_KEY` | 空 | 留空时开发模式每次启动自动生成随机密钥并告警（重启后会话失效）；**生产必填**，缺失直接拒绝启动 |
-| `DATABASE_URL` | `sqlite:///./data/webgis.db` | 开发/CI 默认 SQLite；生产强制 PostgreSQL/PostGIS（见第 7 节） |
+| `DATABASE_URL` | `sqlite:///./data/webgis.db` | 本机 pytest / `manage.py` 默认 SQLite。dev compose 的 api/celery **不读**这个值，改用 PostGIS `db` 服务。生产强制 PostgreSQL/PostGIS（见第 7 节） |
 | `LLM_BASE_URL` | `https://api.stepfun.com/step_plan/v1` | OpenAI 兼容接口，项目默认为阶跃 Step Plan |
 | `LLM_API_KEY` | 占位符 | 生产模式校验会拒绝占位符值（`your-api-key-here`）；开发模式仅告警 |
 | `LLM_MODEL` | `step-3.7-flash` | 默认推理模型（思维链在 `reasoning_content`，正文在 `content`） |
@@ -61,7 +61,7 @@ cp .env.example .env
 容器路径额外必填（`docker-compose.yml` 用 `${VAR:?}` 强制）：
 
 - `REDIS_PASSWORD`：dev compose 的 redis 以 `--requirepass` 启动，必须设置。此时本机直连的 `REDIS_URL` 需带密码：`redis://:<REDIS_PASSWORD>@localhost:16379/0`。
-- `DB_PASSWORD`：PostgreSQL 容器密码。
+- `DB_PASSWORD`：PostgreSQL 容器密码。compose api/celery 用它拼 `DATABASE_URL=postgresql://postgres:${DB_PASSWORD}@db:5432/webgis`（应用不读 `DB_HOST`）。
 
 ## 4. 前端配置 frontend/.env.local
 
@@ -146,7 +146,7 @@ cd frontend && npm run dev
 
 ## 7. 数据库与迁移
 
-- 开发/CI 默认 SQLite（`sqlite:///./data/webgis.db`），零配置兜底；生产必须 PostgreSQL/PostGIS（`ENV=production` 时启动校验强制 `postgresql://` 前缀）。
+- 本机 pytest / `manage.py` 默认 SQLite（`sqlite:///./data/webgis.db`），零配置兜底。dev compose 的 api/celery 钉到 PostGIS `db` 服务（不读 `.env` 里的 sqlite URL）。生产必须 PostgreSQL/PostGIS（`ENV=production` 时启动校验强制 `postgresql://` 前缀）。
 - 迁移用 alembic，单一迁移链 `migrations/versions/`（18 个 revision）：
 
 ```bash

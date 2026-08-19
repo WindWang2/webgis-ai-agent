@@ -232,9 +232,12 @@ def test_k8s_api_has_migration_init_container():
     pod = dep["spec"]["template"]["spec"]
     inits = pod.get("initContainers", [])
     assert any(
-        "alembic" in " ".join(c.get("command", []) + c.get("args", []))
+        "docker-entrypoint.sh" in " ".join(c.get("command", []) + c.get("args", []))
         for c in inits
-    ), "api Deployment 必须有执行 alembic upgrade head 的 initContainer"
+    ), (
+        "api Deployment initContainer 必须走 docker-entrypoint.sh "
+        "（legacy stamp + alembic upgrade head），不能裸跑 alembic"
+    )
 
 
 def test_k8s_migration_init_container_gets_env_and_writable_tmp():
@@ -243,7 +246,8 @@ def test_k8s_migration_init_container_gets_env_and_writable_tmp():
     init = next(
         c
         for c in pod.get("initContainers", [])
-        if "alembic" in " ".join(c.get("command", []) + c.get("args", []))
+        if "docker-entrypoint.sh" in " ".join(c.get("command", []) + c.get("args", []))
+        or "alembic" in " ".join(c.get("command", []) + c.get("args", []))
     )
     env_from = init.get("envFrom", [])
     kinds = [
@@ -278,8 +282,26 @@ def test_k8s_celery_has_no_migration_init_container():
     dep = next(d for d in docs if d and d.get("kind") == "Deployment")
     inits = dep["spec"]["template"]["spec"].get("initContainers", [])
     assert not any(
-        "alembic" in " ".join(c.get("command", []) + c.get("args", [])) for c in inits
-    ), "celery Deployment 不应带 alembic initContainer"
+        "alembic" in joined or "docker-entrypoint.sh" in joined
+        for c in inits
+        for joined in [" ".join(c.get("command", []) + c.get("args", []))]
+    ), "celery Deployment 不应带 alembic / entrypoint initContainer"
+
+
+def test_k8s_migration_init_container_uses_entrypoint_not_bare_alembic():
+    """#618-33: 裸 alembic upgrade head 不会 stamp 收编 legacy create_all 库。"""
+    dep = _k8s_api_deployment()
+    init = next(
+        c
+        for c in dep["spec"]["template"]["spec"].get("initContainers", [])
+        if "docker-entrypoint.sh" in " ".join(c.get("command", []) + c.get("args", []))
+    )
+    cmdline = " ".join(init.get("command", []) + init.get("args", []))
+    assert "docker-entrypoint.sh" in cmdline
+    assert cmdline.strip().endswith("true") or "true" in init.get("args", [])
+    entry = ENTRYPOINT.read_text(encoding="utf-8")
+    assert "alembic stamp head" in entry
+    assert "legacy" in entry
 
 
 # ── 6. 迁移链产出 vs 模型元数据（drift check，#476 验收项）──────────────
@@ -498,6 +520,19 @@ def test_ci_db_migration_gate_is_release_blocking():
 
 
 def test_dev_dockerfile_untouched_by_entrypoint():
-    """dev 镜像（本地 compose 用）不装 entrypoint —— 本地 SQLite + create_all 语义不变。"""
+    """dev 镜像不装 entrypoint —— 本地 pytest 仍走 SQLite + create_all。"""
     df = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
     assert "docker-entrypoint.sh" not in df
+
+
+def test_dev_dockerfile_copies_vendor_for_pi_bridge():
+    """#618-37: backend-builder (compose api target) 必须 COPY vendor/，
+    否则 USE_NEW_AGENT 找不到 PI_RPC_ENTRY 并静默回退。runner 从该阶段拷 /app。"""
+    df = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    builder, _, rest = df.partition("FROM python:3.12-slim AS backend-builder")
+    assert rest, "Dockerfile 必须有 backend-builder 阶段"
+    runner_split = rest.split("FROM python:3.12-slim AS runner", 1)
+    builder_stage = runner_split[0]
+    assert "COPY vendor/" in builder_stage, (
+        "backend-builder 必须 COPY vendor/（PI_RPC_ENTRY + Pi dist）"
+    )

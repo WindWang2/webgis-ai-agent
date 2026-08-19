@@ -330,8 +330,12 @@ jobs:
         # #564：把三个 perf-marked 的"行为量"基准（durable job runtime 语义、
         # provenance 指纹复杂度、bench_runner 可复现 smoke）纳入 PR 门 —— 它们
         # 是确定性/快子集（无墙钟紧断言），补上此前"perf 文件在 PR 零执行"的
-        # 缺口。perf_harness_v2 的 event-loop lag（墙钟断言）保持 nightly 专属。
-        run: pytest tests/benchmarks/test_perf_harness.py tests/benchmarks/test_transport_perf.py tests/benchmarks/test_job_runtime_perf.py tests/benchmarks/test_provenance_perf.py tests/benchmarks/test_bench_runner_478.py -m perf --no-cov --timeout=180 --timeout-method=thread -q
+        # 缺口。
+        # #618-29：test_llm_http_pooling_perf.py 同样是 work-count / 无墙钟，
+        # 进 PR。test_perf_harness_v2.py（event-loop lag）与
+        # test_perf_mapspec_e2e.py（1k/10k/50k + lag monitor）保持 nightly
+        # 专属，避免打满本 job 的 180s thread timeout。
+        run: pytest tests/benchmarks/test_perf_harness.py tests/benchmarks/test_transport_perf.py tests/benchmarks/test_job_runtime_perf.py tests/benchmarks/test_provenance_perf.py tests/benchmarks/test_bench_runner_478.py tests/benchmarks/test_llm_http_pooling_perf.py -m perf --no-cov --timeout=180 --timeout-method=thread -q
 
   # ============ Stage 2c: 制图 / Harness 闭环 smoke（确定性，release-blocking）============
   cartography-smoke:
