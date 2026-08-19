@@ -15,7 +15,9 @@ import asyncio
 import copy
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+
+MutationOrigin = Literal["agent", "user", "system"]
 
 from app.services.session_data import session_data_manager
 from app.services.mapspec.store import mapspec_store_instance, _should_remove_layer
@@ -69,14 +71,31 @@ class MapSpecResult:
     # Monotonic session revision assigned while holding the distributed
     # lifecycle lock. Durable harness context uses it to reject late writes.
     mutation_revision: int = 0
+    origin: Optional[MutationOrigin] = None
+    # Stale expected_revision: not a validation error and not a commit.
+    superseded: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
-        if self.is_error:
-            res = {"success": False, "message": self.error_msg}
+        if self.superseded:
+            res = {
+                "success": False,
+                "status": "superseded",
+                "message": self.error_msg,
+                "mutation_revision": self.mutation_revision,
+            }
+            if self.origin is not None:
+                res["origin"] = self.origin
             if self.correction_hint:
                 res["correction_hint"] = self.correction_hint
             return res
-        return {
+        if self.is_error:
+            res = {"success": False, "message": self.error_msg}
+            if self.origin is not None:
+                res["origin"] = self.origin
+            if self.correction_hint:
+                res["correction_hint"] = self.correction_hint
+            return res
+        res = {
             "success": True,
             "mapspec": self.mapspec,
             "warnings": self.warnings,
@@ -88,6 +107,9 @@ class MapSpecResult:
             "runtime_observation_seq": self.runtime_observation_seq,
             "mutation_revision": self.mutation_revision,
         }
+        if self.origin is not None:
+            res["origin"] = self.origin
+        return res
 
 
 # ─── Discriminated Intent Value Objects ──────────────────────────────────────
@@ -228,12 +250,19 @@ class MapSpecLifecycleEngine:
         self,
         session_id: str,
         intent: MutationIntent,
+        *,
+        origin: MutationOrigin = "agent",
+        expected_revision: Optional[int] = None,
     ) -> MapSpecResult:
         """原子执行 MapSpec 意图变迁，带 per-session 分布式锁 + 事务 rollback。
 
         锁：session_lock_registry.lock(session_id) — Redis 跨 pod 互斥（生产），
         in-process asyncio.Lock（单 worker / 测试）。该锁序列化同 session 的并发
         mutation，避免 lost update。
+
+        origin 为 agent|user|system。user 必须带 expected_revision；缺省 origin=agent
+        且省略 expected_revision 时仍提交（既有 tool 兼容）。expected_revision 与当前
+        revision 不一致则 superseded，MapSpec 不变（ADR-0058）。
         """
         async with session_lock_registry.lock(session_id):
             invalidate = getattr(session_data_manager, "invalidate_local_cache", None)
@@ -248,7 +277,17 @@ class MapSpecLifecycleEngine:
             if pre_state.get("_cartographic_deleted") is True:
                 return MapSpecResult(
                     is_error=True,
+                    origin=origin,
                     error_msg="Session was deleted; stale MapSpec mutation rejected.",
+                )
+            if origin == "user" and expected_revision is None:
+                return MapSpecResult(
+                    is_error=True,
+                    origin=origin,
+                    error_msg="User MapSpec mutations require expected_revision.",
+                    correction_hint=(
+                        "Re-read MapSpec and retry with the current mutation_revision."
+                    ),
                 )
             # PERF-F8: defer the layers deepcopy — view/layout/time intents
             # never touch layers, and the COW work already avoids copying the
@@ -275,6 +314,20 @@ class MapSpecLifecycleEngine:
                 )
             except (TypeError, ValueError):
                 prior_mutation_revision = 0
+            if (
+                expected_revision is not None
+                and expected_revision != prior_mutation_revision
+            ):
+                return MapSpecResult(
+                    superseded=True,
+                    is_error=False,
+                    origin=origin,
+                    mutation_revision=prior_mutation_revision,
+                    error_msg="MapSpec revision has changed.",
+                    correction_hint=(
+                        "Re-read MapSpec and retry with the current mutation_revision."
+                    ),
+                )
             try:
                 loaded = await self.store.get_mapspec(session_id)
                 prior_mapspec = loaded
@@ -448,6 +501,7 @@ class MapSpecLifecycleEngine:
                     if not rb_res.get("success"):
                         return MapSpecResult(
                             is_error=True,
+                            origin=origin,
                             error_msg=rb_res.get("message", "Rollback failed"),
                         )
                     mapspec = rb_res["mapspec"]
@@ -540,6 +594,7 @@ class MapSpecLifecycleEngine:
                         )
                         return MapSpecResult(
                             is_error=True,
+                            origin=origin,
                             error_msg=f"MapSpec 校验失败: {msg}",
                             correction_hint=(
                                 "该意图会引入无效的 source 引用或非法 stops，已拒绝；"
@@ -602,6 +657,7 @@ class MapSpecLifecycleEngine:
                     mapspec_fingerprint=cartographic_review.get("final_fingerprint"),
                     runtime_observation_seq=runtime_observation_seq,
                     mutation_revision=mutation_revision,
+                    origin=origin,
                 )
 
             except Exception as e:
@@ -618,6 +674,7 @@ class MapSpecLifecycleEngine:
                 )
                 return MapSpecResult(
                     is_error=True,
+                    origin=origin,
                     error_msg=f"MapSpec 意图更新失败: {e}",
                     correction_hint="事务已回滚，last-known-good MapSpec 与运行时状态保持一致。",
                 )
