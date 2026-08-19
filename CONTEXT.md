@@ -304,24 +304,26 @@ Consolidates MapSpec document mutations (`InitProjectIntent`, `SetViewIntent`, `
 The distributed per-session lock registry (`app/services/distributed_lock.py`, ADR-0051). Provides `session_lock_registry.lock(session_id)` — a Redis-backed lock (`SET NX` + TTL + token-checked Lua release + best-effort renewal) for cross-pod mutual exclusion, with a resilient fallback to an in-process `asyncio.Lock` when Redis is unavailable or errors at acquire time (never blocks the request). Bounded fallback table with waiter-aware eviction.
 
 ### PiAgentHarness (V2)
-The evidence-driven **evaluation** harness for the cartographic closed loop (L1–L5). It is
+The evidence-driven **evaluation** harness for the cartographic closed loop. It is
 not Pi's agent host and not the GIS Harness. Name stays this round. MapSpecValidity stops
 at SEMANTIC_VALID (ADR-0060). The production gate is CartographicQuality on the live
-Observed Map (ADR-0063), not the 5-float AND.
+Observed Map (ADR-0063), not the 5-float AND. L5 `goal_satisfaction` stays `not_evaluated`;
+`success_levels` are not persisted on the production review (ADR-0064).
 _Avoid_: GISHarness as a rename of this module; treating “didn't error” as runtime success;
 COMPILE_VALID / RUNTIME_VALID as MapSpecValidity tiers; headless canvas as the runtime oracle;
-ToolChoice / ErrorRecovery / StepEfficiency 100 as a production pass.
+ToolChoice / ErrorRecovery / StepEfficiency 100 as a production pass; L5 inheriting L4 pass.
 
 ### EvaluationEvidence
 Proof that a GIS/map change actually happened: ref resolution, MapSpec validity ladder
 (`NOT_EVALUATED → MUTATION_REJECTED → MUTATION_ACCEPTED → SEMANTIC_VALID`), tool-call
 correlation, and actual-runtime review of the Observed Map. Missing evidence is
 `not_evaluated` / 0.0 — never pass, never 100, never a production exemption. L1 “tool
-did not error” is not “the map is correct.”
+did not error” is not “the map is correct.” L5 has no goal/visual oracle this spec.
 _Avoid_: GISEvidence; collapsing this into Decision Intelligence **Evidence**; treating
 `MUTATION_ACCEPTED` as runtime success; COMPILE_VALID / RUNTIME_VALID as validity tiers;
 map-action ACK or `InteractionStateConvergenceRate=100` as Observed Map proof;
-`overall_passed` as the cartographic signal the Agent should see.
+`overall_passed` as the cartographic signal the Agent should see; persisting L1–L5
+`success_levels` as the production review.
 
 ### Cartography Verdict
 The bounded next-turn projection of the current-generation review: `pass`, `fail`, or
