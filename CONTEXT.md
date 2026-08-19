@@ -306,9 +306,11 @@ The distributed per-session lock registry (`app/services/distributed_lock.py`, A
 ### PiAgentHarness (V2)
 The evidence-driven **evaluation** harness for the cartographic closed loop (L1–L5). It is
 not Pi's agent host and not the GIS Harness. Name stays this round. MapSpecValidity stops
-at SEMANTIC_VALID (ADR-0060).
+at SEMANTIC_VALID (ADR-0060). The production gate is CartographicQuality on the live
+Observed Map (ADR-0063), not the 5-float AND.
 _Avoid_: GISHarness as a rename of this module; treating “didn't error” as runtime success;
-COMPILE_VALID / RUNTIME_VALID as MapSpecValidity tiers; headless canvas as the runtime oracle.
+COMPILE_VALID / RUNTIME_VALID as MapSpecValidity tiers; headless canvas as the runtime oracle;
+ToolChoice / ErrorRecovery / StepEfficiency 100 as a production pass.
 
 ### EvaluationEvidence
 Proof that a GIS/map change actually happened: ref resolution, MapSpec validity ladder
