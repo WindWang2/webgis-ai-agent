@@ -85,6 +85,54 @@ def test_mapspec_validity_mixed_mutations():
     assert harness.compute_mapspec_validity() == 50.0
 
 
+def test_mapspec_validity_ladder_ceiling_is_semantic_valid():
+    """ADR-0060 / #655: MapSpecValidityTier stops at SEMANTIC_VALID (3).
+    COMPILE_VALID and RUNTIME_VALID are removed from the enum."""
+    from app.lib.harness.evidence import MapSpecValidityEvidence, MapSpecValidityTier
+
+    # Verify members
+    tiers = list(MapSpecValidityTier)
+    assert tiers == [
+        MapSpecValidityTier.NOT_EVALUATED,
+        MapSpecValidityTier.MUTATION_REJECTED,
+        MapSpecValidityTier.MUTATION_ACCEPTED,
+        MapSpecValidityTier.SEMANTIC_VALID,
+    ]
+    assert not hasattr(MapSpecValidityTier, "COMPILE_VALID")
+    assert not hasattr(MapSpecValidityTier, "RUNTIME_VALID")
+
+    # Verify is_valid semantic boundary
+    assert MapSpecValidityEvidence(tier=MapSpecValidityTier.SEMANTIC_VALID).is_valid is True
+    assert MapSpecValidityEvidence(tier=MapSpecValidityTier.MUTATION_ACCEPTED).is_valid is False
+    assert MapSpecValidityEvidence(tier=MapSpecValidityTier.MUTATION_REJECTED).is_valid is False
+    assert MapSpecValidityEvidence(tier=MapSpecValidityTier.NOT_EVALUATED).is_valid is False
+
+
+def test_validity_for_mutation_never_lifts_above_semantic_valid():
+    """Harness mutation validity evaluation stops at SEMANTIC_VALID."""
+    from app.lib.harness.evidence import MapSpecValidityTier
+
+    harness = PiAgentHarness(session_id="s_ceiling")
+    # Mut accepted with is_valid=True
+    ev = harness._validity_for_mutation(
+        "tc1",
+        {"mutation_accepted": True, "is_valid": True, "semantic_errors": []},
+        {"success": True, "mapspec_revision": "r1"},
+    )
+    assert ev.tier == MapSpecValidityTier.SEMANTIC_VALID
+    assert ev.is_valid is True
+
+    # Mut accepted without is_valid -> MUTATION_ACCEPTED (not is_valid)
+    ev2 = harness._validity_for_mutation(
+        "tc2",
+        {"mutation_accepted": True, "is_valid": False},
+        {"success": True},
+    )
+    assert ev2.tier == MapSpecValidityTier.MUTATION_ACCEPTED
+    assert ev2.is_valid is False
+
+
+
 # ── V2: CursorResolutionRate from REAL SessionStore resolution ───────────
 
 

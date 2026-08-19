@@ -65,14 +65,14 @@ class RefResolutionStatus(str, Enum):
 class MapSpecValidityTier(int, Enum):
     """MapSpec 有效性的分层证据（值越大证据越强）。
 
+    ADR-0060: 天花板止于 SEMANTIC_VALID（3）。COMPILE_VALID 与 RUNTIME_VALID
+    已被移除，阶梯不假装拥有这些证明。
     缺失证据为 NOT_EVALUATED（0），绝不为 success。
     """
     NOT_EVALUATED = 0       # 未采集到任何证据
     MUTATION_REJECTED = 1   # mutation 被校验拒绝（transaction 回滚）
     MUTATION_ACCEPTED = 2   # 工具未报错（最弱证据——"没崩"≠"有效"）
     SEMANTIC_VALID = 3      # 通过纯 Python 结构校验 validate()
-    COMPILE_VALID = 4       # 通过 TS 编译器（compile-report success）
-    RUNTIME_VALID = 5       # 通过 headless 运行时（mapLoaded + 无错误 + 非空 canvas）
 
 
 class MapActionStatus(str, Enum):
