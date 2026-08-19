@@ -547,23 +547,29 @@ def generate_heatmap_raster(features: list, cell_size: int = 500, radius: int = 
 
             v_max_actual = H_smooth.max()
             if v_max_actual > 0:
-                H_smooth[H_smooth < v_max_actual * 0.01] = 0
+                H_smooth[H_smooth < v_max_actual * 0.02] = 0
 
             colors = _HEATMAP_PALETTES.get(palette, _HEATMAP_PALETTES["classic"])
             cmap = LinearSegmentedColormap.from_list("dynamic_heat", colors, N=256)
 
-            fig, ax = plt.subplots(figsize=(10, 10), dpi=100)
-            v_max = np.percentile(H_smooth, 98) if H_smooth.max() > 0 else 1.0
-            if v_max <= 0:
-                v_max = H_smooth.max() or 1.0
+            # 密度归一化基准：只统计非零格（全网格 98 分位会被海量零格拉到
+            # ~0，导致整幅图饱和成最高色 —— 「整片洗色」的直接原因）。
+            nonzero = H_smooth[H_smooth > 0]
+            v_max = float(np.percentile(nonzero, 98)) if nonzero.size else 1.0
+            v_max = max(v_max, v_max_actual * 0.05, 1e-9)
 
+            # 手工 RGBA：密度越低越透明（0 密度全透明）。此前 imshow+cmap 会把
+            # 整个网格矩形涂满调色板最低色（不透明蓝）——大范围单色 wash。
+            norm = np.clip(H_smooth / v_max, 0.0, 1.0)
+            rgba = cmap(norm)
+            rgba[..., 3] = np.clip(norm * 3.0, 0.0, 1.0)
+            rgba[..., 3][H_smooth <= 0] = 0.0
+
+            fig, ax = plt.subplots(figsize=(10, 10), dpi=100)
             ax.imshow(
-                H_smooth,
-                cmap=cmap,
+                rgba,
                 origin="lower",
                 aspect="auto",
-                vmin=0,
-                vmax=v_max,
                 interpolation="bilinear",
             )
             ax.axis("off")

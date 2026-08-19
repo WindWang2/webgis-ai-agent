@@ -135,8 +135,8 @@ async def test_heatmap_data_insufficient_points(spatial_tools):
         "cell_size": 500,
         "radius": 1000,
     })
-    # Single point falls back to in-process _generate_heatmap (no Celery needed)
-    assert "image" in result or "error" in result or "data" in result
+    # v2 默认 native：单点也返回可渲染的 add_native_heatmap 命令
+    assert result.get("command") == "add_native_heatmap" or "image" in result or "error" in result
 
 
 @pytest.mark.asyncio

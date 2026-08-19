@@ -249,17 +249,33 @@ def convert_analysis_to_mapspec_layer(
         paint_color, has_thematic_paint, legend_warnings = _resolve_paint_color(legend_spec, layer_type)
         warnings.extend(legend_warnings)
 
-        default_paint = dict(DEFAULT_CONSTANT_PAINTS.get(layer_type, {"color": DEFAULT_CONSTANT_COLOR}))
-        if not has_thematic_paint:
-            paint_color = _default_color(layer_type)
+        if layer_type == "heatmap":
+            # 原生热力图层：官方 create-a-heatmap-layer 范式（zoom 插值
+            # radius/intensity + 密度多停靠点色带，首段透明）。不走
+            # circle/fill 的 color 语义——heatmap paint 键是 MapLibre 原生
+            # 表达式，图例一致性由 palettes.NATIVE_HEATMAP_COLORS 单一色源保证。
+            from app.lib.cartography.palettes import heatmap_paint
+            meta = analysis_result.get("metadata") or {}
+            params_meta = analysis_result.get("params") or {}
+            paint = heatmap_paint(
+                meta.get("palette") or params_meta.get("palette") or "classic",
+                meta.get("radius") or params_meta.get("radius") or 20,
+            )
+            existing_paint = base_layer.get("paint")
+            if isinstance(existing_paint, dict):
+                paint.update(existing_paint)
+        else:
+            default_paint = dict(DEFAULT_CONSTANT_PAINTS.get(layer_type, {"color": DEFAULT_CONSTANT_COLOR}))
+            if not has_thematic_paint:
+                paint_color = _default_color(layer_type)
 
-        existing_paint = base_layer.get("paint")
-        paint = dict(default_paint)
-        if isinstance(existing_paint, dict):
-            paint.update(existing_paint)
+            existing_paint = base_layer.get("paint")
+            paint = dict(default_paint)
+            if isinstance(existing_paint, dict):
+                paint.update(existing_paint)
 
-        if has_thematic_paint or "color" not in paint:
-            paint["color"] = paint_color
+            if has_thematic_paint or "color" not in paint:
+                paint["color"] = paint_color
 
         algorithm = (
             analysis_result.get("algorithm")

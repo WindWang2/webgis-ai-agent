@@ -73,6 +73,32 @@ class TestHeatmapNativeLegendSpec:
         assert "legend_spec" in result
         assert result["legend_spec"]["palette"] == "Viridis"
 
+    async def test_native_legend_colors_match_frontend_palette(self):
+        """图例渐变色与前端 HEATMAP_PALETTES 同源（classic：蓝→青→绿→黄→橙→红）。
+
+        此前 native 图例走 matplotlib YlOrRd（黄→红），与地图 heatmap-color
+        的蓝→红渐变错位——用户看到「地图单蓝、图例另一套色」。图例色现在
+        直出与前端停靠点相同的 6 色。
+        """
+        result = await _dispatch_native(n=5, palette="classic")
+        colors = result["legend_spec"]["palette_colors"]
+        assert len(colors) == 6
+        assert colors[0] == "#428cd2"  # 与 renderer.ts classic 首色 rgb(66,140,210) 一致
+        assert colors[-1] == "#eb2828"  # 尾色 rgb(235,40,40)
+        # viridis 同样直出前端色
+        result_v = await _dispatch_native(n=5, palette="viridis")
+        assert result_v["legend_spec"]["palette_colors"][0] == "#482878"
+
+    async def test_native_carries_type_hint_for_mapspec_authoring(self):
+        """type_hint=heatmap 驱动 dispatch 的 MapSpec 授权产出 heatmap 图层。
+
+        无 type_hint 时点要素被推断为 circle —— 热力图从未以 heatmap 层
+        挂到地图上（用户实测「热力图没有」的根因之一）。
+        """
+        result = await _dispatch_native(n=5, palette="classic")
+        assert result["type_hint"] == "heatmap"
+        assert result["metadata"]["palette"] == "classic"
+
     async def test_native_includes_weight_field_in_metadata(self):
         """Verify native result carries the render metadata needed by frontend."""
         result = await _dispatch_native(n=10, palette="thermal", radius=3000)

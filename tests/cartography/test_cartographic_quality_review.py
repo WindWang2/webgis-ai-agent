@@ -2002,3 +2002,25 @@ def test_persisted_cartographic_evidence_is_bounded_without_losing_verdict():
     assert serialized["repair_attempts_omitted"] == 1
     assert len(serialized["visual_evidence"]) == 4
     assert serialized["visual_evidence_omitted"] == 4
+
+
+def test_point_heatmap_layer_passes_geometry_check():
+    """heatmap 是 Point 源的合法图层类型（MapLibre 密度累积定义在点要素上）。
+
+    回归：_GEOM_LAYER_TYPE 原先只认 circle/symbol —— heatmap_data 授权的
+    type=heatmap 图层会被 harness 误判为 geometry 不匹配。
+    """
+    mapspec = _plain_mapspec()
+    mapspec["layers"][0]["type"] = "heatmap"
+    mapspec["layers"][0]["paint"] = {
+        "heatmap-weight": 1,
+        "heatmap-color": ["interpolate", ["linear"], ["heatmap-density"],
+                          0, "rgba(38,110,182,0)", 1, "#eb2828"],
+    }
+
+    report = evaluate_cartography_semantics(
+        mapspec, {"points": _point_profile()}
+    ).to_dict()
+
+    geometry = next(c for c in report["checks"] if c["rule"] == "GEOMETRY_LAYER_TYPE")
+    assert geometry["status"] == "pass"

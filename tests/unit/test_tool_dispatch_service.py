@@ -687,3 +687,48 @@ async def test_concurrent_inflight_duplicate_does_not_claim_success(service, fak
     r2 = await service.dispatch(tc, clean_session, executed)
     assert r2.status == "repeated"
     assert "以相同参数成功执行" in r2.llm_payload
+
+
+# ── 原生热力图端到端授权：type_hint=heatmap → MapSpec 落 heatmap 图层 ──
+
+
+@pytest.mark.asyncio
+async def test_native_heatmap_result_authors_heatmap_mapspec_layer(
+    service, fake_registry, clean_session
+):
+    """【回归锁定】heatmap_data native 的结果（FC + type_hint + metadata）经
+    dispatch MapSpec 授权必须落 type=heatmap 图层 + 官方范式 paint。
+
+    回归现场：type_hint 缺失时点要素被推断为 circle，FC 体被白名单剥离，
+    add_native_heatmap 指令丢失 —— 热力图从未在地图上出现。
+    """
+    fake_registry.dispatch.return_value = {
+        "type": "FeatureCollection",
+        "features": [
+            {"geometry": {"type": "Point", "coordinates": [104.0, 30.6]}, "properties": {}},
+            {"geometry": {"type": "Point", "coordinates": [104.02, 30.62]}, "properties": {}},
+        ],
+        "command": "add_native_heatmap",
+        "type_hint": "heatmap",
+        "metadata": {"render_type": "native", "point_count": 2,
+                     "radius": 1500, "palette": "thermal"},
+        "legend_spec": {"type": "continuous", "min": 0.0, "max": 1.0,
+                        "palette": "YlOrRd", "palette_colors": ["#0066ff", "#eb1414"]},
+    }
+    result = await service.dispatch(
+        _tc("heatmap_data", {"geojson": "...", "render_type": "native"}, tc_id="call_heat"),
+        clean_session, set(),
+    )
+    assert result.status == "ok"
+    assert result.map_actions[0]["command"] == "add_layer"
+
+    persisted = await mapspec_store_instance.get_mapspec(clean_session)
+    heat = next(l for l in persisted["layers"] if l["type"] == "heatmap")
+    paint = heat["paint"]
+    for key in ("heatmap-weight", "heatmap-intensity", "heatmap-color",
+                "heatmap-radius", "heatmap-opacity"):
+        assert key in paint
+    # 色带用 palette=thermal 的停靠点色（米制 radius 回落默认 20px）
+    assert "#0066ff" in str(paint["heatmap-color"])
+    assert paint["heatmap-radius"][6] == 20
+    assert heat["provenance"]["algorithm"] == "heatmap_data"

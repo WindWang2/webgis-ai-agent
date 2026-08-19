@@ -1,4 +1,6 @@
 """Unit tests for Analysis -> Cartography Converter (Seam A)."""
+import json
+
 from app.services.analysis_cartography_converter import (
     is_analysis_result,
     convert_analysis_to_mapspec_layer,
@@ -370,3 +372,78 @@ def test_converter_exception_resilience_on_malformed_input():
     assert "provenance" in converted_layer
     assert len(converted_layer["provenance"]["warnings"]) >= 1
 
+
+
+# ── 原生热力图授权（type_hint=heatmap → type=heatmap + 官方范式 paint）──
+
+
+def _point_fc(n=3):
+    return {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature",
+             "geometry": {"type": "Point", "coordinates": [104.0 + i * 0.01, 30.6]},
+             "properties": {"name": f"p{i}"}}
+            for i in range(n)
+        ],
+    }
+
+
+def test_heatmap_type_hint_authors_official_paint():
+    """type_hint=heatmap 的点要素结果 → heatmap 图层 + 官方范式 paint。
+
+    回归：无 type_hint 时点要素被推断为 circle（heatmap_data native 的
+    FC 结果走 dispatch MapSpec 授权，热力图从未以 heatmap 层挂上）。
+    """
+    fc = _point_fc()
+    analysis = {
+        "success": True,
+        "algorithm": "heatmap_data",
+        "data": fc,
+        "type_hint": "heatmap",
+        "metadata": {"render_type": "native", "palette": "thermal",
+                     "radius": 1500, "point_count": 3},
+    }
+    converted_layer, inline_geojson, warnings = convert_analysis_to_mapspec_layer(analysis)
+
+    assert inline_geojson == fc
+    assert converted_layer["type"] == "heatmap"
+
+    # dispatch 实际形态（数据在 ref 后面，无内联 geojson）：type_hint 单独
+    # 驱动图层类型 —— 否则点要素默认推断 circle，热力图从未挂上。
+    dispatch_shape = {
+        "geojson": fc, "algorithm": "heatmap_data",
+        "type_hint": "heatmap",
+        "metadata": {"palette": "classic", "radius": 2000},
+    }
+    layer2, _, _ = convert_analysis_to_mapspec_layer(dispatch_shape)
+    assert layer2["type"] == "heatmap"
+    assert layer2["paint"]["heatmap-color"][2] == ["heatmap-density"]
+    paint = converted_layer["paint"]
+    # 官方 create-a-heatmap-layer 的五个 paint 键，非 circle 的 color 语义
+    for key in ("heatmap-weight", "heatmap-intensity", "heatmap-color",
+                "heatmap-radius", "heatmap-opacity"):
+        assert key in paint, f"missing {key}"
+    # 色带：thermal 首色 + ≥6 停靠点；密度键驱动
+    color_expr = paint["heatmap-color"]
+    assert color_expr[0] == "interpolate" and color_expr[2] == ["heatmap-density"]
+    flat = json.dumps(color_expr)
+    assert "#0066ff" in flat and "rgba(0,40,255,0)" in flat
+    # radius/intensity 都是 zoom 插值；米制 radius(1500) 回落默认 20px
+    assert paint["heatmap-radius"][2] == ["zoom"]
+    assert paint["heatmap-intensity"][2] == ["zoom"]
+    assert paint["heatmap-radius"][6] == 20  # 米制 1500 回落默认 20px
+    assert not any("heatmap" in str(w) for w in warnings)
+
+
+def test_heatmap_paint_palette_fallback_and_unknown():
+    """未知 palette 回落 classic；px 语义 radius 直通。"""
+    from app.lib.cartography.palettes import heatmap_paint, heatmap_legend_colors
+
+    paint = heatmap_paint("不存在", 24)
+    assert "#428cd2" in json.dumps(paint["heatmap-color"])  # classic 兜底
+    assert paint["heatmap-radius"][6] == 24
+    assert paint["heatmap-radius"][8] == min(80, int(24 * 1.7))
+
+    legend = heatmap_legend_colors("classic")
+    assert legend[0] == "#428cd2" and legend[-1] == "#eb2828" and len(legend) == 6

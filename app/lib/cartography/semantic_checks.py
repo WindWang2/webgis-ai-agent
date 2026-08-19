@@ -20,10 +20,12 @@ from typing import Any, Dict, List, Optional
 from app.lib.cartography.thematic_spec import palette_size, spec_to_paint, thematic_field
 
 # Layer "type" expected for a given geometry type. A Point layer painted as
-# "fill" is almost certainly a configuration defect.
+# "fill" is almost certainly a configuration defect. Heatmap layers consume
+# point sources（MapLibre heatmap 的密度累积定义在点要素上），与 circle 同为
+# Point 的合法呈现 —— 不加会误杀 heatmap_data 授权的图层。
 _GEOM_LAYER_TYPE = {
-    "Point": {"circle", "symbol"},
-    "MultiPoint": {"circle", "symbol"},
+    "Point": {"circle", "symbol", "heatmap"},
+    "MultiPoint": {"circle", "symbol", "heatmap"},
     "LineString": {"line"},
     "MultiLineString": {"line"},
     "Polygon": {"fill"},

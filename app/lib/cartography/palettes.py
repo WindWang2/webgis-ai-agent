@@ -38,4 +38,65 @@ def resolve_palette_colors(palette: str, fallback: str = "YlOrRd") -> List[str]:
     return list(COLOR_PALETTES.get("YlOrRd", ["#ffffb2", "#feb24c", "#bd0026"]))
 
 
-__all__ = ["COLOR_PALETTES", "get_color_from_palette", "resolve_palette_colors"]
+# ─── 原生热力图（MapLibre heatmap 层）────────────────────────────────────
+# 色带与前端 frontend/lib/map-kit/renderer.ts 的 HEATMAP_PALETTES +
+# HEATMAP_STOP_POSITIONS 同源：首色透明（官方示例的 blur 效果），其余 6 色
+# 与前端逐色一致——图例（_build_legend_spec）、MapSpec 授权
+# （analysis_cartography_converter）与前端渲染三者不会出现色带漂移。
+# 停靠点位置按 MapLibre 累积 shader 的密度域标定：单点高斯峰 ≈0.4·weight·
+# intensity，中间色压在 0.12-0.45 段保证单点/小簇/密集核分级可辨。
+HEATMAP_STOP_POSITIONS = (0, 0.12, 0.25, 0.45, 0.65, 0.85, 1.0)
+
+NATIVE_HEATMAP_COLORS: Dict[str, List[str]] = {
+    "classic": ["rgba(38,110,182,0)", "#428cd2", "#3dbce8", "#60d678",
+                "#fae032", "#fa8c28", "#eb2828"],
+    "magma": ["rgba(0,0,4,0)", "#341058", "#70207a", "#b63679",
+              "#f46d43", "#fcc178", "#ffffd9"],
+    "viridis": ["rgba(68,1,84,0)", "#482878", "#3b5c9d", "#23948b",
+                "#7acb62", "#fdd53c", "#ffffdc"],
+    "thermal": ["rgba(0,40,255,0)", "#0066ff", "#00d6ff", "#50f078",
+                "#ffe600", "#ff7800", "#eb1414"],
+}
+
+
+def heatmap_legend_colors(palette: str) -> List[str]:
+    """图例渐变色 = 色带去掉透明的首色（6 段不透明色）。"""
+    colors = NATIVE_HEATMAP_COLORS.get(palette, NATIVE_HEATMAP_COLORS["classic"])
+    return list(colors[1:])
+
+
+def heatmap_paint(palette: str = "classic", radius: int = 20) -> Dict[str, object]:
+    """原生热力图层的 MapLibre paint 表达式（官方 create-a-heatmap-layer 范式）。
+
+    - heatmap-radius/intensity 随 zoom 插值：远视图半径小、放大后补偿强度，
+      避免「缩小全是红核 / 放大整片冷色」；
+    - heatmap-color 多停靠点密度色带（首段透明）；
+    - ``radius`` 语义是像素；调用方传米制值（工具 schema 的搜索半径）时
+      回落默认 20px（与前端 renderer 的米制误传防御同阈值）。
+    """
+    colors = NATIVE_HEATMAP_COLORS.get(palette, NATIVE_HEATMAP_COLORS["classic"])
+    stops: List[object] = []
+    for pos, color in zip(HEATMAP_STOP_POSITIONS, colors):
+        stops.extend([pos, color])
+    try:
+        radius_px = int(radius)
+    except (TypeError, ValueError):
+        radius_px = 20
+    if not (4 <= radius_px <= 60):
+        radius_px = 20  # 米制误传（1000-2000）回落
+    return {
+        "heatmap-weight": 1,
+        "heatmap-intensity": ["interpolate", ["linear"], ["zoom"],
+                              0, 0.6, 9, 1.4, 13, 2.2],
+        "heatmap-color": ["interpolate", ["linear"], ["heatmap-density"], *stops],
+        "heatmap-radius": ["interpolate", ["linear"], ["zoom"],
+                           0, 2, 9, radius_px, 13, min(80, int(radius_px * 1.7))],
+        "heatmap-opacity": 0.9,
+    }
+
+
+__all__ = [
+    "COLOR_PALETTES", "get_color_from_palette", "resolve_palette_colors",
+    "HEATMAP_STOP_POSITIONS", "NATIVE_HEATMAP_COLORS",
+    "heatmap_legend_colors", "heatmap_paint",
+]

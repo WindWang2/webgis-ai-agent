@@ -1,6 +1,6 @@
 """空间分析 FC 工具"""
 import logging
-from typing import List, Any
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
@@ -18,12 +18,21 @@ _PALETTE_MAP = {
     "thermal": "Reds",
 }
 
+# native 渲染的图例色：与前端 HEATMAP_PALETTES 同源的单一色源在
+# app/lib/cartography/palettes.py（NATIVE_HEATMAP_COLORS）——图例、MapSpec
+# 授权与前端渲染共用，杜绝「地图多色、图例另一套色」的错位。
 
-def _build_legend_spec(palette: str, min_val: float = 0.0, max_val: float = 1.0) -> dict:
-    """Build a continuous legend spec for heatmap rendering."""
+
+def _build_legend_spec(palette: str, min_val: float = 0.0, max_val: float = 1.0,
+                       colors: Optional[List[str]] = None) -> dict:
+    """Build a continuous legend spec for heatmap rendering.
+
+    ``colors`` 直出图例渐变色（native 路径传前端同源停靠点色）；
+    缺省走 matplotlib 风格的 cartography 调色板解析（raster 等路径）。
+    """
     from app.lib.cartography.palettes import resolve_palette_colors
     palette_key = _PALETTE_MAP.get(palette, "YlOrRd")
-    palette_colors = resolve_palette_colors(palette_key)
+    palette_colors = colors if colors else resolve_palette_colors(palette_key)
     return {
         "type": "continuous",
         "min": min_val,
@@ -42,7 +51,7 @@ class HeatmapDataArgs(BaseModel):
     geojson: Any = Field(..., description="输入点要素 GeoJSON 或数据引用(ref:xxx)")
     cell_size: int = Field(500, ge=10, le=5000, description="网格大小（米），范围 10-5000")
     radius: int = Field(1000, ge=10, le=10000, description="搜索半径（米），范围 10-10000")
-    render_type: str = Field("raster", description="渲染模式: raster(栅格), grid(格网), native(原生)")
+    render_type: str = Field("native", description="渲染模式: native(原生逐点密度，默认推荐), raster(服务端栅格PNG), grid(格网)")
     palette: str = Field("classic", description="配色方案: classic, magma, viridis, thermal")
 
 def register_spatial_tools(registry: ToolRegistry):
@@ -112,15 +121,22 @@ def register_spatial_tools(registry: ToolRegistry):
            ),
            args_model=HeatmapDataArgs)
     @cached_tool(ttl=3600)
-    def heatmap_data(geojson: Any, cell_size: int = 500, radius: int = 2000, render_type: str = "raster", palette: str = "classic") -> dict:
+    def heatmap_data(geojson: Any, cell_size: int = 500, radius: int = 2000, render_type: str = "native", palette: str = "classic") -> dict:
         data = safe_parse_geojson(geojson)
         if not data:
             raise ValueError("Invalid GeoJSON input")
         features = data.get("features") or data.get("feature_collection", [])
-        
+
+        # 默认 native：MapLibre 逐点核密度渲染（轻量、密度真实）。raster 是
+        # 服务端预渲染 PNG，仅在需要导出图片/离线渲染时显式指定。
         if render_type == "native":
             if isinstance(data, dict):
                 data["command"] = "add_native_heatmap"
+                # type_hint 驱动 dispatch 的 MapSpec 授权把点要素结果落成
+                # type=heatmap 图层（默认推断是 circle —— 热力图从未挂上的
+                # 根因），metadata 供授权方生成官方范式 paint（zoom 插值
+                # radius/intensity + 密度多停靠点色带）。
+                data["type_hint"] = "heatmap"
                 data["metadata"] = {
                     "render_type": "native",
                     "point_count": len(features),
@@ -129,8 +145,13 @@ def register_spatial_tools(registry: ToolRegistry):
                 }
                 # Generate legend_spec for native mode so the frontend can
                 # show a color gradient legend alongside the heatmap layer.
+                # 图例色与前端 heatmap-color 停靠点同源（palettes.NATIVE_HEATMAP_COLORS）。
                 try:
-                    data["legend_spec"] = _build_legend_spec(palette)
+                    from app.lib.cartography.palettes import heatmap_legend_colors
+                    data["legend_spec"] = _build_legend_spec(
+                        palette,
+                        colors=heatmap_legend_colors(palette),
+                    )
                 except Exception as e:
                     logger.warning(f"[heatmap_data] legend_spec generation failed: {e}")
             if isinstance(data, dict) and data.get("type") == "FeatureCollection":

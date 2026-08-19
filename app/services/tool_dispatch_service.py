@@ -589,6 +589,12 @@ class ToolDispatchService:
             "legend_spec": result.get("legend_spec"),
             "algorithm": tool_name,
             "result_ref": result_ref,
+            # 热力图等带渲染意图的工具：type_hint 驱动图层类型推断（点要素
+            # 默认推断 circle，type_hint=heatmap 才落 heatmap 层）；metadata
+            # 携带 palette/radius 供官方范式 paint 授权。
+            "type_hint": result.get("type_hint"),
+            "metadata": result.get("metadata")
+            if isinstance(result.get("metadata"), dict) else None,
         }
         try:
             converted_layer, _, conversion_warnings = await asyncio.to_thread(
@@ -1004,6 +1010,15 @@ def is_suspicious_result(result: Any) -> bool:
         # success. (The dispatch error branch handles it before this point.)
         if is_tool_error_result(result):
             return True
+        # MapSpec 封装会剥掉 features、只留 result_ref + feature_count。
+        # 若仍按「无 features 即空」判断，本地 OSM/行政区成功也会被标 empty，
+        # 模型就会再去调高德 search_poi。
+        ref = result.get("result_ref") or result.get("ref")
+        n = result.get("feature_count")
+        if n is None:
+            n = result.get("count")
+        if isinstance(ref, str) and ref.startswith("ref:") and isinstance(n, (int, float)) and n > 0:
+            return False
         if result.get("type") == "FeatureCollection" and not result.get("features"):
             return True
         if "data" in result and isinstance(result["data"], list) and not result["data"]:
