@@ -249,12 +249,17 @@ def register_crawler_tools(registry: ToolRegistry):
 
     @tool(registry, name="search_and_extract_poi",
            description=(
-               "（Sub-Agent 盲区探测器）当基础查询无法获取商业地点、新闻事件或最新 POI 数据时，"
-               "通过公网搜索引擎爬取非结构化文本内容，交由大语言模型进一步提取为含有真实信息的地理要素集。"
-               "底层与 web_search 共用搜索通路（千帆优先，DDG 兜底）。"
+               "（Sub-Agent 盲区探测器）仅用于中国境外、新闻事件或本地 OSM 没有的最新商业点。"
+               "中国境内设施/院校/医院等禁止使用本工具，改 query_local_osm。"
            ),
            args_model=QueryWebCrawlerArgs)
     async def search_and_extract_poi(query: str, limit: int = 5) -> dict:
+        from app.services.local_first import try_local_web_poi
+
+        local = try_local_web_poi(query, limit)
+        if local is not None:
+            return local
+
         logger.info(f"[Crawler] Sub-Agent executing web search for: {query}")
         # 优先千帆，回落 DDG —— 与 web_search 同一条策略，避免两个工具行为漂移
         if settings.BAIDU_QIANFAN_TOKEN:

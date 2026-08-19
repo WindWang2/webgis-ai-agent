@@ -26,6 +26,24 @@ class TestSuspicious:
             ({"poi_count": 5}, False),
             ({"success": True, "ref": "ref:x"}, False),
             (["x"], False),
+            # 制图封装后要素体被收成 result_ref，不能再当空结果。
+            (
+                {
+                    "type": "FeatureCollection",
+                    "feature_count": 128,
+                    "result_ref": "ref:geojson-schools",
+                    "success": True,
+                },
+                False,
+            ),
+            (
+                {
+                    "type": "FeatureCollection",
+                    "count": 20,
+                    "result_ref": "ref:geojson-admin",
+                },
+                False,
+            ),
         ],
     )
     def test_each_shape(self, result, expected):

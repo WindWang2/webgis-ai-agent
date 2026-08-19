@@ -187,17 +187,24 @@ def register_osm_tools(registry: ToolRegistry):
 
     @tool(registry, name="query_osm_poi",
            description=(
-               "在 OpenStreetMap (Overpass API) 内查询区域内的兴趣点 (POI)，返回 GeoJSON 点要素集。"
+               "在区域内查询兴趣点 (POI)，返回 GeoJSON 点要素集。"
+               "中国境内优先查本地 OSM GPKG（离线、秒级）；本地未命中再走 Overpass。"
                "\n何时用：用户给的是区域+POI类型 (如『成都的学校』『海淀区的医院』)；"
-               "需要全量 / 大批 POI 而不是周边几条结果；预算允许等待 (Overpass 可能 3-10s)。"
+               "需要全量 / 大批 POI 而不是周边几条结果。"
                "\n何时不用：(1) 用户问『附近 500 米的便利店』 — 用 search_poi_around (按半径搜)；"
-               "(2) 已知一个闭合多边形要查内部 POI — 用 search_poi_polygon (Amap 数据质量更好)；"
-               "(3) 区域明显跨多个国家 — Overpass 会超时，分批或换 chinese_maps 工具。"
-               "\n关键约束：area 必须能被地理编码 (Nominatim)；POI 类别基于 OSM amenity/shop/leisure tag。"
+               "(2) 已知一个闭合多边形要查内部 POI — 优先 query_local_osm，否则 search_poi_polygon；"
+               "(3) 区域明显跨多个国家 — 分批或换 chinese_maps 工具。"
+               "\n关键约束：area 必须能被本地行政区或 Nominatim 解析；POI 类别基于 OSM amenity/shop/leisure tag。"
            ),
            tier=2, domains=["osm"],
            args_model=QueryOsmPoiArgs)
     async def query_osm_poi(area: str, category: str = "restaurant", limit: int = 50) -> dict:
+        from app.services.local_first import try_local_osm_poi
+
+        local = try_local_osm_poi(area, category, limit)
+        if local is not None:
+            return local
+
         # 从 area 中提取距离信息（如 "5公里内"、"3km"）并扩大搜索范围
         import re
         dist_match = re.search(r'(\d+)\s*(公里|千米|km|公里内)', area, re.IGNORECASE)
@@ -320,6 +327,7 @@ def register_osm_tools(registry: ToolRegistry):
     @tool(registry, name="query_osm_roads",
            description=(
                "OSM 道路网络查询：按区域+道路等级拉取 LineString 路网 GeoJSON。"
+               "中国境内优先查本地 roads GPKG；本地未命中再走 Overpass。"
                "\n何时用：路径规划/可达性分析需要路网底图；按等级筛选 (highway/primary 主干道) 做密度统计。"
                "\n何时不用：仅需路径规划终端结果 — 用 plan_route (高德路径) 或 isochrone_analysis (等时圈)；"
                "需要实时路况 — 用 get_traffic_status。"
@@ -332,6 +340,12 @@ def register_osm_tools(registry: ToolRegistry):
                "limit": "返回上限，默认 100。大区域 + 低等级路（如 residential）极易超量",
            })
     async def query_osm_roads(area: str, road_type: str = "primary", limit: int = 100) -> dict:
+        from app.services.local_first import try_local_osm_roads
+
+        local = try_local_osm_roads(area, road_type, limit)
+        if local is not None:
+            return local
+
         bbox = await _geocode_bbox(area)
         if not bbox:
             raise ValueError(f"无法地理编码: {area}")
@@ -402,6 +416,12 @@ def register_osm_tools(registry: ToolRegistry):
                "admin_level": "OSM admin_level，中国常用 4(省) / 6(市) / 8(区县)。默认 8",
            })
     async def query_osm_boundary(name: str, admin_level: int = 8) -> dict:
+        from app.services.local_first import try_local_osm_boundary
+
+        local = try_local_osm_boundary(name, admin_level)
+        if local is not None:
+            return local
+
         # 先尝试 Overpass
         query = f'relation["admin_level"="{int(admin_level)}"]["name"="{_sanitize_overpass_value(name)}"]->.searchArea;.searchArea out body geom;'
         geojson = await _query_overpass(query)

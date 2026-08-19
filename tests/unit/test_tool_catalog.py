@@ -63,6 +63,28 @@ def test_osm_keyword_loads_osm(catalog):
     assert "query_osm_poi" in _names(schemas)
 
 
+def test_local_osm_hides_remote_poi_tools(monkeypatch, tmp_path):
+    from app.core.config import settings
+    from app.services import tool_catalog as catmod
+
+    monkeypatch.setattr(settings, "LOCAL_GEODATA_DIR", str(tmp_path), raising=False)
+    gpkg = tmp_path / "osm_gpkg"
+    gpkg.mkdir()
+    (gpkg / "pois.gpkg").write_bytes(b"x")
+
+    r = ToolRegistry()
+    r.register("buffer_analysis", "buffer", func=lambda **_: {})
+    r.register("search_poi", "poi", func=lambda **_: {})
+    r.register("search_poi_polygon", "poly", func=lambda **_: {})
+    r.register("query_local_osm", "local", func=lambda **_: {})
+    catalog = ToolCatalog(r, sticky_ttl=0)
+    names = _names(catalog.select_schemas("成都市小学的分布情况"))
+    assert "search_poi" not in names
+    assert "search_poi_polygon" not in names
+    assert "query_local_osm" in names or "buffer_analysis" in names
+    assert catmod._local_osm_available() is True
+
+
 def test_tier3_never_auto_included(catalog):
     """即便用户字面含 'create skill' / 'what if' 关键词，tier 3 也仅匹配 meta/what_if 域。"""
     schemas = catalog.select_schemas("create skill for me", session_id="s1")

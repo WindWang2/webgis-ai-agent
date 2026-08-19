@@ -44,6 +44,7 @@ NON_TOOL_BACKTICKED_TERMS = {
     "layer_removed",
     "base_layer_changed",
     "upload_completed",
+    "total_bounds",
 }
 
 # Names removed by the #204-#208 migrations that must never be referenced

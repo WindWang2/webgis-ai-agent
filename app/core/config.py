@@ -29,7 +29,6 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api"
     ENV: str = "development"
 
-
     # 测试阶段免登录开关：true 时所有受保护端点按 "test-admin"（admin 角色）
     # 放行，无需 Bearer token。仅限本地/测试环境；生产启动会打警告。
     AUTH_DISABLED: bool = False
@@ -37,6 +36,9 @@ class Settings(BaseSettings):
     # 本地地理数据根目录：行政区 SHP（ChinaAdminDivisonSHP/）与 OSM 预处理
     # 产物（osm_gpkg/）从这里解析。空串回退仓库内 data/ 旧布局。
     LOCAL_GEODATA_DIR: str = ""
+    # 远程地理工具出网前是否先查本地 SHP/GPKG。测试默认由 conftest 钉成
+    # false，避免真实数据目录污染 Overpass/高德 mock。
+    LOCAL_QUERY_FIRST: bool = True
 
     def is_production(self) -> bool:
         """判断是否为生产环境"""
@@ -101,7 +103,10 @@ class Settings(BaseSettings):
     # CORS
     # 审计 P2：默认改为 localhost:3000（Next.js dev server），而非 ["*"]。
     # 生产环境 validator 会强制要求显式 allow-list。
-    CORS_ORIGINS: List[str] = ["http://localhost:3000"]
+    CORS_ORIGINS: List[str] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
 
     # Celery & Redis
     REDIS_URL: str = "redis://localhost:16379/0"

@@ -97,6 +97,7 @@ async def test_admin_boundary_by_name(registry, admin_env):
     assert res["count"] == 1
     assert res["features"][0]["properties"]["ct_name"] == "成都市"
     assert res["type"] == "FeatureCollection"
+    assert res["total_bounds"] == [103.0, 30.5, 104.5, 31.5]
 
 
 @pytest.mark.asyncio

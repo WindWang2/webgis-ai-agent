@@ -13,7 +13,7 @@ import json
 import logging
 import threading
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, Union
 
 import numpy as np
 import geopandas as gpd
@@ -137,11 +137,13 @@ def _project_result(gdf: gpd.GeoDataFrame, *, to_wgs84: bool, simplified: bool) 
 
 def _to_feature_collection(gdf: gpd.GeoDataFrame, *, note: str) -> Dict[str, Any]:
     payload = json.loads(gdf.to_json())
+    minx, miny, maxx, maxy = (float(v) for v in gdf.total_bounds)
     return {
         "type": "FeatureCollection",
         "features": payload["features"],
         "count": len(gdf),
         "crs_note": note,
+        "total_bounds": [minx, miny, maxx, maxy],
     }
 
 
@@ -239,12 +241,14 @@ def register_local_admin_tools(registry: ToolRegistry):
     def get_local_admin_boundary(
         name: str = "",
         level: str = "district",
-        adcode: str = "",
+        adcode: Optional[Union[str, int]] = "",
         to_wgs84: bool = False,
         simplified: bool = False,
     ) -> dict:
+        # LLM 常把编码传成数字（510104），此处归一为字符串
+        adcode_s = "" if adcode is None else str(adcode).strip()
         return query_admin_boundary(
-            level, name=name or None, adcode=adcode or None,
+            level, name=name or None, adcode=adcode_s or None,
             to_wgs84=to_wgs84, simplified=simplified,
         )
 

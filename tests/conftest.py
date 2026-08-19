@@ -30,3 +30,5 @@ def _pin_auth_bypass_off(monkeypatch):
     from app.core.config import settings
 
     monkeypatch.setattr(settings, "AUTH_DISABLED", False, raising=False)
+    # 真实 LOCAL_GEODATA_DIR 会让远程 OSM/高德工具先走本地 GPKG，打穿 mock。
+    monkeypatch.setattr(settings, "LOCAL_QUERY_FIRST", False, raising=False)

@@ -242,6 +242,63 @@ def cmd_osm_status():
     console.print_json(_json.dumps(catalog(), ensure_ascii=False, default=str))
 
 
+def cmd_yearbook_ingest(panel_only, force, years):
+    """中国县域统计年鉴（乡镇卷 + 县域面板）→ yearbook.sqlite。"""
+    from app.services import local_yearbook
+
+    if not panel_only:
+        console.print(Panel.fit(
+            "[bold]年鉴预处理[/bold]\n乡镇卷 zip → SQLite（与 district.shp 做 adcode 连接）",
+            title="local-geodata"))
+        stats = local_yearbook.ingest_yearbook(
+            years=[int(y) for y in years.split(",")] if years else None,
+            force=force,
+            progress_cb=lambda year, rows: console.print(
+                f"  出版年 [cyan]{year}[/cyan]: {rows:,} 乡镇行"),
+        )
+        console.print_json(json.dumps(stats, ensure_ascii=False, default=str))
+    panel = local_yearbook.ingest_county_panel(force=force)
+    console.print_json(json.dumps(panel, ensure_ascii=False, default=str))
+
+
+def cmd_yearbook_status():
+    """年鉴库状态：年份覆盖、行数、行政区连接率、指标词表。"""
+    import json as _json
+    from app.services.local_yearbook import yearbook_catalog
+    console.print_json(_json.dumps(yearbook_catalog(), ensure_ascii=False, default=str))
+
+
+def cmd_gd_poi_ingest(force, provinces):
+    """高德 POI zip 系列 → gd_pois.gpkg（GCJ-02 → WGS84）。"""
+    from rich.progress import (BarColumn, Progress, SpinnerColumn,
+                               TextColumn, TimeElapsedColumn)
+
+    from app.services.local_poi import ingest_gd_poi
+
+    console.print(Panel.fit(
+        "[bold]高德 POI 预处理[/bold]\nlocation(GCJ-02) → WGS84 点库；"
+        "「乡镇级地名」回填年鉴乡镇中心点", title="local-geodata"))
+    with Progress(
+        SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
+        BarColumn(), TextColumn("{task.completed:,} rows"),
+        TimeElapsedColumn(), console=console,
+    ) as progress:
+        current = {}
+
+        def _cb(pcode: str, rows: int) -> None:
+            task = current.get(pcode)
+            if task is None:
+                task = current[pcode] = progress.add_task(pcode, total=None)
+            progress.update(task, completed=rows)
+
+        stats = ingest_gd_poi(
+            force=force,
+            provinces=provinces.split(",") if provinces else None,
+            progress_cb=_cb,
+        )
+    console.print_json(json.dumps(stats, ensure_ascii=False, default=str))
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="manage.py",
@@ -282,6 +339,20 @@ def main():
     # osm-status
     subparsers.add_parser("osm-status", help="List local OSM theme catalog and row counts")
 
+    # yearbook-ingest
+    p_yb = subparsers.add_parser("yearbook-ingest", help="中国县域统计年鉴（乡镇卷+县域面板）→ yearbook.sqlite（含行政区 adcode 连接）")
+    p_yb.add_argument("--panel-only", action="store_true", help="只导入县域面板（跳过乡镇卷 zip）")
+    p_yb.add_argument("--force", action="store_true", help="重导已导入年份（默认按年幂等跳过）")
+    p_yb.add_argument("--years", default=None, help="逗号分隔出版年，如 2014,2015（默认全部）")
+
+    # yearbook-status
+    subparsers.add_parser("yearbook-status", help="年鉴库状态：年份/行数/连接率/指标词表")
+
+    # gd-poi-ingest
+    p_gp = subparsers.add_parser("gd-poi-ingest", help="高德全国 POI zip → gd_pois.gpkg（GCJ-02→WGS84，含乡镇中心点回填；支持 xlsx/csv 成员）")
+    p_gp.add_argument("--force", action="store_true", help="重建（默认按省幂等跳过；配合 --provinces 时只刷新指定省，其余省数据不动）")
+    p_gp.add_argument("--provinces", default=None, help="逗号分隔省级 adcode，如 510000,540000（默认全部）")
+
     args = parser.parse_args()
 
     if args.command == "init-db":
@@ -300,6 +371,12 @@ def main():
         cmd_osm_ingest(args.pbf, args.themes, args.force, args.limit, args.flush_rows, args.idx)
     elif args.command == "osm-status":
         cmd_osm_status()
+    elif args.command == "yearbook-ingest":
+        cmd_yearbook_ingest(args.panel_only, args.force, args.years)
+    elif args.command == "yearbook-status":
+        cmd_yearbook_status()
+    elif args.command == "gd-poi-ingest":
+        cmd_gd_poi_ingest(args.force, args.provinces)
     else:
         parser.print_help()
         sys.exit(1)

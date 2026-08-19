@@ -37,6 +37,7 @@ DOMAIN_KEYWORDS: dict[str, list[str]] = {
     # OSM/Overpass 数据查询
     "osm": [
         "OSM", "OpenStreetMap", "Overpass", "开源地图", "全球",
+        "POI", "小学", "中学", "大学", "学校", "医院", "餐厅", "设施",
     ],
     # 遥感 / 栅格 / 地形
     "raster": [
@@ -84,6 +85,14 @@ DOMAIN_KEYWORDS: dict[str, list[str]] = {
 
 # 命中后保持载入的轮次（衰减式 sticky，避免每轮重复探测）
 _DEFAULT_STICKY_TTL = 3
+
+# 本地 OSM GPKG 可用时，不要再把高德/百度 POI 工具塞给模型。
+_SUPPRESS_WHEN_LOCAL_OSM = frozenset({
+    "search_poi",
+    "search_poi_polygon",
+    "search_poi_around",
+    "search_and_extract_poi",
+})
 
 
 class ToolCatalog:
@@ -133,6 +142,8 @@ class ToolCatalog:
                     names.add(name)
                 continue
             # tier 3 永远不自动纳入；由 list_available_tools 显式查询
+        if _local_osm_available():
+            names.difference_update(_SUPPRESS_WHEN_LOCAL_OSM)
         schemas = self.registry.get_schemas_subset(names)
         logger.debug(
             "[ToolCatalog] session=%s domains=%s selected=%d/%d",
@@ -214,3 +225,12 @@ class ToolCatalog:
             decayed[d] = self.sticky_ttl
         self._sticky[session_id] = decayed
         return set(decayed.keys())
+
+
+def _local_osm_available() -> bool:
+    try:
+        from app.services.local_osm import theme_gpkg_path
+
+        return theme_gpkg_path("pois").exists()
+    except Exception:  # noqa: BLE001
+        return False

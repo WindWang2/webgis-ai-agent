@@ -165,14 +165,23 @@ async def batch_geocode_cn(
 def register_chinese_map_tools(registry: ToolRegistry):
 
     @tool(registry, name="search_poi",
-           description="搜索 POI（餐厅、学校、医院等），支持中文关键词和城市限定，可选高德/百度/天地图",
+           description=(
+               "中国境内不要调用本工具，改用 query_local_osm。"
+               "若仍被调用，境内只查本地 OSM，不会请求高德/百度。"
+           ),
            param_descriptions={
-               "keyword": "搜索关键词，如'火锅店'、'三甲医院'",
-               "city": "城市名称，如'北京'、'上海'",
-               "provider": "服务商: 'amap'(高德, 默认), 'baidu'(百度), 'tianditu'(天地图)",
-               "limit": "返回结果数量，默认20",
+               "keyword": "搜索关键词，如'小学'、'大学'、'医院'",
+               "city": "城市名称，如'成都'、'成都市'",
+               "provider": "已忽略。中国境内固定本地 OSM。",
+               "limit": "返回结果数量，默认20，最大2000",
            })
     async def search_poi(keyword: str, city: str = "", provider: str = "amap", limit: int = 20) -> dict:
+        from app.services.local_first import try_local_search_poi
+
+        local = try_local_search_poi(keyword, city, limit)
+        if local is not None:
+            return local
+
         if provider not in _VALID_PROVIDERS:
             return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'，收到: {provider}"}
 
@@ -342,7 +351,10 @@ def register_chinese_map_tools(registry: ToolRegistry):
         return await _AMAP.isochrone(center, minutes, mode)
 
     @tool(registry, name="search_poi_around",
-           description="在指定坐标周围按半径搜索 POI。适合『附近 500 米的便利店』『地铁站周边餐厅』等近邻问题。返回 GeoJSON 点集。",
+           description=(
+               "在指定坐标周围按半径搜索 POI。中国境内优先查本地 OSM，"
+               "不要为补点再改调高德/百度。"
+           ),
            param_descriptions={
                "center": "中心点 WGS84 坐标 [经度, 纬度]",
                "radius_m": "搜索半径（米），1~50000，默认 1000",
@@ -365,6 +377,13 @@ def register_chinese_map_tools(registry: ToolRegistry):
             return {"error": "radius_m 必须在 1~50000 之间"}
         if not keyword and not types:
             return {"error": "keyword 与 types 至少提供一个"}
+
+        from app.services.local_first import try_local_search_poi_around
+
+        local = try_local_search_poi_around(center, radius_m, keyword, types, limit)
+        if local is not None:
+            return local
+
         if provider not in _VALID_PROVIDERS:
             return {"error": "provider 必须是 'amap', 'baidu' 或 'tianditu'"}
 
@@ -380,7 +399,10 @@ def register_chinese_map_tools(registry: ToolRegistry):
         )
 
     @tool(registry, name="search_poi_polygon",
-           description="多边形区域内搜索：在指定的闭合多边形区域内搜索 POI。适合『查询锦江区内的咖啡馆』等精准场景。注意：如果是行政区，请先拿边界再搜。",
+           description=(
+               "多边形区域内搜索 POI。中国境内优先查本地 OSM；"
+               "行政区场景请直接 query_local_osm，不要再打高德/百度。"
+           ),
            param_descriptions={
                "polygon": "闭合多边形坐标列表 [[lng,lat],...]，或 4 元素 bbox [w,s,e,n]，或 GeoJSON 要素引用(ref:xxx)",
                "keyword": "搜索关键词，如'咖啡'",
@@ -429,6 +451,12 @@ def register_chinese_map_tools(registry: ToolRegistry):
 
         if not keyword and not types:
             return {"error": "keyword 与 types 至少提供一个"}
+
+        from app.services.local_first import try_local_search_poi_polygon
+
+        local = try_local_search_poi_polygon(polygon, keyword, types, limit)
+        if local is not None:
+            return local
 
         _dispatch = {"amap": _AMAP.search_poi_polygon, "baidu": _BAIDU.search_poi_polygon}
         return await with_fallback(
@@ -538,6 +566,12 @@ def register_chinese_map_tools(registry: ToolRegistry):
     ) -> dict:
         if not keywords:
             return {"error": "keywords 不能为空"}
+
+        from app.services.local_first import try_local_admin_division
+
+        local = try_local_admin_division(keywords, child_level)
+        if local is not None:
+            return local
         
         # 目前仅 Tianditu 支持较好的边界输出
         if provider != "tianditu":
@@ -560,6 +594,12 @@ def register_chinese_map_tools(registry: ToolRegistry):
         """获取下级行政区的列表及几何边界"""
         if not keywords:
             return {"error": "keywords 不能为空"}
+
+        from app.services.local_first import try_local_child_districts
+
+        local = try_local_child_districts(keywords)
+        if local is not None:
+            return local
             
         if provider == "tianditu" or not _has_provider("amap"):
             # 天地图 V2 本身就支持返回下级，且支持 polygon

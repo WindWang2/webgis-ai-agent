@@ -11,8 +11,10 @@ description: 多条件选址分析，根据用户需求筛选最优位置
 
 1. 询问用户选址目标（新建医院、学校、商场、充电站等）和区域范围。
 2. 了解约束条件：面积要求、交通可达性、人口密度要求、与竞品的最小距离等。
-3. 使用 `geocode_cn` 定位目标城市，用 `buffer_analysis` 确定候选搜索范围。
-4. 使用 `search_poi` 查找目标区域内现有同类设施和竞品分布。
+3. 中国境内用 `get_local_admin_boundary` 锁定城市范围（取其 total_bounds）；
+   境外或本地未命中再用 `geocode_cn`，并用 `buffer_analysis` 确定候选搜索范围。
+4. 范围内同类设施和竞品：先 `query_local_osm`（theme='pois' + bbox + tag）；
+   本地未命中再用 `search_poi`。
 5. 使用 `buffer_analysis` 计算已有设施的服务覆盖范围，识别空白区域。
 6. 使用 `kde_surface` 分析人口密度热力图。
 7. 使用 `nearest_neighbor` 计算候选位置到交通枢纽的距离。
