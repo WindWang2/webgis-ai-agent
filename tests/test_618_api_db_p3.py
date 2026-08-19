@@ -120,7 +120,7 @@ def test_item5_model_declares_creator_id_index():
 
 def test_item4_0020_chains_from_0019_and_is_reversible_on_disk():
     src = _0020_path().read_text(encoding="utf-8")
-    assert f"down_revision" in src and REV_0019 in src
+    assert "down_revision" in src and REV_0019 in src
     assert "def downgrade" in src
     for name, _table, _col in LEFTOVER_SINGLE_INDEXES:
         assert name in src
