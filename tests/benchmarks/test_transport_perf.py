@@ -115,7 +115,7 @@ class _MockPiBridge:
         self.step_result_every = step_result_every
 
     async def stream_prompt(
-        self, message: str, session_id: str | None = None
+        self, message: str, session_id: str | None = None, **_kwargs
     ) -> AsyncIterator[str]:
         sid = session_id or "s"
         yield sse_event("task_start", {"task_id": "t", "session_id": sid})

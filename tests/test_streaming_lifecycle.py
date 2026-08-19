@@ -52,7 +52,7 @@ class _SlowPiBridge:
         self.hold = hold
 
     async def stream_prompt(
-        self, message: str, session_id: str | None = None
+        self, message: str, session_id: str | None = None, **_kwargs
     ) -> AsyncIterator[str]:
         yield sse_event("task_start", {"task_id": "t", "session_id": session_id or "s"})
         await asyncio.sleep(self.hold)  # simulated model latency; stream stays open
@@ -311,7 +311,7 @@ class _BurstPiBridge:
         self.bursts = bursts
 
     async def stream_prompt(
-        self, message: str, session_id: str | None = None
+        self, message: str, session_id: str | None = None, **_kwargs
     ) -> AsyncIterator[str]:
         sid = session_id or "s"
         yield sse_event("task_start", {"task_id": "t", "session_id": sid})
@@ -334,7 +334,7 @@ class _ExplodingPiBridge:
         self.n_tokens = n_tokens
 
     async def stream_prompt(
-        self, message: str, session_id: str | None = None
+        self, message: str, session_id: str | None = None, **_kwargs
     ) -> AsyncIterator[str]:
         sid = session_id or "s"
         yield sse_event("task_start", {"task_id": "t", "session_id": sid})

@@ -3,7 +3,6 @@
 fixture 全部在 tmp_path 内合成（微型 shapefile / 年鉴 zip / POI zip），
 不依赖外置盘真实数据；settings.LOCAL_GEODATA_DIR 指向 tmp。
 """
-import json
 import zipfile
 
 import geopandas as gpd
@@ -620,3 +619,78 @@ def test_poi_truncation_uniform_sampling(stats_env):
     adcodes = {f["properties"]["adcode"] for f in r["features"]}
     assert len(adcodes) >= 2
     assert "均匀采样" in r.get("note", "")
+
+
+def _write_mini_poi_gpkg(root):
+    """Write a tiny pois GPKG so query_gd_poi can be tested without xlsx ingest."""
+    import sqlite3
+
+    gpkg = root / "gd_pois" / "gd_pois.gpkg"
+    gpkg.parent.mkdir(parents=True, exist_ok=True)
+    rows = [
+        {
+            "poi_id": "A1", "name": "海底捞春熙", "category": "餐饮服务",
+            "subtype": "中餐厅;火锅店", "typecode": "", "adcode": "510104",
+            "adname": "锦江区", "cityname": "成都市", "pname": "四川省",
+            "address": "", "tel": "", "geometry": Point(104.08, 30.66),
+        },
+        {
+            "poi_id": "A2", "name": "华西医院", "category": "医疗保健服务",
+            "subtype": "综合医院", "typecode": "", "adcode": "510104",
+            "adname": "锦江区", "cityname": "成都市", "pname": "四川省",
+            "address": "", "tel": "", "geometry": Point(104.09, 30.65),
+        },
+        {
+            "poi_id": "A3", "name": "四川大学", "category": "科教文化服务",
+            "subtype": "学校;高等院校", "typecode": "", "adcode": "510107",
+            "adname": "武侯区", "cityname": "成都市", "pname": "四川省",
+            "address": "", "tel": "", "geometry": Point(104.08, 30.63),
+        },
+        {
+            "poi_id": "A4", "name": "O'Reilly 100% 书店", "category": "购物服务",
+            "subtype": "书店", "typecode": "", "adcode": "510105",
+            "adname": "青羊区", "cityname": "成都市", "pname": "四川省",
+            "address": "", "tel": "", "geometry": Point(104.06, 30.67),
+        },
+    ]
+    gdf = gpd.GeoDataFrame(pd.DataFrame(rows), geometry="geometry", crs="EPSG:4326")
+    gdf.to_file(gpkg, layer="pois", driver="GPKG")
+    conn = sqlite3.connect(gpkg)
+    try:
+        with conn:
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_pois_adcode ON "pois"(adcode)')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_pois_category ON "pois"(category)')
+    finally:
+        conn.close()
+    return gpkg
+
+
+def test_query_gd_poi_bound_params_without_ingest(tmp_path, monkeypatch):
+    """Parameterized sqlite WHERE (bandit B608) still filters and hints correctly."""
+    monkeypatch.setattr(settings, "LOCAL_GEODATA_DIR", str(tmp_path), raising=False)
+    _write_mini_poi_gpkg(tmp_path)
+    from app.services.local_poi import query_gd_poi
+
+    fc = query_gd_poi(name_like="海底捞")
+    assert fc["count"] == 1
+    assert fc["features"][0]["properties"]["name"] == "海底捞春熙"
+    assert fc.get("total_matched") == 1
+
+    fc = query_gd_poi(adcode="5101", category="医疗保健服务")
+    assert fc["count"] == 1
+    assert fc["features"][0]["properties"]["name"] == "华西医院"
+
+    # LIKE metacharacters in the name must not be treated as wildcards.
+    fc = query_gd_poi(name_like="O'Reilly 100%")
+    assert fc["count"] == 1
+    assert "书店" in fc["features"][0]["properties"]["name"]
+
+    miss = query_gd_poi(category="科教文化服务", subtype="魔法学校")
+    assert miss["count"] == 0
+    assert "高等院校" in miss.get("note", "")
+    assert miss.get("correction_hint")
+
+    sampled = query_gd_poi(adcode="51", limit=2)
+    assert sampled["count"] == 2
+    assert sampled.get("truncated") is True
+    assert sampled.get("total_matched") == 4

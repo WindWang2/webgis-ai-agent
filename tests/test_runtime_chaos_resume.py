@@ -83,7 +83,7 @@ class _GatedBridge:
         self._park_before = set(park_before)
 
     async def stream_prompt(
-        self, message: str, session_id: Optional[str] = None
+        self, message: str, session_id: Optional[str] = None, **_kwargs
     ) -> AsyncIterator[str]:
         idx = self.prompt_calls
         self.prompt_calls += 1
@@ -990,7 +990,7 @@ async def test_resume_after_cancelled_turn_replays_cancelled_terminal(_pi_path, 
         def __init__(self) -> None:
             self.prompt_calls = 0
 
-        async def stream_prompt(self, message: str, session_id: Optional[str] = None):
+        async def stream_prompt(self, message: str, session_id: Optional[str] = None, **_kwargs):
             self.prompt_calls += 1
             sid = session_id or "s"
             yield sse_event("task_start", {"task_id": "t", "session_id": sid})
@@ -1029,7 +1029,7 @@ async def test_resume_after_task_error_replays_error_terminal_not_done(_pi_path,
         def __init__(self) -> None:
             self.prompt_calls = 0
 
-        async def stream_prompt(self, message: str, session_id: Optional[str] = None):
+        async def stream_prompt(self, message: str, session_id: Optional[str] = None, **_kwargs):
             self.prompt_calls += 1
             sid = session_id or "s"
             yield sse_event("task_start", {"task_id": "t", "session_id": sid})
@@ -1069,7 +1069,7 @@ async def test_two_tabs_concurrent_resume_same_session(_pi_path, _pass_ownership
         def __init__(self) -> None:
             self.prompt_calls = 0
 
-        async def stream_prompt(self, message: str, session_id: Optional[str] = None):
+        async def stream_prompt(self, message: str, session_id: Optional[str] = None, **_kwargs):
             self.prompt_calls += 1
             sid = session_id or "s"
             yield sse_event("task_start", {"task_id": "t", "session_id": sid})

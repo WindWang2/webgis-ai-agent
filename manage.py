@@ -330,7 +330,7 @@ def main():
     # osm-ingest
     p_oi = subparsers.add_parser("osm-ingest", help="One-off OSM PBF -> themed GPKG preprocessing for local resource queries")
     p_oi.add_argument("--pbf", default=None, help="china-*.osm.pbf 路径（缺省自动在 LOCAL_GEODATA_DIR 下发现）")
-    p_oi.add_argument("--themes", default="pois,roads,railways,waterways", help=f"逗号分隔主题（可选: pois/roads/railways/waterways）")
+    p_oi.add_argument("--themes", default="pois,roads,railways,waterways", help="逗号分隔主题（可选: pois/roads/railways/waterways）")
     p_oi.add_argument("--force", action="store_true", help="覆盖已存在的主题 GPKG（默认跳过）")
     p_oi.add_argument("--limit", type=int, default=0, help="调试：仅扫描前 N 个对象")
     p_oi.add_argument("--flush-rows", type=int, default=100_000, help="分块写库行数")
