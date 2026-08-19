@@ -344,45 +344,74 @@ export function addThematicLayer(map: Map, id: string, data: any, styleDef: Them
   }, beforeId);
 }
 
+/**
+ * 停靠点位置是按 MapLibre 累积 shader 的实际密度域标定的：
+ * val = weight × intensity × 0.39894 × exp(-4.5·d²)（高斯核，四边形铺 3σ），
+ * 即 weight=1、intensity=1 的单个孤立点中心密度峰值只有 ≈0.4。
+ * 旧停靠点 (0.2/0.4/…/1.0) 匀铺会让稀疏区整片停在首段蓝色（用户实测
+ * "没有颜色分级"）；现在把中间色压到 0.12-0.45 段——单点中心落在绿段、
+ * 3-5 点重叠到黄/橙、密集核 5+ 点冲到红段，任何缩放下都有多级渐变。
+ * 位置表 [0, 0.12, 0.25, 0.45, 0.65, 0.85, 1] 与后端
+ * app/tools/spatial.py _NATIVE_HEATMAP_COLORS（图例色）保持同源。
+ */
+const HEATMAP_STOP_POSITIONS = [0, 0.12, 0.25, 0.45, 0.65, 0.85, 1];
+
 const HEATMAP_PALETTES = {
   classic: [
-    0, 'rgba(33,102,172,0)',
-    0.2, 'rgb(103,169,207)',
-    0.4, 'rgb(209,229,240)',
-    0.6, 'rgb(253,219,199)',
-    0.8, 'rgb(239,138,98)',
-    1, 'rgb(178,24,43)'
+    'rgba(38,110,182,0)',
+    'rgb(66,140,210)',
+    'rgb(61,188,232)',
+    'rgb(96,214,120)',
+    'rgb(250,224,50)',
+    'rgb(250,140,40)',
+    'rgb(235,40,40)'
   ],
   magma: [
-    0, 'rgba(0,0,4,0)',
-    0.2, 'rgb(81,18,124)',
-    0.4, 'rgb(182,54,121)',
-    0.6, 'rgb(251,136,97)',
-    0.8, 'rgb(252,253,191)',
-    1, 'rgb(255,255,255)'
+    'rgba(0,0,4,0)',
+    'rgb(52,16,88)',
+    'rgb(112,32,122)',
+    'rgb(182,54,121)',
+    'rgb(244,109,67)',
+    'rgb(252,193,120)',
+    'rgb(255,255,217)'
   ],
   viridis: [
-    0, 'rgba(68,1,84,0)',
-    0.2, 'rgb(59,82,139)',
-    0.4, 'rgb(33,145,140)',
-    0.6, 'rgb(94,201,98)',
-    0.8, 'rgb(253,231,37)',
-    1, 'rgb(255,255,255)'
+    'rgba(68,1,84,0)',
+    'rgb(72,40,120)',
+    'rgb(59,92,157)',
+    'rgb(35,148,139)',
+    'rgb(122,203,98)',
+    'rgb(253,213,60)',
+    'rgb(255,255,220)'
   ],
   thermal: [
-    0, 'rgba(0,0,255,0)',
-    0.2, 'rgb(0,255,255)',
-    0.4, 'rgb(0,255,0)',
-    0.6, 'rgb(255,255,0)',
-    0.8, 'rgb(255,0,0)',
-    1, 'rgb(255,255,255)'
+    'rgba(0,40,255,0)',
+    'rgb(0,102,255)',
+    'rgb(0,214,255)',
+    'rgb(80,240,120)',
+    'rgb(255,230,0)',
+    'rgb(255,120,0)',
+    'rgb(235,20,20)'
   ]
 };
+
+/** 命名调色板 → interpolate 停靠点序列 [pos, color, pos, color, ...]；未知键回落 classic。 */
+function heatmapPaletteStops(palette: string | string[] | undefined): (number | string)[] {
+  if (Array.isArray(palette)) {
+    return palette.flatMap((color, i, arr) => [
+      arr.length > 1 ? i / (arr.length - 1) : 0,
+      color,
+    ]);
+  }
+  const colors = HEATMAP_PALETTES[palette as keyof typeof HEATMAP_PALETTES] ?? HEATMAP_PALETTES.classic;
+  return HEATMAP_STOP_POSITIONS.flatMap((pos, i) => [pos, colors[i]]);
+}
 
 export interface HeatmapOptions {
   id: string;
   source: string;
-  palette?: keyof typeof HEATMAP_PALETTES | string[];
+  /** 命名键（classic/magma/viridis/thermal，未知名回落 classic）或颜色数组。 */
+  palette?: string | string[];
   radius?: number;
   weight?: any;
   intensity?: number;
@@ -398,29 +427,37 @@ export function addNativeHeatmap(map: Map, options: HeatmapOptions) {
     noteStyleLayerRemoved(map, options.id);
   }
 
-  // #611: 后端模板的 heatPalette 是自定义颜色数组 —— 均分铺到热度密度 0..1；
-  // 命名键（classic/viridis/...）走预置调色板表。
-  const palette = Array.isArray(options.palette)
-    ? options.palette.flatMap((color, i, arr) => [
-        arr.length > 1 ? i / (arr.length - 1) : 0,
-        color,
-      ])
-    : HEATMAP_PALETTES[options.palette || 'classic'];
+  const palette = heatmapPaletteStops(options.palette);
+
+  // 后端部分调用方把「米」半径（如 2000m）直接塞进 radius —— MapLibre 的
+  // heatmap-radius 是像素。>100 视为米制误传，回落默认；最终收敛到 [4, 80]px。
+  const rawRadius = Number(options.radius ?? 30)
+  const radiusPx = Math.max(4, Math.min(80, Number.isFinite(rawRadius) && rawRadius <= 100 ? rawRadius : 30))
+
+  // 显式 intensity 原样透传；缺省时随 zoom 增益：高斯核在放大、点距拉开后
+  // 重叠贡献变少，不补偿的话放大后整图退回低密度冷色（MapLibre 官方示例
+  // 同样用 zoom-interpolate intensity 1→3）。
+  const intensity = options.intensity ?? [
+    'interpolate', ['linear'], ['zoom'],
+    4, 0.8,
+    10, 1.3,
+    14, 2.2,
+  ];
 
   map.addLayer({
     id: options.id,
     type: 'heatmap',
     source: options.source,
     paint: {
-      'heatmap-weight': options.weight || 1,
-      'heatmap-intensity': options.intensity || 1,
+      'heatmap-weight': options.weight ?? 1,
+      'heatmap-intensity': intensity as any,
       'heatmap-color': [
         'interpolate',
         ['linear'],
         ['heatmap-density'],
         ...palette
       ],
-      'heatmap-radius': options.radius || 30,
+      'heatmap-radius': radiusPx,
       'heatmap-opacity': options.opacity || 1
     }
   });

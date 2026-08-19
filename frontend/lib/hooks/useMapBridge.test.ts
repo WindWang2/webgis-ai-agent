@@ -11,6 +11,7 @@ import type { MapActionPayload, MapActionTerminalStatus } from '@/lib/types';
 import type { MapActionTerminalDetails } from '@/lib/contexts/map-action-context';
 import type { MapActionAckSink } from '@/lib/api/map-action-acks';
 import { devOnly } from '@/lib/utils/logger';
+import { bboxToFlyTo } from '@/lib/utils/geo';
 
 const hudState = vi.hoisted(() => ({
   layers: [] as Array<{ _mapspecFingerprint?: string }>,
@@ -405,7 +406,13 @@ describe('useMapBridge', () => {
       { wrapper },
     );
     await act(async () => { await result.current.send('q', {}); });
-    expect(dispatchAction).not.toHaveBeenCalled();
+    // Store-mount is the add_heatmap_raster execution. The handler must not
+    // re-run that command. Framing the raster still requires a fly_to.
+    expect(dispatchAction).toHaveBeenCalledTimes(1);
+    expect(dispatchAction).toHaveBeenCalledWith(expect.objectContaining({
+      command: 'fly_to',
+      params: bboxToFlyTo([116.0, 39.0, 117.0, 40.0]),
+    }));
     expect(sinkHolder.current).toHaveBeenCalledWith(expect.objectContaining({
       action_id: 'ma-raster',
       command: 'add_heatmap_raster',
@@ -674,6 +681,35 @@ describe('useMapBridge', () => {
       action_id: 'ma-222',
       correlation: { session_id: 's1', step_id: 'step-2', turn_id: 'turn-1', sse_event_id: '8' },
     });
+  });
+
+  it('store-mounted add_layer still flies to bbox so the result is on screen', async () => {
+    // POI / analysis results arrive as geojson_ref + commands:[add_layer].
+    // add_layer is store-mounted (not dispatched). If we skip the bbox
+    // fallback just because the commands array is non-empty, the camera
+    // stays on the default China view and the points are a one-pixel spec.
+    mockStreamChat.mockReturnValue(makeAsyncGen([{
+      event: 'step_result',
+      data: {
+        geojson_ref: 'ref:geojson-poi',
+        result: {
+          commands: [
+            { command: 'add_layer', params: { layerId: 'result-1', result_ref: 'ref:geojson-poi' } },
+          ],
+          bbox: [104.12, 30.61, 104.13, 30.63],
+        },
+      },
+    }]));
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent)
+    );
+    await act(async () => { await result.current.send('q', {}); });
+    expect(dispatchAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: 'fly_to',
+        params: bboxToFlyTo([104.12, 30.61, 104.13, 30.63]),
+      }),
+    );
   });
 
   it('bbox fallback mints a client fe- action_id + correlation (V3)', async () => {
@@ -1113,7 +1149,11 @@ describe('useMapBridge', () => {
     );
     await act(async () => { await result.current.send('q', {}); });
 
-    expect(dispatchAction).not.toHaveBeenCalled();
+    expect(dispatchAction).toHaveBeenCalledTimes(1);
+    expect(dispatchAction).toHaveBeenCalledWith(expect.objectContaining({
+      command: 'fly_to',
+      params: bboxToFlyTo([116.0, 39.0, 117.0, 40.0]),
+    }));
     expect(sinkHolder.current).toHaveBeenCalledWith(expect.objectContaining({
       action_id: 'ma-raster',
       command: 'add_heatmap_raster',

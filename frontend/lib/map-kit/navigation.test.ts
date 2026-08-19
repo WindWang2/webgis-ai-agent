@@ -66,12 +66,22 @@ describe('navigation', () => {
       expect(mockMap.fitBounds).toHaveBeenCalledWith(bbox, {
         padding: 50,
         duration: 1500,
+        maxZoom: 16,
       });
     });
 
     it('should throw error for invalid bbox', () => {
       const bbox: [number, number, number, number] = [200, 20, 130, 40];
       expect(() => fitBounds(mockMap as Map, bbox)).toThrow('Invalid coordinates in bbox');
+    });
+
+    it('should widen a degenerate single-point bbox instead of fitting to extreme zoom', () => {
+      fitBounds(mockMap as Map, [104.08, 30.66, 104.08, 30.66]);
+      const [box, opts] = (mockMap.fitBounds as ReturnType<typeof vi.fn>).mock.calls.at(-1)!;
+      expect(box[2] - box[0]).toBeGreaterThanOrEqual(0.0029);
+      expect(box[3] - box[1]).toBeGreaterThanOrEqual(0.0029);
+      expect((box[0] + box[2]) / 2).toBeCloseTo(104.08, 5);
+      expect(opts.maxZoom).toBe(16);
     });
   });
 

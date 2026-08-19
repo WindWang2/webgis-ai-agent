@@ -134,6 +134,25 @@ describe('heatmap commands (issue #393: post-state verification, no fake success
         .toEqual({ status: 'failed', error: 'invalid_params' });
     });
 
+    it('reads palette/radius/intensity from params.metadata (heatmap_data 工具结果把它们嵌在 metadata 里)', () => {
+      // useMapBridge 把工具结果除 command 外的整体作为 params 透传：
+      // params = {type, features…, command, metadata: {render_type, palette, radius}, legend_spec}
+      // 不读 metadata 的话 agent 选的配色/半径会静默丢失，永远按 classic 渲染。
+      const map = makeMockMaplibreMap();
+      const result = heatmapCommands.add_native_heatmap.run(makeCtx(map, {
+        geojson: { type: 'FeatureCollection', features: [] },
+        layerId: 'poi-heat',
+        metadata: { render_type: 'native', palette: 'thermal', radius: 2000 },
+      }));
+
+      expect(result).toEqual({ status: 'succeeded', result: { confirmed: true } });
+      const layer = map.getLayer('custom-poi-heat');
+      // metadata.palette 直达 renderer（thermal 首色 rgb(0,102,255)）
+      expect(JSON.stringify(layer.paint['heatmap-color'])).toContain('0,102,255');
+      // metadata.radius=2000 是米制误传 → renderer 防御回落 30px
+      expect(layer.paint['heatmap-radius']).toBe(30);
+    });
+
     it('#611: backend template emission — heatPalette/field/intensity are consumed and the id is stable across re-applies (no Date.now() stacking)', () => {
       // app/tools/templates.py apply_template heatmap variant 发射的形状：
       // params = {geojson, field, intensity, radius, heatPalette}（无 layerId）

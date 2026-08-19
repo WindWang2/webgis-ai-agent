@@ -293,6 +293,20 @@ describe('MapPanel — FE-3 interaction UX', () => {
     vi.unstubAllGlobals();
   });
 
+  it('clicking a feature at country-scale zoom opens the panel WITHOUT auto-focus (v2)', async () => {
+    rmg.map = makeMockMaplibreMap({ zoom: 4, renderedFeatures: () => rmg.queryResults });
+    renderPanel([pointLayer('poi', '周边餐饮POI')]);
+    await settleInteractive(['poi__point']);
+
+    rmg.queryResults = [featureOn('poi__point', { name: '春阳水饺' })];
+    act(() => rmg.lastOnClick?.(clickPoint));
+
+    // v2 重设计：点击只写快照 + 开悬浮窗；不再触发程序化聚焦（防画布空白）。
+    await waitFor(() => expect(hud.state.selectedFeature).toBeTruthy());
+    expect(hud.state.focusLayerId).toBeNull();
+    expect(screen.getAllByText('春阳水饺').length).toBeGreaterThan(0);
+  });
+
   it('click stores the PARENT layer id (longest-prefix — poi vs poi_schools)', async () => {
     renderPanel([pointLayer('poi', 'POI'), pointLayer('poi_schools', 'Schools')]);
     await settleInteractive(['poi__point', 'poi_schools__point']);
@@ -305,7 +319,7 @@ describe('MapPanel — FE-3 interaction UX', () => {
     expect(sel.layerId).toBe('poi_schools'); // parent — NOT the sublayer id
     expect(sel.layerName).toBe('Schools');
     expect(sel.properties).toEqual({ name: 'X', a: 1, b: 2, c: 3 });
-    expect(screen.getByText('Schools')).toBeTruthy(); // selection popup open
+    expect(screen.getByText('Schools')).toBeTruthy(); // info panel open
   });
 
   it('click on a ref: sublayer restores the refId', async () => {
@@ -320,7 +334,7 @@ describe('MapPanel — FE-3 interaction UX', () => {
     expect(hud.state.selectedFeature.refId).toBe('ref:geojson-abc');
   });
 
-  it('mounts the imperative selection highlight and setData the feature', async () => {
+  it('v2: click never mounts selection-highlight layers (blank-canvas hazard removed)', async () => {
     renderPanel([pointLayer('poi', 'POI')]);
     await settleInteractive(['poi__point']);
 
@@ -328,52 +342,33 @@ describe('MapPanel — FE-3 interaction UX', () => {
     rmg.queryResults = [featureOn('poi__point', { name: 'X' }, geometry)];
     act(() => rmg.lastOnClick?.(clickPoint));
 
-    await waitFor(() => {
-      const hlCalls = rmg.map._calls.setData.filter(
-        (c: { id: string }) => c.id === 'claude-selection-highlight',
-      );
-      expect(hlCalls.length).toBeGreaterThan(0);
-      const data = hlCalls[hlCalls.length - 1].data;
-      expect(data).toEqual({
-        type: 'FeatureCollection',
-        features: [
-          {
-            type: 'Feature',
-            geometry,
-            properties: { name: 'X' },
-          },
-        ],
-      });
-    });
+    await waitFor(() => expect(hud.state.selectedFeature).toBeTruthy());
+    // 悬浮窗显示要素名；高亮 source 从未被创建/写入。
+    expect(screen.getAllByText('X').length).toBeTruthy();
+    expect(
+      rmg.map._calls.setData.some((c: { id: string }) => c.id === 'claude-selection-highlight'),
+    ).toBe(false);
+    expect(
+      rmg.map._calls.addSource.some((c: { id: string }) => c.id === 'claude-selection-highlight'),
+    ).toBe(false);
   });
 
-  it('clears selection + highlight when clicking empty space', async () => {
+  it('v2: clicking empty space closes the panel and clears the selection', async () => {
     renderPanel([pointLayer('poi', 'POI')]);
     await settleInteractive(['poi__point']);
 
     rmg.queryResults = [featureOn('poi__point', { name: 'X' })];
     act(() => rmg.lastOnClick?.(clickPoint));
     await waitFor(() => expect(hud.state.selectedFeature).toBeTruthy());
-    await waitFor(() =>
-      expect(
-        rmg.map._calls.setData.some(
-          (c: { id: string }) => c.id === 'claude-selection-highlight',
-        ),
-      ).toBe(true),
-    );
+    expect(screen.getAllByText('X').length).toBeGreaterThan(0);
 
     rmg.queryResults = [];
     act(() => rmg.lastOnClick?.({ point: [50, 60], lngLat: { lng: 117, lat: 40 } }));
     await waitFor(() => expect(hud.state.selectedFeature).toBeNull());
-    await waitFor(() => {
-      const hlCalls = rmg.map._calls.setData.filter(
-        (c: { id: string }) => c.id === 'claude-selection-highlight',
-      );
-      expect((hlCalls[hlCalls.length - 1].data as any).features).toEqual([]);
-    });
+    await waitFor(() => expect(screen.queryByText('X')).toBeNull());
   });
 
-  it('shows an overlap picker (top ≤3) when >1 feature and selects the picked one', async () => {
+  it('v2: >1 feature at a point opens the unified candidate panel; picking shows detail', async () => {
     renderPanel([pointLayer('poi', 'POI'), pointLayer('poi_schools', 'Schools')]);
     await settleInteractive(['poi__point', 'poi_schools__point']);
 
@@ -383,15 +378,15 @@ describe('MapPanel — FE-3 interaction UX', () => {
     ];
     act(() => rmg.lastOnClick?.(clickPoint));
 
-    // Overlap popup lists the candidates for the user to pick.
-    expect(await screen.findByText('选择要素')).toBeTruthy();
-    expect(screen.getByText('Schools')).toBeTruthy();
-    expect(screen.getByText('POI')).toBeTruthy();
+    // 统一悬浮窗：候选列表（标题=要素名，副行=图层名）。
+    expect(await screen.findByText(/选择要素（2）/)).toBeTruthy();
+    expect(screen.getByText('S')).toBeTruthy();
+    expect(screen.getByText('P')).toBeTruthy();
 
-    // Pick the poi_schools entry → parent layer id committed + highlight.
-    fireEvent.click(screen.getByText('Schools'));
-    await waitFor(() => expect(hud.state.selectedFeature?.layerId).toBe('poi_schools'));
-    expect(screen.queryByText('选择要素')).toBeNull(); // picker closed
+    // 点选候选 → 详情视图。
+    fireEvent.click(screen.getByText('S'));
+    expect(screen.getByText('name:')).toBeTruthy();
+    expect(screen.queryByText(/选择要素（2）/)).toBeNull();
   });
 
   it('shows an rAF-throttled hover tooltip with layer name + ≤3 props', async () => {
@@ -473,7 +468,9 @@ describe('MapPanel — FE-3 interaction UX', () => {
     expect(screen.queryByText('a:')).toBeNull();
   });
 
-  it('re-raises the selection highlight above spec layers after a reconcile', async () => {
+  // v2 重设计：选中态不再有命令式高亮图层，reconcile 后也不应有任何
+  // highlight 相关的 moveLayer / setData（这些机制曾是「画布切空白」的触发面）。
+  it('v2: reconcile after a click performs NO highlight moveLayer/setData', async () => {
     const view = await renderPanel([pointLayer('poi', 'POI')]);
     await settleInteractive(['poi__point']);
 
@@ -481,25 +478,17 @@ describe('MapPanel — FE-3 interaction UX', () => {
     rmg.queryResults = [featureOn('poi__point', { name: 'X' }, geometry)];
     act(() => rmg.lastOnClick?.(clickPoint));
     await waitFor(() => expect(hud.state.selectedFeature).toBeTruthy());
-    await waitFor(() =>
-      expect(
-        rmg.map._calls.setData.some(
-          (c: { id: string }) => c.id === 'claude-selection-highlight',
-        ),
-      ).toBe(true),
-    );
 
-    // Reconcile with an added layer — syncLayerZOrder stacks the spec sublayers
-    // on top, burying the highlight; the panel must move it back to the top.
     rerenderPanel(view, [pointLayer('poi', 'POI'), pointLayer('poi2', 'POI2')]);
     await drainRuntime();
 
     const hlMoves = rmg.map._calls.moveLayer.filter((c: { id: string }) =>
       c.id.startsWith('claude-selection-highlight-'),
     );
-    expect(hlMoves.length).toBeGreaterThan(0);
-    // moveLayer without beforeId → end of the layer order (top of the z-order).
-    expect(hlMoves[hlMoves.length - 1].beforeId).toBeNull();
+    expect(hlMoves.length).toBe(0);
+    expect(
+      rmg.map._calls.setData.some((c: { id: string }) => c.id === 'claude-selection-highlight'),
+    ).toBe(false);
   });
 
   // FIX-3-9 (#401): the imperative annotation stack (markers/measurements/
@@ -577,11 +566,9 @@ describe('MapPanel — FE-3 interaction UX', () => {
     expect(order.indexOf('custom-poi')).toBeGreaterThan(order.indexOf('poi__point'));
   });
 
-  // FIX-3-9 (#402): a basemap switch (setStyle diff) wipes the imperative
-  // highlight layers while the selection effect (deps [selectedFeature,
-  // mapReady]) never re-runs. The post-reconcile raise must RE-MOUNT the
-  // highlight instead of early-returning when its layers are missing.
-  it('re-mounts the selection highlight after a basemap-style wipe', async () => {
+  // v2 重设计：底图切换（setStyle diff）后选中态不再需要重建任何高亮——
+  // 悬浮窗是纯 DOM，天然不受样式重建影响。
+  it('v2: a basemap-style wipe does not resurrect selection-highlight layers', async () => {
     const view = await renderPanel([pointLayer('poi', 'POI')]);
     await settleInteractive(['poi__point']);
 
@@ -589,55 +576,38 @@ describe('MapPanel — FE-3 interaction UX', () => {
     rmg.queryResults = [featureOn('poi__point', { name: 'X' }, geometry)];
     act(() => rmg.lastOnClick?.(clickPoint));
     await waitFor(() => expect(hud.state.selectedFeature).toBeTruthy());
-    await waitFor(() =>
-      expect(rmg.map.getLayer('claude-selection-highlight-fill')).toBeTruthy(),
-    );
+    expect(rmg.map.getLayer('claude-selection-highlight-fill')).toBeNull();
 
     // Simulate the setStyle diff of a basemap switch: MapLibre drops every
     // source + layer (spec and imperative alike).
     for (const l of [...rmg.map._layers]) rmg.map.removeLayer(l.id);
     for (const id of Object.keys(rmg.map._sources)) rmg.map.removeSource(id);
-    expect(rmg.map.getLayer('claude-selection-highlight-fill')).toBeNull();
 
-    // A reconcile settles after the style swap (same layer list, new object):
-    // the highlight must come back with the pending geometry.
+    // A reconcile settles after the style swap — no highlight must re-mount.
     rerenderPanel(view, [pointLayer('poi', 'POI')]);
     await drainRuntime();
 
-    await waitFor(() => {
-      expect(rmg.map.getLayer('claude-selection-highlight-fill')).toBeTruthy();
-      expect(rmg.map.getLayer('claude-selection-highlight-circle')).toBeTruthy();
-    });
-    const hlDataCalls = rmg.map._calls.setData.filter(
-      (c: { id: string }) => c.id === 'claude-selection-highlight',
-    );
-    const last = hlDataCalls[hlDataCalls.length - 1];
-    expect(last.data.features[0].geometry).toEqual(geometry);
-    // And it is re-raised above the freshly re-applied spec layers.
-    const hlMoves = rmg.map._calls.moveLayer.filter((c: { id: string }) =>
-      c.id.startsWith('claude-selection-highlight-'),
-    );
-    expect(hlMoves.length).toBeGreaterThan(0);
+    expect(rmg.map.getLayer('claude-selection-highlight-fill')).toBeNull();
+    expect(rmg.map.getLayer('claude-selection-highlight-circle')).toBeNull();
+    expect(
+      rmg.map._calls.setData.some((c: { id: string }) => c.id === 'claude-selection-highlight'),
+    ).toBe(false);
   });
 
-  it('clears selection + highlight when the selected layer is removed', async () => {
+  it('v2: clears selection + closes the info panel when the selected layer is removed', async () => {
     const view = await renderPanel([pointLayer('poi', 'POI')]);
     await settleInteractive(['poi__point']);
 
     rmg.queryResults = [featureOn('poi__point', { name: 'X' })];
     act(() => rmg.lastOnClick?.(clickPoint));
     await waitFor(() => expect(hud.state.selectedFeature).toBeTruthy());
+    expect(screen.getAllByText('X').length).toBeGreaterThan(0);
 
     // Remove the layer → the selection references a sublayer the map no longer
-    // has; the store selection + imperative highlight must both be cleared.
+    // has; the store selection must clear and the floating panel must close.
     rerenderPanel(view, []);
     await waitFor(() => expect(hud.state.selectedFeature).toBeNull());
-    await waitFor(() => {
-      const hlCalls = rmg.map._calls.setData.filter(
-        (c: { id: string }) => c.id === 'claude-selection-highlight',
-      );
-      expect((hlCalls[hlCalls.length - 1].data as any).features).toEqual([]);
-    });
+    await waitFor(() => expect(screen.queryByText('X')).toBeNull());
   });
 
   it('move storm: memoized overlays do not re-render per frame', async () => {

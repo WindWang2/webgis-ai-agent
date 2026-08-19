@@ -67,6 +67,7 @@ export interface MockMapCallLog {
   queryRenderedFeatures: Array<{ geometry: unknown; params?: unknown }>;
   setLayoutProperty: Array<{ layerId: string; name: string; value: unknown }>;
   setPaintProperty: Array<{ layerId: string; name: string; value: unknown }>;
+  setStyle: Array<{ style: unknown; options?: Record<string, unknown> }>;
 }
 
 export interface MakeMockMaplibreMapOptions {
@@ -184,6 +185,7 @@ export function makeMockMaplibreMap(options: MakeMockMaplibreMapOptions = {}) {
     queryRenderedFeatures: [],
     setLayoutProperty: [],
     setPaintProperty: [],
+    setStyle: [],
   };
 
   const emit = (event: string, payload?: unknown) => {
@@ -212,6 +214,14 @@ export function makeMockMaplibreMap(options: MakeMockMaplibreMapOptions = {}) {
 
     // ─── Style bookkeeping ─────────────────────────────────────────────────
     getStyle: vi.fn(() => ({ sources, layers })),
+    // Stateful: a real setStyle SWEEPS every source/layer (basemap switch /
+    // watchdog self-heal paths re-mount business layers afterwards). The mock
+    // mirrors that so post-setStyle assertions observe the emptied style.
+    setStyle: vi.fn((style: unknown, options?: Record<string, unknown>) => {
+      Object.keys(sources).forEach((k) => delete sources[k]);
+      layers.length = 0;
+      calls.setStyle.push({ style, options });
+    }),
     getSource: vi.fn((id: string) => sources[id] ?? null),
     getLayer: vi.fn((id: string) => layers.find((l) => l.id === id) ?? null),
     addSource: vi.fn((id: string, def: any) => {

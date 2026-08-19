@@ -20,7 +20,7 @@
  *   - persist key、partialize 字段集合保持原样
  */
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { createJSONStorage, persist } from 'zustand/middleware';
 
 import type { HudState, LeftTab } from './hud-types';
 import { createLayersSlice } from './slices/layersSlice';
@@ -56,6 +56,42 @@ export {
  */
 export const PERSIST_KEY = 'geoagent-settings';
 
+// Gate persist writes until after skipHydration rehydrate(). Any zustand
+// set() during the first mount (map loaded, ai status, session restore)
+// would otherwise setItem the in-memory DEFAULTS and wipe the user's
+// persisted baseLayer before rehydrate could read it.
+let persistWritesEnabled =
+  typeof process !== 'undefined' && !!process.env.VITEST;
+
+export function enableHudPersistWrites(): void {
+  persistWritesEnabled = true;
+}
+
+/** Test-only: simulate the pre-rehydrate window. */
+export function disableHudPersistWrites(): void {
+  persistWritesEnabled = false;
+}
+
+function readBrowserStorage(): Storage | null {
+  try {
+    if (typeof window === 'undefined') return null;
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+const gatedStorage = {
+  getItem: (name: string) => readBrowserStorage()?.getItem(name) ?? null,
+  setItem: (name: string, value: string) => {
+    if (!persistWritesEnabled) return;
+    readBrowserStorage()?.setItem(name, value);
+  },
+  removeItem: (name: string) => {
+    readBrowserStorage()?.removeItem(name);
+  },
+};
+
 export const useHudStore = create<HudState>()(
   persist(
     (...a) => ({
@@ -67,6 +103,14 @@ export const useHudStore = create<HudState>()(
     }) as HudState,
     {
       name: PERSIST_KEY,
+      // Persist getItem is sync for localStorage and zustand's thenable
+      // flushes it during create(). That would paint persisted baseLayer /
+      // theme-driven labels on the first client render against SSR defaults
+      // → Next hydration mismatch ("Carto 深色" vs "ESRI 影像"). Rehydrate
+      // after mount from ClientProviders instead. Theme no-flash still
+      // comes from the layout.tsx inline script (DOM, not React text).
+      skipHydration: true,
+      storage: createJSONStorage(() => gatedStorage),
       partialize: (state) => ({
         skills: state.skills,
         ragConfig: state.ragConfig,

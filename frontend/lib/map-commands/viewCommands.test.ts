@@ -130,7 +130,8 @@ describe('viewCommands camera commands (V3 Promise<MapCommandResult> contract)',
     );
 
     expect(map._calls.fitBounds).toEqual([
-      { bbox: [116, 39, 117, 40], options: { padding: 40, duration: 1500 } },
+      // maxZoom:16 —— navigation.ts 对退化 bbox 的极端目标缩放防御
+      { bbox: [116, 39, 117, 40], options: { padding: 40, duration: 1500, maxZoom: 16 } },
     ]);
     map._fire('moveend');
     await vi.advanceTimersByTimeAsync(0);

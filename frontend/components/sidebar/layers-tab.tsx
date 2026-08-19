@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useCallback } from 'react';
 import clsx from 'clsx';
-import { Eye, EyeOff, GripVertical, Layers as LayersIcon } from 'lucide-react';
+import { Eye, EyeOff, GripVertical, Layers as LayersIcon, LocateFixed } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { Layer } from '@/lib/types/layer';
 import { ConfirmAction } from '@/components/shared/confirm-action';
@@ -303,6 +303,15 @@ export function LayersTab() {
                         />
 
                         <div className="flex shrink-0 items-center">
+                          {/* 缩放到图层：触发 map-panel 的 focusLayer 效果（fitBounds
+                              到图层 bbox）。无 bbox/无几何的图层点击后无反应是
+                              预期行为（计算不出范围）。 */}
+                          <IconButton
+                            size="sm"
+                            label={`缩放到图层 ${layer.name}`}
+                            icon={LocateFixed}
+                            onClick={() => useHudStore.getState().focusLayer(layer.id)}
+                          />
                           <IconButton
                             size="sm"
                             label={layer.visible ? '隐藏图层' : '显示图层'}

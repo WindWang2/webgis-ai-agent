@@ -306,6 +306,44 @@ describe('renderer', () => {
       expect(layerArg.paint['heatmap-intensity']).toBe(0.6);
       expect(layerArg.paint['heatmap-radius']).toBe(20);
     });
+
+    it('retunes classic stops to the gaussian density domain (单点峰值 0.4 落绿段，不再整片蓝)', () => {
+      // MapLibre 累积 shader：val = weight·intensity·0.39894·exp(-4.5d²) ——
+      // weight=1 的孤立点中心密度峰值只有 0.4。旧停靠点 (0.2..1 匀铺) 让稀疏区
+      // 整片停在首段蓝色（用户实测「没有颜色分级」）；重标定后中间色压到
+      // 0.25/0.45 段，任何缩放下都能看到蓝→绿→黄→红的多级渐变。
+      mapMock.getLayer.mockReturnValue(undefined);
+      addNativeHeatmap(mapMock, { id: 'heatmap-layer', source: 'test-source' });
+      const layerArg = mapMock.addLayer.mock.calls[0][0];
+      const expr = layerArg.paint['heatmap-color'] as unknown as any[];
+      const stops = expr.slice(3);
+      const positions = stops.filter((_, i) => i % 2 === 0);
+      expect(positions).toContain(0.25);
+      expect(positions).toContain(0.45);
+      expect(positions[positions.length - 1]).toBe(1);
+      // 多色相：首段蓝、尾段红（颜色 hex/rgb 字符串）
+      expect(stops[1]).toContain('110,182');
+      expect(stops[stops.length - 1]).toContain('235,40,40');
+    });
+
+    it('falls back to classic stops for unknown palette names (no undefined spread)', () => {
+      mapMock.getLayer.mockReturnValue(undefined);
+      addNativeHeatmap(mapMock, { id: 'heatmap-layer', source: 'test-source', palette: 'not-a-palette' });
+      const expr = mapMock.addLayer.mock.calls[0][0].paint['heatmap-color'] as unknown as any[];
+      // 7 停靠点 × 2 + 表头 3 项，而不是空 stops 的退化 interpolate
+      expect(expr.length).toBe(3 + 14);
+      expect(expr.slice(3).filter((_, i) => i % 2 === 0)).toContain(0.45);
+    });
+
+    it('defaults intensity to a zoom-interpolate boost when not supplied', () => {
+      mapMock.getLayer.mockReturnValue(undefined);
+      addNativeHeatmap(mapMock, { id: 'heatmap-layer', source: 'test-source' });
+      const intensity = mapMock.addLayer.mock.calls[0][0].paint['heatmap-intensity'];
+      // 放大后点距拉开、高斯重叠贡献变少 —— zoom 增益补偿，防止退回冷色
+      expect(Array.isArray(intensity)).toBe(true);
+      expect(intensity[0]).toBe('interpolate');
+      expect(JSON.stringify(intensity)).toContain('zoom');
+    });
   });
 
   describe('removeLayerStack', () => {

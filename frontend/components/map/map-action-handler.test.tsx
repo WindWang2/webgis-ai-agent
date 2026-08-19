@@ -369,7 +369,7 @@ describe('MapActionHandler', () => {
       render(<MapActionHandler />);
     });
 
-    expect(map.fitBounds).toHaveBeenCalledWith([116.0, 39.0, 117.0, 40.0], { duration: 1500, padding: 40 });
+    expect(map.fitBounds).toHaveBeenCalledWith([116.0, 39.0, 117.0, 40.0], { duration: 1500, padding: 40, maxZoom: 16 });
   });
 
   it('calls navigation.flyTo with correct arguments for set_map_view', async () => {

@@ -64,6 +64,10 @@ export const heatmapCommands: Record<string, CommandEntry> = {
         intensity: number;
         field: string;
       }>;
+      // heatmap_data 工具结果把 palette/radius/intensity 嵌在 metadata 里
+      // （useMapBridge 把除 command 外的整体作为 params 透传）——不读的话
+      // agent 选的配色/半径会静默丢失，永远按 classic+默认半径渲染。
+      const meta = ((params ?? {}) as { metadata?: { palette?: string; radius?: number; intensity?: number } }).metadata ?? {};
       // V3: missing payload data → explicit failed result (was a silent return).
       if (!geojson) return { status: 'failed', error: 'invalid_params' };
 
@@ -76,9 +80,9 @@ export const heatmapCommands: Record<string, CommandEntry> = {
       renderer.addNativeHeatmap(map, {
         id,
         source: id,
-        palette: (heatPalette ?? palette) as any,
-        radius,
-        intensity,
+        palette: (heatPalette ?? palette ?? meta.palette) as any,
+        radius: radius ?? meta.radius,
+        intensity: intensity ?? meta.intensity,
         opacity: 0.8
       });
       // V3 round-2 FIX-B (issue #393): post-mutation verification — both the

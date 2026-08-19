@@ -18,6 +18,7 @@ const updateLayer = vi.fn();
 const toggleLayer = vi.fn();
 const removeLayer = vi.fn();
 const reorderLayers = vi.fn();
+const focusLayer = vi.fn();
 
 // A mutable store the component reads from. Tests swap `layers` per case via
 // setStoreLayers(); the selector returns whatever the current store holds.
@@ -27,6 +28,7 @@ const store: Record<string, unknown> = {
   removeLayer,
   updateLayer,
   reorderLayers,
+  focusLayer,
   theme: 'dark',
 };
 
@@ -35,7 +37,10 @@ function setStoreLayers(layers: Layer[]) {
 }
 
 vi.mock('@/lib/store/useHudStore', () => ({
-  useHudStore: (selector: (s: any) => any) => selector(store),
+  useHudStore: Object.assign(
+    (selector: (s: any) => any) => selector(store),
+    { getState: () => store },
+  ),
 }));
 
 // Import AFTER the mock is registered so the component picks up the mock.
@@ -114,5 +119,32 @@ describe('LayersTab — opacity slider debounce (FE-03)', () => {
     fireEvent.pointerUp(slider);
 
     expect(updateLayer).not.toHaveBeenCalled();
+  });
+});
+
+describe('LayersTab — 缩放到图层', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setStoreLayers([]);
+  });
+
+  it('点击「缩放到图层」触发 focusLayer(图层 id)', () => {
+    setStoreLayers([makeLayer({ id: 'poi', name: '成都小学' })]);
+    render(<LayersTab />);
+
+    fireEvent.click(screen.getByRole('button', { name: '缩放到图层 成都小学' }));
+    expect(focusLayer).toHaveBeenCalledTimes(1);
+    expect(focusLayer).toHaveBeenCalledWith('poi');
+  });
+
+  it('每个图层行都有独立的缩放按钮', () => {
+    setStoreLayers([
+      makeLayer({ id: 'a', name: '图层A' }),
+      makeLayer({ id: 'b', name: '图层B' }),
+    ]);
+    render(<LayersTab />);
+
+    fireEvent.click(screen.getByRole('button', { name: '缩放到图层 图层B' }));
+    expect(focusLayer).toHaveBeenCalledWith('b');
   });
 });

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useCallback, useRef, useMemo } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import type { MapActionCorrelation, MapActionPayload, MapActionTerminalStatus } from '@/lib/types';
 import type { MapActionAck, MapActionAckSink } from '@/lib/api/map-action-acks';
 import { useHudStore } from '@/lib/store/useHudStore';
@@ -126,22 +126,49 @@ function mintActionId(): string {
   return `fe-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/** SSR / first-client-paint default. Must not read persist — zustand persist
+ * rehydrates localStorage synchronously during store create(), so a lazy
+ * useState init would paint "ESRI 影像" on the client against SSR "Carto 深色"
+ * and Next throws a hydration mismatch. */
+function defaultBaseLayerIndex(): number {
+  const idx = TILE_PROVIDERS.findIndex((p) => p.name === 'Carto 深色');
+  return idx >= 0 ? idx : 1;
+}
+
 export function MapActionProvider({ children }: { children: React.ReactNode }) {
   const [actions, setActions] = useState<MapActionPayload[]>([]);
-  // 审计 F34：lazy init 从持久化的 useHudStore.baseLayer name 反查 index，
-  // 防刷新后 index 重置为 1 与持久化 name 不一致 -> 底图闪烁。
-  const [selectedBaseLayer, setSelectedBaseLayer] = useState<number>(() => {
-    try {
-      const persistedName = useHudStore.getState().baseLayer;
-      // TILE_PROVIDERS 通过顶部 ESM import 引入；providers.ts 是叶子模块无循环依赖。
-      const idx = TILE_PROVIDERS.findIndex((p: any) => p.name === persistedName);
-      if (idx >= 0) return idx;
-      const fallbackIdx = TILE_PROVIDERS.findIndex((p: any) => p.name === 'Carto 深色');
-      return fallbackIdx >= 0 ? fallbackIdx : 1;
-    } catch {
-      return 1;
-    }
-  });
+  const [selectedBaseLayer, setSelectedBaseLayer] = useState<number>(defaultBaseLayerIndex);
+  // Apply persist after mount (and again when persist finishes hydrating).
+  // Same index heal as F34, just not on the first paint.
+  useEffect(() => {
+    const applyPersisted = () => {
+      try {
+        const persistedName = useHudStore.getState().baseLayer;
+        const idx = TILE_PROVIDERS.findIndex((p) => p.name === persistedName);
+        if (idx >= 0) {
+          setSelectedBaseLayer((cur) => (cur === idx ? cur : idx));
+        }
+      } catch {
+        /* store unavailable in isolated tests */
+      }
+    };
+    applyPersisted();
+    const persistApi = (
+      useHudStore as {
+        persist?: { onFinishHydration?: (cb: () => void) => () => void };
+        subscribe?: (cb: (s: { baseLayer: string }) => void) => () => void;
+      }
+    );
+    const unsubFinish = persistApi.persist?.onFinishHydration?.(applyPersisted);
+    const unsubStore = persistApi.subscribe?.((s) => {
+      const idx = TILE_PROVIDERS.findIndex((p) => p.name === s.baseLayer);
+      if (idx >= 0) setSelectedBaseLayer((cur) => (cur === idx ? cur : idx));
+    });
+    return () => {
+      unsubFinish?.();
+      unsubStore?.();
+    };
+  }, []);
   const snapshotFnRef = useRef<(() => MapSnapshot) | null>(null);
 
   // The queue's authoritative source is a ref so dispatch/coalesce/pop operate on

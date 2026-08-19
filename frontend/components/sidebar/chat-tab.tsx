@@ -194,7 +194,7 @@ const ChatMessageItem = memo(function ChatMessageItem({
                   s.selectResult(msg.resultId!);
                   s.setActiveLeftTab('results');
                 }}
-                className="ml-1 inline-flex items-center gap-0.5 rounded-full bg-white/20 px-1.5 py-0.5 text-[11px] font-medium text-white transition-colors hover:bg-white/30"
+                className="ml-1 inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap rounded-full bg-white/20 px-1.5 py-0.5 text-[11px] font-medium text-white transition-colors hover:bg-white/30"
                 aria-label="在结果工作台查看分析结果"
               >
                 查看结果

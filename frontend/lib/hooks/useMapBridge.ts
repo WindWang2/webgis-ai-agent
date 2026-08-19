@@ -68,6 +68,27 @@ function mintFeActionId(): string {
 // only after the mount (onEvent) returned without throwing, with a
 // `store_mounted` marker (not `confirmed`, which implies convergence).
 const STORE_MOUNTED_COMMANDS = new Set(['add_native_heatmap', 'add_heatmap_raster', 'add_layer']);
+const CAMERA_COMMANDS = new Set(['fly_to', 'set_map_view', 'zoom_to_bbox']);
+
+function maybeFlyToBbox(
+  stepData: { result?: { bbox?: unknown }; bbox?: unknown; step_id?: string; turn_id?: string; task_id?: string },
+  streamSessionId: string | undefined,
+  event: { id?: string },
+  dispatchAction: (action: MapActionPayload) => void,
+): void {
+  const bbox = stepData.result?.bbox ?? stepData.bbox;
+  if (!isValidBbox(bbox)) return;
+  try {
+    dispatchAction({
+      command: 'fly_to',
+      params: bboxToFlyTo(bbox),
+      action_id: mintFeActionId(),
+      correlation: buildMapActionCorrelation(streamSessionId, stepData, event),
+    });
+  } catch {
+    /* invalid bbox after isValidBbox — defensive */
+  }
+}
 
 /**
  * V3 correlation for a step_result dispatch (design §6): session + step
@@ -462,6 +483,10 @@ export function useMapBridge(
                         correlation: buildMapActionCorrelation(streamSessionId, stepData, event),
                       } as MapActionPayload,
                     });
+                    // add_layer is store-mounted so it never reaches the
+                    // handler's flyTo. Still frame the result or POIs stay a
+                    // one-pixel spec on the default China view.
+                    maybeFlyToBbox(stepData, streamSessionId, event, dispatchAction);
                   } else {
                     dispatchAction({
                       command,
@@ -474,6 +499,7 @@ export function useMapBridge(
                 } else if (Array.isArray(batchCommands) && batchCommands.length > 0) {
                   // Batch tool emits a sequence of commands (e.g. export_batch_maps).
                   // The MapActionHandler queue processes one-at-a-time via popAction.
+                  let dispatchedCamera = false;
                   for (const cmd of batchCommands) {
                     if (!cmd?.command) continue;
                     const command = cmd.command as MapActionPayload['command'];
@@ -495,7 +521,11 @@ export function useMapBridge(
                         ...(cmd.action_id ? { action_id: cmd.action_id } : {}),
                         correlation: buildMapActionCorrelation(streamSessionId, stepData, event),
                       });
+                      if (CAMERA_COMMANDS.has(command.toLowerCase())) dispatchedCamera = true;
                     }
+                  }
+                  if (!dispatchedCamera) {
+                    maybeFlyToBbox(stepData, streamSessionId, event, dispatchAction);
                   }
                 } else {
                   const bbox = stepData.result?.bbox ?? stepData.bbox;

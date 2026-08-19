@@ -1,11 +1,12 @@
 "use client"
 
-import React, { Component } from "react"
+import React, { Component, useEffect } from "react"
 import { MotionConfig } from "framer-motion"
 import { MapProvider } from "react-map-gl/maplibre"
 import { MapActionProvider } from "@/lib/contexts/map-action-context"
 import { ToastContainer } from "@/components/ui/toast"
 import { SystemMessageBridge } from "@/components/providers/system-message-bridge"
+import { enableHudPersistWrites, useHudStore } from "@/lib/store/useHudStore"
 
 interface ErrorBoundaryState {
   hasError: boolean
@@ -45,6 +46,11 @@ class ErrorBoundary extends Component<{ children: React.ReactNode }, ErrorBounda
 }
 
 export function ClientProviders({ children }: { children: React.ReactNode }) {
+  useEffect(() => {
+    void Promise.resolve(useHudStore.persist.rehydrate()).finally(() => {
+      enableHudPersistWrites();
+    });
+  }, []);
   return (
     // MotionConfig reducedMotion="user"：globals.css 的 reduced-motion 全局样式
     // 只能关掉 CSS 动画，触不到 framer-motion 用 JS 内联样式驱动的弹簧动画；

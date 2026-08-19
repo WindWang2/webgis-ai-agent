@@ -701,6 +701,10 @@ export function useSSEStream(
                   const current = useHudStore.getState().layers.find((l) => l.id === fetchRef);
                   if (current && current._refId === fetchRef) {
                     useHudStore.getState().updateLayer(fetchRef, { source: geojson });
+                    // Store-mounted add_layer never reaches the handler flyTo.
+                    // Frame the fetched features so POIs are not a 1px spec
+                    // on the default China view.
+                    useHudStore.getState().focusLayer(fetchRef);
                   }
                 }
               })

@@ -234,9 +234,8 @@ describe('MapPanel — basemap switch during in-flight reconcile (#459/#460/#461
     ];
     act(() => rmg.lastOnClick?.(clickPoint));
     await waitFor(() => expect(hud.state.selectedFeature).toBeTruthy());
-    await waitFor(() =>
-      expect(rmg.map.getLayer('claude-selection-highlight-fill')).toBeTruthy(),
-    );
+    // v2 重设计：点击只写快照 + 纯 DOM 悬浮窗，不再挂高亮图层。
+    expect(rmg.map.getLayer('claude-selection-highlight-fill')).toBeNull();
 
     // ── Reconcile starts (layer-changing: visibility toggle on poi) ────────
     const changedLayers = specLayers.map((l) =>
@@ -284,8 +283,10 @@ describe('MapPanel — basemap switch during in-flight reconcile (#459/#460/#461
       .pop();
     expect(annotationData.data.features).toEqual([measurement]);
 
-    // #402 sibling path: the selection highlight is re-mounted on top.
-    expect(rmg.map.getLayer('claude-selection-highlight-fill')).toBeTruthy();
+    // v2 重设计：底图切换后选中态不再重建高亮图层（悬浮窗是纯 DOM，
+    // 天然存活于样式重建之外）。
+    expect(rmg.map.getLayer('claude-selection-highlight-fill')).toBeNull();
+    expect(rmg.map.getLayer('claude-selection-highlight-circle')).toBeNull();
     const order = () => rmg.map._layers.map((l: any) => l.id);
 
     // ── #461: custom-* overlay re-added after recovery stays above spec ──

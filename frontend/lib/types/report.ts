@@ -4,7 +4,7 @@
 
 export type ReportFormat = 'pdf' | 'html' | 'markdown' | 'md';
 
-export type ReportStatus = 'pending' | 'generating' | 'completed' | 'failed';
+export type ReportStatus = 'pending' | 'processing' | 'generating' | 'completed' | 'failed';
 
 export interface ReportInfo {
   id: string;

@@ -17,11 +17,7 @@ import {
 } from "@/lib/mapspec-runtime"
 import { apiFetch } from "@/lib/api/transport"
 import { computeInteractiveIds, resolveParentLayerId } from "@/lib/map-kit/interactive-ids"
-import {
-  setSelectionHighlight,
-  clearSelectionHighlight,
-  SELECTION_HIGHLIGHT_SOURCE_ID,
-} from "@/lib/map-kit/selection-highlight"
+import { PoiInfoPanel } from "@/components/map/poi-info-panel"
 import { raiseAnnotationLayers } from "@/lib/map-commands/annotationHelpers"
 import { notifyUserGestureStart, notifyUserGestureEnd } from "@/lib/map-commands/camera-arbitration"
 import { devOnly } from "@/lib/utils/logger"
@@ -271,6 +267,33 @@ export function MapPanel({
     }
   }, [])
 
+  // TEMP-DEBUG(底图消失排查 #2): map error / 全局错误 → window.__mapErrors
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const w = window as unknown as { __mapErrors?: unknown[] };
+    if (!w.__mapErrors) {
+      w.__mapErrors = [];
+      const push = (e: unknown) => {
+        const err = typeof e === "object" && e !== null && "error" in (e as Record<string, unknown>)
+          ? (e as { error?: unknown }).error
+          : e;
+        w.__mapErrors!.push({ t: Date.now(), msg: String((err as Error)?.message ?? err) });
+      };
+      (window as unknown as { __dbgPush: (e: unknown) => void }).__dbgPush = push;
+      window.addEventListener("error", push);
+      window.addEventListener("unhandledrejection", push);
+    }
+  }, []);
+  useEffect(() => {
+    const map = mapRef.current?.getMap()
+    if (!map || !mapReady) return
+    const push = (window as unknown as { __dbgPush?: (e: unknown) => void }).__dbgPush
+    if (!push) return
+    const onErr = (e: { error?: Error }) => push(e)
+    map.on("error", onErr as never)
+    return () => { map.off("error", onErr as never) }
+  }, [mapReady])
+
   // Lazily create the runtime once the map instance is available.
   useEffect(() => {
     const map = mapRef.current?.getMap()
@@ -295,46 +318,10 @@ export function MapPanel({
     syncInteractiveIds()
   }, [currentMapStyle, syncInteractiveIds])
 
-  // FIX-3-2: runtime.syncLayerZOrder moves spec sublayers to the TOP of the
-  // z-order after every reconcile, burying the ephemeral selection highlight
-  // (its layers were added imperatively and never re-positioned). Re-raise the
-  // highlight above the top spec layer whenever a reconcile completes. Guarded:
-  // no-op when the highlight isn't mounted, and moveLayer is wrapped so a layer
-  // that vanished mid-reconcile is skipped silently.
-  //
-  // FIX-3-9 (#402): a basemap switch (setStyle diff) wipes every imperative
-  // layer — including the highlight — while the selection effect (deps
-  // [selectedFeature, mapReady]) never re-runs. When the highlight layers are
-  // gone but a selection is live, RE-MOUNT them (source + layers + data) via
-  // setSelectionHighlight instead of early-returning, so the yellow overlay
-  // comes back once the new style has settled; then re-raise as usual.
-  const raiseSelectionHighlight = useCallback(() => {
-    const selectedFeature = useHudStore.getState().selectedFeature
-    if (!selectedFeature || !pendingSelectionGeometryRef.current) return
-    const map = mapRef.current?.getMap()
-    if (!map || !mapReady) return
-    const highlightIds = [
-      `${SELECTION_HIGHLIGHT_SOURCE_ID}-fill`,
-      `${SELECTION_HIGHLIGHT_SOURCE_ID}-line`,
-      `${SELECTION_HIGHLIGHT_SOURCE_ID}-circle`,
-    ]
-    if (!highlightIds.some((id) => map.getLayer(id))) {
-      setSelectionHighlight(map, {
-        geometry: pendingSelectionGeometryRef.current,
-        properties: selectedFeature.properties,
-      })
-    }
-    for (const id of highlightIds) {
-      if (!map.getLayer(id)) continue
-      try {
-        // moveLayer without beforeId → end of the layer order (top), i.e.
-        // directly above every spec layer syncLayerZOrder just stacked.
-        map.moveLayer(id)
-      } catch {
-        // Layer vanished mid-reconcile — nothing to re-raise.
-      }
-    }
-  }, [mapReady])
+  // v2 重设计后选中态不再挂高亮图层（曾经的 raise/remount 机制连同
+  // 「画布切空白」的触发面一并移除）；保留一个空回调以维持 reconcile
+  // 依赖数组的形状稳定。
+  const raiseSelectionHighlight = useCallback(() => {}, [])
 
   // Reconcile whenever the inputs to the derived MapSpec change. The runtime's
   // internal diff is the no-op fast path for unchanged specs, and the async
@@ -490,6 +477,31 @@ export function MapPanel({
 
   const setSelectedFeature = useHudStore((s: HudState) => s.setSelectedFeature)
   const selectedFeature = useHudStore((s: HudState) => s.selectedFeature)
+
+  // 底图自愈看门狗：点击选中要素后检查一次样式健康度。若样式里已无任何
+  // 瓦片源（vector/raster 全消失 = 「弹窗还在、画布全空」症状），直接
+  // setStyle 重建 + invalidateStyle 让 MapSpecRuntime 重挂业务图层——
+  // 与手动切换底图的恢复路径等价，只是自动化。
+  useEffect(() => {
+    if (!mapReady || !selectedFeature) return
+    const timer = setTimeout(() => {
+      const map = mapRef.current?.getMap()
+      if (!map) return
+      try {
+        const style = (map as unknown as { getStyle?: () => { sources?: Record<string, unknown>; layers?: unknown[] } }).getStyle?.()
+        const sources = Object.values(style?.sources ?? {}) as Array<{ type?: string }>
+        const layers = style?.layers ?? []
+        const hasTileSource = sources.some((s) => s?.type === "vector" || s?.type === "raster")
+        if (layers.length > 0 && !hasTileSource) {
+          devOnly.warn("[map] 底图瓦片源丢失，自动重建样式")
+          map.setStyle(currentMapStyle)
+          runtimeRef.current?.invalidateStyle()
+          setRuntimeRecoveryGeneration((g) => g + 1)
+        }
+      } catch { /* 观测/自愈代码不得反向破坏交互 */ }
+    }, 2500)
+    return () => clearTimeout(timer)
+  }, [selectedFeature, mapReady, currentMapStyle])
   const layersRef = useRef(layers)
   const layersMapRef = useRef<Record<string, Layer>>({})
   const layerIdsSetRef = useRef<Set<string>>(new Set())
@@ -503,20 +515,17 @@ export function MapPanel({
   }, [layers])
 
   /**
-   * FE-3: commit a clicked/picked feature as the selection.
+   * 选中信息入库（POI 点击重设计 v2）。
    *
-   * Stores the PARENT layer id in selectedFeature.layerId — the `__sub`
-   * suffix is stripped via LONGEST-prefix match against the project layer ids
-   * (fixes poi vs poi_schools mis-attribution, findings D). The raw feature
-   * geometry is kept aside for the imperative highlight (it is not part of the
-   * store snapshot).
+   * 点击链路只做两件事：写 selectedFeature 快照（供 AI 会话感知）+
+   * 打开纯 DOM 悬浮窗。**不做**：命令式高亮图层、z-order 提升、自动
+   * 聚焦相机——这些机制曾在部分会话触发「画布切空白底图」（静默、
+   * 无报错，切底图可恢复），重设计后点击不接触任何 GL/样式/相机状态。
    */
-  const selectFeature = useCallback((map: any, feature: any, point: [number, number]) => {
+  const commitSelection = useCallback((feature: any, point: [number, number]) => {
     const sublayerId = feature.layer?.id as string | undefined
     const parentId = sublayerId ? resolveParentLayerId(sublayerId, layerIdsSetRef.current) : undefined
     const layerInfo = parentId ? layersMapRef.current[parentId] : undefined
-    pendingSelectionGeometryRef.current = feature.geometry ?? null
-    setOverlapFeatures(null)
     setSelectedFeature({
       // 无主图层（process-* 等）时回退到原始 sublayer id。
       layerId: parentId ?? sublayerId ?? 'unknown',
@@ -529,61 +538,48 @@ export function MapPanel({
     })
   }, [setSelectedFeature])
 
-  // FE-3: overlap 候选列表（同一点 >1 个要素时弹出，用户挑选）。
-  const [overlapFeatures, setOverlapFeatures] = useState<{
-    point: [number, number]
+  // 悬浮窗状态：屏幕坐标 + 命中要素列表（≤5）。纯组件本地状态。
+  const [poiPanel, setPoiPanel] = useState<{
+    x: number
+    y: number
+    lngLat: [number, number]
     features: any[]
   } | null>(null)
-
-  const pickOverlapFeature = useCallback((feature: any, point: [number, number]) => {
-    const map = mapRef.current?.getMap()
-    if (!map) return
-    selectFeature(map, feature, point)
-    setOverlapFeatures(null)
-  }, [selectFeature])
 
   const handleMapClick = useCallback((evt: any) => {
     const map = mapRef.current?.getMap()
     if (!map) return
-    // FE-3: reuse the registry-derived ids — the duplicate style scan is gone
-    // (findings E3). 只查询我们自己添加的 __ 子图层；底图瓦片层不应吃 click。
+    // 只查询我们自己添加的 __ 子图层；底图瓦片层不应吃 click。
     const ids = interactiveIdsRef.current
     if (ids.length === 0) {
       setSelectedFeature(null)
-      setOverlapFeatures(null)
+      setPoiPanel(null)
       return
     }
-    const features = map.queryRenderedFeatures(evt.point, { layers: ids })
+    let features: any[] = []
+    try {
+      features = map.queryRenderedFeatures(evt.point, { layers: ids })
+    } catch {
+      // 会话切换/图层重挂瞬间个别 layer id 可能已失效——查询失败静默收敛，
+      // 绝不让异常进入 MapLibre 的事件分发链。
+      features = []
+    }
     if (!features || features.length === 0) {
       setSelectedFeature(null)
-      setOverlapFeatures(null)
+      setPoiPanel(null)
       return
     }
     const point: [number, number] = [evt.lngLat.lng, evt.lngLat.lat]
-    if (features.length > 1) {
-      // FE-3 overlap: 同一位置多个要素 —— 弹出候选列表让用户挑选（top ≤3）。
-      setOverlapFeatures({ point, features: features.slice(0, 3) })
-      return
-    }
-    selectFeature(map, features[0], point)
-  }, [setSelectedFeature, setOverlapFeatures, selectFeature])
-
-  // FE-3: imperative selection highlight — ephemeral, OUTSIDE MapSpecRuntime /
-  // MapSpec (ADR-0036: the spec is derived from HUD state; a click is not).
-  const pendingSelectionGeometryRef = useRef<unknown>(null)
-  useEffect(() => {
-    const map = mapRef.current?.getMap()
-    if (!map || !mapReady) return
-    if (selectedFeature && pendingSelectionGeometryRef.current) {
-      setSelectionHighlight(map, {
-        geometry: pendingSelectionGeometryRef.current,
-        properties: selectedFeature.properties,
-      })
-    } else {
-      pendingSelectionGeometryRef.current = null
-      clearSelectionHighlight(map)
-    }
-  }, [selectedFeature, mapReady])
+    // v2 重设计：单/多要素统一进纯 DOM 悬浮窗（候选列表内置），只写快照，
+    // 不触发高亮图层、不触发自动聚焦。
+    commitSelection(features[0], point)
+    setPoiPanel({
+      x: evt.point.x,
+      y: evt.point.y,
+      lngLat: point,
+      features: features.slice(0, 5),
+    })
+  }, [setSelectedFeature, commitSelection])
 
   // FE-3 hover tooltip: rAF-throttled mousemove over the interactive sublayers,
   // showing the layer name + ≤3 key props. The query only runs once per frame
@@ -668,11 +664,8 @@ export function MapPanel({
       layers.some((l) => l.id === layerId) ||
       layers.some((l) => layerId.startsWith(l.id + '__'))
     if (stillPresent) return
-    pendingSelectionGeometryRef.current = null
-    setOverlapFeatures(null)
+    setPoiPanel(null)
     setSelectedFeature(null)
-    const map = mapRef.current?.getMap()
-    if (map) clearSelectionHighlight(map)
   }, [layers, selectedFeature, setSelectedFeature])
 
   // FE-3: user gesture arbitration — report to camera-arbitration ONLY when the
@@ -731,6 +724,8 @@ export function MapPanel({
   const handleMove = useCallback((evt: ViewStateChangeEvent) => {
     setViewState(evt.viewState)
     viewStateRef.current = evt.viewState
+    // 悬浮窗锚定在点击时的屏幕像素：地图一动位置就失真，直接关闭。
+    setPoiPanel((p) => (p ? null : p))
     const map = mapRef.current?.getMap()
     const b = map?.getBounds()
     const bounds: [number, number, number, number] | undefined = b
@@ -846,66 +841,17 @@ export function MapPanel({
         {...({ preserveDrawingBuffer: true } as any)}
       >
         <MapActionHandler />
-        {overlapFeatures && (
-          <Popup
-            longitude={overlapFeatures.point[0]}
-            latitude={overlapFeatures.point[1]}
-            anchor="bottom"
-            onClose={() => setOverlapFeatures(null)}
-            closeOnClick={false}
-          >
-            <div className="min-w-[160px] p-1 font-sans text-meta">
-              <div className="mb-1 border-b border-map-chrome-border pb-1 font-semibold text-map-chrome-ink">选择要素</div>
-              {overlapFeatures.features.map((f, i) => {
-                const sublayerId = (f.layer?.id as string | undefined)
-                const parentId = sublayerId ? resolveParentLayerId(sublayerId, layerIdsSetRef.current) : undefined
-                const layerInfo = parentId ? layersMapRef.current[parentId] : undefined
-                const name = layerInfo?.name ?? parentId ?? sublayerId ?? `要素 ${i + 1}`
-                const firstProp = Object.entries((f.properties || {}) as Record<string, unknown>)[0]
-                return (
-                  <button
-                    key={i}
-                    type="button"
-                    className="block w-full rounded-xs px-1 py-0.5 text-left hover:bg-surface-hover"
-                    onClick={() => pickOverlapFeature(f, overlapFeatures.point)}
-                  >
-                    <span className="font-mono text-map-chrome-ink-muted">{name}</span>
-                    {firstProp && <span className="ml-2 font-mono break-all">{String(firstProp[1])}</span>}
-                  </button>
-                )
-              })}
-            </div>
-          </Popup>
+        {poiPanel && (
+          <PoiInfoPanel
+            x={poiPanel.x}
+            y={poiPanel.y}
+            features={poiPanel.features}
+            layerIds={layerIdsSetRef.current}
+            layersMap={layersMapRef.current}
+            onClose={() => { setPoiPanel(null); setSelectedFeature(null) }}
+          />
         )}
-        {!overlapFeatures && selectedFeature && (
-          <Popup
-            longitude={selectedFeature.point[0]}
-            latitude={selectedFeature.point[1]}
-            anchor="bottom"
-            onClose={() => setSelectedFeature(null)}
-            closeOnClick={false}
-          >
-            <div className="p-1 font-sans text-meta">
-              <div className="mb-1 truncate border-b border-map-chrome-border pb-1 font-semibold text-map-chrome-ink" title={selectedFeature.layerName || '未命名图层'}>
-                {selectedFeature.layerName || '未命名图层'}
-              </div>
-              <div className="max-h-32 min-w-[150px] space-y-0.5 overflow-y-auto">
-                {Object.entries(selectedFeature.properties).slice(0, 5).map(([k, v]) => (
-                  <div key={k} className="flex justify-between gap-4">
-                    <span className="font-mono text-map-chrome-ink-muted">{k}:</span>
-                    <span className="break-all font-mono text-map-chrome-ink">{String(v)}</span>
-                  </div>
-                ))}
-                {Object.keys(selectedFeature.properties).length > 5 && (
-                  <div className="text-micro italic text-map-chrome-ink-muted">
-                    ...以及其他 {Object.keys(selectedFeature.properties).length - 5} 个属性
-                  </div>
-                )}
-              </div>
-            </div>
-          </Popup>
-        )}
-        {!overlapFeatures && !selectedFeature && hoverInfo && (
+        {!poiPanel && !selectedFeature && hoverInfo && (
           <Popup
             longitude={hoverInfo.point[0]}
             latitude={hoverInfo.point[1]}
@@ -939,7 +885,7 @@ export function MapPanel({
           <div
             className="absolute z-30 flex max-w-[268px] flex-col gap-2 overflow-y-auto pr-1 transition-[bottom,left] duration-300"
             style={{
-              left: 'var(--workspace-offset, 16px)',
+              left: 'var(--map-chrome-left, 16px)',
               bottom: 'var(--map-chrome-bottom, 10px)',
               top: '48px',
               justifyContent: 'flex-end',

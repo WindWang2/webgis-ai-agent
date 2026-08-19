@@ -437,6 +437,16 @@ describe('theme survives a reload', () => {
     expect(src).toMatch(/classList\.add\('dark'\)/);
   });
 
+  it('does not rehydrate persist into React state before mount', () => {
+    // Sync persist-during-create paints "ESRI 影像" on the client against
+    // SSR "Carto 深色" and Next throws a hydration mismatch. Theme still
+    // no-flashes via the layout inline script (DOM class, not text).
+    const store = read('lib/store/useHudStore.ts');
+    const providers = read('components/providers/client-providers.tsx');
+    expect(store).toMatch(/skipHydration:\s*true/);
+    expect(providers).toMatch(/persist\.rehydrate\(/);
+  });
+
   it('syncs the runtime accent into the CSS custom property', () => {
     // `var(--agent-accent)` consumers (nav rail, panel separator) were stuck on
     // the default green no matter what accent the user picked. The effect writes

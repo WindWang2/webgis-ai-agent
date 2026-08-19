@@ -34,23 +34,41 @@ export function flyTo(map: Map, params: ViewportParams): void {
 /**
  * Adjusts the map view to fit a bounding box.
  * bbox: [west, south, east, north]
+ *
+ * maxZoom cap + degenerate-bbox widening: a single-point (or near-zero-area)
+ * bbox makes MapLibre compute an extreme target zoom (default maxZoom is
+ * unbounded), which on raster basemaps exhausts tiles and *looks* like the
+ * basemap vanished. Widen tiny boxes and cap the zoom.
  */
 export function fitBounds(
   map: Map,
   bbox: [number, number, number, number],
   padding: number = 0
 ): void {
-  const [west, south, east, north] = bbox;
+  let [west, south, east, north] = bbox;
   if (!validateCoordinate([west, south]) || !validateCoordinate([east, north])) {
     throw new Error('Invalid coordinates in bbox');
+  }
+  // 退化 bbox（单点/极小范围）扩到 ~300m，避免 fit 出极端 zoom
+  const minSpan = 0.003;
+  if (east - west < minSpan) {
+    const mid = (west + east) / 2;
+    west = mid - minSpan / 2;
+    east = mid + minSpan / 2;
+  }
+  if (north - south < minSpan) {
+    const mid = (south + north) / 2;
+    south = mid - minSpan / 2;
+    north = mid + minSpan / 2;
   }
 
   const options: FitBoundsOptions = {
     padding,
     duration: 1500,
+    maxZoom: 16,
   };
 
-  map.fitBounds(bbox, options);
+  map.fitBounds([west, south, east, north], options);
 }
 
 /**

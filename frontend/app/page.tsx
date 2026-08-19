@@ -14,6 +14,7 @@ import { useSSEStream } from '@/lib/hooks/use-sse-stream';
 import { deleteSession } from '@/lib/api/chat';
 import { describeApiError } from '@/lib/api/transport';
 import { hasWorkspaceContent } from '@/lib/utils/workspace-content';
+import { mapInsetLeft, mapChromeLeft } from '@/lib/utils/workspace-inset';
 import { ConfirmDialog } from '@/components/shared/confirm-dialog';
 
 // New layout components
@@ -241,9 +242,9 @@ export default function Home() {
           overflow: 'hidden',
           marginTop: 42,
           marginBottom: 24,
-          // UI V3：地图 chrome（图例等）的水平避让偏移 —— nav rail(48) +
-          // context panel(可选) 占据的左侧空间。
-          ['--workspace-offset' as string]: `${leftPanelOpen ? 48 + sidebarWidth + 12 : 60}px`,
+          // UI V4：地图 chrome（图例等）的水平避让偏移。地图容器真实收缩后
+          // （见下方 wrapper），展开时 chrome 只需呼吸间距；收起时避开 rail。
+          ['--map-chrome-left' as string]: `${mapChromeLeft(leftPanelOpen)}px`,
           // UI V4：地图 chrome 的底部基线。workspace 已经预留 24px 状态条，
           // HUD 展开到 210px 时需要再抬 186px。所有底部 chrome（读数条、比例尺、
           // 热力图例、专题图例）都从这一个变量堆叠，因此不会互相压盖 ——
@@ -251,8 +252,19 @@ export default function Home() {
           ['--map-chrome-bottom' as string]: hudOpen ? '196px' : '10px',
         }}
       >
-        {/* Map Panel */}
-        <div style={{ position: 'absolute', inset: 0 }}>
+        {/* Map Panel — 左栏展开时容器真实收缩（ContextPanel 不再悬浮遮挡）：
+            MapLibre 的 ResizeObserver 自动 resize 并把地理中心保持在收缩后
+            画布的中心，视口随显示面积重算；位移动画与面板滑入同步（0.25s）。 */}
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            bottom: 0,
+            right: 0,
+            left: mapInsetLeft(leftPanelOpen, sidebarWidth),
+            transition: 'left 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+          }}
+        >
           <MapErrorBoundary>
             <MemoMapPanel
               layers={layers}

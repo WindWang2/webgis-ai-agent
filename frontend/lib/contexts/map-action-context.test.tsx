@@ -5,10 +5,14 @@ import { MapActionProvider, useMapAction } from './map-action-context';
 import type { GeoJSONFeatureCollection, MapActionPayload } from '@/lib/types';
 import type { MapActionAck } from '@/lib/api/map-action-acks';
 
-// The provider's base-layer lazy init reads useHudStore.getState().baseLayer and
-// TILE_PROVIDERS; both are mocked so the test is hermetic.
+// Persist may already hold a non-default layer (e.g. ESRI 影像). First paint
+// must still match the SSR default (Carto 深色) or Next throws a hydration
+// mismatch. The mock persist value is intentionally NOT the default.
 vi.mock('@/lib/store/useHudStore', () => ({
-  useHudStore: { getState: () => ({ baseLayer: 'Carto 深色' }) },
+  useHudStore: {
+    getState: () => ({ baseLayer: 'ESRI 影像' }),
+    persist: { onFinishHydration: () => () => {} },
+  },
 }));
 
 vi.mock('@/lib/providers', () => ({
@@ -37,6 +41,21 @@ function renderCtx() {
 describe('MapActionProvider (V3 queue + lifecycle)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('first paint uses the SSR default base layer, not persist', () => {
+    const firstPaints: number[] = [];
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <MapActionProvider>{children}</MapActionProvider>
+    );
+    const { result } = renderHook(() => {
+      const ctx = useMapAction();
+      firstPaints.push(ctx.selectedBaseLayer);
+      return ctx;
+    }, { wrapper });
+    // Mocked TILE_PROVIDERS: 0 浅色, 1 深色 (SSR/store default), 2 ESRI (persist).
+    expect(firstPaints[0]).toBe(1);
+    expect(result.current.selectedBaseLayer).toBe(2);
   });
 
   afterEach(() => {
