@@ -110,3 +110,22 @@ class TestSessionMapStateAPI:
         mock_sdm.set_map_state.assert_awaited_once_with(
             "sess-123", "viewport", {"center": [116.4, 39.9], "zoom": 10}, seq=None
         )
+
+    @patch("app.services.session_data.session_data_manager")
+    def test_push_map_state_ignores_client_layers(self, mock_sdm, client):
+        """#643: map-state POST must not replace desired layers."""
+        mock_sdm.set_map_state = AsyncMock(return_value=True)
+        mock_conv = MagicMock()
+        with patch.object(_chat_mod.AsyncHistoryService, "get_session_meta", AsyncMock(return_value=mock_conv)):
+            resp = client.post(
+                "/api/v1/chat/sessions/sess-123/map-state",
+                json={
+                    "viewport": {"center": [116.4, 39.9], "zoom": 10},
+                    "layers": [{"id": "forged", "visible": False}],
+                },
+            )
+        assert resp.status_code == 204
+        written_keys = [call.args[1] for call in mock_sdm.set_map_state.await_args_list]
+        assert "layers" not in written_keys
+        assert "viewport" in written_keys
+

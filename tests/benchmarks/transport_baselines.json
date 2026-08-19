@@ -1,5 +1,6 @@
 {
   "concurrent_stream_p95_8": {
+    "floor_ms": 15.0,
     "iterations": 7,
     "median_ms": 5.663
   },
@@ -12,6 +13,7 @@
     "median_ms": 3.472
   },
   "sse_serialization_10k": {
+    "floor_ms": 80.0,
     "iterations": 7,
     "median_ms": 41.169
   },

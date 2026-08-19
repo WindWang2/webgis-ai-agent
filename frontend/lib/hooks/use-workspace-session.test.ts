@@ -160,13 +160,38 @@ describe('useWorkspaceSession selectSession (F-09)', () => {
     expect(restored[1]?.role).toBe('assistant');
     expect(restored[1]?.content).toContain('已恢复历史会话');
 
-    // map-state viewport still applied (F4 coalesce passes seq 1) + base layer
-    expect(dispatchAction).toHaveBeenCalledWith({
-      command: 'fly_to',
-      params: expect.objectContaining({ center: [116, 39], zoom: 12 }),
-    });
+    // Viewport hints are Observed, not Desired — reload must not snap
+    // the camera unless MapSpec.view was an explicit frame (#640).
+    expect(dispatchAction).not.toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'fly_to' }),
+    );
     expect(hudState.setBaseLayer).toHaveBeenCalledWith('streets');
     expect(hudState.fetchAnalysisAssets).toHaveBeenCalledWith('sid-1');
+  });
+
+  it('snaps the camera on restore only for an explicit MapSpec.view frame', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonOk({ sessions: [] }))
+      .mockResolvedValueOnce(jsonOk({ title: 'Map', messages: [] }))
+      .mockResolvedValueOnce(jsonOk({
+        map_state: {
+          viewport: { center: [1, 2], zoom: 4 },
+          mapspec: { view: { center: [114.3, 30.5], zoom: 10, framed: true } },
+          layers: [],
+        },
+      }));
+
+    const onRestore = vi.fn();
+    const dispatchAction = vi.fn();
+    const { result } = renderHook(() => useWorkspaceSession(dispatchAction));
+    await act(async () => {
+      await result.current.selectSession('sid-2', onRestore);
+    });
+
+    expect(dispatchAction).toHaveBeenCalledWith({
+      command: 'fly_to',
+      params: expect.objectContaining({ center: [114.3, 30.5], zoom: 10 }),
+    });
   });
 
   it('restores the final runtime result from cartographic observation metadata', async () => {

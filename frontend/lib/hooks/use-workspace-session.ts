@@ -5,15 +5,12 @@ import { useHudStore } from '@/lib/store/useHudStore';
 import { apiFetch, isApiError } from '@/lib/api/transport';
 import type { ChatSession } from '@/lib/types/chat';
 import type { MapActionPayload } from '@/lib/types';
-import { restoreSessionMapLayers } from '@/lib/session/map-state-restore';
+import { restoreSessionMapLayers, selectCameraToRestore } from '@/lib/session/map-state-restore';
+import { setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 
 
 import { devOnly } from "@/lib/utils/logger";
-import {
-  coalesceViewportState,
-  resetViewportSeq,
-  viewportSeqTracker,
-} from "@/lib/utils/viewport-seq";
+import { resetViewportSeq } from "@/lib/utils/viewport-seq";
 
 const MAX_SESSION_OWNER_TOKENS = 128;
 
@@ -216,28 +213,19 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
         const state = stateData?.map_state;
         if (state) {
           const store = useHudStore.getState();
-          if (state.viewport) {
-            // F4: ignore stale/older-seq viewport state — an in-flight
-            // throttled POST the client already sent outranks the persisted
-            // value, so a restore must never fly the map back to an older view.
-            const coalesced = coalesceViewportState(
-              viewportSeqTracker,
-              state._viewport_seq,
-              state.viewport
-            );
-            if (coalesced.viewport) {
-              dispatchAction({
-                command: 'fly_to',
-                params: {
-                  center: coalesced.viewport.center,
-                  zoom: coalesced.viewport.zoom,
-                  bearing: coalesced.viewport.bearing,
-                  pitch: coalesced.viewport.pitch,
-                },
-              });
-            }
+          const framed = selectCameraToRestore(state);
+          if (framed) {
+            dispatchAction({
+              command: 'fly_to',
+              params: framed,
+            });
           }
           if (state.base_layer) store.setBaseLayer(state.base_layer);
+          setMapSpecSessionCursor(
+            sid,
+            Number(state._cartographic_mutation_revision) || 0,
+            token ?? null,
+          );
           // #552: 图层还原逻辑抽到 lib/session/map-state-restore（观察态优先 +
           // ref 数据回填），会话切换与 /story 分享页共用同一份实现。
           await restoreSessionMapLayers(state, { sessionId: sid, token, signal });
@@ -277,6 +265,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       sessionLoadAbortRef.current?.abort();
       sessionLoadAbortRef.current = null;
       setSessionId(undefined);
+      setMapSpecSessionCursor(undefined, 0, null);
       // FE-P3-1: selectSession syncs the ref synchronously (F38); this path
       // relied on the post-render effect — a programmatic send in the same
       // tick (plan approve/reject defers handleSend by one macrotask) read

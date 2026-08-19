@@ -61,6 +61,15 @@ def _with_evidence(res, base: Dict[str, Any]) -> Dict[str, Any]:
         base["mapspec_fingerprint"] = res.mapspec_fingerprint
     base["runtime_observation_seq"] = getattr(res, "runtime_observation_seq", 0)
     base["mutation_revision"] = getattr(res, "mutation_revision", 0)
+    if getattr(res, "superseded", False):
+        base["success"] = False
+        base["status"] = "superseded"
+        base["mapspec"] = res.mapspec
+        if res.error_msg:
+            base["message"] = res.error_msg
+        if res.correction_hint:
+            base["correction_hint"] = res.correction_hint
+        return base
     if res.is_error:
         base["message"] = res.error_msg
         if res.correction_hint:

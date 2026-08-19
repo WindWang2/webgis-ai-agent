@@ -18,6 +18,7 @@ import type { GeoJSONFeatureCollection, MapActionPayload } from '@/lib/types';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useToastStore } from '@/components/ui/toast';
 import { devOnly } from '@/lib/utils/logger';
+import { commitMapSpecDocument } from '@/lib/mapspec/session-cursor';
 
 function isAbortError(err: unknown): boolean {
   return (err instanceof DOMException && err.name === 'AbortError')
@@ -43,6 +44,17 @@ export interface SessionMapState {
     pitch?: number;
   } | null;
   layers?: any[];
+  mapspec?: {
+    layers?: any[];
+    view?: {
+      center?: number[];
+      zoom?: number;
+      bearing?: number;
+      pitch?: number;
+      framed?: boolean;
+    };
+  };
+  _cartographic_mutation_revision?: number;
   _current_cartographic_fingerprint?: string;
   _cartographic_observation?: { mapspec_fingerprint?: string; layers?: any[] };
 }
@@ -68,11 +80,55 @@ export function selectLayersToRestore(state: SessionMapState): any[] {
   return observedLayers.length > 0 ? observedLayers : (state.layers || []);
 }
 
-/** 单条观察图层 → HUD Layer（字段映射与 selectSession 原实现一致）。 */
+/** Desired camera only when MapSpec.view was an explicit frame (ADR-0057). */
+export function selectCameraToRestore(
+  state: SessionMapState,
+): {
+  center: [number, number];
+  zoom?: number;
+  bearing?: number;
+  pitch?: number;
+} | null {
+  const view = state.mapspec?.view;
+  if (!view || view.framed !== true) return null;
+  const center = view.center;
+  if (!Array.isArray(center) || center.length < 2) return null;
+  if (typeof center[0] !== 'number' || typeof center[1] !== 'number') return null;
+  return {
+    center: [center[0], center[1]],
+    zoom: typeof view.zoom === 'number' ? view.zoom : undefined,
+    bearing: typeof view.bearing === 'number' ? view.bearing : undefined,
+    pitch: typeof view.pitch === 'number' ? view.pitch : undefined,
+  };
+}
+
+export function presentationFromMapSpec(
+  mapspec: { layers?: any[] } | undefined,
+  layerId: string,
+): { visible?: boolean; opacity?: number } {
+  const layers = mapspec?.layers;
+  if (!Array.isArray(layers) || !layerId) return {};
+  const match = layers.find((layer) => {
+    const id = String(layer?.id || '');
+    return id === layerId || id.startsWith(`${layerId}__`);
+  });
+  if (!match) return {};
+  const next: { visible?: boolean; opacity?: number } = {};
+  const visibility = match.layout?.visibility;
+  if (visibility === 'none') next.visible = false;
+  if (visibility === 'visible') next.visible = true;
+  const paint = match.paint && typeof match.paint === 'object' ? match.paint : {};
+  const opacity = paint.opacity ?? paint['circle-opacity'] ?? paint['fill-opacity']
+    ?? paint['line-opacity'] ?? paint['raster-opacity'] ?? paint['heatmap-opacity'];
+  if (typeof opacity === 'number') next.opacity = opacity;
+  return next;
+}
+
 export function buildLayerFromRestored(
   observed: any,
   sessionId: string,
   mapspecFingerprint?: string,
+  mapspec?: { layers?: any[] },
 ) {
   const refId = observed._refId;
   const runtimeId = observed.runtime_store_id ?? refId ?? observed.id;
@@ -84,7 +140,7 @@ export function buildLayerFromRestored(
       image: observed.raster_image,
       bbox: observed.raster_bbox,
     } : null;
-  return {
+  const base = {
     id: runtimeId,
     name: observed.name ?? `分析结果: ${observed.id}`,
     type: rasterSource
@@ -115,6 +171,7 @@ export function buildLayerFromRestored(
       ? observed.intent_generation
       : undefined,
   };
+  return { ...base, ...presentationFromMapSpec(mapspec, String(observed.id ?? runtimeId)) };
 }
 
 export interface RestoreMapLayersOptions {
@@ -129,6 +186,7 @@ export async function restoreSessionMapLayers(
   state: SessionMapState,
   opts: RestoreMapLayersOptions,
 ): Promise<void> {
+  commitMapSpecDocument(state.mapspec);
   const store = useHudStore.getState();
   const raw = selectLayersToRestore(state);
   const observation = state._cartographic_observation;
@@ -139,11 +197,33 @@ export async function restoreSessionMapLayers(
   // The live post-reconcile observation is the final-map snapshot. It outranks
   // the turn-start `layers` state, which may predate the GIS result. Legacy
   // sessions without runtime evidence keep the old path (raw persisted layers).
-  const layersToRestore = fromObservation
-    ? raw.map((observed: any) => buildLayerFromRestored(observed, opts.sessionId, observation?.mapspec_fingerprint))
-    : raw;
+  const allowedIds = new Set(
+    (state.mapspec?.layers || [])
+      .map((layer: any) => String(layer?.id || ''))
+      .flatMap((id: string) => (id.includes('__') ? [id, id.split('__')[0]] : [id]))
+      .filter(Boolean),
+  );
 
-  for (const layer of layersToRestore) {
+  const layersToRestore = fromObservation
+    ? raw.map((observed: any) => buildLayerFromRestored(
+      observed,
+      opts.sessionId,
+      observation?.mapspec_fingerprint,
+      state.mapspec,
+    ))
+    : raw.map((layer: any) => ({
+      ...layer,
+      ...presentationFromMapSpec(state.mapspec, String(layer._mapspecLayerId ?? layer.id)),
+    }));
+
+  const keepers = allowedIds.size === 0
+    ? layersToRestore
+    : layersToRestore.filter((layer: any) => (
+      allowedIds.has(String(layer.id))
+      || allowedIds.has(String(layer._mapspecLayerId || ''))
+    ));
+
+  for (const layer of keepers) {
     store.addLayer(layer);
     if (
       layer._refId
@@ -192,15 +272,11 @@ export async function applyStoryMapState(
 ): Promise<void> {
   const store = useHudStore.getState();
   if (state.base_layer) store.setBaseLayer(state.base_layer);
-  if (state.viewport) {
+  const framed = selectCameraToRestore(state);
+  if (framed) {
     dispatchAction({
       command: 'fly_to',
-      params: {
-        center: state.viewport.center,
-        zoom: state.viewport.zoom,
-        bearing: state.viewport.bearing,
-        pitch: state.viewport.pitch,
-      },
+      params: framed,
     });
   }
   await restoreSessionMapLayers(state, { sessionId, token: null, signal });

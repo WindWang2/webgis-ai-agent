@@ -3,9 +3,11 @@ import { useHudStore } from '@/lib/store/useHudStore';
 import { useToastStore } from '@/components/ui/toast';
 import { ApiError } from '@/lib/api/transport';
 import { devOnly } from '@/lib/utils/logger';
+import { getCommittedMapSpec, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import {
   buildLayerFromRestored,
   restoreSessionMapLayers,
+  selectCameraToRestore,
   selectLayersToRestore,
 } from './map-state-restore';
 
@@ -23,6 +25,7 @@ beforeEach(() => {
   useHudStore.getState().clearLayers();
   useHudStore.setState({ baseLayer: 'Carto 深色' });
   useToastStore.setState({ toasts: [] });
+  setMapSpecSessionCursor(undefined, 0, null);
   vi.mocked(devOnly.error).mockClear();
 });
 
@@ -50,6 +53,25 @@ describe('selectLayersToRestore', () => {
     };
     expect(selectLayersToRestore(stale as any).map((l: any) => l.id)).toEqual(['legacy']);
     expect(selectLayersToRestore({ layers: [{ id: 'legacy' }] } as any).map((l: any) => l.id)).toEqual(['legacy']);
+  });
+});
+
+describe('selectCameraToRestore', () => {
+  it('returns MapSpec.view only when it was explicit framing', () => {
+    expect(selectCameraToRestore({
+      viewport: { center: [1, 2], zoom: 8 },
+      mapspec: { view: { center: [114.3, 30.5], zoom: 10, framed: true } },
+    })).toEqual({ center: [114.3, 30.5], zoom: 10, bearing: undefined, pitch: undefined });
+  });
+
+  it('ignores viewport hints and unframed suggested views', () => {
+    expect(selectCameraToRestore({
+      viewport: { center: [1, 2], zoom: 8 },
+      mapspec: { view: { center: [0, 0], zoom: 2 } },
+    })).toBeNull();
+    expect(selectCameraToRestore({
+      viewport: { center: [1, 2], zoom: 8 },
+    })).toBeNull();
   });
 });
 
@@ -81,6 +103,31 @@ describe('buildLayerFromRestored', () => {
     expect(layer._mapspecLayerId).toBe('mapspec-layer');
     expect(layer._mapspecProjectionFingerprint).toBe('proj-fp');
     expect(layer._intentGeneration).toBe(3);
+  });
+
+  it('lets committed MapSpec visibility and opacity override restored HUD chrome', () => {
+    const layer = buildLayerFromRestored(
+      {
+        id: 'L1',
+        name: 'Schools',
+        type: 'vector',
+        visible: true,
+        opacity: 1,
+      },
+      'sid-1',
+      'carto-fp',
+      {
+        layers: [
+          {
+            id: 'L1',
+            layout: { visibility: 'none' },
+            paint: { opacity: 0.4, 'circle-opacity': 0.4 },
+          },
+        ],
+      },
+    );
+    expect(layer.visible).toBe(false);
+    expect(layer.opacity).toBe(0.4);
   });
 
   it('treats raster_image + raster_bbox as a heatmap with the raster source', () => {
@@ -152,6 +199,36 @@ describe('restoreSessionMapLayers', () => {
 
     expect(useHudStore.getState().layers).toHaveLength(1);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('stores restored MapSpec as the committed live document', async () => {
+    const mapspec = {
+      version: '1.0',
+      sources: { keep: { type: 'geojson' } },
+      layers: [{ id: 'keep', source: 'keep', type: 'circle' }],
+    };
+    await restoreSessionMapLayers(
+      {
+        layers: [{ id: 'keep', name: 'Keep', type: 'vector', visible: true, opacity: 1 }],
+        mapspec,
+      },
+      { sessionId: 'sid-1' },
+    );
+    expect(getCommittedMapSpec()).toEqual(mapspec);
+  });
+
+  it('does not resurrect layers missing from committed MapSpec', async () => {
+    await restoreSessionMapLayers(
+      {
+        layers: [
+          { id: 'gone', name: 'Gone', type: 'vector', visible: true, opacity: 1 },
+          { id: 'keep', name: 'Keep', type: 'vector', visible: true, opacity: 1 },
+        ],
+        mapspec: { layers: [{ id: 'keep', type: 'circle' }] },
+      },
+      { sessionId: 'sid-1' },
+    );
+    expect(useHudStore.getState().layers.map((layer) => layer.id)).toEqual(['keep']);
   });
 
   it('logs ApiError and toasts when ref data fetch fails, without dropping the layer', async () => {

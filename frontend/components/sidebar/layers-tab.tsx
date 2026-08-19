@@ -8,6 +8,12 @@ import type { Layer } from '@/lib/types/layer';
 import { ConfirmAction } from '@/components/shared/confirm-action';
 import { EmptyState } from '@/components/shared/empty-state';
 import { IconButton } from '@/components/shared/icon-button';
+import {
+  removeLayerAndCommit,
+  reorderLayersAndCommit,
+  setLayerOpacityAndCommit,
+  toggleLayerAndCommit,
+} from '@/lib/mapspec/user-mutation';
 
 const GROUP_NAMES: Record<string, string> = {
   analysis: '分析结果',
@@ -31,10 +37,7 @@ function DeleteLayerButton({ onDelete }: { onDelete: () => void }) {
 
 export function LayersTab() {
   const layers = useHudStore((s) => s.layers);
-  const toggleLayer = useHudStore((s) => s.toggleLayer);
-  const removeLayer = useHudStore((s) => s.removeLayer);
   const updateLayer = useHudStore((s) => s.updateLayer);
-  const reorderLayers = useHudStore((s) => s.reorderLayers);
   const setActiveLeftTab = useHudStore((s) => s.setActiveLeftTab);
 
   const [dragId, setDragId] = useState<string | null>(null);
@@ -80,6 +83,7 @@ export function LayersTab() {
         // redundant store update (and reconcile) on grab-without-drag.
         if (Math.abs(next - current) > 1e-9) {
           updateLayer(layer.id, { opacity: next });
+          void setLayerOpacityAndCommit(layer.id, next);
         }
         const nextDraft = { ...prev };
         delete nextDraft[layer.id];
@@ -141,11 +145,11 @@ export function LayersTab() {
       }
       const [moved] = current.splice(fromIdx, 1);
       current.splice(toIdx, 0, moved);
-      reorderLayers(current);
+      void reorderLayersAndCommit(current);
       setDragId(null);
       setOverId(null);
     },
-    [dragId, layers, reorderLayers]
+    [dragId, layers]
   );
 
   const handleDragEnd = useCallback(() => {
@@ -165,9 +169,9 @@ export function LayersTab() {
       if (fromIdx === -1 || toIdx < 0 || toIdx >= current.length) return;
       const [moved] = current.splice(fromIdx, 1);
       current.splice(toIdx, 0, moved);
-      reorderLayers(current);
+      void reorderLayersAndCommit(current);
     },
-    [layers, reorderLayers]
+    [layers]
   );
 
   return (
@@ -317,9 +321,11 @@ export function LayersTab() {
                             label={layer.visible ? '隐藏图层' : '显示图层'}
                             icon={layer.visible ? Eye : EyeOff}
                             active={layer.visible}
-                            onClick={() => toggleLayer(layer.id)}
+                            onClick={() => {
+                              void toggleLayerAndCommit(layer.id);
+                            }}
                           />
-                          <DeleteLayerButton onDelete={() => removeLayer(layer.id)} />
+                          <DeleteLayerButton onDelete={() => { void removeLayerAndCommit(layer.id); }} />
                         </div>
                       </div>
                     );

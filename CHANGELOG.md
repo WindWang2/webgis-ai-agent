@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.1.0.0] - 2026-08-19
+
+### Added
+- User map chrome (visibility, opacity, remove, reorder, explicit frame) now
+  commits through the same MapSpec mutation engine the Agent uses, so hide and
+  fade survive refresh and the next Agent turn.
+- Live map paints committed MapSpec plus an in-flight pending overlay. Gesture
+  camera stays Observed Map and does not rewrite Desired view.
+- Fail-closed evaluation vocabulary: MapSpecValidity stops at SEMANTIC_VALID,
+  live Observed Map is the runtime oracle, Cartography Verdict is
+  `pass` | `fail` | `not_evaluated`, and CartographicQuality is the production
+  gate (ADR-0060–0064).
+
+### Changed
+- Session `map-state` POST no longer replaces desired layers. Chrome edits that
+  used to write HUD-only now go through `apply_mutation` with `expected_revision`.
+- A stale chrome edit is `superseded` (HTTP 409) and the HUD re-projects from
+  the committed MapSpec instead of last-write-wins.
+
 ## [Unreleased] - 2026-08-17
 
 ### Issue-resolution wave: 52 open issues (#514–#565) fixed root-cause-first (PRs #566–#576)

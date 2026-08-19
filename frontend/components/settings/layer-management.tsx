@@ -6,13 +6,16 @@ import { STitle } from '@/components/shared/section-title';
 import ToggleSwitch from '@/components/shared/toggle-switch';
 import { GripVertical, Trash2 } from 'lucide-react';
 import type { Layer } from '@/lib/types/layer';
+import {
+  removeLayerAndCommit,
+  reorderLayersAndCommit,
+  setLayerOpacityAndCommit,
+  toggleLayerAndCommit,
+} from '@/lib/mapspec/user-mutation';
 
 export function LayerManagement() {
   const layers = useHudStore((s) => s.layers);
-  const toggleLayer = useHudStore((s) => s.toggleLayer);
-  const removeLayer = useHudStore((s) => s.removeLayer);
   const updateLayer = useHudStore((s) => s.updateLayer);
-  const reorderLayers = useHudStore((s) => s.reorderLayers);
 
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
@@ -50,11 +53,11 @@ export function LayerManagement() {
       const reordered = [...layers];
       const [moved] = reordered.splice(dragIndex, 1);
       reordered.splice(dropIndex, 0, moved);
-      reorderLayers(reordered);
+      void reorderLayersAndCommit(reordered);
       setDragIndex(null);
       setDragOverIndex(null);
     },
-    [dragIndex, layers, reorderLayers],
+    [dragIndex, layers],
   );
 
   const handleDragEnd = useCallback(() => {
@@ -176,6 +179,14 @@ export function LayerManagement() {
                         opacity: Number(e.target.value) / 100,
                       })
                     }
+                    onPointerUp={() => {
+                      const current = useHudStore.getState().layers.find((l) => l.id === layer.id);
+                      if (current) void setLayerOpacityAndCommit(layer.id, current.opacity);
+                    }}
+                    onBlur={() => {
+                      const current = useHudStore.getState().layers.find((l) => l.id === layer.id);
+                      if (current) void setLayerOpacityAndCommit(layer.id, current.opacity);
+                    }}
                     className="w-full h-1 rounded-full appearance-none cursor-pointer"
                     style={{
                       background: `linear-gradient(to right, var(--agent-accent, #16a34a) ${layer.opacity * 100}%, var(--theme-border-subtle) ${layer.opacity * 100}%)`,
@@ -188,12 +199,14 @@ export function LayerManagement() {
                 <ToggleSwitch
                   label={`显示图层：${layer.name}`}
                   checked={layer.visible}
-                  onChange={() => toggleLayer(layer.id)}
+                  onChange={() => {
+                    void toggleLayerAndCommit(layer.id);
+                  }}
                 />
 
                 {/* Delete */}
                 <button
-                  onClick={() => removeLayer(layer.id)}
+                  onClick={() => { void removeLayerAndCommit(layer.id); }}
                   aria-label="删除图层"
                   className="text-[var(--theme-text-subtle)] hover:text-red-400 transition-colors p-0.5"
                   title="Remove layer"

@@ -92,6 +92,10 @@ async def test_zoom_to_layer_resolves_alias(registry):
     assert out["success"] is True
     assert out["command"] == "zoom_to_bbox"
     assert out["params"]["bbox"] == [100.0, 30.0, 101.0, 31.0]
+    from app.services.mapspec.store import mapspec_store_instance
+    spec = await mapspec_store_instance.get_mapspec(sid)
+    assert spec["view"]["framed"] is True
+    assert spec["view"]["center"] == [100.5, 30.5]
 
     await session_data_manager.clear_session(sid)
 

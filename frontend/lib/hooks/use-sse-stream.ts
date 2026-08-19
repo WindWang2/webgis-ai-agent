@@ -9,6 +9,7 @@ import type { GeoJSONFeatureCollection } from '@/lib/types';
 import type { SSEEvent } from '@/lib/api/chat';
 import type { ToolCallEntry, PlanProposalPayload, PlanProposalStatus, SelectedFeatureInfo } from '@/lib/store/hud-types';
 import { reportLayerFetchFailure } from '@/lib/session/map-state-restore';
+import { commitMapSpecDocument, setMapSpecRevision, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import { useToastStore } from '@/components/ui/toast';
 import type { AgentPlanState } from '@/lib/types/agent-plan';
 import type { MapActionPayload } from '@/lib/types';
@@ -486,6 +487,15 @@ export function useSSEStream(
       if (eventSid && !sessionIdRef.current) {
         setSessionId(eventSid);
         sessionIdRef.current = eventSid;
+        setMapSpecSessionCursor(eventSid, 0, sessionTokenRef.current);
+      }
+      const incomingRevision = data?.mutation_revision ?? data?.result?.mutation_revision;
+      if (typeof incomingRevision === 'number' && sessionIdRef.current) {
+        setMapSpecRevision(incomingRevision);
+      }
+      const incomingMapSpec = data?.mapspec ?? data?.result?.mapspec;
+      if (incomingMapSpec) {
+        commitMapSpecDocument(incomingMapSpec);
       }
 
       // SEC-08：服务端在新建匿名会话时签发 owner_token（随 task_start / session 事件下发）。

@@ -1,0 +1,197 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { useHudStore } from '@/lib/store/useHudStore';
+import {
+  getCommittedMapSpec,
+  getMapSpecSessionCursor,
+  getPendingPresentation,
+  setMapSpecSessionCursor,
+} from '@/lib/mapspec/session-cursor';
+import {
+  commitExplicitView,
+  removeLayerAndCommit,
+  setLayerOpacityAndCommit,
+  toggleLayerAndCommit,
+} from '@/lib/mapspec/user-mutation';
+
+vi.mock('@/lib/api/config', () => ({ API_BASE: 'http://localhost:8000' }));
+
+const fetchMock = vi.fn();
+
+beforeEach(() => {
+  vi.stubGlobal('fetch', fetchMock);
+  fetchMock.mockReset();
+  useHudStore.getState().clearLayers();
+  setMapSpecSessionCursor('sid-1', 3);
+  useHudStore.getState().addLayer({
+    id: 'L1',
+    name: 'Schools',
+    type: 'vector',
+    visible: true,
+    opacity: 1,
+    group: 'analysis',
+    source: { type: 'FeatureCollection', features: [] } as any,
+    _mapspecLayerId: 'L1',
+  } as any);
+});
+
+describe('toggleLayerAndCommit', () => {
+  it('holds a pending overlay until the mutation ACK commits MapSpec', async () => {
+    let release!: (value: unknown) => void;
+    fetchMock.mockImplementationOnce(() => new Promise((resolve) => {
+      release = resolve;
+    }));
+
+    const done = toggleLayerAndCommit('L1');
+    expect(getPendingPresentation()).toEqual({ L1: { visible: false } });
+    expect(useHudStore.getState().layers[0].visible).toBe(false);
+
+    release({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: () => Promise.resolve(JSON.stringify({
+        success: true,
+        origin: 'user',
+        mutation_revision: 4,
+        mapspec: {
+          version: '1.0',
+          sources: { L1: { type: 'geojson' } },
+          layers: [{ id: 'L1', source: 'L1', type: 'circle', layout: { visibility: 'none' } }],
+        },
+      })),
+    });
+    await done;
+
+    expect(getPendingPresentation()).toEqual({});
+    expect(getCommittedMapSpec()?.layers?.[0].layout).toEqual({ visibility: 'none' });
+  });
+
+  it('applies pending HUD visibility then hydrates from committed MapSpec', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: () => Promise.resolve(JSON.stringify({
+        success: true,
+        origin: 'user',
+        mutation_revision: 4,
+        mapspec: {
+          layers: [{ id: 'L1', layout: { visibility: 'none' } }],
+        },
+      })),
+    });
+
+    await toggleLayerAndCommit('L1');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/chat/sessions/sid-1/mapspec/mutations'),
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(useHudStore.getState().layers[0].visible).toBe(false);
+  });
+
+  it('rolls pending visibility back when the mutation is rejected', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      statusText: 'Conflict',
+      text: () => Promise.resolve(JSON.stringify({ detail: { status: 'superseded' } })),
+    });
+
+    await toggleLayerAndCommit('L1');
+
+    expect(useHudStore.getState().layers[0].visible).toBe(true);
+  });
+});
+
+describe('setLayerOpacityAndCommit vs Agent upsert race', () => {
+  it('drops pending opacity and hydrates the Agent MapSpec so a retry uses the new revision', async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        statusText: 'Conflict',
+        text: () => Promise.resolve(JSON.stringify({
+          detail: {
+            status: 'superseded',
+            mutation_revision: 5,
+            correction_hint: 'Re-read MapSpec and retry with the current mutation_revision.',
+            mapspec: {
+              layers: [{
+                id: 'L1',
+                layout: { visibility: 'visible' },
+                paint: { opacity: 1, 'circle-opacity': 1, 'circle-color': '#ff0000' },
+              }],
+            },
+          },
+        })),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: () => Promise.resolve(JSON.stringify({
+          success: true,
+          mutation_revision: 6,
+          mapspec: {
+            layers: [{
+              id: 'L1',
+              layout: { visibility: 'visible' },
+              paint: { opacity: 0.4, 'circle-opacity': 0.4, 'circle-color': '#ff0000' },
+            }],
+          },
+        })),
+      });
+
+    await setLayerOpacityAndCommit('L1', 0.4);
+
+    expect(useHudStore.getState().layers[0].opacity).toBe(1);
+    expect(getMapSpecSessionCursor().revision).toBe(5);
+
+    await setLayerOpacityAndCommit('L1', 0.4);
+
+    const second = JSON.parse(fetchMock.mock.calls[1][1].body as string);
+    expect(second.expected_revision).toBe(5);
+    expect(useHudStore.getState().layers[0].opacity).toBe(0.4);
+    expect(getMapSpecSessionCursor().revision).toBe(6);
+  });
+});
+
+describe('commitExplicitView', () => {
+  it('posts set_view and stores the framed MapSpec', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: () => Promise.resolve(JSON.stringify({
+        success: true,
+        mutation_revision: 4,
+        mapspec: { view: { center: [114, 30], zoom: 10, framed: true } },
+      })),
+    });
+
+    await commitExplicitView({ center: [114, 30], zoom: 10 });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.intent).toBe('set_view');
+    expect(body.center).toEqual([114, 30]);
+    expect(body.expected_revision).toBe(3);
+    expect(getMapSpecSessionCursor().revision).toBe(4);
+  });
+});
+
+describe('removeLayerAndCommit', () => {
+  it('restores HUD layers when the mutation is rejected without a MapSpec', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      statusText: 'Error',
+      headers: { get: () => null },
+      text: () => Promise.resolve(JSON.stringify({ detail: 'boom' })),
+    });
+
+    await removeLayerAndCommit('L1');
+    expect(useHudStore.getState().layers).toHaveLength(1);
+    expect(useHudStore.getState().layers[0].id).toBe('L1');
+  });
+});

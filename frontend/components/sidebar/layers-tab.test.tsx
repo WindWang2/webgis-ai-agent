@@ -36,12 +36,22 @@ function setStoreLayers(layers: Layer[]) {
   store.layers = layers;
 }
 
+const mutationMocks = vi.hoisted(() => ({
+  setLayerOpacityAndCommit: vi.fn(),
+  toggleLayerAndCommit: vi.fn(),
+  commitLayerPresentation: vi.fn(),
+  removeLayerAndCommit: vi.fn(),
+  reorderLayersAndCommit: vi.fn(),
+}));
+
 vi.mock('@/lib/store/useHudStore', () => ({
   useHudStore: Object.assign(
     (selector: (s: any) => any) => selector(store),
     { getState: () => store },
   ),
 }));
+
+vi.mock('@/lib/mapspec/user-mutation', () => mutationMocks);
 
 // Import AFTER the mock is registered so the component picks up the mock.
 import { LayersTab } from './layers-tab';
@@ -96,6 +106,7 @@ describe('LayersTab — opacity slider debounce (FE-03)', () => {
     // Exactly one store write, carrying the final value (50% = 0.5).
     expect(updateLayer).toHaveBeenCalledTimes(1);
     expect(updateLayer).toHaveBeenCalledWith('L1', { opacity: 0.5 });
+    expect(mutationMocks.setLayerOpacityAndCommit).toHaveBeenCalledWith('L1', 0.5);
   });
 
   it('commits on blur as well (keyboard / focus-loss commit path)', () => {
@@ -108,6 +119,7 @@ describe('LayersTab — opacity slider debounce (FE-03)', () => {
 
     expect(updateLayer).toHaveBeenCalledTimes(1);
     expect(updateLayer).toHaveBeenCalledWith('L1', { opacity: 0.3 });
+    expect(mutationMocks.setLayerOpacityAndCommit).toHaveBeenCalledWith('L1', 0.3);
   });
 
   it('does not commit when the value did not change during a drag', () => {
@@ -146,5 +158,23 @@ describe('LayersTab — 缩放到图层', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '缩放到图层 图层B' }));
     expect(focusLayer).toHaveBeenCalledWith('b');
+  });
+});
+
+describe('LayersTab — visibility commits with rollback', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setStoreLayers([]);
+  });
+
+  it('hides through toggleLayerAndCommit so a 409 can roll HUD back', () => {
+    setStoreLayers([makeLayer({ id: 'L1', name: 'Schools', visible: true })]);
+    render(<LayersTab />);
+
+    fireEvent.click(screen.getByLabelText('隐藏图层'));
+
+    expect(mutationMocks.toggleLayerAndCommit).toHaveBeenCalledTimes(1);
+    expect(mutationMocks.toggleLayerAndCommit).toHaveBeenCalledWith('L1');
+    expect(toggleLayer).not.toHaveBeenCalled();
   });
 });

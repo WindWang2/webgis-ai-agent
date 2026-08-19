@@ -4,6 +4,7 @@ import { X, Palette, RotateCcw } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { LayerStyle } from '@/lib/types/layer';
+import { commitLayerPresentation } from '@/lib/mapspec/user-mutation';
 
 const PALETTES: Record<string, { label: string; colors: string[] }> = {
   inferno: { label: 'Inferno', colors: ['#000004', '#420a68', '#932667', '#dd513a', '#fca50a', '#fcffa4'] },
@@ -62,6 +63,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
   const commitOpacity = (val: number) => {
     setDraftOpacity(null);
     updateLayer(layer.id, { opacity: val });
+    void commitLayerPresentation({ layerId: layer.id, opacity: val });
   };
 
   return (

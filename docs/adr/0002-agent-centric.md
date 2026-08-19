@@ -1,5 +1,7 @@
 # ADR-002: Agent-Centric Architecture
 
+**Status:** Accepted for GIS compute. **Sole-interface for map chrome superseded by ADR-0056.**
+
 ## Context
 
 The system needs an interface for users to create layers, run spatial analysis, and manage

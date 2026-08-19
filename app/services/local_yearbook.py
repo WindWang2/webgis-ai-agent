@@ -343,11 +343,12 @@ def _open_db(path: Path) -> sqlite3.Connection:
     return conn
 
 
-def _excel_sheets(data: bytes) -> pd.ExcelFile:
+def _excel_sheets(data_or_path: bytes | Path | str | BytesIO) -> pd.ExcelFile:
+    target = BytesIO(data_or_path) if isinstance(data_or_path, bytes) else data_or_path
     try:
-        return pd.ExcelFile(BytesIO(data), engine="calamine")
+        return pd.ExcelFile(target, engine="calamine")
     except Exception:  # noqa: BLE001 - calamine 不可用时退 openpyxl
-        return pd.ExcelFile(BytesIO(data), engine="openpyxl")
+        return pd.ExcelFile(target, engine="openpyxl")
 
 
 def ingest_yearbook(
@@ -448,7 +449,7 @@ def ingest_county_panel(
             and conn.execute("SELECT COUNT(*) FROM county_panel").fetchone()[0] > 0
         ):
             return {"skipped": True}
-        xl = pd.ExcelFile(path, engine="calamine")
+        xl = _excel_sheets(path)
         sheet = "原始数据" if "原始数据" in xl.sheet_names else xl.sheet_names[0]
         df = xl.parse(sheet)
         rows = []

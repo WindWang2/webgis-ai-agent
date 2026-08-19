@@ -8,6 +8,7 @@ import {
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useToastStore } from '@/components/ui/toast';
 import type { SelectedFeatureInfo, ToolCallEntry } from '@/lib/store/hud-types';
+import { getCommittedMapSpec, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 // use-sse-stream consumes the bridge for aiStatus + send; we spy on send to
@@ -522,6 +523,7 @@ describe('useSSEStream plan_ready restored done steps (#615)', () => {
 
 describe('canonical MapSpec runtime patch', () => {
   beforeEach(() => {
+    setMapSpecSessionCursor('sid-fe4', 0, null);
     useHudStore.setState({
       layers: [{
         id: 'ref:geojson-1',
@@ -626,6 +628,27 @@ describe('canonical MapSpec runtime patch', () => {
     expect(layers[0].source).not.toEqual(expect.objectContaining({
       type: 'FeatureCollection',
     }));
+  });
+
+  it('commits step_result MapSpec as the live document', () => {
+    renderStream();
+    const mapspec = {
+      version: '1.0',
+      sources: { L1: { type: 'geojson' } },
+      layers: [{ id: 'L1', source: 'L1', type: 'circle', layout: { visibility: 'visible' } }],
+    };
+
+    act(() => {
+      bridgeMock.onEventCallback?.({
+        event: 'step_result',
+        data: {
+          session_id: 'sid-fe4',
+          result: { mapspec },
+        },
+      });
+    });
+
+    expect(getCommittedMapSpec()).toEqual(mapspec);
   });
 
   it('INV-2: stale event from old session A does not flip active session B or mutate state', () => {

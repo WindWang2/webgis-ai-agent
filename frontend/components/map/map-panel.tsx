@@ -1,5 +1,5 @@
 "use client"
-import { useState, useRef, useCallback, useEffect, useMemo } from "react"
+import { useState, useRef, useCallback, useEffect, useMemo, useSyncExternalStore } from "react"
 import { MAP_STYLES, MapStyleOption } from "@/lib/constants"
 import Map, { MapRef, ViewStateChangeEvent, Popup } from "react-map-gl/maplibre"
 import type { StyleSpecification } from "maplibre-gl"
@@ -13,8 +13,15 @@ import { fitBounds as navFitBounds, calculateBBox, calculateBBoxAsync } from "@/
 import {
   MapSpecRuntime,
   collectCartographicRuntimeObservation,
-  hudStateToMapSpec,
 } from "@/lib/mapspec-runtime"
+import { composeLiveMapSpec } from "@/lib/mapspec/live-spec"
+import {
+  getCommittedMapSpec,
+  getMapSpecLiveGeneration,
+  getPendingPresentation,
+  getPendingRemoved,
+  subscribeMapSpecLive,
+} from "@/lib/mapspec/session-cursor"
 import { apiFetch } from "@/lib/api/transport"
 import { computeInteractiveIds, resolveParentLayerId } from "@/lib/map-kit/interactive-ids"
 import { PoiInfoPanel } from "@/components/map/poi-info-panel"
@@ -22,6 +29,7 @@ import { raiseAnnotationLayers } from "@/lib/map-commands/annotationHelpers"
 import { notifyUserGestureStart, notifyUserGestureEnd } from "@/lib/map-commands/camera-arbitration"
 import { devOnly } from "@/lib/utils/logger"
 import { buildTileTransformRequest } from "@/lib/map-kit/tile-auth"
+import { commitExplicitView } from "@/lib/mapspec/user-mutation"
 
 interface MapPanelProps {
   layers: Layer[]
@@ -166,7 +174,19 @@ export function MapPanel({
 
       if (cancelled) return
       if (bbox) {
-        try { navFitBounds(map, bbox, 80) } catch (err) {
+        try {
+          navFitBounds(map, bbox, 80)
+          const center = map.getCenter?.()
+          const zoom = map.getZoom?.()
+          if (center && typeof zoom === 'number') {
+            void commitExplicitView({
+              center: [center.lng, center.lat],
+              zoom,
+              bearing: map.getBearing?.(),
+              pitch: map.getPitch?.(),
+            })
+          }
+        } catch (err) {
           devOnly.warn("[map-panel] focusLayer fitBounds failed:", err)
         }
       }
@@ -323,13 +343,22 @@ export function MapPanel({
   // 依赖数组的形状稳定。
   const raiseSelectionHighlight = useCallback(() => {}, [])
 
-  // Reconcile whenever the inputs to the derived MapSpec change. The runtime's
-  // internal diff is the no-op fast path for unchanged specs, and the async
-  // path offloads the diff to a worker and applies the patch through a
-  // frame-budgeted RenderDebouncer (ADR-0036 / issue #227).
+  const liveGeneration = useSyncExternalStore(
+    subscribeMapSpecLive,
+    getMapSpecLiveGeneration,
+    getMapSpecLiveGeneration,
+  )
+
+  // Reconcile the committed MapSpec plus a pending overlay. HUD is a cache
+  // and source payload host, not the Desired author (ADR-0054 / #643).
   useEffect(() => {
     if (!runtimeRef.current) return
-    const spec = hudStateToMapSpec({ layers, processLayers, activeFilters, is3D })
+    const spec = composeLiveMapSpec(
+      getCommittedMapSpec(),
+      { layers, processLayers, activeFilters, is3D },
+      getPendingPresentation(),
+      getPendingRemoved(),
+    )
     // FE-3: recompute interactive ids once this patch has actually applied
     // (reconcileAsync resolves when its last op ran → appliedSpec advanced).
     void runtimeRef.current.reconcileAsync(spec)
@@ -455,7 +484,7 @@ export function MapPanel({
         })
       })
       .catch((e) => console.error("[map] reconcile failed", e))
-  }, [layers, processLayers, activeFilters, is3D, mapReady, currentMapStyle, runtimeRecoveryGeneration, syncInteractiveIds, raiseSelectionHighlight, sessionId, ownerToken, dispatchAction])
+  }, [layers, processLayers, activeFilters, is3D, liveGeneration, mapReady, currentMapStyle, runtimeRecoveryGeneration, syncInteractiveIds, raiseSelectionHighlight, sessionId, ownerToken, dispatchAction])
 
 
   const setViewport = useHudStore((s: HudState) => s.setViewport)
