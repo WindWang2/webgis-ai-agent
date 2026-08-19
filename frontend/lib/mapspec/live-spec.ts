@@ -1,4 +1,4 @@
-import type { MapSpec, MapSpecLayer } from '@/lib/mapspec-compiler/types';
+import type { MapSpec, MapSpecLayer, MapSpecLayerPaint } from '@/lib/mapspec-compiler/types';
 import { hudStateToMapSpec, type HudToSpecInput } from '@/lib/mapspec-runtime/adapter';
 
 export type PendingPresentation = Record<string, { visible?: boolean; opacity?: number }>;
@@ -20,16 +20,20 @@ function applyPending(layer: MapSpecLayer, pending: PendingPresentation): MapSpe
     };
   }
   if (patch.opacity !== undefined) {
-    const paint: Record<string, unknown> = { ...(next.paint || {}) };
+    const paint: MapSpecLayerPaint = { ...(next.paint || {}) };
     paint.opacity = patch.opacity;
-    const key = {
-      circle: 'circle-opacity',
-      fill: 'fill-opacity',
-      line: 'line-opacity',
-      raster: 'raster-opacity',
-      heatmap: 'heatmap-opacity',
-      'fill-extrusion': 'fill-extrusion-opacity',
-    }[next.type];
+    const key = (
+      next.type === 'symbol'
+        ? undefined
+        : ({
+            circle: 'circle-opacity',
+            fill: 'fill-opacity',
+            line: 'line-opacity',
+            raster: 'raster-opacity',
+            heatmap: 'heatmap-opacity',
+            'fill-extrusion': 'fill-extrusion-opacity',
+          } as const)[next.type]
+    );
     if (key) paint[key] = patch.opacity;
     next.paint = paint;
   }
@@ -63,7 +67,7 @@ function exclusiveGeojsonPayload(
       delete merged.url;
     }
   }
-  return merged as MapSpec['sources'][string];
+  return merged as unknown as MapSpec['sources'][string];
 }
 
 function mergeHudSources(

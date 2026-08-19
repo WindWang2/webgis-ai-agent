@@ -9,7 +9,6 @@ import { ConfirmAction } from '@/components/shared/confirm-action';
 import { EmptyState } from '@/components/shared/empty-state';
 import { IconButton } from '@/components/shared/icon-button';
 import {
-  commitLayerPresentation,
   removeLayerAndCommit,
   reorderLayersAndCommit,
   setLayerOpacityAndCommit,
