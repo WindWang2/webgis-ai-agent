@@ -6,7 +6,12 @@ import {
   getPendingPresentation,
   setMapSpecSessionCursor,
 } from '@/lib/mapspec/session-cursor';
-import { setLayerOpacityAndCommit, toggleLayerAndCommit } from '@/lib/mapspec/user-mutation';
+import {
+  commitExplicitView,
+  removeLayerAndCommit,
+  setLayerOpacityAndCommit,
+  toggleLayerAndCommit,
+} from '@/lib/mapspec/user-mutation';
 
 vi.mock('@/lib/api/config', () => ({ API_BASE: 'http://localhost:8000' }));
 
@@ -149,5 +154,44 @@ describe('setLayerOpacityAndCommit vs Agent upsert race', () => {
     expect(second.expected_revision).toBe(5);
     expect(useHudStore.getState().layers[0].opacity).toBe(0.4);
     expect(getMapSpecSessionCursor().revision).toBe(6);
+  });
+});
+
+describe('commitExplicitView', () => {
+  it('posts set_view and stores the framed MapSpec', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: () => Promise.resolve(JSON.stringify({
+        success: true,
+        mutation_revision: 4,
+        mapspec: { view: { center: [114, 30], zoom: 10, framed: true } },
+      })),
+    });
+
+    await commitExplicitView({ center: [114, 30], zoom: 10 });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.intent).toBe('set_view');
+    expect(body.center).toEqual([114, 30]);
+    expect(body.expected_revision).toBe(3);
+    expect(getMapSpecSessionCursor().revision).toBe(4);
+  });
+});
+
+describe('removeLayerAndCommit', () => {
+  it('restores HUD layers when the mutation is rejected without a MapSpec', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      statusText: 'Error',
+      headers: { get: () => null },
+      text: () => Promise.resolve(JSON.stringify({ detail: 'boom' })),
+    });
+
+    await removeLayerAndCommit('L1');
+    expect(useHudStore.getState().layers).toHaveLength(1);
+    expect(useHudStore.getState().layers[0].id).toBe('L1');
   });
 });

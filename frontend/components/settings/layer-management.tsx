@@ -7,14 +7,14 @@ import ToggleSwitch from '@/components/shared/toggle-switch';
 import { GripVertical, Trash2 } from 'lucide-react';
 import type { Layer } from '@/lib/types/layer';
 import {
-  commitLayerPresentation,
   removeLayerAndCommit,
   reorderLayersAndCommit,
+  setLayerOpacityAndCommit,
+  toggleLayerAndCommit,
 } from '@/lib/mapspec/user-mutation';
 
 export function LayerManagement() {
   const layers = useHudStore((s) => s.layers);
-  const toggleLayer = useHudStore((s) => s.toggleLayer);
   const updateLayer = useHudStore((s) => s.updateLayer);
 
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -179,6 +179,14 @@ export function LayerManagement() {
                         opacity: Number(e.target.value) / 100,
                       })
                     }
+                    onPointerUp={() => {
+                      const current = useHudStore.getState().layers.find((l) => l.id === layer.id);
+                      if (current) void setLayerOpacityAndCommit(layer.id, current.opacity);
+                    }}
+                    onBlur={() => {
+                      const current = useHudStore.getState().layers.find((l) => l.id === layer.id);
+                      if (current) void setLayerOpacityAndCommit(layer.id, current.opacity);
+                    }}
                     className="w-full h-1 rounded-full appearance-none cursor-pointer"
                     style={{
                       background: `linear-gradient(to right, var(--agent-accent, #16a34a) ${layer.opacity * 100}%, var(--theme-border-subtle) ${layer.opacity * 100}%)`,
@@ -192,11 +200,7 @@ export function LayerManagement() {
                   label={`显示图层：${layer.name}`}
                   checked={layer.visible}
                   onChange={() => {
-                    toggleLayer(layer.id);
-                    void commitLayerPresentation({
-                      layerId: layer.id,
-                      visible: !layer.visible,
-                    });
+                    void toggleLayerAndCommit(layer.id);
                   }}
                 />
 

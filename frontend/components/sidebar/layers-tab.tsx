@@ -12,6 +12,8 @@ import {
   commitLayerPresentation,
   removeLayerAndCommit,
   reorderLayersAndCommit,
+  setLayerOpacityAndCommit,
+  toggleLayerAndCommit,
 } from '@/lib/mapspec/user-mutation';
 
 const GROUP_NAMES: Record<string, string> = {
@@ -36,7 +38,6 @@ function DeleteLayerButton({ onDelete }: { onDelete: () => void }) {
 
 export function LayersTab() {
   const layers = useHudStore((s) => s.layers);
-  const toggleLayer = useHudStore((s) => s.toggleLayer);
   const updateLayer = useHudStore((s) => s.updateLayer);
   const setActiveLeftTab = useHudStore((s) => s.setActiveLeftTab);
 
@@ -83,7 +84,7 @@ export function LayersTab() {
         // redundant store update (and reconcile) on grab-without-drag.
         if (Math.abs(next - current) > 1e-9) {
           updateLayer(layer.id, { opacity: next });
-          void commitLayerPresentation({ layerId: layer.id, opacity: next });
+          void setLayerOpacityAndCommit(layer.id, next);
         }
         const nextDraft = { ...prev };
         delete nextDraft[layer.id];
@@ -322,11 +323,7 @@ export function LayersTab() {
                             icon={layer.visible ? Eye : EyeOff}
                             active={layer.visible}
                             onClick={() => {
-                              toggleLayer(layer.id);
-                              void commitLayerPresentation({
-                                layerId: layer.id,
-                                visible: !layer.visible,
-                              });
+                              void toggleLayerAndCommit(layer.id);
                             }}
                           />
                           <DeleteLayerButton onDelete={() => { void removeLayerAndCommit(layer.id); }} />

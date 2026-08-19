@@ -1,7 +1,7 @@
 """地图视图操作工具 (View / Camera Control)
 
 提供 LLM 主动驱动地图视角的能力：飞行、缩放到包围盒、定位到图层、重置视图、调整 pitch/bearing。
-所有工具不修改图层数据，只发出前端命令控制相机。
+不修改图层数据。`zoom_to_layer` 还写入 framed `MapSpec.view`（ADR-0057）。
 """
 import logging
 import math

@@ -146,8 +146,10 @@ async def apply_user_mapspec_mutation(
             step=req.step,
             speed=req.speed,
         )
-    else:
+    elif isinstance(req, InitProjectBody):
         intent = InitProjectIntent(view=req.view)
+    else:
+        raise HTTPException(status_code=400, detail="unsupported mapspec mutation intent")
     result = await _engine.apply_mutation(
         session_id,
         intent,

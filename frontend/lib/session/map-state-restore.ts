@@ -80,7 +80,6 @@ export function selectLayersToRestore(state: SessionMapState): any[] {
   return observedLayers.length > 0 ? observedLayers : (state.layers || []);
 }
 
-/** 单条观察图层 → HUD Layer（字段映射与 selectSession 原实现一致）。 */
 /** Desired camera only when MapSpec.view was an explicit frame (ADR-0057). */
 export function selectCameraToRestore(
   state: SessionMapState,

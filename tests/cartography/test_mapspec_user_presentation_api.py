@@ -157,3 +157,36 @@ async def test_user_set_view_via_http_marks_framed(client, session_id):
     assert stored["view"]["center"] == [114.3, 30.5]
     assert stored["view"]["zoom"] == 11
     assert stored["view"]["framed"] is True
+
+
+@pytest.mark.cartography
+@pytest.mark.asyncio
+async def test_empty_patch_layer_presentation_is_400(client, session_id):
+    engine = MapSpecLifecycleEngine()
+    seeded = await engine.apply_mutation(session_id, InitProjectIntent())
+    resp = await client.post(
+        f"/api/v1/chat/sessions/{session_id}/mapspec/mutations",
+        json={
+            "intent": "patch_layer_presentation",
+            "expected_revision": seeded.mutation_revision,
+            "layer_id": "L1",
+        },
+    )
+    assert resp.status_code == 400
+    assert "visible" in resp.json()["detail"]
+
+
+@pytest.mark.cartography
+@pytest.mark.asyncio
+async def test_empty_set_view_is_400(client, session_id):
+    engine = MapSpecLifecycleEngine()
+    seeded = await engine.apply_mutation(session_id, InitProjectIntent())
+    resp = await client.post(
+        f"/api/v1/chat/sessions/{session_id}/mapspec/mutations",
+        json={
+            "intent": "set_view",
+            "expected_revision": seeded.mutation_revision,
+        },
+    )
+    assert resp.status_code == 400
+    assert "center" in resp.json()["detail"]
