@@ -8,6 +8,7 @@ import type { Layer } from '@/lib/types/layer';
 import { ConfirmAction } from '@/components/shared/confirm-action';
 import { EmptyState } from '@/components/shared/empty-state';
 import { IconButton } from '@/components/shared/icon-button';
+import { commitLayerPresentation } from '@/lib/mapspec/user-mutation';
 
 const GROUP_NAMES: Record<string, string> = {
   analysis: '分析结果',
@@ -80,6 +81,7 @@ export function LayersTab() {
         // redundant store update (and reconcile) on grab-without-drag.
         if (Math.abs(next - current) > 1e-9) {
           updateLayer(layer.id, { opacity: next });
+          void commitLayerPresentation({ layerId: layer.id, opacity: next });
         }
         const nextDraft = { ...prev };
         delete nextDraft[layer.id];
@@ -317,7 +319,13 @@ export function LayersTab() {
                             label={layer.visible ? '隐藏图层' : '显示图层'}
                             icon={layer.visible ? Eye : EyeOff}
                             active={layer.visible}
-                            onClick={() => toggleLayer(layer.id)}
+                            onClick={() => {
+                              toggleLayer(layer.id);
+                              void commitLayerPresentation({
+                                layerId: layer.id,
+                                visible: !layer.visible,
+                              });
+                            }}
                           />
                           <DeleteLayerButton onDelete={() => removeLayer(layer.id)} />
                         </div>

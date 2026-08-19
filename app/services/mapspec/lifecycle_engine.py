@@ -164,6 +164,15 @@ class RollbackIntent:
 
 
 @dataclass
+class PatchLayerPresentationIntent:
+    """User/agent chrome: visibility and opacity without re-ingesting data."""
+
+    layer_id: str
+    visible: Optional[bool] = None
+    opacity: Optional[float] = None
+
+
+@dataclass
 class SetTimeIntent:
     enabled: Optional[bool] = None
     field: Optional[str] = None
@@ -176,11 +185,43 @@ class SetTimeIntent:
     speed: Optional[float] = None
 
 
+_OPACITY_PAINT_KEYS = {
+    "circle": "circle-opacity",
+    "fill": "fill-opacity",
+    "line": "line-opacity",
+    "raster": "raster-opacity",
+    "heatmap": "heatmap-opacity",
+    "fill-extrusion": "fill-extrusion-opacity",
+    "symbol": "icon-opacity",
+}
+
+
+def _patch_layer_presentation(
+    layer: Dict[str, Any],
+    visible: Optional[bool],
+    opacity: Optional[float],
+) -> Dict[str, Any]:
+    patched = dict(layer)
+    if visible is not None:
+        layout = dict(patched.get("layout") or {})
+        layout["visibility"] = "visible" if visible else "none"
+        patched["layout"] = layout
+    if opacity is not None:
+        paint = dict(patched.get("paint") or {})
+        paint["opacity"] = opacity
+        type_key = _OPACITY_PAINT_KEYS.get(str(patched.get("type") or ""))
+        if type_key:
+            paint[type_key] = opacity
+        patched["paint"] = paint
+    return patched
+
+
 MutationIntent = Union[
     InitProjectIntent,
     SetViewIntent,
     UpsertSourceIntent,
     UpsertLayerIntent,
+    PatchLayerPresentationIntent,
     RemoveLayerIntent,
     SetLayoutIntent,
     CheckpointIntent,
@@ -293,7 +334,13 @@ class MapSpecLifecycleEngine:
             # never touch layers, and the COW work already avoids copying the
             # mapspec for them; this unconditional copy was left behind.
             _layers_touching = isinstance(
-                intent, (UpsertLayerIntent, RemoveLayerIntent, InitProjectIntent, RollbackIntent)
+                intent, (
+                    UpsertLayerIntent,
+                    PatchLayerPresentationIntent,
+                    RemoveLayerIntent,
+                    InitProjectIntent,
+                    RollbackIntent,
+                )
             )
             old_layers_snapshot = (
                 copy.deepcopy(pre_state.get("layers", []) or [])
@@ -449,6 +496,42 @@ class MapSpecLifecycleEngine:
                         processed_layer.get("id", "layer"),
                         processed_layer,
                     )
+                    auto_checkpoint = True
+
+                elif isinstance(intent, PatchLayerPresentationIntent):
+                    old_mapspec_snapshot = loaded
+                    mapspec = {**loaded} if loaded else {}
+                    mapspec["layers"] = list(
+                        loaded.get("layers", []) if loaded else []
+                    )
+                    matched = False
+                    patched_layers: List[Any] = []
+                    for layer in mapspec["layers"]:
+                        if not isinstance(layer, dict):
+                            patched_layers.append(layer)
+                            continue
+                        layer_id = str(layer.get("id") or "")
+                        if layer_id == intent.layer_id or layer_id.startswith(
+                            f"{intent.layer_id}__"
+                        ):
+                            matched = True
+                            patched_layers.append(
+                                _patch_layer_presentation(
+                                    layer, intent.visible, intent.opacity
+                                )
+                            )
+                        else:
+                            patched_layers.append(layer)
+                    if not matched:
+                        return MapSpecResult(
+                            is_error=True,
+                            origin=origin,
+                            error_msg=f"Layer {intent.layer_id} not found.",
+                            correction_hint=(
+                                "Re-read MapSpec and patch an existing layer id."
+                            ),
+                        )
+                    mapspec["layers"] = patched_layers
                     auto_checkpoint = True
 
                 elif isinstance(intent, UpsertSourceIntent):

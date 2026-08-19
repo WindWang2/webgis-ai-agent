@@ -6,6 +6,7 @@ import { STitle } from '@/components/shared/section-title';
 import ToggleSwitch from '@/components/shared/toggle-switch';
 import { GripVertical, Trash2 } from 'lucide-react';
 import type { Layer } from '@/lib/types/layer';
+import { commitLayerPresentation } from '@/lib/mapspec/user-mutation';
 
 export function LayerManagement() {
   const layers = useHudStore((s) => s.layers);
@@ -188,7 +189,13 @@ export function LayerManagement() {
                 <ToggleSwitch
                   label={`显示图层：${layer.name}`}
                   checked={layer.visible}
-                  onChange={() => toggleLayer(layer.id)}
+                  onChange={() => {
+                    toggleLayer(layer.id);
+                    void commitLayerPresentation({
+                      layerId: layer.id,
+                      visible: !layer.visible,
+                    });
+                  }}
                 />
 
                 {/* Delete */}

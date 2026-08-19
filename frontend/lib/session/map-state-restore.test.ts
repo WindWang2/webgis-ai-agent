@@ -83,6 +83,31 @@ describe('buildLayerFromRestored', () => {
     expect(layer._intentGeneration).toBe(3);
   });
 
+  it('lets committed MapSpec visibility and opacity override restored HUD chrome', () => {
+    const layer = buildLayerFromRestored(
+      {
+        id: 'L1',
+        name: 'Schools',
+        type: 'vector',
+        visible: true,
+        opacity: 1,
+      },
+      'sid-1',
+      'carto-fp',
+      {
+        layers: [
+          {
+            id: 'L1',
+            layout: { visibility: 'none' },
+            paint: { opacity: 0.4, 'circle-opacity': 0.4 },
+          },
+        ],
+      },
+    );
+    expect(layer.visible).toBe(false);
+    expect(layer.opacity).toBe(0.4);
+  });
+
   it('treats raster_image + raster_bbox as a heatmap with the raster source', () => {
     const layer = buildLayerFromRestored(
       {

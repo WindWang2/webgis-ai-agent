@@ -43,6 +43,8 @@ export interface SessionMapState {
     pitch?: number;
   } | null;
   layers?: any[];
+  mapspec?: { layers?: any[] };
+  _cartographic_mutation_revision?: number;
   _current_cartographic_fingerprint?: string;
   _cartographic_observation?: { mapspec_fingerprint?: string; layers?: any[] };
 }
@@ -69,10 +71,33 @@ export function selectLayersToRestore(state: SessionMapState): any[] {
 }
 
 /** 单条观察图层 → HUD Layer（字段映射与 selectSession 原实现一致）。 */
+export function presentationFromMapSpec(
+  mapspec: { layers?: any[] } | undefined,
+  layerId: string,
+): { visible?: boolean; opacity?: number } {
+  const layers = mapspec?.layers;
+  if (!Array.isArray(layers) || !layerId) return {};
+  const match = layers.find((layer) => {
+    const id = String(layer?.id || '');
+    return id === layerId || id.startsWith(`${layerId}__`);
+  });
+  if (!match) return {};
+  const next: { visible?: boolean; opacity?: number } = {};
+  const visibility = match.layout?.visibility;
+  if (visibility === 'none') next.visible = false;
+  if (visibility === 'visible') next.visible = true;
+  const paint = match.paint && typeof match.paint === 'object' ? match.paint : {};
+  const opacity = paint.opacity ?? paint['circle-opacity'] ?? paint['fill-opacity']
+    ?? paint['line-opacity'] ?? paint['raster-opacity'] ?? paint['heatmap-opacity'];
+  if (typeof opacity === 'number') next.opacity = opacity;
+  return next;
+}
+
 export function buildLayerFromRestored(
   observed: any,
   sessionId: string,
   mapspecFingerprint?: string,
+  mapspec?: { layers?: any[] },
 ) {
   const refId = observed._refId;
   const runtimeId = observed.runtime_store_id ?? refId ?? observed.id;
@@ -84,7 +109,7 @@ export function buildLayerFromRestored(
       image: observed.raster_image,
       bbox: observed.raster_bbox,
     } : null;
-  return {
+  const base = {
     id: runtimeId,
     name: observed.name ?? `分析结果: ${observed.id}`,
     type: rasterSource
@@ -115,6 +140,7 @@ export function buildLayerFromRestored(
       ? observed.intent_generation
       : undefined,
   };
+  return { ...base, ...presentationFromMapSpec(mapspec, String(observed.id ?? runtimeId)) };
 }
 
 export interface RestoreMapLayersOptions {
@@ -140,8 +166,16 @@ export async function restoreSessionMapLayers(
   // the turn-start `layers` state, which may predate the GIS result. Legacy
   // sessions without runtime evidence keep the old path (raw persisted layers).
   const layersToRestore = fromObservation
-    ? raw.map((observed: any) => buildLayerFromRestored(observed, opts.sessionId, observation?.mapspec_fingerprint))
-    : raw;
+    ? raw.map((observed: any) => buildLayerFromRestored(
+      observed,
+      opts.sessionId,
+      observation?.mapspec_fingerprint,
+      state.mapspec,
+    ))
+    : raw.map((layer: any) => ({
+      ...layer,
+      ...presentationFromMapSpec(state.mapspec, String(layer._mapspecLayerId ?? layer.id)),
+    }));
 
   for (const layer of layersToRestore) {
     store.addLayer(layer);

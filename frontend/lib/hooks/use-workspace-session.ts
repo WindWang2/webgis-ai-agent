@@ -6,6 +6,7 @@ import { apiFetch, isApiError } from '@/lib/api/transport';
 import type { ChatSession } from '@/lib/types/chat';
 import type { MapActionPayload } from '@/lib/types';
 import { restoreSessionMapLayers } from '@/lib/session/map-state-restore';
+import { setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 
 
 import { devOnly } from "@/lib/utils/logger";
@@ -238,6 +239,11 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
             }
           }
           if (state.base_layer) store.setBaseLayer(state.base_layer);
+          setMapSpecSessionCursor(
+            sid,
+            Number(state._cartographic_mutation_revision) || 0,
+            token ?? null,
+          );
           // #552: 图层还原逻辑抽到 lib/session/map-state-restore（观察态优先 +
           // ref 数据回填），会话切换与 /story 分享页共用同一份实现。
           await restoreSessionMapLayers(state, { sessionId: sid, token, signal });
@@ -277,6 +283,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       sessionLoadAbortRef.current?.abort();
       sessionLoadAbortRef.current = null;
       setSessionId(undefined);
+      setMapSpecSessionCursor(undefined, 0, null);
       // FE-P3-1: selectSession syncs the ref synchronously (F38); this path
       // relied on the post-render effect — a programmatic send in the same
       // tick (plan approve/reject defers handleSend by one macrotask) read
