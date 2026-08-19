@@ -439,8 +439,8 @@ class DataFabricManager:
 
         # Materialization atomicity: query success AND payload stored AND audit
         # record committed must hold together. If the audit commit fails after
-        # the payload was stored, the ref is orphaned (no audit) — report failure
-        # so the caller does not trust an unaudited ref, and roll the TX back.
+        # the payload was stored, delete the session ref (#618-6) so a ref
+        # never exists without its audit row, then report failure.
         mat_id = f"mat_{uuid.uuid4().hex[:12]}"
         mat_record = MaterializationModel(
             id=mat_id,
@@ -457,9 +457,18 @@ class DataFabricManager:
         except Exception:
             db.rollback()
             logger.exception(
-                "[DataFabricManager] audit commit failed for item '%s'; ref '%s' orphaned",
+                "[DataFabricManager] audit commit failed for item '%s'; compensating ref '%s'",
                 item_id, ref_id,
             )
+            deleter = getattr(session_data_manager, "delete_ref", None)
+            if deleter is not None:
+                try:
+                    await deleter(session_id, ref_id)
+                except Exception:
+                    logger.exception(
+                        "[DataFabricManager] failed to delete unaudited ref '%s'",
+                        ref_id,
+                    )
             return {**base, "success": False, "ref_id": None,
                     "error_type": MATERIALIZATION_FAILED,
                     "error": "materialization audit failed"}

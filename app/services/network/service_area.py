@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import networkx as nx
 from shapely.geometry import Point, MultiPoint, LineString, MultiLineString, shape, mapping
-from shapely.ops import unary_union
+from shapely.ops import unary_union, substring
 
 from app.services.network.models import (
     NetworkDataset,
@@ -27,6 +27,26 @@ from app.services.network.routing import NetworkRoutingService
 # equator, so the smoothing radius varied by tens of percent across a dataset
 # (and by latitude within it). Buffer radii are now meters in a local UTM zone.
 _ISOCHRONE_BUFFER_M = 150.0  # road-width smoothing in meters
+
+
+def _break_to_cutoff(
+    brk_val: float,
+    break_unit: str,
+    impedance: Optional[Impedance],
+) -> float:
+    """Convert a service-area break into Dijkstra cutoff units.
+
+    #618-20: ``break_unit=="minutes"`` is wall-clock minutes. Graph time
+    weights are seconds (``travel_time_s`` and other seconds-based custom
+    impedances), so minutes always convert unless ``impedance.unit`` is
+    already ``minutes``. Distance breaks pass through unchanged.
+    """
+    if break_unit != "minutes":
+        return float(brk_val)
+    unit = impedance.unit if impedance is not None else "seconds"
+    if unit == "minutes":
+        return float(brk_val)
+    return float(brk_val) * 60.0
 
 
 class NetworkServiceAreaService:
@@ -148,15 +168,16 @@ class NetworkServiceAreaService:
                 continue
 
             max_break = sorted_breaks[-1]
-            max_cutoff = max_break * 60.0 if break_unit == "minutes" and cost_field == "travel_time_s" else max_break
+            max_cutoff = _break_to_cutoff(max_break, break_unit, impedance)
 
             node_costs = nx.single_source_dijkstra_path_length(graph_view, start_node_id, cutoff=max_cutoff, weight=weight_func)
 
             sa_breaks: List[ServiceAreaBreak] = []
 
             for brk_val in sorted_breaks:
-                cutoff = brk_val * 60.0 if break_unit == "minutes" and cost_field == "travel_time_s" else brk_val
-                reachable_nodes = [n for n, cost in node_costs.items() if cost <= cutoff]
+                cutoff = _break_to_cutoff(brk_val, break_unit, impedance)
+                reachable_set = {n for n, cost in node_costs.items() if cost <= cutoff}
+                reachable_nodes = list(reachable_set)
 
                 # Extract node coordinates
                 node_coords: List[Tuple[float, float]] = []
@@ -164,22 +185,42 @@ class NetworkServiceAreaService:
                     data = graph_view.nodes[n]
                     node_coords.append((data["x"], data["y"]))
 
-                # Collect reachable edges
+                # Collect reachable edges, including the in-budget portion of
+                # an edge whose far endpoint sits past the cutoff (#618-20).
                 reachable_line_geoms: List[LineString] = []
                 edge_count = 0
 
                 for u in reachable_nodes:
+                    cost_u = node_costs[u]
                     for v in graph_view.successors(u):
-                        if v in reachable_nodes:
+                        edge_data = graph_view[u][v]
+                        line = self._edge_linestring(graph_view, u, v, edge_data)
+                        if v in reachable_set:
                             edge_count += 1
-                            edge_data = graph_view[u][v]
-                            g_dict = edge_data.get("geometry")
-                            if g_dict:
-                                reachable_line_geoms.append(shape(g_dict))
-                            else:
-                                u_d = graph_view.nodes[u]
-                                v_d = graph_view.nodes[v]
-                                reachable_line_geoms.append(LineString([(u_d["x"], u_d["y"]), (v_d["x"], v_d["y"])]))
+                            reachable_line_geoms.append(line)
+                            continue
+                        w = weight_func(u, v, edge_data)
+                        remaining = cutoff - cost_u
+                        if remaining <= 0 or w <= 0:
+                            continue
+                        frac = min(1.0, remaining / w)
+                        if frac <= 0:
+                            continue
+                        try:
+                            seg = (
+                                line
+                                if frac >= 1.0
+                                else substring(line, 0.0, frac, normalized=True)
+                            )
+                        except Exception:
+                            seg = line
+                        if (
+                            not isinstance(seg, LineString)
+                            or getattr(seg, "is_empty", False)
+                        ):
+                            continue
+                        edge_count += 1
+                        reachable_line_geoms.append(seg)
 
                 # Build boundary polygon (GIS-08/09)
                 poly_geojson = self._build_isochrone_polygon(
@@ -212,6 +253,17 @@ class NetworkServiceAreaService:
             service_areas.append(sa)
 
         return service_areas
+
+    @staticmethod
+    def _edge_linestring(graph_view: nx.DiGraph, u: Any, v: Any, edge_data: Dict[str, Any]) -> LineString:
+        g_dict = edge_data.get("geometry")
+        if g_dict:
+            geom = shape(g_dict)
+            if isinstance(geom, LineString):
+                return geom
+        u_d = graph_view.nodes[u]
+        v_d = graph_view.nodes[v]
+        return LineString([(u_d["x"], u_d["y"]), (v_d["x"], v_d["y"])])
 
     def _build_isochrone_polygon(
         self,

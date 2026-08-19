@@ -95,7 +95,7 @@ async def apply_decision_to_mapspec(
         "style": {
             "color": {
                 "method": "match",
-                "field": "zone",
+                "field": "zone_type",
                 "stops": [
                     ["direct", "#EF4444"],
                     ["indirect", "#F59E0B"],

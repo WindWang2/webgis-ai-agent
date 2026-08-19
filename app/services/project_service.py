@@ -511,12 +511,16 @@ class ProjectService:
             updated_at=datetime.now(timezone.utc),
         )
         db.add(workflow)
-        db.commit()
-        db.refresh(workflow)
-
-        # Publish the first immutable revision (INV-REV1/2) so the graph as
-        # saved is recoverable even before a first run.
-        ProjectService._publish_revision(db, workflow, user_id)
+        # #618-11: workflow row + first revision must commit together. Flush
+        # so the client-assigned PK is visible to the revision FK; commit only
+        # after _publish_revision succeeds. A revision failure rolls back the
+        # insert so current_revision_id is never empty on a persisted workflow.
+        try:
+            db.flush()
+            ProjectService._publish_revision(db, workflow, user_id)
+        except Exception:
+            db.rollback()
+            raise
         _invalidate_project_context_cache(project_id)
         return workflow
 
@@ -623,17 +627,25 @@ class ProjectService:
         if inputs_schema is not None:
             workflow.inputs_schema = inputs_schema
         workflow.updated_at = datetime.now(timezone.utc)
-        db.commit()
-        db.refresh(workflow)
 
-        # Only bump a revision when the graph actually changed.
-        new_fp = compute_graph_fingerprint(workflow.graph_spec or {})
-        if new_fp != prev_fp:
-            ProjectService._publish_revision(db, workflow, user_id)
-        # Every update bumps ``updated_at`` (line 572) and therefore
-        # the workflow_max_updated aggregate; the cache will miss on
-        # the next lookup. We also invalidate explicitly so the
-        # fingerprint read is not even needed.
+        # #618-11: field updates + revision publish are one transaction when
+        # the graph changed. Commit only after the revision succeeds so a
+        # failed publish cannot leave graph_spec advanced with an empty
+        # current_revision_id.
+        try:
+            new_fp = compute_graph_fingerprint(workflow.graph_spec or {})
+            if new_fp != prev_fp:
+                ProjectService._publish_revision(db, workflow, user_id)
+            else:
+                db.commit()
+                db.refresh(workflow)
+        except Exception:
+            db.rollback()
+            raise
+        # Every update bumps ``updated_at`` and therefore the
+        # workflow_max_updated aggregate; the cache will miss on the
+        # next lookup. We also invalidate explicitly so the fingerprint
+        # read is not even needed.
         _invalidate_project_context_cache(project_id)
         return workflow
 

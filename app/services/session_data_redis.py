@@ -347,6 +347,26 @@ class RedisSessionStore(BaseSessionStore):
         tile_lru_cache.invalidate_ref(session_id, ref_id)
         return True
 
+    async def delete_ref(self, session_id: str, ref_id: str) -> bool:
+        """Drop one stored ref (data + descriptor + index). Returns False on Redis error."""
+        await self._ensure_connected()
+        try:
+            exists = await self._r.exists(self._data_key(session_id, ref_id))
+            async with self._r.pipeline() as pipe:
+                self._evict_ref(pipe, session_id, ref_id, None)
+                await pipe.execute()
+            self._l1_invalidate_session(session_id)
+        except aioredis.RedisError as e:
+            logger.error(
+                "Redis delete_ref failed for session %s ref %s: %s",
+                session_id, ref_id, e,
+            )
+            return False
+        from app.services.mvt import spatial_index_cache, tile_lru_cache
+        spatial_index_cache.invalidate_ref(session_id, ref_id)
+        tile_lru_cache.invalidate_ref(session_id, ref_id)
+        return bool(exists)
+
     async def set_alias(self, session_id: str, ref_id: str, alias: str) -> None:
         """写路径 best-effort：Redis 不可达时 log warning 并丢弃，不抛。
 

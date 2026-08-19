@@ -171,13 +171,14 @@ class SpectralRasterEngine:
                 for p in requested:
                     arr = derivators[p](dem)
                     product_arrays[p] = arr
-                    product_stats[p] = compute_raster_stats(arr)
+                    # #618-17: aspect is circular (0-360°); slope/hillshade stay linear.
+                    product_stats[p] = compute_raster_stats(arr, circular=(p == "aspect"))
 
                 if requested:
                     label = requested[0]
                     target_arr = product_arrays[label]
                     # Stats must describe the returned array, not the raw DEM.
-                    stats = compute_raster_stats(target_arr)
+                    stats = compute_raster_stats(target_arr, circular=(label == "aspect"))
                     stats["terrain_product"] = label
                     stats["products"] = list(requested)
                     stats["terrain_products"] = product_stats

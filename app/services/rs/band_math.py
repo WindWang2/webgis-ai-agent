@@ -175,8 +175,21 @@ def compute_hillshade(dem: np.ndarray, cell_size: float,
     return np.clip(hs * 255, 0, 255)
 
 
-def compute_raster_stats(array: np.ndarray) -> Dict[str, Any]:
-    """忽略 NaN / Mask 计算安全统计指标与有效像素比率"""
+def _circular_mean_deg(values: np.ndarray) -> float:
+    """Circular mean of compass degrees (0-360). 350° and 10° → 0°, not 180°."""
+    rad = np.radians(values.astype(float))
+    mean_rad = np.arctan2(np.mean(np.sin(rad)), np.mean(np.cos(rad)))
+    deg = float(np.mod(np.degrees(mean_rad), 360.0))
+    # Tiny negative atan2 residuals wrap to 360; compass 360° == 0°.
+    return 0.0 if deg >= (360.0 - 1e-6) else deg
+
+
+def compute_raster_stats(array: np.ndarray, circular: bool = False) -> Dict[str, Any]:
+    """忽略 NaN / Mask 计算安全统计指标与有效像素比率
+
+    circular=True uses the atan2(mean sin, mean cos) mean for 0-360°
+    quantities such as aspect (#618-17). min/max/std stay linear.
+    """
     valid_mask = ~np.isnan(array)
     total_cells = array.size
     valid_cells = int(np.sum(valid_mask))
@@ -189,14 +202,17 @@ def compute_raster_stats(array: np.ndarray) -> Dict[str, Any]:
     valid_vals = array[valid_mask]
     v_min = float(np.min(valid_vals))
     v_max = float(np.max(valid_vals))
-    v_mean = float(np.mean(valid_vals))
+    v_mean = _circular_mean_deg(valid_vals) if circular else float(np.mean(valid_vals))
     v_std = float(np.std(valid_vals))
     pct_str = f"{round((valid_cells / total_cells) * 100, 1)}%"
 
+    mean_out = round(v_mean, 4)
+    if circular and mean_out == 360.0:
+        mean_out = 0.0
     return {
         "min": round(v_min, 4),
         "max": round(v_max, 4),
-        "mean": round(v_mean, 4),
+        "mean": mean_out,
         "std": round(v_std, 4),
         "total_pixels": total_cells,
         "valid_pixels": valid_cells,
