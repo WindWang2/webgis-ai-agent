@@ -42,16 +42,10 @@ updates:
         update-types:
           - "minor"
           - "patch"
-    # Next 14→16 + ESLint 9→10 + react-hooks 7 必须一次协调迁移（#629）。
-    # 单独 major 会红 CI 或把未 QA 的运行时带进 master。
+    # ESLint 10 被 eslint-plugin-react@7.37 卡住（peer 只到 eslint ^9.7）。
+    # Next 16 已落地（#629）；eslint major 等 plugin-react 支持后再开。
     ignore:
-      - dependency-name: "next"
-        update-types: ["version-update:semver-major"]
       - dependency-name: "eslint"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "eslint-config-next"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "eslint-plugin-react-hooks"
         update-types: ["version-update:semver-major"]
 
   # Docker base images
