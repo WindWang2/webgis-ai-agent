@@ -3,6 +3,7 @@ import { useHudStore } from '@/lib/store/useHudStore';
 import { useToastStore } from '@/components/ui/toast';
 import { ApiError } from '@/lib/api/transport';
 import { devOnly } from '@/lib/utils/logger';
+import { getCommittedMapSpec, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import {
   buildLayerFromRestored,
   restoreSessionMapLayers,
@@ -24,6 +25,7 @@ beforeEach(() => {
   useHudStore.getState().clearLayers();
   useHudStore.setState({ baseLayer: 'Carto 深色' });
   useToastStore.setState({ toasts: [] });
+  setMapSpecSessionCursor(undefined, 0, null);
   vi.mocked(devOnly.error).mockClear();
 });
 
@@ -197,6 +199,22 @@ describe('restoreSessionMapLayers', () => {
 
     expect(useHudStore.getState().layers).toHaveLength(1);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('stores restored MapSpec as the committed live document', async () => {
+    const mapspec = {
+      version: '1.0',
+      sources: { keep: { type: 'geojson' } },
+      layers: [{ id: 'keep', source: 'keep', type: 'circle' }],
+    };
+    await restoreSessionMapLayers(
+      {
+        layers: [{ id: 'keep', name: 'Keep', type: 'vector', visible: true, opacity: 1 }],
+        mapspec,
+      },
+      { sessionId: 'sid-1' },
+    );
+    expect(getCommittedMapSpec()).toEqual(mapspec);
   });
 
   it('does not resurrect layers missing from committed MapSpec', async () => {

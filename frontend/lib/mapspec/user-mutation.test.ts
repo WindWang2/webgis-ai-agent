@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useHudStore } from '@/lib/store/useHudStore';
-import { setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
-import { getMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
+import {
+  getCommittedMapSpec,
+  getMapSpecSessionCursor,
+  getPendingPresentation,
+  setMapSpecSessionCursor,
+} from '@/lib/mapspec/session-cursor';
 import { setLayerOpacityAndCommit, toggleLayerAndCommit } from '@/lib/mapspec/user-mutation';
 
 vi.mock('@/lib/api/config', () => ({ API_BASE: 'http://localhost:8000' }));
@@ -26,6 +30,37 @@ beforeEach(() => {
 });
 
 describe('toggleLayerAndCommit', () => {
+  it('holds a pending overlay until the mutation ACK commits MapSpec', async () => {
+    let release!: (value: unknown) => void;
+    fetchMock.mockImplementationOnce(() => new Promise((resolve) => {
+      release = resolve;
+    }));
+
+    const done = toggleLayerAndCommit('L1');
+    expect(getPendingPresentation()).toEqual({ L1: { visible: false } });
+    expect(useHudStore.getState().layers[0].visible).toBe(false);
+
+    release({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: () => Promise.resolve(JSON.stringify({
+        success: true,
+        origin: 'user',
+        mutation_revision: 4,
+        mapspec: {
+          version: '1.0',
+          sources: { L1: { type: 'geojson' } },
+          layers: [{ id: 'L1', source: 'L1', type: 'circle', layout: { visibility: 'none' } }],
+        },
+      })),
+    });
+    await done;
+
+    expect(getPendingPresentation()).toEqual({});
+    expect(getCommittedMapSpec()?.layers?.[0].layout).toEqual({ visibility: 'none' });
+  });
+
   it('applies pending HUD visibility then hydrates from committed MapSpec', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,

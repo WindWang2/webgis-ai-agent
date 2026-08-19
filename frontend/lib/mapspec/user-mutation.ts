@@ -1,7 +1,15 @@
 import { ApiError, apiFetch } from '@/lib/api/transport';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { presentationFromMapSpec } from '@/lib/session/map-state-restore';
-import { getMapSpecSessionCursor, setMapSpecRevision } from '@/lib/mapspec/session-cursor';
+import {
+  clearPendingPresentation,
+  clearPendingRemoved,
+  commitMapSpecDocument,
+  getMapSpecSessionCursor,
+  markPendingRemoved,
+  mergePendingPresentation,
+  setMapSpecRevision,
+} from '@/lib/mapspec/session-cursor';
 
 export interface LayerPresentationPatch {
   layerId: string;
@@ -31,6 +39,7 @@ function supersededFromError(err: unknown): MutationResponse | null {
 }
 
 function applyCommittedMapSpec(mapspec: { layers?: any[] } | undefined): void {
+  commitMapSpecDocument(mapspec);
   if (!mapspec) return;
   for (const layer of useHudStore.getState().layers) {
     const pres = presentationFromMapSpec(mapspec, mapspecLayerId(layer.id));
@@ -49,6 +58,11 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
   const { sessionId, revision, ownerToken } = getMapSpecSessionCursor();
   if (!sessionId) return;
   if (patch.visible === undefined && patch.opacity === undefined) return;
+  const specLayerId = mapspecLayerId(patch.layerId);
+  mergePendingPresentation(specLayerId, { visible: patch.visible, opacity: patch.opacity });
+  if (specLayerId !== patch.layerId) {
+    mergePendingPresentation(patch.layerId, { visible: patch.visible, opacity: patch.opacity });
+  }
 
   try {
     const data = await apiFetch<MutationResponse>(
@@ -58,7 +72,7 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
         body: {
           intent: 'patch_layer_presentation',
           expected_revision: revision,
-          layer_id: mapspecLayerId(patch.layerId),
+          layer_id: specLayerId,
           visible: patch.visible,
           opacity: patch.opacity,
         },
@@ -70,14 +84,22 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
       setMapSpecRevision(data.mutation_revision);
     }
     applyCommittedMapSpec(data.mapspec);
+    clearPendingPresentation(specLayerId);
+    clearPendingPresentation(patch.layerId);
   } catch (err) {
     const superseded = supersededFromError(err);
-    if (!superseded) throw err;
+    if (!superseded) {
+      clearPendingPresentation(specLayerId);
+      clearPendingPresentation(patch.layerId);
+      throw err;
+    }
     if (typeof superseded.mutation_revision === 'number') {
       setMapSpecRevision(superseded.mutation_revision);
     }
-    if (!superseded.mapspec) throw err;
     applyCommittedMapSpec(superseded.mapspec);
+    clearPendingPresentation(specLayerId);
+    clearPendingPresentation(patch.layerId);
+    if (!superseded.mapspec) throw err;
   }
 }
 
@@ -119,6 +141,7 @@ export async function commitExplicitView(view: {
   if (typeof data.mutation_revision === 'number') {
     setMapSpecRevision(data.mutation_revision);
   }
+  applyCommittedMapSpec(data.mapspec);
 }
 
 export async function commitMapSpecMutation(
@@ -155,14 +178,20 @@ export async function commitMapSpecMutation(
 
 export async function removeLayerAndCommit(layerId: string): Promise<void> {
   const previous = useHudStore.getState().layers;
+  const specLayerId = mapspecLayerId(layerId);
+  markPendingRemoved(specLayerId);
+  if (specLayerId !== layerId) markPendingRemoved(layerId);
   useHudStore.getState().removeLayer(layerId);
   try {
     await commitMapSpecMutation({
       intent: 'remove_layer',
-      layer_id: mapspecLayerId(layerId),
+      layer_id: specLayerId,
     });
   } catch {
     useHudStore.getState().setLayers(previous);
+  } finally {
+    clearPendingRemoved(specLayerId);
+    clearPendingRemoved(layerId);
   }
 }
 

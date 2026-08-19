@@ -18,6 +18,7 @@ import type { GeoJSONFeatureCollection, MapActionPayload } from '@/lib/types';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useToastStore } from '@/components/ui/toast';
 import { devOnly } from '@/lib/utils/logger';
+import { commitMapSpecDocument } from '@/lib/mapspec/session-cursor';
 
 function isAbortError(err: unknown): boolean {
   return (err instanceof DOMException && err.name === 'AbortError')
@@ -186,6 +187,7 @@ export async function restoreSessionMapLayers(
   state: SessionMapState,
   opts: RestoreMapLayersOptions,
 ): Promise<void> {
+  commitMapSpecDocument(state.mapspec);
   const store = useHudStore.getState();
   const raw = selectLayersToRestore(state);
   const observation = state._cartographic_observation;

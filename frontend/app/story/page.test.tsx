@@ -79,12 +79,16 @@ describe('StoryPage (#552)', () => {
   it('renders restored messages and applies the session map-state', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonOk({ messages: [{ id: 'm1', role: 'assistant', content: '叙事正文' }] }))
-      .mockResolvedValueOnce(jsonOk({ map_state: { viewport: { center: [116, 39], zoom: 12 } } }));
+      .mockResolvedValueOnce(jsonOk({
+        map_state: {
+          viewport: { center: [116, 39], zoom: 12 },
+          mapspec: { view: { center: [116, 39], zoom: 12, framed: true } },
+        },
+      }));
 
     render(<StoryPage />);
 
     await screen.findByText('叙事正文');
-    // map-state 的图层必须进 store —— 地图不再永远空白
     await waitFor(() => {
       expect(dispatchActionMock).toHaveBeenCalledWith({
         command: 'fly_to',
@@ -148,12 +152,13 @@ describe('StoryPage (#552)', () => {
 });
 
 describe('applyStoryMapState (#552)', () => {
-  it('applies base layer, flies to the restored viewport and restores layers', async () => {
+  it('applies base layer, flies to an explicit MapSpec frame and restores layers', async () => {
     const dispatchAction = vi.fn();
     await applyStoryMapState(
       {
         base_layer: 'streets',
-        viewport: { center: [104, 30], zoom: 9, bearing: 0, pitch: 0 },
+        viewport: { center: [1, 2], zoom: 4, bearing: 0, pitch: 0 },
+        mapspec: { view: { center: [104, 30], zoom: 9, bearing: 0, pitch: 0, framed: true } },
         layers: [{ id: 'L1', name: 'A', type: 'vector', visible: true, opacity: 1, source: { type: 'FeatureCollection', features: [] } }],
       },
       'sid-1',

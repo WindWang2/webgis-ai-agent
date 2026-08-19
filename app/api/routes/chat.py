@@ -998,10 +998,9 @@ class MapStatePushRequest(BaseModel):
 
     @model_validator(mode="after")
     def _cap_serialized_size(self):
-        # #521: viewport/layers are client-controlled and persisted verbatim via
-        # set_map_state; bound the serialized body (same 256KB budget as
-        # CartographicRuntimeObservationRequest) so a multi-MB push cannot stall
-        # the event loop's per-key json.dumps.
+        # #521: client-controlled body. Viewport hints are persisted; layers
+        # are accepted for old clients but not written (#643). Bound at 256KB
+        # so a multi-MB push cannot stall the event loop's per-key json.dumps.
         if len(self.model_dump_json().encode("utf-8")) > 256 * 1024:
             raise ValueError("serialized map state push exceeds 256KB")
         return self
@@ -1021,8 +1020,8 @@ async def push_session_map_state(
     from app.services.session_data import session_data_manager
     if req.viewport:
         await session_data_manager.set_map_state(session_id, "viewport", req.viewport, seq=req.seq)
-    if req.layers is not None:
-        await session_data_manager.set_map_state(session_id, "layers", req.layers)
+    # #643: client layers are not Desired MapSpec. Viewport hints and
+    # observation envelopes stay; wholesale layer replacement is rejected.
     if req.base_layer:
         await session_data_manager.set_map_state(session_id, "base_layer", req.base_layer)
 
