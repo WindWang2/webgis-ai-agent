@@ -196,6 +196,13 @@ export async function restoreSessionMapLayers(
   // The live post-reconcile observation is the final-map snapshot. It outranks
   // the turn-start `layers` state, which may predate the GIS result. Legacy
   // sessions without runtime evidence keep the old path (raw persisted layers).
+  const allowedIds = new Set(
+    (state.mapspec?.layers || [])
+      .map((layer: any) => String(layer?.id || ''))
+      .flatMap((id: string) => (id.includes('__') ? [id, id.split('__')[0]] : [id]))
+      .filter(Boolean),
+  );
+
   const layersToRestore = fromObservation
     ? raw.map((observed: any) => buildLayerFromRestored(
       observed,
@@ -208,7 +215,14 @@ export async function restoreSessionMapLayers(
       ...presentationFromMapSpec(state.mapspec, String(layer._mapspecLayerId ?? layer.id)),
     }));
 
-  for (const layer of layersToRestore) {
+  const keepers = allowedIds.size === 0
+    ? layersToRestore
+    : layersToRestore.filter((layer: any) => (
+      allowedIds.has(String(layer.id))
+      || allowedIds.has(String(layer._mapspecLayerId || ''))
+    ));
+
+  for (const layer of keepers) {
     store.addLayer(layer);
     if (
       layer._refId

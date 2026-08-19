@@ -199,6 +199,20 @@ describe('restoreSessionMapLayers', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('does not resurrect layers missing from committed MapSpec', async () => {
+    await restoreSessionMapLayers(
+      {
+        layers: [
+          { id: 'gone', name: 'Gone', type: 'vector', visible: true, opacity: 1 },
+          { id: 'keep', name: 'Keep', type: 'vector', visible: true, opacity: 1 },
+        ],
+        mapspec: { layers: [{ id: 'keep', type: 'circle' }] },
+      },
+      { sessionId: 'sid-1' },
+    );
+    expect(useHudStore.getState().layers.map((layer) => layer.id)).toEqual(['keep']);
+  });
+
   it('logs ApiError and toasts when ref data fetch fails, without dropping the layer', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: false,

@@ -148,6 +148,11 @@ class RemoveLayerIntent:
 
 
 @dataclass
+class ReorderLayersIntent:
+    layer_ids: List[str]
+
+
+@dataclass
 class SetLayoutIntent:
     legend: Optional[Dict[str, Any]] = None
     controls: Optional[List[Dict[str, Any]]] = None
@@ -224,6 +229,7 @@ MutationIntent = Union[
     UpsertLayerIntent,
     PatchLayerPresentationIntent,
     RemoveLayerIntent,
+    ReorderLayersIntent,
     SetLayoutIntent,
     CheckpointIntent,
     RollbackIntent,
@@ -339,6 +345,7 @@ class MapSpecLifecycleEngine:
                     UpsertLayerIntent,
                     PatchLayerPresentationIntent,
                     RemoveLayerIntent,
+                    ReorderLayersIntent,
                     InitProjectIntent,
                     RollbackIntent,
                 )
@@ -554,6 +561,38 @@ class MapSpecLifecycleEngine:
                     layers = mapspec.get("layers", [])
                     mapspec["layers"] = [lay for lay in layers if not _should_remove_layer(lay, intent.layer_id)]
                     pending_layer_op = ("remove", intent.layer_id, None)
+                    auto_checkpoint = True
+
+                elif isinstance(intent, ReorderLayersIntent):
+                    old_mapspec_snapshot = loaded
+                    mapspec = {**loaded} if loaded else {}
+                    current = list(mapspec.get("layers", []) if loaded else [])
+                    by_id = {
+                        str(layer.get("id")): layer
+                        for layer in current
+                        if isinstance(layer, dict) and layer.get("id")
+                    }
+                    next_layers = [
+                        by_id[layer_id]
+                        for layer_id in intent.layer_ids
+                        if layer_id in by_id
+                    ]
+                    leftover = [
+                        layer
+                        for layer in current
+                        if not (
+                            isinstance(layer, dict)
+                            and str(layer.get("id")) in set(intent.layer_ids)
+                        )
+                    ]
+                    if not next_layers:
+                        return MapSpecResult(
+                            is_error=True,
+                            origin=origin,
+                            error_msg="Reorder referenced no existing layers.",
+                            correction_hint="Re-read MapSpec and reorder current layer ids.",
+                        )
+                    mapspec["layers"] = next_layers + leftover
                     auto_checkpoint = True
 
                 elif isinstance(intent, SetLayoutIntent):

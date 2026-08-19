@@ -121,6 +121,64 @@ export async function commitExplicitView(view: {
   }
 }
 
+export async function commitMapSpecMutation(
+  body: Record<string, unknown>,
+): Promise<MutationResponse | void> {
+  const { sessionId, revision, ownerToken } = getMapSpecSessionCursor();
+  if (!sessionId) return;
+  try {
+    const data = await apiFetch<MutationResponse>(
+      `/api/v1/chat/sessions/${sessionId}/mapspec/mutations`,
+      {
+        method: 'POST',
+        body: { ...body, expected_revision: revision },
+        ownerToken,
+        label: 'MapSpec mutation',
+      },
+    );
+    if (typeof data.mutation_revision === 'number') {
+      setMapSpecRevision(data.mutation_revision);
+    }
+    applyCommittedMapSpec(data.mapspec);
+    return data;
+  } catch (err) {
+    const superseded = supersededFromError(err);
+    if (!superseded) throw err;
+    if (typeof superseded.mutation_revision === 'number') {
+      setMapSpecRevision(superseded.mutation_revision);
+    }
+    if (!superseded.mapspec) throw err;
+    applyCommittedMapSpec(superseded.mapspec);
+    return superseded;
+  }
+}
+
+export async function removeLayerAndCommit(layerId: string): Promise<void> {
+  const previous = useHudStore.getState().layers;
+  useHudStore.getState().removeLayer(layerId);
+  try {
+    await commitMapSpecMutation({
+      intent: 'remove_layer',
+      layer_id: mapspecLayerId(layerId),
+    });
+  } catch {
+    useHudStore.getState().setLayers(previous);
+  }
+}
+
+export async function reorderLayersAndCommit(layers: { id: string; _mapspecLayerId?: string }[]): Promise<void> {
+  const previous = useHudStore.getState().layers;
+  useHudStore.getState().reorderLayers(layers as any);
+  try {
+    await commitMapSpecMutation({
+      intent: 'reorder_layers',
+      layer_ids: layers.map((layer) => String(layer._mapspecLayerId || layer.id)),
+    });
+  } catch {
+    useHudStore.getState().setLayers(previous);
+  }
+}
+
 export async function setLayerOpacityAndCommit(layerId: string, opacity: number): Promise<void> {
   const layer = useHudStore.getState().layers.find((item) => item.id === layerId);
   const previous = layer?.opacity ?? 1;

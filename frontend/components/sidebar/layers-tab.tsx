@@ -8,7 +8,11 @@ import type { Layer } from '@/lib/types/layer';
 import { ConfirmAction } from '@/components/shared/confirm-action';
 import { EmptyState } from '@/components/shared/empty-state';
 import { IconButton } from '@/components/shared/icon-button';
-import { commitLayerPresentation } from '@/lib/mapspec/user-mutation';
+import {
+  commitLayerPresentation,
+  removeLayerAndCommit,
+  reorderLayersAndCommit,
+} from '@/lib/mapspec/user-mutation';
 
 const GROUP_NAMES: Record<string, string> = {
   analysis: '分析结果',
@@ -33,9 +37,7 @@ function DeleteLayerButton({ onDelete }: { onDelete: () => void }) {
 export function LayersTab() {
   const layers = useHudStore((s) => s.layers);
   const toggleLayer = useHudStore((s) => s.toggleLayer);
-  const removeLayer = useHudStore((s) => s.removeLayer);
   const updateLayer = useHudStore((s) => s.updateLayer);
-  const reorderLayers = useHudStore((s) => s.reorderLayers);
   const setActiveLeftTab = useHudStore((s) => s.setActiveLeftTab);
 
   const [dragId, setDragId] = useState<string | null>(null);
@@ -143,11 +145,11 @@ export function LayersTab() {
       }
       const [moved] = current.splice(fromIdx, 1);
       current.splice(toIdx, 0, moved);
-      reorderLayers(current);
+      void reorderLayersAndCommit(current);
       setDragId(null);
       setOverId(null);
     },
-    [dragId, layers, reorderLayers]
+    [dragId, layers]
   );
 
   const handleDragEnd = useCallback(() => {
@@ -167,9 +169,9 @@ export function LayersTab() {
       if (fromIdx === -1 || toIdx < 0 || toIdx >= current.length) return;
       const [moved] = current.splice(fromIdx, 1);
       current.splice(toIdx, 0, moved);
-      reorderLayers(current);
+      void reorderLayersAndCommit(current);
     },
-    [layers, reorderLayers]
+    [layers]
   );
 
   return (
@@ -327,7 +329,7 @@ export function LayersTab() {
                               });
                             }}
                           />
-                          <DeleteLayerButton onDelete={() => removeLayer(layer.id)} />
+                          <DeleteLayerButton onDelete={() => { void removeLayerAndCommit(layer.id); }} />
                         </div>
                       </div>
                     );

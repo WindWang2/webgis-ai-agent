@@ -6,14 +6,16 @@ import { STitle } from '@/components/shared/section-title';
 import ToggleSwitch from '@/components/shared/toggle-switch';
 import { GripVertical, Trash2 } from 'lucide-react';
 import type { Layer } from '@/lib/types/layer';
-import { commitLayerPresentation } from '@/lib/mapspec/user-mutation';
+import {
+  commitLayerPresentation,
+  removeLayerAndCommit,
+  reorderLayersAndCommit,
+} from '@/lib/mapspec/user-mutation';
 
 export function LayerManagement() {
   const layers = useHudStore((s) => s.layers);
   const toggleLayer = useHudStore((s) => s.toggleLayer);
-  const removeLayer = useHudStore((s) => s.removeLayer);
   const updateLayer = useHudStore((s) => s.updateLayer);
-  const reorderLayers = useHudStore((s) => s.reorderLayers);
 
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
@@ -51,11 +53,11 @@ export function LayerManagement() {
       const reordered = [...layers];
       const [moved] = reordered.splice(dragIndex, 1);
       reordered.splice(dropIndex, 0, moved);
-      reorderLayers(reordered);
+      void reorderLayersAndCommit(reordered);
       setDragIndex(null);
       setDragOverIndex(null);
     },
-    [dragIndex, layers, reorderLayers],
+    [dragIndex, layers],
   );
 
   const handleDragEnd = useCallback(() => {
@@ -200,7 +202,7 @@ export function LayerManagement() {
 
                 {/* Delete */}
                 <button
-                  onClick={() => removeLayer(layer.id)}
+                  onClick={() => { void removeLayerAndCommit(layer.id); }}
                   aria-label="删除图层"
                   className="text-[var(--theme-text-subtle)] hover:text-red-400 transition-colors p-0.5"
                   title="Remove layer"

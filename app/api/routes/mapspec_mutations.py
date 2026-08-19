@@ -7,8 +7,13 @@ from pydantic import BaseModel, Field
 from app.core.auth import require_owned_session
 from app.models.db_model import Conversation
 from app.services.mapspec.lifecycle_engine import (
+    InitProjectIntent,
     MapSpecLifecycleEngine,
     PatchLayerPresentationIntent,
+    RemoveLayerIntent,
+    ReorderLayersIntent,
+    SetLayoutIntent,
+    SetTimeIntent,
     SetViewIntent,
 )
 
@@ -33,8 +38,56 @@ class SetViewBody(BaseModel):
     bearing: Optional[float] = None
 
 
+class RemoveLayerBody(BaseModel):
+    intent: Literal["remove_layer"]
+    expected_revision: int = Field(ge=0)
+    layer_id: str = Field(min_length=1, max_length=200)
+
+
+class ReorderLayersBody(BaseModel):
+    intent: Literal["reorder_layers"]
+    expected_revision: int = Field(ge=0)
+    layer_ids: list[str] = Field(min_length=1, max_length=128)
+
+
+class SetLayoutBody(BaseModel):
+    intent: Literal["set_layout"]
+    expected_revision: int = Field(ge=0)
+    legend: Optional[dict[str, Any]] = None
+    controls: Optional[list[dict[str, Any]]] = None
+    margins: Optional[dict[str, Any]] = None
+
+
+class SetTimeBody(BaseModel):
+    intent: Literal["set_time"]
+    expected_revision: int = Field(ge=0)
+    enabled: Optional[bool] = None
+    field: Optional[str] = None
+    type: Optional[str] = None
+    extent: Optional[list[Any]] = None
+    current: Optional[Any] = None
+    window: Optional[Any] = None
+    playback: Optional[dict[str, Any]] = None
+    step: Optional[float] = None
+    speed: Optional[float] = None
+
+
+class InitProjectBody(BaseModel):
+    intent: Literal["init_project"]
+    expected_revision: int = Field(ge=0)
+    view: Optional[dict[str, Any]] = None
+
+
 UserMapSpecMutationRequest = Annotated[
-    Union[PatchLayerPresentationBody, SetViewBody],
+    Union[
+        PatchLayerPresentationBody,
+        SetViewBody,
+        RemoveLayerBody,
+        ReorderLayersBody,
+        SetLayoutBody,
+        SetTimeBody,
+        InitProjectBody,
+    ],
     Field(discriminator="intent"),
 ]
 
@@ -56,7 +109,7 @@ async def apply_user_mapspec_mutation(
             visible=req.visible,
             opacity=req.opacity,
         )
-    else:
+    elif isinstance(req, SetViewBody):
         if (
             req.center is None
             and req.zoom is None
@@ -73,6 +126,28 @@ async def apply_user_mapspec_mutation(
             pitch=req.pitch,
             bearing=req.bearing,
         )
+    elif isinstance(req, RemoveLayerBody):
+        intent = RemoveLayerIntent(layer_id=req.layer_id)
+    elif isinstance(req, ReorderLayersBody):
+        intent = ReorderLayersIntent(layer_ids=req.layer_ids)
+    elif isinstance(req, SetLayoutBody):
+        intent = SetLayoutIntent(
+            legend=req.legend, controls=req.controls, margins=req.margins
+        )
+    elif isinstance(req, SetTimeBody):
+        intent = SetTimeIntent(
+            enabled=req.enabled,
+            field=req.field,
+            type=req.type,
+            extent=req.extent,
+            current=req.current,
+            window=req.window,
+            playback=req.playback,
+            step=req.step,
+            speed=req.speed,
+        )
+    else:
+        intent = InitProjectIntent(view=req.view)
     result = await _engine.apply_mutation(
         session_id,
         intent,
