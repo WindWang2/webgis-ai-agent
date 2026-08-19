@@ -248,9 +248,9 @@ async def test_F4_rate_limit_middleware_keys_by_forwarded_ip(monkeypatch):
         resp = await mw.dispatch(Request(scope), call_next)
         return resp
 
-    await _call("/api/v1/health", "203.0.113.9")
-    await _call("/api/v1/health", "198.51.100.7")
-    await _call("/api/v1/health", "203.0.113.9")
+    await _call("/api/v1/chat", "203.0.113.9")
+    await _call("/api/v1/chat", "198.51.100.7")
+    await _call("/api/v1/chat", "203.0.113.9")
 
     assert seen_keys == [
         "rate_limit:203.0.113.9",

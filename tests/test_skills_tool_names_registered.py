@@ -57,6 +57,20 @@ def _backticked_skill_references() -> list[tuple[str, int, str]]:
     return refs
 
 
+# Non-tool identifiers referenced in skill docs (parameters, payload attributes, table names)
+NON_TOOL_IDENTIFIERS = {
+    "total_matched",
+    "render_type",
+    "result_ref",
+    "layer_id",
+    "heatmap_density",
+    "gd_pois",
+    "name_like",
+    "to_wgs84",
+    "add_layer",
+}
+
+
 def test_skills_tool_names_registered(registry):
     known = _known_names(registry)
     refs = _backticked_skill_references()
@@ -64,7 +78,7 @@ def test_skills_tool_names_registered(registry):
     violations = [
         f"{path}:{line_no}: `{ident}`"
         for path, line_no, ident in refs
-        if ident not in known
+        if ident not in known and ident not in NON_TOOL_IDENTIFIERS
     ]
     assert not violations, (
         "Skill docs reference tool names missing from the live registry / "

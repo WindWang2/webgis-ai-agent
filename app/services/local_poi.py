@@ -253,25 +253,47 @@ def _iter_xlsx_chunks(
     大省超 xlsx 单表 2^20 行上限被切多 sheet：首 sheet 带表头，续 sheet
     直接是数据行；sheet 尾部可能有整行空白的填充段（坐标过滤时丢弃）。
     """
-    from python_calamine import CalamineWorkbook
+    try:
+        from python_calamine import CalamineWorkbook
 
-    wb = CalamineWorkbook.from_path(str(tmp))
-    base_header: Optional[List[str]] = None
-    for sheet in wb.sheet_names:
-        ws = wb.get_sheet_by_name(sheet)
-        it = iter(ws.iter_rows())
-        try:
-            first_row = [str(c) for c in next(it)]
-        except StopIteration:
-            continue
-        if "location" in first_row and "id" in first_row:
-            header = _dedupe_header(first_row)  # 带表头的数据 sheet
-            base_header = base_header or header
-            yield header, it
-        elif base_header is not None:
-            yield base_header, itertools.chain([tuple(first_row)], it)  # 无表头续表
-        else:
-            logger.warning("[gd-poi] %s!%s 表头异常，跳过", tmp.name, sheet)
+        wb = CalamineWorkbook.from_path(str(tmp))
+        base_header: Optional[List[str]] = None
+        for sheet in wb.sheet_names:
+            ws = wb.get_sheet_by_name(sheet)
+            it = iter(ws.iter_rows())
+            try:
+                first_row = [str(c) for c in next(it)]
+            except StopIteration:
+                continue
+            if "location" in first_row and "id" in first_row:
+                header = _dedupe_header(first_row)  # 带表头的数据 sheet
+                base_header = base_header or header
+                yield header, it
+            elif base_header is not None:
+                yield base_header, itertools.chain([tuple(first_row)], it)  # 无表头续表
+            else:
+                logger.warning("[gd-poi] %s!%s 表头异常，跳过", tmp.name, sheet)
+    except Exception:
+        import openpyxl
+
+        wb_xl = openpyxl.load_workbook(str(tmp), read_only=True, data_only=True)
+        base_header = None
+        for sheet in wb_xl.sheetnames:
+            ws_xl = wb_xl[sheet]
+            row_iter = ([cell.value for cell in row] for row in ws_xl.iter_rows())
+            it = iter(row_iter)
+            try:
+                first_row = [str(c) if c is not None else "" for c in next(it)]
+            except StopIteration:
+                continue
+            if "location" in first_row and "id" in first_row:
+                header = _dedupe_header(first_row)
+                base_header = base_header or header
+                yield header, it
+            elif base_header is not None:
+                yield base_header, itertools.chain([tuple(first_row)], it)
+            else:
+                logger.warning("[gd-poi] %s!%s 表头异常，跳过", tmp.name, sheet)
 
 
 # 江苏 csv 包无表头且比 xlsx 多一个 parent 列：id,parent,name,type,address,location,...
