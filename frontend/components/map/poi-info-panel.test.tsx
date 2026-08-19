@@ -58,7 +58,6 @@ describe('PoiInfoPanel（纯 DOM 悬浮窗）', () => {
       />,
     )
     const panel = container.firstElementChild as HTMLElement
-    const stop = vi.fn()
     fireEvent.click(panel, { ...{} } as never)
     // stopPropagation 由合成事件验证：直接派发带 spy 的事件对象
     fireEvent(panel, new MouseEvent('click', { bubbles: true }))

@@ -116,7 +116,11 @@ export default function MiniMd({ text }: MiniMdProps) {
             );
           },
           img: ({ src, alt }) => (
-            <AuthImage src={src ?? ''} alt={alt ?? ''} className="max-w-full h-auto my-2 rounded-md" />
+            <AuthImage
+              src={typeof src === 'string' ? src : ''}
+              alt={alt ?? ''}
+              className="max-w-full h-auto my-2 rounded-md"
+            />
           ),
           table: ({ children }) => (
             <div className="overflow-x-auto my-2 rounded-md border border-edge-subtle">
