@@ -263,13 +263,29 @@ except ImportError:
 
 # Rate limiting middleware (Redis with in-memory fallback)
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, max_requests: int = 60, window_seconds: int = 60):
+    # 会话恢复一次并发拉取 8-15 个图层 geojson（restoreSessionMapLayers），
+    # 60/min 的全局预算会被瞬间打爆，随后图层重试与制图观测全部 429 一整
+    # 分钟，地图进入半残状态。两层缓解：
+    #   1. 预算提到 240/min（本地/内网部署的合理值）；
+    #   2. 豁免只读图层/瓦片数据 GET（有 session/owner_token 鉴权，且为
+    #      恢复路径的重负载主体）。
+    RATE_LIMIT_EXEMPT_PREFIXES = (
+        "/api/v1/layers/data/",
+        "/api/v1/health",
+        "/api/v1/local-data/",
+    )
+
+    def __init__(self, app, max_requests: int = 240, window_seconds: int = 60):
         super().__init__(app)
         self.max_requests = max_requests
         self.window = window_seconds
 
     async def dispatch(self, request: Request, call_next):
         if request.url.path.startswith(("/docs", "/redoc", "/openapi.json")):
+            return await call_next(request)
+
+        path = request.url.path
+        if path.startswith(self.RATE_LIMIT_EXEMPT_PREFIXES):
             return await call_next(request)
 
         # SEC-F4: behind nginx, request.client.host is the proxy IP — one
@@ -289,7 +305,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-app.add_middleware(RateLimitMiddleware, max_requests=60, window_seconds=60)
+app.add_middleware(RateLimitMiddleware, max_requests=240, window_seconds=60)
 
 # CORS
 # THREAT MODEL: CORS_ORIGINS=["*"] + allow_credentials=True causes the middleware
@@ -310,7 +326,18 @@ app.add_middleware(
     # (SEC-08). apiFetch sends it today, and MapLibre tile requests
     # (transformRequest, #514) attach it too — the header must be
     # preflight-legal for cross-origin dev setups.
-    allow_headers=["Authorization", "Content-Type", "Accept", "X-Session-Token"],
+    # X-Request-ID: transport.ts injects this on every request. Missing it from
+    # allow_headers makes the browser OPTIONS preflight 400 ("Disallowed CORS
+    # headers") and the chat UI surfaces TypeError "Failed to fetch".
+    # Last-Event-ID: DUP-1 SSE resume header on chat stream reconnects.
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "Accept",
+        "X-Session-Token",
+        "X-Request-ID",
+        "Last-Event-ID",
+    ],
     expose_headers=["X-Request-ID"],
 )
 

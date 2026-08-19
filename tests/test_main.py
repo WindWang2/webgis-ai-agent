@@ -30,6 +30,45 @@ class TestMiddleware:
         middleware_classes = [m.cls.__name__ for m in app.user_middleware]
         assert "CORSMiddleware" in middleware_classes
 
+    def test_cors_preflight_allows_frontend_transport_headers(self):
+        """Browser chat send does OPTIONS first; transport always injects
+        X-Request-ID, and reconnects send Last-Event-ID. Those must be in
+        allow_headers or the preflight is 400 and the UI shows Failed to fetch.
+        """
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        client = TestClient(app)
+        response = client.options(
+            "/api/v1/chat/stream",
+            headers={
+                "Origin": "http://localhost:3000",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": (
+                    "content-type,x-request-id,x-session-token,last-event-id"
+                ),
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.headers.get("access-control-allow-origin") == "http://localhost:3000"
+
+    def test_cors_preflight_allows_loopback_dev_origin(self):
+        """http://127.0.0.1:3000 is a different origin from localhost."""
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        client = TestClient(app)
+        response = client.options(
+            "/api/v1/chat/stream",
+            headers={
+                "Origin": "http://127.0.0.1:3000",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type,x-request-id",
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.headers.get("access-control-allow-origin") == "http://127.0.0.1:3000"
+
 
 class TestRouters:
     def test_health_router_registered(self):
