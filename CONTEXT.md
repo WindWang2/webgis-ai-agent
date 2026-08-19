@@ -318,7 +318,16 @@ correlation, and actual-runtime review of the Observed Map. Missing evidence is
 did not error” is not “the map is correct.”
 _Avoid_: GISEvidence; collapsing this into Decision Intelligence **Evidence**; treating
 `MUTATION_ACCEPTED` as runtime success; COMPILE_VALID / RUNTIME_VALID as validity tiers;
-map-action ACK or `InteractionStateConvergenceRate=100` as Observed Map proof.
+map-action ACK or `InteractionStateConvergenceRate=100` as Observed Map proof;
+`overall_passed` as the cartographic signal the Agent should see.
+
+### Cartography Verdict
+The bounded next-turn projection of the current-generation review: `pass`, `fail`, or
+`not_evaluated`. `passed_with_warnings` is `pass`. Silence means no cartographic activity
+(or superseded), never pass. The full review is pull-only (`webgis_cartography_status`).
+Same-turn mutation `content` is not this verdict (ADR-0062).
+_Avoid_: treating quiet as pass; stuffing MapSpec, Observed Map, camera, or chrome into
+the inject; projecting `overall_passed` to the Agent.
 
 ### CartographySemanticChecks
 Deterministic cartographic semantic checks (`app/lib/cartography/semantic_checks.py`, ADR-0051) connecting the GIS data profile ↔ MapSpec: `SOURCE_LAYER_REF`/`EMPTY_DATA` (errors), `GEOMETRY_LAYER_TYPE`/`STOPS_DATA_RANGE`/`INTERPOLATE_NUMERIC_FIELD`/`LEGEND_FIELD_CONSISTENCY` (warnings). Missing profile → `not_evaluated`, never a fake pass. Empty-data (zero features) is an error, not a silent map success.
