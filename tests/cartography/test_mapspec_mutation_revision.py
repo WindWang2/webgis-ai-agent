@@ -93,6 +93,8 @@ async def test_stale_expected_revision_is_superseded_and_leaves_mapspec_unchange
     payload = result.to_dict()
     assert payload["success"] is False
     assert payload["status"] == "superseded"
+    assert payload["correction_hint"]
+    assert payload["mapspec"] == baseline
 
 
 @pytest.mark.cartography

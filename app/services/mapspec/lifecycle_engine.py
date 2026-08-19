@@ -82,6 +82,7 @@ class MapSpecResult:
                 "status": "superseded",
                 "message": self.error_msg,
                 "mutation_revision": self.mutation_revision,
+                "mapspec": self.mapspec,
             }
             if self.origin is not None:
                 res["origin"] = self.origin
@@ -365,10 +366,12 @@ class MapSpecLifecycleEngine:
                 expected_revision is not None
                 and expected_revision != prior_mutation_revision
             ):
+                current_mapspec = await self.store.get_mapspec(session_id)
                 return MapSpecResult(
                     superseded=True,
                     is_error=False,
                     origin=origin,
+                    mapspec=current_mapspec,
                     mutation_revision=prior_mutation_revision,
                     error_msg="MapSpec revision has changed.",
                     correction_hint=(

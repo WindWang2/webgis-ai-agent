@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
-import { toggleLayerAndCommit } from '@/lib/mapspec/user-mutation';
+import { getMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
+import { setLayerOpacityAndCommit, toggleLayerAndCommit } from '@/lib/mapspec/user-mutation';
 
 vi.mock('@/lib/api/config', () => ({ API_BASE: 'http://localhost:8000' }));
 
@@ -60,5 +61,58 @@ describe('toggleLayerAndCommit', () => {
     await toggleLayerAndCommit('L1');
 
     expect(useHudStore.getState().layers[0].visible).toBe(true);
+  });
+});
+
+describe('setLayerOpacityAndCommit vs Agent upsert race', () => {
+  it('drops pending opacity and hydrates the Agent MapSpec so a retry uses the new revision', async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        statusText: 'Conflict',
+        text: () => Promise.resolve(JSON.stringify({
+          detail: {
+            status: 'superseded',
+            mutation_revision: 5,
+            correction_hint: 'Re-read MapSpec and retry with the current mutation_revision.',
+            mapspec: {
+              layers: [{
+                id: 'L1',
+                layout: { visibility: 'visible' },
+                paint: { opacity: 1, 'circle-opacity': 1, 'circle-color': '#ff0000' },
+              }],
+            },
+          },
+        })),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: () => Promise.resolve(JSON.stringify({
+          success: true,
+          mutation_revision: 6,
+          mapspec: {
+            layers: [{
+              id: 'L1',
+              layout: { visibility: 'visible' },
+              paint: { opacity: 0.4, 'circle-opacity': 0.4, 'circle-color': '#ff0000' },
+            }],
+          },
+        })),
+      });
+
+    await setLayerOpacityAndCommit('L1', 0.4);
+
+    expect(useHudStore.getState().layers[0].opacity).toBe(1);
+    expect(getMapSpecSessionCursor().revision).toBe(5);
+
+    await setLayerOpacityAndCommit('L1', 0.4);
+
+    const second = JSON.parse(fetchMock.mock.calls[1][1].body as string);
+    expect(second.expected_revision).toBe(5);
+    expect(useHudStore.getState().layers[0].opacity).toBe(0.4);
+    expect(getMapSpecSessionCursor().revision).toBe(6);
   });
 });

@@ -129,10 +129,14 @@ async def test_stale_user_mutation_is_conflict(client, session_id):
         },
     )
     assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert detail["status"] == "superseded"
+    assert detail["correction_hint"]
+    assert detail["mapspec"]["layers"][0]["id"] == "L1"
     stored = await mapspec_store_instance.get_mapspec(session_id)
     layer = next(lyr for lyr in stored["layers"] if lyr["id"] == "L1")
     assert (layer.get("layout") or {}).get("visibility") != "none"
-
+    assert detail["mapspec"] == stored
 
 @pytest.mark.cartography
 @pytest.mark.asyncio

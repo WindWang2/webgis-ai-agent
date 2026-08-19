@@ -1,4 +1,4 @@
-import { apiFetch } from '@/lib/api/transport';
+import { ApiError, apiFetch } from '@/lib/api/transport';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { presentationFromMapSpec } from '@/lib/session/map-state-restore';
 import { getMapSpecSessionCursor, setMapSpecRevision } from '@/lib/mapspec/session-cursor';
@@ -10,9 +10,34 @@ export interface LayerPresentationPatch {
 }
 
 interface MutationResponse {
-  success: boolean;
+  success?: boolean;
+  status?: string;
   mutation_revision?: number;
   mapspec?: { layers?: any[] };
+  correction_hint?: string;
+}
+
+function supersededFromError(err: unknown): MutationResponse | null {
+  if (!(err instanceof ApiError) || err.status !== 409) return null;
+  const body = err.body as { detail?: MutationResponse } | MutationResponse | null;
+  if (!body || typeof body !== 'object') return null;
+  if ('detail' in body && body.detail && typeof body.detail === 'object') {
+    return body.detail;
+  }
+  if ('status' in body && (body as MutationResponse).status === 'superseded') {
+    return body as MutationResponse;
+  }
+  return null;
+}
+
+function applyCommittedMapSpec(mapspec: { layers?: any[] } | undefined): void {
+  if (!mapspec) return;
+  for (const layer of useHudStore.getState().layers) {
+    const pres = presentationFromMapSpec(mapspec, mapspecLayerId(layer.id));
+    if (pres.visible !== undefined || pres.opacity !== undefined) {
+      useHudStore.getState().updateLayer(layer.id, pres);
+    }
+  }
 }
 
 function mapspecLayerId(layerId: string): string {
@@ -25,27 +50,34 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
   if (!sessionId) return;
   if (patch.visible === undefined && patch.opacity === undefined) return;
 
-  const data = await apiFetch<MutationResponse>(
-    `/api/v1/chat/sessions/${sessionId}/mapspec/mutations`,
-    {
-      method: 'POST',
-      body: {
-        intent: 'patch_layer_presentation',
-        expected_revision: revision,
-        layer_id: mapspecLayerId(patch.layerId),
-        visible: patch.visible,
-        opacity: patch.opacity,
+  try {
+    const data = await apiFetch<MutationResponse>(
+      `/api/v1/chat/sessions/${sessionId}/mapspec/mutations`,
+      {
+        method: 'POST',
+        body: {
+          intent: 'patch_layer_presentation',
+          expected_revision: revision,
+          layer_id: mapspecLayerId(patch.layerId),
+          visible: patch.visible,
+          opacity: patch.opacity,
+        },
+        ownerToken,
+        label: 'MapSpec presentation mutation',
       },
-      ownerToken,
-      label: 'MapSpec presentation mutation',
-    },
-  );
-  if (typeof data.mutation_revision === 'number') {
-    setMapSpecRevision(data.mutation_revision);
-  }
-  const pres = presentationFromMapSpec(data.mapspec, mapspecLayerId(patch.layerId));
-  if (pres.visible !== undefined || pres.opacity !== undefined) {
-    useHudStore.getState().updateLayer(patch.layerId, pres);
+    );
+    if (typeof data.mutation_revision === 'number') {
+      setMapSpecRevision(data.mutation_revision);
+    }
+    applyCommittedMapSpec(data.mapspec);
+  } catch (err) {
+    const superseded = supersededFromError(err);
+    if (!superseded) throw err;
+    if (typeof superseded.mutation_revision === 'number') {
+      setMapSpecRevision(superseded.mutation_revision);
+    }
+    if (!superseded.mapspec) throw err;
+    applyCommittedMapSpec(superseded.mapspec);
   }
 }
 
