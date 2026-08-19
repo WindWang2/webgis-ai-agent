@@ -3,10 +3,12 @@
 ## Glossary
 
 ### Session / Conversation
-A **Conversation** is the persistent DB record (`conversations` table). A **session** is the
-in-memory runtime state (map_state, refs, LRU caches, TaskTracker entries) keyed by a
-`session_id` UUID. The two terms are used interchangeably in the codebase; the `session_id`
-acts as a capability token for data access.
+A **Conversation** is the persistent DB record (`conversations` table). A **Session** is the
+GIS world's identity: the `session_id` UUID that owns MapSpec, checkpoints, refs, and
+runtime caches. The two names are used interchangeably in code; `session_id` is also a
+capability token. Pi's own session is a replaceable agent runtime, not this identity.
+_Avoid_: treating `pi_session_id` / Pi tree entry as the MapSpec primary key; inventing a
+separate `gis_session_id`.
 
 ### ref_id (Cursor)
 An opaque 16-hex string (e.g., `ref:geojson-abc123...`) pointing to large data objects stored
@@ -99,7 +101,11 @@ Extracted into pure async stage modules (`discover_stage.py`, `fetch_stage.py`, 
 
 ### Tool
 A Python callable registered in `ToolRegistry` with an OpenAI-compatible JSON schema, tier
-(1/2/3), and domain tags. Tools are the only interface to spatial operations.
+(1/2/3), and domain tags. Tools are the Agent's interface to GIS compute and to MapSpec
+mutations. They are not the only writer of MapSpec: user map chrome mutates via Intent
+without an LLM turn (ADR-0056).
+_Avoid_: “tools are the only interface to spatial operations” as a blanket rule (ADR-0002
+sole-interface clause, superseded for map chrome).
 
 ### Tool dispatch
 The single act of executing one tool call end-to-end: validate → tier-authorize → run via the
@@ -205,12 +211,48 @@ for legacy payloads); its frontend mirror is `frontend/lib/mapspec-runtime/thema
 `CartographicStyle` service ADR-0007 deferred — see ADR-0052. `CartographyService` remains the
 classification engine (ADR-0012) and the two converters stay separate renderers (ADR-0017).
 
+### GIS harness (informal)
+Speech for the Pi-hosted closed loop in this product: Agent tools mutate MapSpec, the live
+map consumes MapSpec, and PiAgentHarness evaluates with evidence. Not a module, package,
+or product name. The product remains **WebGIS AI Agent**.
+_Avoid_: GISHarness as a type; renaming `PiAgentHarness`; extracting a standalone kernel.
+
+### HUD
+The frontend chrome cache: layer list, sliders, and other workbench widgets. It projects
+MapSpec for display and *originates* user MapSpec Mutations; it is not the intent document.
+A local change that has not ACKed is a **Pending Mutation**, not a second Desired map.
+_Avoid_: “HUD is the source of truth” (ADR-0036 decision 2, superseded by ADR-0054);
+keeping a private desired map in Zustand; leaving a rejected optimistic edit on screen.
+
+### Observed Map
+What MapLibre actually has right now, read back from the map instance. Includes live
+camera, loaded sources/layers, and transient indication (hover, highlight, popup).
+Observation never overwrites MapSpec; a user or agent who wants intent changed issues
+a MapSpec Mutation.
+_Avoid_: ObservedGISState as a stored document; treating HUD or Redis `map_state` as
+observation.
+
+### Selection
+The Session's current picked features or refs. Observed-side working memory the Agent
+can see; not a MapSpec field. Analysis tools take explicit `ref_id` / feature ids.
+_Avoid_: writing click-selection into MapSpec; leaving selection only in the browser.
+
 ### MapSpec (Cartographic Intent)
-The declarative, high-level cartographic specification: view, layers with high-level style
-methods (`constant` / `interpolate` / `step` / `match` / `field`), layout (legend, controls,
-margins), and runtime thresholds. Co-exists with Redis `map_state` under a **dual-write**
-contract — see *Cartographic Intent vs. Runtime State* below. Lives as a versioned document
-in `.webgis-agent/` (the doc), **not** a replacement for `map_state`.
+The backend-authoritative desired map: sources, layers (including visibility and
+opacity), style methods, layout, time, and **view as last explicit framing** (not the
+live camera). Live MapSpecRuntime and the headless compiler both consume a projection
+of this document.
+_Avoid_: DesiredGISState; HUD-authored ephemeral MapSpec as authority (ADR-0036).
+
+### MapSpec Mutation (Intent)
+The only way MapSpec changes. Origins are `agent`, `user`, or `system`. Agent tools
+and user chrome share `apply_mutation`; user chrome does not wait on an LLM turn.
+Each mutation carries `expected_revision`; mismatch is `superseded`, never silent
+last-write-wins (ADR-0058). `SetViewIntent` is explicit framing; pan/zoom/rotate
+are not mutations (ADR-0057).
+_Avoid_: GISCommand as a parallel vocabulary this round; routing layer sliders through
+the Agent (ADR-0002 sole-interface, superseded for chrome); field-level merge of
+concurrent map edits.
 
 ### MapSpec Source (geojson source entry)
 A per-key entry under a MapSpec document's `sources` map. Carries `type` plus **exactly one** data
@@ -233,29 +275,22 @@ MapLibre `type` (`circle`/`line`/`fill`); a style-method object carries `method`
 two-`type` collision. The TS compiler (`frontend/lib/mapspec-compiler/`) is the sole authority
 for compiling MapSpec → MapLibre style.
 
-### Cartographic Intent vs. Runtime State
-Two sources with distinct responsibilities — **now connected live via MapSpecRuntime (ADR-0036)**:
-- **Runtime State** = `map_state` in `SessionStore` (Redis). What the running map *actually
-  renders*: live layer refs, viewport, and inline `layer.style` + `layer.legend_spec` (the
-  live-map overlay path).
-- **Cartographic Intent** = `MapSpec`. What the map *should be*: high-level style/layout/legend.
-- The live map **renders from a derived MapSpec**: `map-panel.tsx` calls `hudStateToMapSpec(...)`
-  → `MapSpecRuntime.reconcileAsync(spec)`, which diffs against the applied spec and patches the
-  MapLibre map. The orphaned `applyMapSpecToMap` was deleted (ADR-0036); `hudStateToMapSpec` is
-  the pure adapter that fans HUD `Layer[]` into a flat MapSpec, and since ADR-0052 it derives
-  thematic paint from each layer's `legend_spec` (the same source `<ThematicLegend>` reads).
-- The **MapSpec Compiler** still turns Intent → MapLibre Style (`style.json`/`index.html`) for
-  headless consumers: the Playwright runtime validator, eval-evidence scoring, and the static
-  exporter. The runtime applies a layer's `paint` dict straight to MapLibre; both paths produce
-  byte-identical thematic expressions.
-- **MapSpec is authoritative for intent and headless acceptance.** Frontend live-UI edits
-  (drag, opacity slider, paint tweaks) write `map_state` directly and are **transient** — they
-  are *not* back-synced to MapSpec. To persist a manual edit, the user invokes
-  `webgis_layer_upsert` (intended to surface as a "保留 (Keep)" button when a live edit
-  diverges from MapSpec — that diff detector is itself an open item, #202).
-- Layers in MapSpec reference data by `ref_id` at runtime (Fetch-on-Demand preserved); only at
-  **checkpoint** is the payload behind the ref materialized (snapshot copy), so a checkpoint is
-  self-contained and replayable.
+### Cartographic Intent vs. Observed Map
+Three planes, one authority (ADR-0054):
+- **MapSpec** = desired cartographic intent. Backend-authoritative. Both the live map and
+  headless compiler consume a projection of this document.
+- **Render projection** = the ephemeral driver input derived from MapSpec (live runtime or
+  headless `style.json`). Not a stored document.
+- **Observed Map** = MapLibre readout. Never written back onto MapSpec except by becoming a
+  mutation.
+HUD is a UI cache of MapSpec, not a plane of authority. Redis **`map_state`** is a
+session transport cache (refs, SSE restore, observation envelopes, viewport *hint*).
+It is not Observed Map and not MapSpec. Layers in MapSpec reference data by `ref_id`
+at runtime; a **Checkpoint** materializes those payloads so rollback does not need
+live Redis.
+_Avoid_: DesiredGISState / RuntimeRenderSpec / ObservedGISState as parallel document
+types; dual-write where HUD drives pixels and MapSpec is a sidecar; calling
+`map_state` “what the map actually renders.”
 
 ### MapSpecLifecycleEngine
 The deep cartographic intent engine (`app/services/mapspec/lifecycle_engine.py`).
@@ -265,10 +300,17 @@ Consolidates MapSpec document mutations (`InitProjectIntent`, `SetViewIntent`, `
 The distributed per-session lock registry (`app/services/distributed_lock.py`, ADR-0051). Provides `session_lock_registry.lock(session_id)` — a Redis-backed lock (`SET NX` + TTL + token-checked Lua release + best-effort renewal) for cross-pod mutual exclusion, with a resilient fallback to an in-process `asyncio.Lock` when Redis is unavailable or errors at acquire time (never blocks the request). Bounded fallback table with waiter-aware eviction.
 
 ### PiAgentHarness (V2)
-The evidence-driven evaluation harness (`app/lib/harness/pi_agent_harness.py`, ADR-0051). Records tool calls with `run_id`/`session_id`/`turn_id`/`tool_call_id` correlation and computes metrics from REAL evidence, not "didn't error": `MapSpecValidity` is a tiered ladder (`NOT_EVALUATED → MUTATION_REJECTED → MUTATION_ACCEPTED → SEMANTIC_VALID → COMPILE_VALID → RUNTIME_VALID`); `CursorResolutionRate` resolves refs against the real `SessionStore`. Missing evidence → 0.0, never 100.0. `evaluate_with_evidence()` is the async seam that does real ref resolution; `evaluate_evidence()` is the gate policy (unevaluated dimensions fail under `require_evaluated=True`).
+The evidence-driven **evaluation** harness for the cartographic closed loop (L1–L5). It is
+not Pi's agent host and not the GIS Harness. Name stays this round.
+_Avoid_: GISHarness as a rename of this module; treating “didn't error” as runtime success.
 
 ### EvaluationEvidence
-The unified evidence model (`app/lib/harness/evidence.py`) connecting the Harness ↔ GIS ↔ MapSpec ↔ Cartography loop: `RefResolution` (status: malformed/syntactically_valid/not_found/wrong_session/type_mismatch/resolved), `MapSpecValidityEvidence` (the validity ladder), `ToolCallEvidence` (per-call correlation + refs + validity + runtime path), `EvaluationRun`.
+Proof that a GIS/map change actually happened: ref resolution, MapSpec validity ladder,
+tool-call correlation, and actual-runtime review. Missing evidence is `not_evaluated` / 0.0
+— never pass, never 100, never a production exemption. L1 “tool did not error” is not
+“the map is correct.”
+_Avoid_: GISEvidence; collapsing this into Decision Intelligence **Evidence**; treating
+`MUTATION_ACCEPTED` as runtime success.
 
 ### CartographySemanticChecks
 Deterministic cartographic semantic checks (`app/lib/cartography/semantic_checks.py`, ADR-0051) connecting the GIS data profile ↔ MapSpec: `SOURCE_LAYER_REF`/`EMPTY_DATA` (errors), `GEOMETRY_LAYER_TYPE`/`STOPS_DATA_RANGE`/`INTERPOLATE_NUMERIC_FIELD`/`LEGEND_FIELD_CONSISTENCY` (warnings). Missing profile → `not_evaluated`, never a fake pass. Empty-data (zero features) is an error, not a silent map success.
@@ -277,24 +319,16 @@ Deterministic cartographic semantic checks (`app/lib/cartography/semantic_checks
 The content-addressed checkpoint store (`app/services/mapspec/checkpoint.py`, ADR-0051). Each ref payload is stored once as a content-addressed blob (`blobs/<sha>.json`); a checkpoint descriptor maps `ref_id → blob_hash`. Auto checkpoints (no explicit id) dedup on whole-checkpoint content hash (a repeated identical checkpoint writes 0 new bytes). Explicit checkpoint ids always materialize (rollback-by-name contract). Backward-compatible rollback handles both the new descriptor+blob layout and the legacy `materialized_refs.json` layout.
 
 ### MapSpec Compiler
-Deterministic, framework-agnostic TS module (`frontend/lib/mapspec-compiler/`) that turns a
-MapSpec into MapLibre `style.json` + `index.html`. **Consumed by headless consumers** — the
-Playwright runtime validator, eval-evidence capture, and the static map exporter — so it is
-the single source of truth for "what this MapSpec renders to *headlessly*". The live `map-kit`
-map reconciles against a derived MapSpec via the **MapSpecRuntime** (ADR-0036); see below.
-Supports **GeoJSON sources only** in this refactor; PMTiles/OGC/Cesium/OpenLayers are deferred
-to "后续 Adapter".
+Turns MapSpec into MapLibre `style.json` + `index.html` for **headless** consumers
+(Playwright validator, eval capture, static export). Authority for “what this MapSpec
+renders to headlessly,” not for live pixels.
 
-### MapSpecRuntime (Live Reconciliation Engine)
-The deep module (`frontend/lib/mapspec-runtime/`, ADR-0036) that bridges the two previously-
-disconnected worlds of *Cartographic Intent* and *Runtime State* on the live map. A pure
-`hudStateToMapSpec` adapter projects the HUD store's `Layer[]` (+ processLayers +
-activeFilters + is3D) into a flat `MapSpec`; the `MapSpecRuntime` class reconciles that spec
-against the live MapLibre instance via `diffSpecs` (pure, in the compiler package) → minimal
-source/layer/view patch → side-effectful application reusing `map-kit/renderer`'s cache-aware
-helpers. Replaces the orphaned `applyMapSpecToMap` (zero callers) and the ~225-line imperative
-render loop + 6 stale-closure refs that previously lived in `map-panel.tsx`. View changes stay
-imperative (`flyTo`); only sources/layers/paint are reconciled.
+### MapSpecRuntime
+The live map driver: reconciles a projection of backend **MapSpec** onto MapLibre
+(sources/layers/paint). Imperative verbs (`flyTo`, export) stay outside reconcile.
+HUD may cache the same projection; it does not author it (ADR-0054).
+_Avoid_: MapLibreDriver as a rename this round; treating `hudStateToMapSpec` as the
+intent author.
 
 ### Tool Catalog (webgis_*)
 The 11 `webgis_*` tools (`webgis_project_init`, `webgis_state_get`, `webgis_source_profile`,
@@ -332,9 +366,10 @@ its first upsert (only when the view has not been explicitly set); the Agent can
 the "后续 Adapter" queue.
 
 ### Checkpoint
-A self-contained snapshot of a MapSpec at a point in time: the intent doc *plus* the materialized
-payload of every `ref_id` it references (copied into the snapshot dir). Enables rollback, diff,
-and replay without the live Redis store.
+A self-contained snapshot of a MapSpec plus the materialized payload of every `ref_id` it
+references. Owned by `session_id`. A future Pi fork/tree restore loads a Checkpoint; it
+does not make Pi the GIS identity (ADR-0055).
+_Avoid_: GISCheckpoint as a second type.
 
 ### Analysis Result
 The canonical shape returned by a spatial-analysis algorithm (`GeoAnalysisResult.to_llm_response()`):
@@ -425,7 +460,11 @@ The pre-intervention state of spatial features, demographic metrics, and physica
 The specific physical, spatial, or policy modification introduced in a scenario (e.g., placing a new transit node with buffer radii, modifying road capacity, adding green space).
 
 #### Evidence
-Verifiable empirical facts or retrieved domain knowledge backing spatial reasoning conclusions and simulation deltas. Distinguishes between observed facts, computed GIS facts, retrieved rules, assumptions, and inferences.
+Verifiable empirical facts or retrieved domain knowledge backing spatial reasoning
+conclusions and simulation deltas. Distinguishes observed facts, computed GIS facts,
+retrieved rules, assumptions, and inferences. This word belongs to Decision Intelligence.
+_Avoid_: GISEvidence; using this for the L1–L5 cartographic closed loop (that is
+**EvaluationEvidence**).
 
 #### Rule / Constraint
 A structured domain specification (urban planning, transport, environment, site selection, real estate) containing applicability conditions, parameter ranges, confidence/reliability scores, evidence sources, and versioning.

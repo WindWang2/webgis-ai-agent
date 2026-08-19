@@ -4,7 +4,8 @@ Date: 2026-08-02
 
 ## Status
 
-Accepted
+Accepted. **Decision 2 (HUD Zustand as source of truth) is superseded by ADR-0054.**
+Reconciliation-only boundary and imperative view/actions still stand.
 
 ## Context
 
