@@ -723,7 +723,7 @@ async def test_native_heatmap_result_authors_heatmap_mapspec_layer(
     assert result.map_actions[0]["command"] == "add_layer"
 
     persisted = await mapspec_store_instance.get_mapspec(clean_session)
-    heat = next(l for l in persisted["layers"] if l["type"] == "heatmap")
+    heat = next(layer for layer in persisted["layers"] if layer["type"] == "heatmap")
     paint = heat["paint"]
     for key in ("heatmap-weight", "heatmap-intensity", "heatmap-color",
                 "heatmap-radius", "heatmap-opacity"):

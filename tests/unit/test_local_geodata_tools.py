@@ -3,12 +3,11 @@
 fixture 全部在 tmp_path 内合成（微型 shapefile / GPKG / 甚至 PBF——pyosmium
 SimpleWriter 产 3 节点 1 线），不依赖 1.5GB 真实数据；settings 指向 tmp 目录。
 """
-import json
 
 import geopandas as gpd
 import pandas as pd
 import pytest
-from shapely.geometry import LineString, Point, box
+from shapely.geometry import box
 
 from app.core.config import settings
 

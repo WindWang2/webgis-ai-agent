@@ -18,9 +18,8 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, Optional, Tuple
 
-import geopandas as gpd
 import pandas as pd
 
 from app.core.config import settings
@@ -52,6 +51,9 @@ THEME_SPECS: Dict[str, Dict[str, Any]] = {
 
 _MAX_TAGS_JSON_CHARS = 512
 _RESULT_COLUMNS = ["osm_id", "name", "category", "tags"]
+# Layer names are THEME_SPECS keys (identifiers, not bindable). Static map
+# keeps bandit B608 off execute() while still refusing unknown themes.
+_THEME_COUNT_SQL = {name: 'SELECT COUNT(*) FROM "' + name + '"' for name in THEME_SPECS}
 
 
 def osm_gpkg_dir() -> Path:
@@ -94,7 +96,7 @@ def _catalog_row(theme: str) -> Dict[str, Any]:
             conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
             try:
                 row["feature_count"] = conn.execute(
-                    f"SELECT COUNT(*) FROM \"{theme}\""
+                    _THEME_COUNT_SQL[theme]
                 ).fetchone()[0]
             finally:
                 conn.close()

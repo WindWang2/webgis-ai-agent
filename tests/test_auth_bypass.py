@@ -4,7 +4,6 @@
 关闭时：行为与原先完全一致（401 / 匿名哨兵）。bypass 身份必须是绑定身份
 （非 anonymous 哨兵），使会话归属与所有权守卫和受保护端点一致。
 """
-import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -12,7 +11,6 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
 from app.core.auth import (
-    AUTH_BYPASS_PROFILE,
     AUTH_BYPASS_USER_ID,
     auth_bypass_enabled,
     get_current_user,

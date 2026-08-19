@@ -51,7 +51,7 @@ class _BurstBridge:
         self.prompt_calls = 0
 
     async def stream_prompt(
-        self, message: str, session_id: Optional[str] = None
+        self, message: str, session_id: Optional[str] = None, **_kwargs
     ) -> AsyncIterator[str]:
         self.prompt_calls += 1
         sid = session_id or "s"
@@ -77,7 +77,7 @@ class _AbortableBridge:
         self.prompt_calls = 0
 
     async def stream_prompt(
-        self, message: str, session_id: Optional[str] = None
+        self, message: str, session_id: Optional[str] = None, **_kwargs
     ) -> AsyncIterator[str]:
         self.prompt_calls += 1
         sid = session_id or "s"
@@ -170,7 +170,7 @@ async def test_pi_stream_ids_monotonic_with_heartbeat_comments(monkeypatch):
     never break monotonicity of the real events."""
 
     class _HeartbeatBridge:
-        async def stream_prompt(self, message, session_id=None):
+        async def stream_prompt(self, message, session_id=None, **_kwargs):
             sid = session_id or "s"
             yield sse_event("task_start", {"session_id": sid})
             yield ": keepalive\n\n"
@@ -333,7 +333,7 @@ async def test_resume_emits_gap_marker_when_ring_evicted_head(monkeypatch):
         def __init__(self) -> None:
             self.prompt_calls = 0
 
-        async def stream_prompt(self, message, session_id=None):
+        async def stream_prompt(self, message, session_id=None, **_kwargs):
             self.prompt_calls += 1
             sid = session_id or "s"
             yield sse_event("task_start", {"task_id": "t", "session_id": sid})
@@ -473,7 +473,7 @@ async def test_resume_after_route_error_replays_error_terminal(monkeypatch):
             self.prompt_calls = 0
 
         async def stream_prompt(
-            self, message: str, session_id: Optional[str] = None
+            self, message: str, session_id: Optional[str] = None, **_kwargs
         ) -> AsyncIterator[str]:
             self.prompt_calls += 1
             sid = session_id or "s"

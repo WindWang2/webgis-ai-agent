@@ -34,6 +34,12 @@ from app.utils.coord_transform import gcj02_to_wgs84_array
 
 logger = logging.getLogger(__name__)
 
+
+def _bound_sql(*parts: str) -> str:
+    """Join static SQL fragments. Values stay out of the string (bound via ``?``)."""
+    return "".join(parts)
+
+
 _CHUNK_ROWS = 200_000
 _RESULT_COLUMNS = [
     "poi_id", "name", "category", "subtype", "typecode",
@@ -223,12 +229,17 @@ def _delete_province_rows(gpkg: Path, pcode: str) -> None:
     """按省刷新时先删旧数据（GPKG 行 adcode 前缀范围匹配，走索引）。"""
     conn = sqlite3.connect(gpkg)
     try:
-        clauses = []
+        clauses: List[str] = []
+        params: List[str] = []
         for p in _province_prefixes(pcode):
             nxt = p[:-1] + chr(ord(p[-1]) + 1)
-            clauses.append(f"(adcode >= '{p}' AND adcode < '{nxt}')")
+            clauses.append("(adcode >= ? AND adcode < ?)")
+            params.extend((p, nxt))
         with conn:
-            conn.execute(f'DELETE FROM "pois" WHERE {" OR ".join(clauses)}')
+            conn.execute(
+                _bound_sql('DELETE FROM "pois" WHERE ', " OR ".join(clauses)),
+                params,
+            )
     finally:
         conn.close()
 
@@ -305,7 +316,6 @@ def ingest_gd_poi(
 ) -> Dict[str, Any]:
     """gd_*_poi.zip 系列 → gd_pois.gpkg（WGS84）。按 zip 幂等；force 重建
     （指定 provinces 时为按省刷新：只清该省旧行，其余省数据不动）。"""
-    import pyogrio
 
     zips = _iter_poi_zip_paths(source)
     if provinces:
@@ -495,11 +505,14 @@ def _parse_bbox(bbox: Any) -> Optional[Tuple[float, float, float, float]]:
     return None
 
 
+def _sql_like_pattern(value: str) -> str:
+    """Escape LIKE metacharacters; result is bound via ``?``, not interpolated."""
+    return str(value).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def _sql_like(value: str) -> str:
-    escaped = (
-        str(value).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    )
-    return "'" + escaped.replace("'", "''") + "'"
+    """Quoted LIKE fragment for OGR/pyogrio SQL (no bound parameters there)."""
+    return "'" + _sql_like_pattern(value).replace("'", "''") + "'"
 
 
 # 口语子类词 → 高德 taxonomy 片段。高德 subtype 实为「大类;小类」格式
@@ -606,33 +619,57 @@ def query_gd_poi(
     if subtype:
         subtype = _SUBTYPE_ALIASES.get(str(subtype).strip().lower(), subtype)
 
-    clauses: List[str] = []
+    # OGR/pyogrio needs an interpolated WHERE; sqlite3 uses bound params.
+    ogr_clauses: List[str] = []
+    sql_clauses: List[str] = []
+    sql_params: List[Any] = []
     if name_like:
-        clauses.append(f"name LIKE ('%' || {_sql_like(name_like)} || '%') ESCAPE '\\'")
+        ogr_clauses.append(f"name LIKE ('%' || {_sql_like(name_like)} || '%') ESCAPE '\\'")
+        sql_clauses.append("name LIKE ('%' || ? || '%') ESCAPE '\\'")
+        sql_params.append(_sql_like_pattern(name_like))
     if category:
-        clauses.append(f"LOWER(category) = LOWER('{str(category).replace(chr(39), chr(39)*2)}')")
-    subtype_clause = None
+        cat = str(category)
+        ogr_clauses.append(f"LOWER(category) = LOWER('{cat.replace(chr(39), chr(39)*2)}')")
+        sql_clauses.append("LOWER(category) = LOWER(?)")
+        sql_params.append(cat)
+    subtype_ogr = None
+    subtype_sql = None
     if subtype:
-        subtype_clause = f"LOWER(subtype) LIKE LOWER('%'||{_sql_like(str(subtype))}||'%') ESCAPE '\\'"
+        subtype_ogr = (
+            f"LOWER(subtype) LIKE LOWER('%'||{_sql_like(str(subtype))}||'%') ESCAPE '\\'"
+        )
+        subtype_sql = "LOWER(subtype) LIKE LOWER('%'||?||'%') ESCAPE '\\'"
     if adcode:
         code = str(adcode).strip()
         if len(code) >= 6:  # 区县级 6 位：精确（zfill 兜底补零）
-            clauses.append(f"adcode = '{code.zfill(6)}'")
+            padded = code.zfill(6)
+            ogr_clauses.append(f"adcode = '{padded}'")
+            sql_clauses.append("adcode = ?")
+            sql_params.append(padded)
         else:
             # 2/4 位省市级编码：前缀展开。用范围条件而非 LIKE——SQLite 的
             # LIKE 默认大小写不敏感，无法用 idx_pois_adcode（实测 51M 行
             # 全表扫 ~15s），范围条件走 B-tree 索引。
             nxt = code[:-1] + chr(ord(code[-1]) + 1)
-            clauses.append(f"(adcode >= '{code}' AND adcode < '{nxt}')")
+            ogr_clauses.append(f"(adcode >= '{code}' AND adcode < '{nxt}')")
+            sql_clauses.append("(adcode >= ? AND adcode < ?)")
+            sql_params.extend((code, nxt))
     for code in district_codes:
         if len(code) == 4:  # 市级前缀
             nxt = code[:-1] + chr(ord(code[-1]) + 1)
-            clauses.append(f"(adcode >= '{code}' AND adcode < '{nxt}')")
+            ogr_clauses.append(f"(adcode >= '{code}' AND adcode < '{nxt}')")
+            sql_clauses.append("(adcode >= ? AND adcode < ?)")
+            sql_params.extend((code, nxt))
         else:  # 区县级精确
-            clauses.append(f"adcode = '{code}'")
-    where = " AND ".join(clauses + ([subtype_clause] if subtype_clause else [])) or None
+            ogr_clauses.append(f"adcode = '{code}'")
+            sql_clauses.append("adcode = ?")
+            sql_params.append(code)
+    where = " AND ".join(ogr_clauses + ([subtype_ogr] if subtype_ogr else [])) or None
+    sql_where = " AND ".join(sql_clauses + ([subtype_sql] if subtype_sql else [])) or None
+    sql_where_params = list(sql_params) + ([_sql_like_pattern(str(subtype))] if subtype_sql else [])
     # subtype 之外的过滤（零命中 hint 的子类分布查询用）
-    base_where = " AND ".join(clauses) or None
+    base_sql = " AND ".join(sql_clauses) or None
+    base_sql_params = list(sql_params)
 
     # polygon 精确过滤：bbox 候选量必须大于 limit（过滤后再截断）。
     read_cap = limit
@@ -651,15 +688,24 @@ def query_gd_poi(
                 f"file:{gd_poi_gpkg_path()}?mode=ro", uri=True, timeout=10
             )
             try:
+                if not sql_where:
+                    raise ValueError("sql_where required for count/sample")
                 total_matched = int(
-                    conn.execute(f"SELECT COUNT(*) FROM pois WHERE {where}").fetchone()[0]
+                    conn.execute(
+                        _bound_sql("SELECT COUNT(*) FROM pois WHERE ", sql_where),
+                        sql_where_params,
+                    ).fetchone()[0]
                 )
                 if read_cap < total_matched <= _SAMPLE_MAX_ROWS:
                     sample_fids = [
                         int(r[0])
                         for r in conn.execute(
-                            f"SELECT fid FROM pois WHERE {where} "
-                            f"ORDER BY (fid * 2654435761 % 2147483647) LIMIT {read_cap}"
+                            _bound_sql(
+                                "SELECT fid FROM pois WHERE ",
+                                sql_where,
+                                " ORDER BY (fid * 2654435761 % 2147483647) LIMIT ?",
+                            ),
+                            [*sql_where_params, read_cap],
                         )
                     ]
             finally:
@@ -728,18 +774,22 @@ def query_gd_poi(
     # subtype 零命中：返回该范围内真实子类分布，调用方一轮即可自纠
     # （不再需要猜 taxonomy ——「大学」→ 提示实际值是 学校;高等院校）。
     if raw_subtype and not features:
-        hint_where = base_where if (
-            base_where and any(k in base_where for k in ("adcode", "category"))
+        hint_sql = base_sql if (
+            base_sql and any(k in base_sql for k in ("adcode", "category"))
         ) else None
-        if hint_where is not None:
+        if hint_sql is not None:
             try:
                 conn = sqlite3.connect(
                     f"file:{gd_poi_gpkg_path()}?mode=ro", uri=True, timeout=10
                 )
                 try:
                     rows = conn.execute(
-                        f"SELECT subtype, COUNT(*) c FROM pois WHERE {hint_where} "
-                        f"GROUP BY subtype ORDER BY c DESC LIMIT 12"
+                        _bound_sql(
+                            "SELECT subtype, COUNT(*) c FROM pois WHERE ",
+                            hint_sql,
+                            " GROUP BY subtype ORDER BY c DESC LIMIT 12",
+                        ),
+                        base_sql_params,
                     ).fetchall()
                 finally:
                     conn.close()
