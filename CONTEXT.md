@@ -313,17 +313,33 @@ _Avoid_: GISHarness as a rename of this module; treating “didn't error” as r
 COMPILE_VALID / RUNTIME_VALID as MapSpecValidity tiers; headless canvas as the runtime oracle;
 ToolChoice / ErrorRecovery / StepEfficiency 100 as a production pass; L5 inheriting L4 pass.
 
+### MapSpecValidity
+The mutation evidence ladder: `NOT_EVALUATED → MUTATION_REJECTED → MUTATION_ACCEPTED →
+SEMANTIC_VALID`. `is_valid` is `tier >= SEMANTIC_VALID`; “didn’t error” is only
+MUTATION_ACCEPTED. Compile-report stays a tool artifact — not a rung, and not auto-run
+on evaluate (ADR-0060).
+_Avoid_: COMPILE_VALID; RUNTIME_VALID; lifting validity from `webgis_compile_maplibre` or
+Playwright.
+
 ### EvaluationEvidence
-Proof that a GIS/map change actually happened: ref resolution, MapSpec validity ladder
-(`NOT_EVALUATED → MUTATION_REJECTED → MUTATION_ACCEPTED → SEMANTIC_VALID`), tool-call
-correlation, and actual-runtime review of the Observed Map. Missing evidence is
-`not_evaluated` / 0.0 — never pass, never 100, never a production exemption. L1 “tool
-did not error” is not “the map is correct.” L5 has no goal/visual oracle this spec.
+Proof that a GIS/map change actually happened: ref resolution, MapSpecValidity,
+tool-call correlation, and actual-runtime review of the Observed Map. Missing evidence is
+`not_evaluated` / 0.0 — never pass, never 100. Fail-closed applies to CartographicQuality
+(ADR-0063), not to telemetry or benchmark float oracles. L1 “tool did not error” is not
+“the map is correct.” L5 has no goal/visual oracle this spec.
 _Avoid_: GISEvidence; collapsing this into Decision Intelligence **Evidence**; treating
 `MUTATION_ACCEPTED` as runtime success; COMPILE_VALID / RUNTIME_VALID as validity tiers;
 map-action ACK or `InteractionStateConvergenceRate=100` as Observed Map proof;
 `overall_passed` as the cartographic signal the Agent should see; persisting L1–L5
 `success_levels` as the production review.
+
+### CartographicQuality
+The production fail-closed gate: live Observed Map for this MapSpec generation (style
+loaded, no reconcile error, expected layer identities present; hidden-by-intent still
+counts). Missing required runtime evidence is `not_evaluated` and cannot pass.
+`overall_passed` means this check only (ADR-0063).
+_Avoid_: the 5-float AND as the production gate; headless Playwright, map-action ACK, or
+gesture camera as this gate; Eval Evidence’s deferred visual-judge score as this gate.
 
 ### Cartography Verdict
 The bounded next-turn projection of the current-generation review: `pass`, `fail`, or
@@ -364,16 +380,19 @@ translated through the table on replay.
 Headless Playwright over a **static** `index.html`+`style.json` produced by the MapSpec Compiler
 (not the live Next.js app). Self-contained and replayable: serves its own read-only static
 server, drives Chromium, emits PNG/trace/`report.json`. Verifies `mapLoaded`, `mapIdle`,
-console/page/network errors, canvas-blank rate, and control overflow/collision. Live-Next.js
-regression testing is out of scope.
+console/page/network errors, canvas-blank rate, and control overflow/collision. Record-only
+extra: it cannot pass the map alone and cannot change a live Cartography Verdict (ADR-0061).
+Live-Next.js regression testing is out of scope.
+_Avoid_: `mapLoaded` / non-blank canvas as the production runtime oracle.
 
 ### Eval Evidence
 Per-run artifacts auto-captured: MapSpec revisions, Spatial Meta Profiles, `style.json`,
 `index.html`, PNG, Playwright trace, `report.json`, cost stats. Scored on 5 computable
 dimensions (spatial/data correctness 25%, task completion 20%, browser runtime 15%,
-traceability/safety/reproducibility 10%, tool-call efficiency/cost 10%). Cartographic quality
-(20%) is **deferred** pending the future `webgis-visual-judge`; reported scores are normalized
-to an 80% max until then.
+traceability/safety/reproducibility 10%, tool-call efficiency/cost 10%). The eval-suite
+visual-judge slice (20%) is **deferred** pending `webgis-visual-judge`; reported scores are
+normalized to an 80% max until then. That deferred score is not CartographicQuality.
+_Avoid_: treating this eval-suite score as the production CartographicQuality gate.
 
 ### Spatial Meta Profile
 The statistical/metadata summary of a source (GeoJSON only in this refactor): BBOX, suggested
