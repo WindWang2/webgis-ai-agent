@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.api_response import ErrCode
-from app.models.report import Report
+from app.models.report import REPORT_STATUS_IN_PROGRESS, Report
 from app.models.db_model import Conversation, Message
 from app.services.mapspec_to_svg import compile_mapspec_to_svg
 
@@ -84,7 +84,7 @@ class ReportService:
         """
         Report status-lifecycle saga (ADR-0023):
         1. Fetch conversation & messages using active `db` session.
-        2. Create Report row in 'generating' status, commit, and `db.expunge(report)`.
+        2. Create Report row in 'processing' status, commit, and `db.expunge(report)`.
         3. Perform rendering (`generate_report`).
         4. Write final status ('completed'/'failed') via `session_factory` (or fallback `db`).
         """
@@ -129,7 +129,7 @@ class ReportService:
             session_id=session_id,
             title=report_title,
             format=fmt,
-            status="generating",
+            status=REPORT_STATUS_IN_PROGRESS,
             file_path=file_path,
         )
         db.add(report)

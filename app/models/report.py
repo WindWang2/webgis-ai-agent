@@ -7,6 +7,11 @@ from sqlalchemy import (
 )
 from app.core.database import Base
 
+# 必须与 ck_report_status / 线上 SQLite CHECK 一致。
+# 「生成中」用 processing，不要写 generating（会 IntegrityError）。
+ALLOWED_REPORT_STATUSES = ("pending", "processing", "completed", "failed")
+REPORT_STATUS_IN_PROGRESS = "processing"
+
 
 class Report(Base):
     """分析报告表"""
@@ -30,8 +35,11 @@ class Report(Base):
         Index("idx_report_session", "session_id"),
         Index("idx_report_status", "status"),
         CheckConstraint("format IN ('pdf', 'html', 'markdown')", name="ck_report_format"),
-        CheckConstraint("status IN ('pending', 'processing', 'completed', 'failed')", name="ck_report_status"),
+        CheckConstraint(
+            "status IN ('pending', 'processing', 'completed', 'failed')",
+            name="ck_report_status",
+        ),
     )
 
 
-__all__ = ["Report"]
+__all__ = ["Report", "ALLOWED_REPORT_STATUSES", "REPORT_STATUS_IN_PROGRESS"]

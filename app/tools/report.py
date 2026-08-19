@@ -17,13 +17,13 @@ from app.services.report_service import spatial_report_engine, REPORT_DIR
 from app.services.mapspec_store import mapspec_store
 from app.tools._utils import db_session
 from app.models.db_model import Conversation, Message
-from app.models.report import Report
+from app.models.report import REPORT_STATUS_IN_PROGRESS, Report
 
 logger = logging.getLogger(__name__)
 
 
 def _prepare_report_record(session_id: str, format: str, title: Optional[str]) -> dict[str, Any]:
-    """Phase 1: 读取会话消息并落 'generating' 状态的 Report 行。
+    """Phase 1: 读取会话消息并落 'processing' 状态的 Report 行。
 
     #426 计算隔离不变式 1：db_session() 是阻塞的同步 SQLAlchemy Session，
     必须经 asyncio.to_thread 在 worker 线程执行，禁止在事件循环上直接调用。
@@ -54,7 +54,7 @@ def _prepare_report_record(session_id: str, format: str, title: Optional[str]) -
             session_id=session_id,
             title=report_title,
             format=format,
-            status="generating",
+            status=REPORT_STATUS_IN_PROGRESS,
             file_path=file_path,
         )
         db.add(report)
