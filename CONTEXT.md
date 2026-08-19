@@ -228,10 +228,13 @@ keeping a private desired map in Zustand; leaving a rejected optimistic edit on 
 What MapLibre actually has right now, read back from the map instance (live workbench
 or headless Playwright). Includes live camera, loaded sources/layers, and transient
 indication (hover, highlight, popup). Observation never overwrites MapSpec; a user or
-agent who wants intent changed issues a MapSpec Mutation. Harness runtime evidence is
-this readout, not a MapSpecValidity rung.
+agent who wants intent changed issues a MapSpec Mutation. Production runtime pass is
+the **live** instance: this generation loaded, no reconcile error, expected layer
+identities present (hidden-by-intent still present). Headless is extra record, not
+the oracle (ADR-0061).
 _Avoid_: ObservedGISState as a stored document; treating HUD or Redis `map_state` as
-observation; RUNTIME_VALID as a MapSpecValidity tier.
+observation; RUNTIME_VALID as a MapSpecValidity tier; ACK or gesture-camera match as
+runtime pass; headless canvas as the production oracle.
 
 ### Selection
 The Session's current picked features or refs. Observed-side working memory the Agent
@@ -305,7 +308,7 @@ The evidence-driven **evaluation** harness for the cartographic closed loop (L1�
 not Pi's agent host and not the GIS Harness. Name stays this round. MapSpecValidity stops
 at SEMANTIC_VALID (ADR-0060).
 _Avoid_: GISHarness as a rename of this module; treating “didn't error” as runtime success;
-COMPILE_VALID / RUNTIME_VALID as MapSpecValidity tiers.
+COMPILE_VALID / RUNTIME_VALID as MapSpecValidity tiers; headless canvas as the runtime oracle.
 
 ### EvaluationEvidence
 Proof that a GIS/map change actually happened: ref resolution, MapSpec validity ladder
@@ -314,7 +317,8 @@ correlation, and actual-runtime review of the Observed Map. Missing evidence is
 `not_evaluated` / 0.0 — never pass, never 100, never a production exemption. L1 “tool
 did not error” is not “the map is correct.”
 _Avoid_: GISEvidence; collapsing this into Decision Intelligence **Evidence**; treating
-`MUTATION_ACCEPTED` as runtime success; COMPILE_VALID / RUNTIME_VALID as validity tiers.
+`MUTATION_ACCEPTED` as runtime success; COMPILE_VALID / RUNTIME_VALID as validity tiers;
+map-action ACK or `InteractionStateConvergenceRate=100` as Observed Map proof.
 
 ### CartographySemanticChecks
 Deterministic cartographic semantic checks (`app/lib/cartography/semantic_checks.py`, ADR-0051) connecting the GIS data profile ↔ MapSpec: `SOURCE_LAYER_REF`/`EMPTY_DATA` (errors), `GEOMETRY_LAYER_TYPE`/`STOPS_DATA_RANGE`/`INTERPOLATE_NUMERIC_FIELD`/`LEGEND_FIELD_CONSISTENCY` (warnings). Missing profile → `not_evaluated`, never a fake pass. Empty-data (zero features) is an error, not a silent map success.
