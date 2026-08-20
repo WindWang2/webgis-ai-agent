@@ -506,6 +506,16 @@ export function MapPanel({
     }
   }, [])
 
+  // A2: backfill race — AbortController + monotonic seq so superseded fetch never merges
+  const selectionBackfillAbortRef = useRef<AbortController | null>(null)
+  const selectionSeqRef = useRef(0)
+  useEffect(() => {
+    return () => {
+      selectionBackfillAbortRef.current?.abort()
+      selectionBackfillAbortRef.current = null
+    }
+  }, [])
+
   const setSelectedFeature = useHudStore((s: HudState) => s.setSelectedFeature)
   const selectedFeature = useHudStore((s: HudState) => s.selectedFeature)
 
@@ -572,6 +582,11 @@ export function MapPanel({
       if (feature.geometry) tileBbox = geometryBBox(feature.geometry as any) as any
     } catch { /* ignore */ }
     const selectedAt = Date.now()
+    const seq = ++selectionSeqRef.current
+    // Abort any superseded backfill so its promise rejects with AbortError and never merges
+    selectionBackfillAbortRef.current?.abort()
+    const controller = new AbortController()
+    selectionBackfillAbortRef.current = controller
     setSelectedFeature({
       // 无主图层（process-* 等）时回退到原始 sublayer id。
       layerId: parentId ?? sublayerId ?? 'unknown',
@@ -588,10 +603,17 @@ export function MapPanel({
     // #667/#668: selection truthfulness — backfill authoritative feature for MVT layers
     if (targetId && isMvt) {
       if (!hasUsableId) return
-      void ensureLayerData(targetId, 'selection-detail', { featureId: rawFeatureId as string | number })
+      const isStale = (err?: any): boolean => {
+        if (controller.signal.aborted) return true
+        if (err?.name === 'AbortError') return true
+        if (seq !== selectionSeqRef.current) return true
+        const c: any = useHudStore.getState().selectedFeature
+        return !c || c.selectedAt !== selectedAt
+      }
+      void ensureLayerData(targetId, 'selection-detail', { featureId: rawFeatureId as string | number, signal: controller.signal })
         .then((res: any) => {
+          if (isStale()) return
           const cur: any = useHudStore.getState().selectedFeature
-          if (!cur || cur.selectedAt !== selectedAt) return
           if (res?.status === 'single-feature' && res.feature) {
             const af = res.feature as any
             const authProps = (af.properties ?? {}) as Record<string, unknown>
@@ -613,16 +635,17 @@ export function MapPanel({
               isApproximate: false,
             } as any)
           } else if (res?.status === 'fallback') {
-            // keep approximate flag (already true) — explicit
+            if (isStale()) return
             const cur2: any = useHudStore.getState().selectedFeature
-            if (cur2 && cur2.selectedAt === selectedAt && cur2.isApproximate !== true) {
+            if (cur2 && cur2.isApproximate !== true) {
               useHudStore.getState().setSelectedFeature({ ...cur2, isApproximate: true } as any)
             }
           }
         })
-        .catch(() => {
+        .catch((e: any) => {
+          if (isStale(e)) return
           const cur: any = useHudStore.getState().selectedFeature
-          if (cur && cur.selectedAt === selectedAt && cur.isApproximate !== true) {
+          if (cur && cur.isApproximate !== true) {
             useHudStore.getState().setSelectedFeature({ ...cur, isApproximate: true } as any)
           }
         })

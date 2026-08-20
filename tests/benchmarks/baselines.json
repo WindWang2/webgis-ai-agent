@@ -50,6 +50,7 @@
     "median_ms": 6.88
   },
   "raster_tile_streaming": {
+    "floor_ms": 15.0,
     "iterations": 7,
     "median_ms": 3.527
   },

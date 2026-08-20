@@ -320,12 +320,19 @@ def _compute_descriptor_fallback(data) -> dict:
     except Exception:
         filterable_fields = None
 
+    # B4: shared raster detection (same as compute_descriptor / is_raster_capable)
+    try:
+        from app.schemas.ref_descriptor import is_raster_capable
+        raster_capable = is_raster_capable(data)
+    except Exception:
+        raster_capable = isinstance(data, dict) and ("file_path" in data or "path" in data)
+
     return {
         "points": points,
         "features": features,
         "geom_types": list(geom_types),
         "bbox": bbox,
-        "raster_capable": isinstance(data, dict) and ("file_path" in data or "path" in data),
+        "raster_capable": raster_capable,
         "estimated_bytes": estimated,
         "filterable_fields": filterable_fields,
     }
@@ -361,7 +368,7 @@ async def get_layer_descriptor(
             "geometry_types": descriptor["geometry_types"],
             "bbox": descriptor["bbox"],
             "mvt_capable": descriptor["mvt_capable"],
-            "raster_capable": False,  # descriptor doesn't store raster flag yet
+            "raster_capable": descriptor.get("raster_capable", False),
             "estimated_bytes": descriptor["estimated_bytes"],
             "filterable_fields": descriptor.get("filterable_fields"),
         }

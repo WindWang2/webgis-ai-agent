@@ -13,7 +13,7 @@ export interface EnsureLayerResult {
 }
 
 const VECTOR_TILE_THRESHOLD = 5000;
-const FEATURE_ID_KEYS = ['id', 'OBJECTID', 'fid', 'osm_id', '@id', 'featureId', 'feature_id'];
+export const FEATURE_ID_KEYS = ['id', 'OBJECTID', 'fid', 'osm_id', '@id', 'featureId', 'feature_id'];
 
 let _currentSessionId: string | undefined;
 let _currentOwnerToken: string | null | undefined;
@@ -51,7 +51,7 @@ const pendingHydrations = new Map<string, Promise<EnsureLayerResult>>();
 export async function ensureLayerData(
   layerId: string,
   reason: EnsureLayerReason,
-  opts?: { featureId?: string | number },
+  opts?: { featureId?: string | number; signal?: AbortSignal },
 ): Promise<EnsureLayerResult> {
   const state = useHudStore.getState();
   const layer = state.layers.find((l) => l.id === layerId) as Layer | undefined;
@@ -103,6 +103,7 @@ export async function ensureLayerData(
       const feature = await apiFetch<Record<string, unknown>>(url, {
         ownerToken: token ?? undefined,
         label: 'Feature detail error',
+        signal: opts?.signal,
       });
       return { status: 'single-feature', feature };
     } catch (e: any) {

@@ -1,6 +1,8 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import { useHudStore, type HudState } from '@/lib/store/useHudStore'
+import { FEATURE_ID_KEYS } from '@/lib/store/layer-data'
 
 /**
  * POI 信息悬浮窗（点击交互 v2 重设计）。
@@ -64,19 +66,39 @@ export function PoiInfoPanel({
 }: PoiInfoPanelProps) {
   const [picked, setPicked] = useState<number>(features.length === 1 ? 0 : -1)
   const [dismissed, setDismissed] = useState(false)
+  const selectedFeature = useHudStore((s: HudState) => s.selectedFeature)
 
   const entries = useMemo(
     () =>
       features.map((f, i) => {
         const meta = parentLayerName(f, layerIds, layersMap)
+        const parentId = meta.id
+        let effectiveProps = (f.properties || {}) as Record<string, unknown>
+        let effectiveFeature: PoiPanelFeature = f
+        if (selectedFeature && parentId && selectedFeature.layerId === parentId) {
+          const fid = selectedFeature.featureId
+          const hasUsableFid =
+            fid != null && String(fid).trim() !== '' && !String(fid).startsWith('h-')
+          const fProps = (f.properties || {}) as Record<string, unknown>
+          const candidateIds = FEATURE_ID_KEYS.map((k) => (fProps as Record<string, unknown>)[k]).filter(
+            (v) => v != null && v !== '',
+          )
+          const matchesId = hasUsableFid && candidateIds.some((v) => String(v) === String(fid))
+          const isSingleOrFirst = features.length === 1 || i === 0
+          const shouldMerge = hasUsableFid ? matchesId : isSingleOrFirst
+          if (shouldMerge) {
+            effectiveProps = (selectedFeature.properties || {}) as Record<string, unknown>
+            effectiveFeature = { ...f, properties: effectiveProps }
+          }
+        }
         return {
           idx: i,
           layerName: meta.name || meta.id || `要素 ${i + 1}`,
-          title: featureDisplayName(f, `要素 ${i + 1}`),
-          props: (f.properties || {}) as Record<string, unknown>,
+          title: featureDisplayName(effectiveFeature, `要素 ${i + 1}`),
+          props: effectiveProps,
         }
       }),
-    [features, layerIds, layersMap],
+    [features, layerIds, layersMap, selectedFeature],
   )
 
   if (dismissed || entries.length === 0) return null

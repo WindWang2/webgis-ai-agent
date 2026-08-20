@@ -89,7 +89,8 @@ def format_selected_feature(sel: dict | None) -> str | None:
             )
             parts.append(f"属性={{{kvs}}}")
     # #668: honest approximation flag — tell LLM not to treat tile geometry as truth
-    if sel.get("is_approximate") or sel.get("isApproximate"):
+    # Wire canonical is snake_case only (buildSelectedFeatureSnapshot emits is_approximate)
+    if sel.get("is_approximate"):
         parts.append("（近似/瓦片简化属性，需以源数据为准）")
     return " ".join(parts)
 

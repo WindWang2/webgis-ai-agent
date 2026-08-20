@@ -368,7 +368,23 @@ def _metric_byte_estimate_ms() -> float:
 
 
 def _raster_tile_streaming_ms() -> float:
-    """Windowed raster tile rendering: 256x256 PNG generation from GeoTIFF."""
+    """Windowed raster tile rendering: 256x256 PNG generation from GeoTIFF.
+
+    Wall-clock is the point here (guards the overview/decimated-read fix:
+    a low-zoom tile whose window covers the whole raster must NOT decode the
+    full raster — that was 600 MB per request before the fix). The median on
+    this host is ~3.5 ms (200×200 fixture, cache-warm). Without a floor the
+    warn band (1.75× baseline ≈ 6.2 ms) is within ordinary scheduler/GC jitter
+    — isolated runs measured 2.6–5.1 ms per sample, and a fully loaded
+    ``-m perf`` lane pushes the median toward the warn line without any real
+    regression, so the gate is flaky by construction. A floor of 15 ms (stored
+    in baselines.json) makes the effective thresholds
+    warn≈15 ms / fail≈15 ms (floor dominates), which still fails closed on a
+    true regression (full-raster decode would be >>100 ms) while absorbing
+    scheduling noise. The deterministic property (windowed read + overview) is
+    also asserted functionally (PNG validity) — wall-clock remains the
+    regression signal, with the floor as the noise budget.
+    """
     from app.services.raster_tile_service import render_raster_tile
 
     path = _get_perf_tile_raster()

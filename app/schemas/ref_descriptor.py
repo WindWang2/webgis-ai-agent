@@ -21,6 +21,8 @@ class RefDescriptor:
         bbox: [min_lon, min_lat, max_lon, max_lat] or None
         mvt_capable: True if the FC has vector geometry (Point/Line/Polygon)
             servable by the MVT encoder (app/services/mvt.py)
+        raster_capable: True if the payload is a raster source (dict with
+            file_path or path key) servable by the raster tile endpoint.
         estimated_bytes: Rough size estimate (feature-count heuristic; exact
             byte count is not computed to avoid blocking the store() hot path)
         content_hash: Reserved, always None. Computing a stable hash would
@@ -31,7 +33,9 @@ class RefDescriptor:
             non-breaking schema evolution.
         filterable_fields: Distinct property keys present across features,
             used as tile attribute whitelist for MVT setFilter contract (#668).
-            Bounded to first 100 distinct keys to keep descriptor small.
+            Bounded to 100 distinct keys (sorted, first 100) to keep descriptor
+            small and SSE payload bounded; whitelist is advisory for honest
+            ack (server does not enforce strict filtering on tile encode).
     """
     ref_id: str
     feature_count: int
@@ -39,6 +43,7 @@ class RefDescriptor:
     geometry_types: List[str]
     bbox: Optional[List[float]]
     mvt_capable: bool
+    raster_capable: bool
     estimated_bytes: int
     content_hash: Optional[str] = None
     filterable_fields: Optional[List[str]] = None
@@ -52,6 +57,7 @@ class RefDescriptor:
             "geometry_types": self.geometry_types,
             "bbox": self.bbox,
             "mvt_capable": self.mvt_capable,
+            "raster_capable": self.raster_capable,
             "estimated_bytes": self.estimated_bytes,
             "content_hash": self.content_hash,
             "filterable_fields": self.filterable_fields,
@@ -67,6 +73,7 @@ class RefDescriptor:
             geometry_types=d.get("geometry_types", []),
             bbox=d.get("bbox"),
             mvt_capable=d.get("mvt_capable", False),
+            raster_capable=d.get("raster_capable", False),
             estimated_bytes=d.get("estimated_bytes", 0),
             content_hash=d.get("content_hash"),
             filterable_fields=d.get("filterable_fields"),
@@ -98,10 +105,12 @@ def iter_leaf_coords(coordinates):
 def collect_filterable_fields(features) -> Optional[List[str]]:
     """Collect distinct property keys across features for tile attribute whitelist (#668).
 
-    Bounded to 100 distinct keys to keep descriptor small; order is sorted for
-    stable serialization. Returns None when no keys found (keeps descriptor lean).
-    Shared by store-time descriptor (compute_descriptor) and fallback path
-    (app/api/routes/layer._compute_descriptor_fallback) so both stay byte-identical.
+    Bounded to 100 distinct keys (sorted, first 100) to keep descriptor small
+    and SSE payload bounded; whitelist is advisory for honest ack (server does
+    not enforce strict filtering — see B5). Returns None when no keys found
+    (keeps descriptor lean). Shared by store-time descriptor (compute_descriptor)
+    and fallback path (app/api/routes/layer._compute_descriptor_fallback) so
+    both stay byte-identical.
     """
     if not isinstance(features, list) or not features:
         return None
@@ -142,6 +151,15 @@ def is_mvt_capable(geometry_types, feature_count: int) -> bool:
     except TypeError:
         gt_set = set()
     return bool(feature_count > 0 and gt_set - {"GeometryCollection"})
+
+
+def is_raster_capable(data) -> bool:
+    """Shared raster detection — exactly one place.
+
+    Mirrors the fallback path in app/api/routes/layer.py
+    (_compute_descriptor_fallback) which checks for file_path/path keys.
+    """
+    return isinstance(data, dict) and ("file_path" in data or "path" in data)
 
 
 def compute_descriptor(ref_id: str, data) -> RefDescriptor:
@@ -228,6 +246,7 @@ def compute_descriptor(ref_id: str, data) -> RefDescriptor:
         geometry_types=sorted(list(geometry_types)),
         bbox=bbox,
         mvt_capable=is_mvt_capable(geometry_types, feature_count),
+        raster_capable=is_raster_capable(data),
         estimated_bytes=estimated_bytes,
         content_hash=content_hash,
         filterable_fields=filterable_fields,
