@@ -217,19 +217,6 @@ class HarnessEvaluator:
             "trusted": cartography_trusted,
         }
 
-        # A store-mounted ACK intentionally cannot prove MapLibre convergence,
-        # but a trusted post-reconcile cartographic PASS can.  Let that stronger
-        # actual-state evidence satisfy the interaction convergence dimension
-        # without rewriting the ACK itself as verifiable.
-        if cartography_passed and issued > 0:
-            metrics["InteractionStateConvergenceRate"] = 100.0
-            checks["InteractionStateConvergenceRate"].update({
-                "score": 100.0,
-                "passed": True,
-                "evaluated": True,
-                "reason": "trusted_runtime_cartographic_evidence",
-            })
-
         all_passed = all(bool(check.get("passed")) for check in checks.values())
 
         return {

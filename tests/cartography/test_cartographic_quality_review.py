@@ -1057,11 +1057,13 @@ async def test_matching_headless_fatal_error_is_deterministic_failure_not_visual
     )
     assert fatal["status"] == "fail"
     assert fatal["evidence_class"] == "deterministic"
-    assert result["cartography"]["status"] == "failed_unrepairable"
+    # Headless runtime is record-only; live Observed Map passed so verdict is passed (ADR-0061 / Issue #656)
+    assert result["cartography"]["status"] == "passed"
+    assert result["cartography"]["passed"] is True
     gate = HarnessEvaluator().evaluate_evidence(
         result, require_evaluated=False, require_cartography=True
     )
-    assert gate["checks"]["CartographicQuality"]["passed"] is False
+    assert gate["checks"]["CartographicQuality"]["passed"] is True
 
 
 @pytest.mark.asyncio
@@ -1286,8 +1288,9 @@ async def test_missing_runtime_viewport_is_not_evaluated_instead_of_failed():
         if check["rule"] == "RUNTIME_VIEW_CONVERGENCE"
     )
     assert camera["status"] == "not_evaluated"
-    assert result["cartography"]["status"] == "partial"
-    assert result["cartography"]["passed"] is False
+    # Gesture camera is record-only and does not fail or mark incomplete (ADR-0061 / Issue #656)
+    assert result["cartography"]["status"] == "passed"
+    assert result["cartography"]["passed"] is True
 
 
 @pytest.mark.asyncio

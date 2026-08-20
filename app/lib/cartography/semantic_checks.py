@@ -1044,6 +1044,11 @@ def evaluate_cartography_semantics(
                 "layer_id": lid,
                 "visible": True,
             }
+        elif expected_visible is False:
+            visibility_status = "pass"
+            visibility_severity = "info"
+            visibility_repairability = "not_repairable"
+            visibility_fix = None
         else:
             visibility_status = "not_evaluated"
             visibility_severity = "info"
@@ -1058,7 +1063,11 @@ def evaluate_cartography_semantics(
                 else (
                     f"Layer '{lid}' is hidden despite explicit result visibility intent"
                     if expected_visible is True
-                    else f"Layer '{lid}' is hidden but no expected-visible intent is available"
+                    else (
+                        f"Layer '{lid}' is intentionally hidden per explicit cartographic intent"
+                        if expected_visible is False
+                        else f"Layer '{lid}' is hidden but no expected-visible intent is available"
+                    )
                 )
             ),
             severity=visibility_severity,

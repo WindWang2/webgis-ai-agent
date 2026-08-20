@@ -880,6 +880,16 @@ async def evaluate_cartographic_session(
                 "passed": False,
                 "termination_reason": "no_session_harness",
             },
+            "gate": {
+                "score": 0.0,
+                "target": 100.0,
+                "passed": False,
+                "evaluated": False,
+                "reason": "not_evaluated_policy_fail",
+                "status": "not_evaluated",
+                "trusted": False,
+            },
+            "overall_passed": False,
         }
     harness = _get_session_harness(session_id, create=True)
     if harness is None or not await _hydrate_cartographic_harness(session_id, harness):
@@ -892,6 +902,16 @@ async def evaluate_cartographic_session(
                 "passed": False,
                 "termination_reason": "no_session_harness",
             },
+            "gate": {
+                "score": 0.0,
+                "target": 100.0,
+                "passed": False,
+                "evaluated": False,
+                "reason": "not_evaluated_policy_fail",
+                "status": "not_evaluated",
+                "trusted": False,
+            },
+            "overall_passed": False,
         }
     lock = _cartography_eval_locks.setdefault(session_id, asyncio.Lock())
     async with lock:
@@ -971,6 +991,16 @@ async def _evaluate_cartographic_session_unlocked(
                 "passed": False,
                 "termination_reason": "no_session_harness",
             },
+            "gate": {
+                "score": 0.0,
+                "target": 100.0,
+                "passed": False,
+                "evaluated": False,
+                "reason": "not_evaluated_policy_fail",
+                "status": "not_evaluated",
+                "trusted": False,
+            },
+            "overall_passed": False,
         }
     from app.lib.harness.evaluator import HarnessEvaluator
     from app.services.session_data import session_data_manager
@@ -1024,11 +1054,12 @@ async def _evaluate_cartographic_session_unlocked(
         require_evaluated=False,
         require_cartography=True,
     )
+    cartography_gate = gate.get("checks", {}).get("CartographicQuality") or {}
     result = {
         "session_id": session_id,
         "cartography": evidence.get("cartography") or {},
-        "gate": gate.get("checks", {}).get("CartographicQuality") or {},
-        "overall_passed": bool(gate.get("overall_passed")),
+        "gate": cartography_gate,
+        "overall_passed": bool(cartography_gate.get("passed")),
     }
     result = await _advance_runtime_cartographic_repair(
         session_id=session_id,
