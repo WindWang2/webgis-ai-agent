@@ -206,7 +206,7 @@ def _make_synthetic_pbf(path):
     # pyosmium SimpleWriter 鸭子类型：任意带 id/location/tags 属性的对象即可。
     from types import SimpleNamespace
 
-    import osmium
+    osmium = pytest.importorskip("osmium")
 
     writer = osmium.SimpleWriter(str(path))
     try:

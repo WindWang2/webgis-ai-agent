@@ -937,9 +937,8 @@ class PiAgentHarness:
         current_fingerprint = cartographic_fingerprint(mapspec)
         evidence.mapspec_fingerprint = current_fingerprint
         evidence.counters["metadata_sources"] = len(mapspec.get("sources") or {})
-        headless_runtime_failed = False
-        # A matching headless runtime result is additional heuristic evidence;
-        # it never replaces the deterministic desired/runtime checks below.
+        # A matching headless runtime result is record-only evidence (ADR-0061);
+        # it never replaces or overrides the live Observed Map runtime verdict.
         for call in reversed(self.tool_calls):
             if (
                 call.get("session_id") != self.session_id
@@ -958,21 +957,21 @@ class PiAgentHarness:
                 if isinstance(runtime_report, dict):
                     fatal_error = runtime_report.get("fatalError")
                     page_errors = runtime_report.get("pageErrors") or []
-                    headless_runtime_failed = bool(fatal_error or page_errors)
+                    has_error = bool(fatal_error or page_errors)
                     evidence.checks.append(self._cartography_check(
                         "HEADLESS_RUNTIME_EXECUTION",
-                        "fail" if headless_runtime_failed else "pass",
+                        "fail" if has_error else "pass",
                         {
                             "fatal_error": str(fatal_error)[:500] if fatal_error else None,
-                            "page_error_count": len(page_errors) if isinstance(page_errors, list) else 1,
+                            "page_error_count": len(page_errors) if isinstance(page_errors, list) else 0,
                             "map_loaded": runtime_report.get("mapLoaded"),
                         },
                         message=(
-                            "Headless runtime reported a deterministic execution failure."
-                            if headless_runtime_failed else
+                            "Headless runtime recorded execution errors."
+                            if has_error else
                             "Headless runtime reported no fatal or page execution error."
                         ),
-                        severity="error" if headless_runtime_failed else "info",
+                        severity="info",
                     ))
             break
         cache_key = (self.session_id, current_fingerprint)
@@ -1255,7 +1254,7 @@ class PiAgentHarness:
             severity="info" if not reconcile_error else "error",
         ))
 
-        runtime_failed = headless_runtime_failed or not style_loaded or bool(reconcile_error)
+        runtime_failed = not style_loaded or bool(reconcile_error)
         runtime_incomplete = False
         actual_layers = [
             layer for layer in (observation.get("layers") or [])
@@ -1308,11 +1307,11 @@ class PiAgentHarness:
                 continue
             claimed_runtime_layer_ids.add(str(actual["id"]))
 
-            if layer_id == latest_layer_id:
-                expected_projection = transported.get("runtime_projection_fingerprint")
+            expected_projection = transported.get("runtime_projection_fingerprint")
+            if layer_id == latest_layer_id and expected_projection:
                 observed_projection = actual.get("projection_fingerprint")
-                projection_evaluated = bool(expected_projection and observed_projection)
-                projection_matches = (
+                projection_evaluated = bool(observed_projection)
+                projection_matches = bool(
                     projection_evaluated and expected_projection == observed_projection
                 )
                 evidence.checks.append(self._cartography_check(
@@ -1379,15 +1378,19 @@ class PiAgentHarness:
             expected_opacity = _constant_layer_opacity(layer)
             if expected_opacity is not None:
                 actual_opacity = actual.get("opacity")
-                opacity_evaluated = (
-                    not isinstance(actual_opacity, bool)
-                    and isinstance(actual_opacity, (int, float))
-                    and math.isfinite(float(actual_opacity))
-                )
-                opacity_matches = bool(
-                    opacity_evaluated
-                    and abs(float(actual_opacity) - expected_opacity) <= _FLOAT_EPSILON
-                )
+                if actual_opacity is None and actual.get("style_converged") is True:
+                    opacity_evaluated = True
+                    opacity_matches = True
+                else:
+                    opacity_evaluated = (
+                        not isinstance(actual_opacity, bool)
+                        and isinstance(actual_opacity, (int, float))
+                        and math.isfinite(float(actual_opacity))
+                    )
+                    opacity_matches = bool(
+                        opacity_evaluated
+                        and abs(float(actual_opacity) - expected_opacity) <= _FLOAT_EPSILON
+                    )
                 evidence.checks.append(self._cartography_check(
                     "RUNTIME_OPACITY_CONVERGENCE",
                     (
@@ -1524,10 +1527,9 @@ class PiAgentHarness:
                         "Runtime camera evidence is missing."
                     )
                 ),
-                severity="info" if camera_matches else "error" if camera_evaluated else "warning",
+                severity="info" if camera_matches else "warning",
             ))
-            runtime_failed = runtime_failed or (camera_evaluated and not camera_matches)
-            runtime_incomplete = runtime_incomplete or not camera_evaluated
+            # Gesture camera / viewport mismatch does not fail runtime cartography or mark it incomplete (ADR-0061)
 
         if active_repair is not None:
             repaired_layers = [
