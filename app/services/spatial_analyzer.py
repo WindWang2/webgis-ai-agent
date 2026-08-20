@@ -389,14 +389,20 @@ class SpatialAnalyzer:
             return err_res
         valid_path = validated_paths[0]
 
-        feat_list = features.get("features", [])
+        feat_list = features.get("features", []) if isinstance(features, dict) else []
         if not feat_list:
             return GeoAnalysisResult(False, None, "No features provided for zonal statistics")
 
         from app.lib.geo_analysis.raster_ops import zonal_statistics
         from app.lib.geo_analysis.raster_math import rasterio_env
+        # GIS-682: forward the whole FeatureCollection including the top-level
+        # `crs` member so a declared projected FC is not misread as
+        # EPSG:4326 (mirrors #599 clip/overlay passthrough). Previously only
+        # the features list was forwarded and the crs was dropped at the
+        # tool boundary.
+        fc_payload: dict = features if isinstance(features, dict) else {"type": "FeatureCollection", "features": feat_list}
         with rasterio_env():
-            stats = zonal_statistics({"type": "FeatureCollection", "features": feat_list}, valid_path)
+            stats = zonal_statistics(fc_payload, valid_path)
 
         for i, s in enumerate(stats):
             if i < len(feat_list):
