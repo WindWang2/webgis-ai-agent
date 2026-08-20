@@ -19,40 +19,35 @@ def _has_inf_coords(obj) -> bool:
     Those infinities survive into rasterstats and produce hole/zero stats
     that look plausible. Catch them here to fail loudly (GIS-23 / #682).
     """
-    try:
-        import math as _math
-
-        def _walk(v):
-            if isinstance(v, dict):
-                if "coordinates" in v:
-                    if _walk(v["coordinates"]):
+    def _walk(v):
+        if isinstance(v, dict):
+            if "coordinates" in v:
+                if _walk(v["coordinates"]):
+                    return True
+            if "geometries" in v:
+                for g in v["geometries"] or []:
+                    if _walk(g):
                         return True
-                if "geometries" in v:
-                    for g in v["geometries"] or []:
-                        if _walk(g):
-                            return True
-                if "features" in v:
-                    for f in v["features"] or []:
-                        if _walk(f):
-                            return True
-                if "geometry" in v and isinstance(v["geometry"], dict):
-                    if _walk(v["geometry"]):
+            if "features" in v:
+                for f in v["features"] or []:
+                    if _walk(f):
                         return True
-            elif isinstance(v, (list, tuple)):
-                if v and isinstance(v[0], (int, float)) and not isinstance(v[0], bool):
-                    # leaf coordinate tuple
-                    for c in v[:2]:
-                        if isinstance(c, float) and not _math.isfinite(c):
-                            return True
-                else:
-                    for c in v:
-                        if _walk(c):
-                            return True
-            return False
-
-        return _walk(obj)
-    except Exception:
+            if "geometry" in v and isinstance(v["geometry"], dict):
+                if _walk(v["geometry"]):
+                    return True
+        elif isinstance(v, (list, tuple)):
+            if v and isinstance(v[0], (int, float)) and not isinstance(v[0], bool):
+                # leaf coordinate tuple
+                for c in v[:2]:
+                    if isinstance(c, float) and not math.isfinite(c):
+                        return True
+            else:
+                for c in v:
+                    if _walk(c):
+                        return True
         return False
+
+    return _walk(obj)
 
 
 def zonal_statistics(

@@ -401,11 +401,6 @@ class SpatialAnalyzer:
         # the features list was forwarded and the crs was dropped at the
         # tool boundary.
         fc_payload: dict = features if isinstance(features, dict) else {"type": "FeatureCollection", "features": feat_list}
-        # Defensive: if features is a bare list-normalized FC the crs would
-        # already be in `features`; otherwise preserve it explicitly.
-        if isinstance(features, dict) and "crs" in features and "crs" not in fc_payload:
-            fc_payload = dict(fc_payload)
-            fc_payload["crs"] = features["crs"]
         with rasterio_env():
             stats = zonal_statistics(fc_payload, valid_path)
 
