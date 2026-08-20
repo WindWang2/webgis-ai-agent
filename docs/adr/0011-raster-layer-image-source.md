@@ -106,3 +106,27 @@ render — applied to raster. The headless MapSpec Compiler auto-derives its own
    validator silently (it never inspects `source.type`). The compiler then emits a malformed `image`
    source. A focused validation addition (raster source requires `imageRef`+`bounds`; raster layer
    requires a raster source) closes this.
+
+### Update — gap 1 wired (#696)
+
+Gap 1 is now wired (PR #696). The compiler remains session-agnostic — it still
+emits `imageRef` verbatim as the `image` source `url`. The rewrite lives at the
+compile caller that holds `session_id`:
+
+- **Rewrite:** `RuntimeValidator.validate_runtime` (the coordinator chain that
+  holds `session_id`) rewrites `ref:raster/<id>` → `__ORIGIN__/raster/<id>.png`
+  at mapspec level **before** compilation (strictly before the 1b MVT asset
+  assembly block, which it does not touch). The rewritten MapSpec is compiled
+  from a staged ephemeral file so the persisted canonical MapSpec retains the
+  opaque cursor. `__ORIGIN__` is resolved by the existing html-template
+  (`replaceAll("__ORIGIN__", location.origin)`) so no second URL scheme is
+  introduced — raster reuses the same `__ORIGIN__` convention as the MVT tiles
+  (`#695`/`#697`).
+- **Serving:** session PNGs at `.webgis-agent/<sid>/raster/<id>.png` are copied
+  into the compiler output's `raster/` subdirectory (mirroring
+  `runtime_asset_assembly.assemble_mvt_assets`'s `tiles/` pattern). The
+  headless static server serves `dist/` directly, so
+  `__ORIGIN__/raster/<id>.png` resolves to `dist/raster/<id>.png` without
+  extending the server's mount table or weakening its `..` traversal guard.
+
+The original gap description above is retained for history.
