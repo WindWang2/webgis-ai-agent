@@ -1,0 +1,24 @@
+{
+  "version": "1.0",
+  "view": {
+    "center": [5, 5],
+    "zoom": 6
+  },
+  "sources": {
+    "raster_src": {
+      "type": "raster",
+      "imageRef": "__ORIGIN__/raster/raster.png",
+      "bounds": [0, 0, 10, 10]
+    }
+  },
+  "layers": [
+    {
+      "id": "raster-layer",
+      "source": "raster_src",
+      "type": "raster",
+      "paint": {
+        "opacity": 1
+      }
+    }
+  ]
+}

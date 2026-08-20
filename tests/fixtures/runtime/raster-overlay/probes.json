@@ -1,0 +1,7 @@
+{
+  "expect": "pass",
+  "probes": [
+    { "type": "layer-exists", "layer": "raster-layer" },
+    { "type": "pixel-color", "layer": "raster-layer", "at": [1.25, 8.75], "expect": "#440154" }
+  ]
+}

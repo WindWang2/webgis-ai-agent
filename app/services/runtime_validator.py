@@ -143,17 +143,23 @@ class RuntimeValidator:
     runtime_dir = out_dir.parent / "runtime"
     runtime_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1b. Fixture asset assembly (MVT): if the probes file's directory
-    # contains points.geojson, encode z0..z2 tiles into dist/tiles/.
-    # This runs between compile and validate so __ORIGIN__/tiles/... URLs
-    # resolve. Fail-loud by design: an encoder regression must turn the
-    # scenario red with the real traceback, not a misleading tile 404.
+    # 1b. Fixture asset assembly (MVT + raster): if the probes file's
+    # directory contains points.geojson, encode z0..z2 tiles into
+    # dist/tiles/; if it contains raster.json, render raster/<name>.png
+    # into dist/raster/. This runs between compile and validate so
+    # __ORIGIN__/... URLs resolve. Fail-loud by design: an encoder or
+    # renderer regression must turn the scenario red with the real
+    # traceback, not a misleading 404.
     if probes_path is not None:
         probe_parent = Path(probes_path).parent
         if (probe_parent / "points.geojson").is_file():
             from app.services.runtime_asset_assembly import assemble_mvt_assets
 
             assemble_mvt_assets(probe_parent, out_dir)
+        if (probe_parent / "raster.json").is_file():
+            from app.services.runtime_asset_assembly import assemble_raster_assets
+
+            assemble_raster_assets(probe_parent, out_dir)
 
     # 2. Drive the headless Playwright validator over the compiled output.
     # The subprocess can run up to RUNTIME_TIMEOUT_S (90s) — offload to a
