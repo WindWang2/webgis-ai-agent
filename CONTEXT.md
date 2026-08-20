@@ -390,6 +390,13 @@ A declarative fixture pair (`mapspec.json` + `probes.json`) under `tests/fixture
 executed by the Runtime Validator and collected by directory scan. Scenarios run nightly-only
 by default; a scenario earns the `runtime_pr` mark (PR-blocking lane) only after 10 consecutive
 green nightlies and <30s per run.
+A scenario may carry **fixture assets**: readable source data (GeoJSON, or an array+palette
+declaration) that the test setup turns into static binary assets (MVT tiles via the repo's own
+MVT encoder, raster PNGs via `render_array_to_png`) inside the compiled dist. Fixture URLs use
+the **`__ORIGIN__`** placeholder (e.g. `__ORIGIN__/tiles/{z}/{x}/{y}.mvt`), replaced with the
+page's `location.origin` before map construction — fixtures never hardcode ports or hosts.
+_Avoid_: checked-in binary fixtures when a readable source exists; `ref:raster/<id>` cursors in
+fixtures (ref resolution is the backend's job — the static gate asserts the render chain).
 
 ### Runtime Probe
 A declarative render-semantic assertion declared in a Runtime Scenario's `probes.json` and
