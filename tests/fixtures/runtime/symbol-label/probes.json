@@ -1,0 +1,9 @@
+{
+  "expect": "pass",
+  "probes": [
+    { "type": "layer-exists", "layer": "places" },
+    { "type": "layer-exists", "layer": "places-label" },
+    { "type": "feature-count", "layer": "places", "equals": 2 },
+    { "type": "feature-count", "layer": "places-label", "equals": 2 }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "expect": "pass",
+  "probes": [
+    { "type": "layer-exists", "layer": "roads" },
+    { "type": "feature-count", "layer": "roads", "equals": 2 },
+    { "type": "pixel-color", "layer": "roads", "at": [-50, 5], "expect": "#d73027" },
+    { "type": "pixel-color", "layer": "roads", "at": [50, -5], "expect": "#4575b4" }
+  ]
+}

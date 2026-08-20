@@ -1,0 +1,9 @@
+{
+  "expect": "pass",
+  "probes": [
+    { "type": "layer-exists", "layer": "zones" },
+    { "type": "feature-count", "layer": "zones", "min": 2 },
+    { "type": "pixel-color", "layer": "zones", "at": [-50, 0], "expect": "#1a9850" },
+    { "type": "pixel-color", "layer": "zones", "at": [50, 0], "expect": "#fdbb84" }
+  ]
+}

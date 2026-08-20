@@ -1,0 +1,35 @@
+{
+  "version": "1.0",
+  "view": {
+    "center": [0, 0],
+    "zoom": 2
+  },
+  "sources": {
+    "hot": {
+      "type": "geojson",
+      "inlineData": {
+        "type": "FeatureCollection",
+        "features": [
+          {
+            "type": "Feature",
+            "geometry": { "type": "Point", "coordinates": [0, 0] },
+            "properties": {}
+          }
+        ]
+      }
+    }
+  },
+  "layers": [
+    {
+      "id": "hot",
+      "source": "hot",
+      "type": "heatmap",
+      "paint": {
+        "radius": 40,
+        "opacity": 1,
+        "color": "#eb2828",
+        "intensity": 3
+      }
+    }
+  ]
+}

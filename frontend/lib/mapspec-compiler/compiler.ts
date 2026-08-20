@@ -307,6 +307,31 @@ export function compileMapSpec(
           maplibreLayer.paint["heatmap-radius"] = compileStyleMethod(layer.paint.radius);
         if (layer.paint.opacity !== undefined)
           maplibreLayer.paint["heatmap-opacity"] = compileStyleMethod(layer.paint.opacity);
+        // heatmap-color 的输入必须是 heatmap-density，MapSpec 的高级 paint 方法
+        // （interpolate 等按要素属性取值）表达不了。约定 paint.color 传常量热色
+        // （raw hex 字符串），编译器生成 transparent→hot 的密度 ramp；缺省不动，
+        // 保持 MapLibre 默认 ramp —— 测试需求不改生产默认值。
+        const hotColor = layer.paint.color;
+        if (typeof hotColor === "string") {
+          // 0.1 的密度阈值：让低密度区域也映到热色（孤立点场景可判定），
+          // 0 处保持全透明。
+          maplibreLayer.paint["heatmap-color"] = [
+            "interpolate",
+            ["linear"],
+            ["heatmap-density"],
+            0,
+            "rgba(0,0,0,0)",
+            0.1,
+            hotColor,
+            1,
+            hotColor,
+          ];
+        }
+        // intensity/weight 同理可选显式覆盖（默认仍是 MapLibre 的 1）。
+        if (layer.paint.intensity !== undefined)
+          maplibreLayer.paint["heatmap-intensity"] = compileStyleMethod(layer.paint.intensity);
+        if (layer.paint.weight !== undefined)
+          maplibreLayer.paint["heatmap-weight"] = compileStyleMethod(layer.paint.weight);
       } else if (layerType === "raster") {
         // Raster layer (ADR-0011): colors are baked into the source image; the
         // only paint property is opacity. A raster layer references its
@@ -362,6 +387,12 @@ export function compileMapSpec(
     sources,
     layers: compiledLayers,
   };
+  if (labelLayerCount > 0) {
+    // symbol 图层的 text-field 在 MapLibre 里要求 style 级 glyphs 模板，
+    // 否则运行时报错（symbol-label 场景暴露的真实编译缺陷）。
+    (style as Record<string, unknown>).glyphs =
+      "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf";
+  }
 
   const report: CompileReport = {
     success,

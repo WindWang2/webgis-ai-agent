@@ -1,0 +1,43 @@
+{
+  "version": "1.0",
+  "view": {
+    "center": [0, 0],
+    "zoom": 2
+  },
+  "sources": {
+    "places": {
+      "type": "geojson",
+      "inlineData": {
+        "type": "FeatureCollection",
+        "features": [
+          {
+            "type": "Feature",
+            "geometry": { "type": "Point", "coordinates": [-20, 10] },
+            "properties": { "name": "Alpha" }
+          },
+          {
+            "type": "Feature",
+            "geometry": { "type": "Point", "coordinates": [20, -10] },
+            "properties": { "name": "Beta" }
+          }
+        ]
+      }
+    }
+  },
+  "layers": [
+    {
+      "id": "places",
+      "source": "places",
+      "type": "circle",
+      "paint": {
+        "color": { "method": "constant", "value": "#3388ff" },
+        "radius": 6
+      },
+      "label": {
+        "field": "name",
+        "size": 14,
+        "color": "#000000"
+      }
+    }
+  ]
+}

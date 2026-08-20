@@ -1,0 +1,43 @@
+{
+  "version": "1.0",
+  "view": {
+    "center": [0, 0],
+    "zoom": 2
+  },
+  "sources": {
+    "roads": {
+      "type": "geojson",
+      "inlineData": {
+        "type": "FeatureCollection",
+        "features": [
+          {
+            "type": "Feature",
+            "geometry": { "type": "LineString", "coordinates": [[-60, 5], [-40, 5]] },
+            "properties": { "highway": "primary" }
+          },
+          {
+            "type": "Feature",
+            "geometry": { "type": "LineString", "coordinates": [[40, -5], [60, -5]] },
+            "properties": { "highway": "residential" }
+          }
+        ]
+      }
+    }
+  },
+  "layers": [
+    {
+      "id": "roads",
+      "source": "roads",
+      "type": "line",
+      "paint": {
+        "color": {
+          "method": "match",
+          "field": "highway",
+          "cases": [["primary", "#d73027"], ["residential", "#4575b4"]],
+          "default": "#cccccc"
+        },
+        "width": 8
+      }
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "expect": "pass",
+  "probes": [
+    { "type": "layer-exists", "layer": "hot" },
+    { "type": "pixel-color", "layer": "hot", "at": [0, 0], "expect": "#eb2828" }
+  ]
+}
