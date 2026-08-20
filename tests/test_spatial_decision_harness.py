@@ -215,3 +215,26 @@ async def test_benchmark_scenario_10_decision_report_generation():
     assert "关键指标推演与不确定性区间" in report_md
     assert "证据链条 (Evidence Audit Chain)" in report_md
     assert result.decision_id in report_md
+
+
+@pytest.mark.asyncio
+async def test_rag_grounding_falls_back_fast_when_embedding_backend_unavailable():
+    """#660 回归：embedding 后端不可用必须快速降级，而非卡死 worker 线程。
+
+    retrieve_evidence_from_rag 对 search 套了 wait_for(2s)，但 asyncio.to_thread
+    的 worker 线程取消不掉 —— 若 embed 在线程里无限挂起（真实 HF 模型下载正是
+    如此，无超时的 TLS 握手），回退虽按时返回，loop 关停却会卡在
+    shutdown_default_executor，teardown 挂死整个套件。本测试故意不 stub
+    embed（套件级 offline guard 使其立刻 raise），锁定降级路径在时限内返回
+    空证据、线程正常结束。
+    """
+    import time
+
+    from app.services.spatial_decision.rule_pack import retrieve_evidence_from_rag
+
+    start = time.monotonic()
+    evidence = await retrieve_evidence_from_rag("新建地铁十号线站点周边住宅溢价评估")
+    elapsed = time.monotonic() - start
+
+    assert evidence == []
+    assert elapsed < 2.0

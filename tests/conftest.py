@@ -32,3 +32,26 @@ def _pin_auth_bypass_off(monkeypatch):
     monkeypatch.setattr(settings, "AUTH_DISABLED", False, raising=False)
     # 真实 LOCAL_GEODATA_DIR 会让远程 OSM/高德工具先走本地 GPKG，打穿 mock。
     monkeypatch.setattr(settings, "LOCAL_QUERY_FIRST", False, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _offline_embedding_model(monkeypatch):
+    """测试套件禁止惰性加载真实 SentenceTransformer 模型（#660）。
+
+    FaissVectorStore._get_embedding_model 首次调用会从 HuggingFace 下载模型；
+    网络不可达时该同步请求卡在 TLS 握手且无超时。它跑在 asyncio.to_thread
+    的 worker 线程里，wait_for 取消不了线程 —— RAG 降级路径照常返回，但事件
+    循环关停时 shutdown_default_executor(wait=True) 等不到卡死的 worker，
+    pytest-timeout 在 teardown 打断整个套件（无汇总、全量中止）。这里让真模型
+    加载快速失败：需要 embeddings 的测试按既有惯例 stub embed_texts
+    （test_rag_durability.patch_embed 等），其余路径走文档化的 RAG 降级。
+    """
+    from app.services.rag.faiss_store import FaissVectorStore
+
+    def fail_fast(self):
+        raise RuntimeError(
+            "test suite must not load the real SentenceTransformer model "
+            "(unbounded network); stub FaissVectorStore.embed_texts instead"
+        )
+
+    monkeypatch.setattr(FaissVectorStore, "_get_embedding_model", fail_fast)
