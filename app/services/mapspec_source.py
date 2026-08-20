@@ -18,6 +18,12 @@ _IMAGE_SIZE = "imageSize"
 
 DATAFABRIC_SOURCE_TYPES = {"data_fabric", "wms", "wmts", "pmtiles"}
 
+# #687：inline 载体规模门（fail-loud）。超过该特征数的内联 GeoJSON 会把
+# 每次变更的提交面放大到 O(payload)×多次序列化/写盘；大结果集本就该走
+# ref: 引用（工具链的大结果已由 dispatch 自动 Ref 化）。拒绝而非静默转换
+# ——静默转换需要会话上下文，且掩盖调用方未走 ref 的事实。
+INLINE_FEATURE_LIMIT = 5000
+
 
 def store_data(entry: Dict[str, Any], data: Any) -> None:
     """Classify `data` and write it into the source entry in place."""
@@ -57,6 +63,15 @@ def store_data(entry: Dict[str, Any], data: Any) -> None:
         else:
             # An ordinary object is a GeoJSON/inline carrier. Explicit source
             # replacement must not retain a prior raster/vector discriminator.
+            feats = data.get("features") if isinstance(data, dict) else None
+            if isinstance(feats, list) and len(feats) > INLINE_FEATURE_LIMIT:
+                raise ValueError(
+                    f"inline GeoJSON carrier has {len(feats)} features "
+                    f"(> {INLINE_FEATURE_LIMIT}) — store the dataset as a "
+                    "ref: source instead. Large tool results are auto-refed "
+                    "by dispatch; hand-built specs must not inline payloads "
+                    "this large (commit-surface cost, #687)."
+                )
             entry["type"] = "geojson"
             entry[_INLINE] = data
     elif isinstance(data, str):

@@ -11,6 +11,7 @@
   失败绝不写 Redis，避免 cache 持有磁盘没有的 state。
 """
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -85,8 +86,62 @@ def _read_json_sync(path: Path) -> Optional[Any]:
         return None
 
 
+def _atomic_write_text_sync(path: Path, data: str) -> None:
+    """同步原子写已序列化文本（#687：sidecar 等小目标用）。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(data)
+        os.replace(tmp_name, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+def _read_text_sync(path: Path) -> Optional[str]:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        logger.warning(f"[mapspec] read failed for {path}: {e}")
+        return None
+
+
+def _fingerprint_sync(mapspec: Dict[str, Any]) -> str:
+    """#687：spec 的 canonical-JSON SHA256 指纹（提交面 no-op 快比较用）。
+
+    单次 O(spec bytes)；调用方必须在线程内执行（大 spec 的 dumps 在
+    事件循环上即为本票要消灭的停顿源）。
+    """
+    payload = json.dumps(mapspec, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+# #687：no-op 快比较的磁盘 sidecar（内容为 _fingerprint_sync 的输出）。
+_FP_SIDECAR_NAME = "mapspec.json.fp"
+
+
 class MapSpecStore:
     """MapSpec JSON 文件持久化与 Revision 管理服务"""
+
+    def __init__(self) -> None:
+        # #687：session → 最近一次成功落盘（disk+redis 均已写）的 spec 指纹。
+        # 命中即 no-op 短路，O(1)；进程重启后经 sidecar 文件 + Redis 定向
+        # 字段恢复同等语义（两者均为 O(1) 读）。
+        self._persisted_fp: Dict[str, str] = {}
+        # 对象同一性快路径：CoW 架构下重复保存同一 spec 常复用同一对象
+        # （lifecycle 持引用不变时）。`is` 比较 O(1)；等值不同对象才走
+        # 指纹路径（指纹计算虽在线程，但 json.dumps 不释放 GIL，大 spec
+        # 仍会造成循环停顿——同一性短路消除了这个最常见的重复保存场景）。
+        self._persisted_obj: Dict[str, Dict[str, Any]] = {}
 
     def _session_dir_path(self, session_id: str) -> Path:
         """会话目录路径（只算路径，不创建目录）。"""
@@ -157,19 +212,33 @@ class MapSpecStore:
         rev_dir = session_dir / "revisions"
         mapspec_path = session_dir / "mapspec.json"
 
-        # No-op 保护（Phase 8）：若磁盘与 Redis 均已持有相同 spec，跳过全部
-        # 三重写入。重复/幂等保存（如快速连续相同意图）因此不产生 IO。
-        # 磁盘读卸载到线程。
-        disk_current = await asyncio.to_thread(_read_json_sync, mapspec_path)
-        if disk_current == mapspec:
-            state = await session_data_manager.get_map_state(session_id)
-            if state.get("mapspec") == mapspec:
-                return {"mapspec": mapspec}
+        # No-op 保护（#687 重构）：对象同一性 + 指纹快比较替代「全量读盘 +
+        # 双深比较」。旧路径把两次 O(spec bytes) 的全树 == 比较跑在事件循环
+        # 上，并对 Redis 走 get_map_state 全字段冷解析——12MB spec 的幂等保
+        # 存即百毫秒级循环停顿。现在：同一对象 O(1) 短路；等值不同对象经指
+        # 纹（线程内单次 O(bytes)）；冷启动/跨进程经 sidecar 文件 + Redis
+        # 定向字段（均 O(1) 读）恢复语义。
+        if mapspec is self._persisted_obj.get(session_id):
+            return {"mapspec": mapspec}
+        fp = await asyncio.to_thread(_fingerprint_sync, mapspec)
+        if self._persisted_fp.get(session_id) == fp:
+            return {"mapspec": mapspec}
+        sidecar_fp = await asyncio.to_thread(
+            _read_text_sync, mapspec_path.parent / _FP_SIDECAR_NAME
+        )
+        # 鸭子类型守卫：内存后端/测试替身可能未实现定向指纹接口——视为
+        # miss（退回全量落盘），不因缺方法而崩。
+        _get_fp = getattr(session_data_manager, "get_map_spec_fingerprint", None)
+        redis_fp = await _get_fp(session_id) if _get_fp is not None else None
+        if sidecar_fp == fp and redis_fp == fp:
+            self._persisted_fp[session_id] = fp
+            self._persisted_obj[session_id] = mapspec
+            return {"mapspec": mapspec}
 
-        # 原子落盘（mapspec.json + revision 快照 + 裁剪）整体卸载到线程，
-        # 避免大 GeoJSON 的 json.dump 阻塞 event loop。
+        # 原子落盘（mapspec.json + revision 快照 + 指纹 sidecar + 裁剪）
+        # 整体卸载到线程。
         await asyncio.to_thread(
-            self._persist_disk_sync, mapspec_path, rev_dir, mapspec
+            self._persist_disk_sync, mapspec_path, rev_dir, mapspec, fp
         )
 
         # 落盘成功后再写 Redis cache（顺序契约：cache 不持有磁盘没有的 state）。
@@ -178,18 +247,34 @@ class MapSpecStore:
         )
         if persisted is False:
             raise RuntimeError("authoritative MapSpec cache write rejected")
+        _set_fp = getattr(session_data_manager, "set_map_spec_fingerprint", None)
+        if _set_fp is not None:
+            await _set_fp(session_id, fp)
+        self._persisted_fp[session_id] = fp
+        self._persisted_obj[session_id] = mapspec
         return {"mapspec": mapspec}
 
     @staticmethod
     def _persist_disk_sync(
-        mapspec_path: Path, rev_dir: Path, mapspec: Dict[str, Any]
+        mapspec_path: Path,
+        rev_dir: Path,
+        mapspec: Dict[str, Any],
+        fingerprint: Optional[str] = None,
     ) -> None:
-        """同步：原子写 mapspec.json + 写 revision + 裁剪旧 revision。"""
+        """同步：原子写 mapspec.json + 写 revision + 裁剪旧 revision。
+
+        #687：走 _atomic_write_json_sync（perf 基准以其为写放大探针，契约
+        稳定优先）；fingerprint 非空时顺手落 no-op sidecar（文本写）。
+        """
         _atomic_write_json_sync(mapspec_path, mapspec)
 
         rev_dir.mkdir(parents=True, exist_ok=True)
         rev_filename = f"mapspec_rev_{int(time.time() * 1000)}.json"
         _atomic_write_json_sync(rev_dir / rev_filename, mapspec)
+        if fingerprint:
+            _atomic_write_text_sync(
+                mapspec_path.parent / _FP_SIDECAR_NAME, fingerprint + "\n"
+            )
 
         # Revision 保留上限：裁剪到最近 MAPSPEC_REV_RETENTION 份
         # （按文件名时间戳排序，删除最旧）。
@@ -248,6 +333,19 @@ def _session_storage_entries(base: Path):
         if name.startswith(".") or not valid.match(name):
             continue
         yield Path(entry.path)
+
+
+def _expired_session_dirs_sync(base: Path, cutoff: float) -> list:
+    """同步（#687 线程内）：返回 newest_mtime ≤ cutoff 的会话目录名列表。"""
+    out: list = []
+    for session_dir in _session_storage_entries(base):
+        try:
+            if _newest_mtime(session_dir) > cutoff:
+                continue
+            out.append(session_dir.name)
+        except OSError as e:
+            logger.warning("[mapspec] session scan failed for %s: %s", session_dir, e)
+    return out
 
 
 def _newest_mtime(session_dir: Path) -> float:
@@ -310,16 +408,20 @@ async def sweep_expired_session_files(
     cutoff = time.time() - max_age_seconds
     purged: list[str] = []
     base = BASE_STORAGE_DIR.resolve()
-    for session_dir in _session_storage_entries(base):
+    # #687：walk/stat 扫描整块卸载到线程（本机 .webgis-agent/ 有数千会话目录，
+    # 旧实现把数万次 os.stat 直接跑在事件循环上，每 600s 冻结一次全进程；
+    # 同模块其余磁盘操作均已 to_thread，此处是唯一遗漏）。
+    expired_candidates = await asyncio.to_thread(
+        _expired_session_dirs_sync, base, cutoff
+    )
+    for session_name in expired_candidates:
         try:
-            if _newest_mtime(session_dir) > cutoff:
+            if await _is_live(session_name):
                 continue
-            if await _is_live(session_dir.name):
-                continue
-            await purge_session_disk_state(session_dir.name)
-            purged.append(session_dir.name)
+            await purge_session_disk_state(session_name)
+            purged.append(session_name)
         except Exception as e:  # noqa: BLE001
-            logger.warning("[mapspec] session sweep failed for %s: %s", session_dir, e)
+            logger.warning("[mapspec] session sweep failed for %s: %s", session_name, e)
     if purged:
         logger.info("[mapspec] swept %d expired session dir(s): %s", len(purged), purged)
     return purged

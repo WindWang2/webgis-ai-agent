@@ -17,6 +17,7 @@ import asyncio
 import hashlib
 import json
 import re
+import shutil
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -68,6 +69,67 @@ def _content_hash(mapspec: Dict[str, Any], ref_blob_map: Dict[str, str]) -> str:
 
 def _blob_filename(content_hash: str) -> str:
     return f"{content_hash}.json"
+
+
+# #687：自动 checkpoint（ckpt_<ms>）保留上限。显式命名 checkpoint 不受此限
+#（调用方按名 rollback）。镜像 store.MAPSPEC_REV_RETENTION 的裁剪模式。
+MAPSPEC_CKPT_RETENTION = 20
+
+_AUTO_CKPT_RE = re.compile(r"^ckpt_\d+$")
+
+
+def _prune_and_write_manifest_sync(session_dir: Path, manifest: Dict[str, Any]) -> None:
+    """同步（#687 线程内）：清痕 → 原子写 manifest → 裁剪目录。
+
+    顺序即安全性（评审修正）：先把将被裁掉的目录从 manifest 条目中移除并
+    落盘，再 rmtree —— rmtree 失败时清单已不含被裁条目（安全）；manifest
+    写失败时目录仍在且清单仍指向它们（安全）。反序会在 manifest 写失败
+    时留下指向空洞的清单。
+    """
+    pruned_names = _select_prune_targets(session_dir)
+    if pruned_names:
+        entries = manifest.get("entries", {})
+        manifest["entries"] = {
+            h: cid for h, cid in entries.items() if cid not in pruned_names
+        }
+    _atomic_write_json_sync(_manifest_path(session_dir), manifest)
+    if pruned_names:
+        _rmtree_prune_targets(session_dir, pruned_names)
+
+
+def _select_prune_targets(session_dir: Path) -> set:
+    """同步：按保留上限选出将被裁剪的自动 checkpoint 目录名集合。"""
+    root = _checkpoints_root(session_dir)
+    if not root.exists():
+        return set()
+    auto_dirs = sorted(
+        d for d in root.iterdir() if d.is_dir() and _AUTO_CKPT_RE.match(d.name)
+    )
+    if len(auto_dirs) <= MAPSPEC_CKPT_RETENTION:
+        return set()
+    return {d.name for d in auto_dirs[: len(auto_dirs) - MAPSPEC_CKPT_RETENTION]}
+
+
+def _rmtree_prune_targets(session_dir: Path, names: set) -> None:
+    root = _checkpoints_root(session_dir)
+    for name in names:
+        shutil.rmtree(root / name, ignore_errors=True)
+
+
+def _prune_auto_checkpoints_sync(session_dir: Path, manifest: Dict[str, Any]) -> None:
+    """同步（#687 线程内）：裁剪目录 + 就地更新 manifest 视图（不写盘）。
+
+    独立调用入口（测试/维护用）；snapshot 路径走 _prune_and_write_manifest_sync
+    的安全顺序。只动 ckpt_<ms> 形态的目录。
+    """
+    pruned_names = _select_prune_targets(session_dir)
+    if not pruned_names:
+        return
+    _rmtree_prune_targets(session_dir, pruned_names)
+    entries = manifest.get("entries", {})
+    manifest["entries"] = {
+        h: cid for h, cid in entries.items() if cid not in pruned_names
+    }
 
 
 def _checkpoints_root(session_dir: Path) -> Path:
@@ -268,9 +330,13 @@ async def snapshot(
 
     await asyncio.to_thread(_write_checkpoint_sync)
 
-    # 5. 更新 manifest（content_hash -> checkpoint_id），原子写。
+    # 5. 更新 manifest（content_hash -> checkpoint_id），原子写；
+    #    顺带裁剪自动 checkpoint 保留量（#687：无上限时每次 layer 变更
+    #    新增一个目录直至会话清扫，磁盘无界增长）。
     manifest["entries"][content_h] = ckpt_id
-    await asyncio.to_thread(_atomic_write_json_sync, _manifest_path(session_dir), manifest)
+    await asyncio.to_thread(
+        _prune_and_write_manifest_sync, session_dir, manifest
+    )
 
     return {
         "success": True,
