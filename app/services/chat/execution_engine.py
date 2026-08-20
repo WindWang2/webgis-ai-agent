@@ -154,6 +154,28 @@ async def _stream_with_token_keepalive(
             pass
 
 
+class HonestTurnFailure(RuntimeError):
+    """#685: 非流式诚实失败的语义异常（外层 chat() 按类型 settle failure_class）。
+
+    仓内先例：SessionClearingError/PiRpcError —— 不用异常文本匹配做分类，
+    改文案不会脱靶。
+    """
+
+    failure_class = "turn_failure"
+
+
+class EmptyCompletionError(HonestTurnFailure):
+    failure_class = "empty_result"
+
+
+class MaxRoundsExhaustedError(HonestTurnFailure):
+    failure_class = "max_rounds"
+
+
+class NoProgressError(HonestTurnFailure):
+    failure_class = "no_progress"
+
+
 def _settle_cancel() -> None:
     """Mark the live turn's outcome CANCELLED on a cooperative cancel.
 
@@ -1040,12 +1062,8 @@ class ChatExecutionEngine:
                     # empty / max_rounds / no_progress 均由 _chat_locked 已 fail_task，
                     # 这里用异常文本做 failure_class 分类；未分类的仍用异常名兜底
                     _msg = str(exc)
-                    if "empty completion" in _msg:
-                        rt_ev.settle(Outcome.FAILED, failure_class="empty_result", detail=_msg[:200])
-                    elif "达到最大工具调用轮数" in _msg or "max_round" in _msg.lower():
-                        rt_ev.settle(Outcome.FAILED, failure_class="max_rounds", detail=_msg[:200])
-                    elif "no progress" in _msg.lower():
-                        rt_ev.settle(Outcome.FAILED, failure_class="no_progress", detail=_msg[:200])
+                    if isinstance(exc, HonestTurnFailure):
+                        rt_ev.settle(Outcome.FAILED, failure_class=exc.failure_class, detail=_msg[:200])
                     else:
                         rt_ev.settle(Outcome.FAILED, failure_class=type(exc).__name__, detail=_msg[:200])
                     raise
@@ -1308,7 +1326,14 @@ class ChatExecutionEngine:
                             self.tracker.fail_task(task.id, "no progress: repeated/failed tool results")
                             # 让外层 chat() 感知失败（通过异常），外层会在 except 中
                             # settle FAILED，这里先在 _chat_locked 内抛错
-                            raise RuntimeError(f"no progress after {_no_progress_streak} rounds (deduped repeated/error)")
+                            _dedup_n = 0
+                            _ev_np = current_turn_evidence()
+                            if _ev_np is not None:
+                                _dedup_n = int(getattr(_ev_np, "deduped_tool_calls", 0) or 0)
+                            raise NoProgressError(
+                                f"no progress after {_no_progress_streak} rounds "
+                                f"({_dedup_n} deduped repeated tool calls)"
+                            )
                     continue
                 else:
                     content = raw_content
@@ -1318,7 +1343,7 @@ class ChatExecutionEngine:
                     # settle Outcome.FAILED（failure_class=empty_result）。
                     if not (content or "").strip() and not tc_list:
                         self.tracker.fail_task(task.id, "empty completion from provider")
-                        raise RuntimeError("empty completion from provider")
+                        raise EmptyCompletionError("empty completion from provider")
 
                     entry = {"role": "assistant", "content": content}
                     if reasoning:
@@ -1329,7 +1354,7 @@ class ChatExecutionEngine:
                     return {"session_id": session_id, "content": content, "reasoning": reasoning, **({"owner_token": owner_token} if owner_token else {})}
 
             self.tracker.fail_task(task.id, "达到最大工具调用轮数")
-            raise RuntimeError("达到最大工具调用轮数")
+            raise MaxRoundsExhaustedError("达到最大工具调用轮数")
         except (asyncio.CancelledError, GeneratorExit):
             # F8: 取消必须呈现为 cancelled 终态，而不是 failed。
             self.tracker.cancel(task.id)
@@ -2026,8 +2051,11 @@ class ChatExecutionEngine:
                                 _raw = _st.result
                                 if isinstance(_raw, dict) and _raw.get("note") == "Loop blocked":
                                     continue
-                                # 可疑结果（空/失败形态）也不算进展（与非流式同形）
+                                # 可疑结果（空/失败形态）也不算进展——与非流式
+                                # 同一谓词（is_suspicious_result 含空要素形态）
                                 if isinstance(_raw, dict) and _raw.get("success") is False:
+                                    continue
+                                if _is_suspicious_result_fn(_raw):
                                     continue
                                 _stream_has_progress = True
                                 break

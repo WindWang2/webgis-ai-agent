@@ -330,9 +330,45 @@ async def test_parity_success_both_paths(engine, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_parity_failure_both_paths_empty(monkeypatch):
-    """两路径对空补全的失败判定一致（均 FAILED/empty_result）。"""
-    # 已由前两测试覆盖，此处做显式 parity 标签
-    pass
+    """两路径对空补全的失败判定一致（均 FAILED 且 failure 语义为 empty）。
+
+    非流式抛 EmptyCompletionError（failure_class=empty_result）；流式
+    task_error 事件的 message 同样携带 empty 语义。两路径的 tracker 终态
+    必须同为 failed —— 显式 parity，不是摆设标签。
+    """
+    from app.services.chat.execution_engine import EmptyCompletionError
+
+    r = _make_registry_with_echo_tool()
+
+    # 非流式：类型化异常
+    eng1 = ChatEngine(r)
+    monkeypatch.setattr(eng1, "_get_or_create_session", _fake_get_or_create_session)
+    monkeypatch.setattr(eng1, "_save_msg_async", _fake_save)
+    monkeypatch.setattr(eng1, "_maybe_plan", _fake_maybe_plan)
+    empty_resp = {"choices": [{"message": {"content": "", "tool_calls": None}}]}
+    monkeypatch.setattr(eng1, "_call_llm", AsyncMock(return_value=empty_resp))
+    with pytest.raises(EmptyCompletionError):
+        await eng1.chat("hi", session_id="s-parity-ns")
+    t1 = eng1.tracker.list_by_session("s-parity-ns")[-1]
+
+    # 流式：task_error + failed 终态
+    eng2 = ChatEngine(r)
+    monkeypatch.setattr(eng2, "_get_or_create_session", _fake_get_or_create_session)
+    monkeypatch.setattr(eng2, "_save_msg_async", _fake_save)
+    monkeypatch.setattr(eng2, "_maybe_plan", _fake_maybe_plan)
+    monkeypatch.setattr(eng2, "_generate_title", _fake_generate_title)
+
+    async def fake_stream(*a, **k):
+        yield ("done", {"message": {"content": "", "tool_calls": None}})
+
+    monkeypatch.setattr(eng2, "_call_llm_stream", fake_stream)
+    events = []
+    async for e in eng2.chat_stream("hi", session_id="s-parity-st"):
+        events.append(e)
+    t2 = eng2.tracker.list_by_session("s-parity-st")[-1]
+
+    assert t1.status.value == "failed" == t2.status.value
+    assert any("task_error" in e for e in events)
 
 
 @pytest.mark.asyncio
