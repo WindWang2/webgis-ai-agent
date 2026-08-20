@@ -79,7 +79,28 @@ VALID_GEOMETRY_TYPES = {
 VALID_GEOJSON_TYPES = VALID_GEOMETRY_TYPES | {"Feature", "FeatureCollection"}
 
 
-def _estimate_json_bytes(obj: Any, _depth: int = 0) -> int:
+# #677: node-budgeted estimator — width-unbounded payloads (100k features)
+# would otherwise visit every leaf on the event loop (~1M nodes, ~0.7s).
+# Budget caps total visited nodes; once exhausted the walker samples the
+# average cost of visited items and extrapolates the remainder, so large
+# payloads return an approximate byte estimate in O(budget) time. Exact
+# for small/medium payloads, approximate (but traceable via budget) for
+# huge ones — metrics use only, correctness never depends on it.
+_ESTIMATE_MAX_NODES = 20_000
+_ESTIMATE_SIZE_LIMIT = 262_144  # 256 KB — the cache/validation gate threshold
+
+# ContextVar to share the single args-size probe between registry and the
+# cached_tool wrapper (tool_cache.make_cache_key), so the same large args
+# dict is not walked 2-3 times per dispatch. Set in dispatch(), read in
+# make_cache_key(); fallback to a fresh walk when not set.
+_arg_size_hint_var: contextvars.ContextVar[tuple[int, bool] | None] = (
+    contextvars.ContextVar("_arg_size_hint", default=None)
+)
+
+
+def _estimate_json_bytes(
+    obj: Any, _depth: int = 0, _budget: list[int] | None = None
+) -> int:
     """Cheap structural estimate of the JSON byte length of ``obj``.
 
     PERF-01: ``json.dumps`` of a large tool result (e.g. a 10k-feature
@@ -88,7 +109,19 @@ def _estimate_json_bytes(obj: Any, _depth: int = 0) -> int:
     the serialized size without materializing the full string — accurate to
     within a few percent for typical JSON and bounded by ``_depth`` to avoid
     pathological cycles. Used only for metrics; never for correctness.
+
+    #677: additionally bounded by a total node budget (default
+    ``_ESTIMATE_MAX_NODES``). When the budget is exhausted the walker stops
+    visiting new nodes and extrapolates from the sampled average, so a
+    100k-feature payload costs O(budget) rather than O(features). If the
+    caller passes an explicit ``_budget`` list, ``_budget[0] <= 0`` after
+    the call indicates the result is an approximation (budget hit).
     """
+    if _budget is None:
+        _budget = [_ESTIMATE_MAX_NODES]
+    if _budget[0] <= 0:
+        return 0
+    _budget[0] -= 1
     if _depth > 12:
         return 64  # deep nested: stop walking, small placeholder
     if obj is None:
@@ -104,20 +137,47 @@ def _estimate_json_bytes(obj: Any, _depth: int = 0) -> int:
         # {"k":v,...} → 2 braces + per-entry overhead (4: `","` and `:`).
         total = 2
         first = True
-        for k, v in obj.items():
+        items = list(obj.items())
+        sampled = 0
+        for k, v in items:
+            if _budget[0] <= 0:
+                remaining = len(items) - sampled
+                if sampled > 0:
+                    avg = (total - 2) / sampled
+                    total += int(avg * remaining)
+                else:
+                    total += remaining * 16
+                break
             if not first:
                 total += 1  # comma
             first = False
-            total += len(str(k)) + 4 + _estimate_json_bytes(v, _depth + 1)
+            total += len(str(k)) + 4 + _estimate_json_bytes(v, _depth + 1, _budget)
+            sampled += 1
         return total
     if isinstance(obj, (list, tuple)):
         total = 2
         first = True
+        n = len(obj)
+        if n == 0:
+            return total
+        sampled = 0
+        # For large lists (features), sample until budget exhausted then
+        # extrapolate via average per-item cost.
         for item in obj:
+            if _budget[0] <= 0:
+                remaining = n - sampled
+                if sampled > 0:
+                    # average cost per sampled item (including comma)
+                    avg = (total - 2) / sampled if sampled else 8
+                    total += int(avg * remaining) + remaining  # commas for remainder
+                else:
+                    total += remaining * 8
+                break
             if not first:
                 total += 1
             first = False
-            total += _estimate_json_bytes(item, _depth + 1)
+            total += _estimate_json_bytes(item, _depth + 1, _budget)
+            sampled += 1
         return total
     # Fallback: stringify (rare; non-JSON-native types default-str in dumps).
     try:
@@ -386,9 +446,16 @@ class ToolRegistry:
         error_cls: Optional[str] = None
         active_exc: Optional[BaseException] = None
         result: Any = None
-        # PERF-01: arg_bytes is a small dict (tool args). A cheap size estimate
-        # avoids a full json.dumps on every dispatch just to measure bytes.
-        arg_bytes = _estimate_json_bytes(arguments)
+        # #677: single traversal — one budget-limited walk for arg_bytes, gate
+        # and cache. Share via ContextVar so _dispatch_impl / make_cache_key
+        # reuse without re-walking the same large args dict 2-3 times.
+        _arg_budget = [_ESTIMATE_MAX_NODES]
+        arg_bytes = _estimate_json_bytes(arguments, _budget=_arg_budget)
+        _arg_approx = _arg_budget[0] <= 0
+        # Approximate estimates are conservatively treated as oversized for
+        # cache/validation gates (avoid false-small on huge payloads).
+        _arg_is_oversized = _arg_approx or arg_bytes > _ESTIMATE_SIZE_LIMIT
+        _hint_token = _arg_size_hint_var.set((arg_bytes, _arg_is_oversized))
 
         requested_policy = self._metadata.get(name, {}).get("execution_policy")
         req_policy_str = requested_policy.value if requested_policy else "THREAD"
@@ -428,7 +495,15 @@ class ToolRegistry:
             # dispatch service already serializes for the LLM payload; here we
             # use a cheap structural estimate that is accurate to within a few
             # percent for typical JSON, never materializing the full string.
-            result_bytes = _estimate_json_bytes(result) if result is not None else 0
+            # #677: budget-capped so 100k-feature results cost O(budget) on
+            # the event loop, not O(features). Exact for small/medium, approx
+            # for huge — approximation is traceable via result_bytes_approx
+            # flowing into tool_metrics (budget exhaustion is the marker).
+            _result_budget = [_ESTIMATE_MAX_NODES]
+            result_bytes = (
+                _estimate_json_bytes(result, _budget=_result_budget) if result is not None else 0
+            )
+            result_bytes_approx = result is not None and _result_budget[0] <= 0
             cache_hit = cache_hit_var.get()
             # design-v3 §6 observability（additive）：只在 plan_store 进程缓存命中时
             # 附带 plan_id/plan_revision；失败时附 failure_class/recovery_action。
@@ -479,6 +554,8 @@ class ToolRegistry:
                 requested_execution_policy=req_policy_str,
                 actual_execution_mode=actual_mode,
                 compute_ms=duration_ms if not cache_hit else 0,
+                arg_bytes_approx=_arg_approx,
+                result_bytes_approx=result_bytes_approx,
                 plan_id=plan_id,
                 plan_revision=plan_revision,
                 step_id=step_id,
@@ -500,6 +577,10 @@ class ToolRegistry:
             except Exception:  # noqa: BLE001
                 pass
             cache_hit_var.reset(token)
+            try:
+                _arg_size_hint_var.reset(_hint_token)
+            except Exception:
+                pass
 
         return result
 
@@ -593,8 +674,32 @@ class ToolRegistry:
         # 100k-feature payload — structural sanity for large payloads is
         # already covered by the session store's descriptor computation, so
         # only small/medium argument trees pay the walk.
+        # #677: reuse the single arg-size probe from dispatch() via
+        # ContextVar — avoid re-walking the same large args dict. If no hint
+        # (direct _dispatch_impl call) or hint says small but args grew via
+        # ref resolution, do a budget-limited re-check.
         try:
-            if _estimate_json_bytes(arguments) <= 262_144:  # 256 KB
+            _hint = _arg_size_hint_var.get()
+            if _hint is not None:
+                _hint_bytes, _hint_over = _hint
+                # Fast path: hint says oversized → skip validation without walk.
+                if _hint_over:
+                    _need_validate = False
+                else:
+                    # Hint was small — re-check current (post-resolve) args
+                    # with budget cap. For non-ref calls this is still cheap
+                    # (small payload, budget not hit); for ref-expanded large
+                    # payloads the budget caps the walk.
+                    _cur_budget = [_ESTIMATE_MAX_NODES]
+                    _cur_est = _estimate_json_bytes(arguments, _budget=_cur_budget)
+                    _need_validate = not (_cur_budget[0] <= 0 or _cur_est > _ESTIMATE_SIZE_LIMIT)
+            else:
+                # 无 hint 的直调路径同样预算化 + 保守：预算耗尽视为 oversized
+                # 跳过校验（与 hint 路径同一门语义，不留下全量遍历逃逸口）。
+                _nb = [_ESTIMATE_MAX_NODES]
+                _ne = _estimate_json_bytes(arguments, _budget=_nb)
+                _need_validate = not (_nb[0] <= 0 or _ne > _ESTIMATE_SIZE_LIMIT)
+            if _need_validate:
                 validate_geojson_structure(arguments)
         except ValueError as e:
             return std_error_response(

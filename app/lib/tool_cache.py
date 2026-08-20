@@ -39,28 +39,64 @@ def make_cache_key(tool_name: str, args: dict) -> Optional[str]:
     args 内任一叶子值是 'ref:' 开头的字符串时返回 None — 调用方据此跳过缓存。
     （ref:xxx 是会话内可变数据引用，同一引用不同时刻解析结果不同。）
     """
-    if _contains_ref(args):
-        return None
-    # PERF-F3: content-addressing a resolved 100k-feature payload cost ~0.8s
-    # of sha256+dumps per cached-tool call, and per-session data virtually
-    # never hits. Size-gate: oversized args bypass the cache entirely.
-    from app.tools.registry import _estimate_json_bytes
+    # #677: oversized gate before ref walk — a 100k-feature payload is
+    # unconditionally oversized, so we can short-circuit without walking
+    # the whole tree for refs (that walk was ~230ms unbounded). When
+    # inside dispatch(), the gate reuses the ContextVar hint (zero extra
+    # walk). Outside dispatch, fall back to a budget-limited estimate.
+    from app.tools.registry import _arg_size_hint_var, _estimate_json_bytes, _ESTIMATE_SIZE_LIMIT
 
-    if _estimate_json_bytes(args) > 262_144:  # 256 KB
+    hint = _arg_size_hint_var.get()
+    if hint is not None:
+        _, oversized = hint
+        if oversized:
+            return None
+    else:
+        if _estimate_json_bytes(args) > _ESTIMATE_SIZE_LIMIT:
+            return None
+    # ref 检查是正确性门（不是 metrics）：预算内证毕无 ref 才允许缓存。
+    # 节点密集而字节数小的载荷（>20k 节点但 <256KB）会耗尽预算却未触发
+    # oversized 短路 — 证明不了"无 ref"就保守跳过缓存，与无界旧语义一致。
+    from app.tools.registry import _ESTIMATE_MAX_NODES
+    ref_budget = [_ESTIMATE_MAX_NODES]
+    if _contains_ref(args, ref_budget) or ref_budget[0] <= 0:
         return None
     canonical = json.dumps(args, sort_keys=True, separators=(",", ":"), default=str)
     digest = hashlib.sha256(f"{tool_name}::{canonical}".encode()).hexdigest()[:16]
     return f"tool_cache:v1:{digest}"
 
 
-def _contains_ref(value) -> bool:
-    """递归检查任一叶子是否是 'ref:' 开头的字符串。"""
+def _contains_ref(value, _budget: list[int] | None = None) -> bool:
+    """递归检查任一叶子是否是 'ref:' 开头的字符串。
+
+    #677: budgeted so 100k-feature payloads cost O(budget) not O(features).
+    预算耗尽时停在已采样前缀并返回 False；调用方通过共享的 _budget 判定
+    耗尽并跳过缓存 — _contains_ref 的结果只在前缀内是精确证明，绝不让
+    预算截断变成"未发现 ref"的结论（正确性不依赖预算，同 registry 估计器
+    的分工规矩）。
+    """
+    if _budget is None:
+        from app.tools.registry import _ESTIMATE_MAX_NODES
+        _budget = [_ESTIMATE_MAX_NODES]
+    if _budget[0] <= 0:
+        return False
+    _budget[0] -= 1
     if isinstance(value, str):
         return value.startswith("ref:")
     if isinstance(value, dict):
-        return any(_contains_ref(v) for v in value.values())
+        for v in value.values():
+            if _budget[0] <= 0:
+                return False
+            if _contains_ref(v, _budget):
+                return True
+        return False
     if isinstance(value, (list, tuple)):
-        return any(_contains_ref(v) for v in value)
+        for v in value:
+            if _budget[0] <= 0:
+                return False
+            if _contains_ref(v, _budget):
+                return True
+        return False
     return False
 
 

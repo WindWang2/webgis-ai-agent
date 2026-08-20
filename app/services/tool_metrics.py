@@ -205,6 +205,10 @@ def record_tool_call(
     actual_execution_mode: Optional[str] = None,
     compute_ms: Optional[int] = None,
     queue_wait_ms: Optional[int] = None,
+    # #677：字节估计是节点预算化的外推近似时置 True（预算耗尽即近似标志），
+    # 让"这个字节数是外推的"可从 JSONL 行追溯，而不是与精确值不可区分。
+    arg_bytes_approx: bool = False,
+    result_bytes_approx: bool = False,
     # design-v3 §6 observability（additive，无计划时为 None）：
     plan_id: Optional[str] = None,
     plan_revision: Optional[int] = None,
@@ -266,6 +270,8 @@ def record_tool_call(
         "actual_execution_mode": actual_execution_mode,
         "compute_ms": compute_ms,
         "queue_wait_ms": queue_wait_ms,
+        "arg_bytes_approx": arg_bytes_approx,
+        "result_bytes_approx": result_bytes_approx,
         "plan_id": plan_id,
         "plan_revision": plan_revision,
         "step_id": step_id,

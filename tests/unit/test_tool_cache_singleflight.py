@@ -196,3 +196,27 @@ async def test_cache_hit_path_unaffected(_mock_redis):
     assert await fast_tool(x=1) == {"r": 1}
     assert await fast_tool(x=1) == {"r": 1}  # hit
     assert calls == 1
+
+
+# ---- #677 review corner: node-dense but byte-small args ----
+
+def test_cache_key_none_when_ref_walk_budget_exhausted():
+    """节点密集而字节小的 args（>20k 节点但 <256KB）不触发 oversized 短路，
+    却会耗尽 _contains_ref 的节点预算 — 埋在预算之后的 ref: 叶子必须仍然
+    导致跳过缓存（证明不了"无 ref"就不缓存），不得产出错误缓存键。"""
+    from app.tools.registry import _ESTIMATE_MAX_NODES
+
+    # ~21k 个 {"a": 1} ≈ 168KB（< 256KB 门限），节点数 ≈ 43k > 预算 20k。
+    args = {"layers": [{"a": 1} for _ in range(_ESTIMATE_MAX_NODES + 1000)] + ["ref:session1/layer9"]}
+    assert make_cache_key("node_dense_tool", args) is None
+
+
+def test_cache_key_still_built_for_small_ref_free_args():
+    """对照组：小而无 ref 的 args 照常产出缓存键（预算门不误伤正常路径）。"""
+    key = make_cache_key("small_tool", {"geojson": {"type": "Point"}, "n": 1})
+    assert key is not None and key.startswith("tool_cache:v1:")
+
+
+def test_cache_key_none_for_shallow_ref_args():
+    """常规浅层 ref 语义保持：任一叶子是 ref: 开头即跳过缓存。"""
+    assert make_cache_key("shallow_ref_tool", {"source": "ref:abc", "n": 1}) is None
