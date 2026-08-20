@@ -659,22 +659,11 @@ class RedisSessionStore(BaseSessionStore):
                 # BUG-09: _started_at is stored as a bare ISO string (not
                 # JSON). F4: _<key>_updated_at timestamps are stored the same
                 # way. Use the tolerant decoder to also handle legacy values.
-                out[key] = RedisSessionStore._decode_started_at_static(v)
+                out[key] = RedisSessionStore._decode_started_at(v)
             else:
                 out[key] = json.loads(v)
         return out
 
-    @staticmethod
-    def _decode_started_at_static(v) -> Any:
-        """#687：tolerant 解码的静态形态（线程内解析用，语义同 _decode_started_at）。"""
-        raw = v.decode() if isinstance(v, bytes) else v
-        if not isinstance(raw, str):
-            return raw
-        try:
-            decoded = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            return raw
-        return decoded if isinstance(decoded, str) else raw
 
     async def get_map_spec_fingerprint(self, session_id: str) -> Optional[str]:
         """#687：定向读 mapspec 指纹字段（O(1)，不触发全字段冷解析/L1）。
