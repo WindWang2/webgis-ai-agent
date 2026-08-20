@@ -569,7 +569,10 @@ export function useSSEStream(
         // tool name — the SSE payload carries no call id). #608: stamp
         // completedAt (duration badge) and hasGeojson when the result mounts
         // a geojson_ref layer.
-        markToolCallStatus(String(data.tool ?? ''), 'completed', undefined, data.geojson_ref ? { hasGeojson: true } : undefined);
+        markToolCallStatus(String(data.tool ?? ''), 'completed', undefined, {
+          ...(data.geojson_ref ? { hasGeojson: true, layerId: String(data.geojson_ref) } : {}),
+          result: data.result,
+        });
         // Plan Mode：propose_plan 返回的 plan 摘要挂到当前消息，由 PlanProposalCard 渲染
         if (data.tool === 'propose_plan' && data.result?.success && data.result?.plan_id) {
           const plan: PlanProposalPayload = {

@@ -331,6 +331,8 @@ export interface ToolCallEntry {
   error?: string;
   startedAt?: number;
   completedAt?: number;
+  /** Bound map layer id derived from the step_result payload (geojson_ref). Empty when no layer was mounted. */
+  layerId?: string;
 }
 
 export type PlanProposalStatus = 'pending' | 'approved' | 'rejected' | 'revising';

@@ -17,6 +17,7 @@ export interface ToolCallEntry {
   error?: string;
   startedAt?: number;
   completedAt?: number;
+  layerId?: string;
 }
 
 function formatDuration(ms: number): string {
@@ -131,9 +132,15 @@ function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolea
   const isIsochrone = ISOCHRONE_TOOLS.has(call.tool);
 
   const focusLayer = useHudStore((s: { focusLayer: (id: string) => void }) => s.focusLayer);
+  const ownLayerId = (call as ToolCallEntry & { layerId?: string }).layerId ?? '';
   const layers = useHudStore((s: { layers: Array<{ id: string; legend_spec?: unknown }> }) => s.layers);
-  const latestCartoLayerId = isCarto ? (layers.find((l) => l.legend_spec)?.id ?? '') : '';
-  const latestActiveLayerId = layers[0]?.id ?? '';
+  // Prefer the per-call binding (step_result geojson_ref); fall back to legacy
+  // guessing only for stale history entries that predate the binding.
+  const fallbackCartoId = layers.find((l) => l.legend_spec)?.id ?? '';
+  const fallbackActiveId = layers[0]?.id ?? '';
+  const cartoLayerId = ownLayerId || fallbackCartoId;
+  const activeLayerId = ownLayerId || fallbackActiveId;
+  const hasOwnLayer = !!ownLayerId;
 
   const statusIcon =
     call.status === 'running' ? (
@@ -182,24 +189,24 @@ function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolea
       {isCarto && call.result && (
         <CartographyResultCard
           result={call.result}
-          layerId={latestCartoLayerId}
-          onFocus={(id) => id && focusLayer(id)}
+          layerId={cartoLayerId}
+          onFocus={hasOwnLayer ? (id) => id && focusLayer(id) : undefined}
         />
       )}
 
       {isLisa && call.result && (
         <H3LisaResultCard
           result={call.result}
-          layerId={latestActiveLayerId}
-          onFocus={(id) => id && focusLayer(id)}
+          layerId={activeLayerId}
+          onFocus={hasOwnLayer ? (id) => id && focusLayer(id) : undefined}
         />
       )}
 
       {isIsochrone && call.result && (
         <IsochroneResultCard
           result={call.result}
-          layerId={latestActiveLayerId}
-          onFocus={(id) => id && focusLayer(id)}
+          layerId={activeLayerId}
+          onFocus={hasOwnLayer ? (id) => id && focusLayer(id) : undefined}
         />
       )}
 
