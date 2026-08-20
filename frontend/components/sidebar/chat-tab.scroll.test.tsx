@@ -1,4 +1,4 @@
-import { render, act } from '@testing-library/react';
+import { act } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
 import { ChatTab } from './chat-tab';
 import { renderWithStore } from '@/test/test-utils';
