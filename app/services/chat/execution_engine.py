@@ -378,25 +378,44 @@ class ChatExecutionEngine:
         # straggler's result is discarded.
         self._cancel_wait_timeout = float(_os.getenv("CANCEL_WAIT_TIMEOUT", "5.0"))
 
-    def _select_tools(self, session_id: Optional[str], messages: list[dict]) -> Optional[list[dict]]:
-        """选出本轮要推给 LLM 的工具 schema 列表。"""
+    def _select_tools(
+        self,
+        session_id: Optional[str],
+        messages: list[dict],
+        turn_start_user_message: Optional[str] = None,
+        turn_id: Optional[str] = None,
+    ) -> Optional[list[dict]]:
+        """选出本轮要推给 LLM 的工具 schema 列表。
+
+        #684：关键词源固定为本 turn 原始用户消息（turn_start_user_message），
+        合成的"[工具执行结果]"载体消息绝不参与域检测；转向 ToolCatalog 时
+        传入 turn_id 实现按用户轮衰减（同一用户轮内多次 LLM 轮不重复衰减）。
+        """
         if self.catalog is not None:
-            user_text = ""
-            for m in reversed(messages):
-                if m.get("role") == "user":
-                    content = m.get("content")
-                    if isinstance(content, str):
-                        user_text = content
-                    elif isinstance(content, list):
-                        user_text = " ".join(
-                            seg.get("text", "") for seg in content if isinstance(seg, dict)
-                        )
-                    break
+            if turn_start_user_message is not None:
+                user_text = turn_start_user_message
+            else:
+                # 回退：取最后一条非合成的 user 消息（排除"[工具执行结果]"载体）
+                user_text = ""
+                for m in reversed(messages):
+                    if m.get("role") == "user":
+                        content = m.get("content")
+                        if isinstance(content, str):
+                            if content.startswith("[工具执行结果]"):
+                                continue
+                            user_text = content
+                        elif isinstance(content, list):
+                            user_text = " ".join(
+                                seg.get("text", "") for seg in content if isinstance(seg, dict)
+                            )
+                            if user_text.startswith("[工具执行结果]"):
+                                continue
+                        break
             from app.services.chat import planner
             plan = planner.get_plan(session_id) if session_id else None
             declared = set(plan.domains) if plan and plan.domains else None
             schemas = self.catalog.select_schemas(
-                user_text, session_id=session_id, declared_domains=declared,
+                user_text, session_id=session_id, declared_domains=declared, turn_id=turn_id,
             )
             return schemas or None
         all_schemas = self.registry.get_schemas()
@@ -1054,6 +1073,14 @@ class ChatExecutionEngine:
 
         task = self.tracker.create(session_id, message)
         owner_token = self.get_session_owner_token(session_id)
+        # #684：捕获本用户轮原始消息与 turn_id，用于按用户轮衰减与固定关键词源。
+        # _chat_locked 外层（turn 绑定处）通常已注入 turn_id；兜底自铸仅服务
+        # 于无环境上下文的调用方——本方法一次调用即一个用户轮。
+        turn_start_user_message: str = message
+        _rt = rt_ctx.current_runtime_context()
+        turn_id_for_catalog: str | None = (
+            _rt.turn_id if _rt and _rt.turn_id else rt_ctx.new_turn_id()
+        )
 
         try:
             for _ in range(self.max_rounds):
@@ -1062,7 +1089,12 @@ class ChatExecutionEngine:
                     return {"session_id": session_id, "content": "任务已取消", **({"owner_token": owner_token} if owner_token else {})}
 
                 # tools 先选（含 tools payload 软计入估算），再组装上下文
-                tools = self._select_tools(session_id, messages)
+                # #684：关键词源固定为本 turn 原始用户消息，turn_id 按用户轮衰减
+                tools = self._select_tools(
+                    session_id, messages,
+                    turn_start_user_message=turn_start_user_message,
+                    turn_id=turn_id_for_catalog,
+                )
                 _t_ctx = time.perf_counter()
                 messages_with_context = await self._compose_request_messages(
                     session_id, messages, project_id=project_id, user_id=user_id, tools=tools,
@@ -1451,10 +1483,19 @@ class ChatExecutionEngine:
                         return None
 
                 executed_tools = set()
+                # #684：捕获本用户轮原始消息与 turn_id，用于按用户轮衰减与固定关键词源
+                turn_start_user_message = message
+                _rt2 = rt_ctx.current_runtime_context()
+                turn_id_for_catalog = _rt2.turn_id if _rt2 and _rt2.turn_id else turn_id
 
                 for round_index in range(self.max_rounds):
                     # tools 先选（含 tools payload 软计入估算），再组装上下文
-                    tools = self._select_tools(session_id, messages)
+                    # #684：关键词源固定为本 turn 原始用户消息，turn_id 按用户轮衰减
+                    tools = self._select_tools(
+                        session_id, messages,
+                        turn_start_user_message=turn_start_user_message,
+                        turn_id=turn_id_for_catalog,
+                    )
                     _t_ctx = time.perf_counter()
                     messages_with_context = await self._compose_request_messages(
                         session_id, messages, project_id=project_id, user_id=user_id, tools=tools,
