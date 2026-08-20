@@ -61,10 +61,12 @@ function Field({ id, label, children }: { id: string; label: string; children: R
   );
 }
 
-export function AnalysisTab({ onSend }: AnalysisTabProps) {
+export function AnalysisTab({ onSend, aiStatus }: AnalysisTabProps & { aiStatus?: import('@/lib/store/hud-types').AiStatus }) {
   const uid = useId();
   const [activeTool, setActiveTool] = useState<ToolKey>('buffer');
   const layers = useHudStore((s) => s.layers);
+  const setActiveLeftTab = useHudStore((s) => s.setActiveLeftTab);
+  const isBusy = aiStatus === 'thinking' || aiStatus === 'acting';
 
   // Buffer state
   const [bufferLayer, setBufferLayer] = useState('');
@@ -84,12 +86,13 @@ export function AnalysisTab({ onSend }: AnalysisTabProps) {
   const activeDef = TOOLS.find((t) => t.key === activeTool)!;
 
   const bufferDist = parseFloat(bufferDistance);
-  const canSubmit =
+  const baseCanSubmit =
     activeTool === 'buffer'
       ? !!bufferLayer && !isNaN(bufferDist) && bufferDist > 0
       : activeTool === 'overlay'
         ? !!overlayLayerA && !!overlayLayerB
         : !!clipTarget && !!clipMask;
+  const canSubmit = baseCanSubmit && !isBusy;
 
   const handleSubmit = () => {
     if (!canSubmit) return;
@@ -102,7 +105,10 @@ export function AnalysisTab({ onSend }: AnalysisTabProps) {
     } else if (activeTool === 'clip') {
       prompt = `用图层 "${layerName(clipMask)}" 裁剪图层 "${layerName(clipTarget)}"`;
     }
-    if (prompt) onSend(prompt);
+    if (prompt) {
+      setActiveLeftTab('chat');
+      onSend(prompt);
+    }
   };
 
   return (
@@ -231,18 +237,24 @@ export function AnalysisTab({ onSend }: AnalysisTabProps) {
             boxShadow: '0 4px 12px color-mix(in srgb, var(--agent-accent) 15%, transparent)',
           }}
           disabled={!canSubmit}
+          aria-busy={isBusy || undefined}
           onClick={handleSubmit}
         >
-          {activeTool === 'buffer' && '生成缓冲区'}
-          {activeTool === 'overlay' && '生成叠加分析'}
-          {activeTool === 'clip' && '执行裁剪'}
+          {isBusy
+            ? 'AI 忙碌中…'
+            : activeTool === 'buffer'
+              ? '生成缓冲区'
+              : activeTool === 'overlay'
+                ? '生成叠加分析'
+                : '执行裁剪'}
         </button>
-        {!canSubmit && (
-          /* 提示是真实正文，--text-disabled 只该用于禁用/装饰 —— 用 ink-muted。 */
+        {isBusy ? (
+          <p className="mt-1.5 text-caption text-ink-muted">AI 正在处理上一条指令，完成后可再次提交。</p>
+        ) : !baseCanSubmit ? (
           <p className="mt-1.5 text-caption text-ink-muted">
             请选择所需图层{activeTool === 'buffer' ? '并输入有效距离' : ''}后执行
           </p>
-        )}
+        ) : null}
       </div>
     </div>
   );
