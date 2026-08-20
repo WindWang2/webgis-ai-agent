@@ -185,13 +185,14 @@ class CompositeMapSpecBuilder:
             self._viewport = ViewportSlot(**slot_or_data)
         return self
 
-    def assemble(self, combination_ids: dict, layer_id: str = "", field: str = "") -> Dict[str, Any]:
+    def assemble(self, combination_ids: dict, layer_id: str = "", field: str = "", geojson: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Assemble a complete MapSpec dict from orthogonal slot combinations.
 
         :param combination_ids: Dictionary mapping slot names to template IDs or slot parameters.
         :param layer_id: Target layer ID to apply symbology & thematic styles to.
         :param field: Optional thematic field (wired to ThematicSlot.field when thematic is active).
+        :param geojson: Optional GeoJSON FeatureCollection to embed as source inlineData (real data, not decorative).
         :return: Synthesized MapSpec dictionary.
         """
         # Explicit field param takes precedence; combination_ids["field"] is the wire-compat alias
@@ -265,14 +266,30 @@ class CompositeMapSpecBuilder:
         target_id = layer_id or "default_layer"
         source_id = f"source_{target_id}"
 
-        # Source must reference the target layer's data, not a constant empty shell.
-        # Emit a layer-bound reference (dataPath) that the Data Plane / MapSpec compiler
-        # resolves to the actual layer payload. The empty inline fallback is only for
-        # the degenerate no-layer case (kept for validator shape, never consumed).
-        mapspec["sources"][source_id] = {
-            "type": "geojson",
-            "dataPath": f"layers/{target_id}/source",
-        }
+        # Source must carry real data — either the caller-provided geojson as
+        # inlineData (verifiable) or fail-loud. The decorative "dataPath":
+        # "layers/{id}/source" has no consumer (no API route, no frontend
+        # parser for that shape) and is still a fake — replaced with real data.
+        # Caller must provide geojson (see apply_template/combine_map_theme
+        # contracts); without it we keep an empty shell that validate will
+        # reject via the downstream pipeline (is_compiled=False), but the
+        # lifecycle commit will never be reached because the tool returned
+        # an explicit missing-geojson error first.
+        effective_geojson = geojson or combination_ids.get("geojson")
+        if isinstance(effective_geojson, dict) and effective_geojson.get("features"):
+            mapspec["sources"][source_id] = {
+                "type": "geojson",
+                "inlineData": effective_geojson,
+            }
+        else:
+            # Honest empty — caller omitted data; builder alone cannot invent it.
+            # This keeps the MapSpec shape valid for unit tests that don't need data,
+            # but any lifecycle submission without real data would have been rejected
+            # by the tool layer before reaching here.
+            mapspec["sources"][source_id] = {
+                "type": "geojson",
+                "inlineData": {"type": "FeatureCollection", "features": []},
+            }
 
         geom_type = self._symbology.geometry if self._symbology else None
         if geom_type in ("Polygon", "MultiPolygon"):
@@ -349,8 +366,8 @@ class CompositeMapSpecBuilder:
                         paint_color, _warnings = spec_to_paint(layer_def["legend_spec"])
                         if paint_color:
                             layer_def["paint"]["color"] = paint_color
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning("Composite spec_to_paint (graduated) failed: %s", e)
                 elif thematic_slot.method == "categorical":
                     # Categorical without data: emit placeholder categories (consumers render via match)
                     layer_def["legend_spec"] = {
@@ -377,8 +394,8 @@ class CompositeMapSpecBuilder:
                         paint_color, _warnings = spec_to_paint(layer_def["legend_spec"])
                         if paint_color:
                             layer_def["paint"]["color"] = paint_color
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning("Composite spec_to_paint (lisa) failed: %s", e)
                 else:
                     # Unknown method: still emit graduated fallback so slot is not silently dead
                     k = max(2, min(10, int(thematic_slot.k or 5)))
@@ -400,20 +417,20 @@ class CompositeMapSpecBuilder:
                     "heatmap-intensity": thematic_slot.intensity,
                     "heatmap-radius": thematic_slot.radius,
                 }
-                # Heatmap legend (continuous) — frontend renders via thematic-paint continuous path
+                # Heatmap legend (continuous) — frontend renders via thematic-paint continuous path.
+                # Use the heat_palette that drives the paint (not a hardcoded Viridis) so legend ↔ paint agree.
                 try:
-                    from app.lib.cartography.palettes import resolve_palette_colors
-                    colors = resolve_palette_colors("Viridis")
+                    heat_colors = list(thematic_slot.heat_palette or ["#0000ff", "#00ff00", "#ffff00", "#ff0000"])
                     layer_def["legend_spec"] = {
                         "type": "continuous",
                         "field": thematic_slot.field,
                         "min": 0.0,
                         "max": 1.0,
-                        "palette": "Viridis",
-                        "palette_colors": colors,
+                        "palette": "Heat",
+                        "palette_colors": heat_colors,
                     }
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("Composite heatmap legend_spec generation failed: %s", e)
 
         mapspec["layers"].append(layer_def)
 

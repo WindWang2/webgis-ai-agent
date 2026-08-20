@@ -53,8 +53,11 @@ def test_composite_builder_preset_combinations():
     assert mapspec["layout"]["paperSize"] == "A3"
 
 
-def test_combine_map_theme_tool_execution():
-    res = combine_map_theme(
+import pytest
+
+@pytest.mark.asyncio
+async def test_combine_map_theme_tool_execution():
+    res = await combine_map_theme(
         preset="academic_research",
         layer_id="test_admin"
     )

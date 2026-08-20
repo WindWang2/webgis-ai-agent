@@ -74,6 +74,7 @@ class ApplyTemplateArgs(BaseModel):
     geojson: Optional[Any] = Field(None, description="可选的目标 GeoJSON 数据")
     field: Optional[str] = Field(None, description="可选的字段名称 (专题图或分类符号化时使用)")
     layer_id: Optional[str] = Field(None, description="可选的目标图层 ID")
+    session_id: Optional[str] = Field(None, description="会话 ID（composite 样式预设经生命周期引擎提交时必填）")
 
 
 def _get_all_templates() -> List[Dict[str, Any]]:
@@ -191,11 +192,12 @@ def register_template_tools(registry: ToolRegistry):
         ),
         args_model=ApplyTemplateArgs,
     )
-    def apply_template(
+    async def apply_template(
         template_id: str,
         geojson: Optional[Any] = None,
         field: Optional[str] = None,
         layer_id: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> dict:
         # F-FE-TPL: O(1) registry lookup (was: linear scan over the merged
         # SEED + DB list per call). DB templates still need a DB query,
@@ -218,14 +220,13 @@ def register_template_tools(registry: ToolRegistry):
         if kind == "composite":
             from app.services.templates.intent_resolver import expand_composite
             # Composite is a style-preset composition: expand pipeline to real templates.
-            # If caller provided geojson+field, we can emit a composite MapSpec via the
-            # builder; otherwise return an explicit usage error (honest: preset ≠ analysis).
+            # Honest contract: field + geojson are required to produce a data-backed
+            # legend_spec and a mapspec with real inlineData; session_id is required
+            # to commit the mapspec through the lifecycle engine (warehouse rule:
+            # tools submit mutations via mapspec_store, not fake success).
             pipeline = target_tmpl.get("pipeline") or {}
             if not pipeline:
                 return {"error": f"Composite 模板 {template_id!r} 的 pipeline 为空，无法展开。"}
-            # Thematic-driven composites require a field; without it we cannot build legend_spec.
-            # Return a clear, non-misleading error that points to the correct usage.
-            # (Do NOT surface KeyError 'payload' with a layer-attributes hint.)
             thematic_ref = pipeline.get("thematic")
             requires_field = False
             if thematic_ref:
@@ -233,7 +234,6 @@ def register_template_tools(registry: ToolRegistry):
                     from app.schemas.template_registry import get_template_registry as _get_reg
                     _thematic_tmpl = _get_reg().get(thematic_ref)
                     _variant = (_thematic_tmpl or {}).get("payload", {}).get("variant", "choropleth")
-                    # Only choropleth thematic needs a field; heatmap can use weight default but field still preferred
                     requires_field = _variant == "choropleth"
                 except Exception:
                     requires_field = True
@@ -241,41 +241,73 @@ def register_template_tools(registry: ToolRegistry):
                 return {
                     "error": (
                         f"Composite 模板 {template_id!r} 需要 'field' 参数以驱动专题分级（pipeline thematic={thematic_ref!r}）。"
-                        f"请传入 field（要素属性字段名）与 geojson/图层数据，或使用 combine_map_theme(thematic=..., field=...) 组合预设；"
+                        f"请传入 field（要素属性字段名）与 geojson/图层数据，或使用 combine_map_theme(thematic=..., field=..., geojson=..., session_id=...) 组合预设；"
                         f"该预设为样式组合（不含分析计算）。"
+                    )
+                }
+            # Real data required: source must be true inlineData, not a decorative dataPath.
+            parsed_geojson = _safe_parse_geojson(geojson)
+            if parsed_geojson is None or not parsed_geojson.get("features"):
+                return {
+                    "error": (
+                        f"Composite 模板 {template_id!r} 需要 geojson 数据以生成可验证的 MapSpec 图层（当前未提供或 features 为空）。"
+                        f"请传入有效的 GeoJSON FeatureCollection（或 ref:xxx 引用）；样式预设为样式组合，不含分析计算。"
+                    )
+                }
+            if not session_id:
+                return {
+                    "error": (
+                        f"Composite 模板 {template_id!r} 需要 session_id 以经生命周期引擎提交 MapSpec（当前未提供）。"
+                        f"请传入当前会话的 session_id；该预设为样式组合，成功后将通过 mapspec_store 写入并返回已验证的 mapspec。"
                     )
                 }
             # Expand and assemble via builder — reuse the existing slot machinery.
             try:
                 expanded = expand_composite(template_id)
-                # Build combination_ids from pipeline, letting caller field/geojson override where applicable.
                 combination_ids: dict = {}
                 for slot, ref in pipeline.items():
                     if ref:
                         combination_ids[slot] = ref
                 if field:
                     combination_ids["field"] = field
-                # geojson if provided is forwarded as inlineData hint for future data-driven thematic
-                if geojson is not None:
-                    combination_ids["geojson"] = geojson
+                combination_ids["geojson"] = parsed_geojson
                 from app.services.mapspec.composite_builder import CompositeMapSpecBuilder
                 builder = CompositeMapSpecBuilder()
-                mapspec = builder.assemble(combination_ids, layer_id=layer_id or "default_layer", field=field or "")
+                mapspec = builder.assemble(
+                    combination_ids, layer_id=layer_id or "default_layer", field=field or "", geojson=parsed_geojson
+                )
+                # Commit through lifecycle engine (warehouse rule: tools submit via mapspec_store).
+                from app.services.mapspec_store import mapspec_store
+                # Build the MapSpec layer dict that pipeline expects: id/type/source/paint/legend_spec
+                layer_def = mapspec["layers"][0] if mapspec.get("layers") else {}
+                layer = dict(layer_def)
+                # Preserve legend_spec for pipeline validation and前端同步
+                # source_data is the canonical geojson payload that mapspec_store persists as a ref
+                res = await mapspec_store.layer_upsert(session_id, layer, parsed_geojson)
+                if not res.get("success"):
+                    return {
+                        "error": f"Composite 模板 {template_id!r} 的 MapSpec 提交失败: {res.get('message') or res.get('error') or 'unknown'}",
+                        "mapspec": mapspec,
+                        "expanded": {k: (v.get("id") if isinstance(v, dict) else None) for k, v in expanded.items()},
+                    }
+                # Evidence-forwarding: expose lifecycle evidence (is_compiled etc.) alongside tool result
                 return {
                     "status": "composite_applied",
                     "kind": "composite",
                     "template_id": template_id,
                     "template_name": target_tmpl["name"],
-                    # Reuse existing catalogue command so #535 ghost check passes;
-                    # composite MapSpec is applied via the same path as any MapSpec layer.
                     "command": "add_layer",
-                    "params": {"layer_id": layer_id or "default_layer", "field": field or ""},
+                    "params": {"layer_id": layer.get("id") or layer_id or "default_layer", "field": field or ""},
                     "pipeline": pipeline,
                     "expanded": {k: (v.get("id") if isinstance(v, dict) else None) for k, v in expanded.items()},
-                    "mapspec": mapspec,
-                    "geojson": geojson,
+                    "mapspec": res.get("mapspec") or mapspec,
+                    "layer": res.get("layer") or layer,
+                    "is_compiled": res.get("is_compiled"),
+                    "mapspec_fingerprint": res.get("mapspec_fingerprint"),
+                    "session_id": session_id,
                 }
             except Exception as e:
+                logger.warning("Composite template %r apply failed: %s", template_id, e, exc_info=True)
                 return {"error": f"Composite 模板 {template_id!r} 展开失败: {e}"}
 
         payload = target_tmpl["payload"]
@@ -457,7 +489,7 @@ def register_template_tools(registry: ToolRegistry):
         ),
         args_model=CombineMapThemeArgs,
     )
-    def _combine_map_theme_tool(
+    async def _combine_map_theme_tool(
         preset: str = "",
         basemap: str = "",
         symbology: str = "",
@@ -466,8 +498,10 @@ def register_template_tools(registry: ToolRegistry):
         viewport: Optional[dict] = None,
         layer_id: str = "default_layer",
         field: str = "",
+        geojson: Optional[Any] = None,
+        session_id: Optional[str] = None,
     ) -> dict:
-        return combine_map_theme(
+        return await combine_map_theme(
             preset=preset,
             basemap=basemap,
             symbology=symbology,
@@ -476,6 +510,8 @@ def register_template_tools(registry: ToolRegistry):
             viewport=viewport,
             layer_id=layer_id,
             field=field,
+            geojson=geojson,
+            session_id=session_id,
         )
 
     @tool(
@@ -486,7 +522,7 @@ def register_template_tools(registry: ToolRegistry):
         ),
         args_model=CombineMapThemeArgs,
     )
-    def _webgis_map_combine_tool(
+    async def _webgis_map_combine_tool(
         preset: str = "",
         basemap: str = "",
         symbology: str = "",
@@ -495,8 +531,10 @@ def register_template_tools(registry: ToolRegistry):
         viewport: Optional[dict] = None,
         layer_id: str = "default_layer",
         field: str = "",
+        geojson: Optional[Any] = None,
+        session_id: Optional[str] = None,
     ) -> dict:
-        return combine_map_theme(
+        return await combine_map_theme(
             preset=preset,
             basemap=basemap,
             symbology=symbology,
@@ -505,6 +543,8 @@ def register_template_tools(registry: ToolRegistry):
             viewport=viewport,
             layer_id=layer_id,
             field=field,
+            geojson=geojson,
+            session_id=session_id,
         )
 
 
@@ -533,9 +573,10 @@ class CombineMapThemeArgs(BaseModel):
     viewport: Optional[Dict[str, Any]] = Field(None, description="视口件配置: {center: [lng, lat], zoom: 10}")
     layer_id: Optional[str] = Field("default_layer", description="目标图层 ID")
     field: Optional[str] = Field("", description="专题字段（thematic 槽为分级/热力时必填，驱动 legend_spec 生成）")
+    session_id: Optional[str] = Field(None, description="会话 ID（经生命周期引擎提交 MapSpec 时必填）")
 
 
-def combine_map_theme(
+async def combine_map_theme(
     preset: str = "",
     basemap: str = "",
     symbology: str = "",
@@ -544,6 +585,8 @@ def combine_map_theme(
     viewport: Optional[dict] = None,
     layer_id: str = "default_layer",
     field: str = "",
+    geojson: Optional[Any] = None,
+    session_id: Optional[str] = None,
 ) -> dict:
     """组合 5 大正交地图组件槽位并生成完整 MapSpec。"""
     from app.services.mapspec.composite_builder import CompositeMapSpecBuilder
@@ -564,8 +607,38 @@ def combine_map_theme(
     if field:
         combination_ids["field"] = field
 
+    parsed_geojson = _safe_parse_geojson(geojson) if geojson is not None else None
+    if geojson is not None and parsed_geojson is None:
+        return {"error": "combine_map_theme: 无效的 geojson 数据（template_id 预设样式组合，不含分析计算）"}
+    if geojson is not None:
+        combination_ids["geojson"] = parsed_geojson
+
     builder = CompositeMapSpecBuilder()
-    mapspec = builder.assemble(combination_ids, layer_id=layer_id, field=field)
+    mapspec = builder.assemble(combination_ids, layer_id=layer_id, field=field, geojson=parsed_geojson)
+
+    # If session_id provided, commit through lifecycle (warehouse rule)
+    if session_id and parsed_geojson is not None and parsed_geojson.get("features"):
+        from app.services.mapspec_store import mapspec_store
+        layer_def = mapspec["layers"][0] if mapspec.get("layers") else {}
+        layer = dict(layer_def)
+        res = await mapspec_store.layer_upsert(session_id, layer, parsed_geojson)
+        if not res.get("success"):
+            return {
+                "error": f"combine_map_theme 的 MapSpec 提交失败: {res.get('message') or res.get('error') or 'unknown'}",
+                "mapspec": mapspec,
+                "layer_id": layer_id,
+            }
+        return {
+            "status": "composite_applied",
+            "preset": preset,
+            "combination": combination_ids,
+            "layer_id": layer_id,
+            "mapspec": res.get("mapspec") or mapspec,
+            "layer": res.get("layer") or layer,
+            "is_compiled": res.get("is_compiled"),
+            "mapspec_fingerprint": res.get("mapspec_fingerprint"),
+            "session_id": session_id,
+        }
 
     return {
         "status": "composite_map_assembled",
