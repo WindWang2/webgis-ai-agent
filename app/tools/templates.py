@@ -290,14 +290,15 @@ def register_template_tools(registry: ToolRegistry):
                         "mapspec": mapspec,
                         "expanded": {k: (v.get("id") if isinstance(v, dict) else None) for k, v in expanded.items()},
                     }
-                # Evidence-forwarding: expose lifecycle evidence (is_compiled etc.) alongside tool result
+                # Evidence-forwarding: expose lifecycle evidence (is_compiled etc.) alongside tool result.
+                # 不发前端 command：add_layer 的 handler 需要 params 携带图层数据，而本路径
+                # 数据已经 mapspec_store 落库、经 mapspec 同步通道下发（同 webgis_state_set
+                # 纯后端提交形态）；params 不全的 add_layer 只会在前端落 invalid_params。
                 return {
                     "status": "composite_applied",
                     "kind": "composite",
                     "template_id": template_id,
                     "template_name": target_tmpl["name"],
-                    "command": "add_layer",
-                    "params": {"layer_id": layer.get("id") or layer_id or "default_layer", "field": field or ""},
                     "pipeline": pipeline,
                     "expanded": {k: (v.get("id") if isinstance(v, dict) else None) for k, v in expanded.items()},
                     "mapspec": res.get("mapspec") or mapspec,
