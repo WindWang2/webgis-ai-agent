@@ -12,7 +12,7 @@ from typing import List, Optional
 @dataclass
 class RefDescriptor:
     """Lightweight ref metadata computed once at store() time.
-    
+
     Attributes:
         ref_id: The canonical ref identifier
         feature_count: Total feature count (0 for non-FC data)
@@ -23,7 +23,12 @@ class RefDescriptor:
             servable by the MVT encoder (app/services/mvt.py)
         estimated_bytes: Rough size estimate (feature-count heuristic; exact
             byte count is not computed to avoid blocking the store() hot path)
-        content_hash: Reserved; not computed on the hot path (see compute_descriptor)
+        content_hash: Reserved, always None. Computing a stable hash would
+            require json.dumps + sha256 of the full payload on the store hot
+            path (30 MB → seconds of blocking, defeats V3 off-loop goal).
+            No current consumer needs dedup/cache-key/ETag from this field;
+            if needed later, compute off-loop or lazily. Kept as None for
+            non-breaking schema evolution.
     """
     ref_id: str
     feature_count: int
@@ -62,6 +67,53 @@ class RefDescriptor:
         )
 
 
+def iter_leaf_coords(coordinates):
+    """Yield (lon, lat) leaf positions from any nested GeoJSON coordinates array.
+    递归提取所有叶子坐标，覆盖 Point/MultiPoint/LineString/MultiLineString/Polygon/MultiPolygon
+    的任意嵌套深度（含 Polygon holes）。"""
+    if not isinstance(coordinates, list):
+        return
+    if coordinates and isinstance(coordinates[0], (int, float)):
+        if len(coordinates) >= 2 and coordinates[0] is not None and coordinates[1] is not None:
+            try:
+                lon = float(coordinates[0])
+                lat = float(coordinates[1])
+                # 过滤 NaN/Inf
+                import math
+                if math.isfinite(lon) and math.isfinite(lat):
+                    yield (coordinates[0], coordinates[1])
+            except (TypeError, ValueError):
+                pass
+        return
+    for child in coordinates:
+        yield from iter_leaf_coords(child)
+
+
+# Back-compat alias — layer.py previously imported the private name.
+_iter_leaf_coords = iter_leaf_coords
+
+
+def estimate_bytes(feature_count: int) -> int:
+    """Cheap heuristic reused by store-time and fallback paths — never materializes a giant string."""
+    if feature_count > 0:
+        return feature_count * 100 + 1024
+    return 1024
+
+
+def is_mvt_capable(geometry_types, feature_count: int) -> bool:
+    """Shared capability rule — exactly one place.
+
+    MVT encoder (app/services/mvt.py:89-95) supports Point/MultiPoint/
+    LineString/MultiLineString/Polygon/MultiPolygon. Any FC with at least
+    one non-GeometryCollection type is tile-capable.
+    """
+    try:
+        gt_set = set(geometry_types) if geometry_types is not None else set()
+    except TypeError:
+        gt_set = set()
+    return bool(feature_count > 0 and gt_set - {"GeometryCollection"})
+
+
 def compute_descriptor(ref_id: str, data) -> RefDescriptor:
     """Compute descriptor from raw data at store time.
     
@@ -73,8 +125,6 @@ def compute_descriptor(ref_id: str, data) -> RefDescriptor:
     Returns descriptor with all fields populated. For non-FC data,
     feature_count/point_count/geometry_types will be zero/empty.
     """
-    import json
-    
     # Extract FeatureCollection
     fc = data
     if isinstance(data, dict):
@@ -103,28 +153,16 @@ def compute_descriptor(ref_id: str, data) -> RefDescriptor:
                 geometry_types.add(geom_type)
                 if geom_type == "Point":
                     point_count += 1
-                    coords = geometry.get("coordinates")
-                    if isinstance(coords, (list, tuple)) and len(coords) >= 2:
-                        if coords[0] is not None and coords[1] is not None:
-                            bbox_coords.append((coords[0], coords[1]))
-                elif geom_type in ("LineString", "MultiPoint"):
-                    for coords in (geometry.get("coordinates") or []):
-                        if isinstance(coords, (list, tuple)) and len(coords) >= 2:
-                            if coords[0] is not None and coords[1] is not None:
-                                bbox_coords.append((coords[0], coords[1]))
-                elif geom_type in ("Polygon", "MultiLineString"):
-                    for ring in (geometry.get("coordinates") or []):
-                        for coords in ring:
-                            if isinstance(coords, (list, tuple)) and len(coords) >= 2:
-                                if coords[0] is not None and coords[1] is not None:
-                                    bbox_coords.append((coords[0], coords[1]))
-                elif geom_type == "MultiPolygon":
-                    for polygon in (geometry.get("coordinates") or []):
-                        for ring in polygon:
-                            for coords in ring:
-                                if isinstance(coords, (list, tuple)) and len(coords) >= 2:
-                                    if coords[0] is not None and coords[1] is not None:
-                                        bbox_coords.append((coords[0], coords[1]))
+                # bbox 覆盖 MVT 编码器支持的所有类型（app/services/mvt.py:89-95）
+                # 使用递归叶子提取，保证 holes 与多层嵌套均被计入。
+                if geom_type == "GeometryCollection":
+                    for sub in (geometry.get("geometries") or []):
+                        if isinstance(sub, dict):
+                            for lon, lat in iter_leaf_coords(sub.get("coordinates")):
+                                bbox_coords.append((lon, lat))
+                else:
+                    for lon, lat in iter_leaf_coords(geometry.get("coordinates")):
+                        bbox_coords.append((lon, lat))
     
     # Compute bbox
     bbox = None
@@ -138,13 +176,11 @@ def compute_descriptor(ref_id: str, data) -> RefDescriptor:
     
     # Estimate bytes: cheap heuristic — 100 bytes/feature base + raw FC overhead.
     # Avoids serialising the entire payload just for an estimate (O(n) blocked).
+    # Non-FC / empty FC → fixed overhead; never len(json.dumps/str) on large payloads.
     if feature_count > 0:
-        estimated_bytes = feature_count * 100 + 1024
+        estimated_bytes = estimate_bytes(feature_count)
     else:
-        try:
-            estimated_bytes = len(json.dumps(data, ensure_ascii=False))
-        except Exception:
-            estimated_bytes = len(str(data))
+        estimated_bytes = estimate_bytes(0)
     
     # content_hash intentionally omitted from hot-path compute: two full
     # json.dumps + SHA256 of a 30MB payload block the event loop in store().
@@ -157,12 +193,7 @@ def compute_descriptor(ref_id: str, data) -> RefDescriptor:
         point_count=point_count,
         geometry_types=sorted(list(geometry_types)),
         bbox=bbox,
-        # V3: MVT encoder supports Point/Line/Polygon; any FC with vector
-        # features is tile-capable (GeometryCollection members are silently
-        # skipped in the encoder but that's handled at render time).
-        mvt_capable=(feature_count > 0 and bool(
-            geometry_types - {"GeometryCollection"}
-        )),
+        mvt_capable=is_mvt_capable(geometry_types, feature_count),
         estimated_bytes=estimated_bytes,
         content_hash=content_hash,
     )

@@ -190,12 +190,17 @@ async def get_mvt_tile(
 def _compute_descriptor_fallback(data) -> dict:
     """同步计算 descriptor 回退字段（pre-V3 ref / descriptor 键缺失时）。
 
-    全要素扫描（_extract_points / _feature_collection_bbox）+ ``len(str(data))``
-    在 50k 特征量级可达数百 ms —— 与存储侧 compute_descriptor 的 to_thread
-    对称（#590），必须在 worker 线程执行，不能占用事件循环。
+    全要素扫描在 50k 特征量级可达数百 ms —— 与存储侧 compute_descriptor 的
+    to_thread 对称（#590），必须在 worker 线程执行，不能占用事件循环。
+    使用与 compute_descriptor 相同的轻量启发式预估字节数，绝不物化全量字符串。
     """
     points = _extract_points(data)
-    fc = data if isinstance(data, dict) and data.get("type") == "FeatureCollection" else (data.get("geojson") if isinstance(data, dict) else {})
+    # 与 compute_descriptor 完全对齐的 FC 抽取（裸 FC / {"geojson": FC} / {"type":..., "geojson": FC}）
+    fc = data
+    if isinstance(data, dict):
+        nested = data.get("geojson")
+        if isinstance(nested, dict):
+            fc = nested
     features = fc.get("features", []) if isinstance(fc, dict) else []
 
     geom_types = set()
@@ -203,8 +208,37 @@ def _compute_descriptor_fallback(data) -> dict:
         if isinstance(f, dict) and "geometry" in f and isinstance(f["geometry"], dict):
             geom_types.add(f["geometry"].get("type", "Unknown"))
 
-    from app.tools._utils import _feature_collection_bbox
-    bbox = _feature_collection_bbox(fc if isinstance(fc, dict) else {"type": "FeatureCollection", "features": []})
+    # 复用 compute_descriptor 的 bbox 逻辑：递归叶子提取保证 holes 与多几何全覆盖，
+    # 且不限 max_features 条数，保证与 store-time 结果一致。
+    from app.schemas.ref_descriptor import iter_leaf_coords, estimate_bytes
+    bbox_coords = []
+    for f in features:
+        geom = f.get("geometry") if isinstance(f, dict) else None
+        if not isinstance(geom, dict):
+            continue
+        gtype = geom.get("type")
+        if gtype == "GeometryCollection":
+            for sub in (geom.get("geometries") or []):
+                if isinstance(sub, dict):
+                    for lon, lat in iter_leaf_coords(sub.get("coordinates")):
+                        bbox_coords.append((lon, lat))
+        else:
+            for lon, lat in iter_leaf_coords(geom.get("coordinates")):
+                bbox_coords.append((lon, lat))
+    bbox = None
+    if bbox_coords:
+        lons = [c[0] for c in bbox_coords]
+        lats = [c[1] for c in bbox_coords]
+        bbox = [min(lons), min(lats), max(lons), max(lats)]
+    elif isinstance(fc, dict) and isinstance(fc.get("bbox"), list) and len(fc.get("bbox", [])) == 4:
+        bbox = fc["bbox"]
+
+    # 轻量预估：与 compute_descriptor 的 estimate_bytes 一致，永不物化全量字符串
+    # 非 FC / 空 FC → 固定开销（与 compute_descriptor 分支一致）
+    if isinstance(fc, dict) and fc.get("type") == "FeatureCollection" and isinstance(features, list) and len(features) > 0:
+        estimated = estimate_bytes(len(features))
+    else:
+        estimated = estimate_bytes(0)
 
     return {
         "points": points,
@@ -212,7 +246,7 @@ def _compute_descriptor_fallback(data) -> dict:
         "geom_types": list(geom_types),
         "bbox": bbox,
         "raster_capable": isinstance(data, dict) and ("file_path" in data or "path" in data),
-        "estimated_bytes": len(str(data)),
+        "estimated_bytes": estimated,
     }
 
 
@@ -261,7 +295,7 @@ async def get_layer_descriptor(
         status_code = 403 if res.error_type == "PermissionDenied" else 404
         raise HTTPException(status_code=status_code, detail=res.error or "数据不可用")
 
-    # #590：回退计算（全要素扫描 + len(str(data))）整块移入 worker 线程。
+    # #590：回退计算整块移入 worker 线程（与 compute_descriptor 对称，永不物化大字符串）。
     computed = await asyncio.to_thread(_compute_descriptor_fallback, res.data)
     points = computed["points"]
     features = computed["features"]
@@ -270,6 +304,8 @@ async def get_layer_descriptor(
     raster_capable = computed["raster_capable"]
     estimated_bytes = computed["estimated_bytes"]
 
+    from app.schemas.ref_descriptor import is_mvt_capable
+
     return {
         "ref_id": ref_id,
         "session_id": session_id,
@@ -277,7 +313,7 @@ async def get_layer_descriptor(
         "point_count": len(points),
         "geometry_types": list(geom_types),
         "bbox": bbox,
-        "mvt_capable": len(points) > 0,
+        "mvt_capable": is_mvt_capable(geom_types, len(features)),
         "raster_capable": raster_capable,
         "estimated_bytes": estimated_bytes,
     }

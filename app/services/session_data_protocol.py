@@ -146,9 +146,9 @@ class SessionStoreProtocol(Protocol):
         PermissionDenied on token mismatch, NotFound when there is no descriptor
         or the underlying ref payload is gone.
 
-        Descriptors are keyed by canonical ref_id — this method does NOT resolve
-        aliases; an alias input is treated as a plain ref_id and NotFound (the
-        caller's fallback then handles it, matching master's behaviour).
+        Alias 输入会解析为 canonical ref_id（与 get_ref_data 一致，遵循
+        resolve_alias / resolve_aliases 的已有模式），403/404 语义对真正
+        缺失的 ref 保持不变。
 
         Caveat: the "never hydrates" promise assumes the descriptor key exists.
         RedisSessionStore.get_ref_descriptor has a pre-existing on-the-fly
@@ -262,9 +262,8 @@ class BaseSessionStore:
         PermissionDenied on token mismatch, NotFound when there is no descriptor
         or the underlying ref payload is gone.
 
-        Descriptors are keyed by canonical ref_id — this method does NOT resolve
-        aliases; an alias input is treated as a plain ref_id and NotFound (the
-        caller's fallback then handles it, matching master's behaviour).
+        Alias 输入会解析为 canonical ref_id（与 get_ref_data 一致，遵循
+        resolve_alias 的已有模式），403/404 语义对真正缺失的 ref 保持不变。
 
         Caveat: the "never hydrates" promise assumes the descriptor key exists.
         RedisSessionStore.get_ref_descriptor has a pre-existing on-the-fly
@@ -278,7 +277,11 @@ class BaseSessionStore:
         if denied is not None:
             return denied
 
-        descriptor = await self.get_ref_descriptor(session_id, ref_id)
+        # Alias resolution — follow the same pattern as get_ref_data → get() which
+        # resolves alias internally; keep 403/404 unchanged for genuinely missing refs.
+        canonical_ref = await self.resolve_alias(session_id, ref_id)
+
+        descriptor = await self.get_ref_descriptor(session_id, canonical_ref)
         if not descriptor:
             return SessionRefDataResult(
                 success=False,
@@ -286,7 +289,7 @@ class BaseSessionStore:
                 error_type="NotFound",
             )
 
-        exists = await self.ref_exists(session_id, ref_id)
+        exists = await self.ref_exists(session_id, canonical_ref)
         if not exists:
             return SessionRefDataResult(
                 success=False,
