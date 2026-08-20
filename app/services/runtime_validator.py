@@ -143,6 +143,18 @@ class RuntimeValidator:
     runtime_dir = out_dir.parent / "runtime"
     runtime_dir.mkdir(parents=True, exist_ok=True)
 
+    # 1b. Fixture asset assembly (MVT): if the probes file's directory
+    # contains points.geojson, encode z0..z2 tiles into dist/tiles/.
+    # This runs between compile and validate so __ORIGIN__/tiles/... URLs
+    # resolve. Fail-loud by design: an encoder regression must turn the
+    # scenario red with the real traceback, not a misleading tile 404.
+    if probes_path is not None:
+        probe_parent = Path(probes_path).parent
+        if (probe_parent / "points.geojson").is_file():
+            from app.services.runtime_asset_assembly import assemble_mvt_assets
+
+            assemble_mvt_assets(probe_parent, out_dir)
+
     # 2. Drive the headless Playwright validator over the compiled output.
     # The subprocess can run up to RUNTIME_TIMEOUT_S (90s) — offload to a
     # thread so Chromium startup doesn't freeze every SSE stream / request

@@ -1,0 +1,35 @@
+{
+  "version": "1.0",
+  "view": {
+    "center": [0, 5],
+    "zoom": 2
+  },
+  "sources": {
+    "pts": {
+      "type": "vector",
+      "tiles": ["__ORIGIN__/tiles/{z}/{x}/{y}.mvt"],
+      "minzoom": 0,
+      "maxzoom": 2
+    }
+  },
+  "layers": [
+    {
+      "id": "pts-layer",
+      "source": "pts",
+      "type": "circle",
+      "sourceLayer": "data",
+      "paint": {
+        "color": {
+          "method": "match",
+          "field": "kind",
+          "cases": [
+            ["a", "#e41a1c"],
+            ["b", "#377eb8"]
+          ],
+          "default": "#999999"
+        },
+        "radius": 8
+      }
+    }
+  ]
+}

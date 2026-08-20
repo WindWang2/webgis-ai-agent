@@ -109,3 +109,64 @@ def test_pixel_color_pairwise_distinguishable():
                     f"{d.name}: pixel-color probes {i} and {j} expected colors {probes[i]['expect']} vs {probes[j]['expect']} "
                     f"must be pairwise distinguishable (total per-channel distance {dist} <= 48)"
                 )
+
+
+def test_fixture_asset_declarations():
+    """Asset convention: points.geojson → vector tiles via __ORIGIN__.
+
+    - If a fixture contains points.geojson it must be a valid FeatureCollection.
+    - The mapspec must contain at least one vector source whose tiles use __ORIGIN__.
+    - Every __ORIGIN__ path in mapspec.json must correspond to a declared asset
+      (currently __ORIGIN__/tiles/... ↔ points.geojson; __ORIGIN__/raster/... ↔ raster declaration).
+    """
+    origin_re = re.compile(r"__ORIGIN__/([^\s\"']+)")
+    for d in _fixture_dirs():
+        mapspec_path = d / "mapspec.json"
+        if not mapspec_path.is_file():
+            continue
+        raw = mapspec_path.read_text(encoding="utf-8")
+        origin_paths = origin_re.findall(raw)
+        points_path = d / "points.geojson"
+        has_points = points_path.is_file()
+
+        if has_points:
+            # GeoJSON must parse as FeatureCollection
+            data = json.loads(points_path.read_text(encoding="utf-8"))
+            assert isinstance(data, dict), f"{d.name}: points.geojson not an object"
+            assert data.get("type") == "FeatureCollection", f"{d.name}: points.geojson must be a FeatureCollection"
+            feats = data.get("features")
+            assert isinstance(feats, list) and len(feats) > 0, f"{d.name}: points.geojson must have non-empty features"
+            for idx, feat in enumerate(feats):
+                assert isinstance(feat, dict), f"{d.name}: points.geojson feature[{idx}] not an object"
+                geom = feat.get("geometry")
+                assert isinstance(geom, dict), f"{d.name}: feature[{idx}] missing geometry"
+                assert "type" in geom and "coordinates" in geom, f"{d.name}: feature[{idx}] geometry missing type/coordinates"
+
+            # mapspec must have a vector source with __ORIGIN__ tiles
+            spec = json.loads(raw)
+            sources = spec.get("sources", {})
+            vector_sources = [v for v in sources.values() if isinstance(v, dict) and v.get("type") == "vector"]
+            assert len(vector_sources) >= 1, f"{d.name}: contains points.geojson but mapspec has no vector source"
+            has_origin_tile = False
+            for src in vector_sources:
+                tiles = src.get("tiles")
+                if isinstance(tiles, list):
+                    for t in tiles:
+                        if isinstance(t, str) and t.startswith("__ORIGIN__/"):
+                            has_origin_tile = True
+            assert has_origin_tile, f"{d.name}: vector source tiles must use __ORIGIN__ prefix when points.geojson is present"
+
+        # Every __ORIGIN__ path must map to a declared asset
+        for rel in origin_paths:
+            if rel.startswith("tiles/"):
+                assert has_points, (
+                    f"{d.name}: mapspec references __ORIGIN__/{rel} but no points.geojson found in fixture dir"
+                )
+            elif rel.startswith("raster/"):
+                # raster-overlay will bring a raster declaration; for now flag as missing
+                raster_decl = d / "raster.json"
+                assert raster_decl.is_file(), (
+                    f"{d.name}: mapspec references __ORIGIN__/{rel} but no raster asset declaration found"
+                )
+            else:
+                assert False, f"{d.name}: __ORIGIN__/{rel} does not correspond to any declared asset source type (tiles/ or raster/)"

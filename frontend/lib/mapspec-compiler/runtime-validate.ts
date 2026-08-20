@@ -105,6 +105,7 @@ function startStaticServer(root: string): { server: http.Server; port: number; s
     ".js": "application/javascript",
     ".css": "text/css",
     ".png": "image/png",
+    ".mvt": "application/vnd.mapbox-vector-tile",
   };
   const server = http.createServer((req, res) => {
     // Only GET; deny anything that isn't a plain file under root (no traversal).

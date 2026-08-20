@@ -22,12 +22,13 @@ export function generateMapHtml(style: any, layout?: MapSpecLayoutConfig): strin
   <script>
     window.__MAPSPEC_STYLE__ = ${styleJson};
     window.__MAPSPEC_CONTROLS__ = ${controlsJson};
+    const __resolvedStyle = JSON.parse(JSON.stringify(window.__MAPSPEC_STYLE__).replaceAll("__ORIGIN__", location.origin));
 
     const map = new maplibregl.Map({
       container: 'map',
-      style: window.__MAPSPEC_STYLE__,
-      center: window.__MAPSPEC_STYLE__.center || [0, 0],
-      zoom: window.__MAPSPEC_STYLE__.zoom || 2,
+      style: __resolvedStyle,
+      center: __resolvedStyle.center || [0, 0],
+      zoom: __resolvedStyle.zoom || 2,
     });
     window.__MAP__ = map;
 

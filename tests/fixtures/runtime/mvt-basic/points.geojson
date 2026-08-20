@@ -1,0 +1,17 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    { "type": "Feature", "geometry": { "type": "Point", "coordinates": [-30, 10] }, "properties": { "kind": "a" } },
+    { "type": "Feature", "geometry": { "type": "Point", "coordinates": [-25, 15] }, "properties": { "kind": "a" } },
+    { "type": "Feature", "geometry": { "type": "Point", "coordinates": [-20, 5] }, "properties": { "kind": "a" } },
+    { "type": "Feature", "geometry": { "type": "Point", "coordinates": [-15, -10] }, "properties": { "kind": "a" } },
+    { "type": "Feature", "geometry": { "type": "Point", "coordinates": [-10, 0] }, "properties": { "kind": "a" } },
+    { "type": "Feature", "geometry": { "type": "Point", "coordinates": [-5, 20] }, "properties": { "kind": "a" } },
+    { "type": "Feature", "geometry": { "type": "Point", "coordinates": [5, 10] }, "properties": { "kind": "b" } },
+    { "type": "Feature", "geometry": { "type": "Point", "coordinates": [10, 5] }, "properties": { "kind": "b" } },
+    { "type": "Feature", "geometry": { "type": "Point", "coordinates": [15, -5] }, "properties": { "kind": "b" } },
+    { "type": "Feature", "geometry": { "type": "Point", "coordinates": [20, 0] }, "properties": { "kind": "b" } },
+    { "type": "Feature", "geometry": { "type": "Point", "coordinates": [25, 15] }, "properties": { "kind": "b" } },
+    { "type": "Feature", "geometry": { "type": "Point", "coordinates": [30, -10] }, "properties": { "kind": "b" } }
+  ]
+}

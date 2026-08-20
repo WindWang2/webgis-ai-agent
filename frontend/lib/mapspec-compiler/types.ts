@@ -107,6 +107,8 @@ export interface MapSpecLayer {
   label?: MapSpecLayerLabel;
   /** MapLibre filter expression. Emitted by hudStateToMapSpec for $type + thematic filters. */
   filter?: unknown[];
+  /** For vector sources: MapLibre `source-layer` name. Defaults to "data" (repo MVT encoder layer). */
+  sourceLayer?: string;
 }
 
 export interface MapSpecView {

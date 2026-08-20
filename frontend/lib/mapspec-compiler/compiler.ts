@@ -248,9 +248,16 @@ export function compileMapSpec(
         type: "geojson",
         data: source.url || source.dataPath,
       };
+    } else if ((source as any).type === "vector") {
+      const v = source as any;
+      sources[key] = {
+        type: "vector",
+        tiles: v.tiles,
+        minzoom: v.minzoom ?? 0,
+        maxzoom: v.maxzoom ?? 14,
+      };
     } else {
-      // vector 源仅由 runtime adapter 发射（Data Plane 瓦片路径），静态编译
-      // 路径用空 geojson 占位。
+      // Genuinely unknown source types fall back to an empty GeoJSON placeholder.
       sources[key] = {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
@@ -271,6 +278,13 @@ export function compileMapSpec(
       layout: {},
       paint: {},
     };
+    // Vector source layers require `source-layer` in MapLibre. MapSpecLayer
+    // carries an optional `sourceLayer` passthrough; default to "data" (the
+    // encoder's layer name in mvt.py).
+    const srcDef: any = (spec.sources as any)?.[layer.source];
+    if (srcDef?.type === "vector") {
+      maplibreLayer["source-layer"] = (layer as any).sourceLayer ?? "data";
+    }
 
     if (layer.layout?.visibility) {
       maplibreLayer.layout.visibility = layer.layout.visibility;
@@ -364,6 +378,9 @@ export function compileMapSpec(
           "text-color": compileStyleMethod(labelSpec.color ?? layer.layout?.labelColor ?? "#000000"),
         },
       };
+      if (srcDef?.type === "vector") {
+        labelLayer["source-layer"] = (layer as any).sourceLayer ?? "data";
+      }
 
       if (labelSpec.haloColor) {
         labelLayer.paint["text-halo-color"] = labelSpec.haloColor;

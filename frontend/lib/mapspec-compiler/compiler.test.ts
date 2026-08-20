@@ -381,4 +381,81 @@ describe("MapSpec Compiler (Seam A)", () => {
       expect(rasterLayer.paint["raster-opacity"]).toBe(0.85);
     });
   });
+
+  // #697: vector source passthrough — replaces the empty-geojson placeholder
+  describe("vector source compilation (#697)", () => {
+    it("emits a vector source verbatim with tiles and default minzoom/maxzoom", () => {
+      const spec: MapSpec = {
+        version: "1.0",
+        view: { center: [0, 5], zoom: 2 },
+        sources: {
+          pts: {
+            type: "vector",
+            tiles: ["__ORIGIN__/tiles/{z}/{x}/{y}.mvt"],
+          } as any,
+        },
+        layers: [
+          {
+            id: "pts-layer",
+            source: "pts",
+            type: "circle",
+            paint: { color: "#e41a1c", radius: 8 },
+          },
+        ],
+      };
+      const result = compileMapSpec(spec as any);
+      expect(result.style.sources.pts).toEqual({
+        type: "vector",
+        tiles: ["__ORIGIN__/tiles/{z}/{x}/{y}.mvt"],
+        minzoom: 0,
+        maxzoom: 14,
+      });
+      // vector layer must carry source-layer (defaults to "data")
+      const lyr = result.style.layers.find((l: any) => l.id === "pts-layer");
+      expect(lyr["source-layer"]).toBe("data");
+    });
+
+    it("preserves explicit minzoom/maxzoom and explicit sourceLayer", () => {
+      const spec: MapSpec = {
+        version: "1.0",
+        sources: {
+          v: {
+            type: "vector",
+            tiles: ["__ORIGIN__/tiles/{z}/{x}/{y}.mvt"],
+            minzoom: 2,
+            maxzoom: 8,
+          } as any,
+        },
+        layers: [
+          {
+            id: "l1",
+            source: "v",
+            type: "circle",
+            sourceLayer: "custom",
+            paint: { color: "#ff0000" },
+          } as any,
+        ],
+      };
+      const result = compileMapSpec(spec as any);
+      expect(result.style.sources.v.minzoom).toBe(2);
+      expect(result.style.sources.v.maxzoom).toBe(8);
+      const lyr = result.style.layers.find((l: any) => l.id === "l1");
+      expect(lyr["source-layer"]).toBe("custom");
+    });
+
+    it("falls back to empty geojson only for genuinely unknown source types", () => {
+      const spec: MapSpec = {
+        version: "1.0",
+        sources: {
+          weird: { type: "unknown" } as any,
+        },
+        layers: [{ id: "l", source: "weird", type: "circle" } as any],
+      };
+      const result = compileMapSpec(spec as any);
+      expect(result.style.sources.weird).toEqual({
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+    });
+  });
 });
