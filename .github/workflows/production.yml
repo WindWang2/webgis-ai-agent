@@ -289,6 +289,11 @@ jobs:
           echo "USE_REDIS=true" >> $GITHUB_ENV
           echo "CELERY_BROKER_URL=redis://localhost:6379/6" >> $GITHUB_ENV
           echo "CELERY_RESULT_BACKEND=redis://localhost:6379/7" >> $GITHUB_ENV
+          # #661：smoke 的 self-skip 只认显式 REAL_SERVICES=1。全量套件里
+          # import app.main 会 load_dotenv() 把本地 .env 的 REDIS_URL 泄进
+          # os.environ —— 有可达 Redis 的开发机上 ambient 环境会打穿守卫，
+          # production worker 在本地挂死。真 lane 必须显式亮明身份。
+          echo "REAL_SERVICES=1" >> $GITHUB_ENV
 
       - name: Run Real-Services Smoke
         # 与 test-backend 同批 service container：asyncpg 真实往返、PostGIS

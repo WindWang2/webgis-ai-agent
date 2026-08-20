@@ -16,6 +16,10 @@ Redis 线协议、真实 broker 投递从未被验证过（prod-only 回归只�
 全部用 @pytest.mark.real_services 标记，由 CI 的 real-services-smoke lane
 （postgis + redis service containers）执行。服务不可达时逐条 self-skip
 （本地开发无容器也能跑整套套件），绝不把"连不上"伪装成"通过"。
+
+#661：self-skip 只认显式 REAL_SERVICES=1（CI lane 导出）。全量套件里
+import app.main 会执行 load_dotenv()，把本地 .env 的 REDIS_URL/DATABASE_URL
+泄进 os.environ —— 机器上有可达 Redis 时 ambient 环境不再等于"真 lane"。
 """
 import os
 import socket
@@ -30,6 +34,15 @@ import pytest
 pytestmark = pytest.mark.real_services
 
 
+def _explicit_lane_enabled() -> bool:
+    """#661：只有 CI lane 显式导出的 REAL_SERVICES=1 才武装 smoke。
+
+    与 #532 的 REQUIRE_BROWSER=1 同款契约：ambient REDIS_URL/DATABASE_URL
+    （可能是 load_dotenv 从本地 .env 泄进来的）一律不足以为据。
+    """
+    return os.environ.get("REAL_SERVICES") == "1"
+
+
 def _tcp_reachable(url: str, default_port: int) -> bool:
     try:
         parsed = urlparse(url)
@@ -42,6 +55,11 @@ def _tcp_reachable(url: str, default_port: int) -> bool:
 
 
 def _postgres_url() -> str:
+    if not _explicit_lane_enabled():
+        pytest.skip(
+            "real-services lane: 未显式启用（需 REAL_SERVICES=1；"
+            "ambient DATABASE_URL 可能是 load_dotenv 泄漏，不算数）"
+        )
     url = os.environ.get("DATABASE_URL", "")
     if not url.startswith(("postgresql://", "postgresql+")):
         pytest.skip("real-services lane: DATABASE_URL 未指向 Postgres")
@@ -51,6 +69,11 @@ def _postgres_url() -> str:
 
 
 def _redis_url() -> str:
+    if not _explicit_lane_enabled():
+        pytest.skip(
+            "real-services lane: 未显式启用（需 REAL_SERVICES=1；"
+            "ambient REDIS_URL 可能是 load_dotenv 泄漏，不算数）"
+        )
     url = os.environ.get("REDIS_URL", "")
     if not url.startswith("redis://"):
         pytest.skip("real-services lane: REDIS_URL 未设置")

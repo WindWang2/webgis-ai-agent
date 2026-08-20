@@ -99,3 +99,25 @@ def test_real_services_smoke_exercises_production_celery_app():
     assert "-A" in smoke and '"app.services.task_queue"' in smoke, (
         "worker 必须以生产 app 启动（-A app.services.task_queue）"
     )
+
+
+def test_real_services_lane_requires_explicit_flag():
+    """#661：lane 必须显式导出 REAL_SERVICES=1，smoke 守卫只认显式 flag。
+
+    全量套件里 import app.main 会执行 load_dotenv()，把本地 .env 的
+    REDIS_URL 泄进 os.environ；机器上恰好有可达 Redis（如 dev 容器的
+    16379）时，"变量存在且可达"不再能区分"真 lane"与"被污染的本地套件"
+    —— self-skip 被打穿后 production worker 在本地挂死。守卫必须以显式
+    REAL_SERVICES=1 为准（与 #532 的 REQUIRE_BROWSER=1 同款契约），ambient
+    环境变量一律不足以武装 smoke。
+    """
+    jobs = _workflow()["jobs"]
+    run_text = "\n".join(
+        str(s.get("run", "")) for s in jobs["real-services-smoke"]["steps"]
+    )
+    assert "REAL_SERVICES=1" in run_text, "lane 必须导出 REAL_SERVICES=1"
+
+    smoke = (REPO_ROOT / "tests" / "test_real_services_smoke.py").read_text(encoding="utf-8")
+    assert 'REAL_SERVICES' in smoke and '== "1"' in smoke, (
+        'smoke 守卫必须以 REAL_SERVICES=="1" 显式 gate，不认 ambient env'
+    )
