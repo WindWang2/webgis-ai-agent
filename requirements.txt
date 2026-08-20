@@ -87,7 +87,7 @@ psycopg2-binary>=2.9.12
 matplotlib>=3.8.0
 
 # RAG & Vector Search
-sentence-transformers>=2.2.0
+sentence-transformers>=2.2.2  # #662: local_files_only 构造参数（离线加载开关依赖）
 faiss-cpu>=1.8.0
 tiktoken>=0.5.0
 

@@ -83,6 +83,7 @@ services:
       - "127.0.0.1:${FRONTEND_PORT:-13000}:3000"
     environment:
       - ENV=production
+      - RAG_EMBEDDING_OFFLINE=true  # #662: 离线加载 embedding 模型（缓存预置见 docs/DEPLOYMENT.md）
       - DEBUG=false
       - DATABASE_URL=${DATABASE_URL}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
@@ -141,6 +142,7 @@ services:
     restart: unless-stopped
     environment:
       - ENV=production
+      - RAG_EMBEDDING_OFFLINE=true  # #662: 离线加载 embedding 模型（缓存预置见 docs/DEPLOYMENT.md）
       - DEBUG=false
       - DATABASE_URL=${DATABASE_URL}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}

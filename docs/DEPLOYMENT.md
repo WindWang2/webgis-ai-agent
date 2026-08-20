@@ -103,6 +103,20 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
 
 api 与 worker 挂共享命名卷 `webgis_data:/app/data`；api 的 compose healthcheck 与镜像 HEALTHCHECK 一致为双探测（uvicorn `/api/v1/health/live` + 前端 :3000）。
 
+### RAG embedding 模型缓存预置（#662）
+
+生产镜像与两个 prod compose 显式设置 `RAG_EMBEDDING_OFFLINE=true`：RAG
+embedding 模型（`paraphrase-multilingual-MiniLM-L12-v2`）只从本地 HF 缓存
+加载，未缓存时首次使用**秒级失败**（RAG 检索走文档化降级，日志有明确指路
+信息），而不是无超时的 HuggingFace 下载把 worker 线程挂死、连累进程优雅
+关停。预置缓存的三个候选（按推荐排序）：
+
+1. **预热 volume（推荐）**：一次性跑 `docker run --rm -v webgis_hf_cache:/root/.cache/huggingface <镜像> python -c "from sentence_transformers import SentenceTransformer as S; S('paraphrase-multilingual-MiniLM-L12-v2')"`，再把该卷以 `HF_HOME` 挂给 api 与 celery-worker（需要构建机能出网一次）。
+2. **构建期下载**：在 `Dockerfile.prod` 的 backend-deps 阶段加一步下载（镜像增重 ~120MB，构建机需 HF 出网；换来零运行时依赖）。
+3. **不预置**：接受首次 RAG 检索降级（空证据 + error 日志），事后按 1 补缓存。
+
+本地开发不受影响：`RAG_EMBEDDING_OFFLINE` 默认 false，首用自动下载。
+
 ## 形态四：加固生产 docker-compose.prod.secure.yml
 
 CI 的 deploy-prod / rollback / preview 走此栈；也可手动：

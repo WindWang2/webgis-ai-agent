@@ -47,6 +47,7 @@ _ENV_BASELINE = {
     "AUTH_DISABLED": "false",
     "LOCAL_GEODATA_DIR": "",
     "LOCAL_QUERY_FIRST": "true",
+    "RAG_EMBEDDING_OFFLINE": "false",
 }
 for _key, _value in _ENV_BASELINE.items():
     os.environ.setdefault(_key, _value)
@@ -92,5 +93,9 @@ def _offline_embedding_model(monkeypatch):
             "test suite must not load the real SentenceTransformer model "
             "(unbounded network); stub FaissVectorStore.embed_texts instead"
         )
+
+    # 专门测试加载器 wiring 的文件（如 test_rag_embedding_offline.py）可以
+    # 显式换回真实现 —— 它们 mock 构造器或强制离线快失败，不会真加载。
+    fail_fast._real_implementation = FaissVectorStore._get_embedding_model
 
     monkeypatch.setattr(FaissVectorStore, "_get_embedding_model", fail_fast)

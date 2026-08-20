@@ -2,6 +2,15 @@
 
 ## [Unreleased] - 2026-08-20
 
+### Added
+- `RAG_EMBEDDING_OFFLINE` setting (default false): when enabled, the lazy
+  SentenceTransformer load runs with `local_files_only=True` — an uncached
+  model fails in seconds (RAG degrades via its documented fallback) instead
+  of an unbounded HuggingFace download hanging the `to_thread` worker and
+  stalling graceful shutdown (#662). Production surfaces (Dockerfile.prod,
+  both prod composes' api + celery-worker) enable it; cache-provisioning
+  options documented in docs/DEPLOYMENT.md.
+
 ### Changed
 - Env loading moved out of `app/main.py` import time into the launchers
   (`python main.py` / `manage.py` call `load_dotenv()` themselves; bare

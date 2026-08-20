@@ -114,6 +114,12 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = "redis://localhost:16379/1"
     USE_REDIS: bool = True
 
+    # #662：RAG embedding 模型离线加载（local_files_only）。开启后未缓存的
+    # 首次加载秒级失败（有界），而不是无超时的 HF 下载把 to_thread worker
+    # 线程挂死、连累进程优雅关停。默认 False：开发机首用自动下载行为不变；
+    # 生产部署面显式打开，模型缓存预置方式见 docs/DEPLOYMENT.md。
+    RAG_EMBEDDING_OFFLINE: bool = False
+
     # Geospatial Data Fabric resource guards (Section 70). Bounded hard limits so
     # one remote query (or a server that ignores `limit`) cannot OOM the process
     # or materialize an unbounded payload. Override per-env; values are clamped

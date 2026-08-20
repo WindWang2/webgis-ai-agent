@@ -13,6 +13,11 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# #662：离线加载依赖 SentenceTransformer 构造器的 local_files_only 参数
+# （requirements.txt 下界 >=2.2.2 保证存在；更老的版本会对未知 kwarg 抛
+# TypeError，同样是有界失败而非挂起）。
+_EMBEDDING_MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
+
 # Thread-local re-entrancy depth for _write_lock (see its docstring).
 _lock_state = threading.local()
 
@@ -141,14 +146,38 @@ class FaissVectorStore:
         self._index_sig: Optional[int] = None
 
     def _get_embedding_model(self):
-        """Lazy load sentence transformer model."""
+        """Lazy load sentence transformer model.
+
+        #662：``RAG_EMBEDDING_OFFLINE`` 开启时以 ``local_files_only=True``
+        构造 —— 完全不发起网络请求，未缓存的部署秒级失败（有界），而不是
+        无超时的 HF 下载把 ``asyncio.to_thread`` 的 worker 线程永久挂死
+        （#660 在测试进程里炸出的机制，生产面同理）。
+        """
         if self._model is None:
+            from app.core.config import settings
+
             try:
                 from sentence_transformers import SentenceTransformer
-                self._model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
-                logger.info("[RAG] Loaded embedding model: paraphrase-multilingual-MiniLM-L12-v2")
+
+                if settings.RAG_EMBEDDING_OFFLINE:
+                    # #662：local_files_only —— 不发起任何网络请求，
+                    # 未缓存的部署秒级失败（有界）。
+                    self._model = SentenceTransformer(
+                        _EMBEDDING_MODEL_NAME,
+                        local_files_only=True,
+                    )
+                else:
+                    self._model = SentenceTransformer(_EMBEDDING_MODEL_NAME)
+                logger.info(f"[RAG] Loaded embedding model: {_EMBEDDING_MODEL_NAME}")
             except Exception as e:
-                logger.error(f"[RAG] Failed to load embedding model: {e}")
+                if settings.RAG_EMBEDDING_OFFLINE:
+                    logger.error(
+                        "[RAG] Offline embedding-model load failed (no network "
+                        "attempted): %s. 预置 HF 模型缓存，或关闭 "
+                        "RAG_EMBEDDING_OFFLINE（见 docs/DEPLOYMENT.md）", e,
+                    )
+                else:
+                    logger.error(f"[RAG] Failed to load embedding model: {e}")
                 raise
         return self._model
 
