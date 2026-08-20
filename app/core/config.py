@@ -140,6 +140,13 @@ class Settings(BaseSettings):
     # serializes ~5000 remote round-trips.
     DATA_FABRIC_SYNC_CONCURRENCY: int = 4
 
+    # Chat 引擎：连续“无进展”轮次的熔断阈值（#685）
+    # 定义：当连续 N 轮工具调用既未产生新的成功结果也未推进计划进度时，判定为无进展循环。
+    # 具体实现中以 consecutive_no_progress 计数器跟踪，连续 N 轮满足「全失败/重复/错误」
+    # 或「无工具调用但内容为空」即触发熔断，提前结束 max_rounds 循环并以 FAILED/no_progress
+    # 诚实 settle。可被环境变量 LLM_NO_PROGRESS_THRESHOLD 覆盖，便于测试与运维调参。
+    LLM_NO_PROGRESS_THRESHOLD: int = 3
+
     # 代理设置
     HTTP_PROXY: Optional[str] = None
     HTTPS_PROXY: Optional[str] = None

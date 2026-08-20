@@ -154,6 +154,28 @@ async def _stream_with_token_keepalive(
             pass
 
 
+class HonestTurnFailure(RuntimeError):
+    """#685: 非流式诚实失败的语义异常（外层 chat() 按类型 settle failure_class）。
+
+    仓内先例：SessionClearingError/PiRpcError —— 不用异常文本匹配做分类，
+    改文案不会脱靶。
+    """
+
+    failure_class = "turn_failure"
+
+
+class EmptyCompletionError(HonestTurnFailure):
+    failure_class = "empty_result"
+
+
+class MaxRoundsExhaustedError(HonestTurnFailure):
+    failure_class = "max_rounds"
+
+
+class NoProgressError(HonestTurnFailure):
+    failure_class = "no_progress"
+
+
 def _settle_cancel() -> None:
     """Mark the live turn's outcome CANCELLED on a cooperative cancel.
 
@@ -377,6 +399,19 @@ class ChatExecutionEngine:
         # worker's full duration; the bounded wait returns promptly and the
         # straggler's result is discarded.
         self._cancel_wait_timeout = float(_os.getenv("CANCEL_WAIT_TIMEOUT", "5.0"))
+
+        # #685: no-progress 熔断阈值（连续 N 轮工具结果全为 repeated/error 即熔断）。
+        # 从 settings 读取以支持配置覆盖，fallback 3 保持默认行为。
+        # 同一块阈值被非流式与流式两路径复用（parity）。
+        try:
+            from app.core.config import settings as _s  # noqa: WPS433 inline for late binding
+            _thr = int(getattr(_s, "LLM_NO_PROGRESS_THRESHOLD", 3))
+        except Exception:
+            _thr = 3
+        # 也支持 env 覆盖（测试用），与仓内 SESSION_CACHE_SIZE 等惯例一致
+        import os as _os2
+        _thr = int(_os2.getenv("LLM_NO_PROGRESS_THRESHOLD", str(_thr)))
+        self._no_progress_threshold = max(1, _thr)
 
     def _select_tools(
         self,
@@ -1013,13 +1048,24 @@ class ChatExecutionEngine:
                     result = await self._chat_locked(
                         message, session_id, messages, skill_name, user_id, project_id,
                     )
-                    rt_ev.settle(Outcome.SUCCEEDED)
+                    # #685: _chat_locked 内部已通过异常区分 FAILED（empty / max_rounds / no_progress）
+                    # success 的语义由 outcome 决定；这里仅在未被 settle 时兜底成功
+                    if rt_ev.outcome.outcome is None:
+                        rt_ev.settle(Outcome.SUCCEEDED)
+                    # 若 _chat_locked 抛错则进入 except 分支，不会到这里
                     return result
                 except asyncio.CancelledError:
                     rt_ev.settle(Outcome.CANCELLED)
                     raise
                 except Exception as exc:  # noqa: BLE001
-                    rt_ev.settle(Outcome.FAILED, failure_class=type(exc).__name__, detail=str(exc)[:200])
+                    # #685: 把 fail_task 的语义分类透传给 evidence
+                    # empty / max_rounds / no_progress 均由 _chat_locked 已 fail_task，
+                    # 这里用异常文本做 failure_class 分类；未分类的仍用异常名兜底
+                    _msg = str(exc)
+                    if isinstance(exc, HonestTurnFailure):
+                        rt_ev.settle(Outcome.FAILED, failure_class=exc.failure_class, detail=_msg[:200])
+                    else:
+                        rt_ev.settle(Outcome.FAILED, failure_class=type(exc).__name__, detail=_msg[:200])
                     raise
                 finally:
                     # design-v3：把本进程 canonical 计划（含打勾进度）持久化到 store。
@@ -1081,6 +1127,8 @@ class ChatExecutionEngine:
         turn_id_for_catalog: str | None = (
             _rt.turn_id if _rt and _rt.turn_id else rt_ctx.new_turn_id()
         )
+        # #685: no-progress 熔断计数（非流式路径）；与流式路径同义
+        _no_progress_streak = 0
 
         try:
             for _ in range(self.max_rounds):
@@ -1254,9 +1302,49 @@ class ChatExecutionEngine:
                         await self._repair_orphaned_tool_calls(session_id, messages)
                         _settle_cancel()  # cooperative cancel ≠ success
                         return {"session_id": session_id, "content": "任务已取消", **({"owner_token": owner_token} if owner_token else {})}
+                    # #685: no-progress 熔断（非流式路径）
+                    # 轮内是否至少有一个成功的新进展（status=="ok" 且非可疑结果）。
+                    # 失败/重复/异常抛出的工具不算进展；若整轮无进展则 streak++
+                    # 否则重置。达到阈值即 fail_task + FAILED/no_progress 诚实
+                    # settle，并返回失败响应（由外层 chat() 透传为 FAILED Outcome）。
+                    _has_progress = False
+                    for _exec in exec_results:
+                        if _exec is _CANCELLED_TOOL or isinstance(_exec, Exception):
+                            continue
+                        _st = getattr(getattr(_exec, "outcome", None), "status", None)
+                        if _st == "ok" and not _is_suspicious_result_fn(getattr(_exec.outcome, "raw_result", None)):
+                            _has_progress = True
+                            break
+                    if _has_progress:
+                        _no_progress_streak = 0
+                    else:
+                        _no_progress_streak += 1
+                        if _no_progress_streak >= self._no_progress_threshold:
+                            # 不再保存空内容；诚实失败（TurnEvidence 的 dedup
+                            # 计数已在工具执行时记录，外层 settle 时随 evidence 可见）
+
+                            self.tracker.fail_task(task.id, "no progress: repeated/failed tool results")
+                            # 让外层 chat() 感知失败（通过异常），外层会在 except 中
+                            # settle FAILED，这里先在 _chat_locked 内抛错
+                            _dedup_n = 0
+                            _ev_np = current_turn_evidence()
+                            if _ev_np is not None:
+                                _dedup_n = int(getattr(_ev_np, "deduped_tool_calls", 0) or 0)
+                            raise NoProgressError(
+                                f"no progress after {_no_progress_streak} rounds "
+                                f"({_dedup_n} deduped repeated tool calls)"
+                            )
                     continue
                 else:
                     content = raw_content
+                    # CORRECTNESS-4 移植到非流式路径：空补全（无 content 也无 tool_calls）
+                    # 是 provider 异常，不是答案 —— 绝不保存空 assistant 消息也不 complete_task。
+                    # 与流式路径（:1947-1955）同义：fail_task + 异常上抛，外层 chat() 将
+                    # settle Outcome.FAILED（failure_class=empty_result）。
+                    if not (content or "").strip() and not tc_list:
+                        self.tracker.fail_task(task.id, "empty completion from provider")
+                        raise EmptyCompletionError("empty completion from provider")
+
                     entry = {"role": "assistant", "content": content}
                     if reasoning:
                         entry["reasoning_content"] = reasoning
@@ -1265,8 +1353,8 @@ class ChatExecutionEngine:
                     self.tracker.complete_task(task.id)
                     return {"session_id": session_id, "content": content, "reasoning": reasoning, **({"owner_token": owner_token} if owner_token else {})}
 
-            self.tracker.complete_task(task.id)
-            return {"content": "达到最大工具调用轮数", "session_id": session_id, **({"owner_token": owner_token} if owner_token else {})}
+            self.tracker.fail_task(task.id, "达到最大工具调用轮数")
+            raise MaxRoundsExhaustedError("达到最大工具调用轮数")
         except (asyncio.CancelledError, GeneratorExit):
             # F8: 取消必须呈现为 cancelled 终态，而不是 failed。
             self.tracker.cancel(task.id)
@@ -1487,6 +1575,8 @@ class ChatExecutionEngine:
                 turn_start_user_message = message
                 _rt2 = rt_ctx.current_runtime_context()
                 turn_id_for_catalog = _rt2.turn_id if _rt2 and _rt2.turn_id else turn_id
+                # #685: 流式路径 no-progress 熔断（与非流式 _chat_locked 同义）
+                _stream_no_progress_streak = 0
 
                 for round_index in range(self.max_rounds):
                     # tools 先选（含 tools payload 软计入估算），再组装上下文
@@ -1934,6 +2024,58 @@ class ChatExecutionEngine:
                         # 幂等，已配对的 tool_call 不会重复补。
                         await self._repair_orphaned_tool_calls(session_id, messages)
 
+                        # #685: 流式 no-progress 熔断（与非流式同形）
+                        # 以 pending_tools 轮内是否至少有一个“非可疑成功”判进展。
+                        # 注意：repeated 的 step 在上面的分发里已被 complete_step
+                        # （RUN-02 修复把所有终态都落盘），所以不能仅用
+                        # completed 判定；需要看 dedup/重复语义。最可靠的是看
+                        # completion_results 里的 slim_event 是否带 "note": "Loop blocked"
+                        #（即 dispatch 返回 repeated）；带 note 的不算进展。
+                        _stream_has_progress = False
+                        for _p in pending_tools:
+                            _sid = _p["step"].id
+                            _cr = completion_results.get(_sid)
+                            if not _cr:
+                                continue
+                            # 若该 step 的 slim_event 携带 dedup note，说明是 repeated
+                            _task_info = self.tracker.get(task.id)
+                            if _task_info is None:
+                                continue
+                            _st = next((s for s in _task_info.steps if s.id == _sid), None)
+                            if _st is None:
+                                continue
+                            # failed 一律不算进展；completed 但 result 含 note=Loop blocked 也不算
+                            if _st.status.value == "failed":
+                                continue
+                            if _st.status.value == "completed":
+                                _raw = _st.result
+                                if isinstance(_raw, dict) and _raw.get("note") == "Loop blocked":
+                                    continue
+                                # 可疑结果（空/失败形态）也不算进展——与非流式
+                                # 同一谓词（is_suspicious_result 含空要素形态）
+                                if isinstance(_raw, dict) and _raw.get("success") is False:
+                                    continue
+                                if _is_suspicious_result_fn(_raw):
+                                    continue
+                                _stream_has_progress = True
+                                break
+                        if _stream_has_progress:
+                            _stream_no_progress_streak = 0
+                        else:
+                            _stream_no_progress_streak += 1
+                            if _stream_no_progress_streak >= self._no_progress_threshold:
+                                self.tracker.fail_task(task.id, "no progress: repeated/failed tool results")
+                                rt_ev.settle(Outcome.FAILED, failure_class="no_progress")
+                                pf = _maybe_plan_finalized_event()
+                                if pf:
+                                    yield pf
+                                yield sse_event("task_error", {
+                                    "task_id": task.id,
+                                    "error": f"连续 {_stream_no_progress_streak} 轮无进展，自动终止（重复/失败工具调用）",
+                                    "session_id": session_id,
+                                })
+                                yield sse_event("done", {"session_id": session_id})
+                                return
                         continue
                     else:
                         content = raw_content
