@@ -2,6 +2,13 @@
 
 ## [Unreleased] - 2026-08-20
 
+### Fixed
+- Unfiltered local full-suite runs no longer execute `@pytest.mark.perf`
+  benchmarks mid-suite: perf items now self-skip with the isolated-run
+  command unless `-m` selects perf (baselines assume isolated execution;
+  mid-suite timing was nondeterministically red — 0/4/7 failures across
+  three same-day runs, worst on clean master) (#664).
+
 ### Added
 - `RAG_EMBEDDING_OFFLINE` setting (default false): when enabled, the lazy
   SentenceTransformer load runs with `local_files_only=True` — an uncached

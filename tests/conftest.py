@@ -74,6 +74,35 @@ def _pin_auth_bypass_off(monkeypatch):
     monkeypatch.setattr(settings, "LOCAL_QUERY_FIRST", False, raising=False)
 
 
+def pytest_collection_modifyitems(config, items):
+    """#664：perf 基准只在显式 `-m perf`（或含 perf 的选择式）时执行。
+
+    perf 基线的契约是隔离运行（CI 专属 test-perf lane、基准文件 docstring
+    的 `-m perf` 用法）。无 marker 过滤的本地全量跑会把 perf 项混在 ~4500
+    个测试中段执行 —— 堆积累 + 机器负载相位使 median 超基线（同机三次实测
+    0/4/7 failed，干净 master 最差）。未选择 perf 时给 perf 项追加**可见
+    skip** 并教学正确命令：确定性 skip 代替非确定性红。
+
+    markexpr 按 token 匹配：`-m perf` / `-m "cartography or perf"` 放行；
+    `-m "not perf ..."` 也含 perf token，但那些项本就被 marker 过滤剔除，
+    双保险无害；无 `-m`（本地全量）→ skip。行为由
+    tests/unit/test_perf_isolation_wiring.py 以子进程两态锁定。
+    """
+    markexpr = (getattr(config.option, "markexpr", "") or "").strip()
+    if "perf" in markexpr.split():
+        return
+    skip_marker = pytest.mark.skip(
+        reason="perf 基线要求隔离运行（全量中段执行会抖动超基线，#664）："
+        "pytest -m perf --no-cov"
+    )
+    for item in items:
+        # 只认显式 marker，不用 "perf" in item.keywords —— pytest 的 keyword
+        # 索引把目录名也算进去（tests/perf/ 下的功能测试无 marker、CI 主
+        # lane 照跑，误伤会让本地与 CI 行为分叉）。
+        if item.get_closest_marker("perf") is not None:
+            item.add_marker(skip_marker)
+
+
 @pytest.fixture(autouse=True)
 def _offline_embedding_model(monkeypatch):
     """测试套件禁止惰性加载真实 SentenceTransformer 模型（#660）。
