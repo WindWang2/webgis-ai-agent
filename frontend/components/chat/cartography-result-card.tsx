@@ -72,14 +72,27 @@ export function CartographyResultCard({ result, layerId, onFocus }: Props) {
           </div>
           <div className="flex items-center justify-between">
             <span className="text-body text-ink-muted">{summarize(spec)}</span>
-            <button
-              type="button"
-              onClick={() => onFocus?.(layerId)}
-              className="inline-flex items-center gap-1 text-body font-medium text-status-accent hover:underline"
-            >
-              <Target className="h-3 w-3" />
-              高亮此图层
-            </button>
+            {onFocus && layerId ? (
+              <button
+                type="button"
+                onClick={() => onFocus(layerId)}
+                className="inline-flex items-center gap-1 text-body font-medium text-status-accent hover:underline"
+              >
+                <Target className="h-3 w-3" />
+                高亮此图层
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled
+                aria-disabled="true"
+                className="inline-flex items-center gap-1 text-body font-medium text-ink-disabled cursor-not-allowed"
+                title="无可聚焦图层"
+              >
+                <Target className="h-3 w-3" />
+                高亮此图层
+              </button>
+            )}
           </div>
         </>
       )}

@@ -269,9 +269,19 @@ export function ChatTab({ messages, aiStatus, onSend, onPlanAction, sessionId }:
     }
   }, []);
 
+  const NEAR_BOTTOM_PX = 80;
+
+  const isNearBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
+  }, []);
+
   useEffect(() => {
-    scrollToBottom();
-  }, [messages, aiStatus, scrollToBottom]);
+    if (isNearBottom()) {
+      scrollToBottom();
+    }
+  }, [messages, aiStatus, scrollToBottom, isNearBottom]);
 
   useEffect(() => {
     const ta = textareaRef.current;

@@ -15,9 +15,21 @@ export function GraduatedLegend({ spec, onFilterChange }: Props) {
   const classCount = Math.max(0, breaks.length - 1);
   const [visible, setVisible] = useState<boolean[]>(() => new Array(classCount).fill(true));
 
+  const specKey = `${field}:${breaks.join(',')}`;
+  const prevSpecKeyRef = React.useRef<string | null>(null);
   useEffect(() => {
     setVisible(new Array(classCount).fill(true));
-  }, [classCount]);
+    if (prevSpecKeyRef.current !== null && onFilterChange) {
+      // Spec identity changed after mount — clear stale range filter built
+      // from the old breaks so legend and map stay in sync (fix #689-4).
+      const allRanges =
+        classCount > 0
+          ? breaks.slice(0, -1).map((v, i) => [v, breaks[i + 1]] as number[])
+          : [];
+      onFilterChange(allRanges);
+    }
+    prevSpecKeyRef.current = specKey;
+  }, [specKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!breaks || breaks.length < 2) return null;
 

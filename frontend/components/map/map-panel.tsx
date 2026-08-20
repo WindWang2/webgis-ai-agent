@@ -4,6 +4,32 @@ import { MAP_STYLES, MapStyleOption } from "@/lib/constants"
 import Map, { MapRef, ViewStateChangeEvent, Popup } from "react-map-gl/maplibre"
 import type { StyleSpecification } from "maplibre-gl"
 import type { Layer } from "@/lib/types/layer"
+
+/**
+ * #689 图例-过滤对账的纯判定：图例 onFilterChange 载荷 → activeFilters 状态。
+ * 恰好覆盖全部类（全可见/规格重置）→ 移除该层过滤键；其余一律保留——含
+ * 用户全隐藏的空 ranges（adapter 的 ["any"] 空表达式在 MapLibre 求值为
+ * false，正确渲染"该层全部隐藏"）。把空 ranges 当重置删键会让地图全显
+ * 而图例全隐（评审修正的反向不一致）。
+ */
+export function resolveFilterState(
+  prev: Record<string, number[][]>,
+  layerId: string,
+  ranges: number[][],
+  layers: Layer[],
+): Record<string, number[][]> {
+  const spec = layers.find((l) => l.id === layerId)?.legend_spec;
+  const breaks = spec && spec.type === "graduated" ? spec.breaks : null;
+  const expected = Array.isArray(breaks) ? breaks.length - 1 : null;
+  const isFullVisible = expected !== null && ranges.length === expected;
+  if (isFullVisible) {
+    if (!prev[layerId]) return prev;
+    const next = { ...prev };
+    delete next[layerId];
+    return next;
+  }
+  return { ...prev, [layerId]: ranges };
+}
 import { MapActionHandler } from "./map-action-handler"
 import { ThematicLegend } from "./thematic-legend"
 import { MapDecorations } from "./map-decorations"
@@ -139,11 +165,46 @@ export function MapPanel({
   )
 
   const handleFilterChange = useCallback((layerId: string, ranges: number[][]) => {
-    setActiveFilters((prev) => ({
-      ...prev,
-      [layerId]: ranges,
-    }))
+    setActiveFilters((prev) => resolveFilterState(prev, layerId, ranges, useHudStore.getState().layers))
   }, [])
+
+  // When a layer is removed or its spec fingerprint changes, any
+  // activeFilters entry built from the old spec is stale and must be cleared.
+  const prevSpecKeysRef = useRef<Record<string, string>>({})
+  useEffect(() => {
+    const nextKeys: Record<string, string> = {}
+    for (const l of layers) {
+      const ls: any = l.legend_spec
+      nextKeys[l.id] = ls ? `${l._mapspecFingerprint ?? ''}:${ls.breaks?.join(',') ?? ''}:${ls.field ?? ''}` : ''
+    }
+    const prevKeys = prevSpecKeysRef.current
+    let changed = false
+    const toDelete: string[] = []
+    for (const id of Object.keys(prevKeys)) {
+      if (!(id in nextKeys)) {
+        // Layer removed
+        toDelete.push(id)
+        changed = true
+      } else if (prevKeys[id] !== nextKeys[id]) {
+        // Spec / fingerprint changed -> stale filter
+        toDelete.push(id)
+        changed = true
+      }
+    }
+    if (changed) {
+      setActiveFilters((prev) => {
+        let next: Record<string, number[][]> | null = null
+        for (const id of toDelete) {
+          if (prev[id]) {
+            if (!next) next = { ...prev }
+            delete next[id]
+          }
+        }
+        return next ?? prev
+      })
+    }
+    prevSpecKeysRef.current = nextKeys
+  }, [layers])
 
   // Focus Layer Effect — fit map to layer bbox when focusLayerId is set,
   // then clear it back to null so the same layer can be re-focused later.

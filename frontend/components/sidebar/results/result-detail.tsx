@@ -172,18 +172,23 @@ export function ResultDetail({ result, sessionId, ownerToken, onBack, onSend }: 
           setActiveLeftTab('layers');
           break;
         case 'buffer':
+          setActiveLeftTab('chat');
           onSend(`对刚生成的「${result.toolLabel}」结果做缓冲区分析`);
           break;
         case 'overlay':
+          setActiveLeftTab('chat');
           onSend(`将「${result.toolLabel}」结果与其他图层进行叠加分析`);
           break;
         case 'classify':
+          setActiveLeftTab('chat');
           onSend(`对「${result.toolLabel}」栅格结果进行分类`);
           break;
         case 'inspect':
+          setActiveLeftTab('chat');
           onSend(`检查「${result.toolLabel}」结果中的显著要素`);
           break;
         case 'export':
+          setActiveLeftTab('chat');
           onSend(`导出「${result.toolLabel}」结果`);
           break;
       }

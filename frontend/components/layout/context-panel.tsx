@@ -354,7 +354,7 @@ export function ContextPanel({
         )}
         {activeTab === 'project' && <ProjectTab />}
         {activeTab === 'layers' && <PanelErrorBoundary label="图层"><LayersTab /></PanelErrorBoundary>}
-        {activeTab === 'analysis' && <AnalysisTab onSend={onSend} />}
+        {activeTab === 'analysis' && <AnalysisTab onSend={onSend} aiStatus={aiStatus} />}
         {/* #463: sessionId/ownerToken are threaded into the Data Sources tab so
             实例化至图层 materializes into the REAL conversation session instead of
             the phantom 'default_session' (and the layer's ref is fetchable). */}
