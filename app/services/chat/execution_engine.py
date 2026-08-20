@@ -1074,8 +1074,8 @@ class ChatExecutionEngine:
         task = self.tracker.create(session_id, message)
         owner_token = self.get_session_owner_token(session_id)
         # #684：捕获本用户轮原始消息与 turn_id，用于按用户轮衰减与固定关键词源。
-        # 非流式路径不绑定 runtime context（区别于流式 1392 行的手动绑定），
-        # 环境上下文缺 turn_id 时自铸——本方法一次调用即一个用户轮。
+        # _chat_locked 外层（turn 绑定处）通常已注入 turn_id；兜底自铸仅服务
+        # 于无环境上下文的调用方——本方法一次调用即一个用户轮。
         turn_start_user_message: str = message
         _rt = rt_ctx.current_runtime_context()
         turn_id_for_catalog: str | None = (
