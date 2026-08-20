@@ -182,6 +182,18 @@ class TiandituProvider:
         pois = data.get("pois", [])
         if not pois and isinstance(data.get("resultType"), int):
             return {"type": "FeatureCollection", "features": [], "count": 0, "provider": "tianditu"}
+        # v2/search 上报的总命中在 count/total 字段——与 amap/baidu 的 total
+        # 透传对齐（count=returned 本页条数，total=provider 上报总命中）
+        _total = None
+        for _k in ("count", "total"):
+            _v = data.get(_k)
+            if _v is not None:
+                try:
+                    _total = int(_v)
+                except (TypeError, ValueError):
+                    _total = None
+                if _total is not None:
+                    break
         return shape_poi_collection(
             pois,
             extract_coord=self._extract_loc,
@@ -192,7 +204,8 @@ class TiandituProvider:
             },
             provider="tianditu",
             src_crs=self.SRC_CRS,
-            limit=limit,
+            limit=_clamped,
+            total=_total,
         )
 
     async def search_poi_around(

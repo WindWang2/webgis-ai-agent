@@ -104,6 +104,7 @@ class ChineseMapsEngine:
             provider, _call,
             no_key_msg=(f"所有服务商均失败: {'; '.join(errors)}" if errors else "未配置任何地图 API Key"),
             tool_name="search_poi",
+            city=city or None,
         )
 
 
@@ -201,6 +202,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
             provider, _call,
             no_key_msg=(f"所有服务商均失败: {'; '.join(errors)}" if errors else "未配置任何地图 API Key"),
             tool_name="search_poi",
+            city=city or None,
         )
 
     tool(registry, tier=2, domains=["chinese"], name="geocode_cn",

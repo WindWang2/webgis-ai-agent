@@ -203,10 +203,12 @@ async def test_fallback_marks_provider_switched_and_city_note(monkeypatch):
             return {"error": "amap down"}
         return {"type": "FeatureCollection", "features": [], "count": 0, "provider": p}
 
-    out = await with_fallback("amap", _call, tool_name="search_poi")
+    out = await with_fallback("amap", _call, tool_name="search_poi", city="成都")
     assert out.get("provider_switched") is True
     assert "fallback_note" in out and isinstance(out["fallback_note"], str)
     assert len(out["fallback_note"]) > 0
+    # #683 复核补丁：city 显式传入时必须出现过滤保持性话术（此前形参恒死）
+    assert "city 过滤保持性" in out["fallback_note"], out["fallback_note"]
 
 
 @pytest.mark.asyncio
@@ -250,3 +252,4 @@ async def test_fallback_through_tianditu_city_failure_reaches_baidu(monkeypatch)
     if out.get("provider") == "baidu":
         assert out.get("provider_switched") is True
         assert "fallback_note" in out
+

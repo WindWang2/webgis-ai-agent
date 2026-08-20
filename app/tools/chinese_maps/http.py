@@ -110,6 +110,7 @@ async def with_fallback(
     exclude: set[str] | None = None,
     no_key_msg: str = "未配置任何地图 API Key",
     tool_name: str = "",
+    city: str | None = None,
 ) -> dict:
     """Run a per-provider capability call with automatic fallback.
 
@@ -175,7 +176,7 @@ async def with_fallback(
         # 仅对 FeatureCollection/有 provider 的业务结果标注，避免破坏单元测试的最小 dict 断言
         if len(attempted) > 1 and isinstance(result, dict) and result.get("type") == "FeatureCollection":
             origin = attempted[0]
-            note = _fallback_semantic_note(origin, p)
+            note = _fallback_semantic_note(origin, p, city=city)
             result = dict(result)
             result["provider_switched"] = True
             result["fallback_note"] = note
