@@ -57,7 +57,7 @@ describe('viewport filter must not double-crop MVT sources (#668)', () => {
     const src = map.getSource('ref:big-1') as any;
     // If filtering was skipped, source data features length stays 1500
     // If filtering was incorrectly applied, it would be culled to ~6 features intersecting [0,0,0.05,0.05]
-    const stored = src?.__data ?? src?.data ?? null;
+    const _stored = src?.__data ?? src?.data ?? null;
     // mock map stores via addSource data param — inspect via _sources if available
     // fallback: check spy call
     if (spy.mock.calls.length > 0) {

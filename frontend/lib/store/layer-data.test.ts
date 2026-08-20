@@ -101,7 +101,7 @@ describe('ensureLayerData seam (#667)', () => {
     const fc = { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [0, 0] }, properties: {} }] };
     apiFetchMock.mockResolvedValueOnce(fc);
 
-    const r1 = await ensureLayerData(layer.id, 'filter');
+    const _r1 = await ensureLayerData(layer.id, 'filter');
     expect(apiFetchMock).toHaveBeenCalledTimes(1);
     expect((apiFetchMock.mock.calls[0][0] as string)).toContain('/layers/data/');
     expect(useHudStore.getState().layers.find(l => l.id === layer.id)?.source).toEqual(fc);

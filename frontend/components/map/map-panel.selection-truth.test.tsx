@@ -49,7 +49,7 @@ const hud = vi.hoisted(() => {
       hud.setState({ layers });
     },
   };
-  const state: Record<string, unknown> & { selectedFeature: any } = { ...initialState(), ...actions };
+  const state: Record<string, unknown> & { selectedFeature: any; layers: any[] } = { ...initialState(), ...actions };
   const listeners = new Set<() => void>();
   return {
     state,
@@ -77,12 +77,13 @@ vi.mock('react-map-gl/maplibre', () => {
     rmg.lastOnClick = props.onClick ?? null;
     rmg.lastOnMove = props.onMove ?? null;
     rmg.lastOnLoad = props.onLoad ?? null;
+    const { onLoad } = props;
     React.useEffect(() => {
       if (!rmg.loaded) {
         rmg.loaded = true;
-        props.onLoad?.();
+        onLoad?.();
       }
-    }, []);
+    }, [onLoad]);
     return React.createElement('div', { 'data-testid': 'map-mock' }, props.children);
   });
   const PopupMock = (props: any) => React.createElement('div', { 'data-testid': 'popup' }, props.children);
@@ -118,11 +119,11 @@ vi.mock('@/lib/contexts/map-action-context', () => ({
 vi.mock('./map-action-handler', () => ({ MapActionHandler: () => null }));
 vi.mock('./thematic-legend', () => {
   const React = require('react');
-  return { ThematicLegend: React.memo(() => React.createElement('div', { 'data-testid': 'legend-mock' })) };
+  return { ThematicLegend: React.memo(function ThematicLegendMock() { return React.createElement('div', { 'data-testid': 'legend-mock' }); }) };
 });
 vi.mock('./map-decorations', () => {
   const React = require('react');
-  return { MapDecorations: React.memo(() => React.createElement('div', { 'data-testid': 'decor-mock' })) };
+  return { MapDecorations: React.memo(function MapDecorationsMock() { return React.createElement('div', { 'data-testid': 'decor-mock' }); }) };
 });
 vi.mock('@/lib/api/transport', () => ({
   apiFetch: (...args: any[]) => apiFetchMock(...args),
@@ -130,7 +131,6 @@ vi.mock('@/lib/api/transport', () => ({
 }));
 vi.mock('@/lib/api/config', () => ({ API_BASE: 'http://localhost:8000' }));
 
-import { useHudStore } from '@/lib/store/useHudStore';
 import { buildSelectedFeatureSnapshot } from '@/lib/hooks/use-sse-stream';
 
 function freshMockMap() {
