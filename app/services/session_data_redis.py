@@ -640,18 +640,78 @@ class RedisSessionStore(BaseSessionStore):
             return {}
         if not raw:
             return {}
+        # #687：逐字段 json.loads 卸载到线程（对齐 payload 路径的既有做法——
+        # 大 mapspec 字段的冷解析曾整段跑在事件循环上，而 apply_mutation
+        # 每次变更都会打穿 L1 触发冷读）。
+        raw_items = [
+            (k.decode() if isinstance(k, bytes) else k, v) for k, v in raw.items()
+        ]
+        out = await asyncio.to_thread(self._parse_state_fields_sync, raw_items)
+        self._l1_put(session_id, "map_state", out)
+        return out
+
+    @staticmethod
+    def _parse_state_fields_sync(raw_items: list) -> dict[str, Any]:
+        """同步：HGETALL 原始字段 → 解析后的 map_state（纯函数，线程安全）。"""
         out: dict[str, Any] = {}
-        for k, v in raw.items():
-            key = k.decode() if isinstance(k, bytes) else k
+        for key, v in raw_items:
             if key == "_started_at" or key.endswith("_updated_at"):
                 # BUG-09: _started_at is stored as a bare ISO string (not
                 # JSON). F4: _<key>_updated_at timestamps are stored the same
                 # way. Use the tolerant decoder to also handle legacy values.
-                out[key] = self._decode_started_at(v)
+                out[key] = RedisSessionStore._decode_started_at_static(v)
             else:
                 out[key] = json.loads(v)
-        self._l1_put(session_id, "map_state", out)
         return out
+
+    @staticmethod
+    def _decode_started_at_static(v) -> Any:
+        """#687：tolerant 解码的静态形态（线程内解析用，语义同 _decode_started_at）。"""
+        raw = v.decode() if isinstance(v, bytes) else v
+        if not isinstance(raw, str):
+            return raw
+        try:
+            decoded = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return raw
+        return decoded if isinstance(decoded, str) else raw
+
+    async def get_map_spec_fingerprint(self, session_id: str) -> Optional[str]:
+        """#687：定向读 mapspec 指纹字段（O(1)，不触发全字段冷解析/L1）。
+
+        供 MapSpecStore.save_mapspec 的 no-op 快比较核对 Redis 侧状态；
+        字段由 set_map_spec_fingerprint 以 JSON 字符串写入。
+        """
+        try:
+            await self._ensure_connected()
+            v = await self._r.hget(self._state_key(session_id), "_mapspec_fp")
+        except aioredis.RedisError as e:
+            logger.warning(
+                "Redis get_map_spec_fingerprint failed for %s: %s — treating as miss",
+                session_id, e,
+            )
+            return None
+        if v is None:
+            return None
+        try:
+            fp = json.loads(v)
+            return fp if isinstance(fp, str) else None
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+    async def set_map_spec_fingerprint(self, session_id: str, fingerprint: str) -> None:
+        """#687：定向写 mapspec 指纹字段（小字符串，序列化成本可忽略）。"""
+        try:
+            await self._ensure_connected()
+            await self._r.hset(
+                self._state_key(session_id), "_mapspec_fp", json.dumps(fingerprint)
+            )
+        except aioredis.RedisError as e:
+            logger.warning(
+                "Redis set_map_spec_fingerprint failed for %s: %s — no-op fast "
+                "path will fall back to sidecar-only on next boot",
+                session_id, e,
+            )
 
     async def update_layer_in_state(self, session_id: str, layer_id: str, updates: dict) -> bool:
         """审计 M11：read-modify-write 必须用 WATCH/MULTI 防并发覆盖。

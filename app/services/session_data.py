@@ -230,6 +230,18 @@ class MemorySessionStore(BaseSessionStore):
         """Memory is authoritative in-process, so no read cache can be stale."""
         del session_id
 
+    async def get_map_spec_fingerprint(self, session_id: str):
+        """#687：mapspec 指纹定向读（内存后端形态；语义同 Redis 版）。"""
+        st = self._map_state.get(session_id)
+        if not st:
+            return None
+        fp = st.get("_mapspec_fp")
+        return fp if isinstance(fp, str) else None
+
+    async def set_map_spec_fingerprint(self, session_id: str, fingerprint: str) -> None:
+        """#687：mapspec 指纹定向写（内存后端形态）。"""
+        self._map_state.setdefault(session_id, {})["_mapspec_fp"] = fingerprint
+
     async def update_layer_in_state(self, session_id: str, layer_id: str, updates: dict) -> bool:
         """更新地图状态中单个图层的属性"""
         # BUG-14: hold the lock across the whole read-modify-write so a

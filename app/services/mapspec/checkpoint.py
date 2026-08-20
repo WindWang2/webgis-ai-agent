@@ -17,6 +17,7 @@ import asyncio
 import hashlib
 import json
 import re
+import shutil
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -68,6 +69,47 @@ def _content_hash(mapspec: Dict[str, Any], ref_blob_map: Dict[str, str]) -> str:
 
 def _blob_filename(content_hash: str) -> str:
     return f"{content_hash}.json"
+
+
+# #687：自动 checkpoint（ckpt_<ms>）保留上限。显式命名 checkpoint 不受此限
+#（调用方按名 rollback）。镜像 store.MAPSPEC_REV_RETENTION 的裁剪模式。
+MAPSPEC_CKPT_RETENTION = 20
+
+_AUTO_CKPT_RE = re.compile(r"^ckpt_\d+$")
+
+
+def _prune_and_write_manifest_sync(session_dir: Path, manifest: Dict[str, Any]) -> None:
+    """同步（#687 线程内）：先裁剪自动 checkpoint，再原子写 manifest。"""
+    _prune_auto_checkpoints_sync(session_dir, manifest)
+    _atomic_write_json_sync(_manifest_path(session_dir), manifest)
+
+
+def _prune_auto_checkpoints_sync(session_dir: Path, manifest: Dict[str, Any]) -> None:
+    """同步（#687 线程内）：自动 checkpoint 目录裁剪到 MAPSPEC_CKPT_RETENTION 份。
+
+    只动 ckpt_<ms> 形态的目录（名字含毫秒时间戳，字典序即时间序）；
+    manifest 中指向被裁目录的 content_hash 条目同步移除，避免指向空洞。
+    """
+    root = _checkpoints_root(session_dir)
+    if not root.exists():
+        return
+    auto_dirs = sorted(
+        d for d in root.iterdir() if d.is_dir() and _AUTO_CKPT_RE.match(d.name)
+    )
+    if len(auto_dirs) <= MAPSPEC_CKPT_RETENTION:
+        return
+    pruned_names = set()
+    for d in auto_dirs[: len(auto_dirs) - MAPSPEC_CKPT_RETENTION]:
+        try:
+            shutil.rmtree(d, ignore_errors=True)
+            pruned_names.add(d.name)
+        except OSError:
+            continue
+    if pruned_names:
+        entries = manifest.get("entries", {})
+        manifest["entries"] = {
+            h: cid for h, cid in entries.items() if cid not in pruned_names
+        }
 
 
 def _checkpoints_root(session_dir: Path) -> Path:
@@ -268,9 +310,13 @@ async def snapshot(
 
     await asyncio.to_thread(_write_checkpoint_sync)
 
-    # 5. 更新 manifest（content_hash -> checkpoint_id），原子写。
+    # 5. 更新 manifest（content_hash -> checkpoint_id），原子写；
+    #    顺带裁剪自动 checkpoint 保留量（#687：无上限时每次 layer 变更
+    #    新增一个目录直至会话清扫，磁盘无界增长）。
     manifest["entries"][content_h] = ckpt_id
-    await asyncio.to_thread(_atomic_write_json_sync, _manifest_path(session_dir), manifest)
+    await asyncio.to_thread(
+        _prune_and_write_manifest_sync, session_dir, manifest
+    )
 
     return {
         "success": True,

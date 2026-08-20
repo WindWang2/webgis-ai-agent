@@ -206,3 +206,116 @@ def test_perf_mutation_copy_cost_bytes_bounded():
     total_copied = sum(copied_feature_counts)
     assert total_copied < 1000, f"perf mutation copy-cost exceeded: {total_copied} features copied (must be <1000)"
     print(f"\n[perf-copy-cost] copied_features={total_copied} writes_share_ok={res.mapspec['sources']['big']['inlineData'] is large_fc}")
+
+
+# ── #687：提交面解耦基准（loop tick 探针，非 wall-clock） ─────────────────
+
+def _tick_probe():
+    """返回 (runner, stats)：runner(coro_fn) 执行期间采样事件循环 tick 延迟。"""
+    import time as _t
+
+    ticks: list[float] = []
+    state = {"stop": False}
+
+    async def _probe():
+        last = _t.perf_counter()
+        while not state["stop"]:
+            await asyncio.sleep(0.005)
+            now = _t.perf_counter()
+            ticks.append(now - last)
+            last = now
+
+    async def _run(coro_fn):
+        task = asyncio.get_event_loop().create_task(_probe())
+        try:
+            await coro_fn()
+        finally:
+            state["stop"] = True
+            await task
+        return max(ticks) if ticks else 0.0
+
+    return _run
+
+
+@pytest.mark.perf
+@pytest.mark.asyncio
+async def test_noop_save_loop_tick_bounded_for_large_spec(tmp_path, monkeypatch):
+    """幂等保存大 spec 时事件循环停顿必须有界（指纹快比较替代深比较）。"""
+    import app.services.mapspec.store as store_mod
+    from app.services.mapspec.store import MapSpecStore
+    from tests.fixtures.mapspec_cow_fixtures import get_large_inline_fc
+
+    monkeypatch.setattr(store_mod, "BASE_STORAGE_DIR", tmp_path)
+
+    class _SDM:
+        def __init__(self):
+            self.state = {}
+            self.fps = {}
+
+        async def set_map_state(self, sid, key, value, seq=None):
+            self.state[key] = value
+            return True
+
+        async def get_map_state(self, sid):
+            return dict(self.state)
+
+        async def get_map_spec_fingerprint(self, sid):
+            return self.fps.get(sid)
+
+        async def set_map_spec_fingerprint(self, sid, fp):
+            self.fps[sid] = fp
+
+    sdm = _SDM()
+    monkeypatch.setattr(store_mod, "session_data_manager", sdm)
+
+    spec = {
+        "version": "1.0",
+        "view": {"center": [116.0, 39.0], "zoom": 10},
+        "sources": {"big": {"type": "geojson", "inlineData": get_large_inline_fc()}},
+        "layers": [{"id": "l1", "type": "circle", "source": "big"}],
+    }
+    store = MapSpecStore()
+    sid = "perf-687-noop"
+    await store.save_mapspec(sid, spec)  # 首次真实落盘
+
+    run = _tick_probe()
+    max_tick = await run(lambda: store.save_mapspec(sid, spec))
+    # 旧路径：两次全树 == 深比较跑在循环上（~数十 ms/MB）；新路径 O(1) 命中。
+    # 25ms 上限留足 CI 抖动余量，同时远低于旧的深比较停顿。
+    assert max_tick < 0.025, f"no-op save loop tick {max_tick*1000:.1f}ms — must be O(1) fingerprint compare"
+
+
+@pytest.mark.perf
+@pytest.mark.asyncio
+async def test_get_map_state_cold_parse_loop_tick_bounded(tmp_path):
+    """冷读（L1 打穿）ref-only 常态 spec 的循环停顿必须有界（解析已 to_thread）。
+
+    #687 平台限制记录：CPython 的 json C 编解码不释放 GIL，单个 MB 级字段
+    的 loads 即便在线程内也会造成等长的循环停顿——任何 to_thread 方案都
+    无法对巨型单字段封顶。因此本基准锚定门禁后的常态（inline >5000 特征
+    已被 mapspec_source 拒绝，大结果走 ref），此时 mapspec 字段是 KB 级，
+    解析（无论线程内外）都不会冻结循环。巨型 inline 的防御在上游门。
+    """
+    from app.services.session_data_redis import RedisSessionStore
+
+    inst = RedisSessionStore.__new__(RedisSessionStore)  # 绕过 __init__ 的连接
+    ref_only_spec = {
+        "version": "1.0",
+        "view": {"center": [116.0, 39.0], "zoom": 10},
+        "sources": {"big": {"type": "geojson", "ref": "ref:geojson:abc123"}},
+        "layers": [{"id": "l1", "type": "circle", "source": "big"}],
+    }
+    raw_fields = {
+        "mapspec": json.dumps(ref_only_spec, ensure_ascii=False).encode(),
+        "layers": json.dumps(ref_only_spec["layers"], ensure_ascii=False).encode(),
+        "_started_at": "2026-08-21T00:00:00",
+    }
+
+    async def cold_parse():
+        for _ in range(50):
+            out = await asyncio.to_thread(inst._parse_state_fields_sync, list(raw_fields.items()))
+            assert "mapspec" in out
+
+    run = _tick_probe()
+    max_tick = await run(cold_parse)
+    assert max_tick < 0.025, f"cold parse loop tick {max_tick*1000:.1f}ms — ref-only spec parse must not stall the loop"
