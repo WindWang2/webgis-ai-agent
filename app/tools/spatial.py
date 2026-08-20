@@ -95,7 +95,7 @@ def register_spatial_tools(registry: ToolRegistry):
         res = SpatialAnalyzer.statistics(features)
         return res.to_llm_response()
 
-    @tool(registry, name="nearest_neighbor",
+    @tool(registry, tier=2, domains=["statistics"], name="nearest_neighbor",
            description=(
                "最近邻分析 (NNA)：用平均最近邻距离 + R 比率判断点集是聚集 / 随机 / 均匀分布。"
                "\n何时用：拿到一组 POI 点 (餐厅、案件、设施) 想判断它们是否扎堆；"
@@ -111,7 +111,7 @@ def register_spatial_tools(registry: ToolRegistry):
         res = SpatialAnalyzer.nearest(features)
         return res.to_llm_response()
 
-    @tool(registry, name="heatmap_data",
+    @tool(registry, tier=2, domains=["statistics"], name="heatmap_data",
            description=(
                "点要素热力图。✅ 用于：用户宽泛询问『分布』『热度』『密度趋势』时"
                "的首选——优先 render_type='native' 原生渲染，轻量、不增加数据负担。"

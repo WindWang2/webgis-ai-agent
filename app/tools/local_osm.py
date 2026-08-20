@@ -132,14 +132,12 @@ def register_local_osm_tools(registry: ToolRegistry):
 
     @tool(
         registry,
-        name="get_local_osm_catalog",
+        tier=2, domains=["osm"], name="get_local_osm_catalog",
         description=(
             "本地 OSM 数据目录：查看已预处理的主题、行数与覆盖说明。"
             "✅ 用于：query_local_osm 之前确认主题可用性。"
         ),
         execution_policy=ToolExecutionPolicy.INLINE,
-        tier=1,
-        domains=["osm", "meta"],
     )
     def get_local_osm_catalog() -> dict:
         return catalog()

@@ -164,7 +164,7 @@ async def batch_geocode_cn(
 
 def register_chinese_map_tools(registry: ToolRegistry):
 
-    @tool(registry, name="search_poi",
+    @tool(registry, tier=2, domains=["chinese"], name="search_poi",
            description=(
                "中国境内不要调用本工具，改用 query_local_osm。"
                "若仍被调用，境内只查本地 OSM，不会请求高德/百度。"
@@ -203,7 +203,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
             tool_name="search_poi",
         )
 
-    tool(registry, name="geocode_cn",
+    tool(registry, tier=2, domains=["chinese"], name="geocode_cn",
          description="中文地址转坐标，比 Nominatim 中文地址准确率更高，可选高德/百度/天地图",
          param_descriptions={
              "address": "中文地址，如'北京市海淀区中关村'",
@@ -211,7 +211,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
              "provider": "服务商: 'amap'(默认), 'baidu', 'tianditu'",
          })(geocode_cn)
 
-    @tool(registry, name="reverse_geocode_cn",
+    @tool(registry, tier=2, domains=["chinese"], name="reverse_geocode_cn",
            description="坐标转中文地址，返回详细地址和附近 POI，可选高德/百度/天地图",
            param_descriptions={
                "location": "WGS84 坐标 [经度, 纬度]",
@@ -257,7 +257,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
             tool_name="plan_route",
         )
 
-    @tool(registry, name="get_district",
+    @tool(registry, tier=2, domains=["chinese"], name="get_district",
            description=(
                "高德行政区划查询：获取省、市、区/县的范围轮廓或下级单元列表。"
                "✅ 用于：作为 get_admin_division 失败时的备选在线数据源。"
@@ -285,7 +285,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
             tool_name="get_district",
         )
 
-    tool(registry, name="batch_geocode_cn",
+    tool(registry, tier=2, domains=["chinese"], name="batch_geocode_cn",
          description="批量中文地址转坐标，支持高德/百度/天地图。一次处理多条地址，带并发控制。返回每个地址的 WGS84 坐标、成功/失败状态和标准化地址。",
          param_descriptions={
              "addresses": "地址列表，最多100条，例如 ['北京市朝阳区','上海市浦东新区']",
@@ -350,7 +350,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
 
         return await _AMAP.isochrone(center, minutes, mode)
 
-    @tool(registry, name="search_poi_around",
+    @tool(registry, tier=2, domains=["chinese"], name="search_poi_around",
            description=(
                "在指定坐标周围按半径搜索 POI。中国境内优先查本地 OSM，"
                "不要为补点再改调高德/百度。"
@@ -398,7 +398,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
             tool_name="search_poi_around",
         )
 
-    @tool(registry, name="search_poi_polygon",
+    @tool(registry, tier=2, domains=["chinese"], name="search_poi_polygon",
            description=(
                "多边形区域内搜索 POI。中国境内优先查本地 OSM；"
                "行政区场景请直接 query_local_osm，不要再打高德/百度。"
@@ -467,7 +467,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
             tool_name="search_poi_polygon",
         )
 
-    @tool(registry, name="input_tips",
+    @tool(registry, tier=2, domains=["chinese"], name="input_tips",
            description="地点输入联想/纠错。给一个不完整或可能拼错的地名（如『中关创业大街』），返回候选地名+坐标，帮助消除歧义。比直接 geocode 更鲁棒，适合用户口语化输入。",
            param_descriptions={
                "keyword": "用户输入的地名片段，如『中关创』",
@@ -545,7 +545,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
             return {"error": "实时路况当前仅支持 amap"}
         return await _AMAP.traffic(mode, rectangle, center, radius_m, level)
 
-    @tool(registry, name="get_admin_division",
+    @tool(registry, tier=2, domains=["chinese"], name="get_admin_division",
            description=(
                "在线行政区划查询（天地图）：获取省、市、区/县的行政边界（GeoJSON）"
                "及下级行政单元列表。"
@@ -583,7 +583,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
 
         return await _TIANDITU.district_v2(keywords, child_level, extensions == "all")
 
-    @tool(registry, name="get_child_districts",
+    @tool(registry, tier=2, domains=["chinese"], name="get_child_districts",
            description="获取下级行政区列表及轮廓。例如『获取成都市的所有区县边界』或『获取锦江区的所有街道边界』。比多次调用 get_district 更高效。",
            param_descriptions={
                "keywords": "父级行政区名称，如'成都市'、'锦江区'",
@@ -655,7 +655,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
         }
 
 
-    @tool(registry, name="get_sub_districts_polygons",
+    @tool(registry, tier=2, domains=["chinese"], name="get_sub_districts_polygons",
            description="获取指定区域下属所有子单位的边界轮廓。例如『获取锦江区下属所有街道的边界』。适合做街道级空间统计。",
            param_descriptions={
                "keywords": "行政区名称，如'锦江区'、'成都市'",

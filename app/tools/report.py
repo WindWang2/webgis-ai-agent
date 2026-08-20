@@ -105,7 +105,7 @@ def register_report_tools(registry: ToolRegistry):
     """注册报告生成工具到 Agent 工具链"""
 
     @registry.tool(
-        name="generate_analysis_report",
+        tier=2, domains=["report"], name="generate_analysis_report",
         description=(
             "为当前会话生成一份专业的分析报告（PDF/HTML/Markdown）。"
             "报告将包含完整的对话记录、工具调用结果和空间分析过程。"

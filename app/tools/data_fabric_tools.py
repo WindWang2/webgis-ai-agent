@@ -31,6 +31,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
 
     @tool(
         registry,
+        tier=2, domains=["dataset"],
         name="connect_data_source",
         description=(
             "连接与注册地理空间数据源（PostGIS, OGC API, WFS, WMS, WMTS, ArcGIS, STAC, GeoParquet, PMTiles, S3, GeoJSON, CSV 等）。"
@@ -48,7 +49,6 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "password": "认证密码",
             "options": "协议特定配置选项 key-value 字典",
         },
-        domains=["data_fabric", "spatial_catalog", "dataset"],
         execution_policy=ToolExecutionPolicy.ASYNC,
     )
     async def connect_data_source(
@@ -102,7 +102,8 @@ def register_data_fabric_tools(registry: ToolRegistry):
 
     @tool(
         registry,
-        name="inspect_data_source",
+        tier=2, domains=["dataset"],
+      name="inspect_data_source",
         description=(
             "检查已连接数据源的诊断健康状态、协议能力标识（ capabilities ）以及可用的数据集/图层列表。"
             "\n返回：{status, profile_id, health, capabilities, datasets}"
@@ -110,9 +111,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
         param_descriptions={
             "profile_id": "要检查的数据源连接 profile_id",
         },
-        domains=["data_fabric", "spatial_catalog", "dataset"],
-        execution_policy=ToolExecutionPolicy.ASYNC,
-    )
+        execution_policy=ToolExecutionPolicy.ASYNC)
     async def inspect_data_source(profile_id: str) -> dict:
         """检查数据源健康度与能力清单"""
         def _sync_run():
@@ -151,7 +150,8 @@ def register_data_fabric_tools(registry: ToolRegistry):
 
     @tool(
         registry,
-        name="search_spatial_catalog",
+        tier=2, domains=["dataset"],
+      name="search_spatial_catalog",
         description=(
             "在 SpatialCatalog 中检索数据集。支持关键字、空间包围盒 (bbox)、空间参考系 (CRS/SRS)、标签 (tags) 和数据源类型综合过滤。"
             "\n返回：{total, items=[{id, title, description, geometry_type, srs, bbox, tags, ...}], limit, offset}"
@@ -165,9 +165,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "limit": "返回最大数量限制，默认 50",
             "offset": "分页偏移量，默认 0",
         },
-        domains=["data_fabric", "spatial_catalog", "dataset"],
-        execution_policy=ToolExecutionPolicy.INLINE,
-    )
+        execution_policy=ToolExecutionPolicy.INLINE)
     def search_spatial_catalog(
         query: Optional[str] = None,
         bbox: Optional[list[float]] = None,
@@ -198,6 +196,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
 
     @tool(
         registry,
+        tier=2, domains=["dataset"],
         name="describe_dataset",
         description=(
             "获取指定数据集的完整 DatasetDescriptor 属性元数据契约（Schema 字段、几何类型、SRS、FeatureCount、Extent 范围），"
@@ -208,7 +207,6 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "dataset_id": "要描述的数据集/图层唯一 ID",
             "profile_id": "可选的数据源连接 profile_id",
         },
-        domains=["data_fabric", "spatial_catalog", "dataset"],
         execution_policy=ToolExecutionPolicy.INLINE,
     )
     def describe_dataset(dataset_id: str, profile_id: Optional[str] = None) -> dict:
@@ -243,7 +241,8 @@ def register_data_fabric_tools(registry: ToolRegistry):
 
     @tool(
         registry,
-        name="query_dataset",
+        tier=2, domains=["dataset"],
+      name="query_dataset",
         description=(
             "针对数据集执行 QuerySpec 下推查询（支持 limit, offset, bbox 空间裁剪, where 属性过滤, fields 投影与 SRS 转换）。"
             "\n返回：{dataset_id, features, total_count, schema_info, metadata}"
@@ -258,9 +257,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "srs": "输出目标空间参考系，默认 'EPSG:4326'",
             "profile_id": "可选的数据源 profile_id",
         },
-        domains=["data_fabric", "spatial_catalog", "dataset"],
-        execution_policy=ToolExecutionPolicy.ASYNC,
-    )
+        execution_policy=ToolExecutionPolicy.ASYNC)
     async def query_dataset(
         dataset_id: str,
         limit: int = 100,
@@ -320,7 +317,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
 
     @tool(
         registry,
-        name="materialize_dataset",
+        tier=2, domains=["dataset"], name="materialize_dataset",
         description=(
             "执行下推查询并将远程数据物理物化（Materialize）到本地 Session 存储，生成 unique ref_id 游标供后续 GIS 工具分析。"
             "\n返回：{status, ref_id, dataset_id, layer_name, feature_count, fingerprint}"
@@ -335,7 +332,6 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "where": "属性过滤表达式",
             "profile_id": "可选的数据源 profile_id",
         },
-        domains=["data_fabric", "spatial_catalog", "dataset"],
         execution_policy=ToolExecutionPolicy.ASYNC,
     )
     async def materialize_dataset(
@@ -384,7 +380,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
 
     @tool(
         registry,
-        name="refresh_data_source",
+        tier=2, domains=["dataset"], name="refresh_data_source",
         description=(
             "刷新数据源元数据缓存、重新发现数据集/图层，重新触发健康度探测，并更新 SpatialCatalog 索引。"
             "\n返回：{status, profile_id, sync_details, health}"
@@ -392,7 +388,6 @@ def register_data_fabric_tools(registry: ToolRegistry):
         param_descriptions={
             "profile_id": "要刷新的数据源 profile_id",
         },
-        domains=["data_fabric", "spatial_catalog", "dataset"],
         execution_policy=ToolExecutionPolicy.ASYNC,
     )
     async def refresh_data_source(profile_id: str) -> dict:

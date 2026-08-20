@@ -223,7 +223,7 @@ def query_child_districts(
 
 
 def register_local_admin_tools(registry: ToolRegistry):
-    @tool(registry, name="get_local_admin_boundary",
+    @tool(registry, tier=2, domains=["chinese"], name="get_local_admin_boundary",
           description=(
               "本地行政边界查询：从本地 SHP 数据获取中国行政区划边界。"
               "✅ 用于：中国境内行政区边界的首选——本地矢量库，最快最稳，"
@@ -252,7 +252,7 @@ def register_local_admin_tools(registry: ToolRegistry):
             to_wgs84=to_wgs84, simplified=simplified,
         )
 
-    @tool(registry, name="get_local_child_districts",
+    @tool(registry, tier=2, domains=["chinese"], name="get_local_child_districts",
           description="本地下级行政区查询：获取指定城市或省份下的所有区/县边界。比在线 API 更快。",
           param_descriptions={
               "parent_name": "上级行政区名称，如'成都市'、'四川省'",

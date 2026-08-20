@@ -39,7 +39,7 @@ def register_upload_tools(registry: ToolRegistry):
     """注册上传数据相关工具"""
 
     @tool(registry,
-          name="list_uploaded_data",
+          tier=2, domains=["dataset"], name="list_uploaded_data",
           description="列出当前会话中用户上传的 GIS 数据文件列表。返回文件名、类型、格式、要素数量等摘要信息。")
     def list_uploaded_data(session_id: Optional[str] = None) -> dict:
         """列出上传数据"""
@@ -86,7 +86,7 @@ def register_upload_tools(registry: ToolRegistry):
         }
 
     @tool(registry,
-          name="get_upload_info",
+          tier=2, domains=["dataset"], name="get_upload_info",
           description="获取某个上传数据文件的详细信息，包括坐标范围、属性字段等。可用于分析用户上传的数据概况。",
           param_descriptions={
               "upload_id": "上传记录的 ID（从 list_uploaded_data 获取）"

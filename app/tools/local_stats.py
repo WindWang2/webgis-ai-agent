@@ -32,7 +32,7 @@ def _to_str(value: Union[str, int, None]) -> str:
 def register_local_stats_tools(registry: ToolRegistry):
     @tool(
         registry,
-        name="query_local_yearbook",
+        tier=2, domains=["statistics"], name="query_local_yearbook",
         description=(
             "本地统计年鉴查询：中国县域统计年鉴（乡镇卷 2014-2025，乡镇级指标）"
             "与县域面板（2000-2024，75+ 县级指标，含 GDP/人口/财政/教育/医疗）。"
@@ -52,8 +52,6 @@ def register_local_stats_tools(registry: ToolRegistry):
             "indicators": "county_panel 可选：只返回这些指标（逗号分隔，如 '地区生产总值(万元),户籍人口数(万人)'）",
             "limit": "返回上限（默认 200，最大 2000）",
         },
-        tier=1,
-        domains=["stats", "dataset"],
         execution_policy=ToolExecutionPolicy.INLINE,
         timeout=60.0,
     )
@@ -155,22 +153,20 @@ def register_local_stats_tools(registry: ToolRegistry):
 
     @tool(
         registry,
-        name="get_local_stats_catalog",
+        tier=2, domains=["statistics"], name="get_local_stats_catalog",
         description=(
             "本地统计数据目录：年鉴库（年份/行数/行政区连接率/指标词表）与"
             "高德 POI 库（省份/行数）的可用性总览。"
             "✅ 用于：query_local_yearbook / query_local_poi 前确认数据覆盖。"
         ),
         execution_policy=ToolExecutionPolicy.INLINE,
-        tier=1,
-        domains=["stats", "meta"],
     )
     def get_local_stats_catalog() -> dict:
         return {"yearbook": yearbook_catalog(), "gd_poi": gd_poi_catalog()}
 
     @tool(
         registry,
-        name="get_township_center",
+        tier=2, domains=["chinese"], name="get_township_center",
         description=(
             "乡镇中心点查询：返回乡镇/街道的 WGS84 坐标点（来自高德乡镇级地名），"
             "年鉴乡镇行空间定位用。"
@@ -181,8 +177,6 @@ def register_local_stats_tools(registry: ToolRegistry):
             "adcode": "可选：所属区县编码消歧（跨省同名乡镇）",
         },
         execution_policy=ToolExecutionPolicy.INLINE,
-        tier=1,
-        domains=["geocoding", "dataset"],
     )
     def get_township_center(name: str, adcode: Union[str, int] = "") -> dict:
         hit = lookup_township_center(name, _to_str(adcode))

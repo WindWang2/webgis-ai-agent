@@ -133,7 +133,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         res = SpatialAnalyzer.voronoi_polygons(geojson, clip_bounds=clip_bounds)
         return res.to_llm_response()
 
-    @tool(registry, name="convex_hull",
+    @tool(registry, tier=2, domains=["statistics"], name="convex_hull",
            description=(
                "凸包计算：包住整组要素的最小凸多边形，附 area_km2 与 feature_count。可选 group_by 分组。"
                "\n何时用：『XX 类设施的服务范围大致是多大』；做点群空间范围的快速包络；"
@@ -151,7 +151,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         res = SpatialAnalyzer.convex_hull(geojson, group_by=group_by)
         return res.to_llm_response()
 
-    @tool(registry, name="multi_ring_buffer",
+    @tool(registry, tier=2, domains=["statistics"], name="multi_ring_buffer",
            description=(
                "多环缓冲：围绕要素生成多个同心距离环 (含 ring 属性)，适合做距离分级影响圈。"
                "\n何时用：『学校 500/1000/1500m 三档影响圈』『地铁站 300/800m 步行/接驳圈』『加油站 1/3/5km 服务范围分级』；"

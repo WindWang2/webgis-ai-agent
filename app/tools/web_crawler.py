@@ -216,7 +216,7 @@ def _wrap_payload(payload: dict) -> dict:
 def register_crawler_tools(registry: ToolRegistry):
     """注册网络爬虫探测工具"""
 
-    @tool(registry, name="web_search",
+    @tool(registry, tier=2, domains=["osm"], name="web_search",
            description=(
                "通用网络搜索：从公网拉取最新中文网页/新闻/百科等非结构化信息，返回 "
                "title/snippet/link/date 列表。适合 POI 现状、活动、新闻、政策、最新统计数字等"
@@ -247,7 +247,7 @@ def register_crawler_tools(registry: ToolRegistry):
             result = await _ddg_search_async(query, limit)
         return _wrap_payload(result)
 
-    @tool(registry, name="search_and_extract_poi",
+    @tool(registry, tier=2, domains=["osm"], name="search_and_extract_poi",
            description=(
                "（Sub-Agent 盲区探测器）仅用于中国境外、新闻事件或本地 OSM 没有的最新商业点。"
                "中国境内设施/院校/医院等禁止使用本工具，改 query_local_osm。"

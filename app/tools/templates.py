@@ -114,6 +114,7 @@ def register_template_tools(registry: ToolRegistry):
 
     @tool(
         registry,
+        tier=2, domains=["report"],
         name="list_templates",
         description=(
             "查询制图模板列表 (支持按 kind 类别过滤与关键词搜索)。"
@@ -184,7 +185,7 @@ def register_template_tools(registry: ToolRegistry):
 
     @tool(
         registry,
-        name="apply_template",
+        tier=2, domains=["report"], name="apply_template",
         description=(
             "按 template_id 统一套用制图模板 (底图/符号化/版式/专题图)。"
             "\n何时用：用户指定套用摸板或选中画廊模板时。"
@@ -485,7 +486,7 @@ def register_template_tools(registry: ToolRegistry):
 
     @tool(
         registry,
-        name="combine_map_theme",
+        tier=2, domains=["report"], name="combine_map_theme",
         description=(
             "模块化组合地图主题工具。支持通过自由组合 5 大正交组件槽位（basemap 底图件, symbology 符号件, thematic 配色件, layout 版式件, viewport 视口件）或快捷组合预设名称一键合成为目标地图。"
         ),
@@ -518,7 +519,7 @@ def register_template_tools(registry: ToolRegistry):
 
     @tool(
         registry,
-        name="webgis_map_combine",
+        tier=2, domains=["report"], name="webgis_map_combine",
         description=(
             "规范化地图组件组合工具 (Canonical alias for combine_map_theme)。合成 5 大地图正交组件槽位为 MapSpec。"
         ),

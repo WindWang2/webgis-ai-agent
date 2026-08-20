@@ -192,7 +192,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         res = SpatialAnalyzer.isochrone_network(net.get("features", []), facs.get("features", []), travel_time, mode)
         return res.to_llm_response()
 
-    @tool(registry, name="fishnet_grid",
+    @tool(registry, tier=2, domains=["statistics"], name="fishnet_grid",
            description=(
                "鱼网格网生成：在 bbox 内生成正方形或六边形覆盖网格 (空 cell，无属性)。"
                "\n何时用：作为 spatial_aggregate / spatial_join 的底图做空间统计；"
@@ -208,7 +208,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         res = generate_fishnet(bounds, cell_size, type)
         return res.to_llm_response()
 
-    @tool(registry, name="central_feature",
+    @tool(registry, tier=2, domains=["statistics"], name="central_feature",
            description="中心分析：寻找点集的中心位置。支持计算平均中心(mean_center)或寻找距离所有点最近的中心要素(central_feature)。",
            param_descriptions={
                "geojson": "点要素集 GeoJSON 或引用(ref:xxx)",
@@ -290,7 +290,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             payload["data"] = trim_features(payload["data"])
         return payload
 
-    @tool(registry, name="dissolve_layer",
+    @tool(registry, tier=2, domains=["statistics"], name="dissolve_layer",
            description=(
                "矢量融合 (Dissolve)：把相邻同属性的多边形/线合并为单一几何，可选按字段分组。"
                "\n何时用：(1) 把街道边界合并为区县轮廓；"
@@ -312,7 +312,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         res = dissolve_smart(geojson, field=field)
         return res.to_llm_response()
 
-    @tool(registry, name="nearest_facility",
+    @tool(registry, tier=2, domains=["network"], name="nearest_facility",
            description=(
                "最近设施匹配：对每个源点找出目标集合中距离最近的目标，并标注距离（米）。"
                "\n何时用：『每户居民最近的医院/学校』『100 个 POI 最近的地铁站』『每个公交站最近的商圈』 — "
