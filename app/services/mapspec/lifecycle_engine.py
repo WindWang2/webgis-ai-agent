@@ -353,7 +353,11 @@ class MapSpecLifecycleEngine:
             old_layers_snapshot = (
                 copy.deepcopy(pre_state.get("layers", []) or [])
                 if _layers_touching
-                else list(pre_state.get("layers", []) or [])
+                # 669: non-layer intents share no mutation of layers; shallow-copy
+                # each layer dict to prove rollback cannot leak via shared refs
+                # while keeping cost O(#layers) << payload. Tighten over bare
+                # list() which shared dict refs.
+                else [dict(layer) if isinstance(layer, dict) else layer for layer in (pre_state.get("layers", []) or [])]
             )
             observation = pre_state.get("_cartographic_observation")
             try:
@@ -551,7 +555,17 @@ class MapSpecLifecycleEngine:
                     old_mapspec_snapshot = loaded
                     mapspec = {**loaded} if loaded else {}
                     mapspec["sources"] = dict(loaded.get("sources", {})) if loaded else {}
-                    mapspec["sources"][intent.source_id] = copy.deepcopy(intent.source)
+                    # 669: immutable hand-off contract — intent.source is treated
+                    # as immutable after dispatch. Top-level and `profile` are
+                    # shallow-copied (O(1) isolation from caller post-mutation);
+                    # nested payload (`inlineData`, typically a large
+                    # FeatureCollection) is intentionally shared by reference
+                    # (CoW parity with SetView/UpsertLayer) — callers must not
+                    # mutate it after dispatch, and the engine never mutates it.
+                    _src = dict(intent.source)
+                    if isinstance(_src.get("profile"), dict):
+                        _src["profile"] = dict(_src["profile"])
+                    mapspec["sources"][intent.source_id] = _src
                     auto_checkpoint = True
 
                 elif isinstance(intent, RemoveLayerIntent):

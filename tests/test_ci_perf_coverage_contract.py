@@ -23,6 +23,7 @@ PR_LANE_PERF_FILES = (
     "test_provenance_perf.py",
     "test_bench_runner_478.py",
     "test_llm_http_pooling_perf.py",
+    "test_perf_mapspec_mutation_cost.py",
 )
 
 # Perf-marked files that stay nightly-only. They are collected by
