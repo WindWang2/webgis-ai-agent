@@ -173,6 +173,8 @@ class SubagentDispatcher:
                 session_id=self.parent_session_id,
             )
         except Exception as e:
+            # #685: 非流式诚实 settle 后 chat() 会抛异常（empty / max_rounds / no_progress）
+            # 这里统一判失败，不再假成功；summary 保留失败原因以便父循环决策
             logger.exception("[Subagent] sub-engine failed")
             return SubagentResult(
                 success=False,
@@ -180,8 +182,15 @@ class SubagentDispatcher:
                 summary=f"子代理执行失败: {e}",
             )
 
+        # #685: 消费 chat() 的真实 outcome（success 仅当 content 非空且 task 未失败）
+        # 失败轮（empty / max_rounds / no_progress）即使 result 含 content 也判 success=False，
+        # 避免 subagent 空 summary 汇报成功（ticket #685）
         summary = (result.get("content") or "").strip()
         reasoning = (result.get("reasoning") or "").strip()
+
+        # 诚实成功判定：content 非空才算 success，否则为 failed（与非流式 CORRECTNESS-4 对齐）
+        # 注意：若 chat() 在 empty/max_rounds/no_progress 路径已抛异常，上方 except 已返回 False
+        _honest_success = bool(summary)
 
         # 子任务结束后新增的 refs
         try:
@@ -189,6 +198,15 @@ class SubagentDispatcher:
         except Exception:
             refs_after = set()
         new_refs = sorted(refs_after - refs_before)
+
+        if not _honest_success:
+            return SubagentResult(
+                success=False,
+                summary=summary or "子代理未返回有效内容（empty completion / no_progress / max_rounds）",
+                reasoning=reasoning,
+                refs=new_refs,
+                error="subagent empty or failed turn",
+            )
 
         return SubagentResult(
             success=True,
