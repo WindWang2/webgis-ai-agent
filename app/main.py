@@ -1,12 +1,14 @@
-"""FastAPI 应用入口"""
+"""FastAPI 应用入口
+
+env 加载归启动器所有（#663-A）：根 main.py / manage.py 显式 load_dotenv，
+裸 uvicorn 用 --env-file。本模块不得有 import 期环境副作用 —— 契约由
+tests/unit/test_env_hygiene.py 锁定。
+"""
 import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from dotenv import load_dotenv
-
-load_dotenv()
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware

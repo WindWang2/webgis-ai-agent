@@ -1,6 +1,17 @@
 # Changelog
 
-## [0.1.0.0] - 2026-08-19
+## [Unreleased] - 2026-08-20
+
+### Changed
+- Env loading moved out of `app/main.py` import time into the launchers
+  (`python main.py` / `manage.py` call `load_dotenv()` themselves; bare
+  `uvicorn app.main:app` now needs `--env-file .env`). Importing app code no
+  longer mutates `os.environ` — this was the leak that armed the real-services
+  smoke lane mid-suite on machines with a reachable Redis (#661/#663).
+- The test suite pre-pins every `.env.example` key to a Settings-default-
+  equivalent baseline, so locally exported real keys (API tokens, Redis,
+  database URLs) can no longer change suite behavior (#663).
+
 
 ### Added
 - User map chrome (visibility, opacity, remove, reorder, explicit frame) now

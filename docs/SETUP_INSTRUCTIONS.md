@@ -139,8 +139,11 @@ Windows 用户另有 `start_all.bat` 一键脚本（后端 `:8001` + 前端 `:30
 对应的手动等价命令（不想用 manage.py 时）：
 
 ```bash
+# .env 由启动器/命令行加载：manage.py 与 python main.py 内置 load_dotenv；
+# 裸 uvicorn/celery 请显式 --env-file / env 包装（#663：app 代码不再有
+# import 期 env 副作用）。
 celery -A app.services.task_queue.celery_app worker --loglevel=info &
-uvicorn app.main:app --reload --host 0.0.0.0 --port 18000
+uvicorn app.main:app --env-file .env --reload --host 0.0.0.0 --port 18000
 cd frontend && npm run dev
 ```
 

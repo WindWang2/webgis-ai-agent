@@ -104,9 +104,9 @@ def test_real_services_smoke_exercises_production_celery_app():
 def test_real_services_lane_requires_explicit_flag():
     """#661：lane 必须显式导出 REAL_SERVICES=1，smoke 守卫只认显式 flag。
 
-    全量套件里 import app.main 会执行 load_dotenv()，把本地 .env 的
-    REDIS_URL 泄进 os.environ；机器上恰好有可达 Redis（如 dev 容器的
-    16379）时，"变量存在且可达"不再能区分"真 lane"与"被污染的本地套件"
+    历史根因（#663-A 已根治 import 期 load_dotenv）：全量套件 import
+    app.main 把本地 .env 的 REDIS_URL 泄进 os.environ；机器上恰好有可达
+    Redis（如 dev 容器的 16379）时，"变量存在且可达"不再能区分"真 lane"与"被污染的本地套件"
     —— self-skip 被打穿后 production worker 在本地挂死。守卫必须以显式
     REAL_SERVICES=1 为准（与 #532 的 REQUIRE_BROWSER=1 同款契约），ambient
     环境变量一律不足以武装 smoke。

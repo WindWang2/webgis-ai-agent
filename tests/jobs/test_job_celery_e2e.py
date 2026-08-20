@@ -32,7 +32,7 @@ def _celery_offline(monkeypatch):
     """钉死 Celery 为 eager + 无 Redis backend（双保险，见 conftest 占位说明）。
 
     直接调用任务体时 update_state 依赖 backend；若 backend 回退成 RedisBackend
-    （load_dotenv 注入 CELERY_* 的竞态），会去连 localhost:16379 并抛连接错误。
+    （历史上 load_dotenv 注入 CELERY_* 的竞态；#663 后 shell 导出同样防），会去连 localhost:16379 并抛连接错误。
     """
     from app.services.task_queue import celery_app
 

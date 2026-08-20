@@ -17,9 +17,11 @@ Redis 线协议、真实 broker 投递从未被验证过（prod-only 回归只�
 （postgis + redis service containers）执行。服务不可达时逐条 self-skip
 （本地开发无容器也能跑整套套件），绝不把"连不上"伪装成"通过"。
 
-#661：self-skip 只认显式 REAL_SERVICES=1（CI lane 导出）。全量套件里
-import app.main 会执行 load_dotenv()，把本地 .env 的 REDIS_URL/DATABASE_URL
-泄进 os.environ —— 机器上有可达 Redis 时 ambient 环境不再等于"真 lane"。
+#661：self-skip 只认显式 REAL_SERVICES=1（CI lane 导出）。历史上全量套件
+里 import app.main 会执行 load_dotenv() 把本地 .env 的 REDIS_URL 泄进
+os.environ（#663-A 已根治，import app 代码不再改写环境）；shell 导出的
+真实键同样不等于"真 lane"—— 机器上有可达 Redis 时 ambient 环境一律
+不算数。
 """
 import os
 import socket
@@ -58,7 +60,7 @@ def _postgres_url() -> str:
     if not _explicit_lane_enabled():
         pytest.skip(
             "real-services lane: 未显式启用（需 REAL_SERVICES=1；"
-            "ambient DATABASE_URL 可能是 load_dotenv 泄漏，不算数）"
+            "ambient DATABASE_URL（shell 导出/历史泄漏）不算数）"
         )
     url = os.environ.get("DATABASE_URL", "")
     if not url.startswith(("postgresql://", "postgresql+")):
@@ -72,7 +74,7 @@ def _redis_url() -> str:
     if not _explicit_lane_enabled():
         pytest.skip(
             "real-services lane: 未显式启用（需 REAL_SERVICES=1；"
-            "ambient REDIS_URL 可能是 load_dotenv 泄漏，不算数）"
+            "ambient REDIS_URL（shell 导出/历史泄漏）不算数）"
         )
     url = os.environ.get("REDIS_URL", "")
     if not url.startswith("redis://"):

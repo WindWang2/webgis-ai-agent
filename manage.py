@@ -23,6 +23,13 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 
+# #663-A：env 加载归启动器所有。这里加载本地 .env 后，dev/server/worker
+# 拉起的子进程（uvicorn / celery）经 os.environ 继承到同一份配置；app 代码
+# 本身不再有 import 期副作用。
+from dotenv import load_dotenv
+
+load_dotenv()
+
 console = Console()
 
 def cmd_init_db():

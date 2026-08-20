@@ -83,7 +83,7 @@ pip install -r requirements.txt
 celery -A app.services.task_queue worker --loglevel=info
 
 # 3. 启动 FastAPI
-python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+python -m uvicorn app.main:app --env-file .env --reload --host 0.0.0.0 --port 8000
 
 # 4. 启动前端
 cd frontend

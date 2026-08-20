@@ -1,16 +1,55 @@
 import os
 
-# Provide a stable test JWT secret so Settings doesn't warn on every import
-os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-not-for-production")
-os.environ.setdefault("USE_REDIS", "false")
-# 防 load_dotenv 注入：`import app.main` 会执行 `load_dotenv()`（app/main.py），把
-# .env 里的 CELERY_BROKER_URL / CELERY_RESULT_BACKEND 写进 os.environ（override=False
-# 只补不覆盖）。Celery 的 conf 对未显式设置的键（如 result_backend）会回退读取
-# CELERY_* 环境变量 —— 于是本应 eager 的测试进程里 backend 变成 RedisBackend，
-# 任何 update_state 都会去连 localhost:16379 并失败。这里预先占位，load_dotenv
-# 便不会覆盖，测试进程保持离线（broker=memory、backend=cache+memory）。
-os.environ.setdefault("CELERY_BROKER_URL", "memory://")
-os.environ.setdefault("CELERY_RESULT_BACKEND", "cache+memory://")
+# 测试套件环境基线（#663-B）：把 .env.example 全部键 setdefault 预占与
+# Settings 默认等价的安全值 —— 完整性由 tests/unit/test_env_hygiene.py 锁定。
+#   - CI 各 lane 在 pytest 启动前显式导出的变量不受 setdefault 影响
+#     （real-services lane 的 REDIS_URL/DATABASE_URL、主 lane 的 env 原样生效）；
+#   - 本地 shell 里导出的真实键（真 API key / 真 Redis / 真 DATABASE_URL）
+#     不再能改变套件行为：脏机器等价于干净机器；
+#   - HTTP_PROXY/HTTPS_PROXY 是唯二不钉的键：空串在 httpx/requests 语义里
+#     不等于"未设置"，钉 "" 反而改变网络行为。
+#
+# 历史注记：CELERY_* 钉扎最初是防 import app.main 执行 load_dotenv() 把
+# .env 的 CELERY_BROKER_URL/CELERY_RESULT_BACKEND 注进 os.environ（Celery
+# conf 的 property 每次访问先读环境变量，eager 测试进程会去连 localhost
+# 的 Redis 并失败）。#663-A 把 env 加载上移到启动器后，import app 代码不再
+# 改写 os.environ（tests/unit/test_env_hygiene.py 的 import 纯净测试锁死），
+# 钉扎继续对 shell 环境生效。
+_ENV_BASELINE = {
+    "DEBUG": "false",
+    "ENV": "development",
+    "JWT_SECRET_KEY": "test-secret-key-not-for-production",
+    "DATABASE_URL": "sqlite:///./data/webgis.db",
+    "DB_PASSWORD": "",
+    "REDIS_PASSWORD": "",
+    "LLM_BASE_URL": "https://api.stepfun.com/step_plan/v1",
+    "LLM_API_KEY": "your-api-key-here",
+    "LLM_MODEL": "step-3.7-flash",
+    "TIANDITU_TOKEN": "",
+    "AMAP_API_KEY": "",
+    "AMAP_JS_KEY": "",
+    "AMAP_JS_SECURITY_KEY": "",
+    "BAIDU_MAP_AK": "",
+    "BAIDU_QIANFAN_TOKEN": "",
+    "SENTINELHUB_CLIENT_ID": "",
+    "SENTINELHUB_CLIENT_SECRET": "",
+    "NASA_EARTHDATA_USERNAME": "",
+    "NASA_EARTHDATA_PASSWORD": "",
+    "OPENTOPOGRAPHY_API_KEY": "",
+    # 等于 Settings 默认（redis://localhost:16379/0）。USE_REDIS=false 钉扎
+    # 保证主消费者（session_data）走内存实现；懒连接消费者都有有界超时。
+    "REDIS_URL": "redis://localhost:16379/0",
+    # 强于 Settings 默认的离线钉扎（历史遗留，见上方注记）：eager + memory。
+    "CELERY_BROKER_URL": "memory://",
+    "CELERY_RESULT_BACKEND": "cache+memory://",
+    "USE_REDIS": "false",
+    "WEBGIS_DEV_MOUNT": "",
+    "AUTH_DISABLED": "false",
+    "LOCAL_GEODATA_DIR": "",
+    "LOCAL_QUERY_FIRST": "true",
+}
+for _key, _value in _ENV_BASELINE.items():
+    os.environ.setdefault(_key, _value)
 
 import pytest
 
