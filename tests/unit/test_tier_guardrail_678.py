@@ -67,3 +67,18 @@ def test_schema_count_and_token_bound_for_typical_query():
     total_chars2 = sum(len(json.dumps(s, ensure_ascii=False)) for s in schemas2)
     est_tokens2 = total_chars2 / 4.0
     assert est_tokens2 <= 35000, f"多域查询预估 tokens {est_tokens2:.0f} 超过 35000"
+
+
+def test_dataset_domain_activatable_for_data_queries():
+    """#678 复核补丁：dataset 域（data_fabric/upload 9 工具）从 tier-1 降级后，
+    DOMAIN_KEYWORDS 必须含 dataset 激活词——否则降级即永久不可见（可达性回归）。
+    数据相关查询应注入 connect_data_source/query_dataset 等。"""
+    r = _prod_registry()
+    catalog = ToolCatalog(r, sticky_ttl=0)
+    for q in ("连接上传的数据集做分析", "查询数据源里的表"):
+        names = {s["function"]["name"] for s in catalog.select_schemas(q, session_id="t-ds")}
+        hit = names & {
+            "connect_data_source", "query_dataset", "list_uploaded_data",
+            "describe_dataset", "materialize_dataset", "get_upload_info",
+        }
+        assert hit, f"数据查询 {q!r} 未激活任何 dataset 工具，当前注入 {len(names)} 个 schema"

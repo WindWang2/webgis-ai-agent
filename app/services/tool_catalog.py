@@ -79,6 +79,12 @@ DOMAIN_KEYWORDS: dict[str, list[str]] = {
     "report": [
         "报告", "导出", "PDF", "下载", "图件", "制图",
     ],
+    # 数据接入 / 编目 / 上传（#678：dataset 域工具从 tier-1 降级后必须有激活词，
+    # 否则永远不可见。裸"数据"过宽不加——几乎所有 GIS 查询都含它）
+    "dataset": [
+        "数据集", "数据源", "上传", "编目", "物化",
+        "dataset", "data source", "materialize",
+    ],
     # What-if 情景模拟与空间决策
     "what_if": [
         "假设", "情景", "模拟", "推演", "what if", "what-if",
