@@ -126,6 +126,7 @@ describe("hudStateToMapSpec geometry-mix memo (FE-3)", () => {
         mvt_capable: true,
         estimated_bytes: 100,
         content_hash: null,
+        raster_capable: false,
       },
     });
     toSpec([layer]);

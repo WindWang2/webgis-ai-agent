@@ -73,7 +73,6 @@ async def test_b4_raster_capable_parity_store_fastpath_fallback(payload, expecte
 
     # 4. HTTP route fast-path vs fallback parity (full route integration)
     # Fast-path is already asserted via seam; now verify fallback route via deleting descriptor
-    from app.api.routes.layer import get_layer_descriptor
     # Simulate route-level fallback by deleting descriptor but keeping payload
     store._descriptors[sid].pop(ref_id, None)
     # Recompute via fallback helper should match store-time
