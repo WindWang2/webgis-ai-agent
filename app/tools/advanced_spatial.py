@@ -76,7 +76,11 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            args_model=ZonalStatsArgs)
     def zonal_stats(geojson: Any, raster_path: str) -> dict:
         data = safe_parse_geojson(geojson)
-        res = SpatialAnalyzer.zonal_stats(data.get("features", []), raster_path)
+        # GIS-682: forward the whole FeatureCollection so a declared `crs`
+        # member survives the tool boundary — previously only the features
+        # list was forwarded and the FC-level crs was silently dropped
+        # (mirrors the pre-#599 clip/overlay half-stack).
+        res = SpatialAnalyzer.zonal_stats(data, raster_path)
         return res.to_llm_response()
 
     @tool(registry, name="idw_interpolation",

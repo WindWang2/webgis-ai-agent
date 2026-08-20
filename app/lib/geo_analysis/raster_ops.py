@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import os
 from typing import Optional, Union
 import rasterio
@@ -8,6 +9,50 @@ from rasterstats import zonal_stats
 from app.utils.coord_transform import transform_geojson
 
 logger = logging.getLogger(__name__)
+
+
+def _has_inf_coords(obj) -> bool:
+    """Return True if any leaf coordinate in a GeoJSON is non-finite.
+
+    pyproj silently returns (inf, inf) for out-of-bounds reprojections
+    (e.g. EPSG:3857 metres misread as EPSG:4326 degrees) without raising.
+    Those infinities survive into rasterstats and produce hole/zero stats
+    that look plausible. Catch them here to fail loudly (GIS-23 / #682).
+    """
+    try:
+        import math as _math
+
+        def _walk(v):
+            if isinstance(v, dict):
+                if "coordinates" in v:
+                    if _walk(v["coordinates"]):
+                        return True
+                if "geometries" in v:
+                    for g in v["geometries"] or []:
+                        if _walk(g):
+                            return True
+                if "features" in v:
+                    for f in v["features"] or []:
+                        if _walk(f):
+                            return True
+                if "geometry" in v and isinstance(v["geometry"], dict):
+                    if _walk(v["geometry"]):
+                        return True
+            elif isinstance(v, (list, tuple)):
+                if v and isinstance(v[0], (int, float)) and not isinstance(v[0], bool):
+                    # leaf coordinate tuple
+                    for c in v[:2]:
+                        if isinstance(c, float) and not _math.isfinite(c):
+                            return True
+                else:
+                    for c in v:
+                        if _walk(c):
+                            return True
+            return False
+
+        return _walk(obj)
+    except Exception:
+        return False
 
 
 def zonal_statistics(
@@ -55,6 +100,17 @@ def zonal_statistics(
                 f"Polygon reprojection {src_crs} -> {target_crs_str} failed: {e}. "
                 "Refusing to compute zonal stats with mismatched CRS."
             ) from e
+        # GIS-682: pyproj returns (inf, inf) silently for out-of-bounds
+        # reprojections without raising (e.g. EPSG:3857 metres misread as
+        # EPSG:4326 degrees). Those infinities reach rasterstats as
+        # hole/zero stats that look correct. Fail loudly when any
+        # reprojected coordinate is non-finite so the GIS-23 guard fires.
+        if _has_inf_coords(polygons_input):
+            raise ValueError(
+                f"Polygon reprojection {src_crs} -> {target_crs_str} produced "
+                "non-finite coordinates (inf/nan) — input CRS likely mismatched. "
+                "Refusing to compute zonal stats with mismatched CRS."
+            )
     else:
         polygons_input = polygons_geojson
 
