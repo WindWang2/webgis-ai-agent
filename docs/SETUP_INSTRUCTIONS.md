@@ -215,7 +215,9 @@ ruff check app/ tests/ main.py manage.py
 cd frontend && npx vitest run && npm run typecheck && npm run lint
 ```
 
-pytest markers：`heavy`（重依赖 geopandas/numpy/rasterio）、`perf`（性能回归基线）、`cartography`（制图闭环门禁）、`real_services`（需真实 Postgres/Redis/Celery，不可达自跳过）。本地跑单类：`pytest -m heavy` 等。perf 基线要求隔离运行：无 marker 过滤的全量跑会自动 skip perf 项（全量中段执行的时序抖动会超基线，#664），评测 perf 请用 `pytest -m perf --no-cov`。CI 后端覆盖率闸为 75%（`--cov-fail-under`，`pytest.ini` 默认开启 `--cov=app`）。
+pytest markers：`heavy`（重依赖 geopandas/numpy/rasterio，含 Runtime 校验器 `runtime_validator`）、`perf`（性能回归基线）、`cartography`（制图闭环门禁）、`real_services`（需真实 Postgres/Redis/Celery，不可达自跳过）。本地跑单类：`pytest -m heavy` 等。perf 基线要求隔离运行：无 marker 过滤的全量跑会自动 skip perf 项（全量中段执行的时序抖动会超基线，#664），评测 perf 请用 `pytest -m perf --no-cov`。CI 后端覆盖率闸为 75%（`--cov-fail-under`，`pytest.ini` 默认开启 `--cov=app`）。
+
+> **Runtime Scenario 单跑与排障**：新增/调试渲染场景请见 [Runtime Scenario 作者指南](runtime-scenario-guide.md) §5（含 `pytest -m heavy -k <name>` 单跑与 `runtime_dir` 产物 `map.png` / `trace.zip` / `report.json` 排障路径）。
 
 前端脚本一览（`frontend/package.json`）：`npm run dev` / `build` / `start` / `test` / `test:coverage` / `lint` / `typecheck`（双 tsconfig：主工程 + `tsconfig.test.json`）。
 

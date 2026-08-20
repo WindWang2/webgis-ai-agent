@@ -1,0 +1,7 @@
+{
+  "expect": "fail",
+  "probes": [
+    { "type": "layer-exists", "layer": "pts-layer" },
+    { "type": "feature-count", "layer": "pts-layer", "min": 1 }
+  ]
+}

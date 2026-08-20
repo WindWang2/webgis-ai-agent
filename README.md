@@ -255,7 +255,7 @@ CI([`.github/workflows/production.yml`](.github/workflows/production.yml))PR 必
 | DB Migration Gate | PostGIS 上全量 alembic 链 + 模型↔迁移漂移比对 |
 | Real Services Smoke | 真实 Celery worker + Redis + PostGIS 冒烟 |
 
-另有 nightly lane:Playwright 运行时校验器与 cartography/perf 全量矩阵。
+另有 nightly lane:Playwright 运行时校验器与 cartography/perf 全量矩阵。运行时场景的写法见 [Runtime Scenario 作者指南](docs/runtime-scenario-guide.md)。
 
 <a id="deployment"></a>
 
