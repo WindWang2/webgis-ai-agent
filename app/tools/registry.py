@@ -497,9 +497,13 @@ class ToolRegistry:
             # percent for typical JSON, never materializing the full string.
             # #677: budget-capped so 100k-feature results cost O(budget) on
             # the event loop, not O(features). Exact for small/medium, approx
-            # for huge (metrics-only, approximate is acceptable and traceable
-            # via budget exhaustion).
-            result_bytes = _estimate_json_bytes(result) if result is not None else 0
+            # for huge — approximation is traceable via result_bytes_approx
+            # flowing into tool_metrics (budget exhaustion is the marker).
+            _result_budget = [_ESTIMATE_MAX_NODES]
+            result_bytes = (
+                _estimate_json_bytes(result, _budget=_result_budget) if result is not None else 0
+            )
+            result_bytes_approx = result is not None and _result_budget[0] <= 0
             cache_hit = cache_hit_var.get()
             # design-v3 §6 observability（additive）：只在 plan_store 进程缓存命中时
             # 附带 plan_id/plan_revision；失败时附 failure_class/recovery_action。
@@ -550,6 +554,8 @@ class ToolRegistry:
                 requested_execution_policy=req_policy_str,
                 actual_execution_mode=actual_mode,
                 compute_ms=duration_ms if not cache_hit else 0,
+                arg_bytes_approx=_arg_approx,
+                result_bytes_approx=result_bytes_approx,
                 plan_id=plan_id,
                 plan_revision=plan_revision,
                 step_id=step_id,
@@ -688,7 +694,11 @@ class ToolRegistry:
                     _cur_est = _estimate_json_bytes(arguments, _budget=_cur_budget)
                     _need_validate = not (_cur_budget[0] <= 0 or _cur_est > _ESTIMATE_SIZE_LIMIT)
             else:
-                _need_validate = _estimate_json_bytes(arguments) <= _ESTIMATE_SIZE_LIMIT
+                # 无 hint 的直调路径同样预算化 + 保守：预算耗尽视为 oversized
+                # 跳过校验（与 hint 路径同一门语义，不留下全量遍历逃逸口）。
+                _nb = [_ESTIMATE_MAX_NODES]
+                _ne = _estimate_json_bytes(arguments, _budget=_nb)
+                _need_validate = not (_nb[0] <= 0 or _ne > _ESTIMATE_SIZE_LIMIT)
             if _need_validate:
                 validate_geojson_structure(arguments)
         except ValueError as e:

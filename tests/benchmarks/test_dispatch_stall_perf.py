@@ -126,9 +126,9 @@ async def test_dispatch_100k_result_stall_bounded():
     assert res["success"] is True
     assert len(res["features"]) == 100_000
     # Before: full result walk was ~360-430ms on the loop (flip-red). After:
-    # budgeted — steady-state marginal cost is single-digit ms; 50ms cap keeps
-    # ~6x headroom for CI jitter while still failing loudly on O(features).
-    assert stall < 50.0, f"dispatch stall {stall:.1f}ms — must be O(budget) not O(features)"
+    # budgeted — steady-state marginal cost measured ~8.5ms; 30ms cap keeps
+    # ~3.5x headroom for CI jitter while still failing loudly on O(features).
+    assert stall < 30.0, f"dispatch stall {stall:.1f}ms — must be O(budget) not O(features)"
 
 
 @pytest.mark.perf
@@ -179,6 +179,93 @@ async def test_args_inside_dispatch_reuses_hint():
         # Need to also patch tc_mod's imported reference if any — it imports inside fn
         res = await reg.dispatch("tiny_tool", args, session_id=None)
         assert res["ok"] is True
-        # dispatch does one hint walk; cache/make_cache_key and gate must reuse it
-        # (so total outer walks == 1, not 2-3).
-        assert call_count[0] <= 1, f"args walked {call_count[0]} times — must be 1 via hint reuse"
+        # dispatch 的 hint 探测是 args 的唯一一次外层遍历：oversized hint 命中后
+        # _dispatch_impl 校验门与 make_cache_key 都零遍历。任何回归（hint 丢失
+        # 回退全量走）都会数出 2+ 次而红。精确 == 1，不接受恒真的小于等于。
+        assert call_count[0] == 1, f"args walked {call_count[0]} times — must be exactly 1 via hint reuse"
+
+
+@pytest.mark.perf
+@pytest.mark.asyncio
+async def test_result_bytes_approx_traceable():
+    """预算外推的估计值必须可追溯：tool_metrics 收到 result_bytes_approx=True。"""
+    from unittest.mock import patch as _patch
+    import app.services.tool_metrics as tm
+
+    fc = _fc(100_000)
+    reg = ToolRegistry()
+
+    def echo_tool(geojson: dict) -> dict:
+        return {"type": "FeatureCollection", "features": fc["features"], "success": True}
+
+    reg.register("echo_tr", "e", echo_tool)
+
+    captured = []
+    real_rec = tm.record_tool_call
+
+    def capture(**kw):
+        captured.append(kw)
+        return real_rec(**kw)
+
+    with _patch.object(tm, "record_tool_call", side_effect=capture):
+        await reg.dispatch("echo_tr", {"geojson": {"type": "Point", "coordinates": [0, 0]}}, session_id=None)
+
+    assert captured, "record_tool_call must have been invoked"
+    row = captured[-1]
+    assert row["result_bytes"] > 100_000, "100k-feature result estimate must be non-trivial"
+    assert row["result_bytes_approx"] is True, "budget-exhausted estimate must be flagged approximate"
+    assert row["arg_bytes_approx"] is False, "tiny args stay exact"
+
+
+@pytest.mark.perf
+@pytest.mark.asyncio
+async def test_dispatch_impl_no_hint_gate_is_budgeted():
+    """直调 _dispatch_impl（无 ContextVar hint）时校验门同样预算化：
+    大 args 走保守 oversized 分支跳过 validate_geojson_structure，
+    估计 walker 本身有界（<15ms）。注意：本测试不断言直调总时长 —
+    Pydantic 对 10 万要素 args 的 model_dump/校验是另一笔 ~200ms 的
+    O(features) 开销（票面之外的相邻问题，另立票跟踪），不应在此误判
+    为 walker 回归。"""
+    from unittest.mock import patch as _patch
+    import app.tools.registry as reg_mod
+    from app.tools.registry import _arg_size_hint_var, _ESTIMATE_MAX_NODES
+
+    fc = _fc(100_000)
+    reg = ToolRegistry()
+
+    def tiny_tool(geojson: dict) -> dict:
+        return {"ok": True}
+
+    reg.register("tiny_direct", "t", tiny_tool)
+
+    # walker 本身有界：一次预算化估计远低于无界全量走（flip-red ~360ms）
+    t0 = time.perf_counter()
+    _estimate_json_bytes = reg_mod._estimate_json_bytes
+    est = _estimate_json_bytes({"geojson": fc}, _budget=[_ESTIMATE_MAX_NODES])
+    dt = (time.perf_counter() - t0) * 1000
+    assert est > 100_000
+    assert dt < 15.0, f"budgeted walk {dt:.1f}ms — must be O(budget)"
+
+    # 门槛语义（确定性断言，不依赖计时）：无 hint 分支的顶层估计调用必须
+    # 显式携带预算对象 — 修复前这里是 `_estimate_json_bytes(arguments)`
+    # 无预算全量走（~360ms），本断言红。
+    real_est = _estimate_json_bytes
+    top_level_budgeted = []
+
+    def budget_probe(obj, _depth=0, _budget=None):
+        if _depth == 0:
+            top_level_budgeted.append(_budget is not None)
+        return real_est(obj, _depth=_depth, _budget=_budget)
+
+    with _patch.object(reg_mod, "_estimate_json_bytes", side_effect=budget_probe), _patch.object(
+        reg_mod, "validate_geojson_structure", side_effect=lambda a: None
+    ):
+        token = _arg_size_hint_var.set(None)  # 强制无 hint 的 else 分支
+        try:
+            res = await reg._dispatch_impl("tiny_direct", {"geojson": fc})
+        finally:
+            _arg_size_hint_var.reset(token)
+    assert res["ok"] is True
+    assert top_level_budgeted == [True], (
+        f"no-hint gate estimate must pass an explicit budget (got {top_level_budgeted})"
+    )
