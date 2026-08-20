@@ -4,6 +4,7 @@ import { resolveStyle, type LayoutStyle } from './layout-style';
 import { API_BASE } from '@/lib/api/config';
 import { apiFetch, isApiError } from '@/lib/api/transport';
 import { devOnly } from '@/lib/utils/logger';
+import { hydrateMvtLayers } from '@/lib/store/layer-data';
 // Re-export the shared oversample helper so existing callers importing from
 // './exporter' keep working, while the single source of truth lives in
 // ./oversample (shared with the MapSpec-to-SVG compiler).
@@ -692,6 +693,11 @@ export async function generateMapSpecVectorSvgString(
   mapspec: any,
   options: VectorExportOptions = {}
 ): Promise<string> {
+  // #667 export-vector: hydrate MVT layers on demand (cached after first fetch)
+  try {
+    const { useHudStore } = await import('@/lib/store/useHudStore');
+    await hydrateMvtLayers(useHudStore.getState().layers as any, 'export-vector');
+  } catch { /* hydration is best-effort; export still proceeds */ }
   const { compileMapSpecToSvg } = await import('../mapspec-compiler/mapspec-to-svg');
   const { renderSvgPrintLayout } = await import('./svg-marginalia');
 
@@ -1182,6 +1188,13 @@ export async function runExport(
   req: ExportRequest,
 ): Promise<ExportOutcome> {
   const { map, getHudState } = deps;
+  // #667 export-vector: vector exports (svg) need real features; hydrate MVT layers on demand
+  const fmtEarly = String((req as any)?.format ?? 'png').toLowerCase();
+  if (fmtEarly === 'svg') {
+    try {
+      await hydrateMvtLayers(getHudState().layers as any[], 'export-vector');
+    } catch { /* best-effort */ }
+  }
   const {
     title = '',
     subtitle,

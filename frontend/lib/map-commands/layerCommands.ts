@@ -4,6 +4,7 @@ import * as navigation from '@/lib/map-kit/navigation';
 import * as renderer from '@/lib/map-kit/renderer';
 import { devOnly } from '@/lib/utils/logger';
 import { parseFilter } from './parseFilter';
+import { isMvtLayer } from '@/lib/store/layer-data';
 
 /**
  * Layer commands: vector/raster add-remove, base layer switch, visibility/style
@@ -696,6 +697,12 @@ export const layerCommands: Record<string, CommandEntry> = {
 
       if (matched.length === 0) {
         // Store-only: the reconcile owns the map sublayers → honest store_updated.
+        return { status: 'succeeded', result: { store_updated: true } };
+      }
+      // #667 MVT honest ack: tiles may not carry the filtered field → filter is
+      // stored in HUD but renderer can only apply what tiles carry.
+      const targetLayer: any = getHudState().layers?.find?.((l: any) => l.id === layer_id);
+      if (targetLayer && isMvtLayer(targetLayer as any)) {
         return { status: 'succeeded', result: { store_updated: true } };
       }
       // V3: verifiable marker (layer filter — harness convergence).

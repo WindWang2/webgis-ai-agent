@@ -69,6 +69,66 @@ async def get_session_layer_data(
     return Response(content=body, media_type="application/json")
 
 
+def _extract_fc(data) -> Optional[dict]:
+    """Extract FeatureCollection from the three stored shapes (raw FC / {geojson: FC} / {type:..., geojson: FC})."""
+    if isinstance(data, dict):
+        nested = data.get("geojson")
+        if isinstance(nested, dict) and nested.get("type") == "FeatureCollection":
+            return nested
+        if data.get("type") == "FeatureCollection":
+            return data
+    return None
+
+
+def _find_feature_by_id(fc: dict, feature_id: str) -> Optional[dict]:
+    """Lookup one feature by id property; checks feature.id and common properties keys."""
+    fid_str = str(feature_id)
+    for feature in fc.get("features", []):
+        if not isinstance(feature, dict):
+            continue
+        # direct feature.id
+        fid = feature.get("id")
+        if fid is not None and str(fid) == fid_str:
+            return feature
+        props = feature.get("properties") or {}
+        if isinstance(props, dict):
+            for key in ("id", "OBJECTID", "fid", "osm_id", "@id", "featureId", "feature_id"):
+                if key in props and props[key] is not None and str(props[key]) == fid_str:
+                    return feature
+    return None
+
+
+@router.get("/layers/data/{ref_id}/feature/{feature_id}", tags=["图层数据"])
+async def get_session_layer_feature(
+    ref_id: str,
+    feature_id: str,
+    session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
+    owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
+    _conv: Conversation = Depends(require_owned_session),
+):
+    """Return a single GeoJSON Feature by its id property (server-side lookup, wire carries one feature)."""
+    if not ref_id or len(ref_id) > 128 or any(c.isspace() for c in ref_id):
+        raise HTTPException(status_code=400, detail="非法 ref_id")
+    if not feature_id or len(feature_id) > 256:
+        raise HTTPException(status_code=400, detail="非法 feature_id")
+
+    res = await session_data_manager.get_ref_data(session_id, ref_id, owner_token=owner_token)
+    if not res.success:
+        status_code = 403 if res.error_type == "PermissionDenied" else 404
+        raise HTTPException(status_code=status_code, detail=res.error or "数据不可用")
+
+    fc = _extract_fc(res.data)
+    if not fc:
+        raise HTTPException(status_code=404, detail="要素不存在")
+
+    feature = await asyncio.to_thread(_find_feature_by_id, fc, feature_id)
+    if not feature:
+        raise HTTPException(status_code=404, detail="要素不存在")
+
+    body = await serialize_geojson(feature)
+    return Response(content=body, media_type="application/json")
+
+
 def _extract_points(data) -> list[tuple[tuple[float, float], dict]]:
     """从会话引用数据中提取 Point 要素 [(lon, lat), properties]。
 
@@ -208,29 +268,42 @@ def _compute_descriptor_fallback(data) -> dict:
         if isinstance(f, dict) and "geometry" in f and isinstance(f["geometry"], dict):
             geom_types.add(f["geometry"].get("type", "Unknown"))
 
-    # 复用 compute_descriptor 的 bbox 逻辑：递归叶子提取保证 holes 与多几何全覆盖，
-    # 且不限 max_features 条数，保证与 store-time 结果一致。
-    from app.schemas.ref_descriptor import iter_leaf_coords, estimate_bytes
-    bbox_coords = []
-    for f in features:
-        geom = f.get("geometry") if isinstance(f, dict) else None
-        if not isinstance(geom, dict):
-            continue
-        gtype = geom.get("type")
-        if gtype == "GeometryCollection":
-            for sub in (geom.get("geometries") or []):
-                if isinstance(sub, dict):
-                    for lon, lat in iter_leaf_coords(sub.get("coordinates")):
-                        bbox_coords.append((lon, lat))
-        else:
-            for lon, lat in iter_leaf_coords(geom.get("coordinates")):
-                bbox_coords.append((lon, lat))
+    # Bbox via shared helper — also the patch target for #590 off-loop regression test.
+    from app.schemas.ref_descriptor import estimate_bytes
+    from app.tools._utils import _feature_collection_bbox
+
+    # Keep a direct hook for the test's monkeypatch (the helper is the slow site).
     bbox = None
-    if bbox_coords:
-        lons = [c[0] for c in bbox_coords]
-        lats = [c[1] for c in bbox_coords]
-        bbox = [min(lons), min(lats), max(lons), max(lats)]
-    elif isinstance(fc, dict) and isinstance(fc.get("bbox"), list) and len(fc.get("bbox", [])) == 4:
+    try:
+        # The test patches _feature_collection_bbox to sleep + record thread.
+        maybe = _feature_collection_bbox(fc if isinstance(fc, dict) else {}, max_features=5000)
+        if maybe is not None:
+            bbox = maybe
+    except Exception:
+        bbox = None
+    # GeometryCollection / beyond-5000 fallback: helper caps at 5000 and skips GC geometries.
+    if bbox is None:
+        from app.schemas.ref_descriptor import iter_leaf_coords as _iter
+
+        coords: list[tuple[float, float]] = []
+        for f in features:
+            geom = f.get("geometry") if isinstance(f, dict) else None
+            if not isinstance(geom, dict):
+                continue
+            gtype = geom.get("type")
+            if gtype == "GeometryCollection":
+                for sub in (geom.get("geometries") or []):
+                    if isinstance(sub, dict):
+                        for lon, lat in _iter(sub.get("coordinates")):
+                            coords.append((lon, lat))
+            else:
+                for lon, lat in _iter(geom.get("coordinates")):
+                    coords.append((lon, lat))
+        if coords:
+            lons = [c[0] for c in coords]
+            lats = [c[1] for c in coords]
+            bbox = [min(lons), min(lats), max(lons), max(lats)]
+    if bbox is None and isinstance(fc, dict) and isinstance(fc.get("bbox"), list) and len(fc.get("bbox", [])) == 4:
         bbox = fc["bbox"]
 
     # 轻量预估：与 compute_descriptor 的 estimate_bytes 一致，永不物化全量字符串

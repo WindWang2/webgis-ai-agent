@@ -16,6 +16,7 @@ import { describeApiError } from '@/lib/api/transport';
 import { hasWorkspaceContent } from '@/lib/utils/workspace-content';
 import { mapInsetLeft, mapChromeLeft } from '@/lib/utils/workspace-inset';
 import { ConfirmDialog } from '@/components/shared/confirm-dialog';
+import { setLayerDataSession } from '@/lib/store/layer-data';
 
 // New layout components
 import TopBar from '@/components/layout/top-bar';
@@ -114,6 +115,11 @@ export default function Home() {
     rememberSessionToken,
     getSessionTokenFor
   );
+
+  // #667: keep the single lazy-hydration seam's session context in sync
+  useEffect(() => {
+    setLayerDataSession(sessionId ?? undefined, activeSessionToken ?? null);
+  }, [sessionId, activeSessionToken]);
 
   const handleSelectSession = useCallback(
     (sid: string) => {

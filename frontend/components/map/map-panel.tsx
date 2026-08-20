@@ -28,6 +28,7 @@ import { PoiInfoPanel } from "@/components/map/poi-info-panel"
 import { raiseAnnotationLayers } from "@/lib/map-commands/annotationHelpers"
 import { notifyUserGestureStart, notifyUserGestureEnd } from "@/lib/map-commands/camera-arbitration"
 import { devOnly } from "@/lib/utils/logger"
+import { ensureLayerData } from "@/lib/store/layer-data"
 import { buildTileTransformRequest } from "@/lib/map-kit/tile-auth"
 import { commitExplicitView } from "@/lib/mapspec/user-mutation"
 
@@ -555,6 +556,7 @@ export function MapPanel({
     const sublayerId = feature.layer?.id as string | undefined
     const parentId = sublayerId ? resolveParentLayerId(sublayerId, layerIdsSetRef.current) : undefined
     const layerInfo = parentId ? layersMapRef.current[parentId] : undefined
+    const featureId = (feature.id as string | number | undefined) ?? (feature.properties as any)?.id
     setSelectedFeature({
       // 无主图层（process-* 等）时回退到原始 sublayer id。
       layerId: parentId ?? sublayerId ?? 'unknown',
@@ -564,7 +566,16 @@ export function MapPanel({
       point,
       properties: (feature.properties || {}) as Record<string, unknown>,
       selectedAt: Date.now(),
+      featureId: featureId as string | number | undefined,
     })
+    // #667: selection-detail lazy hydration — single-feature endpoint for MVT layers
+    const targetId = parentId ?? sublayerId
+    if (targetId) {
+      const l = layersMapRef.current[targetId]
+      if (l?._tileUrl && l?._descriptor?.mvt_capable) {
+        void ensureLayerData(targetId, 'selection-detail').catch(() => {})
+      }
+    }
   }, [setSelectedFeature])
 
   // 悬浮窗状态：屏幕坐标 + 命中要素列表（≤5）。纯组件本地状态。

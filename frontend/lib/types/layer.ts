@@ -27,6 +27,7 @@ export interface RefDescriptor {
   bbox: [number, number, number, number] | null;
   mvt_capable: boolean;
   estimated_bytes: number;
+  content_hash: string | null;
 }
 
 export interface Layer {
