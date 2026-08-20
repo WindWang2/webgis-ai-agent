@@ -220,9 +220,11 @@ class SubagentDispatcher:
                 _user_message: str,
                 session_id: Optional[str] = None,
                 declared_domains: Optional[set] = None,
+                turn_id: Optional[str] = None,
             ):
-                # declared_domains 是 ToolCatalog 现行接口（_select_tools 始终
-                # 传此 kwarg）；stub 固定返回白名单，忽略即可。
+                # declared_domains / turn_id 是 ToolCatalog 现行接口（_select_tools
+                # 始终传这两个 kwarg，#684 加入 turn_id 按用户轮衰减）；stub 固定
+                # 返回白名单，忽略即可。
                 return self._schemas
 
             def reset_session(self, session_id: str) -> None:
