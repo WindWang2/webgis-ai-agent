@@ -68,11 +68,21 @@ class AmapProvider:
     # ── 9 Protocol capabilities ───────────────────────────────────
 
     async def search_poi(self, keyword: str, city: str, limit: int) -> dict:
-        params = {"keywords": keyword, "city": city, "citylimit": "true" if city else "false", "offset": str(limit)}
+        _limit = max(1, min(int(limit or 20), 25))
+        params = {"keywords": keyword, "city": city, "citylimit": "true" if city else "false", "offset": str(_limit)}
         data = await self._get("/place/text", params)
         if "error" in data:
             return data
         pois = data.get("pois", [])
+        # provider 上报的 total（Amap count 字段），有就透传（#683）
+        _total = None
+        for _k in ("count", "total"):
+            if _k in data:
+                try:
+                    _total = int(str(data[_k]).strip())
+                except Exception:
+                    _total = None
+                break
         return shape_poi_collection(
             pois,
             extract_coord=self._extract_loc,
@@ -86,7 +96,8 @@ class AmapProvider:
             },
             provider="amap",
             src_crs=self.SRC_CRS,
-            limit=limit,
+            limit=_limit,
+            total=_total,
         )
 
     async def search_poi_around(

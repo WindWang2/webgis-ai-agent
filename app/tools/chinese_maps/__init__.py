@@ -104,6 +104,7 @@ class ChineseMapsEngine:
             provider, _call,
             no_key_msg=(f"所有服务商均失败: {'; '.join(errors)}" if errors else "未配置任何地图 API Key"),
             tool_name="search_poi",
+            city=city or None,
         )
 
 
@@ -171,9 +172,9 @@ def register_chinese_map_tools(registry: ToolRegistry):
            ),
            param_descriptions={
                "keyword": "搜索关键词，如'小学'、'大学'、'医院'",
-               "city": "城市名称，如'成都'、'成都市'",
+               "city": "城市名称，如'成都'、'成都市'（天地图需可解析为 adcode，否则显式失败）",
                "provider": "已忽略。中国境内固定本地 OSM。",
-               "limit": "返回结果数量，默认20，最大2000",
+               "limit": "返回结果数量，默认20；本地 gd_poi 单次 ≤2000，在线单页 ≤25（无翻页，超限自动钳制；返回 count 为本页条数，total 为 provider 上报总命中数如有）",
            })
     async def search_poi(keyword: str, city: str = "", provider: str = "amap", limit: int = 20) -> dict:
         from app.services.local_first import try_local_search_poi
@@ -201,6 +202,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
             provider, _call,
             no_key_msg=(f"所有服务商均失败: {'; '.join(errors)}" if errors else "未配置任何地图 API Key"),
             tool_name="search_poi",
+            city=city or None,
         )
 
     tool(registry, tier=2, domains=["chinese"], name="geocode_cn",

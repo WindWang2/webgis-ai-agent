@@ -16,6 +16,97 @@ from app.tools.chinese_maps._shaping import shape_poi_collection
 
 logger = logging.getLogger(__name__)
 
+# ── city → adcode 本地解析（优先本地 SHP，表格缺失时用内置常见城市映射兜底，保障回归） ──
+
+_FALLBACK_CITY_ADCODE: dict[str, str] = {
+    "北京": "110000", "北京市": "110000",
+    "上海": "310000", "上海市": "310000",
+    "天津": "120000", "天津市": "120000",
+    "重庆": "500000", "重庆市": "500000",
+    "成都": "510100", "成都市": "510100",
+    "广州": "440100", "广州市": "440100",
+    "深圳": "440300", "深圳市": "440300",
+    "杭州": "330100", "杭州市": "330100",
+    "南京": "320100", "南京市": "320100",
+    "武汉": "420100", "武汉市": "420100",
+    "西安": "610100", "西安市": "610100",
+    "苏州": "320500", "苏州市": "320500",
+    "长沙": "430100", "长沙市": "430100",
+    "郑州": "410100", "郑州市": "410100",
+    "青岛": "370200", "青岛市": "370200",
+    "大连": "210200", "大连市": "210200",
+    "宁波": "330200", "宁波市": "330200",
+    "厦门": "350200", "厦门市": "350200",
+    "济南": "370100", "济南市": "370100",
+    "合肥": "340100", "合肥市": "340100",
+    "福州": "350100", "福州市": "350100",
+    "昆明": "530100", "昆明市": "530100",
+    "沈阳": "210100", "沈阳市": "210100",
+    "长春": "220100", "长春市": "220100",
+    "哈尔滨": "230100", "哈尔滨市": "230100",
+    "太原": "140100", "太原市": "140100",
+    "石家庄": "130100", "石家庄市": "130100",
+}
+
+
+def _resolve_city_adcode(city: str) -> str | None:
+    """城市名 → 6 位 adcode（优先本地 SHP，缺失时用内置映射）。
+
+    复用 app.tools.local_admin 的 _load_level 缓存，避免重复读盘。
+    匹配语义与 query_admin_boundary 一致：按包含匹配，兼容“成都”→“成都市”。
+    """
+    name = (city or "").strip()
+    if not name:
+        return None
+    # 1. 优先本地 SHP
+    try:
+        from app.tools.local_admin import _load_level, _LEVEL_ADCODE_COL, _LEVEL_NAME_COL
+
+        for level in ("city", "district", "province"):
+            gdf = _load_level(level)
+            if gdf is None or getattr(gdf, "empty", False):
+                continue
+            name_cols = _LEVEL_NAME_COL.get(level, ())
+            adcode_cols = _LEVEL_ADCODE_COL.get(level, ())
+            name_col = next((c for c in name_cols if c in gdf.columns), None)
+            adcode_col = next((c for c in adcode_cols if c in gdf.columns), None)
+            if not name_col or not adcode_col:
+                continue
+            try:
+                mask = gdf[name_col].astype(str).str.contains(name, na=False, regex=False)
+            except Exception:
+                continue
+            if not mask.any():
+                bare = name[:-1] if name.endswith("市") else None
+                if bare:
+                    try:
+                        mask = gdf[name_col].astype(str).str.contains(bare, na=False, regex=False)
+                    except Exception:
+                        mask = None
+                    if mask is None or not mask.any():
+                        continue
+                else:
+                    continue
+            matched = gdf[mask]
+            for _, row in matched.iterrows():
+                raw = row.get(adcode_col) or row.get("adcode")
+                if raw is None or str(raw).strip() == "":
+                    continue
+                code = str(raw).strip().replace(".0", "")
+                if code.isdigit():
+                    return code.zfill(6)
+                return code
+    except Exception:
+        pass
+    # 2. 内置常见城市映射兜底（保障无 SHP 的 CI / 单测环境）
+    if name in _FALLBACK_CITY_ADCODE:
+        return _FALLBACK_CITY_ADCODE[name]
+    bare = name[:-1] if name.endswith("市") else None
+    if bare and bare in _FALLBACK_CITY_ADCODE:
+        return _FALLBACK_CITY_ADCODE[bare]
+    return None
+
+
 
 class TiandituProvider:
     """Tianditu (天地图) implementation of the Chinese-maps provider interface.
@@ -56,17 +147,32 @@ class TiandituProvider:
     # ── Protocol capabilities (6 of 9) ────────────────────────────
 
     async def search_poi(self, keyword: str, city: str, limit: int) -> dict:
-        # specifyAdminCode 必须是数字行政区代码（如 "110000"），中文名传进去等于无过滤
+        # specifyAdminCode 必须是数字行政区代码（如 "110000"）；城市名为中文时
+        # 解析为 adcode，无法解析则显式失败，绝不静默全球检索（#683）。
+        _clamped = max(1, min(int(limit), 25)) if isinstance(limit, int) else max(1, min(int(limit or 20), 25))
         payload: dict = {
             "keyWord": keyword,
             "level": "12",
             "mapBound": "-180,-90,180,90",
             "queryType": "1",
             "start": "0",
-            "count": str(min(limit, 50)),
+            "count": str(_clamped),
         }
-        if city and city.isdigit():
-            payload["specifyAdminCode"] = city
+        if city:
+            if city.isdigit():
+                payload["specifyAdminCode"] = city
+            else:
+                adcode = _resolve_city_adcode(city)
+                if adcode:
+                    payload["specifyAdminCode"] = adcode
+                else:
+                    return {
+                        "error": (
+                            f"Tianditu 不支持城市 '{city}' 的城市过滤：无法解析为行政区代码（adcode）。"
+                            f"请改用高德/百度，或传入该城市的 6 位 adcode（如成都市 510100）"
+                        ),
+                        "correction_hint": "传入数字 adcode（如 '510100'）或改用 provider='amap'/'baidu'",
+                    }
         post_str = json.dumps(payload, ensure_ascii=False)
         # 2026-08 实测：官方搜索服务已从 /search 迁移到 /v2/search（旧路径
         # 返回品牌化 404 HTML 页），geocoder 仍在 /geocoder 不变。
@@ -76,6 +182,18 @@ class TiandituProvider:
         pois = data.get("pois", [])
         if not pois and isinstance(data.get("resultType"), int):
             return {"type": "FeatureCollection", "features": [], "count": 0, "provider": "tianditu"}
+        # v2/search 上报的总命中在 count/total 字段——与 amap/baidu 的 total
+        # 透传对齐（count=returned 本页条数，total=provider 上报总命中）
+        _total = None
+        for _k in ("count", "total"):
+            _v = data.get(_k)
+            if _v is not None:
+                try:
+                    _total = int(_v)
+                except (TypeError, ValueError):
+                    _total = None
+                if _total is not None:
+                    break
         return shape_poi_collection(
             pois,
             extract_coord=self._extract_loc,
@@ -86,7 +204,8 @@ class TiandituProvider:
             },
             provider="tianditu",
             src_crs=self.SRC_CRS,
-            limit=limit,
+            limit=_clamped,
+            total=_total,
         )
 
     async def search_poi_around(

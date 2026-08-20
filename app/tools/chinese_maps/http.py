@@ -69,6 +69,27 @@ _FALLBACK_ERRORS = (
 )
 
 
+# ── Fallback 语义标注（#683） ──────────────────────────────────────────
+
+
+def _fallback_semantic_note(from_provider: str, to_provider: str, city: str | None = None) -> str:
+    parts: list[str] = []
+    if from_provider != to_provider:
+        # Tianditu 特有的语义差异提示
+        if to_provider == "tianditu":
+            parts.append("已回退至 Tianditu：仅支持数字 adcode 城市过滤（中文城市名需可解析为 adcode，否则显式失败而非全球检索）；返回要素仅含 name/address/tel，无城市归属字段")
+        if from_provider == "tianditu":
+            parts.append("已从 Tianditu 回退：目标 provider 支持城市名过滤与更丰富的 POI 属性（name/address/type/tel/city/district）")
+        if to_provider == "baidu":
+            parts.append("已回退至 Baidu：单页容量 ≤20（Amap 单页 ≤25）")
+        if from_provider == "baidu" and to_provider == "amap":
+            parts.append("已从 Baidu 回退至 Amap：单页容量 ≤25")
+        if city:
+            parts.append(f"city 过滤保持性：原始 city='{city}'；Tianditu 需 adcode 解析一致性已在 provider 层显式校验")
+    note = "；".join(parts) if parts else f"已从 {from_provider} 回退至 {to_provider}"
+    return note
+
+
 def _is_provider_error_dict(result: object) -> bool:
     """True only for genuine provider-level failure payloads.
 
@@ -89,6 +110,7 @@ async def with_fallback(
     exclude: set[str] | None = None,
     no_key_msg: str = "未配置任何地图 API Key",
     tool_name: str = "",
+    city: str | None = None,
 ) -> dict:
     """Run a per-provider capability call with automatic fallback.
 
@@ -108,7 +130,8 @@ async def with_fallback(
     benign ``error`` field) do NOT fall back — they propagate / return as-is so
     schema drift surfaces as itself instead of a misleading provider failure
     (#479). Returns the first successful result, or ``{"error": ...}`` when no
-    configured provider succeeded.
+    configured provider succeeded. 当发生跨 provider 回退时，结果 envelope 会
+    显式标注 ``provider_switched``/``fallback_note`` 语义差异（#683）。
 
     Args:
         preferred: the provider the caller asked for (tried first).
@@ -125,6 +148,7 @@ async def with_fallback(
     """
     label = f"{tool_name} " if tool_name else ""
     first_error: str | None = None
+    attempted: list[str] = []
 
     def _note_failure(detail: str) -> None:
         nonlocal first_error
@@ -134,6 +158,7 @@ async def with_fallback(
     for p in _fallback_order(preferred, exclude):
         if not _has_provider(p):
             continue
+        attempted.append(p)
         try:
             result = await call(p)
         except _FALLBACK_ERRORS as e:
@@ -147,6 +172,15 @@ async def with_fallback(
             logger.warning(f"{label}{p} failed: {result.get('error')}")
             _note_failure(str(result.get("error")))
             continue
+        # 成功路径：若发生过回退，在 envelope 显式标注语义差异（#683）
+        # 仅对 FeatureCollection/有 provider 的业务结果标注，避免破坏单元测试的最小 dict 断言
+        if len(attempted) > 1 and isinstance(result, dict) and result.get("type") == "FeatureCollection":
+            origin = attempted[0]
+            note = _fallback_semantic_note(origin, p, city=city)
+            result = dict(result)
+            result["provider_switched"] = True
+            result["fallback_note"] = note
+            result["fallback_from"] = origin
         return result
     if first_error is not None:
         return {"error": f"{no_key_msg}（{first_error}）"}

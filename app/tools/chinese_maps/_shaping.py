@@ -49,6 +49,7 @@ def shape_poi_collection(
     src_crs: Optional[str] = None,
     limit: Optional[int] = None,
     extra_envelope: Optional[Dict[str, Any]] = None,
+    total: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Shape provider POI records into a WGS84 GeoJSON FeatureCollection.
 
@@ -88,6 +89,11 @@ def shape_poi_collection(
         "count": len(features),
         "provider": provider,
     }
+    if total is not None:
+        try:
+            envelope["total"] = int(total)
+        except Exception:
+            envelope["total"] = total
     if extra_envelope:
         envelope.update(extra_envelope)
 

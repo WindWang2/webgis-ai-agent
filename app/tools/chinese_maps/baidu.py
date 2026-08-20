@@ -52,11 +52,20 @@ class BaiduProvider:
     # ── Protocol capabilities ─────────────────────────────────────
 
     async def search_poi(self, keyword: str, city: str, limit: int) -> dict:
-        params = {"query": keyword, "region": city or "全国", "page_size": str(min(limit, 20))}
+        _limit = max(1, min(int(limit or 20), 20))
+        params = {"query": keyword, "region": city or "全国", "page_size": str(_limit)}
         data = await self._get("/place/v2/search", params)
         if "error" in data:
             return data
         pois = data.get("results", [])
+        _total = None
+        for _k in ("total", "count"):
+            if _k in data:
+                try:
+                    _total = int(str(data[_k]).strip())
+                except Exception:
+                    _total = None
+                break
         return shape_poi_collection(
             pois,
             extract_coord=self._extract_loc,
@@ -70,7 +79,8 @@ class BaiduProvider:
             },
             provider="baidu",
             src_crs=self.SRC_CRS,
-            limit=limit,
+            limit=_limit,
+            total=_total,
         )
 
     async def search_poi_around(
