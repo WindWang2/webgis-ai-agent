@@ -297,6 +297,7 @@ def register_template_tools(registry: ToolRegistry):
                 return {
                     "status": "composite_applied",
                     "kind": "composite",
+                    "committed": True,
                     "template_id": template_id,
                     "template_name": target_tmpl["name"],
                     "pipeline": pipeline,
@@ -639,6 +640,7 @@ async def combine_map_theme(
             "is_compiled": res.get("is_compiled"),
             "mapspec_fingerprint": res.get("mapspec_fingerprint"),
             "session_id": session_id,
+            "committed": True,
         }
 
     return {
@@ -646,7 +648,9 @@ async def combine_map_theme(
         "preset": preset,
         "combination": combination_ids,
         "layer_id": layer_id,
-        "mapspec": mapspec
+        "mapspec": mapspec,
+        "committed": False,
+        "summary": "MapSpec 已组装未提交：传入 session_id 与 geojson 将经生命周期引擎提交并验证。",
     }
 
 

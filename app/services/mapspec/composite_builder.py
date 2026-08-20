@@ -206,19 +206,15 @@ class CompositeMapSpecBuilder:
             self.with_basemap(combination_ids["basemap"])
         if "symbology" in combination_ids:
             self.with_symbology(combination_ids["symbology"])
+        # Bind field to thematic (new or already-configured) in one place.
         if "thematic" in combination_ids:
             self.with_thematic(combination_ids["thematic"], field=effective_field)
         elif effective_field and self._thematic and not self._thematic.field:
-            # Caller supplied field without re-specifying thematic — keep preset thematic but bind field
-            self._thematic.field = effective_field
+            self._thematic.field = effective_field  # type: ignore[union-attr]
         if "layout" in combination_ids:
             self.with_layout(combination_ids["layout"])
         if "viewport" in combination_ids:
             self.with_viewport(combination_ids["viewport"])
-        # If thematic was already configured (previous with_thematic call) and a field is now provided,
-        # bind it so the thematic branch below becomes effective.
-        if effective_field and self._thematic and not self._thematic.field:
-            self._thematic.field = effective_field
 
         basemap_slot = self._basemap or BasemapSlot(provider_id="carto-positron")
         layout_slot = self._layout or LayoutSlot()
@@ -266,30 +262,22 @@ class CompositeMapSpecBuilder:
         target_id = layer_id or "default_layer"
         source_id = f"source_{target_id}"
 
-        # Source must carry real data — either the caller-provided geojson as
-        # inlineData (verifiable) or fail-loud. The decorative "dataPath":
-        # "layers/{id}/source" has no consumer (no API route, no frontend
-        # parser for that shape) and is still a fake — replaced with real data.
-        # Caller must provide geojson (see apply_template/combine_map_theme
-        # contracts); without it we keep an empty shell that validate will
-        # reject via the downstream pipeline (is_compiled=False), but the
-        # lifecycle commit will never be reached because the tool returned
-        # an explicit missing-geojson error first.
+        # Source shape knowledge lives in app/services/mapspec_source.py (CONTEXT.md).
+        # Use store_data() rather than hand-rolled {"type":"geojson","inlineData":...}
+        # so the single canonical classifier governs the carrier key.
+        from app.services.mapspec_source import store_data as _store_composite_source
+
         effective_geojson = geojson or combination_ids.get("geojson")
+        entry: Dict[str, Any] = {"type": "geojson"}
         if isinstance(effective_geojson, dict) and effective_geojson.get("features"):
-            mapspec["sources"][source_id] = {
-                "type": "geojson",
-                "inlineData": effective_geojson,
-            }
+            _store_composite_source(entry, effective_geojson)
         else:
             # Honest empty — caller omitted data; builder alone cannot invent it.
             # This keeps the MapSpec shape valid for unit tests that don't need data,
             # but any lifecycle submission without real data would have been rejected
             # by the tool layer before reaching here.
-            mapspec["sources"][source_id] = {
-                "type": "geojson",
-                "inlineData": {"type": "FeatureCollection", "features": []},
-            }
+            _store_composite_source(entry, {"type": "FeatureCollection", "features": []})
+        mapspec["sources"][source_id] = entry
 
         geom_type = self._symbology.geometry if self._symbology else None
         if geom_type in ("Polygon", "MultiPolygon"):
@@ -338,20 +326,22 @@ class CompositeMapSpecBuilder:
             thematic_slot = self._thematic
             if thematic_slot.variant == "choropleth":
                 # Emit legend_spec (frontend thematic-paint consumes this; old "thematic" key was dead).
+                # Helper for the two graduated paths (real method vs unknown-method fallback)
+                # to keep breaks+colors synthesis in one place.
+                def _graduated_breaks_colors(palette: str, k_raw: Any) -> tuple[list[float], list[str]]:
+                    k_ = max(2, min(10, int(k_raw or 5)))
+                    breaks_ = [round(i / k_, 6) for i in range(k_ + 1)]
+                    from app.lib.cartography.palettes import get_color_from_palette as _gcp
+
+                    colors_ = [_gcp(palette, (breaks_[i] + breaks_[i + 1]) / 2.0) for i in range(k_)]
+                    return breaks_, colors_
+
                 # Classification needs data; without it we emit a preset-derived graduated spec with
                 # synthetic breaks so the slot is effective and the legend renders. Breaks are NOT
                 # data-driven — they are evenly spaced over [0, k] and the palette is resolved
                 # honestly via the thematic template's palette (same palette helpers as the real path).
                 if thematic_slot.method in ("quantiles", "equal_interval", "natural_breaks"):
-                    k = max(2, min(10, int(thematic_slot.k or 5)))
-                    # Synthetic breaks over [0, 1] normalized domain — honest preset-derived, not data-derived
-                    breaks = [round(i / k, 6) for i in range(k + 1)]
-                    # Sample palette at class midpoints (same as thematic_spec.resolve_thematic_colors)
-                    from app.lib.cartography.palettes import get_color_from_palette
-                    colors = []
-                    for i in range(k):
-                        mid = (breaks[i] + breaks[i + 1]) / 2.0
-                        colors.append(get_color_from_palette(thematic_slot.palette, mid))
+                    breaks, colors = _graduated_breaks_colors(thematic_slot.palette, thematic_slot.k)
                     layer_def["legend_spec"] = {
                         "type": "graduated",
                         "field": thematic_slot.field,
@@ -398,10 +388,7 @@ class CompositeMapSpecBuilder:
                         logger.warning("Composite spec_to_paint (lisa) failed: %s", e)
                 else:
                     # Unknown method: still emit graduated fallback so slot is not silently dead
-                    k = max(2, min(10, int(thematic_slot.k or 5)))
-                    breaks = [round(i / k, 6) for i in range(k + 1)]
-                    from app.lib.cartography.palettes import get_color_from_palette
-                    colors = [get_color_from_palette(thematic_slot.palette, (breaks[i]+breaks[i+1])/2) for i in range(k)]
+                    breaks, colors = _graduated_breaks_colors(thematic_slot.palette, thematic_slot.k)
                     layer_def["legend_spec"] = {
                         "type": "graduated",
                         "field": thematic_slot.field,

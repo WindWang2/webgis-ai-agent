@@ -191,6 +191,7 @@ async def test_composite_success_commits_and_has_real_inlineData(registry):
         assert result.get("status") == "composite_applied", f"should be composite_applied: {result}"
         assert "error" not in result
         assert "geojson" not in result, f"top-level geojson echo should be removed: {list(result.keys())}"
+        assert result.get("committed") is True, f"apply composite success must have committed True: {result}"
         assert mock_upsert.called, "should have called mapspec_store.layer_upsert"
         call_kwargs = mock_upsert.call_args
         assert call_kwargs[0][0] == "sess-test-123"
@@ -202,6 +203,55 @@ async def test_composite_success_commits_and_has_real_inlineData(registry):
         assert has_real, f"mapspec source should have real data after commit: {src}"
         assert result.get("is_compiled") is True
         assert result.get("session_id") == "sess-test-123"
+
+
+# 9b. combine_map_theme committed semantics
+@pytest.mark.asyncio
+async def test_combine_map_theme_committed_true_with_session_and_geojson():
+    import unittest.mock as mock
+    mock_res = {
+        "success": True,
+        "is_compiled": True,
+        "mapspec_fingerprint": "fp-combine",
+        "mapspec": {"version": "1.0", "sources": {"source_test_layer": {"type": "geojson", "inlineData": SAMPLE_GEOJSON}}, "layers": [{"id": "test_layer", "source": "source_test_layer", "type": "fill", "paint": {}}], "view": {}, "basemap": {"providerId": "carto-positron"}, "layout": {}, "thresholds": {}},
+        "layer": {"id": "test_layer", "source": "source_test_layer", "type": "fill", "paint": {}},
+    }
+    with mock.patch("app.services.mapspec_store.mapspec_store.layer_upsert", new=mock.AsyncMock(return_value=mock_res)):
+        res = await combine_map_theme(thematic="tmpl_th_pop_choro", field="population", layer_id="test_layer", geojson=SAMPLE_GEOJSON, session_id="sess-combine-1")
+        assert res.get("status") == "composite_applied"
+        assert res.get("committed") is True, f"with session+geojson should be committed True: {res}"
+        assert res.get("session_id") == "sess-combine-1"
+
+
+@pytest.mark.asyncio
+async def test_combine_map_theme_not_committed_without_session():
+    res = await combine_map_theme(thematic="tmpl_th_pop_choro", field="population", layer_id="test_layer", geojson=SAMPLE_GEOJSON)
+    assert res.get("status") == "composite_map_assembled"
+    assert res.get("committed") is False, f"without session should be committed False: {res}"
+    assert "summary" in res and "已组装未提交" in res["summary"], f"should have summary about not committed: {res}"
+
+    # Also without geojson (even with session/synthetic breaks) — still not committed
+    import unittest.mock as mock
+    with mock.patch("app.services.mapspec_store.mapspec_store.layer_upsert", new=mock.AsyncMock(return_value={"success": True})) as m:
+        res2 = await combine_map_theme(thematic="tmpl_th_pop_choro", field="population", layer_id="test_layer2")
+        assert res2.get("committed") is False
+        assert not m.called, "without geojson, should not call layer_upsert even with field"
+
+
+# 9c. apply composite also committed (symmetry)
+@pytest.mark.asyncio
+async def test_apply_composite_committed_true_symmetry(registry):
+    import unittest.mock as mock
+    mock_res = {
+        "success": True,
+        "is_compiled": True,
+        "mapspec_fingerprint": "fp-apply-sym",
+        "mapspec": {"version": "1.0", "sources": {"source_x": {"type": "geojson", "inlineData": SAMPLE_GEOJSON}}, "layers": [{"id": "x", "source": "source_x", "type": "fill", "paint": {}}], "view": {}, "basemap": {"providerId": "carto-positron"}, "layout": {}, "thresholds": {}},
+        "layer": {"id": "x", "source": "source_x", "type": "fill", "paint": {}},
+    }
+    with mock.patch("app.services.mapspec_store.mapspec_store.layer_upsert", new=mock.AsyncMock(return_value=mock_res)):
+        result = await registry.dispatch("apply_template", {"template_id": "composite_vegetation_health", "field": "population", "geojson": SAMPLE_GEOJSON, "session_id": "sess-sym-1", "layer_id": "x"})
+        assert result.get("committed") is True
 
 
 # 10. Heatmap legend palette consistency
