@@ -570,3 +570,106 @@ describe("diffSpecsAsync raster images (FE-12)", () => {
     expect((patch.sources[0].next as any)?.bounds).toEqual([116.2, 39.7, 116.6, 40.2]);
   });
 });
+
+// ── FIX-686: two missing fail-closed arms ─────────────────────────────────
+//
+// 686 adds explicit fail-closed for the two arms FIX-3-6 left open:
+//   1) worker 内异常 via `error` 字段 (reconciler.worker catch-and-continue)
+//   2) 死 worker 尸体复用 via onerror/onmessageerror/onexit kill + recreate
+
+describe("diffSpecsAsync fail-closed arms (#686)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    _resetWorkerBridgeForTests();
+  });
+
+  it("flags a worker-thrown error response (error field) as failed diff — not a no-op", async () => {
+    // Reproduce the exact reconciler.worker catch arm: diffSpecs threw, the
+    // worker posts a freshly-constructed EMPTY_PATCH-shaped object + error.
+    // Before 686 this was indistinguishable from a genuine no-op (reference
+    // equality vs the shared EMPTY_PATCH constant) and lastDiffFailed stayed false.
+    let listener: ((event: { data: { id: string; patch: ReturnType<typeof diffSpecs>; error?: string } }) => void) | null = null;
+    class ErrorResponseWorker {
+      constructor(_url: URL, _opts?: { type?: string }) {}
+      postMessage(msg: { id: string }) {
+        queueMicrotask(() => {
+          listener?.({ data: { id: msg.id, patch: { sources: [], layers: [] }, error: "deep equal stack overflow" } });
+        });
+      }
+      addEventListener(_type: string, cb: typeof listener) { listener = cb; }
+      removeEventListener() {}
+      terminate() {}
+    }
+    vi.stubGlobal("Worker", ErrorResponseWorker as unknown as typeof Worker);
+
+    const patch = await diffSpecsAsync(null, spec);
+    expect(patch).toEqual({ sources: [], layers: [] });
+    // The bridge must mark this EMPTY patch as a FAILED diff so the runtime
+    // does not advance appliedSpec onto a spec the map never received.
+    expect(consumeDiffLastFailed()).toBe(true);
+  });
+
+  it("onerror kills the dead worker so the next diff recreates and does not pay 30s timeout", async () => {
+    vi.useFakeTimers();
+
+    let firstInstanceTerminated = false;
+    let createdInstances = 0;
+    let _deadListener: ((event: { data: { id: string; patch: ReturnType<typeof diffSpecs> } }) => void) | null = null;
+
+    class CountingWorker {
+      onerror: ((event: ErrorEvent) => void) | null = null;
+      onmessageerror: ((event: MessageEvent) => void) | null = null;
+      onexit: ((event: CloseEvent) => void) | null = null;
+      private listeners: Array<(event: { data: { id: string; patch: ReturnType<typeof diffSpecs> } }) => void> = [];
+      constructor(_url: URL, _opts?: { type?: string }) {
+        createdInstances++;
+        if (createdInstances === 1) _deadListener = null;
+      }
+      postMessage(msg: { id: string; prev: MapSpec | null; next: MapSpec }) {
+        const { id, prev, next } = msg;
+        if (createdInstances === 1) {
+          // First worker: die immediately — never posts, fires onerror.
+          queueMicrotask(() => this.onerror?.({ type: "error" } as ErrorEvent));
+        } else {
+          // Recreated worker: healthy — replies synchronously.
+          queueMicrotask(() => {
+            const patch = diffSpecs(prev, next);
+            for (const cb of this.listeners) cb({ data: { id, patch } });
+          });
+        }
+      }
+      addEventListener(_type: string, cb: (event: { data: { id: string; patch: ReturnType<typeof diffSpecs> } }) => void) {
+        this.listeners.push(cb);
+        if (createdInstances === 1) _deadListener = cb as any;
+      }
+      removeEventListener() {}
+      terminate() { if (createdInstances === 1) firstInstanceTerminated = true; }
+    }
+    vi.stubGlobal("Worker", CountingWorker as unknown as typeof Worker);
+
+    // First diff: worker dies → empty patch, correctly flagged as failure.
+    const failedPatch = await diffSpecsAsync(null, spec);
+    expect(failedPatch).toEqual({ sources: [], layers: [] });
+    expect(consumeDiffLastFailed()).toBe(true);
+    expect(firstInstanceTerminated).toBe(true);
+    expect(createdInstances).toBe(1);
+
+    // Second diff: must NOT reuse the dead handle. In the old code the shared
+    // worker survived (10s idle timer was armed, new request cancelled it, then
+    // reused the corpse → 30s timeout every diff). Post-fix it must create a
+    // fresh worker and resolve promptly — no timeout advance needed.
+    const pending = diffSpecsAsync(null, spec);
+    // Advance only 1ms of fake time: a reuse would still be pending (needs 30s).
+    await vi.advanceTimersByTimeAsync(1);
+    // Let microtasks drain so the healthy worker's reply can settle.
+    await Promise.resolve();
+    await Promise.resolve();
+    const okPatch = await pending;
+    expect(createdInstances).toBe(2);
+    expect(okPatch.layers[0].kind).toBe("add");
+    expect(consumeDiffLastFailed()).toBe(false);
+    // Prove no 30s delay was needed: the DIFF_WORKER_TIMEOUT_MS timer never fired.
+    // If the dead worker were reused, pending would still be unsettled after 1ms.
+  });
+});

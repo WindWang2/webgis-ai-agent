@@ -449,14 +449,15 @@ export function diffSpecsAsync(prev: MapSpec | null, next: MapSpec): Promise<Spe
      * arm the idle-termination timer when none remain (FE-01) instead of
      * terminating immediately.
      */
-    const finish = (patch: SpecPatch) => {
+    const finish = (patch: SpecPatch, isErrorResponse = false) => {
       if (settled) return;
       settled = true;
       // FIX-3-6: distinguish a genuine no-op patch (worker replied with an
       // empty patch object) from a failure empty patch (we resolved the shared
       // EMPTY_PATCH constant ourselves). Reference equality does that: real
       // worker responses always post a freshly-constructed object.
-      lastDiffFailed = patch === EMPTY_PATCH;
+      // FIX-686: worker 内异常通过 error 字段显式标记失败，不再依赖引用等价
+      lastDiffFailed = isErrorResponse || patch === EMPTY_PATCH;
       clearTimeout(timer);
       worker.removeEventListener("message", onMessage);
       worker.onerror = null;
@@ -471,7 +472,11 @@ export function diffSpecsAsync(prev: MapSpec | null, next: MapSpec): Promise<Spe
 
     const onMessage = (event: MessageEvent<DiffResponse>) => {
       if (event.data?.id !== id) return;
-      finish(event.data.patch);
+      // FIX-686: worker 内 diff 异常通过 error 字段显式标记失败（reconciler.worker
+      // catch-and-continue 路径），不再依赖 EMPTY_PATCH 引用等价（新建字面量
+      // 与共享常量不可区分）。
+      const isError = typeof event.data.error === "string" && event.data.error.length > 0;
+      finish(event.data.patch, isError);
     };
 
     worker.addEventListener("message", onMessage);
@@ -483,12 +488,23 @@ export function diffSpecsAsync(prev: MapSpec | null, next: MapSpec): Promise<Spe
     };
 
     // Worker died before posting (script error, OOM, ...) — no-op contract.
-    worker.onerror = () => finish(EMPTY_PATCH);
+    // FIX-686: die immediately and clear the cached worker so the next diff
+    // creates a fresh one instead of reusing the dead handle and paying the
+    // 30s timeout on every diff (idle timer is cancelled in finish path but
+    // the sharedWorker reference must be cleared before the next createWorker).
+    const killDeadWorker = () => {
+      const dead = sharedWorker;
+      if (!dead) return;
+      if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+      try { dead.terminate(); } catch { /* already gone */ }
+      if (sharedWorker === dead) sharedWorker = null;
+    };
+    worker.onerror = () => { killDeadWorker(); finish(EMPTY_PATCH); };
     // Structured-clone / deserialization failure of the response.
-    worker.onmessageerror = () => finish(EMPTY_PATCH);
+    worker.onmessageerror = () => { killDeadWorker(); finish(EMPTY_PATCH); };
     // Explicit non-zero exit without a response.
     workerWithOnexit.onexit = (event) => {
-      if (event.code !== 0) finish(EMPTY_PATCH);
+      if (event.code !== 0) { killDeadWorker(); finish(EMPTY_PATCH); }
     };
 
     // All settle paths fire asynchronously, so `timer` is always assigned
