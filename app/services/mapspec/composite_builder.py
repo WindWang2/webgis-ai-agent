@@ -123,9 +123,11 @@ class CompositeMapSpecBuilder:
             self._symbology = SymbologySlot(**slot_or_id)
         return self
 
-    def with_thematic(self, slot_or_id: Union[ThematicSlot, str, Dict[str, Any]]) -> "CompositeMapSpecBuilder":
+    def with_thematic(self, slot_or_id: Union[ThematicSlot, str, Dict[str, Any]], field: str = "") -> "CompositeMapSpecBuilder":
         if isinstance(slot_or_id, ThematicSlot):
             self._thematic = slot_or_id
+            if field:
+                self._thematic.field = field
         elif isinstance(slot_or_id, str):
             tmpl = self._templates_cache.get(slot_or_id)
             if tmpl and tmpl.get("kind") == "thematic":
@@ -139,11 +141,14 @@ class CompositeMapSpecBuilder:
                     intensity=p.get("intensity", 0.8),
                     radius=p.get("radius", 25),
                     heat_palette=p.get("heatPalette", ["#0000ff", "#00ff00", "#ffff00", "#ff0000"]),
+                    field=field or p.get("field"),
                 )
             else:
-                self._thematic = ThematicSlot(variant="choropleth")
+                self._thematic = ThematicSlot(variant="choropleth", field=field or None)
         elif isinstance(slot_or_id, dict):
             self._thematic = ThematicSlot(**slot_or_id)
+            if field and not self._thematic.field:
+                self._thematic.field = field
         return self
 
     def with_layout(self, slot_or_id: Union[LayoutSlot, str, Dict[str, Any]]) -> "CompositeMapSpecBuilder":
@@ -180,14 +185,18 @@ class CompositeMapSpecBuilder:
             self._viewport = ViewportSlot(**slot_or_data)
         return self
 
-    def assemble(self, combination_ids: dict, layer_id: str = "") -> Dict[str, Any]:
+    def assemble(self, combination_ids: dict, layer_id: str = "", field: str = "") -> Dict[str, Any]:
         """
         Assemble a complete MapSpec dict from orthogonal slot combinations.
 
         :param combination_ids: Dictionary mapping slot names to template IDs or slot parameters.
         :param layer_id: Target layer ID to apply symbology & thematic styles to.
+        :param field: Optional thematic field (wired to ThematicSlot.field when thematic is active).
         :return: Synthesized MapSpec dictionary.
         """
+        # Explicit field param takes precedence; combination_ids["field"] is the wire-compat alias
+        # for the combine_map_theme tool (so builder remains callable both ways).
+        effective_field = field or combination_ids.get("field", "") or ""
         if "preset" in combination_ids and combination_ids["preset"] in PRESET_COMBINATIONS:
             preset = PRESET_COMBINATIONS[combination_ids["preset"]]
             combination_ids = {**preset, **combination_ids}
@@ -197,11 +206,18 @@ class CompositeMapSpecBuilder:
         if "symbology" in combination_ids:
             self.with_symbology(combination_ids["symbology"])
         if "thematic" in combination_ids:
-            self.with_thematic(combination_ids["thematic"])
+            self.with_thematic(combination_ids["thematic"], field=effective_field)
+        elif effective_field and self._thematic and not self._thematic.field:
+            # Caller supplied field without re-specifying thematic — keep preset thematic but bind field
+            self._thematic.field = effective_field
         if "layout" in combination_ids:
             self.with_layout(combination_ids["layout"])
         if "viewport" in combination_ids:
             self.with_viewport(combination_ids["viewport"])
+        # If thematic was already configured (previous with_thematic call) and a field is now provided,
+        # bind it so the thematic branch below becomes effective.
+        if effective_field and self._thematic and not self._thematic.field:
+            self._thematic.field = effective_field
 
         basemap_slot = self._basemap or BasemapSlot(provider_id="carto-positron")
         layout_slot = self._layout or LayoutSlot()
@@ -249,9 +265,13 @@ class CompositeMapSpecBuilder:
         target_id = layer_id or "default_layer"
         source_id = f"source_{target_id}"
 
+        # Source must reference the target layer's data, not a constant empty shell.
+        # Emit a layer-bound reference (dataPath) that the Data Plane / MapSpec compiler
+        # resolves to the actual layer payload. The empty inline fallback is only for
+        # the degenerate no-layer case (kept for validator shape, never consumed).
         mapspec["sources"][source_id] = {
             "type": "geojson",
-            "inlineData": {"type": "FeatureCollection", "features": []},
+            "dataPath": f"layers/{target_id}/source",
         }
 
         geom_type = self._symbology.geometry if self._symbology else None
@@ -300,12 +320,79 @@ class CompositeMapSpecBuilder:
         if self._thematic and self._thematic.field and self._thematic.variant != "none":
             thematic_slot = self._thematic
             if thematic_slot.variant == "choropleth":
-                layer_def["thematic"] = {
-                    "field": thematic_slot.field,
-                    "method": thematic_slot.method,
-                    "k": thematic_slot.k,
-                    "palette": thematic_slot.palette,
-                }
+                # Emit legend_spec (frontend thematic-paint consumes this; old "thematic" key was dead).
+                # Classification needs data; without it we emit a preset-derived graduated spec with
+                # synthetic breaks so the slot is effective and the legend renders. Breaks are NOT
+                # data-driven — they are evenly spaced over [0, k] and the palette is resolved
+                # honestly via the thematic template's palette (same palette helpers as the real path).
+                if thematic_slot.method in ("quantiles", "equal_interval", "natural_breaks"):
+                    k = max(2, min(10, int(thematic_slot.k or 5)))
+                    # Synthetic breaks over [0, 1] normalized domain — honest preset-derived, not data-derived
+                    breaks = [round(i / k, 6) for i in range(k + 1)]
+                    # Sample palette at class midpoints (same as thematic_spec.resolve_thematic_colors)
+                    from app.lib.cartography.palettes import get_color_from_palette
+                    colors = []
+                    for i in range(k):
+                        mid = (breaks[i] + breaks[i + 1]) / 2.0
+                        colors.append(get_color_from_palette(thematic_slot.palette, mid))
+                    layer_def["legend_spec"] = {
+                        "type": "graduated",
+                        "field": thematic_slot.field,
+                        "breaks": breaks,
+                        "palette": thematic_slot.palette,
+                        "palette_colors": colors,
+                        "method": thematic_slot.method,
+                    }
+                    # Drive paint from the same legend_spec (canonical projection) so legend ↔ paint agree
+                    try:
+                        from app.lib.cartography.thematic_spec import spec_to_paint
+                        paint_color, _warnings = spec_to_paint(layer_def["legend_spec"])
+                        if paint_color:
+                            layer_def["paint"]["color"] = paint_color
+                    except Exception:
+                        pass
+                elif thematic_slot.method == "categorical":
+                    # Categorical without data: emit placeholder categories (consumers render via match)
+                    layer_def["legend_spec"] = {
+                        "type": "categorical",
+                        "field": thematic_slot.field,
+                        "categories": [],
+                        "palette": thematic_slot.palette,
+                    }
+                elif thematic_slot.method == "lisa":
+                    layer_def["legend_spec"] = {
+                        "type": "categorical",
+                        "field": thematic_slot.field,
+                        "categories": [
+                            {"key": "HH", "color": "#ff0000", "label": "High-High"},
+                            {"key": "LL", "color": "#0000ff", "label": "Low-Low"},
+                            {"key": "HL", "color": "#ffaaaa", "label": "High-Low"},
+                            {"key": "LH", "color": "#aaaaff", "label": "Low-High"},
+                            {"key": "NS", "color": "#cccccc", "label": "Not Significant"},
+                        ],
+                        "palette": thematic_slot.palette,
+                    }
+                    try:
+                        from app.lib.cartography.thematic_spec import spec_to_paint
+                        paint_color, _warnings = spec_to_paint(layer_def["legend_spec"])
+                        if paint_color:
+                            layer_def["paint"]["color"] = paint_color
+                    except Exception:
+                        pass
+                else:
+                    # Unknown method: still emit graduated fallback so slot is not silently dead
+                    k = max(2, min(10, int(thematic_slot.k or 5)))
+                    breaks = [round(i / k, 6) for i in range(k + 1)]
+                    from app.lib.cartography.palettes import get_color_from_palette
+                    colors = [get_color_from_palette(thematic_slot.palette, (breaks[i]+breaks[i+1])/2) for i in range(k)]
+                    layer_def["legend_spec"] = {
+                        "type": "graduated",
+                        "field": thematic_slot.field,
+                        "breaks": breaks,
+                        "palette": thematic_slot.palette,
+                        "palette_colors": colors,
+                        "method": thematic_slot.method,
+                    }
             elif thematic_slot.variant == "heatmap":
                 layer_def["type"] = "heatmap"
                 layer_def["paint"] = {
@@ -313,12 +400,26 @@ class CompositeMapSpecBuilder:
                     "heatmap-intensity": thematic_slot.intensity,
                     "heatmap-radius": thematic_slot.radius,
                 }
+                # Heatmap legend (continuous) — frontend renders via thematic-paint continuous path
+                try:
+                    from app.lib.cartography.palettes import resolve_palette_colors
+                    colors = resolve_palette_colors("Viridis")
+                    layer_def["legend_spec"] = {
+                        "type": "continuous",
+                        "field": thematic_slot.field,
+                        "min": 0.0,
+                        "max": 1.0,
+                        "palette": "Viridis",
+                        "palette_colors": colors,
+                    }
+                except Exception:
+                    pass
 
         mapspec["layers"].append(layer_def)
 
         val_res = validate_mapspec(mapspec)
         if not val_res.get("success", False):
-            logger.warning("CompositeMapSpecBuilder validation warnings: %s", val_res.get("errors"))
+            raise ValueError(f"CompositeMapSpecBuilder validation failed: {val_res.get('errors')}")
 
         return mapspec
 

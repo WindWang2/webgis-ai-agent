@@ -38,8 +38,9 @@ def test_composite_builder_custom_slots():
     assert mapspec["view"]["center"] == [116.4, 39.9]
     assert mapspec["view"]["zoom"] == 12.0
     assert mapspec["layout"]["paperSize"] == "A3"
-    assert mapspec["layers"][0]["thematic"]["field"] == "population"
-    assert mapspec["layers"][0]["thematic"]["palette"] == "Viridis"
+    # Thematic now emits legend_spec (consumed by frontend), not dead "thematic" key
+    assert mapspec["layers"][0]["legend_spec"]["field"] == "population"
+    assert mapspec["layers"][0]["legend_spec"]["palette"] == "Viridis"
 
 
 def test_composite_builder_preset_combinations():

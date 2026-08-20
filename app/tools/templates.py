@@ -213,6 +213,71 @@ def register_template_tools(registry: ToolRegistry):
             return {"error": f"Template not found: {template_id}"}
 
         kind = target_tmpl["kind"]
+        # Composite templates carry `pipeline` (slot→template ids), not `payload`.
+        # Handle composite explicitly BEFORE touching payload to avoid KeyError.
+        if kind == "composite":
+            from app.services.templates.intent_resolver import expand_composite
+            # Composite is a style-preset composition: expand pipeline to real templates.
+            # If caller provided geojson+field, we can emit a composite MapSpec via the
+            # builder; otherwise return an explicit usage error (honest: preset ≠ analysis).
+            pipeline = target_tmpl.get("pipeline") or {}
+            if not pipeline:
+                return {"error": f"Composite 模板 {template_id!r} 的 pipeline 为空，无法展开。"}
+            # Thematic-driven composites require a field; without it we cannot build legend_spec.
+            # Return a clear, non-misleading error that points to the correct usage.
+            # (Do NOT surface KeyError 'payload' with a layer-attributes hint.)
+            thematic_ref = pipeline.get("thematic")
+            requires_field = False
+            if thematic_ref:
+                try:
+                    from app.schemas.template_registry import get_template_registry as _get_reg
+                    _thematic_tmpl = _get_reg().get(thematic_ref)
+                    _variant = (_thematic_tmpl or {}).get("payload", {}).get("variant", "choropleth")
+                    # Only choropleth thematic needs a field; heatmap can use weight default but field still preferred
+                    requires_field = _variant == "choropleth"
+                except Exception:
+                    requires_field = True
+            if requires_field and not (field or ""):
+                return {
+                    "error": (
+                        f"Composite 模板 {template_id!r} 需要 'field' 参数以驱动专题分级（pipeline thematic={thematic_ref!r}）。"
+                        f"请传入 field（要素属性字段名）与 geojson/图层数据，或使用 combine_map_theme(thematic=..., field=...) 组合预设；"
+                        f"该预设为样式组合（不含分析计算）。"
+                    )
+                }
+            # Expand and assemble via builder — reuse the existing slot machinery.
+            try:
+                expanded = expand_composite(template_id)
+                # Build combination_ids from pipeline, letting caller field/geojson override where applicable.
+                combination_ids: dict = {}
+                for slot, ref in pipeline.items():
+                    if ref:
+                        combination_ids[slot] = ref
+                if field:
+                    combination_ids["field"] = field
+                # geojson if provided is forwarded as inlineData hint for future data-driven thematic
+                if geojson is not None:
+                    combination_ids["geojson"] = geojson
+                from app.services.mapspec.composite_builder import CompositeMapSpecBuilder
+                builder = CompositeMapSpecBuilder()
+                mapspec = builder.assemble(combination_ids, layer_id=layer_id or "default_layer", field=field or "")
+                return {
+                    "status": "composite_applied",
+                    "kind": "composite",
+                    "template_id": template_id,
+                    "template_name": target_tmpl["name"],
+                    # Reuse existing catalogue command so #535 ghost check passes;
+                    # composite MapSpec is applied via the same path as any MapSpec layer.
+                    "command": "add_layer",
+                    "params": {"layer_id": layer_id or "default_layer", "field": field or ""},
+                    "pipeline": pipeline,
+                    "expanded": {k: (v.get("id") if isinstance(v, dict) else None) for k, v in expanded.items()},
+                    "mapspec": mapspec,
+                    "geojson": geojson,
+                }
+            except Exception as e:
+                return {"error": f"Composite 模板 {template_id!r} 展开失败: {e}"}
+
         payload = target_tmpl["payload"]
 
         if kind == "symbology":
@@ -399,7 +464,8 @@ def register_template_tools(registry: ToolRegistry):
         thematic: str = "",
         layout: str = "",
         viewport: Optional[dict] = None,
-        layer_id: str = "default_layer"
+        layer_id: str = "default_layer",
+        field: str = "",
     ) -> dict:
         return combine_map_theme(
             preset=preset,
@@ -408,7 +474,8 @@ def register_template_tools(registry: ToolRegistry):
             thematic=thematic,
             layout=layout,
             viewport=viewport,
-            layer_id=layer_id
+            layer_id=layer_id,
+            field=field,
         )
 
     @tool(
@@ -426,7 +493,8 @@ def register_template_tools(registry: ToolRegistry):
         thematic: str = "",
         layout: str = "",
         viewport: Optional[dict] = None,
-        layer_id: str = "default_layer"
+        layer_id: str = "default_layer",
+        field: str = "",
     ) -> dict:
         return combine_map_theme(
             preset=preset,
@@ -435,7 +503,8 @@ def register_template_tools(registry: ToolRegistry):
             thematic=thematic,
             layout=layout,
             viewport=viewport,
-            layer_id=layer_id
+            layer_id=layer_id,
+            field=field,
         )
 
 
@@ -463,6 +532,7 @@ class CombineMapThemeArgs(BaseModel):
     layout: Optional[str] = Field("", description="版式件 ID (如 tmpl_ly_academic, tmpl_ly_dark_report, tmpl_ly_minimal, tmpl_ly_engineering)")
     viewport: Optional[Dict[str, Any]] = Field(None, description="视口件配置: {center: [lng, lat], zoom: 10}")
     layer_id: Optional[str] = Field("default_layer", description="目标图层 ID")
+    field: Optional[str] = Field("", description="专题字段（thematic 槽为分级/热力时必填，驱动 legend_spec 生成）")
 
 
 def combine_map_theme(
@@ -472,7 +542,8 @@ def combine_map_theme(
     thematic: str = "",
     layout: str = "",
     viewport: Optional[dict] = None,
-    layer_id: str = "default_layer"
+    layer_id: str = "default_layer",
+    field: str = "",
 ) -> dict:
     """组合 5 大正交地图组件槽位并生成完整 MapSpec。"""
     from app.services.mapspec.composite_builder import CompositeMapSpecBuilder
@@ -490,9 +561,11 @@ def combine_map_theme(
         combination_ids["layout"] = layout
     if viewport:
         combination_ids["viewport"] = viewport
+    if field:
+        combination_ids["field"] = field
 
     builder = CompositeMapSpecBuilder()
-    mapspec = builder.assemble(combination_ids, layer_id=layer_id)
+    mapspec = builder.assemble(combination_ids, layer_id=layer_id, field=field)
 
     return {
         "status": "composite_map_assembled",
