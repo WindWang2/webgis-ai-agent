@@ -1,6 +1,5 @@
 """#687: MapSpec 提交面解耦——inline 门、指纹 no-op、checkpoint 保留上限。"""
 import asyncio
-from pathlib import Path
 
 import pytest
 
