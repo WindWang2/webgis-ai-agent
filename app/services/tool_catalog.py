@@ -116,9 +116,11 @@ class ToolCatalog:
         catalog = ToolCatalog(registry)
         schemas = catalog.select_schemas("成都的医院 NDVI 分布", session_id="abc")
 
-    会话粘性：命中的 domain 在 sticky_ttl 轮内保持载入，避免用户多轮追问时
-    上一轮意图丢失（例：第 1 轮"获取 NDVI"，第 2 轮"再算下均值"虽不再含
-    NDVI 关键词，但 raster 域仍然 active）。
+    会话粘性：命中的 domain 在 sticky_ttl 个**用户轮**内保持载入（#684：按用户轮衰减，
+    同一用户轮内的多次 LLM 轮不衰减），避免用户多轮追问时上一轮意图丢失
+    （例：第 1 轮"获取 NDVI"，第 2 轮"再算下均值"虽不再含 NDVI 关键词，但 raster
+    域仍然 active）。内部通过 ``turn_id`` 区分用户轮边界，未传 ``turn_id`` 时
+    回退为按调用衰减以保持向后兼容。
     """
 
     def __init__(self, registry: ToolRegistry, sticky_ttl: int = _DEFAULT_STICKY_TTL):
@@ -126,6 +128,8 @@ class ToolCatalog:
         self.sticky_ttl = max(0, sticky_ttl)
         # session_id -> {domain -> 剩余轮次}
         self._sticky: dict[str, dict[str, int]] = {}
+        # #684：按用户轮衰减 — 记录 session 上次看到的 turn_id，用于判断是否跨用户轮
+        self._sticky_turn: dict[str, Optional[str]] = {}
         self._MAX_STICKY_SESSIONS = 500
 
     # ─── 公共接口 ──────────────────────────────────────────────
@@ -135,13 +139,18 @@ class ToolCatalog:
         user_message: str,
         session_id: Optional[str] = None,
         declared_domains: Optional[set[str]] = None,
+        turn_id: Optional[str] = None,
     ) -> list[dict]:
         """根据用户消息 + 会话粘性 + 计划声明的 domain，返回本轮 schema 子集。
 
         declared_domains 来自规划阶段产出的 Plan.domains；与关键词检测、
         sticky 取并集——关键词检测保留作安全网，不被替换。
+
+        turn_id：#684 按用户轮衰减的边界信号。同一用户轮内的多次 LLM 轮应传
+        相同 turn_id，此时不重复衰减；跨用户轮传不同 turn_id 时衰减 1。未传
+        时回退为按调用衰减（向后兼容）。
         """
-        active_domains = self._activate_domains(user_message, session_id)
+        active_domains = self._activate_domains(user_message, session_id, turn_id=turn_id)
         if declared_domains:
             active_domains = active_domains | set(declared_domains)
         names: set[str] = set()
@@ -174,6 +183,7 @@ class ToolCatalog:
     def reset_session(self, session_id: str) -> None:
         """清掉会话粘性（清理会话时调用）。"""
         self._sticky.pop(session_id, None)
+        self._sticky_turn.pop(session_id, None)
 
     def reset_sticky(self, session_id: str) -> None:
         """design-v3 §5：明确换目标（followup 分类 new_goal）时清空会话粘性。
@@ -182,14 +192,15 @@ class ToolCatalog:
         本轮工具 schema 选择。由 execution_engine 在 new_goal 时调用。
         """
         self._sticky.pop(session_id, None)
+        self._sticky_turn.pop(session_id, None)
 
     def decay_sticky_domain(self, session_id: str) -> None:
         """手动衰减一轮会话 sticky domain TTL。
 
         保留（public API 兼容）。design-v3 §5 / R8：plan_orchestrator 的调用点
         已移除——该分支在生产路径从不触发（引擎从未传过 tool_catalog），TTL
-        衰减由 ``_activate_domains`` 每轮自然进行（每次 select_schemas 都把
-        所有 sticky domain 减 1）。
+        衰减由 ``_activate_domains`` 按用户轮进行（#684：同一用户轮内多次
+        select_schemas 不重复衰减；跨用户轮衰减 1，未传 turn_id 时回退为按调用衰减）。
         """
         sticky = self._sticky.get(session_id)
         if not sticky:
@@ -220,7 +231,9 @@ class ToolCatalog:
                         break
         return triggered
 
-    def _activate_domains(self, user_message: str, session_id: Optional[str]) -> set[str]:
+    def _activate_domains(
+        self, user_message: str, session_id: Optional[str], turn_id: Optional[str] = None
+    ) -> set[str]:
         fresh = self.detect_domains(user_message or "")
         if not session_id or self.sticky_ttl == 0:
             return fresh
@@ -230,10 +243,20 @@ class ToolCatalog:
             evict_count = self._MAX_STICKY_SESSIONS // 4
             for sid in list(self._sticky.keys())[:evict_count]:
                 del self._sticky[sid]
+                self._sticky_turn.pop(sid, None)
 
         sticky = self._sticky.get(session_id, {})
-        # 先衰减一轮
-        decayed = {d: t - 1 for d, t in sticky.items() if t - 1 > 0}
+        # #684：按用户轮衰减。turn_id 相同 → 同一用户轮内多次调用不衰减；
+        # 不同 turn_id → 跨用户轮衰减 1；未传 turn_id → 按调用衰减（向后兼容）。
+        if turn_id is not None:
+            last_turn = self._sticky_turn.get(session_id)
+            if last_turn == turn_id:
+                decayed = dict(sticky)
+            else:
+                decayed = {d: t - 1 for d, t in sticky.items() if t - 1 > 0}
+                self._sticky_turn[session_id] = turn_id
+        else:
+            decayed = {d: t - 1 for d, t in sticky.items() if t - 1 > 0}
         # 新命中的 domain 满 TTL 重置
         for d in fresh:
             decayed[d] = self.sticky_ttl
