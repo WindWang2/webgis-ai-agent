@@ -1031,10 +1031,6 @@ class ChatExecutionEngine:
                     if rt_ev.outcome.outcome is None:
                         rt_ev.settle(Outcome.SUCCEEDED)
                     # 若 _chat_locked 抛错则进入 except 分支，不会到这里
-                    # attach 当前 outcome 供 subagent 判决使用（成功路径也带上）
-                    if isinstance(result, dict) and rt_ev.outcome.outcome is not None:
-                        # 不污染已有键：仅在调用方需要时可见
-                        pass
                     return result
                 except asyncio.CancelledError:
                     rt_ev.settle(Outcome.CANCELLED)
@@ -1306,11 +1302,9 @@ class ChatExecutionEngine:
                     else:
                         _no_progress_streak += 1
                         if _no_progress_streak >= self._no_progress_threshold:
-                            _ev2 = current_turn_evidence()
-                            if _ev2 is not None:
-                                # 引用已有 dedup 计数作为证据
-                                pass
-                            # 不再保存空内容；诚实失败
+                            # 不再保存空内容；诚实失败（TurnEvidence 的 dedup
+                            # 计数已在工具执行时记录，外层 settle 时随 evidence 可见）
+
                             self.tracker.fail_task(task.id, "no progress: repeated/failed tool results")
                             # 让外层 chat() 感知失败（通过异常），外层会在 except 中
                             # settle FAILED，这里先在 _chat_locked 内抛错
