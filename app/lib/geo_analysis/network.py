@@ -82,6 +82,7 @@ def calculate_isochrones(network_geojson: dict | str, facility_points: dict | st
         
         isochrone_features = []
         max_dist = float(travel_time_min) * _speed_m_per_min(mode)
+        total_clip_failures = 0
 
         nodes = list(G.nodes())
         if not nodes:
@@ -92,10 +93,6 @@ def calculate_isochrones(network_geojson: dict | str, facility_points: dict | st
         # cKDTree for nearest-node search (O(n log n), audit S40)
         from scipy.spatial import cKDTree
         node_tree = cKDTree(nodes_arr)
-
-        # EdgeView-parity lookup (see the per-facility scan below): node ->
-        # insertion order. Built once — it is invariant across facilities.
-        node_order = {n: i for i, n in enumerate(G.nodes)}
 
         # Road-width buffer for the network-constrained polygonization. The
         # previous ``MultiPoint(reachable_nodes).convex_hull`` enclosed rivers,
@@ -144,12 +141,10 @@ def calculate_isochrones(network_geojson: dict | str, facility_points: dict | st
             # Per-facility Dijkstra trees are kept deliberately: the output
             # is one polygon per facility, which a merged multi-source tree
             # cannot produce.
+            # (#681) for auditing _clip_failures is counted in `summary`.
+            _clip_failures = 0
             reachable_edges = []
             seen_edge = set()
-            # EdgeView-parity: networkx yields each undirected edge as
-            # (earlier-in-node-order endpoint, later) on first encounter; the
-            # clipping below assumes u is the geometry's start node, so the
-            # orientation must match the pre-fix G.edges scan exactly.
             reachable_nodes_ordered = [n for n in G.nodes if n in lengths]
             for u0 in cancellable(reachable_nodes_ordered, every=1024):
                 for v0, keys in G[u0].items():
@@ -161,12 +156,8 @@ def calculate_isochrones(network_geojson: dict | str, facility_points: dict | st
                         eg = edata.get("geometry")
                         if eg is None:
                             continue
-                        if node_order[u0] < node_order[v0]:
-                            u, v = u0, v0
-                        else:
-                            u, v = v0, u0
-                        du = lengths.get(u)
-                        dv = lengths.get(v)
+                        du = lengths.get(u0)
+                        dv = lengths.get(v0)
                         if du is None and dv is None:
                             continue
                         du_ok = du is not None and du <= max_dist
@@ -175,27 +166,62 @@ def calculate_isochrones(network_geojson: dict | str, facility_points: dict | st
                             reachable_edges.append(eg)  # fully within budget
                             continue
                         # Partially reachable: clip at the budget fraction(s).
+                        # (#681): clip side is anchored to the REACHABLE endpoint,
+                        # NOT to node insertion order. eg's coordinate direction is
+                        # the source GeoJSON writing direction (start_node=coords[0]),
+                        # which may be opposite to node_order — anchoring to
+                        # node_order clips the unreachable tail instead. Aligns with
+                        # V2 service_area.py which clips from the reachable node
+                        # outward along the directed edge geometry.
                         try:
                             w = edata.get("weight") or eg.length
                             if w <= 0:
                                 w = eg.length or 1.0
+                            # Geometry-anchored orientation: does eg start at u0
+                            # or at v0? Compare eg.coords[0] to the endpoint
+                            # coordinates (cheap) rather than O(n) reprojection.
+                            c0 = eg.coords[0]
+                            # u0/v0 are the actual endpoint tuples used as graph
+                            # nodes (hashable float pairs); exact tuple equality
+                            # holds because add_edge stores those same objects.
+                            eg_starts_at_u0 = (c0[0] == u0[0] and c0[1] == u0[1])
+                            if not eg_starts_at_u0:
+                                # Verify against v0 to handle floating noise from
+                                # UTM round-trips on degenerate edges; fall back
+                                # to project distance if neither matches exactly.
+                                if not (c0[0] == v0[0] and c0[1] == v0[1]):
+                                    try:
+                                        d_u0 = eg.project(Point(u0))
+                                        d_v0 = eg.project(Point(v0))
+                                        eg_starts_at_u0 = d_u0 < d_v0
+                                    except Exception:
+                                        eg_starts_at_u0 = True
                             if du_ok:
                                 frac = min(1.0, max(0.0, (max_dist - du) / w))
                                 if frac > 0:
-                                    seg = substring(eg, 0.0, frac, normalized=True)
+                                    if eg_starts_at_u0:
+                                        seg = substring(eg, 0.0, frac, normalized=True)
+                                    else:
+                                        seg = substring(eg, 1.0 - frac, 1.0, normalized=True)
                                     if not seg.is_empty:
                                         reachable_edges.append(seg)
                             if dv_ok:
                                 frac = min(1.0, max(0.0, (max_dist - dv) / w))
                                 if frac > 0:
-                                    seg = substring(eg, 1.0 - frac, 1.0, normalized=True)
+                                    if eg_starts_at_u0:
+                                        seg = substring(eg, 1.0 - frac, 1.0, normalized=True)
+                                    else:
+                                        seg = substring(eg, 0.0, frac, normalized=True)
                                     if not seg.is_empty:
                                         reachable_edges.append(seg)
-                        except Exception:
-                            # Clipping failed (degenerate geometry / topology): fall
-                            # back to the full edge rather than drop it.
-                            reachable_edges.append(eg)
+                        except Exception as exc:
+                            _clip_failures += 1
+                            logger.warning(
+                                "isochrone clip failed for edge %r-%r: %s — skipping edge",
+                                u0, v0, exc,
+                            )
 
+            total_clip_failures += _clip_failures
             reachable = True
             if reachable_edges:
                 poly = unary_union(reachable_edges).buffer(_buffer_m)
@@ -240,6 +266,9 @@ def calculate_isochrones(network_geojson: dict | str, facility_points: dict | st
             f"Generated {len(isochrone_features)} isochrones for "
             f"{travel_time_min} minutes ({mode})."
         )
+        if total_clip_failures:
+            logger.warning("isochrone clipping failed for %d edge(s)", total_clip_failures)
+            summary += f" ({total_clip_failures} edge(s) skipped: clip failure)"
         n_unreachable = sum(1 for f in isochrone_features if not f["properties"]["reachable"])
         if n_unreachable:
             summary += (

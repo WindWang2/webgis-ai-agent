@@ -48,12 +48,22 @@ def _facility(id_, x, y):
 
 
 def _reference_reachable_edges(network_geojson, facility, minutes, mode="walking"):
-    """The pre-fix (#443) algorithm: full ``G.edges(data=True)`` scan with
-    identical clipping semantics. Returns ``(lengths, reachable_geometries)``
-    where the geometries are in the exact order/multiplicity the old scan
-    produced — the behavioral reference for the optimized adjacency walk."""
+    """Reference reachability: full ``G.edges(data=True)`` scan with
+    DIRECTION-AGNOSTIC clipping (anchored to the reachable endpoint's
+    geometric position, not to node insertion order). Returns
+    ``(lengths, reachable_geometries, utm_crs)``.
+
+    (#681 fix) The pre-fix version assumed ``eg`` starts at ``u``
+    (``substring(0, frac)`` for ``du_ok`` / tail for ``dv_ok``), which flips
+    when ``eg.coords[0]`` is the later-inserted node (reversed/bowed/
+    double-digitized edges). The reference now mirrors production's
+    geometry-anchored clipping (``eg.coords[0]`` vs endpoint coordinates,
+    with a ``project`` fallback), so it is an independent oracle rather
+    than a bug-for-bug copy."""
     import numpy as np
     from scipy.spatial import cKDTree
+
+    from shapely.geometry import Point
 
     from app.lib.geo_processor.core import to_utm_gdf
     from app.lib.geo_analysis.network import _speed_m_per_min
@@ -91,16 +101,29 @@ def _reference_reachable_edges(network_geojson, facility, minutes, mode="walking
         w = edata.get("weight") or eg.length
         if w <= 0:
             w = eg.length or 1.0
+        c0 = eg.coords[0]
+        eg_starts_at_u = (c0[0] == u[0] and c0[1] == u[1])
+        if not eg_starts_at_u and not (c0[0] == v[0] and c0[1] == v[1]):
+            try:
+                eg_starts_at_u = eg.project(Point(u)) < eg.project(Point(v))
+            except Exception:
+                eg_starts_at_u = True
         if du_ok:
             frac = min(1.0, max(0.0, (max_dist - du) / w))
             if frac > 0:
-                seg = substring(eg, 0.0, frac, normalized=True)
+                if eg_starts_at_u:
+                    seg = substring(eg, 0.0, frac, normalized=True)
+                else:
+                    seg = substring(eg, 1.0 - frac, 1.0, normalized=True)
                 if not seg.is_empty:
                     reachable_edges.append(seg)
         if dv_ok:
             frac = min(1.0, max(0.0, (max_dist - dv) / w))
             if frac > 0:
-                seg = substring(eg, 1.0 - frac, 1.0, normalized=True)
+                if eg_starts_at_u:
+                    seg = substring(eg, 1.0 - frac, 1.0, normalized=True)
+                else:
+                    seg = substring(eg, 0.0, frac, normalized=True)
                 if not seg.is_empty:
                     reachable_edges.append(seg)
     return lengths, reachable_edges, utm_crs
@@ -190,16 +213,14 @@ class TestIsochroneEquivalence:
 
 class TestEdgeViewOrientationParity:
     def test_reversed_geometry_parallel_edge_clips_like_edgeview(self):
-        """Orientation parity on the sneaky topology: an edge whose only
-        reachable endpoint is the node that appears LATER in G.nodes order.
+        """(#681) The FIXED clipping is anchored to the reachable endpoint's
+        geometry position, not to node insertion order. On the sneaky topology
+        (facility at the LATER-inserted node B, edge geometry B→A bows back)
+        the correct segment stays adjacent to B; the old bug clipped the far-
+        end tail instead, shifting coverage by hundreds of metres.
 
-        networkx's EdgeView yields such an edge as (earlier, later) — i.e.
-        EdgeView-u is the UNREACHABLE endpoint — and the pre-fix scan clipped
-        from the geometry END for it. The adjacency walk first encounters the
-        edge from the reachable LATER node and must reorient to (earlier,
-        later) exactly like EdgeView — otherwise the clipped segment lands on
-        the opposite end of the road and the polygon shifts by hundreds of
-        metres."""
+        Now asserts production==direction-agnostic reference (not bug-for-bug
+        parity with the old EdgeView orientation assumption)."""
         from shapely.geometry import shape
         from shapely.ops import unary_union
         import geopandas as gpd
@@ -216,8 +237,7 @@ class TestEdgeViewOrientationParity:
                           "coordinates": [[0.004, 0.0], [0.002, 0.001], [0.0, 0.0]]}},
         ]}
         # Facility at B: d(B)=0, A unreachable beyond the budget, so both
-        # edges are first encountered from B — the LATER node — and are only
-        # PARTIALLY reachable, so clipping orientation matters.
+        # edges are only PARTIALLY reachable — clipping orientation matters.
         facs = {"type": "FeatureCollection", "features": [_facility("f1", 0.004, 0.0)]}
         res = calculate_isochrones(json.dumps(net), json.dumps(facs), 3.0, mode="walking")
         assert res.success
@@ -309,6 +329,106 @@ class TestPartialEdgeClipping:
                 f"{frac:.3f} of it at a {max_dist:.0f}/{w:.0f} m budget"
             )
             assert abs(frac - 0.75) < 1e-9
+
+
+class TestIsochrone681ReversedEdgeAnchor:
+    """Regression for #681: partial-edge clipping was anchored to node insertion
+    order (EdgeView earlier→later) instead of to the reachable endpoint's
+    geometry position. On a reversed/bowed parallel edge the budget-near
+    segment was clipped from the unreachable tail, inverting containment.
+
+    Empirical shape: A→B straight + B→A bowed (~498 m UTM). Facility at B,
+    240 m walking budget (3 min): samples near B (15/30/45% along B→A) must be
+    inside the isochrone polygon, far samples (55/85/99%) must be outside."""
+
+    def test_reversed_parallel_edge_within_budget_segment_is_inside_polygon(self):
+        from shapely.geometry import shape
+        net = {"type": "FeatureCollection", "features": [
+            {"type": "Feature", "properties": {},
+             "geometry": {"type": "LineString",
+                          "coordinates": [[0.0, 0.0], [0.004, 0.0]]}},
+            {"type": "Feature", "properties": {},
+             "geometry": {"type": "LineString",
+                          "coordinates": [[0.004, 0.0], [0.002, 0.001], [0.0, 0.0]]}},
+        ]}
+        facs = {"type": "FeatureCollection", "features": [_facility("f1", 0.004, 0.0)]}
+        res = calculate_isochrones(json.dumps(net), json.dumps(facs), 3.0, mode="walking")
+        assert res.success
+        poly = shape(res.data["features"][0]["geometry"])
+        bow = LineString([[0.004, 0.0], [0.002, 0.001], [0.0, 0.0]])
+        for frac in (0.15, 0.30, 0.45):
+            pt = bow.interpolate(frac, normalized=True)
+            assert poly.contains(pt), f"within-budget {frac:.0%} should be inside polygon"
+
+    def test_reversed_parallel_edge_beyond_budget_segment_is_outside_polygon(self):
+        from shapely.geometry import shape
+        net = {"type": "FeatureCollection", "features": [
+            {"type": "Feature", "properties": {},
+             "geometry": {"type": "LineString",
+                          "coordinates": [[0.0, 0.0], [0.004, 0.0]]}},
+            {"type": "Feature", "properties": {},
+             "geometry": {"type": "LineString",
+                          "coordinates": [[0.004, 0.0], [0.002, 0.001], [0.0, 0.0]]}},
+        ]}
+        facs = {"type": "FeatureCollection", "features": [_facility("f1", 0.004, 0.0)]}
+        res = calculate_isochrones(json.dumps(net), json.dumps(facs), 3.0, mode="walking")
+        assert res.success
+        poly = shape(res.data["features"][0]["geometry"])
+        bow = LineString([[0.004, 0.0], [0.002, 0.001], [0.0, 0.0]])
+        for frac in (0.55, 0.85, 0.99):
+            pt = bow.interpolate(frac, normalized=True)
+            assert not poly.contains(pt), f"beyond-budget {frac:.0%} should be outside polygon"
+
+    def test_forward_straight_edge_still_clipped_from_facility_end(self):
+        """Sanity: the non-reversed straight edge (A→B, A inserted first) must
+        also clip from its reachable end —Facility at A— so its near samples
+        are inside and its far tail outside."""
+        from shapely.geometry import shape
+        net = {"type": "FeatureCollection", "features": [
+            {"type": "Feature", "properties": {},
+             "geometry": {"type": "LineString",
+                          "coordinates": [[0.0, 0.0], [0.004, 0.0]]}},
+            {"type": "Feature", "properties": {},
+             "geometry": {"type": "LineString",
+                          "coordinates": [[0.004, 0.0], [0.002, 0.001], [0.0, 0.0]]}},
+        ]}
+        facs = {"type": "FeatureCollection", "features": [_facility("f1", 0.0, 0.0)]}
+        res = calculate_isochrones(json.dumps(net), json.dumps(facs), 3.0, mode="walking")
+        assert res.success
+        poly = shape(res.data["features"][0]["geometry"])
+        straight = LineString([[0.0, 0.0], [0.004, 0.0]])
+        assert poly.contains(straight.interpolate(0.30, normalized=True))
+        assert not poly.contains(straight.interpolate(0.85, normalized=True))
+
+    def test_clip_failure_is_logged_and_edge_skipped(self, caplog):
+        """#681: clipping exceptions must not silently restore the full edge
+        (the previous ``except: reachable_edges.append(eg)``). Instead they
+        log a warning, increment a counter, and the edge is dropped."""
+        import logging
+        from unittest.mock import patch
+        from shapely.ops import substring as _real_substring  # noqa: F401
+
+        net = {"type": "FeatureCollection", "features": [
+            {"type": "Feature", "properties": {},
+             "geometry": {"type": "LineString",
+                          "coordinates": [[0.0, 0.0], [0.004, 0.0]]}},
+        ]}
+        facs = {"type": "FeatureCollection", "features": [_facility("f1", 0.0, 0.0)]}
+
+        def _boom(*a, **kw):
+            raise RuntimeError("injected clip failure")
+
+        with patch("app.lib.geo_analysis.network.substring", side_effect=_boom):
+            with caplog.at_level(logging.WARNING, logger="app.lib.geo_analysis.network"):
+                res = calculate_isochrones(json.dumps(net), json.dumps(facs), 3.0, mode="walking")
+        assert res.success
+        # Partially-reachable edge whose clip failed must be DROPPED, not
+        # restored as the full edge — so the polygon must NOT contain far tail.
+        from shapely.geometry import shape
+        poly = shape(res.data["features"][0]["geometry"])
+        straight = LineString([[0.0, 0.0], [0.004, 0.0]])
+        assert not poly.contains(straight.interpolate(0.95, normalized=True))
+        assert any("clip failed" in r.message for r in caplog.records)
 
 
 class TestPerf:
