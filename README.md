@@ -219,12 +219,20 @@ python manage.py dev           # 一键拉起 后端:18000 + Celery worker + 前
 
 ## 🧪 测试与质量门禁
 
-本地与 CI 同构:
+本地与 CI 同构 —— 推送前跑一条命令，就是 PR lane 的同一批门禁(#671):
+
+```bash
+scripts/ci-local.sh          # 全量:lint + typecheck + vitest + 后端/perf/cartography pytest
+scripts/ci-local.sh --fast   # 快速:ruff + eslint + typecheck + vitest
+```
+
+脚本命令与 [`production.yml`](.github/workflows/production.yml) 逐字对齐,漂移由
+`tests/test_ci_local_gate_contract.py` 契约断言守住。日常快速回路仍可用:
 
 ```bash
 # 后端
 pytest -q tests/unit tests/integration     # 日常快速回路
-ruff check app tests                       # lint
+ruff check app/ tests/ main.py manage.py   # lint(仓级,与 CI 同)
 
 # 前端(vitest 覆盖率闸 75/70/75/60)
 cd frontend

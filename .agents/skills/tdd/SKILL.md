@@ -36,3 +36,4 @@ When the shape of that interface is itself in question — how deep the module i
 - **Red before green.** Write the failing test first, then only enough code to pass it. Don't anticipate future tests or add speculative features.
 - **One slice at a time.** One seam, one test, one minimal implementation per cycle.
 - **Refactoring is not part of the loop.** It belongs to the review stage (see the `code-review` skill), not the red → green implementation cycle.
+- **Verify at CI parity before committing.** Gates are repo-wide, not per-file — run `scripts/ci-local.sh --fast` (or the full `scripts/ci-local.sh`) rather than linting/typechecking only touched files. See `tests/test_ci_local_gate_contract.py` for the workflow↔script lockstep contract.

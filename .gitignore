@@ -5,6 +5,10 @@ logs/
 memory/
 /skills/
 scripts/
+# #671：根级 scripts/ 里只有 ci-local.sh 是提交的 CI 对齐门禁命令，其余仍忽略
+!/scripts/
+/scripts/*
+!/scripts/ci-local.sh
 webgis-ai-agent/
 
 # 系统与临时文件

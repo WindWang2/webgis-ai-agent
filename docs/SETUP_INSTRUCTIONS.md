@@ -192,6 +192,15 @@ curl -i http://localhost:18000/api/v1/ready
 
 ## 10. 测试与质量检查
 
+推送前一条命令跑齐 CI PR lane 的本地可复现门禁（#671）：
+
+```bash
+scripts/ci-local.sh          # 全量
+scripts/ci-local.sh --fast   # 只跑 ruff + eslint + typecheck + vitest
+```
+
+脚本与 `.github/workflows/production.yml` 逐字对齐，漂移由 `tests/test_ci_local_gate_contract.py` 断言守住。日常手动回路：
+
 ```bash
 # 后端：日常快速集（单元 + 集成）
 pytest -q tests/unit tests/integration
@@ -199,8 +208,8 @@ pytest -q tests/unit tests/integration
 # 后端全量
 pytest
 
-# Lint
-ruff check app tests
+# Lint（仓级，与 CI 同 —— 不要只 lint 改动文件）
+ruff check app/ tests/ main.py manage.py
 
 # 前端
 cd frontend && npx vitest run && npm run typecheck && npm run lint
