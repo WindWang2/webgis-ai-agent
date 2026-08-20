@@ -124,7 +124,7 @@ def compute_eval_scores(report: Dict[str, Any], mapspec: Dict[str, Any]) -> Dict
 class RuntimeValidator:
   """Headless Runtime Validator & Eval Evidence Collector."""
 
-  async def validate_runtime(self, session_id: str) -> Dict[str, Any]:
+  async def validate_runtime(self, session_id: str, probes_path: Path | str | None = None) -> Dict[str, Any]:
     mapspec = await mapspec_store.get_mapspec(session_id)
     if not mapspec:
       return {"success": False, "message": "MapSpec not found for session"}
@@ -147,7 +147,7 @@ class RuntimeValidator:
     # The subprocess can run up to RUNTIME_TIMEOUT_S (90s) — offload to a
     # thread so Chromium startup doesn't freeze every SSE stream / request
     # on the event loop.
-    report = await asyncio.to_thread(self._run_headless_validator, out_dir, runtime_dir)
+    report = await asyncio.to_thread(self._run_headless_validator, out_dir, runtime_dir, probes_path)
 
     # 3. Enrich + compute the 5-dimension eval score.
     report["timestamp"] = time.time()
@@ -160,9 +160,10 @@ class RuntimeValidator:
     with open(runtime_dir / "report.json", "w", encoding="utf-8") as f:
       json.dump(report, f, ensure_ascii=False, indent=2)
 
-    # valid = the browser contract held AND the canvas is not blank. Note the
-    # canvas-blank signal is a *risk* flag: a legitimate minimal map can trip
+    # valid = the browser contract held AND the canvas is not blank AND all probes pass.
+    # The canvas-blank signal is a *risk* flag: a legitimate minimal map can trip
     # it, so a 'valid=False' here still merits human cartographic review.
+    probe_failed = any(not r.get("pass", True) for r in report.get("probeResults") or [])
     valid = (
         report.get("mapLoaded")
         and report.get("mapIdle")
@@ -170,6 +171,7 @@ class RuntimeValidator:
         and len(report.get("pageErrors", [])) == 0
         and len(report.get("consoleErrors", [])) == 0
         and not (report.get("canvas") or {}).get("blank", True)
+        and not probe_failed
     )
 
     return {
@@ -193,7 +195,7 @@ class RuntimeValidator:
     }
 
   def _run_headless_validator(
-      self, input_dir: Path, out_dir: Path
+      self, input_dir: Path, out_dir: Path, probes_path: Path | str | None = None
   ) -> Dict[str, Any]:
     """Invoke the Node Playwright validator and parse its JSON report.
 
@@ -225,6 +227,8 @@ class RuntimeValidator:
         "--timeout",
         "45000",
     ]
+    if probes_path is not None:
+      cmd.extend(["--probes", str(probes_path)])
     try:
       proc = subprocess.run(
           cmd,

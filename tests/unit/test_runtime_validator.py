@@ -10,6 +10,7 @@ Two layers:
 `runtime-validator` CI lane, which installs playwright + chromium). In that
 lane a missing browser is a hard FAIL, not a green SKIPPED.
 """
+import json
 import os
 import shutil
 import uuid
@@ -169,6 +170,8 @@ def test_scores_low_for_empty_mapspec():
 
 REQUIRE_BROWSER = os.environ.get("REQUIRE_BROWSER") == "1"
 
+FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "runtime"
+
 
 def _browser_guard(message: str) -> None:
     """#532：浏览器依赖缺失时的处置 —— REQUIRE_BROWSER=1 的 lane 硬失败，
@@ -179,20 +182,28 @@ def _browser_guard(message: str) -> None:
     pytest.skip(message)
 
 
+def _discover_runtime_fixtures() -> list[str]:
+    if not FIXTURE_ROOT.exists():
+        return []
+    names: list[str] = []
+    for d in sorted(FIXTURE_ROOT.iterdir()):
+        if d.is_dir() and (d / "mapspec.json").is_file() and (d / "probes.json").is_file():
+            names.append(d.name)
+    return names
+
+
+_FIXTURE_NAMES = _discover_runtime_fixtures()
+
+
 @pytest.mark.heavy
 @pytest.mark.asyncio
-async def test_runtime_validator_full_flow(clean_session):
-  """End-to-end: init → layer_upsert → validate_runtime drives headless Chromium.
+@pytest.mark.parametrize("fixture_name", _FIXTURE_NAMES)
+async def test_runtime_fixture(fixture_name: str, clean_session):
+  """Parameterized runtime fixture validation — one param per dir under tests/fixtures/runtime/.
 
-  Requires the Playwright chromium browser and network access to the MapLibre
-  CDN (the compiled HTML loads maplibre-gl from unpkg). Run with: pytest -m heavy
+  For each fixture: compile via the Python service (mirroring the old full_flow),
+  validate with --probes, assert per expect.
   """
-  # The validator drives a Node subprocess (npx tsx runtime-validate.ts, cwd=frontend)
-  # that launches Playwright Chromium and loads maplibre-gl from a CDN. PR lanes
-  # never run `npm ci` for the backend test jobs, so frontend/node_modules/playwright
-  # is absent and the subprocess would report `mapLoaded: False`. In non-browser
-  # contexts skip; in the runtime-validator lane (REQUIRE_BROWSER=1) a missing
-  # browser must fail the lane loudly instead of silently self-skipping (#532).
   import subprocess
   from app.services.mapspec_store import PROJECT_ROOT
 
@@ -217,53 +228,52 @@ async def test_runtime_validator_full_flow(clean_session):
 
   from app.services.runtime_validator import runtime_validator
 
-  await mapspec_store.init_project(
-      clean_session, view={"center": [0.0, 0.0], "zoom": 2.0}
-  )
-  # A GeoJSON point layer with an interpolated colour (the compiler's `type`
-  # contract). Three points spread far enough to avoid a pure-blank canvas.
-  layer = {
-      "id": "eq",
-      "source": "pts",
-      "type": "circle",
-      "source_spec": {
-          "type": "geojson",
-          "inlineData": {
-              "type": "FeatureCollection",
-              "features": [
-                  {"type": "Feature", "geometry": {"type": "Point", "coordinates": [0, 0]},
-                   "properties": {"mag": 5}},
-                  {"type": "Feature", "geometry": {"type": "Point", "coordinates": [10, 10]},
-                   "properties": {"mag": 3}},
-                  {"type": "Feature", "geometry": {"type": "Point", "coordinates": [-10, -5]},
-                   "properties": {"mag": 7}},
-              ],
-          },
-      },
-      "paint": {
-          "color": {
-              "method": "interpolate",
-              "field": "mag",
-              "stops": [[0, "#2ca25f"], [8, "#de2d26"]],
-          },
-          "radius": 8,
-      },
-  }
-  await mapspec_store.layer_upsert(clean_session, layer)
+  fixture_dir = FIXTURE_ROOT / fixture_name
+  mapspec = json.loads((fixture_dir / "mapspec.json").read_text(encoding="utf-8"))
+  probes_spec = json.loads((fixture_dir / "probes.json").read_text(encoding="utf-8"))
+  expect = probes_spec.get("expect", "pass")
 
-  res = await runtime_validator.validate_runtime(clean_session)
+  # Persist the fixture MapSpec into the session (mirrors old init_project+layer_upsert path).
+  await mapspec_store.save_mapspec(clean_session, mapspec)
 
-  # The browser contract must hold even if the canvas-blank risk signal trips
-  # for this minimal fixture (a 3-point map is legitimately near-monochrome).
+  probes_path = fixture_dir / "probes.json"
+  res = await runtime_validator.validate_runtime(clean_session, probes_path=probes_path)
+
   report = res["report"]
-  assert report["mapLoaded"] is True
-  assert report["mapIdle"] is True
-  assert report["fatalError"] is None
-  assert report["pageErrors"] == []
-  assert report["consoleErrors"] == []
-  # Evidence trail persisted.
-  assert (Path(res["runtime_dir"]) / "map.png").exists()
-  assert (Path(res["runtime_dir"]) / "trace.zip").exists()
-  assert (Path(res["runtime_dir"]) / "report.json").exists()
-  # Score is present and evaluated up to 100.0 max (cartographic quality visual judge included).
-  assert res["score"] <= 100.0
+  runtime_dir = Path(res["runtime_dir"])
+
+  if expect == "pass":
+    assert report["mapLoaded"] is True, f"{fixture_name}: mapLoaded"
+    assert report["mapIdle"] is True, f"{fixture_name}: mapIdle"
+    assert report["fatalError"] is None, f"{fixture_name}: fatalError={report['fatalError']}"
+    assert report["pageErrors"] == [], f"{fixture_name}: pageErrors"
+    assert report["consoleErrors"] == [], f"{fixture_name}: consoleErrors"
+    # probeResults all pass
+    probe_results = report.get("probeResults") or []
+    assert len(probe_results) > 0, f"{fixture_name}: expected probeResults"
+    assert all(r.get("pass") for r in probe_results), f"{fixture_name}: probeResults should all pass: {probe_results}"
+    # Evidence trail persisted
+    assert (runtime_dir / "map.png").exists(), f"{fixture_name}: map.png missing"
+    assert (runtime_dir / "trace.zip").exists(), f"{fixture_name}: trace.zip missing"
+    assert (runtime_dir / "report.json").exists(), f"{fixture_name}: report.json missing"
+    # Also check report.json on disk contains probeResults
+    disk_report = json.loads((runtime_dir / "report.json").read_text(encoding="utf-8"))
+    assert "probeResults" in disk_report, f"{fixture_name}: report.json missing probeResults"
+    assert all(r.get("pass") for r in disk_report["probeResults"]), f"{fixture_name}: disk probeResults should all pass"
+    assert res["score"] <= 100.0
+  else:  # expect == "fail"
+    probe_results = report.get("probeResults") or []
+    assert len(probe_results) > 0, f"{fixture_name}: expect:fail must have probeResults"
+    assert any(not r.get("pass") for r in probe_results), f"{fixture_name}: expect:fail must have at least one failing probe: {probe_results}"
+    # 门必须因探针失败而红，而非基础设施失败（浏览器崩溃/编译错误/页面异常）——
+    # 否则负例证伪不了"探针会红"这件事本身（#673 评审结论）。
+    assert report["fatalError"] is None, f"{fixture_name}: expect:fail 浏览器须正常，fatalError={report['fatalError']}"
+    assert report["mapLoaded"] is True and report["mapIdle"] is True, f"{fixture_name}: expect:fail 地图须正常加载"
+    assert report["pageErrors"] == [] and report["consoleErrors"] == [], f"{fixture_name}: expect:fail 须无页面/控制台错误"
+    assert res.get("valid") is False, f"{fixture_name}: expect:fail should be invalid"
+    # report.json should also contain failing probe
+    disk_report_path = runtime_dir / "report.json"
+    if disk_report_path.exists():
+      disk_report = json.loads(disk_report_path.read_text(encoding="utf-8"))
+      if "probeResults" in disk_report:
+        assert any(not r.get("pass") for r in disk_report["probeResults"]), f"{fixture_name}: disk probeResults should have failing probe"

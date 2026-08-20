@@ -29,6 +29,7 @@ export function generateMapHtml(style: any, layout?: MapSpecLayoutConfig): strin
       center: window.__MAPSPEC_STYLE__.center || [0, 0],
       zoom: window.__MAPSPEC_STYLE__.zoom || 2,
     });
+    window.__MAP__ = map;
 
     window.__MAP_LOADED__ = false;
     window.__MAP_IDLE__ = false;

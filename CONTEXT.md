@@ -385,6 +385,23 @@ extra: it cannot pass the map alone and cannot change a live Cartography Verdict
 Live-Next.js regression testing is out of scope.
 _Avoid_: `mapLoaded` / non-blank canvas as the production runtime oracle.
 
+### Runtime Scenario
+A declarative fixture pair (`mapspec.json` + `probes.json`) under `tests/fixtures/runtime/<name>/`,
+executed by the Runtime Validator and collected by directory scan. Scenarios run nightly-only
+by default; a scenario earns the `runtime_pr` mark (PR-blocking lane) only after 10 consecutive
+green nightlies and <30s per run.
+
+### Runtime Probe
+A declarative render-semantic assertion declared in a Runtime Scenario's `probes.json` and
+executed by the Runtime Validator inside the headless page. Three kinds: `layer-exists`
+(layer is in the render tree), `feature-count` (`queryRenderedFeatures` cardinality),
+`pixel-color` (feature projected to screen pixel, 5×5 dominant color, ±16 per channel —
+asserts the paint actually rendered, not just the style). A failed probe **hard-fails** the
+gate (exit 1); probes are gate assertions, not an eval-score dimension.
+_Avoid_: `paint-property` style-side assertions (compile-time concern owned by the
+deterministic cartography gate); screenshot diffing (visual ACK stays separate, ADR-0061);
+pixel-color probes on near-identical colors (scenarios must use semantically distant colors).
+
 ### Eval Evidence
 Per-run artifacts auto-captured: MapSpec revisions, Spatial Meta Profiles, `style.json`,
 `index.html`, PNG, Playwright trace, `report.json`, cost stats. Scored on 5 computable

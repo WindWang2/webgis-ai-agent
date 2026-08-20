@@ -1,0 +1,8 @@
+{
+  "expect": "fail",
+  "probes": [
+    { "type": "layer-exists", "layer": "eq" },
+    { "type": "feature-count", "layer": "eq", "equals": 3 },
+    { "type": "pixel-color", "layer": "eq", "at": [60, 0], "expect": "#0000ff" }
+  ]
+}
