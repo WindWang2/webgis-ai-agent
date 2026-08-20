@@ -442,10 +442,11 @@ describe("native heatmap mode — #679 single color source", () => {
     const spec = hudStateToMapSpec({ layers: [layer], processLayers: {}, activeFilters: {}, is3D: false });
     const heat = spec.layers.find((l) => l.type === "heatmap")!;
     expect(heat).toBeDefined();
-    // 停靠点镜像后端 HEATMAP_STOP_POSITIONS（首段透明），与 committed paint 同字节
+    // 停靠点镜像后端 HEATMAP_STOP_POSITIONS；首停靠为首可见色的透明变体
+    // （NATIVE_HEATMAP_COLORS[palette][0] 语义，避免低密度段向黑插值）
     expect(heat.paint!["heatmap-color"]).toEqual([
       "interpolate", ["linear"], ["heatmap-density"],
-      0, "rgba(0,0,0,0)",
+      0, "rgba(66,140,210,0)",
       0.12, "#428cd2",
       0.25, "#3dbce8",
       0.45, "#60d678",
@@ -483,5 +484,44 @@ describe("native heatmap mode — #679 single color source", () => {
     const radius = heat.paint!["heatmap-radius"] as unknown as unknown[];
     // 1500 被视为米制误传 → 回落 20px（与后端 heatmap_paint 同阈值）
     expect(radius).toEqual(["interpolate", ["linear"], ["zoom"], 0, 2, 9, 20, 13, 34]);
+  });
+});
+
+describe("heatgrid mode — #679 single color source", () => {
+  it("derives fill-color stops from legend_spec.palette_colors (weight-driven, transparent head)", () => {
+    const layer = baseLayer({
+      style: { color: "#16a34a", strokeColor: "#16a34a", renderType: "heatmap" },
+      source: fc(polygonFeature({ weight: 0.5 })),
+      legend_spec: {
+        type: "continuous",
+        min: 0,
+        max: 1,
+        palette: "YlOrRd",
+        palette_colors: ["#428cd2", "#3dbce8", "#60d678", "#fae032", "#fa8c28", "#eb2828"],
+      },
+    });
+    const spec = hudStateToMapSpec({ layers: [layer], processLayers: {}, activeFilters: {}, is3D: false });
+    const fills = spec.layers.filter((l) => l.type === "fill");
+    expect(fills).toHaveLength(1);
+    expect(fills[0].paint!["fill-color"]).toEqual([
+      "interpolate", ["linear"], ["get", "weight"],
+      0, "rgba(66,140,210,0)",
+      0.167, "#3dbce8",
+      0.333, "#60d678",
+      0.5, "#fae032",
+      0.667, "#fa8c28",
+      1.0, "#eb2828",
+    ]);
+  });
+
+  it("legacy fallback without legend_spec keeps the hardcoded heatgrid band", () => {
+    const layer = baseLayer({
+      style: { color: "#16a34a", strokeColor: "#16a34a", renderType: "heatmap" },
+      source: fc(polygonFeature({ weight: 0.5 })),
+    });
+    const spec = hudStateToMapSpec({ layers: [layer], processLayers: {}, activeFilters: {}, is3D: false });
+    const fills = spec.layers.filter((l) => l.type === "fill");
+    const color = fills[0].paint!["fill-color"] as unknown as unknown[];
+    expect(color).toContain("rgba(0,242,255,0.4)");
   });
 });

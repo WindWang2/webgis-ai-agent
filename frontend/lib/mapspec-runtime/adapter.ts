@@ -26,6 +26,19 @@ export const SUBLAYER_SEP = "__";
 /** Data Plane: 超过该要素数的 ref 图层改用 MVT 矢量瓦片显示。 */
 export const VECTOR_TILE_THRESHOLD = 5000;
 
+/**
+ * #679 单一色源辅助：legend_spec 的首个可见色 → 同色 0 透明度停靠点。
+ * 后端 heatmap_paint 的首停靠是 NATIVE_HEATMAP_COLORS[palette][0]（首色的
+ * 透明变体）；从 legend_spec（可见段 6 色）重建时用它近似，避免低密度段
+ * RGB 向黑色插值的偏差。
+ */
+function transparentHeadOf(color: string): string {
+  const m = /^#([0-9a-fA-F]{6})$/.exec(color.trim());
+  if (!m) return "rgba(0,0,0,0)";
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},0)`;
+}
+
 export interface HudToSpecInput {
   layers: Layer[];
   processLayers: Record<string, GeoJSONFeatureCollection>;
@@ -268,7 +281,8 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
       const heatPaint: Record<string, unknown> = {};
       if (heatColors && heatColors.length >= 2) {
         const stops: unknown[] = [
-          "interpolate", ["linear"], ["heatmap-density"], 0, "rgba(0,0,0,0)",
+          "interpolate", ["linear"], ["heatmap-density"],
+          0, transparentHeadOf(heatColors[0]),
         ];
         const positions = [0.12, 0.25, 0.45, 0.65, 0.85, 1.0];
         heatColors.slice(0, positions.length).forEach((c, i) => {
@@ -308,8 +322,24 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
     } else if (hasPolygons) {
       if (isHeatmapMode) {
         // Heatgrid fill (map-panel.tsx:275-293)
-        pushLayer("heatgrid", "fill", {
-          "fill-color": [
+        // #679 单一色源：有 legend_spec 时 fill-color 从 palette_colors 重建
+        //（权重驱动 0..1 均布停靠，首段取首色透明变体），与 ThematicLegend
+        // 同源；旧 cyan→red 仅作无 spec 的退化兜底。
+        const gridSpec = layer.legend_spec;
+        const gridColors =
+          gridSpec && (gridSpec.type === "continuous" || gridSpec.type === "divergent")
+            ? gridSpec.palette_colors
+            : undefined;
+        let fillColor: unknown[];
+        if (gridColors && gridColors.length >= 2) {
+          const n = gridColors.length;
+          fillColor = ["interpolate", ["linear"], ["get", "weight"]];
+          gridColors.forEach((c, i) => {
+            const pos = i === n - 1 ? 1.0 : +(i / n).toFixed(3);
+            fillColor.push(pos, i === 0 ? transparentHeadOf(c) : c);
+          });
+        } else {
+          fillColor = [
             "interpolate", ["linear"], ["get", "weight"],
             0.0, "rgba(0,0,0,0)",
             0.2, "rgba(0,242,255,0.4)",
@@ -317,7 +347,10 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
             0.6, "rgba(255,255,0,0.7)",
             0.8, "rgba(255,95,0,0.85)",
             1.0, "rgba(255,45,85,0.95)",
-          ] as any,
+          ];
+        }
+        pushLayer("heatgrid", "fill", {
+          "fill-color": fillColor as any,
           "fill-outline-color": "rgba(255, 255, 255, 0.05)" as any,
           "fill-opacity": (layer.opacity ?? 1) as any,
           "fill-antialias": true as any,
