@@ -111,3 +111,160 @@ def test_assemble_returns_zero_when_no_geojson(tmp_path: Path):
     dist.mkdir()
     assert assemble_mvt_assets(fixture, dist) == 0
     assert not (dist / "tiles").exists()
+
+
+# ─── raster-overlay ──────────────────────────────────────────────────
+
+
+def test_assemble_raster_assets_writes_png(tmp_path: Path):
+    from app.services.runtime_asset_assembly import assemble_raster_assets
+
+    fixture = tmp_path / "fixture_raster"
+    fixture.mkdir()
+    dist = tmp_path / "dist_raster"
+    dist.mkdir()
+    import json
+
+    raster_decl = {
+        "palette": "Viridis",
+        "bounds": [0, 0, 10, 10],
+        "array": [
+            [0, 0, 1, 1],
+            [0, 0, 1, 1],
+            [0, 0, 1, 1],
+            [0, 0, 1, 1],
+        ],
+    }
+    (fixture / "raster.json").write_text(json.dumps(raster_decl), encoding="utf-8")
+    written = assemble_raster_assets(fixture, dist)
+    assert written == 1
+    png_path = dist / "raster" / "raster.png"
+    assert png_path.is_file()
+    data = png_path.read_bytes()
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
+    # dimensions should be 4x4 (1 px per cell)
+    from PIL import Image
+    import io
+
+    img = Image.open(io.BytesIO(data))
+    assert img.size == (4, 4)
+    assert img.mode == "RGBA"
+    # top-left cell (value 0) should be Viridis first color #440154
+    # top-right cell (value 1) should be Viridis last color #fde725
+    # render_array_to_png maps min->first, max->last linearly
+    assert img.getpixel((0, 0))[:3] == (0x44, 0x01, 0x54)
+    assert img.getpixel((3, 0))[:3] == (0xFD, 0xE7, 0x25)
+
+
+def test_assemble_raster_returns_zero_when_no_raster_json(tmp_path: Path):
+    from app.services.runtime_asset_assembly import assemble_raster_assets
+
+    fixture = tmp_path / "fixture_raster2"
+    fixture.mkdir()
+    dist = tmp_path / "dist_raster2"
+    dist.mkdir()
+    assert assemble_raster_assets(fixture, dist) == 0
+    assert not (dist / "raster").exists()
+
+
+def test_assemble_raster_custom_name(tmp_path: Path):
+    from app.services.runtime_asset_assembly import assemble_raster_assets
+
+    fixture = tmp_path / "fixture_raster_name"
+    fixture.mkdir()
+    dist = tmp_path / "dist_raster_name"
+    dist.mkdir()
+    import json
+
+    decl = {
+        "name": "mygrid",
+        "palette": "Viridis",
+        "bounds": [0, 0, 5, 5],
+        "array": [[0, 1], [0, 1]],
+    }
+    (fixture / "raster.json").write_text(json.dumps(decl), encoding="utf-8")
+    written = assemble_raster_assets(fixture, dist)
+    assert written == 1
+    assert (dist / "raster" / "mygrid.png").is_file()
+    assert not (dist / "raster" / "raster.png").exists()
+
+
+def test_assemble_raster_raises_on_corrupt_array(tmp_path: Path):
+    from app.services.runtime_asset_assembly import assemble_raster_assets
+    import json
+    import pytest
+
+    fixture = tmp_path / "fixture_bad_array"
+    fixture.mkdir()
+    dist = tmp_path / "dist_bad_array"
+    dist.mkdir()
+    # non-rectangular array
+    bad = {
+        "palette": "Viridis",
+        "bounds": [0, 0, 10, 10],
+        "array": [[0, 1], [0]],
+    }
+    (fixture / "raster.json").write_text(json.dumps(bad), encoding="utf-8")
+    with pytest.raises((ValueError, Exception)):
+        assemble_raster_assets(fixture, dist)
+
+    # non-numeric value
+    bad2 = {
+        "palette": "Viridis",
+        "bounds": [0, 0, 10, 10],
+        "array": [[0, "oops"], [1, 2]],
+    }
+    (fixture / "raster.json").write_text(json.dumps(bad2), encoding="utf-8")
+    with pytest.raises((ValueError, Exception)):
+        assemble_raster_assets(fixture, dist)
+
+
+def test_assemble_raster_raises_on_unknown_palette(tmp_path: Path):
+    from app.services.runtime_asset_assembly import assemble_raster_assets
+    import json
+    import pytest
+
+    fixture = tmp_path / "fixture_bad_palette"
+    fixture.mkdir()
+    dist = tmp_path / "dist_bad_palette"
+    dist.mkdir()
+    bad = {
+        "palette": "NoSuchPalette",
+        "bounds": [0, 0, 10, 10],
+        "array": [[0, 1], [2, 3]],
+    }
+    (fixture / "raster.json").write_text(json.dumps(bad), encoding="utf-8")
+    with pytest.raises((ValueError, Exception)):
+        assemble_raster_assets(fixture, dist)
+
+
+def test_assemble_raster_raises_on_invalid_bounds(tmp_path: Path):
+    from app.services.runtime_asset_assembly import assemble_raster_assets
+    import json
+    import pytest
+
+    fixture = tmp_path / "fixture_bad_bounds"
+    fixture.mkdir()
+    dist = tmp_path / "dist_bad_bounds"
+    dist.mkdir()
+    bad = {
+        "palette": "Viridis",
+        "bounds": [0, 0],  # too short
+        "array": [[0, 1], [2, 3]],
+    }
+    (fixture / "raster.json").write_text(json.dumps(bad), encoding="utf-8")
+    with pytest.raises((ValueError, Exception)):
+        assemble_raster_assets(fixture, dist)
+
+
+def test_assemble_raster_raises_on_corrupt_json(tmp_path: Path):
+    from app.services.runtime_asset_assembly import assemble_raster_assets
+    import pytest
+
+    fixture = tmp_path / "fixture_corrupt_json"
+    fixture.mkdir()
+    dist = tmp_path / "dist_corrupt_json"
+    dist.mkdir()
+    (fixture / "raster.json").write_text("{ not valid json", encoding="utf-8")
+    with pytest.raises(Exception):
+        assemble_raster_assets(fixture, dist)

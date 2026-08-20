@@ -1,13 +1,16 @@
-"""Runtime fixture asset assembly — MVT tile generation.
+"""Runtime fixture asset assembly — MVT tiles + raster PNG generation.
 
 Used by the heavy pytest runner to generate ``tiles/{z}/{x}/{y}.mvt`` from
-``points.geojson`` fixtures. Also exposes the pure slippy-map helper
-``tiles_for_bbox`` which is unit-tested without a browser.
+``points.geojson`` and ``raster/<name>.png`` from ``raster.json`` fixtures.
+Also exposes the pure slippy-map helper ``tiles_for_bbox`` which is
+unit-tested without a browser.
 
 ``encode_tile`` (app.services.mvt) expects raw (uncompressed) MVT bytes;
 the validator's static server serves them with
 ``application/vnd.mapbox-vector-tile`` and no Content-Encoding, so tiles
-are written uncompressed.
+are written uncompressed. ``render_array_to_png`` (app.services.
+raster_cartography_converter) renders a 2D numeric array with a named
+palette to a colormap-baked PNG (1 px per cell).
 """
 from __future__ import annotations
 
@@ -144,6 +147,99 @@ def bbox_from_geojson(geojson: dict) -> Tuple[float, float, float, float] | None
     e += 1e-6
     n += 1e-6
     return (w, s, e, n)
+
+
+def assemble_raster_assets(fixture_dir: Path, dist_dir: Path) -> int:
+    """If fixture_dir contains raster.json, render raster/<name>.png into dist_dir.
+
+    ``raster.json`` is a text declaration with ``array`` (2D numeric list),
+    ``palette`` (e.g. ``"Viridis"``) and ``bounds`` ([w,s,e,n]). An optional
+    ``name`` field controls the output basename (default ``"raster"``). The
+    array is rendered via :func:`app.services.raster_cartography_converter.
+    render_array_to_png` to ``dist/raster/<name>.png``.
+
+    Returns the number of PNG files written (0 when no asset source present,
+    1 otherwise). Corrupt array/palette/bounds raise a real exception
+    (fail-loud) — returning 0 would hide the regression behind a misleading
+    image 404 in the headless run.
+    """
+    raster_path = fixture_dir / "raster.json"
+    if not raster_path.is_file():
+        return 0
+    # Corrupt JSON must raise — returning 0 would silently produce a missing
+    # image and fail the scenario with a 404 instead of the real parse error.
+    data = json.loads(raster_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"raster.json must be an object, got {type(data).__name__}")
+    if "array" not in data or "palette" not in data or "bounds" not in data:
+        raise ValueError("raster.json must contain 'array', 'palette' and 'bounds'")
+    array_data = data["array"]
+    palette = data["palette"]
+    bounds = data["bounds"]
+
+    # palette validation — unknown palette must raise, not silently fallback
+    if not isinstance(palette, str) or not palette:
+        raise ValueError(f"raster palette must be a non-empty string, got {palette!r}")
+    from app.lib.cartography.palettes import COLOR_PALETTES
+
+    if palette not in COLOR_PALETTES:
+        raise ValueError(f"unknown palette {palette!r}; known: {sorted(COLOR_PALETTES)}")
+
+    # bounds validation — must be 4 numeric values
+    if (
+        not isinstance(bounds, (list, tuple))
+        or len(bounds) != 4
+        or not all(isinstance(v, (int, float)) for v in bounds)
+    ):
+        raise ValueError(f"raster bounds must be [w,s,e,n] numeric 4-tuple, got {bounds!r}")
+    for v in bounds:
+        if not math.isfinite(float(v)):
+            raise ValueError(f"raster bounds values must be finite, got {bounds!r}")
+
+    # array validation — non-empty 2D rectangular numeric list
+    if not isinstance(array_data, list) or len(array_data) == 0:
+        raise ValueError("raster array must be a non-empty 2D list")
+    row_len: int | None = None
+    for r_idx, row in enumerate(array_data):
+        if not isinstance(row, list):
+            raise ValueError(f"raster array row {r_idx} must be a list")
+        if row_len is None:
+            row_len = len(row)
+            if row_len == 0:
+                raise ValueError("raster array rows must be non-empty")
+        elif len(row) != row_len:
+            raise ValueError("raster array rows must have equal length")
+        for c_idx, v in enumerate(row):
+            if not isinstance(v, (int, float)):
+                raise ValueError(f"raster array[{r_idx}][{c_idx}] must be numeric, got {v!r}")
+            if not math.isfinite(float(v)) and not (isinstance(v, float) and math.isnan(v)):
+                # NaN is allowed as nodata (renders transparent), but infinities are not
+                if math.isinf(float(v)):
+                    raise ValueError(f"raster array[{r_idx}][{c_idx}] must be finite or NaN, got {v!r}")
+
+    import numpy as np
+
+    arr = np.array(array_data, dtype=float)
+    if arr.ndim != 2 or arr.size == 0:
+        raise ValueError("raster array must be a 2D non-empty array")
+
+    # output name — explicit 'name' field or default 'raster'; sanitize
+    raw_name = data.get("name") if isinstance(data.get("name"), str) and data.get("name") else "raster"
+    safe_name = Path(raw_name).name
+    if not safe_name:
+        safe_name = "raster"
+    if safe_name.lower().endswith(".png"):
+        safe_name = safe_name[: -len(".png")]
+    png_filename = f"{safe_name}.png"
+
+    from app.services.raster_cartography_converter import render_array_to_png
+
+    png_bytes = render_array_to_png(arr, palette=palette)
+
+    out_path = dist_dir / "raster" / png_filename
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_bytes(png_bytes)
+    return 1
 
 
 def assemble_mvt_assets(fixture_dir: Path, dist_dir: Path) -> int:

@@ -112,12 +112,13 @@ def test_pixel_color_pairwise_distinguishable():
 
 
 def test_fixture_asset_declarations():
-    """Asset convention: points.geojson → vector tiles via __ORIGIN__.
+    """Asset convention: points.geojson → vector tiles, raster.json → raster PNG via __ORIGIN__.
 
     - If a fixture contains points.geojson it must be a valid FeatureCollection.
-    - The mapspec must contain at least one vector source whose tiles use __ORIGIN__.
+    - If a fixture contains raster.json it must declare array/palette/bounds and be parseable.
+    - The mapspec must contain a matching source whose tiles/imageRef use __ORIGIN__.
     - Every __ORIGIN__ path in mapspec.json must correspond to a declared asset
-      (currently __ORIGIN__/tiles/... ↔ points.geojson; __ORIGIN__/raster/... ↔ raster declaration).
+      (__ORIGIN__/tiles/... ↔ points.geojson; __ORIGIN__/raster/... ↔ raster.json).
     """
     origin_re = re.compile(r"__ORIGIN__/([^\s\"']+)")
     for d in _fixture_dirs():
@@ -128,6 +129,8 @@ def test_fixture_asset_declarations():
         origin_paths = origin_re.findall(raw)
         points_path = d / "points.geojson"
         has_points = points_path.is_file()
+        raster_path = d / "raster.json"
+        has_raster = raster_path.is_file()
 
         if has_points:
             # GeoJSON must parse as FeatureCollection
@@ -156,6 +159,44 @@ def test_fixture_asset_declarations():
                             has_origin_tile = True
             assert has_origin_tile, f"{d.name}: vector source tiles must use __ORIGIN__ prefix when points.geojson is present"
 
+        if has_raster:
+            # raster.json must be parseable and declare array/palette/bounds
+            rdata = json.loads(raster_path.read_text(encoding="utf-8"))
+            assert isinstance(rdata, dict), f"{d.name}: raster.json not an object"
+            assert "array" in rdata, f"{d.name}: raster.json must contain 'array'"
+            assert "palette" in rdata, f"{d.name}: raster.json must contain 'palette'"
+            assert "bounds" in rdata, f"{d.name}: raster.json must contain 'bounds'"
+            arr = rdata["array"]
+            assert isinstance(arr, list) and len(arr) > 0, f"{d.name}: raster.json array must be non-empty 2D list"
+            for r_idx, row in enumerate(arr):
+                assert isinstance(row, list) and len(row) > 0, f"{d.name}: raster.json array row {r_idx} must be non-empty list"
+                for v in row:
+                    assert isinstance(v, (int, float)), f"{d.name}: raster.json array[{r_idx}] values must be numeric"
+            # rectangular check
+            row_lens = [len(r) for r in arr if isinstance(r, list)]
+            assert len(set(row_lens)) == 1, f"{d.name}: raster.json array rows must have equal length"
+            palette = rdata["palette"]
+            assert isinstance(palette, str) and palette, f"{d.name}: raster.json palette must be non-empty string"
+            bounds = rdata["bounds"]
+            assert isinstance(bounds, (list, tuple)) and len(bounds) == 4, f"{d.name}: raster.json bounds must be [w,s,e,n]"
+            assert all(isinstance(v, (int, float)) for v in bounds), f"{d.name}: raster.json bounds values must be numbers"
+
+            # mapspec must have a raster source with __ORIGIN__ imageRef
+            spec = json.loads(raw)
+            sources = spec.get("sources", {})
+            raster_sources = [v for v in sources.values() if isinstance(v, dict) and v.get("type") == "raster"]
+            assert len(raster_sources) >= 1, f"{d.name}: contains raster.json but mapspec has no raster source"
+            has_origin_raster = False
+            for src in raster_sources:
+                ref = src.get("imageRef")
+                if isinstance(ref, str) and ref.startswith("__ORIGIN__/raster/"):
+                    has_origin_raster = True
+                # raster bounds must also be present in mapspec source
+                assert isinstance(src.get("bounds"), (list, tuple)) and len(src.get("bounds", [])) == 4, (
+                    f"{d.name}: raster source must declare bounds [w,s,e,n]"
+                )
+            assert has_origin_raster, f"{d.name}: raster source imageRef must use __ORIGIN__/raster/ prefix when raster.json is present"
+
         # Every __ORIGIN__ path must map to a declared asset
         for rel in origin_paths:
             if rel.startswith("tiles/"):
@@ -163,10 +204,15 @@ def test_fixture_asset_declarations():
                     f"{d.name}: mapspec references __ORIGIN__/{rel} but no points.geojson found in fixture dir"
                 )
             elif rel.startswith("raster/"):
-                # raster-overlay will bring a raster declaration; for now flag as missing
-                raster_decl = d / "raster.json"
-                assert raster_decl.is_file(), (
-                    f"{d.name}: mapspec references __ORIGIN__/{rel} but no raster asset declaration found"
+                assert has_raster, (
+                    f"{d.name}: mapspec references __ORIGIN__/{rel} but no raster.json found in fixture dir"
                 )
+                # raster.json content already validated above when has_raster is True;
+                # when referenced but file was just checked, also validate parseability
+                if has_raster:
+                    rdata = json.loads(raster_path.read_text(encoding="utf-8"))
+                    assert isinstance(rdata.get("array"), list), f"{d.name}: raster.json array must be readable"
+                    assert isinstance(rdata.get("palette"), str), f"{d.name}: raster.json palette must be readable"
+                    assert isinstance(rdata.get("bounds"), (list, tuple)), f"{d.name}: raster.json bounds must be readable"
             else:
                 assert False, f"{d.name}: __ORIGIN__/{rel} does not correspond to any declared asset source type (tiles/ or raster/)"

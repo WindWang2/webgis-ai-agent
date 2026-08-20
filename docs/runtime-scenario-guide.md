@@ -27,19 +27,17 @@ tests/fixtures/runtime/<scenario-name>/
 
 ## 1.1 夹具资产约定与 `__ORIGIN__` 占位符
 
-部分场景需要随编译产物一同服务的静态资产（首例为 MVT 矢量瓦片）。约定如下：
+部分场景需要随编译产物一同服务的静态资产。约定如下：
 
-- 夹具目录除 `mapspec.json`/`probes.json` 外可携带**可读资产源**：MVT 场景为 `points.geojson`（`FeatureCollection<Point>`，含类别属性）。
+- 夹具目录除 `mapspec.json`/`probes.json` 外可携带**可读资产源**：MVT 场景为 `points.geojson`（`FeatureCollection<Point>`，含类别属性）；栅格场景为 `raster.json`（`{ array: number[][], palette: string, bounds: [w,s,e,n], name?: string }` 的文本声明，小数组如 4×4，`name` 省略时为 `raster`）。
 - `mapspec.json` 中的 `vector` 源 `tiles` 使用 `__ORIGIN__` 前缀引用资产，例如  
-  `"tiles": ["__ORIGIN__/tiles/{z}/{x}/{y}.mvt"]`。永不硬编码端口/主机。
+  `"tiles": ["__ORIGIN__/tiles/{z}/{x}/{y}.mvt"]`；`raster` 源 `imageRef` 同理，例如  
+  `"imageRef": "__ORIGIN__/raster/raster.png"` + `bounds`。永不硬编码端口/主机。
 - 生成的 `index.html` 在 `new maplibregl.Map` 前执行  
   `JSON.parse(JSON.stringify(window.__MAPSPEC_STYLE__).replaceAll("__ORIGIN__", location.origin))`，  
-  将占位符解析为当前静态服务器的 `origin`，使瓦片请求落在与 `dist/` 同源的 `tiles/` 子目录。
-- **Runner 组装**：heavy runner（`tests/unit/test_runtime_validator.py` → `app/services/runtime_validator.py` → `app/services/runtime_asset_assembly.py`）在**编译之后、校验之前**检测 `points.geojson`，用仓内 `app/services/mvt.py` 的 `encode_tile` 将 z0–z2 覆盖数据 bbox 的所有瓦片现场生成到 `dist/tiles/z/x/y.mvt`（`application/vnd.mapbox-vector-tile`，validator 的 `..` 遍历防线保持不变）。无二进制 check-in，编码器回归会诚实地使场景变红。
-- **契约**：`tests/unit/test_runtime_fixture_contract.py` 的 `test_fixture_asset_declarations` 无浏览器即校验 — `points.geojson` 须可解析为 `FeatureCollection`，`mapspec` 须含 `type:"vector"` 且 `tiles` 以 `__ORIGIN__` 开头，且每个 `__ORIGIN__/...` 路径必有对应的声明资产（`tiles/` ↔ `points.geojson`）。
-- 栅格 `__ORIGIN__/raster/...` 资产与 `raster-overlay` 场景由 #698 扩展，约定相同。
-
-> 本节由 #697 引入；#698 将补全栅格资产说明，届时两票统一在关票评论注明。
+  将占位符解析为当前静态服务器的 `origin`，使瓦片/栅格请求落在与 `dist/` 同源的 `tiles/`、`raster/` 子目录。
+- **Runner 组装**：heavy runner（`tests/unit/test_runtime_validator.py` → `app/services/runtime_validator.py` → `app/services/runtime_asset_assembly.py`）在**编译之后、校验之前**检测资产声明：`points.geojson` → 用仓内 `app/services/mvt.py` 的 `encode_tile` 将 z0–z2 覆盖数据 bbox 的所有瓦片现场生成到 `dist/tiles/z/x/y.mvt`；`raster.json` → 用仓内 `app/services/raster_cartography_converter.py` 的 `render_array_to_png` 现场渲染 `dist/raster/<name>.png`（栅格为单分辨率 `image` 源，`bounds` 定地理配准，colormap bake 进 PNG）。`application/vnd.mapbox-vector-tile` / `image/png`，validator 的 `..` 遍历防线保持不变。无二进制 check-in，编码器/渲染器回归会诚实地使场景变红（数组/palette/bounds 损坏 fail-loud，不得静默 `return 0`）。
+- **契约**：`tests/unit/test_runtime_fixture_contract.py` 的 `test_fixture_asset_declarations` 无浏览器即校验 — `points.geojson` 须可解析为 `FeatureCollection` 且 `mapspec` 须含 `type:"vector"` + `__ORIGIN__` tiles；`raster.json` 须含 `array`/`palette`/`bounds` 且可解析（矩形 2D 数值数组、 palette 非空、 bounds 为 4 元组）且 `mapspec` 须含 `type:"raster"` + `__ORIGIN__/raster/...` + `bounds`；每个 `__ORIGIN__/...` 路径必有对应的声明资产（`tiles/` ↔ `points.geojson`，`raster/` ↔ `raster.json`）。
 
 ## 2. 三类探针
 
