@@ -115,15 +115,20 @@ async def test_dispatch_100k_result_stall_bounded():
 
     reg.register("echo_big", "echo", echo_tool)
 
-    # Wrap the metrics recorder so we can isolate dispatch's loop stall
-    # from DB/Redis red herrings — just time dispatch itself.
+    # Warm up the executor / machinery first — first-call thread-pool spin-up
+    # costs ~150-200ms one-time and is not the loop stall this test pins.
+    # Steady state (measured on the fix): ~8.5ms marginal vs small-tool ~0.3ms.
+    await reg.dispatch("echo_big", {"geojson": {"type": "Point", "coordinates": [0, 0]}}, session_id=None)
+
     t0 = time.perf_counter()
     res = await reg.dispatch("echo_big", {"geojson": {"type": "Point", "coordinates": [0, 0]}}, session_id=None)
     stall = (time.perf_counter() - t0) * 1000
     assert res["success"] is True
     assert len(res["features"]) == 100_000
-    # Before: full result walk was ~200-700ms on the loop. After: budgeted.
-    assert stall < 250.0, f"dispatch stall {stall:.1f}ms — must be O(budget) not O(features)"
+    # Before: full result walk was ~360-430ms on the loop (flip-red). After:
+    # budgeted — steady-state marginal cost is single-digit ms; 50ms cap keeps
+    # ~6x headroom for CI jitter while still failing loudly on O(features).
+    assert stall < 50.0, f"dispatch stall {stall:.1f}ms — must be O(budget) not O(features)"
 
 
 @pytest.mark.perf

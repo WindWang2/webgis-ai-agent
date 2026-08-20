@@ -54,7 +54,12 @@ def make_cache_key(tool_name: str, args: dict) -> Optional[str]:
     else:
         if _estimate_json_bytes(args) > _ESTIMATE_SIZE_LIMIT:
             return None
-    if _contains_ref(args):
+    # ref 检查是正确性门（不是 metrics）：预算内证毕无 ref 才允许缓存。
+    # 节点密集而字节数小的载荷（>20k 节点但 <256KB）会耗尽预算却未触发
+    # oversized 短路 — 证明不了"无 ref"就保守跳过缓存，与无界旧语义一致。
+    from app.tools.registry import _ESTIMATE_MAX_NODES
+    ref_budget = [_ESTIMATE_MAX_NODES]
+    if _contains_ref(args, ref_budget) or ref_budget[0] <= 0:
         return None
     canonical = json.dumps(args, sort_keys=True, separators=(",", ":"), default=str)
     digest = hashlib.sha256(f"{tool_name}::{canonical}".encode()).hexdigest()[:16]
@@ -65,10 +70,10 @@ def _contains_ref(value, _budget: list[int] | None = None) -> bool:
     """递归检查任一叶子是否是 'ref:' 开头的字符串。
 
     #677: budgeted so 100k-feature payloads cost O(budget) not O(features).
-    Budget exhaustion returns False (no ref found in sampled prefix). For
-    oversized payloads the caller already bypasses the cache via the size
-    gate above, so a false-negative here cannot produce a wrong cache key.
-    For small payloads the budget is never hit, so result stays exact.
+    预算耗尽时停在已采样前缀并返回 False；调用方通过共享的 _budget 判定
+    耗尽并跳过缓存 — _contains_ref 的结果只在前缀内是精确证明，绝不让
+    预算截断变成"未发现 ref"的结论（正确性不依赖预算，同 registry 估计器
+    的分工规矩）。
     """
     if _budget is None:
         from app.tools.registry import _ESTIMATE_MAX_NODES
