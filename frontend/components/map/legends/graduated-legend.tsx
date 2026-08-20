@@ -15,9 +15,20 @@ export function GraduatedLegend({ spec, onFilterChange }: Props) {
   const classCount = Math.max(0, breaks.length - 1);
   const [visible, setVisible] = useState<boolean[]>(() => new Array(classCount).fill(true));
 
+  const specKey = `${field}:${breaks.join(',')}`;
   useEffect(() => {
     setVisible(new Array(classCount).fill(true));
-  }, [classCount]);
+    if (onFilterChange) {
+      // Spec identity changed (new breaks / field) — clear any stale range filter
+      // that was built from the old breaks so legend and map stay in sync.
+      // Empty array + classCount check covers the degenerate case safely.
+      const allRanges =
+        classCount > 0
+          ? breaks.slice(0, -1).map((v, i) => [v, breaks[i + 1]] as number[])
+          : [];
+      onFilterChange(allRanges);
+    }
+  }, [specKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!breaks || breaks.length < 2) return null;
 

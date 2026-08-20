@@ -139,11 +139,72 @@ export function MapPanel({
   )
 
   const handleFilterChange = useCallback((layerId: string, ranges: number[][]) => {
-    setActiveFilters((prev) => ({
-      ...prev,
-      [layerId]: ranges,
-    }))
+    setActiveFilters((prev) => {
+      const expected = (useHudStore.getState().layers.find((l) => l.id === layerId)?.legend_spec as any)?.breaks?.length
+        ? (useHudStore.getState().layers.find((l) => l.id === layerId)?.legend_spec as any).breaks.length - 1
+        : null;
+      // Empty ranges means either user hid all classes or legend re-initialized.
+      // If this is a full-visible reset (ranges covers all classes), treat it as clear.
+      const isFullVisible = expected !== null && ranges.length === expected;
+      if (isFullVisible) {
+        if (!prev[layerId]) return prev;
+        const next = { ...prev };
+        delete next[layerId];
+        return next;
+      }
+      // Empty + not full = user hid everything — keep as empty filter (filters all)
+      // Normal partial ranges: store them
+      if (ranges.length === 0 && !isFullVisible) {
+        // No classes hidden but also not full — degenerate; clear stale entry
+        if (!prev[layerId]) return prev;
+        const next = { ...prev };
+        delete next[layerId];
+        return next;
+      }
+      return {
+        ...prev,
+        [layerId]: ranges,
+      };
+    })
   }, [])
+
+  // When a layer is removed or its spec fingerprint changes, any
+  // activeFilters entry built from the old spec is stale and must be cleared.
+  const prevSpecKeysRef = useRef<Record<string, string>>({})
+  useEffect(() => {
+    const nextKeys: Record<string, string> = {}
+    for (const l of layers) {
+      const ls: any = l.legend_spec
+      nextKeys[l.id] = ls ? `${l._mapspecFingerprint ?? ''}:${ls.breaks?.join(',') ?? ''}:${ls.field ?? ''}` : ''
+    }
+    const prevKeys = prevSpecKeysRef.current
+    let changed = false
+    const toDelete: string[] = []
+    for (const id of Object.keys(prevKeys)) {
+      if (!(id in nextKeys)) {
+        // Layer removed
+        toDelete.push(id)
+        changed = true
+      } else if (prevKeys[id] !== nextKeys[id]) {
+        // Spec / fingerprint changed -> stale filter
+        toDelete.push(id)
+        changed = true
+      }
+    }
+    if (changed) {
+      setActiveFilters((prev) => {
+        let next: Record<string, number[][]> | null = null
+        for (const id of toDelete) {
+          if (prev[id]) {
+            if (!next) next = { ...prev }
+            delete next[id]
+          }
+        }
+        return next ?? prev
+      })
+    }
+    prevSpecKeysRef.current = nextKeys
+  }, [layers])
 
   // Focus Layer Effect — fit map to layer bbox when focusLayerId is set,
   // then clear it back to null so the same layer can be re-focused later.
