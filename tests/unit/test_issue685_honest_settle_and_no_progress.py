@@ -7,7 +7,6 @@
 """
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -15,7 +14,6 @@ import pytest
 from app.services.chat_engine import ChatEngine
 from app.tools.registry import ToolRegistry
 from app.services.subagent import SubagentDispatcher
-from app.services.session_data import session_data_manager
 
 
 def _make_registry_with_echo_tool() -> ToolRegistry:
