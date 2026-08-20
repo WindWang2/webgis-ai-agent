@@ -4,6 +4,32 @@ import { MAP_STYLES, MapStyleOption } from "@/lib/constants"
 import Map, { MapRef, ViewStateChangeEvent, Popup } from "react-map-gl/maplibre"
 import type { StyleSpecification } from "maplibre-gl"
 import type { Layer } from "@/lib/types/layer"
+
+/**
+ * #689 图例-过滤对账的纯判定：图例 onFilterChange 载荷 → activeFilters 状态。
+ * 恰好覆盖全部类（全可见/规格重置）→ 移除该层过滤键；其余一律保留——含
+ * 用户全隐藏的空 ranges（adapter 的 ["any"] 空表达式在 MapLibre 求值为
+ * false，正确渲染"该层全部隐藏"）。把空 ranges 当重置删键会让地图全显
+ * 而图例全隐（评审修正的反向不一致）。
+ */
+export function resolveFilterState(
+  prev: Record<string, number[][]>,
+  layerId: string,
+  ranges: number[][],
+  layers: Layer[],
+): Record<string, number[][]> {
+  const spec = layers.find((l) => l.id === layerId)?.legend_spec;
+  const breaks = spec && spec.type === "graduated" ? spec.breaks : null;
+  const expected = Array.isArray(breaks) ? breaks.length - 1 : null;
+  const isFullVisible = expected !== null && ranges.length === expected;
+  if (isFullVisible) {
+    if (!prev[layerId]) return prev;
+    const next = { ...prev };
+    delete next[layerId];
+    return next;
+  }
+  return { ...prev, [layerId]: ranges };
+}
 import { MapActionHandler } from "./map-action-handler"
 import { ThematicLegend } from "./thematic-legend"
 import { MapDecorations } from "./map-decorations"
@@ -139,33 +165,7 @@ export function MapPanel({
   )
 
   const handleFilterChange = useCallback((layerId: string, ranges: number[][]) => {
-    setActiveFilters((prev) => {
-      const expected = (useHudStore.getState().layers.find((l) => l.id === layerId)?.legend_spec as any)?.breaks?.length
-        ? (useHudStore.getState().layers.find((l) => l.id === layerId)?.legend_spec as any).breaks.length - 1
-        : null;
-      // Empty ranges means either user hid all classes or legend re-initialized.
-      // If this is a full-visible reset (ranges covers all classes), treat it as clear.
-      const isFullVisible = expected !== null && ranges.length === expected;
-      if (isFullVisible) {
-        if (!prev[layerId]) return prev;
-        const next = { ...prev };
-        delete next[layerId];
-        return next;
-      }
-      // Empty + not full = user hid everything — keep as empty filter (filters all)
-      // Normal partial ranges: store them
-      if (ranges.length === 0 && !isFullVisible) {
-        // No classes hidden but also not full — degenerate; clear stale entry
-        if (!prev[layerId]) return prev;
-        const next = { ...prev };
-        delete next[layerId];
-        return next;
-      }
-      return {
-        ...prev,
-        [layerId]: ranges,
-      };
-    })
+    setActiveFilters((prev) => resolveFilterState(prev, layerId, ranges, useHudStore.getState().layers))
   }, [])
 
   // When a layer is removed or its spec fingerprint changes, any

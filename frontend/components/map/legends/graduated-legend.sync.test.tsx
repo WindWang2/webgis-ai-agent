@@ -51,3 +51,4 @@ describe('GraduatedLegend — filter sync (#689 fix 4)', () => {
     ]);
   });
 });
+
