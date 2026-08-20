@@ -12,10 +12,12 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
-# 注入只针对"未收敛"的 verdict：已通过无需噪音，superseded 属于被新意图
-# 取代的旧代（用户已向前走），无制图活动的会话不注入。
-_SKIP_STATUSES = {"passed", "passed_with_warnings", "superseded"}
+# 注入针对当前 MapSpec 代的一切 verdict：pass / fail / not_evaluated 都注入
+# 微型三态 token——沉默不再是 pass（#657）。superseded 属于被新意图取代的
+# 旧代（用户已向前走），无制图活动的会话不注入。
+_SKIP_STATUSES = {"superseded"}
 _SKIP_REASONS = {"no_session_harness", "no_mapspec_mutation"}
+_PASS_STATUSES = {"passed", "passed_with_warnings"}
 
 _VERDICT_MARKER = "CARTOGRAPHY_VERDICT"
 _MAX_FAILED_CHECKS = 3
@@ -55,6 +57,15 @@ def should_inject_verdict(
     return str(fingerprint) == str(current_fingerprint)
 
 
+def _verdict_token(status: str) -> str:
+    """归一化为 #657 的三态注入 token：pass | fail | not_evaluated。"""
+    if status in _PASS_STATUSES:
+        return "pass"
+    if status == "not_evaluated":
+        return "not_evaluated"
+    return "fail"
+
+
 def _project_failed_checks(checks: Any) -> List[Dict[str, Any]]:
     """最多 3 条 fail/not_evaluated check 的 LLM 投影。"""
     projected: List[Dict[str, Any]] = []
@@ -87,38 +98,50 @@ def render_verdict_for_llm(review: Dict[str, Any]) -> str:
     输入是 ``_cartographic_review`` 存储形态（``session_id`` / ``cartography``
     / ``gate`` / ``overall_passed``）。调用方负责先过 :func:`should_inject_verdict`
     （prompt 注入路径）；工具路径直接渲染，把完整判定交还给 agent。
+
+    #657：body 一律携带三态 ``verdict`` token（pass | fail | not_evaluated），
+    省略 ``overall_passed``；pass 只渲染微型 token，原始 status、
+    termination_reason、失败检查项与修复进度只出现在非 pass 上。
     """
     cartography = review.get("cartography") if isinstance(review.get("cartography"), dict) else {}
+    token = _verdict_token(str(cartography.get("status") or "not_evaluated"))
     body: Dict[str, Any] = {
-        "status": str(cartography.get("status") or "not_evaluated"),
-        "termination_reason": str(cartography.get("termination_reason") or ""),
-        "desired_status": str(cartography.get("desired_status") or "not_evaluated"),
-        "runtime_status": str(cartography.get("runtime_status") or "not_evaluated"),
+        "verdict": token,
         "mapspec_fingerprint": cartography.get("mapspec_fingerprint"),
-        "overall_passed": bool(review.get("overall_passed")),
     }
-    failed_checks = _project_failed_checks(cartography.get("checks"))
-    if failed_checks:
-        body["failed_checks"] = failed_checks
-    repair_attempts = cartography.get("repair_attempts")
-    if isinstance(repair_attempts, list) and repair_attempts:
-        body["repair_attempts"] = [
-            {
-                "iteration": attempt.get("iteration"),
-                "status": str(attempt.get("status") or ""),
-                "repairability": str(attempt.get("repairability") or ""),
-            }
-            for attempt in repair_attempts[-2:]
-            if isinstance(attempt, dict)
-        ]
+    if token != "pass":
+        body.update({
+            "status": str(cartography.get("status") or "not_evaluated"),
+            "termination_reason": str(cartography.get("termination_reason") or ""),
+            "desired_status": str(cartography.get("desired_status") or "not_evaluated"),
+            "runtime_status": str(cartography.get("runtime_status") or "not_evaluated"),
+        })
+        failed_checks = _project_failed_checks(cartography.get("checks"))
+        if failed_checks:
+            body["failed_checks"] = failed_checks
+        repair_attempts = cartography.get("repair_attempts")
+        if isinstance(repair_attempts, list) and repair_attempts:
+            body["repair_attempts"] = [
+                {
+                    "iteration": attempt.get("iteration"),
+                    "status": str(attempt.get("status") or ""),
+                    "repairability": str(attempt.get("repairability") or ""),
+                }
+                for attempt in repair_attempts[-2:]
+                if isinstance(attempt, dict)
+            ]
     serialized = json.dumps(body, ensure_ascii=False, sort_keys=True)
     if len(serialized) > _MAX_TOTAL_CHARS:
         # 兜底截断：逐字段封顶后正常到不了这里，防御未来字段膨胀。
         serialized = serialized[:_MAX_TOTAL_CHARS]
+    if token == "pass":
+        hint = "No corrective action needed."
+    else:
+        hint = "Plan a corrective webgis_* action."
     return (
         f"[{_VERDICT_MARKER}]\n"
         f"{serialized}\n"
         "Server-verified cartography harness verdict for the CURRENT map state. "
-        "If it reports a failure, plan a corrective webgis_* action; "
-        f"query `{_STATUS_TOOL_NAME}` for full details."
+        f"{hint} "
+        f"Query `{_STATUS_TOOL_NAME}` for full details."
     )

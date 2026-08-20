@@ -573,6 +573,41 @@ async def test_cartography_status_reads_stored_review(registry, clean_session):
 
 
 @pytest.mark.asyncio
+async def test_cartography_status_summary_omits_overall_passed(
+    registry, clean_session,
+):
+    """#657: status 工具的 summary（注入同款渲染）省略 overall_passed。"""
+    await session_data_manager.set_map_state(
+        clean_session, "_cartographic_review", _seed_review(clean_session)
+    )
+    res = await registry.dispatch(
+        "webgis_cartography_status", {}, session_id=clean_session
+    )
+    assert res["success"] is True
+    assert "overall_passed" not in res["summary"]
+
+
+@pytest.mark.asyncio
+async def test_cartography_status_pull_returns_full_pass_review(
+    registry, clean_session,
+):
+    """#657: pass 世代不再 prompt 注入细节，但 status 工具仍可完整 pull。"""
+    review = _seed_review(clean_session, status="passed_with_warnings")
+    review["overall_passed"] = True
+    await session_data_manager.set_map_state(
+        clean_session, "_cartographic_review", review
+    )
+    res = await registry.dispatch(
+        "webgis_cartography_status", {}, session_id=clean_session
+    )
+    assert res["success"] is True
+    assert '"verdict": "pass"' in res["summary"]
+    # 完整存储评审依旧可取（含 pass 细节）。
+    assert res["cartography"]["status"] == "passed_with_warnings"
+    assert res["overall_passed"] is True
+
+
+@pytest.mark.asyncio
 async def test_cartography_status_without_review_reports_not_evaluated(
     registry, clean_session,
 ):

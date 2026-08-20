@@ -148,6 +148,28 @@ async def test_helper_injects_current_generation_failure(carto_session):
 
 
 @pytest.mark.asyncio
+async def test_helper_injects_current_generation_pass_as_tiny_token(carto_session):
+    """#657: pass / passed_with_warnings 也注入微型 pass token——沉默不再是 pass。"""
+    from app.api.routes.chat import _build_cartography_turn_context
+
+    await mapspec_store.init_project(carto_session)
+    fingerprint = await _current_fingerprint(carto_session)
+    review = _failed_review(carto_session, fingerprint)
+    review["cartography"]["status"] = "passed_with_warnings"
+    review["cartography"]["checks"] = []
+    review["overall_passed"] = True
+    await session_data_manager.set_map_state(
+        carto_session, "_cartographic_review", review
+    )
+
+    block = await _build_cartography_turn_context(carto_session)
+    assert block.startswith("[CARTOGRAPHY_VERDICT]")
+    assert '"verdict": "pass"' in block
+    assert "overall_passed" not in block
+    assert "passed_with_warnings" not in block
+
+
+@pytest.mark.asyncio
 async def test_helper_skips_stale_generation_review(carto_session):
     from app.api.routes.chat import _build_cartography_turn_context
 
@@ -167,3 +189,78 @@ async def test_helper_skips_session_without_cartography_activity(carto_session):
     assert await _build_cartography_turn_context(carto_session) == ""
     assert await _build_cartography_turn_context("") == ""
     assert await _build_cartography_turn_context(None) == ""
+
+
+# ─── 同 turn content 守卫：harness verdict 不进 mutation 结果 ────────────
+
+
+@pytest.mark.asyncio
+async def test_same_turn_mutation_content_is_not_harness_verdict(monkeypatch):
+    """#657 AC: 同 turn mutation 的 ``content`` 是 MapSpec 生命周期 payload，
+    不是 harness Cartography Verdict——即使 dispatch 后 evaluate 已持久化
+    评审，返回给模型的文本也保持评估前的 llm_payload 不变。"""
+    import app.agent_pi_bridge as bridge
+    from app.services.tool_dispatch_service import ToolDispatchResult
+
+    sid = f"carto-content-{uuid.uuid4().hex[:8]}"
+    await session_data_manager.clear_session(sid)
+
+    lifecycle_payload = (
+        '{"success": true, "cartographic_review": {"stage": "desired_state"}}'
+    )
+    result = ToolDispatchResult(
+        status="ok",
+        llm_payload=lifecycle_payload,
+        slim_event={},
+        geojson_ref=None,
+        raw_result={
+            "success": True,
+            "is_compiled": True,
+            "mapspec_fingerprint": "fp-content",
+            "mutation_revision": 1,
+        },
+        error_msg=None,
+        map_actions=[],
+    )
+    fake_service = MagicMock()
+    fake_service.dispatch = AsyncMock(return_value=result)
+    monkeypatch.setattr(bridge, "ToolDispatchService", lambda **kw: fake_service)
+
+    fake_registry = MagicMock()
+    fake_registry.list_tools = MagicMock(return_value=["webgis_layer_upsert"])
+    fake_registry.metadata = MagicMock(return_value={"tier": 1})
+    monkeypatch.setattr(bridge, "_tool_registry", fake_registry)
+
+    async def _fake_eval(session_id):
+        # evaluate 在 HTTP 返回前持久化评审；content 不得因此改写。
+        await session_data_manager.set_map_state(session_id, "_cartographic_review", {
+            "session_id": session_id,
+            "cartography": {
+                "status": "passed",
+                "mapspec_fingerprint": "fp-content",
+            },
+            "gate": {},
+            "overall_passed": True,
+        })
+
+    async def _fake_persist(session_id, event, map_actions):
+        return True
+
+    monkeypatch.setattr(bridge, "evaluate_cartographic_session", _fake_eval)
+    monkeypatch.setattr(bridge, "_persist_cartographic_harness_context", _fake_persist)
+
+    request = bridge.PiToolRequest(
+        toolCallId="tc-content",
+        name="webgis_layer_upsert",
+        arguments={},
+        sessionId=sid,
+    )
+    try:
+        resp = await bridge.dispatch_tool(request)
+        text = "".join(c.get("text", "") for c in resp.content)
+        assert text == lifecycle_payload
+        assert "CARTOGRAPHY_VERDICT" not in text
+        assert "overall_passed" not in text
+    finally:
+        await session_data_manager.clear_session(sid)
+        bridge._session_executed_sets.pop(sid, None)
