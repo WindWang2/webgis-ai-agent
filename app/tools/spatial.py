@@ -4,7 +4,7 @@ from typing import Any, List, Optional
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
-from app.tools._utils import cached_tool, trim_features
+from app.tools._utils import cached_tool, std_error_response, trim_features
 from app.services.spatial_analyzer import SpatialAnalyzer
 from app.lib.geo_analysis.density import generate_heatmap_raster
 from app.lib.geo_processor.core import safe_parse as safe_parse_geojson
@@ -115,6 +115,8 @@ def register_spatial_tools(registry: ToolRegistry):
            description=(
                "点要素热力图。✅ 用于：用户宽泛询问『分布』『热度』『密度趋势』时"
                "的首选——优先 render_type='native' 原生渲染，轻量、不增加数据负担。"
+               " 定量护栏：点数 <10（`HEATMAP_MIN_POINTS`，默认 10，点数过少热力图无统计意义）"
+               "或几何以线/面为主时禁止 native 热力图，工具侧会确定性拒绝并给出 correction_hint（改用点图/h3_binning）。"
                "\n❌ 不要用于：(1) 需要网格统计值（每格计数/求和）— 用 h3_binning；"
                "(2) 需要矢量等值面用于导出/制图 — 用 kde_contours；"
                "(3) 需要连续概率面做后续叠加分析 — 用 kde_surface。"
@@ -126,6 +128,43 @@ def register_spatial_tools(registry: ToolRegistry):
         if not data:
             raise ValueError("Invalid GeoJSON input")
         features = data.get("features") or data.get("feature_collection", [])
+
+        # #690: native 路径确定性守卫（小样本/非点几何）— 与 converter 同阈值
+        if render_type == "native":
+            try:
+                from app.core.config import settings as _settings
+                threshold = max(1, int(getattr(_settings, "HEATMAP_MIN_POINTS", 10)))
+            except Exception:
+                threshold = 10
+            # Infer dominant geometry category from features (not shell `data` type)
+            _counts = {"point": 0, "line": 0, "polygon": 0}
+            for _f in features:
+                if not isinstance(_f, dict):
+                    continue
+                _g = _f.get("geometry")
+                if not isinstance(_g, dict):
+                    continue
+                _gt = _g.get("type")
+                if _gt in ("Point", "MultiPoint"):
+                    _counts["point"] += 1
+                elif _gt in ("LineString", "MultiLineString"):
+                    _counts["line"] += 1
+                elif _gt in ("Polygon", "MultiPolygon"):
+                    _counts["polygon"] += 1
+            _active = [k for k, v in _counts.items() if v > 0]
+            _geom_cat = max(_counts, key=lambda c: _counts[c]) if _active else "point"
+            if _geom_cat != "point":
+                return std_error_response(
+                    f"原生热力图仅支持点要素，当前以{_geom_cat}为主",
+                    code="INVALID_GEOMETRY_FOR_HEATMAP",
+                    correction_hint="改用点图(circle)或先将线/面聚合为点/网格（h3_binning）后再做密度分析。",
+                )
+            if len(features) < threshold:
+                return std_error_response(
+                    f"点数{len(features)}<阈值{threshold}，原生热力图无统计意义",
+                    code="INSUFFICIENT_POINTS_FOR_HEATMAP",
+                    correction_hint=f"当前仅{len(features)}点，建议直接用点图(circle)展示或先聚合(h3_binning)，样本≥{threshold}时再用热力图。",
+                )
 
         # 默认 native：MapLibre 逐点核密度渲染（轻量、密度真实）。raster 是
         # 服务端预渲染 PNG，仅在需要导出图片/离线渲染时显式指定。

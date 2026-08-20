@@ -128,15 +128,17 @@ async def test_spatial_stats_invalid_geojson(spatial_tools):
 
 @pytest.mark.asyncio
 async def test_heatmap_data_insufficient_points(spatial_tools):
-    """Heatmap with 1 point falls back to in-process and returns a result."""
+    """#690: 1 point in native mode is now deterministically rejected (small-sample guard)."""
     features = [_point(0, 0)]
     result = await spatial_tools.dispatch("heatmap_data", {
         "geojson": _fc(features),
         "cell_size": 500,
         "radius": 1000,
+        "render_type": "native",
     })
-    # v2 默认 native：单点也返回可渲染的 add_native_heatmap 命令
-    assert result.get("command") == "add_native_heatmap" or "image" in result or "error" in result
+    assert result.get("success") is False
+    assert result.get("code") == "INSUFFICIENT_POINTS_FOR_HEATMAP"
+    assert result.get("correction_hint")
 
 
 @pytest.mark.asyncio
