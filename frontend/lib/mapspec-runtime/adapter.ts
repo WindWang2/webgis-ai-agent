@@ -26,6 +26,19 @@ export const SUBLAYER_SEP = "__";
 /** Data Plane: 超过该要素数的 ref 图层改用 MVT 矢量瓦片显示。 */
 export const VECTOR_TILE_THRESHOLD = 5000;
 
+/**
+ * #679 单一色源辅助：legend_spec 的首个可见色 → 同色 0 透明度停靠点。
+ * 后端 heatmap_paint 的首停靠是 NATIVE_HEATMAP_COLORS[palette][0]（首色的
+ * 透明变体）；从 legend_spec（可见段 6 色）重建时用它近似，避免低密度段
+ * RGB 向黑色插值的偏差。
+ */
+function transparentHeadOf(color: string): string {
+  const m = /^#([0-9a-fA-F]{6})$/.exec(color.trim());
+  if (!m) return "rgba(0,0,0,0)";
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},0)`;
+}
+
 export interface HudToSpecInput {
   layers: Layer[];
   processLayers: Record<string, GeoJSONFeatureCollection>;
@@ -251,10 +264,46 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
 
     // Native MapLibre heatmap (map-panel.tsx:254-273)
     if (isNativeHeatmap) {
+      // #679 单一色源：色带从 layer.legend_spec.palette_colors 重建 —— 与
+      // FloatingLegend 同读一个 spec、与后端 heatmap_paint 的
+      // NATIVE_HEATMAP_COLORS 同源，停靠点位置镜像 palettes.
+      // HEATMAP_STOP_POSITIONS（首段透明）。adapter 首帧与 committed spec
+      // 到达后 addLayerSafe 直传的后端 paint 一致，会话内不再出现
+      // cyan→red 翻转为 blue→red 的中途换色；agent 的 palette 参数经授权
+      // 链路写进 legend_spec 后在此生效。旧硬编码仅作无 legend_spec 的
+      // 退化兜底；weight 死 ramp（POI 要素从不携带 weight 属性，MapLibre
+      // 求值失败回退默认 1）按后端 paint 语义改常量 1。
+      const heatSpec = layer.legend_spec;
+      const heatColors =
+        heatSpec && (heatSpec.type === "continuous" || heatSpec.type === "divergent")
+          ? heatSpec.palette_colors
+          : undefined;
+      const heatPaint: Record<string, unknown> = {};
+      if (heatColors && heatColors.length >= 2) {
+        const stops: unknown[] = [
+          "interpolate", ["linear"], ["heatmap-density"],
+          0, transparentHeadOf(heatColors[0]),
+        ];
+        const positions = [0.12, 0.25, 0.45, 0.65, 0.85, 1.0];
+        heatColors.slice(0, positions.length).forEach((c, i) => {
+          stops.push(positions[i], c);
+        });
+        heatPaint["heatmap-color"] = stops;
+        // 镜像后端 heatmap_paint 的 radius/intensity/opacity 语义（米制
+        // 误传回落、zoom 插值），radius 取 layer.style.radius。
+        const rRaw = Number(layer.style?.radius);
+        const r = Number.isFinite(rRaw) && rRaw >= 4 && rRaw <= 60 ? Math.floor(rRaw) : 20;
+        heatPaint["heatmap-weight"] = 1;
+        heatPaint["heatmap-intensity"] = ["interpolate", ["linear"], ["zoom"], 0, 0.6, 9, 1.4, 13, 2.2];
+        heatPaint["heatmap-radius"] = ["interpolate", ["linear"], ["zoom"], 0, 2, 9, r, 13, Math.min(80, Math.floor(r * 1.7))];
+        heatPaint["heatmap-opacity"] = 0.9;
+      }
       pushLayer("native-heat", "heatmap", {
-        "heatmap-weight": ["interpolate", ["linear"], ["get", "weight"], 0, 0, 1, 1] as any,
-        "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 0, 1, 10, 3, 15, 5, 18, 8] as any,
-        "heatmap-color": [
+        "heatmap-weight": (heatPaint["heatmap-weight"] ?? 1) as any,
+        "heatmap-intensity": (heatPaint["heatmap-intensity"] ?? [
+          "interpolate", ["linear"], ["zoom"], 0, 1, 10, 3, 15, 5, 18, 8,
+        ]) as any,
+        "heatmap-color": (heatPaint["heatmap-color"] ?? [
           "interpolate", ["linear"], ["heatmap-density"],
           0, "rgba(0,0,0,0)",
           0.1, "rgba(0,242,255,0.3)",
@@ -262,15 +311,35 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
           0.5, "rgba(255,255,0,0.7)",
           0.7, "rgba(255,95,0,0.85)",
           1, "rgba(255,45,85,1)",
-        ] as any,
-        "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 0, 2, 5, 5, 9, 25, 12, 40, 15, 70, 18, 100] as any,
-        "heatmap-opacity": ["interpolate", ["linear"], ["zoom"], 7, 1, 19, 0.85] as any,
+        ]) as any,
+        "heatmap-radius": (heatPaint["heatmap-radius"] ?? [
+          "interpolate", ["linear"], ["zoom"], 0, 2, 5, 5, 9, 25, 12, 40, 15, 70, 18, 100,
+        ]) as any,
+        "heatmap-opacity": (heatPaint["heatmap-opacity"] ?? [
+          "interpolate", ["linear"], ["zoom"], 7, 1, 19, 0.85,
+        ]) as any,
       } as any);
     } else if (hasPolygons) {
       if (isHeatmapMode) {
         // Heatgrid fill (map-panel.tsx:275-293)
-        pushLayer("heatgrid", "fill", {
-          "fill-color": [
+        // #679 单一色源：有 legend_spec 时 fill-color 从 palette_colors 重建
+        //（权重驱动 0..1 均布停靠，首段取首色透明变体），与 ThematicLegend
+        // 同源；旧 cyan→red 仅作无 spec 的退化兜底。
+        const gridSpec = layer.legend_spec;
+        const gridColors =
+          gridSpec && (gridSpec.type === "continuous" || gridSpec.type === "divergent")
+            ? gridSpec.palette_colors
+            : undefined;
+        let fillColor: unknown[];
+        if (gridColors && gridColors.length >= 2) {
+          const n = gridColors.length;
+          fillColor = ["interpolate", ["linear"], ["get", "weight"]];
+          gridColors.forEach((c, i) => {
+            const pos = i === n - 1 ? 1.0 : +(i / n).toFixed(3);
+            fillColor.push(pos, i === 0 ? transparentHeadOf(c) : c);
+          });
+        } else {
+          fillColor = [
             "interpolate", ["linear"], ["get", "weight"],
             0.0, "rgba(0,0,0,0)",
             0.2, "rgba(0,242,255,0.4)",
@@ -278,7 +347,10 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
             0.6, "rgba(255,255,0,0.7)",
             0.8, "rgba(255,95,0,0.85)",
             1.0, "rgba(255,45,85,0.95)",
-          ] as any,
+          ];
+        }
+        pushLayer("heatgrid", "fill", {
+          "fill-color": fillColor as any,
           "fill-outline-color": "rgba(255, 255, 255, 0.05)" as any,
           "fill-opacity": (layer.opacity ?? 1) as any,
           "fill-antialias": true as any,
