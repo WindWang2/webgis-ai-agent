@@ -693,11 +693,24 @@ export async function generateMapSpecVectorSvgString(
   mapspec: any,
   options: VectorExportOptions = {}
 ): Promise<string> {
-  // #667 export-vector: hydrate MVT layers on demand (cached after first fetch)
+  // #667/#668 export-vector: hydrate MVT layers on demand; #668 guard fails loudly if still feature-less
+  const { useHudStore } = await import('@/lib/store/useHudStore');
+  const { isMvtLayer } = await import('@/lib/store/layer-data');
   try {
-    const { useHudStore } = await import('@/lib/store/useHudStore');
     await hydrateMvtLayers(useHudStore.getState().layers as any, 'export-vector');
-  } catch { /* hydration is best-effort; export still proceeds */ }
+  } catch (e: any) {
+    throw new Error(`Vector export hydration failed: ${e?.message ?? String(e)}`);
+  }
+  // Guard: after hydration, MVT layers must have features — never silently produce empty SVG
+  const layersAfter = (useHudStore.getState().layers as any[]) ?? [];
+  const emptyMvt = layersAfter.filter(
+    (l: any) => isMvtLayer(l) && (!l.source || !Array.isArray((l.source as any)?.features) || (l.source as any).features.length === 0),
+  );
+  if (emptyMvt.length > 0) {
+    throw new Error(
+      `Vector export guard: MVT layer(s) have no features after hydration: ${emptyMvt.map((l: any) => l.id).join(', ')} — cannot produce feature-less SVG`,
+    );
+  }
   const { compileMapSpecToSvg } = await import('../mapspec-compiler/mapspec-to-svg');
   const { renderSvgPrintLayout } = await import('./svg-marginalia');
 

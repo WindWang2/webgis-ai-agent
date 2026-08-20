@@ -29,6 +29,9 @@ class RefDescriptor:
             No current consumer needs dedup/cache-key/ETag from this field;
             if needed later, compute off-loop or lazily. Kept as None for
             non-breaking schema evolution.
+        filterable_fields: Distinct property keys present across features,
+            used as tile attribute whitelist for MVT setFilter contract (#668).
+            Bounded to first 100 distinct keys to keep descriptor small.
     """
     ref_id: str
     feature_count: int
@@ -38,6 +41,7 @@ class RefDescriptor:
     mvt_capable: bool
     estimated_bytes: int
     content_hash: Optional[str] = None
+    filterable_fields: Optional[List[str]] = None
 
     def to_dict(self) -> dict:
         """Serialize to dict for SSE/JSON responses."""
@@ -50,6 +54,7 @@ class RefDescriptor:
             "mvt_capable": self.mvt_capable,
             "estimated_bytes": self.estimated_bytes,
             "content_hash": self.content_hash,
+            "filterable_fields": self.filterable_fields,
         }
 
     @classmethod
@@ -64,6 +69,7 @@ class RefDescriptor:
             mvt_capable=d.get("mvt_capable", False),
             estimated_bytes=d.get("estimated_bytes", 0),
             content_hash=d.get("content_hash"),
+            filterable_fields=d.get("filterable_fields"),
         )
 
 
@@ -87,6 +93,30 @@ def iter_leaf_coords(coordinates):
         return
     for child in coordinates:
         yield from iter_leaf_coords(child)
+
+
+def collect_filterable_fields(features) -> Optional[List[str]]:
+    """Collect distinct property keys across features for tile attribute whitelist (#668).
+
+    Bounded to 100 distinct keys to keep descriptor small; order is sorted for
+    stable serialization. Returns None when no keys found (keeps descriptor lean).
+    Shared by store-time descriptor (compute_descriptor) and fallback path
+    (app/api/routes/layer._compute_descriptor_fallback) so both stay byte-identical.
+    """
+    if not isinstance(features, list) or not features:
+        return None
+    keys: set = set()
+    for f in features:
+        props = f.get("properties") if isinstance(f, dict) else None
+        if isinstance(props, dict):
+            for k in props.keys():
+                if isinstance(k, str) and k:
+                    keys.add(k)
+                    if len(keys) >= 100:
+                        break
+        if len(keys) >= 100:
+            break
+    return sorted(keys)[:100] if keys else None
 
 
 # Back-compat alias — layer.py previously imported the private name.
@@ -135,19 +165,20 @@ def compute_descriptor(ref_id: str, data) -> RefDescriptor:
     feature_count = 0
     point_count = 0
     geometry_types = set()
-    bbox_coords = []
-    
+    bbox_coords: List = []
+    features: List = []
+
     if isinstance(fc, dict) and fc.get("type") == "FeatureCollection":
-        features = fc.get("features", [])
+        features = fc.get("features", []) if isinstance(fc.get("features"), list) else []
         feature_count = len(features)
-        
+
         for feature in features:
             if not isinstance(feature, dict):
                 continue
             geometry = feature.get("geometry")
             if not geometry or not isinstance(geometry, dict):
                 continue
-            
+
             geom_type = geometry.get("type")
             if geom_type:
                 geometry_types.add(geom_type)
@@ -186,7 +217,10 @@ def compute_descriptor(ref_id: str, data) -> RefDescriptor:
     # json.dumps + SHA256 of a 30MB payload block the event loop in store().
     # Checkpoint already hashes independently for its own dedup.
     content_hash = None
-    
+
+    # #668: attribute whitelist via shared helper (identical to fallback path)
+    filterable_fields = collect_filterable_fields(features)
+
     return RefDescriptor(
         ref_id=ref_id,
         feature_count=feature_count,
@@ -196,4 +230,5 @@ def compute_descriptor(ref_id: str, data) -> RefDescriptor:
         mvt_capable=is_mvt_capable(geometry_types, feature_count),
         estimated_bytes=estimated_bytes,
         content_hash=content_hash,
+        filterable_fields=filterable_fields,
     )

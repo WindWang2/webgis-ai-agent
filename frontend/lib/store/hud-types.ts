@@ -14,6 +14,9 @@ export interface SelectedFeatureInfo {
   featureId?: string | number;
   // FE-4 (design §7)：要素外接矩形 [W,S,E,N]，可算时给出（prompt 路径有界）
   bbox?: [number, number, number, number] | null;
+  // #668: MVT selection truthfulness — tile-derived attributes are simplified/clipped.
+  // When true the card and LLM context must not present tile geometry as source truth.
+  isApproximate?: boolean;
 }
 
 export type AiStatus = 'idle' | 'thinking' | 'acting' | 'done' | 'error';

@@ -31,6 +31,7 @@ import { devOnly } from "@/lib/utils/logger"
 import { ensureLayerData } from "@/lib/store/layer-data"
 import { buildTileTransformRequest } from "@/lib/map-kit/tile-auth"
 import { commitExplicitView } from "@/lib/mapspec/user-mutation"
+import { geometryBBox } from "@/lib/utils/geo"
 
 interface MapPanelProps {
   layers: Layer[]
@@ -556,7 +557,21 @@ export function MapPanel({
     const sublayerId = feature.layer?.id as string | undefined
     const parentId = sublayerId ? resolveParentLayerId(sublayerId, layerIdsSetRef.current) : undefined
     const layerInfo = parentId ? layersMapRef.current[parentId] : undefined
-    const featureId = (feature.id as string | number | undefined) ?? (feature.properties as any)?.id
+    const rawFeatureId = (feature.id as string | number | undefined) ?? (feature.properties as any)?.id ?? (feature.properties as any)?.OBJECTID
+    const targetId = parentId ?? sublayerId
+    const layer = targetId ? layersMapRef.current[targetId] : undefined
+    const isMvt = !!(layer?._tileUrl && layer?._descriptor?.mvt_capable)
+    // `h-` is the synthetic hash-fallback id (e.g. h-1a2b3c4d) assigned by
+    // buildSelectedFeatureSnapshot/resolveFeatureId when a feature has no stable
+    // `id`/`OBJECTID`/`fid` etc. It is not a real feature id → cannot be used
+    // for single-feature backfill; align with layer-data.ts FEATURE_ID_KEYS fallback.
+    const hasUsableId = rawFeatureId != null && String(rawFeatureId).trim() !== '' && !String(rawFeatureId).startsWith('h-')
+    // initial bbox from tile geometry (approximate)
+    let tileBbox: [number, number, number, number] | null = null
+    try {
+      if (feature.geometry) tileBbox = geometryBBox(feature.geometry as any) as any
+    } catch { /* ignore */ }
+    const selectedAt = Date.now()
     setSelectedFeature({
       // 无主图层（process-* 等）时回退到原始 sublayer id。
       layerId: parentId ?? sublayerId ?? 'unknown',
@@ -565,16 +580,52 @@ export function MapPanel({
       refId: parentId?.startsWith('ref:') ? parentId : undefined,
       point,
       properties: (feature.properties || {}) as Record<string, unknown>,
-      selectedAt: Date.now(),
-      featureId: featureId as string | number | undefined,
+      selectedAt,
+      featureId: rawFeatureId as string | number | undefined,
+      bbox: tileBbox,
+      ...(isMvt ? { isApproximate: true } : {}),
     })
-    // #667: selection-detail lazy hydration — single-feature endpoint for MVT layers
-    const targetId = parentId ?? sublayerId
-    if (targetId) {
-      const l = layersMapRef.current[targetId]
-      if (l?._tileUrl && l?._descriptor?.mvt_capable) {
-        void ensureLayerData(targetId, 'selection-detail').catch(() => {})
-      }
+    // #667/#668: selection truthfulness — backfill authoritative feature for MVT layers
+    if (targetId && isMvt) {
+      if (!hasUsableId) return
+      void ensureLayerData(targetId, 'selection-detail', { featureId: rawFeatureId as string | number })
+        .then((res: any) => {
+          const cur: any = useHudStore.getState().selectedFeature
+          if (!cur || cur.selectedAt !== selectedAt) return
+          if (res?.status === 'single-feature' && res.feature) {
+            const af = res.feature as any
+            const authProps = (af.properties ?? {}) as Record<string, unknown>
+            const geom: any = af.geometry
+            let authBbox: [number, number, number, number] | null = cur.bbox ?? null
+            try {
+              if (geom) {
+                const bb = geometryBBox(geom as any)
+                if (bb) authBbox = bb as any
+              }
+              if (Array.isArray(af.bbox) && af.bbox.length === 4) authBbox = af.bbox as any
+            } catch { /* ignore */ }
+            const authId = (af.id as string | number | undefined) ?? (authProps as any).id ?? cur.featureId
+            useHudStore.getState().setSelectedFeature({
+              ...cur,
+              properties: authProps,
+              bbox: authBbox,
+              featureId: authId as any,
+              isApproximate: false,
+            } as any)
+          } else if (res?.status === 'fallback') {
+            // keep approximate flag (already true) — explicit
+            const cur2: any = useHudStore.getState().selectedFeature
+            if (cur2 && cur2.selectedAt === selectedAt && cur2.isApproximate !== true) {
+              useHudStore.getState().setSelectedFeature({ ...cur2, isApproximate: true } as any)
+            }
+          }
+        })
+        .catch(() => {
+          const cur: any = useHudStore.getState().selectedFeature
+          if (cur && cur.selectedAt === selectedAt && cur.isApproximate !== true) {
+            useHudStore.getState().setSelectedFeature({ ...cur, isApproximate: true } as any)
+          }
+        })
     }
   }, [setSelectedFeature])
 

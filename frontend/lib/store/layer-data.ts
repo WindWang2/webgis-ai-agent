@@ -86,7 +86,9 @@ export async function ensureLayerData(
               }
             }
           }
-          // Hash fallback (h-...) is not a real id → treat as unusable
+          // `h-` is the synthetic content-hash fallback (h-xxxxxxxx from
+          // shortContentHash) when a feature has no stable id — see map-panel
+          // commitSelection and use-sse-stream resolveFeatureId; not a real id.
           if (typeof fid === 'string' && fid.startsWith('h-')) fid = undefined;
           if (typeof fid === 'string' && !fid.trim()) fid = undefined;
         }

@@ -57,6 +57,19 @@ function nonConfirmableAck(storeMatched: string[]): MapCommandResult {
     : { status: 'failed', error: 'mutation_failed' };
 }
 
+/** #668: extract a ['get', field] field name from a MapLibre filter expression. */
+function extractFilterField(expr: any): string | null {
+  if (!expr) return null;
+  if (Array.isArray(expr)) {
+    if (expr.length === 2 && expr[0] === 'get' && typeof expr[1] === 'string') return expr[1];
+    for (const sub of expr) {
+      const found = extractFilterField(sub);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 export const layerCommands: Record<string, CommandEntry> = {
   cartographic_runtime_repair: {
     requiredParams: (p) => (
@@ -168,7 +181,22 @@ export const layerCommands: Record<string, CommandEntry> = {
       }
 
       if (flyTo) {
-        const bbox = navigation.calculateBBox(geojson);
+        // #668: descriptor.bbox is the fast path for MVT-backed large layers — full-FC scan only as fallback
+        let bbox: [number, number, number, number] | null = null;
+        try {
+          const existing = ctx.getHudState?.()?.layers?.find?.((l: any) => l.id === targetId) as any;
+          if (existing?._descriptor?.bbox && Array.isArray(existing._descriptor.bbox) && existing._descriptor.bbox.length === 4) {
+            bbox = existing._descriptor.bbox as any;
+          } else if (existing?.source && Array.isArray((existing.source as any).bbox) && (existing.source as any).bbox.length === 4) {
+            bbox = (existing.source as any).bbox as any;
+          } else if (geojson && Array.isArray((geojson as any).bbox) && (geojson as any).bbox.length === 4) {
+            bbox = (geojson as any).bbox as any;
+          } else {
+            bbox = navigation.calculateBBox(geojson);
+          }
+        } catch {
+          bbox = navigation.calculateBBox(geojson);
+        }
         if (bbox) {
           navigation.fitBounds(map, bbox, 50);
         }
@@ -699,10 +727,17 @@ export const layerCommands: Record<string, CommandEntry> = {
         // Store-only: the reconcile owns the map sublayers → honest store_updated.
         return { status: 'succeeded', result: { store_updated: true } };
       }
-      // #667 MVT honest ack: tiles may not carry the filtered field → filter is
-      // stored in HUD but renderer can only apply what tiles carry.
+      // #667/#668 MVT honest ack: tiles may not carry the filtered field → filter is
+      // stored in HUD but renderer can only apply what tiles carry. Whitelist check
+      // keeps the ack honest: field present → filter can work, field absent → degraded
+      // (both are store_updated, never confirmed).
       const targetLayer: any = getHudState().layers?.find?.((l: any) => l.id === layer_id);
       if (targetLayer && isMvtLayer(targetLayer as any)) {
+        const _field = extractFilterField(parsed);
+        const whitelist: string[] | null | undefined = targetLayer._descriptor?.filterable_fields;
+        if (_field && Array.isArray(whitelist) && whitelist.length > 0 && !whitelist.includes(_field)) {
+          devOnly.warn('[apply_layer_filter] MVT field not in tile whitelist:', _field);
+        }
         return { status: 'succeeded', result: { store_updated: true } };
       }
       // V3: verifiable marker (layer filter — harness convergence).

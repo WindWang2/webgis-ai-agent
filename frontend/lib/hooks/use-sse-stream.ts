@@ -246,6 +246,9 @@ export function buildSelectedFeatureSnapshot(
     bbox: validBBox(sel.bbox),
     properties,
     selected_at: sel.selectedAt,
+    // #668: honest approximation flag — LLM must not treat tile geometry as source truth
+    is_approximate: sel.isApproximate === true ? true : undefined,
+    isApproximate: sel.isApproximate === true ? true : undefined,
   };
 }
 

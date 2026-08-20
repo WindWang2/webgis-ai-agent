@@ -28,6 +28,8 @@ export interface RefDescriptor {
   mvt_capable: boolean;
   estimated_bytes: number;
   content_hash: string | null;
+  // #668: attribute whitelist for MVT tile filtering
+  filterable_fields?: string[] | null;
 }
 
 export interface Layer {

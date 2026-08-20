@@ -313,6 +313,13 @@ def _compute_descriptor_fallback(data) -> dict:
     else:
         estimated = estimate_bytes(0)
 
+    # #668: attribute whitelist via shared helper (same as store-time descriptor)
+    try:
+        from app.schemas.ref_descriptor import collect_filterable_fields
+        filterable_fields = collect_filterable_fields(features)
+    except Exception:
+        filterable_fields = None
+
     return {
         "points": points,
         "features": features,
@@ -320,6 +327,7 @@ def _compute_descriptor_fallback(data) -> dict:
         "bbox": bbox,
         "raster_capable": isinstance(data, dict) and ("file_path" in data or "path" in data),
         "estimated_bytes": estimated,
+        "filterable_fields": filterable_fields,
     }
 
 
@@ -355,6 +363,7 @@ async def get_layer_descriptor(
             "mvt_capable": descriptor["mvt_capable"],
             "raster_capable": False,  # descriptor doesn't store raster flag yet
             "estimated_bytes": descriptor["estimated_bytes"],
+            "filterable_fields": descriptor.get("filterable_fields"),
         }
     if res.error_type == "PermissionDenied":
         raise HTTPException(status_code=403, detail=res.error or "数据不可用")
@@ -389,6 +398,7 @@ async def get_layer_descriptor(
         "mvt_capable": is_mvt_capable(geom_types, len(features)),
         "raster_capable": raster_capable,
         "estimated_bytes": estimated_bytes,
+        "filterable_fields": computed.get("filterable_fields"),
     }
 
 

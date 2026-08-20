@@ -1,6 +1,7 @@
 import type { GeoJSONSource, ImageSource, Map } from 'maplibre-gl';
 import { ThematicStyleDef } from './types';
 import { filterFeaturesByBounds } from '@/lib/utils/geo';
+import { useHudStore } from '@/lib/store/useHudStore';
 
 /**
 /**
@@ -44,6 +45,18 @@ const _filteredBySource = new WeakMap<object, { data: unknown; viewport: Viewpor
 
 function sameViewport(a: ViewportBBox, b: ViewportBBox): boolean {
   return a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && a[3] === b[3];
+}
+
+function isMvtSourceId(id: string): boolean {
+  try {
+    const layers: any[] = (useHudStore as any).getState?.()?.layers ?? [];
+    const candidates = [id, id.replace(/^custom-/, '')];
+    for (const cid of candidates) {
+      const l = layers.find((x) => x.id === cid);
+      if (l?.['_tileUrl'] && l?.['_descriptor']?.mvt_capable) return true;
+    }
+  } catch { /* ignore */ }
+  return false;
 }
 
 function _filterForViewport(source: object | undefined, data: any, viewport: ViewportBBox): unknown {
@@ -99,7 +112,9 @@ const _registeredGeoJsonSourceIds = new Set<string>();
 
 export function addGeoJsonSource(map: Map, id: string, data: any, options?: { viewport?: ViewportBBox }) {
   const source = map.getSource(id) as GeoJSONSource;
-  const effective = options?.viewport ? _filterForViewport(source, data, options.viewport) : data;
+  // #668: vector-tile sources are server-cropped per z/x/y — skip GeoJSON viewport double-crop
+  const skipViewport = !!(options?.viewport && isMvtSourceId(id));
+  const effective = options?.viewport && !skipViewport ? _filterForViewport(source, data, options.viewport) : data;
   if (source) {
     // 引用相同则跳过（最常见的优化 -- 大量 layer 重新渲染时）
     if (_lastGeoJsonData.get(source) === effective) return;
@@ -138,6 +153,7 @@ export function addGeoJsonSource(map: Map, id: string, data: any, options?: { vi
 export function refreshGeoJsonSourcesByViewport(map: Map, viewport: ViewportBBox) {
   if (!map) return;
   _registeredGeoJsonSourceIds.forEach((id) => {
+    if (isMvtSourceId(id)) return; // #668: double-crop guard
     const source = map.getSource?.(id) as GeoJSONSource;
     if (!source) return;
     const raw = _rawDataBySource.get(source);
