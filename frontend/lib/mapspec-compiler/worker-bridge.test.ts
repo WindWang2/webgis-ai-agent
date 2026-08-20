@@ -615,7 +615,7 @@ describe("diffSpecsAsync fail-closed arms (#686)", () => {
 
     let firstInstanceTerminated = false;
     let createdInstances = 0;
-    let deadListener: ((event: { data: { id: string; patch: ReturnType<typeof diffSpecs> } }) => void) | null = null;
+    let _deadListener: ((event: { data: { id: string; patch: ReturnType<typeof diffSpecs> } }) => void) | null = null;
 
     class CountingWorker {
       onerror: ((event: ErrorEvent) => void) | null = null;
@@ -624,7 +624,7 @@ describe("diffSpecsAsync fail-closed arms (#686)", () => {
       private listeners: Array<(event: { data: { id: string; patch: ReturnType<typeof diffSpecs> } }) => void> = [];
       constructor(_url: URL, _opts?: { type?: string }) {
         createdInstances++;
-        if (createdInstances === 1) deadListener = null;
+        if (createdInstances === 1) _deadListener = null;
       }
       postMessage(msg: { id: string; prev: MapSpec | null; next: MapSpec }) {
         const { id, prev, next } = msg;
@@ -641,7 +641,7 @@ describe("diffSpecsAsync fail-closed arms (#686)", () => {
       }
       addEventListener(_type: string, cb: (event: { data: { id: string; patch: ReturnType<typeof diffSpecs> } }) => void) {
         this.listeners.push(cb);
-        if (createdInstances === 1) deadListener = cb as any;
+        if (createdInstances === 1) _deadListener = cb as any;
       }
       removeEventListener() {}
       terminate() { if (createdInstances === 1) firstInstanceTerminated = true; }
