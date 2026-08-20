@@ -273,10 +273,9 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
 
   @tool(
       registry,
-      name="webgis_source_profile",
+      tier=2, domains=["dataset"], name="webgis_source_profile",
       description="剖析 GeoJSON 数据源生成 Spatial Meta Profile (BBOX, 建议视图, 字段统计, 数值分布)。",
-      args_model=WebgisSourceProfileArgs,
-      tier=1,
+      args_model=WebgisSourceProfileArgs
   )
   async def webgis_source_profile(
       source_id: str,
@@ -483,10 +482,9 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
 
   @tool(
       registry,
-      name="webgis_layer_remove",
+      tier=2, domains=["report"], name="webgis_layer_remove",
       description="从 MapSpec 中移除指定图层并同步从 runtime map_state 擦除。",
       args_model=WebgisLayerRemoveArgs,
-      tier=1,
   )
   async def webgis_layer_remove(
       layer_id: str,
@@ -502,10 +500,9 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
 
   @tool(
       registry,
-      name="webgis_layout_set",
+      tier=2, domains=["report"], name="webgis_layout_set",
       description="设置 MapSpec 版面配置 (图例位置、控件、边距)。",
-      args_model=WebgisLayoutSetArgs,
-      tier=1,
+      args_model=WebgisLayoutSetArgs
   )
   async def webgis_layout_set(
       legend: Optional[Dict[str, Any]] = None,
@@ -523,10 +520,9 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
 
   @tool(
       registry,
-      name="webgis_validate",
+      tier=2, domains=["report"], name="webgis_validate",
       description="在编译前检验 MapSpec 规范性 (CRS, 字段存在性, stops 严格单调性, view 合理性)。",
-      args_model=WebgisValidateArgs,
-      tier=1,
+      args_model=WebgisValidateArgs
   )
   async def webgis_validate(session_id: Optional[str] = None) -> dict:
     if not session_id:
@@ -535,10 +531,9 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
 
   @tool(
       registry,
-      name="webgis_compile_maplibre",
+      tier=2, domains=["report"], name="webgis_compile_maplibre",
       description="执行 MapSpec 编译，产出 style.json, index.html 与 compile-report.json。",
       args_model=WebgisCompileMaplibreArgs,
-      tier=1,
   )
   async def webgis_compile_maplibre(session_id: Optional[str] = None) -> dict:
     if not session_id:
@@ -547,10 +542,9 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
 
   @tool(
       registry,
-      name="webgis_checkpoint",
+      tier=2, domains=["report"], name="webgis_checkpoint",
       description="创建 MapSpec 快照并具象化落地所引用的全部 ref_id 数据载荷。",
       args_model=WebgisCheckpointArgs,
-      tier=1,
   )
   async def webgis_checkpoint(
       checkpoint_id: Optional[str] = None,
@@ -562,10 +556,9 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
 
   @tool(
       registry,
-      name="webgis_rollback",
+      tier=2, domains=["report"], name="webgis_rollback",
       description="回滚 MapSpec 与 runtime map_state 到指定的快照点。",
       args_model=WebgisRollbackArgs,
-      tier=1,
   )
   async def webgis_rollback(
       checkpoint_id: str,
@@ -577,10 +570,9 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
 
   @tool(
       registry,
-      name="webgis_runtime_validate",
+      tier=2, domains=["report"], name="webgis_runtime_validate",
       description="重新编译当前 MapSpec 并在 Headless 环境下进行运行时验收与 5-维度评分 (80% max)。",
-      args_model=WebgisRuntimeValidateArgs,
-      tier=1,
+      args_model=WebgisRuntimeValidateArgs
   )
   async def webgis_runtime_validate(session_id: Optional[str] = None) -> dict:
     from app.services.runtime_validator import runtime_validator
@@ -590,10 +582,9 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
 
   @tool(
       registry,
-      name="webgis_cartography_status",
+      tier=2, domains=["report"], name="webgis_cartography_status",
       description="查询制图 harness 对当前地图状态的服务端验证结论（desired↔runtime 收敛判定、失败检查项与修复进度）。只读，不触发重评估或修复。",
-      args_model=WebgisCartographyStatusArgs,
-      tier=1,
+      args_model=WebgisCartographyStatusArgs
   )
   async def webgis_cartography_status(session_id: Optional[str] = None) -> dict:
     if not session_id:

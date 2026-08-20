@@ -173,7 +173,7 @@ def _html_to_pdf(html_content: str, output_path: str) -> None:
 def register_monitoring_report_tools(registry: ToolRegistry):
     """注册监测报告生成工具"""
 
-    @tool(registry, name="generate_monitoring_report",
+    @tool(registry, tier=2, domains=["report"], name="generate_monitoring_report",
           description=(
               "生成标准化的自然资源监测报告。将多个分析资产（如 NDVI 分析、变化检测、"
               "地形分析等）整合为一份包含封面、执行摘要、专题图、统计分析和结论建议的"

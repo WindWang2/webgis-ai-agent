@@ -155,7 +155,7 @@ def register_cartography_tools(registry: ToolRegistry):
             logger.error(f"Error creating thematic map: {e}")
             return {"error": str(e)}
 
-    @tool(registry, name="export_thematic_map",
+    @tool(registry, tier=2, domains=["report"], name="export_thematic_map",
            description=(
                "当用户请求导出精美地图、制图排版、保存当前地图视图为图片或 PDF 时调用。"
                "该工具会指挥前端抽取当前地图画面，叠加指北针、比例尺、图例，并合成带标题的高质量图件。"
@@ -212,7 +212,7 @@ def register_cartography_tools(registry: ToolRegistry):
             ),
         }
 
-    @tool(registry, name="export_batch_maps",
+    @tool(registry, tier=2, domains=["report"], name="export_batch_maps",
            description=(
                "批量导出多张地图：按 titles 顺序依次触发导出，每张都用同样的排版/纸张/DPI 设置。"
                "\n何时用：『把当前结果做成 3 张图：总览、北部、南部』『按图层各导一张』。"

@@ -44,7 +44,7 @@ def register_project_tools(registry: ToolRegistry) -> None:
             },
             "required": ["project_id", "workflow_name", "steps"],
         },
-        tier=1,
+        tier=2, domains=["report"],
         tags=["project", "workflow"],
     )
     def save_plan_as_workflow(
@@ -91,7 +91,7 @@ def register_project_tools(registry: ToolRegistry) -> None:
             },
             "required": ["project_id", "workflow_id"],
         },
-        tier=1,
+        tier=2, domains=["report"],
         tags=["project", "workflow"],
     )
     async def rerun_workflow(
@@ -133,7 +133,7 @@ def register_project_tools(registry: ToolRegistry) -> None:
             },
             "required": ["geojson"],
         },
-        tier=1,
+        tier=2, domains=["report"],
         tags=["spatial", "quality"],
     )
     def audit_spatial_quality(
@@ -164,7 +164,7 @@ def register_project_tools(registry: ToolRegistry) -> None:
             },
             "required": ["geojson"],
         },
-        tier=1,
+        tier=2, domains=["report"],
         tags=["spatial", "quality"],
     )
     async def repair_spatial_dataset(

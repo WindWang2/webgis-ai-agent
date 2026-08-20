@@ -118,7 +118,7 @@ def generate_chart(chart_type: str, title: str, data: str, x_label: str = "", y_
 def register_chart_tools(registry: ToolRegistry):
     """注册图表工具"""
     registry.register(
-        name="generate_chart",
+        tier=2, domains=["report"], name="generate_chart",
         description="【核心可视化工具】生成统计图表。所有数值统计结果【必须】通过此工具展示。**严禁**在回复中使用任何图片 Markdown (如 `![已通过图表工具渲染](...)`) 作为占位符或展示标记，这会导致前端由于无法找到图片而报错。只需调用工具并直接进行文字总结即可。",
         func=generate_chart,
         param_descriptions={
