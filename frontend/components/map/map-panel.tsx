@@ -911,8 +911,11 @@ export function MapPanel({
   // FE-3 (design §7): memoize the thematic legend derivation + MapDecorations
   // derived props. decorState 在 move 期间稳定（100ms debounce），结算时更新一次 ——
   // memoized MapDecorations / ThematicLegend 不会每帧重渲染（findings E1）。
+  // #679 单图例：热力层由 FloatingLegend 专职渲染（其色带同源自
+  // legend_spec.palette_colors），不再进 ThematicLegend 列表 —— 修复同屏
+  // 两个互相矛盾的热力图例。
   const thematicLayers = useMemo(
-    () => layers.filter((l) => l.visible && l.legend_spec),
+    () => layers.filter((l) => l.visible && l.legend_spec && l.type !== "heatmap"),
     [layers],
   )
   const legendFilterHandlersRef = useRef<Record<string, (ranges: number[][]) => void>>({})

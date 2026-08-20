@@ -251,10 +251,45 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
 
     // Native MapLibre heatmap (map-panel.tsx:254-273)
     if (isNativeHeatmap) {
+      // #679 单一色源：色带从 layer.legend_spec.palette_colors 重建 —— 与
+      // FloatingLegend 同读一个 spec、与后端 heatmap_paint 的
+      // NATIVE_HEATMAP_COLORS 同源，停靠点位置镜像 palettes.
+      // HEATMAP_STOP_POSITIONS（首段透明）。adapter 首帧与 committed spec
+      // 到达后 addLayerSafe 直传的后端 paint 一致，会话内不再出现
+      // cyan→red 翻转为 blue→red 的中途换色；agent 的 palette 参数经授权
+      // 链路写进 legend_spec 后在此生效。旧硬编码仅作无 legend_spec 的
+      // 退化兜底；weight 死 ramp（POI 要素从不携带 weight 属性，MapLibre
+      // 求值失败回退默认 1）按后端 paint 语义改常量 1。
+      const heatSpec = layer.legend_spec;
+      const heatColors =
+        heatSpec && (heatSpec.type === "continuous" || heatSpec.type === "divergent")
+          ? heatSpec.palette_colors
+          : undefined;
+      const heatPaint: Record<string, unknown> = {};
+      if (heatColors && heatColors.length >= 2) {
+        const stops: unknown[] = [
+          "interpolate", ["linear"], ["heatmap-density"], 0, "rgba(0,0,0,0)",
+        ];
+        const positions = [0.12, 0.25, 0.45, 0.65, 0.85, 1.0];
+        heatColors.slice(0, positions.length).forEach((c, i) => {
+          stops.push(positions[i], c);
+        });
+        heatPaint["heatmap-color"] = stops;
+        // 镜像后端 heatmap_paint 的 radius/intensity/opacity 语义（米制
+        // 误传回落、zoom 插值），radius 取 layer.style.radius。
+        const rRaw = Number(layer.style?.radius);
+        const r = Number.isFinite(rRaw) && rRaw >= 4 && rRaw <= 60 ? Math.floor(rRaw) : 20;
+        heatPaint["heatmap-weight"] = 1;
+        heatPaint["heatmap-intensity"] = ["interpolate", ["linear"], ["zoom"], 0, 0.6, 9, 1.4, 13, 2.2];
+        heatPaint["heatmap-radius"] = ["interpolate", ["linear"], ["zoom"], 0, 2, 9, r, 13, Math.min(80, Math.floor(r * 1.7))];
+        heatPaint["heatmap-opacity"] = 0.9;
+      }
       pushLayer("native-heat", "heatmap", {
-        "heatmap-weight": ["interpolate", ["linear"], ["get", "weight"], 0, 0, 1, 1] as any,
-        "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 0, 1, 10, 3, 15, 5, 18, 8] as any,
-        "heatmap-color": [
+        "heatmap-weight": (heatPaint["heatmap-weight"] ?? 1) as any,
+        "heatmap-intensity": (heatPaint["heatmap-intensity"] ?? [
+          "interpolate", ["linear"], ["zoom"], 0, 1, 10, 3, 15, 5, 18, 8,
+        ]) as any,
+        "heatmap-color": (heatPaint["heatmap-color"] ?? [
           "interpolate", ["linear"], ["heatmap-density"],
           0, "rgba(0,0,0,0)",
           0.1, "rgba(0,242,255,0.3)",
@@ -262,9 +297,13 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
           0.5, "rgba(255,255,0,0.7)",
           0.7, "rgba(255,95,0,0.85)",
           1, "rgba(255,45,85,1)",
-        ] as any,
-        "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 0, 2, 5, 5, 9, 25, 12, 40, 15, 70, 18, 100] as any,
-        "heatmap-opacity": ["interpolate", ["linear"], ["zoom"], 7, 1, 19, 0.85] as any,
+        ]) as any,
+        "heatmap-radius": (heatPaint["heatmap-radius"] ?? [
+          "interpolate", ["linear"], ["zoom"], 0, 2, 5, 5, 9, 25, 12, 40, 15, 70, 18, 100,
+        ]) as any,
+        "heatmap-opacity": (heatPaint["heatmap-opacity"] ?? [
+          "interpolate", ["linear"], ["zoom"], 7, 1, 19, 0.85,
+        ]) as any,
       } as any);
     } else if (hasPolygons) {
       if (isHeatmapMode) {
