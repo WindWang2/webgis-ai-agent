@@ -11,7 +11,8 @@ module wraps it with the small extra the Agent needs:
     in the registry. Used by `list_templates` / `apply_template` to
     short-circuit when the user explicitly named something.
   - ``get_template_or_composite``: O(1) by-id lookup across both built-ins
-    and composites; returns the expanded pipeline for composites.
+    and composites; returns the raw composite record for composites
+    (with ``pipeline``). Use :func:`expand_composite` to resolve slots.
 
 The registry already keeps the hot data in memory; this module never
 re-scans it per call. Tests in tests/unit/test_template_intent.py pin
@@ -30,7 +31,12 @@ def _normalize(s: str) -> str:
 
 
 def get_template_or_composite(template_id: str) -> Optional[Dict[str, Any]]:
-    """O(1) lookup of any template (built-in, user, or composite) by id."""
+    """O(1) lookup of any template (built-in, user, or composite) by id.
+
+    For composite ids the raw composite record is returned (carries ``pipeline``
+    with slot→template id refs, no ``payload``). Call :func:`expand_composite`
+    to resolve the pipeline to concrete slot templates.
+    """
     return get_template_registry().get(template_id)
 
 

@@ -605,10 +605,16 @@ class ToolRegistry:
             )
 
         # 执行函数
-        # 探测函数签名，如果需要 session_id 则传入
+        # 探测函数签名，如果需要 session_id 则传入。dispatch 的第三参是 harness
+        # 注入的上下文 session；工具入参里的 session_id（LLM 显式传入）与之同名时，
+        # 以已存在的非 None 工具参为准，避免用 None 覆盖显式值（composite 工具
+        # 的 session_id 即走此路径，测试 `dispatch(..., {"session_id": "x"})`
+        # 依赖该语义）。
         sig = inspect.signature(tool_func)
         if "session_id" in sig.parameters:
-            arguments["session_id"] = session_id
+            if session_id is not None or "session_id" not in arguments:
+                arguments["session_id"] = session_id
+            # else: keep the explicit tool-arg session_id already in arguments
 
         try:
             policy = meta.get("execution_policy", ToolExecutionPolicy.THREAD)
