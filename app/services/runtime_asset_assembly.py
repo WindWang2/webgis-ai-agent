@@ -1,4 +1,4 @@
-"""Runtime fixture asset assembly — MVT tile generation.
+"""Runtime fixture asset assembly — MVT tile generation + raster rewrite.
 
 Used by the heavy pytest runner to generate ``tiles/{z}/{x}/{y}.mvt`` from
 ``points.geojson`` fixtures. Also exposes the pure slippy-map helper
@@ -8,13 +8,22 @@ Used by the heavy pytest runner to generate ``tiles/{z}/{x}/{y}.mvt`` from
 the validator's static server serves them with
 ``application/vnd.mapbox-vector-tile`` and no Content-Encoding, so tiles
 are written uncompressed.
+
+Live-session raster rewrite (ADR-0011 gap, #696): ``ref:raster/<id>`` cursors
+are rewritten to ``__ORIGIN__/raster/<id>.png`` at the compile caller (holds
+session_id) so the headless validator's static server can fetch the PNG from
+``dist/raster/``. The compiler stays session-agnostic. Copy helper mirrors
+the MVT assembly pattern.
 """
 from __future__ import annotations
 
+import copy
 import json
 import math
+import re
+import shutil
 from pathlib import Path
-from typing import List, Tuple
+from typing import Any, Dict, List, Tuple
 
 _MAX_LAT = 85.05112878
 
@@ -144,6 +153,133 @@ def bbox_from_geojson(geojson: dict) -> Tuple[float, float, float, float] | None
     e += 1e-6
     n += 1e-6
     return (w, s, e, n)
+
+
+# ── Live-session raster rewrite + asset copy (#696) ──────────────────
+
+_RASTER_REF_PREFIX = "ref:raster/"
+_RASTER_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _raster_ref_to_origin_url(image_ref: str) -> str | None:
+    """Map ``ref:raster/<id>`` → ``__ORIGIN__/raster/<id>.png`` else None."""
+    if not isinstance(image_ref, str) or not image_ref.startswith(_RASTER_REF_PREFIX):
+        return None
+    raster_id = image_ref[len(_RASTER_REF_PREFIX) :]
+    if not raster_id or not _RASTER_ID_RE.match(raster_id):
+        return None
+    return f"__ORIGIN__/raster/{raster_id}.png"
+
+
+def raster_ids_from_mapspec(mapspec: Dict[str, Any]) -> List[str]:
+    """Extract raster ids referenced as ``ref:raster/<id>`` in the MapSpec.
+
+    Handles both ``ref:raster/<id>`` and already-rewritten ``__ORIGIN__/raster/<id>.png``
+    forms so the copy helper can be called with either the original or the
+    rewritten mapspec.
+    """
+    ids: List[str] = []
+    for src in (mapspec or {}).get("sources", {}).values():
+        if not isinstance(src, dict) or src.get("type") != "raster":
+            continue
+        ref = src.get("imageRef")
+        if isinstance(ref, str) and ref.startswith(_RASTER_REF_PREFIX):
+            rid = ref[len(_RASTER_REF_PREFIX) :]
+            if _RASTER_ID_RE.match(rid) and rid not in ids:
+                ids.append(rid)
+            continue
+        # also recognise already-rewritten __ORIGIN__ form
+        if isinstance(ref, str) and "__ORIGIN__/raster/" in ref:
+            # extract id between raster/ and .png
+            m = re.search(r"__ORIGIN__/raster/([A-Za-z0-9_-]+)\.png", ref)
+            if m and m.group(1) not in ids:
+                ids.append(m.group(1))
+    return ids
+
+
+def rewrite_mapspec_raster_refs(mapspec: Dict[str, Any]) -> tuple[Dict[str, Any], int]:
+    """Return a deep-copied MapSpec with raster ``ref:raster/<id>`` rewritten.
+
+    Rewrites each ``type:"raster"`` source's ``imageRef`` from
+    ``ref:raster/<id>`` → ``__ORIGIN__/raster/<id>.png``. Non-raster sources
+    and already-rewritten entries are left untouched. Returns
+    ``(new_mapspec, rewritten_count)``. The input dict is never mutated.
+
+    Pure function — no IO, suitable for unit testing without a browser.
+    """
+    if not isinstance(mapspec, dict):
+        return mapspec, 0
+    sources = mapspec.get("sources")
+    if not isinstance(sources, dict):
+        return mapspec, 0
+    rewritten = 0
+    new_sources: Dict[str, Any] = {}
+    changed = False
+    for sid, src in sources.items():
+        if not isinstance(src, dict) or src.get("type") != "raster":
+            new_sources[sid] = src
+            continue
+        ref = src.get("imageRef")
+        url = _raster_ref_to_origin_url(ref) if isinstance(ref, str) else None
+        if url is not None:
+            # copy source dict to avoid mutating input
+            new_src = dict(src)
+            new_src["imageRef"] = url
+            new_sources[sid] = new_src
+            rewritten += 1
+            changed = True
+        else:
+            new_sources[sid] = src
+    if not changed:
+        return mapspec, 0
+    new_mapspec = copy.deepcopy(mapspec)
+    new_mapspec["sources"] = new_sources
+    # Preserve other top-level keys (deepcopy already did).
+    return new_mapspec, rewritten
+
+
+def assemble_raster_assets(session_dir: Path, dist_dir: Path, mapspec: Dict[str, Any] | None = None) -> int:
+    """Copy live-session raster PNGs into ``dist/raster/`` for headless fetch.
+
+    ``session_dir`` is ``.webgis-agent/<sid>``; PNGs live at
+    ``session_dir/raster/<id>.png``. ``dist_dir`` is the compiler output dir
+    (``compiled/``). If ``mapspec`` is given, only raster ids referenced there
+    are copied; otherwise all ``*.png`` under ``session_dir/raster/`` are copied.
+
+    Returns number of files copied (0 when no raster dir or no matching PNGs).
+    Missing PNGs for referenced ids are silently skipped — the validator will
+    surface them as 404/failedRequests, which is the correct signal.
+    """
+    raster_src_dir = Path(session_dir) / "raster"
+    if not raster_src_dir.is_dir():
+        return 0
+    if mapspec is not None:
+        ids = raster_ids_from_mapspec(mapspec)
+        # If mapspec has no raster ids, fall through to copy-zero (don't blindly copy all).
+        if not ids:
+            return 0
+        to_copy = []
+        for rid in ids:
+            src = raster_src_dir / f"{rid}.png"
+            if src.is_file():
+                to_copy.append((src, rid))
+    else:
+        to_copy = [(p, p.stem) for p in raster_src_dir.glob("*.png") if p.is_file()]
+
+    if not to_copy:
+        return 0
+    dest_dir = Path(dist_dir) / "raster"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    written = 0
+    for src, rid in to_copy:
+        # Validate id again before filesystem write — defence in depth.
+        if not _RASTER_ID_RE.match(rid):
+            continue
+        dest = dest_dir / f"{rid}.png"
+        # Use copy to preserve bytes; atomic replace not needed for test/size.
+        shutil.copyfile(src, dest)
+        written += 1
+    return written
 
 
 def assemble_mvt_assets(fixture_dir: Path, dist_dir: Path) -> int:

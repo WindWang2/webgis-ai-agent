@@ -132,7 +132,43 @@ class RuntimeValidator:
     cartographic_review = review_cartography(mapspec).to_dict()
 
     # 1. Recompile MapSpec to static output (index.html + style.json).
-    comp_res = await mapspec_store.compile_mapspec_cli(session_id)
+    # 1a. Live-session raster rewrite (before compile, before 1b): mapspec-level
+    # ``ref:raster/<id>`` → ``__ORIGIN__/raster/<id>.png``. This is the
+    # session-aware rewrite (compiler stays session-agnostic, ADR-0011). When a
+    # rewrite is needed we stage a temporary mapspec file and compile that
+    # instead of the canonical ``mapspec.json``, so the persistent MapSpec
+    # retains the opaque cursor.
+    from app.services.runtime_asset_assembly import (
+        assemble_raster_assets,
+        rewrite_mapspec_raster_refs,
+    )
+
+    rewritten_mapspec, rewritten_count = rewrite_mapspec_raster_refs(mapspec)
+    needs_rewrite = rewritten_count > 0
+    if needs_rewrite:
+        # Use the rewritten mapspec for compilation — compile_via_cli reads a
+        # file path, so stage it beside the canonical file. Write atomically
+        # via a temp + replace to avoid readers seeing a partial file.
+        from app.services.mapspec.coordinator import compile_via_cli
+
+        session_dir = mapspec_store.get_session_dir(session_id)
+        out_dir_pre = session_dir / "compiled"
+        # Staging file is ephemeral; compiled output is what matters.
+        staging_path = session_dir / ".mapspec.runtime.json"
+
+        # Use the store's atomic json writer to keep durability contract.
+        from app.services.mapspec.store import _atomic_write_json_sync
+
+        _atomic_write_json_sync(staging_path, rewritten_mapspec)
+        try:
+            comp_res = await compile_via_cli(staging_path, out_dir_pre)
+        finally:
+            try:
+                staging_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+    else:
+        comp_res = await mapspec_store.compile_mapspec_cli(session_id)
     if not comp_res.get("success"):
       return {
           "success": False,
@@ -142,6 +178,19 @@ class RuntimeValidator:
     out_dir = Path(comp_res["out_dir"])
     runtime_dir = out_dir.parent / "runtime"
     runtime_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1a-continued: copy live-session raster PNGs into dist/raster/ so the
+    # headless static server (serving dist/) can resolve __ORIGIN__/raster/*.png.
+    # Runs after compile, before headless, but is the raster counterpart to
+    # the pre-compile rewrite — both belong before the 1b MVT block per #696.
+    try:
+        session_dir_for_raster = mapspec_store.get_session_dir(session_id)
+        # Use rewritten mapspec for id extraction so both cursor and
+        # already-rewritten forms are recognised.
+        source_mapspec = rewritten_mapspec if needs_rewrite else mapspec
+        assemble_raster_assets(session_dir_for_raster, out_dir, source_mapspec)
+    except Exception as e:  # noqa: BLE001 - copy failure should not block validation
+        logger.warning("raster asset assembly failed for %s: %s", session_id, e)
 
     # 1b. Fixture asset assembly (MVT): if the probes file's directory
     # contains points.geojson, encode z0..z2 tiles into dist/tiles/.
