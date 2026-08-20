@@ -71,25 +71,32 @@ def test_list_available_tools_advertised_domains_all_have_tools(registry):
 
 def test_list_available_tools_vocab_covers_real_domains(registry):
     """The live vocabulary must include the real high-value domains and must
-    NOT claim the ghost domains core/report (the #438-sibling drift)."""
+    NOT claim ghost domains. #678 consolidated data_fabric/spatial_catalog
+    into `dataset` and gave report/export tools the `report` domain — the
+    pinned vocab follows the live registry (#556 contract stays drift-proof:
+    advertised == real)."""
     advertised = set(_advertised_domains(registry))
-    for real in ("temporal", "data_fabric", "spatial_catalog", "dataset",
-                 "raster", "network", "statistics"):
+    for real in ("temporal", "dataset", "raster", "network", "statistics",
+                 "report", "chinese"):
         assert real in advertised, f"real domain {real!r} missing from the advertised vocab"
     assert "core" not in advertised
-    assert "report" not in advertised
+    # 已收敛的死域不得复活（#678：统一进 dataset）
+    assert "data_fabric" not in advertised
+    assert "spatial_catalog" not in advertised
 
 
 @pytest.mark.asyncio
 async def test_report_domain_query_truthful(registry):
-    """list_available_tools('report') returns count 0 (no tools carry it) —
-    and since the description no longer advertises report, that is honest."""
+    """list_available_tools('report') must return the true count — the
+    #556 honesty contract holds in both regimes (0 tools or N tools)."""
     counts = _registry_domains(registry)
-    if counts.get("report", 0) == 0:
-        result = await registry.dispatch(
-            "list_available_tools", {"domain": "report"}, session_id="contract"
-        )
-        assert result["count"] == 0
+    result = await registry.dispatch(
+        "list_available_tools", {"domain": "report"}, session_id="contract"
+    )
+    assert result["count"] == counts.get("report", 0), (
+        f"list_available_tools('report') returned {result['count']} but the live "
+        f"registry carries {counts.get('report', 0)} report-domain tools"
+    )
 
 
 def test_extension_example_names_exist(registry):
