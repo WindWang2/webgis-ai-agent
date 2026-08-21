@@ -97,6 +97,36 @@ SEED_PRODUCT_TEMPLATES: List[MapProductTemplate] = [
         exports=[],
         title_pattern="{scope}{subject}",
     ),
+    MapProductTemplate(
+        id="grid_density_product",
+        name="格网聚合密度产品",
+        description="H3/渔网格网分级填色 + 点叠加：比热力可量化的密度表达。",
+        recipe_id="grid_density_aggregate",
+        layer_roles=[
+            LayerRoleSpec(role="primary", layer_type="fill", cartography="aggregate_grid",
+                          source_capability="grid_binning"),
+            LayerRoleSpec(role="secondary", layer_type="circle", cartography="point_overlay",
+                          source_capability="poi_query"),
+        ],
+        default_components=["title", "legend", "north_arrow", "scale_bar", "attribution"],
+        outputs=["interactive_map", "statistics", "summary"],
+        exports=["png"],
+        title_pattern="{scope}{subject}格网分布",
+    ),
+    MapProductTemplate(
+        id="proportional_symbol_product",
+        name="比例符号气泡产品",
+        description="圆面积 ∝ sqrt(value) 的权重点图：少样本带权场景的热力替代。",
+        recipe_id="proportional_symbol_map",
+        layer_roles=[
+            LayerRoleSpec(role="primary", layer_type="circle", cartography="proportional_symbol",
+                          source_capability="poi_query"),
+        ],
+        default_components=["title", "legend", "north_arrow", "scale_bar", "attribution"],
+        outputs=["interactive_map"],
+        exports=["png"],
+        title_pattern="{scope}{subject}规模分布",
+    ),
 ]
 
 

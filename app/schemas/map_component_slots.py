@@ -35,7 +35,7 @@ class ThematicSlot(BaseModel):
     template_id: Optional[str] = Field(None, description="Source template ID")
     variant: Literal["choropleth", "heatmap", "none"] = Field("choropleth", description="Thematic map type")
     field: Optional[str] = Field(None, description="Data attribute field used for thematic mapping")
-    method: Literal["quantiles", "equal_interval", "natural_breaks", "lisa"] = Field("quantiles", description="Classification algorithm")
+    method: Literal["quantiles", "equal_interval", "natural_breaks", "std_dev", "head_tail", "lisa"] = Field("quantiles", description="Classification algorithm")
     k: int = Field(5, ge=2, le=10, description="Number of statistical classes")
     palette: str = Field("YlOrRd", description="ColorBrewer / Viridis palette identifier")
     intensity: float = Field(0.8, ge=0.0, le=1.0, description="Heatmap intensity parameter")

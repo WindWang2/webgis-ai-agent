@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { captureMapCanvas, composeLayout, downloadBlob, getOversampledZoom, discoverLegendData } from './exporter';
+import { captureMapCanvas, composeLayout, downloadBlob, getOversampledZoom, discoverLegendData, COLOR_PALETTES } from './exporter';
 
 describe('exporter', () => {
   describe('getOversampledZoom', () => {
@@ -216,5 +216,22 @@ describe('discoverLegendData — heatmap legend dedup & palette source', () => {
     const data = discoverLegendData([heatLayer, choroLayer]);
     expect(data.legendSpec?.type).toBe('graduated');
     expect(data.heatmapLegend?.paletteColors?.[0]).toBe('#428cd2');
+  });
+});
+
+// ── COLOR_PALETTES：模型库扩充后的前后端镜像 ─────────────────────────
+describe('COLOR_PALETTES — model-library expansion mirror', () => {
+  it('carries the ColorBrewer / perceptual-uniform additions', () => {
+    for (const pid of ['Oranges','Purples','RdYlGn','RdBu','Set1','Set2','Dark2','Pastel1','Inferno','Plasma']) {
+      expect(COLOR_PALETTES[pid], `missing palette ${pid}`).toBeTruthy();
+      expect(COLOR_PALETTES[pid]!.length).toBeGreaterThanOrEqual(5);
+    }
+  });
+
+  it('keeps authoritative hex heads in sync with backend palettes.py', () => {
+    expect(COLOR_PALETTES.Set1![0]).toBe('#e41a1c');
+    expect(COLOR_PALETTES.RdBu![0]).toBe('#ca0020');
+    expect(COLOR_PALETTES.Oranges![0]).toBe('#feedde');
+    expect(COLOR_PALETTES.Plasma![0]).toBe('#0d0887');
   });
 });

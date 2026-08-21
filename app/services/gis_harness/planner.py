@@ -50,6 +50,8 @@ CAPABILITY_TOOLS: Dict[str, List[str]] = {
     "proximity_buffer": ["buffer_analysis"],
     "service_area": ["isochrone_analysis", "service_area_simple"],
     "raster_source": ["local_raster", "remote_sensing_index"],
+    # 格网聚合：H3 六边形优先，渔网兜底（模型库 aggregate_grid 的执行面）
+    "grid_binning": ["h3_binning", "fishnet_grid"],
 }
 
 
@@ -122,18 +124,20 @@ def _plan_id(query: str, recipe_id: str) -> str:
     return f"plan-{digest}"
 
 
-# 主专题表达 → 图层类型
+# 主专题表达 → 图层类型（模型库 maplibre_layer_type 的镜像）
 _CARTOGRAPHY_LAYER_TYPE = {
     "visual_heatmap": "heatmap",
     "density_overview": "heatmap",
     "point_overlay": "circle",
     "simple_point_map": "circle",
+    "proportional_symbol": "circle",
     "administrative_choropleth": "fill",
     "categorical_thematic": "fill",
     "proximity_overlay": "fill",
     "raster_surface": "raster",
     "hotspot_overlay": "fill",
     "administrative_aggregation": "fill",
+    "aggregate_grid": "fill",
 }
 
 
@@ -209,6 +213,7 @@ class MapProductPlanner:
             "proximity_buffer": "邻近缓冲",
             "raster_source": "栅格数据源",
             "category_breakdown": "类别构成统计",
+            "grid_binning": "H3/渔网格网聚合",
         }
         for cap in capabilities:
             plan.data_requirements.append(DataRequirement(
@@ -297,7 +302,7 @@ class MapProductPlanner:
             from app.services.gis_harness.recipes import _geometry_category
             profile_geom = _geometry_category(geom_types)
 
-        # 图层级裁决：热力层被禁 → 降级 + （几何为点时）点层提升
+        # 图层级裁决：热力/格网主层被禁 → 降级 + （几何为点时）点层提升
         heat_fallback_recorded = False
         for layer in finalized.map_layers:
             if layer.cartography in ("visual_heatmap", "density_overview"):
@@ -326,6 +331,35 @@ class MapProductPlanner:
                             from_element="visual_heatmap",
                             to_element="point_distribution",
                             reason_code=reason.reason_code if reason else "INELIGIBLE",
+                            evidence={
+                                **(reason.evidence if reason else {}),
+                                "profile_geometry": profile_geom,
+                            },
+                        ))
+                        heat_fallback_recorded = True
+            elif layer.cartography == "aggregate_grid":
+                if "aggregate_grid" in disabled_elements or "recipe" in disabled_elements:
+                    reason = next(
+                        (d for d in report.disabled if d.element in ("aggregate_grid", "recipe")
+                         and d.reason_code == "INSUFFICIENT_POINTS"),
+                        None,
+                    )
+                    layer.enabled = False
+                    layer.role = "secondary"
+                    layer.note = f"disabled: {reason.reason_code}" if reason else "disabled"
+                    if not heat_fallback_recorded:
+                        point_layer = next(
+                            (l for l in finalized.map_layers
+                             if l.cartography in ("point_overlay", "simple_point_map")
+                             and l.enabled),
+                            None,
+                        )
+                        if point_layer:
+                            point_layer.role = "primary"
+                        finalized.fallbacks.append(FallbackDecision(
+                            from_element="aggregate_grid",
+                            to_element="point_distribution",
+                            reason_code=reason.reason_code if reason else "INSUFFICIENT_POINTS",
                             evidence={
                                 **(reason.evidence if reason else {}),
                                 "profile_geometry": profile_geom,

@@ -385,6 +385,70 @@ SEED_RECIPES: List[CartographyRecipe] = [
         export_profile={"formats": ["png", "pdf"]},
         priority=40,
     ),
+    CartographyRecipe(
+        id="grid_density_aggregate",
+        name="格网聚合密度",
+        description=(
+            "『按格网/蜂窝看分布』：点聚合到 H3/渔网格后分级填色——"
+            "比视觉热力可量化、比行政面均质。模型库对照 map_model=aggregate_grid"
+            "（deck.gl HexagonLayer/GridLayer、kepler hexbin 同族）。"
+            "空网格必须透明：无数据 ≠ 数值为零。"
+        ),
+        intent_tasks=["analytical_density", "concentration_analysis", "distribution_overview"],
+        intent_cartography=["aggregate_grid"],
+        # 模型库注明 <20 点时网格噪声大于信号；但这是「主元素降级」
+        # 而非「recipe 整体不合格」：把 recipe 标记为 INELIGIBLE 会触发
+        # fallback_gate 的 RECIPE_INELIGIBLE 分支，把整个产品推向兜底
+        # 点图而丢掉已绑定的上下文——因此仅给网格元素设置阈值。
+        required_geometry=["Point", "MultiPoint"],
+        eligibility=[
+            EligibilityRule(
+                element="aggregate_grid",
+                min_points=20,   # <20 点时网格噪声大于信号（模型库 pitfalls）
+                requires_geometry=["Point", "MultiPoint"],
+                reason_code="INSUFFICIENT_POINTS",
+            ),
+        ],
+        preferred_analysis=["poi_query", "grid_binning", "point_profile"],
+        optional_analysis=["admin_boundary_query"],
+        primary_cartography="aggregate_grid",
+        secondary_cartography=["point_overlay"],
+        default_components=["title", "legend", "north_arrow", "scale_bar", "attribution"],
+        fallbacks=[
+            RecipeFallback(
+                when="point_count < 20", reason_code="INSUFFICIENT_POINTS",
+                use="point_distribution",
+            ),
+        ],
+        validation_rules=["empty grid cell renders transparent (no-data ≠ zero)"],
+        export_profile={"formats": ["png"], "layout": "report"},
+        priority=42,
+    ),
+    CartographyRecipe(
+        id="proportional_symbol_map",
+        name="比例符号（气泡）地图",
+        description=(
+            "点少但每点带权重值时的合法热力替代：圆面积 ∝ sqrt(value)"
+            "（面积比例律，直接线性映射半径会平方级夸大）。"
+            "模型库对照 map_model=proportional_symbol。"
+        ),
+        intent_tasks=["distribution_overview"],
+        intent_cartography=["proportional_symbol"],
+        allowed_geometry=["Point", "MultiPoint"],
+        preferred_analysis=["poi_query", "point_profile"],
+        primary_cartography="proportional_symbol",
+        secondary_cartography=["point_overlay"],
+        default_components=["title", "legend", "north_arrow", "scale_bar", "attribution"],
+        fallbacks=[
+            RecipeFallback(
+                when="geometry not point", reason_code="GEOMETRY_NOT_SUPPORTED",
+                use="point_distribution",
+            ),
+        ],
+        validation_rules=["radius ∝ sqrt(value); draw descending by value (small on top)"],
+        export_profile={"formats": ["png"]},
+        priority=55,
+    ),
 ]
 
 
@@ -434,16 +498,41 @@ class RecipeRegistry:
     ) -> List[CartographyRecipe]:
         """按 intent 选择候选 recipe（确定性排序）。
 
-        排序键：task 精确命中 > cartography_intents 交集多 > priority 小 >
-        id 字典序。Agent 可建议 recipe，但最终裁决是 eligibility 检查。
+        排序键（稳定四元组）：
+            1. task 精确命中
+            2. 显式制图意图（图末尾的 aggregate_grid / proportional_symbol
+               等加法信号）是否命中 recipe.intent_cartography
+            3. cartography_intents 交集多
+            4. priority 小（同分稳定排序）
+
+        显式信号那一层解决「同一 distribution_overview 任务下，宽口径
+        recipe 交集计数把用户明确的形态词请求压掉」的优先级错置；其余
+        回归锚（Golden Case A/D/E）保持原有行为。
         """
         task = getattr(intent, "task", "")
         cartography = set(getattr(intent, "cartography_intents", []) or [])
+        explicit: Optional[str] = None
+        # cartography_intents 的尾端是 intent.py 加法注入的显式形态信号
+        # （_GRID_AGG_RE / _BUBBLE_RE 直命中），前面是 task 默认覆盖——
+        # 显式信号前置一层优先级，不被 3-交集的计数优势覆盖。
+        for candidate in ("aggregate_grid", "proportional_symbol"):
+            if candidate in cartography:
+                explicit = candidate
+                break
         scored: List[tuple] = []
         for recipe in self._by_id.values():
             task_hit = task in recipe.intent_tasks
-            cart_hit = len(cartography & set(recipe.intent_cartography or []))
-            score = (0 if task_hit else 1, -cart_hit, recipe.priority, recipe.id)
+            cart_set = set(recipe.intent_cartography or [])
+            explicit_hit = bool(explicit and explicit in cart_set)
+            cart_hit = len(cartography & cart_set)
+            score = (
+                0 if task_hit else 1,
+                0 if (explicit is not None and explicit_hit) else (
+                    1 if explicit is not None else 0
+                ),
+                -cart_hit,
+                recipe.priority, recipe.id,
+            )
             if task_hit or cart_hit:
                 scored.append((score, recipe))
         scored.sort(key=lambda pair: pair[0])

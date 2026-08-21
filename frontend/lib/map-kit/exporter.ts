@@ -484,13 +484,25 @@ function _drawHeatmapLegend(
   return legendH + scalePx(10);
 }
 
-const COLOR_PALETTES: Record<string, string[]> = {
+// 与后端 app/lib/cartography/palettes.py 的 COLOR_PALETTES 同源镜像
+// （ColorBrewer 官方 hex；语义族登记见后端 model_library.PALETTE_KINDS）。
+export const COLOR_PALETTES: Record<string, string[]> = {
   YlOrRd: ["#ffffb2","#fed976","#feb24c","#fd8d3c","#f03b20","#bd0026"],
   Blues:  ["#eff3ff","#bdd7e7","#6baed6","#3182bd","#08519c"],
   Greens: ["#edf8e9","#bae4b3","#74c476","#31a354","#006d2c"],
   Reds:   ["#fee5d9","#fcae91","#fb6a4a","#de2d26","#a50f15"],
+  Oranges:["#feedde","#fdbe85","#fd8d3c","#e6550d","#a63603"],
+  Purples:["#f2f0f7","#cbc9e2","#9e9ac8","#756bb1","#54278f"],
+  RdYlGn: ["#d73027","#fc8d59","#fee08b","#d9ef8b","#91cf60","#1a9850"],
+  RdBu:   ["#ca0020","#f4a582","#f7f7f7","#92c5de","#0571b0"],
+  Set1:   ["#e41a1c","#377eb8","#4daf4a","#984ea3","#ff7f00","#ffff33","#a65628","#f781bf","#999999"],
+  Set2:   ["#66c2a5","#fc8d62","#8da0cb","#e78ac3","#a6d854","#ffd92f","#e5c494","#b3b3b3"],
+  Dark2:  ["#1b9e77","#d95f02","#7570b3","#e7298a","#66a61e","#e6ab02","#a6761d","#666666"],
+  Pastel1:["#fbb4ae","#b3cde3","#ccebc5","#decbe4","#fed9a6","#ffffcc","#e5d8bd","#fddaec","#f2f2f2"],
   Viridis:["#440154","#3b528b","#21908c","#5dc963","#fde725"],
   Magma:  ["#000004","#3b0f70","#8c2981","#de4968","#feb078","#fcfdbf"],
+  Inferno:["#000004","#420a68","#932667","#dd513a","#fca50a","#fcffa4"],
+  Plasma: ["#0d0887","#6a00a8","#b12a90","#e16462","#fca636","#f0f921"],
 };
 
 function _drawDiscreteLegend(ld: LegendDrawCtx, field: string, colors: string[], labels: string[], yOffset: number = 0): number {

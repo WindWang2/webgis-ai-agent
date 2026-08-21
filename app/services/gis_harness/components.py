@@ -223,7 +223,8 @@ def build_default_components(
     if primary_cartography in ("visual_heatmap", "density_overview", "raster_surface"):
         components.append(colorbar_component())
     elif primary_cartography in (
-        "administrative_choropleth", "graduated",
+        "administrative_choropleth", "graduated", "aggregate_grid",
+        "proportional_symbol",
         "hotspot_overlay", "proximity_overlay", "administrative_aggregation",
     ):
         components.append(legend_component())

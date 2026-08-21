@@ -48,6 +48,7 @@ AnalysisIntent = Literal[
     "category_breakdown",
     "proximity_buffer",
     "service_area",
+    "grid_binning",              # H3/渔网格网聚合
     "profile",
     "none",
 ]
@@ -61,6 +62,8 @@ CartographyIntent = Literal[
     "proximity_overlay",         # 缓冲/邻近叠加
     "raster_surface",            # 栅格面
     "hotspot_overlay",           # 热点标注/等值面
+    "aggregate_grid",            # H3/渔网格网聚合填色
+    "proportional_symbol",       # 比例符号（气泡）图
 ]
 
 OutputIntent = Literal[
@@ -180,6 +183,9 @@ _REPORT_RE = re.compile(r"(用于|做|做一份|生成|制作)[^，。?？]*(报
                         r"(报告|论文|简报)[^，。?？]*(用|插图|配图)", re.I)
 _DENSITY_WORD_RE = re.compile(r"密度", re.I)
 _MEASURE_COUNT_RE = re.compile(r"(数量|多少|几|个数|计数)", re.I)
+# 显式制图形态信号（模型库 aggregate_grid / proportional_symbol 的入口词）
+_GRID_AGG_RE = re.compile(r"(格网|网格|hexbin|六边形|蜂窝|h3)", re.I)
+_BUBBLE_RE = re.compile(r"(气泡图|气泡|比例符号|按[^，。?？]{0,6}(大小|规模)(表示|展示)?|圆(的)?大小)", re.I)
 
 
 def _match_scope(query: str) -> ScopeIntent:
@@ -353,6 +359,19 @@ def resolve_map_request_intent(query: str) -> MapRequestIntent:
     # analytical_density 任务，规则序保证「每平方公里」优先命中）。
     if _DENSITY_WORD_RE.search(query) and task not in ("analytical_density",):
         assumptions.append("请求含「密度」但非定量表述，按视觉密度处理")
+
+    # 显式制图形态信号：加法注入 cartography_intents，不改变任务判定
+    # （任务规则仍是权威；形态词只决定同一任务内的表达选型）。
+    if _GRID_AGG_RE.search(query):
+        cartography_intents = list(dict.fromkeys(
+            [*cartography_intents, "aggregate_grid"]))
+        if "grid_binning" not in analysis_intents:
+            analysis_intents.append("grid_binning")
+        matched.append("cartography:aggregate_grid")
+    elif _BUBBLE_RE.search(query):
+        cartography_intents = list(dict.fromkeys(
+            [*cartography_intents, "proportional_symbol"]))
+        matched.append("cartography:proportional_symbol")
 
     if _MEASURE_COUNT_RE.search(query) and not measure:
         measure = "count"

@@ -159,7 +159,28 @@ component_selection / completeness）。Pi bridge 与 legacy seam 均转发该�
 run 豁免（not_applicable_exempt），绝不为 PASS**（`require_map_product=True`
 可收紧为策略失败）。
 
-## 10. 性能
+## 10. 地图模型库（Map Model Library，2026-08 增补）
+
+`app/lib/cartography/model_library.py`（机器可读的权威目录，不是第二套执行引擎）：
+
+| 制图类别 | 模型 id | MapLibre 图层 | 框架对照 | 色系 | 能力解析 |
+|---|---|---|---|---|---|
+| 热力概览 | `visual_heatmap` | `heatmap`（radius 屏幕像素） | deck.gl Heatmap / kepler heatmap / QGIS heatmap | 感知均匀 `classic/magma/viridis` | `heatmap_data` |
+| 行政分级 | `administrative_choropleth` | `fill` + 渐变填充 | kepler geojson / QGIS graduated / GeoDa choropleth | sequential `YlOrRd/Blues/Greens` | `spatial_aggregate` + `admin_boundary` |
+| 格网聚合 | `aggregate_grid` **(新增)** | `fill` | deck.gl HexagonLayer/GridLayer / kepler hexbin | sequential `YlOrRd` | `grid_binning→h3_binning/fishnet_grid` |
+| 比例符号 | `proportional_symbol` **(新增)** | `circle`（面积∝√value） | deck.gl Scatterplot / kepler point size | sequential `Blues` | `poi_query` |
+| 分类专题 | `categorical_thematic` | `fill` | QGIS categorized / GeoDa Unique Value | qualitative `Set1/Set2/Dark2/Pastel1` | `spatial_stats` 类别分解 |
+| 热点显著性 | `hotspot_overlay` | `fill` + rule-based | GeoDa LISA | diverging `RdBu` | `hotspot_analysis` |
+| 栅格面 | `raster_surface` | `raster` | QGIS paletted | `Viridis/Inferno/Plasma` | `local_raster` |
+
+数值分级：`quantiles` / `equal_interval` / `natural_breaks`（Jenks DP）+
+`std_dev` **(新增，QGIS 均值±0.5 SD)** + `head_tail` **(新增，Jiang 2013 重尾)**，
+统一由 `CartographyService.classify` 计算；调色板扩充 9 个（`Oranges/Purples/RdYlGn/RdBu/Set1/Set2/Dark2/Pastel1/Inferno/Plasma`，ColorBrewer 官方 hex），`validate_model_library()` 断言跨引用完整性。
+
+目录完整但运行时待接线（诚实标记 `planned`，`MapModelRegistry.planned_ids()`）：
+`flow_od_arc`（deck.gl ArcLayer）、`extrusion_3d`（MapLibre fill-extrusion / GeoDa 2.5D）、`isoline_contour`（deck.gl ContourLayer）。
+
+## 11. 性能
 
 - Recipe/ProductTemplate 注册表：进程级 indexed dict，O(1) lookup；
 - eligibility 消费 descriptor 派生 profile（零 FeatureCollection 全量扫描）；

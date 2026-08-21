@@ -93,7 +93,9 @@ class CartographyService:
 
     @classmethod
     def classify(cls, values: List[float], method: str = "quantiles", k: int = 5) -> List[float]:
-        """数据分类方法 (quantiles / equal_interval / natural_breaks)"""
+        """数据分类方法 (quantiles / equal_interval / natural_breaks /
+        std_dev / head_tail)。方法元数据（适用场景、权威出处）见
+        ``app.lib.cartography.model_library.CLASSIFICATION_METHODS``。"""
         if not values:
             return []
         arr = np.array(values, dtype=float)
@@ -103,6 +105,10 @@ class CartographyService:
             return np.linspace(arr.min(), arr.max(), k + 1).tolist()
         elif method == "natural_breaks":
             return cls._jenks_natural_breaks(arr, k)
+        elif method == "std_dev":
+            return cls._std_dev_breaks(arr, k)
+        elif method == "head_tail":
+            return cls._head_tail_breaks(arr, k)
         # #557 断点 3：categorical 不是数值断点方法 —— classify 只做数值分级，
         # categorical 由 build_thematic_style 的分支处理（返回类别→色表）。
         logger.warning(
@@ -110,6 +116,56 @@ class CartographyService:
             method,
         )
         return np.linspace(arr.min(), arr.max(), k + 1).tolist()
+
+    @classmethod
+    def _std_dev_breaks(cls, arr: np.ndarray, k: int = 5) -> List[float]:
+        """QGIS『Standard Deviation』模式：以均值为中心、0.5 SD 步进对称铺断点。
+
+        断点 = mean ± m·(SD/2)，向两侧铺满 k-1 个内断点，越出 [min, max]
+        的裁掉；常数场（SD=0）退化为等间距两端。适合围绕均值波动的统计面。
+        """
+        lo, hi = float(arr.min()), float(arr.max())
+        sd = float(arr.std())
+        if sd <= 0 or hi <= lo:
+            return [lo, hi]
+        mu = float(arr.mean())
+        n_inner = max(1, k - 1)
+        half = n_inner // 2
+        mults: List[float] = []
+        for j in range(1, half + 1):
+            mults.append(j * 0.5)
+            mults.append(-j * 0.5)
+        if n_inner % 2 == 1:
+            mults.append((half + 1) * 0.5)
+        raw = sorted(mu + m * sd for m in mults)
+        inner = [v for v in raw if lo < v < hi]
+        return list(dict.fromkeys([lo, *inner, hi]))
+
+    @classmethod
+    def _head_tail_breaks(cls, arr: np.ndarray, k: int = 5) -> List[float]:
+        """Jiang (2013) Head/Tail Breaks：重尾（长尾）分布的自然分级。
+
+        反复对当前『头』（≤ 均值的低值主体）取算术均值作为断点，高于均值的
+        『尾』自成一类，递归只作用于头。类别数由数据形态决定——重尾数据
+        能产出接近 k 的类数，近均匀数据可能只有一两个断裂（这是方法特性，
+        不是退化）。最小头规模 8 为 Jiang 的经验门槛。
+        """
+        sub = np.sort(np.asarray(arr, dtype=float))
+        lo, hi = float(sub[0]), float(sub[-1])
+        if hi <= lo:
+            return [lo, hi]
+        means: List[float] = []
+        while len(means) < k - 1:
+            mean = float(np.mean(sub))
+            idx = int(np.searchsorted(sub, mean, side="right"))
+            # 均值落在端点之外/无进展 → 停止（类数由数据决定）
+            if idx <= 0 or idx >= len(sub):
+                break
+            means.append(mean)
+            sub = sub[:idx]
+            if len(sub) < 8:
+                break
+        return list(dict.fromkeys([lo, *sorted(means), hi]))
 
     @classmethod
     def build_thematic_style(
