@@ -219,37 +219,40 @@ async def test_execute_halts_on_first_failure(registry):
 
 @pytest.mark.asyncio
 async def test_execute_parallelizes_independent_steps(registry):
-    """同波次独立步骤必须并发执行（总耗时 ≈ 最慢者，而非三者之和）。
+    """同波次独立步骤必须并发执行（#703：屏障判定，去墙钟阈值）。
 
-    这是波次并行执行的核心性能不变量：3 个互不依赖的慢工具，
-    串行需要 ~0.6s，并发只需要 ~0.2s。
+    核心并发不变量：3 个互不依赖步骤全部进入后才放行——串行执行时先到者
+    等不到同伴、确定性超时失败。不再依赖 0.45s 墙钟边距（满载间歇红来源）。
     """
+    import asyncio as _aio
     sid = "sess-plan-parallel"
 
-    @registry.tool(name="fake_slow_ok", description="sleep 后成功返回")
+    entered = {"n": 0}
+    all_in = _aio.Event()
+
+    @registry.tool(name="fake_slow_ok", description="barrier 后成功返回")
     async def fake_slow_ok(tag: str, delay: float = 0.2) -> dict:
-        import asyncio as _aio
-        await _aio.sleep(delay)
+        entered["n"] += 1
+        if entered["n"] == 3:
+            all_in.set()
+        # 只有三个步骤并发进入才会被放行；串行者在此确定性超时
+        await _aio.wait_for(all_in.wait(), timeout=5.0)
         return {"success": True, "data": {"tag": tag}}
 
-    import time as _t
     plan = svc.PlanProposal(
         title="parallel",
         steps=[
-            svc.PlanStep(id="p1", tool="fake_slow_ok", args={"tag": "a", "delay": 0.2}),
-            svc.PlanStep(id="p2", tool="fake_slow_ok", args={"tag": "b", "delay": 0.2}),
-            svc.PlanStep(id="p3", tool="fake_slow_ok", args={"tag": "c", "delay": 0.2}),
+            svc.PlanStep(id="p1", tool="fake_slow_ok", args={"tag": "a"}),
+            svc.PlanStep(id="p2", tool="fake_slow_ok", args={"tag": "b"}),
+            svc.PlanStep(id="p3", tool="fake_slow_ok", args={"tag": "c"}),
         ],
     )
     plan_id = await svc.store_plan(sid, plan)
-    t0 = _t.perf_counter()
     result = await svc.execute_plan_async(sid, plan_id, registry)
-    elapsed = _t.perf_counter() - t0
 
-    assert result["success"] is True
+    assert entered["n"] == 3
+    assert result["success"] is True  # 屏障放行 = 三者曾同时在场（任一串行即超时失败）
     assert sorted(result["executed"]) == ["p1", "p2", "p3"]
-    # 串行 ~0.6s；并发 ~0.2s。阈值取 0.45s：小于 2 倍串行即证明并发。
-    assert elapsed < 0.45, f"未并行执行：3 个 0.2s 步骤耗时 {elapsed:.2f}s"
 
 
 @pytest.mark.asyncio

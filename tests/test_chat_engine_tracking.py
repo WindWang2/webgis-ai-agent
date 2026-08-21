@@ -205,39 +205,47 @@ def test_detect_geojson():
 
 @pytest.mark.asyncio
 async def test_stream_parallel_dispatch_runs_tools_concurrently(engine, registry, monkeypatch):
-    """多个工具调用必须并发执行：总耗时 < 串行之和（性能不变量）。
+    """多个工具调用必须并发执行（#703：屏障判定，去墙钟阈值）。
 
-    LLM 一轮返回 3 个互不依赖的工具调用；每个工具 sleep 0.2s。
-    串行需要 ~0.6s；并行需要 ~0.2s。阈值 0.45s（< 2× 串行）即证明并发。
+    LLM 一轮返回 3 个互不依赖的工具调用。fake 工具改用**屏障**：三个调用
+    全部进入后才放行——串行执行时先到者等不到同伴、确定性超时失败，不再
+    依赖 0.45s 墙钟边距（满载 runner 间歇红的来源）。
     """
     import asyncio
-    import time as _t
 
-    @tool(registry, name="slow_echo", description="sleep 后返回")
+    entered = {"n": 0}
+    all_in = asyncio.Event()
+
+    @tool(registry, name="slow_echo", description="barrier 后返回")
     async def slow_echo(tag: str, delay: float = 0.2) -> dict:
-        await asyncio.sleep(delay)
+        entered["n"] += 1
+        if entered["n"] == 3:
+            all_in.set()
+        # 只有三工具并发进入才会被放行；串行者在此确定性超时
+        await asyncio.wait_for(all_in.wait(), timeout=5.0)
         return {"success": True, "data": {"tag": tag}}
 
     msg1 = {
         "content": None,
         "tool_calls": [
-            {"id": "call_a", "function": {"name": "slow_echo", "arguments": '{"tag": "a", "delay": 0.2}'}},
-            {"id": "call_b", "function": {"name": "slow_echo", "arguments": '{"tag": "b", "delay": 0.2}'}},
-            {"id": "call_c", "function": {"name": "slow_echo", "arguments": '{"tag": "c", "delay": 0.2}'}},
+            {"id": "call_a", "function": {"name": "slow_echo", "arguments": '{"tag": "a"}'}},
+            {"id": "call_b", "function": {"name": "slow_echo", "arguments": '{"tag": "b"}'}},
+            {"id": "call_c", "function": {"name": "slow_echo", "arguments": '{"tag": "c"}'}},
         ],
     }
     msg2 = {"content": "done", "tool_calls": None}
 
     with patch.object(engine, "_call_llm_stream", side_effect=[_fake_stream(msg1)(), _fake_stream(msg2)()]):
         with patch.object(engine, "_save_msg_async", new_callable=AsyncMock):
-            t0 = _t.perf_counter()
             events = []
             async for event in engine.chat_stream("并行测试", session_id="test-parallel"):
                 events.append(event)
-            elapsed = _t.perf_counter() - t0
 
+    assert entered["n"] == 3
     assert any("step_result" in e for e in events), "should emit step_result"
-    assert elapsed < 0.45, f"未并发执行：3 个 0.2s 工具耗时 {elapsed:.2f}s"
+    # 屏障放行说明三者曾同时在场；任何 TOOL_TIMEOUT/错误都意味着串行退化
+    assert not any("TOOL_TIMEOUT" in str(e) for e in events), \
+        f"未并发执行：屏障超时，events={events}"
 
 
 @pytest.mark.asyncio

@@ -14,10 +14,15 @@ MapSpec source entry.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# #703-H4：raster_id 字符集白名单（字母/数字/下划线/连字符）。save_png 生成的
+# id 恒满足；resolve 侧校验防路径拼接面被 ../ 或分隔符污染（纵深防御）。
+_RASTER_ID_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 # Raster images live under the session dir, parallel to revisions/ and checkpoints/.
 _RASTER_SUBDIR = "raster"
@@ -49,9 +54,14 @@ def resolve_png_path(session_dir: Path, image_ref: str) -> Optional[Path]:
 
   Inverse of save_png. Used by the serving route and by checkpoint
   materialization (to copy the PNG into the snapshot).
+
+  #703-H4: raster_id 白名单校验（与服务路由 raster.py 的正则+relative_to
+  纪律对齐）——防御纵深。当前仅内部 ref 可达，但路径拼接面不该信任上游。
   """
   if not image_ref.startswith("ref:raster/"):
     return None
   raster_id = image_ref[len("ref:raster/"):]
+  if not _RASTER_ID_RE.fullmatch(raster_id):
+    return None
   path = raster_dir(session_dir) / f"{raster_id}.png"
   return path if path.exists() else None

@@ -15,8 +15,8 @@ polygon per facility, which a merged multi-source tree cannot produce.
 """
 import json
 
-
 import networkx as nx
+import pytest
 
 from shapely.geometry import LineString
 from shapely.ops import substring
@@ -432,11 +432,24 @@ class TestIsochrone681ReversedEdgeAnchor:
 
 
 class TestPerf:
+    def test_small_reach_on_large_network_bounded_results(self):
+        """行为面（#703 拆分）：tiny budget 在大网络上只产生小可达集——
+        该断言不依赖墙钟，留在默认套件。"""
+        net = _grid_geojson(100)  # 19,800 edges
+        facs = {"type": "FeatureCollection", "features": [
+            _facility("f1", 116.05, 39.05), _facility("f2", 116.07, 39.03),
+        ]}
+        res = calculate_isochrones(json.dumps(net), json.dumps(facs), 1.0, mode="walking")
+        assert res.success
+        # 1 min walking = 80 m ≈ 1 grid cell: tiny reachable sets.
+        for f in res.data["features"]:
+            assert f["properties"]["reachable_edges_count"] <= 200
+
+    @pytest.mark.perf
     def test_small_reach_on_large_network_is_fast(self):
-        """Structural performance guard: a tiny travel budget over a large
-        network must not pay the full O(F x E) edge scan — the reachable set
-        is a few dozen edges out of ~20k. Generous wall bound (the pre-fix
-        code needed ~10+ s for this shape)."""
+        """计时面（#703 挂 perf marker，#664 契约：默认套件自跳过）：结构性
+        性能守卫——tiny travel budget 不得付满 O(F x E) 全边扫描。修前形态
+        ~10s+；5s 上界只在 -m perf 隔离执行时判定，满载不再间歇红。"""
         import time
 
         net = _grid_geojson(100)  # 19,800 edges
@@ -447,7 +460,6 @@ class TestPerf:
         res = calculate_isochrones(json.dumps(net), json.dumps(facs), 1.0, mode="walking")
         elapsed = time.perf_counter() - t0
         assert res.success
-        # 1 min walking = 80 m ≈ 1 grid cell: tiny reachable sets.
         for f in res.data["features"]:
             assert f["properties"]["reachable_edges_count"] <= 200
         assert elapsed < 5.0, f"tiny-budget isochrone over 19.8k edges took {elapsed:.1f} s"

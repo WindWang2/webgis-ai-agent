@@ -323,10 +323,13 @@ def _split_place_and_keyword(query: str) -> Tuple[Optional[str], str]:
         rest = (text[: match.start()] + text[match.end() :]).strip(" ，,;；")
         return place, rest or text
     # 「成都大学」无「市」后缀时，用前 2–4 字碰行政区
+    # #703-8：每候选至多两次调用（裸名一次 + 加「市」一次）——旧写法在判定与
+    # 赋值处重复调 admin_bbox_wgs84，至多 2× 冗余 GeoDataFrame 过滤/候选。
     for n in range(4, 1, -1):
         cand = text[:n]
-        if admin_bbox_wgs84(cand) or admin_bbox_wgs84(cand + "市"):
-            place = cand if admin_bbox_wgs84(cand) else cand + "市"
+        bbox = admin_bbox_wgs84(cand)
+        if bbox or admin_bbox_wgs84(cand + "市"):
+            place = cand if bbox else cand + "市"
             rest = text[n:].strip()
             return place, rest or text
     return None, text

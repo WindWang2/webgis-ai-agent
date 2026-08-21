@@ -208,11 +208,34 @@ async def test_broadcast_evicts_failed_socket(fast_ws_timeout):
 
 @pytest.mark.asyncio
 async def test_broadcast_round_bounded_by_single_timeout_with_stuck_sockets(fast_ws_timeout):
-    """P2 (round-2 review): sends are CONCURRENT — N stalled sockets cost ~one
-    WS_SEND_TIMEOUT per round, not N× (sequential sends were N×WS_SEND_TIMEOUT).
-    3 stuck sockets at a 0.1s timeout would take >= 0.3s sequentially; the
-    concurrent round finishes well under that, and every evicted socket is
-    closed."""
+    """行为面（#703 拆分）：卡死 socket 在一轮广播后被逐出且已关闭，健康
+    socket 不丢消息。并发性计时守卫拆到 perf 标记孪生测试（生产代码内部
+    广播无法插桩屏障，墙钟是唯一证明手段——挂 marker 后满载不再间歇红）。"""
+    ws_module = fast_ws_timeout
+    ws_module.WS_SEND_TIMEOUT = 0.1
+    mgr = ws_module.ConnectionManager()
+    stuck = [_StuckWS() for _ in range(3)]
+    healthy = _HealthyWS()
+    for ws in stuck:
+        await mgr.connect(ws, "s1")
+    await mgr.connect(healthy, "s1")
+
+    await mgr.broadcast("s1", {"event": "x"})
+
+    assert healthy.sent == [{"event": "x"}]
+    remaining = mgr.active_connections.get("s1", [])
+    for ws in stuck:
+        assert ws not in remaining
+        assert ws.closed is True
+    assert healthy in remaining
+
+
+@pytest.mark.perf
+@pytest.mark.asyncio
+async def test_broadcast_round_bounded_by_single_timeout_concurrency_perf(fast_ws_timeout):
+    """计时面（#703 挂 perf marker，#664 契约）：P2 (round-2 review) — sends
+    are CONCURRENT, N stalled sockets cost ~one WS_SEND_TIMEOUT per round, not
+    N× (sequential would be >= 0.3s at timeout=0.1). 只在 -m perf 隔离执行时判定。"""
     ws_module = fast_ws_timeout
     ws_module.WS_SEND_TIMEOUT = 0.1
     mgr = ws_module.ConnectionManager()
@@ -231,11 +254,6 @@ async def test_broadcast_round_bounded_by_single_timeout_with_stuck_sockets(fast
     assert elapsed < 0.25, (
         f"concurrent round must complete within ~one timeout, took {elapsed:.3f}s"
     )
-    remaining = mgr.active_connections.get("s1", [])
-    for ws in stuck:
-        assert ws not in remaining
-        assert ws.closed is True
-    assert healthy in remaining
 
 
 @pytest.mark.asyncio
