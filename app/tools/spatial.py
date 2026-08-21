@@ -45,7 +45,7 @@ def _build_legend_spec(palette: str, min_val: float = 0.0, max_val: float = 1.0,
 class BufferAnalysisArgs(BaseModel):
     geojson: Any = Field(..., description="输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)")
     distance: float = Field(..., gt=0, description="缓冲距离（米），必须大于0")
-    unit: str = Field("m", description="单位：m/km，默认m")
+    unit: str = Field("m", pattern=r"^(m|km)$", description="单位：m/km，默认m")
 
 class HeatmapDataArgs(BaseModel):
     geojson: Any = Field(..., description="输入点要素 GeoJSON 或数据引用(ref:xxx)")

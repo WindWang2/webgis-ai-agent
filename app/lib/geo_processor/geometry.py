@@ -27,6 +27,13 @@ def buffer_smart(
         if not fc.get("features"):
             return GeoAnalysisResult(False, None, "Input features list is empty")
 
+        allowed_units = {"m", "km"}
+        if unit not in allowed_units:
+            return GeoAnalysisResult(
+                False, None,
+                f"Unsupported buffer unit '{unit}'. Allowed: m, km.",
+                error_type="ValueError",
+            )
         # Handle unit conversion while preserving the sign of distance.
         dist = distance
         if unit == 'km':
