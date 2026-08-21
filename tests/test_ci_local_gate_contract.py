@@ -89,3 +89,30 @@ def test_cartography_gate_matches_workflow():
     run = _job_run_text("cartography-smoke")
     assert "-m cartography" in run
     assert "-m cartography" in _script(), "ci-local.sh 缺少 cartography smoke 选择"
+
+
+# ── #700 流程硬化：--fast 的契约层清单锁定 ─────────────────────────────────
+# 契约层是精选的根目录跨模块契约测试（两次事故同根：--fast 不碰后端
+# pytest）。此断言防止清单被静默删薄；新增契约文件时应显式加入。
+
+CONTRACT_TIER_FILES = [
+    "tests/test_tool_meta_contract.py",
+    "tests/test_subagent_context_isolation_436.py",
+    "tests/test_ci_local_gate_contract.py",
+    "tests/test_ci_perf_coverage_contract.py",
+]
+
+
+def test_fast_gate_contract_tier_files_present():
+    script = _script()
+    for f in CONTRACT_TIER_FILES:
+        assert f in script, (
+            f"ci-local.sh --fast 的契约层缺少 {f} —— 该文件钉着跨模块契约，"
+            "被移除会让 #678/#694 型事故复发"
+        )
+
+
+def test_contract_tier_step_exists():
+    assert 'step "contract tier (root-level cross-module contracts)"' in _script(), (
+        "ci-local.sh 丢失了契约层步骤（#700）"
+    )

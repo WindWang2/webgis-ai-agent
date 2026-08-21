@@ -45,6 +45,18 @@ step "typecheck (test-frontend job)"
 step "vitest (test-frontend job)"
 (cd frontend && npm run test:ci)
 
+# ── 契约层（#700 流程硬化）：根目录的跨模块契约/stub 测试不属任何 CI PR
+# lane 单独清单，历史上两次事故（#678 域词汇契约、#694 FrozenCatalog stub）
+# 都因 --fast 不碰后端 pytest 而漏过。此层是**精选清单**（秒级），不是全量
+# 后端 lane 的替代——动 registry/catalog/engine 面仍须跑全量 lane。
+step "contract tier (root-level cross-module contracts)"
+pytest \
+  tests/test_tool_meta_contract.py \
+  tests/test_subagent_context_isolation_436.py \
+  tests/test_ci_local_gate_contract.py \
+  tests/test_ci_perf_coverage_contract.py \
+  --no-cov -q
+
 if [ "$FAST" = "1" ]; then
   echo "--fast：跳过 next build 与后端/perf/cartography pytest lanes"
   exit 0

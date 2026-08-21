@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# flip-red — 反证流程的安全包装（#700 流程硬化）。
+#
+# 纪律：flip-red = 把生产代码回退到基线、证明新测试真的会红、再恢复。
+# 事故 #687：未提交的工作被 checkout 覆盖丢失。本脚本在脏树时拒绝执行，
+# 并自动完成「回退 → 跑测试 → 恢复」三步，杜绝手工 checkout 的遗漏。
+#
+# 用法：
+#   scripts/flip-red <base-ref> [pytest-args...]
+#   例：scripts/flip-red afffd85 tests/unit/test_foo.py -q --no-cov
+#
+# 行为：
+#   1. 脏树（tracked 有改动/暂存）→ 拒绝并提示先 commit（#687 教训）。
+#   2. git checkout <base-ref> -- app/ frontend/
+#   3. 以给定参数跑 pytest（默认 -q --no-cov）
+#   4. git checkout HEAD -- app/ frontend/（无论测试成败都恢复）
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+BASE="${1:?用法: scripts/flip-red <base-ref> [pytest-args...]}"
+shift || true
+
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+  echo "✗ 工作树有未提交改动——先 commit 再 flip-red（#687：未提交工作会被覆盖丢失）。" >&2
+  git status --short --untracked-files=no >&2
+  exit 1
+fi
+
+echo "── flip-red：回退 app/ frontend/ 到 ${BASE} ..."
+git checkout "${BASE}" -- app/ frontend/
+
+status=0
+pytest "$@" --no-cov || status=$?
+
+echo "── 恢复 HEAD 的 app/ frontend/ ..."
+git checkout HEAD -- app/ frontend/
+
+if [ "$status" -ne 0 ]; then
+  echo "✓ 红（预期）：新测试在基线上失败——flip-red 取证成立。把红色输出贴进报告/票。"
+else
+  echo "⚠ 绿：测试在基线上也通过——它没有钉住任何行为，检查断言是否恒真。"
+fi
+exit "$status"
