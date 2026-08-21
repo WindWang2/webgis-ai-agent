@@ -171,7 +171,11 @@ def spatial_aggregate(
         if 'count' in final_gdf.columns:
             final_gdf['count'] = final_gdf['count'].fillna(0).astype(int)
         else:
-            final_gdf['count'] = 0
+            # #693 评审修正：stats 不含 count 时不能标量广播 0——那会把
+            # has_data 全置 False、有值多边形的 sum/mean 一并被 NaN 掉。
+            # 从 join 本身派生每多边形的点数（无点=0）。
+            counts = joined.groupby('index_right').size()
+            final_gdf['count'] = final_gdf.index.map(counts).fillna(0).astype(int)
         # has_data distinguishes "no points" (null stats) from "points with zero aggregate"
         final_gdf['has_data'] = final_gdf['count'] > 0
         for s in ['sum', 'mean', 'max', 'min']:

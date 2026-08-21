@@ -266,9 +266,8 @@ class NetworkLocationAllocationService:
             for i in range(n_dem):
                 best_cost = min(cost_matrix[i][j] for j in best_subset)
                 if best_cost == float("inf"):
-                    if fac_idx == best_subset[0]:
-                        # Only count unassigned once (first facility bucket)
-                        pass
+                    # 不可达需求点统一在后置遍历收进 unassigned_ids（此处
+                    # 跳过；曾有一段只对首个设施生效的死分支，已删——#693）
                     continue
                 best_fac_idx = min(best_subset, key=lambda j: cost_matrix[i][j])
                 if best_fac_idx == fac_idx:

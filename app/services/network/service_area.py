@@ -96,7 +96,7 @@ class NetworkServiceAreaService:
         Args:
             facilities: List of Facility objects or (lng, lat) tuples.
             breaks: Cutoff break values e.g. [5.0, 10.0, 15.0].
-            break_unit: 'minutes' or 'meters'.
+            break_unit: 'minutes' / 'meters' / 'seconds'（km 为 meters 别名；秒按速度换算为分钟）
             graph: NetworkX DiGraph.
             network_dataset: NetworkDataset model.
             profile: TravelProfile.
