@@ -19,6 +19,8 @@ interface BaselayerSwitcherProps {
  */
 export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
   const [open, setOpen] = useState(false);
+  // #700 键盘漫游：方向键在选项间移动高亮，Enter 选择，Home/End 跳边界
+  const [activeIdx, setActiveIdx] = useState<number>(-1);
   const baseLayer = useHudStore((s) => s.baseLayer);
   const setBaseLayer = useHudStore((s) => s.setBaseLayer);
   const { selectedBaseLayer, setSelectedBaseLayer } = useMapAction();
@@ -97,6 +99,34 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
         <div
           role='listbox'
           aria-label='Base layer options'
+          aria-activedescendant={activeIdx >= 0 ? `baselayer-opt-${activeIdx}` : undefined}
+          tabIndex={0}
+          onKeyDown={(e) => {
+            const n = TILE_PROVIDERS.length;
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+              e.preventDefault();
+              setActiveIdx((prev) => {
+                const base = prev < 0 ? selectedBaseLayer : prev;
+                const next = e.key === 'ArrowDown' ? (base + 1) % n : (base - 1 + n) % n;
+                return next;
+              });
+            } else if (e.key === 'Home') {
+              e.preventDefault();
+              setActiveIdx(0);
+            } else if (e.key === 'End') {
+              e.preventDefault();
+              setActiveIdx(n - 1);
+            } else if (e.key === 'Enter' && activeIdx >= 0) {
+              e.preventDefault();
+              setSelectedBaseLayer(activeIdx);
+              setBaseLayer(TILE_PROVIDERS[activeIdx].name);
+              setOpen(false);
+              setActiveIdx(-1);
+            } else if (e.key === 'Escape') {
+              setOpen(false);
+              setActiveIdx(-1);
+            }
+          }}
           className='map-chrome absolute right-0 top-full z-30 mt-1 max-h-[340px] min-w-[160px] overflow-y-auto py-1'
         >
           {TILE_PROVIDERS.map((provider, idx) => {
@@ -104,9 +134,10 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
             return (
               <button
                 key={provider.name}
+                id={`baselayer-opt-${idx}`}
                 type='button'
                 role='option'
-                aria-selected={isActive}
+                aria-selected={isActive || idx === activeIdx}
                 onClick={() => {
                   // Dual-write: both stores must agree or we end up with the bug
                   // QA-2026-05-20 ISSUE-001/002/003 fixed
@@ -119,7 +150,11 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
                   width: '100%',
                   padding: '7px 12px',
                   border: 'none',
-                  background: isActive ? 'var(--accent-soft)' : 'transparent',
+                  background: isActive
+                    ? 'var(--accent-soft)'
+                    : idx === activeIdx
+                      ? 'var(--surface-hover)'
+                      : 'transparent',
                   /* 选中项文字是 accent 作文字 —— 用 text-safe 的 --agent-accent-text。 */
                   color: isActive ? 'var(--agent-accent)' : 'var(--map-chrome-text)',
                   fontSize: 13,

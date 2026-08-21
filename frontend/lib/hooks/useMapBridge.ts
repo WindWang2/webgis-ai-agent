@@ -68,6 +68,11 @@ function mintFeActionId(): string {
 // only after the mount (onEvent) returned without throwing, with a
 // `store_mounted` marker (not `confirmed`, which implies convergence).
 const STORE_MOUNTED_COMMANDS = new Set(['add_native_heatmap', 'add_heatmap_raster', 'add_layer']);
+// #700 观测记录：后端与 ref 同结果混发的 command 仅上述三个 store-mounted
+// 成员（heatmap_data 家族，spatial.py:217-219）；visibility/display 系是
+// 独立工具调用（ref 作为其自身参数），不存在"同事件 command 先于挂载"
+// 的竞态模式。若未来新增同事件混发的非 store-mount 命令，需扩展本集合
+// 或引入按 ref 存在性的延迟 ack（见 #692/#700 评审）。
 const CAMERA_COMMANDS = new Set(['fly_to', 'set_map_view', 'zoom_to_bbox']);
 
 function maybeFlyToBbox(
