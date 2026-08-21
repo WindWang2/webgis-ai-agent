@@ -755,19 +755,6 @@ class ToolDispatchService:
         from app.services.raster_store import save_png
         from app.tools.cartography_tools import _runtime_patch
 
-        # #688：descriptor 命中则 O(1) 派生 profile（store 时已算好的
-        # bbox/feature_count/geometry_types——授权消费面：view 注入/图层
-        # 类型/指纹），零全量遍历；descriptor 缺失或不完整才降级全量
-        # profile_geojson_source（字段直方图等富信息场景）。payload 与
-        # source_data 共用同一份（converter 据此零遍历推断几何/点数）。
-        profile = (
-            await asyncio.to_thread(profile_from_descriptor, descriptor)
-            if descriptor
-            else None
-        )
-        if profile is None:
-            profile = await asyncio.to_thread(profile_geojson_source, target_data)
-
         safe_call_id = re.sub(r"[^A-Za-z0-9_-]+", "-", tool_call_id).strip("-")[:48]
         layer_id = f"raster-{safe_call_id or hashlib.sha256(tool_call_id.encode()).hexdigest()[:12]}"
         source_id = f"{layer_id}-source"
