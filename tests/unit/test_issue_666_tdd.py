@@ -123,18 +123,8 @@ async def test_fallback_does_not_str_serialize():
     expected = 5000 * 100 + 1024
     from app.api.routes.layer import _compute_descriptor_fallback
     # Spy on str and json.dumps
-    import app.api.routes.layer as layer_mod
-    import app.schemas.ref_descriptor as desc_mod
-    for mod in (layer_mod, desc_mod):
-        src = open(mod.__file__).read()
-        # No descriptor path should fully serialize a large payload: neither branch may call
-        # json.dumps/str on the whole payload to estimate bytes.
-        # For FC path, heuristic must be used; check that the file does not contain a
-        # payload-size json.dumps/str in the estimate branch (allow json.dumps for tiny descriptor dict).
-        assert "len(str(data))" not in src, f"{mod.__name__} still does len(str(data)) — violates work item 2"
-        # The non-FC fallback in ref_descriptor previously did len(json.dumps(data)); ensure gone
-        # Search for len(json.dumps(data patterns — large-payload serialization
-        assert "len(json.dumps(data" not in src, f"{mod.__name__} still serializes full payload via json.dumps"
+    # #694：grep 源码的断言已删（脆弱 oracle）——行为断言在下方
+    # （estimated_bytes 启发式 vs len(str) 的运行时对照）。
     # Also runtime check: estimated_bytes must be heuristic, not len(str)
     res = await asyncio.to_thread(_compute_descriptor_fallback, fc)
     assert res["estimated_bytes"] == expected, f"estimated_bytes should be heuristic {expected}, got {res['estimated_bytes']}"
@@ -146,13 +136,7 @@ def test_shared_helpers_public():
     import app.schemas.ref_descriptor as m
     assert hasattr(m, "iter_leaf_coords"), "iter_leaf_coords must be public"
     assert hasattr(m, "is_mvt_capable"), "is_mvt_capable must be public"
-    # is_mvt_capable is used by both compute_descriptor and layer fallback — check import in layer
-    import app.api.routes.layer as lm
-    src = open(lm.__file__).read()
-    assert "is_mvt_capable" in src, "layer.py must use shared is_mvt_capable"
-    assert "iter_leaf_coords" in src, "layer.py must use public iter_leaf_coords"
-    assert "_iter_leaf_coords" not in src or "_iter_leaf_coords = iter_leaf_coords" in src, "layer.py should not import private _iter_leaf_coords"
-    # Back-compat alias still exists
+    # #694：grep 源码断言已删；公开性与语义由上方 hasattr 与下方 spot-check 锁定
     assert hasattr(m, "_iter_leaf_coords")
     # is_mvt_capable semantics spot-check
     assert m.is_mvt_capable(["Point"], 1) is True

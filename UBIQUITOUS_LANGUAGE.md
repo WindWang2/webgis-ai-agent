@@ -18,7 +18,7 @@ opinionated glossary; where it disagrees with older docs, this file wins.
 
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |
-| **Validity ladder** | The ordered rungs a MapSpec can prove: `SYNTACTIC_VALID` → `SCHEMA_VALID` → `CARTO_SPEC_VALID` → `SEMANTIC_VALID` (ceiling). | validation stages, levels |
+| **Validity ladder** | The ordered rungs a MapSpec can prove: `NOT_EVALUATED` → `MUTATION_REJECTED` → `MUTATION_ACCEPTED` → `SEMANTIC_VALID` (ceiling). #694：对齐 `app/lib/runtime/evidence.py` 的实际枚举（旧 SYNTACTIC/SCHEMA/CARTO_SPEC 三级不存在于任何代码）。 | validation stages, levels |
 | **L5** | An explicit unevaluated rung above the ladder with no visual/goal oracle; never inherits L4/cartographic pass. | visual validation, level 5 |
 
 ## Evaluation & evidence

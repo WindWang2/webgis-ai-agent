@@ -17,6 +17,7 @@ Provenance contract (see .scratch/workflow-lineage-v2/invariants.md):
     ToolExecutionContext channel (spec §21).
 """
 import uuid
+import json
 import logging
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, timezone
@@ -44,6 +45,40 @@ from app.services.provenance.context import (
 from app.schemas.project_schema import WorkflowStepSpec
 
 logger = logging.getLogger(__name__)
+
+
+
+async def _dispatch_step_via_service(
+    tool_registry,
+    tool_name: str,
+    tool_args: dict,
+    session_id: Optional[str],
+    service,
+    executed_tools: set,
+) -> Dict[str, Any]:
+    """#694：workflow 步骤经 ToolDispatchService 执行（不再直调 registry）。
+
+    此前直调绕过了 #589 错误形态折叠与 Redis-unavailable ref 哨兵检测
+    （ADR-0014 只豁免 plan_mode/admin 端点）。service 缺省时惰性构建；
+    error 判别式结果上抛为 RuntimeError（workflow step 失败语义）。
+    """
+    from app.services.tool_dispatch_service import ToolDispatchService
+
+    if service is None:
+        service = ToolDispatchService(registry=tool_registry)
+    _tc = {
+        "id": "wf-step",
+        "function": {
+            "name": tool_name,
+            "arguments": json.dumps(tool_args, ensure_ascii=False, default=str),
+        },
+    }
+    _res = await service.dispatch(_tc, session_id=session_id, executed_tools=executed_tools)
+    _status = getattr(_res.status, "value", _res.status)
+    if _status == "error":
+        raise RuntimeError(f"tool '{tool_name}' failed: {_res.error_msg}")
+    out = _res.raw_result
+    return out if isinstance(out, dict) else {"success": True, "data": out}
 
 
 class WorkflowEngine:
@@ -314,6 +349,8 @@ class WorkflowEngine:
         execution_trace: List[Dict[str, Any]] = list(seed_trace or [])
         artifact_records: List[Dict[str, Any]] = list(seed_artifact_records or [])
 
+        step_dispatch_service = None  # #694: lazily built ToolDispatchService
+        step_executed_tools: set = set()
         try:
             for step_id in execution_order:
                 step_spec = step_map[step_id]
@@ -334,7 +371,12 @@ class WorkflowEngine:
                     "[WorkflowEngine] step '%s' tool '%s' v=%s arg_keys=%s",
                     step_id, tool_name, tool_version, _arg_keys,
                 )
-                tool_result = await tool_registry.dispatch(tool_name, tool_args, session_id=session_id)
+                # #694：经 ToolDispatchService 执行（#589 错误折叠 + 哨兵检测
+                # 不再被绕过）；helper 可独立测试。
+                tool_result = await _dispatch_step_via_service(
+                    tool_registry, tool_name, tool_args, session_id,
+                    step_dispatch_service, step_executed_tools,
+                )
 
                 step_duration = (datetime.now(timezone.utc) - step_start).total_seconds()
                 step_output = {"result": tool_result}
