@@ -98,7 +98,7 @@ class SpatialQualityEngine:
     def audit_dataset(
         cls,
         geojson_data: Dict[str, Any],
-        crs: str = "EPSG:4326",
+        crs: str | None = "EPSG:4326",
         dataset_id: Optional[str] = None,
     ) -> SpatialQualityReport:
         """
