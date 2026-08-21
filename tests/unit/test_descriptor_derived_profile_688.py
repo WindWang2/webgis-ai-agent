@@ -1,5 +1,4 @@
 """#688: 授权路径 descriptor→profile 派生——dispatch 全量遍历计数 + 等价性。"""
-import asyncio
 from unittest.mock import patch
 
 import pytest
@@ -131,7 +130,7 @@ async def test_author_dispatch_falls_back_to_full_profile_without_descriptor(mon
 
     monkeypatch.setattr(mapspec_store, "layer_upsert", fake_upsert)
     with patch.object(smp, "profile_geojson_source", side_effect=counting):
-        result = await service._author_display_result(
+        await service._author_display_result(
             session_id="s-688b",
             tool_call_id="tc-2",
             tool_name="query_osm_poi",
@@ -140,4 +139,4 @@ async def test_author_dispatch_falls_back_to_full_profile_without_descriptor(mon
             result_ref="ref:geojson:test-688b",
             descriptor=None,
         )
-    assert calls["n"] == 1, "无 descriptor 必须恰好降级一次全量 profile"
+    assert calls["n"] == 1, "无 descriptor 必须恰好降级一次全量 profile", "无 descriptor 必须恰好降级一次全量 profile"
