@@ -249,3 +249,14 @@ async def test_compute_terrain_unsupported_products_fall_back_to_dem(monkeypatch
     res_mixed = await engine.compute_terrain([0.0, 0.0, 1.0, 1.0], products=["aspect", "curvature"])
     assert res_mixed.index_type == "aspect"
     assert res_mixed.stats["unsupported_products"] == ["curvature"]
+
+
+def test_compute_raster_stats_masks_inf():
+    """#712: ±Inf pixels are invalid data — stats must be finite and the
+    valid-pixel count must exclude them (matching the renderer's mask)."""
+    import numpy as np
+    arr = np.array([[1.0, 2.0], [np.inf, -np.inf]])
+    stats = compute_raster_stats(arr)
+    assert stats["valid_pixels"] == 2
+    assert stats["min"] == 1.0 and stats["max"] == 2.0
+    assert np.isfinite(stats["mean"])

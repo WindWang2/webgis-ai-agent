@@ -190,7 +190,10 @@ def compute_raster_stats(array: np.ndarray, circular: bool = False) -> Dict[str,
     circular=True uses the atan2(mean sin, mean cos) mean for 0-360°
     quantities such as aspect (#618-17). min/max/std stay linear.
     """
-    valid_mask = ~np.isnan(array)
+    # #712: ±Inf pixels (DEM/co-registration artifacts) are not valid data —
+    # ~np.isnan keeps them and yields inf/nan stats narrated as real values,
+    # diverging from the renderer which masks all non-finite pixels.
+    valid_mask = np.isfinite(array)
     total_cells = array.size
     valid_cells = int(np.sum(valid_mask))
     if valid_cells == 0 or total_cells == 0:

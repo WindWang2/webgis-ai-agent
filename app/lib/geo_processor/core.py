@@ -409,17 +409,50 @@ def to_utm_gdf(geojson: Any, source_crs: Optional[str] = None) -> tuple[gpd.GeoD
         # when a single zone cannot represent the extent honestly.
         minx, miny, maxx, maxy = gdf.total_bounds
         lon_span = float(maxx - minx)
+        crosses_am = lon_span > 180.0
+        if crosses_am:
+            # #709: a dataset straddling ±180 has a raw lon span near 360°,
+            # so bounds-midpoint zone selection picks a Greenwich-centred
+            # zone (opposite side of the globe) and the >6° warning mislabels
+            # a 2° true span as continental. Rewrap per-geometry bounds into
+            # a continuous frame: a geometry that itself crosses AM reports
+            # [maxx, minx+360]; fully-negative lons shift +360. The selected
+            # zone is centered on the true extent; PROJ's TM trig handles the
+            # ±180 wrap on projection.
+            import numpy as np
+
+            b = gdf.geometry.bounds
+            lo, hi = b["minx"], b["maxx"]
+            am_geom = (hi - lo) > 180.0
+            lo_s = np.where(am_geom, hi, np.where(lo < 0, lo + 360.0, lo))
+            hi_s = np.where(am_geom, lo + 360.0, np.where(hi < 0, hi + 360.0, hi))
+            true_min, true_max = float(lo_s.min()), float(hi_s.max())
+            lon_span = true_max - true_min  # the honest span for the warning
         abs_max_lat = max(abs(float(miny)), abs(float(maxy)))
         polar = abs_max_lat > 84.0
 
         utm_crs = None
         if not polar:
-            try:
-                utm_crs_obj = gdf.estimate_utm_crs()
-                if utm_crs_obj is not None:
-                    utm_crs = str(utm_crs_obj)
-            except Exception:
-                utm_crs = None
+            if crosses_am:
+                center_shifted = (true_min + true_max) / 2.0
+                center_lon = (center_shifted + 180.0) % 360.0 - 180.0
+                zone_number = max(1, min(60, int((center_lon + 180) / 6) + 1))
+                hemisphere = 32600 if (float(miny) + float(maxy)) >= 0 else 32700
+                utm_crs = f"EPSG:{hemisphere + zone_number}"
+                try:
+                    projected = gdf.to_crs(utm_crs)
+                    projected["geometry"] = projected.geometry.make_valid()
+                    projected._original_crs = gdf._original_crs
+                    result = (projected, utm_crs)
+                except Exception:
+                    utm_crs = None
+            else:
+                try:
+                    utm_crs_obj = gdf.estimate_utm_crs()
+                    if utm_crs_obj is not None:
+                        utm_crs = str(utm_crs_obj)
+                except Exception:
+                    utm_crs = None
 
         if utm_crs:
             try:

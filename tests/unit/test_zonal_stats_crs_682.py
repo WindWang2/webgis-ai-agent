@@ -164,3 +164,23 @@ async def test_zonal_stats_tool_3857_zone_on_4326_raster(registry):
             os.unlink(raster_path)
         except OSError:
             pass
+
+
+@pytest.mark.asyncio
+async def test_zonal_stats_string_form_crs_member(tmp_path):
+    """#708: the string-form ``"crs": "EPSG:4326"`` member must be honored —
+    the old dict-only read raised AttributeError on the very form the
+    contract authority (extract_declared_crs) accepts."""
+    from app.lib.geo_analysis.raster_ops import zonal_statistics
+
+    raster = os.path.join(str(tmp_path), "const.tif")
+    _make_raster(raster, "EPSG:4326", value=1.0)
+
+    fc = {
+        "type": "FeatureCollection",
+        "crs": "EPSG:4326",  # string shorthand, not the dict form
+        "features": WGS84_ZONE_FC["features"],
+    }
+    stats = zonal_statistics(fc, raster, stats=["mean"])
+    assert stats and stats[0].get("mean") is not None
+    assert stats[0]["mean"] == pytest.approx(1.0, nan_ok=True)

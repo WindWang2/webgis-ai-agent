@@ -78,7 +78,13 @@ def zonal_statistics(
         geojson_obj = polygons_geojson
 
     if geojson_obj is not None and raster_crs is not None:
-        src_crs = geojson_obj.get("crs", {}).get("properties", {}).get("name", "EPSG:4326")
+        # #708: honor both GeoJSON crs member forms — the dict form
+        # ({"crs": {"properties": {"name": ...}}}) and the string shorthand
+        # ("crs": "EPSG:…") that extract_declared_crs (the contract authority)
+        # accepts; the old dict-only read raised AttributeError on the string
+        # form.
+        from app.lib.geo_processor.core import extract_declared_crs
+        src_crs = extract_declared_crs(geojson_obj) or "EPSG:4326"
         target_crs_str = str(raster_crs)
         try:
             reprojected_geojson = transform_geojson(geojson_obj, from_crs=src_crs, to_crs=target_crs_str)

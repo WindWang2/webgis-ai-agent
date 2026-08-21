@@ -499,13 +499,28 @@ class NetworkRoutingService:
         return min_ratio
 
     @staticmethod
-    def _bearing_change_deg(graph: nx.DiGraph, node_a: Any, node_b: Any, node_c: Any) -> float:
-        """Absolute bearing change (deg, [0, 180]) of the a→b→c polyline."""
+    def _bearing_vectors(
+        graph: nx.DiGraph, node_a: Any, node_b: Any, node_c: Any
+    ) -> tuple:
+        """Bearing vectors with Δx scaled by cos(mean lat).
+
+        #711: node coordinates are degrees — at 45°N a longitude degree is
+        ~cos(45°)=71% of a latitude degree, so raw-degree atan2 rotates true
+        bearings by ~10° and misclassifies turns near the 25° threshold.
+        """
         data_a = graph.nodes[node_a]
         data_b = graph.nodes[node_b]
         data_c = graph.nodes[node_c]
-        v1 = (data_b["x"] - data_a["x"], data_b["y"] - data_a["y"])
-        v2 = (data_c["x"] - data_b["x"], data_c["y"] - data_b["y"])
+        lat = (data_a["y"] + data_b["y"] + data_c["y"]) / 3.0
+        coslat = max(1e-9, math.cos(math.radians(min(89.9, max(-89.9, lat)))))
+        v1 = ((data_b["x"] - data_a["x"]) * coslat, data_b["y"] - data_a["y"])
+        v2 = ((data_c["x"] - data_b["x"]) * coslat, data_c["y"] - data_b["y"])
+        return v1, v2
+
+    @staticmethod
+    def _bearing_change_deg(graph: nx.DiGraph, node_a: Any, node_b: Any, node_c: Any) -> float:
+        """Absolute bearing change (deg, [0, 180]) of the a→b→c polyline."""
+        v1, v2 = NetworkRoutingService._bearing_vectors(graph, node_a, node_b, node_c)
         bearing1 = math.atan2(v1[1], v1[0])
         bearing2 = math.atan2(v2[1], v2[0])
         diff_deg = math.degrees(bearing2 - bearing1)
@@ -805,11 +820,7 @@ class NetworkRoutingService:
         diff_deg = self._bearing_change_deg(graph, node_a, node_b, node_c)
         # bearing_change is absolute; recover the signed direction for the
         # left/right classification from the raw bearings.
-        data_a = graph.nodes[node_a]
-        data_b = graph.nodes[node_b]
-        data_c = graph.nodes[node_c]
-        v1 = (data_b["x"] - data_a["x"], data_b["y"] - data_a["y"])
-        v2 = (data_c["x"] - data_b["x"], data_c["y"] - data_b["y"])
+        v1, v2 = self._bearing_vectors(graph, node_a, node_b, node_c)
         signed = math.degrees(math.atan2(v2[1], v2[0]) - math.atan2(v1[1], v1[0]))
         while signed > 180:
             signed -= 360

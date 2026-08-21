@@ -381,16 +381,39 @@ def kde_contours(
 
     out_features = []
     from shapely.geometry import Polygon
+    from shapely.ops import unary_union
     raw_polys = []  # (poly, val, level_idx) - batch CRS transform after loop
     for i, segs in enumerate(cs.allsegs):
         val = float(cs.levels[i])
+        level_polys = []
         for poly_coords in segs:
             if len(poly_coords) < 3:
                 continue
             poly = Polygon(poly_coords)
             if not poly.is_valid:
                 poly = poly.buffer(0)
-            raw_polys.append((poly, val, i))
+            if not poly.is_empty and poly.area > 0:
+                level_polys.append(poly)
+        # #707: contourf band boundaries include the boundaries of enclosed
+        # holes — emitting every segment as an independent filled polygon
+        # paints enclosed local minima (e.g. a POI ring around a park) at the
+        # band's density level. Rebuild each level's region with even-odd
+        # containment so holes stay holes.
+        if not level_polys:
+            continue
+        level_polys.sort(key=lambda p: p.area, reverse=True)
+        outers, inners = [], []
+        for idx, poly in enumerate(level_polys):
+            depth = sum(1 for prev in level_polys[:idx] if prev.contains(poly))
+            (outers if depth % 2 == 0 else inners).append(poly)
+        if not outers:
+            continue
+        region = unary_union(outers)
+        if inners:
+            region = region.difference(unary_union(inners))
+        for geom in getattr(region, "geoms", [region]):
+            if not geom.is_empty and getattr(geom, "area", 0) > 0:
+                raw_polys.append((geom, val, i))
 
     # Batch CRS transform: one GeoSeries instead of N per-polygon calls
     if raw_polys:

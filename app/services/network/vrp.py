@@ -106,7 +106,11 @@ class NetworkRouteOptimizationService:
             for j in range(n):
                 info = od["pairs"].get((labels[i], labels[j]))
                 if info and info["reachable"]:
-                    cost_mat[i][j] = info["time_s"]
+                    # #710: optimize the tour under the ACTIVE impedance —
+                    # od["cost"] is impedance-resolved (od_matrix weight_func),
+                    # matching build_route_from_path's total_cost accumulation;
+                    # time_s made the tour time-optimal under any impedance.
+                    cost_mat[i][j] = info["cost"]
                 else:
                     cost_mat[i][j] = 1e9
 

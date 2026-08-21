@@ -162,3 +162,42 @@ def test_kde_surface_drops_cells_below_threshold():
     assert len(fc["features"]) == fc["count"]
     for feat in fc["features"]:
         assert feat["properties"]["density"] >= threshold - 1e-6
+
+
+def test_kde_contours_ring_distribution_keeps_holes():
+    """#707: a ring-shaped distribution (high-density band around a low-density
+    center) must NOT paint the enclosed center at the band's level — contourf
+    hole boundaries are rebuilt with even-odd containment."""
+    import numpy as np
+    from shapely.geometry import shape
+
+    rng = np.random.default_rng(707)
+    # ~360 points on a ring of radius ~1.5 km around a park (empty center)
+    angles = np.linspace(0, 2 * np.pi, 360, endpoint=False)
+    r = 1500.0 + rng.normal(0, 120.0, size=angles.size)
+    lons = 116.0 + (r * np.cos(angles)) / (111_320.0 * np.cos(np.radians(39.0)))
+    lats = 39.0 + (r * np.sin(angles)) / 110_540.0
+    points = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {}, "geometry": {"type": "Point", "coordinates": [float(lo), float(la)]}}
+            for lo, la in zip(lons, lats)
+        ],
+    }
+
+    res = kde_contours(points)
+    assert res.success
+    fc = res.data
+    assert fc["count"] > 0
+
+    from shapely.ops import unary_union
+    union = unary_union([shape(f["geometry"]) for f in fc["features"]])
+    hull = union.convex_hull
+    # The disc (hull) is ~pi*r^2 ≈ 7.1 km^2; the annulus excludes the low
+    # center (~pi*(r-bandwidth)^2). With the old hole-filling code the union
+    # covered ≈ the full hull (>0.95); with holes it must be well below.
+    coverage = union.area / hull.area
+    assert coverage < 0.90, (
+        f"#707 regression: contour union covers {coverage:.0%} of the hull — "
+        "enclosed low-density center is painted at band level"
+    )

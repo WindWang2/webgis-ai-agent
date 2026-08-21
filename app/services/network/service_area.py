@@ -55,6 +55,11 @@ def _break_to_cutoff(
     for Dijkstra seconds weight (seconds/60 -> minutes handled by caller).
     """
     norm = _normalize_break_unit(break_unit)
+    raw = str(break_unit or "").strip().lower()
+    if raw == "km":
+        # km is an alias for meters — the VALUE must scale with the unit
+        # rename, otherwise a 5 km isochrone computes as 5 m (#706).
+        return float(brk_val) * 1000.0
     if norm == "seconds":
         # seconds break with seconds-weighted graph: pass through as seconds;
         # with minutes-weighted graph, convert.
@@ -155,7 +160,15 @@ class NetworkServiceAreaService:
         # needed, so barriers apply in place — no second graph copy.
         graph_view = self.router._apply_barriers(graph_work, barriers, copy_graph=not needs_split)
 
-        cost_field = "travel_time_s" if break_unit == "minutes" else "length_m"
+        # #706: cost_field must follow the NORMALIZED unit — the raw-string
+        # compare picked length_m for break_unit="seconds", silently comparing
+        # a seconds cutoff against meter weights (540 s → 540 m isochrone).
+        normalized_break_unit = _normalize_break_unit(break_unit)
+        cost_field = (
+            "travel_time_s"
+            if normalized_break_unit in ("minutes", "seconds")
+            else "length_m"
+        )
         if impedance and impedance.name:
             cost_field = impedance.name
 

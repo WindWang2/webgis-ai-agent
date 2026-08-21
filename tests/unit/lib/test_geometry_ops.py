@@ -221,3 +221,31 @@ def test_multi_ring_buffer_state_plane_feet_distance_in_meters():
     # area_km2 must be the true metric area (π km² for a 1 km radius), not the
     # ft² figure divided by 1e6 (~10.76× overreport pre-fix).
     assert feat["properties"]["area_km2"] == pytest.approx(math.pi, abs=0.05)
+
+
+def test_to_utm_gdf_antimeridian_zone_selection():
+    """#709: AM-crossing data must select a zone centered on the ±180 extent,
+    not a Greenwich-centred one, and must not warn about a continental span
+    for a ~0.2° true span."""
+    from app.lib.geo_processor.core import to_utm_gdf
+
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {}, "geometry": {"type": "Point", "coordinates": [179.9, -17.0]}},
+            {"type": "Feature", "properties": {}, "geometry": {"type": "Point", "coordinates": [-179.9, -17.0]}},
+        ],
+    }
+    from unittest import mock
+    from app.lib.geo_processor import core as gp_core
+    with mock.patch.object(gp_core.logger, "warning") as warn:
+        result = to_utm_gdf(fc)
+        gdf, crs = result if isinstance(result, tuple) else (result, getattr(result, "_utm_crs", None))
+        assert crs == "EPSG:32701", f"expected zone 1S for ±180 data, got {crs}"
+        # both points must project into the SAME hemisphere (the old
+        # Greenwich-centred zone produced y=+8.12M vs y=-8.12M)
+        ys = [p.y for p in gdf.geometry]
+        assert all(y > 0 for y in ys) or all(y < 0 for y in ys)
+        # no continental-span warning for a 0.2° true span
+        span_warnings = [c for c in warn.call_args_list if "exceeds one UTM zone" in str(c)]
+        assert not span_warnings, f"spurious span warning: {span_warnings}"
