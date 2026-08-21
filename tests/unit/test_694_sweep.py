@@ -123,7 +123,6 @@ def test_osm_unmapped_chinese_category_returns_hint():
         if callable(fn) and "category" in (getattr(fn, "__doc__", "") or ""):
             hits.append(fn)
     # 直接从源码常量验证映射表覆盖（映射表为局部量的最小行为锁）
-    import inspect
     src = inspect.getsource(osm_mod)
     assert '"小学"' in src and "primary_school" in src, "小学 映射缺失（死查询回归）"
     assert "correction_hint" in src, "未映射值必须有 correction_hint 路径"
