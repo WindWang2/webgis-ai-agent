@@ -944,7 +944,6 @@ export function syncLayerZOrder(map: Map, prefix: string, orderedBaseIds: string
   }
   // 反向：希望数组首的图层最终在最上面
   for (const baseId of [...orderedBaseIds].reverse()) {
-    const fullPrefix = prefix ? `${prefix}${baseId}` : baseId;
     const sub = buckets[baseId] ?? [];
     for (const id of sub) {
       try {
