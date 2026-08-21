@@ -1,5 +1,6 @@
 """会话数据管理器 - 存储大对象并提供游标引用"""
 import asyncio
+import copy
 import uuid
 import logging
 from typing import Any, Optional
@@ -147,7 +148,13 @@ class MemorySessionStore(BaseSessionStore):
         return {s: aliases.get(s, s) for s in strings}
 
     async def get(self, session_id: str, ref_id_or_alias: str) -> Optional[Any]:
-        """根据游标 ID 或别名获取原始数据"""
+        """根据游标 ID 或别名获取原始数据
+        
+        返回深拷贝副本以统一内存/Redis 后端语义（#701-2）：
+        - Redis 侧每次 json.loads 天然返回新对象
+        - 内存侧必须 deepcopy，消除可变别名
+        调用方就地改 payload 不影响存储；显式更新需调 store_* 方法。
+        """
         session_cache = self._store.get(session_id)
         if not session_cache:
             return None
@@ -165,7 +172,9 @@ class MemorySessionStore(BaseSessionStore):
         data = session_cache.pop(ref_id)
         session_cache[ref_id] = data
         self._touch_session(session_id)
-        return data
+        
+        # 返回深拷贝副本（与 Redis 侧语义对齐）
+        return copy.deepcopy(data)
 
     # P2-1: get_ref_data was a byte-identical override of
     # BaseSessionStore.get_ref_data and has been removed. The inherited Base

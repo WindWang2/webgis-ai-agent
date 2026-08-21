@@ -68,8 +68,15 @@ def get_bridge_secret() -> str:
                         pass
                     raise
     except Exception as e:
-        logger.warning(f"Failed to write bridge secret file: {e}")
-        val = secrets.token_urlsafe(32)
+        # ADR-0066 同款精神：错误在源头可见比在下游可诊断便宜。
+        # 多 worker 部署下回退随机值会导致各 worker 持不同 secret → Pi 回调间歇 401。
+        # 要么全拿到同一个 secret，要么全部启动失败，无中间态。
+        logger.error(f"Failed to write bridge secret file: {e}")
+        raise RuntimeError(
+            f"Cannot initialize Pi bridge secret (write failed: {e}). "
+            "Multi-worker deployments require a persistent shared secret. "
+            "Check file permissions and disk space."
+        ) from e
     os.environ["WEBGIS_BRIDGE_SECRET"] = val
     return val
 
