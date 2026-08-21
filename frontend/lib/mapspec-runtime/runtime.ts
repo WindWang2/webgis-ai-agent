@@ -162,7 +162,12 @@ export class MapSpecRuntime {
     this.reconcileTail = this.reconcileTail
       .then(() => this.processOne(nextSpec, 0))
       .catch((err) => {
-        console.warn("[MapSpecRuntime] reconcileAsync error:", err);
+        // #692：链内兜底 catch 仅供断链保护——生产静默（此前裸 console.warn
+        // 是生产噪声），dev 下保留可诊断性。map-panel 侧挂在该链尾部的
+        // .catch 因此可达性不变（本 catch 吞掉后链恢复 resolved）。
+        if (process.env.NODE_ENV === "development") {
+          console.warn("[MapSpecRuntime] reconcileAsync error:", err);
+        }
       });
     return this.reconcileTail;
   }
