@@ -140,6 +140,23 @@ class TestPlannerWiringForNewModels:
         reasons = {f.reason_code for f in finalized.fallbacks}
         assert "INSUFFICIENT_POINTS" in reasons
 
+    def test_finalize_preserves_geometry_reason_code_for_grid(self):
+        """面几何失配：fallback 必须保留 GEOMETRY_NOT_SUPPORTED 真实原因码
+        （此前被 reason_code 过滤器吞掉后硬编码误标为 INSUFFICIENT_POINTS）。"""
+        intent = resolve_map_request_intent("成都小学按1公里格网统计分布")
+        plan = self.planner.plan_from_intent(intent)
+        finalized = self.planner.finalize_with_profile(
+            plan, _profile(500, geom="Polygon"))
+        grid_layer = next(
+            ly for ly in finalized.map_layers if ly.cartography == "aggregate_grid")
+        assert grid_layer.enabled is False
+        assert "GEOMETRY_NOT_SUPPORTED" in grid_layer.note
+        grid_fb = next(
+            f for f in finalized.fallbacks if f.from_element == "aggregate_grid")
+        assert grid_fb.reason_code == "GEOMETRY_NOT_SUPPORTED"
+        assert grid_fb.to_element == "point_distribution"
+        assert grid_fb.evidence.get("dominant_geometry") == "polygon"
+
 
 class TestComponentsForNewModels:
     @pytest.mark.parametrize("carto,legend_kind", [

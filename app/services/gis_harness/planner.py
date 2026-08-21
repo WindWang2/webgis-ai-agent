@@ -303,8 +303,11 @@ class MapProductPlanner:
             from app.services.gis_harness.recipes import _geometry_category
             profile_geom = _geometry_category(geom_types)
 
-        # 图层级裁决：热力/格网主层被禁 → 降级 + （几何为点时）点层提升
+        # 图层级裁决：热力/格网主层被禁 → 降级 + （几何为点时）点层提升。
+        # 两种主表达各持独立 recorded 标志：混合模板（热力+格网）同被禁时
+        # 各自记录 fallback，不互相吞并。
         heat_fallback_recorded = False
+        grid_fallback_recorded = False
         for layer in finalized.map_layers:
             if layer.cartography in ("visual_heatmap", "density_overview"):
                 if "visual_heatmap" in disabled_elements or "native_heatmap" in disabled_elements:
@@ -340,15 +343,17 @@ class MapProductPlanner:
                         heat_fallback_recorded = True
             elif layer.cartography == "aggregate_grid":
                 if "aggregate_grid" in disabled_elements or "recipe" in disabled_elements:
+                    # 不按 reason_code 过滤：GEOMETRY_NOT_SUPPORTED 与
+                    # INSUFFICIENT_POINTS 都要保留真实原因码（此前过滤导致
+                    # 几何失配被硬编码误标为 INSUFFICIENT_POINTS）。
                     reason = next(
-                        (d for d in report.disabled if d.element in ("aggregate_grid", "recipe")
-                         and d.reason_code == "INSUFFICIENT_POINTS"),
+                        (d for d in report.disabled if d.element in ("aggregate_grid", "recipe")),
                         None,
                     )
                     layer.enabled = False
                     layer.role = "secondary"
                     layer.note = f"disabled: {reason.reason_code}" if reason else "disabled"
-                    if not heat_fallback_recorded:
+                    if not grid_fallback_recorded:
                         point_layer = next(
                             (ly for ly in finalized.map_layers
                              if ly.cartography in ("point_overlay", "simple_point_map")
@@ -360,13 +365,13 @@ class MapProductPlanner:
                         finalized.fallbacks.append(FallbackDecision(
                             from_element="aggregate_grid",
                             to_element="point_distribution",
-                            reason_code=reason.reason_code if reason else "INSUFFICIENT_POINTS",
+                            reason_code=reason.reason_code if reason else "INELIGIBLE",
                             evidence={
                                 **(reason.evidence if reason else {}),
                                 "profile_geometry": profile_geom,
                             },
                         ))
-                        heat_fallback_recorded = True
+                        grid_fallback_recorded = True
 
         # recipe 整体不合格 → 禁用与被禁元素对应的图层并记录 RECIPE_INELIGIBLE；
         # 全部图层被禁时追加点图兜底层（gate 因此可达）。
