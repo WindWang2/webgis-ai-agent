@@ -543,6 +543,18 @@ class ToolRegistry:
                     recovery_action = _recovery_action_for(_fc).value
                 except Exception:  # noqa: BLE001
                     pass
+            # #691：result 为 MapSpec 产物时补 revision/fingerprint（无遍历，取即有字段）
+            _mapspec_revision = _mapspec_fingerprint = None
+            if isinstance(result, dict):
+                _mapspec_revision = result.get("mutation_revision")
+                if _mapspec_revision is not None:
+                    try:
+                        _mapspec_revision = int(_mapspec_revision)
+                    except Exception:
+                        _mapspec_revision = None
+                _mapspec_fingerprint = result.get("mapspec_fingerprint")
+                if not isinstance(_mapspec_fingerprint, str) or not _mapspec_fingerprint:
+                    _mapspec_fingerprint = None
             tool_metrics.record_tool_call(
                 tool=name,
                 arg_bytes=arg_bytes,
@@ -561,6 +573,8 @@ class ToolRegistry:
                 step_id=step_id,
                 failure_class=failure_class,
                 recovery_action=recovery_action,
+                mapspec_revision=_mapspec_revision,
+                mapspec_fingerprint=_mapspec_fingerprint,
             )
             # Runtime observability: record this actual tool execution into the
             # live turn's evidence (single chokepoint — registry.dispatch is the

@@ -263,6 +263,32 @@ except ImportError:
     logger.warning("prometheus-fastapi-instrumentator not installed — /metrics endpoint disabled")
 
 
+class RequestCorrelationMiddleware(BaseHTTPMiddleware):
+    """#691：读 X-Request-ID 进 RuntimeContext，回显响应头。无则生成。
+
+    进出均走同一 contextvar（RuntimeContext.request_id），与后续
+    bind_runtime_context 合并；响应头始终回显（前端 transport.ts 也注入，
+    现在服务端正式消费并关联日志）。
+    """
+
+    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+        try:
+            from app.lib.runtime.context import bind_runtime_context, new_request_id
+        except Exception:  # noqa: BLE001
+            return await call_next(request)
+        incoming = request.headers.get("x-request-id")
+        req_id = incoming.strip() if isinstance(incoming, str) and incoming.strip() else new_request_id()
+        # 合并进 RuntimeContext，并保留 session_id（若已有，如 WebSocket）
+        with bind_runtime_context(request_id=req_id):
+            response = await call_next(request)
+            # 回显（CORS 已 expose，跨域前端可读）
+            try:
+                response.headers["X-Request-ID"] = req_id
+            except Exception:  # noqa: BLE001
+                pass
+            return response
+
+
 # Rate limiting middleware (Redis with in-memory fallback)
 class RateLimitMiddleware(BaseHTTPMiddleware):
     # 会话恢复一次并发拉取 8-15 个图层 geojson（restoreSessionMapLayers），
@@ -342,6 +368,10 @@ app.add_middleware(
     ],
     expose_headers=["X-Request-ID"],
 )
+# #691：X-Request-ID 关联与回显。add_middleware 是反序（最后注册最先执行），
+# 故该 middleware 必须在 CORS 之后注册才能成为最外层——即使 CORS 直接处理
+# OPTIONS 预检返回，也能回显 X-Request-ID。
+app.add_middleware(RequestCorrelationMiddleware)
 
 app.include_router(auth_routes.router, prefix="/api/v1", tags=["认证"])
 app.include_router(health.router, prefix="/api/v1", tags=["健康检查"])

@@ -616,6 +616,7 @@ def _pi_stream_capability(
 @router.post("/completions", response_model=ChatResponse)
 async def chat_completions(
     req: ChatRequest,
+    request: Request,
     _user: dict = Depends(get_current_user_optional),
     owner_token: Optional[str] = Depends(get_owner_token),
     db: AsyncSession = Depends(get_async_db),
@@ -624,10 +625,10 @@ async def chat_completions(
     user_id = _user.get("user_id")
     await _guard_body_session(db, req.session_id, user_id, owner_token)
 
-    # Runtime observability (W1): mint a request id and bind request-scoped
-    # correlation. The Pi bridge / legacy engine bind turn_id/run_id on top of
-    # this (merged), so a full identity chain reaches metrics + job rows.
-    request_id = rt_ctx.new_request_id()
+    # #691：复用 middleware 已绑的 request_id（若无则生成），与日志关联一致。
+    _mid_req = (rt_ctx.current_runtime_context().request_id
+                if rt_ctx.current_runtime_context() else None)
+    request_id = _mid_req or request.headers.get("x-request-id") or rt_ctx.new_request_id()
     with rt_ctx.bind_runtime_context(request_id=request_id, session_id=req.session_id):
         if _use_pi_bridge():
             try:
@@ -749,11 +750,9 @@ async def chat_stream(
 
     session_key = (pi_session_id if use_pi else req.session_id) or ""
 
-    # Runtime observability (W1): request-scoped correlation, bound INSIDE the
-    # streaming generators (a `with` in the route body would exit before the
-    # stream starts). stream_prompt / chat_stream bind turn_id/run_id on top of
-    # this, so the full identity chain reaches tool metrics + durable job rows.
-    request_id = rt_ctx.new_request_id()
+    # #691：复用 middleware 已绑的 request_id，生成器内再合并 session_id。
+    _mid = rt_ctx.current_runtime_context()
+    request_id = (_mid.request_id if _mid and _mid.request_id else None) or rt_ctx.new_request_id()
 
     if last_event_id is not None:
         # DUP-1: a POST carrying Last-Event-ID is a RESUME (read) — never a

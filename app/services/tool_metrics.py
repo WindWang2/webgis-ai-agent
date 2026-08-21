@@ -215,6 +215,9 @@ def record_tool_call(
     step_id: Optional[str] = None,
     failure_class: Optional[str] = None,
     recovery_action: Optional[str] = None,
+    # #691：MapSpec generation 关联（additive）
+    mapspec_revision: Optional[int] = None,
+    mapspec_fingerprint: Optional[str] = None,
 ) -> None:
     """落一行 JSONL（入队，异步落盘）+ 更新聚合器。失败不抛。
 
@@ -277,6 +280,8 @@ def record_tool_call(
         "step_id": step_id,
         "failure_class": failure_class,
         "recovery_action": recovery_action,
+        "mapspec_revision": mapspec_revision,
+        "mapspec_fingerprint": mapspec_fingerprint,
     }
     line = json.dumps(row, separators=(",", ":")) + "\n"
     try:
