@@ -74,7 +74,8 @@ async def _dispatch_step_via_service(
         },
     }
     _res = await service.dispatch(_tc, session_id=session_id, executed_tools=executed_tools)
-    if _res.status.value == "error":
+    _status = getattr(_res.status, "value", _res.status)
+    if _status == "error":
         raise RuntimeError(f"tool '{tool_name}' failed: {_res.error_msg}")
     out = _res.raw_result
     return out if isinstance(out, dict) else {"success": True, "data": out}
