@@ -123,8 +123,6 @@ async def test_fallback_does_not_str_serialize():
     expected = 5000 * 100 + 1024
     from app.api.routes.layer import _compute_descriptor_fallback
     # Spy on str and json.dumps
-    import app.api.routes.layer as layer_mod
-    import app.schemas.ref_descriptor as desc_mod
     # #694：grep 源码的断言已删（脆弱 oracle）——行为断言在下方
     # （estimated_bytes 启发式 vs len(str) 的运行时对照）。
     # Also runtime check: estimated_bytes must be heuristic, not len(str)

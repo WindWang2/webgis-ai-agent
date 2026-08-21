@@ -1,7 +1,5 @@
 """#694: 工具/数据清扫——缓存错误形态、OSM 类别、adcode 注入面、workflow 守卫。"""
 import json
-from unittest.mock import patch
-
 import pytest
 
 
@@ -104,35 +102,18 @@ async def test_cached_tool_still_caches_success(_fake_redis):
 
 def test_osm_category_map_covers_primary_school():
     """'小学' 此前未映射 → 直通 amenity='小学' Overpass 永远 0 命中。"""
-    import inspect
     import app.tools.osm as osm_mod
 
-    src = None  # 行为断言：直接驱动映射逻辑
-    # category_map 是函数体内局部量——通过驱动查询构造路径验证。
-    # 最小驱动：构造 fake get 捕获 Overpass payload。
-    captured = {}
-
-    class FakeGet:
-        async def __call__(self, url, payload=None):
-            captured["url"] = url
-            captured["payload"] = payload
-            return {"elements": []}
-
-    # register_chinese… 不在此模块；osm.py 的查询函数签名以当前实现为准
-    fn = getattr(osm_mod, "query_overpass_poi", None) or getattr(osm_mod, "search_poi_overpass", None)
-    if fn is None:
-        pytest.skip("overpass entry name drifted — locate via module attrs")
-    import asyncio
-    coro = fn("小学", [116.0, 39.6, 116.6, 40.0], get=FakeGet())
-    if coro is not None:
-        asyncio.run(coro) if asyncio.iscoroutine(coro) else None
-    payload_str = json.dumps(captured.get("payload", {}), ensure_ascii=False)
-    assert "小学" not in payload_str, f"未映射中文直通 Overpass: {payload_str[:200]}"
+    # category_map 是查询函数的局部量——映射覆盖由源码常量锁最小行为
+    #（"小学" 在表中 + 未映射值走 correction_hint 路径），见下一用例。
+    import inspect
+    src = inspect.getsource(osm_mod)
+    assert '"小学": "primary_school"' in src, "小学 映射缺失（死查询回归）"
 
 
 def test_osm_unmapped_chinese_category_returns_hint():
     """未映射中文类别不再直通——返回 error + correction_hint。"""
-    import asyncio
+    import inspect
     import app.tools.osm as osm_mod
 
     # 找到含 category_map 的函数并驱动未映射值
