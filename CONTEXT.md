@@ -61,6 +61,55 @@ and SSE event payload formatting behind `chat()` and `chat_stream()` interfaces.
 The deep plan state orchestration engine (`app/services/chat/plan_orchestrator.py`).
 Encapsulates structured plan creation (`Plan`), heuristic gating, LRU plan memory caching,
 and `ToolCatalog` domain decay synchronization behind a unified execution seam.
+Plans additionally carry the deterministic GIS intent projection (`gis_intent` +
+`recipe_id`, attached by the GIS Harness resolver) for audit and product assembly.
+
+### GIS Harness
+The GIS domain-intelligence layer (`app/services/gis_harness/`). Owns intent
+resolution (`MapRequestIntent`), cartography-recipe selection and eligibility
+re-checks (`CartographyRecipe` / `RecipeRegistry`), product planning
+(`MapProductPlan` / `MapProductPlanner`), composable map components
+(`CartographyComponent`), and map-product evidence feeding `PiAgentHarness`.
+Never executes tools and never holds runtime state — execution stays with
+`ToolDispatchService`, desired cartography stays with MapSpec. See
+`docs/gis-harness.md` and `specs/gis-harness-cartography-recipes-spec.md`.
+
+### CartographyRecipe
+A deterministic "how to make this kind of map" contract (intent matching,
+geometry requirements, eligibility rules such as `visual_heatmap: min_points=10`,
+capability-based analysis requirements, primary/secondary cartography, declared
+fallbacks, export profile). Stored in the indexed `RecipeRegistry`
+(`app/services/gis_harness/recipes.py`). Templates describe desired products;
+recipes describe cartographic method; neither hardcodes tool-call sequences
+(capability→tool resolution happens at execution time).
+
+### MapProductPlan
+The typed, replayable execution plan produced by `MapProductPlanner`
+(`app/services/gis_harness/planner.py`) in two phases: draft from intent, then
+finalized against the real Spatial Profile (eligibility re-check, layer
+adjudication with structured fallback evidence `{from, to, reason_code,
+evidence}`, final component set, completeness assessment). `plan_id` is derived
+deterministically from (query, recipe) — diffable and replayable.
+
+### CartographyComponent
+A typed, individually-addressable map-decoration unit (title, north_arrow,
+scale_bar, legend, continuous_colorbar, attribution, export_layout, …) with
+`id/type/enabled/position/priority/style/options` (`app/services/gis_harness/
+components.py`). Components land in `MapSpec.layout.components`; live rendering
+(`frontend/components/map/map-spec-chrome.tsx`) and export read the same list.
+A component mutation (「换一个指南针」) touches exactly one component and never
+re-queries data. Legend (discrete/graduated) and colorbar (continuous) are
+distinct component types chosen by the thematic representation.
+
+### Heatmap Radius Contract
+The separation of the historically conflated `radius` semantics
+(`app/lib/cartography/heatmap_contract.py`, frontend mirror
+`frontend/lib/map-kit/renderer.ts::resolveHeatmapRadiusPx`): visual heatmap
+kernel radius is `radius_px` (screen pixels, default 30, clamp [4,80]);
+analytical density bandwidth is `bandwidth_m` (meters, feeds raster/grid sigma).
+Legacy `radius` (meters per the old schema) is normalized once, explicitly, at
+this boundary with recorded migration warnings — meter values are never consumed
+as pixels anywhere in the chain.
 
 ### SpectralRasterEngine
 The deep remote sensing raster computation engine (`app/services/rs/spectral_engine.py`).
