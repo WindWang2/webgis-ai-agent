@@ -205,6 +205,33 @@ def _infer_geometry_category(geojson: Optional[Dict[str, Any]]) -> Tuple[str, Li
 # the same canonical ``legend_spec``.
 
 
+def _category_from_geometry_types(geometry_types: Any) -> Optional[str]:
+    """#688 收尾：descriptor 的 geometry_types → 几何主类别（零遍历）。
+
+    与 _infer_geometry_category 同一映射；types 缺失/空/不可解析时返回
+    None，调用方降级为对 FC 自行推断（向后兼容无 profile 的调用方）。
+    """
+    if not isinstance(geometry_types, (list, tuple)):
+        return None
+    has_point = has_line = has_polygon = False
+    for t in geometry_types:
+        if not isinstance(t, str):
+            continue
+        if "Point" in t:
+            has_point = True
+        elif "LineString" in t:
+            has_line = True
+        elif "Polygon" in t:
+            has_polygon = True
+    if has_polygon:
+        return "polygon"
+    if has_line:
+        return "line"
+    if has_point:
+        return "point"
+    return None
+
+
 def _resolve_paint_color(
     legend_spec: Any, layer_type: str
 ) -> Tuple[Any, bool, List[str]]:
@@ -238,8 +265,17 @@ def convert_analysis_to_mapspec_layer(
             analysis_result = {}
 
         inline_geojson = _extract_geojson(analysis_result)
-        geom_cat, geom_warnings = _infer_geometry_category(inline_geojson)
-        warnings.extend(geom_warnings)
+        # #688 收尾：授权路径传入 descriptor 派生的 profile 时，几何类别与
+        # 点数零遍历可得（featureCount/geometryTypes 在 store 时已算好）；
+        # 无 profile 才对 FC 自行推断（其他调用方向后兼容）。
+        raw_profile = analysis_result.get("profile")
+        profile = raw_profile if isinstance(raw_profile, dict) else None
+        geom_cat = _category_from_geometry_types(profile.get("geometryTypes")) if profile else None
+        if geom_cat is not None:
+            geom_warnings = []
+        else:
+            geom_cat, geom_warnings = _infer_geometry_category(inline_geojson)
+            warnings.extend(geom_warnings)
 
         cat_to_layer_type = {
             "point": "circle",
@@ -258,6 +294,8 @@ def convert_analysis_to_mapspec_layer(
             # actual GeoJSON feature count; geometry guard uses inferred category.
             meta = analysis_result.get("metadata") or {}
             hint_count = meta.get("point_count")
+            if not (isinstance(hint_count, int) and hint_count >= 0) and profile:
+                hint_count = profile.get("featureCount")
             if isinstance(hint_count, int) and hint_count >= 0:
                 point_count = hint_count
             else:

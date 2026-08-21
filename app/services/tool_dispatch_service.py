@@ -581,11 +581,29 @@ class ToolDispatchService:
         from app.services.spatial_meta_profiler import profile_geojson_source, profile_from_descriptor
         from app.tools.cartography_tools import _fingerprint_metadata, _runtime_patch
 
+        # #688：descriptor 命中则 O(1) 派生 profile（store 时已算好的
+        # bbox/feature_count/geometry_types——授权消费面：view 注入/图层
+        # 类型/指纹），零全量遍历；descriptor 缺失或不完整才降级全量
+        # profile_geojson_source（字段直方图等富信息场景）。payload 与
+        # source_data 共用同一份（converter 据此零遍历推断几何/点数）。
+        profile = (
+            await asyncio.to_thread(profile_from_descriptor, descriptor)
+            if descriptor
+            else None
+        )
+        if profile is None:
+            profile = await asyncio.to_thread(profile_geojson_source, target_data)
+
         safe_call_id = re.sub(r"[^A-Za-z0-9_-]+", "-", tool_call_id).strip("-")[:48]
         layer_id = f"result-{safe_call_id or hashlib.sha256(tool_call_id.encode()).hexdigest()[:12]}"
         source_id = f"{layer_id}-source"
         analysis_payload = {
             "geojson": target_data,
+            # #688 收尾：把已派生的 profile 传入 converter——几何类别/点数
+            # 零遍历可得，converter 不再对大 FC 自行遍历（原扫描 3）。
+            # 复用上方 profile 局部量（descriptor 派生或全量降级的结果，
+            # 均携带 featureCount/geometryTypes）。
+            "profile": profile,
             "legend_spec": result.get("legend_spec"),
             "algorithm": tool_name,
             "result_ref": result_ref,
@@ -609,17 +627,8 @@ class ToolDispatchService:
                     },
                 },
             )
-            # #688：descriptor 命中则 O(1) 派生 profile（store 时已算好的
-            # bbox/feature_count/geometry_types——授权消费面：view 注入/图层
-            # 类型/指纹），零全量遍历；descriptor 缺失或不完整才降级全量
-            # profile_geojson_source（字段直方图等富信息场景）。
-            profile = (
-                await asyncio.to_thread(profile_from_descriptor, descriptor)
-                if descriptor
-                else None
-            )
-            if profile is None:
-                profile = await asyncio.to_thread(profile_geojson_source, target_data)
+            # profile 已在 analysis_payload 构建前派生——payload 与
+            # source_data 共用同一份（#688 收尾）。
             source_data = {
                 "type": "geojson",
                 "ref_id": result_ref,
@@ -745,6 +754,19 @@ class ToolDispatchService:
         from app.services.mapspec_store import mapspec_store
         from app.services.raster_store import save_png
         from app.tools.cartography_tools import _runtime_patch
+
+        # #688：descriptor 命中则 O(1) 派生 profile（store 时已算好的
+        # bbox/feature_count/geometry_types——授权消费面：view 注入/图层
+        # 类型/指纹），零全量遍历；descriptor 缺失或不完整才降级全量
+        # profile_geojson_source（字段直方图等富信息场景）。payload 与
+        # source_data 共用同一份（converter 据此零遍历推断几何/点数）。
+        profile = (
+            await asyncio.to_thread(profile_from_descriptor, descriptor)
+            if descriptor
+            else None
+        )
+        if profile is None:
+            profile = await asyncio.to_thread(profile_geojson_source, target_data)
 
         safe_call_id = re.sub(r"[^A-Za-z0-9_-]+", "-", tool_call_id).strip("-")[:48]
         layer_id = f"raster-{safe_call_id or hashlib.sha256(tool_call_id.encode()).hexdigest()[:12]}"
