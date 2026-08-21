@@ -186,3 +186,12 @@ def test_prompt_and_tool_description_contain_quantitative_guard():
     desc = next((s["function"]["description"] for s in reg.get_schemas() if s["function"]["name"] == "heatmap_data"), "")
     assert "HEATMAP_MIN_POINTS" in desc or "10" in desc
     assert "correction_hint" in desc
+
+
+def test_planner_prompt_carries_quantitative_guardrail():
+    """#690 评审补丁：票面三处偏置面之一的 PLANNER_PROMPT 也必须携带
+    定量护栏（此前只补了 SYSTEM_PROMPT 与工具描述）。"""
+    from app.services.chat.plan_orchestrator import PLANNER_PROMPT
+
+    assert "HEATMAP_MIN_POINTS" in PLANNER_PROMPT or "<10" in PLANNER_PROMPT
+    assert "线/面" in PLANNER_PROMPT or "非点" in PLANNER_PROMPT
