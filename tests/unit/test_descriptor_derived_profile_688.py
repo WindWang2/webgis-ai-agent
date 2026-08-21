@@ -148,7 +148,6 @@ async def test_author_dispatch_converter_skips_geojson_traversal(monkeypatch):
     几何类别/点数经 payload.profile 零遍历供给（原扫描 3 消除）。"""
     import app.services.analysis_cartography_converter as conv_mod
     import app.services.tool_dispatch_service as tds
-    import app.services.spatial_meta_profiler as smp
     from app.services.mapspec_store import mapspec_store
 
     fc = _fc(5000)
