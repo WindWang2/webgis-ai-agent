@@ -17,7 +17,7 @@ function emit(): void {
   listeners.forEach((listener) => listener());
 }
 
-function resetLiveState(): void {
+export function resetLiveState(): void {
   committed = null;
   pending = {};
   pendingRemoved = [];

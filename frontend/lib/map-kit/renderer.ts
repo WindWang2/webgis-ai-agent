@@ -48,12 +48,21 @@ function sameViewport(a: ViewportBBox, b: ViewportBBox): boolean {
 }
 
 function isMvtSourceId(id: string): boolean {
+  // #692：对齐权威定义（adapter.isVectorTileLayer / layer-data）——
+  // 此前缺 feature_count > 阈值判定，而 _tileUrl 对每个 geojson_ref 图层都设，
+  // 导致 1k-5k 要素的 mvt_capable 图层永不做视口剔除（#668 的双裁剪守卫
+  // 过匹配，Phase 8 剔除对中等规模图层失效）。
   try {
     const layers: any[] = (useHudStore as any).getState?.()?.layers ?? [];
     const candidates = [id, id.replace(/^custom-/, '')];
     for (const cid of candidates) {
       const l = layers.find((x) => x.id === cid);
-      if (l?.['_tileUrl'] && l?.['_descriptor']?.mvt_capable) return true;
+      if (!l?.['_tileUrl'] || !l?.['_descriptor']?.mvt_capable) continue;
+      const fc = Number(l?.['_descriptor']?.feature_count ?? 0);
+      if (fc > 5000) return true;
+      // 无 descriptor 时回退内联要素数（对齐 adapter 的 legacy 路径）
+      const feats = l?.['source']?.features;
+      if (Array.isArray(feats) && feats.length > 5000) return true;
     }
   } catch { /* ignore */ }
   return false;
@@ -905,12 +914,38 @@ export function syncLayerZOrder(map: Map, prefix: string, orderedBaseIds: string
   // ids the style may have dropped since the last note.
   const layerIds = getStyleLayerIds(map);
   if (layerIds.length === 0) return;
+  const orderedBaseIdSet = new Set(orderedBaseIds);
+  // #692：O(n·m) → O(n+m)——一次遍历把每个 style id 归入其父层桶，
+  // 再按序输出（此前每个 baseId 都全列表 filter + 3 个 startsWith，
+  // ~150 子层时每 reconcile 数万次字符串操作）。
+  const sep = prefix ? `${prefix}` : '';
+  const buckets: Record<string, string[]> = {};
+  for (const id of layerIds) {
+    // 候选分隔符按特异性排序：__（子层）> -（旧连字符）> 精确匹配
+    let owner: string | null = null;
+    const dd = id.lastIndexOf('__');
+    const dash = id.lastIndexOf('-');
+    // 尝试最长前缀切点：父层 id 必须是 orderedBaseIds 之一才认领
+    for (const cut of [dd, dash]) {
+      if (cut <= 0) continue;
+      const cand = id.slice(0, cut);
+      const stripped = sep && cand.startsWith(sep) ? cand.slice(sep.length) : cand;
+      if (orderedBaseIdSet.has(stripped) || orderedBaseIdSet.has(cand)) {
+        owner = stripped;
+        break;
+      }
+    }
+    if (owner === null) {
+      const stripped = sep && id.startsWith(sep) ? id.slice(sep.length) : id;
+      if (orderedBaseIdSet.has(stripped) || orderedBaseIdSet.has(id)) owner = stripped;
+    }
+    if (owner === null) continue;
+    (buckets[owner] ??= []).push(id);
+  }
   // 反向：希望数组首的图层最终在最上面
   for (const baseId of [...orderedBaseIds].reverse()) {
     const fullPrefix = prefix ? `${prefix}${baseId}` : baseId;
-    const sub = layerIds.filter((id) => {
-      return id === fullPrefix || id.startsWith(`${fullPrefix}__`) || id.startsWith(`${fullPrefix}-`);
-    });
+    const sub = buckets[baseId] ?? [];
     for (const id of sub) {
       try {
         if (map.getLayer(id)) {
