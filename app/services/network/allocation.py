@@ -253,7 +253,10 @@ class NetworkLocationAllocationService:
                     cost_matrix, demand_weights, p_count
                 )
 
-        # Generate allocation results
+        # Generate allocation results; unreachable demand points are
+        # collected as unassigned rather than silently assigned to the first
+        # facility (inf cost would otherwise make min() pick index 0).
+        unassigned_ids: List[str] = []
         allocated_facilities: List[Dict[str, Any]] = []
         for fac_idx in best_subset:
             fac = candidate_facilities[fac_idx]
@@ -261,6 +264,12 @@ class NetworkLocationAllocationService:
             total_assigned_weight = 0.0
 
             for i in range(n_dem):
+                best_cost = min(cost_matrix[i][j] for j in best_subset)
+                if best_cost == float("inf"):
+                    if fac_idx == best_subset[0]:
+                        # Only count unassigned once (first facility bucket)
+                        pass
+                    continue
                 best_fac_idx = min(best_subset, key=lambda j: cost_matrix[i][j])
                 if best_fac_idx == fac_idx:
                     assigned_demands.append(demand_points[i].demand_id)
@@ -275,6 +284,11 @@ class NetworkLocationAllocationService:
                 "assigned_demand_ids": assigned_demands,
             })
 
+        for i in range(n_dem):
+            best_cost = min(cost_matrix[i][j] for j in best_subset) if best_subset else float("inf")
+            if best_cost == float("inf"):
+                unassigned_ids.append(demand_points[i].demand_id)
+
         summary = {
             "problem_type": problem_type,
             "p_count": p_count,
@@ -285,6 +299,8 @@ class NetworkLocationAllocationService:
             # greedy-add). Heuristic results are near-optimal, not guaranteed
             # optimal — explicit so consumers can weigh the trade-off.
             "solver": solver_used,
+            "unassigned_count": len(unassigned_ids),
+            "unassigned_ids": unassigned_ids,
         }
 
         return NetworkAnalysisResult(

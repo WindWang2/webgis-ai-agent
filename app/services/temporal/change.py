@@ -15,7 +15,13 @@ logger = logging.getLogger(__name__)
 
 
 def compute_centroid(geometry: Dict[str, Any]) -> Optional[Tuple[float, float]]:
-    """Helper to compute basic centroid (lon, lat) of Point/Polygon geometries."""
+    """Helper to compute basic centroid (lon, lat) of Point/Polygon geometries.
+
+    Limitation: Polygon centroid is the arithmetic mean of the exterior ring
+    vertices (holes are flattened into the same mean). True area-weighted
+    centroids of polygons with holes differ; for precise metrics use shapely
+    area centroids on projected geometries.
+    """
     if not geometry or not isinstance(geometry, dict):
         return None
     gtype = geometry.get("type", "")
