@@ -120,10 +120,15 @@ async def test_layer_upsert_does_not_block_event_loop(bench_session):
     geojson = {"type": "FeatureCollection", "features": _features(50_000)}
     layer = {"id": "big", "source": "s", "type": "circle", "paint": {"circle-color": "#f00"}}
 
+    # #687 后生产形态：>5000 特征的内联载体被 mapspec_source 门拒绝，大结果集
+    # 走 session ref（descriptor 计算在 store() 时线程内完成——即原 inline
+    # profiling 的归宿）。lag 监控覆盖 store + ref upsert 全程。
     monitor = _LagMonitor()
     monitor.start()
+    ref_id = await session_data_manager.store(bench_session, geojson, prefix="geojson")
     res = await engine.apply_mutation(
-        bench_session, UpsertLayerIntent(layer=layer, source_data=geojson)
+        bench_session,
+        UpsertLayerIntent(layer=layer, source_data={"ref_id": ref_id}),
     )
     max_lag = await monitor.stop()
 
@@ -163,7 +168,9 @@ async def test_mapspec_upsert_scaling_recorded(bench_session):
             eng = MapSpecLifecycleEngine()
             await eng.apply_mutation(sid, InitProjectIntent())
             t0 = time.perf_counter()
-            r = await eng.apply_mutation(sid, UpsertLayerIntent(layer={**layer, "id": f"L{n}"}, source_data=geojson))
+            # #687 后：ref 载体（store 的 descriptor 计算 + ref upsert 全程）
+            ref_id = await session_data_manager.store(sid, geojson, prefix="geojson")
+            r = await eng.apply_mutation(sid, UpsertLayerIntent(layer={**layer, "id": f"L{n}"}, source_data={"ref_id": ref_id}))
             samples.append((time.perf_counter() - t0) * 1000.0)
             assert not r.is_error
             await session_data_manager.clear_session(sid)
