@@ -678,16 +678,26 @@ def register_template_tools(registry: ToolRegistry):
 
 
 def json_geojson_style_apply(geojson: dict, color: str, opacity: float, stroke_width: float) -> dict:
-    """为 GeoJSON 要素注入 style 属性"""
-    import copy
-    data = copy.deepcopy(geojson)
-    features = data.get("features", [])
-    for f in features:
-        if "properties" not in f:
-            f["properties"] = {}
-        f["properties"]["fill_color"] = color
-        f["properties"]["opacity"] = opacity
-        f["properties"]["stroke_width"] = stroke_width
+    """为 GeoJSON 要素注入 style 属性。
+
+    #733: 旧实现 deepcopy 整个 FeatureCollection（几何占体积的大头）只为改
+    3 个属性——50k 要素时是 ~100 ms + 2×8 MB 瞬时内存。改为浅拷贝顶层 +
+    逐要素重建 properties dict；几何 dict 与输入共享（本函数及调用方均不
+    就地改动几何）。"""
+    data = dict(geojson)
+    data["features"] = [
+        {
+            **f,
+            "properties": {
+                **(f.get("properties") or {}),
+                "fill_color": color,
+                "opacity": opacity,
+                "stroke_width": stroke_width,
+            },
+        }
+        for f in geojson.get("features", [])
+        if isinstance(f, dict)
+    ]
     return data
 
 

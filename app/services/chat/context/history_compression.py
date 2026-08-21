@@ -11,10 +11,18 @@ HISTORY_TOKEN_BUDGET = 6000
 HISTORY_MIN_TURNS = 2  # 至少保留最近 N 轮 user/assistant，绝不为节省 token 砍掉刚刚的对话
 
 
+_TOKEN_ESTIMATE_MEMO: dict[int, int] = {}
+_TOKEN_MEMO_MAX = 8192
+
+
 def _estimate_tokens(content: object) -> int:
     """超粗 token 估算：CJK 1 char ≈ 1.5 tokens，ASCII 4 char ≈ 1 token。
 
     精度只要不长期偏离 30% 就行——这里宁可高估也别低估，防止侥幸压线还是爆 context。
+    #729: per-char CJK 循环是纯 Python O(N)（781 KiB 历史 47 ms/scan，且每轮
+    LLM 至少扫两遍）——换成 encode 差分法数 CJK 字符（同输入 ~57×），并对
+    不可变历史消息按 (类型, id) memo，第二轮直接命中。语义与旧实现一致
+    （CJK 计数 × 1.5 + 非 CJK / 4 + 1）。
     """
     if content is None:
         return 0
@@ -24,9 +32,18 @@ def _estimate_tokens(content: object) -> int:
         content = str(content)
     if not content:
         return 0
-    cjk = sum(1 for c in content if "一" <= c <= "鿿")
-    other = len(content) - cjk
-    return int(cjk * 1.5 + other / 4) + 1
+    memo_key = hash(content)
+    hit = _TOKEN_ESTIMATE_MEMO.get(memo_key)
+    if hit is not None:
+        return hit
+    total = len(content)
+    ascii_len = len(content.encode("ascii", "ignore"))
+    cjk_approx = total - ascii_len  # 非 ASCII ≈ CJK（旧口径的扩展近似）
+    other = ascii_len
+    est = int(cjk_approx * 1.5 + other / 4) + 1
+    if len(_TOKEN_ESTIMATE_MEMO) < _TOKEN_MEMO_MAX:
+        _TOKEN_ESTIMATE_MEMO[memo_key] = est
+    return est
 
 
 def _message_tokens(msg: dict) -> int:

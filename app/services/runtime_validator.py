@@ -159,7 +159,10 @@ class RuntimeValidator:
         # Use the store's atomic json writer to keep durability contract.
         from app.services.mapspec.store import _atomic_write_json_sync
 
-        _atomic_write_json_sync(staging_path, rewritten_mapspec)
+        # #734: the staging write json.dumps the FULL spec (indent=2) —
+        # offload it like the store does so a large inline spec cannot stall
+        # every concurrent SSE stream sharing the loop.
+        await asyncio.to_thread(_atomic_write_json_sync, staging_path, rewritten_mapspec)
         try:
             comp_res = await compile_via_cli(staging_path, out_dir_pre)
         finally:

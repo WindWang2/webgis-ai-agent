@@ -121,6 +121,10 @@ def _strip_orphaned_tool_calls(llm_messages: list[dict]) -> list[dict]:
     return llm_messages
 
 
+# #731: 尾窗大小——预算(6000 token)下普通消息(数百~2500 字符)远少于 200 条，
+# 只有大量超短消息才可能触顶，届时回退全量。
+_HISTORY_WINDOW = 200
+
 class AsyncHistoryService(HistoryStoreProtocol):
     def __init__(self, db: Optional[AsyncSession] = None):
         self.db = db
@@ -139,6 +143,49 @@ class AsyncHistoryService(HistoryStoreProtocol):
         # get_or_create 确保行存在（建行或取回同一行）；消息在下面的
         # selectinload 查询中一并取回，返回值无需使用。
         await self.get_or_create_conversation(session_id, user_id=user_id)
+        # #731: windowed tail load — truncation used to happen AFTER hydrating
+        # the WHOLE conversation (a 200-message session moved ~1-2 MB of rows
+        # per turn). Load the newest _HISTORY_WINDOW messages; fall back to
+        # the full load only when the window is under the token budget AND
+        # older messages exist (tiny-message sessions, where older turns
+        # would still fit the budget). Fake/stub sessions that don't speak
+        # scalar() degrade to the legacy full load.
+        try:
+            from sqlalchemy import func, select as _select
+
+            count_stmt = _select(func.count()).select_from(Message).where(
+                Message.conversation_id == session_id
+            )
+            total = (await self.db.execute(count_stmt)).scalar() or 0
+        except (AttributeError, TypeError):
+            total = 0
+        if 0 < _HISTORY_WINDOW < total:
+            try:
+                window_ids_stmt = _select(Message.id).where(
+                    Message.conversation_id == session_id
+                ).order_by(Message.id.desc()).limit(_HISTORY_WINDOW)
+                conv = (
+                    await self.db.execute(
+                        select(Conversation).where(Conversation.id == session_id)
+                    )
+                ).scalar_one()
+                ids = [row[0] for row in (await self.db.execute(window_ids_stmt)).all()]
+                msgs = (
+                    await self.db.execute(
+                        _select(Message).where(Message.id.in_(ids)).order_by(Message.id)
+                    )
+                ).scalars().all()
+                from app.services.chat.context.history_compression import (
+                    HISTORY_TOKEN_BUDGET, _estimate_tokens,
+                )
+                window_tokens = sum(
+                    _estimate_tokens(getattr(m, "content", None) or "") for m in msgs
+                )
+                if window_tokens >= HISTORY_TOKEN_BUDGET:
+                    conv.messages = list(msgs)
+                    return conv
+            except (AttributeError, TypeError):
+                pass  # stub session → legacy full load below
         stmt = (
             select(Conversation)
             .where(Conversation.id == session_id)

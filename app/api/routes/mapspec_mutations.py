@@ -98,6 +98,7 @@ UserMapSpecMutationRequest = Annotated[
 async def apply_user_mapspec_mutation(
     session_id: str,
     req: UserMapSpecMutationRequest,
+    include_review: bool = False,
     _conv: Conversation = Depends(require_owned_session),
 ) -> dict[str, Any]:
     if isinstance(req, PatchLayerPresentationBody):
@@ -159,8 +160,18 @@ async def apply_user_mapspec_mutation(
         origin="user",
         expected_revision=req.expected_revision,
     )
+    payload = result.to_dict()
+    if not include_review:
+        # #732: the user chrome route fires per slider tick — the frontend
+        # consumers (user-mutation.ts) read only mutation_revision + mapspec;
+        # the full cartographic_review (checks/attempts/repair payloads) and
+        # findings were re-serialized on every toggle for nothing. Agent-path
+        # evidence (tool results) is unaffected; opt back in with
+        # ?include_review=true.
+        payload.pop("cartographic_review", None)
+        payload.pop("cartography_findings", None)
     if result.superseded:
-        raise HTTPException(status_code=409, detail=result.to_dict())
+        raise HTTPException(status_code=409, detail=payload)
     if result.is_error:
-        raise HTTPException(status_code=400, detail=result.to_dict())
-    return result.to_dict()
+        raise HTTPException(status_code=400, detail=payload)
+    return payload

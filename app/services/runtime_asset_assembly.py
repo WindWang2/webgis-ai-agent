@@ -20,7 +20,6 @@ session_id) so the headless validator's static server can fetch the PNG from
 """
 from __future__ import annotations
 
-import copy
 import json
 import math
 import re
@@ -328,9 +327,13 @@ def rewrite_mapspec_raster_refs(mapspec: Dict[str, Any]) -> tuple[Dict[str, Any]
             new_sources[sid] = src
     if not changed:
         return mapspec, 0
-    new_mapspec = copy.deepcopy(mapspec)
+    # #734: only the sources branch is rewritten — a full-spec deepcopy (incl.
+    # inline GeoJSON up to 5000 features) just to swap imageRef strings is
+    # O(payload); a shallow top-level copy preserves every other key by
+    # reference (none of them are mutated downstream — the rewrite is
+    # serialized to the staging file only).
+    new_mapspec = dict(mapspec)
     new_mapspec["sources"] = new_sources
-    # Preserve other top-level keys (deepcopy already did).
     return new_mapspec, rewritten
 
 

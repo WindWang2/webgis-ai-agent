@@ -10,6 +10,7 @@ Reliability contract (Data Fabric V3):
 - ``set_alias`` is best-effort metadata; its failure must NOT invalidate an
   otherwise-valid ref.
 """
+import asyncio
 import logging
 from typing import Dict, Any, Optional
 from app.schemas.data_fabric_schema import QuerySpec, QueryResult
@@ -74,7 +75,13 @@ class MaterializationService:
 
         feature_count = len(query_result.features)
         total_count = query_result.total_count or feature_count
-        fingerprint = dataset_fingerprint_service.calculate_data_fingerprint(query_result.features)
+        # #728: the fingerprint json.dumps the whole payload — at the 50k
+        # feature config bound that is a ~145 ms on-loop stall; store()
+        # already offloads its dumps, keep the discipline consistent.
+        fingerprint = await asyncio.to_thread(
+            dataset_fingerprint_service.calculate_data_fingerprint,
+            query_result.features,
+        )
 
         # Resource guard (Section 22): reject an oversized result BEFORE storing
         # it, so a server that ignores `limit` cannot OOM the process. This

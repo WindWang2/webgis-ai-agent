@@ -374,11 +374,10 @@ class RedisSessionStore(BaseSessionStore):
         """
         await self._ensure_connected()
         try:
-            ref_ids = await self._session_ref_ids(session_id)
             async with self._r.pipeline() as pipe:
                 pipe.hset(self._aliases_key(session_id), alias, ref_id)
                 pipe.hset(self._refs_key(session_id), ref_id, alias)
-                self._refresh_session_ttl(pipe, session_id, ref_ids)
+                self._refresh_session_ttl(pipe, session_id)  # #730: per-ref payload TTL refresh dropped — reads (get/ref_exists) already refresh, this fanout was O(refs) per write
                 await pipe.execute()
         except aioredis.RedisError as e:
             logger.warning(
@@ -535,7 +534,6 @@ class RedisSessionStore(BaseSessionStore):
         # update_layer_in_state) — otherwise two in-flight POSTs could both pass
         # the check and the older one land last.
         state_key = self._state_key(session_id)
-        ref_ids = await self._session_ref_ids(session_id)
         for attempt in range(3):
             try:
                 async with self._r.pipeline(transaction=True) as pipe:
@@ -559,7 +557,7 @@ class RedisSessionStore(BaseSessionStore):
                     pipe.hset(state_key, f"_{key}_updated_at", datetime.now(timezone.utc).isoformat())
                     pipe.expire(state_key, STATE_TTL)
                     pipe.sadd(self._active_key(), session_id)
-                    self._refresh_session_ttl(pipe, session_id, ref_ids)
+                    self._refresh_session_ttl(pipe, session_id)  # #730: per-ref payload TTL refresh dropped — reads (get/ref_exists) already refresh, this fanout was O(refs) per write
                     await pipe.execute()
                 # Write-through invalidation: drop L1 so next read refetches from Redis.
                 self._l1_invalidate_session(session_id)
@@ -821,7 +819,6 @@ class RedisSessionStore(BaseSessionStore):
             ensure_ascii=False,
         )
         try:
-            ref_ids = await self._session_ref_ids(session_id)
             async with self._r.pipeline() as pipe:
                 key = self._events_key(session_id)
                 # rpush 保持与 memory (deque.append) 相同的"最旧在前"时序。
@@ -831,7 +828,7 @@ class RedisSessionStore(BaseSessionStore):
                 pipe.ltrim(key, -MAX_EVENTS, -1)
                 pipe.expire(key, EVENTS_TTL)
                 pipe.sadd(self._active_key(), session_id)
-                self._refresh_session_ttl(pipe, session_id, ref_ids)
+                self._refresh_session_ttl(pipe, session_id)  # #730: per-ref payload TTL refresh dropped — reads (get/ref_exists) already refresh, this fanout was O(refs) per write
                 await pipe.execute()
         except aioredis.RedisError as e:
             logger.warning(

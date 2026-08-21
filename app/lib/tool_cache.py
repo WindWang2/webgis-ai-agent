@@ -194,6 +194,30 @@ def _lock_exists(key: str) -> bool:
         return False
 
 
+# ─── async-safe wrappers (#727) ───────────────────────────────────────────────
+# The sync redis-py client carries socket_timeout=5.0 — called directly on
+# the event loop (the old async_wrapper/_singleflight_async path), a degraded
+# Redis (fork/AOF rewrite/network blip) stalled the WHOLE process (all SSE
+# streams, all sessions) up to 5 s per call, ~20 s cumulative on a miss path.
+# Async callers now offload every Redis op to a worker thread.
+
+
+async def get_cached_async(key: str) -> Optional[Any]:
+    return await asyncio.to_thread(get_cached, key)
+
+
+async def set_cached_async(key: str, value: Any, ttl: int) -> None:
+    await asyncio.to_thread(set_cached, key, value, ttl)
+
+
+async def _acquire_lock_async(key: str, token: str, lock_ttl_s: int) -> bool:
+    return await asyncio.to_thread(_acquire_lock, key, token, lock_ttl_s)
+
+
+async def _release_lock_async(key: str, token: str) -> None:
+    await asyncio.to_thread(_release_lock, key, token)
+
+
 def _wait_for_cached(key: str, budget_s: float, sleep: Callable[[float], None]) -> Optional[Any]:
     """轮询直到值出现或锁消失（winner 完成/失败释放）或预算耗尽（指数退避）。
 
@@ -235,20 +259,20 @@ async def _singleflight_async(key: str, ttl: int, lock_ttl_s: int, compute: Call
     锁过期/丢失/Redis 故障时退化为直接计算 — 有界重复，无死锁。
     """
     token = uuid.uuid4().hex
-    if _acquire_lock(key, token, lock_ttl_s):
+    if await _acquire_lock_async(key, token, lock_ttl_s):
         try:
             result = await compute()
             if not _is_error_shaped(result):
-                set_cached(key, result, ttl)
+                await set_cached_async(key, result, ttl)
             return result
         finally:
-            _release_lock(key, token)
+            await _release_lock_async(key, token)
     cached = await asyncio.to_thread(_wait_for_cached, key, float(lock_ttl_s), time.sleep)
     if cached is not None:
         return cached
     result = await compute()
     if not _is_error_shaped(result):
-        set_cached(key, result, ttl)
+        await set_cached_async(key, result, ttl)
     return result
 
 
@@ -330,7 +354,7 @@ def cached_tool(ttl: int = 3600, skip_if: Optional[Callable[[dict], bool]] = Non
                 depth_token = _cache_depth_var.set(prev_depth + 1)
                 is_outermost = prev_depth == 0
                 try:
-                    cached = get_cached(key)
+                    cached = await get_cached_async(key)
                     if cached is not None:
                         # 审计 M10：cache hit 显式 set(True)。
                         hit_token = cache_hit_var.set(True)
@@ -349,7 +373,7 @@ def cached_tool(ttl: int = 3600, skip_if: Optional[Callable[[dict], bool]] = Non
                                 key, ttl, effective_lock_ttl, lambda: func(**kwargs)
                             )
                         result = await func(**kwargs)
-                        set_cached(key, result, ttl)
+                        await set_cached_async(key, result, ttl)
                         return result
                     finally:
                         if not is_outermost:
