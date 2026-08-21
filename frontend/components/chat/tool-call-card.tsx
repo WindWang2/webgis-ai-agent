@@ -1,7 +1,7 @@
 'use client';
 
 import { useId, useState } from 'react';
-import { ChevronRight, ChevronDown, CheckCircle2, AlertCircle, Loader2, Clock, Wrench } from 'lucide-react';
+import { ChevronRight, ChevronDown, CheckCircle2, AlertCircle, AlertTriangle, Loader2, Clock, Wrench } from 'lucide-react';
 import { CartographyResultCard } from './cartography-result-card';
 import { H3LisaResultCard } from './h3-lisa-result-card';
 import { IsochroneResultCard } from './isochrone-result-card';
@@ -286,7 +286,11 @@ export function ToolCallChain({ calls }: { calls: ToolCallEntry[] }) {
         </span>
         <span className="flex-1" />
         {allDone && !expanded && (
-          <CheckCircle2 size={11} className="text-status-success" />
+          failedCount > 0 ? (
+            <AlertTriangle size={11} className="text-status-warning" aria-label="部分或全部调用失败" />
+          ) : (
+            <CheckCircle2 size={11} className="text-status-success" />
+          )
         )}
         {!allDone && (
           <Loader2 size={11} className="animate-spin text-status-info" />

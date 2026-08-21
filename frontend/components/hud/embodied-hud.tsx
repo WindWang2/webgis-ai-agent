@@ -27,11 +27,12 @@ const STEPS: Step[] = [
   { label: '渲染画布', sub: '挂载图层结果' }
 ];
 
-type StepState = 'pending' | 'active' | 'done';
+type StepState = 'pending' | 'active' | 'done' | 'failed';
 
 function getStepState(index: number, aiStatus: string): StepState {
+  // #692 真实性：error 不再伪装成第 0 步激活态（失败后 stepper 永久脉冲）
   if (aiStatus === 'error') {
-    return index === 0 ? 'active' : 'pending';
+    return index === 0 ? 'failed' : 'pending';
   }
   if (aiStatus === 'thinking') {
     return index === 0 ? 'active' : 'pending';
@@ -349,6 +350,10 @@ export function EmbodiedHud() {
 
                   if (state === 'done') {
                     dotColor = 'var(--success)';
+                    textColor = 'var(--text-primary)';
+                  } else if (state === 'failed') {
+                    // #692：失败态——错误色静止圆点（不脉冲），步骤名如实示败
+                    dotColor = 'var(--danger, var(--destructive, #dc2626))';
                     textColor = 'var(--text-primary)';
                   } else if (state === 'active') {
                     dotColor = 'var(--agent-accent)';
