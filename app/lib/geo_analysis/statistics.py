@@ -522,10 +522,16 @@ def cluster_narrated(
     n_clusters: int = 5,
     eps: float = 1000,
     min_samples: int = 5,
-    value_field: str = ""
+    value_field: str = "",
+    value_weight: float = 1.0,
 ) -> GeoAnalysisResult:
     """
     Perform spatial clustering (DBSCAN or K-Means) with narrative summary.
+
+    value_weight scales the standardized value dimension relative to metric
+    coords when value_field is set. Default 1.0 is conservative (equal weight);
+    callers doing unit-aware blending should tune it explicitly. The weight is
+    reported in the result so downstream consumers know the mixing semantics.
     """
     try:
         from sklearn.cluster import DBSCAN, KMeans
@@ -558,7 +564,7 @@ def cluster_narrated(
         coords = extract_centroids(gdf)
         vals = gdf[value_field].to_numpy(dtype=float)
         scaler = StandardScaler()
-        vals_scaled = scaler.fit_transform(vals.reshape(-1, 1))
+        vals_scaled = scaler.fit_transform(vals.reshape(-1, 1)) * float(value_weight)
         features = np.column_stack([coords, vals_scaled])
     else:
         features = coords
