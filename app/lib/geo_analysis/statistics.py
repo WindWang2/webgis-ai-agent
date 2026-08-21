@@ -110,10 +110,16 @@ def calculate_sde(geojson: dict) -> GeoAnalysisResult:
     sum_y2 = np.sum(y_prime**2)
     sum_xy = np.sum(x_prime * y_prime)
 
-    # Angle calculation
+    # Angle calculation (Gi* degenerate branch: delta==0 with negative
+    # covariance is the NW-SE diagonal, theta=-45°).
     delta = sum_x2 - sum_y2
     if delta == 0:
-        theta = np.pi / 4 if sum_xy > 0 else 0
+        if sum_xy > 0:
+            theta = np.pi / 4
+        elif sum_xy < 0:
+            theta = -np.pi / 4
+        else:
+            theta = 0
     else:
         theta = 0.5 * np.arctan2(2 * sum_xy, delta)
 
@@ -314,11 +320,11 @@ def hotspot_narrated(geojson: dict, value_field: str, distance_band: float = 0) 
     from scipy.spatial import cKDTree
     tree = cKDTree(coords)
     binary_weights_coo = tree.sparse_distance_matrix(tree, max_distance=bw, output_type="coo_matrix")
-    # sparse_distance_matrix includes (i, i) self pairs at distance 0; drop
-    # them to match the old dense code's np.fill_diagonal(w, 0).
-    non_self = binary_weights_coo.row != binary_weights_coo.col
+    # Gi* (Getis-Ord) requires w_ii = 1 (include self). sparse_distance_matrix
+    # includes all (i,i) self pairs at distance 0, so keep the full matrix
+    # (binary 1 for every pair within the band, including the diagonal).
     w = sparse.csr_matrix(
-        (np.ones(int(non_self.sum())), (binary_weights_coo.row[non_self], binary_weights_coo.col[non_self])),
+        (np.ones(len(binary_weights_coo.data)), (binary_weights_coo.row, binary_weights_coo.col)),
         shape=(n, n),
     )
     
@@ -404,7 +410,13 @@ def hotspot_narrated(geojson: dict, value_field: str, distance_band: float = 0) 
     return GeoAnalysisResult(True, data_out, summary)
 
 def calculate_nearest(geojson: dict) -> GeoAnalysisResult:
-    """Nearest neighbor analysis with narrative summary (O(n log n) via cKDTree)."""
+    """Nearest neighbor analysis with narrative summary (O(n log n) via cKDTree).
+
+    Returns {mean_nearest_distance, expected, R, pattern} plus aliases
+    {mean_distance, r_ratio} and extras {std_distance, min/max_distance}
+    for backwards compatibility. mean_nearest_distance == mean_distance,
+    expected is the CSR expectation, R == r_ratio.
+    """
     from scipy.spatial import cKDTree
     res = to_utm_gdf(geojson)
     if res is None or res[0] is None:
@@ -440,12 +452,18 @@ def calculate_nearest(geojson: dict) -> GeoAnalysisResult:
     summary = f"Nearest Neighbor Insight: The mean distance to the nearest neighbor is {mean_dist:.2f} meters. The distribution pattern appears to be {pattern} (R ratio: {r_ratio:.2f})."
     
     data = {
+        # Contract keys (docstring / ticket 9): mean_nearest_distance, expected, R
+        "mean_nearest_distance": mean_dist,
+        "expected": float(expected_mean),
+        "R": r_ratio,
+        # Aliases kept for backwards compatibility
         "mean_distance": mean_dist,
+        "r_ratio": r_ratio,
+        # Extras
         "std_distance": std_dist,
         "min_distance": float(nn_dist.min()),
         "max_distance": float(nn_dist.max()),
-        "r_ratio": r_ratio,
-        "pattern": pattern
+        "pattern": pattern,
     }
     return GeoAnalysisResult(True, data, summary)
 
@@ -504,10 +522,16 @@ def cluster_narrated(
     n_clusters: int = 5,
     eps: float = 1000,
     min_samples: int = 5,
-    value_field: str = ""
+    value_field: str = "",
+    value_weight: float = 1.0,
 ) -> GeoAnalysisResult:
     """
     Perform spatial clustering (DBSCAN or K-Means) with narrative summary.
+
+    value_weight scales the standardized value dimension relative to metric
+    coords when value_field is set. Default 1.0 is conservative (equal weight);
+    callers doing unit-aware blending should tune it explicitly. The weight is
+    reported in the result so downstream consumers know the mixing semantics.
     """
     try:
         from sklearn.cluster import DBSCAN, KMeans
@@ -540,7 +564,7 @@ def cluster_narrated(
         coords = extract_centroids(gdf)
         vals = gdf[value_field].to_numpy(dtype=float)
         scaler = StandardScaler()
-        vals_scaled = scaler.fit_transform(vals.reshape(-1, 1))
+        vals_scaled = scaler.fit_transform(vals.reshape(-1, 1)) * float(value_weight)
         features = np.column_stack([coords, vals_scaled])
     else:
         features = coords

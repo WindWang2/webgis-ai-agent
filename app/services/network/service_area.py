@@ -29,6 +29,17 @@ from app.services.network.routing import NetworkRoutingService
 _ISOCHRONE_BUFFER_M = 150.0  # road-width smoothing in meters
 
 
+_ALLOWED_BREAK_UNITS = {"minutes", "meters", "seconds"}
+_BREAK_UNIT_ALIASES = {"minutes": "minutes", "meters": "meters", "seconds": "seconds", "km": "meters"}
+
+
+def _normalize_break_unit(raw: str) -> str:
+    unit = str(raw or "").strip().lower()
+    if unit in _BREAK_UNIT_ALIASES:
+        return _BREAK_UNIT_ALIASES[unit]
+    raise ValueError(f"Unsupported break_unit '{raw}'. Allowed: minutes, meters (seconds accepted as alias).")
+
+
 def _break_to_cutoff(
     brk_val: float,
     break_unit: str,
@@ -40,8 +51,18 @@ def _break_to_cutoff(
     weights are seconds (``travel_time_s`` and other seconds-based custom
     impedances), so minutes always convert unless ``impedance.unit`` is
     already ``minutes``. Distance breaks pass through unchanged.
+    break_unit is validated; 'seconds' is accepted and converted to minutes
+    for Dijkstra seconds weight (seconds/60 -> minutes handled by caller).
     """
-    if break_unit != "minutes":
+    norm = _normalize_break_unit(break_unit)
+    if norm == "seconds":
+        # seconds break with seconds-weighted graph: pass through as seconds;
+        # with minutes-weighted graph, convert.
+        unit = impedance.unit if impedance is not None else "seconds"
+        if unit == "minutes":
+            return float(brk_val) / 60.0
+        return float(brk_val)
+    if norm != "minutes":
         return float(brk_val)
     unit = impedance.unit if impedance is not None else "seconds"
     if unit == "minutes":
@@ -75,7 +96,7 @@ class NetworkServiceAreaService:
         Args:
             facilities: List of Facility objects or (lng, lat) tuples.
             breaks: Cutoff break values e.g. [5.0, 10.0, 15.0].
-            break_unit: 'minutes' or 'meters'.
+            break_unit: 'minutes' / 'meters' / 'seconds'（km 为 meters 别名；秒按速度换算为分钟）
             graph: NetworkX DiGraph.
             network_dataset: NetworkDataset model.
             profile: TravelProfile.

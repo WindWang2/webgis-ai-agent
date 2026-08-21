@@ -139,13 +139,14 @@ def register_project_tools(registry: ToolRegistry) -> None:
     def audit_spatial_quality(
         geojson: Dict[str, Any],
         dataset_id: str = "ds_agent",
-        crs: str = "EPSG:4326",
+        crs: str | None = None,
     ) -> Dict[str, Any]:
-        # audit_dataset signature is (geojson_data, crs, dataset_id); earlier this
-        # call passed args positionally as (geojson, dataset_id, crs), which fed
-        # the CRS check a dataset id and labelled the report with the CRS string.
+        # audit_dataset handles crs=None by falling back to GeoJSON crs member
+        # or EPSG:4326 (GIS-15); a hard default here would shadow that fallback.
+        # Keep behaviour: no crs supplied -> let service decide.
+        effective_crs = crs if crs is not None else None
         report = SpatialQualityEngine.audit_dataset(
-            geojson_data=geojson, crs=crs, dataset_id=dataset_id
+            geojson_data=geojson, crs=effective_crs, dataset_id=dataset_id
         )
         return report.to_dict()
 

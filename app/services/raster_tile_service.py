@@ -221,14 +221,24 @@ def render_raster_tile(
             src_bounds = transform_bounds("EPSG:3857", src_crs, *bounds_3857)
 
             # Read windowed slice from source
-            win = from_bounds(*src_bounds, transform=src.transform)
-            win = win.round_offsets().round_shape()
+            win_raw = from_bounds(*src_bounds, transform=src.transform)
+            win = win_raw.round_offsets().round_shape()
             win = win.intersection(rasterio.windows.Window(0, 0, src.width, src.height))
 
             if win.width <= 0 or win.height <= 0:
                 res = _transparent_tile_png(tile_size)
                 _set_cached_tile(key, res)
                 return res
+
+            # True partial: the ideal (floating) window extends beyond the raster
+            # bounds, so this tile is only partially filled. Rounding alone does
+            # not count (wholly-inside tiles must stay fully opaque).
+            is_partial_tile = (
+                win_raw.col_off < 0
+                or win_raw.row_off < 0
+                or win_raw.col_off + win_raw.width > src.width
+                or win_raw.row_off + win_raw.height > src.height
+            )
 
             # Perform windowed read from source file (O(win_size) memory).
             # Issue #410: read ONLY the bands we render (max 3) — the previous
@@ -286,6 +296,34 @@ def render_raster_tile(
                 dst_nodata=src.nodata,
             )
 
+            # Footprint mask: 1 where the source window actually covers the
+            # destination pixel, 0 where no source data was resampled to.
+            # With src_nodata=None, a legitimate data value of 0 is valid but
+            # an UNCOVERED pixel also reads as 0 — they must not be conflated.
+            # Only true partial tiles (ideal window beyond raster bounds) need
+            # this; wholly-inside tiles keep a full-true mask (no rounding
+            # artifacts at the tile edge).
+            if is_partial_tile:
+                try:
+                    win_mask_src = np.ones((win_data.shape[1], win_data.shape[2]), dtype=np.uint8) * 255
+                    dst_coverage = np.zeros((tile_size, tile_size), dtype=np.uint8)
+                    reproject(
+                        source=win_mask_src,
+                        destination=dst_coverage,
+                        src_transform=win_transform,
+                        src_crs=src_crs,
+                        dst_transform=dst_transform,
+                        dst_crs="EPSG:3857",
+                        resampling=Resampling.nearest,
+                        src_nodata=0,
+                        dst_nodata=0,
+                    )
+                    coverage_mask = dst_coverage > 0
+                except Exception:
+                    coverage_mask = np.ones((tile_size, tile_size), dtype=bool)
+            else:
+                coverage_mask = np.ones((tile_size, tile_size), dtype=bool)
+
             # Format to RGBA image
             if count >= 3:
                 rgb = np.zeros((tile_size, tile_size, 3), dtype=np.uint8)
@@ -295,11 +333,11 @@ def render_raster_tile(
                 nodata_val = src.nodata  # may be None
                 for c in range(3):
                     arr = dst_data[c]
-                    valid_mask = _channel_valid_mask(arr, nodata_val)
+                    valid_mask = _channel_valid_mask(arr, nodata_val) & coverage_mask
                     stretch = stats[c] if stats is not None else ()
                     rgb[:, :, c] = np.where(valid_mask, _normalize_channel(arr, valid_mask, *stretch), 0)
 
-                band_valid = _channel_valid_mask(dst_data, nodata_val).any(axis=0)
+                band_valid = _channel_valid_mask(dst_data, nodata_val).any(axis=0) & coverage_mask
                 alpha = np.where(band_valid, 255, 0).astype(np.uint8)
                 rgba = np.dstack([rgb, alpha])
                 img = Image.fromarray(rgba, "RGBA")
@@ -308,7 +346,7 @@ def render_raster_tile(
                 # #596: no 0-sentinel when the raster declares no nodata —
                 # a true 0-valued flat region must stay visible.
                 nodata_val = src.nodata  # may be None
-                valid_mask = _channel_valid_mask(arr, nodata_val)
+                valid_mask = _channel_valid_mask(arr, nodata_val) & coverage_mask
 
                 if not valid_mask.any():
                     res = _transparent_tile_png(tile_size)

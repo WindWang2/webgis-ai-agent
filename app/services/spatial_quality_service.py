@@ -98,7 +98,7 @@ class SpatialQualityEngine:
     def audit_dataset(
         cls,
         geojson_data: Dict[str, Any],
-        crs: str = "EPSG:4326",
+        crs: str | None = "EPSG:4326",
         dataset_id: Optional[str] = None,
     ) -> SpatialQualityReport:
         """
@@ -571,7 +571,9 @@ class SpatialQualityEngine:
                             break
 
                     # Topology: Near-duplicate vertices between features
-                    if 0 < dist < dup_threshold:
+                    # Already reported as TOPOLOGY_GAP for this pair; skip duplicate.
+                    gap_reported = 0 < dist < gap_threshold
+                    if 0 < dist < dup_threshold and not gap_reported:
                         issues.append(
                             QualityIssue(
                                 dimension="topology",

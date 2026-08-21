@@ -117,8 +117,9 @@ def _reference_hotspot(geojson, value_field, distance_band):
     w = np.zeros((n, n))
     for i in range(n):
         for j in range(n):
-            if i != j and np.hypot(coords[i, 0] - coords[j, 0], coords[i, 1] - coords[j, 1]) <= bw:
+            if np.hypot(coords[i, 0] - coords[j, 0], coords[i, 1] - coords[j, 1]) <= bw:
                 w[i, j] = 1.0
+    # Gi* (w_ii=1): diagonal already 1 because distance 0 <= bw.
 
     x_bar = float(values.mean())
     s = float(values.std(ddof=0))

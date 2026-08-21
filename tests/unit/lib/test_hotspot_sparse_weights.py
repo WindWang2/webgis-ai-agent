@@ -53,7 +53,7 @@ def test_hotspot_matches_old_dense_implementation():
     got_gi = np.array([f["properties"]["gi_star"] for f in res.data["features"]])
     got_p = np.array([f["properties"]["p_value"] for f in res.data["features"]])
 
-    # Replay the exact old dense implementation.
+    # Replay the dense Gi* implementation (w_ii=1).
     from scipy.spatial import cKDTree
     gdf, _ = to_utm_gdf(fc)
     values = gdf["val"].to_numpy(dtype=float)
@@ -63,7 +63,7 @@ def test_hotspot_matches_old_dense_implementation():
     coo = tree.sparse_distance_matrix(tree, max_distance=band, output_type="coo_matrix")
     w = np.zeros((n_pts, n_pts))
     w[coo.row, coo.col] = 1.0
-    np.fill_diagonal(w, 0)
+    # Gi* keeps diagonal 1 (self included); sparse_distance_matrix already has it.
 
     x_bar = values.mean()
     s = values.std(ddof=0)

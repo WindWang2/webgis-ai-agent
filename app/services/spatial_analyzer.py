@@ -199,6 +199,7 @@ class SpatialAnalyzer:
         eps: float = 1000,
         min_samples: int = 5,
         value_field: str = "",
+        value_weight: float = 1.0,
         callback: Optional[Callable] = None
     ) -> GeoAnalysisResult:
         return cluster_narrated(
@@ -207,7 +208,8 @@ class SpatialAnalyzer:
             n_clusters=n_clusters,
             eps=eps,
             min_samples=min_samples,
-            value_field=value_field
+            value_field=value_field,
+            value_weight=value_weight,
         )
 
     @classmethod

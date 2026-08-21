@@ -357,14 +357,15 @@ class NetworkGraphBuilder:
         items: List[Tuple[LineString, Dict[str, Any]]] = []
 
         if isinstance(data, NetworkDataset):
+            node_by_id = {n.id: n for n in data.nodes}
             for edge in data.edges:
                 if edge.geometry:
                     geom = shape(edge.geometry)
                     if isinstance(geom, LineString):
                         items.append((geom, edge.properties))
                 else:
-                    u_node = next((n for n in data.nodes if n.id == edge.u), None)
-                    v_node = next((n for n in data.nodes if n.id == edge.v), None)
+                    u_node = node_by_id.get(edge.u)
+                    v_node = node_by_id.get(edge.v)
                     if u_node and v_node:
                         geom = LineString([(u_node.x, u_node.y), (v_node.x, v_node.y)])
                         items.append((geom, edge.properties))

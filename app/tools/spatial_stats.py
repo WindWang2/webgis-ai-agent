@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 def register_spatial_stats_tools(registry: ToolRegistry):
 
     @tool(registry, name="spatial_cluster",
-           description="空间聚类分析（DBSCAN密度聚类或K-Means分割），返回每个要素的聚类标签",
+           description="空间聚类分析（DBSCAN密度聚类或K-Means分割），返回每个要素的聚类标签；value_field为取值维度（已标准化），value_weight为其权重（默认1.0保守等权，非显式单位语义）",
            tier=2, domains=["statistics"],
            param_descriptions={
                "geojson": "输入点要素 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
@@ -20,16 +20,17 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "n_clusters": "K-Means聚类数，默认5",
                "eps": "DBSCAN邻域半径（米），默认1000",
                "min_samples": "DBSCAN最小样本数，默认5",
-               "value_field": "可选：参与聚类的数值字段名，将作为额外聚类维度",
+               "value_field": "可选：参与聚类的数值字段名，将作为额外聚类维度（已标准化）",
+               "value_weight": "取值维度的显式权重，默认1.0（保守等权）；调大则取值主导，调小则空间主导",
            })
     def spatial_cluster(geojson: Any, method: str = "dbscan", n_clusters: int = 5,
                         eps: float = 1000, min_samples: int = 5,
-                        value_field: str = "") -> dict:
+                        value_field: str = "", value_weight: float = 1.0) -> dict:
         data = safe_parse_geojson(geojson)
         features = data.get("features", [])
         res = SpatialAnalyzer.cluster(
-            features, method=method, n_clusters=n_clusters, eps=eps, 
-            min_samples=min_samples, value_field=value_field
+            features, method=method, n_clusters=n_clusters, eps=eps,
+            min_samples=min_samples, value_field=value_field, value_weight=value_weight,
         )
         return res.to_llm_response()
 
