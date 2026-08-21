@@ -254,8 +254,28 @@ def register_osm_tools(registry: ToolRegistry):
             "游泳池": "swimming_pool",
             "幼儿园": "kindergarten", "托儿所": "kindergarten",
             "学院": "college",
+            # #694：高频缺失项——"小学"是最高频中文 POI 名词，此前未映射
+            # 直通 amenity="小学" Overpass 永远 0 命中。
+            "小学": "primary_school", "中学": "secondary_school",
+            "高中": "secondary_school", "超市": "supermarket",
+            "菜市场": "marketplace", "商场": "mall",
+            "地铁站": "station", "火车站": "station",
+            "寺庙": "place_of_worship", "教堂": "place_of_worship",
         }
-        mapped_category = category_map.get(category, category)
+        mapped_category = category_map.get(category)
+        if mapped_category is None and category and any(
+            "\u4e00" <= ch <= "\u9fff" for ch in category
+        ):
+            # #694：未映射的中文值不再直通 Overpass（tag 值必须是英文枚举，
+            # 中文直通 = 0 命中死查询）。显式报错并给出可用类别。
+            sample = sorted(category_map.values())[:8]
+            return {
+                "error": f"未知的 POI 类别: {category!r}（Overpass tag 需英文枚举值）",
+                "correction_hint": (
+                    f"请改用已映射类别（如 学校/小学/医院/餐厅/公园/超市 等），"
+                    f"或直接用英文 amenity 值（如 {', '.join(sample)}…）"
+                ),
+            }
 
         # 构造 Overpass 查询 - 查询 bbox 内的 POI
         # 分类 tag：leisure / tourism 显式映射，其余全部落 amenity 默认分支
