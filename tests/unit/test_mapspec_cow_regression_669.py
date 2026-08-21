@@ -30,27 +30,10 @@ from tests.fixtures.mapspec_cow_fixtures import (
 _LARGE_INLINE_FC = get_large_inline_fc()
 
 
-# ── 1. grep-level no-deepcopy on hot path ───────────────────────────────────
-def test_no_deepcopy_on_mutation_hot_path():
-    """Issue #669 AC: no copy.deepcopy on intent/mutation hot path.
-
-    Allowed: exactly one deepcopy for old_layers_snapshot (conditional on
-    layer-touching intents). Any deepcopy of intent.source / loaded / mapspec
-    is a regression of the CoW completion.
-    """
-    src = pathlib.Path("app/services/mapspec/lifecycle_engine.py").read_text(encoding="utf-8")
-    # lines that contain copy.deepcopy
-    deepcopy_lines = [line.strip() for line in src.splitlines() if "copy.deepcopy" in line]
-    # After #669, only the old_layers_snapshot conditional deepcopy should remain.
-    # That line is `copy.deepcopy(pre_state.get("layers"` — allow it.
-    allowed = [line for line in deepcopy_lines if 'pre_state.get("layers"' in line or "pre_state.get('layers'" in line]
-    disallowed = [line for line in deepcopy_lines if line not in allowed]
-    assert not disallowed, (
-        "copy.deepcopy on mutation hot path must be eliminated (allowed only "
-        f"old_layers_snapshot); disallowed lines: {disallowed}"
-    )
-    # sanity: allowed branch still exists (rollback safety for layer-touching)
-    assert len(allowed) == 1, f"expected exactly 1 allowed deepcopy (old_layers), got {deepcopy_lines}"
+# ── 1. no-deepcopy on hot path ──────────────────────────────────────────────
+# #694：grep 源码的 oracle 层已删（重构/移动即假红）。行为等价断言在
+# tests/benchmarks/test_perf_mapspec_mutation_cost.py 的 deepcopy spy
+# （统计 intent 路径实际拷贝的要素数）——那是真 oracle。
 
 
 # ── 2. UpsertSourceIntent must not deepcopy intent.source ─────────────────────

@@ -1,6 +1,9 @@
 /**
  * WebGIS Tools Extension for Pi
  *
+ * ⚠️ #694：本文件是 index.mjs 的**死副本**——Pi 只加载编译后的 index.mjs。
+ * 编辑本文件不会生效；改完 .ts 源后必须重新编译/同步到 index.mjs。
+ *
  * Registers a single proxy tool `webgis_execute` that calls back to
  * the Python FastAPI server at http://localhost:8000/pi-tools/execute.
  */
