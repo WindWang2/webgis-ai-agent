@@ -410,7 +410,13 @@ def hotspot_narrated(geojson: dict, value_field: str, distance_band: float = 0) 
     return GeoAnalysisResult(True, data_out, summary)
 
 def calculate_nearest(geojson: dict) -> GeoAnalysisResult:
-    """Nearest neighbor analysis with narrative summary (O(n log n) via cKDTree)."""
+    """Nearest neighbor analysis with narrative summary (O(n log n) via cKDTree).
+
+    Returns {mean_nearest_distance, expected, R, pattern} plus aliases
+    {mean_distance, r_ratio} and extras {std_distance, min/max_distance}
+    for backwards compatibility. mean_nearest_distance == mean_distance,
+    expected is the CSR expectation, R == r_ratio.
+    """
     from scipy.spatial import cKDTree
     res = to_utm_gdf(geojson)
     if res is None or res[0] is None:
@@ -446,12 +452,18 @@ def calculate_nearest(geojson: dict) -> GeoAnalysisResult:
     summary = f"Nearest Neighbor Insight: The mean distance to the nearest neighbor is {mean_dist:.2f} meters. The distribution pattern appears to be {pattern} (R ratio: {r_ratio:.2f})."
     
     data = {
+        # Contract keys (docstring / ticket 9): mean_nearest_distance, expected, R
+        "mean_nearest_distance": mean_dist,
+        "expected": float(expected_mean),
+        "R": r_ratio,
+        # Aliases kept for backwards compatibility
         "mean_distance": mean_dist,
+        "r_ratio": r_ratio,
+        # Extras
         "std_distance": std_dist,
         "min_distance": float(nn_dist.min()),
         "max_distance": float(nn_dist.max()),
-        "r_ratio": r_ratio,
-        "pattern": pattern
+        "pattern": pattern,
     }
     return GeoAnalysisResult(True, data, summary)
 

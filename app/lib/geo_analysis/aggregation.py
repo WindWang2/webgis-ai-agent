@@ -146,8 +146,8 @@ def spatial_aggregate(
         if utm_crs != poly_crs:
             polygons = polygons.to_crs(utm_crs)
 
-        # Spatial Join
-        joined = gpd.sjoin(points, polygons, how='inner', predicate='within')
+        # Spatial Join (aggregate convention: intersects, not strict within)
+        joined = gpd.sjoin(points, polygons, how='inner', predicate='intersects')
         
         results = []
         for stat in stats:
@@ -166,12 +166,19 @@ def spatial_aggregate(
         combined_stats = pd.concat(results, axis=1)
         final_gdf = polygons.join(combined_stats)
         
-        # Fill NaNs
+        # Null vs zero: polygons with no points keep null/count=0;
+        # true zero stays 0. LLM consumers see has_data to disambiguate.
         if 'count' in final_gdf.columns:
             final_gdf['count'] = final_gdf['count'].fillna(0).astype(int)
+        else:
+            final_gdf['count'] = 0
+        # has_data distinguishes "no points" (null stats) from "points with zero aggregate"
+        final_gdf['has_data'] = final_gdf['count'] > 0
         for s in ['sum', 'mean', 'max', 'min']:
             if s in final_gdf.columns:
-                final_gdf[s] = final_gdf[s].fillna(0)
+                # keep NaN for empty polygons (no data), not 0
+                final_gdf[s] = final_gdf[s].where(final_gdf['has_data'], other=np.nan)
+                # For polygons with data but NaN stat (e.g. all-null values), leave as NaN too
         
         # Convert to output CRS (audit: warn when silently reprojecting)
         if output_crs and str(final_gdf.crs) != str(output_crs):
