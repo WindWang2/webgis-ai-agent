@@ -208,6 +208,25 @@ def _stamp(payload: Dict[str, Any], source: str) -> Dict[str, Any]:
     return out
 
 
+def _gd_poi_generated_at() -> Optional[str]:
+    """gd_poi 库的数据年份（meta.json generated_at），#702。
+
+    语义是**数据生成时刻**（库的 vintage），不是查询时刻——agent 据此判断
+    「本地库是几月抓的」。meta 缺失/损坏时返回 None（诚实缺位优于编造时间戳）。
+    """
+    try:
+        from app.services.local_poi import _meta_path
+        meta_path = _meta_path()
+        if not meta_path.exists():
+            return None
+        import json as _json
+        meta = _json.loads(meta_path.read_text(encoding="utf-8"))
+        val = meta.get("generated_at")
+        return val if isinstance(val, str) and val else None
+    except Exception:
+        return None
+
+
 def resolve_poi_filters(
     keyword: str = "",
     types: str = "",
@@ -440,6 +459,8 @@ def _local_poi_chain(
             "count": gd.get("count", 0),
             "provider": "local_gd_poi",
             "source": "local_gd_poi",
+            # #702：数据年份（库的 vintage），非查询时刻；meta 缺失时诚实缺位
+            "generated_at": _gd_poi_generated_at(),
             "bbox": list(bbox),
         }
     tags, name_like = resolve_poi_filters(keyword, types)

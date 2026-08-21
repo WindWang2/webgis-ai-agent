@@ -302,9 +302,22 @@ def cached_tool(ttl: int = 3600, skip_if: Optional[Callable[[dict], bool]] = Non
         is_async = inspect.iscoroutinefunction(func)
         tool_name = getattr(func, "__name__", "anonymous_tool")
 
+        def _merge_positional(args: tuple, kwargs: dict) -> dict:
+            """#702：wrapper 签名是 (*args, **kwargs)，位置传参的既有调用方
+            （如 ChineseMapsEngine.geocode → geocode_cn(addr, city)）不能因此
+            碎掉。有 args 时按内层签名绑定并合并成纯 kwargs 视图——缓存键、
+            skip_if 与内层调用全部只看 kwargs 的既有语义不变。"""
+            if not args:
+                return kwargs
+            sig = inspect.signature(func)
+            bound = sig.bind(*args, **kwargs)
+            bound.apply_defaults()
+            return dict(bound.arguments)
+
         if is_async:
             @functools.wraps(func)
-            async def async_wrapper(**kwargs):
+            async def async_wrapper(*args, **kwargs):
+                kwargs = _merge_positional(args, kwargs)
                 if skip_if is not None and skip_if(kwargs):
                     return await func(**kwargs)
                 key = make_cache_key(tool_name, kwargs)
@@ -346,7 +359,8 @@ def cached_tool(ttl: int = 3600, skip_if: Optional[Callable[[dict], bool]] = Non
             return async_wrapper
 
         @functools.wraps(func)
-        def sync_wrapper(**kwargs):
+        def sync_wrapper(*args, **kwargs):
+            kwargs = _merge_positional(args, kwargs)
             if skip_if is not None and skip_if(kwargs):
                 return func(**kwargs)
             key = make_cache_key(tool_name, kwargs)

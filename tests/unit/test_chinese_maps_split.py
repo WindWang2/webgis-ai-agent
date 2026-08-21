@@ -29,6 +29,16 @@ from app.tools.chinese_maps.http import (
 from app.tools.registry import ToolRegistry
 
 
+@pytest.fixture(autouse=True)
+def _no_tool_cache(monkeypatch):
+    """#702 起 geocode_cn 等 provider 工具挂了 cached_tool：本文件单测一律
+    旁路缓存。否则本地/nightly 的真 Redis 会把前一个测试的成功结果泄漏给
+    后一个测试（同参即命中，KeyError/回退路径直接假绿）。"""
+    from app.lib import tool_cache as _tc
+    monkeypatch.setattr(_tc, "get_cached", lambda key: None)
+    monkeypatch.setattr(_tc, "set_cached", lambda key, value, ttl: None)
+
+
 def test_fallback_order_preferred_first():
     order = _fallback_order("baidu")
     assert order[0] == "baidu"
@@ -153,7 +163,8 @@ async def test_with_fallback_error_dict_triggers_next_provider(monkeypatch):
         return {"provider": p}
 
     out = await with_fallback("amap", _call, no_key_msg="全部失败")
-    assert out == {"provider": "tianditu"}
+    assert out["provider"] == "tianditu"
+    assert out["provenance"] == {"source": "tianditu", "fetched_at": out["provenance"]["fetched_at"]}  # #702 成功结果必带时效戳
     assert calls == ["amap", "tianditu"]
 
 
@@ -198,7 +209,8 @@ async def test_with_fallback_timeout_error_triggers_next_provider(monkeypatch, t
         return {"provider": p}
 
     out = await with_fallback("amap", _call, no_key_msg="全部失败")
-    assert out == {"provider": "baidu"}
+    assert out["provider"] == "baidu"
+    assert out["provenance"]["source"] == "baidu"
     assert calls == ["amap", "baidu"]
 
 
@@ -247,7 +259,10 @@ async def test_with_fallback_error_none_business_dict_does_not_fall_back(monkeyp
         return {"provider": p}
 
     out = await with_fallback("amap", _call)
-    assert out == {"provider": "amap", "results": [], "error": None}
+    assert out["provider"] == "amap"
+    assert out["results"] == []
+    assert out["error"] is None
+    assert out["provenance"]["source"] == "amap"
     assert calls == ["amap"], "baidu must not be tried for a non-error payload"
 
 

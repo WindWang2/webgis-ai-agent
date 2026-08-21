@@ -5,6 +5,7 @@ M2: 从单体 chinese_maps.py 抽出。register_chinese_map_tools 仍在 __init_
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 
 import aiohttp
 
@@ -103,6 +104,24 @@ def _is_provider_error_dict(result: object) -> bool:
     return isinstance(err, str) and bool(err)
 
 
+def stamp_fetched_at(result: dict, source: str) -> dict:
+    """#702: 在线结果在计算时打时效戳（provenance.source + fetched_at）。
+
+    必须发生在缓存写入**之前**——cached_tool 原样返回缓存 payload，
+    provenance 自然反映原始获取时间；严禁在 cache 命中后补时间戳（那会把
+    命中时刻伪装成获取时刻，时效披露就失去意义）。幂等：已带 provenance
+    的 payload 原样返回。
+    """
+    if not isinstance(result, dict) or "provenance" in result:
+        return result
+    out = dict(result)
+    out["provenance"] = {
+        "source": source,
+        "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    return out
+
+
 async def with_fallback(
     preferred: str,
     call,
@@ -181,7 +200,7 @@ async def with_fallback(
             result["provider_switched"] = True
             result["fallback_note"] = note
             result["fallback_from"] = origin
-        return result
+        return stamp_fetched_at(result, p)
     if first_error is not None:
         return {"error": f"{no_key_msg}（{first_error}）"}
     return {"error": no_key_msg}

@@ -28,7 +28,17 @@ from app.tools.chinese_maps.http import (
     _has_provider,
     _VALID_PROVIDERS,
     with_fallback,
+    stamp_fetched_at,
 )
+
+# ── Provider 缓存 TTL（#702：按能力族集中定义，不散落魔法数）─────────────
+# 底图数据（地理编码/POI/行政区划）变化以天计 → 长缓存；
+# 路线族受路况影响但结构稳定 → 短缓存；
+# 实时态势（get_traffic_status）显式不缓存——实时语义，缓存即错误信息。
+GEOCODE_CACHE_TTL_S = 3600
+ROUTE_CACHE_TTL_S = 600
+
+from app.lib.tool_cache import cached_tool
 
 # 三个 provider 已全部深化为类（架构评审 F1）。每个类封装自己的端点、参数构造、
 # 解包键和双向 CRS。_PROVIDERS 是唯一的派发入口；能力矩阵 = Protocol 成员关系 +
@@ -111,6 +121,133 @@ class ChineseMapsEngine:
 chinese_maps_engine = ChineseMapsEngine()
 
 
+# ── 在线回退路径的缓存包装（#702）─────────────────────────────────────────
+# search_poi / search_poi_around / search_poi_polygon / get_admin_division /
+# get_child_districts 带 local-first 分支：本地命中与否取决于服务器本地库
+# 状态而非入参，整工具挂缓存会让「先在线、后装本地库」的部署拿到错误的
+# 在线缓存（反之亦然）。因此只缓存在线回退路径——本地命中永不进缓存。
+
+@cached_tool(ttl=GEOCODE_CACHE_TTL_S)
+async def _search_poi_online(keyword: str, city: str, provider: str, limit: int) -> dict:
+    _dispatch = {
+        "amap": _AMAP.search_poi, "baidu": _BAIDU.search_poi, "tianditu": _TIANDITU.search_poi,
+    }
+    errors: list[str] = []
+
+    async def _call(p):
+        try:
+            return await _dispatch[p](keyword, city, limit)
+        except _FALLBACK_ERRORS as e:
+            errors.append(f"{p}: {e}")
+            raise
+
+    return await with_fallback(
+        provider, _call,
+        no_key_msg=(f"所有服务商均失败: {'; '.join(errors)}" if errors else "未配置任何地图 API Key"),
+        tool_name="search_poi",
+        city=city or None,
+    )
+
+
+@cached_tool(ttl=GEOCODE_CACHE_TTL_S)
+async def _search_poi_around_online(center: list, radius_m: int, keyword: str,
+                                    types: str, provider: str, limit: int) -> dict:
+    _dispatch = {
+        "amap": _AMAP.search_poi_around,
+        "baidu": _BAIDU.search_poi_around,
+        "tianditu": _TIANDITU.search_poi_around,
+    }
+    return await with_fallback(
+        provider,
+        lambda p: _dispatch[p](center, radius_m, keyword, types, limit),
+        tool_name="search_poi_around",
+    )
+
+
+@cached_tool(ttl=GEOCODE_CACHE_TTL_S)
+async def _search_poi_polygon_online(target_poly: list, keyword: str,
+                                     types: str, provider: str, limit: int) -> dict:
+    _dispatch = {"amap": _AMAP.search_poi_polygon, "baidu": _BAIDU.search_poi_polygon}
+    return await with_fallback(
+        provider,
+        lambda p: _dispatch[p](target_poly, keyword, types, limit),
+        exclude={"tianditu"},
+        no_key_msg="未配置高德或百度 API Key",
+        tool_name="search_poi_polygon",
+    )
+
+
+@cached_tool(ttl=GEOCODE_CACHE_TTL_S)
+async def _admin_division_online(keywords: str, child_level: int, extensions_all: bool) -> dict:
+    result = await _TIANDITU.district_v2(keywords, child_level, extensions_all)
+    return stamp_fetched_at(result, "tianditu")
+
+
+@cached_tool(ttl=GEOCODE_CACHE_TTL_S)
+async def _child_districts_online(keywords: str, return_geometry: str, provider: str) -> dict:
+    """get_child_districts 的在线回退路径（原嵌套体原样搬移，语义不变）。"""
+    if provider == "tianditu" or not _has_provider("amap"):
+        # 天地图 V2 本身就支持返回下级，且支持 polygon
+        result = await _TIANDITU.district_v2(keywords, child_level=1, return_polygon=(return_geometry == "polygon"))
+        return stamp_fetched_at(result, "tianditu")
+
+    # 高德方案：先获取下级名称列表，然后（如果是 polygon 模式）并发获取每个下级的边界
+    params = {"keywords": keywords, "subdistrict": "1", "extensions": "base"}
+    data = await _AMAP._get("/config/district", params)
+    if "error" in data:
+        return data
+
+    districts = data.get("districts", [])
+    if not districts:
+        return {"error": f"未找到 '{keywords}' 的下级行政区"}
+
+    sub_units = districts[0].get("districts", [])
+    if not sub_units:
+        return {"error": f"'{keywords}' 没有更细分的下级单位"}
+
+    if return_geometry == "point":
+        features = []
+        for s in sub_units:
+            loc = s.get("center", "").split(",")
+            if len(loc) == 2:
+                lng, lat = gcj02_to_wgs84(float(loc[0]), float(loc[1]))
+                features.append({
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [lng, lat]},
+                    "properties": {"name": s.get("name"), "adcode": s.get("adcode"), "level": s.get("level")}
+                })
+        return stamp_fetched_at(
+            {"type": "FeatureCollection", "features": features, "count": len(features), "provider": "amap"},
+            "amap",
+        )
+
+    # Polygon 模式：并发请求每个子级的边界
+    import asyncio
+    tasks = []
+    for s in sub_units:
+        name = s.get("name")
+        if name:
+            tasks.append(_AMAP.district(name, level=s.get("level", "district"), return_geometry="polygon"))
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    all_features = []
+    for r in results:
+        if isinstance(r, dict) and "features" in r:
+            all_features.extend(r["features"])
+
+    return stamp_fetched_at(
+        {
+            "type": "FeatureCollection",
+            "features": all_features,
+            "count": len(all_features),
+            "provider": "amap",
+            "parent": keywords
+        },
+        "amap",
+    )
+
+
+@cached_tool(ttl=GEOCODE_CACHE_TTL_S)
 async def geocode_cn(address: str, city: str = "", provider: str = "amap") -> dict:
     if provider not in _VALID_PROVIDERS:
         return {"error": "provider 必须是 'amap', 'baidu' 或 'tianditu'"}
@@ -186,24 +323,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
         if provider not in _VALID_PROVIDERS:
             return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'，收到: {provider}"}
 
-        _dispatch = {
-            "amap": _AMAP.search_poi, "baidu": _BAIDU.search_poi, "tianditu": _TIANDITU.search_poi,
-        }
-        errors = []
-
-        async def _call(p):
-            try:
-                return await _dispatch[p](keyword, city, limit)
-            except _FALLBACK_ERRORS as e:
-                errors.append(f"{p}: {e}")
-                raise
-
-        return await with_fallback(
-            provider, _call,
-            no_key_msg=(f"所有服务商均失败: {'; '.join(errors)}" if errors else "未配置任何地图 API Key"),
-            tool_name="search_poi",
-            city=city or None,
-        )
+        return await _search_poi_online(keyword=keyword, city=city, provider=provider, limit=limit)
 
     tool(registry, tier=2, domains=["chinese"], name="geocode_cn",
          description="中文地址转坐标，比 Nominatim 中文地址准确率更高，可选高德/百度/天地图",
@@ -219,6 +339,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
                "location": "WGS84 坐标 [经度, 纬度]",
                "provider": "服务商: 'amap'(默认), 'baidu', 'tianditu'",
            })
+    @cached_tool(ttl=GEOCODE_CACHE_TTL_S)
     async def reverse_geocode_cn(location: list, provider: str = "amap") -> dict:
         if len(location) != 2:
             return {"error": "location 必须是 [经度, 纬度]"}
@@ -244,6 +365,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
                "city": "城市名（公交模式必填）",
                "provider": "服务商: 'amap'(默认) 或 'baidu'（天地图不支持路径规划）",
            })
+    @cached_tool(ttl=ROUTE_CACHE_TTL_S)
     async def plan_route(origin: list, destination: list, mode: str = "driving", city: str = "", provider: str = "amap") -> dict:
         if len(origin) != 2 or len(destination) != 2:
             return {"error": "origin/destination 必须是 [经度, 纬度]"}
@@ -271,6 +393,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
                "provider": "服务商: 'amap'(默认), 'baidu', 'tianditu'",
                "return_geometry": "返回几何类型: 'point'(默认,中心点), 'polygon'(返回完整的行政边界轮廓)",
            })
+    @cached_tool(ttl=GEOCODE_CACHE_TTL_S)
     async def get_district(keywords: str, level: str = "district", provider: str = "amap",
                            return_geometry: str = "point") -> dict:
         if return_geometry not in ("point", "polygon"):
@@ -303,6 +426,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
                "mode": "出行方式: 'driving'(默认)，'walking'，'riding'",
                "provider": "服务商: 'amap'(默认)，'baidu'",
            })
+    @cached_tool(ttl=ROUTE_CACHE_TTL_S)
     async def distance_matrix_cn(
         origins: list[list],
         destinations: list[list],
@@ -320,10 +444,12 @@ def register_chinese_map_tools(registry: ToolRegistry):
         if not _has_provider(provider):
             return {"error": f"未配置 {provider} API Key"}
 
+        # 直调 provider（不经 with_fallback）→ 手动盖章（#702）
         if provider == "amap":
-            return await _AMAP.distance_matrix(origins, destinations, mode)
+            result = await _AMAP.distance_matrix(origins, destinations, mode)
         else:
-            return await _BAIDU.distance_matrix(origins, destinations, mode)
+            result = await _BAIDU.distance_matrix(origins, destinations, mode)
+        return stamp_fetched_at(result, provider)
 
     @tool(registry, tier=2, domains=["network"], name="isochrone_analysis",
            description="等时圈分析：从一个中心点出发，计算并可视化指定时间内可达的范围。支持驾驶/步行/骑行方向。返回 GeoJSON 面数据和半径米数。当前仅支持高德路径规划。",
@@ -333,6 +459,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
                "mode": "出行方式: 'driving'(默认)，'walking'，'riding'",
                "provider": "服务商: 'amap'(默认，当前仅支持高德)",
            })
+    @cached_tool(ttl=ROUTE_CACHE_TTL_S)
     async def isochrone_analysis(
         center: list,
         minutes: int = 10,
@@ -350,7 +477,9 @@ def register_chinese_map_tools(registry: ToolRegistry):
         if not _has_provider(provider):
             return {"error": f"未配置 {provider} API Key"}
 
-        return await _AMAP.isochrone(center, minutes, mode)
+        # 直调 provider（不经 with_fallback）→ 手动盖章（#702）
+        result = await _AMAP.isochrone(center, minutes, mode)
+        return stamp_fetched_at(result, provider)
 
     @tool(registry, tier=2, domains=["chinese"], name="search_poi_around",
            description=(
@@ -389,15 +518,9 @@ def register_chinese_map_tools(registry: ToolRegistry):
         if provider not in _VALID_PROVIDERS:
             return {"error": "provider 必须是 'amap', 'baidu' 或 'tianditu'"}
 
-        _dispatch = {
-            "amap": _AMAP.search_poi_around,
-            "baidu": _BAIDU.search_poi_around,
-            "tianditu": _TIANDITU.search_poi_around,
-        }
-        return await with_fallback(
-            provider,
-            lambda p: _dispatch[p](center, radius_m, keyword, types, limit),
-            tool_name="search_poi_around",
+        return await _search_poi_around_online(
+            center=center, radius_m=radius_m, keyword=keyword,
+            types=types, provider=provider, limit=limit,
         )
 
     @tool(registry, tier=2, domains=["chinese"], name="search_poi_polygon",
@@ -460,13 +583,9 @@ def register_chinese_map_tools(registry: ToolRegistry):
         if local is not None:
             return local
 
-        _dispatch = {"amap": _AMAP.search_poi_polygon, "baidu": _BAIDU.search_poi_polygon}
-        return await with_fallback(
-            provider,
-            lambda p: _dispatch[p](target_poly, keyword, types, limit),
-            exclude={"tianditu"},
-            no_key_msg="未配置高德或百度 API Key",
-            tool_name="search_poi_polygon",
+        return await _search_poi_polygon_online(
+            target_poly=target_poly, keyword=keyword,
+            types=types, provider=provider, limit=limit,
         )
 
     @tool(registry, tier=2, domains=["chinese"], name="input_tips",
@@ -477,6 +596,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
                "location": "附近优先排序的坐标 [lng,lat]（可选）",
                "provider": "服务商: 'amap'(默认), 'baidu'",
            })
+    @cached_tool(ttl=GEOCODE_CACHE_TTL_S)
     async def input_tips(
         keyword: str,
         city: str = "",
@@ -506,6 +626,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
                "city_d": "终点城市名（跨城公交才需要）",
                "strategy": "策略: 0=最快捷, 1=最经济, 2=最少换乘, 3=最少步行, 5=不乘地铁。默认 0",
            })
+    @cached_tool(ttl=ROUTE_CACHE_TTL_S)
     async def search_transit_route(
         origin: list,
         destination: list,
@@ -519,7 +640,9 @@ def register_chinese_map_tools(registry: ToolRegistry):
             return {"error": "origin/destination 必须是 [lng,lat]"}
         if not _has_provider("amap"):
             return {"error": "公交查询当前仅支持 amap，请配置 AMAP_API_KEY"}
-        return await _AMAP.transit(origin, destination, city, city_d, strategy)
+        # 直调 provider（不经 with_fallback）→ 手动盖章（#702）
+        result = await _AMAP.transit(origin, destination, city, city_d, strategy)
+        return stamp_fetched_at(result, "amap")
 
     @tool(registry, tier=2, domains=["network"], name="get_traffic_status",
            description="查询实时路况：指定矩形或圆形范围内的道路拥堵情况。返回道路名+拥堵等级+长度。适合『现在三环堵不堵』『机场高速路况』等问题。仅 Amap。",
@@ -530,6 +653,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
                "radius_m": "圆半径米数（mode=circle，默认 1000）",
                "level": "拥堵等级过滤: 0=全部 1=畅通 2=缓行 3=拥堵 4=严重拥堵。默认 0",
            })
+    # #702：get_traffic_status 显式不缓存——实时语义，缓存即错误信息。
     async def get_traffic_status(
         mode: str = "rectangle",
         rectangle: Optional[list] = None,
@@ -545,7 +669,9 @@ def register_chinese_map_tools(registry: ToolRegistry):
             return {"error": "circle 模式需要 center=[lng,lat]"}
         if not _has_provider("amap"):
             return {"error": "实时路况当前仅支持 amap"}
-        return await _AMAP.traffic(mode, rectangle, center, radius_m, level)
+        # 直调 provider（不经 with_fallback）→ 手动盖章（#702）
+        result = await _AMAP.traffic(mode, rectangle, center, radius_m, level)
+        return stamp_fetched_at(result, "amap")
 
     @tool(registry, tier=2, domains=["chinese"], name="get_admin_division",
            description=(
@@ -574,7 +700,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
         local = try_local_admin_division(keywords, child_level)
         if local is not None:
             return local
-        
+
         # 目前仅 Tianditu 支持较好的边界输出
         if provider != "tianditu":
             # 自动 fallback 到 tianditu 如果可用
@@ -583,7 +709,9 @@ def register_chinese_map_tools(registry: ToolRegistry):
         if not _has_provider("tianditu"):
             return {"error": "行政区划查询需要配置 TIANDITU_TOKEN"}
 
-        return await _TIANDITU.district_v2(keywords, child_level, extensions == "all")
+        return await _admin_division_online(
+            keywords=keywords, child_level=child_level, extensions_all=(extensions == "all"),
+        )
 
     @tool(registry, tier=2, domains=["chinese"], name="get_child_districts",
            description="获取下级行政区列表及轮廓。例如『获取成都市的所有区县边界』或『获取锦江区的所有街道边界』。比多次调用 get_district 更高效。",
@@ -602,59 +730,10 @@ def register_chinese_map_tools(registry: ToolRegistry):
         local = try_local_child_districts(keywords)
         if local is not None:
             return local
-            
-        if provider == "tianditu" or not _has_provider("amap"):
-            # 天地图 V2 本身就支持返回下级，且支持 polygon
-            return await _TIANDITU.district_v2(keywords, child_level=1, return_polygon=(return_geometry == "polygon"))
-        
-        # 高德方案：先获取下级名称列表，然后（如果是 polygon 模式）并发获取每个下级的边界
-        params = {"keywords": keywords, "subdistrict": "1", "extensions": "base"}
-        data = await _AMAP._get("/config/district", params)
-        if "error" in data:
-            return data
-        
-        districts = data.get("districts", [])
-        if not districts:
-            return {"error": f"未找到 '{keywords}' 的下级行政区"}
-        
-        sub_units = districts[0].get("districts", [])
-        if not sub_units:
-            return {"error": f"'{keywords}' 没有更细分的下级单位"}
-        
-        if return_geometry == "point":
-            features = []
-            for s in sub_units:
-                loc = s.get("center", "").split(",")
-                if len(loc) == 2:
-                    lng, lat = gcj02_to_wgs84(float(loc[0]), float(loc[1]))
-                    features.append({
-                        "type": "Feature",
-                        "geometry": {"type": "Point", "coordinates": [lng, lat]},
-                        "properties": {"name": s.get("name"), "adcode": s.get("adcode"), "level": s.get("level")}
-                    })
-            return {"type": "FeatureCollection", "features": features, "count": len(features), "provider": "amap"}
-        
-        # Polygon 模式：并发请求每个子级的边界
-        import asyncio
-        tasks = []
-        for s in sub_units:
-            name = s.get("name")
-            if name:
-                tasks.append(_AMAP.district(name, level=s.get("level", "district"), return_geometry="polygon"))
-        
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        all_features = []
-        for r in results:
-            if isinstance(r, dict) and "features" in r:
-                all_features.extend(r["features"])
-        
-        return {
-            "type": "FeatureCollection", 
-            "features": all_features, 
-            "count": len(all_features), 
-            "provider": "amap",
-            "parent": keywords
-        }
+
+        return await _child_districts_online(
+            keywords=keywords, return_geometry=return_geometry, provider=provider,
+        )
 
 
     @tool(registry, tier=2, domains=["chinese"], name="get_sub_districts_polygons",
