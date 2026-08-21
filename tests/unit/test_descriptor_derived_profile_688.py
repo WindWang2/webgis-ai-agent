@@ -139,4 +139,4 @@ async def test_author_dispatch_falls_back_to_full_profile_without_descriptor(mon
             result_ref="ref:geojson:test-688b",
             descriptor=None,
         )
-    assert calls["n"] == 1, "无 descriptor 必须恰好降级一次全量 profile", "无 descriptor 必须恰好降级一次全量 profile"
+    assert calls["n"] == 1, "无 descriptor 必须恰好降级一次全量 profile"
