@@ -25,6 +25,8 @@ _MAX_CARTOGRAPHIC_FINDINGS = 32
 # Two desired-state attempts plus two runtime convergence attempts.
 _MAX_REPAIR_ATTEMPTS = 4
 _MAX_VISUAL_EVIDENCE = 4
+_MAX_PRODUCT_FALLBACKS = 16
+_MAX_PRODUCT_COMPONENTS = 32
 
 
 def _bounded_cartographic_review(review: Dict[str, Any]) -> Dict[str, Any]:
@@ -231,6 +233,58 @@ class CartographicReviewEvidence:
 
 
 @dataclass
+class MapProductEvidence:
+    """GIS Harness 产品证据（IntentResolution / RecipeSelection / RecipeEligibility /
+    FallbackDecision / ComponentSelection / MapProductCompleteness）。
+
+    由 ``webgis_map_product`` 等产品组装工具在结果中携带
+    ``map_product_evidence`` —— harness 只转录，不推断；缺证据即 None
+    （绝不为 PASS）。条目有界：fallback/组件列表截断保留 + omitted 计数。
+    """
+    tool_call_id: str = ""
+    intent_resolution: Dict[str, Any] = field(default_factory=dict)
+    recipe_selection: Dict[str, Any] = field(default_factory=dict)
+    recipe_eligibility: Dict[str, Any] = field(default_factory=dict)
+    fallback_decisions: List[Dict[str, Any]] = field(default_factory=list)
+    component_selection: List[str] = field(default_factory=list)
+    completeness: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_result(cls, result: Optional[Dict[str, Any]]) -> Optional["MapProductEvidence"]:
+        """从工具结果提取产品证据；无 ``map_product_evidence`` 键 → None。"""
+        if not isinstance(result, dict):
+            return None
+        raw = result.get("map_product_evidence")
+        if not isinstance(raw, dict):
+            return None
+        fallbacks = [
+            fb for fb in raw.get("fallback_decisions", [])
+            if isinstance(fb, dict)
+        ][:_MAX_PRODUCT_FALLBACKS]
+        components = [
+            str(c) for c in raw.get("component_selection", [])
+        ][:_MAX_PRODUCT_COMPONENTS]
+        return cls(
+            intent_resolution=raw.get("intent_resolution") or {},
+            recipe_selection=raw.get("recipe_selection") or {},
+            recipe_eligibility=raw.get("recipe_eligibility") or {},
+            fallback_decisions=fallbacks,
+            component_selection=components,
+            completeness=raw.get("map_product_completeness") or {},
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "intent_resolution": self.intent_resolution,
+            "recipe_selection": self.recipe_selection,
+            "recipe_eligibility": self.recipe_eligibility,
+            "fallback_decisions": self.fallback_decisions,
+            "component_selection": self.component_selection,
+            "completeness": self.completeness,
+        }
+
+
+@dataclass
 class ToolCallEvidence:
     """单次工具调用的完整 correlation + 证据记录。
 
@@ -252,6 +306,8 @@ class ToolCallEvidence:
     map_actions: List["MapActionEvidence"] = field(default_factory=list)
     # 运行时制图证据路径（screenshot/trace/report，可选）
     runtime_evidence_path: Optional[str] = None
+    # GIS Harness 产品证据（Intent/Recipe/Fallback/Component，可选）
+    map_product: Optional[MapProductEvidence] = None
 
 
 @dataclass
