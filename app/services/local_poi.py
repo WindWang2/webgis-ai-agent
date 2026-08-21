@@ -582,6 +582,14 @@ def gd_poi_catalog() -> Dict[str, Any]:
     return out
 
 
+def _adcode_literal(code: str) -> str:
+    """#694：adcode → OGR 字面量。只允许数字（adcode 语义即数字编码），
+    非法字符剥除后引号翻倍兜底——与 category/subtype/name_like 的转义
+    纪律对齐（此前 adcode 是唯一的 f-string 直插注入面）。"""
+    digits = "".join(ch for ch in str(code) if ch.isdigit())
+    return digits.replace("'", "''")
+
+
 def query_gd_poi(
     bbox: Any = None,
     *,
@@ -662,13 +670,13 @@ def query_gd_poi(
         )
         subtype_sql = "LOWER(subtype) LIKE LOWER('%'||?||'%') ESCAPE '\\'"
     if adcode:
-        code = str(adcode).strip()
+        code = _adcode_literal(str(adcode).strip())
         if len(code) >= 6:  # 区县级 6 位：精确（zfill 兜底补零）
             padded = code.zfill(6)
             ogr_clauses.append(f"adcode = '{padded}'")
             sql_clauses.append("adcode = ?")
             sql_params.append(padded)
-        else:
+        elif code:
             # 2/4 位省市级编码：前缀展开。用范围条件而非 LIKE——SQLite 的
             # LIKE 默认大小写不敏感，无法用 idx_pois_adcode（实测 51M 行
             # 全表扫 ~15s），范围条件走 B-tree 索引。
@@ -676,7 +684,10 @@ def query_gd_poi(
             ogr_clauses.append(f"(adcode >= '{code}' AND adcode < '{nxt}')")
             sql_clauses.append("(adcode >= ? AND adcode < ?)")
             sql_params.extend((code, nxt))
-    for code in district_codes:
+    for raw in district_codes:
+        code = _adcode_literal(str(raw).strip())
+        if not code:
+            continue
         if len(code) == 4:  # 市级前缀
             nxt = code[:-1] + chr(ord(code[-1]) + 1)
             ogr_clauses.append(f"(adcode >= '{code}' AND adcode < '{nxt}')")
