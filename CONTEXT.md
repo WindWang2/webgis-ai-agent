@@ -211,6 +211,18 @@ for legacy payloads); its frontend mirror is `frontend/lib/mapspec-runtime/thema
 `CartographicStyle` service ADR-0007 deferred — see ADR-0052. `CartographyService` remains the
 classification engine (ADR-0012) and the two converters stay separate renderers (ADR-0017).
 
+### Inline Carrier (内联载体)
+MapSpec source 里直接内嵌要素体的 GeoJSON 载荷（`inlineData`）。超过 5000 特征的 inline 载体被门拒绝——大数据集的唯一合法形态是 `ref:` 引用（ADR-0066）。无逃生舱。
+_Avoid_: 内联大数据集、直接塞 geojson
+
+### Auto-view (自动取景)
+首次授权图层后自动飞行到数据 bbox 的行为。**仅适用于非 ref 的内联小图层**；ref 层永远不做 auto-view——取景是显式动作（zoom_to_bbox / fly_to / 用户手势），不是授权的副作用（ADR-0067）。
+_Avoid_: 上传即飞行、自动 fitBounds
+
+### Assembled vs Committed (组装 vs 提交)
+Composite/组合预设的两阶段语义：**assembled** = 槽位已合成出 MapSpec 形状（未落库、未验证、前端不可见）；**committed** = 已过生命周期引擎校验并写入会话 store。工具返回必须带 `committed` 布尔或等价显式标志，两者不得混称。
+_Avoid_: 把 assembled 说成"已应用"
+
 ### GIS harness (informal)
 Speech for the Pi-hosted closed loop in this product: Agent tools mutate MapSpec, the live
 map consumes MapSpec, and PiAgentHarness evaluates with evidence. Not a module, package,
