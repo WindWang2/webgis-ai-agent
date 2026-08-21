@@ -8,7 +8,6 @@ Covers:
 """
 import asyncio
 import copy
-import pathlib
 
 import pytest
 
