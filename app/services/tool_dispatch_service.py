@@ -578,7 +578,7 @@ class ToolDispatchService:
             convert_analysis_to_mapspec_layer,
         )
         from app.services.mapspec_store import mapspec_store
-        from app.services.spatial_meta_profiler import profile_geojson_source
+        from app.services.spatial_meta_profiler import profile_geojson_source, profile_from_descriptor
         from app.tools.cartography_tools import _fingerprint_metadata, _runtime_patch
 
         safe_call_id = re.sub(r"[^A-Za-z0-9_-]+", "-", tool_call_id).strip("-")[:48]
@@ -609,7 +609,17 @@ class ToolDispatchService:
                     },
                 },
             )
-            profile = await asyncio.to_thread(profile_geojson_source, target_data)
+            # #688：descriptor 命中则 O(1) 派生 profile（store 时已算好的
+            # bbox/feature_count/geometry_types——授权消费面：view 注入/图层
+            # 类型/指纹），零全量遍历；descriptor 缺失或不完整才降级全量
+            # profile_geojson_source（字段直方图等富信息场景）。
+            profile = (
+                await asyncio.to_thread(profile_from_descriptor, descriptor)
+                if descriptor
+                else None
+            )
+            if profile is None:
+                profile = await asyncio.to_thread(profile_geojson_source, target_data)
             source_data = {
                 "type": "geojson",
                 "ref_id": result_ref,

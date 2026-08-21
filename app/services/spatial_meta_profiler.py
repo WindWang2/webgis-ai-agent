@@ -85,6 +85,40 @@ def _calculate_suggested_zoom(west: float, south: float, east: float, north: flo
   return 15
 
 
+def profile_from_descriptor(descriptor: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """#688：O(1) descriptor → Spatial Meta Profile 派生（零全量遍历）。
+
+    store() 时算好的 ref descriptor（#666：bbox/feature_count/geometry_types）
+    足够支撑授权路径的消费面——view 注入（suggestedView）、图层类型推断
+    （geometryTypes）、指纹。字段直方图不可得，``fields_status`` 置
+    ``unknown``（本模块 return 契约注释明确预留的语义：semantic review
+    不得把不可得的 schema 元数据当 missing-field 失败）。descriptor 缺失
+    或不完整时返回 None，调用方降级全量 profile_geojson_source。
+    """
+    if not isinstance(descriptor, dict):
+        return None
+    fc = descriptor.get("feature_count")
+    if not isinstance(fc, int) or isinstance(fc, bool) or fc < 0:
+        return None
+    bbox = descriptor.get("bbox")
+    # suggestedView 恒空：全量 profiler 只对显式地理 CRS 计算 view（投影/
+    # 未声明坐标上给 view 不安全），而 descriptor 不携带 CRS 信息——派生
+    # 路径对齐该保守语义（ref 层 auto-view 本就走不到，见 #680）。
+    return {
+        "bbox": list(bbox) if isinstance(bbox, (list, tuple)) else None,
+        "crs": None,
+        "crs_status": "unknown",
+        "featureCount": fc,
+        "geometryTypes": sorted(
+            t for t in (descriptor.get("geometry_types") or []) if isinstance(t, str)
+        ),
+        "fields": {},
+        "fields_status": "unknown",
+        "suggestedView": {},
+        "temporalProfile": None,
+    }
+
+
 def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]) -> Dict[str, Any]:
   """
   Analyzes a GeoJSON data source and produces a Spatial Meta Profile.
