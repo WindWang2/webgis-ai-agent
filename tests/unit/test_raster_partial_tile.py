@@ -6,7 +6,7 @@ import rasterio
 from rasterio.transform import from_bounds
 from PIL import Image
 
-from app.services.raster_tile_service import render_raster_tile, _STATS_CACHE, tile_bounds_3857
+from app.services.raster_tile_service import render_raster_tile, _STATS_CACHE
 
 
 def _write_small_raster(path):

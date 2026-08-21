@@ -20,7 +20,7 @@ def test_value_weight_affects_clustering():
     assert res_spatial.success and res_value.success
     # With weight 0, clustering is spatial only; with large weight, value dominates.
     # The two high-value points should cluster together in value-weighted mode.
-    labels_spatial = [f["properties"]["cluster_id"] for f in res_spatial.data["features"]]
+    _labels_spatial = [f["properties"]["cluster_id"] for f in res_spatial.data["features"]]
     labels_weighted = [f["properties"]["cluster_id"] for f in res_value.data["features"]]
     # high-value pair (indices 2,3) must be same cluster when value dominates
     assert labels_weighted[2] == labels_weighted[3]
