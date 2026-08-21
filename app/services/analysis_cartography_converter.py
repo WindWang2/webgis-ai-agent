@@ -121,11 +121,27 @@ def is_analysis_result(source_data: Any) -> bool:
     return False
 
 
+def _get_heatmap_min_points() -> int:
+    """#690: read HEATMAP_MIN_POINTS from settings, clamped to >=1."""
+    try:
+        from app.core.config import settings as _s  # lazy import to avoid cycle
+        raw = getattr(_s, "HEATMAP_MIN_POINTS", 10)
+        return max(1, int(raw))
+    except Exception:
+        return 10
+
+
 def _extract_geojson(analysis_result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Extract GeoJSON FeatureCollection/Feature dict from analysis_result."""
     if "data" in analysis_result:
         data = analysis_result["data"]
         if _looks_like_geojson(data):
+            return data
+        return None
+    # #690: dispatch payload uses `geojson` key (see _author_display_result)
+    if "geojson" in analysis_result:
+        data = analysis_result["geojson"]
+        if isinstance(data, dict) and _looks_like_geojson(data):
             return data
         return None
 
@@ -233,10 +249,39 @@ def convert_analysis_to_mapspec_layer(
         inferred_layer_type = cat_to_layer_type.get(geom_cat, "circle")
 
         type_hint = analysis_result.get("type_hint") or base_layer.get("type_hint")
+        # #690: deterministic guard — do not flip to heatmap when unsuitable
+        heatmap_guard_triggered = False
+        heatmap_guard_reason = ""
         if type_hint == "heatmap":
-            inferred_layer_type = "heatmap"
+            threshold = _get_heatmap_min_points()
+            # Prefer explicit metadata point_count (heatmap_data sets it), fall back to
+            # actual GeoJSON feature count; geometry guard uses inferred category.
+            meta = analysis_result.get("metadata") or {}
+            hint_count = meta.get("point_count")
+            if isinstance(hint_count, int) and hint_count >= 0:
+                point_count = hint_count
+            else:
+                point_count = len(_iter_features(inline_geojson)) if inline_geojson else 0
+            if geom_cat != "point":
+                heatmap_guard_triggered = True
+                heatmap_guard_reason = f"非点几何({geom_cat})不适合原生热力图"
+            elif point_count < threshold:
+                heatmap_guard_triggered = True
+                heatmap_guard_reason = f"点数{point_count}<阈值{threshold}，热力图无统计意义"
+            if heatmap_guard_triggered:
+                correction = (
+                    f"已拦截原生热力图（{heatmap_guard_reason}）"
+                    f"，已回退为点图(circle)展示；"
+                    f"如需密度趋势请先聚合(h3_binning)或增大样本。"
+                )
+                warnings.append(f"heatmap_guard: {heatmap_guard_reason}; {correction}")
+            else:
+                inferred_layer_type = "heatmap"
 
         layer_type = base_layer.get("type") or inferred_layer_type
+        # Guard overrides: never emit heatmap layer when guard triggered
+        if heatmap_guard_triggered and layer_type == "heatmap":
+            layer_type = "circle"
 
         # All legend-bearing emitters attach legend_spec at the top level of their
         # result dict (h3_binning, kde_contours, heatmap_data, apply_template,
@@ -319,6 +364,12 @@ def convert_analysis_to_mapspec_layer(
         source_id = base_layer.get("source") or f"{layer_id}_source"
 
         res_layer = _build_layer(base_layer, layer_id, source_id, layer_type, paint, provenance)
+        # #690: correction_hint accompanies the fallback when heatmap was denied
+        if heatmap_guard_triggered:
+            res_layer["correction_hint"] = (
+                f"已拦截原生热力图（{heatmap_guard_reason}），"
+                f"已回退为点图(circle)；如需密度趋势请用 h3_binning 聚合或增大样本。"
+            )
         # ADR-0052: attach the canonical legend_spec onto the output layer so the
         # cartography semantic checks can verify paint ↔ legend equivalence on
         # the SAME MapSpec (previously the vector path dropped legend_spec while

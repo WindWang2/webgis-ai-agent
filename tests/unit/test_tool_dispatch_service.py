@@ -701,16 +701,17 @@ async def test_native_heatmap_result_authors_heatmap_mapspec_layer(
 
     回归现场：type_hint 缺失时点要素被推断为 circle，FC 体被白名单剥离，
     add_native_heatmap 指令丢失 —— 热力图从未在地图上出现。
+    #690: point_count 需 >= 阈值(10)否则被 MapSpec converter 守卫拦为 circle。
     """
     fake_registry.dispatch.return_value = {
         "type": "FeatureCollection",
         "features": [
-            {"geometry": {"type": "Point", "coordinates": [104.0, 30.6]}, "properties": {}},
-            {"geometry": {"type": "Point", "coordinates": [104.02, 30.62]}, "properties": {}},
+            {"geometry": {"type": "Point", "coordinates": [104.0 + i * 0.01, 30.6]}, "properties": {}}
+            for i in range(12)
         ],
         "command": "add_native_heatmap",
         "type_hint": "heatmap",
-        "metadata": {"render_type": "native", "point_count": 2,
+        "metadata": {"render_type": "native", "point_count": 12,
                      "radius": 1500, "palette": "thermal"},
         "legend_spec": {"type": "continuous", "min": 0.0, "max": 1.0,
                         "palette": "YlOrRd", "palette_colors": ["#0066ff", "#eb1414"]},

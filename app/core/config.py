@@ -140,6 +140,11 @@ class Settings(BaseSettings):
     # serializes ~5000 remote round-trips.
     DATA_FABRIC_SYNC_CONCURRENCY: int = 4
 
+    # #690：原生热力图确定性守卫阈值（点数 < 阈值或非点几何 → 拦截 native heatmap）
+    # 对齐 skill 正文 "<10 点热力图无统计意义"，移至配置层恒生效；settings/env 可覆盖，
+    # 复用仓内 config 惯例。max(1,) 防零在读取侧 clamp，字段层仅定义默认值。
+    HEATMAP_MIN_POINTS: int = 10
+
     # Chat 引擎：连续“无进展”轮次的熔断阈值（#685）
     # 定义：当连续 N 轮工具调用既未产生新的成功结果也未推进计划进度时，判定为无进展循环。
     # 具体实现中以 consecutive_no_progress 计数器跟踪，连续 N 轮满足「全失败/重复/错误」
