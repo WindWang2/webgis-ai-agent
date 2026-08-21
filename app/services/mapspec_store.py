@@ -135,7 +135,12 @@ class MapSpecStore:
             )
             if not isinstance(descriptor, dict):
                 raise ValueError("source ref is missing or not owned by this session")
-            profile = {
+            # #688 收敛：descriptor→profile 投影与授权路径同源，委托
+            # spatial_meta_profiler.profile_from_descriptor（形状属主）；
+            # feature_count 缺失的 legacy descriptor 走原内联形状兜底。
+            from app.services.spatial_meta_profiler import profile_from_descriptor
+
+            profile = profile_from_descriptor(descriptor) or {
                 "bbox": descriptor.get("bbox"),
                 "crs": None,
                 "crs_status": "unknown",

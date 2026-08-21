@@ -41,7 +41,12 @@ def _forward_evidence(res: Dict[str, Any], out: Dict[str, Any]) -> Dict[str, Any
 
 
 def _descriptor_profile(descriptor: Dict[str, Any]) -> Dict[str, Any]:
-  """Project an O(1) ref descriptor into truthful spatial review metadata."""
+  """Project an O(1) ref descriptor into truthful spatial review metadata.
+
+  #688 投影族注：本函数是**空间审查元数据**的精简投影（无 view/temporal）；
+  授权路径的完整 profile 派生用 spatial_meta_profiler.profile_from_descriptor
+  （形状属主），mapspec_store 侧已委托之。改 descriptor 键名时三处同查。
+  """
   return {
       "featureCount": descriptor.get("feature_count"),
       "geometryTypes": list(descriptor.get("geometry_types") or []),
