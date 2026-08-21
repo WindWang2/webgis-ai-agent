@@ -59,15 +59,18 @@ export const heatmapCommands: Record<string, CommandEntry> = {
       const { geojson, layerId, palette, radius } = params || {};
       // #611: 后端模板（app/tools/templates.py apply_template heatmap variant）发射
       // 的 params 含 heatPalette/intensity/field（未列入 MapActionPayload 类型收窄）。
-      const { heatPalette, intensity, field } = (params ?? {}) as Partial<{
+      const { heatPalette, intensity, field, radiusPx } = (params ?? {}) as Partial<{
         heatPalette: string[];
         intensity: number;
         field: string;
+        radiusPx: number;
       }>;
-      // heatmap_data 工具结果把 palette/radius/intensity 嵌在 metadata 里
-      // （useMapBridge 把除 command 外的整体作为 params 透传）——不读的话
-      // agent 选的配色/半径会静默丢失，永远按 classic+默认半径渲染。
-      const meta = ((params ?? {}) as { metadata?: { palette?: string; radius?: number; intensity?: number } }).metadata ?? {};
+      // heatmap_data 工具结果把 palette/radius_px/radius/intensity 嵌在 metadata
+      // 里（useMapBridge 把除 command 外的整体作为 params 透传）——不读的话
+      // agent 选的配色/半径会静默丢失。半径契约：优先显式 radius_px（像素）；
+      // legacy radius 由 renderer 归一化消化（4-60 直通，超窗默认 30px），
+      // 米值绝不再被当作像素消费（后端 heatmap_contract 前端镜像）。
+      const meta = ((params ?? {}) as { metadata?: { palette?: string; radius?: number; radius_px?: number; intensity?: number } }).metadata ?? {};
       // V3: missing payload data → explicit failed result (was a silent return).
       if (!geojson) return { status: 'failed', error: 'invalid_params' };
 
@@ -81,6 +84,7 @@ export const heatmapCommands: Record<string, CommandEntry> = {
         id,
         source: id,
         palette: (heatPalette ?? palette ?? meta.palette) as any,
+        radiusPx: radiusPx ?? meta.radius_px,
         radius: radius ?? meta.radius,
         intensity: intensity ?? meta.intensity,
         opacity: 0.8

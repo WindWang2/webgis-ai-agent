@@ -438,10 +438,30 @@ export interface HeatmapOptions {
   source: string;
   /** 命名键（classic/magma/viridis/thermal，未知名回落 classic）或颜色数组。 */
   palette?: string | string[];
+  /** 显式视觉热力半径（MapLibre 屏幕像素）—— 契约字段，直接 clamp [4,80]。 */
+  radiusPx?: number;
+  /** legacy 米制半径：经归一化规则消化（4-60 历史窗口直通 px，否则默认 30px）。 */
   radius?: number;
   weight?: any;
   intensity?: number;
   opacity?: number;
+}
+
+/**
+ * 热力半径归一化（后端 app/lib/cartography/heatmap_contract.py 的前端镜像）：
+ * 显式 radius_px 优先；legacy radius（米）在 4-60 历史窗口内延续像素直通，
+ * 超窗回落默认 30px —— 米值绝不再被当作像素消费。
+ */
+export function resolveHeatmapRadiusPx(options: HeatmapOptions): number {
+  const explicit = Number(options.radiusPx);
+  if (Number.isFinite(explicit)) {
+    return Math.max(4, Math.min(80, Math.floor(explicit)));
+  }
+  const legacy = Number(options.radius);
+  if (Number.isFinite(legacy) && legacy >= 4 && legacy <= 60) {
+    return Math.max(4, Math.min(80, Math.floor(legacy)));
+  }
+  return 30;
 }
 
 /**
@@ -455,10 +475,7 @@ export function addNativeHeatmap(map: Map, options: HeatmapOptions) {
 
   const palette = heatmapPaletteStops(options.palette);
 
-  // 后端部分调用方把「米」半径（如 2000m）直接塞进 radius —— MapLibre 的
-  // heatmap-radius 是像素。>100 视为米制误传，回落默认；最终收敛到 [4, 80]px。
-  const rawRadius = Number(options.radius ?? 30)
-  const radiusPx = Math.max(4, Math.min(80, Number.isFinite(rawRadius) && rawRadius <= 100 ? rawRadius : 30))
+  const radiusPx = resolveHeatmapRadiusPx(options);
 
   // 显式 intensity 原样透传；缺省时随 zoom 增益：高斯核在放大、点距拉开后
   // 重叠贡献变少，不补偿的话放大后整图退回低密度冷色（MapLibre 官方示例

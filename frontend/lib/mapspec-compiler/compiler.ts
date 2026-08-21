@@ -346,6 +346,23 @@ export function compileMapSpec(
           maplibreLayer.paint["heatmap-intensity"] = compileStyleMethod(layer.paint.intensity);
         if (layer.paint.weight !== undefined)
           maplibreLayer.paint["heatmap-weight"] = compileStyleMethod(layer.paint.weight);
+        // 方言桥接：dispatch 授权链路（analysis_cartography_converter）产出
+        // 的 heatmap 层携带的是 MapLibre 原生 heatmap-* paint 表达式（含
+        // zoom 插值 radius 与密度色带）。live runtime 直传它们；headless
+        // 编译此前只认高级键 → 授权层编译出空 paint。此处显式透传已知的
+        // 原生键（优先级低于上面的高级键），两套方言不再漂移。
+        for (const rawKey of [
+          "heatmap-weight",
+          "heatmap-intensity",
+          "heatmap-color",
+          "heatmap-radius",
+          "heatmap-opacity",
+        ] as const) {
+          const rawValue = (layer.paint as Record<string, unknown>)[rawKey];
+          if (rawValue !== undefined && maplibreLayer.paint[rawKey] === undefined) {
+            maplibreLayer.paint[rawKey] = rawValue as unknown as StyleMethod;
+          }
+        }
       } else if (layerType === "raster") {
         // Raster layer (ADR-0011): colors are baked into the source image; the
         // only paint property is opacity. A raster layer references its

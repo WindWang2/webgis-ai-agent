@@ -459,3 +459,45 @@ describe("MapSpec Compiler (Seam A)", () => {
     });
   });
 });
+
+describe("heatmap raw paint dialect bridge (GIS harness radius contract)", () => {
+  it("passes through raw heatmap-* MapLibre expressions emitted by the dispatch authoring path", () => {
+    // dispatch 授权链路产出的 heatmap 层带原生 zoom 插值 radius 表达式与
+    // 密度色带 —— headless 编译此前只认高级键，授权层编译出空 paint。
+    const radiusExpr = ["interpolate", ["linear"], ["zoom"], 0, 2, 9, 22, 13, 37];
+    const spec: MapSpec = {
+      version: "1.0",
+      sources: { s1: { type: "geojson", inlineData: { type: "FeatureCollection", features: [] } } },
+      layers: [{
+        id: "heat", source: "s1", type: "heatmap",
+        paint: {
+          "heatmap-radius": radiusExpr,
+          "heatmap-weight": 1,
+          "heatmap-opacity": 0.9,
+        } as any,
+      }],
+    };
+    const result = compileMapSpec(spec);
+    const lyr = result.style.layers.find((l: any) => l.id === "heat");
+    expect(lyr.paint["heatmap-radius"]).toEqual(radiusExpr);
+    expect(lyr.paint["heatmap-weight"]).toBe(1);
+    expect(lyr.paint["heatmap-opacity"]).toBe(0.9);
+  });
+
+  it("high-level paint.radius still wins over the raw key", () => {
+    const spec: MapSpec = {
+      version: "1.0",
+      sources: { s1: { type: "geojson", inlineData: { type: "FeatureCollection", features: [] } } },
+      layers: [{
+        id: "heat", source: "s1", type: "heatmap",
+        paint: {
+          radius: 18,
+          "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 0, 2, 9, 30, 13, 51],
+        } as any,
+      }],
+    };
+    const result = compileMapSpec(spec);
+    const lyr = result.style.layers.find((l: any) => l.id === "heat");
+    expect(lyr.paint["heatmap-radius"]).toBe(18);
+  });
+});

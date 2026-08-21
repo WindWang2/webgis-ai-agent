@@ -50,6 +50,7 @@ import {
 } from "@/lib/mapspec/session-cursor"
 import { apiFetch } from "@/lib/api/transport"
 import { computeInteractiveIds, resolveParentLayerId } from "@/lib/map-kit/interactive-ids"
+import { MapSpecChrome } from "@/components/map/map-spec-chrome"
 import { PoiInfoPanel } from "@/components/map/poi-info-panel"
 import { raiseAnnotationLayers } from "@/lib/map-commands/annotationHelpers"
 import { notifyUserGestureStart, notifyUserGestureEnd } from "@/lib/map-commands/camera-arbitration"
@@ -1023,6 +1024,21 @@ export function MapPanel({
     bearing: decorState.bearing,
   }), [decorState])
 
+  // GIS Harness 组件面：committed MapSpec 的 layout.components（Cartography-
+  // Component 契约）。有可渲染组件时由 MapSpecChrome 专职渲染 chrome
+  // （title/指北针/比例尺/署名/色条/图例），旧 MapDecorations 让位避免双
+  // 份；无组件的旧 spec 行为完全不变（HUD chrome 照旧）。
+  const committedSpec = useMemo(
+    () => getCommittedMapSpec(),
+    [liveGeneration],
+  )
+  const specComponents = committedSpec?.layout?.components ?? []
+  const hasSpecChrome = specComponents.some(
+    (c) => c.enabled !== false && c.type !== 'export_layout' && c.type !== 'graticule'
+      && c.type !== 'basemap' && c.type !== 'statistics_panel' && c.type !== 'chart_panel'
+      && c.type !== 'annotation' && c.type !== 'map_border',
+  )
+
   const showPerceptionRings = aiStatus === 'thinking' || aiStatus === 'acting'
 
   return (
@@ -1111,13 +1127,24 @@ export function MapPanel({
             })}
           </div>
           <MapDecorations
-            show={true}
+            show={!hasSpecChrome}
             title={cartographyTitle ?? thematicLayers[0]?.name ?? null}
             zoom={decorProps.zoom}
             centerLat={decorProps.centerLat}
             bearing={decorProps.bearing}
           />
         </>
+      )}
+
+      {/* GIS Harness 制图组件（MapSpec layout.components 契约渲染面） */}
+      {hasSpecChrome && (
+        <MapSpecChrome
+          components={specComponents}
+          zoom={decorProps.zoom}
+          centerLat={decorProps.centerLat}
+          bearing={decorProps.bearing}
+          spec={committedSpec}
+        />
       )}
 
       {/* Perception Rings — AI activity indicator at map center */}

@@ -472,7 +472,20 @@ describe("native heatmap mode — #679 single color source", () => {
     expect(heat.paint!["heatmap-weight"]).toBe(1);
   });
 
-  it("mirrors backend radius clamping from layer.style.radius (meters misuse falls back to 20px)", () => {
+  it("radius contract: style.radius_px preferred; legacy meters value never pixels", () => {
+    // 显式 radius_px（后端 dispatch 投影）→ 直通 clamp [4,80]
+    const explicit = baseLayer({
+      type: "heatmap",
+      source: fc(pointFeature({ weight: 0.7 })),
+      legend_spec: legendSpec,
+      style: { renderType: "heatmap", radius_px: 22 },
+    });
+    const spec1 = hudStateToMapSpec({ layers: [explicit], processLayers: {}, activeFilters: {}, is3D: false });
+    const r1 = spec1.layers.find((l) => l.type === "heatmap")!.paint!["heatmap-radius"] as unknown as unknown[];
+    expect(r1).toEqual(["interpolate", ["linear"], ["zoom"], 0, 2, 9, 22, 13, 37]);
+
+    // legacy style.radius=1500（米制残留）→ 超出 px 窗口 [4,100]，回落契约
+    // 默认 30px（绝不 1500px；与后端 heatmap_contract 归一化阈值族一致）
     const layer = baseLayer({
       type: "heatmap",
       source: fc(pointFeature({ weight: 0.7 })),
@@ -482,8 +495,18 @@ describe("native heatmap mode — #679 single color source", () => {
     const spec = hudStateToMapSpec({ layers: [layer], processLayers: {}, activeFilters: {}, is3D: false });
     const heat = spec.layers.find((l) => l.type === "heatmap")!;
     const radius = heat.paint!["heatmap-radius"] as unknown as unknown[];
-    // 1500 被视为米制误传 → 回落 20px（与后端 heatmap_paint 同阈值）
-    expect(radius).toEqual(["interpolate", ["linear"], ["zoom"], 0, 2, 9, 20, 13, 34]);
+    expect(radius).toEqual(["interpolate", ["linear"], ["zoom"], 0, 2, 9, 30, 13, 51]);
+
+    // legacy 面板/模板 px 值（4-100）直通
+    const pxLayer = baseLayer({
+      type: "heatmap",
+      source: fc(pointFeature({ weight: 0.7 })),
+      legend_spec: legendSpec,
+      style: { renderType: "heatmap", radius: 25 },
+    });
+    const spec3 = hudStateToMapSpec({ layers: [pxLayer], processLayers: {}, activeFilters: {}, is3D: false });
+    const r3 = spec3.layers.find((l) => l.type === "heatmap")!.paint!["heatmap-radius"] as unknown as unknown[];
+    expect(r3[6]).toBe(25);
   });
 });
 

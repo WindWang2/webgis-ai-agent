@@ -50,7 +50,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
   const fillEnabled = style.fill !== false;
   const renderType = style.renderType || 'vector';
   const palette = style.palette || 'inferno';
-  const radius = style.radius ?? 30;
+  const radius = style.radius_px ?? style.radius ?? 30;
   const intensity = style.intensity ?? 1;
   const pointSize = style.pointSize ?? 5;
   const dashArray = style.dashArray || 'solid';
@@ -278,7 +278,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
                 热力半径 <span className="text-white/15 font-mono">{radius}px</span>
               </label>
               <input type="range" min={5} max={100} step={1} value={radius}
-                onChange={(e) => updateStyle({ radius: parseInt(e.target.value) })}
+                onChange={(e) => updateStyle({ radius_px: parseInt(e.target.value) })}
                 className="w-full accent-hud-cyan" />
             </div>
 
