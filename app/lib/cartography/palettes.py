@@ -65,32 +65,37 @@ def heatmap_legend_colors(palette: str) -> List[str]:
     return list(colors[1:])
 
 
-def heatmap_paint(palette: str = "classic", radius: int = 20) -> Dict[str, object]:
+def heatmap_paint(palette: str = "classic", radius_px: int = 30) -> Dict[str, object]:
     """原生热力图层的 MapLibre paint 表达式（官方 create-a-heatmap-layer 范式）。
 
     - heatmap-radius/intensity 随 zoom 插值：远视图半径小、放大后补偿强度，
       避免「缩小全是红核 / 放大整片冷色」；
     - heatmap-color 多停靠点密度色带（首段透明）；
-    - ``radius`` 语义是像素；调用方传米制值（工具 schema 的搜索半径）时
-      回落默认 20px（与前端 renderer 的米制误传防御同阈值）。
+    - ``radius_px`` 语义是**屏幕像素**。单位归一化（legacy 米制 radius 的
+      消化）只在 ``app.lib.cartography.heatmap_contract`` 的 compatibility
+      adapter 中发生——本函数不做单位猜测，显式值仅做契约区间 clamp
+      （[4, 80] px），非法类型回落默认 30px。
     """
+    from app.lib.cartography.heatmap_contract import (
+        DEFAULT_RADIUS_PX,
+        clamp_radius_px,
+    )
+
     colors = NATIVE_HEATMAP_COLORS.get(palette, NATIVE_HEATMAP_COLORS["classic"])
     stops: List[object] = []
     for pos, color in zip(HEATMAP_STOP_POSITIONS, colors):
         stops.extend([pos, color])
     try:
-        radius_px = int(radius)
+        radius = clamp_radius_px(radius_px)
     except (TypeError, ValueError):
-        radius_px = 20
-    if not (4 <= radius_px <= 60):
-        radius_px = 20  # 米制误传（1000-2000）回落
+        radius = DEFAULT_RADIUS_PX
     return {
         "heatmap-weight": 1,
         "heatmap-intensity": ["interpolate", ["linear"], ["zoom"],
                               0, 0.6, 9, 1.4, 13, 2.2],
         "heatmap-color": ["interpolate", ["linear"], ["heatmap-density"], *stops],
         "heatmap-radius": ["interpolate", ["linear"], ["zoom"],
-                           0, 2, 9, radius_px, 13, min(80, int(radius_px * 1.7))],
+                           0, 2, 9, radius, 13, min(80, int(radius * 1.7))],
         "heatmap-opacity": 0.9,
     }
 

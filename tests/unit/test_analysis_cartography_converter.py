@@ -431,11 +431,15 @@ def test_heatmap_type_hint_authors_official_paint():
     assert color_expr[0] == "interpolate" and color_expr[2] == ["heatmap-density"]
     flat = json.dumps(color_expr)
     assert "#0066ff" in flat and "rgba(0,40,255,0)" in flat
-    # radius/intensity 都是 zoom 插值；米制 radius(1500) 回落默认 20px
+    # radius/intensity 都是 zoom 插值；米制 radius(1500) 经 heatmap_contract
+    # 归一化：绝不按像素消费，视觉半径回落默认 30px 并携带迁移警示。
     assert paint["heatmap-radius"][2] == ["zoom"]
     assert paint["heatmap-intensity"][2] == ["zoom"]
-    assert paint["heatmap-radius"][6] == 20  # 米制 1500 回落默认 20px
-    assert not any("heatmap" in str(w) for w in warnings)
+    assert paint["heatmap-radius"][6] == 30  # legacy 米制 1500 → 契约默认 30px
+    assert converted_layer["heatmap"]["radius_px"] == 30
+    assert converted_layer["heatmap"]["bandwidth_m"] == 1500
+    assert converted_layer["heatmap"]["radius_source"] == "legacy_radius_visual_default_applied"
+    assert any("heatmap_radius_contract" in str(w) for w in warnings)
 
 
 def test_heatmap_paint_palette_fallback_and_unknown():
