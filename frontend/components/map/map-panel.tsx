@@ -350,24 +350,36 @@ export function MapPanel({
     }
   }, [])
 
-  // TEMP-DEBUG(底图消失排查 #2): map error / 全局错误 → window.__mapErrors
+  // DEBUG(底图消失排查 #2): map error / 全局错误 → window.__mapErrors。
+  // #692 生产卫生：dev-only 门（生产零暴露零泄漏）+ 有界 ring（对齐上方
+  // appliedRepairIds 的有界惯例；瓦片错误风暴不再无界增长）+ cleanup 卸载
+  // window 监听（此前 effect 无 return，监听随组件生命周期泄漏）。
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || process.env.NODE_ENV !== "development") return;
     const w = window as unknown as { __mapErrors?: unknown[] };
+    const RING_LIMIT = 200;
     if (!w.__mapErrors) {
       w.__mapErrors = [];
       const push = (e: unknown) => {
         const err = typeof e === "object" && e !== null && "error" in (e as Record<string, unknown>)
           ? (e as { error?: unknown }).error
           : e;
-        w.__mapErrors!.push({ t: Date.now(), msg: String((err as Error)?.message ?? err) });
+        const ring = w.__mapErrors!;
+        ring.push({ t: Date.now(), msg: String((err as Error)?.message ?? err) });
+        if (ring.length > RING_LIMIT) ring.splice(0, ring.length - RING_LIMIT);
       };
-      (window as unknown as { __dbgPush: (e: unknown) => void }).__dbgPush = push;
+      (window as unknown as { __dbgPush?: (e: unknown) => void }).__dbgPush = push;
       window.addEventListener("error", push);
       window.addEventListener("unhandledrejection", push);
+      return () => {
+        window.removeEventListener("error", push);
+        window.removeEventListener("unhandledrejection", push);
+        delete (window as unknown as { __dbgPush?: (e: unknown) => void }).__dbgPush;
+      };
     }
   }, []);
   useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
     const map = mapRef.current?.getMap()
     if (!map || !mapReady) return
     const push = (window as unknown as { __dbgPush?: (e: unknown) => void }).__dbgPush
