@@ -491,9 +491,14 @@ export function MapPanel({
         // 每次 reconcile 在主线程序列化 MB 级 base64 仅为算键。用稳定字段
         // + raster 载荷的长度引用计数替代（内容变化必然改变长度或指纹）。
         const rasterImg = (observation as { raster_image?: string }).raster_image
+        // len + 首尾采样：同长异容（同 bbox 换调色板重渲染）也能变键
+        const rasterMark =
+          rasterImg === undefined
+            ? undefined
+            : `len:${rasterImg.length}:${rasterImg.slice(0, 24)}:${rasterImg.slice(-24)}`
         const keyPayload = {
           ...observation,
-          ...(rasterImg !== undefined ? { raster_image: `len:${rasterImg.length}` } : {}),
+          ...(rasterMark !== undefined ? { raster_image: rasterMark } : {}),
         }
         const observationKey = `${sessionId}:${JSON.stringify(keyPayload)}`
         if (observationKey === lastCartographicObservationKeyRef.current) return
