@@ -23,6 +23,12 @@ const GROUP_NAMES: Record<string, string> = {
 };
 
 function getFeatureCount(layer: Layer): number {
+  // #692：MVT 挂载的大图层 source 是 ref/瓦片形态（无内联 features），
+  // 此前恒显示 0——优先读 _descriptor.feature_count（store 时算好）。
+  const d = layer._descriptor;
+  if (d && typeof d.feature_count === 'number' && d.feature_count > 0) {
+    return d.feature_count;
+  }
   const src = layer.source;
   if (src && typeof src === 'object' && 'features' in src) {
     return src.features?.length ?? 0;

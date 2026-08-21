@@ -31,9 +31,10 @@ export function IsochroneResultCard({ result, layerId, onFocus }: Props) {
   if (!result) return null;
 
   const payload = (result.result as IsochroneResultPayload) ?? (result.metadata as IsochroneResultPayload) ?? result;
-  const travelTime = payload.travel_time_min ?? result.travel_time_min ?? 15;
+  // #692 真实性：不再用 ?? 15 / ?? 1 虚构指标——缺数据显示"未知"或不渲染该行
+  const travelTime = payload.travel_time_min ?? result.travel_time_min ?? null;
   const mode = (payload.mode ?? result.mode ?? 'walking').toString().toLowerCase();
-  const facilityCount = payload.facility_count ?? result.facility_count ?? 1;
+  const facilityCount = payload.facility_count ?? result.facility_count ?? null;
   const areaKm2 = payload.area_km2 ?? result.area_km2 ?? null;
   const summaryText = payload.summary ?? (typeof result.summary === 'string' ? result.summary : null);
 
@@ -49,7 +50,7 @@ export function IsochroneResultCard({ result, layerId, onFocus }: Props) {
       <div className="flex items-center justify-between mb-2.5">
         <div className="flex items-center gap-1.5 font-semibold text-ink">
           <Clock className="h-4 w-4 text-status-success shrink-0" />
-          <span>等时圈网络分析 ({travelTime} 分钟)</span>
+          <span>等时圈网络分析{travelTime !== null ? ` (${travelTime} 分钟)` : ''}</span>
         </div>
         <span className="flex items-center gap-1 text-meta px-2 py-0.5 rounded-pill bg-status-success-soft text-status-success font-medium">
           <ModeIcon className="h-3.5 w-3.5" />
@@ -64,7 +65,7 @@ export function IsochroneResultCard({ result, layerId, onFocus }: Props) {
           <div>
             <div className="text-meta text-ink-muted font-medium">设施点数量</div>
             <div className="text-body font-mono font-bold text-ink">
-              {facilityCount} 个设施
+              {facilityCount !== null ? `${facilityCount} 个设施` : '设施数未知'}
             </div>
           </div>
         </div>
@@ -74,7 +75,7 @@ export function IsochroneResultCard({ result, layerId, onFocus }: Props) {
           <div>
             <div className="text-meta text-ink-muted font-medium">覆盖面积</div>
             <div className="text-body font-mono font-bold text-ink">
-              {areaKm2 !== null ? `${areaKm2.toFixed(2)} km²` : `${travelTime} 分钟圈`}
+              {areaKm2 !== null ? `${areaKm2.toFixed(2)} km²` : (travelTime !== null ? `${travelTime} 分钟圈` : '范围未知')}
             </div>
           </div>
         </div>

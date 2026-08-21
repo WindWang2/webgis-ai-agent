@@ -10,6 +10,7 @@ import {
   mergePendingPresentation,
   setMapSpecRevision,
 } from '@/lib/mapspec/session-cursor';
+import { useToastStore } from '@/components/ui/toast';
 
 export interface LayerPresentationPatch {
   layerId: string;
@@ -99,6 +100,14 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
     applyCommittedMapSpec(superseded.mapspec);
     clearPendingPresentation(specLayerId);
     clearPendingPresentation(patch.layerId);
+    // #692 真实性：409 superseded 此前静默回滚用户操作（面板/地图突然变回
+    // 服务端真相零解释）——用已解析的 correction_hint 出提示（缺省兜底文案）
+    try {
+      useToastStore.getState().addToast(
+        superseded.correction_hint || '本操作已被更新的地图状态取代，已恢复为最新状态',
+        'warning',
+      );
+    } catch { /* toast 不可用不得影响状态收敛 */ }
     if (!superseded.mapspec) throw err;
   }
 }
@@ -172,6 +181,13 @@ export async function commitMapSpecMutation(
     }
     if (!superseded.mapspec) throw err;
     applyCommittedMapSpec(superseded.mapspec);
+    // #692 真实性：同上——superseded 收敛不静默
+    try {
+      useToastStore.getState().addToast(
+        superseded.correction_hint || '本操作已被更新的地图状态取代，已恢复为最新状态',
+        'warning',
+      );
+    } catch { /* toast 不可用不得影响状态收敛 */ }
     return superseded;
   }
 }

@@ -17,7 +17,7 @@ function emit(): void {
   listeners.forEach((listener) => listener());
 }
 
-function resetLiveState(): void {
+export function resetLiveState(): void {
   committed = null;
   pending = {};
   pendingRemoved = [];
@@ -68,6 +68,12 @@ export function commitMapSpecDocument(mapspec: unknown): void {
   if (!Array.isArray(spec.layers) && (spec.sources == null || typeof spec.sources !== 'object')) {
     return;
   }
+  // #692：同一 spec 对象重复提交不 bump generation——此前无条件 emit，
+  // map-panel 的 effect 重跑全量 compose + worker diff 只为得到空 patch；
+  // 一轮多事件时按事件量放大。MapSpec 类型无身份字段，CoW 下重复提交
+  // 常是同一对象引用（后端/桥不复制），对象同一性即足够的快路径；等值
+  // 不同对象的深比较本身就是要省掉的成本，不做。
+  if (spec === committed) return;
   committed = spec;
   emit();
 }

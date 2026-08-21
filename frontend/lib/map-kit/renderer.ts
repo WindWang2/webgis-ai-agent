@@ -48,12 +48,22 @@ function sameViewport(a: ViewportBBox, b: ViewportBBox): boolean {
 }
 
 function isMvtSourceId(id: string): boolean {
+  // #692：对齐权威定义（adapter.isVectorTileLayer / layer-data）——
+  // 此前缺 feature_count > 阈值判定，而 _tileUrl 对每个 geojson_ref 图层都设，
+  // 导致 1k-5k 要素的 mvt_capable 图层永不做视口剔除（#668 的双裁剪守卫
+  // 过匹配，Phase 8 剔除对中等规模图层失效）。阈值与 adapter 的
+  // VECTOR_TILE_THRESHOLD 同值（跨模块 import 会引入 map-kit → runtime
+  // 依赖环，此处注释锁定同值契约）。
   try {
     const layers: any[] = (useHudStore as any).getState?.()?.layers ?? [];
     const candidates = [id, id.replace(/^custom-/, '')];
     for (const cid of candidates) {
       const l = layers.find((x) => x.id === cid);
-      if (l?.['_tileUrl'] && l?.['_descriptor']?.mvt_capable) return true;
+      if (!l?.['_tileUrl'] || !l?.['_descriptor']?.mvt_capable) continue;
+      const fc = Number(l?.['_descriptor']?.feature_count ?? 0);
+      if (fc > 5000) return true;
+      const feats = l?.['source']?.features;
+      if (Array.isArray(feats) && feats.length > 5000) return true;
     }
   } catch { /* ignore */ }
   return false;

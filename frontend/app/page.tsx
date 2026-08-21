@@ -43,7 +43,7 @@ const MapPanel = dynamic(
     loading: () => (
       <div className='flex-1 flex items-center justify-center bg-surface-canvas'>
         <div className='animate-pulse text-ink-muted text-micro font-mono uppercase tracking-wider'>
-          Loading Map...
+          地图加载中…
         </div>
       </div>
     ),

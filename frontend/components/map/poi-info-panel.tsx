@@ -104,9 +104,11 @@ export function PoiInfoPanel({
   if (dismissed || entries.length === 0) return null
 
   const above = y > 220
+  // #692：右缘点击钳制——面板 translate(-50%) 半出屏（估宽 280px）
+  const clampedX = Math.min(Math.max(x, 150), (typeof window !== 'undefined' ? window.innerWidth : 1920) - 150)
   const style: React.CSSProperties = {
     position: 'absolute',
-    left: x,
+    left: clampedX,
     top: above ? y - 14 : y + 14,
     transform: above ? 'translate(-50%, -100%)' : 'translate(-50%, 0)',
     zIndex: 30,
