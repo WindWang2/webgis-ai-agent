@@ -56,6 +56,8 @@ class SetLayoutBody(BaseModel):
     legend: Optional[dict[str, Any]] = None
     controls: Optional[list[dict[str, Any]]] = None
     margins: Optional[dict[str, Any]] = None
+    # CartographyComponent 列表（id/type/enabled/position/priority/style/options）
+    components: Optional[list[dict[str, Any]]] = None
 
 
 class SetTimeBody(BaseModel):
@@ -132,7 +134,8 @@ async def apply_user_mapspec_mutation(
         intent = ReorderLayersIntent(layer_ids=req.layer_ids)
     elif isinstance(req, SetLayoutBody):
         intent = SetLayoutIntent(
-            legend=req.legend, controls=req.controls, margins=req.margins
+            legend=req.legend, controls=req.controls, margins=req.margins,
+            components=req.components,
         )
     elif isinstance(req, SetTimeBody):
         intent = SetTimeIntent(

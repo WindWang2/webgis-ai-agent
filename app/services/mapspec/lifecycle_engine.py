@@ -157,6 +157,9 @@ class SetLayoutIntent:
     legend: Optional[Dict[str, Any]] = None
     controls: Optional[List[Dict[str, Any]]] = None
     margins: Optional[Dict[str, Any]] = None
+    # CartographyComponent 列表（app/services/gis_harness/components）。
+    # live 渲染与 export 共用同一份组件描述；None = 不触碰既有组件。
+    components: Optional[List[Dict[str, Any]]] = None
 
 
 @dataclass
@@ -620,6 +623,30 @@ class MapSpecLifecycleEngine:
                         layout["controls"] = intent.controls
                     if intent.margins is not None:
                         layout["margins"] = intent.margins
+                    if intent.components is not None:
+                        # 组件以 id 为键做稳定合并（局部突变只改命中组件）；
+                        # 传入空列表 = 清空组件。条目缺 id/type 的非法输入
+                        # 被确定性拒绝，不留半更新状态。
+                        valid = all(
+                            isinstance(c, dict) and isinstance(c.get("id"), str)
+                            and isinstance(c.get("type"), str)
+                            for c in intent.components
+                        )
+                        if not valid:
+                            return MapSpecResult(
+                                is_error=True,
+                                origin=origin,
+                                error_msg="layout.components entries require string id and type.",
+                                correction_hint=(
+                                    "Each component must be "
+                                    "{'id': str, 'type': str, ...} — see "
+                                    "CartographyComponent (gis_harness.components)."
+                                ),
+                            )
+                        layout["components"] = sorted(
+                            intent.components,
+                            key=lambda c: (c.get("priority", 0), c.get("id", "")),
+                        )
                     mapspec["layout"] = layout
 
                 elif isinstance(intent, CheckpointIntent):
