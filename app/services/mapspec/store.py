@@ -33,6 +33,8 @@ LABEL_LAYER_SUFFIX = "-label"
 # Revision 保留上限：每次 save 都会生成一份完整快照 mapspec_rev_<ms>.json。
 # 无上限时磁盘随会话生命周期无界增长（审计 Phase 8 发现）。裁剪到最近 N 份。
 MAPSPEC_REV_RETENTION = 20
+# revision 文件名的进程内单调序列（与毫秒时间戳拼接，免同毫秒碰撞）
+_REV_SEQ = 0
 
 
 def _should_remove_layer(layer: Dict[str, Any], target_layer_id: str) -> bool:
@@ -269,7 +271,12 @@ class MapSpecStore:
         _atomic_write_json_sync(mapspec_path, mapspec)
 
         rev_dir.mkdir(parents=True, exist_ok=True)
-        rev_filename = f"mapspec_rev_{int(time.time() * 1000)}.json"
+        # revision 文件名必须免碰撞：毫秒时间戳在快速连续 save（同一毫秒）
+        # 下会互相覆盖 —— 快照静默丢失（#687 测试在全量套件负载下偶发红）。
+        # 追加进程内单调序列（定宽），字典序 == 时间序，保留裁剪逻辑不变。
+        global _REV_SEQ
+        _REV_SEQ += 1
+        rev_filename = f"mapspec_rev_{int(time.time() * 1000):013d}_{_REV_SEQ:06d}.json"
         _atomic_write_json_sync(rev_dir / rev_filename, mapspec)
         if fingerprint:
             _atomic_write_text_sync(

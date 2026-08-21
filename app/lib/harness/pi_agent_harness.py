@@ -25,6 +25,7 @@ from app.lib.harness.evidence import (
     EvaluationRun,
     MapActionEvidence,
     MapActionStatus,
+    MapProductEvidence,
     MapSpecValidityEvidence,
     MapSpecValidityTier,
     RefResolution,
@@ -669,6 +670,11 @@ class PiAgentHarness:
                 runtime_evidence_path=(
                     res.get("result", {}).get("runtime_dir")
                     if isinstance(res.get("result"), dict) else None
+                ),
+                # GIS Harness 产品证据（webgis_map_product 等；缺失即 None，
+                # 绝不臆造 PASS）。
+                map_product=MapProductEvidence.from_result(
+                    res.get("result") if isinstance(res.get("result"), dict) else None
                 ),
             )
             run.add(ev)
@@ -1671,6 +1677,8 @@ class PiAgentHarness:
                 if v else None
             ),
             "runtime_evidence_path": ev.runtime_evidence_path,
+            # GIS Harness 产品证据（Intent/Recipe/Fallback/Component；可选）。
+            "map_product": ev.map_product.to_dict() if ev.map_product else None,
             # V3: 该工具调用发出的地图动作证据（每条独立 correlation）。
             "map_actions": [
                 PiAgentHarness._map_action_evidence_to_dict(a) for a in ev.map_actions
@@ -1792,6 +1800,39 @@ class PiAgentHarness:
         well_formed = sum(1 for a in non_succeeded if _ack_is_well_formed(a))
         return min(100.0, max(0.0, (well_formed / len(non_succeeded)) * 100.0))
 
+    def compute_map_product_completeness(self) -> float:
+        """GIS Harness 产品完整度（诚实面）：有产品证据的调用中 completeness
+        达标（complete=True）的比例。
+
+        无任何产品证据 → 0.0（不输出该维度的 run 由 evaluator 豁免，
+        绝不把缺证据记为 PASS）。
+        """
+        # 产品证据挂在 evidence 构建期（evaluate_with_evidence），此处从
+        # 最近一次 evaluate 的 run 拿不到 —— 以 tool_results 原始记录为准。
+        products = []
+        for entry in self.tool_results:
+            if entry.get("session_id") != self.session_id:
+                continue
+            result = entry.get("result")
+            if isinstance(result, dict) and isinstance(result.get("map_product_evidence"), dict):
+                products.append(result["map_product_evidence"])
+        if not products:
+            return 0.0
+        complete = sum(
+            1 for p in products
+            if isinstance(p.get("map_product_completeness"), dict)
+            and p["map_product_completeness"].get("complete") is True
+        )
+        return min(100.0, max(0.0, (complete / len(products)) * 100.0))
+
+    def has_map_product_evidence(self) -> bool:
+        return any(
+            isinstance(entry.get("result"), dict)
+            and isinstance(entry["result"].get("map_product_evidence"), dict)
+            for entry in self.tool_results
+            if entry.get("session_id") == self.session_id
+        )
+
     def get_telemetry_summary(self) -> Dict[str, Any]:
         """Production telemetry digest (consumed by /metrics/digest).
 
@@ -1852,4 +1893,10 @@ class PiAgentHarness:
                 "InteractionStateConvergenceRate": round(self.compute_interaction_state_convergence_rate(), 2),
                 "InteractionRecoveryRate": round(self.compute_interaction_recovery_rate(), 2),
             })
+        # GIS Harness 产品维度（additive）：仅有产品证据时输出，镜像交互维度的
+        # evaluated 语义；缺失证据的 run 由 evaluate_evidence 豁免而非假失败。
+        if self.has_map_product_evidence():
+            metrics["MapProductCompleteness"] = round(
+                self.compute_map_product_completeness(), 2
+            )
         return metrics

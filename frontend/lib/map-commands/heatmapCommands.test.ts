@@ -233,3 +233,29 @@ describe('heatmap commands (issue #393: post-state verification, no fake success
     });
   });
 });
+
+// ── 半径契约：显式 radius_px 优先于 legacy 米制 metadata.radius ──────
+describe('add_native_heatmap radius_px contract', () => {
+  it('metadata.radius_px (explicit px) wins over legacy meters radius', () => {
+    const map = makeMockMaplibreMap();
+    const result = heatmapCommands.add_native_heatmap.run(makeCtx(map, {
+      geojson: { type: 'FeatureCollection', features: [] },
+      layerId: 'px-heat',
+      metadata: { render_type: 'native', radius_px: 22, radius: 2000 },
+    }));
+    expect(result).toEqual({ status: 'succeeded', result: { confirmed: true } });
+    const layer = map.getLayer('custom-px-heat');
+    // 显式像素语义直通（zoom 9 停靠点无插值——imperative 路径 paint 是标量）
+    expect(layer.paint['heatmap-radius']).toBe(22);
+  });
+
+  it('metadata.radius_px clamps to [4,80]', () => {
+    const map = makeMockMaplibreMap();
+    heatmapCommands.add_native_heatmap.run(makeCtx(map, {
+      geojson: { type: 'FeatureCollection', features: [] },
+      layerId: 'px-clamp',
+      metadata: { radius_px: 500 },
+    }));
+    expect(map.getLayer('custom-px-clamp').paint['heatmap-radius']).toBe(80);
+  });
+});

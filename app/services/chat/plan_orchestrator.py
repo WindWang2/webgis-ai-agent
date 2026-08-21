@@ -105,6 +105,9 @@ JSON 结构：
 - meta      创建技能 / 自定义工具
 
 规划原则：
+- 意图先行。分布类请求先经 webgis_map_intent 拿结构化意图与 CartographyRecipe
+  （『每平方公里密度』=定量分析，『各区数量』=行政聚合+choropleth 而非热力图），
+  数据回来后用 webgis_map_product 复检资格并组装完整产品。
 - 由简入深。宽泛请求（如"分布情况"）优先安排原生热力图等轻量步骤。
   但点数 <10（HEATMAP_MIN_POINTS）或几何以线/面为主时禁止原生热力图，
   改为点图或先聚合（h3_binning）——执行侧有同阈值确定性拦截。
@@ -132,6 +135,10 @@ class Plan:
     intent: str
     domains: List[str]
     steps: List[PlanStep]
+    # GIS Harness 结构化意图（MapRequestIntent.model_dump，additive）：
+    # 确定性 resolver 产物，供渲染/审计/后续产品组装消费；LLM 意图不变。
+    gis_intent: Optional[dict] = None
+    recipe_id: str = ""
 
 
 def _coerce_step_n(raw: object, fallback: int) -> int:
@@ -441,6 +448,20 @@ class AgentPlanOrchestrator:
             logger.info(f"[plan_orchestrator] session={session_id} 计划解析失败，降级无计划")
             return None
         self._apply_capability_validation(plan, registry)
+
+        # GIS Harness（additive）：确定性 intent + 推荐 recipe 附着到计划。
+        # LLM 规划不变；结构化意图供 plan_ready 事件/审计/产品组装消费。
+        try:
+            from app.services.gis_harness import (
+                MapProductPlanner,
+                resolve_map_request_intent,
+            )
+            gis_intent = resolve_map_request_intent(user_message)
+            candidates = MapProductPlanner().recipes.select_candidates(gis_intent)
+            plan.gis_intent = gis_intent.model_dump()
+            plan.recipe_id = candidates[0].id if candidates else ""
+        except Exception as e:  # noqa: BLE001 - harness 附着失败不阻断规划
+            logger.warning(f"[plan_orchestrator] gis intent attach failed: {e}")
 
         prev = self._canonical.get(session_id)
         if prev is None:

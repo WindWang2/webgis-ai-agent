@@ -129,10 +129,50 @@ export interface MapSpecControlConfig {
   position?: "top-right" | "top-left" | "bottom-right" | "bottom-left";
 }
 
+/**
+ * CartographyComponent —— 可替换制图组件（GIS Harness 契约的前端镜像，
+ * 见 app/services/gis_harness/components.py）。live 渲染与 export 共用
+ * 同一份组件描述（MapSpec 是唯一 desired cartographic state）。
+ */
+export interface MapSpecComponent {
+  id: string;
+  type:
+    | "basemap"
+    | "legend"
+    | "continuous_colorbar"
+    | "categorical_legend"
+    | "north_arrow"
+    | "scale_bar"
+    | "title"
+    | "subtitle"
+    | "annotation"
+    | "graticule"
+    | "map_border"
+    | "attribution"
+    | "statistics_panel"
+    | "chart_panel"
+    | "export_layout";
+  enabled?: boolean;
+  position?:
+    | "top-left"
+    | "top-center"
+    | "top-right"
+    | "bottom-left"
+    | "bottom-center"
+    | "bottom-right"
+    | "none";
+  priority?: number;
+  style?: Record<string, unknown>;
+  options?: Record<string, unknown>;
+  compatibility?: Record<string, unknown>;
+}
+
 export interface MapSpecLayoutConfig {
   legend?: MapSpecLegendConfig;
   controls?: MapSpecControlConfig[];
   margins?: { top?: number; right?: number; bottom?: number; left?: number };
+  /** 制图组件列表（live chrome 与 export 版面共用；后端 lifecycle 稳定排序）。 */
+  components?: MapSpecComponent[];
 }
 
 export interface MapSpec {

@@ -49,8 +49,19 @@ class BufferAnalysisArgs(BaseModel):
 
 class HeatmapDataArgs(BaseModel):
     geojson: Any = Field(..., description="输入点要素 GeoJSON 或数据引用(ref:xxx)")
-    cell_size: int = Field(500, ge=10, le=5000, description="网格大小（米），范围 10-5000")
-    radius: int = Field(1000, ge=10, le=10000, description="搜索半径（米），范围 10-10000")
+    cell_size: int = Field(500, ge=10, le=5000, description="网格大小（米），范围 10-5000（raster/grid 分析模式用）")
+    radius_px: Optional[int] = Field(
+        None, ge=4, le=80,
+        description="视觉热力半径（MapLibre 屏幕像素，仅 native 渲染）。显式像素语义，"
+                    "与米制分析带宽(bandwidth_m)分离；缺省 30px")
+    bandwidth_m: Optional[int] = Field(
+        None, ge=10, le=10000,
+        description="分析密度带宽（米），raster/grid 模式的核平滑半径。定量密度语义")
+    radius: Optional[int] = Field(
+        None, ge=10, le=10000,
+        description="[兼容] 旧搜索半径（米）。会被归一化为 bandwidth_m；native 视觉半径"
+                    "在 4-60 历史窗口内直通为像素，否则用默认 30px 并告警。"
+                    "新调用请显式用 radius_px/bandwidth_m")
     render_type: str = Field("native", description="渲染模式: native(原生逐点密度，默认推荐), raster(服务端栅格PNG), grid(格网)")
     palette: str = Field("classic", description="配色方案: classic, magma, viridis, thermal")
 
@@ -113,17 +124,29 @@ def register_spatial_tools(registry: ToolRegistry):
 
     @tool(registry, tier=2, domains=["statistics"], name="heatmap_data",
            description=(
-               "点要素热力图。✅ 用于：用户宽泛询问『分布』『热度』『密度趋势』时"
-               "的首选——优先 render_type='native' 原生渲染，轻量、不增加数据负担。"
+               "点要素热力图（视觉密度表达）。✅ 用于：用户宽泛询问『分布』『热度』"
+               "『密度趋势』时的视觉首选——优先 render_type='native' 原生渲染，轻量、"
+               "不增加数据负担。半径语义分离：native 视觉热力用 radius_px（屏幕像素，"
+               "默认 30）；定量/分析密度（每平方公里、带宽平滑）不是本工具的视觉模式——"
+               "raster/grid 模式用 bandwidth_m（米）做核平滑。"
                " 定量护栏：点数 <10（`HEATMAP_MIN_POINTS`，默认 10，点数过少热力图无统计意义）"
                "或几何以线/面为主时禁止 native 热力图，工具侧会确定性拒绝并给出 correction_hint（改用点图/h3_binning）。"
                "\n❌ 不要用于：(1) 需要网格统计值（每格计数/求和）— 用 h3_binning；"
                "(2) 需要矢量等值面用于导出/制图 — 用 kde_contours；"
-               "(3) 需要连续概率面做后续叠加分析 — 用 kde_surface。"
+               "(3) 需要连续概率面做后续叠加分析 — 用 kde_surface；"
+               "(4) 『每平方公里密度』等定量密度结论 — 用空间聚合/密度分析，视觉热力图不是定量证据。"
            ),
            args_model=HeatmapDataArgs)
     @cached_tool(ttl=3600)
-    def heatmap_data(geojson: Any, cell_size: int = 500, radius: int = 2000, render_type: str = "native", palette: str = "classic") -> dict:
+    def heatmap_data(geojson: Any, cell_size: int = 500, radius: Optional[int] = None,
+                     render_type: str = "native", palette: str = "classic",
+                     radius_px: Optional[int] = None, bandwidth_m: Optional[int] = None) -> dict:
+        from app.lib.cartography.heatmap_contract import normalize_heatmap_radius
+        # 单位归一化唯一边界：legacy radius(米) → 显式 bandwidth_m(+视觉默认)，
+        # 核心链路此后只消费显式字段，不再猜测单位。
+        contract = normalize_heatmap_radius(
+            radius_px=radius_px, bandwidth_m=bandwidth_m, legacy_radius=radius,
+        )
         data = safe_parse_geojson(geojson)
         if not data:
             raise ValueError("Invalid GeoJSON input")
@@ -176,11 +199,19 @@ def register_spatial_tools(registry: ToolRegistry):
                 # 根因），metadata 供授权方生成官方范式 paint（zoom 插值
                 # radius/intensity + 密度多停靠点色带）。
                 data["type_hint"] = "heatmap"
+                # 热力半径契约：显式 radius_px（像素）+ bandwidth_m（米）。
+                # legacy radius 归一化结果经 source/warnings 显式可审计；
+                # 消费方（converter/前端）不再解读模糊单位。
+                radius_meta = contract.to_metadata()
+                if contract.bandwidth_m is not None:
+                    # 旧前端只读 meta.radius —— 保持米值回显（旧启发式会回落
+                    # 默认，与新契约一致），新前端优先 radius_px。
+                    radius_meta["radius"] = contract.bandwidth_m
                 data["metadata"] = {
                     "render_type": "native",
                     "point_count": len(features),
-                    "radius": radius,
-                    "palette": palette
+                    "palette": palette,
+                    **radius_meta,
                 }
                 # Generate legend_spec for native mode so the frontend can
                 # show a color gradient legend alongside the heatmap layer.
@@ -197,10 +228,12 @@ def register_spatial_tools(registry: ToolRegistry):
                 data = trim_features(data)
             return data
 
+        # raster/grid：分析密度路径，带宽按米消费（sigma = bandwidth / cell_size）
+        bandwidth = contract.bandwidth_m
         try:
             from app.services.spatial_tasks import run_heatmap_generation
             task = run_heatmap_generation.apply_async(
-                kwargs={"features": features, "cell_size": cell_size, "radius": radius, "render_type": render_type, "palette": palette}
+                kwargs={"features": features, "cell_size": cell_size, "radius": bandwidth, "render_type": render_type, "palette": palette}
             )
             result = task.get(timeout=120)
         except Exception as exc:  # noqa: BLE001
@@ -208,7 +241,7 @@ def register_spatial_tools(registry: ToolRegistry):
             # Any Celery failure (ImportError, broker down, TimeoutError, WorkerLostError)
             # degrades gracefully to an in-process fallback.
             logger.warning(f"[heatmap_data] Celery fallback triggered: {type(exc).__name__}: {exc}")
-            result = generate_heatmap_raster(features, cell_size, radius, render_type, palette)
+            result = generate_heatmap_raster(features, cell_size, bandwidth, render_type, palette)
         
         if result.get("success"):
             res_data = result.get("data")

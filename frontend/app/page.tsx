@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import dynamic from 'next/dynamic';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useGeolocation } from '@/lib/hooks/use-geolocation';
@@ -23,6 +23,7 @@ import TopBar from '@/components/layout/top-bar';
 import { NavRail } from '@/components/layout/nav-rail';
 import { ContextPanel } from '@/components/layout/context-panel';
 import FloatingLegend from '@/components/map/floating-legend';
+import { getCommittedMapSpec, getMapSpecLiveGeneration, subscribeMapSpecLive } from '@/lib/mapspec/session-cursor';
 import { MapStatusReadout } from '@/components/map/map-status-readout';
 import { SpatialCrosshair } from '@/components/map/spatial-crosshair';
 import { MapErrorBoundary } from '@/components/map/map-error-boundary';
@@ -66,6 +67,17 @@ export default function Home() {
   // FE-07：用单字段 selector 订阅，避免订阅整个 store 导致每次状态变更
   // （视口平移、opsLog push、图层变更等）都触发本组件及全部子树重渲染。
   const layers = useHudStore((s) => s.layers);
+  // GIS Harness 组件面：spec 带启用色条组件时 FloatingLegend 让位
+  const mapSpecLiveGen = useSyncExternalStore(
+    subscribeMapSpecLive,
+    getMapSpecLiveGeneration,
+    getMapSpecLiveGeneration,
+  );
+  const specHasColorbar = useMemo(() => {
+    const comps = getCommittedMapSpec()?.layout?.components ?? [];
+    return comps.some((c) => c.type === 'continuous_colorbar' && c.enabled !== false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapSpecLiveGen]);
   const removeLayer = useHudStore((s) => s.removeLayer);
   const toggleLayer = useHudStore((s) => s.toggleLayer);
   const leftPanelOpen = useHudStore((s) => s.leftPanelOpen);
@@ -288,8 +300,10 @@ export default function Home() {
 
         {/* Floating heatmap legend — bottom-RIGHT, stacked above the scale bar.
             It used to sit at the same left/bottom as the thematic legend stack,
-            where the higher-z thematic card hid it outright. */}
-        {layers.find((l) => l.visible && l.type === 'heatmap') && (
+            where the higher-z thematic card hid it outright.
+            GIS Harness 组件面：spec 已带 continuous_colorbar 组件时让位
+            （MapSpecChrome 渲染同一色带，避免同屏两份）。 */}
+        {layers.find((l) => l.visible && l.type === 'heatmap') && !specHasColorbar && (
           <div
             className='absolute right-3 z-10 transition-[bottom] duration-300'
             style={{ bottom: 'calc(var(--map-chrome-bottom, 10px) + 66px)' }}

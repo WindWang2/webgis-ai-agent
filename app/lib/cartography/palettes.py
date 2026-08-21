@@ -4,12 +4,30 @@ Cartographic color palette constants and interpolation utilities.
 from typing import Dict, List
 
 COLOR_PALETTES: Dict[str, List[str]] = {
+    # ── Sequential（ColorBrewer 2.0，5-class 官方 hex）──────────────────
     "YlOrRd": ["#ffffb2", "#fed976", "#feb24c", "#fd8d3c", "#f03b20", "#bd0026"],
     "Blues": ["#eff3ff", "#bdd7e7", "#6baed6", "#3182bd", "#08519c"],
     "Greens": ["#edf8e9", "#bae4b3", "#74c476", "#31a354", "#006d2c"],
     "Reds": ["#fee5d9", "#fcae91", "#fb6a4a", "#de2d26", "#a50f15"],
+    "Oranges": ["#feedde", "#fdbe85", "#fd8d3c", "#e6550d", "#a63603"],
+    "Purples": ["#f2f0f7", "#cbc9e2", "#9e9ac8", "#756bb1", "#54278f"],
+    # ── Diverging（以有意义中点为中心：偏差/阈值/相关性）────────────────
+    "RdYlGn": ["#d73027", "#fc8d59", "#fee08b", "#d9ef8b", "#91cf60", "#1a9850"],
+    "RdBu": ["#ca0020", "#f4a582", "#f7f7f7", "#92c5de", "#0571b0"],
+    # ── Qualitative（类别/唯一值；上限即 ColorBrewer 定义的最大类数）─────
+    "Set1": ["#e41a1c", "#377eb8", "#4daf4a", "#984ea3",
+             "#ff7f00", "#ffff33", "#a65628", "#f781bf", "#999999"],
+    "Set2": ["#66c2a5", "#fc8d62", "#8da0cb", "#e78ac3",
+             "#a6d854", "#ffd92f", "#e5c494", "#b3b3b3"],
+    "Dark2": ["#1b9e77", "#d95f02", "#7570b3", "#e7298a",
+              "#66a61e", "#e6ab02", "#a6761d", "#666666"],
+    "Pastel1": ["#fbb4ae", "#b3cde3", "#ccebc5", "#decbe4", "#fed9a6",
+                "#ffffcc", "#e5d8bd", "#fddaec", "#f2f2f2"],
+    # ── Perceptual uniform（感知均匀、色盲安全、灰度打印保真）────────────
     "Viridis": ["#440154", "#3b528b", "#21908c", "#5dc963", "#fde725"],
     "Magma": ["#000004", "#3b0f70", "#8c2981", "#de4968", "#feb078", "#fcfdbf"],
+    "Inferno": ["#000004", "#420a68", "#932667", "#dd513a", "#fca50a", "#fcffa4"],
+    "Plasma": ["#0d0887", "#6a00a8", "#b12a90", "#e16462", "#fca636", "#f0f921"],
 }
 
 
@@ -65,32 +83,37 @@ def heatmap_legend_colors(palette: str) -> List[str]:
     return list(colors[1:])
 
 
-def heatmap_paint(palette: str = "classic", radius: int = 20) -> Dict[str, object]:
+def heatmap_paint(palette: str = "classic", radius_px: int = 30) -> Dict[str, object]:
     """原生热力图层的 MapLibre paint 表达式（官方 create-a-heatmap-layer 范式）。
 
     - heatmap-radius/intensity 随 zoom 插值：远视图半径小、放大后补偿强度，
       避免「缩小全是红核 / 放大整片冷色」；
     - heatmap-color 多停靠点密度色带（首段透明）；
-    - ``radius`` 语义是像素；调用方传米制值（工具 schema 的搜索半径）时
-      回落默认 20px（与前端 renderer 的米制误传防御同阈值）。
+    - ``radius_px`` 语义是**屏幕像素**。单位归一化（legacy 米制 radius 的
+      消化）只在 ``app.lib.cartography.heatmap_contract`` 的 compatibility
+      adapter 中发生——本函数不做单位猜测，显式值仅做契约区间 clamp
+      （[4, 80] px），非法类型回落默认 30px。
     """
+    from app.lib.cartography.heatmap_contract import (
+        DEFAULT_RADIUS_PX,
+        clamp_radius_px,
+    )
+
     colors = NATIVE_HEATMAP_COLORS.get(palette, NATIVE_HEATMAP_COLORS["classic"])
     stops: List[object] = []
     for pos, color in zip(HEATMAP_STOP_POSITIONS, colors):
         stops.extend([pos, color])
     try:
-        radius_px = int(radius)
+        radius = clamp_radius_px(radius_px)
     except (TypeError, ValueError):
-        radius_px = 20
-    if not (4 <= radius_px <= 60):
-        radius_px = 20  # 米制误传（1000-2000）回落
+        radius = DEFAULT_RADIUS_PX
     return {
         "heatmap-weight": 1,
         "heatmap-intensity": ["interpolate", ["linear"], ["zoom"],
                               0, 0.6, 9, 1.4, 13, 2.2],
         "heatmap-color": ["interpolate", ["linear"], ["heatmap-density"], *stops],
         "heatmap-radius": ["interpolate", ["linear"], ["zoom"],
-                           0, 2, 9, radius_px, 13, min(80, int(radius_px * 1.7))],
+                           0, 2, 9, radius, 13, min(80, int(radius * 1.7))],
         "heatmap-opacity": 0.9,
     }
 

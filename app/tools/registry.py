@@ -671,6 +671,11 @@ class ToolRegistry:
                     and isinstance(arguments.get("source_data"), str)
                 ):
                     skip_keys.add("source_data")
+                # GIS Harness product assembler receives ref cursors by design
+                # (fetches descriptor + data itself); transparent resolution
+                # would inline full FeatureCollections into tool arguments.
+                if name == "webgis_map_product":
+                    skip_keys.update({"primary_ref", "overlay_refs"})
                 arguments = await self._resolve_references(
                     session_id,
                     arguments,

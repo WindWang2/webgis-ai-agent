@@ -8,6 +8,9 @@ export interface LayerStyle {
   fill?: boolean;
   renderType?: 'heatmap' | 'grid' | 'vector';
   palette?: string;
+  /** 显式视觉热力半径（像素）—— 后端 heatmap 契约投影（dispatch _runtime_patch）。 */
+  radius_px?: number;
+  /** legacy 像素语义（面板/模板值，4-100 直通）。 */
   radius?: number;
   intensity?: number;
   pointSize?: number;

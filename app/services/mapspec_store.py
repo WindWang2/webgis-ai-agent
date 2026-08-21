@@ -259,9 +259,14 @@ class MapSpecStore:
         legend: Optional[Dict[str, Any]] = None,
         controls: Optional[List[Dict[str, Any]]] = None,
         margins: Optional[Dict[str, Any]] = None,
+        components: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         res = await self.engine.apply_mutation(
-            session_id, SetLayoutIntent(legend=legend, controls=controls, margins=margins)
+            session_id,
+            SetLayoutIntent(
+                legend=legend, controls=controls, margins=margins,
+                components=components,
+            ),
         )
         return _with_evidence(res, {
             "success": not res.is_error,

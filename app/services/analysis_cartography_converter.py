@@ -337,13 +337,25 @@ def convert_analysis_to_mapspec_layer(
             # radius/intensity + 密度多停靠点色带，首段透明）。不走
             # circle/fill 的 color 语义——heatmap paint 键是 MapLibre 原生
             # 表达式，图例一致性由 palettes.NATIVE_HEATMAP_COLORS 单一色源保证。
+            from app.lib.cartography.heatmap_contract import resolve_paint_radius_px
             from app.lib.cartography.palettes import heatmap_paint
             meta = analysis_result.get("metadata") or {}
             params_meta = analysis_result.get("params") or {}
+            radius_meta = {
+                k: v for k, v in (
+                    *meta.items(), *params_meta.items()
+                ) if k in ("radius_px", "bandwidth_m", "radius")
+            }
+            # 半径契约：显式 radius_px 优先；legacy radius 经唯一归一化边界
+            # （heatmap_contract）解析——米值（如 1000/2000）绝不会再被当作
+            # 像素消费，超历史窗口回落默认 30px 并记录迁移警示。
+            radius_contract = resolve_paint_radius_px(radius_meta)
             paint = heatmap_paint(
                 meta.get("palette") or params_meta.get("palette") or "classic",
-                meta.get("radius") or params_meta.get("radius") or 20,
+                radius_contract.radius_px,
             )
+            for warn in radius_contract.warnings:
+                warnings.append(f"heatmap_radius_contract: {warn}")
             existing_paint = base_layer.get("paint")
             if isinstance(existing_paint, dict):
                 paint.update(existing_paint)
@@ -402,6 +414,11 @@ def convert_analysis_to_mapspec_layer(
         source_id = base_layer.get("source") or f"{layer_id}_source"
 
         res_layer = _build_layer(base_layer, layer_id, source_id, layer_type, paint, provenance)
+        if layer_type == "heatmap":
+            # 热力半径契约记录（diffable/auditable）：runtime/compiler 只转发
+            # id/type/source/paint/layout/filter，此兄弟键与 legend_spec 同一
+            # 先例——不进 MapLibre paint，但让 MapSpec 上的单位语义可审计。
+            res_layer["heatmap"] = radius_contract.to_metadata()
         # #690: correction_hint accompanies the fallback when heatmap was denied
         if heatmap_guard_triggered:
             res_layer["correction_hint"] = (

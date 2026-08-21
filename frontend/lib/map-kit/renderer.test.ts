@@ -6,7 +6,8 @@ import {
   addNativeHeatmap, 
   removeLayerStack, 
   updateLayerStyle,
-  addThematicLayer
+  addThematicLayer,
+  resolveHeatmapRadiusPx,
 } from './renderer';
 
 describe('renderer', () => {
@@ -472,5 +473,32 @@ describe('renderer', () => {
       expect(mapMock.setLayoutProperty).not.toHaveBeenCalled();
       expect(mapMock.setPaintProperty).not.toHaveBeenCalled();
     });
+  });
+});
+
+// ── 热力半径契约（后端 heatmap_contract 前端镜像）────────────────────
+describe('resolveHeatmapRadiusPx — heatmap radius contract mirror', () => {
+  it('explicit radiusPx clamps to [4,80]', () => {
+    expect(resolveHeatmapRadiusPx({ id: 'x', source: 's', radiusPx: 22 } as any)).toBe(22);
+    expect(resolveHeatmapRadiusPx({ id: 'x', source: 's', radiusPx: 500 } as any)).toBe(80);
+    expect(resolveHeatmapRadiusPx({ id: 'x', source: 's', radiusPx: 1 } as any)).toBe(4);
+  });
+
+  it('legacy meters (1000/2000) never render as pixels — default 30px', () => {
+    expect(resolveHeatmapRadiusPx({ id: 'x', source: 's', radius: 1000 } as any)).toBe(30);
+    expect(resolveHeatmapRadiusPx({ id: 'x', source: 's', radius: 2000 } as any)).toBe(30);
+  });
+
+  it('legacy 4-60 historical window passes through as px', () => {
+    expect(resolveHeatmapRadiusPx({ id: 'x', source: 's', radius: 25 } as any)).toBe(25);
+    expect(resolveHeatmapRadiusPx({ id: 'x', source: 's', radius: 61 } as any)).toBe(30);
+  });
+
+  it('explicit radiusPx wins over legacy radius', () => {
+    expect(resolveHeatmapRadiusPx({ id: 'x', source: 's', radiusPx: 18, radius: 1500 } as any)).toBe(18);
+  });
+
+  it('nothing given → contract default 30px', () => {
+    expect(resolveHeatmapRadiusPx({ id: 'x', source: 's' } as any)).toBe(30);
   });
 });

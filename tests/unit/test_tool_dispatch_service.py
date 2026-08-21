@@ -729,7 +729,10 @@ async def test_native_heatmap_result_authors_heatmap_mapspec_layer(
     for key in ("heatmap-weight", "heatmap-intensity", "heatmap-color",
                 "heatmap-radius", "heatmap-opacity"):
         assert key in paint
-    # 色带用 palette=thermal 的停靠点色（米制 radius 回落默认 20px）
+    # 色带用 palette=thermal 的停靠点色（legacy 米制 radius 经 heatmap_contract
+    # 归一化 → 视觉默认 30px，绝不按 1500px 消费）
     assert "#0066ff" in str(paint["heatmap-color"])
-    assert paint["heatmap-radius"][6] == 20
+    assert paint["heatmap-radius"][6] == 30
+    assert heat["heatmap"]["radius_px"] == 30
+    assert heat["heatmap"]["bandwidth_m"] == 1500
     assert heat["provenance"]["algorithm"] == "heatmap_data"

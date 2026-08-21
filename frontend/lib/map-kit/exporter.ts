@@ -61,7 +61,7 @@ export interface ComposeLayoutOptions {
   /** Structured legend spec from layer.legend_spec (graduated/continuous/categorical/divergent). */
   legendSpec?: LegendSpec;
   /** Heatmap gradient legend metadata; consumed when type === 'heatmap' layers are visible. */
-  heatmapLegend?: { name?: string };
+  heatmapLegend?: { name?: string; paletteColors?: string[] };
   /** Layout template style overrides (colors, fonts, margins, graticule, watermark). */
   style?: LayoutStyle;
 }
@@ -426,8 +426,19 @@ function _drawLegendBox(ld: LegendDrawCtx, legendW: number, legendH: number, dra
   drawContent(lx, ly);
 }
 
-function _drawHeatmapLegend(ld: LegendDrawCtx, name?: string, yOffset: number = 0): number {
+function _drawHeatmapLegend(
+  ld: LegendDrawCtx,
+  name?: string,
+  yOffset: number = 0,
+  paletteColors?: string[],
+): number {
   const { ctx, scalePx } = ld;
+  // 色带同源：优先热力层 legend_spec.palette_colors（与 live FloatingLegend、
+  // 后端 NATIVE_HEATMAP_COLORS 同一色）；缺省回落历史 cyan→red 渐变。
+  const colors =
+    paletteColors && paletteColors.length >= 2 ? paletteColors : HEATMAP_COLORS;
+  const labels =
+    colors === HEATMAP_COLORS ? HEATMAP_LABELS : ['低', '', '', '', '高'];
   const padding = scalePx(10);
   const barH = scalePx(8);
   const gradientW = scalePx(140);
@@ -446,10 +457,10 @@ function _drawHeatmapLegend(ld: LegendDrawCtx, name?: string, yOffset: number = 
       y += scalePx(18);
     }
 
-    // Gradient bar: 5 color segments
-    const segW = gradientW / HEATMAP_COLORS.length;
-    for (let i = 0; i < HEATMAP_COLORS.length; i++) {
-      ctx.fillStyle = HEATMAP_COLORS[i];
+    // Gradient bar: equal color segments from the shared palette
+    const segW = gradientW / colors.length;
+    for (let i = 0; i < colors.length; i++) {
+      ctx.fillStyle = colors[i];
       ctx.fillRect(lx + padding + i * segW, y, segW + 1, barH);
     }
 
@@ -458,25 +469,40 @@ function _drawHeatmapLegend(ld: LegendDrawCtx, name?: string, yOffset: number = 
     ctx.fillStyle = ld.dark_mode ? "rgba(255,255,255,0.6)" : "rgba(100,116,139,0.8)";
     ctx.font = `${scalePx(10)}px sans-serif`;
     ctx.textAlign = "left";
-    ctx.fillText(HEATMAP_LABELS[0], lx + padding, y + scalePx(10));
+    ctx.fillText(labels[0], lx + padding, y + scalePx(10));
     ctx.textAlign = "right";
-    ctx.fillText(HEATMAP_LABELS[HEATMAP_LABELS.length - 1], lx + padding + gradientW, y + scalePx(10));
+    ctx.fillText(labels[labels.length - 1], lx + padding + gradientW, y + scalePx(10));
     ctx.textAlign = "center";
-    for (let i = 1; i < HEATMAP_LABELS.length - 1; i++) {
-      ctx.fillText(HEATMAP_LABELS[i], lx + padding + (i / (HEATMAP_LABELS.length - 1)) * gradientW, y + scalePx(10));
+    // 中间刻度按实际色带段数分布；自定义 palette 的中间刻度留空（只有
+    // 首/尾语义标注），不再沿用硬编码 cyan→red 的 中/高 文案。
+    for (let i = 1; i < labels.length - 1; i++) {
+      if (!labels[i]) continue;
+      ctx.fillText(labels[i], lx + padding + (i / (labels.length - 1)) * gradientW, y + scalePx(10));
     }
     ctx.textAlign = "left";
   }, yOffset);
   return legendH + scalePx(10);
 }
 
-const COLOR_PALETTES: Record<string, string[]> = {
+// 与后端 app/lib/cartography/palettes.py 的 COLOR_PALETTES 同源镜像
+// （ColorBrewer 官方 hex；语义族登记见后端 model_library.PALETTE_KINDS）。
+export const COLOR_PALETTES: Record<string, string[]> = {
   YlOrRd: ["#ffffb2","#fed976","#feb24c","#fd8d3c","#f03b20","#bd0026"],
   Blues:  ["#eff3ff","#bdd7e7","#6baed6","#3182bd","#08519c"],
   Greens: ["#edf8e9","#bae4b3","#74c476","#31a354","#006d2c"],
   Reds:   ["#fee5d9","#fcae91","#fb6a4a","#de2d26","#a50f15"],
+  Oranges:["#feedde","#fdbe85","#fd8d3c","#e6550d","#a63603"],
+  Purples:["#f2f0f7","#cbc9e2","#9e9ac8","#756bb1","#54278f"],
+  RdYlGn: ["#d73027","#fc8d59","#fee08b","#d9ef8b","#91cf60","#1a9850"],
+  RdBu:   ["#ca0020","#f4a582","#f7f7f7","#92c5de","#0571b0"],
+  Set1:   ["#e41a1c","#377eb8","#4daf4a","#984ea3","#ff7f00","#ffff33","#a65628","#f781bf","#999999"],
+  Set2:   ["#66c2a5","#fc8d62","#8da0cb","#e78ac3","#a6d854","#ffd92f","#e5c494","#b3b3b3"],
+  Dark2:  ["#1b9e77","#d95f02","#7570b3","#e7298a","#66a61e","#e6ab02","#a6761d","#666666"],
+  Pastel1:["#fbb4ae","#b3cde3","#ccebc5","#decbe4","#fed9a6","#ffffcc","#e5d8bd","#fddaec","#f2f2f2"],
   Viridis:["#440154","#3b528b","#21908c","#5dc963","#fde725"],
   Magma:  ["#000004","#3b0f70","#8c2981","#de4968","#feb078","#fcfdbf"],
+  Inferno:["#000004","#420a68","#932667","#dd513a","#fca50a","#fcffa4"],
+  Plasma: ["#0d0887","#6a00a8","#b12a90","#e16462","#fca636","#f0f921"],
 };
 
 function _drawDiscreteLegend(ld: LegendDrawCtx, field: string, colors: string[], labels: string[], yOffset: number = 0): number {
@@ -521,7 +547,7 @@ function _drawLegend(
     targetW: number;
     targetH: number;
     thematicLayer?: any;
-    heatmapLegend?: { name?: string };
+    heatmapLegend?: { name?: string; paletteColors?: string[] };
     legendSpec?: any;
   }
 ) {
@@ -565,7 +591,9 @@ function _drawLegend(
 
   // Legend 2: Heatmap gradient legend
   if (opts.heatmapLegend) {
-    yOffset += _drawHeatmapLegend(ld, opts.heatmapLegend.name, yOffset);
+    yOffset += _drawHeatmapLegend(
+      ld, opts.heatmapLegend.name, yOffset, opts.heatmapLegend.paletteColors,
+    );
   }
 
   // Legend 3: Legacy thematicLayer (ThematicStyleDef shape)
@@ -1087,11 +1115,26 @@ export interface ExportOutcome {
 interface LegendData {
   legendSpec: any | undefined;
   thematicLayer: any | undefined;
-  heatmapLegend: { name?: string } | undefined;
+  heatmapLegend: { name?: string; paletteColors?: string[] } | undefined;
 }
 
-function discoverLegendData(layers: any[]): LegendData {
-  const legendLayer = layers.find((l: any) => l.visible && l.legend_spec);
+export function discoverLegendData(layers: any[]): LegendData {
+  // #679 修复延伸：热力层自带 legend_spec（连续色带）。此前 legendLayer 与
+  // heatmapLegend 都命中同一热力层 → 导出成品画两个互相矛盾的色带图例
+  //（legendSpec 版 + 硬编码 cyan→red 版）。规则：离散/分级图例优先取非
+  // 热力层；热力层的色带交给 heatmapLegend，并携带 legend_spec.palette_colors
+  // 使导出色带与 live 渲染同源（palette 漂移修复）。
+  const nonHeatLegendLayer = layers.find(
+    (l: any) => l.visible && l.legend_spec && l.type !== 'heatmap',
+  );
+  const heatmapLayer = layers.find(
+    (l: any) => l.visible && l.type === 'heatmap',
+  );
+  const heatSpec = heatmapLayer?.legend_spec;
+  const heatColors =
+    heatSpec && (heatSpec.type === 'continuous' || heatSpec.type === 'divergent')
+      ? heatSpec.palette_colors
+      : undefined;
   const thematicLayerInfo = layers.find(
     (l: any) =>
       l.visible &&
@@ -1099,14 +1142,15 @@ function discoverLegendData(layers: any[]): LegendData {
         (l.style as any)?.type === 'lisa' ||
         (l.source as any)?.metadata?.thematic_type === 'choropleth'),
   );
-  const heatmapLayer = layers.find((l: any) => l.visible && l.type === 'heatmap');
 
   return {
-    legendSpec: legendLayer?.legend_spec,
+    legendSpec: nonHeatLegendLayer?.legend_spec,
     thematicLayer: (thematicLayerInfo?.style as any)?.type
       ? thematicLayerInfo?.style
       : thematicLayerInfo,
-    heatmapLegend: heatmapLayer ? { name: heatmapLayer.name } : undefined,
+    heatmapLegend: heatmapLayer
+      ? { name: heatmapLayer.name, paletteColors: heatColors }
+      : undefined,
   };
 }
 
@@ -1215,8 +1259,6 @@ export async function runExport(
     dataSource = '',
     showWatermark = true,
     showLegend = (req.showLegend ?? req.include_legend ?? true) as boolean,
-    showCompass = (req.showCompass ?? req.include_compass ?? true) as boolean,
-    showScale = (req.showScale ?? req.include_scale ?? true) as boolean,
     showMetadata = true,
     showGraticules = false,
     dark_mode,
@@ -1262,13 +1304,40 @@ export async function runExport(
       storeState.layers,
     );
 
+    // GIS Harness 组件面：live chrome 与 export 共用 MapSpec layout.components
+    // （§21 单一 desired state）。语义：组件类型存在 → 其 enabled 值生效；
+    // 类型不存在 → 保持内置默认 true（与 live 端 hasSpecChrome 排除集一致，
+    // 只有 export_layout 等非可视组件的 spec 不会误关罗盘/比例尺）。
+    // 显式请求参数 > spec 组件 > 内置默认 —— 旧 spec（无 components）行为
+    // 完全不变。
+    let specTitle = '';
+    let specShowCompass: boolean | undefined;
+    let specShowScale: boolean | undefined;
+    try {
+      const { getCommittedMapSpec } = await import('@/lib/mapspec/session-cursor');
+      const specComps = getCommittedMapSpec()?.layout?.components ?? [];
+      if (specComps.length) {
+        const isEnabled = (t: string) =>
+          specComps.some((c) => c.type === t && c.enabled !== false);
+        const hasType = (t: string) => specComps.some((c) => c.type === t);
+        const titleComp = specComps.find((c) => c.type === 'title' && c.enabled !== false);
+        if (titleComp && typeof titleComp.options?.['text'] === 'string') {
+          specTitle = titleComp.options['text'];
+        }
+        if (hasType('north_arrow')) specShowCompass = isEnabled('north_arrow');
+        if (hasType('scale_bar')) specShowScale = isEnabled('scale_bar');
+      }
+    } catch {
+      /* spec 面缺席 → 走请求/内置默认 */
+    }
+
     // #614：经 MapExporterEngine 调 composeLayout（与 exportToPDF 同款路由），
     // 便于测试 spyOn 断言 theme 选项（模块内直接绑定无法被 mock 拦截）。
-    MapExporterEngine.composeLayout(exportCanvas, title || '', subtitle || '', {
+    MapExporterEngine.composeLayout(exportCanvas, title || specTitle || '', subtitle || '', {
       dpi,
       theme,
-      showScale,
-      showCompass,
+      showScale: req.showScale ?? req.include_scale ?? specShowScale ?? true,
+      showCompass: req.showCompass ?? req.include_compass ?? specShowCompass ?? true,
       showWatermark,
       showLegend,
       showMetadata,

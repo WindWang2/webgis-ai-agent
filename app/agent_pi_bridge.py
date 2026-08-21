@@ -400,6 +400,7 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
             "runtime_observation_seq",
             "runtime_projection_fingerprint",
             "mutation_revision",
+            "map_product_evidence",
         ):
             if k in raw:
                 ev[k] = raw[k]
@@ -945,6 +946,7 @@ async def record_cartographic_dispatch_evidence(
         "mapspec_fingerprint", "runtime_observation_seq",
         "runtime_projection_fingerprint",
         "mutation_revision",
+        "map_product_evidence",
     ):
         if key in raw:
             result_evidence[key] = raw[key]

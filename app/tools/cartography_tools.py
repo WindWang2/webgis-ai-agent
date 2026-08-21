@@ -113,6 +113,12 @@ def _runtime_patch(
     value = paint.get(source_key)
     if isinstance(value, (str, int, float)) and not isinstance(value, bool):
       runtime_style[target_key] = value
+  # 热力图层：把契约记录里的显式 radius_px 投影进 HUD style（旧路径只靠
+  # legend 重建 paint，radius 一律回落默认——显式像素语义就此到达前端）。
+  if reviewed_layer.get("type") == "heatmap":
+    heat_meta = reviewed_layer.get("heatmap")
+    if isinstance(heat_meta, dict) and isinstance(heat_meta.get("radius_px"), int):
+      runtime_style["radius_px"] = heat_meta["radius_px"]
   if runtime_style:
     patch["style"] = runtime_style
   patch["projection_fingerprint"] = _fingerprint_metadata(
@@ -159,6 +165,13 @@ class WebgisLayoutSetArgs(BaseModel):
   legend: Optional[Dict[str, Any]] = Field(default=None, description="图例配置，如 {'title': '标题', 'position': 'top-right', 'visible': True}")
   controls: Optional[List[Dict[str, Any]]] = Field(default=None, description="地图控件配置列表")
   margins: Optional[Dict[str, Any]] = Field(default=None, description="边距配置")
+  components: Optional[List[Dict[str, Any]]] = Field(
+      default=None,
+      description="制图组件列表（CartographyComponent 形态：id/type/enabled/position/"
+                  "priority/style/options）。类型：title/subtitle/legend/continuous_colorbar/"
+                  "categorical_legend/north_arrow/scale_bar/attribution/graticule/map_border/"
+                  "statistics_panel/chart_panel/export_layout。整体替换（局部突变用 "
+                  "webgis_component_update）")
 
 
 class WebgisValidateArgs(BaseModel):
@@ -506,18 +519,33 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
   @tool(
       registry,
       tier=2, domains=["report"], name="webgis_layout_set",
-      description="设置 MapSpec 版面配置 (图例位置、控件、边距)。",
+      description="设置 MapSpec 版面配置 (图例位置、控件、边距、制图组件列表)。",
       args_model=WebgisLayoutSetArgs
   )
   async def webgis_layout_set(
       legend: Optional[Dict[str, Any]] = None,
       controls: Optional[List[Dict[str, Any]]] = None,
       margins: Optional[Dict[str, Any]] = None,
+      components: Optional[List[Dict[str, Any]]] = None,
       session_id: Optional[str] = None,
   ) -> dict:
     if not session_id:
       return {"success": False, "message": "Missing session_id"}
-    res = await mapspec_store.layout_set(session_id, legend, controls, margins)
+    if components is not None:
+      # Pydantic 契约校验在工具边界（lifecycle 只做结构性 id/type 检查）
+      try:
+        from app.services.gis_harness.components import CartographyComponent
+        validated = [CartographyComponent.model_validate(c).to_mapspec()
+                     for c in components]
+      except Exception as exc:  # noqa: BLE001 - fail loud with correction
+        return {
+          "success": False,
+          "message": f"Invalid layout.components entry: {exc}",
+          "correction_hint": "每个组件需要 {'id': str, 'type': 合法组件类型, ...}，"
+                             "类型见 CartographyComponent。",
+        }
+      components = validated
+    res = await mapspec_store.layout_set(session_id, legend, controls, margins, components)
     out: Dict[str, Any] = {"layout": res.get("layout", {})}
     if res.get("success"):
       out["summary"] = "MapSpec layout updated"

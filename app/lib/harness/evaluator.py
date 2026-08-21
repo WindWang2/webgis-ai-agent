@@ -24,6 +24,8 @@ DEFAULT_THRESHOLDS = {
     "MapCommandExecutionSuccessRate": 95.0,
     "InteractionStateConvergenceRate": 90.0,
     "InteractionRecoveryRate": 100.0,
+    # GIS Harness 产品维度（additive）：产品组装完整度阈值。
+    "MapProductCompleteness": 80.0,
 }
 
 # V3 交互维度：无交互证据（issued == 0）时在 gate 中豁免/严格受 require_interaction
@@ -33,6 +35,13 @@ INTERACTION_METRICS = frozenset({
     "MapCommandExecutionSuccessRate",
     "InteractionStateConvergenceRate",
     "InteractionRecoveryRate",
+})
+
+# GIS Harness 产品维度：无产品证据（未跑 webgis_map_product 等）时豁免；
+# 有证据则按完整度阈值裁决。缺证据绝不为 PASS（not_evaluated_policy_fail
+# 只在 require_map_product=True 且仍无证据时出现）。
+PRODUCT_METRICS = frozenset({
+    "MapProductCompleteness",
 })
 
 
@@ -57,9 +66,12 @@ class HarnessEvaluator:
 
         for metric_name, target_threshold in self.thresholds.items():
             actual_score = harness_metrics.get(metric_name)
-            if actual_score is None and metric_name in INTERACTION_METRICS:
-                # V3 新增维度：无交互证据的 run 不参与同步 gate（等价 evaluate_evidence
-                # 的 not_applicable_exempt）。V2 调用方只传 5 维时行为不变。
+            if actual_score is None and (
+                metric_name in INTERACTION_METRICS or metric_name in PRODUCT_METRICS
+            ):
+                # V3 新增维度：无交互/产品证据的 run 不参与同步 gate（等价
+                # evaluate_evidence 的 not_applicable_exempt）。V2 调用方只传
+                # 5 维时行为不变。
                 continue
             actual_score = harness_metrics.get(metric_name, 0.0)
             passed = actual_score >= target_threshold
@@ -86,6 +98,7 @@ class HarnessEvaluator:
         require_evaluated: bool = True,
         require_interaction: bool = False,
         require_cartography: Optional[bool] = None,
+        require_map_product: bool = False,
     ) -> Dict[str, Any]:
         """Evaluate a structured ``evaluate_with_evidence`` result.
 
@@ -115,6 +128,7 @@ class HarnessEvaluator:
             display_mutation if require_cartography is None else require_cartography
         )
         had_ref = any(len(e.get("refs", [])) > 0 for e in evidence)
+        had_product = any(e.get("map_product") for e in evidence)
         interaction = evidence_result.get("interaction") or {}
         try:
             issued = int(interaction.get("issued") or 0)
@@ -131,6 +145,8 @@ class HarnessEvaluator:
             "MapCommandExecutionSuccessRate": issued > 0,
             "InteractionStateConvergenceRate": issued > 0,
             "InteractionRecoveryRate": issued > 0,
+            # GIS Harness 产品维度（additive）：evaluated = 有产品证据。
+            "MapProductCompleteness": had_product,
         }
 
         checks: Dict[str, Dict[str, Any]] = {}
@@ -138,13 +154,16 @@ class HarnessEvaluator:
         for metric_name, target in self.thresholds.items():
             evaluated = dims_evaluated[metric_name]
             score = metrics.get(metric_name, 0.0)
-            if metric_name in INTERACTION_METRICS:
-                if not evaluated and require_interaction:
-                    # 要求交互评估但没有任何 issued 动作 → 策略失败。
+            if metric_name in INTERACTION_METRICS or metric_name in PRODUCT_METRICS:
+                if not evaluated and (
+                    (metric_name in PRODUCT_METRICS and require_map_product)
+                    or (metric_name in INTERACTION_METRICS and require_interaction)
+                ):
+                    # 要求评估但没有任何证据 → 策略失败。
                     passed = False
                     reason = "not_evaluated_policy_fail"
                 elif not evaluated:
-                    # 本次 run 无交互（issued == 0）→ 豁免；score 诚实报 0.0。
+                    # 本次 run 无该族证据 → 豁免；score 诚实报 0.0。
                     passed = True
                     reason = "not_applicable_exempt"
                 else:

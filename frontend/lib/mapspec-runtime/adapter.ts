@@ -289,10 +289,22 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
           stops.push(positions[i], c);
         });
         heatPaint["heatmap-color"] = stops;
-        // 镜像后端 heatmap_paint 的 radius/intensity/opacity 语义（米制
-        // 误传回落、zoom 插值），radius 取 layer.style.radius。
-        const rRaw = Number(layer.style?.radius);
-        const r = Number.isFinite(rRaw) && rRaw >= 4 && rRaw <= 60 ? Math.floor(rRaw) : 20;
+        // 半径契约（后端 heatmap_contract 前端镜像）：优先显式
+        // style.radius_px（dispatch 授权层投影）；legacy style.radius 只来自
+        // px 标注的面板/模板（4-100 窗口），结果统一 clamp [4,80] —— 不存在
+        // 越过契约上限的渲染值；缺省 30px。
+        const explicitPx = Number(layer.style?.radius_px);
+        const legacyPx = Number(layer.style?.radius);
+        let r: number;
+        // 0 与后端 _coerce_int 语义一致：有限数值即显式（clamp 到 4），只有
+        // NaN/undefined 才走 legacy/default。
+        if (Number.isFinite(explicitPx)) {
+          r = Math.max(4, Math.min(80, Math.floor(explicitPx)));
+        } else if (Number.isFinite(legacyPx) && legacyPx >= 4 && legacyPx <= 100) {
+          r = Math.max(4, Math.min(80, Math.floor(legacyPx)));
+        } else {
+          r = 30;
+        }
         heatPaint["heatmap-weight"] = 1;
         heatPaint["heatmap-intensity"] = ["interpolate", ["linear"], ["zoom"], 0, 0.6, 9, 1.4, 13, 2.2];
         heatPaint["heatmap-radius"] = ["interpolate", ["linear"], ["zoom"], 0, 2, 9, r, 13, Math.min(80, Math.floor(r * 1.7))];
