@@ -212,6 +212,23 @@ def _wait_for_cached(key: str, budget_s: float, sleep: Callable[[float], None]) 
     return None
 
 
+def _is_error_shaped(result: Any) -> bool:
+    """#694：错误形态结果不写缓存。
+
+    此前任意返回值写穿（ttl 可达 86400——kde_contours 的失败结果滞留一天），
+    重试立即命中缓存错误且 metrics 记 cache hit。判定对齐仓内错误 taxonomy：
+    std_error_response 形如 {"success": False, "code": ..., "message": ...}；
+    工具自带的 {"error": ...} 形态同样命中。成功结果（success 非 False 且
+    无 error 键）照常缓存。
+    """
+    if not isinstance(result, dict):
+        return False
+    if result.get("success") is False:
+        return True
+    err = result.get("error")
+    return isinstance(err, str) and err.strip() != ""
+
+
 async def _singleflight_async(key: str, ttl: int, lock_ttl_s: int, compute: Callable[[], Any]) -> Any:
     """async 版：持有锁者计算并写回；等待者轮询（在线程中，不阻塞事件循环）。
 
@@ -221,7 +238,8 @@ async def _singleflight_async(key: str, ttl: int, lock_ttl_s: int, compute: Call
     if _acquire_lock(key, token, lock_ttl_s):
         try:
             result = await compute()
-            set_cached(key, result, ttl)
+            if not _is_error_shaped(result):
+                set_cached(key, result, ttl)
             return result
         finally:
             _release_lock(key, token)
@@ -229,7 +247,8 @@ async def _singleflight_async(key: str, ttl: int, lock_ttl_s: int, compute: Call
     if cached is not None:
         return cached
     result = await compute()
-    set_cached(key, result, ttl)
+    if not _is_error_shaped(result):
+        set_cached(key, result, ttl)
     return result
 
 
@@ -239,7 +258,8 @@ def _singleflight_sync(key: str, ttl: int, lock_ttl_s: int, compute: Callable[[]
     if _acquire_lock(key, token, lock_ttl_s):
         try:
             result = compute()
-            set_cached(key, result, ttl)
+            if not _is_error_shaped(result):
+                set_cached(key, result, ttl)
             return result
         finally:
             _release_lock(key, token)
@@ -247,7 +267,8 @@ def _singleflight_sync(key: str, ttl: int, lock_ttl_s: int, compute: Callable[[]
     if cached is not None:
         return cached
     result = compute()
-    set_cached(key, result, ttl)
+    if not _is_error_shaped(result):
+        set_cached(key, result, ttl)
     return result
 
 
