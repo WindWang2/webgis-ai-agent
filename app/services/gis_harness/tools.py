@@ -231,8 +231,8 @@ def register_gis_harness_tools(registry: ToolRegistry):
         if profile is None:
             for layer_id in layer_ids:
                 layer = next(
-                    (l for l in spec.get("layers", [])
-                     if isinstance(l, dict) and l.get("id") == layer_id),
+                    (ly for ly in spec.get("layers", [])
+                     if isinstance(ly, dict) and ly.get("id") == layer_id),
                     None,
                 )
                 if not layer:
@@ -263,8 +263,8 @@ def register_gis_harness_tools(registry: ToolRegistry):
         bound_layers: List[Dict[str, Any]] = []
         for layer_id in layer_ids:
             layer = next(
-                (l for l in spec.get("layers", [])
-                 if isinstance(l, dict) and l.get("id") == layer_id),
+                (ly for ly in spec.get("layers", [])
+                 if isinstance(ly, dict) and ly.get("id") == layer_id),
                 None,
             )
             if layer is None:
@@ -277,7 +277,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
         committed_layer_ids: List[str] = [b["layer_id"] for b in bound_layers]
 
         primary_layer = next(
-            (l for l in plan.map_layers if l.role == "primary" and l.enabled), None
+            (ly for ly in plan.map_layers if ly.role == "primary" and ly.enabled), None
         )
         need_heatmap = (
             primary_layer is not None

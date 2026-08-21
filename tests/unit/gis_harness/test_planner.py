@@ -1,5 +1,4 @@
 """MapProductPlanner Golden Cases A–H：intent → recipe → plan → eligibility 复检。"""
-import pytest
 
 from app.services.gis_harness.planner import MapProductPlanner
 from app.services.gis_harness.intent import resolve_map_request_intent
@@ -28,7 +27,7 @@ class TestGoldenPlan:
         assert fin.eligibility["eligible"] is True
         assert fin.fallbacks == []
 
-        layers = {(l.role, l.cartography): l.enabled for l in fin.map_layers}
+        layers = {(ly.role, ly.cartography): ly.enabled for ly in fin.map_layers}
         assert layers.get(("primary", "visual_heatmap")) is True
         assert layers.get(("secondary", "point_overlay")) is True
         # 行政聚合是候选（reference 角色）
@@ -52,7 +51,7 @@ class TestGoldenPlan:
         plan = PLANNER.plan_from_intent(it)
         fin = PLANNER.finalize_with_profile(plan, _point_profile(7))
 
-        heat = next(l for l in fin.map_layers if l.cartography == "visual_heatmap")
+        heat = next(ly for ly in fin.map_layers if ly.cartography == "visual_heatmap")
         assert heat.enabled is False
         assert "INSUFFICIENT_POINTS" in heat.note
 
@@ -65,8 +64,8 @@ class TestGoldenPlan:
 
         # 点图升级为 primary
         point = next(
-            l for l in fin.map_layers
-            if l.cartography == "point_overlay" and l.enabled
+            ly for ly in fin.map_layers
+            if ly.cartography == "point_overlay" and ly.enabled
         )
         assert point.role == "primary"
         # 回退后组件用离散图例语境（无 colorbar 必需）——色条不应再出现
@@ -79,7 +78,7 @@ class TestGoldenPlan:
         plan = PLANNER.plan_from_intent(it)
         fin = PLANNER.finalize_with_profile(plan, _polygon_profile())
 
-        heat = next(l for l in fin.map_layers if l.cartography == "visual_heatmap")
+        heat = next(ly for ly in fin.map_layers if ly.cartography == "visual_heatmap")
         assert heat.enabled is False
         fallbacks = [f.model_dump() if hasattr(f, "model_dump") else f for f in fin.fallbacks]
         assert any(f["reason_code"] == "GEOMETRY_NOT_SUPPORTED" for f in fallbacks)
@@ -89,7 +88,7 @@ class TestGoldenPlan:
         it = resolve_map_request_intent("成都各区小学数量")
         plan = PLANNER.plan_from_intent(it)
         assert plan.recipe_id == "administrative_choropleth"
-        primary = next(l for l in plan.map_layers if l.role == "primary")
+        primary = next(ly for ly in plan.map_layers if ly.role == "primary")
         assert primary.cartography == "administrative_choropleth"
         assert primary.layer_type == "fill"
         caps = {d.capability for d in plan.data_requirements}
@@ -106,7 +105,7 @@ class TestGoldenPlan:
         plan = PLANNER.plan_from_intent(it)
         assert plan.recipe_id == "administrative_choropleth"
         assert "analytical_density" in {d.capability for d in plan.data_requirements}
-        primary = next(l for l in plan.map_layers if l.role == "primary")
+        primary = next(ly for ly in plan.map_layers if ly.role == "primary")
         assert primary.cartography == "administrative_choropleth"
 
     def test_case_f_concentration_allows_density_family(self):

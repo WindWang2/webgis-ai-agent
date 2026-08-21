@@ -6,9 +6,9 @@ Tool Resolver 在执行期解析）—— 工具替换时模板无需重写。
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class LayerRoleSpec(BaseModel):

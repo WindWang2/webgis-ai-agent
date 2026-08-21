@@ -1,5 +1,4 @@
 """MapRequestIntent 确定性 resolver 契约测试（Golden Cases 意图层）。"""
-import pytest
 
 from app.services.gis_harness.intent import (
     MapRequestIntent,

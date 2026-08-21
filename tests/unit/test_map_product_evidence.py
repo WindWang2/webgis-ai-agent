@@ -3,7 +3,6 @@
 不变量：缺产品证据 ≠ PASS（not_applicable_exempt 只在宽松策略下成立；
 require_map_product=True 时缺证据按策略失败）。
 """
-import pytest
 
 from app.lib.harness.evidence import MapProductEvidence
 from app.lib.harness.evaluator import HarnessEvaluator

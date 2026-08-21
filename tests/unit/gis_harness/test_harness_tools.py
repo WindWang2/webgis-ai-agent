@@ -82,7 +82,7 @@ async def test_map_product_golden_flow(registry, clean_session):
     spec = await mapspec_store.get_mapspec(clean_session)
     assert any(c["type"] == "title" and c["options"]["text"] == "成都市小学分布"
                for c in spec["layout"]["components"])
-    assert any(l["type"] == "heatmap" for l in spec["layers"])
+    assert any(ly["type"] == "heatmap" for ly in spec["layers"])
     # 产品证据完整
     ev = res["map_product_evidence"]
     assert ev["intent_resolution"]["task"] == "distribution_overview"
@@ -109,7 +109,7 @@ async def test_map_product_7_points_fallback_evidence(registry, clean_session):
     assert fb["evidence"] == {"point_count": 7, "min_points": 10}
     from app.services.mapspec_store import mapspec_store
     spec = await mapspec_store.get_mapspec(clean_session)
-    assert not any(l["type"] == "heatmap" for l in spec["layers"])
+    assert not any(ly["type"] == "heatmap" for ly in spec["layers"])
 
 
 @pytest.mark.asyncio
@@ -225,7 +225,7 @@ async def test_map_product_polygon_case_c(registry, clean_session):
     assert "GEOMETRY_NOT_SUPPORTED" in reasons
     from app.services.mapspec_store import mapspec_store
     spec = await mapspec_store.get_mapspec(clean_session)
-    assert not any(l["type"] == "heatmap" for l in spec["layers"])
+    assert not any(ly["type"] == "heatmap" for ly in spec["layers"])
 
 
 @pytest.mark.asyncio

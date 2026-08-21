@@ -3,14 +3,12 @@
 核心不变量：米值绝不再被当作像素消费（1000m ≠ 1000px）；legacy radius
 经唯一归一化边界（heatmap_contract）显式转换/回落并记录迁移警示。
 """
-import json
 
 import pytest
 
 from app.lib.cartography.heatmap_contract import (
     DEFAULT_BANDWIDTH_M,
     DEFAULT_RADIUS_PX,
-    HeatmapRadiusContract,
     normalize_heatmap_radius,
     resolve_paint_radius_px,
 )

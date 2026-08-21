@@ -106,7 +106,7 @@ class TestPlannerWiringForNewModels:
         plan = self.planner.plan_from_intent(intent)
         assert plan.recipe_id == "grid_density_aggregate"
         assert plan.template_id == "grid_density_product"
-        primary = next(l for l in plan.map_layers if l.role == "primary")
+        primary = next(ly for ly in plan.map_layers if ly.role == "primary")
         assert primary.layer_type == "fill"
         assert primary.source_capability == "grid_binning"
         caps = {r.capability for r in plan.data_requirements}
@@ -117,7 +117,7 @@ class TestPlannerWiringForNewModels:
         plan = self.planner.plan_from_intent(intent)
         assert plan.recipe_id == "proportional_symbol_map"
         assert plan.template_id == "proportional_symbol_product"
-        primary = next(l for l in plan.map_layers if l.role == "primary")
+        primary = next(ly for ly in plan.map_layers if ly.role == "primary")
         assert primary.layer_type == "circle"
         assert primary.cartography == "proportional_symbol"
 
@@ -135,7 +135,7 @@ class TestPlannerWiringForNewModels:
         finalized = self.planner.finalize_with_profile(plan, _profile(7))
         assert finalized.status == "finalized"
         grid_layer = next(
-            l for l in finalized.map_layers if l.cartography == "aggregate_grid")
+            ly for ly in finalized.map_layers if ly.cartography == "aggregate_grid")
         assert grid_layer.enabled is False
         reasons = {f.reason_code for f in finalized.fallbacks}
         assert "INSUFFICIENT_POINTS" in reasons

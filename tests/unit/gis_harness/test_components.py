@@ -7,7 +7,6 @@ from app.services.gis_harness.components import (
     build_default_components,
     mutate_component,
     north_arrow_component,
-    colorbar_component,
 )
 from app.services.mapspec.store import BASE_STORAGE_DIR
 from app.services.mapspec_store import mapspec_store
@@ -189,4 +188,4 @@ class TestMapSpecComponentsIntegration:
         await mapspec_store.layer_upsert(clean_session, layer, fc)
         spec = await mapspec_store.get_mapspec(clean_session)
         assert len(spec["layout"]["components"]) == len(comps)
-        assert any(l["type"] == "heatmap" for l in spec["layers"])
+        assert any(ly["type"] == "heatmap" for ly in spec["layers"])

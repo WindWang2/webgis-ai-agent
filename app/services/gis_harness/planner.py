@@ -120,7 +120,9 @@ class MapProductPlan(BaseModel):
 
 
 def _plan_id(query: str, recipe_id: str) -> str:
-    digest = hashlib.sha1(f"{query}|{recipe_id}".encode("utf-8")).hexdigest()[:12]
+    digest = hashlib.sha1(
+        f"{query}|{recipe_id}".encode("utf-8"), usedforsecurity=False
+    ).hexdigest()[:12]
     return f"plan-{digest}"
 
 
@@ -294,7 +296,6 @@ class MapProductPlanner:
         finalized.fallbacks = list(report.fallbacks)
 
         disabled_elements = {d.element for d in report.disabled}
-        disabled_reasons = {d.element: d for d in report.disabled}
         # 主数据几何（点层提升的先决条件——面数据上提升 circle 层是制图空转）
         geom_types = (profile or {}).get("geometryTypes") or []
         profile_geom = "unknown"
@@ -318,9 +319,9 @@ class MapProductPlanner:
                     )
                     if not heat_fallback_recorded:
                         point_layer = next(
-                            (l for l in finalized.map_layers
-                             if l.cartography in ("point_overlay", "simple_point_map")
-                             and l.enabled),
+                            (ly for ly in finalized.map_layers
+                             if ly.cartography in ("point_overlay", "simple_point_map")
+                             and ly.enabled),
                             None,
                         )
                         # 点层提升为 primary（converter 会按真实几何推断图层
@@ -349,9 +350,9 @@ class MapProductPlanner:
                     layer.note = f"disabled: {reason.reason_code}" if reason else "disabled"
                     if not heat_fallback_recorded:
                         point_layer = next(
-                            (l for l in finalized.map_layers
-                             if l.cartography in ("point_overlay", "simple_point_map")
-                             and l.enabled),
+                            (ly for ly in finalized.map_layers
+                             if ly.cartography in ("point_overlay", "simple_point_map")
+                             and ly.enabled),
                             None,
                         )
                         if point_layer:
@@ -381,7 +382,7 @@ class MapProductPlanner:
                 reason_code="RECIPE_INELIGIBLE",
                 evidence={"disabled": sorted(disabled_elements)},
             ))
-            if not any(l.enabled for l in finalized.map_layers):
+            if not any(ly.enabled for ly in finalized.map_layers):
                 finalized.map_layers.append(PlannedLayer(
                     role="primary", layer_type="circle", cartography="point_overlay",
                     source_capability="poi_query",
@@ -390,7 +391,7 @@ class MapProductPlanner:
 
         # 终稿组件集：按（回退后的）实际主表达重建 + recipe 声明的附加组件
         primary_layer = next(
-            (l for l in finalized.map_layers if l.role == "primary" and l.enabled),
+            (ly for ly in finalized.map_layers if ly.role == "primary" and ly.enabled),
             None,
         )
         primary_carto = primary_layer.cartography if primary_layer else "point_overlay"
@@ -434,9 +435,9 @@ class MapProductPlanner:
     def assess_completeness(self, plan: MapProductPlan) -> Dict[str, Any]:
         expected_outputs = set(plan.outputs) or {"interactive_map"}
         present: Dict[str, bool] = {}
-        has_enabled_layer = any(l.enabled for l in plan.map_layers)
+        has_enabled_layer = any(ly.enabled for ly in plan.map_layers)
         present["interactive_map"] = has_enabled_layer
-        bound_refs = [l.bound_ref for l in plan.map_layers if l.bound_ref]
+        bound_refs = [ly.bound_ref for ly in plan.map_layers if ly.bound_ref]
         present["data_bound"] = bool(bound_refs)
         present["statistics"] = bool(plan.statistics) and any(
             s.status == "done" for s in plan.analysis_steps
