@@ -183,6 +183,6 @@ def test_prompt_and_tool_description_contain_quantitative_guard():
     from app.tools.spatial import register_spatial_tools
     reg = ToolRegistry()
     register_spatial_tools(reg)
-    desc = reg.metadata("heatmap_data").get("description", "")
+    desc = next((s["function"]["description"] for s in reg.get_schemas() if s["function"]["name"] == "heatmap_data"), "")
     assert "HEATMAP_MIN_POINTS" in desc or "10" in desc
     assert "correction_hint" in desc

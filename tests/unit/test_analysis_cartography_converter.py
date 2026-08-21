@@ -394,15 +394,16 @@ def test_heatmap_type_hint_authors_official_paint():
 
     回归：无 type_hint 时点要素被推断为 circle（heatmap_data native 的
     FC 结果走 dispatch MapSpec 授权，热力图从未以 heatmap 层挂上）。
+    #690: 小样本守卫下 3 点会被拦截，需用足量样本验证 painter 路径。
     """
-    fc = _point_fc()
+    fc = _point_fc(n=12)
     analysis = {
         "success": True,
         "algorithm": "heatmap_data",
         "data": fc,
         "type_hint": "heatmap",
         "metadata": {"render_type": "native", "palette": "thermal",
-                     "radius": 1500, "point_count": 3},
+                     "radius": 1500, "point_count": 12},
     }
     converted_layer, inline_geojson, warnings = convert_analysis_to_mapspec_layer(analysis)
 
@@ -411,10 +412,11 @@ def test_heatmap_type_hint_authors_official_paint():
 
     # dispatch 实际形态（数据在 ref 后面，无内联 geojson）：type_hint 单独
     # 驱动图层类型 —— 否则点要素默认推断 circle，热力图从未挂上。
+    fc12 = _point_fc(n=12)
     dispatch_shape = {
-        "geojson": fc, "algorithm": "heatmap_data",
+        "geojson": fc12, "algorithm": "heatmap_data",
         "type_hint": "heatmap",
-        "metadata": {"palette": "classic", "radius": 2000},
+        "metadata": {"palette": "classic", "radius": 2000, "point_count": 12},
     }
     layer2, _, _ = convert_analysis_to_mapspec_layer(dispatch_shape)
     assert layer2["type"] == "heatmap"
