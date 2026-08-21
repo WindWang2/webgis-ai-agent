@@ -7,6 +7,8 @@ import { useMapAction } from '@/lib/contexts/map-action-context';
 import { Download, Printer, History, ChevronDown, Lock } from 'lucide-react';
 import { API_BASE } from '@/lib/api/config';
 import { downloadWithAuth } from '@/lib/api/authenticated-download';
+import { describeApiError } from '@/lib/api/transport';
+import { useToastStore } from '@/components/ui/toast';
 import { useAuthUser } from '@/lib/auth/use-auth-user';
 import { IconButton } from '@/components/shared/icon-button';
 import { ConfirmAction } from '@/components/shared/confirm-action';
@@ -150,7 +152,13 @@ export function MapStudioTab() {
         { filename: downloadName },
       );
     } catch (err) {
+      // #738: a failed download must be user-visible — devOnly.warn made the
+      // button look dead (indistinguishable from a no-op).
       devOnly.warn('[MapStudioTab] 导出下载失败:', err);
+      useToastStore.getState().addToast(
+        `导出下载失败：${describeApiError(err, '网络错误或文件已失效')}`,
+        'error',
+      );
     }
   };
 

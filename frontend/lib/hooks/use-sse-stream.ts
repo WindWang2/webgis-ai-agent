@@ -23,6 +23,11 @@ import type { ExplorerStage, ExplorerStatus } from '@/lib/types/explorer';
 
 import { devOnly } from "@/lib/utils/logger";
 
+// #742: stable identity — an inline options object churned send/bridge/
+// handleSend identities at token-batch frequency.
+const RECONNECT_OPTS = { maxAttempts: 2, baseDelayMs: 500 } as const;
+
+
 /* ─── FE-4: selection/focus → agent snapshot helpers (design §7) ───
  * The selection snapshot sent inside map_state must stay bounded: the PARENT
  * layer id (never the `${layerId}__${sub}` sublayer id), a stable feature
@@ -963,10 +968,7 @@ export function useSSEStream(
   // config; the backend treats a re-POST carrying Last-Event-ID as a read-only
   // resume (replays missed events, never re-executes the turn), and replayed
   // events are deduped by id in useMapBridge. 2 attempts, 500ms→1s backoff.
-  const bridge = useMapBridge(sessionId, dispatchAction, onEvent, sessionTokenRef, {
-    maxAttempts: 2,
-    baseDelayMs: 500,
-  }, getSessionToken);
+  const bridge = useMapBridge(sessionId, dispatchAction, onEvent, sessionTokenRef, RECONNECT_OPTS, getSessionToken);
   const isLoading = bridge.aiStatus === 'thinking' || bridge.aiStatus === 'acting';
 
   const handlePlanAction = useCallback((planId: string, action: 'approve' | 'revise' | 'reject') => {

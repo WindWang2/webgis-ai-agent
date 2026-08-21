@@ -16,14 +16,30 @@ const COLORS = [
   "#0891b2", "#0e7490", "#155e75", "#164e63",
 ]
 
-const TOOLTIP_STYLE = {
-  contentStyle: {
-    backgroundColor: "#0c1e2e",
-    border: "1px solid rgba(6,182,212,0.3)",
-    borderRadius: "6px",
-    color: "#e2e8f0",
-    fontSize: "14px",
-  },
+// #741: recharts can't consume CSS vars in SVG tick fills directly — read
+// the computed token at module/init time via a helper so charts follow the
+// active theme (light or dark) instead of hard-coded dark-cyan values that
+// were near-unreadable in light theme.
+function themeColor(varName: string, fallback: string): string {
+  if (typeof window === "undefined") return fallback;
+  const value = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+  return value || fallback;
+}
+
+function tickStyle() {
+  return { fill: themeColor("--text-muted", "#5b6b82"), fontSize: 13 };
+}
+
+function tooltipStyle() {
+  return {
+    contentStyle: {
+      backgroundColor: themeColor("--surface-raised", "#ffffff"),
+      border: "1px solid rgba(100,116,139,0.3)",
+      borderRadius: "6px",
+      color: themeColor("--text-primary", "#1c2733"),
+      fontSize: "14px",
+    },
+  };
 }
 
 function RenderBarChart({ chart }: { chart: ChartData }) {
@@ -31,9 +47,9 @@ function RenderBarChart({ chart }: { chart: ChartData }) {
     <ResponsiveContainer width="100%" height={200}>
       <BarChart data={chart.data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(6,182,212,0.15)" />
-        <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 13 }} />
-        <YAxis tick={{ fill: "#94a3b8", fontSize: 13 }} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", fill: "#94a3b8", fontSize: 13 } : undefined} />
-        <Tooltip {...TOOLTIP_STYLE} />
+        <XAxis dataKey="name" tick={tickStyle()} />
+        <YAxis tick={tickStyle()} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", ...tickStyle() } : undefined} />
+        <Tooltip {...tooltipStyle()} />
         <Bar dataKey="value" fill="#06b6d4" radius={[2, 2, 0, 0]} />
       </BarChart>
     </ResponsiveContainer>
@@ -45,9 +61,9 @@ function RenderLineChart({ chart }: { chart: ChartData }) {
     <ResponsiveContainer width="100%" height={200}>
       <LineChart data={chart.data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(6,182,212,0.15)" />
-        <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 13 }} />
-        <YAxis tick={{ fill: "#94a3b8", fontSize: 13 }} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", fill: "#94a3b8", fontSize: 13 } : undefined} />
-        <Tooltip {...TOOLTIP_STYLE} />
+        <XAxis dataKey="name" tick={tickStyle()} />
+        <YAxis tick={tickStyle()} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", ...tickStyle() } : undefined} />
+        <Tooltip {...tooltipStyle()} />
         <Line type="monotone" dataKey="value" stroke="#06b6d4" strokeWidth={2} dot={{ fill: "#06b6d4", r: 3 }} />
       </LineChart>
     </ResponsiveContainer>
@@ -73,7 +89,7 @@ function RenderPieChart({ chart }: { chart: ChartData }) {
             <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
           ))}
         </Pie>
-        <Tooltip {...TOOLTIP_STYLE} />
+        <Tooltip {...tooltipStyle()} />
         <Legend wrapperStyle={{ fontSize: "13px", color: "#94a3b8" }} />
       </PieChart>
     </ResponsiveContainer>
@@ -85,9 +101,9 @@ function RenderScatterChart({ chart }: { chart: ChartData }) {
     <ResponsiveContainer width="100%" height={200}>
       <ScatterChart margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(6,182,212,0.15)" />
-        <XAxis dataKey="x" type="number" tick={{ fill: "#94a3b8", fontSize: 13 }} label={chart.x_label ? { value: chart.x_label, position: "insideBottom", offset: -5, fill: "#94a3b8", fontSize: 13 } : undefined} />
-        <YAxis dataKey="y" type="number" tick={{ fill: "#94a3b8", fontSize: 13 }} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", fill: "#94a3b8", fontSize: 13 } : undefined} />
-        <Tooltip {...TOOLTIP_STYLE} />
+        <XAxis dataKey="x" type="number" tick={tickStyle()} label={chart.x_label ? { value: chart.x_label, position: "insideBottom", offset: -5, fill: "#94a3b8", fontSize: 13 } : undefined} />
+        <YAxis dataKey="y" type="number" tick={tickStyle()} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", ...tickStyle() } : undefined} />
+        <Tooltip {...tooltipStyle()} />
         <Scatter data={chart.data} fill="#06b6d4" />
       </ScatterChart>
     </ResponsiveContainer>
@@ -114,8 +130,8 @@ export function ChartRenderer({ chart }: { chart: ChartData }) {
   }
 
   return (
-    <div className="mt-2 rounded-lg border border-cyan-500/20 bg-cyan-950/30 p-3">
-      <h4 className="mb-2 text-xs font-medium text-cyan-300">{chart.title}</h4>
+    <div className="mt-2 rounded-lg border border-map-chrome-border bg-[color:var(--surface-sunken)] p-3">
+      <h4 className="mb-2 text-xs font-medium text-[color:var(--text-primary)]">{chart.title}</h4>
       <Renderer chart={chart} />
     </div>
   )

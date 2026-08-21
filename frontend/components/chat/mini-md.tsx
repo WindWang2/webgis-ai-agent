@@ -1,6 +1,8 @@
 'use client';
 
 import React from 'react';
+import { describeApiError } from '@/lib/api/transport';
+import { useToastStore } from '@/components/ui/toast';
 import ReactMarkdown, { type UrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { downloadWithAuth, isProtectedDownloadUrl } from '@/lib/api/authenticated-download';
@@ -101,7 +103,12 @@ export default function MiniMd({ text }: MiniMdProps) {
                   onClick={(e) => {
                     e.preventDefault();
                     downloadWithAuth(protectedHref).catch((err) => {
+                      // #738: surface auth/network download failures.
                       devOnly.warn('[MiniMd] 鉴权下载失败:', err);
+                      useToastStore.getState().addToast(
+                        `下载失败：${describeApiError(err, '网络错误或链接已失效')}`,
+                        'error',
+                      );
                     });
                   }}
                 >

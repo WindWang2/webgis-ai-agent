@@ -679,6 +679,13 @@ class ToolDispatchService:
                 "success": True,
                 "result_ref": result_ref,
                 "layer_id": layer_id,
+                # #735: the authoritative doc must ride the step_result —
+                # slim_event_result projects it to bounded metadata, and the
+                # frontend commits that projection, advancing the committed
+                # MapSpec. Without it, every plain-analysis layer was
+                # source-only and invisible in any session holding a
+                # committed spec (agent narrated success, map unchanged).
+                "mapspec": mapspec,
                 "runtime_patch": patch,
                 "runtime_projection_fingerprint": patch["projection_fingerprint"],
                 "commands": [{
@@ -863,6 +870,8 @@ class ToolDispatchService:
                 "success": True,
                 "result_ref": image_ref,
                 "layer_id": layer_id,
+                # #735: same committed-doc advancement as the vector path.
+                "mapspec": mapspec,
                 "runtime_patch": patch,
                 "runtime_projection_fingerprint": patch["projection_fingerprint"],
                 "command": result.get("command") or "add_heatmap_raster",

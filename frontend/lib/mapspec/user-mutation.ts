@@ -45,6 +45,16 @@ function applyCommittedMapSpec(mapspec: { layers?: any[] } | undefined): void {
   for (const layer of useHudStore.getState().layers) {
     const pres = presentationFromMapSpec(mapspec, mapspecLayerId(layer.id));
     if (pres.visible !== undefined || pres.opacity !== undefined) {
+      // #739: skip no-op updates — rewriting every layer per response (even
+      // when values are equal) churned the layers identity and re-triggered
+      // the focus-layer effect (self-sustaining camera refits + set_view
+      // POSTs while updates land).
+      if (
+        (pres.visible === undefined || pres.visible === layer.visible) &&
+        (pres.opacity === undefined || pres.opacity === layer.opacity)
+      ) {
+        continue;
+      }
       useHudStore.getState().updateLayer(layer.id, pres);
     }
   }

@@ -162,6 +162,11 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       // 仍是旧值 -> 若用户在窗口内点 send，消息会发到旧 session。改为同步先 set。
       setSessionId(sid);
       sessionIdRef.current = sid;
+      // #736: reset the MapSpec cursor SYNCHRONOUSLY on switch — previously
+      // the only reset lived inside the map-state GET success branch, so a
+      // thrown GET left session A's committed layers composing on the map
+      // under session B's identity (and B's mutations carried A's revision).
+      setMapSpecSessionCursor(sid, 0, sessionTokensRef.current.get(sid) ?? null);
       // SEC-08：切回某个会话时，前端通常仍持有该会话的 token（同一浏览器会话内）。
       // 旧会话 / 认证会话 token 为 null，头不发送，后端按 grandfather/认证放行。
       const token = sessionTokensRef.current.get(sid) ?? null;
@@ -250,6 +255,14 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
         // 不再静默吞掉失败。
         if (!messagesRestored) {
           onRestoreMessages([], sessionLoadErrorNotice(err));
+        } else {
+          // #736: messages already swapped but map-state restore failed —
+          // surface it; a silent ghost map is indistinguishable from success.
+          const { useToastStore } = await import('@/components/ui/toast');
+          useToastStore.getState().addToast(
+            `地图状态恢复失败：${err?.message ?? '网络错误'}。请刷新重试。`,
+            'error',
+          );
         }
       }
     },

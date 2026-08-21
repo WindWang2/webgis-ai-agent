@@ -5,6 +5,7 @@ import * as renderer from '@/lib/map-kit/renderer';
 import { devOnly } from '@/lib/utils/logger';
 import { parseFilter } from './parseFilter';
 import { isMvtLayer } from '@/lib/store/layer-data';
+import { mergePendingPresentation } from '@/lib/mapspec/session-cursor';
 
 /**
  * Layer commands: vector/raster add-remove, base layer switch, visibility/style
@@ -405,6 +406,20 @@ export const layerCommands: Record<string, CommandEntry> = {
         // Store-only: the reconcile owns the map sublayers → honest store_updated.
         if (Object.keys(storeUpdates).length > 0) {
           getHudState().updateLayer(layer_id, storeUpdates);
+          // #737: with a committed MapSpec, composeLiveMapSpec ignores HUD
+          // visibility — the Layers tab showed the layer visible while the
+          // map stayed hidden. When the store layer carries the authored
+          // spec-layer id, merge the pending presentation there too so the
+          // live compose actually applies it (same mechanism the layer-panel
+          // eye toggle uses).
+          const hudLayer = getHudState().layers?.find?.((l: any) => l.id === layer_id);
+          const specLayerId = (hudLayer as any)?._mapspecLayerId as string | undefined;
+          if (specLayerId && (visible != null || opacity != null)) {
+            mergePendingPresentation(specLayerId, {
+              ...(visible != null ? { visible } : {}),
+              ...(opacity != null ? { opacity } : {}),
+            });
+          }
         }
         return { status: 'succeeded', result: { store_updated: true } };
       }

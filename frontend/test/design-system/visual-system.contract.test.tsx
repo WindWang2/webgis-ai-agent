@@ -191,7 +191,11 @@ describe('keyboard reachability of mouse-only affordances', () => {
     expect(grips[0]).toHaveAccessibleName(/第 1 \/ 2 层/);
 
     grips[0].focus();
+    // #743: the accessible name documents Alt+↑/↓ — the handler must require
+    // the Alt modifier (bare arrows used to surprise-reorder).
     await userEvent.keyboard('{ArrowDown}');
+    expect(useHudStore.getState().layers.map((l) => l.id)).toEqual(['a', 'b']);
+    await userEvent.keyboard('{Alt>}{ArrowDown}{/Alt}');
     expect(useHudStore.getState().layers.map((l) => l.id)).toEqual(['b', 'a']);
 
     // The row itself must not be a tab stop.

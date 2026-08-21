@@ -209,8 +209,14 @@ export function MapPanel({
 
   // Focus Layer Effect — fit map to layer bbox when focusLayerId is set,
   // then clear it back to null so the same layer can be re-focused later.
+  const lastFittedFocusRef = useRef<string | null>(null)
   useEffect(() => {
     if (!focusLayerId) return
+    // #739: one fit per focus request — layers identity changes (e.g. a
+    // set_view response rewriting layers) used to re-run this effect and
+    // refit + re-POST set_view in a self-sustaining cycle.
+    if (lastFittedFocusRef.current === focusLayerId) return
+    lastFittedFocusRef.current = focusLayerId
     const map = mapRef.current?.getMap()
     if (!map || !mapReady) return
     const target = layers.find((l) => l.id === focusLayerId)

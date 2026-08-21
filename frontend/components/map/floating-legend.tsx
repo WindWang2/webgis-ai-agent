@@ -15,6 +15,24 @@ interface FloatingLegendProps {
 const FALLBACK_COLORS = ['#0ff0ff', '#00ff41', '#ffff00', '#ff5f00', '#ff2d55'];
 const LABELS = ['极低', '低', '中', '高', '极高'];
 
+// #740: class labels must map 1:1 onto the actual ramp length — a fixed
+// 5-label row against an N-color palette pointed 极低/极高 at the wrong
+// stops (misleading density reading).
+function labelsFor(colorCount: number): string[] {
+  if (colorCount === LABELS.length) return LABELS;
+  if (colorCount <= 1) return colorCount === 1 ? [LABELS[0]] : [];
+  if (colorCount < LABELS.length) {
+    return [LABELS[0], ...new Array(colorCount - 2).fill(''), LABELS[LABELS.length - 1]].slice(0, colorCount);
+  }
+  // more colors than labels: spread labels, middle classes unlabeled
+  const out = new Array(colorCount).fill('');
+  out[0] = LABELS[0];
+  out[colorCount - 1] = LABELS[LABELS.length - 1];
+  const mid = Math.floor(colorCount / 2);
+  if (mid > 0 && mid < colorCount - 1) out[mid] = '中';
+  return out;
+}
+
 function legendColorsFor(layer: Layer | undefined): string[] {
   const spec = layer?.legend_spec;
   if (spec && (spec.type === 'continuous' || spec.type === 'divergent')) {
@@ -58,8 +76,8 @@ export function FloatingLegend({ className }: FloatingLegendProps) {
           ))}
         </div>
         <div className="flex justify-between text-micro text-map-chrome-ink">
-          {LABELS.map((label) => (
-            <span key={label}>{label}</span>
+          {labelsFor(colors.length).map((label, i) => (
+            <span key={`${label}-${i}`}>{label}</span>
           ))}
         </div>
       </LegendCard>

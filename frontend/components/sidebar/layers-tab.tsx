@@ -263,7 +263,11 @@ export function LayersTab() {
                           title="拖拽移动，或 Alt+↑/↓"
                           className="flex h-control-sm w-icon-md shrink-0 cursor-grab items-center justify-center rounded-xs text-ink-disabled transition-colors hover:text-ink-secondary active:cursor-grabbing"
                           onKeyDown={(e) => {
-                            if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                            // #743: behavior must match the documented
+                            // affordance (Alt+↑/↓) — bare arrows surprise-
+                            // reordered while screen-reader users following
+                            // the label got a no-op.
+                            if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && e.altKey) {
                               e.preventDefault();
                               moveLayer(layer.id, e.key === 'ArrowUp' ? -1 : 1);
                             }
