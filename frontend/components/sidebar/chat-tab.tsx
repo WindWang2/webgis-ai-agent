@@ -144,7 +144,7 @@ const ChatMessageItem = memo(function ChatMessageItem({
           {time && <span className="text-body text-ink-muted">{time}</span>}
           {/* 运行时 accent 直接作文字在暗色下只有 2.96–3.40:1 —— 角色标签改用
               主题校正后的 --agent-accent。 */}
-          <span className="text-title font-semibold text-agent-accent">You</span>
+          <span className="text-title font-semibold text-agent-accent">你</span>
         </div>
         <div
           style={{

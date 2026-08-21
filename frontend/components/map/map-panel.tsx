@@ -486,7 +486,16 @@ export function MapPanel({
           runtimeRef.current?.getLastError() ?? '',
           runtimeRef.current?.getAppliedSpec() ?? null,
         )
-        const observationKey = `${sessionId}:${JSON.stringify(observation)}`
+        // #692：去重键不 stringify 整个 observation——raster_image 是多 MB
+        // data URL（docstring 自称 bounded metadata only 被该字段违反），
+        // 每次 reconcile 在主线程序列化 MB 级 base64 仅为算键。用稳定字段
+        // + raster 载荷的长度引用计数替代（内容变化必然改变长度或指纹）。
+        const rasterImg = (observation as { raster_image?: string }).raster_image
+        const keyPayload = {
+          ...observation,
+          ...(rasterImg !== undefined ? { raster_image: `len:${rasterImg.length}` } : {}),
+        }
+        const observationKey = `${sessionId}:${JSON.stringify(keyPayload)}`
         if (observationKey === lastCartographicObservationKeyRef.current) return
         lastCartographicObservationKeyRef.current = observationKey
         const clientGeneration = Math.max(
