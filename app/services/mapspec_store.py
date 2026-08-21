@@ -253,6 +253,18 @@ class MapSpecStore:
         result["cartographic_review"] = cartographic_review
         return result
 
+    async def set_basemap(self, session_id: str, provider_id: str) -> Dict[str, Any]:
+        """#722: sanctioned basemap mutation so the persisted spec tracks
+        BASE_LAYER_CHANGE commands emitted by the legacy basemap tools."""
+        from app.services.mapspec.lifecycle_engine import SetBasemapIntent
+        res = await self.engine.apply_mutation(
+            session_id, SetBasemapIntent(provider_id=provider_id),
+        )
+        return _with_evidence(res, {
+            "success": not res.is_error,
+            "basemap": {"providerId": provider_id},
+        })
+
     async def layout_set(
         self,
         session_id: str,

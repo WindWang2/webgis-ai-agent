@@ -74,6 +74,18 @@ DOMAIN_KEYWORDS: dict[str, list[str]] = {
         "莫兰", "Moran", "LISA", "热点分析", "Getis",
         "Voronoi", "泰森", "凸包", "标准差椭圆", "中心要素",
         "kde", "核密度", "IDW", "反距离",
+        # #715: the administrative-count family (『各区…数量』) is the
+        # canonical webgis_map_intent/webgis_map_product use case — without
+        # these keywords the product layer was invisible exactly there.
+        "统计", "数量", "多少", "排名", "各区", "个数", "计数",
+    ],
+    # MapSpec 意图域（#713）：图层增删改/版面调整的 desired-state 工具。
+    # 之前挂在 report 域，『把这个图层删掉』这类纯编辑追问一个关键词都
+    # 命不中，模型只能用 runtime-only 的 remove_layer，desired MapSpec 与
+    # runtime 永久分叉。
+    "mapspec": [
+        "图层", "删掉", "删除", "移除", "去掉", "清掉", "隐藏", "显示",
+        "版面", "布局", "制图组件", "图例位置",
     ],
     # 报告 / 导出
     "report": [

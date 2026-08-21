@@ -650,3 +650,40 @@ async def test_cartography_status_is_non_display_via_dispatch_service(
     assert result.map_actions == []
     assert result.geojson_ref is None
     assert "[CARTOGRAPHY_VERDICT]" in result.llm_payload
+
+
+@pytest.mark.asyncio
+async def test_layer_remove_emits_runtime_command_and_mapspec(registry, clean_session):
+    """#713: removal must reach the runtime (REMOVE_LAYER command) and advance
+    the frontend committed doc (mapspec) — previously desired state mutated
+    with no runtime effect and no ACK path."""
+    layer = {"id": "L713", "source": "s", "type": "circle", "paint": {"circle-color": "#0f0"}}
+    await registry.dispatch(
+        "webgis_layer_upsert",
+        {"layer": layer, "source_data": _geojson()},
+        session_id=clean_session,
+    )
+    res = await registry.dispatch("webgis_layer_remove", {"layer_id": "L713"}, session_id=clean_session)
+    assert res["success"] is True
+    assert isinstance(res.get("mapspec"), dict), "committed doc must advance"
+    assert all(
+        lay.get("id") != "L713" for lay in res["mapspec"].get("layers", [])
+    )
+    cmds = res.get("commands") or []
+    assert any(c.get("command") == "REMOVE_LAYER" and c.get("params", {}).get("layer_id") == "L713"
+               for c in cmds), f"expected REMOVE_LAYER command, got {cmds}"
+
+
+@pytest.mark.asyncio
+async def test_layout_set_returns_mapspec_doc(registry, clean_session):
+    """#713: layout/component changes flow to the runtime through the committed
+    MapSpec doc — the result must carry it."""
+    await registry.dispatch("webgis_project_init", {}, session_id=clean_session)
+    res = await registry.dispatch(
+        "webgis_layout_set",
+        {"legend": {"title": "T713", "position": "top-right", "visible": True}},
+        session_id=clean_session,
+    )
+    assert res["success"] is True
+    assert isinstance(res.get("mapspec"), dict)
+    assert res["mapspec"].get("layout", {}).get("legend", {}).get("title") == "T713"

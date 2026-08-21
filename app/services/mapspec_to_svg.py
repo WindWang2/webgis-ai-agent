@@ -270,6 +270,18 @@ def _resolve_paint_value(
     return val.get("value", fallback)
 
 
+def _source_geojson(src: Dict[str, Any]) -> Any:
+    """#714: the canonical writer (mapspec_source.store_data) emits
+    ``inlineData`` / ``ref`` / ``url`` / ``dataPath`` — never ``data``. Read
+    the canonical key first; keep the legacy ``data`` read for hand-built
+    specs (report_service hydrates ``ref:`` sources into ``inlineData``
+    before calling)."""
+    inline = src.get("inlineData")
+    if isinstance(inline, dict):
+        return inline
+    return src.get("data")
+
+
 def compile_mapspec_to_svg(
     mapspec: Dict[str, Any],
     target_dpi: int = 300,
@@ -316,7 +328,7 @@ def compile_mapspec_to_svg(
             for src in sources.values():
                 if not isinstance(src, dict):
                     continue
-                geojson = src.get("data")
+                geojson = _source_geojson(src)
                 if not isinstance(geojson, dict):
                     continue
                 features = (
@@ -473,7 +485,7 @@ def compile_mapspec_to_svg(
                                 elements_svg += f'<image x="0" y="0" width="{_fmt_num(scaled_width)}" height="{_fmt_num(scaled_height)}" href="{tile_url}" opacity="{opacity}" data-oversample-boost="{zoom_boost}" preserveAspectRatio="none" />\n'
                         continue
 
-                    data = src.get("data")
+                    data = _source_geojson(src)
                     if not isinstance(data, dict):
                         continue
                     features = data.get("features", [data]) if data.get("type") == "FeatureCollection" else [data]

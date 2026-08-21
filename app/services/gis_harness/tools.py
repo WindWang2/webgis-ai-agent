@@ -274,6 +274,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
 
         # 缺失图层补齐：热力层被禁时不补；点叠加缺 → 从 primary_ref 授权
         out: Dict[str, Any] = {"success": True, "plan_id": plan.plan_id}
+        authoring_failures: List[str] = []  # #716: honest failure ledger
         committed_layer_ids: List[str] = [b["layer_id"] for b in bound_layers]
 
         primary_layer = next(
@@ -310,6 +311,16 @@ def register_gis_harness_tools(registry: ToolRegistry):
                            if profile and isinstance(profile.get("featureCount"), int) else {}),
                     },
                 }
+                # #718: legend evidence same-source with the heatmap_data /
+                # dispatch seam path (NATIVE_HEATMAP_COLORS via the single
+                # builder) — previously product-authored heatmaps carried no
+                # legend_spec and the review could not see the gap.
+                try:
+                    from app.lib.cartography.palettes import build_heatmap_legend_spec
+                    analysis_payload["legend_spec"] = build_heatmap_legend_spec(palette)
+                except Exception as leg_exc:  # noqa: BLE001 - legend is best-effort
+                    out.setdefault("warnings", []).append(
+                        f"heatmap legend_spec build failed: {leg_exc}")
                 converted, _, _warn = convert_analysis_to_mapspec_layer(analysis_payload)
                 slug = _hashlib.sha256(f"{plan.plan_id}:heatmap".encode()).hexdigest()[:8]
                 converted["id"] = f"product-{slug}-heatmap"
@@ -326,8 +337,9 @@ def register_gis_harness_tools(registry: ToolRegistry):
                     })
                     out = _forward_evidence(res, out)
                 else:
-                    out.setdefault("warnings", []).append(
-                        f"heatmap layer authoring failed: {res.get('message')}")
+                    msg = f"heatmap layer authoring failed: {res.get('message')}"
+                    out.setdefault("warnings", []).append(msg)
+                    authoring_failures.append(msg)
             if need_points:
                 analysis_payload = {
                     "geojson": primary_data,
@@ -348,11 +360,28 @@ def register_gis_harness_tools(registry: ToolRegistry):
                         "cartography": "point_overlay", "authored": True,
                     })
                 else:
-                    out.setdefault("warnings", []).append(
-                        f"point layer authoring failed: {res.get('message')}")
+                    msg = f"point layer authoring failed: {res.get('message')}"
+                    out.setdefault("warnings", []).append(msg)
+                    authoring_failures.append(msg)
 
         # 组件 + 标题落 MapSpec layout.components
         components = list(plan.components)
+        # #718: colorbar must reference the actual authored heatmap layer and
+        # carry the palette — previously layerId defaulted "" and the frontend
+        # had to guess which layer/ramp the colorbar described.
+        primary_bound = next(
+            (b for b in bound_layers if b.get("role") == "primary"), None)
+        for comp in components:
+            if getattr(comp, "type", "") == "continuous_colorbar" and primary_bound:
+                opts = dict(getattr(comp, "options", {}) or {})
+                opts.setdefault("layerId", primary_bound["layer_id"])
+                if opts.get("layerId") == "":
+                    opts["layerId"] = primary_bound["layer_id"]
+                if need_heatmap or any(
+                    b.get("cartography") == "visual_heatmap" for b in bound_layers
+                ):
+                    opts["palette"] = palette
+                comp.options = opts
         if title:
             from app.services.gis_harness.components import title_component
             components = [c for c in components if c.type != "title"]
@@ -362,8 +391,9 @@ def register_gis_harness_tools(registry: ToolRegistry):
             session_id, components=component_dicts,
         )
         if not layout_res.get("success"):
-            out.setdefault("warnings", []).append(
-                f"layout components commit failed: {layout_res.get('message')}")
+            msg = f"layout components commit failed: {layout_res.get('message')}"
+            out.setdefault("warnings", []).append(msg)
+            authoring_failures.append(msg)
 
         # 绑定记录回填 plan（供 evidence 消费）；数据/画像步骤随绑定完成
         for entry in bound_layers:
@@ -404,8 +434,12 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 },
                 "recipe_selection": {
                     "selected": plan.recipe_id,
-                    "candidates": [r for r in planner.recipes.all_ids
-                                   if r == plan.recipe_id],
+                    # #723: record what the deterministic selector actually
+                    # considered — the old comprehension could only ever yield
+                    # [plan.recipe_id], a degenerate singleton.
+                    "candidates": [
+                        c.id for c in planner.recipes.select_candidates(intent)
+                    ] or [plan.recipe_id],
                 },
                 "recipe_eligibility": plan.eligibility,
                 "fallback_decisions": out.get("fallbacks", []),
@@ -416,12 +450,27 @@ def register_gis_harness_tools(registry: ToolRegistry):
             "summary": (
                 f"产品组装完成 recipe={plan.recipe_id}；图层 {len(bound_layers)}，"
                 f"组件 {len(component_dicts)}，fallback {len(plan.fallbacks)} 次"
+                + (f"；⚠ {len(authoring_failures)} 项图层/组件提交失败（见 warnings）"
+                   if authoring_failures else "")
             ),
         })
+        if authoring_failures and not bound_layers:
+            # #716: nothing was actually mounted — do not let the caller
+            # (or the plan tick) treat this as a complete product.
+            out["cartographic_authoring_failed"] = True
         final_spec = layout_res.get("mapspec") if isinstance(layout_res.get("mapspec"), dict) else None
         if final_spec is not None:
             out["mapspec"] = final_spec
             out = _forward_evidence(layout_res, out)
+        if authoring_failures:
+            # #716: evidence forwarding REPLACES warnings — re-merge the
+            # authoring-failure ledger so the failure survives the final
+            # layout forward.
+            merged = list(out.get("warnings") or [])
+            for msg in authoring_failures:
+                if msg not in merged:
+                    merged.append(msg)
+            out["warnings"] = merged
         return out
 
     @tool(

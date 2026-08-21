@@ -766,6 +766,12 @@ async def chat_stream(
 
     if use_pi:
         assert pi_session_id
+        # 架构事实（#726，审计裁决）：Pi 路径（USE_NEW_AGENT=1）刻意不走
+        # legacy 的 classify_followup/should_plan/make_plan/ToolCatalog 规划链
+        # —— Pi 以单一 webgis_execute 代理工具 + promptSnippet 自主选择工具，
+        # CanonicalPlan/decision_log 仅存在于 legacy 路径。详见
+        # docs/gis-harness.md「Pi 路径与规划链」一节。规划链移植到 Pi 是
+        # 独立 roadmap 项，不在本 seam 隐式实现。
         await _record_frontend_cartographic_observation(pi_session_id, req.map_state)
         cartography_context = await _build_cartography_turn_context(pi_session_id)
         async def pi_event_generator():

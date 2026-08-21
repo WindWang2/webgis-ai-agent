@@ -302,3 +302,107 @@ async def test_map_product_through_dispatch_service(registry, clean_session):
         clean_session, executed,
     )
     assert result2.status == "repeated"
+
+
+@pytest.mark.asyncio
+async def test_map_product_heatmap_carries_legend_and_colorbar_binding(registry, clean_session):
+    """#718: product-authored heatmap layers carry legend_spec from the same
+    NATIVE_HEATMAP_COLORS source as heatmap_data, and the colorbar component
+    references the authored layer + palette."""
+    ref = await session_data_manager.store(clean_session, _point_fc(60), prefix="geojson")
+    res = await registry.dispatch(
+        "webgis_map_product",
+        {"query": "成都小学的分布情况", "session_id": clean_session,
+         "primary_ref": ref, "palette": "viridis"},
+        session_id=clean_session,
+    )
+    assert res["success"] is True
+    from app.services.mapspec_store import mapspec_store
+    spec = await mapspec_store.get_mapspec(clean_session)
+    heat = next(ly for ly in spec["layers"] if ly["type"] == "heatmap")
+    ls = heat.get("legend_spec")
+    assert isinstance(ls, dict) and ls["type"] == "continuous", (
+        f"product-authored heatmap must carry legend_spec, got {ls}"
+    )
+    from app.lib.cartography.palettes import heatmap_legend_colors
+    assert ls["palette_colors"] == heatmap_legend_colors("viridis")
+    bar = next(
+        c for c in spec["layout"]["components"] if c["type"] == "continuous_colorbar"
+    )
+    assert bar["options"].get("layerId") == heat["id"], (
+        f"colorbar must bind the authored heatmap layer, got {bar['options']}"
+    )
+    assert bar["options"].get("palette") == "viridis"
+
+
+@pytest.mark.asyncio
+async def test_map_product_evidence_candidates_not_degenerate(registry, clean_session):
+    """#723: recipe_selection.candidates must record the selector's actual
+    candidate set, not a post-hoc [selected_id] singleton."""
+    ref = await session_data_manager.store(clean_session, _point_fc(60), prefix="geojson")
+    res = await registry.dispatch(
+        "webgis_map_product",
+        {"query": "成都小学的分布情况", "session_id": clean_session, "primary_ref": ref},
+        session_id=clean_session,
+    )
+    assert res["success"] is True
+    candidates = res["map_product_evidence"]["recipe_selection"]["candidates"]
+    assert res["recipe_id"] in candidates
+    assert len(candidates) >= 1
+    # the list must come from select_candidates (recipe ids incl. unselected),
+    # not from filtering all_ids by the selection
+    if len(candidates) == 1:
+        from app.services.gis_harness.intent import resolve_map_request_intent
+        from app.services.gis_harness.planner import MapProductPlanner
+        planner = MapProductPlanner()
+        expected = [
+            c.id for c in planner.recipes.select_candidates(
+                resolve_map_request_intent("成都小学的分布情况"))
+        ]
+        assert candidates == expected
+
+
+@pytest.mark.asyncio
+async def test_map_product_authoring_failure_flagged_not_swallowed(registry, clean_session, monkeypatch):
+    """#716: when authoring commits fail, the tool must say so — flag +
+    warnings + honest summary — instead of reporting a clean product."""
+    ref = await session_data_manager.store(clean_session, _point_fc(60), prefix="geojson")
+
+    from app.services.mapspec_store import mapspec_store as _store
+
+    async def _fail_upsert(session_id, layer, source_data=None):
+        return {"success": False, "message": "injected failure 716"}
+
+    monkeypatch.setattr(_store, "layer_upsert", _fail_upsert)
+
+    res = await registry.dispatch(
+        "webgis_map_product",
+        {"query": "成都小学的分布情况", "session_id": clean_session,
+         "primary_ref": ref},
+        session_id=clean_session,
+    )
+    # nothing mounted → the caller must not treat this as a complete product
+    assert res.get("cartographic_authoring_failed") is True
+    assert res["layers"] == []
+    assert any("authoring failed" in w for w in res.get("warnings", []))
+    assert "⚠" in res["summary"]
+
+
+@pytest.mark.asyncio
+async def test_completeness_interactive_map_requires_bound_layer(registry, clean_session):
+    """#716: interactive_map completeness counts AUTHORED+BOUND layers, not
+    planned-defaulted ones."""
+    from app.services.gis_harness.planner import MapProductPlanner
+    from app.services.gis_harness.intent import resolve_map_request_intent
+
+    planner = MapProductPlanner()
+    plan = planner.plan_from_intent(
+        resolve_map_request_intent("成都小学的分布情况"),
+    )
+    plan = planner.finalize_with_profile(plan, {"featureCount": 60, "geometryTypes": ["Point"]})
+    # planned layers exist and default enabled, but nothing is bound yet
+    assert any(ly.enabled for ly in plan.map_layers)
+    comp = planner.assess_completeness(plan)
+    assert comp["present"]["interactive_map"] is False, (
+        "planned-but-unbound layers must not count as interactive_map present"
+    )

@@ -500,7 +500,11 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
 
   @tool(
       registry,
-      tier=2, domains=["report"], name="webgis_layer_remove",
+      # #713: mapspec-intent domain (图层/删除/布局 keywords) — gating MapSpec
+      # removal behind `report` keywords left plain 『把这个图层删掉』 follow-ups
+      # with only the runtime-only legacy remove_layer, so the desired MapSpec
+      # kept the layer and the harness failed RUNTIME_RESULT_PRESENCE forever.
+      tier=2, domains=["mapspec"], name="webgis_layer_remove",
       description="从 MapSpec 中移除指定图层并同步从 runtime map_state 擦除。",
       args_model=WebgisLayerRemoveArgs,
   )
@@ -514,17 +518,29 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
     out: Dict[str, Any] = {"removed_id": layer_id}
     if res.get("success"):
       out["summary"] = f"Layer '{layer_id}' removed from MapSpec"
+      # #713: forward the authoritative doc so the frontend committed spec
+      # advances, and emit the runtime command so the map layer actually
+      # disappears and the ACK loop can verify convergence (previously this
+      # tool mutated desired state with no runtime effect and no ACK).
+      if isinstance(res.get("mapspec"), dict):
+        out["mapspec"] = res["mapspec"]
+      out["commands"] = [{
+          "command": "REMOVE_LAYER",
+          "params": {"layer_id": layer_id},
+      }]
     return _forward_evidence(res, out)
 
   @tool(
       registry,
-      tier=2, domains=["report"], name="webgis_layout_set",
+      # #713: mapspec-intent domain (was report-gated, same rationale as
+      # webgis_layer_remove).
+      tier=2, domains=["mapspec"], name="webgis_layout_set",
       description="设置 MapSpec 版面配置 (图例位置、控件、边距、制图组件列表)。",
       args_model=WebgisLayoutSetArgs
   )
   async def webgis_layout_set(
       legend: Optional[Dict[str, Any]] = None,
-      controls: Optional[List[Dict[str, Any]]] = None,
+      controls: Optional[Dict[str, Any]] = None,
       margins: Optional[Dict[str, Any]] = None,
       components: Optional[List[Dict[str, Any]]] = None,
       session_id: Optional[str] = None,
@@ -549,6 +565,11 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
     out: Dict[str, Any] = {"layout": res.get("layout", {})}
     if res.get("success"):
       out["summary"] = "MapSpec layout updated"
+      # #713: forward the doc — layout/component changes flow to the runtime
+      # through the committed MapSpec reconcile (MapSpecRuntime), not through
+      # an imperative map command.
+      if isinstance(res.get("mapspec"), dict):
+        out["mapspec"] = res["mapspec"]
     return _forward_evidence(res, out)
 
   @tool(
@@ -615,7 +636,7 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
 
   @tool(
       registry,
-      tier=2, domains=["report"], name="webgis_cartography_status",
+      tier=2, domains=["report", "mapspec"], name="webgis_cartography_status",
       description="查询制图 harness 对当前地图状态的服务端验证结论（desired↔runtime 收敛判定、失败检查项与修复进度）。只读，不触发重评估或修复。",
       args_model=WebgisCartographyStatusArgs
   )

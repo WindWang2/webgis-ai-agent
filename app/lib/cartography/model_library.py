@@ -182,6 +182,12 @@ SEED_MAP_MODELS: List[MapModel] = [
             "heatmap-radius 单位是屏幕像素（Style Spec 明确），分析带宽是米——"
             "两者只能经 heatmap_contract 归一化边界转换，禁止混用",
             "样本过少时热力核无统计意义（min_points 门槛 + INSUFFICIENT_POINTS 回退）",
+            # #724: Web-Mercator 面积随纬度膨胀 —— 相同 radius_px/bandwidth_m
+            # 在高纬覆盖的地面米数比赤道少 ~cos(lat) 倍（60°N 约一半），
+            # 跨纬度/高纬城市（乌鲁木齐、哈尔滨）的密度对比被系统性放大。
+            "纬度失真：Web-Mercator 下相同 radius_px/bandwidth_m 在高纬覆盖的"
+            "地面范围比赤道小 ~cos(lat) 倍——跨纬度密度对比需按 cos(lat) 校正"
+            "或避免直接比较",
         ],
         sources=[_MAPLIBRE_SPEC_URL],
     ),

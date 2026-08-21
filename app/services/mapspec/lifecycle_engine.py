@@ -182,6 +182,17 @@ class PatchLayerPresentationIntent:
 
 
 @dataclass
+class SetBasemapIntent:
+    """Basemap chrome mutation (#722): keeps the persisted spec tracking the
+    BASE_LAYER_CHANGE command the legacy basemap tools emit, so desired state
+    and the runtime map cannot diverge on provider switches."""
+    provider_id: Optional[str] = None
+    raster_filters: Optional[Dict[str, Any]] = None
+    overlays: Optional[List[Any]] = None
+    vector_style_url: Optional[str] = None
+
+
+@dataclass
 class SetTimeIntent:
     enabled: Optional[bool] = None
     field: Optional[str] = None
@@ -686,6 +697,22 @@ class MapSpecLifecycleEngine:
                     # rollback 恢复了 refs + mapspec；运行时 layers 需整体对齐到
                     # 恢复后的 mapspec.layers（用特殊 op 标记）。
                     is_rollback = True
+
+                elif isinstance(intent, SetBasemapIntent):
+                    # V3 COW: basemap-only mutation (#722), same discipline as
+                    # SetView/SetTime — shallow copy + copy touched branch.
+                    old_mapspec_snapshot = loaded
+                    mapspec = {**loaded} if loaded else {}
+                    basemap = dict(mapspec.get("basemap", {}))
+                    if intent.provider_id is not None:
+                        basemap["providerId"] = intent.provider_id
+                    if intent.raster_filters is not None:
+                        basemap["rasterFilters"] = intent.raster_filters
+                    if intent.overlays is not None:
+                        basemap["overlays"] = intent.overlays
+                    if intent.vector_style_url is not None:
+                        basemap["vectorStyleUrl"] = intent.vector_style_url
+                    mapspec["basemap"] = basemap
 
                 elif isinstance(intent, SetTimeIntent):
                     # V3 COW: time-only mutation, shallow copy + copy touched branch

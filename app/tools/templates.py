@@ -109,6 +109,55 @@ def _get_all_templates() -> List[Dict[str, Any]]:
     return SEED_TEMPLATES
 
 
+async def _track_legacy_template_in_mapspec(
+    session_id: Optional[str],
+    layer_id: str,
+    paint_patch: Optional[dict],
+    legend_spec: Optional[dict] = None,
+) -> Optional[dict]:
+    """#722: legacy template kinds (symbology/thematic) emit frontend commands
+    that restyle the live map; without a matching MapSpec mutation the
+    persisted desired state goes stale and the harness gate compares against
+    a spec that no longer describes the map. Best-effort commit on sessions
+    that already hold a committed layer; returns None (no-op) on HUD-only
+    sessions or failure — never fake success."""
+    if not session_id or not layer_id or not paint_patch:
+        return None
+    try:
+        from app.services.mapspec_store import mapspec_store
+        spec = await mapspec_store.get_mapspec(session_id)
+        if not spec:
+            return None
+        layer = next(
+            (ly for ly in spec.get("layers", []) if isinstance(ly, dict) and ly.get("id") == layer_id),
+            None,
+        )
+        if layer is None:
+            return None
+        layer = dict(layer)
+        layer["paint"] = {**layer.get("paint", {}), **paint_patch}
+        if legend_spec is not None:
+            layer["legend_spec"] = legend_spec
+        return await mapspec_store.layer_upsert(session_id, layer)
+    except Exception as exc:  # noqa: BLE001 - tracking is best-effort
+        logger.warning("[templates] desired-state tracking commit failed: %s", exc)
+        return None
+
+
+def _semantic_paint_patch(layer_type: str, color=None, opacity=None, stroke_width=None) -> dict:
+    """Map semantic style knobs onto the type-specific paint keys."""
+    color_key = {"fill": "fill-color", "line": "line-color"}.get(layer_type, "circle-color")
+    opacity_key = {"fill": "fill-opacity", "line": "line-opacity"}.get(layer_type, "circle-opacity")
+    patch: dict = {}
+    if color is not None:
+        patch[color_key] = color
+    if opacity is not None:
+        patch[opacity_key] = opacity
+    if stroke_width is not None and layer_type != "fill":
+        patch["line-width" if layer_type == "line" else "circle-stroke-width"] = stroke_width
+    return patch
+
+
 def register_template_tools(registry: ToolRegistry):
     """注册制图模板工具: list_templates & apply_template"""
 
@@ -336,7 +385,7 @@ def register_template_tools(registry: ToolRegistry):
                 # `if (!style) invalid_params` 直接失败。style 键名归一为前端消费的
                 # camelCase 集合（fillOpacity/strokeColor/strokeWidth）。
                 normalized_style = _normalize_symbology_style(style)
-                return {
+                result = {
                     "status": "template_applied",
                     "kind": "symbology",
                     "template_id": template_id,
@@ -348,10 +397,23 @@ def register_template_tools(registry: ToolRegistry):
                     },
                     "geojson": output_geojson or parsed_geojson,
                 }
+                # #722: keep desired state tracking the command
+                tracked = await _track_legacy_template_in_mapspec(
+                    session_id, layer_id or "",
+                    _semantic_paint_patch(
+                        "circle", color=color, opacity=opacity,
+                        stroke_width=stroke_width,
+                    ),
+                )
+                if tracked is not None and not tracked.get("success"):
+                    result.setdefault("warnings", []).append(
+                        f"desired-state tracking failed: {tracked.get('message')}"
+                    )
+                return result
 
             elif mode == "categorical":
                 target_field = field or payload.get("field", "")
-                return {
+                result = {
                     "status": "template_applied",
                     "kind": "symbology",
                     "template_id": template_id,
@@ -368,6 +430,23 @@ def register_template_tools(registry: ToolRegistry):
                     },
                     "geojson": parsed_geojson,
                 }
+                # #722: track the categorical restyle in desired state
+                cat_patch = {
+                    "circle-color": {
+                        "property": target_field,
+                        "type": "categorical",
+                        "stops": [[k, v] for k, v in (payload.get("colorMap") or {}).items()],
+                    },
+                } if payload.get("colorMap") else None
+                if cat_patch:
+                    tracked = await _track_legacy_template_in_mapspec(
+                        session_id, layer_id or "", cat_patch,
+                    )
+                    if tracked is not None and not tracked.get("success"):
+                        result.setdefault("warnings", []).append(
+                            f"desired-state tracking failed: {tracked.get('message')}"
+                        )
+                return result
             else:
                 return {"error": f"不支持的符号化 mode: {mode!r}（模板 {template_id}）"}
 
@@ -378,7 +457,18 @@ def register_template_tools(registry: ToolRegistry):
             canonical_name = resolve_provider_id_to_name(payload.get("providerId", ""))
             if canonical_name is None:
                 return {"error": f"底图提供者无法解析为已知底图: {payload.get('providerId', '')!r}（模板 {template_id}）"}
-            return {
+            # #722: basemap switch must reach the persisted spec (SetBasemapIntent)
+            basemap_warning = None
+            if session_id:
+                try:
+                    from app.services.mapspec_store import mapspec_store
+                    bres = await mapspec_store.set_basemap(session_id, payload.get("providerId", ""))
+                    if not bres.get("success"):
+                        basemap_warning = f"desired-state tracking failed: {bres.get('message')}"
+                except Exception as exc:  # noqa: BLE001 - tracking is best-effort
+                    logger.warning("[templates] basemap tracking failed: %s", exc)
+                    basemap_warning = f"desired-state tracking failed: {exc}"
+            result = {
                 "status": "template_applied",
                 "kind": "basemap",
                 "template_id": template_id,
@@ -386,15 +476,32 @@ def register_template_tools(registry: ToolRegistry):
                 "command": "BASE_LAYER_CHANGE",
                 "params": {"name": canonical_name},
             }
+            if basemap_warning:
+                result.setdefault("warnings", []).append(basemap_warning)
+            return result
 
         elif kind == "layout":
+            # #721: layout templates carry paper sizes (A1/A2/16:9/21:9) that
+            # the frontend export contract rejects ('screen'|'A4'|'A3') —
+            # normalize with a warning instead of passing through an
+            # invalid_params payload.
+            export_payload = dict(payload)
+            raw_paper = str(export_payload.get("paperSize", "screen")).strip()
+            norm_paper = raw_paper.upper() if raw_paper.lower() != "screen" else "screen"
+            if norm_paper not in ("screen", "A4", "A3"):
+                fallback = "A3" if norm_paper.startswith("A") else "screen"
+                warn = f"paperSize '{raw_paper}' 不在导出契约 (screen/A4/A3) 内，已按 {fallback} 输出"
+                if not isinstance(export_payload.get("warnings"), list):
+                    export_payload["warnings"] = []
+                export_payload["warnings"].append(warn)
+                export_payload["paperSize"] = fallback
             return {
                 "status": "template_applied",
                 "kind": "layout",
                 "template_id": template_id,
                 "template_name": target_tmpl["name"],
                 "command": "export_map",
-                "params": payload,
+                "params": export_payload,
             }
 
         elif kind == "thematic":
@@ -403,6 +510,11 @@ def register_template_tools(registry: ToolRegistry):
             parsed_geojson = _safe_parse_geojson(geojson)
 
             if variant == "heatmap":
+                # #722 residual: the heatmap variant stays command-rendered
+                # (frontend add_native_heatmap); spec-side tracking would need
+                # converter authoring whose contract paint could visually
+                # diverge from the command's heatPalette — tracked as a
+                # documented residual rather than risked here.
                 if parsed_geojson is None:
                     # #557 断点 3/4：add_native_heatmap 前端 run 需要 params.geojson，
                     # 缺数据时显式报错（旧实现假成功，params 无 geojson → invalid_params）。
@@ -453,6 +565,18 @@ def register_template_tools(registry: ToolRegistry):
                     return {"error": f"专题图需要 geojson 数据（模板 {template_id}）"}
                 return {"error": f"字段 {target_field!r} 无法构建专题样式（无有效数值/分类值）（模板 {template_id}）"}
 
+            # #722: keep desired state tracking the thematic restyle — same
+            # legend_spec/style_def the frontend command consumes.
+            if session_id and layer_id:
+                from app.lib.cartography.thematic_spec import spec_to_paint
+                try:
+                    paint_color, _pw = spec_to_paint(legend_spec) if legend_spec else (None, None)
+                    patch = {"fill-color": paint_color} if paint_color else None
+                    await _track_legacy_template_in_mapspec(
+                        session_id, layer_id, patch, legend_spec=legend_spec,
+                    )
+                except Exception as exc:  # noqa: BLE001 - tracking is best-effort
+                    logger.warning("[templates] thematic tracking failed: %s", exc)
             return {
                 "status": "template_applied",
                 "kind": "thematic",

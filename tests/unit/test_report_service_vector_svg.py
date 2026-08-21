@@ -23,7 +23,7 @@ _MAPSPEC = {
     "sources": {
         "s1": {
             "type": "geojson",
-            "data": {
+            "inlineData": {
                 "type": "FeatureCollection",
                 "features": [
                     {
@@ -224,3 +224,64 @@ async def test_generate_report_renders_real_pdf_with_magic_bytes():
             content = f.read()
         page_obj_matches = __import__("re").findall(rb"/Type\s*/Page(?!s)\b", content)
         assert len(page_obj_matches) >= 1
+
+
+@pytest.mark.asyncio
+async def test_report_export_hydrates_ref_carried_sources(tmp_path):
+    """#714: a production MapSpec (bodies stored behind ref: ids — the
+    canonical writer never emits sources[*].data) must render a NON-empty
+    vector map: report_service hydrates refs into inlineData before the sync
+    compile, and the compiler reads inlineData."""
+    import shutil
+    import uuid
+
+    from app.services.mapspec.store import BASE_STORAGE_DIR
+    from app.services.mapspec_store import mapspec_store
+    from app.services.session_data import session_data_manager
+    from app.services.mapspec_to_svg import compile_mapspec_to_svg
+
+    sid = f"svg714-{uuid.uuid4().hex[:8]}"
+    try:
+        layer = {
+            "id": "L714", "source": "src714", "type": "circle",
+            "paint": {"circle-color": "#0f0", "circle-radius": 4},
+        }
+        fc = {
+            "type": "FeatureCollection",
+            "features": [
+                {"type": "Feature", "geometry": {"type": "Point", "coordinates": [116.4, 39.9]}, "properties": {}},
+                {"type": "Feature", "geometry": {"type": "Point", "coordinates": [116.41, 39.91]}, "properties": {}},
+            ],
+        }
+        res = await mapspec_store.layer_upsert(sid, layer, fc)
+        assert res.get("success")
+        spec = res["mapspec"]
+
+        # Mirror the dispatch auto-ref path (pipeline.py): the authoritative
+        # carrier is a session ref and the persisted entry drops inlineData.
+        ref = await session_data_manager.store(sid, fc, prefix="geojson")
+        entry = spec["sources"]["src714"]
+        entry.pop("inlineData", None)
+        entry["ref"] = ref
+        entry["ref_id"] = ref
+        assert not isinstance(entry.get("data"), dict)
+        assert isinstance(ref, str) and ref.startswith("ref:")
+
+        # naive compile (no hydration) renders the world-bbox fallback only
+        bare = compile_mapspec_to_svg(spec, target_dpi=150)
+
+        from app.services.report_service import ReportService
+        svc = ReportService.__new__(ReportService)
+        hydrated = await svc._hydrate_mapspec_sources_for_export(sid, spec)
+        assert isinstance(hydrated["sources"]["src714"].get("inlineData"), dict)
+        svg = compile_mapspec_to_svg(hydrated, target_dpi=150)
+
+        assert svg.count("<circle") > bare.count("<circle"), (
+            "hydrated export must render more features than the empty fallback"
+        )
+        assert svg.count("<circle") >= 2
+    finally:
+        await session_data_manager.clear_session(sid)
+        d = BASE_STORAGE_DIR / sid
+        if d.exists():
+            shutil.rmtree(d, ignore_errors=True)

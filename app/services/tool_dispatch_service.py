@@ -733,6 +733,23 @@ class ToolDispatchService:
                 })
             else:
                 result = dict(result)
+            # #716: the analysis succeeded but the cartographic half did NOT —
+            # surface it to the LLM (correction_hint + warnings) instead of a
+            # bare success whose map was never mounted, so the model can retry
+            # authoring explicitly and the result is marked suspicious-adjacent
+            # for downstream consumers.
+            result["success"] = True  # L1 analysis remains available…
+            result.setdefault("warnings", [])
+            if isinstance(result["warnings"], list):
+                result["warnings"].append(
+                    "cartographic authoring failed — the layer was NOT mounted; "
+                    "retry with webgis_layer_upsert"
+                )
+            result["correction_hint"] = (
+                f"地图挂载失败（{type(exc).__name__}）：分析结果已保存为 ref，"
+                "但图层未写入 MapSpec。请调用 webgis_layer_upsert 以完成挂载。"
+            )
+            result["cartographic_authoring_failed"] = True
             result["cartographic_review"] = self._authoring_unavailable_review(exc)
             return result
 
@@ -883,6 +900,19 @@ class ToolDispatchService:
                 if key in result
             }
             authored["type"] = result.get("type") or "heatmap_raster"
+            # #716: same honesty contract as the vector path — the raster
+            # analysis result is preserved but the layer was NOT mounted.
+            authored.setdefault("warnings", [])
+            if isinstance(authored["warnings"], list):
+                authored["warnings"].append(
+                    "cartographic authoring failed — the layer was NOT mounted; "
+                    "retry with webgis_layer_upsert"
+                )
+            authored["correction_hint"] = (
+                f"栅格图层挂载失败（{type(exc).__name__}）：结果已保存为 ref，"
+                "但图层未写入 MapSpec。请调用 webgis_layer_upsert 以完成挂载。"
+            )
+            authored["cartographic_authoring_failed"] = True
             authored["cartographic_review"] = self._authoring_unavailable_review(exc)
             return authored
 

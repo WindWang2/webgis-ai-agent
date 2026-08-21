@@ -29,8 +29,12 @@ def _build_legend_spec(palette: str, min_val: float = 0.0, max_val: float = 1.0,
 
     ``colors`` 直出图例渐变色（native 路径传前端同源停靠点色）；
     缺省走 matplotlib 风格的 cartography 调色板解析（raster 等路径）。
+    #718: native 路径的构建统一委托 palettes.build_heatmap_legend_spec
+    （单一构建口，webgis_map_product 与本工具共用）。
     """
-    from app.lib.cartography.palettes import resolve_palette_colors
+    from app.lib.cartography.palettes import build_heatmap_legend_spec, resolve_palette_colors
+    if colors is None and palette in _PALETTE_MAP_NAMED:
+        return build_heatmap_legend_spec(palette, min_val, max_val)
     palette_key = _PALETTE_MAP.get(palette, "YlOrRd")
     palette_colors = colors if colors else resolve_palette_colors(palette_key)
     return {
@@ -40,6 +44,10 @@ def _build_legend_spec(palette: str, min_val: float = 0.0, max_val: float = 1.0,
         "palette": palette_key,
         "palette_colors": palette_colors,
     }
+
+
+# 与 palettes.NATIVE_HEATMAP_COLORS 同名的 native 色带键
+_PALETTE_MAP_NAMED = {"classic", "magma", "viridis", "thermal"}
 
 
 class BufferAnalysisArgs(BaseModel):

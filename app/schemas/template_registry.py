@@ -662,6 +662,19 @@ class TemplateRegistry:
 
             if not entry.get("name"):
                 errors.append(f"{eid}: missing 'name'")
+            # #721: palettes referenced by payloads must exist in the single
+            # palette source (COLOR_PALETTES) — unresolvable names used to
+            # degrade silently to YlOrRd at every render site.
+            _payload = entry.get("payload")
+            if isinstance(_payload, dict):
+                _pal = _payload.get("palette")
+                if isinstance(_pal, str) and _pal:
+                    from app.lib.cartography.palettes import COLOR_PALETTES
+                    if _pal not in COLOR_PALETTES:
+                        errors.append(
+                            f"{eid}: palette '{_pal}' does not exist in "
+                            "COLOR_PALETTES (renders silently as YlOrRd)"
+                        )
             if not entry.get("kind"):
                 errors.append(f"{eid}: missing 'kind'")
             if entry.get("kind") not in {"basemap", "symbology", "layout", "thematic", "composite"}:

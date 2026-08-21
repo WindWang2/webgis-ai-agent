@@ -25,6 +25,10 @@ class MapProductTemplate(BaseModel):
     description: str = ""
     recipe_id: str
     layer_roles: List[LayerRoleSpec]
+    # #719: subject tokens this template is specialized for (e.g. education
+    # facilities); empty = generic. find_for_recipe prefers a subject match
+    # over the generic template so plan evidence never mislabels the product.
+    subject_categories: List[str] = []
     default_components: List[str] = []
     outputs: List[str] = ["interactive_map"]
     exports: List[str] = ["png"]
@@ -33,10 +37,31 @@ class MapProductTemplate(BaseModel):
 
 SEED_PRODUCT_TEMPLATES: List[MapProductTemplate] = [
     MapProductTemplate(
+        # #719: generic default for poi_distribution_overview — find_for_recipe
+        # prefers the template whose id equals the recipe id, so the education
+        # Golden-case product is only selected via explicit template_id.
+        id="poi_distribution_overview",
+        name="POI 分布概览产品",
+        description="通用 POI 分布概览：热力 + 点叠加 + 色条（主体无关）。",
+        recipe_id="poi_distribution_overview",
+        layer_roles=[
+            LayerRoleSpec(role="primary", layer_type="heatmap", cartography="visual_heatmap",
+                          source_capability="poi_query", description="主体分布热力"),
+            LayerRoleSpec(role="secondary", layer_type="circle", cartography="point_overlay",
+                          source_capability="poi_query", description="主体点叠加"),
+        ],
+        default_components=["title", "continuous_colorbar", "legend", "north_arrow", "scale_bar",
+                            "attribution", "statistics_panel"],
+        outputs=["interactive_map", "statistics", "summary"],
+        exports=["png", "pdf"],
+        title_pattern="{scope}{subject}分布",
+    ),
+    MapProductTemplate(
         id="education_facility_distribution",
         name="教育设施分布产品",
         description="Golden case：学校类 POI 的完整分布产品（热力+点+行政区+统计）。",
         recipe_id="poi_distribution_overview",
+        subject_categories=["小学", "中学", "大学", "学校"],
         layer_roles=[
             LayerRoleSpec(role="primary", layer_type="heatmap", cartography="visual_heatmap",
                           source_capability="poi_query", description="学校分布热力"),
@@ -146,11 +171,26 @@ class ProductTemplateRegistry:
     def get(self, template_id: str) -> Optional[MapProductTemplate]:
         return self._by_id.get(template_id)
 
-    def find_for_recipe(self, recipe_id: str) -> Optional[MapProductTemplate]:
-        for tpl in self._by_id.values():
-            if tpl.recipe_id == recipe_id:
+    def find_for_recipe(
+        self, recipe_id: str, subject_category: str = "",
+    ) -> Optional[MapProductTemplate]:
+        """Deterministic selection: (1) a subject-specialized template
+        matching the intent's subject token, (2) the generic template whose
+        id equals the recipe id, (3) first registrant.
+        #719: the old first-match returned the education Golden-case template
+        for EVERY poi_distribution_overview request, mislabeling plan
+        evidence (『成都餐厅分布』 claimed an 教育设施分布产品)."""
+        matches = [t for t in self._by_id.values() if t.recipe_id == recipe_id]
+        if not matches:
+            return None
+        if subject_category:
+            for tpl in matches:
+                if subject_category in tpl.subject_categories:
+                    return tpl
+        for tpl in matches:
+            if tpl.id == recipe_id:
                 return tpl
-        return None
+        return matches[0]
 
     @property
     def all_ids(self) -> List[str]:

@@ -39,7 +39,10 @@ class ThematicSlot(BaseModel):
     k: int = Field(5, ge=2, le=10, description="Number of statistical classes")
     palette: str = Field("YlOrRd", description="ColorBrewer / Viridis palette identifier")
     intensity: float = Field(0.8, ge=0.0, le=1.0, description="Heatmap intensity parameter")
-    radius: int = Field(25, ge=1, le=100, description="Heatmap kernel radius in pixels")
+    # #717: radius now lives in the contractual [4, 80] px window — the
+    # composite path clamps through heatmap_contract anyway; values outside
+    # the window were silently unreachable styling.
+    radius: int = Field(25, ge=4, le=80, description="Heatmap kernel radius in pixels")
     heat_palette: List[str] = Field(
         default_factory=lambda: ["#0000ff", "#00ff00", "#ffff00", "#ff0000"],
         description="Heatmap gradient color stops"

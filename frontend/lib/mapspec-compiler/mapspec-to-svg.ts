@@ -236,7 +236,7 @@ export function compileMapSpecToSvg(
 
   const sources = mapspec?.sources || {};
   Object.values(sources).forEach((src: any) => {
-    const geojson = src?.data;
+    const geojson = src?.inlineData ?? src?.data;
     if (!geojson) return;
     const features = geojson.type === "FeatureCollection" ? geojson.features : [geojson];
 
@@ -344,8 +344,9 @@ export function compileMapSpecToSvg(
       return;
     }
 
-    if (!src.data) return;
-    const features = src.data.type === "FeatureCollection" ? src.data.features : [src.data];
+    const srcData = src.inlineData ?? src.data;
+    if (!srcData) return;
+    const features = srcData.type === "FeatureCollection" ? srcData.features : [srcData];
 
     features.forEach((feat: any) => {
       const geom = feat?.geometry;

@@ -233,6 +233,14 @@ class ReportService:
         避免阻塞事件循环上所有并发 SSE 流。异常原样向调用方传播，
         saga（create_and_generate / 工具路径）负责落 failed 终态。
         """
+        # #714: ref-carried sources must be materialized before the sync
+        # vector export — compile_mapspec_to_svg reads inlineData, but the
+        # canonical chain stores bodies behind ``ref:`` ids (pipeline strips
+        # inlineData), so without hydration every production report rendered
+        # an empty map (world-bbox fallback).
+        if isinstance(mapspec, dict):
+            mapspec = await self._hydrate_mapspec_sources_for_export(session_id, mapspec)
+
         return await asyncio.to_thread(
             self._generate_report_sync,
             session_id=session_id,
@@ -242,6 +250,45 @@ class ReportService:
             format=format,
             mapspec=mapspec,
         )
+
+    async def _hydrate_mapspec_sources_for_export(
+        self, session_id: str, mapspec: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Inline ``ref:``-carried vector sources into a private spec copy so
+        the export renders the same data the live map shows."""
+        import copy as _copy
+
+        sources = mapspec.get("sources")
+        if not isinstance(sources, dict):
+            return mapspec
+        spec = _copy.deepcopy(mapspec)
+        out_sources = spec.get("sources", {})
+        hydrated: list[str] = []
+        for src in out_sources.values():
+            if not isinstance(src, dict):
+                continue
+            if isinstance(src.get("inlineData"), dict) or isinstance(src.get("data"), dict):
+                continue
+            ref = src.get("ref") or src.get("ref_id")
+            if not isinstance(ref, str) or not ref.startswith("ref:"):
+                continue
+            try:
+                from app.services.session_data import session_data_manager
+                payload = await session_data_manager.get(session_id, ref)
+            except Exception as ex:  # noqa: BLE001 - export is best-effort per source
+                logger.warning(
+                    "report export: source ref %s hydration failed: %s", ref, ex
+                )
+                payload = None
+            if isinstance(payload, dict):
+                src["inlineData"] = payload
+                hydrated.append(ref)
+        if hydrated:
+            logger.info(
+                "report export: hydrated %d ref-carried source(s): %s",
+                len(hydrated), ",".join(hydrated),
+            )
+        return spec
 
     def _generate_report_sync(
         self,

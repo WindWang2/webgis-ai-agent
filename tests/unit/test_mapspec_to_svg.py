@@ -9,7 +9,7 @@ def test_compile_mapspec_to_svg_basic():
         "sources": {
             "s1": {
                 "type": "geojson",
-                "data": {
+                "inlineData": {
                     "type": "FeatureCollection",
                     "features": [
                         {
@@ -97,7 +97,7 @@ def test_polygon_holes_rendered_with_evenodd():
         "sources": {
             "s1": {
                 "type": "geojson",
-                "data": {
+                "inlineData": {
                     "type": "Feature",
                     "geometry": {
                         "type": "Polygon",
@@ -127,7 +127,7 @@ def test_compile_mapspec_to_svg_escapes_paint_values():
         "sources": {
             "s1": {
                 "type": "geojson",
-                "data": {
+                "inlineData": {
                     "type": "FeatureCollection",
                     "features": [
                         {
@@ -170,7 +170,7 @@ def test_compile_mapspec_to_svg_empty_or_degenerate_extents():
         "sources": {
             "s1": {
                 "type": "geojson",
-                "data": {
+                "inlineData": {
                     "type": "Feature",
                     "geometry": {"type": "Point", "coordinates": [10.0, 20.0]},
                 },
@@ -196,7 +196,7 @@ def test_compile_mapspec_to_svg_nan_and_inf_bounds():
         "sources": {
             "s1": {
                 "type": "geojson",
-                "data": {
+                "inlineData": {
                     "type": "FeatureCollection",
                     "features": [
                         {
@@ -258,7 +258,7 @@ def test_compile_mapspec_to_svg_malformed_inputs_handled_gracefully():
         "sources": {
             "s1": {
                 "type": "geojson",
-                "data": {
+                "inlineData": {
                     "type": "Feature",
                     "geometry": {"type": "Point", "coordinates": [10, 20]},
                 },
@@ -286,7 +286,7 @@ def test_mapspec_05_stroke_and_dasharray_properties():
         "sources": {
             "s1": {
                 "type": "geojson",
-                "data": {
+                "inlineData": {
                     "type": "FeatureCollection",
                     "features": [
                         {
@@ -348,7 +348,7 @@ def test_mapspec_06_text_halo_and_anchors():
         "sources": {
             "s1": {
                 "type": "geojson",
-                "data": {
+                "inlineData": {
                     "type": "FeatureCollection",
                     "features": [
                         {
@@ -390,7 +390,7 @@ def test_mapspec_07_polygon_bbox_centroid():
         "sources": {
             "s1": {
                 "type": "geojson",
-                "data": {
+                "inlineData": {
                     "type": "Feature",
                     "geometry": {
                         "type": "Polygon",
@@ -428,7 +428,7 @@ def test_mapspec_08_fallback_rendering():
         "sources": {
             "s1": {
                 "type": "geojson",
-                "data": {
+                "inlineData": {
                     "type": "FeatureCollection",
                     "features": [
                         {

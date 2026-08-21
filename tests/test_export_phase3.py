@@ -107,3 +107,41 @@ async def test_export_batch_maps_supports_a3(registry):
 async def test_export_batch_maps_rejects_empty(registry):
     out = await registry.dispatch("export_batch_maps", {"titles": []})
     assert "error" in out
+
+
+@pytest.mark.asyncio
+async def test_export_batch_maps_views_interleave_fly_to(registry):
+    """#725: per-export views emit interleaved fly_to + export commands —
+    the advertised 『总览/北部/南部』 scenario previously produced N
+    identical maps."""
+    out = await registry.dispatch("export_batch_maps", {
+        "titles": ["总览", "北部"],
+        "views": [
+            {"center": [104.0, 30.6], "zoom": 10.0},
+            {"center": [104.0, 30.7], "zoom": 12.0, "bearing": 15},
+        ],
+    })
+    assert out["count"] == 2
+    seq = [c["command"] for c in out["commands"]]
+    assert seq == ["fly_to", "export_map", "fly_to", "export_map"]
+    north_fly = out["commands"][2]["params"]
+    assert north_fly["center"] == [104.0, 30.7]
+    assert north_fly["bearing"] == 15
+
+
+@pytest.mark.asyncio
+async def test_export_batch_maps_views_length_mismatch_errors(registry):
+    out = await registry.dispatch("export_batch_maps", {
+        "titles": ["a", "b", "c"],
+        "views": [
+            {"center": [104.0, 30.6], "zoom": 10.0},
+            {"center": [104.0, 30.7], "zoom": 11.0},
+        ],
+    })
+    assert "error" in out
+    # 单视图 + 多标题 = 广播同一视图（合法）
+    ok = await registry.dispatch("export_batch_maps", {
+        "titles": ["a", "b"],
+        "views": [{"center": [104.0, 30.6], "zoom": 10.0}],
+    })
+    assert ok["count"] == 2

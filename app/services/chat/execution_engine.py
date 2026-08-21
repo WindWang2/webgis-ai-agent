@@ -1268,6 +1268,13 @@ class ChatExecutionEngine:
                                 and exec_res.outcome is not None
                                 and exec_res.outcome.status == "ok"
                                 and not _is_suspicious_result_fn(exec_res.outcome.raw_result)
+                                # #716: display results whose cartographic
+                                # authoring failed must not tick the plan —
+                                # the map half is unfinished.
+                                and not (
+                                    isinstance(exec_res.outcome.raw_result, dict)
+                                    and exec_res.outcome.raw_result.get("cartographic_authoring_failed")
+                                )
                             ):
                                 from app.services.chat import planner as _planner
                                 step_n_matched = _planner.mark_step_done(
@@ -1864,6 +1871,10 @@ class ChatExecutionEngine:
                                     if (
                                         outcome.status == "ok"
                                         and not _is_suspicious_result_fn(outcome.raw_result)
+                                        and not (
+                                            isinstance(outcome.raw_result, dict)
+                                            and outcome.raw_result.get("cartographic_authoring_failed")  # #716
+                                        )
                                         and not getattr(self, "is_subagent_engine", False)  # P2-7
                                     ):
                                         step_n_matched = _planner.mark_step_done(

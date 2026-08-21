@@ -197,3 +197,23 @@ run 豁免（not_applicable_exempt），绝不为 PASS**（`require_map_product=
   MapDecorations，避免双份；
 - template ids / 工具名 / 既有 MapSpec session 全部兼容；导出请求参数 >
   spec 组件 > 内置默认的优先级保证旧导出调用不变。
+
+## Pi 路径与规划链（#726 审计裁决）
+
+`USE_NEW_AGENT=1` 时（`app/api/routes/chat.py` 的 `pi_event_generator`），回合
+**不经过** legacy 规划链（classify_followup → should_plan → make_plan →
+CanonicalPlan → ToolCatalog schema 子集）。Pi Agent Runtime 以单一
+`webgis_execute` 代理工具 + 各工具的 promptSnippet 自主选择并串行执行工具；
+`webgis_map_intent` / `webgis_map_product`（statistics/report 激活域）承担
+GIS 侧的产品规划职责。
+
+由此产生的架构事实：
+
+- **CanonicalPlan / decision_log 仅是 legacy 路径的计划真相源**；Pi 会话没有
+  CanonicalPlan，也不产生 plan evidence。规划/工具选择质量指标只在 legacy
+  路径上定义。
+- **制图质量闭环两条路径共享**：desired MapSpec 生命周期、runtime 观察、
+  ACK、verdict 注入（`cartography_context` / `webgis_cartography_status`）在
+  Pi 会话上同样成立——差异只在『回合级任务规划』这一层。
+- 把 legacy 规划链移植进 Pi 回车 preamble 是独立的 roadmap 项，需要 Pi 侧
+  多工具 schema 支持，不在本 seam 隐式实现。

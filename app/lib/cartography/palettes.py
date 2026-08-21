@@ -83,6 +83,31 @@ def heatmap_legend_colors(palette: str) -> List[str]:
     return list(colors[1:])
 
 
+# native 热力色带名 → 通用 cartography 调色板名（图例渲染的 ramp key）
+HEATMAP_LEGEND_PALETTE_KEY: Dict[str, str] = {
+    "classic": "YlOrRd",
+    "magma": "Magma",
+    "viridis": "Viridis",
+    "thermal": "Reds",
+}
+
+
+def build_heatmap_legend_spec(
+    palette: str, min_val: float = 0.0, max_val: float = 1.0
+) -> Dict[str, object]:
+    """#718: 产品路径热力图层的 legend_spec 单一构建口——与 heatmap_data
+    工具同源（NATIVE_HEATMAP_COLORS 停靠点色），消除『同一系统两处挂载
+    热力图、只有一处带图例证据』的漂移。"""
+    key = palette if palette in NATIVE_HEATMAP_COLORS else "classic"
+    return {
+        "type": "continuous",
+        "min": min_val,
+        "max": max_val,
+        "palette": HEATMAP_LEGEND_PALETTE_KEY.get(key, "YlOrRd"),
+        "palette_colors": heatmap_legend_colors(key),
+    }
+
+
 def heatmap_paint(palette: str = "classic", radius_px: int = 30) -> Dict[str, object]:
     """原生热力图层的 MapLibre paint 表达式（官方 create-a-heatmap-layer 范式）。
 

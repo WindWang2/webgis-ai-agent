@@ -174,7 +174,9 @@ class MapProductPlanner:
         if template_id:
             template = self.templates.get(template_id)
         if template is None and recipe.id:
-            template = self.templates.find_for_recipe(recipe.id)
+            template = self.templates.find_for_recipe(
+                recipe.id, subject_category=intent.subject.category,
+            )
 
         # simple_view 任务：直接轻量点图产品
         if intent.task == "simple_view":
@@ -440,8 +442,13 @@ class MapProductPlanner:
     def assess_completeness(self, plan: MapProductPlan) -> Dict[str, Any]:
         expected_outputs = set(plan.outputs) or {"interactive_map"}
         present: Dict[str, bool] = {}
-        has_enabled_layer = any(ly.enabled for ly in plan.map_layers)
-        present["interactive_map"] = has_enabled_layer
+        # #716: interactive_map means an AUTHORED+BOUND layer exists — planned
+        # layers default enabled, so the old planned-layer check reported
+        # completeness even when every authoring attempt failed.
+        has_bound_layer = any(
+            ly.enabled and ly.bound_ref and ly.layer_id for ly in plan.map_layers
+        )
+        present["interactive_map"] = has_bound_layer
         bound_refs = [ly.bound_ref for ly in plan.map_layers if ly.bound_ref]
         present["data_bound"] = bool(bound_refs)
         present["statistics"] = bool(plan.statistics) and any(

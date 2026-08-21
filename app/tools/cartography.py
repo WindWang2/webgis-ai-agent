@@ -51,6 +51,14 @@ class ExportMapArgs(BaseModel):
 
 class ExportBatchMapsArgs(BaseModel):
     titles: list[str] = Field(..., description="要批量导出的多个地图标题；每个标题对应一次导出任务，按顺序排队执行")
+    views: list[dict] | None = Field(
+        default=None,
+        description=(
+            "#725 每张导出的独立视图（与 titles 一一对应，可省略）。"
+            "每项 {center: [lng,lat], zoom: number, bearing?: number, pitch?: number}；"
+            "省略该项则沿用当前相机。例如『总览/北部/南部』三张图给三个不同 view。"
+        ),
+    )
     subtitle: str = Field(default="", description="共用的副标题，所有图都用它；不需要就留空")
     include_legend: bool = Field(default=True, description="是否附带图例")
     include_compass: bool = Field(default=True, description="是否绘制指北针")
@@ -218,11 +226,13 @@ def register_cartography_tools(registry: ToolRegistry):
                "\n何时用：『把当前结果做成 3 张图：总览、北部、南部』『按图层各导一张』。"
                "\n何时不用：只需要一张图 — 用 export_thematic_map。"
                "\n关键约束：批量导出会按队列依次执行，每张约 2-3 秒；前端会自动等前一张完成才开始下一张。"
-               "如果用户希望在导出之间切换视图（比如先飞到北部再导出），请改用『fly_to_location + export_thematic_map』串联调用。"
+               "如需每张不同视角（『总览/北部/南部』），传 views 参数（与 titles 一一对应），"
+               "导出之间会自动 fly_to 到对应视图；不需要切视图就不用传。"
            ),
            args_model=ExportBatchMapsArgs)
     def export_batch_maps(
         titles: list[str],
+        views: list[dict] | None = None,
         subtitle: str = "",
         include_legend: bool = True,
         include_compass: bool = True,
@@ -246,7 +256,25 @@ def register_cartography_tools(registry: ToolRegistry):
             ori = "landscape"
 
         commands = []
-        for title in titles:
+        # #725: per-export views emit an interleaved fly_to before each
+        # export — the advertised 『总览/北部/南部』 scenario previously
+        # produced N identical maps (title-only variation).
+        normalized_views: list[dict | None] = list(views or [])
+        if len(normalized_views) == 1 and len(titles) > 1:
+            normalized_views = normalized_views * len(titles)
+        if views and len(normalized_views) != len(titles):
+            return {"error": f"views 数量 ({len(normalized_views)}) 必须与 titles 数量 ({len(titles)}) 一一对应或省略"}
+        for idx, title in enumerate(titles):
+            view = normalized_views[idx] if idx < len(normalized_views) else None
+            if isinstance(view, dict) and isinstance(view.get("center"), (list, tuple)) \
+                    and len(view["center"]) >= 2 and isinstance(view.get("zoom"), (int, float)):
+                commands.append({
+                    "command": "fly_to",
+                    "params": {
+                        key: view[key]
+                        for key in ("center", "zoom", "bearing", "pitch") if key in view
+                    },
+                })
             commands.append({
                 "command": "export_map",
                 "params": {
@@ -266,7 +294,8 @@ def register_cartography_tools(registry: ToolRegistry):
         return {
             "status": "export_batch_task_created",
             "commands": commands,
-            "count": len(commands),
+            # count = 导出张数（fly_to 视图切换指令不计入）
+            "count": sum(1 for c in commands if c["command"] == "export_map"),
             "system_message": (
                 f"已将 {len(commands)} 张地图的批量导出任务发送至前端，将按顺序合成。"
                 "每张完成后都会通过 `[系统通知]` 回传一条带下载链接的提示。"

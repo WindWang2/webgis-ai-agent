@@ -195,3 +195,32 @@ def test_declared_domains_none_preserves_old_behavior(catalog):
     """不传 declared_domains 时行为与旧版一致（纯关键词）。"""
     schemas = catalog.select_schemas("计算 NDVI", session_id="d3")
     assert "compute_ndvi" in _names(schemas)
+
+
+def test_mapspec_domain_activates_layer_edit_followup():
+    """#713: 『把这个图层删掉』 must expose webgis_layer_remove — the report-keyword
+    gating left only the runtime-only legacy remove_layer, permanently diverging
+    desired MapSpec from the runtime map."""
+    from app.tools.registry import ToolRegistry
+    from app.tools import init_tools
+    r = ToolRegistry()
+    init_tools(r)
+    catalog = ToolCatalog(r)
+    schemas = catalog.select_schemas("把这个图层删掉")
+    names = {s.get("function", {}).get("name") or s.get("name") for s in schemas}
+    assert "webgis_layer_remove" in names
+    assert "webgis_cartography_status" in names
+
+
+def test_statistics_domain_activates_count_phrasings():
+    """#715: the 『各区…数量』 family must see the harness product tools."""
+    from app.tools.registry import ToolRegistry
+    from app.tools import init_tools
+    r = ToolRegistry()
+    init_tools(r)
+    catalog = ToolCatalog(r)
+    for msg in ("成都各区的学校数量", "统计一下各区医院数量", "各区学校有多少", "按区排名"):
+        schemas = catalog.select_schemas(msg)
+        names = {s.get("function", {}).get("name") or s.get("name") for s in schemas}
+        assert "webgis_map_intent" in names, msg
+        assert "webgis_map_product" in names, msg

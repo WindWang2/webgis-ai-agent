@@ -290,6 +290,8 @@ def register_layer_management_tools(registry: ToolRegistry):
                "从地图上移除指定图层 (同时释放其 source)。"
                "\n何时用：用户说『把 XX 删掉』『关掉这个图层』『清掉分析结果』，且确实不再需要该数据。"
                "\n何时不用：只是临时隐藏 — 用 set_layer_status visible=false；想换样式 — 用 update_layer_appearance。"
+               "\n若当前 session 已建立 MapSpec（曾用过 webgis_* 工具），改用 webgis_layer_remove——"
+               "它同步更新 desired MapSpec 并携带 runtime 指令，避免 desired 与运行时地图分叉。"
                "\n关键约束：删除是不可逆操作；ref_id 来自 session 数据存储，删除画布上的图层不会清掉 session 数据本身。"
            ),
            args_model=RemoveLayerArgs)

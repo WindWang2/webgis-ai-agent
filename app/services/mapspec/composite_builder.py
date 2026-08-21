@@ -336,11 +336,50 @@ class CompositeMapSpecBuilder:
                     colors_ = [_gcp(palette, (breaks_[i] + breaks_[i + 1]) / 2.0) for i in range(k_)]
                     return breaks_, colors_
 
+                # #717: with data, classify through the SINGLE engine
+                # (build_graduated_spec → CartographyService.classify) exactly
+                # like apply_template's thematic path — the synthetic [0,1]
+                # breaks below deterministically failed
+                # CLASSIFICATION_DOMAIN_COVERAGE for any real field
+                # (counts/populations exceed [0,1]) and the committed review
+                # came back failed_unrepairable while the tool claimed
+                # success.
+                data_graduated = None
+                if (isinstance(effective_geojson, dict)
+                        and effective_geojson.get("features")
+                        and thematic_slot.field):
+                    try:
+                        from app.lib.cartography.thematic_spec import (
+                            build_graduated_spec, spec_to_paint,
+                        )
+                        candidate = build_graduated_spec(
+                            effective_geojson,
+                            thematic_slot.field,
+                            method=(
+                                thematic_slot.method
+                                if thematic_slot.method in ("quantiles", "equal_interval", "natural_breaks")
+                                else "quantiles"
+                            ),
+                            k=thematic_slot.k or 5,
+                            palette=thematic_slot.palette,
+                        )
+                        if candidate is not None:
+                            paint_color, _warnings = spec_to_paint(candidate)
+                            # Degenerate classification (tiny/duplicate-valued
+                            # sample) yields an empty step expression the
+                            # validator rejects — treat as not-classifiable.
+                            if paint_color and paint_color.get("stops"):
+                                data_graduated = candidate
+                                layer_def["legend_spec"] = candidate
+                                layer_def["paint"]["color"] = paint_color
+                    except Exception as e:
+                        logger.warning("Composite build_graduated_spec failed: %s", e)
+                        data_graduated = None
                 # Classification needs data; without it we emit a preset-derived graduated spec with
                 # synthetic breaks so the slot is effective and the legend renders. Breaks are NOT
                 # data-driven — they are evenly spaced over [0, k] and the palette is resolved
                 # honestly via the thematic template's palette (same palette helpers as the real path).
-                if thematic_slot.method in ("quantiles", "equal_interval", "natural_breaks"):
+                if data_graduated is None and thematic_slot.method in ("quantiles", "equal_interval", "natural_breaks"):
                     breaks, colors = _graduated_breaks_colors(thematic_slot.palette, thematic_slot.k)
                     layer_def["legend_spec"] = {
                         "type": "graduated",
@@ -386,7 +425,7 @@ class CompositeMapSpecBuilder:
                             layer_def["paint"]["color"] = paint_color
                     except Exception as e:
                         logger.warning("Composite spec_to_paint (lisa) failed: %s", e)
-                else:
+                elif data_graduated is None:
                     # Unknown method: still emit graduated fallback so slot is not silently dead
                     breaks, colors = _graduated_breaks_colors(thematic_slot.palette, thematic_slot.k)
                     layer_def["legend_spec"] = {
@@ -398,26 +437,33 @@ class CompositeMapSpecBuilder:
                         "method": thematic_slot.method,
                     }
             elif thematic_slot.variant == "heatmap":
+                # #717: the composite path now goes through the SAME paint /
+                # palette / radius contract as the analysis chain —
+                # palettes.heatmap_paint (zoom-interpolated radius clamped to
+                # [4,80] px, NATIVE_HEATMAP_COLORS stops) + the shared
+                # legend builder. The old literal paint (constant radius, no
+                # heatmap-color, separate 4-color ramp) was a second styling
+                # system that failed LEGEND_STYLE_EQUIVALENCE by construction.
+                from app.lib.cartography.heatmap_contract import clamp_radius_px
+                from app.lib.cartography.palettes import (
+                    NATIVE_HEATMAP_COLORS,
+                    build_heatmap_legend_spec,
+                    heatmap_paint,
+                )
+
+                heat_palette_key = (
+                    thematic_slot.palette
+                    if thematic_slot.palette in NATIVE_HEATMAP_COLORS
+                    else "classic"
+                )
+                radius_px = clamp_radius_px(int(thematic_slot.radius or 30))
                 layer_def["type"] = "heatmap"
-                layer_def["paint"] = {
-                    "heatmap-weight": ["interpolate", ["linear"], ["get", thematic_slot.field], 0, 0, 1, 1],
-                    "heatmap-intensity": thematic_slot.intensity,
-                    "heatmap-radius": thematic_slot.radius,
-                }
-                # Heatmap legend (continuous) — frontend renders via thematic-paint continuous path.
-                # Use the heat_palette that drives the paint (not a hardcoded Viridis) so legend ↔ paint agree.
-                try:
-                    heat_colors = list(thematic_slot.heat_palette or ["#0000ff", "#00ff00", "#ffff00", "#ff0000"])
-                    layer_def["legend_spec"] = {
-                        "type": "continuous",
-                        "field": thematic_slot.field,
-                        "min": 0.0,
-                        "max": 1.0,
-                        "palette": "Heat",
-                        "palette_colors": heat_colors,
-                    }
-                except Exception as e:
-                    logger.warning("Composite heatmap legend_spec generation failed: %s", e)
+                layer_def["paint"] = heatmap_paint(heat_palette_key, radius_px)
+                if thematic_slot.field:
+                    layer_def["paint"]["heatmap-weight"] = [
+                        "interpolate", ["linear"], ["get", thematic_slot.field], 0, 0, 1, 1,
+                    ]
+                layer_def["legend_spec"] = build_heatmap_legend_spec(heat_palette_key)
 
         mapspec["layers"].append(layer_def)
 

@@ -256,12 +256,78 @@ async def test_apply_composite_committed_true_symmetry(registry):
 
 # 10. Heatmap legend palette consistency
 def test_heatmap_legend_uses_heat_palette():
+    """#717: the composite heatmap path now shares the SINGLE palette/paint
+    contract with the analysis chain — legend colors are the native
+    NATIVE_HEATMAP_COLORS stops that also drive heatmap-color, and
+    heatmap-color is present (the old literal paint failed
+    LEGEND_STYLE_EQUIVALENCE by construction)."""
     builder = CompositeMapSpecBuilder()
     builder.with_thematic("tmpl_th_heatmap")
     builder._thematic.field = "weight"
-    builder._thematic.heat_palette = ["#111111", "#222222", "#333333", "#444444"]
     mapspec = builder.assemble({}, layer_id="hm_layer")
     layer = mapspec["layers"][0]
     assert layer["type"] == "heatmap"
     assert "legend_spec" in layer, "heatmap should emit legend_spec"
-    assert layer["legend_spec"]["palette_colors"] == ["#111111", "#222222", "#333333", "#444444"], f"heatmap legend should use heat_palette, got {layer['legend_spec']['palette_colors']}"
+    from app.lib.cartography.palettes import heatmap_legend_colors
+    assert layer["legend_spec"]["palette_colors"] == heatmap_legend_colors("classic"), (
+        f"heatmap legend must use the shared native stops, got {layer['legend_spec']['palette_colors']}"
+    )
+    paint = layer["paint"]
+    assert "heatmap-color" in paint, "composite heatmap paint must carry heatmap-color"
+    expr_colors = [v for v in paint["heatmap-color"][3:] if isinstance(v, str) and v.startswith("#")]
+    assert expr_colors == heatmap_legend_colors("classic"), (
+        "legend palette_colors must equal the opaque heatmap-color stops"
+    )
+
+
+def test_composite_choropleth_data_driven_breaks():
+    """#717: with geojson+field, composite thematics classify through the
+    single engine — breaks overlap the real data range instead of the
+    synthetic [0,1] domain that failed CLASSIFICATION_DOMAIN_COVERAGE for any
+    real field."""
+    import random
+
+    rng = random.Random(717)
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {"population": rng.randint(120, 900)},
+             "geometry": {"type": "Point", "coordinates": [float(i), float(i)]}}
+            for i in range(40)
+        ],
+    }
+    builder = CompositeMapSpecBuilder()
+    builder.with_thematic("tmpl_th_pop_choro")
+    mapspec = builder.assemble(
+        {}, layer_id="pop_layer", field="population", geojson=fc,
+    )
+    layer = mapspec["layers"][0]
+    ls = layer["legend_spec"]
+    assert ls["type"] == "graduated"
+    lo, hi = min(f["properties"]["population"] for f in fc["features"]), \
+        max(f["properties"]["population"] for f in fc["features"])
+    assert ls["breaks"][0] <= lo and ls["breaks"][-1] >= hi - 1e-9, (
+        f"data-driven breaks must cover the data range [{lo},{hi}], got {ls['breaks']}"
+    )
+    assert any(b > 1.0 for b in ls["breaks"]), "breaks must not be the synthetic [0,1] domain"
+    # paint driven by the same spec
+    assert layer["paint"].get("color", {}).get("stops"), "paint must carry step stops"
+
+
+def test_composite_heatmap_paint_matches_analysis_contract():
+    """#717: composite heatmap paint == palettes.heatmap_paint output with the
+    radius clamped into the contract window (no second styling system)."""
+    from app.lib.cartography.palettes import heatmap_paint
+    from app.lib.cartography.heatmap_contract import clamp_radius_px
+
+    builder = CompositeMapSpecBuilder()
+    builder.with_thematic("tmpl_th_heatmap")
+    builder._thematic.field = "w"
+    builder._thematic.radius = 95  # outside [4,80] — must clamp
+    mapspec = builder.assemble({}, layer_id="hm2")
+    layer = mapspec["layers"][0]
+    expected = heatmap_paint("classic", clamp_radius_px(95))
+    for key in ("heatmap-color", "heatmap-intensity", "heatmap-radius"):
+        assert layer["paint"].get(key) == expected.get(key), (
+            f"composite {key} must equal the contract paint"
+        )

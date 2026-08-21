@@ -93,16 +93,7 @@ JSON 结构：
   ]
 }
 
-合法的领域取值（domains 与 tool_family 都只能用这些）：
-- core      基础空间分析与图层管理（缓冲、裁剪、过滤、制图等）
-- chinese   中国行政区划 / 中文地址 / 国内 POI（高德、天地图、本地矢量库）
-- osm       OpenStreetMap / Overpass 全球数据
-- raster    遥感 / 栅格 / 地形 / 植被指数
-- network   路径 / 可达性 / 服务区 / 等时圈
-- statistics 热点 / 聚类 / 密度 / 插值 / 空间统计
-- report    报告 / 导出 / 制图成果
-- what_if   情景模拟推演
-- meta      创建技能 / 自定义工具
+__DOMAIN_LIST__
 
 规划原则：
 - 意图先行。分布类请求先经 webgis_map_intent 拿结构化意图与 CartographyRecipe
@@ -113,6 +104,40 @@ JSON 结构：
   改为点图或先聚合（h3_binning）——执行侧有同阈值确定性拦截。
 - 步骤控制在 5 步以内，每步聚焦一个明确产出。
 - 简单请求可以只有 1 步。"""
+
+# #720: 域清单单一来源 —— 从 ToolCatalog.DOMAIN_KEYWORDS 派生，杜绝
+# planner prompt / catalog / capability 三处词汇漂移（temporal、dataset
+# 曾在 prompt 中缺失，LLM 永远无法声明）。
+from app.services.tool_catalog import DOMAIN_KEYWORDS as _DOMAIN_KEYWORDS
+
+_DOMAIN_DESCRIPTIONS: dict[str, str] = {
+    "chinese": "中国行政区划 / 中文地址 / 国内 POI（高德、天地图、本地矢量库）",
+    "osm": "OpenStreetMap / Overpass 全球数据",
+    "raster": "遥感 / 栅格 / 地形 / 植被指数",
+    "network": "路径 / 可达性 / 服务区 / 等时圈",
+    "temporal": "时间维度 / 时空分析 / 动态演变",
+    "statistics": "热点 / 聚类 / 密度 / 插值 / 空间统计 / 行政计数",
+    "mapspec": "图层增删改 / 版面布局（desired MapSpec 变更）",
+    "report": "报告 / 导出 / 制图成果",
+    "dataset": "数据集 / 数据源 / 上传 / 编目",
+    "what_if": "情景模拟推演",
+    "meta": "创建技能 / 自定义工具",
+}
+
+
+def _compose_domain_list() -> str:
+    lines = [
+        "合法的领域取值（domains 与 tool_family 都只能用这些；本清单由",
+        "ToolCatalog.DOMAIN_KEYWORDS 单一来源派生——新增域请在那里注册）：",
+        "- core      基础空间分析与图层管理（缓冲、裁剪、过滤、制图等）",
+    ]
+    for _k in _DOMAIN_KEYWORDS:
+        lines.append(f"- {_k:<11}{_DOMAIN_DESCRIPTIONS.get(_k, '')}")
+    return "\n".join(lines) + "\n"
+
+
+PLANNER_PROMPT = PLANNER_PROMPT.replace("__DOMAIN_LIST__", _compose_domain_list())
+
 
 
 def _planning_messages(user_message: str, env_summary: str) -> List[dict]:
