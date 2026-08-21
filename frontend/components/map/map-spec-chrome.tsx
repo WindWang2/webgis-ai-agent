@@ -45,8 +45,37 @@ const POSITION_CLASS: Record<string, string> = {
   none: 'hidden',
 };
 
-function positionClass(component: MapSpecComponent, fallback: string): string {
-  return POSITION_CLASS[component.position ?? 'none'] ?? fallback;
+// 各类型缺省位置（组件未声明 position 时的回退，与既有 HUD chrome 同位）
+const DEFAULT_POSITION: Record<string, string> = {
+  title: 'top-center',
+  subtitle: 'top-center',
+  north_arrow: 'top-right',
+  scale_bar: 'bottom-right',
+  attribution: 'bottom-left',
+  continuous_colorbar: 'bottom-right',
+  legend: 'bottom-left',
+  categorical_legend: 'bottom-left',
+};
+
+// 底部组件必须让位状态栏/HUD（与 map-decorations 同一 CSS 变量约定：
+// --map-chrome-bottom 随底部 HUD 展开），否则会叠在状态读数上。
+const BOTTOM_OFFSET_STYLE: Record<string, React.CSSProperties> = {
+  'bottom-left': { bottom: 'calc(var(--map-chrome-bottom, 10px) + 6px)' },
+  'bottom-center': { bottom: 'calc(var(--map-chrome-bottom, 10px) + 6px)' },
+  'bottom-right': { bottom: 'calc(var(--map-chrome-bottom, 10px) + 30px)' },
+};
+
+function resolvePosition(component: MapSpecComponent): string {
+  return component.position ?? DEFAULT_POSITION[component.type] ?? 'none';
+}
+
+function positionClass(component: MapSpecComponent): string {
+  const pos = resolvePosition(component);
+  return POSITION_CLASS[pos] ?? POSITION_CLASS[DEFAULT_POSITION[component.type] ?? 'none'] ?? 'hidden';
+}
+
+function positionStyle(component: MapSpecComponent): React.CSSProperties | undefined {
+  return BOTTOM_OFFSET_STYLE[resolvePosition(component)];
 }
 
 function NorthArrowGlyph({ variant }: { variant: string }) {
@@ -77,11 +106,27 @@ function legendForComponent(component: MapSpecComponent, spec: MapSpec | null): 
       | undefined;
     if (layer?.legend_spec) return layer.legend_spec;
   }
-  // 未指定图层 → 取第一个带 legend_spec 的可见图层
-  const withLegend = spec?.layers.find(
+  // 未指定图层 → 取第一个带 legend_spec 的图层
+  const layers = spec?.layers ?? [];
+  const withLegend = layers.find(
     (l) => (l as { legend_spec?: LegendSpec }).legend_spec,
-  ) as ({ legend_spec?: LegendSpec } & typeof spec.layers[number]) | undefined;
+  ) as ({ legend_spec?: LegendSpec } & typeof layers[number]) | undefined;
   return withLegend?.legend_spec;
+}
+
+/** 连续图例的 min/max（类型收窄到 Continuous/Divergent 形态）。 */
+function continuousRange(
+  legend: LegendSpec | undefined,
+): { min?: number; max?: number } {
+  if (!legend) return {};
+  const spec = legend as unknown as { min?: number; max?: number };
+  return { min: spec.min, max: spec.max };
+}
+
+/** 图例条目守卫：畸形 legend_spec（缺 entries）不得炸掉整个地图面板。 */
+function legendEntries(legend: LegendSpec | undefined): { color: string; label: string }[] {
+  const entries = (legend as unknown as { entries?: unknown })?.entries;
+  return Array.isArray(entries) ? (entries as { color: string; label: string }[]) : [];
 }
 
 export const MapSpecChrome = React.memo(function MapSpecChrome({
@@ -97,45 +142,51 @@ export const MapSpecChrome = React.memo(function MapSpecChrome({
   const { meters, pixels } = computeScale(zoom, centerLat);
 
   const byType = (type: string) => enabled.filter((c) => c.type === type);
+  // 后端 lifecycle 拒绝重复 id；这里再以 index 兜底 key 唯一性
+  const keyOf = (c: MapSpecComponent, i: number) => `${c.id}#${i}`;
 
   return (
     <>
-      {byType('title').map((c) => {
+      {byType('title').map((c, i) => {
         const text = typeof c.options?.['text'] === 'string' ? c.options['text'] : '';
         if (!text) return null;
         return (
           <div
-            key={c.id}
+            key={keyOf(c, i)}
             data-testid="spec-chrome-title"
-            className={`map-chrome absolute z-30 max-w-[min(46ch,50%)] truncate px-3 py-1 text-title font-semibold ${positionClass(c, POSITION_CLASS['top-center'])}`}
+            className={`map-chrome absolute z-30 max-w-[min(46ch,50%)] truncate px-3 py-1 text-title font-semibold ${positionClass(c)}`}
           >
             {text}
           </div>
         );
       })}
 
-      {byType('subtitle').map((c) => {
+      {byType('subtitle').map((c, i) => {
         const text = typeof c.options?.['text'] === 'string' ? c.options['text'] : '';
         if (!text) return null;
+        const pos = resolvePosition(c);
+        // 副题只对顶部位置做下移偏移；底部位置直接贴位，避免 top+bottom 双锚拉伸
+        const style =
+          pos.startsWith('top') ? { top: 'calc(0.75rem + 1.75rem)' } : positionStyle(c);
         return (
           <div
-            key={c.id}
+            key={keyOf(c, i)}
             data-testid="spec-chrome-subtitle"
-            className={`map-chrome absolute z-30 max-w-[min(46ch,50%)] truncate px-3 text-caption text-map-chrome-ink-muted ${positionClass(c, POSITION_CLASS['top-center'])}`}
-            style={{ top: 'calc(0.75rem + 1.75rem)' }}
+            style={style}
+            className={`map-chrome absolute z-30 max-w-[min(46ch,50%)] truncate px-3 text-caption text-map-chrome-ink-muted ${positionClass(c)}`}
           >
             {text}
           </div>
         );
       })}
 
-      {byType('north_arrow').map((c) => {
+      {byType('north_arrow').map((c, i) => {
         const variant = typeof c.options?.['variant'] === 'string' ? c.options['variant'] : 'compass_minimal_black';
         return (
           <div
-            key={c.id}
+            key={keyOf(c, i)}
             data-testid="spec-chrome-north-arrow"
-            className={`map-chrome absolute z-30 flex h-control-lg w-control-lg flex-col items-center justify-center gap-px rounded-chrome ${positionClass(c, POSITION_CLASS['top-right'])}`}
+            className={`map-chrome absolute z-30 flex h-control-lg w-control-lg flex-col items-center justify-center gap-px rounded-chrome ${positionClass(c)}`}
             style={{ transform: `rotate(${-bearing}deg)` }}
             aria-label={`指北针（${variant}），当前方位角 ${Math.round(bearing)}°`}
           >
@@ -145,11 +196,12 @@ export const MapSpecChrome = React.memo(function MapSpecChrome({
         );
       })}
 
-      {byType('scale_bar').map((c) => (
+      {byType('scale_bar').map((c, i) => (
         <div
-          key={c.id}
+          key={keyOf(c, i)}
           data-testid="spec-chrome-scale-bar"
-          className={`map-chrome absolute z-30 flex items-center gap-2 px-2 py-1 text-caption font-medium tabular-nums ${positionClass(c, POSITION_CLASS['bottom-right'])}`}
+          style={positionStyle(c)}
+          className={`map-chrome absolute z-30 flex items-center gap-2 px-2 py-1 text-caption font-medium tabular-nums ${positionClass(c)}`}
           aria-label={`比例尺 ${formatMeters(meters)}`}
         >
           <div
@@ -161,21 +213,22 @@ export const MapSpecChrome = React.memo(function MapSpecChrome({
         </div>
       ))}
 
-      {byType('attribution').map((c) => {
+      {byType('attribution').map((c, i) => {
         const text = typeof c.options?.['text'] === 'string' ? c.options['text'] : '';
         if (!text) return null;
         return (
           <div
-            key={c.id}
+            key={keyOf(c, i)}
             data-testid="spec-chrome-attribution"
-            className={`map-chrome absolute z-30 px-2 py-0.5 text-micro text-map-chrome-ink-muted ${positionClass(c, POSITION_CLASS['bottom-left'])}`}
+            style={positionStyle(c)}
+            className={`map-chrome absolute z-30 px-2 py-0.5 text-micro text-map-chrome-ink-muted ${positionClass(c)}`}
           >
             {text}
           </div>
         );
       })}
 
-      {byType('continuous_colorbar').map((c) => {
+      {byType('continuous_colorbar').map((c, i) => {
         const legend = legendForComponent(c, spec);
         const colors =
           legend && (legend.type === 'continuous' || legend.type === 'divergent')
@@ -184,49 +237,54 @@ export const MapSpecChrome = React.memo(function MapSpecChrome({
         if (!colors || colors.length < 2) return null;
         const vertical = c.options?.['orientation'] === 'vertical';
         const gradient = `linear-gradient(to ${vertical ? 'bottom' : 'right'}, ${colors.join(', ')})`;
+        const range = continuousRange(legend);
+        const hasRange = range.min !== undefined && range.max !== undefined;
         return (
           <div
-            key={c.id}
+            key={keyOf(c, i)}
             data-testid="spec-chrome-colorbar"
-            className={`map-chrome absolute z-30 rounded-chrome px-2 py-1.5 ${positionClass(c, POSITION_CLASS['bottom-right'])}`}
+            style={positionStyle(c)}
+            className={`map-chrome absolute z-30 rounded-chrome px-2 py-1.5 ${positionClass(c)}`}
             aria-label="连续密度色条"
           >
-            {legend.min !== undefined && legend.max !== undefined && (
+            {hasRange ? (
               <div className={`flex ${vertical ? 'flex-row gap-1' : 'flex-col gap-0.5'} text-micro tabular-nums text-map-chrome-ink`}>
-                {vertical && <span>{Number(legend.max).toFixed(1)}</span>}
                 <div
                   aria-hidden
                   className={vertical ? 'w-2.5 rounded-sm' : 'h-2.5 w-36 rounded-sm'}
                   style={{ background: gradient }}
                 />
-                <div className={`flex ${vertical ? 'flex-col justify-between' : 'justify-between'} w-full text-map-chrome-ink-muted`}>
-                  <span>{Number(legend.min).toFixed(1)}</span>
-                  {!vertical && <span>{Number(legend.max).toFixed(1)}</span>}
+                <div className="flex w-full justify-between text-map-chrome-ink-muted">
+                  <span>{Number(range.min).toFixed(1)}</span>
+                  <span>{Number(range.max).toFixed(1)}</span>
                 </div>
               </div>
-            ) || (
+            ) : (
               <div aria-hidden className="h-2.5 w-36 rounded-sm" style={{ background: gradient }} />
             )}
           </div>
         );
       })}
 
-      {byType('legend').map((c) => {
+      {byType('legend').map((c, i) => {
         const legend = legendForComponent(c, spec);
         if (!legend || legend.type !== 'graduated') return null;
+        const entries = legendEntries(legend);
+        if (!entries.length) return null;
         return (
           <div
-            key={c.id}
+            key={keyOf(c, i)}
             data-testid="spec-chrome-legend"
-            className={`map-chrome absolute z-30 rounded-chrome px-2 py-1.5 ${positionClass(c, POSITION_CLASS['bottom-left'])}`}
+            style={positionStyle(c)}
+            className={`map-chrome absolute z-30 rounded-chrome px-2 py-1.5 ${positionClass(c)}`}
             aria-label="分级图例"
           >
             {legend.title && (
               <div className="text-micro font-medium text-map-chrome-ink">{legend.title}</div>
             )}
             <div className="mt-1 flex flex-col gap-1">
-              {legend.entries.slice(0, 8).map((entry, i) => (
-                <div key={i} className="flex items-center gap-1.5">
+              {entries.slice(0, 8).map((entry, j) => (
+                <div key={j} className="flex items-center gap-1.5">
                   <span aria-hidden className="h-2.5 w-4 rounded-sm" style={{ background: entry.color }} />
                   <span className="text-micro tabular-nums text-map-chrome-ink-muted">{entry.label}</span>
                 </div>
@@ -236,22 +294,25 @@ export const MapSpecChrome = React.memo(function MapSpecChrome({
         );
       })}
 
-      {byType('categorical_legend').map((c) => {
+      {byType('categorical_legend').map((c, i) => {
         const legend = legendForComponent(c, spec);
         if (!legend || legend.type !== 'categorical') return null;
+        const entries = legendEntries(legend);
+        if (!entries.length) return null;
         return (
           <div
-            key={c.id}
+            key={keyOf(c, i)}
             data-testid="spec-chrome-categorical-legend"
-            className={`map-chrome absolute z-30 rounded-chrome px-2 py-1.5 ${positionClass(c, POSITION_CLASS['bottom-left'])}`}
+            style={positionStyle(c)}
+            className={`map-chrome absolute z-30 rounded-chrome px-2 py-1.5 ${positionClass(c)}`}
             aria-label="分类图例"
           >
             {legend.title && (
               <div className="text-micro font-medium text-map-chrome-ink">{legend.title}</div>
             )}
             <div className="mt-1 flex flex-col gap-1">
-              {legend.entries.slice(0, 8).map((entry, i) => (
-                <div key={i} className="flex items-center gap-1.5">
+              {entries.slice(0, 8).map((entry, j) => (
+                <div key={j} className="flex items-center gap-1.5">
                   <span aria-hidden className="h-2.5 w-4 rounded-sm" style={{ background: entry.color }} />
                   <span className="text-micro text-map-chrome-ink-muted">{entry.label}</span>
                 </div>

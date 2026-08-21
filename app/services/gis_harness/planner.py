@@ -149,14 +149,20 @@ class MapProductPlanner:
         self,
         intent: MapRequestIntent,
         template_id: str = "",
+        recipe_id: str = "",
     ) -> MapProductPlan:
-        candidates = self.recipes.select_candidates(intent)
-        recipe = candidates[0] if candidates else None
+        # recipe_id 显式指定（webgis_map_intent 阶段的推荐/LLM 纠偏）优先——
+        # 保证意图阶段与产品阶段用同一份计划（plan 连续性）。
+        recipe = self.recipes.get(recipe_id) if recipe_id else None
+        if recipe is None:
+            candidates = self.recipes.select_candidates(intent)
+            recipe = candidates[0] if candidates else None
         if recipe is None:
             # 兜底：没有 task/cartography 命中时按通用 POI 分布 recipe
-            recipe = self.recipes.get("poi_distribution_overview") or list(
-                self.recipes._by_id.values()
-            )[0]
+            recipe = (
+                self.recipes.get("poi_distribution_overview")
+                or self.recipes.default_recipe()
+            )
 
         template: Optional[MapProductTemplate] = None
         if template_id:
@@ -283,8 +289,16 @@ class MapProductPlanner:
         finalized.fallbacks = list(report.fallbacks)
 
         disabled_elements = {d.element for d in report.disabled}
+        disabled_reasons = {d.element: d for d in report.disabled}
+        # 主数据几何（点层提升的先决条件——面数据上提升 circle 层是制图空转）
+        geom_types = (profile or {}).get("geometryTypes") or []
+        profile_geom = "unknown"
+        if isinstance(geom_types, list) and geom_types:
+            from app.services.gis_harness.recipes import _geometry_category
+            profile_geom = _geometry_category(geom_types)
 
-        # 图层级裁决：热力层被禁 → 回退点图层
+        # 图层级裁决：热力层被禁 → 降级 + （几何为点时）点层提升
+        heat_fallback_recorded = False
         for layer in finalized.map_layers:
             if layer.cartography in ("visual_heatmap", "density_overview"):
                 if "visual_heatmap" in disabled_elements or "native_heatmap" in disabled_elements:
@@ -293,39 +307,54 @@ class MapProductPlanner:
                         None,
                     )
                     layer.enabled = False
+                    layer.role = "secondary"  # 禁用层不再是 primary（单一 primary 不变式）
                     layer.note = (
                         f"disabled: {reason.reason_code}" if reason else "disabled"
                     )
-                    # 点叠加层升级为 primary
-                    point_layer = next(
-                        (l for l in finalized.map_layers
-                         if l.cartography in ("point_overlay", "simple_point_map") and l.enabled),
-                        None,
-                    )
-                    if point_layer:
-                        point_layer.role = "primary"
-                    finalized.fallbacks.append(FallbackDecision(
-                        from_element="visual_heatmap",
-                        to_element="point_distribution",
-                        reason_code=reason.reason_code if reason else "INELIGIBLE",
-                        evidence=reason.evidence if reason else {},
-                    ))
+                    if not heat_fallback_recorded:
+                        point_layer = next(
+                            (l for l in finalized.map_layers
+                             if l.cartography in ("point_overlay", "simple_point_map")
+                             and l.enabled),
+                            None,
+                        )
+                        # 点层提升为 primary（converter 会按真实几何推断图层
+                        # 类型——面数据上它落成 fill，不会是空转的 circle）。
+                        if point_layer:
+                            point_layer.role = "primary"
+                        finalized.fallbacks.append(FallbackDecision(
+                            from_element="visual_heatmap",
+                            to_element="point_distribution",
+                            reason_code=reason.reason_code if reason else "INELIGIBLE",
+                            evidence={
+                                **(reason.evidence if reason else {}),
+                                "profile_geometry": profile_geom,
+                            },
+                        ))
+                        heat_fallback_recorded = True
 
-        # recipe 整体不合格（如 choropleth 无面几何）→ 整体降级点图
-        if not report.eligible and not any(l.enabled for l in finalized.map_layers):
-            finalized.map_layers.append(PlannedLayer(
-                role="primary", layer_type="circle", cartography="point_overlay",
-                source_capability="poi_query",
-                note="recipe ineligible — fallback point map",
-            ))
+        # recipe 整体不合格 → 禁用与被禁元素对应的图层并记录 RECIPE_INELIGIBLE；
+        # 全部图层被禁时追加点图兜底层（gate 因此可达）。
+        if not report.eligible:
+            for layer in finalized.map_layers:
+                if layer.enabled and layer.cartography in disabled_elements:
+                    layer.enabled = False
+                    layer.role = "secondary"
+                    layer.note = "disabled: RECIPE_INELIGIBLE"
             finalized.fallbacks.append(FallbackDecision(
                 from_element=recipe.id,
                 to_element="point_distribution",
                 reason_code="RECIPE_INELIGIBLE",
                 evidence={"disabled": sorted(disabled_elements)},
             ))
+            if not any(l.enabled for l in finalized.map_layers):
+                finalized.map_layers.append(PlannedLayer(
+                    role="primary", layer_type="circle", cartography="point_overlay",
+                    source_capability="poi_query",
+                    note="recipe ineligible — fallback point map",
+                ))
 
-        # 终稿组件集：按（回退后的）实际主表达重建
+        # 终稿组件集：按（回退后的）实际主表达重建 + recipe 声明的附加组件
         primary_layer = next(
             (l for l in finalized.map_layers if l.role == "primary" and l.enabled),
             None,
@@ -338,6 +367,7 @@ class MapProductPlanner:
             report_product=plan.intent.report_product,
             scope_name=plan.intent.scope.name,
             subject_category=plan.intent.subject.category,
+            extra_types=recipe.default_components,
         )
 
         finalized.status = "finalized"

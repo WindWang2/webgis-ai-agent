@@ -40,7 +40,7 @@
 ### 2.3 CartographyRecipe（`gis_harness/recipes.py`）
 
 - schema：id/name/intent_tasks/intent_cartography/required|allowed_geometry/
-  eligibility（min_points、requires_geometry、requires_fields）/
+  eligibility（check_points + min_points、requires_geometry、requires_fields）/
   preferred|optional_analysis（能力 id）/primary|secondary_cartography/
   default_components/fallbacks（when/reason_code/use/disable）/
   export_profile/priority。
@@ -49,6 +49,13 @@
 - **eligibility / fallback 必须代码侧确定性检查**（profile 输入）；
   数据回来后必须复检（`finalize_with_profile`），回退记录
   `{from, to, reason_code, evidence}`。
+- **阈值同源**：visual_heatmap 的点数阈值由调用方注入
+  （`HEATMAP_MIN_POINTS` 设置），recipe 不硬编码——与工具/converter 守卫
+  不漂移。
+- **主体几何 ≠ 产品几何**：recipe 级 `required_geometry` 只约束「主数据就是
+  该几何」的 recipe（如 poi/hotspot 要求点）；`administrative_choropleth`
+  的主体是被统计点数据，行政面来自 admin 能力——其资格在绑定期把关
+  （面状 ref / 已授权 fill 层才挂 choropleth），不在主数据 profile 上误判。
 - 首批：poi_distribution_overview、point_density、administrative_choropleth、
   categorical_distribution、hotspot_analysis、proximity_analysis、
   accessibility_analysis、raster_distribution。
@@ -77,10 +84,11 @@
 
 - `webgis_map_intent`：意图 + 候选 + 计划骨架（tier-2, statistics+report）。
 - `webgis_map_product`：资格复检 + 角色绑定（类型确定性映射）+ 缺层补齐
-  （既有 converter 授权）+ 组件落 MapSpec + 产品证据。
+  （既有 converter 授权）+ 组件落 MapSpec + 产品证据。`recipe_id`/`task_hint`
+  参数重放意图阶段的纠偏——**两阶段共用同一份计划**（plan 连续性）。
 - `webgis_component_update`：组件局部突变（tier-2, report）。
 - `webgis_map_product` 的 `primary_ref`/`overlay_refs` 在 registry 解引用
-  skip-list（ref 游标不被内联为大 payload）。
+  skip-list（ref 游标不被内联为大 payload）；全量数据只在确需补层时拉取。
 
 ### 2.7 证据（PiAgentHarness 扩展）
 

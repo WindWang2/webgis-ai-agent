@@ -1030,13 +1030,25 @@ export function MapPanel({
   // 份；无组件的旧 spec 行为完全不变（HUD chrome 照旧）。
   const committedSpec = useMemo(
     () => getCommittedMapSpec(),
+    // liveGeneration 是刻意依赖：spec 提交代数变化时重读 committed doc
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [liveGeneration],
   )
   const specComponents = committedSpec?.layout?.components ?? []
-  const hasSpecChrome = specComponents.some(
-    (c) => c.enabled !== false && c.type !== 'export_layout' && c.type !== 'graticule'
-      && c.type !== 'basemap' && c.type !== 'statistics_panel' && c.type !== 'chart_panel'
-      && c.type !== 'annotation' && c.type !== 'map_border',
+  // 包含清单（只认 MapSpecChrome 实际渲染的类型）：未来未知组件类型不会
+  // 静默吞掉既有 chrome。
+  const CHROME_RENDERABLE_TYPES = new Set([
+    'title', 'subtitle', 'north_arrow', 'scale_bar', 'attribution',
+    'continuous_colorbar', 'legend', 'categorical_legend',
+  ])
+  const enabledSpecComponents = specComponents.filter((c) => c.enabled !== false)
+  const hasSpecChrome = enabledSpecComponents.some(
+    (c) => CHROME_RENDERABLE_TYPES.has(c.type),
+  )
+  // spec 图例族组件在场时，HUD 主题图例栈让位（否则同屏两份图例）。
+  // 过滤交互仍可用（图层列表/属性面板）；见 PR Known Limitations。
+  const hasSpecLegend = enabledSpecComponents.some((c) =>
+    c.type === 'continuous_colorbar' || c.type === 'legend' || c.type === 'categorical_legend',
   )
 
   const showPerceptionRings = aiStatus === 'thinking' || aiStatus === 'acting'
@@ -1097,7 +1109,7 @@ export function MapPanel({
       </Map>
 
       {/* Live cartography overlays — driven by layer.legend_spec */}
-      {thematicLayers.length > 0 && (
+      {thematicLayers.length > 0 && !hasSpecLegend && (
         <>
           {/* The stack owns the vertical budget: `top` pins it below the map
               title so it can never grow past the top bar, and it scrolls once

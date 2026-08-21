@@ -290,16 +290,18 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
         });
         heatPaint["heatmap-color"] = stops;
         // 半径契约（后端 heatmap_contract 前端镜像）：优先显式
-        // style.radius_px（dispatch 授权层投影）；legacy style.radius 是
-        // px 语义的面板/模板值，clamp [4,100]；缺省 30px。米值不再有
-        // 直通路径（新链路米制只在 metadata.bandwidth_m，不进 style）。
+        // style.radius_px（dispatch 授权层投影）；legacy style.radius 只来自
+        // px 标注的面板/模板（4-100 窗口），结果统一 clamp [4,80] —— 不存在
+        // 越过契约上限的渲染值；缺省 30px。
         const explicitPx = Number(layer.style?.radius_px);
         const legacyPx = Number(layer.style?.radius);
         let r: number;
-        if (Number.isFinite(explicitPx) && explicitPx > 0) {
+        // 0 与后端 _coerce_int 语义一致：有限数值即显式（clamp 到 4），只有
+        // NaN/undefined 才走 legacy/default。
+        if (Number.isFinite(explicitPx)) {
           r = Math.max(4, Math.min(80, Math.floor(explicitPx)));
         } else if (Number.isFinite(legacyPx) && legacyPx >= 4 && legacyPx <= 100) {
-          r = Math.floor(legacyPx);
+          r = Math.max(4, Math.min(80, Math.floor(legacyPx)));
         } else {
           r = 30;
         }

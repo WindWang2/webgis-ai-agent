@@ -473,8 +473,11 @@ function _drawHeatmapLegend(
     ctx.textAlign = "right";
     ctx.fillText(labels[labels.length - 1], lx + padding + gradientW, y + scalePx(10));
     ctx.textAlign = "center";
-    for (let i = 1; i < HEATMAP_LABELS.length - 1; i++) {
-      ctx.fillText(HEATMAP_LABELS[i], lx + padding + (i / (HEATMAP_LABELS.length - 1)) * gradientW, y + scalePx(10));
+    // 中间刻度按实际色带段数分布；自定义 palette 的中间刻度留空（只有
+    // 首/尾语义标注），不再沿用硬编码 cyan→red 的 中/高 文案。
+    for (let i = 1; i < labels.length - 1; i++) {
+      if (!labels[i]) continue;
+      ctx.fillText(labels[i], lx + padding + (i / (labels.length - 1)) * gradientW, y + scalePx(10));
     }
     ctx.textAlign = "left";
   }, yOffset);
@@ -1103,7 +1106,7 @@ interface LegendData {
   heatmapLegend: { name?: string; paletteColors?: string[] } | undefined;
 }
 
-function discoverLegendData(layers: any[]): LegendData {
+export function discoverLegendData(layers: any[]): LegendData {
   // #679 修复延伸：热力层自带 legend_spec（连续色带）。此前 legendLayer 与
   // heatmapLegend 都命中同一热力层 → 导出成品画两个互相矛盾的色带图例
   //（legendSpec 版 + 硬编码 cyan→red 版）。规则：离散/分级图例优先取非
@@ -1290,8 +1293,11 @@ export async function runExport(
     );
 
     // GIS Harness 组件面：live chrome 与 export 共用 MapSpec layout.components
-    // （§21 单一 desired state）。显式请求参数 > spec 组件 > 内置默认 ——
-    // 旧 spec（无 components）行为完全不变。
+    // （§21 单一 desired state）。语义：组件类型存在 → 其 enabled 值生效；
+    // 类型不存在 → 保持内置默认 true（与 live 端 hasSpecChrome 排除集一致，
+    // 只有 export_layout 等非可视组件的 spec 不会误关罗盘/比例尺）。
+    // 显式请求参数 > spec 组件 > 内置默认 —— 旧 spec（无 components）行为
+    // 完全不变。
     let specTitle = '';
     let specShowCompass: boolean | undefined;
     let specShowScale: boolean | undefined;
@@ -1301,14 +1307,13 @@ export async function runExport(
       if (specComps.length) {
         const isEnabled = (t: string) =>
           specComps.some((c) => c.type === t && c.enabled !== false);
-        const isDisabled = (t: string) =>
-          specComps.some((c) => c.type === t && c.enabled === false);
+        const hasType = (t: string) => specComps.some((c) => c.type === t);
         const titleComp = specComps.find((c) => c.type === 'title' && c.enabled !== false);
         if (titleComp && typeof titleComp.options?.['text'] === 'string') {
           specTitle = titleComp.options['text'];
         }
-        specShowCompass = isDisabled('north_arrow') ? false : isEnabled('north_arrow');
-        specShowScale = isDisabled('scale_bar') ? false : isEnabled('scale_bar');
+        if (hasType('north_arrow')) specShowCompass = isEnabled('north_arrow');
+        if (hasType('scale_bar')) specShowScale = isEnabled('scale_bar');
       }
     } catch {
       /* spec 面缺席 → 走请求/内置默认 */

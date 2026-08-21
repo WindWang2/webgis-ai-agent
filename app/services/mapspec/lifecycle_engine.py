@@ -624,23 +624,31 @@ class MapSpecLifecycleEngine:
                     if intent.margins is not None:
                         layout["margins"] = intent.margins
                     if intent.components is not None:
-                        # 组件以 id 为键做稳定合并（局部突变只改命中组件）；
-                        # 传入空列表 = 清空组件。条目缺 id/type 的非法输入
-                        # 被确定性拒绝，不留半更新状态。
+                        # 组件整体替换（webgis_component_update 先读后写实现
+                        # 局部突变）；条目要求唯一 string id + string type，
+                        # 非法/重复输入确定性拒绝，不留半更新状态。
                         valid = all(
                             isinstance(c, dict) and isinstance(c.get("id"), str)
                             and isinstance(c.get("type"), str)
                             for c in intent.components
                         )
-                        if not valid:
+                        ids = [
+                            c.get("id") for c in intent.components
+                            if isinstance(c, dict)
+                        ]
+                        if not valid or len(ids) != len(set(ids)):
                             return MapSpecResult(
                                 is_error=True,
                                 origin=origin,
-                                error_msg="layout.components entries require string id and type.",
+                                error_msg=(
+                                    "layout.components entries require unique "
+                                    "string id and string type."
+                                ),
                                 correction_hint=(
                                     "Each component must be "
-                                    "{'id': str, 'type': str, ...} — see "
-                                    "CartographyComponent (gis_harness.components)."
+                                    "{'id': str, 'type': str, ...} with unique "
+                                    "ids — see CartographyComponent "
+                                    "(gis_harness.components)."
                                 ),
                             )
                         layout["components"] = sorted(

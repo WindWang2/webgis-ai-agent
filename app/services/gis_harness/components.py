@@ -202,13 +202,15 @@ def build_default_components(
     report_product: bool = False,
     scope_name: str = "",
     subject_category: str = "",
+    extra_types: Optional[List[str]] = None,
 ) -> List[CartographyComponent]:
     """按主专题表达派生默认组件集（确定性）。
 
     - 视觉热力/连续面 → continuous_colorbar；
-    - 分级填色（choropleth）→ legend（离散分级）；
+    - 分级填色（choropleth/graduated/hotspot/proximity 覆盖面）→ legend（离散）；
     - 分类专题 → categorical_legend；
-    - 报告成果 → 额外附 title/subtitle/export_layout/map_border。
+    - 报告成果 → 额外附 title/subtitle/export_layout/map_border；
+    - ``extra_types``：recipe 声明的附加组件（如 statistics_panel）按需并入。
     """
     components: List[CartographyComponent] = []
 
@@ -220,7 +222,10 @@ def build_default_components(
 
     if primary_cartography in ("visual_heatmap", "density_overview", "raster_surface"):
         components.append(colorbar_component())
-    elif primary_cartography in ("administrative_choropleth", "graduated"):
+    elif primary_cartography in (
+        "administrative_choropleth", "graduated",
+        "hotspot_overlay", "proximity_overlay", "administrative_aggregation",
+    ):
         components.append(legend_component())
     elif primary_cartography in ("categorical_thematic",):
         components.append(categorical_legend_component())
@@ -228,6 +233,12 @@ def build_default_components(
     components.append(north_arrow_component())
     components.append(scale_bar_component())
     components.append(attribution_component(attribution))
+
+    for extra in extra_types or []:
+        if extra == "statistics_panel" and not any(
+            c.type == "statistics_panel" for c in components
+        ):
+            components.append(statistics_panel_component())
 
     if report_product:
         components.append(map_border_component())

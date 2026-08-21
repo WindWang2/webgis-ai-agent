@@ -62,7 +62,12 @@ class MapProductArgs(BaseModel):
     template_id: Optional[str] = Field(None, description="产品模板 id（缺省按 recipe 自动匹配）")
     palette: str = Field("classic", description="热力配色 classic/magma/viridis/thermal")
     radius_px: Optional[int] = Field(
-        None, ge=4, le=100, description="视觉热力半径（像素）。显式像素语义")
+        None, ge=4, le=80, description="视觉热力半径（像素）。显式像素语义")
+    recipe_id: Optional[str] = Field(
+        None, description="沿用 webgis_map_intent 推荐的 recipe id（计划连续性："
+                          "两阶段共用同一份计划，避免 hint 纠偏被丢失）")
+    task_hint: Optional[str] = Field(
+        None, description="[可选] 与 webgis_map_intent 相同的任务 hint（重放合并）")
 
 
 class ComponentUpdateArgs(BaseModel):
@@ -129,7 +134,10 @@ def register_gis_harness_tools(registry: ToolRegistry):
         candidates = planner.recipes.select_candidates(intent)
         plan = planner.plan_from_intent(intent)
 
-        available = set(registry._tools.keys()) if hasattr(registry, "_tools") else set()
+        try:
+            available = set(registry.list_tools())
+        except Exception:  # noqa: BLE001 - 能力解析是建议性信息
+            available = set()
         capabilities = []
         for req in plan.data_requirements:
             capabilities.append({
@@ -180,10 +188,14 @@ def register_gis_harness_tools(registry: ToolRegistry):
         template_id: Optional[str] = None,
         palette: str = "classic",
         radius_px: Optional[int] = None,
+        recipe_id: Optional[str] = None,
+        task_hint: Optional[str] = None,
     ) -> dict:
-        from app.services.gis_harness.intent import resolve_map_request_intent
+        from app.services.gis_harness.intent import (
+            merge_intent_hints,
+            resolve_map_request_intent,
+        )
         from app.services.gis_harness.planner import MapProductPlanner
-        from app.services.gis_harness.components import CartographyComponent
         from app.services.mapspec_store import mapspec_store
         from app.services.spatial_meta_profiler import profile_from_descriptor
 
@@ -193,37 +205,53 @@ def register_gis_harness_tools(registry: ToolRegistry):
         layer_ids = list(layer_ids or [])
         overlay_refs = list(overlay_refs or [])
 
+        # 计划连续性：意图阶段（webgis_map_intent）接受的 hint 与推荐 recipe
+        # 在此重放——两个阶段绝不产出两份互相矛盾的计划。
         intent = resolve_map_request_intent(query)
+        if task_hint:
+            intent = merge_intent_hints(intent, {"task": task_hint})
         planner = MapProductPlanner()
-        plan = planner.plan_from_intent(intent, template_id=template_id or "")
+        plan = planner.plan_from_intent(
+            intent,
+            template_id=template_id or "",
+            recipe_id=recipe_id or "",
+        )
 
         # 主数据 profile（eligibility 复检输入）：优先 primary_ref descriptor，
         # 其次第一个绑定图层的 source profile，缺省空 profile（诚实降级）。
+        # descriptor 读取廉价；完整 FC 数据推迟到确需补层时再取（避免无谓的
+        # 全量 deepcopy）。
         profile: Optional[Dict[str, Any]] = None
-        primary_data: Optional[Any] = None
         if primary_ref:
             descriptor = await session_data_manager.get_ref_descriptor(session_id, primary_ref)
             if descriptor:
                 profile = profile_from_descriptor(descriptor)
-            primary_data = await session_data_manager.get(session_id, primary_ref)
 
+        spec = await mapspec_store.get_mapspec(session_id) or {}
         if profile is None:
-            spec = await mapspec_store.get_mapspec(session_id)
             for layer_id in layer_ids:
                 layer = next(
-                    (l for l in (spec or {}).get("layers", [])
+                    (l for l in spec.get("layers", [])
                      if isinstance(l, dict) and l.get("id") == layer_id),
                     None,
                 )
                 if not layer:
                     continue
-                source = (spec or {}).get("sources", {}).get(layer.get("source", ""), {})
+                source = spec.get("sources", {}).get(layer.get("source", ""), {})
                 src_profile = source.get("profile")
                 if isinstance(src_profile, dict):
                     profile = src_profile
                     break
 
-        plan = planner.finalize_with_profile(plan, profile)
+        # 与工具/converter 守卫同源的阈值设置（recipe 资格不与执行侧漂移）
+        try:
+            from app.core.config import settings as _settings
+            min_points = max(1, int(getattr(_settings, "HEATMAP_MIN_POINTS", 10)))
+        except Exception:  # noqa: BLE001
+            min_points = 10
+        plan = planner.finalize_with_profile(
+            plan, profile, min_points_default=min_points,
+        )
 
         # 角色绑定：已存在图层按类型确定性映射
         type_role_map = {
@@ -233,7 +261,6 @@ def register_gis_harness_tools(registry: ToolRegistry):
             "raster": ("primary", "raster_surface"),
         }
         bound_layers: List[Dict[str, Any]] = []
-        spec = await mapspec_store.get_mapspec(session_id) or {}
         for layer_id in layer_ids:
             layer = next(
                 (l for l in spec.get("layers", [])
@@ -259,7 +286,11 @@ def register_gis_harness_tools(registry: ToolRegistry):
         )
         need_points = not any(b["cartography"] == "point_overlay" for b in bound_layers)
 
-        if (need_heatmap or need_points) and primary_data is not None:
+        primary_data: Optional[Any] = None
+        if (need_heatmap or need_points) and primary_ref:
+            # 只在确需补层时取全量数据（get 返回 deepcopy，避免无谓 O(N) 拷贝）
+            primary_data = await session_data_manager.get(session_id, primary_ref)
+        if primary_data is not None:
             from app.services.analysis_cartography_converter import (
                 convert_analysis_to_mapspec_layer,
             )

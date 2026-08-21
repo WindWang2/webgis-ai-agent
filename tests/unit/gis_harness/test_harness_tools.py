@@ -193,3 +193,112 @@ async def test_map_intent_registered_in_full_registry():
     init_tools(reg)
     for name in ("webgis_map_intent", "webgis_map_product", "webgis_component_update"):
         assert name in reg._tools
+
+
+def _polygon_fc(n: int = 8) -> dict:
+    return {"type": "FeatureCollection", "features": [
+        {"type": "Feature",
+         "geometry": {"type": "Polygon", "coordinates": [[[104.0 + i * 0.01, 30.6],
+                                                          [104.01 + i * 0.01, 30.6],
+                                                          [104.01 + i * 0.01, 30.61],
+                                                          [104.0 + i * 0.01, 30.61],
+                                                          [104.0 + i * 0.01, 30.6]]]},
+         "properties": {"name": f"zone{i}"}}
+        for i in range(n)
+    ]}
+
+
+@pytest.mark.asyncio
+async def test_map_product_polygon_case_c(registry, clean_session):
+    """Case C 工具级：Polygon 主数据 → 热力禁用 + GEOMETRY_NOT_SUPPORTED 证据。"""
+    ref = await session_data_manager.store(clean_session, _polygon_fc(), prefix="geojson")
+    res = await registry.dispatch(
+        "webgis_map_product",
+        {"query": "成都小学的分布情况", "session_id": clean_session,
+         "primary_ref": ref},
+        session_id=clean_session,
+    )
+    assert res["success"] is True
+    cartos = {b["cartography"] for b in res["layers"]}
+    assert "visual_heatmap" not in cartos
+    reasons = {f["reason_code"] for f in res["fallbacks"]}
+    assert "GEOMETRY_NOT_SUPPORTED" in reasons
+    from app.services.mapspec_store import mapspec_store
+    spec = await mapspec_store.get_mapspec(clean_session)
+    assert not any(l["type"] == "heatmap" for l in spec["layers"])
+
+
+@pytest.mark.asyncio
+async def test_map_product_recipe_id_plan_continuity(registry, clean_session):
+    """计划连续性：意图阶段接受的 recipe_id 纠偏在产品阶段保留。"""
+    ref = await session_data_manager.store(clean_session, _point_fc(60), prefix="geojson")
+    res = await registry.dispatch(
+        "webgis_map_product",
+        {"query": "成都小学的分布情况", "session_id": clean_session,
+         "primary_ref": ref, "recipe_id": "point_density"},
+        session_id=clean_session,
+    )
+    assert res["recipe_id"] == "point_density"
+    assert res["plan_id"].startswith("plan-")
+
+
+@pytest.mark.asyncio
+async def test_primary_ref_not_transparently_dereferenced(registry, clean_session):
+    """skip-list 直接断言：工具收到的是 ref 游标字符串，而非内联 FC。"""
+    from unittest.mock import AsyncMock, patch
+
+    ref = await session_data_manager.store(clean_session, _point_fc(15), prefix="geojson")
+    calls = []
+    original = session_data_manager.get_ref_descriptor
+
+    async def spy(sid, rid):
+        calls.append(rid)
+        return await original(sid, rid)
+
+    with patch.object(session_data_manager, "get_ref_descriptor", AsyncMock(side_effect=spy)):
+        res = await registry.dispatch(
+            "webgis_map_product",
+            {"query": "成都小学的分布情况", "session_id": clean_session,
+             "primary_ref": ref},
+            session_id=clean_session,
+        )
+    # 工具按原始 ref 字符串取 descriptor —— 透明解引用没有发生（否则收到
+    # 的是 dict，get_ref_descriptor 收不到 ref 串，流程也不会有热力层）。
+    assert ref in calls
+    assert res["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_map_product_through_dispatch_service(registry, clean_session):
+    """经 ToolDispatchService 全链路：raw_result 携带产品证据 + slim payload。"""
+    from app.services.tool_dispatch_service import ToolDispatchService
+
+    ref = await session_data_manager.store(clean_session, _point_fc(40), prefix="geojson")
+    service = ToolDispatchService(registry=registry)
+    executed: set = set()
+    result = await service.dispatch(
+        {"id": "call_prod_1",
+         "function": {"name": "webgis_map_product",
+                      "arguments": {"query": "成都小学的分布情况",
+                                    "session_id": clean_session,
+                                    "primary_ref": ref}}},
+        clean_session, executed,
+    )
+    assert result.status == "ok"
+    raw = result.raw_result
+    assert isinstance(raw.get("map_product_evidence"), dict)
+    assert raw["map_product_evidence"]["recipe_selection"]["selected"] == \
+        "poi_distribution_overview"
+    # slim 事件与 LLM payload 不携带全量 FC（fetch-on-demand 不变量）
+    assert "FeatureCollection" not in result.llm_payload or \
+        result.llm_payload.count("coordinates") < 5
+    # dedup：同 turn 内完全相同的调用被拦截为 repeated
+    result2 = await service.dispatch(
+        {"id": "call_prod_1",
+         "function": {"name": "webgis_map_product",
+                      "arguments": {"query": "成都小学的分布情况",
+                                    "session_id": clean_session,
+                                    "primary_ref": ref}}},
+        clean_session, executed,
+    )
+    assert result2.status == "repeated"

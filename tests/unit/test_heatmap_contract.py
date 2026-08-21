@@ -54,7 +54,8 @@ class TestNormalize:
         c = normalize_heatmap_radius(bandwidth_m=2500)
         assert c.radius_px == DEFAULT_RADIUS_PX
         assert c.bandwidth_m == 2500
-        assert c.source == "explicit"
+        # source 描述 radius_px 的来源：带宽显式但视觉半径未给 → default
+        assert c.source == "default"
 
     def test_metadata_projection_bounded(self):
         c = normalize_heatmap_radius(legacy_radius=2000)

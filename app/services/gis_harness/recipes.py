@@ -26,6 +26,9 @@ LineGeometries = ("LineString", "MultiLineString")
 class EligibilityRule(BaseModel):
     """单条资格规则（确定性阈值检查）。"""
     element: str                     # 被约束的制图元素，如 visual_heatmap
+    # 点数检查：min_points=None + check_points=True → 用注入的默认阈值
+    # （HEATMAP_MIN_POINTS 设置，与工具/converter 守卫同源，不漂移）。
+    check_points: bool = False
     min_points: Optional[int] = None
     requires_geometry: Optional[List[str]] = None   # 允许几何类别
     requires_fields: Optional[List[str]] = None
@@ -122,7 +125,12 @@ def check_eligibility(
     geom_cat = _geometry_category(list(geom_types) if isinstance(geom_types, (list, tuple)) else [])
     feature_count = profile.get("featureCount")
     if not isinstance(feature_count, int):
-        feature_count = 0
+        # JSON 往返可能给 float（如 1260.0）——数值强制收敛，避免大样本被
+        # 误判为 0 点而触发 INSUFFICIENT_POINTS。
+        try:
+            feature_count = int(feature_count) if isinstance(feature_count, (int, float)) else 0
+        except (TypeError, ValueError):
+            feature_count = 0
     fields = profile.get("fields") or {}
     field_names = set(fields.keys()) if isinstance(fields, dict) else set()
 
@@ -169,8 +177,12 @@ def check_eligibility(
                     evidence={"dominant_geometry": geom_cat, "required": sorted(need)},
                 ))
                 check["passed"] = False
-        if rule.min_points is not None:
-            threshold = rule.min_points or min_points_default
+        if rule.check_points or rule.min_points is not None:
+            # min_points=None（默认语义）→ 调用方注入的阈值（与工具/converter
+            # 同源的 HEATMAP_MIN_POINTS 设置）—— recipe 与执行侧不漂移。
+            threshold = (
+                rule.min_points if rule.min_points is not None else min_points_default
+            )
             ok = feature_count >= threshold
             check["min_points"] = {"count": feature_count, "min": threshold}
             if not ok:
@@ -192,10 +204,12 @@ def check_eligibility(
                 check["fields"] = {"missing": missing}
         report.checks.append(check)
 
-    # 声明式 fallback → 结构化决策记录（与 disabled 对应）
-    for fb in recipe.fallbacks:
-        for disabled in report.disabled:
-            if disabled.element == fb.use or (fb.disable and disabled.element in fb.disable):
+    # 声明式 fallback → 结构化决策记录：从被禁元素出发，按 reason_code 匹配
+    # 声明的回退（此前按 fb.use 比对被禁元素名——那是回退目标永不相等，
+    # 声明式记录从未生效）。
+    for disabled in report.disabled:
+        for fb in recipe.fallbacks:
+            if fb.reason_code and fb.reason_code == disabled.reason_code:
                 report.fallbacks.append(FallbackDecision(
                     from_element=disabled.element,
                     to_element=fb.use or "",
@@ -223,7 +237,7 @@ SEED_RECIPES: List[CartographyRecipe] = [
         allowed_geometry=["Point", "MultiPoint"],
         eligibility=[
             EligibilityRule(
-                element="visual_heatmap", min_points=10,
+                element="visual_heatmap", check_points=True,  # 阈值由 HEATMAP_MIN_POINTS 注入
                 requires_geometry=["Point", "MultiPoint"],
                 reason_code="INSUFFICIENT_POINTS",
             ),
@@ -256,7 +270,7 @@ SEED_RECIPES: List[CartographyRecipe] = [
         required_geometry=["Point", "MultiPoint"],
         eligibility=[
             EligibilityRule(
-                element="visual_heatmap", min_points=10,
+                element="visual_heatmap", check_points=True,  # 阈值由 HEATMAP_MIN_POINTS 注入
                 requires_geometry=["Point", "MultiPoint"],
                 reason_code="INSUFFICIENT_POINTS",
             ),
@@ -278,15 +292,14 @@ SEED_RECIPES: List[CartographyRecipe] = [
         description="『各区…数量/密度/排名』类请求：行政聚合 + choropleth 为第一表达；热力非首选。",
         intent_tasks=["administrative_statistic", "analytical_density"],
         intent_cartography=["administrative_choropleth"],
-        required_geometry=["Polygon", "MultiPolygon"],
+        # 主体（被统计对象，如学校 POI）几乎总是点数据；行政面来自
+        # admin_boundary_query / admin_aggregation 能力，是另一个数据源——
+        # 主数据 profile 的几何不该判 recipe 不合格（那是 Case D/E 的误伤）。
+        # choropleth 的真实把关在绑定期：只有面状 ref / 已授权 fill 层才挂。
+        required_geometry=[],
         allowed_geometry=["Polygon", "MultiPolygon", "Point", "MultiPoint"],
         required_fields=[],
-        eligibility=[
-            EligibilityRule(
-                element="choropleth", requires_geometry=["Polygon", "MultiPolygon"],
-                reason_code="NEEDS_ADMIN_UNITS",
-            ),
-        ],
+        eligibility=[],
         preferred_analysis=["poi_query", "admin_boundary_query", "admin_aggregation", "point_profile"],
         optional_analysis=["analytical_density"],
         primary_cartography="administrative_choropleth",
@@ -398,6 +411,10 @@ class RecipeRegistry:
 
     def get(self, recipe_id: str) -> Optional[CartographyRecipe]:
         return self._by_id.get(recipe_id)
+
+    def default_recipe(self) -> CartographyRecipe:
+        """确定性兜底（通用 POI 分布）；注册表为空属编程错误，fail loud。"""
+        return self._by_id["poi_distribution_overview"]
 
     def __contains__(self, recipe_id: str) -> bool:
         return recipe_id in self._by_id

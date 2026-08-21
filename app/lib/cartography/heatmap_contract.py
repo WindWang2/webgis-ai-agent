@@ -58,8 +58,8 @@ class HeatmapRadiusContract:
 
     radius_px: int = DEFAULT_RADIUS_PX
     bandwidth_m: Optional[int] = None
-    # explicit | legacy_radius_px_passthrough | legacy_radius_visual_default
-    source: str = "explicit"
+    # explicit | default | legacy_radius_px_passthrough | legacy_radius_visual_default
+    source: str = "default"
     warnings: List[str] = field(default_factory=list)
 
     def to_metadata(self) -> Dict[str, Any]:

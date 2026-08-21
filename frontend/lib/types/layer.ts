@@ -8,9 +8,9 @@ export interface LayerStyle {
   fill?: boolean;
   renderType?: 'heatmap' | 'grid' | 'vector';
   palette?: string;
-  /** 663e5f0f89c689c970ed529b534a5f84Ff0850cf7d20Ff0920142014 540e7aef heatmap 59517ea662955f71Ff08dispatch _runtime_patchFf093002*/
+  /** 显式视觉热力半径（像素）—— 后端 heatmap 契约投影（dispatch _runtime_patch）。 */
   radius_px?: number;
-  /** legacy 50cf7d208bed4e49Ff089762677f/6a21677f503cFf0c4-100 76f4901aFf093002*/
+  /** legacy 像素语义（面板/模板值，4-100 直通）。 */
   radius?: number;
   intensity?: number;
   pointSize?: number;

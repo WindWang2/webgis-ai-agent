@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # ─── 类型词汇表 ─────────────────────────────────────────────────────────
 
@@ -84,6 +84,10 @@ class SubjectIntent(BaseModel):
 
 class MapRequestIntent(BaseModel):
     """GIS 制图请求的结构化意图契约（typed / serializable / deterministic）。"""
+    # hint 合并用 setattr 覆写 typed 字段——validate_assignment 保证 LLM hint
+    # 的越词汇表值（如未知 task）在校验边界被拒，而非静默进入 typed intent。
+    model_config = ConfigDict(validate_assignment=True)
+
     query: str = ""
     scope: ScopeIntent = Field(default_factory=ScopeIntent)
     subject: SubjectIntent = Field(default_factory=SubjectIntent)
@@ -190,10 +194,15 @@ def _match_scope(query: str) -> ScopeIntent:
             hit = city
     if hit:
         return ScopeIntent(name=hit, level="city")
-    # 3) 区县（排除「各区/每个区」分组表述 —— 那是 group_by 不是 scope）
+    # 3) 区县（排除「各区/每个区」分组表述 —— 那是 group_by 不是 scope）。
+    #    对捕获文本本身做分组词检查：非知名城市的「绵阳各区」会把分组后缀
+    #    误捕为 district（绵阳区），检查须覆盖捕获串而非仅其前缀。
     m = _DISTRICT_RE.search(query)
-    if m and not _GROUPBY_RE.search(query[:m.start() + 2]):
-        return ScopeIntent(name=m.group(1), level="district")
+    if m:
+        captured = m.group(1)
+        prefix = query[: m.start() + 2]
+        if not _GROUPBY_RE.search(prefix) and not _GROUPBY_RE.search(captured):
+            return ScopeIntent(name=captured, level="district")
     return ScopeIntent()
 
 

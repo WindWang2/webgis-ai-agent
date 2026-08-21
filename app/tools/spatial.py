@@ -51,7 +51,7 @@ class HeatmapDataArgs(BaseModel):
     geojson: Any = Field(..., description="输入点要素 GeoJSON 或数据引用(ref:xxx)")
     cell_size: int = Field(500, ge=10, le=5000, description="网格大小（米），范围 10-5000（raster/grid 分析模式用）")
     radius_px: Optional[int] = Field(
-        None, ge=4, le=100,
+        None, ge=4, le=80,
         description="视觉热力半径（MapLibre 屏幕像素，仅 native 渲染）。显式像素语义，"
                     "与米制分析带宽(bandwidth_m)分离；缺省 30px")
     bandwidth_m: Optional[int] = Field(
