@@ -186,6 +186,29 @@ def _estimate_json_bytes(
         return 32
 
 
+def _is_args_oversized(arguments: Any) -> bool:
+    """#699 + #677：超大 args 的统一预算化门（Pydantic 旁路与 GeoJSON 校验共用）。
+
+    实证结论：pydantic-core 的 SchemaSerializer.to_python/model_dump 持 GIL 做
+    整树深拷贝（100k 要素 FC 实测 dump ~104ms、validate ~0ms；cProfile 累计
+    ~220ms），to_thread 实测 tick 仍 ~139ms 未释放 GIL，故选 (b) 大载荷旁路
+    而非 (a) 线程化。hints 复用 #677 的单次预算化估计，阈值与
+    _ESTIMATE_SIZE_LIMIT 对齐。
+    """
+    _hint = _arg_size_hint_var.get()
+    if _hint is not None:
+        _hint_bytes, _hint_over = _hint
+        if _hint_over:
+            return True
+        # hint 小但经 ref 展开后可能膨胀 —— 对当前 arguments 预算化复核
+        _cur_budget: list[int] = [_ESTIMATE_MAX_NODES]
+        _cur_est = _estimate_json_bytes(arguments, _budget=_cur_budget)
+        return _cur_budget[0] <= 0 or _cur_est > _ESTIMATE_SIZE_LIMIT
+    _nb: list[int] = [_ESTIMATE_MAX_NODES]
+    _ne = _estimate_json_bytes(arguments, _budget=_nb)
+    return _nb[0] <= 0 or _ne > _ESTIMATE_SIZE_LIMIT
+
+
 def validate_geojson_structure(obj: Any) -> None:
     """GeoJSON 结构校验辅助函数 (BE-AUDIT-08)。
     在调用空间分析等工具函数前校验参数中的 GeoJSON 几何/要素/要素集合结构。
@@ -663,57 +686,71 @@ class ToolRegistry:
                 )
 
         # Pydantic 语义校验
+        # #699：超大内联 GeoJSON（>256KB / 预算耗尽）走大载荷旁路 ——
+        # tool 函数本就以 `dict` 收参 + 会话层已有 descriptor 覆盖，跳过
+        # 同步的 deep validate+dump（持 GIL 的 O(features) 深拷贝，100k 实测
+        # ~104ms dump / tick ~163ms；to_thread 仍 ~139ms，见探针结论）。
+        # 小/中载荷完整校验语义不变；是否旁路由预算化 hint 判定（与 GeoJSON
+        # 校验同门，避免不同门径语义漂移）。
+        # #699：单次预算化探测，Pydantic 旁路与 GeoJSON 校验门共用（两次调用
+        # 会在无 hint 路径双重遍历——#677 的既有测试以顶层预算调用计数钉住）。
+        _args_oversized_now = _is_args_oversized(arguments)
         if model:
-            try:
-                validated_args = model.model_validate(arguments)
-                arguments = validated_args.model_dump()
-            except ValidationError as e:
-                # 构造友好的错误信息，帮助 LLM "自愈"
-                error_msgs = []
-                for error in e.errors():
-                    loc = ".".join(str(i) for i in error["loc"])
-                    msg = error["msg"]
-                    error_msgs.append(f"参数 '{loc}' 校验失败: {msg}")
-                
-                message = "\n".join(error_msgs)
-                return std_error_response(
-                    message,
-                    code="VALIDATION_ERROR",
-                    error_type="ValidationError",
-                    correction_hint=f"Validation Error: {message}. Please check the tool definition and ensure all required parameters are provided with correct types."
-                )
+            _pydantic_bypass = False
+            if isinstance(arguments, dict) and _args_oversized_now:
+                # 保守：仅对 `Any` 载体字段做旁路；若顶层缺失必填或类型硬错误
+                # 仍应走校验（否则非法调用静默通过）。Any 字段永远通过，旁路只
+                # 省掉昂贵的 deep dump。
+                _has_hard_error = False
+                try:
+                    # 轻量探针：只验必填/类型表层（不触发深拷贝）—— 用 model_fields
+                    # 做最小门；此处先以“无必填缺失”作为旁路准入，结构错误由下游
+                    # 工具自检/错误面兜底（大载荷本就是透传给 session 层的）。
+                    for fname, finfo in model.model_fields.items():
+                        if finfo.is_required() and fname not in arguments:
+                            _has_hard_error = True
+                            break
+                        if fname in arguments and fname != "source_data":
+                            # 非载体字段做一次轻量类型探针（失败则不旁路）
+                            ann = finfo.annotation
+                            val = arguments[fname]
+                            # 仅对 str/int 等标量做极简检查，避免重走 Pydantic
+                            if ann is str and not isinstance(val, str):
+                                _has_hard_error = True
+                                break
+                    if not _has_hard_error:
+                        _pydantic_bypass = True
+                except Exception:
+                    _pydantic_bypass = False
+            if _pydantic_bypass:
+                # dict 直通：工具以 dict 形态收参，无需 normalize；跳过
+                # model_dump 的 O(features) 深拷贝
+                pass
+            else:
+                try:
+                    validated_args = model.model_validate(arguments)
+                    arguments = validated_args.model_dump()
+                except ValidationError as e:
+                    # 构造友好的错误信息，帮助 LLM "自愈"
+                    error_msgs = []
+                    for error in e.errors():
+                        loc = ".".join(str(i) for i in error["loc"])
+                        msg = error["msg"]
+                        error_msgs.append(f"参数 '{loc}' 校验失败: {msg}")
+
+                    message = "\n".join(error_msgs)
+                    return std_error_response(
+                        message,
+                        code="VALIDATION_ERROR",
+                        error_type="ValidationError",
+                        correction_hint=f"Validation Error: {message}. Please check the tool definition and ensure all required parameters are provided with correct types."
+                    )
 
         # GeoJSON 几何结构校验 (BE-AUDIT-08)
-        # PERF-F2: the recursive walk cost ~0.7s on the event loop for a
-        # 100k-feature payload — structural sanity for large payloads is
-        # already covered by the session store's descriptor computation, so
-        # only small/medium argument trees pay the walk.
-        # #677: reuse the single arg-size probe from dispatch() via
-        # ContextVar — avoid re-walking the same large args dict. If no hint
-        # (direct _dispatch_impl call) or hint says small but args grew via
-        # ref resolution, do a budget-limited re-check.
+        # PERF-F2 + #699 + #677：与上节 Pydantic 旁路同门（_is_args_oversized），
+        # 避免两道门用不同预算/阈值造成大载荷一处放行另一处仍全量走。
         try:
-            _hint = _arg_size_hint_var.get()
-            if _hint is not None:
-                _hint_bytes, _hint_over = _hint
-                # Fast path: hint says oversized → skip validation without walk.
-                if _hint_over:
-                    _need_validate = False
-                else:
-                    # Hint was small — re-check current (post-resolve) args
-                    # with budget cap. For non-ref calls this is still cheap
-                    # (small payload, budget not hit); for ref-expanded large
-                    # payloads the budget caps the walk.
-                    _cur_budget = [_ESTIMATE_MAX_NODES]
-                    _cur_est = _estimate_json_bytes(arguments, _budget=_cur_budget)
-                    _need_validate = not (_cur_budget[0] <= 0 or _cur_est > _ESTIMATE_SIZE_LIMIT)
-            else:
-                # 无 hint 的直调路径同样预算化 + 保守：预算耗尽视为 oversized
-                # 跳过校验（与 hint 路径同一门语义，不留下全量遍历逃逸口）。
-                _nb = [_ESTIMATE_MAX_NODES]
-                _ne = _estimate_json_bytes(arguments, _budget=_nb)
-                _need_validate = not (_nb[0] <= 0 or _ne > _ESTIMATE_SIZE_LIMIT)
-            if _need_validate:
+            if not _args_oversized_now:
                 validate_geojson_structure(arguments)
         except ValueError as e:
             return std_error_response(

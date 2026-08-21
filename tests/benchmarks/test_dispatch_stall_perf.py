@@ -269,3 +269,94 @@ async def test_dispatch_impl_no_hint_gate_is_budgeted():
     assert top_level_budgeted == [True], (
         f"no-hint gate estimate must pass an explicit budget (got {top_level_budgeted})"
     )
+
+
+@pytest.mark.perf
+@pytest.mark.asyncio
+async def test_args_pydantic_loop_tick_bounded():
+    """#699：大内联 args 的 Pydantic 校验/dump 停顿必须有界（旁路路线）。
+
+    实证（本机）：修复前 model_dump+validate 持 GIL 共 ~220ms（to_thread
+    仍 ~139ms tick，不可线程化）；旁路后 dispatch wall ~10ms、max_tick
+    ~5.5ms。25ms 上限留 CI 抖动余量。
+    """
+    import asyncio as _aio
+    from app.tools.registry import ToolRegistry
+    import time as _t
+
+    fc = _fc(100_000)
+    reg = ToolRegistry()
+
+    def big_tool(source_data: dict) -> dict:
+        return {"success": True, "n": len(source_data.get("features", []))}
+
+    reg.register("big_args_tool", "b", big_tool)
+    await reg.dispatch("big_args_tool", {"source_data": fc}, session_id=None)  # warm
+
+    ticks: list[float] = []
+    state = {"stop": False}
+
+    async def _probe():
+        last = _t.perf_counter()
+        while not state["stop"]:
+            await _aio.sleep(0.005)
+            now = _t.perf_counter()
+            ticks.append(now - last)
+            last = now
+
+    p = _aio.get_event_loop().create_task(_probe())
+    res = await reg.dispatch("big_args_tool", {"source_data": fc}, session_id=None)
+    state["stop"] = True
+    await p
+    assert res["n"] == 100_000
+    max_tick = max(ticks) if ticks else 0.0
+    assert max_tick < 0.025, f"args dispatch loop tick {max_tick*1000:.1f}ms — Pydantic bypass must bound it"
+
+
+@pytest.mark.asyncio
+async def test_oversized_args_missing_required_still_rejected():
+    """#699 旁路准入探针：超大 args 缺必填字段仍被拒（不静默通过）。"""
+    from app.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+
+    def tool_with_required(layer_name: str, source_data: dict) -> dict:
+        return {"ok": True}
+
+    reg.register("req_tool", "r", tool_with_required)
+    res = await reg.dispatch("req_tool", {"source_data": _fc(100_000)}, session_id=None)
+    assert res.get("success") is False
+    assert res.get("error_type") == "ValidationError" or "校验失败" in str(res.get("message", ""))
+
+
+@pytest.mark.asyncio
+async def test_oversized_args_wrong_scalar_type_still_rejected():
+    """旁路准入探针：非载体标量字段类型错误仍被拒。"""
+    from app.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+
+    def typed_tool(layer_name: str, source_data: dict) -> dict:
+        return {"ok": True}
+
+    reg.register("typed_tool", "t", typed_tool)
+    res = await reg.dispatch(
+        "typed_tool", {"layer_name": 12345, "source_data": _fc(100_000)}, session_id=None
+    )
+    assert res.get("success") is False
+
+
+@pytest.mark.asyncio
+async def test_oversized_args_bypass_passes_dict_intact():
+    """旁路直通：工具收到完整要素（dict 形态，无 dump 深拷贝）。"""
+    from app.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+    fc = _fc(100_000)
+
+    def echo_tool(source_data: dict) -> dict:
+        return {"success": True, "n": len(source_data.get("features", []))}
+
+    reg.register("echo_args", "e", echo_tool)
+    res = await reg.dispatch("echo_args", {"source_data": fc}, session_id=None)
+    assert res["n"] == 100_000
