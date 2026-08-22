@@ -51,6 +51,34 @@ def make_session_store_resolver(session_store: Any):
             status=RefResolutionStatus.SYNTACTICALLY_VALID,
             expected_type=expected_type,
         )
+
+        # #794: 廉价路径 —— 存在性（EXISTS）+ descriptor 类型判定即可满足
+        # 解析契约，无需全量 payload get + json.loads（评估在 session 锁内
+        # 逐 cursor 串行执行，25 refs×200KiB 实测 168ms/次评估）。descriptor
+        # 无法判定类型（table 前缀、descriptor 缺失）或 store 不提供廉价 API
+        # 时回退既有全量路径 —— 语义不变。
+        ref_exists = getattr(session_store, "ref_exists", None)
+        get_descriptor = getattr(session_store, "get_ref_descriptor", None)
+        if ref_exists is not None and get_descriptor is not None:
+            try:
+                if not await ref_exists(session_id, ref):
+                    resolution.status = RefResolutionStatus.NOT_FOUND
+                    resolution.detail = "ref not present in session store"
+                    return resolution
+                descriptor = await get_descriptor(session_id, ref)
+                inferred = _infer_type_from_descriptor(descriptor)
+                if inferred is not None:
+                    if expected_type in _TYPED_PREFIXES and inferred != expected_type:
+                        resolution.status = RefResolutionStatus.TYPE_MISMATCH
+                        resolution.detail = f"expected {expected_type}, got {inferred}"
+                        return resolution
+                    resolution.actual_type = inferred
+                    resolution.status = RefResolutionStatus.RESOLVED
+                    return resolution
+                # descriptor 不存在或无法判定 → 全量路径兜底
+            except Exception as e:  # noqa: BLE001 — 廉价面故障不静默成功 → 回退
+                logger.debug("cheap ref resolution failed for %s: %s", ref, e)
+
         try:
             payload = await session_store.get(session_id, ref)
         except Exception as e:  # store error → observable, not silent success
@@ -78,6 +106,25 @@ def make_session_store_resolver(session_store: Any):
         return resolution
 
     return resolve
+
+
+def _infer_type_from_descriptor(descriptor: Any) -> Optional[str]:
+    """#794: 从 O(1) ref descriptor 判定 payload 类型；不可判定返回 None。
+
+    只有 descriptor 能**确定性**证明类型时才返回 —— raster_capable 即 raster；
+    有要素几何即 geojson。table / 空 FC / 缺 descriptor 都交给全量路径判定，
+    避免把不确定当成 TYPE_MISMATCH。
+    """
+    if not isinstance(descriptor, dict):
+        return None
+    if descriptor.get("raster_capable"):
+        return "raster"
+    if descriptor.get("mvt_capable") or descriptor.get("geometry_types") or (
+        isinstance(descriptor.get("feature_count"), (int, float))
+        and descriptor.get("feature_count") > 0
+    ):
+        return "geojson"
+    return None
 
 
 def _infer_payload_type(payload: Any) -> Optional[str]:

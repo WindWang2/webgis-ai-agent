@@ -621,13 +621,15 @@ class RedisSessionStore(BaseSessionStore):
         # L1 hot read — a single chat turn reads map_state several times
         # (context_builder + ws_service + tool dispatch). Avoid repeated Redis
         # HGETALL round-trips for the same session within L1_TTL_SECONDS.
-        cached = self._l1_get(session_id, "map_state")
-        if cached is not None:
-            # #749: the L1 entry is shared by every reader within the TTL —
-            # return a copy so no caller can mutate the cached object (or,
-            # worse, have its mutation seen by concurrent readers). Deep copy
-            # in a thread: parsed map_state may embed a large mapspec field.
-            return await asyncio.to_thread(copy.deepcopy, cached)
+        cached_raw = self._l1_get(session_id, "map_state")
+        if cached_raw is not None:
+            # #749: every reader must get its own object tree — the L1 entry
+            # is shared within the TTL. #795: re-parse the cached RAW fields
+            # instead of deepcopying the parsed tree — a fresh json.loads
+            # yields an equally isolated tree at 3-5x less CPU at 1MiB-class
+            # specs (measured, audit bench_c2), and mapspec-bearing state is
+            # read several times per cartographic tool call.
+            return await asyncio.to_thread(self._parse_state_fields_sync, cached_raw)
         # #378: get_map_state sits on the request-admission path
         # (_guard_body_session), so a Redis blip must degrade to empty
         # map_state (cache-miss semantics) — never a 500 on every chat
@@ -649,9 +651,9 @@ class RedisSessionStore(BaseSessionStore):
         raw_items = [
             (k.decode() if isinstance(k, bytes) else k, v) for k, v in raw.items()
         ]
-        out = await asyncio.to_thread(self._parse_state_fields_sync, raw_items)
-        self._l1_put(session_id, "map_state", out)
-        return out
+        # #795: 缓存原始字段（bytes 不可变，共享安全）；命中路径重解析。
+        self._l1_put(session_id, "map_state", raw_items)
+        return await asyncio.to_thread(self._parse_state_fields_sync, raw_items)
 
     @staticmethod
     def _parse_state_fields_sync(raw_items: list) -> dict[str, Any]:

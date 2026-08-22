@@ -15,6 +15,7 @@ from __future__ import annotations
 import copy
 import logging
 import math
+import json
 import re
 import time
 from datetime import datetime, timezone
@@ -238,6 +239,43 @@ def _ack_is_well_formed(ev: MapActionEvidence) -> bool:
     return bool(ev.error) or bool(actual.get("reason") or actual.get("error"))
 
 
+# #797: FIFO 保留参数的投影预算（字节）。标量/短串结构（层 id、ref、坐标
+# 标量等 evidence 消费的字段）保留；大容器整体降级为键列表 + 截断标记。
+_RETENTION_ARGS_BUDGET_BYTES = 2048
+
+
+def _slim_args_for_retention(
+    args: Any, budget: int = _RETENTION_ARGS_BUDGET_BYTES
+) -> Any:
+    """有界 arguments 投影：长串截断、容器限量，超预算整体降级。
+
+    ref-cursor 扫描发生在原始参数上（record_tool_call 先存投影再扫原始），
+    因此本函数不影响 ref 检测；仅约束 FIFO 驻留内存（≤1000 条 × MiB → 有界）。
+    """
+    def _slim(value: Any) -> Any:
+        if isinstance(value, str):
+            return value if len(value) <= 256 else value[:253] + "…"
+        if value is None or isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value
+        if isinstance(value, dict):
+            return {k: _slim(v) for k, v in list(value.items())[:32]}
+        if isinstance(value, (list, tuple)):
+            return [_slim(v) for v in list(value)[:32]]
+        return str(value)[:64]
+
+    slimmed = _slim(args)
+    try:
+        payload = json.dumps(slimmed, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return {"_truncated": True}
+    if len(payload.encode("utf-8", "ignore")) <= budget:
+        return slimmed
+    keys = sorted(args.keys())[:32] if isinstance(args, dict) else []
+    return {"_keys": keys, "_truncated": True}
+
+
 class PiAgentHarness:
     """Evidence-driven evaluation harness for PiAgentBridge execution sessions.
 
@@ -362,7 +400,10 @@ class PiAgentHarness:
         call_entry = {
             "tool_call_id": tool_call_id,
             "name": name,
-            "arguments": arguments or {},
+            # #797: FIFO 里有界投影而非全量 arguments —— 5000 要素级 inline
+            # GeoJSON 参数此前原样驻留（≤1000 条 × MiB）。ref 扫描在原始参数
+            # 上进行（下一行），裁剪不影响 ref-cursor 检测与 evidence 结构。
+            "arguments": _slim_args_for_retention(arguments),
             "run_id": eff_run_id,
             "turn_id": eff_turn_id,
             "session_id": eff_session_id,
@@ -510,10 +551,13 @@ class PiAgentHarness:
 
     def record_sse_event(self, event: Dict[str, Any]) -> None:
         """记录一条 SSE 事件。Round-2 P2：补 session_id 归属戳（事件本身不携带
-        session 时回退评估目标），使 sse_events 可被 session 过滤/审计。"""
-        if not event.get("session_id"):
-            event["session_id"] = self.session_id
-        self._append_capped(self.sse_events, event)
+        session 时回退评估目标），使 sse_events 可被 session 过滤/审计。
+        #796: 归属戳写入副本 —— 此前就地改写调用方的共享 dict，把 session_id
+        泄漏进调用方仍持有的对象（SSE 批处理器等并发读者可见）。"""
+        stamped = dict(event)
+        if not stamped.get("session_id"):
+            stamped["session_id"] = self.session_id
+        self._append_capped(self.sse_events, stamped)
 
     def record_event(self, event: ToolCallEvent) -> None:
         # Round-2 P2：绝不改写 self.session_id —— 那是本 harness 的评估目标
@@ -658,21 +702,34 @@ class PiAgentHarness:
         #    Round-2 P2：仅当前评估 session 的 refs（单例 harness 跨 session 时，
         #    其它会话的 refs 不得用本 session 的 store 解析，也不得写坏它们的
         #    状态位）；解析结果按 (session_id, ref) 缓存，避免同 ref 跨会话污染。
+        #    #794/#796: 评估开始时快照缓冲（record_event 等写入方不持评估锁，
+        #    await 间隙的 FIFO 前删不得扰动本轮遍历）；按 ref 去重 + 命中
+        #    _resolved_refs 直接跳过 —— 此前每个 cursor 都做一次全量 payload
+        #    get（实测 25 refs×200KiB → 168ms/次评估，且重复评估不加速）。
         if self.ref_resolver is not None:
-            for rc in self.ref_cursors:
-                if rc.get("session_id") != self.session_id:
-                    continue
-                ref = rc["ref_cursor"]
-                try:
-                    resolution = await self.ref_resolver(self.session_id, ref)
-                except Exception as e:
-                    resolution = RefResolution(
-                        ref=ref,
-                        session_id=self.session_id,
-                        status=RefResolutionStatus.NOT_FOUND,
-                        detail=f"resolver error: {e}",
-                    )
-                self._resolved_refs[(self.session_id, ref)] = resolution
+            cursors_snapshot = [
+                rc for rc in list(self.ref_cursors)
+                if rc.get("session_id") == self.session_id
+            ]
+            for ref in dict.fromkeys(rc["ref_cursor"] for rc in cursors_snapshot):
+                memo_key = (self.session_id, ref)
+                cached = self._resolved_refs.get(memo_key)
+                if cached is not None:
+                    resolution = cached
+                else:
+                    try:
+                        resolution = await self.ref_resolver(self.session_id, ref)
+                    except Exception as e:
+                        # 解析失败不进 memo：store 抖动恢复后应重试真实解析。
+                        resolution = RefResolution(
+                            ref=ref,
+                            session_id=self.session_id,
+                            status=RefResolutionStatus.NOT_FOUND,
+                            detail=f"resolver error: {e}",
+                        )
+                    self._resolved_refs[memo_key] = resolution
+            for rc in cursors_snapshot:
+                resolution = self._resolved_refs[(self.session_id, rc["ref_cursor"])]
                 rc["is_resolved"] = resolution.is_resolved
                 rc["status"] = resolution.status.value
         # If no resolver wired: refs remain SYNTACTICALLY_VALID (not resolved) —
@@ -687,6 +744,12 @@ class PiAgentHarness:
         #    Round-2 P2：所有读取面按 session_id === self.session_id 过滤（镜像
         #    _build_map_action_evidence 的 issued 侧隔离）—— 单例 harness 跨
         #    session 累积时，非交互表面同样不得混入其它会话的工具/结果/refs。
+        #    #796: cursors_by_call 单遍分组 —— 此前每个 tool call 对整个
+        #    cursor 列表做线性过滤（1000×1000 上限实测 53ms/次评估）。
+        cursors_by_call: Dict[str, list] = {}
+        for rc in self.ref_cursors:
+            if rc.get("session_id") == self.session_id:
+                cursors_by_call.setdefault(rc["tool_call_id"], []).append(rc)
         results_by_id = {
             r["tool_call_id"]: r for r in self.tool_results
             if r.get("session_id") == self.session_id
@@ -696,7 +759,7 @@ class PiAgentHarness:
             if m.get("session_id") == self.session_id
         }
 
-        for tc in self.tool_calls:
+        for tc in list(self.tool_calls):
             if tc.get("session_id") != self.session_id:
                 continue
             tcid = tc["tool_call_id"]
@@ -708,9 +771,7 @@ class PiAgentHarness:
                     session_id=self.session_id,
                     status=RefResolutionStatus.SYNTACTICALLY_VALID,
                 )
-                for rc in self.ref_cursors
-                if rc["tool_call_id"] == tcid
-                and rc.get("session_id") == self.session_id
+                for rc in cursors_by_call.get(tcid, [])
             ]
 
             validity: Optional[MapSpecValidityEvidence] = None

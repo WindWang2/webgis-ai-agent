@@ -174,9 +174,11 @@ class MemorySessionStore(BaseSessionStore):
         data = session_cache.pop(ref_id)
         session_cache[ref_id] = data
         self._touch_session(session_id)
-        
-        # 返回深拷贝副本（与 Redis 侧语义对齐）
-        return copy.deepcopy(data)
+
+        # 返回深拷贝副本（与 Redis 侧语义对齐）。
+        # #799: 与 Redis 后端一致地下线程 —— 50k 要素级 ref 的内联 deepcopy
+        # 在事件循环上是 ~100ms 级停顿（降级模式同样不应冻结循环）。
+        return await asyncio.to_thread(copy.deepcopy, data)
 
     # P2-1: get_ref_data was a byte-identical override of
     # BaseSessionStore.get_ref_data and has been removed. The inherited Base
@@ -238,9 +240,10 @@ class MemorySessionStore(BaseSessionStore):
 
         #749: 返回深拷贝——直接返回存储 dict 时，任何调用方就地改动都会
         污染其它读者并绕过 set_map_state 的 seq/F4 单调检查（#701-2 的
-        copy 纪律此前只覆盖了 get()，未覆盖 map_state）。"""
+        copy 纪律此前只覆盖了 get()，未覆盖 map_state）。#799: deepcopy
+        下线程（与 Redis 后端一致），大 state 不再内联阻塞事件循环。"""
         import copy as _copy
-        return _copy.deepcopy(self._map_state.get(session_id, {}))
+        return await asyncio.to_thread(_copy.deepcopy, self._map_state.get(session_id, {}))
 
     def invalidate_local_cache(self, session_id: str) -> None:
         """Memory is authoritative in-process, so no read cache can be stale."""

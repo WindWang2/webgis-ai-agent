@@ -667,6 +667,14 @@ class ToolDispatchService:
             # outcome would serialize and retain a second large copy.
             if result.get("geojson") is target_data:
                 result = {k: v for k, v in result.items() if k != "geojson"}
+            elif isinstance(result, dict) and result.get("data") is target_data:
+                # #798: the ~29 to_llm_response tools returning the #517
+                # data-wrapped FC shape fell through both branches above, so
+                # the full feature body rode into raw_result → PiToolResponse
+                # .details (~1MiB per callback at the 5000-feature cap) and
+                # into the dispatch cache. The ref stays the carrier here too;
+                # SSE's slim_event_result already excludes "data".
+                result = {k: v for k, v in result.items() if k != "data"}
             elif result is target_data:
                 result = {
                     key: result[key]
