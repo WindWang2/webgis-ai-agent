@@ -227,11 +227,17 @@ def test_rotation_keeps_backups_bounded(_isolated_metrics):
                 cache_hit=False, error=None, session_id=None,
             )
             _wait_for_rows(_isolated_metrics)
-        time.sleep(0.3)  # let the writer's rotation finish
-        backups = sorted(
-            p for p in os.listdir(_isolated_metrics.parent)
-            if p.startswith(_isolated_metrics.name) and p != _isolated_metrics.name
-        )
+        # #812: 固定 sleep 换有界轮询 —— 满载 runner 上 0.3s 可能不够 writer
+        # 完成轮转，偶发红；等待 .1 备份出现（与 _wait_for_rows 同款纪律）。
+        _deadline = time.monotonic() + 5.0
+        while time.monotonic() < _deadline:
+            backups = sorted(
+                p for p in os.listdir(_isolated_metrics.parent)
+                if p.startswith(_isolated_metrics.name) and p != _isolated_metrics.name
+            )
+            if any(p.endswith(".1") for p in backups):
+                break
+            time.sleep(0.02)
         assert len(backups) <= tool_metrics._MAX_ROTATIONS
         assert any(p.endswith(".1") for p in backups)
         # The live log is bounded by one writer batch (rotation caps growth),
