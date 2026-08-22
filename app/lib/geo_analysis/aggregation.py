@@ -279,13 +279,14 @@ def h3_binning(geojson: dict | str, resolution: int | None = None, stat_field: s
             stat_method = 'count'
             
         # Create Polygons from H3 indices
+        from app.lib.geo_analysis.interpolation import h3_cell_ring
         polygons = []
         for h3_id in cancellable(grouped['h3_index'], every=512):
-            # cell_to_boundary returns ((lat, lng), ...)
-            boundary = h3.cell_to_boundary(h3_id)
-            # shapely expects (lng, lat)
-            coords = [(lng, lat) for lat, lng in boundary]
-            polygons.append(Polygon(coords))
+            # #763: h3_cell_ring unwraps lngs for cells crossing the
+            # antimeridian — a naive ring joins ±179.99 vertices through
+            # lng 0, producing a world-spanning polygon (~160,000x area
+            # blow-up at res 9).
+            polygons.append(Polygon(h3_cell_ring(h3_id)))
             
         hex_gdf = gpd.GeoDataFrame(grouped, geometry=polygons, crs="EPSG:4326")
         

@@ -331,6 +331,26 @@ def idw_interpolation(
     return [{"h3_index": cell, "value": float(v)} for cell, v in zip(target_cells, out)]
 
 
+def h3_cell_ring(cell: str) -> list[tuple[float, float]]:
+    """H3 cell boundary as a (lng, lat) ring, unwrapped across the
+    antimeridian (#763).
+
+    ``h3.cell_to_boundary`` returns lngs in [-180, 180]; a cell straddling
+    ±180° would otherwise build a ring whose edges run through lng 0 — a
+    ~360°-wide world-spanning polygon (measured ~160,000x area blow-up at
+    res 9). Mirrors ``app/services/mvt.py``'s antimeridian handling: when the
+    lng span exceeds 180°, negative lngs are shifted by +360 so the ring
+    stays continuous. Coordinates may then exceed [-180, 180], which GeoJSON
+    consumers tolerate (MapLibre renders wrapped; PROJ folds on reprojection).
+    """
+    boundary = h3.cell_to_boundary(cell)  # [(lat, lng), ...]
+    ring = [(lng, lat) for lat, lng in boundary]
+    lngs = [lng for lng, _ in ring]
+    if max(lngs) - min(lngs) > 180.0:
+        ring = [(lng + 360.0 if lng < 0.0 else lng, lat) for lng, lat in ring]
+    return ring
+
+
 def h3_to_geojson(results: list[dict], value_field: str = "value") -> dict:
     """Convert IDW/H3 ``[{h3_index, value}]`` records to a GeoJSON FeatureCollection.
 
@@ -341,8 +361,7 @@ def h3_to_geojson(results: list[dict], value_field: str = "value") -> dict:
     for res in cancellable(results, every=512):
         cell = res["h3_index"]
         val = res["value"]
-        boundary = h3.cell_to_boundary(cell)  # [(lat, lng), ...]
-        poly_coords = [(lng, lat) for lat, lng in boundary]  # shapely wants (lng, lat)
+        poly_coords = h3_cell_ring(cell)  # shapely wants (lng, lat); #763 AM-safe
         features.append({
             "type": "Feature",
             "geometry": mapping(Polygon(poly_coords)),

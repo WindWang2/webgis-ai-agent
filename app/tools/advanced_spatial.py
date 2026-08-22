@@ -110,7 +110,10 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
     def overlay_analysis(layer_a: Any, layer_b: Any, how: str = "intersection") -> dict:
         data_a = safe_parse_geojson(layer_a)
         data_b = safe_parse_geojson(layer_b)
-        res = SpatialAnalyzer.overlay(data_a.get("features", []), data_b.get("features", []), how)
+        # #765: forward the parsed FeatureCollection (not the bare features
+        # list) so a declared `crs` member survives the tool boundary — the
+        # deep operators (overlay_smart -> gdf_from_features) honor it.
+        res = SpatialAnalyzer.overlay(data_a, data_b, how)
         return res.to_llm_response()
 
     @tool(registry, name="attribute_filter",
@@ -140,10 +143,12 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         data_left = safe_parse_geojson(left_layer)
         data_right = safe_parse_geojson(right_layer)
         from app.services.spatial_analyzer import SpatialAnalyzer
+        # #765: forward the parsed FeatureCollections (not bare features
+        # lists) so declared `crs` members reach gdf_from_features (#599).
         res = SpatialAnalyzer.spatial_join(
-            data_left.get("features", []), 
-            data_right.get("features", []), 
-            join_type=join_type, 
+            data_left,
+            data_right,
+            join_type=join_type,
             predicate=predicate
         )
         return res.to_llm_response()
@@ -157,7 +162,10 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
     def clip_layer(target_layer: Any, mask_layer: Any) -> dict:
         target = safe_parse_geojson(target_layer)
         mask = safe_parse_geojson(mask_layer)
-        res = SpatialAnalyzer.clip(target.get("features", []), mask)
+        # #765: forward BOTH layers as parsed FeatureCollections — the
+        # target was previously stripped to its features list (dropping its
+        # declared `crs`) while the mask kept its FC (asymmetric).
+        res = SpatialAnalyzer.clip(target, mask)
         return res.to_llm_response()
 
     @tool(registry, name="spatial_aggregate",
@@ -174,12 +182,23 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
     def spatial_aggregate(points: Any, polygons: Any, count_field: str = "point_count") -> dict:
         pts = safe_parse_geojson(points)
         polys = safe_parse_geojson(polygons)
+        # #764: count_field names the OUTPUT count column, it is not a point
+        # attribute selector — forwarding it as value_field was inert for
+        # stats=['count'] (and would silently change the aggregated metric if
+        # the points carried a same-named field). Request only the count and
+        # rename the output column afterwards.
+        # #765: pass the parsed FeatureCollections (not bare features
+        # lists) so declared `crs` members reach to_utm_gdf.
         res = SpatialAnalyzer.aggregate(
-            pts.get("features", []), 
-            polys.get("features", []), 
-            stats=['count'], 
-            value_field=count_field
+            pts,
+            polys,
+            stats=['count'],
         )
+        if res.success and count_field and count_field != "count":
+            for feat in ((res.data or {}).get("features", []) if isinstance(res.data, dict) else []):
+                props = feat.setdefault("properties", {})
+                if "count" in props:
+                    props[count_field] = props.pop("count")
         return res.to_llm_response()
 
     @tool(registry, name="isochrone_network",
@@ -189,7 +208,9 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
     def isochrone_network(network_layer: Any, facilities: Any, travel_time: float = 15, mode: str = "walking") -> dict:
         net = safe_parse_geojson(network_layer)
         facs = safe_parse_geojson(facilities)
-        res = SpatialAnalyzer.isochrone_network(net.get("features", []), facs.get("features", []), travel_time, mode)
+        # #765: forward the parsed FeatureCollections so declared `crs`
+        # members reach to_utm_gdf (calculate_isochrones).
+        res = SpatialAnalyzer.isochrone_network(net, facs, travel_time, mode)
         return res.to_llm_response()
 
     @tool(registry, tier=2, domains=["statistics"], name="fishnet_grid",
@@ -238,7 +259,9 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         speed = speeds.get(mode.lower(), 5.0)
         distance_m = (speed * 1000) * (travel_time_min / 60.0)
         data = safe_parse_geojson(geojson)
-        res = SpatialAnalyzer.buffer(data.get("features", []), distance=distance_m, unit="m", dissolve=dissolve)
+        # #765: forward the parsed FeatureCollection so a declared `crs`
+        # member reaches buffer_smart's gdf_from_features.
+        res = SpatialAnalyzer.buffer(data, distance=distance_m, unit="m", dissolve=dissolve)
         return res.to_llm_response()
 
     @tool(registry, name="h3_binning",

@@ -167,9 +167,20 @@ def test_kde_surface_drops_cells_below_threshold():
 def test_kde_contours_ring_distribution_keeps_holes():
     """#707: a ring-shaped distribution (high-density band around a low-density
     center) must NOT paint the enclosed center at the band's level — contourf
-    hole boundaries are rebuilt with even-odd containment."""
+    hole boundaries are rebuilt with even-odd containment.
+
+    #762 update: the even-odd rebuild is now parent-scoped, so per-level
+    regions are exact density bands [level_i, level_i+1) and they TILE the
+    KDE support — the union of all features legitimately reaches ~100% of the
+    hull (the low-density center belongs to the lowest band). The old
+    `< 0.90` union-coverage criterion pinned the #762 bug (band parts inside
+    and adjacent to the hole silently dropped); the real #707 invariant is
+    that the center is painted ONLY at the lowest band's level, never at any
+    higher band's.
+    """
     import numpy as np
-    from shapely.geometry import shape
+    from shapely.geometry import shape, Point
+    from shapely.ops import unary_union
 
     rng = np.random.default_rng(707)
     # ~360 points on a ring of radius ~1.5 km around a park (empty center)
@@ -190,14 +201,133 @@ def test_kde_contours_ring_distribution_keeps_holes():
     fc = res.data
     assert fc["count"] > 0
 
-    from shapely.ops import unary_union
-    union = unary_union([shape(f["geometry"]) for f in fc["features"]])
-    hull = union.convex_hull
-    # The disc (hull) is ~pi*r^2 ≈ 7.1 km^2; the annulus excludes the low
-    # center (~pi*(r-bandwidth)^2). With the old hole-filling code the union
-    # covered ≈ the full hull (>0.95); with holes it must be well below.
-    coverage = union.area / hull.area
-    assert coverage < 0.90, (
-        f"#707 regression: contour union covers {coverage:.0%} of the hull — "
-        "enclosed low-density center is painted at band level"
+    center = Point(float(np.mean(lons)), float(np.mean(lats)))
+    band_values = sorted({f["properties"]["density_value"] for f in fc["features"]})
+    assert len(band_values) >= 2, "fixture degraded: need at least two bands"
+    lowest = band_values[0]
+    for v in band_values[1:]:
+        higher_band = unary_union(
+            [shape(f["geometry"]) for f in fc["features"]
+             if f["properties"]["density_value"] == v]
+        )
+        assert not higher_band.contains(center), (
+            f"#707 regression: enclosed low-density center painted at band level {v:.2e}"
+        )
+    lowest_band = unary_union(
+        [shape(f["geometry"]) for f in fc["features"]
+         if f["properties"]["density_value"] == lowest]
     )
+    # the center's near-zero density belongs to the lowest band only
+    assert lowest_band.contains(center)
+
+
+def test_kde_contours_ring_with_enclosed_core_keeps_island_bands_762():
+    """#762: a POI ring around an empty moat PLUS a denser enclosed core
+    cluster must keep the core's band polygons — the #707 even-odd rebuild
+    subtracted every hole from ALL outers, erasing even-depth islands that
+    lie geometrically inside a hole (the whole enclosed core).
+
+    Ground truth is band-parity: contourf's ``allsegs[i]`` carries the
+    boundary curves of band ``[levels[i], levels[i+1]]`` (it mixes the level-i
+    and level-i+1 curves — verified on a controlled Gaussian), so the emitted
+    level-``density_value`` region is that band. A probe with KDE density d
+    must be contained in exactly the band whose interval covers d. With the
+    bug, every band region lost its island part inside the moat hole.
+    """
+    import numpy as np
+    import geopandas as gpd
+    from shapely.geometry import shape, Point
+    from shapely.ops import unary_union
+
+    from app.lib.geo_processor.core import to_utm_gdf
+    from app.lib.geo_analysis._vector import extract_centroids
+    from app.lib.geo_analysis.density import _fit_kde, _cap_kde_points, _evaluate_kde
+
+    rng = np.random.default_rng(762)
+    n_ring, n_core = 1400, 300
+    # ring of POIs at R=1800 m (sigma 80) with a wide empty moat, plus a
+    # denser core cluster at r=150 m (sigma 40) enclosed by the moat.
+    a = rng.uniform(0, 2 * np.pi, n_ring)
+    r = 1800.0 + rng.normal(0, 80.0, n_ring)
+    ca = rng.uniform(0, 2 * np.pi, n_core)
+    cr = np.abs(rng.normal(0, 40.0, n_core))
+    px = np.concatenate([r * np.cos(a), cr * np.cos(ca)])
+    py = np.concatenate([r * np.sin(a), cr * np.sin(ca)])
+    points = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {},
+                "geometry": {"type": "Point", "coordinates": [116.0 + x / 111_320.0, y / 110_574.0]},
+            }
+            for x, y in zip(px, py)
+        ],
+    }
+
+    bandwidth = 150
+    res = kde_contours(points, levels=12, bandwidth=bandwidth)
+    assert res.success
+    features = res.data["features"]
+    assert features, "no contour features emitted"
+
+    # Band regions from the emitted features, in UTM (metres) for containment.
+    gdf, utm_crs = to_utm_gdf(points)
+    coords = extract_centroids(gdf)
+    kde, _bw = _fit_kde(_cap_kde_points(coords.T)[0], bandwidth)
+    band_values = sorted({f["properties"]["density_value"] for f in features})
+    band_regions = {}
+    for f in features:
+        v = f["properties"]["density_value"]
+        band_regions.setdefault(v, []).append(shape(f["geometry"]))
+    band_regions = {
+        v: gpd.GeoSeries([unary_union(g)], crs="EPSG:4326").to_crs(utm_crs).iloc[0]
+        for v, g in band_regions.items()
+    }
+
+    def density_at(x_m, y_m):
+        return float(_evaluate_kde(kde, np.array([[x_m], [y_m]]))[0])
+
+    def band_of(d):
+        """Return (value, region) of the band covering density d, or None when
+        d is not comfortably inside any band (polygonization fuzz at edges)."""
+        for i, v in enumerate(band_values):
+            nxt = band_values[i + 1] if i + 1 < len(band_values) else float("inf")
+            width = nxt - v if np.isfinite(nxt) else max(band_values[-1] - band_values[-2], 1e-30)
+            if d - v > 0.25 * width and (nxt - d) > 0.25 * width:
+                return v, band_regions[v]
+        return None
+
+    core_center = coords[n_ring:].mean(axis=0)
+    # Walk a radial transect from the enclosed core center out past the core
+    # disc edge into the moat. Every probe whose KDE density sits comfortably
+    # inside a band MUST be contained in that band's emitted region — with the
+    # #762 bug the low bands (whose allsegs mix ring and core curves) lose
+    # their core parts, so probes at r≈300-360 m (density in the two lowest
+    # non-zero bands) fall out of every region.
+    checked = 0
+    for radius in range(0, 460, 5):
+        x_m = core_center[0] + radius
+        d = density_at(x_m, core_center[1])
+        hit = band_of(d)
+        if hit is None:
+            continue
+        v, region = hit
+        assert region.contains(Point(x_m, core_center[1])), (
+            f"#762 regression: transect r={radius} m (KDE density {d:.3e}) belongs "
+            f"to band starting at {v:.2e} but the emitted level region excludes it"
+        )
+        checked += 1
+    assert checked >= 8, f"fixture degraded: only {checked} comfortable probes on the transect"
+    # 3. a moat point stays excluded from every band above the lowest one
+    import math
+    ring_center = coords[:n_ring].mean(axis=0)
+    moat_x = ring_center[0] + 900.0 * math.cos(0.3)
+    moat_y = ring_center[1] + 900.0 * math.sin(0.3)
+    d_moat = density_at(moat_x, moat_y)
+    assert d_moat < band_values[1], "fixture degraded: moat is not low-density"
+    for v, region in band_regions.items():
+        if v > d_moat:
+            assert not region.contains(Point(moat_x, moat_y)), (
+                f"#762: moat point (density {d_moat:.3e}) painted into band {v:.2e}"
+            )

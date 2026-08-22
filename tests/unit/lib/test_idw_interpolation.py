@@ -290,3 +290,31 @@ def test_idw_resource_guard_rejects_explosive_request():
     assert err.estimated_cells > 1_500_000
     assert len(err.suggested_resolutions) >= 1
     assert all(s < 10 for s in err.suggested_resolutions)
+
+
+def test_h3_to_geojson_antimeridian_cell_true_span_763():
+    """#763: an H3 cell straddling the antimeridian must convert to a polygon
+    of its true ~0.003 deg longitude span (negative lngs unwrapped past +180),
+    not a ring whose edges run through lng 0 (a ~360 deg-wide polygon). A
+    control cell away from +-180 keeps lngs inside [-180, 180]."""
+    from shapely.geometry import shape
+
+    from app.lib.geo_analysis.interpolation import h3_to_geojson
+
+    am_cell = h3.latlng_to_cell(1.0, 179.9995, 9)
+    fc = h3_to_geojson([{"h3_index": am_cell, "value": 1.5}])
+    assert len(fc["features"]) == 1
+    geom = shape(fc["features"][0]["geometry"])
+    minx, _miny, maxx, _maxy = geom.bounds
+    assert maxx - minx < 0.01, (
+        f"#763 regression: AM cell bounds width {maxx - minx:.5f} deg — ring joined through lng 0"
+    )
+    assert fc["features"][0]["properties"]["h3_index"] == am_cell
+    assert fc["features"][0]["properties"]["value"] == 1.5
+
+    ctrl_cell = h3.latlng_to_cell(1.0, 178.9995, 9)
+    ctrl = h3_to_geojson([{"h3_index": ctrl_cell, "value": 1.5}])
+    cgeom = shape(ctrl["features"][0]["geometry"])
+    cminx, _cminy, cmaxx, _cmaxy = cgeom.bounds
+    assert -180.0 <= cminx and cmaxx <= 180.0, "control cell must not be unwrapped"
+    assert cmaxx - cminx < 0.01

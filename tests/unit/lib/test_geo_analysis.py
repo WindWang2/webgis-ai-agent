@@ -124,6 +124,52 @@ def test_h3_binning_honors_declared_crs_member(sample_points):
     assert res_bins == ref_bins
 
 
+def test_h3_binning_antimeridian_cell_true_span_763():
+    """#763: an H3 cell straddling the antimeridian must emit a polygon of its
+    true ~0.003° longitude span (negative lngs unwrapped past +180), not a
+    ring whose edges run through lng 0 — that produced a ~360°-wide,
+    ~160,000x area-bloated polygon. A control cell away from ±180 is unchanged
+    (lngs stay within [-180, 180])."""
+    import h3
+    from shapely.geometry import shape
+
+    am_fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {"v": 1},
+             "geometry": {"type": "Point", "coordinates": [179.9995, 1.0]}}
+        ],
+    }
+    res = h3_binning(am_fc, resolution=9)
+    assert res.success, res.summary
+    geom = shape(res.data["features"][0]["geometry"])
+    minx, _miny, maxx, _maxy = geom.bounds
+    # true res-9 span is ~0.003°; the bug produced a ~359.999° bounds width
+    assert maxx - minx < 0.01, (
+        f"#763 regression: AM cell bounds width {maxx - minx:.5f} deg — ring joined through lng 0"
+    )
+    assert geom.area < 2.0e-5, (
+        f"#763 regression: AM cell area {geom.area:.5e} deg^2 (true res-9 hex ~6.3e-6)"
+    )
+
+    # control cell one degree away: geometry unchanged, lngs inside [-180, 180]
+    ctrl_fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {"v": 1},
+             "geometry": {"type": "Point", "coordinates": [178.9995, 1.0]}}
+        ],
+    }
+    ctrl = h3_binning(ctrl_fc, resolution=9)
+    assert ctrl.success
+    cgeom = shape(ctrl.data["features"][0]["geometry"])
+    cminx, _cminy, cmaxx, _cmaxy = cgeom.bounds
+    assert -180.0 <= cminx and cmaxx <= 180.0, "control cell must not be unwrapped"
+    assert cmaxx - cminx < 0.01
+    # the AM cell keeps the control's true area (same resolution, same latitude)
+    assert geom.area == pytest.approx(cgeom.area, rel=0.05)
+
+
 def test_h3_lisa():
     pytest.importorskip("esda", exc_type=ImportError)
     pytest.importorskip("libpysal", exc_type=ImportError)

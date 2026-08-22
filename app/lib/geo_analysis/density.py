@@ -403,14 +403,26 @@ def kde_contours(
             continue
         level_polys.sort(key=lambda p: p.area, reverse=True)
         outers, inners = [], []
+        # #762: parent of each hole = its smallest containing polygon. A global
+        # `union(outers).difference(union(inners))` subtracts every hole from
+        # ALL outers, erasing even-depth islands geometrically inside a hole
+        # (an enclosed secondary cluster inside a moat) — even-odd requires
+        # subtracting each inner only from its immediate parent.
+        inner_parent: dict[int, Any] = {}
         for idx, poly in enumerate(level_polys):
-            depth = sum(1 for prev in level_polys[:idx] if prev.contains(poly))
-            (outers if depth % 2 == 0 else inners).append(poly)
+            containers = [prev for prev in level_polys[:idx] if prev.contains(poly)]
+            depth = len(containers)
+            if depth % 2 == 0:
+                outers.append(poly)
+            else:
+                inners.append(poly)
+                inner_parent[id(poly)] = min(containers, key=lambda p: p.area)
         if not outers:
             continue
-        region = unary_union(outers)
-        if inners:
-            region = region.difference(unary_union(inners))
+        region = unary_union([
+            o.difference(unary_union([i for i in inners if inner_parent[id(i)] is o]))
+            for o in outers
+        ])
         for geom in getattr(region, "geoms", [region]):
             if not geom.is_empty and getattr(geom, "area", 0) > 0:
                 raw_polys.append((geom, val, i))
