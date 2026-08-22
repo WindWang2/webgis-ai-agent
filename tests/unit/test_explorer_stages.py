@@ -604,3 +604,82 @@ def test_decode_fetch_payload_legacy_hex_still_supported_775():
   assert decode_fetch_payload(legacy) == "中文".encode("utf-8")
   modern = {"data": "5Lit5paH", "codec": "base64", "content_type": "text/csv", "encoding": "utf-8"}
   assert decode_fetch_payload(modern) == "中文".encode("utf-8")
+
+
+# ── #776: explorer 产出桥接进 chat session 命名空间 ──────────────────────
+
+class _FakeBridgeStore:
+    """get_session_store() 的最小替身：explorer 命名空间预置 geocoded ref，
+    记录 store/set_alias 调用供断言。"""
+
+    def __init__(self, payload):
+        self._explorer_payload = payload
+        self.stored: list = []
+        self.aliases: list = []
+
+    async def get(self, session_id, ref_id):
+        if session_id.startswith("explorer:") and ref_id == "geocoded-ref-1":
+            return self._explorer_payload
+        return None
+
+    async def store(self, session_id, data, prefix=""):
+        self.stored.append((session_id, prefix, data))
+        return "session-ref-42"
+
+    async def set_alias(self, session_id, ref_id, alias):
+        self.aliases.append((session_id, ref_id, alias))
+
+
+@pytest.mark.asyncio
+async def test_validate_stage_bridges_geocoded_rows_into_chat_session(monkeypatch):
+    """#776: validate 段把 explorer 命名空间的 geocoded 结果存入 chat session
+    + 登记 alias —— 会话侧 ref:/前端/agent 从此可消费（此前零消费者）。"""
+    from app.services.explorer import validate_stage as vs
+    import app.services.session_data_protocol as protocol
+
+    payload = {"rows": [{"addr": "a", "_lat": 1.0, "_lon": 2.0}], "summary": {"total": 1}}
+    fake = _FakeBridgeStore(payload)
+    monkeypatch.setattr(protocol, "get_session_store", lambda: fake)
+
+    res = await vs.run_validate_stage(
+        "exp_sess-1_100",
+        geocoded_ref_id="geocoded-ref-1",
+        total_rows=1,
+        session_id="sess-1",
+    )
+
+    assert res.success
+    assert res.data["session_ref_id"] == "session-ref-42"
+    assert res.data["session_ref_alias"] == "explorer:exp_sess-1_100"
+    # 同一 payload 存入 chat session 命名空间
+    assert fake.stored == [("sess-1", "explorer_geocoded", payload)]
+    assert fake.aliases == [("sess-1", "session-ref-42", "explorer:exp_sess-1_100")]
+
+
+@pytest.mark.asyncio
+async def test_validate_stage_without_session_stays_task_scoped():
+    """#776 对照：无 chat session 上下文（匿名任务）时不桥接，行为不变。"""
+    from app.services.explorer.validate_stage import run_validate_stage
+
+    res = await run_validate_stage("exp_x_1", geocoded_ref_id="r", total_rows=3)
+    assert res.success
+    assert "session_ref_id" not in res.data
+    assert res.data["geocoded_ref_id"] == "r"
+
+
+@pytest.mark.asyncio
+async def test_validate_stage_bridge_failure_is_not_fatal(monkeypatch):
+    """#776: 桥接异常（如 store 故障）不得判探索失败 —— 只影响可消费性。"""
+    from app.services.explorer import validate_stage as vs
+    import app.services.session_data_protocol as protocol
+
+    class _BrokenStore:
+        async def get(self, *a, **kw):
+            raise RuntimeError("store down")
+
+    monkeypatch.setattr(protocol, "get_session_store", lambda: _BrokenStore())
+    res = await vs.run_validate_stage(
+        "exp_s_1", geocoded_ref_id="r", total_rows=1, session_id="s"
+    )
+    assert res.success
+    assert "session_ref_id" not in res.data

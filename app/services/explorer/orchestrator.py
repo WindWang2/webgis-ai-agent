@@ -283,7 +283,10 @@ class ExplorerOrchestrator:
         if mode == "in_process":
             from app.services.explorer.pipeline import ExplorerPipeline
             pipeline = ExplorerPipeline()
-            res = await pipeline.run_in_process(task_id, query, context, adapter=adapter)
+            # #776: in-process 路径同样透传 session_id 以做会话桥接。
+            res = await pipeline.run_in_process(
+                task_id, query, context, session_id=session_id, adapter=adapter
+            )
             logger.info(f"[Explorer] Finished in-process task {task_id} (success={res.success})")
             return task_id
 
@@ -297,7 +300,9 @@ class ExplorerOrchestrator:
         )
 
         task_chain = chain(
-            explorer_discover_task.s(task_id, query, context.model_dump()),
+            # #776: session_id 随链下传 —— validate 段把 geocoded 结果
+            # 桥接进 chat session 命名空间（此前任务命名空间零消费者）。
+            explorer_discover_task.s(task_id, query, context.model_dump(), session_id),
             explorer_fetch_task.s(),
             explorer_parse_task.s(),
             explorer_geocode_task.s(),
@@ -514,11 +519,20 @@ class ExplorerOrchestrator:
                 # 发送最终事件 — 成功即整链完成（validate）；失败时点名失败
                 # 的阶段，而不是硬编码 validate。终态只发这一条事件（上方
                 # 的常规发射跳过终态，避免重复的 completed/failed）。
+                # #776: 成功终态携带会话桥接描述（session_ref_id/alias/
+                # total_rows）—— 前端/agent 据此即可消费探索产出。
+                final_context: dict = {"final_status": current_state}
+                if current_state == "SUCCESS":
+                    final_info = status.get("result")
+                    if isinstance(final_info, dict):
+                        for key in ("session_ref_id", "session_ref_alias", "total_rows"):
+                            if final_info.get(key):
+                                final_context[key] = final_info[key]
                 final_event = ExplorerPerceptionEvent(
                     stage="validate" if current_state == "SUCCESS" else current_stage,
                     task_id=task_id,
                     status="completed" if current_state == "SUCCESS" else "failed",
-                    context={"final_status": current_state},
+                    context=final_context,
                 )
                 yield sse_event("explorer_progress", final_event)
                 break

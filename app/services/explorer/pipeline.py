@@ -112,6 +112,8 @@ class ExplorerPipelineRunner:
                 total_rows=geo_stage_res.summary.total,
                 fetch_errors=fetch_errors,
                 on_progress=lambda p: on_progress("validate", p) if on_progress else None,
+                # #776: in-process 路径同样桥接进 chat session 命名空间。
+                session_id=session_id,
             )
 
             return validate_res
@@ -128,6 +130,7 @@ class ExplorerPipeline:
         task_id: str,
         query: str,
         context: SearchContext,
+        session_id: str = "",
         adapter: Optional[Any] = None,
         load_ref: Optional[Callable[[str], Any]] = None,
         store_ref: Optional[Callable[[dict, str], str]] = None,
@@ -137,6 +140,7 @@ class ExplorerPipeline:
             task_id=task_id,
             query=query,
             context=context,
+            session_id=session_id,
             adapter=adapter,
             load_ref=load_ref,
             store_ref=store_ref,

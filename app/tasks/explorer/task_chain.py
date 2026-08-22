@@ -59,8 +59,13 @@ def _load_ref(ref_id: str, task_id: str):
 
 
 @celery_app.task(bind=True, max_retries=2, soft_time_limit=30, time_limit=30)
-def explorer_discover_task(self, task_id: str, query: str, context: dict):
-    """数据发现阶段 — thin Celery adapter."""
+def explorer_discover_task(self, task_id: str, query: str, context: dict, session_id: str = ""):
+    """数据发现阶段 — thin Celery adapter.
+
+    #776: ``session_id`` 随首段入链并随每段返回值下传 —— validate 段据此
+    把 geocoded 结果桥接进 chat session 命名空间（此前产出只存在
+    ``explorer:{task_id}`` 命名空间，会话侧零消费者）。
+    """
     from app.services.explorer.discover_stage import run_discover_stage
     logger.info(f"[Explorer:{task_id}] Starting discover stage")
 
@@ -71,6 +76,7 @@ def explorer_discover_task(self, task_id: str, query: str, context: dict):
         res = _run_async(run_discover_stage(
             task_id, query, context, on_progress=_on_progress
         ))
+        res.data["session_id"] = session_id
         return res.data
     except Exception as e:
         logger.error(f"[Explorer:{task_id}] Discover failed: {e}")
@@ -192,6 +198,8 @@ def explorer_geocode_task(self, prev_result: dict):
         "deadline_exceeded": result.summary.deadline_exceeded,
         # #774: keep the fetch stage's per-source failures riding along.
         "fetch_errors": prev_result.get("fetch_errors", []),
+        # #776: chat session 上下文随链下传到 validate 段做会话桥接。
+        "session_id": prev_result.get("session_id", ""),
     }
 
 
@@ -211,6 +219,9 @@ def explorer_validate_task(self, prev_result: dict):
         total_rows=prev_result.get("total_rows", 0),
         fetch_errors=prev_result.get("fetch_errors", []),
         on_progress=_on_progress,
+        # #776: 桥接进 chat session 命名空间（session_ref_id/alias 随
+        # validate 返回值进入 /explorer/status 与 SSE 终态）。
+        session_id=prev_result.get("session_id", ""),
     ))
     return res.data
 

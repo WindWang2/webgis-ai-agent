@@ -170,8 +170,9 @@ def _make_stub_chain_tasks():
     n = _stub_seq["n"]
 
     @celery_app.task(bind=True, name=f"stub.explorer.{n}.discover")
-    def stub_discover(self, task_id, query, context):
-        return {"task_id": task_id, "selected_sources": []}
+    def stub_discover(self, task_id, query, context, session_id=""):
+        # #776: 真实 discover 任务多收一个 session_id（随链下传做会话桥接）
+        return {"task_id": task_id, "selected_sources": [], "session_id": session_id}
 
     @celery_app.task(bind=True, name=f"stub.explorer.{n}.fetch")
     def stub_fetch(self, prev):
