@@ -212,6 +212,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
             resolve_map_request_intent,
         )
         from app.services.gis_harness.planner import MapProductPlanner
+        from app.services.gis_harness.recipes import FallbackDecision
         from app.services.mapspec_store import mapspec_store
         from app.services.spatial_meta_profiler import profile_from_descriptor
 
@@ -541,6 +542,53 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 step.status = "done"
                 step.bound_ref = primary_ref or ""
         plan.completeness = planner.assess_completeness(plan)
+
+        # audit #835: 声明式 NEEDS_ADMIN_UNITS 回退可达化 —— 行政面未落地
+        # （fill 计划 primary 未绑定）而点层已绑时，按 recipe 声明记录
+        # FallbackDecision 并把点层计划条目升为 primary（此前声明是死配置，
+        # 主层不回退也不记原因，completeness 永远 missing）。
+        _primary_planned = next(
+            (ly for ly in plan.map_layers if ly.role == "primary" and ly.enabled),
+            None,
+        )
+        if (
+            _primary_planned is not None
+            and not _primary_planned.layer_id
+            and _primary_planned.layer_type == "fill"
+            and any(b.get("layer_type") == "circle" for b in bound_layers)
+        ):
+            _recipe_decl = planner.recipes.get(plan.recipe_id)
+            _fb_decl = next(
+                (fb for fb in (_recipe_decl.fallbacks if _recipe_decl else [])
+                 if fb.reason_code == "NEEDS_ADMIN_UNITS"),
+                None,
+            )
+            if _fb_decl is not None:
+                _point_planned = next(
+                    (ly for ly in plan.map_layers
+                     if ly.enabled and ly.layer_id
+                     and ly.layer_type == "circle" and ly.role != "primary"),
+                    None,
+                )
+                if _point_planned is not None:
+                    _primary_planned.role = "secondary"
+                    _primary_planned.note = (
+                        (_primary_planned.note + "; " if _primary_planned.note else "")
+                        + "demoted: NEEDS_ADMIN_UNITS (no admin face materialized)"
+                    )
+                    _point_planned.role = "primary"
+                    plan.fallbacks.append(FallbackDecision(
+                        from_element=_primary_planned.cartography,
+                        to_element=_fb_decl.use or "point_distribution",
+                        reason_code="NEEDS_ADMIN_UNITS",
+                        evidence={
+                            "bound_layer_types": sorted({
+                                b.get("layer_type") for b in bound_layers if b.get("layer_type")
+                            }),
+                            "unbound_primary": _primary_planned.cartography,
+                        },
+                    ))
+                    plan.completeness = planner.assess_completeness(plan)
 
         out.update({
             "recipe_id": plan.recipe_id,

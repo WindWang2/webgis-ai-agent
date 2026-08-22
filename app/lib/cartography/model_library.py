@@ -146,6 +146,9 @@ class MapModel(BaseModel):
     geometry_kinds: List[str] = Field(default_factory=list)  # point/line/polygon/raster
     maplibre_layer_type: str                                  # Style Spec 枚举内
     classification: ClassificationId = "none"
+    # audit #833: seed 构造参数 default_class_count 此前被 extra=ignore 静默
+    # 丢弃（administrative_choropleth / aggregate_grid 传了 5 却不可见）。
+    default_class_count: Optional[int] = None
     color_scheme_kind: Literal["sequential", "diverging", "qualitative",
                                "perceptual_uniform", "none"] = "none"
     default_palette: str = ""

@@ -130,6 +130,9 @@ _CITY_RE = re.compile(
 _DISTRICT_RE = re.compile(r"([\u4e00-\u9fa5]{2,6}(?:区|县|旗))")
 # 「各/每个 + 区县」等分组表述不是 scope，是 group_by 信号
 _GROUPBY_RE = re.compile(r"(各|每个?|按)(?:个)?(?:区|县|市|街道|乡镇|镇|村)", re.I)
+# audit #835: 疑问限定词 —— 「哪个区/哪些县」是提问不是地名，不得捕获为
+# district scope（曾把 scope.name 钉成字面「哪个区」并渗入产品标题）。
+_INTERROGATIVE_RE = re.compile(r"(哪个|哪些|哪几|什么)")
 
 _POINT_SUBJECTS = (
     "小学", "中学", "大学", "学校", "医院", "诊所", "药店", "银行", "超市",
@@ -218,7 +221,11 @@ def _match_scope(query: str) -> ScopeIntent:
     if m:
         captured = m.group(1)
         prefix = query[: m.start() + 2]
-        if not _GROUPBY_RE.search(prefix) and not _GROUPBY_RE.search(captured):
+        if (
+            not _GROUPBY_RE.search(prefix)
+            and not _GROUPBY_RE.search(captured)
+            and not _INTERROGATIVE_RE.search(captured)   # audit #835
+        ):
             return ScopeIntent(name=captured, level="district")
     return ScopeIntent()
 
@@ -514,6 +521,12 @@ def merge_intent_hints(
                     merged.cartography_intents = carto
                     merged.measure = measure
                     merged.group_by = group_by
+                    # audit #834: output_intents（含 table/chart 等）与几何
+                    # 期望同样按新任务重算 —— 此前 _outputs 被丢弃，旧任务的
+                    # 输出清单污染 plan.statistics/charts（#780 的残留面）。
+                    merged.output_intents = _outputs
+                    merged.geometry_expectation = _entity_geometry(
+                        merged.subject, value)
             elif getattr(merged, key) != value:
                 setattr(merged, key, value)
                 merged.hint_applied.append(f"{key}->{value}")

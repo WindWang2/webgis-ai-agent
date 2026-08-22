@@ -146,6 +146,22 @@ _CARTOGRAPHY_LAYER_TYPE = {
     "aggregate_grid": "fill",
 }
 
+# audit #832: 几何多态表达 —— 模型库对这些模型声明了多种 geometry_kinds，
+# 计划层的 layer_type 必须跟随真实数据几何，否则授权层（converter 按几何
+# 推断 circle/line/fill）永远绑不上计划层，completeness 永远 missing。
+_GEOMETRY_LAYER_TYPES: Dict[str, Dict[str, str]] = {
+    "categorical_thematic": {"point": "circle", "polygon": "fill", "line": "line"},
+}
+
+
+def _geometry_aware_layer_type(cartography: str, planned_type: str, profile_geom: str) -> str:
+    """Resolve a geometry-polymorphic cartography's layer type from real data."""
+    table = _GEOMETRY_LAYER_TYPES.get(cartography)
+    if not table:
+        return planned_type
+    target = table.get(profile_geom)
+    return target or planned_type
+
 
 class MapProductPlanner:
     """确定性产品规划器（纯函数式，无 LLM 依赖、无 I/O）。"""
@@ -324,6 +340,18 @@ class MapProductPlanner:
         if isinstance(geom_types, list) and geom_types:
             from app.services.gis_harness.recipes import _geometry_category
             profile_geom = _geometry_category(geom_types)
+
+        # audit #832: 几何多态表达的 layer_type 跟随真实数据几何 ——
+        # categorical_thematic 计划为 fill 而点数据授权 circle 时，primary
+        # 永不绑定、completeness 永远 missing（#784 修复的残留面）。
+        for layer in finalized.map_layers:
+            resolved = _geometry_aware_layer_type(
+                layer.cartography, layer.layer_type, profile_geom)
+            if resolved != layer.layer_type:
+                layer.note = (
+                    layer.note + "; " if layer.note else ""
+                ) + f"layer_type {layer.layer_type}->{resolved} by profile geometry"
+                layer.layer_type = resolved
 
         # 图层级裁决：热力/格网主层被禁 → 降级 + （几何为点时）点层提升。
         # 两种主表达各持独立 recorded 标志：混合模板（热力+格网）同被禁时
