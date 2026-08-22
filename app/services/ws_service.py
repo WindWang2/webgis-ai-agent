@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 from fastapi import WebSocket
 
 logger = logging.getLogger(__name__)
@@ -15,8 +15,10 @@ class ConnectionManager:
         # session_id -> list of active websockets
         self.active_connections: Dict[str, List[WebSocket]] = {}
 
-    async def connect(self, websocket: WebSocket, session_id: str):
-        await websocket.accept()
+    async def connect(self, websocket: WebSocket, session_id: str, subprotocol: Optional[str] = None):
+        # #757: 若客户端以 subprotocol 传 token，accept 必须回显选中的
+        # subprotocol，否则浏览器会按约定直接断开连接。
+        await websocket.accept(subprotocol) if subprotocol else await websocket.accept()
         if session_id not in self.active_connections:
             self.active_connections[session_id] = []
         self.active_connections[session_id].append(websocket)

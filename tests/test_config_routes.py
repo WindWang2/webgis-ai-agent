@@ -326,3 +326,40 @@ async def test_config_rag_test_failure_returns_502(app_and_client, monkeypatch):
     )
     assert resp.status_code == 502
     assert "index.faiss" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_config_skills_upload_audit_logs_real_actor(
+    app_and_client, tmp_path, monkeypatch, caplog
+):
+    """#759: RCE 等价操作的审计行必须记录真实 actor（此前读不存在的键恒为 unknown）。"""
+    import logging
+    from types import SimpleNamespace
+    from app.core.auth import require_admin
+
+    app, client = app_and_client
+
+    async def _fake_admin():
+        # require_admin 真实返回形状：user_id + user ORM 对象
+        return {
+            "user_id": "admin-42",
+            "role": "admin",
+            "org_id": None,
+            "user": SimpleNamespace(username="alice"),
+        }
+
+    app.dependency_overrides[require_admin] = _fake_admin
+    # skills_dir 是路由内相对路径 —— 切到临时目录避免污染仓库
+    monkeypatch.chdir(tmp_path)
+
+    with caplog.at_level(logging.WARNING, logger="app.api.routes.config"):
+        resp = await client.post(
+            "/api/v1/config/skills/upload",
+            files={"file": ("audit_probe.py", b"def run():\n    return 1\n", "text/python")},
+        )
+    assert resp.status_code == 200, resp.text
+    audit = [r for r in caplog.records if "Skill uploaded by" in r.getMessage()]
+    assert audit, "audit warning must fire"
+    msg = audit[0].getMessage()
+    assert "admin-42" in msg
+    assert "Skill uploaded by unknown" not in msg

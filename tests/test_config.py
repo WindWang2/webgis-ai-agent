@@ -82,3 +82,28 @@ def test_database_url():
     assert parsed.scheme in {"sqlite", "postgresql", "postgres"}, (
         f"unsupported DATABASE_URL scheme: {parsed.scheme!r}"
     )
+
+
+def test_production_rejects_auth_disabled():
+    """#756: AUTH_DISABLED=true 是完整认证旁路（含 require_admin），生产必须 fail-loud。"""
+    import pytest
+    with pytest.raises(RuntimeError, match="AUTH_DISABLED"):
+        Settings(
+            _env_file=None,
+            ENV="production",
+            JWT_SECRET_KEY="x" * 32,
+            LLM_API_KEY="sk-test-key-for-auth-disabled-test",
+            DATABASE_URL="postgresql://user:pass@localhost/db",
+            AUTH_DISABLED=True,
+        )
+
+
+def test_dev_allows_auth_disabled():
+    """#756: 开发/测试模式仍允许免登录（本地测试便利）。"""
+    s = Settings(
+        _env_file=None,
+        ENV="development",
+        JWT_SECRET_KEY="x" * 32,
+        AUTH_DISABLED=True,
+    )
+    assert s.AUTH_DISABLED is True

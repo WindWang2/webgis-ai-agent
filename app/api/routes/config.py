@@ -286,7 +286,11 @@ async def upload_skill(
     logger.warning(
         "Skill uploaded by %s: %s — executes in-process via exec_module "
         "(RCE-equivalent if malicious; deny-list is defense-in-depth only)",
-        _user.get("username") or _user.get("sub", "unknown"),
+        # #759: 依赖返回形如 {user_id, role, org_id, user: User} —— 此前读
+        # username/sub 两个不存在的键，审计行永远是 "unknown"。
+        _user.get("user_id")
+        or getattr(_user.get("user"), "username", None)
+        or "unknown",
         os.path.basename(file_path),
     )
     return {

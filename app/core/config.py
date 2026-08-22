@@ -228,6 +228,19 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def _validate_auth_disabled(self) -> "Settings":
+        """审计 #756：AUTH_DISABLED=true 是完整认证旁路（含 require_admin），
+        必须像 JWT_SECRET_KEY / CORS['*'] / SQLite-in-prod 一样 fail-loud。
+        一个从本地测试复制到生产的 .env 不应静默打开所有端点。"""
+        if self.is_production() and self.AUTH_DISABLED:
+            raise RuntimeError(
+                "AUTH_DISABLED=true is not allowed in production — it disables all "
+                "authentication including admin endpoints. Remove it from the "
+                "environment."
+            )
+        return self
+
+    @model_validator(mode="after")
     def _validate_external_urls(self) -> "Settings":
         """验证外部 URL 配置，防止 SSRF 攻击。
 

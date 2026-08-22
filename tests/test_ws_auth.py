@@ -13,7 +13,8 @@ from app.api.routes.ws import router as ws_router
 from app.core.auth import create_access_token
 
 
-def _make_app_with_session(session_id: str = "sess-valid", user_id: str = "user-123"):
+def _make_app_with_session(session_id: str = "sess-valid", user_id: str = "user-123",
+                           user_token_version: int = 0):
     """Create a FastAPI app + temp DB with a user and owned session.
 
     Uses sync sqlite3 for setup (avoids event loop conflicts with TestClient).
@@ -47,8 +48,8 @@ def _make_app_with_session(session_id: str = "sess-valid", user_id: str = "user-
         reasoning_content TEXT, tool_calls TEXT, tool_call_id TEXT,
         tool_result TEXT, created_at TEXT
     )""")
-    conn.execute("INSERT INTO users (id, username, email, role, is_active, token_version) VALUES (?, ?, ?, ?, 1, 0)",
-                 (user_id, "testuser", "test@example.com", "viewer"))
+    conn.execute("INSERT INTO users (id, username, email, role, is_active, token_version) VALUES (?, ?, ?, ?, 1, ?)",
+                 (user_id, "testuser", "test@example.com", "viewer", user_token_version))
     conn.execute("INSERT INTO conversations (id, user_id, title) VALUES (?, ?, ?)",
                  (session_id, user_id, "Test"))
     conn.commit()
@@ -140,3 +141,40 @@ def test_ws_connect_with_nonexistent_session_rejected():
         with client.websocket_connect(f"/api/v1/ws/nonexistent?token={valid_token}"):
             pass
     assert exc_info.value.code == 4003
+
+
+def test_ws_connect_via_subprotocol_token_accepted():
+    """#757: token 走 Sec-WebSocket-Protocol（不落 URL/访问日志）也能通过认证。"""
+    app = _make_app_with_session()
+    client = TestClient(app)
+    valid_token = create_access_token({"sub": "user-123", "role": "viewer"})
+    with client.websocket_connect(
+        "/api/v1/ws/sess-valid", subprotocols=["bearer", valid_token]
+    ) as websocket:
+        assert websocket.accepted_subprotocol == "bearer"
+        websocket.send_json({"event": "ping"})
+        resp = websocket.receive_json()
+        assert resp == {"event": "pong"}
+
+
+def test_ws_connect_with_revoked_token_version_rejected():
+    """#758: logout（token_version bump）后旧 access token 不得继续开 WS。"""
+    # user-123 已 bump 到 ver=1（如 logout-everywhere）；token 仍是旧 ver=0
+    app = _make_app_with_session(user_token_version=1)
+    stale_token = create_access_token({"sub": "user-123", "role": "viewer"}, token_version=0)
+    client = TestClient(app)
+    # 拒绝发生在 accept 之前 —— TestClient 在握手处即抛 WebSocketDisconnect(4001)
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect(f"/api/v1/ws/sess-valid?token={stale_token}"):
+            pass
+    assert exc_info.value.code == 4001
+
+
+def test_ws_connect_with_current_token_version_accepted():
+    """#758 对照：ver 与 DB 一致的 token 正常连接。"""
+    app = _make_app_with_session(user_token_version=2)
+    fresh_token = create_access_token({"sub": "user-123", "role": "viewer"}, token_version=2)
+    client = TestClient(app)
+    with client.websocket_connect(f"/api/v1/ws/sess-valid?token={fresh_token}") as websocket:
+        websocket.send_json({"event": "ping"})
+        assert websocket.receive_json() == {"event": "pong"}
