@@ -70,7 +70,7 @@ def test_log_tool_decision_accepts_step_n_parameter(engine, tmp_path, monkeypatc
     from app.services.tool_dispatch_service import ToolDispatchResult
     captured: list = []
     monkeypatch.setattr(decision_log, "log_tool_decision",
-                        lambda rec: captured.append(rec))
+                        lambda rec, **_kw: captured.append(rec))
     # 直接调用 _log_tool_decision，传入 step_n=2
     engine._log_tool_decision(
         session_id="sess-T1",

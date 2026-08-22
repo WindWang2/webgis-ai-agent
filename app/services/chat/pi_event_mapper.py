@@ -6,6 +6,7 @@ is injected as a callable by ``PiBridge.stream_prompt``).
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Callable, Optional
 
@@ -44,25 +45,51 @@ def _extract_error_text(result: Any) -> str:
     return _sanitize_for_client(raw)
 
 
+def _text_from_content_blocks(content: Any) -> str:
+    """Join text out of an AssistantMessage ``content`` value (string or block list)."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for seg in content:
+            if isinstance(seg, dict) and "text" in seg:
+                parts.append(str(seg.get("text", "")))
+        return "".join(parts)
+    return ""
+
+
 def _extract_text_from_event(event: dict) -> str:
-    """Extract text content from an AgentSessionEvent."""
+    """Extract the AUTHORITATIVE latest assistant text for a turn (audit #816).
+
+    Vendor protocol (vendor/pi/packages/agent/src/agent-loop.ts:326-343,
+    agent/src/types.ts): ``message_update.message`` is the ACCUMULATED partial
+    snapshot (appending it per event duplicated content O(n²)); ``agent_end``
+    carries the final ``messages`` list. Both entry points feed
+    ``PiBridge.prompt``'s drain, which keeps only the latest value instead of
+    concatenating snapshots.
+    """
     event_type = event.get("type", "")
 
     if event_type == "message_update":
         msg = event.get("message", {})
-        content = msg.get("content", "")
-        if isinstance(content, str):
-            return content
-        elif isinstance(content, list):
-            return "".join(
-                seg.get("text", "") for seg in content if isinstance(seg, dict)
-            )
+        if isinstance(msg, dict):
+            return _text_from_content_blocks(msg.get("content", ""))
+        return ""
 
-    elif event_type == "agent_end":
+    if event_type == "agent_end":
+        messages = event.get("messages")
+        if isinstance(messages, list):
+            # Final answer = last assistant message carrying text.
+            for m in reversed(messages):
+                if isinstance(m, dict) and m.get("role") == "assistant":
+                    text = _text_from_content_blocks(m.get("content", ""))
+                    if text:
+                        return text
+            return ""
+        # Legacy/no-messages shape: fall back to a single message member.
         msg = event.get("message", {})
-        content = msg.get("content", "")
-        if isinstance(content, str):
-            return content
+        if isinstance(msg, dict):
+            return _text_from_content_blocks(msg.get("content", ""))
 
     return ""
 
@@ -78,29 +105,58 @@ def _base_step_payload(event: dict, session_id: str, extra: dict) -> dict:
     return base
 
 
-def _handle_message_update(event: dict, session_id: str, cache_lookup: Optional[Callable]) -> Optional[str]:
+def _handle_message_update(event: dict, session_id: str, cache_lookup: Optional[Callable], *, turn_stats: Optional[Callable[[], dict]] = None) -> Optional[str]:
+    """Map a ``message_update`` per the vendor AssistantMessageEvent protocol.
+
+    audit #816: the vendor's incremental events carry text in ``delta``
+    (types.ts:471-475) — ``content`` exists only on ``*_end`` events, and
+    toolcall events carry ``toolCall`` (types.ts:478), never name/arguments
+    at the top level. The previous shape never matched a real event.
+    """
     assistant_event = event.get("assistantMessageEvent", {})
     event_kind = assistant_event.get("type", "")
 
-    if "text" in event_kind or "thinking" in event_kind:
-        content = assistant_event.get("content", "")
-        is_reasoning = "thinking" in event_kind
-        if content:
+    if event_kind in ("text_delta", "thinking_delta"):
+        delta = assistant_event.get("delta", "")
+        if delta:
             return sse_event("token", {
-                "content": content,
-                "is_reasoning": is_reasoning,
+                "content": delta,
+                "is_reasoning": event_kind == "thinking_delta",
                 "session_id": session_id,
             })
-    elif "tool_call" in event_kind or "toolcall" in event_kind:
-        return sse_event("tool_call", {
-            "name": assistant_event.get("name", ""),
-            "arguments": assistant_event.get("arguments", ""),
-            "session_id": session_id,
-        })
+        return None
+
+    if event_kind in ("text_end", "thinking_end"):
+        # The deltas already streamed this block; re-emitting the terminal
+        # ``content`` would duplicate every token.
+        return None
+
+    if event_kind in ("toolcall_start", "toolcall_delta"):
+        # Arguments are incomplete until toolcall_end — no SSE yet.
+        return None
+
+    if event_kind == "toolcall_end":
+        tool_call = assistant_event.get("toolCall", {})
+        if isinstance(tool_call, dict) and tool_call.get("name"):
+            args = tool_call.get("arguments")
+            if isinstance(args, dict):
+                try:
+                    args = json.dumps(args, ensure_ascii=False)
+                except Exception:  # noqa: BLE001
+                    args = "{}"
+            elif not isinstance(args, str):
+                args = ""
+            return sse_event("tool_call", {
+                "name": tool_call.get("name", ""),
+                "arguments": args,
+                "session_id": session_id,
+            })
+        return None
+
     return None
 
 
-def _handle_tool_execution_start(event: dict, session_id: str, cache_lookup: Optional[Callable]) -> Optional[str]:
+def _handle_tool_execution_start(event: dict, session_id: str, cache_lookup: Optional[Callable], *, turn_stats: Optional[Callable[[], dict]] = None) -> Optional[str]:
     step_idx = event.get("stepIndex") or event.get("step_index") or 0
     return sse_event("step_start", _base_step_payload(event, session_id, {
         "step_index": step_idx,
@@ -108,7 +164,7 @@ def _handle_tool_execution_start(event: dict, session_id: str, cache_lookup: Opt
     }))
 
 
-def _handle_tool_execution_end(event: dict, session_id: str, cache_lookup: Optional[Callable]) -> Optional[str]:
+def _handle_tool_execution_end(event: dict, session_id: str, cache_lookup: Optional[Callable], *, turn_stats: Optional[Callable[[], dict]] = None) -> Optional[str]:
     """SSE 适配器：读缓存的 dispatch 结果发 step_result / step_error.
 
     ``cache_lookup`` closes over the verified turn session and accepts the
@@ -163,28 +219,36 @@ def _handle_tool_execution_end(event: dict, session_id: str, cache_lookup: Optio
     }))
 
 
-def _handle_agent_end(event: dict, session_id: str, cache_lookup: Optional[Callable]) -> Optional[str]:
+def _handle_agent_end(event: dict, session_id: str, cache_lookup: Optional[Callable], *, turn_stats: Optional[Callable[[], dict]] = None) -> Optional[str]:
+    """task_complete with truthful counters (audit #820).
+
+    ``turn_stats`` (injected by PiBridge) reports the turn's observed tool-step
+    count and final text so the payload matches the legacy engine's
+    len(task.steps)/content[:100] semantics instead of hardcoded zeros.
+    """
+    stats = turn_stats() if callable(turn_stats) else {}
+    summary_src = stats.get("final_text") or _extract_text_from_event(event)
     return sse_event("task_complete", _base_step_payload(event, session_id, {
-        "step_count": 0,
-        "summary": "",
+        "step_count": int(stats.get("tool_step_count", 0) or 0),
+        "summary": str(summary_src)[:100],
     }))
 
 
-def _handle_compaction_start(event: dict, session_id: str, cache_lookup: Optional[Callable]) -> Optional[str]:
+def _handle_compaction_start(event: dict, session_id: str, cache_lookup: Optional[Callable], *, turn_stats: Optional[Callable[[], dict]] = None) -> Optional[str]:
     return sse_event("content", {
         "content": COMPACTION_START_MSG,
         "session_id": session_id,
     })
 
 
-def _handle_compaction_end(event: dict, session_id: str, cache_lookup: Optional[Callable]) -> Optional[str]:
+def _handle_compaction_end(event: dict, session_id: str, cache_lookup: Optional[Callable], *, turn_stats: Optional[Callable[[], dict]] = None) -> Optional[str]:
     return sse_event("content", {
         "content": COMPACTION_END_MSG,
         "session_id": session_id,
     })
 
 
-_EVENT_HANDLERS: dict[str, Callable[[dict, str, Optional[Callable]], Optional[str]]] = {
+_EVENT_HANDLERS: dict[str, Callable[..., Optional[str]]] = {
     "message_update": _handle_message_update,
     "tool_execution_start": _handle_tool_execution_start,
     "tool_execution_end": _handle_tool_execution_end,
@@ -198,6 +262,7 @@ def map_event_to_sse(
     event: dict,
     session_id: str = "",
     cache_lookup: Optional[Callable[[str], Optional[Any]]] = None,
+    turn_stats: Optional[Callable[[], dict]] = None,
 ) -> Optional[str]:
     """Map a Pi AgentSessionEvent to an SSE-formatted string.
 
@@ -209,6 +274,9 @@ def map_event_to_sse(
         cache_lookup: Optional callable (tool_call_id,) -> ToolDispatchResult
                       injected by PiBridge (ADR-0022 rendezvous), with the
                       verified turn session captured by the caller.
+        turn_stats: Optional zero-arg callable returning the turn's observed
+                    counters ({"tool_step_count": int, "final_text": str}),
+                    consumed by the agent_end handler (audit #820).
 
     Returns:
         SSE-formatted string or None if unhandled
@@ -217,4 +285,4 @@ def map_event_to_sse(
     handler = _EVENT_HANDLERS.get(event_type)
     if handler is None:
         return None
-    return handler(event, session_id, cache_lookup)
+    return handler(event, session_id, cache_lookup, turn_stats=turn_stats)

@@ -801,6 +801,35 @@ async def chat_stream(
         async def pi_event_generator():
             buffer = TurnEventBuffer(session_key, req.message)
             _turn_resume_registry.register(session_key, buffer)
+
+            async def _persist_pi_transcript(result: dict) -> None:
+                """audit #818: Pi-path persistence parity — the legacy engine
+                saves user/assistant messages and generates a title; the Pi
+                path previously left Conversation rows empty (Message=[] and
+                title stuck at「新对话」). Best-effort: DB failures only log."""
+                if not result.get("completed"):
+                    return
+                final_text = (result.get("final_text") or "").strip()
+                if not final_text:
+                    return
+                try:
+                    async with async_db_session() as db:
+                        svc = AsyncHistoryService(db)
+                        await svc.save_message(pi_session_id, "user", req.message)
+                        await svc.save_message(pi_session_id, "assistant", final_text)
+                except Exception as e:  # noqa: BLE001 — transcript must not break the stream
+                    logger.warning("[pi-chat] transcript persistence failed for %s: %s", pi_session_id, e)
+                # Title parity: only when still on the default (first turn).
+                try:
+                    async with async_db_session() as db:
+                        conv = await db.get(Conversation, pi_session_id)
+                        needs_title = conv is not None and (conv.title or "新对话") == "新对话"
+                    if needs_title:
+                        engine = get_engine()
+                        engine._fire_and_forget(engine._generate_title, pi_session_id, req.message)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("[pi-chat] title generation failed for %s: %s", pi_session_id, e)
+
             # One id scope per turn: ids stay monotonic across batched token
             # events and structural events, in emission order (see sse.py).
             with sse_event_id_scope(), rt_ctx.bind_runtime_context(
@@ -814,6 +843,16 @@ async def chat_stream(
                         })
                         buffer.record(session_event)
                         yield session_event
+                    # audit #818: the Pi planning chain does not consume these
+                    # request fields (#726 ruling) — say so explicitly instead
+                    # of silently dropping them.
+                    if req.skill_name or req.project_id:
+                        notice = sse_event("content", {
+                            "content": "（提示：当前 Pi 引擎通道暂不支持技能/项目上下文，本次请求将忽略相关字段。）",
+                            "session_id": pi_session_id,
+                        })
+                        buffer.record(notice)
+                        yield notice
                     # #398: record OUTSIDE the route batcher so the buffer
                     # holds the COALESCED chunks (up to 32 token events each)
                     # instead of every single token event — a token-heavy turn
@@ -825,6 +864,7 @@ async def chat_stream(
                                 req.message,
                                 session_id=pi_session_id,
                                 cartography_context=cartography_context,
+                                on_turn_result=_persist_pi_transcript,
                             ),
                         ),
                         buffer,
@@ -838,12 +878,14 @@ async def chat_stream(
                 finally:
                     if not buffer.ended:
                         buffer.mark_ended(aborted=True)
-            # #518 post-turn bridge: 匿名（无 owner）探索任务经聊天流推送进度。
-            # done/error 之后保持连接，直到任务终态（有界，见 bridge 实现）。
-            async for event in bridge_session_explorer_progress(
-                session_key, user_id
-            ):
-                yield event
+                # #518 post-turn bridge: 匿名（无 owner）探索任务经聊天流推送进度。
+                # done/error 之后保持连接，直到任务终态（有界，见 bridge 实现）。
+                # audit #820: 位于 sse_event_id_scope 内（与 legacy 路径一致），
+                # 事件带 id，前端 seenEventIds 去重才生效。
+                async for event in bridge_session_explorer_progress(
+                    session_key, user_id
+                ):
+                    yield event
 
         return StreamingResponse(
             pi_event_generator(),

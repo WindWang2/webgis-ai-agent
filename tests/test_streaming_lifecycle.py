@@ -177,7 +177,7 @@ async def test_stream_prompt_aborts_pi_on_disconnect():
                 "type": "message_update",
                 "message": {"role": "assistant",
                             "content": [{"type": "text", "text": "Hi"}]},
-                "assistantMessageEvent": {"type": "text_delta", "content": "Hi"},
+                "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "Hi"},
             })
         elif cmd == "abort":
             return {"ok": True}
@@ -218,7 +218,7 @@ async def test_stream_prompt_no_abort_on_normal_completion():
         if cmd == "prompt":
             await rpc.events.put({
                 "type": "message_update",
-                "assistantMessageEvent": {"type": "text_delta", "content": "done"},
+                "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "done"},
             })
             await rpc.events.put({"type": "agent_end"})
 

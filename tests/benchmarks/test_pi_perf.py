@@ -87,7 +87,7 @@ class TestPiBridgePerformance:
                 await bridge._rpc.events.put({
                     "type": "message_update",
                     "message": {"role": "assistant", "content": [{"type": "text", "text": "Hi"}]},
-                    "assistantMessageEvent": {"type": "text_delta", "content": "Hi"},
+                    "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "Hi"},
                 })
                 await bridge._rpc.events.put({"type": "agent_end"})
 

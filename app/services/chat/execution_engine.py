@@ -982,7 +982,7 @@ class ChatExecutionEngine:
                 step_id=step_id,
                 failure_class=failure_class,
                 recovery_action=recovery_action,
-            ))
+            ), background=True)
         except Exception as e:
             logger.warning(f"[chat_execution_engine] 决策日志记录失败: {e}")
 
@@ -1000,10 +1000,17 @@ class ChatExecutionEngine:
         ``viewport_seq``; we pass it through so an older in-flight POST that
         lands after this write is rejected as stale instead of clobbering the
         newer snapshot. Other keys are unsequenced (always apply).
+
+        audit #823: ``layers`` is NOT accepted from the chat request — the
+        client echo is not Desired MapSpec (#643) and writing it wholesale
+        created an unsequenced second writer against the server-authored
+        layers key (session_data layer sync + MapSpec rollback). The summary
+        builder's inventory-first strategy makes the server-side layers the
+        correct fallback source; bounded perception keys still flow.
         """
         viewport_seq = map_state.get("viewport_seq")
         for k, v in map_state.items():
-            if k == "viewport_seq":
+            if k == "viewport_seq" or k == "layers":
                 continue
             await session_data_manager.set_map_state(
                 session_id, k, v, seq=viewport_seq if k == "viewport" else None
@@ -1227,6 +1234,7 @@ class ChatExecutionEngine:
                         cancel_watch = asyncio.create_task(task.cancel_token.wait())
                     exec_results: list = [_CANCELLED_TOOL] * len(tool_tasks)
                     cancelled = False
+                    _wave_exc: Optional[BaseException] = None
                     try:
                         remaining: set = set(tool_tasks)
                         while remaining:
@@ -1258,6 +1266,9 @@ class ChatExecutionEngine:
                                     exec_results[idx] = t.result()
                                 except Exception as e:  # noqa: BLE001
                                     exec_results[idx] = e
+                    except BaseException as _wave_e:  # noqa: BLE001 - re-raised below
+                        _wave_exc = _wave_e
+                        raise
                     finally:
                         # 外部取消（chat 协程被 cancel）时回收在飞工具与 watch。
                         # P1: 有界等待 —— 顽固 straggler 不能拖住会话锁。
@@ -1267,6 +1278,47 @@ class ChatExecutionEngine:
                         if cancel_watch is not None and not cancel_watch.done():
                             cancel_watch.cancel()
                             await self._cancel_and_await([cancel_watch])
+                        if _wave_exc is not None and not isinstance(_wave_exc, StopAsyncIteration):
+                            # audit #817 (non-stream F9 parity): during exception
+                            # unwinding the zip-persist loop below is unreachable —
+                            # harvest done-but-unprocessed tool results here and
+                            # persist them so the outer repair only marks the truly
+                            # interrupted tool_calls as「已取消」. Tools may have
+                            # created layers / spawned durable jobs; their completed
+                            # outcomes must survive the disconnect.
+                            for _idx, _t in enumerate(tool_tasks):
+                                if exec_results[_idx] is _CANCELLED_TOOL and _t.done() and not _t.cancelled():
+                                    try:
+                                        exec_results[_idx] = _t.result()
+                                    except Exception as e:  # noqa: BLE001
+                                        exec_results[_idx] = e
+                            for _tc, _res in zip(tc_list, exec_results):
+                                if _res is _CANCELLED_TOOL:
+                                    continue
+                                if isinstance(_res, Exception):
+                                    _payload = f"Tool execution failed: {_res}"
+                                else:
+                                    _payload = _res.llm_payload
+                                if not standard_calls:
+                                    continue  # XML path never persists tool rows (#376)
+                                try:
+                                    messages.append({
+                                        "role": "tool",
+                                        "tool_call_id": _tc.get("id", ""),
+                                        "content": _payload,
+                                    })
+                                    await asyncio.wait_for(
+                                        asyncio.shield(self._save_msg_async(
+                                            session_id, "tool", "", None, _payload, _tc.get("id", ""),
+                                        )),
+                                        timeout=self._cancel_wait_timeout,
+                                    )
+                                except (asyncio.TimeoutError, asyncio.CancelledError):
+                                    pass
+                                except Exception:  # noqa: BLE001
+                                    logger.exception(
+                                        "persist completed tool on unwind failed (session=%s)", session_id
+                                    )
 
                     for tc, exec_res in zip(tc_list, exec_results):
                         if exec_res is _CANCELLED_TOOL:
@@ -1791,6 +1843,10 @@ class ChatExecutionEngine:
                         all_tasks = {p["task"] for p in pending_tools}
                         task_to_pending = {p["task"]: p for p in pending_tools}
                         completion_results: dict[str, dict] = {}  # step.id -> {tc, msg_result_str}
+                        # audit #817: False while this wave's completed tools are
+                        # not yet persisted — the disconnect path reads it to
+                        # decide whether a F9-parity persist is still needed.
+                        _wave_flushed = False
 
                         def _aborted_step_events() -> list[str]:
                             """F7/F8: 取消/断连路径上把未完成的 step 记 cancelled
@@ -2008,6 +2064,7 @@ class ChatExecutionEngine:
                                         session_id, pending_tools, completion_results,
                                         standard_calls, messages, tool_result_msgs,
                                     )
+                                    _wave_flushed = True
                                     # P1: 有界等待 —— 顽固 straggler 不能拖住会话锁
                                     await self._cancel_and_await(remaining)
                                     remaining = set()
@@ -2039,6 +2096,7 @@ class ChatExecutionEngine:
                             session_id, pending_tools, completion_results,
                             standard_calls, messages, tool_result_msgs,
                         )
+                        _wave_flushed = True
 
                         if xml_calls and tool_result_msgs:
                             messages.append({
@@ -2169,6 +2227,31 @@ class ChatExecutionEngine:
                     self.tracker.cancel(task.id)
                 else:
                     self.tracker.terminalize_running_steps(task.id)
+                # audit #817: F9 parity for the disconnect path — if a tool wave
+                # was interrupted mid-flight, persist its COMPLETED tools as
+                # completed before the orphan repair backfills them as
+                # 「已取消」(they may have created layers / durable jobs).
+                # Mirrors the cancel_watch branch; _wave_flushed guards against
+                # double-persisting a wave already flushed by Phase 3.
+                if not locals().get("_wave_flushed", True) and locals().get("pending_tools"):
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.shield(self._persist_tool_messages(
+                                session_id,
+                                locals()["pending_tools"],
+                                locals().get("completion_results") or {},
+                                locals().get("standard_calls") or [],
+                                messages,
+                                locals().get("tool_result_msgs") or [],
+                            )),
+                            timeout=self._cancel_wait_timeout,
+                        )
+                    except (asyncio.TimeoutError, asyncio.CancelledError):
+                        pass
+                    except Exception:  # noqa: BLE001 - never mask the disconnect
+                        logger.exception(
+                            "persist completed tools on disconnect failed (session=%s)", session_id
+                        )
                 # F9: 补齐孤儿 tool_call —— 否则下一轮 LLM 调用被拒，
                 # 会话永久损坏。_save_msg_async 内部已吞异常。
                 # P1: shield + 有界 wait_for —— 二次取消不能截断 repair 的

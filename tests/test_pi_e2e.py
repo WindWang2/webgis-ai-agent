@@ -176,7 +176,7 @@ class TestPiBridgeE2EScenarios:
             {
                 "type": "message_update",
                 "message": {"role": "assistant", "content": [{"type": "thinking", "text": "Let me think..."}]},
-                "assistantMessageEvent": {"type": "thinking_delta", "content": "Let me think..."},
+                "assistantMessageEvent": {"type": "thinking_delta", "contentIndex": 0, "delta": "Let me think..."},
             },
             make_token_event("Based on my analysis, the buffer area is 2.5 sq km."),
             make_agent_end(),

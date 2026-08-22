@@ -33,7 +33,6 @@ from app import agent_pi_bridge as bridge_mod
 from app.agent_pi_bridge import PiBridge, PiToolRequest, dispatch_tool
 from app.services.chat.pi_rpc_client import PiRpcClient
 from app.services.jobs.cancellation import (
-    OperationCancelled,
     checkpoint,
     current_token,
 )
@@ -248,8 +247,12 @@ async def test_stall_abort_also_cancels_turn_token(monkeypatch):
     assert token.cancelled, "stall-path abort must cancel the turn token"
 
     release.set()
-    with pytest.raises(OperationCancelled):
-        await dispatch
+    # audit #821: cooperative cancellation surfaces as a structured cancelled
+    # response (isError=False, details.cancelled=True) — not a raised
+    # OperationCancelled / HTTP 500.
+    resp = await dispatch
+    assert resp.isError is False
+    assert resp.details.get("cancelled") is True
 
 
 # ── F19: request() cancellation must clear _pending_requests ─────────
@@ -363,8 +366,12 @@ async def test_dispatch_tool_binds_active_turn_cancellation_token(monkeypatch):
     assert token.cancelled, "abort must ignite the bound token"
 
     release.set()
-    with pytest.raises(OperationCancelled):
-        await dispatch
+    # audit #821: cooperative cancellation surfaces as a structured cancelled
+    # response (isError=False, details.cancelled=True) — not a raised
+    # OperationCancelled / HTTP 500.
+    resp = await dispatch
+    assert resp.isError is False
+    assert resp.details.get("cancelled") is True
 
 
 @pytest.mark.asyncio
@@ -478,8 +485,12 @@ async def test_prompt_publishes_active_turn_markers(monkeypatch, caplog):
     assert token.cancelled, "abort must ignite the prompt-turn token"
 
     release.set()
-    with pytest.raises(OperationCancelled):
-        await dispatch
+    # audit #821: cooperative cancellation surfaces as a structured cancelled
+    # response (isError=False, details.cancelled=True) — not a raised
+    # OperationCancelled / HTTP 500.
+    resp = await dispatch
+    assert resp.isError is False
+    assert resp.details.get("cancelled") is True
 
     # teardown: cancel the parked prompt turn; markers + lock must clear
     prompt_task.cancel()

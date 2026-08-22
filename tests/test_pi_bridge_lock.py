@@ -74,7 +74,7 @@ async def test_stream_prompt_emits_keepalive_during_lock_wait(monkeypatch):
             await rpc.events.put({
                 "type": "message_update",
                 "message": {"role": "assistant", "content": []},
-                "assistantMessageEvent": {"type": "text_delta", "content": "AAA"},
+                "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "AAA"},
             })
 
     async def fake_request_b(cmd, data=None):
@@ -83,7 +83,7 @@ async def test_stream_prompt_emits_keepalive_during_lock_wait(monkeypatch):
             await rpc.events.put({
                 "type": "message_update",
                 "message": {"role": "assistant", "content": []},
-                "assistantMessageEvent": {"type": "text_delta", "content": "BBB"},
+                "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "BBB"},
             })
             await rpc.events.put({"type": "agent_end"})
 

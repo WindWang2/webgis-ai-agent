@@ -38,7 +38,7 @@ from pydantic import BaseModel
 
 from app.utils.sse import sse_event, sse_event_type
 from app.services.chat.pi_event_mapper import map_event_to_sse, _extract_text_from_event
-from app.services.jobs.cancellation import CancellationToken, use_token
+from app.services.jobs.cancellation import CancellationToken, OperationCancelled, use_token
 from app.services.tool_dispatch_service import ToolDispatchService, normalize_tool_name
 from app.lib.harness.pi_agent_harness import PiAgentHarness
 from app.lib.harness.tool_call_event import ToolCallEvent
@@ -354,6 +354,29 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
             )
             with use_token(dispatch_token):
                 result = await service.dispatch(tc, session_id, executed)
+        except OperationCancelled:
+            # audit #821: 协作取消 ≠ 工具故障（ADR-0052 / legacy tool_pipeline 同义）
+            # —— 记 cancelled 证据（is_error=False）并返回结构化取消响应，
+            # 而不是落入 catch-all 的 is_error=True + HTTP 500。
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            harness = _get_session_harness(session_id)
+            if harness is not None:
+                harness.record_event(ToolCallEvent(
+                    tool_call_id=request.toolCallId,
+                    tool_name=request.name,
+                    arguments=request.arguments or {},
+                    duration_ms=duration_ms,
+                    is_error=False,
+                    error_msg="",
+                    result={"cancelled": True},
+                    session_id=session_id,
+                ))
+            return PiToolResponse(
+                toolCallId=request.toolCallId,
+                content=[{"type": "text", "text": "工具执行已被用户取消"}],
+                details={"cancelled": True},
+                isError=False,
+            )
         except Exception as exc:
             duration_ms = int((time.monotonic() - t0) * 1000)
             harness = _get_session_harness(session_id)
@@ -1719,8 +1742,12 @@ class PiBridge:
                     )
                     raise
 
-                # Drain events from the queue (non-streaming mode)
-                content_parts: list[str] = []
+                # Drain events from the queue (non-streaming mode).
+                # audit #816: message_update carries the ACCUMULATED partial
+                # snapshot — appending per event duplicated content O(n²).
+                # Keep only the latest snapshot; agent_end's messages[] list is
+                # the authoritative final text and overrides it.
+                final_text = ""
                 _drained_complete = False
                 drain_started = time.monotonic()
                 last_event_at = drain_started
@@ -1746,10 +1773,13 @@ class PiBridge:
                         last_event_at = time.monotonic()
                         if event.get("type") == "agent_end":
                             _drained_complete = True
+                            end_text = _extract_text_from_event(event)
+                            if end_text:
+                                final_text = end_text
                             break
                         text = _extract_text_from_event(event)
                         if text:
-                            content_parts.append(text)
+                            final_text = text
                     except asyncio.TimeoutError:
                         if (
                             time.monotonic() - last_event_at >= PI_EVENT_STREAM_TIMEOUT
@@ -1821,7 +1851,7 @@ class PiBridge:
 
         return {
             "sessionId": turn_sid,
-            "content": "".join(content_parts),
+            "content": final_text,
         }
 
     async def stream_prompt(
@@ -1829,6 +1859,7 @@ class PiBridge:
         message: str,
         session_id: Optional[str] = None,
         cartography_context: Optional[str] = None,
+        on_turn_result: Optional[Callable[[dict], Any]] = None,
     ) -> AsyncGenerator[str, None]:
         """Stream a prompt to Pi agent, yielding SSE events.
 
@@ -1837,6 +1868,11 @@ class PiBridge:
             session_id: Optional session ID
             cartography_context: Optional bounded harness verdict block,
                 prepended ahead of the turn marker (see attach_turn_context).
+            on_turn_result: Optional callback invoked once in the turn's
+                finally with {"session_id", "turn_id", "final_text",
+                "completed"} (audit #818: lets the route persist the turn
+                transcript without re-parsing SSE strings). May be sync or
+                async.
 
         Yields:
             SSE-formatted event strings
@@ -1953,6 +1989,10 @@ class PiBridge:
                     process_died_event = asyncio.Event()
 
                 silence_seconds = 0.0
+                # audit #820: turn-scoped counters injected into the mapper's
+                # agent_end handler (task_complete step_count/summary).
+                _turn_tool_steps = 0
+                _turn_final_text = ""
                 get_task = asyncio.ensure_future(self._rpc.events.get())
                 died_task = asyncio.ensure_future(process_died_event.wait())
                 pending = {get_task, died_task}
@@ -1972,12 +2012,25 @@ class PiBridge:
                             event = get_task.result()
                             silence_seconds = 0.0
                             rt_ev.mark_first_event()
+                            # audit #820: truthful task_complete counters — count
+                            # executed tool steps and accumulate the final text
+                            # the vendor streams (message.content snapshots).
+                            if event.get("type") == "tool_execution_end":
+                                _turn_tool_steps += 1
+                            if event.get("type") == "message_update":
+                                _snap = _extract_text_from_event(event)
+                                if _snap:
+                                    _turn_final_text = _snap
                             sse = map_event_to_sse(
                                 event,
                                 turn_sid,
                                 cache_lookup=lambda tool_call_id, _sid=turn_sid: get_cached_dispatch_result(
                                     tool_call_id, _sid
                                 ),
+                                turn_stats=lambda: {
+                                    "tool_step_count": _turn_tool_steps,
+                                    "final_text": _turn_final_text,
+                                },
                             )
                             # V3: 给原始 SSE 事件记录补 turn/run correlation（显式透传）。
                             # B-8: record against THIS turn's session harness, not the
@@ -1995,6 +2048,11 @@ class PiBridge:
                                 # 通过 correlation 回传，闭环才完整）。
                                 yield _inject_turn_id(sse, turn_id)
                             if event.get("type") == "agent_end":
+                                # agent_end's messages[] is the authoritative
+                                # final text (audit #818/#816).
+                                _end_text = _extract_text_from_event(event)
+                                if _end_text:
+                                    _turn_final_text = _end_text
                                 break
                             # Re-arm the queue waiter for the next event; the
                             # completed waiter task is dropped from `pending` by
@@ -2114,6 +2172,24 @@ class PiBridge:
                 rt_ev.mark_ended()
                 emit_turn_summary(rt_ev)
                 TURN_EVIDENCE.remove(turn_id)
+                # audit #818: surface the turn's final transcript state to the
+                # route (persistence parity with the legacy path). Best-effort —
+                # a sink failure must never mask the stream outcome.
+                if on_turn_result is not None:
+                    try:
+                        _res = {
+                            "session_id": turn_sid,
+                            "turn_id": turn_id,
+                            "final_text": _turn_final_text,
+                            "completed": rt_ev.outcome.outcome == Outcome.SUCCEEDED,
+                        }
+                        _r = on_turn_result(_res)
+                        if asyncio.iscoroutine(_r):
+                            await _r
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(
+                            "[PiBridge] on_turn_result sink failed (turn=%s): %s", turn_id, e
+                        )
 
 
 

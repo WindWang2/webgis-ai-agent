@@ -719,17 +719,23 @@ class PiAgentHarness:
                 else:
                     try:
                         resolution = await self.ref_resolver(self.session_id, ref)
-                    except Exception as e:
-                        # 解析失败不进 memo：store 抖动恢复后应重试真实解析。
-                        resolution = RefResolution(
-                            ref=ref,
-                            session_id=self.session_id,
-                            status=RefResolutionStatus.NOT_FOUND,
-                            detail=f"resolver error: {e}",
+                    except Exception as e:  # noqa: BLE001
+                        # 解析失败不进 memo：store 抖动恢复后应重试真实解析
+                        # （audit #819：异常分支不得写入 _resolved_refs，否则
+                        # 该 ref 在 harness 生命周期内被永久钉死 NOT_FOUND）。
+                        # 本轮遍历按未解析处理（下方 .get 容错）。
+                        logger.warning(
+                            "ref resolver error for %s (session=%s): %s — not memoized",
+                            ref, self.session_id, e,
                         )
+                        continue
                     self._resolved_refs[memo_key] = resolution
             for rc in cursors_snapshot:
-                resolution = self._resolved_refs[(self.session_id, rc["ref_cursor"])]
+                resolution = self._resolved_refs.get((self.session_id, rc["ref_cursor"]))
+                if resolution is None:
+                    rc["is_resolved"] = False
+                    rc["status"] = RefResolutionStatus.NOT_FOUND.value
+                    continue
                 rc["is_resolved"] = resolution.is_resolved
                 rc["status"] = resolution.status.value
         # If no resolver wired: refs remain SYNTACTICALLY_VALID (not resolved) —
@@ -1857,7 +1863,9 @@ class PiAgentHarness:
 
     def compute_tool_choice_accuracy(self, expected_tools: List[str]) -> float:
         if not expected_tools:
-            return 100.0
+            # audit #822: 缺失证据绝不为 100（模块教义 / CursorResolution 同款）——
+            # 生产 evaluate_with_evidence 不传 expected_tools 时，此前恒报 100。
+            return 0.0
         # #793: only SUCCESSFUL calls count as having chosen the expected tool.
         # Previously the name match alone earned credit — a call that errored or
         # returned a suspicious empty payload still ticked the expectation.
@@ -1925,7 +1933,8 @@ class PiAgentHarness:
             if tc.get("session_id") == self.session_id
         )
         if actual_step_count == 0:
-            return 100.0 if ideal_step_count == 0 else 0.0
+            # audit #822: 0/0 无证据 → 0.0，不为 100（与交互维度缺证据语义一致）。
+            return 0.0
         efficiency = (ideal_step_count / actual_step_count) * 100.0
         return min(100.0, max(0.0, efficiency))
 

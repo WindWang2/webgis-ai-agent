@@ -51,20 +51,43 @@ def make_mock_process(lines: list[str] | None = None, latency_ms: float = 0) -> 
 
 
 # ─── Pi event factories ─────────────────────────────────────────────
+# Shapes mirror the vendor AgentSessionEvent protocol exactly
+# (vendor/pi/packages/agent/src/agent-loop.ts + ai/src/types.ts):
+# message_update carries the accumulated partial snapshot in `message`
+# plus the incremental AssistantMessageEvent in `assistantMessageEvent`;
+# text increments live in `delta`, tool calls complete on `toolcall_end`
+# with a `toolCall` object; agent_end carries a `messages` list.
 
 def make_token_event(content: str) -> dict:
     return {
         "type": "message_update",
         "message": {"role": "assistant", "content": [{"type": "text", "text": content}]},
-        "assistantMessageEvent": {"type": "text_delta", "content": content},
+        "assistantMessageEvent": {
+            "type": "text_delta",
+            "contentIndex": 0,
+            "delta": content,
+        },
     }
 
 
 def make_tool_call_event(name: str, arguments: str) -> dict:
+    import json as _json
+    try:
+        parsed_args = _json.loads(arguments) if isinstance(arguments, str) else arguments
+    except Exception:
+        parsed_args = {}
+    if not isinstance(parsed_args, dict):
+        parsed_args = {}
     return {
         "type": "message_update",
-        "message": {"role": "assistant", "content": [{"type": "tool_call", "name": name, "arguments": arguments}]},
-        "assistantMessageEvent": {"type": "tool_call", "name": name, "arguments": arguments},
+        "message": {"role": "assistant", "content": [
+            {"type": "toolCall", "id": "tc_mock", "name": name, "arguments": parsed_args}
+        ]},
+        "assistantMessageEvent": {
+            "type": "toolcall_end",
+            "contentIndex": 1,
+            "toolCall": {"type": "toolCall", "id": "tc_mock", "name": name, "arguments": parsed_args},
+        },
     }
 
 
@@ -88,5 +111,11 @@ def make_tool_execution_end(tool_call_id: str, tool_name: str, is_error: bool = 
     }
 
 
-def make_agent_end() -> dict:
-    return {"type": "agent_end"}
+def make_agent_end(content: str = "") -> dict:
+    event: dict = {"type": "agent_end"}
+    if content:
+        event["messages"] = [
+            {"role": "user", "content": [{"type": "text", "text": "q"}]},
+            {"role": "assistant", "content": [{"type": "text", "text": content}]},
+        ]
+    return event

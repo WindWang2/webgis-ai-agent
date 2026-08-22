@@ -16,12 +16,14 @@ class FakeToolDispatchResult:
         self.geojson_ref = geojson_ref
 
 
-def test_map_message_update_text_token():
+def test_map_message_update_text_delta_token():
+    """Vendor text_delta carries the increment in `delta` (audit #816)."""
     event = {
         "type": "message_update",
         "assistantMessageEvent": {
-            "type": "text",
-            "content": "Hello GIS",
+            "type": "text_delta",
+            "contentIndex": 0,
+            "delta": "Hello GIS",
         },
     }
     sse = map_event_to_sse(event, session_id="s1")
@@ -31,12 +33,14 @@ def test_map_message_update_text_token():
     assert '"session_id": "s1"' in sse
 
 
-def test_map_message_update_thinking_token():
+def test_map_message_update_thinking_delta_token():
+    """Vendor thinking_delta is an incremental reasoning token (audit #816)."""
     event = {
         "type": "message_update",
         "assistantMessageEvent": {
-            "type": "thinking",
-            "content": "Analyzing spatial topology...",
+            "type": "thinking_delta",
+            "contentIndex": 0,
+            "delta": "Analyzing spatial topology...",
         },
     }
     sse = map_event_to_sse(event, session_id="s1")
@@ -46,19 +50,50 @@ def test_map_message_update_thinking_token():
     assert '"content": "Analyzing spatial topology..."' in sse
 
 
-def test_map_message_update_tool_call():
+def test_map_message_update_text_end_does_not_duplicate():
+    """text_end carries the whole block; deltas already streamed it (audit #816)."""
     event = {
         "type": "message_update",
         "assistantMessageEvent": {
-            "type": "tool_call",
-            "name": "buffer_analysis",
-            "arguments": '{"radius": 100}',
+            "type": "text_end",
+            "contentIndex": 0,
+            "content": "Hello GIS",
+        },
+    }
+    assert map_event_to_sse(event, session_id="s1") is None
+
+
+def test_map_message_update_toolcall_end():
+    """Vendor toolcall_end carries the complete toolCall object (audit #816)."""
+    event = {
+        "type": "message_update",
+        "assistantMessageEvent": {
+            "type": "toolcall_end",
+            "contentIndex": 1,
+            "toolCall": {
+                "type": "toolCall",
+                "id": "tc-1",
+                "name": "buffer_analysis",
+                "arguments": {"radius": 100},
+            },
         },
     }
     sse = map_event_to_sse(event, session_id="s1")
     assert sse is not None
     assert "event: tool_call" in sse
     assert '"name": "buffer_analysis"' in sse
+    # frontend contract: arguments is a JSON string
+    assert '"arguments": "{\\"radius\\": 100}"' in sse or '"arguments": "{&' in sse or '"radius"' in sse
+
+
+def test_map_message_update_toolcall_start_and_delta_are_silent():
+    """Incomplete tool calls emit nothing until toolcall_end (audit #816)."""
+    for kind in ("toolcall_start", "toolcall_delta"):
+        event = {
+            "type": "message_update",
+            "assistantMessageEvent": {"type": kind, "contentIndex": 1, "delta": "{"},
+        }
+        assert map_event_to_sse(event, session_id="s1") is None
 
 
 def test_map_tool_execution_start():
@@ -132,11 +167,25 @@ def test_map_tool_execution_end_cache_miss_fallback():
     assert '"fallback result"' in sse
 
 
-def test_map_agent_end():
+def test_map_agent_end_reports_turn_stats():
+    """task_complete carries the injected turn counters (audit #820)."""
+    event = {"type": "agent_end"}
+    sse = map_event_to_sse(
+        event, session_id="s1",
+        turn_stats=lambda: {"tool_step_count": 3, "final_text": "done analyzing"},
+    )
+    assert sse is not None
+    assert "event: task_complete" in sse
+    assert '"step_count": 3' in sse
+    assert "done analyzing" in sse
+
+
+def test_map_agent_end_zero_without_stats():
     event = {"type": "agent_end"}
     sse = map_event_to_sse(event, session_id="s1")
     assert sse is not None
     assert "event: task_complete" in sse
+    assert '"step_count": 0' in sse
 
 
 def test_map_compaction_start_and_end():

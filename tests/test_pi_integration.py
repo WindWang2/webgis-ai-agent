@@ -79,6 +79,114 @@ class TestPiBridgeSubprocessFlow:
         assert "sessionId" in result
 
     @pytest.mark.asyncio
+    async def test_prompt_multi_delta_snapshots_not_duplicated(self):
+        """audit #816: message_update carries the ACCUMULATED snapshot per
+        vendor protocol (agent-loop.ts:326-343) — prompt() must return the
+        final text once, not the O(n²) concatenation of every snapshot."""
+        rpc = MagicMock()
+        rpc.events = asyncio.Queue()
+        rpc.start = AsyncMock()
+        rpc.stop = AsyncMock()
+        bridge = PiBridge(rpc=rpc)
+
+        async def fake_request(cmd, data=None):
+            if cmd == "prompt":
+                for prefix in ("H", "He", "Hel", "Hell", "Hello"):
+                    await rpc.events.put({
+                        "type": "message_update",
+                        "message": {"role": "assistant",
+                                    "content": [{"type": "text", "text": prefix}]},
+                        "assistantMessageEvent": {"type": "text_delta",
+                                                  "contentIndex": 0,
+                                                  "delta": prefix[-1]},
+                })
+                await rpc.events.put({
+                    "type": "agent_end",
+                    "messages": [
+                        {"role": "user", "content": [{"type": "text", "text": "q"}]},
+                        {"role": "assistant",
+                         "content": [{"type": "text", "text": "Hello"}]},
+                    ],
+                })
+
+        rpc.request = AsyncMock(side_effect=fake_request)
+        result = await bridge.prompt("Say hello")
+        assert result["content"] == "Hello"
+
+    @pytest.mark.asyncio
+    async def test_prompt_falls_back_to_last_snapshot_without_messages(self):
+        """agent_end without a messages list: latest accumulated snapshot wins."""
+        rpc = MagicMock()
+        rpc.events = asyncio.Queue()
+        rpc.start = AsyncMock()
+        rpc.stop = AsyncMock()
+        bridge = PiBridge(rpc=rpc)
+
+        async def fake_request(cmd, data=None):
+            if cmd == "prompt":
+                await rpc.events.put({
+                    "type": "message_update",
+                    "message": {"role": "assistant",
+                                "content": [{"type": "text", "text": "snapshot answer"}]},
+                })
+                await rpc.events.put({"type": "agent_end"})
+
+        rpc.request = AsyncMock(side_effect=fake_request)
+        result = await bridge.prompt("q")
+        assert result["content"] == "snapshot answer"
+
+    @pytest.mark.asyncio
+    async def test_stream_prompt_emits_incremental_tokens_and_tool_args(self):
+        """audit #816: vendor-shape text_delta events stream incrementally and
+        toolcall_end carries name + JSON-string arguments (FE contract)."""
+        import json as _json
+        rpc = MagicMock()
+        rpc.events = asyncio.Queue()
+        rpc.start = AsyncMock()
+        rpc.stop = AsyncMock()
+        bridge = PiBridge(rpc=rpc)
+
+        async def fake_request(cmd, data=None):
+            if cmd == "prompt":
+                for chunk in ("Hel", "lo"):
+                    await rpc.events.put({
+                        "type": "message_update",
+                        "message": {"role": "assistant", "content": []},
+                        "assistantMessageEvent": {"type": "text_delta",
+                                                  "contentIndex": 0,
+                                                  "delta": chunk},
+                    })
+                await rpc.events.put({
+                    "type": "message_update",
+                    "message": {"role": "assistant", "content": []},
+                    "assistantMessageEvent": {
+                        "type": "toolcall_end", "contentIndex": 1,
+                        "toolCall": {"type": "toolCall", "id": "tc-1",
+                                     "name": "buffer_analysis",
+                                     "arguments": {"radius": 100}},
+                    },
+                })
+                await rpc.events.put({
+                    "type": "tool_execution_end",
+                    "toolCallId": "tc-1", "toolName": "buffer_analysis",
+                    "result": {"features": 1}, "isError": False,
+                })
+                await rpc.events.put({"type": "agent_end"})
+
+        rpc.request = AsyncMock(side_effect=fake_request)
+        out = []
+        async for ev in bridge.stream_prompt("q"):
+            out.append(ev)
+        joined = "\n".join(out)
+        assert '"content": "Hel"' in joined and '"content": "lo"' in joined
+        assert 'event: tool_call' in joined
+        assert '"name": "buffer_analysis"' in joined
+        assert '"arguments": "{\\"radius\\": 100}"' in joined or \
+               _json.dumps({"radius": 100}) in joined
+        # audit #820: task_complete reflects the observed tool step
+        assert '"step_count": 1' in joined
+
+    @pytest.mark.asyncio
     async def test_prompt_pi_error_raises_exception(self):
         """When Pi returns error, prompt() raises PiRpcError instead of returning error dict."""
         rpc = MagicMock()
@@ -103,7 +211,7 @@ class TestPiBridgeSubprocessFlow:
                 await rpc.events.put({
                     "type": "message_update",
                     "message": {"role": "assistant", "content": []},
-                    "assistantMessageEvent": {"type": "text_delta", "content": "streamed"},
+                    "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "streamed"},
                 })
                 await rpc.events.put({"type": "agent_end"})
 
@@ -190,7 +298,7 @@ class TestPiBridgeSubprocessFlow:
             await asyncio.sleep(0.07)  # ~3 heartbeat intervals of silence
             await rpc.events.put({
                 "type": "message_update",
-                "assistantMessageEvent": {"type": "text_delta", "content": "ok"},
+                "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "ok"},
             })
             await rpc.events.put({"type": "agent_end"})
 
@@ -250,7 +358,7 @@ class TestPiBridgeSubprocessFlow:
         stale_event = {
             "type": "message_update",
             "message": {"role": "assistant", "content": [{"type": "text", "text": "STALE FROM PRIOR TURN"}]},
-            "assistantMessageEvent": {"type": "text_delta", "content": "STALE FROM PRIOR TURN"},
+            "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "STALE FROM PRIOR TURN"},
         }
         await rpc.events.put(stale_event)
 
@@ -260,7 +368,7 @@ class TestPiBridgeSubprocessFlow:
                 await rpc.events.put({
                     "type": "message_update",
                     "message": {"role": "assistant", "content": []},
-                    "assistantMessageEvent": {"type": "text_delta", "content": "fresh"},
+                    "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "fresh"},
                 })
                 await rpc.events.put({"type": "agent_end"})
 
@@ -297,7 +405,7 @@ class TestPiBridgeSubprocessFlow:
                 await rpc.events.put({
                     "type": "message_update",
                     "message": {"role": "assistant", "content": []},
-                    "assistantMessageEvent": {"type": "text_delta", "content": "hello"},
+                    "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "hello"},
                 })
                 await rpc.events.put({"type": "agent_end"})
 
@@ -345,7 +453,7 @@ class TestPiBridgeSubprocessFlow:
                 await rpc.events.put({
                     "type": "message_update",
                     "message": {"role": "assistant", "content": []},
-                    "assistantMessageEvent": {"type": "text_delta", "content": "AAA"},
+                    "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "AAA"},
                 })
 
         async def fake_request_b(cmd, data=None):
@@ -354,7 +462,7 @@ class TestPiBridgeSubprocessFlow:
                 await rpc.events.put({
                     "type": "message_update",
                     "message": {"role": "assistant", "content": []},
-                    "assistantMessageEvent": {"type": "text_delta", "content": "BBB"},
+                    "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "BBB"},
                 })
                 await rpc.events.put({"type": "agent_end"})
 
