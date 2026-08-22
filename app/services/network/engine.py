@@ -286,6 +286,26 @@ class NetworkGraphEngine:
         )
 
     @staticmethod
+    def _layer_items(layer: Any) -> Optional[List[Any]]:
+        """Normalize a layer argument to its item list (audit #814).
+
+        Accepts a bare list of items, a GeoJSON FeatureCollection (returns its
+        features), or a single GeoJSON Feature (wraps it). Returns None when
+        the shape is not recognizable — callers decide whether that is an
+        error. Previously a FeatureCollection demand_layer was silently
+        replaced by ``[]`` and solve_accessibility fabricated 0% coverage."""
+        if isinstance(layer, list):
+            return layer
+        if isinstance(layer, dict):
+            t = layer.get("type")
+            if t == "FeatureCollection":
+                feats = layer.get("features")
+                return list(feats) if isinstance(feats, list) else []
+            if t == "Feature":
+                return [layer]
+        return None
+
+    @staticmethod
     def _to_facility(raw: Any, idx: int) -> Facility:
         """Converts raw input to a Facility domain object."""
         if isinstance(raw, Facility):
@@ -296,6 +316,21 @@ class NetworkGraphEngine:
             return Facility(facility_id=fac_id, geometry=geom,
                             capacity=float(raw.get("capacity", 1.0)),
                             name=str(raw.get("name", "")))
+        if isinstance(raw, dict) and isinstance(raw.get("geometry"), dict):
+            # GeoJSON Feature (audit #814): coordinates from geometry, attributes from properties.
+            geom = raw["geometry"]
+            coords = geom.get("coordinates")
+            if not (isinstance(coords, (list, tuple)) and len(coords) >= 2):
+                raise ValueError(
+                    f"Facility feature at index {idx} has no valid geometry.coordinates."
+                )
+            props = raw.get("properties") or {}
+            return Facility(
+                facility_id=str(raw.get("id") or props.get("id") or f"fac_{idx}"),
+                geometry={"type": "Point", "coordinates": [float(coords[0]), float(coords[1])]},
+                capacity=float(props.get("capacity", 1.0) or 1.0),
+                name=str(props.get("name", "") or ""),
+            )
         if isinstance(raw, (list, tuple)) and len(raw) >= 2:
             return Facility(
                 facility_id=f"fac_{idx}",
@@ -317,6 +352,19 @@ class NetworkGraphEngine:
             weight = float(raw.get("weight", 1.0))
             coords = raw.get("coordinates")
             if coords and isinstance(coords, (list, tuple)) and len(coords) >= 2:
+                geom = {"type": "Point", "coordinates": [float(coords[0]), float(coords[1])]}
+            elif isinstance(raw.get("geometry"), dict):
+                # GeoJSON Feature (audit #814): weight from common property spellings.
+                g = raw["geometry"]
+                coords = g.get("coordinates")
+                if not (isinstance(coords, (list, tuple)) and len(coords) >= 2):
+                    raise ValueError(
+                        f"Demand feature at index {idx} has no valid geometry.coordinates."
+                    )
+                props = raw.get("properties") or {}
+                w = props.get("weight", props.get("population", props.get("pop", 1.0)))
+                weight = float(w if w is not None else 1.0)
+                d_id = str(raw.get("id") or props.get("id") or d_id)
                 geom = {"type": "Point", "coordinates": [float(coords[0]), float(coords[1])]}
             else:
                 raise ValueError(
@@ -509,11 +557,28 @@ class NetworkGraphEngine:
             graph, net_ds = self._ensure_graph(network, prof)
 
             demands = []
-            raw_demands = demand_layer if isinstance(demand_layer, list) else []
+            raw_demands = self._layer_items(demand_layer)
+            if raw_demands is None:
+                raise ValueError(
+                    "demand_layer must be a list of points, a GeoJSON FeatureCollection, "
+                    f"or a single Feature — got {type(demand_layer).__name__} "
+                    "(audit #814: unrecognized shapes must not fabricate 0% coverage)."
+                )
             for idx, d in enumerate(raw_demands):
                 demands.append(self._to_demand(d, idx))
+            if not demands:
+                raise ValueError(
+                    "demand_layer parsed to zero demand points — refusing to "
+                    "report fabricated 0% coverage (audit #814)."
+                )
 
-            fac_objs = [self._to_facility(f, i) for i, f in enumerate(facilities)]
+            raw_facilities = self._layer_items(facilities)
+            if raw_facilities is None:
+                raise ValueError(
+                    "facilities must be a list of points, a GeoJSON FeatureCollection, "
+                    f"or a single Feature — got {type(facilities).__name__}."
+                )
+            fac_objs = [self._to_facility(f, i) for i, f in enumerate(raw_facilities)]
 
             acc_res = self.accessibility(
                 demand_points=demands,

@@ -136,10 +136,18 @@ class SpatialAnalyzer:
             return GeoAnalysisResult(False, None, validation_error)
         feat_list = features.get("features", [])
         import geopandas as gpd
-        gdf = gpd.GeoDataFrame.from_features(feat_list)
+        from app.lib.geo_processor.core import extract_declared_crs, declare_crs
+        # audit #815: rebuilding via from_features dropped the declared `crs`
+        # member while keeping projected coordinates — downstream crs-honoring
+        # consumers then misread metres as degrees. Honor + re-declare it.
+        declared_crs = extract_declared_crs(features)
+        gdf = gpd.GeoDataFrame.from_features(feat_list, crs=declared_crs or "EPSG:4326")
         filtered_gdf = gdf.query(query)
         summary = f"Filtered {len(feat_list)} features to {len(filtered_gdf)} using query: {query}"
-        return GeoAnalysisResult(True, filtered_gdf.__geo_interface__, summary)
+        out_fc = filtered_gdf.__geo_interface__
+        if isinstance(out_fc, dict):
+            out_fc.pop("crs", None)  # from_features echoes the member; declare_crs owns it
+        return GeoAnalysisResult(True, declare_crs(out_fc, declared_crs), summary)
 
     @classmethod
     @spatial_operator(name="statistics")

@@ -16,7 +16,24 @@ from app.utils.coord_transform import (  # noqa: F401
     gcj02_to_wgs84,
     gcj02_to_bd09,
     bd09_to_gcj02,
+    bd09_to_wgs84,
+    normalize_chinese_crs,
 )
+from shapely.ops import transform as _shapely_transform
+
+
+def _geometry_to_wgs84(geom, chinese_crs: str):
+    """Convert a shapely geometry from a declared gcj02/bd09 offset frame to
+    true WGS84 (audit #813). These names are not pyproj CRSes: building a
+    GeoDataFrame with ``crs="gcj02"`` raises CRSError for the whole to_utm_gdf
+    family, yet ``transform_geojson`` itself writes the member (GIS-22)."""
+    conv = gcj02_to_wgs84 if chinese_crs == "gcj02" else bd09_to_wgs84
+
+    def _fn(x, y, z=None):
+        lng, lat = conv(float(x), float(y))
+        return (lng, lat, z) if z is not None else (lng, lat)
+
+    return _shapely_transform(_fn, geom)
 
 @dataclass
 class GeoAnalysisResult:
@@ -227,6 +244,14 @@ def gdf_from_features(fc: dict | list, context: str = "") -> gpd.GeoDataFrame:
     member with suspicious coordinates only logs a warning.
     """
     declared = extract_declared_crs(fc)
+    chinese_crs = normalize_chinese_crs(declared) if declared else None
+    if chinese_crs in ("gcj02", "bd09"):
+        # audit #813: offset frames are not pyproj CRSes — normalize the
+        # geometries to true WGS84 instead of the previous except-fallback,
+        # which silently kept the ~100-600m offsets uncorrected.
+        gdf = gpd.GeoDataFrame.from_features(fc, crs="EPSG:4326")
+        gdf["geometry"] = gdf.geometry.apply(lambda g: _geometry_to_wgs84(g, chinese_crs))
+        return gdf
     try:
         gdf = gpd.GeoDataFrame.from_features(fc, crs=declared or "EPSG:4326")
     except Exception:
@@ -372,6 +397,13 @@ def to_utm_gdf(geojson: Any, source_crs: Optional[str] = None) -> tuple[gpd.GeoD
     if source_crs is None:
         source_crs = extract_declared_crs(fc)
 
+    # audit #813: "gcj02"/"bd09" are offset WGS84 frames, not pyproj CRSes —
+    # normalize the geometries to true WGS84 so crs="gcj02" never reaches
+    # GeoDataFrame construction (raw CRSError for the whole analysis family).
+    chinese_crs = normalize_chinese_crs(source_crs) if source_crs else None
+    if chinese_crs in ("gcj02", "bd09"):
+        source_crs = "EPSG:4326"
+
     rows = []
     for f in features:
         if not isinstance(f, dict):
@@ -390,6 +422,14 @@ def to_utm_gdf(geojson: Any, source_crs: Optional[str] = None) -> tuple[gpd.GeoD
 
     if not rows:
         return None, None
+
+    if chinese_crs in ("gcj02", "bd09"):
+        for r in rows:
+            r["geometry"] = _geometry_to_wgs84(r["geometry"], chinese_crs)
+        logger.info(
+            "to_utm_gdf: normalized %d declared-%s features to WGS84",
+            len(rows), chinese_crs,
+        )
 
     original_crs_explicit = source_crs
     gdf = gpd.GeoDataFrame(rows, crs=source_crs or "EPSG:4326")
