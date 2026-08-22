@@ -1472,6 +1472,17 @@ async def clear_session(
                         session_id,
                         purge_error,
                     )
+                # audit #837: the same lifecycle for the other artifact
+                # families — report rows/files and upload rows/dirs are
+                # session-keyed and must not outlive the conversation.
+                try:
+                    from app.services.artifact_lifecycle import purge_session_artifacts
+                    await purge_session_artifacts(session_id)
+                except Exception as artifact_error:  # noqa: BLE001
+                    logger.warning(
+                        "Artifact purge for %s failed (age sweep will reclaim): %s",
+                        session_id, artifact_error,
+                    )
                 # Cross-replica tombstone. The Redis session-state adapter applies
                 # its normal bounded TTL; late work from another replica therefore
                 # cannot recreate a deleted session's cartographic evidence.

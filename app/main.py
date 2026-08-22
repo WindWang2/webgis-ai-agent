@@ -183,6 +183,14 @@ async def _periodic_session_cleanup(interval_seconds: int = 600) -> None:
                 )
             except Exception as sweep_error:  # noqa: BLE001
                 logger.warning(f"[lifespan] session disk sweep failed: {sweep_error}")
+            # audit #837: exports (.owner sidecars) / reports / orphaned
+            # uploads get the same age-based reclamation as the mapspec
+            # family — previously write-only directories.
+            try:
+                from app.services.artifact_lifecycle import sweep_aged_artifacts
+                await sweep_aged_artifacts()
+            except Exception as sweep_error:  # noqa: BLE001
+                logger.warning(f"[lifespan] artifact sweep failed: {sweep_error}")
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001

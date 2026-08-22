@@ -239,7 +239,6 @@ class MaterializationService:
         try:
             query_result = await asyncio.to_thread(self.execute_query, adapter, dataset_id, spec)
         except DataFabricError as e:
-            empty = QueryResult(dataset_id=dataset_id, features=[], total_count=0)
             logger.error(
                 "[MaterializationService] materialize query failed for '%s': %s",
                 dataset_id, e,

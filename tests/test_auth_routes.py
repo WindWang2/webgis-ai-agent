@@ -43,6 +43,12 @@ async def app_and_db(tmp_path, monkeypatch):
         async def is_allowed(self, key, max_requests, window_seconds):
             return True
 
+        async def count(self, key, window_seconds):
+            return 0
+
+        async def record(self, key, window_seconds):
+            return None
+
     async def _stub_get_rate_limiter():
         return _NoOpLimiter()
 

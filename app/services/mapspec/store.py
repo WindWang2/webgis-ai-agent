@@ -170,6 +170,14 @@ class MapSpecStore:
         session_dir.mkdir(parents=True, exist_ok=True)
         return session_dir
 
+    def _invalidate_process_cache(self, session_id: str) -> None:
+        """audit #838: 进程级 no-op 缓存失效 —— clear/discard 后必须弹出，
+        否则 (a) 最后一个完整 spec 对象按会话滞留到进程退出（内存单调增长，
+        Redis/磁盘/会话层都有回收，唯独这层没有）；(b) 同 session_id 复用时
+        进程内指纹短路在 sidecar/Redis 交叉核对之前触发，静默跳过落盘。"""
+        self._persisted_fp.pop(session_id, None)
+        self._persisted_obj.pop(session_id, None)
+
     async def clear_session_files(self, session_id: str) -> None:
         """Purge durable MapSpec/checkpoint/revision state for one session.
 
@@ -177,6 +185,7 @@ class MapSpecStore:
         也不得像旧实现那样先 mkdir 再 rmtree（读路径才需要 mkdir 语义）。
         """
         session_dir = self._session_dir_path(session_id)
+        self._invalidate_process_cache(session_id)
 
         def _rmtree() -> None:
             try:
@@ -200,6 +209,7 @@ class MapSpecStore:
             mapspec_path.unlink(missing_ok=True)
 
         await asyncio.to_thread(_unlink)
+        self._invalidate_process_cache(session_id)  # audit #838
         await session_data_manager.set_map_state(session_id, "mapspec", None)
         await session_data_manager.set_map_state(
             session_id, "_cartographic_mutation_revision", 0
@@ -236,7 +246,16 @@ class MapSpecStore:
             return {"mapspec": mapspec}
         fp = await asyncio.to_thread(_fingerprint_sync, mapspec)
         if self._persisted_fp.get(session_id) == fp:
-            return {"mapspec": mapspec}
+            # audit #838: 进程内指纹命中不再无条件短路 —— sidecar 仍在且指纹
+            # 一致才算数。会话在别处被清除/盘上目录被回收后，同 id 复用的等值
+            # spec 会在此走到全量落盘，而不是静默跳过（磁盘/Redis 双缺失）。
+            sidecar_alive = await asyncio.to_thread(
+                _read_text_sync, mapspec_path.parent / _FP_SIDECAR_NAME
+            )
+            if sidecar_alive == fp:
+                return {"mapspec": mapspec}
+            # sidecar 缺失/不一致：清除进程内陈旧指纹，走全量落盘
+            self._invalidate_process_cache(session_id)
         sidecar_fp = await asyncio.to_thread(
             _read_text_sync, mapspec_path.parent / _FP_SIDECAR_NAME
         )

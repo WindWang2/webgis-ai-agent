@@ -1,4 +1,6 @@
 """Database Core Module"""
+import os
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 from app.core.config import settings
@@ -102,7 +104,32 @@ async def get_async_db():
 
 
 def init_db():
-    Base.metadata.create_all(bind=Engine)
+    """Create schema at startup.
+
+    audit #839: create_all previously ran on EVERY engine including Postgres,
+    silently creating tables outside Alembic's version control (the schema
+    drift that migrations 0017-0020 later had to close proves the risk is
+    real in this repo). Mirror the runtime-migration gate: create_all is a
+    SQLite/dev convenience; Postgres deployments own their schema via Alembic
+    (README deployment path). Set ALLOW_CREATE_ALL_ON_POSTGRES=1 to restore
+    the old behavior explicitly (single-container experiments).
+    """
+    import logging
+
+    log = logging.getLogger(__name__)
+    is_sqlite = str(settings.DATABASE_URL).startswith("sqlite")
+    if is_sqlite or os.environ.get("ALLOW_CREATE_ALL_ON_POSTGRES") == "1":
+        if not is_sqlite:
+            log.warning(
+                "[init_db] ALLOW_CREATE_ALL_ON_POSTGRES=1 — create_all running "
+                "against a non-sqlite database outside Alembic's control"
+            )
+        Base.metadata.create_all(bind=Engine)
+    else:
+        log.info(
+            "[init_db] non-sqlite database — skipping create_all; schema is "
+            "owned by Alembic (audit #839)"
+        )
     _apply_runtime_migrations()
 
 

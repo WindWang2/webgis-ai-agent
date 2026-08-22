@@ -2,7 +2,13 @@
 
 与工具层共用同一 service 实现（app.tools.local_admin / app.services.local_osm），
 只读 GET；写侧（预处理）走 manage.py osm-ingest，不在 HTTP 面。
+
+audit #836: 三个查询 handler 都做同步 SHP/GPKG 读取 + GeoJSON 序列化
+（冷读中国行政区 SHP / pyogrio read_dataframe 可达数百 ms-秒级）——
+与 upload/task/project/map 路由同款纪律，全部经 asyncio.to_thread 出离
+事件循环，避免冻结全部并发 SSE/WS 流（#386 系列）。
 """
+import asyncio
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -26,8 +32,9 @@ async def get_admin_boundary(
     """GET 查询参数用朴素默认值（直接调用路由函数时 Query() 对象会泄漏为实参）。"""
     if level not in LEVELS:
         return {"error": f"不支持的级别: {level}（可选 {', '.join(LEVELS)}）"}
-    return query_admin_boundary(
-        level, name=name, adcode=adcode, to_wgs84=to_wgs84, simplified=simplified
+    return await asyncio.to_thread(
+        query_admin_boundary,
+        level, name=name, adcode=adcode, to_wgs84=to_wgs84, simplified=simplified,
     )
 
 
@@ -39,8 +46,9 @@ async def get_admin_children(
     simplified: bool = False,
     _user: dict = Depends(get_current_user),
 ):
-    return query_child_districts(
-        parent_name, parent_level, to_wgs84=to_wgs84, simplified=simplified
+    return await asyncio.to_thread(
+        query_child_districts,
+        parent_name, parent_level, to_wgs84=to_wgs84, simplified=simplified,
     )
 
 
@@ -59,4 +67,7 @@ async def get_osm_features(
     _user: dict = Depends(get_current_user),
 ):
     bbox_list = [v.strip() for v in bbox.split(",")]
-    return query_osm_features(theme, bbox_list, name_like=name, tag=tag, limit=limit)
+    return await asyncio.to_thread(
+        query_osm_features,
+        theme, bbox_list, name_like=name, tag=tag, limit=limit,
+    )

@@ -15,6 +15,15 @@ class RateLimiter(Protocol):
     async def is_allowed(self, key: str, max_requests: int, window_seconds: int) -> bool:
         ...
 
+    async def count(self, key: str, window_seconds: int) -> int:
+        """audit #839: non-consuming read of how many entries fall in the
+        window (peeks the ledger without consuming budget)."""
+        ...
+
+    async def record(self, key: str, window_seconds: int) -> None:
+        """audit #839: append one ledger entry unconditionally (failure tally)."""
+        ...
+
 
 class RedisRateLimiter:
     """Sliding-window rate limiter backed by Redis sorted sets.
@@ -92,6 +101,30 @@ class RedisRateLimiter:
         return count <= max_requests
 
 
+    async def count(self, key: str, window_seconds: int) -> int:
+        try:
+            client = await self._ensure_client()
+            now = time.time()
+            pipe = client.pipeline()
+            pipe.zremrangebyscore(key, 0, now - window_seconds)
+            pipe.zcard(key)
+            results = await pipe.execute()
+            return int(results[-1] or 0)
+        except Exception:  # noqa: BLE001 — peek fails open (0 entries)
+            return 0
+
+    async def record(self, key: str, window_seconds: int) -> None:
+        try:
+            client = await self._ensure_client()
+            now = time.time()
+            pipe = client.pipeline()
+            pipe.zremrangebyscore(key, 0, now - window_seconds)
+            pipe.zadd(key, {f"{now:.6f}:{uuid.uuid4().hex[:6]}": now})
+            await pipe.execute()
+        except Exception:  # noqa: BLE001 — tally is best-effort
+            pass
+
+
 class MemoryRateLimiter:
     """Sliding-window rate limiter backed by an in-memory deque with TTL eviction."""
 
@@ -112,6 +145,21 @@ class MemoryRateLimiter:
             return False
         timestamps.append(now)
         return True
+
+    async def count(self, key: str, window_seconds: int) -> int:
+        now = time.time()
+        timestamps = self._requests.get(key)
+        if not timestamps:
+            return 0
+        return sum(1 for ts in timestamps if now - ts < window_seconds)
+
+    async def record(self, key: str, window_seconds: int) -> None:
+        self._maybe_evict()
+        now = time.time()
+        timestamps = self._requests[key]
+        while timestamps and now - timestamps[0] >= window_seconds:
+            timestamps.popleft()
+        timestamps.append(now)
 
     def _maybe_evict(self) -> None:
         """Periodically remove empty keys and enforce a hard key cap."""

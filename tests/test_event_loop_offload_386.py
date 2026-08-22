@@ -190,6 +190,12 @@ async def test_register_kdf_off_loop(monkeypatch):
         async def is_allowed(self, *a, **k):
             return True
 
+        async def count(self, *a, **k):
+            return 0
+
+        async def record(self, *a, **k):
+            return None
+
     monkeypatch.setattr(auth_mod, "get_rate_limiter", AsyncMock(return_value=_Limiter()))
 
     fake_result = MagicMock()
@@ -228,6 +234,12 @@ async def test_login_kdf_off_loop(monkeypatch):
     class _Limiter:
         async def is_allowed(self, *a, **k):
             return True
+
+        async def count(self, *a, **k):
+            return 0
+
+        async def record(self, *a, **k):
+            return None
 
     monkeypatch.setattr(auth_mod, "get_rate_limiter", AsyncMock(return_value=_Limiter()))
 

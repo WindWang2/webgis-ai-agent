@@ -188,14 +188,20 @@ async def login(
     db: AsyncSession = Depends(get_async_db),
 ) -> TokenResponse:
     """用户名或邮箱 + 密码登录，返回 access + refresh token。"""
-    # 限速：每 IP 5 分钟最多 5 次失败 -- 防 password spraying + 避免 NAT 下锁正常用户。
+    # 限速：每 IP 5 分钟最多 5 次**失败** -- 防 password spraying。
     # 审计 P1：之前 key 包含 identifier（用户名），攻击者可在同一 NAT 下用
     # 受害者的用户名发起失败登录，导致受害者被锁。改为纯 IP 限速。
+    # audit #839：此前 is_allowed 在凭证校验前无条件消耗配额且成功不返还 ——
+    # 同一 NAT 出口 5 次成功登录就会锁死第 6 个正常用户（与注释语义相悖）。
+    # 现在：失败才记入 fail 台账（count 只读探测不消耗）；另设宽的 attempts
+    # 上限（30/5min）保留防爆破/DoS 的前置闸门。
     client_ip = _get_client_ip(request)
     limiter = await get_rate_limiter()
+    if await limiter.count(f"auth_login_fail:{client_ip}", 300) >= 5:
+        raise HTTPException(status_code=429, detail="登录失败次数过多，请 5 分钟后再试")
     if not await limiter.is_allowed(
-        f"auth_login:{client_ip}",
-        max_requests=5,
+        f"auth_login_attempt:{client_ip}",
+        max_requests=30,
         window_seconds=300,
     ):
         raise HTTPException(status_code=429, detail="登录尝试过于频繁，请 5 分钟后再试")
@@ -210,6 +216,8 @@ async def login(
     stored_hash = user.password_hash if user else _DUMMY_STORED
     valid = await asyncio.to_thread(verify_password, req.password, stored_hash)
     if not user or not valid:
+        # audit #839: 失败记入 fail 台账（窗口 5 分钟，计数 5 次锁出）
+        await limiter.record(f"auth_login_fail:{client_ip}", 300)
         raise HTTPException(status_code=401, detail="用户名或密码错误")
     if not user.is_active:
         raise HTTPException(status_code=403, detail="账号已停用")
