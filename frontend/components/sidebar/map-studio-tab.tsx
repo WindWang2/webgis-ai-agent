@@ -385,7 +385,7 @@ export function MapStudioTab() {
                   >
                     <option value="png">PNG 高清图片</option>
                     <option value="pdf">PDF 印刷文档</option>
-                    <option value="svg">SVG 矢量图</option>
+                    <option value="svg">SVG（内嵌位图）</option>
                   </select>
                 </div>
 

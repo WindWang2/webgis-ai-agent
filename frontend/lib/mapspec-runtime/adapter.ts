@@ -300,7 +300,10 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
         // NaN/undefined 才走 legacy/default。
         if (Number.isFinite(explicitPx)) {
           r = Math.max(4, Math.min(80, Math.floor(explicitPx)));
-        } else if (Number.isFinite(legacyPx) && legacyPx >= 4 && legacyPx <= 100) {
+        } else if (Number.isFinite(legacyPx) && legacyPx >= 4 && legacyPx <= 60) {
+          // audit #841: legacy 直通窗口与后端契约 _LEGACY_PX_WINDOW=(4,60) 对齐
+          // （renderer.resolveHeatmapRadiusPx 同款）；此前 4-100 使 (60,100] 的
+          // legacy 值在首帧与 committed paint 之间翻转半径。
           r = Math.max(4, Math.min(80, Math.floor(legacyPx)));
         } else {
           r = 30;

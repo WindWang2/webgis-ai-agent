@@ -266,19 +266,16 @@ export function MapPanel({
           devOnly.warn("[map-panel] focusLayer fitBounds failed:", err)
         }
       }
-      if (!cancelled) {
-        // #801: 复位定时器不再随 effect 清理被取消 —— `layers` 是依赖项，
-        // 任何图层数组身份变化（后续 display_layer/runtimePatch 事件）都会
-        // 先跑 cleanup 再在 #739 标记处早退，旧实现里唯一的复位路径随
-        // cleanup 一同消失，focusLayerId 永久卡死（常亮高亮环 + 每轮对话
-        // 携带过期 focus_layer_id）。改为固定延时复位，且幂等（仅当仍指向
-        // 同一图层时清空）。
-        window.setTimeout(() => {
-          if (lastFittedFocusRef.current === focusLayerId) {
-            focusLayerSetter(null)
-          }
-        }, 800)
-      }
+      // audit #843: 复位定时器无条件调度 —— `cancelled` 只该守卫 fit 本身。
+      // 此前定时器在 `if (!cancelled)` 内：bbox await 窗口内 layers 身份变化
+      // → cleanup 置 cancelled → 定时器从未调度 → 重跑在 #739 标记处早退，
+      // focusLayerId 永久滞留（#801 的残余竞态）。定时器自身幂等（仅当标记
+      // 仍指向同一图层时清空）。
+      window.setTimeout(() => {
+        if (lastFittedFocusRef.current === focusLayerId) {
+          focusLayerSetter(null)
+        }
+      }, 800)
     }
 
     computeAndFit()
@@ -1030,6 +1027,13 @@ export function MapPanel({
   const legendFilterHandlersRef = useRef<Record<string, (ranges: number[][]) => void>>({})
   const legendFilterHandlers = useMemo(() => {
     const handlers: Record<string, (ranges: number[][]) => void> = {}
+    // audit #843: 图层 id 每轮分析都换新（哈希后缀）—— 缓存只增不减会让
+    // handler 闭包在长会话中无界累积。先按当前图层集修剪，再补新条目
+    // （保持 handler 身份稳定的目的不变）。
+    const liveIds = new Set(layers.map((l) => l.id))
+    for (const id of Object.keys(legendFilterHandlersRef.current)) {
+      if (!liveIds.has(id)) delete legendFilterHandlersRef.current[id]
+    }
     for (const l of layers) {
       if (!legendFilterHandlersRef.current[l.id]) {
         legendFilterHandlersRef.current[l.id] = (ranges) => handleFilterChange(l.id, ranges)

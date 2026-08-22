@@ -1,18 +1,11 @@
 'use client';
-import { memo, useState, useRef, useEffect } from 'react';
-import { X, Palette, RotateCcw } from 'lucide-react';
+import { memo, useState, useRef, useEffect, useSyncExternalStore } from 'react';
+import { X, RotateCcw } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { LayerStyle } from '@/lib/types/layer';
-import { commitLayerPresentation } from '@/lib/mapspec/user-mutation';
-
-const PALETTES: Record<string, { label: string; colors: string[] }> = {
-  inferno: { label: 'Inferno', colors: ['#000004', '#420a68', '#932667', '#dd513a', '#fca50a', '#fcffa4'] },
-  viridis: { label: 'Viridis', colors: ['#440154', '#31688e', '#35b779', '#fde725'] },
-  ylorrd:  { label: 'YlOrRd', colors: ['#ffffcc', '#fd8d3c', '#bd0026'] },
-  spectral: { label: 'Spectral', colors: ['#9e0142', '#fdae61', '#ffffbf', '#abd9e9', '#5e4fa2'] },
-  blues:   { label: 'Blues', colors: ['#f7fbff', '#6baed6', '#08306b'] },
-};
+import { setLayerOpacityAndCommit } from '@/lib/mapspec/user-mutation';
+import { getCommittedMapSpec, subscribeMapSpecLive } from '@/lib/mapspec/session-cursor';
 
 const MODE_LABELS: Record<string, string> = { vector: '矢量', heatmap: '热力', grid: '格网' };
 
@@ -23,9 +16,19 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
   const setEditingLayerId = useHudStore((s) => s.setEditingLayerId);
 
   const layer = layers.find((l) => l.id === editingLayerId);
+  // audit #840: committed MapSpec 存在时，HUD 层样式不进入 paint
+  // （composeLiveMapSpec 的 layers 完全取自 committed）—— 面板样式控件必须
+  // 显式禁用并说明，而不是静默 no-op；opacity/visibility 走 presentation
+  // mutation，仍然有效。
+  const committedSpec = useSyncExternalStore(subscribeMapSpecLive, getCommittedMapSpec);
+  const specBacked = !!committedSpec
+    && Array.isArray((committedSpec as { layers?: { id?: string }[] }).layers)
+    && (committedSpec as { layers?: { id?: string }[] }).layers!.some(
+      (l) => l?.id === editingLayerId,
+    );
 
   const updateStyle = (patch: Partial<LayerStyle>) => {
-    if (!layer) return;
+    if (!layer || specBacked) return;
     updateLayer(layer.id, { style: { ...layer.style, ...patch } });
   };
 
@@ -49,9 +52,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
   const strokeWidth = style.strokeWidth ?? 2;
   const fillEnabled = style.fill !== false;
   const renderType = style.renderType || 'vector';
-  const palette = style.palette || 'inferno';
   const radius = style.radius_px ?? style.radius ?? 30;
-  const intensity = style.intensity ?? 1;
   const pointSize = style.pointSize ?? 5;
   const dashArray = style.dashArray || 'solid';
   const brightness = style.brightness ?? 1;
@@ -62,8 +63,9 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
 
   const commitOpacity = (val: number) => {
     setDraftOpacity(null);
-    updateLayer(layer.id, { opacity: val });
-    void commitLayerPresentation({ layerId: layer.id, opacity: val });
+    // audit #842: 经带回滚的 wrapper 提交 —— 裸 void commitLayerPresentation
+    // 失败时 unhandled rejection 且本地透明度不回滚（与服务端分叉）。
+    void setLayerOpacityAndCommit(layer.id, val);
   };
 
   return (
@@ -131,6 +133,16 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
           )}
         </div>
 
+        {specBacked && (
+          <div className="rounded-lg border border-hud-cyan/20 bg-hud-cyan/5 px-3 py-2 text-[15px] leading-relaxed text-white/45">
+            该图层由 AI 生成的制图规范（MapSpec）管理，样式暂不支持在此修改；
+            透明度调整仍然有效。
+          </div>
+        )}
+
+        {/* audit #840: spec-backed 图层上以下样式控件全部禁用（写 HUD store
+            不进 paint，此前是静默 no-op）。 */}
+        <fieldset disabled={specBacked} className={specBacked ? 'opacity-40' : ''}>
         {/* === VECTOR CONTROLS === */}
         {layer.type === 'vector' && (
           <>
@@ -245,52 +257,19 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
         {/* === HEATMAP CONTROLS === */}
         {layer.type === 'heatmap' && (
           <>
-            {/* Palette */}
-            <div>
-              <label className="text-[15px] text-white/25 uppercase tracking-wider mb-1.5 block flex items-center gap-1">
-                <Palette size={10} /> 色带
-              </label>
-              <div className="space-y-1">
-                {Object.entries(PALETTES).map(([key, p]) => (
-                  <button
-                    key={key}
-                    onClick={() => updateStyle({ palette: key })}
-                    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors ${
-                      palette === key ? 'bg-hud-cyan/10 ring-1 ring-hud-cyan/30' : 'hover:bg-white/[0.03]'
-                    }`}
-                  >
-                    <div className="flex-1 h-3 rounded-full overflow-hidden flex">
-                      {p.colors.map((c, i) => (
-                        <div key={i} className="flex-1" style={{ backgroundColor: c }} />
-                      ))}
-                    </div>
-                    <span className={`text-[15px] ${palette === key ? 'text-hud-cyan' : 'text-white/25'}`}>
-                      {p.label}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
+            {/* audit #840: 色带/热力强度控件已移除 —— 两个参数在任何渲染
+                路径都没有消费者（grep: 仅本面板读写），假控件不如没有。 */}
 
             {/* Radius */}
             <div>
               <label className="text-[15px] text-white/25 uppercase tracking-wider mb-1.5 block">
                 热力半径 <span className="text-white/15 font-mono">{radius}px</span>
               </label>
-              <input type="range" min={5} max={100} step={1} value={radius}
+              <input type="range" min={4} max={80} step={1} value={Math.min(80, radius)}
                 onChange={(e) => updateStyle({ radius_px: parseInt(e.target.value) })}
                 className="w-full accent-hud-cyan" />
             </div>
 
-            {/* Intensity */}
-            <div>
-              <label className="text-[15px] text-white/25 uppercase tracking-wider mb-1.5 block">
-                热力强度 <span className="text-white/15 font-mono">{intensity.toFixed(1)}</span>
-              </label>
-              <input type="range" min={0.1} max={3} step={0.1} value={intensity}
-                onChange={(e) => updateStyle({ intensity: parseFloat(e.target.value) })}
-                className="w-full accent-hud-cyan" />
-            </div>
           </>
         )}
 
@@ -324,6 +303,8 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
           </>
         )}
 
+        </fieldset>
+
         {/* === OPACITY (ALL TYPES) === */}
         <div>
           <label className="text-[15px] text-white/25 uppercase tracking-wider mb-1.5 block">
@@ -345,6 +326,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
 
         {/* Reset */}
         <button
+          disabled={specBacked}
           onClick={() => {
             updateLayer(layer.id, { opacity: 0.8, style: {} });
           }}

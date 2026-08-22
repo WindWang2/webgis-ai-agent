@@ -141,26 +141,38 @@ export async function commitExplicitView(view: {
 }): Promise<void> {
   const { sessionId, revision, ownerToken } = getMapSpecSessionCursor();
   if (!sessionId) return;
-  const data = await apiFetch<MutationResponse>(
-    `/api/v1/chat/sessions/${sessionId}/mapspec/mutations`,
-    {
-      method: 'POST',
-      body: {
-        intent: 'set_view',
-        expected_revision: revision,
-        center: view.center,
-        zoom: view.zoom,
-        pitch: view.pitch,
-        bearing: view.bearing,
+  try {
+    const data = await apiFetch<MutationResponse>(
+      `/api/v1/chat/sessions/${sessionId}/mapspec/mutations`,
+      {
+        method: 'POST',
+        body: {
+          intent: 'set_view',
+          expected_revision: revision,
+          center: view.center,
+          zoom: view.zoom,
+          pitch: view.pitch,
+          bearing: view.bearing,
+        },
+        ownerToken,
+        label: 'MapSpec set_view mutation',
       },
-      ownerToken,
-      label: 'MapSpec set_view mutation',
-    },
-  );
-  if (typeof data.mutation_revision === 'number') {
-    setMapSpecRevision(data.mutation_revision);
+    );
+    if (typeof data.mutation_revision === 'number') {
+      setMapSpecRevision(data.mutation_revision);
+    }
+    applyCommittedMapSpec(data.mapspec);
+  } catch (err) {
+    // audit #842: 与姊妹 mutation 同款 409 收敛 —— superseded 时回灌服务端
+    // 真相（此前 fire-and-forget 调用点没有 catch：unhandled rejection +
+    // 本地视图真相丢失）；其它错误吞掉并保持调用方无感。
+    const superseded = supersededFromError(err);
+    if (!superseded) return;
+    if (typeof superseded.mutation_revision === 'number') {
+      setMapSpecRevision(superseded.mutation_revision);
+    }
+    applyCommittedMapSpec(superseded.mapspec);
   }
-  applyCommittedMapSpec(data.mapspec);
 }
 
 export async function commitMapSpecMutation(
