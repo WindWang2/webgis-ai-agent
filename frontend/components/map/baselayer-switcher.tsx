@@ -25,6 +25,21 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
   const setBaseLayer = useHudStore((s) => s.setBaseLayer);
   const { selectedBaseLayer, setSelectedBaseLayer } = useMapAction();
   const rootRef = useRef<HTMLDivElement>(null);
+  const listboxRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  // #806: 打开即聚焦 listbox —— 键盘漫游（#700）与 aria-activedescendant
+  // 只在 listbox 持有焦点时生效；此前点击触发器后焦点留在按钮上，方向键
+  // 全然无响应直到用户手动 Tab。Escape/关闭时焦点还给触发器。
+  useEffect(() => {
+    if (open) {
+      listboxRef.current?.focus();
+    } else {
+      if (triggerRef.current && document.activeElement === listboxRef.current) {
+        triggerRef.current.focus();
+      }
+    }
+  }, [open]);
 
   const currentLabel = TILE_PROVIDERS[selectedBaseLayer]?.name || baseLayer || 'Carto 浅色';
 
@@ -78,6 +93,7 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
           画布是最贵的那类合成；改走 .map-chrome 不透明容器配方（主题色由
           --map-chrome-* 提供，不再按 isDark 手写两套 hex）。 */}
       <button
+        ref={triggerRef}
         type='button'
         aria-haspopup='listbox'
         aria-expanded={open}
@@ -97,6 +113,7 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
 
       {open && (
         <div
+          ref={listboxRef}
           role='listbox'
           aria-label='Base layer options'
           aria-activedescendant={activeIdx >= 0 ? `baselayer-opt-${activeIdx}` : undefined}

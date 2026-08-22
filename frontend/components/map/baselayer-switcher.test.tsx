@@ -137,3 +137,19 @@ describe('BaselayerSwitcher', () => {
     expect(screen.getByRole('button', { name: /Base layer/i })).toHaveTextContent('Some Stored Layer');
   });
 });
+
+// ── #806: 打开即聚焦 listbox（键盘漫游立即可用） ─────────────────────────
+
+describe('BaselayerSwitcher keyboard focus (#806)', () => {
+  it('打开下拉后焦点落在 listbox 上，ArrowDown+Enter 可完成选择', () => {
+    render(<BaselayerSwitcher />);
+    fireEvent.click(screen.getByRole('button', { name: /Base layer/i }));
+    const listbox = screen.getByRole('listbox');
+    expect(document.activeElement).toBe(listbox);
+    // 方向键在 listbox 上直接生效（此前焦点留在按钮上，方向键无响应）
+    fireEvent.keyDown(listbox, { key: 'ArrowDown' });
+    fireEvent.keyDown(listbox, { key: 'Enter' });
+    expect(mockSetSelectedBaseLayer).toHaveBeenCalled();
+    expect(mockSetBaseLayer).toHaveBeenCalled();
+  });
+});

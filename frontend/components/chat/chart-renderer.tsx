@@ -8,6 +8,7 @@ import {
 
 import type { ChartData, ChartDataPoint } from "@/lib/types";
 import { adaptChartData } from "@/lib/chart-adapter";
+import { useHudStore } from "@/lib/store/useHudStore";
 export type { ChartData, ChartDataPoint };
 export { adaptChartData };
 
@@ -26,11 +27,14 @@ function themeColor(varName: string, fallback: string): string {
   return value || fallback;
 }
 
-function tickStyle() {
+// #807: 主题键参数化 —— themeColor 读的是渲染时刻的 computed token；外层
+// ChatMessageItem 是 memo 边界，主题切换不会跨过它，旧值会一直滞留。
+// 各 Render* 子组件以当前 theme 为键重派生样式。
+function tickStyle(_themeKey?: string) {
   return { fill: themeColor("--text-muted", "#5b6b82"), fontSize: 13 };
 }
 
-function tooltipStyle() {
+function tooltipStyle(_themeKey?: string) {
   return {
     contentStyle: {
       backgroundColor: themeColor("--surface-raised", "#ffffff"),
@@ -43,13 +47,16 @@ function tooltipStyle() {
 }
 
 function RenderBarChart({ chart }: { chart: ChartData }) {
+  // #807: 自订阅主题 —— 外层 ChatMessageItem 是 memo 边界，主题切换不会
+  // 跨过它；订阅后本组件在 toggle 时重派生 tick/tooltip 色。
+  const theme = useHudStore((s) => s.theme);
   return (
     <ResponsiveContainer width="100%" height={200}>
       <BarChart data={chart.data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(6,182,212,0.15)" />
-        <XAxis dataKey="name" tick={tickStyle()} />
-        <YAxis tick={tickStyle()} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", ...tickStyle() } : undefined} />
-        <Tooltip {...tooltipStyle()} />
+        <XAxis dataKey="name" tick={tickStyle(theme)} />
+        <YAxis tick={tickStyle(theme)} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", ...tickStyle() } : undefined} />
+        <Tooltip {...tooltipStyle(theme)} />
         <Bar dataKey="value" fill="#06b6d4" radius={[2, 2, 0, 0]} />
       </BarChart>
     </ResponsiveContainer>
@@ -57,13 +64,16 @@ function RenderBarChart({ chart }: { chart: ChartData }) {
 }
 
 function RenderLineChart({ chart }: { chart: ChartData }) {
+  // #807: 自订阅主题 —— 外层 ChatMessageItem 是 memo 边界，主题切换不会
+  // 跨过它；订阅后本组件在 toggle 时重派生 tick/tooltip 色。
+  const theme = useHudStore((s) => s.theme);
   return (
     <ResponsiveContainer width="100%" height={200}>
       <LineChart data={chart.data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(6,182,212,0.15)" />
-        <XAxis dataKey="name" tick={tickStyle()} />
-        <YAxis tick={tickStyle()} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", ...tickStyle() } : undefined} />
-        <Tooltip {...tooltipStyle()} />
+        <XAxis dataKey="name" tick={tickStyle(theme)} />
+        <YAxis tick={tickStyle(theme)} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", ...tickStyle() } : undefined} />
+        <Tooltip {...tooltipStyle(theme)} />
         <Line type="monotone" dataKey="value" stroke="#06b6d4" strokeWidth={2} dot={{ fill: "#06b6d4", r: 3 }} />
       </LineChart>
     </ResponsiveContainer>
@@ -71,6 +81,9 @@ function RenderLineChart({ chart }: { chart: ChartData }) {
 }
 
 function RenderPieChart({ chart }: { chart: ChartData }) {
+  // #807: 自订阅主题 —— 外层 ChatMessageItem 是 memo 边界，主题切换不会
+  // 跨过它；订阅后本组件在 toggle 时重派生 tick/tooltip 色。
+  const theme = useHudStore((s) => s.theme);
   return (
     <ResponsiveContainer width="100%" height={200}>
       <PieChart>
@@ -89,7 +102,7 @@ function RenderPieChart({ chart }: { chart: ChartData }) {
             <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
           ))}
         </Pie>
-        <Tooltip {...tooltipStyle()} />
+        <Tooltip {...tooltipStyle(theme)} />
         <Legend wrapperStyle={{ fontSize: "13px", color: "#94a3b8" }} />
       </PieChart>
     </ResponsiveContainer>
@@ -97,13 +110,16 @@ function RenderPieChart({ chart }: { chart: ChartData }) {
 }
 
 function RenderScatterChart({ chart }: { chart: ChartData }) {
+  // #807: 自订阅主题 —— 外层 ChatMessageItem 是 memo 边界，主题切换不会
+  // 跨过它；订阅后本组件在 toggle 时重派生 tick/tooltip 色。
+  const theme = useHudStore((s) => s.theme);
   return (
     <ResponsiveContainer width="100%" height={200}>
       <ScatterChart margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(6,182,212,0.15)" />
-        <XAxis dataKey="x" type="number" tick={tickStyle()} label={chart.x_label ? { value: chart.x_label, position: "insideBottom", offset: -5, fill: "#94a3b8", fontSize: 13 } : undefined} />
-        <YAxis dataKey="y" type="number" tick={tickStyle()} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", ...tickStyle() } : undefined} />
-        <Tooltip {...tooltipStyle()} />
+        <XAxis dataKey="x" type="number" tick={tickStyle(theme)} label={chart.x_label ? { value: chart.x_label, position: "insideBottom", offset: -5, fill: "#94a3b8", fontSize: 13 } : undefined} />
+        <YAxis dataKey="y" type="number" tick={tickStyle(theme)} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", ...tickStyle() } : undefined} />
+        <Tooltip {...tooltipStyle(theme)} />
         <Scatter data={chart.data} fill="#06b6d4" />
       </ScatterChart>
     </ResponsiveContainer>
