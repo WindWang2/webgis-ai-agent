@@ -207,7 +207,13 @@ async def test_fetch_stores_payload_through_store_ref_seam():
 
   payload, kind = stored[0]
   assert kind == "fetch"
-  assert payload["data"] == b"col1,col2\n1,2\n".hex()
+  # #775: payloads are stored base64 (~1.33x + padding), not hex (2x) — the
+  # session-store footprint per source used to double.
+  import base64
+  raw = b"col1,col2\n1,2\n"
+  assert payload["data"] == base64.b64encode(raw).decode("ascii")
+  assert payload["codec"] == "base64"
+  assert len(payload["data"]) == 4 * ((len(raw) + 2) // 3)  # exact b64 bound < 2x
   assert payload["content_type"] == "text/csv"
 
 
@@ -383,9 +389,11 @@ class FakeParseAdapter:
 
 
 def _stored_fetch_payload(rows_csv: bytes = b"address\nMain St\n") -> dict:
-  """A fetch-ref payload in the store shape the parse stage reads."""
+  """A fetch-ref payload in the store shape the parse stage reads (#775: base64)."""
+  import base64
   return {
-      "data": rows_csv.hex(),
+      "data": base64.b64encode(rows_csv).decode("ascii"),
+      "codec": "base64",
       "content_type": "text/csv",
       "encoding": "utf-8",
   }
@@ -438,13 +446,14 @@ async def test_parse_partial_missing_keeps_success():
 
 @pytest.mark.asyncio
 async def test_parse_isolates_bad_hex_payload():
-  """A corrupt payload (non-hex data) skips just that source, others survive.
+  """A corrupt payload (non-decodable data) skips just that source, others survive.
 
-  Previously bytes.fromhex(stored["data"]) was unguarded and one bad payload
-  aborted the whole stage with a ValueError.
+  Previously the decode of stored["data"] was unguarded and one bad payload
+  aborted the whole stage (#775 renamed the codec to base64; the isolation
+  contract is unchanged).
   """
   store = {
-      "ref-bad": {"data": "not-hex!!", "content_type": "text/csv", "encoding": "utf-8"},
+      "ref-bad": {"data": "not-base64!!", "codec": "base64", "content_type": "text/csv", "encoding": "utf-8"},
       "ref-ok": _stored_fetch_payload(),
   }
 
@@ -481,3 +490,117 @@ async def test_parse_empty_input_succeeds():
   )
   assert result.success is True
   assert result.data["parsed_results"] == []
+
+
+# ─── #774: fetch failures ride along; empty-source message is distinct ──────
+
+
+@pytest.mark.asyncio
+async def test_fetch_partial_failure_keeps_errors_in_data_774():
+  """#774: with 1 of 3 sources failing, the success StageResult must carry the
+  failure under fetch_errors — previously it vanished (log-only) and the
+  survivors' total_rows masqueraded as the complete result."""
+  adapter = FakeFetchAdapter({"a": b"1", "c": b"3"})  # "bad" absent => raises
+
+  result = await run_fetch_stage(
+      task_id="t774",
+      selected_sources=[
+          {"source": _source("bad").model_dump()},
+          {"source": _source("a").model_dump()},
+          {"source": _source("c").model_dump()},
+      ],
+      adapter=adapter,
+  )
+
+  assert result.success is True
+  ids = [r["source_id"] for r in result.data["fetch_results"]]
+  assert ids == ["a", "c"]
+  assert [e["source_id"] for e in result.data["fetch_errors"]] == ["bad"]
+  assert all("error" in e for e in result.data["fetch_errors"])
+
+
+@pytest.mark.asyncio
+async def test_fetch_empty_sources_message_is_distinct_774():
+  """#774: discovery finding 0 sources must NOT report 'All source fetches
+  failed: []' — an empty candidate list is a distinct (and differently
+  debuggable) condition."""
+  result = await run_fetch_stage(
+      task_id="t774",
+      selected_sources=[],
+      adapter=FakeFetchAdapter({}),
+  )
+  assert result.success is False
+  assert "no sources" in result.message
+  assert "All source fetches failed" not in result.message
+
+
+@pytest.mark.asyncio
+async def test_validate_summary_carries_fetch_errors_774():
+  """#774: the validate stage's completion summary includes the fetch-stage
+  per-source failures (threaded through by the chain/pipeline callers)."""
+  from app.services.explorer.validate_stage import run_validate_stage
+
+  fetch_errors = [{"source_id": "bad", "error": "upstream 503"}]
+  result = await run_validate_stage(
+      "t774", geocoded_ref_id="ref-1", total_rows=5, fetch_errors=fetch_errors
+  )
+  assert result.success is True
+  assert result.data["fetch_errors"] == fetch_errors
+
+
+# ─── #775: base64 storage round-trip + legacy hex payloads ───────────────────
+
+
+@pytest.mark.asyncio
+async def test_fetch_parse_base64_roundtrip_775():
+  """#775: fetch stores base64 and parse decodes it back byte-exact, with the
+  stored string at most 1.4x the payload size (hex was 2x)."""
+  import base64
+
+  raw_bytes = "名称,地址\nA,北京市海淀区\nB,上海市浦东新区\n".encode("utf-8")
+  stored_payloads = {}
+
+  def store_ref(payload, kind):
+      stored_payloads[kind] = payload
+      return "ref-775"
+
+  fetch_res = await run_fetch_stage(
+      task_id="t775",
+      selected_sources=[{"source": _source("s1").model_dump()}],
+      adapter=FakeFetchAdapter({"s1": raw_bytes}),
+      store_ref=store_ref,
+  )
+  payload = stored_payloads["fetch"]
+  assert payload["codec"] == "base64"
+  assert len(payload["data"]) <= 1.4 * len(raw_bytes)
+
+  class _EchoAdapter:
+      async def parse(self, raw):
+          from app.services.explorer.models import StructuredData, FieldInfo
+          text = raw.data.decode("utf-8")
+          rows = [
+              dict(zip(text.splitlines()[0].split(","), line.split(",")))
+              for line in text.splitlines()[1:]
+          ]
+          return StructuredData(rows=rows, fields=[FieldInfo(name="地址")])
+
+  parse_res = await run_parse_stage(
+      "t775",
+      fetch_res.data["fetch_results"],
+      load_ref=lambda ref_id: stored_payloads["fetch"],
+      store_ref=store_ref,
+      adapter=_EchoAdapter(),
+  )
+  assert parse_res.data["parsed_results"][0]["row_count"] == 2
+
+
+def test_decode_fetch_payload_legacy_hex_still_supported_775():
+  """#775: payloads stored before the base64 switch (no codec marker) are hex
+  and must still decode — an in-flight chain across a deploy must not lose its
+  data."""
+  from app.services.explorer.parse_stage import decode_fetch_payload
+
+  legacy = {"data": "e4b8ade69687", "content_type": "text/csv", "encoding": "utf-8"}
+  assert decode_fetch_payload(legacy) == "中文".encode("utf-8")
+  modern = {"data": "5Lit5paH", "codec": "base64", "content_type": "text/csv", "encoding": "utf-8"}
+  assert decode_fetch_payload(modern) == "中文".encode("utf-8")

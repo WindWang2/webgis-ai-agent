@@ -146,3 +146,100 @@ def test_data_fabric_health_and_ssrf():
         bad_h = health_checker.check_connection_profile(bad_profile)
         assert bad_h.status == "unreachable"
         assert "SSRF" in bad_h.message
+
+
+# ── #766: in-band adapter failures must surface as typed errors ─────────────
+
+
+class _InBandErrorAdapter:
+    """Adapter whose query returns the empty-but-"successful" error shape that
+    real network adapters (wfs/ogc/stac) emit on fetch failure."""
+
+    def __init__(self, marker: str = "schema_info"):
+        self.marker = marker
+
+    def query(self, dataset_id, query_spec):
+        if self.marker == "schema_info":
+            return QueryResult(
+                dataset_id=dataset_id, features=[], total_count=0,
+                schema_info={"error": "connection reset by peer"},
+            )
+        return QueryResult(
+            dataset_id=dataset_id, features=[], total_count=0,
+            metadata={"error_type": "SOURCE_BAD_RESPONSE", "error": "HTTP 503"},
+        )
+
+
+def test_execute_query_raises_typed_error_on_in_band_marker():
+    """#766: MaterializationService.execute_query converts schema_info/metadata
+    error markers into typed DataFabricError — fetch failed ≠ empty dataset."""
+    from app.services.data_fabric.errors import (
+        DataFabricError,
+        SourceBadResponseError,
+        SourceUnreachableError,
+    )
+
+    spec = QuerySpec(limit=5)
+    with pytest.raises(SourceUnreachableError):
+        MaterializationService().execute_query(_InBandErrorAdapter("schema_info"), "ds", spec)
+    with pytest.raises(SourceBadResponseError):
+        MaterializationService().execute_query(_InBandErrorAdapter("metadata"), "ds", spec)
+
+
+def test_execute_query_empty_success_is_not_an_error():
+    """#766: a genuinely empty successful result must keep flowing — only the
+    error markers trip the typed failure."""
+    class _EmptyOkAdapter:
+        def query(self, dataset_id, query_spec):
+            return QueryResult(dataset_id=dataset_id, features=[], total_count=0)
+
+    res = MaterializationService().execute_query(_EmptyOkAdapter(), "ds", QuerySpec(limit=5))
+    assert res.features == []
+
+
+@pytest.mark.asyncio
+async def test_materialize_dataset_typed_failure_no_ref():
+    """#766: materialize_dataset reports a typed failure (no ref, no success)
+    when the remote query failed in-band."""
+    from app.services.data_fabric.materialization_service import materialization_service
+
+    res = await materialization_service.materialize_dataset(
+        adapter=_InBandErrorAdapter("metadata"),
+        dataset_id="ds-failed",
+        query_spec=QuerySpec(limit=5),
+        session_id="s766",
+    )
+    assert res["success"] is False
+    assert res["ref_id"] is None
+    assert res["error_type"] == "SOURCE_BAD_RESPONSE"
+
+
+@pytest.mark.asyncio
+async def test_materialize_labels_demo_source_767(monkeypatch):
+    """#767: materialize() result carries is_demo=True for demo-adapter
+    payloads (source_type resolved through the registry)."""
+    from app.services.data_fabric import materialization_service as ms
+
+    async def fake_store(session_id, data, prefix="data"):
+        return "ref:data-fabric-demo1"
+
+    async def fake_alias(session_id, ref_id, alias):
+        return None
+
+    monkeypatch.setattr(ms.session_data_manager, "store", fake_store)
+    monkeypatch.setattr(ms.session_data_manager, "set_alias", fake_alias)
+
+    res = await ms.materialization_service.materialize(
+        "demo-ds",
+        QueryResult(dataset_id="demo-ds", metadata={"source_type": "generic"}),
+        session_id="s767",
+    )
+    assert res["success"] is True
+    assert res["is_demo"] is True
+    # Non-demo source types are labeled False, not omitted.
+    res2 = await ms.materialization_service.materialize(
+        "real-ds",
+        QueryResult(dataset_id="real-ds", metadata={"source_type": "wfs"}),
+        session_id="s767",
+    )
+    assert res2["is_demo"] is False

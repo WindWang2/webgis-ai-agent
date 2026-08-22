@@ -120,3 +120,44 @@ async def test_connect_ssrf_blocking(registry):
             source_type="wfs",
             url="http://127.0.0.1/admin",
         )
+
+
+# ─── #767 / #768: no fabricated descriptors, no synthetic masquerade ────────
+
+
+def test_describe_dataset_unknown_id_is_typed_error_768(registry):
+    """#768: an unknown dataset id must return a typed DATASET_NOT_FOUND error
+    — previously a fabricated worldwide Polygon/EPSG:4326 descriptor was
+    returned with a deterministic fingerprint as if it were real schema."""
+    desc_func = registry._tools["describe_dataset"]
+    res = desc_func(dataset_id="no-such-dataset-768")
+    assert res["status"] == "error"
+    assert res["error_type"] == "DATASET_NOT_FOUND"
+    assert "no-such-dataset-768" in res["error"]
+    # No fabricated descriptor or fingerprint computed.
+    assert "descriptor" not in res
+    assert "fingerprint" not in res
+
+
+@pytest.mark.asyncio
+async def test_connect_demo_source_labeled_767(registry):
+    """#767: the connect tool result labels demo/sample adapters with
+    is_demo=True (and real adapters False), and unregistered types are
+    rejected loudly instead of fabricating an adapter."""
+    conn_func = registry._tools["connect_data_source"]
+
+    res = await conn_func(
+        profile_id="unit_demo_767", source_type="generic", url="https://example.com/api"
+    )
+    assert res["status"] == "connected"
+    assert res["is_demo"] is True
+
+    res_real = await conn_func(
+        profile_id="unit_real_767", source_type="postgis", url="https://example.com/api"
+    )
+    assert res_real["is_demo"] is False
+
+    with pytest.raises(Exception):  # UnsupportedSourceError from the registry
+        await conn_func(
+            profile_id="unit_csv_767", source_type="csv", url="https://example.com/api"
+        )

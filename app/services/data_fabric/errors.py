@@ -28,6 +28,7 @@ RESULT_TOO_LARGE = "RESULT_TOO_LARGE"
 MATERIALIZATION_FAILED = "MATERIALIZATION_FAILED"
 CANCELLED = "CANCELLED"
 SECURITY_BLOCKED = "SECURITY_BLOCKED"
+DATASET_NOT_FOUND = "DATASET_NOT_FOUND"
 
 
 # ── HTTP status classification (single source of truth for retry policy) ─────
@@ -110,6 +111,10 @@ class SecurityBlockedError(DataFabricError):
     code = SECURITY_BLOCKED
 
 
+class DatasetNotFoundError(DataFabricError):
+    code = DATASET_NOT_FOUND
+
+
 def classify_http_status(status: int) -> str:
     """Map a remote HTTP status to a canonical Data Fabric error code.
 
@@ -129,6 +134,56 @@ def classify_http_status(status: int) -> str:
     return SOURCE_BAD_RESPONSE
 
 
+# code → typed exception (inverse mapping for in-band QueryResult markers).
+_ERROR_CLASS_BY_CODE: Dict[str, type] = {
+    SOURCE_UNREACHABLE: SourceUnreachableError,
+    SOURCE_TIMEOUT: SourceTimeoutError,
+    SOURCE_RATE_LIMITED: SourceRateLimitedError,
+    SOURCE_AUTH_FAILED: SourceAuthFailedError,
+    SOURCE_BAD_RESPONSE: SourceBadResponseError,
+    RESULT_TOO_LARGE: ResultTooLargeError,
+    MATERIALIZATION_FAILED: MaterializationFailedError,
+    CANCELLED: DataFabricCancelledError,
+    SECURITY_BLOCKED: SecurityBlockedError,
+}
+
+
+def error_from_query_result(result: Any) -> Optional[DataFabricError]:
+    """Interpret the in-band failure markers of an adapter ``QueryResult``.
+
+    #766: adapters catch every exception and return an empty-but-"successful"
+    ``QueryResult`` whose failure signal lives only in
+    ``schema_info["error"]`` / ``metadata["error_type"]`` (or
+    ``metadata["error"]`` / ``metadata["error_hint"]``). Consumers used to
+    treat those as genuinely empty datasets. This helper converts the markers
+    back into a typed ``DataFabricError`` so callers can distinguish "fetch
+    failed" from "empty dataset". Returns ``None`` when no marker is present
+    (a real, possibly empty, success).
+
+    Duck-typed on ``.metadata`` / ``.schema_info`` / ``.dataset_id`` to avoid
+    an import cycle with the pydantic schema module.
+    """
+    metadata = getattr(result, "metadata", None) or {}
+    schema_info = getattr(result, "schema_info", None) or {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    if not isinstance(schema_info, dict):
+        schema_info = {}
+
+    err_type = metadata.get("error_type")
+    err_msg = metadata.get("error") or schema_info.get("error")
+    if not err_type and not err_msg:
+        return None
+
+    code = err_type or SOURCE_UNREACHABLE
+    cls = _ERROR_CLASS_BY_CODE.get(code, SourceUnreachableError)
+    details: Optional[Dict[str, Any]] = None
+    dataset_id = getattr(result, "dataset_id", None)
+    if dataset_id:
+        details = {"dataset_id": dataset_id}
+    return cls(err_msg or code, code=code, details=details)
+
+
 __all__ = [
     # codes
     "UNSUPPORTED_SOURCE",
@@ -143,10 +198,12 @@ __all__ = [
     "MATERIALIZATION_FAILED",
     "CANCELLED",
     "SECURITY_BLOCKED",
+    "DATASET_NOT_FOUND",
     # classification
     "TRANSIENT_HTTP_STATUS",
     "PERMANENT_HTTP_STATUS",
     "classify_http_status",
+    "error_from_query_result",
     # exceptions
     "DataFabricError",
     "UnsupportedSourceError",
@@ -161,4 +218,5 @@ __all__ = [
     "MaterializationFailedError",
     "DataFabricCancelledError",
     "SecurityBlockedError",
+    "DatasetNotFoundError",
 ]

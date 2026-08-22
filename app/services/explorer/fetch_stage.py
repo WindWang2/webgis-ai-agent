@@ -2,6 +2,7 @@
 Fetch Stage - Pure async stage runner for content fetching.
 """
 import asyncio
+import base64
 import logging
 from typing import Any, Callable, Dict, List, Optional
 
@@ -43,8 +44,11 @@ async def run_fetch_stage(
         source_dict = item.get("source", {})
         source = DataSource(**source_dict)
         raw = await data_adapter.fetch(source)
+        # #775: base64 (1.33× overhead), not hex (2×) — a 50 MB gov CSV per
+        # source was doubled to a 100 MB JSON string in the session store.
         payload = {
-            "data": raw.data.hex(),
+            "data": base64.b64encode(raw.data).decode("ascii"),
+            "codec": "base64",
             "content_type": raw.content_type,
             "encoding": raw.encoding,
         }
@@ -79,10 +83,21 @@ async def run_fetch_stage(
             results.append(outcome)
 
     successful = [r for r in results if "ref_id" in r]
+    failed = [r for r in results if "ref_id" not in r]
     if not successful:
+        # #774: distinguish "nothing to fetch" (discovery found no sources)
+        # from "every candidate failed" — the empty-list "all failed" message
+        # used to mislead debugging.
+        if not selected_sources:
+            return StageResult(
+                stage="fetch",
+                data={"task_id": task_id, "errors": [], "fetch_errors": []},
+                success=False,
+                message="Discovery found no sources to fetch (no candidate sources were selected).",
+            )
         return StageResult(
             stage="fetch",
-            data={"task_id": task_id, "errors": results},
+            data={"task_id": task_id, "errors": results, "fetch_errors": failed},
             success=False,
             message=f"All source fetches failed: {results}",
         )
@@ -90,8 +105,16 @@ async def run_fetch_stage(
     if on_progress:
         on_progress(100)
 
+    # #774: partial success keeps going, but the per-source failures ride
+    # along in the StageResult data (keyed ``fetch_errors``) instead of being
+    # log-only — parse/geocode/validate and the final status payload can then
+    # say that e.g. 2 of 3 sources were dropped.
     return StageResult(
         stage="fetch",
-        data={"task_id": task_id, "fetch_results": successful},
+        data={
+            "task_id": task_id,
+            "fetch_results": successful,
+            "fetch_errors": failed,
+        },
         success=True,
     )

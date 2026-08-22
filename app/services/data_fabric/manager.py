@@ -16,7 +16,12 @@ from app.schemas.data_fabric_schema import (
 )
 from app.models.data_fabric import DataSourceModel, CatalogItemModel, MaterializationModel
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
-from app.services.data_fabric.errors import MATERIALIZATION_FAILED
+from app.services.data_fabric.circuit_breaker import get_breaker_registry
+from app.services.data_fabric.errors import (
+    DataFabricError,
+    MATERIALIZATION_FAILED,
+    error_from_query_result,
+)
 from app.services.data_fabric.fingerprint import dataset_fingerprint_service
 from app.services.data_fabric.limits import enforce_result_bounds
 from app.services.data_fabric.metadata import (
@@ -25,12 +30,46 @@ from app.services.data_fabric.metadata import (
     normalize_feature_count,
     normalize_geometry_type,
 )
-from app.services.data_fabric.registry import build_adapter
+from app.services.data_fabric.registry import build_adapter, resolve_adapter_spec
 from app.services.data_fabric.security import DataFabricSecurity
 from app.services.session_data import session_data_manager
 from app.services.session_data_protocol import is_unavailable_ref
 
 logger = logging.getLogger(__name__)
+
+
+def _execute_remote_query(
+    adapter: GeospatialDataSourceAdapter,
+    source_key: str,
+    dataset_name: str,
+    query_spec: QuerySpec,
+):
+    """Run ``adapter.query`` under the per-source circuit breaker and surface
+    in-band adapter failures as typed errors.
+
+    #766: adapters return empty-but-"successful" QueryResults whose failure
+    signal lives in ``schema_info['error']`` / ``metadata['error_type']``.
+    Those are converted to typed ``DataFabricError`` so "fetch failed" is never
+    mistaken for a genuinely empty dataset.
+
+    #770: the remote call runs via ``get_breaker_registry().call`` so repeated
+    failures (raised or in-band) trip the breaker and later attempts fail fast
+    with ``SourceUnreachableError`` instead of waiting the full adapter
+    timeout.
+    """
+    registry = get_breaker_registry()
+
+    def _query_and_validate():
+        result = adapter.query(dataset_name, query_spec)
+        err = error_from_query_result(result)
+        if err is not None:
+            # Raise INSIDE the breaker-wrapped callable so the in-band failure
+            # is recorded as a breaker failure (a non-raising empty result
+            # would otherwise be counted as success and reset the counter).
+            raise err
+        return result
+
+    return registry.call(source_key, _query_and_validate)
 
 
 class DataFabricManager:
@@ -77,6 +116,13 @@ class DataFabricManager:
         """Register a new Data Source connection profile in DB."""
         source_id = f"ds_{uuid.uuid4().hex[:12]}"
         options = profile_options or {}
+
+        # #767: reject unregistered/unsupported source types LOUDLY, before any
+        # probe/persist. Previously the probe/capabilities try/except below
+        # swallowed UnsupportedSourceError, the row was still persisted with
+        # status="unreachable", and create returned success — a false-success
+        # registration for types the fabric can never serve (e.g. 'csv').
+        resolve_adapter_spec(source_type)
 
         # Validate URL via SSRF policy engine
         clean_url = endpoint_url
@@ -187,7 +233,9 @@ class DataFabricManager:
 
             def _do(dataset_id: str) -> DatasetDescriptor:
                 try:
-                    return adapter.describe(dataset_id)
+                    # #770: describe runs under the per-source circuit breaker
+                    # so a repeatedly failing source fails fast during syncs.
+                    return get_breaker_registry().call(source_id, adapter.describe, dataset_id)
                 except Exception:
                     return DatasetDescriptor(
                         id=dataset_id, title=raw.get(dataset_id, {}).get("title", dataset_id),
@@ -295,7 +343,9 @@ class DataFabricManager:
         )
 
         adapter = cls.get_adapter(conn_profile)
-        result = adapter.query(item.name, query_spec)
+        # #766/#770: run under the circuit breaker; in-band adapter failure
+        # markers surface as typed DataFabricError (never a silent empty set).
+        result = _execute_remote_query(adapter, ds_model.id, item.name, query_spec)
         # Resource guard (Section 22 / #425): only materialize enforced bounds
         # before — the preview/query REST paths returned unbounded payloads
         # (up to 10k features of arbitrary geometry, no byte cap). The guard
@@ -349,9 +399,14 @@ class DataFabricManager:
             cancel_token.raise_if_cancelled()
         # Offload the blocking remote query; the await lets the event loop run
         # and lets asyncio.CancelledError propagate on task cancellation.
+        # #766/#770: the worker-thread call runs under the per-source circuit
+        # breaker and converts in-band adapter failure markers into typed
+        # DataFabricError (fetch failed ≠ empty dataset).
         import asyncio
 
-        result = await asyncio.to_thread(adapter.query, item.name, query_spec)
+        result = await asyncio.to_thread(
+            _execute_remote_query, adapter, ds_model.id, item.name, query_spec
+        )
         if cancel_token is not None:
             cancel_token.raise_if_cancelled()
         # Same resource guard as the sync path (#425): the preview/query REST
@@ -387,16 +442,33 @@ class DataFabricManager:
         if not item:
             raise ValueError(f"Catalog item '{item_id}' not found")
 
-        q_res = await cls.query_catalog_item_async(db, item_id, spec, cancel_token=cancel_token)
-
-        feature_count = len(q_res.features)
         base = {
-            "feature_count": feature_count,
-            "total_count": q_res.total_count,
+            "feature_count": 0,
+            "total_count": 0,
             "dataset_id": item_id,
             "source_id": item.source_id,
             "title": item.title,
         }
+
+        try:
+            q_res = await cls.query_catalog_item_async(db, item_id, spec, cancel_token=cancel_token)
+        except DataFabricError as e:
+            # #766: the remote fetch failed (typed error — unreachable source,
+            # bad response, breaker open, ...). Do NOT materialize an empty
+            # FeatureCollection as success; report a typed failure with no ref
+            # and no audit row.
+            logger.error(
+                "[DataFabricManager] materialize query failed for item '%s': %s",
+                item_id, e,
+            )
+            d = e.to_dict()
+            return {**base, "success": False, "ref_id": None,
+                    "error_type": d["error_type"], "error": d["error"]}
+
+        base["feature_count"] = len(q_res.features)
+        base["total_count"] = q_res.total_count
+
+        feature_count = len(q_res.features)
 
         # Resource guard (Section 22): reject oversized results before storing.
         # Raises ResultTooLargeError with an actionable hint; the route maps it

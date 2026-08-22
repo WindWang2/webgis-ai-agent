@@ -69,11 +69,30 @@ def test_build_adapter_unknown_raises():
 
 
 def test_demo_adapter_is_explicit_opt_in():
-    """generic/geojson resolves to the demo adapter only when explicitly asked."""
+    """generic/mock/sample resolve to the demo adapter only when explicitly asked.
+
+    #767: the 'geojson' alias was removed — it routed requests for real remote
+    GeoJSON URLs to the synthetic-feature demo adapter. It must now raise like
+    any other unregistered type (previously it resolved to 'generic').
+    """
     reg = get_registry()
     assert reg.resolve("generic").adapter_cls is GenericDataSourceAdapter
-    assert reg.resolve("geojson").canonical == "generic"
+    assert reg.resolve("mock").canonical == "generic"
+    assert reg.resolve("sample").canonical == "generic"
     assert reg.resolve("generic").is_demo is True
+    with pytest.raises(UnsupportedSourceError):
+        reg.resolve("geojson")
+
+
+def test_geojson_alias_removed_767():
+    """#767: source_type='geojson' must NOT build the demo adapter — a real
+    remote GeoJSON URL would be 'served' synthetic Beijing features."""
+    with pytest.raises(UnsupportedSourceError) as ei:
+        get_registry().build_adapter(
+            ConnectionProfile(id="x", source_type="geojson", url="https://example.org/parks.geojson")
+        )
+    assert "supported" in str(ei.value.details)  # actionable hint
+    assert ei.value.code == "UNSUPPORTED_SOURCE"
 
 
 def test_raster_tile_capability_flags():

@@ -15,6 +15,40 @@ class GeocodeAddressResult:
     status: str
     provider: Optional[str]
     error: Optional[str]
+    # #772: provider-reported precision level (amap/tianditu "level", baidu
+    # "precision_level") and a per-row fallback marker (the row was answered by
+    # a different provider than the one requested — with_fallback switched).
+    precision: Optional[str] = None
+    provider_switched: bool = False
+
+
+def _row_provider(r: dict, requested: str) -> str:
+    """#772: the provider that ACTUALLY answered the row.
+
+    ``batch_geocode_cn`` wraps each address in ``with_fallback``, which may
+    silently retry an amap failure on baidu/tianditu; the row dict carries the
+    real provider (``r["provider"]`` / ``r["provenance"]["source"]``). Falling
+    back to ``requested`` only when the payload carries no provider field.
+    """
+    provider = r.get("provider")
+    if not provider:
+        provenance = r.get("provenance")
+        if isinstance(provenance, dict):
+            provider = provenance.get("source")
+    return str(provider) if provider else requested
+
+
+def _row_precision(r: dict) -> Optional[str]:
+    """#772: extract the provider's precision level from the nested result
+    (baidu ``precision_level`` / amap+tianditu ``level``), if reported."""
+    results_list = r.get("results")
+    if isinstance(results_list, list) and results_list and isinstance(results_list[0], dict):
+        first = results_list[0]
+        for key in ("precision_level", "level", "precision"):
+            val = first.get(key)
+            if val:
+                return str(val)
+    return None
 
 def extract_lat_lon(item: dict) -> tuple[Optional[float], Optional[float]]:
     """Extract coordinates: prefer item["results"][0]["location"]
@@ -106,8 +140,23 @@ class GeocodeProviderStrategy:
                     if p_idx in success_by_idx:
                         r = success_by_idx[p_idx]
                         lon, lat = extract_lat_lon(r)
-                        if lat is not None and lon is not None:
-                            results_out[overall_idx] = GeocodeAddressResult(lat, lon, "ok", provider, None)
+                        # #771: (0, 0) is Null Island — providers (tianditu/
+                        # baidu) default a MISSING location to 0, so a (0,0)
+                        # row is an unresolved address, never a success.
+                        if lat is not None and lon is not None and not (lat == 0 and lon == 0):
+                            # #772: attribute the row to the provider that
+                            # actually answered (with_fallback may have
+                            # switched) and carry its precision level; mark the
+                            # switch so summary.multi_provider is truthful.
+                            actual_provider = _row_provider(r, provider)
+                            switched = bool(actual_provider != provider)
+                            if switched:
+                                multi_provider_hit = True
+                            results_out[overall_idx] = GeocodeAddressResult(
+                                lat, lon, "ok", actual_provider, None,
+                                precision=_row_precision(r),
+                                provider_switched=switched,
+                            )
                         else:
                             failed_this_attempt.append(p_idx)
                     else:

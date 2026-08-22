@@ -218,7 +218,8 @@ def create_adapter_for_profile(profile: ConnectionProfile) -> GeospatialDataSour
     Routes through the canonical ``AdapterRegistry``. An unregistered source
     type raises ``UnsupportedSourceError`` — it is NEVER silently mapped to
     mock data. (Callers that want the explicit demo adapter must request
-    source_type ``generic``/``geojson``.)
+    source_type ``generic``/``mock``/``sample`` — ``geojson`` is no longer an
+    alias, #767.)
     """
     from app.services.data_fabric.registry import build_adapter
 

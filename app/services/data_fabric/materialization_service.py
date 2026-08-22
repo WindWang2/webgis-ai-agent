@@ -7,6 +7,10 @@ Reliability contract (Data Fabric V3):
   Redis-unavailability sentinel) is reported as a typed ``MATERIALIZATION_FAILED``
   result with ``ref_id=None`` and ``success=False`` — never a fake ref, never a
   fake success.
+- #766: an adapter query failure (in-band marker on the QueryResult) is raised
+  as a typed ``DataFabricError`` by ``execute_query`` and reported as a typed
+  failure — an unreachable source is never materialized as an empty-but-
+  successful dataset.
 - ``set_alias`` is best-effort metadata; its failure must NOT invalidate an
   otherwise-valid ref.
 """
@@ -15,13 +19,31 @@ import logging
 from typing import Dict, Any, Optional
 from app.schemas.data_fabric_schema import QuerySpec, QueryResult
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
-from app.services.data_fabric.errors import MaterializationFailedError
+from app.services.data_fabric.errors import DataFabricError, MaterializationFailedError, error_from_query_result
 from app.services.data_fabric.fingerprint import dataset_fingerprint_service
 from app.services.data_fabric.limits import enforce_result_bounds
 from app.services.session_data import session_data_manager
 from app.services.session_data_protocol import is_unavailable_ref
 
 logger = logging.getLogger(__name__)
+
+
+def _is_demo_source_type(source_type: Any) -> bool:
+    """#767: surface whether a source_type resolves to the explicit demo/sample
+    adapter, so synthetic data is never mistaken for a real remote fetch."""
+    if not source_type or not isinstance(source_type, str):
+        return False
+    try:
+        from app.services.data_fabric.registry import resolve_adapter_spec
+
+        return bool(resolve_adapter_spec(source_type).is_demo)
+    except Exception:
+        return False
+
+
+def _is_demo_adapter_source(query_result: QueryResult) -> bool:
+    """#767: True when the QueryResult was produced by the demo adapter."""
+    return _is_demo_source_type((query_result.metadata or {}).get("source_type"))
 
 
 class MaterializationService:
@@ -38,13 +60,25 @@ class MaterializationService:
     ) -> QueryResult:
         """
         Execute pushdown query or selective fetch on remote data source adapter.
+
+        #766: an in-band adapter failure marker on the returned QueryResult
+        (``schema_info['error']`` / ``metadata['error_type']``) is converted
+        into a typed ``DataFabricError`` — "fetch failed" stays distinguishable
+        from a genuinely empty dataset.
         """
         logger.info(f"[MaterializationService] Executing query for '{dataset_id}' with spec: {query_spec}")
         try:
-            return adapter.query(dataset_id, query_spec)
+            result = adapter.query(dataset_id, query_spec)
         except Exception as e:
             logger.error(f"[MaterializationService] Query pushdown failed for '{dataset_id}': {e}")
             raise
+        err = error_from_query_result(result)
+        if err is not None:
+            logger.error(
+                "[MaterializationService] Query failed for '%s': %s", dataset_id, err
+            )
+            raise err
+        return result
 
     async def materialize(
         self,
@@ -62,6 +96,7 @@ class MaterializationService:
         typed ``error_type=MATERIALIZATION_FAILED`` — no fake ref is minted.
         """
         layer_title = layer_name or f"Materialized Layer {dataset_id}"
+        is_demo = _is_demo_adapter_source(query_result)
         geojson_payload = {
             "type": "FeatureCollection",
             "features": query_result.features,
@@ -138,6 +173,9 @@ class MaterializationService:
             "feature_count": feature_count,
             "total_count": total_count,
             "fingerprint": fingerprint,
+            # #767: demo/sample adapters serve synthetic features — label the
+            # payload so it is never mistaken for real remote data.
+            "is_demo": is_demo,
             "schema_info": query_result.schema_info,
             "metadata": query_result.metadata,
         }
@@ -150,7 +188,7 @@ class MaterializationService:
         total_count: int,
         fingerprint: str,
         query_result: QueryResult,
-        err: MaterializationFailedError,
+        err: DataFabricError,
     ) -> Dict[str, Any]:
         """Build a truthful materialization-failure result (no ref, no success)."""
         d = err.to_dict()
@@ -163,6 +201,7 @@ class MaterializationService:
             "feature_count": feature_count,
             "total_count": total_count,
             "fingerprint": fingerprint,
+            "is_demo": _is_demo_adapter_source(query_result),
             "schema_info": query_result.schema_info,
             "metadata": query_result.metadata,
             "error_type": d["error_type"],
@@ -185,11 +224,41 @@ class MaterializationService:
         ``asyncio.to_thread`` so concurrent tool dispatches aren't stalled; an
         ``asyncio.CancelledError`` during the await propagates before store (no
         stale materialization).
+
+        #766: a typed source failure (unreachable / bad response / non-JSON
+        WFS body / ...) raised by ``execute_query`` is reported as a typed
+        failure result — never materialized as an empty success.
         """
         import asyncio
 
         spec = query_spec or QuerySpec(limit=100)
-        query_result = await asyncio.to_thread(self.execute_query, adapter, dataset_id, spec)
+        layer_title = layer_name or f"Materialized Layer {dataset_id}"
+        is_demo = _is_demo_source_type(
+            getattr(getattr(adapter, "profile", None), "source_type", None)
+        )
+        try:
+            query_result = await asyncio.to_thread(self.execute_query, adapter, dataset_id, spec)
+        except DataFabricError as e:
+            empty = QueryResult(dataset_id=dataset_id, features=[], total_count=0)
+            logger.error(
+                "[MaterializationService] materialize query failed for '%s': %s",
+                dataset_id, e,
+            )
+            return {
+                "status": "failed",
+                "success": False,
+                "ref_id": None,
+                "dataset_id": dataset_id,
+                "layer_name": layer_title,
+                "feature_count": 0,
+                "total_count": 0,
+                "fingerprint": None,
+                "is_demo": is_demo,
+                "schema_info": {},
+                "metadata": {},
+                "error_type": e.code,
+                "error": str(e),
+            }
         return await self.materialize(dataset_id, query_result, session_id=session_id, layer_name=layer_name)
 
 

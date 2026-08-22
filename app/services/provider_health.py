@@ -188,11 +188,21 @@ def check_baidu_status(data: dict) -> tuple[bool, str]:
 
 
 def check_tianditu_status(data: dict) -> tuple[bool, str]:
-    """Check Tianditu JSON response for error presence."""
+    """Check Tianditu JSON response: status must be "1000" (success).
+
+    #771: the previous check only looked for an ``error`` key, so business
+    failures like ``{"status": "101", "msg": "找不到结果"}`` passed as valid —
+    the geocoder then defaulted the missing location to (0, 0) and the row was
+    counted as a successful geocode (Null Island). Tianditu 2.0 endpoints
+    report ``status: "1000"`` on success; anything else is a failure.
+    """
     if not isinstance(data, dict):
         return False, "Invalid Tianditu response format"
     if "error" in data:
         return False, f"Tianditu: {data.get('error')}"
+    status = data.get("status")
+    if str(status).strip() != "1000":
+        return False, f"Tianditu: status {status!r} ({data.get('msg', 'not success')})"
     return True, ""
 
 

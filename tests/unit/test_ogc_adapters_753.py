@@ -198,6 +198,112 @@ def test_wfs_query_bbox_pushdown_and_limit_bound(wfs):
     assert int(call2["params"]["COUNT"]) == 10000
 
 
+# ── #766 / #769: WFS fetch failures are typed errors, CRS never fabricated ──
+
+
+def test_wfs_query_non_json_200_is_typed_error_766(wfs):
+    """#766: a 200 GetFeature body that is not JSON (e.g. GML from a WFS 2.0
+    server ignoring OUTPUTFORMAT) must be an in-band typed error — never a
+    silently empty "successful" dataset."""
+    wfs.session.routes = {
+        "/wfs": FakeResponse(
+            text="<wfs:FeatureCollection/>", headers={"Content-Type": "text/xml"}
+        ),
+    }
+    res = wfs.query("roads", QuerySpec(limit=5))
+    assert res.features == []
+    assert res.metadata["error_type"] == "SOURCE_BAD_RESPONSE"
+    assert "non-JSON" in res.schema_info["error"]
+
+
+def test_wfs_query_declared_non_4326_crs_is_typed_error_769(wfs):
+    """#769: a FeatureCollection declaring a projected CRS must be refused with
+    a typed error — projected coordinates must not flow on as WGS84 degrees."""
+    wfs.session.routes = {
+        "/wfs": FakeResponse(json_data={
+            "type": "FeatureCollection",
+            "crs": "urn:ogc:def:crs:EPSG::28992",
+            "features": [{"type": "Feature",
+                          "geometry": {"type": "Point", "coordinates": [148000.0, 410000.0]},
+                          "properties": {}}],
+        }),
+    }
+    res = wfs.query("roads", QuerySpec(limit=5))
+    assert res.features == []
+    assert res.metadata["error_type"] == "SOURCE_BAD_RESPONSE"
+    assert "28992" in res.metadata["crs"]
+
+
+def test_wfs_query_sends_srsname_4326_769(wfs):
+    """#769: GetFeature must negotiate WGS84 output via SRSNAME/srsName."""
+    wfs.query("roads", QuerySpec(limit=5))
+    call = next(c for c in wfs.session.calls if c["params"].get("REQUEST") == "GetFeature")
+    assert call["params"]["SRSNAME"] == "EPSG:4326"
+
+
+WFS_CAPABILITIES_SRS = b"""<?xml version="1.0"?>
+<wfs:WFS_Capabilities xmlns:wfs="http://www.opengis.net/wfs/2.0">
+  <wfs:FeatureTypeList>
+    <wfs:FeatureType>
+      <wfs:Name>bag:pand</wfs:Name><wfs:Title>BAG</wfs:Title>
+      <wfs:DefaultSRS>urn:ogc:def:crs:EPSG::28992</wfs:DefaultSRS>
+      <wfs:WGS84BoundingBox>
+        <ows:LowerCorner xmlns:ows="http://www.opengis.net/ows/1.1">3.0 50.7</ows:LowerCorner>
+        <ows:UpperCorner xmlns:ows="http://www.opengis.net/ows/1.1">7.2 53.6</ows:UpperCorner>
+      </wfs:WGS84BoundingBox>
+    </wfs:FeatureType>
+    <wfs:FeatureType>
+      <wfs:Name>roads</wfs:Name><wfs:Title>Roads</wfs:Title>
+    </wfs:FeatureType>
+  </wfs:FeatureTypeList>
+</wfs:WFS_Capabilities>"""
+
+
+def test_wfs_describe_parses_default_srs_769(wfs):
+    """#769: describe() reads DefaultSRS + WGS84BoundingBox from
+    GetCapabilities instead of fabricating EPSG:4326 / a worldwide bbox."""
+    wfs.session.routes = {"GetCapabilities": FakeResponse(content=WFS_CAPABILITIES_SRS)}
+    desc = wfs.describe("bag:pand")
+    assert desc.srs == "EPSG:28992"
+    assert desc.bbox == [3.0, 50.7, 7.2, 53.6]
+
+
+def test_wfs_describe_no_srs_declared_is_none_769(wfs):
+    """#769: a FeatureType with no DefaultSRS gets srs=None (never a fabricated
+    EPSG:4326), and an unreachable capabilities document likewise."""
+    wfs.session.routes = {"GetCapabilities": FakeResponse(content=WFS_CAPABILITIES)}
+    desc = wfs.describe("roads")  # present in capabilities but no SRS declared
+    assert desc.srs is None
+    assert desc.bbox is None
+
+    # Capabilities unreachable → still no fabricated SRS/bbox.
+    def boom(url, params=None, timeout=None):
+        raise RuntimeError("unreachable")
+
+    wfs.session.get = boom
+    desc2 = wfs.describe("roads")
+    assert desc2.srs is None
+    assert desc2.bbox is None
+
+
+def test_ogc_describe_without_declared_crs_is_none_769(ogc):
+    """#769: an OGC-API collection that declares no crs gets srs=None —
+    previously hardcoded to EPSG:4326 (fabricated)."""
+    col = dict(OGC_PARCELS)
+    col.pop("crs")
+    ogc.session.routes  # noqa: B018 - routes replaced below
+    original = ogc.session.get
+
+    def route(url, params=None, timeout=None):
+        if url.endswith("/collections/parcels") and params is None:
+            return FakeResponse(json_data=col)
+        return original(url, params=params, timeout=timeout)
+
+    ogc.session.get = route
+    desc = ogc.describe("parcels")
+    assert desc.srs is None
+
+
 def test_ogc_api_adapter_contract(wogc=None, ogc=None):
     pass
 

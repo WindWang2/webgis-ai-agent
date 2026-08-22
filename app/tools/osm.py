@@ -2,6 +2,7 @@
 import json
 import logging
 import math
+from datetime import datetime, timezone
 from typing import Optional
 from pydantic import BaseModel, Field
 
@@ -10,6 +11,20 @@ from app.services.provider_health import check_nominatim_status, check_overpass_
 from app.tools.registry import ToolRegistry, tool
 
 logger = logging.getLogger(__name__)
+
+
+def _utcnow_iso() -> str:
+    """#773: provenance stamp for OSM tool result envelopes."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+# #773: Overpass→Nominatim fallback swaps enumeration semantics (a free-text
+# search of named matches is not an amenity-tag census). Mirrors the
+# ``_fallback_semantic_note`` discipline of chinese_maps (#683).
+_NOMINATIM_FALLBACK_NOTE = (
+    "Overpass 未返回结果，已降级为 Nominatim 关键词搜索：结果为命名地点匹配，"
+    "并非该类别的全量普查（enumeration），总数可能偏少。"
+)
 
 
 
@@ -296,6 +311,10 @@ def register_osm_tools(registry: ToolRegistry):
         query = f'node[{tag_filter}]({bbox});way[{tag_filter}]({bbox});relation[{tag_filter}]({bbox});'
         geojson = await _query_overpass(query, limit=limit)
 
+        # #773: provenance — which upstream actually produced the payload.
+        source = "overpass"
+        fallback_note: Optional[str] = None
+
         # Overpass 失败时，fallback 到 Nominatim 搜索
         if geojson.get("error") or len(geojson.get("features", [])) == 0:
             # Overpass 明确报错，抛出异常以触发标准化错误响应
@@ -331,6 +350,8 @@ def register_osm_tools(registry: ToolRegistry):
             # 使用 Nominatim 结果作为 fallback
             if len(nom_geojson.get("features", [])) > 0:
                 geojson = nom_geojson
+                source = "nominatim"
+                fallback_note = _NOMINATIM_FALLBACK_NOTE
             else:
                 # 依然没找到数据，抛出异常引导 AI 自愈或向用户解释
                 raise ValueError(f"在区域 '{clean_area}' 内找不到类别为 '{category}' 的兴趣点。")
@@ -338,14 +359,21 @@ def register_osm_tools(registry: ToolRegistry):
         # limit 契约：服务端已限制 + 防御性截断（Overpass limit 语义差异兜底）
         geojson["features"] = geojson.get("features", [])[:limit]
 
-        return {
+        # #773: stamp provenance (source + fetched_at) so a stored layer ref
+        # keeps its origin auditable; the fallback swap is explicitly marked.
+        result = {
             "type": "poi_query",
             "area": area,
             "category": category,
             "count": len(geojson.get("features", [])),
             "geojson": geojson,
             "bbox": bbox,
+            "source": source,
+            "fetched_at": _utcnow_iso(),
         }
+        if fallback_note:
+            result["fallback_note"] = fallback_note
+        return result
 
     @tool(registry, name="query_osm_roads",
            description=(
@@ -388,6 +416,9 @@ def register_osm_tools(registry: ToolRegistry):
             "count": len(geojson.get("features", [])),
             "geojson": geojson,
             "bbox": bbox,
+            # #773: provenance stamp for the stored layer ref.
+            "source": "overpass",
+            "fetched_at": _utcnow_iso(),
         }
 
     @tool(registry, name="query_osm_buildings",
@@ -423,6 +454,9 @@ def register_osm_tools(registry: ToolRegistry):
             "count": len(geojson.get("features", [])),
             "geojson": geojson,
             "bbox": bbox,
+            # #773: provenance stamp for the stored layer ref.
+            "source": "overpass",
+            "fetched_at": _utcnow_iso(),
         }
 
     @tool(registry, name="query_osm_boundary",
@@ -448,6 +482,10 @@ def register_osm_tools(registry: ToolRegistry):
         # 先尝试 Overpass
         query = f'relation["admin_level"="{int(admin_level)}"]["name"="{_sanitize_overpass_value(name)}"]->.searchArea;.searchArea out body geom;'
         geojson = await _query_overpass(query)
+
+        # #773: provenance — which upstream actually produced the polygon.
+        source = "overpass"
+        fallback_note: Optional[str] = None
 
         # Overpass 失败时，用 Nominatim 搜索行政边界
         if len(geojson.get("features", [])) == 0:
@@ -482,12 +520,26 @@ def register_osm_tools(registry: ToolRegistry):
                                     },
                                 }],
                             }
+                            # #773: mark the semantics-changing source switch —
+                            # a Nominatim best-match polygon is not necessarily
+                            # the admin_level relation Overpass was asked for.
+                            source = "nominatim"
+                            fallback_note = (
+                                "Overpass 未返回边界，已降级为 Nominatim 最佳匹配多边形；"
+                                "其 admin_level 语义可能与请求不一致。"
+                            )
 
-        return {
+        # #773: provenance stamp (source + fetched_at) on the envelope.
+        boundary_result = {
             "type": "boundary_query",
             "name": name,
             "admin_level": admin_level,
             "count": len(geojson.get("features", [])),
             "geojson": geojson,
+            "source": source,
+            "fetched_at": _utcnow_iso(),
         }
+        if fallback_note:
+            boundary_result["fallback_note"] = fallback_note
+        return boundary_result
 

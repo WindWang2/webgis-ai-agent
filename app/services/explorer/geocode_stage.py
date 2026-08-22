@@ -21,7 +21,8 @@ Design contract (the seam this module exposes):
   task's concern (it owns the handoff dict); this function stays pure about
   the store by accepting ``store_ref`` only when the caller wants rows stored.
 - **dict I/O.** Rows are plain dicts carrying the ``_lat`` / ``_lon`` /
-  ``_geocode_status`` / ``_geocode_provider`` / ``_geocode_error`` magic keys,
+  ``_geocode_status`` / ``_geocode_provider`` / ``_geocode_error`` magic keys
+  (plus ``_geocode_precision`` / ``_geocode_fallback`` since #772),
   preserving the existing row contract the validate stage and frontend read.
 """
 from __future__ import annotations
@@ -211,6 +212,10 @@ async def geocode_stage(
                     row["_geocode_status"] = "failed"
                     row["_geocode_provider"] = None
                     row["_geocode_error"] = "missing address"
+            # #772: keep the geocode annotation keys consistent on every row
+            # (predefined rows carry no precision/fallback either).
+            row.setdefault("_geocode_precision", None)
+            row.setdefault("_geocode_fallback", False)
             all_geocoded.append(row)
 
         skipped = await _geocode_chunk(
@@ -307,12 +312,20 @@ async def _geocode_chunk(
             row["_geocode_status"] = res.status
             row["_geocode_provider"] = res.provider
             row["_geocode_error"] = res.error
+            # #772: per-row provider precision level and fallback marker —
+            # with_fallback may have answered via a different provider than
+            # the one requested (also what makes summary.multi_provider
+            # truthful).
+            row["_geocode_precision"] = getattr(res, "precision", None)
+            row["_geocode_fallback"] = bool(getattr(res, "provider_switched", False))
         else:
             row["_lat"] = None
             row["_lon"] = None
             row["_geocode_status"] = "skipped"
             row["_geocode_provider"] = None
             row["_geocode_error"] = "skipped: geocode time budget exceeded"
+            row["_geocode_precision"] = None
+            row["_geocode_fallback"] = False
 
     return sum(1 for _, addr in chunk if addr in skipped_addresses)
 

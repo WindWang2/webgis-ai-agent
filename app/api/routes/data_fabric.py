@@ -18,8 +18,13 @@ from app.schemas.data_fabric_schema import (
     QuerySpec,
 )
 from app.services.data_fabric.manager import data_fabric_manager
-from app.services.data_fabric.errors import ResultTooLargeError
+from app.services.data_fabric.errors import (
+    DataFabricError,
+    ResultTooLargeError,
+    UnsupportedSourceError,
+)
 from app.services.data_fabric.security import DataFabricSecurity
+from app.services.data_fabric.registry import resolve_adapter_spec
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +32,17 @@ router = APIRouter()
 
 
 _ANONYMOUS_USER_IDS = {"anonymous", "anon"}
+
+
+def _is_demo_source_type(source_type: Optional[str]) -> bool:
+    """#767: True iff the source_type resolves to the explicit demo/sample
+    adapter (``generic``/``mock``/``sample``). Unknown types are not demo."""
+    if not source_type:
+        return False
+    try:
+        return bool(resolve_adapter_spec(source_type).is_demo)
+    except DataFabricError:
+        return False
 
 
 def _real_user_id(user: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -247,6 +263,9 @@ async def create_data_source(
                 "id": source.id,
                 "name": source.name,
                 "source_type": source.source_type,
+                # #767: label demo/sample sources so synthetic data is never
+                # mistaken for a real remote fetch.
+                "is_demo": _is_demo_source_type(source.source_type),
                 "endpoint_url": DataFabricSecurity.redact_url(source.endpoint_url),
                 "status": source.status,
                 "capabilities": source.capabilities_json,
@@ -258,6 +277,13 @@ async def create_data_source(
 
         data_source = await _run_sync_orm(_create)
         return {"success": True, "data_source": data_source}
+    except UnsupportedSourceError as e:
+        # #767: unregistered/unsupported source types (csv, geojson, ...) are
+        # rejected with an actionable 4xx BEFORE any probe or DB write — never
+        # persisted as an "unreachable" row with a success response.
+        return JSONResponse(status_code=400, content={"success": False, **e.to_dict()})
+    except DataFabricError as e:
+        return JSONResponse(status_code=400, content={"success": False, **e.to_dict()})
     except Exception as e:
         logger.error(f"Failed to create data source: {e}", exc_info=True)
         # 不回显原始异常（可能含连接串/内网地址）；全文仅在服务端日志。
@@ -606,6 +632,10 @@ async def preview_catalog_item(
     except ResultTooLargeError as e:
         # Oversized remote result — actionable 413 with the shrink hint.
         return JSONResponse(status_code=413, content={"success": False, **e.to_dict()})
+    except DataFabricError as e:
+        # #766: the remote fetch failed (unreachable / bad response / breaker
+        # open) — typed 502, never an empty-but-200 "successful" payload.
+        return JSONResponse(status_code=502, content={"success": False, **e.to_dict()})
     except Exception as e:
         logger.error(f"Catalog item preview failed for '{item_id}': {e}", exc_info=True)
         # 不回显原始异常；全文仅在服务端日志。
@@ -641,6 +671,9 @@ async def query_catalog_item(
     except ResultTooLargeError as e:
         # Oversized remote result — actionable 413 with the shrink hint.
         return JSONResponse(status_code=413, content={"success": False, **e.to_dict()})
+    except DataFabricError as e:
+        # #766: fetch failure ≠ empty dataset — typed 502 with the error code.
+        return JSONResponse(status_code=502, content={"success": False, **e.to_dict()})
     except Exception as e:
         logger.error(f"Catalog item query failed for '{item_id}': {e}", exc_info=True)
         # 不回显原始异常；全文仅在服务端日志。
@@ -683,6 +716,9 @@ async def materialize_catalog_item(
     except ResultTooLargeError as e:
         # Oversized remote result — actionable 413 with the shrink hint.
         return JSONResponse(status_code=413, content={"success": False, **e.to_dict()})
+    except DataFabricError as e:
+        # #766: typed remote-fetch failure on the materialize path.
+        return JSONResponse(status_code=502, content={"success": False, **e.to_dict()})
     except Exception as e:
         logger.error(f"Materialization failed for catalog item '{req.catalog_item_id}': {e}", exc_info=True)
         # 不回显原始异常（可能含连接串/内网地址）；全文仅在服务端日志。

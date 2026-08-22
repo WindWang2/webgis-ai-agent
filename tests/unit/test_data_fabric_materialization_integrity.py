@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.schemas.data_fabric_schema import QueryResult
+from app.schemas.data_fabric_schema import QueryResult, QuerySpec
 from app.services.data_fabric import manager as df_manager
 from app.services.data_fabric import materialization_service as mat_svc
 from app.services.data_fabric.manager import DataFabricManager
@@ -222,3 +222,119 @@ async def test_materialize_respects_cancel_token_before_store(monkeypatch):
         )
     db.add.assert_not_called()
     db.commit.assert_not_called()
+
+
+# ── #766: adapter fetch failures are never materialized as empty successes ───
+
+
+class _FailingQueryAdapter:
+    """Adapter double: query() returns the in-band error shape real network
+    adapters emit on failure (empty features + error marker)."""
+
+    calls = 0
+
+    def query(self, dataset_id, query_spec):
+        type(self).calls += 1
+        return QueryResult(
+            dataset_id=dataset_id,
+            features=[],
+            total_count=0,
+            metadata={"error_type": "SOURCE_BAD_RESPONSE", "error": "HTTP 503"},
+        )
+
+
+@pytest.fixture
+def _clean_breaker(monkeypatch):
+    """Isolate the per-process breaker registry so failure-counting tests
+    don't bleed into each other (#770)."""
+    from app.services.data_fabric.circuit_breaker import (
+        CircuitBreaker,
+        CircuitBreakerRegistry,
+        set_breaker_registry,
+    )
+
+    reg = CircuitBreakerRegistry(breaker=CircuitBreaker(failure_threshold=5, cool_down=30.0))
+    set_breaker_registry(reg)
+    yield reg
+    set_breaker_registry(CircuitBreakerRegistry())
+
+
+@pytest.mark.asyncio
+async def test_manager_materialize_typed_source_failure_no_ref_no_audit(monkeypatch, _clean_breaker):
+    """#766: a typed source failure from the remote query must surface as a
+    success=False result — no ref minted, no audit row."""
+    from app.services.data_fabric.errors import SourceBadResponseError
+
+    db, _item = _mock_db_with_item()
+
+    async def _failing_async_query(cls, db, item_id, spec, cancel_token=None):
+        raise SourceBadResponseError("HTTP 503")
+
+    monkeypatch.setattr(
+        DataFabricManager,
+        "query_catalog_item_async",
+        classmethod(_failing_async_query),
+    )
+
+    res = await DataFabricManager.materialize_catalog_item(db=db, session_id="s1", item_id="cat1")
+
+    assert res["success"] is False
+    assert res["ref_id"] is None
+    assert res["error_type"] == "SOURCE_BAD_RESPONSE"
+    assert "503" in res["error"]
+    db.add.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def _db_with_item_and_source():
+    """Mock DB whose query().first() yields an object usable as BOTH the
+    catalog item and its parent data source (manager looks both up)."""
+    from unittest.mock import MagicMock
+
+    item = MagicMock()
+    item.id = "cat1"
+    item.name = "layer1"
+    item.source_id = "src1"
+    item.title = "T"
+    item.data_source = None  # force the fallback DataSourceModel lookup
+    item.source_type = "wfs"
+    item.name_ds = None
+    item.endpoint_url = "https://example.com/wfs"
+    item.connection_profile = {"options": {}, "allow_private": False}
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = item
+    return db, item
+
+
+def test_query_catalog_item_raises_typed_on_in_band_error(monkeypatch, _clean_breaker):
+    """#766: query_catalog_item converts the adapter's in-band error marker
+    into a typed DataFabricError (fetch failed ≠ empty dataset)."""
+    from app.services.data_fabric.errors import SourceBadResponseError
+
+    db, _item = _db_with_item_and_source()
+    monkeypatch.setattr(
+        DataFabricManager, "get_adapter", staticmethod(lambda profile: _FailingQueryAdapter())
+    )
+    with pytest.raises(SourceBadResponseError):
+        DataFabricManager.query_catalog_item(db, "cat1", QuerySpec(limit=5))
+
+
+def test_query_catalog_item_records_failure_into_breaker(monkeypatch, _clean_breaker):
+    """#766+#770: the typed in-band failure must feed the per-source breaker;
+    after the threshold the next query fails fast without an adapter call."""
+    from app.services.data_fabric.errors import SourceBadResponseError, SourceUnreachableError
+
+    db, _item = _db_with_item_and_source()
+    monkeypatch.setattr(
+        DataFabricManager, "get_adapter", staticmethod(lambda profile: _FailingQueryAdapter())
+    )
+    for _ in range(5):
+        with pytest.raises(SourceBadResponseError):
+            DataFabricManager.query_catalog_item(db, "cat1", QuerySpec(limit=5))
+
+    # Breaker is open: the 6th call fails fast and never reaches the adapter.
+    before = _FailingQueryAdapter.calls
+    with pytest.raises(SourceUnreachableError) as ei:
+        DataFabricManager.query_catalog_item(db, "cat1", QuerySpec(limit=5))
+    assert "circuit breaker" in str(ei.value)
+    assert _FailingQueryAdapter.calls == before  # no HTTP attempt

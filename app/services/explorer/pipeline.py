@@ -75,6 +75,8 @@ class ExplorerPipelineRunner:
         async with self.tracker.track_step(task_id, "explorer_parse", {}):
             logger.info(f"[ExplorerPipelineRunner:{task_id}] Stage 3: Parse")
             fetch_results = fetch_res.data.get("fetch_results", []) if fetch_res.data else []
+            # #774: per-source fetch failures ride along to the final summary.
+            fetch_errors = fetch_res.data.get("fetch_errors", []) if fetch_res.data else []
             parse_res = await run_parse_stage(
                 task_id, fetch_results, adapter=adapter, load_ref=_load, store_ref=_store,
                 on_progress=lambda p: on_progress("parse", p) if on_progress else None,
@@ -108,6 +110,7 @@ class ExplorerPipelineRunner:
                 task_id,
                 geocoded_ref_id=geocoded_ref_id,
                 total_rows=geo_stage_res.summary.total,
+                fetch_errors=fetch_errors,
                 on_progress=lambda p: on_progress("validate", p) if on_progress else None,
             )
 

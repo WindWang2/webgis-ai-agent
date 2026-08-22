@@ -13,7 +13,12 @@ Contract (Data Fabric V3 / ADR-0053):
 - Each spec carries explicit capability flags so the query planner / materializer
   can negotiate pushdown vs local fallback (Section 26) without re-deriving them.
 - ``GenericDataSourceAdapter`` is registered explicitly as the ``generic`` demo
-  adapter (aliases ``geojson``/``mock``/``sample``). It is opt-in, not a fallback.
+  adapter (aliases ``mock``/``sample``). It is opt-in, not a fallback. The
+  ``geojson`` alias was removed (#767): it routed requests for REAL remote
+  GeoJSON URLs to the synthetic-feature demo adapter, fabricating Beijing-area
+  Points as if they were the user's data. Remote GeoJSON needs a real adapter;
+  until then ``geojson`` resolves to an UnsupportedSourceError like any other
+  unregistered type.
 """
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Type
@@ -151,9 +156,10 @@ def _build_registry() -> AdapterRegistry:
                     aliases=("minio", "object_storage"),
                     notes="object storage seam; metadata-only in catalog"),
         # Explicit demo/sample adapter. Opt-in only — the factory never falls
-        # back to this for an unregistered source type.
+        # back to this for an unregistered source type. No "geojson" alias
+        # (#767): it silently served synthetic features for real remote URLs.
         AdapterSpec("generic", GenericDataSourceAdapter,
-                    aliases=("geojson", "mock", "sample"),
+                    aliases=("mock", "sample"),
                     supports_bbox=True, supports_filter=True,
                     supports_pagination=True, supports_projection=True,
                     is_demo=True,

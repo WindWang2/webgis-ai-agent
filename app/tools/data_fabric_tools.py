@@ -10,7 +10,6 @@ from app.tools.registry import ToolRegistry, tool, ToolExecutionPolicy
 from app.schemas.data_fabric_schema import (
     ConnectionProfile,
     QuerySpec,
-    DatasetDescriptor,
 )
 from app.services.data_fabric.security import DataFabricSecurity
 from app.services.data_fabric.spatial_catalog import spatial_catalog_service
@@ -18,10 +17,24 @@ from app.services.data_fabric.fingerprint import dataset_fingerprint_service
 from app.services.data_fabric.materialization_service import materialization_service
 from app.services.data_fabric.health import data_fabric_health_check
 from app.services.data_fabric.connection_manager import connection_manager
-from app.services.data_fabric.registry import build_adapter
-from app.services.data_fabric.errors import UNSUPPORTED_SOURCE
+from app.services.data_fabric.registry import build_adapter, resolve_adapter_spec
+from app.services.data_fabric.errors import (
+    DATASET_NOT_FOUND,
+    UNSUPPORTED_SOURCE,
+    DataFabricError,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _is_demo_source_type(source_type) -> bool:
+    """#767: True iff source_type resolves to the explicit demo/sample adapter."""
+    if not source_type or not isinstance(source_type, str):
+        return False
+    try:
+        return bool(resolve_adapter_spec(source_type).is_demo)
+    except DataFabricError:
+        return False
 
 
 def register_data_fabric_tools(registry: ToolRegistry):
@@ -34,13 +47,15 @@ def register_data_fabric_tools(registry: ToolRegistry):
         tier=2, domains=["dataset"],
         name="connect_data_source",
         description=(
-            "连接与注册地理空间数据源（PostGIS, OGC API, WFS, WMS, WMTS, ArcGIS, STAC, GeoParquet, PMTiles, S3, GeoJSON, CSV 等）。"
+            "连接与注册地理空间数据源（PostGIS, OGC API, WFS, WMS, WMTS, ArcGIS, STAC, GeoParquet, PMTiles, S3 等；"
+            "generic/mock/sample 为显式演示适配器，返回合成数据并以 is_demo 标注）。"
+            "\n注意：未注册的类型（如 csv、geojson 远程 URL）会被拒绝并返回 UNSUPPORTED_SOURCE 错误——不会静默生成模拟数据。"
             "\n安全策略：自动执行 SSRF 拦截（禁止私有网段/loopback/元数据地址），并在返回结果中自动脱敏敏感凭据。"
-            "\n返回：{status, connection_profile, health, datasets_count}"
+            "\n返回：{status, connection_profile, health, datasets_count, is_demo}"
         ),
         param_descriptions={
             "profile_id": "数据源连接配置的唯一标识符（如 'pg-main', 'wfs-usgs'）",
-            "source_type": "适配器协议类型 ('postgis', 'ogc_api', 'wfs', 'wms', 'wmts', 'arcgis', 'stac', 'geoparquet', 'geojson', 's3')",
+            "source_type": "适配器协议类型 ('postgis', 'ogc_api', 'wfs', 'wms', 'wmts', 'arcgis', 'stac', 'geoparquet', 'flatgeobuf', 'pmtiles', 's3'; 演示: 'generic')",
             "url": "远程服务 API Endpoint URL（执行 SSRF 安全校验）",
             "host": "数据库主机地址",
             "port": "数据库端口",
@@ -96,6 +111,9 @@ def register_data_fabric_tools(registry: ToolRegistry):
                 "health": health.model_dump(),
                 "datasets_count": len(datasets),
                 "discovered_datasets": [d.get("id") for d in datasets],
+                # #767: demo/sample adapters serve synthetic features — label
+                # the connection so the data is never mistaken for remote data.
+                "is_demo": _is_demo_source_type(source_type),
             }
 
         return await asyncio.to_thread(_sync_run)
@@ -220,15 +238,20 @@ def register_data_fabric_tools(registry: ToolRegistry):
                 desc = adapter.describe(dataset_id)
 
         if not desc:
-            desc = DatasetDescriptor(
-                id=dataset_id,
-                title=dataset_id,
-                description=f"Dataset {dataset_id}",
-                source_type="generic",
-                geometry_type="Polygon",
-                srs="EPSG:4326",
-                bbox=[-180.0, -90.0, 180.0, 90.0],
-            )
+            # #768: an unknown dataset id is a typed error — NEVER a fabricated
+            # worldwide Polygon/EPSG:4326 descriptor with a deterministic
+            # fingerprint (the agent would plan queries against metadata that
+            # does not exist).
+            return {
+                "status": "error",
+                "error_type": DATASET_NOT_FOUND,
+                "error": (
+                    f"Dataset '{dataset_id}' not found in the spatial catalog "
+                    f"and no connected adapter can describe it"
+                ),
+                "dataset_id": dataset_id,
+                "profile_id": pid,
+            }
 
         fingerprint = dataset_fingerprint_service.calculate_descriptor_fingerprint(desc)
 
@@ -297,8 +320,22 @@ def register_data_fabric_tools(registry: ToolRegistry):
                 srs=srs or "EPSG:4326",
             )
 
-            query_result = materialization_service.execute_query(adapter, dataset_id, spec)
+            try:
+                query_result = materialization_service.execute_query(adapter, dataset_id, spec)
+            except DataFabricError as e:
+                # #766: the remote fetch failed — typed error, never a silent
+                # empty-but-successful feature list.
+                return {
+                    "status": "error",
+                    "error_type": e.code,
+                    "error": str(e),
+                    "dataset_id": dataset_id,
+                    "features": [],
+                }
             result_dict = query_result.model_dump()
+            result_dict["is_demo"] = _is_demo_source_type(
+                getattr(adapter.profile, "source_type", None)
+            )
             features = result_dict.get("features") or []
             if isinstance(features, list):
                 from app.tools._utils import _feature_collection_bbox

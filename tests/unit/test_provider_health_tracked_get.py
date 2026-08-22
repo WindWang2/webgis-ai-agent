@@ -24,7 +24,13 @@ def test_business_status_checkers():
     assert check_baidu_status({"status": 2, "message": "Parameter Error"})[0] is False
 
     # Tianditu success vs failure
-    assert check_tianditu_status({"returncode": "100", "data": []})[0] is True
+    # #771: the checker now requires status == "1000" — a payload without the
+    # success status (previously accepted, e.g. {"returncode": "100"}) and
+    # business failures like {"status": "101"} are rejected, so the geocoder
+    # can no longer default a missing location to (0, 0) and count it as ok.
+    assert check_tianditu_status({"status": "1000", "msg": "ok"})[0] is True
+    assert check_tianditu_status({"status": "101", "msg": "找不到结果"})[0] is False
+    assert check_tianditu_status({"returncode": "100", "data": []})[0] is False
     assert check_tianditu_status({"error": "Token expired"})[0] is False
 
     # Overpass success vs failure

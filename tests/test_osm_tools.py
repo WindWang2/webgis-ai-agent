@@ -138,3 +138,99 @@ async def test_query_osm_poi_fallback_empty_search_terms():
     assert result["count"] == 1
     assert result["geojson"]["features"][0]["properties"]["name"] == "Custom Place"
 
+
+
+# ─── #773: provenance stamps + marked Overpass→Nominatim fallback ────────────
+
+
+@pytest.mark.asyncio
+async def test_osm_envelopes_carry_source_and_fetched_at_773():
+    """#773: query_osm_poi/roads/buildings envelopes must stamp source and
+    fetched_at so a stored layer ref keeps an auditable origin."""
+    registry = ToolRegistry()
+    register_osm_tools(registry)
+
+    geo_data = [{"boundingbox": ["39.8", "40.0", "116.3", "116.5"], "importance": 0.9, "lat": "39.9", "lon": "116.4"}]
+    overpass_poi = {"elements": [{"type": "node", "id": 1, "lat": 39.9, "lon": 116.4, "tags": {"name": "R"}}]}
+    overpass_ways = {"elements": [{"type": "way", "id": 2, "geometry": [{"lat": 39.9, "lon": 116.4}, {"lat": 39.91, "lon": 116.41}], "tags": {"highway": "primary"}}]}
+
+    async def fake_tracked(name, url, params, **kwargs):
+        if name == "overpass":
+            return overpass_poi if "amenity" in kwargs["data"]["data"] else overpass_ways
+        return geo_data
+
+    with patch("app.tools.osm.tracked_provider_get", side_effect=fake_tracked):
+        poi = await registry.dispatch("query_osm_poi", {"area": "北京", "category": "restaurant"})
+        roads = await registry.dispatch("query_osm_roads", {"area": "北京", "road_type": "primary"})
+        buildings = None
+        # buildings query needs ways with building tag
+        b_overpass = {"elements": [{"type": "way", "id": 3, "geometry": [{"lat": 39.9, "lon": 116.4}, {"lat": 39.9, "lon": 116.5}, {"lat": 39.95, "lon": 116.5}, {"lat": 39.9, "lon": 116.4}], "tags": {"building": "yes"}}]}
+        async def fake_b(name, url, params, **kwargs):
+            if name == "overpass":
+                return b_overpass
+            return geo_data
+        with patch("app.tools.osm.tracked_provider_get", side_effect=fake_b):
+            buildings = await registry.dispatch("query_osm_buildings", {"area": "北京"})
+
+    for res in (poi, roads, buildings):
+        assert res["source"] == "overpass"
+        assert isinstance(res["fetched_at"], str) and res["fetched_at"]
+        assert "fallback_note" not in res  # no fallback fired
+
+
+@pytest.mark.asyncio
+async def test_osm_poi_nominatim_fallback_is_marked_773():
+    """#773: when the Nominatim fallback fires, the envelope must say so —
+    source="nominatim" plus a fallback_note explaining the enumeration
+    semantics changed (named matches, not a census)."""
+    registry = ToolRegistry()
+    register_osm_tools(registry)
+
+    geo_data = [{"boundingbox": ["39.8", "40.0", "116.3", "116.5"], "importance": 0.9, "lat": "39.9", "lon": "116.4"}]
+    overpass_empty = {"elements": []}
+    nom_hits = [{"lat": "39.91", "lon": "116.41", "name": "School A", "type": "school"}]
+
+    async def fake_tracked(name, url, params, **kwargs):
+        if name == "overpass":
+            return overpass_empty
+        if params.get("q") == "school":
+            return nom_hits
+        # the geocode-bbox lookup (q="北京", format=json, limit=5)
+        return geo_data
+
+    with patch("app.tools.osm.tracked_provider_get", side_effect=fake_tracked):
+        result = await registry.dispatch("query_osm_poi", {"area": "北京", "category": "school"})
+
+    assert result["count"] == 1
+    assert result["source"] == "nominatim"
+    assert result["fallback_note"]
+    assert "Nominatim" in result["fallback_note"]
+    assert result["fetched_at"]
+
+
+@pytest.mark.asyncio
+async def test_osm_boundary_nominatim_fallback_is_marked_773():
+    """#773: the boundary tool's Overpass→Nominatim polygon swap is marked with
+    source + fallback_note (a Nominatim best match ≠ the requested
+    admin_level relation)."""
+    registry = ToolRegistry()
+    register_osm_tools(registry)
+
+    overpass_empty = {"elements": []}
+    nom_boundary = [{
+        "lat": "39.9", "lon": "116.4", "name": "海淀区",
+        "display_name": "海淀区, 北京",
+        "geojson": {"type": "Polygon", "coordinates": [[[116.0, 39.9], [116.1, 39.9], [116.1, 40.0], [116.0, 39.9]]]},
+    }]
+
+    async def fake_tracked(name, url, params, **kwargs):
+        if name == "overpass":
+            return overpass_empty
+        return nom_boundary
+
+    with patch("app.tools.osm.tracked_provider_get", side_effect=fake_tracked):
+        result = await registry.dispatch("query_osm_boundary", {"name": "海淀区", "admin_level": 8})
+
+    assert result["source"] == "nominatim"
+    assert result["fallback_note"]
+    assert result["fetched_at"]

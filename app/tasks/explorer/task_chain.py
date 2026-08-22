@@ -121,7 +121,9 @@ def explorer_parse_task(self, prev_result: dict):
         # fail loudly rather than handing an empty parsed_results to geocode.
         error_msg = res.message if hasattr(res, "message") else str(res)
         raise RuntimeError(error_msg)
-    return res.data
+    # #774: thread the fetch stage's per-source failures onward so the final
+    # validate summary can report partial results honestly.
+    return {**res.data, "fetch_errors": prev_result.get("fetch_errors", [])}
 
 
 # No max_retries: this task never calls self.retry(), so a retry budget would
@@ -188,6 +190,8 @@ def explorer_geocode_task(self, prev_result: dict):
         "success_rate": result.summary.success_rate,
         "skipped_rows": result.summary.skipped,
         "deadline_exceeded": result.summary.deadline_exceeded,
+        # #774: keep the fetch stage's per-source failures riding along.
+        "fetch_errors": prev_result.get("fetch_errors", []),
     }
 
 
@@ -205,6 +209,7 @@ def explorer_validate_task(self, prev_result: dict):
         task_id,
         geocoded_ref_id=prev_result.get("geocoded_ref_id"),
         total_rows=prev_result.get("total_rows", 0),
+        fetch_errors=prev_result.get("fetch_errors", []),
         on_progress=_on_progress,
     ))
     return res.data

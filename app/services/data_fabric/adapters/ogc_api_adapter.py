@@ -123,13 +123,19 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
             except Exception:
                 pass
 
+            # #769: srs comes from the collection's declared CRS list; when the
+            # collection declares none, srs stays None — never a fabricated
+            # EPSG:4326 (the metadata truthfulness contract).
+            declared_crs = col_data.get("crs") or []
+            srs = declared_crs[0] if declared_crs else None
+
             return DatasetDescriptor(
                 id=dataset_id,
                 title=col_data.get("title", dataset_id),
                 description=col_data.get("description", f"OGC API Collection {dataset_id}"),
                 source_type="ogc_api",
                 geometry_type=col_data.get("itemType", "Feature"),
-                srs=col_data.get("crs", ["EPSG:4326"])[0] if col_data.get("crs") else "EPSG:4326",
+                srs=srs,
                 bbox=spatial_bbox or [-180.0, -90.0, 180.0, 90.0],
                 feature_count=None,
                 fields=fields,
@@ -143,9 +149,9 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
                 description=f"OGC API Collection ({e})",
                 source_type="ogc_api",
                 geometry_type="Feature",
-                srs="EPSG:4326",
-                bbox=[-180.0, -90.0, 180.0, 90.0],
-                feature_count=0,
+                srs=None,
+                bbox=None,
+                feature_count=None,
                 fields=[],
                 metadata={"error": str(e)},
             )

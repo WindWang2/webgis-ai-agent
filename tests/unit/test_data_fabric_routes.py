@@ -285,3 +285,78 @@ def test_sync_data_source_catalog_2xx_with_existing_dataset():
     assert body["success"] is True
     assert body["synced_count"] >= 1
     assert body["items"][0]["id"].startswith("cat_")
+
+
+# ─── #767: unsupported source types rejected loudly; demo sources labeled ───
+
+
+def test_create_data_source_unsupported_type_is_4xx_767():
+    """#767: an unregistered source type (csv) must be rejected with a typed
+    4xx BEFORE any probe/persist — previously the probe/capabilities swallow
+    persisted an 'unreachable' row and returned success."""
+    client = TestClient(app)
+    headers = _df_auth_headers()
+    res = client.post(
+        "/api/v1/data-fabric/sources",
+        json={
+            "name": "CSV Source",
+            "source_type": "csv",
+            "endpoint_url": "https://example.com/data.csv",
+            "options": {},
+        },
+        headers=headers,
+    )
+    assert res.status_code == 400
+    body = res.json()
+    assert body["success"] is False
+    assert body["error_type"] == "UNSUPPORTED_SOURCE"
+    assert "supported" in body["details"]
+
+    # Nothing was persisted.
+    from app.models.data_fabric import DataSourceModel
+
+    with SessionLocal() as db:
+        assert (
+            db.query(DataSourceModel)
+            .filter(DataSourceModel.name == "CSV Source")
+            .count()
+        ) == 0
+
+
+def test_create_data_source_geojson_rejected_767():
+    """#767: source_type='geojson' no longer routes to the demo adapter that
+    fabricates synthetic Beijing features for a real remote URL."""
+    client = TestClient(app)
+    headers = _df_auth_headers()
+    res = client.post(
+        "/api/v1/data-fabric/sources",
+        json={
+            "name": "Remote GeoJSON",
+            "source_type": "geojson",
+            "endpoint_url": "https://example.org/parks.geojson",
+            "options": {},
+        },
+        headers=headers,
+    )
+    assert res.status_code == 400
+    assert res.json()["error_type"] == "UNSUPPORTED_SOURCE"
+
+
+def test_create_data_source_demo_labeled_767():
+    """#767: when the demo adapter IS used (explicit 'generic'), the create
+    response labels it is_demo so synthetic data is never mistaken for remote
+    data."""
+    client = TestClient(app)
+    headers = _df_auth_headers()
+    res = client.post(
+        "/api/v1/data-fabric/sources",
+        json={
+            "name": "Demo Sample Source",
+            "source_type": "generic",
+            "endpoint_url": "https://example.com/anything",
+            "options": {},
+        },
+        headers=headers,
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["data_source"]["is_demo"] is True

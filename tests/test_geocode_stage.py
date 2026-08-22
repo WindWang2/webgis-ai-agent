@@ -696,3 +696,67 @@ def test_geocode_task_bounded_by_time_budget_and_reports_partial_completion(monk
     assert out.result["deadline_exceeded"] is True
     assert out.result["total_rows"] == 2
     assert out.result["geocoded_ref_id"]
+
+
+# ─── #771 / #772: (0,0) failures, row attribution, precision fan-out ────────
+
+
+def test_geocode_stage_zero_zero_row_is_failed_771():
+    """#771: a provider miss that defaults location to [0,0] (tianditu/baidu)
+    must land as _geocode_status="failed" — never an "ok" row at Null Island
+    inflating summary.success_rate."""
+    parsed_sources = [{"ref_id": "ref_1", "row_count": 1, "mapping": {"address": "addr"}}]
+    rows = [{"name": "A", "addr": "不存在的地址"}]
+
+    async def batch_geocode(addresses, provider="amap", max_concurrency=3):
+        return {
+            "results": [
+                {"index": 0, "status": "ok", "address": "不存在的地址",
+                 "results": [{"location": [0.0, 0.0]}], "provider": provider}
+            ],
+            "errors": [],
+            "provider": provider,
+        }
+
+    result = _run(geocode_stage(
+        parsed_sources,
+        load_ref=lambda ref_id: {"rows": rows, "mapping": {"address": "addr"}},
+        batch_geocode=batch_geocode,
+    ))
+    assert result.rows[0]["_geocode_status"] == "failed"
+    assert result.rows[0]["_lat"] is None
+    assert result.summary.failed == 1
+    assert result.summary.success == 0
+
+
+def test_geocode_stage_fans_out_provider_precision_and_fallback_772():
+    """#772: rows carry _geocode_provider of the provider that ACTUALLY
+    answered (with_fallback switch), its precision level, a per-row fallback
+    marker, and summary.multi_provider becomes truthful."""
+    parsed_sources = [{"ref_id": "ref_1", "row_count": 1, "mapping": {"address": "addr"}}]
+    rows = [{"name": "A", "addr": "海淀某址"}]
+
+    async def batch_geocode(addresses, provider="amap", max_concurrency=3):
+        assert provider == "amap"
+        return {
+            "results": [
+                {"index": 0, "status": "ok", "address": "海淀某址",
+                 "results": [{"location": [116.3, 39.98], "precision_level": "district"}],
+                 "provider": "baidu",
+                 "provenance": {"source": "baidu"}}
+            ],
+            "errors": [],
+            "provider": "amap",
+        }
+
+    result = _run(geocode_stage(
+        parsed_sources,
+        load_ref=lambda ref_id: {"rows": rows, "mapping": {"address": "addr"}},
+        batch_geocode=batch_geocode,
+    ))
+    row = result.rows[0]
+    assert row["_geocode_status"] == "ok"
+    assert row["_geocode_provider"] == "baidu"       # actual provider, not amap
+    assert row["_geocode_precision"] == "district"   # precision level kept
+    assert row["_geocode_fallback"] is True          # per-row fallback marker
+    assert result.summary.multi_provider is True     # truthful summary

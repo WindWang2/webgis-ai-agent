@@ -579,3 +579,86 @@ async def test_stream_stuck_chain_closes_at_deadline(monkeypatch):
     # would hang). The simulated 0.05 s cap must stop it after a handful of
     # polls — nothing like the ~900 polls a real 900 s / 1 Hz run implies.
     assert 1 <= polls["n"] <= 60, f"deadline did not bound the polls: {polls['n']}"
+
+
+# ─── #774: fetch errors are threaded through parse→geocode→validate ─────────
+
+
+def test_fetch_errors_thread_to_validate_summary_774():
+    """#774: the per-source fetch failures must survive the whole task chain
+    and appear in the validate stage's completion payload (previously they
+    were dropped at the fetch→parse handoff and the final result covered only
+    the surviving sources)."""
+    import asyncio
+    import unittest.mock as _mock
+
+    from app.services.session_data import MemorySessionStore
+    from app.services.session_data_protocol import set_active_session_store
+    from app.tasks.explorer import task_chain
+
+    store = MemorySessionStore()
+    set_active_session_store(store)
+
+    # Same seam as the #483 test in test_geocode_stage.py: run the stage
+    # coroutines on a fresh loop instead of the (blocked) pytest-asyncio loop.
+    def _fresh_loop_run(coro):
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(coro)
+            finally:
+                loop.close()
+        # Nested call (a stage coroutine scheduling another _run_async, e.g.
+        # _load_ref inside run_parse_stage): drive it on a worker thread's
+        # own loop instead of nesting run_until_complete.
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            return ex.submit(asyncio.run, coro).result()
+
+    _mock.patch.object(task_chain, "_run_async", _fresh_loop_run).start()
+    try:
+        payload = {
+            "data": "YWRkcmVzcwpCZWlqaW5n",
+            "codec": "base64",
+            "content_type": "text/csv",
+            "encoding": "utf-8",
+        }
+        ref_id = asyncio.run(store.store("explorer:t-774", payload, prefix="fetch"))
+        prev = {
+            "task_id": "t-774",
+            "fetch_results": [{
+                "source_id": "ok-src", "ref_id": ref_id, "size_bytes": 13, "format": "csv",
+            }],
+            "fetch_errors": [{"source_id": "bad-src", "error": "upstream 503"}],
+        }
+
+        class _ParseAdapter:
+            async def parse(self, raw):
+                from app.services.explorer.models import StructuredData, FieldInfo
+                # rows carry predefined coords so the geocode stage stays
+                # offline (predefined rows are not dispatched to providers)
+                rows = [
+                    {"address": line, "lat": 39.9, "lon": 116.4}
+                    for line in raw.data.decode().splitlines()[1:]
+                ]
+                fields = [FieldInfo(name=n) for n in ("address", "lat", "lon")]
+                return StructuredData(rows=rows, fields=fields)
+
+        # 1) parse task threads fetch_errors onward
+        with _mock.patch("app.services.explorer.parse_stage.GovDataAdapter", _ParseAdapter):
+            parse_out = task_chain.explorer_parse_task.apply(args=[prev]).get()
+        assert parse_out["fetch_errors"] == prev["fetch_errors"]
+        assert parse_out["parsed_results"], "parse must succeed for the ok source"
+
+        # 2) geocode task keeps them riding along
+        geo_out = task_chain.explorer_geocode_task.apply(args=[parse_out]).get()
+        assert geo_out["fetch_errors"] == prev["fetch_errors"]
+
+        # 3) validate task surfaces them in the completion summary
+        val_out = task_chain.explorer_validate_task.apply(args=[geo_out]).get()
+        assert val_out["fetch_errors"] == prev["fetch_errors"]
+    finally:
+        _mock.patch.stopall()
+        set_active_session_store(None)

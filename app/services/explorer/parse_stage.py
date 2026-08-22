@@ -1,6 +1,7 @@
 """
 Parse Stage — Pure async stage runner for structured parsing.
 """
+import base64
 import logging
 from typing import Any, Callable, Dict, List, Optional
 
@@ -8,6 +9,19 @@ from app.adapters.gov.gov_data_adapter import GovDataAdapter
 from app.services.explorer.models import RawContent, StageResult
 
 logger = logging.getLogger(__name__)
+
+
+def decode_fetch_payload(stored: Dict[str, Any]) -> bytes:
+    """Decode a stored fetch payload back to bytes.
+
+    #775: fetch stores base64 (``codec: "base64"``); payloads written before
+    that change carry no codec marker and are hex. Both decode deterministically
+    here (the codec marker disambiguates — hex strings are also valid base64
+    alphabet, so sniffing alone would be unreliable).
+    """
+    if stored.get("codec", "hex") == "base64":
+        return base64.b64decode(stored["data"])
+    return bytes.fromhex(stored["data"])
 
 
 def auto_field_mapping(fields: list) -> dict:
@@ -68,12 +82,13 @@ async def run_parse_stage(
             missing_refs.append(ref_id or "<none>")
             continue
 
-        # Per-source isolation: a corrupt payload (bad hex) or a parser failure
-        # must skip just this source, matching fetch_stage's error isolation.
-        # Previously an unguarded bytes.fromhex / parse could abort the whole stage.
+        # Per-source isolation: a corrupt payload (bad base64/hex) or a parser
+        # failure must skip just this source, matching fetch_stage's error
+        # isolation. Previously an unguarded decode / parse could abort the
+        # whole stage.
         try:
             raw = RawContent(
-                data=bytes.fromhex(stored["data"]),
+                data=decode_fetch_payload(stored),
                 content_type=stored["content_type"],
                 encoding=stored["encoding"],
             )
