@@ -113,7 +113,12 @@ async def test_redis_set_map_state_refreshes_payload_ttl():
     data_key = store._data_key("sess-ttl", ref)
     await raw.expire(data_key, 10)
     assert await raw.ttl(data_key) <= 10
+    # #730: WRITE paths no longer fan out per-ref payload TTL refreshes
+    # (O(refs) SMEMBERS + 2N EXPIREs per viewport push); the READ path is the
+    # liveness owner — a get() must refresh the payload TTL.
     await store.set_map_state("sess-ttl", "viewport", {"zoom": 8})
+    assert await raw.ttl(data_key) <= 10, "write path must not refresh payload TTL"
+    await store.get("sess-ttl", ref)
     ttl = await raw.ttl(data_key)
     assert ttl > 10
     assert ttl >= DATA_TTL - 5

@@ -793,12 +793,14 @@ class ChatExecutionEngine:
             )
             return
         try:
-            from app.services.session_data import session_data_manager
-            if await session_data_manager.is_session_clearing(session_id):
+            if await asyncio.wait_for(
+                session_data_manager.is_session_clearing(session_id),
+                timeout=2.0,
+            ):
                 # #750: cross-replica — the session is being cleared on
                 # ANOTHER pod (cap eviction / delete raced this turn under
                 # non-sticky routing); suppress instead of swallowing the FK
-                # IntegrityError below.
+                # IntegrityError below. Uses this module's patched seam.
                 logger.debug(
                     "save_message suppressed for %s: session is being cleared on another replica",
                     session_id,
@@ -2281,9 +2283,14 @@ class ChatExecutionEngine:
         try:
             # #750: publish cross-replica — in-flight turns on OTHER pods read
             # this marker and suppress their message writes for this session.
+            # Uses THIS module's session_data_manager global (the established
+            # patch seam) and a bounded wait — the marker is best-effort and
+            # must never delay or derail the delete.
             try:
-                from app.services.session_data import session_data_manager
-                await session_data_manager.set_session_clearing(session_id)
+                await asyncio.wait_for(
+                    session_data_manager.set_session_clearing(session_id),
+                    timeout=2.0,
+                )
             except Exception as e:  # noqa: BLE001 - marker is best-effort
                 logger.warning(f"clear_session: clearing marker publish failed: {e}")
             deleted = False

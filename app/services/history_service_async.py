@@ -600,8 +600,12 @@ class AsyncHistoryService(HistoryStoreProtocol):
             # _reject_if_clearing 都会读到，在途 turn 的写被抑制而非撞 FK。
             ChatExecutionEngine._clearing_sessions.add(session_id)
             try:
+                import asyncio as _asyncio
                 from app.services.session_data import session_data_manager
-                await session_data_manager.set_session_clearing(session_id)
+                await _asyncio.wait_for(
+                    session_data_manager.set_session_clearing(session_id),
+                    timeout=2.0,
+                )
             except Exception as e:  # noqa: BLE001 - marker is best-effort
                 logger.warning("cap eviction: clearing marker publish failed: %s", e)
             try:
