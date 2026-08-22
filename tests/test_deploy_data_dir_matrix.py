@@ -252,3 +252,24 @@ def test_prod_composes_artifact_subdirs_under_shared_mount():
         } and data_dir.rstrip("/") in {
             tgt for _, tgt in _named_volume_mounts(services["celery-worker"])
         }, f"{name}: DATA_DIR={data_dir} 不是共享挂载目标 —— 产物落在容器层"
+
+
+# ── 4. #760: MapSpec/raster durable store 写根契约 ────────────────────────
+
+def test_mapspec_store_root_lives_under_data_dir():
+    """#760: .webgis-agent 硬编码在 PROJECT_ROOT 下时游离于部署矩阵之外
+    （k8s readOnlyRootFilesystem 首个 mutation 即 EROFS；compose 落容器层）。
+    必须解析到 DATA_DIR（已挂共享卷）之下，或显式 MAPSPEC_STORAGE_DIR。"""
+    import os
+    from app.services.mapspec import store as mapspec_store_module
+
+    explicit = os.environ.get("MAPSPEC_STORAGE_DIR")
+    base = mapspec_store_module.BASE_STORAGE_DIR
+    if explicit:
+        assert str(base) == str(Path(explicit).resolve() / ".webgis-agent")
+    else:
+        data_dir = Path(mapspec_store_module.settings.DATA_DIR).resolve()
+        assert base == data_dir / ".webgis-agent", (
+            f"BASE_STORAGE_DIR={base} 必须位于 DATA_DIR={data_dir} 之下"
+        )
+        assert mapspec_store_module.PROJECT_ROOT not in base.parents or data_dir in base.parents

@@ -20,13 +20,25 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
+from uuid import uuid4
 
+from app.core.config import settings
 from app.services.session_data import session_data_manager
 
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-BASE_STORAGE_DIR = PROJECT_ROOT / ".webgis-agent"
+# #760: 之前硬编码 PROJECT_ROOT/".webgis-agent"，游离于 settings.DATA_DIR 的
+# 部署矩阵之外 —— k8s readOnlyRootFilesystem 下首个 MapSpec mutation/raster
+# save 即 OSError(EROFS)；compose 可写但落在 per-container 层，容器重启丢
+# mapspec/revision/checkpoint/raster 而 Redis 缓存仍在，破坏 "cache 不持有
+# 磁盘没有的 state" 顺序契约（#519 只修了 DATA_DIR 这一族路径，本路径绕过
+# 了它，deploy-matrix 契约测试也因此看不见）。归入 DATA_DIR（k8s/compose
+# 均已挂共享卷），MAPSPEC_STORAGE_DIR 保留为显式覆盖口。
+BASE_STORAGE_DIR = (
+    Path(os.environ.get("MAPSPEC_STORAGE_DIR") or Path(settings.DATA_DIR)).resolve()
+    / ".webgis-agent"
+)
 
 LABEL_LAYER_SUFFIX = "-label"
 
@@ -274,9 +286,15 @@ class MapSpecStore:
         # revision 文件名必须免碰撞：毫秒时间戳在快速连续 save（同一毫秒）
         # 下会互相覆盖 —— 快照静默丢失（#687 测试在全量套件负载下偶发红）。
         # 追加进程内单调序列（定宽），字典序 == 时间序，保留裁剪逻辑不变。
+        # #761: 序列是进程内的 —— 存储迁到共享卷后（#760），两个 pod 同一
+        # 毫秒可铸出同 (ts, seq) 文件名互相覆盖。尾部再拼 uuid 短后缀；排序
+        # 仍按 ts+seq 前缀（uuid 只作消歧尾缀，不破坏字典序语义）。
         global _REV_SEQ
         _REV_SEQ += 1
-        rev_filename = f"mapspec_rev_{int(time.time() * 1000):013d}_{_REV_SEQ:06d}.json"
+        rev_filename = (
+            f"mapspec_rev_{int(time.time() * 1000):013d}_{_REV_SEQ:06d}"
+            f"_{uuid4().hex[:6]}.json"
+        )
         _atomic_write_json_sync(rev_dir / rev_filename, mapspec)
         if fingerprint:
             _atomic_write_text_sync(

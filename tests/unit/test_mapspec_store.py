@@ -473,7 +473,8 @@ async def test_save_mapspec_revision_retention_cap(clean_session):
         f"revision 数量 {len(rev_files)} 超过保留上限 {MAPSPEC_REV_RETENTION}"
     )
     # 最新一次保存的内容必须保留（数据不丢）
-    latest = max(rev_files, key=lambda p: int(p.stem.split("_")[-1]))
+    # #761: 文件名尾缀为 uuid 消歧段 —— 序列号在倒数第二段
+    latest = max(rev_files, key=lambda p: int(p.stem.split("_")[-2]))
     import json as _json
     assert _json.loads(latest.read_text())["n"] == MAPSPEC_REV_RETENTION + 9
 

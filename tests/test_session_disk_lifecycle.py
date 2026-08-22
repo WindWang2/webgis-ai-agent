@@ -227,3 +227,20 @@ def test_clear_session_files_is_idempotent_and_bounded():
         with patch.object(mapspec_store_module, "BASE_STORAGE_DIR", base):
             asyncio.run(store.clear_session_files(sid))  # 不抛即通过
         assert not (base / sid).exists(), "缺失目录不得被重新创建"
+
+
+def test_revision_filenames_unique_across_processes(monkeypatch, tmp_path):
+    """#761: revision 文件名尾缀 uuid —— 强制相同时间戳 + 相同进程内序列时
+    两次持久化也必须产出不同文件名（跨 pod 同毫秒碰撞会静默丢快照）。"""
+    rev_dir = tmp_path / "revisions"
+    monkeypatch.setattr(mapspec_store_module.time, "time", lambda: 1_700_000_000.0)
+
+    # 模拟两个进程：各自从同一 seq 出发，写同一毫秒
+    for _ in range(2):
+        mapspec_store_module._REV_SEQ = 0
+        MapSpecStore._persist_disk_sync(
+            tmp_path / "mapspec.json", rev_dir, {"layers": ["l"]}
+        )
+
+    rev_files = sorted(rev_dir.glob("mapspec_rev_*.json"))
+    assert len(rev_files) == 2, "同 (ts, seq) 的两次快照必须共存，不得互相覆盖"
