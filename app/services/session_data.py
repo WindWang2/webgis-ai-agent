@@ -21,6 +21,8 @@ class MemorySessionStore(BaseSessionStore):
     def __init__(self, capacity: int = 200):
         # session_id -> {ref_id -> data}
         self._store: dict[str, OrderedDict[str, Any]] = {}
+        # #750: 会话清理标记（进程内 TTL）——跨副本场景走 Redis 后端实现
+        self._clearing_markers: dict[str, float] = {}
         # session_id -> {alias -> ref_id}
         self._aliases: dict[str, dict[str, str]] = {}
         # session_id -> {state_key -> value} (e.g., base_layer, current_view)
@@ -232,8 +234,13 @@ class MemorySessionStore(BaseSessionStore):
         return state.get("_started_at")
 
     async def get_map_state(self, session_id: str) -> dict[str, Any]:
-        """获取当前地图所有状态"""
-        return self._map_state.get(session_id, {})
+        """获取当前地图所有状态。
+
+        #749: 返回深拷贝——直接返回存储 dict 时，任何调用方就地改动都会
+        污染其它读者并绕过 set_map_state 的 seq/F4 单调检查（#701-2 的
+        copy 纪律此前只覆盖了 get()，未覆盖 map_state）。"""
+        import copy as _copy
+        return _copy.deepcopy(self._map_state.get(session_id, {}))
 
     def invalidate_local_cache(self, session_id: str) -> None:
         """Memory is authoritative in-process, so no read cache can be stale."""
@@ -347,6 +354,21 @@ class MemorySessionStore(BaseSessionStore):
             return False
         session_cache.move_to_end(ref_id)
         self._touch_session(session_id)
+        return True
+
+    async def set_session_clearing(self, session_id: str, ttl_s: int = 30) -> None:
+        """#750: single-process deployment — an in-memory marker with expiry."""
+        import time as _time
+        self._clearing_markers[session_id] = _time.monotonic() + ttl_s
+
+    async def is_session_clearing(self, session_id: str) -> bool:
+        import time as _time
+        deadline = self._clearing_markers.get(session_id)
+        if deadline is None:
+            return False
+        if _time.monotonic() > deadline:
+            self._clearing_markers.pop(session_id, None)
+            return False
         return True
 
     async def clear_session(self, session_id: str) -> None:

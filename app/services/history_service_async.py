@@ -126,6 +126,10 @@ def _strip_orphaned_tool_calls(llm_messages: list[dict]) -> list[dict]:
 _HISTORY_WINDOW = 200
 
 class AsyncHistoryService(HistoryStoreProtocol):
+    # #747: post-auth engine callers pass internal_ok=True; a missing token
+    # on a token-bearing conversation otherwise fails closed (like a mismatch).
+    _internal_load_ok: bool = False
+
     def __init__(self, db: Optional[AsyncSession] = None):
         self.db = db
 
@@ -200,23 +204,39 @@ class AsyncHistoryService(HistoryStoreProtocol):
         owner_token: Optional[str] = None,
         user_id: Optional[str] = None,
         system_prompt: Optional[str] = None,
+        internal_ok: bool = False,
     ) -> HistoryContext:
         """Deep seam method: load conversation, validate SEC-08 owner_token, and format LLM messages."""
+        self._internal_load_ok = internal_ok
         if self.db is not None:
             conv = await self._get_or_create_with_messages(session_id, user_id=user_id)
         else:
             async with async_db_session() as db:
                 svc = AsyncHistoryService(db)
+                svc._internal_load_ok = internal_ok
                 conv = await svc._get_or_create_with_messages(session_id, user_id=user_id)
 
         # #618-12: owner_token 失配按 SEC-08 契约 fail-closed，与 _authorize
         # 的语义一致（「否则视为不存在」）—— 不得 warning 后仍返回全量消息
         # 与真实 owner_token（失配方拿到真实 token 即可冒充会话所有者）。
-        if conv.user_id is None and conv.owner_token is not None and owner_token:
+        # #747: MISSING token 等同失配 —— 旧条件只在调用方传了（错误）token
+        # 时才拒绝，空 token 拿到全量消息 + 真实 owner_token 回显。引擎内部
+        # 的 post-auth 调用（execution_engine._load_session_from_db）走
+        # internal_ok=True 的豁免通道。
+        if (
+            conv.user_id is None
+            and conv.owner_token is not None
+            and (owner_token or not self._internal_load_ok)
+        ):
             import hmac
-            if not hmac.compare_digest(conv.owner_token, owner_token):
+            mismatch = (
+                not owner_token
+                or not hmac.compare_digest(conv.owner_token, owner_token)
+            )
+            if mismatch:
                 logger.warning(
-                    "Owner token mismatch for session %s — returning empty context (fail-closed)",
+                    "Owner token %s for session %s — returning empty context (fail-closed)",
+                    "missing" if not owner_token else "mismatch",
                     session_id,
                 )
                 return HistoryContext(
@@ -573,6 +593,11 @@ class AsyncHistoryService(HistoryStoreProtocol):
             # 标记是 class 级共享的（#407）：任一引擎实例的 _save_msg_async /
             # _reject_if_clearing 都会读到，在途 turn 的写被抑制而非撞 FK。
             ChatExecutionEngine._clearing_sessions.add(session_id)
+            try:
+                from app.services.session_data import session_data_manager
+                await session_data_manager.set_session_clearing(session_id)
+            except Exception as e:  # noqa: BLE001 - marker is best-effort
+                logger.warning("cap eviction: clearing marker publish failed: %s", e)
             try:
                 from app.api.routes import chat as chat_route
 

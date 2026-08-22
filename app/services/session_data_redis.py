@@ -1,5 +1,6 @@
 """Redis-backed session data manager - persistent storage with TTL and LRU eviction"""
 import asyncio
+import copy
 import json
 import time
 import uuid
@@ -622,7 +623,11 @@ class RedisSessionStore(BaseSessionStore):
         # HGETALL round-trips for the same session within L1_TTL_SECONDS.
         cached = self._l1_get(session_id, "map_state")
         if cached is not None:
-            return cached
+            # #749: the L1 entry is shared by every reader within the TTL —
+            # return a copy so no caller can mutate the cached object (or,
+            # worse, have its mutation seen by concurrent readers). Deep copy
+            # in a thread: parsed map_state may embed a large mapspec field.
+            return await asyncio.to_thread(copy.deepcopy, cached)
         # #378: get_map_state sits on the request-admission path
         # (_guard_body_session), so a Redis blip must degrade to empty
         # map_state (cache-miss semantics) — never a 500 on every chat
@@ -1016,28 +1021,59 @@ class RedisSessionStore(BaseSessionStore):
         self._l1_put(session_id, "metadata", result)
         return result
 
-    async def clear_session(self, session_id: str) -> None:
-        await self._ensure_connected()
-        index_key = self._index_key(session_id)
-        ref_ids = await self._r.smembers(index_key)
-        async with self._r.pipeline() as pipe:
-            for ref_bytes in ref_ids:
-                ref_id = ref_bytes.decode() if isinstance(ref_bytes, bytes) else ref_bytes
-                pipe.delete(self._data_key(session_id, ref_id))
-                pipe.delete(self._descriptor_key(session_id, ref_id))
-            pipe.delete(
-                index_key,
-                self._aliases_key(session_id),
-                self._refs_key(session_id),
-                self._state_key(session_id),
-                self._events_key(session_id),
-                self._refs_order_key(session_id),
-                self._map_actions_key(session_id),
-                self._map_actions_order_key(session_id),
+    def _clearing_key(self, session_id: str) -> str:
+        return f"session:{session_id}:clearing"
+
+    async def set_session_clearing(self, session_id: str, ttl_s: int = 30) -> None:
+        """#750: cross-replica clearing marker — an in-flight turn on another
+        pod checks this before writing messages for the session."""
+        try:
+            await self._ensure_connected()
+            await self._r.set(self._clearing_key(session_id), "1", ex=ttl_s)
+        except aioredis.RedisError as e:
+            logger.warning(
+                "set_session_clearing failed for %s: %s (pod-local suppression only)",
+                session_id, e,
             )
-            pipe.srem(self._active_key(), session_id)
-            pipe.zrem(self._activity_key(), session_id)
-            await pipe.execute()
+
+    async def is_session_clearing(self, session_id: str) -> bool:
+        try:
+            await self._ensure_connected()
+            return bool(await self._r.exists(self._clearing_key(session_id)))
+        except aioredis.RedisError:
+            return False  # degrade to pod-local semantics
+
+    async def clear_session(self, session_id: str) -> None:
+        """#752: RedisError isolation like every sibling method — a Redis
+        blip on session DELETE previously raised (500 on an idempotent-ish
+        operation) and aborted the rest of the idle-eviction list."""
+        try:
+            await self._ensure_connected()
+            index_key = self._index_key(session_id)
+            ref_ids = await self._r.smembers(index_key)
+            async with self._r.pipeline() as pipe:
+                for ref_bytes in ref_ids:
+                    ref_id = ref_bytes.decode() if isinstance(ref_bytes, bytes) else ref_bytes
+                    pipe.delete(self._data_key(session_id, ref_id))
+                    pipe.delete(self._descriptor_key(session_id, ref_id))
+                pipe.delete(
+                    index_key,
+                    self._aliases_key(session_id),
+                    self._refs_key(session_id),
+                    self._state_key(session_id),
+                    self._events_key(session_id),
+                    self._refs_order_key(session_id),
+                    self._map_actions_key(session_id),
+                    self._map_actions_order_key(session_id),
+                )
+                pipe.srem(self._active_key(), session_id)
+                pipe.zrem(self._activity_key(), session_id)
+                await pipe.execute()
+        except aioredis.RedisError as e:
+            logger.warning(
+                "Redis clear_session failed for session %s: %s — L1/disk purge still attempted",
+                session_id, e,
+            )
         # F13: write-through invalidation, like every other writer — otherwise a
         # session recreated with the same id within L1_TTL_SECONDS reads the
         # DELETED session's map_state/refs/event_log from L1.
@@ -1098,9 +1134,18 @@ class RedisSessionStore(BaseSessionStore):
         # Evict only the OVERFLOW (the old `+10` kept max-10 sessions and, for
         # max_sessions < 10, the negative slice removed EVERYTHING).
         to_remove = max(0, len(scored) - max_sessions)
+        cleaned = 0
         for sid, _ in scored[:to_remove]:
-            await self.clear_session(sid)
-        logger.info("Cleaned up %d idle sessions", min(to_remove, len(scored)))
+            # #752: per-session isolation — one failing eviction must not
+            # abort the rest of the list until the next 10-min tick
+            # (clear_session itself degrades on RedisError, but the disk
+            # purge / other exceptions stay contained here too).
+            try:
+                await self.clear_session(sid)
+                cleaned += 1
+            except Exception as e:  # noqa: BLE001 - eviction is per-session best-effort
+                logger.warning("Idle cleanup failed for session %s: %s", sid, e)
+        logger.info("Cleaned up %d idle sessions", cleaned)
 
     def _evict_ref(self, pipe, session_id: str, ref_id: str, alias: Optional[str] = None) -> None:
         """Add eviction commands to an open pipeline.

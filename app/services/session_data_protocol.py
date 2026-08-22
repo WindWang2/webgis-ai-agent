@@ -99,6 +99,15 @@ class SessionStoreProtocol(Protocol):
     async def remove_layer_from_state(self, session_id: str, layer_id: str) -> bool:
         ...
 
+    async def set_session_clearing(self, session_id: str, ttl_s: int = 30) -> None:
+        """#750: publish a short-lived cross-replica "clearing" marker so an
+        in-flight turn on ANOTHER pod suppresses its DB writes for a session
+        being evicted/deleted here (the in-process set is pod-local)."""
+
+    async def is_session_clearing(self, session_id: str) -> bool:
+        """Whether a clearing marker is currently live for the session."""
+        return False
+
     async def clear_session(self, session_id: str) -> None:
         ...
 

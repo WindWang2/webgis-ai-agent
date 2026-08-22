@@ -533,6 +533,7 @@ class ChatExecutionEngine:
                 session_id=session_id,
                 user_id=user_id,
                 system_prompt=self._build_system_prompt(),
+                internal_ok=True,  # #747: engine runs post-route-auth
             )
             if ctx.owner_token and session_id not in self._session_owner_tokens:
                 self._session_owner_tokens[session_id] = ctx.owner_token
@@ -791,6 +792,20 @@ class ChatExecutionEngine:
                 "save_message suppressed for %s: session is being cleared", session_id
             )
             return
+        try:
+            from app.services.session_data import session_data_manager
+            if await session_data_manager.is_session_clearing(session_id):
+                # #750: cross-replica — the session is being cleared on
+                # ANOTHER pod (cap eviction / delete raced this turn under
+                # non-sticky routing); suppress instead of swallowing the FK
+                # IntegrityError below.
+                logger.debug(
+                    "save_message suppressed for %s: session is being cleared on another replica",
+                    session_id,
+                )
+                return
+        except Exception:  # noqa: BLE001 - marker check must never block saves
+            pass
         try:
             if tool_result is not None and isinstance(tool_result, str) and len(tool_result) > 100000:
                 tool_result = tool_result[:100000] + "...[truncated]"
@@ -2264,6 +2279,13 @@ class ChatExecutionEngine:
         # 有界 quiesce 之后清除。
         self._clearing_sessions.add(session_id)
         try:
+            # #750: publish cross-replica — in-flight turns on OTHER pods read
+            # this marker and suppress their message writes for this session.
+            try:
+                from app.services.session_data import session_data_manager
+                await session_data_manager.set_session_clearing(session_id)
+            except Exception as e:  # noqa: BLE001 - marker is best-effort
+                logger.warning(f"clear_session: clearing marker publish failed: {e}")
             deleted = False
             try:
                 async with async_db_session() as db:

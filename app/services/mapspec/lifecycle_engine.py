@@ -867,20 +867,38 @@ class MapSpecLifecycleEngine:
             except Exception as e:
                 logger.error(f"MapSpec mutation failed for session {session_id}: {e}", exc_info=True)
                 # 事务 rollback：恢复 mapspec + redis layers 到 mutation 前。
-                await self._rollback_to_snapshot(
-                    session_id,
-                    # Fresh-session semantics: the intent branches snapshot
-                    # `loaded`, which the auto-init skeleton replaced — a
-                    # failed FIRST mutation must DISCARD the candidate, not
-                    # "restore" the skeleton as a residual spec.
-                    None if session_was_fresh else old_mapspec_snapshot,
-                    old_layers_snapshot,
-                )
+                # Fresh-session semantics: the intent branches snapshot
+                # `loaded`, which the auto-init skeleton replaced — a
+                # failed FIRST mutation must DISCARD the candidate, not
+                # "restore" the skeleton as a residual spec.
+                try:
+                    rollback_ok = await self._rollback_to_snapshot(
+                        session_id,
+                        None if session_was_fresh else old_mapspec_snapshot,
+                        old_layers_snapshot,
+                    )
+                except Exception as rb_err:  # noqa: BLE001
+                    # _rollback_to_snapshot isolates its own failures, but a
+                    # raise here must not mask the honest is_error result.
+                    logger.error(
+                        "MapSpec transaction rollback raised for session %s: %s",
+                        session_id, rb_err, exc_info=True,
+                    )
+                    rollback_ok = False
+                # #748: never claim a consistency guarantee the rollback did
+                # not verify — during a sustained Redis outage commit AND
+                # rollback fail together, and the old fixed text told the
+                # agent the state was consistent.
                 return MapSpecResult(
                     is_error=True,
                     origin=origin,
                     error_msg=f"MapSpec 意图更新失败: {e}",
-                    correction_hint="事务已回滚，last-known-good MapSpec 与运行时状态保持一致。",
+                    correction_hint=(
+                        "事务已回滚，last-known-good MapSpec 与运行时状态保持一致。"
+                        if rollback_ok else
+                        "回滚尝试失败——状态可能不一致：请先重新读取当前 MapSpec "
+                        "（webgis_state_get）再重试，不要假设 last-known-good。"
+                    ),
                 )
 
     async def _rollback_to_snapshot(
@@ -888,7 +906,7 @@ class MapSpecLifecycleEngine:
         session_id: str,
         old_mapspec: Optional[Dict[str, Any]],
         old_layers: List[Any],
-    ) -> None:
+    ) -> bool:
         """恢复 mutation 前的 mapspec + redis layers，避免半提交。
 
         ``old_mapspec`` / ``old_layers`` are deep-copied snapshots captured at
@@ -913,6 +931,8 @@ class MapSpecLifecycleEngine:
                 f"MapSpec transaction rollback FAILED for session {session_id}: {rb_err}",
                 exc_info=True,
             )
+            return False
+        return True
 
 
 mapspec_lifecycle_engine = MapSpecLifecycleEngine()

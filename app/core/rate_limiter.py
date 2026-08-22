@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import time
+import uuid
 from collections import defaultdict, deque
 from typing import Protocol
 
@@ -73,7 +74,11 @@ class RedisRateLimiter:
         window_start = now - window_seconds
         pipe = client.pipeline()
         pipe.zremrangebyscore(key, 0, window_start)
-        pipe.zadd(key, {str(now): now})
+        # #751: member must be unique per request — str(now) collides for
+        # concurrent same-tick requests and zadd overwrites, undercounting by
+        # N-1 (the effective limit silently exceeds the configured one under
+        # bursts).
+        pipe.zadd(key, {f"{now:.6f}:{uuid.uuid4().hex[:6]}": now})
         pipe.zcard(key)
         pipe.expire(key, window_seconds + 1)
         try:

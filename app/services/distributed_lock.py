@@ -228,7 +228,19 @@ class SessionLockRegistry:
             return None
         try:
             import redis.asyncio as aioredis  # local import: don't pay cost if unused
-            self._client = aioredis.from_url(redis_url, decode_responses=False)
+            # #745: bound the client — without socket timeouts a half-open
+            # Redis connection blocks the SET NX await forever; the 10 s
+            # acquire deadline is only checked BETWEEN attempts, so every
+            # MapSpec mutation + ACK evaluation hung on the request path
+            # instead of degrading to the in-process fallback (the exact
+            # resilience scenario this module exists for). Values ≤ the
+            # acquire deadline so the except-fallback fires inside ~10 s.
+            self._client = aioredis.from_url(
+                redis_url,
+                decode_responses=False,
+                socket_timeout=2.0,
+                socket_connect_timeout=2.0,
+            )
             self._bound_loop = loop
             logger.info("SessionLockRegistry: Redis-backed distributed locks enabled")
         except Exception as e:  # noqa: BLE001

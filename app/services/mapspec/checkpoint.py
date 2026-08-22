@@ -430,20 +430,22 @@ async def rollback(
                     "missing_refs": unmaterialized_refs,
                 }
         blob_dir = _blob_dir(session_dir)
-        restored = 0
-        missing_blobs = []
-        for ref_id, blob_hash in (
-            {} if mode == "presentation_only" else descriptor["refs"]
-        ).items():
-            if not isinstance(blob_hash, str):
-                continue
-            blob_path = blob_dir / _blob_filename(blob_hash)
-            payload = await asyncio.to_thread(_read_json_sync, blob_path)
-            if payload is None:
-                missing_blobs.append(ref_id)
-                continue
-            await session_data_manager.overwrite(session_id_for_refs, ref_id, payload)
-            restored += 1
+        # #746: verify ALL blobs exist BEFORE the first overwrite — the old
+        # loop overwrote refs one-by-one and reported missing blobs only
+        # after N-1 refs were already restored, leaving the session matching
+        # neither the checkpoint nor the pre-rollback state.
+        planned = {
+            ref_id: blob_hash
+            for ref_id, blob_hash in (
+                {} if mode == "presentation_only" else descriptor["refs"]
+            ).items()
+            if isinstance(blob_hash, str)
+        }
+        missing_blobs = [
+            ref_id
+            for ref_id, blob_hash in planned.items()
+            if not (blob_dir / _blob_filename(blob_hash)).is_file()
+        ]
         if missing_blobs:
             return {
                 "success": False,
@@ -452,6 +454,23 @@ async def rollback(
                     f"{missing_blobs}"
                 ),
             }
+        restored = 0
+        for ref_id, blob_hash in planned.items():
+            blob_path = blob_dir / _blob_filename(blob_hash)
+            payload = await asyncio.to_thread(_read_json_sync, blob_path)
+            if payload is None:
+                # TOCTOU guard: blob vanished between the existence check and
+                # the read — abort; refs restored so far stay a prefix of the
+                # checkpoint state, and the caller sees an explicit failure.
+                return {
+                    "success": False,
+                    "message": (
+                        f"Checkpoint '{checkpoint_id}' blob for ref '{ref_id}' "
+                        "disappeared mid-restore"
+                    ),
+                }
+            await session_data_manager.overwrite(session_id_for_refs, ref_id, payload)
+            restored += 1
         if mode != "presentation_only":
             ref_count = restored
     else:
