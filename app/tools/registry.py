@@ -186,6 +186,11 @@ def _estimate_json_bytes(
         return 32
 
 
+# audit #824: 别名批量查表的去重后字段上限 —— 超限（或 oversized 载荷）降级为
+# 仅解析显式 ref: 前缀，避免把内联大 GeoJSON 的海量字符串叶塞进一条 HMGET。
+_ALIAS_LOOKUP_MAX_DISTINCT = 1024
+
+
 def _is_args_oversized(arguments: Any) -> bool:
     """#699 + #677：超大 args 的统一预算化门（Pydantic 旁路与 GeoJSON 校验共用）。
 
@@ -442,6 +447,12 @@ class ToolRegistry:
 
         未注册的工具回退到 ``"1.0#cv1"``。供 ArtifactLineage.tool_version 与
         run manifest 记录「当时执行的工具版本」——替代以前硬编码的 "1.0"。
+
+        audit #829 纪律：全库工具当前均为默认 "1.0"/cv1（历史从未 bump）。
+        今后任何改变工具 RESULT 契约的提交（如 to_llm_response 形状、
+        ref 剥离语义）必须同时 bump 该工具的 contract_version=，否则
+        lineage 指纹永远无区分度。tests/unit/test_tooling_audit824_831.py
+        锁定显式声明的版本必须贯穿 dispatch。
         """
         meta = self._metadata.get(name)
         if not meta:
@@ -662,6 +673,9 @@ class ToolRegistry:
         # 这些字段本身就是为了接收引用 ID，绝不应被自动解引用为 GeoJSON 数据。
         if session_id and isinstance(arguments, dict):
             try:
+                # audit #824: 与 Pydantic 旁路同门的预算探测提前到解析之前 ——
+                # oversized 内联载荷的字符串叶是数据不是别名，别名查表直接降级。
+                _oversized_for_resolver = _is_args_oversized(arguments)
                 skip_keys = {"ref_id", "layer_ref", "layer_id", "plan_id", "before_ref"}
                 # MapSpec ingestion preserves the source ref as provenance and
                 # resolves it inside the session-aware tool. Generic transparent
@@ -680,6 +694,7 @@ class ToolRegistry:
                     session_id,
                     arguments,
                     skip_keys=skip_keys,
+                    oversized_hint=_oversized_for_resolver,
                 )
             except ValueError as e:
                 error_msg = str(e)
@@ -732,6 +747,26 @@ class ToolRegistry:
                 # model_dump 的 O(features) 深拷贝
                 pass
             else:
+                # audit #828: 未知参数此前被 extra=ignore 静默丢弃 —— LLM 幻觉
+                # 出的参数无声失效。显式拒绝并列出合法参数集，走自愈通道。
+                _model_extra = getattr(getattr(model, "model_config", None), "get", lambda *_: None)("extra")
+                if _model_extra != "allow" and isinstance(arguments, dict):
+                    _allowed = set(model.model_fields.keys())
+                    _unknown = [k for k in arguments.keys() if k not in _allowed]
+                    if _unknown:
+                        _msg = (
+                            f"工具 {name} 不接受参数: {', '.join(sorted(_unknown))}。"
+                            f"合法参数: {', '.join(sorted(_allowed))}。"
+                        )
+                        return std_error_response(
+                            _msg,
+                            code="VALIDATION_ERROR",
+                            error_type="ValidationError",
+                            correction_hint=(
+                                f"Unknown parameter(s) {sorted(_unknown)} — remove them and "
+                                f"retry with only the documented parameters."
+                            ),
+                        )
                 try:
                     validated_args = model.model_validate(arguments)
                     arguments = validated_args.model_dump()
@@ -808,6 +843,18 @@ class ToolRegistry:
                 code="VALIDATION_ERROR",
                 error_type="ValueError",
                 correction_hint=f"Error: {str(e)} Please check the tool parameters and try again."
+            )
+        except TypeError as e:
+            # audit #828: 显式 parameters 注册的工具多传参数时以裸 TypeError
+            # 落入 TOOL_ERROR —— 归类为参数校验错误并给出自愈提示。
+            return std_error_response(
+                str(e),
+                code="VALIDATION_ERROR",
+                error_type="TypeError",
+                correction_hint=(
+                    f"Argument mismatch: {e}. Check the tool's documented "
+                    "parameters and retry with exactly those."
+                ),
             )
         except KeyError as e:
             return std_error_response(
@@ -901,13 +948,24 @@ class ToolRegistry:
         cache_hit_var.set(thread_cache_hit)
         return result
 
-    async def _resolve_references(self, session_id: str, arguments: Any, skip_keys: Optional[set[str]] = None) -> Any:
+    async def _resolve_references(
+        self, session_id: str, arguments: Any,
+        skip_keys: Optional[set[str]] = None,
+        oversized_hint: bool = False,
+    ) -> Any:
         """递归解析参数中的数据引用 ref:xxx 或 别名（批量版）。
 
         原先每个字符串参数都 await 一次 resolve_alias —— 一次 Redis HGET
         round-trip；N 个字符串参数 = N 次串行 RTT。现在先收集全部字符串
         叶节点，用一次 resolve_aliases（单个 HMGET）批量判定别名，再递归
         替换，每次 dispatch 固定 1 次 RTT。
+
+        audit #824: 大内联 GeoJSON 参数（20k 要素 ≈ 10 万字符串叶）曾把全
+        部叶子（含重复的 "Feature"/"Point"）塞进一条 HMGET 并整树重建。
+        现在：(a) 字符串叶去重后再查别名；(b) oversized 载荷或去重后仍超
+        ``_ALIAS_LOOKUP_MAX_DISTINCT`` 时降级为仅解析显式 ``ref:`` 前缀
+        （内联载荷里的普通字符串是数据不是别名）；(c) 重建按恒等短路 ——
+        子树无任何解析命中时原样返回原节点，不再 O(tree) 拷贝。
         """
         if skip_keys is None:
             skip_keys = set()
@@ -916,27 +974,42 @@ class ToolRegistry:
             return arguments
 
         if isinstance(arguments, str):
-            strings = [arguments]
+            distinct_strings = {arguments}
         elif isinstance(arguments, (dict, list)):
-            strings: list[str] = []
+            if oversized_hint:
+                # audit #824: an oversized payload needs NO alias walk at all —
+                # _resolve below only attempts explicit ``ref:`` cursors, so
+                # the 100k-leaf collection pass is skipped entirely.
+                distinct_strings = set()
+            else:
+                distinct_strings = set()
 
-            def _collect(node) -> None:
-                if isinstance(node, str):
-                    strings.append(node)
-                elif isinstance(node, dict):
-                    for k, v in node.items():
-                        if k in skip_keys:
-                            continue
-                        _collect(v)
-                elif isinstance(node, list):
-                    for v in node:
-                        _collect(v)
+                def _collect(node) -> None:
+                    if isinstance(node, str):
+                        distinct_strings.add(node)
+                    elif isinstance(node, dict):
+                        for k, v in node.items():
+                            if k in skip_keys:
+                                continue
+                            _collect(v)
+                    elif isinstance(node, list):
+                        for v in node:
+                            _collect(v)
 
-            _collect(arguments)
+                _collect(arguments)
         else:
             return arguments
 
-        aliases = await session_data_manager.resolve_aliases(session_id, strings)
+        # audit #824: alias lookup degradation — an oversized inline payload's
+        # strings are data, not references. Resolve explicit ref: cursors only.
+        aliases: dict[str, str] = {}
+        if (
+            not oversized_hint
+            and len(distinct_strings) <= _ALIAS_LOOKUP_MAX_DISTINCT
+        ):
+            aliases = await session_data_manager.resolve_aliases(
+                session_id, list(distinct_strings)
+            )
 
         async def _resolve(node):
             if isinstance(node, str):
@@ -970,16 +1043,29 @@ class ToolRegistry:
                 return node
 
             if isinstance(node, dict):
+                changed = False
                 new_args = {}
                 for k, v in node.items():
                     if k in skip_keys:
                         new_args[k] = v
                     else:
-                        new_args[k] = await _resolve(v)
-                return new_args
+                        r = await _resolve(v)
+                        if r is not v:
+                            changed = True
+                        new_args[k] = r
+                # audit #824: identity short-circuit — a subtree with no
+                # resolution hits returns the ORIGINAL node (no O(tree) copy).
+                return new_args if changed else node
 
             if isinstance(node, list):
-                return [await _resolve(v) for v in node]
+                changed = False
+                new_items = []
+                for v in node:
+                    r = await _resolve(v)
+                    if r is not v:
+                        changed = True
+                    new_items.append(r)
+                return new_items if changed else node
 
             return node
 

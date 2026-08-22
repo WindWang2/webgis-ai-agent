@@ -106,6 +106,9 @@ DOMAIN_KEYWORDS: dict[str, list[str]] = {
     # 技能元工具
     "meta": [
         "创建技能", "新建工具", "自定义脚本", "create skill", "new tool",
+        # audit #831: spawn_subagent 的文档激活词（subagent.py docstring 承诺
+        # 「批量/子任务/委派」触发载入）此前不在词表 —— 按文档触发永远无法激活。
+        "批量", "子任务", "委派", "子代理", "spawn subagent",
     ],
 }
 

@@ -26,20 +26,17 @@ from .models import CanonicalPlan
 # subsetting). The two sets answer different questions — "does this domain
 # emit refs" vs "when should its schemas be shown". When adding a catalog
 # domain whose tools emit refs, add it here too.
+# audit #830: entries must be live registry domain names (renamed domains were
+# left behind here); tests/unit/test_capability_registry_parity.py locks it.
 PRODUCES_REF_DOMAINS: frozenset[str] = frozenset(
     {
         "osm",
-        "data_fabric",
         "dataset",
-        "spatial_catalog",
         "network",
         "raster",
         "statistics",
-        "spatial",
         "temporal",
-        "remote_sensing",
         "chinese",
-        "geocoding",
     }
 )
 

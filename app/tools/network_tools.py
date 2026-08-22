@@ -306,7 +306,7 @@ def register_network_tools(registry: ToolRegistry):
         tier=2,
         domains=["network"],
         args_model=NetworkShortestPathArgs,
-        execution_policy=ToolExecutionPolicy.THREAD,
+        execution_policy=ToolExecutionPolicy.ASYNC,  # audit #827: async solver (honest declaration)
     )
     async def network_shortest_path(
         network: Any,
@@ -339,7 +339,7 @@ def register_network_tools(registry: ToolRegistry):
         tier=2,
         domains=["network"],
         args_model=NetworkODMatrixArgs,
-        execution_policy=ToolExecutionPolicy.THREAD,
+        execution_policy=ToolExecutionPolicy.ASYNC,  # audit #827: async solver (honest declaration)
     )
     async def network_od_matrix(
         network: Any,
@@ -384,7 +384,7 @@ def register_network_tools(registry: ToolRegistry):
         tier=2,
         domains=["network"],
         args_model=NetworkClosestFacilityArgs,
-        execution_policy=ToolExecutionPolicy.THREAD,
+        execution_policy=ToolExecutionPolicy.ASYNC,  # audit #827: async solver (honest declaration)
     )
     async def network_closest_facility(
         network: Any,
@@ -418,7 +418,7 @@ def register_network_tools(registry: ToolRegistry):
         tier=2,
         domains=["network"],
         args_model=NetworkServiceAreaArgs,
-        execution_policy=ToolExecutionPolicy.THREAD,
+        execution_policy=ToolExecutionPolicy.ASYNC,  # audit #827: async solver (honest declaration)
     )
     async def network_service_area(
         network: Any,
@@ -450,7 +450,7 @@ def register_network_tools(registry: ToolRegistry):
         tier=2,
         domains=["network"],
         args_model=NetworkAccessibilityArgs,
-        execution_policy=ToolExecutionPolicy.THREAD,
+        execution_policy=ToolExecutionPolicy.ASYNC,  # audit #827: async solver (honest declaration)
     )
     async def network_accessibility(
         network: Any,
@@ -482,7 +482,7 @@ def register_network_tools(registry: ToolRegistry):
         tier=3,
         domains=["network"],
         args_model=LocationAllocationArgs,
-        execution_policy=ToolExecutionPolicy.CELERY,
+        execution_policy=ToolExecutionPolicy.ASYNC,  # audit #827: async solver; CELERY channel was never implemented
     )
     async def location_allocation(
         network: Any,
@@ -516,7 +516,7 @@ def register_network_tools(registry: ToolRegistry):
         tier=3,
         domains=["network"],
         args_model=OptimizeRouteArgs,
-        execution_policy=ToolExecutionPolicy.CELERY,
+        execution_policy=ToolExecutionPolicy.ASYNC,  # audit #827: async solver; CELERY channel was never implemented
     )
     async def optimize_route(
         network: Any,

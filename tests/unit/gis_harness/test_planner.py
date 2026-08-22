@@ -163,6 +163,7 @@ class TestCapabilityResolution:
         from app.services.gis_harness.planner import resolve_tool_for_capability
 
         assert resolve_tool_for_capability("poi_query", set()) is None or True  # 空注册表可 None
-        resolved = resolve_tool_for_capability("poi_query", {"local_poi_search"})
-        assert resolved == "local_poi_search"
+        # audit #825: candidates are the REAL registered names now
+        resolved = resolve_tool_for_capability("poi_query", {"query_local_poi"})
+        assert resolved == "query_local_poi"
         assert resolve_tool_for_capability("poi_query", {"nonexistent"}) is None

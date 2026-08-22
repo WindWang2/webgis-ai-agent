@@ -38,20 +38,24 @@ from app.services.gis_harness.recipes import (
 
 # 能力面 → 具体工具的解析表（Tool Resolver）。能力 id 稳定，工具可替换；
 # 未注册能力在 plan 中标记 unavailable（诚实报告，不静默）。
+# audit #825: 候选名必须与 ToolRegistry 真实注册名对账（曾有 3/12 能力指向
+# 改名后的幽灵工具）；tests/unit/test_capability_registry_parity.py 全量锁定。
 CAPABILITY_TOOLS: Dict[str, List[str]] = {
-    "poi_query": ["local_poi_search", "local_poi", "search_pois"],
-    "admin_boundary_query": ["local_admin_boundaries", "get_admin_boundary"],
-    "admin_aggregation": ["spatial_aggregate", "aggregate_points"],
-    "point_profile": ["spatial_stats", "profile_source"],
+    "poi_query": ["query_local_poi", "search_poi", "query_osm_poi"],
+    "admin_boundary_query": ["get_local_admin_boundary"],
+    "admin_aggregation": ["spatial_aggregate"],
+    "point_profile": ["spatial_stats", "webgis_source_profile"],
     "density_surface": ["heatmap_data"],
     "kde_density": ["kde_contours", "kde_surface"],
     "hotspot": ["hotspot_analysis"],
     "category_breakdown": ["spatial_stats"],
     "proximity_buffer": ["buffer_analysis"],
     "service_area": ["isochrone_analysis", "service_area_simple"],
-    "raster_source": ["local_raster", "remote_sensing_index"],
+    "raster_source": ["fetch_dem"],
     # 格网聚合：H3 六边形优先，渔网兜底（模型库 aggregate_grid 的执行面）
     "grid_binning": ["h3_binning", "fishnet_grid"],
+    # administrative_choropleth 的 optional_analysis（audit #825 补映射）
+    "analytical_density": ["kde_contours", "heatmap_data", "spatial_aggregate"],
 }
 
 
@@ -156,6 +160,7 @@ class MapProductPlanner:
         intent: MapRequestIntent,
         template_id: str = "",
         recipe_id: str = "",
+        available_tools: Optional[Any] = None,
     ) -> MapProductPlan:
         # recipe_id 显式指定（webgis_map_intent 阶段的推荐/LLM 纠偏）优先——
         # 保证意图阶段与产品阶段用同一份计划（plan 连续性）。
@@ -218,8 +223,23 @@ class MapProductPlanner:
             "raster_source": "栅格数据源",
             "category_breakdown": "类别构成统计",
             "grid_binning": "H3/渔网格网聚合",
+            "analytical_density": "分析密度面/密度聚合",
         }
         for cap in capabilities:
+            # audit #825: 兑现模块 docstring —— 调用方传入注册表可见工具时，
+            # 解析不到真实工具的能力在 plan 中标记 unavailable（诚实报告）。
+            if available_tools is not None and not resolve_tool_for_capability(
+                cap, available_tools
+            ):
+                plan.data_requirements.append(DataRequirement(
+                    capability=cap, purpose=purpose_map.get(cap, cap),
+                    status="unavailable",
+                ))
+                plan.analysis_steps.append(AnalysisStep(
+                    capability=cap, purpose=purpose_map.get(cap, cap),
+                    status="unavailable",
+                ))
+                continue
             plan.data_requirements.append(DataRequirement(
                 capability=cap, purpose=purpose_map.get(cap, cap),
             ))

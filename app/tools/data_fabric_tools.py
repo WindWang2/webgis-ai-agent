@@ -225,7 +225,10 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "dataset_id": "要描述的数据集/图层唯一 ID",
             "profile_id": "可选的数据源连接 profile_id",
         },
-        execution_policy=ToolExecutionPolicy.INLINE,
+        # audit #826: catalog-miss falls back to adapter.describe() which does
+        # SYNCHRONOUS network I/O (WFS GetCapabilities up to 10-15s) — that is
+        # a THREAD contract, not INLINE (<5ms event-loop budget).
+        execution_policy=ToolExecutionPolicy.THREAD,
     )
     def describe_dataset(dataset_id: str, profile_id: Optional[str] = None) -> dict:
         """获取数据集 Schema 描述与 Fingerprint"""

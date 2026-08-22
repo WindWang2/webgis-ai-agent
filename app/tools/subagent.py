@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 def register_subagent_tools(registry: ToolRegistry):
     """注册 spawn_subagent 工具。
 
-    设为 tier=2 domains=["meta"] —— 不是默认 catalog 工具，需要用户或 plan
+    设为 tier=2 domains=["meta", "what_if"] —— 不是默认 catalog 工具，需要用户或 plan
     显式提及"批量"、"子任务"、"委派" 等关键词才载入。这是有意为之：subagent
     本身有 LLM 调用成本，应当只在主任务真的需要时才暴露。
     """

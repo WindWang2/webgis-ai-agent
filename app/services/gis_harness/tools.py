@@ -146,12 +146,14 @@ def register_gis_harness_tools(registry: ToolRegistry):
 
         planner = MapProductPlanner()
         candidates = planner.recipes.select_candidates(intent)
-        plan = planner.plan_from_intent(intent)
-
         try:
             available = set(registry.list_tools())
         except Exception:  # noqa: BLE001 - 能力解析是建议性信息
             available = set()
+        # audit #825: 把注册表可见工具传给 planner —— 解析不到的能力在 plan
+        # 里标记 unavailable（docstring 承诺的诚实报告）。
+        plan = planner.plan_from_intent(intent, available_tools=available or None)
+
         capabilities = []
         for req in plan.data_requirements:
             capabilities.append({
