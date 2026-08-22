@@ -186,3 +186,21 @@ async def test_clear_l1_cache():
     store.clear_l1_cache()
     assert len(store._l1) == 0
     assert len(store._l1_order) == 0
+
+
+@pytest.mark.asyncio
+async def test_metadata_l1_hit_returns_isolated_copy_809():
+    """#809: metadata L1 命中返回独立对象树（#749 纪律对齐 get_map_state）——
+    嵌套 map_state 的就地改动不得污染缓存与其并发读者。"""
+    store = _store()
+    await store.set_map_state("s809", "layers", [{"id": "L1"}])
+    await store.append_event("s809", "chat", {"m": 1})
+    store.clear_l1_cache()
+
+    first = await store.get_session_metadata("s809")
+    assert ("s809", "metadata") in store._l1
+
+    # 就地污染尝试（嵌套层）
+    first["map_state"]["layers"].append({"id": "POISON"})
+    second = await store.get_session_metadata("s809")
+    assert [l["id"] for l in second["map_state"]["layers"]] == ["L1"]

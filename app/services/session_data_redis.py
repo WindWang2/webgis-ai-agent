@@ -965,7 +965,11 @@ class RedisSessionStore(BaseSessionStore):
         # bundles 4 Redis calls; cache for L1_TTL_SECONDS to collapse repeats.
         cached = self._l1_get(session_id, "metadata")
         if cached is not None:
-            return cached
+            # #809: the L1 bundle embeds map_state/list_refs/event_log and is
+            # shared by every reader within the TTL — return a copy so no
+            # caller can poison concurrent readers (same #749 discipline
+            # get_map_state already follows; copy off the loop like siblings).
+            return await asyncio.to_thread(copy.deepcopy, cached)
         await self._ensure_connected()
         async with self._r.pipeline() as pipe:
             pipe.hgetall(self._state_key(session_id))
@@ -1020,7 +1024,12 @@ class RedisSessionStore(BaseSessionStore):
             "event_log": event_log,
             "started_at": started_at,
         }
-        self._l1_put(session_id, "metadata", result)
+        # #809: 缓存存副本 —— 首个调用者拿到的对象不得与 L1 条目别名
+        # （否则它随后的就地改动会污染缓存与 2s TTL 内的所有并发读者）。
+        self._l1_put(
+            session_id, "metadata",
+            await asyncio.to_thread(copy.deepcopy, result),
+        )
         return result
 
     def _clearing_key(self, session_id: str) -> str:

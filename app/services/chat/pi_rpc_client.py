@@ -135,6 +135,11 @@ class PiRpcClient:
             # Process already gone or slow to exit; fall through to kill.
             try:
                 proc.kill()
+                # #810: kill 后同步收尸（atexit 安全网同样不留僵尸）
+                try:
+                    proc.wait(timeout=2)
+                except (ProcessLookupError, subprocess.TimeoutExpired):
+                    pass
             except ProcessLookupError:
                 # Best-effort only: at exit the process may already be gone or
                 # the OS is tearing down; nothing to do, nothing to log.
@@ -234,10 +239,18 @@ class PiRpcClient:
         # dereferencing the field again below raised AttributeError and
         # skipped reader/stderr task reclamation. Work on a local handle.
         try:
+            proc = self._process
             proc.terminate()
             await asyncio.sleep(0.5)
             if proc.poll() is None:
                 proc.kill()
+                # #810: SIGKILL 后必须 wait 收尸 —— 否则 node 子进程以 defunct
+                # 僵尸态驻留到解释器退出（懒回收依赖下一次 Popen 创建，而
+                # 单例桥关闭后不会再有）。每个 lifespan 周期泄一个僵尸。
+                try:
+                    proc.wait(timeout=2)
+                except (ProcessLookupError, subprocess.TimeoutExpired):
+                    pass
         finally:
             if self._process is proc:
                 self._process = None
@@ -451,9 +464,16 @@ class PiRpcClient:
 
         try:
             line = json.dumps(request) + "\n"
+            # #810: 在 executor 跳转前捕获本地句柄 —— stop() 可能在循环侧
+            # 校验之后、线程执行之前把 self._process 置 None，线程里再读
+            # self._process.stdin 会抛裸 AttributeError 而非 PiRpcError。
+            proc = self._process
 
             def _write_and_flush():
-                stdin = self._process.stdin
+                stdin = proc.stdin if proc is not None else None
+                if stdin is None:
+                    # stop() 并发清场 —— 分类为 PiRpcError 而非 AttributeError
+                    raise BrokenPipeError("Pi process stopped concurrently")
                 # Binary Popen (production) needs bytes; a text pipe keeps str.
                 payload = line if getattr(stdin, "encoding", None) else line.encode("utf-8")
                 stdin.write(payload)

@@ -146,15 +146,28 @@ async def handle_upload(session_id: str, data: dict):
     await session_data_manager.append_event(session_id, "upload_completed", data)
 
 
+# #811: state_snapshot 的感知键白名单 —— REST 观测路由只接受 viewport 等
+# 感知键（内部 _cartographic_* 与 wholesale layers 由 #643 desired-MapSpec
+# 门拒绝），WS 通道此前无差别写任意键，内部真相可被客户端覆盖。
+_WS_SNAPSHOT_ALLOWED_KEYS = frozenset({
+    "viewport", "base_layer", "is_3d", "bearing", "pitch",
+})
+
+
 async def handle_state_snapshot(session_id: str, data: dict):
-    for k, v in data.items():
+    for k, v in (data or {}).items():
+        if k.startswith("_") or k not in _WS_SNAPSHOT_ALLOWED_KEYS:
+            # #811: 内部键（_cartographic_deleted/_cartographic_review 等）与
+            # 任意未知键一律丢弃 —— WS 感知通道不是 desired-MapSpec 的写入口。
+            continue
         await session_data_manager.set_map_state(session_id, k, v)
 
 
 async def handle_layers_changed(session_id: str, data: dict):
-    layers = data.get("layers")
-    if layers is not None:
-        await session_data_manager.set_map_state(session_id, "layers", layers)
+    # #811: wholesale layers 替换与 REST 路由同样拒绝（#643：客户端图层不是
+    # Desired MapSpec）—— 单层变更走 layer_toggled/layer_opacity_changed/
+    # layer_removed 事件。
+    return
 
 
 async def handle_layers_reordered(session_id: str, data: dict):
