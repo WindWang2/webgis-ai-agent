@@ -247,6 +247,7 @@ MutationIntent = Union[
     SetLayoutIntent,
     CheckpointIntent,
     RollbackIntent,
+    SetBasemapIntent,
     SetTimeIntent,
 ]
 

@@ -8,15 +8,16 @@ from app.tools._utils import cached_tool, std_error_response, trim_features
 from app.services.spatial_analyzer import SpatialAnalyzer
 from app.lib.geo_analysis.density import generate_heatmap_raster
 from app.lib.geo_processor.core import safe_parse as safe_parse_geojson
+from app.lib.cartography.palettes import (
+    HEATMAP_LEGEND_PALETTE_KEY,
+    NATIVE_HEATMAP_COLORS,
+)
 
 logger = logging.getLogger(__name__)
 
-_PALETTE_MAP = {
-    "classic": "YlOrRd",
-    "magma": "Magma",
-    "viridis": "Viridis",
-    "thermal": "Reds",
-}
+# 单一来源：与 palettes.HEATMAP_LEGEND_PALETTE_KEY 同一映射（#717 审查意见：
+# 新增 native 色带时只改 palettes.py 一处）
+_PALETTE_MAP = dict(HEATMAP_LEGEND_PALETTE_KEY)
 
 # native 渲染的图例色：与前端 HEATMAP_PALETTES 同源的单一色源在
 # app/lib/cartography/palettes.py（NATIVE_HEATMAP_COLORS）——图例、MapSpec
@@ -47,7 +48,7 @@ def _build_legend_spec(palette: str, min_val: float = 0.0, max_val: float = 1.0,
 
 
 # 与 palettes.NATIVE_HEATMAP_COLORS 同名的 native 色带键
-_PALETTE_MAP_NAMED = {"classic", "magma", "viridis", "thermal"}
+_PALETTE_MAP_NAMED = set(NATIVE_HEATMAP_COLORS)
 
 
 class BufferAnalysisArgs(BaseModel):

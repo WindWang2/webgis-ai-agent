@@ -20,6 +20,12 @@ from .models import CanonicalPlan
 # Domains whose tools produce a session-data ref (cursor) as their primary
 # output. Default for ``produces_ref``; override explicitly per tool when the
 # domain default is wrong (a ref-less tool tagged with one of these domains).
+#
+# NOTE (#720 audit review): this is a CAPABILITY taxonomy, deliberately NOT
+# identical to ToolCatalog.DOMAIN_KEYWORDS (activation keywords for schema
+# subsetting). The two sets answer different questions — "does this domain
+# emit refs" vs "when should its schemas be shown". When adding a catalog
+# domain whose tools emit refs, add it here too.
 PRODUCES_REF_DOMAINS: frozenset[str] = frozenset(
     {
         "osm",

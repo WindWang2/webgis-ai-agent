@@ -186,7 +186,13 @@ class AsyncHistoryService(HistoryStoreProtocol):
                     _estimate_tokens(getattr(m, "content", None) or "") for m in msgs
                 )
                 if window_tokens >= HISTORY_TOKEN_BUDGET:
-                    conv.messages = list(msgs)
+                    # set_committed_value, NOT attribute assignment — conv is
+                    # an ATTACHED instance; a plain assignment marks the older
+                    # (out-of-window) messages for deletion at the next
+                    # autoflush. This injects the preloaded collection without
+                    # change tracking.
+                    from sqlalchemy.orm.attributes import set_committed_value
+                    set_committed_value(conv, "messages", list(msgs))
                     return conv
             except (AttributeError, TypeError):
                 pass  # stub session → legacy full load below

@@ -297,7 +297,7 @@ def register_cartography_tools(registry: ToolRegistry):
             # count = 导出张数（fly_to 视图切换指令不计入）
             "count": sum(1 for c in commands if c["command"] == "export_map"),
             "system_message": (
-                f"已将 {len(commands)} 张地图的批量导出任务发送至前端，将按顺序合成。"
+                f"已将 {sum(1 for c in commands if c['command'] == 'export_map')} 张地图的批量导出任务发送至前端，将按顺序合成。"
                 "每张完成后都会通过 `[系统通知]` 回传一条带下载链接的提示。"
                 "请告知用户『批量制图开始，预计耗时约 N 秒』并耐心等待结果。"
             ),
