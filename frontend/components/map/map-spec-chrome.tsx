@@ -15,6 +15,7 @@ import React from 'react';
 import { Compass, Navigation2, Rose } from 'lucide-react';
 import type { MapSpec, MapSpecComponent } from '@/lib/mapspec-compiler/types';
 import type { LegendSpec } from '@/lib/map-kit/types';
+import { formatLegendValue } from './legends/legend-card';
 
 // 与 map-decorations.tsx 同源的度量换算（单一算法，复制以保持模块独立）
 const EARTH_CIRCUMFERENCE = 40_075_016.686;
@@ -98,6 +99,15 @@ interface ChromeProps {
   spec: MapSpec | null;
 }
 
+// 组件类型 ↔ legend_spec 类型（ADR-0052 契约）：离散图例组件必须挑同型
+// legend_spec —— 未指定 layerId 时取第一个匹配类型的图层，而不是任带
+// legend_spec 的图层（否则一个连续色带会挡住离散图例的回退选取）。
+const LEGEND_TYPE_BY_COMPONENT: Record<string, string[]> = {
+  continuous_colorbar: ['continuous', 'divergent'],
+  legend: ['graduated'],
+  categorical_legend: ['categorical'],
+};
+
 function legendForComponent(component: MapSpecComponent, spec: MapSpec | null): LegendSpec | undefined {
   const layerId = component.options?.['layerId'];
   if (typeof layerId === 'string' && layerId && spec) {
@@ -106,11 +116,13 @@ function legendForComponent(component: MapSpecComponent, spec: MapSpec | null): 
       | undefined;
     if (layer?.legend_spec) return layer.legend_spec;
   }
-  // 未指定图层 → 取第一个带 legend_spec 的图层
+  // 未指定图层（或 layerId 未命中）→ 取第一个 legend_spec 类型与组件匹配的图层
+  const wanted = LEGEND_TYPE_BY_COMPONENT[component.type] ?? [];
   const layers = spec?.layers ?? [];
-  const withLegend = layers.find(
-    (l) => (l as { legend_spec?: LegendSpec }).legend_spec,
-  ) as ({ legend_spec?: LegendSpec } & typeof layers[number]) | undefined;
+  const withLegend = layers.find((l) => {
+    const ls = (l as { legend_spec?: { type?: string } }).legend_spec;
+    return ls != null && (wanted.length === 0 || wanted.includes(String(ls.type ?? '')));
+  }) as ({ legend_spec?: LegendSpec } & typeof layers[number]) | undefined;
   return withLegend?.legend_spec;
 }
 
@@ -123,10 +135,43 @@ function continuousRange(
   return { min: spec.min, max: spec.max };
 }
 
-/** 图例条目守卫：畸形 legend_spec（缺 entries）不得炸掉整个地图面板。 */
+/** 图例条目守卫：畸形 legend_spec（缺字段/非法形态）不得炸掉整个地图面板。
+ *
+ * #777: 条目从真实 LegendSpec 契约派生（与 exporter/HUD ThematicLegend
+ * 同源）—— 后端 builder（build_graduated_spec / build_categorical_spec /
+ * 热力与栅格 legend）从不产出 `entries` 字段，此前离散图例组件恒渲染空，
+ * 而 map-panel 又因组件在场抑制了 HUD 图例，分类产品 live 完全没有图例：
+ * - graduated: palette_colors 与 labels zip；labels 缺失时按 breaks 合成
+ *   （exporter 的同名算法）；
+ * - categorical: categories → {color,label}；
+ * - 旧 hand-written `entries` 形态保留兼容。 */
 function legendEntries(legend: LegendSpec | undefined): { color: string; label: string }[] {
-  const entries = (legend as unknown as { entries?: unknown })?.entries;
-  return Array.isArray(entries) ? (entries as { color: string; label: string }[]) : [];
+  if (!legend) return [];
+  const legacy = (legend as unknown as { entries?: unknown }).entries;
+  if (Array.isArray(legacy)) return legacy as { color: string; label: string }[];
+  if (legend.type === 'graduated') {
+    const breaks = legend.breaks ?? [];
+    const colors = legend.palette_colors ?? [];
+    const labels = legend.labels;
+    const classCount = Math.min(breaks.length - 1, colors.length);
+    if (classCount < 1) return [];
+    return Array.from({ length: classCount }, (_, i) => ({
+      color: colors[i],
+      label:
+        labels && labels[i] != null && String(labels[i]).trim() !== ''
+          ? String(labels[i])
+          : `${formatLegendValue(breaks[i])} – ${formatLegendValue(breaks[i + 1])}`,
+    }));
+  }
+  if (legend.type === 'categorical') {
+    return (legend.categories ?? [])
+      .filter((c) => c != null && typeof c.color === 'string' && c.color)
+      .map((c) => ({
+        color: c.color,
+        label: c.label != null && String(c.label).trim() !== '' ? String(c.label) : String(c.key ?? ''),
+      }));
+  }
+  return [];
 }
 
 export const MapSpecChrome = React.memo(function MapSpecChrome({

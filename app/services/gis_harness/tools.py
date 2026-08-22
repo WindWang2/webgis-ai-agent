@@ -126,8 +126,22 @@ def register_gis_harness_tools(registry: ToolRegistry):
             intent.scope = ScopeIntent(name=scope_hint, level="city")
             intent.hint_applied.append(f"scope->{scope_hint}")
         if subject_hint and intent.subject.type == "unknown":
-            from app.services.gis_harness.intent import SubjectIntent
-            intent.subject = SubjectIntent(type="poi", category=subject_hint)
+            # #785: 主体提示先经栅格/面/线 token 表定类型（如 NDVI → raster），
+            # 不再无条件 poi —— 否则栅格数据的 evidence 声称 POI 主体、
+            # geometry_expectation 停留在旧值。token 表无命中才默认 poi。
+            from app.services.gis_harness.intent import (
+                SubjectIntent,
+                _entity_geometry,
+                _match_subject,
+            )
+            typed = _match_subject(subject_hint)
+            if typed.type != "unknown":
+                intent.subject = typed
+            else:
+                intent.subject = SubjectIntent(type="poi", category=subject_hint)
+            intent.entity_type = intent.subject.type
+            intent.geometry_expectation = _entity_geometry(
+                intent.subject, intent.task)
             intent.hint_applied.append(f"subject->{subject_hint}")
 
         planner = MapProductPlanner()
@@ -222,9 +236,11 @@ def register_gis_harness_tools(registry: ToolRegistry):
         # descriptor 读取廉价；完整 FC 数据推迟到确需补层时再取（避免无谓的
         # 全量 deepcopy）。
         profile: Optional[Dict[str, Any]] = None
+        primary_descriptor: Optional[Dict[str, Any]] = None
         if primary_ref:
             descriptor = await session_data_manager.get_ref_descriptor(session_id, primary_ref)
             if descriptor:
+                primary_descriptor = descriptor
                 profile = profile_from_descriptor(descriptor)
 
         spec = await mapspec_store.get_mapspec(session_id) or {}
@@ -253,13 +269,39 @@ def register_gis_harness_tools(registry: ToolRegistry):
             plan, profile, min_points_default=min_points,
         )
 
-        # 角色绑定：已存在图层按类型确定性映射
+        # 角色绑定：#784 —— 以终稿计划为权威。按实际 MapSpec 图层类型解析到
+        # 计划里同类型的规划图层（取其 role/cartography），仅当计划中无同
+        # 类型已启用图层时才退回全局 type→role 映射。旧实现把每个 fill 一律
+        # 记成 reference/administrative_choropleth —— recipe 主 choropleth 被
+        # 降级成 reference，simple_view/grid 流的计划标签永远对不上。
         type_role_map = {
             "heatmap": ("primary", "visual_heatmap"),
             "circle": ("secondary", "point_overlay"),
             "fill": ("reference", "administrative_choropleth"),
             "raster": ("primary", "raster_surface"),
         }
+        _role_order = {"primary": 0, "secondary": 1, "reference": 2}
+        planned_by_type: Dict[str, list] = {}
+        for planned in plan.map_layers:
+            if planned.enabled:
+                planned_by_type.setdefault(planned.layer_type, []).append(planned)
+        for same_type in planned_by_type.values():
+            same_type.sort(key=lambda p: _role_order.get(p.role, 3))
+        _consumed_planned: set = set()
+
+        def _resolve_binding(layer_type: str) -> tuple:
+            """(role, cartography, layer_type)：计划标签优先，类型映射兜底。
+
+            #784: evidence 同时携带实际图层类型（converter 可能按真实几何
+            换型，如面数据上的 circle→fill），不再只记计划的 cartography 串。
+            """
+            for planned in planned_by_type.get(layer_type, []):
+                if id(planned) not in _consumed_planned:
+                    _consumed_planned.add(id(planned))
+                    return planned.role, planned.cartography, layer_type
+            role, carto = type_role_map.get(layer_type, ("secondary", "point_overlay"))
+            return role, carto, layer_type
+
         bound_layers: List[Dict[str, Any]] = []
         for layer_id in layer_ids:
             layer = next(
@@ -269,8 +311,12 @@ def register_gis_harness_tools(registry: ToolRegistry):
             )
             if layer is None:
                 continue
-            role, carto = type_role_map.get(layer.get("type", ""), ("secondary", "point_overlay"))
-            bound_layers.append({"layer_id": layer_id, "role": role, "cartography": carto})
+            actual_type = str(layer.get("type") or "")
+            role, carto, _ = _resolve_binding(actual_type)
+            bound_layers.append({
+                "layer_id": layer_id, "role": role, "cartography": carto,
+                "layer_type": actual_type,
+            })
 
         # 缺失图层补齐：热力层被禁时不补；点叠加缺 → 从 primary_ref 授权
         out: Dict[str, Any] = {"success": True, "plan_id": plan.plan_id}
@@ -283,9 +329,37 @@ def register_gis_harness_tools(registry: ToolRegistry):
         need_heatmap = (
             primary_layer is not None
             and primary_layer.layer_type == "heatmap"
-            and not any(b["cartography"] == "visual_heatmap" for b in bound_layers)
+            and not any(
+                b.get("layer_type") == "heatmap" or b["cartography"] == "visual_heatmap"
+                for b in bound_layers
+            )
         )
-        need_points = not any(b["cartography"] == "point_overlay" for b in bound_layers)
+        # #784/#781: 点叠加授权必须以真实点几何为前提 ——
+        # - 面 primary_ref 不再复制出第二个常量 fill 层（layer id 却叫
+        #   product-*-points、cartography 记 point_overlay 的错标重复层）；
+        # - 栅格 primary_ref（intent.geometry_expectation=='raster' 或
+        #   descriptor.raster_capable）不得产出挂在 geojson 名义源上的空
+        #   circle 层。无 profile 时保持旧行为（converter 自行按真实几何
+        #   推断图层类型）。
+        raster_primary = (
+            intent.geometry_expectation == "raster"
+            or bool(primary_descriptor and primary_descriptor.get("raster_capable"))
+        )
+        profile_geom_types = set((profile or {}).get("geometryTypes") or [])
+        has_point_geometry = any(
+            g in ("Point", "MultiPoint") for g in profile_geom_types
+        )
+        need_points = (
+            not raster_primary
+            # simple_view 的 simple_point_map / 比例符号也是点族标签
+            and not any(
+                b.get("layer_type") == "circle"
+                or b["cartography"] in ("point_overlay", "simple_point_map",
+                                        "proportional_symbol")
+                for b in bound_layers
+            )
+            and (profile is None or has_point_geometry)
+        )
 
         primary_data: Optional[Any] = None
         if (need_heatmap or need_points) and primary_ref:
@@ -331,9 +405,14 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 res = await mapspec_store.layer_upsert(session_id, converted, src_ref)
                 if res.get("success"):
                     committed_layer_ids.append(converted["id"])
+                    # #784: 记录 converter 的实际图层类型 + 从终稿计划解析
+                    # 角色/标签（converter 可能按真实几何换型）。
+                    h_role, h_carto, h_type = _resolve_binding(
+                        str(converted.get("type") or "heatmap"))
                     bound_layers.append({
-                        "layer_id": converted["id"], "role": "primary",
-                        "cartography": "visual_heatmap", "authored": True,
+                        "layer_id": converted["id"], "role": h_role,
+                        "cartography": h_carto, "layer_type": h_type,
+                        "authored": True,
                     })
                     out = _forward_evidence(res, out)
                 else:
@@ -355,9 +434,12 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 )
                 if res.get("success"):
                     committed_layer_ids.append(converted["id"])
+                    p_role, p_carto, p_type = _resolve_binding(
+                        str(converted.get("type") or "circle"))
                     bound_layers.append({
-                        "layer_id": converted["id"], "role": "secondary",
-                        "cartography": "point_overlay", "authored": True,
+                        "layer_id": converted["id"], "role": p_role,
+                        "cartography": p_carto, "layer_type": p_type,
+                        "authored": True,
                     })
                 else:
                     msg = f"point layer authoring failed: {res.get('message')}"
@@ -378,7 +460,9 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 if opts.get("layerId") == "":
                     opts["layerId"] = primary_bound["layer_id"]
                 if need_heatmap or any(
-                    b.get("cartography") == "visual_heatmap" for b in bound_layers
+                    b.get("layer_type") == "heatmap"
+                    or b.get("cartography") == "visual_heatmap"
+                    for b in bound_layers
                 ):
                     opts["palette"] = palette
                 comp.options = opts
@@ -395,23 +479,65 @@ def register_gis_harness_tools(registry: ToolRegistry):
             out.setdefault("warnings", []).append(msg)
             authoring_failures.append(msg)
 
-        # 绑定记录回填 plan（供 evidence 消费）；数据/画像步骤随绑定完成
+        # 绑定记录回填 plan（供 evidence 消费）；#784: 除 cartography 字符串
+        # 相等外，按实际图层类型兼容匹配 —— simple_view 的 simple_point_map、
+        # grid 的 aggregate_grid 等 template 标签与全局映射词汇表不同名，
+        # 此前永远匹配不上（completeness 永远 incomplete）。
         for entry in bound_layers:
+            actual_type = entry.get("layer_type")
             for planned in plan.map_layers:
-                if planned.cartography == entry["cartography"] and not planned.bound_ref:
+                if planned.layer_id:
+                    continue
+                if (
+                    planned.cartography == entry["cartography"]
+                    or (bool(actual_type) and planned.layer_type == actual_type)
+                ):
                     planned.layer_id = entry["layer_id"]
                     planned.bound_ref = primary_ref or ""
                     break
+        # #784: done 能力面不再只有 poi_query 一族 —— 绑定图层自身的
+        # provenance（生成该图层的分析算法）映射回能力 id，admin_aggregation
+        # / grid_binning 等步骤在图层绑定后即可标记完成，统计维 completeness
+        # 不再对已完成的行政/格网产品报 missing。
+        _PROVENANCE_CAPABILITY = {
+            "spatial_aggregate": "admin_aggregation",
+            "aggregate_points": "admin_aggregation",
+            "h3_binning": "grid_binning",
+            "fishnet_grid": "grid_binning",
+            "heatmap_data": "density_surface",
+            "kde_contours": "kde_density",
+            "kde_surface": "kde_density",
+            "hotspot_analysis": "hotspot",
+            "buffer_analysis": "proximity_buffer",
+            "isochrone_analysis": "service_area",
+            "service_area_simple": "service_area",
+            "local_raster": "raster_source",
+            "remote_sensing_index": "raster_source",
+        }
+        done_caps: set = set()
         if primary_data is not None:
-            done_caps = {"poi_query", "point_profile", "raster_source"}
-            for req in plan.data_requirements:
-                if req.capability in done_caps:
-                    req.status = "available"
-                    req.bound_ref = primary_ref or ""
-            for step in plan.analysis_steps:
-                if step.capability in done_caps:
-                    step.status = "done"
-                    step.bound_ref = primary_ref or ""
+            done_caps |= {"poi_query", "point_profile", "raster_source"}
+        for entry in bound_layers:
+            prov_layer = next(
+                (ly for ly in spec.get("layers", [])
+                 if isinstance(ly, dict) and ly.get("id") == entry["layer_id"]),
+                None,
+            )
+            provenance = (prov_layer or {}).get("provenance")
+            algorithm = (
+                provenance.get("algorithm") if isinstance(provenance, dict) else None
+            )
+            capability = _PROVENANCE_CAPABILITY.get(algorithm or "")
+            if capability:
+                done_caps.add(capability)
+        for req in plan.data_requirements:
+            if req.capability in done_caps:
+                req.status = "available"
+                req.bound_ref = primary_ref or ""
+        for step in plan.analysis_steps:
+            if step.capability in done_caps:
+                step.status = "done"
+                step.bound_ref = primary_ref or ""
         plan.completeness = planner.assess_completeness(plan)
 
         out.update({

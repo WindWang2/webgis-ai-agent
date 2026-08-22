@@ -187,6 +187,9 @@ class CartographyService:
         lisa_values = []
         categorical_values: list = []
         seen_categories: set = set()
+        # #783: 超出 k 的类别不再截断丢弃 —— 继续扫描以检测剩余类别的存在
+        # （不收集值本身，保持收集阶段的有界性）。
+        categorical_surplus = False
         for f in features:
             val = f.get("properties", {}).get(field)
             if method == "lisa":
@@ -208,9 +211,10 @@ class CartographyService:
                         marker = val
                 if marker not in seen_categories:
                     seen_categories.add(marker)
-                    categorical_values.append(marker)
-                    if len(categorical_values) >= k:
-                        break
+                    if len(categorical_values) < k:
+                        categorical_values.append(marker)
+                    else:
+                        categorical_surplus = True
             else:
                 # Filter NaN/Inf/bool once at the value-collection seam so a
                 # stray null in the column can no longer poison the quantile/
@@ -251,14 +255,36 @@ class CartographyService:
                 return None
             from app.lib.cartography.palettes import resolve_palette_colors as _resolve_palette_colors
             colors = _resolve_palette_colors(palette)
-            entries = [
-                {
-                    "key": v,
-                    "color": colors[i % len(colors)],
-                    "label": str(v),
-                }
-                for i, v in enumerate(categorical_values)
-            ]
+            # #783: 去重类别超过 k 时不再静默截断（截断使第 k+1..N 类被
+            # match default 刷成第 k 类颜色却没有任何图例条目，不同类别在
+            # 图上被合并）。前 k-1 类保留各自颜色，剩余类别并入显式「其他」
+            # 桶 —— 其他桶位于末位，_categorical_to_match 的 default 恰好
+            # 覆盖它（所有剩余值渲染为其他桶颜色），总类数仍以 k 为上限，
+            # 颜色分配保持确定性。
+            if categorical_surplus:
+                kept = categorical_values[: k - 1]
+                entries = [
+                    {
+                        "key": v,
+                        "color": colors[i % len(colors)],
+                        "label": str(v),
+                    }
+                    for i, v in enumerate(kept)
+                ]
+                entries.append({
+                    "key": "__other__",
+                    "color": colors[(k - 1) % len(colors)],
+                    "label": "其他",
+                })
+            else:
+                entries = [
+                    {
+                        "key": v,
+                        "color": colors[i % len(colors)],
+                        "label": str(v),
+                    }
+                    for i, v in enumerate(categorical_values)
+                ]
             return {
                 "type": "categorical",
                 "field": field,

@@ -58,10 +58,16 @@ def should_inject_verdict(
 
 
 def _verdict_token(status: str) -> str:
-    """归一化为 #657 的三态注入 token：pass | fail | not_evaluated。"""
+    """归一化为 #657 的三态注入 token：pass | fail | not_evaluated。
+
+    #778: ``partial`` 意为「证据不完整」（desired 证据未齐或 runtime 观测
+    未到达），不是失败 —— 映射为 not_evaluated（ADR-0061：无证据 ≠ 修正
+    压力），避免对正确的地图注入假 fail 训练 agent 反复重做。只有
+    failed_* / repair_exhausted 等真实失败态才映射 fail。
+    """
     if status in _PASS_STATUSES:
         return "pass"
-    if status == "not_evaluated":
+    if status == "not_evaluated" or status == "partial":
         return "not_evaluated"
     return "fail"
 

@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 # ─── 类型词汇表 ─────────────────────────────────────────────────────────
 
@@ -158,7 +158,11 @@ _TASK_RULES: List[tuple] = [
                 r"(最集中|热点|高发区|聚集区|核心区在哪)", re.I),
      "concentration_analysis"),
     ("accessibility_service_area",
-     re.compile(r"(可达性|等时圈|服务区|覆盖范围|通勤时间|车程[^，。?？]*内|步行[^，。?？]*分钟内)", re.I),
+     # #779: 「服务覆盖盲区/缺口/欠覆盖」是可达性-覆盖语义（教育/设施规划
+     # 的核心问法），不是分布概览 —— 盲区/缺口/未覆盖/覆盖空白/欠覆盖 与
+     # 可达性/服务区/覆盖范围 同族。
+     re.compile(r"(可达性|等时圈|服务区|覆盖范围|盲区|缺口|未覆盖|覆盖空白|欠覆盖|"
+                r"通勤时间|车程[^，。?？]*内|步行[^，。?？]*分钟内)", re.I),
      "accessibility_analysis"),
     ("proximity_buffer",
      re.compile(r"(\d+\s*(?:m|米|km|公里|千米)[^，。?？]*(内|之内|范围内|周边|附近)|"
@@ -173,6 +177,13 @@ _TASK_RULES: List[tuple] = [
     ("simple_view",
      re.compile(r"^(给我看|看看|显示|查看|瞄一眼|瞧瞧|show\s+me)", re.I),
      "simple_view"),
+    # #781: 栅格主体（遥感/影像/DEM/NDVI/气温/降水…）在无更强任务规则命中
+    # 时归入 raster_distribution —— 此前栅格查询落入 distribution_overview
+    # 兜底，raster_distribution recipe 从确定性路径不可达。规则序保证
+    # 变化检测等更强语义先命中。
+    ("raster_subject_thematic",
+     re.compile("(" + "|".join(_RASTER_SUBJECTS) + ")", re.I),
+     "raster_distribution"),
     ("distribution_generic",
      re.compile(r"(分布|散布|散落|态势|格局|疏密)", re.I),
      "distribution_overview"),
@@ -212,20 +223,36 @@ def _match_scope(query: str) -> ScopeIntent:
     return ScopeIntent()
 
 
+def _last_matched_token(lowered: str, tokens: tuple) -> Optional[str]:
+    """#785: 取查询中**最靠后**命中的主体词（「…的X」的中心语）。
+
+    此前按词汇表顺序取第一个命中词 —— 「找出距离学校500米以内的地铁站」
+    会因为「学校」排在表前而把主体误判为学校。中文邻近问句的中心语
+    （被分析的标的）几乎总是最后一个主体词。
+    """
+    best: Optional[str] = None
+    best_pos = -1
+    for token in tokens:
+        pos = lowered.rfind(token)
+        if pos >= 0 and pos > best_pos:
+            best, best_pos = token, pos
+    return best
+
+
 def _match_subject(query: str) -> SubjectIntent:
     lowered = query.lower()
-    for token in _POINT_SUBJECTS:
-        if token in lowered:
-            return SubjectIntent(type="poi", category=token)
-    for token in _RASTER_SUBJECTS:
-        if token in lowered:
-            return SubjectIntent(type="raster", category=token)
-    for token in _POLYGON_SUBJECTS:
-        if token in lowered:
-            return SubjectIntent(type="boundary", category=token)
-    for token in _LINE_SUBJECTS:
-        if token in lowered:
-            return SubjectIntent(type="network", category=token)
+    token = _last_matched_token(lowered, _POINT_SUBJECTS)
+    if token:
+        return SubjectIntent(type="poi", category=token)
+    token = _last_matched_token(lowered, _RASTER_SUBJECTS)
+    if token:
+        return SubjectIntent(type="raster", category=token)
+    token = _last_matched_token(lowered, _POLYGON_SUBJECTS)
+    if token:
+        return SubjectIntent(type="boundary", category=token)
+    token = _last_matched_token(lowered, _LINE_SUBJECTS)
+    if token:
+        return SubjectIntent(type="network", category=token)
     return SubjectIntent()
 
 
@@ -318,6 +345,30 @@ def _task_specific_intents(task: str, query: str) -> tuple:
     return (["profile"], ["point_overlay"], ["map"], "count", "")
 
 
+def _apply_form_signals(
+    query: str,
+    analysis_intents: List[str],
+    cartography_intents: List[str],
+) -> tuple:
+    """显式制图形态信号（格网/气泡）：加法注入 cartography/analysis intents。
+
+    返回 (signal, analysis_intents, cartography_intents)；signal 为命中的
+    形态信号 id（未命中为 ""）。#780: resolve 与 hint 合并后的派生意图
+    重算共用同一份逻辑 —— 任务被 hint 纠偏后显式形态词不得丢失。
+    """
+    if _GRID_AGG_RE.search(query):
+        cartography_intents = list(dict.fromkeys(
+            [*cartography_intents, "aggregate_grid"]))
+        if "grid_binning" not in analysis_intents:
+            analysis_intents.append("grid_binning")
+        return "aggregate_grid", analysis_intents, cartography_intents
+    if _BUBBLE_RE.search(query):
+        cartography_intents = list(dict.fromkeys(
+            [*cartography_intents, "proportional_symbol"]))
+        return "proportional_symbol", analysis_intents, cartography_intents
+    return "", analysis_intents, cartography_intents
+
+
 def resolve_map_request_intent(query: str) -> MapRequestIntent:
     """确定性解析自然语言 GIS 请求为 typed intent。
 
@@ -362,16 +413,10 @@ def resolve_map_request_intent(query: str) -> MapRequestIntent:
 
     # 显式制图形态信号：加法注入 cartography_intents，不改变任务判定
     # （任务规则仍是权威；形态词只决定同一任务内的表达选型）。
-    if _GRID_AGG_RE.search(query):
-        cartography_intents = list(dict.fromkeys(
-            [*cartography_intents, "aggregate_grid"]))
-        if "grid_binning" not in analysis_intents:
-            analysis_intents.append("grid_binning")
-        matched.append("cartography:aggregate_grid")
-    elif _BUBBLE_RE.search(query):
-        cartography_intents = list(dict.fromkeys(
-            [*cartography_intents, "proportional_symbol"]))
-        matched.append("cartography:proportional_symbol")
+    signal, analysis_intents, cartography_intents = _apply_form_signals(
+        query, analysis_intents, cartography_intents)
+    if signal:
+        matched.append(f"cartography:{signal}")
 
     if _MEASURE_COUNT_RE.search(query) and not measure:
         measure = "count"
@@ -420,6 +465,14 @@ _HINT_OVERRIDABLE = {
 }
 
 
+# hint 不可降级的确定性任务（语义护栏，与工具描述对齐）：
+# - analytical_density：定量密度不可降级为视觉热力（原有护栏）；
+# - administrative_statistic：『各区数量』首选行政聚合+choropleth 而非热力图
+#   （#780：此前只有 density 方向受保护，statistic 可被单个 hint 静默降级
+#   为热力产品族）。
+_HINT_PROTECTED_TASKS = ("analytical_density", "administrative_statistic")
+
+
 def merge_intent_hints(
     base: MapRequestIntent,
     hints: Optional[Dict[str, Any]],
@@ -427,8 +480,12 @@ def merge_intent_hints(
     """把 agent（LLM）的语义提示合并进确定性 intent。
 
     LLM 负责语义理解（scope/subject/任务纠偏），确定性规则负责护栏：
-    ``analytical_density`` 任务不允许被 hint 降级为非定量任务 —— 视觉
-    热力不是定量证据。所有覆盖显式记录进 ``hint_applied``。
+    ``analytical_density`` / ``administrative_statistic`` 任务不允许被 hint
+    降级为视觉任务 —— 视觉热力不是定量证据，热力也不是「各区数量」的
+    首选表达。任务 hint 生效后派生意图（analysis/cartography/measure/
+    group_by）按新任务重算（#780：不得留着旧任务的派生集污染 evidence）。
+    所有覆盖显式记录进 ``hint_applied``；单个非法 hint 值只拒绝该键，
+    不炸掉整个调用（#780）。
     """
     merged = base.model_copy(deep=True)
     if not isinstance(hints, dict):
@@ -436,18 +493,35 @@ def merge_intent_hints(
     for key, value in hints.items():
         if key not in _HINT_OVERRIDABLE or value in (None, "", []):
             continue
-        if key == "task":
-            if base.task == "analytical_density" and value != "analytical_density":
-                merged.hint_applied.append(
-                    f"task:{value} rejected — analytical_density 不可降级为视觉任务"
-                )
-                continue
-            if value != base.task:
-                merged.task = value
-                merged.hint_applied.append(f"task:{base.task}->{value}")
-        elif getattr(merged, key) != value:
-            setattr(merged, key, value)
-            merged.hint_applied.append(f"{key}->{value}")
+        try:
+            if key == "task":
+                if base.task in _HINT_PROTECTED_TASKS and value != base.task:
+                    merged.hint_applied.append(
+                        f"task:{value} rejected — {base.task} 不可降级为视觉任务"
+                    )
+                    continue
+                if value != base.task:
+                    merged.task = value
+                    merged.hint_applied.append(f"task:{base.task}->{value}")
+                    # 派生意图按新任务重算（保留显式形态信号），否则
+                    # task 与 cartography_intents/measure 各说各话。
+                    analysis, carto, _outputs, measure, group_by = (
+                        _task_specific_intents(value, merged.query)
+                    )
+                    _signal, analysis, carto = _apply_form_signals(
+                        merged.query, analysis, carto)
+                    merged.analysis_intents = analysis
+                    merged.cartography_intents = carto
+                    merged.measure = measure
+                    merged.group_by = group_by
+            elif getattr(merged, key) != value:
+                setattr(merged, key, value)
+                merged.hint_applied.append(f"{key}->{value}")
+        except ValidationError:
+            # #780: validate_assignment 会把越词汇表的 hint 值变成异常 ——
+            # 拒绝该键、保留确定性基线，继续处理其余 hint。
+            merged.hint_applied.append(f"{key}:{value} rejected (invalid value)")
+            continue
     if merged.hint_applied:
         merged.confidence = round(min(1.0, merged.confidence + 0.1), 2)
     return merged

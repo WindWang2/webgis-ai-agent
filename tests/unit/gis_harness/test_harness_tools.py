@@ -87,7 +87,13 @@ async def test_map_product_golden_flow(registry, clean_session):
     ev = res["map_product_evidence"]
     assert ev["intent_resolution"]["task"] == "distribution_overview"
     assert ev["recipe_selection"]["selected"] == "poi_distribution_overview"
-    assert ev["map_product_completeness"]["complete"] is True
+    # #784: 教育模板规划的 reference 行政区层未绑定（本流程只授权热力+点）
+    # —— completeness 必须如实列出缺失的规划层，不再假报 complete。
+    comp = ev["map_product_completeness"]
+    assert comp["complete"] is False
+    assert "planned_layers" in comp["missing"]
+    assert comp["unbound_planned_layers"] == ["administrative_choropleth"]
+    assert comp["present"]["interactive_map"] is True
 
 
 @pytest.mark.asyncio
@@ -406,3 +412,192 @@ async def test_completeness_interactive_map_requires_bound_layer(registry, clean
     assert comp["present"]["interactive_map"] is False, (
         "planned-but-unbound layers must not count as interactive_map present"
     )
+
+
+# ─── #784: 角色绑定 / 缺层可见性 / done 能力面 契约 ────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_map_product_simple_view_complete_and_primary(registry, clean_session):
+    """#784: simple_view 流（primary_ref 点数据）→ 单层绑定 primary 角色，
+    completeness 真实 complete。旧实现把 circle 一律记成
+    secondary/point_overlay，计划标签 simple_point_map 永远匹配不上，
+    已挂载图层的产品被误报 incomplete。"""
+    ref = await session_data_manager.store(clean_session, _point_fc(12), prefix="geojson")
+    res = await registry.dispatch(
+        "webgis_map_product",
+        {"query": "给我看看成都小学", "session_id": clean_session, "primary_ref": ref},
+        session_id=clean_session,
+    )
+    assert res["success"] is True
+    assert res["layers"], "点主数据应授权一个点图层"
+    first = res["layers"][0]
+    assert first["role"] == "primary"
+    assert first["cartography"] == "simple_point_map"
+    assert first["layer_type"] == "circle"  # 实际图层类型如实记录
+    comp = res["completeness"]
+    assert comp["missing"] == []
+    assert comp["complete"] is True
+
+
+@pytest.mark.asyncio
+async def test_map_product_grid_flow_binds_aggregate_grid(registry, clean_session):
+    """#784: 格网流绑定 H3 fill → 计划标签 aggregate_grid + primary 角色
+    （旧实现记成 reference/administrative_choropleth）；h3_binning
+    provenance 使 grid_binning 步骤标记完成。"""
+    from app.services.analysis_cartography_converter import (
+        convert_analysis_to_mapspec_layer,
+    )
+    from app.services.mapspec_store import mapspec_store
+    h3_layer, _, _ = convert_analysis_to_mapspec_layer({
+        "geojson": _polygon_fc(25), "algorithm": "h3_binning",
+    })
+    h3_layer["id"] = "result-h3"
+    await mapspec_store.layer_upsert(clean_session, h3_layer, _polygon_fc(25))
+    # 主数据是原始点（格网聚合的输入）—— eligibility 以输入点数判定
+    ref = await session_data_manager.store(clean_session, _point_fc(60), prefix="geojson")
+
+    res = await registry.dispatch(
+        "webgis_map_product",
+        {"query": "成都小学按格网分布", "session_id": clean_session,
+         "layer_ids": ["result-h3"], "primary_ref": ref},
+        session_id=clean_session,
+    )
+    assert res["success"] is True
+    binding = next(b for b in res["layers"] if b["layer_id"] == "result-h3")
+    assert binding["role"] == "primary"
+    assert binding["cartography"] == "aggregate_grid"
+    assert binding["layer_type"] == "fill"
+    comp = res["completeness"]
+    assert comp["present"]["statistics"] is True
+    assert comp["complete"] is True
+
+
+@pytest.mark.asyncio
+async def test_map_product_admin_flow_choropleth_binds_primary(registry, clean_session):
+    """#784: 行政统计流绑定 spatial_aggregate 的 fill → primary 角色（旧实现
+    一律 reference）；admin_aggregation 步骤经 provenance 映射标记完成，
+    statistics 维不再误报 missing。"""
+    from app.services.analysis_cartography_converter import (
+        convert_analysis_to_mapspec_layer,
+    )
+    from app.services.mapspec_store import mapspec_store
+    agg_layer, _, _ = convert_analysis_to_mapspec_layer({
+        "geojson": _polygon_fc(5), "algorithm": "spatial_aggregate",
+    })
+    agg_layer["id"] = "result-aggregate"
+    await mapspec_store.layer_upsert(clean_session, agg_layer, _polygon_fc(5))
+
+    res = await registry.dispatch(
+        "webgis_map_product",
+        {"query": "统计各区小学数量并绘图", "session_id": clean_session,
+         "layer_ids": ["result-aggregate"]},
+        session_id=clean_session,
+    )
+    assert res["success"] is True
+    assert res["recipe_id"] == "administrative_choropleth"
+    binding = next(b for b in res["layers"] if b["layer_id"] == "result-aggregate")
+    assert binding["role"] == "primary", "choropleth 主层不得降级为 reference"
+    assert binding["cartography"] == "administrative_choropleth"
+    assert binding["layer_type"] == "fill"
+    comp = res["completeness"]
+    assert comp["present"]["statistics"] is True
+    assert comp["complete"] is True
+
+
+@pytest.mark.asyncio
+async def test_map_product_polygon_primary_ref_no_duplicate_fill(registry, clean_session):
+    """#784: 面 primary_ref 不再授权 product-*-points 常量 fill 重复层
+    （need_points 必须以真实点几何为前提）。"""
+    from app.services.mapspec_store import mapspec_store
+    ref = await session_data_manager.store(clean_session, _polygon_fc(), prefix="geojson")
+    res = await registry.dispatch(
+        "webgis_map_product",
+        {"query": "成都小学的分布情况", "session_id": clean_session, "primary_ref": ref},
+        session_id=clean_session,
+    )
+    assert res["success"] is True
+    spec = await mapspec_store.get_mapspec(clean_session)
+    assert not any(
+        ly["id"].endswith("-points") or ly.get("type") == "circle"
+        for ly in spec["layers"]
+    ), "面主数据上不得授权点叠加/重复 fill 层"
+
+
+# ─── #781: 栅格 primary_ref 不落 POI 产品族 ───────────────────────────────
+
+
+def _raster_payload() -> dict:
+    return {"file_path": "/tmp/ndvi_test.tif", "bounds": [104.0, 30.6, 104.1, 30.7],
+            "width": 8, "height": 8, "band": 1}
+
+
+@pytest.mark.asyncio
+async def test_map_product_raster_query_routes_raster_recipe(registry, clean_session):
+    """#781: 栅格查询（intent 阶段）→ raster_distribution recipe，产品阶段
+    不再对栅格 ref 授权挂在 geojson 名义源上的空 circle 层。"""
+    from app.services.mapspec_store import mapspec_store
+    ref = await session_data_manager.store(clean_session, _raster_payload(), prefix="raster")
+    res = await registry.dispatch(
+        "webgis_map_product",
+        {"query": "分析某栅格NDVI并生成专题图", "session_id": clean_session,
+         "primary_ref": ref},
+        session_id=clean_session,
+    )
+    assert res["success"] is True
+    assert res["recipe_id"] == "raster_distribution"
+    assert res["layers"] == [], "栅格主数据不得经 POI 授权路径产出 circle 层"
+    spec = await mapspec_store.get_mapspec(clean_session)
+    for ly in spec["layers"]:
+        source = spec.get("sources", {}).get(ly.get("source", ""), {})
+        if ly.get("type") == "circle":
+            assert source.get("type") != "geojson" or source.get("ref_id") != ref, (
+                "不得提交 geojson 名义源指向栅格 artifact 的 circle 层"
+            )
+
+
+@pytest.mark.asyncio
+async def test_map_product_raster_descriptor_gates_point_authoring(registry, clean_session):
+    """#781: 即便查询是 POI 措辞，descriptor 判定 raster 的 primary_ref
+    也不触发点层授权（gate 不依赖 intent 词汇命中）。"""
+    ref = await session_data_manager.store(clean_session, _raster_payload(), prefix="raster")
+    res = await registry.dispatch(
+        "webgis_map_product",
+        {"query": "成都小学的分布情况", "session_id": clean_session, "primary_ref": ref},
+        session_id=clean_session,
+    )
+    assert res["success"] is True
+    assert all(not b["layer_id"].endswith("-points") for b in res["layers"])
+    assert all(b.get("layer_type") != "circle" for b in res["layers"])
+
+
+# ─── #780 / #785: intent 工具面的 hint 语义 ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_map_intent_invalid_task_hint_degrades_gracefully(registry):
+    """#780: 单个非法 task hint 值不再让整个 intent 工具调用失败。"""
+    res = await registry.dispatch(
+        "webgis_map_intent",
+        {"query": "成都小学的分布情况", "task_hint": "accessibility"},
+        session_id=None,
+    )
+    assert res["success"] is True
+    assert res["intent"]["task"] == "distribution_overview"
+    assert any("rejected (invalid value)" in h for h in res["intent"]["hint_applied"])
+
+
+@pytest.mark.asyncio
+async def test_map_intent_subject_hint_typed_by_token_tables(registry):
+    """#785: 主体提示经栅格/面/线 token 表定类型 —— NDVI 是 raster 主体，
+    不再无条件 poi（geometry_expectation 同步重算）。"""
+    res = await registry.dispatch(
+        "webgis_map_intent",
+        {"query": "分析这个数据并制图", "subject_hint": "NDVI"},
+        session_id=None,
+    )
+    intent = res["intent"]
+    assert intent["subject"]["type"] == "raster"
+    assert intent["subject"]["category"] == "ndvi"
+    assert intent["entity_type"] == "raster"
+    assert intent["geometry_expectation"] == "raster"

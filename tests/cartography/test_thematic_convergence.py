@@ -151,6 +151,61 @@ def test_build_graduated_spec_defaults_nodata_rule():
 # ─── semantic checks: drift regressions ─────────────────────────────────────
 
 
+# ─── #782: builders' degenerate single-class domains pass the review ────────
+
+
+def test_constant_field_graduated_spec_passes_classification_integrity():
+    """#782: build_graduated_spec 对常量字段刻意产出 [v, v] 单类 spec（#618-19
+    归一化）—— 评审不得把系统自身构建器的合法输出判成失败。"""
+    geojson = {"type": "FeatureCollection", "features": [
+        {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 0]]]},
+         "properties": {"v": 5.0}} for _ in range(6)
+    ]}
+    legend = ts.build_graduated_spec(geojson, "v", method="quantiles", k=4, palette="YlOrRd")
+    assert legend is not None
+    assert legend["breaks"] == [5.0, 5.0], "常量字段应归一化为单类 [v, v]"
+
+    paint, _warns = ts.spec_to_paint(legend)
+    layer = {"id": "L1", "source": "src1", "type": "fill",
+             "paint": {"color": paint}, "legend_spec": legend}
+    report = evaluate_cartography_semantics(_mapspec([layer]), _profile(field="v", fmin=5.0, fmax=5.0))
+    checks = {c.rule: c for c in report.checks}
+    integ = checks.get("CLASSIFICATION_INTEGRITY")
+    assert integ is not None
+    assert integ.status == "pass", (
+        f"degenerate single-class graduated spec must pass, got {integ.status}"
+    )
+    assert integ.evidence.get("single_class_degenerate") is True
+
+
+def test_raster_min_max_equal_continuous_legend_is_degenerate_not_invalid():
+    """#782: raster_cartography_converter 对常量/全 nodata 栅格产出 min==max
+    连续 legend（刻意的退化域）—— _classification_integrity 不得判 fail；
+    min>max 仍是非法域。"""
+    from app.lib.cartography.semantic_checks import _classification_integrity
+
+    legend = {"type": "continuous", "min": 0.3, "max": 0.3, "palette": "Viridis",
+              "palette_colors": ["#440154", "#3b528b", "#fde725"]}
+    status, evidence, _msg = _classification_integrity(legend)
+    assert status == "pass"
+    assert evidence["degenerate_single_class"] is True
+
+    inverted = {"type": "continuous", "min": 5.0, "max": 1.0, "palette": "Viridis",
+                "palette_colors": ["#440154", "#3b528b", "#fde725"]}
+    status, _, _msg = _classification_integrity(inverted)
+    assert status == "fail", "min>max 仍是真正的非法域"
+
+
+def test_graduated_equal_adjacent_breaks_beyond_single_class_still_fails():
+    """#782 放行的只有两断点完全相等的单类形态；多断点但相邻相等仍失败。"""
+    from app.lib.cartography.semantic_checks import _classification_integrity
+
+    legend = {"type": "graduated", "field": "v", "breaks": [0.0, 5.0, 5.0, 10.0],
+              "palette": "YlOrRd", "palette_colors": ["#a", "#b", "#c"]}
+    status, _, _msg = _classification_integrity(legend)
+    assert status == "fail"
+
+
 def test_legend_field_drift_is_detected():
     # Map paints field=population, legend declares field=income → drift.
     layer = _graduated_layer([0, 10, 20, 30], ["#a", "#b", "#c"],

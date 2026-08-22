@@ -498,12 +498,14 @@ class RecipeRegistry:
     ) -> List[CartographyRecipe]:
         """按 intent 选择候选 recipe（确定性排序）。
 
-        排序键（稳定四元组）：
-            1. task 精确命中
-            2. 显式制图意图（图末尾的 aggregate_grid / proportional_symbol
+        排序键（稳定五元组）：
+            1. geometry 期望失配（#781：geometry_expectation=='raster' 时
+               非栅格面族候选全部后置——栅格主体绝不推荐 POI 热力族）
+            2. task 精确命中
+            3. 显式制图意图（图末尾的 aggregate_grid / proportional_symbol
                等加法信号）是否命中 recipe.intent_cartography
-            3. cartography_intents 交集多
-            4. priority 小（同分稳定排序）
+            4. cartography_intents 交集多
+            5. priority 小（同分稳定排序）
 
         显式信号那一层解决「同一 distribution_overview 任务下，宽口径
         recipe 交集计数把用户明确的形态词请求压掉」的优先级错置；其余
@@ -511,6 +513,7 @@ class RecipeRegistry:
         """
         task = getattr(intent, "task", "")
         cartography = set(getattr(intent, "cartography_intents", []) or [])
+        geometry = str(getattr(intent, "geometry_expectation", "") or "")
         explicit: Optional[str] = None
         # cartography_intents 的尾端是 intent.py 加法注入的显式形态信号
         # （_GRID_AGG_RE / _BUBBLE_RE 直命中），前面是 task 默认覆盖——
@@ -522,10 +525,20 @@ class RecipeRegistry:
         scored: List[tuple] = []
         for recipe in self._by_id.values():
             task_hit = task in recipe.intent_tasks
+            # #781: geometry_expectation=='raster' 时栅格面族（raster_surface）
+            # 候选前置并保证入选 —— 此前 select_candidates 只看 task/cartography，
+            # 栅格主体被推荐成 POI 热力族。硬过滤语义（几何期望是最强信号），
+            # 非 raster 期望时该层恒 0，既有候选排序不变。
+            raster_family = (
+                recipe.primary_cartography == "raster_surface"
+                or "raster_surface" in (recipe.intent_cartography or [])
+            )
+            geometry_mismatch = 1 if (geometry == "raster" and not raster_family) else 0
             cart_set = set(recipe.intent_cartography or [])
             explicit_hit = bool(explicit and explicit in cart_set)
             cart_hit = len(cartography & cart_set)
             score = (
+                geometry_mismatch,
                 0 if task_hit else 1,
                 0 if (explicit is not None and explicit_hit) else (
                     1 if explicit is not None else 0
@@ -533,7 +546,7 @@ class RecipeRegistry:
                 -cart_hit,
                 recipe.priority, recipe.id,
             )
-            if task_hit or cart_hit:
+            if task_hit or cart_hit or (geometry == "raster" and raster_family):
                 scored.append((score, recipe))
         scored.sort(key=lambda pair: pair[0])
         return [recipe for _, recipe in scored[:limit]]

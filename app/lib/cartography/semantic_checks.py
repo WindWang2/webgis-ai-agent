@@ -472,6 +472,12 @@ def _classification_integrity(legend_spec: Any) -> tuple[str, Dict[str, Any], st
             float(breaks[i]) < float(breaks[i + 1])
             for i in range(len(breaks) - 1)
         )
+        # #782: 构建器自身的合法退化形态 —— 常量字段的单类 graduated
+        # spec（#618-19 归一化为 [v, v]）不是断点错误，不得让评审失败。
+        single_class = (
+            finite and len(breaks) == 2
+            and float(breaks[0]) == float(breaks[1])
+        )
         labels = legend_spec.get("labels") or []
         labels_valid = not labels or all(str(v).strip() for v in labels)
         colors = legend_spec.get("palette_colors") or legend_spec.get("colors") or []
@@ -484,11 +490,12 @@ def _classification_integrity(legend_spec: Any) -> tuple[str, Dict[str, Any], st
             "legend_type": ltype,
             "break_count": len(breaks),
             "strictly_increasing": bool(increasing),
+            "single_class_degenerate": bool(single_class),
             "labels_non_empty": bool(labels_valid),
             "colors_valid": colors_valid,
             "invalid_color_indexes": invalid_color_indexes[:16],
         }
-        if not increasing or not labels_valid or not colors_valid:
+        if (not increasing and not single_class) or not labels_valid or not colors_valid:
             return (
                 "fail",
                 evidence,
@@ -497,7 +504,10 @@ def _classification_integrity(legend_spec: Any) -> tuple[str, Dict[str, Any], st
         return "pass", evidence, "Graduated classification is structurally coherent"
     if ltype in ("continuous", "divergent"):
         mn, mx = legend_spec.get("min"), legend_spec.get("max")
-        valid = _is_num(mn) and _is_num(mx) and float(mn) < float(mx)
+        # #782: min==max 是栅格/连续面的合法退化域（常量或全 nodata 栅格，
+        # raster_cartography_converter 刻意产出），不是非法域；min>max 仍失败。
+        degenerate = _is_num(mn) and _is_num(mx) and float(mn) == float(mx)
+        valid = _is_num(mn) and _is_num(mx) and (float(mn) < float(mx) or degenerate)
         center = legend_spec.get("center")
         center_valid = (
             ltype != "divergent"
@@ -514,6 +524,7 @@ def _classification_integrity(legend_spec: Any) -> tuple[str, Dict[str, Any], st
             "min": mn,
             "max": mx,
             "domain_valid": bool(valid),
+            "degenerate_single_class": bool(degenerate),
             "center_valid": bool(center_valid),
             "colors_valid": colors_valid,
             "invalid_color_indexes": invalid_color_indexes[:16],

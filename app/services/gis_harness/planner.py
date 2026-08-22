@@ -445,22 +445,45 @@ class MapProductPlanner:
         # #716: interactive_map means an AUTHORED+BOUND layer exists — planned
         # layers default enabled, so the old planned-layer check reported
         # completeness even when every authoring attempt failed.
+        # #784: layer_ids 绑定流没有 primary_ref —— 绑定的已提交图层本身
+        # 就是「已授权且已挂载」的证据，bound_ref 不再是必要条件。
         has_bound_layer = any(
-            ly.enabled and ly.bound_ref and ly.layer_id for ly in plan.map_layers
+            ly.enabled and ly.layer_id for ly in plan.map_layers
         )
         present["interactive_map"] = has_bound_layer
-        bound_refs = [ly.bound_ref for ly in plan.map_layers if ly.bound_ref]
-        present["data_bound"] = bool(bound_refs)
-        present["statistics"] = bool(plan.statistics) and any(
-            s.status == "done" for s in plan.analysis_steps
-        ) if plan.statistics else False
+        # #784: data_bound 的判据是「计划元素绑到了已提交图层或 ref 任一」——
+        # grid/simple_view 流常只带 layer_ids（无 primary_ref），绑定的图层
+        # 本身就是数据到位的证据。
+        present["data_bound"] = any(
+            ly.bound_ref or ly.layer_id for ly in plan.map_layers
+        )
+        # #784: 统计维只在该产品族声明了统计输出时适用 —— simple_view 等
+        # 轻量产品不该因「没有统计」被记成 missing statistics。
+        present["statistics"] = (
+            bool(plan.statistics) and any(
+                s.status == "done" for s in plan.analysis_steps
+            )
+        ) if plan.statistics else True
         present["components"] = bool(plan.components)
         present["exports"] = bool(plan.exports) if "export" in expected_outputs else True
+        # #784: 未绑定的结构性规划图层（primary/reference）必须可见 ——
+        # 此前任何单个绑定图层就满足 interactive_map，缺失的 reference 层
+        #（如教育产品的行政区层）是静默的，completeness 对缺层产品假报
+        # complete。secondary 点叠加是可选增强（planner 资格降级本身就可能
+        # 砍掉它），不因缺席记 missing。
+        unbound_planned = [
+            ly.cartography or ly.layer_type
+            for ly in plan.map_layers
+            if ly.enabled and ly.role != "secondary"
+            and not (ly.bound_ref or ly.layer_id)
+        ]
+        present["planned_layers"] = not unbound_planned
         missing = sorted(k for k, v in present.items() if not v)
         return {
             "expected_outputs": sorted(expected_outputs),
             "present": present,
             "missing": missing,
+            "unbound_planned_layers": unbound_planned,
             "complete": not missing,
             "fallback_count": len(plan.fallbacks),
         }

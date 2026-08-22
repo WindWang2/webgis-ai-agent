@@ -95,6 +95,19 @@ class TestRenderVerdictForLlm:
             _review(status="not_evaluated", reason="runtime_repair_ack_pending")
         )
 
+    def test_partial_maps_to_not_evaluated_not_fail(self):
+        """#778: partial = 证据不完整（如 GeoJSON 无 crs 成员导致 CRS_EVIDENCE
+        not_evaluated），不是失败 —— 三态 token 必须是 not_evaluated，禁止对
+        正确的地图注入假 fail 的修正压力。"""
+        block = render_verdict_for_llm(
+            _review(status="partial", reason="desired_quality_evidence_incomplete")
+        )
+        assert '"verdict": "not_evaluated"' in block
+        assert '"verdict": "fail"' not in block
+        # partial 仍携带 status 细节，供 webgis_cartography_status 溯源
+        assert '"partial"' in block
+        assert '"desired_quality_evidence_incomplete"' in block
+
     def test_passed_with_warnings_renders_tiny_pass_token(self):
         review = _review(status="passed_with_warnings")
         review["overall_passed"] = True

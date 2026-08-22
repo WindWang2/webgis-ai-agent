@@ -101,7 +101,119 @@ describe('MapSpecChrome', () => {
     expect(cb.innerHTML).toContain('to bottom');
   });
 
-  it('renders graduated legend component from layer legend_spec', () => {
+  it('renders graduated legend from the real LegendSpec contract (#777)', () => {
+    // #777: 后端 build_graduated_spec 产出 breaks + palette_colors + labels ——
+    // 从不产出 entries；此前 legend 组件因此恒渲染空（HUD 图例又被抑制）。
+    const spec: MapSpec = {
+      ...baseSpec,
+      layers: [
+        {
+          id: 'district-choro',
+          source: 's1',
+          type: 'fill',
+          legend_spec: {
+            type: 'graduated',
+            field: 'school_count',
+            title: '小学数量',
+            breaks: [0, 10, 25, 50],
+            palette: 'YlOrRd',
+            palette_colors: ['#ffffb2', '#fecc5c', '#bd0026'],
+            labels: ['0 - 10', '10 - 25', '25 - 50'],
+          },
+        } as unknown as MapSpec['layers'][number],
+      ],
+    };
+    render(
+      <MapSpecChrome
+        components={[comp({ id: 'legend-main', type: 'legend' })]}
+        zoom={10}
+        centerLat={30}
+        bearing={0}
+        spec={spec}
+      />,
+    );
+    const legend = screen.getByTestId('spec-chrome-legend');
+    expect(legend.textContent).toContain('小学数量');
+    expect(legend.textContent).toContain('0 - 10');
+    expect(legend.textContent).toContain('25 - 50');
+    // jsdom 把十六进制背景序列化为 rgb() 形式
+    expect(legend.innerHTML).toContain('rgb(255, 255, 178)');
+    expect(legend.innerHTML).toContain('rgb(189, 0, 38)');
+  });
+
+  it('synthesizes graduated labels from breaks when labels are absent (#777)', () => {
+    // exporter 的同名兜底：labels 缺失时按 breaks 合成区间标签。
+    const spec: MapSpec = {
+      ...baseSpec,
+      layers: [
+        {
+          id: 'district-choro',
+          source: 's1',
+          type: 'fill',
+          legend_spec: {
+            type: 'graduated',
+            field: 'count',
+            breaks: [0, 100],
+            palette: 'YlOrRd',
+            palette_colors: ['#ffffb2', '#bd0026'],
+          },
+        } as unknown as MapSpec['layers'][number],
+      ],
+    };
+    render(
+      <MapSpecChrome
+        components={[comp({ id: 'legend-main', type: 'legend' })]}
+        zoom={10}
+        centerLat={30}
+        bearing={0}
+        spec={spec}
+      />,
+    );
+    const legend = screen.getByTestId('spec-chrome-legend');
+    expect(legend.textContent).toContain('0');
+    expect(legend.textContent).toContain('100');
+  });
+
+  it('renders categorical legend from categories (#777)', () => {
+    const spec: MapSpec = {
+      ...baseSpec,
+      layers: [
+        {
+          id: 'landuse',
+          source: 's1',
+          type: 'fill',
+          legend_spec: {
+            type: 'categorical',
+            field: 'landuse',
+            title: '土地利用',
+            categories: [
+              { key: 'residential', color: '#66c2a5', label: '居住' },
+              { key: 'commercial', color: '#fc8d62', label: '商业' },
+              { key: '__other__', color: '#8da0cb', label: '其他' },
+            ],
+          },
+        } as unknown as MapSpec['layers'][number],
+      ],
+    };
+    render(
+      <MapSpecChrome
+        components={[comp({ id: 'cat-legend', type: 'categorical_legend' })]}
+        zoom={10}
+        centerLat={30}
+        bearing={0}
+        spec={spec}
+      />,
+    );
+    const legend = screen.getByTestId('spec-chrome-categorical-legend');
+    expect(legend.textContent).toContain('土地利用');
+    expect(legend.textContent).toContain('居住');
+    expect(legend.textContent).toContain('其他');
+    // jsdom 把十六进制背景序列化为 rgb() 形式
+    expect(legend.innerHTML).toContain('rgb(102, 194, 165)');
+  });
+
+  it('keeps legacy hand-written entries working (back-compat)', () => {
+    // 旧 payload 兼容：仍直接消费 entries 数组。
     const spec: MapSpec = {
       ...baseSpec,
       layers: [
@@ -131,6 +243,31 @@ describe('MapSpecChrome', () => {
     );
     expect(screen.getByTestId('spec-chrome-legend').textContent).toContain('小学数量');
     expect(screen.getByTestId('spec-chrome-legend').textContent).toContain('50+');
+  });
+
+  it('malformed legend_spec renders nothing without crashing (guard stays)', () => {
+    const spec: MapSpec = {
+      ...baseSpec,
+      layers: [
+        {
+          id: 'broken',
+          source: 's1',
+          type: 'fill',
+          legend_spec: { type: 'graduated' },
+        } as unknown as MapSpec['layers'][number],
+      ],
+    };
+    const { container } = render(
+      <MapSpecChrome
+        components={[comp({ id: 'legend-main', type: 'legend' })]}
+        zoom={10}
+        centerLat={30}
+        bearing={0}
+        spec={spec}
+      />,
+    );
+    expect(screen.queryByTestId('spec-chrome-legend')).toBeNull();
+    expect(container.firstChild).toBeNull();
   });
 
   it('renders nothing when all components disabled', () => {

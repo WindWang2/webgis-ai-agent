@@ -202,6 +202,50 @@ def test_build_thematic_style_categorical_caps_at_k():
     assert len(style_def["categories"]) <= 5
 
 
+def test_build_thematic_style_categorical_surplus_buckets_into_other():
+    """#783: 去重类别超过 k 时，剩余类别并入显式「其他」桶（独立颜色 +
+    图例条目），不得被静默刷成第 k 类的颜色且无图例条目。"""
+    from app.lib.cartography.thematic_spec import spec_to_paint
+
+    geojson = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {"cat": f"class{i}"}}
+            for i in range(8)
+        ],
+    }
+    style_def = CartographyService.build_thematic_style(
+        geojson=geojson, field="cat", method="categorical", k=5, palette="Set2"
+    )
+    assert style_def is not None
+    entries = style_def["categories"]
+    # 前 k-1 类保留 + 显式「其他」桶 = 总类数仍以 k 为上限
+    assert len(entries) == 5
+    other = entries[-1]
+    assert other["label"] == "其他"
+    named_colors = {e["color"] for e in entries[:-1]}
+    assert other["color"] not in named_colors, "其他桶必须有独立颜色"
+    assert [e["key"] for e in entries[:-1]] == [f"class{i}" for i in range(4)]
+
+    # 所有 8 个值都必须映射到一个可见的图例类：
+    # class0..3 命中各自 case，class4..7 落到 default = 其他桶颜色。
+    legend = CartographyService.build_legend_spec(style_def, palette="Set2")
+    paint, warns = spec_to_paint(legend)
+    assert paint is not None and warns == []
+    visible_colors = {case[1] for case in paint["cases"]} | {paint["default"]}
+    for i in range(8):
+        value = f"class{i}"
+        if any(case[0] == value for case in paint["cases"]):
+            mapped = next(c[1] for c in paint["cases"] if c[0] == value)
+        else:
+            mapped = paint["default"]
+        assert mapped == other["color"] or mapped in named_colors
+        assert mapped in visible_colors
+    # 图例条目与渲染类一一对应（无值挂在无图例的颜色上）
+    legend_colors = {c["color"] for c in legend["categories"]}
+    assert visible_colors == legend_colors
+
+
 def test_build_thematic_style_categorical_no_valid_values_returns_none():
     geojson = {
         "type": "FeatureCollection",
