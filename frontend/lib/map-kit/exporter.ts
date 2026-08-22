@@ -5,6 +5,7 @@ import { API_BASE } from '@/lib/api/config';
 import { apiFetch, isApiError } from '@/lib/api/transport';
 import { devOnly } from '@/lib/utils/logger';
 import { hydrateMvtLayers } from '@/lib/store/layer-data';
+import { metersPerPixelAt } from './meters-per-pixel';
 // Re-export the shared oversample helper so existing callers importing from
 // './exporter' keep working, while the single source of truth lives in
 // ./oversample (shared with the MapSpec-to-SVG compiler).
@@ -58,6 +59,13 @@ export interface ComposeLayoutOptions {
   mapZoom?: number;
   mapBearing?: number;
   thematicLayer?: unknown;
+  /**
+   * #802: 画布设备像素 / 逻辑(CSS)像素比。导出画布在默认 dpi=96 路径下是
+   * 浏览器原生 backing store（css·devicePixelRatio），与 dpi/96 无关 ——
+   * 比例尺长度与经纬网范围必须按真实比值换算，否则 HiDPI 上条长错 dpr 倍。
+   * 缺省回退 dpi/96 保持既有调用方语义。
+   */
+  pixelsPerLogicalPx?: number;
   /** Structured legend spec from layer.legend_spec (graduated/continuous/categorical/divergent). */
   legendSpec?: LegendSpec;
   /** Heatmap gradient legend metadata; consumed when type === 'heatmap' layers are visible. */
@@ -154,11 +162,14 @@ export function composeLayout(
     mapZoom,
     mapBearing = 0,
     thematicLayer,
+    pixelsPerLogicalPx,
   } = options;
 
   const dark_mode = theme === 'dark';
   const layoutStyle = resolveStyle(theme, options.style);
   const dpiMultiplier = dpi / 96;
+  // #802: 每逻辑像素的真实设备像素数 —— 未显式提供时回退 dpi/96（旧语义）
+  const pxPerLogical = pixelsPerLogicalPx ?? dpiMultiplier;
   const scalePx = (val: number) => val * dpiMultiplier;
   const targetW = canvas.width;
   const targetH = canvas.height;
@@ -186,11 +197,9 @@ export function composeLayout(
 
   // 3. Scale bar
   if (showScale && mapCenter && mapZoom !== undefined) {
-    const metersPerPx =
-      (156543.03392 * Math.cos((mapCenter.lat * Math.PI) / 180)) /
-      Math.pow(2, mapZoom);
+    const metersPerPx = metersPerPixelAt(mapZoom, mapCenter.lat);
     
-    const logicalW = targetW / dpiMultiplier;
+    const logicalW = targetW / pxPerLogical;
     const targetPx = Math.round(logicalW * 0.12);
     const rawMeters = metersPerPx * targetPx;
     
@@ -202,7 +211,7 @@ export function composeLayout(
         : prev;
     }, magnitude);
     
-    const barPx = (nice / metersPerPx) * dpiMultiplier;
+    const barPx = (nice / metersPerPx) * pxPerLogical;
     const barLabel = nice >= 1000 ? `${nice / 1000} km` : `${nice} m`;
 
     const bx = marginX, by = targetH - scalePx(52), bh = scalePx(8);
@@ -275,7 +284,7 @@ export function composeLayout(
 
   // 4.5 Graticule / coordinate grid lines
   if (showGraticules && mapCenter && mapZoom !== undefined) {
-    _drawGraticules(ctx, { dark_mode, scalePx, targetW, targetH, mapCenter, mapZoom, graticuleColor: layoutStyle.graticuleColor });
+    _drawGraticules(ctx, { dark_mode, scalePx, targetW, targetH, mapCenter, mapZoom, graticuleColor: layoutStyle.graticuleColor, pxPerLogical });
   }
 
   // 5. Legend
@@ -328,20 +337,22 @@ function _drawGraticules(
     mapCenter: { lat: number; lng: number };
     mapZoom: number;
     graticuleColor?: string;
+    /** #802: 设备像素/逻辑像素比（缺省 1 —— 调用方已按 dpi 缩放时） */
+    pxPerLogical?: number;
   }
 ) {
-  const { dark_mode, scalePx, targetW, targetH, mapCenter, mapZoom, graticuleColor } = opts;
+  const { dark_mode, scalePx, targetW, targetH, mapCenter, mapZoom, graticuleColor, pxPerLogical = 1 } = opts;
 
   // Calculate graticule interval from zoom level
   const intervals = [30, 20, 10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01];
   const zoomIndex = Math.max(0, Math.min(Math.floor((mapZoom - 1) / 2), intervals.length - 1));
   const interval = intervals[zoomIndex];
 
-  // Calculate geographic extent from center and zoom
-  // Web Mercator: metersPerPixel = 156543.03392 * cos(lat) / 2^zoom
-  const metersPerPixel = (156543.03392 * Math.cos((mapCenter.lat * Math.PI) / 180)) / Math.pow(2, mapZoom);
-  const halfWidthMeters = (targetW / 2) * metersPerPixel;
-  const halfHeightMeters = (targetH / 2) * metersPerPixel;
+  // Calculate geographic extent from center and zoom (via shared 512-tile helper)
+  const metersPerPixel = metersPerPixelAt(mapZoom, mapCenter.lat);
+  // #802: 经纬网范围按逻辑(CSS)像素宽度推导 —— 设备像素会随 dpr/dpi 虚增
+  const halfWidthMeters = (targetW / pxPerLogical / 2) * metersPerPixel;
+  const halfHeightMeters = (targetH / pxPerLogical / 2) * metersPerPixel;
 
   // Convert meters to degrees (approximate)
   const metersPerDegree = 111319.9;
@@ -664,12 +675,26 @@ export async function exportToPDF(
 
   // Add map image
   const imgData = canvas.toDataURL('image/png');
-  doc.addImage(imgData, 'PNG', mapX, mapY, mapW, mapH);
+  // #803: 帧内等比适配 —— 固定帧直接拉伸会畸变地理形状（A4 横版帧 1.63:1
+  // 对 1.414 裁剪画布横向拉伸 ×1.15；screen 默认无裁剪时窄画布拉伸可达
+  // ×1.86，圆形要素变椭圆）。取帧内最大等比矩形并居中。
+  const imgRatio = canvas.width / canvas.height;
+  const frameRatio = mapW / mapH;
+  let placedW = mapW;
+  let placedH = mapH;
+  if (imgRatio > frameRatio) {
+    placedH = mapW / imgRatio;
+  } else {
+    placedW = mapH * imgRatio;
+  }
+  const placedX = mapX + (mapW - placedW) / 2;
+  const placedY = mapY + (mapH - placedH) / 2;
+  doc.addImage(imgData, 'PNG', placedX, placedY, placedW, placedH);
 
-  // Border around map
+  // Border around the placed map area
   doc.setDrawColor(200);
   doc.setLineWidth(0.3);
-  doc.rect(mapX, mapY, mapW, mapH);
+  doc.rect(placedX, placedY, placedW, placedH);
 
   // Title
   doc.setFontSize(16);
@@ -1263,10 +1288,31 @@ export async function runExport(
     showGraticules = false,
     dark_mode,
     format = 'png',
-    paperSize = 'screen',
-    orientation = 'landscape',
-    dpi = 96,
   } = req || {};
+
+  // #805: export_layout 组件是版面参数的 spec 层 —— A4/300dpi 的报告意图
+  // 提交进 MapSpec 后，未显式传参的导出请求应采用它（此前组件是死配置，
+  // 一律落到 screen/96 默认）。
+  let layoutOpts: Record<string, unknown> = {};
+  try {
+    const { getCommittedMapSpec } = await import('@/lib/mapspec/session-cursor');
+    const layoutComps = getCommittedMapSpec()?.layout?.components ?? [];
+    const exportLayoutComp = layoutComps.find(
+      (c) => c.type === 'export_layout' && c.enabled !== false,
+    );
+    layoutOpts = (exportLayoutComp?.options ?? {}) as Record<string, unknown>;
+  } catch {
+    /* spec 面缺席 → 内置默认 */
+  }
+  const paperSize = (req.paperSize ??
+    (typeof layoutOpts['paperSize'] === 'string' ? layoutOpts['paperSize'] : undefined) ??
+    'screen') as 'screen' | 'A4' | 'A3';
+  const orientation = (req.orientation ??
+    (typeof layoutOpts['orientation'] === 'string' ? layoutOpts['orientation'] : undefined) ??
+    'landscape') as 'landscape' | 'portrait';
+  const dpi = (req.dpi ??
+    (typeof layoutOpts['dpi'] === 'number' && layoutOpts['dpi'] > 0 ? layoutOpts['dpi'] : undefined) ??
+    96) as number;
 
   try {
     getHudState().setPendingSystemMessage(
@@ -1293,6 +1339,16 @@ export async function runExport(
     }
 
     const baseCanvas = map.getCanvas();
+    // #802: 默认 dpi=96 路径不调用 setPixelRatio，导出画布就是浏览器原生
+    // backing store（css·devicePixelRatio）—— 比例尺/经纬网换算需要真实的
+    // 设备像素比，而非 dpi/96（HiDPI 上此前恰好错 dpr 倍）。clientWidth
+    // 不可得（测试环境）时回退到有效 pixelRatio。
+    const canvasDpr =
+      baseCanvas.clientWidth > 0
+        ? baseCanvas.width / baseCanvas.clientWidth
+        : targetPixelRatio > 1
+          ? targetPixelRatio
+          : 1;
     const { canvas: exportCanvas } = prepareExportCanvas(baseCanvas, {
       paperSize: paperSize as any,
       orientation: orientation as any,
@@ -1336,6 +1392,8 @@ export async function runExport(
     MapExporterEngine.composeLayout(exportCanvas, title || specTitle || '', subtitle || '', {
       dpi,
       theme,
+      // #802: 按真实画布设备像素比换算（dpi 参数仍驱动布局字号/边距缩放）
+      pixelsPerLogicalPx: canvasDpr,
       showScale: req.showScale ?? req.include_scale ?? specShowScale ?? true,
       showCompass: req.showCompass ?? req.include_compass ?? specShowCompass ?? true,
       showWatermark,

@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { Compass } from 'lucide-react';
+import { metersPerPixelAt } from '@/lib/map-kit/meters-per-pixel';
 
 interface Props {
   show: boolean;
@@ -12,9 +13,8 @@ interface Props {
 }
 
 // Convert zoom + latitude to meters/pixel, then snap to a human-friendly scale
-function computeScale(zoom: number, lat: number): { meters: number; pixels: number } {
-  const EARTH_CIRCUMFERENCE = 40_075_016.686;
-  const metersPerPixel = (EARTH_CIRCUMFERENCE * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, zoom + 8);
+export function computeScale(zoom: number, lat: number): { meters: number; pixels: number } {
+  const metersPerPixel = metersPerPixelAt(zoom, lat);
   const targetMeters = metersPerPixel * 100;
   const candidates = [50, 100, 200, 500, 1_000, 2_000, 5_000, 10_000, 20_000, 50_000, 100_000];
   let best = candidates[0];

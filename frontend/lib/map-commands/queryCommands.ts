@@ -1,5 +1,6 @@
 import type { CommandEntry } from './types';
 import { devOnly } from '@/lib/utils/logger';
+import { metersPerPixelAt } from '@/lib/map-kit/meters-per-pixel';
 
 /**
  * query_features — 点要素探查（#535：幽灵命令落地）。
@@ -35,8 +36,7 @@ export const queryCommands: Record<string, CommandEntry> = {
         // 米 → 像素半径的近似换算（当前缩放级别下赤道周长 / 瓦片像素，
         // 按纬度 cos 修正）。只想兜住"这个点附近有什么"，近似足够诚实。
         const zoom = map.getZoom();
-        const metersPerPixel =
-          (40075016.686 * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, zoom + 8);
+        const metersPerPixel = metersPerPixelAt(zoom, lat);
         const pxRadius = Math.max(1, Math.round(bufferM / Math.max(metersPerPixel, 1e-9)));
         // #606: queryRenderedFeatures 的 bbox 签名是 [PointLike, PointLike] 嵌套数组；
         // 平面四元组会被 Point.convert 只取前两个元素 → 退化为 bbox 左上角单点查询，

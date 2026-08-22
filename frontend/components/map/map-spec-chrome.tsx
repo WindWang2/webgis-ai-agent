@@ -17,12 +17,10 @@ import type { MapSpec, MapSpecComponent } from '@/lib/mapspec-compiler/types';
 import type { LegendSpec } from '@/lib/map-kit/types';
 import { formatLegendValue } from './legends/legend-card';
 
-// 与 map-decorations.tsx 同源的度量换算（单一算法，复制以保持模块独立）
-const EARTH_CIRCUMFERENCE = 40_075_016.686;
+import { metersPerPixelAt } from '@/lib/map-kit/meters-per-pixel';
 
-function computeScale(zoom: number, lat: number): { meters: number; pixels: number } {
-  const metersPerPixel =
-    (EARTH_CIRCUMFERENCE * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, zoom + 8);
+export function computeScale(zoom: number, lat: number): { meters: number; pixels: number } {
+  const metersPerPixel = metersPerPixelAt(zoom, lat);
   const targetMeters = metersPerPixel * 100;
   const candidates = [50, 100, 200, 500, 1_000, 2_000, 5_000, 10_000, 20_000, 50_000, 100_000];
   let best = candidates[0];
@@ -184,9 +182,23 @@ export const MapSpecChrome = React.memo(function MapSpecChrome({
   const enabled = components.filter((c) => c.enabled !== false);
   if (!enabled.length) return null;
 
+  // #804: 缺省回退（镜像 exporter.ts 的 hasType/isEnabled 语义）—— spec
+  // 提交了组件但未声明 north_arrow/scale_bar 时，指北针/比例尺默认存在，
+  // 而不是随 colorbar-only spec 一起消失（live 与 export 的 chrome 契约
+  // 一致）。显式 enabled:false 仍然关闭。
+  const hasType = (t: string) => components.some((c) => c.type === t);
+  const fallbackDecor: MapSpecComponent[] = [];
+  if (!hasType('north_arrow')) {
+    fallbackDecor.push({ id: '__fallback_north_arrow', type: 'north_arrow', enabled: true } as MapSpecComponent);
+  }
+  if (!hasType('scale_bar')) {
+    fallbackDecor.push({ id: '__fallback_scale_bar', type: 'scale_bar', enabled: true } as MapSpecComponent);
+  }
+  const renderable = fallbackDecor.length ? [...enabled, ...fallbackDecor] : enabled;
+
   const { meters, pixels } = computeScale(zoom, centerLat);
 
-  const byType = (type: string) => enabled.filter((c) => c.type === type);
+  const byType = (type: string) => renderable.filter((c) => c.type === type);
   // 后端 lifecycle 拒绝重复 id；这里再以 index 兜底 key 唯一性
   const keyOf = (c: MapSpecComponent, i: number) => `${c.id}#${i}`;
 

@@ -539,3 +539,65 @@ describe('MapPanel — cartographic repair generation safety', () => {
     expect(dispatchedIds()).toEqual(['r-A', 'r-B']);
   });
 });
+
+
+// ─── #801: focus-layer 复位不被图层数组身份变化吞掉 ────────────────────────
+
+describe('MapPanel — focus-layer reset survives layers identity changes (#801)', () => {
+  let fetchCtl: ReturnType<typeof makeControllableFetch>;
+
+  beforeEach(() => {
+    hud.reset();
+    rmg.map = freshMockMap();
+    rmg.renderCount = 0;
+    rmg.lastOnLoad = null;
+    dispatch.mockClear();
+    fetchCtl = makeControllableFetch();
+    vi.stubGlobal('fetch', fetchCtl.fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const focusLayerWithBbox = (id: string): Layer => ({
+    ...fingerprintLayer(id, id),
+    source: {
+      type: 'geojson',
+      bbox: [116.0, 39.5, 116.8, 40.1],
+    } as any,
+  });
+
+  it('layers 更新后 800ms 复位仍触发（此前随 cleanup 消失导致 focus 卡死）', async () => {
+    const view = await mountPanel([focusLayerWithBbox('FL')]);
+
+    const before = rmg.map.fitBounds.mock.calls.length;
+    await act(async () => { hud.setState({ focusLayerId: 'FL' }); });
+    await waitFor(() => expect(rmg.map.fitBounds.mock.calls.length).toBe(before + 1));
+    expect(hud.state.focusLayerId).toBe('FL');
+
+    // 800ms 窗口内推入新的 layers 数组身份（同 id）—— 旧实现 cleanup 取消
+    // 复位定时器后 effect 在 #739 标记处早退，focusLayerId 永久卡死。
+    await rerenderPanel(view, [focusLayerWithBbox('FL'), focusLayerWithBbox('FL2')]);
+    expect(hud.state.focusLayerId).toBe('FL');
+
+    // 等待复位窗口过去（真实定时器；<1s）
+    await act(async () => { await new Promise((r) => setTimeout(r, 900)); });
+    expect(hud.state.focusLayerId).toBeNull();
+  });
+
+  it('复位后同一图层可再次聚焦（fitBounds 再次发生）', async () => {
+    await mountPanel([focusLayerWithBbox('FL')]);
+
+    const before = rmg.map.fitBounds.mock.calls.length;
+    await act(async () => { hud.setState({ focusLayerId: 'FL' }); });
+    await waitFor(() => expect(rmg.map.fitBounds.mock.calls.length).toBe(before + 1));
+    await act(async () => { await new Promise((r) => setTimeout(r, 900)); });
+    expect(hud.state.focusLayerId).toBeNull();
+
+    // 同 id 再聚焦 —— 复位时已清 fitted 标记，fitBounds 再次发生
+    const before2 = rmg.map.fitBounds.mock.calls.length;
+    await act(async () => { hud.setState({ focusLayerId: 'FL' }); });
+    await waitFor(() => expect(rmg.map.fitBounds.mock.calls.length).toBe(before2 + 1));
+  });
+});

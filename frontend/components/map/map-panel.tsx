@@ -211,14 +211,21 @@ export function MapPanel({
   // then clear it back to null so the same layer can be re-focused later.
   const lastFittedFocusRef = useRef<string | null>(null)
   useEffect(() => {
-    if (!focusLayerId) return
+    if (!focusLayerId) {
+      // #801: 复位时清掉 fitted 标记 —— 同一图层可被再次聚焦（zustand 同值
+      // set 不触发订阅，重聚焦依赖这里的清理）。
+      lastFittedFocusRef.current = null
+      return
+    }
     // #739: one fit per focus request — layers identity changes (e.g. a
     // set_view response rewriting layers) used to re-run this effect and
     // refit + re-POST set_view in a self-sustaining cycle.
     if (lastFittedFocusRef.current === focusLayerId) return
-    lastFittedFocusRef.current = focusLayerId
     const map = mapRef.current?.getMap()
+    // #801: 标记仅在 ready 检查**之后**写入 —— 此前 map 未就绪时先写标记再
+    // 早退，pre-ready 的聚焦请求永久丢失。
     if (!map || !mapReady) return
+    lastFittedFocusRef.current = focusLayerId
     const target = layers.find((l) => l.id === focusLayerId)
     if (!target) {
       focusLayerSetter(null)
@@ -226,7 +233,6 @@ export function MapPanel({
     }
     const src = target.source as any
     let cancelled = false
-    let timerId: any = null
 
     const computeAndFit = async () => {
       let bbox: [number, number, number, number] | null = null
@@ -261,7 +267,17 @@ export function MapPanel({
         }
       }
       if (!cancelled) {
-        timerId = setTimeout(() => focusLayerSetter(null), 800)
+        // #801: 复位定时器不再随 effect 清理被取消 —— `layers` 是依赖项，
+        // 任何图层数组身份变化（后续 display_layer/runtimePatch 事件）都会
+        // 先跑 cleanup 再在 #739 标记处早退，旧实现里唯一的复位路径随
+        // cleanup 一同消失，focusLayerId 永久卡死（常亮高亮环 + 每轮对话
+        // 携带过期 focus_layer_id）。改为固定延时复位，且幂等（仅当仍指向
+        // 同一图层时清空）。
+        window.setTimeout(() => {
+          if (lastFittedFocusRef.current === focusLayerId) {
+            focusLayerSetter(null)
+          }
+        }, 800)
       }
     }
 
@@ -269,7 +285,6 @@ export function MapPanel({
 
     return () => {
       cancelled = true
-      if (timerId) window.clearTimeout(timerId)
     }
   }, [focusLayerId, mapReady, layers, focusLayerSetter])
 
@@ -1144,15 +1159,20 @@ export function MapPanel({
               );
             })}
           </div>
-          <MapDecorations
-            show={!hasSpecChrome}
-            title={cartographyTitle ?? thematicLayers[0]?.name ?? null}
-            zoom={decorProps.zoom}
-            centerLat={decorProps.centerLat}
-            bearing={decorProps.bearing}
-          />
         </>
       )}
+
+      {/* #804: 装饰件（指北针/比例尺/标题）不再嵌在「有主题图例」条件内 ——
+          纯点/热力会话此前永远没有比例尺；spec chrome 在场时让位
+          （MapSpecChrome 自带 north_arrow/scale_bar 缺省回退，与 exporter
+          一致），无组件 spec/旧会话行为不变。 */}
+      <MapDecorations
+        show={!hasSpecChrome}
+        title={cartographyTitle ?? thematicLayers[0]?.name ?? null}
+        zoom={decorProps.zoom}
+        centerLat={decorProps.centerLat}
+        bearing={decorProps.bearing}
+      />
 
       {/* GIS Harness 制图组件（MapSpec layout.components 契约渲染面） */}
       {hasSpecChrome && (

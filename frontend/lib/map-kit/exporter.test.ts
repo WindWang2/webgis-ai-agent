@@ -235,3 +235,95 @@ describe('COLOR_PALETTES — model-library expansion mirror', () => {
     expect(COLOR_PALETTES.Plasma![0]).toBe('#0d0887');
   });
 });
+
+// ── #802: 比例尺长度按真实画布设备像素比换算 ─────────────────────────────
+
+describe('composeLayout scale bar DPR-awareness (#802)', () => {
+  function makeCtx() {
+    return {
+      createLinearGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
+      fillRect: vi.fn(), fillText: vi.fn(), strokeRect: vi.fn(),
+      beginPath: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(), closePath: vi.fn(),
+      fill: vi.fn(), stroke: vi.fn(), arc: vi.fn(), save: vi.fn(),
+      restore: vi.fn(), translate: vi.fn(), rotate: vi.fn(), arcTo: vi.fn(),
+      measureText: vi.fn(() => ({ width: 100 })),
+      fillStyle: '', font: '', lineWidth: 0, strokeStyle: '', shadowBlur: 0,
+      globalAlpha: 1,
+    };
+  }
+  function barWidthPx(ctx: any): number {
+    // strokeRect(bx, by, barPx, bh) —— 比例尺条是导出布局里唯一调用
+    // strokeRect 的 1.5 线宽矩形；取其宽度。
+    const calls = ctx.strokeRect.mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    return calls[calls.length - 1][2] as number;
+  }
+
+  it('等比关系：barPx = nice / metersPerPx × pixelsPerLogicalPx（dpr=2）', () => {
+    const ctx = makeCtx();
+    const canvas = { width: 2400, height: 1600, getContext: vi.fn(() => ctx) } as any;
+    const mapZoom = 10, lat = 0;
+    const metersPerPx = (40075016.686 * Math.cos(0)) / (512 * Math.pow(2, mapZoom));
+    composeLayout(canvas, 'T', undefined, {
+      showScale: true, theme: 'light', mapCenter: { lat, lng: 0 }, mapZoom,
+      dpi: 96, pixelsPerLogicalPx: 2,
+    });
+    const barPx = barWidthPx(ctx);
+    const labelMeters = (barPx / 2) * metersPerPx; // 反推标签米数
+    // barPx 必须等于某个 nice 值 / mpp × 2（容差容忍 nice 取整）
+    const niceCandidates = [1, 2, 5, 10].flatMap((n) =>
+      [0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000].map((m) => n * m));
+    const matched = niceCandidates.some(
+      (nice) => Math.abs(barPx - (nice / metersPerPx) * 2) < 0.5);
+    expect(matched).toBe(true);
+    // 标签米数在逻辑（CSS）像素语义下成立 —— 不再随 dpr 虚增
+    expect(labelMeters).toBeGreaterThan(0);
+  });
+
+  it('缺省 pixelsPerLogicalPx 回退 dpi/96（旧调用方语义不变）', () => {
+    const ctxA = makeCtx(), ctxB = makeCtx();
+    const opts = {
+      showScale: true, theme: 'light' as const,
+      mapCenter: { lat: 0, lng: 0 }, mapZoom: 10,
+    };
+    composeLayout({ width: 1000, height: 800, getContext: vi.fn(() => ctxA) } as any,
+      'T', undefined, { ...opts, dpi: 96 });
+    composeLayout({ width: 1000, height: 800, getContext: vi.fn(() => ctxB) } as any,
+      'T', undefined, { ...opts, dpi: 96, pixelsPerLogicalPx: 1 });
+    expect(barWidthPx(ctxA)).toBeCloseTo(barWidthPx(ctxB), 6);
+  });
+});
+
+// ── #803: PDF 帧内等比适配 ───────────────────────────────────────────────
+
+describe('exportToPDF aspect preservation (#803)', () => {
+  it('addImage 接收的宽高比与画布一致（A4 横版 1.414 画布不再被拉到 1.63 帧）', async () => {
+    vi.resetModules();
+    const addImage = vi.fn();
+    const rect = vi.fn();
+    class FakeJsPDF {
+      internal = { pageSize: { getWidth: () => 297, getHeight: () => 210 } };
+      addImage = addImage; rect = rect; setDrawColor = vi.fn(); setLineWidth = vi.fn();
+      setFontSize = vi.fn(); setTextColor = vi.fn(); text = vi.fn();
+      addFont = vi.fn(); setFont = vi.fn(); save = vi.fn(); output = vi.fn(() => 'blob');
+      setProperties = vi.fn();
+    }
+    vi.doMock('jspdf', () => ({ default: FakeJsPDF }));
+    try {
+      const { exportToPDF } = await import('./exporter');
+      const canvas = {
+        width: 1414, height: 1000,
+        toDataURL: vi.fn(() => 'data:image/png;base64,x'),
+      } as any;
+      await exportToPDF(canvas, 'T');
+      expect(addImage).toHaveBeenCalledTimes(1);
+      const [, , , , w, h] = addImage.mock.calls[0];
+      expect(w / h).toBeCloseTo(1.414, 2);
+      // 居中且不超过帧
+      expect(w).toBeLessThanOrEqual(277 + 1e-6);
+      expect(h).toBeLessThanOrEqual(170 + 1e-6);
+    } finally {
+      vi.doUnmock('jspdf');
+    }
+  });
+});

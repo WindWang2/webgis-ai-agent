@@ -267,7 +267,10 @@ describe('MapSpecChrome', () => {
       />,
     );
     expect(screen.queryByTestId('spec-chrome-legend')).toBeNull();
-    expect(container.firstChild).toBeNull();
+    // #804: 缺省装饰件（未声明的 north_arrow/scale_bar）默认存在 —— 畸形
+    // legend_spec 只抑制图例分支，不再清空整个 chrome 面。
+    expect(screen.getByTestId('spec-chrome-north-arrow')).toBeTruthy();
+    expect(screen.getByTestId('spec-chrome-scale-bar')).toBeTruthy();
   });
 
   it('renders nothing when all components disabled', () => {
@@ -281,5 +284,43 @@ describe('MapSpecChrome', () => {
       />,
     );
     expect(container.firstChild).toBeNull();
+  });
+});
+
+
+// ── #804: 缺省装饰件回退（镜像 exporter 的 hasType/isEnabled 语义） ──────
+
+describe('MapSpecChrome fallback decorations (#804)', () => {
+  it('colorbar-only spec 仍渲染默认指北针与比例尺（缺省即存在）', () => {
+    render(
+      <MapSpecChrome
+        components={[comp({ id: 'colorbar-main', type: 'continuous_colorbar', position: 'bottom-right' })]}
+        zoom={10}
+        centerLat={30.6}
+        bearing={0}
+        spec={baseSpec}
+      />,
+    );
+    expect(screen.getByTestId('spec-chrome-colorbar')).toBeTruthy();
+    expect(screen.getByTestId('spec-chrome-north-arrow')).toBeTruthy();
+    expect(screen.getByTestId('spec-chrome-scale-bar')).toBeTruthy();
+  });
+
+  it('显式 enabled:false 的类型不再回退（『不要指南针』语义保持）', () => {
+    render(
+      <MapSpecChrome
+        components={[
+          comp({ id: 'colorbar-main', type: 'continuous_colorbar', position: 'bottom-right' }),
+          comp({ id: 'na', type: 'north_arrow', position: 'top-right', enabled: false }),
+        ]}
+        zoom={10}
+        centerLat={30.6}
+        bearing={0}
+        spec={baseSpec}
+      />,
+    );
+    expect(screen.queryByTestId('spec-chrome-north-arrow')).toBeNull();
+    // 未声明的 scale_bar 仍回退存在
+    expect(screen.getByTestId('spec-chrome-scale-bar')).toBeTruthy();
   });
 });
