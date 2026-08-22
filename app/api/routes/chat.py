@@ -98,6 +98,15 @@ def get_engine() -> ChatEngine:
     return engine
 
 
+def _session_busy_503() -> HTTPException:
+    """#791 (F-E-3): session-lock acquisition TimeoutError (10s) at a route
+    boundary is cross-pod back-pressure (another holder runs a multi-second
+    mutation/evaluation under the same lock), not a server fault. Scope it to
+    a 503 "session busy" so clients retry instead of the global handler
+    turning it into a generic 500."""
+    return HTTPException(status_code=503, detail="Session busy, please retry")
+
+
 _FRONTEND_OBSERVATION_MAX_LAYERS = 128
 _FRONTEND_OBSERVATION_MAX_FRAGMENT_BYTES = 16_384
 _FRONTEND_OBSERVATION_MAX_TOTAL_BYTES = 262_144
@@ -632,7 +641,12 @@ async def chat_completions(
     with rt_ctx.bind_runtime_context(request_id=request_id, session_id=req.session_id):
         if _use_pi_bridge():
             try:
-                await _record_frontend_cartographic_observation(req.session_id, req.map_state)
+                try:
+                    await _record_frontend_cartographic_observation(req.session_id, req.map_state)
+                except (TimeoutError, asyncio.TimeoutError):
+                    # #791: lock contention on the turn-start observation write
+                    # is scoped back-pressure, not a 500.
+                    raise _session_busy_503()
                 cartography_context = await _build_cartography_turn_context(req.session_id)
                 result = await pi_bridge.prompt(
                     req.message,
@@ -643,6 +657,10 @@ async def chat_completions(
             except PiRpcError as e:
                 logger.error(f"Pi bridge error: {e}", exc_info=True)
                 raise HTTPException(status_code=502, detail="Agent bridge error")
+            except HTTPException:
+                # #791: scoped HTTP errors (e.g. the turn-start 503 above) pass
+                # through instead of being re-labelled 500 by the catch-all.
+                raise
             except Exception as e:
                 logger.error(f"Pi bridge unexpected error: {e}", exc_info=True)
                 raise HTTPException(status_code=500, detail="Internal server error")
@@ -772,7 +790,13 @@ async def chat_stream(
         # CanonicalPlan/decision_log 仅存在于 legacy 路径。详见
         # docs/gis-harness.md「Pi 路径与规划链」一节。规划链移植到 Pi 是
         # 独立 roadmap 项，不在本 seam 隐式实现。
-        await _record_frontend_cartographic_observation(pi_session_id, req.map_state)
+        try:
+            await _record_frontend_cartographic_observation(pi_session_id, req.map_state)
+        except (TimeoutError, asyncio.TimeoutError):
+            # #791: lock contention on the turn-start observation write is
+            # scoped back-pressure, not a 500 (raised before the stream starts,
+            # so the client gets a JSON error body instead of a dead SSE).
+            raise _session_busy_503()
         cartography_context = await _build_cartography_turn_context(pi_session_id)
         async def pi_event_generator():
             buffer = TurnEventBuffer(session_key, req.message)
@@ -1064,43 +1088,102 @@ async def push_cartographic_runtime_observation(
     """
     layers = _project_frontend_layers(req.layers)
     viewport = _bounded_observation_fragment(req.viewport) or {}
-    async with session_lock_registry.lock(session_id):
-        session_data_manager.invalidate_local_cache(session_id)
-        state = await session_data_manager.get_map_state(session_id)
-        previous = state.get("_cartographic_observation")
-        from app.lib.cartography.quality_loop import cartographic_fingerprint
-        from app.services.mapspec.store import mapspec_store_instance
+    try:
+        async with session_lock_registry.lock(session_id):
+            session_data_manager.invalidate_local_cache(session_id)
+            state = await session_data_manager.get_map_state(session_id)
+            previous = state.get("_cartographic_observation")
+            from app.lib.cartography.quality_loop import cartographic_fingerprint
+            from app.services.mapspec.store import mapspec_store_instance
 
-        current_mapspec = await mapspec_store_instance.get_mapspec(session_id)
-        current_fingerprint = (
-            cartographic_fingerprint(current_mapspec)
-            if isinstance(current_mapspec, dict)
-            else ""
-        )
-        previous_generation = (
-            previous.get("client_generation")
-            if isinstance(previous, dict) else None
-        )
-        rejection_reason = (
-            "stale_mapspec_fingerprint"
-            if not current_fingerprint
-            or req.mapspec_fingerprint != current_fingerprint
-            else "stale_client_generation"
-            if (
-            isinstance(previous_generation, int)
-            and req.client_generation <= previous_generation
+            current_mapspec = await mapspec_store_instance.get_mapspec(session_id)
+            current_fingerprint = (
+                cartographic_fingerprint(current_mapspec)
+                if isinstance(current_mapspec, dict)
+                else ""
             )
-            else ""
-        )
-        if rejection_reason:
-            # Never echo an old repair action: callers dispatch a returned
-            # action immediately, so a stale response must be an inert view of
-            # the newest trusted result.
-            stored_review = state.get("_cartographic_review")
-            if isinstance(stored_review, dict):
-                review = dict(stored_review)
-                review.pop("repair_action", None)
-            else:
+            previous_generation = (
+                previous.get("client_generation")
+                if isinstance(previous, dict) else None
+            )
+            rejection_reason = (
+                "stale_mapspec_fingerprint"
+                if not current_fingerprint
+                or req.mapspec_fingerprint != current_fingerprint
+                else "stale_client_generation"
+                if (
+                isinstance(previous_generation, int)
+                and req.client_generation <= previous_generation
+            )
+                else ""
+            )
+            if rejection_reason:
+                # Never echo an old repair action: callers dispatch a returned
+                # action immediately, so a stale response must be an inert view of
+                # the newest trusted result.
+                stored_review = state.get("_cartographic_review")
+                if isinstance(stored_review, dict):
+                    review = dict(stored_review)
+                    review.pop("repair_action", None)
+                else:
+                    review = {
+                        "session_id": session_id,
+                        "cartography": {
+                            "status": "not_evaluated",
+                            "trusted": False,
+                            "evaluated": False,
+                            "passed": False,
+                            "termination_reason": "stale_runtime_observation",
+                        },
+                        "overall_passed": False,
+                    }
+                return {
+                    "observation_sequence": int(
+                        previous.get("sequence") or 0
+                    ) if isinstance(previous, dict) else 0,
+                    "observation_accepted": False,
+                    "observation_rejection_reason": rejection_reason,
+                    **review,
+                }
+            try:
+                sequence = (
+                    int(previous.get("sequence", 0)) + 1
+                    if isinstance(previous, dict) else 1
+                )
+            except (TypeError, ValueError):
+                sequence = 1
+            observation = {
+                "session_id": session_id,
+                "sequence": sequence,
+                "client_generation": req.client_generation,
+                "source": "frontend_runtime",
+                "mapspec_fingerprint": req.mapspec_fingerprint,
+                "layer_count": len(layers),
+                "layers": layers,
+                "viewport": viewport if isinstance(viewport, dict) else {},
+                "style_loaded": req.style_loaded,
+                "reconcile_error": req.reconcile_error,
+            }
+            persisted = await session_data_manager.set_map_state(
+                session_id, "_cartographic_observation", observation
+            )
+            if persisted is False:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Cartographic observation could not be persisted",
+                )
+            from app.agent_pi_bridge import evaluate_cartographic_session
+
+            try:
+                review = await evaluate_cartographic_session(
+                    session_id, session_lock_held=True
+                )
+            except Exception as review_error:  # noqa: BLE001 - observation remains accepted
+                logger.warning(
+                    "Cartographic observation evaluation unavailable for %s: %s",
+                    session_id,
+                    review_error,
+                )
                 review = {
                     "session_id": session_id,
                     "cartography": {
@@ -1108,68 +1191,13 @@ async def push_cartographic_runtime_observation(
                         "trusted": False,
                         "evaluated": False,
                         "passed": False,
-                        "termination_reason": "stale_runtime_observation",
+                        "termination_reason": "evaluation_unavailable",
                     },
                     "overall_passed": False,
                 }
-            return {
-                "observation_sequence": int(
-                    previous.get("sequence") or 0
-                ) if isinstance(previous, dict) else 0,
-                "observation_accepted": False,
-                "observation_rejection_reason": rejection_reason,
-                **review,
-            }
-        try:
-            sequence = (
-                int(previous.get("sequence", 0)) + 1
-                if isinstance(previous, dict) else 1
-            )
-        except (TypeError, ValueError):
-            sequence = 1
-        observation = {
-            "session_id": session_id,
-            "sequence": sequence,
-            "client_generation": req.client_generation,
-            "source": "frontend_runtime",
-            "mapspec_fingerprint": req.mapspec_fingerprint,
-            "layer_count": len(layers),
-            "layers": layers,
-            "viewport": viewport if isinstance(viewport, dict) else {},
-            "style_loaded": req.style_loaded,
-            "reconcile_error": req.reconcile_error,
-        }
-        persisted = await session_data_manager.set_map_state(
-            session_id, "_cartographic_observation", observation
-        )
-        if persisted is False:
-            raise HTTPException(
-                status_code=503,
-                detail="Cartographic observation could not be persisted",
-            )
-        from app.agent_pi_bridge import evaluate_cartographic_session
-
-        try:
-            review = await evaluate_cartographic_session(
-                session_id, session_lock_held=True
-            )
-        except Exception as review_error:  # noqa: BLE001 - observation remains accepted
-            logger.warning(
-                "Cartographic observation evaluation unavailable for %s: %s",
-                session_id,
-                review_error,
-            )
-            review = {
-                "session_id": session_id,
-                "cartography": {
-                    "status": "not_evaluated",
-                    "trusted": False,
-                    "evaluated": False,
-                    "passed": False,
-                    "termination_reason": "evaluation_unavailable",
-                },
-                "overall_passed": False,
-            }
+    except (TimeoutError, asyncio.TimeoutError):
+        # #791: session-lock contention is back-pressure, not a server fault.
+        raise _session_busy_503()
     return {
         "observation_sequence": sequence,
         "observation_accepted": True,
@@ -1316,9 +1344,15 @@ async def push_map_action_acks(
         raise HTTPException(status_code=429, detail="Too many map action acks")
     # Serialize with deletion and observation. An ACK that arrives after the
     # delete tombstone cannot recreate bounded event/review state.
-    async with session_lock_registry.lock(session_id):
-        session_data_manager.invalidate_local_cache(session_id)
-        return await _persist_map_action_acks_locked(session_id, req)
+    try:
+        async with session_lock_registry.lock(session_id):
+            session_data_manager.invalidate_local_cache(session_id)
+            return await _persist_map_action_acks_locked(session_id, req)
+    except (TimeoutError, asyncio.TimeoutError):
+        # #791: session-lock contention is back-pressure, not a server fault.
+        # The client retries the ACK batch (first-terminal-wins idempotency
+        # makes the retry safe).
+        raise _session_busy_503()
 
 
 @router.get("/skills")
@@ -1373,39 +1407,44 @@ async def clear_session(
         restore_cartographic_session_state,
     )
 
-    async with session_lock_registry.lock(session_id):
-        session_data_manager.invalidate_local_cache(session_id)
-        # Tombstone first: an evaluation already in flight must not recreate
-        # review/repair state after the authoritative session is removed.
-        clear_cartographic_session_state(session_id)
-        ok = await get_engine().clear_session(
-            session_id, user_id=user_id, owner_token=owner_token
-        )
-        if not ok:
-            restore_cartographic_session_state(session_id)
-        else:
-            from app.services.mapspec.store import mapspec_store_instance
-            try:
-                await mapspec_store_instance.clear_session_files(session_id)
-            except FileNotFoundError:
-                pass
-            except Exception as purge_error:  # noqa: BLE001
-                logger.error(
-                    "Unable to purge durable MapSpec state for %s: %s",
-                    session_id,
-                    purge_error,
-                )
-            # Cross-replica tombstone. The Redis session-state adapter applies
-            # its normal bounded TTL; late work from another replica therefore
-            # cannot recreate a deleted session's cartographic evidence.
-            persisted = await session_data_manager.set_map_state(
-                session_id, "_cartographic_deleted", True
+    try:
+        async with session_lock_registry.lock(session_id):
+            session_data_manager.invalidate_local_cache(session_id)
+            # Tombstone first: an evaluation already in flight must not recreate
+            # review/repair state after the authoritative session is removed.
+            clear_cartographic_session_state(session_id)
+            ok = await get_engine().clear_session(
+                session_id, user_id=user_id, owner_token=owner_token
             )
-            if persisted is False:
-                raise HTTPException(
-                    status_code=503,
-                    detail="Session deleted but deletion tombstone persistence failed",
+            if not ok:
+                restore_cartographic_session_state(session_id)
+            else:
+                from app.services.mapspec.store import mapspec_store_instance
+                try:
+                    await mapspec_store_instance.clear_session_files(session_id)
+                except FileNotFoundError:
+                    pass
+                except Exception as purge_error:  # noqa: BLE001
+                    logger.error(
+                        "Unable to purge durable MapSpec state for %s: %s",
+                        session_id,
+                        purge_error,
+                    )
+                # Cross-replica tombstone. The Redis session-state adapter applies
+                # its normal bounded TTL; late work from another replica therefore
+                # cannot recreate a deleted session's cartographic evidence.
+                persisted = await session_data_manager.set_map_state(
+                    session_id, "_cartographic_deleted", True
                 )
+                if persisted is False:
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Session deleted but deletion tombstone persistence failed",
+                    )
+    except (TimeoutError, asyncio.TimeoutError):
+        # #791: session-lock contention is back-pressure, not a server fault.
+        # Nothing was deleted yet (the tombstone write happens under the lock).
+        raise _session_busy_503()
     if not ok:
         raise HTTPException(status_code=404, detail="Session not found")
     # P2 (round-2 review): purge the deleted session's resume buffers. Without

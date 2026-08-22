@@ -129,6 +129,44 @@ class ChatContextAssembler:
     def __init__(self, store: Optional[SessionStoreProtocol] = None) -> None:
         self.store = store or session_data_manager
 
+    @staticmethod
+    async def _build_cartography_verdict_block(
+        session_id: str, map_state: dict,
+    ) -> str:
+        """#788: bounded ``[CARTOGRAPHY_VERDICT]`` block for the legacy path.
+
+        Read-only composition mirroring the Pi route's
+        ``_build_cartography_turn_context``: the stored ``_cartographic_review``
+        is rendered behind ``should_inject_verdict`` (fingerprint must match the
+        CURRENT MapSpec generation) — a pass renders only the #657 micro-token.
+        Any failure degrades to no injection (the verdict is additive context;
+        it must never break turn composition). Called only when a stored review
+        exists, so the mapspec fingerprint read costs nothing otherwise.
+        """
+        review = map_state.get("_cartographic_review") if isinstance(map_state, dict) else None
+        if not isinstance(review, dict):
+            return ""
+        try:
+            from app.lib.cartography.quality_loop import cartographic_fingerprint
+            from app.lib.cartography.verdict_summary import (
+                render_verdict_for_llm,
+                should_inject_verdict,
+            )
+            from app.services.mapspec.store import mapspec_store_instance
+
+            mapspec = await mapspec_store_instance.get_mapspec(session_id)
+            current_fingerprint = (
+                cartographic_fingerprint(mapspec) if isinstance(mapspec, dict) else None
+            )
+            if not should_inject_verdict(review, current_fingerprint):
+                return ""
+            return render_verdict_for_llm(review)
+        except Exception as ex:  # noqa: BLE001 — 注入是增值上下文，失败不阻断对话
+            logger.warning(
+                "Cartography verdict block unavailable for %s: %s", session_id, ex
+            )
+            return ""
+
     async def assemble(
         self,
         session_id: str,
@@ -254,6 +292,21 @@ class ChatContextAssembler:
             # design-v3 §4：计划块单一渲染来源（plan_orchestrator.render_plan_block）。
             from app.services.chat.plan_orchestrator import render_plan_block
             head.append({"role": "system", "content": render_plan_block(plan)})
+
+        # #788 (F-A-8): the [CARTOGRAPHY_VERDICT] turn-start injection used to
+        # be Pi-only (chat route builds it in the _use_pi_bridge() branches),
+        # so a legacy turn followed a failed/repairable cartography generation
+        # with zero knowledge of it. Inject the same bounded verdict block
+        # here — the seam where the legacy path composes its request messages.
+        # Gated by include_plan_block like the plan block: the verdict is the
+        # main agent's session-level corrective context, not a subagent's
+        # (#436 isolation rationale applies identically).
+        if include_plan_block:
+            verdict_block = await self._build_cartography_verdict_block(
+                session_id, map_state
+            )
+            if verdict_block:
+                head.append({"role": "system", "content": verdict_block})
 
         last_ctx = build_last_analysis_context(messages)
         if last_ctx:

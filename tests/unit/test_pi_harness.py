@@ -257,6 +257,8 @@ async def test_evaluate_evidence_fails_when_cartography_not_evaluated():
 
 
 def test_error_recovery_tracking():
+    """#793: recovery is a later SUCCESSFUL call of the SAME tool — the retry
+    below satisfies that, so the same-tool semantics still recover to 100%."""
     harness = PiAgentHarness(session_id="s11")
     harness.record_tool_call("c1", "st_dbscan", {})
     harness.record_tool_result("c1", "st_dbscan", {}, is_error=True, error_msg="Invalid CRS")
@@ -266,6 +268,96 @@ def test_error_recovery_tracking():
     metrics = harness.evaluate_all(expected_tools=["st_dbscan"], ideal_step_count=1)
     assert metrics["ErrorRecoveryRate"] == 100.0
     assert metrics["StepEfficiency"] == 50.0  # 1 ideal / 2 actual
+
+
+def test_error_recovery_requires_same_tool_success():
+    """#793: an UNRELATED later success (here a fly_to after a failed
+    st_dbscan) must NOT count as recovery — previously any next non-error
+    result cleared the error state, making ErrorRecoveryRate gameable."""
+    harness = PiAgentHarness(session_id="s-recovery")
+    harness.record_tool_call("c1", "st_dbscan", {})
+    harness.record_tool_result("c1", "st_dbscan", {}, is_error=True, error_msg="Invalid CRS")
+    harness.record_tool_call("c2", "webgis_view_set", {})
+    harness.record_tool_result("c2", "webgis_view_set", {"success": True}, is_error=False)
+
+    assert harness.compute_error_recovery_rate() == 0.0
+
+    # A later SAME-tool success does recover.
+    harness.record_tool_call("c3", "st_dbscan", {"crs": "EPSG:4326"})
+    harness.record_tool_result("c3", "st_dbscan", {"success": True}, is_error=False)
+    assert harness.compute_error_recovery_rate() == 100.0
+
+
+def test_free_text_ref_mention_is_not_a_ref_cursor():
+    """#793: a literal ref-shaped string inside free-text argument fields
+    (query/title/text/description/name) must not become a ref cursor; a real
+    ref under a ref-bearing key (or inside a ref list) must still count."""
+    harness = PiAgentHarness(session_id="s-cursor")
+    harness.record_tool_call("c1", "query_map_features", {
+        "query": "check ref:geojson-fake123 please",
+        "title": "ref:raster-fake456",
+        "data": "ref:geojson-real789",
+        "overlay_refs": ["ref:geojson-list123"],
+        "layer": {"source": "ref:geojson-nested456"},  # nested dicts are not ref carriers
+    })
+
+    cursors = {c["ref_cursor"] for c in harness.ref_cursors}
+    assert cursors == {"ref:geojson-real789", "ref:geojson-list123"}
+
+
+def test_tool_choice_accuracy_excludes_error_and_suspicious_calls():
+    """#793: an expected tool call that ERRORED (or returned a suspicious
+    empty/error-shaped payload) earns no credit — only successful calls
+    satisfy the expectation."""
+    harness = PiAgentHarness(session_id="s-choice")
+    harness.record_tool_call("c1", "st_dbscan", {})
+    harness.record_tool_result("c1", "st_dbscan", {}, is_error=True, error_msg="boom")
+    # suspicious: empty FeatureCollection shape
+    harness.record_tool_call("c2", "webgis_view_set", {})
+    harness.record_tool_result(
+        "c2", "webgis_view_set", {"type": "FeatureCollection", "features": []}
+    )
+    harness.record_tool_call("c3", "webgis_view_set", {})
+    harness.record_tool_result("c3", "webgis_view_set", {"success": True})
+
+    # errored c1 earns nothing; only the successful c3 credits webgis_view_set.
+    assert harness.compute_tool_choice_accuracy(["st_dbscan"]) == 0.0
+    assert harness.compute_tool_choice_accuracy(["webgis_view_set"]) == 100.0
+
+
+# ── #789: structural mutation classification (real tool names) ───────────
+
+
+def test_fingerprint_result_outside_mutation_tools_enters_ledger():
+    """#789: an analysis tool outside MAPSPEC_MUTATION_TOOLS whose result
+    carries a mapspec_fingerprint IS a display-producing mutation — it must
+    enter the mutation ledger under its real name and receive validity
+    evidence, without any name relabeling."""
+    harness = PiAgentHarness(session_id="s789")
+    harness.record_tool_call("c1", "heatmap_data", {"query": "poi"})
+    harness.record_tool_result("c1", "heatmap_data", {
+        "success": True, "is_compiled": True, "mapspec_fingerprint": "carto-sha256:x",
+    })
+
+    assert [m["tool_name"] for m in harness.mapspec_mutations] == ["heatmap_data"]
+    assert harness.mapspec_mutations[0]["is_valid"] is True
+
+
+@pytest.mark.asyncio
+async def test_evidence_attaches_validity_for_structural_mutation():
+    """#789: evaluate_with_evidence attaches the validity ladder via the
+    mutation ledger (structural), so a fingerprint-carrying analysis tool
+    keeps its real name AND its MapSpec validity evidence."""
+    harness = PiAgentHarness(session_id="s789b")
+    harness.record_tool_call("c1", "webgis_view_set", {})
+    harness.record_tool_result("c1", "webgis_view_set", {
+        "success": True, "is_compiled": True, "mapspec_fingerprint": "carto-sha256:y",
+    })
+
+    result = await harness.evaluate_with_evidence(expected_tools=["webgis_view_set"])
+    ev = result["evidence"][0]
+    assert ev["tool_name"] == "webgis_view_set"
+    assert ev["mapspec_validity"]["tier"] == "SEMANTIC_VALID"
 
 
 # ── harness_runner: honest metric reporting ──────────────────────────────

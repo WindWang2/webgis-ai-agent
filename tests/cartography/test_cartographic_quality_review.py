@@ -1441,8 +1441,71 @@ async def test_stale_ack_and_user_supersession_cannot_certify_new_mapspec():
     superseded = await user_wins.evaluate_with_evidence(
         map_action_reader=superseded_ack
     )
-    assert superseded["cartography"]["status"] == "superseded"
-    assert superseded["cartography"]["termination_reason"] == "user_or_newer_intent"
+    # #787: a superseded/cancelled NON-repair action no longer flips the whole
+    # current generation to "superseded" (that suppressed the verdict entirely).
+    # The action cannot certify the runtime — the verdict is now derived from
+    # the observation checks, which here find no session-owned frontend_runtime
+    # observation (source="frontend"), so the honest status is not_evaluated.
+    assert superseded["cartography"]["status"] == "not_evaluated"
+    assert superseded["cartography"]["termination_reason"] == "stale_runtime_observation"
+    ack_checks = [
+        c for c in superseded["cartography"]["checks"]
+        if c.get("rule") == "MAP_ACTION_ACK"
+    ]
+    assert ack_checks and ack_checks[0]["status"] == "not_evaluated"
+    assert ack_checks[0]["evidence"]["status"] == "superseded"
+
+
+@pytest.mark.asyncio
+async def test_superseded_non_repair_action_does_not_bury_failing_observation():
+    """#787: the latest mutation's fly_to ACK arrives superseded (user panned /
+    newer camera command) while the runtime observation shows a genuinely
+    broken layer state — the verdict must be derived from the observation
+    (failed_repairable), not "superseded" (which the verdict injector skips,
+    leaving the agent with no cartography feedback at all)."""
+    mapspec = _plain_mapspec()
+    mapspec["sources"]["points"]["profile"] = _point_profile()
+    current_fp = cartographic_fingerprint(mapspec)
+
+    async def reader(session_id: str):
+        return {
+            "session_id": session_id,
+            "mapspec": mapspec,
+            "map_state": {
+                # Fresh session-owned observation whose layer visibility
+                # contradicts the desired MapSpec -> runtime failure.
+                "_cartographic_observation": _runtime_observation(
+                    session_id, current_fp, sequence=1, visible=False,
+                ),
+            },
+        }
+
+    async def superseded_ack(_session_id: str):
+        return [{
+            "action_id": "ma-fly",
+            "status": "superseded",
+            "actual": {"reason": "newer_camera_command"},
+        }]
+
+    harness = PiAgentHarness(session_id="action-fly", cartography_state_reader=reader)
+    _record_mapspec_mutation(harness, mapspec, observation_seq=0)
+    harness.record_map_action_issued(
+        session_id="action-fly",
+        tool_call_id="call-1",
+        action_id="ma-fly",
+        command="fly_to",
+        requested={"center": [100.0, 20.0], "zoom": 8},
+        mapspec_fingerprint=current_fp,
+    )
+
+    result = await harness.evaluate_with_evidence(map_action_reader=superseded_ack)
+
+    assert result["cartography"]["status"] == "failed_repairable"
+    assert result["cartography"]["termination_reason"] == "runtime_state_mismatch"
+    assert any(
+        check.get("rule") == "RUNTIME_RESULT_VISIBILITY" and check.get("status") == "fail"
+        for check in result["cartography"]["checks"]
+    )
 
 
 @pytest.mark.asyncio

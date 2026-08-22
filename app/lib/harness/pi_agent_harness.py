@@ -276,6 +276,10 @@ class PiAgentHarness:
         # Round-2 P2：单例 harness 跨 session 累积时，错误状态必须按 session
         # 隔离 —— session A 的错误绝不能被 session B 的后续成功"恢复"。
         self._recovered_exceptions_count: Dict[str, int] = {}
+        # #793: error state is keyed by (session_id, tool_name) — recovery is a
+        # later SUCCESSFUL call of the SAME tool. Previously any next success
+        # (e.g. an unrelated fly_to) "recovered" the error, making
+        # ErrorRecoveryRate gameable.
         self._in_error_state: set = set()
 
         # V3: 已发出的地图动作（issued 侧证据，FIFO 上限与其它累积面一致）。
@@ -421,15 +425,53 @@ class PiAgentHarness:
                 "turn_id": eff_turn_id,
                 "session_id": eff_session_id,
             })
-            self._in_error_state.add(eff_session_id)
+            # #793: key by (session, tool) so only a later success of the SAME
+            # tool counts as recovery.
+            self._in_error_state.add((eff_session_id, name))
         else:
-            if eff_session_id in self._in_error_state:
+            if (eff_session_id, name) in self._in_error_state:
                 self._recovered_exceptions_count[eff_session_id] = (
                     self._recovered_exceptions_count.get(eff_session_id, 0) + 1
                 )
-                self._in_error_state.discard(eff_session_id)
+                self._in_error_state.discard((eff_session_id, name))
 
-        if name in MAPSPEC_MUTATION_TOOLS:
+        # #789: mutation classification is STRUCTURAL, not name-based. Tools in
+        # MAPSPEC_MUTATION_TOOLS mutate by definition; an analysis tool outside
+        # that set can still auto-author display layers, and its result then
+        # carries ``mapspec_fingerprint`` — that fingerprint is the structural
+        # signal that the call produced a MapSpec generation, so it must enter
+        # the mutation ledger under its REAL name (never a relabel).
+        is_structural_mutation = name in MAPSPEC_MUTATION_TOOLS or (
+            isinstance(result, dict) and bool(result.get("mapspec_fingerprint"))
+        )
+        if is_structural_mutation:
+            if not any(
+                mutation["tool_call_id"] == tool_call_id
+                and mutation.get("session_id") == eff_session_id
+                for mutation in self.mapspec_mutations
+            ):
+                # record_tool_call already appended for MAPSPEC_MUTATION_TOOLS
+                # names; this branch covers fingerprint-carrying analysis tools
+                # whose name is outside the set (call recorded, ledger not).
+                mutation_arguments = next(
+                    (
+                        tc.get("arguments")
+                        for tc in reversed(self.tool_calls)
+                        if tc.get("tool_call_id") == tool_call_id
+                        and tc.get("session_id") == eff_session_id
+                        and isinstance(tc.get("arguments"), dict)
+                    ),
+                    {},
+                )
+                self._append_capped(self.mapspec_mutations, {
+                    "tool_call_id": tool_call_id,
+                    "tool_name": name,
+                    "arguments": mutation_arguments,
+                    "is_valid": False,
+                    "run_id": eff_run_id,
+                    "turn_id": eff_turn_id,
+                    "session_id": eff_session_id,
+                })
             # V2: MapSpec validity derives from REAL evidence — the tool result
             # of a mutation carries ``is_compiled`` (pure-Python validate() outcome
             # from MapSpecLifecycleEngine) and ``success``. "Didn't error" alone
@@ -538,11 +580,37 @@ class PiAgentHarness:
 
     # ── Ref cursor scanning ──────────────────────────────────────────────
 
+    # #793: free-text argument fields whose string VALUE is prose written by
+    # the model/user, not a ref carrier. A literal "ref:geojson-abc" mention
+    # inside a query/title must not become a ref cursor (it then fails store
+    # resolution and drags CursorResolutionRate below its gate).
+    _REF_CURSOR_FREE_TEXT_FIELDS = frozenset({
+        "query", "title", "text", "description", "name",
+    })
+
     def _scan_and_record_ref_cursors(
         self, tool_call_id: str, args: Dict[str, Any], session_id: str = ""
     ) -> None:
-        args_str = str(args)
-        found_refs = set(REF_CURSOR_PATTERN.findall(args_str))
+        """#793: per-value scan (never ``str(args)``) of string values only.
+
+        A value is treated as a ref cursor only when it lives under a
+        ref-bearing argument key: free-text fields (query/title/text/description/
+        name) are skipped, and nested dict payloads (e.g. layer specs) are not
+        scanned at all. List values keep their string elements scanned — real
+        tools carry refs as top-level lists (``overlay_refs=["ref:geojson-x"]``).
+        """
+        if not isinstance(args, dict):
+            return
+        found_refs: set = set()
+        for key, value in args.items():
+            if str(key).lower() in self._REF_CURSOR_FREE_TEXT_FIELDS:
+                continue
+            if isinstance(value, str):
+                found_refs.update(REF_CURSOR_PATTERN.findall(value))
+            elif isinstance(value, (list, tuple)):
+                for item in value:
+                    if isinstance(item, str):
+                        found_refs.update(REF_CURSOR_PATTERN.findall(item))
         for ref in found_refs:
             self._append_capped(self.ref_cursors, {
                 "tool_call_id": tool_call_id,
@@ -646,7 +714,9 @@ class PiAgentHarness:
             ]
 
             validity: Optional[MapSpecValidityEvidence] = None
-            if tc["name"] in MAPSPEC_MUTATION_TOOLS:
+            # #789: structural — the mutation ledger (populated by tool name OR
+            # a fingerprint-carrying result) decides, not the tool name alone.
+            if tcid in mutation_results:
                 mut = mutation_results.get(tcid, {})
                 validity = self._validity_for_mutation(tcid, mut, res)
                 self._validity_cache[tcid] = validity
@@ -1097,15 +1167,38 @@ class PiAgentHarness:
                 evidence.termination_reason = "stale_action_fingerprint"
                 return evidence
             if action.status in (MapActionStatus.SUPERSEDED, MapActionStatus.CANCELLED):
-                evidence.status = "superseded"
+                if action.command == "cartographic_runtime_repair":
+                    # Generation-level supersession: the auto-repair action of
+                    # the current generation was superseded/cancelled by newer
+                    # intent — the user has moved on from this whole generation.
+                    evidence.status = "superseded"
+                    evidence.checks.append(self._cartography_check(
+                        "MAP_ACTION_ACK",
+                        "fail",
+                        {"action_id": action.action_id, "status": action.status.value},
+                        message="The runtime action was superseded or cancelled by newer intent.",
+                    ))
+                    evidence.termination_reason = "user_or_newer_intent"
+                    return evidence
+                # #787: action-level supersession on a NON-repair action (e.g.
+                # a fly_to ACK superseded by a newer camera command) must not
+                # flip the whole current generation to "superseded" — the
+                # verdict injector then skips the generation entirely and the
+                # agent receives NO cartography feedback even when the layer
+                # content is genuinely broken. Skip this action (like the
+                # FAILED-initial-mount ``continue`` below) and let the
+                # observation/fingerprint checks decide the verdict.
                 evidence.checks.append(self._cartography_check(
                     "MAP_ACTION_ACK",
-                    "fail",
+                    "not_evaluated",
                     {"action_id": action.action_id, "status": action.status.value},
-                    message="The runtime action was superseded or cancelled by newer intent.",
+                    message=(
+                        "The runtime action was superseded or cancelled by newer "
+                        "intent; it cannot certify or fail the runtime state."
+                    ),
+                    severity="warning",
                 ))
-                evidence.termination_reason = "user_or_newer_intent"
-                return evidence
+                continue
             if action.status is MapActionStatus.FAILED:
                 evidence.checks.append(self._cartography_check(
                     "MAP_ACTION_ACK",
@@ -1687,13 +1780,40 @@ class PiAgentHarness:
 
     # ── Legacy float-metric surface (now evidence-honest) ────────────────
 
+    @staticmethod
+    def _result_denies_credit(result: Any) -> bool:
+        """#793: a result that must not earn tool-choice credit — error flag,
+        missing result, or a suspicious (empty/error-shaped) payload."""
+        if not isinstance(result, dict) or not result:
+            return True
+        try:
+            # Single authoritative predicate (lazy import: this module must
+            # stay importable without app.services cycles).
+            from app.services.tool_dispatch_service import is_suspicious_result
+            return bool(is_suspicious_result(result))
+        except Exception:  # noqa: BLE001 - a metric must never crash on wiring
+            return False
+
     def compute_tool_choice_accuracy(self, expected_tools: List[str]) -> float:
         if not expected_tools:
             return 100.0
-        invoked_tools = [
-            tc["name"] for tc in self.tool_calls
-            if tc.get("session_id") == self.session_id
-        ]
+        # #793: only SUCCESSFUL calls count as having chosen the expected tool.
+        # Previously the name match alone earned credit — a call that errored or
+        # returned a suspicious empty payload still ticked the expectation.
+        results_by_id = {
+            r["tool_call_id"]: r for r in self.tool_results
+            if r.get("session_id") == self.session_id
+        }
+        invoked_tools: List[str] = []
+        for tc in self.tool_calls:
+            if tc.get("session_id") != self.session_id:
+                continue
+            res = results_by_id.get(tc["tool_call_id"])
+            if res is None or res.get("is_error"):
+                continue
+            if self._result_denies_credit(res.get("result")):
+                continue
+            invoked_tools.append(tc["name"])
         expected_remaining = list(expected_tools)
         correct = 0
         for tool in invoked_tools:

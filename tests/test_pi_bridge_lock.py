@@ -144,8 +144,14 @@ async def test_stream_prompt_emits_keepalive_during_lock_wait(monkeypatch):
 @pytest.mark.asyncio
 async def test_prompt_drain_timeout_raises_and_sends_abort(monkeypatch):
     """A drain that times out without agent_end must raise (not return a 200
-    with truncated content) AND send the abort RPC so Pi stops executing."""
+    with truncated content) AND send the abort RPC so Pi stops executing.
+
+    #786: the failure condition is now CONTINUOUS silence reaching the stream
+    path's stall budget (PI_EVENT_STREAM_TIMEOUT), not a single inter-event
+    gap — so the stall budget is patched small here instead of only
+    PI_EVENT_DRAIN_TIMEOUT (which is now just the per-event wait granularity)."""
     monkeypatch.setattr(bridge_mod, "PI_EVENT_DRAIN_TIMEOUT", 0.05)
+    monkeypatch.setattr(bridge_mod, "PI_EVENT_STREAM_TIMEOUT", 0.05)
 
     rpc = _make_rpc()  # request() sends the prompt, feeds NO events
     bridge = PiBridge(rpc=rpc)
@@ -157,6 +163,76 @@ async def test_prompt_drain_timeout_raises_and_sends_abort(monkeypatch):
         "drain-timeout turn must send the abort RPC so Pi stops generating "
         f"tokens / executing tools; calls={_rpc_commands(rpc)}"
     )
+
+
+@pytest.mark.asyncio
+async def test_prompt_survives_silent_gap_longer_than_drain_timeout(monkeypatch):
+    """#786: a silent window between tool_execution_start and tool_execution_end
+    (or a slow first token) longer than PI_EVENT_DRAIN_TIMEOUT must NOT kill the
+    non-streaming turn — the drain keeps waiting as long as the CONTINUOUS
+    silence stays under the stream stall budget. A 0.2s gap with a 0.05s
+    per-event granularity and events arriving every 0.02s must complete."""
+    monkeypatch.setattr(bridge_mod, "PI_EVENT_DRAIN_TIMEOUT", 0.05)
+    monkeypatch.setattr(bridge_mod, "PI_EVENT_STREAM_TIMEOUT", 60.0)
+
+    rpc = _make_rpc()
+
+    async def fake_request(cmd, data=None):
+        if cmd == "prompt":
+            async def emit(kind: str, payload: dict | None = None):
+                await asyncio.sleep(0.02)
+                await rpc.events.put(payload or {"type": kind})
+
+            # tool_execution_start ... [silent 0.2s tool execution] ... tool_end
+            await emit("tool_execution_start", {
+                "type": "tool_execution_start", "toolCallId": "tc-1",
+                "tool": "webgis_execute", "arguments": {},
+            })
+            await asyncio.sleep(0.2)
+            await emit("tool_execution_end", {
+                "type": "tool_execution_end", "toolCallId": "tc-1",
+                "content": [{"type": "text", "text": "tool done"}],
+            })
+            await emit("agent_end")
+
+    rpc.request = AsyncMock(side_effect=fake_request)
+    bridge = PiBridge(rpc=rpc)
+
+    result = await asyncio.wait_for(
+        bridge.prompt("hi", session_id="sess-gap"), timeout=5.0
+    )
+    assert result["content"] == ""
+    assert "abort" not in _rpc_commands(rpc), (
+        "a turn whose silent gap stayed under the stall budget must NOT be "
+        f"aborted; calls={_rpc_commands(rpc)}"
+    )
+    assert bridge._lock.locked() is False
+
+
+@pytest.mark.asyncio
+async def test_prompt_send_failure_sends_abort():
+    """#790 (B-6 parity with stream_prompt): when request("prompt") itself
+    raises PiRpcError, the finally must still send the abort RPC — Pi may
+    already have started the turn and its tools, so without the abort a retry
+    duplicates side effects."""
+    rpc = _make_rpc()
+
+    async def failing_request(cmd, data=None):
+        if cmd == "prompt":
+            raise PiRpcError("Pi pipe error")
+        return {"ok": True}
+
+    rpc.request = AsyncMock(side_effect=failing_request)
+    bridge = PiBridge(rpc=rpc)
+
+    with pytest.raises(PiRpcError, match="Pi pipe error"):
+        await bridge.prompt("hi", session_id="sess-sendfail")
+
+    assert "abort" in _rpc_commands(rpc), (
+        "a failed prompt RPC must send the abort RPC (send_failed), mirroring "
+        f"stream_prompt's B-6 handling; calls={_rpc_commands(rpc)}"
+    )
+    assert bridge._lock.locked() is False
 
 
 @pytest.mark.asyncio
@@ -253,3 +329,76 @@ async def test_dispatch_reuses_service_and_marks_completed(monkeypatch):
         "post-success dedup message missing — _completed_keys never persists, "
         "i.e. ToolDispatchService is still rebuilt per callback"
     )
+
+
+# ─── #789: real tool name in the harness trail (no layer_upsert relabel) ──
+
+
+@pytest.mark.asyncio
+async def test_dispatch_keeps_real_tool_name_and_structural_mutation(monkeypatch):
+    """#789 (F-A-2): a fingerprint-carrying ``webgis_view_set`` dispatch must
+    be recorded in the harness trail under its REAL name (audit trail +
+    ToolChoiceAccuracy) while still entering the mutation ledger — the ledger
+    classification is structural (result carries mapspec_fingerprint), not the
+    fake "webgis_layer_upsert" relabel."""
+    from app.services.tool_dispatch_service import ToolDispatchResult
+
+    sid = "sess-789-viewset"
+    result = ToolDispatchResult(
+        status="ok",
+        llm_payload="view updated",
+        slim_event={},
+        geojson_ref=None,
+        raw_result={
+            "success": True,
+            "is_compiled": True,
+            "mapspec_fingerprint": "carto-sha256:fp-789",
+            "mutation_revision": 1,
+        },
+        error_msg=None,
+        map_actions=[],
+    )
+    fake_service = MagicMock()
+    fake_service.dispatch = AsyncMock(return_value=result)
+    monkeypatch.setattr(bridge_mod, "ToolDispatchService", lambda **kw: fake_service)
+
+    fake_registry = MagicMock()
+    fake_registry.list_tools = MagicMock(return_value=["webgis_view_set"])
+    fake_registry.metadata = MagicMock(return_value={"tier": 1})
+    monkeypatch.setattr(bridge_mod, "get_tool_registry", lambda: fake_registry)
+
+    async def _fake_persist(session_id, event, actions):
+        return True
+
+    async def _fake_eval(session_id, **kwargs):
+        return {}
+
+    monkeypatch.setattr(bridge_mod, "_persist_cartographic_harness_context", _fake_persist)
+    monkeypatch.setattr(bridge_mod, "evaluate_cartographic_session", _fake_eval)
+
+    try:
+        resp = await dispatch_tool(PiToolRequest(
+            toolCallId="tc-789",
+            name="webgis_view_set",
+            arguments={"zoom": 10},
+            sessionId=sid,
+        ))
+        assert resp.isError is False
+
+        harness = bridge_mod.get_harness(sid)
+        assert harness is not None
+        assert harness.tool_calls[-1]["name"] == "webgis_view_set", (
+            "#789: dispatch must record the REAL tool name, not the "
+            f"webgis_layer_upsert relabel (got {harness.tool_calls[-1]['name']!r})"
+        )
+        mutations = [
+            m for m in harness.mapspec_mutations
+            if m.get("session_id") == sid
+        ]
+        assert [m["tool_name"] for m in mutations] == ["webgis_view_set"]
+        assert mutations[0]["is_valid"] is True, (
+            "the structural fingerprint signal must still feed the mutation "
+            "ledger / validity ladder"
+        )
+    finally:
+        bridge_mod._discard_session_harness(sid)

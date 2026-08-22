@@ -143,3 +143,121 @@ async def test_assemble_does_not_refetch_map_state(monkeypatch):
     # The fetched inventory still makes it into the assembled context.
     assert "ref:data-aaa" in result.messages[0]["content"]
     assert "geocode_cn" in result.messages[0]["content"]
+
+
+# ── #788 (F-A-8): legacy path injects the cartography harness verdict ─────
+
+
+@pytest.fixture
+async def legacy_verdict_session():
+    """A session with a real MapSpec generation (for fingerprint matching)."""
+    import shutil
+    import uuid
+
+    from app.services.mapspec.store import BASE_STORAGE_DIR
+    from app.services.mapspec_store import mapspec_store
+
+    sid = f"legacy-verdict-{uuid.uuid4().hex[:8]}"
+    await mapspec_store.init_project(sid)
+    yield sid
+    await session_data_manager.clear_session(sid)
+    shutil.rmtree(BASE_STORAGE_DIR / sid, ignore_errors=True)
+
+
+async def _current_fingerprint(sid: str) -> str:
+    from app.lib.cartography.quality_loop import cartographic_fingerprint
+    from app.services.mapspec.store import mapspec_store_instance
+
+    mapspec = await mapspec_store_instance.get_mapspec(sid)
+    assert isinstance(mapspec, dict), "init_project must produce a mapspec"
+    return cartographic_fingerprint(mapspec)
+
+
+def _review(sid: str, fingerprint: str, status: str) -> dict:
+    review = {
+        "session_id": sid,
+        "cartography": {
+            "status": status,
+            "termination_reason": "desired_quality_failed",
+            "mapspec_fingerprint": fingerprint,
+            "checks": [
+                {"rule": "PAINT_LEGEND_EQUIVALENCE", "status": "fail",
+                 "message": "legend labels diverge from paint domain"},
+            ],
+            "repair_attempts": [],
+        },
+        "gate": {},
+        "overall_passed": False,
+    }
+    if status in ("passed", "passed_with_warnings"):
+        review["cartography"]["checks"] = []
+        review["overall_passed"] = True
+    return review
+
+
+def _system_blocks(result) -> str:
+    return "\n".join(
+        m["content"] for m in result.messages if m.get("role") == "system"
+    )
+
+
+@pytest.mark.asyncio
+async def test_legacy_path_injects_fail_verdict(legacy_verdict_session):
+    """#788: a stored failing review of the CURRENT generation must reach the
+    legacy engine's composed request messages — previously the
+    [CARTOGRAPHY_VERDICT] injection existed only on the Pi path."""
+    sid = legacy_verdict_session
+    fingerprint = await _current_fingerprint(sid)
+    await session_data_manager.set_map_state(
+        sid, "_cartographic_review", _review(sid, fingerprint, "failed_repairable")
+    )
+
+    result = await ChatContextAssembler().assemble(sid, [
+        {"role": "system", "content": "System prompt."},
+        {"role": "user", "content": "换个颜色"},
+    ])
+
+    blocks = _system_blocks(result)
+    assert "CARTOGRAPHY_VERDICT" in blocks
+    assert '"verdict": "fail"' in blocks
+    assert "failed_repairable" in blocks
+
+
+@pytest.mark.asyncio
+async def test_legacy_path_renders_pass_as_micro_token(legacy_verdict_session):
+    """#788 + #657: a passing review renders ONLY the micro-token — no status,
+    checks, or overall_passed fields leak into the legacy context."""
+    sid = legacy_verdict_session
+    fingerprint = await _current_fingerprint(sid)
+    await session_data_manager.set_map_state(
+        sid, "_cartographic_review",
+        _review(sid, fingerprint, "passed_with_warnings"),
+    )
+
+    result = await ChatContextAssembler().assemble(sid, [
+        {"role": "system", "content": "System prompt."},
+        {"role": "user", "content": "谢谢"},
+    ])
+
+    blocks = _system_blocks(result)
+    assert "CARTOGRAPHY_VERDICT" in blocks
+    assert '"verdict": "pass"' in blocks
+    assert "overall_passed" not in blocks
+    assert "passed_with_warnings" not in blocks
+
+
+@pytest.mark.asyncio
+async def test_legacy_path_skips_stale_generation_review(legacy_verdict_session):
+    """#788 guard: a review of a stale MapSpec generation is not injected
+    (same fingerprint guard as the Pi route helper)."""
+    sid = legacy_verdict_session
+    await session_data_manager.set_map_state(
+        sid, "_cartographic_review", _review(sid, "carto-sha256:stale", "failed_repairable")
+    )
+
+    result = await ChatContextAssembler().assemble(sid, [
+        {"role": "system", "content": "System prompt."},
+        {"role": "user", "content": "你好"},
+    ])
+
+    assert "CARTOGRAPHY_VERDICT" not in _system_blocks(result)

@@ -119,11 +119,11 @@ class HarnessEvaluator:
         evidence = evidence_result.get("evidence", [])
 
         had_mutation = any(e.get("mapspec_validity") for e in evidence)
-        display_mutation = any(
-            e.get("tool_name") == "webgis_layer_upsert"
-            and e.get("mapspec_validity")
-            for e in evidence
-        )
+        # #789: display-mutation detection is structural (any evidence carrying
+        # MapSpec validity), not the "webgis_layer_upsert" name — the dispatch
+        # seams now record the REAL tool name, and view/layout/product tools
+        # mutate display state just as much as a layer upsert.
+        display_mutation = had_mutation
         cartography_required = (
             display_mutation if require_cartography is None else require_cartography
         )

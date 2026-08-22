@@ -90,3 +90,154 @@ async def test_clear_session(client, app):
             assert resp.status_code == 200
     finally:
         app.dependency_overrides.clear()
+
+
+# ── #791 (F-E-3): session-lock contention -> scoped 503, never a 500 ──────
+
+
+class _BusyLock:
+    """Async CM whose acquire always times out — mirrors distributed_lock's
+    10s acquire deadline raising TimeoutError under cross-pod contention."""
+
+    async def __aenter__(self):
+        raise TimeoutError("session lock contention: could not acquire in 10s")
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _BusyLockRegistry:
+    def lock(self, session_id: str) -> _BusyLock:
+        return _BusyLock()
+
+
+def _assert_busy_503(exc_info) -> None:
+    from fastapi import HTTPException
+
+    assert isinstance(exc_info.value, HTTPException)
+    assert exc_info.value.status_code == 503, (
+        "#791: lock contention must surface as a scoped 503 (session busy), "
+        f"got {exc_info.value.status_code}"
+    )
+    assert "busy" in str(exc_info.value.detail).lower()
+
+
+@pytest.mark.asyncio
+async def test_cartographic_observation_lock_timeout_returns_503(monkeypatch):
+    """#791: the observation POST endpoint must translate a session-lock
+    TimeoutError into a 503 'session busy' body, not a generic 500."""
+    from fastapi import HTTPException
+
+    from app.api.routes.chat import (
+        CartographicRuntimeObservationRequest,
+        push_cartographic_runtime_observation,
+    )
+
+    monkeypatch.setattr(_chat_mod, "session_lock_registry", _BusyLockRegistry())
+    req = CartographicRuntimeObservationRequest(
+        client_generation=1,
+        mapspec_fingerprint="f" * 64,
+        layers=[],
+        viewport={},
+        style_loaded=True,
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        await push_cartographic_runtime_observation("sess-busy", req, _conv=object())
+    _assert_busy_503(exc_info)
+
+
+@pytest.mark.asyncio
+async def test_map_action_ack_lock_timeout_returns_503(monkeypatch):
+    """#791: the map-action-ACK endpoint must translate a session-lock
+    TimeoutError into a 503 (client retries; first-terminal-wins idempotency
+    makes the retry safe)."""
+    from fastapi import HTTPException
+
+    from app.api.routes.chat import MapActionAckRequest, push_map_action_acks
+
+    monkeypatch.setattr(_chat_mod, "session_lock_registry", _BusyLockRegistry())
+
+    limiter = MagicMock()
+
+    async def _is_allowed(key, max_requests, window_seconds):
+        return True
+
+    limiter.is_allowed = _is_allowed
+
+    async def _get_limiter():
+        return limiter
+
+    monkeypatch.setattr(_chat_mod, "get_rate_limiter", _get_limiter)
+
+    request = MagicMock()
+    request.headers = {}
+    request.client = None
+    acks = MapActionAckRequest(acks=[{
+        "action_id": "ma-1", "command": "fly_to", "status": "succeeded",
+    }])
+    with pytest.raises(HTTPException) as exc_info:
+        await push_map_action_acks("sess-busy", acks, request=request, _conv=object())
+    _assert_busy_503(exc_info)
+
+
+@pytest.mark.asyncio
+async def test_clear_session_lock_timeout_returns_503(monkeypatch):
+    """#791: DELETE /sessions/{id} under lock contention must return a scoped
+    503 (nothing was deleted — the tombstone write happens under the lock)."""
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(_chat_mod, "session_lock_registry", _BusyLockRegistry())
+    with pytest.raises(HTTPException) as exc_info:
+        await _chat_mod.clear_session(
+            "sess-busy", _user={}, owner_token=None, _conv=object()
+        )
+    _assert_busy_503(exc_info)
+
+
+def _patch_turn_start_busy(monkeypatch):
+    """Make the Pi-path turn-start observation write time out on the lock."""
+
+    async def _busy(session_id, map_state):
+        raise TimeoutError("session lock contention: could not acquire in 10s")
+
+    async def _noop_guard(db, session_id, user_id, owner_token):
+        return None
+
+    monkeypatch.setattr(_chat_mod, "_record_frontend_cartographic_observation", _busy)
+    monkeypatch.setattr(_chat_mod, "_guard_body_session", _noop_guard)
+    monkeypatch.setattr(_chat_mod, "USE_NEW_AGENT", True)
+    fake_bridge = MagicMock()
+    fake_bridge._process_died = False
+    fake_bridge.prompt = AsyncMock()
+    monkeypatch.setattr(_chat_mod, "pi_bridge", fake_bridge, raising=False)
+    return fake_bridge
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_turn_start_observation_lock_timeout_503(monkeypatch):
+    """#791: POST /chat/completions must scope a turn-start observation lock
+    TimeoutError to 503 — and never start the Pi turn."""
+    from fastapi import HTTPException
+
+    fake_bridge = _patch_turn_start_busy(monkeypatch)
+    req = _chat_mod.ChatRequest(message="hi", session_id="sess-busy")
+    with pytest.raises(HTTPException) as exc_info:
+        await _chat_mod.chat_completions(
+            req, request=MagicMock(), _user={}, owner_token=None, db=None
+        )
+    _assert_busy_503(exc_info)
+    fake_bridge.prompt.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_turn_start_observation_lock_timeout_503(monkeypatch):
+    """#791: POST /chat/stream must scope a turn-start observation lock
+    TimeoutError to 503 before any SSE stream starts."""
+    from fastapi import HTTPException
+
+    fake_bridge = _patch_turn_start_busy(monkeypatch)
+    req = _chat_mod.ChatRequest(message="hi", session_id="sess-busy")
+    with pytest.raises(HTTPException) as exc_info:
+        await _chat_mod.chat_stream(req, _user={}, owner_token=None, db=None)
+    _assert_busy_503(exc_info)
+    fake_bridge.stream_prompt.assert_not_called()

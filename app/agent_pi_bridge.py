@@ -72,7 +72,17 @@ def _env_float_drain(name: str, default: float) -> float:
 # Timeout constants for prompt/stream event draining (prompt semantics, not RPC-generic).
 # These stay in the bridge because they're about draining the event queue into SSE,
 # not about the RPC transport itself (which has its own PI_RPC_TIMEOUT in pi_rpc_client).
-PI_EVENT_DRAIN_TIMEOUT = _env_float_drain("PI_EVENT_DRAIN_TIMEOUT", 2.0)    # prompt() 非流式 drain 超时
+#
+# #786: PI_EVENT_DRAIN_TIMEOUT is the per-event wait granularity for prompt()'s
+# non-streaming drain, NOT a turn deadline. The vendor answers the ``prompt`` RPC
+# at preflight, so the drain consumes the event stream live — and a GIS tool call
+# is a silent window between ``tool_execution_start`` and ``tool_execution_end``
+# (the extension ignores ``_onUpdate``). Bounding a SINGLE inter-event gap at 2s
+# killed every turn with a >2s tool or slow first token. Failure semantics now
+# mirror stream_prompt: only CONTINUOUS silence reaching PI_EVENT_STREAM_TIMEOUT
+# (the stall budget) or the whole turn exceeding PI_TURN_TOTAL_TIMEOUT fails.
+PI_EVENT_DRAIN_TIMEOUT = _env_float_drain("PI_EVENT_DRAIN_TIMEOUT", 2.0)    # prompt() 单次事件等待粒度
+PI_TURN_TOTAL_TIMEOUT = _env_float_drain("PI_TURN_TOTAL_TIMEOUT", 900.0)    # prompt() 非流式整回合兜底上限
 
 # transport goal B-P1-3: how often to emit an SSE keepalive comment when Pi is
 # silent (long GIS tool, compaction, slow first token). Keeps the connection
@@ -406,7 +416,12 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
                 ev[k] = raw[k]
         event = ToolCallEvent(
             tool_call_id=request.toolCallId,
-            tool_name=("webgis_layer_upsert" if has_cartographic_generation else tool_name),
+            # #789: keep the REAL tool name. Relabeling every fingerprint-
+            # carrying call to "webgis_layer_upsert" falsified the audit trail
+            # and under-counted ToolChoiceAccuracy; the mutation ledger is now
+            # classified structurally (result carries mapspec_fingerprint) in
+            # PiAgentHarness.record_tool_result.
+            tool_name=tool_name,
             arguments=request.arguments or {},
             duration_ms=duration_ms,
             is_error=is_error,
@@ -952,7 +967,9 @@ async def record_cartographic_dispatch_evidence(
             result_evidence[key] = raw[key]
     event = ToolCallEvent(
         tool_call_id=tool_call_id,
-        tool_name="webgis_layer_upsert",
+        # #789: real tool name (no "webgis_layer_upsert" relabel) — the harness
+        # classifies mutations structurally from the mapspec_fingerprint.
+        tool_name=tool_name,
         arguments=arguments,
         duration_ms=duration_ms,
         is_error=False,
@@ -1302,6 +1319,60 @@ def get_harness(session_id: Optional[str] = None) -> Optional[PiAgentHarness]:
     return _harness
 
 
+def get_harness_telemetry_summary() -> Optional[dict[str, Any]]:
+    """#792 (F-A-4): service-level harness telemetry aggregated across the
+    per-session harness registry.
+
+    ``/metrics/digest`` used to present the LAST-TOUCHED session's harness as
+    service-level telemetry (``get_harness()`` with no session returns the
+    module-global ``_harness`` that ``_get_session_harness`` re-points on every
+    touch), so with concurrent sessions the digest flip-flopped between one
+    session's partial windows. Aggregate instead: mean of non-null per-session
+    rates (null when NO session has evidence for that rate), ``evaluated`` is
+    true when any session has evidence, counts sum, and ``harness_sessions``
+    names how many per-session harnesses contributed.
+    """
+    harnesses = list(_harnesses.values())
+    if not harnesses:
+        return None
+    summaries = [h.get_telemetry_summary() for h in harnesses]
+    rate_keys = sorted({
+        key
+        for summary in summaries
+        for key in (summary.get("rates") or {})
+    })
+    rates: dict[str, Any] = {}
+    evaluated: dict[str, bool] = {}
+    for key in rate_keys:
+        values = [
+            summary["rates"][key]
+            for summary in summaries
+            if (summary.get("rates") or {}).get(key) is not None
+        ]
+        rates[key] = round(sum(values) / len(values), 2) if values else None
+        evaluated[key] = any(
+            (summary.get("evaluated") or {}).get(key) for summary in summaries
+        )
+    count_keys = sorted({
+        key
+        for summary in summaries
+        for key in (summary.get("counts") or {})
+    })
+    counts = {
+        key: float(sum(
+            (summary.get("counts") or {}).get(key, 0.0) for summary in summaries
+        ))
+        for key in count_keys
+    }
+    counts["HarnessSessions"] = float(len(harnesses))
+    return {
+        "rates": rates,
+        "evaluated": evaluated,
+        "counts": counts,
+        "harness_sessions": len(harnesses),
+    }
+
+
 def clear_cartographic_session_state(session_id: str) -> None:
     """Drop process-local evidence when the owned session is deleted."""
     global _harness
@@ -1614,6 +1685,7 @@ class PiBridge:
             TURN_EVIDENCE.register(rt_ev)
             cancelled = False
             timed_out = False
+            send_failed = False
             try:
                 # F5/F24: publish the active turn's identity + cancellation token
                 # while the lock is held — abort() reads the sid for session
@@ -1631,14 +1703,47 @@ class PiBridge:
                 # Drop any residual events from a prior turn before sending, so they
                 # cannot be attributed to this turn.
                 await self._drain_stale_events()
-                await self._rpc.request("prompt", data)
+                try:
+                    await self._rpc.request("prompt", data)
+                except PiRpcError as send_exc:
+                    # #790 (B-6 parity with stream_prompt's ``send_failed``): the
+                    # prompt RPC itself raised. Pi may already have started the
+                    # turn and its tools, so the finally MUST abort — without it
+                    # a retry duplicates side effects while this caller already
+                    # returned an error.
+                    send_failed = True
+                    rt_ev.settle(
+                        Outcome.FAILED,
+                        failure_class="pi_send_error",
+                        detail=str(send_exc)[:200],
+                    )
+                    raise
 
                 # Drain events from the queue (non-streaming mode)
                 content_parts: list[str] = []
                 _drained_complete = False
+                drain_started = time.monotonic()
+                last_event_at = drain_started
                 while True:
+                    # #786: keep draining while events keep arriving. A single
+                    # expired wait is NOT a turn failure — declare a stall only
+                    # after CONTINUOUS silence reaching the stream path's stall
+                    # budget (PI_EVENT_STREAM_TIMEOUT) or the bounded total-turn
+                    # deadline, mirroring stream_prompt's silence accumulation.
+                    now = time.monotonic()
+                    remaining_stall = PI_EVENT_STREAM_TIMEOUT - (now - last_event_at)
+                    remaining_total = PI_TURN_TOTAL_TIMEOUT - (now - drain_started)
+                    wait_budget = min(
+                        PI_EVENT_DRAIN_TIMEOUT, remaining_stall, remaining_total
+                    )
+                    if wait_budget <= 0:
+                        timed_out = True
+                        break
                     try:
-                        event = await asyncio.wait_for(self._rpc.events.get(), timeout=PI_EVENT_DRAIN_TIMEOUT)
+                        event = await asyncio.wait_for(
+                            self._rpc.events.get(), timeout=wait_budget
+                        )
+                        last_event_at = time.monotonic()
                         if event.get("type") == "agent_end":
                             _drained_complete = True
                             break
@@ -1646,8 +1751,12 @@ class PiBridge:
                         if text:
                             content_parts.append(text)
                     except asyncio.TimeoutError:
-                        timed_out = True
-                        break
+                        if (
+                            time.monotonic() - last_event_at >= PI_EVENT_STREAM_TIMEOUT
+                            or time.monotonic() - drain_started >= PI_TURN_TOTAL_TIMEOUT
+                        ):
+                            timed_out = True
+                            break
                 # Best-effort: drain any leftover events so the next turn starts clean.
                 await self._drain_remaining_turn_events()
                 if timed_out:
@@ -1662,8 +1771,10 @@ class PiBridge:
                     # failure_class in the except handler below.
                     rt_ev.settle(Outcome.FAILED, failure_class="drain_timeout")
                     raise PiRpcError(
-                        f"Pi agent did not emit agent_end within {PI_EVENT_DRAIN_TIMEOUT}s "
-                        "(event-drain timeout); the turn has been aborted."
+                        f"Pi agent did not emit agent_end (continuous silence exceeded "
+                        f"{PI_EVENT_STREAM_TIMEOUT}s or the turn exceeded "
+                        f"{PI_TURN_TOTAL_TIMEOUT}s; event-drain timeout); "
+                        "the turn has been aborted."
                     )
                 # Only a clean agent_end reaches this point — a timeout already
                 # raised above, so PARTIAL is no longer reachable.
@@ -1676,13 +1787,15 @@ class PiBridge:
                 rt_ev.settle(Outcome.FAILED, failure_class=type(exc).__name__, detail=str(exc)[:200])
                 raise
             finally:
-                if cancelled or timed_out:
+                if cancelled or timed_out or send_failed:
                     # #554 defect 2: tell Pi to stop generating tokens / executing
                     # tools when the non-streaming turn ends without a clean
                     # agent_end (drain timeout) or is cancelled mid-drain — a
-                    # retry otherwise duplicates side effects. Mirrors
-                    # stream_prompt's finally guard; abort() is lock-free by
-                    # design, so it is safe to call while the lock is still held.
+                    # retry otherwise duplicates side effects. #790: a failed
+                    # prompt RPC (send_failed) must abort for the same reason
+                    # (B-6, mirroring stream_prompt). Mirrors stream_prompt's
+                    # finally guard; abort() is lock-free by design, so it is
+                    # safe to call while the lock is still held.
                     try:
                         await asyncio.wait_for(
                             asyncio.shield(self._abort_on_disconnect(turn_sid)),
