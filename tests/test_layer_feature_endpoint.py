@@ -96,3 +96,43 @@ async def test_feature_endpoint_does_not_hydrate_full_fc_on_wire(client, store):
     # must NOT be a FeatureCollection
     assert body["type"] == "Feature"
     assert "features" not in body
+
+
+@pytest.mark.asyncio
+async def test_feature_endpoint_served_from_spatial_index(client, store):
+    """P-2（#875）：MVT 索引缓存命中时零 Redis/store 全量读取 —— 索引里的
+    features 列表直接服务要素查找（即使 store 侧数据不同也不触达）。"""
+    from app.services.mvt import spatial_index_cache, build_spatial_index_entry
+
+    index_fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "id": "idx-1", "geometry": {"type": "Point", "coordinates": [104.0, 30.6]},
+             "properties": {"name": "from-index"}},
+        ],
+    }
+    store_fc = _fc_with_ids()
+    ref_id = await store.store(_VALID_SID, store_fc, prefix="data")
+
+    key = (_VALID_SID, ref_id)
+    entry = build_spatial_index_entry(key, index_fc)
+    spatial_index_cache._entries[key] = entry  # 直接注入（build 已含 features 列表）
+    spatial_index_cache._total_bytes += getattr(entry, "estimated_bytes", 0)
+    try:
+        resp = await client.get(
+            f"/api/v1/layers/data/{ref_id}/feature/idx-1",
+            params={"session_id": _VALID_SID},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        # 来自索引（store 侧没有 idx-1 —— 若走了全量 get_ref_data 会 404）
+        assert body["id"] == "idx-1"
+        assert body["properties"]["name"] == "from-index"
+        # 索引里不存在的要素仍 404（不回落到 store 的旧数据）
+        resp2 = await client.get(
+            f"/api/v1/layers/data/{ref_id}/feature/feat-1",
+            params={"session_id": _VALID_SID},
+        )
+        assert resp2.status_code == 404
+    finally:
+        spatial_index_cache.invalidate_ref(_VALID_SID, ref_id)

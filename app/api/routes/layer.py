@@ -12,10 +12,11 @@
 import asyncio
 import gzip
 import hashlib
+from collections import OrderedDict
 import logging
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 
 from app.core.auth import require_owned_session, verify_session_owner
 from app.lib.geojson_serializer import serialize_geojson
@@ -53,6 +54,7 @@ async def get_session_layer_data(
     session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     _conv: Conversation = Depends(require_owned_session),
+    request: Request = None,
 ):
     """通过引用 ID 或别名获取会话缓存中的大数据对象（如分析产生的 GeoJSON）。"""
     if not ref_id or len(ref_id) > 128 or any(c.isspace() for c in ref_id):
@@ -65,8 +67,18 @@ async def get_session_layer_data(
     # #590：数据面响应侧序列化（多 MB GeoJSON）不能由默认 JSONResponse 在
     # 事件循环上整包编码 —— 与 #427/#499 同族，走分块 + to_thread 序列化
     #（C 编码器分批持有 GIL，事件循环间隙保持毫秒级），再以 bytes 响应返回。
-    body = await serialize_geojson(res.data)
-    return Response(content=body, media_type="application/json")
+    # P-7（#880）：compact 序列化（pretty 对 50k 要素层放大 ~1.8x）+ 客户端
+    # 声明 gzip 时端点级压缩（dev/直连 uvicorn 无 nginx gzip 兜底）。
+    body = await serialize_geojson(res.data, pretty=False)
+    vary = {"Vary": "Accept-Encoding", "X-Content-Type-Options": "nosn"}
+    if request is not None and "gzip" in (request.headers.get("accept-encoding") or ""):
+        gz = await asyncio.to_thread(gzip.compress, body, 6)
+        return Response(
+            content=gz,
+            media_type="application/json",
+            headers={"Content-Encoding": "gzip", **vary},
+        )
+    return Response(content=body, media_type="application/json", headers=vary)
 
 
 def _extract_fc(data) -> Optional[dict]:
@@ -112,6 +124,20 @@ async def get_session_layer_feature(
     if not feature_id or len(feature_id) > 256:
         raise HTTPException(status_code=400, detail="非法 feature_id")
 
+    # P-2（#875）：MVT 瓦片路径的进程内空间索引常驻同一 ref 的 features
+    # 列表 —— 命中时零 Redis 流量、零 json.loads，直接在已解析列表上扫描
+    # （鉴权与会话归属同 MVT 路由：require_owned_session 已校验）。
+    from app.services.mvt import spatial_index_cache
+    index_entry = spatial_index_cache.get((session_id, ref_id))
+    if index_entry is not None:
+        feature = await asyncio.to_thread(
+            _find_feature_by_id, {"features": index_entry.features}, feature_id
+        )
+        if not feature:
+            raise HTTPException(status_code=404, detail="要素不存在")
+        body = await serialize_geojson(feature, pretty=False)
+        return Response(content=body, media_type="application/json")
+
     res = await session_data_manager.get_ref_data(session_id, ref_id, owner_token=owner_token)
     if not res.success:
         status_code = 403 if res.error_type == "PermissionDenied" else 404
@@ -125,7 +151,7 @@ async def get_session_layer_feature(
     if not feature:
         raise HTTPException(status_code=404, detail="要素不存在")
 
-    body = await serialize_geojson(feature)
+    body = await serialize_geojson(feature, pretty=False)
     return Response(content=body, media_type="application/json")
 
 
@@ -421,12 +447,58 @@ async def get_raster_tile(
     session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     _conv: Conversation = Depends(require_owned_session),
+    if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
 ):
-    """以 Web Mercator XYZ PNG 瓦片形式返回栅格图层数据（Data Plane 路径）。"""
+    """以 Web Mercator XYZ PNG 瓦片形式返回栅格图层数据（Data Plane 路径）。
+
+    P-5（#878）：与 MVT 路由同构的性能路径 —— PNG LRU 命中零 ref-store IO；
+    single-flight 去重并发同瓦片；(session, ref) → safe_path 短 TTL 缓存
+    免去每瓦片的 Redis 拉取 + 路径校验；响应带 ETag 支持 304。
+    """
     if not ref_id or len(ref_id) > 128 or any(c.isspace() for c in ref_id):
         raise HTTPException(status_code=400, detail="非法 ref_id")
     if not (0 <= z <= 20) or x < 0 or y < 0 or x >= (1 << z) or y >= (1 << z):
         raise HTTPException(status_code=400, detail="非法瓦片坐标")
+
+    from app.services.mvt import tile_lru_cache
+
+    cache_key = (session_id, ref_id, z, x, y)
+    cached_png = tile_lru_cache.get(cache_key)
+    if cached_png is not None:
+        return _png_tile_response(cached_png, if_none_match)
+
+    async def _compute_png() -> bytes:
+        safe_path = await _resolve_raster_tile_path(session_id, ref_id, owner_token)
+        png = await asyncio.to_thread(render_raster_tile, safe_path, z, x, y)
+        tile_lru_cache.put(cache_key, png)
+        return png
+
+    png_bytes = await single_flight.run(cache_key, _compute_png)
+    return _png_tile_response(png_bytes, if_none_match)
+
+
+# P-5（#878）：(session, ref) → 已校验 safe_path 的短 TTL 缓存。
+# 栅格 ref 的 payload 只是 file_path dict，但每次读取协议昂贵（metadata +
+# payload GET + WATCH/MULTI）；瓦片风暴时一屏 20-40 瓦片全部重复付费。
+# 失效：TTL 5s + tile_lru_cache.invalidate_ref 联动清 PNG（ref 失效时路径
+# 缓存最迟 5s 后自然过期）。
+_RASTER_PATH_TTL_S = 5.0
+_raster_path_cache: "OrderedDict[tuple, tuple[str, float]]" = OrderedDict()
+_RASTER_PATH_CACHE_MAX = 256
+
+
+async def _resolve_raster_tile_path(session_id: str, ref_id: str, owner_token: Optional[str]) -> str:
+    """Resolve + validate a raster ref's file path with a short process cache."""
+    import time as _time
+
+    key = (session_id, ref_id)
+    hit = _raster_path_cache.get(key)
+    if hit is not None:
+        path, expire_at = hit
+        if _time.monotonic() <= expire_at:
+            _raster_path_cache.move_to_end(key)
+            return path
+        _raster_path_cache.pop(key, None)
 
     res = await session_data_manager.get_ref_data(session_id, ref_id, owner_token=owner_token)
     if not res.success or not res.data:
@@ -451,12 +523,26 @@ async def get_raster_tile(
         logger.warning(f"[layer] raster tile path rejected: {e}")
         raise HTTPException(status_code=400, detail="非法栅格路径")
 
-    png_bytes = await asyncio.to_thread(render_raster_tile, safe_path, z, x, y)
+    _raster_path_cache[key] = (safe_path, _time.monotonic() + _RASTER_PATH_TTL_S)
+    _raster_path_cache.move_to_end(key)
+    while len(_raster_path_cache) > _RASTER_PATH_CACHE_MAX:
+        _raster_path_cache.popitem(last=False)
+    return safe_path
+
+
+def _png_tile_response(png_bytes: bytes, if_none_match: Optional[str]) -> Response:
+    """PNG 瓦片响应：ETag（sha256 前 16 位）+ If-None-Match 304（对齐 MVT）。"""
+    etag = '"%s"' % hashlib.sha256(png_bytes).hexdigest()[:16]
+    if if_none_match:
+        candidate = if_none_match.strip()
+        if candidate == "*" or candidate.strip('"') == etag.strip('"'):
+            return Response(status_code=304, headers={"ETag": etag})
     return Response(
         content=png_bytes,
         media_type="image/png",
         headers={
             "Cache-Control": "private, max-age=300",
+            "ETag": etag,
             "X-Content-Type-Options": "nosniff",
         },
     )

@@ -1059,7 +1059,10 @@ class ToolRegistry:
                 # input was a registered alias for this session.
                 _resolved = aliases.get(node, node)
                 if node.startswith("ref:") or _resolved != node:
-                    data = await session_data_manager.get(session_id, node)
+                    # P-1（#874）：解引用热路径走共享只读读取（进程内 payload
+                    # 缓存 / 存储对象本体），链式分析 turn 内同 ref 不再重复
+                    # 全量 GET + json.loads。只读约定：工具不得就地改 payload。
+                    data = await session_data_manager.get_shared(session_id, node)
                     if data is not None:
                         # PERF-F2: the dereferenced payload is OPAQUE — refs
                         # live in the ARGUMENTS, not inside stored data. The

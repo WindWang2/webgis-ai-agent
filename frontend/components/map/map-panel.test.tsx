@@ -639,8 +639,10 @@ describe('MapPanel — FE-3 interaction UX', () => {
     // across the whole storm.
     expect(overlays.legendRenders).toBe(0);
     expect(overlays.decorRenders).toBe(0);
-    // The Map component itself re-renders per frame (viewState is local state).
-    expect(rmg.renderCount).toBeGreaterThan(mapRendersBefore);
+    // P-9 (#882): non-controlled camera — onMove only writes viewStateRef;
+    // the Map component (and MapPanel at large) no longer re-renders per
+    // frame during the storm.
+    expect(rmg.renderCount).toBe(mapRendersBefore);
 
     // Settle (100ms viewport-write debounce): the store gets ONE final
     // viewport write — the zoom scale bar legitimately updates once, never per

@@ -149,6 +149,28 @@ class MemorySessionStore(BaseSessionStore):
         aliases = self._aliases.get(session_id, {})
         return {s: aliases.get(s, s) for s in strings}
 
+    async def get_shared(self, session_id: str, ref_id_or_alias: str) -> Optional[Any]:
+        """P-1（#874）：共享只读读取 —— 返回存储对象本体（零拷贝）。
+
+        进程内后端自己就是权威副本，无需额外缓存：overwrite/delete/evict
+        天然反映在下一次读取。只读约定见
+        app/services/ref_payload_cache.py；需要可变副本走 ``get()``。
+        """
+        session_cache = self._store.get(session_id)
+        if not session_cache:
+            return None
+        ref_id = ref_id_or_alias
+        aliases = self._aliases.get(session_id, {})
+        if ref_id_or_alias in aliases:
+            ref_id = aliases[ref_id_or_alias]
+        data = session_cache.get(ref_id)
+        if data is None:
+            return None
+        # LRU touch（与 get() 一致；dict 本体共享，move_to_end 保热度）
+        session_cache.move_to_end(ref_id)
+        self._touch_session(session_id)
+        return data
+
     async def get(self, session_id: str, ref_id_or_alias: str) -> Optional[Any]:
         """根据游标 ID 或别名获取原始数据
         

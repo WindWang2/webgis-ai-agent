@@ -1292,8 +1292,13 @@ async def push_cartographic_runtime_observation(
             from app.agent_pi_bridge import evaluate_cartographic_session
 
             try:
+                # P-6（#879）：锁内快照复用——observation 刚写入的字段本地合成进
+                # 已读快照，hydrate/evaluate 不再各自冷读 map_state（此前一次
+                # 请求 3 次 get_map_state，1MiB 级 mapspec 字段反复重解析）。
+                state_snapshot = dict(state)
+                state_snapshot["_cartographic_observation"] = observation
                 review = await evaluate_cartographic_session(
-                    session_id, session_lock_held=True
+                    session_id, session_lock_held=True, state=state_snapshot
                 )
             except Exception as review_error:  # noqa: BLE001 - observation remains accepted
                 logger.warning(

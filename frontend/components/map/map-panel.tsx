@@ -130,7 +130,10 @@ export function MapPanel({
   void _onToggleLayer;
 
   const { selectedBaseLayer, registerSnapshotFn, dispatchAction } = useMapAction()
-  const [viewState, setViewState] = useState(DEFAULT_VIEW_STATE)
+  // P-9（#882）：非受控相机 —— MapLibre 实例自持真相，onMove 只写
+  // viewStateRef（0 re-render 成本）；程序化移动走 mapRef/命令通道。
+  // 旧受控回灌（setViewState → {...viewState}）是恒等反馈环，移动期间
+  // 每帧触发 MapPanel 整组件重渲染。
   const viewStateRef = useRef(DEFAULT_VIEW_STATE)
   const [decorState, setDecorState] = useState({
     zoom: DEFAULT_VIEW_STATE.zoom,
@@ -940,7 +943,6 @@ export function MapPanel({
   }, [])
 
   const handleMove = useCallback((evt: ViewStateChangeEvent) => {
-    setViewState(evt.viewState)
     viewStateRef.current = evt.viewState
     // 悬浮窗锚定在点击时的屏幕像素：地图一动位置就失真，直接关闭。
     setPoiPanel((p) => (p ? null : p))
@@ -1084,7 +1086,7 @@ export function MapPanel({
       <Map
         id="default"
         ref={mapRef}
-        {...viewState}
+        initialViewState={DEFAULT_VIEW_STATE}
         onMove={handleMove}
         onClick={handleMapClick}
         interactiveLayerIds={interactiveIds}
