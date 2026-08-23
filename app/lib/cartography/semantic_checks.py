@@ -17,6 +17,10 @@ import math
 import re
 from typing import Any, Dict, List, Optional
 
+from app.lib.cartography.palettes import (
+    min_adjacent_delta_e,
+    perceptual_ramp,
+)
 from app.lib.cartography.thematic_spec import palette_size, spec_to_paint, thematic_field
 
 # Layer "type" expected for a given geometry type. A Point layer painted as
@@ -889,6 +893,335 @@ def _check_thematic_consistency(
                 ))
 
 
+# ─── 量化制图规则（specs/cartographic-quality-rules-and-memory-spec P1）────
+# 三条确定性规则：视口负载量、色带感知可分性（CIEDE2000）、图例完备性。
+# 适用性约定与既有条件规则一致（如 RESULT_MAP_PROVENANCE）：仅当规则的
+# 证据域存在时发射 check——视口负载需要 view.zoom + profile 计数/bbox，
+# 色彩可分性需要 legend 颜色，图例完备需要可见专题层。证据缺失时不发射
+# 假通过；多边形填充负载模型显式推迟（无 check，绝不猜）。
+
+_LOAD_WARN_RATIO = 0.15
+_LOAD_FAIL_RATIO = 0.40
+_VIEWPORT_WIDTH_PX = 1024.0
+_VIEWPORT_HEIGHT_PX = 768.0
+_AVG_LINE_SEGMENT_PX = 40.0
+_DEFAULT_CIRCLE_RADIUS_PX = 5.0
+_DEFAULT_LINE_WIDTH_PX = 2.0
+_MAX_MERCATOR_LAT = 85.0
+_COLOR_SEP_FAIL_DELTA_E = 5.0
+_COLOR_SEP_WARN_DELTA_E = 10.0
+
+_POINT_GEOMS = ("Point", "MultiPoint")
+_LINE_GEOMS = ("LineString", "MultiLineString")
+_POLYGON_GEOMS = ("Polygon", "MultiPolygon")
+
+
+def _viewport_bbox(view: Any) -> Optional[List[float]]:
+    """Web-mercator 视口 bbox [w, s, e, n]（度）。zoom/center 缺失 → None。"""
+    if not isinstance(view, dict):
+        return None
+    zoom = view.get("zoom")
+    center = view.get("center")
+    if not _is_num(zoom) or not isinstance(center, (list, tuple)) or len(center) < 2:
+        return None
+    if not (_is_num(center[0]) and _is_num(center[1])):
+        return None
+    z = float(zoom)
+    if z < 0 or z > 24:
+        return None
+    lon = min(max(float(center[0]), -180.0), 180.0)
+    lat = min(max(float(center[1]), -_MAX_MERCATOR_LAT), _MAX_MERCATOR_LAT)
+    # 256px 瓦片在 zoom z 覆盖 360/2^z 度经度；视口宽高按 1024×768。
+    lon_span = 360.0 * _VIEWPORT_WIDTH_PX / (256.0 * (2.0 ** z))
+    lat_span = (
+        360.0 * _VIEWPORT_HEIGHT_PX / (256.0 * (2.0 ** z))
+        / max(math.cos(math.radians(lat)), 1e-6)
+    )
+    return [
+        max(lon - lon_span / 2.0, -180.0),
+        max(lat - lat_span / 2.0, -90.0),
+        min(lon + lon_span / 2.0, 180.0),
+        min(lat + lat_span / 2.0, 90.0),
+    ]
+
+
+def _bbox_overlap_ratio(viewport: List[float], bbox: List[float]) -> float:
+    """源 bbox 落入视口的比例（0..1，均匀密度假设下的可见份额）。"""
+    w = max(viewport[0], bbox[0])
+    s = max(viewport[1], bbox[1])
+    e = min(viewport[2], bbox[2])
+    n = min(viewport[3], bbox[3])
+    if e <= w or n <= s:
+        return 0.0
+    src_area = max((bbox[2] - bbox[0]) * (bbox[3] - bbox[1]), 1e-12)
+    return min((e - w) * (n - s) / src_area, 1.0)
+
+
+def _symbol_area_px(layer: Dict[str, Any], geom_types: List[str]) -> Optional[float]:
+    """单要素平均符号面积（px²）。点/线模型；多边形填充模型推迟 → None。
+
+    点层取 paint ``circle-radius``（数值常量，默认 5px）；线层取
+    ``line-width`` × 平均段长估计（40px）。混合点+线时取两者均值（分布
+    未知，如实记录于 evidence.model）。
+    """
+    has_point = any(g in _POINT_GEOMS for g in geom_types)
+    has_line = any(g in _LINE_GEOMS for g in geom_types)
+    if not (has_point or has_line):
+        return None
+    paint = layer.get("paint") if isinstance(layer.get("paint"), dict) else {}
+
+    def _num_or(key: str, default: float) -> float:
+        value = paint.get(key)
+        return float(value) if _is_num(value) else default
+
+    point_area = math.pi * _num_or("circle-radius", _DEFAULT_CIRCLE_RADIUS_PX) ** 2
+    line_area = _num_or("line-width", _DEFAULT_LINE_WIDTH_PX) * _AVG_LINE_SEGMENT_PX
+    if has_point and has_line:
+        return (point_area + line_area) / 2.0
+    return point_area if has_point else line_area
+
+
+def _check_viewport_load(
+    report: CartographyReport,
+    mapspec: Dict[str, Any],
+    layer: Dict[str, Any],
+    lid: Optional[str],
+    sid: Optional[str],
+    profile: Optional[Dict[str, Any]],
+) -> None:
+    """carto.load.ratio — 视口内估计墨量负载（点/线模型）。
+
+    负载 = 估计可见要素数 × 平均符号面积 / 视口像素面积。均匀密度假设
+    如实标注；数据操作类修复（抽稀/概括）绝不进入 AUTO_SAFE——它们改
+    变数据，只能作为建议上报。
+    """
+    if layer.get("type") == "raster" or not isinstance(profile, dict):
+        return
+    feature_count = profile.get("featureCount")
+    bbox = profile.get("bbox")
+    geom_types = [
+        g for g in (profile.get("geometryTypes") or [])
+        if isinstance(g, str)
+    ]
+    symbol_area = _symbol_area_px(layer, geom_types)
+    viewport = _viewport_bbox(mapspec.get("view"))
+    if (
+        not _is_num(feature_count)
+        or float(feature_count) <= 0
+        or not _valid_bbox(bbox)
+        or symbol_area is None
+        or viewport is None
+    ):
+        return
+    coverage = _bbox_overlap_ratio(viewport, list(bbox))
+    est_visible = float(feature_count) * coverage
+    load_ratio = est_visible * symbol_area / (_VIEWPORT_WIDTH_PX * _VIEWPORT_HEIGHT_PX)
+    evidence = {
+        "zoom": mapspec.get("view", {}).get("zoom"),
+        "viewport_px": [int(_VIEWPORT_WIDTH_PX), int(_VIEWPORT_HEIGHT_PX)],
+        "bbox_coverage": round(coverage, 6),
+        "feature_count": int(float(feature_count)),
+        "est_visible_features": int(est_visible),
+        "symbol_area_px": round(symbol_area, 2),
+        "geometry_types": geom_types,
+        "load_ratio": round(load_ratio, 4),
+        "thresholds": {"warn": _LOAD_WARN_RATIO, "fail": _LOAD_FAIL_RATIO},
+        "model": "uniform_density_point_line_symbols",
+    }
+    if load_ratio > _LOAD_FAIL_RATIO:
+        report.add_check(
+            "carto.load.ratio",
+            "fail",
+            (f"Layer '{lid}' viewport load {load_ratio:.2f} exceeds the "
+             f"{_LOAD_FAIL_RATIO:.0%} ink budget — thin or generalize before display"),
+            severity="error",
+            layer_id=lid,
+            source_id=sid,
+            evidence=evidence,
+            repairability="not_repairable",
+            suggested_fix={
+                "operation": (
+                    "thin_features"
+                    if any(g in _POINT_GEOMS for g in geom_types)
+                    else "generalize"
+                ),
+                "layer_id": lid,
+                "target_ratio": _LOAD_WARN_RATIO,
+            },
+        )
+        return
+    if load_ratio > _LOAD_WARN_RATIO:
+        report.add_check(
+            "carto.load.ratio",
+            "warning",
+            (f"Layer '{lid}' viewport load {load_ratio:.2f} is above the "
+             f"{_LOAD_WARN_RATIO:.0%} comfort budget"),
+            severity="warning",
+            layer_id=lid,
+            source_id=sid,
+            evidence=evidence,
+            repairability="not_repairable",
+            suggested_fix={
+                "operation": "thin_features",
+                "layer_id": lid,
+                "target_ratio": _LOAD_WARN_RATIO,
+            },
+        )
+        return
+    report.add_check(
+        "carto.load.ratio",
+        "pass",
+        f"Layer '{lid}' viewport load {load_ratio:.2f} is within budget",
+        layer_id=lid,
+        source_id=sid,
+        evidence=evidence,
+    )
+
+
+def _check_color_separability(
+    report: CartographyReport,
+    layer: Dict[str, Any],
+    lid: Optional[str],
+    sid: Optional[str],
+) -> None:
+    """carto.color.separability — 图例相邻类色的感知可分性（CIEDE2000）。
+
+    ΔE00 < 5（fail）：类色在感知上不可分，读者无法把类别映射回图例；
+    5–10（warning）：可分但吃力。失败时若能生成同长度的感知均匀替代
+    色带，给出 AUTO_SAFE 的 change_palette 修复（只换呈现色，不动分类
+    语义）；替代色带自身不达标则只作建议，绝不提出一条失败的“修复”。
+    """
+    legend_spec = layer.get("legend_spec")
+    if not isinstance(legend_spec, dict):
+        return
+    colors = _legend_colors(legend_spec)
+    if len(colors) < 2:
+        return
+    min_de = min_adjacent_delta_e(colors)
+    if min_de is None:
+        # 存在不可解析颜色：色值合法性由既有 color 校验规则负责；
+        # 本规则在其解析成功前无可评证据。
+        return
+    evidence = {
+        "legend_type": legend_spec.get("type"),
+        "class_count": len(colors),
+        "min_adjacent_delta_e": round(min_de, 2),
+        "thresholds": {
+            "fail": _COLOR_SEP_FAIL_DELTA_E,
+            "warn": _COLOR_SEP_WARN_DELTA_E,
+        },
+        "model": "ciede2000",
+    }
+    if min_de >= _COLOR_SEP_WARN_DELTA_E:
+        report.add_check(
+            "carto.color.separability",
+            "pass",
+            (f"Layer '{lid}' legend classes are perceptually separable "
+             f"(min adjacent ΔE00 {min_de:.1f})"),
+            layer_id=lid,
+            source_id=sid,
+            evidence=evidence,
+        )
+        return
+
+    replacement = perceptual_ramp(len(colors))
+    replacement_ok = (
+        len(replacement) == len(colors)
+        and (min_adjacent_delta_e(replacement) or 0.0) >= _COLOR_SEP_WARN_DELTA_E
+    )
+    message = (
+        f"Layer '{lid}' legend classes are not perceptually separable "
+        f"(min adjacent ΔE00 {min_de:.1f})"
+        if min_de < _COLOR_SEP_FAIL_DELTA_E
+        else f"Layer '{lid}' legend classes are hard to tell apart "
+             f"(min adjacent ΔE00 {min_de:.1f})"
+    )
+    if min_de < _COLOR_SEP_FAIL_DELTA_E:
+        status, severity = "fail", "error"
+        repairability = "auto_safe" if replacement_ok else "not_repairable"
+        suggested = (
+            {
+                "operation": "change_palette",
+                "layer_id": lid,
+                "value": {"colors": replacement},
+            }
+            if replacement_ok
+            else {"operation": "change_palette", "layer_id": lid}
+        )
+    else:
+        status, severity = "warning", "warning"
+        repairability = "not_repairable"
+        suggested = {
+            "operation": "change_palette",
+            "layer_id": lid,
+            "value": {"colors": replacement} if replacement_ok else None,
+        }
+    report.add_check(
+        "carto.color.separability",
+        status,
+        message,
+        severity=severity,
+        layer_id=lid,
+        source_id=sid,
+        evidence=evidence,
+        repairability=repairability,
+        suggested_fix=suggested,
+    )
+
+
+def _check_map_legend_completeness(
+    report: CartographyReport,
+    mapspec: Dict[str, Any],
+    layers: List[Dict[str, Any]],
+) -> None:
+    """carto.legend.completeness — 可见专题层必须有可读的图例通道。
+
+    存在带 legend_spec 的可见专题层、而地图级图例被显式关闭
+    （layout.legend.visible === false）时，分类对读者不可解释。修复是
+    presentation-only 的（打开图例 chrome），AUTO_SAFE。
+    """
+    thematic_visible: List[str] = []
+    for layer in layers:
+        if not isinstance(layer, dict) or layer.get("visible") is False:
+            continue
+        if layer.get("type") == "raster":
+            continue
+        legend_spec = layer.get("legend_spec")
+        if not isinstance(legend_spec, dict):
+            continue
+        if _legend_colors(legend_spec) or (legend_spec.get("categories") or []):
+            thematic_visible.append(str(layer.get("id")))
+    if not thematic_visible:
+        return
+    legend = (mapspec.get("layout") or {}).get("legend")
+    legend_hidden = isinstance(legend, dict) and legend.get("visible") is False
+    if not legend_hidden:
+        report.add_check(
+            "carto.legend.completeness",
+            "pass",
+            (f"{len(thematic_visible)} visible thematic layer(s) have a "
+             "readable legend channel"),
+            evidence={"thematic_visible_layers": thematic_visible},
+        )
+        return
+    report.add_check(
+        "carto.legend.completeness",
+        "fail",
+        ("Map legend is explicitly hidden while visible classified layer(s) "
+         f"{thematic_visible} need a legend to be interpretable"),
+        severity="error",
+        evidence={
+            "thematic_visible_layers": thematic_visible,
+            "map_legend_visible": False,
+        },
+        repairability="auto_safe",
+        suggested_fix={
+            "operation": "set_map_legend_visibility",
+            "value": True,
+        },
+    )
+
+
 def evaluate_cartography_semantics(
     mapspec: Dict[str, Any],
     source_profiles: Optional[Dict[str, Dict[str, Any]]] = None,
@@ -1653,6 +1986,11 @@ def evaluate_cartography_semantics(
             evidence={"pixel_evidence_available": False},
         )
 
+        # 6b. Quantitative cartographic rules
+        # (specs/cartographic-quality-rules-and-memory-spec Phase 1).
+        _check_viewport_load(report, mapspec, layer, lid, sid, profile)
+        _check_color_separability(report, layer, lid, sid)
+
     # 7. Legend / style field consistency (warning).
     legend = (mapspec.get("layout") or {}).get("legend") or {}
     legend_field = legend.get("field") if isinstance(legend, dict) else None
@@ -1670,5 +2008,9 @@ def evaluate_cartography_semantics(
                     f"(used: {sorted(paint_fields)})"
                 ),
             ))
+
+    # 8. Map-level legend completeness
+    # (specs/cartographic-quality-rules-and-memory-spec Phase 1).
+    _check_map_legend_completeness(report, mapspec, layers)
 
     return report

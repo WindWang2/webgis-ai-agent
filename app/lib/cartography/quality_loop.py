@@ -14,7 +14,11 @@ import json
 import math
 from typing import Any, Callable, Dict, List, Optional
 
-from app.lib.cartography.semantic_checks import evaluate_cartography_semantics
+from app.lib.cartography.semantic_checks import (
+    _paint_methods,
+    _paint_output_colors,
+    evaluate_cartography_semantics,
+)
 
 
 MAX_REPAIR_ITERATIONS = 2
@@ -298,6 +302,58 @@ def _plan_auto_safe_repairs(review: Dict[str, Any]) -> List[Dict[str, Any]]:
     return repairs
 
 
+def _apply_palette_change(layer: Dict[str, Any], colors: List[Any]) -> None:
+    """AUTO_SAFE change_palette：按位替换图例色与 paint 输出色（长度一致才动）。
+
+    只换呈现色，不触碰分类断点/类别键——分类语义由 legend_spec 的
+    min/max/breaks/categories[].key 承载，颜色仅是呈现。长度不匹配时
+    不动（下一次评审仍失败 → repair_exhausted，诚实终止）。
+    """
+    if not isinstance(colors, list) or not colors:
+        return
+    legend_spec = layer.get("legend_spec")
+    if isinstance(legend_spec, dict):
+        ramp_key = (
+            "palette_colors"
+            if isinstance(legend_spec.get("palette_colors"), list)
+            else "colors" if isinstance(legend_spec.get("colors"), list)
+            else None
+        )
+        if ramp_key and len(legend_spec[ramp_key]) == len(colors):
+            legend_spec[ramp_key] = list(colors)
+        categories = legend_spec.get("categories")
+        if isinstance(categories, list) and len(categories) == len(colors):
+            for category, color in zip(categories, colors):
+                if isinstance(category, dict):
+                    category["color"] = color
+    paint = layer.get("paint")
+    if not isinstance(paint, dict):
+        return
+    for _prop, spec in _paint_methods(paint):
+        outputs = _paint_output_colors(spec)
+        if len(outputs) != len(colors):
+            continue
+        method = spec.get("method")
+        if method == "step":
+            if spec.get("default") is not None:
+                spec["default"] = colors[0]
+                rest = colors[1:]
+            else:
+                rest = colors
+            stops = spec.get("stops") or []
+            for stop, color in zip(stops, rest):
+                if isinstance(stop, (list, tuple)) and len(stop) >= 2:
+                    stop[1] = color
+        elif method == "interpolate":
+            for stop, color in zip(spec.get("stops") or [], colors):
+                if isinstance(stop, (list, tuple)) and len(stop) >= 2:
+                    stop[1] = color
+        elif method == "match":
+            for case, color in zip(spec.get("cases") or [], colors):
+                if isinstance(case, (list, tuple)) and len(case) >= 2:
+                    case[1] = color
+
+
 def _apply_repairs(
     mapspec: Dict[str, Any], repairs: List[Dict[str, Any]]
 ) -> Dict[str, Any]:
@@ -313,7 +369,26 @@ def _apply_repairs(
             "normalize_opacity",
             "refresh_style_from_legend",
             "set_layer_visibility",
+            "change_palette",
+            "set_map_legend_visibility",
         ):
+            continue
+        if operation == "set_map_legend_visibility":
+            layout = candidate.get("layout")
+            if not isinstance(layout, dict):
+                layout = {}
+                candidate["layout"] = layout
+            legend = layout.get("legend")
+            if not isinstance(legend, dict):
+                legend = {}
+                layout["legend"] = legend
+            legend["visible"] = bool(repair.get("value"))
+            continue
+        if operation == "change_palette":
+            layer = by_id.get(repair.get("layer_id"))
+            value = repair.get("value")
+            if isinstance(layer, dict) and isinstance(value, dict):
+                _apply_palette_change(layer, value.get("colors"))
             continue
         layer = by_id.get(repair.get("layer_id"))
         if operation == "set_layer_visibility":

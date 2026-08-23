@@ -227,8 +227,12 @@ def test_legend_color_drift_is_detected():
 
 
 def test_drift_free_graduated_passes_clean():
+    # Colors must be perceptually separable — the near-gray ramp this test
+    # used (#aaaaaa/#bbbbbb/#cccccc, ΔE00 < 5) now correctly fails
+    # carto.color.separability, so the clean-pass fixture carries a
+    # separable Reds-subset ramp instead.
     layer = _graduated_layer(
-        [0, 10, 20, 30], ["#aaaaaa", "#bbbbbb", "#cccccc"]
+        [0, 10, 20, 30], ["#fee5d9", "#fb6a4a", "#a50f15"]
     )
     report = evaluate_cartography_semantics(
         _mapspec([layer]), _profile(fmin=0, fmax=30, null_count=0)
@@ -319,7 +323,7 @@ def test_no_data_rule_present_not_flagged():
 
 
 def test_no_data_not_evaluated_without_null_count():
-    layer = _graduated_layer([0, 10, 20], ["#aaaaaa", "#bbbbbb"])
+    layer = _graduated_layer([0, 10, 20], ["#fee5d9", "#a50f15"])
     report = evaluate_cartography_semantics(_mapspec([layer]), _profile(field="population", fmin=0, fmax=20))
     nodata_findings = [f for f in report.findings if f.check == "NO_DATA_SEMANTICS"]
     # A profile EXISTS but lacks null_count → an explicit NOT_EVALUATED info
@@ -388,7 +392,10 @@ def test_cardinality_colors_breaks_mismatch():
 
 def test_missing_evidence_is_not_evaluated_not_success():
     # No profile → checks must be NOT_EVALUATED, never a fake pass.
-    layer = _graduated_layer([0, 10, 20], ["#aaaaaa", "#bbbbbb"])
+    # Separable ramp: this test isolates missing-evidence semantics; the
+    # near-gray pair it used would now (correctly) fail
+    # carto.color.separability for an unrelated reason.
+    layer = _graduated_layer([0, 10, 20], ["#fee5d9", "#a50f15"])
     report = evaluate_cartography_semantics(_mapspec([layer]))  # no source_profiles
     # No-data / domain checks that need a profile are NOT_EVALUATED (info).
     evaluated = [f for f in report.findings if f.check in ("NO_DATA_SEMANTICS", "CLASSIFICATION_DOMAIN_COVERAGE") and f.evaluated]

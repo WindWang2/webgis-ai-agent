@@ -116,7 +116,7 @@ def heatmap_paint(palette: str = "classic", radius_px: int = 30) -> Dict[str, ob
     - heatmap-color 多停靠点密度色带（首段透明）；
     - ``radius_px`` 语义是**屏幕像素**。单位归一化（legacy 米制 radius 的
       消化）只在 ``app.lib.cartography.heatmap_contract`` 的 compatibility
-      adapter 中发生——本函数不做单位猜测，显式值仅做契约区间 clamp
+      adapter 中发生——本函数不做单位猜测，显式值仅做区间 clamp
       （[4, 80] px），非法类型回落默认 30px。
     """
     from app.lib.cartography.heatmap_contract import (
@@ -143,8 +143,221 @@ def heatmap_paint(palette: str = "classic", radius_px: int = 30) -> Dict[str, ob
     }
 
 
+# ─── 感知色差（CIEDE2000）与可分性色带 ─────────────────────────────────
+# specs/cartographic-quality-rules-and-memory-spec P1: carto.color.separability
+# 依赖的纯函数。无第三方依赖：sRGB→Lab(D65) 转换 + CIEDE2000（Sharma et al.
+# 2005 公式,含色相旋转项）。
+
+import math as _math
+from typing import Optional as _Optional, Tuple as _Tuple
+
+
+def parse_css_color(value: object) -> _Optional[_Tuple[int, int, int]]:
+    """解析 CSS 颜色为不透明 sRGB 三元组。
+
+    半透明色（rgba alpha<1）先合成到白底——图例/地图上的实际观感
+    取决于底色，比较时以白底合成色为准。Pillow 拒绝 CSS4 浮点 alpha 的
+    ``rgba()``（见 semantic_checks._is_supported_color 同源注释），因此
+    functional rgb/rgba 自行解析，Pillow 仅兜底 hex/命名色/hsl。
+    非法输入返回 None（调用方按 fail-closed 处理，绝不猜）。
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    import re as _re
+
+    color = value.strip()
+    functional = _re.fullmatch(r"rgba?\(([^)]*)\)", color, flags=_re.IGNORECASE)
+    if functional:
+        parts = [p.strip() for p in functional.group(1).split(",")]
+        expected = 4 if color.lower().startswith("rgba") else 3
+        if len(parts) != expected:
+            return None
+        channels: List[float] = []
+        for part in parts[:3]:
+            try:
+                if part.endswith("%"):
+                    channels.append(float(part[:-1]) / 100.0 * 255.0)
+                else:
+                    channels.append(float(part))
+            except ValueError:
+                return None
+        if any(c < 0.0 or c > 255.0 for c in channels):
+            return None
+        if expected == 4:
+            alpha_part = parts[3]
+            try:
+                alpha = (
+                    float(alpha_part[:-1]) / 100.0
+                    if alpha_part.endswith("%")
+                    else float(alpha_part)
+                )
+            except ValueError:
+                return None
+            if not 0.0 <= alpha <= 1.0:
+                return None
+        else:
+            alpha = 1.0
+        if alpha <= 0.0:
+            return None
+        if alpha >= 1.0:
+            return (int(channels[0]), int(channels[1]), int(channels[2]))
+        return (
+            int(round(channels[0] * alpha + 255 * (1 - alpha))),
+            int(round(channels[1] * alpha + 255 * (1 - alpha))),
+            int(round(channels[2] * alpha + 255 * (1 - alpha))),
+        )
+    try:
+        from PIL import ImageColor
+
+        r, g, b, a = ImageColor.getcolor(color, "RGBA")
+    except (ImportError, TypeError, ValueError):
+        return None
+    alpha = float(a) / 255.0
+    if alpha <= 0.0:
+        return None
+    if alpha >= 1.0:
+        return (int(r), int(g), int(b))
+    return (
+        int(round(int(r) * alpha + 255 * (1 - alpha))),
+        int(round(int(g) * alpha + 255 * (1 - alpha))),
+        int(round(int(b) * alpha + 255 * (1 - alpha))),
+    )
+
+
+def _srgb_to_lab(rgb: _Tuple[int, int, int]) -> _Tuple[float, float, float]:
+    def _linearize(channel: int) -> float:
+        c = channel / 255.0
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (_linearize(c) for c in rgb)
+    # sRGB → XYZ (D65)
+    x = r * 0.4124564 + g * 0.3575761 + b * 0.1804375
+    y = r * 0.2126729 + g * 0.7151522 + b * 0.0721750
+    z = r * 0.0193339 + g * 0.1191920 + b * 0.9503041
+    # D65 白点
+    xn, yn, zn = 0.95047, 1.00000, 1.08883
+
+    def _f(t: float) -> float:
+        return t ** (1.0 / 3.0) if t > 216.0 / 24389.0 else (24389.0 / 27.0 * t + 16.0) / 116.0
+
+    fx, fy, fz = _f(x / xn), _f(y / yn), _f(z / zn)
+    return (116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz))
+
+
+def ciede2000(
+    rgb1: _Tuple[int, int, int], rgb2: _Tuple[int, int, int]
+) -> float:
+    """两 sRGB 颜色的 CIEDE2000 色差 ΔE00（Sharma et al. 2005 实现）。"""
+    l1, a1, b1 = _srgb_to_lab(rgb1)
+    l2, a2, b2 = _srgb_to_lab(rgb2)
+
+    c1 = _math.hypot(a1, b1)
+    c2 = _math.hypot(a2, b2)
+    c_bar = (c1 + c2) / 2.0
+    c_bar7 = c_bar ** 7
+    g = 0.5 * (1.0 - _math.sqrt(c_bar7 / (c_bar7 + 25.0 ** 7)))
+    a1p = (1.0 + g) * a1
+    a2p = (1.0 + g) * a2
+    c1p = _math.hypot(a1p, b1)
+    c2p = _math.hypot(a2p, b2)
+
+    def _hp(ap: float, b: float) -> float:
+        if ap == 0.0 and b == 0.0:
+            return 0.0
+        h = _math.degrees(_math.atan2(b, ap))
+        return h + 360.0 if h < 0.0 else h
+
+    h1p = _hp(a1p, b1)
+    h2p = _hp(a2p, b2)
+
+    d_l = l2 - l1
+    d_c = c2p - c1p
+    if c1p * c2p == 0.0:
+        d_h = 0.0
+    else:
+        d_h = h2p - h1p
+        if d_h > 180.0:
+            d_h -= 360.0
+        elif d_h < -180.0:
+            d_h += 360.0
+    d_h_big = 2.0 * _math.sqrt(c1p * c2p) * _math.sin(_math.radians(d_h) / 2.0)
+
+    l_bar = (l1 + l2) / 2.0
+    c_barp = (c1p + c2p) / 2.0
+    if c1p * c2p == 0.0:
+        h_bar = h1p + h2p
+    else:
+        diff = abs(h1p - h2p)
+        sum_h = h1p + h2p
+        h_bar = (
+            sum_h / 2.0 if diff <= 180.0
+            else (sum_h + 360.0 if sum_h < 360.0 else sum_h - 360.0) / 2.0
+        )
+
+    t = (
+        1.0
+        - 0.17 * _math.cos(_math.radians(h_bar - 30.0))
+        + 0.24 * _math.cos(_math.radians(2.0 * h_bar))
+        + 0.32 * _math.cos(_math.radians(3.0 * h_bar + 6.0))
+        - 0.20 * _math.cos(_math.radians(4.0 * h_bar - 63.0))
+    )
+    d_theta = 30.0 * _math.exp(-(((h_bar - 275.0) / 25.0) ** 2))
+    c_barp7 = c_barp ** 7
+    r_c = 2.0 * _math.sqrt(c_barp7 / (c_barp7 + 25.0 ** 7))
+    s_l = 1.0 + (0.015 * (l_bar - 50.0) ** 2) / _math.sqrt(20.0 + (l_bar - 50.0) ** 2)
+    s_c = 1.0 + 0.045 * c_barp
+    s_h = 1.0 + 0.015 * c_barp * t
+    r_t = -_math.sin(_math.radians(2.0 * d_theta)) * r_c
+
+    return _math.sqrt(
+        (d_l / s_l) ** 2
+        + (d_c / s_c) ** 2
+        + (d_h_big / s_h) ** 2
+        + r_t * (d_c / s_c) * (d_h_big / s_h)
+    )
+
+
+def min_adjacent_delta_e(colors: List[str]) -> _Optional[float]:
+    """色带相邻类的最小 ΔE00。任一色不可解析 → None（fail-closed）。"""
+    parsed = [parse_css_color(c) for c in colors]
+    if any(p is None for p in parsed) or len(parsed) < 2:
+        return None
+    return min(
+        ciede2000(parsed[i], parsed[i + 1]) for i in range(len(parsed) - 1)
+    )
+
+
+_PERCEPTUAL_RAMP_ANCHORS = COLOR_PALETTES["Viridis"]
+
+
+def perceptual_ramp(n: int) -> List[str]:
+    """从感知均匀锚点色带（Viridis）均匀采样 n 色的替代色带。
+
+    用于 carto.color.separability 失败时的 AUTO_SAFE 换带建议：类数不变、
+    仅换呈现色，不触碰分类语义。n<2 或超过锚点可分能力时返回空列表
+    （调用方不会拿到一条本身就不达标的“修复”）。
+    """
+    if n < 2 or n > 10:
+        return []
+    anchors = _PERCEPTUAL_RAMP_ANCHORS
+    out: List[str] = []
+    for i in range(n):
+        pos = i / (n - 1) * (len(anchors) - 1)
+        lo = int(_math.floor(pos))
+        hi = min(lo + 1, len(anchors) - 1)
+        frac = pos - lo
+        c1 = parse_css_color(anchors[lo])
+        c2 = parse_css_color(anchors[hi])
+        if c1 is None or c2 is None:
+            return []
+        rgb = tuple(int(round(a + (b - a) * frac)) for a, b in zip(c1, c2))
+        out.append("#{:02x}{:02x}{:02x}".format(*rgb))
+    return out
+
+
 __all__ = [
     "COLOR_PALETTES", "get_color_from_palette", "resolve_palette_colors",
     "HEATMAP_STOP_POSITIONS", "NATIVE_HEATMAP_COLORS",
     "heatmap_legend_colors", "heatmap_paint",
+    "parse_css_color", "ciede2000", "min_adjacent_delta_e", "perceptual_ramp",
 ]
