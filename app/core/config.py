@@ -215,12 +215,6 @@ class Settings(BaseSettings):
         生产模式下必须显式配置；开发模式下仅警告。
         """
         _PLACEHOLDER = "your-api-key-here"
-        # E-9（#900）：安全开关审查 —— 生产环境禁止开放注册。
-        if self.ALLOW_PUBLIC_REGISTER and self.is_production():
-            raise RuntimeError(
-                "ALLOW_PUBLIC_REGISTER=true is forbidden in production "
-                "(use manage.py create-admin instead)"
-            )
         _PROD_REQUIRED: dict[str, str] = {
             "LLM_API_KEY": _PLACEHOLDER,
         }
@@ -391,6 +385,22 @@ class Settings(BaseSettings):
                     "cannot verify SSRF safety, allowing with warning",
                     hostname, field,
                 )
+
+
+    @model_validator(mode="after")
+    def _validate_allow_public_register_prod(self) -> "Settings":
+        """E-9（#900）：安全开关终审 —— 生产禁止开放注册。
+
+        独立且最后定义的 validator（pydantic 按定义顺序执行）：确保
+        CORS/AUTH_DISABLED 等既有生产检查先有机会报出它们更具体的错误，
+        本守卫只兜"其余全合法但开放注册"的组合。
+        """
+        if self.ALLOW_PUBLIC_REGISTER and self.is_production():
+            raise RuntimeError(
+                "ALLOW_PUBLIC_REGISTER=true is forbidden in production "
+                "(use manage.py create-admin instead)"
+            )
+        return self
 
 
 settings = Settings()

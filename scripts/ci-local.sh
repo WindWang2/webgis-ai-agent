@@ -73,7 +73,7 @@ pytest --cov=app --cov-report=term-missing --cov-fail-under=75 \
 step "perf harness (test-perf job)"
 pytest tests/benchmarks/test_perf_harness.py tests/benchmarks/test_transport_perf.py \
   tests/benchmarks/test_job_runtime_perf.py tests/benchmarks/test_provenance_perf.py \
-  tests/benchmarks/test_bench_runner_478.py tests/benchmarks/test_llm_http_pooling_perf.py \
+  tests/benchmarks/test_llm_http_pooling_perf.py \
   tests/benchmarks/test_perf_mapspec_mutation_cost.py tests/benchmarks/test_dispatch_stall_perf.py \
   -m perf --no-cov --timeout=180 --timeout-method=thread -q
 

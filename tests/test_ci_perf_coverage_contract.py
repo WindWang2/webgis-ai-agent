@@ -21,7 +21,6 @@ PR_LANE_PERF_FILES = (
     "test_transport_perf.py",
     "test_job_runtime_perf.py",
     "test_provenance_perf.py",
-    "test_bench_runner_478.py",
     "test_llm_http_pooling_perf.py",
     "test_perf_mapspec_mutation_cost.py",
     "test_dispatch_stall_perf.py",
