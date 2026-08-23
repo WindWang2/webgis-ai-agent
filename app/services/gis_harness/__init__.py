@@ -35,6 +35,13 @@ from app.services.gis_harness.planner import (
     MapProductPlan,
     MapProductPlanner,
 )
+from app.services.gis_harness.template_catalog import (
+    TemplateCatalog,
+    get_template_catalog,
+)
+from app.services.gis_harness.template_selector import (
+    TemplateSelector,
+)
 
 __all__ = [
     "MapRequestIntent",
@@ -51,4 +58,7 @@ __all__ = [
     "build_default_components",
     "MapProductPlan",
     "MapProductPlanner",
+    "TemplateCatalog",
+    "get_template_catalog",
+    "TemplateSelector",
 ]

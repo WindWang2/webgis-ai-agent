@@ -1,17 +1,21 @@
-"""MapProductPlanner —— Intent → Recipe → MapProductPlan。
+"""MapProductPlanner —— Intent → Recipe → Capability → Algorithm → Plan。
 
 流程（§4 总体目标的中间层）：
 
     MapRequestIntent
           ↓ recipe selection（确定性）
     Candidate Recipe
+          ↓ CapabilityRegistry / AlgorithmResolver（能力→算法→工具裁决）
+    Capability Requirements + Algorithm Selections
           ↓ fetch data（agent 经 ToolDispatchService 执行能力面）
     Spatial Profile（ref descriptor 派生，零全量扫描）
-          ↓ Recipe Eligibility（代码侧确定性复检，§17）
+          ↓ Recipe Eligibility + Algorithm applicability 复检（§17）
     Final Cartography Plan（含 fallback 决策记录）
 
-plan 是**期望产品描述**，不是工具调用脚本；工具解析由 Tool Resolver 按
-能力面完成。plan_id 由 (query, recipe_id) 决定性派生 —— 可回放、可 diff。
+plan 是**期望产品描述**，不是工具调用脚本。planner 是纯领域编排器：
+具体工具名归 AlgorithmRegistry（经 resolver 裁决）、图层类型归
+MapModelRegistry、模板选择归 TemplateSelector —— 本文件不再持有这些
+知识的硬编码表。plan_id 由 (query, recipe_id) 决定性派生。
 """
 from __future__ import annotations
 
@@ -35,42 +39,62 @@ from app.services.gis_harness.recipes import (
     FallbackDecision,
     get_recipe_registry,
 )
+from app.services.gis_harness.template_catalog import get_template_catalog
+from app.services.gis_harness.template_selector import TemplateSelector
 
-# 能力面 → 具体工具的解析表（Tool Resolver）。能力 id 稳定，工具可替换；
-# 未注册能力在 plan 中标记 unavailable（诚实报告，不静默）。
-# audit #825: 候选名必须与 ToolRegistry 真实注册名对账（曾有 3/12 能力指向
-# 改名后的幽灵工具）；tests/unit/test_capability_registry_parity.py 全量锁定。
-CAPABILITY_TOOLS: Dict[str, List[str]] = {
-    "poi_query": ["query_local_poi", "search_poi", "query_osm_poi"],
-    "admin_boundary_query": ["get_local_admin_boundary"],
-    "admin_aggregation": ["spatial_aggregate"],
-    "point_profile": ["spatial_stats", "webgis_source_profile"],
-    "density_surface": ["heatmap_data"],
-    "kde_density": ["kde_contours", "kde_surface"],
-    "hotspot": ["hotspot_analysis"],
-    "category_breakdown": ["spatial_stats"],
-    "proximity_buffer": ["buffer_analysis"],
-    "service_area": ["isochrone_analysis", "service_area_simple"],
-    "raster_source": ["fetch_dem"],
-    # 格网聚合：H3 六边形优先，渔网兜底（模型库 aggregate_grid 的执行面）
-    "grid_binning": ["h3_binning", "fishnet_grid"],
-    # administrative_choropleth 的 optional_analysis（audit #825 补映射）
-    "analytical_density": ["kde_contours", "heatmap_data", "spatial_aggregate"],
-}
+
+# ── 兼容视图（audit #825 的锁定对象迁移到 registry；非第二事实源）──────
+#
+# CAPABILITY_TOOLS 现在是 AlgorithmRegistry 的**派生视图**：capability →
+# 有序算法工具候选。新增算法只需注册 AlgorithmDescriptor，本模块零改动。
+# tests/unit/test_capability_registry_parity.py 锁定派生视图与真实
+# ToolRegistry / recipe 声明的 parity。
+def capability_tool_map() -> Dict[str, List[str]]:
+    """capability → 有序工具候选（AlgorithmRegistry 派生）。"""
+    from app.lib.gis.algorithm_registry import get_algorithm_registry
+    return get_algorithm_registry().capability_tool_map()
 
 
 def resolve_tool_for_capability(
     capability: str,
     available_tools: Optional[Any] = None,
 ) -> Optional[str]:
-    """把能力 id 解析为当前注册表里真实存在的工具名。"""
-    candidates = CAPABILITY_TOOLS.get(capability) or []
-    if available_tools is None:
-        return candidates[0] if candidates else None
-    for name in candidates:
-        if name in available_tools:
-            return name
-    return None
+    """把能力 id 解析为当前注册表里真实存在的工具名。
+
+    兼容 shim：委托 AlgorithmResolver 裁决（capability → algorithm →
+    tool 的唯一裁决点）；available_tools 为 None 时返回首选候选。
+    """
+    from app.lib.gis.algorithm_resolver import get_algorithm_resolver
+    resolution = get_algorithm_resolver().resolve(
+        capability, available_tools=available_tools)
+    return resolution.tool if resolution.status == "resolved" else None
+
+
+# 模块级兼容名（DEPRECATED：import 时快照，进程内重注册 registry 会过期；
+# 新代码用 capability_tool_map()）。旧导入方（tests 等）仍可
+# `from planner import CAPABILITY_TOOLS`。
+CAPABILITY_TOOLS: Dict[str, List[str]] = capability_tool_map()
+
+
+def layer_type_for_cartography(cartography: str, default: str = "circle") -> str:
+    """制图模型 → MapLibre 图层类型。MapModelRegistry 是唯一权威。"""
+    from app.lib.cartography.model_library import get_map_model_registry
+    model = get_map_model_registry().resolve(cartography)
+    return model.maplibre_layer_type if model else default
+
+
+def _geometry_aware_layer_type(cartography: str, planned_type: str, profile_geom: str) -> str:
+    """Resolve a geometry-polymorphic cartography's layer type from real data.
+
+    多态映射收编进 MapModel.geometry_layer_types（audit #832）；
+    非多态模型保持计划类型。
+    """
+    from app.lib.cartography.model_library import get_map_model_registry
+    model = get_map_model_registry().resolve(cartography)
+    table = model.geometry_layer_types if model else {}
+    if not table:
+        return planned_type
+    return table.get(profile_geom) or planned_type
 
 
 class DataRequirement(BaseModel):
@@ -80,6 +104,7 @@ class DataRequirement(BaseModel):
     status: Literal["pending", "available", "unavailable"] = "pending"
     bound_ref: str = ""
     resolved_tool: str = ""
+    resolved_algorithm: str = ""
 
 
 class AnalysisStep(BaseModel):
@@ -88,6 +113,20 @@ class AnalysisStep(BaseModel):
     status: Literal["pending", "done", "skipped", "unavailable"] = "pending"
     bound_ref: str = ""
     resolved_tool: str = ""
+    resolved_algorithm: str = ""
+
+
+class AlgorithmSelectionRecord(BaseModel):
+    """一次 capability → algorithm → tool 裁决的有界证据（§27）。"""
+
+    capability: str
+    status: Literal["resolved", "unavailable"]
+    algorithm: str = ""
+    tool: str = ""
+    reason: str = ""
+    rejected: List[str] = []
+    fallback_trail: List[Dict[str, Any]] = []
+    fallback_candidates: List[str] = []
 
 
 class PlannedLayer(BaseModel):
@@ -121,6 +160,10 @@ class MapProductPlan(BaseModel):
     status: Literal["draft", "finalized"] = "draft"
     completeness: Dict[str, Any] = Field(default_factory=dict)
     eligibility: Dict[str, Any] = Field(default_factory=dict)
+    # ── registry 编排证据（有界转录，§27）─────────────────────────────
+    algorithm_selections: List[AlgorithmSelectionRecord] = []
+    template_selection: Dict[str, Any] = Field(default_factory=dict)
+    map_model_selection: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 def _plan_id(query: str, recipe_id: str) -> str:
@@ -130,45 +173,65 @@ def _plan_id(query: str, recipe_id: str) -> str:
     return f"plan-{digest}"
 
 
-# 主专题表达 → 图层类型（模型库 maplibre_layer_type 的镜像）
-_CARTOGRAPHY_LAYER_TYPE = {
-    "visual_heatmap": "heatmap",
-    "density_overview": "heatmap",
-    "point_overlay": "circle",
-    "simple_point_map": "circle",
-    "proportional_symbol": "circle",
-    "administrative_choropleth": "fill",
-    "categorical_thematic": "fill",
-    "proximity_overlay": "fill",
-    "raster_surface": "raster",
-    "hotspot_overlay": "fill",
-    "administrative_aggregation": "fill",
-    "aggregate_grid": "fill",
-}
-
-# audit #832: 几何多态表达 —— 模型库对这些模型声明了多种 geometry_kinds，
-# 计划层的 layer_type 必须跟随真实数据几何，否则授权层（converter 按几何
-# 推断 circle/line/fill）永远绑不上计划层，completeness 永远 missing。
-_GEOMETRY_LAYER_TYPES: Dict[str, Dict[str, str]] = {
-    "categorical_thematic": {"point": "circle", "polygon": "fill", "line": "line"},
-}
-
-
-def _geometry_aware_layer_type(cartography: str, planned_type: str, profile_geom: str) -> str:
-    """Resolve a geometry-polymorphic cartography's layer type from real data."""
-    table = _GEOMETRY_LAYER_TYPES.get(cartography)
-    if not table:
-        return planned_type
-    target = table.get(profile_geom)
-    return target or planned_type
-
-
 class MapProductPlanner:
     """确定性产品规划器（纯函数式，无 LLM 依赖、无 I/O）。"""
 
     def __init__(self) -> None:
         self.recipes = get_recipe_registry()
         self.templates = get_product_template_registry()
+        self.catalog = get_template_catalog()
+        self.selector = TemplateSelector(catalog=self.catalog)
+
+    # ── registry 裁决辅助 ─────────────────────────────────────────────
+    def _resolve_capabilities(
+        self,
+        capabilities: List[str],
+        intent: MapRequestIntent,
+        *,
+        available_tools: Optional[Any] = None,
+        profile: Optional[Dict[str, Any]] = None,
+    ) -> tuple[List[DataRequirement], List[AnalysisStep], List[AlgorithmSelectionRecord]]:
+        """capability → DataRequirement/AnalysisStep + 裁决证据。"""
+        from app.lib.gis.algorithm_resolver import get_algorithm_resolver
+        from app.lib.gis.capability_registry import get_capability_registry
+        caps = get_capability_registry()
+        resolver = get_algorithm_resolver()
+        requirements: List[DataRequirement] = []
+        steps: List[AnalysisStep] = []
+        selections: List[AlgorithmSelectionRecord] = []
+        subject = intent.subject.category or "主体"
+        for cap in capabilities:
+            purpose = caps.purpose_for(cap, subject)
+            resolution_result = resolver.resolve(
+                cap, profile=profile, available_tools=available_tools)
+            record = AlgorithmSelectionRecord(
+                capability=cap,
+                status=resolution_result.status,
+                algorithm=resolution_result.algorithm,
+                tool=resolution_result.tool,
+                reason=resolution_result.reason,
+                rejected=list(resolution_result.rejected),
+                fallback_trail=[f.model_dump() for f in resolution_result.fallback_trail],
+                fallback_candidates=list(resolution_result.fallback_candidates),
+            )
+            selections.append(record)
+            # audit #825: 调用方传入注册表可见工具时，解析不到真实工具的
+            # 能力标记 unavailable（诚实报告）；视图未知（None）保持 pending。
+            unavailable = (
+                available_tools is not None and record.status != "resolved"
+            )
+            status = "unavailable" if unavailable else "pending"  # type: ignore[assignment]
+            requirements.append(DataRequirement(
+                capability=cap, purpose=purpose, status=status,
+                resolved_tool=record.tool if record.status == "resolved" else "",
+                resolved_algorithm=record.algorithm if record.status == "resolved" else "",
+            ))
+            steps.append(AnalysisStep(
+                capability=cap, purpose=purpose, status=status,  # type: ignore[arg-type]
+                resolved_tool=record.tool if record.status == "resolved" else "",
+                resolved_algorithm=record.algorithm if record.status == "resolved" else "",
+            ))
+        return requirements, steps, selections
 
     # ── 阶段 1：intent → draft plan（数据未到手） ────────────────────
     def plan_from_intent(
@@ -191,17 +254,24 @@ class MapProductPlanner:
                 or self.recipes.default_recipe()
             )
 
+        # 模板选择：显式 template_id 优先（plan 连续性）；否则由
+        # TemplateSelector 确定性评分（subject/task/outputs/priority）。
         template: Optional[MapProductTemplate] = None
+        selection_dump: Dict[str, Any] = {}
         if template_id:
-            template = self.templates.get(template_id)
-        if template is None and recipe.id:
-            template = self.templates.find_for_recipe(
-                recipe.id, subject_category=intent.subject.category,
+            template = self.catalog.get_product_template(template_id)
+            selection_dump = {
+                "status": "selected" if template else "none",
+                "template_id": template.id if template else "",
+                "decision": {"reason": f"explicit_template_id:{template_id}"},
+            }
+        if template is None:
+            selection = self.selector.select_product(
+                intent=intent, recipe_id=recipe.id,
             )
-
-        # simple_view 任务：直接轻量点图产品
-        if intent.task == "simple_view":
-            template = self.templates.get("simple_poi_view") or template
+            selection_dump = selection.model_dump()
+            if selection.status == "selected":
+                template = self.catalog.get_product_template(selection.template_id)
 
         plan = MapProductPlan(
             plan_id=_plan_id(intent.query, recipe.id),
@@ -210,6 +280,7 @@ class MapProductPlanner:
             recipe_id=recipe.id,
             template_id=template.id if template else "",
             status="draft",
+            template_selection=selection_dump,
         )
 
         # 数据需求（能力去重，保持声明顺序）；simple_view 不过度分析——
@@ -226,49 +297,19 @@ class MapProductPlanner:
                 if extra not in capabilities:
                     capabilities.append(extra)
 
-        purpose_map = {
-            "poi_query": f"{intent.subject.category or '主体'} 要素获取",
-            "admin_boundary_query": "行政边界/区划面获取",
-            "admin_aggregation": "按行政区聚合统计",
-            "point_profile": "数据画像（点数/几何/字段）",
-            "kde_density": "核密度分析",
-            "hotspot": "热点显著性分析",
-            "density_surface": "密度面",
-            "service_area": "网络服务区",
-            "proximity_buffer": "邻近缓冲",
-            "raster_source": "栅格数据源",
-            "category_breakdown": "类别构成统计",
-            "grid_binning": "H3/渔网格网聚合",
-            "analytical_density": "分析密度面/密度聚合",
-        }
-        for cap in capabilities:
-            # audit #825: 兑现模块 docstring —— 调用方传入注册表可见工具时，
-            # 解析不到真实工具的能力在 plan 中标记 unavailable（诚实报告）。
-            if available_tools is not None and not resolve_tool_for_capability(
-                cap, available_tools
-            ):
-                plan.data_requirements.append(DataRequirement(
-                    capability=cap, purpose=purpose_map.get(cap, cap),
-                    status="unavailable",
-                ))
-                plan.analysis_steps.append(AnalysisStep(
-                    capability=cap, purpose=purpose_map.get(cap, cap),
-                    status="unavailable",
-                ))
-                continue
-            plan.data_requirements.append(DataRequirement(
-                capability=cap, purpose=purpose_map.get(cap, cap),
-            ))
-            plan.analysis_steps.append(AnalysisStep(
-                capability=cap, purpose=purpose_map.get(cap, cap),
-            ))
+        requirements, steps, selections = self._resolve_capabilities(
+            capabilities, intent, available_tools=available_tools)
+        plan.data_requirements = requirements
+        plan.analysis_steps = steps
+        plan.algorithm_selections = selections
 
-        # 图层角色：来自产品模板或 recipe 声明
+        # 图层角色：来自产品模板或 recipe 声明（layer_type 由模型库推导）
         if template:
             for role_spec in template.layer_roles:
                 plan.map_layers.append(PlannedLayer(
                     role=role_spec.role,  # type: ignore[arg-type]
-                    layer_type=role_spec.layer_type,
+                    layer_type=layer_type_for_cartography(role_spec.cartography,
+                                                          role_spec.layer_type or "circle"),
                     cartography=role_spec.cartography,
                     source_capability=role_spec.source_capability,
                 ))
@@ -279,17 +320,18 @@ class MapProductPlanner:
         else:
             plan.map_layers.append(PlannedLayer(
                 role="primary",
-                layer_type=_CARTOGRAPHY_LAYER_TYPE.get(recipe.primary_cartography, "circle"),
+                layer_type=layer_type_for_cartography(recipe.primary_cartography),
                 cartography=recipe.primary_cartography,
                 source_capability=recipe.preferred_analysis[0] if recipe.preferred_analysis else "",
             ))
             for carto in recipe.secondary_cartography:
                 plan.map_layers.append(PlannedLayer(
                     role="secondary",
-                    layer_type=_CARTOGRAPHY_LAYER_TYPE.get(carto, "circle"),
+                    layer_type=layer_type_for_cartography(carto),
                     cartography=carto,
                     source_capability=recipe.preferred_analysis[0] if recipe.preferred_analysis else "",
                 ))
+        plan.map_model_selection = self._map_model_evidence(plan.map_layers)
 
         # 统计/图表
         if "statistics" in intent.output_intents:
@@ -302,6 +344,21 @@ class MapProductPlanner:
         plan.validation = list(recipe.validation_rules)
         return plan
 
+    def _map_model_evidence(self, layers: List[PlannedLayer]) -> List[Dict[str, Any]]:
+        """图层 → MapModel 解析证据（有界：≤ layers 数）。"""
+        from app.lib.cartography.model_library import get_map_model_registry
+        models = get_map_model_registry()
+        evidence: List[Dict[str, Any]] = []
+        for layer in layers:
+            model = models.resolve(layer.cartography)
+            evidence.append({
+                "cartography": layer.cartography,
+                "map_model": model.id if model else "",
+                "layer_type": layer.layer_type,
+                "source": "map_model_registry" if model else "fallback_default",
+            })
+        return evidence
+
     # ── 阶段 2：数据回来后 → eligibility 复检 + 终稿 ─────────────────
     def finalize_with_profile(
         self,
@@ -309,10 +366,13 @@ class MapProductPlanner:
         profile: Optional[Dict[str, Any]],
         *,
         min_points_default: int = 10,
+        available_tools: Optional[Any] = None,
     ) -> MapProductPlan:
         """Spatial Profile 到手后的确定性复检（§17 反一锤定音）。
 
         - profile 几何/点数驱动 eligibility；
+        - algorithm applicability 复检（resolver 带 profile 重裁决；
+          available_tools 传入时与 draft 阶段同视图，evidence 不漂移）；
         - 不合格元素禁用 + fallback 记录（from/to/reason/evidence）；
         - 主专题表达可能因此改变（heatmap → point），组件集随终稿重算。
         """
@@ -333,6 +393,16 @@ class MapProductPlanner:
         }
         finalized.fallbacks = list(report.fallbacks)
 
+        # algorithm applicability 复检：带 profile 重裁决（不改变
+        # DataRequirement 的 available 状态——那是绑定回填的职责；只更新
+        # 裁决证据，让 evidence 能解释『为什么这个算法没跑』）。
+        if profile is not None:
+            capabilities = [r.capability for r in finalized.data_requirements]
+            _, _, selections = self._resolve_capabilities(
+                capabilities, plan.intent, profile=profile,
+                available_tools=available_tools)
+            finalized.algorithm_selections = selections
+
         disabled_elements = {d.element for d in report.disabled}
         # 主数据几何（点层提升的先决条件——面数据上提升 circle 层是制图空转）
         geom_types = (profile or {}).get("geometryTypes") or []
@@ -352,6 +422,7 @@ class MapProductPlanner:
                     layer.note + "; " if layer.note else ""
                 ) + f"layer_type {layer.layer_type}->{resolved} by profile geometry"
                 layer.layer_type = resolved
+        finalized.map_model_selection = self._map_model_evidence(finalized.map_layers)
 
         # 图层级裁决：热力/格网主层被禁 → 降级 + （几何为点时）点层提升。
         # 两种主表达各持独立 recorded 标志：混合模板（热力+格网）同被禁时
@@ -439,7 +510,9 @@ class MapProductPlanner:
             ))
             if not any(ly.enabled for ly in finalized.map_layers):
                 finalized.map_layers.append(PlannedLayer(
-                    role="primary", layer_type="circle", cartography="point_overlay",
+                    role="primary",
+                    layer_type=layer_type_for_cartography("point_overlay"),
+                    cartography="point_overlay",
                     source_capability="poi_query",
                     note="recipe ineligible — fallback point map",
                 ))
@@ -486,7 +559,7 @@ class MapProductPlanner:
             subject=intent.subject.category or "",
         )
 
-    # ── 完整性评估（Harness evidence 消费面） ────────────────────────
+    # ── 完整性评估（Harness evidence 消费面）──────────────────────────
     def assess_completeness(self, plan: MapProductPlan) -> Dict[str, Any]:
         expected_outputs = set(plan.outputs) or {"interactive_map"}
         present: Dict[str, bool] = {}
@@ -541,8 +614,11 @@ __all__ = [
     "MapProductPlan",
     "DataRequirement",
     "AnalysisStep",
+    "AlgorithmSelectionRecord",
     "PlannedLayer",
     "MapProductPlanner",
     "CAPABILITY_TOOLS",
+    "capability_tool_map",
     "resolve_tool_for_capability",
+    "layer_type_for_cartography",
 ]

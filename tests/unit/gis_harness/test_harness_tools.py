@@ -601,3 +601,65 @@ async def test_map_intent_subject_hint_typed_by_token_tables(registry):
     assert intent["subject"]["category"] == "ndvi"
     assert intent["entity_type"] == "raster"
     assert intent["geometry_expectation"] == "raster"
+
+
+@pytest.fixture
+def full_registry():
+    """完整工具注册表（capability → tool 裁决需要真实分析工具在场）。"""
+    from app.tools import init_tools
+
+    reg = ToolRegistry()
+    init_tools(reg)
+    return reg
+
+
+@pytest.mark.asyncio
+async def test_map_product_evidence_carries_registry_orchestration(full_registry, clean_session):
+    """§27: map_product_evidence 携带 capability/algorithm/map_model/template
+    裁决证据 + artifact lineage（有界）。"""
+    ref = await session_data_manager.store(clean_session, _point_fc(60), prefix="geojson")
+    res = await full_registry.dispatch(
+        "webgis_map_product",
+        {"query": "成都小学的分布情况", "session_id": clean_session,
+         "primary_ref": ref},
+        session_id=clean_session,
+    )
+    assert res["success"] is True
+    ev = res["map_product_evidence"]
+    # capability_resolution：与 plan 的 DataRequirement 同源
+    caps = {c["capability"]: c for c in ev["capability_resolution"]}
+    assert caps["poi_query"]["resolved_tool"] == "query_local_poi"
+    assert caps["poi_query"]["resolved_algorithm"] == "poi.query.local"
+    # algorithm_selection：裁决理由 + fallback trail 结构
+    algos = {a["capability"]: a for a in ev["algorithm_selection"]}
+    assert algos["poi_query"]["status"] == "resolved"
+    assert algos["poi_query"]["algorithm"] == "poi.query.local"
+    assert algos["poi_query"]["reason"]
+    # map_model_selection：图层 → 模型解析（模型库权威）
+    models = {m["cartography"]: m for m in ev["map_model_selection"]}
+    assert models["visual_heatmap"]["map_model"] == "visual_heatmap"
+    assert models["visual_heatmap"]["layer_type"] == "heatmap"
+    assert models["visual_heatmap"]["source"] == "map_model_registry"
+    # template_selection：确定性选择器证据
+    assert ev["template_selection"]["template_id"] == "education_facility_distribution"
+    assert ev["template_selection"]["decision"]["reason"]
+    # artifact_lineage：绑定图层 → 语义 artifact 类型
+    lineage = ev["artifact_lineage"]
+    assert lineage, "artifact lineage evidence missing"
+    heat = next((e for e in lineage if e["cartography"] == "visual_heatmap"), None)
+    assert heat is not None
+    # 热力层直接消费 POI 点集（source_capability=poi_query），经渲染态密度
+    # 表达 —— lineage 如实记录数据源 artifact，不虚构中间密度产物。
+    assert heat["capability"] == "poi_query"
+    assert heat["artifact_type"] == "poi_feature_set"
+    assert heat["source_ref"] == ref
+
+
+@pytest.mark.asyncio
+async def test_map_intent_reports_resolved_algorithm(full_registry):
+    res = await full_registry.dispatch(
+        "webgis_map_intent", {"query": "成都小学六边形网格统计"}, session_id=None,
+    )
+    caps = {c["capability"]: c for c in res["capabilities"]}
+    assert caps["grid_binning"]["resolved_tool"] == "h3_binning"
+    assert caps["grid_binning"]["resolved_algorithm"] == "spatial.grid.h3"

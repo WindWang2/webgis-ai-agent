@@ -189,11 +189,21 @@ def register_gis_harness_tools(registry: ToolRegistry):
         plan = planner.plan_from_intent(intent, available_tools=available or None)
 
         capabilities = []
+        # resolved_algorithm 与 plan 裁决证据同源；resolved_tool 保持与
+        # 真实注册表视图（available，含空视图）一致。
+        selection_by_cap = {
+            r.capability: r for r in plan.algorithm_selections
+        }
         for req in plan.data_requirements:
+            record = selection_by_cap.get(req.capability)
             capabilities.append({
                 "capability": req.capability,
                 "purpose": req.purpose,
                 "resolved_tool": resolve_tool_for_capability(req.capability, available),
+                "resolved_algorithm": (
+                    record.algorithm if record and record.status == "resolved"
+                    else ""
+                ),
             })
 
         return {
@@ -320,6 +330,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
             min_points = 10
         plan = planner.finalize_with_profile(
             plan, profile, min_points_default=min_points,
+            available_tools=available or None,
         )
 
         # 角色绑定：#784 —— 以终稿计划为权威。按实际 MapSpec 图层类型解析到
@@ -552,21 +563,24 @@ def register_gis_harness_tools(registry: ToolRegistry):
         # provenance（生成该图层的分析算法）映射回能力 id，admin_aggregation
         # / grid_binning 等步骤在图层绑定后即可标记完成，统计维 completeness
         # 不再对已完成的行政/格网产品报 missing。
-        _PROVENANCE_CAPABILITY = {
-            "spatial_aggregate": "admin_aggregation",
+        # 映射不再手写：主表由 AlgorithmRegistry 派生（tool_candidates →
+        # 主 capability）；仅 converter provenance 词汇里的非工具别名保留
+        # 在 _LEGACY_PROVENANCE_ALIASES（raster converter 的 algorithm 串）。
+        from app.lib.gis.algorithm_registry import get_algorithm_registry
+        _LEGACY_PROVENANCE_ALIASES = {
             "aggregate_points": "admin_aggregation",
-            "h3_binning": "grid_binning",
-            "fishnet_grid": "grid_binning",
-            "heatmap_data": "density_surface",
-            "kde_contours": "kde_density",
-            "kde_surface": "kde_density",
-            "hotspot_analysis": "hotspot",
-            "buffer_analysis": "proximity_buffer",
-            "isochrone_analysis": "service_area",
-            "service_area_simple": "service_area",
             "local_raster": "raster_source",
             "remote_sensing_index": "raster_source",
         }
+        _PROVENANCE_CAPABILITY = {
+            **_LEGACY_PROVENANCE_ALIASES,
+            **get_algorithm_registry().tool_to_capability(),
+        }
+        # artifact lineage（§27 有界证据）：绑定图层 → 语义 artifact 类型。
+        # 同一轮遍历顺带完成 provenance → capability 回填（done_caps）。
+        from app.lib.gis.capability_registry import get_capability_registry
+        _caps_registry = get_capability_registry()
+        _artifact_lineage: List[Dict[str, Any]] = []
         done_caps: set = set()
         if primary_data is not None:
             done_caps |= {"poi_query", "point_profile", "raster_source"}
@@ -580,9 +594,30 @@ def register_gis_harness_tools(registry: ToolRegistry):
             algorithm = (
                 provenance.get("algorithm") if isinstance(provenance, dict) else None
             )
-            capability = _PROVENANCE_CAPABILITY.get(algorithm or "")
-            if capability:
-                done_caps.add(capability)
+            provenance_cap = _PROVENANCE_CAPABILITY.get(algorithm or "")
+            if provenance_cap:
+                done_caps.add(provenance_cap)
+            planned_src = next(
+                (ly for ly in plan.map_layers if ly.layer_id == entry["layer_id"]),
+                None,
+            )
+            capability = (
+                (planned_src.source_capability if planned_src else "")
+                or provenance_cap or ""
+            )
+            cap_desc = _caps_registry.get(capability) if capability else None
+            _artifact_lineage.append({
+                "layer_id": entry["layer_id"],
+                "role": entry.get("role"),
+                "cartography": entry.get("cartography"),
+                "source_ref": primary_ref or "",
+                "producer_tool": algorithm or "",
+                "capability": capability,
+                "artifact_type": (
+                    cap_desc.output_artifact_types[0]
+                    if cap_desc and cap_desc.output_artifact_types else ""
+                ),
+            })
         for req in plan.data_requirements:
             if req.capability in done_caps:
                 req.status = "available"
@@ -671,6 +706,19 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 },
                 "recipe_eligibility": plan.eligibility,
                 "fallback_decisions": out.get("fallbacks", []),
+                # ── registry 编排证据（§27，有界转录）────────────────────
+                "capability_resolution": [
+                    {"capability": r.capability, "status": r.status,
+                     "resolved_tool": r.resolved_tool,
+                     "resolved_algorithm": r.resolved_algorithm}
+                    for r in plan.data_requirements
+                ],
+                "algorithm_selection": [
+                    r.model_dump() for r in plan.algorithm_selections
+                ],
+                "map_model_selection": plan.map_model_selection,
+                "template_selection": plan.template_selection,
+                "artifact_lineage": _artifact_lineage,
                 "component_selection": [c["type"] for c in component_dicts],
                 "map_product_completeness": plan.completeness,
                 "bound_layers": bound_layers,
