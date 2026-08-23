@@ -5,7 +5,6 @@
   应抛 PiRpcError 而非裸 AttributeError（写入用捕获的本地句柄，
   句柄失效分类为 BrokenPipeError → PiRpcError）
 """
-import asyncio
 from unittest.mock import MagicMock
 
 import pytest

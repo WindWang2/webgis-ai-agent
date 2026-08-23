@@ -203,4 +203,4 @@ async def test_metadata_l1_hit_returns_isolated_copy_809():
     # 就地污染尝试（嵌套层）
     first["map_state"]["layers"].append({"id": "POISON"})
     second = await store.get_session_metadata("s809")
-    assert [l["id"] for l in second["map_state"]["layers"]] == ["L1"]
+    assert [layer["id"] for layer in second["map_state"]["layers"]] == ["L1"]

@@ -555,7 +555,6 @@ async def test_validate_summary_carries_fetch_errors_774():
 async def test_fetch_parse_base64_roundtrip_775():
   """#775: fetch stores base64 and parse decodes it back byte-exact, with the
   stored string at most 1.4x the payload size (hex was 2x)."""
-  import base64
 
   raw_bytes = "名称,地址\nA,北京市海淀区\nB,上海市浦东新区\n".encode("utf-8")
   stored_payloads = {}

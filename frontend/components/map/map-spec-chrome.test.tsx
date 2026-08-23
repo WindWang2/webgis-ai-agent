@@ -257,7 +257,7 @@ describe('MapSpecChrome', () => {
         } as unknown as MapSpec['layers'][number],
       ],
     };
-    const { container } = render(
+    render(
       <MapSpecChrome
         components={[comp({ id: 'legend-main', type: 'legend' })]}
         zoom={10}

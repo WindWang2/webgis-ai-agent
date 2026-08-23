@@ -11,7 +11,6 @@
       cannot bind while a circle layer did).
 """
 
-import pytest
 
 
 # ─── #832: geometry-aware layer type ────────────────────────────────────
