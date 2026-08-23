@@ -67,6 +67,9 @@ services:
       # compose `db` service so api/celery do not inherit host-side sqlite
       # from .env and concurrently write one SQLite file (#618-32).
       - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:?Set DB_PASSWORD in .env}@db:5432/${DB_NAME:-webgis}
+      # audit #853: dev compose 无 alembic 步骤 —— 冷启动建表靠 create_all
+      # （显式启用；prod 镜像走 alembic entrypoint，门控保持关闭）。
+      - ALLOW_CREATE_ALL_ON_POSTGRES=1
       # Redis 配置
       - REDIS_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@${REDIS_HOST:-redis}:6379/0
       - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@${REDIS_HOST:-redis}:6379/0
@@ -99,6 +102,9 @@ services:
     environment:
       # Same PostGIS URL as api (Settings reads DATABASE_URL only; #618-32).
       - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:?Set DB_PASSWORD in .env}@db:5432/${DB_NAME:-webgis}
+      # audit #853: dev compose 无 alembic 步骤 —— 冷启动建表靠 create_all
+      # （显式启用；prod 镜像走 alembic entrypoint，门控保持关闭）。
+      - ALLOW_CREATE_ALL_ON_POSTGRES=1
       # Redis 配置
       - REDIS_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@${REDIS_HOST:-redis}:6379/0
       - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@${REDIS_HOST:-redis}:6379/0

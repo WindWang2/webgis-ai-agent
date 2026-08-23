@@ -248,8 +248,11 @@ export function MapPanel({
         bbox = calculateBBox(src)
       }
 
-      if (cancelled) return
-      if (bbox) {
+      // audit #843/#852: `cancelled` 只守卫 fit 本身，绝不提前 return 整个
+      // continuation —— 复位定时器必须在每条退出路径上调度，否则 bbox await
+      // 窗口内的 layers 身份变化会让重跑在 #739 标记处早退、focusLayerId
+      // 永久滞留（常亮高亮环 + 每轮携带过期 focus_layer_id）。
+      if (!cancelled && bbox) {
         try {
           navFitBounds(map, bbox, 80)
           const center = map.getCenter?.()
@@ -266,11 +269,6 @@ export function MapPanel({
           devOnly.warn("[map-panel] focusLayer fitBounds failed:", err)
         }
       }
-      // audit #843: 复位定时器无条件调度 —— `cancelled` 只该守卫 fit 本身。
-      // 此前定时器在 `if (!cancelled)` 内：bbox await 窗口内 layers 身份变化
-      // → cleanup 置 cancelled → 定时器从未调度 → 重跑在 #739 标记处早退，
-      // focusLayerId 永久滞留（#801 的残余竞态）。定时器自身幂等（仅当标记
-      // 仍指向同一图层时清空）。
       window.setTimeout(() => {
         if (lastFittedFocusRef.current === focusLayerId) {
           focusLayerSetter(null)

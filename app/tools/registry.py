@@ -847,13 +847,38 @@ class ToolRegistry:
         except TypeError as e:
             # audit #828: 显式 parameters 注册的工具多传参数时以裸 TypeError
             # 落入 TOOL_ERROR —— 归类为参数校验错误并给出自愈提示。
+            # audit #846: 仅参数绑定形态的 TypeError（unexpected keyword /
+            # missing required / positional argument）走校验分类；工具体运行
+            # 中的 TypeError 仍按 TOOL_ERROR 处理，否则 LLM 会被误导去删参数。
+            _msg = str(e)
+            _binding_error = any(
+                marker in _msg
+                for marker in (
+                    "unexpected keyword argument",
+                    "missing a required argument",
+                    "missing 1 required",
+                    "positional argument",
+                    "too many positional arguments",
+                )
+            )
+            if _binding_error:
+                return std_error_response(
+                    _msg,
+                    code="VALIDATION_ERROR",
+                    error_type="TypeError",
+                    correction_hint=(
+                        f"Argument mismatch: {e}. Check the tool's documented "
+                        "parameters and retry with exactly those."
+                    ),
+                )
+            logger.exception(f"Tool execution failed with TypeError: {name}")
             return std_error_response(
-                str(e),
-                code="VALIDATION_ERROR",
+                _msg,
+                code="TOOL_ERROR",
                 error_type="TypeError",
                 correction_hint=(
-                    f"Argument mismatch: {e}. Check the tool's documented "
-                    "parameters and retry with exactly those."
+                    "An unexpected error occurred during tool execution. "
+                    "Please review the error message and parameters."
                 ),
             )
         except KeyError as e:
@@ -980,7 +1005,17 @@ class ToolRegistry:
                 # audit #824: an oversized payload needs NO alias walk at all —
                 # _resolve below only attempts explicit ``ref:`` cursors, so
                 # the 100k-leaf collection pass is skipped entirely.
-                distinct_strings = set()
+                # audit #848: depth-1 direct argument values still get alias
+                # resolution (O(#args)) — the practical mixed case is a big
+                # inline payload plus one alias/ref-like scalar argument.
+                distinct_strings = {
+                    v for v in (
+                        arguments.values() if isinstance(arguments, dict) else arguments
+                    )
+                    if isinstance(v, str)
+                }
+                if len(distinct_strings) > 64:
+                    distinct_strings = set()  # degenerate arg lists stay cheap
             else:
                 distinct_strings = set()
 
@@ -1002,13 +1037,18 @@ class ToolRegistry:
 
         # audit #824: alias lookup degradation — an oversized inline payload's
         # strings are data, not references. Resolve explicit ref: cursors only.
+        # audit #848: oversized 载荷仍解析 depth-1 直接参数的别名（上方收集）。
         aliases: dict[str, str] = {}
-        if (
-            not oversized_hint
-            and len(distinct_strings) <= _ALIAS_LOOKUP_MAX_DISTINCT
-        ):
+        if len(distinct_strings) <= _ALIAS_LOOKUP_MAX_DISTINCT:
             aliases = await session_data_manager.resolve_aliases(
                 session_id, list(distinct_strings)
+            )
+        elif not oversized_hint:
+            logger.debug(
+                "_resolve_references: %d distinct strings exceed the alias "
+                "lookup cap (%d) — resolving explicit ref: cursors only "
+                "(audit #824)",
+                len(distinct_strings), _ALIAS_LOOKUP_MAX_DISTINCT,
             )
 
         async def _resolve(node):

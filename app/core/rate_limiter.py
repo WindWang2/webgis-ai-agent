@@ -120,6 +120,8 @@ class RedisRateLimiter:
             pipe = client.pipeline()
             pipe.zremrangebyscore(key, 0, now - window_seconds)
             pipe.zadd(key, {f"{now:.6f}:{uuid.uuid4().hex[:6]}": now})
+            # audit #851: is_allowed 同款 EXPIRE —— 一次性失败 IP 的 key 不再永驻
+            pipe.expire(key, window_seconds + 1)
             await pipe.execute()
         except Exception:  # noqa: BLE001 — tally is best-effort
             pass

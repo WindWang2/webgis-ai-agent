@@ -748,24 +748,32 @@ class ChatExecutionEngine:
         否则它们的 tool_call_id 会被 _repair_orphaned_tool_calls 误标成
         「工具执行已被用户取消」—— 而工具可能已创建图层、已 spawn durable job，
         首达终态使真实成功不可恢复。
+
+        audit #847: 每条结果落库成功后打 ``persisted`` 标记 —— persist 中途被
+        取消/断连打断时，断连 handler 的补落库只处理未保存的余量，已写条目
+        不再重复（否则同 tool_call_id 双响应会被 provider 拒绝整个上下文）。
         """
         for p in pending_tools:
             res = completion_results.get(p["step"].id)
             if res is None:
                 continue  # 极端取消场景：该工具未完成，跳过
+            if res.get("persisted"):
+                continue  # audit #847: 幂等 —— 已成功落库的条目不重写
             tc = res["tc"]
             msg_result_str = res["msg_result_str"]
             tool_name = res["tool_name"]
             if standard_calls:
+                db_save_content = msg_result_str[:100000] if len(msg_result_str) > 100000 else msg_result_str
+                await self._save_msg_async(session_id, "tool", "", None, db_save_content, tc["id"])
+                # DB 写完成后再动内存列表 —— 中断窗口内重入不会重复 append
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc["id"],
                     "content": msg_result_str,
                 })
-                db_save_content = msg_result_str[:100000] if len(msg_result_str) > 100000 else msg_result_str
-                await self._save_msg_async(session_id, "tool", "", None, db_save_content, tc["id"])
             else:
                 tool_result_msgs.append(f"{tool_name}: {msg_result_str}")
+            res["persisted"] = True
 
     async def _save_msg_async(self, session_id: str, role: str, content: str, tool_calls=None, tool_result=None, tool_call_id=None, reasoning_content=None):
         """异步保存消息到数据库"""

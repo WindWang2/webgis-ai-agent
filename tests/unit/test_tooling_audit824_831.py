@@ -62,8 +62,10 @@ class TestAudit824Resolver:
         fc = self._big_fc()
         args = {"geojson": fc, "radius": 100}
         out = await reg._resolve_references("s1", args, skip_keys=set(), oversized_hint=True)
-        # no alias HMGET at all
-        assert resolver_seams["alias_fields"] == []
+        # audit #848: only depth-1 direct args are probed (no full walk);
+        # pure-payload degradation sends at most one tiny batch
+        batches = [b for b in resolver_seams["alias_fields"] if b]
+        assert batches == []
         # identity short-circuit: subtree untouched
         assert out["geojson"] is fc
 

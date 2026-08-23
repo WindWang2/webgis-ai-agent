@@ -35,10 +35,32 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+from app.services.report_service import REPORT_DIR
+
 _DATA_DIR = Path(settings.DATA_DIR)
 EXPORT_DIR = _DATA_DIR / "exports"
-REPORT_DIR = _DATA_DIR / "reports"
 UPLOADS_DIR = _DATA_DIR / "uploads"
+# audit #851: REPORT_DIR 直接采用写入方（report_service）的单一事实源 ——
+# 此前按 settings.DATA_DIR 重算，DATA_DIR 覆写时清扫基地址与写入地址分叉。
+
+
+def _upload_id_from_filename(filename: str) -> str:
+    """audit #849: 从 UploadRecord.filename 恢复 upload_id。
+
+    写入方存的是 `"{upload_dir}/{original}"`（upload_dir = base/uploads/<id>，
+    base 可相对可绝对），取 `uploads` 段的**下一段**；仅当该段形如 32-hex
+    id（写入方 uuid4().hex）时返回，绝不基于猜测删除目录。
+    """
+    if not filename:
+        return ""
+    parts = [seg for seg in str(filename).replace("\\", "/").split("/") if seg]
+    for i, seg in enumerate(parts):
+        if seg == "uploads" and i + 1 < len(parts):
+            candidate = parts[i + 1]
+            if len(candidate) == 32 and all(c in "0123456789abcdef" for c in candidate.lower()):
+                return candidate
+            return ""
+    return ""
 
 _DEFAULT_EXPORT_RETENTION_DAYS = 7.0
 _DEFAULT_REPORT_RETENTION_DAYS = 14.0
@@ -126,7 +148,7 @@ async def purge_session_artifacts(session_id: str) -> Dict[str, Any]:
             )).scalars().all()
             removed_rows = removed_dirs = 0
             for row in rows:
-                upload_id = str(row.filename or "").split("/")[0]
+                upload_id = _upload_id_from_filename(str(row.filename or ""))
                 if upload_id:
                     # only ever delete inside UPLOADS_DIR
                     candidate = UPLOADS_DIR / upload_id
@@ -190,8 +212,16 @@ async def sweep_aged_artifacts() -> Dict[str, int]:
             "REPORT_RETENTION_DAYS", _DEFAULT_REPORT_RETENTION_DAYS)
         cutoff = datetime.now(timezone.utc) - timedelta(days=retention)
         async with async_db_session() as db:
+            # audit #850: 仍有效的分享（share_expires_at 在未来）不随龄清除
+            # —— 分享 API 允许最长 30 天 TTL，纯按 created_at 会提前杀死链接。
             rows = (await db.execute(
-                select(Report).where(Report.created_at < cutoff)
+                select(Report).where(
+                    Report.created_at < cutoff,
+                    ~(
+                        (Report.share_expires_at.isnot(None))
+                        & (Report.share_expires_at > datetime.now(timezone.utc))
+                    ),
+                )
             )).scalars().all()
             removed = 0
             for row in rows:
@@ -232,7 +262,7 @@ async def sweep_aged_artifacts() -> Dict[str, int]:
             rows = (await db.execute(orphan_stmt)).scalars().all()
             removed_rows = removed_dirs = 0
             for row in rows:
-                upload_id = str(row.filename or "").split("/")[0]
+                upload_id = _upload_id_from_filename(str(row.filename or ""))
                 if upload_id:
                     candidate = UPLOADS_DIR / upload_id
                     try:
