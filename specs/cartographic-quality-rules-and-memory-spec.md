@@ -148,7 +148,7 @@ severity, repairability, suggested_fix: {type, params}}`,挂入
 - 不做跨项目全局记忆(记忆严格 project 域,避免跨租户泄漏——沿用多租户隔离纪律);
 - 不引入第二套 MapSpec/评审格式(全部扩展现有 lifecycle + quality_loop 证据模型)。
 
-## 开放问题 (Open Questions) — 1/2 已落地
+## 开放问题 (Open Questions) — 全部落地
 
 1. ✅ **阈值校准（已落地）**：全部规则阈值经 `CARTO_*` settings 键可运维调参
    （import 期一次解析，规则保持纯函数）；
@@ -161,6 +161,11 @@ severity, repairability, suggested_fix: {type, params}}`,挂入
    （conflicted/stale 的人工裁决，ADR-0069 决策 3 的入口）；前端项目面板内嵌
    「制图记忆」折叠面板（状态徽标 + 撤销/激活，登录门控与 #528 一致）。
    没有任何"凭记忆改评审"的入口——那在 ADR-0069 决策 2 下被禁止。
-3. recipe_outcome 与现有 recipe 库推荐逻辑的合流点
-   (gis-harness-cartography-recipes-spec) 在后续 recipe 推荐改造时对齐，
-   避免双轨推荐。
+3. ✅ **recipe 推荐合流（已落地）**：单一推荐路径 + 记忆加成——
+   `select_candidates` 的稳定排序元组在 priority 之前插入「项目验证」层
+   （本项目 `recipe_outcome` ACTIVE 的 recipe 前置），语义弱一档的验证
+   recipe 绝不压过语义更强的候选（记忆是先验，ADR-0069 决策 2）。写入侧：
+   turn 评审通过 + session 计划携带 recipe_id → 收割时落
+   `recipe_outcome` 事实。项目上下文经 turn 级 `RuntimeContext.project_id`
+   （HTTP 入口绑定）传入工具层；无项目会话排序与既有行为逐字节一致。
+   不存在第二套带记忆的推荐器。

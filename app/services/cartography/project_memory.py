@@ -484,6 +484,18 @@ def apply_distribution_drift(
     return events
 
 
+def get_verified_recipe_ids(db: Session, project_id: str) -> set:
+    """本项目验证过（recipe_outcome ACTIVE）的 recipe id 集合。
+
+    推荐排序的读取口（spec 开放问题 3）：单一推荐路径 + 记忆加成，
+    不存在第二套带记忆的推荐器。
+    """
+    if not project_id:
+        return set()
+    facts = get_active_facts(db, project_id, kinds=("recipe_outcome",))
+    return {fact.subject for fact in facts}
+
+
 def list_project_facts(
     db: Session, project_id: str, limit: int = 200
 ) -> List[CartoProjectFact]:
@@ -585,6 +597,7 @@ __all__ = [
     "get_active_facts",
     "get_pending_env_changes",
     "get_shared_classification",
+    "get_verified_recipe_ids",
     "harvest_facts_from_review",
     "mark_stale",
     "render_memory_block",

@@ -84,6 +84,35 @@ class ComponentUpdateArgs(BaseModel):
         None, description="选项合并（如 {'variant':'compass_rose'} / {'orientation':'vertical'}）")
 
 
+async def _project_verified_recipes() -> set:
+    """当前 turn 的项目已验证 recipe id 集合（无项目上下文 → 空集）。
+
+    读账本是一次有界索引查询（recipe_outcome 事实通常个位数），且仅当
+    RuntimeContext 携带 project_id 时发生——匿名/无项目会话零开销。
+    账本不可用时返回空集（记忆是增值信号，绝不阻断推荐）。
+    """
+    from app.lib.runtime.context import current_runtime_context
+
+    ctx = current_runtime_context()
+    project_id = getattr(ctx, "project_id", None)
+    if not project_id:
+        return set()
+
+    def _read() -> set:
+        from app.core.database import SessionLocal
+        from app.services.cartography.project_memory import get_verified_recipe_ids
+
+        with SessionLocal() as db:
+            return get_verified_recipe_ids(db, project_id)
+
+    try:
+        import asyncio as _asyncio
+
+        return await _asyncio.to_thread(_read)
+    except Exception:  # noqa: BLE001 — 记忆缺失退化为无加成
+        return set()
+
+
 def register_gis_harness_tools(registry: ToolRegistry):
     """注册 GIS Harness 工具（tier 1：意图解析廉价且恒可用）。"""
 
@@ -145,7 +174,12 @@ def register_gis_harness_tools(registry: ToolRegistry):
             intent.hint_applied.append(f"subject->{subject_hint}")
 
         planner = MapProductPlanner()
-        candidates = planner.recipes.select_candidates(intent)
+        # ADR-0069 / spec 开放问题 3：推荐排序带项目记忆——本项目验证过的
+        # recipe 前置。project_id 来自 turn 级 RuntimeContext（HTTP 入口
+        # 绑定），无项目上下文时 verified 为空集，排序与既有行为一致。
+        candidates = planner.recipes.select_candidates(
+            intent, project_verified=await _project_verified_recipes()
+        )
         try:
             available = set(registry.list_tools())
         except Exception:  # noqa: BLE001 - 能力解析是建议性信息

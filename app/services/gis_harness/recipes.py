@@ -495,25 +495,34 @@ class RecipeRegistry:
         self,
         intent,
         limit: int = 3,
+        project_verified: Optional[set] = None,
     ) -> List[CartographyRecipe]:
         """按 intent 选择候选 recipe（确定性排序）。
 
-        排序键（稳定五元组）：
+        排序键（稳定六元组）：
             1. geometry 期望失配（#781：geometry_expectation=='raster' 时
                非栅格面族候选全部后置——栅格主体绝不推荐 POI 热力族）
             2. task 精确命中
             3. 显式制图意图（图末尾的 aggregate_grid / proportional_symbol
                等加法信号）是否命中 recipe.intent_cartography
             4. cartography_intents 交集多
-            5. priority 小（同分稳定排序）
+            5. 项目验证加成（ADR-0069 / spec 开放问题 3）：本项目
+               recipe_outcome 事实 ACTIVE 的 recipe 前置——同语义信号下
+               优先复用本项目已验证的制图方法。放在 priority 之前：
+               项目证据比静态种子优先级更有资格定序。
+            6. priority 小（同分稳定排序）
 
         显式信号那一层解决「同一 distribution_overview 任务下，宽口径
         recipe 交集计数把用户明确的形态词请求压掉」的优先级错置；其余
         回归锚（Golden Case A/D/E）保持原有行为。
+
+        ``project_verified`` 为 None（无项目上下文）时第 5 层恒 0，
+        排序与既有行为完全一致——记忆只在本项目内改变起点（决策 1/2）。
         """
         task = getattr(intent, "task", "")
         cartography = set(getattr(intent, "cartography_intents", []) or [])
         geometry = str(getattr(intent, "geometry_expectation", "") or "")
+        verified = project_verified or set()
         explicit: Optional[str] = None
         # cartography_intents 的尾端是 intent.py 加法注入的显式形态信号
         # （_GRID_AGG_RE / _BUBBLE_RE 直命中），前面是 task 默认覆盖——
@@ -544,6 +553,7 @@ class RecipeRegistry:
                     1 if explicit is not None else 0
                 ),
                 -cart_hit,
+                0 if recipe.id in verified else 1,
                 recipe.priority, recipe.id,
             )
             if task_hit or cart_hit or (geometry == "raster" and raster_family):

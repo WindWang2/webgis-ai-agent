@@ -34,17 +34,26 @@ def set_session_local_factory(factory: Optional[Callable]) -> None:
     _session_local_factory = factory
 
 
-def _harvest_sync(project_id: str, mapspec: dict, review: Optional[dict]) -> dict:
+def _harvest_sync(
+    project_id: str, mapspec: dict, review: Optional[dict], recipe_id: str = "",
+) -> dict:
     """Drift-then-harvest in one transaction.
 
     Order matters: distribution drift is applied FIRST so priors that the
     refreshed data invalidated are already ``stale`` before this turn's
     verdict gets a chance to re-establish them. A passing review then
     re-confirms whatever is still true (spec P3).
+
+    ``recipe_id``（spec 开放问题 3）：本 session 计划所用的 recipe。评审
+    通过时记一条 ``recipe_outcome`` 事实——"该方法在本项目产出过通过
+    评审的图"，成为推荐排序的项目验证信号。
     """
     from app.services.cartography.project_memory import (
+        _review_is_trustworthy,
+        _review_tier,
         apply_distribution_drift,
         harvest_facts_from_review,
+        record_fact,
     )
 
     SessionLocal = _get_session_local()
@@ -54,6 +63,14 @@ def _harvest_sync(project_id: str, mapspec: dict, review: Optional[dict]) -> dic
                 db, project_id, _numeric_field_profiles(mapspec)
             )
             written = harvest_facts_from_review(db, project_id, mapspec, review)
+            if recipe_id and _review_is_trustworthy(review):
+                record_fact(
+                    db, project_id, "recipe_outcome", recipe_id,
+                    {"task": _recipe_task(mapspec)},
+                    fingerprint=None,
+                    validity_tier=_review_tier(review),
+                )
+                written += 1
             if events or written:
                 db.commit()
             else:
@@ -62,6 +79,17 @@ def _harvest_sync(project_id: str, mapspec: dict, review: Optional[dict]) -> dic
         except Exception:
             db.rollback()
             raise
+
+
+def _recipe_task(mapspec: dict) -> str:
+    """从 MapSpec 侧可得的任务线索（plan 的 gis_intent 不在此处；诚实留空
+    优于编造）。cartographic_profile 若携带 intent 轨迹则用它。"""
+    profile = mapspec.get("cartographic_profile")
+    if isinstance(profile, dict):
+        task = profile.get("task")
+        if isinstance(task, str) and task:
+            return task
+    return ""
 
 
 def _numeric_field_profiles(mapspec: dict) -> dict:
@@ -120,7 +148,19 @@ async def harvest_project_memory(
         if not isinstance(mapspec, dict) or not mapspec:
             return empty
         review = state.get("_cartographic_review") if isinstance(state, dict) else None
-        return await asyncio.to_thread(_harvest_sync, project_id, mapspec, review)
+        # Session 计划携带本轮实际选用的 recipe（plan_orchestrator 在意图
+        # 解析时写入）。读不到就没有可记的方法结论——留空，不猜。
+        recipe_id = ""
+        try:
+            from app.services.chat.plan_orchestrator import get_plan
+
+            plan = get_plan(session_id)
+            recipe_id = str(getattr(plan, "recipe_id", "") or "")
+        except Exception:  # noqa: BLE001 — plan 缺席不阻断收割
+            recipe_id = ""
+        return await asyncio.to_thread(
+            _harvest_sync, project_id, mapspec, review, recipe_id,
+        )
     except Exception as ex:  # noqa: BLE001 — best-effort by contract
         logger.warning(
             "[CartoMemory] harvest skipped for session=%s project=%s: %s",

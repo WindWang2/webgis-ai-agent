@@ -39,6 +39,10 @@ class RuntimeContext:
     session_id: Optional[str] = None
     turn_id: Optional[str] = None
     run_id: Optional[str] = None
+    # 活动项目（ADR-0069 记忆的作用域）。HTTP 入口从请求体解析；工具层
+    # （如 recipe 推荐）据此读取项目制图记忆——session 域与 project 域的
+    # 唯一桥接点，避免到处传参或另建全局映射。
+    project_id: Optional[str] = None
 
     def merged(self, **overrides: Optional[str]) -> "RuntimeContext":
         """返回一个用非 None 覆盖项更新后的新上下文（frozen，不修改自身）。"""
@@ -54,6 +58,7 @@ class RuntimeContext:
             "session_id": self.session_id,
             "turn_id": self.turn_id,
             "run_id": self.run_id,
+            "project_id": self.project_id,
         }
 
 
@@ -97,6 +102,7 @@ def bind_runtime_context(
     session_id: Optional[str] = None,
     turn_id: Optional[str] = None,
     run_id: Optional[str] = None,
+    project_id: Optional[str] = None,
 ) -> Iterator[RuntimeContext]:
     """绑定运行时关联上下文（与外层合并），离开作用域时恢复。
 
@@ -110,6 +116,7 @@ def bind_runtime_context(
         session_id=session_id,
         turn_id=turn_id,
         run_id=run_id,
+        project_id=project_id,
     )
     token = _CURRENT.set(ctx)
     try:

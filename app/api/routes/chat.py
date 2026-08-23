@@ -662,7 +662,7 @@ async def chat_completions(
     _mid_req = (rt_ctx.current_runtime_context().request_id
                 if rt_ctx.current_runtime_context() else None)
     request_id = _mid_req or request.headers.get("x-request-id") or rt_ctx.new_request_id()
-    with rt_ctx.bind_runtime_context(request_id=request_id, session_id=req.session_id):
+    with rt_ctx.bind_runtime_context(request_id=request_id, session_id=req.session_id, project_id=req.project_id):
         if _use_pi_bridge():
             try:
                 try:
@@ -875,7 +875,7 @@ async def chat_stream(
             # One id scope per turn: ids stay monotonic across batched token
             # events and structural events, in emission order (see sse.py).
             with sse_event_id_scope(), rt_ctx.bind_runtime_context(
-                request_id=request_id, session_id=req.session_id
+                request_id=request_id, session_id=req.session_id, project_id=req.project_id
             ):
                 try:
                     if pi_owner_token:
@@ -940,7 +940,7 @@ async def chat_stream(
         buffer = TurnEventBuffer(session_key, req.message)
         _turn_resume_registry.register(session_key, buffer)
         with sse_event_id_scope(), rt_ctx.bind_runtime_context(
-            request_id=request_id, session_id=req.session_id
+            request_id=request_id, session_id=req.session_id, project_id=req.project_id
         ):
             try:
                 async for event in _recorded(
