@@ -780,9 +780,9 @@ async def _hydrate_cartographic_harness(
         mutation.get("session_id") == session_id
         for mutation in harness.mapspec_mutations
     )
-    if state is None:
-        from app.services.session_data import session_data_manager
+    from app.services.session_data import session_data_manager
 
+    if state is None:
         state = await session_data_manager.get_map_state(session_id)
     if state.get("_cartographic_deleted") is True:
         return False
@@ -1056,10 +1056,9 @@ async def _evaluate_cartographic_session_unlocked(
             "overall_passed": False,
         }
     from app.lib.harness.evaluator import HarnessEvaluator
+    from app.services.session_data import session_data_manager
 
     if state is None:
-        from app.services.session_data import session_data_manager
-
         state = await session_data_manager.get_map_state(session_id)
     observation = state.get("_cartographic_observation")
     sequence = int(observation.get("sequence", 0)) if isinstance(observation, dict) else 0

@@ -25,6 +25,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 _UNPINNED_OK = {
     "HTTP_PROXY",
     "HTTPS_PROXY",
+  # E-9/E-4（#895/#900）：安全/CORS 开关不钉扎 —— auth 测试文件在模块导入期
+  # setdefault("ALLOW_PUBLIC_REGISTER", "true") 自行开启；钉 false 会让注册
+  # 全 503。CORS 默认列表由 Settings 提供，钉 [] 会破坏 CORS preflight 测试。
+  "ALLOW_PUBLIC_REGISTER",
+  "CORS_ORIGINS",
 }
 
 # 第三方库 import 期已知的环境改写（与 app 代码无关，不可由本仓库修复）：

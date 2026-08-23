@@ -43,6 +43,8 @@ async def test_F2_dereferenced_payload_is_opaque(monkeypatch):
 
     monkeypatch.setattr(session_data_manager, "resolve_aliases", fake_resolve_aliases)
     monkeypatch.setattr(session_data_manager, "get", fake_get)
+    # P-1（#874）：解引用热路径走共享只读 get_shared —— 伪造面同步
+    monkeypatch.setattr(session_data_manager, "get_shared", fake_get)
 
     reg = ToolRegistry()
 

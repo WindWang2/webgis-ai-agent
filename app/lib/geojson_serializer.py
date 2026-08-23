@@ -55,6 +55,13 @@ def _encode_batch(elements: list, pad: str) -> List[str]:
     return [_reindent(_dumps_pretty(el), pad) for el in elements]
 
 
+def _encode_compact_batch(elements: list) -> List[str]:
+    """Compact-path batch encoder (worker thread); mirrors _encode_batch so the
+    event-loop responsiveness contract (tests/test_event_loop_offload_590_592)
+    can patch both paths uniformly."""
+    return [_dumps_compact(el) for el in elements]
+
+
 def _encode_value(value: Any, pad: str) -> str:
     """Serialize a non-chunked top-level value at one indent level."""
     return _reindent(_dumps_pretty(value), pad)
@@ -77,11 +84,7 @@ async def _serialize_compact(data: Any) -> bytes:
             total = len(val)
             for start in range(0, total, _GEOJSON_BATCH_ITEMS):
                 chunk = val[start : start + _GEOJSON_BATCH_ITEMS]
-
-                def _encode_chunk(c: list) -> List[str]:
-                    return [_dumps_compact(el) for el in c]
-
-                batch = await asyncio.to_thread(_encode_chunk, chunk)
+                batch = await asyncio.to_thread(_encode_compact_batch, chunk)
                 tail = "," if start + _GEOJSON_BATCH_ITEMS < total else ""
                 parts.append(",".join(batch) + tail)
             parts.append(f"]{comma}")

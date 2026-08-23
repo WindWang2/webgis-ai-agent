@@ -25,9 +25,9 @@ class CartographyService:
     # E-3（#894）：算法实现已下沉 app/lib/cartography/classify.py，别名保持兼容。
     from app.lib.cartography import classify as _classify_mod  # noqa: E402
 
-    _jenks_natural_breaks = classmethod(_classify_mod._jenks_natural_breaks)
-    _std_dev_breaks = classmethod(_classify_mod._std_dev_breaks)
-    _head_tail_breaks = classmethod(_classify_mod._head_tail_breaks)
+    _jenks_natural_breaks = staticmethod(_classify_mod._jenks_natural_breaks)
+    _std_dev_breaks = staticmethod(_classify_mod._std_dev_breaks)
+    _head_tail_breaks = staticmethod(_classify_mod._head_tail_breaks)
 
 
 

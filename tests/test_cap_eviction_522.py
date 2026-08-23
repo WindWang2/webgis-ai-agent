@@ -179,6 +179,9 @@ async def test_eviction_runs_clear_session_protocol(db, monkeypatch):
     methods the create path runs after committing the evicting transaction."""
     recorder = _ProtocolRecorder()
     monkeypatch.setattr(chat_mod, "engine", recorder)
+    # E-2（#893）：engine 单例读取点已下沉 services/chat/engine_instance
+    from app.services.chat import engine_instance as _holder
+    monkeypatch.setattr(_holder, "_engine", recorder)
 
     svc = AsyncHistoryService(db)
     for i in range(MAX_SESSIONS + 1):
