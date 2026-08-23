@@ -590,12 +590,42 @@ def _adcode_literal(code: str) -> str:
     return digits.replace("'", "''")
 
 
+def _gpkg_blob_envelope(blob: Any) -> Optional[Tuple[float, float, float, float]]:
+    """解析 GPKG geometry blob 头的 envelope（G-1/#865）。
+
+    GPKG 二进制头：magic "GP"(2B) + version(1B) + flags(1B) + srs_id(4B LE)
+    + 可选 envelope（flags bit1-3 指示维度组合），随后才是 WKB。GDAL
+    写 GPKG 默认带 XY envelope——空间过滤无需解析 WKB/无 SpatiaLite。
+
+    Returns (minx, miny, maxx, maxy)；非 GPKG blob 或无 envelope 返回 None。
+    """
+    import struct
+
+    if not isinstance(blob, (bytes, bytearray, memoryview)) or len(blob) < 40:
+        return None
+    b = bytes(blob)
+    if b[0:2] != b"GP":
+        return None
+    env_code = (b[3] >> 1) & 0x07
+    if env_code == 0:
+        return None
+    ndoubles = {1: 4, 2: 6, 3: 6, 4: 8}.get(env_code)
+    if ndoubles is None:
+        return None
+    try:
+        vals = struct.unpack_from("<%dd" % ndoubles, b, 8)
+    except struct.error:
+        return None
+    minx, maxx, miny, maxy = vals[0], vals[1], vals[2], vals[3]
+    return (minx, miny, maxx, maxy)
+
+
 def query_gd_poi(
     bbox: Any = None,
     *,
     name_like: Optional[str] = None,
     category: Optional[str] = None,
-    subtype: Optional[str] = None,
+    subtype: Any = None,
     adcode: Optional[str] = None,
     district: Optional[str] = None,
     polygon: Any = None,
@@ -609,7 +639,8 @@ def query_gd_poi(
     - bbox：WGS84 [minx,miny,maxx,maxy] 或 "w,s,e,n"（矩形，含边界外溢）；
     - district/adcode：行政区精确归属（POI 自带 adcode 字段 + 索引，
       行政区查询首选——无矩形外溢）。
-    属性过滤：name_like / category / subtype。
+    属性过滤：name_like / category / subtype。G-8（#872）：subtype 支持
+    传列表（OR 语义，如 ["小学", "中学"] 对应「中小学」复合词）。
     """
     import pyogrio
 
@@ -645,9 +676,18 @@ def query_gd_poi(
         }
     limit = max(1, min(int(limit), 2000))
 
-    raw_subtype = subtype
-    if subtype:
-        subtype = _SUBTYPE_ALIASES.get(str(subtype).strip().lower(), subtype)
+    # G-8（#872）：subtype 列表 → 多值 OR（每个值独立走别名映射与 LIKE）。
+    subtype_list: List[str] = []
+    if isinstance(subtype, (list, tuple)):
+        subtype_list = [str(s).strip() for s in subtype if str(s).strip()]
+    raw_subtype = subtype_list[0] if subtype_list else subtype
+    if isinstance(subtype, str) or (subtype is not None and not subtype_list):
+        single = _SUBTYPE_ALIASES.get(str(subtype).strip().lower(), subtype) if subtype else subtype
+        subtype_list = [single] if single else []
+    elif subtype_list:
+        subtype_list = [
+            _SUBTYPE_ALIASES.get(s.lower(), s) for s in subtype_list
+        ]
 
     # OGR/pyogrio needs an interpolated WHERE; sqlite3 uses bound params.
     ogr_clauses: List[str] = []
@@ -664,11 +704,20 @@ def query_gd_poi(
         sql_params.append(cat)
     subtype_ogr = None
     subtype_sql = None
-    if subtype:
-        subtype_ogr = (
-            f"LOWER(subtype) LIKE LOWER('%'||{_sql_like(str(subtype))}||'%') ESCAPE '\\'"
-        )
-        subtype_sql = "LOWER(subtype) LIKE LOWER('%'||?||'%') ESCAPE '\\'"
+    subtype_sql_params: List[Any] = []
+    if subtype_list:
+        # G-8（#872）：多值 OR —— 每个值独立 LIKE，括号包裹防与外层 AND 粘连。
+        ogr_parts = [
+            f"LOWER(subtype) LIKE LOWER('%'||{_sql_like(str(s))}||'%') ESCAPE '\\'"
+            for s in subtype_list
+        ]
+        sql_parts = [
+            "LOWER(subtype) LIKE LOWER('%'||?||'%') ESCAPE '\\'"
+            for _ in subtype_list
+        ]
+        subtype_ogr = "(" + " OR ".join(ogr_parts) + ")"
+        subtype_sql = "(" + " OR ".join(sql_parts) + ")"
+        subtype_sql_params = [_sql_like_pattern(str(s)) for s in subtype_list]
     if adcode:
         code = _adcode_literal(str(adcode).strip())
         if len(code) >= 6:  # 区县级 6 位：精确（zfill 兜底补零）
@@ -699,7 +748,7 @@ def query_gd_poi(
             sql_params.append(code)
     where = " AND ".join(ogr_clauses + ([subtype_ogr] if subtype_ogr else [])) or None
     sql_where = " AND ".join(sql_clauses + ([subtype_sql] if subtype_sql else [])) or None
-    sql_where_params = list(sql_params) + ([_sql_like_pattern(str(subtype))] if subtype_sql else [])
+    sql_where_params = list(sql_params) + subtype_sql_params
     # subtype 之外的过滤（零命中 hint 的子类分布查询用）
     base_sql = " AND ".join(sql_clauses) or None
     base_sql_params = list(sql_params)
@@ -713,20 +762,38 @@ def query_gd_poi(
     # category 查询（如成都 科教文化服务 34k 条 limit 2000）会全量落在
     # adcode 最小的区县（实测 2000 条全是锦江区培训机构）。先 COUNT，
     # 超出 read_cap 且规模可控时按 fid 整数哈希采样，覆盖整个查询范围。
+    # G-1（#865）：bbox/polygon 路径此前被整体跳过（采样门条件只覆盖
+    # "纯属性过滤"）——带 bbox 的查询（本地优先链路的主路径）仍是索引
+    # 头部截断，「成都小学」类任务返回点几乎全部来自入库顺序最前的区县，
+    # 密度/聚合结论系统性偏斜。空间过滤不能下推 SQLite（无 SpatiaLite
+    # 扩展，BuildMBR 不可用）——改为流式扫描 GPKG blob 头的 envelope
+    #（纯 Python 解析，无 WKB 开销）取 bbox 内候选 fid。
     total_matched: Optional[int] = None
     sample_fids: Optional[List[int]] = None
-    if where is not None and parsed is None:
+
+    # 空间候选扫描上限：防止全国级 category 查询（属性命中百万行）把
+    # blob 扫描本身变成瓶颈；超限放弃采样回退旧行为。
+    _SPATIAL_SCAN_CAP = 100_000
+
+    try:
+        conn = sqlite3.connect(
+            f"file:{gd_poi_gpkg_path()}?mode=ro", uri=True, timeout=10
+        )
         try:
-            conn = sqlite3.connect(
-                f"file:{gd_poi_gpkg_path()}?mode=ro", uri=True, timeout=10
-            )
-            try:
-                if not sql_where:
-                    raise ValueError("sql_where required for count/sample")
+            parts: List[str] = []
+            params: List[Any] = []
+            if sql_where:
+                parts.append(sql_where)
+                params.extend(sql_where_params)
+            if parsed is None:
+                # 纯属性路径：谓词直接下推 SQL（既有行为）。
+                if not parts:
+                    raise ValueError("no predicate for count/sample")
+                predicate = " AND ".join(parts)
                 total_matched = int(
                     conn.execute(
-                        _bound_sql("SELECT COUNT(*) FROM pois WHERE ", sql_where),
-                        sql_where_params,
+                        _bound_sql("SELECT COUNT(*) FROM pois WHERE ", predicate),
+                        params,
                     ).fetchone()[0]
                 )
                 if read_cap < total_matched <= _SAMPLE_MAX_ROWS:
@@ -735,17 +802,51 @@ def query_gd_poi(
                         for r in conn.execute(
                             _bound_sql(
                                 "SELECT fid FROM pois WHERE ",
-                                sql_where,
+                                predicate,
                                 " ORDER BY (fid * 2654435761 % 2147483647) LIMIT ?",
                             ),
-                            [*sql_where_params, read_cap],
+                            [*params, read_cap],
                         )
                     ]
-            finally:
-                conn.close()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("[gd-poi] count/sample 跳过（%s）", exc)
-            total_matched = None
+            else:
+                # G-1：空间路径 —— 属性谓词下推 SQL，bbox 在 Python 侧用
+                # GPKG blob envelope 过滤，再按 fid 哈希均匀采样。
+                minx, miny, maxx, maxy = (float(v) for v in parsed)
+                predicate = " AND ".join(parts) if parts else "1=1"
+                candidates: List[int] = []
+                scanned = 0
+                capped = False
+                for row in conn.execute(
+                    _bound_sql("SELECT fid, geom FROM pois WHERE ", predicate),
+                    params,
+                ):
+                    scanned += 1
+                    if scanned > _SPATIAL_SCAN_CAP:
+                        capped = True
+                        break
+                    env = _gpkg_blob_envelope(row[1])
+                    if env is None:
+                        # 无 envelope（非常规写入）——保守保留为候选。
+                        candidates.append(int(row[0]))
+                        continue
+                    if not (
+                        env[0] > maxx or env[2] < minx
+                        or env[1] > maxy or env[3] < miny
+                    ):
+                        candidates.append(int(row[0]))
+                if not capped:
+                    total_matched = len(candidates)
+                    if read_cap < total_matched:
+                        candidates.sort(
+                            key=lambda f: (f * 2654435761) % 2147483647
+                        )
+                        sample_fids = candidates[:read_cap]
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[gd-poi] count/sample 跳过（%s）", exc)
+        total_matched = None
+        sample_fids = None
 
     read_kwargs: Dict[str, Any] = {
         "layer": "pois",
@@ -794,8 +895,9 @@ def query_gd_poi(
     if total_matched is not None:
         out["total_matched"] = total_matched
     notes: List[str] = []
-    if raw_subtype and str(raw_subtype).strip() != str(subtype).strip():
-        notes.append(f"subtype '{raw_subtype}' 已按别名映射为 '{subtype}'")
+    _mapped_display = "|".join(subtype_list) if subtype_list else ""
+    if raw_subtype and _mapped_display and str(raw_subtype).strip() != _mapped_display:
+        notes.append(f"subtype '{raw_subtype}' 已按别名映射为 '{_mapped_display}'")
     if len(features) >= limit:
         out["truncated"] = True
         if sample_fids and total_matched is not None:

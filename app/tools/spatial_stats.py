@@ -81,7 +81,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
            tier=2, domains=["statistics"],
            param_descriptions={
                "geojson": "输入点要素 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
-               "bandwidth": "核函数带宽（米），0表示自动计算（Silverman法则）",
+               "bandwidth": "核函数带宽（米），0=自动（Scott规则，并按最近邻尺度钳制防过平滑）",
                "cell_size": "网格单元大小（米），默认500",
                "value_field": "可选：作为权重的数值字段",
                "bounds": "可选：分析范围 [xmin, ymin, xmax, ymax]（WGS84），默认数据范围+10%缓冲",

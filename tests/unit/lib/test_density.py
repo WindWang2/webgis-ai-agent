@@ -274,7 +274,7 @@ def test_kde_contours_ring_with_enclosed_core_keeps_island_bands_762():
     # Band regions from the emitted features, in UTM (metres) for containment.
     gdf, utm_crs = to_utm_gdf(points)
     coords = extract_centroids(gdf)
-    kde, _bw = _fit_kde(_cap_kde_points(coords.T)[0], bandwidth)
+    kde, _bw, _clamped = _fit_kde(_cap_kde_points(coords.T)[0], bandwidth)
     band_values = sorted({f["properties"]["density_value"] for f in features})
     band_regions = {}
     for f in features:

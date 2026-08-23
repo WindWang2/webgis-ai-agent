@@ -16,6 +16,24 @@ from app.lib.geo_analysis._vector import extract_centroids
 # 真正释放 CPU 而不是只改 UI 状态。
 from app.services.jobs.cancellation import cancellable
 
+
+def _bh_qvalues(p: "np.ndarray") -> "np.ndarray":
+    """BH-FDR 校正的 q 值（G-6/#870）。
+
+    逐点 p<0.05 的显著性判定在 n 个单元上独立检验时，随机数据期望产出
+    ~0.05n 个假显著；q 值控制 FDR 后再判定"可断言热点"。
+    """
+    p = np.asarray(p, dtype=float)
+    n = p.size
+    if n == 0:
+        return p
+    order = np.argsort(p)
+    ranked = p[order] * n / (np.arange(n) + 1)
+    q_sorted = np.minimum.accumulate(ranked[::-1])[::-1]
+    out = np.empty(n, dtype=float)
+    out[order] = np.clip(q_sorted, 0.0, 1.0)
+    return out
+
 def _build_weights(gdf: gpd.GeoDataFrame, k: int = 8) -> sparse.coo_matrix:
     """Build spatial weights matrix using KNN via cKDTree.
 
@@ -345,7 +363,14 @@ def hotspot_narrated(geojson: dict, value_field: str, distance_band: float = 0) 
     with np.errstate(invalid="ignore", divide="ignore"):
         gi_stars = np.where(denominators != 0, numerators / denominators, 0)
     p_vals = 2 * (1 - norm.cdf(np.abs(gi_stars)))
-    
+
+    # G-6（#870）：BH-FDR 校正 —— n 个单元各按 α=0.05 独立检验时，完全
+    # 随机数据也期望产出 0.05×n 个"显著"热点并直接上图。q 值随要素输出，
+    # 信封披露期望假阳性数；hot_count 不再高于期望假阳性时叙事降级。
+    q_vals = _bh_qvalues(p_vals)
+    expected_false_pos = round(0.05 * len(p_vals), 1)
+    fdr_hot_count = int(np.sum((q_vals < 0.05) & (gi_stars > 0)))
+
     hot_count = int(np.sum((p_vals < 0.05) & (gi_stars > 0)))
     cold_count = int(np.sum((p_vals < 0.05) & (gi_stars < 0)))
     
@@ -383,6 +408,7 @@ def hotspot_narrated(geojson: dict, value_field: str, distance_band: float = 0) 
         props.update({
             "gi_star": round(gi_star, 4),
             "p_value": round(p_val, 6),
+            "q_value_fdr": round(float(q_vals[i]), 6),
             "hotspot_type": h_type,
             "confidence": confidence
         })
@@ -398,13 +424,22 @@ def hotspot_narrated(geojson: dict, value_field: str, distance_band: float = 0) 
         summary += f" Significant clusters of high/low values were detected using a distance band of {bw:.1f} meters."
     else:
         summary += " No significant hotspots were detected at the 90% confidence level."
-        
+    # G-6（#870）：多重比较披露 —— 未校正显著数接近随机期望时降级叙述。
+    summary += (
+        f"（BH-FDR 校正后 {fdr_hot_count} 个热点 q<0.05；"
+        f"未校正 α=0.05 下 {len(p_vals)} 个单元的随机期望假阳性 ≈{expected_false_pos} 个）"
+    )
+    if hot_count > 0 and hot_count <= expected_false_pos:
+        summary += " 显著数不高于随机期望，热点结论不可靠，请谨慎叙述。"
+
     data_out = {
         "type": "FeatureCollection",
         "features": features,
         "hot_spots_count": hot_count,
         "cold_spots_count": cold_count,
-        "distance_band_m": round(bw, 2)
+        "distance_band_m": round(bw, 2),
+        "fdr_hot_spots_count": fdr_hot_count,
+        "expected_false_positives": expected_false_pos,
     }
     
     return GeoAnalysisResult(True, data_out, summary)
@@ -564,10 +599,20 @@ def cluster_narrated(
         coords = extract_centroids(gdf)
         vals = gdf[value_field].to_numpy(dtype=float)
         scaler = StandardScaler()
-        vals_scaled = scaler.fit_transform(vals.reshape(-1, 1)) * float(value_weight)
+        # G-3（#867）：值维缩放到与坐标（米）可比的尺度。此前标准化值维
+        # （σ=1，无量纲）与 UTM 米坐标直接拼接，默认 value_weight=1.0 下
+        # 值维贡献仅 ~1 米（城市坐标 σ≈8-20km），"值感知聚类"退化为纯空间
+        # 聚类且无披露。现在值维 σ = value_weight × 空间坐标 σ ——
+        # value_weight=1 表示值维与空间维同量级参与距离。
+        coords_std = float(np.std(coords, axis=0).mean()) if len(coords) else 0.0
+        vals_scaled = scaler.fit_transform(vals.reshape(-1, 1)) * (
+            float(value_weight) * max(coords_std, 1.0)
+        )
         features = np.column_stack([coords, vals_scaled])
+        value_effective_scale = float(value_weight) * max(coords_std, 1.0)
     else:
         features = coords
+        value_effective_scale = None
 
     if method == "kmeans":
         # Guard (E-10): n_clusters<=0 or > n raises an opaque sklearn error.
@@ -615,6 +660,9 @@ def cluster_narrated(
         "method": method,
         "n_clusters": len(set(labels)) - (1 if -1 in labels else 0),
     }
+    # G-3（#867）：披露值维的实际参与尺度（米），调用方能感知量纲语义。
+    if value_effective_scale is not None:
+        data_out["value_dim_effective_scale_m"] = round(value_effective_scale, 2)
 
     return GeoAnalysisResult(True, data_out, summary)
 
@@ -675,6 +723,9 @@ def h3_lisa(h3_geojson: dict, value_field: str) -> GeoAnalysisResult:
         default=4,
     )
     clusters = [cluster_labels[c] for c in label_codes.tolist()]
+    # G-6（#870）：多重比较披露 —— p_sim<0.05 的逐格判定在随机数据下期望
+    # 产出 ~0.05n 个"显著"格子，信封披露期望假阳性数供叙述校准。
+    _lisa_expected_fp = round(0.05 * len(p_sim), 1)
     label_counts = np.bincount(label_codes, minlength=5)
     cluster_counts = {
         "HH": int(label_counts[0]),
@@ -725,9 +776,15 @@ def h3_lisa(h3_geojson: dict, value_field: str) -> GeoAnalysisResult:
     data_out = {
         "type": "FeatureCollection",
         "features": out_features,
-        "cluster_stats": cluster_counts
+        "cluster_stats": cluster_counts,
+        # G-6（#870）：随机零假设下的期望假阳性格数（p_sim<0.05 逐格判定）。
+        "expected_false_positives": _lisa_expected_fp,
     }
-    
+    summary += (
+        f"（{len(p_sim)} 个格网在 α=0.05 逐格判定下的随机期望假阳性 ≈"
+        f"{_lisa_expected_fp} 个；显著数不高于该值时聚集结论应谨慎叙述）"
+    )
+
     return GeoAnalysisResult(True, data_out, summary)
 
 
