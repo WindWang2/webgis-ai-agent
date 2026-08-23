@@ -900,26 +900,46 @@ def _check_thematic_consistency(
 # 色彩可分性需要 legend 颜色，图例完备需要可见专题层。证据缺失时不发射
 # 假通过；多边形填充负载模型显式推迟（无 check，绝不猜）。
 
-_LOAD_WARN_RATIO = 0.15
-_LOAD_FAIL_RATIO = 0.40
+def _carto_threshold(name: str, default: float) -> float:
+    """Read a rule threshold from settings, falling back to the shipped default.
+
+    Thresholds are operator-tunable (spec open question 1) but resolved ONCE at
+    import so the rules themselves stay pure functions of their inputs — a rule
+    that reads global config per call is neither unit-testable nor reproducible.
+    Tests override the module constants directly (monkeypatch), not the env.
+    """
+    try:
+        from app.core.config import settings
+
+        value = getattr(settings, name, None)
+        return float(value) if value is not None else default
+    except Exception:  # noqa: BLE001 — config must never break rule import
+        return default
+
+
+_LOAD_WARN_RATIO = _carto_threshold("CARTO_LOAD_WARN_RATIO", 0.15)
+_LOAD_FAIL_RATIO = _carto_threshold("CARTO_LOAD_FAIL_RATIO", 0.40)
 _VIEWPORT_WIDTH_PX = 1024.0
 _VIEWPORT_HEIGHT_PX = 768.0
 _AVG_LINE_SEGMENT_PX = 40.0
 _DEFAULT_CIRCLE_RADIUS_PX = 5.0
 _DEFAULT_LINE_WIDTH_PX = 2.0
 _MAX_MERCATOR_LAT = 85.0
-_COLOR_SEP_FAIL_DELTA_E = 5.0
-_COLOR_SEP_WARN_DELTA_E = 10.0
+_COLOR_SEP_FAIL_DELTA_E = _carto_threshold("CARTO_COLOR_SEP_FAIL_DELTA_E", 5.0)
+_COLOR_SEP_WARN_DELTA_E = _carto_threshold("CARTO_COLOR_SEP_WARN_DELTA_E", 10.0)
 
 _POINT_GEOMS = ("Point", "MultiPoint")
 _LINE_GEOMS = ("LineString", "MultiLineString")
 _POLYGON_GEOMS = ("Polygon", "MultiPolygon")
 
-# Phase 4 阈值。注记盒占比按图面惯例（注记不应吃掉一成以上图面）；
-# SVS = smallest visible size，0.4mm@96dpi ≈ 1.5px 边长 → 2.25px² 面积。
-_LABEL_WARN_RATIO = 0.10
-_LABEL_FAIL_RATIO = 0.25
-_SVS_AREA_PX = 2.25
+# Phase 4 阈值（同样可运维调参，见 _carto_threshold）。注记盒占比按图面
+# 惯例（注记不应吃掉一成以上图面）；SVS = smallest visible size，
+# 0.4mm@96dpi ≈ 1.5px 边长 → 2.25px² 面积。
+_LABEL_WARN_RATIO = _carto_threshold("CARTO_LABEL_WARN_RATIO", 0.10)
+_LABEL_FAIL_RATIO = _carto_threshold("CARTO_LABEL_FAIL_RATIO", 0.25)
+_SVS_AREA_PX = _carto_threshold("CARTO_SVS_AREA_PX", 2.25)
+_VISUALVAR_WARN_COUNT = int(_carto_threshold("CARTO_VISUALVAR_WARN_COUNT", 3))
+_VISUALVAR_FAIL_COUNT = int(_carto_threshold("CARTO_VISUALVAR_FAIL_COUNT", 4))
 
 
 def _viewport_bbox(view: Any) -> Optional[List[float]]:
@@ -1207,11 +1227,11 @@ def _check_visual_variable_overload(
             field: sorted(props) for field, props in
             list(channels.items())[:8]
         },
-        "thresholds": {"warn": 3, "fail": 4},
+        "thresholds": {"warn": _VISUALVAR_WARN_COUNT, "fail": _VISUALVAR_FAIL_COUNT},
         "model": "bertin_concurrent_variables",
     }
     count = len(encoded_fields)
-    if count >= 4:
+    if count >= _VISUALVAR_FAIL_COUNT:
         report.add_check(
             "carto.visualvar.overload",
             "fail",
@@ -1229,11 +1249,11 @@ def _check_visual_variable_overload(
             },
         )
         return
-    if count == 3:
+    if count >= _VISUALVAR_WARN_COUNT:
         report.add_check(
             "carto.visualvar.overload",
             "warning",
-            (f"Layer '{lid}' encodes 3 data variables on one symbol — "
+            (f"Layer '{lid}' encodes {count} data variables on one symbol — "
              "consider splitting or dropping a channel"),
             severity="warning",
             layer_id=lid,

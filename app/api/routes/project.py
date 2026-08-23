@@ -567,3 +567,101 @@ def get_artifact_lineage(
     # DATA-01: pass project.id so the traversal filters cross-tenant neighbors.
     graph = LineageService.get_lineage_graph(db=db, artifact_id=artifact_id, project_id=project.id)
     return graph
+
+
+# ── 项目制图记忆管理（ADR-0069 / spec 开放问题 2）─────────────────────────
+# 记忆是先验不是证据；这里只提供人工治理入口：查看、撤销（retire）、
+# 显式（重）激活（conflicted/stale 的裁决）。不存在任何"凭记忆改评审"
+# 的写入口——那在 ADR-0069 决策 2 下被禁止。
+
+
+def _carto_fact_row(fact) -> Dict[str, Any]:
+    return {
+        "id": fact.id,
+        "kind": fact.kind,
+        "subject": fact.subject,
+        "payload": fact.payload if isinstance(fact.payload, dict) else {},
+        "fingerprint": fact.fingerprint,
+        "validity_tier": fact.validity_tier,
+        "status": fact.status,
+        "created_at": fact.created_at.isoformat() if fact.created_at else None,
+        "last_verified_at": (
+            fact.last_verified_at.isoformat() if fact.last_verified_at else None
+        ),
+    }
+
+
+@router.get("/{project_id}/carto-memory")
+def list_carto_memory(
+    project_id: str,
+    db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+):
+    """项目的全部制图事实（含 stale/conflicted/retired，管理视图）。"""
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(
+        db=db, project_id=project_id, user_id=user_id, org_id=org_id,
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found or permission denied")
+    from app.services.cartography.project_memory import list_project_facts
+
+    facts = list_project_facts(db, project_id)
+    return {
+        "project_id": project_id,
+        "counts": {
+            status_name: sum(1 for f in facts if f.status == status_name)
+            for status_name in ("active", "stale", "conflicted", "retired")
+        },
+        "facts": [_carto_fact_row(f) for f in facts],
+    }
+
+
+@router.delete("/{project_id}/carto-memory/{fact_id}")
+def retire_carto_fact(
+    project_id: str,
+    fact_id: str,
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """撤销一条事实（软删 retired）——用户改主意 / 方案弃用。"""
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(
+        db=db, project_id=project_id, user_id=user_id, org_id=org_id,
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found or permission denied")
+    from app.services.cartography.project_memory import retire_fact
+
+    fact = retire_fact(db, project_id, fact_id)
+    if fact is None:
+        raise HTTPException(status_code=404, detail="Fact not found in this project")
+    db.commit()
+    return {"status": "retired", "fact": _carto_fact_row(fact)}
+
+
+@router.post("/{project_id}/carto-memory/{fact_id}/activate")
+def activate_carto_fact(
+    project_id: str,
+    fact_id: str,
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """显式（重）激活一条事实——conflicted/stale 的人工裁决入口。
+
+    ADR-0069 决策 3：共享方案的升级/确认只能经显式动作，这里就是那个
+    动作。激活清除分歧与环境事件标记并刷新验证时间。
+    """
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(
+        db=db, project_id=project_id, user_id=user_id, org_id=org_id,
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found or permission denied")
+    from app.services.cartography.project_memory import activate_fact
+
+    fact = activate_fact(db, project_id, fact_id)
+    if fact is None:
+        raise HTTPException(status_code=404, detail="Fact not found in this project")
+    db.commit()
+    return {"status": "active", "fact": _carto_fact_row(fact)}

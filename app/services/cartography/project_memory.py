@@ -484,6 +484,61 @@ def apply_distribution_drift(
     return events
 
 
+def list_project_facts(
+    db: Session, project_id: str, limit: int = 200
+) -> List[CartoProjectFact]:
+    """项目全部事实（含 stale/conflicted/retired）——管理视图用。
+
+    注入视图用 :func:`get_active_facts`；本函数是 UI/审计入口，按最近
+    验证排序，遵守同一 LRU 上限量级。
+    """
+    if not project_id:
+        return []
+    stmt = (
+        select(CartoProjectFact)
+        .where(CartoProjectFact.project_id == project_id)
+        .order_by(CartoProjectFact.last_verified_at.desc())
+        .limit(limit)
+    )
+    return list(db.execute(stmt).scalars().all())
+
+
+def retire_fact(db: Session, project_id: str, fact_id: str) -> Optional[CartoProjectFact]:
+    """撤销一条事实（开放问题 2 的入口）：``retired`` 软删，不物理删除。
+
+    撤销偏好 = 用户改主意；撤销共享分类 = 项目不再复用该方案。行保留可
+    审计（evidence_digest/fingerprint 不丢）。
+    """
+    fact = db.get(CartoProjectFact, fact_id)
+    if fact is None or fact.project_id != project_id:
+        return None
+    fact.status = "retired"
+    fact.last_verified_at = _now()
+    db.flush()
+    return fact
+
+
+def activate_fact(db: Session, project_id: str, fact_id: str) -> Optional[CartoProjectFact]:
+    """显式（重）激活一条事实——ADR-0069 决策 3 的裁决入口。
+
+    适用场景：用户在 UI 上确认 conflicted 的方案之一、或复活一条 stale
+    事实（“我知道数据变了，但就要这套断点”）。激活是**显式动作**：清除
+    分歧/环境事件标记，刷新验证时间。调用方负责提交。
+    """
+    fact = db.get(CartoProjectFact, fact_id)
+    if fact is None or fact.project_id != project_id:
+        return None
+    if isinstance(fact.payload, dict):
+        fact.payload = {
+            k: v for k, v in fact.payload.items()
+            if k not in ("_conflict", "_env_change")
+        }
+    fact.status = "active"
+    fact.last_verified_at = _now()
+    db.flush()
+    return fact
+
+
 def get_pending_env_changes(
     db: Session, project_id: str, limit: int = 10
 ) -> List[Dict[str, Any]]:
@@ -523,7 +578,10 @@ __all__ = [
     "FACT_STATUSES",
     "apply_distribution_drift",
     "classification_fingerprint",
+    "list_project_facts",
     "record_fact",
+    "retire_fact",
+    "activate_fact",
     "get_active_facts",
     "get_pending_env_changes",
     "get_shared_classification",

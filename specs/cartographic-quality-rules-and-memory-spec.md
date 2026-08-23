@@ -148,11 +148,19 @@ severity, repairability, suggested_fix: {type, params}}`,挂入
 - 不做跨项目全局记忆(记忆严格 project 域,避免跨租户泄漏——沿用多租户隔离纪律);
 - 不引入第二套 MapSpec/评审格式(全部扩展现有 lifecycle + quality_loop 证据模型)。
 
-## 开放问题 (Open Questions)
+## 开放问题 (Open Questions) — 1/2 已落地
 
-1. 阈值校准来源:负载量/色差阈值先取制图学教科书保守值 + settings 可配;是否引入
-   基于现有 eval 套件的自动校准,留待 Phase 1 数据积累后决定。
-2. `preference` 事实的撤销语义(用户改主意):初版用 `retired` 软删,是否需要 UI 入口,
-   待前端需求确认。
-3. recipe_outcome 与现有 recipe 库推荐逻辑的合流点(gis-harness-cartography-recipes-spec)
-   在 Phase 2 实施时对齐,避免双轨推荐。
+1. ✅ **阈值校准（已落地）**：全部规则阈值经 `CARTO_*` settings 键可运维调参
+   （import 期一次解析，规则保持纯函数）；
+   `scripts/calibrate_cartography_thresholds.py` 从实测评审证据
+   （`checks[].evidence` 的 load_ratio/ΔE00/注记占比等）聚合分布并按分位数给
+   warn/fail 建议值——low_bad 指标方向语义在脚本内固化（fail 阈 < warn 阈）。
+   输出仅为建议（注释形态 .env 行），阈值变更影响 gate 行为，必须人工确认。
+2. ✅ **记忆治理入口（已落地）**：`GET/DELETE /api/v1/projects/{id}/carto-memory`
+   与 `POST …/{fact_id}/activate` 提供查看/撤销（retired 软删）/显式激活
+   （conflicted/stale 的人工裁决，ADR-0069 决策 3 的入口）；前端项目面板内嵌
+   「制图记忆」折叠面板（状态徽标 + 撤销/激活，登录门控与 #528 一致）。
+   没有任何"凭记忆改评审"的入口——那在 ADR-0069 决策 2 下被禁止。
+3. recipe_outcome 与现有 recipe 库推荐逻辑的合流点
+   (gis-harness-cartography-recipes-spec) 在后续 recipe 推荐改造时对齐，
+   避免双轨推荐。

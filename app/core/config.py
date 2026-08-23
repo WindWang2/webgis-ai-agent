@@ -50,6 +50,27 @@ class Settings(BaseSettings):
     # 数据库
     DATABASE_URL: str = "sqlite:///./data/webgis.db"
 
+    # ── 制图质量规则阈值（specs/cartographic-quality-rules-and-memory-spec）──
+    # 默认值取制图学保守惯例。规则本体仍是纯函数：阈值经参数注入，规则内
+    # 不读全局配置——否则规则就不再可单测/可复现。
+    # 视口墨量负载（估计可见符号面积 / 视口面积）
+    CARTO_LOAD_WARN_RATIO: float = 0.15
+    CARTO_LOAD_FAIL_RATIO: float = 0.40
+    # 图例相邻类感知色差 CIEDE2000
+    CARTO_COLOR_SEP_WARN_DELTA_E: float = 10.0
+    CARTO_COLOR_SEP_FAIL_DELTA_E: float = 5.0
+    # 注记盒占视口比例
+    CARTO_LABEL_WARN_RATIO: float = 0.10
+    CARTO_LABEL_FAIL_RATIO: float = 0.25
+    # 最小可视尺寸（0.4mm@96dpi ≈ 1.5px 边长 → 2.25px² 面积）
+    CARTO_SVS_AREA_PX: float = 2.25
+    # 单图层并置数据变量数（Bertin 过载）
+    CARTO_VISUALVAR_WARN_COUNT: int = 3
+    CARTO_VISUALVAR_FAIL_COUNT: int = 4
+    # 分布漂移：分位向量相对偏差 / 空值率绝对变化
+    CARTO_DRIFT_RELATIVE_THRESHOLD: float = 0.15
+    CARTO_DRIFT_NULL_RATIO_THRESHOLD: float = 0.10
+
     # LLM 配置 (OpenAI 兼容接口)
     # 项目默认：阶跃 Step Plan 的 step-3.7-flash（推理模型，响应含
     # reasoning_content，正文在 content）。API key 只经环境变量注入，

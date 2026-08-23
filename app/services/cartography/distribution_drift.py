@@ -18,11 +18,27 @@ from typing import Any, Dict, List, Optional, Sequence
 
 logger = logging.getLogger(__name__)
 
-#: 分位向量相对偏差阈值：超过即判定漂移（spec P3 默认 15%）。
-DRIFT_RELATIVE_THRESHOLD = 0.15
+
+def _threshold(name: str, default: float) -> float:
+    """Operator-tunable threshold (spec open question 1), resolved at import.
+
+    Same rationale as semantic_checks._carto_threshold: the detector stays a
+    pure function of (held, incoming, thresholds); config is injected once.
+    """
+    try:
+        from app.core.config import settings
+
+        value = getattr(settings, name, None)
+        return float(value) if value is not None else default
+    except Exception:  # noqa: BLE001
+        return default
+
+
+#: 分位向量相对偏差阈值：超过即判定漂移（默认 15%，可运维调参）。
+DRIFT_RELATIVE_THRESHOLD = _threshold("CARTO_DRIFT_RELATIVE_THRESHOLD", 0.15)
 
 #: 空值率绝对变化阈值：列的“空洞程度”独立于分布形状变化。
-NULL_RATIO_ABS_THRESHOLD = 0.10
+NULL_RATIO_ABS_THRESHOLD = _threshold("CARTO_DRIFT_NULL_RATIO_THRESHOLD", 0.10)
 
 #: [ENV_CHANGE] 注入块预算，与记忆块同量级。
 ENV_CHANGE_CHAR_BUDGET = 600

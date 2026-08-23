@@ -22,6 +22,7 @@ import { useAuthUser } from '@/lib/auth/use-auth-user';
 import { useWorkflowWorkspace } from '@/lib/hooks/use-workflow-workspace';
 import { formatCrs, formatOutcomeMessage, outcomeToastVariant, shortId } from '@/lib/workflow/recovery';
 import { RunInspector } from './workflow/run-inspector';
+import { CartoMemoryPanel } from './carto-memory-panel';
 
 export function ProjectTab() {
   const uid = useId();
@@ -184,6 +185,10 @@ export function ProjectTab() {
                     </div>
                   )}
                 </div>
+
+                {/* ADR-0069 / spec 开放问题 2：项目制图记忆治理面板。
+                    放在数据集之下——记忆与数据集同属"项目的长期状态"。 */}
+                <CartoMemoryPanel projectId={ws.selectedProjectId} />
 
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-meta font-medium text-ink-secondary">
