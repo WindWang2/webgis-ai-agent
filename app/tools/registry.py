@@ -998,8 +998,11 @@ class ToolRegistry:
         if not session_id:
             return arguments
 
+        # 有序去重（dict.fromkeys 保持首次出现顺序）—— 批查的字段序确定，
+        # 与旧 list 收集的行为契约一致（test_ref_resolution_batching 锁定）。
+        ordered: dict[str, None] = {}
         if isinstance(arguments, str):
-            distinct_strings = {arguments}
+            ordered[arguments] = None
         elif isinstance(arguments, (dict, list)):
             if oversized_hint:
                 # audit #824: an oversized payload needs NO alias walk at all —
@@ -1008,20 +1011,17 @@ class ToolRegistry:
                 # audit #848: depth-1 direct argument values still get alias
                 # resolution (O(#args)) — the practical mixed case is a big
                 # inline payload plus one alias/ref-like scalar argument.
-                distinct_strings = {
-                    v for v in (
-                        arguments.values() if isinstance(arguments, dict) else arguments
-                    )
-                    if isinstance(v, str)
-                }
-                if len(distinct_strings) > 64:
-                    distinct_strings = set()  # degenerate arg lists stay cheap
+                for v in (
+                    arguments.values() if isinstance(arguments, dict) else arguments
+                ):
+                    if isinstance(v, str):
+                        ordered[v] = None
+                if len(ordered) > 64:
+                    ordered = {}  # degenerate arg lists stay cheap
             else:
-                distinct_strings = set()
-
                 def _collect(node) -> None:
                     if isinstance(node, str):
-                        distinct_strings.add(node)
+                        ordered[node] = None
                     elif isinstance(node, dict):
                         for k, v in node.items():
                             if k in skip_keys:
@@ -1034,6 +1034,7 @@ class ToolRegistry:
                 _collect(arguments)
         else:
             return arguments
+        distinct_strings = ordered.keys()
 
         # audit #824: alias lookup degradation — an oversized inline payload's
         # strings are data, not references. Resolve explicit ref: cursors only.

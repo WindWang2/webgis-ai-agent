@@ -428,6 +428,16 @@ configs:
                           '$$status $$body_bytes_sent "$$http_referer" '
                           '"$$http_user_agent" "$$http_x_forwarded_for"';
 
+          # #757: WS 位置专用 —— $$request_no_query 把请求行里的 query string 剥掉，
+          # 防止 ?token=<JWT> 随 $$request 写入访问日志。
+          map $$request $$request_no_query {
+              ~^(?<req_method>[^ ]+) (?<req_path>[^ ?]+)\?[^\ ]* (?<req_ver>HTTP/[^ ]+)$$ "$$req_method $$req_path $$req_ver";
+              default $$request;
+          }
+          log_format ws_no_query '$$remote_addr - $$remote_user [$$time_local] "$$request_no_query" '
+                                 '$$status $$body_bytes_sent "$$http_referer" '
+                                 '"$$http_user_agent" "$$http_x_forwarded_for"';
+
           access_log /var/log/nginx/access.log main;
 
           # 性能优化
@@ -646,7 +656,10 @@ configs:
               }
 
               # ======== WebSocket 支持 ========
+              # #757: WS 握手 URL 可能携带 ?token=<JWT>（兼容回退），$$request 含
+              # 完整 query —— 用去掉 query 的请求行记录，避免活体 JWT 落盘。
               location /ws/ {
+                  access_log /var/log/nginx/access.log ws_no_query;
                   proxy_pass http://api_backend;
                   proxy_http_version 1.1;
                   proxy_set_header Upgrade $$http_upgrade;
