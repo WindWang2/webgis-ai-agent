@@ -161,6 +161,18 @@ class MapModel(BaseModel):
     aliases: List[str] = Field(default_factory=list)          # 旧词汇别名
     pitfalls_zh: List[str] = Field(default_factory=list)
     sources: List[str] = Field(default_factory=list)
+    # ── Harness 编排接线（§Phase E：planner/selector 从这里取知识）─────
+    # 接受的 artifact 语义类型（引用 app.lib.gis.artifacts 的类型 id）
+    accepted_artifact_types: List[str] = Field(default_factory=list)
+    # 该模型作为主表达时必需/推荐的组件类型（components.py 的 ComponentType）
+    recommended_components: List[str] = Field(default_factory=list)
+    # 兼容的样式模板 kind（basemap/symbology/layout/thematic）
+    supported_template_kinds: List[str] = Field(default_factory=list)
+    # 导出兼容性（png/pdf/svg；空 = 无特殊声明）
+    export_compatibility: List[str] = Field(default_factory=list)
+    # 几何多态模型按输入几何族切换 layer_type（audit #832 知识收编；
+    # 非多态模型缺省 maplibre_layer_type）
+    geometry_layer_types: Dict[str, str] = Field(default_factory=dict)
 
 
 _MAPLIBRE_SPEC_URL = "https://maplibre.org/maplibre-style-spec/layers/"
@@ -181,6 +193,10 @@ SEED_MAP_MODELS: List[MapModel] = [
         deck_gl_layer="HeatmapLayer", kepler_layer="heatmap",
         qgis_renderer="heatmap",
         aliases=["density_overview"],
+        accepted_artifact_types=["poi_feature_set", "point_feature_set"],
+        recommended_components=["continuous_colorbar"],
+        supported_template_kinds=["thematic"],
+        export_compatibility=["png", "pdf", "svg"],
         pitfalls_zh=[
             "heatmap-radius 单位是屏幕像素（Style Spec 明确），分析带宽是米——"
             "两者只能经 heatmap_contract 归一化边界转换，禁止混用",
@@ -207,6 +223,10 @@ SEED_MAP_MODELS: List[MapModel] = [
         deck_gl_layer="PolygonLayer(+CPU 分级)", kepler_layer="geojson",
         qgis_renderer="graduated",
         aliases=["graduated_choropleth", "choropleth"],
+        accepted_artifact_types=["admin_aggregate_table", "admin_boundary_set"],
+        recommended_components=["legend"],
+        supported_template_kinds=["thematic"],
+        export_compatibility=["png", "pdf", "svg", "csv"],
         pitfalls_zh=[
             "大区县面积大≠数值大，面积偏差严重时考虑密度归一或 cartogram",
             "分级数建议 4-7（默认 5）；类数 >7 人眼不可辨",
@@ -222,6 +242,10 @@ SEED_MAP_MODELS: List[MapModel] = [
         classification="graduated",
         color_scheme_kind="sequential", default_palette="Blues",
         qgis_renderer="graduated",
+        accepted_artifact_types=["admin_aggregate_table", "admin_boundary_set"],
+        recommended_components=["legend"],
+        supported_template_kinds=["thematic"],
+        export_compatibility=["png", "pdf"],
         sources=[_QGIS_URL],
     ),
     MapModel(
@@ -237,6 +261,10 @@ SEED_MAP_MODELS: List[MapModel] = [
         kepler_layer="hexbin / grid",
         qgis_renderer="graduated（前置 fishnet/h3 聚合）",
         aliases=["hexbin", "grid_binning"],
+        accepted_artifact_types=["grid_aggregate"],
+        recommended_components=["legend"],
+        supported_template_kinds=["thematic"],
+        export_compatibility=["png", "pdf", "csv"],
         pitfalls_zh=[
             "网格统计意义依赖分辨率：分辨率过高每格 0-1 个点，过低失去局部性",
             "空网格应透明而非着最低档色（避免把『没有数据』画成『数值为零』）",
@@ -254,6 +282,11 @@ SEED_MAP_MODELS: List[MapModel] = [
         deck_gl_layer="ScatterplotLayer", kepler_layer="point(size channel)",
         qgis_renderer="single symbol + 数据定义覆盖（辅助大小）",
         aliases=["bubble_map", "graduated_symbol"],
+        accepted_artifact_types=["poi_feature_set", "point_feature_set",
+                                 "grid_aggregate"],
+        recommended_components=["legend"],
+        supported_template_kinds=["symbology"],
+        export_compatibility=["png", "pdf"],
         pitfalls_zh=[
             "面积比例律：radius ∝ sqrt(value)；直接线性映射半径会让大值被平方级夸大",
             "重叠气泡按值降序绘制（小的在上）；超过 ~50 点改用聚合网格",
@@ -270,6 +303,12 @@ SEED_MAP_MODELS: List[MapModel] = [
         deck_gl_layer="GeoJsonLayer(match 表达式)", kepler_layer="geojson(color by category)",
         qgis_renderer="categorized",
         aliases=["unique_values"],
+        accepted_artifact_types=["poi_feature_set", "point_feature_set",
+                                 "polygon_feature_set", "line_feature_set"],
+        recommended_components=["categorical_legend"],
+        supported_template_kinds=["thematic", "symbology"],
+        export_compatibility=["png", "pdf"],
+        geometry_layer_types={"point": "circle", "line": "line", "polygon": "fill"},
         pitfalls_zh=[
             "定性色系上限 ~9-12 类，超出的长尾类别并入『其他』",
             "顺序语义的字段（低/中/高）不该用定性色，改 sequential 渐变",
@@ -285,6 +324,10 @@ SEED_MAP_MODELS: List[MapModel] = [
         color_scheme_kind="diverging", default_palette="RdBu",
         qgis_renderer="rule-based（显著性阈值）",
         aliases=["lisa_cluster"],
+        accepted_artifact_types=["hotspot_result"],
+        recommended_components=["legend"],
+        supported_template_kinds=["thematic"],
+        export_compatibility=["png", "pdf"],
         pitfalls_zh=[
             "HH/LL/HL/LH/NS 五类语义固定，颜色必须红蓝发散且 NS 低饱和置灰",
             "样本稀疏时 Gi* 多重比较校正不可省",
@@ -299,6 +342,10 @@ SEED_MAP_MODELS: List[MapModel] = [
         color_scheme_kind="qualitative", default_palette="Set2",
         deck_gl_layer="PolygonLayer(buffer)", kepler_layer="geojson",
         qgis_renderer="single symbol + 缓冲几何",
+        accepted_artifact_types=["proximity_zone", "service_area"],
+        recommended_components=["legend"],
+        supported_template_kinds=["symbology"],
+        export_compatibility=["png", "pdf"],
         sources=[_DECKGL_URL],
     ),
     MapModel(
@@ -308,6 +355,11 @@ SEED_MAP_MODELS: List[MapModel] = [
         maplibre_layer_type="raster",
         color_scheme_kind="perceptual_uniform", default_palette="Viridis",
         qgis_renderer="paletted/singleband pseudocolor",
+        accepted_artifact_types=["raster_surface", "terrain_surface",
+                                 "remote_sensing_index", "density_surface"],
+        recommended_components=["continuous_colorbar"],
+        supported_template_kinds=["thematic"],
+        export_compatibility=["png"],
         pitfalls_zh=["连续色条（colorbar）而非离散图例"],
         sources=[_MAPLIBRE_SPEC_URL],
     ),
@@ -318,6 +370,9 @@ SEED_MAP_MODELS: List[MapModel] = [
         maplibre_layer_type="circle",
         color_scheme_kind="none",
         qgis_renderer="single symbol",
+        accepted_artifact_types=["poi_feature_set", "point_feature_set"],
+        supported_template_kinds=["symbology"],
+        export_compatibility=["png"],
         sources=[_QGIS_URL],
     ),
     MapModel(
@@ -327,6 +382,8 @@ SEED_MAP_MODELS: List[MapModel] = [
         maplibre_layer_type="circle",
         color_scheme_kind="none",
         qgis_renderer="single symbol",
+        accepted_artifact_types=["poi_feature_set", "point_feature_set"],
+        supported_template_kinds=["symbology"],
         sources=[_QGIS_URL],
     ),
     # ── 目录完整但运行时未接线（诚实标记 planned）──────────────────────
