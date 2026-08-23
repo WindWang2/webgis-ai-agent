@@ -28,6 +28,7 @@ from app.services.history_service_async import AsyncHistoryService
 from app.services.explorer.orchestrator import bridge_session_explorer_progress
 from app.services.distributed_lock import session_lock_registry
 from app.services.session_data import session_data_manager
+from app.services.cartography.memory_harvest import harvest_project_memory
 from app.tools._utils import async_db_session
 from app.tools.registry import ToolRegistry
 
@@ -253,15 +254,23 @@ async def _record_frontend_cartographic_observation(
         )
 
 
-async def _build_cartography_turn_context(session_id: Optional[str]) -> str:
+async def _build_cartography_turn_context(
+    session_id: Optional[str], project_id: Optional[str] = None
+) -> str:
     """Assemble the bounded harness verdict block for the next Pi turn.
 
     只读：不触发重评估/修复——新用户消息不应在 agent 回应前就产生修复
     副作用。verdict 由既有事件源刷新（mutation 后评估、观测/ACK 端点），
     agent 在 turn 内可经 ``webgis_cartography_status`` 主动查询。
+
+    ``project_id`` 存在时追加 ADR-0069 的 ``[CARTOGRAPHY_MEMORY]`` 先验块
+    （共享分类方案/偏好/recipe 成效）。Pi 只有一个注入通道，所以两个块在此
+    拼接；先 verdict（本 session 的纠正证据）后 memory（项目先验），与 legacy
+    assembler 的顺序一致。无 project 时零额外查询。
     """
     if not session_id:
         return ""
+    verdict_text = ""
     try:
         from app.lib.cartography.quality_loop import cartographic_fingerprint
         from app.lib.cartography.verdict_summary import (
@@ -278,14 +287,29 @@ async def _build_cartography_turn_context(session_id: Optional[str]) -> str:
         current_fingerprint = (
             cartographic_fingerprint(mapspec) if isinstance(mapspec, dict) else None
         )
-        if not should_inject_verdict(review, current_fingerprint):
-            return ""
-        return render_verdict_for_llm(review)
+        if should_inject_verdict(review, current_fingerprint):
+            verdict_text = render_verdict_for_llm(review)
     except Exception as e:  # noqa: BLE001 — 注入是增值上下文，失败不阻断对话
         logger.warning(
             "[chat] cartography turn context unavailable for %s: %s", session_id, e
         )
-        return ""
+
+    memory_text = ""
+    if project_id:
+        try:
+            from app.services.chat.context_assembler import (
+                _build_project_memory_block,
+            )
+
+            memory_text = await asyncio.to_thread(
+                _build_project_memory_block, project_id
+            )
+        except Exception as e:  # noqa: BLE001 — 同上，记忆缺失退化为无记忆
+            logger.warning(
+                "[chat] cartography memory unavailable for project %s: %s",
+                project_id, e,
+            )
+    return f"{verdict_text}{memory_text}"
 
 
 def get_registry() -> ToolRegistry:
@@ -647,12 +671,18 @@ async def chat_completions(
                     # #791: lock contention on the turn-start observation write
                     # is scoped back-pressure, not a 500.
                     raise _session_busy_503()
-                cartography_context = await _build_cartography_turn_context(req.session_id)
+                cartography_context = await _build_cartography_turn_context(
+                    req.session_id, project_id=req.project_id
+                )
                 result = await pi_bridge.prompt(
                     req.message,
                     session_id=req.session_id,
                     cartography_context=cartography_context,
                 )
+                # ADR-0069: harvest project memory AFTER this turn's verdict
+                # exists — memory lags evidence by one step and can never
+                # short-circuit review. Best-effort; never fails the turn.
+                await harvest_project_memory(req.session_id, req.project_id)
                 return ChatResponse(session_id=result.get("sessionId", req.session_id or ""), content=result.get("content", ""))
             except PiRpcError as e:
                 logger.error(f"Pi bridge error: {e}", exc_info=True)
@@ -675,6 +705,12 @@ async def chat_completions(
                 skill_name=req.skill_name,
                 user_id=user_id,
                 project_id=req.project_id,
+            )
+            # ADR-0069: same turn-end harvest as the Pi path — the legacy
+            # engine produces the same session review, so project memory must
+            # accrue identically (no Pi-only parity gap, cf. #788).
+            await harvest_project_memory(
+                result.get("session_id") or req.session_id, req.project_id
             )
             return ChatResponse(**result)
         except Exception as e:
@@ -797,7 +833,9 @@ async def chat_stream(
             # scoped back-pressure, not a 500 (raised before the stream starts,
             # so the client gets a JSON error body instead of a dead SSE).
             raise _session_busy_503()
-        cartography_context = await _build_cartography_turn_context(pi_session_id)
+        cartography_context = await _build_cartography_turn_context(
+            pi_session_id, project_id=req.project_id
+        )
         async def pi_event_generator():
             buffer = TurnEventBuffer(session_key, req.message)
             _turn_resume_registry.register(session_key, buffer)
@@ -829,6 +867,10 @@ async def chat_stream(
                         engine._fire_and_forget(engine._generate_title, pi_session_id, req.message)
                 except Exception as e:  # noqa: BLE001
                     logger.warning("[pi-chat] title generation failed for %s: %s", pi_session_id, e)
+                # ADR-0069: harvest project memory at turn end, after the
+                # verdict exists. Best-effort like the transcript/title writes
+                # above — memory is additive context, never a turn blocker.
+                await harvest_project_memory(pi_session_id, req.project_id)
 
             # One id scope per turn: ids stay monotonic across batched token
             # events and structural events, in emission order (see sse.py).

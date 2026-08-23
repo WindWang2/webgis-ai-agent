@@ -109,6 +109,31 @@ def _build_project_context_block(
         return summary.render()
 
 
+def _build_project_memory_block(project_id: str) -> str:
+    """Sync DB read of the project's cartographic memory (runs OFF the event loop).
+
+    ADR-0069：注入的是**先验而非证据**——只影响下一张图的起点（共享分类
+    方案/偏好/recipe 成效），永不参与 verdict 计算。只读 ``active`` 事实
+    （``stale``/``conflicted`` 一律不注入：注入一个自己都不确定的先验比
+    不注入更坏）。账本不可用时返回空串，行为退化为无记忆。
+    """
+    from app.services.cartography.project_memory import (
+        get_active_facts,
+        render_memory_block,
+    )
+
+    SessionLocal = _get_session_local()
+    try:
+        with SessionLocal() as db:
+            facts = get_active_facts(db, project_id)
+            return render_memory_block(facts)
+    except Exception as ex:  # noqa: BLE001 — 记忆是增值上下文，失败不阻断对话
+        logger.warning(
+            "Cartographic project memory unavailable for %s: %s", project_id, ex
+        )
+        return ""
+
+
 @dataclass(frozen=True)
 class ContextAssemblyResult:
     """Structured result of prompt context assembly with observability metrics."""
@@ -222,6 +247,10 @@ class ChatContextAssembler:
 
         # Extract session metadata & map state
         store = self.store
+        # Resolved below from the metadata store when available; the
+        # no-metadata branch keeps the caller's explicit override only, so
+        # the memory block below never reads an unbound name.
+        effective_project_id = project_id
         if hasattr(store, "get_session_metadata"):
             metadata = await store.get_session_metadata(session_id)
             map_state = metadata.get("map_state") or {}
@@ -307,6 +336,22 @@ class ChatContextAssembler:
             )
             if verdict_block:
                 head.append({"role": "system", "content": verdict_block})
+
+            # ADR-0069 (spec P2): the project's cartographic memory block sits
+            # beside the verdict — the verdict is THIS session's corrective
+            # evidence, the memory is the project's confirmed priors (shared
+            # classification / preferences / recipe outcomes). Same gating as
+            # the verdict: main agent only, additive, never blocking. Only
+            # emitted when a project context exists (no project → zero query).
+            if effective_project_id:
+                try:
+                    memory_block = await asyncio.to_thread(
+                        _build_project_memory_block, effective_project_id
+                    )
+                    if memory_block:
+                        head.append({"role": "system", "content": memory_block})
+                except Exception as ex:  # noqa: BLE001
+                    logger.warning(f"Failed to assemble project memory block: {ex}")
 
         last_ctx = build_last_analysis_context(messages)
         if last_ctx:

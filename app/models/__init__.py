@@ -23,6 +23,7 @@ from app.models.project import (
     WorkflowRun,
     Artifact,
     ArtifactLineage,
+    CartoProjectFact,
 )
 from app.models.data_fabric import (
     DataSource,
@@ -54,6 +55,7 @@ __all__ = [
     "WorkflowRun",
     "Artifact",
     "ArtifactLineage",
+    "CartoProjectFact",
     "DataSource",
     "DataFabricDataset",
     "DataMaterializationRecord",

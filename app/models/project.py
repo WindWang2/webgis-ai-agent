@@ -4,7 +4,8 @@ Project Workspace, Dataset, Workflow, and Artifact SQLAlchemy ORM models.
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy import (
-    Column, Integer, String, Text, DateTime, BigInteger, ForeignKey, Index, JSON, CheckConstraint
+    Column, Integer, String, Text, DateTime, BigInteger, ForeignKey, Index, JSON,
+    CheckConstraint, UniqueConstraint
 )
 from sqlalchemy.orm import relationship
 from app.core.database import Base
@@ -275,6 +276,64 @@ class ArtifactLineage(Base):
     workflow_run = relationship("WorkflowRun", foreign_keys=[workflow_run_id], back_populates="lineages", lazy="selectin")
 
 
+class CartoProjectFact(Base):
+    """项目级制图事实账本（ADR-0069 / cartographic-quality-rules-and-memory-spec P2）。
+
+    记忆是**先验而非证据**：每一行只影响下一次作图的起点（默认色带、共享
+    分类方案、偏好），永不参与 verdict 计算，也永不让某条规则跳过评审
+    （ADR-0069 决策 2）。``validity_tier`` 是"当时那次评审的结论"的历史标签，
+    不是本次的通行证。
+
+    作用域严格是 project（ADR-0069 决策 1）：查询恒带 project 谓词，不存在
+    跨项目的全局制图手艺库。
+    """
+
+    __tablename__ = "carto_project_facts"
+
+    id = Column(String(255), primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id = Column(
+        String(255), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    # preference | recipe_outcome | data_profile | shared_classification
+    kind = Column(String(32), nullable=False)
+    # 事实主体：偏好键 / recipe 名 / 数据集标识 / 分类方案的主题字段
+    subject = Column(String(255), nullable=False)
+    payload = Column(JSON, nullable=False, default=dict)
+    # 分类/分布指纹：shared_classification 与 data_profile 的漂移判定锚点
+    fingerprint = Column(String(64), nullable=True)
+    validity_tier = Column(String(32), nullable=True)
+    evidence_digest = Column(String(64), nullable=True)
+    # active | stale | conflicted | retired —— 只有 active 会被注入
+    status = Column(String(16), nullable=False, default="active")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_verified_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (
+        # 同一项目内 (kind, subject) 即事实身份：写入是 upsert 而非追加，
+        # 否则同一条偏好会随 turn 数无界增长。
+        UniqueConstraint("project_id", "kind", "subject", name="uq_carto_fact_identity"),
+        # 注入查询的唯一形态：project + status + kind。
+        Index("idx_carto_fact_project_status", "project_id", "status", "kind"),
+        # LRU 淘汰按 last_verified_at 取最旧。
+        Index("idx_carto_fact_project_verified", "project_id", "last_verified_at"),
+        CheckConstraint(
+            "kind IN ('preference', 'recipe_outcome', 'data_profile', "
+            "'shared_classification')",
+            name="ck_carto_fact_kind",
+        ),
+        CheckConstraint(
+            "status IN ('active', 'stale', 'conflicted', 'retired')",
+            name="ck_carto_fact_status",
+        ),
+    )
+
+    project = relationship("Project", backref="carto_facts", lazy="selectin")
+
+
 __all__ = [
     "Project",
     "ProjectDataset",
@@ -283,4 +342,5 @@ __all__ = [
     "WorkflowRun",
     "Artifact",
     "ArtifactLineage",
+    "CartoProjectFact",
 ]

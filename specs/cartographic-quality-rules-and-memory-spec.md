@@ -125,7 +125,7 @@ severity, repairability, suggested_fix: {type, params}}`,挂入
 | 阶段 | 内容 | 规模 | 依赖 | 验收标准 |
 |---|---|---|---|---|
 | **Phase 1** ✅ 已实施 | 三条高杠杆规则(`load.ratio`/`color.separability`/`legend.completeness`)+ typed fix 映射 + 修复动作 | M | 无 | ① 规则单测(golden fixture:超载图/低色差图/缺图例图各自 fail 且 fix 类型正确);② 修复循环端到端:注入失败原因后下一候选通过;③ 现有 L4 评审无回归 |
-| **Phase 2** | 事实账本表 + alembic 迁移 + 三个写入点 + 项目级有界注入 + 冲突语义 + ADR-0069 | M | Phase 1(落账需要 deterministic 证据摘要) | ① 同项目第二张图复用共享分类(断点一致);② 指纹冲突时显式 `conflicted` 而非覆盖;③ 注入有界(字符预算测试);④ 无 project 上下文时零行为变化 |
+| **Phase 2** ✅ 已实施 | 事实账本表 + alembic 迁移 + 写入点(gate 收割) + 项目级有界注入(legacy + Pi) + 冲突语义 + ADR-0069 | M | Phase 1(落账需要 deterministic 证据摘要) | ① 同项目第二张图复用共享分类(断点一致);② 指纹冲突时显式 `conflicted` 而非覆盖;③ 注入有界(字符预算测试);④ 无 project 上下文时零行为变化 |
 | **Phase 3** | 分布指纹漂移检测 + stale 失效 + `[ENV_CHANGE]` 注入 + 时序复验任务 | S/M | Phase 2 | ① 上传新分布数据后相关事实转 stale 且下 turn 可见提示;② 分布未变时零误报(指纹稳定性测试);③ 时序新时段触发复验 |
 | **Phase 4(可选)** | 其余三条规则(视觉变量过载/注记碰撞估计/SVS 比例尺适宜性) | M | Phase 1 | 同 Phase 1 模式 |
 
