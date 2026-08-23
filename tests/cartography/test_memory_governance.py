@@ -48,6 +48,14 @@ def test_thresholds_come_from_settings_env(monkeypatch):
     测试结束完整还原，避免污染其它测试的常量。"""
     from app.lib.cartography import semantic_checks as sc
     from app.services.cartography import distribution_drift as dd
+    import app.core.config as cfg_mod
+
+    # 污染治理：reload 会铸造新的 settings 单例——全部持旧引用的模块
+    # （execution_engine 等）与新 import 的测试将看到两个不同的对象，
+    # 后续任何 monkeypatch.setattr(settings, ...) 都打在对方看不见的
+    # 那个上（全量套件顺序污染，复现：本文件 + test_chat_engine_planning
+    # 两文件共跑）。先捕获原单例，teardown 时回填并二次 reload 依赖模块。
+    original_settings = cfg_mod.settings
 
     for key, value in (
         ("CARTO_LOAD_WARN_RATIO", "0.05"),
@@ -56,7 +64,7 @@ def test_thresholds_come_from_settings_env(monkeypatch):
     ):
         monkeypatch.setenv(key, value)
     try:
-        importlib.reload(importlib.import_module("app.core.config"))
+        importlib.reload(cfg_mod)
         importlib.reload(sc)
         importlib.reload(dd)
         assert sc._LOAD_WARN_RATIO == 0.05
@@ -69,7 +77,8 @@ def test_thresholds_come_from_settings_env(monkeypatch):
             "CARTO_DRIFT_RELATIVE_THRESHOLD",
         ):
             monkeypatch.delenv(key, raising=False)
-        importlib.reload(importlib.import_module("app.core.config"))
+        importlib.reload(cfg_mod)
+        cfg_mod.settings = original_settings  # 恢复全进程共享的单例身份
         importlib.reload(sc)
         importlib.reload(dd)
     assert sc._LOAD_WARN_RATIO == 0.15

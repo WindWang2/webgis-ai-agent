@@ -144,6 +144,8 @@ def _drive_fixture_app() -> str:
     from prometheus_fastapi_instrumentator import Instrumentator
 
     app = FastAPI()
+    # 保持默认 REGISTRY：本 fixture 的职责是复现 app/main.py 的完整清单面
+    #（含 process_* 与 auth 计数器），供 inventory 断言消费。
     Instrumentator().instrument(app).expose(
         app, endpoint="/metrics", include_in_schema=False
     )
@@ -333,9 +335,19 @@ async def test_error_rate_rule_numerator_matches_real_status_values():
     """High_Error_Rate's status=~"5.." matcher must match the instrumentator's
     grouped status values ("5xx") — a 5xx storm produces a real numerator."""
     from prometheus_fastapi_instrumentator import Instrumentator
+    from prometheus_client import CollectorRegistry
 
     app = FastAPI()
-    Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+    # 污染治理：默认 REGISTRY 可能已被更早 import 的 app.main 占用（同名
+    # 序列互扰导致本 app 的 5xx 计数丢失）。隔离 registry + 把断言依赖的
+    # auth 计数器（模块级 Collector，与 registry 解耦）注册进来。
+    _reg = CollectorRegistry()
+    from app.core.auth_metrics import AUTH_JWT_VALIDATION_ERRORS
+
+    _reg.register(AUTH_JWT_VALIDATION_ERRORS)
+    Instrumentator(registry=_reg).instrument(app).expose(
+        app, endpoint="/metrics", include_in_schema=False
+    )
 
     @app.get("/boom")
     async def boom():
