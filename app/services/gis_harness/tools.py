@@ -118,7 +118,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
 
     @tool(
         registry,
-        tier=2, domains=["statistics", "report"], name="webgis_map_intent",
+        tier=2, domains=["statistics", "report", "network", "temporal"], name="webgis_map_intent",
         description=(
             "GIS 制图意图解析器（确定性，无副作用）。输入用户请求，返回 typed "
             "MapRequestIntent（scope/subject/task/analysis_intents/cartography_intents/"
@@ -215,7 +215,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
 
     @tool(
         registry,
-        tier=2, domains=["statistics", "report"], name="webgis_map_product",
+        tier=2, domains=["statistics", "report", "network", "temporal"], name="webgis_map_product",
         description=(
             "地图产品组装器：数据/图层到位后，按 CartographyRecipe 复检资格"
             "（几何/最小点数/字段——代码侧确定性），把已授权图层绑定到产品角色、"
@@ -262,10 +262,26 @@ def register_gis_harness_tools(registry: ToolRegistry):
         if task_hint:
             intent = merge_intent_hints(intent, {"task": task_hint})
         planner = MapProductPlanner()
+        # H-9（#864）：与意图阶段同源的真实选择参数——
+        # ① 注册表可见工具传给 planner，unavailable 能力不退回 pending
+        #   （两阶段 evidence 的能力状态一致，audit #825 承诺）；
+        # ② 候选选择带 project_verified（ADR-0069 项目记忆），一次取数
+        #   同时驱动 recipe 解析与 evidence 记录（此前 evidence 二次选择
+        #   不带记忆，记录的候选序与真实决策不一致）。
+        try:
+            available = set(registry.list_tools())
+        except Exception:  # noqa: BLE001 - 能力解析是建议性信息
+            available = set()
+        _verified = await _project_verified_recipes()
+        _candidates = planner.recipes.select_candidates(
+            intent, project_verified=_verified
+        )
+        _selected_recipe = recipe_id or (_candidates[0].id if _candidates else "")
         plan = planner.plan_from_intent(
             intent,
             template_id=template_id or "",
-            recipe_id=recipe_id or "",
+            recipe_id=_selected_recipe,
+            available_tools=available or None,
         )
 
         # 主数据 profile（eligibility 复检输入）：优先 primary_ref descriptor，
@@ -647,8 +663,10 @@ def register_gis_harness_tools(registry: ToolRegistry):
                     # #723: record what the deterministic selector actually
                     # considered — the old comprehension could only ever yield
                     # [plan.recipe_id], a degenerate singleton.
+                    # H-9（#864）：与真实选择同源（带 project_verified 的
+                    # 一次取数），evidence 候选序不再与决策依据漂移。
                     "candidates": [
-                        c.id for c in planner.recipes.select_candidates(intent)
+                        c.id for c in _candidates
                     ] or [plan.recipe_id],
                 },
                 "recipe_eligibility": plan.eligibility,

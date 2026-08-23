@@ -6,6 +6,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import time
 import uuid
@@ -176,6 +177,12 @@ class NoProgressError(HonestTurnFailure):
     failure_class = "no_progress"
 
 
+class TurnTimeoutError(HonestTurnFailure):
+    """H-2（#857）：legacy 回合总时长预算耗尽（对齐 Pi 路径 900s 整轮预算）。"""
+
+    failure_class = "turn_timeout"
+
+
 def _settle_cancel() -> None:
     """Mark the live turn's outcome CANCELLED on a cooperative cancel.
 
@@ -214,6 +221,15 @@ def _has_non_plan_refs(refs: dict) -> bool:
 #: 结果对齐循环据此跳过（不写成工具失败），孤儿 tool_call 由
 #: _repair_orphaned_tool_calls 以「已取消」补齐。
 _CANCELLED_TOOL = object()
+
+
+def _is_empty_completion(content: object, tc_list: object) -> bool:
+    """CORRECTNESS-4 空补全谓词（H-6/#861 提为共用函数）。
+
+    非流式路径原本带 ``.strip()`` 而流式路径漏抄——纯空白补全（"  \\n"）
+    曾被流式路径当成功收尾。两路径共用本谓词，杜绝再次漂移。
+    """
+    return not (content or "").strip() and not tc_list
 
 
 class SessionClearingError(RuntimeError):
@@ -331,7 +347,11 @@ class ChatExecutionEngine:
         self.model = settings.LLM_MODEL
         self.api_key = settings.LLM_API_KEY
         self.use_prompt_caching = settings.LLM_PROMPT_CACHING_ENABLED
-        self.max_rounds = 60
+        # H-1（#856）：轮数上限支持 env 覆盖（原硬编码 60）。
+        self.max_rounds = max(1, int(os.getenv("CHAT_MAX_ROUNDS", "60")))
+        # H-2（#857）：回合总墙钟预算（默认对齐 Pi 的 PI_TURN_TOTAL_TIMEOUT=900s）。
+        # 坏回合（每轮"有进展"但工具/LLM 缓慢）此前可持会话锁以小时计。
+        self._turn_total_timeout_s = float(os.getenv("TURN_TOTAL_TIMEOUT_S", "900"))
         self.tracker = TaskTracker()
 
         from app.services.chat.context_assembler import ChatContextAssembler
@@ -1146,10 +1166,11 @@ class ChatExecutionEngine:
         messages.append({"role": "user", "content": message})
         await self._save_msg_async(session_id, "user", message)
 
+        # H-5（#860）非流式 parity：tracker 先于规划创建——取消在规划等待期
+        # （最长 120s planner 调用）也有可点燃的对象，而不是等规划结束后才生效。
+        task = self.tracker.create(session_id, message)
         await self._maybe_plan(session_id, message, messages)
         executed_tools: set[tuple[str, str]] = set()
-
-        task = self.tracker.create(session_id, message)
         owner_token = self.get_session_owner_token(session_id)
         # #684：捕获本用户轮原始消息与 turn_id，用于按用户轮衰减与固定关键词源。
         # _chat_locked 外层（turn 绑定处）通常已注入 turn_id；兜底自铸仅服务
@@ -1162,8 +1183,17 @@ class ChatExecutionEngine:
         # #685: no-progress 熔断计数（非流式路径）；与流式路径同义
         _no_progress_streak = 0
 
+        # H-2（#857）：非流式回合总墙钟预算（与流式路径同义）。
+        _turn_deadline = time.monotonic() + self._turn_total_timeout_s
         try:
             for _ in range(self.max_rounds):
+                # H-2：总预算耗尽的诚实失败（fail_task + TurnTimeoutError，
+                # 外层 chat() 按 failure_class="turn_timeout" settle FAILED）。
+                if time.monotonic() > _turn_deadline:
+                    self.tracker.fail_task(task.id, "turn total timeout")
+                    raise TurnTimeoutError(
+                        f"turn exceeded total budget of {self._turn_total_timeout_s}s"
+                    )
                 if self.tracker.is_cancelled(task.id):
                     _settle_cancel()  # cooperative cancel ≠ success
                     return {"session_id": session_id, "content": "任务已取消", **({"owner_token": owner_token} if owner_token else {})}
@@ -1331,6 +1361,15 @@ class ChatExecutionEngine:
                     for tc, exec_res in zip(tc_list, exec_results):
                         if exec_res is _CANCELLED_TOOL:
                             continue  # 被抢占/未完成 —— 由 repair 以「已取消」补齐
+                        # H-4（#859）非流式 parity：决策日志所需上下文（与流式路径对齐）
+                        _dec_step_n: Optional[int] = None
+                        _dec_fc: Optional[str] = None
+                        _dec_ra: Optional[str] = None
+                        try:
+                            _args_raw = (tc.get("function", {}) or {}).get("arguments") or "{}"
+                            _dec_args = json.loads(_args_raw) if isinstance(_args_raw, str) else (_args_raw or {})
+                        except Exception:  # noqa: BLE001
+                            _dec_args = {}
                         if isinstance(exec_res, Exception):
                             if cancelled:
                                 continue  # 取消路径：已完成但失败的工具不写失败消息
@@ -1361,6 +1400,23 @@ class ChatExecutionEngine:
                                     # P3 #4：打勾后立即 best-effort 落盘（回合末
                                     # flush 仍保留，幂等）。崩溃/断连不丢 tick。
                                     await self._flush_plan(session_id)
+                                _dec_step_n = step_n_matched
+                            elif exec_res.outcome is not None and exec_res.outcome.status == "error":
+                                _dec_fc, _dec_ra = self._classify_failure(exec_res.outcome)
+                        # H-4（#859）：非流式工具决策日志（此前只有流式路径记录，
+                        # logs/tool_decisions.jsonl 对非流式流量存在系统性盲区）。
+                        _dec_outcome = getattr(exec_res, "outcome", None)
+                        _dec_tool = getattr(exec_res, "tool_name", None) or (
+                            (tc.get("function", {}) or {}).get("name") or "tool"
+                        )
+                        if _dec_outcome is not None:
+                            self._log_tool_decision(
+                                session_id, 0, message, _dec_tool, _dec_args,
+                                _dec_outcome, len(tc_list),
+                                step_n=_dec_step_n,
+                                failure_class=_dec_fc,
+                                recovery_action=_dec_ra,
+                            )
 
                         if standard_calls:
                             messages.append({
@@ -1423,9 +1479,9 @@ class ChatExecutionEngine:
                     content = raw_content
                     # CORRECTNESS-4 移植到非流式路径：空补全（无 content 也无 tool_calls）
                     # 是 provider 异常，不是答案 —— 绝不保存空 assistant 消息也不 complete_task。
-                    # 与流式路径（:1947-1955）同义：fail_task + 异常上抛，外层 chat() 将
+                    # 与流式路径同义：fail_task + 异常上抛，外层 chat() 将
                     # settle Outcome.FAILED（failure_class=empty_result）。
-                    if not (content or "").strip() and not tc_list:
+                    if _is_empty_completion(content, tc_list):
                         self.tracker.fail_task(task.id, "empty completion from provider")
                         raise EmptyCompletionError("empty completion from provider")
 
@@ -1435,6 +1491,9 @@ class ChatExecutionEngine:
                     messages.append(entry)
                     await self._save_msg_async(session_id, "assistant", content, reasoning_content=reasoning)
                     self.tracker.complete_task(task.id)
+                    # H-4（#859）非流式 parity：成功回合触发标题生成（此前仅
+                    # 流式/Pi 路径生成，非流式会话标题永留「新对话」）。
+                    self._fire_and_forget(self._generate_title, session_id, message)
                     return {"session_id": session_id, "content": content, "reasoning": reasoning, **({"owner_token": owner_token} if owner_token else {})}
 
             self.tracker.fail_task(task.id, "达到最大工具调用轮数")
@@ -1597,9 +1656,36 @@ class ChatExecutionEngine:
                 plan_wait = asyncio.create_task(
                     self._maybe_plan(session_id, message, messages)
                 )
+                # H-5（#860）：规划等待期也监听 cancel token——此前取消要等
+                # planner LLM 返回（非流式 call_llm 平顶 120s）才在下一轮生效。
+                _plan_cancel_watch: Optional[asyncio.Task] = None
+                if task.cancel_token is not None:
+                    _plan_cancel_watch = asyncio.create_task(task.cancel_token.wait())
                 try:
                     while not plan_wait.done():
-                        await asyncio.wait({plan_wait}, timeout=_PLANNER_KEEPALIVE_S)
+                        _plan_wait_set = {plan_wait}
+                        if _plan_cancel_watch is not None:
+                            _plan_wait_set.add(_plan_cancel_watch)
+                        # FIRST_COMPLETED：cancel_watch 率先完成（取消到达）时
+                        # 立即返回，不等 plan_wait 自然结束（默认 ALL_COMPLETED
+                        # 会等满 planner 时长）。
+                        await asyncio.wait(
+                            _plan_wait_set,
+                            timeout=_PLANNER_KEEPALIVE_S,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        if _plan_cancel_watch is not None and _plan_cancel_watch.done():
+                            plan_wait.cancel()
+                            try:
+                                await plan_wait
+                            except BaseException:  # noqa: BLE001 — 取消路径
+                                pass
+                            _settle_cancel()  # cooperative cancel ≠ success
+                            yield sse_event("task_cancelled", {
+                                "task_id": task.id, "session_id": session_id,
+                            })
+                            yield sse_event("done", {"session_id": session_id})
+                            return
                         if not plan_wait.done():
                             yield sse_event("keep_alive", {"message": "ping"})
                             logger.debug("SSE Heartbeat sent for planner phase")
@@ -1610,6 +1696,12 @@ class ChatExecutionEngine:
                         try:
                             await plan_wait
                         except BaseException:  # noqa: BLE001 — consumer already exiting
+                            pass
+                    if _plan_cancel_watch is not None and not _plan_cancel_watch.done():
+                        _plan_cancel_watch.cancel()
+                        try:
+                            await _plan_cancel_watch
+                        except BaseException:  # noqa: BLE001
                             pass
                 plan_existed_this_turn = plan is not None
                 if not plan_existed_this_turn:
@@ -1661,8 +1753,28 @@ class ChatExecutionEngine:
                 turn_id_for_catalog = _rt2.turn_id if _rt2 and _rt2.turn_id else turn_id
                 # #685: 流式路径 no-progress 熔断（与非流式 _chat_locked 同义）
                 _stream_no_progress_streak = 0
+                # H-2（#857）：流式回合总墙钟预算（对齐 Pi 的 900s 整轮预算）。
+                _turn_deadline = time.monotonic() + self._turn_total_timeout_s
 
                 for round_index in range(self.max_rounds):
+                    # H-2：总预算耗尽的诚实收尾（failure_class=turn_timeout）。
+                    if time.monotonic() > _turn_deadline:
+                        pf = _maybe_plan_finalized_event()
+                        if pf:
+                            yield pf
+                        self.tracker.fail_task(task.id, "turn total timeout")
+                        rt_ev.settle(Outcome.FAILED, failure_class="turn_timeout")
+                        yield sse_event("task_error", {
+                            "task_id": task.id,
+                            "error": f"回合超过 {int(self._turn_total_timeout_s)} 秒总预算，已自动终止",
+                            "session_id": session_id,
+                        })
+                        yield sse_event("content", {
+                            "content": f"本回合已运行超过 {int(self._turn_total_timeout_s)} 秒的总时长预算，为释放会话已自动终止。请缩小任务范围或分步执行。",
+                            "session_id": session_id,
+                        })
+                        yield sse_event("done", {"session_id": session_id})
+                        return
                     # tools 先选（含 tools payload 软计入估算），再组装上下文
                     # #684：关键词源固定为本 turn 原始用户消息，turn_id 按用户轮衰减
                     tools = self._select_tools(
@@ -2179,7 +2291,9 @@ class ChatExecutionEngine:
                         # the old path saved an empty assistant message and
                         # reported success. Fail the turn truthfully so the
                         # client retries instead of showing an empty bubble.
-                        if not content and not tc_list:
+                        # H-6（#861）：谓词统一走 _is_empty_completion（含
+                        # strip，纯空白补全不再被当成功收尾）。
+                        if _is_empty_completion(content, tc_list):
                             self.tracker.fail_task(task.id, "empty completion from provider")
                             rt_ev.settle(Outcome.FAILED, failure_class="empty_result")
                             yield sse_event("task_error", {

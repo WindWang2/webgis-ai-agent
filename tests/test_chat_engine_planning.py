@@ -40,6 +40,7 @@ def test_planner_llm_config_falls_back_to_main_model(engine, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_maybe_plan_runs_for_complex_request(engine, monkeypatch):
+    """复杂高置信 GIS 请求 → H-1（#856）确定性合成计划（0 次规划 LLM 调用）。"""
     captured = {}
     async def fake_make_plan(cfg, session_id, message, env):
         captured["called"] = True
@@ -47,8 +48,11 @@ async def test_maybe_plan_runs_for_complex_request(engine, monkeypatch):
         planner_mod.set_plan(session_id, plan)
         return plan
     monkeypatch.setattr(planner_mod, "make_plan", fake_make_plan)
-    await engine._maybe_plan("sess-P1", "分析成都市三甲医院的空间分布并做热点检测", [])
-    assert captured.get("called") is True
+    plan = await engine._maybe_plan("sess-P1", "分析成都市三甲医院的空间分布并做热点检测", [])
+    # H-1: 高置信（scope=成都 + subject=医院 + 分布任务规则）→ harness 合成
+    assert plan is not None and plan.steps
+    assert plan.recipe_id, "确定性合成必须附着 recipe_id"
+    assert "called" not in captured, "高置信请求不应再付规划 LLM 调用"
     planner_mod.clear_plan("sess-P1")
 
 
@@ -101,7 +105,10 @@ async def test_maybe_plan_returns_plan_on_success(engine, monkeypatch):
         planner_mod.set_plan(session_id, expected_plan)
         return expected_plan
     monkeypatch.setattr(planner_mod, "make_plan", fake_make_plan)
-    result = await engine._maybe_plan("sess-R1", "复杂请求需要规划的内容", [])
+    # 长且无任务规则关键词的消息：不走最简门也不走 harness 合成 → LLM 规划路径
+    result = await engine._maybe_plan(
+        "sess-R1", "请帮我处理一下这些内容，给出有价值的建议和结论", []
+    )
     assert result is expected_plan
     planner_mod.clear_plan("sess-R1")
 
@@ -121,7 +128,9 @@ async def test_maybe_plan_returns_none_on_llm_failure(engine, monkeypatch):
     async def fake_make_plan(*a, **k):
         raise RuntimeError("LLM down")
     monkeypatch.setattr(planner_mod, "make_plan", fake_make_plan)
-    result = await engine._maybe_plan("sess-R3", "复杂请求需要规划的内容", [])
+    result = await engine._maybe_plan(
+        "sess-R3", "请帮我处理一下这些内容，给出有价值的建议和结论", []
+    )
     assert result is None
 
 
