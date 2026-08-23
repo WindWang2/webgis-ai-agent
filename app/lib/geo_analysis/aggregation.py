@@ -260,6 +260,8 @@ def h3_binning(geojson: dict | str, resolution: int | None = None, stat_field: s
         if not all(geom.geom_type == 'Point' for geom in gdf.geometry):
             gdf['geometry'] = gdf.geometry.centroid
             
+        stat_method_requested = stat_method
+        _degraded_stat = False
         # Assign H3 index (向量化：避免 O(n) apply lambda)
         lats = gdf.geometry.y.values
         lngs = gdf.geometry.x.values
@@ -274,9 +276,15 @@ def h3_binning(geojson: dict | str, resolution: int | None = None, stat_field: s
             else:
                 grouped = gdf.groupby('h3_index').size().rename('count').reset_index()
                 stat_method = 'count'
+                _degraded_stat = True
         else:
             grouped = gdf.groupby('h3_index').size().rename('count').reset_index()
             stat_method = 'count'
+            # G-9（#873）：sum/mean 无有效 stat_field 时静默降级 count ——
+            # 在结果信封显式披露（tool 层据此给 correction_hint），否则
+            # LLM 以为拿到均值专题图，下游 legend_spec 还会因列名失配而
+            # 静默缺失。
+            _degraded_stat = stat_method_requested in ('sum', 'mean')
             
         # Create Polygons from H3 indices
         from app.lib.geo_analysis.interpolation import h3_cell_ring
@@ -289,12 +297,21 @@ def h3_binning(geojson: dict | str, resolution: int | None = None, stat_field: s
             polygons.append(Polygon(h3_cell_ring(h3_id)))
             
         hex_gdf = gpd.GeoDataFrame(grouped, geometry=polygons, crs="EPSG:4326")
-        
+
         summary = f"Binned {len(gdf)} points into {len(hex_gdf)} hexagons at resolution {resolution}."
-        
+        data_out = hex_gdf.__geo_interface__
+        if _degraded_stat:
+            # G-9（#873）：降级披露 —— 请求了 sum/mean 但缺有效 stat_field。
+            data_out["stat_method_effective"] = "count"
+            data_out["warning"] = (
+                f"stat_method={stat_method_requested} 需要 stat_field 指向数值列，"
+                f"已降级为 count 统计。"
+            )
+            summary += f" ⚠ stat_method={stat_method_requested} 缺 stat_field，已降级为 count。"
+
         return GeoAnalysisResult(
             success=True,
-            data=hex_gdf.__geo_interface__,
+            data=data_out,
             summary=summary
         )
     except Exception as e:

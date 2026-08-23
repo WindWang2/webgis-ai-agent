@@ -183,6 +183,16 @@ class BaseSessionStore:
     `get_map_state`, `set_map_state`, `get_session_metadata`, etc.
     """
 
+    async def get_shared(self, session_id: str, ref_id_or_alias: str) -> Optional[Any]:
+        """P-1（#874）：共享只读读取 —— 返回不拷贝的 payload 对象。
+
+        供解引用热路径（registry._resolve_references / 数据面序列化）使用。
+        默认实现保守地回落到 ``get()``（拷贝语义）；后端用进程内缓存或
+        存储对象本体覆盖。调用方**不得就地修改**返回对象（只读约定，
+        详见 app/services/ref_payload_cache.py 模块注释）。
+        """
+        return await self.get(session_id, ref_id_or_alias)
+
     async def resolve_alias(self, session_id: str, ref_or_alias: str) -> str:
         """Default fallback alias resolution. Overridden by subclasses if alias map is separate."""
         return ref_or_alias

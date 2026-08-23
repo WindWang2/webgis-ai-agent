@@ -24,6 +24,11 @@ from app.core.rate_limiter import get_rate_limiter
 from app.models.db_model import Conversation, Message
 from app.services.chat.event_resume import TurnEventBuffer, TurnResumeRegistry
 from app.services.chat_engine import ChatEngine
+# H-3（#858）：非流式路由透传 #685 诚实失败分类（经兼容层 re-export）。
+from app.services.chat.execution_engine import (
+    HonestTurnFailure,
+    SessionClearingError,
+)
 from app.services.history_service_async import AsyncHistoryService
 from app.services.explorer.orchestrator import bridge_session_explorer_progress
 from app.services.distributed_lock import session_lock_registry
@@ -713,6 +718,22 @@ async def chat_completions(
                 result.get("session_id") or req.session_id, req.project_id
             )
             return ChatResponse(**result)
+        except HonestTurnFailure as e:
+            # H-3（#858）：诚实失败透传——provider 空补全/max_rounds/no_progress/
+            # turn_timeout 是上游语义失败而非服务器 bug。此前一律折叠 500
+            # "Internal server error"，客户端按"服务器错误"重发整条消息导致
+            # 工具副作用重复（dedup 集合是 per-turn 的）。
+            logger.warning(
+                f"Chat honest failure ({e.failure_class}): {e}"
+            )
+            raise HTTPException(
+                status_code=502,
+                detail={"failure_class": e.failure_class, "message": str(e)},
+            )
+        except SessionClearingError:
+            raise HTTPException(
+                status_code=409, detail="session is being cleared; retry later"
+            )
         except Exception as e:
             logger.error(f"Chat error: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -844,7 +865,20 @@ async def chat_stream(
                 """audit #818: Pi-path persistence parity — the legacy engine
                 saves user/assistant messages and generates a title; the Pi
                 path previously left Conversation rows empty (Message=[] and
-                title stuck at「新对话」). Best-effort: DB failures only log."""
+                title stuck at「新对话」). Best-effort: DB failures only log.
+
+                H-7（#862）：user 消息与 ``completed`` 门解绑——失败/停滞/中断
+                回合也保留用户输入（legacy 是"user 即存、assistant 完成才存"），
+                刷新页面后失败回合不至于丢失用户问了什么。assistant 文本与
+                标题仍受 completed 门约束。每 turn 恰好回调一次（resume 不重发
+                prompt，DUP-1），无重复保存风险。
+                """
+                try:
+                    async with async_db_session() as db:
+                        svc = AsyncHistoryService(db)
+                        await svc.save_message(pi_session_id, "user", req.message)
+                except Exception as e:  # noqa: BLE001 — transcript must not break the stream
+                    logger.warning("[pi-chat] user message persistence failed for %s: %s", pi_session_id, e)
                 if not result.get("completed"):
                     return
                 final_text = (result.get("final_text") or "").strip()
@@ -853,7 +887,6 @@ async def chat_stream(
                 try:
                     async with async_db_session() as db:
                         svc = AsyncHistoryService(db)
-                        await svc.save_message(pi_session_id, "user", req.message)
                         await svc.save_message(pi_session_id, "assistant", final_text)
                 except Exception as e:  # noqa: BLE001 — transcript must not break the stream
                     logger.warning("[pi-chat] transcript persistence failed for %s: %s", pi_session_id, e)
@@ -1259,8 +1292,13 @@ async def push_cartographic_runtime_observation(
             from app.agent_pi_bridge import evaluate_cartographic_session
 
             try:
+                # P-6（#879）：锁内快照复用——observation 刚写入的字段本地合成进
+                # 已读快照，hydrate/evaluate 不再各自冷读 map_state（此前一次
+                # 请求 3 次 get_map_state，1MiB 级 mapspec 字段反复重解析）。
+                state_snapshot = dict(state)
+                state_snapshot["_cartographic_observation"] = observation
                 review = await evaluate_cartographic_session(
-                    session_id, session_lock_held=True
+                    session_id, session_lock_held=True, state=state_snapshot
                 )
             except Exception as review_error:  # noqa: BLE001 - observation remains accepted
                 logger.warning(

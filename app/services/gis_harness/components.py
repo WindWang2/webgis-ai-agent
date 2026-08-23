@@ -206,6 +206,10 @@ def build_default_components(
 ) -> List[CartographyComponent]:
     """按主专题表达派生默认组件集（确定性）。
 
+    组件规则的首要权威是模型库（MapModel.recommended_components，
+    app/lib/cartography/model_library.py）；模型库没有的旧词汇
+    （如 "graduated"）走下方兼容分支。规则不散落在 planner 的 if/else。
+
     - 视觉热力/连续面 → continuous_colorbar；
     - 分级填色（choropleth/graduated/hotspot/proximity 覆盖面）→ legend（离散）；
     - 分类专题 → categorical_legend；
@@ -220,16 +224,38 @@ def build_default_components(
     if subtitle:
         components.append(subtitle_component(subtitle))
 
-    if primary_cartography in ("visual_heatmap", "density_overview", "raster_surface"):
-        components.append(colorbar_component())
-    elif primary_cartography in (
-        "administrative_choropleth", "graduated", "aggregate_grid",
-        "proportional_symbol",
-        "hotspot_overlay", "proximity_overlay", "administrative_aggregation",
-    ):
-        components.append(legend_component())
-    elif primary_cartography in ("categorical_thematic",):
-        components.append(categorical_legend_component())
+    legend_types: List[str] = []  # 模型库/兼容分支推导出的图例组件
+    model = None
+    try:
+        from app.lib.cartography.model_library import get_map_model_registry
+        model = get_map_model_registry().resolve(primary_cartography)
+    except Exception:  # noqa: BLE001 - 模型库不可用不阻塞组件推导
+        model = None
+    if model is not None and model.recommended_components:
+        legend_types = [
+            t for t in model.recommended_components
+            if t in ("continuous_colorbar", "legend", "categorical_legend")
+        ]
+    else:
+        # 兼容分支：模型库未收录的旧词汇（"graduated" 等）
+        if primary_cartography in ("visual_heatmap", "density_overview", "raster_surface"):
+            legend_types = ["continuous_colorbar"]
+        elif primary_cartography in (
+            "administrative_choropleth", "graduated", "aggregate_grid",
+            "proportional_symbol",
+            "hotspot_overlay", "proximity_overlay", "administrative_aggregation",
+        ):
+            legend_types = ["legend"]
+        elif primary_cartography in ("categorical_thematic",):
+            legend_types = ["categorical_legend"]
+
+    for t in legend_types:
+        if t == "continuous_colorbar":
+            components.append(colorbar_component())
+        elif t == "categorical_legend":
+            components.append(categorical_legend_component())
+        elif t == "legend":
+            components.append(legend_component())
 
     components.append(north_arrow_component())
     components.append(scale_bar_component())

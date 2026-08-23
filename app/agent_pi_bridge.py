@@ -767,16 +767,23 @@ async def _persist_cartographic_harness_context(
 
 
 async def _hydrate_cartographic_harness(
-    session_id: str, harness: PiAgentHarness
+    session_id: str, harness: PiAgentHarness,
+    state: Optional[dict] = None,
 ) -> bool:
-    """Restore the latest owned mutation evidence into a fresh worker."""
+    """Restore the latest owned mutation evidence into a fresh worker.
+
+    P-6（#879）：``state`` 允许调用方传入锁内已读快照（observation/ACK 处理
+    链此前一次请求内 3 次独立 get_map_state，1MiB 级 mapspec 字段反复冷读/
+    重解析）；缺省时自行读取（行为不变）。
+    """
     has_local_mutation = any(
         mutation.get("session_id") == session_id
         for mutation in harness.mapspec_mutations
     )
-    from app.services.session_data import session_data_manager
+    if state is None:
+        from app.services.session_data import session_data_manager
 
-    state = await session_data_manager.get_map_state(session_id)
+        state = await session_data_manager.get_map_state(session_id)
     if state.get("_cartographic_deleted") is True:
         return False
     context = state.get("_cartographic_harness_context")
@@ -893,7 +900,8 @@ async def _persist_cartographic_issued_action(
 
 
 async def evaluate_cartographic_session(
-    session_id: str, *, session_lock_held: bool = False
+    session_id: str, *, session_lock_held: bool = False,
+    state: Optional[dict] = None,
 ) -> dict[str, Any]:
     """Serialize and recompute the session gate after meaningful evidence.
 
@@ -931,7 +939,9 @@ async def evaluate_cartographic_session(
             "overall_passed": False,
         }
     harness = _get_session_harness(session_id, create=True)
-    if harness is None or not await _hydrate_cartographic_harness(session_id, harness):
+    if harness is None or not await _hydrate_cartographic_harness(
+        session_id, harness, state=state
+    ):
         return {
             "session_id": session_id,
             "cartography": {
@@ -954,7 +964,7 @@ async def evaluate_cartographic_session(
         }
     lock = _cartography_eval_locks.setdefault(session_id, asyncio.Lock())
     async with lock:
-        return await _evaluate_cartographic_session_unlocked(session_id)
+        return await _evaluate_cartographic_session_unlocked(session_id, state=state)
 
 
 async def record_cartographic_dispatch_evidence(
@@ -1021,6 +1031,7 @@ async def record_cartographic_dispatch_evidence(
 
 async def _evaluate_cartographic_session_unlocked(
     session_id: str,
+    state: Optional[dict] = None,
 ) -> dict[str, Any]:
     harness = _get_session_harness(session_id)
     if harness is None:
@@ -1045,9 +1056,11 @@ async def _evaluate_cartographic_session_unlocked(
             "overall_passed": False,
         }
     from app.lib.harness.evaluator import HarnessEvaluator
-    from app.services.session_data import session_data_manager
 
-    state = await session_data_manager.get_map_state(session_id)
+    if state is None:
+        from app.services.session_data import session_data_manager
+
+        state = await session_data_manager.get_map_state(session_id)
     observation = state.get("_cartographic_observation")
     sequence = int(observation.get("sequence", 0)) if isinstance(observation, dict) else 0
     fingerprint = str(observation.get("mapspec_fingerprint") or "") if isinstance(observation, dict) else ""

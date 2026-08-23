@@ -101,14 +101,16 @@ async def test_cached_tool_still_caches_success(_fake_redis):
 # ── 2. query_osm_poi 类别映射 ───────────────────────────────────────────
 
 def test_osm_category_map_covers_primary_school():
-    """'小学' 此前未映射 → 直通 amenity='小学' Overpass 永远 0 命中。"""
-    import app.tools.osm as osm_mod
+    """'小学' 此前未映射 → 直通 amenity='小学' Overpass 永远 0 命中。
 
-    # category_map 是查询函数的局部量——映射覆盖由源码常量锁最小行为
-    #（"小学" 在表中 + 未映射值走 correction_hint 路径），见下一用例。
-    import inspect
-    src = inspect.getsource(osm_mod)
-    assert '"小学": "primary_school"' in src, "小学 映射缺失（死查询回归）"
+    G-4（#868）更新：映射迁移到共享表 app/lib/osm_category_map.py，且
+    从非文档化的 amenity=primary_school 改为标准 amenity=school（+
+    Overpass 学段窄化）。意图保持：小学必须映射到真实存在的 OSM tag。
+    """
+    from app.lib.osm_category_map import CHINESE_CATEGORY_TAGS, OVERPASS_STAGE_NARROW
+
+    assert CHINESE_CATEGORY_TAGS.get("小学") == ("amenity", "school")
+    assert "primary" in OVERPASS_STAGE_NARROW.get("小学", "")
 
 
 def test_osm_unmapped_chinese_category_returns_hint():
@@ -116,16 +118,9 @@ def test_osm_unmapped_chinese_category_returns_hint():
     import inspect
     import app.tools.osm as osm_mod
 
-    # 找到含 category_map 的函数并驱动未映射值
-    hits = []
-    for name in dir(osm_mod):
-        fn = getattr(osm_mod, name)
-        if callable(fn) and "category" in (getattr(fn, "__doc__", "") or ""):
-            hits.append(fn)
-    # 直接从源码常量验证映射表覆盖（映射表为局部量的最小行为锁）
     src = inspect.getsource(osm_mod)
-    assert '"小学"' in src and "primary_school" in src, "小学 映射缺失（死查询回归）"
     assert "correction_hint" in src, "未映射值必须有 correction_hint 路径"
+    assert "CHINESE_CATEGORY_TAGS" in src, "映射必须走共享表（单一事实来源）"
 
 
 # ── 3. adcode 注入面 ────────────────────────────────────────────────────

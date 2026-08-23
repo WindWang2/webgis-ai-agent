@@ -684,6 +684,28 @@ class TemplateRegistry:
                 # or preview_metadata (user) — at least one so the detail view
                 # is meaningful.
                 errors.append(f"{eid}: missing 'payload' or 'preview_metadata'")
+            # §Phase F: 显式 compatibility 键必须可解析且引用真实 registry 条目
+            # （未携带该键的旧模板/DB 模板不受影响）。
+            compat_raw = entry.get("compatibility")
+            if compat_raw is not None:
+                from app.schemas.template_schema import TemplateCompatibility
+                try:
+                    compat = TemplateCompatibility.model_validate(compat_raw)
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"{eid}: invalid 'compatibility' ({exc})")
+                else:
+                    from app.lib.cartography.model_library import get_map_model_registry
+                    from app.lib.gis.artifacts import get_artifact_type_registry
+                    models = get_map_model_registry()
+                    artifacts = get_artifact_type_registry()
+                    for mm in compat.compatible_map_models:
+                        if models.resolve(mm) is None:
+                            errors.append(
+                                f"{eid}: compatibility.map_model '{mm}' not in MapModelRegistry")
+                    for at in compat.accepted_artifact_types:
+                        if not artifacts.has(at):
+                            errors.append(
+                                f"{eid}: compatibility.artifact_type '{at}' not registered")
 
         # Composite-specific: every pipeline reference must resolve.
         for entry in self._by_kind.get("composite", ()):

@@ -56,6 +56,31 @@ VALID_DOMAINS: Set[str] = set(DOMAIN_KEYWORDS) | {"core"}
 # R4: 单计划步骤数硬上限（prompt 里的 5 步只是软约束，代码层强制 8）
 MAX_PLAN_STEPS = 8
 
+# H-1（#856）确定性短路之一 —— 最简门：极短、无任何域关键词、followup 分类
+# 为 unclear 的消息（寒暄/打招呼）不值得一次规划 LLM 调用。跳过的只是"规划"，
+# 回合本身照常执行（与 followup 跳过规划同语义）。
+_MINIMAL_GATE_MAX_CHARS = 12
+
+# H-1（#856）确定性短路之二 —— harness 合成置信度阈值：intent resolver 命中
+# 显式任务规则（非 fallback）且置信度达标、recipe 候选非空时，直接由
+# MapProductPlanner 合成 Plan，规划阶段 0 次 LLM 调用。
+_HARNESS_SYNTH_MIN_CONFIDENCE = 0.65
+
+# H-1：intent.task → 规划 domains 提示（与 RecipeRegistry 任务族对齐；
+# detect_domains 的关键词命中会再取并集，这里只保证任务族自身的主域不缺）。
+_TASK_DOMAIN_HINTS: dict = {
+    "distribution_overview": ["statistics"],
+    "simple_view": [],
+    "administrative_statistic": ["statistics", "chinese"],
+    "analytical_density": ["statistics"],
+    "concentration_analysis": ["statistics"],
+    "categorical_distribution": ["statistics"],
+    "proximity_analysis": ["network", "statistics"],
+    "accessibility_analysis": ["network"],
+    "raster_distribution": ["raster"],
+    "change_detection": ["temporal"],
+}
+
 # P1-A（R1-qualified）：core 通配的**展示类工具排除集**。
 # 生产注册表里 0/149 个工具声明 domain "core"（149 个里有 86 个 tier-1 分析
 # 工具干脆不声明任何 domain），而规划 prompt 让 LLM 对最常见的步骤发
@@ -446,6 +471,129 @@ class AgentPlanOrchestrator:
             del self._canonical[session_id]
         plan_store.forget(session_id)
 
+    async def _persist_new_plan(self, session_id: str, plan: Plan) -> None:
+        """新计划入库（supersede 旧非终态计划，绝不静默覆盖）。
+
+        make_plan（LLM 规划）与 _synth_plan_from_harness（确定性合成）共用。
+        """
+        prev = self._canonical.get(session_id)
+        if prev is None:
+            # P1-B(3)：进程 _canonical 缓存未命中（evicted / 重启后的新 worker）
+            # 时，supersede 判定必须回落到 store 的当前计划——否则一个刚
+            # 恢复出旧计划/无缓存的 worker 会静默 overwrite 掉更新计划，
+            # 而不是把它 supersede。
+            try:
+                prev = await plan_store.load_current(session_id)
+            except Exception as e:  # noqa: BLE001 store 读失败不阻断规划
+                logger.warning(f"[plan_orchestrator] 读取 store 当前计划失败: {e}")
+                prev = None
+        canon = self._canonical_from_projection(plan, session_id)
+        if (
+            prev is not None
+            and prev.status not in TERMINAL_STATUSES
+            and prev.plan_id != canon.plan_id
+        ):
+            # design-v3：换目标 → 旧计划 superseded，绝不静默覆盖。
+            await plan_store.supersede(session_id, canon)
+        else:
+            await plan_store.save(canon)
+        self.set_plan(session_id, plan)
+
+    def _minimal_chat_gate(
+        self, message: str, followup_kind: Optional[FollowUpKind]
+    ) -> bool:
+        """H-1 最简门：寒暄类消息不值得一次规划 LLM 调用。
+
+        条件（全部满足才拦）：followup 分类为 unclear（或未分类）、消息
+        极短、无任何域关键词。命中任一域关键词（如"成都小学分布"命中
+        chinese/osm/statistics）即放行——真正的 GIS 请求不会走到这里。
+        """
+        text = (message or "").strip()
+        if not text or len(text) > _MINIMAL_GATE_MAX_CHARS:
+            return False
+        if followup_kind is not None and followup_kind != FollowUpKind.unclear:
+            return False
+        try:
+            from app.services.tool_catalog import ToolCatalog
+            return not ToolCatalog.detect_domains(text)
+        except Exception:  # noqa: BLE001 关键词检测失败 → 不拦，走原路径
+            return False
+
+    async def _synth_plan_from_harness(
+        self, session_id: str, user_message: str
+    ) -> Optional[Plan]:
+        """H-1 harness 确定性合成：高置信 intent + 唯一候选 recipe 时零 LLM 规划。
+
+        合成条件（保守，三者缺一即回落 LLM 规划）：
+        - intent 命中显式任务规则（matched_rules[0] 非 fallback）；
+        - confidence ≥ _HARNESS_SYNTH_MIN_CONFIDENCE（识别出主体/范围）；
+        - RecipeRegistry.select_candidates 非空。
+        合成的步骤 goal 取 MapProductPlanner 的能力 purpose 文案，tool_family
+        统一为 "core"（P1-A 限定通配：已注册非展示类工具即可打勾）。
+        """
+        try:
+            from app.services.gis_harness import (
+                MapProductPlanner,
+                resolve_map_request_intent,
+            )
+        except Exception:  # noqa: BLE001 harness 不可用 → 回落 LLM 规划
+            return None
+        try:
+            intent = resolve_map_request_intent(user_message)
+            matched = list(getattr(intent, "matched_rules", []) or [])
+            if not matched or matched[0] == "fallback_distribution_default":
+                return None
+            if float(getattr(intent, "confidence", 0.0) or 0.0) < _HARNESS_SYNTH_MIN_CONFIDENCE:
+                return None
+            gplanner = MapProductPlanner()
+            candidates = gplanner.recipes.select_candidates(intent)
+            if not candidates:
+                return None
+            recipe = candidates[0]
+            registry = _get_registry()
+            try:
+                available = set(registry.list_tools()) if registry is not None else None
+            except Exception:  # noqa: BLE001
+                available = None
+            product = gplanner.plan_from_intent(
+                intent, recipe_id=recipe.id, available_tools=available,
+            )
+        except Exception as e:  # noqa: BLE001 合成失败 → 回落 LLM 规划
+            logger.info(f"[plan_orchestrator] harness 确定性合成失败，回落 LLM 规划: {e}")
+            return None
+
+        domains: set = set(_TASK_DOMAIN_HINTS.get(intent.task, []))
+        try:
+            from app.services.tool_catalog import ToolCatalog
+            domains |= ToolCatalog.detect_domains(user_message)
+        except Exception:  # noqa: BLE001
+            pass
+        valid_domains = sorted(d for d in domains if d in VALID_DOMAINS)
+
+        steps = [
+            PlanStep(n=i, goal=(s.purpose or s.capability), tool_family="core")
+            for i, s in enumerate(
+                (s for s in product.analysis_steps if s.status != "unavailable"),
+                start=1,
+            )
+        ]
+        if not steps:
+            return None
+        plan = Plan(
+            intent=(user_message or "").strip()[:120],
+            domains=valid_domains or ["statistics"],
+            steps=steps,
+        )
+        plan.gis_intent = intent.model_dump()
+        plan.recipe_id = recipe.id
+        self._apply_capability_validation(plan, registry)
+        await self._persist_new_plan(session_id, plan)
+        logger.info(
+            f"[plan_orchestrator] session={session_id} harness 确定性合成计划"
+            f"（规划 0 次 LLM 调用）: recipe={recipe.id} steps={len(steps)}"
+        )
+        return plan
+
     async def make_plan(
         self,
         cfg: LLMConfig,
@@ -488,28 +636,7 @@ class AgentPlanOrchestrator:
         except Exception as e:  # noqa: BLE001 - harness 附着失败不阻断规划
             logger.warning(f"[plan_orchestrator] gis intent attach failed: {e}")
 
-        prev = self._canonical.get(session_id)
-        if prev is None:
-            # P1-B(3)：进程 _canonical 缓存未命中（evicted / 重启后的新 worker）
-            # 时，supersede 判定必须回落到 store 的当前计划——否则一个刚
-            # 恢复出旧计划/无缓存的 worker 会静默 overwrite 掉更新计划，
-            # 而不是把它 supersede。
-            try:
-                prev = await plan_store.load_current(session_id)
-            except Exception as e:  # noqa: BLE001 store 读失败不阻断规划
-                logger.warning(f"[plan_orchestrator] make_plan 读取 store 当前计划失败: {e}")
-                prev = None
-        canon = self._canonical_from_projection(plan, session_id)
-        if (
-            prev is not None
-            and prev.status not in TERMINAL_STATUSES
-            and prev.plan_id != canon.plan_id
-        ):
-            # design-v3：换目标 → 旧计划 superseded，绝不静默覆盖。
-            await plan_store.supersede(session_id, canon)
-        else:
-            await plan_store.save(canon)
-        self.set_plan(session_id, plan)
+        await self._persist_new_plan(session_id, plan)
         logger.info(
             f"[plan_orchestrator] session={session_id} 计划已生成: "
             f"intent={plan.intent!r} domains={plan.domains} steps={len(plan.steps)}"
@@ -569,10 +696,25 @@ class AgentPlanOrchestrator:
         env_summary: str,
         followup_kind: Optional[FollowUpKind] = None,
     ) -> Optional[Plan]:
-        """门控 + 规划编排入口（followup_kind 透传给 should_plan，design-v3 §followup）。"""
+        """门控 + 规划编排入口（followup_kind 透传给 should_plan，design-v3 §followup）。
+
+        H-1（#856）两级确定性短路，LLM 只兜底：
+        1. 最简门 —— 寒暄类消息（短 + 无域关键词 + unclear）直接不规划；
+        2. harness 合成 —— 高置信 intent + 候选 recipe 时由 MapProductPlanner
+           确定性合成计划（0 次 LLM 调用），gis_intent/recipe_id 照常附着。
+        """
         has_plan = self.get_plan(session_id) is not None
         if not should_plan(user_message, messages, has_plan, followup_kind=followup_kind):
             return None
+        if self._minimal_chat_gate(user_message, followup_kind):
+            logger.info(
+                f"[plan_orchestrator] session={session_id} 最简门命中"
+                f"（寒暄/短消息无域关键词），跳过规划 LLM 调用"
+            )
+            return None
+        synth = await self._synth_plan_from_harness(session_id, user_message)
+        if synth is not None:
+            return synth
         from app.services.chat import planner
         return await planner.make_plan(cfg, session_id, user_message, env_summary)
 

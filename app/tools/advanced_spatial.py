@@ -288,11 +288,26 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
 
         try:
             out_geojson = payload.get("data") if isinstance(payload, dict) else None
-            # Determine the actual stat field name written into feature properties
-            if stat_field and stat_method in ("sum", "mean"):
-                stat_field_name = stat_method
+            # G-9（#873）：lib 层 sum/mean 缺有效 stat_field 时降级 count 并在
+            # data 上标记 stat_method_effective —— 列名推断以它为准（此前
+            # 按 stat_method 取列名会拿到不存在的列，legend_spec 静默缺失）。
+            effective_method = "count"
+            if isinstance(out_geojson, dict) and out_geojson.get("stat_method_effective"):
+                effective_method = out_geojson["stat_method_effective"]
+            elif stat_field and stat_method in ("sum", "mean"):
+                effective_method = stat_method
+            if effective_method != "count":
+                stat_field_name = effective_method
             else:
                 stat_field_name = "count"
+            if (
+                stat_method in ("sum", "mean") and effective_method == "count"
+                and isinstance(payload, dict)
+            ):
+                payload["correction_hint"] = (
+                    f"stat_method={stat_method} 需要同时传 stat_field（数值列名）；"
+                    f"本次已降级为 count 统计。"
+                )
             if isinstance(out_geojson, dict):
                 # Single canonical graduated-spec builder (ADR-0052): runs the
                 # one classification algorithm, resolves palette colors through

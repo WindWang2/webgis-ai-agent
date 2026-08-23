@@ -67,7 +67,7 @@ def test_explicit_bandwidth_kernel_isotropic_on_anisotropic_cloud():
     ~1819 m × 184 m)."""
     coords = _utm_coords(_anisotropic_fc())
     h = 1000.0
-    kde, bw = _fit_kde(coords.T, h)
+    kde, bw, _clamped = _fit_kde(coords.T, h)
     assert bw == pytest.approx(h)
     # The kernel Cholesky factor is exactly h·I -> covariance h²·I on both
     # axes, independent of the cloud's covariance.
@@ -90,7 +90,7 @@ def test_auto_bandwidth_kernel_isotropic():
     """Scott auto mode also produces an isotropic kernel (std = the reported
     effective bandwidth), not a covariance-shaped ellipse."""
     coords = _utm_coords(_anisotropic_fc())
-    kde, bw = _fit_kde(coords.T, 0)
+    kde, bw, _clamped = _fit_kde(coords.T, 0)
     assert bw > 0
     assert np.allclose(kde.cho_cov, bw * np.eye(2), atol=1e-9)
 

@@ -756,6 +756,12 @@ class PiAgentHarness:
         for rc in self.ref_cursors:
             if rc.get("session_id") == self.session_id:
                 cursors_by_call.setdefault(rc["tool_call_id"], []).append(rc)
+        # P-3（#876）：map_actions 同款单遍分组 —— #796 只修了 cursors，此处
+        # 嵌套线性过滤是同型残留（1000×1000 上限实测 31.5ms/次评估，且跑在
+        # 事件循环上）。
+        actions_by_call: Dict[str, list] = {}
+        for a in self._map_action_evidence:
+            actions_by_call.setdefault(a.tool_call_id, []).append(a)
         results_by_id = {
             r["tool_call_id"]: r for r in self.tool_results
             if r.get("session_id") == self.session_id
@@ -800,10 +806,7 @@ class PiAgentHarness:
                 ref_resolutions=refs_for_call,
                 mapspec_validity=validity,
                 # V3: 该工具调用发出的地图动作证据（按 tool_call_id 归属）。
-                map_actions=[
-                    a for a in self._map_action_evidence
-                    if a.tool_call_id == tcid
-                ],
+                map_actions=actions_by_call.get(tcid, []),
                 runtime_evidence_path=(
                     res.get("result", {}).get("runtime_dir")
                     if isinstance(res.get("result"), dict) else None

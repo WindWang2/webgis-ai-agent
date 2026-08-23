@@ -135,16 +135,24 @@ def _project_result(gdf: gpd.GeoDataFrame, *, to_wgs84: bool, simplified: bool) 
     return gdf
 
 
-def _to_feature_collection(gdf: gpd.GeoDataFrame, *, note: str) -> Dict[str, Any]:
+def _to_feature_collection(
+    gdf: gpd.GeoDataFrame, *, note: str, crs: Optional[str] = None
+) -> Dict[str, Any]:
     payload = json.loads(gdf.to_json())
     minx, miny, maxx, maxy = (float(v) for v in gdf.total_bounds)
-    return {
+    out: Dict[str, Any] = {
         "type": "FeatureCollection",
         "features": payload["features"],
         "count": len(gdf),
         "crs_note": note,
         "total_bounds": [minx, miny, maxx, maxy],
     }
+    # G-2（#866）：机器可读的 crs 成员——下游 gdf_from_features/to_utm_gdf
+    # 只认 crs 成员（#599/#813 契约），此前坐标系语义只停留在 crs_note 字符串
+    # 里，GCJ-02 边界与 WGS84 POI 叠加时 ~100-600m 偏移无法被自动归一。
+    if crs:
+        out["crs"] = crs
+    return out
 
 
 _CRS_NOTE_GCJ = "GCJ-02（高德系偏移坐标，与 amap 数据同系）"
@@ -190,7 +198,11 @@ def query_admin_boundary(
             return {"error": f"未找到名为 '{name}' 的行政区（level={level}）"}
 
     result = _project_result(result, to_wgs84=to_wgs84, simplified=simplified)
-    return _to_feature_collection(result, note=_CRS_NOTE_WGS if to_wgs84 else _CRS_NOTE_GCJ)
+    return _to_feature_collection(
+        result,
+        note=_CRS_NOTE_WGS if to_wgs84 else _CRS_NOTE_GCJ,
+        crs=None if to_wgs84 else "gcj02",
+    )
 
 
 def query_child_districts(
@@ -219,7 +231,11 @@ def query_child_districts(
     if result.empty:
         return {"error": f"未找到 '{parent_name}'（{parent_level}）下的区/县"}
     result = _project_result(result, to_wgs84=to_wgs84, simplified=simplified)
-    return _to_feature_collection(result, note=_CRS_NOTE_WGS if to_wgs84 else _CRS_NOTE_GCJ)
+    return _to_feature_collection(
+        result,
+        note=_CRS_NOTE_WGS if to_wgs84 else _CRS_NOTE_GCJ,
+        crs=None if to_wgs84 else "gcj02",
+    )
 
 
 def register_local_admin_tools(registry: ToolRegistry):

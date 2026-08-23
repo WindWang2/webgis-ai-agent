@@ -3,15 +3,14 @@
 
 #832: geometry-polymorphic cartography (categorical_thematic) resolves its
       planned layer_type from the real profile geometry so the primary binds.
-#833: MapModel.default_class_count survives seed construction; planner's
-      _CARTOGRAPHY_LAYER_TYPE stays locked to the library's layer types.
+#833: MapModel.default_class_count survives seed construction; planner layer
+      types are derived from the model library (no hand-copied mirror).
 #834: task hints recompute output_intents (and geometry expectation).
 #835: interrogative「哪个区」is not a district scope; the declared
       NEEDS_ADMIN_UNITS fallback is reachable (recorded when the fill primary
       cannot bind while a circle layer did).
 """
 
-import pytest
 
 
 # ─── #832: geometry-aware layer type ────────────────────────────────────
@@ -75,23 +74,31 @@ class TestAudit833ModelLibrary:
         assert m3 is not None
         assert m3.default_class_count is None
 
-    def test_planner_layer_type_table_matches_model_library(self):
-        """Lock planner's hand-copied mirror to the library's authority.
+    def test_planner_layer_types_come_from_model_library(self):
+        """Lock the planner to the model library's authority (audit #833).
 
-        The library has no runtime consumer today; this test makes drift
-        between the two fact sources fail loudly instead of silently
-        diverging (audit #833)."""
+        The planner's hand-copied `_CARTOGRAPHY_LAYER_TYPE` mirror is gone —
+        layer types are derived from MapModelRegistry at planning time. This
+        test pins: (1) every recipe cartography resolves through the registry,
+        (2) the derived layer type equals the model's maplibre_layer_type."""
         from app.lib.cartography.model_library import get_map_model
-        from app.services.gis_harness.planner import _CARTOGRAPHY_LAYER_TYPE
+        from app.services.gis_harness.planner import layer_type_for_cartography
+        from app.services.gis_harness.recipes import get_recipe_registry
 
-        for carto, layer_type in _CARTOGRAPHY_LAYER_TYPE.items():
-            model = get_map_model(carto)
-            if model is None:
-                continue  # planner-only vocabulary (e.g. density_overview)
-            assert model.maplibre_layer_type == layer_type, (
-                f"{carto}: planner says {layer_type}, model library says "
-                f"{model.maplibre_layer_type} — the two fact sources drifted"
-            )
+        checked = 0
+        for rid in get_recipe_registry().all_ids:
+            recipe = get_recipe_registry().get(rid)
+            for carto in [recipe.primary_cartography] + list(recipe.secondary_cartography):
+                model = get_map_model(carto)
+                if model is None:
+                    continue  # planner-only vocabulary
+                derived = layer_type_for_cartography(carto)
+                assert derived == model.maplibre_layer_type, (
+                    f"{carto}: planner derived {derived}, model library says "
+                    f"{model.maplibre_layer_type} — the two fact sources drifted"
+                )
+                checked += 1
+        assert checked >= 10, "expected the recipe vocabulary to hit the library"
 
 
 # ─── #834: output_intents recompute on task hint ────────────────────────

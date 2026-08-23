@@ -243,77 +243,74 @@ def register_osm_tools(registry: ToolRegistry):
         if not bbox:
             raise ValueError(f"无法地理编码: {clean_area}")
 
-        # 中文 category 转英文
-        category_map = {
-            "大学": "university", "高校": "university", "高等学校": "university",
-            "学校": "school", "中小学": "school",
-            "医院": "hospital", "诊所": "clinic",
-            "餐厅": "restaurant", "餐馆": "restaurant", "饭店": "restaurant",
-            "银行": "bank",
-            "咖啡": "cafe", "咖啡厅": "cafe", "咖啡店": "cafe",
-            "酒吧": "bar",
-            "公园": "park", "花园": "garden",
-            "酒店": "hotel", "宾馆": "hotel", "旅馆": "hotel",
-            "博物馆": "museum",
-            "图书馆": "library",
-            "药店": "pharmacy", "药房": "pharmacy",
-            "加油站": "fuel",
-            "停车场": "parking",
-            "公交站": "bus_station", "汽车站": "bus_station",
-            "派出所": "police", "警察局": "police",
-            "消防站": "fire_station", "消防局": "fire_station",
-            "邮局": "post_office",
-            "剧院": "theatre", "剧场": "theatre",
-            "电影院": "cinema",
-            "体育馆": "sports_centre", "体育场": "stadium",
-            "游泳池": "swimming_pool",
-            "幼儿园": "kindergarten", "托儿所": "kindergarten",
-            "学院": "college",
-            # #694：高频缺失项——"小学"是最高频中文 POI 名词，此前未映射
-            # 直通 amenity="小学" Overpass 永远 0 命中。
-            "小学": "primary_school", "中学": "secondary_school",
-            "高中": "secondary_school", "超市": "supermarket",
-            "菜市场": "marketplace", "商场": "mall",
-            "地铁站": "station", "火车站": "station",
-            "寺庙": "place_of_worship", "教堂": "place_of_worship",
-        }
-        mapped_category = category_map.get(category)
-        if mapped_category is None and category and any(
+        # 中文 category → 标准 OSM 标签。G-4（#868）：单一事实来源在
+        # app/lib/osm_category_map.py（与 local_first 共享；小学/中学走
+        # amenity=school + 学段窄化，超市/商场走 shop，车站走 railway——
+        # 旧映射的 primary_school/secondary_school 等为非文档化标签，
+        # Overpass 召回≈0）。
+        from app.lib.osm_category_map import (
+            CHINESE_CATEGORY_TAGS,
+            NOMINATIM_TERMS,
+            OVERPASS_STAGE_NARROW,
+        )
+
+        tag_spec = CHINESE_CATEGORY_TAGS.get(category)
+        if tag_spec is None and category and any(
             "\u4e00" <= ch <= "\u9fff" for ch in category
         ):
             # #694：未映射的中文值不再直通 Overpass（tag 值必须是英文枚举，
             # 中文直通 = 0 命中死查询）。显式报错并给出可用类别。
-            sample = sorted(category_map.values())[:8]
+            sample = sorted({f"{k}={v}" for k, v in CHINESE_CATEGORY_TAGS.values()})[:8]
             return {
                 "error": f"未知的 POI 类别: {category!r}（Overpass tag 需英文枚举值）",
                 "correction_hint": (
                     f"请改用已映射类别（如 学校/小学/医院/餐厅/公园/超市 等），"
-                    f"或直接用英文 amenity 值（如 {', '.join(sample)}…）"
+                    f"或直接用英文 tag（如 {', '.join(sample)}…）"
                 ),
             }
+        key, value = tag_spec if tag_spec else ("amenity", str(category or ""))
 
-        # 构造 Overpass 查询 - 查询 bbox 内的 POI
-        # 分类 tag：leisure / tourism 显式映射，其余全部落 amenity 默认分支
-        # （amenity 类型集合无需单独声明——else 即为其处理分支）。
-        # leisure 类型
-        leisure_types = {"park", "garden", "playground", "sports_centre", "swimming_pool", "stadium"}
-        # tourism 类型
-        tourism_types = {"hotel", "museum", "attraction", "viewpoint", "hostel"}
+        safe_value = _sanitize_overpass_value(value)
+        tag_filter = f'"{key}"="{safe_value}"'
 
-        safe_category = _sanitize_overpass_value(mapped_category)
-        if mapped_category in leisure_types:
-            tag_filter = f'"leisure"="{safe_category}"'
-        elif mapped_category in tourism_types:
-            tag_filter = f'"tourism"="{safe_category}"'
-        else:
-            tag_filter = f'"amenity"="{safe_category}"'
+        # G-4：学段窄化——amenity=school + school~primary|elementary；窄化
+        # 0 命中时放宽回全量 school（大量学校未标 school 子标签）并披露。
+        stage_regex = OVERPASS_STAGE_NARROW.get(category) if (
+            key == "amenity" and value == "school"
+        ) else None
 
-        query = f'node[{tag_filter}]({bbox});way[{tag_filter}]({bbox});relation[{tag_filter}]({bbox});'
+        def _build_query(use_stage: bool) -> str:
+            if use_stage and stage_regex:
+                extra = f'["school"~"({stage_regex})"]'
+                return (
+                    f'node[{key}="{safe_value}"]{extra}({bbox});'
+                    f'way[{key}="{safe_value}"]{extra}({bbox});'
+                    f'relation[{key}="{safe_value}"]{extra}({bbox});'
+                )
+            return (
+                f'node[{tag_filter}]({bbox});way[{tag_filter}]({bbox});'
+                f'relation[{tag_filter}]({bbox});'
+            )
+
+        query = _build_query(bool(stage_regex))
         geojson = await _query_overpass(query, limit=limit)
 
         # #773: provenance — which upstream actually produced the payload.
         source = "overpass"
         fallback_note: Optional[str] = None
+
+        if (
+            stage_regex
+            and not geojson.get("error")
+            and len(geojson.get("features", [])) == 0
+        ):
+            # 窄化 0 命中：放宽为全量 amenity=school（可能含其他学段），披露。
+            fallback_note = (
+                f"学段窄化（school~{stage_regex}）0 命中，已放宽为全量 "
+                f"{key}={value}（结果可能包含其他学段学校）"
+            )
+            query = _build_query(False)
+            geojson = await _query_overpass(query, limit=limit)
 
         # Overpass 失败时，fallback 到 Nominatim 搜索
         if geojson.get("error") or len(geojson.get("features", [])) == 0:
@@ -322,21 +319,9 @@ def register_osm_tools(registry: ToolRegistry):
                  raise RuntimeError(geojson["error"])
 
             # 用中英文关键词搜索（优先使用英文 tag，增加成功率）
-            category_names = {
-                "park": ["park", "公园"], "garden": ["garden", "花园"],
-                "school": ["school", "学校"], "hospital": ["hospital", "医院"],
-                "restaurant": ["restaurant", "餐厅"], "bank": ["bank", "银行"],
-                "hotel": ["hotel", "酒店"], "museum": ["museum", "博物馆"],
-                "cafe": ["cafe", "咖啡店"], "pharmacy": ["pharmacy", "药店"],
-                "library": ["library", "图书馆"],
-                "university": ["university", "大学"], "college": ["college", "学院"],
-                "kindergarten": ["kindergarten", "幼儿园"],
-                "police": ["police", "警察局"], "fire_station": ["fire station", "消防站"],
-                "post_office": ["post office", "邮局"],
-                "bus_station": ["bus station", "公交站"], "parking": ["parking", "停车场"],
-                "fuel": ["fuel", "加油站"],
-            }
-            search_terms = category_names.get(mapped_category, [mapped_category] if mapped_category else [])
+            # G-4（#868）：词表来自共享 osm_category_map.NOMINATIM_TERMS，
+            # 补齐 supermarket/mall/marketplace/station 等此前缺失词条。
+            search_terms = NOMINATIM_TERMS.get(value, [value] if value else [])
             if not search_terms:
                 search_terms = [category] if category else ["poi"]
             nom_geojson = {"type": "FeatureCollection", "features": []}
@@ -371,6 +356,15 @@ def register_osm_tools(registry: ToolRegistry):
             "source": source,
             "fetched_at": _utcnow_iso(),
         }
+        # G-7（#871）：截断披露 —— count==limit 时样本几乎必然不完整
+        #（Overpass `out body geom N` 返回任意前 N 条），下游统计（R 比率/
+        # Moran/热点）在截断样本上的显著性叙述必须感知这一前提。
+        if result["count"] >= limit:
+            result["truncated"] = True
+            result["note"] = (
+                f"结果达到 limit={limit}，样本可能不完整（前 N 条而非空间均匀）；"
+                f"分布/密度/统计结论前请提高 limit 或分 bbox 拉取。"
+            )
         if fallback_note:
             result["fallback_note"] = fallback_note
         return result

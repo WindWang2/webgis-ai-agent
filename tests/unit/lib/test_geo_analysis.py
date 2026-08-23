@@ -130,7 +130,6 @@ def test_h3_binning_antimeridian_cell_true_span_763():
     ring whose edges run through lng 0 — that produced a ~360°-wide,
     ~160,000x area-bloated polygon. A control cell away from ±180 is unchanged
     (lngs stay within [-180, 180])."""
-    import h3
     from shapely.geometry import shape
 
     am_fc = {

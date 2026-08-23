@@ -57,7 +57,6 @@ class TestAudit847IdempotentPersist:
 
         engine = object.__new__(ee.ChatExecutionEngine)
         saved: list[tuple[str, str]] = []
-        appended: list[dict] = []
 
         class _CancelAfterFirst(Exception):
             pass

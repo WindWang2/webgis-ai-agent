@@ -1,15 +1,16 @@
-"""audit #825: capability→tool mapping parity with the live ToolRegistry.
+"""Capability/Algorithm registry parity with the live ToolRegistry (audit #825).
 
-The previous guard sampled 3 capability ids; the table had drifted so that
-poi_query / admin_boundary_query / raster_source resolved to ghost tool names
-(renamed long ago) and administrative_choropleth declared an unmapped
-analytical_density. This suite locks FULL parity:
+The guard's object has moved from the planner's static CAPABILITY_TOOLS dict
+to the GIS Algorithm Registry (app/lib/gis). CAPABILITY_TOOLS is now a
+**derived view** over the registry; this suite locks:
 
-1. every CAPABILITY_TOOLS candidate is a really-registered tool name;
-2. every capability id declared by any recipe (preferred/optional) has an
-   entry in CAPABILITY_TOOLS;
-3. plan_from_intent marks unresolvable capabilities unavailable when the
-   caller passes the registry view.
+1. every native algorithm's tool candidates are really-registered tools;
+2. every capability declared by any recipe (preferred/optional) has at least
+   one algorithm with a live tool candidate;
+3. the derived CAPABILITY_TOOLS view covers exactly the recipe vocabulary;
+4. plan_from_intent marks unresolvable capabilities unavailable when the
+   caller passes the registry view;
+5. core capabilities resolve to real tools through the AlgorithmResolver.
 """
 
 import pytest
@@ -25,38 +26,72 @@ def registry_names():
     return set(reg.list_tools())
 
 
-def test_every_capability_candidate_is_a_registered_tool(registry_names):
-    from app.services.gis_harness.planner import CAPABILITY_TOOLS
+def test_every_algorithm_tool_candidate_is_a_registered_tool(registry_names):
+    from app.lib.gis.algorithm_registry import get_algorithm_registry
 
-    dead = {
-        cap: [c for c in cands if c not in registry_names]
-        for cap, cands in CAPABILITY_TOOLS.items()
-        if any(c not in registry_names for c in cands)
-    }
-    assert not dead, f"capability candidates not in registry: {dead}"
+    dead = []
+    for aid in get_algorithm_registry().all_ids:
+        algo = get_algorithm_registry().get(aid)
+        if algo is None or algo.runtime_status != "native":
+            continue
+        missing = [t for t in algo.tool_candidates if t not in registry_names]
+        if missing:
+            dead.append((aid, missing))
+    assert not dead, f"algorithm tool candidates not in registry: {dead}"
 
 
-def test_every_recipe_capability_has_a_tool_mapping():
-    from app.services.gis_harness.planner import CAPABILITY_TOOLS
+def test_every_recipe_capability_resolves_to_a_live_tool(registry_names):
+    from app.lib.gis.algorithm_resolver import get_algorithm_resolver
     from app.services.gis_harness.recipes import get_recipe_registry
 
+    resolver = get_algorithm_resolver()
     missing = set()
     for rid in get_recipe_registry().all_ids:
         recipe = get_recipe_registry().get(rid)
         for cap in (recipe.preferred_analysis or []) + (recipe.optional_analysis or []):
-            if cap not in CAPABILITY_TOOLS:
+            resolution = resolver.resolve(cap, available_tools=registry_names)
+            if resolution.status != "resolved":
                 missing.add((rid, cap))
-    assert not missing, f"recipe capabilities without tool mapping: {sorted(missing)}"
+    assert not missing, f"recipe capabilities without a live tool: {sorted(missing)}"
+
+
+def test_derived_capability_tools_view_matches_recipe_vocabulary(registry_names):
+    from app.services.gis_harness.planner import capability_tool_map
+    from app.services.gis_harness.recipes import get_recipe_registry
+
+    derived = capability_tool_map()
+    recipe_caps = set()
+    for rid in get_recipe_registry().all_ids:
+        recipe = get_recipe_registry().get(rid)
+        recipe_caps.update(recipe.preferred_analysis or [])
+        recipe_caps.update(recipe.optional_analysis or [])
+    unmapped = recipe_caps - set(derived)
+    assert not unmapped, f"recipe capabilities missing from derived view: {sorted(unmapped)}"
+    # 派生视图里的每个候选都必须是真实工具（不再是手写字典的幽灵名）
+    dead = {
+        cap: [t for t in tools if t not in registry_names]
+        for cap, tools in derived.items()
+        if any(t not in registry_names for t in tools)
+    }
+    assert not dead, f"derived capability tool candidates not registered: {dead}"
+
+
+def test_registry_validation_clean_with_live_tools(registry_names):
+    from app.services.gis_harness.registry_validation import validate_gis_library
+
+    issues = validate_gis_library(available_tools=registry_names)
+    assert issues == [], f"cross-registry validation issues: {issues}"
 
 
 def test_core_capabilities_resolve_to_real_tools(registry_names):
-    from app.services.gis_harness.planner import resolve_tool_for_capability
+    from app.lib.gis.algorithm_resolver import get_algorithm_resolver
 
+    resolver = get_algorithm_resolver()
     for cap in ("poi_query", "admin_boundary_query", "raster_source",
                 "admin_aggregation", "kde_density", "hotspot", "grid_binning"):
-        resolved = resolve_tool_for_capability(cap, registry_names)
-        assert resolved, f"{cap} must resolve against the live registry"
-        assert resolved in registry_names
+        resolution = resolver.resolve(cap, available_tools=registry_names)
+        assert resolution.status == "resolved", f"{cap} must resolve: {resolution.reason}"
+        assert resolution.tool in registry_names
 
 
 def test_unresolvable_capability_marked_unavailable_in_plan():

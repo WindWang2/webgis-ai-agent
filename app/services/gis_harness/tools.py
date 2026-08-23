@@ -118,7 +118,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
 
     @tool(
         registry,
-        tier=2, domains=["statistics", "report"], name="webgis_map_intent",
+        tier=2, domains=["statistics", "report", "network", "temporal"], name="webgis_map_intent",
         description=(
             "GIS 制图意图解析器（确定性，无副作用）。输入用户请求，返回 typed "
             "MapRequestIntent（scope/subject/task/analysis_intents/cartography_intents/"
@@ -189,11 +189,21 @@ def register_gis_harness_tools(registry: ToolRegistry):
         plan = planner.plan_from_intent(intent, available_tools=available or None)
 
         capabilities = []
+        # resolved_algorithm 与 plan 裁决证据同源；resolved_tool 保持与
+        # 真实注册表视图（available，含空视图）一致。
+        selection_by_cap = {
+            r.capability: r for r in plan.algorithm_selections
+        }
         for req in plan.data_requirements:
+            record = selection_by_cap.get(req.capability)
             capabilities.append({
                 "capability": req.capability,
                 "purpose": req.purpose,
                 "resolved_tool": resolve_tool_for_capability(req.capability, available),
+                "resolved_algorithm": (
+                    record.algorithm if record and record.status == "resolved"
+                    else ""
+                ),
             })
 
         return {
@@ -215,7 +225,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
 
     @tool(
         registry,
-        tier=2, domains=["statistics", "report"], name="webgis_map_product",
+        tier=2, domains=["statistics", "report", "network", "temporal"], name="webgis_map_product",
         description=(
             "地图产品组装器：数据/图层到位后，按 CartographyRecipe 复检资格"
             "（几何/最小点数/字段——代码侧确定性），把已授权图层绑定到产品角色、"
@@ -262,10 +272,26 @@ def register_gis_harness_tools(registry: ToolRegistry):
         if task_hint:
             intent = merge_intent_hints(intent, {"task": task_hint})
         planner = MapProductPlanner()
+        # H-9（#864）：与意图阶段同源的真实选择参数——
+        # ① 注册表可见工具传给 planner，unavailable 能力不退回 pending
+        #   （两阶段 evidence 的能力状态一致，audit #825 承诺）；
+        # ② 候选选择带 project_verified（ADR-0069 项目记忆），一次取数
+        #   同时驱动 recipe 解析与 evidence 记录（此前 evidence 二次选择
+        #   不带记忆，记录的候选序与真实决策不一致）。
+        try:
+            available = set(registry.list_tools())
+        except Exception:  # noqa: BLE001 - 能力解析是建议性信息
+            available = set()
+        _verified = await _project_verified_recipes()
+        _candidates = planner.recipes.select_candidates(
+            intent, project_verified=_verified
+        )
+        _selected_recipe = recipe_id or (_candidates[0].id if _candidates else "")
         plan = planner.plan_from_intent(
             intent,
             template_id=template_id or "",
-            recipe_id=recipe_id or "",
+            recipe_id=_selected_recipe,
+            available_tools=available or None,
         )
 
         # 主数据 profile（eligibility 复检输入）：优先 primary_ref descriptor，
@@ -304,6 +330,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
             min_points = 10
         plan = planner.finalize_with_profile(
             plan, profile, min_points_default=min_points,
+            available_tools=available or None,
         )
 
         # 角色绑定：#784 —— 以终稿计划为权威。按实际 MapSpec 图层类型解析到
@@ -536,21 +563,24 @@ def register_gis_harness_tools(registry: ToolRegistry):
         # provenance（生成该图层的分析算法）映射回能力 id，admin_aggregation
         # / grid_binning 等步骤在图层绑定后即可标记完成，统计维 completeness
         # 不再对已完成的行政/格网产品报 missing。
-        _PROVENANCE_CAPABILITY = {
-            "spatial_aggregate": "admin_aggregation",
+        # 映射不再手写：主表由 AlgorithmRegistry 派生（tool_candidates →
+        # 主 capability）；仅 converter provenance 词汇里的非工具别名保留
+        # 在 _LEGACY_PROVENANCE_ALIASES（raster converter 的 algorithm 串）。
+        from app.lib.gis.algorithm_registry import get_algorithm_registry
+        _LEGACY_PROVENANCE_ALIASES = {
             "aggregate_points": "admin_aggregation",
-            "h3_binning": "grid_binning",
-            "fishnet_grid": "grid_binning",
-            "heatmap_data": "density_surface",
-            "kde_contours": "kde_density",
-            "kde_surface": "kde_density",
-            "hotspot_analysis": "hotspot",
-            "buffer_analysis": "proximity_buffer",
-            "isochrone_analysis": "service_area",
-            "service_area_simple": "service_area",
             "local_raster": "raster_source",
             "remote_sensing_index": "raster_source",
         }
+        _PROVENANCE_CAPABILITY = {
+            **_LEGACY_PROVENANCE_ALIASES,
+            **get_algorithm_registry().tool_to_capability(),
+        }
+        # artifact lineage（§27 有界证据）：绑定图层 → 语义 artifact 类型。
+        # 同一轮遍历顺带完成 provenance → capability 回填（done_caps）。
+        from app.lib.gis.capability_registry import get_capability_registry
+        _caps_registry = get_capability_registry()
+        _artifact_lineage: List[Dict[str, Any]] = []
         done_caps: set = set()
         if primary_data is not None:
             done_caps |= {"poi_query", "point_profile", "raster_source"}
@@ -564,9 +594,30 @@ def register_gis_harness_tools(registry: ToolRegistry):
             algorithm = (
                 provenance.get("algorithm") if isinstance(provenance, dict) else None
             )
-            capability = _PROVENANCE_CAPABILITY.get(algorithm or "")
-            if capability:
-                done_caps.add(capability)
+            provenance_cap = _PROVENANCE_CAPABILITY.get(algorithm or "")
+            if provenance_cap:
+                done_caps.add(provenance_cap)
+            planned_src = next(
+                (ly for ly in plan.map_layers if ly.layer_id == entry["layer_id"]),
+                None,
+            )
+            capability = (
+                (planned_src.source_capability if planned_src else "")
+                or provenance_cap or ""
+            )
+            cap_desc = _caps_registry.get(capability) if capability else None
+            _artifact_lineage.append({
+                "layer_id": entry["layer_id"],
+                "role": entry.get("role"),
+                "cartography": entry.get("cartography"),
+                "source_ref": primary_ref or "",
+                "producer_tool": algorithm or "",
+                "capability": capability,
+                "artifact_type": (
+                    cap_desc.output_artifact_types[0]
+                    if cap_desc and cap_desc.output_artifact_types else ""
+                ),
+            })
         for req in plan.data_requirements:
             if req.capability in done_caps:
                 req.status = "available"
@@ -647,12 +698,27 @@ def register_gis_harness_tools(registry: ToolRegistry):
                     # #723: record what the deterministic selector actually
                     # considered — the old comprehension could only ever yield
                     # [plan.recipe_id], a degenerate singleton.
+                    # H-9（#864）：与真实选择同源（带 project_verified 的
+                    # 一次取数），evidence 候选序不再与决策依据漂移。
                     "candidates": [
-                        c.id for c in planner.recipes.select_candidates(intent)
+                        c.id for c in _candidates
                     ] or [plan.recipe_id],
                 },
                 "recipe_eligibility": plan.eligibility,
                 "fallback_decisions": out.get("fallbacks", []),
+                # ── registry 编排证据（§27，有界转录）────────────────────
+                "capability_resolution": [
+                    {"capability": r.capability, "status": r.status,
+                     "resolved_tool": r.resolved_tool,
+                     "resolved_algorithm": r.resolved_algorithm}
+                    for r in plan.data_requirements
+                ],
+                "algorithm_selection": [
+                    r.model_dump() for r in plan.algorithm_selections
+                ],
+                "map_model_selection": plan.map_model_selection,
+                "template_selection": plan.template_selection,
+                "artifact_lineage": _artifact_lineage,
                 "component_selection": [c["type"] for c in component_dicts],
                 "map_product_completeness": plan.completeness,
                 "bound_layers": bound_layers,

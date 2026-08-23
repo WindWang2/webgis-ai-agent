@@ -103,6 +103,31 @@ class CartographyTemplateResponse(CartographyTemplateBase):
     creator_id: Optional[str] = None
 
 
+class TemplateCompatibility(BaseModel):
+    """模板兼容性元数据（§Phase F）—— 全字段 optional，旧模板无此键仍可加载。
+
+    让 TemplateSelector 能按 MapModel / artifact / 几何 / 输出目标做确定性
+    评分，而不是只靠 id/name/keyword 检索。
+    """
+    compatible_map_models: List[str] = Field(default_factory=list)
+    accepted_artifact_types: List[str] = Field(default_factory=list)
+    geometry_types: List[str] = Field(default_factory=list)
+    required_fields: List[str] = Field(default_factory=list)
+    optional_fields: List[str] = Field(default_factory=list)
+    output_targets: List[str] = Field(default_factory=list)
+    renderer_support: List[str] = Field(default_factory=list)   # maplibre/web
+    export_support: List[str] = Field(default_factory=list)     # png/pdf/svg/csv
+    scale_range: Optional[List[float]] = None                  # [min, max] 分母
+    feature_count_range: Optional[List[int]] = None             # [min, max]
+    component_dependencies: List[str] = Field(default_factory=list)
+    style_profile: str = ""                                     # academic/light/dark…
+    quality_profile: str = ""
+    runtime_status: Literal["native", "planned", "unavailable"] = "native"
+    schema_version: int = 1
+    template_version: str = "1.0"
+    deprecated: bool = False
+
+
 SEED_TEMPLATES: List[Dict[str, Any]] = [
     # --- BASEMAP (4) ---
     {

@@ -8,15 +8,30 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class LayerRoleSpec(BaseModel):
+    """产品模板里的一个图层角色（§16：layer_type 由 MapModel 推导）。
+
+    演进：`map_model` 是制图模型 id（缺省取 `cartography`）；`layer_type`
+    变为可选——显式给出时必须与 MapModelRegistry 的
+    ``maplibre_layer_type``（或几何多态映射）一致，validation suite 锁定，
+    禁止以后手写漂移。`source_artifact` 声明该角色消费的 artifact 语义
+    类型；`style_slot` 引用样式模板 id（TemplateCatalog 校验存在性）。
+    """
     role: str                      # primary / secondary / reference
-    layer_type: str                # heatmap / circle / fill / line / raster
-    cartography: str               # visual_heatmap / point_overlay / …
-    source_capability: str         # 数据来源能力 id
+    cartography: str               # visual_heatmap / point_overlay / …（MapModel id/别名）
+    layer_type: str = ""           # 可选；缺省由 MapModel 推导
+    map_model: str = ""            # 缺省 = cartography
+    source_capability: str = ""    # 数据来源能力 id
+    source_artifact: str = ""      # 消费的 artifact 语义类型
+    style_slot: str = ""           # 样式模板 id（可选）
     description: str = ""
+
+    @property
+    def resolved_map_model(self) -> str:
+        return self.map_model or self.cartography
 
 
 class MapProductTemplate(BaseModel):
@@ -29,10 +44,28 @@ class MapProductTemplate(BaseModel):
     # facilities); empty = generic. find_for_recipe prefers a subject match
     # over the generic template so plan evidence never mislabels the product.
     subject_categories: List[str] = []
+    # 任务亲和（TemplateSelector 用）：如 simple_view → 轻量点图产品。
+    task_affinity: List[str] = []
     default_components: List[str] = []
     outputs: List[str] = ["interactive_map"]
     exports: List[str] = ["png"]
     title_pattern: str = ""        # 如 "{scope}{subject}分布"
+    # 兼容元数据（缺省从 layer_roles 推导）
+    compatible_map_models: List[str] = []
+    priority: int = 50             # selector 评分 tie-break（小者优先）
+    template_version: str = "1.0"
+    deprecated: bool = False
+
+    @model_validator(mode="after")
+    def _derive_compatible_map_models(self) -> "MapProductTemplate":
+        if not self.compatible_map_models:
+            models: List[str] = []
+            for role in self.layer_roles:
+                mm = role.resolved_map_model
+                if mm not in models:
+                    models.append(mm)
+            self.compatible_map_models = models
+        return self
 
 
 SEED_PRODUCT_TEMPLATES: List[MapProductTemplate] = [
@@ -113,6 +146,7 @@ SEED_PRODUCT_TEMPLATES: List[MapProductTemplate] = [
         name="轻量 POI 点图",
         description="『给我看看』：不过度分析，一张点图。",
         recipe_id="poi_distribution_overview",
+        task_affinity=["simple_view"],
         layer_roles=[
             LayerRoleSpec(role="primary", layer_type="circle", cartography="simple_point_map",
                           source_capability="poi_query"),
@@ -170,6 +204,10 @@ class ProductTemplateRegistry:
 
     def get(self, template_id: str) -> Optional[MapProductTemplate]:
         return self._by_id.get(template_id)
+
+    def values(self) -> List[MapProductTemplate]:
+        """注册序全量视图（TemplateCatalog 等门面消费）。"""
+        return list(self._by_id.values())
 
     def find_for_recipe(
         self, recipe_id: str, subject_category: str = "",

@@ -8,7 +8,7 @@
  * recharts 渲染依赖容器尺寸，不稳定。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, act } from '@testing-library/react';
+import { render, act } from '@testing-library/react';
 
 const themeState = { theme: 'light' as string };
 const themeListeners = new Set<() => void>();
@@ -17,8 +17,8 @@ const setTheme = (t: string) => {
   themeListeners.forEach((l) => l());
 };
 
-vi.mock('@/lib/store/useHudStore', () => {
-  const React = require('react');
+vi.mock('@/lib/store/useHudStore', async () => {
+  const React = await import('react');
   const { useSyncExternalStore } = React;
   const subscribe = (cb: () => void) => {
     themeListeners.add(cb);
@@ -31,8 +31,8 @@ vi.mock('@/lib/store/useHudStore', () => {
 });
 
 let lastTickFill = '';
-vi.mock('recharts', () => {
-  const React = require('react');
+vi.mock('recharts', async () => {
+  const React = await import('react');
   const passthrough = ({ children }: any) => React.createElement('div', null, children);
   return {
     ResponsiveContainer: passthrough,
@@ -56,7 +56,8 @@ vi.mock('recharts', () => {
   };
 });
 
-import { ChartRenderer } from './chart-renderer';
+// ChartRenderer 经测试体内 await import('./chart-renderer') 动态加载,
+// 以便 vi.mock 工厂先行就位。
 
 // 让 themeColor 读到可控的 computed token
 const setToken = (name: string, value: string) => {

@@ -55,9 +55,14 @@ def test_select_tools_keyword_source_is_original_user_message():
     network 域敏感词）不点亮 network；检测跑在本 turn 原始用户消息上。"""
     from app.services.chat.execution_engine import ChatExecutionEngine
 
+    # H-8（#863）：harness 前门工具（webgis_map_intent/product）刻意跨域标注
+    # （statistics/report/network/temporal）——它们因 statistics/chinese 激活
+    # 而可见是设计内行为，不属于"network 域被合成文本点亮"。本测试守护的
+    # 是 network 专属工具不被点亮，故把前门工具从断言集合中排除。
+    _HARNESS_FRONTDOOR = {"webgis_map_intent", "webgis_map_product"}
     r, cat = _prod()
     engine = ChatExecutionEngine(tool_registry=r, tool_catalog=cat)
-    network_tools = _domain_tools(r, "network")
+    network_tools = _domain_tools(r, "network") - _HARNESS_FRONTDOOR
     chinese_tools = _domain_tools(r, "chinese")
     assert network_tools and chinese_tools
 

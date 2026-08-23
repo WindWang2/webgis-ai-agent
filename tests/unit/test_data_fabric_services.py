@@ -174,7 +174,6 @@ def test_execute_query_raises_typed_error_on_in_band_marker():
     """#766: MaterializationService.execute_query converts schema_info/metadata
     error markers into typed DataFabricError — fetch failed ≠ empty dataset."""
     from app.services.data_fabric.errors import (
-        DataFabricError,
         SourceBadResponseError,
         SourceUnreachableError,
     )

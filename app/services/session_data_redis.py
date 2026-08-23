@@ -302,6 +302,10 @@ class RedisSessionStore(BaseSessionStore):
                         for old_ref in old_refs:
                             self._evict_ref(evict_pipe, session_id, old_ref, aliases.get(old_ref))
                         await evict_pipe.execute()
+                    # P-1（#874）：被驱逐 ref 的进程内 payload 缓存一并失效
+                    from app.services.ref_payload_cache import ref_payload_cache
+                    for old_ref in old_refs:
+                        ref_payload_cache.invalidate(session_id, old_ref)
         except aioredis.RedisError as e:
             logger.error(
                 "Redis post-store eviction failed for session %s: %s — new ref kept",
@@ -346,6 +350,9 @@ class RedisSessionStore(BaseSessionStore):
         from app.services.mvt import spatial_index_cache, tile_lru_cache
         spatial_index_cache.invalidate_ref(session_id, ref_id)
         tile_lru_cache.invalidate_ref(session_id, ref_id)
+        # P-1（#874）：payload 变更/删除时进程内解析缓存同步失效
+        from app.services.ref_payload_cache import ref_payload_cache
+        ref_payload_cache.invalidate(session_id, ref_id)
         return True
 
     async def delete_ref(self, session_id: str, ref_id: str) -> bool:
@@ -366,6 +373,8 @@ class RedisSessionStore(BaseSessionStore):
         from app.services.mvt import spatial_index_cache, tile_lru_cache
         spatial_index_cache.invalidate_ref(session_id, ref_id)
         tile_lru_cache.invalidate_ref(session_id, ref_id)
+        from app.services.ref_payload_cache import ref_payload_cache
+        ref_payload_cache.invalidate(session_id, ref_id)
         return bool(exists)
 
     async def set_alias(self, session_id: str, ref_id: str, alias: str) -> None:
@@ -430,6 +439,65 @@ class RedisSessionStore(BaseSessionStore):
             else:
                 out[s] = ref.decode() if isinstance(ref, bytes) else ref
         return out
+
+    async def get_shared(self, session_id: str, ref_id_or_alias: str) -> Optional[Any]:
+        """P-1（#874）：共享只读读取 —— 进程内已解析 payload 缓存。
+
+        解引用热路径（registry._resolve_references、数据面序列化）此前每次
+        都全量 GET + json.loads（50k 要素 ≈ 171ms/次 + 11MB Redis 流量）。
+        命中返回同一对象（只读约定）；miss 时读取一次并按原始字节长度入
+        缓存（TTL 5s 兜底跨副本写入）。TTL/recency 刷新 pipeline 只在 miss
+        路径执行（命中路径零 Redis 往返）。
+        """
+        from app.services.ref_payload_cache import ref_payload_cache
+        try:
+            ref_id = ref_id_or_alias
+            resolved = await self._r.hget(self._aliases_key(session_id), ref_id_or_alias)
+            if resolved is not None:
+                ref_id = resolved.decode() if isinstance(resolved, bytes) else resolved
+
+            cached = ref_payload_cache.get(session_id, ref_id)
+            if cached is not None:
+                return cached
+
+            data_key = self._data_key(session_id, ref_id)
+            raw = await self._r.get(data_key)
+            if raw is None:
+                return None
+            raw_str = raw.decode() if isinstance(raw, bytes) else raw
+            try:
+                data = await asyncio.to_thread(json.loads, raw_str)
+            except Exception:  # noqa: BLE001 非 JSON payload 原样返回（与 get() 同语义），不入缓存
+                return raw_str
+            ref_payload_cache.put(session_id, ref_id, data, len(raw_str))
+
+            # Best-effort TTL/recency 刷新（仅 miss 路径；失败不转为 miss）。
+            try:
+                async with self._r.pipeline(transaction=True) as pipe:
+                    await pipe.watch(data_key)
+                    if not await pipe.exists(data_key):
+                        pipe.reset()
+                        return data
+                    pipe.multi()
+                    pipe.expire(data_key, DATA_TTL)
+                    pipe.expire(self._descriptor_key(session_id, ref_id), DATA_TTL)
+                    pipe.zadd(self._refs_order_key(session_id), {ref_id: time.time()})
+                    self._refresh_session_ttl(pipe, session_id)
+                    await pipe.execute()
+            except aioredis.WatchError:
+                pass
+            except aioredis.RedisError as e:
+                logger.warning(
+                    "Redis TTL refresh failed for session %s ref %s: %s — returning cached data",
+                    session_id, ref_id_or_alias, e,
+                )
+            return data
+        except aioredis.RedisError as e:
+            logger.error(
+                "Redis get_shared failed for session %s ref %s: %s — returning cache-miss",
+                session_id, ref_id_or_alias, e,
+            )
+            return None
 
     async def get(self, session_id: str, ref_id_or_alias: str) -> Optional[Any]:
         """读数据；Redis 不可达时返回 None（cache-miss 语义），让上层工具走自愈路径。
@@ -1091,6 +1159,8 @@ class RedisSessionStore(BaseSessionStore):
         self._l1_invalidate_session(session_id)
         from app.services.mvt import spatial_index_cache, tile_lru_cache
         spatial_index_cache.invalidate_session(session_id)
+        from app.services.ref_payload_cache import ref_payload_cache
+        ref_payload_cache.invalidate_session(session_id)
         tile_lru_cache.invalidate_session(session_id)
         # #470：与 Redis 键删除同语义 —— 会话没了，盘上 mapspec revisions/
         # checkpoints/raster PNGs 一并回收（idle 淘汰 + 显式删除共用此路径）。

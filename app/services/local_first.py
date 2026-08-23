@@ -16,80 +16,38 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# 与 app.tools.osm.query_osm_poi 的中文类别表对齐，便于拦截后仍按同一语义过滤。
+# G-4（#868）：中文类别 → OSM 标签的单一事实来源在 app/lib/osm_category_map.py，
+# 本表由其派生（此前两处各自维护已失同步：小学/中学/超市/商场/车站等
+# #694 新增词条本地链缺失）。新增类别只改 osm_category_map。
+from app.lib.osm_category_map import CHINESE_CATEGORY_TAGS
+
 _CATEGORY_TO_TAG: Dict[str, str] = {
-    "大学": "amenity=university",
-    "高校": "amenity=university",
-    "高等学校": "amenity=university",
-    "university": "amenity=university",
-    "学校": "amenity=school",
-    "中小学": "amenity=school",
-    "school": "amenity=school",
-    "医院": "amenity=hospital",
-    "诊所": "amenity=clinic",
-    "hospital": "amenity=hospital",
-    "clinic": "amenity=clinic",
-    "餐厅": "amenity=restaurant",
-    "餐馆": "amenity=restaurant",
-    "饭店": "amenity=restaurant",
-    "restaurant": "amenity=restaurant",
-    "银行": "amenity=bank",
-    "bank": "amenity=bank",
-    "咖啡": "amenity=cafe",
-    "咖啡厅": "amenity=cafe",
-    "咖啡店": "amenity=cafe",
-    "cafe": "amenity=cafe",
-    "酒吧": "amenity=bar",
-    "bar": "amenity=bar",
-    "公园": "leisure=park",
-    "花园": "leisure=garden",
-    "park": "leisure=park",
-    "garden": "leisure=garden",
-    "酒店": "tourism=hotel",
-    "宾馆": "tourism=hotel",
-    "旅馆": "tourism=hotel",
-    "hotel": "tourism=hotel",
-    "博物馆": "tourism=museum",
-    "museum": "tourism=museum",
-    "图书馆": "amenity=library",
-    "library": "amenity=library",
-    "药店": "amenity=pharmacy",
-    "药房": "amenity=pharmacy",
-    "pharmacy": "amenity=pharmacy",
-    "加油站": "amenity=fuel",
-    "fuel": "amenity=fuel",
-    "停车场": "amenity=parking",
-    "parking": "amenity=parking",
-    "公交站": "amenity=bus_station",
-    "汽车站": "amenity=bus_station",
-    "bus_station": "amenity=bus_station",
-    "派出所": "amenity=police",
-    "警察局": "amenity=police",
-    "police": "amenity=police",
-    "消防站": "amenity=fire_station",
-    "消防局": "amenity=fire_station",
-    "fire_station": "amenity=fire_station",
-    "邮局": "amenity=post_office",
-    "post_office": "amenity=post_office",
-    "剧院": "amenity=theatre",
-    "剧场": "amenity=theatre",
-    "theatre": "amenity=theatre",
-    "电影院": "amenity=cinema",
-    "cinema": "amenity=cinema",
-    "体育馆": "leisure=sports_centre",
-    "体育场": "leisure=stadium",
-    "sports_centre": "leisure=sports_centre",
-    "stadium": "leisure=stadium",
-    "游泳池": "leisure=swimming_pool",
-    "swimming_pool": "leisure=swimming_pool",
-    "幼儿园": "amenity=kindergarten",
-    "托儿所": "amenity=kindergarten",
-    "kindergarten": "amenity=kindergarten",
-    "学院": "amenity=college",
-    "college": "amenity=college",
+    _zh: f"{k}={v}"
+    for _zh, (k, v) in CHINESE_CATEGORY_TAGS.items()
 }
+# 英文直查别名（本地 GPKG 的 fclass 值域）
+for _en, _kv in (
+    ("university", "amenity=university"), ("school", "amenity=school"),
+    ("hospital", "amenity=hospital"), ("clinic", "amenity=clinic"),
+    ("restaurant", "amenity=restaurant"), ("bank", "amenity=bank"),
+    ("cafe", "amenity=cafe"), ("bar", "amenity=bar"),
+    ("park", "leisure=park"), ("garden", "leisure=garden"),
+    ("hotel", "tourism=hotel"), ("museum", "tourism=museum"),
+    ("library", "amenity=library"), ("pharmacy", "amenity=pharmacy"),
+    ("fuel", "amenity=fuel"), ("parking", "amenity=parking"),
+    ("bus_station", "amenity=bus_station"), ("police", "amenity=police"),
+    ("fire_station", "amenity=fire_station"), ("post_office", "amenity=post_office"),
+    ("theatre", "amenity=theatre"), ("cinema", "amenity=cinema"),
+    ("sports_centre", "leisure=sports_centre"), ("stadium", "leisure=stadium"),
+    ("swimming_pool", "leisure=swimming_pool"),
+    ("kindergarten", "amenity=kindergarten"), ("college", "amenity=college"),
+    ("supermarket", "shop=supermarket"),
+):
+    _CATEGORY_TO_TAG[_en] = _kv
 
 # 口语/报告用词往往不是 OSM 标签原词（「高等院校」不含「高校」子串）。
+# G-4：与 osm_category_map 同步——补齐学段/购物/车站词条（此前本地链与
+# 出网链对同一中文词解析到不同 OSM tag，跨源计数不可比）。
 _SYNONYM_TAGS: List[Tuple[Tuple[str, ...], Tuple[str, ...]]] = [
     (
         ("高等院校", "高等学校", "高校", "大学", "院校", "大专", "本科",
@@ -109,13 +67,21 @@ _SYNONYM_TAGS: List[Tuple[Tuple[str, ...], Tuple[str, ...]]] = [
     (("药店", "药房", "pharmacy"), ("amenity=pharmacy",)),
     (("加油站", "fuel"), ("amenity=fuel",)),
     (("停车场", "parking"), ("amenity=parking",)),
-    (("超市", "商场", "supermarket"), ("shop=supermarket",)),
+    (("超市", "supermarket"), ("shop=supermarket",)),
+    (("商场", "mall"), ("shop=mall",)),
+    (("菜市场", "marketplace"), ("amenity=marketplace",)),
+    (("地铁站", "地铁"), ("railway=station",)),
+    (("火车站", "高铁站", "动车站"), ("railway=station",)),
 ]
 
 # 高德 POI 检索提示：中文关键词 → amap 一级大类(category)/二三级(subtype)。
 # gd 库与 amap 同源同分类法，比 OSM 标签映射更直接；顺序即优先级（长词在前）。
-_GD_KEYWORD_HINTS: List[Tuple[Tuple[str, ...], Dict[str, str]]] = [
+_GD_KEYWORD_HINTS: List[Tuple[Tuple[str, ...], Dict[str, Any]]] = [
     (("三级甲等", "三甲"), {"category": "医疗保健服务", "subtype": "三级甲等"}),
+    # G-8（#872）：复合学段词专属词条——此前"中小学"按子串顺序先命中
+    # ("小学",) 只查小学（漏掉中学），而 OSM 出网链解析为全学段 school，
+    # 本地有数/无数两种情况下集合语义不同，跨源计数不可比。
+    (("中小学", "初高中"), {"category": "科教文化服务", "subtypes": ["小学", "中学"]}),
     (("小学",), {"category": "科教文化服务", "subtype": "小学"}),
     (("幼儿园",), {"category": "科教文化服务", "subtype": "幼儿园"}),
     (("中学", "初中", "高中", "完中"), {"category": "科教文化服务", "subtype": "中学"}),
@@ -428,10 +394,13 @@ def _local_gd_poi(
     text = f"{keyword or ''} {types or ''}".strip()
     hint = _gd_hints(text)
     name_term = keyword or types or None
+    # G-8（#872）：复合学段词（中小学/初高中）映射为多 subtype OR 查询，
+    # 与 OSM 链的全学段语义对齐。
+    subtype_arg: Any = hint.get("subtypes") or hint.get("subtype")
     result = query_gd_poi(
         list(bbox),
         category=hint.get("category"),
-        subtype=hint.get("subtype"),
+        subtype=subtype_arg,
         name_like=None if hint else name_term,
         limit=limit,
     )
@@ -456,6 +425,13 @@ def _local_poi_chain(
     （调用方据此出网）。"""
     gd = _local_gd_poi(bbox, keyword=keyword, types=types, limit=limit)
     if gd is not None:
+        # G-1（#865）：截断披露透传——gd 信封里的 total_matched/truncated/notes
+        # 此前被丢掉，LLM 无从得知样本被截断（偏斜样本上照常输出分布结论）。
+        gd_envelope = {
+            k: gd[k]
+            for k in ("total_matched", "truncated", "notes")
+            if gd.get(k) is not None
+        }
         return {
             "type": "FeatureCollection",
             "features": gd.get("features", []),
@@ -465,6 +441,7 @@ def _local_poi_chain(
             # #702：数据年份（库的 vintage），非查询时刻；meta 缺失时诚实缺位
             "generated_at": _gd_poi_generated_at(),
             "bbox": list(bbox),
+            **gd_envelope,
         }
     tags, name_like = resolve_poi_filters(keyword, types)
     osm = _local_osm_pois(bbox, tags=tags, name_like=name_like, limit=limit)
@@ -534,6 +511,13 @@ def try_local_osm_poi(
     if osm is None:
         return None
     south_west_north_east = f"{bbox[1]},{bbox[0]},{bbox[3]},{bbox[2]}"
+    # G-1（#865）：截断披露透传到工具信封（此前 _local_poi_chain 已带上、
+    # 这里又丢一次），query_osm_poi 的调用方（LLM/统计下游）可感知样本完整性。
+    disclosure = {
+        k: osm[k]
+        for k in ("total_matched", "truncated", "notes")
+        if osm.get(k) is not None
+    }
     return {
         "type": "poi_query",
         "area": area,
@@ -545,6 +529,7 @@ def try_local_osm_poi(
         },
         "bbox": south_west_north_east,
         "source": osm["source"],
+        **disclosure,
     }
 
 

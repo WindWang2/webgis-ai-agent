@@ -104,26 +104,50 @@ def _fit_kde(kde_data, bandwidth, weights=None):
     Args:
         kde_data: ``(2, n)`` array of UTM coordinates.
         bandwidth: requested kernel std in meters; ``<= 0`` = Scott auto
-            (``factor × data_std`` with ``data_std`` the mean per-axis std).
+            (``factor × data_std``), clamped by the mean kNN distance scale
+            (G-5/#869: Scott rule on strongly-clustered urban POI data
+            yields 2.8-4.2 km bandwidths that smear neighborhood-scale
+            clusters into city-scale blobs).
         weights: optional ``(n,)`` point weights.
 
     Returns:
-        ``(kde, bw)`` with ``bw`` the kernel std in meters.
+        ``(kde, bw, clamped)`` — ``bw`` is the kernel std in meters;
+        ``clamped`` marks an auto bandwidth that hit the kNN clamp.
     """
     from scipy.stats import gaussian_kde
 
     # Fit once (also surfaces degenerate/coincident input as LinAlgError,
     # which the callers map to a structured NumericalError).
     kde = gaussian_kde(kde_data, bw_method="scott", weights=weights)
+    clamped = False
     if bandwidth <= 0:
         data_std = float(np.mean(np.std(kde_data, axis=1)))
         if data_std == 0:
             data_std = 1.0
         bw = float(kde.factor * data_std)
+        # G-5（#869）：自动带宽钳制 —— Scott/Silverman 是对单峰近似高斯的
+        # 最优规则，对多峰强聚集点集严重过平滑。上限取 6×平均最近邻距离
+        # （与 Gi* 自动距离带的 E-7 尺度哲学对齐），且不超过 bbox 对角线
+        # 的 10%；命中即标记 clamped，由调用方在结果信封披露。
+        try:
+            from scipy.spatial import cKDTree
+
+            tree = cKDTree(kde_data.T)
+            dists, _ = tree.query(kde_data.T, k=2)
+            mean_knn = float(np.mean(dists[:, 1]))
+            if mean_knn > 0:
+                span = np.max(kde_data, axis=1) - np.min(kde_data, axis=1)
+                diag = float(np.linalg.norm(span))
+                cap = min(6.0 * mean_knn, 0.1 * diag)
+                if cap > 0 and bw > cap:
+                    bw = cap
+                    clamped = True
+        except Exception:  # noqa: BLE001 钳制失败回退 Scott 原值
+            pass
     else:
         bw = float(bandwidth)
     kde.cho_cov = np.eye(kde_data.shape[0], dtype=float) * bw
-    return kde, bw
+    return kde, bw, clamped
 
 
 def _evaluate_kde(kde, points):
@@ -219,7 +243,7 @@ def kde_surface(
 
     try:
         # #384: shared isotropic-meter-bandwidth logic with kde_contours.
-        kde, bw = _fit_kde(kde_data, bandwidth, kde_weights)
+        kde, bw, bw_clamped = _fit_kde(kde_data, bandwidth, kde_weights)
     except np.linalg.LinAlgError as e:
         # Degenerate input (all-coincident / collinear points) yields a
         # singular covariance matrix (C-5). Surface it as a structured error
@@ -303,6 +327,13 @@ def kde_surface(
         },
         "bandwidth_m": round(bw, 1),
     }
+    # G-5（#869）：自动带宽被 kNN 尺度钳制时披露，调用方知晓等值面粒度依据。
+    if bw_clamped:
+        fc["bandwidth_mode"] = "auto-clamped"
+        fc["note"] = (
+            "自动带宽（Scott 规则）对强聚集数据过平滑，已钳制为最近邻尺度；"
+            "需要更平滑的密度面请显式传 bandwidth（米）。"
+        )
     if n_points_used < n_points_total:
         # #384: input was subsampled to the point cap; say so on the envelope.
         fc["sampled_points"] = {"used": n_points_used, "total": n_points_total}
@@ -358,7 +389,7 @@ def kde_contours(
 
     try:
         # #384: shared isotropic-meter-bandwidth logic with kde_surface.
-        kde, _bw = _fit_kde(kde_data, bandwidth)
+        kde, _bw, _bw_clamped = _fit_kde(kde_data, bandwidth)
     except np.linalg.LinAlgError as e:
         # Degenerate input (coincident/collinear points) -> singular
         # covariance (C-5). Surface a structured error.

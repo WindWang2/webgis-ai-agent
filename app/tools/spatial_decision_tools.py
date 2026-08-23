@@ -2,6 +2,7 @@
 Spatial Decision Intelligence V2 Tool Registration & Catalog Seam.
 Registers spatial_decision_v2 and scenario_compare tools into ToolRegistry and ToolCatalog.
 """
+import asyncio
 import logging
 from typing import Dict, List, Any
 from pydantic import BaseModel, Field
@@ -150,29 +151,53 @@ def register_spatial_decision_tools(registry: ToolRegistry):
             return {"type": "error", "message": "至少需要提供一个方案进行对比。"}
 
         try:
-            evaluated_results = []
+            # P-4（#877）：各方案相互独立（独立 decision_id、geocode/RAG 网络往返），
+            # gather 并行后 wall-clock ≈ max(单方案)；Semaphore(4) 防外部 API 突并发。
+            # 单方案异常降级为该方案的 error 项（比旧的"任一异常吞掉全部结果"更鲁棒）。
+            _sem = asyncio.Semaphore(4)
+
+            async def _evaluate_one(item):
+                scen_str, target_str, params, b_ref = item
+                async with _sem:
+                    return await engine.evaluate_decision(
+                        scenario_text=scen_str,
+                        target_area_text=target_str,
+                        parameters=params,
+                        baseline_data_ref=b_ref,
+                        session_id=session_id,
+                    )
+
+            pending: list = []
             for item in scenarios:
                 if isinstance(item, dict):
-                    scen_str = item.get("scenario", "")
-                    target_str = item.get("target_area", "")
-                    params = item.get("parameters", {})
-                    b_ref = item.get("baseline_data_ref", "")
+                    pending.append((
+                        item.get("scenario", ""),
+                        item.get("target_area", ""),
+                        item.get("parameters", {}),
+                        item.get("baseline_data_ref", ""),
+                    ))
                 elif isinstance(item, ScenarioItem):
-                    scen_str = item.scenario
-                    target_str = item.target_area
-                    params = item.parameters
-                    b_ref = item.baseline_data_ref
-                else:
-                    continue
+                    pending.append((item.scenario, item.target_area, item.parameters, item.baseline_data_ref))
+                # 其他形状跳过（与旧串行版一致）
 
-                res = await engine.evaluate_decision(
-                    scenario_text=scen_str,
-                    target_area_text=target_str,
-                    parameters=params,
-                    baseline_data_ref=b_ref,
-                    session_id=session_id,
-                )
-                evaluated_results.append(res)
+            evaluated_results = []
+            for item, res in zip(
+                pending,
+                await asyncio.gather(
+                    *[_evaluate_one(p) for p in pending],
+                    return_exceptions=True,
+                ),
+            ):
+                if isinstance(res, BaseException):
+                    logger.error(
+                        "[scenario_compare] 方案评估失败（已降级为 error 项）: %s", res
+                    )
+                    evaluated_results.append({
+                        "type": "error",
+                        "message": f"方案评估失败: {res}",
+                    })
+                else:
+                    evaluated_results.append(res)
 
             cmp_res = await cmp_engine.compare_scenarios(
                 results=evaluated_results,
