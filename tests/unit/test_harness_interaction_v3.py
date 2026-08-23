@@ -906,7 +906,8 @@ async def test_stream_prompt_mints_turn_id_and_threads_into_records(monkeypatch)
     rpc = _make_event_rpc([
         {"type": "tool_execution_start", "toolCallId": "tc-fly", "toolName": "webgis_view_set", "stepIndex": 0},
         {"type": "tool_execution_end", "toolCallId": "tc-fly", "toolName": "webgis_view_set", "result": {}},
-        {"type": "agent_end", "message": {"content": ""}},
+        {"type": "agent_end", "message": {"content": ""}, "willRetry": False},
+        {"type": "agent_settled"},
     ])
     br = bridge_mod.PiBridge(rpc=rpc)
     collected = [s async for s in br.stream_prompt("hi", session_id="turn-sess")]

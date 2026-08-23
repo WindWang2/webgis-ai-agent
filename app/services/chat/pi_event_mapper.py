@@ -19,6 +19,11 @@ logger = logging.getLogger(__name__)
 COMPACTION_START_MSG = "[压缩上下文...]\n"
 COMPACTION_END_MSG = "[上下文压缩完成]\n"
 
+# SSE content strings for vendor auto-retry events (#855).
+AUTO_RETRY_START_FMT = "[模型瞬时错误，{delay:.0f}s 后自动重试（第 {attempt}/{max_attempts} 次）：{error}]\n"
+AUTO_RETRY_END_OK_FMT = "[自动重试成功（第 {attempt} 次），继续生成]\n"
+AUTO_RETRY_END_FAIL_FMT = "[自动重试失败（第 {attempt} 次）：{error}]\n"
+
 
 def _sanitize_for_client(text: str) -> str:
     """Sanitize an error string for safe emission to clients/SSE."""
@@ -220,18 +225,67 @@ def _handle_tool_execution_end(event: dict, session_id: str, cache_lookup: Optio
 
 
 def _handle_agent_end(event: dict, session_id: str, cache_lookup: Optional[Callable], *, turn_stats: Optional[Callable[[], dict]] = None) -> Optional[str]:
-    """task_complete with truthful counters (audit #820).
+    """``agent_end`` is NOT a turn-final event (#855).
+
+    Vendor protocol (vendor/pi/packages/coding-agent/src/core/agent-session.ts,
+    v0.81.1): ``agent_end{willRetry}`` fires after EVERY agent run — with
+    ``willRetry=true`` before an auto-retry, and even ``willRetry=false`` may be
+    followed by a compaction or queued-message continuation run. Only
+    ``agent_settled`` (emitted in ``_runAgentPrompt``'s finally) unconditionally
+    ends the turn — the same signal the vendor's own ``RpcClient.waitForIdle``
+    waits on. The final text is already streamed as ``token`` deltas and the
+    authoritative ``messages[]`` snapshot is stashed bridge-side; the
+    ``task_complete`` SSE is emitted by ``_handle_agent_settled``.
+    """
+    return None
+
+
+def _handle_agent_settled(event: dict, session_id: str, cache_lookup: Optional[Callable], *, turn_stats: Optional[Callable[[], dict]] = None) -> Optional[str]:
+    """task_complete with truthful counters (audit #820, #855).
 
     ``turn_stats`` (injected by PiBridge) reports the turn's observed tool-step
     count and final text so the payload matches the legacy engine's
     len(task.steps)/content[:100] semantics instead of hardcoded zeros.
     """
     stats = turn_stats() if callable(turn_stats) else {}
-    summary_src = stats.get("final_text") or _extract_text_from_event(event)
+    summary_src = stats.get("final_text", "")
     return sse_event("task_complete", _base_step_payload(event, session_id, {
         "step_count": int(stats.get("tool_step_count", 0) or 0),
         "summary": str(summary_src)[:100],
     }))
+
+
+def _handle_auto_retry_start(event: dict, session_id: str, cache_lookup: Optional[Callable], *, turn_stats: Optional[Callable[[], dict]] = None) -> Optional[str]:
+    """Surface the vendor's auto-retry backoff as a transient content note (#855).
+
+    Vendor payload: ``{attempt, maxAttempts, delayMs, errorMessage}``
+    (agent-session.ts `_prepareRetry`). Emitted between
+    ``agent_end{willRetry:true}`` and the retried run.
+    """
+    error = _sanitize_for_client(str(event.get("errorMessage", "") or "unknown error"))
+    content = AUTO_RETRY_START_FMT.format(
+        delay=float(event.get("delayMs", 0) or 0) / 1000.0,
+        attempt=int(event.get("attempt", 0) or 0),
+        max_attempts=int(event.get("maxAttempts", 0) or 0),
+        error=error,
+    )
+    return sse_event("content", {"content": content, "session_id": session_id})
+
+
+def _handle_auto_retry_end(event: dict, session_id: str, cache_lookup: Optional[Callable], *, turn_stats: Optional[Callable[[], dict]] = None) -> Optional[str]:
+    """Surface the vendor's auto-retry outcome (#855).
+
+    Success (``success=true``) fires when a retried assistant response lands;
+    failure carries ``finalError`` after retries are exhausted (or a retry was
+    cancelled). The turn itself still ends on ``agent_settled``.
+    """
+    attempt = int(event.get("attempt", 0) or 0)
+    if event.get("success"):
+        content = AUTO_RETRY_END_OK_FMT.format(attempt=attempt)
+    else:
+        error = _sanitize_for_client(str(event.get("finalError", "") or "unknown error"))
+        content = AUTO_RETRY_END_FAIL_FMT.format(attempt=attempt, error=error)
+    return sse_event("content", {"content": content, "session_id": session_id})
 
 
 def _handle_compaction_start(event: dict, session_id: str, cache_lookup: Optional[Callable], *, turn_stats: Optional[Callable[[], dict]] = None) -> Optional[str]:
@@ -253,6 +307,9 @@ _EVENT_HANDLERS: dict[str, Callable[..., Optional[str]]] = {
     "tool_execution_start": _handle_tool_execution_start,
     "tool_execution_end": _handle_tool_execution_end,
     "agent_end": _handle_agent_end,
+    "agent_settled": _handle_agent_settled,
+    "auto_retry_start": _handle_auto_retry_start,
+    "auto_retry_end": _handle_auto_retry_end,
     "compaction_start": _handle_compaction_start,
     "compaction_end": _handle_compaction_end,
 }
@@ -276,7 +333,7 @@ def map_event_to_sse(
                       verified turn session captured by the caller.
         turn_stats: Optional zero-arg callable returning the turn's observed
                     counters ({"tool_step_count": int, "final_text": str}),
-                    consumed by the agent_end handler (audit #820).
+                    consumed by the agent_settled handler (audit #820, #855).
 
     Returns:
         SSE-formatted string or None if unhandled

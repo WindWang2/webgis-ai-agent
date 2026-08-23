@@ -85,7 +85,8 @@ async def test_stream_prompt_emits_keepalive_during_lock_wait(monkeypatch):
                 "message": {"role": "assistant", "content": []},
                 "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "BBB"},
             })
-            await rpc.events.put({"type": "agent_end"})
+            await rpc.events.put({"type": "agent_end", "willRetry": False})
+            await rpc.events.put({"type": "agent_settled"})
 
     async def run_a():
         rpc.request = AsyncMock(side_effect=fake_request_a)
@@ -102,11 +103,12 @@ async def test_stream_prompt_emits_keepalive_during_lock_wait(monkeypatch):
 
     async def feed_a_agent_end():
         await a_release.wait()
-        await rpc.events.put({"type": "agent_end"})
+        await rpc.events.put({"type": "agent_end", "willRetry": False})
+        await rpc.events.put({"type": "agent_settled"})
 
     feeder = asyncio.ensure_future(feed_a_agent_end())
     task_a = asyncio.ensure_future(run_a())
-    # Turn A holds the lock and is parked mid-drain waiting for agent_end.
+    # Turn A holds the lock and is parked mid-drain waiting for agent_settled.
     await asyncio.wait_for(a_drained_first_event.wait(), timeout=2.0)
     await asyncio.sleep(0.02)
 
@@ -143,7 +145,7 @@ async def test_stream_prompt_emits_keepalive_during_lock_wait(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_prompt_drain_timeout_raises_and_sends_abort(monkeypatch):
-    """A drain that times out without agent_end must raise (not return a 200
+    """A drain that times out without agent_settled must raise (not return a 200
     with truncated content) AND send the abort RPC so Pi stops executing.
 
     #786: the failure condition is now CONTINUOUS silence reaching the stream
@@ -193,7 +195,8 @@ async def test_prompt_survives_silent_gap_longer_than_drain_timeout(monkeypatch)
                 "type": "tool_execution_end", "toolCallId": "tc-1",
                 "content": [{"type": "text", "text": "tool done"}],
             })
-            await emit("agent_end")
+            await emit("agent_end", {"type": "agent_end", "willRetry": False})
+            await emit("agent_settled")
 
     rpc.request = AsyncMock(side_effect=fake_request)
     bridge = PiBridge(rpc=rpc)
@@ -237,7 +240,7 @@ async def test_prompt_send_failure_sends_abort():
 
 @pytest.mark.asyncio
 async def test_prompt_clean_agent_end_still_succeeds():
-    """The happy path is unchanged: agent_end within the budget returns the
+    """The happy path is unchanged: agent_settled within the budget returns the
     content and sends NO abort."""
     rpc = _make_rpc()
 
@@ -247,7 +250,8 @@ async def test_prompt_clean_agent_end_still_succeeds():
                 "type": "message_update",
                 "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]},
             })
-            await rpc.events.put({"type": "agent_end"})
+            await rpc.events.put({"type": "agent_end", "willRetry": False})
+            await rpc.events.put({"type": "agent_settled"})
 
     rpc.request = AsyncMock(side_effect=fake_request)
     bridge = PiBridge(rpc=rpc)

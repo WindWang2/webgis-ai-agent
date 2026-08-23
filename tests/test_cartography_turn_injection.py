@@ -43,7 +43,8 @@ def _make_bridge():
                     {"type": "text", "text": "ok"}
                 ]},
             })
-            await rpc.events.put({"type": "agent_end"})
+            await rpc.events.put({"type": "agent_end", "willRetry": False})
+            await rpc.events.put({"type": "agent_settled"})
 
     rpc.request = AsyncMock(side_effect=fake_request)
     bridge = PiBridge(rpc=rpc)

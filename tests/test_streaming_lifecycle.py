@@ -220,7 +220,8 @@ async def test_stream_prompt_no_abort_on_normal_completion():
                 "type": "message_update",
                 "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "done"},
             })
-            await rpc.events.put({"type": "agent_end"})
+            await rpc.events.put({"type": "agent_end", "willRetry": False})
+            await rpc.events.put({"type": "agent_settled"})
 
     rpc.request = AsyncMock(side_effect=fake_request)
 

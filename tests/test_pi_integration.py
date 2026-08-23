@@ -70,7 +70,8 @@ class TestPiBridgeSubprocessFlow:
                     "type": "message_update",
                     "message": {"role": "assistant", "content": [{"type": "text", "text": "Hi there"}]},
                 })
-                await rpc.events.put({"type": "agent_end"})
+                await rpc.events.put({"type": "agent_end", "willRetry": False})
+                await rpc.events.put({"type": "agent_settled"})
 
         rpc.request = AsyncMock(side_effect=fake_request)
 
@@ -108,6 +109,7 @@ class TestPiBridgeSubprocessFlow:
                          "content": [{"type": "text", "text": "Hello"}]},
                     ],
                 })
+                await rpc.events.put({"type": "agent_settled"})
 
         rpc.request = AsyncMock(side_effect=fake_request)
         result = await bridge.prompt("Say hello")
@@ -129,7 +131,8 @@ class TestPiBridgeSubprocessFlow:
                     "message": {"role": "assistant",
                                 "content": [{"type": "text", "text": "snapshot answer"}]},
                 })
-                await rpc.events.put({"type": "agent_end"})
+                await rpc.events.put({"type": "agent_end", "willRetry": False})
+                await rpc.events.put({"type": "agent_settled"})
 
         rpc.request = AsyncMock(side_effect=fake_request)
         result = await bridge.prompt("q")
@@ -171,7 +174,8 @@ class TestPiBridgeSubprocessFlow:
                     "toolCallId": "tc-1", "toolName": "buffer_analysis",
                     "result": {"features": 1}, "isError": False,
                 })
-                await rpc.events.put({"type": "agent_end"})
+                await rpc.events.put({"type": "agent_end", "willRetry": False})
+                await rpc.events.put({"type": "agent_settled"})
 
         rpc.request = AsyncMock(side_effect=fake_request)
         out = []
@@ -213,7 +217,8 @@ class TestPiBridgeSubprocessFlow:
                     "message": {"role": "assistant", "content": []},
                     "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "streamed"},
                 })
-                await rpc.events.put({"type": "agent_end"})
+                await rpc.events.put({"type": "agent_end", "willRetry": False})
+                await rpc.events.put({"type": "agent_settled"})
 
         rpc.request = AsyncMock(side_effect=fake_request)
 
@@ -291,7 +296,7 @@ class TestPiBridgeSubprocessFlow:
         bridge = PiBridge(rpc=rpc)
 
         monkeypatch.setattr("app.agent_pi_bridge.PI_HEARTBEAT_INTERVAL", 0.02)
-        # Stall budget large enough for several heartbeats before agent_end.
+        # Stall budget large enough for several heartbeats before agent_settled.
         monkeypatch.setattr("app.agent_pi_bridge.PI_EVENT_STREAM_TIMEOUT", 10.0)
 
         async def feed_after_delay():
@@ -300,7 +305,8 @@ class TestPiBridgeSubprocessFlow:
                 "type": "message_update",
                 "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "ok"},
             })
-            await rpc.events.put({"type": "agent_end"})
+            await rpc.events.put({"type": "agent_end", "willRetry": False})
+            await rpc.events.put({"type": "agent_settled"})
 
         asyncio.create_task(feed_after_delay())
 
@@ -370,7 +376,8 @@ class TestPiBridgeSubprocessFlow:
                     "message": {"role": "assistant", "content": []},
                     "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "fresh"},
                 })
-                await rpc.events.put({"type": "agent_end"})
+                await rpc.events.put({"type": "agent_end", "willRetry": False})
+                await rpc.events.put({"type": "agent_settled"})
 
         rpc.request = AsyncMock(side_effect=fake_request)
 
@@ -407,7 +414,8 @@ class TestPiBridgeSubprocessFlow:
                     "message": {"role": "assistant", "content": []},
                     "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "hello"},
                 })
-                await rpc.events.put({"type": "agent_end"})
+                await rpc.events.put({"type": "agent_end", "willRetry": False})
+                await rpc.events.put({"type": "agent_settled"})
 
         rpc.request = AsyncMock(side_effect=fake_request)
 
@@ -464,13 +472,15 @@ class TestPiBridgeSubprocessFlow:
                     "message": {"role": "assistant", "content": []},
                     "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "BBB"},
                 })
-                await rpc.events.put({"type": "agent_end"})
+                await rpc.events.put({"type": "agent_end", "willRetry": False})
+                await rpc.events.put({"type": "agent_settled"})
 
         async def feed_a_agent_end():
             """Wait until turn A has drained its first event, then hold for release."""
             await a_drained_first_event.wait()
             await a_release.wait()
-            await rpc.events.put({"type": "agent_end"})
+            await rpc.events.put({"type": "agent_end", "willRetry": False})
+            await rpc.events.put({"type": "agent_settled"})
 
         a_events: list[str] = []
         b_events: list[str] = []
@@ -696,3 +706,127 @@ class TestClearSessionRoute:
                     owner_token=None,
                 )
         assert exc_info.value.status_code == 404
+
+
+# ============================================================================
+# #855: agent_end is not final — vendor auto-retry / continuation runs must
+# not truncate the turn. The vendor emits agent_end{willRetry:true} before an
+# auto-retry and may continue even a willRetry=false run (compaction overflow
+# recovery, queued follow-ups); agent_settled is the sole final signal.
+# ============================================================================
+
+def _retry_event_sequence() -> list[dict]:
+    """A faithful vendor turn with one transient 429 → auto-retry → recovery.
+
+    Mirrors vendor/pi agent-session.ts: failed run emits its accumulated
+    snapshot, then agent_end{willRetry:true}; _prepareRetry emits
+    auto_retry_start (backoff) and the retried run emits a fresh snapshot and
+    the final agent_end{willRetry:false} + agent_settled.
+    """
+    return [
+        # Attempt 1: partial text, then a retryable error ends the run.
+        {
+            "type": "message_update",
+            "message": {"role": "assistant",
+                        "content": [{"type": "text", "text": "truncated partial"}]},
+            "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "truncated partial"},
+        },
+        {
+            "type": "agent_end",
+            "willRetry": True,
+            "messages": [
+                {"role": "user", "content": [{"type": "text", "text": "q"}]},
+                {"role": "assistant", "stopReason": "error",
+                 "content": [{"type": "text", "text": ""}]},
+            ],
+        },
+        {"type": "auto_retry_start", "attempt": 1, "maxAttempts": 3,
+         "delayMs": 2000, "errorMessage": "429 rate limited"},
+        # Attempt 2: the recovered run supersedes the failed one.
+        {
+            "type": "message_update",
+            "message": {"role": "assistant",
+                        "content": [{"type": "text", "text": "recovered final answer"}]},
+            "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "recovered final answer"},
+        },
+        {
+            "type": "agent_end",
+            "willRetry": False,
+            "messages": [
+                {"role": "user", "content": [{"type": "text", "text": "q"}]},
+                {"role": "assistant",
+                 "content": [{"type": "text", "text": "recovered final answer"}]},
+            ],
+        },
+        {"type": "agent_settled"},
+    ]
+
+
+class TestVendorAutoRetryTurns:
+    """#855 regression: turns must drain to agent_settled, not the first agent_end."""
+
+    @pytest.mark.asyncio
+    async def test_prompt_waits_through_vendor_auto_retry(self):
+        """prompt() must return the RETRIED run's answer, not truncate at the
+        first agent_end{willRetry:true} (which carries the error run)."""
+        rpc = MagicMock()
+        rpc.events = asyncio.Queue()
+        rpc.start = AsyncMock()
+        rpc.stop = AsyncMock()
+        bridge = PiBridge(rpc=rpc)
+
+        async def fake_request(cmd, data=None):
+            if cmd == "prompt":
+                for ev in _retry_event_sequence():
+                    await rpc.events.put(ev)
+
+        rpc.request = AsyncMock(side_effect=fake_request)
+
+        result = await asyncio.wait_for(bridge.prompt("q"), timeout=5.0)
+        assert result["content"] == "recovered final answer", (
+            "turn truncated at the retrying agent_end: the vendor's recovered "
+            "answer was lost"
+        )
+
+    @pytest.mark.asyncio
+    async def test_stream_prompt_retry_notice_before_task_complete(self):
+        rpc = MagicMock()
+        rpc.events = asyncio.Queue()
+        rpc.start = AsyncMock()
+        rpc.stop = AsyncMock()
+        bridge = PiBridge(rpc=rpc)
+
+        async def fake_request(cmd, data=None):
+            if cmd == "prompt":
+                for ev in _retry_event_sequence():
+                    await rpc.events.put(ev)
+
+        rpc.request = AsyncMock(side_effect=fake_request)
+
+        events = []
+        async for ev in bridge.stream_prompt("q"):
+            events.append(ev)
+
+        event_types: list[str] = []
+        for e in events:
+            if not e.strip():
+                continue
+            for line in e.split("\n"):
+                if line.startswith("event: "):
+                    event_types.append(line[len("event: "):])
+
+        # Exactly one task_complete, and it is the LAST structured event
+        # before done — the retrying agent_end must not close the stream.
+        assert event_types.count("task_complete") == 1, event_types
+        assert event_types[-1] == "done"
+        assert event_types[-2] == "task_complete", event_types
+        # The retry notice surfaces as a transient content note.
+        assert "content" in event_types, event_types
+        content_frames = [e for e in events if e.startswith("event: content")]
+        assert any("自动重试" in e for e in content_frames), content_frames
+        # The recovered run's tokens flowed after the failed attempt's.
+        assert "recovered final answer" in "\n".join(events)
+        # The failed attempt's partial must not win the task_complete summary.
+        task_complete = next(e for e in events if e.startswith("event: task_complete"))
+        assert "recovered final answer" in task_complete
+        assert "truncated partial" not in task_complete

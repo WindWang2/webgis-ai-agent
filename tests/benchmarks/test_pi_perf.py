@@ -52,7 +52,7 @@ class TestPiBridgePerformance:
     async def test_prompt_latency(self, bridge):
         """Measure prompt() round-trip latency with pre-drained event queue."""
         # Seed the RPC event queue so prompt()'s drain loop exits immediately
-        # after consuming the agent_end event (avoids waiting for
+        # after consuming the agent_settled event (avoids waiting for
         # PI_EVENT_DRAIN_TIMEOUT).
         async def fake_request(cmd, data=None):
             if cmd == "prompt":
@@ -60,7 +60,8 @@ class TestPiBridgePerformance:
                     "type": "message_update",
                     "message": {"role": "assistant", "content": [{"type": "text", "text": "Hi"}]},
                 })
-                await bridge._rpc.events.put({"type": "agent_end"})
+                await bridge._rpc.events.put({"type": "agent_end", "willRetry": False})
+                await bridge._rpc.events.put({"type": "agent_settled"})
 
         bridge._rpc.request = AsyncMock(side_effect=fake_request)
 
@@ -89,7 +90,8 @@ class TestPiBridgePerformance:
                     "message": {"role": "assistant", "content": [{"type": "text", "text": "Hi"}]},
                     "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "Hi"},
                 })
-                await bridge._rpc.events.put({"type": "agent_end"})
+                await bridge._rpc.events.put({"type": "agent_end", "willRetry": False})
+                await bridge._rpc.events.put({"type": "agent_settled"})
 
         bridge._rpc.request = AsyncMock(side_effect=fake_request)
 

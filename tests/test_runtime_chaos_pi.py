@@ -713,11 +713,12 @@ async def test_start_clears_death_signal():
 @pytest.mark.asyncio
 async def test_stream_prompt_happy_path_unchanged_with_death_aware_rpc():
     """G guard: with a death-aware client (real process_died_event that never
-    fires), the happy path is unchanged — task_start -> token -> agent_end ->
+    fires), the happy path is unchanged — task_start -> token -> settled ->
     done, no error, no abort, queue empty, lock released."""
     rpc = _make_death_rpc([
         make_token_event("hello"),
-        {"type": "agent_end"},
+        {"type": "agent_end", "willRetry": False},
+        {"type": "agent_settled"},
     ])
     bridge = PiBridge(rpc=rpc)
 

@@ -81,7 +81,8 @@ class TestAudit820TaskComplete:
                         "toolCallId": f"tc-{i}", "toolName": "buffer_analysis",
                         "result": {"ok": True}, "isError": False,
                     })
-                await rpc.events.put({"type": "agent_end"})
+                await rpc.events.put({"type": "agent_end", "willRetry": False})
+                await rpc.events.put({"type": "agent_settled"})
 
         rpc.request = AsyncMock(side_effect=fake_request)
         out = []
@@ -239,11 +240,13 @@ class TestAudit818TurnResultSink:
                 })
                 await rpc.events.put({
                     "type": "agent_end",
+                    "willRetry": False,
                     "messages": [
                         {"role": "user", "content": [{"type": "text", "text": "q"}]},
                         {"role": "assistant", "content": [{"type": "text", "text": "final!"}]},
                     ],
                 })
+                await rpc.events.put({"type": "agent_settled"})
 
         rpc.request = AsyncMock(side_effect=fake_request)
         results = []

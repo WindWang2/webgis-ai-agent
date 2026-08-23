@@ -1611,9 +1611,11 @@ class PiBridge:
         """Best-effort drain of this turn's leftover events after timeout/disconnect.
 
         Without this, a timed-out or cancelled stream leaves the turn's
-        remaining events (up to ``agent_end``) in the shared queue, where the
-        next turn's drain loop would pick them up. Bounded and non-blocking so
-        a stuck producer cannot block cleanup.
+        remaining events (up to ``agent_settled``, the sole turn terminator per
+        #855 — ``agent_end`` alone may be followed by an auto-retry or
+        continuation run) in the shared queue, where the next turn's drain loop
+        would pick them up. Bounded and non-blocking so a stuck producer cannot
+        block cleanup.
         """
         events = self._rpc.events
         for _ in range(events.maxsize or 1024):
@@ -1621,7 +1623,7 @@ class PiBridge:
                 event = events.get_nowait()
             except asyncio.QueueEmpty:
                 break
-            if isinstance(event, dict) and event.get("type") == "agent_end":
+            if isinstance(event, dict) and event.get("type") == "agent_settled":
                 break
 
     async def _abort_on_disconnect(self, turn_sid: str) -> None:
@@ -1745,8 +1747,13 @@ class PiBridge:
                 # Drain events from the queue (non-streaming mode).
                 # audit #816: message_update carries the ACCUMULATED partial
                 # snapshot — appending per event duplicated content O(n²).
-                # Keep only the latest snapshot; agent_end's messages[] list is
-                # the authoritative final text and overrides it.
+                # Keep only the latest snapshot; a non-retrying agent_end's
+                # messages[] list is the authoritative final text and overrides
+                # it. #855: agent_end is NOT the turn terminator — the vendor
+                # auto-retries behind willRetry=true and may continue even a
+                # willRetry=false run (compaction overflow recovery / queued
+                # follow-ups). The turn ends on agent_settled only, mirroring
+                # the vendor RpcClient.waitForIdle contract.
                 final_text = ""
                 _drained_complete = False
                 drain_started = time.monotonic()
@@ -1771,15 +1778,23 @@ class PiBridge:
                             self._rpc.events.get(), timeout=wait_budget
                         )
                         last_event_at = time.monotonic()
-                        if event.get("type") == "agent_end":
+                        event_type = event.get("type")
+                        if event_type == "agent_settled":
                             _drained_complete = True
-                            end_text = _extract_text_from_event(event)
-                            if end_text:
-                                final_text = end_text
                             break
-                        text = _extract_text_from_event(event)
-                        if text:
-                            final_text = text
+                        if event_type == "agent_end":
+                            # #855: stash the authoritative final text only from
+                            # a non-retrying agent_end; a willRetry=true end
+                            # carries the transient error message, not the turn
+                            # outcome — the retried run supersedes it.
+                            if not event.get("willRetry"):
+                                end_text = _extract_text_from_event(event)
+                                if end_text:
+                                    final_text = end_text
+                        else:
+                            text = _extract_text_from_event(event)
+                            if text:
+                                final_text = text
                     except asyncio.TimeoutError:
                         if (
                             time.monotonic() - last_event_at >= PI_EVENT_STREAM_TIMEOUT
@@ -1790,24 +1805,24 @@ class PiBridge:
                 # Best-effort: drain any leftover events so the next turn starts clean.
                 await self._drain_remaining_turn_events()
                 if timed_out:
-                    # #554 defect 2: a drain that timed out without agent_end is
-                    # a PARTIAL turn. Previously the caller received a 200 with
+                    # #554 defect 2: a drain that timed out without agent_settled
+                    # is a PARTIAL turn. Previously the caller received a 200 with
                     # truncated content and NO abort RPC — Pi kept generating
                     # tokens and executing tools (up to the 300s RPC timeout)
                     # while the client believed the turn succeeded. Surface an
                     # error instead; the finally below sends the abort RPC
-                    # (mirrors stream_prompt's stall handling). First-wins settle
+                    # (mirrors stream_prompt's stall handling). First-win settle
                     # keeps this "drain_timeout" classification over the generic
                     # failure_class in the except handler below.
                     rt_ev.settle(Outcome.FAILED, failure_class="drain_timeout")
                     raise PiRpcError(
-                        f"Pi agent did not emit agent_end (continuous silence exceeded "
+                        f"Pi agent did not emit agent_settled (continuous silence exceeded "
                         f"{PI_EVENT_STREAM_TIMEOUT}s or the turn exceeded "
                         f"{PI_TURN_TOTAL_TIMEOUT}s; event-drain timeout); "
                         "the turn has been aborted."
                     )
-                # Only a clean agent_end reaches this point — a timeout already
-                # raised above, so PARTIAL is no longer reachable.
+                # Only a clean agent_settled reaches this point — a timeout
+                # already raised above, so PARTIAL is no longer reachable.
                 rt_ev.settle(Outcome.SUCCEEDED)
             except asyncio.CancelledError:
                 cancelled = True
@@ -1820,7 +1835,7 @@ class PiBridge:
                 if cancelled or timed_out or send_failed:
                     # #554 defect 2: tell Pi to stop generating tokens / executing
                     # tools when the non-streaming turn ends without a clean
-                    # agent_end (drain timeout) or is cancelled mid-drain — a
+                    # agent_settled (drain timeout) or is cancelled mid-drain — a
                     # retry otherwise duplicates side effects. #790: a failed
                     # prompt RPC (send_failed) must abort for the same reason
                     # (B-6, mirroring stream_prompt). Mirrors stream_prompt's
@@ -2048,11 +2063,20 @@ class PiBridge:
                                 # 通过 correlation 回传，闭环才完整）。
                                 yield _inject_turn_id(sse, turn_id)
                             if event.get("type") == "agent_end":
-                                # agent_end's messages[] is the authoritative
-                                # final text (audit #818/#816).
-                                _end_text = _extract_text_from_event(event)
-                                if _end_text:
-                                    _turn_final_text = _end_text
+                                # #855: agent_end is NOT final — willRetry=true
+                                # precedes a vendor auto-retry, and even
+                                # willRetry=false may be followed by a compaction
+                                # or queued-message continuation run. Stash the
+                                # authoritative final text only from a
+                                # non-retrying agent_end (audit #818/#816); the
+                                # stream ends on agent_settled below, matching
+                                # vendor RpcClient.waitForIdle. task_complete is
+                                # emitted by the mapper on agent_settled.
+                                if not event.get("willRetry"):
+                                    _end_text = _extract_text_from_event(event)
+                                    if _end_text:
+                                        _turn_final_text = _end_text
+                            elif event.get("type") == "agent_settled":
                                 break
                             # Re-arm the queue waiter for the next event; the
                             # completed waiter task is dropped from `pending` by
@@ -2136,8 +2160,8 @@ class PiBridge:
                     except Exception as e:  # noqa: BLE001
                         logger.warning("[PiBridge] abort-on-disconnect failed (turn=%s): %s", turn_sid, e)
                 # Drain any leftover events so a timeout/disconnect doesn't poison
-                # the next turn. (On a normal agent_end the queue is already empty;
-                # this is a no-op there.)
+                # the next turn. (On a normal agent_settled the queue is already
+                # empty; this is a no-op there.)
                 await self._drain_remaining_turn_events()
                 # Turn-end cleanup: drop this turn's dedup sets (incl. the "" bucket
                 # where sessionId-less Pi dispatches land) and orphaned dispatch

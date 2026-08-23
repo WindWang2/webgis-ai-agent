@@ -55,8 +55,10 @@ def make_mock_process(lines: list[str] | None = None, latency_ms: float = 0) -> 
 # (vendor/pi/packages/agent/src/agent-loop.ts + ai/src/types.ts):
 # message_update carries the accumulated partial snapshot in `message`
 # plus the incremental AssistantMessageEvent in `assistantMessageEvent`;
-# text increments live in `delta`, tool calls complete on `toolcall_end`
-# with a `toolCall` object; agent_end carries a `messages` list.
+# text increments live in `delta`, tool calls complete on toolcall_end
+# with a `toolCall` object; agent_end carries a `messages` list and a
+# `willRetry` flag, and is followed by `agent_settled` — the sole
+# turn-final event the vendor emits unconditionally (#855).
 
 def make_token_event(content: str) -> dict:
     return {
@@ -111,11 +113,33 @@ def make_tool_execution_end(tool_call_id: str, tool_name: str, is_error: bool = 
     }
 
 
-def make_agent_end(content: str = "") -> dict:
-    event: dict = {"type": "agent_end"}
+def make_agent_end(content: str = "", will_retry: bool = False) -> dict:
+    event: dict = {"type": "agent_end", "willRetry": will_retry}
     if content:
         event["messages"] = [
             {"role": "user", "content": [{"type": "text", "text": "q"}]},
             {"role": "assistant", "content": [{"type": "text", "text": content}]},
         ]
+    return event
+
+
+def make_agent_settled() -> dict:
+    """The vendor's unconditional turn-final event (#855)."""
+    return {"type": "agent_settled"}
+
+
+def make_auto_retry_start(attempt: int = 1, max_attempts: int = 3, delay_ms: int = 2000, error: str = "429 rate limited") -> dict:
+    return {
+        "type": "auto_retry_start",
+        "attempt": attempt,
+        "maxAttempts": max_attempts,
+        "delayMs": delay_ms,
+        "errorMessage": error,
+    }
+
+
+def make_auto_retry_end(success: bool, attempt: int = 1, final_error: str | None = None) -> dict:
+    event: dict = {"type": "auto_retry_end", "success": success, "attempt": attempt}
+    if final_error is not None:
+        event["finalError"] = final_error
     return event

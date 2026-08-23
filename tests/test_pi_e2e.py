@@ -25,6 +25,7 @@ from app.agent_pi_bridge import PiBridge, PiRpcError
 
 from tests.fixtures.pi_mocks import (
     make_agent_end,
+    make_agent_settled,
     make_token_event,
     make_tool_call_event,
     make_tool_execution_end,
@@ -75,6 +76,7 @@ class TestPiBridgeE2EScenarios:
         events = [
             make_token_event("Hello! How can I help?"),
             make_agent_end(),
+            make_agent_settled(),
         ]
         bridge = PiBridge(rpc=_make_event_rpc(events))
 
@@ -102,6 +104,7 @@ class TestPiBridgeE2EScenarios:
             make_tool_execution_start("tc-1", "spatial_analyze"),
             make_tool_execution_end("tc-1", "spatial_analyze", is_error=False),
             make_agent_end(),
+            make_agent_settled(),
         ]
         bridge = PiBridge(rpc=_make_event_rpc(events))
 
@@ -126,6 +129,7 @@ class TestPiBridgeE2EScenarios:
             make_tool_execution_start("tc-1", "spatial_analyze"),
             make_tool_execution_end("tc-1", "spatial_analyze", is_error=True),
             make_agent_end(),
+            make_agent_settled(),
         ]
         bridge = PiBridge(rpc=_make_event_rpc(events))
 
@@ -180,6 +184,7 @@ class TestPiBridgeE2EScenarios:
             },
             make_token_event("Based on my analysis, the buffer area is 2.5 sq km."),
             make_agent_end(),
+            make_agent_settled(),
         ]
         bridge = PiBridge(rpc=_make_event_rpc(events))
 

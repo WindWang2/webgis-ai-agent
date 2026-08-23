@@ -35,7 +35,8 @@ async def test_prompt_signed_token_shares_single_mint(monkeypatch):
         async def request(self, command: str, data=None):
             captured["data"] = data
             captured["context"] = bridge_mod._active_turn_context
-            await self.events.put({"type": "agent_end"})
+            await self.events.put({"type": "agent_end", "willRetry": False})
+            await self.events.put({"type": "agent_settled"})
             return {}
 
     bridge = PiBridge(rpc=_Rpc())

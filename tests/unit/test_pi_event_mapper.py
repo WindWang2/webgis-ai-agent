@@ -167,9 +167,9 @@ def test_map_tool_execution_end_cache_miss_fallback():
     assert '"fallback result"' in sse
 
 
-def test_map_agent_end_reports_turn_stats():
-    """task_complete carries the injected turn counters (audit #820)."""
-    event = {"type": "agent_end"}
+def test_map_agent_settled_reports_turn_stats():
+    """task_complete carries the injected turn counters (audit #820, #855)."""
+    event = {"type": "agent_settled"}
     sse = map_event_to_sse(
         event, session_id="s1",
         turn_stats=lambda: {"tool_step_count": 3, "final_text": "done analyzing"},
@@ -180,12 +180,54 @@ def test_map_agent_end_reports_turn_stats():
     assert "done analyzing" in sse
 
 
-def test_map_agent_end_zero_without_stats():
-    event = {"type": "agent_end"}
+def test_map_agent_settled_zero_without_stats():
+    event = {"type": "agent_settled"}
     sse = map_event_to_sse(event, session_id="s1")
     assert sse is not None
     assert "event: task_complete" in sse
     assert '"step_count": 0' in sse
+
+
+def test_map_agent_end_is_not_final_emits_nothing():
+    """#855: agent_end (retrying or not) emits no SSE — task_complete fires on
+    agent_settled only. agent_end{willRetry:true} precedes a vendor auto-retry;
+    even willRetry=false may be followed by a compaction/queued continuation."""
+    assert map_event_to_sse(
+        {"type": "agent_end", "willRetry": True, "messages": []}, session_id="s1"
+    ) is None
+    assert map_event_to_sse(
+        {"type": "agent_end", "willRetry": False, "messages": []}, session_id="s1"
+    ) is None
+
+
+def test_map_auto_retry_start_and_end():
+    """#855: vendor auto-retry events surface as transient content notes."""
+    sse_start = map_event_to_sse(
+        {"type": "auto_retry_start", "attempt": 1, "maxAttempts": 3,
+         "delayMs": 2000, "errorMessage": "429 rate limited"},
+        session_id="s1",
+    )
+    assert sse_start is not None
+    assert "event: content" in sse_start
+    assert "自动重试" in sse_start
+    assert "429 rate limited" in sse_start
+
+    sse_ok = map_event_to_sse(
+        {"type": "auto_retry_end", "success": True, "attempt": 1}, session_id="s1"
+    )
+    assert sse_ok is not None
+    assert "event: content" in sse_ok
+    assert "自动重试成功" in sse_ok
+
+    sse_fail = map_event_to_sse(
+        {"type": "auto_retry_end", "success": False, "attempt": 3,
+         "finalError": "provider down"},
+        session_id="s1",
+    )
+    assert sse_fail is not None
+    assert "event: content" in sse_fail
+    assert "自动重试失败" in sse_fail
+    assert "provider down" in sse_fail
 
 
 def test_map_compaction_start_and_end():
