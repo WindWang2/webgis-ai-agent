@@ -85,6 +85,33 @@ def _calculate_suggested_zoom(west: float, south: float, east: float, north: flo
   return 15
 
 
+#: 分位断点位置（spec P3）：五数概括 + 十分位端点，覆盖分位/自然断点分类
+#: 实际依赖的分布形状，同时保持向量短小（漂移比较是 O(1) 长度）。
+QUANTILE_POSITIONS: Tuple[float, ...] = (0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0)
+
+
+def _quantiles(values: List[float]) -> List[float]:
+  """Linear-interpolated quantiles at :data:`QUANTILE_POSITIONS`.
+
+  Distribution shape, not extremes: a classification derived from quantile
+  or natural breaks depends on these, so they are the drift anchor for
+  project-scoped shared classification schemes (ADR-0069 / spec P3).
+  Empty input returns ``[]`` (callers treat absence as unevaluable).
+  """
+  if not values:
+    return []
+  ordered = sorted(values)
+  last = len(ordered) - 1
+  out: List[float] = []
+  for position in QUANTILE_POSITIONS:
+    exact = position * last
+    low = int(math.floor(exact))
+    high = min(low + 1, last)
+    frac = exact - low
+    out.append(round(ordered[low] + (ordered[high] - ordered[low]) * frac, 6))
+  return out
+
+
 def profile_from_descriptor(descriptor: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """#688：O(1) descriptor → Spatial Meta Profile 派生（零全量遍历）。
 
@@ -228,6 +255,15 @@ def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]
           "mean": round(f_mean, 4),
           "sampleValues": sample,
           "null_count": null_count,
+          # spec P3: the distribution shape a classification scheme was
+          # derived from. Quantiles (not min/max) are what quantile/natural-
+          # breaks classifications depend on, so they are the drift anchor.
+          # ``null_ratio`` moves independently of the quantiles (a column can
+          # keep its shape while going half-empty), so both are recorded.
+          "quantiles": _quantiles(numeric_vals),
+          "null_ratio": (
+              round(null_count / feature_count, 6) if feature_count else 0.0
+          ),
       }
     elif len(bool_vals) == len(vals):
       fields_profile[k] = {

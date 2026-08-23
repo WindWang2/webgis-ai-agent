@@ -403,15 +403,129 @@ def _classification_payload(legend_spec: Dict[str, Any]) -> Dict[str, Any]:
     return payload
 
 
+def apply_distribution_drift(
+    db: Session,
+    project_id: str,
+    field_profiles: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """按新的字段分布证据失效过期先验，返回环境事件列表（spec P3）。
+
+    对每个主题字段：把账本里 ``data_profile`` 记住的分布证据与新 profile 比较——
+
+    - 漂移：该字段的 ``shared_classification`` 与 ``data_profile`` 转 ``stale``
+      （断点是分布的函数，分布变了断点就不再成立），并产出一条环境事件；
+    - 稳定：刷新 ``last_verified_at``（先验重新确认，LRU 上也更年轻）；
+    - 证据不足（无分位）：**什么都不做**——不可判定不等于未漂移
+      （fail-closed）。
+
+    新字段（账本还没记过分布）只记录基线，不产出事件：第一次见到不是变化。
+    调用方负责提交。
+    """
+    if not project_id or not isinstance(field_profiles, dict):
+        return []
+    from app.services.cartography.distribution_drift import (
+        detect_distribution_drift,
+        distribution_evidence,
+    )
+
+    events: List[Dict[str, Any]] = []
+    for field, profile in field_profiles.items():
+        incoming = distribution_evidence(profile)
+        if incoming is None:
+            continue
+        held_fact = db.execute(
+            select(CartoProjectFact).where(
+                CartoProjectFact.project_id == project_id,
+                CartoProjectFact.kind == "data_profile",
+                CartoProjectFact.subject == str(field),
+            )
+        ).scalar_one_or_none()
+        if held_fact is None:
+            record_fact(
+                db, project_id, "data_profile", str(field), incoming,
+                fingerprint=None,
+            )
+            continue
+        verdict = detect_distribution_drift(held_fact.payload, incoming)
+        if not verdict.get("evaluated"):
+            continue
+        if not verdict.get("drifted"):
+            held_fact.payload = incoming
+            held_fact.status = "active"
+            held_fact.last_verified_at = _now()
+            db.flush()
+            continue
+        # 漂移：断点先验过期。保留新证据作为基线，但标记为 stale —— 复验
+        # （用户/下一轮重新分类并通过 gate）才会重新 active。
+        held_fact.payload = incoming
+        held_fact.status = "stale"
+        held_fact.last_verified_at = _now()
+        stale_count = mark_stale(
+            db, project_id, kinds=["shared_classification"], subjects=[str(field)],
+        )
+        db.flush()
+        event = {
+            "subject": str(field),
+            "reason": verdict.get("reason"),
+            "deviation": verdict.get("max_relative_deviation"),
+            "invalidated_classifications": stale_count,
+        }
+        # 事件必须能被**下一个 turn** 读到，而 turn 与摄取是不同请求，所以
+        # 事件随 stale 事实一起落库（payload 里的 ``_env_change``），注入时
+        # 由 stale 的 data_profile 反推——不需要第二张事件表。
+        held_fact.payload = {**incoming, "_env_change": event}
+        db.flush()
+        events.append(event)
+        logger.info(
+            "[CartoMemory] distribution drift on %s/%s: %s (dev=%s)",
+            project_id, field, verdict.get("reason"),
+            verdict.get("max_relative_deviation"),
+        )
+    return events
+
+
+def get_pending_env_changes(
+    db: Session, project_id: str, limit: int = 10
+) -> List[Dict[str, Any]]:
+    """待告知 agent 的环境变化事件（由 stale ``data_profile`` 事实携带）。
+
+    读取即消费：返回后清除 ``_env_change``，避免同一条漂移在每个 turn 重复
+    刷屏。事实本身保持 ``stale``——真正的复活条件是重新分类并通过 gate。
+    调用方负责提交。
+    """
+    if not project_id:
+        return []
+    facts = list(db.execute(
+        select(CartoProjectFact).where(
+            CartoProjectFact.project_id == project_id,
+            CartoProjectFact.kind == "data_profile",
+            CartoProjectFact.status == "stale",
+        ).order_by(CartoProjectFact.last_verified_at.desc()).limit(limit)
+    ).scalars().all())
+    events: List[Dict[str, Any]] = []
+    for fact in facts:
+        payload = fact.payload if isinstance(fact.payload, dict) else {}
+        event = payload.get("_env_change")
+        if not isinstance(event, dict):
+            continue
+        events.append(event)
+        fact.payload = {k: v for k, v in payload.items() if k != "_env_change"}
+    if events:
+        db.flush()
+    return events
+
+
 __all__ = [
     "MAX_FACTS_PER_PROJECT",
     "MEMORY_BLOCK_CHAR_BUDGET",
     "MEMORY_MARKER",
     "FACT_KINDS",
     "FACT_STATUSES",
+    "apply_distribution_drift",
     "classification_fingerprint",
     "record_fact",
     "get_active_facts",
+    "get_pending_env_changes",
     "get_shared_classification",
     "harvest_facts_from_review",
     "mark_stale",

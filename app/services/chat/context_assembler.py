@@ -116,17 +116,25 @@ def _build_project_memory_block(project_id: str) -> str:
     方案/偏好/recipe 成效），永不参与 verdict 计算。只读 ``active`` 事实
     （``stale``/``conflicted`` 一律不注入：注入一个自己都不确定的先验比
     不注入更坏）。账本不可用时返回空串，行为退化为无记忆。
+
+    spec P3：待告知的环境变化（分布漂移致先验过期）前置于记忆块——先说
+    "世界变了"，再给剩下仍然可信的先验。事件读取即消费，不会每个 turn 重复。
     """
+    from app.services.cartography.distribution_drift import render_env_change_block
     from app.services.cartography.project_memory import (
         get_active_facts,
+        get_pending_env_changes,
         render_memory_block,
     )
 
     SessionLocal = _get_session_local()
     try:
         with SessionLocal() as db:
+            events = get_pending_env_changes(db, project_id)
+            if events:
+                db.commit()
             facts = get_active_facts(db, project_id)
-            return render_memory_block(facts)
+            return render_env_change_block(events) + render_memory_block(facts)
     except Exception as ex:  # noqa: BLE001 — 记忆是增值上下文，失败不阻断对话
         logger.warning(
             "Cartographic project memory unavailable for %s: %s", project_id, ex
