@@ -571,9 +571,9 @@ def generate_heatmap_raster(features: list, cell_size: int = 500, radius: int = 
     from matplotlib.colors import LinearSegmentedColormap
     from scipy.ndimage import gaussian_filter
 
-    # Lazy import: the spatial_tasks helpers are shared with the Celery task
-    # path (run_heatmap_generation); keep them lazy to avoid a cycle.
-    from app.services.spatial_tasks import (
+    # E-3（#894）：网格原语已下沉本层 heatmap_grid.py（此前 lazy import
+    # services/spatial_tasks 避免 cycle——现在依赖方向天然正确）。
+    from app.lib.geo_analysis.heatmap_grid import (
         _extract_heatmap_points,
         _build_heatmap_grid,
         _build_grid_features,

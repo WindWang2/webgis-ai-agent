@@ -443,7 +443,7 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
           # SEC-08/#408：路由要求所有权校验；MapLibre 图片请求带不了请求头，
           # 匿名会话的 owner_token 以查询参数附加在 URL 上。
           try:
-            from app.api.routes.raster import lookup_session_owner_token
+            from app.services.session_ownership import lookup_session_owner_token
             session_token = await lookup_session_owner_token(session_id)
           except Exception:
             session_token = None

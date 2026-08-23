@@ -15,10 +15,6 @@ from __future__ import annotations
 
 import hmac
 import logging
-import os
-import secrets
-import tempfile
-import fcntl
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 
@@ -26,59 +22,15 @@ from app.agent_pi_bridge import PiToolRequest, PiToolResponse, dispatch_tool
 
 logger = logging.getLogger(__name__)
 
-from pathlib import Path
 
-from app.core.config import settings
 
 router = APIRouter(prefix="/pi-tools", tags=["pi-tools"])
 
 # 共享密钥：若环境变量 WEBGIS_BRIDGE_SECRET 未提供，在 DATA_DIR 读写共享 secret 文件，
 # 确保多 worker 进程间密钥一致。
-def get_bridge_secret() -> str:
-    """返回当前 bridge 共享密钥（供 PiBridge.start 注入 subprocess env），确保多 worker 进程一致。"""
-    secret = os.getenv("WEBGIS_BRIDGE_SECRET")
-    if secret:
-        return secret
-    secret_file = Path(settings.DATA_DIR) / ".pi_bridge_secret"
-    lock_file = secret_file.with_suffix(".lock")
-    try:
-        secret_file.parent.mkdir(parents=True, exist_ok=True)
-        with lock_file.open("a+") as lock:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-            try:
-                val = secret_file.read_text(encoding="utf-8").strip()
-            except FileNotFoundError:
-                val = ""
-            if not val:
-                val = secrets.token_urlsafe(32)
-                fd, tmp_name = tempfile.mkstemp(
-                    prefix=".pi_bridge_secret.", dir=str(secret_file.parent)
-                )
-                try:
-                    with os.fdopen(fd, "w", encoding="utf-8") as temp:
-                        temp.write(val)
-                        temp.flush()
-                        os.fsync(temp.fileno())
-                    os.chmod(tmp_name, 0o600)
-                    os.replace(tmp_name, secret_file)
-                except BaseException:
-                    try:
-                        os.unlink(tmp_name)
-                    except OSError:
-                        pass
-                    raise
-    except Exception as e:
-        # ADR-0066 同款精神：错误在源头可见比在下游可诊断便宜。
-        # 多 worker 部署下回退随机值会导致各 worker 持不同 secret → Pi 回调间歇 401。
-        # 要么全拿到同一个 secret，要么全部启动失败，无中间态。
-        logger.error(f"Failed to write bridge secret file: {e}")
-        raise RuntimeError(
-            f"Cannot initialize Pi bridge secret (write failed: {e}). "
-            "Multi-worker deployments require a persistent shared secret. "
-            "Check file permissions and disk space."
-        ) from e
-    os.environ["WEBGIS_BRIDGE_SECRET"] = val
-    return val
+# E-2（#893）：实现下沉 app/core/bridge_secret.py（services 层反向
+# import 路由层的隐式环收口）；此处 re-export 保持兼容。
+from app.core.bridge_secret import get_bridge_secret  # noqa: E402
 
 
 async def verify_bridge_secret(

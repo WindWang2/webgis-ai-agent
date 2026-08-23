@@ -609,9 +609,11 @@ class AsyncHistoryService(HistoryStoreProtocol):
             except Exception as e:  # noqa: BLE001 - marker is best-effort
                 logger.warning("cap eviction: clearing marker publish failed: %s", e)
             try:
-                from app.api.routes import chat as chat_route
+                # E-2（#893）：经 services 层持有器取 engine（此前反向
+                # import api 路由模块拿 chat.engine）
+                from app.services.chat.engine_instance import try_get_chat_engine
 
-                engine = chat_route.engine
+                engine = try_get_chat_engine()
                 if engine is not None:
                     await engine.cancel_inflight_turn(session_id)
             except Exception as e:  # noqa: BLE001 清理失败不阻断会话创建

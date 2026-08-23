@@ -22,13 +22,10 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import FileResponse
-from sqlalchemy import select
 
 from app.core.auth import get_current_user_optional, verify_session_owner
 from app.core.database import get_async_db
-from app.models.db_model import Conversation
 from app.services.mapspec_store import BASE_STORAGE_DIR
-from app.tools._utils import async_db_session
 
 logger = logging.getLogger(__name__)
 
@@ -93,15 +90,4 @@ async def get_raster_png(
   return FileResponse(resolved, media_type="image/png")
 
 
-async def lookup_session_owner_token(session_id: str) -> Optional[str]:
-  """The session's anonymous owner_token, if any (for URL minting in tools).
-
-  Authenticated sessions have no owner_token (cookie/bearer auth covers them);
-  token-less legacy anonymous sessions need none. Only token-bearing anonymous
-  sessions require the query-parameter form on the URLs they hand to MapLibre.
-  """
-  async with async_db_session() as db:
-    row = (
-        await db.execute(select(Conversation.owner_token).where(Conversation.id == session_id))
-    ).scalar_one_or_none()
-    return row if isinstance(row, str) else None
+# E-2（#893）：实现下沉 app/services/session_ownership.py；re-export 兼容。

@@ -84,6 +84,18 @@ class Settings(BaseSettings):
 
     # OSM
     OVERPASS_API_URL: str = "https://overpass.openstreetmap.fr/api/interpreter"
+    # E-9（#900）：运行期可覆盖的行为参数登记（各读取点保留 lazy env 读以
+    # 兼容逐 case 重置的测试；登记目的是可发现/可审计/模板可见）。
+    # 安全面：公开注册开关 —— 生产环境为 true 时下方 fail-fast 校验直接拒绝启动。
+    ALLOW_PUBLIC_REGISTER: bool = False
+    TOOL_TIMEOUT_S: float = 300.0
+    SESSION_CACHE_SIZE: int = 200
+    SESSION_MESSAGE_CAP: int = 200
+    CLEAR_QUIESCE_TIMEOUT_S: float = 5.0
+    CANCEL_WAIT_TIMEOUT_S: float = 5.0
+    CHAT_MAX_ROUNDS: int = 60
+    TURN_TOTAL_TIMEOUT_S: float = 900.0
+
     NOMINATIM_URL: str = "https://nominatim.openstreetmap.org/search"
 
     # 天地图
@@ -203,6 +215,12 @@ class Settings(BaseSettings):
         生产模式下必须显式配置；开发模式下仅警告。
         """
         _PLACEHOLDER = "your-api-key-here"
+        # E-9（#900）：安全开关审查 —— 生产环境禁止开放注册。
+        if self.ALLOW_PUBLIC_REGISTER and self.is_production():
+            raise RuntimeError(
+                "ALLOW_PUBLIC_REGISTER=true is forbidden in production "
+                "(use manage.py create-admin instead)"
+            )
         _PROD_REQUIRED: dict[str, str] = {
             "LLM_API_KEY": _PLACEHOLDER,
         }

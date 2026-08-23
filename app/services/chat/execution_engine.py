@@ -31,6 +31,17 @@ from app.services.chat.llm_client import (
     call_llm_stream,
     parse_minimax_xml_tool_calls as _parse_minimax_xml_tool_calls,
 )
+# E-8（#899）：HonestTurnFailure 族与失败分类拆分至 turn_recovery
+#（纯函数职责；此处 re-export 保持既有 import/方法调用兼容）。
+from app.services.chat.turn_recovery import (  # noqa: F401
+    HonestTurnFailure,
+    EmptyCompletionError,
+    MaxRoundsExhaustedError,
+    NoProgressError,
+    TurnTimeoutError,
+    classify_failure as _classify_failure_impl,
+)
+
 from app.services.chat.prompt import (
     SYSTEM_PROMPT,
     construct_self_healing_message as _construct_self_healing_message,
@@ -155,34 +166,8 @@ async def _stream_with_token_keepalive(
             pass
 
 
-class HonestTurnFailure(RuntimeError):
-    """#685: 非流式诚实失败的语义异常（外层 chat() 按类型 settle failure_class）。
-
-    仓内先例：SessionClearingError/PiRpcError —— 不用异常文本匹配做分类，
-    改文案不会脱靶。
-    """
-
-    failure_class = "turn_failure"
-
-
-class EmptyCompletionError(HonestTurnFailure):
-    failure_class = "empty_result"
-
-
-class MaxRoundsExhaustedError(HonestTurnFailure):
-    failure_class = "max_rounds"
-
-
-class NoProgressError(HonestTurnFailure):
-    failure_class = "no_progress"
-
-
-class TurnTimeoutError(HonestTurnFailure):
-    """H-2（#857）：legacy 回合总时长预算耗尽（对齐 Pi 路径 900s 整轮预算）。"""
-
-    failure_class = "turn_timeout"
-
-
+# （E-8/#899 拆分回迁）回合取消结算/计划 ref 判定/空补全谓词是引擎
+# 内部原语，保留在引擎模块：
 def _settle_cancel() -> None:
     """Mark the live turn's outcome CANCELLED on a cooperative cancel.
 
@@ -230,6 +215,8 @@ def _is_empty_completion(content: object, tc_list: object) -> bool:
     曾被流式路径当成功收尾。两路径共用本谓词，杜绝再次漂移。
     """
     return not (content or "").strip() and not tc_list
+
+
 
 
 class SessionClearingError(RuntimeError):
@@ -321,6 +308,11 @@ def _lock_in_use(lock: asyncio.Lock) -> bool:
 
 class ChatExecutionEngine:
     """Agent 对话与流式响应执行引擎"""
+
+    # E-8（#899）：失败分类拆分至 turn_recovery.classify_failure；
+    # 静态方法别名保持 self._classify_failure 调用点不变。
+    _classify_failure = staticmethod(_classify_failure_impl)
+
 
     #: #407: P1「clearing」标记提升为注册表级（class 级共享）—— per-instance
     #: 时父引擎的 clear_session 只抑制本实例的 _save_msg_async，与 in-flight
@@ -2565,37 +2557,3 @@ class ChatExecutionEngine:
     def _detect_suspicious_result(self, result: Any) -> bool:
         return _is_suspicious_result_fn(result)
 
-    @staticmethod
-    def _classify_failure(
-        outcome: Optional[ToolDispatchResult],
-        exception: Optional[Exception] = None,
-    ) -> tuple[Optional[str], Optional[str]]:
-        """design-v3 §recovery：把一次工具失败分类成 failure_class + recovery_action。
-
-        供 step_error SSE / decision_log 附加字段使用（additive，不改变任何
-        现有行为与自愈路径）。
-        """
-        from app.services.planning.models import FailureClass as _FailureClass
-        from app.services.planning.recovery import (
-            classify_error as _classify_error,
-            recovery_action_for as _recovery_action_for,
-        )
-        try:
-            if exception is not None:
-                fc = _classify_error(exception=exception)
-            else:
-                raw = outcome.raw_result if isinstance(outcome.raw_result, dict) else {}
-                if raw.get("cancelled"):
-                    fc = _FailureClass.cancelled
-                else:
-                    fc = _classify_error(
-                        status=outcome.status,
-                        code=raw.get("code"),
-                        error_type=raw.get("error_type"),
-                        message=outcome.error_msg,
-                    )
-            ra = _recovery_action_for(fc)
-            return fc.value, ra.value
-        except Exception as e:  # noqa: BLE001 分类失败不拖垮主流程
-            logger.warning(f"[chat_execution_engine] failure 分类失败: {e}")
-            return None, None

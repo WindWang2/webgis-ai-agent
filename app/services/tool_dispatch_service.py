@@ -818,7 +818,7 @@ class ToolDispatchService:
                 raster_id = image_ref[len("ref:raster/"):]
                 image_url = f"/api/v1/sessions/{session_id}/raster/{raster_id}.png"
                 try:
-                    from app.api.routes.raster import lookup_session_owner_token
+                    from app.services.session_ownership import lookup_session_owner_token
                     session_token = await lookup_session_owner_token(session_id)
                 except Exception:
                     session_token = None

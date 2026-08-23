@@ -34,7 +34,7 @@ from shapely.geometry import Polygon, mapping
 # ADR-0052: 协作式取消检查点。cancellable() 在 chunk 边界读一次 contextvar，
 # 未绑定 token 时开销为零；用户取消后长循环立即抛 OperationCancelled 退出，
 # 真正释放 CPU 而不是只改 UI 状态。
-from app.services.jobs.cancellation import cancellable
+from app.lib.cancellation import cancellable
 
 logger = logging.getLogger(__name__)
 

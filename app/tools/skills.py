@@ -244,11 +244,15 @@ async def create_new_skill(module_name: str, code: str, description: str) -> str
         return "Skill validation failed:\n" + "\n".join(f"- {e}" for e in errors) + "\nPlease revise your code to remove dangerous patterns."
 
     from app.services.skill_creator import skill_creator
-    from app.api.routes.chat import get_registry
+    # E-2（#893）：经 services 层持有器取 registry（此前反向 import 路由层）
+    from app.services.chat.engine_instance import try_get_app_registry
 
+    app_registry = try_get_app_registry()
+    if app_registry is None:
+        return "Skill created but registry not initialized yet; skill will load on next dispatch."
     result = skill_creator.create_skill(module_name, code, description)
     # 立即触发热加载
-    load_skills(get_registry())
+    load_skills(app_registry)
     return result
 
 def _load_single_skill(registry: ToolRegistry, file_path: str, filename: str):
@@ -325,6 +329,9 @@ async def fetch_remote_skills(registry: ToolRegistry, repo_url: str):
     logger.info(f"Fetching remote skills from {repo_url}...")
     # 模拟远程获取并写入本地 app/skills/remote_xxx.py
     # ...
-    from app.api.routes.chat import get_registry
-    load_skills(get_registry())
+    from app.services.chat.engine_instance import try_get_app_registry
+
+    app_registry = try_get_app_registry()
+    if app_registry is not None:
+        load_skills(app_registry)
     return {"status": "success", "count": 0}

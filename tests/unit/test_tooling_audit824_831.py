@@ -45,6 +45,8 @@ class TestAudit824Resolver:
 
         monkeypatch.setattr(reg_mod.session_data_manager, "resolve_aliases", fake_resolve_aliases)
         monkeypatch.setattr(reg_mod.session_data_manager, "get", fake_get)
+        # P-1（#874）：解引用缝改走共享读 get_shared，伪造面同步
+        monkeypatch.setattr(reg_mod.session_data_manager, "get_shared", fake_get)
         return calls
 
     def _big_fc(self, n=20000):
