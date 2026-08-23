@@ -74,9 +74,9 @@ severity, repairability, suggested_fix: {type, params}}`,挂入
 | `carto.load.ratio` | 视口内要素数×平均符号面积/视口面积,按比例尺分档 | Meta Profile 要素计数 + camera + 符号基尺寸 | `thin_features` / `generalize` / `resize_symbols` |
 | `carto.color.separability` | 色带相邻类 CIEDE2000;主题层与底图明度对比 | `palettes.py` 色带定义 + basemap 目录已知色 | `change_palette` / `increase_class_gap` |
 | `carto.legend.completeness` | 图例项 ↔ 相机下可见层双向核对 | MapSpec `legend_spec` + camera + 图层可见性 | `add_legend_item` / `remove_stale_item` |
-| `carto.visualvar.overload`(P4) | 同层占用 Bertin 视觉变量通道计数 | MapSpec 样式字段 | `split_layer` / `reduce_channels` |
-| `carto.label.collision_est`(P4) | 空间索引标签盒采样估计(有界采样,非全量) | 注记字段 + camera | `resize_labels` / `thin_labels` |
-| `carto.scale.svs`(P4) | 目标比例尺下要素最小图上尺寸 vs 最小可视尺寸 | geometry 类型 + Meta Profile bbox | `generalize` / `switch_symbolization` |
+| `carto.visualvar.overload` | 同层占用 Bertin 视觉变量通道计数 | MapSpec 样式字段 | `split_layer` / `reduce_channels` |
+| `carto.label.collision_est` | 空间索引标签盒采样估计(有界采样,非全量) | 注记字段 + camera | `resize_labels` / `thin_labels` |
+| `carto.scale.svs` | 目标比例尺下要素最小图上尺寸 vs 最小可视尺寸 | geometry 类型 + Meta Profile bbox | `generalize` / `switch_symbolization` |
 
 - CIEDE2000 以纯函数落在 `app/lib/cartography/palettes.py`(无第三方依赖)。
 - 所有规则是 `(MapSpec, Meta Profile, camera) → rule 结果` 的**纯函数**;数据缺字段 →
@@ -127,7 +127,7 @@ severity, repairability, suggested_fix: {type, params}}`,挂入
 | **Phase 1** ✅ 已实施 | 三条高杠杆规则(`load.ratio`/`color.separability`/`legend.completeness`)+ typed fix 映射 + 修复动作 | M | 无 | ① 规则单测(golden fixture:超载图/低色差图/缺图例图各自 fail 且 fix 类型正确);② 修复循环端到端:注入失败原因后下一候选通过;③ 现有 L4 评审无回归 |
 | **Phase 2** ✅ 已实施 | 事实账本表 + alembic 迁移 + 写入点(gate 收割) + 项目级有界注入(legacy + Pi) + 冲突语义 + ADR-0069 | M | Phase 1(落账需要 deterministic 证据摘要) | ① 同项目第二张图复用共享分类(断点一致);② 指纹冲突时显式 `conflicted` 而非覆盖;③ 注入有界(字符预算测试);④ 无 project 上下文时零行为变化 |
 | **Phase 3** ✅ 已实施 | 分布指纹漂移检测 + stale 失效 + `[ENV_CHANGE]` 注入 + 时序复验（与漂移同一判定） | S/M | Phase 2 | ① 上传新分布数据后相关事实转 stale 且下 turn 可见提示;② 分布未变时零误报(指纹稳定性测试);③ 时序新时段触发复验 |
-| **Phase 4(可选)** | 其余三条规则(视觉变量过载/注记碰撞估计/SVS 比例尺适宜性) | M | Phase 1 | 同 Phase 1 模式 |
+| **Phase 4** ✅ 已实施 | 其余三条规则(视觉变量过载/注记碰撞估计/SVS 比例尺适宜性) | M | Phase 1 | 同 Phase 1 模式 |
 
 各阶段独立可回滚(规则可按 rule_id 灰度开关;账本注入可整体关闭降级为现状)。
 

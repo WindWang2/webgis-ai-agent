@@ -915,6 +915,12 @@ _POINT_GEOMS = ("Point", "MultiPoint")
 _LINE_GEOMS = ("LineString", "MultiLineString")
 _POLYGON_GEOMS = ("Polygon", "MultiPolygon")
 
+# Phase 4 阈值。注记盒占比按图面惯例（注记不应吃掉一成以上图面）；
+# SVS = smallest visible size，0.4mm@96dpi ≈ 1.5px 边长 → 2.25px² 面积。
+_LABEL_WARN_RATIO = 0.10
+_LABEL_FAIL_RATIO = 0.25
+_SVS_AREA_PX = 2.25
+
 
 def _viewport_bbox(view: Any) -> Optional[List[float]]:
     """Web-mercator 视口 bbox [w, s, e, n]（度）。zoom/center 缺失 → None。"""
@@ -1166,6 +1172,313 @@ def _check_color_separability(
         evidence=evidence,
         repairability=repairability,
         suggested_fix=suggested,
+    )
+
+
+def _check_visual_variable_overload(
+    report: CartographyReport,
+    layer: Dict[str, Any],
+    lid: Optional[str],
+    sid: Optional[str],
+) -> None:
+    """carto.visualvar.overload — 一个图层同时编码的数据变量数（Bertin）。
+
+    同一变量用多个视觉通道表达是**冗余**（可取）；不同变量挤在同一符号上
+    才是**过载**——读者无法同时解码 3 个以上并置变量。所以计数对象是
+    data-driven paint 里出现的**不同字段数**，而不是通道数。
+
+    修复是拆层/降维（结构变更），只作建议，绝不 AUTO_SAFE。
+    """
+    paint = layer.get("paint")
+    if not isinstance(paint, dict):
+        return
+    channels: Dict[str, List[str]] = {}
+    for prop, spec in _paint_methods(paint):
+        field = spec.get("field")
+        if isinstance(field, str) and field:
+            channels.setdefault(field, []).append(prop)
+    if not channels:
+        return
+    encoded_fields = sorted(channels)
+    evidence = {
+        "encoded_field_count": len(encoded_fields),
+        "encoded_fields": encoded_fields[:8],
+        "channels_per_field": {
+            field: sorted(props) for field, props in
+            list(channels.items())[:8]
+        },
+        "thresholds": {"warn": 3, "fail": 4},
+        "model": "bertin_concurrent_variables",
+    }
+    count = len(encoded_fields)
+    if count >= 4:
+        report.add_check(
+            "carto.visualvar.overload",
+            "fail",
+            (f"Layer '{lid}' encodes {count} data variables on one symbol — "
+             "a reader cannot decode that many concurrently; split layers"),
+            severity="error",
+            layer_id=lid,
+            source_id=sid,
+            evidence=evidence,
+            repairability="not_repairable",
+            suggested_fix={
+                "operation": "split_layer",
+                "layer_id": lid,
+                "fields": encoded_fields,
+            },
+        )
+        return
+    if count == 3:
+        report.add_check(
+            "carto.visualvar.overload",
+            "warning",
+            (f"Layer '{lid}' encodes 3 data variables on one symbol — "
+             "consider splitting or dropping a channel"),
+            severity="warning",
+            layer_id=lid,
+            source_id=sid,
+            evidence=evidence,
+            repairability="not_repairable",
+            suggested_fix={
+                "operation": "reduce_channels",
+                "layer_id": lid,
+                "fields": encoded_fields,
+            },
+        )
+        return
+    report.add_check(
+        "carto.visualvar.overload",
+        "pass",
+        f"Layer '{lid}' encodes {count} data variable(s) — decodable",
+        layer_id=lid,
+        source_id=sid,
+        evidence=evidence,
+    )
+
+
+def _check_label_collision(
+    report: CartographyReport,
+    mapspec: Dict[str, Any],
+    layer: Dict[str, Any],
+    lid: Optional[str],
+    sid: Optional[str],
+    profile: Optional[Dict[str, Any]],
+) -> None:
+    """carto.label.collision_est — 注记盒总面积对视口的占比（不做渲染）。
+
+    只在**标注层**（symbol/text + layout.text-field）且证据齐备时适用：
+    要素数 + bbox（估可见标注数）、text-size、以及标注字段的 profile
+    ``sampleValues``（估平均字符数——比猜一个常数诚实）。字号缺省 12px、
+    西文字宽按 0.6em；CJK 字符按 1em 计（中文注记宽度约为字号本身）。
+
+    这是**估计**而非渲染证据：像素级重叠仍由 ``VISUAL_OVERLAP`` 保持
+    ``not_evaluated``。修复（缩字号/抽稀注记）会牺牲可读性或信息量，
+    因此只作建议。
+    """
+    if layer.get("type") not in ("symbol", "text"):
+        return
+    layout = layer.get("layout") if isinstance(layer.get("layout"), dict) else {}
+    text_field = layout.get("text-field") or (
+        layer.get("paint", {}).get("text-field")
+        if isinstance(layer.get("paint"), dict) else None
+    )
+    if not isinstance(text_field, str) or not text_field.strip():
+        return
+    if not isinstance(profile, dict):
+        return
+    feature_count = profile.get("featureCount")
+    bbox = profile.get("bbox")
+    viewport = _viewport_bbox(mapspec.get("view"))
+    if (
+        not _is_num(feature_count) or float(feature_count) <= 0
+        or not _valid_bbox(bbox) or viewport is None
+    ):
+        return
+
+    text_size = layout.get("text-size")
+    font_px = float(text_size) if _is_num(text_size) else 12.0
+    if font_px <= 0:
+        return
+    field_name = text_field.strip().strip("{}")
+    avg_chars, char_evidence = _estimate_label_chars(profile, field_name)
+    if avg_chars is None:
+        return
+    coverage = _bbox_overlap_ratio(viewport, list(bbox))
+    est_labels = float(feature_count) * coverage
+    label_area = avg_chars * font_px * font_px  # 宽 = chars×0.6em 已并入 avg_chars
+    ratio = est_labels * label_area / (_VIEWPORT_WIDTH_PX * _VIEWPORT_HEIGHT_PX)
+    evidence = {
+        "text_field": field_name,
+        "font_px": font_px,
+        "avg_label_em_width": round(avg_chars, 3),
+        "label_char_evidence": char_evidence,
+        "est_visible_labels": int(est_labels),
+        "label_ink_ratio": round(ratio, 4),
+        "thresholds": {
+            "warn": _LABEL_WARN_RATIO, "fail": _LABEL_FAIL_RATIO,
+        },
+        "model": "uniform_density_label_boxes_estimate",
+    }
+    if ratio > _LABEL_FAIL_RATIO:
+        report.add_check(
+            "carto.label.collision_est",
+            "fail",
+            (f"Layer '{lid}' label boxes cover an estimated {ratio:.0%} of the "
+             "viewport — collisions are unavoidable at this scale"),
+            severity="error",
+            layer_id=lid,
+            source_id=sid,
+            evidence=evidence,
+            repairability="not_repairable",
+            suggested_fix={"operation": "thin_labels", "layer_id": lid},
+        )
+        return
+    if ratio > _LABEL_WARN_RATIO:
+        report.add_check(
+            "carto.label.collision_est",
+            "warning",
+            (f"Layer '{lid}' label boxes cover an estimated {ratio:.0%} of the "
+             "viewport — expect crowding"),
+            severity="warning",
+            layer_id=lid,
+            source_id=sid,
+            evidence=evidence,
+            repairability="not_repairable",
+            suggested_fix={"operation": "resize_labels", "layer_id": lid},
+        )
+        return
+    report.add_check(
+        "carto.label.collision_est",
+        "pass",
+        f"Layer '{lid}' estimated label load {ratio:.0%} leaves room",
+        layer_id=lid,
+        source_id=sid,
+        evidence=evidence,
+    )
+
+
+def _estimate_label_chars(
+    profile: Dict[str, Any], field_name: str
+) -> tuple[Optional[float], Dict[str, Any]]:
+    """标注平均宽度（以 em 计）。无字段样本 → (None, …) 表示不可评。
+
+    西文字符按 0.6em、CJK 按 1.0em 折算——同一个 sampleValues 里混排时
+    逐字符加权，不用单一常数糊。
+    """
+    fields = profile.get("fields")
+    field_info = fields.get(field_name) if isinstance(fields, dict) else None
+    samples = (
+        field_info.get("sampleValues") if isinstance(field_info, dict) else None
+    )
+    if not isinstance(samples, list) or not samples:
+        return None, {"sample_count": 0}
+    widths: List[float] = []
+    for sample in samples[:16]:
+        text = str(sample)
+        if not text:
+            continue
+        widths.append(sum(
+            1.0 if ord(ch) > 0x2E80 else 0.6 for ch in text
+        ))
+    if not widths:
+        return None, {"sample_count": 0}
+    return (
+        sum(widths) / len(widths),
+        {"sample_count": len(widths), "field": field_name},
+    )
+
+
+def _check_scale_svs(
+    report: CartographyReport,
+    mapspec: Dict[str, Any],
+    layer: Dict[str, Any],
+    lid: Optional[str],
+    sid: Optional[str],
+    profile: Optional[Dict[str, Any]],
+) -> None:
+    """carto.scale.svs — 面要素在当前比例尺下是否达到最小可视尺寸。
+
+    仅多边形层适用（线/点的最小可视尺寸由线宽/符号半径直接给出，不需要
+    从数据推）。均匀假设：平均面积 = bbox 面积 / 要素数，换算到当前 zoom
+    的像素面积后与 SVS（smallest visible size，约 0.4mm ≈ 1.5px 边长，
+    2.25px² 面积）比较。低于 SVS 说明该比例尺下要素退化为不可见斑点，
+    需要概括或换符号化方案（结构决策，只作建议）。
+    """
+    if layer.get("type") not in ("fill", "fill-extrusion"):
+        return
+    if not isinstance(profile, dict):
+        return
+    geom_types = [g for g in (profile.get("geometryTypes") or []) if isinstance(g, str)]
+    if not geom_types or any(g not in _POLYGON_GEOMS for g in geom_types):
+        return
+    feature_count = profile.get("featureCount")
+    bbox = profile.get("bbox")
+    view = mapspec.get("view")
+    zoom = view.get("zoom") if isinstance(view, dict) else None
+    if (
+        not _is_num(feature_count) or float(feature_count) <= 0
+        or not _valid_bbox(bbox) or not _is_num(zoom)
+    ):
+        return
+    bbox_list = list(bbox)
+    lat_mid = (float(bbox_list[1]) + float(bbox_list[3])) / 2.0
+    # 度 → 像素：zoom z 下 1° 经度 = 256·2^z/360 px；纬度按 cos 修正。
+    px_per_deg_lon = 256.0 * (2.0 ** float(zoom)) / 360.0
+    px_per_deg_lat = px_per_deg_lon / max(math.cos(math.radians(lat_mid)), 1e-6)
+    bbox_area_px = (
+        abs(float(bbox_list[2]) - float(bbox_list[0])) * px_per_deg_lon
+        * abs(float(bbox_list[3]) - float(bbox_list[1])) * px_per_deg_lat
+    )
+    if bbox_area_px <= 0:
+        return
+    avg_area_px = bbox_area_px / float(feature_count)
+    evidence = {
+        "zoom": zoom,
+        "feature_count": int(float(feature_count)),
+        "avg_feature_area_px": round(avg_area_px, 3),
+        "svs_area_px": _SVS_AREA_PX,
+        "model": "uniform_area_from_bbox_over_feature_count",
+    }
+    if avg_area_px < _SVS_AREA_PX:
+        report.add_check(
+            "carto.scale.svs",
+            "fail",
+            (f"Layer '{lid}' polygons average {avg_area_px:.2f}px² at zoom "
+             f"{zoom} — below the {_SVS_AREA_PX}px² smallest visible size"),
+            severity="error",
+            layer_id=lid,
+            source_id=sid,
+            evidence=evidence,
+            repairability="not_repairable",
+            suggested_fix={
+                "operation": "generalize",
+                "layer_id": lid,
+                "alternative": "switch_symbolization",
+            },
+        )
+        return
+    if avg_area_px < _SVS_AREA_PX * 4:
+        report.add_check(
+            "carto.scale.svs",
+            "warning",
+            (f"Layer '{lid}' polygons average {avg_area_px:.2f}px² at zoom "
+             f"{zoom} — near the visibility floor"),
+            severity="warning",
+            layer_id=lid,
+            source_id=sid,
+            evidence=evidence,
+            repairability="not_repairable",
+            suggested_fix={"operation": "switch_symbolization", "layer_id": lid},
+        )
+        return
+    report.add_check(
+        "carto.scale.svs",
+        "pass",
+        f"Layer '{lid}' polygons are legible at zoom {zoom}",
+        layer_id=lid,
+        source_id=sid,
+        evidence=evidence,
     )
 
 
@@ -1987,9 +2300,12 @@ def evaluate_cartography_semantics(
         )
 
         # 6b. Quantitative cartographic rules
-        # (specs/cartographic-quality-rules-and-memory-spec Phase 1).
+        # (specs/cartographic-quality-rules-and-memory-spec Phase 1 + 4).
         _check_viewport_load(report, mapspec, layer, lid, sid, profile)
         _check_color_separability(report, layer, lid, sid)
+        _check_visual_variable_overload(report, layer, lid, sid)
+        _check_label_collision(report, mapspec, layer, lid, sid, profile)
+        _check_scale_svs(report, mapspec, layer, lid, sid, profile)
 
     # 7. Legend / style field consistency (warning).
     legend = (mapspec.get("layout") or {}).get("legend") or {}
