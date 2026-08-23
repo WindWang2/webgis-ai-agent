@@ -144,6 +144,14 @@ export function PoiInfoPanel({
         </button>
       </div>
 
+      {/* U-5（#887）：近似数据披露 —— isApproximate 此前只上报给 LLM（#668），
+          对人类用户隐身；瓦片裁剪属性与权威属性的替换过程无任何解释。 */}
+      {selectedFeature?.isApproximate === true && (
+        <div className="border-b border-map-chrome-border bg-status-warning-soft px-2 py-1 font-sans text-micro text-status-warning" role="status">
+          瓦片近似数据，正在核实…
+        </div>
+      )}
+
       {current ? (
         <div className="p-2 font-sans text-meta">
           <div className="mb-1 truncate font-semibold text-map-chrome-ink" title={current.title}>

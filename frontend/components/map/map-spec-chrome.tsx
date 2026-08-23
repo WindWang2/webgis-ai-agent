@@ -3,7 +3,11 @@
 import React from 'react';
 import type { MapSpec, MapSpecComponent } from '@/lib/mapspec-compiler/types';
 import { renderComponent } from './map-components';
+import { buildBottomSlotIndexes, stackedBottomStyle } from './map-components/helpers';
 import { metersPerPixelAt } from '@/lib/map-kit/meters-per-pixel';
+
+// U-2（#884）同槽堆叠原语经 helpers 供渲染器与测试复用
+export { buildBottomSlotIndexes, stackedBottomStyle };
 
 export function computeScale(zoom: number, lat: number): { meters: number; pixels: number } {
   const metersPerPixel = metersPerPixelAt(zoom, lat);
@@ -36,7 +40,9 @@ export const MapSpecChrome = React.memo(function MapSpecChrome({ components, zoo
   }
   const renderable = fallbackDecor.length ? [...enabled, ...fallbackDecor] : enabled;
 
-  const ctx = { spec, zoom, centerLat, bearing };
+  // U-2（#884）：底部同槽组件分层索引（colorbar+scale_bar 不再互压）。
+  const bottomSlotIndexes = buildBottomSlotIndexes(renderable);
+  const ctx = { spec, zoom, centerLat, bearing, bottomSlotIndexes };
 
   return (
     <>

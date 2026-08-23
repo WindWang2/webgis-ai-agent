@@ -10,6 +10,7 @@ import {
   UserRound,
   X,
   ShieldCheck,
+  Layers,
 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
@@ -17,6 +18,7 @@ import { LlmConfig } from './llm-config';
 import { SkillsHub } from './skills-hub';
 import { RagConfig } from './rag-config';
 import { MapConfig } from './map-config';
+import { LayerManagement } from './layer-management';
 import { SystemSettings } from './system-settings';
 import { AccountSection } from './account-section';
 
@@ -25,7 +27,7 @@ import { AccountSection } from './account-section';
 /* ------------------------------------------------------------------ */
 
 interface NavItem {
-  key: 'llm' | 'skills' | 'rag' | 'map' | 'system' | 'account';
+  key: 'llm' | 'skills' | 'rag' | 'map' | 'layers' | 'system' | 'account';
   label: string;
   icon: React.ElementType;
   count?: number;
@@ -36,6 +38,8 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'skills', label: 'Skills', icon: Hash, count: 0 },
   { key: 'rag', label: '知识库', icon: Brain },
   { key: 'map', label: '地图配置', icon: Crosshair },
+  // U-1（#883）：图层管理面板此前完整实现却无导航入口（不可达死代码）。
+  { key: 'layers', label: '图层', icon: Layers },
   { key: 'system', label: '系统', icon: Settings },
   { key: 'account', label: '账户', icon: UserRound },
 ];
@@ -54,6 +58,8 @@ function TabContent({ tab }: { tab: string }) {
       return <RagConfig />;
     case 'map':
       return <MapConfig />;
+    case 'layers':
+      return <LayerManagement />;
     case 'system':
       return <SystemSettings />;
     case 'account':

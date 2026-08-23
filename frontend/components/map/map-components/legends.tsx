@@ -2,7 +2,7 @@
 import React from 'react';
 import type { MapSpecComponent } from '@/lib/mapspec-compiler/types';
 import { registerComponentRenderer } from './registry';
-import { positionClass, positionStyle } from './helpers';
+import { positionClass, stackedBottomStyle } from './helpers';
 import type { RendererContext } from './types';
 import type { LegendSpec } from '@/lib/map-kit/types';
 import { formatLegendValue } from '../legends/legend-card';
@@ -51,7 +51,7 @@ function LegendRenderer(component: MapSpecComponent, ctx: RendererContext) {
   const entries = legendEntries(legend);
   if (!entries.length) return null;
   return (
-    <div data-testid="spec-chrome-legend" style={positionStyle(component)} className={`map-chrome absolute z-30 rounded-chrome px-2 py-1.5 ${positionClass(component)}`} aria-label="分级图例">
+    <div data-testid="spec-chrome-legend" style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome px-2 py-1.5 ${positionClass(component)}`} aria-label="分级图例">
       {(legend as unknown as { title?: string }).title && <div className="text-micro font-medium text-map-chrome-ink">{(legend as unknown as { title: string }).title}</div>}
       <div className="mt-1 flex flex-col gap-1">
         {entries.slice(0, 8).map((e, j) => (
@@ -71,7 +71,7 @@ function CategoricalLegendRenderer(component: MapSpecComponent, ctx: RendererCon
   const entries = legendEntries(legend);
   if (!entries.length) return null;
   return (
-    <div data-testid="spec-chrome-categorical-legend" style={positionStyle(component)} className={`map-chrome absolute z-30 rounded-chrome px-2 py-1.5 ${positionClass(component)}`} aria-label="分类图例">
+    <div data-testid="spec-chrome-categorical-legend" style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome px-2 py-1.5 ${positionClass(component)}`} aria-label="分类图例">
       {(legend as unknown as { title?: string }).title && <div className="text-micro font-medium text-map-chrome-ink">{(legend as unknown as { title: string }).title}</div>}
       <div className="mt-1 flex flex-col gap-1">
         {entries.slice(0, 8).map((e, j) => (

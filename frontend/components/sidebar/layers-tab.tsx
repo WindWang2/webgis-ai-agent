@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useCallback } from 'react';
 import clsx from 'clsx';
-import { Eye, EyeOff, GripVertical, Layers as LayersIcon, LocateFixed } from 'lucide-react';
+import { Eye, EyeOff, GripVertical, Layers as LayersIcon, LocateFixed, Palette } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { Layer } from '@/lib/types/layer';
 import { ConfirmAction } from '@/components/shared/confirm-action';
@@ -299,7 +299,9 @@ export function LayersTab() {
                           </span>
                         )}
 
-                        {/* 不透明度滑杆内联进同一行 —— 功能不变，不再多占一行。 */}
+                        {/* 不透明度滑杆内联进同一行 —— 功能不变，不再多占一行。
+                            U-6（#888）：onKeyUp 补键盘提交——此前仅 onPointerUp/onBlur，
+                            键盘用户调滑杆地图纹丝不动直到失焦（与样式面板实现漂移）。 */}
                         <input
                           type="range"
                           min={0}
@@ -308,6 +310,7 @@ export function LayersTab() {
                           value={sliderPercent(layer)}
                           onChange={(e) => handleOpacityChange(layer, parseInt(e.target.value, 10))}
                           onPointerUp={() => commitOpacity(layer)}
+                          onKeyUp={() => commitOpacity(layer)}
                           onBlur={() => commitOpacity(layer)}
                           title={`不透明度 ${sliderPercent(layer)}%`}
                           /* w-16 + .slider-track：w-9(36px) 配上被 appearance-none
@@ -317,6 +320,15 @@ export function LayersTab() {
                         />
 
                         <div className="flex shrink-0 items-center">
+                          {/* U-1（#883）：样式编辑入口 —— LayerStylePanel 完整实现
+                              341 行却因历史重构丢失了唯一的生产入口（按钮），
+                              ContextPanel 承诺的「样式」实际不可达。 */}
+                          <IconButton
+                            size="sm"
+                            label={`编辑图层样式 ${layer.name}`}
+                            icon={Palette}
+                            onClick={() => useHudStore.getState().setEditingLayerId(layer.id)}
+                          />
                           {/* 缩放到图层：触发 map-panel 的 focusLayer 效果（fitBounds
                               到图层 bbox）。无 bbox/无几何的图层点击后无反应是
                               预期行为（计算不出范围）。 */}

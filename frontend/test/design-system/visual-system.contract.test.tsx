@@ -387,7 +387,9 @@ describe('density is token-driven', () => {
     expect(css).toMatch(/\.slider-track::-moz-range-thumb/);
 
     const layers = readCode('components/sidebar/layers-tab.tsx');
-    const range = layers.slice(layers.indexOf("type=\"range\""), layers.indexOf("type=\"range\"") + 600);
+    // U-6（#888）为滑杆补 onKeyUp 后 props 变长，窗口 600 → 900（断言不变：
+    // appearance-none 的 range 必须带 slider-track 类恢复可见 thumb）。
+    const range = layers.slice(layers.indexOf("type=\"range\""), layers.indexOf("type=\"range\"") + 900);
     expect(range).toContain('slider-track');
     // 36px over 100 steps is 0.36px per step; the track needs real width.
     expect(range).not.toMatch(/\bw-9\b/);

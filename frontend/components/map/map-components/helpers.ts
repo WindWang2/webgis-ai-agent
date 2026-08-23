@@ -41,3 +41,49 @@ export function positionClass(component: MapSpecComponent): string {
 export function positionStyle(component: MapSpecComponent): React.CSSProperties | undefined {
   return BOTTOM_OFFSET_STYLE[resolvePosition(component)];
 }
+
+// U-2（#884）：底部同槽多组件按「scale_bar 最贴底、其余按 spec 序上移」
+// 分层堆叠 —— 色条与比例尺缺省同为 bottom-right 且偏移相同，两个元素会
+// 锚定同一点互相遮挡。层距 36px 对齐 HUD chrome 族（状态读数 +0 / 比例尺
+// +30 / 图例 +66）的堆叠约定。
+const BOTTOM_STACK_BASE: Record<string, number> = {
+  'bottom-left': 6,
+  'bottom-center': 6,
+  'bottom-right': 30,
+};
+const BOTTOM_STACK_STEP_PX = 36;
+
+export function buildBottomSlotIndexes(
+  renderable: MapSpecComponent[],
+): Map<MapSpecComponent, number> {
+  const perSlotCount: Record<string, number> = {};
+  const perSlotStacked: Record<string, number> = {};
+  for (const c of renderable) {
+    const pos = resolvePosition(c);
+    if (pos in BOTTOM_STACK_BASE) perSlotCount[pos] = (perSlotCount[pos] ?? 0) + 1;
+  }
+  const indexes = new Map<MapSpecComponent, number>();
+  for (const c of renderable) {
+    const pos = resolvePosition(c);
+    if (!(pos in BOTTOM_STACK_BASE) || (perSlotCount[pos] ?? 0) <= 1) continue;
+    // scale_bar 恒为槽内第 0 层（贴底）；其余组件按 spec 声明序 1,2,… 上移
+    if (c.type === 'scale_bar') {
+      indexes.set(c, 0);
+    } else {
+      perSlotStacked[pos] = (perSlotStacked[pos] ?? 0) + 1;
+      indexes.set(c, perSlotStacked[pos]);
+    }
+  }
+  return indexes;
+}
+
+export function stackedBottomStyle(
+  component: MapSpecComponent,
+  slotIndexes?: Map<MapSpecComponent, number>,
+): React.CSSProperties | undefined {
+  const pos = resolvePosition(component);
+  const base = BOTTOM_STACK_BASE[pos];
+  if (base === undefined) return BOTTOM_OFFSET_STYLE[pos];
+  const idx = slotIndexes?.get(component) ?? 0;
+  return { bottom: `calc(var(--map-chrome-bottom, 10px) + ${base + idx * BOTTOM_STACK_STEP_PX}px)` };
+}

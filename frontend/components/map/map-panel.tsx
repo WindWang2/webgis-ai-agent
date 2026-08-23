@@ -271,6 +271,16 @@ export function MapPanel({
         } catch (err) {
           devOnly.warn("[map-panel] focusLayer fitBounds failed:", err)
         }
+      } else if (!cancelled) {
+        // U-8（#890）：无 bbox/无几何的图层聚焦此前完全无反馈（按钮可点但
+        // 点击无反应，用户会反复点击认定功能坏了）——诚实告知原因。
+        try {
+          const { useToastStore } = await import('@/components/ui/toast')
+          useToastStore.getState().addToast(
+            `图层「${target.name || focusLayerId}」暂无空间范围，无法缩放`,
+            'info',
+          )
+        } catch { /* toast 不可用不影响复位 */ }
       }
       window.setTimeout(() => {
         if (lastFittedFocusRef.current === focusLayerId) {
