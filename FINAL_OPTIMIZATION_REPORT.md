@@ -13,7 +13,7 @@
 | 2 多Agent审查 | 5 份专项报告：`HARNESS_CODE_REVIEW.md` / `GIS_ALGORITHM_REVIEW.md` / `PERFORMANCE_REVIEW.md` / `UI_REVIEW.md` / `ENGINEERING_REVIEW.md`（共 48 条发现，每条含 file:line 证据 + 修复方案 + 验证命令） |
 | 3 优化设计 | `HARNESS_OPTIMIZATION_PLAN.md`（七模块缺口分析与实施批次） |
 | 4 Issue 管理 | 48 个 Issues（#856–#903），5 个分类标签（harness / performance / gis-algorithm / frontend / engineering） |
-| 5+6 修复开发 | **6 个 commit，119 文件，+4923/−2682 行**，每类完成后本地验证 + 关闭对应 Issues |
+| 5+6 修复开发 | **9 个 commit，130+ 文件，+5600/−2900 行**，每类完成后本地验证 + 关闭对应 Issues |
 | 7 整体复审 | `scripts/ci-local.sh` 全量本地门禁（与 CI 逐字同构） |
 | 8 本报告 | `FINAL_OPTIMIZATION_REPORT.md` |
 
@@ -64,6 +64,8 @@
 | `eecc077` [gis] | G-1..G-9：均匀采样、CRS 声明、标准 OSM 标签、统计诚实性（#865-873） |
 | `851383e` [frontend] | U-1..U-9：样式编辑入口恢复、chrome 堆叠、失败反馈（#883-891） |
 | `5128086` [engineering] | E-2..E-12：分层收口、配置守恒、模块拆分（#893-903） |
+| `4628043`/`7ed6108` [engineering] | 全量套件回归修复（jenks 别名、conftest 钉扎外溢、validator 顺序与缩进、lane 清单三方同步） |
+| `d5fe92b` [engineering] | **master 既有全量门禁污染根因修复**（settings 单例 reload 污染 + prometheus 默认 registry 污染） |
 
 ## 6. 性能优化结果
 
@@ -87,12 +89,27 @@
 - **配置守恒**：.env.example 补齐 34 键 + 契约测试锁定；运行期 env 键登记 Settings；`ALLOW_PUBLIC_REGISTER` 生产 fail-fast。
 - **诚实性贯穿**：截断披露（POI 采样/Overpass limit）、FDR 校正披露（热点/LISA）、坐标系机器可读声明（gcj02）、失败回滚 toast、近似数据横幅——"看似专业实则误导"的静默路径逐条封死。
 
-## 8. Phase 7 复审结论
+## 8. Phase 7 复审结论（全量本地门禁，与 CI 逐字同构）
 
-- 功能保持：2764 后端单测 + 41 制图门禁 + 71 perf 基线 + 172 前端文件（1708 测试）全绿；
-- lint/typecheck：ruff、ESLint、双 tsconfig tsc 全部清零（并修复了被增量缓存掩盖的 `?raw` 类型门禁缺口）；
-- 架构：反向依赖 grep 验证清零；新增 47 个回归测试锚点（tests/unit/test_harness_round_856_864.py 等 4 个新测试文件）；
-- 全量 `scripts/ci-local.sh`（与 CI 逐字同构）执行结果见下方附记。
+最终状态（commit d5fe92b，`scripts/ci-local.sh` 各 lane）：
+
+| 门禁 | 结果 |
+|---|---|
+| ruff（仓级） | ✅ All checks passed |
+| ESLint（--max-warnings 0） | ✅ 清零 |
+| typecheck（双 tsconfig） | ✅ 0 错（含修复被增量缓存掩盖的 `?raw` 类型缺口） |
+| vitest 全量 | ✅ 172 文件 / 1708 测试 |
+| next build | ✅ 静态导出完成 |
+| **后端全量 pytest（--cov-fail-under=75）** | ✅ **5171 passed / 0 failed / 覆盖率 84%** |
+| perf 基线 lane | ✅ 70 passed |
+| cartography 门禁 | ✅ 41 passed |
+| 契约层 | ✅ 26 passed |
+
+**重要过程发现——master 全量门禁本就是红的**：基线 commit（062ba31）上同一命令有 **39 个失败**（长期被绕过 CI 的直推掩盖，与 E-1 相互印证）。逐组二分定位到**单一污染根因**：`tests/cartography/test_memory_governance.py` 为验证 env 阈值而 `importlib.reload(app.core.config)`，每次 reload 铸造新的 `settings` 单例——所有持旧引用的模块与后续 import 新对象的测试从此看到两个不同的 Settings，任何 `monkeypatch.setattr(settings, ...)` 都打在对方看不见的那个上（local_stats 的 `LOCAL_GEODATA_DIR` 打旧对象 → ingest 读默认路径 → rows==0；auth/planner/CORS 等同族）。次要根因：prometheus 默认 REGISTRY 被先导入的 app.main 占用后，metrics 测试的新 app 5xx 计数丢失。两者均**在基线上用两文件共跑复现**后修复（teardown 恢复原单例身份；boom app 隔离 CollectorRegistry 并注册断言依赖的 auth 计数器）。
+
+修复过程本身也引入并修回过 3 批回归（jenks 别名调用约定、conftest 钉扎外溢、validator 误缩进），全部在复跑中捕获——最终 0 失败包含对全部 9 个 commit 改动的回归验证。
+
+架构验证：services/tools/lib → api 反向 import grep 清零；新增 60+ 回归测试锚点（4 个新测试文件 + 既有测试缝同步）。
 
 ## 9. 后续发展建议
 
