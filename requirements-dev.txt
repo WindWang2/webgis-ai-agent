@@ -14,7 +14,7 @@ pytest-cov>=7.1.0
 pytest-timeout>=2.4.0
 
 # In-memory Redis fake for unit tests (tests/test_async_session_data.py 等使用)
-fakeredis>=2.37.0
+fakeredis>=2.37.1
 
 # Excel parsing for local stats / yearbook ingest tests
 openpyxl>=3.1.2
