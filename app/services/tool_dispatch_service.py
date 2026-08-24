@@ -30,11 +30,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import logging
+import os
 import re
 import uuid
-import hashlib
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Literal, Optional
 
@@ -223,6 +224,11 @@ class ToolDispatchService:
         # adds. Lock is held only for the microsecond check-and-add, released
         # before the heavy registry dispatch, so it never serializes execution.
         self._dedup_lock = asyncio.Lock()
+        # #909 wave concurrency bound: ASYNC + THREAD both burst through here
+        # under an LLM round that emits 12-20 concurrent tool_calls. Registry's
+        # _TOOL_THREAD_LIMIT only gates sync work; this gate bounds the wave.
+        _wave_limit = max(1, int(os.getenv("TOOL_WAVE_CONCURRENCY") or os.getenv("TOOL_CONCURRENCY_LIMIT") or "5"))
+        self._wave_semaphore = asyncio.Semaphore(_wave_limit)
         # P2-9（adversarial P2-9 / recovery P2）：已完成（非在飞）的同参调用集合。
         # 重复命中时若 key ∈ _completed_keys → post-success 语义（原文案）；
         # 否则视为"并发在飞"→ 不谎报成功的软化文案。有界：超限整体清空只会
@@ -276,8 +282,13 @@ class ToolDispatchService:
             executed_tools.add(tool_key)
 
         # 2. 执行（registry 内部全权处理 ref 解析、校验、异常捕获与自愈）
+        # #909 wave bound: the registry call (+ store + MapSpec authoring below) is
+        # the blast radius. Guard it behind _wave_semaphore so an LLM round that
+        # emits 12-20 concurrent tool_calls cannot burst the thread pool / Redis /
+        # external APIs. _dedup_lock is already released, so only execution is gated.
         try:
-            result = await self._registry.dispatch(tool_name, tool_args_raw, session_id=session_id)
+            async with self._wave_semaphore:
+                result = await self._registry.dispatch(tool_name, tool_args_raw, session_id=session_id)
         except OperationCancelled:
             # ADR-0052：取消上抛给工具管道处理（它会记成「已取消」而非工具故障）。
             # 取消的调用不占用 dedup 槽位（本轮后续重试不被“已成功”谎言拦截）。
