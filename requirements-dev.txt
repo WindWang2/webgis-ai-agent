@@ -17,6 +17,6 @@ pytest-timeout>=2.4.0
 fakeredis>=2.37.1
 
 # Excel parsing for local stats / yearbook ingest tests
-openpyxl>=3.1.2
+openpyxl>=3.1.5
 python-calamine>=0.8.2
 
