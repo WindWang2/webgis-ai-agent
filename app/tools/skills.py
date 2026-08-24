@@ -153,10 +153,14 @@ def _attr_chain(node: ast.Attribute) -> str:
 def _validate_skill_code(code: str) -> list[str]:
     """Validate skill code for dangerous patterns. Returns list of errors.
 
-    Defense-in-depth (issue #399): beyond bare-name checks, attribute-access
-    chains are resolved to their full dotted name (`platform.os.open`,
-    `_posixsubprocess.fork_exec`) and rejected if any segment hits the
-    dangerous set. This is still a deny-list — NOT a security boundary.
+    Defense-in-depth (issues #399, #916): beyond bare-name checks,
+    attribute-access chains are resolved to their full dotted name
+    (`platform.os.open`, `_posixsubprocess.fork_exec`) and rejected if any
+    segment hits the dangerous set. Computed/dynamic imports via
+    ``getattr(builtins, "__import__")`` / ``__builtins__.__import__`` are
+    also detected via a dedicated dunder-import probe. This is still a
+    deny-list — NOT a security boundary; admin-only + ALLOW_DYNAMIC_SKILLS
+    + tier-3 gate are the real boundary.
     """
     errors = []
     try:
@@ -177,9 +181,11 @@ def _validate_skill_code(code: str) -> list[str]:
                 if root_mod in _BLOCKED_IMPORTS:
                     errors.append(f"Blocked import: {node.module}")
 
-        # Block dunder attribute access on any node (MRO chain / sandbox escape)
+        # Block dunder attribute/name access on any node (MRO chain / sandbox escape)
         if isinstance(node, ast.Attribute) and node.attr.startswith("__"):
             errors.append(f"Blocked dunder attribute: {node.attr}")
+        if isinstance(node, ast.Name) and node.id.startswith("__"):
+            errors.append(f"Blocked dunder name: {node.id}")
 
         # Issue #399: resolve attribute chains (platform.os.open) and reject
         # any chain whose segment hits the dangerous set. Catches aliased
@@ -200,8 +206,35 @@ def _validate_skill_code(code: str) -> list[str]:
                 errors.append(f"Blocked builtin: {func.id}")
             if isinstance(func, ast.Attribute) and func.attr in _BLOCKED_ATTRS:
                 errors.append(f"Blocked attribute: {func.attr}")
+            # #916: getattr(builtins, "__import__") / getattr(__builtins__, "eval")
+            # is a verified bypass — the string literal carries a dunder that
+            # the attribute checks above cannot see (the dunder is a Constant,
+            # not an Attribute node). Probe Call(getattr) string args for dunders.
+            if isinstance(func, ast.Name) and func.id == "getattr":
+                for arg in node.args:
+                    if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and arg.value.startswith("__"):
+                        errors.append(f"Blocked getattr dunder arg: {arg.value!r}")
 
-    return errors
+        # #916: string-literal dunder smuggling outside Call(getattr) —
+        # e.g. ``x = "__import__"; getattr(b, x)`` or ``__import__("os")`` via
+        # a computed string variable. A bare "__import__" literal anywhere in
+        # skill code is a strong bypass signal; reject it with a correction hint.
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if node.value in ("__import__", "__builtins__", "__loader__", "__spec__"):
+                # Allow the word appearing in a comment string that is also
+                # used in legitimate GIS tool docstrings only if the skill file
+                # is trivially small — here skill code is attacker-controlled
+                # LLM output, so be strict.
+                errors.append(f"Blocked dunder string literal: {node.value!r}")
+
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for e in errors:
+        if e not in seen:
+            seen.add(e)
+            deduped.append(e)
+    return deduped
 
 
 def register_skill_tools(registry: ToolRegistry):
@@ -239,9 +272,18 @@ async def create_new_skill(module_name: str, code: str, description: str) -> str
             "有 admin 权限。"
         )
 
+    import hashlib as _hashlib
+
     errors = _validate_skill_code(code)
     if errors:
         return "Skill validation failed:\n" + "\n".join(f"- {e}" for e in errors) + "\nPlease revise your code to remove dangerous patterns."
+
+    # #916 audit log: sha256 + truncated description + module name for forensics
+    try:
+        sha = _hashlib.sha256(code.encode()).hexdigest()[:16]
+        logger.warning("[skill-audit] create_new_skill module=%s sha256=%s size=%d desc=%r", module_name, sha, len(code), description[:200])
+    except Exception:
+        pass
 
     from app.services.skill_creator import skill_creator
     # E-2（#893）：经 services 层持有器取 registry（此前反向 import 路由层）
