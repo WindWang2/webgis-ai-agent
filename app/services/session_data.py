@@ -1,6 +1,7 @@
 """会话数据管理器 - 存储大对象并提供游标引用"""
 import asyncio
 import copy
+import os
 import uuid
 import logging
 from typing import Any, Optional
@@ -63,9 +64,29 @@ class MemorySessionStore(BaseSessionStore):
         # 16 hex chars = 64 bits entropy. ref_id + session_id 是能力令牌，需难以枚举。
         ref_id = f"ref:{prefix}-{uuid.uuid4().hex[:16]}"
 
-        # 维护容量：按 LRU 淘汰最久未访问的项
+        # 维护容量：按 LRU 淘汰最久未访问的项（entry 计数 + 字节预算）
+        # #912 byte cap: each entry can be 5k FC (~5MB). 200 × 5MB = 1GB per session.
+        # SESSION_STORE_MAX_BYTES (env, default 50MB) bounds memory before OOM.
+        _max_bytes = int(os.getenv("SESSION_STORE_MAX_BYTES", "52428800"))
         session_cache = self._store[session_id]
-        while len(session_cache) >= self.capacity:
+        # Pre-compute new entry size for byte-cap check (uses public alias)
+        try:
+            from app.lib.json_size import estimate_json_bytes as _est_bytes
+            _new_size = _est_bytes(data) if isinstance(data, (dict, list)) else len(str(data).encode())
+        except Exception:
+            _new_size = 0
+        def _cache_bytes() -> int:
+            total = _new_size
+            for v in session_cache.values():
+                try:
+                    from app.lib.json_size import estimate_json_bytes as _eb2
+                    total += _eb2(v) if isinstance(v, (dict, list)) else len(str(v).encode())
+                except Exception:
+                    pass
+            return total
+        while len(session_cache) >= self.capacity or (_new_size and _cache_bytes() > _max_bytes):
+            if not session_cache:
+                break
             oldest_ref, _ = session_cache.popitem(last=False)
             self._remove_alias_by_ref(session_id, oldest_ref)
             if session_id in self._descriptors:

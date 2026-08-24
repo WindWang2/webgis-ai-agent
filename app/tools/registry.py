@@ -695,11 +695,21 @@ class ToolRegistry:
                     )
 
         # GeoJSON 几何结构校验 (BE-AUDIT-08)
-        # PERF-F2 + #699 + #677：与上节 Pydantic 旁路同门（_is_args_oversized），
-        # 避免两道门用不同预算/阈值造成大载荷一处放行另一处仍全量走。
+        # PERF-F2 + #699 + #677：与上节 Pydantic 旁路同门（_is_args_oversized）。
+        # #911: oversized 载荷此前跳过校验 — 恶意/非法 GeoJSON 静默进入工具。
+        # 保留浅层叶校验（只验顶层 type/features 形状，预算化 O(1)）：
+        # 深层要素枚举仍跳过以释放 100k 载荷的 ~100ms dump 预算。
         try:
             if not _args_oversized_now:
                 validate_geojson_structure(arguments)
+            else:
+                # Lightweight leaf probe for oversized: only top-level FC shape
+                _args_geo = arguments.get("geojson") if isinstance(arguments, dict) else None
+                if isinstance(_args_geo, dict) and _args_geo.get("type") == "FeatureCollection":
+                    if "features" not in _args_geo:
+                        raise ValueError("GeoJSON FeatureCollection 缺少必需的 'features' 字段（大载荷浅层校验）")
+                    if not isinstance(_args_geo.get("features"), list):
+                        raise ValueError("GeoJSON FeatureCollection 的 'features' 字段必须为列表")
         except ValueError as e:
             return std_error_response(
                 str(e),
