@@ -40,21 +40,19 @@ class MapProductTemplate(BaseModel):
     description: str = ""
     recipe_id: str
     layer_roles: List[LayerRoleSpec]
-    # #719: subject tokens this template is specialized for (e.g. education
-    # facilities); empty = generic. find_for_recipe prefers a subject match
-    # over the generic template so plan evidence never mislabels the product.
     subject_categories: List[str] = []
-    # 任务亲和（TemplateSelector 用）：如 simple_view → 轻量点图产品。
     task_affinity: List[str] = []
     default_components: List[str] = []
     outputs: List[str] = ["interactive_map"]
     exports: List[str] = ["png"]
-    title_pattern: str = ""        # 如 "{scope}{subject}分布"
-    # 兼容元数据（缺省从 layer_roles 推导）
+    title_pattern: str = ""
     compatible_map_models: List[str] = []
-    priority: int = 50             # selector 评分 tie-break（小者优先）
+    priority: int = 50
     template_version: str = "1.0"
     deprecated: bool = False
+    composition_template_id: str = ""
+    component_overrides: Dict[str, object] = {}
+    component_requirements: Dict[str, str] = {}
 
     @model_validator(mode="after")
     def _derive_compatible_map_models(self) -> "MapProductTemplate":
