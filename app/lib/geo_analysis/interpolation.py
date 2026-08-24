@@ -251,12 +251,26 @@ def idw_interpolation(
     )
 
     # --- H3 target cells (lon/lat bbox) + resource guard --------------------
-    min_lon = max(float(lonlat[:, 0].min()) - _BBOX_BUF_DEG, -180.0)
-    max_lon = min(float(lonlat[:, 0].max()) + _BBOX_BUF_DEG, 180.0)
+    # Antimeridian wrap: naive min/max yields 358° for points at 179° and -179°.
+    # Detect wrapped span >180° and compute true wrapped width for the estimate.
+    raw_min_lon = float(lonlat[:, 0].min())
+    raw_max_lon = float(lonlat[:, 0].max())
+    crosses_am = (raw_max_lon - raw_min_lon) > 180.0
+    if crosses_am:
+        # Unwrap negatives (+360) to measure the narrow band across the date line
+        wrapped_width = 360.0 - (raw_max_lon - raw_min_lon)
+    else:
+        wrapped_width = None  # type: ignore[assignment]
+
+    min_lon = max(raw_min_lon - _BBOX_BUF_DEG, -180.0) if not crosses_am else max(raw_min_lon - _BBOX_BUF_DEG, -180.0)
+    max_lon = min(raw_max_lon + _BBOX_BUF_DEG, 180.0) if not crosses_am else min(raw_max_lon + _BBOX_BUF_DEG, 180.0)
     min_lat = max(float(lonlat[:, 1].min()) - _BBOX_BUF_DEG, -90.0)
     max_lat = min(float(lonlat[:, 1].max()) + _BBOX_BUF_DEG, 90.0)
 
-    estimate = _estimate_h3_cells(min_lon, min_lat, max_lon, max_lat, resolution)
+    if crosses_am and wrapped_width is not None:
+        estimate = int(_world_h3_cells(resolution) * (abs(float(wrapped_width)) * abs(max_lat - min_lat) / 41253.0))
+    else:
+        estimate = _estimate_h3_cells(min_lon, min_lat, max_lon, max_lat, resolution)
     if estimate > _MAX_H3_CELLS:
         raise InterpolationResourceExceededError(
             f"IDW 请求估计将生成约 {estimate:,} 个 H3 单元（上限 {_MAX_H3_CELLS:,}），"
@@ -269,14 +283,27 @@ def idw_interpolation(
             ),
         )
 
-    bbox_polygon = {
-        "type": "Polygon",
-        "coordinates": [[
-            [min_lon, min_lat], [max_lon, min_lat], [max_lon, max_lat],
-            [min_lon, max_lat], [min_lon, min_lat],
-        ]],
-    }
-    target_cells = h3.geo_to_cells(bbox_polygon, resolution)
+    if crosses_am:
+        # Split across the date line into two bboxes for correct polyfill
+        # Interval A: [raw_max_lon, 180], Interval B: [-180, raw_min_lon]
+        bbox_a = {"type": "Polygon", "coordinates": [[[raw_max_lon, min_lat], [180.0, min_lat], [180.0, max_lat], [raw_max_lon, max_lat], [raw_max_lon, min_lat]]]}
+        bbox_b = {"type": "Polygon", "coordinates": [[[-180.0, min_lat], [raw_min_lon, min_lat], [raw_min_lon, max_lat], [-180.0, max_lat], [-180.0, min_lat]]]}
+        cells_a = h3.geo_to_cells(bbox_a, resolution) if raw_max_lon < 180.0 else set()
+        cells_b = h3.geo_to_cells(bbox_b, resolution) if raw_min_lon > -180.0 else set()
+        target_cells: set = set(cells_a) | set(cells_b)
+        # Fallback: if split produced nothing (tiny band at exact 180), fall back to narrow strip
+        if not target_cells:
+            narrow = {"type": "Polygon", "coordinates": [[[min_lon, min_lat], [max_lon, min_lat], [max_lon, max_lat], [min_lon, max_lat], [min_lon, min_lat]]]}
+            target_cells = h3.geo_to_cells(narrow, resolution)
+    else:
+        bbox_polygon = {
+            "type": "Polygon",
+            "coordinates": [[
+                [min_lon, min_lat], [max_lon, min_lat], [max_lon, max_lat],
+                [min_lon, max_lat], [min_lon, min_lat],
+            ]],
+        }
+        target_cells = h3.geo_to_cells(bbox_polygon, resolution)
     n_cells = len(target_cells)
 
     # h3.geo_to_cells returns [] for pathological bboxes (over a pole, or the

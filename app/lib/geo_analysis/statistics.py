@@ -178,11 +178,12 @@ def calculate_sde(geojson: dict) -> GeoAnalysisResult:
     area_km2 = ellipse_poly.area / 1e6
     summary = f"Directional Insight: The points show a clear {direction} directional trend, covering an area of {area_km2:.2f} sq km."
     
+    center_wgs84 = gpd.GeoSeries([Point(float(mean_x), float(mean_y))], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
     data_out = {
         "type": "Feature",
         "geometry": mapping(ellipse_wgs84),
         "properties": {
-            "center": [float(mean_x), float(mean_y)],
+            "center": [float(center_wgs84.x), float(center_wgs84.y)],
             "sigma_x": float(sigma_x),
             "sigma_y": float(sigma_y),
             "angle_deg": float(deg),

@@ -368,15 +368,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                         ]
         except Exception as e:
             logger.warning(f"PostGIS list_datasets fallback due to error: {e}")
-            return [
-                {
-                    "id": f"public.{self.database}_table",
-                    "title": f"{self.profile.id}_{self.database}_table",
-                    "schema": "public",
-                    "geometry_type": "Polygon",
-                    "source_type": "postgis",
-                }
-            ]
+            return []
 
     def describe(self, dataset_id: str) -> DatasetDescriptor:
         """Fetch full DatasetDescriptor metadata contract for a specific PostGIS spatial table."""
@@ -434,14 +426,13 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                         source_type="postgis",
                         geometry_type=geom_type,
                         srs=srid,
-                        bbox=bbox or [-180.0, -90.0, 180.0, 90.0],
-                        feature_count=feature_count,
+                        bbox=bbox,  # None when unknown — caller renders "unknown", not world
+                        feature_count=feature_count if feature_count else None,
                         fields=fields,
                         metadata={"schema": schema_name, "table": table_name},
                     )
         except Exception as e:
             logger.warning(f"PostGIS describe fallback for '{dataset_id}': {e}")
-            # Fallback descriptor to avoid pipeline breakdown
             return DatasetDescriptor(
                 id=dataset_id,
                 title=f"{self.profile.id}_{table_name}",
@@ -449,8 +440,8 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                 source_type="postgis",
                 geometry_type="Geometry",
                 srs="EPSG:4326",
-                bbox=[-180.0, -90.0, 180.0, 90.0],
-                feature_count=100,
+                bbox=None,
+                feature_count=None,
                 fields=[{"name": "id", "type": "integer"}],
                 tags=[self.profile.id, "postgis"],
                 metadata={"error": str(e)},
@@ -523,7 +514,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                         "schema": {"table": dataset_id, "columns": columns if 'columns' in locals() else []},
                         "properties": sample_properties,
                         "features": features,
-                        "bbox": [-180.0, -90.0, 180.0, 90.0],
+                        "bbox": None,
                     }
         except Exception as e:
             logger.warning(f"PostGIS preview error for '{dataset_id}': {e}")
@@ -531,7 +522,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                 "schema": {"table": dataset_id, "error": str(e)},
                 "properties": {},
                 "features": [],
-                "bbox": [-180.0, -90.0, 180.0, 90.0],
+                "bbox": None,
             }
 
     def query(self, dataset_id: str, query_spec: QuerySpec) -> QueryResult:
