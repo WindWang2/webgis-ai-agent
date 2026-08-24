@@ -196,5 +196,5 @@ __all__ = [
     "ComponentCategoryRegistry",
     "get_component_category_registry",
     "reset_component_category_registry",
-    "SEED_CATEGORIES",
+    "_SEED_CATEGORIES",
 ]

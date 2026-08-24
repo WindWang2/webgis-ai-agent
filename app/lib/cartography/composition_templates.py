@@ -269,7 +269,6 @@ class CompositionTemplateRegistry:
             from app.lib.cartography.component_templates import get_component_template_registry
             comp_reg = get_component_registry()
             tmpl_reg = get_component_template_registry()
-            cat_exists = comp_reg.all_ids  # check slot allowed types
             for tpl in self._by_id.values():
                 if tpl.fallback_template and tpl.fallback_template not in self._by_id:
                     issues.append(f"composition {tpl.id}: fallback {tpl.fallback_template} not found")

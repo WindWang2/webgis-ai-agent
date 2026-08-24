@@ -323,5 +323,5 @@ __all__ = [
     "ComponentRegistry",
     "get_component_registry",
     "reset_component_registry",
-    "SEED_DESCRIPTORS",
+    "_SEED_DESCRIPTORS",
 ]
