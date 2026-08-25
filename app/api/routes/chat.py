@@ -567,11 +567,34 @@ async def chat_completions(
                     session_id=req.session_id,
                     cartography_context=cartography_context,
                 )
+                pi_session_id = result.get("sessionId") or req.session_id or ""
+                final_content = result.get("content", "")
+
+                # Parity with streaming Pi & legacy path: persist transcript & title
+                try:
+                    async with async_db_session() as db:
+                        svc = AsyncHistoryService(db)
+                        await svc.save_message(pi_session_id, "user", req.message)
+                        if final_content:
+                            await svc.save_message(pi_session_id, "assistant", final_content)
+                except Exception as e:
+                    logger.warning("[pi-chat-nonstream] message persistence failed for %s: %s", pi_session_id, e)
+
+                try:
+                    async with async_db_session() as db:
+                        conv = await db.get(Conversation, pi_session_id)
+                        needs_title = conv is not None and (conv.title or "新对话") == "新对话"
+                    if needs_title:
+                        engine = get_engine()
+                        engine._fire_and_forget(engine._generate_title, pi_session_id, req.message)
+                except Exception as e:
+                    logger.warning("[pi-chat-nonstream] title generation failed for %s: %s", pi_session_id, e)
+
                 # ADR-0069: harvest project memory AFTER this turn's verdict
                 # exists — memory lags evidence by one step and can never
                 # short-circuit review. Best-effort; never fails the turn.
                 await harvest_project_memory(req.session_id, req.project_id)
-                return ChatResponse(session_id=result.get("sessionId", req.session_id or ""), content=result.get("content", ""))
+                return ChatResponse(session_id=pi_session_id, content=final_content)
             except PiRpcError as e:
                 logger.error(f"Pi bridge error: {e}", exc_info=True)
                 raise HTTPException(status_code=502, detail="Agent bridge error")

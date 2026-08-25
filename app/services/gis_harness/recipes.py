@@ -231,8 +231,8 @@ SEED_RECIPES: List[CartographyRecipe] = [
             "宽泛『分布情况』请求的产品族：视觉热力为主，点叠加 + 行政聚合为辅；"
             "样本不足或非点几何时确定性降级为点图。"
         ),
-        intent_tasks=["distribution_overview"],
-        intent_cartography=["density_overview", "point_overlay", "administrative_choropleth"],
+        intent_tasks=["distribution_overview", "simple_view"],
+        intent_cartography=["density_overview", "point_overlay", "administrative_choropleth", "simple_point_map"],
         required_geometry=["Point", "MultiPoint"],
         allowed_geometry=["Point", "MultiPoint"],
         eligibility=[

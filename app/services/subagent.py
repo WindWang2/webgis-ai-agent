@@ -181,7 +181,7 @@ class SubagentDispatcher:
                 success=False,
                 error=str(e),
                 summary=f"子代理执行失败: {e}",
-                refs=None,
+                refs=[],
             )
 
         # #685: 消费 chat() 的真实 outcome（success 仅当 content 非空且 task 未失败）

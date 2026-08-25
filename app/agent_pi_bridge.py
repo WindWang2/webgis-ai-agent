@@ -269,6 +269,44 @@ def _cleanup_turn_state(turn_sid: str) -> None:
     _dispatch_result_cache.clear()
 
 
+def _slim_pi_details_payload(result: Any) -> Any:
+    """Cap details payload to 64KB and strip large images/features."""
+    details_payload: Any = getattr(result, "raw_result", result)
+    if isinstance(details_payload, dict):
+        details_payload = dict(details_payload)
+        # Raster data URL is not needed — frontend mounts via result_ref / imageRef
+        if "image" in details_payload and isinstance(details_payload.get("image"), str):
+            img = details_payload["image"]
+            if img.startswith("data:image/") and len(img) > 1024:
+                details_payload.pop("image", None)
+                ref = getattr(result, "geojson_ref", None) or details_payload.get("result_ref")
+                if ref:
+                    details_payload["imageRef"] = ref
+        # GeoJSON body already stored as ref — strip from details too
+        if "geojson" in details_payload:
+            details_payload.pop("geojson", None)
+        if isinstance(details_payload.get("data"), dict) and details_payload["data"].get("type") == "FeatureCollection":
+            # keep summary, drop heavy features array
+            data_fc = details_payload["data"]
+            if isinstance(data_fc.get("features"), list) and len(data_fc["features"]) > 100:
+                details_payload["data"] = {k: v for k, v in data_fc.items() if k != "features"}
+                details_payload["data"]["feature_count"] = len(data_fc["features"])
+        # Cap details to 64KB JSON
+        import json as _json
+        try:
+            encoded = _json.dumps(details_payload, ensure_ascii=False)
+            if len(encoded.encode("utf-8")) > 65536:
+                # Keep only essential keys
+                keep = {k: v for k, v in details_payload.items() if k in ("type", "result_ref", "imageRef", "mapspec_fingerprint", "success", "summary", "status", "feature_count", "bbox", "command", "layer_id", "source_id")}
+                if keep:
+                    details_payload = keep
+                else:
+                    details_payload = {"summary": str(details_payload.get("summary", ""))[:2000], "result_ref": details_payload.get("result_ref") or details_payload.get("imageRef")}
+        except Exception:
+            pass
+    return details_payload
+
+
 async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
     """Dispatch a GIS tool call via ToolDispatchService, cache the result for the SSE adapter.
 
@@ -399,6 +437,22 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
 
     duration_ms = int((time.monotonic() - t0) * 1000)
 
+    # 记录到 TaskTracker 以支持 /api/tasks/* 观察
+    try:
+        from app.api.routes.chat import get_engine
+        engine = get_engine()
+        tasks = engine.tracker.list_by_session(session_id)
+        if tasks:
+            latest_task = tasks[-1]
+            if latest_task.status.value in ("pending", "running"):
+                step = engine.tracker.start_step(latest_task.id, tool_name, request.arguments or {})
+                if result.status == "ok":
+                    engine.tracker.complete_step(latest_task.id, step.id, result.raw_result)
+                else:
+                    engine.tracker.fail_step(latest_task.id, step.id, result.llm_payload[:200])
+    except Exception:
+        pass
+
     # 缓存供 SSE 适配器按已验证 turn session 读取。
     cache_dispatch_result(request.toolCallId, result, session_id)
 
@@ -464,7 +518,7 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
                 return PiToolResponse(
                     toolCallId=request.toolCallId,
                     content=[{"type": "text", "text": result.llm_payload}],
-                    details=result.raw_result,
+                    details=_slim_pi_details_payload(result),
                     isError=(result.status == "error"),
                 )
         if result.status == "ok":
@@ -493,41 +547,7 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
                     review_error,
                 )
 
-    # #908 cap: raster tools return MB base64 data URLs in `image` and full
-    # mapspec in `raw_result` — sending the raw body as PiToolResponse.details
-    # blows up loopback JSON and SSE backpressure. Keep only the ref handle.
-    details_payload: Any = result.raw_result
-    if isinstance(details_payload, dict):
-        details_payload = dict(details_payload)
-        # Raster data URL is not needed — frontend mounts via result_ref / imageRef
-        if "image" in details_payload and isinstance(details_payload.get("image"), str):
-            img = details_payload["image"]
-            if img.startswith("data:image/") and len(img) > 1024:
-                details_payload.pop("image", None)
-                if result.geojson_ref or result.raw_result.get("result_ref"):
-                    details_payload["imageRef"] = result.geojson_ref or result.raw_result.get("result_ref")
-        # GeoJSON body already stored as ref — strip from details too
-        if "geojson" in details_payload:
-            details_payload.pop("geojson", None)
-        if isinstance(details_payload.get("data"), dict) and details_payload["data"].get("type") == "FeatureCollection":
-            # keep summary, drop heavy features array
-            data_fc = details_payload["data"]
-            if isinstance(data_fc.get("features"), list) and len(data_fc["features"]) > 100:
-                details_payload["data"] = {k: v for k, v in data_fc.items() if k != "features"}
-                details_payload["data"]["feature_count"] = len(data_fc["features"])
-        # Cap details to 64KB JSON
-        import json as _json
-        try:
-            encoded = _json.dumps(details_payload, ensure_ascii=False)
-            if len(encoded.encode("utf-8")) > 65536:
-                # Keep only essential keys
-                keep = {k: v for k, v in details_payload.items() if k in ("type", "result_ref", "imageRef", "mapspec_fingerprint", "success", "summary", "status", "feature_count", "bbox", "command", "layer_id", "source_id")}
-                if keep:
-                    details_payload = keep
-                else:
-                    details_payload = {"summary": str(details_payload.get("summary", ""))[:2000], "result_ref": details_payload.get("result_ref") or details_payload.get("imageRef")}
-        except Exception:
-            pass
+    details_payload = _slim_pi_details_payload(result)
 
     return PiToolResponse(
         toolCallId=request.toolCallId,
@@ -1773,6 +1793,16 @@ class PiBridge:
                 _active_turn_turn_id = turn_id
                 _active_turn_run_id = run_id
                 _active_turn_session_id = turn_sid or None
+
+                tracker_task_id = None
+                try:
+                    from app.api.routes.chat import get_engine
+                    engine = get_engine()
+                    tracker_task = engine.tracker.create(turn_sid, message)
+                    tracker_task_id = tracker_task.id
+                except Exception:
+                    pass
+
                 # Drop any residual events from a prior turn before sending, so they
                 # cannot be attributed to this turn.
                 await self._drain_stale_events()
@@ -1898,6 +1928,18 @@ class PiBridge:
                         pass
                     except Exception as e:  # noqa: BLE001
                         logger.warning("[PiBridge] abort-on-failed-turn (turn=%s): %s", turn_sid, e)
+                if tracker_task_id:
+                    try:
+                        from app.api.routes.chat import get_engine
+                        engine = get_engine()
+                        if cancelled:
+                            engine.tracker.cancel(tracker_task_id)
+                        elif timed_out or send_failed:
+                            engine.tracker.fail_task(tracker_task_id, "turn failed or timed out")
+                        else:
+                            engine.tracker.complete_task(tracker_task_id)
+                    except Exception:
+                        pass
                 _cleanup_turn_state(turn_sid)
                 # Clear the active-turn markers before releasing the lock.
                 self._active_turn_sid = None
@@ -2013,6 +2055,16 @@ class PiBridge:
             _active_turn_turn_id = turn_id
             _active_turn_run_id = run_id
             _active_turn_session_id = turn_sid or None
+
+            tracker_task_id = None
+            try:
+                from app.api.routes.chat import get_engine
+                engine = get_engine()
+                tracker_task = engine.tracker.create(turn_sid, message)
+                tracker_task_id = tracker_task.id
+            except Exception:
+                pass
+
             try:
                 # Drop residual events from a prior turn so they can't be dequeued
                 # and attributed to this session.
@@ -2247,6 +2299,18 @@ class PiBridge:
                 # audit #818: surface the turn's final transcript state to the
                 # route (persistence parity with the legacy path). Best-effort —
                 # a sink failure must never mask the stream outcome.
+                if tracker_task_id:
+                    try:
+                        from app.api.routes.chat import get_engine
+                        engine = get_engine()
+                        if cancelled:
+                            engine.tracker.cancel(tracker_task_id)
+                        elif timed_out or send_failed or process_died:
+                            engine.tracker.fail_task(tracker_task_id, "stream turn failed or timed out")
+                        else:
+                            engine.tracker.complete_task(tracker_task_id)
+                    except Exception:
+                        pass
                 if on_turn_result is not None:
                     try:
                         _res = {
