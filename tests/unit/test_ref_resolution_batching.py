@@ -85,6 +85,8 @@ async def test_alias_argument_resolves_to_data(monkeypatch):
 
     monkeypatch.setattr("app.tools.registry.session_data_manager.resolve_aliases", spy_resolve_aliases)
     monkeypatch.setattr("app.tools.registry.session_data_manager.get", spy_get)
+    # P-1（#874）：解引用缝改走共享读 get_shared，spy 同步挂载
+    monkeypatch.setattr("app.tools.registry.session_data_manager.get_shared", spy_get)
     monkeypatch.setattr("app.tools.registry.session_data_manager.list_refs", spy_list_refs)
 
     result = await reg.dispatch(
@@ -109,6 +111,8 @@ async def test_ref_prefix_argument_resolves_to_data(monkeypatch):
 
     monkeypatch.setattr("app.tools.registry.session_data_manager.resolve_aliases", spy_resolve_aliases)
     monkeypatch.setattr("app.tools.registry.session_data_manager.get", spy_get)
+    # P-1（#874）：解引用缝改走共享读 get_shared，spy 同步挂载
+    monkeypatch.setattr("app.tools.registry.session_data_manager.get_shared", spy_get)
 
     result = await reg.dispatch(
         "echo_tool", {"name": "n1", "path": "ref:data-1", "layer_id": "L1", "extra": "e1"},
@@ -133,6 +137,8 @@ async def test_missing_ref_raises_helpful_error(monkeypatch):
 
     monkeypatch.setattr("app.tools.registry.session_data_manager.resolve_aliases", spy_resolve_aliases)
     monkeypatch.setattr("app.tools.registry.session_data_manager.get", spy_get)
+    # P-1（#874）：解引用缝改走共享读 get_shared，spy 同步挂载
+    monkeypatch.setattr("app.tools.registry.session_data_manager.get_shared", spy_get)
     monkeypatch.setattr("app.tools.registry.session_data_manager.list_refs", spy_list_refs)
 
     result = await reg.dispatch(

@@ -35,7 +35,6 @@ pyyaml>=6.0.3
 rich>=15.0.0
 
 # Logging & Monitoring
-structlog>=26.1.0
 
 # LLM & AI
 openai>=1.0.0

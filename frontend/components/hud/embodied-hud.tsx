@@ -353,7 +353,11 @@ export function EmbodiedHud() {
                     textColor = 'var(--text-primary)';
                   } else if (state === 'failed') {
                     // #692：失败态——错误色静止圆点（不脉冲），步骤名如实示败
-                    dotColor = 'var(--danger, var(--destructive, #dc2626))';
+                    // U-4（#886）：--destructive 是 HSL 裸三元组（供
+                    // hsl(var(--destructive)) 用），直接作 backgroundColor 是非法
+                    // 颜色被丢弃 → 失败圆点不可见。改用 V4 语义令牌 --critical
+                    //（十六进制，与 StatusBadge/toast 错误色同源）。
+                    dotColor = 'var(--critical)';
                     textColor = 'var(--text-primary)';
                   } else if (state === 'active') {
                     dotColor = 'var(--agent-accent)';

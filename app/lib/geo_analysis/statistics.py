@@ -14,7 +14,7 @@ from app.lib.geo_analysis._vector import extract_centroids
 # ADR-0052: 协作式取消检查点。cancellable() 在 chunk 边界读一次 contextvar，
 # 未绑定 token 时开销为零；用户取消后长循环立即抛 OperationCancelled 退出，
 # 真正释放 CPU 而不是只改 UI 状态。
-from app.services.jobs.cancellation import cancellable
+from app.lib.cancellation import cancellable
 
 
 def _bh_qvalues(p: "np.ndarray") -> "np.ndarray":
@@ -178,11 +178,12 @@ def calculate_sde(geojson: dict) -> GeoAnalysisResult:
     area_km2 = ellipse_poly.area / 1e6
     summary = f"Directional Insight: The points show a clear {direction} directional trend, covering an area of {area_km2:.2f} sq km."
     
+    center_wgs84 = gpd.GeoSeries([Point(float(mean_x), float(mean_y))], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
     data_out = {
         "type": "Feature",
         "geometry": mapping(ellipse_wgs84),
         "properties": {
-            "center": [float(mean_x), float(mean_y)],
+            "center": [float(center_wgs84.x), float(center_wgs84.y)],
             "sigma_x": float(sigma_x),
             "sigma_y": float(sigma_y),
             "angle_deg": float(deg),

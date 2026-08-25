@@ -84,6 +84,18 @@ class Settings(BaseSettings):
 
     # OSM
     OVERPASS_API_URL: str = "https://overpass.openstreetmap.fr/api/interpreter"
+    # E-9（#900）：运行期可覆盖的行为参数登记（各读取点保留 lazy env 读以
+    # 兼容逐 case 重置的测试；登记目的是可发现/可审计/模板可见）。
+    # 安全面：公开注册开关 —— 生产环境为 true 时下方 fail-fast 校验直接拒绝启动。
+    ALLOW_PUBLIC_REGISTER: bool = False
+    TOOL_TIMEOUT_S: float = 300.0
+    SESSION_CACHE_SIZE: int = 200
+    SESSION_MESSAGE_CAP: int = 200
+    CLEAR_QUIESCE_TIMEOUT_S: float = 5.0
+    CANCEL_WAIT_TIMEOUT_S: float = 5.0
+    CHAT_MAX_ROUNDS: int = 60
+    TURN_TOTAL_TIMEOUT_S: float = 900.0
+
     NOMINATIM_URL: str = "https://nominatim.openstreetmap.org/search"
 
     # 天地图
@@ -373,6 +385,22 @@ class Settings(BaseSettings):
                     "cannot verify SSRF safety, allowing with warning",
                     hostname, field,
                 )
+
+
+    @model_validator(mode="after")
+    def _validate_allow_public_register_prod(self) -> "Settings":
+        """E-9（#900）：安全开关终审 —— 生产禁止开放注册。
+
+        独立且最后定义的 validator（pydantic 按定义顺序执行）：确保
+        CORS/AUTH_DISABLED 等既有生产检查先有机会报出它们更具体的错误，
+        本守卫只兜"其余全合法但开放注册"的组合。
+        """
+        if self.ALLOW_PUBLIC_REGISTER and self.is_production():
+            raise RuntimeError(
+                "ALLOW_PUBLIC_REGISTER=true is forbidden in production "
+                "(use manage.py create-admin instead)"
+            )
+        return self
 
 
 settings = Settings()

@@ -122,14 +122,31 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
   }
 }
 
+// U-3（#885）：非 409 失败（网络断开/5xx/会话过期）此前静默回滚——用户点
+// 删除图层消失一秒后又弹回，全程无解释，弱网下看起来像按钮坏了。复用
+// superseded 路径的 toast 模式，按操作语义给文案。
+function toastRollback(actionLabel: string, err: unknown): void {
+  try {
+    // 延迟 import 防循环依赖（transport ↔ store 无环，保守起见与文件内
+    // 其它延迟用法一致）。
+    import('@/lib/api/transport').then(({ describeApiError }) => {
+      useToastStore.getState().addToast(
+        `${actionLabel}未生效（已恢复）：${describeApiError(err, '网络错误')}`,
+        'error',
+      );
+    }).catch(() => { /* toast 不可用不得影响状态收敛 */ });
+  } catch { /* noop */ }
+}
+
 export async function toggleLayerAndCommit(layerId: string): Promise<void> {
   const layer = useHudStore.getState().layers.find((item) => item.id === layerId);
   const previous = layer?.visible !== false;
   useHudStore.getState().toggleLayer(layerId);
   try {
     await commitLayerPresentation({ layerId, visible: !previous });
-  } catch {
+  } catch (err) {
     useHudStore.getState().updateLayer(layerId, { visible: previous });
+    toastRollback('显隐切换', err);
   }
 }
 
@@ -167,7 +184,12 @@ export async function commitExplicitView(view: {
     // 真相（此前 fire-and-forget 调用点没有 catch：unhandled rejection +
     // 本地视图真相丢失）；其它错误吞掉并保持调用方无感。
     const superseded = supersededFromError(err);
-    if (!superseded) return;
+    if (!superseded) {
+      // U-3（#885）：视口真相提交失败不再静默（此前注释自述"其它错误吞掉
+      // 并保持调用方无感"——断网时每次 focusLayer 后视口悄悄丢失）。
+      toastRollback('视图保存', err);
+      return;
+    }
     if (typeof superseded.mutation_revision === 'number') {
       setMapSpecRevision(superseded.mutation_revision);
     }
@@ -225,8 +247,9 @@ export async function removeLayerAndCommit(layerId: string): Promise<void> {
       intent: 'remove_layer',
       layer_id: specLayerId,
     });
-  } catch {
+  } catch (err) {
     useHudStore.getState().setLayers(previous);
+    toastRollback('删除图层', err);
   } finally {
     clearPendingRemoved(specLayerId);
     clearPendingRemoved(layerId);
@@ -241,8 +264,9 @@ export async function reorderLayersAndCommit(layers: { id: string; _mapspecLayer
       intent: 'reorder_layers',
       layer_ids: layers.map((layer) => String(layer._mapspecLayerId || layer.id)),
     });
-  } catch {
+  } catch (err) {
     useHudStore.getState().setLayers(previous);
+    toastRollback('图层排序', err);
   }
 }
 
@@ -252,7 +276,8 @@ export async function setLayerOpacityAndCommit(layerId: string, opacity: number)
   useHudStore.getState().updateLayer(layerId, { opacity });
   try {
     await commitLayerPresentation({ layerId, opacity });
-  } catch {
+  } catch (err) {
     useHudStore.getState().updateLayer(layerId, { opacity: previous });
+    toastRollback('不透明度调整', err);
   }
 }

@@ -102,10 +102,13 @@ function StoryPageInner() {
       setPlaying(false);
       return;
     }
-    // 从头开始播放
-    setActiveIndex(0);
+    // U-7（#889）：续播 —— 暂停后再按播放从当前消息继续；仅当已播到最后
+    // 一条时回到开头（此前每次播放都强制 setActiveIndex(0)，暂停在第 5 条
+    // 再按播放跳回第 1 条，违背播放/暂停按钮直觉；从头重播由 Previous 键
+    // 逐条回退承担）。
+    setActiveIndex((cur) => (cur >= messages.length - 1 ? 0 : cur));
     setPlaying(true);
-  }, [playing]);
+  }, [playing, messages.length]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -233,8 +236,10 @@ function StoryPageInner() {
               <div
                 key={idx}
                 data-story-message
+                data-story-active={idx === activeIndex ? 'true' : undefined}
                 className={`prose prose-agent prose-headings:text-status-info prose-a:text-status-info max-w-none transition-opacity duration-700
-                  ${msg.role === 'user' ? 'opacity-50 border-l-2 border-edge-subtle pl-4 italic text-body' : 'opacity-100'}`}
+                  ${msg.role === 'user' ? 'opacity-50 border-l-2 border-edge-subtle pl-4 italic text-body' : 'opacity-100'}
+                  ${idx === activeIndex ? 'story-message-active' : (msg.role === 'user' ? '' : 'story-message-idle')}`}
               >
                 {msg.role === 'user' ? (
                   <p className="m-0 font-mono">USER: {msg.content}</p>

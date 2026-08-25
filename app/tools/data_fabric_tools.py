@@ -37,10 +37,29 @@ def _is_demo_source_type(source_type) -> bool:
         return False
 
 
+def _cap_payload_for_context(res: dict, list_key: str, cap: int = 10) -> None:
+    """E-3/E-11（#902）：LLM 上下文载荷上限保护。
+
+    json.dumps 检查器自身失败（不可序列化对象等）时，旧行为 `except: pass`
+    会让保护静默失效——超大 payload 原样进入上下文。失败分支改为保守裁剪
+    + warning 日志（宁可误裁不可漏放）。
+    """
+    import json
+    try:
+        oversized = len(json.dumps(res)) > 40000
+    except Exception as e:  # noqa: BLE001 检查失败 → 保守按超限处理
+        logger.warning("[data_fabric] payload size check failed (%s); conservatively capping %s", e, list_key)
+        oversized = True
+    if oversized and isinstance(res.get(list_key), list):
+        res[list_key] = res[list_key][:cap]
+        res["_payload_notice"] = "Payload capped for context safety (>40,000 chars)."
+
+
 def register_data_fabric_tools(registry: ToolRegistry):
     """
     Register the 7 unified Data Fabric AI tools into the ToolRegistry.
     """
+
 
     @tool(
         registry,
@@ -155,13 +174,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
                 "datasets_count": len(datasets),
                 "datasets": datasets,
             }
-            try:
-                import json
-                if len(json.dumps(res)) > 40000:
-                    res["datasets"] = datasets[:10]
-                    res["_payload_notice"] = "Payload capped for context safety (>40,000 chars)."
-            except Exception:
-                pass
+            _cap_payload_for_context(res, "datasets")
             return res
 
         return await asyncio.to_thread(_sync_run)
@@ -203,13 +216,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
             limit=limit,
             offset=offset,
         )
-        try:
-            import json
-            if len(json.dumps(res)) > 40000 and "items" in res and isinstance(res["items"], list):
-                res["items"] = res["items"][:10]
-                res["_payload_notice"] = "Payload capped for context safety (>40,000 chars)."
-        except Exception:
-            pass
+        _cap_payload_for_context(res, "items")
         return res
 
     @tool(

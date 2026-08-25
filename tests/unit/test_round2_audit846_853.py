@@ -132,6 +132,8 @@ class TestAudit848DepthOneAlias:
 
         monkeypatch.setattr(reg_mod.session_data_manager, "resolve_aliases", fake_resolve_aliases)
         monkeypatch.setattr(reg_mod.session_data_manager, "get", fake_get)
+        # P-1（#874）：解引用热路径改走共享只读 get_shared —— 伪造面同步
+        monkeypatch.setattr(reg_mod.session_data_manager, "get_shared", fake_get)
 
         reg = ToolRegistry.__new__(ToolRegistry)
         args = {

@@ -121,7 +121,7 @@ cd frontend && npm run dev
 
 容器内源码热重载：在 `.env` 设 `WEBGIS_DEV_MOUNT=./app` 后重建 api/celery 服务。
 
-Windows 用户另有 `start_all.bat` 一键脚本（后端 `:8001` + 前端 `:3000`；此时 `NEXT_PUBLIC_API_URL` 应指向 8001）。
+（`start_all.bat` 一键脚本已随 E-12/#903 清理移除——请用 `python manage.py dev` 一键拉起前后端。）
 
 ## 6. manage.py 命令参考
 

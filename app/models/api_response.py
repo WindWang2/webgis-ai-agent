@@ -1,12 +1,12 @@
 """
 API Response 统一格式定义
 """
-from typing import TypeVar, Optional, Any
+from typing import TypeVar, Optional, Generic
 from pydantic import BaseModel
 
 T = TypeVar("T")
 
-class ApiResponse(BaseModel):
+class ApiResponse(BaseModel, Generic[T]):
     """
     统一 API 响应格式
     
@@ -25,7 +25,7 @@ class ApiResponse(BaseModel):
     code: str = "SUCCESS"
     success: bool = True
     message: str = ""
-    data: Optional[Any] = None
+    data: Optional[T] = None
     
     # 便捷构造方法
     @classmethod

@@ -44,21 +44,21 @@ def make_cache_key(tool_name: str, args: dict) -> Optional[str]:
     # the whole tree for refs (that walk was ~230ms unbounded). When
     # inside dispatch(), the gate reuses the ContextVar hint (zero extra
     # walk). Outside dispatch, fall back to a budget-limited estimate.
-    from app.tools.registry import _arg_size_hint_var, _estimate_json_bytes, _ESTIMATE_SIZE_LIMIT
+    from app.lib.json_size import arg_size_hint_var, estimate_json_bytes, ESTIMATE_SIZE_LIMIT
 
-    hint = _arg_size_hint_var.get()
+    hint = arg_size_hint_var.get()
     if hint is not None:
         _, oversized = hint
         if oversized:
             return None
     else:
-        if _estimate_json_bytes(args) > _ESTIMATE_SIZE_LIMIT:
+        if estimate_json_bytes(args) > ESTIMATE_SIZE_LIMIT:
             return None
     # ref 检查是正确性门（不是 metrics）：预算内证毕无 ref 才允许缓存。
     # 节点密集而字节数小的载荷（>20k 节点但 <256KB）会耗尽预算却未触发
     # oversized 短路 — 证明不了"无 ref"就保守跳过缓存，与无界旧语义一致。
-    from app.tools.registry import _ESTIMATE_MAX_NODES
-    ref_budget = [_ESTIMATE_MAX_NODES]
+    from app.lib.json_size import ESTIMATE_MAX_NODES
+    ref_budget = [ESTIMATE_MAX_NODES]
     if _contains_ref(args, ref_budget) or ref_budget[0] <= 0:
         return None
     canonical = json.dumps(args, sort_keys=True, separators=(",", ":"), default=str)
@@ -76,8 +76,8 @@ def _contains_ref(value, _budget: list[int] | None = None) -> bool:
     的分工规矩）。
     """
     if _budget is None:
-        from app.tools.registry import _ESTIMATE_MAX_NODES
-        _budget = [_ESTIMATE_MAX_NODES]
+        from app.lib.json_size import ESTIMATE_MAX_NODES
+        _budget = [ESTIMATE_MAX_NODES]
     if _budget[0] <= 0:
         return False
     _budget[0] -= 1

@@ -56,6 +56,9 @@ async def lifespan(app: FastAPI):
 
     registry = ToolRegistry()
     init_tools(registry)
+    # E-2（#893）：单例注入下沉 services 层（路由模块全局保留赋值兼容旧引用）
+    from app.services.chat.engine_instance import set_app_registry
+    set_app_registry(registry)
     chat.registry = registry
     # Inject the registry into the Pi bridge so tool dispatch
     # (called by the Pi extension via /pi-tools/execute) uses real GIS tools.
@@ -64,6 +67,9 @@ async def lifespan(app: FastAPI):
     # 分层工具目录：按用户消息 + 会话粘性筛选 schema，cut token & 提升选择准确率
     catalog = ToolCatalog(registry)
     chat_engine = ChatEngine(registry, tool_catalog=catalog)
+    # E-2（#893）：同 registry —— engine 单例注入 services 层持有器
+    from app.services.chat.engine_instance import set_chat_engine
+    set_chat_engine(chat_engine)
     chat.engine = chat_engine
 
     # Feature flag: 初始化 Pi agent (vendor/pi) 通过 RPC 调用

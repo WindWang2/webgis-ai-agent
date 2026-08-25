@@ -2,7 +2,7 @@
 import React from 'react';
 import type { MapSpecComponent } from '@/lib/mapspec-compiler/types';
 import { registerComponentRenderer } from './registry';
-import { positionClass, positionStyle } from './helpers';
+import { positionClass, stackedBottomStyle } from './helpers';
 import type { RendererContext } from './types';
 import type { LegendSpec } from '@/lib/map-kit/types';
 
@@ -36,7 +36,7 @@ function ColorbarRenderer(component: MapSpecComponent, ctx: RendererContext) {
   const range = legend as unknown as { min?: number; max?: number };
   const hasRange = range.min !== undefined && range.max !== undefined;
   return (
-    <div data-testid="spec-chrome-colorbar" style={positionStyle(component)} className={`map-chrome absolute z-30 rounded-chrome px-2 py-1.5 ${positionClass(component)}`} aria-label="连续密度色条">
+    <div data-testid="spec-chrome-colorbar" style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome px-2 py-1.5 ${positionClass(component)}`} aria-label="连续密度色条">
       {hasRange ? (
         <div className={`flex ${vertical ? 'flex-row gap-1' : 'flex-col gap-0.5'} text-micro tabular-nums text-map-chrome-ink`}>
           <div aria-hidden className={vertical ? 'w-2.5 rounded-sm' : 'h-2.5 w-36 rounded-sm'} style={{ background: gradient }} />

@@ -11,8 +11,8 @@ from rasterio.warp import reproject, calculate_default_transform
 
 # ADR-0052: 窗口写入循环现在（a）在窗口边界检查取消，（b）写临时文件再原子
 # os.replace —— 取消/崩溃不再留下半个 GeoTIFF（规范 §12 raster window / §23）。
-from app.services.jobs.artifacts import atomic_output
-from app.services.jobs.cancellation import checkpoint
+from app.lib.artifacts import atomic_output
+from app.lib.cancellation import checkpoint
 
 
 # ─── Shared GDAL environment ────────────────────────────────────

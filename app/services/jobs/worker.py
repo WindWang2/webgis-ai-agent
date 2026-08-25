@@ -437,7 +437,7 @@ def durable_job(
                 # 且状态保持 cancelled（终态不被覆盖）。
                 DurableJobStore.mark_failed_sync(db, job_id, error=exc)
                 db.commit()
-            logger.warning("[jobs] failed job_id=%s error=%s", job_id, type(exc).__name__)
+            logger.warning("[jobs] failed job_id=%s error=%s: %s", job_id, type(exc).__name__, exc, exc_info=True)
         raise
     else:
         handle.cleanup_temps()

@@ -86,108 +86,16 @@ VALID_GEOJSON_TYPES = VALID_GEOMETRY_TYPES | {"Feature", "FeatureCollection"}
 # payloads return an approximate byte estimate in O(budget) time. Exact
 # for small/medium payloads, approximate (but traceable via budget) for
 # huge ones — metrics use only, correctness never depends on it.
-_ESTIMATE_MAX_NODES = 20_000
-_ESTIMATE_SIZE_LIMIT = 262_144  # 256 KB — the cache/validation gate threshold
-
-# ContextVar to share the single args-size probe between registry and the
-# cached_tool wrapper (tool_cache.make_cache_key), so the same large args
-# dict is not walked 2-3 times per dispatch. Set in dispatch(), read in
-# make_cache_key(); fallback to a fresh walk when not set.
-_arg_size_hint_var: contextvars.ContextVar[tuple[int, bool] | None] = (
-    contextvars.ContextVar("_arg_size_hint", default=None)
+# E-3（#894）：估算器已下沉 app/lib/json_size.py（公有 API），此处保留
+# 私有别名兼容本模块内部引用。
+from app.lib.json_size import (  # noqa: F401
+    ESTIMATE_MAX_NODES as _ESTIMATE_MAX_NODES,
+    ESTIMATE_SIZE_LIMIT as _ESTIMATE_SIZE_LIMIT,
+    arg_size_hint_var as _arg_size_hint_var,
+    estimate_json_bytes as _estimate_json_bytes,
 )
 
 
-def _estimate_json_bytes(
-    obj: Any, _depth: int = 0, _budget: list[int] | None = None
-) -> int:
-    """Cheap structural estimate of the JSON byte length of ``obj``.
-
-    PERF-01: ``json.dumps`` of a large tool result (e.g. a 10k-feature
-    GeoJSON FeatureCollection) just to record a byte metric duplicates the
-    serialization the dispatch path already performs. This walker estimates
-    the serialized size without materializing the full string — accurate to
-    within a few percent for typical JSON and bounded by ``_depth`` to avoid
-    pathological cycles. Used only for metrics; never for correctness.
-
-    #677: additionally bounded by a total node budget (default
-    ``_ESTIMATE_MAX_NODES``). When the budget is exhausted the walker stops
-    visiting new nodes and extrapolates from the sampled average, so a
-    100k-feature payload costs O(budget) rather than O(features). If the
-    caller passes an explicit ``_budget`` list, ``_budget[0] <= 0`` after
-    the call indicates the result is an approximation (budget hit).
-    """
-    if _budget is None:
-        _budget = [_ESTIMATE_MAX_NODES]
-    if _budget[0] <= 0:
-        return 0
-    _budget[0] -= 1
-    if _depth > 12:
-        return 64  # deep nested: stop walking, small placeholder
-    if obj is None:
-        return 4
-    if isinstance(obj, bool):
-        return 4 if obj else 5
-    if isinstance(obj, (int, float)):
-        return len(str(obj))
-    if isinstance(obj, str):
-        # +2 for the quotes; escape overhead is minor for typical strings.
-        return len(obj) + 2
-    if isinstance(obj, dict):
-        # {"k":v,...} → 2 braces + per-entry overhead (4: `","` and `:`).
-        total = 2
-        first = True
-        items = list(obj.items())
-        sampled = 0
-        for k, v in items:
-            if _budget[0] <= 0:
-                remaining = len(items) - sampled
-                if sampled > 0:
-                    avg = (total - 2) / sampled
-                    total += int(avg * remaining)
-                else:
-                    total += remaining * 16
-                break
-            if not first:
-                total += 1  # comma
-            first = False
-            total += len(str(k)) + 4 + _estimate_json_bytes(v, _depth + 1, _budget)
-            sampled += 1
-        return total
-    if isinstance(obj, (list, tuple)):
-        total = 2
-        first = True
-        n = len(obj)
-        if n == 0:
-            return total
-        sampled = 0
-        # For large lists (features), sample until budget exhausted then
-        # extrapolate via average per-item cost.
-        for item in obj:
-            if _budget[0] <= 0:
-                remaining = n - sampled
-                if sampled > 0:
-                    # average cost per sampled item (including comma)
-                    avg = (total - 2) / sampled if sampled else 8
-                    total += int(avg * remaining) + remaining  # commas for remainder
-                else:
-                    total += remaining * 8
-                break
-            if not first:
-                total += 1
-            first = False
-            total += _estimate_json_bytes(item, _depth + 1, _budget)
-            sampled += 1
-        return total
-    # Fallback: stringify (rare; non-JSON-native types default-str in dumps).
-    try:
-        return len(str(obj))
-    except Exception:
-        return 32
-
-
-# audit #824: 别名批量查表的去重后字段上限 —— 超限（或 oversized 载荷）降级为
-# 仅解析显式 ref: 前缀，避免把内联大 GeoJSON 的海量字符串叶塞进一条 HMGET。
 _ALIAS_LOOKUP_MAX_DISTINCT = 1024
 
 
@@ -787,11 +695,21 @@ class ToolRegistry:
                     )
 
         # GeoJSON 几何结构校验 (BE-AUDIT-08)
-        # PERF-F2 + #699 + #677：与上节 Pydantic 旁路同门（_is_args_oversized），
-        # 避免两道门用不同预算/阈值造成大载荷一处放行另一处仍全量走。
+        # PERF-F2 + #699 + #677：与上节 Pydantic 旁路同门（_is_args_oversized）。
+        # #911: oversized 载荷此前跳过校验 — 恶意/非法 GeoJSON 静默进入工具。
+        # 保留浅层叶校验（只验顶层 type/features 形状，预算化 O(1)）：
+        # 深层要素枚举仍跳过以释放 100k 载荷的 ~100ms dump 预算。
         try:
             if not _args_oversized_now:
                 validate_geojson_structure(arguments)
+            else:
+                # Lightweight leaf probe for oversized: only top-level FC shape
+                _args_geo = arguments.get("geojson") if isinstance(arguments, dict) else None
+                if isinstance(_args_geo, dict) and _args_geo.get("type") == "FeatureCollection":
+                    if "features" not in _args_geo:
+                        raise ValueError("GeoJSON FeatureCollection 缺少必需的 'features' 字段（大载荷浅层校验）")
+                    if not isinstance(_args_geo.get("features"), list):
+                        raise ValueError("GeoJSON FeatureCollection 的 'features' 字段必须为列表")
         except ValueError as e:
             return std_error_response(
                 str(e),

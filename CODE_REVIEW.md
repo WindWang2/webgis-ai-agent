@@ -1,5 +1,10 @@
 # Code Review & Integrity Standards (V3.2 Core)
 
+> **E-12（#903）归档说明（2026-08-24）**：本文档的工程红线已由
+> `docs/architecture.md` §扩展纪律、CI 9 项门禁（`scripts/ci-local.sh` 本地
+> 同构）与 `docs/adr/`（70 篇）承接；历史修补录保留作演进参考。新贡献者
+> 请以上述现行体系为准，本文不再作为唯一审计依据。
+
 **Date**: 2026-04-30
 **Scope**: Full Stack (FastAPI + Next.js + Celery)
 

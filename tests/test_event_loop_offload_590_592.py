@@ -96,6 +96,12 @@ async def test_layer_data_serialization_batched_off_loop(monkeypatch):
         return real_encode_batch(elements, pad)
 
     monkeypatch.setattr(geojson_serializer, "_encode_batch", _slow_batch)
+    # P-7（#880）：数据面端点走 compact 路径 —— 两路批编码器同步慢化，
+    # 否则工作瞬间完成，事件循环响应性断言观测不到在飞窗口。
+    monkeypatch.setattr(
+        geojson_serializer, "_encode_compact_batch",
+        lambda elements: _slow_batch(elements, ""),
+    )
 
     class _FakeSDM:
         async def get_ref_data(self, session_id, ref_id, owner_token=None):

@@ -154,7 +154,10 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
                 id={`baselayer-opt-${idx}`}
                 type='button'
                 role='option'
-                aria-selected={isActive || idx === activeIdx}
+                // U-9（#891）：selected 只表达真实选中；键盘漫游高亮由
+                // aria-activedescendant 表达（此前复合条件让读屏把漫游项
+                // 播报为"已选中"）。
+                aria-selected={isActive}
                 onClick={() => {
                   // Dual-write: both stores must agree or we end up with the bug
                   // QA-2026-05-20 ISSUE-001/002/003 fixed

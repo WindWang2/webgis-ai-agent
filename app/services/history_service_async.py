@@ -288,6 +288,53 @@ class AsyncHistoryService(HistoryStoreProtocol):
                 svc = AsyncHistoryService(db)
                 await svc._commit_interaction_internal(session_id, user_content, assistant_content, metadata)
 
+    async def save_interaction(
+        self,
+        session_id: str,
+        user_content: str,
+        assistant_content: str,
+    ) -> None:
+        """Atomically persist a user+assistant pair in a single transaction.
+
+        Unlike two sequential save_message() calls (each with its own commit),
+        this method adds both rows and commits once. If the commit fails
+        (locked / IntegrityError) neither row persists — no orphan user row.
+        """
+        import anyio
+
+        for attempt in range(3):
+            try:
+                if user_content:
+                    self.db.add(
+                        Message(
+                            conversation_id=session_id,
+                            role="user",
+                            content=user_content,
+                            created_at=datetime.now(timezone.utc),
+                        )
+                    )
+                if assistant_content:
+                    self.db.add(
+                        Message(
+                            conversation_id=session_id,
+                            role="assistant",
+                            content=assistant_content,
+                            created_at=datetime.now(timezone.utc),
+                        )
+                    )
+                if user_content or assistant_content:
+                    conv = await self.db.get(Conversation, session_id)
+                    if conv:
+                        conv.updated_at = datetime.now(timezone.utc)
+                await self.db.commit()
+                return
+            except Exception as e:
+                if "locked" in str(e).lower() and attempt < 2:
+                    await anyio.sleep(0.1 * (attempt + 1))
+                    await self.db.rollback()
+                    continue
+                raise
+
     async def _commit_interaction_internal(
         self,
         session_id: str,
@@ -295,10 +342,9 @@ class AsyncHistoryService(HistoryStoreProtocol):
         assistant_content: str,
         metadata: Optional[dict] = None,
     ) -> None:
-        if user_content:
-            await self.save_message(session_id, "user", user_content)
-        if assistant_content:
-            await self.save_message(session_id, "assistant", assistant_content)
+        # #915 atomic: single transaction for the user+assistant pair so that a
+        # failure on the second insert cannot leave an orphan user row.
+        await self.save_interaction(session_id, user_content, assistant_content)
 
     async def get_or_create_conversation(
         self,
@@ -609,9 +655,11 @@ class AsyncHistoryService(HistoryStoreProtocol):
             except Exception as e:  # noqa: BLE001 - marker is best-effort
                 logger.warning("cap eviction: clearing marker publish failed: %s", e)
             try:
-                from app.api.routes import chat as chat_route
+                # E-2（#893）：经 services 层持有器取 engine（此前反向
+                # import api 路由模块拿 chat.engine）
+                from app.services.chat.engine_instance import try_get_chat_engine
 
-                engine = chat_route.engine
+                engine = try_get_chat_engine()
                 if engine is not None:
                     await engine.cancel_inflight_turn(session_id)
             except Exception as e:  # noqa: BLE001 清理失败不阻断会话创建

@@ -156,9 +156,9 @@ def build_graduated_spec(
     numeric data to classify (matches the legacy ``build_thematic_style``
     contract so existing callers/tests are unaffected).
     """
-    # Local import to respect ADR-0012 (CartographyService is the engine; this
-    # module delegates the algorithm rather than reimplementing it).
-    from app.services.cartography_service import CartographyService
+    # E-3（#894）：分类算法已下沉本层（classify.py），不再反向 import
+    # services 层的 CartographyService。
+    from app.lib.cartography.classify import classify_values
 
     features = (geojson or {}).get("features", []) or []
     raw = (f.get("properties", {}).get(field) for f in features if isinstance(f, dict))
@@ -166,7 +166,7 @@ def build_graduated_spec(
     if len(values) < 2:
         return None
 
-    breaks = CartographyService.classify(values, method, k)
+    breaks = classify_values(values, method, k)
     if not breaks:
         return None
     # #618-19: 全等数值列（常量字段）在 n>k 时 classify 返回单断点 [v]，与

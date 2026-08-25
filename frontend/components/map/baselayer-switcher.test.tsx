@@ -153,3 +153,28 @@ describe('BaselayerSwitcher keyboard focus (#806)', () => {
     expect(mockSetBaseLayer).toHaveBeenCalled();
   });
 });
+
+
+// U-9（#891）：aria-selected 只表达真实选中 —— 键盘漫游（ArrowDown 移动
+// activeIdx 视觉高亮）不得把漫游项播报为已选中。
+describe('U-9 (#891) aria-selected 语义', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    selectedBaseLayer = 0;
+    baseLayer = 'Carto Light';
+  });
+
+  it('ArrowDown 漫游后仍只有真实选中项 aria-selected=true', () => {
+    render(<BaselayerSwitcher />);
+    const trigger = screen.getByRole('button', { name: /base layer/i });
+    fireEvent.click(trigger);
+    const selectedBefore = screen
+      .getAllByRole('option')
+      .filter((o) => o.getAttribute('aria-selected') === 'true').length;
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+    const options = screen.getAllByRole('option');
+    const selectedAfter = options.filter((o) => o.getAttribute('aria-selected') === 'true');
+    expect(selectedAfter.length).toBe(selectedBefore);
+    expect(selectedAfter.length).toBe(1);
+  });
+});

@@ -183,7 +183,7 @@ class PiRpcClient:
         env["PI_OFFLINE"] = "1"
         env["PI_SKIP_VERSION_CHECK"] = "1"
         # 审计 SEC-01：注入共享密钥，Pi 扩展的 HTTP 回调用它调 /pi-tools/execute
-        from app.api.routes.pi_tools import get_bridge_secret
+        from app.core.bridge_secret import get_bridge_secret
         env["WEBGIS_BRIDGE_SECRET"] = get_bridge_secret()
         env["WEBGIS_API_BASE"] = env.get("WEBGIS_API_BASE", "http://127.0.0.1:8000")
 

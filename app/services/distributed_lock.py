@@ -21,8 +21,8 @@ Contract:
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
+import logging
 import secrets
 from typing import Dict, Optional
 
@@ -222,8 +222,12 @@ class SessionLockRegistry:
         if self._client is not None or (now - self._last_check_s) < 60.0:
             return self._client
         self._last_check_s = now
-        redis_url = os.getenv("REDIS_URL")
-        use_redis = os.getenv("USE_REDIS", "true").lower() in ("true", "1", "yes")
+        # E-9（#900）：Settings 优先（单一事实来源），env 直读兜底以支持
+        # 运行期/测试在 settings 装配后改写 REDIS_URL 的既有语义（#745 测试）。
+        from app.core.config import settings as _settings
+
+        redis_url = os.getenv("REDIS_URL") or _settings.REDIS_URL or None
+        use_redis = os.getenv("USE_REDIS", "").lower() in ("true", "1", "yes") or bool(_settings.USE_REDIS)
         if not redis_url or not use_redis:
             return None
         try:

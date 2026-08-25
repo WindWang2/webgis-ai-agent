@@ -34,6 +34,8 @@ import type { AiStatus } from '@/lib/store/hud-types';
 import { PanelHeader } from '@/components/shared/panel-header';
 import { ChatTab } from '@/components/sidebar/chat-tab';
 import { LayersTab } from '@/components/sidebar/layers-tab';
+// U-1（#883）：恢复样式编辑面板的生产入口（editingLayerId 驱动的钻入视图）。
+import { LayerStylePanel } from '@/components/hud/layer-style-panel';
 import { AnalysisTab } from '@/components/sidebar/analysis-tab';
 import { MapStudioTab } from '@/components/sidebar/map-studio-tab';
 import { ProjectTab } from '@/components/sidebar/project-tab';
@@ -111,6 +113,8 @@ export function ContextPanel({
   const sidebarWidth = useHudStore((s) => s.sidebarWidth);
   const setSidebarWidth = useHudStore((s) => s.setSidebarWidth);
   const layerCount = useHudStore((s) => s.layers.length);
+  // U-1（#883）：editingLayerId 非空时图层 tab 钻入样式编辑视图。
+  const editingLayerId = useHudStore((s) => s.editingLayerId);
   const exportCount = useHudStore((s) => s.exports.length);
   const resultCount = useHudStore((s) => s.results.length);
   // HUD 展开时面板整体上移避让（与 nav rail / floating legend 一致），
@@ -353,7 +357,11 @@ export function ContextPanel({
           />
         )}
         {activeTab === 'project' && <ProjectTab />}
-        {activeTab === 'layers' && <PanelErrorBoundary label="图层"><LayersTab /></PanelErrorBoundary>}
+        {activeTab === 'layers' && (
+          <PanelErrorBoundary label="图层">
+            {editingLayerId ? <LayerStylePanel /> : <LayersTab />}
+          </PanelErrorBoundary>
+        )}
         {activeTab === 'analysis' && <AnalysisTab onSend={onSend} aiStatus={aiStatus} />}
         {/* #463: sessionId/ownerToken are threaded into the Data Sources tab so
             实例化至图层 materializes into the REAL conversation session instead of

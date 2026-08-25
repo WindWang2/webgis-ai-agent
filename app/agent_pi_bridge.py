@@ -82,7 +82,7 @@ def _env_float_drain(name: str, default: float) -> float:
 # mirror stream_prompt: only CONTINUOUS silence reaching PI_EVENT_STREAM_TIMEOUT
 # (the stall budget) or the whole turn exceeding PI_TURN_TOTAL_TIMEOUT fails.
 PI_EVENT_DRAIN_TIMEOUT = _env_float_drain("PI_EVENT_DRAIN_TIMEOUT", 2.0)    # prompt() 单次事件等待粒度
-PI_TURN_TOTAL_TIMEOUT = _env_float_drain("PI_TURN_TOTAL_TIMEOUT", 900.0)    # prompt() 非流式整回合兜底上限
+PI_TURN_TOTAL_TIMEOUT = _env_float_drain("PI_TURN_TOTAL_TIMEOUT", 300.0)    # prompt() 非流式整回合兜底上限 (#910: 900→300, env wins)
 
 # transport goal B-P1-3: how often to emit an SSE keepalive comment when Pi is
 # silent (long GIS tool, compaction, slow first token). Keeps the connection
@@ -97,7 +97,7 @@ PI_HEARTBEAT_INTERVAL = _env_float_drain("PI_HEARTBEAT_INTERVAL", 8.0)
 # so this now only needs to catch a true Pi hang; bumped to 180s to tolerate
 # long toolchains (still well under PI_RPC_TIMEOUT=300s that bounds one RPC).
 # Operators may tune via the env var.
-PI_EVENT_STREAM_TIMEOUT = _env_float_drain("PI_EVENT_STREAM_TIMEOUT", 180.0)
+PI_EVENT_STREAM_TIMEOUT = _env_float_drain("PI_EVENT_STREAM_TIMEOUT", 120.0)
 
 
 # ── V3: turn_id 铸造 + step_result SSE 注入（Harness–Map Interaction Closed Loop）─
@@ -493,10 +493,46 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
                     review_error,
                 )
 
+    # #908 cap: raster tools return MB base64 data URLs in `image` and full
+    # mapspec in `raw_result` — sending the raw body as PiToolResponse.details
+    # blows up loopback JSON and SSE backpressure. Keep only the ref handle.
+    details_payload: Any = result.raw_result
+    if isinstance(details_payload, dict):
+        details_payload = dict(details_payload)
+        # Raster data URL is not needed — frontend mounts via result_ref / imageRef
+        if "image" in details_payload and isinstance(details_payload.get("image"), str):
+            img = details_payload["image"]
+            if img.startswith("data:image/") and len(img) > 1024:
+                details_payload.pop("image", None)
+                if result.geojson_ref or result.raw_result.get("result_ref"):
+                    details_payload["imageRef"] = result.geojson_ref or result.raw_result.get("result_ref")
+        # GeoJSON body already stored as ref — strip from details too
+        if "geojson" in details_payload:
+            details_payload.pop("geojson", None)
+        if isinstance(details_payload.get("data"), dict) and details_payload["data"].get("type") == "FeatureCollection":
+            # keep summary, drop heavy features array
+            data_fc = details_payload["data"]
+            if isinstance(data_fc.get("features"), list) and len(data_fc["features"]) > 100:
+                details_payload["data"] = {k: v for k, v in data_fc.items() if k != "features"}
+                details_payload["data"]["feature_count"] = len(data_fc["features"])
+        # Cap details to 64KB JSON
+        import json as _json
+        try:
+            encoded = _json.dumps(details_payload, ensure_ascii=False)
+            if len(encoded.encode("utf-8")) > 65536:
+                # Keep only essential keys
+                keep = {k: v for k, v in details_payload.items() if k in ("type", "result_ref", "imageRef", "mapspec_fingerprint", "success", "summary", "status", "feature_count", "bbox", "command", "layer_id", "source_id")}
+                if keep:
+                    details_payload = keep
+                else:
+                    details_payload = {"summary": str(details_payload.get("summary", ""))[:2000], "result_ref": details_payload.get("result_ref") or details_payload.get("imageRef")}
+        except Exception:
+            pass
+
     return PiToolResponse(
         toolCallId=request.toolCallId,
         content=[{"type": "text", "text": result.llm_payload}],
-        details=result.raw_result,
+        details=details_payload,
         isError=(result.status == "error"),
     )
 
@@ -780,9 +816,9 @@ async def _hydrate_cartographic_harness(
         mutation.get("session_id") == session_id
         for mutation in harness.mapspec_mutations
     )
-    if state is None:
-        from app.services.session_data import session_data_manager
+    from app.services.session_data import session_data_manager
 
+    if state is None:
         state = await session_data_manager.get_map_state(session_id)
     if state.get("_cartographic_deleted") is True:
         return False
@@ -1056,10 +1092,9 @@ async def _evaluate_cartographic_session_unlocked(
             "overall_passed": False,
         }
     from app.lib.harness.evaluator import HarnessEvaluator
+    from app.services.session_data import session_data_manager
 
     if state is None:
-        from app.services.session_data import session_data_manager
-
         state = await session_data_manager.get_map_state(session_id)
     observation = state.get("_cartographic_observation")
     sequence = int(observation.get("sequence", 0)) if isinstance(observation, dict) else 0

@@ -679,3 +679,13 @@ textarea {
     scroll-behavior: auto !important;
   }
 }
+
+/* U-7（#889）：StoryMap 播放器当前消息指示 —— active 消息左侧指示条 +
+   其余非用户消息轻微降透明（此前 activeIndex 只驱动滚动，无视觉高亮）。 */
+.story-message-active {
+  border-left: 2px solid var(--agent-accent, #38bdf8);
+  padding-left: 1rem;
+}
+.story-message-idle {
+  opacity: 0.75;
+}

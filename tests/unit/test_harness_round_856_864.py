@@ -19,6 +19,7 @@ from app.services.chat_engine import ChatEngine
 from app.services.chat import planner as planner_mod
 from app.services.chat.execution_engine import TurnTimeoutError
 from app.services.chat.plan_orchestrator import plan_orchestrator
+from app.services.chat import plan_orchestrator as plan_orchestrator_module
 from app.services.gis_harness.tools import register_gis_harness_tools
 from app.services.tool_catalog import ToolCatalog
 from app.tools.registry import ToolRegistry
@@ -88,6 +89,10 @@ async def test_h1_high_confidence_synthesizes_without_llm(monkeypatch):
         return None
 
     monkeypatch.setattr(planner_mod, "make_plan", fake_make_plan)
+    # 全量套件污染隔离：更早的测试可能经 agent_pi_bridge 注入过受限的 stub
+    # registry（缺 poi_query 系工具）——合成会把能力标 unavailable 而回落
+    # LLM。钉 None（available 未知 → 不标 unavailable）与本用例单元语义一致。
+    monkeypatch.setattr(plan_orchestrator_module, "_get_registry", lambda: None)
     result = await plan_orchestrator.orchestrate_plan(
         object(), "sess-h1-synth", "成都小学分布情况", [], "env"
     )

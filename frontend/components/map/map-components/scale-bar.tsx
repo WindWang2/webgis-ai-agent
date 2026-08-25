@@ -2,7 +2,7 @@
 import React from 'react';
 import type { MapSpecComponent } from '@/lib/mapspec-compiler/types';
 import { registerComponentRenderer } from './registry';
-import { positionClass, positionStyle } from './helpers';
+import { positionClass, stackedBottomStyle } from './helpers';
 import type { RendererContext } from './types';
 import { metersPerPixelAt } from '@/lib/map-kit/meters-per-pixel';
 
@@ -21,7 +21,7 @@ function formatMeters(m: number): string {
 function ScaleBarRenderer(component: MapSpecComponent, ctx: RendererContext) {
   const { meters, pixels } = computeScale(ctx.zoom, ctx.centerLat);
   return (
-    <div data-testid="spec-chrome-scale-bar" style={positionStyle(component)} className={`map-chrome absolute z-30 flex items-center gap-2 px-2 py-1 text-caption font-medium tabular-nums ${positionClass(component)}`} aria-label={`比例尺 ${formatMeters(meters)}`}>
+    <div data-testid="spec-chrome-scale-bar" style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 flex items-center gap-2 px-2 py-1 text-caption font-medium tabular-nums ${positionClass(component)}`} aria-label={`比例尺 ${formatMeters(meters)}`}>
       <div aria-hidden className="border-b-2 border-l-2 border-r-2 border-map-chrome-ink" style={{ width: `${Math.round(pixels)}px`, height: '5px' }} />
       <span className="text-map-chrome-ink">{formatMeters(meters)}</span>
     </div>
