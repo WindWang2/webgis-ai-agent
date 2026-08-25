@@ -318,6 +318,7 @@ export default function Home() {
           messages={messages}
           aiStatus={aiStatus}
           onSend={handleSend}
+          onCancel={bridge.cancel}
           sessionId={sessionId}
           ownerToken={activeSessionToken}
           onPlanAction={handlePlanAction}

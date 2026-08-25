@@ -2,7 +2,7 @@
 
 import { memo, useState, useRef, useEffect, useCallback, type KeyboardEvent } from 'react';
 import dynamic from 'next/dynamic';
-import { Send, Sparkles, CheckCircle2 } from 'lucide-react';
+import { Send, Sparkles, CheckCircle2, Square, RotateCcw } from 'lucide-react';
 import type { AiStatus } from '@/lib/store/hud-types';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { ToolCallChain } from '@/components/chat/tool-call-card';
@@ -93,10 +93,26 @@ interface ChatMessage {
   resultId?: string;
 }
 
+/**
+ * #1000：重试入口——最近一条非空 user 消息（失败回合的原始指令），从
+ * messages 尾部倒序找。纯派生计算（≤200 条反向扫描，远廉于同帧的
+ * markdown 重解析），不 useMemo：React Compiler 无法保留该形状的手工
+ * memoization（react-hooks/preserve-manual-memoization）。
+ */
+function findLastUserMessage(messages: ChatMessage[]): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role === 'user' && m.content.trim()) return m.content.trim();
+  }
+  return null;
+}
+
 interface ChatTabProps {
   messages: ChatMessage[];
   aiStatus: AiStatus;
   onSend: (text: string) => void;
+  /** #988：isBusy 期间发送键切换为『停止』形态时点击触发（bridge.cancel）。 */
+  onCancel?: () => void;
   /** Plan Mode: 用户在卡片上点按钮时回调，由父组件发送对应 chat 消息并更新 plan.status */
   onPlanAction?: (planId: string, action: 'approve' | 'revise' | 'reject') => void;
   /**
@@ -254,7 +270,7 @@ const ChatMessageItem = memo(function ChatMessageItem({
   );
 });
 
-export function ChatTab({ messages, aiStatus, onSend, onPlanAction, sessionId }: ChatTabProps) {
+export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, sessionId }: ChatTabProps) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -320,6 +336,14 @@ export function ChatTab({ messages, aiStatus, onSend, onPlanAction, sessionId }:
         ? '正在执行空间操作...'
         : '';
 
+  // #1000：失败终态时 messages 已是最终形状，直接派生（见函数注释）。
+  const lastUserMessage = findLastUserMessage(messages);
+
+  const handleRetry = useCallback(() => {
+    if (!lastUserMessage || isBusy) return;
+    onSend(lastUserMessage);
+  }, [lastUserMessage, isBusy, onSend]);
+
   return (
     <div className="flex flex-col h-full">
       {/* Messages scroll area */}
@@ -375,7 +399,26 @@ export function ChatTab({ messages, aiStatus, onSend, onPlanAction, sessionId }:
             composer 静默恢复可用，用户无法感知失败） */}
         {aiStatus === 'error' && (
           <div className="px-panel pt-2">
-            <InlineNotice variant="error">上一条指令执行失败，请调整后重试。</InlineNotice>
+            <InlineNotice variant="error">
+              {/* #1000：失败后的恢复入口——一键重发最近一条 user 指令，
+                  免去重新手打整条命令。 */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="min-w-0 flex-1">上一条指令执行失败，请调整后重试。</span>
+                {lastUserMessage && (
+                  <button
+                    type="button"
+                    onClick={handleRetry}
+                    disabled={isBusy}
+                    aria-label="重试上一条指令"
+                    title={lastUserMessage}
+                    className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-sm border border-status-critical-border bg-surface-raised px-1.5 py-0.5 text-micro font-medium text-status-critical transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <RotateCcw size={10} aria-hidden />
+                    重试上一条
+                  </button>
+                )}
+              </div>
+            </InlineNotice>
           </div>
         )}
         <div className="flex items-end gap-2 px-panel pb-1 pt-2">
@@ -395,19 +438,33 @@ export function ChatTab({ messages, aiStatus, onSend, onPlanAction, sessionId }:
             className="max-h-20 flex-1 resize-none bg-transparent py-1 text-body leading-normal text-ink placeholder:text-ink-disabled focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-status-accent-border"
           />
 
-          {/* Send button */}
-          <button
-            onClick={handleSend}
-            disabled={!input.trim() || isBusy}
-            aria-label="发送消息"
-            className={`flex h-control-md w-control-md shrink-0 items-center justify-center rounded-sm transition-colors ${
-              input.trim() && !isBusy
-                ? 'bg-status-accent text-ink-on-accent'
-                : 'cursor-not-allowed bg-surface-sunken text-ink-disabled'
-            }`}
-          >
-            <Send size={13} aria-hidden />
-          </button>
+          {/* Send / Stop button —— #988：isBusy 时发送键切换为『停止』形态，
+              中止进行中的 Agent 回合（后端把 SSE 断开归一为 task_cancelled），
+              而不是禁用干等或整页刷新丢工作台上下文。 */}
+          {isBusy ? (
+            <button
+              onClick={onCancel}
+              disabled={!onCancel}
+              aria-label="停止生成"
+              title="停止生成"
+              className="flex h-control-md w-control-md shrink-0 cursor-pointer items-center justify-center rounded-sm border border-status-critical-border bg-status-critical-soft text-status-critical transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Square size={10} fill="currentColor" aria-hidden />
+            </button>
+          ) : (
+            <button
+              onClick={handleSend}
+              disabled={!input.trim()}
+              aria-label="发送消息"
+              className={`flex h-control-md w-control-md shrink-0 items-center justify-center rounded-sm transition-colors ${
+                input.trim()
+                  ? 'cursor-pointer bg-status-accent text-ink-on-accent'
+                  : 'cursor-not-allowed bg-surface-sunken text-ink-disabled'
+              }`}
+            >
+              <Send size={13} aria-hidden />
+            </button>
+          )}
         </div>
 
         {/* Hint */}

@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { useId, useState, useEffect } from 'react';
 import { ChevronRight, ChevronDown, CheckCircle2, AlertCircle, AlertTriangle, Loader2, Clock, Wrench } from 'lucide-react';
 import { CartographyResultCard } from './cartography-result-card';
 import { H3LisaResultCard } from './h3-lisa-result-card';
@@ -250,10 +250,23 @@ function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolea
 
 export function ToolCallChain({ calls }: { calls: ToolCallEntry[] }) {
   const [expanded, setExpanded] = useState(false);
+  // #1000：失败行抵达时链默认展开——错误详情此前埋在「展开链→展开单行」
+  // 两级折叠之下，用户默认看不到失败原因难以调整重试。用户手动开合过
+  // 之后不再强推（尊重显式操作，含恢复的历史会话：挂载即已带 failed 态）。
+  const [userToggled, setUserToggled] = useState(false);
 
   const runningCount = calls.filter((c) => c.status === 'running').length;
   const completedCount = calls.filter((c) => c.status === 'completed').length;
   const failedCount = calls.filter((c) => c.status === 'failed').length;
+
+  useEffect(() => {
+    if (failedCount > 0 && !userToggled) setExpanded(true);
+  }, [failedCount, userToggled]);
+
+  const toggleExpanded = () => {
+    setUserToggled(true);
+    setExpanded((v) => !v);
+  };
 
   // Summary line when collapsed
   const allDone = runningCount === 0;
@@ -269,7 +282,7 @@ export function ToolCallChain({ calls }: { calls: ToolCallEntry[] }) {
     <div className="my-1.5 rounded-md border border-edge-subtle bg-surface-raised overflow-hidden">
       {/* Chain header — click to expand */}
       <button
-        onClick={() => setExpanded(!expanded)}
+        onClick={toggleExpanded}
         aria-expanded={expanded}
         aria-controls={chainListId}
         /* B: 同 ToolCallRow —— 删掉 focus:ring-blue-400，交给全局 *:focus-visible。 */

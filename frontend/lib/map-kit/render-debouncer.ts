@@ -1,4 +1,5 @@
 import type maplibregl from 'maplibre-gl';
+import { devOnly } from '@/lib/utils/logger';
 
 export type RenderOpType =
   | 'SET_PAINT'
@@ -104,9 +105,8 @@ export class RenderDebouncer {
       try {
         op.execute(this.map);
       } catch (err) {
-        if (process.env.NODE_ENV !== 'production') {
-          console.warn(`[RenderDebouncer] Operation execution failed for ${id}:`, err);
-        }
+        // #1008：裸 console（NODE_ENV 手工门禁）统一换 devOnly。
+        devOnly.warn(`[RenderDebouncer] Operation execution failed for ${id}:`, err);
       }
       executedOps++;
 
@@ -124,9 +124,8 @@ export class RenderDebouncer {
         try {
           op.execute(this.map);
         } catch (err) {
-          if (process.env.NODE_ENV !== 'production') {
-            console.warn(`[RenderDebouncer] Operation execution failed for ${id}:`, err);
-          }
+          // #1008：同上，统一 devOnly 门禁。
+          devOnly.warn(`[RenderDebouncer] Operation execution failed for ${id}:`, err);
         }
         executedOps++;
 

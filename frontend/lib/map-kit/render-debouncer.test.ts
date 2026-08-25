@@ -91,4 +91,23 @@ describe('RenderDebouncer', () => {
     debouncer.enqueue(op);
     expect(debouncer.pendingCount()).toBe(0);
   });
+
+  it('#1008: failing operation logs through devOnly only (no bare console in test env)', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const debouncer = new RenderDebouncer(mockMap);
+
+    debouncer.enqueue({
+      id: 'op:throws',
+      type: 'SET_PAINT',
+      execute: () => {
+        throw new Error('op exploded');
+      },
+    });
+
+    expect(() => debouncer.flush()).not.toThrow();
+    // 旧实现是 NODE_ENV!=='production' 的裸 console.warn（test 环境会打）；
+    // devOnly 仅在 development 输出 —— vitest（NODE_ENV=test）必须静默。
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(debouncer.pendingCount()).toBe(0);
+  });
 });

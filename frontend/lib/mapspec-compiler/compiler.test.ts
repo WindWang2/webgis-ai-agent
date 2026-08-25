@@ -3,6 +3,7 @@ import {
   compileMapSpec,
   compileStyleMethod,
   validateMapSpec,
+  MAP_GLYPHS_URL,
 } from "./compiler";
 import { MapSpec } from "./types";
 
@@ -499,5 +500,75 @@ describe("heatmap raw paint dialect bridge (GIS harness radius contract)", () =>
     const result = compileMapSpec(spec);
     const lyr = result.style.layers.find((l: any) => l.id === "heat");
     expect(lyr.paint["heatmap-radius"]).toBe(18);
+  });
+
+  /* ─── #1007: 标注默认 halo + glyphs 可配置 ─── */
+
+  function labelSpec(label: Record<string, unknown>): MapSpec {
+    return {
+      version: "1.0",
+      sources: {
+        pts: { type: "geojson", inlineData: { type: "FeatureCollection", features: [] } },
+      },
+      layers: [
+        {
+          id: "poi",
+          source: "pts",
+          type: "circle",
+          paint: { color: "#ff0000", radius: 5 },
+          label,
+        } as any,
+      ],
+    };
+  }
+
+  it("#1007: label without explicit halo gets the default 1px white halo (readable on dark basemaps)", () => {
+    const result = compileMapSpec(labelSpec({ field: "name" }));
+    const labelLayer = result.style.layers.find((l: any) => l.id === "poi-label") as any;
+    expect(labelLayer).toBeTruthy();
+    // 默认黑字保留，但补上 GIS 标注惯例的白色 halo——裸黑字在暗色底图
+    // （含导出图）上不可读。
+    expect(labelLayer.paint["text-color"]).toBe("#000000");
+    expect(labelLayer.paint["text-halo-color"]).toBe("#ffffff");
+    expect(labelLayer.paint["text-halo-width"]).toBe(1);
+  });
+
+  it("#1007: explicit haloColor/haloWidth are fully respected over the defaults", () => {
+    const result = compileMapSpec(
+      labelSpec({ field: "name", haloColor: "#0000ff", haloWidth: 2.5 }),
+    );
+    const labelLayer = result.style.layers.find((l: any) => l.id === "poi-label") as any;
+    expect(labelLayer.paint["text-halo-color"]).toBe("#0000ff");
+    expect(labelLayer.paint["text-halo-width"]).toBe(2.5);
+  });
+
+  it("#1007: explicit label color still wins over the dark default", () => {
+    const result = compileMapSpec(labelSpec({ field: "name", color: "#ffee99" }));
+    const labelLayer = result.style.layers.find((l: any) => l.id === "poi-label") as any;
+    expect(labelLayer.paint["text-color"]).toBe("#ffee99");
+    // 显式浅色字同样享受默认 halo（未显式配 halo 时）
+    expect(labelLayer.paint["text-halo-color"]).toBe("#ffffff");
+  });
+
+  it("#1007: style glyphs template comes from MAP_GLYPHS_URL (env-overridable, offline-capable)", () => {
+    const result = compileMapSpec(labelSpec({ field: "name" }));
+    expect((result.style as any).glyphs).toBe(MAP_GLYPHS_URL);
+    // 缺省保留公共 demotiles 模板（含占位符）；部署方可通过
+    // NEXT_PUBLIC_MAP_GLYPHS_URL 指向本地字形托管。
+    expect(MAP_GLYPHS_URL).toContain("{fontstack}/{range}.pbf");
+  });
+
+  it("#1007: style omits glyphs when no label layer was compiled", () => {
+    const spec: MapSpec = {
+      version: "1.0",
+      sources: {
+        pts: { type: "geojson", inlineData: { type: "FeatureCollection", features: [] } },
+      },
+      layers: [
+        { id: "poi", source: "pts", type: "circle", paint: { color: "#ff0000" } },
+      ],
+    };
+    const result = compileMapSpec(spec);
+    expect((result.style as any).glyphs).toBeUndefined();
   });
 });

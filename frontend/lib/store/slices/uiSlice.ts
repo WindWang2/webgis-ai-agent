@@ -12,9 +12,23 @@ import type { HudState, AiStatus, LeftTab, SettingsTab, ExportItem } from '../hu
  */
 export const MAX_OPS_LOG = 200;
 
+/**
+ * #999（最小版小屏适配）：ContextPanel 的初始开合由视口宽度决定。
+ * 主工作台布局是桌面像素常量（rail 48 + 面板 280–420px），窄视口
+ * （平板竖屏/手机，<768px）上展开的左栏会占满视口宽度。仅影响初始态；
+ * 用户随后的开合（toggleLeftPanel / setLeftPanelOpen）不受约束。
+ * SSR（无 window）保持展开，客户端 store 创建时再收敛。
+ */
+export const LEFT_PANEL_MIN_VIEWPORT_PX = 768;
+
+export function defaultLeftPanelOpen(): boolean {
+  if (typeof window === 'undefined') return true;
+  return window.innerWidth >= LEFT_PANEL_MIN_VIEWPORT_PX;
+}
+
 export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = (set) => ({
   /* ─── HUD Panels (legacy compat) ─── */
-  leftPanelOpen: true,
+  leftPanelOpen: defaultLeftPanelOpen(),
   rightPanelOpen: true,
   toggleLeftPanel: () => set((s) => ({ leftPanelOpen: !s.leftPanelOpen })),
   toggleRightPanel: () => set((s) => ({ rightPanelOpen: !s.rightPanelOpen })),

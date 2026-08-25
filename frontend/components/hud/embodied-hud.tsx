@@ -79,13 +79,16 @@ export function EmbodiedHud() {
   const [phase, setPhase] = useState(0);
   const reducedMotion = usePrefersReducedMotion();
   useEffect(() => {
-    // 审计 findings.md Perf Medium：HUD 关闭时（仅显示 24px 条）无需动画，
-    // 暂停 rAF 循环避免空转的 60fps 状态更新 + 重渲染。
+    // #1001：空闲态不再跑 JS rAF——HUD 展开期间循环曾无条件运行（空闲步进
+    // 0.08），每帧 setPhase 重渲染整个 HUD 子树直到手动收起。波形是纯装饰，
+    // 空闲时相位冻结为静态曲线；仅 isThinking 保留 JS 相位驱动（活跃波形的
+    // 波幅/频率逐帧变化需要它）。
+    // 审计 findings.md Perf Medium：HUD 关闭时（仅显示 24px 条）同样不动画。
     // UI V3：prefers-reduced-motion 时同样不启动。
-    if (!hudOpen || reducedMotion) return;
+    if (!hudOpen || !isThinking || reducedMotion) return;
     let frame: number;
     const tick = () => {
-      setPhase((p) => (p + (isThinking ? 0.25 : 0.08)) % (Math.PI * 2));
+      setPhase((p) => (p + 0.25) % (Math.PI * 2));
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);

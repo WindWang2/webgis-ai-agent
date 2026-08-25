@@ -626,7 +626,8 @@ export function MapPanel({
           devOnly.warn('[map] cartographic observation failed:', error)
         })
       })
-      .catch((e) => console.error("[map] reconcile failed", e))
+      // #1008：reconcile 失败的裸 console.error 泄漏内部细节 → devOnly。
+      .catch((e) => devOnly.error("[map] reconcile failed", e))
   }, [layers, processLayers, activeFilters, is3D, liveGeneration, refSourcesGeneration, mapReady, currentMapStyle, runtimeRecoveryGeneration, syncInteractiveIds, raiseSelectionHighlight, sessionId, ownerToken, sessionTokenRef, dispatchAction])
 
 
