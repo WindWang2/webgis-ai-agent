@@ -274,7 +274,6 @@ async def run_workflow(
     project_id: str,
     workflow_id: str,
     req: WorkflowRunRequest,
-    db: Session = Depends(get_db),
     # SEC-F1: workflow execution dispatches registered tools synchronously —
     # not an anonymous surface (resource exhaustion + tool-echo).
     user: Dict[str, Any] = Depends(get_current_user),
@@ -430,7 +429,6 @@ async def replay_run(
     project_id: str,
     run_id: str,
     req: RunReplayRequest,
-    db: Session = Depends(get_db),
     user: Dict[str, Any] = Depends(get_current_user),
 ):
     """Re-execute a prior run. ``exact`` (default) reuses the frozen graph +
@@ -464,7 +462,6 @@ async def resume_run(
     project_id: str,
     run_id: str,
     req: RunResumeRequest,
-    db: Session = Depends(get_db),
     user: Dict[str, Any] = Depends(get_current_user),
 ):
     """Continue a failed/partial prior run from where it stopped.

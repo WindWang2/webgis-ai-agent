@@ -2,6 +2,8 @@
 import asyncio
 import ssl
 import logging
+import threading
+import weakref
 import aiohttp
 import certifi
 
@@ -64,9 +66,80 @@ async def create_client_session(**kwargs) -> aiohttp.ClientSession:
 
 # ── 共享连接池（供 chinese_maps.py 的多 provider 共用）───────────────────────
 
+# Per-event-loop registry (fix #933): the shared session and its lock must not
+# be reused across worker-thread event loops created via asyncio.run().  A
+# module-level asyncio.Lock / aiohttp.ClientSession binds to the loop that
+# created it; reusing it on a different loop raises
+# "Timeout context manager should be used inside a task" /
+# "Future attached to a different loop".  We keep one session+lock per loop.
+_sessions: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+_locks: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+_registry_lock = threading.Lock()
+
+# Legacy aliases kept for backward compatibility (tests may import them).
+# They always mirror the *calling* loop's entry after each public call.
 _shared_session: aiohttp.ClientSession | None = None
 _shared_session_loop: asyncio.AbstractEventLoop | None = None
-_pool_lock: asyncio.Lock = asyncio.Lock()
+
+
+def _get_loop_lock(loop: asyncio.AbstractEventLoop) -> asyncio.Lock:
+    """Return the asyncio.Lock for *loop*, creating it atomically."""
+    with _registry_lock:
+        lock = _locks.get(loop)
+        if lock is None:
+            lock = asyncio.Lock()
+            _locks[loop] = lock
+        return lock
+
+
+class _PerLoopLockProxy:
+    """Proxy so legacy `async with _pool_lock:` is per-loop safe.
+
+    Before #933, `_pool_lock = asyncio.Lock()` was instantiated at import and
+    then awaited from worker-thread loops — violating asyncio's loop affinity.
+    This proxy delegates every `async with _pool_lock` to the *current*
+    running loop's lock, so old import sites remain correct without code
+    changes.
+    """
+
+    async def __aenter__(self):
+        loop = asyncio.get_running_loop()
+        lock = _get_loop_lock(loop)
+        await lock.acquire()
+        self._entered_lock = lock  # type: ignore[attr-defined]
+        return lock
+
+    async def __aexit__(self, exc_type, exc, tb):
+        lock = getattr(self, "_entered_lock", None)
+        if lock is not None:
+            lock.release()
+            self._entered_lock = None  # type: ignore[attr-defined]
+        return False
+
+    async def acquire(self):
+        loop = asyncio.get_running_loop()
+        lock = _get_loop_lock(loop)
+        await lock.acquire()
+        self._entered_lock = lock  # type: ignore[attr-defined]
+        return True
+
+    def release(self):
+        lock = getattr(self, "_entered_lock", None)
+        if lock is not None and lock.locked():
+            lock.release()
+            self._entered_lock = None  # type: ignore[attr-defined]
+
+    def locked(self):
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        with _registry_lock:
+            lock = _locks.get(loop)
+        return lock.locked() if lock is not None else False
+
+
+_pool_lock = _PerLoopLockProxy()
 
 
 def _shared_session_usable() -> bool:
@@ -75,11 +148,19 @@ def _shared_session_usable() -> bool:
     session 是在创建它的那个 event loop 上工作的；若该 loop 已被关闭（例如前一个
     测试的函数级 loop），继续复用或 close 它都会在已关闭的 loop 上调度任务并抛出
     ``RuntimeError: Event loop is closed``。此时必须当作不可用并重新创建。
+
+    Per-loop variant: checks the *current* running loop's session only; returns
+    False when called outside a running loop.
     """
-    if _shared_session is None or _shared_session.closed:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
         return False
-    loop = _shared_session_loop
-    return loop is not None and not loop.is_closed()
+    with _registry_lock:
+        sess = _sessions.get(loop)
+    if sess is None or sess.closed:
+        return False
+    return not loop.is_closed()
 
 
 async def get_shared_client() -> aiohttp.ClientSession:
@@ -91,29 +172,81 @@ async def get_shared_client() -> aiohttp.ClientSession:
     注意：并发量由调用方的 Semaphore / rate limiter 另行约束，非此模块负责。
     """
     global _shared_session, _shared_session_loop
-    async with _pool_lock:
-        if not _shared_session_usable():
-            _shared_session = None
-            _shared_session_loop = None
-            conn = aiohttp.TCPConnector(ttl_dns_cache=300, limit=20, limit_per_host=10)
-            _shared_session = aiohttp.ClientSession(
-                connector=conn,
-                timeout=aiohttp.ClientTimeout(total=10),
-                headers=get_base_headers(),
-            )
-            _shared_session_loop = asyncio.get_running_loop()
-        return _shared_session
+    loop = asyncio.get_running_loop()
+    lock = _get_loop_lock(loop)
+    async with lock:
+        # Re-check under lock (double-checked) — another coroutine on the same
+        # loop may have created the session while we waited for the lock.
+        with _registry_lock:
+            sess = _sessions.get(loop)
+            if sess is not None and not sess.closed and not loop.is_closed():
+                _shared_session = sess
+                _shared_session_loop = loop
+                return sess
+            # Stale entry (closed session) — drop it; a new one will be created.
+            if sess is not None and sess.closed:
+                _sessions.pop(loop, None)
+
+        conn = aiohttp.TCPConnector(ttl_dns_cache=300, limit=20, limit_per_host=10)
+        new_sess = aiohttp.ClientSession(
+            connector=conn,
+            timeout=aiohttp.ClientTimeout(total=10),
+            headers=get_base_headers(),
+        )
+        with _registry_lock:
+            _sessions[loop] = new_sess
+            _shared_session = new_sess
+            _shared_session_loop = loop
+        return new_sess
 
 
 async def close_shared_client() -> None:
     """服务关闭时释放共享 session。应在 FastAPI lifespan shutdown 事件中调用。"""
     global _shared_session, _shared_session_loop
-    async with _pool_lock:
-        if _shared_session is not None and not _shared_session.closed:
-            # 若 session 绑定的 loop 已关闭，直接丢弃引用即可，不能再 await close()，
-            # 否则会在已关闭的 loop 上调度任务而抛 RuntimeError: Event loop is closed。
-            loop = _shared_session_loop
-            if loop is not None and not loop.is_closed():
-                await _shared_session.close()
-        _shared_session = None
-        _shared_session_loop = None
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop (e.g. called from sync context after the loop was
+        # closed). Best-effort: close all known sessions whose loops are still
+        # open by scheduling closes on their own loops if possible; otherwise
+        # just drop references — weak dict will GC them.
+        with _registry_lock:
+            items = list(_sessions.items())
+            _sessions.clear()
+            _locks.clear()
+            _shared_session = None
+            _shared_session_loop = None
+        for sess_loop, sess in items:
+            if sess is None or sess.closed:
+                continue
+            if sess_loop.is_closed():
+                continue
+            # Try to close on its own loop if that loop is still running in
+            # another thread; otherwise ignore (GC will reap).
+            try:
+                if sess_loop.is_running():
+                    fut = asyncio.run_coroutine_threadsafe(sess.close(), sess_loop)
+                    fut.result(timeout=2)
+                else:
+                    # Loop exists but not running — spin a temporary run to close.
+                    # aiohttp close must be awaited on the session's loop; if we
+                    # can't, just drop.
+                    pass
+            except Exception:
+                pass
+        return
+
+    lock = _get_loop_lock(loop)
+    async with lock:
+        with _registry_lock:
+            sess = _sessions.pop(loop, None)
+            # Update legacy aliases if they pointed at this loop's session.
+            if _shared_session_loop is loop:
+                _shared_session = None
+                _shared_session_loop = None
+        if sess is not None and not sess.closed:
+            if not loop.is_closed():
+                await sess.close()
+        # Clean up the lock entry for this loop (no longer needed).
+        with _registry_lock:
+            _locks.pop(loop, None)

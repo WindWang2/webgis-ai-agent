@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
-from app.core.database import get_db, SessionLocal
+from app.core.database import SessionLocal
 from app.core.auth import get_current_user, get_current_user_optional
 from app.models.data_fabric import DataSourceModel, CatalogItemModel
 from app.schemas.data_fabric_schema import (
@@ -216,7 +216,6 @@ class MaterializeRequest(BaseModel):
 @router.post("/data-fabric/sources", tags=["Data Fabric / 数据织网"])
 async def create_data_source(
     req: CreateDataSourceRequest,
-    db: Session = Depends(get_db),
     user: Dict[str, Any] = Depends(get_current_user),
 ):
     """注册新的地理空间数据源连接配置
@@ -293,7 +292,6 @@ async def create_data_source(
 @router.get("/data-fabric/sources", tags=["Data Fabric / 数据织网"])
 async def list_data_sources(
     source_type: Optional[str] = Query(None, description="Filter by source type"),
-    db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     """获取所有已注册的地理空间数据源列表"""
@@ -327,7 +325,6 @@ async def list_data_sources(
 @router.get("/data-fabric/sources/{source_id}", tags=["Data Fabric / 数据织网"])
 async def get_data_source(
     source_id: str,
-    db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     """获取指定数据源详情"""
@@ -351,7 +348,6 @@ async def get_data_source(
 @router.delete("/data-fabric/sources/{source_id}", tags=["Data Fabric / 数据织网"])
 async def delete_data_source(
     source_id: str,
-    db: Session = Depends(get_db),
     user: Dict[str, Any] = Depends(get_current_user),
 ):
     """删除指定数据源及其关联目录项
@@ -374,7 +370,6 @@ async def delete_data_source(
 @router.post("/data-fabric/sources/{source_id}/probe", tags=["Data Fabric / 数据织网"])
 async def probe_data_source(
     source_id: str,
-    db: Session = Depends(get_db),
     user: Dict[str, Any] = Depends(get_current_user),
 ):
     """探查数据源健康状况与连通性
@@ -411,7 +406,6 @@ async def probe_data_source(
 @router.post("/data-fabric/sources/{source_id}/sync", tags=["Data Fabric / 数据织网"])
 async def sync_data_source_catalog(
     source_id: str,
-    db: Session = Depends(get_db),
     user: Dict[str, Any] = Depends(get_current_user),
 ):
     """主动刷新/同步数据源图层元数据至 Spatial Catalog
@@ -468,7 +462,6 @@ async def list_spatial_catalog(
         "JSON from the list payload; pass ?summary=false to receive the full row "
         "(backward compat).",
     ),
-    db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     """检索 Spatial Catalog 空间元数据索引目录
@@ -551,7 +544,6 @@ async def list_spatial_catalog(
 @router.get("/data-fabric/catalog/{item_id}", tags=["Data Fabric / 数据织网"])
 async def get_catalog_item(
     item_id: str,
-    db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     """获取指定 Spatial Catalog 项元数据"""
@@ -578,7 +570,6 @@ async def get_catalog_item(
 @router.get("/data-fabric/catalog/{item_id}/descriptor", tags=["Data Fabric / 数据织网"])
 async def get_catalog_item_descriptor(
     item_id: str,
-    db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     """获取完整的 DatasetDescriptor 契约元数据"""
@@ -600,7 +591,6 @@ async def get_catalog_item_descriptor(
 async def preview_catalog_item(
     item_id: str,
     limit: int = Query(10, ge=1, le=100),
-    db: Session = Depends(get_db),
     user: Dict[str, Any] = Depends(get_current_user),
 ):
     """获取 Spatial Catalog 项的有界样例数据预览
@@ -646,7 +636,6 @@ async def preview_catalog_item(
 async def query_catalog_item(
     item_id: str,
     query_spec: QuerySpec,
-    db: Session = Depends(get_db),
     user: Dict[str, Any] = Depends(get_current_user),
 ):
     """执行下推（Pushdown）选择性查询
@@ -684,7 +673,6 @@ async def query_catalog_item(
 async def materialize_catalog_item(
     req: MaterializeRequest,
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
-    db: Session = Depends(get_db),
     user: Dict[str, Any] = Depends(get_current_user),
 ):
     """按需实例化（Materialize）数据至会话 SessionStore 并产生 ref_id 游标

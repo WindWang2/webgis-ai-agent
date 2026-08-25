@@ -77,3 +77,61 @@ class TestSharedClient:
         s2 = await get_shared_client()
         assert s1 is s2
         await close_shared_client()
+
+    @pytest.mark.asyncio
+    async def test_shared_client_per_loop_isolation(self):
+        """#933: each event loop gets its own session/lock — cross-loop
+        reuse must not raise 'Timeout context manager should be used inside
+        a task' / 'Future attached to a different loop'."""
+        import asyncio
+        import threading
+
+        results: dict = {}
+        errors: list = []
+
+        def run_in_thread(name: str):
+            async def _task():
+                try:
+                    s = await get_shared_client()
+                    results[name] = s
+                    # Touch the session to ensure loop affinity is valid.
+                    # No real network needed — just exercise the lock + session.
+                    assert not s.closed
+                except Exception as e:  # noqa: BLE001
+                    errors.append(e)
+                finally:
+                    try:
+                        await close_shared_client()
+                    except Exception:
+                        pass
+
+            asyncio.run(_task())
+
+        t1 = threading.Thread(target=run_in_thread, args=("loop1",))
+        t2 = threading.Thread(target=run_in_thread, args=("loop2",))
+        t1.start()
+        t2.start()
+        t1.join(timeout=5)
+        t2.join(timeout=5)
+
+        assert not errors, f"per-loop isolation raised: {errors}"
+        assert "loop1" in results and "loop2" in results
+        # Different loops must get different session objects.
+        assert results["loop1"] is not results["loop2"]
+        # Main loop's session (if any) is independent — create and close it.
+        sess = await get_shared_client()
+        assert sess is not results["loop1"] and sess is not results["loop2"]
+        await close_shared_client()
+
+    @pytest.mark.asyncio
+    async def test_shared_session_usable_is_per_loop(self):
+        """_shared_session_usable() checks the calling loop only; after
+        get_shared_client the current loop's session is usable until closed."""
+        from app.core.network import _shared_session_usable
+
+        assert not _shared_session_usable() or True  # no assertion before creation
+        sess = await get_shared_client()
+        assert _shared_session_usable() is True
+        assert sess is await get_shared_client()
+        await close_shared_client()
+        assert _shared_session_usable() is False
