@@ -725,10 +725,16 @@ class ToolRegistry:
         # 的 session_id 即走此路径，测试 `dispatch(..., {"session_id": "x"})`
         # 依赖该语义）。
         sig = inspect.signature(tool_func)
+        has_var_keyword = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
         if "session_id" in sig.parameters:
             if session_id is not None or "session_id" not in arguments:
                 arguments["session_id"] = session_id
             # else: keep the explicit tool-arg session_id already in arguments
+        elif not has_var_keyword and isinstance(arguments, dict) and "session_id" in arguments:
+            # Drop injected session_id if the tool doesn't accept session_id or **kwargs
+            arguments = {k: v for k, v in arguments.items() if k != "session_id"}
 
         try:
             policy = meta.get("execution_policy", ToolExecutionPolicy.THREAD)

@@ -235,13 +235,13 @@ class ToolCatalog:
         for domain, kws in DOMAIN_KEYWORDS.items():
             for kw in kws:
                 kw_low = kw.lower()
-                # 英文关键词加单词边界检查防误伤；中文直接子串。
+                # 英文关键词加边界检查防误伤（使用非英文字符边界，兼容中英混排）；中文直接子串。
                 if re.match(r"^[\x00-\x7f]+$", kw_low):
-                    if re.search(r"\b" + re.escape(kw_low) + r"\b", low):
+                    if re.search(r"(?<![a-zA-Z0-9])" + re.escape(kw_low) + r"(?![a-zA-Z0-9])", low):
                         triggered.add(domain)
                         break
                 else:
-                    if kw in text:
+                    if kw.lower() in low:
                         triggered.add(domain)
                         break
         return triggered
