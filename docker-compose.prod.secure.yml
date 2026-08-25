@@ -555,6 +555,23 @@ configs:
                   proxy_cache_bypass $$http_upgrade;
               }
 
+              # ======== WebSocket canonical endpoint (P0: must be more specific than /api/) ========
+              # FastAPI registers WS at /api/v1/ws/{session_id} (app/main.py prefix /api/v1 + ws.py prefix /ws).
+              # A dedicated prefix location wins over generic `location /api/` so handshake Upgrade headers
+              # are not stripped by `proxy_set_header Connection "";`.
+              location /api/v1/ws/ {
+                  access_log /var/log/nginx/access.log ws_no_query;
+                  proxy_pass http://api_backend;
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade $$http_upgrade;
+                  proxy_set_header Connection $$connection_upgrade;
+                  proxy_set_header Host $$host;
+                  proxy_set_header X-Real-IP $$remote_addr;
+                  proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $$scheme;
+                  proxy_read_timeout 86400s;
+              }
+
               # ======== API 路由 ========
               location /api/ {
                   proxy_pass http://api_backend;
@@ -655,20 +672,9 @@ configs:
                   proxy_read_timeout 300s;
               }
 
-              # ======== WebSocket 支持 ========
-              # #757: WS 握手 URL 可能携带 ?token=<JWT>（兼容回退），$$request 含
-              # 完整 query —— 用去掉 query 的请求行记录，避免活体 JWT 落盘。
-              location /ws/ {
-                  access_log /var/log/nginx/access.log ws_no_query;
-                  proxy_pass http://api_backend;
-                  proxy_http_version 1.1;
-                  proxy_set_header Upgrade $$http_upgrade;
-                  proxy_set_header Connection "upgrade";
-                  proxy_set_header Host $$host;
-                  proxy_set_header X-Real-IP $$remote_addr;
-                  proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
-                  proxy_read_timeout 86400s;
-              }
+              # ======== WebSocket 支持（已迁移至 /api/v1/ws/，保留 /ws/ 已移除） ========
+              # 旧的 `location /ws/` 直接 proxy 到 api_backend 但 FastAPI 实际路由为
+              # /api/v1/ws/{session_id}，导致 404；现由上面的 canonical location 处理。
 
               # ======== 健康检查端点 ========
               location /health {

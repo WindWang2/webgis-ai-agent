@@ -120,3 +120,46 @@ class TestNginxApiRoutingAndBodySizeGuards:
         assert content.count("client_max_body_size 100M;") >= 2, (
             "client_max_body_size 100M 应有 server 级全局基线 + /upload 冗余两处"
         )
+
+
+class TestNginxWebSocketRouting:
+    """#924: WebSocket 必须走 canonical /api/v1/ws/，且不再有 broken /ws/。"""
+
+    NGINX = "deploy/nginx/nginx.conf"
+
+    def _read(self):
+        with open(self.NGINX) as f:
+            return f.read()
+
+    def test_canonical_ws_location_exists_with_upgrade_headers(self):
+        content = self._read()
+        assert "location /api/v1/ws/" in content, (
+            "缺失 canonical WS location /api/v1/ws/ — "
+            "FastAPI WS 路由为 /api/v1/ws/{session_id}，必须有专用 location 透传 Upgrade"
+        )
+        import re
+        m = re.search(r"location /api/v1/ws/ \{(.*?)\n        \}", content, re.DOTALL)
+        assert m, "location /api/v1/ws/ 块无法解析"
+        block = m.group(1)
+        assert "proxy_set_header Upgrade $http_upgrade;" in block, (
+            "canonical WS location 必须透传 Upgrade 头"
+        )
+        assert "proxy_set_header Connection $connection_upgrade;" in block, (
+            "canonical WS location 必须使用 $connection_upgrade（map $http_upgrade），"
+            "不能硬编码 upgrade 或清空 Connection"
+        )
+        assert "ws_no_query" in block, "canonical WS 应使用 ws_no_query 避免 JWT 落盘"
+        assert "proxy_read_timeout 86400s;" in block, "WS 长连接超时应为 86400s"
+
+    def test_no_standalone_ws_location(self):
+        content = self._read()
+        assert "location /ws/ {" not in content, (
+            "旧的 location /ws/ 会把 /ws/... 直接 proxy 到 api_backend 导致 404 "
+            "(FastAPI 实际路由为 /api/v1/ws/)；应已移除，WS 只走 canonical /api/v1/ws/"
+        )
+
+    def test_ws_connection_upgrade_map_exists(self):
+        content = self._read()
+        assert "map $http_upgrade $connection_upgrade" in content, (
+            "需要 map $http_upgrade $connection_upgrade 以在非 WS 请求上复用 keepalive"
+        )
