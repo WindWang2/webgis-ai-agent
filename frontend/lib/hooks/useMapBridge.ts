@@ -3,7 +3,7 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { streamChat } from '@/lib/api/chat';
 import type { SSEEvent } from '@/lib/api/chat';
-import { apiFetch } from '@/lib/api/transport';
+import { apiFetch, describeApiError } from '@/lib/api/transport';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { AiStatus } from '@/lib/store/hud-types';
 import type { MapActionCorrelation, MapActionPayload } from '@/lib/types';
@@ -162,6 +162,8 @@ export function useMapBridge(
 ): {
   aiStatus: AiStatus;
   send: (content: string, mapSnapshot: Record<string, unknown>) => Promise<void>;
+  /** #988：中止进行中的 Agent 回合（用户点『停止』）。无在飞流时为 no-op。 */
+  cancel: () => void;
   onViewportChange: (center: [number, number], zoom: number, bearing: number, pitch: number) => void;
 } {
   if (process.env.NODE_ENV === 'development' && !onEvent) {
@@ -286,12 +288,11 @@ export function useMapBridge(
 
   const emitSyntheticError = useCallback(
     (err: unknown) => {
+      // #989：SSE 失败路径复用 REST 的同一可读化管线（describeApiError 优先
+      // 取 FastAPI detail、网络层 TypeError 归一中文文案），不再把
+      // err.message（如 "Chat API error: 500"）原样写进聊天气泡。
       const errorMsg =
-        typeof err === 'string'
-          ? err
-          : err instanceof Error
-            ? err.message
-            : String(err ?? 'Unknown error');
+        typeof err === 'string' ? err : describeApiError(err, '连接已断开，请重试');
       onEvent({
         event: 'error',
         data: { error: errorMsg } as unknown as Record<string, unknown>,
@@ -652,6 +653,23 @@ export function useMapBridge(
     [dispatchAction, onEvent, setAiStatus, sessionTokenRef, reconnect, emitSyntheticError]
   );
 
+  // #988：用户中止进行中的回合。取消通道即断开——后端把 SSE 连接断开
+  // （GeneratorExit/CancelledError，chat.py / execution_engine.py）归一为
+  // task_cancelled 终态，因此 abort 内部 AbortController 就完成了"通知后端
+  // 取消"，无需显式 cancel 端点。但本端流已被切断、收不到后端的
+  // task_cancelled 事件，这里合成同语义终态交给 onEvent——消息流 UI
+  // （use-sse-stream 的 task_cancelled handler）据此收束 thinking 消息与
+  // still-running 工具行，复用既有终态承接逻辑。
+  const cancel = useCallback((): void => {
+    const controller = abortControllerRef.current;
+    if (!controller || controller.signal.aborted) return;
+    controller.abort();
+    onEvent({
+      event: 'task_cancelled',
+      data: {} as Record<string, unknown>,
+    });
+  }, [onEvent]);
+
   // [ENG-D3] useCallback([sessionId]) — stable ref so MapPanel's handleMove deps don't churn
   const onViewportChange = useCallback(
     (center: [number, number], zoom: number, bearing: number, pitch: number) => {
@@ -684,5 +702,8 @@ export function useMapBridge(
 
   // 审计 F25：返回对象用 useMemo 包裹，避免每次 render 都创建新对象引用
   // -> 下游 useCallback/useMemo 依赖 bridge 的不会每次都失效。
-  return useMemo(() => ({ aiStatus, send, onViewportChange }), [aiStatus, send, onViewportChange]);
+  return useMemo(
+    () => ({ aiStatus, send, cancel, onViewportChange }),
+    [aiStatus, send, cancel, onViewportChange],
+  );
 }

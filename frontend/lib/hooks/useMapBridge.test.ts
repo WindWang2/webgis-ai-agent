@@ -4,6 +4,7 @@ import { renderHook, act } from '@testing-library/react';
 import { useMapBridge } from './useMapBridge';
 import { resetViewportSeq } from '@/lib/utils/viewport-seq';
 import * as chatApi from '@/lib/api/chat';
+import { ApiError } from '@/lib/api/transport';
 import type { SSEEvent } from '@/lib/api/chat';
 import { MapActionContext } from '@/lib/contexts/map-action-context';
 import type { MapActionContextType } from '@/lib/contexts/map-action-context';
@@ -1280,6 +1281,111 @@ describe('useMapBridge', () => {
     // Must NOT retry 3 times when error is a 404 client error!
     expect(mockStreamChat).toHaveBeenCalledTimes(1);
     expect(result.current.aiStatus).toBe('error');
+  });
+
+  /* ─── #988: 用户取消（停止按钮） ─── */
+
+  it('#988: cancel() aborts the in-flight stream and emits a synthetic task_cancelled terminal', async () => {
+    let capturedSignal: AbortSignal | undefined;
+    mockStreamChat.mockImplementation(async function*(_msg, _sid, _snap, signal) {
+      capturedSignal = signal;
+      await new Promise<void>((resolve) => {
+        signal?.addEventListener('abort', () => resolve());
+      });
+      yield { event: 'done', data: {} };
+    });
+
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent)
+    );
+
+    act(() => { void result.current.send('slow multi-tool turn', {}); });
+    expect(result.current.aiStatus).toBe('thinking');
+
+    act(() => { result.current.cancel(); });
+
+    // 1) 内部 AbortController 已中止（SSE 断开即后端取消通道）。
+    expect(capturedSignal?.aborted).toBe(true);
+    // 2) 本端流被切断收不到后端的 task_cancelled —— 合成同语义终态交给
+    //    onEvent（use-sse-stream 已有 handler 收束消息与工具行）。
+    const cancelEvent = onEvent.mock.calls.find(([e]) => e.event === 'task_cancelled');
+    expect(cancelEvent).toBeTruthy();
+    // 合成事件不带 session_id：不得被跨会话守卫拦截。
+    expect((cancelEvent![0].data as Record<string, unknown>).session_id).toBeUndefined();
+
+    // 双击停止不重复发终态（第二次调用直接早退）。
+    const callsAfterFirst = onEvent.mock.calls.length;
+    act(() => { result.current.cancel(); });
+    expect(onEvent.mock.calls.length).toBe(callsAfterFirst);
+
+    // 流收尾后 composer 释放（idle，不是 error/done）。
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(result.current.aiStatus).toBe('idle');
+  });
+
+  it('#988: cancel() without an in-flight stream is a no-op (no phantom task_cancelled)', () => {
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent)
+    );
+    act(() => { result.current.cancel(); });
+    expect(onEvent).not.toHaveBeenCalled();
+  });
+
+  /* ─── #989: 流级错误可读化（describeApiError 管线） ─── */
+
+  it('#989: stream-level ApiError surfaces the backend Chinese detail, not the raw English label', async () => {
+    const apiErr = new ApiError(404, 'Not Found', { detail: '会话不存在或已过期' }, 'req-1', 'Chat API error');
+    async function* failing(): AsyncGenerator<SSEEvent> {
+      throw apiErr;
+    }
+    mockStreamChat.mockReturnValue(failing());
+
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent)
+    );
+
+    await act(async () => { await result.current.send('q', {}); });
+
+    const errCall = onEvent.mock.calls.find(([e]) => e.event === 'error');
+    expect(errCall).toBeTruthy();
+    // 旧实现会写入 err.message（"Chat API error: 404"）——现在必须是后端 detail。
+    expect((errCall![0].data as { error?: string }).error).toBe('会话不存在或已过期');
+  });
+
+  it('#989: network-level TypeError is normalized to the fixed Chinese message', async () => {
+    async function* networkDeath(): AsyncGenerator<SSEEvent> {
+      throw new TypeError('fetch failed');
+    }
+    mockStreamChat.mockReturnValue(networkDeath());
+
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent)
+    );
+
+    await act(async () => { await result.current.send('q', {}); });
+
+    const errCall = onEvent.mock.calls.find(([e]) => e.event === 'error');
+    expect(errCall).toBeTruthy();
+    expect((errCall![0].data as { error?: string }).error).toBe('网络错误，无法连接服务器');
+  });
+
+  it('#989: ApiError without detail falls back with the status appended (not the raw label)', async () => {
+    const apiErr = new ApiError(500, 'Internal Server Error', undefined, 'req-2', 'Chat API error');
+    async function* failing(): AsyncGenerator<SSEEvent> {
+      throw apiErr;
+    }
+    mockStreamChat.mockReturnValue(failing());
+
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent)
+    );
+
+    await act(async () => { await result.current.send('q', {}); });
+
+    const errCall = onEvent.mock.calls.find(([e]) => e.event === 'error');
+    expect(errCall).toBeTruthy();
+    expect((errCall![0].data as { error?: string }).error).toBe('连接已断开，请重试（HTTP 500）');
   });
 
   it('INV-9: aborting stream during reconnect backoff sleep stops immediately without sending next request', async () => {

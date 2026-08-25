@@ -56,6 +56,8 @@ export interface ContextPanelProps {
   }>;
   aiStatus: AiStatus;
   onSend: (text: string) => void;
+  /** #988：ChatTab 的『停止』按钮（isBusy 期间）→ bridge.cancel。 */
+  onCancel?: () => void;
   sessionId?: string | null;
   ownerToken?: string | null;
   onPlanAction?: (planId: string, action: 'approve' | 'revise' | 'reject') => void;
@@ -103,6 +105,7 @@ export function ContextPanel({
   messages,
   aiStatus,
   onSend,
+  onCancel,
   sessionId,
   ownerToken,
   onPlanAction,
@@ -352,6 +355,7 @@ export function ContextPanel({
             messages={messages}
             aiStatus={aiStatus}
             onSend={onSend}
+            onCancel={onCancel}
             onPlanAction={onPlanAction}
             sessionId={sessionId}
           />

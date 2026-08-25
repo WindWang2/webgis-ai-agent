@@ -11,6 +11,16 @@ import {
 } from "./types";
 import { generateMapHtml } from "./html-template";
 
+/**
+ * #1007：style 级 glyphs 模板进配置。缺省保留公共 demotiles 源；内网/
+ * 离线部署通过 NEXT_PUBLIC_MAP_GLYPHS_URL 指向本地字形托管（如
+ * https://intranet/fonts/{fontstack}/{range}.pbf），Canvas/SVG 导出的标注
+ * 层不再因外部字体源不可达而缺字。
+ */
+export const MAP_GLYPHS_URL =
+  process.env.NEXT_PUBLIC_MAP_GLYPHS_URL ??
+  "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf";
+
 export function isStyleMethodObject(val: any): boolean {
   return (
     val !== null &&
@@ -401,15 +411,18 @@ export function compileMapSpec(
         },
         paint: {
           "text-color": compileStyleMethod(labelSpec.color ?? layer.layout?.labelColor ?? "#000000"),
+          // #1007：默认 1px 白色 halo（GIS 标注惯例）。编译器在 lib 层没有
+          // 主题上下文——主题令牌是 CSS 变量，MapLibre style 与 Canvas/SVG
+          // 导出都解析不了，无法让默认色随主题；裸黑字在暗色底图上不可读
+          // （导出图同病）。黑字 + 白晕在任意底图上保持可读（与
+          // map-commands/annotationHelpers 的在制标注同款），显式
+          // haloColor/haloWidth 完全尊重。SVG 导出读同一组 paint 键，自动受益。
+          "text-halo-color": labelSpec.haloColor ?? "#ffffff",
+          "text-halo-width": labelSpec.haloWidth ?? 1,
         },
       };
       if (srcDef?.type === "vector") {
         labelLayer["source-layer"] = (layer as any).sourceLayer ?? "data";
-      }
-
-      if (labelSpec.haloColor) {
-        labelLayer.paint["text-halo-color"] = labelSpec.haloColor;
-        labelLayer.paint["text-halo-width"] = labelSpec.haloWidth ?? 1;
       }
 
       compiledLayers.push(labelLayer);
@@ -432,8 +445,8 @@ export function compileMapSpec(
   if (labelLayerCount > 0) {
     // symbol 图层的 text-field 在 MapLibre 里要求 style 级 glyphs 模板，
     // 否则运行时报错（symbol-label 场景暴露的真实编译缺陷）。
-    (style as Record<string, unknown>).glyphs =
-      "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf";
+    // #1007：URL 进配置（NEXT_PUBLIC_MAP_GLYPHS_URL），支持本地字形托管。
+    (style as Record<string, unknown>).glyphs = MAP_GLYPHS_URL;
   }
 
   const report: CompileReport = {

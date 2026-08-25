@@ -43,6 +43,21 @@ const eslintConfig = [
       'react-hooks/immutability': 'off',
     },
   },
+  {
+    // #1008 防回归：已完成 devOnly 清理的生产边界文件锁定 no-console——
+    // 新增裸 console.*（绕过 lib/utils/logger 的 devOnly 门禁）直接报错。
+    // 仅覆盖已清理文件（全仓仍有少量待清点，见 issue 跟踪；logger.ts 是
+    // wrapper 本身、mapspec-compiler/cli.ts 等是合法使用 console 的 CLI）。
+    files: [
+      'components/map/map-components/index.ts',
+      'components/map/map-panel.tsx',
+      'lib/map-kit/render-debouncer.ts',
+      'lib/mapspec-runtime/runtime.ts',
+    ],
+    rules: {
+      'no-console': 'error',
+    },
+  },
 ];
 
 export default eslintConfig;

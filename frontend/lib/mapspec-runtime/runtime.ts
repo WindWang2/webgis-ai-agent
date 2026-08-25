@@ -6,6 +6,7 @@ import { isRefOnlySource } from "@/lib/mapspec/ref-source-resolver";
 import { RenderDebouncer, type RenderOperation } from "@/lib/map-kit/render-debouncer";
 import * as renderer from "@/lib/map-kit/renderer";
 import { recordDebounceFrame } from "@/lib/utils/perf-counters";
+import { devOnly } from "@/lib/utils/logger";
 
 /**
  * MapSpecRuntime — the deep module that reconciles a declarative MapSpec
@@ -167,9 +168,8 @@ export class MapSpecRuntime {
         // #692：链内兜底 catch 仅供断链保护——生产静默（此前裸 console.warn
         // 是生产噪声），dev 下保留可诊断性。map-panel 侧挂在该链尾部的
         // .catch 因此可达性不变（本 catch 吞掉后链恢复 resolved）。
-        if (process.env.NODE_ENV === "development") {
-          console.warn("[MapSpecRuntime] reconcileAsync error:", err);
-        }
+        // #1008：手工 NODE_ENV 门禁统一收敛到 devOnly（同文件一致）。
+        devOnly.warn("[MapSpecRuntime] reconcileAsync error:", err);
       });
     return this.reconcileTail;
   }
@@ -562,7 +562,9 @@ export class MapSpecRuntime {
       // already re-added by the styledata path. Log and continue rather than
       // throwing the whole reconcile.
        
-      console.warn(`[MapSpecRuntime] addLayer failed for ${layer.id}:`, err);
+      // #1008：addLayer 失败的裸 console.warn（泄漏内部层 id）→ devOnly，
+      // 与同文件 reconcileAsync 的门禁一致。
+      devOnly.warn(`[MapSpecRuntime] addLayer failed for ${layer.id}:`, err);
       this.lastError = `add_layer_failed:${layer.id}`;
     }
   }
