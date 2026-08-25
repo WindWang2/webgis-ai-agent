@@ -81,6 +81,13 @@ class Settings(BaseSettings):
     # 规划阶段专用模型；留空时回退 LLM_MODEL（便于以后单独配更便宜的模型）
     LLM_PLANNER_MODEL: str = ""
     LLM_PROMPT_CACHING_ENABLED: bool = True
+    # audit4 #997: 采样/超时/预算参数进配置层（此前硬编码在 llm_client 与调用点，
+    # 无法按角色调参，换供应商时 16384 可能超其上限直接 400）。
+    LLM_TIMEOUT_S: float = 120.0        # 非流式请求超时；流式 read = max(180, 1.5×)
+    LLM_MAX_TOKENS: int = 16384         # 执行角色默认输出预算
+    LLM_TEMPERATURE: Optional[float] = None  # None = 不发送（用 provider 默认）
+    # 标题/摘要等辅助任务的廉价模型；空回退 LLM_MODEL
+    LLM_TITLE_MODEL: str = ""
 
     # OSM
     OVERPASS_API_URL: str = "https://overpass.openstreetmap.fr/api/interpreter"

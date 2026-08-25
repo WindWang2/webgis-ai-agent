@@ -8,6 +8,7 @@
 """
 import logging
 import os
+import time
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
@@ -46,6 +47,9 @@ def _validate_or_reject_skill_code(code: str) -> None:
 
 # 允许的技能文件扩展名
 _ALLOWED_SKILL_EXTS = {".py", ".md"}
+
+# audit4 #1005: 连通性测试去抖缓存（key -> 上次成功时刻的 monotonic 时间）
+_LLM_TEST_CACHE: dict[str, float] = {}
 
 class LLMConfigRequest(BaseModel):
     base_url: Optional[str] = None
@@ -146,7 +150,18 @@ async def test_llm_config(
     try:
         from app.services.chat.llm_client import LLMConfig, test_llm_connection
         cfg = LLMConfig(base_url=base_url, model=model, api_key=api_key)
+        # audit4 #1005: 同配置 60s 去抖 —— 连通性测试是幂等小调用，反复点击
+        # 此前每次都全额计费。
+        cache_key = f"{base_url}|{model}|{hash(api_key or '')}"
+        now = time.monotonic()
+        hit = _LLM_TEST_CACHE.get(cache_key)
+        if hit is not None and now - hit < 60.0:
+            return {"status": "ok", "detail": f"连接成功: {model}（60s 内已验证，复用缓存结果）"}
         await test_llm_connection(cfg)
+        _LLM_TEST_CACHE[cache_key] = now
+        if len(_LLM_TEST_CACHE) > 32:
+            oldest = min(_LLM_TEST_CACHE, key=_LLM_TEST_CACHE.get)
+            _LLM_TEST_CACHE.pop(oldest, None)
     except httpx.HTTPError as e:
         logger.warning(f"LLM connectivity test failed: {e}")
         raise HTTPException(status_code=502, detail=f"连接失败: {_provider_error_detail(e)}")

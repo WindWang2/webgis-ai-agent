@@ -186,6 +186,19 @@ class PiRpcClient:
         from app.core.bridge_secret import get_bridge_secret
         env["WEBGIS_BRIDGE_SECRET"] = get_bridge_secret()
         env["WEBGIS_API_BASE"] = env.get("WEBGIS_API_BASE", "http://127.0.0.1:8000")
+        # audit4 #987: 后端 LLM 凭证映射进 Pi 子进程 —— 此前 Pi 模型配置与
+        # 后端完全双轨（仅继承 os.environ），管理面板改 key 对 Pi 无效。
+        # Pi 的 openai provider 读 OPENAI_API_KEY；未显式设置时映射后端
+        # LLM_API_KEY（占位符不映射，避免污染）。可选 PI_PROVIDER + PI_MODEL
+        # 由 spawn 后的 set_model RPC 显式选择 Pi 目录内模型。
+        try:
+            from app.core.config import settings as _settings
+            if not env.get("OPENAI_API_KEY"):
+                _key = getattr(_settings, "LLM_API_KEY", "")
+                if _key and "your-api-key" not in _key:
+                    env["OPENAI_API_KEY"] = _key
+        except Exception:  # noqa: BLE001 — env 映射是尽力而为，绝不阻断 spawn
+            pass
 
         # Build CLI args with --extension flags for each extension path
         args = ["node", str(self._pi_rpc_entry), "--mode", "rpc", "--no-session"]
@@ -218,6 +231,19 @@ class PiRpcClient:
             await asyncio.wait_for(self._wait_for_ready(), timeout=PI_STARTUP_READY_TIMEOUT)
         except asyncio.TimeoutError:
             logger.warning(f"[PiRpcClient] Pi did not become ready within {PI_STARTUP_READY_TIMEOUT}s, continuing anyway")
+
+        # audit4 #987: 可选的显式模型选择 —— PI_PROVIDER + PI_MODEL 同时设置
+        # 时通过 set_model RPC 把 Pi 切到目录内指定模型（provider/modelId 必须
+        # 是 Pi 已注册的；后端 chat-completions 端点不是 Pi provider，不能盲映射）。
+        # 失败只记日志：模型保持 Pi 自身配置，绝不阻断桥启动。
+        pi_provider = os.environ.get("PI_PROVIDER", "").strip()
+        pi_model = os.environ.get("PI_MODEL", "").strip()
+        if pi_provider and pi_model:
+            try:
+                await self.request("set_model", {"provider": pi_provider, "modelId": pi_model})
+                logger.info(f"[PiRpcClient] Pi model set to {pi_provider}/{pi_model}")
+            except Exception as e:  # noqa: BLE001 — 尽力而为
+                logger.warning(f"[PiRpcClient] set_model {pi_provider}/{pi_model} failed: {e}")
 
     async def _wait_for_ready(self) -> None:
         """Poll get_state until Pi responds or the reader task ends."""

@@ -37,7 +37,6 @@ rich>=15.0.0
 # Logging & Monitoring
 
 # LLM & AI
-openai>=1.0.0
 # CVE-2024-23334 (静态文件路径穿越) 在 3.9.2 修复
 aiohttp>=3.10.0
 

@@ -146,6 +146,11 @@ class TurnEvidence:
         self.map_actions_issued = 0
         self.map_actions_acked = 0
         self.artifacts = 0
+        # audit4 #985: provider token usage 记账（此前全链路丢弃，成本不可观测）
+        self.prompt_tokens = 0
+        self.completion_tokens = 0
+        self.total_tokens = 0
+        self.llm_usage_reports = 0
         # 结构（有界）
         self._map_actions: "OrderedDict[str, _MapActionTrack]" = OrderedDict()
         self._warnings: Deque[Dict[str, str]] = deque(maxlen=_MAX_WARNINGS)
@@ -177,6 +182,22 @@ class TurnEvidence:
                 self.llm_total_ms += total_ms
             if ttft_ms is not None and self.llm_ttft_ms is None:
                 self.llm_ttft_ms = ttft_ms
+
+    def add_llm_usage(self, usage: Optional[dict]) -> None:
+        """audit4 #985: 累计一次 LLM 调用的 provider usage（None/缺字段安全跳过）。"""
+        if not isinstance(usage, dict):
+            return
+        try:
+            p = int(usage.get("prompt_tokens") or 0)
+            c = int(usage.get("completion_tokens") or 0)
+            t = int(usage.get("total_tokens") or (p + c))
+        except (TypeError, ValueError):
+            return
+        with self._lock:
+            self.prompt_tokens += p
+            self.completion_tokens += c
+            self.total_tokens += t
+            self.llm_usage_reports += 1
 
     def add_tool_call(self, *, duration_ms: Optional[float] = None,
                       failure_class: Optional[str] = None) -> None:
@@ -284,6 +305,12 @@ class TurnEvidence:
                 "map_actions_acked": self.map_actions_acked,
                 "map_actions_unacked": unacked,
                 "artifacts": self.artifacts,
+            },
+            "llm_usage": {
+                "prompt_tokens": self.prompt_tokens,
+                "completion_tokens": self.completion_tokens,
+                "total_tokens": self.total_tokens,
+                "reports": self.llm_usage_reports,
             },
             "warnings": warnings,
         }

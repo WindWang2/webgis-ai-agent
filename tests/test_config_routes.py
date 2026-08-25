@@ -24,6 +24,10 @@ async def app_and_client():
     from app.tools.registry import ToolRegistry
     from app.core.auth import get_current_user, get_current_user_with_version
 
+    # audit4 #1005: 连通性测试 60s 去抖缓存按用例隔离 —— 成功用例写入的
+    # 缓存不能把后续失败用例（同引擎默认配置键）伪装成 200。
+    config_routes._LLM_TEST_CACHE.clear()
+
     # 给 chat 模块注入 engine + registry（config 路由会用）
     registry = ToolRegistry()
     chat_routes.registry = registry

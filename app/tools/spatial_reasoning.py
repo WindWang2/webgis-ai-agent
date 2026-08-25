@@ -7,8 +7,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.tools.registry import ToolRegistry, tool
 from app.tools._utils import std_error_response
-from app.services.chat.llm_client import LLMConfig, call_llm
-from app.core.config import settings
+from app.services.chat.llm_client import call_llm
 from app.lib.geo_processor.core import _repair_json
 
 logger = logging.getLogger(__name__)
@@ -226,13 +225,10 @@ async def _call_llm_real(system_prompt: str, user_prompt: str) -> dict:
 
     logger.debug("_call_llm_real invoking LLM service")
 
-    cfg = LLMConfig(
-        base_url=settings.LLM_BASE_URL,
-        model=settings.LLM_MODEL or "deepseek-v4-flash",
-        api_key=settings.LLM_API_KEY,
-        use_prompt_caching=settings.LLM_PROMPT_CACHING_ENABLED,
-        max_tokens=4096,
-    )
+    # audit4 #997: 走单一解析点（SPATIAL 角色）—— 此前直读 settings，
+    # admin 运行时改配后本调用点仍用旧配置（同进程两套生效配置）。
+    from app.services.chat.model_config import ModelRole, resolve_llm_config
+    cfg = resolve_llm_config(ModelRole.SPATIAL)
 
     messages = [
         {"role": "system", "content": system_prompt},
