@@ -209,3 +209,59 @@ def test_overpass_and_nominatim_still_block_private():
                 DATABASE_URL="postgresql://user:pass@localhost/db",
                 OVERPASS_API_URL="http://evil.example.com/api",
             )
+
+
+def test_env_prod_example_contains_mandatory_llm_api_key():
+    """#926: .env.prod.example 必须显式包含 LLM_API_KEY 且无 legacy 注释。"""
+    from pathlib import Path
+    content = Path(".env.prod.example").read_text(encoding="utf-8")
+    assert "LLM_API_KEY=" in content, ".env.prod.example 必须包含 LLM_API_KEY"
+    assert "# OPENAI_API_KEY=" not in content, "应已移除 legacy # OPENAI_API_KEY"
+    assert "# ANTHROPIC_API_KEY=" not in content, "应已移除 legacy # ANTHROPIC_API_KEY"
+    # 模板中的 LLM_API_KEY 应为空值 + 必填说明，避免静默使用占位符
+    assert "your-api-key-here" not in content or "LLM_API_KEY=" in content
+    # 验证：从模板生成的生产 env（仅填 CHANGE_ME 占位符，LLM_API_KEY 留空）应启动失败
+    import os
+    import tempfile
+    # 清理外层变量避免干扰（_env_file 优先级低于环境变量）
+    old_llm = os.environ.pop("LLM_API_KEY", None)
+    old_jwt = os.environ.pop("JWT_SECRET_KEY", None)
+    old_env = os.environ.pop("ENV", None)
+    old_db = os.environ.pop("DATABASE_URL", None)
+    try:
+        prod_env = content.replace(
+            "CHANGE_ME_TO_SECURE_RANDOM_STRING_AT_LEAST_32_CHARS",
+            "super-secure-production-jwt-key-32chars",
+        ).replace(
+            "CHANGE_ME_STRONG_DB_PASSWORD", "StrongDbPass123"
+        ).replace(
+            "CHANGE_ME_STRONG_REDIS_PASSWORD", "StrongRedisPass123"
+        ).replace(
+            "CHANGE_ME_STRONG_GRAFANA_PASSWORD", "StrongGrafanaPass123"
+        )
+        prod_env += "\nAUTH_DISABLED=false\n"
+        with tempfile.NamedTemporaryFile("w+", suffix=".env.prod", delete=False) as f:
+            f.write(prod_env)
+            temp_path = f.name
+        import pytest
+
+        with pytest.raises(RuntimeError, match="LLM_API_KEY"):
+            Settings(_env_file=temp_path)
+        os.remove(temp_path)
+        # 填入真实 key 后应能启动
+        prod_env_filled = prod_env.replace("LLM_API_KEY=", "LLM_API_KEY=sk-real-prod-key-12345")
+        with tempfile.NamedTemporaryFile("w+", suffix=".env.prod", delete=False) as f:
+            f.write(prod_env_filled)
+            temp_path = f.name
+        s = Settings(_env_file=temp_path)
+        assert s.LLM_API_KEY == "sk-real-prod-key-12345"
+        os.remove(temp_path)
+    finally:
+        if old_llm is not None:
+            os.environ["LLM_API_KEY"] = old_llm
+        if old_jwt is not None:
+            os.environ["JWT_SECRET_KEY"] = old_jwt
+        if old_env is not None:
+            os.environ["ENV"] = old_env
+        if old_db is not None:
+            os.environ["DATABASE_URL"] = old_db
