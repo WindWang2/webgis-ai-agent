@@ -727,22 +727,32 @@ class ChatExecutionEngine:
         answered = {
             m.get("tool_call_id") for m in messages if m.get("role") == "tool"
         }
-        orphan_ids: list[str] = []
-        for m in messages:
+        # Collect orphan ids grouped by the assistant message that owns them —
+        # order matters for both the memory splice and the DB saves.
+        seen: set[str] = set()
+        groups: list[tuple[int, list[str]]] = []  # (assistant_index, [orphan_ids])
+        for idx, m in enumerate(messages):
             if m.get("role") != "assistant":
                 continue
+            ids: list[str] = []
             for tc in m.get("tool_calls") or []:
                 tc_id = tc.get("id") if isinstance(tc, dict) else None
-                if tc_id and tc_id not in answered and tc_id not in orphan_ids:
-                    orphan_ids.append(tc_id)
-        for tc_id in orphan_ids:
-            payload = "工具执行已被用户取消"
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc_id,
-                "content": payload,
-            })
-            await self._save_msg_async(session_id, "tool", "", None, payload, tc_id)
+                if tc_id and tc_id not in answered and tc_id not in seen:
+                    seen.add(tc_id)
+                    ids.append(tc_id)
+            if ids:
+                groups.append((idx, ids))
+        # Splice in reverse so earlier indices remain valid after inserts.
+        for idx, ids in reversed(groups):
+            insert_at = idx + 1
+            for offset, tc_id in enumerate(ids):
+                payload = "工具执行已被用户取消"
+                messages.insert(insert_at + offset, {
+                    "role": "tool",
+                    "tool_call_id": tc_id,
+                    "content": payload,
+                })
+                await self._save_msg_async(session_id, "tool", "", None, payload, tc_id)
 
     async def _persist_tool_messages(
         self,

@@ -36,8 +36,12 @@ export function compileStyleMethod(method: StyleMethod | undefined): any {
 
     case "interpolate": {
       const fieldExpr = ["to-number", ["get", m.field]];
+      const stops = m.stops;
+      if (!Array.isArray(stops) || stops.length === 0) {
+        return m.default ?? 0;
+      }
       const flattenedStops: any[] = [];
-      for (const [stopVal, outputVal] of m.stops) {
+      for (const [stopVal, outputVal] of stops) {
         flattenedStops.push(stopVal, outputVal);
       }
       return ["interpolate", ["linear"], fieldExpr, ...flattenedStops];
@@ -60,8 +64,12 @@ export function compileStyleMethod(method: StyleMethod | undefined): any {
 
     case "match": {
       const fieldExpr = ["get", m.field];
+      const rawCases = m.cases;
+      if (!Array.isArray(rawCases) || rawCases.length === 0) {
+        return m.default ?? "";
+      }
       const cases: any[] = [];
-      for (const [caseVal, outputVal] of m.cases) {
+      for (const [caseVal, outputVal] of rawCases) {
         cases.push(caseVal, outputVal);
       }
       const defaultValue = m.default !== undefined ? m.default : cases[cases.length - 1] ?? "";
@@ -171,7 +179,7 @@ function extractLegendForLayer(layer: MapSpecLayer): LegendDef | null {
   if (colorProp && isStyleMethodObject(colorProp)) {
     const m = colorProp as any;
     if (m.method === "interpolate" || m.method === "step") {
-      for (const [val, color] of m.stops) {
+      for (const [val, color] of m.stops ?? []) {
         items.push({
           label: `${m.field}: ${val}`,
           color: String(color),
@@ -179,7 +187,7 @@ function extractLegendForLayer(layer: MapSpecLayer): LegendDef | null {
         });
       }
     } else if (m.method === "match") {
-      for (const [val, color] of m.cases) {
+      for (const [val, color] of m.cases ?? []) {
         items.push({
           label: `${m.field}: ${val}`,
           color: String(color),
