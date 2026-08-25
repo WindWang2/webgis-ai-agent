@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from contextlib import contextmanager
-from typing import Any, Callable, Optional, Type, List
+from typing import Any, Callable, Optional, Type, List, Union
 from pydantic import BaseModel, create_model, ValidationError
 
 from enum import Enum
@@ -97,6 +97,54 @@ from app.lib.json_size import (  # noqa: F401
 
 
 _ALIAS_LOOKUP_MAX_DISTINCT = 1024
+
+
+def _is_list_annotation(annotation: Any) -> bool:
+    """annotation 是否为 list 族（list / list[T] / List[T] / Optional[List[T]]）。"""
+    import typing as _typing
+
+    ann = annotation
+    # Union 语义（含 Optional）：任一 arm 是 list 族即认。
+    if _typing.get_origin(ann) is Union:
+        return any(_is_list_annotation(a) for a in _typing.get_args(ann))
+    if ann is list or ann is List:
+        return True
+    return _typing.get_origin(ann) is list
+
+
+def _coerce_json_string_lists(
+    arguments: dict, model: Type[BaseModel]
+) -> dict:
+    """列表参数的 JSON 字符串宽容解码（2026-08-25 会话：webgis_map_product）。
+
+    LLM 常把本该是数组的参数编码成 JSON 字符串（``"[\"a\",\"b\"]"``）——
+    pydantic 拒以 ``Input should be a valid list``，且模型自愈重试不改形
+    （实测连错 3 轮触发无进展终止）。凡模型字段注解为 list 族、实参是
+    str 且 json.loads 结果确为 list 的，就地解码替换；其余形态不动，
+    留给 pydantic 出原本的校验错误。
+    """
+    coerced = False
+    out = arguments
+    for fname, finfo in model.model_fields.items():
+        if fname not in arguments or not _is_list_annotation(finfo.annotation):
+            continue
+        val = arguments[fname]
+        if not isinstance(val, str) or not val.strip():
+            continue
+        try:
+            parsed = json.loads(val)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if isinstance(parsed, list):
+            if not coerced:
+                out = dict(arguments)
+                coerced = True
+            out[fname] = parsed
+            logger.debug(
+                "registry: coerced JSON-string list arg %r (%d items)",
+                fname, len(parsed),
+            )
+    return out
 
 
 def _is_args_oversized(arguments: Any) -> bool:
@@ -598,6 +646,11 @@ class ToolRegistry:
                 # would inline full FeatureCollections into tool arguments.
                 if name == "webgis_map_product":
                     skip_keys.update({"primary_ref", "overlay_refs"})
+                # 显示收尾钩子的 show_refs 是引用列表（ref/别名/名称混合）——
+                # 工具自身经 resolve_layer_ref 逐个解析；transparent resolution
+                # 会把列表里的 ref: 元素解成整个 FeatureCollection 载荷。
+                if name == "finalize_display":
+                    skip_keys.add("show_refs")
                 arguments = await self._resolve_references(
                     session_id,
                     arguments,
@@ -676,6 +729,10 @@ class ToolRegistry:
                             ),
                         )
                 try:
+                    # LLM 常把 list 参数编码成 JSON 字符串（webgis_map_product
+                    # 的 layer_ids/overlay_refs 连错 3 轮触发无进展终止）——
+                    # 校验前先做宽容解码，解码不了仍走 pydantic 原错误。
+                    arguments = _coerce_json_string_lists(arguments, model)
                     validated_args = model.model_validate(arguments)
                     arguments = validated_args.model_dump()
                 except ValidationError as e:
