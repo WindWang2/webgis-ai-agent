@@ -39,14 +39,14 @@ function ColorbarRenderer(component: MapSpecComponent, ctx: RendererContext) {
     <div data-testid="spec-chrome-colorbar" style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome px-2 py-1.5 ${positionClass(component)}`} aria-label="连续密度色条">
       {hasRange ? (
         <div className={`flex ${vertical ? 'flex-row gap-1' : 'flex-col gap-0.5'} text-micro tabular-nums text-map-chrome-ink`}>
-          <div aria-hidden className={vertical ? 'w-2.5 rounded-sm' : 'h-2.5 w-36 rounded-sm'} style={{ background: gradient }} />
+          <div aria-hidden className={vertical ? 'w-2.5 rounded-sm' : 'h-2.5 w-36 rounded-sm'} style={{ background: gradient, backgroundImage: gradient }} data-gradient={gradient} />
           <div className="flex w-full justify-between text-map-chrome-ink-muted">
             <span>{Number(range.min).toFixed(1)}</span>
             <span>{Number(range.max).toFixed(1)}</span>
           </div>
         </div>
       ) : (
-        <div aria-hidden className="h-2.5 w-36 rounded-sm" style={{ background: gradient }} />
+        <div aria-hidden className="h-2.5 w-36 rounded-sm" style={{ background: gradient, backgroundImage: gradient }} data-gradient={gradient} />
       )}
     </div>
   );
