@@ -43,6 +43,7 @@ from .history_compression import (
     _message_tokens,
     _group_into_turns,
     truncate_history_by_budget,
+    fold_intra_turn_tool_results,
     _build_truncation_notice,
 )
 
@@ -77,5 +78,6 @@ __all__ = [
     "_message_tokens",
     "_group_into_turns",
     "truncate_history_by_budget",
+    "fold_intra_turn_tool_results",
     "_build_truncation_notice",
 ]

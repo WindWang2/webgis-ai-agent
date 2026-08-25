@@ -110,6 +110,10 @@ def register_epsg_transform_tools(registry: ToolRegistry):
 
     @tool(registry, name="reproject_coordinates",
           tier=2,
+          # audit4 #983: 零 domains 的 tier-2 工具永不入 catalog 且
+          # list_available_tools 也查不到（空域不命中任何查询）——EPSG
+          # 重投影对 LLM 永久不可见。上传/数据集语境是 canonical 触发场景。
+          domains=["dataset", "chinese"],
           description=(
               "通用坐标参考系 (CRS) 转换：将 GeoJSON 图层从一种 EPSG 坐标系重投影到另一种。"
               "\n何时用：(1) 上传的 Shapefile/GPKG 使用了地方坐标系（如 CGCS2000 / EPSG:4490），"

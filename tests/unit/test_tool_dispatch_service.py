@@ -683,10 +683,14 @@ async def test_concurrent_inflight_duplicate_does_not_claim_success(service, fak
     r1 = await asyncio.wait_for(first, timeout=5.0)
     assert r1.status == "ok"
 
-    # 原调用完成后，同参再调 → post-success 文案（保持原文案，含"成功执行"）
+    # 原调用完成后，同参再调 → post-success 语义。audit4 #984 后的诚实契约：
+    # 声明「未重新执行、结果是先前状态、上下文变了要微调参数」——
+    # 不再使用旧的「已成功执行/直接汇报」成功口吻。
     r2 = await service.dispatch(tc, clean_session, executed)
     assert r2.status == "repeated"
-    assert "以相同参数成功执行" in r2.llm_payload
+    assert "以相同参数执行过" in r2.llm_payload
+    assert "未重新执行" in r2.llm_payload
+    assert "已成功执行" not in r2.llm_payload
 
 
 # ── 原生热力图端到端授权：type_hint=heatmap → MapSpec 落 heatmap 图层 ──

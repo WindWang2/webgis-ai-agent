@@ -54,6 +54,7 @@ from app.services.chat.context import (
     _message_tokens,
     _group_into_turns,
     truncate_history_by_budget,
+    fold_intra_turn_tool_results,
     _build_truncation_notice,
 )
 

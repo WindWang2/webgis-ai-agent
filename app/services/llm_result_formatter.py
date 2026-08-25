@@ -34,6 +34,9 @@ _PRESERVED_META_KEYS = (
     "message",
     "mapspec_fingerprint",
     "runtime_observation_seq",
+    # audit4 #979: harness 计划类工具的有界裁决投影（capability→resolved_tool
+    # 表）。summary 分支此前把它整包丢弃 —— 计划骨架永远到不了 LLM。
+    "guidance",
 )
 
 
@@ -187,7 +190,12 @@ def is_error_like_result(result: Any) -> bool:
     Recognized error-as-value key shapes:
       - ``{"error": <str>}``                — the #529 family (~139 sites),
       - ``{"type": "error", ...}``          — network/temporal/spatial_decision,
-      - ``{"status": "error"|"failed"}``    — project/workflow/explorer.
+      - ``{"status": "error"|"failed"}``    — project/workflow/explorer,
+      - ``{"success": False, "message": <str>}`` — audit4 #984: the
+        cartography_tools/webgis_component_update family (~17 sites).
+        ``success is False`` 是无歧义的失败信号（与 registry metrics 的判定
+        口径一致），此前仅因缺 code 键逃过归一 —— 被标 completed、同参重试
+        被「已成功执行」拦截。
 
     Conservative by design (mirrors ``chinese_maps/http.py``'s
     ``_is_provider_error_dict``): only a **string** ``error`` value classifies,
@@ -207,6 +215,8 @@ def is_error_like_result(result: Any) -> bool:
     if result.get("type") == "error":
         return True
     if result.get("status") in ("error", "failed"):
+        return True
+    if result.get("success") is False and isinstance(result.get("message"), str):
         return True
     return False
 
