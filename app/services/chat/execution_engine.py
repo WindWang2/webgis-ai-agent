@@ -341,7 +341,10 @@ class ChatExecutionEngine:
         self.use_prompt_caching = settings.LLM_PROMPT_CACHING_ENABLED
         # H-1（#856）：轮数上限支持 env 覆盖（原硬编码 60）。
         self.max_rounds = max(1, int(os.getenv("CHAT_MAX_ROUNDS", "60")))
-        # H-2（#857）：回合总墙钟预算（默认对齐 Pi 的 PI_TURN_TOTAL_TIMEOUT=900s）。
+        # H-2（#857）：回合总墙钟预算。双引擎预算语义（#982/#993 修正注释漂移）：
+        # - legacy 本引擎 = TURN_TOTAL_TIMEOUT_S（默认 900s，env 覆盖）；
+        # - Pi 非流式 drain 与流式 stream_prompt 共用 PI_TURN_TOTAL_TIMEOUT
+        #   （默认 300s；流式自 #982 起同样受整轮总预算约束，此前仅有静默熔断）。
         # 坏回合（每轮"有进展"但工具/LLM 缓慢）此前可持会话锁以小时计。
         self._turn_total_timeout_s = float(os.getenv("TURN_TOTAL_TIMEOUT_S", "900"))
         self.tracker = TaskTracker()

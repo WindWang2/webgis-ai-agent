@@ -18,6 +18,13 @@ from .formatters import (
 logger = logging.getLogger(__name__)
 
 _LAYER_SCHEMA_CACHE_MAX = 1024
+# #992: cap on rendered inventory lines. Every successful dispatch with a
+# FeatureCollection stores a new ref, so a long session accumulates dozens;
+# rendering one line per ref (alias/type/style/8-field schema/bbox) into the
+# system message re-billed thousands of tokens every round. Keep the newest
+# LAYER_INVENTORY_MAX_LINES refs (tail of the inventory dict = most recently
+# stored) and collapse the rest into one summary line.
+LAYER_INVENTORY_MAX_LINES = 20
 # /review P2-1: per-(session, ref) cached schema. GeoJSON data behind a ref is
 # immutable once stored (session_data_manager.store returns a new ref on each
 # `put()`), so the inferred schema is also immutable.
@@ -121,10 +128,17 @@ async def format_layer_lines(
     """
     out: list[str] = []
     if inventory:
+        # #992: truncate BEFORE the parallel schema gather — dropped refs must
+        # not trigger schema inference (a full data fetch per unseen ref).
+        # Newest refs are the dict tail (dispatch appends on store).
+        items = list(inventory.items())
+        hidden = max(0, len(items) - LAYER_INVENTORY_MAX_LINES)
+        if hidden:
+            items = items[hidden:]
         # Gather all schemas in parallel before the main loop
         schema_map: dict[str, dict | None] = {}
         if session_id:
-            ref_ids_list = list(inventory.keys())
+            ref_ids_list = [rid for rid, _ in items]
             schemas = await asyncio.gather(
                 *[build_layer_schema(session_id, rid) for rid in ref_ids_list],
                 return_exceptions=True,
@@ -138,7 +152,7 @@ async def format_layer_lines(
                     logger.warning("build_layer_schema failed for ref=%s: %s", rid, s)
 
         visibility_map = {layer.get("id"): layer for layer in active_layers if layer.get("id")}
-        for ref_id, alias in inventory.items():
+        for ref_id, alias in items:
             meta = visibility_map.get(ref_id) or next(
                 (m for aid, m in visibility_map.items() if aid in ref_id or ref_id in aid),
                 {},
@@ -162,6 +176,8 @@ async def format_layer_lines(
             if schema:
                 line += f" | {format_layer_schema(schema, viewport_bounds)}"
             out.append(line)
+        if hidden:
+            out.append(f"（另有 {hidden} 层未列出，可通过 inventory_layers 查看）")
         return out
 
     for layer in active_layers:

@@ -438,18 +438,32 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
     duration_ms = int((time.monotonic() - t0) * 1000)
 
     # 记录到 TaskTracker 以支持 /api/tasks/* 观察
+    # #993: 迟到回调不得把 step 记到 tasks[-1] —— route 的 is_active_pi_turn
+    # 检查发生在 dispatch 之前，工具执行期间本 turn 可能被取消/结算而新 turn
+    # 已建 task（tasks[-1] 已归属新 turn）。以回调自带的 verifiedTurnId（签名
+    # turn token 解出）对当前活跃 turn：不匹配 → 丢弃迟到 step + warning，
+    # 不错记。未经 route 验证的直连调用（verifiedTurnId=None）保持旧行为。
     try:
         from app.api.routes.chat import get_engine
         engine = get_engine()
-        tasks = engine.tracker.list_by_session(session_id)
-        if tasks:
-            latest_task = tasks[-1]
-            if latest_task.status.value in ("pending", "running"):
-                step = engine.tracker.start_step(latest_task.id, tool_name, request.arguments or {})
-                if result.status == "ok":
-                    engine.tracker.complete_step(latest_task.id, step.id, result.raw_result)
-                else:
-                    engine.tracker.fail_step(latest_task.id, step.id, result.llm_payload[:200])
+        callback_turn = request.verifiedTurnId
+        active_turn, _run, _sid = active_turn_correlation()
+        if callback_turn is not None and callback_turn != active_turn:
+            logger.warning(
+                "[PiBridge] drop late tool step (tool=%s, turn=%s, session=%s): "
+                "callback's turn is no longer active; latest task belongs to a newer turn",
+                tool_name, callback_turn, session_id,
+            )
+        else:
+            tasks = engine.tracker.list_by_session(session_id)
+            if tasks:
+                latest_task = tasks[-1]
+                if latest_task.status.value in ("pending", "running"):
+                    step = engine.tracker.start_step(latest_task.id, tool_name, request.arguments or {})
+                    if result.status == "ok":
+                        engine.tracker.complete_step(latest_task.id, step.id, result.raw_result)
+                    else:
+                        engine.tracker.fail_step(latest_task.id, step.id, result.llm_payload[:200])
     except Exception:
         pass
 
@@ -2104,6 +2118,15 @@ class PiBridge:
                     process_died_event = asyncio.Event()
 
                 silence_seconds = 0.0
+                # #982: whole-turn wall-clock budget. The stall budget below only
+                # covers CONTINUOUS silence — a drip-feed event stream (e.g.
+                # tool_execution_start/end pairs every <PI_EVENT_STREAM_TIMEOUT)
+                # could previously keep a dead-looped turn alive forever. Same
+                # env constant as the non-streaming drain (PI_TURN_TOTAL_TIMEOUT).
+                turn_started = time.monotonic()
+                # "" | "stall" | "total" — distinguishes the two timeout budgets
+                # in the error payload and the failure classification.
+                timeout_reason = ""
                 # audit #820: turn-scoped counters injected into the mapper's
                 # agent_end handler (task_complete step_count/summary).
                 _turn_tool_steps = 0
@@ -2117,6 +2140,14 @@ class PiBridge:
                             pending, timeout=PI_HEARTBEAT_INTERVAL,
                             return_when=asyncio.FIRST_COMPLETED,
                         )
+                        # #982: the total-budget check runs EVERY iteration, not
+                        # only in the silence branch — a steady drip of events
+                        # (each resetting silence_seconds) must not exempt a turn
+                        # from the whole-turn deadline.
+                        if time.monotonic() - turn_started >= PI_TURN_TOTAL_TIMEOUT:
+                            timed_out = True
+                            timeout_reason = "total"
+                            break
                         if died_task in done:
                             # Pi subprocess died mid-stream: the reader's finally
                             # already failed every pending future; end the turn now
@@ -2190,6 +2221,7 @@ class PiBridge:
                             if silence_seconds >= PI_EVENT_STREAM_TIMEOUT:
                                 # True stall: no Pi event for the whole stall budget.
                                 timed_out = True
+                                timeout_reason = "stall"
                                 break
                             # Keepalive: an SSE comment line (``: ...``) is ignored by
                             # the client parser and never enters chat history or the
@@ -2207,10 +2239,21 @@ class PiBridge:
                         await asyncio.gather(*pending, return_exceptions=True)
 
                 if timed_out:
-                    yield sse_event("error", {
-                        "session_id": turn_sid,
-                        "error": f"Pi agent stalled — no events for {int(PI_EVENT_STREAM_TIMEOUT)}s. The agent may be stuck; please retry.",
-                    })
+                    if timeout_reason == "total":
+                        yield sse_event("error", {
+                            "session_id": turn_sid,
+                            "error": (
+                                f"Pi agent turn exceeded the total budget of "
+                                f"{int(PI_TURN_TOTAL_TIMEOUT)}s — events were still "
+                                "flowing but the whole turn ran too long. The turn "
+                                "has been aborted; please retry with a narrower request."
+                            ),
+                        })
+                    else:
+                        yield sse_event("error", {
+                            "session_id": turn_sid,
+                            "error": f"Pi agent stalled — no events for {int(PI_EVENT_STREAM_TIMEOUT)}s. The agent may be stuck; please retry.",
+                        })
                 if process_died:
                     yield sse_event("error", {
                         "session_id": turn_sid,
@@ -2285,7 +2328,11 @@ class PiBridge:
                     rt_ev.settle(Outcome.CANCELLED)
                 elif timed_out or send_failed or process_died:
                     if timed_out:
-                        failure_class = "pi_stall"
+                        # #982: distinguish whole-turn budget exhaustion from a
+                        # heartbeat stall in the failure classification.
+                        failure_class = (
+                            "pi_turn_budget" if timeout_reason == "total" else "pi_stall"
+                        )
                     elif process_died:
                         failure_class = "pi_process_died"
                     else:

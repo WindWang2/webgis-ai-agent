@@ -121,6 +121,11 @@ class CanonicalStep(BaseModel):
     n: int = Field(..., description="1-based 步骤序号（与 orchestrator PlanStep.n 对齐）")
     goal: str = Field(..., description="该步的自然语言意图")
     tool_family: Optional[str] = Field(None, description="所属领域（tool_catalog domain）")
+    # #994: capability 裁决出的工具名集合（harness 合成计划填充）——带绑定
+    # 的步骤只有 binding 内工具完成才打勾；不填则回退通配匹配。
+    tool_binding: Optional[list[str]] = Field(
+        None, description="可完成本步骤的已注册工具名集合（精确打勾绑定）"
+    )
     tool: Optional[str] = Field(None, description="具体调用的已注册工具名")
     args: dict = Field(default_factory=dict, description="传给工具的参数（可含 ${} 占位符）")
     depends_on: list[str] = Field(default_factory=list, description="前置步骤 ID 列表")
