@@ -327,12 +327,15 @@ async def test_dispatch_reuses_service_and_marks_completed(monkeypatch):
     assert stub.call_count == 1, "identical concurrent callbacks must execute once"
 
     # Post-success repeat: the shared service's _completed_keys now holds the
-    # key, so the message must be the SUCCESS variant — not "仍在执行中".
+    # key, so the message must be the POST-SUCCESS variant — not "仍在执行中".
+    # audit4 #984 后的诚实契约：post-success 措辞为「以相同参数执行过」+
+    # 「本次未重新执行」（不再声称"成功执行/结果已生效"）。
     r3 = await dispatch_tool(_tool_request("tc-3"))
-    assert "已在本任务中以相同参数成功执行" in r3.content[0]["text"], (
+    assert "已在本任务中以相同参数执行过" in r3.content[0]["text"], (
         "post-success dedup message missing — _completed_keys never persists, "
         "i.e. ToolDispatchService is still rebuilt per callback"
     )
+    assert "未重新执行" in r3.content[0]["text"]
 
 
 # ─── #789: real tool name in the harness trail (no layer_upsert relabel) ──
