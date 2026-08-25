@@ -201,3 +201,103 @@ def test_converter_without_profile_still_infers():
     assert _category_from_geometry_types(["LineString"]) == "line"
     assert _category_from_geometry_types([]) is None
     assert _category_from_geometry_types(None) is None
+
+
+# ─── store 时 field_schema → 派生 fields 证据（2026-08-25 会话"证据不完整"根因）───
+
+def _descriptor_for_fc(fc):
+    from app.schemas.ref_descriptor import compute_descriptor
+
+    return compute_descriptor("ref:geojson:test-schema", fc).to_dict()
+
+
+def test_compute_descriptor_field_schema_types_and_stats():
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "geometry": {"type": "Point", "coordinates": [1, 2]},
+             "properties": {"count": 5, "name": "武侯区", "flag": True, "note": None}},
+            {"type": "Feature", "geometry": {"type": "Point", "coordinates": [1, 3]},
+             "properties": {"count": 9, "name": "锦江区", "flag": False}},
+        ],
+    }
+    d = _descriptor_for_fc(fc)
+    schema = d["field_schema"]
+    assert schema is not None and d["field_schema_complete"] is True
+    assert schema["count"] == {"type": "number", "null_count": 0, "min": 5.0, "max": 9.0,
+                               "sampleValues": [5, 9]}
+    assert schema["name"]["type"] == "string"
+    assert schema["name"]["sampleValues"] == ["武侯区", "锦江区"]
+    assert schema["flag"]["type"] == "boolean"
+    assert schema["note"]["null_count"] == 1  # null 只计数，不参与类型判定
+
+
+def test_profile_from_descriptor_fields_evidence():
+    fc = _fc(20)
+    d = _descriptor_for_fc(fc)
+    derived = profile_from_descriptor(d)
+    assert derived["fields_status"] == "explicit"
+    assert derived["fields"]["v"]["type"] == "number"
+    assert derived["fields"]["v"]["min"] == 0 and derived["fields"]["v"]["max"] == 19
+    assert derived["fields"]["name"]["type"] == "string"
+    # 语义检查的关键消费面：PAINT_FIELD_EXISTS 可评（字段存在）
+    assert "v" in derived["fields"]
+
+
+def test_field_schema_truncation_falls_back_unknown():
+    """命中 100 键上限 → complete=False → fields_status 回落 unknown（缺失字段
+    不再构成权威缺失），但已收集字段仍是正向证据。"""
+    from app.schemas.ref_descriptor import collect_field_schema
+
+    features = [
+        {"type": "Feature", "geometry": None,
+         # count 排在 120 个键之前，确保截断发生前已被收集
+         "properties": {"count": 1} | {f"f{i}": i for i in range(120)}},
+    ]
+    schema, complete = collect_field_schema(features)
+    assert complete is False
+    assert len(schema) == 100
+    derived = profile_from_descriptor({
+        "feature_count": 1, "bbox": None, "geometry_types": [],
+        "field_schema": schema, "field_schema_complete": complete,
+    })
+    assert derived["fields_status"] == "unknown"
+    assert "count" in derived["fields"]  # 已收集字段保留
+
+
+def test_descriptor_roundtrip_preserves_field_schema():
+    from app.schemas.ref_descriptor import RefDescriptor
+
+    fc = _fc(3)
+    d = _descriptor_for_fc(fc)
+    restored = RefDescriptor.from_dict(d)
+    assert restored.field_schema == d["field_schema"]
+    assert restored.field_schema_complete is True
+    # 旧 descriptor（无 field_schema 键）反序列化保持 None + 默认 complete
+    legacy = RefDescriptor.from_dict({
+        "ref_id": "r", "feature_count": 1, "point_count": 0,
+        "geometry_types": [], "bbox": None, "mvt_capable": False,
+        "raster_capable": False, "estimated_bytes": 0,
+    })
+    assert legacy.field_schema is None
+
+
+def test_legacy_descriptor_without_schema_stays_unknown():
+    derived = profile_from_descriptor({
+        "feature_count": 10, "bbox": [0, 0, 1, 1], "geometry_types": ["Point"],
+    })
+    assert derived["fields_status"] == "unknown"
+    assert derived["fields"] == {}
+
+
+def test_mixed_type_field_is_string():
+    """混合类型列（数值+字符串）→ "string"（与全量 profiler 的回退一致）。"""
+    from app.schemas.ref_descriptor import collect_field_schema
+
+    features = [
+        {"type": "Feature", "geometry": None, "properties": {"x": 1}},
+        {"type": "Feature", "geometry": None, "properties": {"x": "abc"}},
+    ]
+    schema, complete = collect_field_schema(features)
+    assert complete is True
+    assert schema["x"]["type"] == "string"

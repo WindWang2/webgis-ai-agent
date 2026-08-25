@@ -346,6 +346,14 @@ def _compute_descriptor_fallback(data) -> dict:
     except Exception:
         filterable_fields = None
 
+    # 与 store 侧 compute_descriptor 同款有界字段 schema（旧 ref 回退路径
+    # 与新路径的证据面保持一致）
+    try:
+        from app.schemas.ref_descriptor import collect_field_schema
+        field_schema, field_schema_complete = collect_field_schema(features)
+    except Exception:
+        field_schema, field_schema_complete = None, True
+
     # B4: shared raster detection (same as compute_descriptor / is_raster_capable)
     try:
         from app.schemas.ref_descriptor import is_raster_capable
@@ -361,6 +369,8 @@ def _compute_descriptor_fallback(data) -> dict:
         "raster_capable": raster_capable,
         "estimated_bytes": estimated,
         "filterable_fields": filterable_fields,
+        "field_schema": field_schema,
+        "field_schema_complete": field_schema_complete,
     }
 
 
@@ -397,6 +407,8 @@ async def get_layer_descriptor(
             "raster_capable": descriptor.get("raster_capable", False),
             "estimated_bytes": descriptor["estimated_bytes"],
             "filterable_fields": descriptor.get("filterable_fields"),
+            "field_schema": descriptor.get("field_schema"),
+            "field_schema_complete": descriptor.get("field_schema_complete", True),
         }
     if res.error_type == "PermissionDenied":
         raise HTTPException(status_code=403, detail=res.error or "数据不可用")
@@ -432,6 +444,8 @@ async def get_layer_descriptor(
         "raster_capable": raster_capable,
         "estimated_bytes": estimated_bytes,
         "filterable_fields": computed.get("filterable_fields"),
+        "field_schema": computed.get("field_schema"),
+        "field_schema_complete": computed.get("field_schema_complete", True),
     }
 
 

@@ -6,7 +6,7 @@ allows frontend to decide GeoJSON vs MVT without downloading the full payload.
 """
 
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -47,6 +47,15 @@ class RefDescriptor:
     estimated_bytes: int
     content_hash: Optional[str] = None
     filterable_fields: Optional[List[str]] = None
+    # 有界字段 schema（store 时同一次遍历产出，见 collect_field_schema）：
+    # {field: {type, null_count, min/max?, sampleValues?}}。供
+    # profile_from_descriptor 派生 fields 证据 —— PAINT_FIELD_EXISTS /
+    # CLASSIFICATION_DOMAIN_COVERAGE 等语义检查由此从 not_evaluated
+    # （质量环"证据不完整"）变为可评。
+    field_schema: Optional[Dict[str, Dict[str, Any]]] = None
+    # False = 命中 100 键上限被截断：缺失字段不再是权威缺失（fields_status
+    # 回落 unknown，宽松分支）。
+    field_schema_complete: bool = True
 
     def to_dict(self) -> dict:
         """Serialize to dict for SSE/JSON responses."""
@@ -61,6 +70,8 @@ class RefDescriptor:
             "estimated_bytes": self.estimated_bytes,
             "content_hash": self.content_hash,
             "filterable_fields": self.filterable_fields,
+            "field_schema": self.field_schema,
+            "field_schema_complete": self.field_schema_complete,
         }
 
     @classmethod
@@ -77,6 +88,8 @@ class RefDescriptor:
             estimated_bytes=d.get("estimated_bytes", 0),
             content_hash=d.get("content_hash"),
             filterable_fields=d.get("filterable_fields"),
+            field_schema=d.get("field_schema"),
+            field_schema_complete=d.get("field_schema_complete", True),
         )
 
 
@@ -126,6 +139,91 @@ def collect_filterable_fields(features) -> Optional[List[str]]:
         if len(keys) >= 100:
             break
     return sorted(keys)[:100] if keys else None
+
+
+# 字段 schema 上限与 collect_filterable_fields 的 100 键对齐；样本数与全量
+# profiler 的 sampleValues[:5] 对齐（语义检查 CATEGORICAL_DOMAIN_CONSISTENCY
+# 只看前几个样本）。
+_FIELD_SCHEMA_MAX_FIELDS = 100
+_FIELD_SCHEMA_MAX_SAMPLES = 5
+
+
+def collect_field_schema(features) -> Tuple[Optional[Dict[str, Dict[str, Any]]], bool]:
+    """有界逐字段 schema：type / null_count / 数值 min·max / 样本值。
+
+    store 时与 bbox 同一趟 O(n·k) 遍历产出，profile_from_descriptor 据此
+    派生 fields 证据，语义检查（PAINT_FIELD_EXISTS、
+    CLASSIFICATION_DOMAIN_COVERAGE 等）不再因"descriptor 无字段信息"而
+    not_evaluated → 质量环"证据不完整"。与全量 profiler 的 fields 同构但
+    无 mean/quantiles（那些检查各自降级 not_evaluated，是逐检查语义）。
+
+    返回 (schema, complete)：complete=False 表示命中键上限被截断，缺失
+    字段不再构成权威缺失。类型判定与全量 profiler 一致：纯数值列 →
+    "number"，纯布尔列 → "boolean"，其余（含混合/null 之外）→ "string"。
+    """
+    if not isinstance(features, list) or not features:
+        return None, True
+    raw: Dict[str, Dict[str, Any]] = {}
+    truncated = False
+    for f in features:
+        props = f.get("properties") if isinstance(f, dict) else None
+        if not isinstance(props, dict):
+            continue
+        for k, v in props.items():
+            if not isinstance(k, str) or not k:
+                continue
+            info = raw.get(k)
+            if info is None:
+                if len(raw) >= _FIELD_SCHEMA_MAX_FIELDS:
+                    truncated = True
+                    break
+                info = raw[k] = {
+                    "types": set(), "min": None, "max": None,
+                    "samples": [], "null_count": 0,
+                }
+            if v is None:
+                info["null_count"] += 1
+                continue
+            # bool 是 int 子类，先判 bool 再判数值
+            if isinstance(v, bool):
+                info["types"].add("boolean")
+                continue
+            if isinstance(v, (int, float)):
+                info["types"].add("number")
+                try:
+                    fv = float(v)
+                except (TypeError, ValueError):
+                    continue
+                import math
+
+                if not math.isfinite(fv):
+                    continue
+                if info["min"] is None or fv < info["min"]:
+                    info["min"] = fv
+                if info["max"] is None or fv > info["max"]:
+                    info["max"] = fv
+                if len(info["samples"]) < _FIELD_SCHEMA_MAX_SAMPLES and v not in info["samples"]:
+                    info["samples"].append(v)
+            else:
+                info["types"].add("string")
+                if isinstance(v, str) and len(info["samples"]) < _FIELD_SCHEMA_MAX_SAMPLES and v not in info["samples"]:
+                    info["samples"].append(v)
+        if truncated:
+            break
+    if not raw:
+        return None, not truncated
+    out: Dict[str, Dict[str, Any]] = {}
+    for k, info in raw.items():
+        types = info["types"]
+        ftype = "number" if types == {"number"} else ("boolean" if types == {"boolean"} else "string")
+        entry: Dict[str, Any] = {"type": ftype, "null_count": info["null_count"]}
+        if ftype == "number":
+            entry["min"] = info["min"]
+            entry["max"] = info["max"]
+        if info["samples"]:
+            entry["sampleValues"] = info["samples"]
+        out[k] = entry
+    return out, not truncated
 
 
 # Back-compat alias — layer.py previously imported the private name.
@@ -238,6 +336,7 @@ def compute_descriptor(ref_id: str, data) -> RefDescriptor:
 
     # #668: attribute whitelist via shared helper (identical to fallback path)
     filterable_fields = collect_filterable_fields(features)
+    field_schema, field_schema_complete = collect_field_schema(features)
 
     return RefDescriptor(
         ref_id=ref_id,
@@ -250,4 +349,6 @@ def compute_descriptor(ref_id: str, data) -> RefDescriptor:
         estimated_bytes=estimated_bytes,
         content_hash=content_hash,
         filterable_fields=filterable_fields,
+        field_schema=field_schema,
+        field_schema_complete=field_schema_complete,
     )
