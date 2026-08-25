@@ -517,21 +517,80 @@ class MapProductPlanner:
                     note="recipe ineligible — fallback point map",
                 ))
 
-        # 终稿组件集：按（回退后的）实际主表达重建 + recipe 声明的附加组件
+        # 终稿组件集：优先走 component_resolver/composer（composition 驱动），
+        # 失败回退到 build_default_components（兼容旧路径）。
         primary_layer = next(
             (ly for ly in finalized.map_layers if ly.role == "primary" and ly.enabled),
             None,
         )
         primary_carto = primary_layer.cartography if primary_layer else "point_overlay"
-        finalized.components = build_default_components(
-            primary_cartography=primary_carto,
-            title=self._default_title(plan),
-            subtitle=plan.intent.scope.name if plan.intent.scope.name else "",
-            report_product=plan.intent.report_product,
-            scope_name=plan.intent.scope.name,
-            subject_category=plan.intent.subject.category,
-            extra_types=recipe.default_components,
-        )
+        try:
+            from app.services.gis_harness.component_composer import get_component_composer
+            from app.services.gis_harness.component_resolver import get_component_resolver
+            template = self.templates.get(plan.template_id) if plan.template_id else None
+            comp_tmpl_id = (template.composition_template_id if template and template.composition_template_id else "")
+            # report_product prefers a composition that provides export_layout/map_border
+            if plan.intent.report_product:
+                output_target = "pdf"
+                # force a report-capable composition
+                if not comp_tmpl_id:
+                    from app.lib.cartography.composition_templates import get_composition_template_registry
+                    comp_reg = get_composition_template_registry()
+                    cands = comp_reg.find_for_map_model(primary_carto, "pdf")
+                    report_cands = [c for c in cands if any(s.id == "export_layout" and s.cardinality == "required" for s in c.component_slots)]
+                    if report_cands:
+                        comp_tmpl_id = report_cands[0].id
+            else:
+                output_target = "interactive"
+            resolver = get_component_resolver()
+            # available_context: statistics/chart if recipe declares those outputs
+            ctx: list = []
+            if plan.statistics:
+                ctx.append("statistics")
+            if plan.charts:
+                ctx.append("chart")
+            selection = resolver.resolve(
+                composition_template_id=comp_tmpl_id,
+                map_model_id=primary_carto,
+                output_target=output_target,
+                available_context=ctx,
+            )
+            title_text = self._default_title(plan)
+            subtitle_text = plan.intent.scope.name if plan.intent.scope.name else ""
+            # layer binding: primary layer id → legend/colorbar
+            layer_bindings: dict = {}
+            if primary_layer and primary_layer.layer_id:
+                layer_bindings["primary"] = primary_layer.layer_id
+            composer = get_component_composer()
+            overrides = (template.component_overrides if template else {})  # type: ignore[attr-defined]
+            composed = composer.compose(
+                selection,
+                title_text=title_text,
+                subtitle_text=subtitle_text,
+                layer_bindings=layer_bindings,
+                composition_template_id=selection.composition_template_id,
+                overrides=overrides if isinstance(overrides, dict) else {},
+            )
+            if composed:
+                finalized.components = composed
+                # stash composition evidence
+                finalized.template_selection = {
+                    **finalized.template_selection,
+                    "composition_template_id": selection.composition_template_id,
+                    "component_templates": selection.component_templates,
+                }
+            else:
+                raise ValueError("empty composition")
+        except Exception:
+            finalized.components = build_default_components(
+                primary_cartography=primary_carto,
+                title=self._default_title(plan),
+                subtitle=plan.intent.scope.name if plan.intent.scope.name else "",
+                report_product=plan.intent.report_product,
+                scope_name=plan.intent.scope.name,
+                subject_category=plan.intent.subject.category,
+                extra_types=recipe.default_components,
+            )
 
         finalized.status = "finalized"
         finalized.completeness = self.assess_completeness(finalized)

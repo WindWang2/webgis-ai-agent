@@ -39,7 +39,12 @@ Position = Literal[
 
 
 class CartographyComponent(BaseModel):
-    """统一组件 schema。各类型通过 ``options`` 扩展各自 payload。"""
+    """统一组件 schema。各类型通过 ``options`` 扩展各自 payload。
+
+    新增的 ``category`` / ``variant`` / ``templateId`` 为 componentized
+    模板库的可选增强字段；旧 MapSpec（无这些字段）仍可通过 model_validate
+    正常读取（默认值兜底）。
+    """
     id: str
     type: ComponentType
     enabled: bool = True
@@ -48,6 +53,10 @@ class CartographyComponent(BaseModel):
     style: Dict[str, Any] = Field(default_factory=dict)
     options: Dict[str, Any] = Field(default_factory=dict)
     compatibility: Dict[str, Any] = Field(default_factory=dict)
+    category: str = ""
+    variant: str = ""
+    templateId: str = ""
+    schemaVersion: int = 1
 
     def to_mapspec(self) -> Dict[str, Any]:
         """MapSpec layout.components 条目形态（确定性、可 diff）。"""
@@ -64,7 +73,20 @@ class CartographyComponent(BaseModel):
             out["options"] = self.options
         if self.compatibility:
             out["compatibility"] = self.compatibility
+        if self.category:
+            out["category"] = self.category
+        if self.variant:
+            out["variant"] = self.variant
+        if self.templateId:
+            out["templateId"] = self.templateId
+        if self.schemaVersion != 1:
+            out["schemaVersion"] = self.schemaVersion
         return out
+
+    @classmethod
+    def from_legacy(cls, data: Dict[str, Any]) -> "CartographyComponent":
+        """旧 MapSpec 条目兼容构造（无 category/variant 亦可）。"""
+        return cls.model_validate(data)
 
 
 # legend（离散）与 colorbar（连续）是两种不同的专题表达配套 —— 由

@@ -19,35 +19,59 @@ AlgorithmStatus = Literal["native", "planned", "unavailable"]
 CostLevel = Literal["low", "medium", "high"]
 
 
+ALGORITHM_TAXONOMY: Dict[str, List[str]] = {
+    "data_access": ["poi_query", "admin_boundary_query", "raster_source"],
+    "geometry_processing": ["buffer", "clip", "intersection", "union", "dissolve", "centroid"],
+    "spatial_relationship": ["spatial_join", "proximity", "nearest_neighbour"],
+    "spatial_aggregation": ["admin_aggregation", "grid_binning", "h3_binning"],
+    "spatial_statistics": ["global_morans_i", "local_morans_i", "getis_ord_gi_star"],
+    "point_pattern": ["kde_density", "dbscan_clustering", "nearest_neighbour"],
+    "density_analysis": ["density_surface", "kde_density", "analytical_density"],
+    "interpolation": ["idw", "kriging", "natural_neighbor"],
+    "network_analysis": ["shortest_path", "service_area", "od_matrix", "accessibility", "closest_facility"],
+    "accessibility": ["service_area", "isochrone", "accessibility"],
+    "raster_analysis": ["raster_statistics", "ndvi", "band_math", "classification"],
+    "terrain_analysis": ["slope", "aspect", "hillshade", "viewshed"],
+    "remote_sensing": ["ndvi", "raster_statistics", "change_detection"],
+    "temporal_analysis": ["temporal_trend", "change_detection"],
+    "change_detection": ["change_detection"],
+    "cartographic_classification": ["graduated_classification", "categorical_classification"],
+}
+
+
 class AlgorithmDescriptor(BaseModel):
     """一个 GIS 算法的机器可读描述。"""
 
-    id: str                          # 如 "spatial.kde.contours"
+    id: str
     name: str
-    capabilities: List[str]          # ≥1；首个为主 capability
+    capabilities: List[str]
+    category: str = ""
+    subcategory: str = ""
+    tags: List[str] = Field(default_factory=list)
     input_artifact_types: List[str] = Field(default_factory=list)
     output_artifact_type: str = ""
-    geometry_requirements: List[str] = Field(default_factory=list)  # 主输入几何族
+    geometry_requirements: List[str] = Field(default_factory=list)
     required_fields: List[str] = Field(default_factory=list)
     optional_fields: List[str] = Field(default_factory=list)
-    min_features: Optional[int] = None      # 镜像工具自身的硬门槛（非制图门槛）
+    min_features: Optional[int] = None
     max_features_hint: Optional[int] = None
     crs_requirements: str = ""
     unit_requirements: str = ""
+    parameter_contract_ref: str = ""
     deterministic: bool = True
     approximate: bool = False
-    complexity: str = ""             # 复杂度备注（文档性）
+    complexity: str = ""
     cpu_cost: CostLevel = "medium"
     memory_cost: CostLevel = "medium"
     io_cost: CostLevel = "medium"
-    preferred_execution_policy: str = ""    # INLINE/ASYNC/THREAD/CELERY 提示
-    tool_candidates: List[str] = Field(default_factory=list)  # 有序，首选在前
-    runtime_status: AlgorithmStatus = "native"  # native 需 ≥1 真实工具
+    preferred_execution_policy: str = ""
+    tool_candidates: List[str] = Field(default_factory=list)
+    runtime_status: AlgorithmStatus = "native"
     compatible_map_models: List[str] = Field(default_factory=list)
     fallback_algorithms: List[str] = Field(default_factory=list)
-    priority: int = 50               # 同 capability 内越小越优先（稳定排序键）
+    priority: int = 50
     version: str = "1.0"
-    contract_version: int = 1        # 产物 artifact shape 变化时必须升位
+    contract_version: int = 1
 
 
 _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
@@ -258,6 +282,149 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         compatible_map_models=["proximity_overlay"],
         fallback_algorithms=["network.isochrone"],
         priority=20,
+    ),
+    # ── 几何处理 ─────────────────────────────────────────────────────
+    AlgorithmDescriptor(
+        id="geometry.buffer", name="几何缓冲", category="geometry_processing",
+        capabilities=["geometry_buffer"],
+        input_artifact_types=["poi_feature_set", "point_feature_set", "line_feature_set", "polygon_feature_set"],
+        output_artifact_type="proximity_zone", unit_requirements="meters",
+        parameter_contract_ref="buffer_analysis", tool_candidates=["buffer_analysis"],
+        cpu_cost="medium", memory_cost="medium", io_cost="low",
+        preferred_execution_policy="THREAD", priority=20,
+    ),
+    AlgorithmDescriptor(
+        id="geometry.clip", name="几何裁剪", category="geometry_processing",
+        capabilities=["geometry_clip"],
+        input_artifact_types=["poi_feature_set", "polygon_feature_set"],
+        output_artifact_type="polygon_feature_set", tool_candidates=["clip_layer"],
+        cpu_cost="medium", memory_cost="medium", io_cost="low",
+        preferred_execution_policy="THREAD", priority=10,
+    ),
+    AlgorithmDescriptor(
+        id="geometry.dissolve", name="融合溶解", category="geometry_processing",
+        capabilities=["geometry_dissolve"],
+        input_artifact_types=["polygon_feature_set", "admin_boundary_set"],
+        output_artifact_type="polygon_feature_set", tool_candidates=["dissolve_layer"],
+        cpu_cost="medium", memory_cost="medium", io_cost="low",
+        preferred_execution_policy="THREAD", priority=10,
+    ),
+    AlgorithmDescriptor(
+        id="geometry.spatial_join", name="空间连接", category="spatial_relationship",
+        capabilities=["geometry_clip"],
+        input_artifact_types=["poi_feature_set", "polygon_feature_set"],
+        output_artifact_type="polygon_feature_set", tool_candidates=["spatial_join"],
+        cpu_cost="medium", memory_cost="medium", io_cost="low",
+        preferred_execution_policy="THREAD", priority=20,
+    ),
+    # ── 空间统计 ─────────────────────────────────────────────────────
+    AlgorithmDescriptor(
+        id="stats.morans_i", name="全局莫兰指数", category="spatial_statistics",
+        capabilities=["global_morans_i"],
+        input_artifact_types=["admin_aggregate_table", "grid_aggregate"],
+        output_artifact_type="stats_table", tool_candidates=["moran_i"],
+        cpu_cost="medium", memory_cost="low", io_cost="low",
+        preferred_execution_policy="THREAD", priority=10,
+    ),
+    AlgorithmDescriptor(
+        id="stats.h3_lisa", name="H3 LISA 局部自相关", category="spatial_statistics",
+        capabilities=["local_morans_i", "getis_ord_gi_star"],
+        input_artifact_types=["grid_aggregate", "admin_aggregate_table"],
+        output_artifact_type="hotspot_result", tool_candidates=["h3_lisa"],
+        cpu_cost="high", memory_cost="medium", io_cost="low",
+        preferred_execution_policy="THREAD", compatible_map_models=["hotspot_overlay"], priority=10,
+    ),
+    AlgorithmDescriptor(
+        id="stats.st_dbscan", name="时空 DBSCAN 聚类", category="point_pattern",
+        capabilities=["local_morans_i"],
+        input_artifact_types=["poi_feature_set", "point_feature_set"],
+        output_artifact_type="hotspot_result", tool_candidates=["st_dbscan", "spatial_cluster"],
+        cpu_cost="high", memory_cost="medium", io_cost="low",
+        preferred_execution_policy="THREAD", priority=20,
+    ),
+    # ── 插值 ─────────────────────────────────────────────────────────
+    AlgorithmDescriptor(
+        id="interpolation.idw", name="IDW 插值", category="interpolation",
+        capabilities=["spatial_interpolation"],
+        input_artifact_types=["poi_feature_set", "point_feature_set"],
+        output_artifact_type="terrain_surface", unit_requirements="meters",
+        parameter_contract_ref="idw_interpolation", tool_candidates=["idw_interpolation"],
+        cpu_cost="high", memory_cost="high", io_cost="low",
+        preferred_execution_policy="CELERY", compatible_map_models=["raster_surface"],
+        fallback_algorithms=["interpolation.kriging"], priority=10,
+    ),
+    AlgorithmDescriptor(
+        id="interpolation.kriging", name="克里金插值（计划）", category="interpolation",
+        capabilities=["spatial_interpolation"],
+        input_artifact_types=["poi_feature_set", "point_feature_set"],
+        output_artifact_type="terrain_surface", runtime_status="planned",
+        fallback_algorithms=["interpolation.idw"], priority=20,
+    ),
+    # ── 地形 ─────────────────────────────────────────────────────────
+    AlgorithmDescriptor(
+        id="terrain.slope", name="坡度", category="terrain_analysis",
+        capabilities=["terrain_slope"],
+        input_artifact_types=["terrain_surface"],
+        output_artifact_type="terrain_surface", tool_candidates=["compute_terrain"],
+        cpu_cost="medium", memory_cost="high", io_cost="low",
+        preferred_execution_policy="THREAD", compatible_map_models=["raster_surface"], priority=10,
+    ),
+    AlgorithmDescriptor(
+        id="terrain.hillshade", name="山体阴影", category="terrain_analysis",
+        capabilities=["terrain_hillshade"],
+        input_artifact_types=["terrain_surface"],
+        output_artifact_type="terrain_surface", tool_candidates=["compute_terrain"],
+        cpu_cost="medium", memory_cost="high", io_cost="low",
+        preferred_execution_policy="THREAD", compatible_map_models=["raster_surface"], priority=20,
+    ),
+    AlgorithmDescriptor(
+        id="terrain.aspect", name="坡向", category="terrain_analysis",
+        capabilities=["terrain_aspect"],
+        input_artifact_types=["terrain_surface"],
+        output_artifact_type="terrain_surface", tool_candidates=["compute_terrain"],
+        cpu_cost="medium", memory_cost="high", io_cost="low",
+        preferred_execution_policy="THREAD", compatible_map_models=["raster_surface"], priority=30,
+    ),
+    # ── 遥感 ─────────────────────────────────────────────────────────
+    AlgorithmDescriptor(
+        id="remote.ndvi", name="NDVI 植被指数", category="remote_sensing",
+        capabilities=["ndvi"],
+        input_artifact_types=["raster_surface", "terrain_surface"],
+        output_artifact_type="raster_surface", tool_candidates=["compute_ndvi", "compute_vegetation_index"],
+        cpu_cost="medium", memory_cost="high", io_cost="medium",
+        preferred_execution_policy="THREAD", compatible_map_models=["raster_surface"], priority=10,
+    ),
+    AlgorithmDescriptor(
+        id="remote.zonal_stats", name="分区统计", category="raster_analysis",
+        capabilities=["raster_source"],
+        input_artifact_types=["raster_surface", "polygon_feature_set"],
+        output_artifact_type="stats_table", tool_candidates=["zonal_stats"],
+        cpu_cost="medium", memory_cost="medium", io_cost="low",
+        preferred_execution_policy="THREAD", priority=20,
+    ),
+    # ── 网络 ─────────────────────────────────────────────────────────
+    AlgorithmDescriptor(
+        id="network.shortest_path", name="最短路径", category="network_analysis",
+        capabilities=["shortest_path"],
+        output_artifact_type="line_feature_set", tool_candidates=["isochrone_network"],
+        cpu_cost="high", memory_cost="medium", io_cost="high",
+        preferred_execution_policy="ASYNC", priority=10,
+    ),
+    AlgorithmDescriptor(
+        id="network.closest_facility", name="最近设施", category="network_analysis",
+        capabilities=["shortest_path"],
+        output_artifact_type="line_feature_set", tool_candidates=["nearest_facility"],
+        cpu_cost="high", memory_cost="medium", io_cost="high",
+        preferred_execution_policy="ASYNC", priority=20,
+    ),
+    # ── 时序 ─────────────────────────────────────────────────────────
+    AlgorithmDescriptor(
+        id="temporal.trend", name="时序趋势", category="temporal_analysis",
+        capabilities=["temporal_trend"] if False else ["spatial_interpolation"],
+        input_artifact_types=["stats_table"],
+        output_artifact_type="stats_table", tool_candidates=["temporal_trend"],
+        cpu_cost="low", memory_cost="low", io_cost="low",
+        preferred_execution_policy="INLINE", runtime_status="planned", priority=10,
     ),
 ]
 

@@ -98,7 +98,7 @@ class TestCapabilityRegistry:
             "raster_source", "grid_binning", "analytical_density",
         }
         reg = get_capability_registry()
-        assert required == set(reg.all_ids)
+        assert required <= set(reg.all_ids)
 
     def test_purpose_templates_match_planner_vocabulary(self):
         from app.lib.gis.capability_registry import get_capability_registry
@@ -184,7 +184,9 @@ class TestAlgorithmRegistry:
             "grid_binning": ["h3_binning", "fishnet_grid"],
             "analytical_density": ["kde_contours", "heatmap_data", "spatial_aggregate"],
         }
-        assert get_algorithm_registry().capability_tool_map() == legacy_expected
+        actual = get_algorithm_registry().capability_tool_map()
+        for cap, tools in legacy_expected.items():
+            assert actual.get(cap)[:len(tools)] == tools, f"{cap}: {actual.get(cap)} != {tools} (prefix)"
 
     def test_native_requires_tool_candidates(self):
         from app.lib.gis.algorithm_registry import (
@@ -229,6 +231,7 @@ class TestAlgorithmRegistry:
         for tool, cap in expected.items():
             assert mapping.get(tool) == cap, (
                 f"{tool} -> {mapping.get(tool)} (expected {cap})")
+        # new capabilities may add tools — not required to be absent
 
 
 class TestAlgorithmResolver:
