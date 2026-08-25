@@ -66,6 +66,9 @@ export interface Layer {
   _mapspecRepairActionId?: string;
   /** Monotonic HUD mutation generation used to supersede stale repairs. */
   _intentGeneration?: number;
+  /** 「地图随对话」：最后一次被展示（agent display / 用户点开）所属的对话轮次。
+   *  新一轮 agent 展示时，落后轮次的可见分析图层会被收起（lib/chat/turn-focus）。 */
+  _displayTurn?: number;
   /** Bounded desired-state AUTO_SAFE repairs applied before runtime reconcile. */
   _cartographicRepairs?: Array<Record<string, unknown>>;
   created_at?: string;

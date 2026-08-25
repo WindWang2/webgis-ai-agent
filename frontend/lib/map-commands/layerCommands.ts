@@ -5,7 +5,8 @@ import * as renderer from '@/lib/map-kit/renderer';
 import { devOnly } from '@/lib/utils/logger';
 import { parseFilter } from './parseFilter';
 import { isMvtLayer } from '@/lib/store/layer-data';
-import { mergePendingPresentation } from '@/lib/mapspec/session-cursor';
+import { mergePendingPresentation, getCommittedMapSpec } from '@/lib/mapspec/session-cursor';
+import { noteAgentDisplayed } from '@/lib/chat/turn-focus';
 
 /**
  * Layer commands: vector/raster add-remove, base layer switch, visibility/style
@@ -65,6 +66,38 @@ function resolveTargetId(params: any, legacyKeys: string[]): string | undefined 
     if (typeof v === 'string' && v.trim()) return v;
   }
   return undefined;
+}
+
+/**
+ * 跨 id 体系的图层目标解析（2026-08-26：set_layer_status 对恢复会话假成功）。
+ *
+ * Agent 图层管理工具解析出的目标是数据 ref（ref:geojson-*）；会话恢复后的
+ * store 层 id 是 MapSpec 层 id（result-chatcmpl-* / product-*，且旧持久化层
+ * 无 _refId）——ref 直接下发全部 target_not_found，工具却已报 success。
+ * 解析链（命中即止）：
+ *   1. store 层 id 直接命中（在飞会话的常态）；
+ *   2. store 层 `_refId` 命中（挂载路径的 HUD 层）；
+ *   3. committed MapSpec：ref → source（ref_id 字段）→ 引用该 source 的
+ *      spec 层 id（恢复层的 id 即 spec 层 id）。一个 ref 可背多层（如
+ *      product-heatmap + product-points），全部返回。
+ */
+export function resolveLayerTargetsByRef(layerId: string, getHudState: () => any): string[] {
+  const layers: any[] = getHudState().layers ?? [];
+  if (layers.some((l) => l.id === layerId)) return [layerId];
+  const byRefId = layers.filter((l) => l._refId === layerId).map((l) => l.id);
+  if (byRefId.length > 0) return byRefId;
+  const spec = getCommittedMapSpec();
+  if (!spec?.sources || !spec?.layers) return [];
+  const sourceIds = new Set(
+    Object.entries(spec.sources as Record<string, any>)
+      .filter(([, s]) => (s?.ref_id ?? s?.ref) === layerId)
+      .map(([id]) => id),
+  );
+  if (sourceIds.size === 0) return [];
+  const knownIds = new Set(layers.map((l) => l.id));
+  return (spec.layers as any[])
+    .filter((l) => sourceIds.has(String(l.source || '')) && knownIds.has(String(l.id)))
+    .map((l) => String(l.id));
 }
 
 /** #668: extract a ['get', field] field name from a MapLibre filter expression. */
@@ -392,15 +425,28 @@ export const layerCommands: Record<string, CommandEntry> = {
       // V3: missing target → explicit failed result (was a silent return).
       if (!layer_id) return { status: 'failed', error: 'target_not_found' };
 
+      // 跨 id 体系解析（ref:geojson-* → 恢复层的 result-*/product-* id），
+      // 一个 ref 可背多层（product-heatmap + product-points 同源）——全部为目标。
+      const targetIds = resolveLayerTargetsByRef(layer_id, getHudState);
+      const effectiveId = targetIds[0] ?? layer_id;
+
       // V3 round-2 FIX-B: resolve across BOTH id schemes (custom-… + store …__…).
-      const matched = matchMapLayers(map, layer_id);
-      const storeHasLayer = getHudState().layers?.some?.((l: any) => l.id === layer_id) ?? false;
+      const matched = Array.from(new Set(targetIds.flatMap((id) => matchMapLayers(map, id))));
       // V3: no matching map layer AND no store layer → genuine miss → failed
       // result (was: silent no-op forEach + void success).
-      if (matched.length === 0 && !storeHasLayer) return { status: 'failed', error: 'target_not_found' };
+      if (matched.length === 0 && targetIds.length === 0) return { status: 'failed', error: 'target_not_found' };
 
       // Store-layer sublayers are owned by the async MapSpecRuntime reconcile.
-      const storeMatched = matched.filter((id) => isStoreSchemeMatch(layer_id, id));
+      const storeMatched = matched.filter((id) => isStoreSchemeMatch(effectiveId, id));
+
+      // 「地图随对话」：agent 显式展示（display_layer/set_layer_status）→ 标记
+      // 当前轮并收起旧轮的可见分析图层。先标记全部目标再逐个 sweep：同 ref
+      // 的多层同属当前轮展示集，互不收起。
+      if (visible === true) {
+        for (const id of targetIds) {
+          noteAgentDisplayed(id);
+        }
+      }
 
       // #609: 后端 Python Optional 未传序列化为 JSON null，语义是"不修改该属性"。
       // 判存在性必须用 `!= null` 而非 `!== undefined`——否则 null 走 falsy 分支
@@ -409,20 +455,17 @@ export const layerCommands: Record<string, CommandEntry> = {
       if (visible != null) storeUpdates.visible = visible;
       if (opacity != null) storeUpdates.opacity = opacity;
       if (name !== undefined) storeUpdates.name = name;
-      if (color !== undefined) storeUpdates.style = { ...(getHudState().layers.find((l: any) => l.id === layer_id)?.style ?? {}), color };
+      if (color !== undefined) storeUpdates.style = { ...(getHudState().layers.find((l: any) => l.id === effectiveId)?.style ?? {}), color };
 
-      if (matched.length === 0) {
-        // Store-only: the reconcile owns the map sublayers → honest store_updated.
-        if (Object.keys(storeUpdates).length > 0) {
-          getHudState().updateLayer(layer_id, storeUpdates);
-          // #737: with a committed MapSpec, composeLiveMapSpec ignores HUD
-          // visibility — the Layers tab showed the layer visible while the
-          // map stayed hidden. When the store layer carries the authored
-          // spec-layer id, merge the pending presentation there too so the
-          // live compose actually applies it (same mechanism the layer-panel
-          // eye toggle uses).
-          const hudLayer = getHudState().layers?.find?.((l: any) => l.id === layer_id);
-          const specLayerId = (hudLayer as any)?._mapspecLayerId as string | undefined;
+      // store 更新 + #737 pending presentation 合并，逐目标应用（多目标同
+      // 值）；specLayerId 兜底见 resolveLayerTargetsByRef 注释（恢复层 id 即
+      // spec 层 id）。
+      const applyStoreUpdates = () => {
+        if (Object.keys(storeUpdates).length === 0) return;
+        for (const id of targetIds) {
+          getHudState().updateLayer(id, storeUpdates);
+          const hudLayer = getHudState().layers?.find?.((l: any) => l.id === id);
+          const specLayerId = ((hudLayer as any)?._mapspecLayerId ?? id) as string | undefined;
           if (specLayerId && (visible != null || opacity != null)) {
             mergePendingPresentation(specLayerId, {
               ...(visible != null ? { visible } : {}),
@@ -430,6 +473,11 @@ export const layerCommands: Record<string, CommandEntry> = {
             });
           }
         }
+      };
+
+      if (matched.length === 0) {
+        // Store-only: the reconcile owns the map sublayers → honest store_updated.
+        applyStoreUpdates();
         return { status: 'succeeded', result: { store_updated: true } };
       }
 
@@ -442,9 +490,7 @@ export const layerCommands: Record<string, CommandEntry> = {
           color: color as string | undefined,
         });
       }
-      if (Object.keys(storeUpdates).length > 0) {
-        getHudState().updateLayer(layer_id, storeUpdates);
-      }
+      applyStoreUpdates();
       // V3 round-2 FIX-B: post-mutation verification — the matched layer exists
       // on the map AND (visibility) getLayoutProperty reflects the new value.
       // #609: 只对"本次请求要改的属性"读回比对——visible=null 时未请求改可见性，
@@ -464,6 +510,55 @@ export const layerCommands: Record<string, CommandEntry> = {
     },
   },
 
+  /**
+   * 最终图层显示管理（finalize_display 钩子的执行面）：展示 show_layer_ids
+   * （跨 id 体系解析，一个 ref 可展开多层），隐藏其余所有可见分析图层。
+   * 与逐层 set_layer_status 的区别：一次调用原子收口 —— Agent 在分析收尾
+   * 时声明"本轮最终成图集合"，中间层（点云/边界/裁剪残料）不再由用户手动
+   * 关闭。展示集同步标记当前对话轮（turn-focus 联动）。
+   */
+  finalize_display: {
+    requiredParams: (p) => Array.isArray(p?.show_layer_ids) && p.show_layer_ids.length > 0,
+    run(ctx) {
+      const { getHudState, params } = ctx;
+      const raw = ((params as any)?.show_layer_ids ?? []) as string[];
+      if (raw.length === 0) return { status: 'failed', error: 'invalid_params' };
+
+      const { layers, updateLayer } = getHudState();
+      const show = new Set(raw.flatMap((id) => resolveLayerTargetsByRef(id, getHudState)));
+      if (show.size === 0) return { status: 'failed', error: 'target_not_found' };
+
+      let shown = 0;
+      for (const id of show) {
+        updateLayer(id, { visible: true });
+        const hudLayer = (layers ?? []).find((l: any) => l.id === id);
+        mergePendingPresentation(String((hudLayer as any)?._mapspecLayerId ?? id), { visible: true });
+        shown += 1;
+      }
+      let hidden = 0;
+      const boundaryRole = new Set(
+        ((getCommittedMapSpec()?.layers || []) as any[])
+          .filter((l) => l?.context_role === 'boundary')
+          .map((l) => String(l.id)),
+      );
+      for (const layer of layers ?? []) {
+        if (show.has(layer.id)) continue;
+        if ((layer.group ?? 'analysis') !== 'analysis' || !layer.visible) continue;
+        // 行政边界层默认常显（制图语境），不在收口隐藏之列
+        const specId = String((layer as any)._mapspecLayerId ?? layer.id);
+        if (boundaryRole.has(specId)) continue;
+        updateLayer(layer.id, { visible: false });
+        mergePendingPresentation(specId, { visible: false });
+        hidden += 1;
+      }
+      // turn-focus：展示集即本轮主题（先全部标记再 sweep —— 同集互不收起）
+      for (const id of show) {
+        noteAgentDisplayed(id);
+      }
+      return { status: 'succeeded', result: { shown, hidden } };
+    },
+  },
+
   layer_style_update: {
     requiredParams: (p) => typeof p.layer_id === 'string' || typeof p.id === 'string',
     run(ctx) {
@@ -474,15 +569,25 @@ export const layerCommands: Record<string, CommandEntry> = {
       // V3: silent no-ops become explicit failed results (design §6).
       if (!layer_id) return { status: 'failed', error: 'target_not_found' };
 
+      // 跨 id 体系解析（同 layer_visibility_update：ref → 恢复层 id）。
+      const targetIds = resolveLayerTargetsByRef(layer_id, getHudState);
+      const effectiveId = targetIds[0] ?? layer_id;
+
       // V3 round-2 FIX-B: resolve across BOTH id schemes (custom-… + store …__…).
-      const matched = matchMapLayers(map, layer_id);
-      const storeHasLayer = getHudState().layers?.some?.((l: any) => l.id === layer_id) ?? false;
+      const matched = Array.from(new Set(targetIds.flatMap((id) => matchMapLayers(map, id))));
       // V3: no matching map layer AND no store layer → genuine miss → failed
       // result (was: silent no-op forEach + void success).
-      if (matched.length === 0 && !storeHasLayer) return { status: 'failed', error: 'target_not_found' };
+      if (matched.length === 0 && targetIds.length === 0) return { status: 'failed', error: 'target_not_found' };
 
       // Store-layer sublayers are owned by the async MapSpecRuntime reconcile.
-      const storeMatched = matched.filter((id) => isStoreSchemeMatch(layer_id, id));
+      const storeMatched = matched.filter((id) => isStoreSchemeMatch(effectiveId, id));
+
+      const updateStoreStyle = (patch: Record<string, unknown>) => {
+        for (const id of targetIds) {
+          const existing = getHudState().layers.find((l: any) => l.id === id);
+          getHudState().updateLayer(id, { style: { ...(existing?.style ?? {}), ...patch } });
+        }
+      };
 
       // #557 断点 1/3：categorical 符号化（SSE apply_template mode=categorical
       // 发出 field+colorMap+baseStyle，没有 style 键）—— 走 match 表达式。
@@ -499,13 +604,9 @@ export const layerCommands: Record<string, CommandEntry> = {
         for (const id of matched) {
           renderer.updateLayerStyle(map, id, { categorical: catStyle.categorical as any });
         }
-        const existing = getHudState().layers.find((l: any) => l.id === layer_id) as any;
-        getHudState().updateLayer(layer_id, {
-          style: {
-            ...(existing?.style ?? {}),
-            categorical: { field, colorMap },
-            ...((baseStyle as any)?.fillOpacity !== undefined && { fillOpacity: (baseStyle as any).fillOpacity }),
-          },
+        updateStoreStyle({
+          categorical: { field, colorMap },
+          ...((baseStyle as any)?.fillOpacity !== undefined && { fillOpacity: (baseStyle as any).fillOpacity }),
         });
         if (matched.length === 0) {
           return { status: 'succeeded', result: { store_updated: true } };
@@ -529,10 +630,7 @@ export const layerCommands: Record<string, CommandEntry> = {
       if (matched.length === 0) {
         // Store-only: the reconcile owns the map sublayers → honest store_updated.
         if (Object.keys(styleUpdates).length > 0) {
-          const existing = getHudState().layers.find((l: any) => l.id === layer_id);
-          getHudState().updateLayer(layer_id, {
-            style: { ...(existing?.style ?? {}), ...styleUpdates },
-          });
+          updateStoreStyle(styleUpdates);
         }
         return { status: 'succeeded', result: { store_updated: true } };
       }
@@ -549,10 +647,7 @@ export const layerCommands: Record<string, CommandEntry> = {
         });
       }
       if (Object.keys(styleUpdates).length > 0) {
-        const existing = getHudState().layers.find((l: any) => l.id === layer_id);
-        getHudState().updateLayer(layer_id, {
-          style: { ...(existing?.style ?? {}), ...styleUpdates },
-        });
+        updateStoreStyle(styleUpdates);
       }
       // V3 round-2 FIX-B: post-mutation verification — the matched layer must
       // exist on the map (getLayer) before we claim confirmed.

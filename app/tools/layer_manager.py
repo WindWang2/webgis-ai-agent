@@ -1,6 +1,6 @@
 """图层管理工具 (Session Context Management)"""
 import logging
-from typing import Any, Optional
+from typing import Any, List, Optional
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
@@ -24,6 +24,16 @@ class ReorderLayerArgs(BaseModel):
 
 class RemoveLayerArgs(BaseModel):
     layer_ref: str = Field(..., description="图层引用 (ref:xxx) / 别名 / 名称")
+
+
+class FinalizeDisplayArgs(BaseModel):
+    show_refs: List[str] = Field(
+        ...,
+        description=(
+            "本轮最终要展示的图层引用列表（ref:xxx / 别名 / 名称）。"
+            "未列出的分析图层将全部隐藏"
+        ),
+    )
 
 
 async def resolve_layer_ref(
@@ -83,6 +93,48 @@ async def resolve_layer_ref(
 
 def register_layer_management_tools(registry: ToolRegistry):
     """注册会话图层管理工具"""
+
+    @tool(
+           registry,
+           name="finalize_display",
+           tier=2,
+           domains=["cartography"],
+           description=(
+               "【每轮分析收尾必调】最终图层显示管理钩子：确定本轮要展示的图层集合。"
+               "显示列出的图层，隐藏当前会话中其余所有分析图层（原始 POI 点、边界、"
+               "缓冲区等中间层一律让位）。"
+               "\n何时用：一轮空间分析的工具全部执行完、即将给出最终结论之前 —— "
+               "由你判断哪些图层与最终成图直接相关，一次性收口显示状态。"
+               "\n关键约束：show_refs 只包含最终成图需要的图层；宁可少列不要多列，"
+               "中间过程层（点云、边界、缓冲、裁剪残料）不要出现在最终地图上。"
+           ),
+           args_model=FinalizeDisplayArgs,
+    )
+    async def finalize_display(show_refs: List[str], session_id: Optional[str] = None) -> dict:
+        """收尾显示管理：展示 show_refs，隐藏其余分析图层"""
+        if not session_id:
+            return {"error": "Missing session_id context"}
+        if not show_refs:
+            return {"error": "show_refs 不能为空 —— 至少列出最终成图的一个图层"}
+
+        resolved: List[str] = []
+        for ref in show_refs:
+            id_to_use, err = await resolve_layer_ref(session_id, ref)
+            if err:
+                return err
+            if id_to_use and id_to_use not in resolved:
+                resolved.append(id_to_use)
+
+        return {
+            "success": True,
+            "command": "FINALIZE_DISPLAY",
+            "params": {"show_layer_ids": resolved},
+            "message": (
+                f"最终展示集已收口：显示 {len(resolved)} 个图层"
+                f"（{', '.join(resolved[:3])}{'…' if len(resolved) > 3 else ''}），"
+                f"其余分析图层已隐藏"
+            ),
+        }
 
     @tool(registry, name="alias_layer",
            description="为当前会话中的数据引用（ref:xxx）设置一个语义化的别名。设置后，后续可以直呼其名（如：'核心保护区'）来引用该数据。",

@@ -3,6 +3,8 @@ import { layerCommands } from './layerCommands';
 import type { MapCommandContext } from './types';
 import * as renderer from '@/lib/map-kit/renderer';
 import { makeMockMaplibreMap } from '@/test/__mocks__/maplibre-map';
+import { resolveLayerTargetsByRef } from './layerCommands';
+import { commitMapSpecDocument, getPendingPresentation, resetLiveState } from '@/lib/mapspec/session-cursor';
 
 // #462: keep the real layer-id registry exports (matchMapLayers reads them);
 // only the style-mutating helpers are stubbed for call assertions.
@@ -533,5 +535,206 @@ describe('layer_visibility_update (#609 null semantics)', () => {
       expect.objectContaining({ visibility: 'none' }),
     );
     expect(updateLayer).toHaveBeenCalledWith('result', { visible: false });
+  });
+});
+
+// ─── 跨 id 体系目标解析：ref:geojson-* → 恢复会话的 result-*/product-* 层 ───
+// 2026-08-26：set_layer_status/display_layer 解析出数据 ref 下发，但恢复后的
+// store 层 id 是 MapSpec 层 id —— 命令全部 target_not_found，工具却已报
+// success（假成功）。解析链：store id 直接命中 → _refId → committed spec
+// 的 ref→source→layer。
+
+describe('layer_visibility_update 跨 id 体系解析', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetLiveState();
+  });
+
+  function restoredCtx(refId: string) {
+    // 模拟恢复后的 store：层 id = MapSpec 层 id，无 _refId（旧持久化形态）
+    const layers = [
+      { id: 'product-abc-heatmap', visible: true, opacity: 1, group: 'analysis', style: {} },
+      { id: 'product-abc-points', visible: true, opacity: 1, group: 'analysis', style: {} },
+    ];
+    const updateLayer = vi.fn();
+    const map = makeMockMaplibreMap();
+    const hud = { layers, updateLayer };
+    const ctx = {
+      map,
+      popAction: () => {},
+      setDeferredPop: () => {},
+      safePop: () => {},
+      getHudState: () => hud,
+      setSelectedBaseLayer: () => {},
+      command: 'layer_visibility_update',
+      params: { layer_id: refId, visible: false },
+    } as unknown as MapCommandContext;
+    return { ctx, updateLayer, layers };
+  }
+
+  it('ref 经 committed spec(ref→source→layer)解析到恢复层，同 ref 多层全部生效', () => {
+    commitMapSpecDocument({
+      version: '1.0',
+      sources: {
+        'webgis_map_product_layer_source': { type: 'geojson', ref_id: 'ref:geojson-xyz' },
+        unrelated: { type: 'geojson', ref_id: 'ref:geojson-other' },
+      },
+      layers: [
+        { id: 'product-abc-heatmap', source: 'webgis_map_product_layer_source', type: 'heatmap' },
+        { id: 'product-abc-points', source: 'webgis_map_product_layer_source', type: 'circle' },
+      ],
+    } as any);
+    const { ctx, updateLayer } = restoredCtx('ref:geojson-xyz');
+
+    const result = layerCommands.layer_visibility_update.run(ctx) as any;
+
+    expect(result.status).toBe('succeeded');
+    // 两层都被隐藏（store 更新 + #737 pending presentation）
+    const ids = updateLayer.mock.calls.map((c: any[]) => c[0]);
+    expect(ids).toContain('product-abc-heatmap');
+    expect(ids).toContain('product-abc-points');
+    expect(getPendingPresentation()['product-abc-heatmap']).toEqual({ visible: false });
+    expect(getPendingPresentation()['product-abc-points']).toEqual({ visible: false });
+  });
+
+  it('store 层 _refId 命中（在飞会话 HUD 层形态）', () => {
+    const layers = [{ id: 'ref:geojson-live', _refId: 'ref:geojson-live', visible: true }];
+    const updateLayer = vi.fn();
+    const map = makeMockMaplibreMap();
+    const ctx = {
+      map, popAction: () => {}, setDeferredPop: () => {}, safePop: () => {},
+      getHudState: () => ({ layers, updateLayer }),
+      setSelectedBaseLayer: () => {},
+      command: 'layer_visibility_update',
+      params: { layer_id: 'ref:geojson-live', visible: false },
+    } as unknown as MapCommandContext;
+    expect((layerCommands.layer_visibility_update.run(ctx) as any).status).toBe('succeeded');
+    expect(updateLayer).toHaveBeenCalledWith('ref:geojson-live', { visible: false });
+  });
+
+  it('完全未知的 ref 仍然 target_not_found', () => {
+    commitMapSpecDocument({ version: '1.0', sources: {}, layers: [] } as any);
+    const { ctx } = restoredCtx('ref:geojson-nope');
+    const result = layerCommands.layer_visibility_update.run(ctx);
+    expect(result).toEqual({ status: 'failed', error: 'target_not_found' });
+  });
+
+  it('resolveLayerTargetsByRef 三级解析链', () => {
+    // 1. 直接命中
+    expect(
+      resolveLayerTargetsByRef('a1', () => ({ layers: [{ id: 'a1' }] }) as any),
+    ).toEqual(['a1']);
+    // 2. _refId 命中
+    expect(
+      resolveLayerTargetsByRef('ref:r', () => ({ layers: [{ id: 'L1', _refId: 'ref:r' }] }) as any),
+    ).toEqual(['L1']);
+    // 3. committed spec 命中（store 层缺一不可 —— 只返回 store 里真实存在的层）
+    commitMapSpecDocument({
+      version: '1.0',
+      sources: { s1: { type: 'geojson', ref_id: 'ref:r2' } },
+      layers: [{ id: 'spec-only', source: 's1', type: 'circle' }],
+    } as any);
+    expect(
+      resolveLayerTargetsByRef('ref:r2', () => ({ layers: [] }) as any),
+    ).toEqual([]);
+  });
+});
+
+// ─── finalize_display：分析收尾的显示管理钩子 ───
+
+describe('finalize_display（最终展示集收口）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetLiveState();
+  });
+
+  function ctxWith(showIds: string[]) {
+    // 混合场景:恢复层(mapspec id) + HUD 层(ref id) + base 组
+    const layers = [
+      { id: 'choropleth-1', visible: true, group: 'analysis' },
+      { id: 'poi-points', visible: true, group: 'analysis', _refId: 'ref:geojson-poi' },
+      { id: 'boundary', visible: true, group: 'analysis' },
+      { id: 'basemap-x', visible: true, group: 'base' },
+    ];
+    const updateLayer = vi.fn();
+    const map = makeMockMaplibreMap();
+    const ctx = {
+      map, popAction: () => {}, setDeferredPop: () => {}, safePop: () => {},
+      getHudState: () => ({ layers, updateLayer }),
+      setSelectedBaseLayer: () => {},
+      command: 'finalize_display',
+      params: { show_layer_ids: showIds },
+    } as unknown as MapCommandContext;
+    return { ctx, updateLayer };
+  }
+
+  it('展示列出层、隐藏其余分析层、不动 base 组、pending presentation 同步', () => {
+    commitMapSpecDocument({
+      version: '1.0',
+      sources: { src1: { type: 'geojson', ref_id: 'ref:geojson-choro' } },
+      layers: [{ id: 'choropleth-1', source: 'src1', type: 'fill' }],
+    } as any);
+    const { ctx, updateLayer } = ctxWith(['ref:geojson-choro']);
+
+    const result = layerCommands.finalize_display.run(ctx) as any;
+
+    expect(result.status).toBe('succeeded');
+    expect(result.result).toEqual({ shown: 1, hidden: 2 });
+    const showCalls = updateLayer.mock.calls.filter((c: any[]) => c[1]?.visible === true);
+    const hideCalls = updateLayer.mock.calls.filter((c: any[]) => c[1]?.visible === false);
+    expect(showCalls.map((c: any[]) => c[0])).toEqual(['choropleth-1']);
+    expect(hideCalls.map((c: any[]) => c[0]).sort()).toEqual(['boundary', 'poi-points']);
+    // base 组不受影响
+    expect(updateLayer).not.toHaveBeenCalledWith('basemap-x', expect.anything());
+    // committed spec 层的 pending presentation
+    expect(getPendingPresentation()['choropleth-1']).toEqual({ visible: true });
+    expect(getPendingPresentation()['poi-points']).toEqual({ visible: false });
+  });
+
+  it('空列表 / 全部无法解析 → 显式失败', () => {
+    const { ctx } = ctxWith(['ref:geojson-nobody']);
+    expect(layerCommands.finalize_display.run(ctx)).toEqual({ status: 'failed', error: 'target_not_found' });
+    const empty = ctxWith([]);
+    expect(layerCommands.finalize_display.run(empty.ctx)).toEqual({ status: 'failed', error: 'invalid_params' });
+  });
+});
+
+describe('finalize_display 边界层豁免（context_role=boundary 常显）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetLiveState();
+  });
+
+  it('行政区边界层不被收口隐藏', () => {
+    commitMapSpecDocument({
+      version: '1.0',
+      sources: {
+        s: { type: 'geojson', ref_id: 'ref:geojson-final' },
+        b: { type: 'geojson', ref_id: 'ref:geojson-boundary' },
+      },
+      layers: [
+        { id: 'final-1', source: 's', type: 'circle' },
+        { id: 'boundary-1', source: 'b', type: 'line', context_role: 'boundary' },
+      ],
+    } as any);
+    const layers = [
+      { id: 'final-1', visible: true, group: 'analysis' },
+      { id: 'boundary-1', visible: true, group: 'analysis' },
+      { id: 'poi', visible: true, group: 'analysis' },
+    ];
+    const updateLayer = vi.fn();
+    const ctx = {
+      map: makeMockMaplibreMap(),
+      popAction: () => {}, setDeferredPop: () => {}, safePop: () => {},
+      getHudState: () => ({ layers, updateLayer }),
+      setSelectedBaseLayer: () => {},
+      command: 'finalize_display',
+      params: { show_layer_ids: ['ref:geojson-final'] },
+    } as unknown as MapCommandContext;
+    // 只精确解析到 final-1（模拟 resolve 命中一层）：boundary 标记层与 poi 都不在展示集
+    const result = layerCommands.finalize_display.run(ctx) as any;
+    expect(result.status).toBe('succeeded');
+    const hidden = updateLayer.mock.calls.filter((c: any[]) => c[1]?.visible === false).map((c: any[]) => c[0]);
+    expect(hidden).toEqual(['poi']); // boundary-1 被豁免
   });
 });

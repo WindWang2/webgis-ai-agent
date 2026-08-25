@@ -213,6 +213,9 @@ export async function restoreSessionMapLayers(
     ))
     : raw.map((layer: any) => ({
       ...layer,
+      // 旧持久化层的 name 可为 null（后端 runtime 层注册表早期写入）——
+      // 图层面板此前直接渲染出 "undefined"。
+      name: layer.name || `分析结果: ${layer._mapspecLayerId ?? layer.id}`,
       ...presentationFromMapSpec(state.mapspec, String(layer._mapspecLayerId ?? layer.id)),
     }));
 

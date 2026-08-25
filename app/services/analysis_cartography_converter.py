@@ -29,9 +29,32 @@ DEFAULT_CONSTANT_COLOR = "#3b82f6"
 DEFAULT_CONSTANT_PAINTS = {
     "circle": {"color": "#3b82f6", "radius": 5},
     "line": {"color": "#2563eb", "width": 2},
-    "fill": {"color": "#3b82f6", "opacity": 0.6},
+    # 面层默认不透明度 0.4（2026-08-26 用户反馈"行政区图层颜色太深遮挡下面
+    # 内容"）：0.6 叠加饱和色带会把底图道路与下层层内容整片盖死；0.4 保持
+    # 分级可辨的同时透出底图。该值经 runtime_patch.opacity 同步到 HUD 呈现，
+    # 是专题面层的唯一权威默认（用户仍可用不透明度滑杆覆盖）。
+    "fill": {"color": "#3b82f6", "opacity": 0.4},
     "heatmap": {"color": "#d97706", "radius": 10},
 }
+
+# 行政边界/区划面类工具的产出是"参考语境层"——填面只会盖住底图与数据层
+# （2026-08-26 用户反馈"行政区图层只显示边缘，不要显示面对象"）。这些层
+# 直接以线图层渲染多边形边界：fill-outline-color 恒为 1px 发丝线不可加粗，
+# line-width 可调（用户随后要求"边缘更粗一点"，取 2.5px）。分级专题
+# （choropleth）不在此列——填面即语义。
+_BOUNDARY_OUTLINE_ALGORITHMS = {
+    "get_local_admin_boundary",
+    "get_local_child_districts",
+}
+# 级别 → 边界线宽（国界最粗、区县界最细；2026-08-26 用户要求按行政区
+# 级别区分粗细）。admin_level 由 local_admin 工具写入结果 metadata 下传。
+_ADMIN_BOUNDARY_LINE_WIDTH = {
+    "country": 4.0,
+    "province": 3.5,
+    "city": 3.0,
+    "district": 2.0,
+}
+_BOUNDARY_LINE_WIDTH_DEFAULT = 2.5
 
 
 # ─── small shared helpers (extracted to kill duplicated logic shape) ────────
@@ -320,6 +343,12 @@ def convert_analysis_to_mapspec_layer(
         # Guard overrides: never emit heatmap layer when guard triggered
         if heatmap_guard_triggered and layer_type == "heatmap":
             layer_type = "circle"
+        # 行政边界/区划面 → 线图层（边界线宽可调；填面恒被拒）。
+        if (
+            str(analysis_result.get("algorithm") or "") in _BOUNDARY_OUTLINE_ALGORITHMS
+            and not base_layer.get("type")
+        ):
+            layer_type = "line"
 
         # All legend-bearing emitters attach legend_spec at the top level of their
         # result dict (h3_binning, kde_contours, heatmap_data, apply_template,
@@ -377,6 +406,18 @@ def convert_analysis_to_mapspec_layer(
             or analysis_result.get("analysis_type")
             or "spatial_analysis"
         )
+        if (
+            layer_type == "line"
+            and not has_thematic_paint
+            and str(algorithm) in _BOUNDARY_OUTLINE_ALGORITHMS
+        ):
+            meta = analysis_result.get("metadata")
+            admin_level = (
+                meta.get("admin_level") if isinstance(meta, dict) else None
+            )
+            paint["width"] = _ADMIN_BOUNDARY_LINE_WIDTH.get(
+                str(admin_level or ""), _BOUNDARY_LINE_WIDTH_DEFAULT
+            )
         source_ref = analysis_result.get("source_ref")
         params = analysis_result.get("params", {})
         computed_at = analysis_result.get("computed_at") or datetime.now(timezone.utc).isoformat()
@@ -433,6 +474,13 @@ def convert_analysis_to_mapspec_layer(
         # id/type/source/paint/layout/filter to MapLibre).
         if isinstance(legend_spec, dict):
             res_layer["legend_spec"] = legend_spec
+        # 行政边界层 = 参考语境层：默认常显（制图语境），前端 finalize 收口
+        # 与「地图随对话」主题切换豁免之（context_role 兄弟键先例同上）。
+        if (
+            layer_type == "line"
+            and str(algorithm) in _BOUNDARY_OUTLINE_ALGORITHMS
+        ):
+            res_layer["context_role"] = "boundary"
         return res_layer, inline_geojson, unique_warnings
 
     except Exception as e:

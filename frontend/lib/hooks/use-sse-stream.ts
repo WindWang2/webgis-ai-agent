@@ -10,6 +10,7 @@ import type { SSEEvent } from '@/lib/api/chat';
 import type { ToolCallEntry, PlanProposalPayload, PlanProposalStatus, SelectedFeatureInfo } from '@/lib/store/hud-types';
 import { reportLayerFetchFailure } from '@/lib/session/map-state-restore';
 import { commitMapSpecDocument, setMapSpecRevision, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
+import { nextTurn, noteAgentDisplayed } from '@/lib/chat/turn-focus';
 import { useToastStore } from '@/components/ui/toast';
 import type { AgentPlanState } from '@/lib/types/agent-plan';
 import type { MapActionPayload } from '@/lib/types';
@@ -689,6 +690,11 @@ export function useSSEStream(
                 : undefined,
             });
           }
+          // 「地图随对话」：runtime_patch 声明 visible（agent 的展示意图，
+          // 含热力图等自动挂载可见路径）→ 标记当前轮并收起旧轮可见层。
+          if (patchVisible) {
+            noteAgentDisplayed(layerId);
+          }
           if (layerMetaTitle) {
             useHudStore.getState().setCartographyTitle(layerMetaTitle);
           }
@@ -1027,6 +1033,10 @@ export function useSSEStream(
   const handleSend = useCallback(
     async (userMsg: string): Promise<boolean> => {
       if (!userMsg || isLoadingRef.current || sendingRef.current) return false;
+
+      // 「地图随对话」：新对话轮次。本轮 agent 展示图层时，旧轮的可见
+      // 分析图层让位（lib/chat/turn-focus）。
+      nextTurn();
 
       // #466: pending tool-arg evidence is TURN-scoped. Args queued by an
       // interrupted previous turn (stream cut, task_cancelled without

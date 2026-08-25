@@ -274,7 +274,8 @@ def test_geometry_inference_and_constant_fallback():
     assert inline_geojson == polygon_geojson
     assert converted_layer["type"] == "fill"
     assert converted_layer["paint"]["color"] == "#3b82f6"
-    assert converted_layer["paint"]["opacity"] == 0.6
+    # 面层默认不透明度 0.4：透出底图与下层内容（2026-08-26 用户反馈）
+    assert converted_layer["paint"]["opacity"] == 0.4
     assert converted_layer["provenance"]["algorithm"] == "spatial_buffer"
 
 
@@ -453,3 +454,68 @@ def test_heatmap_paint_palette_fallback_and_unknown():
 
     legend = heatmap_legend_colors("classic")
     assert legend[0] == "#428cd2" and legend[-1] == "#eb2828" and len(legend) == 6
+
+
+# ─── 行政区边界层描边模式（2026-08-26 用户反馈：只显示边缘不填面）───
+
+def _polygon_analysis(algorithm):
+    polygon_geojson = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]],
+                },
+                "properties": {},
+            }
+        ],
+    }
+    return {
+        "geojson": polygon_geojson,
+        "algorithm": algorithm,
+    }
+
+
+def _boundary_analysis(algorithm, admin_level=None):
+    payload = _polygon_analysis(algorithm)
+    if admin_level:
+        payload["metadata"] = {"admin_level": admin_level}
+    return payload
+
+
+def test_admin_boundary_line_width_by_level():
+    """边界线宽按行政级别分级：国 4.0 / 省 3.5 / 市 3.0 / 区县 2.0。"""
+    for level, width in [("country", 4.0), ("province", 3.5), ("city", 3.0), ("district", 2.0)]:
+        converted, _, _ = convert_analysis_to_mapspec_layer(
+            _boundary_analysis("get_local_admin_boundary", level)
+        )
+        assert converted["type"] == "line", level
+        assert converted["paint"]["width"] == width, level
+        assert converted["context_role"] == "boundary", level
+
+
+def test_boundary_without_level_metadata_falls_back():
+    converted, _, _ = convert_analysis_to_mapspec_layer(_polygon_analysis("get_local_admin_boundary"))
+    assert converted["type"] == "line"
+    assert converted["paint"]["width"] == 2.5
+    assert converted["context_role"] == "boundary"
+
+
+def test_child_districts_are_district_level():
+    converted, _, _ = convert_analysis_to_mapspec_layer(
+        _boundary_analysis("get_local_child_districts", "district")
+    )
+    assert converted["type"] == "line"
+    assert converted["paint"]["width"] == 2.0
+    assert converted["context_role"] == "boundary"
+
+
+def test_non_boundary_fill_keeps_solid_fill():
+    """非边界工具的普通面层保持实心填面（线型仅限行政参考层）。"""
+    converted, _, _ = convert_analysis_to_mapspec_layer(_polygon_analysis("spatial_aggregate"))
+    assert converted["type"] == "fill"
+    assert converted["paint"]["color"] == "#3b82f6"
+    assert converted["paint"]["opacity"] == 0.4
+    assert "context_role" not in converted

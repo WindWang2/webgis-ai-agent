@@ -31,7 +31,7 @@ export function resolveFilterState(
   return { ...prev, [layerId]: ranges };
 }
 import { MapActionHandler } from "./map-action-handler"
-import { ThematicLegend } from "./thematic-legend"
+import { LegendStack } from "./legend-stack"
 import { MapDecorations } from "./map-decorations"
 import { useHudStore, type HudState } from "@/lib/store/useHudStore"
 import * as renderer from "@/lib/map-kit/renderer"
@@ -41,6 +41,11 @@ import {
   collectCartographicRuntimeObservation,
 } from "@/lib/mapspec-runtime"
 import { composeLiveMapSpec } from "@/lib/mapspec/live-spec"
+import {
+  injectResolvedRefSources,
+  subscribeRefSources,
+  getRefSourcesGeneration,
+} from "@/lib/mapspec/ref-source-resolver"
 import {
   getCommittedMapSpec,
   getMapSpecLiveGeneration,
@@ -453,16 +458,35 @@ export function MapPanel({
     getMapSpecLiveGeneration,
     getMapSpecLiveGeneration,
   )
+  // ref 源解析完成（ref-source-resolver 拉回数据）→ 重跑 reconcile，
+  // diff 以 source:update + layer:recompile 补挂载 product 等直写图层。
+  const refSourcesGeneration = useSyncExternalStore(
+    subscribeRefSources,
+    getRefSourcesGeneration,
+    getRefSourcesGeneration,
+  )
 
   // Reconcile the committed MapSpec plus a pending overlay. HUD is a cache
   // and source payload host, not the Desired author (ADR-0054 / #643).
   useEffect(() => {
     if (!runtimeRef.current) return
-    const spec = composeLiveMapSpec(
+    const spec0 = composeLiveMapSpec(
       getCommittedMapSpec(),
       { layers, processLayers, activeFilters, is3D },
       getPendingPresentation(),
       getPendingRemoved(),
+    )
+    // HUD 已挂靠的 ref 由 live-spec 的 ref_id 合并解析；解析器只兜底
+    // 无 HUD 挂靠的（避免对同一份 ref 双下载）。
+    const hudOwnedRefs = new Set(
+      layers.filter((l) => typeof l._refId === 'string').map((l) => l._refId as string),
+    )
+    const spec = injectResolvedRefSources(
+      spec0,
+      sessionId
+        ? { sessionId, ownerToken: sessionTokenRef?.current ?? ownerToken ?? null }
+        : null,
+      hudOwnedRefs,
     )
     // FE-3: recompute interactive ids once this patch has actually applied
     // (reconcileAsync resolves when its last op ran → appliedSpec advanced).
@@ -603,7 +627,7 @@ export function MapPanel({
         })
       })
       .catch((e) => console.error("[map] reconcile failed", e))
-  }, [layers, processLayers, activeFilters, is3D, liveGeneration, mapReady, currentMapStyle, runtimeRecoveryGeneration, syncInteractiveIds, raiseSelectionHighlight, sessionId, ownerToken, dispatchAction])
+  }, [layers, processLayers, activeFilters, is3D, liveGeneration, refSourcesGeneration, mapReady, currentMapStyle, runtimeRecoveryGeneration, syncInteractiveIds, raiseSelectionHighlight, sessionId, ownerToken, sessionTokenRef, dispatchAction])
 
 
   const setViewport = useHudStore((s: HudState) => s.setViewport)
@@ -1145,35 +1169,18 @@ export function MapPanel({
 
       {/* Live cartography overlays — driven by layer.legend_spec */}
       {thematicLayers.length > 0 && !hasSpecLegend && (
-        <>
-          {/* The stack owns the vertical budget: `top` pins it below the map
-              title so it can never grow past the top bar, and it scrolls once
-              several thematic legends are loaded. */}
-          <div
-            className="absolute z-30 flex max-w-[268px] flex-col gap-2 overflow-y-auto pr-1 transition-[bottom,left] duration-300"
-            style={{
-              left: 'var(--map-chrome-left, 16px)',
-              bottom: 'var(--map-chrome-bottom, 10px)',
-              top: '48px',
-              justifyContent: 'flex-end',
-            }}
-          >
-            {thematicLayers.map((l) => {
-              const flashing = focusLayerId === l.id;
-              return (
-                <div
-                  key={l.id}
-                  className={`rounded-chrome ${flashing ? 'ring-2 ring-status-accent-vivid' : ''}`}
-                >
-                  <div className="eyebrow mb-1 max-w-[240px] truncate px-1" title={l.name}>
-                    {l.name}
-                  </div>
-                  <ThematicLegend spec={l.legend_spec!} onFilterChange={legendFilterHandlers[l.id]} />
-                </div>
-              );
-            })}
-          </div>
-        </>
+        /* 栈的纵向预算由 LegendStack 自持：top 钉在地图标题之下，多层时
+           默认只展开最新一层、其余收折成窄条（2026-08-25 用户反馈图例栈
+           整列遮盖地图内容），可滚动。 */
+        <LegendStack
+          entries={thematicLayers.map((l) => ({
+            id: l.id,
+            name: l.name,
+            legendSpec: l.legend_spec!,
+            onFilterChange: legendFilterHandlers[l.id],
+            flashing: focusLayerId === l.id,
+          }))}
+        />
       )}
 
       {/* #804: 装饰件（指北针/比例尺/标题）不再嵌在「有主题图例」条件内 ——

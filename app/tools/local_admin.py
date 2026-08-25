@@ -198,11 +198,14 @@ def query_admin_boundary(
             return {"error": f"未找到名为 '{name}' 的行政区（level={level}）"}
 
     result = _project_result(result, to_wgs84=to_wgs84, simplified=simplified)
-    return _to_feature_collection(
+    out = _to_feature_collection(
         result,
         note=_CRS_NOTE_WGS if to_wgs84 else _CRS_NOTE_GCJ,
         crs=None if to_wgs84 else "gcj02",
     )
+    # 行政级别随载荷下传（converter 按级别定边界线宽：国界粗、区县界细）
+    out["metadata"] = {**(out.get("metadata") or {}), "admin_level": level}
+    return out
 
 
 def query_child_districts(
@@ -231,11 +234,14 @@ def query_child_districts(
     if result.empty:
         return {"error": f"未找到 '{parent_name}'（{parent_level}）下的区/县"}
     result = _project_result(result, to_wgs84=to_wgs84, simplified=simplified)
-    return _to_feature_collection(
+    out = _to_feature_collection(
         result,
         note=_CRS_NOTE_WGS if to_wgs84 else _CRS_NOTE_GCJ,
         crs=None if to_wgs84 else "gcj02",
     )
+    # 子级查询恒为 district 级（区/县界）
+    out["metadata"] = {**(out.get("metadata") or {}), "admin_level": "district"}
+    return out
 
 
 def register_local_admin_tools(registry: ToolRegistry):

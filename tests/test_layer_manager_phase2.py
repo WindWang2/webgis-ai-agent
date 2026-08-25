@@ -262,3 +262,29 @@ async def test_remove_layer_accepts_valid_session_ref(registry, session_with_lay
     )
     assert out.get("success") is True, f"expected success, got {out}"
     assert out["command"] == "REMOVE_LAYER"
+
+
+# ─── finalize_display：每轮分析收尾的显示管理钩子（2026-08-26 用户需求）───
+
+@pytest.mark.asyncio
+async def test_finalize_display_resolves_and_dedupes(registry, session_with_layer):
+    sid, ref = session_with_layer
+    out = await registry.dispatch(
+        "finalize_display",
+        {"show_refs": [ref, "我的层", ref]},  # 同层三种引用形态 → 去重为一个
+        session_id=sid,
+    )
+    assert out["success"] is True
+    assert out["command"] == "FINALIZE_DISPLAY"
+    assert out["params"]["show_layer_ids"] == [ref]
+
+
+@pytest.mark.asyncio
+async def test_finalize_display_rejects_empty_and_unknown(registry, session_with_layer):
+    sid, _ = session_with_layer
+    empty = await registry.dispatch("finalize_display", {"show_refs": []}, session_id=sid)
+    assert "error" in empty
+    unknown = await registry.dispatch(
+        "finalize_display", {"show_refs": ["ref:geojson-does-not-exist"]}, session_id=sid
+    )
+    assert "error" in unknown
