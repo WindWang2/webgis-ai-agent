@@ -107,3 +107,171 @@ def test_dev_allows_auth_disabled():
         AUTH_DISABLED=True,
     )
     assert s.AUTH_DISABLED is True
+
+
+def test_llm_private_endpoints_allowed_in_production():
+    """#925: LLM_BASE_URL 允许内网/集群内私网地址，仅做轻量校验。"""
+    # direct private IPs and localhost should be allowed for LLM
+    # OVERPASS/NOMINATIM 用公网 IP 字面量：走严格校验路径但不依赖外部 DNS（确定性）
+    for url in [
+        "http://10.244.1.25:8000/v1",
+        "http://192.168.1.50:11434/v1",
+        "http://172.16.0.10:8000/v1",
+        "http://127.0.0.1:8000/v1",
+        "http://localhost:11434/v1",
+    ]:
+        s = Settings(
+            _env_file=None,
+            ENV="production",
+            JWT_SECRET_KEY="x" * 32,
+            LLM_API_KEY="sk-test-key",
+            DATABASE_URL="postgresql://user:pass@localhost/db",
+            LLM_BASE_URL=url,
+            OVERPASS_API_URL="https://8.8.8.8/api/interpreter",
+            NOMINATIM_URL="https://1.1.1.1/search",
+        )
+        assert s.LLM_BASE_URL == url
+
+    # cluster DNS resolving to private IP should also be allowed for LLM
+    import unittest.mock as mock
+
+    def _fake_llm_private(host, *a, **kw):
+        if host == "vllm-service.webgis-prod.svc.cluster.local":
+            return [(2, 1, 6, "", ("10.244.2.15", 8000))]
+        return [(2, 1, 6, "", ("1.1.1.1", 80))]
+
+    with mock.patch("socket.getaddrinfo", side_effect=_fake_llm_private):
+        s = Settings(
+            _env_file=None,
+            ENV="production",
+            JWT_SECRET_KEY="x" * 32,
+            LLM_API_KEY="sk-test-key",
+            DATABASE_URL="postgresql://user:pass@localhost/db",
+            LLM_BASE_URL="http://vllm-service.webgis-prod.svc.cluster.local:8000/v1",
+            OVERPASS_API_URL="https://8.8.8.8/api/interpreter",
+            NOMINATIM_URL="https://1.1.1.1/search",
+        )
+        assert "vllm-service" in s.LLM_BASE_URL
+
+
+def test_llm_still_rejects_invalid_scheme_and_no_hostname():
+    """#925: LLM 轻量校验仍需拒绝非法 scheme 和缺失 hostname。"""
+    import pytest
+    with pytest.raises(Exception, match="disallowed scheme"):
+        Settings(
+            _env_file=None,
+            ENV="production",
+            JWT_SECRET_KEY="x" * 32,
+            LLM_API_KEY="sk-test-key",
+            DATABASE_URL="postgresql://user:pass@localhost/db",
+            LLM_BASE_URL="ftp://10.0.0.1/v1",
+        )
+    with pytest.raises(Exception, match="has no hostname"):
+        Settings(
+            _env_file=None,
+            ENV="production",
+            JWT_SECRET_KEY="x" * 32,
+            LLM_API_KEY="sk-test-key",
+            DATABASE_URL="postgresql://user:pass@localhost/db",
+            LLM_BASE_URL="http:///no-host",
+        )
+
+
+def test_overpass_and_nominatim_still_block_private():
+    """#925 对照: Overpass/Nominatim 保持严格 SSRF，私网仍被拒。"""
+    import pytest
+    with pytest.raises(Exception, match="private|blocked domain|Blocked"):
+        Settings(
+            _env_file=None,
+            ENV="production",
+            JWT_SECRET_KEY="x" * 32,
+            LLM_API_KEY="sk-test-key",
+            DATABASE_URL="postgresql://user:pass@localhost/db",
+            OVERPASS_API_URL="http://10.1.1.1/api",
+        )
+    with pytest.raises(Exception, match="private|blocked domain|Blocked"):
+        Settings(
+            _env_file=None,
+            ENV="production",
+            JWT_SECRET_KEY="x" * 32,
+            LLM_API_KEY="sk-test-key",
+            DATABASE_URL="postgresql://user:pass@localhost/db",
+            NOMINATIM_URL="http://192.168.1.10/search",
+        )
+    # DNS 解析到私网也应被拒
+    import unittest.mock as mock
+    with mock.patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("10.0.0.5", 80))]):
+        with pytest.raises(Exception, match="private.*Blocked|Blocked"):
+            Settings(
+                _env_file=None,
+                ENV="production",
+                JWT_SECRET_KEY="x" * 32,
+                LLM_API_KEY="sk-test-key",
+                DATABASE_URL="postgresql://user:pass@localhost/db",
+                OVERPASS_API_URL="http://evil.example.com/api",
+            )
+
+
+def test_env_prod_example_contains_mandatory_llm_api_key():
+    """#926: .env.prod.example 必须显式包含 LLM_API_KEY 且无 legacy 注释。"""
+    from pathlib import Path
+    content = Path(".env.prod.example").read_text(encoding="utf-8")
+    assert "LLM_API_KEY=" in content, ".env.prod.example 必须包含 LLM_API_KEY"
+    assert "# OPENAI_API_KEY=" not in content, "应已移除 legacy # OPENAI_API_KEY"
+    assert "# ANTHROPIC_API_KEY=" not in content, "应已移除 legacy # ANTHROPIC_API_KEY"
+    # 模板中的 LLM_API_KEY 应为空值 + 必填说明，避免静默使用占位符
+    assert "your-api-key-here" not in content or "LLM_API_KEY=" in content
+    # 验证：从模板生成的生产 env（仅填 CHANGE_ME 占位符，LLM_API_KEY 留空）应启动失败
+    import os
+    import tempfile
+    # 清理外层变量避免干扰（_env_file 优先级低于环境变量）
+    old_llm = os.environ.pop("LLM_API_KEY", None)
+    old_jwt = os.environ.pop("JWT_SECRET_KEY", None)
+    old_env = os.environ.pop("ENV", None)
+    old_db = os.environ.pop("DATABASE_URL", None)
+    # 模板里的 OVERPASS/NOMINATIM 域名在 Settings 校验时会做真实 DNS 解析，
+    # 环境解析抖动（非全局 IP/超时）会让本测试误红 —— 统一 mock 成公网 IP。
+    import unittest.mock as _mock
+
+    def _public_dns(host, *a, **kw):
+        return [(2, 1, 6, "", ("93.184.216.34", 80))]
+
+    try:
+        prod_env = content.replace(
+            "CHANGE_ME_TO_SECURE_RANDOM_STRING_AT_LEAST_32_CHARS",
+            "super-secure-production-jwt-key-32chars",
+        ).replace(
+            "CHANGE_ME_STRONG_DB_PASSWORD", "StrongDbPass123"
+        ).replace(
+            "CHANGE_ME_STRONG_REDIS_PASSWORD", "StrongRedisPass123"
+        ).replace(
+            "CHANGE_ME_STRONG_GRAFANA_PASSWORD", "StrongGrafanaPass123"
+        )
+        prod_env += "\nAUTH_DISABLED=false\n"
+        with tempfile.NamedTemporaryFile("w+", suffix=".env.prod", delete=False) as f:
+            f.write(prod_env)
+            temp_path = f.name
+        import pytest
+
+        with _mock.patch("socket.getaddrinfo", side_effect=_public_dns):
+            with pytest.raises(RuntimeError, match="LLM_API_KEY"):
+                Settings(_env_file=temp_path)
+        os.remove(temp_path)
+        # 填入真实 key 后应能启动
+        prod_env_filled = prod_env.replace("LLM_API_KEY=", "LLM_API_KEY=sk-real-prod-key-12345")
+        with tempfile.NamedTemporaryFile("w+", suffix=".env.prod", delete=False) as f:
+            f.write(prod_env_filled)
+            temp_path = f.name
+        with _mock.patch("socket.getaddrinfo", side_effect=_public_dns):
+            s = Settings(_env_file=temp_path)
+        assert s.LLM_API_KEY == "sk-real-prod-key-12345"
+        os.remove(temp_path)
+    finally:
+        if old_llm is not None:
+            os.environ["LLM_API_KEY"] = old_llm
+        if old_jwt is not None:
+            os.environ["JWT_SECRET_KEY"] = old_jwt
+        if old_env is not None:
+            os.environ["ENV"] = old_env
+        if old_db is not None:
+            os.environ["DATABASE_URL"] = old_db
