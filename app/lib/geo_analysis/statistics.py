@@ -710,15 +710,62 @@ def h3_lisa(h3_geojson: dict, value_field: str) -> GeoAnalysisResult:
     gdf = gdf.reset_index(drop=True)
     w = Queen.from_dataframe(gdf)
     w.transform = 'r'
-    
-    # Calculate LISA (with seed=42 for deterministic permutations)
-    lisa = Moran_Local(values, w, seed=42)
-    
-    # Vectorized q → cluster label mapping + counts (audit S40: same q → label
-    # mapping — 1=HH, 2=LH, 3=LL, 4=HL, else NS — same p < 0.05 significance
-    # gate, same counts dict shape as the scalar spec)
-    p_sim = np.asarray(lisa.p_sim)
-    q_arr = np.asarray(lisa.q)
+
+    # Island guard (#927): Queen creates island weights (0 neighbors) for
+    # geographically disconnected hexes; esda.crand.compute_chunk cannot
+    # broadcast empty neighbor arrays and crashes. Exclude islands from
+    # Moran_Local and give them neutral results, preserving row alignment.
+    island_ids = set(getattr(w, "islands", []) or [])
+    if island_ids:
+        n_total = len(gdf)
+        non_island_idx = [i for i in range(n_total) if i not in island_ids]
+        if len(non_island_idx) < 3:
+            p_sim = np.ones(n_total, dtype=float)
+            q_arr = np.zeros(n_total, dtype=int)
+        else:
+            values_conn = values[np.array(non_island_idx)]
+            gdf_conn = gdf.iloc[non_island_idx].reset_index(drop=True)
+            w2 = Queen.from_dataframe(gdf_conn)
+            w2.transform = 'r'
+            w2_islands = set(getattr(w2, "islands", []) or [])
+            if w2_islands:
+                # Subset still contains islands (rare); filter again
+                w2_non = [i for i in range(len(gdf_conn)) if i not in w2_islands]
+                if len(w2_non) < 3:
+                    p_sim = np.ones(n_total, dtype=float)
+                    q_arr = np.zeros(n_total, dtype=int)
+                else:
+                    values_conn2 = values_conn[np.array(w2_non)]
+                    gdf_conn2 = gdf_conn.iloc[w2_non].reset_index(drop=True)
+                    w3 = Queen.from_dataframe(gdf_conn2)
+                    w3.transform = 'r'
+                    lisa2 = Moran_Local(values_conn2, w3, seed=42)
+                    p_tmp = np.asarray(lisa2.p_sim)
+                    q_tmp = np.asarray(lisa2.q)
+                    p_conn2 = np.ones(len(values_conn), dtype=float)
+                    q_conn2 = np.zeros(len(values_conn), dtype=int)
+                    for li, gi in enumerate(w2_non):
+                        p_conn2[gi] = float(p_tmp[li])
+                        q_conn2[gi] = int(q_tmp[li])
+                    p_sim = np.ones(n_total, dtype=float)
+                    q_arr = np.zeros(n_total, dtype=int)
+                    for li, gi in enumerate(non_island_idx):
+                        p_sim[gi] = float(p_conn2[li])
+                        q_arr[gi] = int(q_conn2[li])
+            else:
+                lisa = Moran_Local(values_conn, w2, seed=42)
+                p_conn = np.asarray(lisa.p_sim)
+                q_conn = np.asarray(lisa.q)
+                p_sim = np.ones(n_total, dtype=float)
+                q_arr = np.zeros(n_total, dtype=int)
+                for li, gi in enumerate(non_island_idx):
+                    p_sim[gi] = float(p_conn[li])
+                    q_arr[gi] = int(q_conn[li])
+    else:
+        # Calculate LISA (with seed=42 for deterministic permutations)
+        lisa = Moran_Local(values, w, seed=42)
+        p_sim = np.asarray(lisa.p_sim)
+        q_arr = np.asarray(lisa.q)
     significant = p_sim < 0.05
     cluster_labels = ["HH", "LH", "LL", "HL", "NS"]  # label_codes index 0..4
     label_codes = np.select(

@@ -170,3 +170,29 @@ def test_bh_qvalues_nan_sanitized():
     p_clean = np.array([0.0001, 0.001, 0.005, 0.01, 0.02, 0.03])
     q_clean = _bh_qvalues(p_clean)
     assert q_clean == pytest.approx(np.array([0.0006, 0.003, 0.01, 0.015, 0.024, 0.03]), abs=1e-12)
+
+
+def test_h3_lisa_island_cells_neutral():
+    import h3
+    from shapely.geometry import Polygon, mapping
+
+    hex_bj = h3.latlng_to_cell(39.9042, 116.4074, 7)
+    hex_sh = h3.latlng_to_cell(31.2304, 121.4737, 7)
+    hex_gz = h3.latlng_to_cell(23.1291, 113.2644, 7)
+    features = []
+    for i, h in enumerate([hex_bj, hex_sh, hex_gz]):
+        b = h3.cell_to_boundary(h)
+        coords = [(lng, lat) for lat, lng in b]
+        coords.append(coords[0])
+        features.append({
+            "type": "Feature",
+            "geometry": mapping(Polygon(coords)),
+            "properties": {"val": float((i + 1) * 10), "h3_index": h},
+        })
+    fc = {"type": "FeatureCollection", "features": features}
+    res = h3_lisa(fc, "val")
+    assert res.success
+    assert len(res.data["features"]) == 3
+    for f in res.data["features"]:
+        assert f["properties"]["lisa_cluster"] == "NS"
+    assert res.data["cluster_stats"]["NS"] == 3
