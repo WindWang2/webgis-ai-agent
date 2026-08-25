@@ -148,7 +148,8 @@ async def websocket_endpoint(
                 handler = PERCEPTION_HANDLERS[event_type]
                 await handler(session_id, data.get("data", {}))
     except WebSocketDisconnect:
-        manager.disconnect(websocket, session_id)
+        pass
     except Exception as e:
         logger.error(f"WebSocket error for session {session_id}: {e}")
+    finally:
         manager.disconnect(websocket, session_id)
