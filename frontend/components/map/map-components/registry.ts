@@ -1,5 +1,4 @@
 'use client';
-import type { MapSpec, MapSpecComponent } from '@/lib/mapspec-compiler/types';
 import type { ComponentRenderer } from './types';
 
 const REGISTRY = new Map<string, ComponentRenderer>();
