@@ -10,6 +10,7 @@ from typing import Any, Optional
 
 import redis.asyncio as aioredis
 from app.services.session_data_protocol import BaseSessionStore, UNAVAILABLE_REF_PREFIX
+from app.lib.numpy_json import numpy_json_default as _numpy_json_default
 
 logger = logging.getLogger(__name__)
 
@@ -245,7 +246,9 @@ class RedisSessionStore(BaseSessionStore):
         # P1: 大 GeoJSON 的 json.dumps 在事件循环上要 0.6-4s（同
         # tool_dispatch_service 的论证），必须在 pipe 外先线程化序列化，
         # pipe 事务内只做 set。
-        payload_json = await asyncio.to_thread(json.dumps, data, ensure_ascii=False)
+        payload_json = await asyncio.to_thread(
+            json.dumps, data, ensure_ascii=False, default=_numpy_json_default
+        )
 
         try:
             # Insert first. Evicting before the write used to delete live refs
@@ -329,7 +332,9 @@ class RedisSessionStore(BaseSessionStore):
         # P1 (#521): same as store() — checkpoint rollback overwrites
         # multi-MB materialized blobs per ref; serializing inline would block
         # the event loop for the whole dump.
-        payload_json = await asyncio.to_thread(json.dumps, data, ensure_ascii=False)
+        payload_json = await asyncio.to_thread(
+            json.dumps, data, ensure_ascii=False, default=_numpy_json_default
+        )
         try:
             async with self._r.pipeline() as pipe:
                 pipe.set(data_key, payload_json, ex=DATA_TTL)
@@ -594,7 +599,9 @@ class RedisSessionStore(BaseSessionStore):
         # entry points are client-controlled and only capped at the DTO layer, so
         # a multi-MB value must not stall the loop for the whole dump.
         try:
-            payload_json = await asyncio.to_thread(json.dumps, value, ensure_ascii=False)
+            payload_json = await asyncio.to_thread(
+            json.dumps, value, ensure_ascii=False, default=_numpy_json_default
+        )
         except (TypeError, ValueError) as e:
             logger.warning("set_map_state un-serializable value for %s %s: %s", session_id, key, e)
             return False
@@ -801,7 +808,9 @@ class RedisSessionStore(BaseSessionStore):
                         layers.append({"id": layer_id, **updates})
                     # P1 (#521): serialize the (possibly large) layers list off
                     # the event loop before entering the transaction.
-                    payload_json = await asyncio.to_thread(json.dumps, layers, ensure_ascii=False)
+                    payload_json = await asyncio.to_thread(
+            json.dumps, layers, ensure_ascii=False, default=_numpy_json_default
+        )
                     # 写回
                     pipe.multi()
                     pipe.hset(state_key, "layers", payload_json)
@@ -856,7 +865,9 @@ class RedisSessionStore(BaseSessionStore):
                         layers = []
                     new_layers = [layer for layer in layers if layer.get("id") != layer_id]
                     # P1 (#521): serialize off the event loop (see update_layer_in_state).
-                    payload_json = await asyncio.to_thread(json.dumps, new_layers, ensure_ascii=False)
+                    payload_json = await asyncio.to_thread(
+            json.dumps, new_layers, ensure_ascii=False, default=_numpy_json_default
+        )
                     pipe.multi()
                     pipe.hset(state_key, "layers", payload_json)
                     pipe.expire(state_key, STATE_TTL)

@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Literal, Optional
 
 from app.services.session_data import session_data_manager
+from app.lib.numpy_json import numpy_json_default as _numpy_json_default
 from app.services.session_data_protocol import is_unavailable_ref
 from app.tools.registry import ToolRegistry
 from app.utils.security import sanitize_error_msg
@@ -520,7 +521,9 @@ class ToolDispatchService:
 
             _est = _estimate_json_bytes(result)
             if _est <= 4096:  # comfortably under MSG_MAX_CHARS even with slack
-                result_str = json.dumps(result, ensure_ascii=False)
+                result_str = json.dumps(
+                    result, ensure_ascii=False, default=_numpy_json_default
+                )
             elif isinstance(result, dict) and "summary" in result:
                 # slim_tool_result's summary branch never reads result_str.
                 result_str = ""
@@ -529,7 +532,8 @@ class ToolDispatchService:
                 # (review P3 — the space-marker fallback fed the LLM blanks
                 # for oversized non-dict results like bare lists).
                 result_str = await asyncio.to_thread(
-                    json.dumps, result, ensure_ascii=False
+                    json.dumps, result, ensure_ascii=False,
+                    default=_numpy_json_default,
                 )
         llm_payload = slim_tool_result(result, result_str, geojson_ref) or result_str
         if is_suspicious_result(result):

@@ -17,6 +17,21 @@ from app.lib.geo_analysis._vector import extract_centroids
 from app.lib.cancellation import cancellable
 
 
+def _feature_props(row: "pd.Series") -> dict:
+    """GeoPandas 行属性 → JSON 可序列化 dict。
+
+    ``row.items()`` 对数值列返回 numpy 标量（int64/float64 等），标准库
+    ``json.dumps`` 不认识 —— 结果入 ref 库（session_data_redis.store）即
+    ``TypeError: Object of type int64 is not JSON serializable``，整个工具
+    调用被误报为执行异常（2026-08-25 会话：h3_lisa 982 校网格即此崩法）。
+    """
+    return {
+        k: (v.item() if isinstance(v, np.generic) else v)
+        for k, v in row.items()
+        if k != "geometry"
+    }
+
+
 def _bh_qvalues(p: "np.ndarray") -> "np.ndarray":
     """BH-FDR 校正的 q 值（G-6/#870）。
 
@@ -408,7 +423,7 @@ def hotspot_narrated(geojson: dict, value_field: str, distance_band: float = 0) 
         
         geom_wgs84 = gdf_wgs84.geometry.iloc[i]
         row = gdf.iloc[i]
-        props = {k: v for k, v in row.items() if k != "geometry"}
+        props = _feature_props(row)
         props.update({
             "gi_star": round(gi_star, 4),
             "p_value": round(p_val, 6),
@@ -647,7 +662,7 @@ def cluster_narrated(
     for i in cancellable(range(len(gdf)), every=512):
         geom_wgs84 = gdf_wgs84.geometry.iloc[i]
         row = gdf.iloc[i]
-        props = {k: v for k, v in row.items() if k != "geometry"}
+        props = _feature_props(row)
         props["cluster_id"] = int(labels[i])
         out_features.append({
             "type": "Feature",
@@ -796,7 +811,7 @@ def h3_lisa(h3_geojson: dict, value_field: str) -> GeoAnalysisResult:
     for i in cancellable(range(len(gdf)), every=512):
         geom_wgs84 = gdf_wgs84.geometry.iloc[i]
         row = gdf.iloc[i]
-        props = {k: v for k, v in row.items() if k != "geometry"}
+        props = _feature_props(row)
         props["lisa_cluster"] = clusters[i]
         out_features.append({
             "type": "Feature",
@@ -1026,7 +1041,7 @@ def st_dbscan_narrated(
     for i in cancellable(range(n), every=512):
         geom_wgs84 = gdf_wgs84.geometry.iloc[i]
         row = gdf_valid.iloc[i]
-        props = {k: v for k, v in row.items() if k != "geometry"}
+        props = _feature_props(row)
         props["cluster_id"] = int(labels[i])
         out_features.append({
             "type": "Feature",

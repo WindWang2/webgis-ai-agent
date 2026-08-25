@@ -196,3 +196,28 @@ def test_h3_lisa_island_cells_neutral():
     for f in res.data["features"]:
         assert f["properties"]["lisa_cluster"] == "NS"
     assert res.data["cluster_stats"]["NS"] == 3
+
+
+# --------------------------------------------------------------------------- #
+# 2026-08-25 会话回归：numpy 标量泄漏进 LISA 输出 → 入库 json.dumps 即
+# TypeError（"工具执行异常 (TypeError): Object of type int64 ..."）
+# --------------------------------------------------------------------------- #
+def test_h3_lisa_output_json_serializable():
+    import json
+
+    fc = _h3_grid()
+    if len(fc["features"]) < 3:
+        pytest.skip("H3 grid too small at this extent")
+    for i, f in enumerate(fc["features"]):
+        # 非常数取值让 LISA 真正跑通输出路径；int 列模拟会话里的 count
+        f["properties"]["val"] = float(i + 1)
+        f["properties"]["count"] = (i + 1) * 10
+    res = h3_lisa(fc, "val")
+    assert res.success
+    # dispatch → ref 库的序列化路径：不抛 TypeError
+    payload = json.dumps(res.to_llm_response(), ensure_ascii=False)
+    assert "lisa_cluster" in payload
+    # 数值列经 _feature_props 转成 Python 原生类型（不再是 np.generic）
+    props = res.data["features"][0]["properties"]
+    assert isinstance(props["count"], int) and not hasattr(props["count"], "item") or isinstance(props["count"], int)
+    assert json.dumps(props["count"])
