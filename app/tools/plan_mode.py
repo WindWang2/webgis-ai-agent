@@ -108,21 +108,28 @@ def register_plan_mode_tools(registry: ToolRegistry):
             "按拓扑顺序逐步运行，自动解析 ${stepId} 占位符。\n"
             "任一步失败立即中止并返回累计已执行步骤的结果。\n"
             "**调用纪律**：只有当用户在最近一轮明确回复『好/可以/执行吧』类肯定后才调用。"
-            "如果计划里 destructive_steps 非空，必须额外确认。"
+            "如果计划里 destructive_steps 非空，必须经用户明确授权并在调用时传入 confirm_destructive=True。"
         ),
         param_descriptions={
             "plan_id": "由 propose_plan 返回的 plan_id（形如 ref:plan-xxxxxxxxxxxxxxxx）",
+            "confirm_destructive": "若计划包含 Tier 3 破坏性/高危步骤，必须在用户明确确认后传入 True",
         },
         execution_policy=ToolExecutionPolicy.INLINE,
     )
-    async def execute_plan(plan_id: str, session_id: Optional[str] = None) -> dict:
+    async def execute_plan(
+        plan_id: str,
+        confirm_destructive: bool = False,
+        session_id: Optional[str] = None,
+    ) -> dict:
         if not session_id:
             return {
                 "success": False,
                 "code": "VALIDATION_ERROR",
                 "message": "execute_plan 必须在会话上下文中调用 (session_id 缺失)",
             }
-        return await plan_svc.execute_plan_async(session_id, plan_id, registry)
+        return await plan_svc.execute_plan_async(
+            session_id, plan_id, registry, confirm_destructive=confirm_destructive
+        )
 
     @registry.tool(
         name="get_plan_status",

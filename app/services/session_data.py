@@ -69,25 +69,27 @@ class MemorySessionStore(BaseSessionStore):
         # SESSION_STORE_MAX_BYTES (env, default 50MB) bounds memory before OOM.
         _max_bytes = int(os.getenv("SESSION_STORE_MAX_BYTES", "52428800"))
         session_cache = self._store[session_id]
-        # Pre-compute new entry size for byte-cap check (uses public alias)
         try:
             from app.lib.json_size import estimate_json_bytes as _est_bytes
             _new_size = _est_bytes(data) if isinstance(data, (dict, list)) else len(str(data).encode())
         except Exception:
             _new_size = 0
-        def _cache_bytes() -> int:
-            total = _new_size
-            for v in session_cache.values():
-                try:
-                    from app.lib.json_size import estimate_json_bytes as _eb2
-                    total += _eb2(v) if isinstance(v, (dict, list)) else len(str(v).encode())
-                except Exception:
-                    pass
-            return total
-        while len(session_cache) >= self.capacity or (_new_size and _cache_bytes() > _max_bytes):
-            if not session_cache:
-                break
+
+        # Calculate initial cache bytes once in O(N) instead of O(N^2) loop
+        total_bytes = 0
+        sizes: dict[str, int] = {}
+        for r_id, v in session_cache.items():
+            try:
+                from app.lib.json_size import estimate_json_bytes as _eb2
+                sz = _eb2(v) if isinstance(v, (dict, list)) else len(str(v).encode())
+            except Exception:
+                sz = 0
+            sizes[r_id] = sz
+            total_bytes += sz
+
+        while session_cache and (len(session_cache) >= self.capacity or (total_bytes + _new_size > _max_bytes and total_bytes > 0)):
             oldest_ref, _ = session_cache.popitem(last=False)
+            total_bytes -= sizes.get(oldest_ref, 0)
             self._remove_alias_by_ref(session_id, oldest_ref)
             if session_id in self._descriptors:
                 self._descriptors[session_id].pop(oldest_ref, None)

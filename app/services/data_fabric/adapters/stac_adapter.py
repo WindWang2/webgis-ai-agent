@@ -137,9 +137,7 @@ class STACAdapter(GeospatialDataSourceAdapter):
             return True  # Fallback synthetic mode is reachable
         try:
             safe_url = DataFabricSecurity.validate_url(self.endpoint, allow_private=self.allow_private)
-            import requests
-
-            resp = requests.get(safe_url, timeout=5, headers={"Accept": "application/json"})
+            resp = self.session.get(safe_url, timeout=5, headers={"Accept": "application/json"})
             if resp.status_code == 200:
                 data = resp.json()
                 return "stac_version" in data or "collections" in data or "links" in data
@@ -175,10 +173,8 @@ class STACAdapter(GeospatialDataSourceAdapter):
 
         try:
             safe_url = DataFabricSecurity.validate_url(self.endpoint, allow_private=self.allow_private)
-            import requests
-
             collections_url = urljoin(safe_url + "/", "collections")
-            resp = requests.get(collections_url, timeout=8)
+            resp = self.session.get(collections_url, timeout=8)
             if resp.status_code == 200:
                 body = resp.json()
                 colls = body.get("collections", [])
@@ -197,7 +193,7 @@ class STACAdapter(GeospatialDataSourceAdapter):
                     return result
 
             # Try parsing root catalog links
-            root_resp = requests.get(safe_url, timeout=8)
+            root_resp = self.session.get(safe_url, timeout=8)
             if root_resp.status_code == 200:
                 root_json = root_resp.json()
                 links = root_json.get("links", [])
@@ -272,10 +268,8 @@ class STACAdapter(GeospatialDataSourceAdapter):
         error_message: Optional[str] = None
         try:
             safe_url = DataFabricSecurity.validate_url(self.endpoint, allow_private=self.allow_private)
-            import requests
-
             coll_url = urljoin(safe_url + "/", f"collections/{dataset_id}")
-            resp = requests.get(coll_url, timeout=8)
+            resp = self.session.get(coll_url, timeout=8)
             if resp.status_code == 200:
                 c = resp.json()
                 bbox = c.get("extent", {}).get("spatial", {}).get("bbox", [[-180.0, -90.0, 180.0, 90.0]])[0]

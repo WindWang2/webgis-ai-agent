@@ -124,41 +124,52 @@ class GovDataAdapter(BaseDataAdapter):
         if not source.url:
             raise ValueError("Source URL is empty")
 
-        # SEC-04 (deep-audit round 2): source.url originates from remote gov
-        # platform search responses ("link" fields) that are attacker-influenced
-        # (a compromised platform, or a search keyword steered toward a crafted
-        # listing). The Data Fabric SSRF policy module already blocks
-        # private/loopback/metadata targets — reuse it here instead of fetching
-        # arbitrary server-side URLs. Private endpoints are never allowed from
-        # this path (mirrors the Data Fabric REST gate).
-        try:
-            from app.services.data_fabric.security import DataFabricSecurity
-
-            DataFabricSecurity.validate_url(source.url, allow_private=False)
-        except Exception as e:
-            logger.warning(f"[GovDataAdapter] SSRF block for URL {source.url}: {e}")
-            raise ValueError(f"Unsafe or invalid source URL blocked: {e}") from e
-
         MAX_SIZE = 50 * 1024 * 1024  # 50MB
+        current_url = source.url
+        max_redirects = 3
+        chunks = []
+
+        import urllib.parse
+        from app.services.data_fabric.security import DataFabricSecurity
 
         async with aiohttp.ClientSession(headers=get_base_headers()) as session:
-            async with session.get(source.url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                if resp.status != 200:
-                    raise RuntimeError(f"Download failed: HTTP {resp.status}")
+            for _ in range(max_redirects + 1):
+                try:
+                    DataFabricSecurity.validate_url(current_url, allow_private=False)
+                except Exception as e:
+                    logger.warning(f"[GovDataAdapter] SSRF block for URL {current_url}: {e}")
+                    raise ValueError(f"Unsafe or invalid source URL blocked: {e}") from e
 
-                cl_header = resp.headers.get("Content-Length")
-                if cl_header and cl_header.isdigit() and int(cl_header) > MAX_SIZE:
-                    raise RuntimeError(f"File too large: {int(cl_header)} bytes > {MAX_SIZE}")
+                async with session.get(
+                    current_url,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                    allow_redirects=False,
+                ) as resp:
+                    if resp.status in (301, 302, 303, 307, 308):
+                        location = resp.headers.get("Location")
+                        if not location:
+                            raise RuntimeError(f"Redirect HTTP {resp.status} with missing Location header")
+                        current_url = urllib.parse.urljoin(current_url, location)
+                        continue
 
-                chunks = []
-                total_bytes = 0
-                async for chunk in resp.content.iter_chunked(65536):
-                    total_bytes += len(chunk)
-                    if total_bytes > MAX_SIZE:
-                        raise RuntimeError(f"File too large: exceeds {MAX_SIZE} bytes during streaming download")
-                    chunks.append(chunk)
+                    if resp.status != 200:
+                        raise RuntimeError(f"Download failed: HTTP {resp.status}")
 
-                data = b"".join(chunks)
+                    cl_header = resp.headers.get("Content-Length")
+                    if cl_header and cl_header.isdigit() and int(cl_header) > MAX_SIZE:
+                        raise RuntimeError(f"File too large: {int(cl_header)} bytes > {MAX_SIZE}")
+
+                    total_bytes = 0
+                    async for chunk in resp.content.iter_chunked(65536):
+                        total_bytes += len(chunk)
+                        if total_bytes > MAX_SIZE:
+                            raise RuntimeError(f"File too large: exceeds {MAX_SIZE} bytes during streaming download")
+                        chunks.append(chunk)
+                    break
+            else:
+                raise RuntimeError("Too many redirects during download")
+
+            data = b"".join(chunks)
 
         return RawContent(
             data=data,

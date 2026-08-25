@@ -252,9 +252,10 @@ def parse_raster(
     except Exception as e:
         raise ParseError(f"栅格文件读取失败: {e}")
 
-    # 复制原始文件到上传目录
+    # 复制原始文件到上传目录（避免同名 SameFileError）
     output_path = upload_dir / "original.tif"
-    shutil.copy2(file_path, output_path)
+    if file_path.resolve() != output_path.resolve():
+        shutil.copy2(file_path, output_path)
 
     return {
         "file_type": "raster",

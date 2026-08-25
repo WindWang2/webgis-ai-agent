@@ -263,10 +263,7 @@ async def test_F4_rate_limit_middleware_keys_by_forwarded_ip(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_F1_approved_plan_executes_tier3_steps():
-    """execute_plan IS the user-approved channel for destructive steps
-    (propose_plan marks them; the UI requires plan approval first). The
-    registry chokepoint must therefore honor tier-3 inside plan waves —
-    while ad-hoc dispatch stays refused."""
+    """execute_plan requires explicit confirm_destructive for tier-3 steps."""
     from app.services import plan_mode as svc
     from app.tools.registry import ToolRegistry
 
@@ -282,10 +279,62 @@ async def test_F1_approved_plan_executes_tier3_steps():
         steps=[svc.PlanStep(id="d1", tool="audit_t3_step", args={})],
     )
     plan_id = await svc.store_plan(sid, plan)
-    ret = await svc.execute_plan_async(sid, plan_id, reg)
+
+    # Without confirm_destructive=True, execution is rejected
+    unconfirmed = await svc.execute_plan_async(sid, plan_id, reg, confirm_destructive=False)
+    assert unconfirmed["success"] is False
+    assert unconfirmed["code"] == "CONFIRMATION_REQUIRED"
+
+    # With confirm_destructive=True, execution is granted
+    ret = await svc.execute_plan_async(sid, plan_id, reg, confirm_destructive=True)
     assert ret["success"] is True, ret
     assert ret["results"]["d1"]["value"] == "ran"
 
     # Ad-hoc dispatch of the same tool stays refused (no confirmation).
     res = await reg.dispatch("audit_t3_step", {})
     assert res.get("code") == "TIER3_CONFIRMATION_REQUIRED"
+
+
+def test_parse_raster_same_file_original_tif(tmp_path):
+    """Uploading a file named original.tif should not crash with SameFileError."""
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+    from app.services.data_parser import parse_raster
+
+    tif_path = tmp_path / "original.tif"
+    data = np.zeros((10, 10), dtype=np.uint8)
+    transform = from_origin(100.0, 30.0, 1.0, 1.0)
+    with rasterio.open(
+        tif_path,
+        "w",
+        driver="GTiff",
+        height=10,
+        width=10,
+        count=1,
+        dtype=data.dtype,
+        crs="EPSG:4326",
+        transform=transform,
+    ) as dst:
+        dst.write(data, 1)
+
+    # Calling parse_raster with upload_dir == tif_path.parent
+    meta = parse_raster(tif_path, tmp_path, "upload_test")
+    assert meta["file_type"] == "raster"
+    assert meta["format"] == "geotiff"
+
+
+@pytest.mark.asyncio
+async def test_memory_session_store_eviction_preserves_unwiped_cache():
+    """Oversized items must not completely wipe out existing small cached entries."""
+    from app.services.session_data import MemorySessionStore
+
+    store = MemorySessionStore(capacity=10)
+    sid = "test-evict-session"
+
+    r1 = await store.store(sid, {"feature": 1})
+    r2 = await store.store(sid, {"feature": 2})
+
+    assert await store.get(sid, r1) is not None
+    assert await store.get(sid, r2) is not None
+

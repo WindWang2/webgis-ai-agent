@@ -648,6 +648,7 @@ async def execute_plan_async(
     session_id: str,
     plan_id: str,
     registry: ToolRegistry,
+    confirm_destructive: bool = False,
 ) -> dict:
     """按拓扑顺序执行计划；任一步失败立即中止。
 
@@ -704,13 +705,16 @@ async def execute_plan_async(
     """
     async with session_lock_registry.lock(f"plan:{plan_id}"):
         async with _get_plan_lock(session_id, plan_id):
-            return await _execute_plan_locked(session_id, plan_id, registry)
+            return await _execute_plan_locked(
+                session_id, plan_id, registry, confirm_destructive=confirm_destructive
+            )
 
 
 async def _execute_plan_locked(
     session_id: str,
     plan_id: str,
     registry: ToolRegistry,
+    confirm_destructive: bool = False,
 ) -> dict:
     """execute_plan_async 的锁内实现（P1-C / P2-1 语义见 execute_plan_async）。"""
     plan_data = await load_plan(session_id, plan_id)
@@ -744,6 +748,25 @@ async def _execute_plan_locked(
 
     # 还原 Pydantic 模型用于拓扑排序
     plan = PlanProposal.model_validate({k: v for k, v in plan_data.items() if not k.startswith("__")})
+
+    # SEC-01: 校验 Tier 3 破坏性步骤授权
+    meta_all = registry.all_metadata()
+    tier3_steps = [
+        s.id for s in plan.steps if meta_all.get(s.tool, {}).get("tier", 1) == 3
+    ]
+    if tier3_steps and not confirm_destructive:
+        return {
+            "success": False,
+            "code": "CONFIRMATION_REQUIRED",
+            "plan_id": plan_id,
+            "destructive_steps": tier3_steps,
+            "error": (
+                f"计划包含破坏性/高危步骤 (Tier 3: {', '.join(tier3_steps)})，"
+                "必须由用户明确确认并在调用 execute_plan 时指定 confirm_destructive=True"
+            ),
+            "executed": [],
+            "results": {},
+        }
 
     # design-v3 §4：用已存结果播种 step_results（resume 起点）。
     # P3 #1：已存结果是 slim 摘要 → 先按 ref 水合回完整结果，保证 ${} 解析
@@ -957,16 +980,26 @@ async def _execute_plan_locked(
             # yield 的是内部 _wait_for_one 协程而非原始 Task，无法映射回 sid；
             # 因此改用 asyncio.wait(FIRST_COMPLETED)，它返回原始 Task 对象。
             #
-            # SEC-F1 (plan contract): execute_plan IS the user-approved channel
-            # for destructive (tier-3) steps — propose_plan marks them and the
-            # UI requires explicit plan approval before the LLM may call this.
-            # The registry chokepoint refuses tier-3 without a confirmation
-            # grant, so mint one for the wave's tasks (create_task copies the
-            # current context; the grant travels with each task). Ad-hoc chat
-            # dispatch, subagents and workflows stay locked down.
+            # SEC-01 (plan contract): execute_plan requires explicit confirm_destructive
+            # before granting tier-3 dispatch rights.
             from app.tools.registry import confirm_tier3
 
-            with confirm_tier3():
+            wave_has_tier3 = any(
+                meta_all.get(step_by_id[sid].tool, {}).get("tier", 1) == 3
+                for sid in wave
+            )
+
+            if wave_has_tier3 and confirm_destructive:
+                with confirm_tier3():
+                    tasks = {
+                        sid: asyncio.create_task(
+                            registry.dispatch(
+                                step_by_id[sid].tool, resolved_args[sid], session_id=session_id
+                            )
+                        )
+                        for sid in wave
+                    }
+            else:
                 tasks = {
                     sid: asyncio.create_task(
                         registry.dispatch(
