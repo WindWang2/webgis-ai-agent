@@ -58,6 +58,15 @@ function nonConfirmableAck(storeMatched: string[]): MapCommandResult {
     : { status: 'failed', error: 'mutation_failed' };
 }
 
+/** Resolve canonical `id` with fallback to legacy aliases (issue #935). */
+function resolveTargetId(params: any, legacyKeys: string[]): string | undefined {
+  for (const k of ['id', ...legacyKeys]) {
+    const v = params?.[k];
+    if (typeof v === 'string' && v.trim()) return v;
+  }
+  return undefined;
+}
+
 /** #668: extract a ['get', field] field name from a MapLibre filter expression. */
 function extractFilterField(expr: any): string | null {
   if (!expr) return null;
@@ -256,8 +265,7 @@ export const layerCommands: Record<string, CommandEntry> = {
     requiredParams: (p) => typeof p.layer_id === 'string' || typeof p.layerId === 'string' || typeof p.id === 'string',
     run(ctx) {
       const { map, params, getHudState } = ctx;
-      const { layer_id, layerId } = params || {};
-      const target = layer_id || layerId;
+      const target = resolveTargetId(params, ['layer_id', 'layerId']);
       // V3: missing target → explicit failed result (was a silent return).
       if (!target) return { status: 'failed', error: 'target_not_found' };
       // V3 round-2 FIX-B: resolve the target across BOTH id schemes (custom-…
@@ -327,7 +335,7 @@ export const layerCommands: Record<string, CommandEntry> = {
     requiredParams: (p) => typeof p.name === 'string' || typeof p.id === 'string',
     run(ctx) {
       const { map, params, setSelectedBaseLayer, getHudState } = ctx;
-      const name = params?.name as string | undefined;
+      const name = resolveTargetId(params, ['name']);
       // V3: a missing name is a param failure, not a target miss.
       if (!name) return { status: 'failed', error: 'invalid_params' };
       const search = name.toLowerCase();
@@ -379,7 +387,8 @@ export const layerCommands: Record<string, CommandEntry> = {
     requiredParams: (p) => typeof p.layer_id === 'string' || typeof p.id === 'string',
     run(ctx) {
       const { map, params, getHudState } = ctx;
-      const { layer_id, visible, opacity, name, color } = params || {};
+      const layer_id = resolveTargetId(params, ['layer_id']);
+      const { visible, opacity, name, color } = (params || {}) as any;
       // V3: missing target → explicit failed result (was a silent return).
       if (!layer_id) return { status: 'failed', error: 'target_not_found' };
 
@@ -460,7 +469,8 @@ export const layerCommands: Record<string, CommandEntry> = {
     run(ctx) {
       const { map, params, getHudState } = ctx;
       const p = params as any;
-      const { layer_id, style, field, colorMap, baseStyle } = p || {};
+      const layer_id = resolveTargetId(p, ['layer_id']);
+      const { style, field, colorMap, baseStyle } = p || {};
       // V3: silent no-ops become explicit failed results (design §6).
       if (!layer_id) return { status: 'failed', error: 'target_not_found' };
 
@@ -694,7 +704,8 @@ export const layerCommands: Record<string, CommandEntry> = {
     requiredParams: (p) => typeof p.layer_id === 'string' || typeof p.id === 'string',
     run(ctx) {
       const { map, params, getHudState } = ctx;
-      const { layer_id, filter } = params || {};
+      const layer_id = resolveTargetId(params, ['layer_id']);
+      const { filter } = (params || {}) as any;
       // V3: missing target → explicit failed result (was a silent return).
       if (!layer_id) return { status: 'failed', error: 'target_not_found' };
 
