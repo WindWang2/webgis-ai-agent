@@ -480,8 +480,11 @@ def calculate_nearest(geojson: dict) -> GeoAnalysisResult:
     xmin, ymin, xmax, ymax = gdf.total_bounds
     area = (xmax - xmin) * (ymax - ymin)
     expected_mean = 0.5 * np.sqrt(area / len(gdf))
-    r_ratio = mean_dist / expected_mean if expected_mean > 0 else 1
-    
+    if expected_mean == 0 or mean_dist == 0:
+        r_ratio = 0.0
+    else:
+        r_ratio = mean_dist / expected_mean
+
     pattern = "random"
     if r_ratio < 0.7:
         pattern = "clustered"
