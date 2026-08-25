@@ -1,7 +1,16 @@
 """地理编码工具 - Nominatim"""
+from typing import Annotated
+
+from pydantic import Field
+
 from app.core.config import settings
 from app.services.provider_health import check_nominatim_status, tracked_provider_get
 from app.tools.registry import ToolRegistry, tool
+
+# #995: 坐标范围约束 —— 描述早已写明 -90..90 / -180..180，schema 层同步
+# 拦截（registry._generate_model 直接消费签名注解，Annotated 携带 Field 约束）。
+LatRange = Annotated[float, Field(ge=-90, le=90)]
+LonRange = Annotated[float, Field(ge=-180, le=180)]
 
 
 def _raise_on_error(result: dict) -> None:
@@ -75,7 +84,7 @@ def register_geocoding_tools(registry: ToolRegistry):
                "lat": "WGS84 纬度（-90..90）",
                "lon": "WGS84 经度（-180..180）",
            })
-    async def reverse_geocode(lat: float, lon: float) -> dict:
+    async def reverse_geocode(lat: LatRange, lon: LonRange) -> dict:
         """反向地理编码：坐标 → 地名"""
         url = settings.NOMINATIM_URL.replace("/search", "/reverse")
         params = {

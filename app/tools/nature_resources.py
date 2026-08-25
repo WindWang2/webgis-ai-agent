@@ -37,7 +37,11 @@ def register_nature_resource_tools(registry: ToolRegistry):
               "(2) 双时相变化 — 用 detect_vegetation_change；"
               "(3) 不知道波段顺序 — 工具会自动探测，但 3 波段 RGB 无 NIR 时会失败。"
               "\n关键约束：raster_path 必须是 list_uploaded_data 返回过的路径；任务异步，返回 task_id 后需轮询。"
-          ))
+          ),
+          # #996: 工具体经 submit_durable_job 内部投递 Celery
+          # （run_ndvi_analysis.apply_async）——重工具显式标 heavy；提交路径
+          # 本身只做 DB 写 + broker 入队，60s 预算绰绰有余。
+          cost="heavy", timeout=60.0)
     def analyze_vegetation_index(raster_path: str, nir_band: Optional[int] = None, red_band: Optional[int] = None, session_id: Optional[str] = None) -> dict:
         # ADR-0052: 重计算走 durable job —— 返回 job_id 让用户能在任务中心看到进度
         # 并随时取消；幂等键防止双击/重连提交两次同样的分析。

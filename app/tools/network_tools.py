@@ -4,7 +4,7 @@ Exposes network_shortest_path, network_od_matrix, network_closest_facility,
 network_service_area, network_accessibility, location_allocation, and optimize_route.
 """
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, ToolExecutionPolicy, tool
@@ -235,11 +235,17 @@ def _truncate_network_fallback(out: Dict[str, Any]) -> bool:
 
 # --- Pydantic Args Models ---
 
+# #995: 分类参数 schema 层枚举 —— 合法值即各 Field 描述里声明的集合
+# （TravelProfile 名族 + 工具自定义 "custom"；schema 前置拦截，工具体
+# 运行时校验语义不变）。
+TravelProfileName = Literal["walking", "driving", "cycling", "custom"]
+
+
 class NetworkShortestPathArgs(BaseModel):
     network: Any = Field(..., description="Network GeoJSON LineString dataset, ref ID, or 'osm_road'")
     origin: Any = Field(..., description="Origin point (lng, lat), GeoJSON point, or address string")
     destination: Any = Field(..., description="Destination point (lng, lat), GeoJSON point, or address string")
-    profile: str = Field(default="driving", description="Travel profile: walking, driving, cycling, custom")
+    profile: TravelProfileName = Field(default="driving", description="Travel profile: walking, driving, cycling, custom")
     impedance: str = Field(default="travel_time_s", description="Impedance field: length_m, travel_time_s")
     barriers: Optional[List[Dict[str, Any]]] = Field(default=None, description="Optional barrier points or polygons")
 
@@ -248,7 +254,7 @@ class NetworkODMatrixArgs(BaseModel):
     network: Any = Field(..., description="Network GeoJSON dataset, ref ID, or 'osm_road'")
     origins: List[Any] = Field(..., description=f"List of origin points or features（起终点组合数上限 {MAX_OD_MATRIX_PAIRS}，超限请求必须拆分）")
     destinations: List[Any] = Field(..., description=f"List of destination points or features（起终点组合数上限 {MAX_OD_MATRIX_PAIRS}，超限请求必须拆分）")
-    profile: str = Field(default="driving", description="Travel profile: walking, driving, cycling, custom")
+    profile: TravelProfileName = Field(default="driving", description="Travel profile: walking, driving, cycling, custom")
     cutoff_s: Optional[float] = Field(default=None, description="Maximum travel time cutoff in seconds")
 
 
@@ -256,8 +262,8 @@ class NetworkClosestFacilityArgs(BaseModel):
     network: Any = Field(..., description="Network GeoJSON dataset, ref ID, or 'osm_road'")
     incidents: List[Any] = Field(..., description="Incident / demand points needing service")
     facilities: List[Any] = Field(..., description="Facility locations")
-    profile: str = Field(default="driving", description="Travel profile: walking, driving, cycling, custom")
-    number_to_find: int = Field(default=1, description="Number of closest facilities to return per incident")
+    profile: TravelProfileName = Field(default="driving", description="Travel profile: walking, driving, cycling, custom")
+    number_to_find: int = Field(1, description="Number of closest facilities to return per incident")
     cutoff_cost: Optional[float] = Field(
         default=None,
         description="Maximum travel cost cutoff (in the active impedance's units: seconds for travel_time_s, meters for length_m). Pairs beyond it are excluded from both the routing and the results — bound the analysis before Routes are built.",
@@ -268,24 +274,24 @@ class NetworkServiceAreaArgs(BaseModel):
     network: Any = Field(..., description="Network GeoJSON dataset, ref ID, or 'osm_road'")
     facilities: List[Any] = Field(..., description="Facility point locations")
     breaks: List[float] = Field(default_factory=lambda: [5.0, 10.0, 15.0], description="Service area cutoff breaks in minutes")
-    profile: str = Field(default="driving", description="Travel profile: walking, driving, cycling, custom")
+    profile: TravelProfileName = Field(default="driving", description="Travel profile: walking, driving, cycling, custom")
 
 
 class NetworkAccessibilityArgs(BaseModel):
     network: Any = Field(..., description="Network GeoJSON dataset, ref ID, or 'osm_road'")
     demand_layer: Any = Field(..., description="Demand / population points or polygon layer")
     facilities: List[Any] = Field(..., description="Service facility locations")
-    cutoff_minutes: float = Field(default=15.0, description="Target travel time cutoff in minutes")
-    profile: str = Field(default="walking", description="Travel profile: walking, driving, cycling, custom")
+    cutoff_minutes: float = Field(15.0, description="Target travel time cutoff in minutes")
+    profile: TravelProfileName = Field(default="walking", description="Travel profile: walking, driving, cycling, custom")
 
 
 class LocationAllocationArgs(BaseModel):
     network: Any = Field(..., description="Network GeoJSON dataset, ref ID, or 'osm_road'")
     candidate_facilities: List[Any] = Field(..., description="Candidate facility locations")
     demand_points: List[Any] = Field(..., description="Demand points or population centers")
-    number_to_choose: int = Field(default=2, description="Number of facilities to select")
-    objective: str = Field(default="minimize_cost", description="Objective: minimize_cost or maximize_coverage")
-    profile: str = Field(default="driving", description="Travel profile")
+    number_to_choose: int = Field(2, description="Number of facilities to select")
+    objective: Literal["minimize_cost", "maximize_coverage"] = Field(default="minimize_cost", description="Objective: minimize_cost or maximize_coverage")
+    profile: TravelProfileName = Field(default="driving", description="Travel profile")
 
 
 class OptimizeRouteArgs(BaseModel):

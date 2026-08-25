@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from contextlib import contextmanager
-from typing import Any, Callable, Optional, Type, List, Union
+from typing import Any, Callable, Literal, Optional, Type, List, Union
 from pydantic import BaseModel, create_model, ValidationError
 
 from enum import Enum
@@ -53,6 +53,13 @@ class ToolExecutionPolicy(str, Enum):
     ASYNC = "async"      # Genuine non-blocking async I/O (httpx, session_data_manager, async DB)
     THREAD = "thread"    # Sync blocking file I/O or fast CPU/Shapely operations via asyncio.to_thread + semaphore
     CELERY = "celery"    # Heavy GDAL, raster warps, large spatial joins, KDE/IDW surfaces via Celery background tasks
+
+# #996: 工具成本先验 —— 注册契约的一部分。light = 常规元数据/廉价查询；
+# medium = 常规空间计算/一次外部 API；heavy = 栅格级计算、内部投递 Celery 的
+# 重工具（调用前 LLM/调度器可据此权衡，wave 并发可按档分桶）。默认 light，
+# 存量 156 个未标注工具零改动兼容。
+ToolCost = Literal["light", "medium", "heavy"]
+_VALID_TOOL_COSTS = ("light", "medium", "heavy")
 
 # 同步工具并发上限（见 _dispatch_impl 的 to_thread 路径）。GIL 下 CPU-bound
 # 工具超过核数无收益；给足核数余量 + 小缓冲，避免并行工具波互相拖累。
@@ -236,6 +243,7 @@ class ToolRegistry:
              timeout: Optional[float] = None,
              version: str = "1.0",
              contract_version: int = 1,
+             cost: ToolCost = "light",
              **kwargs: Any) -> Callable:
         """装饰器：注册工具到此 registry 实例"""
         def decorator(func: Callable):
@@ -249,6 +257,7 @@ class ToolRegistry:
                 timeout=timeout,
                 version=version,
                 contract_version=contract_version,
+                cost=cost,
                 **kwargs,
             )
             return func
@@ -264,6 +273,7 @@ class ToolRegistry:
                  timeout: Optional[float] = None,
                  version: str = "1.0",
                  contract_version: int = 1,
+                 cost: ToolCost = "light",
                  **kwargs: Any):
         """注册一个工具函数"""
         self._tools[name] = func
@@ -334,6 +344,12 @@ class ToolRegistry:
         # （result shape）版本——二者拼接形成稳定指纹，供 lineage/run manifest 记录
         # 「当时执行的工具是哪一个版本」。绝不把 git SHA 塞进每个 tool schema。
         # timeout: 单次执行墙钟预算（秒），覆盖模块级 _TOOL_TIMEOUT_S。
+        # cost (#996): 成本先验（light/medium/heavy），默认 light 全库兼容；
+        # 非法值与 execution_policy 同门在注册期显式失败。
+        if cost not in _VALID_TOOL_COSTS:
+            raise ValueError(
+                f"工具 {name} 声明了非法 cost={cost!r}，合法值: {', '.join(_VALID_TOOL_COSTS)}"
+            )
         self._metadata[name] = {
             "tier": tier,
             "domains": list(domains or []),
@@ -341,7 +357,26 @@ class ToolRegistry:
             "timeout": timeout,
             "version": str(version or "1.0"),
             "contract_version": int(contract_version or 1),
+            "cost": cost,
         }
+
+    @staticmethod
+    def _declared_ref_cursor_keys(model: Optional[Type[BaseModel]]) -> set[str]:
+        """#1004: 从 args model 提取声明式 ref 游标字段名集合。
+
+        字段带 json_schema_extra={"ref_cursor": True} 时，该参数按引用
+        游标语义直传工具（registry 解引用阶段跳过，不把整个 FeatureCollection
+        内联进参数）。仅支持 dict 形态的 json_schema_extra（callable 形态
+        无法静态检视，不参与识别）。无 model / 无声明返回空集。
+        """
+        if model is None:
+            return set()
+        keys: set[str] = set()
+        for fname, finfo in model.model_fields.items():
+            extra = finfo.json_schema_extra
+            if isinstance(extra, dict) and extra.get("ref_cursor"):
+                keys.add(fname)
+        return keys
 
     def _generate_model(self, name: str, func: Callable, param_descriptions: Optional[dict[str, str]]) -> Type[BaseModel]:
         """根据函数签名动态推导 Pydantic Model"""
@@ -395,7 +430,9 @@ class ToolRegistry:
     def metadata(self, name: str) -> dict[str, Any]:
         """获取单个工具的分层元数据；未注册时返回 tier=1 兜底。"""
         return self._metadata.get(
-            name, {"tier": 1, "domains": [], "version": "1.0", "contract_version": 1}
+            name,
+            {"tier": 1, "domains": [], "version": "1.0", "contract_version": 1,
+             "cost": "light"},
         )
 
     def tool_version(self, name: str) -> str:
@@ -633,6 +670,12 @@ class ToolRegistry:
                 # oversized 内联载荷的字符串叶是数据不是别名，别名查表直接降级。
                 _oversized_for_resolver = _is_args_oversized(arguments)
                 skip_keys = {"ref_id", "layer_ref", "layer_id", "plan_id", "before_ref"}
+                # #1004: 参数级声明式 ref 游标通道 —— args model 字段声明
+                # json_schema_extra={"ref_cursor": True} 即以游标语义传参
+                # （跳过解引用）。新工具接 ref 游标不再需要改 registry 核心
+                # 加「工具名+字段名」硬编码；下方既有硬编码名单保留兼容
+                # （存量不迁移）。
+                skip_keys |= self._declared_ref_cursor_keys(model)
                 # MapSpec ingestion preserves the source ref as provenance and
                 # resolves it inside the session-aware tool. Generic transparent
                 # resolution would erase that identity before the tool sees it.
@@ -1109,11 +1152,13 @@ def tool(registry: ToolRegistry, name: str, description: str,
          timeout: Optional[float] = None,
          version: str = "1.0",
          contract_version: int = 1,
+         cost: ToolCost = "light",
          **kwargs: Any):
     """装饰器：注册工具到 registry.
 
     tier / domains 见 ToolRegistry.register 文档。未提供时默认 tier=1 always-on。
     version / contract_version 提供稳定实现指纹（见 ToolRegistry.tool_version）。
+    cost (#996): 成本先验 light/medium/heavy，默认 light（见 ToolCost）。
     """
     def decorator(func: Callable):
         registry.register(
@@ -1126,6 +1171,7 @@ def tool(registry: ToolRegistry, name: str, description: str,
             timeout=timeout,
             version=version,
             contract_version=contract_version,
+            cost=cost,
             **kwargs,
         )
         return func

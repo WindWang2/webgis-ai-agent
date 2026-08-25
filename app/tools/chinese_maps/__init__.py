@@ -15,7 +15,7 @@
 """
 import asyncio
 import logging
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from app.tools.registry import ToolRegistry, tool
 from app.utils.coord_transform import (
@@ -366,7 +366,13 @@ def register_chinese_map_tools(registry: ToolRegistry):
                "provider": "服务商: 'amap'(默认) 或 'baidu'（天地图不支持路径规划）",
            })
     @cached_tool(ttl=ROUTE_CACHE_TTL_S)
-    async def plan_route(origin: list, destination: list, mode: str = "driving", city: str = "", provider: str = "amap") -> dict:
+    async def plan_route(origin: list, destination: list,
+                         # #995: 分类参数 schema 层枚举（合法值与 amap/baidu
+                         # route 的 mode_map 键、with_fallback(exclude={"tianditu"})
+                         # 的可用 provider 一致；体内运行时校验保留）
+                         mode: Literal["driving", "walking", "cycling", "transit"] = "driving",
+                         city: str = "",
+                         provider: Literal["amap", "baidu"] = "amap") -> dict:
         if len(origin) != 2 or len(destination) != 2:
             return {"error": "origin/destination 必须是 [经度, 纬度]"}
         if provider not in _VALID_PROVIDERS:
