@@ -1,10 +1,18 @@
 """遥感数据 FC 工具"""
 import logging
+from typing import Annotated
+
+from pydantic import Field
+
 from app.tools.registry import ToolRegistry, tool
 from app.services.rs.spectral_engine import spectral_engine
 from app.tools._utils import parse_bbox
 
 logger = logging.getLogger(__name__)
+
+# #995: 日期格式约束 —— 描述写明 YYYY-MM-DD，schema 层 pattern 同步拦截
+# （签名注解驱动 registry._generate_model，Annotated 携带 Field 约束）。
+DateStr = Annotated[str, Field(pattern=r"^\d{4}-\d{2}-\d{2}$")]
 
 
 def register_rs_tools(registry: ToolRegistry):
@@ -27,7 +35,7 @@ def register_rs_tools(registry: ToolRegistry):
                "date_to": "结束日期 YYYY-MM-DD",
                "bands": "波段组合：'true-color'(默认) / 'false-color' / 'ndvi'",
            })
-    async def fetch_sentinel(bbox: str, date_from: str, date_to: str, bands: str = "true-color") -> dict:
+    async def fetch_sentinel(bbox: str, date_from: DateStr, date_to: DateStr, bands: str = "true-color") -> dict:
         try:
             parts = parse_bbox(bbox)
             return await spectral_engine.fetch_sentinel_thumbnail(parts, date_from, date_to, bands)
@@ -52,7 +60,7 @@ def register_rs_tools(registry: ToolRegistry):
                "date_from": "起始日期 YYYY-MM-DD",
                "date_to": "结束日期 YYYY-MM-DD",
            })
-    async def compute_ndvi(bbox: str, date_from: str, date_to: str) -> dict:
+    async def compute_ndvi(bbox: str, date_from: DateStr, date_to: DateStr) -> dict:
         try:
             parts = parse_bbox(bbox)
             return await spectral_engine.compute_ndvi(parts, date_from, date_to)

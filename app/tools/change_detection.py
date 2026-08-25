@@ -3,7 +3,7 @@
 支持双时相植被指数变化检测与分类分析
 """
 import logging
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, Field
 from app.tools.registry import ToolRegistry, tool
 from app.services.spatial_tasks import run_change_detection
@@ -19,7 +19,8 @@ class ChangeDetectionArgs(BaseModel):
     t1_to: str = Field(..., description="T1 时期结束日期 YYYY-MM-DD")
     t2_from: str = Field(..., description="T2 时期起始日期 YYYY-MM-DD")
     t2_to: str = Field(..., description="T2 时期结束日期 YYYY-MM-DD")
-    index_type: str = Field("ndvi", description="植被指数类型: ndvi, ndwi, nbr, evi")
+    index_type: Literal["ndvi", "ndwi", "nbr", "evi"] = Field(
+        "ndvi", description="植被指数类型: ndvi, ndwi, nbr, evi")
     change_threshold: float = Field(0.1, description="变化检测阈值，默认 0.1")
     session_id: Optional[str] = Field(None, description="会话 ID")
 
@@ -45,14 +46,20 @@ def register_change_detection_tools(registry: ToolRegistry):
               "t2_to": "第二期结束日期 (YYYY-MM-DD)",
               "index_type": "指数类型: ndvi(植被), ndwi(水体), nbr(燃烧), evi(增强植被)",
               "change_threshold": "变化阈值，决定轻微/显著变化的边界",
-          })
+          },
+          # #996: 工具体经 submit_durable_job 内部投递 Celery
+          # （run_change_detection.apply_async）——重工具显式标 heavy；
+          # 提交路径本身只做 DB 写 + broker 入队，60s 预算绰绰有余。
+          cost="heavy", timeout=60.0)
     def detect_vegetation_change(
         bbox: str,
         t1_from: str,
         t1_to: str,
         t2_from: str,
         t2_to: str,
-        index_type: str = "ndvi",
+        # #995: schema 层枚举（合法值 = 工具体 valid_indices；体内运行时
+        # 校验保留兜底）。签名注解驱动 registry._generate_model 的 schema。
+        index_type: Literal["ndvi", "ndwi", "nbr", "evi"] = "ndvi",
         change_threshold: float = 0.1,
         session_id: Optional[str] = None,
     ) -> dict:

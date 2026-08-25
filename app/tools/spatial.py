@@ -1,6 +1,6 @@
 """空间分析 FC 工具"""
 import logging
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
@@ -71,8 +71,10 @@ class HeatmapDataArgs(BaseModel):
         description="[兼容] 旧搜索半径（米）。会被归一化为 bandwidth_m；native 视觉半径"
                     "在 4-60 历史窗口内直通为像素，否则用默认 30px 并告警。"
                     "新调用请显式用 radius_px/bandwidth_m")
-    render_type: str = Field("native", description="渲染模式: native(原生逐点密度，默认推荐), raster(服务端栅格PNG), grid(格网)")
-    palette: str = Field("classic", description="配色方案: classic, magma, viridis, thermal")
+    render_type: Literal["native", "raster", "grid"] = Field(
+        "native", description="渲染模式: native(原生逐点密度，默认推荐), raster(服务端栅格PNG), grid(格网)")
+    palette: Literal["classic", "magma", "viridis", "thermal"] = Field(
+        "classic", description="配色方案: classic, magma, viridis, thermal")
 
 def register_spatial_tools(registry: ToolRegistry):
     """注册空间分析工具"""
@@ -145,7 +147,12 @@ def register_spatial_tools(registry: ToolRegistry):
                "(3) 需要连续概率面做后续叠加分析 — 用 kde_surface；"
                "(4) 『每平方公里密度』等定量密度结论 — 用空间聚合/密度分析，视觉热力图不是定量证据。"
            ),
-           args_model=HeatmapDataArgs)
+           args_model=HeatmapDataArgs,
+           # #996: raster/grid 路径内部投递 Celery（run_heatmap_generation
+           # .apply_async 后 task.get(timeout=120) 同步等结果）——重工具显式
+           # 标 heavy + 显式墙钟预算（120s 任务等待 + 与原默认 300s 等量的
+           # 进程内回退余量，不因显式化而收紧）。
+           cost="heavy", timeout=300.0)
     @cached_tool(ttl=3600)
     def heatmap_data(geojson: Any, cell_size: int = 500, radius: Optional[int] = None,
                      render_type: str = "native", palette: str = "classic",
@@ -202,6 +209,11 @@ def register_spatial_tools(registry: ToolRegistry):
         # 服务端预渲染 PNG，仅在需要导出图片/离线渲染时显式指定。
         if render_type == "native":
             if isinstance(data, dict):
+                # #990: safe_parse_geojson 透传 dict 时可能原样返回共享只读
+                # payload 本体（#874 get_shared 零拷贝契约：工具不得就地改
+                # payload）。native 元数据只写进顶层浅拷贝，原 ref payload /
+                # 会话存储不被污染，同 ref 的并发调用也互不可见。
+                data = dict(data)
                 data["command"] = "add_native_heatmap"
                 # type_hint 驱动 dispatch 的 MapSpec 授权把点要素结果落成
                 # type=heatmap 图层（默认推断是 circle —— 热力图从未挂上的

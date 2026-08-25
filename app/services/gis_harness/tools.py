@@ -127,6 +127,9 @@ def register_gis_harness_tools(registry: ToolRegistry):
         # visibility. Keep webgis_map_product tier=2: it runs only after data
         # tools returned.
         tier=1, domains=["statistics", "report", "network", "temporal"], name="webgis_map_intent",
+        # #996: audit4 #979 给 result 形状加了 guidance 键（有界 capability→tool
+        # 裁决投影）——RESULT 契约变更，contract_version 1→2（指纹 1.0#cv2）。
+        contract_version=2,
         description=(
             "GIS 制图意图解析器（确定性，无副作用）。输入用户请求，返回 typed "
             "MapRequestIntent（scope/subject/task/analysis_intents/cartography_intents/"
@@ -252,6 +255,9 @@ def register_gis_harness_tools(registry: ToolRegistry):
     @tool(
         registry,
         tier=2, domains=["statistics", "report", "network", "temporal"], name="webgis_map_product",
+        # #996: audit4 #979 给 result 形状加了 guidance 键（绑定/fallback/
+        # 完备度有界投影）——RESULT 契约变更，contract_version 1→2（1.0#cv2）。
+        contract_version=2,
         description=(
             "地图产品组装器：数据/图层到位后，按 CartographyRecipe 复检资格"
             "（几何/最小点数/字段——代码侧确定性），把已授权图层绑定到产品角色、"
