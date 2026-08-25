@@ -315,6 +315,7 @@ def raster_calculator(
         # 的 B 需整幅重投影 —— 工具说明已建议先 resample 对齐，保留原实现。
         src_b = None
         data_b_full: Optional[np.ndarray] = None
+        footprint_b_full: Optional[np.ndarray] = None
         aligned = False
         try:
             if raster_b:
@@ -359,6 +360,28 @@ def raster_calculator(
                         reproject_kwargs["src_crs"] = src_b.crs
 
                     reproject(**reproject_kwargs)
+                    # Footprint of B in destination coordinates (#931): when
+                    # nodata_b is None, outside B's extent is filled with 0
+                    # and treated as valid (A+0=A). Reproject a mask of ones
+                    # to know which dest pixels are actually covered by B.
+                    footprint_b_full = np.zeros(src_a.shape, dtype=np.uint8)
+                    mask_src = np.ones((src_b.height, src_b.width), dtype=np.uint8)
+                    footprint_kwargs: dict = {
+                        "source": mask_src,
+                        "destination": footprint_b_full,
+                        "dst_transform": src_a.transform,
+                        "dst_crs": src_a.crs,
+                        "resampling": Resampling.nearest,
+                        "dst_nodata": 0,
+                    }
+                    if gcps_b:
+                        footprint_kwargs["gcps"] = gcps_b
+                        footprint_kwargs["gcps_crs"] = gcps_crs_b
+                        footprint_kwargs["src_crs"] = gcps_crs_b or src_b.crs
+                    else:
+                        footprint_kwargs["src_transform"] = src_b.transform
+                        footprint_kwargs["src_crs"] = src_b.crs
+                    reproject(**footprint_kwargs)
             else:
                 const_val = constant if constant is not None else 0
                 nodata_b = nodata_a
@@ -370,13 +393,16 @@ def raster_calculator(
                     return data_b_full[win.toslices()]
                 return np.full_like(data_a_win, fill_value=const_val, dtype=data_a_win.dtype)
 
-            def _compute_window(data_a_win: np.ndarray, data_b_win: np.ndarray) -> np.ndarray:
+            def _compute_window(data_a_win: np.ndarray, data_b_win: np.ndarray, win: Window) -> np.ndarray:
                 mask_a = _nodata_valid_mask(data_a_win, nodata_a)
                 mask_b = (
                     _nodata_valid_mask(data_b_win, nodata_b)
                     if (raster_b and nodata_b is not None)
                     else np.ones(data_a_win.shape, dtype=bool)
                 )
+                if footprint_b_full is not None:
+                    fw = footprint_b_full[win.toslices()]
+                    mask_b = mask_b & (fw == 1)
 
                 mask = mask_a & mask_b
 
@@ -425,7 +451,7 @@ def raster_calculator(
 
             first_win = windows[0]
             data_a0 = src_a.read(1, window=first_win)
-            result0 = _compute_window(data_a0, _get_b_window(first_win, data_a0))
+            result0 = _compute_window(data_a0, _get_b_window(first_win, data_a0), first_win)
 
             profile = _gtiff_profile(src_a.profile, nodata=out_nodata, count=1)
             profile["dtype"] = result0.dtype
@@ -436,7 +462,7 @@ def raster_calculator(
                 for win in windows[1:]:
                     checkpoint()
                     data_a_win = src_a.read(1, window=win)
-                    res = _compute_window(data_a_win, _get_b_window(win, data_a_win))
+                    res = _compute_window(data_a_win, _get_b_window(win, data_a_win), win)
                     dst.write(res, 1, window=win)
                     _accumulate(res)
         finally:
