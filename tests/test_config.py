@@ -107,3 +107,105 @@ def test_dev_allows_auth_disabled():
         AUTH_DISABLED=True,
     )
     assert s.AUTH_DISABLED is True
+
+
+def test_llm_private_endpoints_allowed_in_production():
+    """#925: LLM_BASE_URL 允许内网/集群内私网地址，仅做轻量校验。"""
+    # direct private IPs and localhost should be allowed for LLM
+    for url in [
+        "http://10.244.1.25:8000/v1",
+        "http://192.168.1.50:11434/v1",
+        "http://172.16.0.10:8000/v1",
+        "http://127.0.0.1:8000/v1",
+        "http://localhost:11434/v1",
+    ]:
+        s = Settings(
+            _env_file=None,
+            ENV="production",
+            JWT_SECRET_KEY="x" * 32,
+            LLM_API_KEY="sk-test-key",
+            DATABASE_URL="postgresql://user:pass@localhost/db",
+            LLM_BASE_URL=url,
+            OVERPASS_API_URL="https://overpass.openstreetmap.fr/api/interpreter",
+            NOMINATIM_URL="https://nominatim.openstreetmap.org/search",
+        )
+        assert s.LLM_BASE_URL == url
+
+    # cluster DNS resolving to private IP should also be allowed for LLM
+    import unittest.mock as mock
+
+    def _fake_llm_private(host, *a, **kw):
+        if host == "vllm-service.webgis-prod.svc.cluster.local":
+            return [(2, 1, 6, "", ("10.244.2.15", 8000))]
+        return [(2, 1, 6, "", ("1.1.1.1", 80))]
+
+    with mock.patch("socket.getaddrinfo", side_effect=_fake_llm_private):
+        s = Settings(
+            _env_file=None,
+            ENV="production",
+            JWT_SECRET_KEY="x" * 32,
+            LLM_API_KEY="sk-test-key",
+            DATABASE_URL="postgresql://user:pass@localhost/db",
+            LLM_BASE_URL="http://vllm-service.webgis-prod.svc.cluster.local:8000/v1",
+            OVERPASS_API_URL="https://overpass.openstreetmap.fr/api/interpreter",
+            NOMINATIM_URL="https://nominatim.openstreetmap.org/search",
+        )
+        assert "vllm-service" in s.LLM_BASE_URL
+
+
+def test_llm_still_rejects_invalid_scheme_and_no_hostname():
+    """#925: LLM 轻量校验仍需拒绝非法 scheme 和缺失 hostname。"""
+    import pytest
+    with pytest.raises(Exception, match="disallowed scheme"):
+        Settings(
+            _env_file=None,
+            ENV="production",
+            JWT_SECRET_KEY="x" * 32,
+            LLM_API_KEY="sk-test-key",
+            DATABASE_URL="postgresql://user:pass@localhost/db",
+            LLM_BASE_URL="ftp://10.0.0.1/v1",
+        )
+    with pytest.raises(Exception, match="has no hostname"):
+        Settings(
+            _env_file=None,
+            ENV="production",
+            JWT_SECRET_KEY="x" * 32,
+            LLM_API_KEY="sk-test-key",
+            DATABASE_URL="postgresql://user:pass@localhost/db",
+            LLM_BASE_URL="http:///no-host",
+        )
+
+
+def test_overpass_and_nominatim_still_block_private():
+    """#925 对照: Overpass/Nominatim 保持严格 SSRF，私网仍被拒。"""
+    import pytest
+    with pytest.raises(Exception, match="private|blocked domain|Blocked"):
+        Settings(
+            _env_file=None,
+            ENV="production",
+            JWT_SECRET_KEY="x" * 32,
+            LLM_API_KEY="sk-test-key",
+            DATABASE_URL="postgresql://user:pass@localhost/db",
+            OVERPASS_API_URL="http://10.1.1.1/api",
+        )
+    with pytest.raises(Exception, match="private|blocked domain|Blocked"):
+        Settings(
+            _env_file=None,
+            ENV="production",
+            JWT_SECRET_KEY="x" * 32,
+            LLM_API_KEY="sk-test-key",
+            DATABASE_URL="postgresql://user:pass@localhost/db",
+            NOMINATIM_URL="http://192.168.1.10/search",
+        )
+    # DNS 解析到私网也应被拒
+    import unittest.mock as mock
+    with mock.patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("10.0.0.5", 80))]):
+        with pytest.raises(Exception, match="private.*Blocked|Blocked"):
+            Settings(
+                _env_file=None,
+                ENV="production",
+                JWT_SECRET_KEY="x" * 32,
+                LLM_API_KEY="sk-test-key",
+                DATABASE_URL="postgresql://user:pass@localhost/db",
+                OVERPASS_API_URL="http://evil.example.com/api",
+            )

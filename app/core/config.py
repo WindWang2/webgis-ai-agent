@@ -280,14 +280,16 @@ class Settings(BaseSettings):
         审计 P1：之前只对 *非默认值* 做校验，若攻击者通过环境变量注入
         覆盖默认 URL（如 LLM_BASE_URL=https://evil.com），SSRF 校验被完全绕过。
         现在对所有 URL 统一校验，默认值也不例外。
+        #925: LLM_BASE_URL 允许企业内网/集群内私网地址，仅做轻量校验。
         """
-        for attr in ("LLM_BASE_URL", "OVERPASS_API_URL", "NOMINATIM_URL"):
+        for attr in ("OVERPASS_API_URL", "NOMINATIM_URL"):
             url = getattr(self, attr)
             self._validate_no_ssrf(url, field=attr)
+        self._validate_no_ssrf(getattr(self, "LLM_BASE_URL"), field="LLM_BASE_URL", allow_private=True)
         return self
 
     @staticmethod
-    def _validate_no_ssrf(url: str, field: str = "URL") -> None:
+    def _validate_no_ssrf(url: str, field: str = "URL", allow_private: bool = False) -> None:
         """校验单个 URL 不允许指向内网/元数据/非 HTTP 协议。"""
         parsed = urlparse(url)
 
@@ -302,8 +304,8 @@ class Settings(BaseSettings):
         if not hostname:
             raise ValueError(f"{field}='{url}' has no hostname.")
 
-        # 阻止本地回环
-        if hostname in ("localhost", "127.0.0.1", "::1"):
+        # 阻止本地回环（#925: LLM 内网豁免）
+        if not allow_private and hostname in ("localhost", "127.0.0.1", "::1"):
             raise ValueError(
                 f"{field}='{url}' points to localhost. "
                 f"Localhost URLs are blocked to prevent SSRF."
@@ -320,7 +322,9 @@ class Settings(BaseSettings):
                 f"{field}='{url}' points to a cloud metadata endpoint. Blocked."
             )
 
-        # 尝试解析 hostname → IP，检查是否为私有地址
+        # 尝试解析 hostname → IP，检查是否为私有地址（#925: LLM 豁免）
+        if allow_private:
+            return
         try:
             addr = ipaddress.ip_address(hostname)
             if addr.is_private or addr.is_loopback or addr.is_link_local:
