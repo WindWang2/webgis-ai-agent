@@ -31,3 +31,18 @@ def test_nearest_docstring_covers_contract():
     src = inspect.getsource(calculate_nearest)
     assert "mean_nearest_distance" in src
     assert "expected" in src
+
+
+def test_nearest_coincident_points_clustered():
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "geometry": {"type": "Point", "coordinates": [116.4074, 39.9042]}, "properties": {"id": i}}
+            for i in range(10)
+        ],
+    }
+    res = calculate_nearest(fc)
+    assert res.success
+    assert res.data["mean_nearest_distance"] == 0.0
+    assert res.data["R"] == 0.0
+    assert res.data["pattern"] == "clustered"

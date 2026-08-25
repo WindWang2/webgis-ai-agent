@@ -463,3 +463,20 @@ class TestPerf:
         for f in res.data["features"]:
             assert f["properties"]["reachable_edges_count"] <= 200
         assert elapsed < 5.0, f"tiny-budget isochrone over 19.8k edges took {elapsed:.1f} s"
+
+
+def test_isochrone_edge_projection_contains_facility():
+    from shapely.geometry import shape, Point
+
+    net = {
+        "type": "FeatureCollection",
+        "features": [{"type": "Feature", "geometry": {"type": "LineString", "coordinates": [[116.0, 39.9], [116.1, 39.9]]}, "properties": {}}],
+    }
+    facs = {
+        "type": "FeatureCollection",
+        "features": [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [116.05, 39.9]}, "properties": {"id": "f1"}}],
+    }
+    res = calculate_isochrones(net, facs, 15, mode="walking")
+    assert res.success
+    poly = shape(res.data["features"][0]["geometry"])
+    assert poly.intersects(Point(116.05, 39.9))

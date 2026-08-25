@@ -144,3 +144,28 @@ def test_calculator_undeclared_nan_becomes_nodata(_data_dir):
         arr = out.read(1)
     # The NaN position is the output nodata (0 by default), not a computed value.
     assert arr[0, 1] == 0
+
+
+def test_calculator_unaligned_nodata_footprint(_data_dir):
+    """Unaligned B without nodata tag: outside B's footprint must be nodata,
+    not A+0 (#931)."""
+    import tempfile
+    import os as _os
+    from rasterio.transform import from_bounds
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pa = _os.path.join(tmpdir, "a.tif")
+        pb = _os.path.join(tmpdir, "b.tif")
+        data_a = np.full((10, 10), 10.0, dtype=np.float32)
+        data_b = np.full((5, 5), 5.0, dtype=np.float32)
+        tr_a = from_bounds(0, 0, 100, 100, 10, 10)
+        tr_b = from_bounds(0, 50, 50, 100, 5, 5)
+        with rasterio.open(pa, "w", driver="GTiff", height=10, width=10, count=1, dtype=np.float32, crs="EPSG:3857", transform=tr_a, nodata=-9999.0) as dst:
+            dst.write(data_a, 1)
+        with rasterio.open(pb, "w", driver="GTiff", height=5, width=5, count=1, dtype=np.float32, crs="EPSG:3857", transform=tr_b) as dst:
+            dst.write(data_b, 1)
+        res = raster_calculator(raster_a=pa, raster_b=pb, expression="A + B")
+        with rasterio.open(res["output_path"]) as out:
+            arr = out.read(1)
+            assert arr[0, 0] == 15.0
+            assert arr[9, 9] == out.nodata

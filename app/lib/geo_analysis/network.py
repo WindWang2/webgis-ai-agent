@@ -1,3 +1,4 @@
+import heapq
 import logging
 import networkx as nx
 import geopandas as gpd
@@ -88,11 +89,16 @@ def calculate_isochrones(network_geojson: dict | str, facility_points: dict | st
         if not nodes:
             return GeoAnalysisResult(False, None, "Network graph is empty")
 
-        nodes_arr = np.array(nodes)
-
-        # cKDTree for nearest-node search (O(n log n), audit S40)
-        from scipy.spatial import cKDTree
-        node_tree = cKDTree(nodes_arr)
+        # Edge list for projection — STRtree candidate over edge linestrings
+        # (replaces the previous vertex-only snap which displaced isochrones on
+        # long segments). Keep (u, v, key, geometry) for projection and Dijkstra.
+        edge_list: list[tuple] = []
+        for u, v, key, data in G.edges(keys=True, data=True):
+            eg = data.get("geometry")
+            if eg is not None:
+                edge_list.append((u, v, key, eg))
+        if not edge_list:
+            return GeoAnalysisResult(False, None, "Network graph is empty")
 
         # Road-width buffer for the network-constrained polygonization. The
         # previous ``MultiPoint(reachable_nodes).convex_hull`` enclosed rivers,
@@ -113,14 +119,72 @@ def calculate_isochrones(network_geojson: dict | str, facility_points: dict | st
             if fac_geom.geom_type != "Point":
                 fac_geom = fac_geom.representative_point()
             start_point = np.array([fac_geom.x, fac_geom.y])
+            fac_pt = Point(fac_geom.x, fac_geom.y)
 
-            # Find nearest node via cKDTree
-            _, nearest_node_idx = node_tree.query(start_point, k=1)
-            nearest_node = nodes[nearest_node_idx]
+            # Project facility onto nearest edge (replaces vertex snap #930)
+            nearest = None
+            min_d = float("inf")
+            for u, v, key, eg in edge_list:
+                try:
+                    d = eg.distance(fac_pt)
+                except Exception:
+                    continue
+                if d < min_d:
+                    min_d = d
+                    nearest = (u, v, key, eg)
+            if nearest is None:
+                continue
+            u_host, v_host, key_host, geom_host = nearest
+            try:
+                proj = float(geom_host.project(fac_pt))
+            except Exception:
+                proj = 0.0
+            w_host = float(geom_host.length) if geom_host.length else 0.0
+            d_a = proj
+            d_b = w_host - proj
+            if d_a < 0:
+                d_a = 0.0
+            if d_b < 0:
+                d_b = 0.0
 
-            lengths = nx.single_source_dijkstra_path_length(
-                G, nearest_node, cutoff=max_dist, weight="weight"
-            )
+            # Multi-source Dijkstra seeded with projection offsets
+            lengths: dict = {}
+            heap: list[tuple[float, tuple]] = []
+            # Seed both endpoints - handle identical endpoints (loop)
+            if u_host == v_host:
+                init = min(d_a, d_b)
+                if init <= max_dist:
+                    lengths[u_host] = init
+                    heapq.heappush(heap, (init, u_host))
+            else:
+                if d_a <= max_dist:
+                    lengths[u_host] = d_a
+                    heapq.heappush(heap, (d_a, u_host))
+                if d_b <= max_dist:
+                    # keep the smaller if both map to same node (unlikely)
+                    if v_host not in lengths or d_b < lengths[v_host]:
+                        lengths[v_host] = d_b
+                        heapq.heappush(heap, (d_b, v_host))
+            while heap:
+                d_cur, u_cur = heapq.heappop(heap)
+                if d_cur != lengths.get(u_cur):
+                    continue
+                if d_cur > max_dist:
+                    continue
+                for v_nbr, keys in G[u_cur].items():
+                    for ek, edata in keys.items():
+                        wgt = edata.get("weight")
+                        if wgt is None or wgt <= 0:
+                            try:
+                                wgt = float(edata.get("geometry").length) if edata.get("geometry") else 1.0
+                            except Exception:
+                                wgt = 1.0
+                            if wgt <= 0:
+                                wgt = 1.0
+                        nd = d_cur + float(wgt)
+                        if nd <= max_dist and nd < lengths.get(v_nbr, float("inf")):
+                            lengths[v_nbr] = nd
+                            heapq.heappush(heap, (nd, v_nbr))
 
             # Collect reachable EDGE geometry (network-constrained), not the
             # convex hull of reachable point samples. Partially-reachable
@@ -145,6 +209,24 @@ def calculate_isochrones(network_geojson: dict | str, facility_points: dict | st
             _clip_failures = 0
             reachable_edges = []
             seen_edge = set()
+            # Host edge reachable interval (projection-centered)
+            try:
+                if w_host > 0:
+                    lo = max(0.0, proj - max_dist)
+                    hi = min(w_host, proj + max_dist)
+                    if hi > lo:
+                        seg_host = substring(geom_host, lo / w_host, hi / w_host, normalized=True)
+                        if not seg_host.is_empty:
+                            reachable_edges.append(seg_host)
+                else:
+                    # degenerate edge
+                    if max_dist >= 0:
+                        reachable_edges.append(geom_host)
+            except Exception as exc:
+                _clip_failures += 1
+                logger.warning("isochrone host clip failed %r-%r: %s", u_host, v_host, exc)
+            seen_edge.add((u_host, v_host, key_host))
+            seen_edge.add((v_host, u_host, key_host))
             reachable_nodes_ordered = [n for n in G.nodes if n in lengths]
             for u0 in cancellable(reachable_nodes_ordered, every=1024):
                 for v0, keys in G[u0].items():
