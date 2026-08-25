@@ -141,7 +141,16 @@ class AlgorithmResolver:
         *,
         profile: Optional[Dict[str, Any]] = None,
         available_tools: Optional[Any] = None,
+        _visited: Optional[set[str]] = None,
     ) -> AlgorithmResolution:
+        visited = set(_visited or ())
+        if capability in visited:
+            return AlgorithmResolution(
+                capability=capability,
+                status="unavailable",
+                reason="fallback_cycle_detected",
+            )
+        visited.add(capability)
         cap = self.capabilities.get(capability)
         if cap is None:
             return AlgorithmResolution(
@@ -210,7 +219,7 @@ class AlgorithmResolver:
         # 实际降级由 recipe eligibility / planner 图层回退执行）。
         for fb_cap in cap.fallback_capabilities:
             fb_resolution = self.resolve(
-                fb_cap, profile=profile, available_tools=available_tools)
+                fb_cap, profile=profile, available_tools=available_tools, _visited=visited)
             if fb_resolution.status == "resolved":
                 trail.append(FallbackStep(
                     from_element=capability,

@@ -390,10 +390,11 @@ SEED_MAP_MODELS: List[MapModel] = [
     MapModel(
         id="flow_od_arc", name_zh="OD 流向弧线图",
         purpose_zh="起讫对之间的流量/迁徙表达",
-        geometry_kinds=["point"],
+        geometry_kinds=["line", "point"],
         maplibre_layer_type="line",
         color_scheme_kind="sequential", default_palette="Plasma",
         deck_gl_layer="ArcLayer", kepler_layer="arc / flow(experimental)",
+        accepted_artifact_types=["line_feature_set", "od_matrix_table"],
         runtime_status="planned",
         pitfalls_zh=["需要 OD 结构化输入（起终点坐标对 + 权重），当前工具面未提供"],
         sources=[_DECKGL_URL, _KEPLER_URL],
