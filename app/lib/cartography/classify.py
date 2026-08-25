@@ -27,12 +27,14 @@ def _jenks_natural_breaks(values: np.ndarray, k: int) -> List[float]:
     严格 `<` 比较）保持不变；断点值仍从原始（未平移）数组取，因此与
     旧实现的分类边界完全一致（tests/test_jenks_441.py 用旧算法逐字
     副本在多组对抗数据上验证）。"""
+    uniq = sorted(set(np.asarray(values, dtype=float).tolist()))
+    if len(uniq) <= 1:
+        return [float(uniq[0])] if uniq else [0.0]
+    if len(uniq) <= k:
+        return [float(u) for u in uniq]
+
     arr = np.sort(values)
     n = len(arr)
-    if n <= k:
-        # Too few points for k classes — return all unique values as breaks
-        uniq = sorted(set(arr.tolist()))
-        return uniq if len(uniq) >= 2 else [uniq[0], uniq[0]]
     # Cap sample size for performance (Jenks is O(n²k))
     if n > 1000:
         # #618-19: 披露降采样 —— 断点基于均匀抽样的 1000 个样本计算，

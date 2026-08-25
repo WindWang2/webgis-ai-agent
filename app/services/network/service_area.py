@@ -350,19 +350,23 @@ class NetworkServiceAreaService:
                 pass
 
         # Fallback (no projection or empty reachable edges): buffer the node
-        # cluster. Keep the old degree-based convex hull ONLY as a last resort
-        # so the shape is never empty.
+        # cluster using latitude-adjusted degree distance (150m equivalent).
+        import math
+        lat_deg = float(fac_coords[1]) if len(fac_coords) > 1 else 0.0
+        cos_lat = max(0.01, math.cos(math.radians(lat_deg)))
+        buf_deg = (_ISOCHRONE_BUFFER_M / 111320.0) / cos_lat
+
         points = [Point(c[0], c[1]) for c in node_coords] if node_coords else [Point(fac_coords)]
         if len(points) >= 3:
             mp = MultiPoint(points)
-            hull = mp.convex_hull.buffer(0.005)
+            hull = mp.convex_hull.buffer(buf_deg)
             return mapping(hull)
         elif len(points) > 0:
             mp = MultiPoint(points)
-            buffered = mp.buffer(0.005)
+            buffered = mp.buffer(buf_deg)
             return mapping(buffered)
         else:
-            p = Point(fac_coords).buffer(0.005)
+            p = Point(fac_coords).buffer(buf_deg)
             return mapping(p)
 
     def _normalize_facilities(
