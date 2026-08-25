@@ -126,6 +126,7 @@ def test_llm_private_endpoints_allowed_in_production():
             JWT_SECRET_KEY="x" * 32,
             LLM_API_KEY="sk-test-key",
             DATABASE_URL="postgresql://user:pass@localhost/db",
+            ALLOW_PUBLIC_REGISTER=False,
             LLM_BASE_URL=url,
             OVERPASS_API_URL="https://8.8.8.8/api/interpreter",
             NOMINATIM_URL="https://1.1.1.1/search",
@@ -147,6 +148,7 @@ def test_llm_private_endpoints_allowed_in_production():
             JWT_SECRET_KEY="x" * 32,
             LLM_API_KEY="sk-test-key",
             DATABASE_URL="postgresql://user:pass@localhost/db",
+            ALLOW_PUBLIC_REGISTER=False,
             LLM_BASE_URL="http://vllm-service.webgis-prod.svc.cluster.local:8000/v1",
             OVERPASS_API_URL="https://8.8.8.8/api/interpreter",
             NOMINATIM_URL="https://1.1.1.1/search",
@@ -229,6 +231,7 @@ def test_env_prod_example_contains_mandatory_llm_api_key():
     old_jwt = os.environ.pop("JWT_SECRET_KEY", None)
     old_env = os.environ.pop("ENV", None)
     old_db = os.environ.pop("DATABASE_URL", None)
+    old_reg = os.environ.pop("ALLOW_PUBLIC_REGISTER", None)
     # 模板里的 OVERPASS/NOMINATIM 域名在 Settings 校验时会做真实 DNS 解析，
     # 环境解析抖动（非全局 IP/超时）会让本测试误红 —— 统一 mock 成公网 IP。
     import unittest.mock as _mock
@@ -247,7 +250,7 @@ def test_env_prod_example_contains_mandatory_llm_api_key():
         ).replace(
             "CHANGE_ME_STRONG_GRAFANA_PASSWORD", "StrongGrafanaPass123"
         )
-        prod_env += "\nAUTH_DISABLED=false\n"
+        prod_env += "\nAUTH_DISABLED=false\nALLOW_PUBLIC_REGISTER=false\n"
         with tempfile.NamedTemporaryFile("w+", suffix=".env.prod", delete=False) as f:
             f.write(prod_env)
             temp_path = f.name
@@ -275,3 +278,5 @@ def test_env_prod_example_contains_mandatory_llm_api_key():
             os.environ["ENV"] = old_env
         if old_db is not None:
             os.environ["DATABASE_URL"] = old_db
+        if old_reg is not None:
+            os.environ["ALLOW_PUBLIC_REGISTER"] = old_reg
