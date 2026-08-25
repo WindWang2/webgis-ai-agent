@@ -158,17 +158,25 @@ def test_vectorized_perf_speedup():
     lngs = rng.uniform(73, 135, n)
     lats = rng.uniform(3, 53, n)
 
-    # vectorized
-    t0 = _t.perf_counter()
-    wgs84_to_gcj02_array(lngs, lats)
-    t_vec = _t.perf_counter() - t0
+    # CI 共享 runner 的负载抖动会让单次计时严重失真（曾把 10-50x 的真实
+    # 加速比测成 1.9x），两侧各取 3 次最小值 —— 对两条路径同等的
+    # 「本征耗时」估计，不偏袒任何一方。
+    def _time_vec() -> float:
+        t0 = _t.perf_counter()
+        wgs84_to_gcj02_array(lngs, lats)
+        return _t.perf_counter() - t0
 
     # scalar (sample subset to keep test fast — extrapolate)
     sample = 500
-    t0 = _t.perf_counter()
-    for i in range(sample):
-        wgs84_to_gcj02(float(lngs[i]), float(lats[i]))
-    t_scalar = (_t.perf_counter() - t0) * (n / sample)
+
+    def _time_scalar() -> float:
+        t0 = _t.perf_counter()
+        for i in range(sample):
+            wgs84_to_gcj02(float(lngs[i]), float(lats[i]))
+        return (_t.perf_counter() - t0) * (n / sample)
+
+    t_vec = min(_time_vec() for _ in range(3))
+    t_scalar = min(_time_scalar() for _ in range(3))
 
     # vectorized must be at least 3x faster than extrapolated scalar
     # (conservative floor across machines; real speedup is ~10-50x at full scale)

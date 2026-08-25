@@ -431,7 +431,7 @@ configs:
           # #757: WS 位置专用 —— $$request_no_query 把请求行里的 query string 剥掉，
           # 防止 ?token=<JWT> 随 $$request 写入访问日志。
           map $$request $$request_no_query {
-              ~^(?<req_method>[^ ]+) (?<req_path>[^ ?]+)\?[^\ ]* (?<req_ver>HTTP/[^ ]+)$$ "$$req_method $$req_path $$req_ver";
+              "~^(?<req_method>[^ ]+) (?<req_path>[^ ?]+)\?[^\ ]* (?<req_ver>HTTP/[^ ]+)$$" "$$req_method $$req_path $$req_ver";
               default $$request;
           }
           log_format ws_no_query '$$remote_addr - $$remote_user [$$time_local] "$$request_no_query" '
