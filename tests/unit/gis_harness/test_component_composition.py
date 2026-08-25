@@ -1,4 +1,3 @@
-import pytest
 from app.lib.cartography.component_taxonomy import get_component_category_registry
 from app.lib.cartography.component_registry import get_component_registry
 from app.lib.cartography.component_templates import get_component_template_registry
@@ -56,7 +55,7 @@ def test_resolver_respects_output_target():
     # minimal_interactive forbids map_border/export_layout
     assert "map_border" not in sel.selected
 
-    sel2 = resolver.resolve(map_model_id="visual_heatmap", output_target="pdf", available_context=["statistics"])
+    resolver.resolve(map_model_id="visual_heatmap", output_target="pdf", available_context=["statistics"])
     # pdf-capable compositions may include export_layout
     # at least not crash
 
