@@ -94,9 +94,11 @@ export function resolveLayerTargetsByRef(layerId: string, getHudState: () => any
       .map(([id]) => id),
   );
   if (sourceIds.size === 0) return [];
-  const knownIds = new Set(layers.map((l) => l.id));
+  // 不要求 store 行：product-* 等后端直写图层可能尚无 HUD 行（镜像
+  // syncSpecLayersToStore 与本解析互为兜底）。无行的目标由调用侧经
+  // mergePendingPresentation 落到 spec 层——绝不能因面板无行而漏隐藏。
   return (spec.layers as any[])
-    .filter((l) => sourceIds.has(String(l.source || '')) && knownIds.has(String(l.id)))
+    .filter((l) => sourceIds.has(String(l.source || '')))
     .map((l) => String(l.id));
 }
 

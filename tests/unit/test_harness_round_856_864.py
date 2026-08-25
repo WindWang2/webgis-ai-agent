@@ -295,3 +295,22 @@ def test_h9_evidence_candidates_share_selection_source():
     assert "c.id for c in _candidates" in src, (
         "evidence 候选必须来自与决策同源的一次取数（H-9）"
     )
+
+
+# ─── 2026-08-25 会话回归：product-* 直写图层必须带 name ──────────────────
+
+def test_product_layers_carry_display_names():
+    """webgis_map_product 补层（heatmap/points）必须给图层 stamp 名称。
+
+    无名的 product-* 层在前端面板只能显示 id 后缀（product-930ab45f-
+    points），用户认不出哪行是 POI 查询结果；且 spec 无 name 时前端镜像
+    行的命名链退到算法名。源码级回归锚点（与 H-9 同模式）。"""
+    from app.services.gis_harness import tools as harness_tools
+
+    src = open(harness_tools.__file__, encoding="utf-8").read()
+    assert 'converted["name"] = f"{title}·密度热力图" if title else "密度热力图"' in src, (
+        "product heatmap 层必须带语义名（title 前缀可选）"
+    )
+    assert 'converted["name"] = f"{title}·点位分布" if title else "点位分布图"' in src, (
+        "product points 层必须带语义名（title 前缀可选）"
+    )

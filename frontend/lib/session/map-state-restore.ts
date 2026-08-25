@@ -181,12 +181,83 @@ export interface RestoreMapLayersOptions {
   signal?: AbortSignal;
 }
 
+/**
+ * Live 会话的 committed MapSpec → HUD 行镜像（2026-08-25 会话回归）。
+ * webgis_map_product / webgis_layer_upsert 等后端直写图层只落 MapSpec，
+ * 不经 tool_result 的 addLayer 路径 → 图层面板看不到它们，ref 定向的
+ * set_layer_status / finalize_display 也因 store 无行而漏网（POI 点隐藏
+ * 失败即此因）。committed spec 提交时给缺行的图层补一行：行上带
+ * `_mapspecLayerId`（开关/删除走 user-mutation 的 presentation/removed
+ * 路径）与 `_refId`（数据由 ref-source-resolver 回填）。幂等——按 id
+ * 与 `_mapspecLayerId` 双重去重，重复提交零副作用。
+ */
+export function syncSpecLayersToStore(
+  mapspec: { layers?: unknown[]; sources?: Record<string, any> } | null | undefined,
+  sessionId: string | undefined,
+): void {
+  const specLayers = mapspec?.layers;
+  if (!Array.isArray(specLayers) || specLayers.length === 0) return;
+
+  const storeLayers = useHudStore.getState().layers ?? [];
+  const known = new Set<string>();
+  for (const row of storeLayers) {
+    known.add(String(row.id));
+    if (row._mapspecLayerId) known.add(String(row._mapspecLayerId));
+  }
+
+  for (const raw of specLayers) {
+    const layer = raw as Record<string, any>;
+    const id = String(layer?.id || '');
+    if (!id || known.has(id)) continue;
+    const source = mapspec?.sources?.[String(layer.source || '')] ?? {};
+    const refId = typeof source?.ref_id === 'string' ? source.ref_id
+      : typeof source?.ref === 'string' ? source.ref : undefined;
+    // 命名链：spec 自带 name/title → legend 标题 → 算法语义名 → id 兜底。
+    // 之前 product-* 直写层只能得到 "分析结果: <uuid 后缀>"，用户在面板
+    // 里根本认不出哪个是 POI 查询结果。
+    const algorithm = layer?.provenance?.algorithm;
+    const name = String(
+      layer.name
+      || layer.title
+      || layer?.legend_spec?.title
+      || (algorithm === 'webgis_map_product' ? '地图产品图层' : '')
+      || (algorithm ? `分析结果: ${algorithm}` : '')
+      || `分析结果: ${id}`,
+    );
+    const presentation = presentationFromMapSpec(mapspec as any, id);
+    useHudStore.getState().addLayer({
+      id,
+      name,
+      type: layer.type === 'heatmap' || layer.type === 'raster' ? layer.type : 'vector',
+      visible: presentation.visible !== false,
+      opacity: typeof presentation.opacity === 'number' ? presentation.opacity : 1,
+      group: 'analysis',
+      source: {
+        type: 'FeatureCollection',
+        features: [],
+        metadata: { ref_id: refId },
+      } as GeoJSONFeatureCollection,
+      _refId: refId,
+      legend_spec: layer?.legend_spec,
+      _mapspecLayerId: id,
+      _tileUrl: refId && sessionId
+        ? `${API_BASE}/api/v1/layers/data/${refId}/tiles/{z}/{x}/{y}.mvt?session_id=${sessionId}`
+        : undefined,
+    });
+    known.add(id);
+  }
+}
+
 /** 把会话 map-state 的图层部分应用到 HUD store（含 ref 数据回填）。 */
 export async function restoreSessionMapLayers(
   state: SessionMapState,
   opts: RestoreMapLayersOptions,
 ): Promise<void> {
   commitMapSpecDocument(state.mapspec);
+  // 持久化 layers/observation 只记 HUD 行——product-* 等直写层只在
+  // state.mapspec.layers 里，恢复时同样要镜像成行（与会话 live 路径
+  // syncSpecLayersToStore 的调用点互补）。
+  syncSpecLayersToStore(state.mapspec, opts.sessionId);
   const store = useHudStore.getState();
   const raw = selectLayersToRestore(state);
   const observation = state._cartographic_observation;

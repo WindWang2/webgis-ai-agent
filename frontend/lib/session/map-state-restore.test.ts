@@ -9,6 +9,7 @@ import {
   restoreSessionMapLayers,
   selectCameraToRestore,
   selectLayersToRestore,
+  syncSpecLayersToStore,
 } from './map-state-restore';
 
 vi.mock('@/lib/api/config', () => ({ API_BASE: 'http://localhost:8000' }));
@@ -141,6 +142,77 @@ describe('buildLayerFromRestored', () => {
     );
     expect(layer.type).toBe('heatmap');
     expect(layer.source).toEqual({ image: 'data:image/png;base64,xxx', bbox: [100, 20, 101, 21] });
+  });
+});
+
+describe('syncSpecLayersToStore（product-* 直写图层镜像）', () => {
+  const productSpec = {
+    version: '1.0',
+    sources: {
+      'webgis_map_product_layer_source': { type: 'geojson', ref_id: 'ref:geojson-poi' },
+    },
+    layers: [
+      {
+        id: 'product-930-points',
+        source: 'webgis_map_product_layer_source',
+        type: 'circle',
+        provenance: { algorithm: 'webgis_map_product' },
+        name: '点位分布图',
+      },
+    ],
+  };
+
+  it('给无 store 行的 spec 层补 HUD 行（名称/ref 身份/瓦片端点）', () => {
+    syncSpecLayersToStore(productSpec as any, 'sid-1');
+    const rows = useHudStore.getState().layers;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: 'product-930-points',
+      name: '点位分布图',
+      _mapspecLayerId: 'product-930-points',
+      _refId: 'ref:geojson-poi',
+      visible: true,
+    });
+    expect(rows[0]._tileUrl).toContain('/tiles/{z}/{x}/{y}.mvt?session_id=sid-1');
+  });
+
+  it('无 spec 名时按 命名链 兜底（legend 标题 → 算法语义名）', () => {
+    syncSpecLayersToStore({
+      version: '1.0',
+      sources: { s1: { type: 'geojson', ref_id: 'ref:r' } },
+      layers: [
+        { id: 'product-x-points', source: 's1', type: 'circle', provenance: { algorithm: 'webgis_map_product' } },
+        { id: 'result-1', source: 's1', type: 'circle', provenance: { algorithm: 'query_local_poi' } },
+      ],
+    } as any, 'sid-1');
+    const names = useHudStore.getState().layers.map((l) => l.name);
+    expect(names).toContain('地图产品图层');
+    expect(names).toContain('分析结果: query_local_poi');
+  });
+
+  it('layout.visibility=none 的 spec 层镜像为隐藏行', () => {
+    syncSpecLayersToStore({
+      version: '1.0',
+      sources: {},
+      layers: [{ id: 'hidden-one', type: 'circle', layout: { visibility: 'none' } }],
+    } as any, 'sid-1');
+    expect(useHudStore.getState().layers[0].visible).toBe(false);
+  });
+
+  it('幂等：按 id 与 _mapspecLayerId 双重去重，重复提交零新增', () => {
+    syncSpecLayersToStore(productSpec as any, 'sid-1');
+    syncSpecLayersToStore(productSpec as any, 'sid-1');
+    expect(useHudStore.getState().layers).toHaveLength(1);
+
+    // 已有行 id 不同但 _mapspecLayerId 相同（恢复层形态）也不重复镜像
+    useHudStore.getState().clearLayers();
+    useHudStore.getState().addLayer({
+      id: 'ref:geojson-poi',
+      name: 'POI',
+      _mapspecLayerId: 'product-930-points',
+    } as any);
+    syncSpecLayersToStore(productSpec as any, 'sid-1');
+    expect(useHudStore.getState().layers).toHaveLength(1);
   });
 });
 

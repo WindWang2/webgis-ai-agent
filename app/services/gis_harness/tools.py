@@ -462,6 +462,9 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 converted, _, _warn = convert_analysis_to_mapspec_layer(analysis_payload)
                 slug = _hashlib.sha256(f"{plan.plan_id}:heatmap".encode()).hexdigest()[:8]
                 converted["id"] = f"product-{slug}-heatmap"
+                # 图层名进 spec（前端面板镜像行直接采用）：无名的 product-*
+                # 在面板里只能显示 id 后缀，用户无法辨认。
+                converted["name"] = f"{title}·密度热力图" if title else "密度热力图"
                 src_ref = {
                     "type": "geojson", "ref_id": primary_ref,
                     "profile": profile,
@@ -492,6 +495,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 converted, _, _warn = convert_analysis_to_mapspec_layer(analysis_payload)
                 slug = _hashlib.sha256(f"{plan.plan_id}:points".encode()).hexdigest()[:8]
                 converted["id"] = f"product-{slug}-points"
+                converted["name"] = f"{title}·点位分布" if title else "点位分布图"
                 res = await mapspec_store.layer_upsert(
                     session_id, converted,
                     {"type": "geojson", "ref_id": primary_ref, "profile": profile},

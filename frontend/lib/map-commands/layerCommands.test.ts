@@ -628,7 +628,9 @@ describe('layer_visibility_update 跨 id 体系解析', () => {
     expect(
       resolveLayerTargetsByRef('ref:r', () => ({ layers: [{ id: 'L1', _refId: 'ref:r' }] }) as any),
     ).toEqual(['L1']);
-    // 3. committed spec 命中（store 层缺一不可 —— 只返回 store 里真实存在的层）
+    // 3. committed spec 命中 —— spec-only 层（无 store 行）也是合法目标：
+    // product-* 直写层可能尚未镜像成 HUD 行，漏了它 ref 定向隐藏就漏网
+    // （2026-08-25 会话回归：POI 点隐藏失败）。
     commitMapSpecDocument({
       version: '1.0',
       sources: { s1: { type: 'geojson', ref_id: 'ref:r2' } },
@@ -636,7 +638,29 @@ describe('layer_visibility_update 跨 id 体系解析', () => {
     } as any);
     expect(
       resolveLayerTargetsByRef('ref:r2', () => ({ layers: [] }) as any),
-    ).toEqual([]);
+    ).toEqual(['spec-only']);
+  });
+
+  it('spec-only 层（无 store 行）的 ref 隐藏经 pending presentation 落到 spec 层', () => {
+    commitMapSpecDocument({
+      version: '1.0',
+      sources: { s1: { type: 'geojson', ref_id: 'ref:poi' } },
+      layers: [{ id: 'product-xyz-points', source: 's1', type: 'circle' }],
+    } as any);
+    const updateLayer = vi.fn();
+    const map = makeMockMaplibreMap();
+    const ctx = {
+      map, popAction: () => {}, setDeferredPop: () => {}, safePop: () => {},
+      getHudState: () => ({ layers: [], updateLayer }),
+      setSelectedBaseLayer: () => {},
+      command: 'layer_visibility_update',
+      params: { layer_id: 'ref:poi', visible: false },
+    } as unknown as MapCommandContext;
+
+    const result = layerCommands.layer_visibility_update.run(ctx) as any;
+
+    expect(result.status).toBe('succeeded');
+    expect(getPendingPresentation()['product-xyz-points']).toEqual({ visible: false });
   });
 });
 

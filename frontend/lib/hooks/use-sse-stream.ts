@@ -8,7 +8,7 @@ import { API_BASE } from '@/lib/api/config';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
 import type { SSEEvent } from '@/lib/api/chat';
 import type { ToolCallEntry, PlanProposalPayload, PlanProposalStatus, SelectedFeatureInfo } from '@/lib/store/hud-types';
-import { reportLayerFetchFailure } from '@/lib/session/map-state-restore';
+import { reportLayerFetchFailure, syncSpecLayersToStore } from '@/lib/session/map-state-restore';
 import { commitMapSpecDocument, setMapSpecRevision, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import { nextTurn, noteAgentDisplayed } from '@/lib/chat/turn-focus';
 import { useToastStore } from '@/components/ui/toast';
@@ -505,6 +505,9 @@ export function useSSEStream(
       const incomingMapSpec = data?.mapspec ?? data?.result?.mapspec;
       if (incomingMapSpec) {
         commitMapSpecDocument(incomingMapSpec);
+        // product-* 等后端直写图层只落 MapSpec 不走 addLayer 路径——镜像
+        // 成 HUD 行，图层面板可见、ref 定向显隐可解析（幂等，见注释）。
+        syncSpecLayersToStore(incomingMapSpec, sessionIdRef.current);
       }
 
       // SEC-08：服务端在新建匿名会话时签发 owner_token（随 task_start / session 事件下发）。
@@ -672,9 +675,10 @@ export function useSSEStream(
           // generation instead of creating a duplicate layer.
           if (runtimePatch && data.geojson_ref) {
             useHudStore.getState().updateLayer(layerId, {
-              name: runtimePatch.layer_id
-                ? `分析结果: ${runtimePatch.layer_id}`
-                : layerName,
+              // 命名不得回退成 "分析结果: result-chatcmpl-tool-<hash>"——
+              // 用户在图层面板认不出哪行是 POI/热力（2026-08-25 会话回归）。
+              // 语义链：layer_meta 标题 → 工具语义名（"搜索结果: 小学"等）。
+              name: layerMetaTitle || layerName,
               visible: patchVisible,
               opacity: patchOpacity,
               style: patchStyle,
