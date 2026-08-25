@@ -300,20 +300,15 @@ async def test_run_workflow_engine_off_loop(monkeypatch):
 
     monkeypatch.setattr(route_mod, "ProjectService", _FakeProjectService)
 
-    injected_db = MagicMock()
     req = WorkflowRunRequest(input_bindings={"aoi": "Haidian"}, start_from_step=None)
     res = await _assert_loop_responsive_while(
         lambda: route_mod.run_workflow(
             "proj_1", "wf_1", req,
-            db=injected_db,
             user={"user_id": "u1", "org_id": None},
         )
     )
     assert res["status"] == "completed"
     assert observed["thread"] != _main_thread, "workflow engine ran on the event loop thread"
-    assert observed["session_id"] != id(injected_db), (
-        "engine reused the request-injected Session across threads"
-    )
 
 
 # ─── Site 5: Celery broker/backend socket I/O ────────────────────────────────

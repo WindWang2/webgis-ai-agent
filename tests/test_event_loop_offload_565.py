@@ -85,6 +85,41 @@ def test_async_routes_have_no_direct_sync_db_calls():
     )
 
 
+def test_no_unused_depends_get_db_in_offloaded_routes():
+    """#932: async routes that offload via SessionLocal must not also hold
+    Depends(get_db) — that holds two pool connections and exhausts QueuePool."""
+    import ast
+    from pathlib import Path
+
+    offenders: list[str] = []
+    for rel in ("app/api/routes/data_fabric.py", "app/api/routes/project.py"):
+        src = Path(rel).read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.AsyncFunctionDef):
+                continue
+            # Does this async def declare `db: Session = Depends(get_db)`?
+            has_depends = False
+            for arg in node.args.args:
+                if arg.arg == "db":
+                    # inspect default via source slice
+                    has_depends = True
+            if not has_depends:
+                continue
+            # Check if body actually uses `db` (Load)
+            used = any(
+                isinstance(n, ast.Name) and n.id == "db" and isinstance(n.ctx, ast.Load)
+                for n in ast.walk(node)
+                if getattr(n, "lineno", 0) > node.lineno
+            )
+            if not used:
+                offenders.append(f"{rel}:{node.lineno} {node.name} holds unused Depends(get_db)")
+    assert not offenders, (
+        "async routes hold unused Depends(get_db) (dual connection → pool exhaustion #932):\n"
+        + "\n".join(offenders)
+    )
+
+
 # ─── Dynamic loop-responsiveness: slow DB work must stay off the loop ──────
 
 
@@ -206,7 +241,7 @@ async def test_list_data_sources_db_read_off_loop(monkeypatch):
     monkeypatch.setattr(df, "SessionLocal", lambda: _SlowSession([], observed))
 
     res = await _assert_loop_responsive_while(
-        lambda: df.list_data_sources(source_type=None, db=None, user=None)
+        lambda: df.list_data_sources(source_type=None, user=None)
     )
     assert observed.get("thread") != _main_thread, (
         "list_data_sources ran its DB read on the event loop thread"
@@ -220,7 +255,7 @@ async def test_list_spatial_catalog_db_read_off_loop(monkeypatch):
     monkeypatch.setattr(df, "SessionLocal", lambda: _SlowSession([], observed))
 
     res = await _assert_loop_responsive_while(
-        lambda: df.list_spatial_catalog(db=None, user=None)
+        lambda: df.list_spatial_catalog(user=None)
     )
     assert observed.get("thread") != _main_thread
     assert res["total"] == 0 and res["items"] == []
@@ -240,7 +275,7 @@ async def test_probe_data_source_read_and_commit_off_loop(monkeypatch):
     )
 
     res = await _assert_loop_responsive_while(
-        lambda: df.probe_data_source("src-1", db=None, user=None)
+        lambda: df.probe_data_source("src-1", user=None)
     )
     assert observed.get("thread") != _main_thread, (
         "probe_data_source ran its DB read/commit on the event loop thread"
@@ -260,7 +295,7 @@ async def test_run_workflow_auth_lookup_off_loop(monkeypatch):
     with pytest.raises(HTTPException) as exc_info:
         await _assert_loop_responsive_while(
             lambda: project_mod.run_workflow(
-                "proj-1", "wf-1", req=req, db=None, user={"user_id": "u1"}
+                "proj-1", "wf-1", req=req, user={"user_id": "u1"}
             )
         )
     assert exc_info.value.status_code == 404
