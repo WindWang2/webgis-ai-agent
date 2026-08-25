@@ -112,6 +112,7 @@ def test_dev_allows_auth_disabled():
 def test_llm_private_endpoints_allowed_in_production():
     """#925: LLM_BASE_URL 允许内网/集群内私网地址，仅做轻量校验。"""
     # direct private IPs and localhost should be allowed for LLM
+    # OVERPASS/NOMINATIM 用公网 IP 字面量：走严格校验路径但不依赖外部 DNS（确定性）
     for url in [
         "http://10.244.1.25:8000/v1",
         "http://192.168.1.50:11434/v1",
@@ -126,8 +127,8 @@ def test_llm_private_endpoints_allowed_in_production():
             LLM_API_KEY="sk-test-key",
             DATABASE_URL="postgresql://user:pass@localhost/db",
             LLM_BASE_URL=url,
-            OVERPASS_API_URL="https://overpass.openstreetmap.fr/api/interpreter",
-            NOMINATIM_URL="https://nominatim.openstreetmap.org/search",
+            OVERPASS_API_URL="https://8.8.8.8/api/interpreter",
+            NOMINATIM_URL="https://1.1.1.1/search",
         )
         assert s.LLM_BASE_URL == url
 
@@ -147,8 +148,8 @@ def test_llm_private_endpoints_allowed_in_production():
             LLM_API_KEY="sk-test-key",
             DATABASE_URL="postgresql://user:pass@localhost/db",
             LLM_BASE_URL="http://vllm-service.webgis-prod.svc.cluster.local:8000/v1",
-            OVERPASS_API_URL="https://overpass.openstreetmap.fr/api/interpreter",
-            NOMINATIM_URL="https://nominatim.openstreetmap.org/search",
+            OVERPASS_API_URL="https://8.8.8.8/api/interpreter",
+            NOMINATIM_URL="https://1.1.1.1/search",
         )
         assert "vllm-service" in s.LLM_BASE_URL
 
@@ -228,6 +229,13 @@ def test_env_prod_example_contains_mandatory_llm_api_key():
     old_jwt = os.environ.pop("JWT_SECRET_KEY", None)
     old_env = os.environ.pop("ENV", None)
     old_db = os.environ.pop("DATABASE_URL", None)
+    # 模板里的 OVERPASS/NOMINATIM 域名在 Settings 校验时会做真实 DNS 解析，
+    # 环境解析抖动（非全局 IP/超时）会让本测试误红 —— 统一 mock 成公网 IP。
+    import unittest.mock as _mock
+
+    def _public_dns(host, *a, **kw):
+        return [(2, 1, 6, "", ("93.184.216.34", 80))]
+
     try:
         prod_env = content.replace(
             "CHANGE_ME_TO_SECURE_RANDOM_STRING_AT_LEAST_32_CHARS",
@@ -245,15 +253,17 @@ def test_env_prod_example_contains_mandatory_llm_api_key():
             temp_path = f.name
         import pytest
 
-        with pytest.raises(RuntimeError, match="LLM_API_KEY"):
-            Settings(_env_file=temp_path)
+        with _mock.patch("socket.getaddrinfo", side_effect=_public_dns):
+            with pytest.raises(RuntimeError, match="LLM_API_KEY"):
+                Settings(_env_file=temp_path)
         os.remove(temp_path)
         # 填入真实 key 后应能启动
         prod_env_filled = prod_env.replace("LLM_API_KEY=", "LLM_API_KEY=sk-real-prod-key-12345")
         with tempfile.NamedTemporaryFile("w+", suffix=".env.prod", delete=False) as f:
             f.write(prod_env_filled)
             temp_path = f.name
-        s = Settings(_env_file=temp_path)
+        with _mock.patch("socket.getaddrinfo", side_effect=_public_dns):
+            s = Settings(_env_file=temp_path)
         assert s.LLM_API_KEY == "sk-real-prod-key-12345"
         os.remove(temp_path)
     finally:
