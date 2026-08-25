@@ -248,6 +248,7 @@ class ChatContextAssembler:
             build_last_analysis_context,
             build_map_state_summary,
             truncate_history_by_budget,
+            fold_intra_turn_tool_results,
             _build_truncation_notice,
         )
         from app.services.chat.context.session_overview import build_session_overview
@@ -365,7 +366,11 @@ class ChatContextAssembler:
         if last_ctx:
             head.append({"role": "system", "content": last_ctx})
 
-        history, dropped = truncate_history_by_budget(messages[1:])
+        # audit4 #980: 先折叠当前回合内较早的 tool 结果（仅影响发送视图，
+        # 不落库），再按跨轮预算截断 —— min_turns 豁免对轮内增长无效，60 轮
+        # 工具循环的回合此前每轮全量重发。
+        foldable = fold_intra_turn_tool_results(messages[1:])
+        history, dropped = truncate_history_by_budget(foldable)
         if dropped > 0:
             head.append({"role": "system", "content": _build_truncation_notice(dropped)})
             logger.info(f"[HISTORY-TRUNC] session={session_id} dropped {dropped} turns")

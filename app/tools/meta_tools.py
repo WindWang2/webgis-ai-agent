@@ -13,34 +13,36 @@ from app.tools.registry import ToolRegistry, tool, ToolExecutionPolicy
 logger = logging.getLogger(__name__)
 
 
-def _live_domain_vocab(registry: ToolRegistry) -> str:
+def _registry_domains_sorted(registry: ToolRegistry) -> list[str]:
     """Derive the domain vocabulary from the live registry — the single source
     of truth. The previous static description listed domains that don't exist
     in the registry (``core`` / ``report`` have zero tools, a dead end) while
-    omitting four real ones (``temporal`` / ``data_fabric`` / ``spatial_catalog``
-    / ``dataset``), so the LLM's discovery vocabulary drifted from reality
+    omitting real ones, so the LLM's discovery vocabulary drifted from reality
     (#556). Contract: every domain this tool advertises must return ≥1 tool.
     """
-    domains = sorted(
+    return sorted(
         {
             d
             for meta in registry.all_metadata().values()
             for d in meta.get("domains", [])
         }
     )
-    return " / ".join(domains)
 
 
 def _build_list_available_tools_args_model(registry: ToolRegistry) -> Type[BaseModel]:
     """Args model for list_available_tools, generated from the live registry
     domains so the advertised vocabulary can never drift from reality again."""
+    domains = _registry_domains_sorted(registry)
     return create_model(
         "ListAvailableToolsArgs",
         domain=(
             str,
             Field(
                 ...,
-                description=f"要查询的领域，取值之一：{_live_domain_vocab(registry)}",
+                description=f"要查询的领域，取值之一：{' / '.join(domains)}",
+                # audit4 #983: schema 层枚举 —— 此前拼错域名静默返回 count=0
+                # 死胡同，LLM 无从纠正。
+                json_schema_extra={"enum": domains},
             ),
         ),
     )
@@ -62,6 +64,22 @@ def register_meta_tools(registry: ToolRegistry) -> None:
         execution_policy=ToolExecutionPolicy.INLINE,
     )
     async def list_available_tools(domain: str) -> dict:
+        # audit4 #983: 运行时兜底 —— json_schema_extra 的 enum 只是文档层提示，
+        # 拼错域名时返回 available_domains 纠错信息而非静默 count=0 死胡同。
+        # 保持非错误形状（success≠False）：#556 契约测试在部分注册表场景下
+        # 派发任意域且要求不落入错误分支。
+        valid = _registry_domains_sorted(registry)
+        if domain not in valid:
+            return {
+                "domain": domain,
+                "count": 0,
+                "tools": [],
+                "available_domains": valid,
+                "message": (
+                    f"未知领域 {domain!r}"
+                    + (f"；可用领域：{' / '.join(valid)}" if valid else "（当前注册表未注册任何域工具）")
+                ),
+            }
         descriptions: dict[str, str] = {}
         for schema in registry.get_schemas():
             fn = schema.get("function", {})

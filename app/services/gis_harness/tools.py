@@ -206,6 +206,23 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 ),
             })
 
+        # audit4 #979: 有界 guidance 投影 —— slim_tool_result 的 summary 分支
+        # 此前把 intent/candidates/plan 整包丢弃，capability→tool 裁决从未
+        # 到达 LLM（harness 只有建议权的具体机制）。guidance 在
+        # _PRESERVED_META_KEYS 白名单内，每行一条裁决，总量闸兜底。
+        guidance = [
+            f"{c['capability']} → {c['resolved_tool'] or '无对应工具(需自选)'}"
+            f"（{c['purpose']}）"
+            for c in capabilities[:10]
+        ]
+        if len(capabilities) > 10:
+            guidance.append(f"（另有 {len(capabilities) - 10} 项数据需求，见 map_product 阶段）")
+        missing = [c["capability"] for c in capabilities if not c["resolved_tool"]]
+        if missing:
+            guidance.append(
+                "⚠ 未解析能力: " + ", ".join(missing[:5]) + " —— 计划内无注册工具，需换路径"
+            )
+
         return {
             "success": True,
             "intent": intent.model_dump(),
@@ -217,6 +234,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
             "recommended_recipe": plan.recipe_id,
             "plan": plan.model_dump(),
             "capabilities": capabilities,
+            "guidance": guidance,
             "summary": (
                 f"意图:{intent.task} 范围:{intent.scope.name or '未识别'} "
                 f"主体:{intent.subject.category or '未识别'} → 推荐 recipe:{plan.recipe_id}"
@@ -679,6 +697,33 @@ def register_gis_harness_tools(registry: ToolRegistry):
                     ))
                     plan.completeness = planner.assess_completeness(plan)
 
+        # audit4 #979: 产品阶段 guidance 投影（与 intent 阶段同理由）——
+        # 绑定结果/fallback 证据/完备度必须有界地到达 LLM，否则降级与缺口
+        # 不可见、模型无法自纠。
+        def _item_field(item: Any, key: str) -> Any:
+            if isinstance(item, dict):
+                return item.get(key)
+            return getattr(item, key, None)
+
+        product_guidance: List[str] = [
+            f"recipe={plan.recipe_id} 状态={plan.status}",
+            f"已绑定图层 {len(bound_layers)} 个"
+            + (
+                "（" + ", ".join(
+                    str(_item_field(b, "layer_id") or _item_field(b, "role") or "?")
+                    for b in bound_layers[:3]
+                ) + ("…" if len(bound_layers) > 3 else "") + "）"
+                if bound_layers else ""
+            ),
+        ]
+        if plan.fallbacks:
+            first_fb = plan.fallbacks[0]
+            fb_msg = _item_field(first_fb, "reason") or _item_field(first_fb, "message") or first_fb
+            product_guidance.append(f"⚠ fallback {len(plan.fallbacks)} 次（如: {str(fb_msg)[:80]}）")
+        if authoring_failures:
+            product_guidance.append(
+                f"⚠ {len(authoring_failures)} 项图层/组件提交失败 —— 产品不完整，需补数据或重试"
+            )
         out.update({
             "recipe_id": plan.recipe_id,
             "template_id": plan.template_id,
@@ -688,6 +733,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
             "fallbacks": [fb if isinstance(fb, dict) else fb.model_dump() for fb in plan.fallbacks],
             "eligibility": plan.eligibility,
             "completeness": plan.completeness,
+            "guidance": product_guidance[:10],
             "intent": {"task": intent.task, "scope": intent.scope.name,
                        "subject": intent.subject.category},
             "map_product_evidence": {

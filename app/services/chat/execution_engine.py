@@ -788,10 +788,12 @@ class ChatExecutionEngine:
                 db_save_content = msg_result_str[:100000] if len(msg_result_str) > 100000 else msg_result_str
                 await self._save_msg_async(session_id, "tool", "", None, db_save_content, tc["id"])
                 # DB 写完成后再动内存列表 —— 中断窗口内重入不会重复 append
+                # audit4 #980: 内存副本与 DB 同钳 100K —— 此前未截断的
+                # msg_result_str 直接进 messages，轮内重组时全量重发。
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc["id"],
-                    "content": msg_result_str,
+                    "content": db_save_content,
                 })
             else:
                 tool_result_msgs.append(f"{tool_name}: {msg_result_str}")

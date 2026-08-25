@@ -98,7 +98,11 @@ def register_layer_management_tools(registry: ToolRegistry):
            registry,
            name="finalize_display",
            tier=2,
-           domains=["cartography"],
+           # audit4 #978: 域必须是 DOMAIN_KEYWORDS 的键。此前误标 "cartography"
+           # （词表中不存在的域）→ tier-2 永不命中，SYSTEM_PROMPT 强制的每轮
+           # 收尾钩子在 legacy 引擎整链不可达。"mapspec" 与「显示/隐藏/图层」
+           # 激活词对齐，追问收口场景必然命中。
+           domains=["mapspec"],
            description=(
                "【每轮分析收尾必调】最终图层显示管理钩子：确定本轮要展示的图层集合。"
                "显示列出的图层，隐藏当前会话中其余所有分析图层（原始 POI 点、边界、"

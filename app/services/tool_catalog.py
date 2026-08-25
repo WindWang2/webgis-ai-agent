@@ -15,7 +15,9 @@
 """
 from __future__ import annotations
 
+import json
 import logging
+import os
 import re
 from typing import Optional
 
@@ -115,6 +117,19 @@ DOMAIN_KEYWORDS: dict[str, list[str]] = {
 # 命中后保持载入的轮次（衰减式 sticky，避免每轮重复探测）
 _DEFAULT_STICKY_TTL = 3
 
+# audit4 #981: 粘性域总量上限 —— sticky 命中即重置 TTL 且只增不减，多主题
+# 探索会话 3-4 个用户轮即可累积激活全部 11 个域（≈147 schema，逼近全目录）。
+# 超限时按最近命中时间保留最新 N 个域。
+_MAX_ACTIVE_STICKY_DOMAINS = 4
+
+# audit4 #981: tier-2 schema 增量硬预算（字节）。tier-1 是必发基线不参与截断；
+# 超预算时 tier-2 按「本轮关键词域 → 计划声明域 → 粘性域」的优先级依次纳入，
+# 截断后 LLM 仍可通过 list_available_tools 自救。典型中文多域请求此前可达
+# 57KB/81 工具；该闸把它钉在有界水平。
+_TIER2_SCHEMA_BUDGET_BYTES = int(
+    os.getenv("TOOL_SCHEMA_TIER2_BUDGET_KB") or 24
+) * 1024
+
 # 本地 OSM GPKG 可用时，不要再把高德/百度 POI 工具塞给模型。
 _SUPPRESS_WHEN_LOCAL_OSM = frozenset({
     "search_poi",
@@ -183,10 +198,81 @@ class ToolCatalog:
         if _local_osm_available():
             names.difference_update(_SUPPRESS_WHEN_LOCAL_OSM)
         schemas = self.registry.get_schemas_subset(names)
+        schemas = self._enforce_schema_budget(
+            schemas, user_message, declared_domains, active_domains,
+        )
         logger.debug(
             "[ToolCatalog] session=%s domains=%s selected=%d/%d",
             session_id, sorted(active_domains), len(schemas), len(self.registry.get_schemas()),
         )
+        return schemas
+
+    def _enforce_schema_budget(
+        self,
+        schemas: list[dict],
+        user_message: Optional[str],
+        declared_domains: Optional[set[str]],
+        active_domains: set[str],
+    ) -> list[dict]:
+        """audit4 #981: tier-2 增量字节硬预算。
+
+        超预算时按域优先级（本轮关键词命中域 → 计划声明域 → 其余粘性域，
+        域内按工具名排序保持确定性）截断 tier-2；tier-1 必发不截。LLM 的
+        自救通道（list_available_tools，tier-1 恒可见）不受影响。
+        """
+        if not schemas:
+            return schemas
+        budget = _TIER2_SCHEMA_BUDGET_BYTES
+        fresh = self.detect_domains(user_message or "")
+        priority_domains: list[str] = sorted(fresh | set(declared_domains or ()))
+        priority_domains += [d for d in sorted(active_domains) if d not in priority_domains]
+        domain_rank = {d: i for i, d in enumerate(priority_domains)}
+        all_meta = self.registry.all_metadata()
+
+        tier1: list[tuple[str, dict]] = []
+        tier2: list[tuple[str, dict]] = []
+        for s in schemas:
+            name = s.get("function", {}).get("name", "")
+            if int(all_meta.get(name, {}).get("tier", 1)) == 1:
+                tier1.append((name, s))
+            else:
+                tier2.append((name, s))
+
+        def _rank(item: tuple[str, dict]) -> tuple:
+            name, _ = item
+            ranks = [
+                domain_rank[d]
+                for d in all_meta.get(name, {}).get("domains", [])
+                if d in domain_rank
+            ]
+            # #715/#979: harness 前门工具（webgis_*）是确定性意图/产品入口，
+            # 预算截断时绝不能被同域的字母序挤掉——否则"各区…数量"这类
+            # canonical 场景又回到intent不可达。
+            front_door = 0 if name.startswith("webgis_") else 1
+            return (min(ranks) if ranks else len(domain_rank), front_door, name)
+
+        sizes: dict[str, int] = {}
+        for s in schemas:
+            sizes[s.get("function", {}).get("name", "")] = len(json.dumps(s, ensure_ascii=False))
+        tier2.sort(key=_rank)
+
+        kept_names = [name for name, _ in tier1]
+        used = 0
+        for name, _ in tier2:
+            if used + sizes[name] > budget:
+                break
+            kept_names.append(name)
+            used += sizes[name]
+        dropped = len(tier2) - (len(kept_names) - len(tier1))
+        if dropped > 0:
+            logger.info(
+                "[ToolCatalog] schema budget: dropped %d/%d tier-2 tools "
+                "(tier2=%dKB > budget=%dKB); list_available_tools remains the fallback",
+                dropped, len(tier2),
+                sum(sizes[name] for name, _ in tier2) // 1024, budget // 1024,
+            )
+            keep = set(kept_names)
+            return [s for s in schemas if s.get("function", {}).get("name", "") in keep]
         return schemas
 
     def active_domains(self, session_id: Optional[str]) -> set[str]:
@@ -272,9 +358,15 @@ class ToolCatalog:
                 self._sticky_turn[session_id] = turn_id
         else:
             decayed = {d: t - 1 for d, t in sticky.items() if t - 1 > 0}
-        # 新命中的 domain 满 TTL 重置
+        # 新命中的 domain 满 TTL 重置（pop+reinsert 维护 recency 插入序）
         for d in fresh:
+            decayed.pop(d, None)
             decayed[d] = self.sticky_ttl
+        # audit4 #981: 粘性域总量上限 —— 超限保留最近命中的 N 个域，
+        # 防止多主题会话累积激活全部域逼近全目录。
+        if len(decayed) > _MAX_ACTIVE_STICKY_DOMAINS:
+            keep = list(decayed)[-_MAX_ACTIVE_STICKY_DOMAINS:]
+            decayed = {d: decayed[d] for d in keep}
         self._sticky[session_id] = decayed
         return set(decayed.keys())
 

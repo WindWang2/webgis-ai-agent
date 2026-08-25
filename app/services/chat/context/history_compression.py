@@ -119,3 +119,74 @@ def truncate_history_by_budget(
         return history, 0
     flat = [m for turn in kept for m in turn]
     return flat, dropped
+
+
+# ── audit4 #980: 轮内（intra-turn）tool 结果软预算 ──────────────────────────
+# truncate_history_by_budget 以「用户轮」为原子、min_turns 强制保留最近轮，
+# 但一个用户回合内最多 CHAT_MAX_ROUNDS=60 轮 LLM 循环的 tool_calls+tool 结果
+# 全部属于"当前轮"——预算对轮内增长完全无效，每轮全量重发导致 token 二次方
+# 级膨胀。折叠策略：当前回合内只保留最近 keep_recent 条 tool 结果原文，更早
+# 的替换为单行占位（消息不删、tool_call/tool 配对保持，provider 不会拒绝）。
+_TURN_TOOL_KEEP_RECENT = 8   # 保留原文的最新 tool 结果条数
+_TURN_TOOL_FOLD_MIN = 12     # 回合内 tool 消息少于该数不折叠（小回合无 churn）
+_SYNTHETIC_TOOL_USER_PREFIX = "[工具执行结果]"
+_FOLDED_TOOL_PLACEHOLDER = (
+    "[已折叠] {name} 已执行，结果已省略以控制上下文长度。"
+    "如需引用其产物请使用已返回的 ref/别名；如需重跑请微调参数"
+    "（完全同参会被去重拦截）。"
+)
+
+
+def fold_intra_turn_tool_results(
+    messages: list[dict],
+    keep_recent: int = _TURN_TOOL_KEEP_RECENT,
+) -> list[dict]:
+    """折叠**当前回合**内较早的 tool 结果（仅影响发给 LLM 的视图，不改动库）。
+
+    - 当前回合 = 最后一条真实 user 消息（排除 XML 路径合成的
+      ``[工具执行结果]`` 载体）之后的全部消息。
+    - 回合内 tool 消息 ≤ fold_min 时不动作，返回原列表。
+    - 被折叠消息的 content 替换为单行占位（配对不变），其余字段原样保留。
+    """
+    if not messages:
+        return messages
+    last_user_idx = -1
+    for i in range(len(messages) - 1, -1, -1):
+        msg = messages[i]
+        if msg.get("role") != "user":
+            continue
+        content = msg.get("content")
+        text = content if isinstance(content, str) else ""
+        if text.startswith(_SYNTHETIC_TOOL_USER_PREFIX):
+            continue
+        last_user_idx = i
+        break
+    if last_user_idx < 0:
+        return messages
+    tail = messages[last_user_idx + 1:]
+    tool_positions = [j for j, m in enumerate(tail) if m.get("role") == "tool"]
+    if len(tool_positions) <= max(keep_recent, _TURN_TOOL_FOLD_MIN):
+        return messages
+
+    # tool_call_id → 工具名（占位文案里指名道姓，帮助模型定位）
+    call_names: dict[str, str] = {}
+    for m in tail:
+        for tc in m.get("tool_calls") or []:
+            try:
+                call_names[tc["id"]] = tc["function"]["name"]
+            except (KeyError, TypeError):
+                continue
+
+    fold_set = set(tool_positions[:-keep_recent]) if keep_recent > 0 else set(tool_positions)
+    if not fold_set:
+        return messages
+    new_tail: list[dict] = []
+    for j, m in enumerate(tail):
+        if j in fold_set:
+            name = call_names.get(m.get("tool_call_id") or "", "工具")
+            folded = dict(m)
+            folded["content"] = _FOLDED_TOOL_PLACEHOLDER.format(name=name)
+            new_tail.append(folded)
+        else:
+            new_tail.append(m)
+    return messages[: last_user_idx + 1] + new_tail
