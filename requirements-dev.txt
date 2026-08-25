@@ -18,5 +18,5 @@ fakeredis>=2.37.1
 
 # Excel parsing for local stats / yearbook ingest tests
 openpyxl>=3.1.2
-python-calamine>=0.2.0
+python-calamine>=0.8.2
 
