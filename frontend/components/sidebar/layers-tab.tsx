@@ -80,23 +80,27 @@ export function LayersTab() {
 
   const commitOpacity = useCallback(
     (layer: Layer) => {
+      const pct = opacityDraft[layer.id];
+      if (pct === undefined) return; // nothing drafted (no drag happened)
+      // Store 写入必须在 updater 之外：React 在渲染阶段执行 updater（要求
+      // 纯函数），在里面写 store 会触发 "Cannot update a component while
+      // rendering a different component"。
       setOpacityDraft((prev) => {
-        const pct = prev[layer.id];
-        if (pct === undefined) return prev; // nothing drafted (no drag happened)
-        const next = pct / 100;
-        const current = layer.opacity ?? 1;
-        // Only write when the committed value actually differs — avoids a
-        // redundant store update (and reconcile) on grab-without-drag.
-        if (Math.abs(next - current) > 1e-9) {
-          updateLayer(layer.id, { opacity: next });
-          void setLayerOpacityAndCommit(layer.id, next);
-        }
+        if (!(layer.id in prev)) return prev; // onPointerUp 后紧跟 onBlur 的重复提交
         const nextDraft = { ...prev };
         delete nextDraft[layer.id];
         return nextDraft;
       });
+      const next = pct / 100;
+      const current = layer.opacity ?? 1;
+      // Only write when the committed value actually differs — avoids a
+      // redundant store update (and reconcile) on grab-without-drag.
+      if (Math.abs(next - current) > 1e-9) {
+        updateLayer(layer.id, { opacity: next });
+        void setLayerOpacityAndCommit(layer.id, next);
+      }
     },
-    [updateLayer]
+    [opacityDraft, updateLayer]
   );
 
   const visibleCount = useMemo(

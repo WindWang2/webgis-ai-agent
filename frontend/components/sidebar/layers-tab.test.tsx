@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
+import { useSyncExternalStore } from 'react';
 import type { Layer } from '@/lib/types/layer';
 
 /**
@@ -131,6 +132,75 @@ describe('LayersTab — opacity slider debounce (FE-03)', () => {
     fireEvent.pointerUp(slider);
 
     expect(updateLayer).not.toHaveBeenCalled();
+  });
+});
+
+describe('LayersTab — commitOpacity 不在渲染阶段写 store', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setStoreLayers([]);
+  });
+
+  /**
+   * 2026-08-25 会话回归：commitOpacity 曾把 updateLayer（zustand set →
+   * EmbodiedHud 的 setState）放进 setOpacityDraft 的 updater 里。React 在
+   * 渲染阶段执行 updater（要求纯函数），于是浏览器报 "Cannot update a
+   * component (EmbodiedHud) while rendering a different component
+   * (LayersTab)"。这里用一个 useSyncExternalStore 订阅者扮演 EmbodiedHud：
+   * 若 updateLayer 仍在渲染阶段被调用，React 会通过 console.error 发出
+   * 该警告，断言捕获不到它。
+   */
+  it('提交透明度不触发 setState-in-render 警告', () => {
+    const listeners = new Set<() => void>();
+    let version = 0;
+    const notify = () => {
+      version += 1;
+      listeners.forEach((l) => l());
+    };
+    updateLayer.mockImplementation(() => notify());
+
+    // 订阅者组件：等同 EmbodiedHud 对 store 的 useSyncExternalStore 订阅
+    function StoreSubscriber() {
+      useSyncExternalStore(
+        (cb) => {
+          listeners.add(cb);
+          return () => listeners.delete(cb);
+        },
+        () => version
+      );
+      return null;
+    }
+
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      setStoreLayers([makeLayer({ opacity: 1 })]);
+      render(
+        <div>
+          <StoreSubscriber />
+          <LayersTab />
+        </div>
+      );
+
+      const slider = screen.getByRole('slider');
+      fireEvent.change(slider, { target: { value: '50' } });
+      act(() => {
+        fireEvent.pointerUp(slider);
+      });
+      // 重复提交路径（pointerUp 之后紧跟 blur）也应干净
+      act(() => {
+        fireEvent.blur(slider);
+      });
+
+      const renderPhaseWrites = errSpy.mock.calls
+        .map((c) => c.map(String).join(' '))
+        .filter((t) => t.includes('Cannot update a component'));
+      expect(renderPhaseWrites).toEqual([]);
+      // 提交本身仍然发生（修复不能以丢提交为代价）
+      expect(updateLayer).toHaveBeenCalledWith('L1', { opacity: 0.5 });
+    } finally {
+      errSpy.mockRestore();
+      updateLayer.mockImplementation(undefined);
+    }
   });
 });
 
