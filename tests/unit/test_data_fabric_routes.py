@@ -6,7 +6,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.core.database import SessionLocal, init_db, Base, Engine
+from app.core.database import SessionLocal, Base, Engine
 from app.schemas.data_fabric_schema import DataFabricHealth, QueryResult
 from app.services.mapspec.lifecycle_engine import mapspec_lifecycle_engine, UpsertLayerIntent
 from app.services.mapspec_source import is_data_fabric_entry
@@ -15,7 +15,10 @@ from app.services.mapspec_source import is_data_fabric_entry
 @pytest.fixture(scope="module", autouse=True)
 def setup_db():
     Base.metadata.drop_all(bind=Engine)
-    init_db()
+    # Postgres（CI）上 init_db 按 audit #839 跳过 create_all（schema 归
+    # Alembic），测试自管 schema 须显式建表 —— 与 test_618 / test_project_domain
+    # 的 drop_all + create_all 惯例一致。
+    Base.metadata.create_all(bind=Engine)
     # The create route persists owner_id = JWT sub into data_sources.owner_id,
     # which FK-references users(id). Postgres (CI) enforces the FK; sqlite
     # (local) does not — seed the caller's row so both environments agree.
