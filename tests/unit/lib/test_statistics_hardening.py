@@ -156,3 +156,17 @@ def test_kmeans_zero_clusters_friendly_error():
     res = cluster_narrated(_clustered_field(), method="kmeans", n_clusters=0)
     assert res.success  # clamped to 1, not crashed
     assert res.data["method"] == "kmeans"
+
+
+def test_bh_qvalues_nan_sanitized():
+    from app.lib.geo_analysis.statistics import _bh_qvalues
+
+    p_vals = np.array([0.0001, 0.001, 0.005, 0.01, 0.02, 0.03, np.nan])
+    q_vals = _bh_qvalues(p_vals)
+    assert not np.isnan(q_vals[:-1]).any()
+    assert q_vals[-1] == 1.0
+    assert np.all((q_vals >= 0) & (q_vals <= 1))
+    assert np.all(q_vals[:-1] < 0.05)
+    p_clean = np.array([0.0001, 0.001, 0.005, 0.01, 0.02, 0.03])
+    q_clean = _bh_qvalues(p_clean)
+    assert q_clean == pytest.approx(np.array([0.0006, 0.003, 0.01, 0.015, 0.024, 0.03]), abs=1e-12)

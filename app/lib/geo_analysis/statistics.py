@@ -27,11 +27,14 @@ def _bh_qvalues(p: "np.ndarray") -> "np.ndarray":
     n = p.size
     if n == 0:
         return p
-    order = np.argsort(p)
-    ranked = p[order] * n / (np.arange(n) + 1)
+    nan_mask = np.isnan(p)
+    p_clean = np.where(nan_mask, 1.0, p)
+    order = np.argsort(p_clean)
+    ranked = p_clean[order] * n / (np.arange(n) + 1)
     q_sorted = np.minimum.accumulate(ranked[::-1])[::-1]
     out = np.empty(n, dtype=float)
     out[order] = np.clip(q_sorted, 0.0, 1.0)
+    out[nan_mask] = 1.0
     return out
 
 def _build_weights(gdf: gpd.GeoDataFrame, k: int = 8) -> sparse.coo_matrix:
