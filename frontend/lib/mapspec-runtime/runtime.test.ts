@@ -772,3 +772,46 @@ describe("MapSpecRuntime — Data Plane vector tile source", () => {
     expect(map._calls.addLayer.map((call: any) => call.def.id)).toEqual(["V1__point"]);
   });
 });
+
+// ─── ref-only 源的静默跳过与数据到达后的补挂载（product 图层契约）───
+
+describe("MapSpecRuntime — pending ref-only sources", () => {
+  it("ref-only 源的图层不 addLayer、不置 lastError（静默等待数据）", async () => {
+    const map = makeMockMap();
+    const rt = new MapSpecRuntime(map);
+    const spec: MapSpec = {
+      version: "1.0",
+      sources: {
+        webgis_map_product_layer_source: {
+          type: "geojson",
+          ref_id: "ref:geojson-poi",
+          profile: { featureCount: 3 },
+        } as any,
+      },
+      layers: [
+        { id: "product-a-heatmap", source: "webgis_map_product_layer_source", type: "heatmap" },
+      ],
+    };
+    await rt.reconcileAsync(spec);
+    expect(map._calls.addLayer).toEqual([]);
+    expect(map._calls.addSource.map((c: any) => c.id)).toEqual([]);
+    // 不污染 lastError（#459：lastError 阻断 appliedSpec 前进）
+    expect(rt.getLastError()).toBeNull();
+    expect(rt.getAppliedSpec()).toEqual(spec);
+
+    // 数据到达（inlineData 注入）→ source:update + layer:recompile 补挂载
+    const resolved: MapSpec = {
+      ...spec,
+      sources: {
+        webgis_map_product_layer_source: {
+          type: "geojson",
+          ref_id: "ref:geojson-poi",
+          inlineData: { type: "FeatureCollection", features: [] },
+        } as any,
+      },
+    };
+    await rt.reconcileAsync(resolved);
+    expect(map._calls.addSource.map((c: any) => c.id)).toEqual(["webgis_map_product_layer_source"]);
+    expect(map._calls.addLayer.map((c: any) => c.def.id)).toEqual(["product-a-heatmap"]);
+  });
+});

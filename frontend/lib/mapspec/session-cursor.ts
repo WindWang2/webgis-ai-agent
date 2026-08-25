@@ -2,6 +2,7 @@
 
 import type { MapSpec } from '@/lib/mapspec-compiler/types';
 import type { PendingPresentation } from '@/lib/mapspec/live-spec';
+import { resetRefSourceCache } from '@/lib/mapspec/ref-source-resolver';
 
 let sessionId: string | undefined;
 let revision = 0;
@@ -21,6 +22,8 @@ export function resetLiveState(): void {
   committed = null;
   pending = {};
   pendingRemoved = [];
+  // ref 数据缓存随会话失效（ref 归会话所有；切换后旧数据不可复用）。
+  resetRefSourceCache();
 }
 
 export function subscribeMapSpecLive(listener: () => void): () => void {

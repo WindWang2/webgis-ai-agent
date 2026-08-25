@@ -1,6 +1,8 @@
 import { diffSpecs, type SpecPatch } from "@/lib/mapspec-compiler/reconciler";
 import { diffSpecsAsync, disposeWorker, consumeDiffLastFailed } from "@/lib/mapspec-compiler/worker-bridge";
 import type { MapSpec, MapSpecSource, MapSpecLayer } from "@/lib/mapspec-compiler/types";
+import { toMapLibrePaint } from "@/lib/mapspec-runtime/paint-bridge";
+import { isRefOnlySource } from "@/lib/mapspec/ref-source-resolver";
 import { RenderDebouncer, type RenderOperation } from "@/lib/map-kit/render-debouncer";
 import * as renderer from "@/lib/map-kit/renderer";
 import { recordDebounceFrame } from "@/lib/utils/perf-counters";
@@ -290,6 +292,18 @@ export class MapSpecRuntime {
 
     const ops: RenderOperation[] = [];
 
+    // 数据 ref 尚未解析的源（后端直写 MapSpec 的 {ref_id} 源，payload 由
+    // ref-source-resolver / HUD 异步补齐）此刻无法上地图：跳过其源应用与
+    // 依赖图层的 add/recompile，不触发 MapLibre 的 "source not found" 报错，
+    // 也不污染 lastError（#459：lastError 会阻断 appliedSpec 前进）。数据
+    // 到达后的下一次 diff 会以 source:update + layer:recompile 补挂载。
+    const pendingRefSources = new Set<string>();
+    for (const layer of nextSpec.layers) {
+      if (layer.source && isRefOnlySource(nextSpec.sources?.[layer.source])) {
+        pendingRefSources.add(layer.source);
+      }
+    }
+
     for (const change of patch.layers) {
       if (change.kind === "remove" || change.kind === "recompile") {
         ops.push({
@@ -310,6 +324,7 @@ export class MapSpecRuntime {
           execute: () => this.removeSourceSafe(change.id),
         });
       } else if ((change.kind === "add" || change.kind === "update") && change.next) {
+        if (pendingRefSources.has(change.id)) continue;
         const next = change.next;
         ops.push({
           id: `source:apply:${change.id}`,
@@ -322,6 +337,7 @@ export class MapSpecRuntime {
 
     for (const change of patch.layers) {
       if ((change.kind === "add" || change.kind === "recompile") && change.next) {
+        if (pendingRefSources.has(change.next.source)) continue;
         const next = change.next;
         ops.push({
           id: `layer:add:${change.id}`,
@@ -508,12 +524,15 @@ export class MapSpecRuntime {
 
   private addLayerSafe(layer: MapSpecLayer): void {
     // MapSpecLayer is already shaped close to a MapLibre layer spec. We pass it
-    // through with only the fields MapLibre expects.
+    // through with only the fields MapLibre expects. Paint goes through the
+    // dialect bridge: backend-authored layers carry canonical short keys
+    // (`color`/`radius`/…) while the adapter emits MapLibre-native keys —
+    // MapLibre rejects the former as unknown properties.
     const def: any = {
       id: layer.id,
       type: layer.type,
       source: layer.source,
-      paint: layer.paint || {},
+      paint: toMapLibrePaint(layer),
       layout: layer.layout || {},
     };
     if (layer.filter) def.filter = layer.filter;

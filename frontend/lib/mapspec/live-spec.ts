@@ -97,6 +97,35 @@ function mergeHudSources(
       }
     }
   }
+
+  // ref 数据身份合并：后端直写图层（webgis_map_product 等）的源只带
+  // ref_id，其数据 ref 往往正是某个 HUD 图层已拉取的同一份（POI 查询
+  // 结果）。按 ref 身份并入，product 图层无需二次下载即可挂载。
+  // 只认已落地的 GeoJSON 载荷（inlineData 非空占位）——空占位（HUD
+  // 尚未拉回）与 MVT 矢量源不参与。
+  const hudRefPayloads = new Map<string, NonNullable<MapSpec['sources'][string]>>();
+  for (const layer of hud.layers || []) {
+    const refId = layer._refId;
+    const data = (hudSpec.sources?.[layer.id] as unknown as Record<string, unknown> | undefined)?.inlineData as
+      | { features?: unknown[] }
+      | undefined;
+    if (!refId || !data || !Array.isArray(data.features) || data.features.length === 0) continue;
+    if (!hudRefPayloads.has(refId)) {
+      hudRefPayloads.set(refId, hudSpec.sources![layer.id]);
+    }
+  }
+  if (hudRefPayloads.size > 0) {
+    for (const [sid, source] of Object.entries(sources)) {
+      const s = source as unknown as Record<string, unknown> | undefined;
+      if (!s || s.type !== 'geojson') continue;
+      if (s.inlineData != null || s.url != null || s.dataPath != null) continue;
+      const refId = typeof s.ref_id === 'string' ? s.ref_id : typeof s.ref === 'string' ? s.ref : null;
+      const payload = refId ? hudRefPayloads.get(refId) : undefined;
+      if (payload) {
+        sources[sid] = exclusiveGeojsonPayload(source, payload);
+      }
+    }
+  }
   return sources;
 }
 
