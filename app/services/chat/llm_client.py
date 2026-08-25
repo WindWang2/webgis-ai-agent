@@ -105,20 +105,21 @@ class LLMConfig:
     base_url: str
     model: str
     api_key: str
+    # audit4 #1005: X-Prompt-Cache / deepseek-caching 均非 OpenAI / DeepSeek
+    # 文档化约定，大概率空转 —— 字段保留（兼容 update_config API），不再发送
+    # 任何缓存头；DeepSeek 的上下文缓存是服务端自动行为。
     use_prompt_caching: bool = False
     max_tokens: int = 16384
+    # audit4 #997: 采样/超时参数进配置层（此前硬编码 16384 / 120s / 180s）。
+    temperature: Optional[float] = None
+    timeout_s: float = 120.0
 
 
 def _build_headers(cfg: LLMConfig) -> dict:
-    headers = {
+    return {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {cfg.api_key}",
     }
-    if cfg.use_prompt_caching:
-        headers["X-Prompt-Cache"] = "1"
-        if "deepseek" in cfg.base_url.lower():
-            headers["deepseek-caching"] = "true"
-    return headers
 
 
 def _build_payload(cfg: LLMConfig, messages: list[dict], tools: Optional[list], stream: bool) -> dict:
@@ -127,11 +128,16 @@ def _build_payload(cfg: LLMConfig, messages: list[dict], tools: Optional[list], 
         "messages": messages,
         "max_tokens": cfg.max_tokens,
     }
+    if cfg.temperature is not None:
+        payload["temperature"] = cfg.temperature
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
     if stream:
         payload["stream"] = True
+        # audit4 #985: 请求 provider 在 [DONE] 前回传 usage（OpenAI 兼容约定），
+        # 否则流式 token 用量结构性丢失、成本不可观测。
+        payload["stream_options"] = {"include_usage": True}
     return payload
 
 
@@ -343,27 +349,59 @@ async def close_llm_http_clients() -> None:
     await _registry.aclose_all()
 
 
+# ── audit4 #986: 连接相位重试 ────────────────────────────────────────────────
+# 上面池化契约的注释明确了唯一安全的重试边界：连接/池相位（请求尚未被 provider
+# 处理）+ 流式建立时的非 2xx（未 yield 任何 token）。本层只重试这两类：
+#   * httpx.ConnectError / ConnectTimeout / PoolTimeout —— TCP/TLS/池获取失败；
+#   * HTTP 429/500/502/503/504 且**流未建立/未产出内容** —— 幂等安全。
+# 任何已产出 token 的中途失败绝不重试（会重复内容/双执行 tool 调用）。
+_RETRY_TRANSPORT = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
+_RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
+_RETRY_ATTEMPTS = 3
+_RETRY_BACKOFF_S = 0.5
+
+
+async def _connect_backoff(attempt: int) -> None:
+    await asyncio.sleep(_RETRY_BACKOFF_S * (2 ** attempt))
+
+
+def _is_retryable_failure(exc: BaseException) -> bool:
+    if isinstance(exc, _RETRY_TRANSPORT):
+        return True
+    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in _RETRY_STATUS
+
+
 async def call_llm(
     cfg: LLMConfig,
     messages: list[dict],
     tools: Optional[list] = None,
 ) -> dict:
-    """同步（非流式）调用 LLM API；返回完整响应 JSON。"""
+    """同步（非流式）调用 LLM API；返回完整响应 JSON（含 usage）。"""
     headers = _build_headers(cfg)
     payload = _build_payload(cfg, messages, tools, stream=False)
     _key, prefix = _normalize_base_url(cfg.base_url)
-    # Pooled client: the connection/keep-alive pool is reused across calls to the
-    # same provider. Timeout is passed per-request to preserve the wire contract
-    # (flat 120s) exactly, independent of the shared client's own defaults.
     client = await get_llm_http_client(cfg.base_url)
-    response = await client.post(
-        f"{prefix}/chat/completions",
-        headers=headers,
-        json=payload,
-        timeout=120.0,
-    )
-    response.raise_for_status()
-    return response.json()
+    last_exc: Optional[BaseException] = None
+    for attempt in range(_RETRY_ATTEMPTS):
+        try:
+            response = await client.post(
+                f"{prefix}/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=cfg.timeout_s,
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as exc:  # noqa: BLE001 — 分型后重抛
+            if attempt + 1 >= _RETRY_ATTEMPTS or not _is_retryable_failure(exc):
+                raise
+            last_exc = exc
+            logger.warning(
+                "call_llm connect-phase retry %d/%d for %s: %s",
+                attempt + 1, _RETRY_ATTEMPTS, cfg.model, exc,
+            )
+            await _connect_backoff(attempt)
+    raise last_exc  # pragma: no cover — 循环必然 return 或 raise
 
 
 async def test_llm_connection(
@@ -406,7 +444,8 @@ async def call_llm_stream(
 ) -> AsyncGenerator[tuple[str, dict], None]:
     """流式调用 LLM。Yields (event_type, data)：
     - ('token', {'content': str, 'is_reasoning': bool}) — 增量 token
-    - ('done', {'message': dict, 'finish_reason': str|None}) — 流结束、整条 assistant 消息
+    - ('done', {'message': dict, 'finish_reason': str|None,
+                'usage': dict|None}) — 流结束、整条 assistant 消息与用量
 
     兼容 DeepSeek-R1 / MiniMax-M2.7 风格的 reasoning_content / <think> 标签：
     - 显式 reasoning_content delta 单独走 is_reasoning=True 通道
@@ -419,29 +458,44 @@ async def call_llm_stream(
     reasoning_parts: list[str] = []
     tool_calls_accum: dict[int, dict] = {}
     finish_reason: Optional[str] = None
+    usage: Optional[dict] = None
     in_think_block = False
 
     _key, prefix = _normalize_base_url(cfg.base_url)
-    # Pooled client reused across calls to the same provider. ``async with
-    # client.stream(...)`` releases the connection back to the pool on normal exit,
-    # exception, CancelledError and GeneratorExit, so a cancelled stream forfeits at
-    # most one connection and never poisons the pooled client. Pool timeout is
-    # shortened to 5s so self-inflicted pool exhaustion fails fast instead of being
-    # mislabelled as upstream latency; connect/read/write are unchanged.
-    timeout = httpx.Timeout(connect=10.0, read=180.0, write=10.0, pool=5.0)
+    timeout = httpx.Timeout(connect=10.0, read=max(180.0, cfg.timeout_s * 1.5), write=10.0, pool=5.0)
     client = await get_llm_http_client(cfg.base_url)
-    async with client.stream(
-        "POST",
-        f"{prefix}/chat/completions",
-        headers=headers,
-        json=payload,
-        timeout=timeout,
-    ) as response:
-        if response.status_code != 200:
-            error_text = await response.aread()
-            logger.error(f"LLM Stream Error {response.status_code}: {error_text.decode()}")
-        response.raise_for_status()
+    # audit4 #986: 连接相位 + 建流非 2xx 的有界重试 —— 此时还未 yield 任何
+    # token，重试幂等安全；一旦进入行消费循环，任何失败立即上抛（重试会
+    # 重复已产出内容）。
+    response = None
+    for attempt in range(_RETRY_ATTEMPTS):
+        try:
+            response = await client.send(
+                client.build_request(
+                    "POST", f"{prefix}/chat/completions",
+                    headers=headers, json=payload, timeout=timeout,
+                ),
+                stream=True,
+            )
+            if response.status_code != 200:
+                body = (await response.aread()).decode(errors="replace")
+                logger.error(f"LLM Stream Error {response.status_code}: {body[:500]}")
+                response.raise_for_status()
+            break
+        except Exception as exc:  # noqa: BLE001 — 分型后重试/重抛
+            if response is not None:
+                await response.aclose()
+                response = None
+            if attempt + 1 >= _RETRY_ATTEMPTS or not _is_retryable_failure(exc):
+                raise
+            logger.warning(
+                "call_llm_stream connect-phase retry %d/%d for %s: %s",
+                attempt + 1, _RETRY_ATTEMPTS, cfg.model, exc,
+            )
+            await _connect_backoff(attempt)
+    assert response is not None  # 循环必经 break（成功）或 raise
 
+    try:
         async for line in response.aiter_lines():
             line = line.strip()
             if not line or not line.startswith("data: "):
@@ -454,6 +508,12 @@ async def call_llm_stream(
             except json.JSONDecodeError:
                 logger.warning(f"Failed to parse SSE chunk: {data_str[:200]}")
                 continue
+
+            # audit4 #985: usage chunk（choices 为空的最终帧）在 choices 检查
+            # **之前**捕获，否则被 continue 结构性丢弃。
+            chunk_usage = chunk.get("usage")
+            if isinstance(chunk_usage, dict):
+                usage = chunk_usage
 
             choices = chunk.get("choices", [])
             if not choices:
@@ -525,6 +585,10 @@ async def call_llm_stream(
                         tc_entry["function"]["name"] += fn_delta["name"]
                     if fn_delta.get("arguments"):
                         tc_entry["function"]["arguments"] += fn_delta["arguments"]
+    finally:
+        # 手动管理的流式响应：正常/异常/取消路径都把连接归还连接池
+        # （等价旧 ``async with client.stream`` 的释放语义）。
+        await response.aclose()
 
     # Assemble final message
     assembled_content = "".join(content_parts)
@@ -547,4 +611,4 @@ async def call_llm_stream(
             })
         assembled_message["tool_calls"] = assembled_tool_calls
 
-    yield ("done", {"message": assembled_message, "finish_reason": finish_reason})
+    yield ("done", {"message": assembled_message, "finish_reason": finish_reason, "usage": usage})

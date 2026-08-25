@@ -489,6 +489,12 @@ class ChatExecutionEngine:
             self.api_key = api_key
         if use_prompt_caching is not None:
             self.use_prompt_caching = use_prompt_caching
+        # audit4 #997: 同步写单一解析点的运行时覆盖 —— 标题/规划/空间推演
+        # 等不读引擎实例字段的调用点此后同样生效（此前只改引擎=同进程两套配置）。
+        from app.services.chat import model_config
+        model_config.set_runtime_override(
+            base_url=base_url or None, model=model or None, api_key=api_key or None,
+        )
         logger.info(f"ChatExecutionEngine config updated: model={self.model}, base_url={self.base_url}")
 
     def get_config(self) -> dict:
@@ -855,20 +861,23 @@ class ChatExecutionEngine:
             # Route through the pooled LLM client (call_llm) instead of opening a
             # one-off httpx.AsyncClient, so title generation reuses the same
             # keep-alive connection pool as every other LLM call to this provider.
-            cfg = LLMConfig(
-                base_url=self.base_url,
-                model=self.model,
-                api_key=self.api_key,
-                max_tokens=64,
-            )
+            # audit4 #1005: 标题走 TITLE 角色（廉价模型可配 + max_tokens=512，
+            # 旧值 64 会让推理模型的 reasoning 耗尽预算、content 为空，回退
+            # 取到的 reasoning 前缀直接成了用户可见标题）；只取 content，
+            # 不再把思考碎片当标题。
+            from app.services.chat.model_config import ModelRole, resolve_llm_config
+            cfg = resolve_llm_config(ModelRole.TITLE)
             messages = [
                 {"role": "system", "content": "根据用户的首条消息，生成一个简短的对话主题标题。要求：1) 不超过12个字 2) 突出空间分析的核心对象（地名、分析类型等）3) 不要使用引号、书名号或多余的标点。只输出标题文本，不要任何额外内容。"},
                 {"role": "user", "content": first_user_message[:500]},
             ]
             resp = await call_llm(cfg, messages)
+            _ev = current_turn_evidence()
+            if _ev is not None:
+                _ev.add_llm_usage(resp.get("usage"))
             choice = resp["choices"][0]
             msg = choice["message"]
-            title = msg.get("content") or msg.get("reasoning") or msg.get("reasoning_content")
+            title = msg.get("content")
             if title:
                 title = title.strip()
 
@@ -891,23 +900,14 @@ class ChatExecutionEngine:
                     logger.warning(f"History: title fallback failed for {session_id}: {e2}")
 
     def _llm_config(self) -> LLMConfig:
-        return LLMConfig(
-            base_url=self.base_url,
-            model=self.model,
-            api_key=self.api_key,
-            use_prompt_caching=self.use_prompt_caching,
-        )
+        # audit4 #997: 单一解析点 —— 运行时覆盖（update_config 写入）对引擎、
+        # 规划、标题、空间推演一致生效，不再出现同进程两套配置。
+        from app.services.chat.model_config import ModelRole, resolve_llm_config
+        return resolve_llm_config(ModelRole.EXECUTION)
 
     def _planner_llm_config(self) -> LLMConfig:
-        cfg = self._llm_config()
-        if settings.LLM_PLANNER_MODEL:
-            return LLMConfig(
-                base_url=cfg.base_url,
-                model=settings.LLM_PLANNER_MODEL,
-                api_key=cfg.api_key,
-                use_prompt_caching=cfg.use_prompt_caching,
-            )
-        return cfg
+        from app.services.chat.model_config import ModelRole, resolve_llm_config
+        return resolve_llm_config(ModelRole.PLANNER)
 
     async def _maybe_plan(self, session_id: str, message: str, messages: list[dict]):
         from app.services.chat.plan_orchestrator import plan_orchestrator
@@ -1221,6 +1221,8 @@ class ChatExecutionEngine:
                 response = await self._call_llm(messages_with_context, tools)
                 if _ev is not None:
                     _ev.add_llm_round(total_ms=(time.perf_counter() - _t_llm) * 1000.0)
+                    # audit4 #985: 非流式响应里的 usage 同样记账
+                    _ev.add_llm_usage(response.get("usage"))
                 choice = response.get("choices", [{}])[0]
                 assistant_msg = choice.get("message", {})
 
@@ -1849,6 +1851,10 @@ class ChatExecutionEngine:
                                 for chunk in token_batcher.flush():
                                     yield chunk
                                 assistant_msg = event_data["message"]
+                                # audit4 #985: 流式 usage 帧（stream_options
+                                # include_usage）经 done 事件透传，落 evidence 记账
+                                if _ev is not None:
+                                    _ev.add_llm_usage(event_data.get("usage"))
                             elif event_type == "keep_alive":
                                 # #409: provider silent for _LLM_TOKEN_KEEPALIVE_S
                                 # — heartbeat the wire so idle proxies don't kill
