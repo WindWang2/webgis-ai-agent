@@ -178,6 +178,10 @@ class PlanStep:
     goal: str
     tool_family: Optional[str]
     done: bool = False
+    # #994: 精确打勾绑定 —— harness 合成计划时把该步骤 capability 裁决出的
+    # 工具名集合（AnalysisStep.resolved_tool 或 capability 候选工具集）写入；
+    # advance_step 对带绑定的步骤只认 binding 内的工具，无绑定才回退通配。
+    tool_binding: Optional[List[str]] = None
 
 
 @dataclasses.dataclass
@@ -358,6 +362,9 @@ class AgentPlanOrchestrator:
                     goal=s.goal,
                     tool_family=s.tool_family,
                     done=s.status == StepStatus.completed,
+                    # #994: binding must survive projection round-trips,
+                    # otherwise a reloaded plan silently degrades to wildcard.
+                    tool_binding=list(s.tool_binding) if s.tool_binding else None,
                 )
                 for s in canon.steps
             ],
@@ -373,6 +380,7 @@ class AgentPlanOrchestrator:
                 goal=s.goal,
                 tool_family=s.tool_family,
                 status=StepStatus.completed if s.done else StepStatus.pending,
+                tool_binding=list(s.tool_binding) if s.tool_binding else None,
             )
             for i, s in enumerate(plan.steps, start=1)
         ]
@@ -530,12 +538,17 @@ class AgentPlanOrchestrator:
         - RecipeRegistry.select_candidates 非空。
         合成的步骤 goal 取 MapProductPlanner 的能力 purpose 文案，tool_family
         统一为 "core"（P1-A 限定通配：已注册非展示类工具即可打勾）。
+        #994: 步骤同时携带 tool_binding（步骤 capability 裁决出的工具名集合，
+        优先 AnalysisStep.resolved_tool，回落 capability 候选工具集，且只留
+        当前注册表里真实存在的工具）——advance_step 对绑定步骤精确打勾，
+        未解析到任何候选的步骤保持 core 通配。
         """
         try:
             from app.services.gis_harness import (
                 MapProductPlanner,
                 resolve_map_request_intent,
             )
+            from app.services.gis_harness.planner import capability_tool_map
         except Exception:  # noqa: BLE001 harness 不可用 → 回落 LLM 规划
             return None
         try:
@@ -570,8 +583,25 @@ class AgentPlanOrchestrator:
             pass
         valid_domains = sorted(d for d in domains if d in VALID_DOMAINS)
 
+        def _binding_for(s) -> Optional[List[str]]:
+            # #994: 优先取 planner 裁决出的单工具；未裁决时回落 capability
+            # 的完整候选工具集。过滤到注册表现存工具，保证 advance_step 的
+            # 精确匹配真实可达；无任何候选 → None（该步骤保持通配）。
+            candidates: List[str] = (
+                [s.resolved_tool] if s.resolved_tool
+                else list(capability_tool_map().get(s.capability, []))
+            )
+            if available is not None:
+                candidates = [t for t in candidates if t in available]
+            return candidates or None
+
         steps = [
-            PlanStep(n=i, goal=(s.purpose or s.capability), tool_family="core")
+            PlanStep(
+                n=i,
+                goal=(s.purpose or s.capability),
+                tool_family="core",
+                tool_binding=_binding_for(s),
+            )
             for i, s in enumerate(
                 (s for s in product.analysis_steps if s.status != "unavailable"),
                 start=1,
@@ -719,9 +749,13 @@ class AgentPlanOrchestrator:
         return await planner.make_plan(cfg, session_id, user_message, env_summary)
 
     def advance_step(self, session_id: str, tool_name: str, registry, tool_catalog=None) -> Optional[int]:
-        """把工具调用匹配到第一个未完成的计划步骤并打勾（R1/R6/R7 + P1-A）。
+        """把工具调用匹配到第一个未完成的计划步骤并打勾（R1/R6/R7 + P1-A + #994）。
 
-        - 非 core 步骤：只有调用工具声明 domain 与步骤 tool_family 真实重叠
+        - **绑定步骤（#994 精确匹配）**：harness 合成计划携带 tool_binding
+          （capability 裁决出的工具名集合）——只有完成的工具名 ∈ binding 才
+          打勾；不匹配绝不落入通配/domain 重叠（此前 3 步计划可被 3 个毫不
+          相关的分析调用依次"完成"）。
+        - 非 core 无绑定步骤：只有调用工具声明 domain 与步骤 tool_family 真实重叠
           才打勾（R1，G-report 实测未知工具/样式工具误打勾）。
         - **core 步骤（限定通配，P1-A）**：生产注册表没有任何工具声明
           domain "core"，而 planner prompt 对最常见步骤发 tool_family:"core"，
@@ -750,6 +784,15 @@ class AgentPlanOrchestrator:
         plan_domains = set(plan.domains)
         for idx, step in enumerate(plan.steps):
             if step.done:
+                continue
+            if step.tool_binding:
+                # #994: 绑定步骤只认精确匹配——完成的工具名 ∈ binding 才打勾，
+                # 不匹配时继续看下一个步骤（本步骤绝不落入下方通配分支）。
+                if norm in step.tool_binding:
+                    step.done = True
+                    if canon is not None and idx < len(canon.steps):
+                        canon.steps[idx].status = StepStatus.completed
+                    return step.n
                 continue
             if step.tool_family == "core":
                 # P1-A 限定通配：core 步骤只按「已注册 ∧ 非展示类」打勾，或

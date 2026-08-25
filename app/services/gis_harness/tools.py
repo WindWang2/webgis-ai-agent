@@ -118,7 +118,15 @@ def register_gis_harness_tools(registry: ToolRegistry):
 
     @tool(
         registry,
-        tier=2, domains=["statistics", "report", "network", "temporal"], name="webgis_map_intent",
+        # #993: tier 1 — the docstring below has always promised "意图解析廉价
+        # 且恒可用"，and SYSTEM_PROMPT's 意图先行 contract requires it visible for
+        # keyword-less requests like『看看成都的大学』(no statistics/report/
+        # network/temporal keywords → tier-2 domain gating hid it). The declared
+        # domains stay for the H-8 task-family coverage contract (proximity→
+        # network / change_detection→temporal); with tier 1 they no longer gate
+        # visibility. Keep webgis_map_product tier=2: it runs only after data
+        # tools returned.
+        tier=1, domains=["statistics", "report", "network", "temporal"], name="webgis_map_intent",
         description=(
             "GIS 制图意图解析器（确定性，无副作用）。输入用户请求，返回 typed "
             "MapRequestIntent（scope/subject/task/analysis_intents/cartography_intents/"

@@ -206,7 +206,13 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
       name="webgis_project_init",
       description="初始化当前会话的 MapSpec 制图 Intent 文档与基线配置。",
       args_model=WebgisProjectInitArgs,
-      tier=1,
+      # #993: tier-2 — a once-per-session MapSpec bootstrap is clearly
+      # low-frequency; demoted to stay under the #678 tier-1 ≤40 cap after
+      # webgis_map_intent moved to tier 1. domains=["mapspec"] keeps it
+      # reachable via 图层/版面/布局 keywords (same gating as its siblings
+      # webgis_layer_remove / webgis_layout_set), avoiding the "demoted =
+      # permanently invisible" regression class from #678.
+      tier=2, domains=["mapspec"],
   )
   async def webgis_project_init(
       view: Optional[dict] = None,
