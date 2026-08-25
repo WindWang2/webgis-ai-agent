@@ -245,6 +245,17 @@ def moran_i_narrated(geojson: dict, value_field: str) -> GeoAnalysisResult:
         )
 
     w = _build_weights(gdf, k=min(8, n-1))
+    # #1002: KNN weights are directional (i being j's k-nearest does not imply
+    # j is i's). Global Moran's I requires symmetric weights — otherwise it is
+    # systematically biased vs the PySAL reference and inconsistent with the
+    # symmetric Queen contiguity weights h3_lisa uses. Symmetrize by union
+    # (elementwise maximum = w | w.T for binary weights), then row-standardize.
+    w_csr = w.tocsr()
+    w_sym = w_csr.maximum(w_csr.transpose())
+    row_sums = np.asarray(w_sym.sum(axis=1)).ravel()
+    inv_row = np.zeros_like(row_sums)
+    np.divide(1.0, row_sums, out=inv_row, where=row_sums > 0)
+    w = (sparse.diags(inv_row) @ w_sym).tocoo()
     w_sum = float(w.sum())
     if w_sum == 0:
         return GeoAnalysisResult(False, None, "Spatial weights matrix is empty")

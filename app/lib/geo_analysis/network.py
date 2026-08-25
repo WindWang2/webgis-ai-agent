@@ -3,6 +3,7 @@ import logging
 import networkx as nx
 import geopandas as gpd
 import numpy as np
+from shapely import STRtree
 from shapely.geometry import Point, LineString, MultiLineString, mapping
 from shapely.ops import unary_union, substring
 from app.lib.geo_processor.core import GeoAnalysisResult
@@ -89,16 +90,24 @@ def calculate_isochrones(network_geojson: dict | str, facility_points: dict | st
         if not nodes:
             return GeoAnalysisResult(False, None, "Network graph is empty")
 
-        # Edge list for projection — STRtree candidate over edge linestrings
-        # (replaces the previous vertex-only snap which displaced isochrones on
-        # long segments). Keep (u, v, key, geometry) for projection and Dijkstra.
+        # Edge list for the facility→edge projection (#930 replaced the
+        # vertex-only snap that displaced isochrones on long segments). Keep
+        # (u, v, key, geometry) tuples: projection picks the host edge, then
+        # Dijkstra seeds from its two endpoints.
         edge_list: list[tuple] = []
         for u, v, key, data in G.edges(keys=True, data=True):
             eg = data.get("geometry")
-            if eg is not None:
+            if eg is not None and not eg.is_empty:
                 edge_list.append((u, v, key, eg))
         if not edge_list:
             return GeoAnalysisResult(False, None, "Network graph is empty")
+
+        # #991: ONE STRtree over the edge linestrings, built before the
+        # facility loop. The previous per-facility scan called GEOS distance on
+        # every edge — O(F×E), ~75ms per facility on a 20k-edge network, seconds
+        # for a multi-facility task. tree.nearest returns the exact nearest
+        # edge, so results match the brute-force scan.
+        edge_tree = STRtree([eg for _u, _v, _k, eg in edge_list])
 
         # Road-width buffer for the network-constrained polygonization. The
         # previous ``MultiPoint(reachable_nodes).convex_hull`` enclosed rivers,
@@ -121,20 +130,13 @@ def calculate_isochrones(network_geojson: dict | str, facility_points: dict | st
             start_point = np.array([fac_geom.x, fac_geom.y])
             fac_pt = Point(fac_geom.x, fac_geom.y)
 
-            # Project facility onto nearest edge (replaces vertex snap #930)
-            nearest = None
-            min_d = float("inf")
-            for u, v, key, eg in edge_list:
-                try:
-                    d = eg.distance(fac_pt)
-                except Exception:
-                    continue
-                if d < min_d:
-                    min_d = d
-                    nearest = (u, v, key, eg)
-            if nearest is None:
+            # Project facility onto nearest edge (replaces vertex snap #930).
+            # STRtree.nearest gives the host edge index; GEOS nearest is exact,
+            # so the projection equals the previous full edge scan.
+            nearest_idx = edge_tree.nearest(fac_pt)
+            if nearest_idx is None:
                 continue
-            u_host, v_host, key_host, geom_host = nearest
+            u_host, v_host, key_host, geom_host = edge_list[int(nearest_idx)]
             try:
                 proj = float(geom_host.project(fac_pt))
             except Exception:
@@ -429,27 +431,53 @@ def nearest_neighbor_features(source_points: dict | str, target_points: dict | s
         # the result FeatureCollection plot as easting/northing-as-lon/lat.
         props = gdf_src.drop(columns='geometry').to_dict('records')
         geom_maps = [mapping(g) for g in gdf_src.to_crs("EPSG:4326").geometry]
-        tgt_ids = gdf_tgt.index
-        
+
+        # #1002: the target RangeIndex row number is not a feature identity —
+        # downstream joins against the target attribute table silently
+        # mismatch. Prefer an id/name/fid attribute value when present;
+        # otherwise report the honest key name nearest_target_index.
+        tgt_id_col = next(
+            (c for c in ("id", "name", "fid") if c in gdf_tgt.columns), None
+        )
+        if tgt_id_col is not None:
+            id_key = "nearest_target_id"
+            # numpy scalars would crash the JSON layer (see statistics.
+            # _feature_props); convert to plain Python values.
+            tgt_ids = [
+                v.item() if isinstance(v, np.generic) else v
+                for v in gdf_tgt[tgt_id_col]
+            ]
+            id_note = ""
+        else:
+            id_key = "nearest_target_index"
+            tgt_ids = list(gdf_tgt.index)
+            id_note = (
+                " Targets identified by 0-based row index "
+                "(target set has no id/name/fid attribute column)."
+            )
+
         out_features = [
             {
                 "type": "Feature",
                 "geometry": geom_maps[i],
                 "properties": {
                     **props[i],
-                    "nearest_target_id": tgt_ids[min_indices[i]],
+                    id_key: tgt_ids[int(min_indices[i])],
                     "distance_m": float(min_distances[i])
                 }
             }
             for i in range(len(src_coords))
         ]
-            
+
         avg_dist = float(min_distances.mean())
-        
+
         return GeoAnalysisResult(
             success=True,
             data={"type": "FeatureCollection", "features": out_features},
-            summary=f"Calculated nearest neighbors for {len(gdf_src)} points. Average distance: {avg_dist:.1f}m."
+            summary=(
+                f"Calculated nearest neighbors for {len(gdf_src)} points. "
+                f"Average distance: {avg_dist:.1f}m.{id_note}"
+            )
         )
     except Exception as e:
         return GeoAnalysisResult(False, None, f"Nearest neighbor analysis failed: {str(e)}")

@@ -358,7 +358,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "\n何时不用：(1) 同一集合内的最近邻距离/聚集度 — 用 nearest_neighbor (单集合统计)；"
                "(2) 服务区/可达性 — 用 isochrone_analysis 或 service_area_simple；"
                "(3) 沿路网最近 — 当前是欧氏距离，沿路网路网最短路径暂不支持。"
-               "\n返回：每个源点的副本，properties 新增 nearest_target_id 与 distance_m。"
+               "\n返回：每个源点的副本，properties 新增最近目标标识与 distance_m；目标含 id/name/fid 字段时标识为 nearest_target_id（取其值），否则为 nearest_target_index（目标行号）。"
            ),
            param_descriptions={
                "source_points": "源点要素集 (GeoJSON 或 ref:xxx) — 每个点会找一个最近目标",

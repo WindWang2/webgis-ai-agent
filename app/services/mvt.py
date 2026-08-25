@@ -1147,7 +1147,7 @@ def encode_tile_from_index(entry: "SpatialIndexEntry", z: int, x: int, y: int) -
     if not _SHAPELY or entry.geoms is None:
         return encode_tile(entry.query_tile(z, x, y), z, x, y)
     records: List[Tuple[int, bytes, Dict[str, Any]]] = []
-    for feature, geom_lonlat, geom_z0 in entry.query_candidates(z, x, y):
+    for feature, geom_lonlat, geom_z0, crosses_am in entry.query_candidates(z, x, y):
         geometry = feature.get("geometry")
         gtype = geometry.get("type") if isinstance(geometry, dict) else None
         # GeometryCollections and unsupported types are excluded at index-build
@@ -1167,7 +1167,10 @@ def encode_tile_from_index(entry: "SpatialIndexEntry", z: int, x: int, y: int) -
                 records.append((type_id, geom_bytes, props))
         else:
             coords = geometry.get("coordinates") if isinstance(geometry, dict) else None
-            if coords is not None and _crosses_antimeridian(gtype, coords):
+            # #1003: AM-crossing flag precomputed at index-build time; the old
+            # per-candidate _crosses_antimeridian scan walked every vertex of
+            # every candidate on every tile request.
+            if crosses_am and coords is not None:
                 # Issue #598: the cached z0 projection of an unsplit
                 # AM-crossing geometry is unusable (it spans the world
                 # interior and renders as a world-spanning arc). Route through
@@ -1210,17 +1213,25 @@ class SpatialIndexEntry:
     per-ref geometry memory vs. the z0-only design; this is the deliberate
     trade-off for eliminating per-tile reconstruction, and stays bounded by the
     per-(session, ref) byte and entry count LRU. ``bounds`` are plain z0-px bboxes
-    used by the no-shapely full-scan fallback. ``geoms`` / ``geoms_lonlat`` are None
-    when shapely is unavailable.
+    used by the no-shapely full-scan fallback. ``geoms`` / ``geoms_lonlat`` /
+    ``crosses_am`` are None when shapely is unavailable.
     """
 
-    __slots__ = ("key", "features", "geoms", "geoms_lonlat", "tree", "bounds", "estimated_bytes")
+    __slots__ = (
+        "key", "features", "geoms", "geoms_lonlat", "crosses_am",
+        "tree", "bounds", "estimated_bytes",
+    )
 
-    def __init__(self, key, features, geoms, geoms_lonlat, tree, bounds, estimated_bytes: int = 0):
+    def __init__(self, key, features, geoms, geoms_lonlat, crosses_am, tree, bounds,
+                 estimated_bytes: int = 0):
         self.key = key
         self.features = features
         self.geoms = geoms
         self.geoms_lonlat = geoms_lonlat
+        # #1003: antimeridian-crossing flag per feature (parallel to
+        # ``features``), precomputed once here so the per-tile hot path reads a
+        # bool instead of rescanning every candidate's coordinates.
+        self.crosses_am = crosses_am
         self.tree = tree
         self.bounds = bounds
         self.estimated_bytes = estimated_bytes
@@ -1245,13 +1256,14 @@ class SpatialIndexEntry:
         return [self.features[i] for i in self._candidate_indices(z, x, y)]
 
     def query_candidates(self, z: int, x: int, y: int):
-        """Prepared ``(feature, geom_lonlat, geom_z0)`` for each bbox-hit candidate.
+        """Prepared ``(feature, geom_lonlat, geom_z0, crosses_am)`` for each
+        bbox-hit candidate.
 
         Insertion-ordered (parallel to ``query_tile``). Only valid when
         ``geoms`` is set (shapely available); callers gate on that.
         """
         return [
-            (self.features[i], self.geoms_lonlat[i], self.geoms[i])
+            (self.features[i], self.geoms_lonlat[i], self.geoms[i], self.crosses_am[i])
             for i in self._candidate_indices(z, x, y)
         ]
 
@@ -1289,13 +1301,17 @@ def build_spatial_index_entry(key, data) -> SpatialIndexEntry:
 
     Each kept feature's lon/lat shapely geometry and its z0 projection are
     retained (parallel to ``features``) so that tile encoding can reuse them
-    instead of re-parsing coordinates and re-projecting per tile request.
+    instead of re-parsing coordinates and re-projecting per tile request. The
+    per-feature antimeridian-crossing flag is likewise precomputed once here
+    (#1003): it is invariant per feature but was previously rescanned from the
+    coordinates on every tile request for every candidate.
     """
     if data is None:
         raise RefDataUnavailableError(f"ref data unavailable for index build: {key}")
     features = extract_features(data)
     geoms: List[Any] = []
     geoms_lonlat: List[Any] = []
+    crosses_am: List[bool] = []
     bounds: List[Tuple[float, float, float, float]] = []
     kept: List[dict] = []
     for f in features:
@@ -1318,6 +1334,7 @@ def build_spatial_index_entry(key, data) -> SpatialIndexEntry:
             geoms_lonlat.append(geom)
             geoms.append(geom_z0)
             bounds.append(tuple(b))
+            crosses_am.append(bool(_crosses_antimeridian(gtype, coords)))
         else:  # pragma: no cover - no-shapely environments
             b = _pure_bounds(gtype, coords)
             if b is None:
@@ -1356,6 +1373,7 @@ def build_spatial_index_entry(key, data) -> SpatialIndexEntry:
         + len(geoms) * _GEOM_OBJ_BYTES
         + len(geoms_lonlat) * _GEOM_OBJ_BYTES
         + len(bounds) * 80
+        + len(kept) * 8  # crosses_am bool pointers (#1003)
         + 1024
     )
     return SpatialIndexEntry(
@@ -1363,6 +1381,7 @@ def build_spatial_index_entry(key, data) -> SpatialIndexEntry:
         kept,
         geoms if _SHAPELY else None,
         geoms_lonlat if _SHAPELY else None,
+        crosses_am if _SHAPELY else None,
         tree,
         bounds,
         estimated_bytes=est_bytes,

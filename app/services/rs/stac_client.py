@@ -13,6 +13,37 @@ logger = logging.getLogger(__name__)
 
 _STAC_CATALOG_URL = "https://earth-search.aws.element84.com/v1"
 
+# DEM elevation sentinels used by spectral_engine.compute_terrain's nodata
+# mask; legitimate elevations never reach this depth (Dead Sea shore ≈ −430 m).
+DEM_SENTINEL_NODATA = -9999.0
+
+
+def _nan_block_mean(src: np.ndarray, out_h: int, out_w: int) -> np.ndarray:
+    """Average-resample ``src`` to (out_h, out_w), excluding NaN pixels (#1002).
+
+    Pure-numpy stand-in for GDAL's nodata-aware ``average`` resampling on
+    datasets that declare no nodata: each destination pixel is the mean of its
+    source block's valid (non-NaN) pixels. Blocks are contiguous index ranges
+    (sizes differ by at most 1 when the ratio is not integer, so every source
+    row/column is used); blocks with no valid pixel stay NaN for the
+    downstream mask.
+    """
+    h, w = src.shape
+    out_h = min(out_h, h)
+    out_w = min(out_w, w)
+    row_starts = np.arange(out_h) * h // out_h
+    col_starts = np.arange(out_w) * w // out_w
+    valid = np.isfinite(src)
+    filled = np.where(valid, src, 0.0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        sums = np.add.reduceat(
+            np.add.reduceat(filled, row_starts, axis=0), col_starts, axis=1)
+        counts = np.add.reduceat(
+            np.add.reduceat(valid.astype(np.int64), row_starts, axis=0),
+            col_starts, axis=1,
+        )
+        return sums / counts
+
 
 class StacClientPrimitive:
     """STAC 检索与波段读取服务"""
@@ -36,12 +67,17 @@ class StacClientPrimitive:
         bands_needed: Optional[Union[Dict[str, str], List[str]]] = None,
         ds_factor: int = 4,
         empty_error_msg: str = "No data found",
+        mask_sentinel_nodata: bool = False,
     ) -> Dict[str, Any]:
         """从 STAC Catalog 检索 item 并按需要读取波段 NumPy 数组
 
         读取波段时按 bbox ∩ 影像足迹做窗口化读取 (crop)，返回结果附带
         "bounds": 实际读取窗口的 WGS84 范围 [w, s, e, n] (非请求 bbox，
-        统计与栅格叠加配准到真实数据 footprint)。"""
+        统计与栅格叠加配准到真实数据 footprint)。
+
+        mask_sentinel_nodata: 未声明 nodata 的数据集 (如部分 DEM) 在降采样前
+        先做 <=DEM_SENTINEL_NODATA→NaN 掩膜再 average 重采样 (#1002)。仅
+        DEM/单波段高程路径应开启 —— 反射率波段不存在该哨兵约定。"""
         try:
             catalog = await self.open_catalog()
             datetime_param = f"{date_from}/{date_to}" if date_from and date_to else None
@@ -201,19 +237,29 @@ class StacClientPrimitive:
                                     # 拦不住 (如 -1599.75 通过 -9999 判定)。数据集
                                     # 声明 nodata 时改用 GDAL nodata-aware 的
                                     # average 重采样 (只对有效像元加权平均;整窗全
-                                    # nodata 时输出哨兵值供下游掩码);未声明时退回
+                                    # nodata 时输出哨兵值供下游掩膜);未声明且调用
+                                    # 方开启 mask_sentinel_nodata (DEM 路径, #1002)
+                                    # 时读取原生窗口先 <= 哨兵→NaN 掩膜,再用
+                                    # NaN 感知的块均值 average 降采样;其余退回
                                     # bilinear 保持原行为。
-                                    resampling = (
-                                        Resampling.average
-                                        if ds.nodata is not None
-                                        else Resampling.bilinear
-                                    )
-                                    data = ds.read(
-                                        1,
-                                        window=win,
-                                        out_shape=(out_h, out_w),
-                                        resampling=resampling,
-                                    ).astype(float)
+                                    if ds.nodata is not None:
+                                        data = ds.read(
+                                            1,
+                                            window=win,
+                                            out_shape=(out_h, out_w),
+                                            resampling=Resampling.average,
+                                        ).astype(float)
+                                    elif mask_sentinel_nodata:
+                                        full = ds.read(1, window=win).astype(float)
+                                        full[full <= DEM_SENTINEL_NODATA] = np.nan
+                                        data = _nan_block_mean(full, out_h, out_w)
+                                    else:
+                                        data = ds.read(
+                                            1,
+                                            window=win,
+                                            out_shape=(out_h, out_w),
+                                            resampling=Resampling.bilinear,
+                                        ).astype(float)
                                     bands_dict[name] = data
                                     if name == ref_name:
                                         # 输出网格足迹 = 参考窗口 transform 按

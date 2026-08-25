@@ -329,6 +329,15 @@ def test_moran_i_pvalue_matches_seeded_scalar_reference():
         cols.extend(nbrs)
     w = sparse.coo_matrix((np.ones(len(rows)), (np.array(rows), np.array(cols))),
                           shape=(n_pts, n_pts))
+    # #1002: moran_i_narrated symmetrizes the directional KNN weights by union
+    # (binary maximum = w | w.T) then row-standardizes — mirror that here so
+    # the reference pins the same weights semantics as the implementation.
+    w_csr = w.tocsr()
+    w = w_csr.maximum(w_csr.transpose())
+    row_sums = np.asarray(w.sum(axis=1)).ravel()
+    inv_row = np.zeros_like(row_sums)
+    np.divide(1.0, row_sums, out=inv_row, where=row_sums > 0)
+    w = (sparse.diags(inv_row) @ w).tocoo()
 
     z = values - values.mean()
     s0 = float(w.sum())

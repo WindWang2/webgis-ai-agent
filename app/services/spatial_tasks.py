@@ -298,6 +298,40 @@ def _array_window_for_bounds(arr: np.ndarray, arr_bounds, common_bounds):
     return row0, col0, row1, col1
 
 
+def _window_grid(a: np.ndarray, arr_bounds, win):
+    """(res_x, res_y, west, top) of a windowed array's source grid."""
+    w, s, e, n = arr_bounds
+    res_x = (e - w) / a.shape[1]
+    res_y = (n - s) / a.shape[0]
+    left = w + res_x * win[1]
+    top = n - res_y * win[0]
+    return res_x, res_y, left, top
+
+
+def _grids_pixel_aligned(a1: np.ndarray, b1, w1, a2: np.ndarray, b2, w2) -> bool:
+    """True only when the two common windows share ONE pixel grid (#1002).
+
+    Equal window shapes are necessary but not sufficient: shapes can coincide
+    while resolutions differ or the grids carry a sub-pixel phase offset, and
+    the pixel-wise difference then compares shifted samples while still being
+    labelled ``pixel_common_footprint``. Aligned means resolutions match within
+    a 1e-6 relative tolerance and the window origins differ by a near-integer
+    number of pixels.
+    """
+    res_x1, res_y1, left1, top1 = _window_grid(a1, b1, w1)
+    res_x2, res_y2, left2, top2 = _window_grid(a2, b2, w2)
+    if abs(res_x1 - res_x2) > 1e-6 * max(res_x1, res_x2):
+        return False
+    if abs(res_y1 - res_y2) > 1e-6 * max(res_y1, res_y2):
+        return False
+    phase_x = (left2 - left1) / res_x1
+    phase_y = (top2 - top1) / res_y1
+    return (
+        abs(phase_x - round(phase_x)) <= 1e-6
+        and abs(phase_y - round(phase_y)) <= 1e-6
+    )
+
+
 def _pixel_change_classification(t1: Dict, t2: Dict, change_threshold: float) -> Optional[Dict]:
     """Pixel-level change classification on the two epochs' COMMON footprint.
 
@@ -331,8 +365,11 @@ def _pixel_change_classification(t1: Dict, t2: Dict, change_threshold: float) ->
     sub1 = a1[w1[0]:w1[2], w1[1]:w1[3]].astype(float)
     sub2 = a2[w2[0]:w2[2], w2[1]:w2[3]].astype(float)
 
-    if sub1.shape != sub2.shape:
-        # Different resolutions → resample T2 onto T1's common-window grid.
+    if sub1.shape != sub2.shape or not _grids_pixel_aligned(a1, b1, w1, a2, b2, w2):
+        # Misaligned grids (different resolutions OR equal shapes with a
+        # sub-pixel phase offset, #1002) → resample T2 onto T1's common-window
+        # grid. Equal shapes alone must not skip this: coincidental shape
+        # equality would compare every pixel pair shifted.
         try:
             from rasterio.transform import from_origin
             from rasterio.warp import Resampling, reproject
