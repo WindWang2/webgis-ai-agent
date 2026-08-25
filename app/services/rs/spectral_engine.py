@@ -129,6 +129,9 @@ class SpectralRasterEngine:
             bands_needed={"dem": "data"},
             ds_factor=2,
             empty_error_msg=f"指定区域 bbox={bbox} 无 {dem_type} 高程数据",
+            # #1002: DEM 路径开启哨兵预掩膜 —— 未声明 nodata 的 DEM 走
+            # bilinear 会把 -9999 哨兵混成 -4899 等中间值逃逸下方掩膜。
+            mask_sentinel_nodata=True,
         )
 
         if "error" in fetch_res or not fetch_res.get("bands"):
