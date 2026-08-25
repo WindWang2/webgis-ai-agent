@@ -5,7 +5,7 @@ import { registerComponentRenderer } from './registry';
 import { positionClass, stackedBottomStyle } from './helpers';
 import type { RendererContext } from './types';
 
-function AttributionRenderer(component: MapSpecComponent, _ctx: RendererContext) {
+function AttributionRenderer(component: MapSpecComponent, ctx: RendererContext) {
   const text = typeof (component as unknown as { options?: Record<string, unknown> }).options?.['text'] === 'string'
     ? (component as unknown as { options: Record<string, string> }).options['text'] : '';
   if (!text) return null;
