@@ -36,10 +36,7 @@ import { MapDecorations } from "./map-decorations"
 import { useHudStore, type HudState } from "@/lib/store/useHudStore"
 import * as renderer from "@/lib/map-kit/renderer"
 import { fitBounds as navFitBounds, calculateBBox, calculateBBoxAsync } from "@/lib/map-kit/navigation"
-import {
-  MapSpecRuntime,
-  collectCartographicRuntimeObservation,
-} from "@/lib/mapspec-runtime"
+import { MapSpecRuntime } from "@/lib/mapspec-runtime"
 import { composeLiveMapSpec } from "@/lib/mapspec/live-spec"
 import {
   injectResolvedRefSources,
@@ -53,17 +50,17 @@ import {
   getPendingRemoved,
   subscribeMapSpecLive,
 } from "@/lib/mapspec/session-cursor"
-import { apiFetch } from "@/lib/api/transport"
-import { computeInteractiveIds, resolveParentLayerId } from "@/lib/map-kit/interactive-ids"
+import { computeInteractiveIds } from "@/lib/map-kit/interactive-ids"
 import { MapSpecChrome } from "@/components/map/map-spec-chrome"
 import { PoiInfoPanel } from "@/components/map/poi-info-panel"
 import { raiseAnnotationLayers } from "@/lib/map-commands/annotationHelpers"
 import { notifyUserGestureStart, notifyUserGestureEnd } from "@/lib/map-commands/camera-arbitration"
 import { devOnly } from "@/lib/utils/logger"
-import { ensureLayerData } from "@/lib/store/layer-data"
 import { buildTileTransformRequest } from "@/lib/map-kit/tile-auth"
 import { commitExplicitView } from "@/lib/mapspec/user-mutation"
-import { geometryBBox } from "@/lib/utils/geo"
+import { useCartographicObservation } from "@/lib/hooks/use-cartographic-observation"
+import { useHoverTooltip } from "@/lib/hooks/use-hover-tooltip"
+import { useFeatureSelection } from "@/lib/hooks/use-feature-selection"
 
 interface MapPanelProps {
   layers: Layer[]
@@ -117,10 +114,6 @@ const DEFAULT_VIEW_STATE = {
   latitude: 39.9042,
   zoom: 4,
 }
-
-// Cap on remembered applied repair action_ids (bounded memory; older ids are
-// stale generations that the generation gate already drops, so eviction is safe).
-const MAX_APPLIED_REPAIR_IDS = 16;
 
 export function MapPanel({
   layers,
@@ -321,34 +314,15 @@ export function MapPanel({
   // (renderTimeoutRef/isUpdatingRef/renderLayersRef) + the styledata re-listen
   // machinery. The runtime owns the style-loaded retry internally.
   const runtimeRef = useRef<MapSpecRuntime | null>(null)
-  const lastCartographicObservationKeyRef = useRef<string>('')
-  const cartographicObservationGenerationRef = useRef(Date.now() * 1000)
-  const cartographicSessionIdRef = useRef(sessionId)
-  cartographicSessionIdRef.current = sessionId
-  // Cartographic observation→repair generation safety (latest-generation-wins).
-  // The backend already rejects stale observations server-side and strips
-  // repair_action from stale responses, but HTTP responses within ONE session
-  // can still arrive out of order. These refs make the client self-protecting:
-  // only the newest issued generation/fingerprint may dispatch a repair.
-  const latestIssuedCartographicFingerprintRef = useRef<string>('')
-  // Bounded ring of recently-applied repair action_ids so a re-echoed (duplicate)
-  // response is applied at most once. Keyed on action_id ONLY — patch_fingerprint
-  // can legitimately recur for a different mapspec fingerprint and would wrongly
-  // block a valid re-issue, so it is intentionally not used as a dedup key.
-  const appliedRepairIdsRef = useRef<Set<string>>(new Set())
-  const mountedRef = useRef(true)
-  const observationAbortRef = useRef<AbortController | null>(null)
-
-  // Cancel any in-flight observation on unmount so a late response can never
-  // setState / dispatch a map action after the panel is gone (INV-6).
-  useEffect(() => {
-    mountedRef.current = true
-    return () => {
-      mountedRef.current = false
-      observationAbortRef.current?.abort()
-      observationAbortRef.current = null
-    }
-  }, [])
+  // 制图观测→修复回路整体下沉到 useCartographicObservation（#1009 分解）：
+  // generation 门 / AbortController / 修复去重环 / 卸载中止都在 hook 内，
+  // 这里只取回 reconcile 落定后要调用的签发函数。
+  const issueCartographicObservation = useCartographicObservation({
+    runtimeRef,
+    sessionId,
+    ownerToken,
+    dispatchAction,
+  })
 
   // FE-3 (design §7): derive interactiveLayerIds from the runtime's APPLIED
   // spec — the authoritative registry of what the map currently reflects
@@ -524,111 +498,11 @@ export function MapPanel({
             renderer.disable3DTerrain(map)
           }
         }
-        const generation = layers.reduce<Layer | null>((latest, layer) => {
-          if (!layer._mapspecFingerprint) return latest
-          if (!latest) return layer
-          return (layer._mapspecGenerationAt ?? 0) > (latest._mapspecGenerationAt ?? 0)
-            ? layer
-            : latest
-        }, null)
-        if (!map || !sessionId || !generation?._mapspecFingerprint) return
-        const observation = collectCartographicRuntimeObservation(
-          map,
-          spec,
-          layers,
-          generation._mapspecFingerprint,
-          runtimeRef.current?.getLastError() ?? '',
-          runtimeRef.current?.getAppliedSpec() ?? null,
-        )
-        // #692：去重键不 stringify 整个 observation——raster_image 是多 MB
-        // data URL（docstring 自称 bounded metadata only 被该字段违反），
-        // 每次 reconcile 在主线程序列化 MB 级 base64 仅为算键。用稳定字段
-        // + raster 载荷的长度引用计数替代（内容变化必然改变长度或指纹）。
-        const rasterImg = (observation as { raster_image?: string }).raster_image
-        // len + 首尾采样：同长异容（同 bbox 换调色板重渲染）也能变键
-        const rasterMark =
-          rasterImg === undefined
-            ? undefined
-            : `len:${rasterImg.length}:${rasterImg.slice(0, 24)}:${rasterImg.slice(-24)}`
-        const keyPayload = {
-          ...observation,
-          ...(rasterMark !== undefined ? { raster_image: rasterMark } : {}),
-        }
-        const observationKey = `${sessionId}:${JSON.stringify(keyPayload)}`
-        if (observationKey === lastCartographicObservationKeyRef.current) return
-        lastCartographicObservationKeyRef.current = observationKey
-        const clientGeneration = Math.max(
-          cartographicObservationGenerationRef.current + 1,
-          Date.now() * 1000,
-        )
-        cartographicObservationGenerationRef.current = clientGeneration
-        // Capture THIS request's correlation in the closure so a late response
-        // compares against the newest issued values, not its own stale view.
-        const requestGeneration = clientGeneration
-        latestIssuedCartographicFingerprintRef.current = generation._mapspecFingerprint
-        // A newer observation supersedes any still in flight: abort it so its
-        // late response cannot dispatch a stale repair. The generation gate in
-        // the handler below is the authoritative guard; the abort just reclaims
-        // the round-trip and makes unmount deterministic.
-        observationAbortRef.current?.abort()
-        const controller = new AbortController()
-        observationAbortRef.current = controller
-        void apiFetch<{ repair_action?: import('@/lib/types').MapActionPayload }>(
-          `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/cartographic-observation`,
-          {
-            method: 'POST',
-            body: { ...observation, client_generation: clientGeneration },
-            ownerToken,
-            signal: controller.signal,
-            label: 'Cartographic observation error',
-          },
-        ).then((response) => {
-          const repair = response.repair_action
-          if (!repair) return
-          // Generation-safe dispatch — latest generation/fingerprint wins.
-          if (!mountedRef.current) return // unmounted: no side effects (INV-6)
-          if (cartographicSessionIdRef.current !== sessionId) return // session switch (INV-2)
-          if (cartographicObservationGenerationRef.current !== requestGeneration) {
-            return // a newer observation was issued → this response is stale (INV-1/INV-7)
-          }
-          const repairParams = repair.params as
-            | { mapspec_fingerprint?: string }
-            | undefined
-          // A repair targeting an older mapspec fingerprint must not mutate a
-          // map that has since advanced (INV-4). Only enforced when the backend
-          // echoes a fingerprint, so a future field change can't block a valid
-          // repair (INV-7).
-          if (
-            repairParams?.mapspec_fingerprint
-            && latestIssuedCartographicFingerprintRef.current !== repairParams.mapspec_fingerprint
-          ) return
-          // Duplicate response / retry must not re-apply the same repair (INV-3).
-          const repairId = repair.action_id
-          if (repairId && appliedRepairIdsRef.current.has(repairId)) return
-          dispatchAction(repair)
-          // Record AFTER dispatch so a dispatch throw leaves the repair re-issuable.
-          if (repairId) {
-            const seen = appliedRepairIdsRef.current
-            seen.add(repairId)
-            if (seen.size > MAX_APPLIED_REPAIR_IDS) {
-              seen.delete(seen.keys().next().value as string)
-            }
-          }
-        }).catch((error) => {
-          // A supersede/unmount abort is expected: the newer request (or the
-          // unmount) owns the state, so stay quiet and leave the key alone.
-          if (!mountedRef.current || error?.name === "AbortError") return
-          // Only the LATEST request may reset the observation key for retry — a
-          // superseded request failing must not force a redundant re-POST of the
-          // newer observation (INV-5: retry without a storm).
-          if (cartographicObservationGenerationRef.current !== requestGeneration) return
-          lastCartographicObservationKeyRef.current = ''
-          devOnly.warn('[map] cartographic observation failed:', error)
-        })
+        issueCartographicObservation({ map, spec, layers })
       })
       // #1008：reconcile 失败的裸 console.error 泄漏内部细节 → devOnly。
       .catch((e) => devOnly.error("[map] reconcile failed", e))
-  }, [layers, processLayers, activeFilters, is3D, liveGeneration, refSourcesGeneration, mapReady, currentMapStyle, runtimeRecoveryGeneration, syncInteractiveIds, raiseSelectionHighlight, sessionId, ownerToken, sessionTokenRef, dispatchAction])
+  }, [layers, processLayers, activeFilters, is3D, liveGeneration, refSourcesGeneration, mapReady, currentMapStyle, runtimeRecoveryGeneration, syncInteractiveIds, raiseSelectionHighlight, sessionId, ownerToken, sessionTokenRef, issueCartographicObservation])
 
 
   const setViewport = useHudStore((s: HudState) => s.setViewport)
@@ -645,16 +519,6 @@ export function MapPanel({
         clearTimeout(viewportWriteTimerRef.current)
         viewportWriteTimerRef.current = null
       }
-    }
-  }, [])
-
-  // A2: backfill race — AbortController + monotonic seq so superseded fetch never merges
-  const selectionBackfillAbortRef = useRef<AbortController | null>(null)
-  const selectionSeqRef = useRef(0)
-  useEffect(() => {
-    return () => {
-      selectionBackfillAbortRef.current?.abort()
-      selectionBackfillAbortRef.current = null
     }
   }, [])
 
@@ -697,102 +561,13 @@ export function MapPanel({
     layerIdsSetRef.current = new Set(layers.map((l) => l.id))
   }, [layers])
 
-  /**
-   * 选中信息入库（POI 点击重设计 v2）。
-   *
-   * 点击链路只做两件事：写 selectedFeature 快照（供 AI 会话感知）+
-   * 打开纯 DOM 悬浮窗。**不做**：命令式高亮图层、z-order 提升、自动
-   * 聚焦相机——这些机制曾在部分会话触发「画布切空白底图」（静默、
-   * 无报错，切底图可恢复），重设计后点击不接触任何 GL/样式/相机状态。
-   */
-  const commitSelection = useCallback((feature: any, point: [number, number]) => {
-    const sublayerId = feature.layer?.id as string | undefined
-    const parentId = sublayerId ? resolveParentLayerId(sublayerId, layerIdsSetRef.current) : undefined
-    const layerInfo = parentId ? layersMapRef.current[parentId] : undefined
-    const rawFeatureId = (feature.id as string | number | undefined) ?? (feature.properties as any)?.id ?? (feature.properties as any)?.OBJECTID
-    const targetId = parentId ?? sublayerId
-    const layer = targetId ? layersMapRef.current[targetId] : undefined
-    const isMvt = !!(layer?._tileUrl && layer?._descriptor?.mvt_capable)
-    // `h-` is the synthetic hash-fallback id (e.g. h-1a2b3c4d) assigned by
-    // buildSelectedFeatureSnapshot/resolveFeatureId when a feature has no stable
-    // `id`/`OBJECTID`/`fid` etc. It is not a real feature id → cannot be used
-    // for single-feature backfill; align with layer-data.ts FEATURE_ID_KEYS fallback.
-    const hasUsableId = rawFeatureId != null && String(rawFeatureId).trim() !== '' && !String(rawFeatureId).startsWith('h-')
-    // initial bbox from tile geometry (approximate)
-    let tileBbox: [number, number, number, number] | null = null
-    try {
-      if (feature.geometry) tileBbox = geometryBBox(feature.geometry as any) as any
-    } catch { /* ignore */ }
-    const selectedAt = Date.now()
-    const seq = ++selectionSeqRef.current
-    // Abort any superseded backfill so its promise rejects with AbortError and never merges
-    selectionBackfillAbortRef.current?.abort()
-    const controller = new AbortController()
-    selectionBackfillAbortRef.current = controller
-    setSelectedFeature({
-      // 无主图层（process-* 等）时回退到原始 sublayer id。
-      layerId: parentId ?? sublayerId ?? 'unknown',
-      layerName: layerInfo?.name,
-      // 还原回 ref:xxx：sublayerId 形如 'ref:geojson-xxx__point'，父 id 即数据 ref。
-      refId: parentId?.startsWith('ref:') ? parentId : undefined,
-      point,
-      properties: (feature.properties || {}) as Record<string, unknown>,
-      selectedAt,
-      featureId: rawFeatureId as string | number | undefined,
-      bbox: tileBbox,
-      ...(isMvt ? { isApproximate: true } : {}),
-    })
-    // #667/#668: selection truthfulness — backfill authoritative feature for MVT layers
-    if (targetId && isMvt) {
-      if (!hasUsableId) return
-      const isStale = (err?: any): boolean => {
-        if (controller.signal.aborted) return true
-        if (err?.name === 'AbortError') return true
-        if (seq !== selectionSeqRef.current) return true
-        const c: any = useHudStore.getState().selectedFeature
-        return !c || c.selectedAt !== selectedAt
-      }
-      void ensureLayerData(targetId, 'selection-detail', { featureId: rawFeatureId as string | number, signal: controller.signal })
-        .then((res: any) => {
-          if (isStale()) return
-          const cur: any = useHudStore.getState().selectedFeature
-          if (res?.status === 'single-feature' && res.feature) {
-            const af = res.feature as any
-            const authProps = (af.properties ?? {}) as Record<string, unknown>
-            const geom: any = af.geometry
-            let authBbox: [number, number, number, number] | null = cur.bbox ?? null
-            try {
-              if (geom) {
-                const bb = geometryBBox(geom as any)
-                if (bb) authBbox = bb as any
-              }
-              if (Array.isArray(af.bbox) && af.bbox.length === 4) authBbox = af.bbox as any
-            } catch { /* ignore */ }
-            const authId = (af.id as string | number | undefined) ?? (authProps as any).id ?? cur.featureId
-            useHudStore.getState().setSelectedFeature({
-              ...cur,
-              properties: authProps,
-              bbox: authBbox,
-              featureId: authId as any,
-              isApproximate: false,
-            } as any)
-          } else if (res?.status === 'fallback') {
-            if (isStale()) return
-            const cur2: any = useHudStore.getState().selectedFeature
-            if (cur2 && cur2.isApproximate !== true) {
-              useHudStore.getState().setSelectedFeature({ ...cur2, isApproximate: true } as any)
-            }
-          }
-        })
-        .catch((e: any) => {
-          if (isStale(e)) return
-          const cur: any = useHudStore.getState().selectedFeature
-          if (cur && cur.isApproximate !== true) {
-            useHudStore.getState().setSelectedFeature({ ...cur, isApproximate: true } as any)
-          }
-        })
-    }
-  }, [setSelectedFeature])
+  // 选中入库 + MVT 权威回填（含竞态守卫）下沉到 useFeatureSelection
+  // （#1009 分解）；上面的 layers 注册表 ref 仍由本组件维护并传入。
+  const { commitSelection } = useFeatureSelection({
+    layerIdsSetRef,
+    layersMapRef,
+    setSelectedFeature,
+  })
 
   // 悬浮窗状态：屏幕坐标 + 命中要素列表（≤5）。纯组件本地状态。
   const [poiPanel, setPoiPanel] = useState<{
@@ -837,74 +612,14 @@ export function MapPanel({
     })
   }, [setSelectedFeature, commitSelection])
 
-  // FE-3 hover tooltip: rAF-throttled mousemove over the interactive sublayers,
-  // showing the layer name + ≤3 key props. The query only runs once per frame
-  // at most, so a ~60fps pointer sweep never floods the pipeline.
-  const [hoverInfo, setHoverInfo] = useState<{
-    point: [number, number]
-    layerName: string
-    props: Record<string, unknown>
-  } | null>(null)
-  const hoverTimerRef = useRef<number | null>(null)
-  const hoverPendingRef = useRef<any>(null)
-
-  const flushHover = useCallback(() => {
-    hoverTimerRef.current = null
-    const evt = hoverPendingRef.current
-    hoverPendingRef.current = null
-    if (!evt) return
-    const map = mapRef.current?.getMap()
-    if (!map) return
-    const ids = interactiveIdsRef.current
-    if (ids.length === 0) {
-      setHoverInfo(null)
-      return
-    }
-    const features = map.queryRenderedFeatures(evt.point, { layers: ids })
-    if (!features || features.length === 0) {
-      setHoverInfo(null)
-      return
-    }
-    const top = features[0]
-    const sublayerId = top.layer?.id as string | undefined
-    const parentId = sublayerId ? resolveParentLayerId(sublayerId, layerIdsSetRef.current) : undefined
-    const layerInfo = parentId ? layersMapRef.current[parentId] : undefined
-    const props = (top.properties || {}) as Record<string, unknown>
-    setHoverInfo({
-      point: [evt.lngLat.lng, evt.lngLat.lat],
-      layerName: layerInfo?.name ?? parentId ?? sublayerId ?? '未知图层',
-      props: Object.fromEntries(Object.entries(props).slice(0, 3)),
-    })
-  }, [])
-
-  const handleMapMouseMove = useCallback((evt: any) => {
-    // Keep only the latest event; flush at most once per frame (rAF).
-    hoverPendingRef.current = evt
-    if (hoverTimerRef.current !== null) return
-    if (typeof requestAnimationFrame !== 'undefined') {
-      hoverTimerRef.current = requestAnimationFrame(() => flushHover()) as unknown as number
-    } else {
-      // Node / test fallback (mirrors RenderDebouncer's rAF fallback).
-      hoverTimerRef.current = setTimeout(() => flushHover(), 0) as unknown as number
-    }
-  }, [flushHover])
-
-  // FIX-3-3: the hover tooltip must clear when the cursor leaves the map —
-  // previously only mousemove updated it, so it lingered after mouseout. Also
-  // drop the pending hover event + cancel any scheduled flush so a stale rAF
-  // can't re-set hoverInfo after the cursor is gone.
-  const handleMapMouseOut = useCallback(() => {
-    hoverPendingRef.current = null
-    if (hoverTimerRef.current !== null) {
-      if (typeof cancelAnimationFrame !== 'undefined') {
-        cancelAnimationFrame(hoverTimerRef.current)
-      } else {
-        clearTimeout(hoverTimerRef.current)
-      }
-      hoverTimerRef.current = null
-    }
-    setHoverInfo(null)
-  }, [])
+  // 悬浮提示（rAF 节流 hover 查询 + mouseout/卸载清理）下沉到
+  // useHoverTooltip（#1009 分解）；监听仍由下方手势仲裁 effect 挂载。
+  const { hoverInfo, handleMapMouseMove, handleMapMouseOut } = useHoverTooltip({
+    mapRef,
+    interactiveIdsRef,
+    layerIdsSetRef,
+    layersMapRef,
+  })
 
   // FIX-3-4: clear the selection (store + highlight + popup) when the layer it
   // belongs to is removed from the HUD layers — otherwise a stale highlight and
@@ -962,20 +677,6 @@ export function MapPanel({
       map.off('mouseout', handleMapMouseOut)
     }
   }, [mapReady, handleMapMouseMove, handleMapMouseOut])
-
-  // FE-3: cancel any pending hover flush on unmount.
-  useEffect(() => {
-    return () => {
-      if (hoverTimerRef.current !== null) {
-        if (typeof cancelAnimationFrame !== 'undefined') {
-          cancelAnimationFrame(hoverTimerRef.current)
-        } else {
-          clearTimeout(hoverTimerRef.current)
-        }
-        hoverTimerRef.current = null
-      }
-    }
-  }, [])
 
   const handleMove = useCallback((evt: ViewStateChangeEvent) => {
     viewStateRef.current = evt.viewState
