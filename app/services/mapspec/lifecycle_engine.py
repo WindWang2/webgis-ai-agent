@@ -670,6 +670,27 @@ class MapSpecLifecycleEngine:
                                 + ", ".join(f"{c.id}({c.type})" for c in components)
                             ),
                         )
+                    # QA 加固对齐 SetLayoutIntent：patch 路径（component_update /
+                    # 用户路由）同样不允许组件条目携带大数据（96KB）。
+                    oversized = [
+                        c.id for c in mutated
+                        if _estimate_component_bytes(c.to_mapspec()) > _MAX_COMPONENT_BYTES
+                    ]
+                    if oversized:
+                        return MapSpecResult(
+                            is_error=True,
+                            origin=origin,
+                            error_msg=(
+                                "patched layout.components entry exceeds "
+                                f"{_MAX_COMPONENT_BYTES // 1024}KB: "
+                                + ", ".join(oversized[:5])
+                            ),
+                            correction_hint=(
+                                "组件 options 不携带大数据——图表用 chart=ChartData"
+                                "（大载荷自动转 ref:chart-* artifact），统计用 "
+                                "stats.items 摘要（≤24 条）。"
+                            ),
+                        )
                     layout["components"] = sorted(
                         [c.to_mapspec() for c in mutated],
                         key=lambda c: (c.get("priority", 0), c.get("id", "")),

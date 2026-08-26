@@ -285,6 +285,7 @@ export const layerCommands: Record<string, CommandEntry> = {
       let sawFailure = false;
       const storeMatchedAll: string[] = [];
       const matchedAll: string[] = [];
+      const removeDurabilityTargets: string[] = [];
       let runtimeRemovedAny = false;
 
       for (const tgt of effectiveTargets) {
@@ -296,8 +297,11 @@ export const layerCommands: Record<string, CommandEntry> = {
         const storeMatched = matched.filter((id) => isStoreSchemeMatch(tgt, id));
         storeMatchedAll.push(...storeMatched);
 
+        // 供 durability 用：先于 removeLayer 捕获 spec 层 id（两种退出路径皆需）
+        const preLayer0 = getHudState().layers?.find?.((l: any) => l.id === tgt);
+        const preSpecId0 = String((preLayer0 as any)?._mapspecLayerId ?? tgt);
+        if (specLayerIds.has(preSpecId0)) removeDurabilityTargets.push(preSpecId0);
         if (matched.length === 0 && !storeHasLayer) continue;
-
         const customId = `custom-${tgt}`;
         const customMatched = matched.filter((id) => isCustomSchemeMatch(tgt, id));
 
@@ -354,14 +358,11 @@ export const layerCommands: Record<string, CommandEntry> = {
 
       // 4. durability：MapSpec 拥有的层同步删除后端 desired state（此前
       //    Agent remove 不动 spec——backend 修复/reconcile 会复活图层）。
-      //    fire-and-forget：地图已删，后端失败只降级为 pending 语义。
+      //    先捕获的 specLayerIds 避免 store 行删除后丢失映射。
       void (async () => {
         const { commitMapSpecMutation, } = await import('@/lib/mapspec/user-mutation');
         const { markPendingRemoved } = await import('@/lib/mapspec/session-cursor');
-        for (const tgt of effectiveTargets) {
-          const hudLayer = getHudState().layers?.find?.((l: any) => l.id === tgt);
-          const specLayerId = String((hudLayer as any)?._mapspecLayerId ?? tgt);
-          if (!specLayerIds.has(specLayerId)) continue;
+        for (const specLayerId of removeDurabilityTargets) {
           markPendingRemoved(specLayerId);
           try {
             await commitMapSpecMutation({ intent: 'remove_layer', layer_id: specLayerId });

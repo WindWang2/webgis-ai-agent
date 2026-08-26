@@ -73,7 +73,12 @@ function ChartPanelView({ component }: { component: MapSpecComponent }) {
   const [fetched, setFetched] = useState<ChartData | null | undefined>(undefined);
 
   useEffect(() => {
-    if (!chartRef) return;
+    if (!chartRef) {
+      setFetched(undefined);
+      return;
+    }
+    // ref 切换：清除旧 fetched，否则短暂显示旧图
+    setFetched(undefined);
     let alive = true;
     // 缓存命中（含其他面板已拉取）时 loadChartArtifact 兑现同一结果
     loadChartArtifact(chartRef).then((chart) => {

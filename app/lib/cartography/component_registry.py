@@ -159,8 +159,8 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         placement_domain="panel", supported_outputs=["interactive", "png", "pdf"],
         required_context=["chart"],
         renderer_support=["interactive"], exporter_support=["png", "pdf"],
-        default_variant="default", variants=["default", "compact"],
-        default_position="top-left", allowed_positions=["top-left", "top-right", "none"],
+        default_variant="default", variants=["default", "compact", "transparent", "report"],
+        default_position="top-left", allowed_positions=["top-left", "top-right", "bottom-left", "bottom-right", "none"],
         cardinality="zero_or_one", priority=41,
     ),
     MapComponentDescriptor(

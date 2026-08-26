@@ -95,6 +95,16 @@ export async function commitComponentPatch(
       setMapSpecRevision(superseded.mutation_revision);
     }
     commitMapSpecDocument(superseded.mapspec);
+    // superseded 时的 override 与 server 真相不一致（如被并发 Agent 覆盖），
+    // 则不应永久压住——清掉，让 spec 成为可见真相（review P2）。
+    if (err instanceof ApiError && superseded.mapspec) {
+      const spec = superseded.mapspec as { layout?: { components?: Array<{ id: string; placement?: unknown }> } };
+      const serverPlacement = (spec.layout?.components || []).find((c) => c.id === componentId)?.placement;
+      const override = getComponentPlacementOverride(componentId);
+      if (override && JSON.stringify(serverPlacement) !== JSON.stringify(override)) {
+        setComponentPlacementOverride(componentId, null);
+      }
+    }
     devOnly.warn('[component-mutation] patch superseded, converged to server truth');
   }
 }

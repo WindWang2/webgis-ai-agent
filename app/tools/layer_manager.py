@@ -167,6 +167,15 @@ def register_layer_management_tools(registry: ToolRegistry):
         final_spec = await mapspec_store_instance.get_mapspec(session_id) or {}
         fingerprint = cartographic_fingerprint(final_spec) if final_spec else ""
 
+        # review P2-3/P1（409 风暴根因）：服务端 desired patch 推进了
+        # mutation_revision，但结果不带 revision/mapspec → 前端游标必然
+        # 过期 → finalize 突发提交全数 409。回传两项让 SSE 消费端
+        # （use-sse-stream 读 data.mutation_revision/data.mapspec）在命令
+        # 执行前收敛游标。
+        from app.services.session_data import session_data_manager as _sdm
+        _state = await _sdm.get_map_state(session_id)
+        _revision = _state.get("_cartographic_mutation_revision", 0)
+
         return {
             "success": True,
             "command": "FINALIZE_DISPLAY",
@@ -175,6 +184,8 @@ def register_layer_management_tools(registry: ToolRegistry):
             # 前端 ack（confirmed/store_updated + visible/hidden/unresolved
             # layer ids）参与收敛判定。
             "mapspec_fingerprint": fingerprint,
+            "mutation_revision": _revision if isinstance(_revision, int) else 0,
+            "mapspec": final_spec or None,
             "final_display": {
                 "show_layer_ids": resolved,
                 "desired_state_patched": durability_patched,

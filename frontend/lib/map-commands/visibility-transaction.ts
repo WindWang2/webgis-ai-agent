@@ -1,7 +1,14 @@
 import * as renderer from '@/lib/map-kit/renderer';
 import { devOnly } from '@/lib/utils/logger';
-import { mergePendingPresentation } from '@/lib/mapspec/session-cursor';
-import { commitLayerPresentation } from '@/lib/mapspec/user-mutation';
+import {
+  clearPendingPresentation,
+  commitMapSpecDocument,
+  getMapSpecSessionCursor,
+  mergePendingPresentation,
+  setMapSpecRevision,
+} from '@/lib/mapspec/session-cursor';
+import { ApiError, apiFetch } from '@/lib/api/transport';
+import { presentationFromMapSpec } from '@/lib/session/map-state-restore';
 import type { MapCommandContext, MapCommandResult } from './types';
 import {
   matchMapLayers,
@@ -16,13 +23,16 @@ import {
  * 每次可见性变更走同一深接口，杜绝「UI 一套 / Agent 一套 / finalize 一套」：
  *   resolve identity → desired（HUD store + pending presentation）
  *   → runtime（MapLibre setLayoutProperty 即时生效）
- *   → durability（后端 MapSpec patch_layer_presentation 提交，CAS；
- *     superseded 时用户最新交互优先——服务端真相回灌）
+ *   → durability（后端 MapSpec patch_layer_presentation 提交，CAS）
  *   → postcondition（getLayoutProperty 读回验证）
  *   → evidence（confirmed / store_updated，绝不假成功）。
  *
- * durability 提交是 fire-and-forget：runtime 已生效的突变不因后端提交
- * 失败而回滚；失败保留 pending presentation（下一次 reconcile 再收敛）。
+ * durability 全局串行队列（review P1 修复）：finalize 突发 N 层 × 每层独立
+ * fire-and-forget 会并发读同一游标 revision → 除首笔外全 409，且 superseded
+ * 收敛会回滚本地 hide 决策。所有持久化提交进同一条 promise 链，逐笔读取
+ * 前一笔推进后的 revision；superseded 时检查服务端真相是否已含期望值，
+ * 不含则带新 revision 重试一次（仍失败 → 保留 pending，reconcile 兜底）。
+ * runtime 已生效的突变不因后端提交失败而回滚。
  */
 
 export interface VisibilityTransactionInput {
@@ -48,35 +58,134 @@ function wantVisibility(visible: boolean | null | undefined): 'visible' | 'none'
   return visible != null ? (visible ? 'visible' : 'none') : undefined;
 }
 
-async function commitDurability(
-  targets: { storeId: string; specLayerId: string }[],
-  visible?: boolean | null,
-  opacity?: number | null,
-): Promise<'committed' | 'pending'> {
-  let durability: 'committed' | 'pending' = 'committed';
-  // 顺序提交（非并行）：每次 commitLayerPresentation 从游标读
-  // expected_revision，首笔成功推进 revision 后，下一笔读到新值——
-  // 并行会全部读到同一旧 revision，除首笔外全被 409 拒（多目标丢失）。
-  for (const { specLayerId } of targets) {
-    try {
-      await commitLayerPresentation({
-        layerId: specLayerId,
-        ...(visible != null ? { visible: Boolean(visible) } : {}),
-        ...(opacity != null ? { opacity: Number(opacity) } : {}),
-      });
-    } catch (err) {
-      // runtime 已生效——durability 失败不回滚地图，保留 pending 由
-      // 下一次 reconcile/用户操作收敛。
-      devOnly.warn('[visibility-transaction] durability commit failed:', err);
-      durability = 'pending';
-    }
+interface MutationResponse {
+  success?: boolean;
+  mutation_revision?: number;
+  mapspec?: { layers?: unknown[] } & Record<string, unknown>;
+  correction_hint?: string;
+}
+
+function supersededFromError(err: unknown): MutationResponse | null {
+  if (!(err instanceof ApiError) || err.status !== 409) return null;
+  const body = err.body as { detail?: MutationResponse } | MutationResponse | null;
+  if (!body || typeof body !== 'object') return null;
+  if ('detail' in body && body.detail && typeof body.detail === 'object') {
+    return body.detail;
   }
-  return durability;
+  return null;
+}
+
+interface PresentationPatch {
+  visible?: boolean;
+  opacity?: number;
+}
+
+function serverReflectsPatch(
+  mapspec: { layers?: unknown[] } & Record<string, unknown> | undefined,
+  specLayerId: string,
+  patch: PresentationPatch,
+): boolean {
+  if (!mapspec) return false;
+  const pres = presentationFromMapSpec(mapspec as never, specLayerId);
+  if (patch.visible !== undefined && pres.visible !== patch.visible) return false;
+  if (patch.opacity !== undefined && pres.opacity !== patch.opacity) return false;
+  return true;
 }
 
 /**
- * 应用一次可见性事务。同步返回读回验证后的结果；durability 提交在后台
- * 进行（不阻塞 ack——ack 语义只覆盖可同步验证的 runtime 真相）。
+ * 单笔 presentation 持久化（带一次 superseded 重试）。
+ * 返回值仅供诊断；调用方不依赖其结果（fire-and-forget 语义）。
+ */
+async function postPresentationOnce(
+  specLayerId: string,
+  patch: PresentationPatch,
+): Promise<'committed' | 'reflected' | 'retry' | 'lost'> {
+  const { sessionId, revision, ownerToken } = getMapSpecSessionCursor();
+  if (!sessionId) return 'lost';
+  try {
+    const data = await apiFetch<MutationResponse>(
+      `/api/v1/chat/sessions/${sessionId}/mapspec/mutations`,
+      {
+        method: 'POST',
+        body: {
+          intent: 'patch_layer_presentation',
+          expected_revision: revision,
+          layer_id: specLayerId,
+          ...patch,
+        },
+        ownerToken,
+        label: 'Layer visibility durability commit',
+      },
+    );
+    if (typeof data.mutation_revision === 'number') {
+      setMapSpecRevision(data.mutation_revision);
+    }
+    if (data.mapspec) commitMapSpecDocument(data.mapspec);
+    clearPendingPresentation(specLayerId);
+    return 'committed';
+  } catch (err) {
+    const superseded = supersededFromError(err);
+    if (!superseded) {
+      devOnly.warn('[visibility-transaction] durability commit failed:', err);
+      clearPendingPresentation(specLayerId);
+      return 'lost';
+    }
+    // superseded：收敛 revision + 服务端真相；若真相已含期望值（并发同值
+    // 写）→ 完成；否则调用方带新 revision 重试一次。
+    if (typeof superseded.mutation_revision === 'number') {
+      setMapSpecRevision(superseded.mutation_revision);
+    }
+    if (superseded.mapspec) commitMapSpecDocument(superseded.mapspec);
+    clearPendingPresentation(specLayerId);
+    return serverReflectsPatch(superseded.mapspec, specLayerId, patch)
+      ? 'reflected'
+      : 'retry';
+  }
+}
+
+async function postPresentationWithRetry(
+  specLayerId: string,
+  patch: PresentationPatch,
+): Promise<'committed' | 'reflected' | 'lost'> {
+  const first = await postPresentationOnce(specLayerId, patch);
+  if (first !== 'retry') return first as 'committed' | 'reflected' | 'lost';
+  const second = await postPresentationOnce(specLayerId, patch);
+  if (second !== 'lost') return second as 'committed' | 'reflected' | 'lost';
+  // 重试仍失败：重新落 pending —— reconcile 继续表达本地期望真相，
+  // 不静默丢决策（服务端偏差由下一次用户/agent 突变或修复循环收敛）。
+  mergePendingPresentation(specLayerId, patch);
+  return 'lost';
+}
+
+// 全局串行队列：跨事务（finalize 的 N 层 + 逐层命令 + 用户 toggle）也逐笔
+// 顺序提交——每笔从游标读到前一笔推进后的 revision。
+let durabilityChain: Promise<void> = Promise.resolve();
+
+function enqueueDurability(
+  targets: { storeId: string; specLayerId: string }[],
+  visible?: boolean | null,
+  opacity?: number | null,
+): void {
+  const patch: PresentationPatch = {
+    ...(visible != null ? { visible: Boolean(visible) } : {}),
+    ...(opacity != null ? { opacity: Number(opacity) } : {}),
+  };
+  if (Object.keys(patch).length === 0) return;
+  durabilityChain = durabilityChain
+    .then(async () => {
+      for (const { specLayerId } of targets) {
+        await postPresentationWithRetry(specLayerId, patch);
+      }
+    })
+    .catch((err) => {
+      // 队列自身绝不因单笔失败断裂。
+      devOnly.warn('[visibility-transaction] durability queue error:', err);
+    });
+}
+
+/**
+ * 应用一次可见性事务。同步返回读回验证后的结果；durality 提交在全局
+ * 串行队列后台进行（不阻塞 ack——ack 语义只覆盖可同步验证的 runtime 真相）。
  */
 export function applyLayerVisibilityTransaction(
   ctx: MapCommandContext,
@@ -134,10 +243,10 @@ export function applyLayerVisibilityTransaction(
     }
   }
 
-  // 5. durability：后端 desired state 提交（fire-and-forget，agent 路径
-  //    此前缺失——reload 后 Agent 可见性决策丢失的根因）。
+  // 5. durability：后端 desired state 提交（全局串行队列 + superseded
+  //    重试；agent 路径此前缺失——reload 后 Agent 可见性决策丢失的根因）。
   if (input.durable !== false && (visible != null || opacity != null)) {
-    void commitDurability(targetSpecPairs, visible, opacity);
+    enqueueDurability(targetSpecPairs, visible, opacity);
   }
 
   // 6. postcondition：读回验证（只对本次请求要改的属性比对）
@@ -187,27 +296,34 @@ export function boundedVisibilityRepair(
 ): Promise<{ confirmed: string[]; unresolved: string[] }> {
   return new Promise((resolve) => {
     setTimeout(() => {
-      const confirmed: string[] = [];
-      const unresolved: string[] = [];
-      for (const { layerId, visible } of targets) {
-        const want = visible ? 'visible' : 'none';
-        const matched = matchMapLayers(ctx.map, layerId);
-        let ok = matched.length > 0;
-        for (const id of matched) {
-          if (!ctx.map.getLayer?.(id) || ctx.map.getLayoutProperty?.(id, 'visibility') !== want) {
-            // 一次有界修复：仍存在的图层重应用期望值（重验在 ack 之外，
-            // observation 循环最终裁决）。
-            try {
-              renderer.updateLayerStyle(ctx.map, id, { visibility: want });
-            } catch (err) {
-              devOnly.warn('[visibility-transaction] bounded repair failed:', err);
+      // 定时器回调内所有 map 访问有界包裹——面板卸载/地图释放后不产生
+      // uncaught error（review P3）。
+      try {
+        const confirmed: string[] = [];
+        const unresolved: string[] = [];
+        for (const { layerId, visible } of targets) {
+          const want = visible ? 'visible' : 'none';
+          const matched = matchMapLayers(ctx.map, layerId);
+          let ok = matched.length > 0;
+          for (const id of matched) {
+            if (!ctx.map.getLayer?.(id) || ctx.map.getLayoutProperty?.(id, 'visibility') !== want) {
+              // 一次有界修复：仍存在的图层重应用期望值（重验在 ack 之外，
+              // observation 循环最终裁决）。
+              try {
+                renderer.updateLayerStyle(ctx.map, id, { visibility: want });
+              } catch (err) {
+                devOnly.warn('[visibility-transaction] bounded repair failed:', err);
+              }
+              ok = ctx.map.getLayoutProperty?.(id, 'visibility') === want;
             }
-            ok = ctx.map.getLayoutProperty?.(id, 'visibility') === want;
           }
+          (ok ? confirmed : unresolved).push(layerId);
         }
-        (ok ? confirmed : unresolved).push(layerId);
+        resolve({ confirmed, unresolved });
+      } catch (err) {
+        devOnly.warn('[visibility-transaction] bounded repair crashed:', err);
+        resolve({ confirmed: [], unresolved: targets.map((t) => t.layerId) });
       }
-      resolve({ confirmed, unresolved });
     }, timeoutMs);
   });
 }

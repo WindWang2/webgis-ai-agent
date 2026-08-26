@@ -51,7 +51,9 @@
       "type": "chart_panel",
       "variants": [
         "default",
-        "compact"
+        "compact",
+        "transparent",
+        "report"
       ],
       "defaultVariant": "default",
       "defaultPosition": "top-left",

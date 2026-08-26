@@ -531,9 +531,10 @@ def mutate_component(
     if position is not None:
         changes["position"] = {"from": mutated.position, "to": position}
         mutated.position = position  # type: ignore[assignment]
-        if mutated.placement is not None and mutated.placement.mode == "anchor":
-            # position 与 anchor placement 双写一致化（单一真相）
-            mutated.placement = ComponentPlacement(mode="anchor", anchor=position)  # type: ignore[arg-type]
+        # position 槽位突变 → anchor placement 双写一致化（单一真相）。对已
+        # floating 的面板是重新锚定（否则 position 突变是静默 no-op——change
+        # 记录说改了而地图不动）。
+        mutated.placement = ComponentPlacement(mode="anchor", anchor=position)  # type: ignore[arg-type]
     if placement is not None:
         parsed = ComponentPlacement.model_validate(placement)
         # anchor 模式同步 position；floating 模式 position 保留原值（旧消费
@@ -552,8 +553,15 @@ def mutate_component(
         changes["style"] = {"from": mutated.style, "to": style}
         mutated.style = {**mutated.style, **style}
     if options is not None:
-        # options 合并语义：嵌套 dict 深合并，标量整体替换
+        # options 合并语义：嵌套 dict 深合并，标量整体替换。
+        # chart ↔ chartRef 互斥绑定：新值携带其一时移除另一个键——深合并会
+        # 保留旧 inline chart，导致 renderer（inline 优先）与 catalog 一直
+        # 显示旧数据（review P1-3）。
         merged_opts = {**mutated.options}
+        if "chart" in options:
+            merged_opts.pop("chartRef", None)
+        if "chartRef" in options:
+            merged_opts.pop("chart", None)
         for k, v in options.items():
             if isinstance(v, dict) and isinstance(merged_opts.get(k), dict):
                 merged_opts[k] = {**merged_opts[k], **v}

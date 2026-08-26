@@ -228,9 +228,23 @@ export function FloatingChrome({
     }
   }
 
-  function finishGesture(e: React.PointerEvent<HTMLElement>) {
+  function finishGesture(
+    e: React.PointerEvent<HTMLElement>,
+    options: { cancelled?: boolean } = {},
+  ) {
     const gesture = gestureRef.current;
     if (!gesture || gesture.pointerId !== e.pointerId) return;
+    if (options.cancelled) {
+      // 指针被系统取消（滚动抢占）——舍弃瞬态，不提交半成品 placement
+      gestureRef.current = null;
+      pendingRef.current = null;
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = 0;
+      }
+      setTransient(null);
+      return;
+    }
     const finalGeometry = computeNext(gesture, e.clientX, e.clientY);
     gestureRef.current = null;
     pendingRef.current = null;
@@ -303,7 +317,7 @@ export function FloatingChrome({
         onPointerDown={onTitlePointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={finishGesture}
-        onPointerCancel={finishGesture}
+        onPointerCancel={(e) => finishGesture(e, { cancelled: true })}
       >
         <span className="min-w-0 truncate text-caption font-medium text-map-chrome-ink" title={title}>
           {title}
@@ -351,7 +365,7 @@ export function FloatingChrome({
             onPointerDown={(e) => startGesture(e, 'resize')}
             onPointerMove={onPointerMove}
             onPointerUp={finishGesture}
-            onPointerCancel={finishGesture}
+            onPointerCancel={(e) => finishGesture(e, { cancelled: true })}
           />
         </>
       )}

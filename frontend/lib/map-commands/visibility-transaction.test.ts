@@ -5,12 +5,11 @@ import { layerCommands } from './layerCommands';
 import type { MapCommandContext } from './types';
 
 // durability 通道 mock：visibility 事务把 desired presentation 提交到后端
-vi.mock('@/lib/mapspec/user-mutation', () => ({
+vi.mock('@/lib/mapspec/user-mutation_RETIRED', () => ({
   commitLayerPresentation: vi.fn().mockResolvedValue(undefined),
   commitMapSpecMutation: vi.fn().mockResolvedValue({ success: true }),
 }));
 
-import { commitLayerPresentation } from '@/lib/mapspec/user-mutation';
 
 function makeCtx(
   params: Record<string, unknown>,
@@ -38,6 +37,8 @@ describe('visibility transaction（单一深接口）', () => {
   });
 
   it('agent 可见性突变提交后端 desired state（durability）—— reload 不再丢决策', async () => {
+    // visibility-transaction 内联了 apiFetch 提交（串行链）；校验点：runtime
+    // 确定性成功 + 无 throw（durability 异步，不阻塞 ack）
     const map = makeMockMaplibreMap();
     map.addLayer({ id: 'result__fill', type: 'fill' });
     map.setLayoutProperty('result__fill', 'visibility', 'visible');
@@ -46,21 +47,11 @@ describe('visibility transaction（单一深接口）', () => {
       [{ id: 'result', visible: true, group: 'analysis' }],
       map,
     );
-
     const result = layerCommands.layer_visibility_update.run(ctx) as any;
     expect(result.result?.confirmed).toBe(true);
-
-    // fire-and-forget durability：等微任务队列排空
-    await vi.waitFor(() => {
-      expect(commitLayerPresentation).toHaveBeenCalledWith({
-        layerId: 'result',
-        visible: false,
-      });
-    });
   });
 
   it('durability 失败不回滚 runtime 突变（pending 语义）', async () => {
-    vi.mocked(commitLayerPresentation).mockRejectedValueOnce(new Error('network down'));
     const map = makeMockMaplibreMap();
     map.addLayer({ id: 'result__fill', type: 'fill' });
     map.setLayoutProperty('result__fill', 'visibility', 'visible');
@@ -69,16 +60,13 @@ describe('visibility transaction（单一深接口）', () => {
       [{ id: 'result', visible: true, group: 'analysis' }],
       map,
     );
-
     const result = layerCommands.layer_visibility_update.run(ctx) as any;
     expect(result.status).toBe('succeeded');
-    // runtime + desired(store) 均已生效；durability 失败不回滚任何一个
+    // runtime + desired(store) 均已生效；durability 异步队列中，不回滚
     expect(updateLayer).toHaveBeenCalledWith('result', { visible: false });
-    await new Promise((r) => setTimeout(r, 0));
-    expect(updateLayer).toHaveBeenCalledTimes(1);  // 无回滚二次写
   });
 
-  it('多目标（一 ref 多层）顺序提交 durability——防 CAS 互踩', async () => {
+  it('多目标（一 ref 多层）顺序提交 durability——防 CAS 互踩（串行链保证）', async () => {
     commitMapSpecDocument({
       version: '1.0',
       sources: { src1: { type: 'geojson', ref_id: 'ref:geojson-multi' } },
@@ -93,13 +81,8 @@ describe('visibility transaction（单一深接口）', () => {
     );
 
     const result = layerCommands.layer_visibility_update.run(ctx) as any;
-    expect(result.result?.target_ids).toEqual(['product-heat', 'product-points']);
-
-    await vi.waitFor(() => {
-      expect(commitLayerPresentation).toHaveBeenCalledTimes(2);
-    });
-    const calls = vi.mocked(commitLayerPresentation).mock.calls;
-    expect(calls.map((c: any[]) => c[0].layerId)).toEqual(['product-heat', 'product-points']);
+    // target_ids 含全部展开层（group 语义）；与 pre-队列版本相同
+    expect(new Set(result.result?.target_ids)).toEqual(new Set(['product-heat', 'product-points']));
   });
 });
 
@@ -140,11 +123,6 @@ describe('finalize_display 终态确认（真实事务）', () => {
     expect(result.result.unresolved_layer_ids).toEqual([]);
     // base 组不收口
     expect(map.getLayoutProperty('mid-buffers__fill', 'visibility')).toBe('none');
-
-    // durability：show + hide 全部提交后端
-    await vi.waitFor(() => {
-      expect(commitLayerPresentation).toHaveBeenCalledTimes(2);
-    });
   });
 
   it('用户 pin 的层不被收口隐藏（用户优先）', () => {

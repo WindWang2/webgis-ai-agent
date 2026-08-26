@@ -147,7 +147,9 @@ export async function toggleLayerAndCommit(layerId: string): Promise<void> {
   // 不会把它当旧轮收起（不与用户对抗）。只处理"点开"方向（previous 为
   // hidden）；隐藏方向解除 pin（此后 Agent 收口语义恢复常态）。
   if (previous === false) {
-    tagUserDisplayed(layerId);
+    // wasHidden=true：toggleLayer 已同步翻转 visible，tagUserDisplayed 不能
+    // 再以 store 的 visible 判断来源（否则 pin 永远不落——review P1）。
+    tagUserDisplayed(layerId, true);
   } else {
     untagUserPinned(layerId);
   }

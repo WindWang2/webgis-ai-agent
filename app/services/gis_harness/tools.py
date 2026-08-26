@@ -1012,6 +1012,10 @@ def register_gis_harness_tools(registry: ToolRegistry):
             "success": True,
             "change": change,
             "components": final_components,
+            # review P1-1：legacy SSE 路径读 result.mapspec 提交文档
+            # （use-sse-stream:505），丢失该键 → agent 组件编辑在下次事件前
+            # 不重渲。Pi details 白名单从未携带它，不受影响。
+            "mapspec": res.get("mapspec"),
             "component_mutation_evidence": {
                 "change": change,
                 "layer_count_unchanged": len(spec.get("layers", []))
@@ -1090,11 +1094,14 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 "default_position": desc.default_position,
             })
 
-        revision = spec.get("mutation_revision")
+        # revision 唯一权威是 map_state._cartographic_mutation_revision
+        # （引擎从不在 spec 文档内嵌该字段）。
+        state = await session_data_manager.get_map_state(session_id)
+        revision = state.get("_cartographic_mutation_revision", 0)
         if not isinstance(revision, int):
-            state = await session_data_manager.get_map_state(session_id)
-            revision = state.get("_cartographic_mutation_revision", 0)
+            revision = 0
 
+        from app.services.gis_harness.components import _FACTORY_BY_TYPE
         return {
             "success": True,
             "mutation_revision": revision,
@@ -1102,7 +1109,8 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 _summarize(c) for c in raw_components if isinstance(c, dict)
             ],
             "available_variants": variant_catalog,
-            "creatable_types": ["chart_panel", "statistics_panel", "annotation", "north_arrow", "scale_bar"],
+            # 可创建类型从工厂表派生（单一事实源，防目录撒谎）
+            "creatable_types": sorted(_FACTORY_BY_TYPE.keys()),
             "summary": (
                 f"{len(raw_components)} 个组件；revision={revision}。"
                 "webgis_component_update 传 expected_revision=revision 防覆盖。"
