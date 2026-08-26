@@ -6,9 +6,11 @@ from pydantic import BaseModel, Field
 
 from app.core.auth import require_owned_session
 from app.models.db_model import Conversation
+from app.services.gis_harness.components import ComponentPlacement
 from app.services.mapspec.lifecycle_engine import (
     InitProjectIntent,
     MapSpecLifecycleEngine,
+    PatchComponentIntent,
     PatchLayerPresentationIntent,
     RemoveLayerIntent,
     ReorderLayersIntent,
@@ -27,6 +29,25 @@ class PatchLayerPresentationBody(BaseModel):
     layer_id: str = Field(min_length=1, max_length=200)
     visible: Optional[bool] = None
     opacity: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+
+
+class PatchComponentBody(BaseModel):
+    """组件局部突变（UI 拖拽/缩放/折叠收尾提交）。
+
+    placement 结构在边界即校验（非法布局 422 而非事务回滚）；
+    enabled 支持『隐藏组件』；collapse 走 placement.collapsed。
+    """
+
+    intent: Literal["patch_component"]
+    expected_revision: int = Field(ge=0)
+    component_id: str = Field(min_length=1, max_length=128)
+    enabled: Optional[bool] = None
+    position: Optional[str] = None
+    placement: Optional[ComponentPlacement] = None
+    variant: Optional[str] = Field(None, max_length=64)
+    style: Optional[dict[str, Any]] = None
+    options: Optional[dict[str, Any]] = None
+    upsert: bool = False
 
 
 class SetViewBody(BaseModel):
@@ -83,6 +104,7 @@ class InitProjectBody(BaseModel):
 UserMapSpecMutationRequest = Annotated[
     Union[
         PatchLayerPresentationBody,
+        PatchComponentBody,
         SetViewBody,
         RemoveLayerBody,
         ReorderLayersBody,
@@ -111,6 +133,25 @@ async def apply_user_mapspec_mutation(
             layer_id=req.layer_id,
             visible=req.visible,
             opacity=req.opacity,
+        )
+    elif isinstance(req, PatchComponentBody):
+        if all(
+            f is None
+            for f in (req.enabled, req.position, req.placement, req.variant, req.style, req.options)
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="patch_component requires at least one mutation field",
+            )
+        intent = PatchComponentIntent(
+            component_id=req.component_id,
+            enabled=req.enabled,
+            position=req.position,
+            placement=req.placement.model_dump(exclude_none=True) if req.placement else None,
+            variant=req.variant,
+            style=req.style,
+            options=req.options,
+            upsert=req.upsert,
         )
     elif isinstance(req, SetViewBody):
         if (

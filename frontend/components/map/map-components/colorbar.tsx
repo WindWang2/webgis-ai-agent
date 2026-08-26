@@ -2,7 +2,7 @@
 import React from 'react';
 import type { MapSpecComponent } from '@/lib/mapspec-compiler/types';
 import { registerComponentRenderer } from './registry';
-import { positionClass, stackedBottomStyle } from './helpers';
+import { positionClass, resolveVariant, stackedBottomStyle } from './helpers';
 import type { RendererContext } from './types';
 import type { LegendSpec } from '@/lib/map-kit/types';
 import { formatLegendValue } from '@/components/map/legends/legend-card';
@@ -33,14 +33,22 @@ function ColorbarRenderer(component: MapSpecComponent, ctx: RendererContext) {
   const colors = legend && (legend.type === 'continuous' || legend.type === 'divergent') ? (legend as unknown as { palette_colors: string[] }).palette_colors : undefined;
   if (!colors || colors.length < 2) return null;
   const vertical = (component as unknown as { options?: Record<string, unknown> }).options?.['orientation'] === 'vertical';
+  // D7：slim = 更细色条；compact = 紧凑内边距；report = 卡片加宽 + 刻度强调
+  // （horizontal/vertical 是 orientation 载体，不改变 padding 语义）
+  const variant = resolveVariant(component, '');
+  const slim = variant === 'slim';
+  const padClass = variant === 'compact' ? 'px-1.5 py-1' : variant === 'report' ? 'px-3 py-2' : 'px-2 py-1.5';
+  const barClass = vertical
+    ? `${slim ? 'w-1.5' : 'w-2.5'} rounded-sm`
+    : `${slim ? 'h-1.5' : 'h-2.5'} w-36 rounded-sm`;
   const gradient = `linear-gradient(to ${vertical ? 'bottom' : 'right'}, ${colors.join(', ')})`;
   const range = legend as unknown as { min?: number; max?: number; unit?: string };
   const hasRange = range.min !== undefined && range.max !== undefined;
   return (
-    <div data-testid="spec-chrome-colorbar" style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome px-2 py-1.5 ${positionClass(component)}`} aria-label="连续密度色条">
+    <div data-testid="spec-chrome-colorbar" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${padClass} ${positionClass(component)}`} aria-label="连续密度色条">
       {hasRange ? (
         <div className={`flex ${vertical ? 'flex-row gap-1' : 'flex-col gap-0.5'} text-micro tabular-nums text-map-chrome-ink`}>
-          <div aria-hidden className={vertical ? 'w-2.5 rounded-sm' : 'h-2.5 w-36 rounded-sm'} style={{ background: gradient, backgroundImage: gradient }} data-gradient={gradient} />
+          <div aria-hidden className={barClass} style={{ background: gradient, backgroundImage: gradient }} data-gradient={gradient} />
           <div className="flex w-full items-baseline justify-between gap-1 text-map-chrome-ink-muted">
             {/* #998：两端刻度走统一 formatLegendValue（千分位 / M-k 压缩 /
                 非零不打印零），与图例读数一致——固定 toFixed(1) 会把
@@ -56,7 +64,7 @@ function ColorbarRenderer(component: MapSpecComponent, ctx: RendererContext) {
           </div>
         </div>
       ) : (
-        <div aria-hidden className="h-2.5 w-36 rounded-sm" style={{ background: gradient, backgroundImage: gradient }} data-gradient={gradient} />
+        <div aria-hidden className={barClass} style={{ background: gradient, backgroundImage: gradient }} data-gradient={gradient} />
       )}
     </div>
   );

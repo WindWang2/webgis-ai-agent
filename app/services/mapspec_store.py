@@ -16,6 +16,7 @@ from app.services.mapspec import (
     SetViewIntent,
     UpsertSourceIntent,
     UpsertLayerIntent,
+    PatchComponentIntent,
     RemoveLayerIntent,
     SetLayoutIntent,
     CheckpointIntent,
@@ -283,6 +284,46 @@ class MapSpecStore:
         return _with_evidence(res, {
             "success": not res.is_error,
             "layout": res.mapspec.get("layout", {}) if res.mapspec else {},
+            "mapspec": res.mapspec,
+        })
+
+    async def patch_component(
+        self,
+        session_id: str,
+        *,
+        component_id: str,
+        component_type: Optional[str] = None,
+        enabled: Optional[bool] = None,
+        position: Optional[str] = None,
+        placement: Optional[Dict[str, Any]] = None,
+        variant: Optional[str] = None,
+        style: Optional[Dict[str, Any]] = None,
+        options: Optional[Dict[str, Any]] = None,
+        upsert: bool = False,
+        expected_revision: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """组件局部突变（单组件事务；Agent 工具与用户 UI 同一入口）。
+
+        与 layout_set 的整表替换相对；expected_revision 提供乐观并发
+        （落后 → superseded，用户最新交互优先于旧 Agent 决策）。
+        """
+        res = await self.engine.apply_mutation(
+            session_id,
+            PatchComponentIntent(
+                component_id=component_id,
+                component_type=component_type,
+                enabled=enabled,
+                position=position,
+                placement=placement,
+                variant=variant,
+                style=style,
+                options=options,
+                upsert=upsert,
+            ),
+            expected_revision=expected_revision,
+        )
+        return _with_evidence(res, {
+            "success": not res.is_error and not res.superseded,
             "mapspec": res.mapspec,
         })
 

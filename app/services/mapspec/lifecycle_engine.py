@@ -182,6 +182,26 @@ class PatchLayerPresentationIntent:
 
 
 @dataclass
+class PatchComponentIntent:
+    """Component-local mutation (UI drag/resize/collapse or agent chrome edit).
+
+    与 SetLayoutIntent（整表替换）相对：只改命中的单个组件，其余组件不动。
+    校验/突变逻辑复用 gis_harness.components.mutate_component —— 同一入口
+    服务 user route 与 agent 工具，不出现第二套组件突变实现。
+    """
+
+    component_id: str
+    component_type: Optional[str] = None
+    enabled: Optional[bool] = None
+    position: Optional[str] = None
+    placement: Optional[Dict[str, Any]] = None
+    variant: Optional[str] = None
+    style: Optional[Dict[str, Any]] = None
+    options: Optional[Dict[str, Any]] = None
+    upsert: bool = False
+
+
+@dataclass
 class SetBasemapIntent:
     """Basemap chrome mutation (#722): keeps the persisted spec tracking the
     BASE_LAYER_CHANGE command the legacy basemap tools emit, so desired state
@@ -216,6 +236,19 @@ _OPACITY_PAINT_KEYS = {
 }
 
 
+# layout.components 单条目载荷上限（QA-2026-08-26：LLM 直塞 FeatureCollection）
+_MAX_COMPONENT_BYTES = 96 * 1024
+
+
+def _estimate_component_bytes(component: Dict[str, Any]) -> int:
+    """组件条目序列化尺寸估算（失败 → 超限，宁可拒绝不放大）。"""
+    try:
+        from app.lib.json_size import estimate_json_bytes
+        return estimate_json_bytes(component)
+    except Exception:  # noqa: BLE001
+        return _MAX_COMPONENT_BYTES + 1
+
+
 def _patch_layer_presentation(
     layer: Dict[str, Any],
     visible: Optional[bool],
@@ -242,6 +275,7 @@ MutationIntent = Union[
     UpsertSourceIntent,
     UpsertLayerIntent,
     PatchLayerPresentationIntent,
+    PatchComponentIntent,
     RemoveLayerIntent,
     ReorderLayersIntent,
     SetLayoutIntent,
@@ -583,6 +617,86 @@ class MapSpecLifecycleEngine:
                     mapspec["sources"][intent.source_id] = _src
                     auto_checkpoint = True
 
+                elif isinstance(intent, PatchComponentIntent):
+                    # 组件局部突变（UI 拖拽收尾 / Agent 组件编辑）——与
+                    # SetLayoutIntent 的整表替换不同，只动命中的单个组件。
+                    # 突变/校验复用 gis_harness.components.mutate_component，
+                    # 不出现第二套组件突变实现。
+                    from app.services.gis_harness.components import (
+                        CartographyComponent,
+                        mutate_component,
+                    )
+
+                    old_mapspec_snapshot = loaded
+                    mapspec = {**loaded} if loaded else {}
+                    layout = dict(mapspec.get("layout", {}))
+                    raw_components = layout.get("components") or []
+                    components = [
+                        CartographyComponent.model_validate(dict(c))
+                        for c in raw_components
+                        if isinstance(c, dict)
+                    ]
+                    if not components and not intent.upsert:
+                        return MapSpecResult(
+                            is_error=True,
+                            origin=origin,
+                            error_msg="MapSpec has no layout.components to patch.",
+                            correction_hint=(
+                                "Initialize components via webgis_map_product or "
+                                "webgis_layout_set first, or patch with upsert."
+                            ),
+                        )
+                    mutated, change = mutate_component(
+                        components,
+                        component_id=intent.component_id,
+                        component_type=intent.component_type,
+                        enabled=intent.enabled,
+                        position=intent.position,
+                        placement=intent.placement,
+                        variant=intent.variant,
+                        style=intent.style,
+                        options=intent.options,
+                        upsert=intent.upsert,
+                    )
+                    if change is None:
+                        return MapSpecResult(
+                            is_error=True,
+                            origin=origin,
+                            error_msg=(
+                                f"Component {intent.component_id} not found."
+                            ),
+                            correction_hint=(
+                                "Current components: "
+                                + ", ".join(f"{c.id}({c.type})" for c in components)
+                            ),
+                        )
+                    # QA 加固对齐 SetLayoutIntent：patch 路径（component_update /
+                    # 用户路由）同样不允许组件条目携带大数据（96KB）。
+                    oversized = [
+                        c.id for c in mutated
+                        if _estimate_component_bytes(c.to_mapspec()) > _MAX_COMPONENT_BYTES
+                    ]
+                    if oversized:
+                        return MapSpecResult(
+                            is_error=True,
+                            origin=origin,
+                            error_msg=(
+                                "patched layout.components entry exceeds "
+                                f"{_MAX_COMPONENT_BYTES // 1024}KB: "
+                                + ", ".join(oversized[:5])
+                            ),
+                            correction_hint=(
+                                "组件 options 不携带大数据——图表用 chart=ChartData"
+                                "（大载荷自动转 ref:chart-* artifact），统计用 "
+                                "stats.items 摘要（≤24 条）。"
+                            ),
+                        )
+                    layout["components"] = sorted(
+                        [c.to_mapspec() for c in mutated],
+                        key=lambda c: (c.get("priority", 0), c.get("id", "")),
+                    )
+                    mapspec["layout"] = layout
+
                 elif isinstance(intent, RemoveLayerIntent):
                     # V3 COW: layers mutation, shallow copy + new filtered list
                     old_mapspec_snapshot = loaded
@@ -639,11 +753,37 @@ class MapSpecLifecycleEngine:
                         # 组件整体替换（webgis_component_update 先读后写实现
                         # 局部突变）；条目要求唯一 string id + string type，
                         # 非法/重复输入确定性拒绝，不留半更新状态。
+                        # QA-2026-08-26 加固：LLM 曾把整份 FeatureCollection 塞进
+                        # statistics_panel.options（layout_set 绕过组件 payload
+                        # 校验）——组件条目尺寸有界（96KB），大数据走
+                        # ref:chart-* artifact / 图层 ref，不进 layout.components。
                         valid = all(
                             isinstance(c, dict) and isinstance(c.get("id"), str)
                             and isinstance(c.get("type"), str)
                             for c in intent.components
                         )
+                        oversized = [
+                            str(c.get("id"))
+                            for c in intent.components
+                            if isinstance(c, dict)
+                            and _estimate_component_bytes(c) > _MAX_COMPONENT_BYTES
+                        ]
+                        if oversized:
+                            return MapSpecResult(
+                                is_error=True,
+                                origin=origin,
+                                error_msg=(
+                                    "layout.components entries exceed "
+                                    f"{_MAX_COMPONENT_BYTES // 1024}KB: "
+                                    + ", ".join(oversized[:5])
+                                ),
+                                correction_hint=(
+                                    "组件 options 不携带大数据（FeatureCollection/"
+                                    "全量记录）——图表经 generate_chart(attach_to_map)"
+                                    "或 component_update(chart=…) 走 ref:chart-* "
+                                    "artifact；统计数据用 stats.items 摘要（≤24 条）。"
+                                ),
+                            )
                         ids = [
                             c.get("id") for c in intent.components
                             if isinstance(c, dict)

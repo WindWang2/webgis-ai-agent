@@ -315,7 +315,7 @@ describe('MapActionHandler', () => {
     expect(reportTerminalFn).toHaveBeenCalledWith(
       expect.objectContaining({ command: 'add_layer' }),
       'succeeded',
-      expect.objectContaining({ actual: { confirmed: true } }),
+      expect.objectContaining({ actual: expect.objectContaining({ confirmed: true }) }),
     );
   });
 
@@ -354,7 +354,7 @@ describe('MapActionHandler', () => {
     expect(reportTerminalFn).toHaveBeenCalledWith(
       expect.objectContaining({ command: 'add_layer' }),
       'succeeded',
-      expect.objectContaining({ actual: { confirmed: true } }),
+      expect.objectContaining({ actual: expect.objectContaining({ confirmed: true }) }),
     );
   });
 
@@ -490,7 +490,7 @@ describe('MapActionHandler', () => {
     expect(reportTerminalFn).toHaveBeenCalledWith(
       expect.objectContaining({ command: 'remove_layer' }),
       'succeeded',
-      expect.objectContaining({ actual: { confirmed: true } }),
+      expect.objectContaining({ actual: expect.objectContaining({ confirmed: true }) }),
     );
   });
 
@@ -623,7 +623,7 @@ describe('MapActionHandler', () => {
     expect(reportTerminalFn).toHaveBeenCalledWith(
       expect.objectContaining({ command: 'LAYER_VISIBILITY_UPDATE' }),
       'succeeded',
-      expect.objectContaining({ actual: { confirmed: true } }),
+      expect.objectContaining({ actual: expect.objectContaining({ confirmed: true }) }),
     );
   });
 
@@ -648,7 +648,7 @@ describe('MapActionHandler', () => {
     expect(reportTerminalFn).toHaveBeenCalledWith(
       expect.objectContaining({ command: 'LAYER_STYLE_UPDATE' }),
       'succeeded',
-      expect.objectContaining({ actual: { confirmed: true } }),
+      expect.objectContaining({ actual: expect.objectContaining({ confirmed: true }) }),
     );
   });
 
@@ -822,7 +822,7 @@ describe('MapActionHandler', () => {
     expect(reportTerminalFn).toHaveBeenCalledWith(
       expect.objectContaining({ command: 'APPLY_LAYER_FILTER' }),
       'succeeded',
-      expect.objectContaining({ actual: { confirmed: true } }),
+      expect.objectContaining({ actual: expect.objectContaining({ confirmed: true }) }),
     );
     expect(popAction).toHaveBeenCalled();
   });
@@ -1218,7 +1218,7 @@ describe('MapActionHandler', () => {
     expect(reportTerminalFn).toHaveBeenCalledWith(
       expect.objectContaining({ command: 'REORDER_LAYER' }),
       'succeeded',
-      expect.objectContaining({ actual: { store_updated: true } }),
+      expect.objectContaining({ actual: expect.objectContaining({ store_updated: true }) }),
     );
     expect(popAction).toHaveBeenCalled();
   });
@@ -1246,7 +1246,7 @@ describe('MapActionHandler', () => {
     expect(reportTerminalFn).toHaveBeenCalledWith(
       expect.objectContaining({ command: 'add_layer' }),
       'succeeded',
-      expect.objectContaining({ actual: { confirmed: true } }),
+      expect.objectContaining({ actual: expect.objectContaining({ confirmed: true }) }),
     );
     expect(popAction).toHaveBeenCalled();
   });
@@ -1268,7 +1268,7 @@ describe('MapActionHandler', () => {
     expect(reportTerminalFn).toHaveBeenCalledWith(
       expect.objectContaining({ command: 'REORDER_LAYER' }),
       'succeeded',
-      expect.objectContaining({ actual: { confirmed: true } }),
+      expect.objectContaining({ actual: expect.objectContaining({ confirmed: true }) }),
     );
   });
 
@@ -1287,7 +1287,7 @@ describe('MapActionHandler', () => {
     expect(reportTerminalFn).toHaveBeenCalledWith(
       expect.objectContaining({ command: 'remove_layer' }),
       'succeeded',
-      expect.objectContaining({ actual: { confirmed: true } }),
+      expect.objectContaining({ actual: expect.objectContaining({ confirmed: true }) }),
     );
   });
 
@@ -1311,7 +1311,7 @@ describe('MapActionHandler', () => {
     expect(reportTerminalFn).toHaveBeenCalledWith(
       expect.objectContaining({ command: 'add_marker' }),
       'succeeded',
-      expect.objectContaining({ actual: { confirmed: true } }),
+      expect.objectContaining({ actual: expect.objectContaining({ confirmed: true }) }),
     );
   });
 
@@ -1364,7 +1364,7 @@ describe('MapActionHandler', () => {
     expect(reportTerminalFn).toHaveBeenCalledWith(
       expect.objectContaining({ command: 'add_raster_layer' }),
       'succeeded',
-      expect.objectContaining({ actual: { confirmed: true } }),
+      expect.objectContaining({ actual: expect.objectContaining({ confirmed: true }) }),
     );
   });
 
@@ -1409,7 +1409,7 @@ describe('MapActionHandler', () => {
     expect(reportTerminalFn).toHaveBeenCalledWith(
       expect.objectContaining({ command: 'remove_layer' }),
       'succeeded',
-      expect.objectContaining({ actual: { confirmed: true } }),
+      expect.objectContaining({ actual: expect.objectContaining({ confirmed: true }) }),
     );
   });
 
@@ -1427,7 +1427,7 @@ describe('MapActionHandler', () => {
     expect(reportTerminalFn).toHaveBeenCalledWith(
       expect.objectContaining({ command: 'remove_layer' }),
       'succeeded',
-      expect.objectContaining({ actual: { store_updated: true } }),
+      expect.objectContaining({ actual: expect.objectContaining({ store_updated: true }) }),
     );
     expect(reportTerminalFn).not.toHaveBeenCalledWith(
       expect.objectContaining({ command: 'remove_layer' }),
@@ -1453,7 +1453,7 @@ describe('MapActionHandler', () => {
     expect(reportTerminalFn).toHaveBeenCalledWith(
       expect.objectContaining({ command: 'LAYER_VISIBILITY_UPDATE' }),
       'succeeded',
-      expect.objectContaining({ actual: { confirmed: true } }),
+      expect.objectContaining({ actual: expect.objectContaining({ confirmed: true }) }),
     );
   });
 
@@ -1471,7 +1471,7 @@ describe('MapActionHandler', () => {
     expect(reportTerminalFn).toHaveBeenCalledWith(
       expect.objectContaining({ command: 'LAYER_VISIBILITY_UPDATE' }),
       'succeeded',
-      expect.objectContaining({ actual: { store_updated: true } }),
+      expect.objectContaining({ actual: expect.objectContaining({ store_updated: true }) }),
     );
   });
 
@@ -1495,7 +1495,7 @@ describe('MapActionHandler', () => {
     expect(reportTerminalFn).toHaveBeenCalledWith(
       expect.objectContaining({ command: 'LAYER_VISIBILITY_UPDATE' }),
       'succeeded',
-      expect.objectContaining({ actual: { store_updated: true } }),
+      expect.objectContaining({ actual: expect.objectContaining({ store_updated: true }) }),
     );
     expect(reportTerminalFn).not.toHaveBeenCalledWith(
       expect.objectContaining({ command: 'LAYER_VISIBILITY_UPDATE' }),
@@ -1520,7 +1520,7 @@ describe('MapActionHandler', () => {
     expect(reportTerminalFn).toHaveBeenCalledWith(
       expect.objectContaining({ command: 'LAYER_STYLE_UPDATE' }),
       'succeeded',
-      expect.objectContaining({ actual: { confirmed: true } }),
+      expect.objectContaining({ actual: expect.objectContaining({ confirmed: true }) }),
     );
   });
 

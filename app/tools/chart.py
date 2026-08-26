@@ -133,11 +133,39 @@ def _map_features_to_points(
     return points, ""
 
 
+def validate_chart_payload(chart: Any) -> "str | None":
+    """公共 ChartData 校验（map chart_panel 与 chat 图表共用同一契约）。
+
+    输入应为 {type,title,data[,x_label,y_label]} dict；返回 None=合法，
+    否则返回错误信息。复用 generate_chart 的全部 DoS/XSS 防线。
+    """
+    if not isinstance(chart, dict):
+        return "chart 必须是对象 {type,title,data}"
+    effective_type = str(chart.get("type") or "").strip().lower()
+    if effective_type not in VALID_CHART_TYPES:
+        return f"chart.type 必须是 {', '.join(sorted(VALID_CHART_TYPES))} 之一"
+    title = chart.get("title")
+    if not isinstance(title, str) or not title.strip():
+        return "chart.title 不能为空"
+    data = chart.get("data")
+    if not isinstance(data, list):
+        return "chart.data 必须是数组"
+    if len(data) == 0:
+        return "chart.data 不能为空"
+    if len(data) > MAX_DATA_POINTS:
+        return f"chart.data 超过 {MAX_DATA_POINTS} 点上限（请聚合/降采样）"
+    for i, point in enumerate(data):
+        is_valid, error_msg = _validate_data_point(point, effective_type)
+        if not is_valid:
+            return f"chart.data[{i}]: {error_msg}"
+    return None
+
+
 def generate_chart(chart_type: str = "", title: str = "", data: Any = "",
                    x_label: str = "", y_label: str = "",
                    x_field: str = "", y_field: str = "", name_field: str = "",
                    type: str = "") -> dict:
-    """生成图表配置数据，供前端渲染。
+    """生成图表配置数据，供前端渲染（同步核心——chat 图表路径不变）。
 
     data 三种形态：[{name,value}] / [{name,x,y}] JSON 数组字符串；已解析的
     列表/FeatureCollection（registry 会在调用前把 ref: 引用解引用成存储的
@@ -219,12 +247,104 @@ def generate_chart(chart_type: str = "", title: str = "", data: Any = "",
     return {"chart": chart}
 
 
+async def generate_chart_tool(
+    chart_type: str = "", title: str = "", data: Any = "",
+    x_label: str = "", y_label: str = "",
+    x_field: str = "", y_field: str = "", name_field: str = "",
+    type: str = "",
+    session_id: str = "", attach_to_map: bool = False,
+    position: str = "", variant: str = "default",
+) -> dict:
+    """generate_chart 的注册面（async 包装）。
+
+    attach_to_map=true（需 session_id）：图表同时作为地图浮动 chart_panel
+    组件写入 MapSpec（组件突变——不触发任何数据重查/图层重排）。与
+    webgis_component_update(create=true) 走同一入口与校验。
+    同步核心 generate_chart 保持既有 chat 图表契约与全部测试兼容。
+    """
+    out = generate_chart(
+        chart_type=chart_type, title=title, data=data,
+        x_label=x_label, y_label=y_label,
+        x_field=x_field, y_field=y_field, name_field=name_field,
+        type=type,
+    )
+    if "error" in out:
+        return out
+    if attach_to_map and session_id:
+        out.update(await _attach_chart_panel(session_id, out["chart"], position, variant))
+    elif attach_to_map and not session_id:
+        out["map_chart_panel"] = {
+            "attached": False,
+            "layer_count_unchanged": True,
+            "error": "attach_to_map 需要 session_id",
+            "hint": "传 session_id=当前会话 后重试，或用 webgis_component_update(create=true)。",
+        }
+    return out
+
+
+async def _attach_chart_panel(
+    session_id: str, chart: dict, position: str, variant: str,
+) -> dict:
+    """把 chart 以 chart_panel 组件 upsert 进 MapSpec（组件突变，不动图层）。
+
+    与 webgis_component_update(create=true) 同入口：小载荷 inline，大载荷
+    （>32KB）存 session artifact ref（MapSpec 只持引用）。返回附加 evidence
+    字段（合并进工具结果）。
+    """
+    import json as _json
+
+    from app.lib.json_size import estimate_json_bytes
+    from app.services.mapspec_store import mapspec_store
+
+    options: dict = {}
+    inline_bytes = estimate_json_bytes(chart)
+    if inline_bytes > 32 * 1024:
+        from app.services.session_data import session_data_manager
+        ref_id = await session_data_manager.store(session_id, {"chart": chart}, prefix="chart")
+        options["chartRef"] = ref_id
+    else:
+        options["chart"] = chart
+
+    res = await mapspec_store.patch_component(
+        session_id,
+        component_id="chart-panel",
+        component_type="chart_panel",
+        options=options,
+        position=position or None,
+        variant=variant or None,
+        upsert=True,
+    )
+    evidence = {
+        "map_chart_panel": {
+            "attached": bool(res.get("success")),
+            "inline": "chart" in options,
+            "bytes": inline_bytes,
+            "layer_count_unchanged": True,
+        },
+    }
+    if options.get("chartRef"):
+        evidence["map_chart_panel"]["chart_ref"] = options["chartRef"]
+    if res.get("success"):
+        evidence["map_chart_panel"]["mutation_revision"] = res.get("mutation_revision")
+        return evidence
+    evidence["map_chart_panel"]["error"] = res.get("message") or _json.dumps(
+        {k: res.get(k) for k in ("message", "correction_hint") if res.get(k)},
+        ensure_ascii=False,
+    )
+    # 附加失败不使图表生成本身失败（chat 侧图表仍返回）；面板错误显式可见
+    evidence["map_chart_panel"]["hint"] = (
+        "地图面板附加失败——可用 webgis_component_update(create=true, "
+        "component_type=chart_panel) 重试。"
+    )
+    return evidence
+
+
 def register_chart_tools(registry: ToolRegistry):
     """注册图表工具"""
     registry.register(
         tier=2, domains=["report"], name="generate_chart",
-        description="【核心可视化工具】生成统计图表。所有数值统计结果【必须】通过此工具展示。data 可传 JSON 数组，也可直接传 GeoJSON/ref 引用并配合 x_field/y_field 取字段。**严禁**在回复中使用任何图片 Markdown (如 `![已通过图表工具渲染](...)`) 作为占位符或展示标记，这会导致前端由于无法找到图片而报错。只需调用工具并直接进行文字总结即可。",
-        func=generate_chart,
+        description="【核心可视化工具】生成统计图表。所有数值统计结果【必须】通过此工具展示。data 可传 JSON 数组，也可直接传 GeoJSON/ref 引用并配合 x_field/y_field 取字段。attach_to_map=true（+session_id）可同时把图表作为地图浮动面板显示（组件突变，不重查数据）。**严禁**在回复中使用任何图片 Markdown (如 `![已通过图表工具渲染](...)`) 作为占位符或展示标记，这会导致前端由于无法找到图片而报错。只需调用工具并直接进行文字总结即可。",
+        func=generate_chart_tool,
         param_descriptions={
             "chart_type": '图表类型: "bar"(柱状图), "line"(折线图), "pie"(饼图), "scatter"(散点图)（别名 type）',
             "title": "图表标题",
@@ -234,5 +354,9 @@ def register_chart_tools(registry: ToolRegistry):
             "x_field": "GeoJSON 输入时的类目/名称字段（bar/line/pie 的类目，scatter 的 x 值字段）",
             "y_field": "GeoJSON 输入时的数值字段（bar/line/pie 的取值，scatter 的 y 值字段）",
             "name_field": "GeoJSON 输入时的名称字段（可选，缺省用 x_field）",
+            "session_id": "当前会话 ID（attach_to_map 时必填）",
+            "attach_to_map": "true 时图表同时作为地图浮动 chart_panel 组件写入 MapSpec（『在地图上显示统计图』场景；组件突变，不重查数据）",
+            "position": "地图面板位置（可选）：top-left/top-right/bottom-left/bottom-right 等槽位",
+            "variant": "面板样式 variant（可选）：default/compact/transparent/report",
         },
     )

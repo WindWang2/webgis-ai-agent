@@ -115,7 +115,15 @@ def register_layer_management_tools(registry: ToolRegistry):
            args_model=FinalizeDisplayArgs,
     )
     async def finalize_display(show_refs: List[str], session_id: Optional[str] = None) -> dict:
-        """收尾显示管理：展示 show_refs，隐藏其余分析图层"""
+        """收尾显示管理：展示 show_refs，隐藏其余分析图层。
+
+        Goal C（终态确认）：结果携带 ``mapspec_fingerprint`` —— 使 finalize
+        进入 cartographic gate（Pi has_cartographic_generation / legacy
+        tool_pipeline 同源），前端 ack 的 confirmed/store_updated 证据因此
+        参与收敛判定，不再游离在门禁之外。展示集同时落服务端 desired state
+        （MapSpec layout.visibility，经生命周期引擎事务提交）——即便前端
+        错过命令，期望态也已持久。
+        """
         if not session_id:
             return {"error": "Missing session_id context"}
         if not show_refs:
@@ -129,10 +137,60 @@ def register_layer_management_tools(registry: ToolRegistry):
             if id_to_use and id_to_use not in resolved:
                 resolved.append(id_to_use)
 
+        # 服务端 desired 持久化：展示集 visible=true（只写 MapSpec 已有层；
+        # HUD-only 层由前端命令的 pending presentation + durability 提交
+        # 收敛——隐藏集的裁决权也在前端：group/pin/boundary 语境只有它有）。
+        from app.lib.cartography.quality_loop import cartographic_fingerprint
+        from app.services.mapspec.lifecycle_engine import (
+            MapSpecLifecycleEngine,
+            PatchLayerPresentationIntent,
+        )
+        from app.services.mapspec.store import mapspec_store_instance
+
+        engine = MapSpecLifecycleEngine()
+        spec = await mapspec_store_instance.get_mapspec(session_id) or {}
+        spec_layer_ids = {
+            str(layer.get("id")) for layer in spec.get("layers", []) if isinstance(layer, dict)
+        }
+        durability_patched: List[str] = []
+        for layer_id in resolved:
+            if layer_id not in spec_layer_ids:
+                continue
+            pres = await engine.apply_mutation(
+                session_id,
+                PatchLayerPresentationIntent(layer_id=layer_id, visible=True),
+                origin="agent",
+            )
+            if not pres.is_error:
+                durability_patched.append(layer_id)
+
+        final_spec = await mapspec_store_instance.get_mapspec(session_id) or {}
+        fingerprint = cartographic_fingerprint(final_spec) if final_spec else ""
+
+        # review P2-3/P1（409 风暴根因）：服务端 desired patch 推进了
+        # mutation_revision，但结果不带 revision/mapspec → 前端游标必然
+        # 过期 → finalize 突发提交全数 409。回传两项让 SSE 消费端
+        # （use-sse-stream 读 data.mutation_revision/data.mapspec）在命令
+        # 执行前收敛游标。
+        from app.services.session_data import session_data_manager as _sdm
+        _state = await _sdm.get_map_state(session_id)
+        _revision = _state.get("_cartographic_mutation_revision", 0)
+
         return {
             "success": True,
             "command": "FINALIZE_DISPLAY",
             "params": {"show_layer_ids": resolved},
+            # 门禁证据：fingerprint 存在 → dispatch 进入 cartographic gate，
+            # 前端 ack（confirmed/store_updated + visible/hidden/unresolved
+            # layer ids）参与收敛判定。
+            "mapspec_fingerprint": fingerprint,
+            "mutation_revision": _revision if isinstance(_revision, int) else 0,
+            "mapspec": final_spec or None,
+            "final_display": {
+                "show_layer_ids": resolved,
+                "desired_state_patched": durability_patched,
+                "verification": "frontend_runtime",
+            },
             "message": (
                 f"最终展示集已收口：显示 {len(resolved)} 个图层"
                 f"（{', '.join(resolved[:3])}{'…' if len(resolved) > 3 else ''}），"

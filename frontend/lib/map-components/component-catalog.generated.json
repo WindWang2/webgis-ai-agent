@@ -1,0 +1,194 @@
+{
+  "schemaVersion": 1,
+  "exportedFrom": "app/lib/cartography/component_registry.py",
+  "componentTypes": [
+    {
+      "type": "annotation",
+      "variants": [
+        "default"
+      ],
+      "defaultVariant": "default",
+      "defaultPosition": "top-left",
+      "category": "annotation.text",
+      "runtimeStatus": "native",
+      "rendererRequired": true
+    },
+    {
+      "type": "attribution",
+      "variants": [
+        "default",
+        "compact"
+      ],
+      "defaultVariant": "default",
+      "defaultPosition": "bottom-left",
+      "category": "annotation.attribution",
+      "runtimeStatus": "native",
+      "rendererRequired": true
+    },
+    {
+      "type": "basemap",
+      "variants": [],
+      "defaultVariant": "default",
+      "defaultPosition": "none",
+      "category": "",
+      "runtimeStatus": "native",
+      "rendererRequired": false
+    },
+    {
+      "type": "categorical_legend",
+      "variants": [
+        "academic",
+        "compact",
+        "report"
+      ],
+      "defaultVariant": "academic",
+      "defaultPosition": "bottom-left",
+      "category": "legend.categorical",
+      "runtimeStatus": "native",
+      "rendererRequired": true
+    },
+    {
+      "type": "chart_panel",
+      "variants": [
+        "default",
+        "compact",
+        "transparent",
+        "report"
+      ],
+      "defaultVariant": "default",
+      "defaultPosition": "top-left",
+      "category": "analysis.chart_panel",
+      "runtimeStatus": "native",
+      "rendererRequired": true
+    },
+    {
+      "type": "continuous_colorbar",
+      "variants": [
+        "horizontal",
+        "vertical",
+        "slim"
+      ],
+      "defaultVariant": "horizontal",
+      "defaultPosition": "bottom-right",
+      "category": "legend.continuous_colorbar",
+      "runtimeStatus": "native",
+      "rendererRequired": true
+    },
+    {
+      "type": "export_layout",
+      "variants": [
+        "A4_landscape",
+        "A4_portrait",
+        "A3_landscape",
+        "letter"
+      ],
+      "defaultVariant": "A4_landscape",
+      "defaultPosition": "none",
+      "category": "export.page_layout",
+      "runtimeStatus": "native",
+      "rendererRequired": false
+    },
+    {
+      "type": "graticule",
+      "variants": [
+        "light",
+        "geographic"
+      ],
+      "defaultVariant": "light",
+      "defaultPosition": "none",
+      "category": "navigation.graticule",
+      "runtimeStatus": "native",
+      "rendererRequired": false
+    },
+    {
+      "type": "legend",
+      "variants": [
+        "academic",
+        "compact",
+        "report"
+      ],
+      "defaultVariant": "academic",
+      "defaultPosition": "bottom-left",
+      "category": "legend.graduated",
+      "runtimeStatus": "native",
+      "rendererRequired": true
+    },
+    {
+      "type": "map_border",
+      "variants": [
+        "minimal",
+        "academic",
+        "report"
+      ],
+      "defaultVariant": "minimal",
+      "defaultPosition": "none",
+      "category": "frame.map_border",
+      "runtimeStatus": "native",
+      "rendererRequired": false
+    },
+    {
+      "type": "north_arrow",
+      "variants": [
+        "compass_minimal_black",
+        "compass_needle",
+        "compass_rose",
+        "arrow_simple"
+      ],
+      "defaultVariant": "compass_minimal_black",
+      "defaultPosition": "top-right",
+      "category": "navigation.north_arrow",
+      "runtimeStatus": "native",
+      "rendererRequired": true
+    },
+    {
+      "type": "scale_bar",
+      "variants": [
+        "minimal",
+        "boxed",
+        "academic"
+      ],
+      "defaultVariant": "minimal",
+      "defaultPosition": "bottom-right",
+      "category": "navigation.scale_bar",
+      "runtimeStatus": "native",
+      "rendererRequired": true
+    },
+    {
+      "type": "statistics_panel",
+      "variants": [
+        "default",
+        "compact"
+      ],
+      "defaultVariant": "default",
+      "defaultPosition": "top-left",
+      "category": "analysis.statistics_panel",
+      "runtimeStatus": "native",
+      "rendererRequired": true
+    },
+    {
+      "type": "subtitle",
+      "variants": [
+        "default",
+        "academic"
+      ],
+      "defaultVariant": "default",
+      "defaultPosition": "top-center",
+      "category": "annotation.subtitle",
+      "runtimeStatus": "native",
+      "rendererRequired": true
+    },
+    {
+      "type": "title",
+      "variants": [
+        "academic",
+        "report",
+        "presentation"
+      ],
+      "defaultVariant": "academic",
+      "defaultPosition": "top-center",
+      "category": "annotation.title",
+      "runtimeStatus": "native",
+      "rendererRequired": true
+    }
+  ]
+}

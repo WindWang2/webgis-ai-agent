@@ -48,6 +48,8 @@ function parkStaleLayers(exceptLayerId: string): void {
     if (layer.id === exceptLayerId) continue;
     // group 缺失（旧路径恢复的层）按 analysis 处理；只排除显式的 base 等组。
     if ((layer.group ?? 'analysis') !== 'analysis' || !layer.visible) continue;
+    // 用户 pin 的层不收起（跨轮持续——用户显式点开且未手动隐藏）。
+    if ((layer as { _userPinned?: boolean })._userPinned) continue;
     // 未标记（会话恢复的存量层）视为第 0 轮 —— 新轮展示时同样让位。
     const displayTurn = layer._displayTurn ?? 0;
     if (displayTurn >= turn) continue;
@@ -73,10 +75,30 @@ export function noteAgentDisplayed(layerId: string): void {
   parkStaleLayers(layerId);
 }
 
-/** 用户手动展示语义：只标记轮次，不触发收起。 */
-export function tagUserDisplayed(layerId: string): void {
+/**
+ * 用户手动展示语义：标记轮次并 pin（finalize 不自动隐藏）。
+ *
+ * ``wasHidden``：调用方在 toggle 之前捕获的状态。调用方通常已先把
+ * store 行翻成 visible（toggleLayer 同步生效），此时本函数不能再以
+ * ``layer.visible`` 判断来源——否则 pin 永远不落（review P1）。
+ */
+export function tagUserDisplayed(layerId: string, wasHidden?: boolean): void {
   const { layers, updateLayer } = useHudStore.getState();
   const layer = layers?.find((l) => l.id === layerId);
-  if (!layer || layer.visible) return;
-  updateLayer(layerId, { visible: true, _displayTurn: turn });
+  if (!layer) return;
+  if (wasHidden !== true && layer.visible) return;
+  updateLayer(layerId, { visible: true, _displayTurn: turn, _userPinned: true });
+}
+
+/** 用户手动隐藏 → 解除 pin（此后 Agent 收口语义恢复常态）。 */
+export function untagUserPinned(layerId: string): void {
+  const layer = useHudStore.getState().layers?.find((l) => l.id === layerId);
+  if (!layer?._userPinned) return;
+  useHudStore.getState().updateLayer(layerId, { _userPinned: false });
+}
+
+/** finalize/收口豁免：用户手动点开且仍 pin 的层不自动隐藏（用户优先）。 */
+export function isUserPinned(layerId: string): boolean {
+  const layer = useHudStore.getState().layers?.find((l) => l.id === layerId);
+  return Boolean((layer as { _userPinned?: boolean } | undefined)?._userPinned);
 }

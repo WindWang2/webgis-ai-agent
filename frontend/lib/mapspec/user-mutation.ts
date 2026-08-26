@@ -11,7 +11,7 @@ import {
   setMapSpecRevision,
 } from '@/lib/mapspec/session-cursor';
 import { useToastStore } from '@/components/ui/toast';
-import { tagUserDisplayed } from '@/lib/chat/turn-focus';
+import { tagUserDisplayed, untagUserPinned } from '@/lib/chat/turn-focus';
 
 export interface LayerPresentationPatch {
   layerId: string;
@@ -145,9 +145,13 @@ export async function toggleLayerAndCommit(layerId: string): Promise<void> {
   useHudStore.getState().toggleLayer(layerId);
   // 「地图随对话」：用户手动点开的层标记为当前轮 —— 后续同轮 agent 展示
   // 不会把它当旧轮收起（不与用户对抗）。只处理"点开"方向（previous 为
-  // hidden）；隐藏方向不动。
+  // hidden）；隐藏方向解除 pin（此后 Agent 收口语义恢复常态）。
   if (previous === false) {
-    tagUserDisplayed(layerId);
+    // wasHidden=true：toggleLayer 已同步翻转 visible，tagUserDisplayed 不能
+    // 再以 store 的 visible 判断来源（否则 pin 永远不落——review P1）。
+    tagUserDisplayed(layerId, true);
+  } else {
+    untagUserPinned(layerId);
   }
   try {
     await commitLayerPresentation({ layerId, visible: !previous });

@@ -69,6 +69,9 @@ export interface Layer {
   /** 「地图随对话」：最后一次被展示（agent display / 用户点开）所属的对话轮次。
    *  新一轮 agent 展示时，落后轮次的可见分析图层会被收起（lib/chat/turn-focus）。 */
   _displayTurn?: number;
+  /** 用户手动点开并保持 pin（finalize 收口豁免——用户优先，不与用户对抗；
+   *  用户手动隐藏时解除）。见 lib/chat/turn-focus 的 tagUserDisplayed。 */
+  _userPinned?: boolean;
   /** Bounded desired-state AUTO_SAFE repairs applied before runtime reconcile. */
   _cartographicRepairs?: Array<Record<string, unknown>>;
   created_at?: string;
