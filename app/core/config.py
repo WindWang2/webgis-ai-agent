@@ -8,7 +8,7 @@ from typing import List, Optional
 from urllib.parse import urlparse
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +195,15 @@ class Settings(BaseSettings):
     # 代理设置
     HTTP_PROXY: Optional[str] = None
     HTTPS_PROXY: Optional[str] = None
+
+    @field_validator("LLM_TEMPERATURE", mode="before")
+    @classmethod
+    def _empty_temperature_is_none(cls, v):
+        """Optional[float] 的 env 字符串没有 None 形态——模板留空（""）映射回 None，
+        与 LLM_TITLE_MODEL / LLM_PLANNER_MODEL 的留空语义对齐。"""
+        if v == "":
+            return None
+        return v
 
     @model_validator(mode="after")
     def _ensure_jwt_secret(self) -> "Settings":

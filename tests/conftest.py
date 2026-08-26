@@ -52,6 +52,11 @@ _ENV_BASELINE = {
         "LLM_PLANNER_MODEL": "",
         "LLM_PROMPT_CACHING_ENABLED": "true",
         "LLM_NO_PROGRESS_THRESHOLD": "3",
+        # audit4 #997：采样/超时/预算参数（LLM_TEMPERATURE 空串经 field_validator 映射回 None）
+        "LLM_TIMEOUT_S": "120.0",
+        "LLM_MAX_TOKENS": "16384",
+        "LLM_TEMPERATURE": "",
+        "LLM_TITLE_MODEL": "",
         "MAPBOX_TOKEN": "",
         "BING_MAP_KEY": "",
         "TENCENT_MAP_KEY": "",
