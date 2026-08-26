@@ -16,7 +16,7 @@
 | 五 | 6 批次修复（P0→P1→P2→P3），每批独立 worktree/分支，本地测试后 merge | 见 §2/§3 |
 | 八 | 全仓回归 + 本报告 | tests/unit 2940 通过；cartography 门禁 41/41；根契约层 21/21 |
 
-**Issue 闭环状态**: 34 个 Issue 中 **32 个已修复闭环**（#978–#1008、#1010），**2 个留作后续**（#1009 巨型组件拆分属多 PR 长期重构；#1011 预存失败甄别，均为本轮发现但超出单批安全修复范围）。
+**Issue 闭环状态**: 34 个 Issue 中 **33 个已修复闭环**（#978–#1008、#1010），**2 个留作后续**（#1009 巨型组件拆分属多 PR 长期重构；#1011 预存失败甄别，均为本轮发现但超出单批安全修复范围）。
 
 ## 2. 修复列表（按批次）
 
@@ -38,6 +38,7 @@
 | #987 | Pi spawn env 映射 `LLM_API_KEY→OPENAI_API_KEY`（占位符不映射）；可选 `PI_PROVIDER+PI_MODEL` → `set_model` RPC |
 | #997 | 新 `app/services/chat/model_config.py`：`resolve_llm_config(role)` 单一解析点（execution/planner/title/spatial）+ 运行时覆盖传播；Settings 增 `LLM_TIMEOUT_S/LLM_MAX_TOKENS/LLM_TEMPERATURE/LLM_TITLE_MODEL`；spatial_reasoning 不再直读 settings |
 | #1005 | 标题调用 TITLE 角色（max_tokens 64→512、只取 content，杜绝推理前缀当标题）；/llm/test 60s 去抖；删除 X-Prompt-Cache/deseek 非标头；移除 openai 死依赖 |
+| #1006 | session_overview 轮数统计排除 XML 路径合成的『[工具执行结果]』载体 user 消息（commit cf391f0，终验时补修） |
 
 ### Batch 3 — GIS 算法（merge e82a210，委托子代理）
 | Issue | 修复 |
@@ -92,6 +93,8 @@ e0cd32a fix(frontend): stop button, readable stream errors… (closes #988,#989,
 2d6b7c7 merge: audit4 batch 5
 4912c1f fix(tools): shared-ref immutability, schema enum constraints… (closes #990,#995,#996,#1004)
 8a49a94 merge: audit4 batch 6
+cf391f0 fix(models): session_overview excludes synthetic XML tool-carrier messages (closes #1006)
+2d77317 test(models): fix f-string reference in session_overview carrier test
 ```
 
 新增守护/回归测试 **~150 个**（batch1 15 + gis 17 + models 12 + harness 10 + frontend 87 + tools-meta 17，含对既有断言的契约更新），全部通过。
@@ -140,4 +143,4 @@ e0cd32a fix(frontend): stop button, readable stream errors… (closes #988,#989,
 
 ## 10. 结论
 
-本轮将仓库从上一审计闭环点（#977）推进到 **#1011**：新增 40 项实证发现全部转为 Issue，其中 32 项已完成代码修复、测试守护与合并；平台在 Agent 循环效率（三层上下文预算）、诚实性契约、成本可观测（usage 记账）、GIS 算法正确性尾巴、制图读数保真（量化图例/色条/标注光晕）与用户控制回路（停止/重试）六个方向获得实质升级。"LLM 调用 GIS 工具"向"面向空间智能任务的 GIS Agent Harness 平台"演进的三条关键断链（意图裁决到达 LLM、计划-执行绑定、用户中断回路）已打通，Model/Tool Registry 的最小前体（角色化解析 + cost/版本契约）已落地并有守护测试锁定。
+本轮将仓库从上一审计闭环点（#977）推进到 **#1011**：新增 41 项实证发现全部转为 Issue，其中 33 项已完成代码修复、测试守护与合并；平台在 Agent 循环效率（三层上下文预算）、诚实性契约、成本可观测（usage 记账）、GIS 算法正确性尾巴、制图读数保真（量化图例/色条/标注光晕）与用户控制回路（停止/重试）六个方向获得实质升级。"LLM 调用 GIS 工具"向"面向空间智能任务的 GIS Agent Harness 平台"演进的三条关键断链（意图裁决到达 LLM、计划-执行绑定、用户中断回路）已打通，Model/Tool Registry 的最小前体（角色化解析 + cost/版本契约）已落地并有守护测试锁定。
