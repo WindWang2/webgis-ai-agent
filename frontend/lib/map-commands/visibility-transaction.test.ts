@@ -1,0 +1,213 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { commitMapSpecDocument, resetLiveState } from '@/lib/mapspec/session-cursor';
+import { makeMockMaplibreMap } from '@/test/__mocks__/maplibre-map';
+import { layerCommands } from './layerCommands';
+import type { MapCommandContext } from './types';
+
+// durability 通道 mock：visibility 事务把 desired presentation 提交到后端
+vi.mock('@/lib/mapspec/user-mutation', () => ({
+  commitLayerPresentation: vi.fn().mockResolvedValue(undefined),
+  commitMapSpecMutation: vi.fn().mockResolvedValue({ success: true }),
+}));
+
+import { commitLayerPresentation } from '@/lib/mapspec/user-mutation';
+
+function makeCtx(
+  params: Record<string, unknown>,
+  layers: any[],
+  map = makeMockMaplibreMap(),
+): { ctx: MapCommandContext; updateLayer: ReturnType<typeof vi.fn>; map: any } {
+  const updateLayer = vi.fn();
+  const ctx = {
+    map,
+    popAction: () => {},
+    setDeferredPop: () => {},
+    safePop: () => {},
+    getHudState: () => ({ layers, updateLayer }),
+    setSelectedBaseLayer: () => {},
+    command: 'layer_visibility_update',
+    params,
+  } as unknown as MapCommandContext;
+  return { ctx, updateLayer, map };
+}
+
+describe('visibility transaction（单一深接口）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetLiveState();
+  });
+
+  it('agent 可见性突变提交后端 desired state（durability）—— reload 不再丢决策', async () => {
+    const map = makeMockMaplibreMap();
+    map.addLayer({ id: 'result__fill', type: 'fill' });
+    map.setLayoutProperty('result__fill', 'visibility', 'visible');
+    const { ctx } = makeCtx(
+      { layer_id: 'result', visible: false },
+      [{ id: 'result', visible: true, group: 'analysis' }],
+      map,
+    );
+
+    const result = layerCommands.layer_visibility_update.run(ctx) as any;
+    expect(result.result?.confirmed).toBe(true);
+
+    // fire-and-forget durability：等微任务队列排空
+    await vi.waitFor(() => {
+      expect(commitLayerPresentation).toHaveBeenCalledWith({
+        layerId: 'result',
+        visible: false,
+      });
+    });
+  });
+
+  it('durability 失败不回滚 runtime 突变（pending 语义）', async () => {
+    vi.mocked(commitLayerPresentation).mockRejectedValueOnce(new Error('network down'));
+    const map = makeMockMaplibreMap();
+    map.addLayer({ id: 'result__fill', type: 'fill' });
+    map.setLayoutProperty('result__fill', 'visibility', 'visible');
+    const { ctx, updateLayer } = makeCtx(
+      { layer_id: 'result', visible: false },
+      [{ id: 'result', visible: true, group: 'analysis' }],
+      map,
+    );
+
+    const result = layerCommands.layer_visibility_update.run(ctx) as any;
+    expect(result.status).toBe('succeeded');
+    // runtime + desired(store) 均已生效；durability 失败不回滚任何一个
+    expect(updateLayer).toHaveBeenCalledWith('result', { visible: false });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(updateLayer).toHaveBeenCalledTimes(1);  // 无回滚二次写
+  });
+
+  it('多目标（一 ref 多层）顺序提交 durability——防 CAS 互踩', async () => {
+    commitMapSpecDocument({
+      version: '1.0',
+      sources: { src1: { type: 'geojson', ref_id: 'ref:geojson-multi' } },
+      layers: [
+        { id: 'product-heat', source: 'src1', type: 'heatmap' },
+        { id: 'product-points', source: 'src1', type: 'circle' },
+      ],
+    } as any);
+    const { ctx } = makeCtx(
+      { layer_id: 'ref:geojson-multi', visible: false },
+      [],
+    );
+
+    const result = layerCommands.layer_visibility_update.run(ctx) as any;
+    expect(result.result?.target_ids).toEqual(['product-heat', 'product-points']);
+
+    await vi.waitFor(() => {
+      expect(commitLayerPresentation).toHaveBeenCalledTimes(2);
+    });
+    const calls = vi.mocked(commitLayerPresentation).mock.calls;
+    expect(calls.map((c: any[]) => c[0].layerId)).toEqual(['product-heat', 'product-points']);
+  });
+});
+
+describe('finalize_display 终态确认（真实事务）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetLiveState();
+  });
+
+  it('MapLibre 读回一致 → confirmed 证据 + visible/hidden/unresolved 集合', async () => {
+    const map = makeMockMaplibreMap();
+    map.addLayer({ id: 'final-heat__main', type: 'heatmap' });
+    map.addLayer({ id: 'final-heat__native-heat', type: 'heatmap' });
+    map.addLayer({ id: 'mid-buffers__fill', type: 'fill' });
+    // 真实 renderer 会 setLayoutProperty；先手动预置初值模拟挂载态
+    map.setLayoutProperty('final-heat__main', 'visibility', 'none');
+    map.setLayoutProperty('final-heat__native-heat', 'visibility', 'none');
+
+    const layers = [
+      { id: 'final-heat', visible: false, group: 'analysis' },
+      { id: 'mid-buffers', visible: true, group: 'analysis' },
+      { id: 'base-map', visible: true, group: 'base' },
+    ];
+    const { ctx } = makeCtx(
+      { show_layer_ids: ['final-heat'] },
+      layers,
+      map,
+    );
+    ctx.command = 'finalize_display';
+    // 展示目标落 visible:true（renderer 真实执行 setLayoutProperty）
+    // ——预置 none，事务应写 visible 并读回一致
+    const result = layerCommands.finalize_display.run(ctx) as any;
+
+    expect(result.status).toBe('succeeded');
+    expect(result.result.confirmed).toBe(true);
+    expect(result.result.visible_layer_ids).toEqual(['final-heat']);
+    expect(result.result.hidden_layer_ids).toEqual(['mid-buffers']);
+    expect(result.result.unresolved_layer_ids).toEqual([]);
+    // base 组不收口
+    expect(map.getLayoutProperty('mid-buffers__fill', 'visibility')).toBe('none');
+
+    // durability：show + hide 全部提交后端
+    await vi.waitFor(() => {
+      expect(commitLayerPresentation).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('用户 pin 的层不被收口隐藏（用户优先）', () => {
+    const map = makeMockMaplibreMap();
+    const layers = [
+      { id: 'final-layer', visible: true, group: 'analysis' },
+      { id: 'user-opened', visible: true, group: 'analysis', _userPinned: true },
+    ];
+    const { ctx, updateLayer } = makeCtx(
+      { show_layer_ids: ['final-layer'] },
+      layers,
+      map,
+    );
+    ctx.command = 'finalize_display';
+    const result = layerCommands.finalize_display.run(ctx) as any;
+
+    expect(result.result.hidden_layer_ids).toEqual([]);
+    expect(updateLayer).not.toHaveBeenCalledWith('user-opened', expect.objectContaining({ visible: false }));
+  });
+});
+
+describe('remove_layer 身份解析对称 + desired state 同步', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetLiveState();
+  });
+
+  it('ref 目标展开多层：全部 store 行清除、无 zombie', () => {
+    commitMapSpecDocument({
+      version: '1.0',
+      sources: { src1: { type: 'geojson', ref_id: 'ref:geojson-rm' } },
+      layers: [
+        { id: 'product-rm-heatmap', source: 'src1', type: 'heatmap' },
+        { id: 'product-rm-points', source: 'src1', type: 'circle' },
+      ],
+    } as any);
+    const map = makeMockMaplibreMap();
+    map.addLayer({ id: 'product-rm-heatmap__native-heat', type: 'heatmap' });
+    map.addLayer({ id: 'product-rm-points__point', type: 'circle' });
+
+    const removeLayer = vi.fn();
+    const layers = [
+      { id: 'product-rm-heatmap', visible: true, group: 'analysis' },
+      { id: 'product-rm-points', visible: true, group: 'analysis' },
+    ];
+    const ctx = {
+      map,
+      popAction: () => {},
+      setDeferredPop: () => {},
+      safePop: () => {},
+      getHudState: () => ({ layers, removeLayer }),
+      setSelectedBaseLayer: () => {},
+      command: 'remove_layer',
+      params: { layer_id: 'ref:geojson-rm' },
+    } as unknown as MapCommandContext;
+
+    const result = layerCommands.remove_layer.run(ctx) as any;
+    expect(result.status).toBe('succeeded');
+    // 一个 ref 的全部 store 行都清除（旧实现只删一行/直接 target_not_found）
+    expect(removeLayer).toHaveBeenCalledWith('product-rm-heatmap');
+    expect(removeLayer).toHaveBeenCalledWith('product-rm-points');
+    // MapLibre 子层与 source 实际移除（mock getLayer 移除后返回 null）
+    expect(map.getLayer('product-rm-heatmap__native-heat')).toBeFalsy();
+    expect(map.getLayer('product-rm-points__point')).toBeFalsy();
+  });
+});

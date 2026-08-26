@@ -73,10 +73,23 @@ export function noteAgentDisplayed(layerId: string): void {
   parkStaleLayers(layerId);
 }
 
-/** 用户手动展示语义：只标记轮次，不触发收起。 */
+/** 用户手动展示语义：只标记轮次，不触发收起；并 pin（finalize 不自动隐藏）。 */
 export function tagUserDisplayed(layerId: string): void {
   const { layers, updateLayer } = useHudStore.getState();
   const layer = layers?.find((l) => l.id === layerId);
   if (!layer || layer.visible) return;
-  updateLayer(layerId, { visible: true, _displayTurn: turn });
+  updateLayer(layerId, { visible: true, _displayTurn: turn, _userPinned: true });
+}
+
+/** 用户手动隐藏 → 解除 pin（此后 Agent 收口语义恢复常态）。 */
+export function untagUserPinned(layerId: string): void {
+  const layer = useHudStore.getState().layers?.find((l) => l.id === layerId);
+  if (!layer?._userPinned) return;
+  useHudStore.getState().updateLayer(layerId, { _userPinned: false });
+}
+
+/** finalize/收口豁免：用户手动点开且仍 pin 的层不自动隐藏（用户优先）。 */
+export function isUserPinned(layerId: string): boolean {
+  const layer = useHudStore.getState().layers?.find((l) => l.id === layerId);
+  return Boolean((layer as { _userPinned?: boolean } | undefined)?._userPinned);
 }

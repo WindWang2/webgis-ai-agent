@@ -5,8 +5,22 @@ import * as renderer from '@/lib/map-kit/renderer';
 import { devOnly } from '@/lib/utils/logger';
 import { parseFilter } from './parseFilter';
 import { isMvtLayer } from '@/lib/store/layer-data';
-import { mergePendingPresentation, getCommittedMapSpec } from '@/lib/mapspec/session-cursor';
+import { getCommittedMapSpec } from '@/lib/mapspec/session-cursor';
 import { noteAgentDisplayed } from '@/lib/chat/turn-focus';
+import {
+  isCustomSchemeMatch,
+  isStoreSchemeMatch,
+  matchMapLayers,
+  resolveLayerTargetsByRef,
+} from './layer-identity';
+import {
+  applyLayerVisibilityTransaction,
+  boundedVisibilityRepair,
+} from './visibility-transaction';
+
+// 身份解析已集中到 layer-identity.ts（LayerIdentityResolver 单一深接口）；
+// 此处 re-export 保持既有导入路径（tests / 兄弟命令）兼容。
+export { resolveLayerTargetsByRef, matchMapLayers };
 
 /**
  * Layer commands: vector/raster add-remove, base layer switch, visibility/style
@@ -20,32 +34,11 @@ import { noteAgentDisplayed } from '@/lib/chat/turn-focus';
  * Casing: the component lowercases `action.command` before the catalogue lookup,
  * and `dispatchAction` normalizes to lowercase at entry, so the catalogue only
  * registers lowercase keys (e.g. `base_layer_change`, not `BASE_LAYER_CHANGE`).
+ *
+ * 可见性突变（show/hide/finalize）统一走 visibility-transaction.ts 的
+ * LayerVisibilityTransaction：desired → runtime → durability → postcondition，
+ * 不再维护 per-command 的第二套实现。
  */
-
-/**
- * Map sublayer id schemes for one logical layer id (round-2 FIX-B):
- *  - custom (interactive add / legacy): `custom-${id}`, `custom-${id}-…`, `custom-${id}_…`
- *  - store (MapSpecRuntime reconcile, mapspec-runtime/adapter.ts): `${id}__${sub}`
- *    sublayers plus the bare `${id}` (the runtime's source id / bare layer).
- * Commands must match BOTH schemes before declaring `target_not_found`.
- */
-function isCustomSchemeMatch(target: string, id: string): boolean {
-  const custom = `custom-${target}`;
-  return id === custom || id.startsWith(`${custom}-`) || id.startsWith(`${custom}_`);
-}
-
-function isStoreSchemeMatch(target: string, id: string): boolean {
-  return id === target || id.startsWith(`${target}__`);
-}
-
-/** All map layer ids matching the target across both schemes (style index). */
-function matchMapLayers(map: any, target: string): string[] {
-  // #462: id list from the maintained registry — getStyle() here deep-cloned
-  // the whole style on every map command (matchMapLayers runs 2-3×/command).
-  return renderer
-    .getStyleLayerIds(map)
-    .filter((id: string) => isCustomSchemeMatch(target, id) || isStoreSchemeMatch(target, id));
-}
 
 /**
  * Store-layer sublayers (`${id}__*`) are owned by the async MapSpecRuntime
@@ -69,38 +62,9 @@ function resolveTargetId(params: any, legacyKeys: string[]): string | undefined 
 }
 
 /**
- * 跨 id 体系的图层目标解析（2026-08-26：set_layer_status 对恢复会话假成功）。
- *
- * Agent 图层管理工具解析出的目标是数据 ref（ref:geojson-*）；会话恢复后的
- * store 层 id 是 MapSpec 层 id（result-chatcmpl-* / product-*，且旧持久化层
- * 无 _refId）——ref 直接下发全部 target_not_found，工具却已报 success。
- * 解析链（命中即止）：
- *   1. store 层 id 直接命中（在飞会话的常态）；
- *   2. store 层 `_refId` 命中（挂载路径的 HUD 层）；
- *   3. committed MapSpec：ref → source（ref_id 字段）→ 引用该 source 的
- *      spec 层 id（恢复层的 id 即 spec 层 id）。一个 ref 可背多层（如
- *      product-heatmap + product-points），全部返回。
+ * 跨 id 体系的图层目标解析已迁移至 layer-identity.ts（单一深接口）。
+ * 一个 ref 可背多层（product-heatmap + product-points 同源）——全部为目标。
  */
-export function resolveLayerTargetsByRef(layerId: string, getHudState: () => any): string[] {
-  const layers: any[] = getHudState().layers ?? [];
-  if (layers.some((l) => l.id === layerId)) return [layerId];
-  const byRefId = layers.filter((l) => l._refId === layerId).map((l) => l.id);
-  if (byRefId.length > 0) return byRefId;
-  const spec = getCommittedMapSpec();
-  if (!spec?.sources || !spec?.layers) return [];
-  const sourceIds = new Set(
-    Object.entries(spec.sources as Record<string, any>)
-      .filter(([, s]) => (s?.ref_id ?? s?.ref) === layerId)
-      .map(([id]) => id),
-  );
-  if (sourceIds.size === 0) return [];
-  // 不要求 store 行：product-* 等后端直写图层可能尚无 HUD 行（镜像
-  // syncSpecLayersToStore 与本解析互为兜底）。无行的目标由调用侧经
-  // mergePendingPresentation 落到 spec 层——绝不能因面板无行而漏隐藏。
-  return (spec.layers as any[])
-    .filter((l) => sourceIds.has(String(l.source || '')))
-    .map((l) => String(l.id));
-}
 
 /** #668: extract a ['get', field] field name from a MapLibre filter expression. */
 function extractFilterField(expr: any): string | null {
@@ -303,64 +267,127 @@ export const layerCommands: Record<string, CommandEntry> = {
       const target = resolveTargetId(params, ['layer_id', 'layerId']);
       // V3: missing target → explicit failed result (was a silent return).
       if (!target) return { status: 'failed', error: 'target_not_found' };
-      // V3 round-2 FIX-B: resolve the target across BOTH id schemes (custom-…
-      // stack and store `…__…` sublayers) before declaring a miss — the old
-      // custom-only matcher missed store layers keyed `${id}__${sub}`.
-      const matched = matchMapLayers(map, target);
-      const storeHasLayer = getHudState().layers?.some?.((l: any) => l.id === target) ?? false;
-      if (matched.length === 0 && !storeHasLayer) return { status: 'failed', error: 'target_not_found' };
 
-      const customId = `custom-${target}`;
-      const customMatched = matched.filter((id) => isCustomSchemeMatch(target, id));
-      const storeMatched = matched.filter((id) => isStoreSchemeMatch(target, id));
+      // 身份解析与 visibility 对称（此前 remove 不做 ref 展开：恢复会话里
+      // ref 目标假 target_not_found；一个 ref 背的多层只删一层留下残件）。
+      const targetIds = resolveLayerTargetsByRef(target, getHudState);
+      const effectiveTargets = targetIds.length > 0 ? targetIds : [target];
 
-      if (matched.length === 0) {
-        // Store-only: the MapSpecRuntime owns the map sublayers (not applied
-        // yet / mid-reconcile). Dropping the store entry lets the reconcile
-        // clean the map; there is no synchronous map state to verify → honest
-        // store_updated ack (backend treats it as non-converging).
-        getHudState().removeLayer(target);
-        return { status: 'succeeded', result: { store_updated: true } };
-      }
+      const specLayerIds = new Set(
+        ((getCommittedMapSpec()?.layers || []) as any[]).map((l) => String(l.id)),
+      );
+      const anyMatch = effectiveTargets.some(
+        (id) => matchMapLayers(map, id).length > 0
+          || (getHudState().layers?.some?.((l: any) => l.id === id) ?? false),
+      );
+      if (!anyMatch) return { status: 'failed', error: 'target_not_found' };
 
-      // 1. custom stack → renderer.removeLayerStack (layers + sources). The
-      //    boolean return distinguishes a real removal failure from a no-op
-      //    (round-2 FIX-B; previously every error was silently swallowed).
-      if (customMatched.length > 0 || map.getLayer?.(customId) || map.getSource?.(customId)) {
-        try {
-          const ok = renderer.removeLayerStack(map, customId, true);
-          if (!ok) {
-            devOnly.warn('[MapActionHandler] REMOVE_LAYER failed to remove custom stack:', customId);
-            return { status: 'failed', error: 'mutation_failed' };
+      let sawFailure = false;
+      const storeMatchedAll: string[] = [];
+      const matchedAll: string[] = [];
+      let runtimeRemovedAny = false;
+
+      for (const tgt of effectiveTargets) {
+        // V3 round-2 FIX-B: resolve the target across BOTH id schemes (custom-…
+        // stack and store `…__…` sublayers) before declaring a miss.
+        const matched = matchMapLayers(map, tgt);
+        const storeHasLayer = getHudState().layers?.some?.((l: any) => l.id === tgt) ?? false;
+        matchedAll.push(...matched);
+        const storeMatched = matched.filter((id) => isStoreSchemeMatch(tgt, id));
+        storeMatchedAll.push(...storeMatched);
+
+        if (matched.length === 0 && !storeHasLayer) continue;
+
+        const customId = `custom-${tgt}`;
+        const customMatched = matched.filter((id) => isCustomSchemeMatch(tgt, id));
+
+        if (matched.length === 0) {
+          // Store-only: the MapSpecRuntime owns the map sublayers. Dropping the
+          // store entry lets the reconcile clean the map; honest store_updated.
+          getHudState().removeLayer?.(tgt);
+          continue;
+        }
+        runtimeRemovedAny = true;
+
+        // 1. custom stack → renderer.removeLayerStack (layers + sources).
+        if (customMatched.length > 0 || map.getLayer?.(customId) || map.getSource?.(customId)) {
+          try {
+            const ok = renderer.removeLayerStack(map, customId, true);
+            if (!ok) {
+              devOnly.warn('[MapActionHandler] REMOVE_LAYER failed to remove custom stack:', customId);
+              sawFailure = true;
+              continue;
+            }
+          } catch (e) {
+            devOnly.warn('[MapActionHandler] REMOVE_LAYER failed:', e);
+            sawFailure = true;
+            continue;
           }
-        } catch (e) {
-          devOnly.warn('[MapActionHandler] REMOVE_LAYER failed:', e);
-          return { status: 'failed', error: 'mutation_failed' };
         }
-      }
-      // 2. store sublayers + bare source → remove directly (the runtime's next
-      //    reconcile is a no-op for already-gone ids).
-      for (const id of storeMatched) {
-        if (map.getLayer?.(id)) {
-          try { map.removeLayer(id); } catch { /* already gone */ }
-          renderer.noteStyleLayerRemoved(map, id);
+        // 2. store sublayers + bare source → remove directly (the runtime's
+        //    next reconcile is a no-op for already-gone ids).后端直写图层的
+        //    source 键可能与目标 id 不同名——按 spec 反查引用该目标的全部
+        //    source 键一并清（防孤儿 source）。
+        for (const id of storeMatched) {
+          if (map.getLayer?.(id)) {
+            try { map.removeLayer(id); } catch { /* already gone */ }
+            renderer.noteStyleLayerRemoved(map, id);
+          }
         }
+        const sourceKeys = new Set<string>([tgt]);
+        for (const [sid] of Object.entries(
+          (getCommittedMapSpec()?.sources ?? {}) as Record<string, any>,
+        )) {
+          const refsLayers = ((getCommittedMapSpec()?.layers || []) as any[]).some(
+            (l) => l.source === sid && (l.id === tgt || l.id.startsWith(`${tgt}__`)),
+          );
+          if (refsLayers) sourceKeys.add(sid);
+        }
+        for (const sid of sourceKeys) {
+          if (map.getSource?.(sid)) {
+            try { map.removeSource(sid); } catch { /* already gone */ }
+          }
+        }
+        // 3. store 行同步（含一个 ref 背多层的姊妹行）
+        getHudState().removeLayer?.(tgt);
       }
-      if (map.getSource?.(target)) {
-        try { map.removeSource(target); } catch { /* already gone */ }
-      }
-      // 3. Sync removal to store so LayersTab stays in sync
-      getHudState().removeLayer(target);
 
-      // 4. V3 round-2 FIX-B: post-mutation verification — the resolved stack
-      //    must be gone from the map (getLayer/getSource absent OR the style
-      //    layer set no longer contains any of the target's sublayers).
-      //    (#462: registry read — no per-command style deep-clone.)
+      // 4. durability：MapSpec 拥有的层同步删除后端 desired state（此前
+      //    Agent remove 不动 spec——backend 修复/reconcile 会复活图层）。
+      //    fire-and-forget：地图已删，后端失败只降级为 pending 语义。
+      void (async () => {
+        const { commitMapSpecMutation, } = await import('@/lib/mapspec/user-mutation');
+        const { markPendingRemoved } = await import('@/lib/mapspec/session-cursor');
+        for (const tgt of effectiveTargets) {
+          const hudLayer = getHudState().layers?.find?.((l: any) => l.id === tgt);
+          const specLayerId = String((hudLayer as any)?._mapspecLayerId ?? tgt);
+          if (!specLayerIds.has(specLayerId)) continue;
+          markPendingRemoved(specLayerId);
+          try {
+            await commitMapSpecMutation({ intent: 'remove_layer', layer_id: specLayerId });
+          } catch (err) {
+            devOnly.warn('[remove_layer] backend spec removal failed (stays pending):', err);
+          }
+        }
+      })();
+
+      // 5. V3 round-2 FIX-B: post-mutation verification — the resolved stack
+      //    must be gone from the map. (#462: registry read.)
       const layersAfter = renderer.getStyleLayerIds(map);
-      const stillPresent = matched.some(
+      const stillPresent = matchedAll.some(
         (id) => !!map.getLayer?.(id) || !!map.getSource?.(id) || layersAfter.includes(id),
       );
-      if (stillPresent) return nonConfirmableAck(storeMatched);
+      if (sawFailure) {
+        return storeMatchedAll.length > 0
+          ? { status: 'succeeded', result: { store_updated: true } }
+          : { status: 'failed', error: 'mutation_failed' };
+      }
+      if (!runtimeRemovedAny) {
+        // 全部目标是 store-only（reconcile 拥有 map 子层）→ 无同步可验证的
+        // map 状态，诚实 store_updated（后端视作未收敛）。
+        return { status: 'succeeded', result: { store_updated: true } };
+      }
+      if (stillPresent) return nonConfirmableAck(storeMatchedAll);
       // V3: verifiable marker (layer remove — harness convergence evidence).
       return { status: 'succeeded', result: { confirmed: true } };
     },
@@ -421,94 +448,30 @@ export const layerCommands: Record<string, CommandEntry> = {
   layer_visibility_update: {
     requiredParams: (p) => typeof p.layer_id === 'string' || typeof p.id === 'string',
     run(ctx) {
-      const { map, params, getHudState } = ctx;
+      const { params } = ctx;
       const layer_id = resolveTargetId(params, ['layer_id']);
       const { visible, opacity, name, color } = (params || {}) as any;
       // V3: missing target → explicit failed result (was a silent return).
       if (!layer_id) return { status: 'failed', error: 'target_not_found' };
 
-      // 跨 id 体系解析（ref:geojson-* → 恢复层的 result-*/product-* id），
-      // 一个 ref 可背多层（product-heatmap + product-points 同源）——全部为目标。
-      const targetIds = resolveLayerTargetsByRef(layer_id, getHudState);
-      const effectiveId = targetIds[0] ?? layer_id;
-
-      // V3 round-2 FIX-B: resolve across BOTH id schemes (custom-… + store …__…).
-      const matched = Array.from(new Set(targetIds.flatMap((id) => matchMapLayers(map, id))));
-      // V3: no matching map layer AND no store layer → genuine miss → failed
-      // result (was: silent no-op forEach + void success).
-      if (matched.length === 0 && targetIds.length === 0) return { status: 'failed', error: 'target_not_found' };
-
-      // Store-layer sublayers are owned by the async MapSpecRuntime reconcile.
-      const storeMatched = matched.filter((id) => isStoreSchemeMatch(effectiveId, id));
-
-      // 「地图随对话」：agent 显式展示（display_layer/set_layer_status）→ 标记
-      // 当前轮并收起旧轮的可见分析图层。先标记全部目标再逐个 sweep：同 ref
-      // 的多层同属当前轮展示集，互不收起。
+      // 「地图随对话」：agent 显式展示 → 先标记当前轮再收起旧轮（同 ref
+      // 的多层同属当前轮展示集，互不收起）——与事务解耦，事务内不重复。
       if (visible === true) {
-        for (const id of targetIds) {
+        for (const id of resolveLayerTargetsByRef(layer_id, ctx.getHudState)) {
           noteAgentDisplayed(id);
         }
       }
 
-      // #609: 后端 Python Optional 未传序列化为 JSON null，语义是"不修改该属性"。
-      // 判存在性必须用 `!= null` 而非 `!== undefined`——否则 null 走 falsy 分支
-      // 会把图层隐藏，且后验证读到 'none' 与"预期"一致 → 假收敛 confirmed。
-      const storeUpdates: Record<string, unknown> = {};
-      if (visible != null) storeUpdates.visible = visible;
-      if (opacity != null) storeUpdates.opacity = opacity;
-      if (name !== undefined) storeUpdates.name = name;
-      if (color !== undefined) storeUpdates.style = { ...(getHudState().layers.find((l: any) => l.id === effectiveId)?.style ?? {}), color };
-
-      // store 更新 + #737 pending presentation 合并，逐目标应用（多目标同
-      // 值）；specLayerId 兜底见 resolveLayerTargetsByRef 注释（恢复层 id 即
-      // spec 层 id）。
-      const applyStoreUpdates = () => {
-        if (Object.keys(storeUpdates).length === 0) return;
-        for (const id of targetIds) {
-          getHudState().updateLayer(id, storeUpdates);
-          const hudLayer = getHudState().layers?.find?.((l: any) => l.id === id);
-          const specLayerId = ((hudLayer as any)?._mapspecLayerId ?? id) as string | undefined;
-          if (specLayerId && (visible != null || opacity != null)) {
-            mergePendingPresentation(specLayerId, {
-              ...(visible != null ? { visible } : {}),
-              ...(opacity != null ? { opacity } : {}),
-            });
-          }
-        }
-      };
-
-      if (matched.length === 0) {
-        // Store-only: the reconcile owns the map sublayers → honest store_updated.
-        applyStoreUpdates();
-        return { status: 'succeeded', result: { store_updated: true } };
-      }
-
-      for (const id of matched) {
-        renderer.updateLayerStyle(map, id, {
-          visibility: visible != null ? (visible ? 'visible' : 'none') : undefined,
-          // null 必须归一为 undefined：renderer 以 `opacity !== undefined` 判断，
-          // 原样传 null 会走 setPaintProperty(prop, null) 重置为默认值。
-          opacity: opacity != null ? opacity : undefined,
-          color: color as string | undefined,
-        });
-      }
-      applyStoreUpdates();
-      // V3 round-2 FIX-B: post-mutation verification — the matched layer exists
-      // on the map AND (visibility) getLayoutProperty reflects the new value.
-      // #609: 只对"本次请求要改的属性"读回比对——visible=null 时未请求改可见性，
-      // 不得拿当前 'visible'/'none' 状态去凑 confirmed。
-      const wantVisibility = visible != null ? (visible ? 'visible' : 'none') : undefined;
-      for (const id of matched) {
-        if (!map.getLayer?.(id)) return nonConfirmableAck(storeMatched);
-        if (
-          wantVisibility !== undefined &&
-          map.getLayoutProperty?.(id, 'visibility') !== wantVisibility
-        ) {
-          return nonConfirmableAck(storeMatched);
-        }
-      }
-      // V3: verifiable marker (layer style/visibility update — harness convergence).
-      return { status: 'succeeded', result: { confirmed: true } };
+      // 可见性突变统一事务：desired(store+pending) → runtime(setLayoutProperty)
+      // → durability(后端 MapSpec CAS 提交) → postcondition(读回验证)。
+      // #609: JSON null = "不修改该属性"（`!= null` 判存在性）。
+      return applyLayerVisibilityTransaction(ctx, {
+        layerId: layer_id,
+        visible: visible ?? null,
+        opacity: opacity ?? null,
+        name,
+        color: color as string | undefined,
+      });
     },
   },
 
@@ -518,6 +481,12 @@ export const layerCommands: Record<string, CommandEntry> = {
    * 与逐层 set_layer_status 的区别：一次调用原子收口 —— Agent 在分析收尾
    * 时声明"本轮最终成图集合"，中间层（点云/边界/裁剪残料）不再由用户手动
    * 关闭。展示集同步标记当前对话轮（turn-focus 联动）。
+   *
+   * 终态确认（Goal C）：每层经同一可见性事务（runtime 突变 + 后端 desired
+   * 持久化 + 读回验证），ack 携带证据（confirmed / visible/hidden/
+   * unresolved layer ids）——不再是无验证的 {shown, hidden} 假成功。
+   * store-owned 子层（reconcile 未落）走一次有界重验（bounded repair，
+   * 最多一次），绝不无限循环。
    */
   finalize_display: {
     requiredParams: (p) => Array.isArray(p?.show_layer_ids) && p.show_layer_ids.length > 0,
@@ -526,38 +495,93 @@ export const layerCommands: Record<string, CommandEntry> = {
       const raw = ((params as any)?.show_layer_ids ?? []) as string[];
       if (raw.length === 0) return { status: 'failed', error: 'invalid_params' };
 
-      const { layers, updateLayer } = getHudState();
+      const { layers } = getHudState();
       const show = new Set(raw.flatMap((id) => resolveLayerTargetsByRef(id, getHudState)));
       if (show.size === 0) return { status: 'failed', error: 'target_not_found' };
 
-      let shown = 0;
-      for (const id of show) {
-        updateLayer(id, { visible: true });
-        const hudLayer = (layers ?? []).find((l: any) => l.id === id);
-        mergePendingPresentation(String((hudLayer as any)?._mapspecLayerId ?? id), { visible: true });
-        shown += 1;
-      }
-      let hidden = 0;
+      // 收口豁免：行政区边界（制图语境常显）+ 用户 pin 的层（用户手动点开
+      // 且未手动隐藏——不与用户对抗）+ 非 analysis 组（base 等）。
       const boundaryRole = new Set(
         ((getCommittedMapSpec()?.layers || []) as any[])
           .filter((l) => l?.context_role === 'boundary')
           .map((l) => String(l.id)),
       );
+      const hideTargets: string[] = [];
       for (const layer of layers ?? []) {
         if (show.has(layer.id)) continue;
         if ((layer.group ?? 'analysis') !== 'analysis' || !layer.visible) continue;
-        // 行政边界层默认常显（制图语境），不在收口隐藏之列
         const specId = String((layer as any)._mapspecLayerId ?? layer.id);
         if (boundaryRole.has(specId)) continue;
-        updateLayer(layer.id, { visible: false });
-        mergePendingPresentation(specId, { visible: false });
-        hidden += 1;
+        // 用户手动点开且仍 pin 的层不自动隐藏（用户优先，不与用户对抗）
+        if ((layer as any)._userPinned) continue;
+        hideTargets.push(layer.id);
       }
-      // turn-focus：展示集即本轮主题（先全部标记再 sweep —— 同集互不收起）
+
+      // turn-focus：展示集即本轮主题（先全部标记再收口 —— 同集互不收起）
       for (const id of show) {
         noteAgentDisplayed(id);
       }
-      return { status: 'succeeded', result: { shown, hidden } };
+
+      // 逐层事务：展示集 visible:true；收口集 visible:false。
+      const visibleLayerIds: string[] = [];
+      const hiddenLayerIds: string[] = [];
+      const unresolvedLayerIds: string[] = [];
+      const storePendingRepair: { layerId: string; visible: boolean }[] = [];
+
+      for (const id of show) {
+        const res = applyLayerVisibilityTransaction(ctx, { layerId: id, visible: true });
+        if (res.status === 'failed') {
+          unresolvedLayerIds.push(id);
+        } else {
+          visibleLayerIds.push(id);
+          if (res.result?.store_updated) storePendingRepair.push({ layerId: id, visible: true });
+        }
+      }
+      for (const id of hideTargets) {
+        const res = applyLayerVisibilityTransaction(ctx, { layerId: id, visible: false });
+        if (res.status === 'failed') {
+          unresolvedLayerIds.push(id);
+        } else {
+          hiddenLayerIds.push(id);
+          if (res.result?.store_updated) storePendingRepair.push({ layerId: id, visible: false });
+        }
+      }
+
+      // 证据契约：confirmed = 展示集全部验证通过（读回一致）；store-owned
+      // 目标如实标记 store_updated（后端 harness 视作未收敛，observation
+      // 循环续证）——绝不把未验证的层报成 confirmed。
+      const confirmed = visibleLayerIds.length === show.size && storePendingRepair.length === 0;
+
+      if (storePendingRepair.length > 0) {
+        // 有界修复：等 reconcile 去抖周期后重验一次（再应用一次期望值），
+        // 结果只进 dev 日志与 observation 循环——ack 先行，不阻塞队列。
+        void boundedVisibilityRepair(ctx, storePendingRepair).then(({ unresolved }) => {
+          if (unresolved.length > 0) {
+            devOnly.warn(
+              '[finalize_display] bounded repair left unresolved layers:',
+              unresolved,
+            );
+          }
+        });
+      }
+
+      return {
+        status: unresolvedLayerIds.length > 0 && visibleLayerIds.length === 0
+          ? 'failed'
+          : 'succeeded',
+        error: unresolvedLayerIds.length > 0 && visibleLayerIds.length === 0
+          ? 'target_not_found'
+          : undefined,
+        result: {
+          shown: visibleLayerIds.length,
+          hidden: hiddenLayerIds.length,
+          confirmed,
+          store_updated: !confirmed && storePendingRepair.length > 0,
+          visible_layer_ids: visibleLayerIds,
+          hidden_layer_ids: hiddenLayerIds,
+          unresolved_layer_ids: unresolvedLayerIds,
+        },
+      };
     },
   },
 

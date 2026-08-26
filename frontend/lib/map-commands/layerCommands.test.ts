@@ -471,7 +471,11 @@ describe('layer_visibility_update (#609 null semantics)', () => {
 
     const result = layerCommands.layer_visibility_update.run(ctx);
 
-    expect(result).toEqual({ status: 'succeeded', result: { confirmed: true } });
+    // 事务契约：confirmed + target_ids（目标解析证据）
+    expect(result).toEqual({
+      status: 'succeeded',
+      result: { confirmed: true, target_ids: ['result'] },
+    });
     // 透明度照常应用；可见性必须是"未请求"（undefined），绝不能是 'none'
     expect(renderer.updateLayerStyle).toHaveBeenCalledWith(
       map,
@@ -500,7 +504,10 @@ describe('layer_visibility_update (#609 null semantics)', () => {
 
     const result = layerCommands.layer_visibility_update.run(ctx);
 
-    expect(result).toEqual({ status: 'succeeded', result: { confirmed: true } });
+    expect(result).toEqual({
+      status: 'succeeded',
+      result: { confirmed: true, target_ids: ['result'] },
+    });
     // opacity 必须归一为 undefined：renderer 以 `opacity !== undefined` 判断，
     // 原样传 null 会走 setPaintProperty(prop, null) 重置为默认值。
     expect(renderer.updateLayerStyle).toHaveBeenCalledWith(
@@ -528,7 +535,10 @@ describe('layer_visibility_update (#609 null semantics)', () => {
 
     const result = layerCommands.layer_visibility_update.run(ctx);
 
-    expect(result).toEqual({ status: 'succeeded', result: { confirmed: true } });
+    expect(result).toEqual({
+      status: 'succeeded',
+      result: { confirmed: true, target_ids: ['result'] },
+    });
     expect(renderer.updateLayerStyle).toHaveBeenCalledWith(
       map,
       'result__fill',
@@ -703,7 +713,15 @@ describe('finalize_display（最终展示集收口）', () => {
     const result = layerCommands.finalize_display.run(ctx) as any;
 
     expect(result.status).toBe('succeeded');
-    expect(result.result).toEqual({ shown: 1, hidden: 2 });
+    // 证据契约：shown/hidden 计数保留；终态集合 + 验证状态显式化
+    // （本例 map 无子层——store-owned → store_updated，诚实未收敛）
+    expect(result.result.shown).toBe(1);
+    expect(result.result.hidden).toBe(2);
+    expect(result.result.visible_layer_ids).toEqual(['choropleth-1']);
+    expect(result.result.hidden_layer_ids.sort()).toEqual(['boundary', 'poi-points']);
+    expect(result.result.unresolved_layer_ids).toEqual([]);
+    expect(result.result.confirmed).toBe(false);
+    expect(result.result.store_updated).toBe(true);
     const showCalls = updateLayer.mock.calls.filter((c: any[]) => c[1]?.visible === true);
     const hideCalls = updateLayer.mock.calls.filter((c: any[]) => c[1]?.visible === false);
     expect(showCalls.map((c: any[]) => c[0])).toEqual(['choropleth-1']);
