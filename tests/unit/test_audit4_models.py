@@ -252,4 +252,4 @@ def test_session_overview_excludes_synthetic_tool_carriers():
     import asyncio as _aio
     overview = _aio.run(build_session_overview("s-x", messages=msgs, _fetched=True))
     joined = overview or ""
-    assert "2 轮提问" in joined, f"合成载体被计入轮数: {parts}"
+    assert "2 轮提问" in joined, f"合成载体被计入轮数: {joined!r}"
