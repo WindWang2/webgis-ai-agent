@@ -360,14 +360,16 @@ export const layerCommands: Record<string, CommandEntry> = {
       //    Agent remove 不动 spec——backend 修复/reconcile 会复活图层）。
       //    先捕获的 specLayerIds 避免 store 行删除后丢失映射。
       void (async () => {
-        const { commitMapSpecMutation, } = await import('@/lib/mapspec/user-mutation');
-        const { markPendingRemoved } = await import('@/lib/mapspec/session-cursor');
+        const { commitMapSpecMutation } = await import('@/lib/mapspec/user-mutation');
+        const { markPendingRemoved, clearPendingRemoved } = await import('@/lib/mapspec/session-cursor');
         for (const specLayerId of removeDurabilityTargets) {
           markPendingRemoved(specLayerId);
           try {
             await commitMapSpecMutation({ intent: 'remove_layer', layer_id: specLayerId });
           } catch (err) {
-            devOnly.warn('[remove_layer] backend spec removal failed (stays pending):', err);
+            devOnly.warn('[remove_layer] backend spec removal failed:', err);
+          } finally {
+            clearPendingRemoved(specLayerId);
           }
         }
       })();
@@ -530,7 +532,7 @@ export const layerCommands: Record<string, CommandEntry> = {
       const storePendingRepair: { layerId: string; visible: boolean }[] = [];
 
       for (const id of show) {
-        const res = applyLayerVisibilityTransaction(ctx, { layerId: id, visible: true });
+        const res = applyLayerVisibilityTransaction(ctx, { layerId: id, visible: true, durable: false });
         if (res.status === 'failed') {
           unresolvedLayerIds.push(id);
         } else {
@@ -539,7 +541,7 @@ export const layerCommands: Record<string, CommandEntry> = {
         }
       }
       for (const id of hideTargets) {
-        const res = applyLayerVisibilityTransaction(ctx, { layerId: id, visible: false });
+        const res = applyLayerVisibilityTransaction(ctx, { layerId: id, visible: false, durable: true });
         if (res.status === 'failed') {
           unresolvedLayerIds.push(id);
         } else {

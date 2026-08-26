@@ -82,7 +82,7 @@ export interface CompareRow {
 }
 
 function dictDiffKeys(block: { diff_keys?: string[] } | undefined): string[] {
-  return Array.isArray(block?.diff_keys) ? block.diff_keys : [];
+  return Array.isArray(block?.diff_keys) ? block!.diff_keys : [];
 }
 
 export function summarizeCompare(cmp: RunComparison): CompareRow[] {

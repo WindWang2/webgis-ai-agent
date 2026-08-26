@@ -183,7 +183,7 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
 
     // Raster/tile layer (map-panel.tsx:231-239)
     if (layer.type === "raster" || layer.type === "tile") {
-      const paint: Record<string, unknown> = { "raster-opacity": layer.opacity || 1 };
+      const paint: Record<string, unknown> = { "raster-opacity": layer.opacity ?? 1 };
       if (layer.style?.brightness != null) paint["raster-brightness-max"] = layer.style.brightness;
       if (layer.style?.contrast != null) paint["raster-contrast"] = layer.style.contrast;
       if (layer.style?.saturation != null) paint["raster-saturation"] = layer.style.saturation;
@@ -377,7 +377,7 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
           "fill-color": (fillEnabled
             ? (thematicColor ?? ["coalesce", ["get", "fill_color"], color])
             : "rgba(0,0,0,0)") as any,
-          "fill-opacity": fillEnabled ? (layer.style?.fillOpacity ?? (layer.opacity || 1) * 0.3) : (0 as any),
+          "fill-opacity": fillEnabled ? (layer.style?.fillOpacity ?? (layer.opacity ?? 1) * 0.3) : (0 as any),
         }, buildLayerFilter("Polygon"));
 
         // Conditional fill-extrusion when 3D (map-panel.tsx:306-317)
@@ -386,7 +386,7 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
             "fill-extrusion-color": (thematicColor ?? color) as any,
             "fill-extrusion-height": ["coalesce", ["get", "height"], 20] as any,
             "fill-extrusion-base": (0 as any),
-            "fill-extrusion-opacity": (layer.opacity || 0.8) as any,
+            "fill-extrusion-opacity": (layer.opacity ?? 0.8) as any,
           }, buildLayerFilter("Polygon"));
         }
 
@@ -394,7 +394,7 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
         const outlinePaint: Record<string, unknown> = {
           "line-color": (thematicColor ?? ["coalesce", ["get", "stroke_color"], ["get", "fill_color"], strokeColor]) as any,
           "line-width": layer.style?.strokeWidth ?? 2,
-          "line-opacity": layer.opacity || 1,
+          "line-opacity": layer.opacity ?? 1,
         };
         if (layer.style?.dashArray && layer.style.dashArray !== "solid") {
           (outlinePaint as any)["line-dasharray"] = parseDashArray(layer.style.dashArray);
@@ -408,7 +408,7 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
       const linePaint: Record<string, unknown> = {
         "line-color": (thematicColor ?? ["coalesce", ["get", "fill_color"], strokeColor]) as any,
         "line-width": layer.style?.strokeWidth ?? 2,
-        "line-opacity": layer.opacity || 1,
+        "line-opacity": layer.opacity ?? 1,
       };
       if (layer.style?.dashArray && layer.style.dashArray !== "solid") {
         (linePaint as any)["line-dasharray"] = parseDashArray(layer.style.dashArray);
@@ -428,7 +428,7 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
         "circle-color": (thematicColor ?? ["coalesce", ["get", "fill_color"], color]) as any,
         "circle-stroke-width": (1.5 as any),
         "circle-stroke-color": "rgba(22, 163, 74, 0.3)" as any,
-        "circle-opacity": (layer.opacity || 1) as any,
+        "circle-opacity": (layer.opacity ?? 1) as any,
       }, buildLayerFilter("Point"));
     }
     // Note: map-panel.tsx:354-360 hides the stale point sublayer when a layer

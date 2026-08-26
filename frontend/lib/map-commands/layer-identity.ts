@@ -33,7 +33,7 @@ export interface HudStateLike {
 /** MapLibre 子层 id 方案匹配（store `${id}__*` 与 custom `custom-${id}*`）。 */
 export function isCustomSchemeMatch(target: string, id: string): boolean {
   const custom = `custom-${target}`;
-  return id === custom || id.startsWith(`${custom}-`) || id.startsWith(`${custom}_`);
+  return id === custom || id.startsWith(`${custom}-`) || id.startsWith(`${custom}__`);
 }
 
 export function isStoreSchemeMatch(target: string, id: string): boolean {
@@ -56,23 +56,39 @@ export function resolveLayerTargetsByRef(
   getHudState: () => HudStateLike,
 ): string[] {
   const layers: HudLayerLike[] = getHudState().layers ?? [];
-  if (layers.some((l) => l.id === layerId)) return [layerId];
-  const byRefId = layers.filter((l) => l._refId === layerId).map((l) => l.id);
-  if (byRefId.length > 0) return byRefId;
+  const matched = new Set<string>();
+
+  for (const l of layers) {
+    if (l.id === layerId || l._refId === layerId) {
+      matched.add(l.id);
+    }
+  }
+  if (matched.size > 0) return Array.from(matched);
+
   const spec = getCommittedMapSpec();
-  if (!spec?.sources || !spec?.layers) return [];
+  if (!spec?.sources || !spec?.layers) {
+    return [];
+  }
+
   const sourceIds = new Set(
     Object.entries(spec.sources as Record<string, { ref_id?: string; ref?: string }>)
       .filter(([, s]) => (s?.ref_id ?? s?.ref) === layerId)
       .map(([id]) => id),
   );
-  if (sourceIds.size === 0) return [];
-  // 不要求 store 行：product-* 等后端直写图层可能尚无 HUD 行（镜像
-  // syncSpecLayersToStore 与本解析互为兜底）。无行的目标由调用侧经
-  // mergePendingPresentation 落到 spec 层——绝不能因面板无行而漏隐藏。
-  return (spec.layers as { id: string; source?: string }[])
-    .filter((l) => sourceIds.has(String(l.source || '')))
-    .map((l) => String(l.id));
+
+  if (sourceIds.size > 0) {
+    const matchedSpecLayers = (spec.layers as { id: string; source?: string }[])
+      .filter((l) => sourceIds.has(String(l.source || '')))
+      .map((l) => String(l.id));
+
+    if (matchedSpecLayers.length > 0) return matchedSpecLayers;
+  }
+
+  if ((spec.layers as { id: string }[]).some((l) => String(l.id) === layerId)) {
+    return [layerId];
+  }
+
+  return [];
 }
 
 /** 目标对应的 MapSpec spec 层 id（store 行 `_mapspecLayerId` 优先，兜底自身 id）。 */

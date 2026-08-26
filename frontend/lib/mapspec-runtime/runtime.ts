@@ -490,7 +490,8 @@ export class MapSpecRuntime {
    * optimizations are preserved exactly.
    */
   private applySource(id: string, source: MapSpecSource, replaceExisting = false): void {
-    if (replaceExisting && this.map.getSource(id)) {
+    const existingSource = this.map.getSource(id) as { type?: string } | undefined;
+    if (existingSource && (replaceExisting || existingSource.type !== source.type)) {
       // The reconciler has already scheduled every dependent layer for
       // recompile. Replace the definition instead of relying on renderer
       // helpers whose same-type fast paths deliberately no-op tile/image URL

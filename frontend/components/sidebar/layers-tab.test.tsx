@@ -199,7 +199,7 @@ describe('LayersTab — commitOpacity 不在渲染阶段写 store', () => {
       expect(updateLayer).toHaveBeenCalledWith('L1', { opacity: 0.5 });
     } finally {
       errSpy.mockRestore();
-      updateLayer.mockImplementation(undefined);
+      updateLayer.mockReset();
     }
   });
 });

@@ -4,7 +4,6 @@ import { filterFeaturesByBounds } from '@/lib/utils/geo';
 import { useHudStore } from '@/lib/store/useHudStore';
 
 /**
-/**
  * 审计 F31：缓存每个 source 上次 setData 的 data 引用。
  * 相同引用跳过 setData，避免每帧重新解析 GeoJSON（50k 要素层 ~100ms jank）。
  * 用 WeakMap 让 source 被 GC 时自动清理。
@@ -646,7 +645,7 @@ export function updateLayerStyle(map: Map, id: string, style: StyleUpdateOptions
     }
   }
 
-  if (style.opacity !== undefined) {
+  if (style.opacity !== undefined && style.opacity !== null && Number.isFinite(Number(style.opacity))) {
     let opacityProp = '';
     switch (layer.type) {
       case 'fill': opacityProp = 'fill-opacity'; break;
@@ -657,7 +656,7 @@ export function updateLayerStyle(map: Map, id: string, style: StyleUpdateOptions
       case 'symbol': opacityProp = 'icon-opacity'; break;
     }
     if (opacityProp) {
-      map.setPaintProperty(id, opacityProp, style.opacity);
+      map.setPaintProperty(id, opacityProp, Number(style.opacity));
     }
   }
 
@@ -925,6 +924,28 @@ export function disable3DTerrain(map: Map) {
  * MapLibre `moveLayer(id)` 无 beforeId 时把它移到栈顶。所以**反向迭代**
  * orderedBaseIds 即可让最后被 move 的（数组首）落在最顶。
  */
+const SUBLAYER_RANK: Record<string, number> = {
+  fill: 10,
+  main: 15,
+  raster: 20,
+  extrusion: 25,
+  heatgrid: 30,
+  'native-heat': 35,
+  line: 40,
+  outline: 50,
+  point: 60,
+  label: 70,
+};
+
+function sublayerRank(id: string): number {
+  for (const [key, rank] of Object.entries(SUBLAYER_RANK)) {
+    if (id.endsWith(`__${key}`) || id.endsWith(`-${key}`)) {
+      return rank;
+    }
+  }
+  return 50;
+}
+
 export function syncLayerZOrder(map: Map, prefix: string, orderedBaseIds: string[]) {
   // #462: the id ORDER comes from the maintained registry — MapSpecRuntime
   // calls this after every layer-changing patch, and map.getStyle() would
@@ -935,9 +956,11 @@ export function syncLayerZOrder(map: Map, prefix: string, orderedBaseIds: string
   // 反向：希望数组首的图层最终在最上面
   for (const baseId of [...orderedBaseIds].reverse()) {
     const fullPrefix = prefix ? `${prefix}${baseId}` : baseId;
-    const sub = layerIds.filter((id) => {
-      return id === fullPrefix || id.startsWith(`${fullPrefix}__`) || id.startsWith(`${fullPrefix}-`);
-    });
+    const sub = layerIds
+      .filter((id) => {
+        return id === fullPrefix || id.startsWith(`${fullPrefix}__`) || id.startsWith(`${fullPrefix}-`);
+      })
+      .sort((a, b) => sublayerRank(a) - sublayerRank(b));
     for (const id of sub) {
       try {
         if (map.getLayer(id)) {

@@ -324,11 +324,10 @@ describe('map chrome is one container recipe', () => {
     expect(card).toMatch(/overflow-y-auto/);
     expect(card).not.toMatch(/max-h-\[min\(/);
 
-    const stack = readCode('components/map/map-panel.tsx');
-    const block = stack.slice(stack.indexOf('thematicLayers.length > 0'));
-    expect(block).toMatch(/overflow-y-auto/);
-    expect(block).toMatch(/--map-chrome-bottom/);
-    expect(block).toMatch(/top:/);
+    const stack = readCode('components/map/legend-stack.tsx');
+    expect(stack).toMatch(/overflow-y-auto/);
+    expect(stack).toMatch(/--map-chrome-bottom/);
+    expect(stack).toMatch(/top:/);
   });
 
   it('formats legend values identically everywhere', () => {
