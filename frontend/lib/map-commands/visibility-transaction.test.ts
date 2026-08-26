@@ -211,3 +211,66 @@ describe('remove_layer 身份解析对称 + desired state 同步', () => {
     expect(map.getLayer('product-rm-points__point')).toBeFalsy();
   });
 });
+
+describe('boundedVisibilityRepair（单次有界重验）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('store-owned 目标在 reconcile 周期后重验一次并修复', async () => {
+    const { boundedVisibilityRepair } = await import('./visibility-transaction');
+    const map = makeMockMaplibreMap();
+    map.addLayer({ id: 'late-layer__fill', type: 'fill' });
+    map.setLayoutProperty('late-layer__fill', 'visibility', 'visible');
+    const updateLayer = vi.fn();
+    const ctx = {
+      map,
+      popAction: () => {},
+      setDeferredPop: () => {},
+      safePop: () => {},
+      getHudState: () => ({ layers: [{ id: 'late-layer' }], updateLayer }),
+      setSelectedBaseLayer: () => {},
+      command: 'finalize_display',
+      params: {},
+    } as unknown as MapCommandContext;
+
+    const promise = boundedVisibilityRepair(
+      ctx, [{ layerId: 'late-layer', visible: false }], 100,
+    );
+    const outcome = promise.then((r) => r);
+    await vi.advanceTimersByTimeAsync(150);
+    const result = await outcome;
+    // 一次修复把期望值落上（真实 renderer 调 setLayoutProperty）
+    expect(result.confirmed).toEqual(['late-layer']);
+    expect(result.unresolved).toEqual([]);
+    expect(map.getLayoutProperty('late-layer__fill', 'visibility')).toBe('none');
+  });
+
+  it('目标从未挂载 → unresolved（诚实未收敛，不再重试）', async () => {
+    const { boundedVisibilityRepair } = await import('./visibility-transaction');
+    const map = makeMockMaplibreMap();
+    const ctx = {
+      map,
+      popAction: () => {},
+      setDeferredPop: () => {},
+      safePop: () => {},
+      getHudState: () => ({ layers: [] }),
+      setSelectedBaseLayer: () => {},
+      command: 'finalize_display',
+      params: {},
+    } as unknown as MapCommandContext;
+
+    const promise = boundedVisibilityRepair(
+      ctx, [{ layerId: 'never-mounted', visible: true }], 50,
+    );
+    const outcome = promise.then((r) => r);
+    await vi.advanceTimersByTimeAsync(100);
+    const result = await outcome;
+    expect(result.confirmed).toEqual([]);
+    expect(result.unresolved).toEqual(['never-mounted']);
+  });
+});
