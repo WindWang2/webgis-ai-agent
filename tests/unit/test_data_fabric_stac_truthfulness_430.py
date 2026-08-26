@@ -53,6 +53,16 @@ def _adapter(endpoint: str = _ENDPOINT) -> STACAdapter:
     ))
 
 
+def _patch_session_get(monkeypatch, adapter: STACAdapter, handler) -> None:
+    """把假 HTTP 处理器挂到适配器的 SSRF 安全会话上。
+
+    适配器只经 ``self.session.get``（make_safe_session 产物）发请求——
+    旧写法 patch 全局 ``requests.get`` 从未被命中，用例实际打到真实网络
+    路径（#1011：离线机器 DNS 失败 → 假红）。
+    """
+    monkeypatch.setattr(adapter.session, "get", handler)
+
+
 # ---------------------------------------------------------------------------
 # list_datasets: configured endpoint failure → [] (never synthetic ids)
 # ---------------------------------------------------------------------------
@@ -61,15 +71,17 @@ def test_list_datasets_unreachable_returns_empty(monkeypatch):
     def _conn_error(url, **kwargs):
         raise requests.exceptions.ConnectionError("no route to host")
 
-    monkeypatch.setattr(requests, "get", _conn_error)
-    datasets = _adapter().list_datasets()
+    adapter = _adapter()
+    _patch_session_get(monkeypatch, adapter, _conn_error)
+    datasets = adapter.list_datasets()
     assert datasets == []
     assert not SYNTHETIC_IDS & {d.get("id") for d in datasets}
 
 
 def test_list_datasets_server_error_returns_empty(monkeypatch):
-    monkeypatch.setattr(requests, "get", lambda url, **kw: _FakeResp(status_code=503))
-    datasets = _adapter().list_datasets()
+    adapter = _adapter()
+    _patch_session_get(monkeypatch, adapter, lambda url, **kw: _FakeResp(status_code=503))
+    datasets = adapter.list_datasets()
     assert datasets == []
 
 
@@ -79,8 +91,9 @@ def test_list_datasets_non_json_200_returns_empty(monkeypatch):
         resp.json = lambda: (_ for _ in ()).throw(ValueError("not json"))
         return resp
 
-    monkeypatch.setattr(requests, "get", _bad_json)
-    assert _adapter().list_datasets() == []
+    adapter = _adapter()
+    _patch_session_get(monkeypatch, adapter, _bad_json)
+    assert adapter.list_datasets() == []
 
 
 def test_list_datasets_empty_catalog_without_child_links_returns_empty(monkeypatch):
@@ -91,8 +104,9 @@ def test_list_datasets_empty_catalog_without_child_links_returns_empty(monkeypat
             return _FakeResp(200, {"collections": []})
         return _FakeResp(200, {"links": [{"rel": "self", "href": "https://stac.example.com/v1"}]})
 
-    monkeypatch.setattr(requests, "get", _router)
-    datasets = _adapter().list_datasets()
+    adapter = _adapter()
+    _patch_session_get(monkeypatch, adapter, _router)
+    datasets = adapter.list_datasets()
     assert datasets == []
     assert not SYNTHETIC_IDS & {d.get("id") for d in datasets}
 
@@ -105,8 +119,9 @@ def test_list_datasets_success_path_untouched(monkeypatch):
             {"id": "sentinel-2-l2a", "title": "Sentinel-2 L2A", "description": "d", "license": "proprietary"},
         ]})
 
-    monkeypatch.setattr(requests, "get", _router)
-    datasets = _adapter().list_datasets()
+    adapter = _adapter()
+    _patch_session_get(monkeypatch, adapter, _router)
+    datasets = adapter.list_datasets()
     assert [d["id"] for d in datasets] == ["sentinel-2-l2a"]
     assert not SYNTHETIC_IDS & {d.get("id") for d in datasets}
 
@@ -129,8 +144,9 @@ def test_describe_endpoint_failure_returns_honest_stub(monkeypatch):
     def _conn_error(url, **kwargs):
         raise requests.exceptions.ConnectionError("no route to host")
 
-    monkeypatch.setattr(requests, "get", _conn_error)
-    desc = _adapter().describe("some-real-collection")
+    adapter = _adapter()
+    _patch_session_get(monkeypatch, adapter, _conn_error)
+    desc = adapter.describe("some-real-collection")
     assert isinstance(desc, DatasetDescriptor)
     assert desc.id == "some-real-collection"
     # Never a fabricated count and never the fixture payload.
@@ -140,8 +156,9 @@ def test_describe_endpoint_failure_returns_honest_stub(monkeypatch):
 
 
 def test_describe_endpoint_error_status_is_typed(monkeypatch):
-    monkeypatch.setattr(requests, "get", lambda url, **kw: _FakeResp(status_code=503))
-    desc = _adapter().describe("some-real-collection")
+    adapter = _adapter()
+    _patch_session_get(monkeypatch, adapter, lambda url, **kw: _FakeResp(status_code=503))
+    desc = adapter.describe("some-real-collection")
     assert desc.feature_count is None
     assert desc.metadata.get("error_type") == "SOURCE_BAD_RESPONSE"
 
@@ -157,26 +174,29 @@ def test_describe_synthetic_id_with_configured_endpoint_is_not_fixture(monkeypat
             "license": "PDDL",
         })
 
-    monkeypatch.setattr(requests, "get", _router)
-    desc = _adapter().describe("landsat-8-c2-l2")
+    adapter = _adapter()
+    _patch_session_get(monkeypatch, adapter, _router)
+    desc = adapter.describe("landsat-8-c2-l2")
     assert desc.title == "Real Landsat"
     assert desc.feature_count is None  # not the fabricated 10000
 
 
 def test_describe_success_does_not_fabricate_feature_count(monkeypatch):
-    monkeypatch.setattr(requests, "get", lambda url, **kw: _FakeResp(200, {
+    adapter = _adapter()
+    _patch_session_get(monkeypatch, adapter, lambda url, **kw: _FakeResp(200, {
         "id": "sentinel-2-l2a", "title": "Sentinel-2 L2A",
     }))
-    desc = _adapter().describe("sentinel-2-l2a")
+    desc = adapter.describe("sentinel-2-l2a")
     assert desc.title == "Sentinel-2 L2A"
     assert desc.feature_count is None
 
 
 def test_describe_reports_item_count_when_source_provides_it(monkeypatch):
-    monkeypatch.setattr(requests, "get", lambda url, **kw: _FakeResp(200, {
+    adapter = _adapter()
+    _patch_session_get(monkeypatch, adapter, lambda url, **kw: _FakeResp(200, {
         "id": "sentinel-2-l2a", "title": "Sentinel-2 L2A", "item_count": 4321,
     }))
-    desc = _adapter().describe("sentinel-2-l2a")
+    desc = adapter.describe("sentinel-2-l2a")
     assert desc.feature_count == 4321
 
 
@@ -205,7 +225,8 @@ def test_sync_catalog_with_failing_stac_endpoint_registers_nothing(monkeypatch):
     def _conn_error(url, **kwargs):
         raise requests.exceptions.ConnectionError("no route to host")
 
-    monkeypatch.setattr(requests, "get", _conn_error)
+    adapter = _adapter()
+    _patch_session_get(monkeypatch, adapter, _conn_error)
     ds = MagicMock()
     ds.id = "src_stac"
     ds.name = "stac"

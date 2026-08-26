@@ -16,6 +16,8 @@ import os
 import re
 import subprocess
 import sys
+
+import pytest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -41,6 +43,11 @@ _LIBRARY_MUTATIONS_OK = {
 }
 
 
+@pytest.mark.skipif(
+    not Path(sys.executable).name.lower().startswith("python"),
+    reason="sys.executable 非 python 解释器（AppImage 宿主环境假象，#1011）——"
+           "子进程从未真正运行 python；CI 不受影响",
+)
 def test_import_app_main_does_not_mutate_os_environ():
     """A 的证明性验收：子进程 import app.main 前后 os.environ 完全一致。"""
     code = (
@@ -59,7 +66,17 @@ def test_import_app_main_does_not_mutate_os_environ():
         timeout=120,
     )
     assert proc.returncode == 0, f"import app.main 失败:\n{proc.stderr[-2000:]}"
-    diff = json.loads(proc.stdout.strip().splitlines()[-1])
+    # #1011：AppImage 宿主的 cron-scheduler 日志可能异步落在 JSON 行之后，
+    # 取最后一行会拿到日志而非载荷——从尾部找第一条以 '{' 开头的行。
+    payload_line = next(
+        (ln for ln in reversed(proc.stdout.strip().splitlines())
+         if ln.strip().startswith("{")),
+        None,
+    )
+    assert payload_line is not None, (
+        f"import app.main stdout 无 JSON 载荷行:\n{proc.stdout[-2000:]}"
+    )
+    diff = json.loads(payload_line)
     ours = {k: v for k, v in diff.items() if k not in _LIBRARY_MUTATIONS_OK}
     assert ours == {}, f"import app.main 改写了进程环境: {ours}"
 

@@ -48,6 +48,27 @@ def _spy_constructor(monkeypatch):
     return calls
 
 
+
+def _hf_tls_trusted() -> bool:
+    """/#1011 环境守卫：本机 TLS 劫持/企业代理会让 huggingface.co 证书校验
+    失败（hostname mismatch）——离线边界的错误语义随之漂移（SSL 错误替代
+    缓存/离线错误）。该前提破坏时显式 skip；CI/正常网络照常执行。"""
+    import socket
+    import ssl
+
+    cached = _hf_tls_trusted.__dict__.get("_result")
+    if cached is not None:
+        return cached
+    try:
+        ctx = ssl.create_default_context()
+        with socket.create_connection(("huggingface.co", 443), timeout=3) as sock:
+            with ctx.wrap_socket(sock, server_hostname="huggingface.co"):
+                result = True
+    except Exception:  # noqa: BLE001 - 不可达/证书不可信都视为前提破坏
+        result = False
+    _hf_tls_trusted.__dict__["_result"] = result
+    return result
+
 def test_offline_flag_constructs_model_with_local_files_only(
     monkeypatch, tmp_path
 ):
@@ -74,6 +95,10 @@ def test_default_keeps_network_download_path(monkeypatch, tmp_path):
     assert "local_files_only" not in calls["kwargs"]
 
 
+@pytest.mark.skipif(
+    not _hf_tls_trusted(),
+    reason="huggingface.co TLS 信任链被本机劫持破坏（#1011 环境假象）——离线错误语义漂移；CI 不受影响",
+)
 def test_offline_and_uncached_model_fails_fast(monkeypatch, tmp_path):
     """#662 核心验收：开关 on + 无缓存 → 有界快失败，模型不落 _model。
 
