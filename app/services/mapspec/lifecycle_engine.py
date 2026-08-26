@@ -236,6 +236,19 @@ _OPACITY_PAINT_KEYS = {
 }
 
 
+# layout.components 单条目载荷上限（QA-2026-08-26：LLM 直塞 FeatureCollection）
+_MAX_COMPONENT_BYTES = 96 * 1024
+
+
+def _estimate_component_bytes(component: Dict[str, Any]) -> int:
+    """组件条目序列化尺寸估算（失败 → 超限，宁可拒绝不放大）。"""
+    try:
+        from app.lib.json_size import estimate_json_bytes
+        return estimate_json_bytes(component)
+    except Exception:  # noqa: BLE001
+        return _MAX_COMPONENT_BYTES + 1
+
+
 def _patch_layer_presentation(
     layer: Dict[str, Any],
     visible: Optional[bool],
@@ -719,11 +732,37 @@ class MapSpecLifecycleEngine:
                         # 组件整体替换（webgis_component_update 先读后写实现
                         # 局部突变）；条目要求唯一 string id + string type，
                         # 非法/重复输入确定性拒绝，不留半更新状态。
+                        # QA-2026-08-26 加固：LLM 曾把整份 FeatureCollection 塞进
+                        # statistics_panel.options（layout_set 绕过组件 payload
+                        # 校验）——组件条目尺寸有界（96KB），大数据走
+                        # ref:chart-* artifact / 图层 ref，不进 layout.components。
                         valid = all(
                             isinstance(c, dict) and isinstance(c.get("id"), str)
                             and isinstance(c.get("type"), str)
                             for c in intent.components
                         )
+                        oversized = [
+                            str(c.get("id"))
+                            for c in intent.components
+                            if isinstance(c, dict)
+                            and _estimate_component_bytes(c) > _MAX_COMPONENT_BYTES
+                        ]
+                        if oversized:
+                            return MapSpecResult(
+                                is_error=True,
+                                origin=origin,
+                                error_msg=(
+                                    "layout.components entries exceed "
+                                    f"{_MAX_COMPONENT_BYTES // 1024}KB: "
+                                    + ", ".join(oversized[:5])
+                                ),
+                                correction_hint=(
+                                    "组件 options 不携带大数据（FeatureCollection/"
+                                    "全量记录）——图表经 generate_chart(attach_to_map)"
+                                    "或 component_update(chart=…) 走 ref:chart-* "
+                                    "artifact；统计数据用 stats.items 摘要（≤24 条）。"
+                                ),
+                            )
                         ids = [
                             c.get("id") for c in intent.components
                             if isinstance(c, dict)

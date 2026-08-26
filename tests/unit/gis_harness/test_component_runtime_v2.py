@@ -362,3 +362,58 @@ async def test_patch_component_intent_upsert_chart_panel(clean_session):
     assert created is not None
     assert created["type"] == "chart_panel"
     assert created["options"]["chart"] == chart
+
+
+# ── layout_set 组件载荷上限（QA-2026-08-26：LLM 直塞 FeatureCollection）───
+
+
+@pytest.mark.asyncio
+async def test_layout_set_rejects_oversized_component_payload(clean_session):
+    """大数据不得经 layout.components 进入 MapSpec（图表走 ref artifact）。"""
+    from app.services.mapspec.lifecycle_engine import (
+        MapSpecLifecycleEngine, SetLayoutIntent,
+    )
+    engine = MapSpecLifecycleEngine()
+    await engine.apply_mutation(clean_session, InitProjectIntent())
+    big_fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "geometry": {"type": "Point", "coordinates": [0, 0]},
+             "properties": {"blob": "x" * 512}}
+            for _ in range(400)
+        ],
+    }
+    res = await engine.apply_mutation(
+        clean_session,
+        SetLayoutIntent(components=[{
+            "id": "statistics", "type": "statistics_panel",
+            "options": {"data_source": big_fc},
+        }]),
+        origin="agent",
+    )
+    assert res.is_error is True
+    assert "96KB" in (res.error_msg or "") or "exceed" in (res.error_msg or "")
+    # 拒绝不留半更新状态
+    stored = await mapspec_store_instance.get_mapspec(clean_session)
+    comps = (stored.get("layout") or {}).get("components") if stored else None
+    assert not comps or all(
+        not (c.get("options") or {}).get("data_source") for c in comps
+    )
+
+
+@pytest.mark.asyncio
+async def test_layout_set_accepts_normal_component_payload(clean_session):
+    from app.services.mapspec.lifecycle_engine import (
+        MapSpecLifecycleEngine, SetLayoutIntent,
+    )
+    engine = MapSpecLifecycleEngine()
+    await engine.apply_mutation(clean_session, InitProjectIntent())
+    res = await engine.apply_mutation(
+        clean_session,
+        SetLayoutIntent(components=[
+            {"id": "stats", "type": "statistics_panel",
+             "options": {"stats": {"items": [{"label": "总数", "value": 42}]}}},
+        ]),
+        origin="agent",
+    )
+    assert res.is_error is False
