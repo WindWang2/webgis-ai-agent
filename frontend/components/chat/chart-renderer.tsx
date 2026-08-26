@@ -1,143 +1,19 @@
 "use client"
 
-import {
-  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
-  ScatterChart, Scatter, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Legend,
-} from "recharts"
-
 import type { ChartData, ChartDataPoint } from "@/lib/types";
 import { adaptChartData } from "@/lib/chart-adapter";
-import { useHudStore } from "@/lib/store/useHudStore";
+import { ChartCore, isChartTypeSupported } from "./chart-core";
+
 export type { ChartData, ChartDataPoint };
 export { adaptChartData };
 
-const COLORS = [
-  "#06b6d4", "#22d3ee", "#67e8f9", "#a5f3fc",
-  "#0891b2", "#0e7490", "#155e75", "#164e63",
-]
-
-// #741: recharts can't consume CSS vars in SVG tick fills directly — read
-// the computed token at module/init time via a helper so charts follow the
-// active theme (light or dark) instead of hard-coded dark-cyan values that
-// were near-unreadable in light theme.
-function themeColor(varName: string, fallback: string): string {
-  if (typeof window === "undefined") return fallback;
-  const value = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
-  return value || fallback;
-}
-
-// #807: 主题键参数化 —— themeColor 读的是渲染时刻的 computed token；外层
-// ChatMessageItem 是 memo 边界，主题切换不会跨过它，旧值会一直滞留。
-// 各 Render* 子组件以当前 theme 为键重派生样式。
-function tickStyle(_themeKey?: string) {
-  return { fill: themeColor("--text-muted", "#5b6b82"), fontSize: 13 };
-}
-
-function tooltipStyle(_themeKey?: string) {
-  return {
-    contentStyle: {
-      backgroundColor: themeColor("--surface-raised", "#ffffff"),
-      border: "1px solid rgba(100,116,139,0.3)",
-      borderRadius: "6px",
-      color: themeColor("--text-primary", "#1c2733"),
-      fontSize: "14px",
-    },
-  };
-}
-
-function RenderBarChart({ chart }: { chart: ChartData }) {
-  // #807: 自订阅主题 —— 外层 ChatMessageItem 是 memo 边界，主题切换不会
-  // 跨过它；订阅后本组件在 toggle 时重派生 tick/tooltip 色。
-  const theme = useHudStore((s) => s.theme);
-  return (
-    <ResponsiveContainer width="100%" height={200}>
-      <BarChart data={chart.data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="rgba(6,182,212,0.15)" />
-        <XAxis dataKey="name" tick={tickStyle(theme)} />
-        <YAxis tick={tickStyle(theme)} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", ...tickStyle() } : undefined} />
-        <Tooltip {...tooltipStyle(theme)} />
-        <Bar dataKey="value" fill="#06b6d4" radius={[2, 2, 0, 0]} />
-      </BarChart>
-    </ResponsiveContainer>
-  )
-}
-
-function RenderLineChart({ chart }: { chart: ChartData }) {
-  // #807: 自订阅主题 —— 外层 ChatMessageItem 是 memo 边界，主题切换不会
-  // 跨过它；订阅后本组件在 toggle 时重派生 tick/tooltip 色。
-  const theme = useHudStore((s) => s.theme);
-  return (
-    <ResponsiveContainer width="100%" height={200}>
-      <LineChart data={chart.data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="rgba(6,182,212,0.15)" />
-        <XAxis dataKey="name" tick={tickStyle(theme)} />
-        <YAxis tick={tickStyle(theme)} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", ...tickStyle() } : undefined} />
-        <Tooltip {...tooltipStyle(theme)} />
-        <Line type="monotone" dataKey="value" stroke="#06b6d4" strokeWidth={2} dot={{ fill: "#06b6d4", r: 3 }} />
-      </LineChart>
-    </ResponsiveContainer>
-  )
-}
-
-function RenderPieChart({ chart }: { chart: ChartData }) {
-  // #807: 自订阅主题 —— 外层 ChatMessageItem 是 memo 边界，主题切换不会
-  // 跨过它；订阅后本组件在 toggle 时重派生 tick/tooltip 色。
-  const theme = useHudStore((s) => s.theme);
-  return (
-    <ResponsiveContainer width="100%" height={200}>
-      <PieChart>
-        <Pie
-          data={chart.data}
-          dataKey="value"
-          nameKey="name"
-          cx="50%"
-          cy="50%"
-          outerRadius={70}
-          label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
-          labelLine={{ stroke: "#94a3b8" }}
-          fontSize={13}
-        >
-          {chart.data.map((_, index) => (
-            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-          ))}
-        </Pie>
-        <Tooltip {...tooltipStyle(theme)} />
-        <Legend wrapperStyle={{ fontSize: "13px", color: "#94a3b8" }} />
-      </PieChart>
-    </ResponsiveContainer>
-  )
-}
-
-function RenderScatterChart({ chart }: { chart: ChartData }) {
-  // #807: 自订阅主题 —— 外层 ChatMessageItem 是 memo 边界，主题切换不会
-  // 跨过它；订阅后本组件在 toggle 时重派生 tick/tooltip 色。
-  const theme = useHudStore((s) => s.theme);
-  return (
-    <ResponsiveContainer width="100%" height={200}>
-      <ScatterChart margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="rgba(6,182,212,0.15)" />
-        <XAxis dataKey="x" type="number" tick={tickStyle(theme)} label={chart.x_label ? { value: chart.x_label, position: "insideBottom", offset: -5, fill: "#94a3b8", fontSize: 13 } : undefined} />
-        <YAxis dataKey="y" type="number" tick={tickStyle(theme)} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", ...tickStyle() } : undefined} />
-        <Tooltip {...tooltipStyle(theme)} />
-        <Scatter data={chart.data} fill="#06b6d4" />
-      </ScatterChart>
-    </ResponsiveContainer>
-  )
-}
-
-const CHART_RENDERERS: Record<ChartData["type"], React.FC<{ chart: ChartData }>> = {
-  bar: RenderBarChart,
-  line: RenderLineChart,
-  pie: RenderPieChart,
-  scatter: RenderScatterChart,
-}
+// 渲染核（Recharts 子组件 + 主题派生）已抽到 chart-core.tsx —— chat 消息
+// 与地图 chart_panel 共用同一实现，不出现第二套图表 schema/主题。
+export { ChartCore } from "./chart-core";
 
 export function ChartRenderer({ chart }: { chart: ChartData }) {
-  const Renderer = CHART_RENDERERS[chart.type]
-
   // Show error instead of silent null for debugging
-  if (!Renderer) {
+  if (!isChartTypeSupported(chart.type)) {
     return (
       <div className="mt-2 rounded-lg border border-red-500/20 bg-red-950/30 p-3">
         <h4 className="text-xs font-medium text-red-300">{`无法渲染图表：未支持的类型 "${chart.type}"`}</h4>
@@ -148,7 +24,7 @@ export function ChartRenderer({ chart }: { chart: ChartData }) {
   return (
     <div className="mt-2 rounded-lg border border-map-chrome-border bg-[color:var(--surface-sunken)] p-3">
       <h4 className="mb-2 text-xs font-medium text-[color:var(--text-primary)]">{chart.title}</h4>
-      <Renderer chart={chart} />
+      <ChartCore chart={chart} />
     </div>
   )
 }

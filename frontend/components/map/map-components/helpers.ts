@@ -21,6 +21,11 @@ export const DEFAULT_POSITION: Record<string, string> = {
   continuous_colorbar: 'bottom-right',
   legend: 'bottom-left',
   categorical_legend: 'bottom-left',
+  // 新组件缺省槽位与后端目录（component-catalog.generated.json
+  // defaultPosition）保持一致
+  annotation: 'top-left',
+  statistics_panel: 'top-left',
+  chart_panel: 'top-left',
 };
 
 export const BOTTOM_OFFSET_STYLE: Record<string, React.CSSProperties> = {
@@ -86,4 +91,40 @@ export function stackedBottomStyle(
   if (base === undefined) return BOTTOM_OFFSET_STYLE[pos];
   const idx = slotIndexes?.get(component) ?? 0;
   return { bottom: `calc(var(--map-chrome-bottom, 10px) + ${base + idx * BOTTOM_STACK_STEP_PX}px)` };
+}
+
+// ── D1/D4：placement 自由布局原语 ────────────────────────────────────────
+// floating 模式渲染器组合方式：`absolute` 类 + placementStyle 内联样式；
+// anchor 模式走旧 positionClass 槽位（placementStyle 返回 undefined，
+// 既有槽位类/堆叠偏移完全不受影响）。
+
+/** floating 布局判定（anchor / 缺省 placement 均走旧槽位语义）。 */
+export function isFloating(component: MapSpecComponent): boolean {
+  return component.placement?.mode === 'floating';
+}
+
+/** floating 布局内联样式；anchor 模式返回 undefined（旧槽位类继续生效）。 */
+export function placementStyle(component: MapSpecComponent): React.CSSProperties | undefined {
+  const placement = component.placement;
+  if (!placement || placement.mode !== 'floating') return undefined;
+  const style: React.CSSProperties = {
+    left: typeof placement.x === 'number' ? Math.round(placement.x) : undefined,
+    top: typeof placement.y === 'number' ? Math.round(placement.y) : undefined,
+    // 缺省 zIndex=40：浮动面板盖过锚定 chrome（z-30），压不过弹层
+    zIndex: typeof placement.zIndex === 'number' ? placement.zIndex : 40,
+  };
+  if (typeof placement.width === 'number') style.width = placement.width;
+  if (typeof placement.height === 'number') style.height = placement.height;
+  return style;
+}
+
+/**
+ * 组件 variant 解析：options.variant（历史载体，north_arrow 等）优先，
+ * 其次 component.variant（目录字段），缺省回退 fallback。
+ */
+export function resolveVariant(component: MapSpecComponent, fallback = ''): string {
+  const fromOptions = component.options?.['variant'];
+  if (typeof fromOptions === 'string' && fromOptions) return fromOptions;
+  if (typeof component.variant === 'string' && component.variant) return component.variant;
+  return fallback;
 }

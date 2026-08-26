@@ -12,6 +12,9 @@ import './scale-bar';
 import './attribution';
 import './colorbar';
 import './legends';
+import './annotation';
+import './statistics-panel';
+import './chart-panel';
 
 export function renderComponent(component: MapSpecComponent, ctx: RendererContext): React.ReactNode {
   const renderer = getComponentRenderer(component.type);

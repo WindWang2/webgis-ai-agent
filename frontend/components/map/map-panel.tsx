@@ -1100,6 +1100,7 @@ export function MapPanel({
   const CHROME_RENDERABLE_TYPES = new Set([
     'title', 'subtitle', 'north_arrow', 'scale_bar', 'attribution',
     'continuous_colorbar', 'legend', 'categorical_legend',
+    'annotation', 'statistics_panel', 'chart_panel',
   ])
   const enabledSpecComponents = specComponents.filter((c) => c.enabled !== false)
   const hasSpecChrome = enabledSpecComponents.some(

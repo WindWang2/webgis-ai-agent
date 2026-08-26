@@ -130,6 +130,23 @@ export interface MapSpecControlConfig {
 }
 
 /**
+ * 组件自由布局放置（D1，后端 ComponentPlacement 的前端镜像）。
+ * - anchor 模式：等价旧六槽语义（anchor = 七槽字面量），position 双写一致；
+ * - floating 模式：x/y 像素自由定位 + 可选 width/height/zIndex/collapsed，
+ *   服务拖拽/缩放后的持久化。缺省字段由渲染端兜底（zIndex 默认 40）。
+ */
+export interface ComponentPlacement {
+  mode: 'anchor' | 'floating';
+  anchor?: string;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  zIndex?: number;
+  collapsed?: boolean;
+}
+
+/**
  * CartographyComponent —— 可替换制图组件（GIS Harness 契约的前端镜像，
  * 见 app/services/gis_harness/components.py）。live 渲染与 export 共用
  * 同一份组件描述（MapSpec 是唯一 desired cartographic state）。
@@ -165,6 +182,10 @@ export interface MapSpecComponent {
   style?: Record<string, unknown>;
   options?: Record<string, unknown>;
   compatibility?: Record<string, unknown>;
+  /** 组件 variant（目录 variant 词汇，见 component-catalog.generated.json）。 */
+  variant?: string;
+  /** 自由布局（可选增强；缺省 → 旧 position 槽位语义）。 */
+  placement?: ComponentPlacement;
 }
 
 export interface MapSpecLayoutConfig {
