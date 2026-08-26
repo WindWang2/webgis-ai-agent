@@ -1,3 +1,4 @@
+import type { Map as MaplibreMap } from "maplibre-gl";
 import { diffSpecs, type SpecPatch } from "@/lib/mapspec-compiler/reconciler";
 import { diffSpecsAsync, disposeWorker, consumeDiffLastFailed } from "@/lib/mapspec-compiler/worker-bridge";
 import type { MapSpec, MapSpecSource, MapSpecLayer } from "@/lib/mapspec-compiler/types";
@@ -37,7 +38,12 @@ interface MapSpecRuntimeOptions {
 }
 
 export class MapSpecRuntime {
-  private map: any;
+  /**
+   * #1009 类型边界：runtime 持有真实 MapLibre Map 类型（此前 any——字段
+   * 契约变更只能在运行时暴露）。测试的结构化 mock 经构造函数边界收敛
+   * （调用侧 ``as unknown as MaplibreMap``），核心逻辑不再依赖 any。
+   */
+  private map: MaplibreMap;
   private appliedSpec: MapSpec | null = null;
   private pendingTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
@@ -81,7 +87,7 @@ export class MapSpecRuntime {
    */
   private layerSourceIndex = new Map<string, string>();
 
-  constructor(map: any, options: MapSpecRuntimeOptions = {}) {
+  constructor(map: MaplibreMap, options: MapSpecRuntimeOptions = {}) {
     this.map = map;
     this.onStyleRecovery = options.onStyleRecovery;
     // FE-3: wire the debouncer's FrameStats instrument to the dev/test counter
@@ -434,7 +440,9 @@ export class MapSpecRuntime {
     const resolve = this.currentApplyResolve;
     this.currentApplyResolve = null;
     if (resolve) resolve();
-    this.map = null;
+    // dispose 后 runtime 不可再用（disposed 标志守卫全部入口）；置空断开
+    // Map 强引用防泄漏——类型边界处显式断言（#1009）。
+    this.map = null as unknown as MaplibreMap;
     this.appliedSpec = null;
   }
 

@@ -150,9 +150,12 @@ class TestPromptDisplayLayerConsistency:
         # prompt.py 是静态常量模块，直接读文件内容
         with open("app/services/chat/prompt.py", "r", encoding="utf-8") as f:
             prompt_content = f.read()
-        
-        # 断言包含自动挂载豁免说明
-        assert "自动挂载" in prompt_content or "自动显示" in prompt_content
+
+        # #1011：24da614 finalize_display 重写后措辞从「自动挂载/自动显示」
+        # 漂移为「自动加载（默认隐藏）+ finalize_display 收口」——断言对齐
+        # 现行契约（意图不变：数据自动挂载、轮末统一收口、有例外说明）。
+        assert "自动加载" in prompt_content
+        assert "finalize_display" in prompt_content
         assert "heatmap_data" in prompt_content or "热力图" in prompt_content
         # 断言不再是无条件"必须 display_layer"（有例外说明）
         assert "例外" in prompt_content or "除外" in prompt_content or "无需显式调用" in prompt_content

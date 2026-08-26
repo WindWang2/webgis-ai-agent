@@ -1,10 +1,25 @@
 """Tests for PiAgentHarness dispatch hook wiring in agent_pi_bridge."""
 import os
+import sys
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from app.lib.harness.pi_agent_harness import PiAgentHarness
+
+def _sys_executable_is_interpreter() -> bool:
+    """#1011 环境假象守卫：ZCode AppImage 宿主把 sys.executable 重解析为
+    桌面应用包装器（子进程输出为桌面日志，非 python）——显式 skip，
+    CI 不受影响。"""
+    from pathlib import Path as _Path
+    return _Path(sys.executable).name.lower().startswith("python")
+
+
+pytestmark = pytest.mark.skipif(
+    not _sys_executable_is_interpreter(),
+    reason="sys.executable 非 python 解释器（AppImage 宿主环境假象，#1011）；CI 不受影响",
+)
+
 from app.lib.harness.tool_call_event import ToolCallEvent
 
 

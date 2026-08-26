@@ -78,6 +78,57 @@ export interface SSEEvent {
 }
 
 /**
+ * `step_result` 事件载荷的最小契约（#1009：SSE 层去 any 的第一步）。
+ *
+ * 只声明前端实际读取的字段；`result` 是后端工具结果的有界投影（slim_event_result），
+ * 其内部结构因工具而异，故保持 Record 兜底 + 已知可选字段显式化。
+ * 新字段先在这里声明再使用——类型错误即契约漂移信号。
+ */
+export type StepResultPayload = {
+  tool?: string;
+  name?: string;
+  arguments?: string;
+  /** 数据 ref（ref:geojson-*）——挂载图层 id 即该值。 */
+  geojson_ref?: string;
+  /** 会话数据引用描述符（执行引擎附加，V3 性能通道）。 */
+  ref_descriptor?: import('@/lib/types/layer').RefDescriptor;
+  /** 工具结果有界投影；已知形状见各分支。 */
+  result?: {
+    success?: boolean;
+    type?: string;
+    task_id?: string;
+    image?: unknown;
+    command?: string;
+    plan_id?: string;
+    title?: string;
+    summary?: string;
+    step_count?: number;
+    destructive_steps?: string[];
+    steps_preview?: Array<{ id?: string; tool?: string; purpose?: string; destructive?: boolean } & Record<string, unknown>>;
+    legend_spec?: import('@/lib/map-kit/types').LegendSpec;
+    layer_meta?: { title?: string | null } & Record<string, unknown>;
+    runtime_patch?: {
+      visible?: boolean;
+      opacity?: number;
+      layer_id?: string;
+      mapspec_fingerprint?: string;
+      projection_fingerprint?: string;
+      repair_attempts?: Array<Record<string, unknown>>;
+      style?: Record<string, unknown>;
+      legend_spec?: import('@/lib/map-kit/types').LegendSpec;
+      image_ref?: string;
+    } & Record<string, unknown>;
+    chart?: Record<string, unknown>;
+    metadata?: Record<string, unknown>;
+  } & Record<string, unknown>;
+  /** 后端投影的 committed MapSpec（组件/图层突变事件携带）。 */
+  mapspec?: Record<string, unknown>;
+  mutation_revision?: number;
+  /** 会话 id（跨会话事件守卫 INV-2 读取）。 */
+  session_id?: string;
+} & Record<string, unknown>;
+
+/**
  * 发送流式对话请求，返回 AsyncGenerator
  *
  * SEC-08：ownerToken 仅在匿名会话首次创建后由前端持有；提供时附在

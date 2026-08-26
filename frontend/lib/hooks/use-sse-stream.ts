@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
+import type { StepResultPayload } from '@/lib/api/chat';
+import type { StepResultEvent } from '@/lib/results/types';
 import { useMapBridge } from './useMapBridge';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { apiFetch } from '@/lib/api/transport';
@@ -568,12 +570,18 @@ export function useSSEStream(
           });
         }
       } else if (event.event === "step_result") {
+        // #1009: 分支内收窄到 step_result 最小契约（字段漂移由 tsc 捕获）
+        const data = event.data as StepResultPayload;
         // Result Workbench: normalize + record this result into the bounded,
         // session-scoped registry. Runs before the layer/chart handling so the
         // result is inspectable even when no layer is mounted. propose_plan and
         // other non-analysis events are ignored inside the slice. The returned
         // id lets the chat layer-added chip deep-link to the same result.
-        const workbenchResultId = useHudStore.getState().captureStepResult(data);
+        // captureStepResult 的 StepResultEvent 是本契约的子集投影（历史
+        // 三处定义收敛前的边界）；字段级契约由 StepResultPayload 保证。
+        const workbenchResultId = useHudStore.getState().captureStepResult(
+          data as unknown as StepResultEvent,
+        );
         // FE-P3-3: terminal transition for the ToolCallChain row (matched by
         // tool name — the SSE payload carries no call id). #608: stamp
         // completedAt (duration badge) and hasGeojson when the result mounts
@@ -584,13 +592,20 @@ export function useSSEStream(
         });
         // Plan Mode：propose_plan 返回的 plan 摘要挂到当前消息，由 PlanProposalCard 渲染
         if (data.tool === 'propose_plan' && data.result?.success && data.result?.plan_id) {
+          // 守卫已确认 plan 字段在载荷中（运行时契约）；TS 无法跨 index-
+          // signature 窄化，边界处显式断言。
+          const planResult = data.result as {
+            plan_id: string; title: string; summary?: string;
+            step_count?: number; destructive_steps?: string[];
+            steps_preview?: PlanProposalPayload['steps_preview'];
+          };
           const plan: PlanProposalPayload = {
-            plan_id: data.result.plan_id,
-            title: data.result.title,
-            summary: data.result.summary,
-            step_count: data.result.step_count,
-            destructive_steps: data.result.destructive_steps || [],
-            steps_preview: data.result.steps_preview || [],
+            plan_id: planResult.plan_id,
+            title: planResult.title,
+            summary: planResult.summary,
+            step_count: planResult.step_count ?? 0,
+            destructive_steps: planResult.destructive_steps ?? [],
+            steps_preview: planResult.steps_preview ?? [],
             status: 'pending',
           };
           setMessages((prev) => prev.map((m) => (m.id === thinkingId ? { ...m, plan } : m)));
@@ -764,7 +779,7 @@ export function useSSEStream(
                 ? {
                     ...m,
                     // FE-P3-2: bounded per-message chart history.
-                    charts: [...((m.charts as any[]) ?? []).slice(-19), data.result.chart],
+                    charts: [...((m.charts as any[]) ?? []).slice(-19), data.result?.chart],
                   }
                 : m
             )

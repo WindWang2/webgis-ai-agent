@@ -10,6 +10,8 @@ perf 基线在隔离进程下记录（CI 专属 test-perf lane、文件 docstrin
 """
 import subprocess
 import sys
+
+import pytest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -17,6 +19,20 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # 探针目标选 transport perf：5 个 workload、全部带 perf marker、独立跑最快
 # （~4s；skip 态更短）—— 足以证明 guard 的两态，无需扫全部 perf 文件。
 _PROBE_TARGET = "tests/benchmarks/test_transport_perf.py"
+
+def _sys_executable_is_interpreter() -> bool:
+    """/#1011 环境假象守卫：ZCode AppImage 宿主会把 sys.executable 重解析为
+    桌面应用包装器（子进程输出为桌面应用日志，非 python）——子进程契约
+    测试在该环境无法成立，显式 skip；CI/正常 venv 的 sys.executable 是
+    python 解释器，测试照常执行。"""
+    from pathlib import Path as _Path
+    return _Path(sys.executable).name.lower().startswith("python")
+
+
+pytestmark = pytest.mark.skipif(
+    not _sys_executable_is_interpreter(),
+    reason="sys.executable 非 python 解释器（AppImage 宿主环境假象，#1011）；CI 不受影响",
+)
 
 
 def _run_pytest(*args: str) -> subprocess.CompletedProcess:
