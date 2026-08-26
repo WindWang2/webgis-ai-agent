@@ -75,13 +75,35 @@ class ComponentUpdateArgs(BaseModel):
     component_id: Optional[str] = Field(
         None, description="组件 id（如 north-arrow）。与 component_type 二选一")
     component_type: Optional[str] = Field(
-        None, description="组件类型（如 north_arrow）——按类型命中第一个")
+        None, description="组件类型（如 north_arrow）——按类型命中第一个；"
+                          "create=true 时为新组件类型")
     enabled: Optional[bool] = Field(None, description="启用/禁用（『不要指南针』= enabled:false）")
     position: Optional[str] = Field(
-        None, description="位置 top-left/top-center/top-right/bottom-left/bottom-center/bottom-right")
+        None, description="位置槽 top-left/top-center/top-right/bottom-left/bottom-center/bottom-right")
+    placement: Optional[Dict[str, Any]] = Field(
+        None, description=(
+            "typed 布局（position 的超集）：{mode:'anchor',anchor:'bottom-left'} "
+            "或 {mode:'floating',x,y,width?,height?,zIndex?,collapsed?}。"
+            "『移到右下角、缩小一些』→ floating + 坐标尺寸"))
+    variant: Optional[str] = Field(
+        None, description="variant（如 north_arrow: compass_rose/compass_needle/"
+                          "arrow_simple；scale_bar: boxed/academic）。可用值见 "
+                          "webgis_component_catalog")
     style: Optional[Dict[str, Any]] = Field(None, description="样式合并（半透明字典）")
     options: Optional[Dict[str, Any]] = Field(
-        None, description="选项合并（如 {'variant':'compass_rose'} / {'orientation':'vertical'}）")
+        None, description="选项合并（如 {'orientation':'vertical'} / 统计面板 stats）")
+    chart: Optional[Dict[str, Any]] = Field(
+        None, description="chart_panel 数据（ChartData：{type:bar|line|pie|scatter,"
+                          "title,data:[{name,value|x,y}]}，与 generate_chart 同契约，"
+                          "≤500 点）。create=true 时用于新建图表面板")
+    stats: Optional[Dict[str, Any]] = Field(
+        None, description="statistics_panel 数据（{title?,items:[{label,value,unit?}]}，"
+                          "≤24 条）")
+    create: bool = Field(False, description="目标不存在时创建（需 component_type；"
+                                            "面板加新图表/统计卡用同一入口）")
+    expected_revision: Optional[int] = Field(
+        None, ge=0, description="乐观并发：webgis_component_catalog 读到的 "
+                                "mutation_revision；落后即 superseded（用户最新交互优先）")
 
 
 async def _project_verified_recipes() -> set:
@@ -819,11 +841,18 @@ def register_gis_harness_tools(registry: ToolRegistry):
         description=(
             "制图组件局部突变：只改命中的单个组件（id 或类型），其余组件与所有"
             "数据图层完全不动——不触发任何数据重查/重分析。"
-            "\n适用：『换一个指南针』(component_type=north_arrow, options.variant="
+            "\n适用：『换一个指南针』(component_type=north_arrow, variant="
             "compass_rose)、『不要指南针』(enabled=false)、『比例尺放左下角』"
             "(position=bottom-left)、『色条改成竖向』(component_type="
-            "continuous_colorbar, options.orientation=vertical)、『换成 Viridis 色带』、"
-            "『图例放左下』『标题改成…』(component_type=title, options.text=…)。"
+            "continuous_colorbar, options.orientation=vertical)、『图例放左下』"
+            "『标题改成…』(component_type=title, options.text=…)、"
+            "『把统计图移到右下角、缩小一些』(placement={mode:'floating',"
+            "x:…,y:…,width:…,height:…})。"
+            "\n创建：create=true + component_type=chart_panel + chart=ChartData"
+            "（bar/line/pie/scatter，与 generate_chart 同契约）可在地图上加"
+            "浮动统计图；component_type=statistics_panel + stats 建统计卡。"
+            "\n并发：先 webgis_component_catalog 读 mutation_revision，"
+            "传 expected_revision 防止覆盖用户拖拽后的最新位置。"
         ),
         args_model=ComponentUpdateArgs,
     )
@@ -833,12 +862,18 @@ def register_gis_harness_tools(registry: ToolRegistry):
         component_type: Optional[str] = None,
         enabled: Optional[bool] = None,
         position: Optional[str] = None,
+        placement: Optional[Dict[str, Any]] = None,
+        variant: Optional[str] = None,
         style: Optional[Dict[str, Any]] = None,
         options: Optional[Dict[str, Any]] = None,
+        chart: Optional[Dict[str, Any]] = None,
+        stats: Optional[Dict[str, Any]] = None,
+        create: bool = False,
+        expected_revision: Optional[int] = None,
     ) -> dict:
         from app.services.gis_harness.components import (
-            CartographyComponent,
-            mutate_component,
+            validate_chart_payload,
+            validate_stats_payload,
         )
         from app.services.mapspec_store import mapspec_store
 
@@ -850,58 +885,226 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 "message": "component_id 或 component_type 必须提供其一",
                 "correction_hint": "如 component_type='north_arrow' 或 component_id='north-arrow'。",
             }
-        if not any(v is not None for v in (enabled, position, style, options)):
+        if not any(
+            v is not None
+            for v in (enabled, position, placement, variant, style, options, chart, stats)
+        ):
             return {
                 "success": False,
-                "message": "至少提供一个突变字段 (enabled/position/style/options)",
+                "message": "至少提供一个突变字段 (enabled/position/placement/variant/style/options/chart/stats)",
             }
+
+        # payload 契约校验（与 chat generate_chart / statistics 面板同协议）
+        effective_type = component_type
+        if component_id and not effective_type:
+            spec = await mapspec_store.get_mapspec(session_id) or {}
+            for c in (spec.get("layout") or {}).get("components") or []:
+                if isinstance(c, dict) and c.get("id") == component_id:
+                    effective_type = str(c.get("type") or "")
+                    break
+        if chart is not None:
+            if effective_type and effective_type != "chart_panel" and not create:
+                return {
+                    "success": False,
+                    "message": "chart 参数只适用于 chart_panel 组件",
+                    "correction_hint": "create=true + component_type='chart_panel'，或更新既有的 chart_panel。",
+                }
+            err = validate_chart_payload(chart)
+            if err:
+                return {"success": False, "message": f"chart 数据不合法: {err}"}
+        if stats is not None:
+            if effective_type and effective_type != "statistics_panel" and not create:
+                return {
+                    "success": False,
+                    "message": "stats 参数只适用于 statistics_panel 组件",
+                }
+            err = validate_stats_payload(stats)
+            if err:
+                return {"success": False, "message": f"stats 数据不合法: {err}"}
+
+        # chart 数据通道：小载荷 inline（options.chart），大载荷存 session
+        # artifact ref（options.chartRef）——MapSpec 不背大数据（D2）。
+        chart_options: Dict[str, Any] = {}
+        if chart is not None:
+            from app.lib.json_size import estimate_json_bytes
+            if estimate_json_bytes(chart) > 32 * 1024:
+                from app.services.session_data import session_data_manager
+                ref_id = await session_data_manager.store(
+                    session_id, {"chart": chart}, prefix="chart",
+                )
+                chart_options["chartRef"] = ref_id
+            else:
+                chart_options["chart"] = chart
+        if stats is not None:
+            chart_options["stats"] = stats
+        merged_options = {**(options or {}), **chart_options} or None
 
         spec = await mapspec_store.get_mapspec(session_id) or {}
         raw_components = ((spec.get("layout") or {}).get("components")) or []
-        components = [
-            CartographyComponent.model_validate({**c})
+
+        # change 记录经同一纯函数预计算（引擎事务内再算一次，确定性一致）——
+        # 保持既有 evidence 契约（change.from/to）。
+        from app.services.gis_harness.components import (
+            CartographyComponent,
+            mutate_component,
+        )
+        parsed = [
+            CartographyComponent.model_validate(dict(c))
             for c in raw_components if isinstance(c, dict)
         ]
-        if not components:
-            return {
-                "success": False,
-                "message": "当前 MapSpec 无 layout.components 可突变",
-                "correction_hint": "先用 webgis_map_product 或 webgis_layout_set 建立组件集。",
-            }
-
-        mutated, change = mutate_component(
-            components,
+        _, change = mutate_component(
+            parsed,
             component_id=component_id,
             component_type=component_type,
             enabled=enabled,
             position=position,
+            placement=placement,
+            variant=variant,
             style=style,
-            options=options,
+            options=merged_options,
+            upsert=create,
         )
         if change is None:
+            current = ", ".join(
+                f"{c.get('id')}({c.get('type')})" for c in raw_components if isinstance(c, dict)
+            ) or "（无组件）"
             return {
                 "success": False,
                 "message": f"未找到组件 component_id={component_id} component_type={component_type}",
-                "correction_hint": "当前组件: " + ", ".join(f"{c.id}({c.type})" for c in components),
+                "correction_hint": (
+                    f"当前组件: {current}；新组件用 create=true + component_type。"
+                ),
             }
 
-        res = await mapspec_store.layout_set(
-            session_id, components=[c.to_mapspec() for c in mutated],
+        res = await mapspec_store.patch_component(
+            session_id,
+            # 未命中组件时 change 为 None 已提前返回；这里用预计算解析出的
+            # 目标 id（component_id 缺省按类型命中时二者等价、确定性一致）。
+            component_id=str(component_id or change.get("id") or ""),
+            component_type=component_type,
+            enabled=enabled,
+            position=position,
+            placement=placement,
+            variant=variant,
+            style=style,
+            options=merged_options,
+            upsert=create,
+            expected_revision=expected_revision,
         )
+
+        if res.get("status") == "superseded":
+            return {
+                "success": False,
+                "superseded": True,
+                "mutation_revision": res.get("mutation_revision"),
+                "message": "组件状态已被更新的交互修改（用户拖拽/其他突变优先），请重新读取 catalog 后再试",
+                "correction_hint": "调用 webgis_component_catalog 获取最新 mutation_revision 与组件状态。",
+            }
+        if not res.get("success"):
+            return {
+                "success": False,
+                "message": res.get("message") or "组件突变失败",
+                "correction_hint": res.get("correction_hint"),
+            }
+
+        final_components = (((res.get("mapspec") or {}).get("layout") or {}).get("components")) or []
         out: Dict[str, Any] = {
-            "success": bool(res.get("success")),
+            "success": True,
             "change": change,
-            "components": [c.to_mapspec() for c in mutated],
+            "components": final_components,
             "component_mutation_evidence": {
                 "change": change,
-                "layer_count_unchanged": True,
+                "layer_count_unchanged": len(spec.get("layers", []))
+                == len((res.get("mapspec") or {}).get("layers", [])),
                 "layers_before": len(spec.get("layers", [])),
                 "layers_after": len((res.get("mapspec") or {}).get("layers", [])),
             },
+            "summary": (
+                f"组件 {change.get('id')} 已更新（{len(final_components)} 组件，数据层未动）"
+            ),
         }
-        if res.get("success"):
-            out["summary"] = (
-                f"组件 {change.get('id')} 已更新（{len(mutated)} 组件，数据层未动）"
-            )
-            out["mapspec"] = res.get("mapspec")
+        if chart_options.get("chartRef"):
+            out["chart_ref"] = chart_options["chartRef"]
         return _forward_evidence(res, out)
+
+    @tool(
+        registry,
+        tier=2, domains=["report"], name="webgis_component_catalog",
+        description=(
+            "读取当前地图的制图组件目录与状态（只读）。一次返回："
+            "(1) 当前 MapSpec 的全部组件（id/type/enabled/位置/placement/variant/"
+            "图表绑定摘要）；(2) 每种组件类型的可用 variant 清单；"
+            "(3) 当前 mutation_revision（供 webgis_component_update 做乐观并发）。"
+            "\n『当前有哪些组件？统计图在哪？用什么数据？』『把刚才用户移动过的"
+            "统计图恢复到左上角』——先读本工具拿最新状态与 revision，再突变。"
+        ),
+    )
+    async def webgis_component_catalog(session_id: Optional[str] = None) -> dict:
+        if not session_id:
+            return {"success": False, "message": "Missing session_id"}
+        from app.lib.cartography.component_registry import get_component_registry
+        from app.services.mapspec_store import mapspec_store
+
+        spec = await mapspec_store.get_mapspec(session_id) or {}
+        raw_components = ((spec.get("layout") or {}).get("components")) or []
+
+        def _summarize(c: Dict[str, Any]) -> Dict[str, Any]:
+            opts = c.get("options") if isinstance(c.get("options"), dict) else {}
+            summary: Dict[str, Any] = {
+                "id": c.get("id"),
+                "type": c.get("type"),
+                "enabled": c.get("enabled", True),
+                "position": c.get("position", "none"),
+            }
+            if c.get("placement"):
+                summary["placement"] = c.get("placement")
+            if c.get("variant"):
+                summary["variant"] = c.get("variant")
+            if "chart" in opts:
+                chart = opts.get("chart")
+                summary["chart"] = {
+                    "type": chart.get("type") if isinstance(chart, dict) else None,
+                    "title": chart.get("title") if isinstance(chart, dict) else None,
+                    "points": len(chart.get("data") or []) if isinstance(chart, dict) else 0,
+                    "binding": "inline",
+                }
+            elif "chartRef" in opts:
+                summary["chart"] = {"binding": str(opts.get("chartRef")), "inline": False}
+            if isinstance(opts.get("stats"), dict):
+                items = opts["stats"].get("items")
+                summary["stats"] = {
+                    "title": opts["stats"].get("title"),
+                    "items": len(items) if isinstance(items, list) else 0,
+                }
+            if isinstance(opts.get("text"), str):
+                summary["text"] = opts["text"][:60]
+            return summary
+
+        component_registry = get_component_registry()
+        variant_catalog = []
+        for desc in sorted(component_registry.native_descriptors(), key=lambda d: d.id):
+            variant_catalog.append({
+                "type": desc.type,
+                "variants": desc.variants,
+                "default_variant": desc.default_variant,
+                "default_position": desc.default_position,
+            })
+
+        revision = spec.get("mutation_revision")
+        if not isinstance(revision, int):
+            state = await session_data_manager.get_map_state(session_id)
+            revision = state.get("_cartographic_mutation_revision", 0)
+
+        return {
+            "success": True,
+            "mutation_revision": revision,
+            "components": [
+                _summarize(c) for c in raw_components if isinstance(c, dict)
+            ],
+            "available_variants": variant_catalog,
+            "creatable_types": ["chart_panel", "statistics_panel", "annotation", "north_arrow", "scale_bar"],
+            "summary": (
+                f"{len(raw_components)} 个组件；revision={revision}。"
+                "webgis_component_update 传 expected_revision=revision 防覆盖。"
+            ),
+        }

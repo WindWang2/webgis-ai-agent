@@ -1040,6 +1040,32 @@ async def get_session_map_state(
     return {"session_id": session_id, "map_state": response_state}
 
 
+@router.get("/sessions/{session_id}/chart-artifacts/{ref_id}")
+async def get_session_chart_artifact(
+    session_id: str,
+    ref_id: str,
+    _conv: Conversation = Depends(require_owned_session),
+):
+    """chart_panel 的 ref-backed 数据通道（D2 ref 路径）。
+
+    与 /layers/data/{ref}（GeoJSON 序列化面）不同，chart artifact 是
+    {chart: ChartData} 小载荷（生成时已受 100KB/500 点上限约束）——
+    直接 JSON 返回，无分块序列化需求。所有权校验复用 require_owned_session。
+    """
+    if not ref_id or not ref_id.startswith("ref:chart-") or len(ref_id) > 128:
+        raise HTTPException(status_code=400, detail="非法 chart artifact ref")
+    from app.services.session_data import session_data_manager
+
+    res = await session_data_manager.get_ref_data(session_id, ref_id)
+    if not res.success:
+        status_code = 403 if res.error_type == "PermissionDenied" else 404
+        raise HTTPException(status_code=status_code, detail=res.error or "图表数据不可用")
+    data = res.data
+    if isinstance(data, dict) and isinstance(data.get("chart"), dict):
+        return data
+    raise HTTPException(status_code=404, detail="ref 不是图表 artifact")
+
+
 class MapStatePushRequest(BaseModel):
     viewport: Optional[dict] = None
     layers: Optional[list] = Field(default=None, max_length=128)
