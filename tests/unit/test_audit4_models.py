@@ -233,3 +233,23 @@ def test_runtime_override_reaches_all_roles(monkeypatch):
         if role is ModelRole.TITLE:
             monkeypatch.setattr(settings, "LLM_TITLE_MODEL", "", raising=False)
         assert resolve_llm_config(role).model == "new-model", role
+
+
+# ── #1006: session_overview 排除 XML 合成载体消息 ──────────────────────────
+
+def test_session_overview_excludes_synthetic_tool_carriers():
+    from app.services.chat.context.session_overview import build_session_overview
+
+    msgs = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "成都的小学分布"},
+        {"role": "assistant", "content": ""},
+        {"role": "user", "content": "[工具执行结果]\nsearch_poi: ..."},  # XML 载体
+        {"role": "assistant", "content": "分析中"},
+        {"role": "user", "content": "[工具执行结果]\nbuffer: ..."},   # XML 载体
+        {"role": "user", "content": "再算一下密度"},                  # 真实提问
+    ]
+    import asyncio as _aio
+    overview = _aio.run(build_session_overview("s-x", messages=msgs, _fetched=True))
+    joined = overview or ""
+    assert "2 轮提问" in joined, f"合成载体被计入轮数: {parts}"

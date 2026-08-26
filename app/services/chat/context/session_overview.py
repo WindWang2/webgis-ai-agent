@@ -60,8 +60,19 @@ async def build_session_overview(
 
     turn_count = 0
     if messages:
-        # 数 user 角色出现次数 = 用户提问轮数
-        turn_count = sum(1 for m in messages if m.get("role") == "user")
+        # 数 user 角色出现次数 = 用户提问轮数。
+        # audit4 #1006: 排除 MiniMax XML 工具路径合成的 "[工具执行结果]" 载体
+        # user 消息 —— 它们是工具结果回填不是提问，此前被计入导致 XML provider
+        # 会话的轮数虚高、env 感知里的会话深浅判断失真（与 _select_tools 的
+        # 同款过滤对齐）。
+        def _is_genuine_user_message(m: dict) -> bool:
+            if m.get("role") != "user":
+                return False
+            content = m.get("content")
+            text = content if isinstance(content, str) else ""
+            return not text.startswith("[工具执行结果]")
+
+        turn_count = sum(1 for m in messages if _is_genuine_user_message(m))
 
     parts: list[str] = []
     if duration:
