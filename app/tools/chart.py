@@ -133,6 +133,34 @@ def _map_features_to_points(
     return points, ""
 
 
+def validate_chart_payload(chart: Any) -> "str | None":
+    """公共 ChartData 校验（map chart_panel 与 chat 图表共用同一契约）。
+
+    输入应为 {type,title,data[,x_label,y_label]} dict；返回 None=合法，
+    否则返回错误信息。复用 generate_chart 的全部 DoS/XSS 防线。
+    """
+    if not isinstance(chart, dict):
+        return "chart 必须是对象 {type,title,data}"
+    effective_type = str(chart.get("type") or "").strip().lower()
+    if effective_type not in VALID_CHART_TYPES:
+        return f"chart.type 必须是 {', '.join(sorted(VALID_CHART_TYPES))} 之一"
+    title = chart.get("title")
+    if not isinstance(title, str) or not title.strip():
+        return "chart.title 不能为空"
+    data = chart.get("data")
+    if not isinstance(data, list):
+        return "chart.data 必须是数组"
+    if len(data) == 0:
+        return "chart.data 不能为空"
+    if len(data) > MAX_DATA_POINTS:
+        return f"chart.data 超过 {MAX_DATA_POINTS} 点上限（请聚合/降采样）"
+    for i, point in enumerate(data):
+        is_valid, error_msg = _validate_data_point(point, effective_type)
+        if not is_valid:
+            return f"chart.data[{i}]: {error_msg}"
+    return None
+
+
 def generate_chart(chart_type: str = "", title: str = "", data: Any = "",
                    x_label: str = "", y_label: str = "",
                    x_field: str = "", y_field: str = "", name_field: str = "",

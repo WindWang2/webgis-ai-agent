@@ -182,6 +182,26 @@ class PatchLayerPresentationIntent:
 
 
 @dataclass
+class PatchComponentIntent:
+    """Component-local mutation (UI drag/resize/collapse or agent chrome edit).
+
+    与 SetLayoutIntent（整表替换）相对：只改命中的单个组件，其余组件不动。
+    校验/突变逻辑复用 gis_harness.components.mutate_component —— 同一入口
+    服务 user route 与 agent 工具，不出现第二套组件突变实现。
+    """
+
+    component_id: str
+    component_type: Optional[str] = None
+    enabled: Optional[bool] = None
+    position: Optional[str] = None
+    placement: Optional[Dict[str, Any]] = None
+    variant: Optional[str] = None
+    style: Optional[Dict[str, Any]] = None
+    options: Optional[Dict[str, Any]] = None
+    upsert: bool = False
+
+
+@dataclass
 class SetBasemapIntent:
     """Basemap chrome mutation (#722): keeps the persisted spec tracking the
     BASE_LAYER_CHANGE command the legacy basemap tools emit, so desired state
@@ -242,6 +262,7 @@ MutationIntent = Union[
     UpsertSourceIntent,
     UpsertLayerIntent,
     PatchLayerPresentationIntent,
+    PatchComponentIntent,
     RemoveLayerIntent,
     ReorderLayersIntent,
     SetLayoutIntent,
@@ -582,6 +603,65 @@ class MapSpecLifecycleEngine:
                         _src["profile"] = dict(_src["profile"])
                     mapspec["sources"][intent.source_id] = _src
                     auto_checkpoint = True
+
+                elif isinstance(intent, PatchComponentIntent):
+                    # 组件局部突变（UI 拖拽收尾 / Agent 组件编辑）——与
+                    # SetLayoutIntent 的整表替换不同，只动命中的单个组件。
+                    # 突变/校验复用 gis_harness.components.mutate_component，
+                    # 不出现第二套组件突变实现。
+                    from app.services.gis_harness.components import (
+                        CartographyComponent,
+                        mutate_component,
+                    )
+
+                    old_mapspec_snapshot = loaded
+                    mapspec = {**loaded} if loaded else {}
+                    layout = dict(mapspec.get("layout", {}))
+                    raw_components = layout.get("components") or []
+                    components = [
+                        CartographyComponent.model_validate(dict(c))
+                        for c in raw_components
+                        if isinstance(c, dict)
+                    ]
+                    if not components and not intent.upsert:
+                        return MapSpecResult(
+                            is_error=True,
+                            origin=origin,
+                            error_msg="MapSpec has no layout.components to patch.",
+                            correction_hint=(
+                                "Initialize components via webgis_map_product or "
+                                "webgis_layout_set first, or patch with upsert."
+                            ),
+                        )
+                    mutated, change = mutate_component(
+                        components,
+                        component_id=intent.component_id,
+                        component_type=intent.component_type,
+                        enabled=intent.enabled,
+                        position=intent.position,
+                        placement=intent.placement,
+                        variant=intent.variant,
+                        style=intent.style,
+                        options=intent.options,
+                        upsert=intent.upsert,
+                    )
+                    if change is None:
+                        return MapSpecResult(
+                            is_error=True,
+                            origin=origin,
+                            error_msg=(
+                                f"Component {intent.component_id} not found."
+                            ),
+                            correction_hint=(
+                                "Current components: "
+                                + ", ".join(f"{c.id}({c.type})" for c in components)
+                            ),
+                        )
+                    layout["components"] = sorted(
+                        [c.to_mapspec() for c in mutated],
+                        key=lambda c: (c.get("priority", 0), c.get("id", "")),
+                    )
+                    mapspec["layout"] = layout
 
                 elif isinstance(intent, RemoveLayerIntent):
                     # V3 COW: layers mutation, shallow copy + new filtered list
