@@ -50,11 +50,16 @@ _REV_SEQ = 0
 
 
 def _should_remove_layer(layer: Dict[str, Any], target_layer_id: str) -> bool:
-    """判断图层是否为目标图层或其伴随标签图层"""
-    lid = layer.get("id")
+    """判断图层是否为目标图层或其伴随标签/派生子图层"""
+    lid = str(layer.get("id") or "")
     if not lid:
         return False
-    return lid == target_layer_id or lid == f"{target_layer_id}{LABEL_LAYER_SUFFIX}"
+    return (
+        lid == target_layer_id
+        or lid == f"{target_layer_id}{LABEL_LAYER_SUFFIX}"
+        or lid.startswith(f"{target_layer_id}__")
+        or lid.startswith(f"{target_layer_id}-")
+    )
 
 
 def view_has_center(mapspec: Dict[str, Any]) -> bool:
