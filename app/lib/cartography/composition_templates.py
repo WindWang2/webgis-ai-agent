@@ -195,6 +195,7 @@ SEED_COMPOSITION_TEMPLATES: List[MapCompositionTemplate] = [
             ComponentSlot(id="scale_bar", category="navigation.scale_bar", cardinality="required", required=True, allowed_component_types=["scale_bar"], position_zone="bottom-right", fallback_zones=["bottom-center"]),
             ComponentSlot(id="attribution", category="annotation.attribution", cardinality="required", required=True, allowed_component_types=["attribution"], position_zone="bottom-left"),
             ComponentSlot(id="statistics_panel", category="analysis.statistics_panel", cardinality="optional", allowed_component_types=["statistics_panel"], position_zone="top-left"),
+            ComponentSlot(id="chart_panel", category="analysis.chart_panel", cardinality="optional", allowed_component_types=["chart_panel"], position_zone="top-left", fallback_zones=["top-right"]),
         ],
     ),
     MapCompositionTemplate(

@@ -463,6 +463,10 @@ def build_default_components(
             c.type == "statistics_panel" for c in components
         ):
             components.append(statistics_panel_component())
+        elif extra == "chart_panel" and not any(
+            c.type == "chart_panel" for c in components
+        ):
+            components.append(chart_panel_component())
 
     if report_product:
         components.append(map_border_component())
@@ -577,10 +581,18 @@ def mutate_component(
 
 # upsert 用的类型默认工厂（新组件起步值；突变字段随后应用）
 _FACTORY_BY_TYPE = {
+    "title": lambda component_id: title_component(text="", component_id=component_id),
+    "subtitle": lambda component_id: subtitle_component(text="", component_id=component_id),
+    "continuous_colorbar": lambda component_id: colorbar_component(component_id=component_id),
+    "categorical_legend": lambda component_id: categorical_legend_component(component_id=component_id),
+    "legend": lambda component_id: legend_component(component_id=component_id),
+    "attribution": lambda component_id: attribution_component(text="© OpenStreetMap contributors", component_id=component_id),
     "chart_panel": lambda component_id: chart_panel_component(component_id=component_id),
     "statistics_panel": lambda component_id: statistics_panel_component(component_id=component_id),
     "north_arrow": lambda component_id: north_arrow_component(component_id=component_id),
     "scale_bar": lambda component_id: scale_bar_component(component_id=component_id),
+    "map_border": lambda component_id: map_border_component(component_id=component_id),
+    "export_layout": lambda component_id: export_layout_component(component_id=component_id),
     "annotation": lambda component_id: CartographyComponent(
         id=component_id, type="annotation", position="top-left", priority=55,
         options={"text": ""},

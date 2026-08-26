@@ -995,6 +995,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
         if res.get("status") == "superseded":
             return {
                 "success": False,
+                "status": "superseded",
                 "superseded": True,
                 "mutation_revision": res.get("mutation_revision"),
                 "message": "组件状态已被更新的交互修改（用户拖拽/其他突变优先），请重新读取 catalog 后再试",
@@ -1008,9 +1009,15 @@ def register_gis_harness_tools(registry: ToolRegistry):
             }
 
         final_components = (((res.get("mapspec") or {}).get("layout") or {}).get("components")) or []
+        target_id = (change.get("id") if isinstance(change, dict) else None) or component_id
+        target_component = next(
+            (c for c in final_components if c.get("id") == target_id),
+            next((c for c in final_components if c.get("type") == component_type), None) if not target_id else None,
+        )
         out: Dict[str, Any] = {
             "success": True,
             "change": change,
+            "component": target_component,
             "components": final_components,
             # review P1-1：legacy SSE 路径读 result.mapspec 提交文档
             # （use-sse-stream:505），丢失该键 → agent 组件编辑在下次事件前
