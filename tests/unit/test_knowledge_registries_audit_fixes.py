@@ -1,6 +1,4 @@
 """Unit tests verifying Knowledge Registries & Map Models Parity fixes (#956-#960)."""
-import pytest
-
 from app.lib.gis.algorithm_resolver import AlgorithmResolver
 from app.lib.cartography.model_library import get_map_model
 from app.lib.gis.algorithm_registry import AlgorithmRegistry, AlgorithmDescriptor, get_algorithm_registry

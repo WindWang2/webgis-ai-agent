@@ -90,7 +90,7 @@ async def test_finalize_display_carries_fingerprint_and_persists_desired(registr
 
     # 服务端 desired：展示层 visible（reload 不丢）
     spec = await mapspec_store_instance.get_mapspec(clean_session)
-    stored = next(l for l in spec["layers"] if l["id"] == layer_id)
+    stored = next(lyr for lyr in spec["layers"] if lyr["id"] == layer_id)
     assert stored["layout"]["visibility"] == "visible"
 
 

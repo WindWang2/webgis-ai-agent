@@ -15,29 +15,16 @@ Covers the 10 core scenarios:
 
 import uuid
 import pytest
-from typing import Any, Dict
 
 from app.lib.cartography.component_registry import get_component_registry
-from app.lib.cartography.composition_templates import (
-    get_composition_template_registry,
-    SEED_COMPOSITION_TEMPLATES,
-)
+from app.lib.cartography.composition_templates import get_composition_template_registry
 from app.lib.cartography.model_library import get_map_model
-from app.lib.cartography.quality_loop import cartographic_fingerprint
-from app.services.gis_harness.components import (
-    CartographyComponent,
-    ComponentPlacement,
-    build_default_components,
-    chart_panel_component,
-    mutate_component,
-    statistics_panel_component,
-)
+from app.services.gis_harness.components import build_default_components
 from app.services.mapspec.lifecycle_engine import (
     MapSpecLifecycleEngine,
     PatchComponentIntent,
     PatchLayerPresentationIntent,
     RemoveLayerIntent,
-    ReorderLayersIntent,
     UpsertLayerIntent,
 )
 from app.services.mapspec.store import mapspec_store_instance, _should_remove_layer
@@ -269,7 +256,7 @@ async def test_scenario_4_and_5_layer_visibility_persistence(clean_session):
 
     # Verify MapSpec desired state has visible=False / layout.visibility='none'
     spec = await mapspec_store_instance.get_mapspec(clean_session)
-    layer = next(l for l in spec["layers"] if l["id"] == "schools_poi")
+    layer = next(lyr for lyr in spec["layers"] if lyr["id"] == "schools_poi")
     assert layer.get("visible") is False or layer.get("layout", {}).get("visibility") == "none"
 
     # Re-enable
@@ -280,7 +267,7 @@ async def test_scenario_4_and_5_layer_visibility_persistence(clean_session):
     )
     assert not show_res.is_error
     spec2 = await mapspec_store_instance.get_mapspec(clean_session)
-    layer2 = next(l for l in spec2["layers"] if l["id"] == "schools_poi")
+    layer2 = next(lyr for lyr in spec2["layers"] if lyr["id"] == "schools_poi")
     assert layer2.get("visible") is True or layer2.get("layout", {}).get("visibility") == "visible"
 
 

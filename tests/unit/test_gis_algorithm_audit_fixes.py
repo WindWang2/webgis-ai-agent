@@ -1,7 +1,5 @@
 """Unit tests verifying GIS Algorithm Correctness audit fixes (#950-#955)."""
-import math
 import numpy as np
-import pytest
 import geopandas as gpd
 from shapely.geometry import Point
 
