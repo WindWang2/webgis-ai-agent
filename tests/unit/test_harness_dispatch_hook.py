@@ -114,10 +114,12 @@ async def test_dispatch_tool_records_duration_and_truncated_error(monkeypatch):
     fake_registry.metadata = MagicMock(return_value={"tier": 1})
     monkeypatch.setattr(bridge, "_tool_registry", fake_registry)
 
+    # #1031: dispatch_tool rejects unknown bare names (fail-closed), so the
+    # only route to the unified dispatch exception path is webgis_execute.
     request = bridge.PiToolRequest(
         toolCallId="tc_x",
-        name="some_tool",
-        arguments={},
+        name="webgis_execute",
+        arguments={"toolName": "some_tool", "arguments": {}},
         sessionId="exc_test",
     )
 
