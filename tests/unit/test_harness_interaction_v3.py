@@ -44,6 +44,7 @@ from app.services.tool_dispatch_service import (
 from app.tools.harness_runner import run_benchmark_scenario
 
 import app.agent_pi_bridge as bridge_mod
+import app.services.cartography_runtime as cartography_runtime_mod
 
 
 class _FakeStore:
@@ -879,7 +880,7 @@ async def test_stream_prompt_mints_turn_id_and_threads_into_records(monkeypatch)
     """stream_prompt 每 turn 铸 turn_id：step_result SSE 负载携带；record_sse_event
     补 run/turn correlation（显式透传，绝不用全局 set_correlation）。"""
     harness = PiAgentHarness(session_id="turn-sess")
-    monkeypatch.setattr(bridge_mod, "_harness", harness)
+    monkeypatch.setattr(cartography_runtime_mod, "_harness", harness)
 
     # 预置一次 fly_to dispatch（模拟 HTTP 回调已调度并缓存结果）
     dispatch_result = ToolDispatchResult(

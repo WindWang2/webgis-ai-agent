@@ -101,7 +101,7 @@ def _normalize_channel(
 # dataset-global (vmin, vmax) per band once per raster and reuse it for every
 # tile. Bounded LRU-ish dict; double-checked under a lock (worst case two
 # threads compute the same raster's stats concurrently, one wins — harmless).
-_STATS_CACHE: "Dict[str, Tuple[Tuple[float, float], ...]]" = {}
+_STATS_CACHE: "Dict[Tuple[str, Tuple[int, ...]], Tuple[Tuple[float, float], ...]]" = {}
 _STATS_CACHE_LOCK = threading.Lock()
 _STATS_MAX_ENTRIES = 512
 # Longest-side cap for the decimated stats read: bounds the one-time cost even
@@ -110,25 +110,28 @@ _STATS_MAX_ENTRIES = 512
 _STATS_MAX_SIDE = 2048
 
 
-def _compute_band_stats(src, count: int) -> Tuple[Tuple[float, float], ...]:
-    """Dataset-wide (vmin, vmax) per band, skipping nodata/NaN pixels.
+def _compute_band_stats(src, indexes: Tuple[int, ...]) -> Tuple[Tuple[float, float], ...]:
+    """Dataset-wide (vmin, vmax) for the REQUESTED bands, skipping nodata/NaN.
 
-    Reads the whole raster decimated to at most ``_STATS_MAX_SIDE`` pixels on
-    the longest side (masked=True so nodata never enters the min/max; NaN and
-    Inf values are additionally filtered — the NaN-nodata fix from #372 stays
-    intact because declared-nodata NaN is masked AND stray NaNs are skipped).
+    Reads decimated to at most ``_STATS_MAX_SIDE`` pixels on the longest side
+    (masked=True so nodata never enters the min/max; NaN and Inf values are
+    additionally filtered — the NaN-nodata fix from #372 stays intact because
+    declared-nodata NaN is masked AND stray NaNs are skipped). C5: stats are
+    per-band-subset (band selection needs each requested band's stretch) and
+    only the requested bands are decoded — never all bands of a >3-band raster
+    (#595/#410 discipline applies to the stats read too).
     """
     scale = min(1.0, _STATS_MAX_SIDE / float(max(src.width, src.height)))
     out_shape = (
-        count,
+        len(indexes),
         max(1, int(round(src.height * scale))),
         max(1, int(round(src.width * scale))),
     )
-    data = src.read(indexes=tuple(range(1, count + 1)), out_shape=out_shape, masked=True)
+    data = src.read(indexes=indexes, out_shape=out_shape, masked=True)
     arr = np.ma.getdata(data)
     mask = np.ma.getmaskarray(data)
     stats: "list[Tuple[float, float]]" = []
-    for b in range(count):
+    for b in range(len(indexes)):
         valid = np.isfinite(arr[b]) & ~mask[b]
         if not valid.any():
             stats.append((0.0, 0.0))
@@ -137,20 +140,23 @@ def _compute_band_stats(src, count: int) -> Tuple[Tuple[float, float], ...]:
     return tuple(stats)
 
 
-def _get_band_stats(raster_path: str, src, count: int) -> Tuple[Tuple[float, float], ...]:
-    """Cached per-raster (vmin, vmax) per band (double-checked, lock-protected)."""
+def _get_band_stats(
+    raster_path: str, src, indexes: Tuple[int, ...]
+) -> Tuple[Tuple[float, float], ...]:
+    """Cached per-(raster, band-subset) (vmin, vmax) (double-checked, lock-protected)."""
+    cache_key = (raster_path, indexes)
     with _STATS_CACHE_LOCK:
-        stats = _STATS_CACHE.get(raster_path)
+        stats = _STATS_CACHE.get(cache_key)
     if stats is not None:
         return stats
-    stats = _compute_band_stats(src, count)
+    stats = _compute_band_stats(src, indexes)
     with _STATS_CACHE_LOCK:
-        existing = _STATS_CACHE.get(raster_path)
+        existing = _STATS_CACHE.get(cache_key)
         if existing is not None:
             return existing
         if len(_STATS_CACHE) >= _STATS_MAX_ENTRIES:
             _STATS_CACHE.clear()  # bounded working set; staleness is best-effort
-        _STATS_CACHE[raster_path] = stats
+        _STATS_CACHE[cache_key] = stats
     return stats
 
 
@@ -283,9 +289,9 @@ def render_raster_tile(
             # Dataset-global stretch bounds (per band) so adjacent tiles share
             # one normalization instead of per-tile min/max (seam fix, #410).
             try:
-                stats_all = _get_band_stats(raster_path, src, src.count)
-                # C5：bands 组合下取对应波段的 stretch（stats 为全波段元组）
-                stats = tuple(stats_all[b - 1] for b in indexes)
+                # C5：只对请求的波段子集计算/缓存全局 stretch（#595 纪律同样
+                # 适用于 stats 读取——绝不解码 >3 波段栅格的全部波段）
+                stats = _get_band_stats(raster_path, src, indexes)
             except Exception:
                 logger.debug(
                     "[raster_tile_service] global stats unavailable for %s, "
