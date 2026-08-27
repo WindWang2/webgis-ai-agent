@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PROTOTYPE — Pi native tool surface</title>
+  <style>
+    :root {
+      --bg: #f4f1ea;
+      --ink: #1c1917;
+      --muted: #57534e;
+      --card: #fffcf7;
+      --line: #e7e0d4;
+      --accent: #0f766e;
+      --accent-ink: #f0fdfa;
+      --warn: #b45309;
+      --bad: #b91c1c;
+      --ok: #047857;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 16px/1.5 "Iwanami Mincho", "Source Han Serif SC", "Songti SC", Georgia, serif;
+      color: var(--ink);
+      background: var(--bg);
+    }
+    main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
+    h1 { font-size: 1.55rem; font-weight: 650; margin: 0 0 8px; }
+    .lede { color: var(--muted); margin: 0 0 24px; }
+    .mark {
+      display: inline-block;
+      font-size: 0.75rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      background: #44403c;
+      color: #fafaf9;
+      padding: 2px 8px;
+      border-radius: 999px;
+      margin-bottom: 12px;
+    }
+    section {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 18px 18px 16px;
+      margin-bottom: 16px;
+    }
+    h2 { font-size: 1.05rem; margin: 0 0 12px; }
+    .state dt { color: var(--muted); font-size: 0.82rem; }
+    .state dd { margin: 0 0 10px; }
+    .pill {
+      display: inline-block;
+      border-radius: 6px;
+      padding: 1px 8px;
+      font-size: 0.85rem;
+      background: #ecfdf5;
+      color: var(--ok);
+    }
+    .pill.exec { background: #fff7ed; color: var(--warn); }
+    .pill.bad { background: #fef2f2; color: var(--bad); }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; }
+    button {
+      font: inherit;
+      cursor: pointer;
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 8px;
+      padding: 8px 12px;
+    }
+    button:hover { border-color: var(--accent); }
+    button.accent { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+    button.ghost { background: transparent; }
+    .tabs { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+    .tabs button[aria-selected="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+    .note { color: var(--muted); font-size: 0.92rem; margin: 0 0 10px; }
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+      background: #1c1917;
+      color: #f5f5f4;
+      padding: 12px;
+      border-radius: 8px;
+    }
+    .changed { outline: 2px solid var(--accent); outline-offset: 2px; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="mark">Throwaway prototype — not production</div>
+    <h1>Pi 看见哪些 GIS 工具？</h1>
+    <p class="lede">
+      问题：#1018 的静态清单，配上 live ToolRegistry 的参数，模型还能不能把「成都市小学分布」走对，
+      还是会再把 city/topic/scope 塞进验收工具？点按钮，看每一次调用被判成 native、execute，还是拒绝。
+    </p>
+
+    <section>
+      <h2>当前状态</h2>
+      <dl class="state" id="state-panel"></dl>
+    </section>
+
+    <section>
+      <h2>自由点</h2>
+      <p class="note">任意顺序。Native 用登记表参数；长尾必须经 execute，并带上真实 toolName。</p>
+      <div class="row" id="freeplay"></div>
+    </section>
+
+    <section>
+      <h2>走一遍</h2>
+      <div class="tabs" id="tabs"></div>
+      <p class="note" id="walk-copy"></p>
+      <div class="row" id="walk-steps"></div>
+    </section>
+  </main>
+  <script>
+    /** Pure catalog + call resolver. No DOM. Lift candidate for the real extension sketch. */
+    const CATALOG = {
+      native: {
+        webgis_map_intent: {
+          source: "ToolRegistry · MapIntentArgs",
+          required: ["query"],
+          props: ["query", "task_hint", "scope_hint", "subject_hint", "geometry_hint"],
+        },
+        webgis_map_product: {
+          source: "ToolRegistry · MapProductArgs",
+          required: ["query"],
+          props: ["query", "layer_ids", "primary_ref", "overlay_refs", "title", "recipe_id"],
+        },
+        webgis_component_update: {
+          source: "ToolRegistry · ComponentUpdateArgs",
+          required: [],
+          props: ["component_id", "component_type", "enabled", "position"],
+        },
+        webgis_cartography_status: {
+          source: "ToolRegistry · WebgisCartographyStatusArgs (empty)",
+          required: [],
+          props: [],
+        },
+        query_local_poi: {
+          source: "ToolRegistry · query_local_poi params",
+          required: [],
+          props: ["district", "subtype", "category", "bbox", "name_like", "adcode", "limit"],
+        },
+        get_local_admin_boundary: {
+          source: "ToolRegistry · get_local_admin_boundary params",
+          required: [],
+          props: ["name", "level", "adcode", "to_wgs84"],
+        },
+        list_available_tools: {
+          source: "ToolRegistry · live domain enum",
+          required: ["domain"],
+          props: ["domain"],
+        },
+      },
+      execute: {
+        tool: "webgis_execute",
+        source: "extension wrapper — arguments extra=allow; inner name must be a registered GIS tool not in native",
+        remainingExamples: ["heatmap_data", "finalize_display", "h3_binning", "h3_lisa"],
+      },
+    };
+
+    function resolveCall(name, args) {
+      args = args && typeof args === "object" ? args : {};
+      const native = CATALOG.native[name];
+      if (native) {
+        const unknown = Object.keys(args).filter((k) => !native.props.includes(k));
+        const missing = native.required.filter((k) => args[k] == null || args[k] === "");
+        if (unknown.length || missing.length) {
+          return {
+            kind: "reject",
+            name,
+            args,
+            schemaSource: native.source,
+            errors: [
+              unknown.length ? "不接受参数: " + unknown.sort().join(", ") : "",
+              missing.length ? "缺必填: " + missing.join(", ") : "",
+            ].filter(Boolean),
+          };
+        }
+        return { kind: "native", name, args, schemaSource: native.source, errors: [] };
+      }
+      if (name === "webgis_execute") {
+        const inner = args.toolName;
+        if (!inner) {
+          return { kind: "reject", name, args, schemaSource: CATALOG.execute.source, errors: ["缺 toolName"] };
+        }
+        if (CATALOG.native[inner]) {
+          return {
+            kind: "reject",
+            name,
+            args,
+            schemaSource: CATALOG.execute.source,
+            errors: [inner + " 已是 native，不要再包一层 execute"],
+          };
+        }
+        return {
+          kind: "execute",
+          name: inner,
+          args: args.arguments || {},
+          schemaSource: CATALOG.execute.source + " → " + inner,
+          errors: [],
+        };
+      }
+      return {
+        kind: "reject",
+        name,
+        args,
+        schemaSource: "not on Pi surface",
+        errors: ["Pi 看不见这个名字。先 list_available_tools，再 webgis_execute。"],
+      };
+    }
+
+    const SCENARIOS = {
+      chengdu: {
+        title: "成都市小学分布",
+        copy: "Happy path。看 GIS 章、取数、热力、产品是不是分得开。热力必须走 execute。",
+        steps: [
+          { label: "intent", name: "webgis_map_intent", args: { query: "成都市小学分布情况" } },
+          { label: "边界", name: "get_local_admin_boundary", args: { name: "成都市", level: "city", to_wgs84: true } },
+          { label: "POI", name: "query_local_poi", args: { district: "成都市", subtype: "小学", category: "科教文化服务" } },
+          { label: "热力 via execute", name: "webgis_execute", args: { toolName: "heatmap_data", arguments: { render_type: "native" } } },
+          { label: "产品", name: "webgis_map_product", args: { query: "成都市小学分布情况", recipe_id: "poi_distribution_overview" } },
+          { label: "验收 {}", name: "webgis_cartography_status", args: {} },
+        ],
+      },
+      hallucination: {
+        title: "旧幻觉",
+        copy: "把分析参数塞进验收。Native 空 schema 必须拒绝。这是 live 翻车那一枪。",
+        steps: [
+          {
+            label: "status + city/topic/scope",
+            name: "webgis_cartography_status",
+            args: { city: "成都市", topic: "小学分布", scope: "全市" },
+          },
+        ],
+      },
+      discover: {
+        title: "发现长尾",
+        copy: "H3 不在 native 里。先发现，再 execute。不要直接当 Pi 工具名点。",
+        steps: [
+          { label: "list statistics", name: "list_available_tools", args: { domain: "statistics" } },
+          { label: "execute h3_binning", name: "webgis_execute", args: { toolName: "h3_binning", arguments: {} } },
+          { label: "误点 h3_binning 当 native", name: "h3_binning", args: {} },
+        ],
+      },
+    };
+
+    const FREE = [
+      { label: "intent 成都小学", name: "webgis_map_intent", args: { query: "成都市小学分布情况" } },
+      { label: "intent 缺 query", name: "webgis_map_intent", args: {} },
+      { label: "边界 成都", name: "get_local_admin_boundary", args: { name: "成都市", level: "city" } },
+      { label: "POI 小学", name: "query_local_poi", args: { district: "成都市", subtype: "小学" } },
+      { label: "status {}", name: "webgis_cartography_status", args: {} },
+      { label: "status + city", name: "webgis_cartography_status", args: { city: "成都市" } },
+      { label: "execute heatmap", name: "webgis_execute", args: { toolName: "heatmap_data", arguments: { render_type: "native" } } },
+      { label: "execute finalize", name: "webgis_execute", args: { toolName: "finalize_display", arguments: { show_refs: ["geojson-x"] } } },
+      { label: "execute intent（套娃）", name: "webgis_execute", args: { toolName: "webgis_map_intent", arguments: { query: "x" } } },
+      { label: "list_available_tools poi", name: "list_available_tools", args: { domain: "poi" } },
+    ];
+
+    let last = null;
+    let walk = { id: "chengdu", i: 0 };
+
+    function render() {
+      const panel = document.getElementById("state-panel");
+      const nativeNames = Object.keys(CATALOG.native).join(" · ");
+      const lastHtml = last
+        ? `<span class="pill ${last.kind === "native" ? "" : last.kind === "execute" ? "exec" : "bad"}">${last.kind}</span>
+           <div><strong>${last.name}</strong></div>
+           <pre>${JSON.stringify({ args: last.args, schemaSource: last.schemaSource, errors: last.errors }, null, 2)}</pre>`
+        : "<span class='pill exec'>还没调用</span>";
+      panel.innerHTML = `
+        <dt>Pi native（7）</dt><dd>${nativeNames}</dd>
+        <dt>仍走 execute 的例子</dt><dd>${CATALOG.execute.remainingExamples.join(" · ")}</dd>
+        <dt>schema 从哪来</dt><dd>native = live ToolRegistry 参数；execute = 扩展包装，inner 名必须不在 native 里</dd>
+        <dt>上一次调用${last ? "（刚变）" : ""}</dt><dd class="${last ? "changed" : ""}">${lastHtml}</dd>
+      `;
+
+      const fp = document.getElementById("freeplay");
+      fp.innerHTML = "";
+      FREE.forEach((b) => {
+        const el = document.createElement("button");
+        el.textContent = b.label;
+        el.onclick = () => { last = resolveCall(b.name, b.args); render(); };
+        fp.appendChild(el);
+      });
+
+      const tabs = document.getElementById("tabs");
+      tabs.innerHTML = "";
+      Object.entries(SCENARIOS).forEach(([id, sc]) => {
+        const el = document.createElement("button");
+        el.textContent = sc.title;
+        el.setAttribute("aria-selected", walk.id === id ? "true" : "false");
+        el.onclick = () => { walk = { id, i: 0 }; last = null; render(); };
+        tabs.appendChild(el);
+      });
+      const sc = SCENARIOS[walk.id];
+      document.getElementById("walk-copy").textContent =
+        sc.copy + "  步骤 " + Math.min(walk.i + 1, sc.steps.length) + " / " + sc.steps.length;
+      const steps = document.getElementById("walk-steps");
+      steps.innerHTML = "";
+      sc.steps.forEach((st, idx) => {
+        const el = document.createElement("button");
+        el.textContent = (idx + 1) + ". " + st.label;
+        if (idx === walk.i) el.className = "accent";
+        if (idx > walk.i) el.disabled = true;
+        el.onclick = () => {
+          if (idx !== walk.i) return;
+          last = resolveCall(st.name, st.args);
+          walk.i = Math.min(walk.i + 1, sc.steps.length);
+          render();
+        };
+        steps.appendChild(el);
+      });
+      const reset = document.createElement("button");
+      reset.className = "ghost";
+      reset.textContent = "重来";
+      reset.onclick = () => { walk.i = 0; last = null; render(); };
+      steps.appendChild(reset);
+    }
+    render();
+  </script>
+</body>
+</html>
