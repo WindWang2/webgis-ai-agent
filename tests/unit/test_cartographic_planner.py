@@ -7,7 +7,6 @@ RESULT_VISIBILITY 恒 not_evaluated。现在 upsert 落意图、presentation pat
 import pytest
 
 from app.lib.cartography.visualization_plan import (
-    ClassificationChoice,
     build_visualization_plan,
     choose_classification,
     distribution_stats_from_values,
@@ -153,7 +152,7 @@ async def test_upsert_projects_cartographic_intent():
     sid = "plan-intent-1"
     await _seed(sid)
     spec = await mapspec_store_instance.get_mapspec(sid)
-    layer = next(l for l in spec["layers"] if l["id"] == "result-layer")
+    layer = next(lyr for lyr in spec["layers"] if lyr["id"] == "result-layer")
     assert layer["cartographic_intent"] == {
         "expected_visible": True,
         "role": "result",
@@ -171,7 +170,7 @@ async def test_presentation_patch_rewrites_expected_visible():
     )
     assert not res.is_error
     spec = await mapspec_store_instance.get_mapspec(sid)
-    layer = next(l for l in spec["layers"] if l["id"] == "result-layer")
+    layer = next(lyr for lyr in spec["layers"] if lyr["id"] == "result-layer")
     assert layer["layout"]["visibility"] == "none"
     assert layer["cartographic_intent"]["expected_visible"] is False
 
@@ -198,7 +197,7 @@ async def test_result_visibility_check_now_evaluated():
     import copy
 
     broken = copy.deepcopy(spec)
-    layer = next(l for l in broken["layers"] if l["id"] == "result-layer")
+    layer = next(lyr for lyr in broken["layers"] if lyr["id"] == "result-layer")
     layer["layout"]["visibility"] = "none"
     layer["cartographic_intent"]["expected_visible"] = True
     report2 = evaluate_cartography_semantics(broken)

@@ -177,7 +177,7 @@ def colormap_rgb_lut(colormap: str, size: int = 256):
     return lut
 
 
-def apply_colormap_u8(gray: "np.ndarray", colormap: str) -> Optional["np.ndarray"]:
+def apply_colormap_u8(gray: Any, colormap: str) -> Optional[Any]:
     """把归一化 uint8 灰度经 LUT 映射为 (..., 3) RGB。未知 colormap → None。"""
 
     lut = colormap_rgb_lut(colormap)

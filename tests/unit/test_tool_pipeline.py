@@ -102,10 +102,12 @@ async def test_tool_pipeline_error_handling():
 
 @pytest.mark.asyncio
 async def test_legacy_pipeline_feeds_display_mutation_to_existing_harness(monkeypatch):
-    import app.agent_pi_bridge as bridge
+    # ADR-0071：制图证据钩子已迁至 cartography_runtime（bridge 只 re-export，
+    # patch bridge 名字不再影响 tool_pipeline 的函数级 import）。
+    import app.services.cartography_runtime as cartography_runtime
 
     recorder = AsyncMock()
-    monkeypatch.setattr(bridge, "record_cartographic_dispatch_evidence", recorder)
+    monkeypatch.setattr(cartography_runtime, "record_cartographic_dispatch_evidence", recorder)
     outcome = ToolDispatchResult(
         status="ok",
         llm_payload="authored",

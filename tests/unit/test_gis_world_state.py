@@ -116,7 +116,7 @@ async def test_user_wins_guard_blocks_agent_reversal():
 
     # 服务端 desired state 保持用户决策
     spec = await mapspec_store_instance.get_mapspec(sid)
-    layer = next(l for l in spec["layers"] if l["id"] == "poi-main")
+    layer = next(lyr for lyr in spec["layers"] if lyr["id"] == "poi-main")
     assert layer["layout"]["visibility"] == "none"
 
     # Agent 同值重放（visible=False）→ 允许（幂等，无对抗）
@@ -234,5 +234,5 @@ async def test_finalize_display_respects_user_hidden_layer():
 
     # 服务端 desired：用户隐藏决策原样保留
     spec = await mapspec_store_instance.get_mapspec(sid)
-    layer = next(l for l in spec["layers"] if l["id"] == "poi-main")
+    layer = next(lyr for lyr in spec["layers"] if lyr["id"] == "poi-main")
     assert layer["layout"]["visibility"] == "none"

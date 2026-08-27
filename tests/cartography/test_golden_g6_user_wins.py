@@ -113,8 +113,8 @@ async def test_g6_user_hidden_layer_survives_agent_turn_and_reload():
 
     # ── reload 模拟：desired spec 是恢复的真相源 ────────────────────
     spec = await mapspec_store_instance.get_mapspec(sid)
-    choropleth = next(l for l in spec["layers"] if l["id"] == "product-choropleth")
-    points = next(l for l in spec["layers"] if l["id"] == "product-points")
+    choropleth = next(lyr for lyr in spec["layers"] if lyr["id"] == "product-choropleth")
+    points = next(lyr for lyr in spec["layers"] if lyr["id"] == "product-points")
     assert choropleth["layout"]["visibility"] == "none"  # 用户决策存续
     assert points["layout"].get("visibility", "visible") != "none"  # agent 收口不受影响
 
