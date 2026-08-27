@@ -5,6 +5,7 @@ from app.services.mapspec.lifecycle_engine import (
     InitProjectIntent,
     SetViewIntent,
     UpsertLayerIntent,
+    PatchLayerPresentationIntent,
     RemoveLayerIntent,
     SetLayoutIntent,
     CheckpointIntent,
@@ -103,3 +104,68 @@ async def test_lifecycle_checkpoint_and_rollback():
     assert rb_res.is_error is False
     assert rb_res.mapspec["view"]["center"] == [100.0, 20.0]
     assert rb_res.mapspec["view"]["zoom"] == 5.0
+
+
+@pytest.mark.asyncio
+async def test_upsert_preserves_user_durable_presentation():
+    """ST-P2-2（user wins）：用户 durable 隐藏/透明度不被 agent 重跑同 id upsert 静默重置。"""
+    engine = MapSpecLifecycleEngine()
+    session_id = "test_session_user_pres_1"
+
+    layer_def = {
+        "id": "poi-layer",
+        "type": "circle",
+        "source": "src-poi",
+        "paint": {"circle-color": "#ff0000"},
+    }
+    source_data = {"type": "FeatureCollection", "features": []}
+    res = await engine.apply_mutation(
+        session_id, UpsertLayerIntent(layer=layer_def, source_data=source_data)
+    )
+    assert res.is_error is False
+
+    # 用户 durable 决策：隐藏 + 透明度 0.3（origin=user 强制 CAS）
+    res_patch = await engine.apply_mutation(
+        session_id,
+        PatchLayerPresentationIntent(layer_id="poi-layer", visible=False, opacity=0.3),
+        origin="user",
+        expected_revision=res.mutation_revision,
+    )
+    assert res_patch.is_error is False
+
+    # Agent 重跑同 id upsert（新数据/新颜色，未显式给出显隐与透明度）
+    reup = dict(layer_def)
+    reup["paint"] = {"circle-color": "#00ff00"}
+    res_reup = await engine.apply_mutation(
+        session_id, UpsertLayerIntent(layer=reup, source_data=source_data)
+    )
+    assert res_reup.is_error is False
+    layer = res_reup.mapspec["layers"][0]
+    assert layer["paint"]["circle-color"] == "#00ff00"  # agent 样式以新为准
+    assert layer["layout"]["visibility"] == "none"  # 用户隐藏决策保留
+    assert layer["paint"]["opacity"] == 0.3  # 用户透明度决策保留
+    assert layer["paint"]["circle-opacity"] == 0.3
+
+
+@pytest.mark.asyncio
+async def test_upsert_explicit_agent_visibility_wins():
+    """Agent 显式给出 visibility 时以 agent 为准（合法语义：分析中间层默认隐藏）。"""
+    engine = MapSpecLifecycleEngine()
+    session_id = "test_session_agent_vis_1"
+
+    layer_def = {"id": "layer-a", "type": "fill", "source": "src-a", "paint": {}}
+    source_data = {"type": "FeatureCollection", "features": []}
+    await engine.apply_mutation(
+        session_id, UpsertLayerIntent(layer=layer_def, source_data=source_data)
+    )
+    await engine.apply_mutation(
+        session_id, PatchLayerPresentationIntent(layer_id="layer-a", visible=False)
+    )
+
+    reup = dict(layer_def)
+    reup["layout"] = {"visibility": "visible"}
+    res = await engine.apply_mutation(
+        session_id, UpsertLayerIntent(layer=reup, source_data=source_data)
+    )
+    assert res.is_error is False
+    assert res.mapspec["layers"][0]["layout"]["visibility"] == "visible"

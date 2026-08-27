@@ -269,6 +269,44 @@ def _patch_layer_presentation(
     return patched
 
 
+def _preserve_durable_presentation(
+    existing: Dict[str, Any],
+    incoming: Dict[str, Any],
+) -> None:
+    """同 id 整层 upsert 替换时的 durable presentation 继承（user wins）。
+
+    用户隐藏/调透明度的层被 agent 重跑查询后整层 upsert：数据、样式与
+    分类以 agent 新结果为准，但 durable 的显隐/透明度决策属于用户——
+    agent 本次未显式给出时必须保留（否则用户隐藏的层静默回默认可见，
+    reload 后用户决策彻底丢失）。图层类型改变时只继承 visibility
+    （类型专属 opacity 键对新类型无效）。
+    """
+    existing_layout = existing.get("layout") if isinstance(existing.get("layout"), dict) else {}
+    incoming_layout = incoming.get("layout") if isinstance(incoming.get("layout"), dict) else {}
+    if (
+        existing_layout.get("visibility") == "none"
+        and incoming_layout.get("visibility") is None
+    ):
+        incoming["layout"] = {**incoming_layout, "visibility": "none"}
+
+    existing_paint = existing.get("paint") if isinstance(existing.get("paint"), dict) else {}
+    incoming_paint = incoming.get("paint") if isinstance(incoming.get("paint"), dict) else {}
+    if not existing_paint:
+        return
+    existing_opacity = existing_paint.get("opacity")
+    if (
+        existing_opacity is not None
+        and incoming_paint.get("opacity") is None
+        and str(existing.get("type") or "") == str(incoming.get("type") or "")
+    ):
+        merged = dict(incoming_paint)
+        merged["opacity"] = existing_opacity
+        type_key = _OPACITY_PAINT_KEYS.get(str(incoming.get("type") or ""))
+        if type_key and type_key not in merged:
+            merged[type_key] = existing_opacity
+        incoming["paint"] = merged
+
+
 MutationIntent = Union[
     InitProjectIntent,
     SetViewIntent,
@@ -551,6 +589,9 @@ class MapSpecLifecycleEngine:
                     updated = False
                     for i, layer in enumerate(layers):
                         if layer.get("id") == processed_layer.get("id"):
+                            # ST-P2-2：重跑同 id upsert 整层替换时保留既有
+                            # durable presentation（用户显隐/透明度决策）。
+                            _preserve_durable_presentation(layer, processed_layer)
                             layers[i] = processed_layer
                             updated = True
                             break
