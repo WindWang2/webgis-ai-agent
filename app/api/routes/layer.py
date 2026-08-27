@@ -459,6 +459,8 @@ async def get_raster_tile(
     x: int,
     y: int,
     session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
+    cmap: Optional[str] = Query(None, description="单波段着色（matplotlib 合法名，如 viridis；缺省灰度）"),
+    bands: Optional[str] = Query(None, description="波段组合（1-based CSV，如 '1' 或 '3,2,1'；缺省前 3 波段）"),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     _conv: Conversation = Depends(require_owned_session),
     if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
@@ -476,14 +478,24 @@ async def get_raster_tile(
 
     from app.services.mvt import tile_lru_cache
 
-    cache_key = (session_id, ref_id, z, x, y)
+    # C5：样式进缓存键（换样式 = 新缓存条目，不重算遥感产物）
+    band_tuple = None
+    if bands:
+        try:
+            band_tuple = tuple(int(b) for b in bands.split(",") if b.strip())[:3]
+        except ValueError:
+            raise HTTPException(status_code=400, detail="bands 必须是 1-based 波段 CSV，如 '1' 或 '3,2,1'")
+        if not band_tuple or any(b < 1 for b in band_tuple):
+            raise HTTPException(status_code=400, detail="bands 必须是 1-based 波段 CSV，如 '1' 或 '3,2,1'")
+
+    cache_key = (session_id, ref_id, z, x, y, cmap or "", band_tuple or ())
     cached_png = tile_lru_cache.get(cache_key)
     if cached_png is not None:
         return _png_tile_response(cached_png, if_none_match)
 
     async def _compute_png() -> bytes:
         safe_path = await _resolve_raster_tile_path(session_id, ref_id, owner_token)
-        png = await asyncio.to_thread(render_raster_tile, safe_path, z, x, y)
+        png = await asyncio.to_thread(render_raster_tile, safe_path, z, x, y, 256, cmap, band_tuple)
         tile_lru_cache.put(cache_key, png)
         return png
 
