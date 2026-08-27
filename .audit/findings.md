@@ -59,9 +59,13 @@ P0: 0 ｜ P1: 9 ｜ P2: 24 ｜ P3: 15
 - Effect: 两并发 POST 同 expected_revision → 后到 409 → 用户操作被回滚；层 A 响应把层 B 在途乐观值改回旧值。
 - Fix: 用户路径复用 durabilityChain 串行；applyCommittedMapSpec 跳过仍有 pending 的层。
 
-### ST-P2-1 finalize_display show 集 durable:false 与 hide 集 durable:true 不对称 → reload 丢 agent 展示决策
+### ST-P2-1 ~~finalize_display show 集 durable:false 与 hide 集 durable:true 不对称~~ 【已验证为设计而非缺陷】
 - Files: `frontend/lib/map-commands/layerCommands.ts:535` vs `:544`。
-- Fix: show 集对“当前 spec 为 none 的目标”补 durable。Tests: hide→finalize show→重载断言仍可见。
+- 验证结论（2026-08-27）：后端 `finalize_display`（app/tools/layer_manager.py:143-165）已为
+  spec 内的展示集做服务端 durable patch（PatchLayerPresentationIntent visible=True，origin=agent）。
+  前端 `durable:false` 是有意去重（避免重复 POST 引发 409 风暴）；HUD-only 层本就不在 spec、
+  无 desired state 可写。reload 场景由后端 patch 覆盖。**不修改**——此条从修复清单移除，
+  审计结论修正为"双端职责划分正确但缺少文档说明"（在 architecture 更新中说明）。
 
 ### ST-P2-2 agent 整层 upsert 无 CAS 且不保留用户 presentation
 - Files: `app/services/mapspec/lifecycle_engine.py:550-558`（整层替换）；pipeline.py 只保 source entry。

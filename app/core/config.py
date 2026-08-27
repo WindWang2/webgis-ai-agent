@@ -103,6 +103,11 @@ class Settings(BaseSettings):
     CHAT_MAX_ROUNDS: int = 60
     TURN_TOTAL_TIMEOUT_S: float = 900.0
 
+    # AH-P2-2：Pi bridge 运行时开关入配置中心（此前 os.getenv 散读于
+    # agent_pi_bridge 模块级，config.py/.env.example 均无此键——可发现性差）。
+    # 默认 false：ChatEngine 仍是默认执行路径（ADR 分层：Pi 为 opt-in）。
+    USE_NEW_AGENT: bool = False
+
     NOMINATIM_URL: str = "https://nominatim.openstreetmap.org/search"
 
     # 天地图

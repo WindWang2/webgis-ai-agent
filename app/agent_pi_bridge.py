@@ -32,7 +32,7 @@ import os
 import time
 import uuid
 from pathlib import Path
-from typing import Any, AsyncGenerator, Optional
+from typing import Any, AsyncGenerator, Callable, Optional
 
 from pydantic import BaseModel
 
@@ -54,7 +54,12 @@ from app.lib.runtime.evidence import (
 logger = logging.getLogger(__name__)
 
 # Feature flag
-USE_NEW_AGENT = os.getenv("USE_NEW_AGENT", "").lower() in ("true", "1", "yes")
+# AH-P2-2：经配置中心读取（Settings 支持 "true"/"1"/"yes" 的 pydantic
+# bool 解析；默认 False = ChatEngine 主路径）。保留模块级常量供 main.py
+# 与路由层准入复用。
+from app.core.config import settings as _app_settings
+
+USE_NEW_AGENT = bool(_app_settings.USE_NEW_AGENT)
 
 
 def _env_float_drain(name: str, default: float) -> float:
@@ -444,8 +449,10 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
     # turn token 解出）对当前活跃 turn：不匹配 → 丢弃迟到 step + warning，
     # 不错记。未经 route 验证的直连调用（verifiedTurnId=None）保持旧行为。
     try:
-        from app.api.routes.chat import get_engine
-        engine = get_engine()
+        from app.services.chat.engine_instance import try_get_chat_engine
+        engine = try_get_chat_engine()
+        if engine is None:
+            raise RuntimeError("ChatEngine not initialized")
         callback_turn = request.verifiedTurnId
         active_turn, _run, _sid = active_turn_correlation()
         if callback_turn is not None and callback_turn != active_turn:
@@ -1810,8 +1817,10 @@ class PiBridge:
 
                 tracker_task_id = None
                 try:
-                    from app.api.routes.chat import get_engine
-                    engine = get_engine()
+                    from app.services.chat.engine_instance import try_get_chat_engine
+                    engine = try_get_chat_engine()
+                    if engine is None:
+                        raise RuntimeError("ChatEngine not initialized")
                     tracker_task = engine.tracker.create(turn_sid, message)
                     tracker_task_id = tracker_task.id
                 except Exception:
@@ -1944,8 +1953,10 @@ class PiBridge:
                         logger.warning("[PiBridge] abort-on-failed-turn (turn=%s): %s", turn_sid, e)
                 if tracker_task_id:
                     try:
-                        from app.api.routes.chat import get_engine
-                        engine = get_engine()
+                        from app.services.chat.engine_instance import try_get_chat_engine
+                        engine = try_get_chat_engine()
+                        if engine is None:
+                            raise RuntimeError("ChatEngine not initialized")
                         if cancelled:
                             engine.tracker.cancel(tracker_task_id)
                         elif timed_out or send_failed:
@@ -2072,8 +2083,10 @@ class PiBridge:
 
             tracker_task_id = None
             try:
-                from app.api.routes.chat import get_engine
-                engine = get_engine()
+                from app.services.chat.engine_instance import try_get_chat_engine
+                engine = try_get_chat_engine()
+                if engine is None:
+                    raise RuntimeError("ChatEngine not initialized")
                 tracker_task = engine.tracker.create(turn_sid, message)
                 tracker_task_id = tracker_task.id
             except Exception:
@@ -2348,8 +2361,10 @@ class PiBridge:
                 # a sink failure must never mask the stream outcome.
                 if tracker_task_id:
                     try:
-                        from app.api.routes.chat import get_engine
-                        engine = get_engine()
+                        from app.services.chat.engine_instance import try_get_chat_engine
+                        engine = try_get_chat_engine()
+                        if engine is None:
+                            raise RuntimeError("ChatEngine not initialized")
                         if cancelled:
                             engine.tracker.cancel(tracker_task_id)
                         elif timed_out or send_failed or process_died:
