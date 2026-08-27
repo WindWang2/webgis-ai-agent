@@ -124,3 +124,4 @@ bench_results_after.json
 # 审计工作文件（PHASE 审计 ledger/findings，不入库）
 .audit/
 .agent_cache/
+.pi/

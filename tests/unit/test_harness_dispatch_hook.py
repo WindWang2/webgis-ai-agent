@@ -98,6 +98,7 @@ def test_harness_disabled_by_default():
 async def test_dispatch_tool_records_duration_and_truncated_error(monkeypatch):
     """P1 fix: dispatch_tool must populate duration_ms, truncate error_msg,
     and still record telemetry on the exception path (previously skipped)."""
+    import app.agent_pi_bridge as bridge
     import app.services.cartography_runtime as cartography_runtime
 
     harness = PiAgentHarness(session_id="exc_test")
