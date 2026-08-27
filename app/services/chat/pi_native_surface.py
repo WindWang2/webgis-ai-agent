@@ -157,7 +157,8 @@ def native_tools_for_pi(registry: Any) -> list[dict[str, Any]]:
 
     A native name missing from the registry raises rather than degrading to
     an empty schema — the dump is the only source of Pi's native surface and
-    must never silently drift from the registry (spec story 35)."""
+    must never silently drift from the registry
+    (specs/pi-as-agent-host.md, user story 35)."""
     schemas = {
         item.get("function", {}).get("name"): item.get("function", {})
         for item in registry.get_schemas_subset(set(NATIVE_TOOL_NAMES))
@@ -169,7 +170,7 @@ def native_tools_for_pi(registry: Any) -> list[dict[str, Any]]:
         )
     dumped: list[dict[str, Any]] = []
     for name in NATIVE_TOOL_NAMES:
-        fn = schemas.get(name) or {}
+        fn = schemas[name]
         dumped.append(
             {
                 "name": name,
