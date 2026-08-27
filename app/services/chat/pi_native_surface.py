@@ -1,8 +1,9 @@
 """Pi native GIS tool surface (wrap-only, live registry schemas).
 
-The model-facing kinds are native | execute | reject. Dispatch still accepts
-registered long-tail names (the execute proxy unwraps them). Native parameter
-schemas are generated from ToolRegistry — never a handwritten second catalog.
+The model-facing kinds are native | execute | reject. Unknown bare names
+reject at both the model surface and the HTTP dispatch boundary — the long
+tail is reachable only through the execute proxy. Native parameter schemas
+are generated from ToolRegistry — never a handwritten second catalog.
 """
 from __future__ import annotations
 
