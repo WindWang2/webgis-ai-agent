@@ -40,20 +40,53 @@ def clear_layer_schema_cache(session_id: str | None = None) -> None:
         _layer_schema_cache.pop(key, None)
 
 
-async def build_layer_schema(session_id: str, ref_id: str, sample_size: int = 5) -> dict | None:
-    """从 session 里取 GeoJSON 数据，抽样推断 properties 字段名+类型 + 几何类型 + bbox。
+async def _schema_from_descriptor(session_id: str, ref_id: str) -> dict | None:
+    """DA-P1-1：descriptor 优先路径 —— 零物化、零全量扫描。
 
-    返回形如 {"geom":"Polygon", "count":123, "fields":{...}, "bbox":[w,s,e,n]}。
-    LRU 已经在 manager.get() 内部维护，这里不再额外更新顺序。
-    数据不存在或不是 FeatureCollection 时返回 None。
-
-    /review P2-1: result cached per (session_id, ref_id) — refs are immutable.
+    store() 时已一次性算好 feature_count / geometry_types / bbox /
+    field_schema（ref 不可变 → descriptor 即权威）。仅当 descriptor 缺失
+    或字段 schema 不可用（老 ref、非 FeatureCollection）时返回 None，
+    由调用方回落到全量物化推断。
     """
-    cache_key = (session_id, ref_id)
-    cached = _layer_schema_cache.get(cache_key)
-    if cached is not None:
-        return cached
+    try:
+        descriptor = await session_data_manager.get_ref_descriptor(session_id, ref_id)
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(descriptor, dict):
+        return None
+    count = descriptor.get("feature_count") or 0
+    geom_types = descriptor.get("geometry_types")
+    if count <= 0 and not geom_types:
+        return None
+    field_schema = descriptor.get("field_schema")
+    if not isinstance(field_schema, dict) or not field_schema:
+        # 无字段信息无法区分"老 descriptor"与"无属性 FC"——整笔回落物化
+        # （每 (session, ref) 只付一次，随后进缓存）。
+        return None
+    fields: dict[str, str] = {}
+    # 与 summarize_feature_properties 的 ignored_keys 对齐（样式注入键不是
+    # 数据字段，进 inventory 行只会误导 agent）
+    ignored = {"fill_color", "opacity", "stroke_width", "__style__"}
+    for name, info in field_schema.items():
+        if name in ignored:
+            continue
+        if isinstance(info, dict) and info.get("type"):
+            # descriptor 词汇 boolean 与 summarize 的 bool 对齐（纯展示差异）
+            ftype = str(info["type"])
+            fields[str(name)] = "bool" if ftype == "boolean" else ftype
+    if not fields:
+        return None
+    bbox = descriptor.get("bbox")
+    return {
+        "geom": "/".join(sorted(g for g in geom_types or [] if isinstance(g, str))) or None,
+        "count": count,
+        "fields": fields,
+        "bbox": bbox if isinstance(bbox, list) and len(bbox) == 4 else None,
+    }
 
+
+async def _schema_from_payload(session_id: str, ref_id: str, sample_size: int) -> dict | None:
+    """回落路径：全量物化 + O(features) 扫描（descriptor 不可用时）。"""
     data = await session_data_manager.get(session_id, ref_id)
     if not isinstance(data, dict):
         return None
@@ -73,12 +106,35 @@ async def build_layer_schema(session_id: str, ref_id: str, sample_size: int = 5)
     bbox = geojson_bbox(data)
     fields, _ = summarize_feature_properties(features, sample_size=sample_size)
 
-    schema = {
+    return {
         "geom": "/".join(sorted(geom_types)) if geom_types else None,
         "count": len(features),
         "fields": fields,
         "bbox": bbox,
     }
+
+
+async def build_layer_schema(session_id: str, ref_id: str, sample_size: int = 5) -> dict | None:
+    """取 ref 的属性 schema（字段名+类型）+ 几何类型 + 数量 + bbox。
+
+    返回形如 {"geom":"Polygon", "count":123, "fields":{...}, "bbox":[w,s,e,n]}。
+    数据不存在或不是 FeatureCollection 时返回 None。
+
+    /review P2-1: result cached per (session_id, ref_id) — refs are immutable.
+    DA-P1-1: descriptor-first —— 每轮 ambient context 的 inventory 行不再为
+    新大 ref 付全 payload Redis GET + json.loads + O(features) 扫描
+    （50k 要素 ≈171ms + 全量内存），descriptor 命中即零物化。
+    """
+    cache_key = (session_id, ref_id)
+    cached = _layer_schema_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    schema = await _schema_from_descriptor(session_id, ref_id)
+    if schema is None:
+        schema = await _schema_from_payload(session_id, ref_id, sample_size)
+    if schema is None:
+        return None
 
     # /review P2-1: write to cache. Bounded LRU-ish via simple oldest-eviction
     if len(_layer_schema_cache) >= _LAYER_SCHEMA_CACHE_MAX:
