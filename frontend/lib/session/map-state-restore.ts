@@ -74,7 +74,7 @@ function observationIsCurrent(state: SessionMapState): boolean {
  */
 export function selectLayersToRestore(state: SessionMapState): any[] {
   const observation = state._cartographic_observation;
-  const observedLayers = observationIsCurrent(state) && Array.isArray(observation?.layers)
+  const observedLayers = observationIsCurrent(state) && observation && Array.isArray(observation.layers)
     ? observation.layers
     : [];
   return observedLayers.length > 0 ? observedLayers : (state.layers || []);
@@ -290,7 +290,8 @@ export async function restoreSessionMapLayers(
       ...presentationFromMapSpec(state.mapspec, String(layer._mapspecLayerId ?? layer.id)),
     }));
 
-  const keepers = allowedIds.size === 0
+  const hasMapSpecLayers = Array.isArray(state.mapspec?.layers);
+  const keepers = !hasMapSpecLayers
     ? layersToRestore
     : layersToRestore.filter((layer: any) => (
       allowedIds.has(String(layer.id))

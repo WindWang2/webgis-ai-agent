@@ -22,7 +22,7 @@ async def compile_via_cli(mapspec_file: Path, target_out_dir: Path) -> Dict[str,
     target_out_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
         "npx",
-        "tsx",
+        "jiti",
         str(_CLI_PATH),
         "--input",
         str(mapspec_file),

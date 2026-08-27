@@ -681,7 +681,7 @@ export function useSSEStream(
             _mapspecGenerationAt: mapspecGenerationAt,
             _mapspecProjectionFingerprint: runtimePatch?.projection_fingerprint,
             _cartographicRepairs: Array.isArray(runtimePatch?.repair_attempts)
-              ? runtimePatch.repair_attempts.slice(0, 2)
+              ? runtimePatch!.repair_attempts.slice(0, 2)
               : undefined,
           });
           // A GIS result is often auto-mounted hidden before the agent authors

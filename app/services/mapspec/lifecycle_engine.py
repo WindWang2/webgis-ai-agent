@@ -576,10 +576,7 @@ class MapSpecLifecycleEngine:
                         if not isinstance(layer, dict):
                             patched_layers.append(layer)
                             continue
-                        layer_id = str(layer.get("id") or "")
-                        if layer_id == intent.layer_id or layer_id.startswith(
-                            f"{intent.layer_id}__"
-                        ):
+                        if _should_remove_layer(layer, intent.layer_id):
                             matched = True
                             patched_layers.append(
                                 _patch_layer_presentation(
@@ -710,32 +707,31 @@ class MapSpecLifecycleEngine:
                     old_mapspec_snapshot = loaded
                     mapspec = {**loaded} if loaded else {}
                     current = list(mapspec.get("layers", []) if loaded else [])
-                    by_id = {
-                        str(layer.get("id")): layer
-                        for layer in current
-                        if isinstance(layer, dict) and layer.get("id")
-                    }
-                    next_layers = [
-                        by_id[layer_id]
-                        for layer_id in intent.layer_ids
-                        if layer_id in by_id
-                    ]
+                    # Support both exact ID and prefix matching for sublayers (__fill, __outline, etc.)
+                    matched_ordered: List[Dict[str, Any]] = []
+                    matched_ids: set = set()
+                    for lid in intent.layer_ids:
+                        for layer in current:
+                            if not isinstance(layer, dict):
+                                continue
+                            layer_id = str(layer.get("id") or "")
+                            if layer_id in matched_ids:
+                                continue
+                            if layer_id == lid or layer_id.startswith(f"{lid}__") or layer_id.startswith(f"{lid}-"):
+                                matched_ordered.append(layer)
+                                matched_ids.add(layer_id)
                     leftover = [
-                        layer
-                        for layer in current
-                        if not (
-                            isinstance(layer, dict)
-                            and str(layer.get("id")) in set(intent.layer_ids)
-                        )
+                        layer for layer in current
+                        if isinstance(layer, dict) and str(layer.get("id") or "") not in matched_ids
                     ]
-                    if not next_layers:
+                    if not matched_ordered:
                         return MapSpecResult(
                             is_error=True,
                             origin=origin,
                             error_msg="Reorder referenced no existing layers.",
                             correction_hint="Re-read MapSpec and reorder current layer ids.",
                         )
-                    mapspec["layers"] = next_layers + leftover
+                    mapspec["layers"] = matched_ordered + leftover
                     auto_checkpoint = True
 
                 elif isinstance(intent, SetLayoutIntent):

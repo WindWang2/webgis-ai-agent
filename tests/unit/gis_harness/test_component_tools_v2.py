@@ -268,7 +268,7 @@ async def test_generate_chart_attach_does_not_rerun_data(registry, clean_session
     await mapspec_store.layer_upsert(clean_session, layer, fc)
     await _seed_components(clean_session)
     spec_before = await mapspec_store.get_mapspec(clean_session)
-    layers_before = [l["id"] for l in spec_before["layers"]]
+    layers_before = [lyr["id"] for lyr in spec_before["layers"]]
 
     res = await registry.dispatch(
         "generate_chart",
@@ -278,7 +278,7 @@ async def test_generate_chart_attach_does_not_rerun_data(registry, clean_session
     )
     assert res["map_chart_panel"]["attached"] is True
     spec_after = await mapspec_store.get_mapspec(clean_session)
-    assert [l["id"] for l in spec_after["layers"]] == layers_before
+    assert [lyr["id"] for lyr in spec_after["layers"]] == layers_before
     # 数据层 fingerprint 语义：layers 数组逐字不变
     assert spec_after["layers"] == spec_before["layers"]
 

@@ -28,6 +28,7 @@ from app.services.tool_dispatch_service import LEGACY_TOOL_NAME_MAP
 # ref ids, param names, sentinel tags, SSE event names, GeoJSON keywords.
 NON_TOOL_BACKTICKED_TERMS = {
     "ref_id",
+    "show_refs",       # finalize_display 的参数名（prompt 以签名形式反引引用）
     "render_type",
     "return_geometry",
     "untrusted_layer_name",

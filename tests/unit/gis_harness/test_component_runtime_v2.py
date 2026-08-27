@@ -243,9 +243,9 @@ def test_mutate_component_upsert_creates_chart_panel():
 
 def test_mutate_component_upsert_requires_factory_type():
     components = _spec_components()
-    # title 有工厂默认吗——不在 _FACTORY_BY_TYPE → 不创建，返回未命中
+    # 未在 _FACTORY_BY_TYPE 注册的类型 → 不创建，返回未命中
     mutated, change = mutate_component(
-        components, component_id="nope", component_type="title", upsert=True,
+        components, component_id="nope", component_type="unknown_custom_widget", upsert=True,
     )
     assert change is None
     assert len(mutated) == len(components)

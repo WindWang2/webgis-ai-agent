@@ -285,7 +285,7 @@ services:
   # PostgreSQL exporter（#473：pg_up 的数据源 —— Database_Connection_Failure
   # 告警之前引用 pg_up 但没有任何 exporter 被抓取，是永不触发的装饰性监控）
   postgres-exporter:
-    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    image: docker.io/prometheuscommunity/postgres-exporter:v0.15.0
     container_name: webgis-prod-postgres-exporter
     restart: unless-stopped
     environment:
@@ -308,7 +308,7 @@ services:
   # Redis_Memory_High 与 Celery_Task_Backlog 告警）。check-keys=celery 导出
   # celery 默认队列（Redis list key "celery"）长度为 redis_key_size。
   redis-exporter:
-    image: quay.io/prometheuscommunity/redis-exporter:v1.58.0
+    image: docker.io/oliver006/redis_exporter:v1.58.0
     container_name: webgis-prod-redis-exporter
     restart: unless-stopped
     environment:
@@ -332,7 +332,7 @@ services:
   # Node exporter（#473：node_filesystem_* 的数据源 —— Disk_Space_Low 告警）。
   # 只读挂载宿主 /proc /sys /，监控容器所在宿主机（Linux）的根文件系统。
   node-exporter:
-    image: quay.io/prometheuscommunity/node-exporter:v1.7.0
+    image: docker.io/prom/node-exporter:v1.7.0
     container_name: webgis-prod-node-exporter
     restart: unless-stopped
     command:

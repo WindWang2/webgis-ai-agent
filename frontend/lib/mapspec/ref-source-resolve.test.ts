@@ -23,6 +23,7 @@ vi.mock('@/lib/api/transport', () => ({
 }));
 
 import { apiFetch } from '@/lib/api/transport';
+import { devOnly } from '@/lib/utils/logger';
 const apiFetchMock = vi.mocked(apiFetch);
 
 function layer(id: string, source: string, type: MapSpecLayer['type'] = 'circle'): MapSpecLayer {
@@ -169,7 +170,8 @@ describe('ref-source-resolver — 兜底拉取与注入', () => {
   });
 
   it('超上限的 ref 放弃拉取并不再告警重复', () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // 告警走 devOnly 门禁（生产静默），契约观测点在 devOnly.warn 本身
+    const warnSpy = vi.spyOn(devOnly, 'warn').mockImplementation(() => {});
     injectResolvedRefSources(spec, { sessionId: 's1', ownerToken: null });
     const callsWithHuge = apiFetchMock.mock.calls.filter((c) => String(c[0]).includes('huge'));
     expect(callsWithHuge).toHaveLength(0);

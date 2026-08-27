@@ -5,8 +5,14 @@ export type PendingPresentation = Record<string, { visible?: boolean; opacity?: 
 
 function applyPending(layer: MapSpecLayer, pending: PendingPresentation): MapSpecLayer {
   const id = String(layer.id || '');
-  const parent = id.includes('__') ? id.split('__')[0] : id;
-  const patch = pending[id] || pending[parent];
+  const aliases = layerAliases(id);
+  let patch: { visible?: boolean; opacity?: number } | undefined;
+  for (const alias of aliases) {
+    if (pending[alias]) {
+      patch = pending[alias];
+      break;
+    }
+  }
   if (!patch) return layer;
   const next: MapSpecLayer = {
     ...layer,
@@ -41,8 +47,18 @@ function applyPending(layer: MapSpecLayer, pending: PendingPresentation): MapSpe
 }
 
 function layerAliases(id: string): string[] {
-  const parent = id.includes('__') ? id.split('__')[0] : id;
-  return parent === id ? [id] : [id, parent];
+  const aliases = new Set<string>([id]);
+  if (id.includes('__')) {
+    aliases.add(id.split('__')[0]);
+  }
+  if (id.startsWith('custom-')) {
+    const withoutCustom = id.slice(7);
+    aliases.add(withoutCustom);
+    if (withoutCustom.includes('__')) {
+      aliases.add(withoutCustom.split('__')[0]);
+    }
+  }
+  return Array.from(aliases);
 }
 
 function isPendingRemoved(layer: MapSpecLayer, removed: string[]): boolean {

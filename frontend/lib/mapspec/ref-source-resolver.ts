@@ -1,5 +1,6 @@
 import { apiFetch } from '@/lib/api/transport';
 import type { MapSpec, MapSpecSource } from '@/lib/mapspec-compiler/types';
+import { devOnly } from '@/lib/utils/logger';
 
 /**
  * 通用 ref 源解析器（committed MapSpec → live runtime 的兜底数据通道）。
@@ -109,7 +110,7 @@ export function injectResolvedRefSources(
     if (typeof featureCount === 'number' && featureCount > FETCH_FEATURE_CAP) {
       if (!warned.has(refId)) {
         warned.add(refId);
-        console.warn(
+        devOnly.warn(
           `[ref-source-resolver] ref ${refId} (${featureCount} features) exceeds fetch cap ${FETCH_FEATURE_CAP}; layer not mounted`,
         );
       }
