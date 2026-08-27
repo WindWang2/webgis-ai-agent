@@ -1,0 +1,203 @@
+"""Pi native GIS tool surface (wrap-only, live registry schemas).
+
+The model-facing kinds are native | execute | reject. Dispatch still accepts
+registered long-tail names (the execute proxy unwraps them). Native parameter
+schemas are generated from ToolRegistry — never a handwritten second catalog.
+"""
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Literal, Mapping, Optional
+
+NATIVE_TOOL_NAMES: tuple[str, ...] = (
+    "webgis_map_intent",
+    "webgis_map_product",
+    "webgis_component_update",
+    "webgis_cartography_status",
+    "query_local_poi",
+    "get_local_admin_boundary",
+    "list_available_tools",
+)
+NATIVE_TOOL_NAME_SET = frozenset(NATIVE_TOOL_NAMES)
+EXECUTE_PROXY_NAME = "webgis_execute"
+STATUS_TOOL = "webgis_cartography_status"
+
+_PASSTHROUGH_KEYS = frozenset({"session_id"})
+
+_LABELS = {
+    "webgis_map_intent": "Map Intent",
+    "webgis_map_product": "Map Product",
+    "webgis_component_update": "Component Update",
+    "webgis_cartography_status": "Cartography Status",
+    "query_local_poi": "Local POI",
+    "get_local_admin_boundary": "Admin Boundary",
+    "list_available_tools": "List Tools",
+}
+
+_SNIPPETS = {
+    "webgis_map_intent": "First GIS step for 分布/密度. Pass {query: the user text}.",
+    "webgis_map_product": "Assemble the map after data tools return. Same SessionPlan envelope.",
+    "webgis_component_update": "Restyle one map component. Does not start a new city analysis.",
+    "webgis_cartography_status": "Zero-argument verdict pull AFTER the map changed. Call with {}.",
+    "query_local_poi": "China POI. district + subtype, e.g. 成都市 + 小学.",
+    "get_local_admin_boundary": "China admin boundary. name e.g. 成都市.",
+    "list_available_tools": "Discover long-tail GIS names by domain, then call them via webgis_execute.",
+}
+
+ResolvedKind = Literal["native", "execute", "reject", "passthrough"]
+
+
+@dataclass(frozen=True)
+class ResolvedPiCall:
+    kind: ResolvedKind
+    name: str
+    arguments: dict[str, Any]
+    error: str = ""
+
+
+def _analysis_extras(arguments: Mapping[str, Any]) -> dict[str, Any]:
+    extra: dict[str, Any] = {}
+    for key, value in arguments.items():
+        if key in _PASSTHROUGH_KEYS or value in (None, ""):
+            continue
+        extra[key] = value
+    return extra
+
+
+def resolve_pi_tool_call(
+    name: str,
+    arguments: Mapping[str, Any] | None,
+    *,
+    allow_passthrough: bool = True,
+) -> ResolvedPiCall:
+    """Classify a Pi-facing tool call.
+
+    ``allow_passthrough=True`` (HTTP dispatch): registered long-tail names
+    proceed to the unified dispatcher. ``False`` is the model-surface
+    resolveCall: unknown bare names reject (discover via list_available_tools,
+    then webgis_execute).
+    """
+    args = dict(arguments or {})
+    if name == EXECUTE_PROXY_NAME:
+        inner = args.get("toolName") or args.get("name")
+        inner_args = args.get("arguments") if isinstance(args.get("arguments"), dict) else {}
+        if not isinstance(inner_args, dict):
+            inner_args = {}
+        if not inner or not isinstance(inner, str):
+            return ResolvedPiCall(
+                kind="reject",
+                name=name,
+                arguments=args,
+                error="webgis_execute requires toolName",
+            )
+        if inner in NATIVE_TOOL_NAME_SET:
+            return ResolvedPiCall(
+                kind="reject",
+                name=name,
+                arguments=args,
+                error=(
+                    f"do not wrap native tool {inner} inside webgis_execute; "
+                    "call it directly"
+                ),
+            )
+        return ResolvedPiCall(kind="execute", name=inner, arguments=dict(inner_args))
+
+    if name == STATUS_TOOL:
+        extras = _analysis_extras(args)
+        if extras:
+            keys = ", ".join(sorted(extras))
+            return ResolvedPiCall(
+                kind="reject",
+                name=name,
+                arguments=args,
+                error=(
+                    f"{STATUS_TOOL} does not accept analysis arguments: {keys}. "
+                    "Call it with {{}} after the map changes; use webgis_map_intent "
+                    "for distribution queries."
+                ),
+            )
+        return ResolvedPiCall(kind="native", name=name, arguments=args)
+
+    if name in NATIVE_TOOL_NAME_SET:
+        return ResolvedPiCall(kind="native", name=name, arguments=args)
+
+    if allow_passthrough:
+        return ResolvedPiCall(kind="passthrough", name=name, arguments=args)
+    return ResolvedPiCall(
+        kind="reject",
+        name=name,
+        arguments=args,
+        error=(
+            f"unknown tool {name}; discover via list_available_tools, "
+            "then call webgis_execute"
+        ),
+    )
+
+
+def _pi_parameters(function_schema: dict[str, Any]) -> dict[str, Any]:
+    params = function_schema.get("parameters") or {"type": "object", "properties": {}}
+    properties = dict(params.get("properties") or {})
+    properties.pop("session_id", None)
+    required = [key for key in (params.get("required") or []) if key != "session_id"]
+    out: dict[str, Any] = {
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": False,
+    }
+    if "$defs" in params:
+        out["$defs"] = params["$defs"]
+    if "definitions" in params:
+        out["definitions"] = params["definitions"]
+    return out
+
+
+def native_tools_for_pi(registry: Any) -> list[dict[str, Any]]:
+    """Live-registry schemas in Pi ``registerTool`` shape."""
+    schemas = {
+        item.get("function", {}).get("name"): item.get("function", {})
+        for item in registry.get_schemas_subset(set(NATIVE_TOOL_NAMES))
+    }
+    dumped: list[dict[str, Any]] = []
+    for name in NATIVE_TOOL_NAMES:
+        fn = schemas.get(name) or {}
+        dumped.append(
+            {
+                "name": name,
+                "label": _LABELS.get(name, name),
+                "description": fn.get("description") or name,
+                "parameters": _pi_parameters(fn) if fn else {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                    "additionalProperties": False,
+                },
+                "promptSnippet": _SNIPPETS.get(name, ""),
+            }
+        )
+    return dumped
+
+
+def write_native_tools_file(registry: Any, path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = native_tools_for_pi(registry)
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def dump_native_tools_best_effort(path: Path) -> Optional[Path]:
+    """Spawn-time helper: skip when the registry is not injected."""
+    try:
+        from app.agent_pi_bridge import get_tool_registry
+        registry = get_tool_registry()
+    except Exception:
+        return None
+    try:
+        return write_native_tools_file(registry, path)
+    except Exception:
+        return None

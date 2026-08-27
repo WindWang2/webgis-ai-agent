@@ -116,6 +116,7 @@ export default function Home() {
     handleSend,
     handlePlanAction,
     bridge,
+    agentRuntime,
   } = useSSEStream(
     sessionId,
     setSessionId,
@@ -322,6 +323,7 @@ export default function Home() {
           sessionId={sessionId}
           ownerToken={activeSessionToken}
           onPlanAction={handlePlanAction}
+          agentRuntime={agentRuntime}
         />
 
         {/* RAG Independent Panel */}

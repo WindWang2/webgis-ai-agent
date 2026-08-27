@@ -6,11 +6,13 @@ def test_default_settings(monkeypatch):
     # Clear DEBUG and ENV env vars to test default settings in isolation
     monkeypatch.delenv("DEBUG", raising=False)
     monkeypatch.delenv("ENV", raising=False)
+    monkeypatch.delenv("USE_NEW_AGENT", raising=False)
     # 绕过 .env 文件读取真正的代码默认值
     s = Settings(_env_file=None)
     assert s.PROJECT_NAME == "WebGIS AI Agent"
     # 安全：默认禁用 DEBUG，避免 .env 缺失时生产端泄漏堆栈
     assert s.DEBUG is False
+    assert s.USE_NEW_AGENT is True
     # LLM_MODEL 默认值会随版本演进；只验证非空即可
     assert s.LLM_MODEL
     assert s.DATA_DIR == "./data"

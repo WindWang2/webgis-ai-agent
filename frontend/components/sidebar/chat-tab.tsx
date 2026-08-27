@@ -10,6 +10,12 @@ import { CollapsibleThink } from '@/components/chat/collapsible-think';
 import { PlanProposalCard } from '@/components/chat/plan-proposal-card';
 import { PlanCard } from '@/components/chat/plan-card';
 import { InlineNotice } from '@/components/shared/inline-notice';
+import { apiFetch } from '@/lib/api/transport';
+import {
+  agentRuntimeLabel,
+  parseAgentRuntime,
+  type AgentRuntime,
+} from '@/lib/agent-runtime';
 import { ChatAnnouncer } from '@/components/chat/chat-announcer';
 import { adaptChartData } from "@/lib/chart-adapter";
 
@@ -121,6 +127,8 @@ interface ChatTabProps {
    * 「回复已完成」。
    */
   sessionId?: string | null;
+  /** Live host for the current turn (SSE task_start). Health is the fallback. */
+  agentRuntime?: AgentRuntime | null;
 }
 
 /* ─── Memoized message bubble ───
@@ -270,7 +278,23 @@ const ChatMessageItem = memo(function ChatMessageItem({
   );
 });
 
-export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, sessionId }: ChatTabProps) {
+export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, sessionId, agentRuntime }: ChatTabProps) {
+  const [configuredRuntime, setConfiguredRuntime] = useState<AgentRuntime | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch<{ agent_runtime?: string }>('/api/v1/health')
+      .then((data) => {
+        if (cancelled) return;
+        setConfiguredRuntime(parseAgentRuntime(data?.agent_runtime));
+      })
+      .catch(() => {
+        /* badge is additive; a down health endpoint just hides it */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const runtime = agentRuntime ?? configuredRuntime;
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -346,6 +370,13 @@ export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, se
 
   return (
     <div className="flex flex-col h-full">
+      {runtime && (
+        <div className="shrink-0 border-b border-edge-subtle px-panel py-1.5">
+          <p className="text-meta tracking-wide text-ink-muted" data-testid="agent-runtime-badge">
+            {agentRuntimeLabel(runtime)}
+          </p>
+        </div>
+      )}
       {/* Messages scroll area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {messages.length === 0 && !isBusy && (

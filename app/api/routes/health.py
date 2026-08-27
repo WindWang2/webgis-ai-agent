@@ -71,6 +71,17 @@ def _check_celery():
         return False
 
 
+def _live_agent_runtime() -> str:
+    """Pi if the bundled subprocess is up; ChatEngine otherwise."""
+    try:
+        from app.api.routes.chat import _use_pi_bridge
+        if _use_pi_bridge():
+            return "pi"
+        return "chatengine"
+    except Exception:
+        return "pi" if settings.USE_NEW_AGENT else "chatengine"
+
+
 @router.get("/health")
 def health_check():
     """基础存活检查"""
@@ -78,7 +89,8 @@ def health_check():
         "status": "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "service": "WebGIS AI Agent",
-        "version": "0.1.3"
+        "version": "0.1.3",
+        "agent_runtime": _live_agent_runtime(),
     }
 
 

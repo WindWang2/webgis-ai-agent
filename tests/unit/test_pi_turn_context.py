@@ -5,7 +5,12 @@ from fastapi import HTTPException
 
 from app.agent_pi_bridge import PiToolRequest, PiToolResponse
 from app.api.routes.pi_tools import execute_tool
-from app.services.chat.pi_turn_context import issue_turn_token, verify_turn_token
+from app.services.chat.pi_turn_context import (
+    TURN_CONTEXT_MARKER,
+    attach_turn_context,
+    issue_turn_token,
+    verify_turn_token,
+)
 
 
 def test_turn_context_is_session_bound_tamper_evident_and_expiring():
@@ -19,6 +24,22 @@ def test_turn_context_is_session_bound_tamper_evident_and_expiring():
     assert verify_turn_token("wrong-secret", token, now=1_001) is None
     assert verify_turn_token("secret", token + "tampered", now=1_001) is None
     assert verify_turn_token("secret", token, now=2_000, max_age_seconds=10) is None
+
+
+def test_attach_turn_context_keeps_marker_last_with_session_plan():
+    token = issue_turn_token("secret", "s1", "turn-1", issued_at=1_000)
+    text = attach_turn_context(
+        "成都市小学分布情况",
+        token,
+        "[CARTOGRAPHY_VERDICT] pass",
+        "[SessionPlan] recipe=poi_distribution_overview open=poi_query replaced=false superseded=false",
+    )
+    marker = f"[{TURN_CONTEXT_MARKER}:{token}]"
+    assert text.index("[CARTOGRAPHY_VERDICT]") < text.index("[SessionPlan]")
+    assert text.index("[SessionPlan]") < text.index(marker)
+    assert text.rstrip().endswith(
+        "(Internal routing context; do not quote or modify this marker.)"
+    )
 
 
 @pytest.mark.asyncio

@@ -1650,7 +1650,11 @@ class ChatExecutionEngine:
                 # finally that exits the CMs (no ContextVar leak window).
                 TURN_EVIDENCE.register(rt_ev)
                 owner_token = self.get_session_owner_token(session_id)
-                task_start_data = {"task_id": task.id, "session_id": session_id}
+                task_start_data = {
+                    "task_id": task.id,
+                    "session_id": session_id,
+                    "agent_runtime": "chatengine",
+                }
                 if owner_token:
                     task_start_data["owner_token"] = owner_token
                 yield sse_event("task_start", task_start_data)

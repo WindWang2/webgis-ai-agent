@@ -25,6 +25,7 @@ import type { ExplorerStage, ExplorerStatus } from '@/lib/types/explorer';
 
 
 import { devOnly } from "@/lib/utils/logger";
+import { parseAgentRuntime, type AgentRuntime } from "@/lib/agent-runtime";
 
 // #742: stable identity — an inline options object churned send/bridge/
 // handleSend identities at token-batch frequency.
@@ -362,6 +363,8 @@ export function useSSEStream(
     },
   ]);
 
+  const [agentRuntime, setAgentRuntime] = useState<AgentRuntime | null>(null);
+
   const thinkingMsgIdRef = useRef<string>('');
   // FE-P3-3: ToolCallChain terminal transitions (completed on step_result,
   // failed on step_error/step_cancelled).
@@ -514,6 +517,15 @@ export function useSSEStream(
 
       // SEC-08：服务端在新建匿名会话时签发 owner_token（随 task_start / session 事件下发）。
       // 前端持有后在后续请求的 X-Session-Token 头里回传。认证会话不携带该字段。
+      if (event.event === 'task_start') {
+        const runtime = parseAgentRuntime(
+          typeof data === 'object' && data !== null
+            ? (data as Record<string, unknown>).agent_runtime
+            : undefined,
+        );
+        if (runtime) setAgentRuntime(runtime);
+      }
+
       if (data?.owner_token && typeof data.owner_token === 'string') {
         const ownerSessionId = data.session_id ?? sessionIdRef.current;
         if (typeof ownerSessionId === 'string' && ownerSessionId) {
@@ -740,6 +752,7 @@ export function useSSEStream(
               {
                 signal: layerFetchAbortRef.current?.signal,
                 ownerToken: token,
+                timeoutMs: 120_000,
                 label: 'Layer data error',
               }
             )
@@ -1177,5 +1190,6 @@ export function useSSEStream(
     handleSend,
     handlePlanAction,
     bridge,
+    agentRuntime,
   };
 }

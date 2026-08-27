@@ -12,8 +12,11 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import time
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 
 TURN_CONTEXT_MARKER = "WEBGIS_TURN_CONTEXT"
@@ -88,17 +91,46 @@ def verify_turn_token(
 
 
 def attach_turn_context(
-    message: str, token: str, cartography_block: str = ""
+    message: str,
+    token: str,
+    cartography_block: str = "",
+    session_plan_block: str = "",
 ) -> str:
     """Attach the capability to the turn for the extension's local session view.
 
-    ``cartography_block``（可选）是 harness 制图 verdict 的有界投影，插在
-    用户消息与 turn marker 之间；marker 必须保持最后——扩展的
+    ``cartography_block``（可选）是 harness 制图 verdict 的有界投影。
+    ``session_plan_block``（可选）是 SessionPlan 的有界投影，不是 verdict。
+    两者都插在用户消息与 turn marker 之间；marker 必须保持最后——扩展的
     ``currentTurnToken`` 取最新 entry 的最后一个匹配。
     """
     parts = [message]
     if cartography_block:
         parts.append(cartography_block)
+    if session_plan_block:
+        parts.append(session_plan_block)
     parts.append(f"[{TURN_CONTEXT_MARKER}:{token}]")
     parts.append("(Internal routing context; do not quote or modify this marker.)")
     return "\n\n".join(parts)
+
+
+async def bind_turn_prompt(
+    message: str,
+    token: str,
+    session_id: str,
+    cartography_block: str = "",
+) -> str:
+    """Open the SessionPlan slot and attach verdict + bounded plan + turn marker."""
+    plan_block = ""
+    if session_id:
+        try:
+            from app.services.session_plan import (
+                ensure_session_plan_slot,
+                format_session_plan_projection,
+                load_session_plan,
+            )
+            await ensure_session_plan_slot(session_id)
+            plan = await load_session_plan(session_id)
+            plan_block = format_session_plan_projection(plan)
+        except Exception:
+            logger.exception("[PiTurn] SessionPlan projection failed session=%s", session_id)
+    return attach_turn_context(message, token, cartography_block, plan_block)
