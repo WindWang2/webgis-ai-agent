@@ -236,8 +236,9 @@ async def test_late_tool_callback_step_not_misattributed(monkeypatch, caplog):
     monkeypatch.setattr(bridge_mod, "get_tool_registry", _fake_registry_for_dispatch)
     monkeypatch.setattr(bridge_mod, "ToolDispatchService", lambda **kw: fake_service)
     engine, tracker = _fake_engine_with_task()
-    from app.api.routes import chat as chat_route
-    monkeypatch.setattr(chat_route, "get_engine", lambda: engine)
+    # AH-P1-2：bridge 经 engine_instance 读取 ChatEngine（不再反向 import 路由层）
+    from app.services.chat import engine_instance
+    monkeypatch.setattr(engine_instance, "_engine", engine)
 
     # New turn is active; the callback belongs to the cancelled previous turn.
     monkeypatch.setattr(bridge_mod, "_active_turn_turn_id", "turn-new")

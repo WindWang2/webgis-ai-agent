@@ -224,7 +224,7 @@ class ToolExecutionPipeline:
             # Both the legacy and Pi agents converge into the same existing
             # harness. Dynamic import avoids coupling the generic pipeline at
             # module import time to the optional Pi transport.
-            from app.agent_pi_bridge import record_cartographic_dispatch_evidence
+            from app.services.cartography_runtime import record_cartographic_dispatch_evidence
 
             try:
                 await record_cartographic_dispatch_evidence(
