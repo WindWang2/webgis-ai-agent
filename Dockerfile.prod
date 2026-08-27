@@ -94,7 +94,11 @@ COPY vendor/ ./vendor/
 # Create non root user
 RUN groupadd --system --gid 1001 appgroup && \
     useradd --system --uid 1001 --gid appgroup --shell /bin/false --home /app appuser && \
-    mkdir -p /app/uploads && chown -R appuser:appgroup /app
+    # /app/data 必须在镜像内预建并归 appuser：命名卷（webgis_data）挂载到
+    # 镜像中不存在的路径时，Docker 以 root 创建挂载点，非 root 进程
+    # makedirs(DATA_DIR/exports) 直接 EACCES（api 起不来，preview 健康检查
+    # 502）。空命名卷首次挂载会从镜像复制目录属主，预建即修复。
+    mkdir -p /app/uploads /app/data && chown -R appuser:appgroup /app
 
 USER appuser
 
