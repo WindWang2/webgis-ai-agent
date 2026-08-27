@@ -101,16 +101,16 @@ async def test_report_domain_query_truthful(registry):
 
 def test_extension_example_names_exist(registry):
     """The Pi extension's webgis_execute toolName description examples must be
-    real registry tool names (or legacy aliases the dispatch normalizes). Both
-    the source (index.ts) and the compiled runtime artifact (index.mjs) are
-    checked — the extension ships from the .mjs."""
+    real registry tool names (or legacy aliases the dispatch normalizes). The
+    compiled runtime artifact (index.mjs) is checked — the extension ships from
+    the .mjs (the index.ts dead copy was removed, AH-P3-1)."""
     import pathlib
 
     ext_dir = pathlib.Path(__file__).resolve().parents[1] / "app" / "extensions" / "webgis-tools"
     registered = set(registry.all_metadata().keys()) | set(
         LEGACY_TOOL_NAME_MAP.keys()
     )
-    for artifact in ("index.ts", "index.mjs"):
+    for artifact in ("index.mjs",):
         text = (ext_dir / artifact).read_text(encoding="utf-8")
         m = re.search(r"e\.g\.,\s*([^)\"]+)", text)
         assert m, f"could not find the toolName example list in {artifact}"
