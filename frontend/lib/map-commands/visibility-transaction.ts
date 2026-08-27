@@ -1,5 +1,6 @@
 import * as renderer from '@/lib/map-kit/renderer';
 import { devOnly } from '@/lib/utils/logger';
+import { enqueueUserMutation } from '@/lib/mapspec/user-mutation';
 import {
   clearPendingPresentation,
   commitMapSpecDocument,
@@ -120,7 +121,7 @@ async function postPresentationOnce(
     if (typeof data.mutation_revision === 'number') {
       setMapSpecRevision(data.mutation_revision);
     }
-    if (data.mapspec) commitMapSpecDocument(data.mapspec);
+    if (data.mapspec) commitMapSpecDocument(data.mapspec, data.mutation_revision);
     clearPendingPresentation(specLayerId);
     return 'committed';
   } catch (err) {
@@ -135,7 +136,9 @@ async function postPresentationOnce(
     if (typeof superseded.mutation_revision === 'number') {
       setMapSpecRevision(superseded.mutation_revision);
     }
-    if (superseded.mapspec) commitMapSpecDocument(superseded.mapspec);
+    if (superseded.mapspec) {
+      commitMapSpecDocument(superseded.mapspec, superseded.mutation_revision);
+    }
     clearPendingPresentation(specLayerId);
     return serverReflectsPatch(superseded.mapspec, specLayerId, patch)
       ? 'reflected'
@@ -148,19 +151,21 @@ async function postPresentationWithRetry(
   patch: PresentationPatch,
 ): Promise<'committed' | 'reflected' | 'lost'> {
   const first = await postPresentationOnce(specLayerId, patch);
-  if (first !== 'retry') return first as 'committed' | 'reflected' | 'lost';
+  if (first !== 'retry') return first;
   const second = await postPresentationOnce(specLayerId, patch);
-  if (second !== 'lost') return second as 'committed' | 'reflected' | 'lost';
-  // 重试仍失败：重新落 pending —— reconcile 继续表达本地期望真相，
-  // 不静默丢决策（服务端偏差由下一次用户/agent 突变或修复循环收敛）。
+  if (second === 'committed' || second === 'reflected') return second;
+  // 'lost' 或再次 superseded（'retry'）：重新落 pending —— reconcile 继续表达
+  // 本地期望真相，不静默丢决策（服务端偏差由下一次用户/agent 突变或修复
+  // 循环收敛）。此前 'retry' 分支被类型断言吞掉且 pending 已清——agent
+  // 隐藏决策在双 superseded 时无声丢失（ST-P3-2）。
   mergePendingPresentation(specLayerId, patch);
   return 'lost';
 }
 
-// 全局串行队列：跨事务（finalize 的 N 层 + 逐层命令 + 用户 toggle）也逐笔
-// 顺序提交——每笔从游标读到前一笔推进后的 revision。
-let durabilityChain: Promise<void> = Promise.resolve();
-
+// durability 串行链与用户 mutation 共享（ST-P1-2）：同一 MapSpec mutation
+// 端点的全部 CAS 写（用户 presentation / 视图 / 删除 + agent 可见性
+// durability）逐笔排队，每笔读到前一笔推进后的 revision——跨来源并发
+// 不再互 409。
 function enqueueDurability(
   targets: { storeId: string; specLayerId: string }[],
   visible?: boolean | null,
@@ -171,16 +176,14 @@ function enqueueDurability(
     ...(opacity != null ? { opacity: Number(opacity) } : {}),
   };
   if (Object.keys(patch).length === 0) return;
-  durabilityChain = durabilityChain
-    .then(async () => {
-      for (const { specLayerId } of targets) {
-        await postPresentationWithRetry(specLayerId, patch);
-      }
-    })
-    .catch((err) => {
-      // 队列自身绝不因单笔失败断裂。
-      devOnly.warn('[visibility-transaction] durability queue error:', err);
-    });
+  void enqueueUserMutation(async () => {
+    for (const { specLayerId } of targets) {
+      await postPresentationWithRetry(specLayerId, patch);
+    }
+  }).catch((err) => {
+    // 队列自身绝不因单笔失败断裂。
+    devOnly.warn('[visibility-transaction] durability queue error:', err);
+  });
 }
 
 /**

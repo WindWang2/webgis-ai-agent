@@ -6,6 +6,7 @@ import {
   setMapSpecRevision,
   subscribeMapSpecLive,
 } from '@/lib/mapspec/session-cursor';
+import { enqueueUserMutation } from '@/lib/mapspec/user-mutation';
 import { devOnly } from '@/lib/utils/logger';
 import type { ComponentPlacement } from '@/lib/mapspec-compiler/types';
 
@@ -56,57 +57,62 @@ function supersededFromError(err: unknown): MutationResponse | null {
  * 成功 → setMapSpecRevision + commitMapSpecDocument（chrome 立即重渲）；
  * 409 superseded → 同样回灌服务端真相后静默返回（拖拽不弹 toast）；
  * 其它错误 → 抛给调用方（FloatingChrome 回滚 override 并 devOnly.warn）。
+ * 经共享串行链提交（ST-P1-2）：revision 在轮到本笔时才读，与其它
+ * MapSpec mutation 写互不抢 revision。
  */
 export async function commitComponentPatch(
   componentId: string,
   patch: ComponentPatch,
 ): Promise<void> {
-  const { sessionId, revision, ownerToken } = getMapSpecSessionCursor();
-  if (!sessionId) return;
   if (patch.enabled === undefined && patch.placement === undefined && patch.variant === undefined) {
     return;
   }
-  try {
-    const data = await apiFetch<MutationResponse>(
-      `/api/v1/chat/sessions/${sessionId}/mapspec/mutations`,
-      {
-        method: 'POST',
-        body: {
-          intent: 'patch_component',
-          expected_revision: revision,
-          component_id: componentId,
-          ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
-          ...(patch.placement !== undefined ? { placement: patch.placement } : {}),
-          ...(patch.variant !== undefined ? { variant: patch.variant } : {}),
+  const enqueuedSessionId = getMapSpecSessionCursor().sessionId;
+  await enqueueUserMutation(async () => {
+    const { sessionId, revision, ownerToken } = getMapSpecSessionCursor();
+    if (!sessionId || sessionId !== enqueuedSessionId) return;
+    try {
+      const data = await apiFetch<MutationResponse>(
+        `/api/v1/chat/sessions/${sessionId}/mapspec/mutations`,
+        {
+          method: 'POST',
+          body: {
+            intent: 'patch_component',
+            expected_revision: revision,
+            component_id: componentId,
+            ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
+            ...(patch.placement !== undefined ? { placement: patch.placement } : {}),
+            ...(patch.variant !== undefined ? { variant: patch.variant } : {}),
+          },
+          ownerToken,
+          label: 'MapSpec component patch mutation',
         },
-        ownerToken,
-        label: 'MapSpec component patch mutation',
-      },
-    );
-    if (typeof data.mutation_revision === 'number') {
-      setMapSpecRevision(data.mutation_revision);
-    }
-    commitMapSpecDocument(data.mapspec);
-  } catch (err) {
-    const superseded = supersededFromError(err);
-    if (!superseded) throw err;
-    // 静默收敛：服务端已有更新真相 —— 回灌 revision + spec，拖拽交互不打断
-    if (typeof superseded.mutation_revision === 'number') {
-      setMapSpecRevision(superseded.mutation_revision);
-    }
-    commitMapSpecDocument(superseded.mapspec);
-    // superseded 时的 override 与 server 真相不一致（如被并发 Agent 覆盖），
-    // 则不应永久压住——清掉，让 spec 成为可见真相（review P2）。
-    if (err instanceof ApiError && superseded.mapspec) {
-      const spec = superseded.mapspec as { layout?: { components?: Array<{ id: string; placement?: unknown }> } };
-      const serverPlacement = (spec.layout?.components || []).find((c) => c.id === componentId)?.placement;
-      const override = getComponentPlacementOverride(componentId);
-      if (override && JSON.stringify(serverPlacement) !== JSON.stringify(override)) {
-        setComponentPlacementOverride(componentId, null);
+      );
+      if (typeof data.mutation_revision === 'number') {
+        setMapSpecRevision(data.mutation_revision);
       }
+      commitMapSpecDocument(data.mapspec, data.mutation_revision);
+    } catch (err) {
+      const superseded = supersededFromError(err);
+      if (!superseded) throw err;
+      // 静默收敛：服务端已有更新真相 —— 回灌 revision + spec，拖拽交互不打断
+      if (typeof superseded.mutation_revision === 'number') {
+        setMapSpecRevision(superseded.mutation_revision);
+      }
+      commitMapSpecDocument(superseded.mapspec, superseded.mutation_revision);
+      // superseded 时的 override 与 server 真相不一致（如被并发 Agent 覆盖），
+      // 则不应永久压住——清掉，让 spec 成为可见真相（review P2）。
+      if (err instanceof ApiError && superseded.mapspec) {
+        const spec = superseded.mapspec as { layout?: { components?: Array<{ id: string; placement?: unknown }> } };
+        const serverPlacement = (spec.layout?.components || []).find((c) => c.id === componentId)?.placement;
+        const override = getComponentPlacementOverride(componentId);
+        if (override && JSON.stringify(serverPlacement) !== JSON.stringify(override)) {
+          setComponentPlacementOverride(componentId, null);
+        }
+      }
+      devOnly.warn('[component-mutation] patch superseded, converged to server truth');
     }
-    devOnly.warn('[component-mutation] patch superseded, converged to server truth');
-  }
+  });
 }
 
 // ── 乐观 override store（tiny subscribe store，模式同 session-cursor）─────

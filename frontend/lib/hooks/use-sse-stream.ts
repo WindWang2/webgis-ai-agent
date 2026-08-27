@@ -506,7 +506,12 @@ export function useSSEStream(
       }
       const incomingMapSpec = data?.mapspec ?? data?.result?.mapspec;
       if (incomingMapSpec) {
-        commitMapSpecDocument(incomingMapSpec);
+        // 携带 revision 提交：迟到的旧代次 SSE 事件（HTTP 响应已推进游标）
+        // 不再把 committed spec 拉回旧代（ST-P3-1）。
+        commitMapSpecDocument(
+          incomingMapSpec,
+          typeof incomingRevision === 'number' ? incomingRevision : undefined,
+        );
         // product-* 等后端直写图层只落 MapSpec 不走 addLayer 路径——镜像
         // 成 HUD 行，图层面板可见、ref 定向显隐可解析（幂等，见注释）。
         syncSpecLayersToStore(incomingMapSpec, sessionIdRef.current);
