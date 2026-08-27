@@ -246,7 +246,7 @@ async def test_late_tool_callback_step_not_misattributed(monkeypatch, caplog):
 
     with caplog.at_level(logging.WARNING, logger="app.agent_pi_bridge"):
         resp = await dispatch_tool(PiToolRequest(
-            toolCallId="tc-late", name="buffer_analysis", arguments={},
+            toolCallId="tc-late", name="webgis_execute", arguments={"toolName": "buffer_analysis", "arguments": {}},
             sessionId="s-late", verifiedTurnId="turn-old",
         ))
     assert resp.isError is False
@@ -257,7 +257,7 @@ async def test_late_tool_callback_step_not_misattributed(monkeypatch, caplog):
 
     # Same callback, verified as the ACTIVE turn → step recorded as before.
     resp = await dispatch_tool(PiToolRequest(
-        toolCallId="tc-live", name="buffer_analysis", arguments={},
+        toolCallId="tc-live", name="webgis_execute", arguments={"toolName": "buffer_analysis", "arguments": {}},
         sessionId="s-late", verifiedTurnId="turn-new",
     ))
     assert resp.isError is False
@@ -266,7 +266,7 @@ async def test_late_tool_callback_step_not_misattributed(monkeypatch, caplog):
 
     # Unverified direct in-process calls (verifiedTurnId=None) keep legacy behavior.
     resp = await dispatch_tool(PiToolRequest(
-        toolCallId="tc-direct", name="buffer_analysis", arguments={},
+        toolCallId="tc-direct", name="webgis_execute", arguments={"toolName": "buffer_analysis", "arguments": {}},
         sessionId="s-late",
     ))
     assert resp.isError is False

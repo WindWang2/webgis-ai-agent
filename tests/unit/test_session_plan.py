@@ -1,6 +1,9 @@
 """SessionPlan store + apply (no live LLM, no Pi RPC)."""
+import asyncio
+
 import pytest
 
+from app.services.distributed_lock import session_lock_registry
 from app.services.session_data import session_data_manager
 from app.services.session_plan import (
     CANONICAL_PLAN_EVENT_NAMES,
@@ -274,3 +277,95 @@ async def test_component_update_keeps_envelope(sid):
     assert after.envelope_id == before.envelope_id
     assert after.gis_chapter["query"] == "成都市小学分布情况"
     assert SESSION_PLAN_SUPERSEDED not in [e.event for e in events]
+
+
+@pytest.mark.asyncio
+async def test_apply_tool_result_serializes_on_session_lock(sid):
+    """Parallel tool callbacks in one Pi turn must not interleave
+    load→mutate→save on the envelope — apply waits for the per-session lock."""
+    gis = _gis("成都市小学分布情况", "成都市")
+    await ensure_session_plan_slot(sid)
+
+    async with session_lock_registry.lock(sid):
+        task = asyncio.create_task(
+            apply_tool_result(
+                sid, "webgis_map_intent",
+                {"success": True, "plan": gis, "intent": gis["intent"]},
+                success=True,
+            )
+        )
+        await asyncio.sleep(0.05)
+        assert not task.done(), "apply must block while the session lock is held"
+        assert (await load_session_plan(sid)).gis_chapter is None
+
+    events = await asyncio.wait_for(task, timeout=5.0)
+    assert any(e.event == SESSION_PLAN_UPDATED for e in events)
+    assert (await load_session_plan(sid)).gis_chapter is not None
+
+
+@pytest.mark.asyncio
+async def test_slot_open_serializes_on_session_lock(sid):
+    """Slot-open is equally serialized (ADR-0051): two first-turn tools racing
+    to open the envelope must block on the per-session lock and observe ONE
+    envelope — never two competing first-turn envelopes."""
+    async with session_lock_registry.lock(sid):
+        t1 = asyncio.create_task(ensure_session_plan_slot(sid))
+        t2 = asyncio.create_task(ensure_session_plan_slot(sid))
+        await asyncio.sleep(0.05)
+        assert not t1.done(), "slot-open must block while the session lock is held"
+        assert not t2.done(), "slot-open must block while the session lock is held"
+        assert await load_session_plan(sid) is None, (
+            "no envelope may exist while the lock is still held — creation "
+            "must wait for the slot-open critical section"
+        )
+
+    p1 = await asyncio.wait_for(t1, timeout=5.0)
+    p2 = await asyncio.wait_for(t2, timeout=5.0)
+    stored = await load_session_plan(sid)
+    assert p1.envelope_id == p2.envelope_id == stored.envelope_id, (
+        "two first-turn tools must not create competing envelopes"
+    )
+    assert stored.gis_chapter is None
+
+
+@pytest.mark.asyncio
+async def test_supersede_survives_concurrent_capability_write(sid):
+    """A supersede racing a capability write must never be lost to
+    last-write-wins (user stories #1029-6/#1029-21): after both applies the
+    current envelope is the new goal's, and the old one is archived superseded."""
+    gis = _gis("成都市小学分布情况", "成都市")
+    await apply_tool_result(sid, "webgis_map_intent", {"plan": gis}, success=True)
+    old = await load_session_plan(sid)
+    new_gis = _gis("分析北京学校", "北京市", subject="学校")
+
+    async with session_lock_registry.lock(sid):
+        cap_task = asyncio.create_task(
+            apply_tool_result(
+                sid, "heatmap_data", {"success": True},
+                success=True, geojson_ref="ref:geojson-heat",
+            )
+        )
+        intent_task = asyncio.create_task(
+            apply_tool_result(sid, "webgis_map_intent", {"plan": new_gis}, success=True)
+        )
+        await asyncio.sleep(0.05)
+        assert not cap_task.done() and not intent_task.done(), (
+            "both applies must block while the session lock is held — "
+            "serialization is observed, not assumed"
+        )
+
+    await asyncio.wait_for(asyncio.gather(cap_task, intent_task), timeout=5.0)
+    final = await load_session_plan(sid)
+    # The user goal change is never lost: the new goal's envelope is current.
+    assert final.gis_chapter["intent"]["scope"]["name"] == "北京市"
+    assert final.envelope_id != old.envelope_id
+    assert final.superseded is False
+    # The old envelope is archived as superseded — a stale capability write
+    # must not resurrect it as the current envelope.
+    from app.services.session_plan import HISTORY_ALIAS_PREFIX, SessionPlan
+    ref = await session_data_manager.resolve_alias(
+        sid, f"{HISTORY_ALIAS_PREFIX}{old.envelope_id}"
+    )
+    archived = SessionPlan.model_validate(await session_data_manager.get(sid, ref))
+    assert archived.superseded is True
+    assert archived.envelope_id == old.envelope_id

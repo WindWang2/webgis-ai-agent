@@ -252,8 +252,8 @@ async def test_same_turn_mutation_content_is_not_harness_verdict(monkeypatch):
 
     request = bridge.PiToolRequest(
         toolCallId="tc-content",
-        name="webgis_layer_upsert",
-        arguments={},
+        name="webgis_execute",
+        arguments={"toolName": "webgis_layer_upsert", "arguments": {}},
         sessionId=sid,
     )
     try:

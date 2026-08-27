@@ -1,9 +1,15 @@
 # Spec: Pi as the agent host
 
-> Status: Ready for implementation. Parent map: GitHub issue “Pi as the agent host”.
-> Glossary: Session, SessionPlan, GIS Harness, MapProductPlan, CartographyRecipe, Tool dispatch, Cartography Verdict, Observed Map.
+> Status: Implemented on `feat/pi-as-agent-host` (hardening pass applied: envelope
+> session lock, native-dump fail-fast, key-sensitive status guard, bare-name
+> reject at the HTTP boundary). Live-LLM E2E of the Chengdu chain is the merge gate.
+> Parent map: GitHub issue “Pi as the agent host”.
+> Glossary: Session, SessionPlan, GIS Harness, MapProductPlan, CartographyRecipe, Tool dispatch, Cartography Verdict, Observed Map, Pi Native Surface.
 > ADRs this spec adds: 0076 (SessionPlan is Pi-path plan truth), 0077 (wrap vendored Pi).
-> Does not reopen ADR-0055, 0006, 0071.
+> Does not reopen ADR-0055, 0006, 0071. (ADR-0071 “shared cartography session
+> runtime” currently lives only on the unmerged next-generation-harness line,
+> commit `7955cba` — the shared-seam statement it records is already true on
+> master via `app/services/cartography_runtime.py` bridge re-exports.)
 
 ## Problem Statement
 
@@ -98,6 +104,10 @@ Good tests observe **external behavior**: after a scripted tool call, what Sessi
 **Do not** require a live LLM or a full Pi RPC round-trip to prove SessionPlan or native schema guards. Optional later: extension-level tests that the seven names are registered.
 
 Prior art: cartography status evidence tests, GIS harness intent-tool tests (Chengdu schools query), Pi dispatch integration tests, SSE stream tests for `plan_*` (those names must **not** appear on the Pi path for SessionPlan).
+
+Exception to "no extension internals": `tests/test_tool_meta_contract.py` greps the extension source for the persona hook (`before_agent_start` / GeoAgent) and the `WEBGIS_NATIVE_TOOLS_PATH` wiring. It pins host↔extension text contracts the spec calls out (persona, distribution-before-status routing); it does not assert file layout or Pi subprocess internals.
+
+SessionPlan wire is **stream-only by contract**: `session_plan_updated` / `session_plan_progress` / `session_plan_superseded` are emitted on the SSE stream after each tool execution; the non-stream `prompt()` path does not carry them (no consumer exists today — a non-stream consumer reads the envelope from SessionStore).
 
 ## Out of Scope
 

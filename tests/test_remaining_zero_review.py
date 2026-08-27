@@ -192,8 +192,8 @@ async def test_dispatch_tool_records_harness_evidence_once(monkeypatch):
 
     request = bridge.PiToolRequest(
         toolCallId="tc-dup",
-        name="webgis_layer_upsert",
-        arguments={},
+        name="webgis_execute",
+        arguments={"toolName": "webgis_layer_upsert", "arguments": {}},
         sessionId="dup-sess",
     )
     try:

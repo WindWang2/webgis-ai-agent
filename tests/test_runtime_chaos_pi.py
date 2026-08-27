@@ -234,7 +234,7 @@ async def test_stall_abort_also_cancels_turn_token(monkeypatch):
             break
         await asyncio.sleep(0)
     dispatch = asyncio.create_task(dispatch_tool(PiToolRequest(
-        name="query_map_features", toolCallId="tc-stall", arguments={},
+        name="webgis_execute", toolCallId="tc-stall", arguments={"toolName": "query_map_features", "arguments": {}},
         sessionId="sess-stall2",
     )))
     await asyncio.wait_for(started.wait(), timeout=2.0)
@@ -350,7 +350,7 @@ async def test_dispatch_tool_binds_active_turn_cancellation_token(monkeypatch):
     assert "task_start" in first  # turn parked mid-stream
 
     dispatch = asyncio.create_task(dispatch_tool(PiToolRequest(
-        name="query_map_features", toolCallId="tc-1", arguments={},
+        name="webgis_execute", toolCallId="tc-1", arguments={"toolName": "query_map_features", "arguments": {}},
         sessionId="sess-cancel",
     )))
     await asyncio.wait_for(started.wait(), timeout=2.0)
@@ -398,7 +398,7 @@ async def test_dispatch_tool_without_active_turn_runs_uncancelled(monkeypatch):
     monkeypatch.setattr(bridge_mod.ToolDispatchService, "dispatch", _fake_dispatch)
 
     resp = await dispatch_tool(PiToolRequest(
-        name="query_map_features", toolCallId="tc-solo", arguments={},
+        name="webgis_execute", toolCallId="tc-solo", arguments={"toolName": "query_map_features", "arguments": {}},
         sessionId="sess-solo",
     ))
     assert resp.isError is False
@@ -476,7 +476,7 @@ async def test_prompt_publishes_active_turn_markers(monkeypatch, caplog):
 
     # F24: dispatch during prompt() is bound to the turn's token
     dispatch = asyncio.create_task(dispatch_tool(PiToolRequest(
-        name="query_map_features", toolCallId="tc-prompt", arguments={},
+        name="webgis_execute", toolCallId="tc-prompt", arguments={"toolName": "query_map_features", "arguments": {}},
         sessionId="sess-P",
     )))
     await asyncio.wait_for(started.wait(), timeout=2.0)
@@ -624,7 +624,7 @@ async def test_process_death_mid_stream_fast_fails_turn(monkeypatch):
     # A tool dispatch is in flight via the HTTP callback, bound to the turn's
     # token (F24); it captures the token object for the cancellation assert.
     dispatch = asyncio.create_task(dispatch_tool(PiToolRequest(
-        name="query_map_features", toolCallId="tc-death", arguments={},
+        name="webgis_execute", toolCallId="tc-death", arguments={"toolName": "query_map_features", "arguments": {}},
         sessionId="sess-death",  # required by the hardened callback contract
     )))
     await dispatch

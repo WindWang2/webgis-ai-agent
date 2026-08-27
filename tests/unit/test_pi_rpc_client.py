@@ -52,7 +52,7 @@ class DummyPipe:
 
 
 @pytest.mark.asyncio
-async def test_start_popen_uses_binary_pipes(monkeypatch):
+async def test_start_popen_uses_binary_pipes(monkeypatch, tmp_path):
     """start() must spawn Popen with text=False — text pipes TypeError the reader."""
     from app.services.chat import pi_rpc_client as mod
 
@@ -69,6 +69,12 @@ async def test_start_popen_uses_binary_pipes(monkeypatch):
         return proc
 
     monkeypatch.setattr(mod.subprocess, "Popen", fake_popen)
+    # 本测试聚焦管道/spawn 参数：native dump 走 strict 路径（无 registry 即
+    # raise），与二进制管道无关，patch 掉以隔离。
+    monkeypatch.setattr(
+        "app.services.chat.pi_native_surface.dump_native_tools",
+        lambda _p: tmp_path / "native-tools.json",
+    )
     client = mod.PiRpcClient()
     monkeypatch.setattr(client, "_wait_for_ready", AsyncMock(return_value=None))
     try:
@@ -461,3 +467,51 @@ async def test_event_queue_drops_on_overflow():
     except asyncio.QueueFull:
         put_ok = False
     assert put_ok is False, "queue should be full"
+
+
+@pytest.mark.asyncio
+async def test_start_fails_fast_when_native_dump_fails(monkeypatch, tmp_path):
+    """Native schema dump is spawn-mandatory: a failure must abort start()
+    (the API lifespan catches it and falls back to ChatEngine), not leave Pi
+    running with webgis_execute only."""
+    from app.services.chat import pi_rpc_client as mod
+
+    def _boom(_path):
+        raise RuntimeError("registry not injected")
+
+    monkeypatch.setattr(mod, "PI_AGENT_DIR", tmp_path)
+    monkeypatch.setattr(
+        "app.services.chat.pi_native_surface.dump_native_tools", _boom
+    )
+    monkeypatch.setattr(
+        mod.subprocess,
+        "Popen",
+        MagicMock(side_effect=AssertionError("spawn must not happen after dump failure")),
+    )
+    client = mod.PiRpcClient()
+    monkeypatch.setattr(client, "_wait_for_ready", AsyncMock(return_value=None))
+    with pytest.raises(RuntimeError, match="registry not injected"):
+        await client.start()
+
+
+@pytest.mark.asyncio
+async def test_get_pi_bridge_resets_singleton_on_start_failure(monkeypatch):
+    """A failed start() must not leave a half-initialized bridge singleton —
+    the next get_pi_bridge() retries instead of returning a dead bridge."""
+    import app.agent_pi_bridge as bridge_mod
+
+    calls = {"n": 0}
+
+    async def _failing_start(self):
+        calls["n"] += 1
+        raise RuntimeError("start failed")
+
+    monkeypatch.setattr(bridge_mod.PiBridge, "start", _failing_start)
+    monkeypatch.setattr(bridge_mod, "_pi_bridge", None)
+    with pytest.raises(RuntimeError, match="start failed"):
+        await bridge_mod.get_pi_bridge()
+    assert bridge_mod._pi_bridge is None
+    # Retry reaches start() again — no dead singleton short-circuit.
+    with pytest.raises(RuntimeError, match="start failed"):
+        await bridge_mod.get_pi_bridge()
+    assert calls["n"] == 2
