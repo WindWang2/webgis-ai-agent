@@ -259,6 +259,13 @@ def _patch_layer_presentation(
         layout = dict(patched.get("layout") or {})
         layout["visibility"] = "visible" if visible else "none"
         patched["layout"] = layout
+        # CA-P1-1（意图投影）：presentation 是一次**显式决策**——它改写该层的
+        # cartographic_intent.expected_visible，QA（RESULT_VISIBILITY）由此区分
+        # "故意隐藏"（用户/agent 收口）与"结果层被误藏"（auto_safe 修复）。
+        # 用户隐藏 → expected_visible=False → QA pass 且 user-wins 一致。
+        intent = dict(patched.get("cartographic_intent") or {})
+        intent["expected_visible"] = bool(visible)
+        patched["cartographic_intent"] = intent
     if opacity is not None:
         paint = dict(patched.get("paint") or {})
         paint["opacity"] = opacity
@@ -267,6 +274,25 @@ def _patch_layer_presentation(
             paint[type_key] = opacity
         patched["paint"] = paint
     return patched
+
+
+def _project_cartographic_intent(layer: Dict[str, Any]) -> None:
+    """Upsert 落意图（CA-P1-1）：authoring 决策写进 cartographic_intent。
+
+    expected_visible = authoring 时的可见性决策（布局无 none 即默认展示）；
+    role 从 context_role/role 透传，不发明。调用方显式给出的
+    cartographic_intent 优先（planner 携带 product plan 的角色裁决）。
+    """
+    if isinstance(layer.get("cartographic_intent"), dict):
+        return
+    layout = layer.get("layout") if isinstance(layer.get("layout"), dict) else {}
+    intent: Dict[str, Any] = {
+        "expected_visible": layout.get("visibility", "visible") != "none",
+    }
+    role = layer.get("context_role") or layer.get("role")
+    if isinstance(role, str) and role:
+        intent["role"] = role
+    layer["cartographic_intent"] = intent
 
 
 def _preserve_durable_presentation(
@@ -597,6 +623,10 @@ class MapSpecLifecycleEngine:
                             break
                     if not updated:
                         layers.append(processed_layer)
+                    # CA-P1-1：authoring 决策投影为 cartographic_intent
+                    #（QA RESULT_VISIBILITY 的意图证据——此前只读不写，恒
+                    # not_evaluated）。
+                    _project_cartographic_intent(processed_layer)
 
                     pending_layer_op = (
                         "upsert",

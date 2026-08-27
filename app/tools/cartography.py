@@ -3,7 +3,7 @@
 """
 import json
 import logging
-from typing import Any
+from typing import Any, Optional
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
@@ -31,8 +31,13 @@ class ApplyStyleArgs(BaseModel):
 class ThematicMapArgs(BaseModel):
     geojson: Any = Field(..., description="输入 GeoJSON 或数据引用(ref:xxx)")
     field: str = Field(..., description="用于分类的数值字段名")
-    method: str = Field("quantiles", description="分类方法: quantiles(分位数), equal_interval(等间距), natural_breaks(自然断裂点), lisa(局部空间自相关)")
-    k: int = Field(5, ge=2, le=10, description="分类数量 (2-10)")
+    method: Optional[str] = Field(
+        None,
+        description=("分类方法: quantiles(分位数), equal_interval(等间距), natural_breaks(自然断裂点), "
+                     "head_tail(头尾断裂,重尾计数数据), lisa(局部空间自相关)。"
+                     "留空 = 由制图规划器按字段分布自动裁决（推荐）"),
+    )
+    k: int = Field(5, ge=2, le=10, description="分类数量 (2-10)；留默认时由规划器按模型缺省校正 (3-7)")
     palette: str = Field("YlOrRd", description="调色板: YlOrRd, Blues, Greens, Reds, Viridis, Magma")
     group: str = Field("analysis", description="图层组: analysis(分析), base(底图), reference(参考)")
 
@@ -112,7 +117,7 @@ def register_cartography_tools(registry: ToolRegistry):
     @tool(registry, name="create_thematic_map",
            description="根据指定字段制作分层设色专题图 (Choropleth Map)，自动计算颜色级别。",
            args_model=ThematicMapArgs)
-    def create_thematic_map(geojson: Any, field: str, method: str = "quantiles", k: int = 5, palette: str = "YlOrRd", group: str = "analysis") -> dict:
+    def create_thematic_map(geojson: Any, field: str, method: Optional[str] = None, k: int = 5, palette: str = "YlOrRd", group: str = "analysis") -> dict:
         try:
             data = _safe_parse_geojson(geojson)
             if not data:
@@ -120,6 +125,28 @@ def register_cartography_tools(registry: ToolRegistry):
 
             from app.services.cartography_service import CartographyService
             from app.lib.cartography.thematic_spec import build_graduated_spec
+
+            # C3（分布驱动分类裁决）：method 缺省时由规划器按字段分布选择
+            #（重尾→head_tail；近均匀→equal_interval/quantiles；默认
+            # natural_breaks），裁决证据（理由/落选者/authority）随结果下发。
+            classification_plan = None
+            if method is None or method == "":
+                from app.lib.cartography.visualization_plan import (
+                    choose_classification,
+                    distribution_stats_from_values,
+                )
+
+                values = [
+                    f.get("properties", {}).get(field)
+                    for f in (data.get("features") or [])
+                    if isinstance(f, dict)
+                ]
+                stats = distribution_stats_from_values(values)  # type: ignore[arg-type]
+                if stats is not None:
+                    choice = choose_classification(stats, requested_k=k)
+                    method = choice.method
+                    k = choice.k
+                    classification_plan = choice.model_dump()
 
             # ADR-0052: legend_spec is the canonical thematic style — the single
             # source both the live MapSpec paint and the <ThematicLegend> overlay
@@ -136,6 +163,9 @@ def register_cartography_tools(registry: ToolRegistry):
                 )
                 legend_spec = CartographyService.build_legend_spec(style_def, palette=palette)
             else:
+                if method in (None, ""):
+                    # 无分布证据（字段全空/过少）——回退制图学默认
+                    method = "natural_breaks"
                 legend_spec = build_graduated_spec(
                     data, field=field, method=method, k=k, palette=palette,
                 )
@@ -153,6 +183,8 @@ def register_cartography_tools(registry: ToolRegistry):
                 "group": group,
                 "style": style_def,
             }
+            if classification_plan is not None:
+                return_dict["classification_plan"] = classification_plan
             if legend_spec is not None:
                 return_dict["legend_spec"] = legend_spec
                 return_dict["layer_meta"] = {
