@@ -362,10 +362,16 @@ export const layerCommands: Record<string, CommandEntry> = {
       //    ST-P1-1：经 removeLayerFromSpec（superseded 重试一次）而非
       //    commitMapSpecMutation（吞 409 → 服务端仍含被删层 + pending 被清
       //    → reconcile 复活僵尸）。双 superseded 保留 pending 压制 compose。
+      //    P2-2（会话守卫）：在途时切会话不得把 A 会话的 layer_id POST 到 B 的
+      //    mutations 端点——enqueuedSessionId 与执行时 session 比对，丢弃跨会话
+      //     durability。
       void (async () => {
+        const { getMapSpecSessionCursor } = await import('@/lib/mapspec/session-cursor');
+        const enqueuedSessionId = getMapSpecSessionCursor().sessionId;
         const { removeLayerFromSpec } = await import('@/lib/mapspec/user-mutation');
         const { markPendingRemoved, clearPendingRemoved } = await import('@/lib/mapspec/session-cursor');
         for (const specLayerId of removeDurabilityTargets) {
+          if (!enqueuedSessionId || getMapSpecSessionCursor().sessionId !== enqueuedSessionId) break;
           markPendingRemoved(specLayerId);
           try {
             const outcome = await removeLayerFromSpec(specLayerId);

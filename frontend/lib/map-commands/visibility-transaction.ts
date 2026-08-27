@@ -176,7 +176,9 @@ function enqueueDurability(
     ...(opacity != null ? { opacity: Number(opacity) } : {}),
   };
   if (Object.keys(patch).length === 0) return;
+  const enqueuedSessionId = getMapSpecSessionCursor().sessionId;
   void enqueueUserMutation(async () => {
+    if (!enqueuedSessionId || getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return;
     for (const { specLayerId } of targets) {
       await postPresentationWithRetry(specLayerId, patch);
     }

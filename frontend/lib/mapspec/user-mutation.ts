@@ -45,9 +45,10 @@ function supersededFromError(err: unknown): MutationResponse | null {
 function applyCommittedMapSpec(
   mapspec: { layers?: any[] } | undefined,
   revision?: number,
-): void {
-  commitMapSpecDocument(mapspec, revision);
-  if (!mapspec) return;
+): boolean {
+  if (!commitMapSpecDocument(mapspec, revision)) return false;
+  
+  if (!mapspec) return true;
   for (const layer of useHudStore.getState().layers) {
     const specLayerId = mapspecLayerId(layer.id);
     // 在途乐观态保护（ST-P1-2 放大器）：响应 mapspec 的 presentation 是
@@ -71,6 +72,7 @@ function applyCommittedMapSpec(
       useHudStore.getState().updateLayer(layer.id, pres);
     }
   }
+  return true;
 }
 
 function mapspecLayerId(layerId: string): string {

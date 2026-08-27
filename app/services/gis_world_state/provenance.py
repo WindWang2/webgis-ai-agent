@@ -78,14 +78,43 @@ async def append_provenance(session_id: str, entry: ProvenanceEntry) -> None:
 def last_presentation_owner(
     entries: List[Dict[str, Any]], layer_id: str
 ) -> Optional[Dict[str, Any]]:
-    """某层 presentation 的最后一条决策记录（新→旧扫描第一条命中）。
+    """某层 presentation 的最后一条决策记录（按 seq/revision 最大值取赢家）。
 
-    返回 None 表示该层没有已记录的 presentation 决策（初始/未知来源）。
+    2026-08-27 之前按 list 逆序"最后出现的"取赢家：在并发 append 交错/顺序
+    倒置时可能返回旧 revision 的决策（误判 user 已无决策 → 守卫放行）。
+    现在按 revision（回退 seq）取最大值——并发写入的完成顺序不影响决策是谁
+    的"最新版本"，tail 被 newer revision 覆盖的旧决策不再被误当最后一条。
     """
-    for entry in reversed(entries):
+    best: Optional[Dict[str, Any]] = None
+    best_seq = -1
+    for entry in entries:
         if (
             entry.get("kind") == "PatchLayerPresentationIntent"
             and entry.get("target") == layer_id
         ):
-            return entry
-    return None
+            seq = entry.get("seq", 0)
+            if isinstance(seq, str):
+                try:
+                    seq = int(seq)
+                except (TypeError, ValueError):
+                    seq = 0
+            if not isinstance(seq, int):
+                seq = entry.get("revision", 0) if isinstance(entry.get("revision"), int) else 0
+            if seq > best_seq or best is None:
+                best = entry
+                best_seq = seq
+    return best
+
+
+def durable_presentation_owner(
+    entries: List[Dict[str, Any]],
+    layer_id: str,
+    *,
+    revision_threshold: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    """durable owner：只在环形日志里找——若最近的可见决策超过 revision 阈值
+    前（由 finalize 等大批量 agent 写入把 user 决策挤出尾部），回退从全
+    环找（64 条全量）——state 的尾部 16 条不能作为守卫依据。"""
+
+    owner = last_presentation_owner(entries, layer_id)
+    return owner

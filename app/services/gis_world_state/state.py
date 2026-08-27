@@ -112,9 +112,14 @@ async def build_world_state(session_id: str) -> Dict[str, Any]:
     ][:MAX_COMPONENT_SUMMARIES]
 
     provenance = (await get_provenance(session_id))[-MAX_PROVENANCE_SNAPSHOT:]
+    # user_hidden 以全环为依据（ADR-0072 修复 P2-1：finalize 一次写 30+ 条
+    # agent provenance 会把用户决策挤出尾部 16 条，快照必须从全环派生，否则
+    # 守卫(全环64条)与感知(尾16)互相矛盾——agent 被守卫拦但快照说"没有用户决策")。
+    all_provenance = await get_provenance(session_id)
+    user_hidden_source = all_provenance if len(all_provenance) > len(provenance) else provenance
     user_hidden = [
         entry.get("target")
-        for entry in reversed(provenance)
+        for entry in reversed(user_hidden_source)
         if entry.get("origin") == "user"
         and entry.get("kind") == "PatchLayerPresentationIntent"
         and entry.get("detail", {}).get("visible") is False
