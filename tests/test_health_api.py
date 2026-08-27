@@ -1,7 +1,7 @@
 """Health & Readiness API tests"""
 import pytest
 from httpx import AsyncClient, ASGITransport
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from fastapi import FastAPI
 
 from app.api.routes import health as _mod
@@ -30,6 +30,28 @@ async def test_health_check(client):
     assert "timestamp" in data
     assert data["service"] == "WebGIS AI Agent"
     assert data["agent_runtime"] in {"pi", "chatengine"}
+
+
+@pytest.mark.asyncio
+async def test_agent_runtime_badge_reflects_chatengine_fallback(client, monkeypatch):
+    """#1032: after a failed bridge start the lifespan serves on ChatEngine
+    (``chat.pi_bridge`` stays None — no half-started singleton). The runtime
+    badge must honestly report ``chatengine`` even with USE_NEW_AGENT on,
+    and flip back to ``pi`` once a live bridge owns the subprocess."""
+    import app.api.routes.chat as chat_mod
+
+    monkeypatch.setattr(chat_mod, "USE_NEW_AGENT", True)
+    # Exact post-fallback state: start() failed, lifespan left pi_bridge None.
+    monkeypatch.setattr(chat_mod, "pi_bridge", None)
+    resp = await client.get("/api/v1/health")
+    assert resp.json()["agent_runtime"] == "chatengine"
+
+    # Converse pins the badge to actual bridge state (not a hardcoded value).
+    alive_bridge = MagicMock()
+    alive_bridge._process_died = False
+    monkeypatch.setattr(chat_mod, "pi_bridge", alive_bridge)
+    resp = await client.get("/api/v1/health")
+    assert resp.json()["agent_runtime"] == "pi"
 
 
 @pytest.mark.asyncio
