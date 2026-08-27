@@ -91,6 +91,10 @@ _ENV_BASELINE = {
         "CANCEL_WAIT_TIMEOUT_S": "5.0",
         "CHAT_MAX_ROUNDS": "60",
         "TURN_TOTAL_TIMEOUT_S": "900",
+        # TE-P2-4：钉扎 runtime 选择——脏 shell 导出 USE_NEW_AGENT=true 会把
+        # 整个套件静默切到 Pi 路径（子进程/锁语义全变），违背"脏机器等价
+        # 于干净机器"的 conftest 契约。默认 false（与 agent_pi_bridge 默认一致）。
+        "USE_NEW_AGENT": "false",
 }
 for _key, _value in _ENV_BASELINE.items():
     os.environ.setdefault(_key, _value)

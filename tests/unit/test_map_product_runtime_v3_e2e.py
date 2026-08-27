@@ -335,11 +335,19 @@ def test_scenario_7_multi_physical_sublayers_matching():
 
 
 # ---------------------------------------------------------------------------
-# Scenario 8: Remove Layer & Orphan Source Cleanup
+# Scenario 8: Remove Layer (sublayer sweep) + source invariants
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_scenario_8_remove_layer_and_source_cleanup(clean_session):
-    """Scenario 8: Removing a logical layer removes all sublayers and prunes orphan sources."""
+    """Scenario 8: Removing a logical layer removes all sublayers; sources stay (CoW).
+
+    Source 语义（与 #1014 COW 设计一致，TE-P1-1 修正名实相反的旧断言）：
+    sources 是数据登记项（ref 归 session ref-store 所有），remove_layer 只做
+    图层清扫、不做 source GC——source 清理由 ref 生命周期治理。真正必须锁定
+    的不变量是：(a) 被删逻辑层的全部子层不复存在（无 zombie layer）；
+    (b) 引用完整性——任何 layer 的 source 键在 spec.sources 中必须存在
+    （孤儿 source 可以存在，悬空 layer 引用不可以）。
+    """
     engine = MapSpecLifecycleEngine()
     # Add layer with sublayer and source
     await engine.apply_mutation(
@@ -379,7 +387,18 @@ async def test_scenario_8_remove_layer_and_source_cleanup(clean_session):
     # Both sublayers (__fill and __outline) are removed
     assert len(spec_after["layers"]) == 1
     assert spec_after["layers"][0]["id"] == "poi_layer"
-    # COW: sources are preserved with zero copy
+    # (a) 无 zombie：被删逻辑层与任何子层变体都不得残留
+    layer_ids = {str(layer.get("id")) for layer in spec_after["layers"]}
+    assert not any(
+        layer_id == "district_poly" or layer_id.startswith("district_poly__")
+        for layer_id in layer_ids
+    )
+    # (b) 引用完整性：layer.source 悬空 = 渲染时 source 缺失（P0 级状态破坏）
+    for layer in spec_after["layers"]:
+        assert str(layer.get("source")) in spec_after["sources"], (
+            f"layer {layer.get('id')} references missing source {layer.get('source')}"
+        )
+    # CoW：sources 保留（数据登记项不随图层删除回收）
     assert "src_district" in spec_after["sources"]
     assert "src_poi" in spec_after["sources"]
 
