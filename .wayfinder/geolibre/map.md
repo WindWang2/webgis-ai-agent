@@ -26,6 +26,7 @@
 - [WASM 结果回流——MapSpec 写入与栅格渲染决策](ticket-005-result-flow-decision.md) — **算在浏览器、状态在服务端**：矢量 `POST /upload` 回传→ref→`/mapspec/mutations` 薄暴露 `upsert_layer`（复用现有 `UpsertLayerIntent`）；栅格 COG 回传→现成 raster-tiles by ref 回显，前端零改动；MapSpec 保持服务端单一写入边界
 - [算子子集暴露与 ToolRegistry 分类策略](ticket-006-tool-exposure-strategy.md) — 类目白名单（水文/地形/LiDAR/插值+厚栅格精选，~260 个，矢量基础不开）+ `listManifests()` 动态生成注册（`wb_` 前缀、新增 `client` 执行策略、类目→tier/domain/cost 映射表）+ 客户端预检护栏（超限结构化错误→self-healing hints→回落服务端 Celery）
 - [最小 PoC——浏览器手动驱动跑通 1–2 个算子](ticket-007-minimal-poc.md) — **物理路线成立**（poc/，commit 5e8ae3b）：viewshed 251 ms@300² DEM、dissolve 19.2 s@400 面（矢量重拓扑慢→白名单维持栅格/地形类为主）、wasm 编译 <0.4 s、回传体积 2–27 KiB、manifest 参数权威源实证
+- [ADR 落笔——引入决策与集成架构](ticket-008-adr-decision.md) — 用户确认 accepted：[ADR-0078](../../docs/adr/0078-geolibre-wasm-browser-algorithm-engine.md) 有条件引入 `geolibre-wasm` 为浏览器端补充算法引擎，集成架构四要点（白名单动态注册/字节直传/回流/护栏）+ agent 接线后续 effort + 供应链风险缓解。**地图到站。**
 
 ## Not yet specified
 
