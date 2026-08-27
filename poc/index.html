@@ -1,0 +1,49 @@
+<!doctype html>
+<!-- PROTOTYPE (throwaway) — wayfinder ticket-007: Whitebox WASM 工具箱物理 PoC.
+     验证：单体 wasm 加载体量/耗时、数据序列化往返、dissolve(矢量)+viewshed(地形) 端到端。 -->
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>PROTOTYPE — GeoLibre WASAM 物理验证 (ticket-007)</title>
+<link rel="stylesheet" href="./node_modules/maplibre-gl/dist/maplibre-gl.css" />
+<style>
+  html, body { margin: 0; height: 100%; font: 13px/1.5 system-ui, sans-serif; }
+  header { padding: 6px 12px; background: #7c2d12; color: #fed7aa; }
+  header b { color: #fff; }
+  main { display: flex; height: calc(100% - 34px); }
+  #map-wrap { position: relative; flex: 1; }
+  #map { position: absolute; inset: 0; }
+  #overlay { position: absolute; inset: 0; pointer-events: none; }
+  aside { width: 480px; display: flex; flex-direction: column; border-left: 1px solid #ddd; }
+  .controls { padding: 8px 10px; border-bottom: 1px solid #ddd; display: grid; gap: 6px; }
+  button { padding: 6px 10px; font-size: 13px; cursor: pointer; }
+  button:disabled { opacity: .4; cursor: default; }
+  .args { font: 11px monospace; padding: 3px 5px; }
+  #summary { padding: 6px 10px; font-size: 12px; white-space: pre; background: #fffbeb; border-bottom: 1px solid #ddd; min-height: 60px; }
+  #log { flex: 1; overflow: auto; margin: 0; padding: 8px 10px; font: 11px/1.45 monospace; background: #0c0a09; color: #a7f3d0; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<header>⚠ <b>PROTOTYPE — 丢弃式原型</b> · wayfinder 票据：<b>最小 PoC——浏览器手动驱动跑通 1–2 个算子</b> · 算在浏览器，状态在服务端（结果回流另需后端，本页只证物理）</header>
+<main>
+  <div id="map-wrap">
+    <div id="map"></div>
+    <canvas id="overlay"></canvas>
+  </div>
+  <aside>
+    <div class="controls">
+      <button id="btn-init">① 初始化工具箱（下载+编译 wasm）</button>
+      <button id="btn-manifests" disabled>④ 查看 dissolve / viewshed 参数 manifest</button>
+      <button id="btn-dissolve" disabled>② 矢量：dissolve 样本多边形</button>
+      <div>dissolve args <input id="args-dissolve" class="args" style="width:100%" value="--input=/work/polys.geojson --output=/work/dissolved.geojson"></div>
+      <button id="btn-viewshed" disabled>③ 地形：viewshed 小 DEM</button>
+      <div>viewshed args <input id="args-viewshed" class="args" style="width:100%" value="--input=/work/dem.tif --output=/work/viewshed.tif"></div>
+    </div>
+    <div id="summary">（未初始化）</div>
+    <pre id="log"></pre>
+  </aside>
+</main>
+
+<script type="module" src="./dist/main.js"></script>
+</body>
+</html>
