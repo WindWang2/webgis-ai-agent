@@ -122,10 +122,34 @@ def _init_progress(gis_chapter: dict[str, Any]) -> list[CapabilityProgress]:
     return [CapabilityProgress(capability=cap, status="pending") for cap in seen]
 
 
+def _merge_progress(
+    rows: list[CapabilityProgress],
+    gis_chapter: dict[str, Any],
+) -> list[CapabilityProgress]:
+    """Same-goal replace: voided rows survive only while the replacement
+    chapter still tracks that capability; new capabilities join as pending.
+
+    Keeps the stored progress consistent with the void SSE — the store is the
+    plan truth (ADR-0076), so rows must not silently flip back to pending.
+    """
+    fresh = _init_progress(gis_chapter)
+    chapter_caps = {row.capability for row in fresh}
+    merged = [row for row in rows if row.capability in chapter_caps]
+    known = {row.capability for row in merged}
+    merged.extend(row for row in fresh if row.capability not in known)
+    return merged
+
+
 def open_capabilities(plan: Optional[SessionPlan]) -> list[str]:
+    """Voided rows are open too — their completion is gone, the chapter
+    requirement is pending again."""
     if plan is None:
         return []
-    return [row.capability for row in plan.progress if row.status == "pending"]
+    return [
+        row.capability
+        for row in plan.progress
+        if row.status in ("pending", "voided")
+    ]
 
 
 def format_session_plan_projection(plan: Optional[SessionPlan]) -> str:
@@ -137,11 +161,10 @@ def format_session_plan_projection(plan: Optional[SessionPlan]) -> str:
         )
     recipe = str(plan.gis_chapter.get("recipe_id") or "none")
     open_caps = ",".join(open_capabilities(plan)) or "none"
-    superseded_flag = "true" if plan.previous_goal else "false"
     return (
         f"[SessionPlan] recipe={recipe} open={open_caps} "
         f"replaced={'true' if plan.replaced else 'false'} "
-        f"superseded={superseded_flag}"
+        f"superseded={'true' if plan.superseded else 'false'}"
     )
 
 
@@ -387,13 +410,13 @@ async def apply_tool_result(
 
         replaced = plan.gis_chapter is not None
         if replaced:
-            for row in list(plan.progress):
+            for row in plan.progress:
                 if row.status != "voided":
                     row.status = "voided"
                     events.append(_progress_event(plan, row))
         plan.gis_chapter = gis
         plan.user_goal = query or plan.user_goal
-        plan.progress = _init_progress(gis)
+        plan.progress = _merge_progress(plan.progress, gis)
         plan.replaced = replaced
         plan.superseded = False
         await save_session_plan(plan, store=backend)
@@ -416,11 +439,8 @@ async def apply_tool_result(
             and item.get("capability")
             and item.get("status") in ("available", "resolved", "done")
         ]
-        completeness = raw.get("completeness")
-        if isinstance(completeness, dict) and completeness.get("missing") == []:
-            done_caps.extend(
-                row.capability for row in plan.progress if row.status == "pending"
-            )
+        # completeness.missing == [] says the *product outputs* are complete;
+        # it is not evidence that never-run capabilities executed.
         changed = _mark_progress(
             plan, done_caps, status="complete", bound_ref=geojson_ref or ""
         )

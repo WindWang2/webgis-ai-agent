@@ -1,58 +1,16 @@
-"""Pi first-turn: cartography_status + analysis args → webgis_map_intent."""
+"""Pi native surface: cartography status fails closed on analysis args."""
 import pytest
 
 from app.agent_pi_bridge import PiToolRequest, dispatch_tool, set_tool_registry
-from app.services.chat.pi_tool_reroute import (
-    INTENT_TOOL,
-    STATUS_TOOL,
-    reroute_cartography_status_misuse,
-)
+from app.services.chat.pi_native_surface import STATUS_TOOL
 from app.tools.registry import ToolRegistry
 
-
-def test_chengdu_schools_status_call_rewrites_to_intent():
-    name, args = reroute_cartography_status_misuse(
-        STATUS_TOOL,
-        {"city": "成都市", "topic": "小学分布", "scope": "全市"},
-    )
-    assert name == INTENT_TOOL
-    assert args["query"] == "成都市 小学分布"
-    assert args["scope_hint"] == "成都市"
-    assert args["subject_hint"] == "小学分布"
-
-
-def test_empty_status_call_is_unchanged():
-    name, args = reroute_cartography_status_misuse(STATUS_TOOL, {})
-    assert name == STATUS_TOOL
-    assert args == {}
-
-
-def test_status_with_only_session_id_is_unchanged():
-    name, args = reroute_cartography_status_misuse(
-        STATUS_TOOL, {"session_id": "sess-1"}
-    )
-    assert name == STATUS_TOOL
-    assert args == {"session_id": "sess-1"}
-
-
-def test_other_tools_are_not_rewritten():
-    original = {"district": "成都市", "subtype": "小学"}
-    name, args = reroute_cartography_status_misuse("query_local_poi", original)
-    assert name == "query_local_poi"
-    assert args == original
-
-
-def test_unknown_junk_on_status_is_not_rewritten():
-    name, args = reroute_cartography_status_misuse(
-        STATUS_TOOL, {"foo": "bar"}
-    )
-    assert name == STATUS_TOOL
-    assert args == {"foo": "bar"}
+INTENT_TOOL = "webgis_map_intent"
 
 
 @pytest.mark.asyncio
 async def test_dispatch_rejects_chengdu_status_hallucination():
-    """Native surface: status + analysis keys fail closed (do not reroute)."""
+    """Native surface: status + analysis keys fail closed (no silent reroute)."""
     registry = ToolRegistry()
     status_hits = []
     intent_hits = []

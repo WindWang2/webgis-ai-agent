@@ -14,6 +14,7 @@ from app.services.session_plan import (
     format_session_plan_projection,
     goal_key,
     load_session_plan,
+    open_capabilities,
     public_data_refs,
 )
 
@@ -97,9 +98,55 @@ async def test_same_goal_replaces_and_voids_progress(sid):
     assert SESSION_PLAN_PROGRESS in names
     assert SESSION_PLAN_UPDATED in names
     assert SESSION_PLAN_SUPERSEDED not in names
+    voided = [e for e in events if e.event == SESSION_PLAN_PROGRESS]
+    assert all(e.data["status"] == "voided" for e in voided)
     plan = await load_session_plan(sid)
     assert plan.replaced is True
-    assert all(row.status == "pending" for row in plan.progress)
+    # Store is plan truth: voided SSE must match voided rows, not a silent
+    # re-init back to pending.
+    assert all(row.status == "voided" for row in plan.progress)
+    # Voided completions are open again — the chapter requirement is pending.
+    assert set(open_capabilities(plan)) >= {"poi_query", "admin_boundary", "heatmap"}
+
+
+@pytest.mark.asyncio
+async def test_product_completeness_does_not_complete_unrun_caps(sid):
+    await apply_tool_result(
+        sid, "webgis_map_intent",
+        {"plan": _gis("成都市小学分布情况", "成都市")},
+        success=True,
+    )
+    events = await apply_tool_result(
+        sid, "webgis_map_product",
+        {
+            "success": True,
+            "recipe_id": "poi_distribution_overview",
+            "status": "finalized",
+            "completeness": {"missing": [], "complete": True},
+            "map_product_evidence": {
+                "capability_resolution": [
+                    {"capability": "poi_query", "status": "available",
+                     "resolved_tool": "query_local_poi"},
+                    {"capability": "admin_boundary", "status": "pending",
+                     "resolved_tool": "get_local_admin_boundary"},
+                ],
+            },
+        },
+        success=True, geojson_ref="ref:geojson-poi",
+    )
+    plan = await load_session_plan(sid)
+    statuses = {row.capability: row.status for row in plan.progress}
+    assert statuses["poi_query"] == "complete"
+    # completeness.missing == [] covers product outputs, not capabilities —
+    # never-run admin_boundary/heatmap must stay open, not flip complete.
+    assert statuses["admin_boundary"] == "pending"
+    assert statuses["heatmap"] == "pending"
+    progressed = {
+        e.data["capability"]: e.data["status"]
+        for e in events
+        if e.event == SESSION_PLAN_PROGRESS
+    }
+    assert progressed == {"poi_query": "complete"}
 
 
 @pytest.mark.asyncio
@@ -122,6 +169,18 @@ async def test_new_goal_supersedes_envelope(sid):
     assert new.envelope_id != old.envelope_id
     assert new.gis_chapter["intent"]["scope"]["name"] == "北京市"
     assert new.previous_goal == old.user_goal
+    # The current envelope is the replacement, not the superseded one —
+    # its projection must not keep flagging superseded on later turns.
+    assert "superseded=false" in format_session_plan_projection(new)
+    from app.services.session_plan import HISTORY_ALIAS_PREFIX, SessionPlan
+    ref = await session_data_manager.resolve_alias(
+        sid, f"{HISTORY_ALIAS_PREFIX}{old.envelope_id}"
+    )
+    archived = SessionPlan.model_validate(
+        await session_data_manager.get(sid, ref)
+    )
+    assert archived.superseded is True
+    assert "superseded=true" in format_session_plan_projection(archived)
 
 
 @pytest.mark.asyncio
