@@ -25,13 +25,13 @@
 - [v1 数据进入浏览器的路径决策](ticket-004-data-path-decision.md) — v1 = 服务端中介字节直传：矢量 ref_id GeoJSON、栅格/点云上传件原样单文件字节；CSV/SHP/PMTiles 服务端先转 GeoJSON；超护栏体量回落服务端 Celery；range 直取落雾，上传直通出局
 - [WASM 结果回流——MapSpec 写入与栅格渲染决策](ticket-005-result-flow-decision.md) — **算在浏览器、状态在服务端**：矢量 `POST /upload` 回传→ref→`/mapspec/mutations` 薄暴露 `upsert_layer`（复用现有 `UpsertLayerIntent`）；栅格 COG 回传→现成 raster-tiles by ref 回显，前端零改动；MapSpec 保持服务端单一写入边界
 - [算子子集暴露与 ToolRegistry 分类策略](ticket-006-tool-exposure-strategy.md) — 类目白名单（水文/地形/LiDAR/插值+厚栅格精选，~260 个，矢量基础不开）+ `listManifests()` 动态生成注册（`wb_` 前缀、新增 `client` 执行策略、类目→tier/domain/cost 映射表）+ 客户端预检护栏（超限结构化错误→self-healing hints→回落服务端 Celery）
+- [最小 PoC——浏览器手动驱动跑通 1–2 个算子](ticket-007-minimal-poc.md) — **物理路线成立**（poc/，commit 5e8ae3b）：viewshed 251 ms@300² DEM、dissolve 19.2 s@400 面（矢量重拓扑慢→白名单维持栅格/地形类为主）、wasm 编译 <0.4 s、回传体积 2–27 KiB、manifest 参数权威源实证
 
 ## Not yet specified
 
-- 包体预算与加载策略细化（service worker 缓存 wasm、按类目懒加载）——ticket-001 事实已落地（单体 22.72 MiB/gzip 7.53 MiB + worker 运行器 ~23 MB，仅整体懒加载）；预计被 PoC 票与 ADR 吸收，若容纳不下再毕业成票
 - COG/GeoParquet 字节范围窗口提取直取浏览器（`extract_cog_subset`/`pmtiles_extract`）——v2 优化，需在 data_fabric 新开面向浏览器的提取通道（v1 决策已将其延后）
 - 浏览器内瓦片自渲染（`write_pmtiles`/`raster_to_tiles`）——v2 优化，仅当栅格回传成本被证明不可接受时毕业（结果回流决策已将 v1 定为回传-服务端切片）
-- WASM 算子结果质量对照验证（与 QGIS/服务端 Python 结果比对）——仅当 PoC 结论有争议时才需要
+- WASM 算子结果质量对照验证（与 QGIS/服务端 Python 结果比对）——仅当 ADR 落笔票对 PoC 证据有争议时才需要（PoC 中 viewshed 可见像元 835/90000 未对照参考实现）
 
 ## Out of scope
 
