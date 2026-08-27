@@ -277,7 +277,7 @@ services:
   # Redis_Memory_High 与 Celery_Task_Backlog 告警）。check-keys=celery 导出
   # celery 默认队列（Redis list key "celery"）长度为 redis_key_size。
   redis-exporter:
-    image: docker.io/prometheuscommunity/redis-exporter:v1.58.0
+    image: docker.io/oliver006/redis_exporter:v1.58.0
     container_name: webgis-prod-redis-exporter
     restart: unless-stopped
     environment:
@@ -301,7 +301,7 @@ services:
   # Node exporter（#473：node_filesystem_* 的数据源 —— Disk_Space_Low 告警）。
   # 只读挂载宿主 /proc /sys /，监控容器所在宿主机（Linux）的根文件系统。
   node-exporter:
-    image: docker.io/prometheuscommunity/node-exporter:v1.7.0
+    image: docker.io/prom/node-exporter:v1.7.0
     container_name: webgis-prod-node-exporter
     restart: unless-stopped
     command:
