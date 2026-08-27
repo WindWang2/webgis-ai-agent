@@ -96,7 +96,8 @@ export const createLayersSlice: StateCreator<HudState, [], [], Partial<HudState>
         const effective = withAttestationPolicy(updates);
         let noOp = true;
         for (const key of Object.keys(effective)) {
-          if ((target as Record<string, unknown>)[key] !== (effective as Record<string, unknown>)[key]) {
+          if ((target as unknown as Record<string, unknown>)[key]
+            !== (effective as unknown as Record<string, unknown>)[key]) {
             noOp = false;
             break;
           }
