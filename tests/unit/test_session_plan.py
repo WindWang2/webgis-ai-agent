@@ -14,6 +14,7 @@ from app.services.session_plan import (
     format_session_plan_projection,
     goal_key,
     load_session_plan,
+    public_data_refs,
 )
 
 
@@ -147,6 +148,49 @@ def test_projection_is_bounded_not_verdict():
     assert text.startswith("[SessionPlan]")
     assert "CARTOGRAPHY" not in text
     assert "verdict" not in text.lower()
+
+
+def test_public_data_refs_hide_session_plan_envelope():
+    refs = {
+        "ref:geojson-abc": "schools",
+        "ref:sessionplan-xyz": "session-plan",
+        "ref:sessionplan-old": "session-plan-id:sp-1",
+    }
+    assert public_data_refs(refs) == {"ref:geojson-abc": "schools"}
+
+
+def test_session_plan_only_is_not_data_refs():
+    from app.services.chat.execution_engine import _has_non_plan_refs
+    assert _has_non_plan_refs({"ref:sessionplan-xyz": "session-plan"}) is False
+    assert _has_non_plan_refs({"ref:geojson-abc": "schools"}) is True
+
+
+@pytest.mark.asyncio
+async def test_unresolved_ref_error_omits_session_plan(sid):
+    from app.tools.registry import ToolRegistry, tool
+
+    await apply_tool_result(
+        sid, "webgis_map_intent",
+        {"plan": _gis("成都市小学分布情况", "成都市")},
+        success=True,
+    )
+    await session_data_manager.store(
+        sid, {"type": "FeatureCollection", "features": []}, prefix="geojson",
+    )
+    registry = ToolRegistry()
+
+    @tool(registry, name="echo_geojson", description="echo")
+    def echo_geojson(geojson):
+        return {"success": True}
+
+    result = await registry.dispatch(
+        "echo_geojson", {"geojson": "ref:missing-dead"}, session_id=sid,
+    )
+    message = str(result.get("message") or result.get("summary") or "")
+    assert "无法找到引用数据或别名" in message
+    assert "session-plan" not in message
+    assert "sessionplan" not in message.lower()
+    assert "ref:geojson-" in message
 
 
 def test_goal_key_distinguishes_cities():

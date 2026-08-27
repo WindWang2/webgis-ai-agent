@@ -21,6 +21,29 @@ logger = logging.getLogger(__name__)
 
 CURRENT_ALIAS = "session-plan"
 STORE_PREFIX = "sessionplan"
+REF_PREFIX = f"ref:{STORE_PREFIX}-"
+HISTORY_ALIAS_PREFIX = "session-plan-id:"
+
+
+def is_session_plan_listing(ref_id: str, alias: str = "") -> bool:
+    """True for SessionPlan store rows — not GIS data the model should reuse."""
+    rid = str(ref_id or "")
+    al = str(alias or "")
+    return (
+        rid.startswith(REF_PREFIX)
+        or al == CURRENT_ALIAS
+        or al.startswith(HISTORY_ALIAS_PREFIX)
+    )
+
+
+def public_data_refs(refs: dict) -> dict:
+    """Drop SessionPlan envelope rows from an LLM-facing ref inventory."""
+    return {
+        rid: alias
+        for rid, alias in (refs or {}).items()
+        if not is_session_plan_listing(str(rid), str(alias or ""))
+    }
+
 
 SESSION_PLAN_UPDATED = "session_plan_updated"
 SESSION_PLAN_PROGRESS = "session_plan_progress"
@@ -66,7 +89,7 @@ def _new_envelope_id() -> str:
 
 
 def _history_alias(envelope_id: str) -> str:
-    return f"session-plan-id:{envelope_id}"
+    return f"{HISTORY_ALIAS_PREFIX}{envelope_id}"
 
 
 def goal_key(gis_chapter: Optional[dict[str, Any]], query: str = "") -> str:

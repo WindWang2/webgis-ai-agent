@@ -1098,6 +1098,8 @@ class ToolRegistry:
 
                     # 解引用失败：构造详细错误信息引导 AI 自愈
                     available_refs = await session_data_manager.list_refs(session_id)
+                    from app.services.session_plan import public_data_refs
+                    available_refs = public_data_refs(available_refs)
                     ref_info = "\n".join([f"- {rid} ({alias})" if alias else f"- {rid}" for rid, alias in available_refs.items()])
                     error_msg = f"无法找到引用数据或别名: '{node}'。"
                     if available_refs:
