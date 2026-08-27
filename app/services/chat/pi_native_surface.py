@@ -153,11 +153,20 @@ def _pi_parameters(function_schema: dict[str, Any]) -> dict[str, Any]:
 
 
 def native_tools_for_pi(registry: Any) -> list[dict[str, Any]]:
-    """Live-registry schemas in Pi ``registerTool`` shape."""
+    """Live-registry schemas in Pi ``registerTool`` shape.
+
+    A native name missing from the registry raises rather than degrading to
+    an empty schema — the dump is the only source of Pi's native surface and
+    must never silently drift from the registry (spec story 35)."""
     schemas = {
         item.get("function", {}).get("name"): item.get("function", {})
         for item in registry.get_schemas_subset(set(NATIVE_TOOL_NAMES))
     }
+    missing = [name for name in NATIVE_TOOL_NAMES if not schemas.get(name)]
+    if missing:
+        raise ValueError(
+            f"native tool(s) missing from live registry: {', '.join(missing)}"
+        )
     dumped: list[dict[str, Any]] = []
     for name in NATIVE_TOOL_NAMES:
         fn = schemas.get(name) or {}
@@ -166,12 +175,7 @@ def native_tools_for_pi(registry: Any) -> list[dict[str, Any]]:
                 "name": name,
                 "label": _LABELS.get(name, name),
                 "description": fn.get("description") or name,
-                "parameters": _pi_parameters(fn) if fn else {
-                    "type": "object",
-                    "properties": {},
-                    "required": [],
-                    "additionalProperties": False,
-                },
+                "parameters": _pi_parameters(fn),
                 "promptSnippet": _SNIPPETS.get(name, ""),
             }
         )

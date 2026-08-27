@@ -1,6 +1,8 @@
 """Pi native GIS surface: live schemas + resolveCall kinds."""
 from pathlib import Path
 
+import pytest
+
 from app.services.chat.pi_native_surface import (
     EXECUTE_PROXY_NAME,
     NATIVE_TOOL_NAMES,
@@ -104,3 +106,14 @@ def test_write_native_tools_file(tmp_path: Path):
     text = path.read_text(encoding="utf-8")
     for name in NATIVE_TOOL_NAMES:
         assert name in text
+
+
+def test_native_dump_raises_on_missing_registry_name():
+    """A native name absent from the registry must fail the dump, not
+    silently stub an empty schema (spec story 35: live registry only)."""
+    class _PartialRegistry:
+        def get_schemas_subset(self, names):
+            return []  # nothing registered — every native name is missing
+
+    with pytest.raises(ValueError, match="missing from live registry"):
+        native_tools_for_pi(_PartialRegistry())

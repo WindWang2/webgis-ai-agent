@@ -72,14 +72,20 @@ def _check_celery():
 
 
 def _live_agent_runtime() -> str:
-    """Pi if the bundled subprocess is up; ChatEngine otherwise."""
+    """Pi if the bundled subprocess is up; ChatEngine otherwise.
+
+    Fail-closed: an unreadable bridge state must not claim "pi" off the flag
+    alone — that is the hardcoded-badge lie #1032 kills. If the probe itself
+    errors, report ChatEngine (the safe fallback that serves when the bridge
+    cannot be verified)."""
     try:
         from app.api.routes.chat import _use_pi_bridge
         if _use_pi_bridge():
             return "pi"
         return "chatengine"
     except Exception:
-        return "pi" if settings.USE_NEW_AGENT else "chatengine"
+        logger.warning("agent_runtime probe failed; reporting chatengine", exc_info=True)
+        return "chatengine"
 
 
 @router.get("/health")
