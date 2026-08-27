@@ -35,11 +35,14 @@ from app.agent_pi_bridge import PiRpcError
 
 logger = logging.getLogger(__name__)
 
-# Pi RPC entry point
-PI_RPC_ENTRY = Path(__file__).parent.parent.parent.parent / "vendor" / "pi" / "packages" / "coding-agent" / "dist" / "rpc-entry.js"
-
-# Default session directory
-DEFAULT_SESSION_DIR = Path(__file__).parent.parent.parent.parent / ".pi" / "sessions"
+# Bundled Pi (vendor/pi) — never the user's global `pi` CLI / ~/.pi tree.
+REPO_ROOT = Path(__file__).resolve().parents[3]
+PI_RPC_ENTRY = (
+    REPO_ROOT / "vendor" / "pi" / "packages" / "coding-agent" / "dist" / "rpc-entry.js"
+)
+PI_AGENT_DIR = REPO_ROOT / ".pi" / "agent"
+DEFAULT_SESSION_DIR = REPO_ROOT / ".pi" / "sessions"
+BUNDLED_PI_PROVIDER = "webgis"
 
 # REVIEW-P2 (Pi subprocess trust boundary):
 # Cap a single stdout line at 16 MiB. Pi is a trusted subprocess, but "trusted"
@@ -92,9 +95,9 @@ class PiRpcClient:
         cwd: Optional[Path] = None,
         extension_paths: Optional[list[str]] = None,
     ):
-        self._pi_rpc_entry = pi_rpc_entry or PI_RPC_ENTRY
+        self._pi_rpc_entry = Path(pi_rpc_entry) if pi_rpc_entry else PI_RPC_ENTRY
         self._session_dir = session_dir or DEFAULT_SESSION_DIR
-        self._cwd = cwd or Path.cwd()
+        self._cwd = cwd or REPO_ROOT
         self._extension_paths = extension_paths or []
         self._process: Optional[subprocess.Popen] = None
         self._pending_requests: dict[str, asyncio.Future] = {}
@@ -177,22 +180,29 @@ class PiRpcClient:
         self._process_died_event.clear()
 
         self._session_dir.mkdir(parents=True, exist_ok=True)
+        PI_AGENT_DIR.mkdir(parents=True, exist_ok=True)
 
         env = os.environ.copy()
+        env["PI_CODING_AGENT_DIR"] = str(PI_AGENT_DIR)
         env["PI_SESSION_DIR"] = str(self._session_dir)
         env["PI_OFFLINE"] = "1"
         env["PI_SKIP_VERSION_CHECK"] = "1"
         # 审计 SEC-01：注入共享密钥，Pi 扩展的 HTTP 回调用它调 /pi-tools/execute
         from app.core.bridge_secret import get_bridge_secret
         env["WEBGIS_BRIDGE_SECRET"] = get_bridge_secret()
-        env["WEBGIS_API_BASE"] = env.get("WEBGIS_API_BASE", "http://127.0.0.1:8000")
-        # audit4 #987: 后端 LLM 凭证映射进 Pi 子进程 —— 此前 Pi 模型配置与
-        # 后端完全双轨（仅继承 os.environ），管理面板改 key 对 Pi 无效。
-        # Pi 的 openai provider 读 OPENAI_API_KEY；未显式设置时映射后端
-        # LLM_API_KEY（占位符不映射，避免污染）。可选 PI_PROVIDER + PI_MODEL
-        # 由 spawn 后的 set_model RPC 显式选择 Pi 目录内模型。
+        if not (env.get("WEBGIS_API_BASE") or "").strip():
+            port = (env.get("API_PORT") or env.get("PORT") or "").strip()
+            env["WEBGIS_API_BASE"] = (
+                f"http://127.0.0.1:{port}" if port else "http://127.0.0.1:18000"
+            )
+        # audit4 #987: 后端 LLM 凭证映射进 Pi 子进程。仓内 models.json 指向
+        # 同一套 LLM_BASE_URL / LLM_MODEL，不读用户 ~/.pi。
+        llm_base = ""
+        llm_model = ""
         try:
             from app.core.config import settings as _settings
+            llm_base = str(getattr(_settings, "LLM_BASE_URL", "") or "")
+            llm_model = str(getattr(_settings, "LLM_MODEL", "") or "")
             if not env.get("OPENAI_API_KEY"):
                 _key = getattr(_settings, "LLM_API_KEY", "")
                 if _key and "your-api-key" not in _key:
@@ -200,8 +210,68 @@ class PiRpcClient:
         except Exception:  # noqa: BLE001 — env 映射是尽力而为，绝不阻断 spawn
             pass
 
+        if llm_base and llm_model:
+            (PI_AGENT_DIR / "models.json").write_text(
+                json.dumps(
+                    {
+                        "providers": {
+                            BUNDLED_PI_PROVIDER: {
+                                "baseUrl": llm_base.rstrip("/"),
+                                "api": "openai-completions",
+                                "apiKey": "$OPENAI_API_KEY",
+                                "compat": {
+                                    "supportsDeveloperRole": False,
+                                    "supportsReasoningEffort": False,
+                                },
+                                "models": [
+                                    {"id": llm_model, "name": llm_model, "reasoning": True}
+                                ],
+                            }
+                        }
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (PI_AGENT_DIR / "settings.json").write_text(
+                json.dumps(
+                    {"defaultProvider": BUNDLED_PI_PROVIDER, "defaultModel": llm_model},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
         # Build CLI args with --extension flags for each extension path
-        args = ["node", str(self._pi_rpc_entry), "--mode", "rpc", "--no-session"]
+        rpc_entry = self._pi_rpc_entry.expanduser().resolve()
+        if not rpc_entry.is_file():
+            raise FileNotFoundError(
+                f"Bundled Pi RPC entry missing: {rpc_entry}. "
+                "Build vendor/pi (packages/coding-agent dist/rpc-entry.js)."
+            )
+        try:
+            from app.services.chat.pi_native_surface import dump_native_tools_best_effort
+            native_path = dump_native_tools_best_effort(PI_AGENT_DIR / "native-tools.json")
+            if native_path is not None:
+                env["WEBGIS_NATIVE_TOOLS_PATH"] = str(native_path)
+            else:
+                logger.warning(
+                    "[PiRpc] native GIS schemas not dumped (registry missing?); "
+                    "Pi will only see webgis_execute until the next spawn"
+                )
+        except Exception:
+            logger.warning("[PiRpc] native-tools dump failed", exc_info=True)
+
+        # GIS product: Pi is the host, not a coding agent. Built-in bash/read/
+        # write/edit would otherwise swallow GIS failures (live: cartography
+        # status validation error → bash). Extension tools stay enabled.
+        args = [
+            "node", str(rpc_entry), "--mode", "rpc", "--no-session",
+            "--no-builtin-tools",
+        ]
         for ext_path in self._extension_paths:
             args.extend(["--extension", str(ext_path)])
 

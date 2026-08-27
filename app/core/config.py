@@ -103,6 +103,12 @@ class Settings(BaseSettings):
     CHAT_MAX_ROUNDS: int = 60
     TURN_TOTAL_TIMEOUT_S: float = 900.0
 
+    # 仓内 vendor/pi 是默认 agent 宿主：API 启动即拉起 bundled RPC 子进程。
+    # 测试套件在 conftest 钉 false，避免每个 TestClient 起 Node。
+    # 紧急回退 ChatEngine：USE_NEW_AGENT=false。
+    USE_NEW_AGENT: bool = True
+
+
     NOMINATIM_URL: str = "https://nominatim.openstreetmap.org/search"
 
     # 天地图

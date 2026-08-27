@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { MapSpecRuntime } from '@/lib/mapspec-runtime';
 import { collectCartographicRuntimeObservation } from '@/lib/mapspec-runtime';
-import { apiFetch } from '@/lib/api/transport';
+import { apiFetch, ApiTimeoutError } from '@/lib/api/transport';
 import { devOnly } from '@/lib/utils/logger';
 import type { Layer } from '@/lib/types/layer';
 import type { MapSpec } from '@/lib/mapspec-compiler/types';
@@ -129,6 +129,9 @@ export function useCartographicObservation({
         body: { ...observation, client_generation: clientGeneration },
         ownerToken,
         signal: controller.signal,
+        // Fire-and-forget: evaluation can exceed 30s under a Pi turn's
+        // session lock. Superceded by the next observation's abort.
+        timeoutMs: 0,
         label: 'Cartographic observation error',
       },
     ).then((response) => {
@@ -166,7 +169,11 @@ export function useCartographicObservation({
     }).catch((error) => {
       // A supersede/unmount abort is expected: the newer request (or the
       // unmount) owns the state, so stay quiet and leave the key alone.
-      if (!mountedRef.current || error?.name === "AbortError") return
+      if (
+        !mountedRef.current
+        || error?.name === "AbortError"
+        || error instanceof ApiTimeoutError
+      ) return
       // Only the LATEST request may reset the observation key for retry — a
       // superseded request failing must not force a redundant re-POST of the
       // newer observation (INV-5: retry without a storm).

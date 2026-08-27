@@ -38,6 +38,7 @@ from pydantic import BaseModel
 
 from app.utils.sse import sse_event, sse_event_type
 from app.services.chat.pi_event_mapper import map_event_to_sse, _extract_text_from_event
+from app.services.chat.pi_native_surface import resolve_pi_tool_call
 from app.services.jobs.cancellation import CancellationToken, OperationCancelled, use_token
 from app.services.tool_dispatch_service import ToolDispatchService, normalize_tool_name
 from app.lib.harness.pi_agent_harness import PiAgentHarness
@@ -54,7 +55,10 @@ from app.lib.runtime.evidence import (
 logger = logging.getLogger(__name__)
 
 # Feature flag
-USE_NEW_AGENT = os.getenv("USE_NEW_AGENT", "").lower() in ("true", "1", "yes")
+# 默认 True = 仓内 vendor/pi；False = ChatEngine 回退（测试 conftest 钉 false）。
+from app.core.config import settings as _app_settings
+
+USE_NEW_AGENT = bool(_app_settings.USE_NEW_AGENT)
 
 
 def _env_float_drain(name: str, default: float) -> float:
@@ -199,6 +203,9 @@ def get_tool_registry() -> "ToolRegistry":
 # ADR-0022: this cache + the two dispatch adapters stay here - they are the
 # deliberate rendezvous between the Pi HTTP-callback and SSE adapters.
 _dispatch_result_cache: dict[tuple[str, str], "ToolDispatchResult"] = {}
+# Sidecar: SessionPlan SSE blobs keyed like the dispatch cache, concatenated
+# onto tool_execution_end. Not part of ToolDispatchResult (ADR-0022 shape).
+_session_plan_sse_cache: dict[tuple[str, str], str] = {}
 
 # #554 defect 3: ONE long-lived ToolDispatchService shared by every Pi HTTP
 # callback dispatch (mirrors the legacy engine's RUN-01 pattern — a fresh
@@ -236,6 +243,19 @@ def cache_dispatch_result(
         _dispatch_result_cache.pop(next(iter(_dispatch_result_cache)))
 
 
+def cache_session_plan_sse(tool_call_id: str, sse: str, session_id: str = "") -> None:
+    if not sse:
+        return
+    _session_plan_sse_cache[(session_id, tool_call_id)] = sse
+    if len(_session_plan_sse_cache) > 128:
+        _session_plan_sse_cache.pop(next(iter(_session_plan_sse_cache)))
+
+
+def take_session_plan_sse(tool_call_id: str, session_id: str = "") -> str:
+    """Pop SessionPlan SSE cached for this tool call (empty if none)."""
+    return _session_plan_sse_cache.pop((session_id, tool_call_id), "")
+
+
 def get_cached_dispatch_result(
     tool_call_id: str,
     session_id: Optional[str] = None,
@@ -254,6 +274,7 @@ def get_cached_dispatch_result(
 def _clear_dispatch_cache() -> None:
     """清空所有缓存的 dispatch 结果（新 turn 开始时调用）。"""
     _dispatch_result_cache.clear()
+    _session_plan_sse_cache.clear()
 
 
 def _cleanup_turn_state(turn_sid: str) -> None:
@@ -267,6 +288,7 @@ def _cleanup_turn_state(turn_sid: str) -> None:
     _session_executed_sets.pop(turn_sid, None)
     _session_executed_sets.pop("", None)
     _dispatch_result_cache.clear()
+    _session_plan_sse_cache.clear()
 
 
 def _slim_pi_details_payload(result: Any) -> Any:
@@ -319,6 +341,7 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
     """
     registry = get_tool_registry()
     tool_name = normalize_tool_name(request.name)
+    arguments = dict(request.arguments or {})
     # The HTTP route verifies a signed turn token and writes its immutable sid
     # here. Direct in-process callers/tests may still supply sessionId. Never
     # fall back to the bridge's mutable active turn: a delayed callback could
@@ -326,6 +349,24 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
     session_id = request.sessionId or ""
     if not session_id:
         raise PiRpcError("Pi tool callback has no verified turn session")
+
+    resolved = resolve_pi_tool_call(tool_name, arguments)
+    if resolved.kind == "reject":
+        return PiToolResponse(
+            toolCallId=request.toolCallId,
+            content=[{"type": "text", "text": resolved.error}],
+            details={"error": "native_surface_reject", "tool": tool_name},
+            isError=True,
+        )
+    tool_name = normalize_tool_name(resolved.name)
+    arguments = dict(resolved.arguments)
+
+    if session_id:
+        try:
+            from app.services.session_plan import ensure_session_plan_slot
+            await ensure_session_plan_slot(session_id)
+        except Exception:
+            logger.exception("[PiBridge] SessionPlan slot open failed session=%s", session_id)
 
     # Validate tool exists
     available = set(registry.list_tools())
@@ -360,7 +401,7 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
     # 服务实例按 bridge 复用（#554 缺陷 3）：每回调新建实例会让 _completed_keys
     # 永远为空，同回合内已完成调用的重复调用被误报为"仍在执行中"。
     service = _get_shared_dispatch_service()
-    tc = {"id": request.toolCallId, "function": {"name": tool_name, "arguments": request.arguments or {}}}
+    tc = {"id": request.toolCallId, "function": {"name": tool_name, "arguments": arguments}}
     executed = _session_executed_sets.setdefault(session_id, set())
     # 防御上限：turn 末清理兜底正常路径，此上限兜住跨会话无 turn 的病态累积
     if len(_session_executed_sets) > 128:
@@ -401,8 +442,8 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
             if harness is not None:
                 harness.record_event(ToolCallEvent(
                     tool_call_id=request.toolCallId,
-                    tool_name=request.name,
-                    arguments=request.arguments or {},
+                    tool_name=tool_name,
+                    arguments=arguments,
                     duration_ms=duration_ms,
                     is_error=False,
                     error_msg="",
@@ -421,8 +462,8 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
             if harness is not None:
                 harness.record_event(ToolCallEvent(
                     tool_call_id=request.toolCallId,
-                    tool_name=request.name,
-                    arguments=request.arguments or {},
+                    tool_name=tool_name,
+                    arguments=arguments,
                     duration_ms=duration_ms,
                     is_error=True,
                     error_msg=str(exc)[:200],
@@ -459,7 +500,7 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
             if tasks:
                 latest_task = tasks[-1]
                 if latest_task.status.value in ("pending", "running"):
-                    step = engine.tracker.start_step(latest_task.id, tool_name, request.arguments or {})
+                    step = engine.tracker.start_step(latest_task.id, tool_name, arguments)
                     if result.status == "ok":
                         engine.tracker.complete_step(latest_task.id, step.id, result.raw_result)
                     else:
@@ -469,6 +510,27 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
 
     # 缓存供 SSE 适配器按已验证 turn session 读取。
     cache_dispatch_result(request.toolCallId, result, session_id)
+
+    if result.status == "ok":
+        try:
+            from app.services.session_plan import apply_tool_result, events_to_sse
+            plan_events = await apply_tool_result(
+                session_id,
+                tool_name,
+                result.raw_result,
+                success=True,
+                geojson_ref=result.geojson_ref,
+            )
+            cache_session_plan_sse(
+                request.toolCallId,
+                events_to_sse(plan_events, session_id),
+                session_id,
+            )
+        except Exception:
+            logger.exception(
+                "[PiBridge] SessionPlan apply failed session=%s tool=%s",
+                session_id, tool_name,
+            )
 
     raw = result.raw_result if isinstance(result.raw_result, dict) else {}
     has_cartographic_generation = bool(raw.get("mapspec_fingerprint"))
@@ -513,7 +575,7 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
             # classified structurally (result carries mapspec_fingerprint) in
             # PiAgentHarness.record_tool_result.
             tool_name=tool_name,
-            arguments=request.arguments or {},
+            arguments=arguments,
             duration_ms=duration_ms,
             is_error=is_error,
             # P1 fix: truncate to a short message rather than the full payload.
@@ -1756,17 +1818,15 @@ class PiBridge:
         # could overwrite). Pi events carry no session of their own.
         turn_sid = session_id or ""
         from app.api.routes.pi_tools import get_bridge_secret
-        from app.services.chat.pi_turn_context import attach_turn_context, issue_turn_token
+        from app.services.chat.pi_turn_context import bind_turn_prompt, issue_turn_token
 
         turn_id = _mint_turn_id()
         turn_token = issue_turn_token(get_bridge_secret(), turn_sid, turn_id)
-        data: dict[str, Any] = {
-            "message": attach_turn_context(message, turn_token, cartography_context or ""),
-        }
+        data: dict[str, Any] = {}
         if turn_sid:
             data["sessionId"] = turn_sid
 
-        # Runtime observability: prompt() now mints a real turn_id (previously
+        # Runtime observability: prompt() now mints a real turn_id (previously)
         # its cancellation token carried the *session* id as job_id, so the
         # non-stream path had no turn identity). run_id is a first-class turn
         # handle (the prior "run_id == session_id" reuse is retired here).
@@ -1820,6 +1880,9 @@ class PiBridge:
                 # Drop any residual events from a prior turn before sending, so they
                 # cannot be attributed to this turn.
                 await self._drain_stale_events()
+                data["message"] = await bind_turn_prompt(
+                    message, turn_token, turn_sid, cartography_context or "",
+                )
                 try:
                     await self._rpc.request("prompt", data)
                 except PiRpcError as send_exc:
@@ -2004,13 +2067,11 @@ class PiBridge:
         # overwritten.
         turn_sid = session_id or ""
         from app.api.routes.pi_tools import get_bridge_secret
-        from app.services.chat.pi_turn_context import attach_turn_context, issue_turn_token
+        from app.services.chat.pi_turn_context import bind_turn_prompt, issue_turn_token
 
         turn_id = _mint_turn_id()
         turn_token = issue_turn_token(get_bridge_secret(), turn_sid, turn_id)
-        data: dict[str, Any] = {
-            "message": attach_turn_context(message, turn_token, cartography_context or ""),
-        }
+        data: dict[str, Any] = {}
         if turn_sid:
             data["sessionId"] = turn_sid
 
@@ -2083,6 +2144,9 @@ class PiBridge:
                 # Drop residual events from a prior turn so they can't be dequeued
                 # and attributed to this session.
                 await self._drain_stale_events()
+                data["message"] = await bind_turn_prompt(
+                    message, turn_token, turn_sid, cartography_context or "",
+                )
 
                 # Send prompt command
                 try:
@@ -2103,7 +2167,12 @@ class PiBridge:
                 # event (not a Pi event), so first_event is NOT marked here — it is
                 # marked on the first REAL Pi event below, so first_event/TTFT-proxy
                 # measures prompt→first-Pi-event, not lock+drain+RPC-send.
-                yield sse_event("task_start", {"task_id": turn_sid, "session_id": turn_sid, "turn_id": turn_id})
+                yield sse_event("task_start", {
+                    "task_id": turn_sid,
+                    "session_id": turn_sid,
+                    "turn_id": turn_id,
+                    "agent_runtime": "pi",
+                })
 
                 # G: watch the subprocess death signal alongside the event queue so
                 # a mid-stream Pi crash ends the turn promptly (error + done +
@@ -2188,6 +2257,12 @@ class PiBridge:
                                 turn_harness.record_sse_event({
                                     **event, "run_id": run_id, "turn_id": turn_id,
                                 })
+                            if event.get("type") == "tool_execution_end":
+                                extra_plan = take_session_plan_sse(
+                                    str(event.get("toolCallId") or ""), turn_sid,
+                                )
+                                if extra_plan:
+                                    sse = (sse or "") + extra_plan
                             if sse:
                                 rt_ev.inc_sse_event()
                                 # V3: step_result 负载加 additive turn_id 字段（前端 ack 时

@@ -72,7 +72,7 @@ async def lifespan(app: FastAPI):
     set_chat_engine(chat_engine)
     chat.engine = chat_engine
 
-    # Feature flag: 初始化 Pi agent (vendor/pi) 通过 RPC 调用
+    # 仓内 vendor/pi：API 启动即拉起 bundled RPC 子进程（不是用户全局 pi CLI）。
     from app.agent_pi_bridge import USE_NEW_AGENT, get_pi_bridge
     if USE_NEW_AGENT:
         try:
@@ -81,11 +81,15 @@ async def lifespan(app: FastAPI):
             # 不是 .ts）。.mjs 是 ESM 格式，Node 原生支持无需编译。
             extension_path = str(Path(__file__).parent.parent / "app" / "extensions" / "webgis-tools" / "index.mjs")
             chat.pi_bridge = await get_pi_bridge(extension_paths=[extension_path])
-            logger.info("[lifespan] Pi agent system enabled (USE_NEW_AGENT=true)")
+            logger.info("[lifespan] bundled vendor/pi RPC agent started")
         except Exception as e:
-            logger.warning(f"[lifespan] Failed to initialize Pi bridge: {e}, falling back to ChatEngine")
+            logger.error(
+                f"[lifespan] bundled vendor/pi failed to start: {e}; "
+                "falling back to ChatEngine"
+            )
             chat.pi_bridge = None
     else:
+        logger.info("[lifespan] USE_NEW_AGENT=false — ChatEngine path (bundled Pi not started)")
         chat.pi_bridge = None
 
     # 审计 S46：cleanup_idle_sessions 之前是死代码（定义在 session_data_manager

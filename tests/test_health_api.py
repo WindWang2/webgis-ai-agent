@@ -29,6 +29,7 @@ async def test_health_check(client):
     assert data["status"] == "healthy"
     assert "timestamp" in data
     assert data["service"] == "WebGIS AI Agent"
+    assert data["agent_runtime"] in {"pi", "chatengine"}
 
 
 @pytest.mark.asyncio

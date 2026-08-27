@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { toMapLibrePaint } from "@/lib/mapspec-runtime/paint-bridge";
+import { sanitizeMapLibreExpression, toMapLibrePaint } from "@/lib/mapspec-runtime/paint-bridge";
 import { compileStyleMethod } from "@/lib/mapspec-compiler/compiler";
 import type { MapSpecLayer } from "@/lib/mapspec-compiler/types";
 
@@ -121,5 +121,48 @@ describe("toMapLibrePaint — 冲突与防御", () => {
     expect(toMapLibrePaint(layer("circle", { color: "#fff" }))).toEqual({
       "circle-color": "#fff",
     });
+  });
+});
+
+describe("sanitizeMapLibreExpression — MapLibre arity", () => {
+  it("appends fallback to a case expression missing the otherwise arm", () => {
+    // Pi/agent fill-color often: ["case", cond, color] (length 3, odd).
+    expect(
+      sanitizeMapLibreExpression([
+        "case",
+        ["==", ["get", "lisa_cluster"], "HH"],
+        "#ff0000",
+      ]),
+    ).toEqual([
+      "case",
+      ["==", ["get", "lisa_cluster"], "HH"],
+      "#ff0000",
+      "#cccccc",
+    ]);
+  });
+
+  it("appends fallback to a match expression missing default (even length)", () => {
+    expect(
+      sanitizeMapLibreExpression(["match", ["get", "cluster"], "HH", "#ff0000", "LL", "#0000ff"]),
+    ).toEqual(["match", ["get", "cluster"], "HH", "#ff0000", "LL", "#0000ff", "#cccccc"]);
+  });
+
+  it("leaves a valid LISA match untouched", () => {
+    const expr = ["match", ["get", "lisa_cluster"], "HH", "#ff0000", "NS", "#ccc", "#ccc"];
+    expect(sanitizeMapLibreExpression(expr)).toEqual(expr);
+  });
+
+  it("toMapLibrePaint sanitizes native fill-color case before addLayer", () => {
+    const out = toMapLibrePaint(
+      layer("fill", {
+        "fill-color": ["case", ["==", ["get", "lisa_cluster"], "HH"], "#ff0000"],
+      }),
+    );
+    expect(out["fill-color"]).toEqual([
+      "case",
+      ["==", ["get", "lisa_cluster"], "HH"],
+      "#ff0000",
+      "#cccccc",
+    ]);
   });
 });

@@ -4,6 +4,8 @@ Tests subprocess initialization, request-response matching, and event queueing.
 """
 import asyncio
 import json
+from pathlib import Path
+
 import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
 
@@ -57,6 +59,7 @@ async def test_start_popen_uses_binary_pipes(monkeypatch):
     captured = {}
 
     def fake_popen(*args, **kwargs):
+        captured["args"] = args[0] if args else kwargs.get("args")
         captured["kwargs"] = kwargs
         proc = MagicMock()
         proc.stdin = MagicMock()
@@ -78,6 +81,52 @@ async def test_start_popen_uses_binary_pipes(monkeypatch):
 
     assert captured["kwargs"].get("text") is False
     assert captured["kwargs"].get("universal_newlines") in (None, False)
+    spawn = list(captured["args"] or [])
+    assert "--no-builtin-tools" in spawn
+    assert "--mode" in spawn and "rpc" in spawn
+
+
+@pytest.mark.asyncio
+async def test_start_dumps_native_tools_from_live_registry(monkeypatch, tmp_path):
+    """Spawn writes live-registry native schemas for the extension to register."""
+    from app.agent_pi_bridge import set_tool_registry
+    from app.services.chat import pi_rpc_client as mod
+    from app.tools import init_tools
+    from app.tools.registry import ToolRegistry
+
+    registry = ToolRegistry()
+    init_tools(registry)
+    set_tool_registry(registry)
+
+    captured = {}
+
+    def fake_popen(*args, **kwargs):
+        captured["env"] = kwargs.get("env") or {}
+        proc = MagicMock()
+        proc.stdin = MagicMock()
+        proc.stdout = DummyPipe([])
+        proc.stderr = DummyPipe([])
+        proc.poll.return_value = None
+        return proc
+
+    monkeypatch.setattr(mod, "PI_AGENT_DIR", tmp_path)
+    monkeypatch.setattr(mod.subprocess, "Popen", fake_popen)
+    client = mod.PiRpcClient()
+    monkeypatch.setattr(client, "_wait_for_ready", AsyncMock(return_value=None))
+    try:
+        await client.start()
+    finally:
+        if client._reader_task:
+            client._reader_task.cancel()
+        if client._stderr_task:
+            client._stderr_task.cancel()
+
+    path = captured["env"].get("WEBGIS_NATIVE_TOOLS_PATH")
+    assert path
+    text = Path(path).read_text(encoding="utf-8")
+    assert "webgis_map_intent" in text
+    assert "query_local_poi" in text
+    assert "webgis_cartography_status" in text
 
 
 def test_readline_bounded_accepts_text_pipe():

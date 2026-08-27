@@ -4,11 +4,12 @@
 
 ### Session / Conversation
 A **Conversation** is the persistent DB record (`conversations` table). A **Session** is the
-GIS world's identity: the `session_id` UUID that owns MapSpec, checkpoints, refs, and
-runtime caches. The two names are used interchangeably in code; `session_id` is also a
-capability token. Pi's own session is a replaceable agent runtime, not this identity.
-_Avoid_: treating `pi_session_id` / Pi tree entry as the MapSpec primary key; inventing a
-separate `gis_session_id`.
+GIS world's identity: the `session_id` UUID that owns MapSpec, checkpoints, refs,
+runtime caches, and the current **SessionPlan**. The two names are used interchangeably
+in code; `session_id` is also a capability token. Pi's own session is a replaceable
+agent runtime, not this identity.
+_Avoid_: treating `pi_session_id` / Pi tree entry as the MapSpec or SessionPlan primary key;
+inventing a separate `gis_session_id`.
 
 ### ref_id (Cursor)
 An opaque 16-hex string (e.g., `ref:geojson-abc123...`) pointing to large data objects stored
@@ -84,12 +85,24 @@ recipes describe cartographic method; neither hardcodes tool-call sequences
 (capability→tool resolution happens at execution time).
 
 ### MapProductPlan
-The typed, replayable execution plan produced by `MapProductPlanner`
+The typed, replayable GIS product plan produced by `MapProductPlanner`
 (`app/services/gis_harness/planner.py`) in two phases: draft from intent, then
 finalized against the real Spatial Profile (eligibility re-check, layer
 adjudication with structured fallback evidence `{from, to, reason_code,
 evidence}`, final component set, completeness assessment). `plan_id` is derived
-deterministically from (query, recipe) — diffable and replayable.
+deterministically from (query, recipe) — diffable and replayable. On the Pi
+path it is the GIS chapter inside **SessionPlan**, not the name of the host-plan
+truth.
+
+### SessionPlan
+The Session's current host-plan envelope: an embedded MapProductPlan as the GIS
+chapter, plus capability-completion progress (not a tool-call sequence). Owned
+by `session_id` in SessionStore under alias `session-plan`
+(`app/services/session_plan.py`); a new user goal supersedes it. SSE names are
+`session_plan_updated` / `session_plan_progress` / `session_plan_superseded`.
+_Avoid_: PiPlan, HostPlan, treating CanonicalPlan or MapProductPlan as the
+Pi-path plan truth, storing the envelope in a Pi session / `custom` entry,
+reusing CanonicalPlan `plan_*` event names on the Pi path.
 
 ### CartographyComponent
 A typed, individually-addressable map-decoration unit (title, north_arrow,
@@ -638,6 +651,8 @@ Layer 1 ── * LayerPermission
 Conversation 1 ── * Message
 Conversation 1 ── * Report
 Conversation 1 ── 1 SessionData (in-memory/Redis)
+Session 1 ── 0..1 SessionPlan (current host-plan envelope)
+SessionPlan 1 ── 1 MapProductPlan (GIS chapter)
 Conversation 1 ── * TaskInfo
 Layer (result_layer_id) ◄── AnalysisTask
 UploadRecord (session_id) ──── Conversation

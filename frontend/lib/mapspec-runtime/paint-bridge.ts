@@ -52,6 +52,42 @@ const CANONICAL_PAINT_KEYS: Record<string, Record<string, string>> = {
   },
 };
 
+const FALLBACK_COLOR = "#cccccc";
+
+/**
+ * MapLibre rejects color expressions with the wrong arity:
+ *   case         — length including op must be even (≥4):  ["case", cond, out, fallback]
+ *                  odd length → "Expected an odd number of arguments."
+ *   match        — length must be odd (≥5)
+ *   interpolate  — length must be odd (≥7, at least two stops)
+ *   step         — length must be odd (≥3)
+ * Agent-authored MapSpec (Pi layer_upsert) often omits the match/case fallback.
+ */
+export function sanitizeMapLibreExpression(
+  value: unknown,
+  fallback: string = FALLBACK_COLOR,
+): unknown {
+  if (!Array.isArray(value) || typeof value[0] !== "string") return value;
+  const op = value[0];
+  if (op === "case") {
+    // MapLibre case.ts: args.length must be even and ≥4.
+    if (value.length < 3) return fallback;
+    if (value.length % 2 !== 0) return [...value, fallback];
+    return value;
+  }
+  if (op === "match") {
+    // MapLibre match.ts: args.length must be odd and ≥5.
+    if (value.length < 4) return fallback;
+    if (value.length % 2 === 0) return [...value, fallback];
+    return value;
+  }
+  if (op === "interpolate" || op === "step") {
+    if (value.length % 2 === 0) return [...value, fallback];
+    return value;
+  }
+  return value;
+}
+
 /** heatmap 的规范 `color`(raw hex)→ 透明→热色密度 ramp,与 compiler.ts 热力图分支同形。 */
 function heatmapColorRamp(hotColor: string): unknown[] {
   return [
@@ -109,6 +145,10 @@ export function toMapLibrePaint(layer: MapSpecLayer): Record<string, unknown> {
     if (layer.type === "heatmap" && key === "color") continue;
     if (!isNativePaintKey(layer.type, key)) continue;
     if (out[key] === undefined) out[key] = value;
+  }
+
+  for (const [key, value] of Object.entries(out)) {
+    out[key] = sanitizeMapLibreExpression(value);
   }
 
   return out;
