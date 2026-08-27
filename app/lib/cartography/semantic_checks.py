@@ -2327,6 +2327,10 @@ def evaluate_cartography_semantics(
         _check_label_collision(report, mapspec, layer, lid, sid, profile)
         _check_scale_svs(report, mapspec, layer, lid, sid, profile)
 
+    # 7pre. Component layout QA（C4）：zone 容量 / singleton 重复 / 悬空绑定 /
+    # floating 矩形重叠——desired-state 证据即可评，不再恒 not_evaluated。
+    _check_component_layout(report, mapspec)
+
     # 7. Legend / style field consistency (warning).
     legend = (mapspec.get("layout") or {}).get("legend") or {}
     legend_field = legend.get("field") if isinstance(legend, dict) else None
@@ -2350,3 +2354,111 @@ def evaluate_cartography_semantics(
     _check_map_legend_completeness(report, mapspec, layers)
 
     return report
+
+
+def _check_component_layout(report: CartographyReport, mapspec: Dict[str, Any]) -> None:
+    """C4（Cartographic QA）：组件布局检查——desired-state 证据即可评。
+
+    维度（layout_constraints 的 zone 模型 + floating 矩形）：
+    - zone 容量超限 / exclusive zone 重复占用（anchored 组件）；
+    - singleton 组件重复（title/north_arrow/scale_bar/attribution）；
+    - 组件 layerId 悬空（指向不存在的图层）；
+    - floating 组件矩形重叠（拖拽后压住另一个 floating 面板）。
+
+    floating 组件的位置由用户手势拥有（placement.mode=floating 豁免 zone
+    容量——用户可以把它放任何地方），但 floating 之间的矩形重叠仍要报。
+    无组件 / 全部 not_applicable 时 pass（有证据的通过，不是 not_evaluated）。
+    """
+    from types import SimpleNamespace
+
+    from app.lib.cartography.layout_constraints import (
+        detect_collisions,
+        detect_orphan_components,
+    )
+
+    layout = mapspec.get("layout") if isinstance(mapspec.get("layout"), dict) else {}
+    raw = layout.get("components")
+    if not isinstance(raw, list) or not raw:
+        return  # 无组件：布局维度不适用（不产检查项）
+    components = [c for c in raw if isinstance(c, dict)]
+
+    layer_ids = {
+        str(layer.get("id"))
+        for layer in (mapspec.get("layers") or [])
+        if isinstance(layer, dict)
+    }
+
+    def _adapt(c: Dict[str, Any]) -> SimpleNamespace:
+        placement = c.get("placement") if isinstance(c.get("placement"), dict) else {}
+        return SimpleNamespace(
+            id=str(c.get("id") or ""),
+            type=str(c.get("type") or ""),
+            enabled=bool(c.get("enabled", True)),
+            # floating 组件豁免 zone 容量（位置归用户手势所有）
+            position="none" if placement.get("mode") == "floating" else str(c.get("position") or "none"),
+            priority=int(c.get("priority") or 0),
+            options=c.get("options") if isinstance(c.get("options"), dict) else {},
+        )
+
+    adapted = [_adapt(c) for c in components]
+    issues: List[str] = []
+    issues.extend(detect_collisions(adapted))
+    issues.extend(detect_orphan_components(adapted, sorted(layer_ids)))
+    issues.extend(_detect_floating_overlaps(components))
+
+    if not issues:
+        report.add_check(
+            "LAYOUT_COLLISION",
+            "pass",
+            f"{len(components)} components: no zone overflow, singleton duplication, "
+            "orphan binding, or floating overlap",
+            evidence_class="desired_state",
+        )
+        return
+    report.add_check(
+        "LAYOUT_COLLISION",
+        "warning",
+        "; ".join(issues[:6]),
+        severity="warning",
+        evidence_class="desired_state",
+        evidence={"issues": issues},
+    )
+
+
+def _detect_floating_overlaps(components: List[Dict[str, Any]]) -> List[str]:
+    """floating 组件矩形重叠（归一化 x/y/width/height 相交检测）。
+
+    仅报 warning：用户可能有意叠放（如临时收起的统计卡）；QA 曝光即可，
+    不 auto_safe 修复（修复会挪动用户手动摆放的位置——user wins）。
+    """
+    floating: List[Dict[str, Any]] = []
+    for c in components:
+        placement = c.get("placement") if isinstance(c.get("placement"), dict) else {}
+        if not c.get("enabled", True) or placement.get("mode") != "floating":
+            continue
+        try:
+            floating.append({
+                "id": str(c.get("id") or c.get("type") or "?"),
+                "x": float(placement.get("x", 0)),
+                "y": float(placement.get("y", 0)),
+                "w": float(placement.get("width", 0) or 0),
+                "h": float(placement.get("height", 0) or 0),
+            })
+        except (TypeError, ValueError):
+            continue
+
+    issues: List[str] = []
+    for i in range(len(floating)):
+        for j in range(i + 1, len(floating)):
+            a, b = floating[i], floating[j]
+            if a["w"] <= 0 or a["h"] <= 0 or b["w"] <= 0 or b["h"] <= 0:
+                continue
+            overlap_x = min(a["x"] + a["w"], b["x"] + b["w"]) - max(a["x"], b["x"])
+            overlap_y = min(a["y"] + a["h"], b["y"] + b["h"]) - max(a["y"], b["y"])
+            if overlap_x > 0 and overlap_y > 0:
+                issues.append(
+                    f"floating components {a['id']} and {b['id']} overlap "
+                    f"({overlap_x:.2f}x{overlap_y:.2f} normalized units)"
+                )
+    return issues
+
