@@ -231,6 +231,60 @@ def _get_shared_dispatch_service() -> "ToolDispatchService":
     return _dispatch_service
 
 
+_DISPATCH_CACHE_MAX = 256
+_SESSION_PLAN_CACHE_MAX = 256
+_SESSION_EXECUTED_SETS_MAX = 256
+
+
+def _get_active_session_id() -> str:
+    """Return the currently active turn's session_id, or empty string if none."""
+    if _active_turn_context and len(_active_turn_context) >= 1:
+        return _active_turn_context[0] or ""
+    return ""
+
+
+def _evict_dispatch_result_cache() -> None:
+    """Evict stale cache entries, protecting the active turn's session."""
+    if len(_dispatch_result_cache) <= _DISPATCH_CACHE_MAX:
+        return
+    active_sid = _get_active_session_id()
+    for key in list(_dispatch_result_cache.keys()):
+        if not active_sid or key[0] != active_sid:
+            _dispatch_result_cache.pop(key, None)
+            if len(_dispatch_result_cache) <= _DISPATCH_CACHE_MAX:
+                return
+    if len(_dispatch_result_cache) > _DISPATCH_CACHE_MAX:
+        _dispatch_result_cache.pop(next(iter(_dispatch_result_cache)), None)
+
+
+def _evict_session_plan_sse_cache() -> None:
+    """Evict stale SessionPlan SSE entries, protecting the active turn's session."""
+    if len(_session_plan_sse_cache) <= _SESSION_PLAN_CACHE_MAX:
+        return
+    active_sid = _get_active_session_id()
+    for key in list(_session_plan_sse_cache.keys()):
+        if not active_sid or key[0] != active_sid:
+            _session_plan_sse_cache.pop(key, None)
+            if len(_session_plan_sse_cache) <= _SESSION_PLAN_CACHE_MAX:
+                return
+    if len(_session_plan_sse_cache) > _SESSION_PLAN_CACHE_MAX:
+        _session_plan_sse_cache.pop(next(iter(_session_plan_sse_cache)), None)
+
+
+def _evict_session_executed_set() -> None:
+    """Evict stale session executed sets, protecting the active turn's session."""
+    if len(_session_executed_sets) <= _SESSION_EXECUTED_SETS_MAX:
+        return
+    active_sid = _get_active_session_id()
+    for sid in list(_session_executed_sets.keys()):
+        if not active_sid or sid != active_sid:
+            _session_executed_sets.pop(sid, None)
+            if len(_session_executed_sets) <= _SESSION_EXECUTED_SETS_MAX:
+                return
+    if len(_session_executed_sets) > _SESSION_EXECUTED_SETS_MAX:
+        _session_executed_sets.pop(next(iter(_session_executed_sets)), None)
+
+
 def cache_dispatch_result(
     tool_call_id: str,
     result: "ToolDispatchResult",
@@ -238,17 +292,14 @@ def cache_dispatch_result(
 ) -> None:
     """缓存一次 dispatch 的结果，供 SSE 适配器按 session/toolCallId 读取。"""
     _dispatch_result_cache[(session_id, tool_call_id)] = result
-    # 防御上限：turn 末清理兜底正常路径，此上限兜住"无后续 turn"的病态窗口
-    if len(_dispatch_result_cache) > 128:
-        _dispatch_result_cache.pop(next(iter(_dispatch_result_cache)))
+    _evict_dispatch_result_cache()
 
 
 def cache_session_plan_sse(tool_call_id: str, sse: str, session_id: str = "") -> None:
     if not sse:
         return
     _session_plan_sse_cache[(session_id, tool_call_id)] = sse
-    if len(_session_plan_sse_cache) > 128:
-        _session_plan_sse_cache.pop(next(iter(_session_plan_sse_cache)))
+    _evict_session_plan_sse_cache()
 
 
 def take_session_plan_sse(tool_call_id: str, session_id: str = "") -> str:
@@ -278,17 +329,20 @@ def _clear_dispatch_cache() -> None:
 
 
 def _cleanup_turn_state(turn_sid: str) -> None:
-    """Turn-end cleanup: dedup sets + dispatch cache.
+    """Turn-end cleanup: dedup sets + dispatch cache for the ending turn's session.
 
-    Dispatch results written by the HTTP callback but never consumed by the
-    SSE adapter (client disconnected / turn aborted) are dropped too. This is
-    safe because turns are strictly serial and
-    the mapper only consumes within the turn.
+    Dispatch results and SessionPlan SSE written by the HTTP callback for this
+    session are dropped if never consumed. Scoped to turn_sid to prevent wiping
+    unrelated sessions' state under multi-session concurrency.
     """
     _session_executed_sets.pop(turn_sid, None)
     _session_executed_sets.pop("", None)
-    _dispatch_result_cache.clear()
-    _session_plan_sse_cache.clear()
+    for key in list(_dispatch_result_cache.keys()):
+        if key[0] == turn_sid or key[0] == "":
+            _dispatch_result_cache.pop(key, None)
+    for key in list(_session_plan_sse_cache.keys()):
+        if key[0] == turn_sid or key[0] == "":
+            _session_plan_sse_cache.pop(key, None)
 
 
 def _slim_pi_details_payload(result: Any) -> Any:
@@ -405,9 +459,7 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
     service = _get_shared_dispatch_service()
     tc = {"id": request.toolCallId, "function": {"name": tool_name, "arguments": arguments}}
     executed = _session_executed_sets.setdefault(session_id, set())
-    # 防御上限：turn 末清理兜底正常路径，此上限兜住跨会话无 turn 的病态累积
-    if len(_session_executed_sets) > 128:
-        _session_executed_sets.pop(next(iter(_session_executed_sets)))
+    _evict_session_executed_set()
 
     # Runtime observability (W3): recover the active turn's correlation.
     turn_id, run_id, active_session = active_turn_correlation()
