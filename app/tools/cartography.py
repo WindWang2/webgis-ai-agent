@@ -121,7 +121,7 @@ def register_cartography_tools(registry: ToolRegistry):
             from app.services.cartography_service import CartographyService
             from app.lib.cartography.thematic_spec import build_graduated_spec
 
-            # ADR-0052: legend_spec is the canonical thematic style — the single
+            # ADR-0078: legend_spec is the canonical thematic style — the single
             # source both the live MapSpec paint and the <ThematicLegend> overlay
             # derive from. Built through ONE classification (CartographyService
             # stays the engine; the canonical builder delegates to classify, then

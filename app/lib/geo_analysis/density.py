@@ -481,7 +481,7 @@ def kde_contours(
         ]
         if level_vals:
             try:
-                # ADR-0052: route through the canonical continuous builder so the
+                # ADR-0078: route through the canonical continuous builder so the
                 # legend carries `field` (the live map's interpolate needs it) and
                 # the ramp resolves through one path — replacing the hand-built
                 # palette_colors[:5] truncation + missing-field drift. The builder

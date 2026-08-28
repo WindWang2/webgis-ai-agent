@@ -83,7 +83,7 @@ class CartographyService:
             else:
                 # Filter NaN/Inf/bool once at the value-collection seam so a
                 # stray null in the column can no longer poison the quantile/
-                # Jenks breaks (ADR-0052 no-data semantics).
+                # Jenks breaks (ADR-0078 no-data semantics).
                 if isinstance(val, (int, float)) and not isinstance(val, bool) and np.isfinite(val):
                     values.append(float(val))
 
@@ -170,7 +170,7 @@ class CartographyService:
             breaks = [breaks[0], breaks[0]]
         min_val, max_val = min(values), max(values)
 
-        # ADR-0052: resolve palette colors through the single midpoint-sampling
+        # ADR-0078: resolve palette colors through the single midpoint-sampling
         # path (resolve_thematic_colors) so build_thematic_style, build_graduated_spec
         # and h3_binning all share one palette-resolution implementation.
         from app.lib.cartography.thematic_spec import resolve_thematic_colors
