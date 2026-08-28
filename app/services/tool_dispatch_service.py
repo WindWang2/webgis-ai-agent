@@ -215,6 +215,31 @@ def _decode_data_url_png(image: str) -> Optional[bytes]:
         return None
 
 
+class _MultiSlotAcquire:
+    """#1062: 在一个 asyncio.Semaphore 上按槽位数获取/释放的 async 上下文。
+
+    asyncio.Semaphore 没有参数化 acquire(n)；heavy 工具（cost=heavy）占
+    2 槽、其余 1 槽，逐槽获取语义等价。异常路径由 __aexit__ 统一释放
+    已获取的槽，保证不泄漏。
+    """
+
+    def __init__(self, sem: asyncio.Semaphore, slots: int = 1):
+        self._sem = sem
+        self._slots = max(1, int(slots))
+        self._held = 0
+
+    async def __aenter__(self) -> "_MultiSlotAcquire":
+        for _ in range(self._slots):
+            await self._sem.acquire()
+            self._held += 1
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        for _ in range(self._held):
+            self._sem.release()
+        self._held = 0
+
+
 class ToolDispatchService:
     """工具调度的单一拥有者。两条 agent 路径都应经由本服务。"""
 
@@ -295,11 +320,21 @@ class ToolDispatchService:
         # emits 12-20 concurrent tool_calls cannot burst the thread pool / Redis /
         # external APIs. _dedup_lock is already released, so only execution is gated.
         try:
-            async with self._wave_semaphore:
+            # #1062: 消费 ToolCost 元数据（#996 承诺的「wave 并发可按档分桶」
+            # 的最小落地）—— heavy 工具占 2 个并发槽，避免同波多个 heavy
+            # 分析挤占全部 wave 预算让轻工具排队。light/medium 占 1 槽不变。
+            _wave_slots = 2 if self._registry.metadata(tool_name).get("cost") == "heavy" else 1
+            async with _MultiSlotAcquire(self._wave_semaphore, _wave_slots):
                 result = await self._registry.dispatch(tool_name, tool_args_raw, session_id=session_id)
         except OperationCancelled:
             # ADR-0052：取消上抛给工具管道处理（它会记成「已取消」而非工具故障）。
             # 取消的调用不占用 dedup 槽位（本轮后续重试不被“已成功”谎言拦截）。
+            self._release_key(executed_tools, tool_key)
+            raise
+        except asyncio.CancelledError:
+            # #946/#1060：asyncio.CancelledError 是 BaseException，不会命中上面
+            # 两个 handler —— 硬取消（task.cancel()）若不在此外释放占位键，
+            # 本 turn 内同参重试会一直收到「并发在飞」谎言（实际无结果）。
             self._release_key(executed_tools, tool_key)
             raise
         except Exception as e:
@@ -478,9 +513,16 @@ class ToolDispatchService:
             and isinstance(result, dict)
         ):
             if ref_descriptor is None:
-                ref_descriptor = await session_data_manager.get_ref_descriptor(
-                    session_id, geojson_ref
-                )
+                # #1061(b): 此处若不守卫，损坏的 descriptor（JSONDecodeError 等
+                # 非 RedisError 异常）会在工具已成功执行、ref 已落库之后令整个
+                # dispatch 抛错 —— LLM 被告知重试一个副作用已发生的工具。
+                # 与 :469-474 一致按「descriptor 缺失」处理。
+                try:
+                    ref_descriptor = await session_data_manager.get_ref_descriptor(
+                        session_id, geojson_ref
+                    )
+                except Exception:
+                    ref_descriptor = None
             result = await self._author_display_result(
                 session_id=session_id,
                 tool_call_id=str(tc.get("id") or "result"),
@@ -752,6 +794,13 @@ class ToolDispatchService:
             # failed.  The already-stored owned ref remains the carrier.
             if result.get("geojson") is target_data:
                 result = {k: v for k, v in result.items() if k != "geojson"}
+            elif isinstance(result, dict) and result.get("data") is target_data:
+                # #1061(a): #798 只修了成功路径——data-wrapped FC（#517 形族）
+                # 在 authoring 失败时全量要素体此前照旧进入 raw_result /
+                # dispatch 缓存 / tracker。镜像成功分支的剥离，并让 LLM
+                # 知道结果落在哪个 ref（失败分支其余形状均有 result_ref）。
+                result = {k: v for k, v in result.items() if k != "data"}
+                result["result_ref"] = result_ref
             elif result is target_data:
                 feature_count = (
                     len(target_data.get("features", []))

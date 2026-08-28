@@ -7,7 +7,7 @@ import logging
 import os
 from contextlib import contextmanager
 from typing import Any, Callable, Literal, Optional, Type, List, Union
-from pydantic import BaseModel, create_model, ValidationError
+from pydantic import BaseModel, ConfigDict, create_model, ValidationError
 
 from enum import Enum
 
@@ -227,6 +227,10 @@ class ToolRegistry:
         self._tools: dict[str, Callable] = {}
         self._models: dict[str, Type[BaseModel]] = {}
         self._schemas: list[dict] = []
+        # #1062: schema 序列化字节缓存。schema 启动后不可变（唯一 mutator 是
+        # register 同名覆盖 / update_args_model，两处都会失效对应条目），字节
+        # 大小无需每轮在预算闸里重新 json.dumps。
+        self._schema_sizes: dict[str, int] = {}
         # 工具分层元数据。无标注的工具默认 tier=1 (always-on)，确保向后兼容。
         # tier: 1 = 总在 catalog 中 (foundational / high-frequency)
         #       2 = 仅当本轮用户消息触发或最近 N 轮命中相应 domain 时载入
@@ -276,11 +280,31 @@ class ToolRegistry:
                  cost: ToolCost = "light",
                  **kwargs: Any):
         """注册一个工具函数"""
+        if name in self._tools and self._tools[name] is not func:
+            # #1062: 此前静默覆盖同名工具 —— 两个模块撞名（或 skill 热重建
+            # re-register）会无声替换一个活工具。显式告警留痕；显式更新走
+            # update_args_model（有语义契约）。
+            logger.warning(
+                "工具 %s 重复注册：覆盖既有实现（旧 %s -> 新 %s）",
+                name,
+                getattr(self._tools[name], "__module__", "?"),
+                getattr(func, "__module__", "?"),
+            )
         self._tools[name] = func
         if parameters:
             # 优先使用显式提供的 parameters (OpenAI 格式)
             properties = parameters.get("properties", {})
             required = parameters.get("required", [])
+            # #1059: 显式 parameters 只声明 LLM-facing schema；校验模型仍按
+            # 函数签名生成（与 parameters-less 路径同一管线），使未知参数
+            # 拒绝、类型收敛与 JSON-string-list 宽容解码对两路一致。此前该
+            # 分支从不写 _models[name]，这批工具的 dispatch 完全跳过校验，
+            # 未知参数以原生 TypeError 形态漏出（#945 误关闭的回归）。
+            self._models[name] = (
+                args_model
+                if args_model is not None
+                else self._generate_model(name, func, param_descriptions)
+            )
         else:
             # 如果没有显式提供 parameters 或 model，则根据函数签名自动推导
             if args_model is None:
@@ -314,6 +338,7 @@ class ToolRegistry:
         # 移除已存在的同名 schema，确保唯一性
         self._schemas = [s for s in self._schemas if s["function"]["name"] != name]
         self._schemas.append(schema)
+        self._schema_sizes.pop(name, None)
 
         # 校验并确定执行策略
         if execution_policy is None:
@@ -395,6 +420,16 @@ class ToolRegistry:
 
             fields[p_name] = (p_type, default)
 
+        # #1059: 函数本身接受 **kwargs 时，模型必须 extra="allow" —— 否则
+        # 签名推导的零/少字段模型会把函数有意接受的任意参数当未知参数拒绝
+        # （#828 的未知参数闸只应拦截 LLM 幻觉，不应拦截作者声明的弹性签名）。
+        has_var_keyword = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+        if has_var_keyword:
+            return create_model(
+                f"{name}_args", __config__=ConfigDict(extra="allow"), **fields
+            )
         return create_model(f"{name}_args", **fields)
 
     def get_schemas(self) -> list[dict]:
@@ -413,6 +448,7 @@ class ToolRegistry:
         if name not in self._tools:
             raise KeyError(f"tool {name!r} not registered")
         self._models[name] = args_model
+        self._schema_sizes.pop(name, None)
         schema_json = args_model.model_json_schema()
         new_params: dict[str, Any] = {
             "type": "object",
@@ -426,6 +462,24 @@ class ToolRegistry:
     def get_schemas_subset(self, names: set[str]) -> list[dict]:
         """按名称白名单返回 schema 子集；用于 ToolCatalog 分层选择。"""
         return [s for s in self._schemas if s["function"]["name"] in names]
+
+    def schema_size(self, name: str) -> Optional[int]:
+        """该工具 schema 的 ``len(json.dumps(..., ensure_ascii=False))`` 字节数。
+
+        #1062：注册后 schema 不可变，字节大小缓存一次；同名覆盖 /
+        update_args_model 时失效。未注册返回 None（调用方自行兜底）。
+        """
+        cached = self._schema_sizes.get(name)
+        if cached is not None:
+            return cached
+        schema = next(
+            (s for s in self._schemas if s["function"]["name"] == name), None
+        )
+        if schema is None:
+            return None
+        size = len(json.dumps(schema, ensure_ascii=False))
+        self._schema_sizes[name] = size
+        return size
 
     def metadata(self, name: str) -> dict[str, Any]:
         """获取单个工具的分层元数据；未注册时返回 tier=1 兜底。"""

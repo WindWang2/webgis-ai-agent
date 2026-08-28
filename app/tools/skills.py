@@ -320,11 +320,16 @@ def _load_single_skill(registry: ToolRegistry, file_path: str, filename: str):
 
 
 def load_skills(registry: ToolRegistry, skills_dir: str = "app/skills"):
-    """Load all skill scripts from the skills directory."""
+    """Load all skill scripts from the skills directory.
+
+    #1062: .md 技能按目录重建 —— 已删除的 .md 文件此前永远残留在
+    ``_md_skills``（无任何驱逐路径），list_md_skills 会持续广告幽灵技能。
+    """
     if not os.path.exists(skills_dir):
         os.makedirs(skills_dir, exist_ok=True)
         return
 
+    _md_skills.clear()
     for filename in os.listdir(skills_dir):
         if filename.endswith(".py") and not filename.startswith("__"):
             _load_single_skill(registry, os.path.join(skills_dir, filename), filename)
@@ -337,6 +342,10 @@ def watch_skills(registry: ToolRegistry, skills_dir: str = "app/skills"):
     Tracks file modification times. Returns a check function that can be
     called periodically (e.g., every 5s) to detect new or changed skill files.
     Only reloads files that actually changed.
+
+    #1062 NOTE: zero callers in app/ and tests/ — production reload goes
+    through ``create_new_skill`` → ``load_skills``. Retained as a public
+    helper for operational scripts; do not extend without wiring a caller.
     """
     _mtimes: dict[str, float] = {}
 

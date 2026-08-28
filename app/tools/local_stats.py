@@ -52,7 +52,7 @@ def register_local_stats_tools(registry: ToolRegistry):
             "indicators": "county_panel 可选：只返回这些指标（逗号分隔，如 '地区生产总值(万元),户籍人口数(万人)'）",
             "limit": "返回上限（默认 200，最大 2000）",
         },
-        execution_policy=ToolExecutionPolicy.INLINE,
+        execution_policy=ToolExecutionPolicy.THREAD,
         timeout=60.0,
     )
     def query_local_yearbook(

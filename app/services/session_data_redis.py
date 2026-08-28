@@ -1285,6 +1285,16 @@ class RedisSessionStore(BaseSessionStore):
         except aioredis.RedisError as e:
             logger.error("Redis get_ref_descriptor failed for %s/%s: %s", session_id, ref_id, e)
             return None
+        except ValueError as e:
+            # #1061(b): 损坏的 descriptor/payload JSON（半写、截断）抛
+            # JSONDecodeError(ValueError 子类)——此前逃逸出本方法，在工具已
+            # 成功执行后把整个 dispatch 炸成失败。按「descriptor 不可得」
+            # 处理（调用方已有缺失语义），不吞连接类异常。
+            logger.error(
+                "Corrupt ref payload for %s/%s (%s); treating descriptor as missing",
+                session_id, ref_id, e,
+            )
+            return None
 
     async def ref_exists(self, session_id: str, ref_id: str) -> bool:
         """EXISTS on the data key with ``get()``'s recency side-effects.
