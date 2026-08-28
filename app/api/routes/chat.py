@@ -1092,14 +1092,7 @@ async def get_session_plan(
         "query": str(gis.get("query") or "") if gis else None,
         "plan_id": str(gis.get("plan_id") or "") if gis else None,
         "recipe_id": str(gis.get("recipe_id") or "") if gis else None,
-        "progress": [
-            {
-                "capability": row.capability,
-                "status": row.status,
-                "bound_ref": row.bound_ref,
-            }
-            for row in plan.progress
-        ],
+        "progress": [row.model_dump() for row in plan.progress],
         "replaced": plan.replaced,
         "superseded": plan.superseded,
         "updated_at": plan.updated_at,

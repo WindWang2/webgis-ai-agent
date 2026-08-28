@@ -14,20 +14,29 @@ interface Props {
   ownerToken?: string | null;
 }
 
-const STATUS_LABEL: Record<SessionPlanCapabilityStatus, string> = {
-  pending: '待完成',
-  complete: '已完成',
-  voided: '已作废',
-  unavailable: '不可用',
-};
-
 // 已作废（目标变更被作废）与不可用（无法满足）观感必须可区分——前者是
 // 中性灰，后者是警示色；完成走 success 绿，待完成沿用 plan-card 的脉冲点。
-const STATUS_ICON: Record<SessionPlanCapabilityStatus, ReactElement> = {
-  complete: <Check className="h-3 w-3 text-status-success" />,
-  pending: <Circle className="h-3 w-3 text-ink-disabled animate-pulse" />,
-  voided: <MinusCircle className="h-3 w-3 text-ink-disabled" />,
-  unavailable: <CircleSlash className="h-3 w-3 text-status-warning" />,
+// label 与 icon 同源一份 map，新增状态时不会漂移。
+const STATUS_META: Record<
+  SessionPlanCapabilityStatus,
+  { label: string; icon: ReactElement }
+> = {
+  pending: {
+    label: '待完成',
+    icon: <Circle className="h-3 w-3 text-ink-disabled animate-pulse" />,
+  },
+  complete: {
+    label: '已完成',
+    icon: <Check className="h-3 w-3 text-status-success" />,
+  },
+  voided: {
+    label: '已作废',
+    icon: <MinusCircle className="h-3 w-3 text-ink-disabled" />,
+  },
+  unavailable: {
+    label: '不可用',
+    icon: <CircleSlash className="h-3 w-3 text-status-warning" />,
+  },
 };
 
 /**
@@ -90,7 +99,7 @@ export function SessionPlanPanel({ sessionId, ownerToken }: Props) {
           <ul className="space-y-1">
             {plan.progress.map((row) => (
               <li key={row.capability} className="flex items-center gap-2 text-body">
-                <span className="shrink-0">{STATUS_ICON[row.status]}</span>
+                <span className="shrink-0">{STATUS_META[row.status].icon}</span>
                 <span
                   className={`flex-1 truncate ${
                     row.status === 'complete' ? 'text-ink' : 'text-ink-muted'
@@ -102,7 +111,7 @@ export function SessionPlanPanel({ sessionId, ownerToken }: Props) {
                   )}
                 </span>
                 <span className="shrink-0 text-micro text-ink-muted">
-                  {STATUS_LABEL[row.status]}
+                  {STATUS_META[row.status].label}
                 </span>
               </li>
             ))}
