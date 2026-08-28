@@ -75,7 +75,10 @@ async def test_start_popen_uses_binary_pipes(monkeypatch, tmp_path):
         "app.services.chat.pi_native_surface.dump_native_tools",
         lambda _p: tmp_path / "native-tools.json",
     )
-    client = mod.PiRpcClient()
+    # CI 不构建 vendor/pi dist：rpc-entry 前置条件由测试自备。
+    entry = tmp_path / "rpc-entry.js"
+    entry.write_text("// stub", encoding="utf-8")
+    client = mod.PiRpcClient(pi_rpc_entry=entry)
     monkeypatch.setattr(client, "_wait_for_ready", AsyncMock(return_value=None))
     try:
         await client.start()
@@ -117,7 +120,10 @@ async def test_start_dumps_native_tools_from_live_registry(monkeypatch, tmp_path
 
     monkeypatch.setattr(mod, "PI_AGENT_DIR", tmp_path)
     monkeypatch.setattr(mod.subprocess, "Popen", fake_popen)
-    client = mod.PiRpcClient()
+    # CI 不构建 vendor/pi dist：rpc-entry 前置条件由测试自备。
+    entry = tmp_path / "rpc-entry.js"
+    entry.write_text("// stub", encoding="utf-8")
+    client = mod.PiRpcClient(pi_rpc_entry=entry)
     monkeypatch.setattr(client, "_wait_for_ready", AsyncMock(return_value=None))
     try:
         await client.start()
@@ -258,7 +264,7 @@ async def test_process_not_cleared_when_still_alive_on_cancellation():
 
 
 @pytest.mark.asyncio
-async def test_start_can_respawn_after_natural_death():
+async def test_start_can_respawn_after_natural_death(monkeypatch, tmp_path):
     """After the process dies naturally (EOF + poll=dead), start() must not
     early-return on the `if self._process is not None: return` guard.
 
@@ -272,7 +278,15 @@ async def test_start_can_respawn_after_natural_death():
     # the cached module rather than triggering a fresh import chain.
     import app.api.routes.pi_tools  # noqa: F401
 
-    client = PiRpcClient()
+    # 本测试聚焦 respawn 守卫：rpc-entry 与 native dump 均由测试自备，
+    # 不依赖 vendor/pi dist（CI 不构建）与进程内全局 registry 状态。
+    entry = tmp_path / "rpc-entry.js"
+    entry.write_text("// stub", encoding="utf-8")
+    monkeypatch.setattr(
+        "app.services.chat.pi_native_surface.dump_native_tools",
+        lambda _p: tmp_path / "native-tools.json",
+    )
+    client = PiRpcClient(pi_rpc_entry=entry)
 
     # Simulate a process that already died: _process cleared by the reader's
     # finally (as tested above), _process_died set.

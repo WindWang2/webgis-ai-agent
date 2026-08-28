@@ -682,13 +682,21 @@ async def test_process_died_event_fires_on_reader_eof():
 
 
 @pytest.mark.asyncio
-async def test_start_clears_death_signal():
+async def test_start_clears_death_signal(monkeypatch, tmp_path):
     """G guard: a stale death signal from a previous process must not fast-fail
     a healthy respawned turn — start() clears both the flag and the event
     before spawning (mirrors the unit respawn test's Popen mocking)."""
     import app.api.routes.pi_tools  # noqa: F401 — pre-import so the patch hits the cached module
 
-    client = PiRpcClient()
+    # 本测试聚焦死亡信号清理：rpc-entry 与 native dump 均由测试自备，
+    # 不依赖 vendor/pi dist（CI 不构建）与进程内全局 registry 状态。
+    entry = tmp_path / "rpc-entry.js"
+    entry.write_text("// stub", encoding="utf-8")
+    monkeypatch.setattr(
+        "app.services.chat.pi_native_surface.dump_native_tools",
+        lambda _p: tmp_path / "native-tools.json",
+    )
+    client = PiRpcClient(pi_rpc_entry=entry)
     client._process_died = True
     client._process_died_event.set()
 
