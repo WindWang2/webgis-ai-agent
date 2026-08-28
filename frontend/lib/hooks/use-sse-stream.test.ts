@@ -1149,3 +1149,110 @@ describe('useSSEStream explorer_progress（回归：任务条目首见插入，�
     expect(tasks.map((t) => t.taskId)).toEqual(['exp-a', 'exp-b']);
   });
 });
+
+// ── #1048: session_plan_* live deltas ────────────────────────────────────
+// 流 hook 的接缝是事件解析（spec Testing Decisions #1）：三个事件名在既有
+// 分发链中被识别、载荷原样转交 SessionPlan 消费方；信封关联与状态应用在
+// use-session-plan（panel 测试钉渲染与规则）。fixtures 是冻结的线上契约
+// （app/services/session_plan.py 的 _updated_event / _progress_event /
+// _superseded_event 逐字构造），解析层绝不增删字段。
+describe('useSSEStream session_plan_* live deltas (#1048)', () => {
+  beforeEach(() => {
+    bridgeMock.onEventCallback = null;
+  });
+
+  // 字面量 wire fixtures（冻结契约，不得改形）。
+  const UPDATED = {
+    session_id: 'sid-fe4',
+    envelope_id: 'sp-chengdu',
+    plan_id: 'plan-chengdu',
+    recipe_id: 'poi_distribution_overview',
+    query: '成都市小学分布情况',
+    replaced: false,
+  };
+  const PROGRESS = {
+    session_id: 'sid-fe4',
+    envelope_id: 'sp-chengdu',
+    capability: 'poi_query',
+    status: 'complete',
+    bound_ref: 'ref:geojson-poi',
+  };
+  const SUPERSEDED = {
+    session_id: 'sid-fe4',
+    old_envelope_id: 'sp-chengdu',
+    envelope_id: 'sp-beijing',
+    previous_query: '成都市小学分布情况',
+    query: '分析北京学校',
+  };
+
+  function renderWithSessionPlan() {
+    const onSessionPlanEvent = vi.fn();
+    const hook = renderHook(() =>
+      useSSEStream(
+        'sid-fe4',
+        setSessionId,
+        { current: 'sid-fe4' },
+        dispatchAction,
+        getMapSnapshot,
+        null,
+        { current: null },
+        undefined,
+        undefined,
+        onSessionPlanEvent,
+      ),
+    );
+    return { hook, onSessionPlanEvent };
+  }
+
+  function fire(event: string, data: Record<string, unknown>) {
+    act(() => {
+      bridgeMock.onEventCallback?.({ event, data });
+    });
+  }
+
+  it('dispatches the three session_plan_* events verbatim to the session-plan consumer', () => {
+    const { onSessionPlanEvent } = renderWithSessionPlan();
+    fire('session_plan_updated', UPDATED);
+    fire('session_plan_progress', PROGRESS);
+    fire('session_plan_superseded', SUPERSEDED);
+    expect(onSessionPlanEvent).toHaveBeenCalledTimes(3);
+    expect(onSessionPlanEvent).toHaveBeenNthCalledWith(1, 'session_plan_updated', UPDATED);
+    expect(onSessionPlanEvent).toHaveBeenNthCalledWith(2, 'session_plan_progress', PROGRESS);
+    expect(onSessionPlanEvent).toHaveBeenNthCalledWith(3, 'session_plan_superseded', SUPERSEDED);
+  });
+
+  it('drops cross-session session_plan_* events before the consumer (INV-2)', () => {
+    const { onSessionPlanEvent } = renderWithSessionPlan();
+    fire('session_plan_progress', { ...PROGRESS, session_id: 'sid-other' });
+    fire('session_plan_updated', { ...UPDATED, session_id: 'sid-other' });
+    fire('session_plan_superseded', { ...SUPERSEDED, session_id: 'sid-other' });
+    expect(onSessionPlanEvent).not.toHaveBeenCalled();
+  });
+
+  it('leaves the plan_* branch untouched — plan_ready still parses beside the new names', async () => {
+    const { hook, onSessionPlanEvent } = renderWithSessionPlan();
+    await act(async () => {
+      await hook.result.current.handleSend('分析北京市学校分布密度');
+    });
+    act(() => {
+      bridgeMock.onEventCallback?.({
+        event: 'plan_ready',
+        data: {
+          session_id: 'sid-fe4',
+          task_id: 't1',
+          intent: '分析北京市学校分布密度',
+          domains: ['spatial'],
+          steps: [{ n: 1, goal: '查询学校', tool_family: 'spatial' }],
+        },
+      });
+    });
+    fire('session_plan_progress', PROGRESS);
+    const msg = hook.result.current.messages[hook.result.current.messages.length - 1];
+    expect((msg as any).agentPlan).toMatchObject({
+      finalized: false,
+      steps: [{ n: 1, goal: '查询学校', status: 'pending' }],
+    });
+    expect(onSessionPlanEvent).toHaveBeenCalledTimes(1);
+    expect(onSessionPlanEvent).toHaveBeenCalledWith('session_plan_progress', PROGRESS);
+  });
+});

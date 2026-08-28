@@ -10,6 +10,7 @@ import { CollapsibleThink } from '@/components/chat/collapsible-think';
 import { PlanProposalCard } from '@/components/chat/plan-proposal-card';
 import { PlanCard } from '@/components/chat/plan-card';
 import { SessionPlanPanel } from '@/components/chat/session-plan-panel';
+import type { SessionPlanViewState } from '@/lib/session/session-plan-delta';
 import { InlineNotice } from '@/components/shared/inline-notice';
 import { apiFetch } from '@/lib/api/transport';
 import {
@@ -132,6 +133,12 @@ interface ChatTabProps {
   agentRuntime?: AgentRuntime | null;
   /** SEC-08：匿名会话的所有权 token —— SessionPlan 面板水合（#1047）用。 */
   ownerToken?: string | null;
+  /**
+   * #1048：SessionPlan 流式实时状态（page.tsx 里 useSessionPlan 的 view，
+   * agentRuntime 同款路径：hook 状态 → props 下行）。未提供时面板自行水合
+   * （#1047 行为）。
+   */
+  sessionPlan?: SessionPlanViewState;
 }
 
 /* ─── Memoized message bubble ───
@@ -281,7 +288,7 @@ const ChatMessageItem = memo(function ChatMessageItem({
   );
 });
 
-export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, sessionId, agentRuntime, ownerToken }: ChatTabProps) {
+export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, sessionId, agentRuntime, ownerToken, sessionPlan }: ChatTabProps) {
   const [configuredRuntime, setConfiguredRuntime] = useState<AgentRuntime | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -381,8 +388,9 @@ export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, se
         </div>
       )}
       {/* SessionPlan 面板（Pi 路径，#1047）：会话级只读水合卡。无信封 / 拉取
-          失败时整卡隐藏 —— ChatEngine 兜底会话的侧边栏与今天完全一致。 */}
-      <SessionPlanPanel sessionId={sessionId} ownerToken={ownerToken} />
+          失败时整卡隐藏 —— ChatEngine 兜底会话的侧边栏与今天完全一致。
+          #1048：sessionPlan（useSessionPlan.view）提供时由流式增量驱动。 */}
+      <SessionPlanPanel sessionId={sessionId} ownerToken={ownerToken} live={sessionPlan} />
       {/* Messages scroll area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {messages.length === 0 && !isBusy && (

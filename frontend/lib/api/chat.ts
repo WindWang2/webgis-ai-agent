@@ -65,6 +65,10 @@ export type SSEEventType =
   | 'plan_ready'
   | 'plan_step_done'
   | 'plan_finalized'
+  // #1048: SessionPlan live deltas（Pi 路径；与 plan_* 是两个计划概念，ADR-0076）
+  | 'session_plan_updated'
+  | 'session_plan_progress'
+  | 'session_plan_superseded'
   | 'keep_alive'
   | 'resume_gap'
   | 'heartbeat';

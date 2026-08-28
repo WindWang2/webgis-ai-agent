@@ -8,10 +8,17 @@ import type {
   SessionPlanCapabilityStatus,
   SessionPlanProjection,
 } from '@/lib/types/session-plan';
+import type { SessionPlanViewState } from '@/lib/session/session-plan-delta';
 
 interface Props {
   sessionId?: string | null;
   ownerToken?: string | null;
+  /**
+   * #1048：流式增量驱动的实时状态（useSessionPlan 的 view）。提供时面板由它
+   * 渲染且不做自身水合（避免双重 GET）；未提供（既有调用方/测试）时保持
+   * #1047 的 mount 水合行为。
+   */
+  live?: SessionPlanViewState;
 }
 
 // 已作废（目标变更被作废）与不可用（无法满足）观感必须可区分——前者是
@@ -42,35 +49,41 @@ const STATUS_META: Record<
 /**
  * SessionPlan 面板（Pi 路径，#1047）——挂载在 chat 侧边栏的会话级计划卡。
  *
- * 只读水合：mount / sessionId 变化时拉取当前信封投影；SSE 增量（#1048）
- * 不在本组件。降级约定：端点失败 → 面板隐藏，绝不阻塞聊天面；无信封 →
- * 整卡隐藏（ChatEngine 兜底会话与今天完全一致）；槽位已开但 GIS 章节为
- * 空 → 显式「暂无计划内容」空态，不是空白卡。
+ * 状态来源二选一：`live`（#1048，useSessionPlan 的 hydrate-then-delta，
+ * 流式增量实时驱动）或自身 mount 水合（#1047 行为保留）。降级约定：端点
+ * 失败 → 面板隐藏，绝不阻塞聊天面；无信封 → 整卡隐藏（ChatEngine 兜底
+ * 会话与今天完全一致）；槽位已开但 GIS 章节为空 → 显式「暂无计划内容」
+ * 空态，不是空白卡。superseded 交接（previous goal → new goal）由增量层
+ * 携带，GET 投影刻意不含 previous_goal。
  */
-export function SessionPlanPanel({ sessionId, ownerToken }: Props) {
-  const [plan, setPlan] = useState<SessionPlanProjection | undefined>(undefined);
+export function SessionPlanPanel({ sessionId, ownerToken, live }: Props) {
+  const [hydrated, setHydrated] = useState<SessionPlanProjection | undefined>(undefined);
+  const liveProvided = live !== undefined;
 
   useEffect(() => {
+    if (liveProvided) return; // 流式状态接管，绝不做自身水合（避免双重 GET）
     if (!sessionId) {
-      setPlan(undefined);
+      setHydrated(undefined);
       return;
     }
     let cancelled = false;
     // 会话切换先清空：陈旧会话的信封绝不涂到新会话的侧边栏上。
-    setPlan(undefined);
+    setHydrated(undefined);
     getSessionPlan(sessionId, ownerToken)
       .then((p) => {
-        if (!cancelled) setPlan(p);
+        if (!cancelled) setHydrated(p);
       })
       .catch(() => {
-        if (!cancelled) setPlan(undefined); // 降级：隐藏而非报错
+        if (!cancelled) setHydrated(undefined); // 降级：隐藏而非报错
       });
     return () => {
       cancelled = true;
     };
-  }, [sessionId, ownerToken]);
+  }, [sessionId, ownerToken, liveProvided]);
 
-  if (!plan) return null;
+  const view: SessionPlanViewState = live ?? { plan: hydrated ?? null, supersede: null };
+  if (!view.plan) return null;
+  const plan = view.plan;
 
   const hasChapter = plan.query !== null || plan.recipe_id !== null;
 
@@ -83,6 +96,14 @@ export function SessionPlanPanel({ sessionId, ownerToken }: Props) {
         <ClipboardList className="h-4 w-4 text-status-accent" />
         <span className="text-body font-semibold text-ink">会话计划</span>
       </div>
+      {view.supersede && (
+        <div
+          data-testid="session-plan-superseded"
+          className="mb-2 rounded-sm bg-status-accent-soft px-2 py-1 text-micro text-ink"
+        >
+          目标已更换：{view.supersede.previous_goal} → {view.supersede.goal}
+        </div>
+      )}
       {hasChapter ? (
         <>
           <div className="space-y-1 mb-2">

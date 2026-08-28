@@ -336,6 +336,14 @@ export function useSSEStream(
   sessionTokenRef: React.MutableRefObject<string | null>,
   rememberSessionToken?: (sessionId: string, token: string) => void,
   getSessionToken?: (sessionId: string) => string | null,
+  /**
+   * #1048: session_plan_* 增量的出口。三个事件名在本 hook 的既有分发链中
+   * 识别（plan_* 分支保持不动），载荷原样转交；信封关联与状态应用在
+   * useSessionPlan（page.tsx 接线）。可选项：既有调用方与测试不受影响。
+   * 必须传稳定引用（useSessionPlan 返回的 applySessionPlanEvent），
+   * 否则 onEvent 身份抖动会打断在飞流。
+   */
+  onSessionPlanEvent?: (eventName: string, data: Record<string, unknown>) => void,
 ) {
   const [messages, setMessages] = useState<
     Array<{
@@ -868,6 +876,16 @@ export function useSSEStream(
         } catch (err) {
           devOnly.warn('[plan_finalized] parse failed', err);
         }
+      } else if (
+        event.event === 'session_plan_updated' ||
+        event.event === 'session_plan_progress' ||
+        event.event === 'session_plan_superseded'
+      ) {
+        // #1048: SessionPlan 实时增量（Pi 路径，与上方 plan_* 是两个计划概念，
+        // ADR-0076）。载荷是冻结的线上投影（session_plan.py 构造），本 hook 只
+        // 在既有分发链里识别三个事件名并原样转交；信封关联与状态应用在
+        // useSessionPlan。跨会话事件已被本函数顶部的 INV-2 守卫丢弃。
+        onSessionPlanEvent?.(event.event, data as Record<string, unknown>);
       } else if (event.event === 'step_cancelled') {
         // B-P2: 步骤被抢占取消时后端下发 step_cancelled
         // ({task_id, step_id, tool, session_id})。把对应 running 的 tool-call
@@ -999,7 +1017,7 @@ export function useSSEStream(
         applyExplorerProgressToStore(data as Record<string, unknown>);
       }
     },
-    [setSessionId, sessionIdRef, sessionTokenRef, rememberSessionToken, markToolCallStatus, finalizeToolCalls, startExplorerProgressStream]
+    [setSessionId, sessionIdRef, sessionTokenRef, rememberSessionToken, markToolCallStatus, finalizeToolCalls, startExplorerProgressStream, onSessionPlanEvent]
   );
 
   // DUP-1: bounded auto-reconnect for the chat stream. Opt-in by explicit

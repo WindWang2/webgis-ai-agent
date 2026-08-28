@@ -33,3 +33,39 @@ export interface SessionPlanProjection {
   superseded: boolean;
   updated_at: number;
 }
+
+/* ── #1048：三条 session_plan_* SSE 事件的载荷 ──────────────────────────
+ * 冻结契约（hardening spec #1029 冻结的 stream-only 面），由
+ * app/services/session_plan.py 的 _updated_event / _progress_event /
+ * _superseded_event 逐字构造 —— 任何字段都不得增删或为 UI 富化。
+ * 全量能力列表永不走 SSE：水合靠 GET 投影，SSE 只是增量。 */
+
+export type SessionPlanEventName =
+  | 'session_plan_updated'
+  | 'session_plan_progress'
+  | 'session_plan_superseded';
+
+export interface SessionPlanUpdatedPayload {
+  session_id: string;
+  envelope_id: string;
+  plan_id: string;
+  recipe_id: string;
+  query: string;
+  replaced: boolean;
+}
+
+export interface SessionPlanProgressPayload {
+  session_id: string;
+  envelope_id: string;
+  capability: string;
+  status: SessionPlanCapabilityStatus;
+  bound_ref: string;
+}
+
+export interface SessionPlanSupersededPayload {
+  session_id: string;
+  old_envelope_id: string;
+  envelope_id: string;
+  previous_query: string;
+  query: string;
+}
