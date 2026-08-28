@@ -1270,7 +1270,7 @@ async def push_cartographic_runtime_observation(
                     status_code=503,
                     detail="Cartographic observation could not be persisted",
                 )
-            from app.agent_pi_bridge import evaluate_cartographic_session
+            from app.services.cartography_runtime import evaluate_cartographic_session
 
             try:
                 # P-6（#879）：锁内快照复用——observation 刚写入的字段本地合成进

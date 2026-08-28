@@ -88,6 +88,22 @@ export const createLayersSlice: StateCreator<HudState, [], [], Partial<HudState>
     }),
   updateLayer: (id, updates) =>
     set((s) => {
+      const target = s.layers.find((l) => l.id === id);
+      if (target) {
+        // #739 同款 no-op 短路：SSE 挂载路径 addLayer 后紧跟 updateLayer，
+        // 等值更新会 bump layers 身份 + intentGeneration → reconcile effect
+        // 双跑（第二次 diff 为空但付全 effect 开销）。
+        const effective = withAttestationPolicy(updates);
+        let noOp = true;
+        for (const key of Object.keys(effective)) {
+          if ((target as unknown as Record<string, unknown>)[key]
+            !== (effective as unknown as Record<string, unknown>)[key]) {
+            noOp = false;
+            break;
+          }
+        }
+        if (noOp) return s;
+      }
       const generation = s.layerIntentGeneration + 1;
       return {
         layerIntentGeneration: generation,

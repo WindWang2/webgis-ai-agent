@@ -108,7 +108,6 @@ class Settings(BaseSettings):
     # 紧急回退 ChatEngine：USE_NEW_AGENT=false。
     USE_NEW_AGENT: bool = True
 
-
     NOMINATIM_URL: str = "https://nominatim.openstreetmap.org/search"
 
     # 天地图

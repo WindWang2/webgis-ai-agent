@@ -4,7 +4,7 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, Depends
 
-from app.agent_pi_bridge import get_harness_telemetry_summary
+from app.services.cartography_runtime import get_harness_telemetry_summary
 from app.core.auth import require_admin
 from app.services import tool_metrics
 from app.services.spatial_analyzer import SpatialAnalyzer

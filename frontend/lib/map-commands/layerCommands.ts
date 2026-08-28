@@ -359,18 +359,30 @@ export const layerCommands: Record<string, CommandEntry> = {
       // 4. durability：MapSpec 拥有的层同步删除后端 desired state（此前
       //    Agent remove 不动 spec——backend 修复/reconcile 会复活图层）。
       //    先捕获的 specLayerIds 避免 store 行删除后丢失映射。
+      //    ST-P1-1：经 removeLayerFromSpec（superseded 重试一次）而非
+      //    commitMapSpecMutation（吞 409 → 服务端仍含被删层 + pending 被清
+      //    → reconcile 复活僵尸）。双 superseded 保留 pending 压制 compose。
+      //    P2-2（会话守卫）：在途时切会话不得把 A 会话的 layer_id POST 到 B 的
+      //    mutations 端点——enqueuedSessionId 与执行时 session 比对，丢弃跨会话
+      //     durability。
       void (async () => {
-        const { commitMapSpecMutation } = await import('@/lib/mapspec/user-mutation');
+        const { getMapSpecSessionCursor } = await import('@/lib/mapspec/session-cursor');
+        const enqueuedSessionId = getMapSpecSessionCursor().sessionId;
+        const { removeLayerFromSpec } = await import('@/lib/mapspec/user-mutation');
         const { markPendingRemoved, clearPendingRemoved } = await import('@/lib/mapspec/session-cursor');
         for (const specLayerId of removeDurabilityTargets) {
+          if (!enqueuedSessionId || getMapSpecSessionCursor().sessionId !== enqueuedSessionId) break;
           markPendingRemoved(specLayerId);
           try {
-            await commitMapSpecMutation({ intent: 'remove_layer', layer_id: specLayerId });
+            const outcome = await removeLayerFromSpec(specLayerId);
+            if (outcome === 'unsynced') {
+              devOnly.warn('[remove_layer] backend spec removal unsynced; keeping pendingRemoved:', specLayerId);
+              continue;
+            }
           } catch (err) {
             devOnly.warn('[remove_layer] backend spec removal failed:', err);
-          } finally {
-            clearPendingRemoved(specLayerId);
           }
+          clearPendingRemoved(specLayerId);
         }
       })();
 

@@ -11,6 +11,8 @@ import type { MapActionPayload } from '@/lib/types';
 // Cap on remembered applied repair action_ids (bounded memory; older ids are
 // stale generations that the generation gate already drops, so eviction is safe).
 const MAX_APPLIED_REPAIR_IDS = 16;
+// MAX_REPAIR_ATTEMPTS（FE-P2-3）：单会话客户端派发修复的总预算。
+const MAX_TOTAL_SESSION_REPAIRS = 8;
 
 interface UseCartographicObservationOptions {
   /** 共享的 MapSpecRuntime ref（读取 getLastError/getAppliedSpec 作观测证据）。 */
@@ -50,6 +52,12 @@ export function useCartographicObservation({
   // can legitimately recur for a different mapspec fingerprint and would wrongly
   // block a valid re-issue, so it is intentionally not used as a dedup key.
   const appliedRepairIdsRef = useRef<Set<string>>(new Set())
+  // FE-P2-3：每会话修复总预算熔断——去重环（16）淘汰后旧 action_id 可重新
+  // 派发；若修复每轮都改变观测（A↔B 震荡 / 后端持续换新 action_id），回路
+  // 理论无界（每轮一个网络往返 + dispatch + reconcile + 观测采集）。超限后
+  // 停止派发（观测照常上报），告警一次。会话切换随 sessionId 重置。
+  const totalRepairsRef = useRef(0)
+  const repairBudgetExhaustedWarnedRef = useRef(false)
   const mountedRef = useRef(true)
   const observationAbortRef = useRef<AbortController | null>(null)
 
@@ -63,6 +71,12 @@ export function useCartographicObservation({
       observationAbortRef.current = null
     }
   }, [])
+
+  // FE-P2-3：修复总预算按会话重置（新会话 = 新的修复额度）。
+  useEffect(() => {
+    totalRepairsRef.current = 0
+    repairBudgetExhaustedWarnedRef.current = false
+  }, [sessionId])
 
   const issueCartographicObservation = useCallback(({
     map,
@@ -157,6 +171,16 @@ export function useCartographicObservation({
       // Duplicate response / retry must not re-apply the same repair (INV-3).
       const repairId = repair.action_id
       if (repairId && appliedRepairIdsRef.current.has(repairId)) return
+      if (totalRepairsRef.current >= MAX_TOTAL_SESSION_REPAIRS) {
+        if (!repairBudgetExhaustedWarnedRef.current) {
+          repairBudgetExhaustedWarnedRef.current = true
+          devOnly.warn(
+            '[map] cartographic repair budget exhausted; repairs suspended for this session',
+          )
+        }
+        return
+      }
+      totalRepairsRef.current += 1
       dispatchAction(repair)
       // Record AFTER dispatch so a dispatch throw leaves the repair re-issuable.
       if (repairId) {

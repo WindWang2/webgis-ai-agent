@@ -15,6 +15,7 @@
 import { apiFetch } from '@/lib/api/transport';
 import { API_BASE } from '@/lib/api/config';
 import type { GeoJSONFeatureCollection, MapActionPayload } from '@/lib/types';
+import { getPendingRemoved } from '@/lib/mapspec/session-cursor';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useToastStore } from '@/components/ui/toast';
 import { devOnly } from '@/lib/utils/logger';
@@ -205,10 +206,18 @@ export function syncSpecLayersToStore(
     if (row._mapspecLayerId) known.add(String(row._mapspecLayerId));
   }
 
+  // P1（幽灵面板行修复）：用户删除图层触发 double-superseded 时 pendingRemoved
+  // 保留压制 compose（地图不渲被删层），但 committed spec 仍含已删层；下一个
+  // 带 mapspec 的 SSE 事件若把同一层 re-add 为 store 行，面板重现幽灵行而地图
+  // 不渲（pendingRemoved 仍过滤 compose）。跳过所有刚被 pendingRemoved 压制的
+  // id 上的镜像（包括 alias），直到 pending 随下次收敛被清。
+  const pendingIds = new Set(getPendingRemoved().map((pid) => String(pid)));
+
   for (const raw of specLayers) {
     const layer = raw as Record<string, any>;
     const id = String(layer?.id || '');
     if (!id || known.has(id)) continue;
+    if (pendingIds.has(id)) continue;
     const source = mapspec?.sources?.[String(layer.source || '')] ?? {};
     const refId = typeof source?.ref_id === 'string' ? source.ref_id
       : typeof source?.ref === 'string' ? source.ref : undefined;
@@ -253,7 +262,7 @@ export async function restoreSessionMapLayers(
   state: SessionMapState,
   opts: RestoreMapLayersOptions,
 ): Promise<void> {
-  commitMapSpecDocument(state.mapspec);
+  commitMapSpecDocument(state.mapspec, state._cartographic_mutation_revision);
   // 持久化 layers/observation 只记 HUD 行——product-* 等直写层只在
   // state.mapspec.layers 里，恢复时同样要镜像成行（与会话 live 路径
   // syncSpecLayersToStore 的调用点互补）。

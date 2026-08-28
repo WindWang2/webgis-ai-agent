@@ -195,11 +195,17 @@ async def apply_user_mapspec_mutation(
         intent = InitProjectIntent(view=req.view)
     else:
         raise HTTPException(status_code=400, detail="unsupported mapspec mutation intent")
-    result = await _engine.apply_mutation(
+    # GISWorldState 门面（C2）：语义与 engine.apply_mutation 一致，额外记录
+    # provenance（用户决策链——user-wins 守卫与 reload 审计的依据）。
+    from app.services.gis_world_state import apply_gis_mutation
+
+    result = await apply_gis_mutation(
         session_id,
         intent,
         origin="user",
+        actor="mapspec_route",
         expected_revision=req.expected_revision,
+        engine=_engine,
     )
     payload = result.to_dict()
     if not include_review:

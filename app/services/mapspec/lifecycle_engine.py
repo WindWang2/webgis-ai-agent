@@ -259,6 +259,13 @@ def _patch_layer_presentation(
         layout = dict(patched.get("layout") or {})
         layout["visibility"] = "visible" if visible else "none"
         patched["layout"] = layout
+        # CA-P1-1（意图投影）：presentation 是一次**显式决策**——它改写该层的
+        # cartographic_intent.expected_visible，QA（RESULT_VISIBILITY）由此区分
+        # "故意隐藏"（用户/agent 收口）与"结果层被误藏"（auto_safe 修复）。
+        # 用户隐藏 → expected_visible=False → QA pass 且 user-wins 一致。
+        intent = dict(patched.get("cartographic_intent") or {})
+        intent["expected_visible"] = bool(visible)
+        patched["cartographic_intent"] = intent
     if opacity is not None:
         paint = dict(patched.get("paint") or {})
         paint["opacity"] = opacity
@@ -267,6 +274,63 @@ def _patch_layer_presentation(
             paint[type_key] = opacity
         patched["paint"] = paint
     return patched
+
+
+def _project_cartographic_intent(layer: Dict[str, Any]) -> None:
+    """Upsert 落意图（CA-P1-1）：authoring 决策写进 cartographic_intent。
+
+    expected_visible = authoring 时的可见性决策（布局无 none 即默认展示）；
+    role 从 context_role/role 透传，不发明。调用方显式给出的
+    cartographic_intent 优先（planner 携带 product plan 的角色裁决）。
+    """
+    if isinstance(layer.get("cartographic_intent"), dict):
+        return
+    layout = layer.get("layout") if isinstance(layer.get("layout"), dict) else {}
+    intent: Dict[str, Any] = {
+        "expected_visible": layout.get("visibility", "visible") != "none",
+    }
+    role = layer.get("context_role") or layer.get("role")
+    if isinstance(role, str) and role:
+        intent["role"] = role
+    layer["cartographic_intent"] = intent
+
+
+def _preserve_durable_presentation(
+    existing: Dict[str, Any],
+    incoming: Dict[str, Any],
+) -> None:
+    """同 id 整层 upsert 替换时的 durable presentation 继承（user wins）。
+
+    用户隐藏/调透明度的层被 agent 重跑查询后整层 upsert：数据、样式与
+    分类以 agent 新结果为准，但 durable 的显隐/透明度决策属于用户——
+    agent 本次未显式给出时必须保留（否则用户隐藏的层静默回默认可见，
+    reload 后用户决策彻底丢失）。图层类型改变时只继承 visibility
+    （类型专属 opacity 键对新类型无效）。
+    """
+    existing_layout = existing.get("layout") if isinstance(existing.get("layout"), dict) else {}
+    incoming_layout = incoming.get("layout") if isinstance(incoming.get("layout"), dict) else {}
+    if (
+        existing_layout.get("visibility") == "none"
+        and incoming_layout.get("visibility") is None
+    ):
+        incoming["layout"] = {**incoming_layout, "visibility": "none"}
+
+    existing_paint = existing.get("paint") if isinstance(existing.get("paint"), dict) else {}
+    incoming_paint = incoming.get("paint") if isinstance(incoming.get("paint"), dict) else {}
+    if not existing_paint:
+        return
+    existing_opacity = existing_paint.get("opacity")
+    if (
+        existing_opacity is not None
+        and incoming_paint.get("opacity") is None
+        and str(existing.get("type") or "") == str(incoming.get("type") or "")
+    ):
+        merged = dict(incoming_paint)
+        merged["opacity"] = existing_opacity
+        type_key = _OPACITY_PAINT_KEYS.get(str(incoming.get("type") or ""))
+        if type_key and type_key not in merged:
+            merged[type_key] = existing_opacity
+        incoming["paint"] = merged
 
 
 MutationIntent = Union[
@@ -551,11 +615,18 @@ class MapSpecLifecycleEngine:
                     updated = False
                     for i, layer in enumerate(layers):
                         if layer.get("id") == processed_layer.get("id"):
+                            # ST-P2-2：重跑同 id upsert 整层替换时保留既有
+                            # durable presentation（用户显隐/透明度决策）。
+                            _preserve_durable_presentation(layer, processed_layer)
                             layers[i] = processed_layer
                             updated = True
                             break
                     if not updated:
                         layers.append(processed_layer)
+                    # CA-P1-1：authoring 决策投影为 cartographic_intent
+                    #（QA RESULT_VISIBILITY 的意图证据——此前只读不写，恒
+                    # not_evaluated）。
+                    _project_cartographic_intent(processed_layer)
 
                     pending_layer_op = (
                         "upsert",

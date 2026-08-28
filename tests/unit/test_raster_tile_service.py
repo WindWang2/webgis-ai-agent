@@ -133,8 +133,8 @@ def test_render_uses_dataset_global_stretch_across_tiles(monkeypatch, tmp_path):
     assert vmin == 0.0
     assert vmax == 1000.0
 
-    # Stats are cached per raster path after the first render.
-    assert path in svc._STATS_CACHE
+    # Stats are cached per (raster, band-subset) after the first render (C5).
+    assert (path, (1,)) in svc._STATS_CACHE
 
 
 def test_multiband_read_uses_indexes_not_all_bands(monkeypatch, tmp_path):
@@ -200,9 +200,9 @@ def test_multiband_read_uses_indexes_not_all_bands(monkeypatch, tmp_path):
         assert "indexes" in kwargs, f"read() called without indexes: {args=} {kwargs=}"
         assert kwargs["indexes"] == (1, 2, 3)
 
-    # Stats cache holds exactly the 3 rendered bands.
-    assert path in svc._STATS_CACHE
-    assert len(svc._STATS_CACHE[path]) == 3
+    # Stats cache holds exactly the 3 rendered bands (keyed by band subset, C5).
+    assert (path, (1, 2, 3)) in svc._STATS_CACHE
+    assert len(svc._STATS_CACHE[(path, (1, 2, 3))]) == 3
 
 
 def test_normalize_channel_explicit_stretch():

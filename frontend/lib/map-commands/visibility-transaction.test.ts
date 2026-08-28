@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { commitMapSpecDocument, resetLiveState } from '@/lib/mapspec/session-cursor';
+import {
+  commitMapSpecDocument,
+  resetLiveState,
+  setMapSpecSessionCursor,
+} from '@/lib/mapspec/session-cursor';
 import { makeMockMaplibreMap } from '@/test/__mocks__/maplibre-map';
 import { layerCommands } from './layerCommands';
 import type { MapCommandContext } from './types';
@@ -83,6 +87,45 @@ describe('visibility transaction（单一深接口）', () => {
     const result = layerCommands.layer_visibility_update.run(ctx) as any;
     // target_ids 含全部展开层（group 语义）；与 pre-队列版本相同
     expect(new Set(result.result?.target_ids)).toEqual(new Set(['product-heat', 'product-points']));
+  });
+
+  it('ST-P3-2: double superseded re-merges pending——agent 隐藏决策不静默丢失', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false,
+      status: 409,
+      statusText: 'Conflict',
+      text: () => Promise.resolve(JSON.stringify({
+        detail: {
+          status: 'superseded',
+          mutation_revision: 99,
+          // 服务端真相始终与期望（visible:false）不符 → 持续 'retry'
+          mapspec: { layers: [{ id: 'agent-hide', layout: { visibility: 'visible' } }] },
+        },
+      })),
+    })));
+    setMapSpecSessionCursor('sid-vt', 42);
+
+    const map = makeMockMaplibreMap();
+    map.addLayer({ id: 'agent-hide__fill', type: 'fill' });
+    map.setLayoutProperty('agent-hide__fill', 'visibility', 'visible');
+    const { ctx } = makeCtx(
+      { layer_id: 'agent-hide', visible: false },
+      [{ id: 'agent-hide', visible: true, group: 'analysis', _mapspecLayerId: 'agent-hide' }],
+      map,
+    );
+
+    const result = layerCommands.layer_visibility_update.run(ctx) as any;
+    expect(result.status).toBe('succeeded');
+
+    // durability 异步：两次尝试（首笔 + 一次重试）后 pending 必须重新落下
+    for (let i = 0; i < 10; i += 1) {
+      await Promise.resolve();
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const { getPendingPresentation } = await import('@/lib/mapspec/session-cursor');
+    expect(getPendingPresentation().agent_hide ?? getPendingPresentation()['agent-hide']).toBeDefined();
+    vi.unstubAllGlobals();
   });
 });
 

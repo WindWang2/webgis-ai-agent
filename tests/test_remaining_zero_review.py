@@ -147,8 +147,12 @@ async def test_dispatch_tool_records_harness_evidence_once(monkeypatch):
     from app.services.tool_dispatch_service import ToolDispatchResult
 
     harness = PiAgentHarness(session_id="dup-sess")
-    monkeypatch.setattr(bridge, "_harness", harness)
-    monkeypatch.setattr(bridge, "_harnesses", {**getattr(bridge, "_harnesses", {}), "dup-sess": harness})
+    import app.services.cartography_runtime as cartography_runtime
+    monkeypatch.setattr(cartography_runtime, "_harness", harness)
+    monkeypatch.setattr(
+        cartography_runtime, "_harnesses",
+        {**getattr(cartography_runtime, "_harnesses", {}), "dup-sess": harness},
+    )
 
     result = ToolDispatchResult(
         status="ok",

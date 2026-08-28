@@ -34,6 +34,13 @@ class MemorySessionStore(BaseSessionStore):
         self._map_action_events: dict[str, OrderedDict[str, dict]] = {}
         # V3 Performance: session_id -> {ref_id -> descriptor_dict}
         self._descriptors: dict[str, dict[str, Any]] = {}
+        # DA-P2-1：增量字节记账——session_id -> {ref_id -> bytes} 与
+        # session_id -> total_bytes。此前 store() 每次对全部存量条目重估
+        # 字节（O(N×budget)/次写且跑在事件循环上，200 条满员时每写一次
+        # 最坏 ~4M 节点访问）。尺寸在写入点一次算好，淘汰/删除/覆写时
+        # O(1) 增减。
+        self._ref_sizes: dict[str, dict[str, int]] = {}
+        self._session_bytes: dict[str, int] = {}
         self.capacity = capacity
         # BUG-14: serialize read-modify-write mutations of the layers list so
         # two concurrent update_layer_in_state calls don't clobber each other.
@@ -75,21 +82,27 @@ class MemorySessionStore(BaseSessionStore):
         except Exception:
             _new_size = 0
 
-        # Calculate initial cache bytes once in O(N) instead of O(N^2) loop
-        total_bytes = 0
-        sizes: dict[str, int] = {}
-        for r_id, v in session_cache.items():
-            try:
-                from app.lib.json_size import estimate_json_bytes as _eb2
-                sz = _eb2(v) if isinstance(v, (dict, list)) else len(str(v).encode())
-            except Exception:
-                sz = 0
-            sizes[r_id] = sz
-            total_bytes += sz
+        # DA-P2-1: O(1) incremental accounting (sizes maintained at each write
+        # point: store/overwrite/delete/evict/clear). A lazy one-off sync only
+        # for a session created before this field existed (defensive).
+        sizes = self._ref_sizes.get(session_id)
+        if sizes is None or len(sizes) != len(session_cache):
+            sizes = self._ref_sizes.setdefault(session_id, {})
+            total_bytes = 0
+            for r_id, v in session_cache.items():
+                try:
+                    from app.lib.json_size import estimate_json_bytes as _eb2
+                    sz = _eb2(v) if isinstance(v, (dict, list)) else len(str(v).encode())
+                except Exception:
+                    sz = 0
+                sizes[r_id] = sz
+                total_bytes += sz
+            self._session_bytes[session_id] = total_bytes
+        total_bytes = self._session_bytes.get(session_id, 0)
 
         while session_cache and (len(session_cache) >= self.capacity or (total_bytes + _new_size > _max_bytes and total_bytes > 0)):
             oldest_ref, _ = session_cache.popitem(last=False)
-            total_bytes -= sizes.get(oldest_ref, 0)
+            total_bytes -= sizes.pop(oldest_ref, 0)
             self._remove_alias_by_ref(session_id, oldest_ref)
             if session_id in self._descriptors:
                 self._descriptors[session_id].pop(oldest_ref, None)
@@ -99,6 +112,8 @@ class MemorySessionStore(BaseSessionStore):
             logger.debug(f"Session {session_id}: evicted {oldest_ref} (capacity={self.capacity})")
 
         session_cache[ref_id] = data
+        sizes[ref_id] = _new_size
+        self._session_bytes[session_id] = total_bytes + _new_size
         self._touch_session(session_id)
 
         # V3 Performance: compute descriptor once at store time so every subsequent
@@ -127,6 +142,18 @@ class MemorySessionStore(BaseSessionStore):
         if not session_cache or ref_id not in session_cache:
             return False
         session_cache[ref_id] = data
+        # DA-P2-1：覆写尺寸 O(1) 增减
+        try:
+            from app.lib.json_size import estimate_json_bytes as _est_bytes
+            new_size = _est_bytes(data) if isinstance(data, (dict, list)) else len(str(data).encode())
+        except Exception:
+            new_size = 0
+        sizes = self._ref_sizes.get(session_id)
+        if sizes is not None:
+            self._session_bytes[session_id] = (
+                self._session_bytes.get(session_id, 0) - sizes.get(ref_id, 0) + new_size
+            )
+            sizes[ref_id] = new_size
         from app.services.mvt import spatial_index_cache, tile_lru_cache
         spatial_index_cache.invalidate_ref(session_id, ref_id)
         tile_lru_cache.invalidate_ref(session_id, ref_id)
@@ -145,6 +172,12 @@ class MemorySessionStore(BaseSessionStore):
         self._remove_alias_by_ref(session_id, ref_id)
         if session_id in self._descriptors:
             self._descriptors[session_id].pop(ref_id, None)
+        # DA-P2-1：删除尺寸 O(1) 扣减
+        sizes = self._ref_sizes.get(session_id)
+        if sizes is not None and ref_id in sizes:
+            self._session_bytes[session_id] = (
+                self._session_bytes.get(session_id, 0) - sizes.pop(ref_id)
+            )
         from app.services.mvt import spatial_index_cache, tile_lru_cache
         spatial_index_cache.invalidate_ref(session_id, ref_id)
         tile_lru_cache.invalidate_ref(session_id, ref_id)
@@ -427,6 +460,8 @@ class MemorySessionStore(BaseSessionStore):
         self._event_log.pop(session_id, None)
         self._map_action_events.pop(session_id, None)
         self._descriptors.pop(session_id, None)
+        self._ref_sizes.pop(session_id, None)
+        self._session_bytes.pop(session_id, None)
         self._session_order.pop(session_id, None)
         from app.services.mvt import spatial_index_cache, tile_lru_cache
         spatial_index_cache.invalidate_session(session_id)

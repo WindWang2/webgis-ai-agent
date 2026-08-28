@@ -24,6 +24,7 @@ PR_LANE_PERF_FILES = (
     "test_llm_http_pooling_perf.py",
     "test_perf_mapspec_mutation_cost.py",
     "test_dispatch_stall_perf.py",
+    "test_perf_large_workspace.py",
 )
 
 # Perf-marked files that stay nightly-only. They are collected by

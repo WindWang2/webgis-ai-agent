@@ -101,7 +101,7 @@ def _normalize_channel(
 # dataset-global (vmin, vmax) per band once per raster and reuse it for every
 # tile. Bounded LRU-ish dict; double-checked under a lock (worst case two
 # threads compute the same raster's stats concurrently, one wins — harmless).
-_STATS_CACHE: "Dict[str, Tuple[Tuple[float, float], ...]]" = {}
+_STATS_CACHE: "Dict[Tuple[str, Tuple[int, ...]], Tuple[Tuple[float, float], ...]]" = {}
 _STATS_CACHE_LOCK = threading.Lock()
 _STATS_MAX_ENTRIES = 512
 # Longest-side cap for the decimated stats read: bounds the one-time cost even
@@ -110,25 +110,28 @@ _STATS_MAX_ENTRIES = 512
 _STATS_MAX_SIDE = 2048
 
 
-def _compute_band_stats(src, count: int) -> Tuple[Tuple[float, float], ...]:
-    """Dataset-wide (vmin, vmax) per band, skipping nodata/NaN pixels.
+def _compute_band_stats(src, indexes: Tuple[int, ...]) -> Tuple[Tuple[float, float], ...]:
+    """Dataset-wide (vmin, vmax) for the REQUESTED bands, skipping nodata/NaN.
 
-    Reads the whole raster decimated to at most ``_STATS_MAX_SIDE`` pixels on
-    the longest side (masked=True so nodata never enters the min/max; NaN and
-    Inf values are additionally filtered — the NaN-nodata fix from #372 stays
-    intact because declared-nodata NaN is masked AND stray NaNs are skipped).
+    Reads decimated to at most ``_STATS_MAX_SIDE`` pixels on the longest side
+    (masked=True so nodata never enters the min/max; NaN and Inf values are
+    additionally filtered — the NaN-nodata fix from #372 stays intact because
+    declared-nodata NaN is masked AND stray NaNs are skipped). C5: stats are
+    per-band-subset (band selection needs each requested band's stretch) and
+    only the requested bands are decoded — never all bands of a >3-band raster
+    (#595/#410 discipline applies to the stats read too).
     """
     scale = min(1.0, _STATS_MAX_SIDE / float(max(src.width, src.height)))
     out_shape = (
-        count,
+        len(indexes),
         max(1, int(round(src.height * scale))),
         max(1, int(round(src.width * scale))),
     )
-    data = src.read(indexes=tuple(range(1, count + 1)), out_shape=out_shape, masked=True)
+    data = src.read(indexes=indexes, out_shape=out_shape, masked=True)
     arr = np.ma.getdata(data)
     mask = np.ma.getmaskarray(data)
     stats: "list[Tuple[float, float]]" = []
-    for b in range(count):
+    for b in range(len(indexes)):
         valid = np.isfinite(arr[b]) & ~mask[b]
         if not valid.any():
             stats.append((0.0, 0.0))
@@ -137,20 +140,23 @@ def _compute_band_stats(src, count: int) -> Tuple[Tuple[float, float], ...]:
     return tuple(stats)
 
 
-def _get_band_stats(raster_path: str, src, count: int) -> Tuple[Tuple[float, float], ...]:
-    """Cached per-raster (vmin, vmax) per band (double-checked, lock-protected)."""
+def _get_band_stats(
+    raster_path: str, src, indexes: Tuple[int, ...]
+) -> Tuple[Tuple[float, float], ...]:
+    """Cached per-(raster, band-subset) (vmin, vmax) (double-checked, lock-protected)."""
+    cache_key = (raster_path, indexes)
     with _STATS_CACHE_LOCK:
-        stats = _STATS_CACHE.get(raster_path)
+        stats = _STATS_CACHE.get(cache_key)
     if stats is not None:
         return stats
-    stats = _compute_band_stats(src, count)
+    stats = _compute_band_stats(src, indexes)
     with _STATS_CACHE_LOCK:
-        existing = _STATS_CACHE.get(raster_path)
+        existing = _STATS_CACHE.get(cache_key)
         if existing is not None:
             return existing
         if len(_STATS_CACHE) >= _STATS_MAX_ENTRIES:
             _STATS_CACHE.clear()  # bounded working set; staleness is best-effort
-        _STATS_CACHE[raster_path] = stats
+        _STATS_CACHE[cache_key] = stats
     return stats
 
 
@@ -180,13 +186,21 @@ def render_raster_tile(
     x: int,
     y: int,
     tile_size: int = 256,
-    cmap_name: str = "viridis",
+    cmap_name: Optional[str] = None,
+    bands: Optional[Tuple[int, ...]] = None,
 ) -> bytes:
-    """Render a 256x256 PNG tile for the given XYZ coordinates from a GeoTIFF."""
+    """Render a 256x256 PNG tile for the given XYZ coordinates from a GeoTIFF.
+
+    C5（RasterStyleSpec 数据面）：
+    - ``cmap_name``：单波段着色（matplotlib 合法名；None/未知名 = 灰度）。
+      此前是死参数——只进缓存键不进渲染体。
+    - ``bands``：1-based 波段组合（≤3）；缺省前 min(3, count)。
+    - 样式（cmap/bands）进缓存键：换样式 = 新缓存条目，绝不重算遥感产物。
+    """
     if z < 0 or z > 22 or x < 0 or y < 0 or x >= (1 << z) or y >= (1 << z):
         return _transparent_tile_png(tile_size)
 
-    key = (raster_path, z, x, y, tile_size, cmap_name)
+    key = (raster_path, z, x, y, tile_size, cmap_name or "", bands or ())
     cached = _get_cached_tile(key)
     if cached is not None:
         return cached
@@ -243,8 +257,16 @@ def render_raster_tile(
             # Perform windowed read from source file (O(win_size) memory).
             # Issue #410: read ONLY the bands we render (max 3) — the previous
             # full-band read decoded every band of a >3-band raster (~2x waste).
-            count = min(src.count, 3)
-            indexes = tuple(range(1, count + 1))
+            # C5：band selection（RasterStyleSpec.normalized_bands 语义同构）
+            if bands:
+                indexes = tuple(b for b in bands if 1 <= b <= src.count)[:3]
+            else:
+                indexes = tuple(range(1, min(src.count, 3) + 1))
+            if not indexes:
+                res = _transparent_tile_png(tile_size)
+                _set_cached_tile(key, res)
+                return res
+            count = len(indexes)
             # #595: decimate the read to ~the destination resolution. A low-zoom
             # tile's window can cover the WHOLE raster (10000×10000 uint16 × 3
             # bands ≈ 600MB decoded per request) just to reproject it down to
@@ -267,7 +289,9 @@ def render_raster_tile(
             # Dataset-global stretch bounds (per band) so adjacent tiles share
             # one normalization instead of per-tile min/max (seam fix, #410).
             try:
-                stats = _get_band_stats(raster_path, src, count)
+                # C5：只对请求的波段子集计算/缓存全局 stretch（#595 纪律同样
+                # 适用于 stats 读取——绝不解码 >3 波段栅格的全部波段）
+                stats = _get_band_stats(raster_path, src, indexes)
             except Exception:
                 logger.debug(
                     "[raster_tile_service] global stats unavailable for %s, "
@@ -356,7 +380,18 @@ def render_raster_tile(
                 stretch = stats[0] if stats is not None else ()
                 gray = _normalize_channel(arr, valid_mask, *stretch)
                 alpha = np.where(valid_mask, 255, 0).astype(np.uint8)
-                rgba = np.dstack([gray, gray, gray, alpha])
+                # C5：单波段着色——样式改动只换缓存键，不重跑遥感计算
+                rgb_out = None
+                if cmap_name:
+                    from app.schemas.raster_spec import apply_colormap_u8
+
+                    colored = apply_colormap_u8(gray, cmap_name)
+                    if colored is not None:
+                        rgb_out = colored
+                if rgb_out is not None:
+                    rgba = np.dstack([rgb_out, alpha])
+                else:
+                    rgba = np.dstack([gray, gray, gray, alpha])
                 img = Image.fromarray(rgba, "RGBA")
 
             buf = io.BytesIO()

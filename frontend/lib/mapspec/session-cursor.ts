@@ -13,6 +13,10 @@ let pendingRemoved: string[] = [];
 let generation = 0;
 const listeners = new Set<() => void>();
 
+function curRevision(): number {
+  return revision;
+}
+
 function emit(): void {
   generation += 1;
   listeners.forEach((listener) => listener());
@@ -58,6 +62,11 @@ export function getMapSpecSessionCursor(): {
 }
 
 export function setMapSpecRevision(nextRevision: number): void {
+  // 单调保护（ST-P3-1）：HTTP 突变响应与 SSE agent 事件是两条信道，迟到的
+  // 旧事件不得把游标 revision 拉回过去（否则下一次用户突变必然 spurious
+  // 409）。restore 路径经 setMapSpecSessionCursor 整体重置，不受影响。
+  if (!Number.isFinite(nextRevision)) return;
+  if (nextRevision < revision) return;
   revision = nextRevision;
 }
 
@@ -65,20 +74,28 @@ export function getCommittedMapSpec(): MapSpec | null {
   return committed;
 }
 
-export function commitMapSpecDocument(mapspec: unknown): void {
-  if (!mapspec || typeof mapspec !== 'object') return;
+export function commitMapSpecDocument(mapspec: unknown, revision?: number): boolean {
+  if (!mapspec || typeof mapspec !== 'object') return false;
   const spec = mapspec as MapSpec;
   if (!Array.isArray(spec.layers) && (spec.sources == null || typeof spec.sources !== 'object')) {
-    return;
+    return false;
+  }
+  // 旧代次保护（ST-P3-1）：携带 revision 且低于游标当前值的 spec 是迟到
+  // 信道上的旧真相——提交会让 committed 回退到旧代（下一次 compose 用旧
+  // spec 组合）。无 revision（restore/未标注来源）按无条件提交（调用方
+  // 已负责传入当前 revision，见 map-state-restore 的带 revision 提交）。
+  if (typeof revision === 'number' && Number.isFinite(revision) && revision < curRevision()) {
+    return false;
   }
   // #692：同一 spec 对象重复提交不 bump generation——此前无条件 emit，
   // map-panel 的 effect 重跑全量 compose + worker diff 只为得到空 patch；
   // 一轮多事件时按事件量放大。MapSpec 类型无身份字段，CoW 下重复提交
   // 常是同一对象引用（后端/桥不复制），对象同一性即足够的快路径；等值
   // 不同对象的深比较本身就是要省掉的成本，不做。
-  if (spec === committed) return;
+  if (spec === committed) return true;
   committed = spec;
   emit();
+  return true;
 }
 
 export function getPendingPresentation(): PendingPresentation {

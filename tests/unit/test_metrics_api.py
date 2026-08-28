@@ -61,7 +61,7 @@ def test_metrics_digest_harness_telemetry_aggregates_sessions():
     """#792 (F-A-4): /metrics/digest harness telemetry must aggregate across
     ALL per-session harnesses (mean of non-null per-session rates) instead of
     presenting only the last-touched session's window as service-level."""
-    import app.agent_pi_bridge as bridge
+    import app.services.cartography_runtime as bridge
 
     saved_harnesses = dict(bridge._harnesses)
     saved_harness = bridge._harness

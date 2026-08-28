@@ -1769,7 +1769,7 @@ class ChatExecutionEngine:
                 turn_id_for_catalog = _rt2.turn_id if _rt2 and _rt2.turn_id else turn_id
                 # #685: 流式路径 no-progress 熔断（与非流式 _chat_locked 同义）
                 _stream_no_progress_streak = 0
-                # H-2（#857）：流式回合总墙钟预算（对齐 Pi 的 900s 整轮预算）。
+                # H-2（#857）：流式回合总墙钟预算（legacy=900s；Pi 侧为nPI_TURN_TOTAL_TIMEOUT=300s，#910 收紧——两预算刻意独立，见 AH-P2-1）。
                 _turn_deadline = time.monotonic() + self._turn_total_timeout_s
 
                 for round_index in range(self.max_rounds):

@@ -1581,7 +1581,7 @@ async def test_unchanged_mapspec_reuses_deterministic_review():
 async def test_production_session_harness_re_evaluates_after_runtime_and_ack(
     quality_session,
 ):
-    import app.agent_pi_bridge as bridge
+    import app.services.cartography_runtime as bridge
     from app.services.mapspec.store import mapspec_store_instance
 
     mapspec = _plain_mapspec()
@@ -1647,7 +1647,7 @@ async def test_production_session_harness_re_evaluates_after_runtime_and_ack(
 async def test_out_of_order_runtime_observation_cannot_overwrite_newer_state(
     quality_session,
 ):
-    import app.agent_pi_bridge as bridge
+    import app.services.cartography_runtime as bridge
     from app.services.mapspec.store import mapspec_store_instance
 
     mapspec = _plain_mapspec()
@@ -1707,7 +1707,7 @@ async def test_out_of_order_runtime_observation_cannot_overwrite_newer_state(
 async def test_obsolete_fingerprint_cannot_poison_observation_generation(
     quality_session,
 ):
-    import app.agent_pi_bridge as bridge
+    import app.services.cartography_runtime as bridge
     from app.services.mapspec.store import mapspec_store_instance
 
     old_mapspec = _plain_mapspec()
@@ -1761,7 +1761,7 @@ async def test_obsolete_fingerprint_cannot_poison_observation_generation(
 async def test_harness_context_rehydrates_on_another_worker_without_data_body(
     quality_session,
 ):
-    import app.agent_pi_bridge as bridge
+    import app.services.cartography_runtime as bridge
     from app.services.mapspec.store import mapspec_store_instance
 
     mapspec = _plain_mapspec()
@@ -1831,7 +1831,7 @@ async def test_harness_context_rehydrates_on_another_worker_without_data_body(
 async def test_deleted_session_tombstone_rejects_late_context_persistence(
     quality_session,
 ):
-    import app.agent_pi_bridge as bridge
+    import app.services.cartography_runtime as bridge
 
     await session_data_manager.set_map_state(
         quality_session, "_cartographic_deleted", True
@@ -1886,7 +1886,7 @@ def _runtime_observation(
 async def test_runtime_hidden_layer_auto_repairs_then_ack_and_new_observation_pass(
     quality_session,
 ):
-    import app.agent_pi_bridge as bridge
+    import app.services.cartography_runtime as bridge
     from app.services.mapspec.store import mapspec_store_instance
 
     mapspec = _plain_mapspec()
@@ -1944,7 +1944,7 @@ async def test_runtime_hidden_layer_auto_repairs_then_ack_and_new_observation_pa
 async def test_identical_runtime_repair_terminates_and_user_cancel_supersedes(
     quality_session,
 ):
-    import app.agent_pi_bridge as bridge
+    import app.services.cartography_runtime as bridge
     from app.services.mapspec.store import mapspec_store_instance
 
     mapspec = _plain_mapspec()
@@ -2024,7 +2024,7 @@ async def test_identical_runtime_repair_terminates_and_user_cancel_supersedes(
 
 
 def test_session_harness_registry_never_retags_or_shares_accumulators():
-    import app.agent_pi_bridge as bridge
+    import app.services.cartography_runtime as bridge
 
     session_a = f"registry-a-{uuid.uuid4().hex[:8]}"
     session_b = f"registry-b-{uuid.uuid4().hex[:8]}"

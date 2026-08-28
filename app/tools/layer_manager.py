@@ -153,16 +153,24 @@ def register_layer_management_tools(registry: ToolRegistry):
             str(layer.get("id")) for layer in spec.get("layers", []) if isinstance(layer, dict)
         }
         durability_patched: List[str] = []
+        # user_hidden 拒绝集：用户 durable 隐藏的层不因收口被 agent 翻回可见
+        #（G6 不变量——user interaction wins 的服务端强制，GISWorldState 守卫）。
+        user_guard_refusals: List[str] = []
+        from app.services.gis_world_state import apply_gis_mutation
         for layer_id in resolved:
             if layer_id not in spec_layer_ids:
                 continue
-            pres = await engine.apply_mutation(
+            pres = await apply_gis_mutation(
                 session_id,
                 PatchLayerPresentationIntent(layer_id=layer_id, visible=True),
                 origin="agent",
+                actor="finalize_display",
+                engine=engine,
             )
-            if not pres.is_error:
+            if not pres.is_error and not pres.superseded:
                 durability_patched.append(layer_id)
+            elif pres.is_error and "不覆盖用户显式操作" in (pres.error_msg or ""):
+                user_guard_refusals.append(layer_id)
 
         final_spec = await mapspec_store_instance.get_mapspec(session_id) or {}
         fingerprint = cartographic_fingerprint(final_spec) if final_spec else ""
@@ -189,6 +197,7 @@ def register_layer_management_tools(registry: ToolRegistry):
             "final_display": {
                 "show_layer_ids": resolved,
                 "desired_state_patched": durability_patched,
+                "user_hidden_respected": user_guard_refusals,
                 "verification": "frontend_runtime",
             },
             "message": (
