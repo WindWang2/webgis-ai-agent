@@ -21,6 +21,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 from app.lib.harness.tool_call_event import ToolCallEvent
+import app.agent_pi_bridge as bridge
 
 
 def test_harness_records_tool_call_via_record_event():
