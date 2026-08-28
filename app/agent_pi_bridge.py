@@ -231,9 +231,9 @@ def _get_shared_dispatch_service() -> "ToolDispatchService":
     return _dispatch_service
 
 
-_DISPATCH_CACHE_MAX = 256
-_SESSION_PLAN_CACHE_MAX = 256
-_SESSION_EXECUTED_SETS_MAX = 256
+_DISPATCH_CACHE_MAX = 128
+_SESSION_PLAN_CACHE_MAX = 128
+_SESSION_EXECUTED_SETS_MAX = 128
 
 
 def _get_active_session_id() -> str:
@@ -243,46 +243,46 @@ def _get_active_session_id() -> str:
     return ""
 
 
-def _evict_dispatch_result_cache() -> None:
-    """Evict stale cache entries, protecting the active turn's session."""
-    if len(_dispatch_result_cache) <= _DISPATCH_CACHE_MAX:
+def _pop_session_entries(cache: dict, session_id: str) -> None:
+    """Pop all entries matching session_id (or empty session) from a cache."""
+    for key in list(cache.keys()):
+        if isinstance(key, tuple):
+            if key[0] == session_id or key[0] == "":
+                cache.pop(key, None)
+        elif key == session_id or key == "":
+            cache.pop(key, None)
+
+
+def _evict_cache_protect_active(
+    cache: dict,
+    max_cap: int,
+    is_tuple_key: bool = True,
+) -> None:
+    """Evict oldest entries when cache exceeds max_cap, protecting the active session."""
+    if len(cache) <= max_cap:
         return
     active_sid = _get_active_session_id()
-    for key in list(_dispatch_result_cache.keys()):
-        if not active_sid or key[0] != active_sid:
-            _dispatch_result_cache.pop(key, None)
-            if len(_dispatch_result_cache) <= _DISPATCH_CACHE_MAX:
+    for key in list(cache.keys()):
+        sid = key[0] if is_tuple_key else key
+        if not active_sid or sid != active_sid:
+            cache.pop(key, None)
+            if len(cache) <= max_cap:
                 return
-    if len(_dispatch_result_cache) > _DISPATCH_CACHE_MAX:
-        _dispatch_result_cache.pop(next(iter(_dispatch_result_cache)), None)
+    # If all entries belong to active session (extreme overload), enforce hard bound
+    while len(cache) > max_cap:
+        cache.pop(next(iter(cache)), None)
+
+
+def _evict_dispatch_result_cache() -> None:
+    _evict_cache_protect_active(_dispatch_result_cache, _DISPATCH_CACHE_MAX, is_tuple_key=True)
 
 
 def _evict_session_plan_sse_cache() -> None:
-    """Evict stale SessionPlan SSE entries, protecting the active turn's session."""
-    if len(_session_plan_sse_cache) <= _SESSION_PLAN_CACHE_MAX:
-        return
-    active_sid = _get_active_session_id()
-    for key in list(_session_plan_sse_cache.keys()):
-        if not active_sid or key[0] != active_sid:
-            _session_plan_sse_cache.pop(key, None)
-            if len(_session_plan_sse_cache) <= _SESSION_PLAN_CACHE_MAX:
-                return
-    if len(_session_plan_sse_cache) > _SESSION_PLAN_CACHE_MAX:
-        _session_plan_sse_cache.pop(next(iter(_session_plan_sse_cache)), None)
+    _evict_cache_protect_active(_session_plan_sse_cache, _SESSION_PLAN_CACHE_MAX, is_tuple_key=True)
 
 
 def _evict_session_executed_set() -> None:
-    """Evict stale session executed sets, protecting the active turn's session."""
-    if len(_session_executed_sets) <= _SESSION_EXECUTED_SETS_MAX:
-        return
-    active_sid = _get_active_session_id()
-    for sid in list(_session_executed_sets.keys()):
-        if not active_sid or sid != active_sid:
-            _session_executed_sets.pop(sid, None)
-            if len(_session_executed_sets) <= _SESSION_EXECUTED_SETS_MAX:
-                return
-    if len(_session_executed_sets) > _SESSION_EXECUTED_SETS_MAX:
-        _session_executed_sets.pop(next(iter(_session_executed_sets)), None)
+    _evict_cache_protect_active(_session_executed_sets, _SESSION_EXECUTED_SETS_MAX, is_tuple_key=False)
 
 
 def cache_dispatch_result(
@@ -322,10 +322,14 @@ def get_cached_dispatch_result(
     return _dispatch_result_cache.pop(matches[0], None)
 
 
-def _clear_dispatch_cache() -> None:
-    """清空所有缓存的 dispatch 结果（新 turn 开始时调用）。"""
-    _dispatch_result_cache.clear()
-    _session_plan_sse_cache.clear()
+def _clear_dispatch_cache(session_id: Optional[str] = None) -> None:
+    """清空指定 session 或所有的 dispatch 缓存（新 turn 开始时按 session 清空）。"""
+    if session_id:
+        _pop_session_entries(_dispatch_result_cache, session_id)
+        _pop_session_entries(_session_plan_sse_cache, session_id)
+    else:
+        _dispatch_result_cache.clear()
+        _session_plan_sse_cache.clear()
 
 
 def _cleanup_turn_state(turn_sid: str) -> None:
@@ -337,12 +341,8 @@ def _cleanup_turn_state(turn_sid: str) -> None:
     """
     _session_executed_sets.pop(turn_sid, None)
     _session_executed_sets.pop("", None)
-    for key in list(_dispatch_result_cache.keys()):
-        if key[0] == turn_sid or key[0] == "":
-            _dispatch_result_cache.pop(key, None)
-    for key in list(_session_plan_sse_cache.keys()):
-        if key[0] == turn_sid or key[0] == "":
-            _session_plan_sse_cache.pop(key, None)
+    _pop_session_entries(_dispatch_result_cache, turn_sid)
+    _pop_session_entries(_session_plan_sse_cache, turn_sid)
 
 
 def _slim_pi_details_payload(result: Any) -> Any:
@@ -1927,7 +1927,7 @@ class PiBridge:
         # Clear caches only after the lock so a concurrent stream_prompt
         # cannot wipe another in-flight turn's dispatch results / dedup set.
         _session_executed_sets.pop(turn_sid, None)
-        _clear_dispatch_cache()
+        _clear_dispatch_cache(turn_sid)
         with rt_ctx.bind_runtime_context(turn_id=turn_id, run_id=run_id), bind_turn_evidence(rt_ev):
             TURN_EVIDENCE.register(rt_ev)
             cancelled = False
@@ -2193,7 +2193,7 @@ class PiBridge:
                 except asyncio.TimeoutError:
                     yield ": keepalive\n\n"
             _session_executed_sets.pop(turn_sid, None)
-            _clear_dispatch_cache()
+            _clear_dispatch_cache(turn_sid)
             cancelled = False
             timed_out = False
             send_failed = False

@@ -142,3 +142,61 @@ def test_cleanup_turn_state_is_session_scoped():
     assert get_cached_dispatch_result("call-b", session_id="sess-B") is not None
     assert take_session_plan_sse("call-b", session_id="sess-B") == "sse-data-B"
     assert "sess-B" in _session_executed_sets
+
+
+def test_inactive_entries_evicted_when_exceeding_capacity():
+    """When cache exceeds 128 without an active turn, oldest inactive entries are evicted."""
+    dummy_result = ToolDispatchResult(
+        status="ok",
+        llm_payload="ok",
+        slim_event={"ok": True},
+        geojson_ref=None,
+        raw_result={"ok": True},
+        error_msg=None,
+    )
+
+    # Insert 150 entries
+    for i in range(150):
+        cache_dispatch_result(f"call-{i}", dummy_result, session_id=f"sess-{i}")
+        cache_session_plan_sse(f"call-{i}", f"data-{i}", session_id=f"sess-{i}")
+
+    # Total cache sizes must not exceed 128
+    assert len(_dispatch_result_cache) <= 128
+    assert len(_session_plan_sse_cache) <= 128
+
+    # Oldest entries (e.g. call-0 .. call-21) were evicted
+    assert get_cached_dispatch_result("call-0", session_id="sess-0") is None
+    assert take_session_plan_sse("call-0", session_id="sess-0") == ""
+
+    # Newest entries (e.g. call-149) are retained
+    assert get_cached_dispatch_result("call-149", session_id="sess-149") is not None
+    assert take_session_plan_sse("call-149", session_id="sess-149") == "data-149"
+
+
+def test_clear_dispatch_cache_is_session_scoped():
+    """_clear_dispatch_cache(session_id) clears only the specified session."""
+    from app.agent_pi_bridge import _clear_dispatch_cache
+
+    dummy_result = ToolDispatchResult(
+        status="ok",
+        llm_payload="ok",
+        slim_event={"ok": True},
+        geojson_ref=None,
+        raw_result={"ok": True},
+        error_msg=None,
+    )
+
+    cache_dispatch_result("call-x", dummy_result, session_id="sess-X")
+    cache_dispatch_result("call-y", dummy_result, session_id="sess-Y")
+    cache_session_plan_sse("call-x", "sse-X", session_id="sess-X")
+    cache_session_plan_sse("call-y", "sse-Y", session_id="sess-Y")
+
+    _clear_dispatch_cache("sess-X")
+
+    # sess-X is cleared
+    assert get_cached_dispatch_result("call-x", session_id="sess-X") is None
+    assert take_session_plan_sse("call-x", session_id="sess-X") == ""
+
+    # sess-Y is preserved
+    assert get_cached_dispatch_result("call-y", session_id="sess-Y") is not None
+    assert take_session_plan_sse("call-y", session_id="sess-Y") == "sse-Y"
