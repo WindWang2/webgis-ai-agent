@@ -336,11 +336,27 @@ def _use_pi_bridge() -> bool:
     bridge falls through to the always-initialised legacy ChatEngine so the
     service degrades instead of hard-failing until a restart.
     """
-    return (
-        USE_NEW_AGENT
-        and pi_bridge is not None
-        and not getattr(pi_bridge, "_process_died", False)
-    )
+    if not USE_NEW_AGENT or pi_bridge is None:
+        return False
+    if getattr(pi_bridge, "_process_died", False):
+        return False
+    is_alive_fn = getattr(pi_bridge, "is_alive", None)
+    if is_alive_fn and callable(is_alive_fn):
+        return is_alive_fn()
+    return True
+
+
+async def _ensure_pi_bridge_available() -> bool:
+    """Return True if Pi bridge is active or successfully respawned, False if degraded to ChatEngine."""
+    if not USE_NEW_AGENT or pi_bridge is None:
+        return False
+    if _use_pi_bridge():
+        return True
+    # Attempt lazy respawn if dead
+    respawn_fn = getattr(pi_bridge, "respawn_if_dead", None)
+    if respawn_fn and callable(respawn_fn):
+        return await respawn_fn()
+    return False
 
 
 async def _sse_batched(stream, max_events=_PI_BATCH_MAX_EVENTS, max_delay_s=_PI_BATCH_MAX_DELAY_S):
@@ -552,7 +568,7 @@ async def chat_completions(
                 if rt_ctx.current_runtime_context() else None)
     request_id = _mid_req or request.headers.get("x-request-id") or rt_ctx.new_request_id()
     with rt_ctx.bind_runtime_context(request_id=request_id, session_id=req.session_id, project_id=req.project_id):
-        if _use_pi_bridge():
+        if await _ensure_pi_bridge_available():
             try:
                 try:
                     await _record_frontend_cartographic_observation(req.session_id, req.map_state)
@@ -683,7 +699,7 @@ async def chat_stream(
     stream; the early close takes it to 0 during streaming).
     """
     user_id = _user.get("user_id")
-    use_pi = _use_pi_bridge()
+    use_pi = await _ensure_pi_bridge_available()
     last_event_id = (
         last_event_id_header
         if last_event_id_header is not None

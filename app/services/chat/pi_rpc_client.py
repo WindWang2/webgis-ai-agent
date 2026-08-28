@@ -153,9 +153,30 @@ class PiRpcClient:
         """The raw AgentSessionEvent queue (consumed by the SSE mapper)."""
         return self._event_queue
 
+    def is_alive(self) -> bool:
+        """Check if the Pi child process is running and healthy.
+
+        Proactively polls the OS subprocess: if the process exited before
+        the stdout reader reached EOF, sets process_died and triggers death
+        events immediately.
+        """
+        if self._process_died:
+            return False
+        if self._process is None:
+            return False
+        if self._process.poll() is not None:
+            self._process_died = True
+            self._process_died_event.set()
+            self._fail_all_pending("Pi process exited (detected via poll)")
+            return False
+        return True
+
     @property
     def process_died(self) -> bool:
         """True after the Pi process exits or the reader task crashes."""
+        if not self._process_died and self._process is not None and self._process.poll() is not None:
+            self._process_died = True
+            self._process_died_event.set()
         return self._process_died
 
     @property
