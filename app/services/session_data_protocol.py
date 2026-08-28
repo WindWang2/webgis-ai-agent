@@ -176,6 +176,20 @@ class SessionStoreProtocol(Protocol):
         ...
 
 
+def _layer_matches_removal_family(layer_id, target_id) -> bool:
+    """#1074(F-12): 运行时删层的族谓词 —— 与 spec 侧 _should_remove_layer
+    （store.py：删 x 即删 x-label/x__*/x-* 族）语义对齐。此前运行时侧精确
+    id 匹配，伴生子层在 map_state.layers 残留（spec/运行时可见集分叉）。
+    """
+    if not isinstance(layer_id, str) or not isinstance(target_id, str) or not target_id:
+        return False
+    return (
+        layer_id == target_id
+        or layer_id.startswith(f"{target_id}-")
+        or layer_id.startswith(f"{target_id}__")
+    )
+
+
 class BaseSessionStore:
     """Abstract base class providing unified domain logic for SessionStore implementations.
 

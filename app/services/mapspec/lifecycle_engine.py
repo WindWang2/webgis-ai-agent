@@ -15,7 +15,7 @@ import asyncio
 import copy
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
 
 MutationOrigin = Literal["agent", "user", "system"]
 
@@ -27,7 +27,11 @@ from app.lib.cartography.quality_loop import (
     cartographic_fingerprint,
     review_and_repair_cartography,
 )
-from app.services.mapspec.checkpoint import snapshot as create_checkpoint, rollback as rollback_checkpoint
+from app.services.mapspec.checkpoint import (
+    snapshot as create_checkpoint,
+    rollback as rollback_checkpoint,
+    discard_checkpoint,
+)
 from app.services.distributed_lock import session_lock_registry
 
 logger = logging.getLogger(__name__)
@@ -253,6 +257,7 @@ def _patch_layer_presentation(
     layer: Dict[str, Any],
     visible: Optional[bool],
     opacity: Optional[float],
+    origin: str = "agent",
 ) -> Dict[str, Any]:
     patched = dict(layer)
     if visible is not None:
@@ -263,8 +268,11 @@ def _patch_layer_presentation(
         # cartographic_intent.expected_visible，QA（RESULT_VISIBILITY）由此区分
         # "故意隐藏"（用户/agent 收口）与"结果层被误藏"（auto_safe 修复）。
         # 用户隐藏 → expected_visible=False → QA pass 且 user-wins 一致。
+        # #1070: presentation_owner 持久落层 —— 用户决策的权威从 64 条环形
+        # provenance（一次 finalize 写 30+ 条即驱逐）移到权威 spec 本身。
         intent = dict(patched.get("cartographic_intent") or {})
         intent["expected_visible"] = bool(visible)
+        intent["presentation_owner"] = str(origin)
         patched["cartographic_intent"] = intent
     if opacity is not None:
         paint = dict(patched.get("paint") or {})
@@ -306,10 +314,32 @@ def _preserve_durable_presentation(
     agent 本次未显式给出时必须保留（否则用户隐藏的层静默回默认可见，
     reload 后用户决策彻底丢失）。图层类型改变时只继承 visibility
     （类型专属 opacity 键对新类型无效）。
+
+    #1070(F-3): 既有层的 cartographic_intent.presentation_owner=="user" 且
+    用户决策为隐藏时，agent upsert 显式携带的 layout.visibility 也一并
+    剥离（此前只在 incoming 未给 visibility 时保留 —— 显式给出即绕过，
+    且 expected_visible 被洗成 True 让下游 AUTO_SAFE 修复无从分辨）。
+    持久 owner 印记随之继承，守卫据此长期有效。
     """
     existing_layout = existing.get("layout") if isinstance(existing.get("layout"), dict) else {}
     incoming_layout = incoming.get("layout") if isinstance(incoming.get("layout"), dict) else {}
-    if (
+    existing_intent = (
+        existing.get("cartographic_intent")
+        if isinstance(existing.get("cartographic_intent"), dict) else {}
+    )
+    user_owned_hidden = (
+        existing_intent.get("presentation_owner") == "user"
+        and existing_layout.get("visibility") == "none"
+    )
+    if user_owned_hidden:
+        # agent 的 visibility 覆写被剥离，用户隐藏保留；owner 印记继承。
+        merged_layout = {**incoming_layout, "visibility": "none"}
+        incoming["layout"] = merged_layout
+        incoming_intent = dict(incoming.get("cartographic_intent") or {})
+        incoming_intent["expected_visible"] = False
+        incoming_intent["presentation_owner"] = "user"
+        incoming["cartographic_intent"] = incoming_intent
+    elif (
         existing_layout.get("visibility") == "none"
         and incoming_layout.get("visibility") is None
     ):
@@ -414,6 +444,7 @@ class MapSpecLifecycleEngine:
         *,
         origin: MutationOrigin = "agent",
         expected_revision: Optional[int] = None,
+        pre_commit_check: Optional[Callable] = None,
     ) -> MapSpecResult:
         """原子执行 MapSpec 意图变迁，带 per-session 分布式锁 + 事务 rollback。
 
@@ -424,8 +455,20 @@ class MapSpecLifecycleEngine:
         origin 为 agent|user|system。user 必须带 expected_revision；缺省 origin=agent
         且省略 expected_revision 时仍提交（既有 tool 兼容）。expected_revision 与当前
         revision 不一致则 superseded，MapSpec 不变（ADR-0058）。
+
+        pre_commit_check：锁内、prior spec 载入后调用的异步回调
+        ``(session_id, intent, origin, prior_mapspec) -> Optional[MapSpecResult]``；
+        返回非 None 即拒绝提交（守卫复检语义）。None 保持既有行为。
+
+        #1071: 持久写路径对锁降级/丢失 fail-closed —— 降级获取（锁 SET
+        2s 超时 vs 数据面 5s 的不对称窗口）+ 活数据面 = 两 pod 各持进程
+        内锁并发提交，revision 相等的丢更新；TTL 过期丢失（事件循环停顿
+        >30s）后本持有者仍会覆盖他 pod 的提交。
         """
-        async with session_lock_registry.lock(session_id):
+        _lock = session_lock_registry.lock(
+            session_id, fail_on_degraded=True, fail_on_lost=True,
+        )
+        async with _lock:
             invalidate = getattr(session_data_manager, "invalidate_local_cache", None)
             if callable(invalidate):
                 invalidate(session_id)
@@ -505,6 +548,15 @@ class MapSpecLifecycleEngine:
             try:
                 loaded = await self.store.get_mapspec(session_id)
                 prior_mapspec = loaded
+                # #1070(F-1): 锁内守卫复检 seam —— apply_gis_mutation 的
+                # user-wins 检查此前在锁外求值，等锁窗口内落地的用户决策
+                # 不可见（TOCTOU）。回调返回非 None 即拒绝（不提交）。
+                if pre_commit_check is not None:
+                    guard_result = await pre_commit_check(
+                        session_id, intent, origin, prior_mapspec
+                    )
+                    if guard_result is not None:
+                        return guard_result
                 # CORR-2 companion: whether the session had a persisted spec
                 # BEFORE the auto-init skeleton below. Rollback of a first
                 # mutation must DISCARD the candidate, not "restore" the
@@ -651,7 +703,8 @@ class MapSpecLifecycleEngine:
                             matched = True
                             patched_layers.append(
                                 _patch_layer_presentation(
-                                    layer, intent.visible, intent.opacity
+                                    layer, intent.visible, intent.opacity,
+                                    origin=str(origin),
                                 )
                             )
                         else:
@@ -770,7 +823,14 @@ class MapSpecLifecycleEngine:
                     old_mapspec_snapshot = loaded
                     mapspec = {**loaded} if loaded else {}
                     layers = mapspec.get("layers", [])
-                    mapspec["layers"] = [lay for lay in layers if not _should_remove_layer(lay, intent.layer_id)]
+                    mapspec["layers"] = [
+                        lay for lay in layers
+                        if not _should_remove_layer(lay, intent.layer_id)
+                    ]
+                    # F-11（audit5 #1074）复核后维持既有契约：sources 是数据
+                    # 登记项，remove_layer 只做图层清扫、不做 source GC（#1014
+                    # TE-P1-1，scenario_8 测试锁定 —— ref 生命周期另有治理；
+                    # inlineData 死重是已知的权衡而非缺陷）。
                     pending_layer_op = ("remove", intent.layer_id, None)
                     auto_checkpoint = True
 
@@ -1015,13 +1075,34 @@ class MapSpecLifecycleEngine:
                         )
 
                 # 5. 提交（checkpoint → save_mapspec → redis layers），任一失败回滚。
+                # #1071: 提交前复检锁所有权 —— TTL 过期丢失（事件循环停顿
+                # >30s / Redis 中断后恢复）后本持有者继续写会覆盖他 pod 的
+                # 提交；aexit 的 fail_on_lost 只能事后暴露，此处防止发生。
+                if getattr(_lock, "lost", False):
+                    return MapSpecResult(
+                        is_error=True,
+                        origin=origin,
+                        error_msg="Session lock ownership lost before commit; mutation aborted.",
+                        correction_hint=(
+                            "锁所有权在提交前丢失（TTL 过期）。请重读 MapSpec 后重试。"
+                        ),
+                    )
                 if auto_checkpoint and not checkpoint_id_created:
                     session_dir = self.store.get_session_dir(session_id)
                     ckpt_res = await create_checkpoint(mapspec, session_dir, session_data_manager)
                     checkpoint_id_created = ckpt_res.get("checkpoint_id")
                     ckpt_ref_count = ckpt_res.get("ref_count", 0)
 
-                await self.store.save_mapspec(session_id, mapspec)
+                mutation_revision = prior_mutation_revision + 1
+                # #1073: spec 与 CAS 令牌单事务原子落地（crash 窗口不再产生
+                # spec=世代 N+1 而令牌=N 的错配）。save 返回未携带时（后端缺
+                # set_map_state_fields 的测试替身）退回旧的双写。
+                save_res = await self.store.save_mapspec(
+                    session_id, mapspec, mutation_revision=mutation_revision,
+                )
+                revision_persisted = bool(
+                    save_res.get("revision_persisted")
+                ) if isinstance(save_res, dict) else False
 
                 if pending_layer_op is not None:
                     op, layer_id, layer = pending_layer_op
@@ -1045,14 +1126,14 @@ class MapSpecLifecycleEngine:
                     if persisted is False:
                         raise RuntimeError("rollback runtime layer persistence rejected")
 
-                mutation_revision = prior_mutation_revision + 1
-                persisted = await session_data_manager.set_map_state(
-                    session_id,
-                    "_cartographic_mutation_revision",
-                    mutation_revision,
-                )
-                if persisted is False:
-                    raise RuntimeError("cartographic mutation revision persistence rejected")
+                if not revision_persisted:
+                    persisted = await session_data_manager.set_map_state(
+                        session_id,
+                        "_cartographic_mutation_revision",
+                        mutation_revision,
+                    )
+                    if persisted is False:
+                        raise RuntimeError("cartographic mutation revision persistence rejected")
 
                 cartography_findings = (
                     cartographic_review.get("review", {}).get("findings", [])
@@ -1093,6 +1174,20 @@ class MapSpecLifecycleEngine:
                         session_id, rb_err, exc_info=True,
                     )
                     rollback_ok = False
+                # #1074(F-14): 提交前创建的 auto-checkpoint 描述的是从未
+                # commit 的候选世代 —— 孤儿目录会让后续 rollback "恢复"到
+                # 未提交状态并占用 20 槽保留额。清理 best-effort。
+                if checkpoint_id_created:
+                    try:
+                        await discard_checkpoint(
+                            self.store.get_session_dir(session_id),
+                            checkpoint_id_created,
+                        )
+                    except Exception as ck_err:  # noqa: BLE001
+                        logger.warning(
+                            "orphan auto-checkpoint cleanup failed for %s/%s: %s",
+                            session_id, checkpoint_id_created, ck_err,
+                        )
                 # #748: never claim a consistency guarantee the rollback did
                 # not verify — during a sustained Redis outage commit AND
                 # rollback fail together, and the old fixed text told the

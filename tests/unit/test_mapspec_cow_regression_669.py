@@ -190,7 +190,7 @@ def test_rollback_after_cow_intent_shares_refs_does_not_mutate_prior(monkeypatch
     engine = MapSpecLifecycleEngine()
 
     class FailingStore(FakeStore):
-        async def save_mapspec(self, sid, mapspec):
+        async def save_mapspec(self, sid, mapspec, **_kw):
             raise RuntimeError("injected save failure")
 
     engine.store = FailingStore(prior)

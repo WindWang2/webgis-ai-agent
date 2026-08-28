@@ -147,6 +147,10 @@ def _fingerprint_sync(mapspec: Dict[str, Any]) -> str:
 # #687：no-op 快比较的磁盘 sidecar（内容为 _fingerprint_sync 的输出）。
 _FP_SIDECAR_NAME = "mapspec.json.fp"
 
+# #1073(F-9)：mutation revision 的磁盘 sidecar —— Redis 状态过期而磁盘 spec
+# 存活时随 get_mapspec 的复活路径一并恢复 CAS 令牌。
+_REV_SIDECAR_NAME = "mapspec.json.rev"
+
 
 class MapSpecStore:
     """MapSpec JSON 文件持久化与 Revision 管理服务"""
@@ -231,12 +235,41 @@ class MapSpecStore:
         # 文件读卸载到线程，避免大文件阻塞 event loop。
         mapspec = await asyncio.to_thread(_read_json_sync, mapspec_file)
         if mapspec is not None:
-            await session_data_manager.set_map_state(session_id, "mapspec", mapspec)
+            # #1073(F-9): Redis 状态过期而磁盘 spec 存活时，CAS 令牌必须随
+            # spec 一起复活 —— 否则下一次 mutation 以 prior=0 写 revision=1
+            # 给世代 N 的 spec（单调性 N→0→1 破坏，重放的 expected_revision=0
+            # 开世 mutation 会通过针对新 spec 的 CAS）。
+            rev_sidecar = await asyncio.to_thread(
+                _read_text_sync, mapspec_file.parent / _REV_SIDECAR_NAME
+            )
+            try:
+                disk_rev = int(rev_sidecar) if rev_sidecar else None
+            except (TypeError, ValueError):
+                disk_rev = None
+            stored_rev = map_state.get("_cartographic_mutation_revision")
+            restore_fields = {"mapspec": mapspec}
+            if disk_rev is not None and int(stored_rev or 0) < disk_rev:
+                restore_fields["_cartographic_mutation_revision"] = disk_rev
+            await session_data_manager.set_map_state_fields(session_id, restore_fields)
             return mapspec
 
         return None
 
-    async def save_mapspec(self, session_id: str, mapspec: Dict[str, Any]) -> Dict[str, Any]:
+    async def save_mapspec(
+        self,
+        session_id: str,
+        mapspec: Dict[str, Any],
+        mutation_revision: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """持久化 MapSpec；可选携带 mutation_revision 一并原子落地。
+
+        #1073: spec 与其 CAS 令牌此前是两笔独立 Redis 事务（engine 里
+        save_mapspec → set_map_state(revision)），crash 落在两写之间破坏
+        相等 CAS 的前提。携带 revision 时经 set_map_state_fields 单 MULTI
+        提交，并落 _REV_SIDECAR_NAME 供磁盘复活路径恢复令牌。返回
+        ``revision_persisted`` 标记是否已随本调用落地（后端缺接口时调用方
+        自行补写）。
+        """
         session_dir = self.get_session_dir(session_id)
         rev_dir = session_dir / "revisions"
         mapspec_path = session_dir / "mapspec.json"
@@ -248,7 +281,18 @@ class MapSpecStore:
         # 纹（线程内单次 O(bytes)）；冷启动/跨进程经 sidecar 文件 + Redis
         # 定向字段（均 O(1) 读）恢复语义。
         if mapspec is self._persisted_obj.get(session_id):
-            return {"mapspec": mapspec}
+            # #1074(F-8): 同一性短路此前完全跳过存活复检（#838 只修了指纹
+            # 路径）—— 他 worker 的 clear_session（空闲逐出，无 tombstone）
+            # 后本进程同对象再保存会静默不持久化。sidecar + Redis 指纹两个
+            # O(1) 读复检；缺失即失效进程缓存走全量落盘。
+            sidecar_alive = await asyncio.to_thread(
+                _read_text_sync, session_dir / _FP_SIDECAR_NAME
+            )
+            _get_fp8 = getattr(session_data_manager, "get_map_spec_fingerprint", None)
+            redis_fp8 = await _get_fp8(session_id) if _get_fp8 is not None else None
+            if sidecar_alive and redis_fp8 is not None:
+                return {"mapspec": mapspec}
+            self._invalidate_process_cache(session_id)
         fp = await asyncio.to_thread(_fingerprint_sync, mapspec)
         if self._persisted_fp.get(session_id) == fp:
             # audit #838: 进程内指纹命中不再无条件短路 —— sidecar 仍在且指纹
@@ -274,15 +318,26 @@ class MapSpecStore:
             return {"mapspec": mapspec}
 
         # 原子落盘（mapspec.json + revision 快照 + 指纹 sidecar + 裁剪）
-        # 整体卸载到线程。
+        # 整体卸载到线程。#1073: revision sidecar 同步落盘。
         await asyncio.to_thread(
-            self._persist_disk_sync, mapspec_path, rev_dir, mapspec, fp
+            self._persist_disk_sync, mapspec_path, rev_dir, mapspec, fp,
+            mutation_revision,
         )
 
         # 落盘成功后再写 Redis cache（顺序契约：cache 不持有磁盘没有的 state）。
-        persisted = await session_data_manager.set_map_state(
-            session_id, "mapspec", mapspec
-        )
+        # #1073: 携带 revision 时经单事务接口原子提交 spec + CAS 令牌。
+        revision_persisted = False
+        _set_fields = getattr(session_data_manager, "set_map_state_fields", None)
+        if mutation_revision is not None and _set_fields is not None:
+            persisted = await _set_fields(session_id, {
+                "mapspec": mapspec,
+                "_cartographic_mutation_revision": int(mutation_revision),
+            })
+            revision_persisted = bool(persisted)
+        else:
+            persisted = await session_data_manager.set_map_state(
+                session_id, "mapspec", mapspec
+            )
         if persisted is False:
             raise RuntimeError("authoritative MapSpec cache write rejected")
         _set_fp = getattr(session_data_manager, "set_map_spec_fingerprint", None)
@@ -290,7 +345,7 @@ class MapSpecStore:
             await _set_fp(session_id, fp)
         self._persisted_fp[session_id] = fp
         self._persisted_obj[session_id] = mapspec
-        return {"mapspec": mapspec}
+        return {"mapspec": mapspec, "revision_persisted": revision_persisted}
 
     @staticmethod
     def _persist_disk_sync(
@@ -298,13 +353,20 @@ class MapSpecStore:
         rev_dir: Path,
         mapspec: Dict[str, Any],
         fingerprint: Optional[str] = None,
+        mutation_revision: Optional[int] = None,
     ) -> None:
         """同步：原子写 mapspec.json + 写 revision + 裁剪旧 revision。
 
         #687：走 _atomic_write_json_sync（perf 基准以其为写放大探针，契约
         稳定优先）；fingerprint 非空时顺手落 no-op sidecar（文本写）。
+        #1073: mutation_revision 非空时落 _REV_SIDECAR_NAME（磁盘复活路径
+        恢复 CAS 令牌的依据）。
         """
         _atomic_write_json_sync(mapspec_path, mapspec)
+        if mutation_revision is not None:
+            (mapspec_path.parent / _REV_SIDECAR_NAME).write_text(
+                str(int(mutation_revision))
+            )
 
         rev_dir.mkdir(parents=True, exist_ok=True)
         # revision 文件名必须免碰撞：毫秒时间戳在快速连续 save（同一毫秒）

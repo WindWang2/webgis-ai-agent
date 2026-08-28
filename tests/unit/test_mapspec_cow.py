@@ -69,7 +69,7 @@ class _FakeStore:
     async def get_mapspec(self, session_id):
         return self.spec
 
-    async def save_mapspec(self, session_id, mapspec):
+    async def save_mapspec(self, session_id, mapspec, **_kw):
         self.saved.append(mapspec)
         self.spec = mapspec
         return {"mapspec": mapspec}
@@ -104,7 +104,7 @@ class _FakeLockCtx:
 
 
 class _FakeLockReg:
-    def lock(self, session_id):
+    def lock(self, session_id, **_kw):
         return _FakeLockCtx()
 
 

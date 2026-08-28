@@ -126,7 +126,7 @@ class FakeStore:
     async def get_mapspec(self, sid):
         return self.spec
 
-    async def save_mapspec(self, sid, mapspec):
+    async def save_mapspec(self, sid, mapspec, **_kw):
         self.saved.append(mapspec)
         self.spec = mapspec
         return {"mapspec": mapspec}
@@ -166,7 +166,7 @@ class FakeLockCtx:
 
 
 class FakeLockReg:
-    def lock(self, sid):
+    def lock(self, sid, **_kw):
         return FakeLockCtx()
 
 

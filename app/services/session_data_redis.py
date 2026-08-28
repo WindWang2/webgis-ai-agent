@@ -9,7 +9,11 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 import redis.asyncio as aioredis
-from app.services.session_data_protocol import BaseSessionStore, UNAVAILABLE_REF_PREFIX
+from app.services.session_data_protocol import (
+    BaseSessionStore,
+    UNAVAILABLE_REF_PREFIX,
+    _layer_matches_removal_family,
+)
 from app.lib.numpy_json import numpy_json_default as _numpy_json_default
 
 logger = logging.getLogger(__name__)
@@ -593,6 +597,68 @@ class RedisSessionStore(BaseSessionStore):
             )
             return {}
 
+    async def leave_active_set(self, session_id: str) -> None:
+        """#1074(F-15): 把会话从 sessions:active / activity 有序集摘除。
+
+        tombstone 经通用写者落键时会把已删会话 re-add 进 active 集（滞留
+        ≤4h：清扫空转、活跃计数失真）。删除路径写完 tombstone 后定向摘除。
+        best-effort —— 失败只影响清理效率，不影响正确性。
+        """
+        try:
+            await self._ensure_connected()
+            async with self._r.pipeline(transaction=False) as pipe:
+                pipe.srem(self._active_key(), session_id)
+                pipe.zrem(self._activity_key(), session_id)
+                await pipe.execute()
+        except aioredis.RedisError as e:
+            logger.warning(
+                "leave_active_set failed for %s: %s", session_id, e
+            )
+
+    async def set_map_state_fields(self, session_id: str, fields: dict) -> bool:
+        """#1073: 单事务写多个状态字段（无 seq 语义的服务端真值）。
+
+        mapspec 与其 CAS 令牌（_cartographic_mutation_revision）此前是两笔
+        独立 WATCH/MULTI —— crash 落在两写之间会让 spec=世代 N+1 而令牌=N，
+        持旧 expected_revision 的客户端通过相等 CAS 在新 spec 上重复应用。
+        单 MULTI 保证原子。
+        """
+        if not fields:
+            return True
+        await self._ensure_connected()
+        payloads: dict[str, str] = {}
+        for key, value in fields.items():
+            try:
+                payloads[key] = await asyncio.to_thread(
+                    json.dumps, value, ensure_ascii=False, default=_numpy_json_default
+                )
+            except (TypeError, ValueError) as e:
+                logger.warning(
+                    "set_map_state_fields un-serializable value for %s %s: %s",
+                    session_id, key, e,
+                )
+                return False
+        state_key = self._state_key(session_id)
+        try:
+            async with self._r.pipeline(transaction=True) as pipe:
+                pipe.hsetnx(
+                    state_key,
+                    "_started_at",
+                    datetime.now(timezone.utc).isoformat(),
+                )
+                pipe.hset(state_key, mapping=payloads)
+                pipe.expire(state_key, STATE_TTL)
+                pipe.sadd(self._active_key(), session_id)
+                self._refresh_session_ttl(pipe, session_id)
+                await pipe.execute()
+            self._l1_invalidate_session(session_id)
+            return True
+        except aioredis.RedisError as e:
+            logger.error(
+                "set_map_state_fields failed for %s: %s", session_id, e
+            )
+            return False
+
     async def set_map_state(self, session_id: str, key: str, value: Any, seq: Optional[int] = None) -> bool:
         await self._ensure_connected()
         # P1 (#521): serialize off the event loop (same as store()). The map_state
@@ -888,7 +954,11 @@ class RedisSessionStore(BaseSessionStore):
                             layers = json.loads(raw_layers)
                     else:
                         layers = []
-                    new_layers = [layer for layer in layers if layer.get("id") != layer_id]
+                    # #1074(F-12): 族谓词与 spec 侧删层对称（见内存后端注释）。
+                    new_layers = [
+                        layer for layer in layers
+                        if not _layer_matches_removal_family(layer.get("id"), layer_id)
+                    ]
                     # P1 (#521): serialize off the event loop (see update_layer_in_state).
                     payload_json = await asyncio.to_thread(
             json.dumps, new_layers, ensure_ascii=False, default=_numpy_json_default

@@ -169,3 +169,98 @@ async def test_upsert_explicit_agent_visibility_wins():
     )
     assert res.is_error is False
     assert res.mapspec["layers"][0]["layout"]["visibility"] == "visible"
+
+
+@pytest.mark.asyncio
+async def test_rollback_fails_loudly_when_ref_unrestorable(monkeypatch):
+    """#1072: 回滚的 ref 恢复 overwrite() 返回 False（内存后端 ref 已被
+    LRU 逐出 / Redis 不可用）时必须响亮失败 —— 此前静默"成功"留下指向
+    无负载 ref 的图层。"""
+    engine = MapSpecLifecycleEngine()
+    session_id = "test_session_ckpt_unrestorable_1"
+
+    # ref-backed source：checkpoint 才会物化 blob（planned 非空 → 恢复走
+    # overwrite 路径）。
+    from app.services.session_data import session_data_manager as sdm
+
+    fc = {"type": "FeatureCollection", "features": [
+        {"type": "Feature", "geometry": {"type": "Point", "coordinates": [104.0, 30.6]},
+         "properties": {"v": 1}}]}
+    ref_id = await sdm.store(session_id, fc, prefix="geojson")
+    layer_def = {"id": "ly-1", "type": "circle", "source": "src-1"}
+    source_data = {"type": "geojson", "ref_id": ref_id}
+    await engine.apply_mutation(
+        session_id, UpsertLayerIntent(layer=layer_def, source_data=source_data)
+    )
+    # 显式命名 checkpoint 才是自包含（物化 ref blob）；自动 checkpoint 是
+    # presentation_only（refs 留存活动态，无需 overwrite）。
+    ckpt = await engine.apply_mutation(
+        session_id, CheckpointIntent(checkpoint_id="ckpt_audit1072")
+    )
+    assert ckpt.checkpoint_id
+
+    # 模拟恢复期存储不可用：checkpoint.py 的 overwrite 全部失败。
+    # 直接在 checkpoint 模块命名空间打桩（它 import 的是模块级单例）。
+    from app.services.session_data import session_data_manager
+
+    async def _failing_overwrite(sid, ref_id, data):
+        return False
+
+    # rollback 从 lifecycle_engine 收到的就是该单例对象 —— 直接打桩其方法
+    monkeypatch.setattr(session_data_manager, "overwrite", _failing_overwrite)
+    rb = await engine.apply_mutation(
+        session_id, RollbackIntent(checkpoint_id=ckpt.checkpoint_id)
+    )
+    # 会话无过期 ref 时走 refs_reused 快路径（无 overwrite）—— 用 materialized
+    # blob 的 planned 路径验证；若本会话未触发 planned 非空，则强制经由
+    # monkeypatch 的失败 overwrite 至少被调用一次的分支无法覆盖，
+    # 断言降级为回滚不静默丢失（success 或显式 error 二选一，绝不
+    # "成功但 ref 缺失"）。
+    assert rb.is_error is True, "ref 无法恢复时回滚必须失败（不得静默成功）"
+    assert "could not restore" in (rb.error_msg or "")
+
+
+@pytest.mark.asyncio
+async def test_remove_layer_family_predicate_matches_runtime_layers():
+    """#1074(F-12): spec 删层族（x / x-label）与运行时 map_state.layers 的
+    可见集必须一致 —— 此前运行时只删精确 id。"""
+    engine = MapSpecLifecycleEngine()
+    session_id = "test_session_family_rm_1"
+    from app.services.session_data import session_data_manager
+
+    fc = {"type": "FeatureCollection", "features": []}
+    await engine.apply_mutation(session_id, UpsertLayerIntent(
+        layer={"id": "roads", "type": "circle", "source": "src-1"},
+        source_data={"type": "geojson", "inlineData": fc},
+    ))
+    await engine.apply_mutation(session_id, UpsertLayerIntent(
+        layer={"id": "roads-label", "type": "symbol", "source": "src-1"},
+        source_data={"type": "geojson", "inlineData": fc},
+    ))
+    await engine.apply_mutation(session_id, RemoveLayerIntent(layer_id="roads"))
+    state = await session_data_manager.get_map_state(session_id)
+    runtime_ids = {ly.get("id") for ly in state.get("layers", [])}
+    assert "roads" not in runtime_ids
+    assert "roads-label" not in runtime_ids, "伴生子层必须随族移除（与 spec 一致）"
+
+
+@pytest.mark.asyncio
+async def test_mutation_revision_restored_when_redis_state_expires():
+    """#1074(F-9): Redis 状态过期而磁盘 spec 存活时，CAS 令牌随复活路径
+    恢复（不再 N→0→1 破坏单调性）。"""
+    engine = MapSpecLifecycleEngine()
+    session_id = "test_session_rev_restore_1"
+    from app.services.session_data import session_data_manager
+
+    res1 = await engine.apply_mutation(session_id, SetViewIntent(center=[104.0, 30.6], zoom=10.0))
+    res2 = await engine.apply_mutation(session_id, SetViewIntent(center=[104.1, 30.7], zoom=11.0))
+    assert res2.mutation_revision == 2
+    # 模拟 Redis 状态过期：仅清内存状态哈希（等价 TTL 到期），保留磁盘
+    # spec + revision sidecar。注意 clear_session 在内存后端会连磁盘一起
+    # 清（会话删除语义），不能用它模拟过期。
+    session_data_manager._map_state.pop(session_id, None)
+    spec = await engine.store.get_mapspec(session_id)
+    assert spec is not None, "磁盘兜底应复活 spec"
+    state = await session_data_manager.get_map_state(session_id)
+    assert state.get("_cartographic_mutation_revision") == 2, \
+        "revision 必须随磁盘复活恢复（sidecar）"

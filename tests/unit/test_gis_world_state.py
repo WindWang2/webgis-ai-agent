@@ -288,3 +288,79 @@ async def test_world_state_single_map_state_read(monkeypatch):
     )
     await build_world_state(clean_session)
     assert calls["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_user_presentation_survives_provenance_ring_eviction():
+    """#1070(F-2): 用户决策的权威在持久 spec（presentation_owner），不在
+    64 条环形 provenance —— 一次 finalize 写 30+ 条 agent 记录后仍不可被
+    agent 反转。"""
+    from app.services.gis_world_state.mutation import apply_gis_mutation
+    from app.services.mapspec.lifecycle_engine import PatchLayerPresentationIntent
+
+    sid = "user-wins-eviction"
+    await session_data_manager.clear_session(sid)
+    revision = await _seed_layer(sid, "poi-main")
+    # 用户隐藏
+    res = await apply_gis_mutation(
+        sid, PatchLayerPresentationIntent(layer_id="poi-main", visible=False),
+        origin="user", actor="user", expected_revision=revision,
+    )
+    assert not res.is_error, res.error_msg
+    # 淹没环形 provenance：100 条 agent 决策把用户条目挤出 64 条环
+    from app.services.gis_world_state.provenance import append_provenance, ProvenanceEntry
+    from datetime import datetime, timezone
+    for i in range(100):
+        await append_provenance(sid, ProvenanceEntry(
+            seq=i, ts=datetime.now(timezone.utc).isoformat(), origin="agent",
+            actor="finalize", kind="SetLayoutIntent", target="layout",
+            revision=i, summary="agent noise", detail={},
+        ))
+    # agent 反转用户隐藏 → 必须被持久 owner 印记拒绝（环已被淹没）
+    res2 = await apply_gis_mutation(
+        sid, PatchLayerPresentationIntent(layer_id="poi-main", visible=True),
+        origin="agent", actor="finalize_display",
+    )
+    assert res2.is_error, "agent 反转用户隐藏必须在环形 provenance 被驱逐后仍被拒绝"
+
+
+@pytest.mark.asyncio
+async def test_agent_upsert_cannot_strip_user_hidden_visibility():
+    """#1070(F-3): agent upsert 显式携带 layout.visibility 也不能翻转
+    user-owned 隐藏（此前显式给出即绕过且 expected_visible 被洗成 True）。"""
+    from app.services.mapspec.lifecycle_engine import (
+        MapSpecLifecycleEngine, PatchLayerPresentationIntent, UpsertLayerIntent,
+    )
+
+    sid = "user-wins-upsert"
+    await session_data_manager.clear_session(sid)
+    engine = MapSpecLifecycleEngine()
+    await engine.apply_mutation(sid, UpsertLayerIntent(
+        layer={"id": "ly-a", "type": "circle", "source": "src-a",
+               "layout": {"visibility": "visible"}},
+        source_data={"type": "geojson", "inlineData": {
+            "type": "FeatureCollection", "features": [
+                {"type": "Feature", "geometry": {"type": "Point", "coordinates": [104.0, 30.6]},
+                 "properties": {}}]}},
+    ))
+    res = await engine.apply_mutation(
+        sid, PatchLayerPresentationIntent(layer_id="ly-a", visible=False),
+        origin="user", expected_revision=1,
+    )
+    assert not res.is_error, res.error_msg
+    # agent 整层 upsert 且显式携带 visibility="visible"
+    res2 = await engine.apply_mutation(sid, UpsertLayerIntent(
+        layer={"id": "ly-a", "type": "circle", "source": "src-a",
+               "layout": {"visibility": "visible"}, "paint": {"circle-color": "#0f0"}},
+        source_data={"type": "geojson", "inlineData": {
+            "type": "FeatureCollection", "features": [
+                {"type": "Feature", "geometry": {"type": "Point", "coordinates": [104.0, 30.6]},
+                 "properties": {}}]}},
+    ))
+    assert not res2.is_error
+    from app.services.mapspec_store import mapspec_store
+    spec = await mapspec_store.get_mapspec(sid)
+    layer = next(ly for ly in spec["layers"] if ly["id"] == "ly-a")
+    assert layer["layout"]["visibility"] == "none", "用户隐藏必须穿透 agent upsert 保留"
+    assert layer["cartographic_intent"]["expected_visible"] is False
+    assert layer["cartographic_intent"]["presentation_owner"] == "user"

@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 from app.services.mapspec.lifecycle_engine import (
     MapSpecLifecycleEngine,
@@ -61,16 +61,67 @@ def _get_engine() -> MapSpecLifecycleEngine:
     return _engine
 
 
-async def _check_user_presentation_guard(
+def _check_user_presentation_guard(
     session_id: str,
     intent: MutationIntent,
     origin: MutationOrigin,
+    prior_mapspec: Optional[Dict[str, Any]] = None,
 ) -> Optional[UserPresentationGuardError]:
-    """user-wins 守卫：agent 不得反转用户最后的显隐/透明度决策。"""
+    """user-wins 守卫：agent 不得反转用户最后的显隐/透明度决策。
+
+    #1070: 权威从 64 条环形 provenance（一次 finalize 写 30+ 条即驱逐用户
+    决策，F-2）移到持久 spec —— prior_mapspec 中该层的
+    ``cartographic_intent.presentation_owner=="user"`` 且 expected_visible
+    与 agent 意图相反即拒绝。环形 provenance 保留为 legacy 补充（旧会话
+    未携带 owner 印记时仍可守卫）。锁内复检（F-1）由
+    engine.apply_mutation(pre_commit_check=...) seam 承载。
+    """
     if origin != "agent" or not isinstance(intent, PatchLayerPresentationIntent):
         return None
     if intent.visible is None:
         # opacity 反转难以判定"意图对抗"（连续值）；本轮只硬守卫 visible。
+        return None
+    if prior_mapspec is not None:
+        for layer in prior_mapspec.get("layers", []) or []:
+            if not isinstance(layer, dict):
+                continue
+            layer_intent = (
+                layer.get("cartographic_intent")
+                if isinstance(layer.get("cartographic_intent"), dict) else {}
+            )
+            if layer_intent.get("presentation_owner") != "user":
+                continue
+            if not _should_match_layer_family(layer.get("id"), intent.layer_id):
+                continue
+            user_visible = layer_intent.get("expected_visible")
+            if user_visible is None or bool(user_visible) == bool(intent.visible):
+                continue
+            return UserPresentationGuardError(
+                layer_id=intent.layer_id,
+                user_value=user_visible,
+                agent_value=intent.visible,
+            )
+    return None
+
+
+def _should_match_layer_family(layer_id: Any, target_id: str) -> bool:
+    """守卫的层匹配（族语义，与 spec 删层谓词一致）。"""
+    if not isinstance(layer_id, str) or not target_id:
+        return False
+    if layer_id == target_id:
+        return True
+    return layer_id.startswith(f"{target_id}-") or layer_id.startswith(f"{target_id}__")
+
+
+async def _check_user_presentation_guard_ring(
+    session_id: str,
+    intent: MutationIntent,
+    origin: MutationOrigin,
+) -> Optional[UserPresentationGuardError]:
+    """legacy 环形 provenance 守卫（旧会话无 owner 印记时的补充）。"""
+    if origin != "agent" or not isinstance(intent, PatchLayerPresentationIntent):
+        return None
+    if intent.visible is None:
         return None
     entries = await get_provenance(session_id)
     last = last_presentation_owner(entries, intent.layer_id)
@@ -123,7 +174,9 @@ async def apply_gis_mutation(
       与工具错误契约（{"error": ...} + correction_hint）对齐；
     - 成功后追加 provenance（best-effort）。
     """
-    guard_error = await _check_user_presentation_guard(session_id, intent, origin)
+    guard_error = await _check_user_presentation_guard_ring(session_id, intent, origin)
+    if guard_error is None:
+        guard_error = _check_user_presentation_guard(session_id, intent, origin)
     if guard_error is not None:
         logger.info(
             "[gis_world_state] user-presentation guard refused agent mutation: %s", guard_error
@@ -143,8 +196,37 @@ async def apply_gis_mutation(
         )
 
     active_engine = engine or _get_engine()
+
+    async def _locked_guard(sid, locked_intent, locked_origin, prior_mapspec):
+        """#1070(F-1): 锁内复检 —— 守卫初查后、锁获取前落地的用户决策在此可见。"""
+        if locked_origin != "agent":
+            return None
+        error = _check_user_presentation_guard(
+            sid, locked_intent, locked_origin, prior_mapspec
+        )
+        if error is None:
+            error = await _check_user_presentation_guard_ring(
+                sid, locked_intent, locked_origin
+            )
+        if error is None:
+            return None
+        return MapSpecResult(
+            is_error=True,
+            origin=locked_origin,
+            error_msg=(
+                f"图层 {error.layer_id} 的显示状态由用户手动设定"
+                f"（visible={error.user_value}），Agent 不覆盖用户显式操作。"
+            ),
+            correction_hint=(
+                "保留该层用户设定的显示状态继续成图；如确需反转，请先向用户说明并"
+                "由用户操作（图层面板开关），或在 MapSpec 层使用非 presentation 途径"
+                "重建图层。"
+            ),
+        )
+
     result = await active_engine.apply_mutation(
-        session_id, intent, origin=origin, expected_revision=expected_revision
+        session_id, intent, origin=origin, expected_revision=expected_revision,
+        pre_commit_check=_locked_guard,
     )
     if not result.is_error and not result.superseded:
         detail: dict[str, Any] = {}

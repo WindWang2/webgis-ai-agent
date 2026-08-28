@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from app.core.auth import require_owned_session
 from app.models.db_model import Conversation
+from app.services.distributed_lock import LockContentionError
 from app.services.gis_harness.components import ComponentPlacement
 from app.services.mapspec.lifecycle_engine import (
     InitProjectIntent,
@@ -199,14 +200,26 @@ async def apply_user_mapspec_mutation(
     # provenance（用户决策链——user-wins 守卫与 reload 审计的依据）。
     from app.services.gis_world_state import apply_gis_mutation
 
-    result = await apply_gis_mutation(
-        session_id,
-        intent,
-        origin="user",
-        actor="mapspec_route",
-        expected_revision=req.expected_revision,
-        engine=_engine,
-    )
+    try:
+        result = await apply_gis_mutation(
+            session_id,
+            intent,
+            origin="user",
+            actor="mapspec_route",
+            expected_revision=req.expected_revision,
+            engine=_engine,
+        )
+    except (TimeoutError, LockContentionError):
+        # #1071: 用户在 agent 持锁（大栅格摄取可 >30s）期间切换可见度，
+        # 等满获取预算后收到裸 500 —— 锁竞争是背压不是服务端故障，与
+        # chat.py 全部同型点一致映射 503 + retry 指引。
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "session_busy",
+                "message": "会话正被 Agent 操作占用，请稍后重试。",
+            },
+        )
     payload = result.to_dict()
     if not include_review:
         # #732: the user chrome route fires per slider tick — the frontend

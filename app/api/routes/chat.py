@@ -1555,6 +1555,20 @@ async def clear_session(
                 persisted = await session_data_manager.set_map_state(
                     session_id, "_cartographic_deleted", True
                 )
+                # #1074(F-15): 通用写者会把会话 re-add 进 sessions:active 并
+                # 刷整族 TTL —— 已删会话在 active 集滞留 ≤4h（清扫空转、计数
+                # 失真）。定向摘除（Redis 后端；内存后端无此集合）。
+                _leave_active = getattr(
+                    session_data_manager, "leave_active_set", None
+                )
+                if _leave_active is not None:
+                    try:
+                        await _leave_active(session_id)
+                    except Exception as leave_error:  # noqa: BLE001 - tombstone 已写
+                        logger.warning(
+                            "active-set removal for deleted session %s failed: %s",
+                            session_id, leave_error,
+                        )
                 if persisted is False:
                     raise HTTPException(
                         status_code=503,

@@ -118,6 +118,7 @@ def _get_plan_lock(session_id: str, plan_id: str) -> asyncio.Lock:
 # 与执行锁（_get_plan_lock）无交叉获取顺序，不会死锁。
 _PLAN_STATUS_LOCKS: dict[str, asyncio.Lock] = {}
 _PLAN_STATUS_LOCKS_MAX = 1024
+_PLAN_STATUS_LOCK_TOUCH: dict[str, float] = {}
 _PLAN_LOCK_GRACE_S = 30.0
 
 
@@ -127,11 +128,23 @@ def _get_status_write_lock(session_id: str, plan_id: str) -> asyncio.Lock:
     if lock is None:
         lock = asyncio.Lock()
         _PLAN_STATUS_LOCKS[key] = lock
-        if len(_PLAN_STATUS_LOCKS) > _PLAN_STATUS_LOCKS_MAX:
-            for k in [
-                k for k, lk in _PLAN_STATUS_LOCKS.items() if not lk.locked()
-            ][: _PLAN_STATUS_LOCKS_MAX // 4]:
-                _PLAN_STATUS_LOCKS.pop(k, None)
+    _PLAN_STATUS_LOCK_TOUCH[key] = time.monotonic()
+    if len(_PLAN_STATUS_LOCKS) > _PLAN_STATUS_LOCKS_MAX:
+        # #1074(A-4): 与 _get_plan_lock 同款 CONC-F8 守卫 —— 此前只查
+        # not lk.locked()，release→waiter 交接窗口内驱逐会让两写者各自
+        # mint 新锁对象，破坏 first-terminal-wins 串行化。等待者 + 宽限期
+        # 双条件齐全才可驱逐。
+        now = time.monotonic()
+        idle = [
+            k
+            for k, lk in _PLAN_STATUS_LOCKS.items()
+            if not lk.locked()
+            and not getattr(lk, "_waiters", None)
+            and (now - _PLAN_STATUS_LOCK_TOUCH.get(k, 0.0)) > _PLAN_LOCK_GRACE_S
+        ][:_PLAN_STATUS_LOCKS_MAX // 4]
+        for k in idle:
+            _PLAN_STATUS_LOCKS.pop(k, None)
+            _PLAN_STATUS_LOCK_TOUCH.pop(k, None)
     return lock
 
 
