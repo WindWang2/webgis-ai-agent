@@ -246,6 +246,44 @@ _SEED_CAPS: List[CapabilityDescriptor] = [
         output_artifact_types=["line_feature_set"],
         purpose_template="最短路径",
     ),
+    # v2(audit R2): 网络工具 parity 补全 —— 此前 closest_facility/
+    # accessibility/od_matrix/location_allocation/optimize_route 五个网络
+    # 语义无 capability 归属（孤儿工具或悬空 taxonomy 引用）。
+    CapabilityDescriptor(
+        id="closest_facility", name="最近设施", category="network",
+        domain="network", description="从需求点到设施集合的 top-K 最近路径。",
+        input_artifact_types=["point_feature_set"],
+        output_artifact_types=["line_feature_set"],
+        purpose_template="最近设施分析",
+    ),
+    CapabilityDescriptor(
+        id="accessibility", name="网络可达性", category="network",
+        domain="network", description="需求点对设施集合的可达性指标计算。",
+        input_artifact_types=["point_feature_set"],
+        output_artifact_types=["stats_table"],
+        purpose_template="网络可达性分析",
+    ),
+    CapabilityDescriptor(
+        id="od_matrix", name="起讫点矩阵", category="network",
+        domain="network", description="起点-终点集合间的网络代价矩阵。",
+        input_artifact_types=["point_feature_set"],
+        output_artifact_types=["od_matrix"],
+        purpose_template="起讫点（OD）矩阵",
+    ),
+    CapabilityDescriptor(
+        id="location_allocation", name="区位配置", category="network",
+        domain="network", description="设施选址-分配优化（tier-3 门控）。",
+        input_artifact_types=["point_feature_set"],
+        output_artifact_types=["point_feature_set", "stats_table"],
+        purpose_template="区位配置优化",
+    ),
+    CapabilityDescriptor(
+        id="route_optimization", name="路线优化", category="network",
+        domain="network", description="多站点访问顺序优化（VRP，tier-3 门控）。",
+        input_artifact_types=["point_feature_set"],
+        output_artifact_types=["line_feature_set"],
+        purpose_template="访问路线优化",
+    ),
     # #1075(D-10): 时序能力就位 —— temporal.* 算法此前因该 capability
     # 缺失被 if False 挂到 spatial_interpolation 上。
     CapabilityDescriptor(

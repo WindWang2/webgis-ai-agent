@@ -153,6 +153,26 @@ def open_capabilities(plan: Optional[SessionPlan]) -> list[str]:
     ]
 
 
+def session_plan_stale(plan: Optional[SessionPlan]) -> bool:
+    """#1084（v2 Phase 4）：持久计划的 registry 指纹与当前 manifest 不一致。
+
+    部署升级改变 registry 语义（工具改绑/候选重排/模板变更）后，旧计划按
+    新 registry 静默重放会错归 capability 或引用消失的工具。判 stale 的
+    计划在投影中标注 STALE_PLAN 并建议 replan；不自动作废（agent 可判断
+    剩余步骤是否受影响）。历史计划（无指纹）不判 stale。
+    """
+    if plan is None or not plan.gis_chapter:
+        return False
+    stored_fp = plan.gis_chapter.get("manifest_fingerprint")
+    if not stored_fp:
+        return False
+    try:
+        from app.lib.gis.runtime_manifest import get_runtime_manifest
+        return get_runtime_manifest().is_stale_plan(str(stored_fp))
+    except Exception:  # noqa: BLE001 — 指纹比对失败不阻断投影
+        return False
+
+
 def format_session_plan_projection(plan: Optional[SessionPlan]) -> str:
     """Bounded next-turn note. Not a Cartography Verdict block."""
     if plan is None or plan.gis_chapter is None:
@@ -162,10 +182,18 @@ def format_session_plan_projection(plan: Optional[SessionPlan]) -> str:
         )
     recipe = str(plan.gis_chapter.get("recipe_id") or "none")
     open_caps = ",".join(open_capabilities(plan)) or "none"
+    stale_note = ""
+    if session_plan_stale(plan):
+        stale_note = (
+            " STALE_PLAN=true"
+            "（计划编制于不同 registry 世代，工具/能力绑定可能已变；"
+            "续跑前优先 webgis_map_intent 重规划或逐能力核验 resolved_tool）"
+        )
     return (
         f"[SessionPlan] recipe={recipe} open={open_caps} "
         f"replaced={'true' if plan.replaced else 'false'} "
         f"superseded={'true' if plan.superseded else 'false'}"
+        f"{stale_note}"
     )
 
 

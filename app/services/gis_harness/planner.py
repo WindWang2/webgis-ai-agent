@@ -39,6 +39,7 @@ from app.services.gis_harness.recipes import (
     FallbackDecision,
     get_recipe_registry,
 )
+from app.lib.gis.runtime_manifest import get_runtime_manifest
 from app.services.gis_harness.template_catalog import get_template_catalog
 from app.services.gis_harness.template_selector import TemplateSelector
 
@@ -50,9 +51,15 @@ from app.services.gis_harness.template_selector import TemplateSelector
 # tests/unit/test_capability_registry_parity.py 锁定派生视图与真实
 # ToolRegistry / recipe 声明的 parity。
 def capability_tool_map() -> Dict[str, List[str]]:
-    """capability → 有序工具候选（AlgorithmRegistry 派生）。"""
-    from app.lib.gis.algorithm_registry import get_algorithm_registry
-    return get_algorithm_registry().capability_tool_map()
+    """capability → 有序工具候选。
+
+    v2(audit R4)：读 Compiled Runtime Manifest 的 O(1) 预排序视图 ——
+    AlgorithmRegistry.capability_tool_map() 此前每次调用全量重建，
+    plan_orchestrator 每步都调。manifest 编译时已按算法 priority 排序，
+    内容与 registry 派生视图一致（同一来源）。
+    """
+    from app.lib.gis.runtime_manifest import get_runtime_manifest
+    return dict(get_runtime_manifest().capability_to_tools)
 
 
 def resolve_tool_for_capability(
@@ -164,6 +171,10 @@ class MapProductPlan(BaseModel):
     algorithm_selections: List[AlgorithmSelectionRecord] = []
     template_selection: Dict[str, Any] = Field(default_factory=dict)
     map_model_selection: List[Dict[str, Any]] = Field(default_factory=list)
+    # v2(Phase 4, #1084)：计划编制时的 registry 内容指纹 —— 恢复/续跑时与
+    # 当前 manifest 比对，不一致 → STALE_PLAN（旧计划不得静默套用新
+    # registry 语义）。空 = 历史计划（不判 stale）。
+    manifest_fingerprint: str = ""
 
 
 def _plan_id(query: str, recipe_id: str) -> str:
@@ -286,6 +297,7 @@ class MapProductPlanner:
             template_id=template.id if template else "",
             status="draft",
             template_selection=selection_dump,
+            manifest_fingerprint=get_runtime_manifest().fingerprint,
         )
 
         # 数据需求（能力去重，保持声明顺序）；simple_view 不过度分析——

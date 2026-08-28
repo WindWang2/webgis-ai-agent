@@ -409,17 +409,65 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         id="network.shortest_path", name="最短路径", category="network_analysis",
         capabilities=["shortest_path"],
         output_artifact_type="line_feature_set",
-        tool_candidates=["network_shortest_path", "isochrone_network"],
+        # v2(audit R2): 移除 isochrone_network fallback 残留（#1075(D-3)
+        # 修正后 shortest_path 不应退化到等时圈工具族）。
+        tool_candidates=["network_shortest_path"],
         cpu_cost="high", memory_cost="medium", io_cost="high",
         preferred_execution_policy="ASYNC", priority=10,
     ),
     AlgorithmDescriptor(
         id="network.closest_facility", name="最近设施", category="network_analysis",
-        capabilities=["shortest_path"],
+        capabilities=["closest_facility"],
         output_artifact_type="line_feature_set",
-        tool_candidates=["network_closest_facility", "network_accessibility"],
+        tool_candidates=["network_closest_facility"],
         cpu_cost="high", memory_cost="medium", io_cost="high",
         preferred_execution_policy="ASYNC", priority=20,
+    ),
+    # v2(audit R2): accessibility 独立算法（此前 network_accessibility 是
+    # closest_facility 的 fallback 候选并反查到 shortest_path capability）。
+    AlgorithmDescriptor(
+        id="network.accessibility", name="网络可达性", category="network_analysis",
+        capabilities=["accessibility"],
+        output_artifact_type="stats_table",
+        tool_candidates=["network_accessibility"],
+        cpu_cost="high", memory_cost="medium", io_cost="high",
+        preferred_execution_policy="ASYNC", priority=20,
+    ),
+    # v2(audit R2): 真实拓扑服务区工具归位（此前 network_service_area 是
+    # 孤儿 —— service_area 只解析到 amap 等时圈或速度表近似）。
+    AlgorithmDescriptor(
+        id="network.service_area.topological", name="拓扑服务区", category="network_analysis",
+        capabilities=["service_area"],
+        output_artifact_type="service_area",
+        tool_candidates=["network_service_area"],
+        cpu_cost="high", memory_cost="medium", io_cost="high",
+        preferred_execution_policy="ASYNC", priority=5,
+    ),
+    # v2(audit R2): tier-3 网络优化工具接入 planner 可达面（此前无
+    # capability/algorithm，工具存在但不可规划）。
+    AlgorithmDescriptor(
+        id="network.location_allocation", name="区位配置", category="network_analysis",
+        capabilities=["location_allocation"],
+        output_artifact_type="point_feature_set",
+        tool_candidates=["location_allocation"],
+        cpu_cost="high", memory_cost="medium", io_cost="medium",
+        preferred_execution_policy="ASYNC", priority=30,
+    ),
+    AlgorithmDescriptor(
+        id="network.od_matrix", name="起讫点（OD）矩阵", category="network_analysis",
+        capabilities=["od_matrix"],
+        output_artifact_type="od_matrix",
+        tool_candidates=["network_od_matrix"],
+        cpu_cost="high", memory_cost="medium", io_cost="medium",
+        preferred_execution_policy="ASYNC", priority=25,
+    ),
+    AlgorithmDescriptor(
+        id="network.optimize_route", name="路线优化（VRP）", category="network_analysis",
+        capabilities=["route_optimization"],
+        output_artifact_type="line_feature_set",
+        tool_candidates=["optimize_route"],
+        cpu_cost="high", memory_cost="medium", io_cost="medium",
+        preferred_execution_policy="ASYNC", priority=30,
     ),
     # ── 数据访问补全（D-3 孤儿工具）─────────────────────────────────
     AlgorithmDescriptor(

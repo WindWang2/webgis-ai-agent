@@ -125,7 +125,14 @@ def test_purpose_named_tools_backmap_to_capabilities():
     t2c = get_algorithm_registry().tool_to_capability()
     expected = {
         "network_shortest_path": "shortest_path",
-        "network_closest_facility": "shortest_path",
+        # v2(audit R2)：closest_facility 有专属 capability（此前错绑
+        # shortest_path）；accessibility/od/location/route 同批接入。
+        "network_closest_facility": "closest_facility",
+        "network_accessibility": "accessibility",
+        "network_od_matrix": "od_matrix",
+        "location_allocation": "location_allocation",
+        "optimize_route": "route_optimization",
+        "network_service_area": "service_area",
         "raster_calculator": "raster_source",
         "spatiotemporal_hotspot": "temporal_trend",
         "temporal_aggregate": "temporal_trend",
