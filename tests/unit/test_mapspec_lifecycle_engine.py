@@ -245,25 +245,39 @@ async def test_remove_layer_family_predicate_matches_runtime_layers():
 
 
 @pytest.mark.asyncio
-async def test_mutation_revision_restored_when_redis_state_expires():
+async def test_mutation_revision_restored_when_redis_state_expires(tmp_path, monkeypatch):
     """#1074(F-9): Redis 状态过期而磁盘 spec 存活时，CAS 令牌随复活路径
-    恢复（不再 N→0→1 破坏单调性）。"""
-    engine = MapSpecLifecycleEngine()
-    session_id = "test_session_rev_restore_1"
-    from app.services.session_data import session_data_manager
+    恢复（不再 N→0→1 破坏单调性）。
 
-    await engine.apply_mutation(session_id, SetViewIntent(center=[104.0, 30.6], zoom=10.0))
-    res2 = await engine.apply_mutation(session_id, SetViewIntent(center=[104.1, 30.7], zoom=11.0))
-    assert res2.mutation_revision == 2
-    # 模拟 Redis 状态过期：仅清内存状态哈希（等价 TTL 到期），保留磁盘
-    # spec + revision sidecar。注意 clear_session 在内存后端会连磁盘一起
-    # 清（会话删除语义），不能用它模拟过期。
-    session_data_manager._map_state.pop(session_id, None)
-    spec = await engine.store.get_mapspec(session_id)
-    assert spec is not None, "磁盘兜底应复活 spec"
-    state = await session_data_manager.get_map_state(session_id)
-    assert state.get("_cartographic_mutation_revision") == 2, \
-        "revision 必须随磁盘复活恢复（sidecar）"
+    v2(F1): 会话目录必须隔离 —— 固定 id 的跨运行磁盘 sidecar 残留会让
+    prior 继承上一运行的令牌（这正是 F1 修复的新语义：复活令牌参与
+    CAS 计算），旧断言因此不确定。
+    """
+    import shutil
+    import uuid
+    from app.services.mapspec.store import BASE_STORAGE_DIR
+
+    engine = MapSpecLifecycleEngine()
+    session_id = f"test_session_rev_restore_{uuid.uuid4().hex[:8]}"
+    session_dir = BASE_STORAGE_DIR / session_id
+    shutil.rmtree(session_dir, ignore_errors=True)
+    try:
+        from app.services.session_data import session_data_manager
+
+        await engine.apply_mutation(session_id, SetViewIntent(center=[104.0, 30.6], zoom=10.0))
+        res2 = await engine.apply_mutation(session_id, SetViewIntent(center=[104.1, 30.7], zoom=11.0))
+        assert res2.mutation_revision == 2
+        # 模拟 Redis 状态过期：仅清内存状态哈希（等价 TTL 到期），保留磁盘
+        # spec + revision sidecar。注意 clear_session 在内存后端会连磁盘一起
+        # 清（会话删除语义），不能用它模拟过期。
+        session_data_manager._map_state.pop(session_id, None)
+        spec = await engine.store.get_mapspec(session_id)
+        assert spec is not None, "磁盘兜底应复活 spec"
+        state = await session_data_manager.get_map_state(session_id)
+        assert state.get("_cartographic_mutation_revision") == 2, \
+            "revision 必须随磁盘复活恢复（sidecar）"
+    finally:
+        shutil.rmtree(session_dir, ignore_errors=True)
 
 
 @pytest.mark.asyncio

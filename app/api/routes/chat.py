@@ -31,7 +31,11 @@ from app.services.chat.execution_engine import (
 )
 from app.services.history_service_async import AsyncHistoryService
 from app.services.explorer.orchestrator import bridge_session_explorer_progress
-from app.services.distributed_lock import session_lock_registry
+from app.services.distributed_lock import (
+    LockDegradedError,
+    LockLostError,
+    session_lock_registry,
+)
 from app.services.session_data import session_data_manager
 from app.services.session_plan import load_session_plan
 from app.services.cartography.memory_harvest import harvest_project_memory
@@ -237,9 +241,16 @@ async def _record_frontend_cartographic_observation(
         map_state.get("base_layer"), _budget=node_budget
     )
 
-    async with session_lock_registry.lock(session_id):
+    # v2(audit F2/F3): 观察序列是共享 Redis 状态（读-改-写 sequence）——
+    # 降级锁下两 pod 并发写丢观察帧；写前复检锁所有权（TTL 丢失后本
+    # 持有者的写会覆盖他 pod 的帧）。锁异常由调用方映射 503（#791 同款）。
+    async with session_lock_registry.lock(session_id, fail_on_degraded=True) as _obs_lock:
         session_data_manager.invalidate_local_cache(session_id)
         current = await session_data_manager.get_map_state(session_id)
+        if getattr(_obs_lock, "lost", False):
+            raise LockLostError(
+                f"session lock ownership lost before observation write for {session_id}"
+            )
         previous = current.get("_cartographic_context_observation")
         try:
             sequence = int(previous.get("sequence", 0)) + 1 if isinstance(previous, dict) else 1
@@ -576,6 +587,9 @@ async def chat_completions(
                     # #791: lock contention on the turn-start observation write
                     # is scoped back-pressure, not a 500.
                     raise _session_busy_503()
+                except (LockDegradedError, LockLostError):
+                    # v2(audit F2/F3): 锁降级/丢失同 #791 语义 —— back-pressure 503。
+                    raise _session_busy_503()
                 cartography_context = await _build_cartography_turn_context(
                     req.session_id, project_id=req.project_id
                 )
@@ -776,6 +790,9 @@ async def chat_stream(
             # #791: lock contention on the turn-start observation write is
             # scoped back-pressure, not a 500 (raised before the stream starts,
             # so the client gets a JSON error body instead of a dead SSE).
+            raise _session_busy_503()
+        except (LockDegradedError, LockLostError):
+            # v2(audit F2/F3): 锁降级/丢失同 #791 语义 —— back-pressure 503。
             raise _session_busy_503()
         cartography_context = await _build_cartography_turn_context(
             pi_session_id, project_id=req.project_id
@@ -1187,9 +1204,18 @@ async def push_cartographic_runtime_observation(
     layers = _project_frontend_layers(req.layers)
     viewport = _bounded_observation_fragment(req.viewport) or {}
     try:
-        async with session_lock_registry.lock(session_id):
+        # v2(audit F2/F3): 共享观察/评审写 —— 降级锁 fail-closed；写前
+        # 复检锁所有权。
+        async with session_lock_registry.lock(
+            session_id, fail_on_degraded=True,
+        ) as _carto_lock:
             session_data_manager.invalidate_local_cache(session_id)
             state = await session_data_manager.get_map_state(session_id)
+            if getattr(_carto_lock, "lost", False):
+                raise LockLostError(
+                    f"session lock ownership lost before cartographic "
+                    f"observation write for {session_id}"
+                )
             previous = state.get("_cartographic_observation")
             from app.lib.cartography.quality_loop import cartographic_fingerprint
             from app.services.mapspec.store import mapspec_store_instance
@@ -1300,6 +1326,9 @@ async def push_cartographic_runtime_observation(
                 }
     except (TimeoutError, asyncio.TimeoutError):
         # #791: session-lock contention is back-pressure, not a server fault.
+        raise _session_busy_503()
+    except (LockDegradedError, LockLostError):
+        # v2(audit F2/F3): 锁降级/丢失 —— 观察不写共享状态，客户端重试。
         raise _session_busy_503()
     return {
         "observation_sequence": sequence,
@@ -1450,13 +1479,25 @@ async def push_map_action_acks(
     # Serialize with deletion and observation. An ACK that arrives after the
     # delete tombstone cannot recreate bounded event/review state.
     try:
-        async with session_lock_registry.lock(session_id):
+        # v2(audit F2/F3): ACK hash/zset 是共享写 —— 降级锁 fail-closed；
+        # 写前复检锁所有权（lost 后的批量 ACK 会以旧世代覆盖他 pod 写入）。
+        async with session_lock_registry.lock(
+            session_id, fail_on_degraded=True,
+        ) as _ack_lock:
             session_data_manager.invalidate_local_cache(session_id)
+            if getattr(_ack_lock, "lost", False):
+                raise LockLostError(
+                    f"session lock ownership lost before ACK batch for {session_id}"
+                )
             return await _persist_map_action_acks_locked(session_id, req)
     except (TimeoutError, asyncio.TimeoutError):
         # #791: session-lock contention is back-pressure, not a server fault.
         # The client retries the ACK batch (first-terminal-wins idempotency
         # makes the retry safe).
+        raise _session_busy_503()
+    except (LockDegradedError, LockLostError):
+        # v2(audit F2/F3): 锁降级/丢失 = 无法证明分布式所有权 —— ACK 批
+        # 不写共享状态，客户端幂等重试（与 503 back-pressure 同语义）。
         raise _session_busy_503()
 
 
@@ -1513,8 +1554,17 @@ async def clear_session(
     )
 
     try:
-        async with session_lock_registry.lock(session_id):
+        # v2(audit F2/F3): delete 是最强的共享状态突变（tombstone + 多键
+        # 清除 + 磁盘清扫）—— 降级锁下与在飞 mutation 的 tombstone 检查
+        # 竞态（engine 在锁内检查、本路径却各持进程内锁）；写前复检所有权。
+        async with session_lock_registry.lock(
+            session_id, fail_on_degraded=True,
+        ) as _del_lock:
             session_data_manager.invalidate_local_cache(session_id)
+            if getattr(_del_lock, "lost", False):
+                raise LockLostError(
+                    f"session lock ownership lost before session delete for {session_id}"
+                )
             # Tombstone first: an evaluation already in flight must not recreate
             # review/repair state after the authoritative session is removed.
             clear_cartographic_session_state(session_id)
@@ -1574,6 +1624,10 @@ async def clear_session(
     except (TimeoutError, asyncio.TimeoutError):
         # #791: session-lock contention is back-pressure, not a server fault.
         # Nothing was deleted yet (the tombstone write happens under the lock).
+        raise _session_busy_503()
+    except (LockDegradedError, LockLostError):
+        # v2(audit F2/F3): 锁降级/丢失 —— 不做任何清除（tombstone 未写，
+        # 客户端重试安全）。
         raise _session_busy_503()
     if not ok:
         raise HTTPException(status_code=404, detail="Session not found")

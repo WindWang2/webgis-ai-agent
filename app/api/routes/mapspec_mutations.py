@@ -6,7 +6,11 @@ from pydantic import BaseModel, Field
 
 from app.core.auth import require_owned_session
 from app.models.db_model import Conversation
-from app.services.distributed_lock import LockContentionError
+from app.services.distributed_lock import (
+    LockContentionError,
+    LockDegradedError,
+    LockLostError,
+)
 from app.services.gis_harness.components import ComponentPlacement
 from app.services.mapspec.lifecycle_engine import (
     InitProjectIntent,
@@ -218,6 +222,16 @@ async def apply_user_mapspec_mutation(
             detail={
                 "error": "session_busy",
                 "message": "会话正被 Agent 操作占用，请稍后重试。",
+            },
+        )
+    except (LockDegradedError, LockLostError):
+        # v2(audit F2): engine fail-closed 抛出（#1071 引入）此前无路由
+        # 捕获 → 裸 500。同 503 语义：状态未写，客户端重读后重试安全。
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "session_lock_unavailable",
+                "message": "会话锁暂不可用（分布式所有权无法证明），状态未修改，请稍后重试。",
             },
         )
     payload = result.to_dict()

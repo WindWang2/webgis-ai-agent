@@ -164,7 +164,8 @@ async def _persist_cartographic_harness_context(
     if not session_lock_held:
         from app.services.distributed_lock import session_lock_registry
 
-        async with session_lock_registry.lock(session_id):
+        # v2(audit F2): harness context 是共享 Redis 投影 —— 降级锁 fail-closed。
+        async with session_lock_registry.lock(session_id, fail_on_degraded=True):
             from app.services.session_data import session_data_manager
             session_data_manager.invalidate_local_cache(session_id)
             return await _persist_cartographic_harness_context(
@@ -345,7 +346,8 @@ async def _persist_cartographic_issued_action(
     if not session_lock_held:
         from app.services.distributed_lock import session_lock_registry
 
-        async with session_lock_registry.lock(session_id):
+        # v2(audit F2): issued-action 投影是共享 Redis 写 —— 降级锁 fail-closed。
+        async with session_lock_registry.lock(session_id, fail_on_degraded=True):
             from app.services.session_data import session_data_manager
             session_data_manager.invalidate_local_cache(session_id)
             await _persist_cartographic_issued_action(
@@ -426,7 +428,9 @@ async def evaluate_cartographic_session(
     if not session_lock_held:
         from app.services.distributed_lock import session_lock_registry
 
-        async with session_lock_registry.lock(session_id):
+        # v2(audit F2): 评估持锁读冷态 —— 降级锁下两 pod 并发评估/写评审，
+        # 世代守卫只在写侧兜底；fail-closed 保持读-判-写一致。
+        async with session_lock_registry.lock(session_id, fail_on_degraded=True):
             from app.services.session_data import session_data_manager
             session_data_manager.invalidate_local_cache(session_id)
             # NOTE: 调用方快照读取于锁外，跨锁边界可能已被其它写者更新——

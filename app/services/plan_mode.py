@@ -716,7 +716,9 @@ async def execute_plan_async(
 
     返回汇总 {plan_id, status, executed, results, failed_step, error}。
     """
-    async with session_lock_registry.lock(f"plan:{plan_id}"):
+    # v2(audit F2): 计划状态是共享 Redis 写 —— 降级锁 fail-closed（仅获取
+    # 时；执行中 TTL 丢失仍由 >300s crashed-plan 启发式兜底）。
+    async with session_lock_registry.lock(f"plan:{plan_id}", fail_on_degraded=True):
         async with _get_plan_lock(session_id, plan_id):
             return await _execute_plan_locked(
                 session_id, plan_id, registry, confirm_destructive=confirm_destructive

@@ -525,6 +525,14 @@ class MapSpecLifecycleEngine:
                 )
             except (TypeError, ValueError):
                 runtime_observation_seq = 0
+            # v2(audit F1): 权威载入必须先于 revision 捕获/CAS ——
+            # get_mapspec 的磁盘复活路径（Redis 过期、盘上 spec 存活）会把
+            # CAS 令牌随 spec 恢复进 Redis 并回写 hint（store.py）。此前
+            # prior 从复活前的 pre_state 捕获（stale 0）：commit 以 0+1
+            # 覆盖世代 N 破坏单调性，且重放的 expected_revision=0 开世
+            # mutation 会通过针对新 spec 的 CAS。superseded 返回也直接复用
+            # loaded，省掉旧路径的第二次全量 get_mapspec。
+            loaded = await self.store.get_mapspec(session_id, state_hint=pre_state)
             try:
                 prior_mutation_revision = int(
                     pre_state.get("_cartographic_mutation_revision", 0)
@@ -535,12 +543,11 @@ class MapSpecLifecycleEngine:
                 expected_revision is not None
                 and expected_revision != prior_mutation_revision
             ):
-                current_mapspec = await self.store.get_mapspec(session_id)
                 return MapSpecResult(
                     superseded=True,
                     is_error=False,
                     origin=origin,
-                    mapspec=current_mapspec,
+                    mapspec=loaded,
                     mutation_revision=prior_mutation_revision,
                     error_msg="MapSpec revision has changed.",
                     correction_hint=(
@@ -552,11 +559,6 @@ class MapSpecLifecycleEngine:
             checkpoint_id_created: Optional[str] = None
             ckpt_ref_count = 0
             try:
-                # #1082(F-10): pre_state 已含解析好的 mapspec —— 直接采用，
-                # 不再第二次全量 get_map_state（大 spec 每变更双解析）。
-                loaded = await self.store.get_mapspec(
-                    session_id, state_hint=pre_state,
-                )
                 prior_mapspec = loaded
                 # #1070(F-1): 锁内守卫复检 seam —— apply_gis_mutation 的
                 # user-wins 检查此前在锁外求值，等锁窗口内落地的用户决策
@@ -1125,14 +1127,28 @@ class MapSpecLifecycleEngine:
                 # #1073: spec 与 CAS 令牌单事务原子落地（crash 窗口不再产生
                 # spec=世代 N+1 而令牌=N 的错配）。save 返回未携带时（后端缺
                 # set_map_state_fields 的测试替身）退回旧的双写。
+                # v2(audit F4): runtime layers 的 upsert/remove/replace 一并
+                # 并入同一提交事务（layer_op → commit_mapspec_state 单
+                # WATCH/MULTI）—— 此前 spec 落地与 layers 落地是两笔事务，
+                # crash 落在中间会留下 spec=世代 N+1 而 layers=世代 N。
+                commit_layer_op: Optional[Tuple[str, str, Optional[Any]]] = None
+                if pending_layer_op is not None:
+                    commit_layer_op = pending_layer_op
+                elif is_rollback:
+                    # 把运行时 layers 对齐到恢复后的 mapspec.layers。
+                    commit_layer_op = ("replace", "", list(mapspec.get("layers", [])))
                 save_res = await self.store.save_mapspec(
                     session_id, mapspec, mutation_revision=mutation_revision,
+                    layer_op=commit_layer_op,
                 )
                 revision_persisted = bool(
                     save_res.get("revision_persisted")
                 ) if isinstance(save_res, dict) else False
+                layers_persisted = bool(
+                    save_res.get("layers_persisted")
+                ) if isinstance(save_res, dict) else False
 
-                if pending_layer_op is not None:
+                if pending_layer_op is not None and not layers_persisted:
                     op, layer_id, layer = pending_layer_op
                     if op == "upsert":
                         persisted = await session_data_manager.update_layer_in_state(
@@ -1146,8 +1162,7 @@ class MapSpecLifecycleEngine:
                         )
                         if persisted is False:
                             raise RuntimeError("runtime layer removal rejected")
-                elif is_rollback:
-                    # 把运行时 layers 对齐到恢复后的 mapspec.layers。
+                elif is_rollback and not layers_persisted:
                     persisted = await session_data_manager.set_map_state(
                         session_id, "layers", list(mapspec.get("layers", []))
                     )
@@ -1193,6 +1208,7 @@ class MapSpecLifecycleEngine:
                         session_id,
                         None if session_was_fresh else old_mapspec_snapshot,
                         old_layers_snapshot,
+                        revision=prior_mutation_revision + 1,
                     )
                 except Exception as rb_err:  # noqa: BLE001
                     # _rollback_to_snapshot isolates its own failures, but a
@@ -1237,6 +1253,7 @@ class MapSpecLifecycleEngine:
         session_id: str,
         old_mapspec: Optional[Dict[str, Any]],
         old_layers: List[Any],
+        revision: Optional[int] = None,
     ) -> bool:
         """恢复 mutation 前的 mapspec + redis layers，避免半提交。
 
@@ -1244,10 +1261,23 @@ class MapSpecLifecycleEngine:
         load time (review P1-1): they are independent of the live store state, so
         restoring them is not a silent no-op even under the in-memory backend's
         reference aliasing.
+
+        v2(audit F4): ``revision``（prior+1）随恢复的旧 spec 一并落地 —— 回滚
+        绝不把令牌拨回旧值：失败尝试可能已把 N+1 暴露给读者，回退会让持有
+        N+1 的客户端在旧 spec 上通过相等 CAS。方向约束：rev ≥ spec 世代是
+        安全（客户端被 superseded 后重读），spec 世代 > rev 才是危险方向。
+        layers 恢复经 layer_op 并入同一提交事务（后端支持时）。
         """
         try:
             if old_mapspec is not None:
-                await self.store.save_mapspec(session_id, old_mapspec)
+                saved = await self.store.save_mapspec(
+                    session_id, old_mapspec,
+                    mutation_revision=revision,
+                    layer_op=("replace", "", list(old_layers)),
+                )
+                if not (isinstance(saved, dict) and saved.get("layers_persisted")):
+                    # 测试替身缺 commit_mapspec_state —— layers 恢复退回独立写。
+                    await session_data_manager.set_map_state(session_id, "layers", old_layers)
             else:
                 # First mutation: there is no last-known-good spec. Discard the
                 # candidate that may already have been written so rollback does
@@ -1255,7 +1285,7 @@ class MapSpecLifecycleEngine:
                 discard = getattr(self.store, "discard_mapspec", None)
                 if callable(discard):
                     await discard(session_id)
-            await session_data_manager.set_map_state(session_id, "layers", old_layers)
+                await session_data_manager.set_map_state(session_id, "layers", old_layers)
         except Exception as rb_err:
             # rollback 自身失败必须大声报错——绝不静默。
             logger.error(

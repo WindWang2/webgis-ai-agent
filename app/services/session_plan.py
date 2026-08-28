@@ -235,7 +235,9 @@ async def ensure_session_plan_slot(
     current = await load_session_plan(session_id, store=store)
     if current is not None:
         return current
-    async with session_lock_registry.lock(session_id):
+    # v2(audit F2): 计划 envelope 是共享 Redis 状态（alias/refs/history），
+    # 降级锁（两 pod 各持进程内锁）下创建会交叉覆盖 —— fail-closed。
+    async with session_lock_registry.lock(session_id, fail_on_degraded=True):
         return await _ensure_slot_unlocked(session_id, store=store)
 
 
@@ -396,7 +398,10 @@ async def apply_tool_result(
     """
     if not session_id or not success:
         return []
-    async with session_lock_registry.lock(session_id) as lock:
+    # v2(audit F2): envelope 变更是共享 Redis 写（supersede 归档 + 进度
+    # append），降级锁下两 pod last-write-wins —— fail-closed（lost 检查
+    # 已由 _apply_tool_result_unlocked 的 lock.lost 守卫覆盖）。
+    async with session_lock_registry.lock(session_id, fail_on_degraded=True) as lock:
         return await _apply_tool_result_unlocked(
             session_id,
             tool_name,

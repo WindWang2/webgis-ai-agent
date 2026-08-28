@@ -658,6 +658,94 @@ class RedisSessionStore(BaseSessionStore):
             )
             return False
 
+    async def commit_mapspec_state(
+        self,
+        session_id: str,
+        fields: dict,
+        layer_op: Optional[tuple] = None,
+    ) -> bool:
+        """v2(audit F4): MapSpec commit 单事务（spec+revision+指纹+runtime layers）。
+
+        此前 save_mapspec（spec/令牌一笔 MULTI）与 runtime layers 写
+        （update/remove_layer_in_state 另一笔 WATCH/MULTI）是两个事务，
+        crash 落在两写之间会留下 spec=世代 N+1 而 layers=世代 N 的错配。
+        本方法把 layers 的 read-modify-write 合入同一 WATCH/MULTI：EXEC 前
+        到达的并发 layers 写（WS 感知通道，不走分布式锁）触发 WatchError
+        重读合并 —— 保留 update/remove_layer_in_state 的合并语义。
+
+        layer_op: ("upsert", layer_id, layer_dict) | ("remove", layer_id, None)
+                  | ("replace", "", layers_list)。fields 为 Python 对象。
+        """
+        if not fields and layer_op is None:
+            return True
+        await self._ensure_connected()
+        state_key = self._state_key(session_id)
+        for _attempt in range(3):
+            try:
+                async with self._r.pipeline(transaction=True) as pipe:
+                    await pipe.watch(state_key)
+                    payloads: dict[str, str] = {}
+                    for key, value in fields.items():
+                        payloads[key] = await asyncio.to_thread(
+                            json.dumps, value, ensure_ascii=False,
+                            default=_numpy_json_default,
+                        )
+                    if layer_op is not None:
+                        op, layer_id, layer_payload = layer_op
+                        raw_layers = await pipe.hget(state_key, "layers")
+                        layers = list(json.loads(raw_layers)) if raw_layers is not None else []
+                        if op == "upsert":
+                            for layer in layers:
+                                if layer.get("id") == layer_id:
+                                    layer.update(layer_payload)
+                                    break
+                            else:
+                                layers.append({"id": layer_id, **layer_payload})
+                        elif op == "remove":
+                            layers = [
+                                layer for layer in layers
+                                if not _layer_matches_removal_family(
+                                    layer.get("id"), layer_id,
+                                )
+                            ]
+                        elif op == "replace":
+                            layers = list(layer_payload or [])
+                        payloads["layers"] = await asyncio.to_thread(
+                            json.dumps, layers, ensure_ascii=False,
+                            default=_numpy_json_default,
+                        )
+                    pipe.multi()
+                    pipe.hsetnx(
+                        state_key,
+                        "_started_at",
+                        datetime.now(timezone.utc).isoformat(),
+                    )
+                    pipe.hset(state_key, mapping=payloads)
+                    pipe.expire(state_key, STATE_TTL)
+                    pipe.sadd(self._active_key(), session_id)
+                    self._refresh_session_ttl(pipe, session_id)
+                    await pipe.execute()
+                self._l1_invalidate_session(session_id)
+                return True
+            except aioredis.WatchError:
+                continue  # 并发 layers 写 —— 重读合并后重试
+            except (TypeError, ValueError, json.JSONDecodeError) as e:
+                logger.warning(
+                    "commit_mapspec_state invalid payload for %s: %s",
+                    session_id, e,
+                )
+                return False
+            except aioredis.RedisError as e:
+                logger.error(
+                    "commit_mapspec_state failed for %s: %s", session_id, e
+                )
+                return False
+        logger.warning(
+            "commit_mapspec_state gave up after 3 retries for %s (contention)",
+            session_id,
+        )
+        return False
+
     async def set_map_state(self, session_id: str, key: str, value: Any, seq: Optional[int] = None) -> bool:
         await self._ensure_connected()
         # P1 (#521): serialize off the event loop (same as store()). The map_state

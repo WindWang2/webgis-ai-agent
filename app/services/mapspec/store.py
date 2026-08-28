@@ -19,7 +19,7 @@ import shutil
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 from uuid import uuid4
 
 from app.core.config import settings
@@ -271,6 +271,11 @@ class MapSpecStore:
             if disk_rev is not None and int(stored_rev or 0) < disk_rev:
                 restore_fields["_cartographic_mutation_revision"] = disk_rev
             await session_data_manager.set_map_state_fields(session_id, restore_fields)
+            if state_hint is not None:
+                # v2(audit F1): 复活结果同步回写 hint —— 调用方（engine）在
+                # hint 上捕获 CAS 令牌；不回写则 prior 停留在复活前的 stale 0，
+                # commit 会以 0+1 覆盖世代 N（单调性破坏 + 重放 CAS 通过）。
+                state_hint.update(restore_fields)
             return mapspec
 
         return None
@@ -280,6 +285,7 @@ class MapSpecStore:
         session_id: str,
         mapspec: Dict[str, Any],
         mutation_revision: Optional[int] = None,
+        layer_op: Optional[Tuple[str, str, Optional[Any]]] = None,
     ) -> Dict[str, Any]:
         """持久化 MapSpec；可选携带 mutation_revision 一并原子落地。
 
@@ -289,6 +295,13 @@ class MapSpecStore:
         提交，并落 _REV_SIDECAR_NAME 供磁盘复活路径恢复令牌。返回
         ``revision_persisted`` 标记是否已随本调用落地（后端缺接口时调用方
         自行补写）。
+
+        v2(audit F4): ``layer_op``（("upsert"|"remove"|"replace", id, payload)）
+        把 runtime layers 的 read-modify-write 并入同一提交事务
+        （commit_mapspec_state），消灭 spec=世代 N+1 而 layers=世代 N 的
+        crash 窗口；返回 ``layers_persisted``，调用方据此跳过旧的第二笔
+        layers 写。携带 layer_op 时跳过幂等短路（layers 字段与 spec 内容
+        是两个表示，spec 等值不蕴含 layers 已写）。
         """
         session_dir = self.get_session_dir(session_id)
         rev_dir = session_dir / "revisions"
@@ -300,7 +313,8 @@ class MapSpecStore:
         # 存即百毫秒级循环停顿。现在：同一对象 O(1) 短路；等值不同对象经指
         # 纹（线程内单次 O(bytes)）；冷启动/跨进程经 sidecar 文件 + Redis
         # 定向字段（均 O(1) 读）恢复语义。
-        if mapspec is self._persisted_obj.get(session_id):
+        # v2(audit F4): 携带 layer_op 时永不短路 —— layers 写必须发生。
+        if layer_op is None and mapspec is self._persisted_obj.get(session_id):
             # #1074(F-8): 同一性短路此前完全跳过存活复检（#838 只修了指纹
             # 路径）—— 他 worker 的 clear_session（空闲逐出，无 tombstone）
             # 后本进程同对象再保存会静默不持久化。sidecar + Redis 指纹两个
@@ -314,7 +328,7 @@ class MapSpecStore:
                 return {"mapspec": mapspec}
             self._invalidate_process_cache(session_id)
         fp = await asyncio.to_thread(_fingerprint_sync, mapspec)
-        if self._persisted_fp.get(session_id) == fp:
+        if layer_op is None and self._persisted_fp.get(session_id) == fp:
             # audit #838: 进程内指纹命中不再无条件短路 —— sidecar 仍在且指纹
             # 一致才算数。会话在别处被清除/盘上目录被回收后，同 id 复用的等值
             # spec 会在此走到全量落盘，而不是静默跳过（磁盘/Redis 双缺失）。
@@ -332,7 +346,7 @@ class MapSpecStore:
         # miss（退回全量落盘），不因缺方法而崩。
         _get_fp = getattr(session_data_manager, "get_map_spec_fingerprint", None)
         redis_fp = await _get_fp(session_id) if _get_fp is not None else None
-        if sidecar_fp == fp and redis_fp == fp:
+        if layer_op is None and sidecar_fp == fp and redis_fp == fp:
             self._persisted_fp[session_id] = fp
             self._persisted_obj[session_id] = mapspec
             return {"mapspec": mapspec}
@@ -345,27 +359,51 @@ class MapSpecStore:
         )
 
         # 落盘成功后再写 Redis cache（顺序契约：cache 不持有磁盘没有的 state）。
-        # #1073: 携带 revision 时经单事务接口原子提交 spec + CAS 令牌。
+        # v2(audit F4+F-P4): commit_mapspec_state 把 spec+revision+指纹+layers
+        # 的 read-modify-write 并入单 WATCH/MULTI（此前为 spec/令牌一笔 +
+        # layers 另一笔 + 指纹第三笔 HSET）。后端缺接口（测试替身）退回旧
+        # 序列，由 engine 补写 layers。
         revision_persisted = False
-        _set_fields = getattr(session_data_manager, "set_map_state_fields", None)
-        if mutation_revision is not None and _set_fields is not None:
-            persisted = await _set_fields(session_id, {
-                "mapspec": mapspec,
-                "_cartographic_mutation_revision": int(mutation_revision),
-            })
-            revision_persisted = bool(persisted)
+        layers_persisted = False
+        fingerprint_persisted = False
+        _commit = getattr(session_data_manager, "commit_mapspec_state", None)
+        if _commit is not None:
+            commit_fields: Dict[str, Any] = {"mapspec": mapspec}
+            if mutation_revision is not None:
+                commit_fields["_cartographic_mutation_revision"] = int(mutation_revision)
+            commit_fields["_mapspec_fp"] = fp
+            committed = await _commit(session_id, commit_fields, layer_op=layer_op)
+            if committed:
+                revision_persisted = mutation_revision is not None
+                layers_persisted = layer_op is not None
+                fingerprint_persisted = True
+            else:
+                raise RuntimeError("authoritative MapSpec cache write rejected")
         else:
-            persisted = await session_data_manager.set_map_state(
-                session_id, "mapspec", mapspec
-            )
-        if persisted is False:
-            raise RuntimeError("authoritative MapSpec cache write rejected")
-        _set_fp = getattr(session_data_manager, "set_map_spec_fingerprint", None)
-        if _set_fp is not None:
-            await _set_fp(session_id, fp)
+            _set_fields = getattr(session_data_manager, "set_map_state_fields", None)
+            if mutation_revision is not None and _set_fields is not None:
+                persisted = await _set_fields(session_id, {
+                    "mapspec": mapspec,
+                    "_cartographic_mutation_revision": int(mutation_revision),
+                })
+                revision_persisted = bool(persisted)
+            else:
+                persisted = await session_data_manager.set_map_state(
+                    session_id, "mapspec", mapspec
+                )
+            if persisted is False:
+                raise RuntimeError("authoritative MapSpec cache write rejected")
+            _set_fp = getattr(session_data_manager, "set_map_spec_fingerprint", None)
+            if _set_fp is not None:
+                await _set_fp(session_id, fp)
         self._persisted_fp[session_id] = fp
         self._persisted_obj[session_id] = mapspec
-        return {"mapspec": mapspec, "revision_persisted": revision_persisted}
+        return {
+            "mapspec": mapspec,
+            "revision_persisted": revision_persisted,
+            "layers_persisted": layers_persisted,
+            "fingerprint_persisted": fingerprint_persisted,
+        }
 
     @staticmethod
     def _persist_disk_sync(
