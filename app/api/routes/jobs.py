@@ -194,6 +194,23 @@ async def cancel_job(
             await DurableJobStore.request_cancel(db, durable_id)
             cancellation_registry.cancel(durable_id, "parent agent task cancelled")
         await db.commit()
+        # #1066: agent job 的取消同样要桥接 Pi 活跃回合（与 DELETE /tasks/{id}
+        # 同型 —— tracker 令牌点燃不终止 Pi 子进程）。
+        try:
+            from app.api.routes import chat as chat_routes
+            from app.agent_pi_bridge import active_turn_correlation
+
+            _, _, active_sid = active_turn_correlation()
+            if (
+                chat_routes.pi_bridge is not None
+                and task_info.session_id
+                and active_sid == task_info.session_id
+            ):
+                await chat_routes.pi_bridge.abort(task_info.session_id)
+        except Exception as abort_error:  # noqa: BLE001 - 取消已生效，abort 失败不回滚
+            logger.warning(
+                "Pi abort during job %s cancel failed: %s", job_id, abort_error
+            )
         return JobCancelResponse(
             id=job_id,
             status=JobStatus.cancelling.value if not already else JobStatus.cancelled.value,

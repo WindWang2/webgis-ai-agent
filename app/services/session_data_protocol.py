@@ -197,6 +197,15 @@ class BaseSessionStore:
         """Default fallback alias resolution. Overridden by subclasses if alias map is separate."""
         return ref_or_alias
 
+    async def get_state_field(self, session_id: str, field: str) -> Any:
+        """#1064: 定向读单个 map_state 字段（授权/tombstone 检查用）。
+
+        默认实现回落到全量 get_map_state 后取字段（语义兜底）；Redis 后端
+        覆盖为单 HGET（不 HGETALL/不解析 1MiB 级 mapspec）。缺失返回 None。
+        """
+        state = await self.get_map_state(session_id)
+        return state.get(field)
+
     def _validate_owner_token(self, meta: Optional[Dict[str, Any]], owner_token: Optional[str]) -> Optional[SessionRefDataResult]:
         """Shared owner-token check for get_ref_data / get_ref_descriptor_authorized.
         Returns a PermissionDenied result if the token mismatches, else None.
@@ -244,7 +253,15 @@ class BaseSessionStore:
         owner_token: Optional[str] = None,
     ) -> SessionRefDataResult:
         """Deep interface method: resolves alias, validates owner token if present, and returns deserialized data."""
-        meta = await self.get_session_metadata(session_id)
+        # #1064: 授权凭证只存在于两个特定状态字段。此前经
+        # get_session_metadata 物化整个会话包（mapspec 级 map_state 的
+        # HGETALL + deepcopy/L1 重解析）——15 层恢复扇出实测 195 条 Redis
+        # 命令 / 334ms（重会话 58ms/层）。定向读后 Redis 后端仅 2 次 HGET。
+        # 最小 meta 同时覆盖顶层与 map_state 嵌套两种读取形状。
+        meta: Dict[str, Any] = {
+            "owner_token_digest": await self.get_state_field(session_id, "owner_token_digest"),
+            "owner_token": await self.get_state_field(session_id, "owner_token"),
+        }
         denied = self._validate_owner_token(meta, owner_token)
         if denied is not None:
             return denied

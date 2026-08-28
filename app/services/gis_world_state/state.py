@@ -21,7 +21,8 @@ from typing import Any, Dict, Optional
 
 from app.services.session_data import session_data_manager
 from app.services.mapspec.store import mapspec_store_instance
-from app.services.gis_world_state.provenance import get_provenance
+from app.services.gis_world_state import provenance as _provenance
+from app.services.gis_world_state.provenance import get_provenance  # noqa: F401 - re-export
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +66,20 @@ def _source_summary(source_id: str, entry: Dict[str, Any]) -> Dict[str, Any]:
             summary[key] = value
             break
     if profile:
-        summary["feature_count"] = profile.get("feature_count")
-        summary["geometry_types"] = profile.get("geometry_types")
+        # #1067(E-6): 全部写入方（spatial_meta_profiler / mapspec_store /
+        # process_layer_ingestion）都写 camelCase —— 此前读 snake_case 键，
+        # sources[*] 的要素计数/几何类型从未出现（工具描述承诺的通道恒死）。
+        summary["feature_count"] = (
+            profile.get("featureCount")
+            if profile.get("featureCount") is not None
+            else profile.get("feature_count")
+        )
+        _geoms = (
+            profile.get("geometryTypes")
+            if profile.get("geometryTypes") is not None
+            else profile.get("geometry_types")
+        )
+        summary["geometry_types"] = _geoms
     return {k: v for k, v in summary.items() if v is not None}
 
 
@@ -86,13 +99,20 @@ def _component_summary(component: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def build_world_state(session_id: str) -> Dict[str, Any]:
-    """构建 session 的 GISWorldState 快照（只读、有界、无 payload）。"""
-    mapspec = await mapspec_store_instance.get_mapspec(session_id) or {}
+    """构建 session 的 GISWorldState 快照（只读、有界、无 payload）。
+
+    #1068(E-5): 单次全量 get_map_state 派生 mapspec/provenance/user_hidden/
+    observation（此前 3-4 次全量物化）；mapspec 缺失时回退 store 读取（磁盘
+    兜底语义不变）。
+    """
     map_state: Dict[str, Any] = {}
     try:
         map_state = await session_data_manager.get_map_state(session_id) or {}
     except Exception as e:  # noqa: BLE001
         logger.warning("[gis_world_state] map_state unavailable: %s", e)
+    mapspec = map_state.get("mapspec")
+    if not isinstance(mapspec, dict) or not mapspec:
+        mapspec = await mapspec_store_instance.get_mapspec(session_id) or {}
 
     layers = [
         _layer_summary(layer)
@@ -111,12 +131,18 @@ async def build_world_state(session_id: str) -> Dict[str, Any]:
         if isinstance(component, dict)
     ][:MAX_COMPONENT_SUMMARIES]
 
-    provenance = (await get_provenance(session_id))[-MAX_PROVENANCE_SNAPSHOT:]
+    # #1068(E-5): 全环 provenance 从同一份 map_state 派生 —— 此前
+    # get_provenance 被调用两次（尾部切片 + 全环），每次各触发一次全量
+    # get_map_state（mapspec 级状态的完整物化），一次快照 3-4 次全量读。
+    state_entries = map_state.get(_provenance._PROVENANCE_KEY)
+    all_provenance = (
+        list(state_entries) if isinstance(state_entries, list) else []
+    )
+    provenance = all_provenance[-MAX_PROVENANCE_SNAPSHOT:]
     # user_hidden 以全环为依据（ADR-0072 修复 P2-1：finalize 一次写 30+ 条
     # agent provenance 会把用户决策挤出尾部 16 条，快照必须从全环派生，否则
-    # 守卫(全环64条)与感知(尾16)互相矛盾——agent 被守卫拦但快照说"没有用户决策")。
-    all_provenance = await get_provenance(session_id)
-    user_hidden_source = all_provenance if len(all_provenance) > len(provenance) else provenance
+    # 守卫(全环64条)与感知(尾16)互相矛盾——agent 被守卫拦但快照说"没有用户决策"）。
+    user_hidden_source = all_provenance
     user_hidden = [
         entry.get("target")
         for entry in reversed(user_hidden_source)

@@ -1,5 +1,7 @@
 """Task API Route - 任务状态查询与取消"""
 import asyncio
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional
@@ -19,6 +21,7 @@ from app.services.task_queue import TaskQueueService
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/tasks", tags=["任务管理"])
+logger = logging.getLogger(__name__)
 
 
 class TaskStepResponse(BaseModel):
@@ -154,6 +157,23 @@ async def cancel_task(
         await DurableJobStore.request_cancel(db, job_id)
     if background_job_ids:
         await db.commit()
+    # #1066: Pi 路径的活跃回合与其 dispatch 绑定的是 bridge 的
+    # _active_turn_token（与 tracker 令牌相互独立）—— 只点燃 tracker 令牌
+    # 时，子进程继续生成/执行工具直到自然 settle。任务的 session 即活跃
+    # 回合的 session 时同步 abort（abort 自带跨 session 守卫，串号安全）。
+    task_session = task_info.session_id if task_info else None
+    if task_session:
+        try:
+            from app.api.routes import chat as chat_routes
+            from app.agent_pi_bridge import active_turn_correlation
+
+            _, _, active_sid = active_turn_correlation()
+            if chat_routes.pi_bridge is not None and active_sid == task_session:
+                await chat_routes.pi_bridge.abort(task_session)
+        except Exception as abort_error:  # noqa: BLE001 - 取消已生效，abort 失败不回滚
+            logger.warning(
+                "Pi abort during task %s cancel failed: %s", task_id, abort_error
+            )
     return TaskCancelResponse(cancelled=cancelled)
 
 

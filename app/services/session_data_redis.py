@@ -745,6 +745,31 @@ class RedisSessionStore(BaseSessionStore):
         return out
 
 
+    async def get_state_field(self, session_id: str, field: str) -> Any:
+        """#1064: 定向读单个状态字段（单 HGET，不 HGETALL/不解析 mapspec）。
+
+        授权/tombstone 检查只需要一个字段（owner_token_digest、
+        _cartographic_deleted），此前经 get_map_state/get_session_metadata
+        物化整个状态包（1MiB 级 mapspec 冷读/重解析/传输）。字段值按 JSON
+        解码（与 get_map_state 的 per-field 语义一致）；缺失或不可解析返回
+        None。
+        """
+        try:
+            await self._ensure_connected()
+            v = await self._r.hget(self._state_key(session_id), field)
+        except aioredis.RedisError as e:
+            logger.warning(
+                "Redis get_state_field(%s) failed for %s: %s — treating as miss",
+                field, session_id, e,
+            )
+            return None
+        if v is None:
+            return None
+        try:
+            return json.loads(v)
+        except (json.JSONDecodeError, TypeError):
+            return v
+
     async def get_map_spec_fingerprint(self, session_id: str) -> Optional[str]:
         """#687：定向读 mapspec 指纹字段（O(1)，不触发全字段冷解析/L1）。
 

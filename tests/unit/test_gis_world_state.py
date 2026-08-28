@@ -236,3 +236,55 @@ async def test_finalize_display_respects_user_hidden_layer():
     spec = await mapspec_store_instance.get_mapspec(sid)
     layer = next(lyr for lyr in spec["layers"] if lyr["id"] == "poi-main")
     assert layer["layout"]["visibility"] == "none"
+
+
+@pytest.mark.asyncio
+async def test_world_state_sources_include_camelcase_profile_counts():
+    """#1067(E-6): sources[*] 的 feature_count/geometry_types 此前读
+    snake_case 键而全部写入方写 camelCase —— 通道从未出过数。"""
+    from app.services.session_data import session_data_manager
+    from app.services.gis_world_state.state import build_world_state
+
+    clean_session = "gws-camelcase-1"
+    await session_data_manager.clear_session(clean_session)
+    profile = {"featureCount": 42, "geometryTypes": ["Point"],
+               "bbox": [104.0, 30.5, 104.2, 30.7]}
+    await session_data_manager.set_map_state(clean_session, "mapspec", {
+        "specVersion": 3,
+        "layers": [{"id": "ly1", "type": "circle", "source": "src1",
+                    "layout": {"visibility": "visible"}}],
+        "sources": {"src1": {"type": "geojson", "ref_id": "ref:x", "profile": profile}},
+        "layout": {"components": []},
+    })
+    state = await build_world_state(clean_session)
+    src = next(s for s in state["sources"] if s["id"] == "src1")
+    assert src["feature_count"] == 42
+    assert src["geometry_types"] == ["Point"]
+
+
+@pytest.mark.asyncio
+async def test_world_state_single_map_state_read(monkeypatch):
+    """#1068(E-5): build_world_state 此前 3-4 次全量 map_state 物化（mapspec
+    读 + provenance 两次 + observation）—— 现在一次。"""
+    import app.services.gis_world_state.state as state_mod
+
+    clean_session = "gws-single-read-1"
+    await session_data_manager.clear_session(clean_session)
+    calls = {"n": 0}
+    real = state_mod.session_data_manager.get_map_state
+
+    async def _counting(sid):
+        calls["n"] += 1
+        return await real(sid)
+
+    monkeypatch.setattr(state_mod.session_data_manager, "get_map_state", _counting)
+    await state_mod.session_data_manager.set_map_state(clean_session, "mapspec", {
+        "specVersion": 3, "layers": [], "sources": {}, "layout": {"components": []},
+    })
+    await state_mod.session_data_manager.set_map_state(
+        clean_session, "_gis_provenance",
+        [{"origin": "user", "kind": "PatchLayerPresentationIntent",
+          "target": "ly1", "detail": {"visible": False}}],
+    )
+    await build_world_state(clean_session)
+    assert calls["n"] == 1

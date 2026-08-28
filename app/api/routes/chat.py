@@ -1355,8 +1355,9 @@ async def _persist_map_action_acks_locked(
         raise HTTPException(status_code=410, detail="Session was deleted")
     # Process-local tombstone misses other replicas. The Redis/map_state
     # flag is the cross-replica contract written on session delete.
-    deleted_state = await ack_store.get_map_state(session_id)
-    if deleted_state.get("_cartographic_deleted") is True:
+    # #1064: 单布尔字段用定向读 —— 此前全量 get_map_state 只为读
+    # _cartographic_deleted（重会话 40ms/次的 mapspec 冷解析）。
+    if await ack_store.get_state_field(session_id, "_cartographic_deleted") is True:
         raise HTTPException(status_code=410, detail="Session was deleted")
 
     accepted = 0
@@ -1387,8 +1388,12 @@ async def _persist_map_action_acks_locked(
         result["dropped"] = dropped
     if accepted:
         try:
+            # #1064: ACK 批次刚写入后读一次全量状态并穿透 hydrate/evaluate
+            # （镜像 #879 observation 路由的锁内快照复用）—— 此前 ACK 路由
+            # 不传 state，评估链每批 3 次全量 map_state 冷读。
+            state_snapshot = await ack_store.get_map_state(session_id)
             evaluation = await evaluate_cartographic_session(
-                session_id, session_lock_held=True
+                session_id, session_lock_held=True, state=state_snapshot
             )
         except Exception as review_error:  # noqa: BLE001 - ACK is already durable
             logger.warning(

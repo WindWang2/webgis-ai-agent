@@ -240,12 +240,17 @@ class MapProductPlanner:
         template_id: str = "",
         recipe_id: str = "",
         available_tools: Optional[Any] = None,
+        project_verified: Optional[set] = None,
     ) -> MapProductPlan:
         # recipe_id 显式指定（webgis_map_intent 阶段的推荐/LLM 纠偏）优先——
         # 保证意图阶段与产品阶段用同一份计划（plan 连续性）。
         recipe = self.recipes.get(recipe_id) if recipe_id else None
         if recipe is None:
-            candidates = self.recipes.select_candidates(intent)
+            # #1067(E-12): 回退重选此前不带 project_verified（#864 只修了
+            # 主路径）—— 应用 recipe 与 evidence 候选在项目记忆排序场景下分叉。
+            candidates = self.recipes.select_candidates(
+                intent, project_verified=project_verified
+            )
             recipe = candidates[0] if candidates else None
         if recipe is None:
             # 兜底：没有 task/cartography 命中时按通用 POI 分布 recipe
