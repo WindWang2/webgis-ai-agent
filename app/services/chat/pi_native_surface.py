@@ -186,13 +186,34 @@ def native_tools_for_pi(registry: Any) -> list[dict[str, Any]]:
     return dumped
 
 
+import os
+import tempfile
+
+
 def write_native_tools_file(registry: Any, path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = native_tools_for_pi(registry)
-    path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+    content = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+
+    temp_file = tempfile.NamedTemporaryFile(
+        mode="w",
         encoding="utf-8",
+        dir=path.parent,
+        delete=False,
+        prefix=f".{path.name}.tmp-",
     )
+    try:
+        temp_file.write(content)
+        temp_file.flush()
+        os.fsync(temp_file.fileno())
+        temp_file.close()
+        os.replace(temp_file.name, path)
+    except Exception:
+        try:
+            os.unlink(temp_file.name)
+        except OSError:
+            pass
+        raise
     return path
 
 

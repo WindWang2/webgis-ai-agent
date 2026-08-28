@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SessionPlanPanel } from './session-plan-panel';
-import type { SessionPlanProjection } from '@/lib/types/session-plan';
+import type { SessionPlanEventName, SessionPlanProjection } from '@/lib/types/session-plan';
 import {
   applySessionPlanEvent,
   EMPTY_SESSION_PLAN_STATE,
@@ -162,7 +162,11 @@ describe('SessionPlanPanel live deltas (#1048)', () => {
     query: '分析北京学校',
   };
 
-  function apply(state: SessionPlanViewState, event: string, data: Record<string, unknown>) {
+  function apply(
+    state: SessionPlanViewState,
+    event: SessionPlanEventName,
+    data: Record<string, unknown>,
+  ) {
     return applySessionPlanEvent(state, event, data);
   }
 
@@ -204,7 +208,7 @@ describe('SessionPlanPanel live deltas (#1048)', () => {
     expect(screen.queryByText('poi_query')).not.toBeInTheDocument();
   });
 
-  it('updated with replaced=true resets rows; without replaced keeps completed rows', () => {
+  it('updated with replaced=true resets rows; replaced=false keeps every row', () => {
     let state = apply(EMPTY_SESSION_PLAN_STATE, 'session_plan_updated', UPDATED);
     state = apply(state, 'session_plan_progress', PROGRESS);
     state = apply(state, 'session_plan_progress', {
@@ -214,7 +218,9 @@ describe('SessionPlanPanel live deltas (#1048)', () => {
       status: 'pending',
       bound_ref: '',
     });
-    // replaced=false：目标/配方刷新，已完成行存活，待完成行属于旧章节。
+    // replaced=false：目标/配方刷新，全部既有行存活 —— 后端在产品装配后仍发
+    // 非 replaced updated，此时 pending 行合法存活，而 progress 只重发变化行
+    // （被丢掉的行永不回来），因此任何行都不得在此处被过滤。
     let next = apply(state, 'session_plan_updated', {
       ...UPDATED,
       query: '成都市小学分布（更新）',
@@ -222,7 +228,9 @@ describe('SessionPlanPanel live deltas (#1048)', () => {
     });
     const { rerender } = render(<SessionPlanPanel live={next} />);
     expect(screen.getByText('poi_query')).toBeInTheDocument();
-    expect(screen.queryByText('admin_boundary')).not.toBeInTheDocument();
+    expect(screen.getByText('admin_boundary')).toBeInTheDocument();
+    expect(screen.getByText('待完成')).toBeInTheDocument();
+    expect(screen.getByText('成都市小学分布（更新）')).toBeInTheDocument();
 
     // replaced=true：目标更换，旧行全部清空。
     next = apply(state, 'session_plan_updated', { ...UPDATED, replaced: true });
@@ -253,5 +261,22 @@ describe('SessionPlanPanel live deltas (#1048)', () => {
     expect(screen.getByText('成都市小学分布情况')).toBeInTheDocument();
     rerender(<SessionPlanPanel live={staleProgress} />);
     expect(screen.queryByText('heatmap')).not.toBeInTheDocument();
+  });
+
+  it('drops a superseded event whose old_envelope_id is not current (same reference)', () => {
+    let state = apply(EMPTY_SESSION_PLAN_STATE, 'session_plan_updated', UPDATED);
+    state = apply(state, 'session_plan_progress', PROGRESS);
+    // 陈旧 superseded（old_envelope_id 与当前信封不符）：整体丢弃 —— 信封
+    // 迁移只由匹配的 superseded 驱动，绝不半迁移，状态保持原引用。
+    const stale = apply(state, 'session_plan_superseded', {
+      ...SUPERSEDED,
+      old_envelope_id: 'sp-not-current',
+    });
+    expect(stale).toBe(state); // 丢弃 = 状态原样（引用判同）
+    const { rerender } = render(<SessionPlanPanel live={stale} />);
+    expect(screen.queryByTestId('session-plan-superseded')).not.toBeInTheDocument();
+    expect(screen.getByText('成都市小学分布情况')).toBeInTheDocument();
+    rerender(<SessionPlanPanel live={state} />);
+    expect(screen.getByText('poi_query')).toBeInTheDocument();
   });
 });

@@ -33,21 +33,34 @@ const GIS_IDENTITY =
 const CODING_ASSISTANT_OPENING =
   "You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.";
 
-function loadNativeTools() {
+const DEFAULT_TOOL_TIMEOUT_MS = 60000;
+
+export function loadNativeTools() {
   const path = process.env.WEBGIS_NATIVE_TOOLS_PATH;
   if (!path) return [];
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf8"));
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
+    const content = readFileSync(path, "utf8");
+    const parsed = JSON.parse(content);
+    if (!Array.isArray(parsed)) {
+      console.error(`[webgis-tools] WEBGIS_NATIVE_TOOLS_PATH (${path}) content is not an array`);
+      return [];
+    }
+    return parsed;
+  } catch (err) {
+    console.error(`[webgis-tools] Failed to load native tools from WEBGIS_NATIVE_TOOLS_PATH (${path}):`, err);
     return [];
   }
 }
 
+let _pinnedTurnToken = "";
+
+export function _resetPinnedTurnToken() {
+  _pinnedTurnToken = "";
+}
+
 export function currentTurnToken(ctx) {
   const entries = ctx?.sessionManager?.getEntries?.() ?? [];
-  const start = Math.max(0, entries.length - 24);
-  for (let index = entries.length - 1; index >= start; index -= 1) {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
     let serialized = "";
     try {
       serialized = JSON.stringify(entries[index]);
@@ -55,12 +68,16 @@ export function currentTurnToken(ctx) {
       continue;
     }
     const matches = Array.from(serialized.matchAll(TURN_CONTEXT_RE));
-    if (matches.length) return matches[matches.length - 1][1];
+    if (matches.length) {
+      const token = matches[matches.length - 1][1];
+      _pinnedTurnToken = token;
+      return token;
+    }
   }
-  return "";
+  return _pinnedTurnToken;
 }
 
-async function postToBridge(toolCallId, name, args, turnToken) {
+export async function postToBridge(toolCallId, name, args, turnToken, options = {}) {
   if (!turnToken) {
     return {
       content: [{ type: "text", text: "WebGIS tool execution rejected: missing turn context" }],
@@ -68,6 +85,16 @@ async function postToBridge(toolCallId, name, args, turnToken) {
       isError: true,
     };
   }
+
+  const timeoutMs = options?.timeoutMs ?? (
+    Number(process.env.WEBGIS_TOOL_TIMEOUT_MS) > 0
+      ? Number(process.env.WEBGIS_TOOL_TIMEOUT_MS)
+      : DEFAULT_TOOL_TIMEOUT_MS
+  );
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
     const response = await fetch(`${WEBGIS_API_BASE}/pi-tools/execute`, {
       method: "POST",
@@ -76,14 +103,46 @@ async function postToBridge(toolCallId, name, args, turnToken) {
         "X-Pi-Bridge-Secret": BRIDGE_SECRET,
       },
       body: JSON.stringify({ toolCallId, name, arguments: args, turnToken }),
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
+
     if (!response.ok) {
+      let detailText = "";
+      try {
+        const errJson = await response.json();
+        if (errJson && typeof errJson.detail === "string") {
+          detailText = errJson.detail;
+        } else if (errJson && typeof errJson.error === "string") {
+          detailText = errJson.error;
+        }
+      } catch {
+        // non-JSON response
+      }
+
+      let errorText = "";
+      if (response.status === 409) {
+        errorText = `HTTP 409 Conflict: Concurrent mutation conflict on session state${detailText ? ` (${detailText})` : ""}. Retry the tool call or inspect the current map state with webgis_cartography_status {}.`;
+      } else if (response.status === 503) {
+        errorText = `HTTP 503 Service Unavailable: WebGIS backend is temporarily overloaded or unavailable${detailText ? ` (${detailText})` : ""}. Please wait a moment and retry.`;
+      } else if (response.status === 401) {
+        errorText = `HTTP 401 Unauthorized: Invalid turn authentication or missing bridge credentials${detailText ? ` (${detailText})` : ""}.`;
+      } else {
+        errorText = `HTTP ${response.status}: ${response.statusText || "Error"}${detailText ? ` - ${detailText}` : ""}`;
+      }
+
       return {
-        content: [{ type: "text", text: `HTTP ${response.status}: ${response.statusText}` }],
-        details: { error: `HTTP ${response.status}`, toolName: name },
+        content: [{ type: "text", text: errorText }],
+        details: {
+          error: `HTTP ${response.status}`,
+          status: response.status,
+          toolName: name,
+          detail: detailText || undefined,
+        },
         isError: true,
       };
     }
+
     const result = await response.json();
     return {
       content: result.content ?? [{ type: "text", text: JSON.stringify(result) }],
@@ -91,6 +150,18 @@ async function postToBridge(toolCallId, name, args, turnToken) {
       isError: result.isError,
     };
   } catch (error) {
+    clearTimeout(timeoutId);
+    if (error?.name === "AbortError" || controller.signal.aborted) {
+      const timeoutSec = Math.round(timeoutMs / 1000);
+      return {
+        content: [{
+          type: "text",
+          text: `WebGIS tool execution timed out after ${timeoutSec}s: server is busy or processing a long-running spatial calculation. Check current map state with webgis_cartography_status {} or retry with a narrower scope.`,
+        }],
+        details: { error: "timeout", toolName: name, timeoutMs },
+        isError: true,
+      };
+    }
     const message = error instanceof Error ? error.message : String(error);
     return {
       content: [{ type: "text", text: `WebGIS tool execution failed: ${message}` }],
