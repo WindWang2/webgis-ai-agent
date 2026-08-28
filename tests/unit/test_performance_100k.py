@@ -96,7 +96,7 @@ def test_mapspec_set_view_cow_no_source_copy(fc_100k):
     
     # Mock store that returns the same spec object (in-memory backend behavior)
     class _FakeStore:
-        async def get_mapspec(self, sid):
+        async def get_mapspec(self, sid, **_kw):
             return spec
         async def save_mapspec(self, sid, mapspec, **_kw):
             return {"mapspec": mapspec}

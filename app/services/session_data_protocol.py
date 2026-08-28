@@ -211,6 +211,26 @@ class BaseSessionStore:
         """Default fallback alias resolution. Overridden by subclasses if alias map is separate."""
         return ref_or_alias
 
+    async def append_map_action_event_batch(
+        self, session_id: str, events: list
+    ) -> list:
+        """#1081: 批量追加 ACK（每条返回 'stored'/'duplicate'/'invalid'）。
+
+        默认实现逐条走 singular 接口（语义等价）；Redis 后端覆盖为单个
+        Lua 脚本（1 RTT、原子、first-terminal-wins 保序保幂等）。
+        """
+        out: list = []
+        for ev in events:
+            ok = await self.append_map_action_event(session_id, ev)
+            action_id = str((ev or {}).get("action_id") or "")
+            if not action_id:
+                out.append("invalid")
+            elif ok:
+                out.append("stored")
+            else:
+                out.append("duplicate")
+        return out
+
     async def get_state_field(self, session_id: str, field: str) -> Any:
         """#1064: 定向读单个 map_state 字段（授权/tombstone 检查用）。
 

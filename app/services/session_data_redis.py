@@ -1,6 +1,5 @@
 """Redis-backed session data manager - persistent storage with TTL and LRU eviction"""
 import asyncio
-import copy
 import json
 import time
 import uuid
@@ -1111,6 +1110,104 @@ class RedisSessionStore(BaseSessionStore):
         )
         return False
 
+    # #1081: 批量 ACK 落库 Lua —— 复刻 singular 路径的全部语义（首达终态
+    # 获胜去重、MAX 逐出、到达分严格单调、TTL 扇出一次），单脚本原子执行。
+    _ACK_BATCH_LUA = """
+local max_events = tonumber(ARGV[1])
+local state_ttl = tonumber(ARGV[2])
+local session_ttl = tonumber(ARGV[3])
+local now = tonumber(ARGV[4])
+local session_id = ARGV[5]
+local n = tonumber(ARGV[6])
+local results = {}
+local last = redis.call('ZRANGE', KEYS[2], -1, -1, 'WITHSCORES')
+local last_score = 0.0
+if #last >= 2 then last_score = tonumber(last[2]) end
+local arrival = now
+if arrival <= last_score then arrival = last_score + 0.000001 end
+for i = 0, n - 1 do
+  local action_id = ARGV[7 + i * 2]
+  local payload = ARGV[8 + i * 2]
+  if not action_id or action_id == '' then
+    results[#results + 1] = 'invalid'
+  elseif redis.call('HEXISTS', KEYS[1], action_id) == 1 then
+    results[#results + 1] = 'duplicate'
+  else
+    local count = redis.call('ZCARD', KEYS[2])
+    local overflow = count - max_events + 1
+    if overflow > 0 then
+      local oldest = redis.call('ZRANGE', KEYS[2], 0, overflow - 1)
+      for _, oid in ipairs(oldest) do
+        redis.call('HDEL', KEYS[1], oid)
+        redis.call('ZREM', KEYS[2], oid)
+      end
+    end
+    redis.call('HSET', KEYS[1], action_id, payload)
+    redis.call('ZADD', KEYS[2], arrival, action_id)
+    arrival = arrival + 0.000001
+    results[#results + 1] = 'stored'
+  end
+end
+redis.call('EXPIRE', KEYS[1], state_ttl)
+redis.call('EXPIRE', KEYS[2], state_ttl)
+redis.call('SADD', KEYS[3], session_id)
+for i = 4, #KEYS do
+  redis.call('EXPIRE', KEYS[i], session_ttl)
+end
+redis.call('ZADD', KEYS[#KEYS], now, session_id)
+return results
+"""
+
+    async def append_map_action_event_batch(
+        self, session_id: str, events: list
+    ) -> list:
+        """#1081: 单 Lua 脚本落整批 ACK（1 RTT，锁持有时长 ~250ms→~5ms 网络化）。"""
+        if not events:
+            return []
+        await self._ensure_connected()
+        prepared: list[tuple[str, str]] = []
+        for ev in events:
+            action_id = str((ev or {}).get("action_id") or "")
+            if not action_id:
+                prepared.append(("", "{}"))
+                continue
+            payload = await asyncio.to_thread(json.dumps, ev, ensure_ascii=False)
+            prepared.append((action_id, payload))
+        keys = [
+            self._map_actions_key(session_id),
+            self._map_actions_order_key(session_id),
+            self._active_key(),
+            self._aliases_key(session_id),
+            self._refs_key(session_id),
+            self._refs_order_key(session_id),
+            self._index_key(session_id),
+            self._state_key(session_id),
+            self._events_key(session_id),
+            self._activity_key(),
+        ]
+        args: list = [
+            str(MAX_MAP_ACTION_EVENTS),
+            str(STATE_TTL),
+            str(SESSION_TTL),
+            repr(time.time()),
+            session_id,
+            str(len(prepared)),
+        ]
+        for action_id, payload in prepared:
+            args.extend((action_id, payload))
+        try:
+            results = await self._r.eval(self._ACK_BATCH_LUA, len(keys), *keys, *args)
+            return [
+                r.decode() if isinstance(r, bytes) else str(r) for r in results
+            ]
+        except aioredis.RedisError as e:
+            logger.warning(
+                "Redis append_map_action_event_batch failed for %s: %s — falling "
+                "back to per-event path",
+                session_id, e,
+            )
+            return await super().append_map_action_event_batch(session_id, events)
+
     async def get_map_action_events(self, session_id: str) -> list[dict]:
         """返回该 session 当前全部地图动作 ACK（按到达顺序，与 memory 后端一致）。"""
         await self._ensure_connected()
@@ -1134,16 +1231,21 @@ class RedisSessionStore(BaseSessionStore):
             return []
 
     async def get_session_metadata(self, session_id: str) -> dict[str, Any]:
-        """Fetch session metadata in a single async pipeline."""
-        # L1 hot read — this is called at the start of every chat turn and
-        # bundles 4 Redis calls; cache for L1_TTL_SECONDS to collapse repeats.
-        cached = self._l1_get(session_id, "metadata")
+        """Fetch session metadata in a single async pipeline.
+
+        L1 hot read — this is called at the start of every chat turn and
+        bundles 4 Redis calls; cache for L1_TTL_SECONDS to collapse repeats.
+        #1080（#795 同型）：L1 命中路径此前 deepcopy 整个 bundle（含
+        mapspec 级 map_state，重会话实测 ~55ms）；改为缓存原始字节字段、
+        每读者在线程内重解析（C 级 json.loads，同负载 ~32ms，且不复制
+        list_refs/event_log 的 Python 对象树）。
+        """
+        cached = self._l1_get(session_id, "metadata_raw")
         if cached is not None:
-            # #809: the L1 bundle embeds map_state/list_refs/event_log and is
-            # shared by every reader within the TTL — return a copy so no
-            # caller can poison concurrent readers (same #749 discipline
-            # get_map_state already follows; copy off the loop like siblings).
-            return await asyncio.to_thread(copy.deepcopy, cached)
+            return await asyncio.to_thread(
+                self._parse_metadata_bundle_sync, cached[0], cached[1],
+                cached[2], cached[3],
+            )
         await self._ensure_connected()
         async with self._r.pipeline() as pipe:
             pipe.hgetall(self._state_key(session_id))
@@ -1160,7 +1262,19 @@ class RedisSessionStore(BaseSessionStore):
                     "event_log": await self.get_event_log(session_id),
                     "started_at": await self.get_started_at(session_id),
                 }
+        # #1080: 缓存原始字段（bytes），读者各自解析 —— 不再有共享对象树
+        # 需要 deepcopy 防污染（旧 "metadata" 键的解析树条目随之淘汰）。
+        self._l1_put(
+            session_id, "metadata_raw",
+            (state_raw, ref_ids_bytes, raw_refs, events_raw),
+        )
+        return await asyncio.to_thread(
+            self._parse_metadata_bundle_sync, state_raw, ref_ids_bytes,
+            raw_refs, events_raw,
+        )
 
+    def _parse_metadata_bundle_sync(self, state_raw, ref_ids_bytes, raw_refs, events_raw):
+        """#1080: 原始 Redis 字段 → metadata dict（同步、线程内执行）。"""
         map_state: dict = {}
         started_at = None
         if state_raw:
@@ -1192,19 +1306,12 @@ class RedisSessionStore(BaseSessionStore):
             except (json.JSONDecodeError, TypeError):
                 continue
 
-        result = {
+        return {
             "map_state": map_state,
             "list_refs": list_refs,
             "event_log": event_log,
             "started_at": started_at,
         }
-        # #809: 缓存存副本 —— 首个调用者拿到的对象不得与 L1 条目别名
-        # （否则它随后的就地改动会污染缓存与 2s TTL 内的所有并发读者）。
-        self._l1_put(
-            session_id, "metadata",
-            await asyncio.to_thread(copy.deepcopy, result),
-        )
-        return result
 
     def _clearing_key(self, session_id: str) -> str:
         return f"session:{session_id}:clearing"

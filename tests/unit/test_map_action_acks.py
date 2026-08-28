@@ -544,3 +544,26 @@ async def test_late_ack_cannot_resurrect_deleted_session(client):
         assert await store.get_map_action_events(sid) == []
     finally:
         restore_cartographic_session_state(sid)
+
+
+@pytest.mark.parametrize("store_factory", STORE_FACTORIES)
+@pytest.mark.asyncio
+async def test_batch_append_classifies_and_preserves_semantics(store_factory):
+    """#1081: 批量落库接口的 stored/duplicate/invalid 分类与首达终态获胜、
+    到达序语义（内存后端走默认逐条实现；Redis 后端为单 Lua 脚本）。"""
+    store = store_factory()
+    sid = "ack-batch-1"
+    await store.clear_session(sid)
+    now = __import__("time").time()
+    acks = [
+        {"action_id": "b-1", "type": "map_action_ack", "status": "SUCCEEDED", "timestamp": now},
+        {"action_id": "b-2", "type": "map_action_ack", "status": "FAILED", "timestamp": now},
+        {"action_id": "", "type": "map_action_ack"},
+    ]
+    statuses = await store.append_map_action_event_batch(sid, acks)
+    assert statuses == ["stored", "stored", "invalid"]
+    again = await store.append_map_action_event_batch(sid, acks[:2])
+    assert again == ["duplicate", "duplicate"]
+    events = await store.get_map_action_events(sid)
+    assert [e["action_id"] for e in events] == ["b-1", "b-2"]
+    await store.clear_session(sid)

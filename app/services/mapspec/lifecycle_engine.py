@@ -391,6 +391,8 @@ class MapSpecLifecycleEngine:
         # which could hand two concurrent same-session coroutines different lock
         # objects (lost update) — review P1-2. The registry lock is the sole
         # serializer; no in-engine lock table.
+        # #1082(F-10): prior spec blocking-codes 的指纹缓存（有界 256）。
+        self._prior_blocking_cache: Dict[str, set] = {}
 
     @staticmethod
     def _blocking_error_codes(validation: Dict[str, Any]) -> set:
@@ -545,8 +547,16 @@ class MapSpecLifecycleEngine:
                         "Re-read MapSpec and retry with the current mutation_revision."
                     ),
                 )
+            # #1074(F-14): except 处理器引用 checkpoint_id_created —— 初始化
+            # 必须先于 try（异常发生在原初始化行之前时不得 UnboundLocal）。
+            checkpoint_id_created: Optional[str] = None
+            ckpt_ref_count = 0
             try:
-                loaded = await self.store.get_mapspec(session_id)
+                # #1082(F-10): pre_state 已含解析好的 mapspec —— 直接采用，
+                # 不再第二次全量 get_map_state（大 spec 每变更双解析）。
+                loaded = await self.store.get_mapspec(
+                    session_id, state_hint=pre_state,
+                )
                 prior_mapspec = loaded
                 # #1070(F-1): 锁内守卫复检 seam —— apply_gis_mutation 的
                 # user-wins 检查此前在锁外求值，等锁窗口内落地的用户决策
@@ -595,8 +605,6 @@ class MapSpecLifecycleEngine:
                 # 2. 在内存构建 candidate；记录 deferred redis layer 操作。
                 #    重 IO/CPU 的 process_layer_ingestion 卸载到线程，不阻塞 event loop。
                 auto_checkpoint = False
-                checkpoint_id_created: Optional[str] = None
-                ckpt_ref_count = 0
                 # pending_layer_op: (op, layer_id, layer?) — 提交时才写 redis layers
                 pending_layer_op: Optional[Tuple[str, str, Optional[Dict[str, Any]]]] = None
                 # rollback 意图需要恢复 refs，单独走快路径（不经 candidate 校验拒绝）
@@ -1053,10 +1061,30 @@ class MapSpecLifecycleEngine:
                 warnings = [e["message"] for e in validation.get("errors", [])] + validation.get("warnings", [])
 
                 if not is_rollback:
-                    prior_blocking = (
-                        self._blocking_error_codes(validate_mapspec(prior_mapspec))
-                        if prior_mapspec else set()
-                    )
+                    # #1082(F-10): 旧 spec 的 blocking codes 按指纹缓存 ——
+                    # 每次非回滚变更此前都全量 validate 一遍只为 diff codes。
+                    prior_blocking = set()
+                    if prior_mapspec:
+                        prior_fp = None
+                        try:
+                            from app.lib.cartography.quality_loop import (
+                                cartographic_fingerprint,
+                            )
+                            prior_fp = cartographic_fingerprint(prior_mapspec)
+                        except Exception:  # noqa: BLE001 - 指纹失败回退全量校验
+                            prior_fp = None
+                        if prior_fp is not None and prior_fp in self._prior_blocking_cache:
+                            prior_blocking = self._prior_blocking_cache[prior_fp]
+                        else:
+                            prior_blocking = self._blocking_error_codes(
+                                validate_mapspec(prior_mapspec)
+                            )
+                            if prior_fp is not None:
+                                self._prior_blocking_cache[prior_fp] = prior_blocking
+                                while len(self._prior_blocking_cache) > 256:
+                                    self._prior_blocking_cache.popitem(
+                                        next(iter(self._prior_blocking_cache))
+                                    )
                     new_blocking = self._blocking_error_codes(validation) - prior_blocking
                     if new_blocking:
                         # 引入新的 blocking 错误：拒绝，不落盘，last-known-good 不变。

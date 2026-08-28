@@ -123,7 +123,7 @@ class FakeStore:
         self.spec = spec
         self.saved = []
 
-    async def get_mapspec(self, sid):
+    async def get_mapspec(self, sid, **_kw):
         return self.spec
 
     async def save_mapspec(self, sid, mapspec, **_kw):

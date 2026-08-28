@@ -224,8 +224,28 @@ class MapSpecStore:
             session_id, "_cartographic_mutation_revision", 0
         )
 
-    async def get_mapspec(self, session_id: str) -> Optional[Dict[str, Any]]:
-        map_state = await session_data_manager.get_map_state(session_id)
+    async def get_mapspec(
+        self,
+        session_id: str,
+        state_hint: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """读取 MapSpec。
+
+        #1082(F-10): ``state_hint`` 允许调用方传入锁内已读的 map_state
+        （apply_mutation 此前 pre_state 与 get_mapspec 各做一次全量
+        get_map_state，mapspec 字段被完整 JSON 解析两遍）。hint 含
+        ``mapspec`` 键即直接采用（调用方已完成 deleted 检查）；缺省或
+        hint 无键时行为不变（含磁盘兜底 + revision 复活）。
+        """
+        if state_hint is not None and isinstance(
+            state_hint.get("mapspec"), dict
+        ):
+            return state_hint["mapspec"]
+        map_state = (
+            state_hint
+            if state_hint is not None
+            else await session_data_manager.get_map_state(session_id)
+        )
         if map_state.get("_cartographic_deleted") is True:
             return None
         if "mapspec" in map_state:

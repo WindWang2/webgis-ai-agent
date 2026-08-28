@@ -252,7 +252,7 @@ async def test_mutation_revision_restored_when_redis_state_expires():
     session_id = "test_session_rev_restore_1"
     from app.services.session_data import session_data_manager
 
-    res1 = await engine.apply_mutation(session_id, SetViewIntent(center=[104.0, 30.6], zoom=10.0))
+    await engine.apply_mutation(session_id, SetViewIntent(center=[104.0, 30.6], zoom=10.0))
     res2 = await engine.apply_mutation(session_id, SetViewIntent(center=[104.1, 30.7], zoom=11.0))
     assert res2.mutation_revision == 2
     # 模拟 Redis 状态过期：仅清内存状态哈希（等价 TTL 到期），保留磁盘
@@ -264,3 +264,41 @@ async def test_mutation_revision_restored_when_redis_state_expires():
     state = await session_data_manager.get_map_state(session_id)
     assert state.get("_cartographic_mutation_revision") == 2, \
         "revision 必须随磁盘复活恢复（sidecar）"
+
+
+@pytest.mark.asyncio
+async def test_mutation_single_full_state_read(monkeypatch):
+    """#1082(F-10): 每次 mutation 恰一次全量 get_map_state（此前 2-3 次：
+    pre_state + get_mapspec 二读 + 每次旧 spec 全量重校验）。"""
+    import app.services.mapspec.lifecycle_engine as le
+
+    engine = MapSpecLifecycleEngine()
+    session_id = "test_session_single_read_1"
+    calls = {"n": 0}
+    monkeypatch.setattr(
+        le, "session_data_manager", _CountingSDM(le.session_data_manager, calls)
+    )
+    await engine.apply_mutation(
+        session_id, SetViewIntent(center=[104.0, 30.6], zoom=10.0)
+    )
+    calls["n"] = 0
+    for i in range(3):
+        await engine.apply_mutation(
+            session_id, SetViewIntent(center=[104.0 + i * 0.01, 30.6], zoom=10.5)
+        )
+    assert calls["n"] == 3, f"3 次 mutation 应恰 3 次全量读，实际 {calls['n']}"
+
+
+class _CountingSDM:
+    """包裹 session_data_manager：仅计数 get_map_state，其余透传。"""
+
+    def __init__(self, inner, counter):
+        self._inner = inner
+        self._counter = counter
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    async def get_map_state(self, sid):
+        self._counter["n"] += 1
+        return await self._inner.get_map_state(sid)

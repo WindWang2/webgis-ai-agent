@@ -1363,22 +1363,19 @@ async def _persist_map_action_acks_locked(
     accepted = 0
     duplicates = 0
     dropped = 0
-    stored = await ack_store.get_map_action_events(session_id)
-    snapshot_stale = False
-    for ack in req.acks:
-        if await ack_store.append_map_action_event(
-            session_id, ack.model_dump(exclude_none=True)
-        ):
+    # #1081: 整批单脚本落库（此前逐条 WATCH/MULTI 串行 —— 50 条批 = 750
+    # Redis 命令、网络化 Redis 下 ~250ms+ 锁持有）。批量结果自带
+    # stored/duplicate/invalid 分类，不再需要快照重读。
+    statuses = await ack_store.append_map_action_event_batch(
+        session_id, [ack.model_dump(exclude_none=True) for ack in req.acks]
+    )
+    for ack, status in zip(req.acks, statuses):
+        if status == "stored":
             accepted += 1
-            snapshot_stale = True
             _ack_turn_id = (ack.correlation or {}).get("turn_id")
             if _ack_turn_id:
                 record_map_action_acked_by_turn(_ack_turn_id, ack.action_id, ack.status)
-            continue
-        if snapshot_stale:
-            stored = await ack_store.get_map_action_events(session_id)
-            snapshot_stale = False
-        if any(event.get("action_id") == ack.action_id for event in stored):
+        elif status == "duplicate":
             duplicates += 1
         else:
             dropped += 1

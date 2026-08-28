@@ -66,7 +66,7 @@ class _FakeStore:
         self.spec = spec
         self.saved = []
 
-    async def get_mapspec(self, session_id):
+    async def get_mapspec(self, session_id, **_kw):
         return self.spec
 
     async def save_mapspec(self, session_id, mapspec, **_kw):
