@@ -131,7 +131,11 @@ function scheduleFetch(refId: string, fetchContext: RefFetchContext | null | und
         features?: unknown[];
       }>(
         `/api/v1/layers/data/${encodeURIComponent(refId)}?session_id=${encodeURIComponent(fetchContext.sessionId)}`,
-        { ownerToken: fetchContext.ownerToken, label: 'Ref source resolve error' },
+        {
+          ownerToken: fetchContext.ownerToken,
+          timeoutMs: 120_000,
+          label: 'Ref source resolve error',
+        },
       );
       if (geojson && (geojson.type === 'FeatureCollection' || Array.isArray(geojson.features))) {
         cache.set(refId, geojson);

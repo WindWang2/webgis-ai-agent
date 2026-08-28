@@ -1,7 +1,7 @@
 """Health & Readiness API tests"""
 import pytest
 from httpx import AsyncClient, ASGITransport
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from fastapi import FastAPI
 
 from app.api.routes import health as _mod
@@ -29,6 +29,29 @@ async def test_health_check(client):
     assert data["status"] == "healthy"
     assert "timestamp" in data
     assert data["service"] == "WebGIS AI Agent"
+    assert data["agent_runtime"] in {"pi", "chatengine"}
+
+
+@pytest.mark.asyncio
+async def test_agent_runtime_badge_reflects_chatengine_fallback(client, monkeypatch):
+    """#1032: after a failed bridge start the lifespan serves on ChatEngine
+    (``chat.pi_bridge`` stays None — no half-started singleton). The runtime
+    badge must honestly report ``chatengine`` even with USE_NEW_AGENT on,
+    and flip back to ``pi`` once a live bridge owns the subprocess."""
+    import app.api.routes.chat as chat_mod
+
+    monkeypatch.setattr(chat_mod, "USE_NEW_AGENT", True)
+    # Exact post-fallback state: start() failed, lifespan left pi_bridge None.
+    monkeypatch.setattr(chat_mod, "pi_bridge", None)
+    resp = await client.get("/api/v1/health")
+    assert resp.json()["agent_runtime"] == "chatengine"
+
+    # Converse pins the badge to actual bridge state (not a hardcoded value).
+    alive_bridge = MagicMock()
+    alive_bridge._process_died = False
+    monkeypatch.setattr(chat_mod, "pi_bridge", alive_bridge)
+    resp = await client.get("/api/v1/health")
+    assert resp.json()["agent_runtime"] == "pi"
 
 
 @pytest.mark.asyncio
@@ -63,3 +86,36 @@ async def test_liveness_check(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "alive"
+
+
+@pytest.mark.asyncio
+async def test_agent_runtime_reports_chatengine_when_probe_errors(client, monkeypatch):
+    """Fail-closed: if the bridge-state probe itself raises, the badge must
+    not fall back to "pi" off the flag — report chatengine (#1032 honesty)."""
+    import app.api.routes.chat as chat_mod
+
+    monkeypatch.setattr(chat_mod, "USE_NEW_AGENT", True)
+    alive_bridge = MagicMock()
+    alive_bridge._process_died = False
+    monkeypatch.setattr(chat_mod, "pi_bridge", alive_bridge)
+
+    def _boom():
+        raise RuntimeError("probe exploded")
+
+    monkeypatch.setattr(chat_mod, "_use_pi_bridge", _boom)
+    resp = await client.get("/api/v1/health")
+    assert resp.json()["agent_runtime"] == "chatengine"
+
+
+@pytest.mark.asyncio
+async def test_agent_runtime_reports_chatengine_when_pi_process_died(client, monkeypatch):
+    """The most common real degradation: a crashed Pi subprocess must report
+    chatengine even with USE_NEW_AGENT on (#1032 / C-F15 honesty)."""
+    import app.api.routes.chat as chat_mod
+
+    monkeypatch.setattr(chat_mod, "USE_NEW_AGENT", True)
+    dead = MagicMock()
+    dead._process_died = True
+    monkeypatch.setattr(chat_mod, "pi_bridge", dead)
+    resp = await client.get("/api/v1/health")
+    assert resp.json()["agent_runtime"] == "chatengine"

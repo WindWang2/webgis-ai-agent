@@ -24,6 +24,14 @@ import pytest
 import app.agent_pi_bridge as bridge_mod
 from app.agent_pi_bridge import PiBridge, PiRpcError, PiToolRequest, dispatch_tool
 
+# stream_prompt lazily imports app.api.routes.chat inside the turn path; on a
+# cold process that module-level import costs seconds INSIDE the generator, so
+# the first turn stalls with zero bytes and blows this file's sub-2s lock-wait
+# budgets (test_stream_prompt_emits_keepalive_during_lock_wait is order-sensitive
+# otherwise). Warm it at collection time — in production it is always imported
+# at app startup before any turn runs.
+import app.api.routes.chat  # noqa: F401
+
 
 def _make_rpc() -> MagicMock:
     rpc = MagicMock()
@@ -280,10 +288,11 @@ class _StubRegistry:
 
 
 def _tool_request(tc_id: str, session_id: str = "sess-d") -> PiToolRequest:
+    # 扩展真实路径：非 native 工具经 webgis_execute 代理调用
     return PiToolRequest(
-        name="query_map_features",
+        name="webgis_execute",
         toolCallId=tc_id,
-        arguments={"query": "医院"},
+        arguments={"toolName": "query_map_features", "arguments": {"query": "医院"}},
         sessionId=session_id,
     )
 
@@ -386,8 +395,8 @@ async def test_dispatch_keeps_real_tool_name_and_structural_mutation(monkeypatch
     try:
         resp = await dispatch_tool(PiToolRequest(
             toolCallId="tc-789",
-            name="webgis_view_set",
-            arguments={"zoom": 10},
+            name="webgis_execute",
+            arguments={"toolName": "webgis_view_set", "arguments": {"zoom": 10}},
             sessionId=sid,
         ))
         assert resp.isError is False

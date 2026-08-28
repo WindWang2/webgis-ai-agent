@@ -30,6 +30,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# 仓内 Pi 扩展回调本进程 API。manage.py 把后端绑在 18000。
+os.environ.setdefault("WEBGIS_API_BASE", "http://127.0.0.1:18000")
+
 console = Console()
 
 def cmd_init_db():

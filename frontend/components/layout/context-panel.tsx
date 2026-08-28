@@ -31,6 +31,8 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { AiStatus } from '@/lib/store/hud-types';
+import type { AgentRuntime } from '@/lib/agent-runtime';
+import type { SessionPlanViewState } from '@/lib/session/session-plan-delta';
 import { PanelHeader } from '@/components/shared/panel-header';
 import { ChatTab } from '@/components/sidebar/chat-tab';
 import { LayersTab } from '@/components/sidebar/layers-tab';
@@ -61,6 +63,9 @@ export interface ContextPanelProps {
   sessionId?: string | null;
   ownerToken?: string | null;
   onPlanAction?: (planId: string, action: 'approve' | 'revise' | 'reject') => void;
+  agentRuntime?: AgentRuntime | null;
+  /** #1048：SessionPlan 流式实时状态（useSessionPlan.view）→ ChatTab → 面板。 */
+  sessionPlan?: SessionPlanViewState;
 }
 
 const PANEL_MIN = 280;
@@ -109,6 +114,8 @@ export function ContextPanel({
   sessionId,
   ownerToken,
   onPlanAction,
+  agentRuntime,
+  sessionPlan,
 }: ContextPanelProps) {
   const activeTab = useHudStore((s) => s.activeLeftTab);
   const leftPanelOpen = useHudStore((s) => s.leftPanelOpen);
@@ -358,6 +365,9 @@ export function ContextPanel({
             onCancel={onCancel}
             onPlanAction={onPlanAction}
             sessionId={sessionId}
+            agentRuntime={agentRuntime}
+            ownerToken={ownerToken}
+            sessionPlan={sessionPlan}
           />
         )}
         {activeTab === 'project' && <ProjectTab />}

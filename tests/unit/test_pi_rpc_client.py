@@ -4,6 +4,8 @@ Tests subprocess initialization, request-response matching, and event queueing.
 """
 import asyncio
 import json
+from pathlib import Path
+
 import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
 
@@ -50,13 +52,14 @@ class DummyPipe:
 
 
 @pytest.mark.asyncio
-async def test_start_popen_uses_binary_pipes(monkeypatch):
+async def test_start_popen_uses_binary_pipes(monkeypatch, tmp_path):
     """start() must spawn Popen with text=False — text pipes TypeError the reader."""
     from app.services.chat import pi_rpc_client as mod
 
     captured = {}
 
     def fake_popen(*args, **kwargs):
+        captured["args"] = args[0] if args else kwargs.get("args")
         captured["kwargs"] = kwargs
         proc = MagicMock()
         proc.stdin = MagicMock()
@@ -66,7 +69,16 @@ async def test_start_popen_uses_binary_pipes(monkeypatch):
         return proc
 
     monkeypatch.setattr(mod.subprocess, "Popen", fake_popen)
-    client = mod.PiRpcClient()
+    # 本测试聚焦管道/spawn 参数：native dump 走 strict 路径（无 registry 即
+    # raise），与二进制管道无关，patch 掉以隔离。
+    monkeypatch.setattr(
+        "app.services.chat.pi_native_surface.dump_native_tools",
+        lambda _p: tmp_path / "native-tools.json",
+    )
+    # CI 不构建 vendor/pi dist：rpc-entry 前置条件由测试自备。
+    entry = tmp_path / "rpc-entry.js"
+    entry.write_text("// stub", encoding="utf-8")
+    client = mod.PiRpcClient(pi_rpc_entry=entry)
     monkeypatch.setattr(client, "_wait_for_ready", AsyncMock(return_value=None))
     try:
         await client.start()
@@ -78,6 +90,55 @@ async def test_start_popen_uses_binary_pipes(monkeypatch):
 
     assert captured["kwargs"].get("text") is False
     assert captured["kwargs"].get("universal_newlines") in (None, False)
+    spawn = list(captured["args"] or [])
+    assert "--no-builtin-tools" in spawn
+    assert "--mode" in spawn and "rpc" in spawn
+
+
+@pytest.mark.asyncio
+async def test_start_dumps_native_tools_from_live_registry(monkeypatch, tmp_path):
+    """Spawn writes live-registry native schemas for the extension to register."""
+    from app.agent_pi_bridge import set_tool_registry
+    from app.services.chat import pi_rpc_client as mod
+    from app.tools import init_tools
+    from app.tools.registry import ToolRegistry
+
+    registry = ToolRegistry()
+    init_tools(registry)
+    set_tool_registry(registry)
+
+    captured = {}
+
+    def fake_popen(*args, **kwargs):
+        captured["env"] = kwargs.get("env") or {}
+        proc = MagicMock()
+        proc.stdin = MagicMock()
+        proc.stdout = DummyPipe([])
+        proc.stderr = DummyPipe([])
+        proc.poll.return_value = None
+        return proc
+
+    monkeypatch.setattr(mod, "PI_AGENT_DIR", tmp_path)
+    monkeypatch.setattr(mod.subprocess, "Popen", fake_popen)
+    # CI 不构建 vendor/pi dist：rpc-entry 前置条件由测试自备。
+    entry = tmp_path / "rpc-entry.js"
+    entry.write_text("// stub", encoding="utf-8")
+    client = mod.PiRpcClient(pi_rpc_entry=entry)
+    monkeypatch.setattr(client, "_wait_for_ready", AsyncMock(return_value=None))
+    try:
+        await client.start()
+    finally:
+        if client._reader_task:
+            client._reader_task.cancel()
+        if client._stderr_task:
+            client._stderr_task.cancel()
+
+    path = captured["env"].get("WEBGIS_NATIVE_TOOLS_PATH")
+    assert path
+    text = Path(path).read_text(encoding="utf-8")
+    assert "webgis_map_intent" in text
+    assert "query_local_poi" in text
+    assert "webgis_cartography_status" in text
 
 
 def test_readline_bounded_accepts_text_pipe():
@@ -203,7 +264,7 @@ async def test_process_not_cleared_when_still_alive_on_cancellation():
 
 
 @pytest.mark.asyncio
-async def test_start_can_respawn_after_natural_death():
+async def test_start_can_respawn_after_natural_death(monkeypatch, tmp_path):
     """After the process dies naturally (EOF + poll=dead), start() must not
     early-return on the `if self._process is not None: return` guard.
 
@@ -217,7 +278,15 @@ async def test_start_can_respawn_after_natural_death():
     # the cached module rather than triggering a fresh import chain.
     import app.api.routes.pi_tools  # noqa: F401
 
-    client = PiRpcClient()
+    # 本测试聚焦 respawn 守卫：rpc-entry 与 native dump 均由测试自备，
+    # 不依赖 vendor/pi dist（CI 不构建）与进程内全局 registry 状态。
+    entry = tmp_path / "rpc-entry.js"
+    entry.write_text("// stub", encoding="utf-8")
+    monkeypatch.setattr(
+        "app.services.chat.pi_native_surface.dump_native_tools",
+        lambda _p: tmp_path / "native-tools.json",
+    )
+    client = PiRpcClient(pi_rpc_entry=entry)
 
     # Simulate a process that already died: _process cleared by the reader's
     # finally (as tested above), _process_died set.
@@ -412,3 +481,55 @@ async def test_event_queue_drops_on_overflow():
     except asyncio.QueueFull:
         put_ok = False
     assert put_ok is False, "queue should be full"
+
+
+@pytest.mark.asyncio
+async def test_start_fails_fast_when_native_dump_fails(monkeypatch, tmp_path):
+    """Native schema dump is spawn-mandatory: a failure must abort start()
+    (the API lifespan catches it and falls back to ChatEngine), not leave Pi
+    running with webgis_execute only."""
+    from app.services.chat import pi_rpc_client as mod
+
+    def _boom(_path):
+        raise RuntimeError("registry not injected")
+
+    monkeypatch.setattr(mod, "PI_AGENT_DIR", tmp_path)
+    # Own the rpc-entry precondition: vendor/pi dist may be unbuilt in CI, and
+    # start() would raise FileNotFoundError before reaching the patched dump.
+    entry = tmp_path / "rpc-entry.js"
+    entry.write_text("// stub", encoding="utf-8")
+    monkeypatch.setattr(
+        "app.services.chat.pi_native_surface.dump_native_tools", _boom
+    )
+    monkeypatch.setattr(
+        mod.subprocess,
+        "Popen",
+        MagicMock(side_effect=AssertionError("spawn must not happen after dump failure")),
+    )
+    client = mod.PiRpcClient(pi_rpc_entry=entry, session_dir=tmp_path / "sess")
+    monkeypatch.setattr(client, "_wait_for_ready", AsyncMock(return_value=None))
+    with pytest.raises(RuntimeError, match="registry not injected"):
+        await client.start()
+
+
+@pytest.mark.asyncio
+async def test_get_pi_bridge_resets_singleton_on_start_failure(monkeypatch):
+    """A failed start() must not leave a half-initialized bridge singleton —
+    the next get_pi_bridge() retries instead of returning a dead bridge."""
+    import app.agent_pi_bridge as bridge_mod
+
+    calls = {"n": 0}
+
+    async def _failing_start(self):
+        calls["n"] += 1
+        raise RuntimeError("start failed")
+
+    monkeypatch.setattr(bridge_mod.PiBridge, "start", _failing_start)
+    monkeypatch.setattr(bridge_mod, "_pi_bridge", None)
+    with pytest.raises(RuntimeError, match="start failed"):
+        await bridge_mod.get_pi_bridge()
+    assert bridge_mod._pi_bridge is None
+    # Retry reaches start() again — no dead singleton short-circuit.
+    with pytest.raises(RuntimeError, match="start failed"):
+        await bridge_mod.get_pi_bridge()
+    assert calls["n"] == 2

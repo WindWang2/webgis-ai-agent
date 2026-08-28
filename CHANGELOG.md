@@ -1,5 +1,23 @@
 # Changelog
 
+## [Unreleased] - 2026-08-28
+
+### Fixed
+- Pi-host pre-landing review pass: `ensure_session_plan_slot` uses
+  double-checked locking (lockless fast path — per-callback slot checks no
+  longer cost a Redis lock cycle); a session-lock `TimeoutError` during a
+  SessionPlan apply retries once so a supersede is not silently lost to a
+  long cartographic evaluation holding the lock; the native-dump fail-fast
+  test owns its rpc-entry precondition (CI without built `vendor/pi`
+  asserts the dump contract, not a vendor `FileNotFoundError`).
+- Spec/doc truth: `pi-as-agent-host.md` no longer cites the nonexistent
+  `app/services/cartography_runtime.py`; `api-docs.md` documents
+  `agent_runtime` on `/api/v1/health` (fail-closed) and the three
+  stream-only SessionPlan SSE events.
+- New regression tests: status `session_id` passthrough exemption,
+  execute-without-`toolName` reject, dead-Pi `/health` reports
+  `chatengine` (#1032).
+
 ## [Unreleased] - 2026-08-20
 
 ### Fixed

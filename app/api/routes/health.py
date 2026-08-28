@@ -71,6 +71,23 @@ def _check_celery():
         return False
 
 
+def _live_agent_runtime() -> str:
+    """Pi if the bundled subprocess is up; ChatEngine otherwise.
+
+    Fail-closed: an unreadable bridge state must not claim "pi" off the flag
+    alone — that is the hardcoded-badge lie #1032 kills. If the probe itself
+    errors, report ChatEngine (the safe fallback that serves when the bridge
+    cannot be verified)."""
+    try:
+        from app.api.routes.chat import _use_pi_bridge
+        if _use_pi_bridge():
+            return "pi"
+        return "chatengine"
+    except Exception:
+        logger.warning("agent_runtime probe failed; reporting chatengine", exc_info=True)
+        return "chatengine"
+
+
 @router.get("/health")
 def health_check():
     """基础存活检查"""
@@ -78,7 +95,8 @@ def health_check():
         "status": "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "service": "WebGIS AI Agent",
-        "version": "0.1.3"
+        "version": "0.1.3",
+        "agent_runtime": _live_agent_runtime(),
     }
 
 

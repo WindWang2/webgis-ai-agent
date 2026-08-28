@@ -122,3 +122,25 @@ def test_extension_example_names_exist(registry):
             f"{artifact} advertises example tool names that do not resolve in "
             f"the live registry (UNKNOWN_TOOL round trips): {missing}"
         )
+
+
+def test_extension_routes_distribution_before_status_pull():
+    """Native GIS tools + execute tail. The snippet used to advertise
+    webgis_cartography_status as the GIS example, so live turns stuffed
+    city/topic/scope into that zero-arg verdict pull. The prompt must name
+    the real first-turn tools and pin status to {}."""
+    import pathlib
+
+    text = (
+        pathlib.Path(__file__).resolve().parents[1]
+        / "app" / "extensions" / "webgis-tools" / "index.mjs"
+    ).read_text(encoding="utf-8")
+    assert "webgis_map_intent" in text
+    assert "query_local_poi" in text
+    assert "get_local_admin_boundary" in text
+    assert "webgis_cartography_status {}" in text or "webgis_cartography_status', {})" in text
+    assert "Never pass city" in text or "does not accept city" in text
+    assert "--no-builtin-tools" not in text  # spawn flag lives in the RPC client
+    assert "before_agent_start" in text
+    assert "GeoAgent" in text
+    assert "WEBGIS_NATIVE_TOOLS_PATH" in text

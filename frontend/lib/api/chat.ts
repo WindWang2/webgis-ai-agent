@@ -65,6 +65,10 @@ export type SSEEventType =
   | 'plan_ready'
   | 'plan_step_done'
   | 'plan_finalized'
+  // #1048: SessionPlan live deltas（Pi 路径；与 plan_* 是两个计划概念，ADR-0076）
+  | 'session_plan_updated'
+  | 'session_plan_progress'
+  | 'session_plan_superseded'
   | 'keep_alive'
   | 'resume_gap'
   | 'heartbeat';
@@ -232,6 +236,24 @@ export async function getSessionList() {
  */
 export async function getSessionDetail(sessionId: string, ownerToken?: string | null) {
   return apiFetch(`/api/v1/chat/sessions/${sessionId}`, { ownerToken, label: "API Error" });
+}
+
+/**
+ * 获取当前 SessionPlan 信封投影（Pi 路径面板水合源，#1047）。
+ *
+ * SEC-08：匿名会话需提供 ownerToken 匹配 X-Session-Token 头。
+ * 后端无信封时回 204，apiFetch 解析为 undefined（A-F-14）——「没有计划」
+ * 是正常态，调用方据此隐藏面板而不是报错。
+ * 只读：后端只返回当前信封，绝无历史列表。
+ */
+export async function getSessionPlan(
+  sessionId: string,
+  ownerToken?: string | null
+): Promise<import('@/lib/types/session-plan').SessionPlanProjection | undefined> {
+  return apiFetch<import('@/lib/types/session-plan').SessionPlanProjection | undefined>(
+    `/api/v1/chat/sessions/${sessionId}/plan`,
+    { ownerToken, label: "API Error" }
+  );
 }
 
 /**

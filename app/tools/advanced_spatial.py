@@ -309,7 +309,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                     f"本次已降级为 count 统计。"
                 )
             if isinstance(out_geojson, dict):
-                # Single canonical graduated-spec builder (ADR-0052): runs the
+                # Single canonical graduated-spec builder (ADR-0078): runs the
                 # one classification algorithm, resolves palette colors through
                 # one path (midpoint sampling, matching create_thematic_map), and
                 # filters NaN/Inf once. Replaces the verbatim palette truncation

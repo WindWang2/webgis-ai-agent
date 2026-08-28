@@ -445,8 +445,9 @@ async def test_dispatch_tool_records_tool_call_into_turn_evidence():
     bridge_mod._active_turn_run_id = "ru-integ"
     bridge_mod._active_turn_session_id = "s-integ"
     try:
-        req = PiToolRequest(toolCallId="tc-integ", name="noop",
-                            arguments={}, sessionId="s-integ")
+        req = PiToolRequest(toolCallId="tc-integ", name="webgis_execute",
+                            arguments={"toolName": "noop", "arguments": {}},
+                            sessionId="s-integ")
         resp = await dispatch_tool(req)
         assert not resp.isError
         # THE integration assertion: the registry chokepoint recorded this tool
@@ -489,8 +490,9 @@ async def test_dispatch_tool_stale_cross_session_callback_not_misattributed():
     bridge_mod._active_turn_session_id = "s-A"
     try:
         # a stale callback arrives claiming session-B (different session)
-        req = PiToolRequest(toolCallId="tc-stale", name="noop",
-                            arguments={}, sessionId="s-B")
+        req = PiToolRequest(toolCallId="tc-stale", name="webgis_execute",
+                            arguments={"toolName": "noop", "arguments": {}},
+                            sessionId="s-B")
         resp = await dispatch_tool(req)
         assert not resp.isError  # tool still executes
         # the active turn's evidence must NOT be polluted by the stale callback

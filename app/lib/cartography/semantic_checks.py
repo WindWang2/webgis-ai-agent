@@ -627,7 +627,7 @@ def _check_thematic_consistency(
     layer: Dict[str, Any],
     profile: Optional[Dict[str, Any]],
 ) -> None:
-    """ADR-0052 cartographic-semantic checks pairing a layer's legend_spec with
+    """ADR-0078 cartographic-semantic checks pairing a layer's legend_spec with
     its paint + source profile. Each check is NOT_EVALUATED when the evidence it
     needs (legend_spec, paint, or profile fields) is absent — never a fake pass.
     """
@@ -2096,7 +2096,7 @@ def evaluate_cartography_semantics(
                                 layer_id=lid, source_id=sid,
                             ))
 
-        # 4b-10. ADR-0052 thematic consistency: paint ↔ legend equivalence,
+        # 4b-10. ADR-0078 thematic consistency: paint ↔ legend equivalence,
         # cardinality, domain coverage, no-data, divergent, palette, categorical
         # domain. Each NOT_EVALUATED when its evidence is absent.
         legend_spec = layer.get("legend_spec")
@@ -2223,7 +2223,7 @@ def evaluate_cartography_semantics(
                 }
                 for finding in report.findings[findings_before:]:
                     if finding.check == "LEGEND_STYLE_EQUIVALENCE":
-                        # ADR-0052 makes legend_spec the canonical thematic
+                        # ADR-0078 makes legend_spec the canonical thematic
                         # classification and derives paint with spec_to_paint;
                         # this repair restores that projection, it does not
                         # invent new breaks/categories.

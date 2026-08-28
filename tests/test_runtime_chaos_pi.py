@@ -234,7 +234,7 @@ async def test_stall_abort_also_cancels_turn_token(monkeypatch):
             break
         await asyncio.sleep(0)
     dispatch = asyncio.create_task(dispatch_tool(PiToolRequest(
-        name="query_map_features", toolCallId="tc-stall", arguments={},
+        name="webgis_execute", toolCallId="tc-stall", arguments={"toolName": "query_map_features", "arguments": {}},
         sessionId="sess-stall2",
     )))
     await asyncio.wait_for(started.wait(), timeout=2.0)
@@ -350,7 +350,7 @@ async def test_dispatch_tool_binds_active_turn_cancellation_token(monkeypatch):
     assert "task_start" in first  # turn parked mid-stream
 
     dispatch = asyncio.create_task(dispatch_tool(PiToolRequest(
-        name="query_map_features", toolCallId="tc-1", arguments={},
+        name="webgis_execute", toolCallId="tc-1", arguments={"toolName": "query_map_features", "arguments": {}},
         sessionId="sess-cancel",
     )))
     await asyncio.wait_for(started.wait(), timeout=2.0)
@@ -398,7 +398,7 @@ async def test_dispatch_tool_without_active_turn_runs_uncancelled(monkeypatch):
     monkeypatch.setattr(bridge_mod.ToolDispatchService, "dispatch", _fake_dispatch)
 
     resp = await dispatch_tool(PiToolRequest(
-        name="query_map_features", toolCallId="tc-solo", arguments={},
+        name="webgis_execute", toolCallId="tc-solo", arguments={"toolName": "query_map_features", "arguments": {}},
         sessionId="sess-solo",
     ))
     assert resp.isError is False
@@ -476,7 +476,7 @@ async def test_prompt_publishes_active_turn_markers(monkeypatch, caplog):
 
     # F24: dispatch during prompt() is bound to the turn's token
     dispatch = asyncio.create_task(dispatch_tool(PiToolRequest(
-        name="query_map_features", toolCallId="tc-prompt", arguments={},
+        name="webgis_execute", toolCallId="tc-prompt", arguments={"toolName": "query_map_features", "arguments": {}},
         sessionId="sess-P",
     )))
     await asyncio.wait_for(started.wait(), timeout=2.0)
@@ -624,7 +624,7 @@ async def test_process_death_mid_stream_fast_fails_turn(monkeypatch):
     # A tool dispatch is in flight via the HTTP callback, bound to the turn's
     # token (F24); it captures the token object for the cancellation assert.
     dispatch = asyncio.create_task(dispatch_tool(PiToolRequest(
-        name="query_map_features", toolCallId="tc-death", arguments={},
+        name="webgis_execute", toolCallId="tc-death", arguments={"toolName": "query_map_features", "arguments": {}},
         sessionId="sess-death",  # required by the hardened callback contract
     )))
     await dispatch
@@ -682,13 +682,21 @@ async def test_process_died_event_fires_on_reader_eof():
 
 
 @pytest.mark.asyncio
-async def test_start_clears_death_signal():
+async def test_start_clears_death_signal(monkeypatch, tmp_path):
     """G guard: a stale death signal from a previous process must not fast-fail
     a healthy respawned turn — start() clears both the flag and the event
     before spawning (mirrors the unit respawn test's Popen mocking)."""
     import app.api.routes.pi_tools  # noqa: F401 — pre-import so the patch hits the cached module
 
-    client = PiRpcClient()
+    # 本测试聚焦死亡信号清理：rpc-entry 与 native dump 均由测试自备，
+    # 不依赖 vendor/pi dist（CI 不构建）与进程内全局 registry 状态。
+    entry = tmp_path / "rpc-entry.js"
+    entry.write_text("// stub", encoding="utf-8")
+    monkeypatch.setattr(
+        "app.services.chat.pi_native_surface.dump_native_tools",
+        lambda _p: tmp_path / "native-tools.json",
+    )
+    client = PiRpcClient(pi_rpc_entry=entry)
     client._process_died = True
     client._process_died_event.set()
 

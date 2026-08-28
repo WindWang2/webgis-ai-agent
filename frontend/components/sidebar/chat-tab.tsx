@@ -9,7 +9,15 @@ import { ToolCallChain } from '@/components/chat/tool-call-card';
 import { CollapsibleThink } from '@/components/chat/collapsible-think';
 import { PlanProposalCard } from '@/components/chat/plan-proposal-card';
 import { PlanCard } from '@/components/chat/plan-card';
+import { SessionPlanPanel } from '@/components/chat/session-plan-panel';
+import type { SessionPlanViewState } from '@/lib/session/session-plan-delta';
 import { InlineNotice } from '@/components/shared/inline-notice';
+import { apiFetch } from '@/lib/api/transport';
+import {
+  agentRuntimeLabel,
+  parseAgentRuntime,
+  type AgentRuntime,
+} from '@/lib/agent-runtime';
 import { ChatAnnouncer } from '@/components/chat/chat-announcer';
 import { adaptChartData } from "@/lib/chart-adapter";
 
@@ -121,6 +129,16 @@ interface ChatTabProps {
    * 「回复已完成」。
    */
   sessionId?: string | null;
+  /** Live host for the current turn (SSE task_start). Health is the fallback. */
+  agentRuntime?: AgentRuntime | null;
+  /** SEC-08：匿名会话的所有权 token —— SessionPlan 面板水合（#1047）用。 */
+  ownerToken?: string | null;
+  /**
+   * #1048：SessionPlan 流式实时状态（page.tsx 里 useSessionPlan 的 view，
+   * agentRuntime 同款路径：hook 状态 → props 下行）。未提供时面板自行水合
+   * （#1047 行为）。
+   */
+  sessionPlan?: SessionPlanViewState;
 }
 
 /* ─── Memoized message bubble ───
@@ -270,7 +288,23 @@ const ChatMessageItem = memo(function ChatMessageItem({
   );
 });
 
-export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, sessionId }: ChatTabProps) {
+export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, sessionId, agentRuntime, ownerToken, sessionPlan }: ChatTabProps) {
+  const [configuredRuntime, setConfiguredRuntime] = useState<AgentRuntime | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch<{ agent_runtime?: string }>('/api/v1/health')
+      .then((data) => {
+        if (cancelled) return;
+        setConfiguredRuntime(parseAgentRuntime(data?.agent_runtime));
+      })
+      .catch(() => {
+        /* badge is additive; a down health endpoint just hides it */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const runtime = agentRuntime ?? configuredRuntime;
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -346,6 +380,17 @@ export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, se
 
   return (
     <div className="flex flex-col h-full">
+      {runtime && (
+        <div className="shrink-0 border-b border-edge-subtle px-panel py-1.5">
+          <p className="text-meta tracking-wide text-ink-muted" data-testid="agent-runtime-badge">
+            {agentRuntimeLabel(runtime)}
+          </p>
+        </div>
+      )}
+      {/* SessionPlan 面板（Pi 路径，#1047）：会话级只读水合卡。无信封 / 拉取
+          失败时整卡隐藏 —— ChatEngine 兜底会话的侧边栏与今天完全一致。
+          #1048：sessionPlan（useSessionPlan.view）提供时由流式增量驱动。 */}
+      <SessionPlanPanel sessionId={sessionId} ownerToken={ownerToken} live={sessionPlan} />
       {/* Messages scroll area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {messages.length === 0 && !isBusy && (

@@ -114,6 +114,8 @@ task_plan.md
 .zcode/
 screenshot-*.png
 .webgis-agent/
+# Bundled-Pi local runtime state (auth.json credentials, sessions, native-tools dump)
+.pi/
 
 .agents/
 

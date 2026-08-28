@@ -5,7 +5,7 @@ import logging
 import uuid
 from typing import Annotated, Any, Literal, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func, select
@@ -33,6 +33,7 @@ from app.services.history_service_async import AsyncHistoryService
 from app.services.explorer.orchestrator import bridge_session_explorer_progress
 from app.services.distributed_lock import session_lock_registry
 from app.services.session_data import session_data_manager
+from app.services.session_plan import load_session_plan
 from app.services.cartography.memory_harvest import harvest_project_memory
 from app.tools._utils import async_db_session
 from app.tools.registry import ToolRegistry
@@ -335,11 +336,27 @@ def _use_pi_bridge() -> bool:
     bridge falls through to the always-initialised legacy ChatEngine so the
     service degrades instead of hard-failing until a restart.
     """
-    return (
-        USE_NEW_AGENT
-        and pi_bridge is not None
-        and not getattr(pi_bridge, "_process_died", False)
-    )
+    if not USE_NEW_AGENT or pi_bridge is None:
+        return False
+    if getattr(pi_bridge, "_process_died", False):
+        return False
+    is_alive_fn = getattr(pi_bridge, "is_alive", None)
+    if is_alive_fn and callable(is_alive_fn):
+        return is_alive_fn()
+    return True
+
+
+async def _ensure_pi_bridge_available() -> bool:
+    """Return True if Pi bridge is active or successfully respawned, False if degraded to ChatEngine."""
+    if not USE_NEW_AGENT or pi_bridge is None:
+        return False
+    if _use_pi_bridge():
+        return True
+    # Attempt lazy respawn if dead
+    respawn_fn = getattr(pi_bridge, "respawn_if_dead", None)
+    if respawn_fn and callable(respawn_fn):
+        return await respawn_fn()
+    return False
 
 
 async def _sse_batched(stream, max_events=_PI_BATCH_MAX_EVENTS, max_delay_s=_PI_BATCH_MAX_DELAY_S):
@@ -551,7 +568,7 @@ async def chat_completions(
                 if rt_ctx.current_runtime_context() else None)
     request_id = _mid_req or request.headers.get("x-request-id") or rt_ctx.new_request_id()
     with rt_ctx.bind_runtime_context(request_id=request_id, session_id=req.session_id, project_id=req.project_id):
-        if _use_pi_bridge():
+        if await _ensure_pi_bridge_available():
             try:
                 try:
                     await _record_frontend_cartographic_observation(req.session_id, req.map_state)
@@ -682,7 +699,7 @@ async def chat_stream(
     stream; the early close takes it to 0 during streaming).
     """
     user_id = _user.get("user_id")
-    use_pi = _use_pi_bridge()
+    use_pi = await _ensure_pi_bridge_available()
     last_event_id = (
         last_event_id_header
         if last_event_id_header is not None
@@ -1064,6 +1081,38 @@ async def get_session_chart_artifact(
     if isinstance(data, dict) and isinstance(data.get("chart"), dict):
         return data
     raise HTTPException(status_code=404, detail="ref 不是图表 artifact")
+
+
+@router.get("/sessions/{session_id}/plan")
+async def get_session_plan(
+    session_id: str,
+    _conv: Conversation = Depends(require_owned_session),
+):
+    """当前 SessionPlan 信封投影（只读，#1047 —— Pi 路径面板水合源）。
+
+    只返回 CURRENT_ALIAS 指向的当前信封 —— 历史信封（supersede 归档行）
+    永不出现在响应里。无信封 → 204 显式空结果（同 map-state 写路由的
+    空响应惯用法）："没有计划"是正常态，不是错误。信封存在但 GIS 章节
+    为空（槽位已开、intent 未跑）→ query/plan_id/recipe_id 为 null 的
+    显式空投影。CanonicalPlan（plan_* HUD）与此端点无关。
+    """
+    plan = await load_session_plan(session_id)
+    if plan is None:
+        return Response(status_code=204)
+    gis = plan.gis_chapter
+    return {
+        "session_id": plan.session_id,
+        "envelope_id": plan.envelope_id,
+        "user_goal": plan.user_goal,
+        # 章节缺席时三字段为 null —— 前端据此区分「无章节」与「章节为空串」。
+        "query": str(gis.get("query") or "") if gis else None,
+        "plan_id": str(gis.get("plan_id") or "") if gis else None,
+        "recipe_id": str(gis.get("recipe_id") or "") if gis else None,
+        "progress": [row.model_dump() for row in plan.progress],
+        "replaced": plan.replaced,
+        "superseded": plan.superseded,
+        "updated_at": plan.updated_at,
+    }
 
 
 class MapStatePushRequest(BaseModel):

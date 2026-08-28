@@ -643,7 +643,13 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
   @tool(
       registry,
       tier=2, domains=["report", "mapspec"], name="webgis_cartography_status",
-      description="查询制图 harness 对当前地图状态的服务端验证结论（desired↔runtime 收敛判定、失败检查项与修复进度）。只读，不触发重评估或修复。",
+      description=(
+          "查询制图 harness 对当前地图状态的服务端验证结论（desired↔runtime "
+          "收敛判定、失败检查项与修复进度）。只读，不触发重评估或修复。"
+          "不接受 city/topic/scope/query——那些是分析参数；分布/密度请求先调 "
+          "webgis_map_intent。本工具参数必须是空对象 {}，且只在地图已发生 "
+          "display 变更之后调用。"
+      ),
       args_model=WebgisCartographyStatusArgs
   )
   async def webgis_cartography_status(session_id: Optional[str] = None) -> dict:

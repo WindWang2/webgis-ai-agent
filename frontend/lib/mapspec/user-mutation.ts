@@ -122,6 +122,7 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
             opacity: patch.opacity,
           },
           ownerToken,
+          timeoutMs: 60_000,
           label: 'MapSpec presentation mutation',
         },
       );
