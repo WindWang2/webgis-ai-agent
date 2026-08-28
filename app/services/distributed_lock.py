@@ -39,6 +39,7 @@ def _track_client_close(task) -> None:
     task.add_done_callback(_client_close_tasks.discard)
 
 _DEFAULT_TTL_MS = 30_000          # 30s base TTL
+_DEFAULT_ACQUIRE_TIMEOUT_S = 30.0 # 30s acquire budget (matches cartographic observation holders)
 _RENEW_INTERVAL_S = 8.0           # renew well before TTL expiry
 _FALLBACK_CAP = 4096              # bound the in-process fallback registry
 # Lua: release only if we still own the token (avoid releasing another's lock).
@@ -55,6 +56,22 @@ _RENEW_SCRIPT = (
     b"if redis.call('get', KEYS[1]) == ARGV[1] then "
     b"return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end"
 )
+
+
+class LockError(Exception):
+    """Base error for session lock failures."""
+
+
+class LockContentionError(TimeoutError, LockError):
+    """Raised when lock cannot be acquired within the deadline due to contention."""
+
+
+class LockDegradedError(LockError):
+    """Raised when Redis acquire fails and fail_on_degraded is True."""
+
+
+class LockLostError(LockError):
+    """Raised when lock ownership is lost during the critical section."""
 
 
 class _InProcessLock:
@@ -83,21 +100,58 @@ class _ResilientSessionLock:
     caller's critical section is still serialized within the process.
     """
 
-    def __init__(self, client, key: str, fallback: _InProcessLock,
-                 ttl_ms: int = _DEFAULT_TTL_MS):
+    def __init__(
+        self,
+        client,
+        key: str,
+        fallback: _InProcessLock,
+        ttl_ms: int = _DEFAULT_TTL_MS,
+        acquire_timeout_s: float = _DEFAULT_ACQUIRE_TIMEOUT_S,
+        fail_on_degraded: bool = False,
+        fail_on_lost: bool = False,
+    ):
         self._client = client
         self._key = key
         self._fallback = fallback
         self._ttl_ms = ttl_ms
-        self._mode: str = "inprocess"   # "redis" once acquired via Redis
+        self._acquire_timeout_s = acquire_timeout_s
+        self._fail_on_degraded = fail_on_degraded
+        self._fail_on_lost = fail_on_lost
+        self._mode: str = "inprocess"   # "redis" | "inprocess" | "degraded"
         self._token: Optional[str] = None
         self._renewer: Optional[asyncio.Task] = None
+        self._lost: bool = False
+
+    @property
+    def mode(self) -> str:
+        """Lock acquisition mode: 'redis', 'inprocess', or 'degraded'."""
+        return self._mode
+
+    @property
+    def is_redis_backed(self) -> bool:
+        """True if lock is actively held in Redis."""
+        return self._mode == "redis"
+
+    @property
+    def is_degraded(self) -> bool:
+        """True if Redis was configured but failed to acquire, degrading to in-process."""
+        return self._mode == "degraded"
+
+    @property
+    def lost(self) -> bool:
+        """True if Redis lock ownership was lost during the critical section."""
+        return self._lost
+
+    @property
+    def is_lost(self) -> bool:
+        """Alias to lost."""
+        return self._lost
 
     async def __aenter__(self):
         if self._client is not None:
             try:
                 self._token = secrets.token_hex(16)
-                deadline = asyncio.get_event_loop().time() + 10.0
+                deadline = asyncio.get_event_loop().time() + self._acquire_timeout_s
                 while True:
                     ok = await self._client.set(
                         self._key, self._token, nx=True, px=self._ttl_ms
@@ -107,22 +161,27 @@ class _ResilientSessionLock:
                         self._renewer = asyncio.create_task(self._renew_loop())
                         return self
                     if asyncio.get_event_loop().time() > deadline:
-                        raise TimeoutError(
-                            f"session lock contention: could not acquire {self._key} in 10s"
+                        raise LockContentionError(
+                            f"session lock contention: could not acquire {self._key} in {self._acquire_timeout_s:.1f}s"
                         )
                     await asyncio.sleep(0.05)
-            except (TimeoutError, asyncio.TimeoutError):
+            except (LockContentionError, TimeoutError, asyncio.TimeoutError):
                 # Genuine contention (another owner holds it): do NOT silently
                 # fall back — that would break cross-pod mutual exclusion. Re-raise
                 # so the caller surfaces a real "busy" rather than a lost update.
                 raise
             except Exception as e:
                 # Redis unavailable / errored → degrade to in-process for this
-                # acquisition. Observable, non-fatal (review P2-1).
+                # acquisition. Observable, non-fatal unless fail_on_degraded=True.
+                if self._fail_on_degraded:
+                    raise LockDegradedError(
+                        f"session lock Redis acquire failed for {self._key} (fail_on_degraded=True): {e}"
+                    ) from e
                 logger.warning(
                     "session lock Redis acquire failed for %s, degrading to in-process: %s",
                     self._key, e,
                 )
+                self._mode = "degraded"
                 self._token = None
         # In-process fallback (also the path when no client is configured).
         await self._fallback.__aenter__()
@@ -136,11 +195,15 @@ class _ResilientSessionLock:
                     await self._renewer
                 except (asyncio.CancelledError, Exception):
                     pass
-            if self._token:
+            if self._token and not self._lost:
                 try:
                     await self._client.eval(_RELEASE_SCRIPT, 1, self._key, self._token)
                 except Exception as e:  # release failure is observable but non-fatal
                     logger.warning("session lock release failed for %s: %s", self._key, e)
+            if self._lost and self._fail_on_lost and exc_type is None:
+                raise LockLostError(
+                    f"session lock ownership for {self._key} was lost during the critical section"
+                )
         else:
             await self._fallback.__aexit__(exc_type, exc, tb)
 
@@ -157,7 +220,8 @@ class _ResilientSessionLock:
                     continue  # best-effort; the initial TTL still bounds stale locks
                 if not renewed:
                     # Key expired and someone else owns it (or it vanished) —
-                    # stop extending a lock we no longer hold.
+                    # mark as lost and stop extending a lock we no longer hold.
+                    self._lost = True
                     logger.warning(
                         "session lock renew lost ownership of %s — stopping renewal",
                         self._key,
@@ -279,12 +343,25 @@ class SessionLockRegistry:
             if len(self._fallback_locks) < _FALLBACK_CAP * 3 // 4:
                 break
 
-    def lock(self, session_id: str, ttl_ms: int = _DEFAULT_TTL_MS):
+    def lock(
+        self,
+        session_id: str,
+        ttl_ms: int = _DEFAULT_TTL_MS,
+        acquire_timeout_s: float = _DEFAULT_ACQUIRE_TIMEOUT_S,
+        fail_on_degraded: bool = False,
+        fail_on_lost: bool = False,
+    ):
         """Return an async context manager mutually exclusive for ``session_id``."""
         client = self._get_client()
         fallback = self._fallback_lock(session_id)
         return _ResilientSessionLock(
-            client, f"webgis:sessionlock:{session_id}", fallback, ttl_ms
+            client,
+            f"webgis:sessionlock:{session_id}",
+            fallback,
+            ttl_ms=ttl_ms,
+            acquire_timeout_s=acquire_timeout_s,
+            fail_on_degraded=fail_on_degraded,
+            fail_on_lost=fail_on_lost,
         )
 
 

@@ -396,14 +396,21 @@ async def apply_tool_result(
     """
     if not session_id or not success:
         return []
-    async with session_lock_registry.lock(session_id):
-        return await _apply_tool_result_unlocked(
+    async with session_lock_registry.lock(session_id) as lock:
+        res = await _apply_tool_result_unlocked(
             session_id,
             tool_name,
             raw_result,
             geojson_ref=geojson_ref,
             store=store,
         )
+        if getattr(lock, "lost", False):
+            logger.error(
+                "[SessionPlan] Lock ownership for session %s was lost during tool result application; aborting envelope mutation",
+                session_id,
+            )
+            return []
+        return res
 
 
 async def _apply_tool_result_unlocked(
