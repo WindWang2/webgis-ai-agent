@@ -216,7 +216,7 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
     const isHeatmapMode = layer.type === "heatmap" || layer.style?.renderType === "heatmap" || layer.style?.renderType === "grid";
 
     // Filter expression builder (map-panel.tsx:207-214).
-    // ADR-0052: when a layer carries a thematic legend_spec, its field is the
+    // ADR-0078: when a layer carries a thematic legend_spec, its field is the
     // SINGLE identity shared by paint, legend filter and the legend UI — so the
     // range filter can never reference a different field than the painted one.
     // Falls back to source metadata.field for non-thematic layers (back compat).
@@ -241,7 +241,7 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
     const color = layer.style?.color || "#16a34a";
     const strokeColor = layer.style?.strokeColor || layer.style?.color || "#16a34a";
 
-    // ADR-0052: derive the live map's thematic color expression from the SAME
+    // ADR-0078: derive the live map's thematic color expression from the SAME
     // legend_spec the <ThematicLegend> overlay reads. Before this, the adapter
     // painted every feature as a flat `style.color`/`#16a34a` while the legend
     // showed a full classified palette — a maximal, undetectable drift. When no

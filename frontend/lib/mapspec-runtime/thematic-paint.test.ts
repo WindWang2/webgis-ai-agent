@@ -4,7 +4,7 @@ import { compileStyleMethod } from "@/lib/mapspec-compiler/compiler";
 import type { LegendSpec } from "@/lib/map-kit/types";
 
 /**
- * ADR-0052 frontend thematic-paint contract. These pin the live-path
+ * ADR-0078 frontend thematic-paint contract. These pin the live-path
  * projection of legend_spec → MapLibre color expression, and assert it mirrors
  * the backend `spec_to_paint` + the compiler's `compileStyleMethod` so the live
  * map and the legend cannot diverge.
@@ -105,7 +105,7 @@ describe("field identity + validity", () => {
   });
 });
 
-describe("ADR-0052 cross-check: legend_spec→expression matches compileStyleMethod", () => {
+describe("ADR-0078 cross-check: legend_spec→expression matches compileStyleMethod", () => {
   // Pins that the live direct projection (legendSpecToColorExpression) and the
   // headless compiler lowering (compileStyleMethod of the StyleMethod that
   // spec_to_paint would emit) agree mode-for-mode. A future change to either

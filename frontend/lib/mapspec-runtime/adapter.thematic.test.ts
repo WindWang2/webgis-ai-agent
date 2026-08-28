@@ -4,7 +4,7 @@ import type { Layer } from "@/lib/types/layer";
 import type { GeoJSONFeatureCollection } from "@/lib/types";
 
 /**
- * ADR-0052 adapter drift-fix regression. Before the fix, a thematic layer
+ * ADR-0078 adapter drift-fix regression. Before the fix, a thematic layer
  * (create_thematic_map result) rendered every feature as a flat `style.color`
  * / `#16a34a` while <ThematicLegend> showed a full graduated palette — because
  * the adapter painted from a pre-baked `fill_color` property that the backend

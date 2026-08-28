@@ -550,7 +550,7 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
         # ladder isn't starved in production. Slim to evidence fields only — the
         # full mapspec is fetched via fetch-on-demand, never logged wholesale.
         ev = {"status": result.status, "llm_payload_len": len(result.llm_payload)}
-        # ADR-0052: also forward cartography_findings so the Harness surfaces
+        # ADR-0078: also forward cartography_findings so the Harness surfaces
         # thematic drift (paint↔legend equivalence) in semantic_errors.
         for k in (
             "success",

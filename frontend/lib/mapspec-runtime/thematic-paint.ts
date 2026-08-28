@@ -2,7 +2,7 @@ import type { LegendSpec } from "@/lib/map-kit/types";
 
 /**
  * Derive a MapLibre data-driven color expression from a canonical
- * {@link LegendSpec} (ADR-0052).
+ * {@link LegendSpec} (ADR-0078).
  *
  * This is the frontend mirror of the backend
  * `app/lib/cartography/thematic_spec.py::spec_to_paint`. Both are deterministic
