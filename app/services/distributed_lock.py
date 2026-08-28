@@ -13,8 +13,21 @@ Contract:
 - Resilient (review P2-1): a Redis error at acquire time (incl. post-startup
   outages) degrades to an in-process lock for that acquisition — it NEVER raises
   unhandled or blocks the request indefinitely.
+- Degraded acquisitions are observable (#1043): ``lock.degraded`` is True iff
+  Redis was configured but the acquire errored, so cross-pod exclusion is NOT
+  guaranteed for that section. Last-write-wins-sensitive callers should fail
+  the update (SessionLockDegradedError) rather than race another pod.
+- Ownership loss while held is observable (#1043): ``lock.lost`` turns True
+  once the renew loop sees the token refused (or release reports a token
+  mismatch), so a caller mid-mutation can abort its save (SessionLockLostError)
+  instead of clobbering the new owner's write.
 - TTL + token-checked Lua release so a slow holder never releases a different
   owner's lock; best-effort renewal while held.
+- Acquire budget is per-call (``acquire_timeout_s``, #1043): the 10s default
+  fits short mutations, but holders like the cartographic evaluation are
+  documented to hold the lock >30s — acquirers queueing behind that class pass
+  ``LONG_HOLDER_ACQUIRE_TIMEOUT_S`` or their contention retries fail
+  deterministically.
 - The in-process fallback registry is bounded with waiter-aware eviction (review
   P2-5): only locks that are unlocked with zero waiters are evictable.
 """
@@ -27,6 +40,21 @@ import secrets
 from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
+
+
+class SessionLockDegradedError(RuntimeError):
+    """Redis was configured but the acquire errored → in-process fallback.
+
+    Cross-pod mutual exclusion is NOT guaranteed while degraded. Callers whose
+    write would race another pod last-write-wins should fail the update — the
+    caller's own retry path re-attempts it once Redis recovers (#1043)."""
+
+
+class SessionLockLostError(RuntimeError):
+    """Lock ownership was lost (TTL expiry / takeover) while the section ran.
+
+    A save after ownership loss would clobber whatever the new owner wrote;
+    mutating callers abort and retry the whole read-modify-write (#1043)."""
 
 #: F12: 旧 loop 上 client 的异步关闭任务是 fire-and-forget —— 丢弃引用会让它
 #: 在运行前被 GC，且对任何 background-task drain 不可见。保持强引用直到任务
@@ -41,6 +69,13 @@ def _track_client_close(task) -> None:
 _DEFAULT_TTL_MS = 30_000          # 30s base TTL
 _RENEW_INTERVAL_S = 8.0           # renew well before TTL expiry
 _FALLBACK_CAP = 4096              # bound the in-process fallback registry
+_DEFAULT_ACQUIRE_TIMEOUT_S = 10.0
+#: #1043: the cartographic evaluation is documented to hold the session lock
+#: >30s (``frontend/lib/hooks/use-cartographic-observation.ts`` sets
+#: timeoutMs=0 for exactly this reason). Acquirers queueing behind that holder
+#: class need a matching budget — the 10s default makes their contention
+#: retries fail deterministically.
+LONG_HOLDER_ACQUIRE_TIMEOUT_S = 60.0
 # Lua: release only if we still own the token (avoid releasing another's lock).
 _RELEASE_SCRIPT = (
     b"if redis.call('get', KEYS[1]) == ARGV[1] then "
@@ -84,20 +119,38 @@ class _ResilientSessionLock:
     """
 
     def __init__(self, client, key: str, fallback: _InProcessLock,
-                 ttl_ms: int = _DEFAULT_TTL_MS):
+                 ttl_ms: int = _DEFAULT_TTL_MS,
+                 acquire_timeout_s: float = _DEFAULT_ACQUIRE_TIMEOUT_S):
         self._client = client
         self._key = key
         self._fallback = fallback
         self._ttl_ms = ttl_ms
+        self._acquire_timeout_s = acquire_timeout_s
         self._mode: str = "inprocess"   # "redis" once acquired via Redis
         self._token: Optional[str] = None
         self._renewer: Optional[asyncio.Task] = None
+        self._degraded = False          # True iff Redis was configured but acquire errored
+        self._lost = False              # True once ownership was lost while held
+
+    @property
+    def degraded(self) -> bool:
+        """This acquisition fell back to in-process after a Redis acquire
+        error — cross-pod mutual exclusion is NOT guaranteed (#1043). False
+        when Redis was never configured (normal single-pod / test mode)."""
+        return self._degraded
+
+    @property
+    def lost(self) -> bool:
+        """Ownership was lost while held (renewal refused / release token
+        mismatch). Best-effort: updated by the renew loop, so detection lags
+        actual expiry by at most one renew interval (#1043)."""
+        return self._lost
 
     async def __aenter__(self):
         if self._client is not None:
             try:
                 self._token = secrets.token_hex(16)
-                deadline = asyncio.get_event_loop().time() + 10.0
+                deadline = asyncio.get_event_loop().time() + self._acquire_timeout_s
                 while True:
                     ok = await self._client.set(
                         self._key, self._token, nx=True, px=self._ttl_ms
@@ -108,7 +161,8 @@ class _ResilientSessionLock:
                         return self
                     if asyncio.get_event_loop().time() > deadline:
                         raise TimeoutError(
-                            f"session lock contention: could not acquire {self._key} in 10s"
+                            f"session lock contention: could not acquire {self._key} "
+                            f"in {self._acquire_timeout_s:g}s"
                         )
                     await asyncio.sleep(0.05)
             except (TimeoutError, asyncio.TimeoutError):
@@ -118,7 +172,9 @@ class _ResilientSessionLock:
                 raise
             except Exception as e:
                 # Redis unavailable / errored → degrade to in-process for this
-                # acquisition. Observable, non-fatal (review P2-1).
+                # acquisition. Observable, non-fatal (review P2-1); the flag lets
+                # data-integrity callers fail the update (#1043).
+                self._degraded = True
                 logger.warning(
                     "session lock Redis acquire failed for %s, degrading to in-process: %s",
                     self._key, e,
@@ -138,7 +194,19 @@ class _ResilientSessionLock:
                     pass
             if self._token:
                 try:
-                    await self._client.eval(_RELEASE_SCRIPT, 1, self._key, self._token)
+                    released = await self._client.eval(
+                        _RELEASE_SCRIPT, 1, self._key, self._token
+                    )
+                    if not released:
+                        # Token mismatch at release: the TTL expired and another
+                        # owner took over mid-section — flag it so callers (and
+                        # post-hoc diagnostics) see the section raced (#1043).
+                        self._lost = True
+                        logger.warning(
+                            "session lock %s was no longer owned at release — "
+                            "the critical section may have raced another owner",
+                            self._key,
+                        )
                 except Exception as e:  # release failure is observable but non-fatal
                     logger.warning("session lock release failed for %s: %s", self._key, e)
         else:
@@ -157,7 +225,9 @@ class _ResilientSessionLock:
                     continue  # best-effort; the initial TTL still bounds stale locks
                 if not renewed:
                     # Key expired and someone else owns it (or it vanished) —
-                    # stop extending a lock we no longer hold.
+                    # stop extending a lock we no longer hold, and flag the
+                    # loss so mutating callers abort their save (#1043).
+                    self._lost = True
                     logger.warning(
                         "session lock renew lost ownership of %s — stopping renewal",
                         self._key,
@@ -279,12 +349,24 @@ class SessionLockRegistry:
             if len(self._fallback_locks) < _FALLBACK_CAP * 3 // 4:
                 break
 
-    def lock(self, session_id: str, ttl_ms: int = _DEFAULT_TTL_MS):
-        """Return an async context manager mutually exclusive for ``session_id``."""
+    def lock(
+        self,
+        session_id: str,
+        ttl_ms: int = _DEFAULT_TTL_MS,
+        acquire_timeout_s: float = _DEFAULT_ACQUIRE_TIMEOUT_S,
+    ):
+        """Return an async context manager mutually exclusive for ``session_id``.
+
+        ``acquire_timeout_s`` bounds how long a contended acquire waits before
+        raising TimeoutError (callers map that to busy/back-pressure). Holders
+        like the cartographic evaluation run >30s — queue behind them with
+        ``LONG_HOLDER_ACQUIRE_TIMEOUT_S``, not the 10s default (#1043).
+        """
         client = self._get_client()
         fallback = self._fallback_lock(session_id)
         return _ResilientSessionLock(
-            client, f"webgis:sessionlock:{session_id}", fallback, ttl_ms
+            client, f"webgis:sessionlock:{session_id}", fallback, ttl_ms,
+            acquire_timeout_s,
         )
 
 

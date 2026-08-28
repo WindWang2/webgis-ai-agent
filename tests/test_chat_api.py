@@ -107,7 +107,7 @@ class _BusyLock:
 
 
 class _BusyLockRegistry:
-    def lock(self, session_id: str) -> _BusyLock:
+    def lock(self, session_id: str, **_kwargs) -> _BusyLock:
         return _BusyLock()
 
 

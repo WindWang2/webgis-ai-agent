@@ -31,7 +31,10 @@ from app.services.chat.execution_engine import (
 )
 from app.services.history_service_async import AsyncHistoryService
 from app.services.explorer.orchestrator import bridge_session_explorer_progress
-from app.services.distributed_lock import session_lock_registry
+from app.services.distributed_lock import (
+    LONG_HOLDER_ACQUIRE_TIMEOUT_S,
+    session_lock_registry,
+)
 from app.services.session_data import session_data_manager
 from app.services.cartography.memory_harvest import harvest_project_memory
 from app.tools._utils import async_db_session
@@ -1138,7 +1141,12 @@ async def push_cartographic_runtime_observation(
     layers = _project_frontend_layers(req.layers)
     viewport = _bounded_observation_fragment(req.viewport) or {}
     try:
-        async with session_lock_registry.lock(session_id):
+        # #1043: this endpoint re-runs the trusted evaluation under the lock
+        # and Pi turns are documented to hold it >30s — the 10s default made
+        # contention fail deterministically instead of queueing.
+        async with session_lock_registry.lock(
+            session_id, acquire_timeout_s=LONG_HOLDER_ACQUIRE_TIMEOUT_S
+        ):
             session_data_manager.invalidate_local_cache(session_id)
             state = await session_data_manager.get_map_state(session_id)
             previous = state.get("_cartographic_observation")
@@ -1397,9 +1405,13 @@ async def push_map_action_acks(
     ):
         raise HTTPException(status_code=429, detail="Too many map action acks")
     # Serialize with deletion and observation. An ACK that arrives after the
-    # delete tombstone cannot recreate bounded event/review state.
+    # delete tombstone cannot recreate bounded event/review state. #1043: the
+    # locked section re-runs the evaluation (>30s holders) — queue with a
+    # matching budget instead of failing at the 10s default.
     try:
-        async with session_lock_registry.lock(session_id):
+        async with session_lock_registry.lock(
+            session_id, acquire_timeout_s=LONG_HOLDER_ACQUIRE_TIMEOUT_S
+        ):
             session_data_manager.invalidate_local_cache(session_id)
             return await _persist_map_action_acks_locked(session_id, req)
     except (TimeoutError, asyncio.TimeoutError):

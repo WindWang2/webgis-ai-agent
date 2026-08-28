@@ -14,7 +14,12 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from app.services.distributed_lock import session_lock_registry
+from app.services.distributed_lock import (
+    LONG_HOLDER_ACQUIRE_TIMEOUT_S,
+    SessionLockDegradedError,
+    SessionLockLostError,
+    session_lock_registry,
+)
 from app.services.session_data import session_data_manager
 from app.utils.sse import sse_event
 
@@ -221,6 +226,28 @@ async def save_session_plan(
     await backend.set_alias(plan.session_id, new_ref, CURRENT_ALIAS)
 
 
+def _abort_if_lock_lost(lock: Any, session_id: str) -> None:
+    """A persist after TTL-expiry ownership loss would clobber whatever the
+    new lock owner wrote — abort so the caller retries the whole apply
+    (#1043). ``getattr`` keeps test lock fakes (which only mimic the
+    context-manager protocol) compatible."""
+    if lock is not None and getattr(lock, "lost", False):
+        raise SessionLockLostError(
+            f"session lock ownership lost before save — SessionPlan update "
+            f"aborted for {session_id}"
+        )
+
+
+def _abort_if_lock_degraded(lock: Any, session_id: str, action: str) -> None:
+    """A write under a degraded (in-process fallback) acquisition has no
+    cross-pod exclusion — two pods can race last-write-wins (#1043)."""
+    if getattr(lock, "degraded", False):
+        raise SessionLockDegradedError(
+            f"session lock degraded to in-process for {session_id} — "
+            f"SessionPlan {action} aborted (cross-pod exclusion unguaranteed)"
+        )
+
+
 async def ensure_session_plan_slot(
     session_id: str,
     *,
@@ -231,18 +258,25 @@ async def ensure_session_plan_slot(
     Read-mostly and called on every Pi tool callback, so the fast path is
     lockless: only a miss (envelope absent) takes the session lock and
     re-checks inside — double-checked locking, keeping per-callback slot
-    checks free of lock traffic while first-creation stays serialized."""
+    checks free of lock traffic while first-creation stays serialized.
+
+    Fails closed on a degraded acquisition (#1043): both callers swallow the
+    error and the next callback retries once Redis recovers."""
     current = await load_session_plan(session_id, store=store)
     if current is not None:
         return current
-    async with session_lock_registry.lock(session_id):
-        return await _ensure_slot_unlocked(session_id, store=store)
+    async with session_lock_registry.lock(session_id) as lock:
+        _abort_if_lock_degraded(lock, session_id, action="slot-open")
+        return await _ensure_slot_unlocked(session_id, store=store, lock=lock)
 
 
-async def _ensure_slot_unlocked(session_id: str, *, store: Any) -> SessionPlan:
+async def _ensure_slot_unlocked(
+    session_id: str, *, store: Any, lock: Any = None
+) -> SessionPlan:
     current = await load_session_plan(session_id, store=store)
     if current is not None:
         return current
+    _abort_if_lock_lost(lock, session_id)
     plan = SessionPlan(
         envelope_id=_new_envelope_id(),
         session_id=session_id,
@@ -393,16 +427,26 @@ async def apply_tool_result(
     load→mutate→save runs under the per-session lock: a Pi turn may issue
     parallel tool callbacks and the supersede branch must not be lost to a
     last-write-wins interleave (ADR-0051 lock pattern).
+
+    #1043: fails closed when the acquisition degraded to in-process (both
+    pods mutating concurrently is worse than a retried update) and every
+    persist aborts if ownership was lost mid-section. The acquire budget
+    matches the >30s cartographic-evaluation holders — with the 10s default
+    every contention retry against them failed deterministically.
     """
     if not session_id or not success:
         return []
-    async with session_lock_registry.lock(session_id):
+    async with session_lock_registry.lock(
+        session_id, acquire_timeout_s=LONG_HOLDER_ACQUIRE_TIMEOUT_S
+    ) as lock:
+        _abort_if_lock_degraded(lock, session_id, action="update")
         return await _apply_tool_result_unlocked(
             session_id,
             tool_name,
             raw_result,
             geojson_ref=geojson_ref,
             store=store,
+            lock=lock,
         )
 
 
@@ -413,9 +457,10 @@ async def _apply_tool_result_unlocked(
     *,
     geojson_ref: Optional[str] = None,
     store: Any = None,
+    lock: Any = None,
 ) -> list[SessionPlanEvent]:
     backend = store if store is not None else session_data_manager
-    plan = await _ensure_slot_unlocked(session_id, store=backend)
+    plan = await _ensure_slot_unlocked(session_id, store=backend, lock=lock)
     raw = raw_result if isinstance(raw_result, dict) else {}
     events: list[SessionPlanEvent] = []
 
@@ -427,6 +472,7 @@ async def _apply_tool_result_unlocked(
         new_key = goal_key(gis, query)
         old_key = goal_key(plan.gis_chapter, plan.user_goal)
         if plan.gis_chapter and old_key and new_key and old_key != new_key:
+            _abort_if_lock_lost(lock, session_id)
             old = plan.model_copy(deep=True)
             old.superseded = True
             await _archive_envelope(old, store=backend)
@@ -438,6 +484,10 @@ async def _apply_tool_result_unlocked(
                 progress=_init_progress(gis),
                 previous_goal=old.user_goal,
             )
+            # Re-check: the archive above awaits, and ownership can be lost
+            # across any await — saving the new envelope then would clobber
+            # the new owner's write (#1043).
+            _abort_if_lock_lost(lock, session_id)
             await save_session_plan(new, store=backend)
             events.append(_superseded_event(old, new))
             events.append(_updated_event(new))
@@ -454,6 +504,7 @@ async def _apply_tool_result_unlocked(
         plan.progress = _merge_progress(plan.progress, gis)
         plan.replaced = replaced
         plan.superseded = False
+        _abort_if_lock_lost(lock, session_id)
         await save_session_plan(plan, store=backend)
         events.append(_updated_event(plan))
         return events
@@ -479,6 +530,7 @@ async def _apply_tool_result_unlocked(
         changed = _mark_progress(
             plan, done_caps, status="complete", bound_ref=geojson_ref or ""
         )
+        _abort_if_lock_lost(lock, session_id)
         await save_session_plan(plan, store=backend)
         events.append(_updated_event(plan))
         events.extend(_progress_event(plan, row) for row in changed)
@@ -494,5 +546,6 @@ async def _apply_tool_result_unlocked(
     )
     if not changed:
         return []
+    _abort_if_lock_lost(lock, session_id)
     await save_session_plan(plan, store=backend)
     return [_progress_event(plan, row) for row in changed]

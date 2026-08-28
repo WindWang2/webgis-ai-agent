@@ -515,7 +515,12 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
 
     if result.status == "ok":
         try:
-            from app.services.session_plan import apply_tool_result, events_to_sse
+            from app.services.session_plan import (
+                SessionLockDegradedError,
+                SessionLockLostError,
+                apply_tool_result,
+                events_to_sse,
+            )
             plan_events = await apply_tool_result(
                 session_id,
                 tool_name,
@@ -549,11 +554,24 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
                     events_to_sse(plan_events, session_id),
                     session_id,
                 )
+            except (SessionLockDegradedError, SessionLockLostError) as lock_err:
+                logger.error(
+                    "[PiBridge] SessionPlan apply retry aborted session=%s tool=%s: %s",
+                    session_id, tool_name, lock_err,
+                )
             except Exception:
                 logger.exception(
                     "[PiBridge] SessionPlan apply retry failed session=%s tool=%s",
                     session_id, tool_name,
                 )
+        except (SessionLockDegradedError, SessionLockLostError) as lock_err:
+            # #1043: the apply was deliberately aborted (degraded cross-pod
+            # exclusion / lost ownership) — nothing was written; the next
+            # tool callback re-applies once the lock is healthy again.
+            logger.error(
+                "[PiBridge] SessionPlan apply aborted session=%s tool=%s: %s",
+                session_id, tool_name, lock_err,
+            )
         except Exception:
             logger.exception(
                 "[PiBridge] SessionPlan apply failed session=%s tool=%s",
