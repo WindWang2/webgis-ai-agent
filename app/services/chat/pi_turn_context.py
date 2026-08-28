@@ -134,3 +134,80 @@ async def bind_turn_prompt(
         except Exception:
             logger.exception("[PiTurn] SessionPlan projection failed session=%s", session_id)
     return attach_turn_context(message, token, cartography_block, plan_block)
+
+
+class PiTurnRegistry:
+    """Encapsulated coordinator for active Pi turn registration (local + Redis)."""
+
+    def __init__(self) -> None:
+        self._local_context: Optional[tuple[str, str]] = None
+        self._client = None
+        self._last_check_s = 0.0
+
+    def _get_redis_client(self):
+        import os
+        now = time.monotonic()
+        if self._client is not None or (now - self._last_check_s) < 60.0:
+            return self._client
+        self._last_check_s = now
+        from app.core.config import settings as _settings
+        redis_url = os.getenv("REDIS_URL") or _settings.REDIS_URL or None
+        use_redis = os.getenv("USE_REDIS", "").lower() in ("true", "1", "yes") or bool(_settings.USE_REDIS)
+        if not redis_url or not use_redis:
+            return None
+        try:
+            import redis.asyncio as aioredis
+            self._client = aioredis.from_url(
+                redis_url,
+                decode_responses=False,
+                socket_timeout=2.0,
+                socket_connect_timeout=2.0,
+            )
+        except Exception as e:
+            logger.warning("PiTurnRegistry: Redis unavailable: %s", e)
+            self._client = None
+        return self._client
+
+    async def register_turn(self, session_id: str, turn_id: str) -> None:
+        self._local_context = (session_id, turn_id)
+        client = self._get_redis_client()
+        if client is not None:
+            try:
+                await client.set(
+                    f"webgis:pi:active_turn:{session_id}",
+                    turn_id,
+                    ex=TURN_CONTEXT_MAX_AGE_SECONDS,
+                )
+            except Exception as e:
+                logger.warning("PiTurnRegistry: Redis register failed for %s: %s", session_id, e)
+
+    async def unregister_turn(self, session_id: str, turn_id: str) -> None:
+        if self._local_context == (session_id, turn_id):
+            self._local_context = None
+        client = self._get_redis_client()
+        if client is not None:
+            try:
+                script = (
+                    b"if redis.call('get', KEYS[1]) == ARGV[1] then "
+                    b"return redis.call('del', KEYS[1]) else return 0 end"
+                )
+                await client.eval(script, 1, f"webgis:pi:active_turn:{session_id}", turn_id)
+            except Exception as e:
+                logger.warning("PiTurnRegistry: Redis unregister failed for %s: %s", session_id, e)
+
+    async def is_active(self, session_id: str, turn_id: str) -> bool:
+        if self._local_context == (session_id, turn_id):
+            return True
+        client = self._get_redis_client()
+        if client is not None:
+            try:
+                val = await client.get(f"webgis:pi:active_turn:{session_id}")
+                if val is not None:
+                    stored = val.decode("utf-8") if isinstance(val, bytes) else str(val)
+                    return stored == turn_id
+            except Exception as e:
+                logger.warning("PiTurnRegistry: Redis check failed for %s: %s", session_id, e)
+        return False
+
+
+pi_turn_registry = PiTurnRegistry()

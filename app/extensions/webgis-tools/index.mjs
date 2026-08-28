@@ -124,6 +124,8 @@ export async function postToBridge(toolCallId, name, args, turnToken, options = 
         const errJson = await response.json();
         if (errJson && typeof errJson.detail === "string") {
           detailText = errJson.detail;
+        } else if (errJson && typeof errJson.detail === "object" && errJson.detail !== null) {
+          detailText = errJson.detail.guidance || errJson.detail.error || JSON.stringify(errJson.detail);
         } else if (errJson && typeof errJson.error === "string") {
           detailText = errJson.error;
         }
@@ -133,7 +135,7 @@ export async function postToBridge(toolCallId, name, args, turnToken, options = 
 
       let errorText = "";
       if (response.status === 409) {
-        errorText = `HTTP 409 Conflict: Concurrent mutation conflict on session state${detailText ? ` (${detailText})` : ""}. Retry the tool call or inspect the current map state with webgis_cartography_status {}.`;
+        errorText = `HTTP 409 Conflict: ${detailText || "Turn context is no longer active. Session state must be re-synchronized before issuing further tools; do not retry with the current expired turn."}`;
       } else if (response.status === 503) {
         errorText = `HTTP 503 Service Unavailable: WebGIS backend is temporarily overloaded or unavailable${detailText ? ` (${detailText})` : ""}. Please wait a moment and retry.`;
       } else if (response.status === 401) {

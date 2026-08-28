@@ -728,9 +728,27 @@ _active_turn_token: Optional[CancellationToken] = None
 _active_turn_context: Optional[tuple[str, str]] = None
 
 
-def is_active_pi_turn(session_id: str, turn_id: str) -> bool:
-    """Return whether ``(session, turn)`` owns the live Pi prompt."""
-    return _active_turn_context == (session_id, turn_id)
+async def register_active_pi_turn(session_id: str, turn_id: str) -> None:
+    """Register active turn in local process memory and Redis (if available)."""
+    global _active_turn_context
+    _active_turn_context = (session_id, turn_id)
+    from app.services.chat.pi_turn_context import pi_turn_registry
+    await pi_turn_registry.register_turn(session_id, turn_id)
+
+
+async def unregister_active_pi_turn(session_id: str, turn_id: str) -> None:
+    """Unregister active turn in local memory and Redis (if owned)."""
+    global _active_turn_context
+    if _active_turn_context == (session_id, turn_id):
+        _active_turn_context = None
+    from app.services.chat.pi_turn_context import pi_turn_registry
+    await pi_turn_registry.unregister_turn(session_id, turn_id)
+
+
+async def is_active_pi_turn(session_id: str, turn_id: str) -> bool:
+    """Return whether ``(session, turn)`` owns the live Pi prompt (local or cross-pod Redis)."""
+    from app.services.chat.pi_turn_context import pi_turn_registry
+    return await pi_turn_registry.is_active(session_id, turn_id)
 
 # Runtime observability: 当前在飞 turn 的关联身份（turn_id / run_id / session_id）。
 # 与 ``_active_turn_token`` 同源——dispatch_tool 是独立的 HTTP 回调 task，看不到流
@@ -1999,7 +2017,7 @@ class PiBridge:
                 # the GLOBAL abort killed this turn, and HTTP-callback tool
                 # dispatches ran unbounded (F24 no-op) on this path.
                 self._active_turn_sid = turn_sid
-                _active_turn_context = (turn_sid, turn_id)
+                await register_active_pi_turn(turn_sid, turn_id)
                 _active_turn_token = CancellationToken(job_id=turn_id)
                 _active_turn_turn_id = turn_id
                 _active_turn_run_id = run_id
@@ -2158,8 +2176,7 @@ class PiBridge:
                 # Clear the active-turn markers before releasing the lock.
                 self._active_turn_sid = None
                 _active_turn_token = None
-                if _active_turn_context == (turn_sid, turn_id):
-                    _active_turn_context = None
+                await unregister_active_pi_turn(turn_sid, turn_id)
                 _active_turn_turn_id = None
                 _active_turn_run_id = None
                 _active_turn_session_id = None
@@ -2262,7 +2279,7 @@ class PiBridge:
             # the lock is held — abort() reads the sid for session scoping,
             # dispatch_tool binds the token via use_token. Cleared in the finally.
             self._active_turn_sid = turn_sid
-            _active_turn_context = (turn_sid, turn_id)
+            await register_active_pi_turn(turn_sid, turn_id)
             _active_turn_token = CancellationToken(job_id=turn_id)
             _active_turn_turn_id = turn_id
             _active_turn_run_id = run_id
@@ -2530,8 +2547,7 @@ class PiBridge:
                 _active_turn_turn_id = None
                 _active_turn_run_id = None
                 _active_turn_session_id = None
-                if _active_turn_context == (turn_sid, turn_id):
-                    _active_turn_context = None
+                await unregister_active_pi_turn(turn_sid, turn_id)
                 self._lock.release()
                 # Runtime observability: settle turn outcome (cancelled ≠ failed),
                 # emit the diagnostic summary, and unregister the evidence. Order:
