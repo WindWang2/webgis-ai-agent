@@ -76,7 +76,6 @@ async def test_lock_lost_signal_on_renew_expiry():
             assert lock.lost is False
             await asyncio.sleep(0.06)
             assert lock.lost is True
-            assert lock.is_lost is True
     finally:
         dl._RENEW_INTERVAL_S = orig_interval
 
@@ -98,17 +97,19 @@ async def test_lock_lost_signal_on_renew_expiry():
 async def test_session_plan_aborts_save_if_lock_lost():
     """apply_tool_result checks lock.lost and aborts envelope mutation to avoid dirty writes."""
     from app.services.session_data import SessionDataManager
+    from app.services.session_plan import load_session_plan
     store = SessionDataManager()
     sid = "sess-lock-abort"
 
     plan = SessionPlan(
         envelope_id="env-init",
         session_id=sid,
+        user_goal="Initial Goal",
         updated_at=time.time(),
     )
     await save_session_plan(plan, store=store)
 
-    # Mock lock whose .lost flips to True during mutation
+    # Mock lock whose .lost is True
     fake_lock = MagicMock()
     fake_lock.lost = True
     fake_lock.__aenter__ = AsyncMock(return_value=fake_lock)
@@ -124,10 +125,20 @@ async def test_session_plan_aborts_save_if_lock_lost():
         )
         assert events == []
 
+    # Verify store was NOT updated with the new goal
+    loaded = await load_session_plan(sid, store=store)
+    assert loaded.user_goal == "Initial Goal"
+
 
 @pytest.mark.asyncio
 async def test_lock_acquire_budget_defaults_to_30s():
     """Acquisition budget defaults to 30s and respects custom acquire_timeout_s."""
+    from app.services.distributed_lock import _DEFAULT_ACQUIRE_TIMEOUT_S
+    assert _DEFAULT_ACQUIRE_TIMEOUT_S == 30.0
+
+    default_lock = _ResilientSessionLock(None, "k:def", _InProcessLock())
+    assert default_lock._acquire_timeout_s == 30.0
+
     fake_client = MagicMock()
     # Always fails to acquire with False (another owner holds lock)
     fake_client.set = AsyncMock(return_value=False)
@@ -148,10 +159,18 @@ async def test_lock_acquire_budget_defaults_to_30s():
 async def test_in_process_mode_when_redis_disabled():
     """When Redis is not configured, lock mode is inprocess and is_degraded is False."""
     lock = _ResilientSessionLock(
-        None, "k1043:local", _InProcessLock()
+        None, "k1043:local", _InProcessLock(), redis_configured=False
     )
     async with lock:
         assert lock.mode == "inprocess"
         assert lock.is_degraded is False
         assert lock.is_redis_backed is False
         assert lock.lost is False
+
+    # When Redis was configured but client is None -> degraded mode
+    degraded_lock = _ResilientSessionLock(
+        None, "k1043:deg", _InProcessLock(), redis_configured=True
+    )
+    async with degraded_lock:
+        assert degraded_lock.mode == "degraded"
+        assert degraded_lock.is_degraded is True

@@ -75,7 +75,7 @@ class LockLostError(LockError):
 
 
 class _InProcessLock:
-    """Thin wrapper so the fallback path has the same context-manager API."""
+    """Thin wrapper so the fallback path has the same context-manager API with timeout support."""
 
     def __init__(self):
         self._lock = asyncio.Lock()
@@ -85,11 +85,26 @@ class _InProcessLock:
         """True iff unlocked AND no waiters — safe to evict (review P2-5)."""
         return (not self._lock.locked()) and (not self._lock._waiters)
 
+    async def acquire(self, timeout_s: Optional[float] = None) -> None:
+        if timeout_s is not None and timeout_s > 0:
+            try:
+                await asyncio.wait_for(self._lock.acquire(), timeout=timeout_s)
+            except (asyncio.TimeoutError, TimeoutError):
+                raise LockContentionError(
+                    f"session in-process lock contention: could not acquire within {timeout_s:.1f}s"
+                )
+        else:
+            await self._lock.acquire()
+
+    def release(self) -> None:
+        self._lock.release()
+
     async def __aenter__(self):
-        await self._lock.acquire()
+        await self.acquire()
+        return self
 
     async def __aexit__(self, exc_type, exc, tb):
-        self._lock.release()
+        self.release()
 
 
 class _ResilientSessionLock:
@@ -109,6 +124,7 @@ class _ResilientSessionLock:
         acquire_timeout_s: float = _DEFAULT_ACQUIRE_TIMEOUT_S,
         fail_on_degraded: bool = False,
         fail_on_lost: bool = False,
+        redis_configured: bool = False,
     ):
         self._client = client
         self._key = key
@@ -117,6 +133,7 @@ class _ResilientSessionLock:
         self._acquire_timeout_s = acquire_timeout_s
         self._fail_on_degraded = fail_on_degraded
         self._fail_on_lost = fail_on_lost
+        self._redis_configured = redis_configured
         self._mode: str = "inprocess"   # "redis" | "inprocess" | "degraded"
         self._token: Optional[str] = None
         self._renewer: Optional[asyncio.Task] = None
@@ -140,11 +157,6 @@ class _ResilientSessionLock:
     @property
     def lost(self) -> bool:
         """True if Redis lock ownership was lost during the critical section."""
-        return self._lost
-
-    @property
-    def is_lost(self) -> bool:
-        """Alias to lost."""
         return self._lost
 
     async def __aenter__(self):
@@ -183,8 +195,16 @@ class _ResilientSessionLock:
                 )
                 self._mode = "degraded"
                 self._token = None
+        elif self._redis_configured:
+            # Redis was configured in environment but client failed initialization
+            self._mode = "degraded"
+            if self._fail_on_degraded:
+                raise LockDegradedError(
+                    f"session lock Redis client unavailable for {self._key} (fail_on_degraded=True)"
+                )
+
         # In-process fallback (also the path when no client is configured).
-        await self._fallback.__aenter__()
+        await self._fallback.acquire(timeout_s=self._acquire_timeout_s)
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
@@ -205,7 +225,7 @@ class _ResilientSessionLock:
                     f"session lock ownership for {self._key} was lost during the critical section"
                 )
         else:
-            await self._fallback.__aexit__(exc_type, exc, tb)
+            self._fallback.release()
 
     async def _renew_loop(self):
         """Extend the TTL while held so a slow operation doesn't lose ownership."""
@@ -343,6 +363,12 @@ class SessionLockRegistry:
             if len(self._fallback_locks) < _FALLBACK_CAP * 3 // 4:
                 break
 
+    def _is_redis_configured(self) -> bool:
+        from app.core.config import settings as _settings
+        redis_url = os.getenv("REDIS_URL") or _settings.REDIS_URL or None
+        use_redis = os.getenv("USE_REDIS", "").lower() in ("true", "1", "yes") or bool(_settings.USE_REDIS)
+        return bool(redis_url and use_redis)
+
     def lock(
         self,
         session_id: str,
@@ -362,6 +388,7 @@ class SessionLockRegistry:
             acquire_timeout_s=acquire_timeout_s,
             fail_on_degraded=fail_on_degraded,
             fail_on_lost=fail_on_lost,
+            redis_configured=self._is_redis_configured(),
         )
 
 
