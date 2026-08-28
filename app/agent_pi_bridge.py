@@ -1690,12 +1690,69 @@ class PiBridge:
                 extension_paths=extension_paths or [],
             )
         self._lock = asyncio.Lock()
+        self._respawn_lock = asyncio.Lock()
         self._active_turn_sid: Optional[str] = None
+        self._last_respawn_attempt: float = 0.0
+        self._respawn_backoff_s: float = 1.0
+        self._consecutive_respawn_failures: int = 0
 
     @property
     def _process_died(self) -> bool:
         """Delegate to the RPC client (back-compat for _use_pi_bridge)."""
         return self._rpc.process_died
+
+    def is_alive(self) -> bool:
+        """Return True if the underlying RPC client process is alive and healthy."""
+        is_alive_fn = getattr(self._rpc, "is_alive", None)
+        if is_alive_fn and callable(is_alive_fn):
+            return is_alive_fn()
+        return not self._rpc.process_died
+
+    async def respawn_if_dead(self) -> bool:
+        """Attempt lazy respawn of the Pi subprocess with exponential backoff.
+
+        Returns True if the bridge is currently alive or was successfully respawned;
+        False if respawn is on cooldown or failed.
+        """
+        if self.is_alive():
+            return True
+
+        async with self._respawn_lock:
+            # Double check under lock in case another coroutine just finished respawning
+            if self.is_alive():
+                return True
+
+            now = time.monotonic()
+            if now - self._last_respawn_attempt < self._respawn_backoff_s:
+                logger.warning(
+                    "[PiBridge] Lazy respawn on cooldown (%.1fs remaining of %.1fs backoff); degrading to ChatEngine",
+                    self._respawn_backoff_s - (now - self._last_respawn_attempt),
+                    self._respawn_backoff_s,
+                )
+                return False
+
+            self._last_respawn_attempt = now
+            try:
+                logger.info("[PiBridge] Attempting lazy respawn of Pi subprocess...")
+                await self.start()
+                if self.is_alive():
+                    logger.info("[PiBridge] Pi subprocess successfully respawned and healthy")
+                    self._respawn_backoff_s = 1.0
+                    self._consecutive_respawn_failures = 0
+                    return True
+                else:
+                    raise PiRpcError("Pi subprocess was not alive after start()")
+            except Exception as e:
+                self._consecutive_respawn_failures += 1
+                # Exponential backoff: 1s, 2s, 4s, 8s, 16s, max 30s
+                self._respawn_backoff_s = min(30.0, 1.0 * (2 ** (self._consecutive_respawn_failures - 1)))
+                logger.error(
+                    "[PiBridge] Lazy respawn failed (attempt %d, next backoff %.1fs): %s",
+                    self._consecutive_respawn_failures,
+                    self._respawn_backoff_s,
+                    e,
+                )
+                return False
 
     # ── Public API ──────────────────────────────────────────────
 
