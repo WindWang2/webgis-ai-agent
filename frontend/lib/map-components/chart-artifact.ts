@@ -18,9 +18,12 @@ import type { ChartData } from '@/lib/types';
  */
 
 const cache = new Map<string, ChartData | null>(); // null = 拉取失败/非法载荷
+const failureAt = new Map<string, number>(); // #1078(G-4): 失败时间戳（TTL 重试窗口）
 const inFlight = new Map<string, Promise<ChartData | null>>();
 let generation = 0;
 const listeners = new Set<() => void>();
+// #1078(G-4): 失败不再永久缓存 —— 瞬时 500/超时让降级卡片在 TTL 后可重试。
+const FAILURE_TTL_MS = 30_000;
 
 function emit(): void {
   generation += 1;
@@ -41,13 +44,25 @@ export function getChartArtifactsGeneration(): number {
 /** 清空缓存（会话切换 / 测试隔离）。 */
 export function resetChartArtifactCache(): void {
   cache.clear();
+  failureAt.clear();
   inFlight.clear();
   emit();
 }
 
-/** 同步读缓存：ChartData（命中）/ null（失败）/ undefined（未拉取）。 */
+/** 同步读缓存：ChartData（命中）/ null（失败）/ undefined（未拉取）。
+ * #1078(G-4): null（失败）条目超过 FAILURE_TTL_MS 视为未拉取（可重试）。
+ */
 export function getCachedChartArtifact(ref: string): ChartData | null | undefined {
-  return cache.get(ref);
+  const hit = cache.get(ref);
+  if (hit === null) {
+    const at = failureAt.get(ref) ?? 0;
+    if (Date.now() - at > FAILURE_TTL_MS) {
+      cache.delete(ref);
+      failureAt.delete(ref);
+      return undefined;
+    }
+  }
+  return hit;
 }
 
 /**
@@ -79,6 +94,7 @@ export function loadChartArtifact(ref: string): Promise<ChartData | null> {
     } catch (e) {
       devOnly.warn(`[chart-artifact] ref ${key} 拉取失败`, e);
       cache.set(key, null);
+      failureAt.set(key, Date.now());
       return null;
     }
   })();

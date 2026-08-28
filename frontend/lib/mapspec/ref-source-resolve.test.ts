@@ -9,7 +9,7 @@ import {
   resetRefSourceCache,
   subscribeRefSources,
 } from '@/lib/mapspec/ref-source-resolver';
-import { resetLiveState } from '@/lib/mapspec/session-cursor';
+import { resetLiveState, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 
 /**
  * product 图层 ref 源解析契约（2026-08-25：webgis_map_product 直写层的
@@ -140,6 +140,9 @@ describe('ref-source-resolver — 兜底拉取与注入', () => {
   });
 
   it('拉取成功 → generation bump → 缓存命中注入 inlineData', async () => {
+    // #1078(G-10)：迟到完成守卫以 cursor 会话为准 —— 缓存回填要求
+    // cursor 与 fetchContext 同会话（生产中二者恒同源）。
+    setMapSpecSessionCursor('s1');
     apiFetchMock.mockResolvedValueOnce(POI_FC);
     let notified = 0;
     const unsub = subscribeRefSources(() => { notified += 1; });
@@ -161,6 +164,8 @@ describe('ref-source-resolver — 兜底拉取与注入', () => {
   });
 
   it('拉取失败 → 失败标记，不重复拉取', async () => {
+    // 同上：cursor 会话对齐后 FAILED 标记才落缓存（否则守卫视为跨会话丢弃）。
+    setMapSpecSessionCursor('s1');
     apiFetchMock.mockRejectedValueOnce(new Error('boom'));
     injectResolvedRefSources(spec, { sessionId: 's1', ownerToken: null });
     await vi.waitFor(() => expect(getRefSourcesGeneration()).toBeGreaterThan(0));

@@ -695,6 +695,27 @@ export const layerCommands: Record<string, CommandEntry> = {
       for (const id of matched) {
         if (!map.getLayer?.(id)) return nonConfirmableAck(storeMatched);
       }
+      // #1077: spec 承载层的样式命令没有持久通道（committed MapSpec 的
+      // paint 不被本命令改写，下一次同层 recompile 即回滚）—— 诚实返回
+      // store_updated 上限而非 confirmed（后者让 harness 视作已收敛，
+      // 随后的静默回滚与之矛盾）。需要持久样式时走重新 authoring。
+      const specLayerIds = new Set(
+        ((getCommittedMapSpec()?.layers || []) as any[]).map((l) => String(l.id)),
+      );
+      const specBackedTarget = matched.some(
+        (id) => specLayerIds.has(String(id))
+          || [...specLayerIds].some((sid) => String(id).startsWith(`${sid}__`)),
+      );
+      if (specBackedTarget) {
+        return {
+          status: 'succeeded',
+          result: {
+            store_updated: true,
+            durable: false,
+            note: '样式已应用到当前渲染与面板；该层由 MapSpec 承载，未写入 committed paint —— 同层任何重编译会回滚。需持久请重新 authoring 该层。',
+          },
+        };
+      }
       // V3: verifiable marker (layer style update — harness convergence).
       return { status: 'succeeded', result: { confirmed: true } };
     },

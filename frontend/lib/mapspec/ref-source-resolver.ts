@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api/transport';
+import { getMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import type { MapSpec, MapSpecSource } from '@/lib/mapspec-compiler/types';
 import { devOnly } from '@/lib/utils/logger';
 
@@ -124,6 +125,10 @@ export function injectResolvedRefSources(
 
 function scheduleFetch(refId: string, fetchContext: RefFetchContext | null | undefined): void {
   if (inFlight.has(refId) || !fetchContext) return;
+  // #1078(G-10): 迟到完成守卫 —— 会话切换清空 cache/inFlight 后，旧会话的
+  // in-flight promise 完成时不回填新会话的缓存（外会话条目永久滞留 +
+  // 一次无谓的 reconcile emit）。
+  const fetchSessionId = fetchContext.sessionId;
   const task = (async () => {
     try {
       const geojson = await apiFetch<{
@@ -137,13 +142,16 @@ function scheduleFetch(refId: string, fetchContext: RefFetchContext | null | und
           label: 'Ref source resolve error',
         },
       );
+      if (getMapSpecSessionCursor().sessionId !== fetchSessionId) return;
       if (geojson && (geojson.type === 'FeatureCollection' || Array.isArray(geojson.features))) {
         cache.set(refId, geojson);
       } else {
         cache.set(refId, FAILED);
       }
     } catch {
-      cache.set(refId, FAILED);
+      if (getMapSpecSessionCursor().sessionId === fetchSessionId) {
+        cache.set(refId, FAILED);
+      }
     } finally {
       inFlight.delete(refId);
       emit();
