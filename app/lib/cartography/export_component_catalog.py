@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import get_args
 
 from app.lib.cartography.component_registry import get_component_registry
+from app.lib.cartography.component_renderers import get_component_renderer_registry
 from app.services.gis_harness.components import ComponentType
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -30,16 +31,18 @@ RENDERER_EXEMPT = {
     "export_layout",    # exporter-side only
     "graticule",        # export-oriented overlay (renderer optional)
     "map_border",       # export frame (renderer optional)
-    "inset_map",        # runtime_status=planned (not in ComponentType union yet)
+    "inset_map",        # runtime_status=planned (schema/registry only)
 }
 
 
 def build_catalog() -> dict:
     registry = get_component_registry()
+    renderers = get_component_renderer_registry()
     types = sorted(get_args(ComponentType))
     components = []
     for t in types:
         desc = registry.get_by_type(t)
+        support = renderers.support_for(t)
         entry = {
             "type": t,
             "variants": list(desc.variants) if desc else [],
@@ -48,10 +51,14 @@ def build_catalog() -> dict:
             "category": desc.category if desc else "",
             "runtimeStatus": desc.runtime_status if desc else "native",
             "rendererRequired": t not in RENDERER_EXEMPT,
+            # 机器真值（component_renderers.py 单一权威）：live 渲染器与
+            # 导出器各自真正消费该组件类型的目标清单。
+            "rendererSupport": list(support.renderers) if support else [],
+            "exporterSupport": list(support.exporters) if support else [],
         }
         components.append(entry)
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "exportedFrom": "app/lib/cartography/component_registry.py",
         "componentTypes": components,
     }

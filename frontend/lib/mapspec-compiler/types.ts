@@ -168,7 +168,9 @@ export interface MapSpecComponent {
     | "attribution"
     | "statistics_panel"
     | "chart_panel"
-    | "export_layout";
+    | "export_layout"
+    /** 区位插图（后端 runtime_status=planned；渲染器落地前不消费）。 */
+    | "inset_map";
   enabled?: boolean;
   position?:
     | "top-left"

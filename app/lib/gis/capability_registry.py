@@ -246,6 +246,93 @@ _SEED_CAPS: List[CapabilityDescriptor] = [
         output_artifact_types=["line_feature_set"],
         purpose_template="最短路径",
     ),
+    # ── 网络族补齐（phase-2：真实路网工具整族接入 registry） ───────────
+    CapabilityDescriptor(
+        id="closest_facility", name="最近设施", category="network",
+        domain="network", description="路网时间/距离最近的设施匹配。",
+        input_artifact_types=["poi_feature_set", "point_feature_set"],
+        output_artifact_types=["line_feature_set"],
+        purpose_template="最近设施分析",
+    ),
+    CapabilityDescriptor(
+        id="od_matrix", name="OD 成本矩阵", category="network",
+        domain="network", description="多起点×终点网络成本矩阵。",
+        input_artifact_types=["poi_feature_set", "point_feature_set"],
+        output_artifact_types=["od_matrix"],
+        compatible_map_models=["flow_od_arc"],
+        purpose_template="OD 成本矩阵",
+    ),
+    CapabilityDescriptor(
+        id="accessibility", name="可达性分析", category="network",
+        domain="network", description="15 分钟生活圈等网络可达性。",
+        output_artifact_types=["service_area"],
+        compatible_map_models=["proximity_overlay"],
+        purpose_template="网络可达性",
+    ),
+    CapabilityDescriptor(
+        id="location_allocation", name="选址配置", category="network",
+        domain="network", description="Location-Allocation 选址优化。",
+        input_artifact_types=["poi_feature_set", "point_feature_set"],
+        output_artifact_types=["stats_table"],
+        purpose_template="选址优化",
+    ),
+    CapabilityDescriptor(
+        id="route_optimization", name="路线优化", category="network",
+        domain="network", description="VRP 配送/巡检路线优化。",
+        output_artifact_types=["line_feature_set"],
+        purpose_template="路线优化",
+    ),
+    # ── 时序族（phase-2：temporal 工具族正式词汇） ─────────────────────
+    CapabilityDescriptor(
+        id="temporal_profile", name="时间画像", category="statistics",
+        description="时间字段/跨度/粒度画像（元数据，不产新数据）。",
+        input_artifact_types=["poi_feature_set", "point_feature_set"],
+        output_artifact_types=["stats_table"],
+        purpose_template="时间维度画像",
+    ),
+    CapabilityDescriptor(
+        id="temporal_aggregate", name="时间聚合", category="statistics",
+        description="按时间窗重采样汇总。",
+        input_artifact_types=["point_feature_set", "poi_feature_set"],
+        output_artifact_types=["stats_table"],
+        purpose_template="时间聚合统计",
+    ),
+    CapabilityDescriptor(
+        id="temporal_trend", name="时序趋势", category="statistics",
+        description="Sen's Slope / 移动平均等时序趋势。",
+        input_artifact_types=["stats_table"],
+        output_artifact_types=["stats_table"],
+        purpose_template="时序趋势",
+    ),
+    CapabilityDescriptor(
+        id="change_detection", name="变化检测", category="analysis",
+        description="双时相对比变化集。",
+        input_artifact_types=["raster_surface", "poi_feature_set", "point_feature_set"],
+        output_artifact_types=["change_set"],
+        purpose_template="变化检测",
+    ),
+    CapabilityDescriptor(
+        id="spatiotemporal_clustering", name="时空聚类", category="statistics",
+        description="ST-DBSCAN 等时空聚类（与 LISA 局部自相关是不同检验）。",
+        input_artifact_types=["poi_feature_set", "point_feature_set"],
+        output_artifact_types=["hotspot_result"],
+        purpose_template="时空聚类",
+    ),
+    # ── 几何/栅格统计错挂修复配套词汇 ──────────────────────────────────
+    CapabilityDescriptor(
+        id="spatial_join", name="空间连接", category="analysis",
+        description="按拓扑关系把右表属性挂到左表（区别于几何裁剪）。",
+        input_artifact_types=["poi_feature_set", "polygon_feature_set"],
+        output_artifact_types=["polygon_feature_set"],
+        purpose_template="空间连接",
+    ),
+    CapabilityDescriptor(
+        id="zonal_statistics", name="分区统计", category="raster",
+        domain="raster", description="面内栅格 min/max/mean/sum 统计。",
+        input_artifact_types=["raster_surface", "polygon_feature_set"],
+        output_artifact_types=["stats_table"],
+        purpose_template="分区统计",
+    ),
 ]
 
 

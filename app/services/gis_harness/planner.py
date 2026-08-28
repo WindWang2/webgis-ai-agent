@@ -173,6 +173,14 @@ def _plan_id(query: str, recipe_id: str) -> str:
     return f"plan-{digest}"
 
 
+class _CompositionRejectedError(Exception):
+    """组合校验失败（携带违规明细，供兜底路径记录 evidence）。"""
+
+    def __init__(self, message: str, *, violations: Optional[List[Dict[str, Any]]] = None) -> None:
+        super().__init__(message)
+        self.violations = violations or []
+
+
 class MapProductPlanner:
     """确定性产品规划器（纯函数式，无 LLM 依赖、无 I/O）。"""
 
@@ -532,12 +540,23 @@ class MapProductPlanner:
             # report_product prefers a composition that provides export_layout/map_border
             if plan.intent.report_product:
                 output_target = "pdf"
-                # force a report-capable composition
-                if not comp_tmpl_id:
-                    from app.lib.cartography.composition_templates import get_composition_template_registry
-                    comp_reg = get_composition_template_registry()
-                    cands = comp_reg.find_for_map_model(primary_carto, "pdf")
-                    report_cands = [c for c in cands if any(s.id == "export_layout" and s.cardinality == "required" for s in c.component_slots)]
+                # force a report-capable composition（接线模板不满足时改选；
+                # 满足 export_layout 必备的接线模板保持不变）
+                from app.lib.cartography.composition_templates import get_composition_template_registry
+                compo_reg = get_composition_template_registry()
+
+                def _requires_export_layout(c) -> bool:
+                    return c is not None and any(
+                        s.id == "export_layout" and s.cardinality == "required"
+                        for s in c.component_slots
+                    )
+
+                wired = compo_reg.get(comp_tmpl_id) if comp_tmpl_id else None
+                if not _requires_export_layout(wired):
+                    # wired 为 None 时（未接线/未注册 id）同样走自动改选 ——
+                    # 报告产品的版面契约优先于具体模板选择。
+                    cands = compo_reg.find_for_map_model(primary_carto, "pdf")
+                    report_cands = [c for c in cands if _requires_export_layout(c)]
                     if report_cands:
                         comp_tmpl_id = report_cands[0].id
             else:
@@ -571,17 +590,59 @@ class MapProductPlanner:
                 composition_template_id=selection.composition_template_id,
                 overrides=overrides if isinstance(overrides, dict) else {},
             )
-            if composed:
-                finalized.components = composed
-                # stash composition evidence
-                finalized.template_selection = {
-                    **finalized.template_selection,
-                    "composition_template_id": selection.composition_template_id,
-                    "component_templates": selection.component_templates,
-                }
-            else:
+            if not composed:
                 raise ValueError("empty composition")
-        except Exception:
+            # 组合级校验（conflicts/cardinality/required/forbidden/planned/
+            # 孤儿绑定）：error 级违规 → 抛错走 build_default_components 兜底；
+            # warning（zone 碰撞等）记入 evidence，QA（semantic_checks）单独报告。
+            from app.lib.cartography.composition_validation import validate_component_composition
+            validation = validate_component_composition(
+                composed,
+                composition_template_id=selection.composition_template_id,
+                map_model_id=primary_carto,
+                layer_ids=[ly.layer_id for ly in finalized.map_layers if ly.layer_id],
+                output_target=output_target,
+            )
+            if not validation.ok:
+                raise _CompositionRejectedError(
+                    "composition violations: "
+                    + "; ".join(
+                        f"{v.code}[{v.component_type or v.slot}] {v.detail}"
+                        for v in validation.errors
+                    ),
+                    violations=[v.to_dict() for v in validation.errors],
+                )
+            finalized.components = composed
+            # stash composition evidence
+            finalized.template_selection = {
+                **finalized.template_selection,
+                "composition_template_id": selection.composition_template_id,
+                "component_templates": selection.component_templates,
+                "composition_warnings": [v.to_dict() for v in validation.warnings],
+            }
+        except Exception as exc:
+            # 组合路径失败 → build_default_components 兜底，但必须留下可追溯
+            # evidence（FallbackDecision + template_selection），不静默吞掉。
+            reason_code = (
+                "COMPOSITION_INVALID" if isinstance(exc, _CompositionRejectedError)
+                else "COMPOSITION_ERROR"
+            )
+            fallback_evidence: Dict[str, Any] = {
+                "reason_code": reason_code,
+                "error": str(exc)[:500],
+            }
+            if isinstance(exc, _CompositionRejectedError):
+                fallback_evidence["violations"] = exc.violations
+            finalized.fallbacks.append(FallbackDecision(
+                from_element="composition_template",
+                to_element="default_components",
+                reason_code=reason_code,
+                evidence=fallback_evidence,
+            ))
+            finalized.template_selection = {
+                **finalized.template_selection,
+                "composition_fallback": fallback_evidence,
+            }
             finalized.components = build_default_components(
                 primary_cartography=primary_carto,
                 title=self._default_title(plan),

@@ -86,6 +86,7 @@ SEED_PRODUCT_TEMPLATES: List[MapProductTemplate] = [
         outputs=["interactive_map", "statistics", "summary"],
         exports=["png", "pdf"],
         title_pattern="{scope}{subject}分布",
+        composition_template_id="composition.density_map",
     ),
     MapProductTemplate(
         id="education_facility_distribution",
@@ -106,6 +107,7 @@ SEED_PRODUCT_TEMPLATES: List[MapProductTemplate] = [
         outputs=["interactive_map", "statistics", "summary"],
         exports=["png", "pdf", "csv"],
         title_pattern="{scope}{subject}分布",
+        composition_template_id="composition.density_map",
     ),
     MapProductTemplate(
         id="poi_density_overview",
@@ -122,6 +124,7 @@ SEED_PRODUCT_TEMPLATES: List[MapProductTemplate] = [
         outputs=["interactive_map", "summary"],
         exports=["png"],
         title_pattern="{scope}{subject}分布",
+        composition_template_id="composition.density_map",
     ),
     MapProductTemplate(
         id="administrative_statistics_map",
@@ -138,6 +141,7 @@ SEED_PRODUCT_TEMPLATES: List[MapProductTemplate] = [
         outputs=["interactive_map", "statistics", "table", "summary"],
         exports=["png", "pdf", "csv"],
         title_pattern="{scope}{subject}统计",
+        composition_template_id="composition.statistical_map",
     ),
     MapProductTemplate(
         id="simple_poi_view",
@@ -153,6 +157,7 @@ SEED_PRODUCT_TEMPLATES: List[MapProductTemplate] = [
         outputs=["interactive_map"],
         exports=[],
         title_pattern="{scope}{subject}",
+        composition_template_id="composition.minimal_interactive",
     ),
     MapProductTemplate(
         id="grid_density_product",
@@ -169,6 +174,7 @@ SEED_PRODUCT_TEMPLATES: List[MapProductTemplate] = [
         outputs=["interactive_map", "statistics", "summary"],
         exports=["png"],
         title_pattern="{scope}{subject}格网分布",
+        composition_template_id="composition.statistical_map",
     ),
     MapProductTemplate(
         id="proportional_symbol_product",
@@ -183,6 +189,7 @@ SEED_PRODUCT_TEMPLATES: List[MapProductTemplate] = [
         outputs=["interactive_map"],
         exports=["png"],
         title_pattern="{scope}{subject}规模分布",
+        composition_template_id="composition.standard_analysis",
     ),
 ]
 

@@ -77,7 +77,7 @@ SEED_COMPOSITION_TEMPLATES: List[MapCompositionTemplate] = [
         id="composition.standard_analysis",
         name="Standard Analysis",
         description="标准分析地图：标题+图例/色条+指北针+比例尺+归属+统计可选。",
-        compatible_map_models=["visual_heatmap", "administrative_choropleth", "aggregate_grid"],
+        compatible_map_models=["visual_heatmap", "administrative_choropleth", "aggregate_grid", "proportional_symbol"],
         output_targets=["interactive", "png", "pdf"],
         layout_profile="standard",
         collision_policy="exclusive",
@@ -115,6 +115,9 @@ SEED_COMPOSITION_TEMPLATES: List[MapCompositionTemplate] = [
             ComponentSlot(id="map_border", category="frame.map_border", cardinality="required", required=True, allowed_component_types=["map_border"], position_zone="none", preferred_templates=["frame/academic"]),
             ComponentSlot(id="statistics_panel", category="analysis.statistics_panel", cardinality="optional", allowed_component_types=["statistics_panel"], position_zone="top-left"),
             ComponentSlot(id="export_layout", category="export.page_layout", cardinality="required", required=True, allowed_component_types=["export_layout"], position_zone="none", preferred_templates=["export-layout/A4-landscape"]),
+            # 区位插图（inset）：schema/registry 支持，组件 planned —— resolver
+            # 按 runtime_status 排除，渲染器落地后此槽位即刻生效。
+            ComponentSlot(id="inset_map", category="inset.map", cardinality="optional", allowed_component_types=["inset_map"], position_zone="top-right", fallback_zones=["bottom-right"]),
         ],
     ),
     MapCompositionTemplate(
@@ -274,6 +277,12 @@ class CompositionTemplateRegistry:
                 if tpl.fallback_template and tpl.fallback_template not in self._by_id:
                     issues.append(f"composition {tpl.id}: fallback {tpl.fallback_template} not found")
                 for slot in tpl.component_slots:
+                    if not slot.allowed_component_types and slot.cardinality in ("required", "forbidden"):
+                        # required/forbidden 槽位无类型清单 = 永远无法满足/永不禁止
+                        # （组合校验按 allowed_component_types 匹配实例）
+                        issues.append(
+                            f"composition {tpl.id} slot {slot.id}: cardinality "
+                            f"{slot.cardinality} requires non-empty allowed_component_types")
                     for ctype in slot.allowed_component_types:
                         if ctype not in comp_reg.all_ids:
                             issues.append(f"composition {tpl.id} slot {slot.id}: unknown component type {ctype}")

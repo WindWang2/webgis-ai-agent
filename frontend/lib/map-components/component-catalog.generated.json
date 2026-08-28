@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "exportedFrom": "app/lib/cartography/component_registry.py",
   "componentTypes": [
     {
@@ -11,7 +11,11 @@
       "defaultPosition": "top-left",
       "category": "annotation.text",
       "runtimeStatus": "native",
-      "rendererRequired": true
+      "rendererRequired": true,
+      "rendererSupport": [
+        "interactive"
+      ],
+      "exporterSupport": []
     },
     {
       "type": "attribution",
@@ -23,7 +27,11 @@
       "defaultPosition": "bottom-left",
       "category": "annotation.attribution",
       "runtimeStatus": "native",
-      "rendererRequired": true
+      "rendererRequired": true,
+      "rendererSupport": [
+        "interactive"
+      ],
+      "exporterSupport": []
     },
     {
       "type": "basemap",
@@ -32,7 +40,9 @@
       "defaultPosition": "none",
       "category": "",
       "runtimeStatus": "native",
-      "rendererRequired": false
+      "rendererRequired": false,
+      "rendererSupport": [],
+      "exporterSupport": []
     },
     {
       "type": "categorical_legend",
@@ -45,7 +55,11 @@
       "defaultPosition": "bottom-left",
       "category": "legend.categorical",
       "runtimeStatus": "native",
-      "rendererRequired": true
+      "rendererRequired": true,
+      "rendererSupport": [
+        "interactive"
+      ],
+      "exporterSupport": []
     },
     {
       "type": "chart_panel",
@@ -59,7 +73,11 @@
       "defaultPosition": "top-left",
       "category": "analysis.chart_panel",
       "runtimeStatus": "native",
-      "rendererRequired": true
+      "rendererRequired": true,
+      "rendererSupport": [
+        "interactive"
+      ],
+      "exporterSupport": []
     },
     {
       "type": "continuous_colorbar",
@@ -72,7 +90,11 @@
       "defaultPosition": "bottom-right",
       "category": "legend.continuous_colorbar",
       "runtimeStatus": "native",
-      "rendererRequired": true
+      "rendererRequired": true,
+      "rendererSupport": [
+        "interactive"
+      ],
+      "exporterSupport": []
     },
     {
       "type": "export_layout",
@@ -86,7 +108,12 @@
       "defaultPosition": "none",
       "category": "export.page_layout",
       "runtimeStatus": "native",
-      "rendererRequired": false
+      "rendererRequired": false,
+      "rendererSupport": [],
+      "exporterSupport": [
+        "png",
+        "pdf"
+      ]
     },
     {
       "type": "graticule",
@@ -98,7 +125,23 @@
       "defaultPosition": "none",
       "category": "navigation.graticule",
       "runtimeStatus": "native",
-      "rendererRequired": false
+      "rendererRequired": false,
+      "rendererSupport": [],
+      "exporterSupport": []
+    },
+    {
+      "type": "inset_map",
+      "variants": [
+        "overview",
+        "location"
+      ],
+      "defaultVariant": "overview",
+      "defaultPosition": "top-right",
+      "category": "inset.map",
+      "runtimeStatus": "planned",
+      "rendererRequired": false,
+      "rendererSupport": [],
+      "exporterSupport": []
     },
     {
       "type": "legend",
@@ -111,7 +154,11 @@
       "defaultPosition": "bottom-left",
       "category": "legend.graduated",
       "runtimeStatus": "native",
-      "rendererRequired": true
+      "rendererRequired": true,
+      "rendererSupport": [
+        "interactive"
+      ],
+      "exporterSupport": []
     },
     {
       "type": "map_border",
@@ -124,7 +171,9 @@
       "defaultPosition": "none",
       "category": "frame.map_border",
       "runtimeStatus": "native",
-      "rendererRequired": false
+      "rendererRequired": false,
+      "rendererSupport": [],
+      "exporterSupport": []
     },
     {
       "type": "north_arrow",
@@ -138,7 +187,15 @@
       "defaultPosition": "top-right",
       "category": "navigation.north_arrow",
       "runtimeStatus": "native",
-      "rendererRequired": true
+      "rendererRequired": true,
+      "rendererSupport": [
+        "interactive"
+      ],
+      "exporterSupport": [
+        "png",
+        "pdf",
+        "svg"
+      ]
     },
     {
       "type": "scale_bar",
@@ -151,7 +208,15 @@
       "defaultPosition": "bottom-right",
       "category": "navigation.scale_bar",
       "runtimeStatus": "native",
-      "rendererRequired": true
+      "rendererRequired": true,
+      "rendererSupport": [
+        "interactive"
+      ],
+      "exporterSupport": [
+        "png",
+        "pdf",
+        "svg"
+      ]
     },
     {
       "type": "statistics_panel",
@@ -163,7 +228,11 @@
       "defaultPosition": "top-left",
       "category": "analysis.statistics_panel",
       "runtimeStatus": "native",
-      "rendererRequired": true
+      "rendererRequired": true,
+      "rendererSupport": [
+        "interactive"
+      ],
+      "exporterSupport": []
     },
     {
       "type": "subtitle",
@@ -175,7 +244,11 @@
       "defaultPosition": "top-center",
       "category": "annotation.subtitle",
       "runtimeStatus": "native",
-      "rendererRequired": true
+      "rendererRequired": true,
+      "rendererSupport": [
+        "interactive"
+      ],
+      "exporterSupport": []
     },
     {
       "type": "title",
@@ -188,7 +261,15 @@
       "defaultPosition": "top-center",
       "category": "annotation.title",
       "runtimeStatus": "native",
-      "rendererRequired": true
+      "rendererRequired": true,
+      "rendererSupport": [
+        "interactive"
+      ],
+      "exporterSupport": [
+        "png",
+        "pdf",
+        "svg"
+      ]
     }
   ]
 }
