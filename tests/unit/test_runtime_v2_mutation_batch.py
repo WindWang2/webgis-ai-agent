@@ -317,9 +317,22 @@ async def test_engine_batch_fails_closed_on_degraded_lock(clean_session):
             fail_on_degraded=kwargs.get("fail_on_degraded", False),
         )
 
-    real_lock = dl.session_lock_registry.lock
+    import app.services.mapspec.lifecycle_engine as le
+    import app.services.gis_world_state.mutation as mut_mod
+
+    class _DegradedReg:
+        def lock(self, key, *args, **kwargs):
+            return _ResilientSessionLock(
+                fake_client, f"webgis:sessionlock:{key}", _InProcessLock(),
+                fail_on_degraded=kwargs.get("fail_on_degraded", False),
+            )
+
+    # 全量套件稳健性：patch 消费方模块的引用（cow 测试同款）—— 之前的
+    # dl.session_lock_registry 实例属性补丁在长套件中被其它用例的注册表
+    # 状态交互影响。
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(dl.session_lock_registry, "lock", degraded_factory)
+        mp.setattr(le, "session_lock_registry", _DegradedReg())
+        mp.setattr(mut_mod, "session_lock_registry", _DegradedReg(), raising=False)
         with pytest.raises(LockDegradedError):
             await apply_gis_mutation_batch(
                 clean_session,

@@ -196,7 +196,6 @@ async def test_session_plan_fails_closed_on_degraded_lock(monkeypatch):
     fake_client = MagicMock()
     fake_client.set = AsyncMock(side_effect=ConnectionError("redis down"))
 
-    real_lock = dl.session_lock_registry.lock
     lock_factory_calls = {"n": 0}
 
     def degraded_factory(key, *args, **kwargs):
@@ -206,7 +205,18 @@ async def test_session_plan_fails_closed_on_degraded_lock(monkeypatch):
             fail_on_degraded=kwargs.get("fail_on_degraded", False),
         )
 
-    monkeypatch.setattr(dl.session_lock_registry, "lock", degraded_factory)
+    import app.services.session_plan as sp_mod
+
+    class _DegradedReg:
+        def lock(self, key, *args, **kwargs):
+            lock_factory_calls["n"] += 1
+            return _ResilientSessionLock(
+                fake_client, f"webgis:sessionlock:{key}", _InProcessLock(),
+                fail_on_degraded=kwargs.get("fail_on_degraded", False),
+            )
+
+    # 全量套件稳健性：patch 消费方模块引用（见 mutation_batch 同款注释）。
+    monkeypatch.setattr(sp_mod, "session_lock_registry", _DegradedReg())
 
     from app.services.session_plan import apply_tool_result
 
@@ -218,4 +228,3 @@ async def test_session_plan_fails_closed_on_degraded_lock(monkeypatch):
             success=True,
         )
     assert lock_factory_calls["n"] >= 1
-    monkeypatch.setattr(dl.session_lock_registry, "lock", real_lock)
