@@ -362,6 +362,7 @@ export function ContextPanel({
             onPlanAction={onPlanAction}
             sessionId={sessionId}
             agentRuntime={agentRuntime}
+            ownerToken={ownerToken}
           />
         )}
         {activeTab === 'project' && <ProjectTab />}

@@ -235,6 +235,24 @@ export async function getSessionDetail(sessionId: string, ownerToken?: string | 
 }
 
 /**
+ * 获取当前 SessionPlan 信封投影（Pi 路径面板水合源，#1047）。
+ *
+ * SEC-08：匿名会话需提供 ownerToken 匹配 X-Session-Token 头。
+ * 后端无信封时回 204，apiFetch 解析为 undefined（A-F-14）——「没有计划」
+ * 是正常态，调用方据此隐藏面板而不是报错。
+ * 只读：后端只返回当前信封，绝无历史列表。
+ */
+export async function getSessionPlan(
+  sessionId: string,
+  ownerToken?: string | null
+): Promise<import('@/lib/types/session-plan').SessionPlanProjection | undefined> {
+  return apiFetch<import('@/lib/types/session-plan').SessionPlanProjection | undefined>(
+    `/api/v1/chat/sessions/${sessionId}/plan`,
+    { ownerToken, label: "API Error" }
+  );
+}
+
+/**
  * 删除会话
  *
  * SEC-08：匿名会话需提供 ownerToken 匹配 X-Session-Token 头。

@@ -9,6 +9,7 @@ import { ToolCallChain } from '@/components/chat/tool-call-card';
 import { CollapsibleThink } from '@/components/chat/collapsible-think';
 import { PlanProposalCard } from '@/components/chat/plan-proposal-card';
 import { PlanCard } from '@/components/chat/plan-card';
+import { SessionPlanPanel } from '@/components/chat/session-plan-panel';
 import { InlineNotice } from '@/components/shared/inline-notice';
 import { apiFetch } from '@/lib/api/transport';
 import {
@@ -129,6 +130,8 @@ interface ChatTabProps {
   sessionId?: string | null;
   /** Live host for the current turn (SSE task_start). Health is the fallback. */
   agentRuntime?: AgentRuntime | null;
+  /** SEC-08：匿名会话的所有权 token —— SessionPlan 面板水合（#1047）用。 */
+  ownerToken?: string | null;
 }
 
 /* ─── Memoized message bubble ───
@@ -278,7 +281,7 @@ const ChatMessageItem = memo(function ChatMessageItem({
   );
 });
 
-export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, sessionId, agentRuntime }: ChatTabProps) {
+export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, sessionId, agentRuntime, ownerToken }: ChatTabProps) {
   const [configuredRuntime, setConfiguredRuntime] = useState<AgentRuntime | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -377,6 +380,9 @@ export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, se
           </p>
         </div>
       )}
+      {/* SessionPlan 面板（Pi 路径，#1047）：会话级只读水合卡。无信封 / 拉取
+          失败时整卡隐藏 —— ChatEngine 兜底会话的侧边栏与今天完全一致。 */}
+      <SessionPlanPanel sessionId={sessionId} ownerToken={ownerToken} />
       {/* Messages scroll area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {messages.length === 0 && !isBusy && (
