@@ -71,11 +71,25 @@ async def execute_tool(
     # been superseded while still inside its clock validity window.
     session_id = str(verified["session_id"])
     turn_id = str(verified["turn_id"])
+    import inspect
     from app.agent_pi_bridge import is_active_pi_turn
-    if not is_active_pi_turn(session_id, turn_id):
+    active = is_active_pi_turn(session_id, turn_id)
+    if inspect.isawaitable(active):
+        active = await active
+    if not active:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Pi turn context is no longer active",
+            detail={
+                "error": "Pi turn context is no longer active",
+                "code": "TURN_CONTEXT_INACTIVE",
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "guidance": (
+                    "The turn ownership token has completed or belongs to a different turn. "
+                    "In multi-pod deployments, ensure ingress session affinity is enabled so callbacks "
+                    "route to the pod holding the active subprocess."
+                ),
+            },
         )
     request.sessionId = session_id
     request.verifiedTurnId = turn_id

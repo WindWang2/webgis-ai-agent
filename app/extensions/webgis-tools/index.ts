@@ -98,6 +98,8 @@ function defineWebgisExecuteTool(): ToolDefinition<TSchema> {
 						const errJson = (await response.json()) as any;
 						if (errJson && typeof errJson.detail === "string") {
 							detailText = errJson.detail;
+						} else if (errJson && typeof errJson.detail === "object" && errJson.detail !== null) {
+							detailText = errJson.detail.guidance || errJson.detail.error || JSON.stringify(errJson.detail);
 						} else if (errJson && typeof errJson.error === "string") {
 							detailText = errJson.error;
 						}

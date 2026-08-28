@@ -726,11 +726,58 @@ _active_turn_token: Optional[CancellationToken] = None
 # necessary but insufficient: once its turn ends, a delayed callback must not
 # remain executable for the token's remaining clock lifetime.
 _active_turn_context: Optional[tuple[str, str]] = None
+_REDIS_TURN_TTL_S = 300  # 5 minutes TTL for multi-pod active turn registration
 
 
-def is_active_pi_turn(session_id: str, turn_id: str) -> bool:
-    """Return whether ``(session, turn)`` owns the live Pi prompt."""
-    return _active_turn_context == (session_id, turn_id)
+async def register_active_pi_turn(session_id: str, turn_id: str) -> None:
+    """Register active turn in local process memory and Redis (if available)."""
+    global _active_turn_context
+    _active_turn_context = (session_id, turn_id)
+    try:
+        from app.services.distributed_lock import session_lock_registry
+        client = session_lock_registry._get_client()
+        if client is not None:
+            key = f"webgis:pi:active_turn:{session_id}"
+            await client.set(key, turn_id, ex=_REDIS_TURN_TTL_S)
+    except Exception as e:
+        logger.warning("Failed to register active Pi turn in Redis for %s: %s", session_id, e)
+
+
+async def unregister_active_pi_turn(session_id: str, turn_id: str) -> None:
+    """Unregister active turn in local memory and Redis (if owned)."""
+    global _active_turn_context
+    if _active_turn_context == (session_id, turn_id):
+        _active_turn_context = None
+    try:
+        from app.services.distributed_lock import session_lock_registry
+        client = session_lock_registry._get_client()
+        if client is not None:
+            key = f"webgis:pi:active_turn:{session_id}"
+            script = (
+                b"if redis.call('get', KEYS[1]) == ARGV[1] then "
+                b"return redis.call('del', KEYS[1]) else return 0 end"
+            )
+            await client.eval(script, 1, key, turn_id)
+    except Exception as e:
+        logger.warning("Failed to unregister active Pi turn in Redis for %s: %s", session_id, e)
+
+
+async def is_active_pi_turn(session_id: str, turn_id: str) -> bool:
+    """Return whether ``(session, turn)`` owns the live Pi prompt (local or cross-pod Redis)."""
+    if _active_turn_context == (session_id, turn_id):
+        return True
+    try:
+        from app.services.distributed_lock import session_lock_registry
+        client = session_lock_registry._get_client()
+        if client is not None:
+            key = f"webgis:pi:active_turn:{session_id}"
+            val = await client.get(key)
+            if val is not None:
+                stored = val.decode("utf-8") if isinstance(val, bytes) else str(val)
+                return stored == turn_id
+    except Exception as e:
+        logger.warning("Failed to check active Pi turn in Redis for %s: %s", session_id, e)
+    return False
 
 # Runtime observability: 当前在飞 turn 的关联身份（turn_id / run_id / session_id）。
 # 与 ``_active_turn_token`` 同源——dispatch_tool 是独立的 HTTP 回调 task，看不到流
@@ -1999,7 +2046,7 @@ class PiBridge:
                 # the GLOBAL abort killed this turn, and HTTP-callback tool
                 # dispatches ran unbounded (F24 no-op) on this path.
                 self._active_turn_sid = turn_sid
-                _active_turn_context = (turn_sid, turn_id)
+                await register_active_pi_turn(turn_sid, turn_id)
                 _active_turn_token = CancellationToken(job_id=turn_id)
                 _active_turn_turn_id = turn_id
                 _active_turn_run_id = run_id
@@ -2158,8 +2205,7 @@ class PiBridge:
                 # Clear the active-turn markers before releasing the lock.
                 self._active_turn_sid = None
                 _active_turn_token = None
-                if _active_turn_context == (turn_sid, turn_id):
-                    _active_turn_context = None
+                await unregister_active_pi_turn(turn_sid, turn_id)
                 _active_turn_turn_id = None
                 _active_turn_run_id = None
                 _active_turn_session_id = None
@@ -2262,7 +2308,7 @@ class PiBridge:
             # the lock is held — abort() reads the sid for session scoping,
             # dispatch_tool binds the token via use_token. Cleared in the finally.
             self._active_turn_sid = turn_sid
-            _active_turn_context = (turn_sid, turn_id)
+            await register_active_pi_turn(turn_sid, turn_id)
             _active_turn_token = CancellationToken(job_id=turn_id)
             _active_turn_turn_id = turn_id
             _active_turn_run_id = run_id
@@ -2530,8 +2576,7 @@ class PiBridge:
                 _active_turn_turn_id = None
                 _active_turn_run_id = None
                 _active_turn_session_id = None
-                if _active_turn_context == (turn_sid, turn_id):
-                    _active_turn_context = None
+                await unregister_active_pi_turn(turn_sid, turn_id)
                 self._lock.release()
                 # Runtime observability: settle turn outcome (cancelled ≠ failed),
                 # emit the diagnostic summary, and unregister the evidence. Order:

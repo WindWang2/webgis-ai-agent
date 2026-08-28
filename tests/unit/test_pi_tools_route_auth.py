@@ -159,7 +159,9 @@ async def test_route_inactive_turn_returns_409(async_client, monkeypatch):
         },
     )
     assert resp.status_code == 409
-    assert "Pi turn context is no longer active" in resp.json()["detail"]
+    detail = resp.json()["detail"]
+    detail_str = detail.get("error", "") if isinstance(detail, dict) else detail
+    assert "Pi turn context is no longer active" in detail_str
 
 
 @pytest.mark.asyncio
