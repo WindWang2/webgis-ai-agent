@@ -157,8 +157,8 @@ class PiRpcClient:
         """Check if the Pi child process is running and healthy.
 
         Proactively polls the OS subprocess: if the process exited before
-        the stdout reader reached EOF, sets process_died and triggers death
-        events immediately.
+        the stdout reader reached EOF, sets process_died, clears _process,
+        and triggers death events immediately.
         """
         if self._process_died:
             return False
@@ -167,6 +167,7 @@ class PiRpcClient:
         if self._process.poll() is not None:
             self._process_died = True
             self._process_died_event.set()
+            self._process = None
             self._fail_all_pending("Pi process exited (detected via poll)")
             return False
         return True
@@ -175,8 +176,7 @@ class PiRpcClient:
     def process_died(self) -> bool:
         """True after the Pi process exits or the reader task crashes."""
         if not self._process_died and self._process is not None and self._process.poll() is not None:
-            self._process_died = True
-            self._process_died_event.set()
+            self.is_alive()
         return self._process_died
 
     @property
@@ -192,7 +192,7 @@ class PiRpcClient:
 
     async def start(self) -> None:
         """Start the Pi subprocess."""
-        if self._process is not None:
+        if self._process is not None and self._process.poll() is None:
             return
 
         # 重连/respawn：清掉上一次死亡的残留信号，防止陈旧死亡误杀新 turn

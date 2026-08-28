@@ -139,3 +139,28 @@ async def test_pi_rpc_client_start_refreshes_native_tools_schema_dump(tmp_path, 
             client._reader_task.cancel()
         if client._stderr_task:
             client._stderr_task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_respawn_only_spawns_once(mock_rpc):
+    """Concurrent requests hitting a dead bridge serialize under lock and respawn only once."""
+    import asyncio
+
+    bridge = PiBridge(rpc=mock_rpc)
+    mock_rpc.process_died = True
+    mock_rpc.is_alive.return_value = False
+
+    async def _mock_start():
+        await asyncio.sleep(0.01)
+        mock_rpc.process_died = False
+        mock_rpc.is_alive.return_value = True
+
+    mock_rpc.start.side_effect = _mock_start
+
+    results = await asyncio.gather(
+        bridge.respawn_if_dead(),
+        bridge.respawn_if_dead(),
+        bridge.respawn_if_dead(),
+    )
+    assert all(results)
+    assert mock_rpc.start.call_count == 1
