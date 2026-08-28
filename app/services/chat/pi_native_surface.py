@@ -8,6 +8,8 @@ are generated from ToolRegistry — never a handwritten second catalog.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Mapping
@@ -184,10 +186,6 @@ def native_tools_for_pi(registry: Any) -> list[dict[str, Any]]:
             }
         )
     return dumped
-
-
-import os
-import tempfile
 
 
 def write_native_tools_file(registry: Any, path: Path) -> Path:

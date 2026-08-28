@@ -94,6 +94,16 @@ export async function postToBridge(toolCallId, name, args, turnToken, options = 
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  let cleanupSignal;
+  if (options?.signal) {
+    if (options.signal.aborted) {
+      controller.abort();
+    } else {
+      const onAbort = () => controller.abort();
+      options.signal.addEventListener("abort", onAbort, { once: true });
+      cleanupSignal = () => options.signal.removeEventListener("abort", onAbort);
+    }
+  }
 
   try {
     const response = await fetch(`${WEBGIS_API_BASE}/pi-tools/execute`, {
@@ -106,6 +116,7 @@ export async function postToBridge(toolCallId, name, args, turnToken, options = 
       signal: controller.signal,
     });
     clearTimeout(timeoutId);
+    cleanupSignal?.();
 
     if (!response.ok) {
       let detailText = "";
@@ -151,14 +162,16 @@ export async function postToBridge(toolCallId, name, args, turnToken, options = 
     };
   } catch (error) {
     clearTimeout(timeoutId);
+    cleanupSignal?.();
     if (error?.name === "AbortError" || controller.signal.aborted) {
+      const wasExternal = options?.signal?.aborted;
       const timeoutSec = Math.round(timeoutMs / 1000);
+      const text = wasExternal
+        ? `WebGIS tool execution cancelled by agent/user`
+        : `WebGIS tool execution timed out after ${timeoutSec}s: server is busy or processing a long-running spatial calculation. Check current map state with webgis_cartography_status {} or retry with a narrower scope.`;
       return {
-        content: [{
-          type: "text",
-          text: `WebGIS tool execution timed out after ${timeoutSec}s: server is busy or processing a long-running spatial calculation. Check current map state with webgis_cartography_status {} or retry with a narrower scope.`,
-        }],
-        details: { error: "timeout", toolName: name, timeoutMs },
+        content: [{ type: "text", text }],
+        details: { error: wasExternal ? "cancelled" : "timeout", toolName: name, timeoutMs },
         isError: true,
       };
     }
@@ -189,7 +202,7 @@ export default function webgisToolsExtension(pi) {
       promptSnippet: tool.promptSnippet,
       parameters: tool.parameters || { type: "object", properties: {} },
       async execute(toolCallId, params, _signal, _onUpdate, ctx) {
-        return postToBridge(toolCallId, tool.name, params || {}, currentTurnToken(ctx));
+        return postToBridge(toolCallId, tool.name, params || {}, currentTurnToken(ctx), { signal: _signal });
       },
     });
   }
@@ -244,6 +257,7 @@ export default function webgisToolsExtension(pi) {
         "webgis_execute",
         { toolName, arguments: args },
         currentTurnToken(ctx),
+        { signal: _signal },
       );
     },
   });

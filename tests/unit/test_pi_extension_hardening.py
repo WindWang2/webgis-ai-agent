@@ -147,6 +147,32 @@ def test_post_to_bridge_timeout_provides_guidance():
     assert "webgis_cartography_status" in text
 
 
+def test_post_to_bridge_external_signal_cancellation():
+    """Item 1: External harness cancellation signal cancels postToBridge."""
+    script = f"""
+      import {{ postToBridge }} from {json.dumps(EXTENSION_PATH.as_uri())};
+      const controller = new AbortController();
+      controller.abort();
+      globalThis.fetch = (_url, opts) => new Promise((_resolve, reject) => {{
+        const err = new Error("The operation was aborted");
+        err.name = "AbortError";
+        if (opts.signal?.aborted) {{
+          return reject(err);
+        }}
+        opts.signal.addEventListener("abort", () => {{
+          reject(err);
+        }});
+      }});
+      const res = await postToBridge("call-1", "query_local_poi", {{}}, "tok.123", {{ signal: controller.signal }});
+      process.stdout.write(JSON.stringify(res));
+    """
+    res = _run_node_script(script)
+    data = json.loads(res.stdout)
+    assert data["isError"] is True
+    assert data["details"]["error"] == "cancelled"
+    assert "cancelled" in data["content"][0]["text"]
+
+
 def test_load_native_tools_logs_on_invalid_json(tmp_path: Path):
     """Item 2: loadNativeTools logs loudly when file is unparseable or not an array."""
     bad_file = tmp_path / "bad-native-tools.json"
