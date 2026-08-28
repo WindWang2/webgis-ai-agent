@@ -104,6 +104,7 @@ export function addImageSource(map: Map, id: string, url: string, coordinates: [
     });
     const newSource = map.getSource(id);
     if (newSource) _lastImageUrl.set(newSource, url);
+    recordCustomOverlaySource(id, { kind: 'image', url, coordinates });
   }
 }
 
@@ -146,6 +147,8 @@ export function addGeoJsonSource(map: Map, id: string, data: any, options?: { vi
         _filteredBySource.set(newSource, { data: effective, viewport: [...options.viewport] });
       }
     }
+    // v2(#1078 FE1)：记录 raw data（重挂不走 viewport 裁剪 —— 首挂语义）。
+    recordCustomOverlaySource(id, { kind: 'geojson', data });
   }
 }
 
@@ -177,6 +180,7 @@ export function refreshGeoJsonSourcesByViewport(map: Map, viewport: ViewportBBox
 
 export function unregisterGeoJsonSource(id: string) {
   _registeredGeoJsonSourceIds.delete(id);
+  unregisterCustomOverlay(id);
 }
 
 /**
@@ -295,6 +299,14 @@ export function addVectorLayer(map: Map, options: VectorLayerOptions, beforeId?:
     ...(options.filter && { filter: options.filter }),
   } as any, beforeId);
   noteStyleLayerAdded(map, options.id);
+  recordCustomOverlayLayer({
+    id: options.id,
+    type: options.type,
+    source: options.source,
+    paint: options.paint ? { ...options.paint } : undefined,
+    layout: options.layout ? { ...options.layout } : undefined,
+    filter: options.filter,
+  });
 }
 
 /**
@@ -979,6 +991,12 @@ export function syncLayerZOrder(map: Map, prefix: string, orderedBaseIds: string
  * heatmapCommands.ts).
  */
 export const CUSTOM_OVERLAY_PREFIX = 'custom-';
+// v2(Phase 5, #1078 FE1)：custom-* 挂载记账 —— setStyle 重载后重挂。
+import {
+  recordCustomOverlayLayer,
+  recordCustomOverlaySource,
+  unregisterCustomOverlay,
+} from './custom-overlay-registry';
 
 /**
  * #461 (sibling of #401): re-raise the imperative `custom-*` overlays above

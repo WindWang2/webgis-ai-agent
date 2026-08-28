@@ -20,7 +20,9 @@ export const heatmapCommands: Record<string, CommandEntry> = {
       if (!image) return { status: 'failed', error: 'invalid_params' };
       if (!bbox) return { status: 'failed', error: 'invalid_params' };
 
-      const id = `custom-${layerId || 'heatmap-' + Date.now()}`;
+      // v2(#1078 FE3)：不再 mint Date.now() 匿名 id —— 不可寻址（后续
+      // remove/style/ref 命令无法定位）。缺省回落到稳定语义 id。
+      const id = `custom-${layerId || 'heatmap-raster'}`;
 
       // bbox is [west, south, east, north]
       // MapLibre image source expects: [top-left, top-right, bottom-right, bottom-left]

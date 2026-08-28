@@ -1,7 +1,8 @@
 import type { CommandEntry, MapCommandResult } from './types';
 import { TILE_PROVIDERS } from '@/lib/providers';
 import * as navigation from '@/lib/map-kit/navigation';
-import * as renderer from '@/lib/map-kit/renderer';
+import * as renderer from '@/lib/map-kit/renderer'
+import { unregisterCustomOverlay } from '@/lib/map-kit/custom-overlay-registry';
 import { devOnly } from '@/lib/utils/logger';
 import { parseFilter } from './parseFilter';
 import { isMvtLayer } from '@/lib/store/layer-data';
@@ -351,6 +352,10 @@ export const layerCommands: Record<string, CommandEntry> = {
           if (map.getSource?.(sid)) {
             try { map.removeSource(sid); } catch { /* already gone */ }
           }
+          // v2(#1078 FE3)：source 移除同步注销裁剪/挂载两本账 —— 否则
+          // viewport 刷新持续探测死 id，style 重挂会复活已删覆盖层。
+          renderer.unregisterGeoJsonSource(sid);
+          unregisterCustomOverlay(tgt);
         }
         // 3. store 行同步（含一个 ref 背多层的姊妹行）
         getHudState().removeLayer?.(tgt);

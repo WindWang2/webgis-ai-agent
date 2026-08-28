@@ -254,3 +254,41 @@ def test_auto_safe_visibility_updates_intent_stamp():
     assert by_id["x"]["cartographic_intent"]["presentation_owner"] == "system"
     # user-owned 印记不被系统修复改写
     assert by_id["y"]["cartographic_intent"]["presentation_owner"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_patch_layer_style_intent_persists_paint(clean_session):
+    """#1077：PatchLayerStyleIntent 把 paint 合并进 spec 层族（持久通道）。"""
+    from app.services.mapspec.lifecycle_engine import PatchLayerStyleIntent
+
+    await _seed_layers(clean_session, ["sty-1"])
+    engine = mapspec_lifecycle_engine
+    res = await engine.apply_mutation(
+        clean_session,
+        PatchLayerStyleIntent(layer_id="sty-1", paint={"color": "#00ff00"}),
+        origin="user",
+        expected_revision=1,
+    )
+    assert res.is_error is False
+    state = await session_data_manager.get_map_state(clean_session)
+    layer = next(l for l in state["mapspec"]["layers"] if l["id"] == "sty-1")
+    assert layer["paint"]["color"] == "#00ff00"
+    # 幂等合并：第二次 patch 保留第一次的键
+    res2 = await engine.apply_mutation(
+        clean_session,
+        PatchLayerStyleIntent(layer_id="sty-1", paint={"radius": 12}),
+        origin="user",
+        expected_revision=2,
+    )
+    assert res2.is_error is False
+    state2 = await session_data_manager.get_map_state(clean_session)
+    layer2 = next(l for l in state2["mapspec"]["layers"] if l["id"] == "sty-1")
+    assert layer2["paint"] == {"color": "#00ff00", "radius": 12}
+    # 未知层拒绝
+    res3 = await engine.apply_mutation(
+        clean_session,
+        PatchLayerStyleIntent(layer_id="missing", paint={"color": "#000"}),
+        origin="user",
+        expected_revision=3,
+    )
+    assert res3.is_error is True

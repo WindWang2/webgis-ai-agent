@@ -46,6 +46,7 @@ vi.mock('@/lib/mapspec/session-cursor', () => ({
 const opacityCommit = vi.fn();
 vi.mock('@/lib/mapspec/user-mutation', () => ({
   setLayerOpacityAndCommit: (...args: unknown[]) => opacityCommit(...args),
+  commitLayerStyleAndCommit: vi.fn(async () => {}),
 }));
 
 const heatContractWindow = vi.fn(async () => {
@@ -68,20 +69,20 @@ describe('audit #840: spec-backed gating', () => {
     expect(screen.queryByText(/由 AI 生成的制图规范/)).toBeNull();
   });
 
-  it('disables style controls with an explanation on committed-spec layers', () => {
+  it('#1077 (v2): spec-backed layers expose durable canonical controls; filter controls stay gated', () => {
     committedSpec = { layers: [{ id: 'layer-1' }] };
     render(<LayerStylePanel />);
-    expect(screen.getByText(/由 AI 生成的制图规范/)).toBeTruthy();
-    // jsdom does not reflect fieldset-disable onto descendants' .disabled
-    // property — assert the fieldset gate itself and the notice.
+    // 说明文案更新：规范样式修改持久提交（#1077 durable 通道）
+    expect(screen.getByText(/持久提交到地图规范/)).toBeTruthy();
+    // 规范键控件（颜色等）启用 —— durable 通道经 patch_layer_style 写权威 spec
     const color = screen.getByLabelText('填充颜色') as HTMLInputElement;
     const fieldset = color.closest('fieldset') as HTMLFieldSetElement;
-    expect(fieldset.disabled).toBe(true);
-    // opacity stays functional: it renders outside the gated fieldset
-    const opacity = document.querySelector(
-      'input[type="range"]:not(fieldset[disabled] input)') as HTMLInputElement | null;
+    expect(fieldset.disabled).toBe(false);
+    // opacity 独立通道：滑杆存在且启用（presentation mutation，非样式面）
+    const sliders = screen.getAllByRole('slider') as HTMLInputElement[];
+    const opacity = sliders[sliders.length - 1];
     expect(opacity).toBeTruthy();
-    expect(opacity!.closest('fieldset')).toBeNull();
+    expect(opacity.disabled).toBe(false);
   });
 
   it('removes the never-consumed palette/intensity controls', () => {

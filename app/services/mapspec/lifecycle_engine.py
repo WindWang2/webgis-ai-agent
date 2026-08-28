@@ -79,6 +79,43 @@ class MapSpecResult:
     # Stale expected_revision: not a validation error and not a commit.
     superseded: bool = False
 
+    def to_dict(self) -> Dict[str, Any]:
+        if self.superseded:
+            res = {
+                "success": False,
+                "status": "superseded",
+                "message": self.error_msg,
+                "mutation_revision": self.mutation_revision,
+                "mapspec": self.mapspec,
+            }
+            if self.origin is not None:
+                res["origin"] = self.origin
+            if self.correction_hint:
+                res["correction_hint"] = self.correction_hint
+            return res
+        if self.is_error:
+            res = {"success": False, "message": self.error_msg}
+            if self.origin is not None:
+                res["origin"] = self.origin
+            if self.correction_hint:
+                res["correction_hint"] = self.correction_hint
+            return res
+        res = {
+            "success": True,
+            "mapspec": self.mapspec,
+            "warnings": self.warnings,
+            "is_compiled": self.is_compiled,
+            "checkpoint_id": self.checkpoint_id,
+            "cartography_findings": self.cartography_findings,
+            "cartographic_review": self.cartographic_review,
+            "mapspec_fingerprint": self.mapspec_fingerprint,
+            "runtime_observation_seq": self.runtime_observation_seq,
+            "mutation_revision": self.mutation_revision,
+        }
+        if self.origin is not None:
+            res["origin"] = self.origin
+        return res
+
 
 @dataclass
 class BatchIntentOutcome:
@@ -143,43 +180,6 @@ class MapSpecBatchResult:
             "committed": self.committed,
         }
 
-    def to_dict(self) -> Dict[str, Any]:
-        if self.superseded:
-            res = {
-                "success": False,
-                "status": "superseded",
-                "message": self.error_msg,
-                "mutation_revision": self.mutation_revision,
-                "mapspec": self.mapspec,
-            }
-            if self.origin is not None:
-                res["origin"] = self.origin
-            if self.correction_hint:
-                res["correction_hint"] = self.correction_hint
-            return res
-        if self.is_error:
-            res = {"success": False, "message": self.error_msg}
-            if self.origin is not None:
-                res["origin"] = self.origin
-            if self.correction_hint:
-                res["correction_hint"] = self.correction_hint
-            return res
-        res = {
-            "success": True,
-            "mapspec": self.mapspec,
-            "warnings": self.warnings,
-            "is_compiled": self.is_compiled,
-            "checkpoint_id": self.checkpoint_id,
-            "cartography_findings": self.cartography_findings,
-            "cartographic_review": self.cartographic_review,
-            "mapspec_fingerprint": self.mapspec_fingerprint,
-            "runtime_observation_seq": self.runtime_observation_seq,
-            "mutation_revision": self.mutation_revision,
-        }
-        if self.origin is not None:
-            res["origin"] = self.origin
-        return res
-
 
 # ─── Discriminated Intent Value Objects ──────────────────────────────────────
 
@@ -238,6 +238,21 @@ class CheckpointIntent:
 @dataclass
 class RollbackIntent:
     checkpoint_id: str
+
+
+@dataclass
+@dataclass
+class PatchLayerStyleIntent:
+    """#1077：spec 承载层的持久样式突变（paint 顶层键合并）。
+
+    layer_style_update 此前只改 MapLibre 运行时 paint + HUD 行（不进
+    committed MapSpec）—— 下一次同层 recompile 即回滚，「UI 已改色但
+    地图随后复原」既是体验缺陷也是观察/修复环的噪声源。该意图把样式
+    写入权威 spec；origin=agent 的工具路径与 origin=user 的面板路径
+    共用（样式不属于 user-wins 守卫的 presentation 面）。
+    """
+    layer_id: str
+    paint: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -441,6 +456,7 @@ MutationIntent = Union[
     RollbackIntent,
     SetBasemapIntent,
     SetTimeIntent,
+    PatchLayerStyleIntent,
 ]
 
 
@@ -793,6 +809,42 @@ class MapSpecLifecycleEngine:
                             ),
                         )
                     mapspec["layers"] = patched_layers
+                    auto_checkpoint = True
+
+                elif isinstance(intent, PatchLayerStyleIntent):
+                    # #1077：持久样式突变 —— paint 顶层键合并进 spec 层族
+                    # （与 presentation patch 同族谓词；不触碰
+                    # cartographic_intent —— 样式不是 presentation 决策）。
+                    old_mapspec_snapshot = loaded
+                    mapspec = {**loaded} if loaded else {}
+                    mapspec["layers"] = list(
+                        loaded.get("layers", []) if loaded else []
+                    )
+                    styled_layers: List[Any] = []
+                    style_matched = False
+                    for layer in mapspec["layers"]:
+                        if not isinstance(layer, dict):
+                            styled_layers.append(layer)
+                            continue
+                        if _should_remove_layer(layer, intent.layer_id):
+                            style_matched = True
+                            merged_paint = dict(layer.get("paint") or {})
+                            merged_paint.update(intent.paint or {})
+                            patched_style = dict(layer)
+                            patched_style["paint"] = merged_paint
+                            styled_layers.append(patched_style)
+                        else:
+                            styled_layers.append(layer)
+                    if not style_matched:
+                        return MapSpecResult(
+                            is_error=True,
+                            origin=origin,
+                            error_msg=f"Layer {intent.layer_id} not found.",
+                            correction_hint=(
+                                "Re-read MapSpec and patch an existing layer id."
+                            ),
+                        )
+                    mapspec["layers"] = styled_layers
                     auto_checkpoint = True
 
                 elif isinstance(intent, UpsertSourceIntent):

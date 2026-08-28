@@ -53,6 +53,14 @@ export function setMapSpecSessionCursor(
   nextRevision = 0,
   nextOwnerToken: string | null = null,
 ): void {
+  // v2(#1078 FE1)：会话 id 变化 → custom-* 覆盖层挂载账本随旧会话失效
+  // （重挂注册表不清会让新会话的 style 切换复活旧会话的命令层）。
+  // 同 id 重设（重连/重水合）不清 —— 账本仍描述当前地图的真实挂载。
+  if (sessionId !== nextId) {
+    void import('../map-kit/custom-overlay-registry')
+      .then((m) => m.clearCustomOverlayRegistry())
+      .catch(() => { /* best-effort */ });
+  }
   sessionId = nextId;
   revision = Number.isFinite(nextRevision) ? nextRevision : 0;
   ownerToken = nextOwnerToken;

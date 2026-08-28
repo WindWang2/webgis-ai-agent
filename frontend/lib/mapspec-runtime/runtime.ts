@@ -591,6 +591,15 @@ export class MapSpecRuntime {
       // #462: keep the layer→source index + renderer id-order registry exact.
       this.layerSourceIndex.set(layer.id, layer.source);
       renderer.noteStyleLayerAdded(this.map, layer.id);
+      // v2(audit FE2)：spec 层 label 上活地图 —— headless compiler 一直为
+      // layer.label 生成 `${id}-label` symbol 子层，活路径从未挂载（导出
+      // 与屏幕内容漂移）。挂载条件与编译器一致（label 存在且类型适配）；
+      // `-label` 方言已被删层族谓词与 z 序 rank 认领，无需额外映射。
+      const label = (layer as any).label;
+      const labelField = (layer as any).labelField;
+      if ((label || labelField) && layer.type !== "raster" && layer.type !== "heatmap") {
+        this.addLabelSublayerSafe(layer, String(label || labelField));
+      }
     } catch (err) {
       // Defensive: a recompile that races with a style swap may find the layer
       // already re-added by the styledata path. Log and continue rather than
@@ -609,6 +618,50 @@ export class MapSpecRuntime {
     }
     this.layerSourceIndex.delete(id);
     renderer.noteStyleLayerRemoved(this.map, id);
+    // FE2：label 子层（`${id}-label`）与主层同生命周期 —— 删主层必须
+    // 一并删除，否则留下无 source 消费者的 ghost 文本层。
+    const labelId = `${id}-label`;
+    if (this.map.getLayer(labelId)) {
+      try { this.map.removeLayer(labelId); } catch { /* already gone */ }
+      renderer.noteStyleLayerRemoved(this.map, labelId);
+    }
+  }
+
+  /** FE2：spec 层的 label symbol 子层（`${id}-label`，与编译器方言一致）。 */
+  private addLabelSublayerSafe(layer: MapSpecLayer, labelText: string): void {
+    const labelId = `${layer.id}-label`;
+    const labelField = (layer as any).labelField;
+    const textField = labelField
+      ? ["get", String(labelField)]
+      : labelText;
+    const def: any = {
+      id: labelId,
+      type: "symbol",
+      source: layer.source,
+      paint: {
+        "text-color": "#ffffff",
+        "text-halo-color": "rgba(0,0,0,0.75)",
+        "text-halo-width": 1.25,
+      },
+      layout: {
+        "text-field": textField,
+        "text-size": 12,
+        "text-offset": [0, 1.2],
+        "text-anchor": "top",
+        "text-allow-overlap": false,
+        visibility: (layer.layout as any)?.visibility ?? "visible",
+      },
+    };
+    const src = this.map.getSource(layer.source);
+    if (src && (src as any).type === "vector") def["source-layer"] = "data";
+    try {
+      if (this.map.getLayer(labelId)) this.removeLayerSafe(labelId);
+      this.map.addLayer(def);
+      this.layerSourceIndex.set(labelId, layer.source);
+      renderer.noteStyleLayerAdded(this.map, labelId);
+    } catch (err) {
+      devOnly.warn(`[MapSpecRuntime] label sublayer failed for ${layer.id}:`, err);
+    }
   }
 
   private removeSourceSafe(id: string): void {

@@ -131,9 +131,26 @@ export function collectCartographicRuntimeObservation(
   const liveStyleSources = map.getStyle?.()?.sources;
   const layers = hudLayers.map((hud) => {
     const attested = hud._mapspecFingerprint === mapspecFingerprint;
-    const expected = desired.layers.filter(
-      (candidate) => candidate.id.startsWith(`${hud.id}${SUBLAYER_SEP}`),
+    // v2(audit FE4)：期望子层族按**家族键联合**匹配 —— desired 的层 id
+    // 有两种形态：HUD 行经 hudStateToMapSpec 展开为 `${hud.id}__*` 子层；
+    // committed spec 层保持平铺 id（spec 层 id 或 _mapspecLayerId）。
+    // 旧过滤只认 `hud.id+'__'`：ref-mounted 行（hud.id=geojson ref，
+    // spec 层 id=product-*）与恢复行（hud.id=spec id 但 desired 是平铺
+    // id）都得到空集 → 观察证据恒 visible:false（与真实地图无关），
+    // 持续饿死感知/修复环。与 layer-identity 的别名规则保持一致。
+    const familyKeys = (
+      [hud.id, hud._mapspecLayerId].filter(Boolean) as string[]
     );
+    const seen = new Set<string>();
+    const expected = desired.layers.filter((candidate) => {
+      if (seen.has(candidate.id)) return false;
+      const matched = familyKeys.some(
+        (key) => candidate.id === key
+          || candidate.id.startsWith(`${key}${SUBLAYER_SEP}`),
+      );
+      if (matched) seen.add(candidate.id);
+      return matched;
+    });
     const liveByExpected = expected.map(
       (candidate) => ({ candidate, actual: map.getLayer?.(candidate.id) }),
     );

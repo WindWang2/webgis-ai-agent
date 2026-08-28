@@ -17,6 +17,7 @@ from app.services.mapspec.lifecycle_engine import (
     MapSpecLifecycleEngine,
     PatchComponentIntent,
     PatchLayerPresentationIntent,
+    PatchLayerStyleIntent,
     RemoveLayerIntent,
     ReorderLayersIntent,
     SetLayoutIntent,
@@ -34,6 +35,18 @@ class PatchLayerPresentationBody(BaseModel):
     layer_id: str = Field(min_length=1, max_length=200)
     visible: Optional[bool] = None
     opacity: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+
+
+class PatchLayerStyleBody(BaseModel):
+    """#1077：spec 承载层的持久样式突变（用户样式面板 durable 通道）。
+
+    paint 顶层键合并（部分更新）；族谓词与 presentation patch 一致。
+    """
+
+    intent: Literal["patch_layer_style"]
+    expected_revision: int = Field(ge=0)
+    layer_id: str = Field(min_length=1, max_length=200)
+    paint: dict[str, Any] = Field(min_length=1)
 
 
 class PatchComponentBody(BaseModel):
@@ -109,6 +122,7 @@ class InitProjectBody(BaseModel):
 UserMapSpecMutationRequest = Annotated[
     Union[
         PatchLayerPresentationBody,
+        PatchLayerStyleBody,
         PatchComponentBody,
         SetViewBody,
         RemoveLayerBody,
@@ -128,7 +142,11 @@ async def apply_user_mapspec_mutation(
     include_review: bool = False,
     _conv: Conversation = Depends(require_owned_session),
 ) -> dict[str, Any]:
-    if isinstance(req, PatchLayerPresentationBody):
+    if isinstance(req, PatchLayerStyleBody):
+        intent = PatchLayerStyleIntent(
+            layer_id=req.layer_id, paint=dict(req.paint),
+        )
+    elif isinstance(req, PatchLayerPresentationBody):
         if req.visible is None and req.opacity is None:
             raise HTTPException(
                 status_code=400,

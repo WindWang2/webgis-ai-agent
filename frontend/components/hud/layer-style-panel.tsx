@@ -1,5 +1,7 @@
 'use client';
 import { memo, useState, useRef, useEffect, useSyncExternalStore } from 'react';
+import { commitLayerStyleAndCommit } from '@/lib/mapspec/user-mutation';
+import { useToastStore } from '@/components/ui/toast';
 import { X, RotateCcw } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useHudStore } from '@/lib/store/useHudStore';
@@ -33,8 +35,44 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
         || (!!l?.id && l.id.startsWith(`${specLayerKey}__`)),
     );
 
+  // v2(#1077)：LayerStyle patch → 规范 paint 键（按层型）。无规范键的
+  // 控件（brightness/contrast/saturation/dashArray 等滤镜类）返回空 ——
+  // 这些控件在 spec 层保持禁用（规范未建模，不发明语义）。
+  const specPaintPatchFrom = (patch: Partial<LayerStyle>): Record<string, unknown> => {
+    const out: Record<string, unknown> = {};
+    const type = layer?.type;
+    const push = (k: string, v: unknown) => { if (v !== undefined) out[k] = v; };
+    if (patch.color !== undefined) push('color', patch.color);
+    if (patch.strokeColor !== undefined) push('strokeColor', patch.strokeColor);
+    if (patch.strokeWidth !== undefined) {
+      push(type === 'vector' ? 'width' : 'strokeWidth', patch.strokeWidth);
+    }
+    if (patch.radius !== undefined) push('radius', patch.radius);
+    if (patch.radius_px !== undefined) push('radius', patch.radius_px);
+    if (patch.pointSize !== undefined && type !== 'raster') push('radius', patch.pointSize);
+    return out;
+  };
+
   const updateStyle = (patch: Partial<LayerStyle>) => {
-    if (!layer || specBacked) return;
+    if (!layer) return;
+    if (specBacked) {
+      const paintPatch = specPaintPatchFrom(patch);
+      if (Object.keys(paintPatch).length === 0) return;
+      // 乐观本地行样式 + durable 提交：成功后 committed spec 驱动 reconcile
+      // （spec 为源），失败/被取代由 commit 通道收敛并提示。
+      updateLayer(layer.id, { style: { ...layer.style, ...patch } });
+      void commitLayerStyleAndCommit(specLayerKey!, paintPatch).catch(() => {
+        // 非 superseded 失败：本地乐观回滚（与 U-3 语义一致）
+        updateLayer(layer.id, { style: { ...layer.style } });
+        import('@/lib/api/transport').then(({ describeApiError }) => {
+          useToastStore.getState().addToast(
+            `样式修改未生效（已恢复）：${describeApiError({}, '网络错误')}`,
+            'error',
+          );
+        }).catch(() => { /* noop */ });
+      });
+      return;
+    }
     updateLayer(layer.id, { style: { ...layer.style, ...patch } });
   };
 
@@ -141,14 +179,17 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
 
         {specBacked && (
           <div className="rounded-lg border border-hud-cyan/20 bg-hud-cyan/5 px-3 py-2 text-[15px] leading-relaxed text-white/45">
-            该图层由 AI 生成的制图规范（MapSpec）管理，样式暂不支持在此修改；
-            透明度调整仍然有效。
+            该图层由制图规范（MapSpec）管理：颜色/描边/尺寸等规范样式修改会
+            持久提交到地图规范（#1077）；滤镜类调整（亮度/对比度/饱和度）暂
+            不支持；透明度走独立通道，始终有效。
           </div>
         )}
 
         {/* audit #840: spec-backed 图层上以下样式控件全部禁用（写 HUD store
             不进 paint，此前是静默 no-op）。 */}
-        <fieldset disabled={specBacked} className={specBacked ? 'opacity-40' : ''}>
+        {/* v2(#1077)：规范键控件对 spec 层启用（durable 通道）；滤镜类控件
+            在下方按 specBacked 单独禁用。 */}
+        <fieldset>
         {/* === VECTOR CONTROLS === */}
         {layer.type === 'vector' && (
           <>
@@ -212,6 +253,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
                 ] as const).map((d) => (
                   <button
                     key={d.value}
+                    disabled={specBacked}
                     onClick={() => updateStyle({ dashArray: d.value })}
                     className={`flex-1 px-2 py-1.5 text-[15px] rounded-lg font-semibold transition-colors ${
                       dashArray === d.value
@@ -286,7 +328,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
               <label className="text-[15px] text-white/25 uppercase tracking-wider mb-1.5 block">
                 亮度 <span className="text-white/15 font-mono">{brightness.toFixed(1)}</span>
               </label>
-              <input type="range" min={0.5} max={2} step={0.1} value={brightness}
+              <input type="range" min={0.5} max={2} step={0.1} value={brightness} disabled={specBacked}
                 onChange={(e) => updateStyle({ brightness: parseFloat(e.target.value) })}
                 className="w-full accent-hud-cyan" />
             </div>
@@ -294,7 +336,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
               <label className="text-[15px] text-white/25 uppercase tracking-wider mb-1.5 block">
                 对比度 <span className="text-white/15 font-mono">{contrast.toFixed(1)}</span>
               </label>
-              <input type="range" min={0.5} max={2} step={0.1} value={contrast}
+              <input type="range" min={0.5} max={2} step={0.1} value={contrast} disabled={specBacked}
                 onChange={(e) => updateStyle({ contrast: parseFloat(e.target.value) })}
                 className="w-full accent-hud-cyan" />
             </div>
@@ -302,7 +344,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
               <label className="text-[15px] text-white/25 uppercase tracking-wider mb-1.5 block">
                 饱和度 <span className="text-white/15 font-mono">{saturation.toFixed(1)}</span>
               </label>
-              <input type="range" min={0} max={2} step={0.1} value={saturation}
+              <input type="range" min={0} max={2} step={0.1} value={saturation} disabled={specBacked}
                 onChange={(e) => updateStyle({ saturation: parseFloat(e.target.value) })}
                 className="w-full accent-hud-cyan" />
             </div>
