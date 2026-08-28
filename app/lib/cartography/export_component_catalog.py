@@ -25,11 +25,11 @@ OUTPUT = REPO_ROOT / "frontend" / "lib" / "map-components" / "component-catalog.
 
 # ComponentTypes that must have a live interactive renderer whenever a spec
 # enables them (chrome/panel family). Export/planned types are exempt.
-RENDERER_EXEMPT = {
+# #1075(D-5): 只为「无描述符的类型」兜底；有描述符的类型以
+# renderer_support 为准（graticule/map_border 的描述符已如实改为空）。
+RENDERER_EXEMPT_NO_DESC = {
     "basemap",          # type-only union member (style, not chrome)
     "export_layout",    # exporter-side only
-    "graticule",        # export-oriented overlay (renderer optional)
-    "map_border",       # export frame (renderer optional)
     "inset_map",        # runtime_status=planned (not in ComponentType union yet)
 }
 
@@ -40,6 +40,10 @@ def build_catalog() -> dict:
     components = []
     for t in types:
         desc = registry.get_by_type(t)
+        # #1075(D-5): rendererRequired 由描述符的 renderer_support 驱动
+        #（描述符如实申报），RENDERER_EXEMPT 只描述「无描述符的类型」——
+        # 此前硬编码集合覆盖描述符真相，两个事实源打架。
+        renderer_supported = bool(desc.renderer_support) if desc else False
         entry = {
             "type": t,
             "variants": list(desc.variants) if desc else [],
@@ -47,7 +51,7 @@ def build_catalog() -> dict:
             "defaultPosition": desc.default_position if desc else "none",
             "category": desc.category if desc else "",
             "runtimeStatus": desc.runtime_status if desc else "native",
-            "rendererRequired": t not in RENDERER_EXEMPT,
+            "rendererRequired": renderer_supported and t not in RENDERER_EXEMPT_NO_DESC,
         }
         components.append(entry)
     return {

@@ -246,6 +246,15 @@ _SEED_CAPS: List[CapabilityDescriptor] = [
         output_artifact_types=["line_feature_set"],
         purpose_template="最短路径",
     ),
+    # #1075(D-10): 时序能力就位 —— temporal.* 算法此前因该 capability
+    # 缺失被 if False 挂到 spatial_interpolation 上。
+    CapabilityDescriptor(
+        id="temporal_trend", name="时序趋势", category="analysis",
+        domain="statistics", description="时间维度的趋势/聚合/时空热点分析。",
+        input_artifact_types=["poi_feature_set", "raster_surface", "stats_table"],
+        output_artifact_types=["stats_table", "raster_surface"],
+        purpose_template="时序趋势",
+    ),
 ]
 
 

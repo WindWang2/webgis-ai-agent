@@ -28,6 +28,10 @@ Harness 的 recipe/planner 引用：
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -444,7 +448,13 @@ class MapModelRegistry:
             return
         self._by_id[model.id] = model
         for alias in model.aliases:
-            self._alias.setdefault(alias, model.id)
+            existing = self._alias.setdefault(alias, model.id)
+            if existing != model.id:
+                # #1075(D-2): 别名碰撞此前首胜且无痕。
+                logger.warning(
+                    "map model alias %r 冲突：%r 已指向 %r，忽略 %r",
+                    alias, alias, existing, model.id,
+                )
 
     def resolve(self, model_or_alias_id: str) -> Optional[MapModel]:
         canon = self._alias.get(model_or_alias_id, model_or_alias_id)

@@ -68,7 +68,7 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         id="legend", category="legend.graduated", type="legend",
         name="Graduated Legend", name_zh="分级图例",
         placement_domain="overlay", supported_outputs=["interactive", "png", "pdf", "svg"],
-        compatible_map_models=["administrative_choropleth", "graduated", "aggregate_grid", "hotspot_overlay", "proximity_overlay", "administrative_aggregation"],
+        compatible_map_models=["administrative_choropleth", "aggregate_grid", "hotspot_overlay", "proximity_overlay", "administrative_aggregation"],  # #1075(D-6): 移除悬空 "graduated"（非 id 非别名；真别名 graduated_choropleth/choropleth 均解析到已列出的 administrative_choropleth）
         compatible_artifact_types=["admin_aggregate_table", "grid_aggregate"],
         renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
         default_variant="academic", variants=["academic", "compact", "report"],
@@ -128,8 +128,11 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
     MapComponentDescriptor(
         id="graticule", category="navigation.graticule", type="graticule",
         name="Graticule", name_zh="经纬网",
-        placement_domain="overlay", supported_outputs=["interactive", "png", "pdf", "svg"],
-        renderer_support=["interactive"], exporter_support=["png", "pdf"],
+        # #1075(D-5): 前端无 graticule 渲染器 —— renderer_support 如实为空，
+        # interactive 输出从 supported_outputs 摘除（交互模板选中它只会渲染
+        # 空白且无信号）。导出（png/pdf）路径真实支持，保留。
+        placement_domain="overlay", supported_outputs=["png", "pdf", "svg"],
+        renderer_support=[], exporter_support=["png", "pdf"],
         default_variant="light", variants=["light", "geographic"],
         default_position="none", allowed_positions=["none"],
         cardinality="single", priority=60,
@@ -138,7 +141,8 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         id="map_border", category="frame.map_border", type="map_border",
         name="Map Border", name_zh="图框边框",
         placement_domain="chrome", supported_outputs=["png", "pdf", "svg"],
-        renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
+        # #1075(D-5): 前端无 map_border 渲染器 —— renderer_support 如实为空。
+        renderer_support=[], exporter_support=["png", "pdf", "svg"],
         default_variant="minimal", variants=["minimal", "academic", "report"],
         default_position="none", allowed_positions=["none"],
         cardinality="single", priority=70,
@@ -199,11 +203,14 @@ class ComponentRegistry:
     def __init__(self) -> None:
         self._by_id: Dict[str, MapComponentDescriptor] = {}
         self._by_type: Dict[str, str] = {}
+        # #1076(D-8): 注册代次 —— 静态目录派生缓存的失效键。
+        self._version: int = 0
         self._by_category: Dict[str, List[str]] = {}
 
     def load_builtins(self) -> None:
         self._by_id.clear()
         self._by_type.clear()
+        self._version += 1
         self._by_category.clear()
         for desc in _SEED_DESCRIPTORS:
             self.register(desc)
@@ -213,11 +220,16 @@ class ComponentRegistry:
             raise ValueError(f"duplicate component descriptor id: {desc.id}")
         self._by_id[desc.id] = desc
         self._by_type[desc.type] = desc.id
+        self._version += 1
         self._by_category.setdefault(desc.category, []).append(desc.id)
         # also index by top-level category prefix
         top = desc.category.split(".")[0]
         if top != desc.category:
             self._by_category.setdefault(top, []).append(desc.id)
+
+    def registry_version(self) -> int:
+        """#1076(D-8): 注册代次（静态目录派生缓存的失效键）。"""
+        return self._version
 
     def get(self, descriptor_id: str) -> Optional[MapComponentDescriptor]:
         return self._by_id.get(descriptor_id)

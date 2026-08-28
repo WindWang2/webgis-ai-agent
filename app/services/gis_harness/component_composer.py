@@ -124,8 +124,16 @@ class ComponentComposer:
             category = desc.category if desc else ""
             variant = ""
             template_id = template_map.get(ctype, "")
-            position = slot_positions.get(ctype, _default_position_for_type(ctype))
-            priority = _PRIORITY.get(ctype, 50)
+            # #1075(D-11): position/priority 以描述符为权威（缺省回退表）——
+            # 此前只查硬编码表，annotation 的描述符 priority=55 被静默降为 50。
+            if desc is not None and desc.default_position:
+                position = slot_positions.get(ctype, desc.default_position)
+            else:
+                position = slot_positions.get(ctype, _default_position_for_type(ctype))
+            if desc is not None and desc.priority is not None:
+                priority = int(desc.priority)
+            else:
+                priority = _PRIORITY.get(ctype, 50)
 
             # resolve template variant / options
             options: Dict[str, Any] = {}

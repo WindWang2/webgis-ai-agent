@@ -6,6 +6,10 @@ Tool Resolver 在执行期解析）—— 工具替换时模板无需重写。
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 from typing import Dict, List, Optional
 
 from pydantic import BaseModel, model_validator
@@ -197,8 +201,11 @@ class ProductTemplateRegistry:
             self.register(tpl)
 
     def register(self, tpl: MapProductTemplate) -> None:
-        if tpl.id not in self._by_id:
-            self._by_id[tpl.id] = tpl
+        if tpl.id in self._by_id:
+            # #1075(D-2): 静默跳过 → 显式告警。
+            logger.warning("product template %r 重复注册：保留既有条目", tpl.id)
+            return
+        self._by_id[tpl.id] = tpl
 
     def get(self, template_id: str) -> Optional[MapProductTemplate]:
         return self._by_id.get(template_id)

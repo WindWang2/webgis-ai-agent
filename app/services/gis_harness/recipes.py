@@ -11,6 +11,10 @@ eligibility / fallback 全部是代码侧确定性检查（几何兼容、最小
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -468,6 +472,9 @@ class RecipeRegistry:
 
     def register(self, recipe: CartographyRecipe) -> None:
         if recipe.id in self._by_id:
+            # #1075(D-2): 与 lib/gis 系（register 即 raise）对齐至少留痕 ——
+            # 此前静默 return，后续种子编辑可无声遮蔽既有条目。
+            logger.warning("recipe %r 重复注册：保留既有条目，忽略新条目", recipe.id)
             return
         self._by_id[recipe.id] = recipe
         for task in recipe.intent_tasks:

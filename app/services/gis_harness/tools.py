@@ -106,6 +106,15 @@ class ComponentUpdateArgs(BaseModel):
                                 "mutation_revision；落后即 superseded（用户最新交互优先）")
 
 
+# #1076(D-8): turn 级记忆 —— intent→product 链此前每个 harness 工具调用
+# 各查一次 DB（一条链 2 次往返）。缓存键为 (project_id, turn_id)：同 turn
+# 内的记忆漂移不可见（recipe 验证事实本 turn 内不会变），跨 turn 失效。
+_verified_recipes_cache: dict[tuple, tuple] = {}
+# #1076(D-8): 组件静态 variant 目录缓存（registry_version 失效）。
+_variant_catalog_cache: dict = {}
+_VERIFIED_CACHE_MAX = 64
+
+
 async def _project_verified_recipes() -> set:
     """当前 turn 的项目已验证 recipe id 集合（无项目上下文 → 空集）。
 
@@ -119,6 +128,11 @@ async def _project_verified_recipes() -> set:
     project_id = getattr(ctx, "project_id", None)
     if not project_id:
         return set()
+    turn_id = getattr(ctx, "turn_id", None) or ""
+    cache_key = (str(project_id), str(turn_id))
+    cached = _verified_recipes_cache.get(cache_key)
+    if cached is not None:
+        return set(cached)
 
     def _read() -> set:
         from app.core.database import SessionLocal
@@ -130,9 +144,13 @@ async def _project_verified_recipes() -> set:
     try:
         import asyncio as _asyncio
 
-        return await _asyncio.to_thread(_read)
+        verified = await _asyncio.to_thread(_read)
     except Exception:  # noqa: BLE001 — 记忆缺失退化为无加成
         return set()
+    _verified_recipes_cache[cache_key] = tuple(sorted(verified))
+    while len(_verified_recipes_cache) > _VERIFIED_CACHE_MAX:
+        _verified_recipes_cache.pop(next(iter(_verified_recipes_cache)))
+    return verified
 
 
 def register_gis_harness_tools(registry: ToolRegistry):
@@ -173,7 +191,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
         geometry_hint: Optional[str] = None,
     ) -> dict:
         from app.services.gis_harness.intent import merge_intent_hints, resolve_map_request_intent
-        from app.services.gis_harness.planner import MapProductPlanner, resolve_tool_for_capability
+        from app.services.gis_harness.planner import MapProductPlanner
 
         base = resolve_map_request_intent(query)
         hints: Dict[str, Any] = {}
@@ -222,8 +240,9 @@ def register_gis_harness_tools(registry: ToolRegistry):
         plan = planner.plan_from_intent(intent, available_tools=available or None)
 
         capabilities = []
-        # resolved_algorithm 与 plan 裁决证据同源；resolved_tool 保持与
-        # 真实注册表视图（available，含空视图）一致。
+        # #1076(D-7): resolved_tool 与 resolved_algorithm 同源于
+        # plan.algorithm_selections（此前 tool 字段对每 capability 再跑一遍
+        # resolver —— probe 实测恰 2× 解析，且两字段可能分叉）。
         selection_by_cap = {
             r.capability: r for r in plan.algorithm_selections
         }
@@ -232,7 +251,9 @@ def register_gis_harness_tools(registry: ToolRegistry):
             capabilities.append({
                 "capability": req.capability,
                 "purpose": req.purpose,
-                "resolved_tool": resolve_tool_for_capability(req.capability, available),
+                "resolved_tool": (
+                    record.tool if record and record.status == "resolved" else ""
+                ),
                 "resolved_algorithm": (
                     record.algorithm if record and record.status == "resolved"
                     else ""
@@ -1167,15 +1188,23 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 summary["text"] = opts["text"][:60]
             return summary
 
+        # #1076(D-8): 静态目录进程级缓存（描述符载入后才变）—— 此前每次
+        # 调用全量排序重建。registry 版本号作为失效键（注册新描述符即变）。
         component_registry = get_component_registry()
-        variant_catalog = []
-        for desc in sorted(component_registry.native_descriptors(), key=lambda d: d.id):
-            variant_catalog.append({
-                "type": desc.type,
-                "variants": desc.variants,
-                "default_variant": desc.default_variant,
-                "default_position": desc.default_position,
-            })
+        _reg_version = component_registry.registry_version()
+        _cached_catalog = _variant_catalog_cache.get("catalog")
+        if _cached_catalog is None or _cached_catalog[0] != _reg_version:
+            variant_catalog = []
+            for desc in sorted(component_registry.native_descriptors(), key=lambda d: d.id):
+                variant_catalog.append({
+                    "type": desc.type,
+                    "variants": desc.variants,
+                    "default_variant": desc.default_variant,
+                    "default_position": desc.default_position,
+                })
+            _variant_catalog_cache["catalog"] = (_reg_version, variant_catalog)
+        else:
+            variant_catalog = _cached_catalog[1]
 
         # revision 唯一权威是 map_state._cartographic_mutation_revision
         # （引擎从不在 spec 文档内嵌该字段）。
