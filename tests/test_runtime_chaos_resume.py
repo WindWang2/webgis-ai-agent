@@ -963,6 +963,10 @@ async def test_ack_persist_redis_tombstone_is_410(monkeypatch):
     process-local is_cartographic_session_deleted set (cross-replica delete)."""
 
     class _TombstoneStore(MemorySessionStore):
+        # v2(Phase 6)：tombstone 检查走单字段读（get_state_field）
+        async def get_state_field(self, session_id: str, field: str):
+            return True if field == "_cartographic_deleted" else None
+
         async def get_map_state(self, session_id: str) -> dict:
             return {"_cartographic_deleted": True}
 

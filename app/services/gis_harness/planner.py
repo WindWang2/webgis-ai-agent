@@ -20,6 +20,7 @@ MapModelRegistry、模板选择归 TemplateSelector —— 本文件不再持有
 from __future__ import annotations
 
 import hashlib
+import json
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -77,10 +78,15 @@ def resolve_tool_for_capability(
     return resolution.tool if resolution.status == "resolved" else None
 
 
-# 模块级兼容名（DEPRECATED：import 时快照，进程内重注册 registry 会过期；
-# 新代码用 capability_tool_map()）。旧导入方（tests 等）仍可
-# `from planner import CAPABILITY_TOOLS`。
-CAPABILITY_TOOLS: Dict[str, List[str]] = capability_tool_map()
+# 模块级兼容名（DEPRECATED：新代码用 capability_tool_map()）。
+# v2(review)：不再 import 时快照 —— 模块级调用会在 manifest 编译（持
+# threading.Lock）经 import 链重入 get_runtime_manifest() 时死锁（非重入
+# 锁 + 缓存未置的再编译）。PEP 562 惰性属性保持 `from planner import
+# CAPABILITY_TOOLS` 兼容，且首次访问才取当前视图（顺带消除快照过期）。
+def __getattr__(name: str):
+    if name == "CAPABILITY_TOOLS":
+        return capability_tool_map()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def layer_type_for_cartography(cartography: str, default: str = "circle") -> str:
@@ -269,8 +275,14 @@ class MapProductPlanner:
         memo_key = None
         if use_memo:
             try:
+                # v2(review R3-P1-3)：intent 全量参与键 —— task/subject/
+                # output_intents 等字段都改变 plan 输出，只按 query 键会在
+                # 同 query 不同 intent 时返回错误计划（复现于 review）。
+                intent_canonical = json.dumps(
+                    intent.model_dump(), ensure_ascii=False, sort_keys=True,
+                )
                 memo_key = (
-                    intent.query, recipe_id, template_id,
+                    intent_canonical, recipe_id, template_id,
                     tuple(sorted(available_tools)) if available_tools is not None else None,
                     tuple(sorted(project_verified)) if project_verified else None,
                     get_runtime_manifest().fingerprint,

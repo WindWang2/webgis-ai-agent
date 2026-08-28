@@ -106,7 +106,12 @@ class CompiledRuntimeManifest:
         """
         if not stored_fingerprint:
             return False
-        return stored_fingerprint != self.fingerprint
+        stored = str(stored_fingerprint)
+        if len(stored) != 64 or any(c not in "0123456789abcdef" for c in stored):
+            # 损坏/截断的存储值不是"不同 registry 世代"的证据 —— 不判
+            # stale（避免损坏记录把计划永久标记）。
+            return False
+        return stored != self.fingerprint
 
     def summary(self) -> Dict[str, Any]:
         by_sev: Dict[str, int] = {s: 0 for s in _SEVERITIES}
@@ -167,11 +172,15 @@ def _project_algorithm(algo) -> Dict[str, Any]:
 
 
 def _project_tool(meta: Any) -> Dict[str, Any]:
+    def _get(key: str, default):
+        if isinstance(meta, dict):
+            return meta.get(key, default) or default
+        return getattr(meta, key, default) or default
     return {
-        "version": getattr(meta, "version", "1.0") or "1.0",
-        "contract_version": getattr(meta, "contract_version", 1) or 1,
-        "tier": getattr(meta, "tier", 1) or 1,
-        "domains": sorted(getattr(meta, "domains", None) or []),
+        "version": _get("version", "1.0"),
+        "contract_version": _get("contract_version", 1),
+        "tier": _get("tier", 1),
+        "domains": sorted(_get("domains", []) or []),
     }
 
 
@@ -224,15 +233,19 @@ def compile_runtime_manifest(tool_registry: Optional[Any] = None) -> CompiledRun
             from app.tools.registry import ToolRegistry
             tool_registry = ToolRegistry()
             init_tools(tool_registry)
-        meta_getter = getattr(tool_registry, "get_metadata", None)
-        name_getter = getattr(tool_registry, "list_tool_names", None)
-        if name_getter is not None:
-            tool_names = set(name_getter())
+        # v2(review R3-P1-1)：真实访问器是 metadata(name)/all_metadata()/
+        # list_tools()（此前探测的 get_metadata/list_tool_names 不存在 →
+        # 全部工具投影为默认值，network_tool_orphan 守卫恒不触发、指纹对
+        # 工具 tier/contract_version 变化盲）。
+        all_meta_getter = getattr(tool_registry, "all_metadata", None)
+        if callable(all_meta_getter):
+            tool_names = set(all_meta_getter().keys())
         else:
             tool_names = set(getattr(tool_registry, "_tools", {}).keys())
+        meta_getter = getattr(tool_registry, "metadata", None)
         for name in sorted(tool_names):
             meta = meta_getter(name) if callable(meta_getter) else None
-            manifest.tools[name] = _project_tool(meta if meta is not None else type("M", (), {})())
+            manifest.tools[name] = _project_tool(meta if meta is not None else {})
     except Exception as e:  # noqa: BLE001
         _fatal("tool_registry_unavailable", str(e))
 
@@ -242,10 +255,21 @@ def compile_runtime_manifest(tool_registry: Optional[Any] = None) -> CompiledRun
             if cap not in cap_ids:
                 _fatal("algorithm_dangling_capability", f"{aid} → capability {cap} 不存在")
         missing_tools = [t for t in proj["tool_candidates"] if t not in tool_names]
-        if proj["tool_candidates"] and missing_tools == proj["tool_candidates"]:
-            _fatal(
+        if proj["runtime_status"] != "native":
+            # planned 算法的前置声明候选允许缺失（规划态语义）。
+            if missing_tools:
+                _planned(
+                    "planned_algorithm_missing_tools",
+                    f"{aid}（planned）候选未注册: {missing_tools}",
+                )
+        elif proj["tool_candidates"] and missing_tools == proj["tool_candidates"]:
+            # v2(review R3-P2-4)：全候选缺失降为 warning —— 根因通常是
+            # init_tools 的单模块加载失败（环境相关，已有日志），fatal 会
+            # 把可降级运行变成启动砖。静态种子错误（悬空 capability/别名/
+            # recipe）仍 fatal。
+            _warn(
                 "algorithm_no_tool",
-                f"{aid} 的全部候选工具不存在: {missing_tools}",
+                f"{aid} 的全部候选工具不存在（模块加载失败？）: {missing_tools}",
             )
         elif missing_tools:
             _warn(
@@ -270,8 +294,11 @@ def compile_runtime_manifest(tool_registry: Optional[Any] = None) -> CompiledRun
                 if t not in tools_for_cap:
                     tools_for_cap.append(t)
 
-    # 网络域工具必须有 capability 归属（R2 parity 的持续防回归）
+    # 网络域工具必须有 capability 归属（R2 parity 的持续防回归）。
+    # 豁免：webgis_* 规划入口工具（harness 面，非 capability 分析）。
     for name, proj in sorted(manifest.tools.items()):
+        if name.startswith("webgis_"):
+            continue
         if "network" in proj["domains"] and name not in manifest.tool_to_capability:
             _warn("network_tool_orphan", f"{name} 无 capability 绑定（planner 不可达）")
 

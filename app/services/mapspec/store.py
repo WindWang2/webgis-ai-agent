@@ -314,7 +314,8 @@ class MapSpecStore:
         # 纹（线程内单次 O(bytes)）；冷启动/跨进程经 sidecar 文件 + Redis
         # 定向字段（均 O(1) 读）恢复语义。
         # v2(audit F4): 携带 layer_op 时永不短路 —— layers 写必须发生。
-        if layer_op is None and mapspec is self._persisted_obj.get(session_id):
+        if (layer_op is None and mutation_revision is None
+                and mapspec is self._persisted_obj.get(session_id)):
             # #1074(F-8): 同一性短路此前完全跳过存活复检（#838 只修了指纹
             # 路径）—— 他 worker 的 clear_session（空闲逐出，无 tombstone）
             # 后本进程同对象再保存会静默不持久化。sidecar + Redis 指纹两个
@@ -328,7 +329,8 @@ class MapSpecStore:
                 return {"mapspec": mapspec}
             self._invalidate_process_cache(session_id)
         fp = await asyncio.to_thread(_fingerprint_sync, mapspec)
-        if layer_op is None and self._persisted_fp.get(session_id) == fp:
+        if (layer_op is None and mutation_revision is None
+                and self._persisted_fp.get(session_id) == fp):
             # audit #838: 进程内指纹命中不再无条件短路 —— sidecar 仍在且指纹
             # 一致才算数。会话在别处被清除/盘上目录被回收后，同 id 复用的等值
             # spec 会在此走到全量落盘，而不是静默跳过（磁盘/Redis 双缺失）。
@@ -346,7 +348,8 @@ class MapSpecStore:
         # miss（退回全量落盘），不因缺方法而崩。
         _get_fp = getattr(session_data_manager, "get_map_spec_fingerprint", None)
         redis_fp = await _get_fp(session_id) if _get_fp is not None else None
-        if layer_op is None and sidecar_fp == fp and redis_fp == fp:
+        if (layer_op is None and mutation_revision is None
+                and sidecar_fp == fp and redis_fp == fp):
             self._persisted_fp[session_id] = fp
             self._persisted_obj[session_id] = mapspec
             return {"mapspec": mapspec}
@@ -422,8 +425,11 @@ class MapSpecStore:
         """
         _atomic_write_json_sync(mapspec_path, mapspec)
         if mutation_revision is not None:
-            (mapspec_path.parent / _REV_SIDECAR_NAME).write_text(
-                str(int(mutation_revision))
+            # v2(review R1-P1-2)：rev sidecar 原子写 —— 撕裂的 sidecar 在
+            # 磁盘复活路径读出 disk_rev=None，会以旧令牌复活新世代 spec
+            # （spec 世代 > rev 的危险方向）。
+            _atomic_write_text_sync(
+                mapspec_path.parent / _REV_SIDECAR_NAME, str(int(mutation_revision))
             )
 
         rev_dir.mkdir(parents=True, exist_ok=True)

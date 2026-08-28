@@ -116,7 +116,7 @@ export const heatmapCommands: Record<string, CommandEntry> = {
       // V3: missing payload data → explicit failed result (was a silent return).
       if (!geojson || !style) return { status: 'failed', error: 'invalid_params' };
 
-      const id = `custom-${layerId || 'thematic-' + (field || Date.now())}`;
+      const id = `custom-${layerId || 'thematic-' + (field || 'map')}`;
       renderer.addGeoJsonSource(map, id, geojson);
       renderer.addThematicLayer(map, id, geojson, style);
       // V3 round-2 FIX-B (issue #393): post-mutation verification — the source

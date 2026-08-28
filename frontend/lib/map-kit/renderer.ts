@@ -87,6 +87,8 @@ function _filterForViewport(source: object | undefined, data: any, viewport: Vie
 export function addImageSource(map: Map, id: string, url: string, coordinates: [[number, number], [number, number], [number, number], [number, number]]) {
   const source = map.getSource(id) as ImageSource;
   if (source) {
+    // v2(review R4-P1-2)：image 更新路径同样刷新账本（同 GeoJSON 理由）。
+    recordCustomOverlaySource(id, { kind: 'image', url, coordinates });
     if (source.updateImage) {
       // 审计 F28：同 url 加 cache-buster，防 MapLibre 内部缓存命中显示旧图
       const lastUrl = _lastImageUrl.get(source);
@@ -132,6 +134,9 @@ export function addGeoJsonSource(map: Map, id: string, data: any, options?: { vi
     source.setData(effective as any);
     _rawDataBySource.set(source, data);
     _registeredGeoJsonSourceIds.add(id);
+    // v2(review R4-P1-2)：更新路径同步刷新挂载账本 —— 只记首挂数据会让
+    // style 重载把覆盖层回退到最初的 GeoJSON。
+    recordCustomOverlaySource(id, { kind: 'geojson', data });
   } else {
     map.addSource(id, {
       type: 'geojson',

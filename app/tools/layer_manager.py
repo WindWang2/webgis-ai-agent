@@ -227,10 +227,48 @@ def register_layer_management_tools(registry: ToolRegistry):
             _raw_rev = _state.get("_cartographic_mutation_revision", 0)
             _revision = _raw_rev if isinstance(_raw_rev, int) else 0
 
-        return {
+        # v2(review R2-P1-1)：尊重集随 params 下发 —— 前端命令据此跳过
+        # 对这些层的本地呈现翻转（服务端守卫已拒绝，本地翻转会造成
+        # 运行时与 durable desired 态的会话内分叉且 pending 永不清除）。
+        respect_ids = sorted(set(user_guard_refusals))
+        # v2(review R2-P1-2)：失败/未提交批的 per-layer 列表如实清空
+        # （回滚后的 applied 记录会谎报已落盘），消息按裁决实况表述。
+        if batch.committed:
+            patched_show = durability_patched
+            patched_hide = hidden_patched
+        else:
+            patched_show = []
+            patched_hide = []
+        if batch.is_error:
+            message = (
+                f"收口事务失败已回滚：{batch.error_msg}。"
+                f"（correction: {batch.correction_hint}）"
+            )
+        elif not batch.committed and user_guard_refusals:
+            message = (
+                f"收口未落盘：全部 {len(user_guard_refusals)} 个目标层的显隐由用户手动设定"
+                "（user-wins），已保留用户决策。"
+            )
+        elif not batch.committed:
+            message = (
+                f"收口未落盘：展示集 {len(unresolved_ids)} 个层在 MapSpec 中"
+                "不存在（not_found）。"
+            )
+        else:
+            message = (
+                f"最终展示集已收口：显示 {len(patched_show)} 个图层"
+                f"（{', '.join(resolved[:3])}{'…' if len(resolved) > 3 else ''}），"
+                f"隐藏 {len(patched_hide)} 个分析图层"
+                + (f"；{len(respect_ids)} 个层保留用户手动设定" if respect_ids else "")
+            )
+        result = {
             "success": not batch.is_error,
             "command": "FINALIZE_DISPLAY",
-            "params": {"show_layer_ids": resolved},
+            "params": {
+                "show_layer_ids": resolved,
+                # 服务端守卫拒绝集（用户手动设定，前端不得本地翻转）
+                "respect_layer_ids": respect_ids,
+            },
             # 门禁证据：fingerprint 存在 → dispatch 进入 cartographic gate，
             # 前端 ack（confirmed/store_updated + visible/hidden/unresolved
             # layer ids）参与收敛判定。
@@ -239,19 +277,19 @@ def register_layer_management_tools(registry: ToolRegistry):
             "mapspec": final_spec or None,
             "final_display": {
                 "show_layer_ids": resolved,
-                "desired_state_patched": durability_patched,
-                "hidden_patched": hidden_patched,
+                "desired_state_patched": patched_show,
+                "hidden_patched": patched_hide,
                 "user_hidden_respected": user_guard_refusals,
                 "unresolved_layer_ids": unresolved_ids,
                 "batch_committed": batch.committed,
                 "verification": "frontend_runtime",
             },
-            "message": (
-                f"最终展示集已收口：显示 {len(durability_patched)} 个图层"
-                f"（{', '.join(resolved[:3])}{'…' if len(resolved) > 3 else ''}），"
-                f"其余分析图层已隐藏"
-            ),
+            "message": message,
         }
+        if batch.is_error:
+            result["error"] = batch.error_msg or "finalize batch failed"
+            result["correction_hint"] = batch.correction_hint
+        return result
 
     @tool(registry, name="alias_layer",
            description="为当前会话中的数据引用（ref:xxx）设置一个语义化的别名。设置后，后续可以直呼其名（如：'核心保护区'）来引用该数据。",

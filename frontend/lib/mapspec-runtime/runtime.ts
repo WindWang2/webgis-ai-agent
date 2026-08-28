@@ -593,12 +593,16 @@ export class MapSpecRuntime {
       renderer.noteStyleLayerAdded(this.map, layer.id);
       // v2(audit FE2)：spec 层 label 上活地图 —— headless compiler 一直为
       // layer.label 生成 `${id}-label` symbol 子层，活路径从未挂载（导出
-      // 与屏幕内容漂移）。挂载条件与编译器一致（label 存在且类型适配）；
-      // `-label` 方言已被删层族谓词与 z 序 rank 认领，无需额外映射。
-      const label = (layer as any).label;
-      const labelField = (layer as any).labelField;
-      if ((label || labelField) && layer.type !== "raster" && layer.type !== "heatmap") {
-        this.addLabelSublayerSafe(layer, String(label || labelField));
+      // 与屏幕内容漂移）。方言与编译器对齐：label 是 MapSpecLayerLabel
+      // 对象（field/size/color/halo*）或 layout.labelField 标量回退。
+      const labelSpecRaw = (layer as any).label;
+      const labelSpec = (
+        (labelSpecRaw && typeof labelSpecRaw === "object" && labelSpecRaw.field)
+          ? labelSpecRaw
+          : (layer.layout?.labelField ? { field: layer.layout.labelField } : undefined)
+      );
+      if (labelSpec?.field && layer.type !== "raster" && layer.type !== "heatmap") {
+        this.addLabelSublayerSafe(layer, labelSpec);
       }
     } catch (err) {
       // Defensive: a recompile that races with a style swap may find the layer
@@ -627,29 +631,28 @@ export class MapSpecRuntime {
     }
   }
 
-  /** FE2：spec 层的 label symbol 子层（`${id}-label`，与编译器方言一致）。 */
-  private addLabelSublayerSafe(layer: MapSpecLayer, labelText: string): void {
+  /** FE2：spec 层的 label symbol 子层（`${id}-label`，编译器同款方言/样式）。 */
+  private addLabelSublayerSafe(
+    layer: MapSpecLayer,
+    labelSpec: { field: string; size?: unknown; color?: unknown; haloColor?: string; haloWidth?: number },
+  ): void {
     const labelId = `${layer.id}-label`;
-    const labelField = (layer as any).labelField;
-    const textField = labelField
-      ? ["get", String(labelField)]
-      : labelText;
+    const layout = (layer.layout as any) ?? {};
     const def: any = {
       id: labelId,
       type: "symbol",
       source: layer.source,
       paint: {
-        "text-color": "#ffffff",
-        "text-halo-color": "rgba(0,0,0,0.75)",
-        "text-halo-width": 1.25,
+        // 与 compiler.ts 的默认一致：黑字 + 白晕（任意底图可读，#1007）。
+        "text-color": (labelSpec.color as any) ?? layout.labelColor ?? "#000000",
+        "text-halo-color": labelSpec.haloColor ?? "#ffffff",
+        "text-halo-width": labelSpec.haloWidth ?? 1,
       },
       layout: {
-        "text-field": textField,
-        "text-size": 12,
-        "text-offset": [0, 1.2],
-        "text-anchor": "top",
+        "text-field": ["get", String(labelSpec.field)],
+        "text-size": (labelSpec.size as any) ?? layout.labelSize ?? 12,
         "text-allow-overlap": false,
-        visibility: (layer.layout as any)?.visibility ?? "visible",
+        visibility: layout.visibility ?? "visible",
       },
     };
     const src = this.map.getSource(layer.source);

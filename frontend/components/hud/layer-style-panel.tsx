@@ -35,21 +35,33 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
         || (!!l?.id && l.id.startsWith(`${specLayerKey}__`)),
     );
 
-  // v2(#1077)：LayerStyle patch → 规范 paint 键（按层型）。无规范键的
-  // 控件（brightness/contrast/saturation/dashArray 等滤镜类）返回空 ——
-  // 这些控件在 spec 层保持禁用（规范未建模，不发明语义）。
+  // v2(#1077)：LayerStyle patch → 规范 paint 键（按 SPEC 层型映射 ——
+  // review R4-P2-7：HUD type==='vector' 不蕴含 spec 层型，width 仅对 line
+  // 规范、strokeWidth 仅对 circle；错键会被 paint-bridge 丢弃并作为垃圾
+  // 写进权威 spec）。无规范键的控件（brightness/contrast/saturation/
+  // dashArray/fill/renderType 等滤镜类）返回空 —— 这些控件在 spec 层保持
+  // 禁用（规范未建模，不发明语义）。
+  const specLayerType = (() => {
+    const specLayers = (committedSpec as { layers?: { id?: string; type?: string }[] })?.layers;
+    const hit = specLayers?.find(
+      (l) => l?.id === specLayerKey || (!!l?.id && l.id.startsWith(`${specLayerKey}__`)),
+    );
+    return hit?.type;
+  })();
   const specPaintPatchFrom = (patch: Partial<LayerStyle>): Record<string, unknown> => {
     const out: Record<string, unknown> = {};
-    const type = layer?.type;
     const push = (k: string, v: unknown) => { if (v !== undefined) out[k] = v; };
     if (patch.color !== undefined) push('color', patch.color);
-    if (patch.strokeColor !== undefined) push('strokeColor', patch.strokeColor);
+    if (patch.strokeColor !== undefined && (specLayerType === 'circle' || specLayerType === 'fill' || !specLayerType)) {
+      push('strokeColor', patch.strokeColor);
+    }
     if (patch.strokeWidth !== undefined) {
-      push(type === 'vector' ? 'width' : 'strokeWidth', patch.strokeWidth);
+      if (specLayerType === 'line') push('width', patch.strokeWidth);
+      else if (specLayerType === 'circle' || !specLayerType) push('strokeWidth', patch.strokeWidth);
     }
     if (patch.radius !== undefined) push('radius', patch.radius);
     if (patch.radius_px !== undefined) push('radius', patch.radius_px);
-    if (patch.pointSize !== undefined && type !== 'raster') push('radius', patch.pointSize);
+    if (patch.pointSize !== undefined && specLayerType !== 'raster') push('radius', patch.pointSize);
     return out;
   };
 
@@ -61,12 +73,12 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
       // 乐观本地行样式 + durable 提交：成功后 committed spec 驱动 reconcile
       // （spec 为源），失败/被取代由 commit 通道收敛并提示。
       updateLayer(layer.id, { style: { ...layer.style, ...patch } });
-      void commitLayerStyleAndCommit(specLayerKey!, paintPatch).catch(() => {
+      void commitLayerStyleAndCommit(specLayerKey!, paintPatch).catch((err: unknown) => {
         // 非 superseded 失败：本地乐观回滚（与 U-3 语义一致）
         updateLayer(layer.id, { style: { ...layer.style } });
         import('@/lib/api/transport').then(({ describeApiError }) => {
           useToastStore.getState().addToast(
-            `样式修改未生效（已恢复）：${describeApiError({}, '网络错误')}`,
+            `样式修改未生效（已恢复）：${describeApiError(err, '网络错误')}`,
             'error',
           );
         }).catch(() => { /* noop */ });
@@ -271,6 +283,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
             <div className="flex items-center justify-between">
               <label className="text-[15px] text-white/25 uppercase tracking-wider">填充开关</label>
               <button
+                disabled={specBacked}
                 onClick={() => updateStyle({ fill: !fillEnabled })}
                 className={`w-8 h-4 rounded-full transition-colors relative ${fillEnabled ? 'bg-hud-cyan/40' : 'bg-white/10'}`}
               >
@@ -287,6 +300,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
                 {(['vector', 'heatmap', 'grid'] as const).map((mode) => (
                   <button
                     key={mode}
+                    disabled={specBacked}
                     onClick={() => updateStyle({ renderType: mode })}
                     className={`flex-1 px-2 py-1.5 text-[15px] rounded-lg font-semibold transition-colors ${
                       renderType === mode

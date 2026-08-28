@@ -354,8 +354,11 @@ export const layerCommands: Record<string, CommandEntry> = {
           }
           // v2(#1078 FE3)：source 移除同步注销裁剪/挂载两本账 —— 否则
           // viewport 刷新持续探测死 id，style 重挂会复活已删覆盖层。
+          // review R4-P0：挂载账本以完整 custom- id 记账 —— 用裸 tgt 注销
+          // 永不匹配（'custom-foo' 不以 'foo-' 开头），删除的覆盖层会在
+          // 下一次 style 重载复活且账本无界增长。
           renderer.unregisterGeoJsonSource(sid);
-          unregisterCustomOverlay(tgt);
+          unregisterCustomOverlay(`custom-${tgt}`);
         }
         // 3. store 行同步（含一个 ref 背多层的姊妹行）
         getHudState().removeLayer?.(tgt);
@@ -518,6 +521,18 @@ export const layerCommands: Record<string, CommandEntry> = {
       const { layers } = getHudState();
       const show = new Set(raw.flatMap((id) => resolveLayerTargetsByRef(id, getHudState)));
       if (show.size === 0) return { status: 'failed', error: 'target_not_found' };
+      // v2(review R2-P1-1)：服务端守卫拒绝集（用户手动设定的层）—— 本地
+      // 不得翻转呈现（服务端已保留用户决策，本地翻转会分叉且 pending 永存）。
+      // 服务端给的是 spec 层 id；本地 show/hideTargets 是 HUD 行 id ——
+      // 经 _mapspecLayerId 别名双向展开。
+      const respectSpec = new Set(
+        ((params as any)?.respect_layer_ids ?? []) as string[],
+      );
+      const respect = new Set<string>(respectSpec);
+      for (const l of layers) {
+        const specId = (l as any)?._mapspecLayerId;
+        if (specId && respectSpec.has(String(specId))) respect.add(String(l.id));
+      }
 
       // 收口豁免：行政区边界（制图语境常显）+ 用户 pin 的层（用户手动点开
       // 且未手动隐藏——不与用户对抗）+ 非 analysis 组（base 等）。
@@ -556,6 +571,7 @@ export const layerCommands: Record<string, CommandEntry> = {
       const storePendingRepair: { layerId: string; visible: boolean }[] = [];
 
       for (const id of show) {
+        if (respect.has(id)) continue; // 用户手动隐藏的展示目标：保留用户决策
         const res = applyLayerVisibilityTransaction(ctx, { layerId: id, visible: true, durable: false });
         if (res.status === 'failed') {
           unresolvedLayerIds.push(id);
@@ -565,6 +581,7 @@ export const layerCommands: Record<string, CommandEntry> = {
         }
       }
       for (const id of hideTargets) {
+        if (respect.has(id)) continue; // 用户手动显/隐的收口目标：同上
         const res = applyLayerVisibilityTransaction(ctx, { layerId: id, visible: false, durable: false });
         if (res.status === 'failed') {
           unresolvedLayerIds.push(id);

@@ -103,6 +103,7 @@ export function FloatingChrome({
   const merged = usePlacementPatchedComponent(component);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const gestureRef = useRef<Gesture | null>(null);
+  const keyCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingRef = useRef<Geometry | null>(null);
   const rafRef = useRef(0);
   // 手势瞬态几何（仅手势期间存在；pointerup 后清空，渲染回归 spec/override）
@@ -328,7 +329,15 @@ export function FloatingChrome({
       height: origin.height,
     };
     const nextPlacement = toPlacement(next);
-    commitPlacement(nextPlacement, nextPlacement);
+    // v2(review R4-P2-8)：键重复（~30Hz）不得每键一次 CAS —— 乐观 override
+    // 即时生效，durable 提交按 500ms 静默去抖（与指针手势的"手势中节流、
+    // 收尾单次提交"同款纪律）。
+    setComponentPlacementOverride(merged.id, nextPlacement);
+    if (keyCommitTimerRef.current) clearTimeout(keyCommitTimerRef.current);
+    keyCommitTimerRef.current = setTimeout(() => {
+      keyCommitTimerRef.current = null;
+      commitPlacement(nextPlacement, nextPlacement);
+    }, 500);
   }
 
   return (

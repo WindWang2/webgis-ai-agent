@@ -75,7 +75,10 @@ export function clearCustomOverlayRegistry(): void {
  * 返回重挂的层数（测试/证据观测点）。重放后由调用方执行 z-raise
  * （raiseCustomOverlayLayers）恢复 custom 带的置顶序。
  */
-export function remountCustomOverlays(map: any): number {
+export function remountCustomOverlays(
+  map: any,
+  hooks?: { onLayerAdded?: (map: any, id: string) => void },
+): number {
   if (!map) return 0;
   let remounted = 0;
   // 先 sources 后 layers（MapLibre 层引用 source，顺序反了会 throw）。
@@ -101,6 +104,10 @@ export function remountCustomOverlays(map: any): number {
       if (def.layout) layer.layout = def.layout;
       if (def.filter !== undefined) layer.filter = def.filter;
       map.addLayer(layer as any, def.beforeId ?? undefined);
+      // v2(review R4-P1-3)：重挂的层必须补记 style-layer-id 账本 —— 否则
+      // 下一次 layer-changing reconcile 的 z 序同步看不到 custom 层，
+      // #461 的"埋没"缺陷在 style 重载后复现。
+      hooks?.onLayerAdded?.(map, def.id);
       remounted += 1;
     } catch { /* 同上 */ }
   }

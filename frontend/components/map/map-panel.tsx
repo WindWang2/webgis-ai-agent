@@ -479,7 +479,9 @@ export function MapPanel({
           // （旧实现只 z-raise 不重挂 —— 切换即永久丢失）。挂载注册表按
           // 插入序重放后，再由 raise 恢复 custom 带置顶序。reconcile 仅在
           // 新 style 加载完成后 resolve（#605 同款时序约束），此处安全。
-          const remounted = remountCustomOverlays(map);
+          const remounted = remountCustomOverlays(map, {
+            onLayerAdded: renderer.noteStyleLayerAdded,
+          });
           if (remounted > 0) {
             devOnly.warn('[map] remounted custom overlays after style reload:', remounted);
           }

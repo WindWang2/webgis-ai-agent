@@ -241,7 +241,6 @@ class RollbackIntent:
 
 
 @dataclass
-@dataclass
 class PatchLayerStyleIntent:
     """#1077：spec 承载层的持久样式突变（paint 顶层键合并）。
 
@@ -350,8 +349,17 @@ def _patch_layer_presentation(
         # #1070: presentation_owner 持久落层 —— 用户决策的权威从 64 条环形
         # provenance（一次 finalize 写 30+ 条即驱逐）移到权威 spec 本身。
         intent = dict(patched.get("cartographic_intent") or {})
+        same_value = (
+            intent.get("presentation_owner") == "user"
+            and intent.get("expected_visible") is not None
+            and bool(intent.get("expected_visible")) == bool(visible)
+        )
         intent["expected_visible"] = bool(visible)
-        intent["presentation_owner"] = str(origin)
+        # v2(review R2-P2-1)：幂等同值重放不改写归属 —— agent finalize 的
+        # show/hide 与用户既有决策同值时，owner 保持 user（每次 finalize
+        # 把用户决策洗成 agent 会让 spec 印记系统性失真，user-wins 退化到
+        # 只剩 64 条 ring 兜底）。值翻转才伴随归属转移。
+        intent["presentation_owner"] = "user" if same_value else str(origin)
         patched["cartographic_intent"] = intent
     if opacity is not None:
         paint = dict(patched.get("paint") or {})

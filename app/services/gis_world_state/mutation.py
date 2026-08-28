@@ -205,7 +205,13 @@ async def apply_gis_mutation(
       与工具错误契约（{"error": ...} + correction_hint）对齐；
     - 成功后追加 provenance（best-effort）。
     """
-    guard_error = await _check_user_presentation_guard_ring(session_id, intent, origin)
+    # v2(review R1-P2-7)：pre-lock ring 检查只覆盖 Patch —— upsert 的家族
+    # 存在性判定需要 prior spec（锁内权威复检有），pre-lock 无 prior 时对
+    # 已删除重建的层会误拒（stale ring 条目）。
+    if isinstance(intent, PatchLayerPresentationIntent):
+        guard_error = await _check_user_presentation_guard_ring(session_id, intent, origin)
+    else:
+        guard_error = None
     if guard_error is None:
         guard_error = _check_user_presentation_guard(session_id, intent, origin)
     if guard_error is not None:

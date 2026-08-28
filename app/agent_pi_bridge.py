@@ -20,6 +20,7 @@ zero knowledge of the cache.
 """
 from __future__ import annotations
 
+from app.services.distributed_lock import LockDegradedError, LockLostError
 import asyncio
 import contextlib
 import json
@@ -680,9 +681,20 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
             session_id=session_id,
         )
         if has_cartographic_generation and result.status == "ok":
-            generation_current = await _persist_cartographic_harness_context(
-                session_id, event, result.map_actions
-            )
+            # v2(review R1-P2-6)：工具已成功提交，此处降级锁（F2 fail-closed
+            # 引入）不得把成功调用标成裸 500 —— 兜底为跳过本帧 harness
+            # context（下一事件源会重建），与下方 evaluate 的兜底同款。
+            try:
+                generation_current = await _persist_cartographic_harness_context(
+                    session_id, event, result.map_actions
+                )
+            except (LockDegradedError, LockLostError) as lock_err:
+                logger.warning(
+                    "[PiBridge] harness context skipped (lock unavailable) "
+                    "session=%s tool=%s: %s",
+                    session_id, tool_name, lock_err,
+                )
+                generation_current = False
             if not generation_current:
                 # The GIS result is still returned, but a completion from an
                 # older MapSpec revision cannot enter or evaluate the current

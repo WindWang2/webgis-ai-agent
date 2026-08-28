@@ -45,7 +45,20 @@ def test_network_parity_lookups(compiled):
     # 拓扑服务区工具排在 service_area 候选首位（priority 5 < 等时圈/速度表）
     assert compiled.tools_for_capability("service_area")[0] == "network_service_area"
     # shortest_path 不再退化到 isochrone 工具族（R2 移除错误 fallback 残留）
-    assert compiled.tools_for_capability("shortest_path") == ["network_shortest_path"]
+    assert compiled.tools_for_capability("shortest_path") == [
+        "network_shortest_path", "plan_route",
+    ]  # v2(review): plan_route（高德在线路由）归位为在线 fallback
+
+
+def _unregister_algorithm(ar, probe_id: str, capability: str) -> None:
+    """测试探针的完整清理：_by_id 与 _by_capability 索引都还原（悬空
+    索引会让后续 capability_tool_map() KeyError —— 组合运行污染源）。"""
+    ar._by_id.pop(probe_id, None)
+    bucket = ar._by_capability.get(capability)
+    if bucket and probe_id in bucket:
+        bucket.remove(probe_id)
+        if not bucket:
+            ar._by_capability.pop(capability, None)
 
 
 def test_fingerprint_deterministic_and_content_sensitive():
@@ -66,8 +79,7 @@ def test_fingerprint_deterministic_and_content_sensitive():
         m3 = compile_runtime_manifest()
         assert m3.fingerprint != m1.fingerprint, "registry 内容变化指纹必须变化"
     finally:
-        ar._by_id.pop("probe.fp-sensitivity", None)
-        ar._by_capability.get("poi_query", []).remove("probe.fp-sensitivity")
+        _unregister_algorithm(ar, "probe.fp-sensitivity", "poi_query")
     m4 = compile_runtime_manifest()
     assert m4.fingerprint == m1.fingerprint, "撤销变更后指纹复原"
 
@@ -89,7 +101,7 @@ def test_manifest_flags_fatal_on_dangling_capability():
         with pytest.raises(RuntimeError, match="dangling"):
             validate_runtime_manifest_strict(m)
     finally:
-        ar._by_id.pop("probe.dangling", None)
+        _unregister_algorithm(ar, "probe.dangling", "capability_that_does_not_exist")
 
 
 def test_planner_capability_tool_map_matches_manifest():
@@ -108,7 +120,7 @@ def test_plan_stale_detection():
     m = compile_runtime_manifest()
     plan_old = SessionPlan(
         envelope_id="e1", session_id="s1", updated_at=time.time(),
-        gis_chapter={"manifest_fingerprint": "deadbeef", "recipe_id": "r"},
+        gis_chapter={"manifest_fingerprint": "deadbeef" * 8, "recipe_id": "r"},  # 64-hex 形状（32 位旧值会被形状守卫拒绝）
     )
     assert session_plan_stale(plan_old) is True
 
@@ -117,6 +129,13 @@ def test_plan_stale_detection():
         gis_chapter={"manifest_fingerprint": m.fingerprint, "recipe_id": "r"},
     )
     assert session_plan_stale(plan_current) is False
+
+    # 形状守卫：损坏/截断（非 64-hex）的存储值不判 stale
+    plan_corrupt = SessionPlan(
+        envelope_id="e4", session_id="s1", updated_at=time.time(),
+        gis_chapter={"manifest_fingerprint": "deadbeef", "recipe_id": "r"},
+    )
+    assert session_plan_stale(plan_corrupt) is False
 
     plan_legacy = SessionPlan(
         envelope_id="e3", session_id="s1", updated_at=time.time(),
