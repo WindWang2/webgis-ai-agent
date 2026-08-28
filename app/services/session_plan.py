@@ -226,7 +226,15 @@ async def ensure_session_plan_slot(
     *,
     store: Any = None,
 ) -> SessionPlan:
-    """Host opens an empty envelope before tools run. No SSE (GIS chapter empty)."""
+    """Host opens an empty envelope before tools run. No SSE (GIS chapter empty).
+
+    Read-mostly and called on every Pi tool callback, so the fast path is
+    lockless: only a miss (envelope absent) takes the session lock and
+    re-checks inside — double-checked locking, keeping per-callback slot
+    checks free of lock traffic while first-creation stays serialized."""
+    current = await load_session_plan(session_id, store=store)
+    if current is not None:
+        return current
     async with session_lock_registry.lock(session_id):
         return await _ensure_slot_unlocked(session_id, store=store)
 

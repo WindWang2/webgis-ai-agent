@@ -117,3 +117,17 @@ def test_native_dump_raises_on_missing_registry_name():
 
     with pytest.raises(ValueError, match="missing from live registry"):
         native_tools_for_pi(_PartialRegistry())
+
+
+def test_status_session_id_is_not_an_extra():
+    """The sole passthrough key: an extension-injected session_id keeps a
+    status call legal — a regression dropping the exemption would reject the
+    extension's real callbacks."""
+    resolved = resolve_pi_tool_call(STATUS_TOOL, {"session_id": "sess-1"})
+    assert resolved.kind == "native"
+    assert resolved.name == STATUS_TOOL
+
+
+def test_execute_missing_tool_name_rejects():
+    assert resolve_pi_tool_call(EXECUTE_PROXY_NAME, {}).kind == "reject"
+    assert resolve_pi_tool_call(EXECUTE_PROXY_NAME, {"toolName": ""}).kind == "reject"

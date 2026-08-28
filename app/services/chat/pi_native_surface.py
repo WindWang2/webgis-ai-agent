@@ -75,8 +75,10 @@ def resolve_pi_tool_call(
 
     Unknown bare names reject by default: both the model surface and the HTTP
     dispatch boundary point the caller at ``list_available_tools`` followed by
-    ``webgis_execute``. ``allow_passthrough=True`` is an explicit opt-in for
-    callers that resolve names ahead of a registry existence check.
+    ``webgis_execute``. ``allow_passthrough=True`` is an explicit opt-in
+    (currently test-only — no production caller resolves names ahead of the
+    registry existence check) kept so the classifier's total behavior stays
+    observable.
     """
     args = dict(arguments or {})
     if name == EXECUTE_PROXY_NAME:
