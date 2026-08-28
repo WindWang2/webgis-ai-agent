@@ -94,7 +94,7 @@ function applyUpdated(state: SessionPlanViewState, d: Record<string, unknown>): 
       query,
       user_goal: query,
       replaced,
-      progress: replaced ? [] : plan.progress.filter((r) => r.status === 'complete'),
+      progress: replaced ? [] : plan.progress,
       updated_at: Date.now() / 1000,
     };
   }
