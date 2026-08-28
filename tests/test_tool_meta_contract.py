@@ -17,6 +17,7 @@ import re
 
 import pytest
 
+from app.services.chat.pi_native_surface import NATIVE_TOOL_NAMES, native_tools_for_pi
 from app.services.tool_dispatch_service import LEGACY_TOOL_NAME_MAP
 
 
@@ -122,6 +123,39 @@ def test_extension_example_names_exist(registry):
             f"{artifact} advertises example tool names that do not resolve in "
             f"the live registry (UNKNOWN_TOOL round trips): {missing}"
         )
+
+
+def test_native_name_lists_pinned_equal_across_sources(registry):
+    """#1044 contract: the native tool name list lives in three places —
+    Python ``NATIVE_TOOL_NAMES`` (dispatch surface), the extension's
+    ``FALLBACK_NATIVE`` (prompt vocabulary), and the spawn-time schema dump
+    (what Pi actually registers). Drift between them means either the prompt
+    advertises natives Pi cannot call or the dispatch surface rejects names
+    the prompt steers toward. Pin all three equal; the .mjs is the shipped
+    artifact (index.ts is the documented dead copy)."""
+    import pathlib
+
+    ext = (
+        pathlib.Path(__file__).resolve().parents[1]
+        / "app" / "extensions" / "webgis-tools" / "index.mjs"
+    ).read_text(encoding="utf-8")
+    m = re.search(r"const FALLBACK_NATIVE\s*=\s*\[([^\]]*)\]", ext)
+    assert m, "could not locate FALLBACK_NATIVE array in index.mjs"
+    fallback = re.findall(r'"([^"]+)"', m.group(1))
+    assert fallback, "FALLBACK_NATIVE parsed to an empty list"
+
+    assert set(fallback) == set(NATIVE_TOOL_NAMES), (
+        f"extension FALLBACK_NATIVE drifted from NATIVE_TOOL_NAMES: "
+        f"only-in-extension={sorted(set(fallback) - set(NATIVE_TOOL_NAMES))} "
+        f"only-in-python={sorted(set(NATIVE_TOOL_NAMES) - set(fallback))}"
+    )
+
+    dumped = {item["name"] for item in native_tools_for_pi(registry)}
+    assert dumped == set(NATIVE_TOOL_NAMES), (
+        f"spawn-time dump drifted from NATIVE_TOOL_NAMES: "
+        f"only-in-dump={sorted(dumped - set(NATIVE_TOOL_NAMES))} "
+        f"only-in-python={sorted(set(NATIVE_TOOL_NAMES) - dumped)}"
+    )
 
 
 def test_extension_routes_distribution_before_status_pull():

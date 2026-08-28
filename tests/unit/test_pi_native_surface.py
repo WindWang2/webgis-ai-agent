@@ -1,4 +1,5 @@
 """Pi native GIS surface: live schemas + resolveCall kinds."""
+import json
 from pathlib import Path
 
 import pytest
@@ -106,6 +107,40 @@ def test_write_native_tools_file(tmp_path: Path):
     text = path.read_text(encoding="utf-8")
     for name in NATIVE_TOOL_NAMES:
         assert name in text
+
+
+def test_write_native_tools_file_replaces_atomically(tmp_path, monkeypatch):
+    """#1044: the dump must land via tmp + os.replace so a crash mid-write can
+    never expose a torn native-tools.json to the extension reader (which
+    would degrade that spawn to a native-less GeoAgent)."""
+    import os
+
+    from app.tools import init_tools
+    from app.tools.registry import ToolRegistry
+
+    registry = ToolRegistry()
+    init_tools(registry)
+
+    replaces: list[tuple[str, str]] = []
+    real_replace = os.replace
+
+    def spy_replace(src, dst):
+        replaces.append((str(src), str(dst)))
+        # The payload must already be complete at rename time — the rename
+        # only ever publishes a full document.
+        staged = json.loads(Path(src).read_text(encoding="utf-8"))
+        assert {item["name"] for item in staged} == set(NATIVE_TOOL_NAMES)
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", spy_replace)
+
+    path = write_native_tools_file(registry, tmp_path / "native-tools.json")
+
+    assert [dst for _, dst in replaces] == [str(path)]
+    assert Path(replaces[0][0]).parent == path.parent, "tmp must share the target directory"
+    assert path.name in replaces[0][0], "tmp must be distinguishable from the dump"
+    assert json.loads(path.read_text(encoding="utf-8"))[0]["name"] == NATIVE_TOOL_NAMES[0]
+    assert sorted(p.name for p in path.parent.iterdir()) == [path.name], "no tmp residue"
 
 
 def test_native_dump_raises_on_missing_registry_name():

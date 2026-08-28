@@ -484,6 +484,55 @@ async def test_event_queue_drops_on_overflow():
 
 
 @pytest.mark.asyncio
+async def test_start_injects_bridge_timeout_aligned_with_turn_budget(monkeypatch, tmp_path):
+    """#1044: the extension's callback-fetch budget must track the server turn
+    budget. Spawn injects PI_TURN_TOTAL_TIMEOUT (in ms) as
+    WEBGIS_BRIDGE_TIMEOUT_MS; an operator-pinned value wins."""
+    from app.agent_pi_bridge import PI_TURN_TOTAL_TIMEOUT
+    from app.services.chat import pi_rpc_client as mod
+
+    captured = {}
+
+    def fake_popen(*args, **kwargs):
+        captured["env"] = kwargs.get("env") or {}
+        proc = MagicMock()
+        proc.stdin = MagicMock()
+        proc.stdout = DummyPipe([])
+        proc.stderr = DummyPipe([])
+        proc.poll.return_value = None
+        return proc
+
+    monkeypatch.setattr(mod, "PI_AGENT_DIR", tmp_path)
+    monkeypatch.setattr(mod.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        "app.services.chat.pi_native_surface.dump_native_tools",
+        lambda _p: tmp_path / "native-tools.json",
+    )
+    entry = tmp_path / "rpc-entry.js"
+    entry.write_text("// stub", encoding="utf-8")
+
+    async def _start_and_capture():
+        client = mod.PiRpcClient(pi_rpc_entry=entry, session_dir=tmp_path / "sess")
+        monkeypatch.setattr(client, "_wait_for_ready", AsyncMock(return_value=None))
+        try:
+            await client.start()
+        finally:
+            if client._reader_task:
+                client._reader_task.cancel()
+            if client._stderr_task:
+                client._stderr_task.cancel()
+
+    await _start_and_capture()
+    assert captured["env"]["WEBGIS_BRIDGE_TIMEOUT_MS"] == str(
+        int(PI_TURN_TOTAL_TIMEOUT * 1000)
+    )
+
+    monkeypatch.setenv("WEBGIS_BRIDGE_TIMEOUT_MS", "12345")
+    await _start_and_capture()
+    assert captured["env"]["WEBGIS_BRIDGE_TIMEOUT_MS"] == "12345"
+
+
+@pytest.mark.asyncio
 async def test_start_fails_fast_when_native_dump_fails(monkeypatch, tmp_path):
     """Native schema dump is spawn-mandatory: a failure must abort start()
     (the API lifespan catches it and falls back to ChatEngine), not leave Pi

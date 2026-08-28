@@ -10,12 +10,39 @@
  *
  * 审计 SEC-01：回调 /pi-tools/execute 时带 X-Pi-Bridge-Secret header，
  * 与后端共享密钥校验对应。密钥从 env WEBGIS_BRIDGE_SECRET 读取（后端启动时注入）。
+ *
+ * #1044 硬化：回调 fetch 带 AbortSignal 预算（对齐后端 turn 预算），
+ * 409/503/401 映射为恢复指引而非裸状态行；turn token 钉在滚动窗口之外
+ * （工具密集回合不再把 marker 挤出窗口）；dump 解析失败大声报错而非静默降级。
  */
 import { readFileSync } from "node:fs";
 
 const WEBGIS_API_BASE = process.env.WEBGIS_API_BASE ?? "http://localhost:8000";
 const BRIDGE_SECRET = process.env.WEBGIS_BRIDGE_SECRET ?? "";
 const TURN_CONTEXT_RE = /WEBGIS_TURN_CONTEXT:([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/g;
+
+// 与后端 turn 预算对齐：spawn 时后端把 PI_TURN_TOTAL_TIMEOUT（默认 300s）
+// 换算成 WEBGIS_BRIDGE_TIMEOUT_MS 注入本进程，一次回调挂死不可能也不应该
+// 活得比服务端的回合预算更久；300s 只是脱离后端独立运行时的兜底默认。
+const BRIDGE_TIMEOUT_MS = Number.parseInt(process.env.WEBGIS_BRIDGE_TIMEOUT_MS ?? "", 10) > 0
+  ? Number.parseInt(process.env.WEBGIS_BRIDGE_TIMEOUT_MS, 10)
+  : 300_000;
+
+// 模型面的恢复指引：裸 "HTTP 409: Conflict" 只会诱发盲目重试。
+const STATUS_GUIDANCE = {
+  401: {
+    error: "turn_context_rejected",
+    text: "The WebGIS backend rejected the turn context as invalid or expired. Do not retry tool calls; finish the reply and tell the user to send a new message to re-establish the map session.",
+  },
+  409: {
+    error: "turn_not_active",
+    text: "This turn is no longer active (it completed, was aborted, or was superseded by a newer message). Retrying will keep failing — stop calling GIS tools and summarize the results you already have for the user.",
+  },
+  503: {
+    error: "bridge_unavailable",
+    text: "The WebGIS backend is temporarily unavailable (starting up or overloaded). Wait a few seconds and retry the same call once; if it fails again, report the outage to the user instead of retrying further.",
+  },
+};
 
 const FALLBACK_NATIVE = [
   "webgis_map_intent",
@@ -38,16 +65,54 @@ function loadNativeTools() {
   if (!path) return [];
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8"));
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
+    if (!Array.isArray(parsed)) {
+      throw new TypeError(`dump root is ${Object.prototype.toString.call(parsed)}, expected an array`);
+    }
+    return parsed;
+  } catch (error) {
+    // #1044：spawn 侧对 dump 失败已经 fail-fast，走到这里说明文件在写后
+    // 损坏/被改写。静默返回 [] 会复活"crippled GeoAgent、零诊断"的洞 ——
+    // 大声报到 stderr（PiRpcClient 会转发 Pi 子进程 stderr），再降级为
+    // 仅 webgis_execute，让长尾工具与显式报错仍可达。
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(
+      `[webgis-tools] WEBGIS_NATIVE_TOOLS_PATH is set but the dump at ${path} is unusable: ${message}. ` +
+        "Native GIS tools are NOT registered this session (webgis_execute still is); " +
+        "the spawn-time dump should have prevented this — investigate the file.",
+    );
     return [];
   }
 }
 
+// #1044：marker 钉在滚动窗口之外。此前只扫最近 24 条 session entry，一个
+// 工具密集回合（每步约 2-3 条）会在 ~8-10 步后把 turn marker 挤出窗口，
+// 之后所有回调都 401 missing_turn_context。改为：按 sessionManager 记住
+// 上次命中的 {index, token}，每次只扫上次命中之后的新 entry（追加型会话的
+// 稳态成本 = 新 entry 数 + 钉住点一次校验），扫不到新 marker 就沿用钉住的
+// token。新回合的 marker 一定在更高 index，回扫先命中，不会被记忆中的旧
+// token 遮蔽；钉住点越界或不再携带钉住 token（会话重置、压缩重写）时作废
+// 重扫。校验是子串级的：重写后原样引用旧 marker 的病态 entry 仍会沿用旧
+// token —— 服务端的签名/活跃 turn 校验（401/409）是最终裁决者。
+const TURN_TOKEN_MEMO = new WeakMap();
+
+function entryStillHasToken(entry, token) {
+  try {
+    return JSON.stringify(entry).includes(`WEBGIS_TURN_CONTEXT:${token}`);
+  } catch {
+    return false;
+  }
+}
+
 export function currentTurnToken(ctx) {
-  const entries = ctx?.sessionManager?.getEntries?.() ?? [];
-  const start = Math.max(0, entries.length - 24);
-  for (let index = entries.length - 1; index >= start; index -= 1) {
+  const manager = ctx?.sessionManager;
+  const entries = manager?.getEntries?.() ?? [];
+  let pinned = TURN_TOKEN_MEMO.get(manager);
+  if (pinned && (pinned.index >= entries.length || !entryStillHasToken(entries[pinned.index], pinned.token))) {
+    TURN_TOKEN_MEMO.delete(manager);
+    pinned = undefined;
+  }
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    if (pinned && index === pinned.index) break;
     let serialized = "";
     try {
       serialized = JSON.stringify(entries[index]);
@@ -55,12 +120,18 @@ export function currentTurnToken(ctx) {
       continue;
     }
     const matches = Array.from(serialized.matchAll(TURN_CONTEXT_RE));
-    if (matches.length) return matches[matches.length - 1][1];
+    if (matches.length) {
+      // 取该 entry 的最后一个匹配：后端 marker 排在不可信用户文本之后，
+      // 用户伪造的同形 marker 不能遮蔽服务器能力。
+      const token = matches[matches.length - 1][1];
+      TURN_TOKEN_MEMO.set(manager, { index, token });
+      return token;
+    }
   }
-  return "";
+  return pinned ? pinned.token : "";
 }
 
-async function postToBridge(toolCallId, name, args, turnToken) {
+export async function postToBridge(toolCallId, name, args, turnToken) {
   if (!turnToken) {
     return {
       content: [{ type: "text", text: "WebGIS tool execution rejected: missing turn context" }],
@@ -76,11 +147,22 @@ async function postToBridge(toolCallId, name, args, turnToken) {
         "X-Pi-Bridge-Secret": BRIDGE_SECRET,
       },
       body: JSON.stringify({ toolCallId, name, arguments: args, turnToken }),
+      signal: AbortSignal.timeout(BRIDGE_TIMEOUT_MS),
     });
     if (!response.ok) {
+      const guidance = STATUS_GUIDANCE[response.status];
       return {
-        content: [{ type: "text", text: `HTTP ${response.status}: ${response.statusText}` }],
-        details: { error: `HTTP ${response.status}`, toolName: name },
+        content: [{
+          type: "text",
+          text: guidance
+            ? `HTTP ${response.status}: ${guidance.text}`
+            : `HTTP ${response.status}: ${response.statusText}`,
+        }],
+        details: {
+          error: guidance ? guidance.error : `HTTP ${response.status}`,
+          status: response.status,
+          toolName: name,
+        },
         isError: true,
       };
     }
@@ -91,7 +173,10 @@ async function postToBridge(toolCallId, name, args, turnToken) {
       isError: result.isError,
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const errorName = error instanceof Error ? error.name : "";
+    const message = errorName === "TimeoutError" || errorName === "AbortError"
+      ? `bridge fetch timed out after ${BRIDGE_TIMEOUT_MS}ms (backend did not answer within the turn budget); do not blind-retry — the tool may still be running server-side`
+      : error instanceof Error ? error.message : String(error);
     return {
       content: [{ type: "text", text: `WebGIS tool execution failed: ${message}` }],
       details: { error: message, toolName: name },

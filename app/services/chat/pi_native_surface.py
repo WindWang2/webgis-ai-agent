@@ -8,6 +8,7 @@ are generated from ToolRegistry — never a handwritten second catalog.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Mapping
@@ -187,12 +188,23 @@ def native_tools_for_pi(registry: Any) -> list[dict[str, Any]]:
 
 
 def write_native_tools_file(registry: Any, path: Path) -> Path:
+    """Dump native schemas atomically (tmp + ``os.replace``).
+
+    The extension's reader treats an unparseable dump as a loud-but-degraded
+    empty surface; a torn write from a crash mid-``write_text`` would reopen
+    that hole on every spawn until the next successful dump. The rename is
+    atomic, so readers see either the previous complete dump or the new one —
+    never a partial file. The tmp name carries the pid so concurrent workers
+    spawning Pi never rename each other's in-flight tmp away.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = native_tools_for_pi(registry)
-    path.write_text(
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+    os.replace(tmp, path)
     return path
 
 

@@ -190,6 +190,13 @@ class PiRpcClient:
         # 审计 SEC-01：注入共享密钥，Pi 扩展的 HTTP 回调用它调 /pi-tools/execute
         from app.core.bridge_secret import get_bridge_secret
         env["WEBGIS_BRIDGE_SECRET"] = get_bridge_secret()
+        # #1044：回调 fetch 的 AbortSignal 预算对齐服务端回合预算 —— 扩展侧
+        # 只兜底挂死，不自行决定预算；ops 调 PI_TURN_TOTAL_TIMEOUT 时回调预算
+        # 同步收紧。setdefault：显式设置了 WEBGIS_BRIDGE_TIMEOUT_MS 的以它为准。
+        from app.agent_pi_bridge import PI_TURN_TOTAL_TIMEOUT
+        env.setdefault(
+            "WEBGIS_BRIDGE_TIMEOUT_MS", str(int(PI_TURN_TOTAL_TIMEOUT * 1000))
+        )
         if not (env.get("WEBGIS_API_BASE") or "").strip():
             port = (env.get("API_PORT") or env.get("PORT") or "").strip()
             env["WEBGIS_API_BASE"] = (
