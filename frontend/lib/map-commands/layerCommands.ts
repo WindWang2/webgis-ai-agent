@@ -537,7 +537,14 @@ export const layerCommands: Record<string, CommandEntry> = {
         noteAgentDisplayed(id);
       }
 
-      // 逐层事务：展示集 visible:true；收口集 visible:false。
+      // 逐层事务：展示集与收口集都只做本地呈现（durable:false）。
+      // v2(audit H2)：服务端 finalize_display 已用 GISMutationBatch 以
+      // agent origin 一次性落盘展示集+隐藏集（layout.visibility +
+      // presentation_owner=agent）。旧路径把 agent 决定的隐藏经 user
+      // mutation 路由提交（durable:true），洗白为 presentation_owner="user"
+      // —— 此后 agent 无法翻回自己的收口决策（user-wins 误伤）且"谁决策"
+      // 溯源失真。本地命令现在只负责即刻呈现（pending overlay + store 行），
+      // 持久收敛由 step_result 携带的 mapspec/mutation_revision 完成。
       const visibleLayerIds: string[] = [];
       const hiddenLayerIds: string[] = [];
       const unresolvedLayerIds: string[] = [];
@@ -553,7 +560,7 @@ export const layerCommands: Record<string, CommandEntry> = {
         }
       }
       for (const id of hideTargets) {
-        const res = applyLayerVisibilityTransaction(ctx, { layerId: id, visible: false, durable: true });
+        const res = applyLayerVisibilityTransaction(ctx, { layerId: id, visible: false, durable: false });
         if (res.status === 'failed') {
           unresolvedLayerIds.push(id);
         } else {

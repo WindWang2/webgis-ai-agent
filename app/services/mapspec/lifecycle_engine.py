@@ -79,6 +79,70 @@ class MapSpecResult:
     # Stale expected_revision: not a validation error and not a commit.
     superseded: bool = False
 
+
+@dataclass
+class BatchIntentOutcome:
+    """GISMutationBatch 中单个 intent 的裁决（applied / refused / not_found）。"""
+    layer_id: str
+    status: str
+    visible: Optional[bool] = None
+    error_msg: Optional[str] = None
+
+
+@dataclass
+class MapSpecBatchResult:
+    """GISMutationBatch 统一结果：一次锁/一次读/一次校验/一次 revision+1。
+
+    v2(Phase 7)：finalize_display 等收口此前逐层 apply_gis_mutation ——
+    N 层 = N 个完整事务（N 次锁循环 + N 次 checkpoint（每次物化全部 ref）
+    + N 次 revision 递增 + N×4 次全量 parse），既是性能根因也是 409 风暴
+    根因。batch 把 N 个 presentation patch 合并为一个事务；refused/
+    not_found 的 intent 被跳过并逐项上报，不影响其余 intent 提交。
+    """
+    mapspec: Optional[Dict[str, Any]] = None
+    outcomes: List[BatchIntentOutcome] = field(default_factory=list)
+    applied_count: int = 0
+    refused_count: int = 0
+    not_found_count: int = 0
+    mutation_revision: int = 0
+    is_error: bool = False
+    error_msg: str = ""
+    correction_hint: str = ""
+    superseded: bool = False
+    origin: Optional[MutationOrigin] = None
+    checkpoint_id: Optional[str] = None
+    mapspec_fingerprint: Optional[str] = None
+    cartographic_review: Optional[Dict[str, Any]] = None
+    warnings: List[str] = field(default_factory=list)
+
+    @property
+    def committed(self) -> bool:
+        """至少一个 intent 落盘（revision 已递增）。"""
+        return self.applied_count > 0 and not self.is_error and not self.superseded
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "mapspec": self.mapspec,
+            "outcomes": [
+                {
+                    "layer_id": o.layer_id,
+                    "status": o.status,
+                    "visible": o.visible,
+                    "error_msg": o.error_msg,
+                }
+                for o in self.outcomes
+            ],
+            "applied_count": self.applied_count,
+            "refused_count": self.refused_count,
+            "not_found_count": self.not_found_count,
+            "mutation_revision": self.mutation_revision,
+            "is_error": self.is_error,
+            "error_msg": self.error_msg,
+            "correction_hint": self.correction_hint,
+            "superseded": self.superseded,
+            "committed": self.committed,
+        }
+
     def to_dict(self) -> Dict[str, Any]:
         if self.superseded:
             res = {
@@ -1246,6 +1310,255 @@ class MapSpecLifecycleEngine:
                         "回滚尝试失败——状态可能不一致：请先重新读取当前 MapSpec "
                         "（webgis_state_get）再重试，不要假设 last-known-good。"
                     ),
+                )
+
+    async def apply_presentation_batch(
+        self,
+        session_id: str,
+        intents: List[PatchLayerPresentationIntent],
+        *,
+        origin: MutationOrigin = "agent",
+        expected_revision: Optional[int] = None,
+        pre_commit_check: Optional[Callable] = None,
+    ) -> MapSpecBatchResult:
+        """GISMutationBatch：N 个 presentation patch 一个事务。
+
+        单锁 / 单 pre_state 读 / 单 spec 载入（含 F1 复活序）/ 逐 intent
+        锁内守卫 / 单次校验 / 单次 review / 单 checkpoint / revision 恰 +1 /
+        单次 save。per-intent 裁决：
+        - pre_commit_check 返回非 None → refused（守卫拒绝，user-wins）；
+        - 层族不命中 → not_found（跳过，不阻断其余）；
+        - 其余 applied（_patch_layer_presentation 印记 presentation_owner）。
+
+        全部 refused/not_found → 不落盘不递增（no-op 批）。异常 → 与
+        apply_mutation 同款回滚（spec 未变时丢弃候选）。
+        """
+        _lock = session_lock_registry.lock(
+            session_id, fail_on_degraded=True, fail_on_lost=True,
+        )
+        async with _lock:
+            invalidate = getattr(session_data_manager, "invalidate_local_cache", None)
+            if callable(invalidate):
+                invalidate(session_id)
+            pre_state = await session_data_manager.get_map_state(session_id)
+            if pre_state.get("_cartographic_deleted") is True:
+                return MapSpecBatchResult(
+                    is_error=True, origin=origin,
+                    error_msg="Session was deleted; stale MapSpec mutation rejected.",
+                )
+            if origin == "user" and expected_revision is None:
+                return MapSpecBatchResult(
+                    is_error=True, origin=origin,
+                    error_msg="User MapSpec mutations require expected_revision.",
+                )
+            loaded = await self.store.get_mapspec(session_id, state_hint=pre_state)
+            try:
+                prior_mutation_revision = int(
+                    pre_state.get("_cartographic_mutation_revision", 0)
+                )
+            except (TypeError, ValueError):
+                prior_mutation_revision = 0
+            if (
+                expected_revision is not None
+                and expected_revision != prior_mutation_revision
+            ):
+                return MapSpecBatchResult(
+                    superseded=True, origin=origin, mapspec=loaded,
+                    mutation_revision=prior_mutation_revision,
+                    error_msg="MapSpec revision has changed.",
+                    correction_hint=(
+                        "Re-read MapSpec and retry with the current mutation_revision."
+                    ),
+                )
+            session_was_fresh = loaded is None
+            if not loaded:
+                loaded = {
+                    "version": "1.0", "view": {}, "sources": {}, "layers": [],
+                    "layout": {
+                        "legend": {"visible": True, "position": "top-right"},
+                        "controls": [{"type": "navigation", "position": "top-right"}],
+                    },
+                    "thresholds": {"maxFeatures": 50000, "timeoutMs": 30000},
+                }
+            checkpoint_id_created: Optional[str] = None
+            outcomes: List[BatchIntentOutcome] = []
+            candidate: Optional[Dict[str, Any]] = None
+            try:
+                # 1. 逐 intent：锁内守卫 → family 命中 → patch。
+                for intent in intents:
+                    if pre_commit_check is not None:
+                        guard_result = await pre_commit_check(
+                            session_id, intent, origin, loaded
+                        )
+                        if guard_result is not None:
+                            outcomes.append(BatchIntentOutcome(
+                                layer_id=intent.layer_id, status="refused",
+                                visible=intent.visible,
+                                error_msg=str(getattr(guard_result, "error_msg", "") or ""),
+                            ))
+                            continue
+                    matched = False
+                    base = candidate if candidate is not None else loaded
+                    patched_layers: List[Any] = []
+                    for layer in base.get("layers", []) or []:
+                        if not isinstance(layer, dict):
+                            patched_layers.append(layer)
+                            continue
+                        if _should_remove_layer(layer, intent.layer_id):
+                            matched = True
+                            patched_layers.append(
+                                _patch_layer_presentation(
+                                    layer, intent.visible, intent.opacity,
+                                    origin=str(origin),
+                                )
+                            )
+                        else:
+                            patched_layers.append(layer)
+                    if not matched:
+                        outcomes.append(BatchIntentOutcome(
+                            layer_id=intent.layer_id, status="not_found",
+                            visible=intent.visible,
+                        ))
+                        continue
+                    if candidate is None:
+                        candidate = {**base}
+                    candidate["layers"] = patched_layers
+                    outcomes.append(BatchIntentOutcome(
+                        layer_id=intent.layer_id, status="applied",
+                        visible=intent.visible,
+                    ))
+
+                applied = sum(1 for o in outcomes if o.status == "applied")
+                refused = sum(1 for o in outcomes if o.status == "refused")
+                not_found = sum(1 for o in outcomes if o.status == "not_found")
+                if candidate is None or applied == 0:
+                    # no-op 批：不落盘、不递增 revision、不建 checkpoint。
+                    return MapSpecBatchResult(
+                        mapspec=loaded, outcomes=outcomes,
+                        applied_count=0, refused_count=refused,
+                        not_found_count=not_found,
+                        mutation_revision=prior_mutation_revision,
+                        origin=origin,
+                    )
+
+                mapspec = candidate
+
+                # 2. review（AUTO_SAFE ≤2 iter）—— 整批一次。
+                cartographic_review: Dict[str, Any] = {}
+                try:
+                    cartographic_loop = review_and_repair_cartography(
+                        mapspec, max_iterations=2,
+                    )
+                    mapspec = cartographic_loop.mapspec
+                    cartographic_review = cartographic_loop.to_dict()
+                except Exception as review_exc:  # noqa: BLE001
+                    logger.warning(
+                        "Cartographic desired-state review unavailable for batch %s: %s",
+                        session_id, type(review_exc).__name__,
+                    )
+                    cartographic_review = self._review_failure(mapspec, review_exc)
+
+                # 3. 校验 + prior-blocking 指纹缓存（与单笔同款）。
+                validation = validate_mapspec(mapspec)
+                warnings = [e["message"] for e in validation.get("errors", [])] + \
+                    validation.get("warnings", [])
+                prior_blocking: set = set()
+                prior_fp = None
+                if loaded:
+                    try:
+                        from app.lib.cartography.quality_loop import (
+                            cartographic_fingerprint,
+                        )
+                        prior_fp = cartographic_fingerprint(loaded)
+                    except Exception:  # noqa: BLE001
+                        prior_fp = None
+                if prior_fp is not None and prior_fp in self._prior_blocking_cache:
+                    prior_blocking = self._prior_blocking_cache[prior_fp]
+                elif loaded:
+                    prior_blocking = self._blocking_error_codes(validate_mapspec(loaded))
+                    if prior_fp is not None:
+                        self._prior_blocking_cache[prior_fp] = prior_blocking
+                        while len(self._prior_blocking_cache) > 256:
+                            self._prior_blocking_cache.popitem(next(iter(self._prior_blocking_cache)))
+                new_blocking = self._blocking_error_codes(validation) - prior_blocking
+                if new_blocking:
+                    msg = "; ".join(
+                        e["message"] for e in validation.get("errors", [])
+                        if e.get("code") in new_blocking
+                    )
+                    return MapSpecBatchResult(
+                        is_error=True, origin=origin,
+                        error_msg=f"MapSpec 校验失败: {msg}",
+                        correction_hint="批量意图会引入无效引用；last-known-good 保持不变。",
+                        outcomes=outcomes,
+                    )
+
+                # 4. lost 复检 → checkpoint → revision+1 → save（单事务）。
+                if getattr(_lock, "lost", False):
+                    return MapSpecBatchResult(
+                        is_error=True, origin=origin,
+                        error_msg="Session lock ownership lost before commit; batch aborted.",
+                        correction_hint="锁所有权在提交前丢失（TTL 过期）。请重读 MapSpec 后重试。",
+                    )
+                session_dir = self.store.get_session_dir(session_id)
+                ckpt_res = await create_checkpoint(
+                    mapspec, session_dir, session_data_manager,
+                )
+                checkpoint_id_created = ckpt_res.get("checkpoint_id")
+                mutation_revision = prior_mutation_revision + 1
+                await self.store.save_mapspec(
+                    session_id, mapspec, mutation_revision=mutation_revision,
+                )
+                return MapSpecBatchResult(
+                    mapspec=mapspec, outcomes=outcomes,
+                    applied_count=applied, refused_count=refused,
+                    not_found_count=not_found,
+                    mutation_revision=mutation_revision,
+                    origin=origin,
+                    checkpoint_id=checkpoint_id_created,
+                    mapspec_fingerprint=cartographic_review.get("final_fingerprint"),
+                    cartographic_review=cartographic_review,
+                    warnings=warnings,
+                )
+            except Exception as e:
+                logger.error(
+                    f"MapSpec batch mutation failed for session {session_id}: {e}",
+                    exc_info=True,
+                )
+                try:
+                    rollback_ok = await self._rollback_to_snapshot(
+                        session_id,
+                        None if session_was_fresh else loaded,
+                        [dict(layer) if isinstance(layer, dict) else layer
+                         for layer in (pre_state.get("layers", []) or [])],
+                        revision=prior_mutation_revision + 1,
+                    )
+                except Exception as rb_err:  # noqa: BLE001
+                    logger.error(
+                        "MapSpec batch rollback raised for %s: %s",
+                        session_id, rb_err, exc_info=True,
+                    )
+                    rollback_ok = False
+                if checkpoint_id_created:
+                    try:
+                        await discard_checkpoint(
+                            self.store.get_session_dir(session_id),
+                            checkpoint_id_created,
+                        )
+                    except Exception as ck_err:  # noqa: BLE001
+                        logger.warning(
+                            "orphan batch checkpoint cleanup failed for %s/%s: %s",
+                            session_id, checkpoint_id_created, ck_err,
+                        )
+                return MapSpecBatchResult(
+                    is_error=True, origin=origin,
+                    error_msg=f"MapSpec 批量意图更新失败: {e}",
+                    correction_hint=(
+                        "事务已回滚，last-known-good MapSpec 与运行时状态保持一致。"
+                        if rollback_ok else
+                        "回滚尝试失败——状态可能不一致：请先重新读取当前 MapSpec 再重试。"
+                    ),
+                    outcomes=outcomes,
                 )
 
     async def _rollback_to_snapshot(

@@ -20,11 +20,13 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from app.services.mapspec.lifecycle_engine import (
+    MapSpecBatchResult,
     MapSpecLifecycleEngine,
     MapSpecResult,
     MutationIntent,
     MutationOrigin,
     PatchLayerPresentationIntent,
+    UpsertLayerIntent,
 )
 from app.services.gis_world_state.provenance import (
     ProvenanceEntry,
@@ -117,24 +119,53 @@ async def _check_user_presentation_guard_ring(
     session_id: str,
     intent: MutationIntent,
     origin: MutationOrigin,
+    prior_mapspec: Optional[Dict[str, Any]] = None,
 ) -> Optional[UserPresentationGuardError]:
-    """legacy 环形 provenance 守卫（旧会话无 owner 印记时的补充）。"""
-    if origin != "agent" or not isinstance(intent, PatchLayerPresentationIntent):
+    """legacy 环形 provenance 守卫（旧会话无 owner 印记时的补充）。
+
+    v2(audit H3): UpsertLayerIntent 同样受守卫 —— 此前只有 patch 走守卫，
+    legacy 会话（用户 hide 只存在于 ring）里 agent 可用
+    ``upsert(layout.visibility=visible)`` 绕过用户隐藏。spec 印记路径由
+    engine._preserve_durable_presentation 剥离可见性（不拒绝），ring 路径
+    在此拒绝。仅当 upsert 目标是 prior spec 中已存在的层族时生效（新层
+    无用户决策可言；重跑分析 mint 新 id 也不受影响）。
+    """
+    if origin != "agent":
         return None
-    if intent.visible is None:
+    if isinstance(intent, PatchLayerPresentationIntent):
+        if intent.visible is None:
+            return None
+        layer_key: Optional[str] = intent.layer_id
+        target_visible = bool(intent.visible)
+    elif isinstance(intent, UpsertLayerIntent):
+        layer_dict = intent.layer if isinstance(intent.layer, dict) else {}
+        layer_key = str(layer_dict.get("id") or "") or None
+        if not layer_key:
+            return None
+        layout = layer_dict.get("layout") if isinstance(layer_dict.get("layout"), dict) else {}
+        target_visible = bool(layout.get("visibility", "visible") != "none")
+        if prior_mapspec is not None:
+            family_exists = any(
+                _should_match_layer_family(existing.get("id"), layer_key)
+                for existing in prior_mapspec.get("layers", []) or []
+                if isinstance(existing, dict)
+            )
+            if not family_exists:
+                return None
+    else:
         return None
     entries = await get_provenance(session_id)
-    last = last_presentation_owner(entries, intent.layer_id)
+    last = last_presentation_owner(entries, layer_key)
     if last is None or last.get("origin") != "user":
         return None
     user_visible = last.get("detail", {}).get("visible")
-    if user_visible is None or bool(user_visible) == bool(intent.visible):
+    if user_visible is None or bool(user_visible) == bool(target_visible):
         # 用户没有显式 visible 决策，或 agent 与用户决策同值（幂等重放）
         return None
     return UserPresentationGuardError(
-        layer_id=intent.layer_id,
+        layer_id=layer_key,
         user_value=user_visible,
-        agent_value=intent.visible,
+        agent_value=target_visible,
     )
 
 
@@ -198,7 +229,8 @@ async def apply_gis_mutation(
     active_engine = engine or _get_engine()
 
     async def _locked_guard(sid, locked_intent, locked_origin, prior_mapspec):
-        """#1070(F-1): 锁内复检 —— 守卫初查后、锁获取前落地的用户决策在此可见。"""
+        """#1070(F-1): 锁内复检 —— 守卫初查后、锁获取前落地的用户决策在此可见。
+        v2(H3): prior_mapspec 同传给 ring 检查（upsert 守卫需要层族存在性）。"""
         if locked_origin != "agent":
             return None
         error = _check_user_presentation_guard(
@@ -206,7 +238,7 @@ async def apply_gis_mutation(
         )
         if error is None:
             error = await _check_user_presentation_guard_ring(
-                sid, locked_intent, locked_origin
+                sid, locked_intent, locked_origin, prior_mapspec
             )
         if error is None:
             return None
@@ -247,6 +279,89 @@ async def apply_gis_mutation(
                 revision=int(result.mutation_revision or 0),
                 summary=_intent_summary(intent),
                 detail=detail,
+            ),
+        )
+    return result
+
+
+async def apply_gis_mutation_batch(
+    session_id: str,
+    intents: list,
+    *,
+    origin: MutationOrigin = "agent",
+    actor: str = "unknown",
+    expected_revision: Optional[int] = None,
+    engine: Optional[MapSpecLifecycleEngine] = None,
+) -> MapSpecBatchResult:
+    """GISMutationBatch 统一入口：逐 intent 守卫 → 引擎单事务 → 单条 provenance。
+
+    v2(Phase 7 + audit H1/H2)：finalize_display 等收口此前逐层走
+    apply_gis_mutation（N 层 = N 个完整事务：N 次锁/checkpoint/revision/
+    全量 parse），且隐藏集经前端 user 路由洗白为 presentation_owner="user"。
+    batch 以 origin（默认 agent）一次落盘 N 个 presentation patch：
+    - user-wins 守卫逐 intent 在锁内复检（refused 项跳过并上报）；
+    - 全批一条 provenance（batch 摘要），不再逐条灌 ring（#1070 F-2 的
+      驱逐压力）。
+    """
+    for intent in intents:
+        if not isinstance(intent, PatchLayerPresentationIntent):
+            raise TypeError(
+                f"apply_gis_mutation_batch 目前只接受 PatchLayerPresentationIntent，"
+                f"收到 {type(intent).__name__}"
+            )
+    active_engine = engine or _get_engine()
+
+    async def _locked_batch_guard(sid, locked_intent, locked_origin, prior_mapspec):
+        if locked_origin != "agent":
+            return None
+        error = _check_user_presentation_guard(
+            sid, locked_intent, locked_origin, prior_mapspec
+        )
+        if error is None:
+            error = await _check_user_presentation_guard_ring(
+                sid, locked_intent, locked_origin, prior_mapspec
+            )
+        if error is None:
+            return None
+        return MapSpecResult(
+            is_error=True,
+            origin=locked_origin,
+            error_msg=(
+                f"图层 {error.layer_id} 的显示状态由用户手动设定"
+                f"（visible={error.user_value}），Agent 不覆盖用户显式操作。"
+            ),
+            correction_hint="保留该层用户设定的显示状态；如确需反转请由用户操作。",
+        )
+
+    result = await active_engine.apply_presentation_batch(
+        session_id, intents, origin=origin,
+        expected_revision=expected_revision,
+        pre_commit_check=_locked_batch_guard,
+    )
+    if result.committed:
+        shown = sorted(
+            o.layer_id for o in result.outcomes
+            if o.status == "applied" and o.visible is True
+        )
+        hidden = sorted(
+            o.layer_id for o in result.outcomes
+            if o.status == "applied" and o.visible is False
+        )
+        await append_provenance(
+            session_id,
+            ProvenanceEntry(
+                seq=int(result.mutation_revision or 0),
+                ts=datetime.now(timezone.utc).isoformat(),
+                origin=str(origin),
+                actor=actor,
+                kind="GISMutationBatch",
+                target=f"batch:{len(result.outcomes)}",
+                revision=int(result.mutation_revision or 0),
+                summary=(
+                    f"batch applied={result.applied_count} "
+                    f"refused={result.refused_count} not_found={result.not_found_count}"
+                ),
+                detail={"shown": shown, "hidden": hidden},
             ),
         )
     return result
