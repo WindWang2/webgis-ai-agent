@@ -361,3 +361,38 @@ def test_moran_i_pvalue_matches_seeded_scalar_reference():
 
     assert res.data["moran_i"] == pytest.approx(moran_i, abs=1e-12)
     assert res.data["p_value"] == pytest.approx(p_value, abs=1e-12)
+
+
+def test_assemble_features_matches_scalar_loop_output():
+    """#1063: 列式组装与旧 iloc 逐行循环的输出 golden 等价。"""
+    import numpy as np
+    import geopandas as gpd
+    from shapely.geometry import Point
+    from shapely.geometry import mapping
+    from app.lib.geo_analysis.statistics import _assemble_features, _feature_props
+
+    rng = np.random.default_rng(42)
+    n = 50
+    gdf = gpd.GeoDataFrame(
+        {
+            "score": rng.normal(size=n).round(3),
+            "label": [f"p{i}" for i in range(n)],
+            "flag": rng.integers(0, 2, size=n),
+        },
+        geometry=[Point(float(x), float(y)) for x, y in zip(rng.uniform(104, 104.1, n), rng.uniform(30, 30.1, n))],
+        crs="EPSG:4326",
+    )
+    gdf_wgs84 = gdf.to_crs("EPSG:4326")
+    cluster_ids = rng.integers(-1, 4, size=n)
+
+    fast = _assemble_features(gdf_wgs84, {"cluster_id": [int(v) for v in cluster_ids]})
+
+    # 旧实现语义（逐行 iloc + _feature_props + 单列注入）
+    legacy = []
+    for i in range(n):
+        row = gdf.iloc[i]
+        props = _feature_props(row)
+        props["cluster_id"] = int(cluster_ids[i])
+        legacy.append({"type": "Feature", "geometry": mapping(gdf_wgs84.geometry.iloc[i]), "properties": props})
+
+    assert fast == legacy

@@ -55,6 +55,11 @@ _MAX_KDE_POINTS = 200_000
 # Evaluation chunk: bounds peak per-call memory when both the (capped) point
 # count and the grid are large.
 _KDE_EVAL_CHUNK = 25_000
+# #1063: cap the KDE *evaluation product* (n_points × n_grid_cells). The
+# per-factor caps (#384) bound memory but not CPU: the cap corner computes
+# 2e10 kernel evaluations (~hundreds of seconds). Grid resolution is the
+# free variable — coarsen cell_size until the product fits.
+_MAX_KDE_EVAL_PRODUCTS = 200_000_000
 
 
 def _cap_kde_points(kde_data, kde_weights=None):
@@ -280,6 +285,27 @@ def kde_surface(
         ny = max(int((ymax - ymin) / cell_size), 2)
         logger.warning(f"KDE grid auto-adjusted to {nx}x{ny}={nx*ny} cells (cell_size={cell_size:.0f}m)")
 
+    # #1063: 内存护栏（#384）只分别限制点数与格网数，但评估成本是**乘积**
+    # —— cap 角（200k 点 × 100k 格）= 2e10 次核评估 ≈ 数百秒纯 CPU。乘积
+    # 超预算时加粗 cell_size（点携带数据，格网分辨率是自由变量）直到乘积
+    # 进入预算，并在结果信封披露。迭代加粗而非单次面积开方：退化维度
+    #（零高度点线数据）下面积公式不约束另一维的格数。
+    eval_product_capped = False
+    n_used = int(kde_data.shape[1])
+    if n_used * nx * ny > _MAX_KDE_EVAL_PRODUCTS:
+        eval_product_capped = True
+        while n_used * nx * ny > _MAX_KDE_EVAL_PRODUCTS and (nx > 2 or ny > 2):
+            factor = max(
+                ((n_used * nx * ny) / _MAX_KDE_EVAL_PRODUCTS) ** 0.5 * 1.05, 1.05
+            )
+            cell_size = cell_size * factor
+            nx = max(int((xmax - xmin) / cell_size), 2)
+            ny = max(int((ymax - ymin) / cell_size), 2)
+        logger.warning(
+            f"KDE evaluation product capped: {n_used} pts x {nx}x{ny} grid "
+            f"(cell_size={cell_size:.0f}m)"
+        )
+
     grid_x = np.linspace(xmin, xmax, nx)
     grid_y = np.linspace(ymin, ymax, ny)
     gx, gy = np.meshgrid(grid_x, grid_y)
@@ -337,6 +363,13 @@ def kde_surface(
     if n_points_used < n_points_total:
         # #384: input was subsampled to the point cap; say so on the envelope.
         fc["sampled_points"] = {"used": n_points_used, "total": n_points_total}
+    if eval_product_capped:
+        # #1063: grid coarsened to bound evaluation CPU; disclosed so the
+        # caller knows the surface resolution was lowered.
+        fc["eval_product_capped"] = {
+            "points": n_used, "grid_cells": nx * ny,
+            "cell_size_effective_m": round(cell_size, 1),
+        }
     return GeoAnalysisResult(True, fc, f"KDE surface: {len(out_features)} cells, grid {nx}x{ny}, bw={bw:.0f}m")
 
 

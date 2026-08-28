@@ -79,6 +79,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "看分布趋势用 heatmap_data，要矢量等值面用 kde_contours。"
            ),
            tier=2, domains=["statistics"],
+           cost="heavy", timeout=300.0,
            param_descriptions={
                "geojson": "输入点要素 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
                "bandwidth": "核函数带宽（米），0=自动（Scott规则，并按最近邻尺度钳制防过平滑）",

@@ -331,3 +331,28 @@ def test_kde_contours_ring_with_enclosed_core_keeps_island_bands_762():
             assert not region.contains(Point(moat_x, moat_y)), (
                 f"#762: moat point (density {d_moat:.3e}) painted into band {v:.2e}"
             )
+
+
+def test_kde_evaluation_product_capped(monkeypatch):
+    """#1063: 评估成本是 n×m 乘积 —— 乘积超预算时必须加粗格网并在信封披露，
+    而不是跑 2e10 次核评估（数百秒）。"""
+    from app.lib.geo_analysis import density as density_mod
+    from app.lib.geo_analysis.density import kde_surface
+
+    # 降低预算使小数据也能触发（等价于大数据集的行为契约）
+    monkeypatch.setattr(density_mod, "_MAX_KDE_EVAL_PRODUCTS", 200)
+    pts = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "geometry": {"type": "Point", "coordinates": [104.0 + i * 0.001, 30.0]},
+             "properties": {}}
+            for i in range(30)
+        ],
+    }
+    res = kde_surface(pts, cell_size=100)
+    assert res.success
+    used = res.data.get("eval_product_capped")
+    assert used, "product cap 未触发（预算 200、30 点 × 细格网）"
+    assert used["points"] <= 30
+    # 核心断言：加粗后的乘积回到预算内
+    assert used["points"] * used["grid_cells"] <= 200

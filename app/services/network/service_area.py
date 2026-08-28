@@ -206,35 +206,51 @@ class NetworkServiceAreaService:
 
             node_costs = nx.single_source_dijkstra_path_length(graph_view, start_node_id, cutoff=max_cutoff, weight=weight_func)
 
-            sa_breaks: List[ServiceAreaBreak] = []
+            # #1063: 单趟边分类。每个可达节点从其首个 break 进入；每条边
+            # 只分类一次（两端都可达的 break 起全量、其前的 break 按剩余
+            # 预算截断），追加到所属的每个 break。旧实现按 break 重扫全部
+            # 可达边并重建几何并集 —— O(B×E)，嵌套 break 重复小 break 的
+            # 全部工作。输出集合与旧实现逐 break 等价（golden 校验）。
+            cutoffs = [
+                _break_to_cutoff(b, break_unit, impedance) for b in sorted_breaks
+            ]
+            n_breaks = len(sorted_breaks)
+            first_idx: Dict[Any, int] = {}
+            for node, cost in node_costs.items():
+                for bi, cutoff in enumerate(cutoffs):
+                    if cost <= cutoff:
+                        first_idx[node] = bi
+                        break
 
-            for brk_val in sorted_breaks:
-                cutoff = _break_to_cutoff(brk_val, break_unit, impedance)
-                reachable_set = {n for n, cost in node_costs.items() if cost <= cutoff}
-                reachable_nodes = list(reachable_set)
+            node_coords_per_break: List[List[Tuple[float, float]]] = [
+                [] for _ in range(n_breaks)
+            ]
+            for node, bi in first_idx.items():
+                data = graph_view.nodes[node]
+                xy = (data["x"], data["y"])
+                for k in range(bi, n_breaks):
+                    node_coords_per_break[k].append(xy)
 
-                # Extract node coordinates
-                node_coords: List[Tuple[float, float]] = []
-                for n in reachable_nodes:
-                    data = graph_view.nodes[n]
-                    node_coords.append((data["x"], data["y"]))
-
-                # Collect reachable edges, including the in-budget portion of
-                # an edge whose far endpoint sits past the cutoff (#618-20).
-                reachable_line_geoms: List[LineString] = []
-                edge_count = 0
-
-                for u in reachable_nodes:
-                    cost_u = node_costs[u]
-                    for v in graph_view.successors(u):
-                        edge_data = graph_view[u][v]
-                        line = self._edge_linestring(graph_view, u, v, edge_data)
-                        if v in reachable_set:
-                            edge_count += 1
-                            reachable_line_geoms.append(line)
-                            continue
+            line_geoms_per_break: List[List[LineString]] = [
+                [] for _ in range(n_breaks)
+            ]
+            edge_counts = [0] * n_breaks
+            for u, cost_u in node_costs.items():
+                u_idx = first_idx[u]
+                for v in graph_view.successors(u):
+                    edge_data = graph_view[u][v]
+                    line = self._edge_linestring(graph_view, u, v, edge_data)
+                    v_idx = first_idx.get(v)
+                    for bi in range(u_idx, n_breaks):
+                        if v_idx is not None and v_idx <= bi:
+                            # v 在本 break 可达 → 全边属于 bi 及之后所有 break
+                            for bj in range(bi, n_breaks):
+                                edge_counts[bj] += 1
+                                line_geoms_per_break[bj].append(line)
+                            break
+                        # 部分截断（#618-20）：远端点超出该 break 的预算
                         w = weight_func(u, v, edge_data)
-                        remaining = cutoff - cost_u
+                        remaining = cutoffs[bi] - cost_u
                         if remaining <= 0 or w <= 0:
                             continue
                         frac = min(1.0, remaining / w)
@@ -253,15 +269,18 @@ class NetworkServiceAreaService:
                             or getattr(seg, "is_empty", False)
                         ):
                             continue
-                        edge_count += 1
-                        reachable_line_geoms.append(seg)
+                        edge_counts[bi] += 1
+                        line_geoms_per_break[bi].append(seg)
 
+            sa_breaks: List[ServiceAreaBreak] = []
+            for bi, brk_val in enumerate(sorted_breaks):
                 # Build boundary polygon (GIS-08/09)
                 poly_geojson = self._build_isochrone_polygon(
-                    node_coords, reachable_line_geoms, fac_coords,
+                    node_coords_per_break[bi], line_geoms_per_break[bi], fac_coords,
                     to_utm=to_utm, to_wgs=to_wgs,
                 )
 
+                reachable_line_geoms = line_geoms_per_break[bi]
                 reachable_net_dict = (
                     mapping(MultiLineString(reachable_line_geoms))
                     if reachable_line_geoms
@@ -273,7 +292,7 @@ class NetworkServiceAreaService:
                     break_unit=break_unit,
                     geometry=poly_geojson,
                     reachable_network_geometry=reachable_net_dict,
-                    reachable_edge_count=edge_count,
+                    reachable_edge_count=edge_counts[bi],
                 )
                 sa_breaks.append(sa_break)
 
