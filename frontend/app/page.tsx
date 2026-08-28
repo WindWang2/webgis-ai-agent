@@ -9,6 +9,7 @@ import { useMapAction } from '@/lib/contexts/map-action-context';
 // Refactored custom hooks
 import { useWorkspaceSession } from '@/lib/hooks/use-workspace-session';
 import { useSSEStream } from '@/lib/hooks/use-sse-stream';
+import { useSessionPlan } from '@/lib/hooks/use-session-plan';
 
 // #553: 会话删除客户端 + 新会话确认守卫
 import { deleteSession } from '@/lib/api/chat';
@@ -108,6 +109,11 @@ export default function Home() {
     refreshSessions,
   } = useWorkspaceSession(dispatchAction);
 
+  // #1048: SessionPlan hydrate-then-delta 状态（page 级，与 agentRuntime 同款
+  // 下行路径）。增量由 useSSEStream 的分发链驱动，视图经 ContextPanel → ChatTab
+  // 到 SessionPlanPanel；applySessionPlanEvent 恒稳，不影响 onEvent 身份。
+  const sessionPlan = useSessionPlan(sessionId, activeSessionToken);
+
   // 3. SSE Stream and Event Bridge Hook
   const {
     messages,
@@ -126,7 +132,8 @@ export default function Home() {
     userLocation,
     sessionTokenRef,
     rememberSessionToken,
-    getSessionTokenFor
+    getSessionTokenFor,
+    sessionPlan.applySessionPlanEvent
   );
 
   // #667: keep the single lazy-hydration seam's session context in sync
@@ -324,6 +331,7 @@ export default function Home() {
           ownerToken={activeSessionToken}
           onPlanAction={handlePlanAction}
           agentRuntime={agentRuntime}
+          sessionPlan={sessionPlan.view}
         />
 
         {/* RAG Independent Panel */}

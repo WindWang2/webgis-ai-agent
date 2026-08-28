@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { sendChat, getSessionList, deleteSession, executeToolDirect, streamChat } from './chat';
+import { sendChat, getSessionList, deleteSession, executeToolDirect, streamChat, getSessionPlan } from './chat';
 import type { SSEEvent, SSEEventType } from './chat';
 
 const mockFetch = vi.fn();
@@ -92,6 +92,71 @@ describe('Chat API', () => {
     it('throws on non-ok response', async () => {
       mockFetch.mockResolvedValueOnce({ ok: false, status: 404 });
       await expect(getSessionList()).rejects.toThrow('API Error: 404');
+    });
+  });
+
+  describe('getSessionPlan', () => {
+    const projection = {
+      session_id: 's1',
+      envelope_id: 'sp-abc',
+      user_goal: '成都市小学分布情况',
+      query: '成都市小学分布情况',
+      plan_id: 'plan-成都市',
+      recipe_id: 'poi_distribution_overview',
+      progress: [
+        { capability: 'poi_query', status: 'complete', bound_ref: 'ref:geojson-poi' },
+        { capability: 'heatmap', status: 'pending', bound_ref: '' },
+      ],
+      replaced: false,
+      superseded: false,
+      updated_at: 1750000000.5,
+    };
+
+    it('fetches the read-only session plan endpoint', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: () => Promise.resolve(JSON.stringify(projection)),
+      });
+      const result = await getSessionPlan('s1');
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/v1/chat/sessions/s1/plan'),
+        expect.objectContaining({ method: 'GET' })
+      );
+      expect(result).toEqual(projection);
+    });
+
+    it('SEC-08: sends X-Session-Token when ownerToken is provided', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: () => Promise.resolve(JSON.stringify(projection)),
+      });
+      await getSessionPlan('s1', 'tok-123');
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/v1/chat/sessions/s1/plan'),
+        expect.objectContaining({
+          headers: expect.objectContaining({ 'X-Session-Token': 'tok-123' }),
+        })
+      );
+    });
+
+    it('resolves undefined on 204 (no envelope — hidden, not an error)', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 204,
+        statusText: 'No Content',
+        text: () => Promise.resolve(''),
+      });
+      const result = await getSessionPlan('s1');
+      expect(result).toBeUndefined();
+    });
+
+    it('throws on non-ok response', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
+      await expect(getSessionPlan('s1')).rejects.toThrow('API Error: 500');
     });
   });
 
