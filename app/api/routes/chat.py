@@ -524,8 +524,15 @@ async def _guard_body_session(
         return
 
     session_data_manager.invalidate_local_cache(session_id)
-    deleted_state = await session_data_manager.get_map_state(session_id)
-    if deleted_state.get("_cartographic_deleted") is True:
+    # v2(audit P2)：准入守卫只查 tombstone 布尔 —— 单字段读（ACK 路由
+    # #1081 同款修正；旧实现每条 chat 消息全量解析 mapspec）。
+    _get_field = getattr(session_data_manager, "get_state_field", None)
+    deleted = (
+        await _get_field(session_id, "_cartographic_deleted")
+        if callable(_get_field) else
+        (await session_data_manager.get_map_state(session_id)).get("_cartographic_deleted")
+    )
+    if deleted is True:
         raise HTTPException(status_code=404, detail="Session not found")
 
     # #525: guard-only variant — no message-collection selectinload on the

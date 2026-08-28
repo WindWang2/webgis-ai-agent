@@ -192,6 +192,13 @@ class MapProductPlanner:
         self.templates = get_product_template_registry()
         self.catalog = get_template_catalog()
         self.selector = TemplateSelector(catalog=self.catalog)
+        # v2(audit R4)：同一会话里 webgis_map_intent 与 webgis_map_product
+        # 对同一 query 各解析一次（加上 finalize_with_profile 共 2-3 次）。
+        # plan_from_intent 是纯函数 —— 以 (query, recipe, template,
+        # available_tools, manifest 指纹) 为键 memo；registry 内容变化
+        # （manifest 指纹变）自动失效。有界 64。
+        self._plan_memo: "OrderedDictT" = {}
+        self._plan_memo_max = 64
 
     # ── registry 裁决辅助 ─────────────────────────────────────────────
     def _resolve_capabilities(
@@ -252,7 +259,27 @@ class MapProductPlanner:
         recipe_id: str = "",
         available_tools: Optional[Any] = None,
         project_verified: Optional[set] = None,
+        use_memo: bool = True,
     ) -> MapProductPlan:
+        # v2(R4)：memo 命中直接返回既有 plan（确定性规划器，同输入同输出）。
+        # available_tools 参与（工具面变化改变 resolution evidence）；
+        # project_verified 参与（#864 项目记忆排序）。测试可用 use_memo=False
+        # 绕过。
+        from collections import OrderedDict
+        memo_key = None
+        if use_memo:
+            try:
+                memo_key = (
+                    intent.query, recipe_id, template_id,
+                    tuple(sorted(available_tools)) if available_tools is not None else None,
+                    tuple(sorted(project_verified)) if project_verified else None,
+                    get_runtime_manifest().fingerprint,
+                )
+                cached = self._plan_memo.get(memo_key)
+                if cached is not None:
+                    return cached.model_copy(deep=True)
+            except Exception:  # noqa: BLE001 — memo 失败退直算
+                memo_key = None
         # recipe_id 显式指定（webgis_map_intent 阶段的推荐/LLM 纠偏）优先——
         # 保证意图阶段与产品阶段用同一份计划（plan 连续性）。
         recipe = self.recipes.get(recipe_id) if recipe_id else None
@@ -359,6 +386,13 @@ class MapProductPlanner:
             plan.charts = ["category_bar"] if intent.task == "categorical_distribution" else ["admin_bar"]
 
         plan.validation = list(recipe.validation_rules)
+        if memo_key is not None:
+            # 存入即深拷贝：调用方持有返回对象并可变（plan1.data_requirements=[]
+            # 不得污染 memo 基底）。
+            self._plan_memo[memo_key] = plan.model_copy(deep=True)
+            while len(self._plan_memo) > self._plan_memo_max:
+                self._plan_memo.popitem(last=False)
+
         return plan
 
     def _map_model_evidence(self, layers: List[PlannedLayer]) -> List[Dict[str, Any]]:

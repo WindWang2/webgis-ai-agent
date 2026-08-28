@@ -60,7 +60,7 @@ function refChartState(chartRef: string, fetched: ChartData | null | undefined):
   return cached ? { status: 'ready', chart: cached } : { status: 'unavailable' };
 }
 
-function ChartPanelView({ component }: { component: MapSpecComponent }) {
+function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?: RendererContext }) {
   const patched = usePlacementPatchedComponent(component);
   const variant = resolvePanelVariant(patched);
   const placement = patched.placement;
@@ -103,6 +103,7 @@ function ChartPanelView({ component }: { component: MapSpecComponent }) {
     <FloatingChrome
       component={patched}
       title={title}
+      topSlotIndexes={ctx?.topSlotIndexes}
       testId="spec-chrome-chart-panel"
       dataVariant={variant}
       transparent={variant === 'transparent'}
@@ -128,7 +129,7 @@ function ChartPanelView({ component }: { component: MapSpecComponent }) {
 }
 
 function ChartPanelRenderer(component: MapSpecComponent, _ctx: RendererContext) {
-  return <ChartPanelView component={component} />;
+  return <ChartPanelView component={component} ctx={_ctx} />;
 }
 
 registerComponentRenderer('chart_panel', ChartPanelRenderer);

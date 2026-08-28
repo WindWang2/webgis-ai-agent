@@ -4,6 +4,7 @@ import React from 'react';
 import type { MapSpec, MapSpecComponent } from '@/lib/mapspec-compiler/types';
 import { renderComponent } from './map-components';
 import { buildBottomSlotIndexes, stackedBottomStyle } from './map-components/helpers';
+import { buildTopSlotIndexes } from './map-components/helpers';
 import { metersPerPixelAt } from '@/lib/map-kit/meters-per-pixel';
 
 // U-2（#884）同槽堆叠原语经 helpers 供渲染器与测试复用
@@ -42,7 +43,9 @@ export const MapSpecChrome = React.memo(function MapSpecChrome({ components, zoo
 
   // U-2（#884）：底部同槽组件分层索引（colorbar+scale_bar 不再互压）。
   const bottomSlotIndexes = buildBottomSlotIndexes(renderable);
-  const ctx = { spec, zoom, centerLat, bearing, bottomSlotIndexes };
+  // v2(#1079)：顶槽堆叠索引（chart/statistics/annotation 同槽不再互压）
+  const topSlotIndexes = buildTopSlotIndexes(renderable);
+  const ctx = { spec, zoom, centerLat, bearing, bottomSlotIndexes, topSlotIndexes };
 
   return (
     <>

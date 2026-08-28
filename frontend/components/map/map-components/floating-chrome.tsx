@@ -9,8 +9,9 @@ import {
   setComponentPlacementOverride,
   subscribeComponentOverrides,
 } from '@/lib/mapspec/component-mutation';
-import { DEFAULT_POSITION, isFloating, placementStyle, positionClass, resolvePosition } from './helpers';
+import { DEFAULT_POSITION, isFloating, placementStyle, positionClass, resolvePosition, stackedTopStyle } from './helpers';
 import { devOnly } from '@/lib/utils/logger';
+import { keyboardMoveDelta } from '@/lib/map-components/layout-runtime';
 
 /**
  * FloatingChrome —— 浮动面板交互壳（D4）：拖拽 / 缩放 / 折叠 / 隐藏 / 复位。
@@ -81,6 +82,8 @@ export interface FloatingChromeProps {
   bodyClassName?: string;
   className?: string;
   testId?: string;
+  /** v2(#1079)：顶槽堆叠索引（锚定态同槽避让）；floating 态忽略。 */
+  topSlotIndexes?: Map<MapSpecComponent, number>;
   children: React.ReactNode;
 }
 
@@ -92,6 +95,7 @@ export function FloatingChrome({
   bodyClassName,
   className,
   testId,
+  topSlotIndexes,
   children,
 }: FloatingChromeProps) {
   // 内部再合并一次 override（幂等）：直接使用 FloatingChrome 的调用方
@@ -299,11 +303,39 @@ export function FloatingChrome({
     }
     : floating
       ? placementStyle(merged)
-      : undefined;
+      : stackedTopStyle(merged, topSlotIndexes);
+
+  // v2(#1079)：键盘移动 —— 方向键 8px、Shift/Alt+方向键 24px；以当前
+  // 几何为原点换算 delta 后走与指针手势相同的提交通道（乐观 override +
+  // 单次 CAS）。锚定态首次移动即转 floating（与拖拽语义一致）。
+  function onTitleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    const delta = keyboardMoveDelta(e.key, e.shiftKey || e.altKey);
+    if (!delta) return;
+    e.preventDefault();
+    const el = containerRef.current;
+    if (!el) return;
+    const origin = measureOrigin(el);
+    const parent = measureParent(el);
+    const hasLayout = parent.width > 0 || parent.height > 0;
+    const next: Geometry = {
+      x: hasLayout
+        ? clamp(origin.x + delta.dx, EDGE_MARGIN, Math.max(EDGE_MARGIN, parent.width - origin.width - EDGE_MARGIN))
+        : origin.x + delta.dx,
+      y: hasLayout
+        ? clamp(origin.y + delta.dy, EDGE_MARGIN, Math.max(EDGE_MARGIN, parent.height - origin.height - EDGE_MARGIN))
+        : origin.y + delta.dy,
+      width: origin.width,
+      height: origin.height,
+    };
+    const nextPlacement = toPlacement(next);
+    commitPlacement(nextPlacement, nextPlacement);
+  }
 
   return (
     <div
       ref={containerRef}
+      role="region"
+      aria-label={`${title} 面板（方向键移动，Shift+方向键大幅移动）`}
       data-testid={testId}
       data-variant={dataVariant}
       className={`${transparent
@@ -313,7 +345,10 @@ export function FloatingChrome({
     >
       <div
         data-testid={testId ? `${testId}-title-bar` : 'floating-chrome-title-bar'}
-        className="flex cursor-grab select-none touch-none items-center justify-between gap-2 border-b border-map-chrome-border px-2 py-1 active:cursor-grabbing"
+        tabIndex={0}
+        aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight Shift+ArrowUp Shift+ArrowDown Shift+ArrowLeft Shift+ArrowRight"
+        className="flex cursor-grab select-none touch-none items-center justify-between gap-2 border-b border-map-chrome-border px-2 py-1 outline-none focus-visible:ring-1 focus-visible:ring-map-chrome-ink/40 active:cursor-grabbing"
+        onKeyDown={onTitleKeyDown}
         onPointerDown={onTitlePointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={finishGesture}

@@ -360,10 +360,18 @@ async def _persist_cartographic_issued_action(
         return
     from app.services.session_data import session_data_manager
 
-    state = await session_data_manager.get_map_state(session_id)
-    if state.get("_cartographic_deleted") is True:
-        return
-    context = state.get("_cartographic_harness_context")
+    # v2(audit P3)：两个字段的定向读（tombstone + harness context）——
+    # 旧实现全量解析 mapspec。
+    _get_field = getattr(session_data_manager, "get_state_field", None)
+    if callable(_get_field):
+        if await _get_field(session_id, "_cartographic_deleted") is True:
+            return
+        context = await _get_field(session_id, "_cartographic_harness_context")
+    else:
+        state = await session_data_manager.get_map_state(session_id)
+        if state.get("_cartographic_deleted") is True:
+            return
+        context = state.get("_cartographic_harness_context")
     if not isinstance(context, dict) or context.get("session_id") != session_id:
         return
     try:

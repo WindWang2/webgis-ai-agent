@@ -299,6 +299,18 @@ class MemorySessionStore(BaseSessionStore):
         self._map_state[session_id].update(fields)
         return True
 
+    async def get_state_field(self, session_id: str, field: str) -> Any:
+        """v2(audit P6)：定向读单字段 —— 覆盖协议默认（全量 get_map_state
+        deepcopy 整个状态含 mapspec）为单字段浅拷贝（列表字段拷贝列表，
+        防 #701 的引用逃逸）。"""
+        state = self._map_state.get(session_id, {})
+        value = state.get(field)
+        if isinstance(value, list):
+            return list(value)
+        if isinstance(value, dict):
+            return dict(value)
+        return value
+
     async def commit_mapspec_state(
         self, session_id: str, fields: dict, layer_op: Optional[tuple] = None,
     ) -> bool:

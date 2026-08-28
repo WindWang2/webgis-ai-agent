@@ -47,6 +47,7 @@ class RedisSessionStore(BaseSessionStore):
         socket_timeout: float = 5.0,
         redis: Optional[aioredis.Redis] = None,
     ):
+        self._ack_batch_script = None  # v2(P5)：ACK 批 Lua 的 EVALSHA 句柄
         # 审计 TEST-13：不要在此创建 Redis 客户端。Redis.from_url 返回的客户端在
         # 第一次 async 操作时会把它内部的连接池绑定到当时的 event loop；而本单例在
         # 模块 import 时就构造（session_data_manager = create_session_data_manager()），
@@ -1284,7 +1285,12 @@ return results
         for action_id, payload in prepared:
             args.extend((action_id, payload))
         try:
-            results = await self._r.eval(self._ACK_BATCH_LUA, len(keys), *keys, *args)
+            # v2(audit P5)：EVALSHA（register_script 缓存 Script 对象）——
+            # 每批 ~1.5KB 脚本体不再随请求传输；NOSCRIPT 时 redis-py 自动
+            # 回退 EVAL。
+            if self._ack_batch_script is None:
+                self._ack_batch_script = self._r.register_script(self._ACK_BATCH_LUA)
+            results = await self._ack_batch_script(keys=keys, args=args)
             return [
                 r.decode() if isinstance(r, bytes) else str(r) for r in results
             ]
