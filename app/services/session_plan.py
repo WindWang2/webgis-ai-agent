@@ -396,13 +396,14 @@ async def apply_tool_result(
     """
     if not session_id or not success:
         return []
-    async with session_lock_registry.lock(session_id):
+    async with session_lock_registry.lock(session_id) as lock:
         return await _apply_tool_result_unlocked(
             session_id,
             tool_name,
             raw_result,
             geojson_ref=geojson_ref,
             store=store,
+            lock=lock,
         )
 
 
@@ -413,11 +414,19 @@ async def _apply_tool_result_unlocked(
     *,
     geojson_ref: Optional[str] = None,
     store: Any = None,
+    lock: Any = None,
 ) -> list[SessionPlanEvent]:
     backend = store if store is not None else session_data_manager
     plan = await _ensure_slot_unlocked(session_id, store=backend)
     raw = raw_result if isinstance(raw_result, dict) else {}
     events: list[SessionPlanEvent] = []
+
+    if lock is not None and lock.lost:
+        logger.error(
+            "[SessionPlan] Lock ownership for session %s was lost; aborting envelope mutation",
+            session_id,
+        )
+        return []
 
     if tool_name == "webgis_map_intent":
         gis = raw.get("plan")
@@ -427,6 +436,8 @@ async def _apply_tool_result_unlocked(
         new_key = goal_key(gis, query)
         old_key = goal_key(plan.gis_chapter, plan.user_goal)
         if plan.gis_chapter and old_key and new_key and old_key != new_key:
+            if lock is not None and lock.lost:
+                return []
             old = plan.model_copy(deep=True)
             old.superseded = True
             await _archive_envelope(old, store=backend)
@@ -438,6 +449,8 @@ async def _apply_tool_result_unlocked(
                 progress=_init_progress(gis),
                 previous_goal=old.user_goal,
             )
+            if lock is not None and lock.lost:
+                return []
             await save_session_plan(new, store=backend)
             events.append(_superseded_event(old, new))
             events.append(_updated_event(new))
@@ -453,7 +466,8 @@ async def _apply_tool_result_unlocked(
         plan.user_goal = query or plan.user_goal
         plan.progress = _merge_progress(plan.progress, gis)
         plan.replaced = replaced
-        plan.superseded = False
+        if lock is not None and lock.lost:
+            return []
         await save_session_plan(plan, store=backend)
         events.append(_updated_event(plan))
         return events
@@ -479,6 +493,8 @@ async def _apply_tool_result_unlocked(
         changed = _mark_progress(
             plan, done_caps, status="complete", bound_ref=geojson_ref or ""
         )
+        if lock is not None and lock.lost:
+            return []
         await save_session_plan(plan, store=backend)
         events.append(_updated_event(plan))
         events.extend(_progress_event(plan, row) for row in changed)
@@ -493,6 +509,8 @@ async def _apply_tool_result_unlocked(
         plan, hits, status="complete", bound_ref=geojson_ref or ""
     )
     if not changed:
+        return []
+    if lock is not None and lock.lost:
         return []
     await save_session_plan(plan, store=backend)
     return [_progress_event(plan, row) for row in changed]
