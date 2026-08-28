@@ -480,6 +480,10 @@ async def test_start_fails_fast_when_native_dump_fails(monkeypatch, tmp_path):
         raise RuntimeError("registry not injected")
 
     monkeypatch.setattr(mod, "PI_AGENT_DIR", tmp_path)
+    # Own the rpc-entry precondition: vendor/pi dist may be unbuilt in CI, and
+    # start() would raise FileNotFoundError before reaching the patched dump.
+    entry = tmp_path / "rpc-entry.js"
+    entry.write_text("// stub", encoding="utf-8")
     monkeypatch.setattr(
         "app.services.chat.pi_native_surface.dump_native_tools", _boom
     )
@@ -488,7 +492,7 @@ async def test_start_fails_fast_when_native_dump_fails(monkeypatch, tmp_path):
         "Popen",
         MagicMock(side_effect=AssertionError("spawn must not happen after dump failure")),
     )
-    client = mod.PiRpcClient()
+    client = mod.PiRpcClient(pi_rpc_entry=entry, session_dir=tmp_path / "sess")
     monkeypatch.setattr(client, "_wait_for_ready", AsyncMock(return_value=None))
     with pytest.raises(RuntimeError, match="registry not injected"):
         await client.start()

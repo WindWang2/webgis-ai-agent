@@ -528,6 +528,32 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
                 events_to_sse(plan_events, session_id),
                 session_id,
             )
+        except (TimeoutError, asyncio.TimeoutError):
+            # Session-lock contention (e.g. a long cartographic evaluation
+            # holding the per-session lock): retry once so the envelope
+            # update — possibly a supersede — is not silently lost.
+            logger.warning(
+                "[PiBridge] SessionPlan apply lock contention session=%s tool=%s — retrying once",
+                session_id, tool_name,
+            )
+            try:
+                plan_events = await apply_tool_result(
+                    session_id,
+                    tool_name,
+                    result.raw_result,
+                    success=True,
+                    geojson_ref=result.geojson_ref,
+                )
+                cache_session_plan_sse(
+                    request.toolCallId,
+                    events_to_sse(plan_events, session_id),
+                    session_id,
+                )
+            except Exception:
+                logger.exception(
+                    "[PiBridge] SessionPlan apply retry failed session=%s tool=%s",
+                    session_id, tool_name,
+                )
         except Exception:
             logger.exception(
                 "[PiBridge] SessionPlan apply failed session=%s tool=%s",

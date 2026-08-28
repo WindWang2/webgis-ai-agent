@@ -433,6 +433,16 @@ MapLibre `image` source 无法携带请求头，因此除 `X-Session-Token` 外�
 | `plan_step_done` | `{session_id, task_id, step_n}` | 计划步骤完成 |
 | `plan_finalized` | `{session_id, task_id, skipped[]}` | 计划终态（含被跳过步骤） |
 
+### SessionPlan 事件（Pi 路径，仅流式）
+
+Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**只在流式 `/chat/stream` 上、每个工具执行后**发射；`plan_ready`/`plan_step_done`/`plan_finalized` 这三个 CanonicalPlan 名字在 Pi 路径**永不出现**（非流式消费者请直接读 SessionStore 的 `session-plan` 别名）。
+
+| 事件名 | 载荷 | 说明 |
+|--------|------|-----|
+| `session_plan_updated` | `{session_id, envelope_id, plan_id, recipe_id, query, replaced}` | GIS 章节写入/替换（新目标为 supersede + 新信封） |
+| `session_plan_progress` | `{session_id, envelope_id, capability, status, bound_ref}` | 能力完成/置空（能力形状，非工具步骤） |
+| `session_plan_superseded` | `{session_id, old_envelope_id, envelope_id, previous_query, query}` | 用户目标变更，旧信封归档 |
+
 ### 探索引擎事件
 
 | 事件名 | 载荷 | 说明 |
@@ -474,7 +484,7 @@ MapLibre `image` source 无法携带请求头，因此除 `X-Session-Token` 外�
 
 | 方法 | 路径 | 说明 |
 |------|-----|-----|
-| GET | `/api/v1/health` | 基本信息：`{status, timestamp, service, version}` |
+| GET | `/api/v1/health` | 基本信息：`{status, timestamp, service, version, agent_runtime}`；`agent_runtime` 为 `"pi"`/`"chatengine"`，fail-closed：bridge 探测失败或进程已死时如实报 `chatengine`，绝不按 flag 推报 `pi`（#1032） |
 | GET | `/api/v1/health/live` | liveness：仅确认进程可响应 `{status: "alive"}`；k8s livenessProbe / Docker HEALTHCHECK 使用，不检查依赖 |
 | GET | `/api/v1/ready` | readiness：检查 **DB + LLM + Redis + Celery** 四项连通；全通 200，任一失败 503，body 仅 `{"ready": bool}`（不泄露内部依赖拓扑，SEC-11） |
 

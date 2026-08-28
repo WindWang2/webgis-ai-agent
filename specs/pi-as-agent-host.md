@@ -8,8 +8,9 @@
 > ADRs this spec adds: 0076 (SessionPlan is Pi-path plan truth), 0077 (wrap vendored Pi).
 > Does not reopen ADR-0055, 0006, 0071. (ADR-0071 “shared cartography session
 > runtime” currently lives only on the unmerged next-generation-harness line,
-> commit `7955cba` — the shared-seam statement it records is already true on
-> master via `app/services/cartography_runtime.py` bridge re-exports.)
+> commit `7955cba`; the shared evaluation seam it records — both hosts
+> evaluating cartography through the same session-scoped harness state — is
+> already how master works.)
 
 ## Problem Statement
 

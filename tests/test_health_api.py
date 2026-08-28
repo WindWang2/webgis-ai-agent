@@ -105,3 +105,17 @@ async def test_agent_runtime_reports_chatengine_when_probe_errors(client, monkey
     monkeypatch.setattr(chat_mod, "_use_pi_bridge", _boom)
     resp = await client.get("/api/v1/health")
     assert resp.json()["agent_runtime"] == "chatengine"
+
+
+@pytest.mark.asyncio
+async def test_agent_runtime_reports_chatengine_when_pi_process_died(client, monkeypatch):
+    """The most common real degradation: a crashed Pi subprocess must report
+    chatengine even with USE_NEW_AGENT on (#1032 / C-F15 honesty)."""
+    import app.api.routes.chat as chat_mod
+
+    monkeypatch.setattr(chat_mod, "USE_NEW_AGENT", True)
+    dead = MagicMock()
+    dead._process_died = True
+    monkeypatch.setattr(chat_mod, "pi_bridge", dead)
+    resp = await client.get("/api/v1/health")
+    assert resp.json()["agent_runtime"] == "chatengine"
