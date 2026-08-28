@@ -302,7 +302,6 @@ async def test_patch_layer_style_intent_persists_paint(clean_session):
 async def test_engine_batch_fails_closed_on_degraded_lock(clean_session):
     """降级锁（Redis 配置但不可达）下引擎批必须拒绝 —— 两 worker 各持进程
     内锁并发提交的 lost-update 面在此关闭。"""
-    import app.services.distributed_lock as dl
     from app.services.distributed_lock import (
         _InProcessLock, _ResilientSessionLock, LockDegradedError,
     )
