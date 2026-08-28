@@ -317,6 +317,17 @@ async def apply_gis_mutation_batch(
             )
     active_engine = engine or _get_engine()
 
+    # v2(review 5/6-A5)：ring 批内只读一次 —— per-intent 守卫每次 HGET
+    # _gis_provenance，N 层 finalize 在锁内串行 N 次 RTT；锁内单次读取后
+    # 内存裁决（ring 在锁内不会变化）。
+    _ring_cache: dict = {"entries": None, "loaded": False}
+
+    async def _load_ring_once(sid: str):
+        if not _ring_cache["loaded"]:
+            _ring_cache["entries"] = await get_provenance(sid)
+            _ring_cache["loaded"] = True
+        return _ring_cache["entries"]
+
     async def _locked_batch_guard(sid, locked_intent, locked_origin, prior_mapspec):
         if locked_origin != "agent":
             return None
@@ -324,9 +335,23 @@ async def apply_gis_mutation_batch(
             sid, locked_intent, locked_origin, prior_mapspec
         )
         if error is None:
-            error = await _check_user_presentation_guard_ring(
-                sid, locked_intent, locked_origin, prior_mapspec
+            entries = await _load_ring_once(sid)
+            from app.services.gis_world_state.provenance import (
+                last_presentation_owner,
             )
+            if isinstance(locked_intent, PatchLayerPresentationIntent):
+                if locked_intent.visible is not None:
+                    last = last_presentation_owner(entries, locked_intent.layer_id)
+                    if (
+                        last is not None and last.get("origin") == "user"
+                        and last.get("detail", {}).get("visible") is not None
+                        and bool(last["detail"]["visible"]) != bool(locked_intent.visible)
+                    ):
+                        error = UserPresentationGuardError(
+                            layer_id=locked_intent.layer_id,
+                            user_value=last["detail"]["visible"],
+                            agent_value=locked_intent.visible,
+                        )
         if error is None:
             return None
         return MapSpecResult(

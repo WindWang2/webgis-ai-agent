@@ -84,8 +84,9 @@ async def test_pc1_finalize_batch_cost_independent_of_layer_count(clean_session)
             )
             # 批内全量读不随 N 增长（引擎一次 + provenance 单字段不计数；
             # 上界随实现微调，但必须 << N）
-            assert full_reads["count"] <= 4, (
-                f"n={n}: 全量 get_map_state {full_reads['count']} 次 —— 批量事务不应随 N 线性放大"
+            assert 1 <= full_reads["count"] <= 4, (
+                f"n={n}: 全量 get_map_state {full_reads['count']} 次 —— 批量事务恰一次"
+                f"权威读（0 = 仪器化失效，>4 = 随 N 放大）"
             )
         finally:
             await session_data_manager.clear_session(sid)
@@ -120,6 +121,11 @@ async def test_pc2_guard_ring_uses_single_field_reads(clean_session):
         )
     assert not res.is_error
     assert field_reads["count"] >= 2, "守卫环应走单字段通道（pre-lock + in-lock）"
+    # review 5/6-A1：全量读上限必须显式断言 —— 引擎锁内一次 + 无守卫环全量读
+    # （旧实现守卫环 2 次全量读会让这里读到 3）。
+    assert full_reads["count"] <= 1, (
+        f"守卫环不得触发全量 get_map_state（实测 {full_reads['count']} 次）"
+    )
 
 
 @pytest.mark.perf

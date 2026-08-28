@@ -96,3 +96,18 @@ describe('custom-overlay-registry', () => {
     expect(layers.has(`${CUSTOM_OVERLAY_PREFIX}good`)).toBe(true);
   });
 });
+
+describe('custom-overlay-registry — 会话切换清理（review 5/6-B8）', () => {
+  it('setMapSpecSessionCursor 会话 id 变化清空挂载账本', async () => {
+    recordCustomOverlaySource(`${CUSTOM_OVERLAY_PREFIX}a`, { kind: 'geojson', data: FC });
+    recordCustomOverlayLayer({ id: `${CUSTOM_OVERLAY_PREFIX}a`, type: 'circle', source: `${CUSTOM_OVERLAY_PREFIX}a` });
+    const { setMapSpecSessionCursor } = await import('@/lib/mapspec/session-cursor');
+    setMapSpecSessionCursor('session-b');  // id 变化 → 动态 import 清账本
+    await new Promise((r) => setTimeout(r, 20));  // 等 best-effort 微任务
+    expect(listCustomOverlayLayerIds()).toEqual([]);
+    const { map, layers } = fakeMap();
+    expect(remountCustomOverlays(map)).toBe(0);
+    expect(layers.size).toBe(0);
+    clearCustomOverlayRegistry();
+  });
+});

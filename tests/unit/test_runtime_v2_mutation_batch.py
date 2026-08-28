@@ -252,8 +252,10 @@ def test_auto_safe_visibility_updates_intent_stamp():
     by_id = {l["id"]: l for l in out["layers"]}
     assert by_id["x"]["cartographic_intent"]["expected_visible"] is True
     assert by_id["x"]["cartographic_intent"]["presentation_owner"] == "system"
-    # user-owned 印记不被系统修复改写
+    # user-owned 印记不被系统修复改写；expected_visible 同步（review 5/6-B9：
+    # 该翻转必须被钉住 —— 用户决策值被翻转是危险方向）
     assert by_id["y"]["cartographic_intent"]["presentation_owner"] == "user"
+    assert by_id["y"]["cartographic_intent"]["expected_visible"] is True
 
 
 @pytest.mark.asyncio
@@ -292,3 +294,133 @@ async def test_patch_layer_style_intent_persists_paint(clean_session):
         expected_revision=3,
     )
     assert res3.is_error is True
+
+
+# ── /goal §14 adversarial：锁降级/锁丢失/并发 user-vs-agent（review 5/6-B8）──
+
+@pytest.mark.asyncio
+async def test_engine_batch_fails_closed_on_degraded_lock(clean_session):
+    """降级锁（Redis 配置但不可达）下引擎批必须拒绝 —— 两 worker 各持进程
+    内锁并发提交的 lost-update 面在此关闭。"""
+    import app.services.distributed_lock as dl
+    from app.services.distributed_lock import (
+        _InProcessLock, _ResilientSessionLock, LockDegradedError,
+    )
+    from unittest.mock import AsyncMock, MagicMock
+
+    fake_client = MagicMock()
+    fake_client.set = AsyncMock(side_effect=ConnectionError("redis down"))
+
+    def degraded_factory(key, *args, **kwargs):
+        return _ResilientSessionLock(
+            fake_client, f"webgis:sessionlock:{key}", _InProcessLock(),
+            fail_on_degraded=kwargs.get("fail_on_degraded", False),
+        )
+
+    real_lock = dl.session_lock_registry.lock
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(dl.session_lock_registry, "lock", degraded_factory)
+        with pytest.raises(LockDegradedError):
+            await apply_gis_mutation_batch(
+                clean_session,
+                [PatchLayerPresentationIntent(layer_id="x", visible=True)],
+                origin="agent",
+                actor="test",
+            )
+    state = await session_data_manager.get_map_state(clean_session)
+    assert state.get("_cartographic_mutation_revision", 0) == 0
+
+
+@pytest.mark.asyncio
+async def test_engine_batch_aborts_when_lock_lost_mid_batch(clean_session):
+    """锁 TTL 丢失（commit 前置复检）→ 批中止、零持久化、结构化错误。"""
+    await _seed_layers(clean_session, ["lost-1"])
+    engine = mapspec_lifecycle_engine
+    state0 = await session_data_manager.get_map_state(clean_session)
+    rev0 = state0["_cartographic_mutation_revision"]
+
+    class _LostLockProxy:
+        """包装真实锁：进入后立刻标记 lost（模拟续期失败被发现的窗口）。"""
+        def __init__(self, inner):
+            self._inner = inner
+            self.lost = True
+
+        async def __aenter__(self):
+            await self._inner.__aenter__()
+            return self
+
+        async def __aexit__(self, *exc):
+            return await self._inner.__aexit__(*exc)
+
+    import app.services.mapspec.lifecycle_engine as le
+    real_lock = le.session_lock_registry.lock
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            le.session_lock_registry, "lock",
+            lambda sid, **kw: _LostLockProxy(real_lock(sid, **kw)),
+        )
+        batch = await apply_gis_mutation_batch(
+            clean_session,
+            [PatchLayerPresentationIntent(layer_id="lost-1", visible=False)],
+            origin="agent",
+            actor="test",
+        )
+    assert batch.is_error is True
+    assert "lost" in batch.error_msg.lower()
+    state1 = await session_data_manager.get_map_state(clean_session)
+    assert state1["_cartographic_mutation_revision"] == rev0, "lost 批不得递增 revision"
+    by_id = {l["id"]: l for l in state1["mapspec"]["layers"]}
+    assert by_id["lost-1"]["cartographic_intent"]["expected_visible"] is True
+
+
+@pytest.mark.asyncio
+async def test_concurrent_user_hide_vs_agent_finalize_batch(clean_session):
+    """并发 user hide vs agent finalize：无论交错，用户决策最终存活。"""
+    import asyncio
+    await _seed_layers(clean_session, ["race-a", "race-b"])
+    engine = mapspec_lifecycle_engine
+
+    async def user_hide():
+        # 用户 durable 隐藏 race-a（CAS 重试至成功 —— 与 agent 批竞态）
+        for _ in range(5):
+            state = await session_data_manager.get_map_state(clean_session)
+            rev = state.get("_cartographic_mutation_revision", 0)
+            res = await apply_gis_mutation(
+                clean_session,
+                PatchLayerPresentationIntent(layer_id="race-a", visible=False),
+                origin="user",
+                actor="test",
+                expected_revision=rev,
+            )
+            if res.is_error is False and not res.superseded:
+                return
+            await asyncio.sleep(0)
+
+    async def agent_finalize():
+        for _ in range(5):
+            state = await session_data_manager.get_map_state(clean_session)
+            rev = state.get("_cartographic_mutation_revision", 0)
+            batch = await apply_gis_mutation_batch(
+                clean_session,
+                [
+                    PatchLayerPresentationIntent(layer_id="race-a", visible=True),
+                    PatchLayerPresentationIntent(layer_id="race-b", visible=False),
+                ],
+                origin="agent",
+                actor="finalize",
+                expected_revision=rev,
+            )
+            if batch.committed or batch.refused_count > 0:
+                return
+            await asyncio.sleep(0)
+
+    await asyncio.gather(user_hide(), agent_finalize())
+    state = await session_data_manager.get_map_state(clean_session)
+    by_id = {l["id"]: l for l in state["mapspec"]["layers"]}
+    a_intent = by_id["race-a"]["cartographic_intent"]
+    # 不变量：用户隐藏要么成立（owner=user/hidden），要么 agent 批从未翻回
+    #（refused）—— 二者必居其一，绝无 agent-owned visible=true 覆盖用户隐藏。
+    assert not (
+        a_intent.get("presentation_owner") == "agent"
+        and a_intent.get("expected_visible") is True
+    ), f"用户隐藏被 agent 批覆盖: {a_intent}"

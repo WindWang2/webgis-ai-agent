@@ -132,3 +132,35 @@ Repair / Replan → Pi
 10. **Phase 10/11**：planner 走 manifest 单次解析；模板 descriptor 补 slot/priority 字段。
 
 测试：adversarial 并发（双 worker 同 session：lock degraded/lost、revision conflict、user hide vs agent finalize）、perf 契约（parse/redis-cmd/mutation 计数，非 wall-clock）。
+
+
+## 5. 独立 Review 轮（2026-08-29，6 项评审矩阵）
+
+Review 1-4（state/concurrency、harness 架构、registry/manifest、前端 layer
+runtime）与 Review 5/6（perf、测试质量）全部完成。发现与处置：
+
+| 严重度 | 数量 | 处置 |
+|---|---|---|
+| P0 | 2 | 全部修复（remove_layer 反注册 id 错误→复活+泄漏；planner 模块级 manifest 重入死锁） |
+| P1 | 12 | 全部修复（批幂等短路→409 风暴、rev sidecar 撕裂、finalize 诚实性×2、respect 集下发、tool 元数据访问器、memo key 不完备、孤儿工具归位、WATCH 窗口序列化+退避、PC-2 空断言、CI perf 线、§14 对抗用例×4） |
+| P2 | 18 | 修复 14（owner 洗白、pre-lock upsert 守卫、降级锁兜底、label 对象方言、面板类型映射、键盘去抖、ring 批内单读、H5 钉死、计时器泄漏等）；记录 4（复用既有 §4 决议） |
+
+### 已核验为既有（master e8e51c8 同样失败，非本分支回归）
+
+`test_workflow_provenance(7)` / `test_runtime_chaos_resume(4)` /
+`test_session_l1_cache(4)` / `test_provenance_regression(3)` /
+`test_runtime_chaos_pi(3)` / `test_workflow_run_transactions(2)` /
+`test_workflow_api(2)` / `test_spatial_stats(2)` / `test_pi_tools_route_auth(2)` /
+`test_pi_e2e(1)` / `test_runtime_chaos_store(1)` / `test_streaming_lifecycle(1)` /
+`test_pi_extension_hardening(1)` / `test_workflow_concurrency(1)` ——
+根因集中在 `_Reg` 测试替身缺 `ToolRegistry.metadata()`（audit5 dispatch 改动
+后未同步测试替身）与 L1 缓存键形态漂移（#795 raw 化）。
+
+### 记录未修（P2，有意保留）
+
+- manifest 非重入锁在编译期 import 链上的重入陷阱 —— planner 已改惰性；
+  防再引入靠 review（ADR-0079 记录）。
+- lifespan 写 `_cached_manifest` 未持锁（boot 期单线程，理论竞态）。
+- `get_traffic_status` / `search_transit_route` 无 capability 绑定（在线信息
+  工具，非 planner 可达分析面 —— manifest 持续警告是期望行为）。
+- source GC 维持 #1014 TE-P1-1 注册表语义（scenario_8 锁定）。

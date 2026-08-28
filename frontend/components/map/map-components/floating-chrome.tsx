@@ -111,6 +111,12 @@ export function FloatingChrome({
 
   useEffect(() => () => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    // v2(review 5/6-B11)：键盘去抖计时器随卸载清理 —— 500ms 窗口内卸载
+    // 后触发 durable 提交会对错误会话发 stale placement POST。
+    if (keyCommitTimerRef.current) {
+      clearTimeout(keyCommitTimerRef.current);
+      keyCommitTimerRef.current = null;
+    }
   }, []);
 
   const placement = merged.placement;

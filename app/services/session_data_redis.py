@@ -681,16 +681,23 @@ class RedisSessionStore(BaseSessionStore):
             return True
         await self._ensure_connected()
         state_key = self._state_key(session_id)
+        # v2(review 5/6-A4)：fields 预序列化在 WATCH 窗口外 —— 大 mapspec 的
+        # dumps（~10ms 级）此前持窗口，WS 感知写并发时 3 次重试的碰撞概率
+        # 被无谓放大（finalize 在用户拖动期间以百分比级概率假失败）。
+        pre_serialized: dict[str, str] = {}
+        for key, value in fields.items():
+            pre_serialized[key] = await asyncio.to_thread(
+                json.dumps, value, ensure_ascii=False,
+                default=_numpy_json_default,
+            )
         for _attempt in range(3):
+            if _attempt:
+                # 小退避 + 抖动：削平 WS 写风暴下的连续碰撞。
+                await asyncio.sleep(0.01 * _attempt + (id(_attempt) % 100) / 10000)
             try:
                 async with self._r.pipeline(transaction=True) as pipe:
                     await pipe.watch(state_key)
-                    payloads: dict[str, str] = {}
-                    for key, value in fields.items():
-                        payloads[key] = await asyncio.to_thread(
-                            json.dumps, value, ensure_ascii=False,
-                            default=_numpy_json_default,
-                        )
+                    payloads: dict[str, str] = dict(pre_serialized)
                     if layer_op is not None:
                         op, layer_id, layer_payload = layer_op
                         raw_layers = await pipe.hget(state_key, "layers")
