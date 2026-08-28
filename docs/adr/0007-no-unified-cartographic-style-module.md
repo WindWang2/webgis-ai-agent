@@ -1,10 +1,10 @@
 # No unified cartographic-style module until MapSpec feeds the live map
 
-**Status:** superseded by [ADR-0052](0052-unified-thematic-style-contract.md) (2026-08-12)
+**Status:** superseded by [ADR-0078](0078-unified-thematic-style-contract.md) (2026-08-12)
 
 > **Superseded.** The revisit trigger below was satisfied by [ADR-0036](0036-mapspec-runtime.md):
 > `applyMapSpecToMap` was deleted and replaced with `MapSpecRuntime.reconcile`, which IS the
-> live map path (`map-panel.tsx` → `hudStateToMapSpec` → `runtime.reconcileAsync`). ADR-0052
+> live map path (`map-panel.tsx` → `hudStateToMapSpec` → `runtime.reconcileAsync`). ADR-0078
 > introduces the canonical thematic-style contract this ADR deferred. The text below is
 > preserved as the historical rationale.
 

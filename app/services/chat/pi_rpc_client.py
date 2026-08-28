@@ -252,18 +252,14 @@ class PiRpcClient:
                 f"Bundled Pi RPC entry missing: {rpc_entry}. "
                 "Build vendor/pi (packages/coding-agent dist/rpc-entry.js)."
             )
-        try:
-            from app.services.chat.pi_native_surface import dump_native_tools_best_effort
-            native_path = dump_native_tools_best_effort(PI_AGENT_DIR / "native-tools.json")
-            if native_path is not None:
-                env["WEBGIS_NATIVE_TOOLS_PATH"] = str(native_path)
-            else:
-                logger.warning(
-                    "[PiRpc] native GIS schemas not dumped (registry missing?); "
-                    "Pi will only see webgis_execute until the next spawn"
-                )
-        except Exception:
-            logger.warning("[PiRpc] native-tools dump failed", exc_info=True)
+        # Fail-fast: without this dump Pi would start with webgis_execute only
+        # and the whole native surface (incl. webgis_map_intent) is unreachable
+        # for the process lifetime. A raise here aborts the spawn; the API
+        # lifespan catches it and falls back to ChatEngine.
+        from app.services.chat.pi_native_surface import dump_native_tools
+        env["WEBGIS_NATIVE_TOOLS_PATH"] = str(
+            dump_native_tools(PI_AGENT_DIR / "native-tools.json")
+        )
 
         # GIS product: Pi is the host, not a coding agent. Built-in bash/read/
         # write/edit would otherwise swallow GIS failures (live: cartography

@@ -1,7 +1,7 @@
 """Canonical thematic-style contract — the single source of truth for thematic
 cartography on both the MapSpec paint path and the legend path.
 
-ADR-0052 supersedes ADR-0007. ADR-0007 deferred a unified cartographic-style
+ADR-0078 supersedes ADR-0007. ADR-0007 deferred a unified cartographic-style
 module because MapSpec ``paint`` was headless-only (``applyMapSpecToMap`` had
 zero live callers). ADR-0036 replaced that orphan with ``MapSpecRuntime``,
 which IS the live map path (``map-panel.tsx`` → ``hudStateToMapSpec`` →
@@ -192,7 +192,7 @@ def build_graduated_spec(
     }
     # Default a no-data rule so null/missing field values are diverted to the
     # no-data color on the live map instead of being coerced by `to-number`
-    # into the lowest class (ADR-0052 no-data semantics).
+    # into the lowest class (ADR-0078 no-data semantics).
     spec["nodata"] = nodata if nodata is not None else dict(NODATA_DEFAULT)
     if unit is not None:
         spec["unit"] = unit
@@ -263,7 +263,7 @@ def build_continuous_spec(
     # Accept a flat domain (min == max, e.g. a degenerate KDE with one contour
     # band): emit a constant-domain legend rather than dropping it — the legend
     # overlay still appears, and spec_to_paint falls back to a constant color
-    # (correct: a constant field has one class). Preserves the pre-ADR-0052
+    # (correct: a constant field has one class). Preserves the pre-ADR-0078
     # behavior where kde_contours emitted a legend whenever features existed.
     if not (is_finite_number(min_val) and is_finite_number(max_val) and float(min_val) <= float(max_val)):
         return None

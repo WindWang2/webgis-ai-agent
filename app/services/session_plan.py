@@ -14,6 +14,7 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from app.services.distributed_lock import session_lock_registry
 from app.services.session_data import session_data_manager
 from app.utils.sse import sse_event
 
@@ -226,6 +227,11 @@ async def ensure_session_plan_slot(
     store: Any = None,
 ) -> SessionPlan:
     """Host opens an empty envelope before tools run. No SSE (GIS chapter empty)."""
+    async with session_lock_registry.lock(session_id):
+        return await _ensure_slot_unlocked(session_id, store=store)
+
+
+async def _ensure_slot_unlocked(session_id: str, *, store: Any) -> SessionPlan:
     current = await load_session_plan(session_id, store=store)
     if current is not None:
         return current
@@ -375,12 +381,33 @@ async def apply_tool_result(
     """Mutate the SessionPlan after a successful unified dispatch.
 
     Intent replaces / supersedes the GIS chapter. Product updates the same
-    envelope. Other tools complete matching capabilities.
+    envelope. Other tools complete matching capabilities. The whole
+    load→mutate→save runs under the per-session lock: a Pi turn may issue
+    parallel tool callbacks and the supersede branch must not be lost to a
+    last-write-wins interleave (ADR-0051 lock pattern).
     """
     if not session_id or not success:
         return []
+    async with session_lock_registry.lock(session_id):
+        return await _apply_tool_result_unlocked(
+            session_id,
+            tool_name,
+            raw_result,
+            geojson_ref=geojson_ref,
+            store=store,
+        )
+
+
+async def _apply_tool_result_unlocked(
+    session_id: str,
+    tool_name: str,
+    raw_result: Any,
+    *,
+    geojson_ref: Optional[str] = None,
+    store: Any = None,
+) -> list[SessionPlanEvent]:
     backend = store if store is not None else session_data_manager
-    plan = await ensure_session_plan_slot(session_id, store=backend)
+    plan = await _ensure_slot_unlocked(session_id, store=backend)
     raw = raw_result if isinstance(raw_result, dict) else {}
     events: list[SessionPlanEvent] = []
 

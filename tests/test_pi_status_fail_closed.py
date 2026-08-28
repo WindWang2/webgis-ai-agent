@@ -105,6 +105,32 @@ async def test_dispatch_empty_status_does_not_reroute():
 
 
 @pytest.mark.asyncio
+async def test_dispatch_empty_status_succeeds_on_live_registry():
+    """Live registry: the empty verdict pull dispatches to the real status
+    tool and succeeds — no reroute to intent, no key-guard rejection."""
+    from app.tools import init_tools
+
+    registry = ToolRegistry()
+    init_tools(registry)
+    set_tool_registry(registry)
+
+    resp = await dispatch_tool(
+        PiToolRequest(
+            toolCallId="tc-status-empty-live",
+            name=STATUS_TOOL,
+            arguments={},
+            sessionId="sess-status-empty-live",
+        )
+    )
+    assert not resp.isError, resp.content
+    text = resp.content[0]["text"]
+    # The REAL status tool ran: its not-evaluated verdict summary comes back,
+    # not an intent dispatch (which would answer with 意图/analysis guidance).
+    assert "No cartography harness verdict yet" in text
+    assert "意图" not in text
+
+
+@pytest.mark.asyncio
 async def test_dispatch_chengdu_status_fails_closed_on_live_registry():
     """Full registry: status with analysis keys never succeeds."""
     from app.tools import init_tools
@@ -124,3 +150,50 @@ async def test_dispatch_chengdu_status_fails_closed_on_live_registry():
     assert resp.isError, resp.content
     text = resp.content[0]["text"]
     assert "city" in text or "不接受参数" in text
+
+
+@pytest.mark.asyncio
+async def test_dispatch_status_null_valued_keys_fail_closed():
+    """Key-sensitive guard: `{"city": null}` is still a hallucinated
+    analysis argument, not a valid empty status call."""
+    from app.tools import init_tools
+
+    registry = ToolRegistry()
+    init_tools(registry)
+    set_tool_registry(registry)
+
+    resp = await dispatch_tool(
+        PiToolRequest(
+            toolCallId="tc-status-null-city",
+            name=STATUS_TOOL,
+            arguments={"city": None, "topic": ""},
+            sessionId="sess-status-null-city",
+        )
+    )
+    assert resp.isError, resp.content
+    assert "city" in resp.content[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_unknown_bare_name_rejects_with_discovery_guidance():
+    """HTTP dispatch boundary: unknown bare names reject with the
+    list_available_tools → webgis_execute guidance, not a bare Tool-not-found."""
+    from app.tools import init_tools
+
+    registry = ToolRegistry()
+    init_tools(registry)
+    set_tool_registry(registry)
+
+    resp = await dispatch_tool(
+        PiToolRequest(
+            toolCallId="tc-bare-name",
+            name="heatmap_data",
+            arguments={"render_type": "native"},
+            sessionId="sess-bare-name",
+        )
+    )
+    assert resp.isError, resp.content
+    text = resp.content[0]["text"]
+    assert "list_available_tools" in text
+    assert "webgis_execute" in text
+    assert resp.details.get("error") == "native_surface_reject"

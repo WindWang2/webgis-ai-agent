@@ -1,4 +1,4 @@
-# 52. Unified thematic-style contract — `legend_spec` as the single source of truth
+# 78. Unified thematic-style contract — `legend_spec` as the single source of truth
 
 Date: 2026-08-12
 

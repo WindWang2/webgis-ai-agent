@@ -1,4 +1,4 @@
-"""ADR-0052 thematic-style convergence regression suite.
+"""ADR-0078 thematic-style convergence regression suite.
 
 Pins the single-source-of-truth contract: ``legend_spec`` is the canonical
 thematic style; MapSpec ``paint`` and the legend UI are deterministic
@@ -127,7 +127,7 @@ def test_build_graduated_spec_colors_match_breaks_cardinality():
 
 
 def test_build_graduated_spec_defaults_nodata_rule():
-    """ADR-0052 no-data semantics: graduated/continuous/divergent specs default to
+    """ADR-0078 no-data semantics: graduated/continuous/divergent specs default to
     a no-data rule so null/missing values are diverted on the live map rather
     than coerced by to-number into the lowest class."""
     geojson = {"type": "FeatureCollection", "features": [
@@ -492,7 +492,7 @@ def test_closed_loop_graduated_paint_equals_legend():
 
 
 def test_cartography_findings_flow_to_mapspec_result_and_harness_evidence():
-    """ADR-0052 Phase 7: a drift mapspec's cartography errors must surface in
+    """ADR-0078 Phase 7: a drift mapspec's cartography errors must surface in
     MapSpecResult.cartography_findings and thence in the harness semantic_errors
     evidence channel (structural validity ≠ thematic correctness)."""
     from app.services.mapspec.lifecycle_engine import MapSpecResult
@@ -529,7 +529,7 @@ def test_cartography_findings_flow_to_mapspec_result_and_harness_evidence():
 
 
 def test_cartography_findings_forwarded_through_production_evidence_channel():
-    """ADR-0052 Phase 7 (Round-2 fix): cartography_findings must survive the
+    """ADR-0078 Phase 7 (Round-2 fix): cartography_findings must survive the
     production tool/adapter/bridge forwarding layers (mapspec_store._with_evidence
     + agent_pi_bridge whitelist) — not just exist on MapSpecResult. Without this,
     the harness semantic_errors channel is starved in production while tests that

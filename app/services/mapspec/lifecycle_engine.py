@@ -54,7 +54,7 @@ class MapSpecResult:
     is_error: bool = False
     error_msg: str = ""
     correction_hint: str = ""
-    # ADR-0052: deterministic cartography-semantic findings (paint ↔ legend
+    # ADR-0078: deterministic cartography-semantic findings (paint ↔ legend
     # equivalence, cardinality, domain coverage, no-data, …). Structural
     # validity (is_compiled) ≠ thematic correctness — these findings are the
     # evidence the Harness surfaces so "structurally valid but legend/paint

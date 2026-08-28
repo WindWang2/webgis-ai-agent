@@ -127,8 +127,8 @@ class TestAudit821CancelledDispatch:
 
         class _Req:
             toolCallId = "tc-1"
-            name = "buffer_analysis"
-            arguments = {}
+            name = "webgis_execute"
+            arguments = {"toolName": "buffer_analysis", "arguments": {}}
             sessionId = "s1"
             turnToken = ""
             verifiedTurnId = "t1"

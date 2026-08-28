@@ -1,15 +1,16 @@
 """Pi native GIS tool surface (wrap-only, live registry schemas).
 
-The model-facing kinds are native | execute | reject. Dispatch still accepts
-registered long-tail names (the execute proxy unwraps them). Native parameter
-schemas are generated from ToolRegistry — never a handwritten second catalog.
+The model-facing kinds are native | execute | reject. Unknown bare names
+reject at both the model surface and the HTTP dispatch boundary — the long
+tail is reachable only through the execute proxy. Native parameter schemas
+are generated from ToolRegistry — never a handwritten second catalog.
 """
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Mapping, Optional
+from typing import Any, Literal, Mapping
 
 NATIVE_TOOL_NAMES: tuple[str, ...] = (
     "webgis_map_intent",
@@ -58,26 +59,24 @@ class ResolvedPiCall:
 
 
 def _analysis_extras(arguments: Mapping[str, Any]) -> dict[str, Any]:
-    extra: dict[str, Any] = {}
-    for key, value in arguments.items():
-        if key in _PASSTHROUGH_KEYS or value in (None, ""):
-            continue
-        extra[key] = value
-    return extra
+    """Extras beyond the passthrough set. Key-sensitive: a hallucinated
+    analysis argument stays hallucinated when its value is null or empty —
+    extra keys fail closed regardless of value."""
+    return {k: v for k, v in arguments.items() if k not in _PASSTHROUGH_KEYS}
 
 
 def resolve_pi_tool_call(
     name: str,
     arguments: Mapping[str, Any] | None,
     *,
-    allow_passthrough: bool = True,
+    allow_passthrough: bool = False,
 ) -> ResolvedPiCall:
     """Classify a Pi-facing tool call.
 
-    ``allow_passthrough=True`` (HTTP dispatch): registered long-tail names
-    proceed to the unified dispatcher. ``False`` is the model-surface
-    resolveCall: unknown bare names reject (discover via list_available_tools,
-    then webgis_execute).
+    Unknown bare names reject by default: both the model surface and the HTTP
+    dispatch boundary point the caller at ``list_available_tools`` followed by
+    ``webgis_execute``. ``allow_passthrough=True`` is an explicit opt-in for
+    callers that resolve names ahead of a registry existence check.
     """
     args = dict(arguments or {})
     if name == EXECUTE_PROXY_NAME:
@@ -155,25 +154,30 @@ def _pi_parameters(function_schema: dict[str, Any]) -> dict[str, Any]:
 
 
 def native_tools_for_pi(registry: Any) -> list[dict[str, Any]]:
-    """Live-registry schemas in Pi ``registerTool`` shape."""
+    """Live-registry schemas in Pi ``registerTool`` shape.
+
+    A native name missing from the registry raises rather than degrading to
+    an empty schema — the dump is the only source of Pi's native surface and
+    must never silently drift from the registry
+    (specs/pi-as-agent-host.md, user story 35)."""
     schemas = {
         item.get("function", {}).get("name"): item.get("function", {})
         for item in registry.get_schemas_subset(set(NATIVE_TOOL_NAMES))
     }
+    missing = [name for name in NATIVE_TOOL_NAMES if not schemas.get(name)]
+    if missing:
+        raise ValueError(
+            f"native tool(s) missing from live registry: {', '.join(missing)}"
+        )
     dumped: list[dict[str, Any]] = []
     for name in NATIVE_TOOL_NAMES:
-        fn = schemas.get(name) or {}
+        fn = schemas[name]
         dumped.append(
             {
                 "name": name,
                 "label": _LABELS.get(name, name),
                 "description": fn.get("description") or name,
-                "parameters": _pi_parameters(fn) if fn else {
-                    "type": "object",
-                    "properties": {},
-                    "required": [],
-                    "additionalProperties": False,
-                },
+                "parameters": _pi_parameters(fn),
                 "promptSnippet": _SNIPPETS.get(name, ""),
             }
         )
@@ -190,14 +194,13 @@ def write_native_tools_file(registry: Any, path: Path) -> Path:
     return path
 
 
-def dump_native_tools_best_effort(path: Path) -> Optional[Path]:
-    """Spawn-time helper: skip when the registry is not injected."""
-    try:
-        from app.agent_pi_bridge import get_tool_registry
-        registry = get_tool_registry()
-    except Exception:
-        return None
-    try:
-        return write_native_tools_file(registry, path)
-    except Exception:
-        return None
+def dump_native_tools(path: Path) -> Path:
+    """Spawn-time dump of native schemas from the live registry. Fail-fast.
+
+    A Pi spawned without its native surface silently loses ``webgis_map_intent``
+    (execute-wrapping natives is rejected), so a missing registry or an
+    unwritable dump must abort the spawn — the API then falls back to
+    ChatEngine instead of running a crippled GeoAgent.
+    """
+    from app.agent_pi_bridge import get_tool_registry
+    return write_native_tools_file(get_tool_registry(), path)

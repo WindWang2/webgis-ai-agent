@@ -531,7 +531,7 @@ class PiAgentHarness:
                     )
                     mutation["is_valid"] = semantic_valid  # SEMANTIC_VALID tier
                     mutation["mutation_accepted"] = mutation_accepted
-                    # ADR-0052: semantic_errors carries BOTH the structural
+                    # ADR-0078: semantic_errors carries BOTH the structural
                     # validate() warnings AND the deterministic cartography
                     # findings (paint↔legend drift, cardinality, domain, …) so
                     # "structurally valid but thematically inconsistent" is

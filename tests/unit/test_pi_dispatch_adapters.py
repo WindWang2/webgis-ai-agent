@@ -61,6 +61,16 @@ def _geojson_tool_registry() -> ToolRegistry:
     return registry
 
 
+def _via_execute(tool_call_id: str, tool: str, arguments: dict, sid: str) -> PiToolRequest:
+    """扩展真实路径：非 native 工具一律经 webgis_execute 代理调用。"""
+    return PiToolRequest(
+        toolCallId=tool_call_id,
+        name="webgis_execute",
+        arguments={"toolName": tool, "arguments": arguments},
+        sessionId=sid,
+    )
+
+
 # ─── HTTP-callback 适配器：dispatch_tool → PiToolResponse ──────────
 
 
@@ -68,12 +78,7 @@ def _geojson_tool_registry() -> ToolRegistry:
 async def test_http_callback_translates_llm_payload_to_content(clean_session):
     """dispatch_tool 经 ToolDispatchService 调度，返回 PiToolResponse.content 含 llm_payload。"""
     set_tool_registry(_geojson_tool_registry())
-    req = PiToolRequest(
-        toolCallId="tc-geo-1",
-        name="pi_geo_tool",
-        arguments={},
-        sessionId=clean_session,
-    )
+    req = _via_execute("tc-geo-1", "pi_geo_tool", {}, clean_session)
     resp = await dispatch_tool(req)
     assert resp.toolCallId == "tc-geo-1"
     assert not resp.isError
@@ -84,12 +89,7 @@ async def test_http_callback_translates_llm_payload_to_content(clean_session):
 async def test_http_callback_caches_result_for_sse_adapter(clean_session):
     """dispatch 后结果按 toolCallId 缓存，供 SSE 适配器读取。"""
     set_tool_registry(_geojson_tool_registry())
-    req = PiToolRequest(
-        toolCallId="tc-geo-2",
-        name="pi_geo_tool",
-        arguments={},
-        sessionId=clean_session,
-    )
+    req = _via_execute("tc-geo-2", "pi_geo_tool", {}, clean_session)
     await dispatch_tool(req)
 
     cached = get_cached_dispatch_result("tc-geo-2", clean_session)
@@ -111,12 +111,7 @@ async def test_sse_adapter_round_trips_geojson_ref(clean_session):
     """
     set_tool_registry(_geojson_tool_registry())
     # 先 dispatch 一次（HTTP 回调路径），缓存结果
-    await dispatch_tool(PiToolRequest(
-        toolCallId="tc-geo-3",
-        name="pi_geo_tool",
-        arguments={},
-        sessionId=clean_session,
-    ))
+    await dispatch_tool(_via_execute("tc-geo-3", "pi_geo_tool", {}, clean_session))
 
     # Pi 随后流式回传 tool_execution_end 事件 —— SSE 适配器读缓存。
     # 生产路径的 mapper closure 捕获验签后的 clean_session；测试直接传 helper
@@ -164,12 +159,7 @@ async def test_sse_adapter_error_uses_cached_error_status(clean_session):
                       parameters={"type": "object", "properties": {}, "required": []})
     set_tool_registry(registry)
 
-    await dispatch_tool(PiToolRequest(
-        toolCallId="tc-err-1",
-        name="pi_fail_tool",
-        arguments={},
-        sessionId=clean_session,
-    ))
+    await dispatch_tool(_via_execute("tc-err-1", "pi_fail_tool", {}, clean_session))
 
     event = {
         "type": "tool_execution_end",
@@ -187,12 +177,7 @@ async def test_sse_adapter_error_uses_cached_error_status(clean_session):
 async def test_dispatch_cache_is_scoped_to_verified_turn_session(clean_session):
     """A delayed callback/result cannot be consumed by another session turn."""
     set_tool_registry(_geojson_tool_registry())
-    await dispatch_tool(PiToolRequest(
-        toolCallId="tc-asym",
-        name="pi_geo_tool",
-        arguments={},
-        sessionId=clean_session,
-    ))
+    await dispatch_tool(_via_execute("tc-asym", "pi_geo_tool", {}, clean_session))
 
     # SSE 适配器在一个拥有真实 session_id 的 turn 中读取。
     event = {

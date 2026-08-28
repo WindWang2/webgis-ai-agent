@@ -29,7 +29,7 @@ export interface GeoAnalysisResult {
 }
 
 // ─── Legend Spec contract (backend → frontend) ───────────────────────────────
-// ADR-0052: legend_spec is the canonical thematic style — the single source
+// ADR-0078: legend_spec is the canonical thematic style — the single source
 // both the live MapSpec paint (thematic-paint.ts) and <ThematicLegend> derive
 // from. The optional fields below (method/labels/nodata/title) are additive and
 // produced by the canonical builders; legacy payloads omit them cleanly.

@@ -270,7 +270,7 @@ map's MapLibre color expression (frontend) are deterministic **projections** of 
 one palette-resolution path, finite/NaN filtering, `spec_to_paint` projection, `normalize_legend_spec`
 for legacy payloads); its frontend mirror is `frontend/lib/mapspec-runtime/thematic-paint.ts`
 (`legendSpecToColorExpression`, incl. a no-data guard). This replaces the aspirational
-`CartographicStyle` service ADR-0007 deferred — see ADR-0052. `CartographyService` remains the
+`CartographicStyle` service ADR-0007 deferred — see ADR-0078. `CartographyService` remains the
 classification engine (ADR-0012) and the two converters stay separate renderers (ADR-0017).
 
 ### Inline Carrier (内联载体)
@@ -442,13 +442,34 @@ _Avoid_: MapLibreDriver as a rename this round; treating `hudStateToMapSpec` as 
 intent author.
 
 ### Tool Catalog (webgis_*)
-The 11 `webgis_*` tools (`webgis_project_init`, `webgis_state_get`, `webgis_source_profile`,
-`webgis_view_set`, `webgis_layer_upsert`, `webgis_layout_set`, `webgis_validate`,
-`webgis_compile_maplibre`, `webgis_runtime_validate`, `webgis_checkpoint`, …) are the canonical
-tool names, **hard-migrated** from the legacy `add_layer` / `set_view` / etc. via a central
-`old→new` alias table at the `ToolRegistry.dispatch()` entry, so Pi bridge, history replay, and
-tests all cross one normalization boundary. Legacy names carry no alias; stored history is
-translated through the table on replay.
+The 18 `webgis_*` registry tools (`webgis_project_init`, `webgis_state_get`,
+`webgis_source_profile`, `webgis_view_set`, `webgis_layer_upsert`,
+`webgis_layer_remove`, `webgis_layout_set`, `webgis_map_combine`,
+`webgis_validate`, `webgis_compile_maplibre`, `webgis_runtime_validate`,
+`webgis_checkpoint`, `webgis_rollback`, `webgis_map_intent`,
+`webgis_map_product`, `webgis_component_update`, `webgis_component_catalog`,
+`webgis_cartography_status`) are the canonical tool names, **hard-migrated**
+from the legacy `add_layer` / `set_view` / etc. via a central `old→new` alias
+table at the `ToolRegistry.dispatch()` entry, so Pi bridge, history replay, and
+tests all cross one normalization boundary. Legacy names carry no alias; stored
+history is translated through the table on replay.
+
+### Pi Native Surface
+The fixed set of tool names the Pi extension registers at process start
+(`app/services/chat/pi_native_surface.py`): the 7 registry-backed natives
+(`webgis_map_intent`, `webgis_map_product`, `webgis_component_update`,
+`webgis_cartography_status`, `query_local_poi`, `get_local_admin_boundary`,
+`list_available_tools`) whose schemas are generated from the live
+`ToolRegistry`, plus the Pi-only proxy `webgis_execute` for the long tail.
+`webgis_execute` is **not a Tool** — it exists only in the extension, is
+unwrapped host-side before dispatch, and must never be registered in the
+registry. Natives are never wrapped inside `webgis_execute`; the
+native-tools dump is spawn-mandatory (a failed dump aborts the spawn and the
+API falls back to ChatEngine). Unknown bare names reject with
+discover-via-`list_available_tools` guidance on both the model surface and the
+HTTP dispatch boundary.
+_Avoid_: registering `webgis_execute` as a registry tool; a handwritten second
+native catalog; treating the native set as mutable after spawn.
 
 ### Runtime Validator
 Headless Playwright over a **static** `index.html`+`style.json` produced by the MapSpec Compiler

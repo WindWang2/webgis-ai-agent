@@ -223,7 +223,7 @@ def _infer_geometry_category(geojson: Optional[Dict[str, Any]]) -> Tuple[str, Li
 # ─── legend_spec -> StyleMethod paint.color (single projection) ─────────────
 # Paint derivation delegates to ``thematic_spec.spec_to_paint`` — the ONE
 # construction site shared with the frontend adapter and the semantic checks
-# (ADR-0052). Keeping a single projection is what guarantees the live map's
+# (ADR-0078). Keeping a single projection is what guarantees the live map's
 # paint and the legend can never diverge: both are deterministic functions of
 # the same canonical ``legend_spec``.
 
@@ -466,7 +466,7 @@ def convert_analysis_to_mapspec_layer(
                 f"已拦截原生热力图（{heatmap_guard_reason}），"
                 f"已回退为点图(circle)；如需密度趋势请用 h3_binning 聚合或增大样本。"
             )
-        # ADR-0052: attach the canonical legend_spec onto the output layer so the
+        # ADR-0078: attach the canonical legend_spec onto the output layer so the
         # cartography semantic checks can verify paint ↔ legend equivalence on
         # the SAME MapSpec (previously the vector path dropped legend_spec while
         # the raster path kept it — an asymmetry that made drift undetectable).

@@ -130,7 +130,7 @@ export function useCartographicObservation({
         ownerToken,
         signal: controller.signal,
         // Fire-and-forget: evaluation can exceed 30s under a Pi turn's
-        // session lock. Superceded by the next observation's abort.
+        // session lock. Superseded by the next observation's abort.
         timeoutMs: 0,
         label: 'Cartographic observation error',
       },

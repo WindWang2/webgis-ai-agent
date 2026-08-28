@@ -54,10 +54,27 @@ def test_unknown_bare_name_rejects_on_model_surface():
     assert resolved.kind == "reject"
 
 
-def test_unknown_bare_name_passthrough_on_dispatch():
-    resolved = resolve_pi_tool_call("pi_test_echo", {"msg": "x"})
+def test_unknown_bare_name_rejects_by_default():
+    resolved = resolve_pi_tool_call("heatmap_data", {})
+    assert resolved.kind == "reject"
+    assert "list_available_tools" in resolved.error
+    assert "webgis_execute" in resolved.error
+
+
+def test_unknown_bare_name_passthrough_is_explicit_opt_in():
+    resolved = resolve_pi_tool_call(
+        "pi_test_echo", {"msg": "x"}, allow_passthrough=True,
+    )
     assert resolved.kind == "passthrough"
     assert resolved.name == "pi_test_echo"
+
+
+def test_status_null_valued_extra_keys_reject():
+    """Key-sensitive fail-closed: `{"city": null}` is still a hallucination."""
+    resolved = resolve_pi_tool_call(STATUS_TOOL, {"city": None, "topic": ""})
+    assert resolved.kind == "reject"
+    assert "city" in resolved.error
+    assert "topic" in resolved.error
 
 
 def test_native_dump_uses_live_registry_schemas():
@@ -89,3 +106,14 @@ def test_write_native_tools_file(tmp_path: Path):
     text = path.read_text(encoding="utf-8")
     for name in NATIVE_TOOL_NAMES:
         assert name in text
+
+
+def test_native_dump_raises_on_missing_registry_name():
+    """A native name absent from the registry must fail the dump, not
+    silently stub an empty schema (spec story 35: live registry only)."""
+    class _PartialRegistry:
+        def get_schemas_subset(self, names):
+            return []  # nothing registered — every native name is missing
+
+    with pytest.raises(ValueError, match="missing from live registry"):
+        native_tools_for_pi(_PartialRegistry())

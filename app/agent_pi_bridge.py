@@ -350,7 +350,9 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
     if not session_id:
         raise PiRpcError("Pi tool callback has no verified turn session")
 
-    resolved = resolve_pi_tool_call(tool_name, arguments)
+    # Unknown bare names reject with discover guidance — the extension only
+    # sends the 7 natives + webgis_execute, so no legitimate call crosses this.
+    resolved = resolve_pi_tool_call(tool_name, arguments, allow_passthrough=False)
     if resolved.kind == "reject":
         return PiToolResponse(
             toolCallId=request.toolCallId,
@@ -548,7 +550,7 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
         # ladder isn't starved in production. Slim to evidence fields only — the
         # full mapspec is fetched via fetch-on-demand, never logged wholesale.
         ev = {"status": result.status, "llm_payload_len": len(result.llm_payload)}
-        # ADR-0052: also forward cartography_findings so the Harness surfaces
+        # ADR-0078: also forward cartography_findings so the Harness surfaces
         # thematic drift (paint↔legend equivalence) in semantic_errors.
         for k in (
             "success",
@@ -2464,8 +2466,16 @@ async def get_pi_bridge(extension_paths: Optional[list[str]] = None) -> PiBridge
     """
     global _pi_bridge
     if _pi_bridge is None:
-        _pi_bridge = PiBridge(extension_paths=extension_paths or [])
-        await _pi_bridge.start()
+        bridge = PiBridge(extension_paths=extension_paths or [])
+        try:
+            await bridge.start()
+        except Exception:
+            # Don't leave a half-started singleton: a later get_pi_bridge()
+            # must retry the spawn (or fail loud again), not return a dead
+            # bridge whose rpc client never came up (native dump fail-fast).
+            _pi_bridge = None
+            raise
+        _pi_bridge = bridge
     return _pi_bridge
 
 
