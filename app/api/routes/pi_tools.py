@@ -71,12 +71,8 @@ async def execute_tool(
     # been superseded while still inside its clock validity window.
     session_id = str(verified["session_id"])
     turn_id = str(verified["turn_id"])
-    import inspect
     from app.agent_pi_bridge import is_active_pi_turn
-    active = is_active_pi_turn(session_id, turn_id)
-    if inspect.isawaitable(active):
-        active = await active
-    if not active:
+    if not await is_active_pi_turn(session_id, turn_id):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={

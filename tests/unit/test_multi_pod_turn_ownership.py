@@ -42,7 +42,7 @@ async def test_multi_pod_active_turn_redis_coordination():
 
     fake_client = FakeRedisClient()
 
-    with patch("app.services.distributed_lock.session_lock_registry._get_client", return_value=fake_client):
+    with patch("app.services.chat.pi_turn_context.pi_turn_registry._get_redis_client", return_value=fake_client):
         # 1. Pod A registers active turn
         sid = "sess-multipod-1"
         tid = "turn-pod-a"
@@ -55,6 +55,8 @@ async def test_multi_pod_active_turn_redis_coordination():
 
         # 3. Simulate Pod B (clear local memory, but Redis holds the record)
         bridge_mod._active_turn_context = None
+        from app.services.chat.pi_turn_context import pi_turn_registry
+        pi_turn_registry._local_context = None
         assert await is_active_pi_turn(sid, tid) is True
 
         # 4. Foreign/mismatched turn is False on Pod B
@@ -99,7 +101,7 @@ async def test_route_409_returns_actionable_recovery_guidance():
 @pytest.mark.asyncio
 async def test_local_only_mode_when_redis_client_none():
     """When Redis is not configured, register/unregister/is_active works solely in-process."""
-    with patch("app.services.distributed_lock.session_lock_registry._get_client", return_value=None):
+    with patch("app.services.chat.pi_turn_context.pi_turn_registry._get_redis_client", return_value=None):
         sid = "sess-local"
         tid = "turn-local"
 

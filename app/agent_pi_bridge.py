@@ -726,21 +726,14 @@ _active_turn_token: Optional[CancellationToken] = None
 # necessary but insufficient: once its turn ends, a delayed callback must not
 # remain executable for the token's remaining clock lifetime.
 _active_turn_context: Optional[tuple[str, str]] = None
-_REDIS_TURN_TTL_S = 300  # 5 minutes TTL for multi-pod active turn registration
 
 
 async def register_active_pi_turn(session_id: str, turn_id: str) -> None:
     """Register active turn in local process memory and Redis (if available)."""
     global _active_turn_context
     _active_turn_context = (session_id, turn_id)
-    try:
-        from app.services.distributed_lock import session_lock_registry
-        client = session_lock_registry._get_client()
-        if client is not None:
-            key = f"webgis:pi:active_turn:{session_id}"
-            await client.set(key, turn_id, ex=_REDIS_TURN_TTL_S)
-    except Exception as e:
-        logger.warning("Failed to register active Pi turn in Redis for %s: %s", session_id, e)
+    from app.services.chat.pi_turn_context import pi_turn_registry
+    await pi_turn_registry.register_turn(session_id, turn_id)
 
 
 async def unregister_active_pi_turn(session_id: str, turn_id: str) -> None:
@@ -748,36 +741,14 @@ async def unregister_active_pi_turn(session_id: str, turn_id: str) -> None:
     global _active_turn_context
     if _active_turn_context == (session_id, turn_id):
         _active_turn_context = None
-    try:
-        from app.services.distributed_lock import session_lock_registry
-        client = session_lock_registry._get_client()
-        if client is not None:
-            key = f"webgis:pi:active_turn:{session_id}"
-            script = (
-                b"if redis.call('get', KEYS[1]) == ARGV[1] then "
-                b"return redis.call('del', KEYS[1]) else return 0 end"
-            )
-            await client.eval(script, 1, key, turn_id)
-    except Exception as e:
-        logger.warning("Failed to unregister active Pi turn in Redis for %s: %s", session_id, e)
+    from app.services.chat.pi_turn_context import pi_turn_registry
+    await pi_turn_registry.unregister_turn(session_id, turn_id)
 
 
 async def is_active_pi_turn(session_id: str, turn_id: str) -> bool:
     """Return whether ``(session, turn)`` owns the live Pi prompt (local or cross-pod Redis)."""
-    if _active_turn_context == (session_id, turn_id):
-        return True
-    try:
-        from app.services.distributed_lock import session_lock_registry
-        client = session_lock_registry._get_client()
-        if client is not None:
-            key = f"webgis:pi:active_turn:{session_id}"
-            val = await client.get(key)
-            if val is not None:
-                stored = val.decode("utf-8") if isinstance(val, bytes) else str(val)
-                return stored == turn_id
-    except Exception as e:
-        logger.warning("Failed to check active Pi turn in Redis for %s: %s", session_id, e)
-    return False
+    from app.services.chat.pi_turn_context import pi_turn_registry
+    return await pi_turn_registry.is_active(session_id, turn_id)
 
 # Runtime observability: 当前在飞 turn 的关联身份（turn_id / run_id / session_id）。
 # 与 ``_active_turn_token`` 同源——dispatch_tool 是独立的 HTTP 回调 task，看不到流
