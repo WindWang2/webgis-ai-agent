@@ -164,6 +164,10 @@ class MapProductPlan(BaseModel):
     algorithm_selections: List[AlgorithmSelectionRecord] = []
     template_selection: Dict[str, Any] = Field(default_factory=dict)
     map_model_selection: List[Dict[str, Any]] = Field(default_factory=list)
+    # #1084: 编译该计划时的 registry 语义指纹（Compiled GIS Runtime
+    # Manifest）。持久化 plan/gis_chapter 重放时可对当前指纹检测 stale ——
+    # 部署改变了算法优先级/工具候选后，旧计划不再静默按新语义解释。
+    manifest_fingerprint: str = ""
 
 
 def _plan_id(query: str, recipe_id: str) -> str:
@@ -278,12 +282,15 @@ class MapProductPlanner:
             if selection.status == "selected":
                 template = self.catalog.get_product_template(selection.template_id)
 
+        # #1084: 计划携带编译期 registry 指纹（进程级缓存 O(1)）。
+        from app.lib.gis.runtime_manifest import current_manifest_fingerprint
         plan = MapProductPlan(
             plan_id=_plan_id(intent.query, recipe.id),
             query=intent.query,
             intent=intent,
             recipe_id=recipe.id,
             template_id=template.id if template else "",
+            manifest_fingerprint=current_manifest_fingerprint(),
             status="draft",
             template_selection=selection_dump,
         )

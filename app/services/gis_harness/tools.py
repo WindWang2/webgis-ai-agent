@@ -106,6 +106,15 @@ class ComponentUpdateArgs(BaseModel):
                                 "mutation_revision；落后即 superseded（用户最新交互优先）")
 
 
+def _manifest_stale(recorded: str) -> bool:
+    """#1084: 计划记录的 registry 指纹是否落后于当前编译（诚实披露）。"""
+    try:
+        from app.lib.gis.runtime_manifest import get_runtime_manifest
+        return get_runtime_manifest().stale(recorded)
+    except Exception:  # noqa: BLE001 - 指纹披露是增值信号，不阻断产品
+        return False
+
+
 # #1076(D-8): turn 级记忆 —— intent→product 链此前每个 harness 工具调用
 # 各查一次 DB（一条链 2 次往返）。缓存键为 (project_id, turn_id)：同 turn
 # 内的记忆漂移不可见（recipe 验证事实本 turn 内不会变），跨 turn 失效。
@@ -870,6 +879,10 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 "component_selection": [c["type"] for c in component_dicts],
                 "map_product_completeness": plan.completeness,
                 "bound_layers": bound_layers,
+                # #1084: 产品证据携带 registry 语义指纹；与当前编译指纹
+                # 不一致（计划跨部署重放）时如实披露 stale。
+                "manifest_fingerprint": plan.manifest_fingerprint,
+                "manifest_stale": _manifest_stale(plan.manifest_fingerprint),
             },
             "summary": (
                 f"产品组装完成 recipe={plan.recipe_id}；图层 {len(bound_layers)}，"
