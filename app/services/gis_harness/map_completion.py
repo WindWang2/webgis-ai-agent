@@ -73,16 +73,19 @@ R_SHOW_LAYER = "show_layer"
 
 # 组件 upsert 的默认 id（与 gis_harness.components 工厂一致；不引入第二
 # 套默认值 —— 修复走 mutate_component 的同一工厂入口）。
+# 与 gis_harness.components 工厂的默认 id 同表（review P2：categorical_legend
+# 工厂默认 legend-categorical、statistics_panel 工厂默认 statistics —— 此前
+# 手抄表与工厂漂移，add_component 修复会错配到别的组件 id 上）。
 _COMPONENT_DEFAULT_IDS: Dict[str, str] = {
     "title": "title",
     "subtitle": "subtitle",
     "legend": "legend-main",
-    "categorical_legend": "legend-main",
+    "categorical_legend": "legend-categorical",
     "continuous_colorbar": "colorbar-main",
     "scale_bar": "scale-bar",
     "north_arrow": "north-arrow",
     "attribution": "attribution",
-    "statistics_panel": "statistics-panel",
+    "statistics_panel": "statistics",
     "chart_panel": "chart-panel",
 }
 
@@ -99,6 +102,8 @@ class MapCompletionFinding:
     target: str = ""
     detail: str = ""
     repair: Optional[str] = None  # 适用/已应用的 repair action code
+    # 组件族（slot 的 allowed_component_types）—— family-aware 修复用。
+    family: Optional[List[str]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -296,9 +301,11 @@ def validate_execution(chapter: Dict[str, Any]) -> List[MapCompletionFinding]:
                 )
             )
         return findings
-    # 兜底（无图）：行状态直读
+    # 兜底（无图）：行状态直读（unavailable 与 failed 同为阻塞态）
     open_rows = [r for r in rows if str(r.get("status") or "") == "pending"]
-    failed_rows = [r for r in rows if str(r.get("status") or "") == "failed"]
+    failed_rows = [
+        r for r in rows if str(r.get("status") or "") in ("failed", "unavailable")
+    ]
     if open_rows:
         caps = ",".join(str(r.get("capability") or "?") for r in open_rows[:4])
         findings.append(
@@ -326,7 +333,14 @@ def validate_artifacts(
     chapter: Dict[str, Any],
     descriptors: Dict[str, Optional[dict]],
 ) -> List[MapCompletionFinding]:
-    """artifact 校验：required artifact 已绑定、ref 存活、空结果有明确语义。"""
+    """artifact 校验：required artifact 已绑定、ref 存活、空结果有明确语义。
+
+    registry-driven（review 6 P1）：只有产出**空间 feature set** 的能力才
+    要求 bound_ref —— `stats_table`（spatial_stats/point_profile 等）、
+    `od_matrix`、raster 家族（heatmap 栅格走独立通道，geojson_ref 恒空）
+    的完成证据是工具成功本身，不落 FC ref；对它们强求 bound_ref 会把
+    常规 recipe 路径误判为 failed。
+    """
     findings: List[MapCompletionFinding] = []
     rows = [
         r
@@ -342,6 +356,8 @@ def validate_artifacts(
         if cap in seen:
             continue
         seen.add(cap)
+        if not _capability_requires_artifact_ref(cap):
+            continue
         ref = str(row.get("bound_ref") or "")
         if not ref:
             findings.append(
@@ -375,6 +391,27 @@ def validate_artifacts(
                 )
             )
     return findings
+
+
+# 非空间输出类型：完成证据 = 工具成功（无 FC ref 可绑；见 dispatch 的
+# geojson_ref 语义）。raster 家族走 heatmap 栅格通道，同样不落 FC ref。
+_NON_SPATIAL_ARTIFACT_TYPES = {"stats_table", "od_matrix", "raster_surface", "terrain_surface"}
+
+
+def _capability_requires_artifact_ref(capability: str) -> bool:
+    """该能力的输出是否包含空间 feature set（决定 bound_ref 断言适用性）。"""
+    try:
+        from app.lib.gis.capability_registry import get_capability_registry
+
+        desc = get_capability_registry().get(capability)
+        if desc is None:
+            return True  # 未知能力保守要求（缺 ref 时由 finding 披露）
+        outputs = [str(t) for t in (desc.output_artifact_types or [])]
+        if not outputs:
+            return True
+        return not all(t in _NON_SPATIAL_ARTIFACT_TYPES for t in outputs)
+    except Exception:  # noqa: BLE001 — registry 读失败保守要求
+        return True
 
 
 def _spec_layers(mapspec: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -471,6 +508,23 @@ def validate_layers(
     return findings
 
 
+def _family_renderable(family: List[str]) -> bool:
+    """slot 族内是否有任一类型存在 live 渲染器或导出消费方（支持矩阵）。"""
+    try:
+        from app.lib.cartography.component_renderers import (
+            get_component_renderer_registry,
+        )
+
+        registry = get_component_renderer_registry()
+        for t in family:
+            support = registry.support_for(t)
+            if support and (support.renderers or support.exporters):
+                return True
+        return False
+    except Exception:  # noqa: BLE001 — 矩阵缺失按可修复处理（保守）
+        return True
+
+
 def validate_components(
     mapspec: Dict[str, Any],
     required_slots: List[List[str]],
@@ -495,27 +549,33 @@ def validate_components(
     for family in required_slots:
         family = [t for t in family if t] or ["title"]
         primary = family[0]
+        # review P2：两侧都无渲染/导出消费方的类型（map_border /
+        # export_layout / graticule / inset_map）不修也不判 error ——
+        # "修复"一个永远不可见的组件是完成度表演；降级为 warning 披露。
+        repairable = _family_renderable(family)
         if not any(t in present_types for t in family):
             findings.append(
                 MapCompletionFinding(
                     code=F_COMPONENT_MISSING,
-                    severity="error",
+                    severity="error" if repairable else "warning",
                     target=primary,
                     detail=(
                         f"required component slot '{primary}' absent "
                         f"(any of {', '.join(family[:3])})"
                     ),
-                    repair=R_ADD_COMPONENT,
+                    repair=R_ADD_COMPONENT if repairable else None,
+                    family=family,
                 )
             )
         elif not any(t in enabled_types for t in family):
             findings.append(
                 MapCompletionFinding(
                     code=F_COMPONENT_DISABLED,
-                    severity="error",
+                    severity="error" if repairable else "warning",
                     target=primary,
                     detail=f"required component slot '{primary}' is disabled",
-                    repair=R_ENABLE_COMPONENT,
+                    repair=R_ENABLE_COMPONENT if repairable else None,
+                    family=family,
                 )
             )
     # 单例重复（desired-state 即可评）
@@ -708,6 +768,7 @@ async def _apply_repairs(
     session_id: str,
     findings: List[MapCompletionFinding],
     mapspec: Dict[str, Any],
+    prior_repairs: Optional[List[str]] = None,
 ) -> List[str]:
     """执行可自动修复的发现；返回实际应用的 repair action codes。
 
@@ -716,7 +777,12 @@ async def _apply_repairs(
     - enable_component：required 组件被禁用 → 重新启用；
     - show_layer：结果层 desired-visibility=none → GISMutationBatch（用户
       显式隐藏会被既有 user-wins 守卫拒绝并如实保留）。
+
+    ``prior_repairs``（上一持久化块里已应用过的修复）提供组件修复的
+    one-shot 语义：用户在 finalizer 启用后再次禁用时不形成修复对抗，
+    转为 needs_repair 披露（组件通道没有 layer 那样的 owner 守卫）。
     """
+    prior = list(prior_repairs or [])
     applied: List[str] = []
     from app.services.mapspec_store import mapspec_store
 
@@ -726,43 +792,60 @@ async def _apply_repairs(
         if isinstance(c, dict)
     ]
     for f in findings:
+        family = f.family or [f.target]
         if f.repair == R_ADD_COMPONENT and f.code == F_COMPONENT_MISSING:
-            default_id = _COMPONENT_DEFAULT_IDS.get(f.target, f"{f.target}-main")
+            # one-shot（review P1）：上一轮已尝试过同族修复而 finding 仍在
+            # （典型：用户在 finalizer 启用后再次禁用）→ 不再对抗，披露
+            # needs_repair —— 用户显式决策优先。
+            if any(p.startswith(f"{R_ADD_COMPONENT}:{t}") for t in family for p in prior):
+                continue
+            repair_type = family[0]
+            default_id = _COMPONENT_DEFAULT_IDS.get(repair_type, f"{repair_type}-main")
             try:
                 res = await mapspec_store.patch_component(
                     session_id,
                     component_id=default_id,
-                    component_type=f.target,
+                    component_type=repair_type,
                     enabled=True,
                     upsert=True,
                 )
                 if res.get("success"):
-                    applied.append(f"{R_ADD_COMPONENT}:{f.target}")
+                    applied.append(f"{R_ADD_COMPONENT}:{repair_type}")
             except Exception:  # noqa: BLE001 — 单项修复失败留给下一轮披露
                 logger.warning(
-                    "[MapFinalizer] add_component repair failed type=%s", f.target
+                    "[MapFinalizer] add_component repair failed type=%s", repair_type
                 )
         elif f.repair == R_ENABLE_COMPONENT and f.code == F_COMPONENT_DISABLED:
-            target_id = next(
+            if any(p.startswith(f"{R_ENABLE_COMPONENT}:{t}") for t in family for p in prior):
+                continue
+            # family-aware（review P2）：禁用的成员可能是族内非 primary 类型
+            # （如 categorical_legend），只按 primary 找会命中不存在的 id。
+            member = next(
                 (
-                    str(c.get("id") or "")
+                    c
                     for c in components
-                    if c.get("type") == f.target
+                    if c.get("type") in family and c.get("enabled") is False
                 ),
-                _COMPONENT_DEFAULT_IDS.get(f.target, f.target),
+                None,
             )
+            if member is not None:
+                target_id = str(member.get("id") or "")
+                target_type = str(member.get("type") or f.target)
+            else:
+                target_type = family[0]
+                target_id = _COMPONENT_DEFAULT_IDS.get(target_type, target_type)
             try:
                 res = await mapspec_store.patch_component(
                     session_id,
                     component_id=target_id,
-                    component_type=f.target,
+                    component_type=target_type,
                     enabled=True,
                 )
                 if res.get("success"):
-                    applied.append(f"{R_ENABLE_COMPONENT}:{f.target}")
+                    applied.append(f"{R_ENABLE_COMPONENT}:{target_type}")
             except Exception:  # noqa: BLE001
                 logger.warning(
-                    "[MapFinalizer] enable_component repair failed type=%s", f.target
+                    "[MapFinalizer] enable_component repair failed type=%s", target_type
                 )
         elif f.repair == R_SHOW_LAYER and f.code == F_LAYER_HIDDEN:
             try:
@@ -799,6 +882,7 @@ async def run_map_finalization(
     chapter: Optional[Dict[str, Any]] = None,
     max_passes: int = MAX_FINALIZATION_PASSES,
     reason: str = "manual",
+    prior_repairs: Optional[List[str]] = None,
 ) -> Optional[MapCompletionResult]:
     """对一个会话运行完成度终验。无 GIS 章节 → None（无事可终验）。
 
@@ -829,22 +913,44 @@ async def run_map_finalization(
     all_repairs: List[str] = []
     findings: List[MapCompletionFinding] = []
     passes = 0
+    repaired_last_pass = False
     while passes < max_passes:
         passes += 1
         findings = _validate_all(inputs, chapter)
+        fatal = [
+            f
+            for f in findings
+            if f.severity == "error"
+            and f.repair is None
+            and f.code in (F_NO_RESULT_LAYER, F_LAYER_MISSING, F_SOURCE_MISSING)
+        ]
+        if fatal:
+            # review P3：存在不可修复的结构性 error 时不再做组件修复 ——
+            # 修复只会白付两轮 revision 而 status 仍 failed。
+            repaired_last_pass = False
+            break
         repairable = [f for f in findings if f.repair is not None]
         if not repairable or not findings:
+            repaired_last_pass = False
             break
-        repairs = await _apply_repairs(session_id, findings, inputs["mapspec"])
+        repairs = await _apply_repairs(
+            session_id, findings, inputs["mapspec"], prior_repairs=prior_repairs
+        )
         all_repairs.extend(repairs)
         if not repairs:
+            repaired_last_pass = False
             break  # 修复通道全部失败 → 再验也不会变，避免空转
         # 修复改变了 desired state —— 重读输入再验
         inputs = await gather_completion_inputs(session_id, chapter)
+        repaired_last_pass = True
+
+    # review P1：末轮刚应用过修复时，findings 还是修复前的快照 —— 用
+    # 重读后的输入做一次终验（纯函数，零 I/O），状态才与新 desired state
+    # 一致（否则 repairs_applied 与 findings 自相矛盾）。
+    if repaired_last_pass:
+        findings = _validate_all(inputs, chapter)
 
     result.passes = passes
-    result.findings = findings[:MAX_FINDINGS]
-    result.repairs_applied = all_repairs[:MAX_DISCLOSED_REPAIRS]
     result.result_bbox = derive_result_bbox(chapter, inputs["descriptors"])
     result.export_status = assess_export_parity(inputs["mapspec"])
 
@@ -854,7 +960,7 @@ async def run_map_finalization(
         result.viewport_status = "repairable"
     elif has_layers:
         result.viewport_status = "invalid"
-        result.findings.append(
+        findings.append(
             MapCompletionFinding(
                 code=F_VIEWPORT_NO_BBOX,
                 severity="warning",
@@ -864,6 +970,9 @@ async def run_map_finalization(
         )
     else:
         result.viewport_status = "not_applicable"
+    # 截断放在 viewport finding 追加之后（review P3：否则第 13 条被静默丢弃）
+    result.findings = findings[:MAX_FINDINGS]
+    result.repairs_applied = all_repairs[:MAX_DISCLOSED_REPAIRS]
 
     layer_err = [f for f in result.findings if f.code in (
         F_NO_RESULT_LAYER, F_LAYER_MISSING, F_SOURCE_MISSING, F_LAYER_HIDDEN,
@@ -875,16 +984,19 @@ async def run_map_finalization(
     result.component_status = "issues" if comp_err else "valid"
 
     errors = [f for f in result.findings if f.severity == "error"]
+    unrepairable = [f for f in errors if f.repair is None]
     still_repairable = [f for f in errors if f.repair is not None]
     if not errors:
         result.status = STATUS_COMPLETE
         result.summary = "map product validated"
-    elif still_repairable:
+    elif unrepairable:
+        # 不可修复 error 在场 → failed 优先于 needs_repair（只靠修复到不了
+        # complete，"needs repair" 会误导下一动作）。
+        result.status = STATUS_FAILED
+        result.summary = f"{len(errors)} blocking findings ({len(unrepairable)} unrepairable)"
+    else:
         result.status = STATUS_NEEDS_REPAIR
         result.summary = f"{len(still_repairable)} repairable findings remain"
-    else:
-        result.status = STATUS_FAILED
-        result.summary = f"{len(errors)} blocking findings"
 
     logger.info(
         "[MapFinalizer] finalization_pass session=%s status=%s passes=%d repairs=%d",
@@ -911,6 +1023,17 @@ async def _current_mapspec_revision(session_id: str) -> int:
         return 0
 
 
+def _stored_checked_revision(stored: Dict[str, Any]) -> Optional[int]:
+    """合法 0 不被误判（review P3：``int(x or -1)`` 把 0 洗成 -1）。"""
+    raw = stored.get("checked_revision")
+    if isinstance(raw, bool) or raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 async def maybe_finalize_map_product(
     session_id: str,
     *,
@@ -919,14 +1042,21 @@ async def maybe_finalize_map_product(
 ) -> Optional[MapCompletionResult]:
     """Harness 侧触发入口：廉价门 + 终验 + 章节持久化（幂等、有界）。
 
-    去重门：章节已有 ``map_product`` 且 status=complete 且 checked_revision
-    与当前 MapSpec revision 一致 → 跳过（同一 desired state 不重复终验）。
-    任何后续突变（revision 变化）自然重新满足终验条件。
+    去重门（review 加固）：章节已有 ``map_product`` 且 status=complete 且
+    checked_revision 与当前 MapSpec revision 一致，**且当前行状态仍全部
+    终态**（行失败/重试不推 revision —— 只看 revision 会把 "final" 披露成
+    陈旧）→ 跳过。
+
+    pending 不持久化、不披露（review 性能 P1：DAG 未终态是 turn 中段的
+    常态，每个工具结果都落块+SSE 是纯写放大；[GIS Plan] 的行投影已披露
+    未完成态）。
 
     写入路径复用 SessionPlan 的 per-session lock（fail-closed）；只覆盖
     ``gis_chapter["map_product"]`` 单键，不触碰行状态（无第二事实源）。
+    锁内做两道守卫：goal 变化（supersede 竞态）与 revision 漂移（验证后
+    突变）都不落块 —— 让下一个触发点对真实状态重新终验。
     """
-    from app.services.session_plan import load_session_plan, save_session_plan
+    from app.services.session_plan import goal_key, load_session_plan, save_session_plan
     from app.services.distributed_lock import session_lock_registry
 
     if not session_id:
@@ -941,13 +1071,27 @@ async def maybe_finalize_map_product(
         not force
         and isinstance(stored, dict)
         and stored.get("status") == STATUS_COMPLETE
-        and int(stored.get("checked_revision") or -1) == revision
+        and _stored_checked_revision(stored) == revision
+        and not validate_execution(chapter)
     ):
         return None
 
-    result = await run_map_finalization(session_id, chapter=chapter, reason=reason)
+    result = await run_map_finalization(
+        session_id,
+        chapter=chapter,
+        reason=reason,
+        prior_repairs=(
+            list(stored.get("repairs") or []) if isinstance(stored, dict) else None
+        ),
+    )
     if result is None:
         return None
+    if result.status == STATUS_PENDING:
+        # 不持久化、不披露（见 docstring）；调用方拿 result 只做日志。
+        return result
+
+    validated_goal = goal_key(chapter, plan.user_goal)
+    revision_after_run = await _current_mapspec_revision(session_id)
 
     # 持久化（锁内重读——终验本身的 repair 突变可能已推进 revision）
     try:
@@ -956,8 +1100,23 @@ async def maybe_finalize_map_product(
             if fresh is not None and isinstance(fresh.gis_chapter, dict):
                 if lock.lost:
                     return result
+                # supersede/replace 竞态：验证的章节已不是当前章节 → 不落块
+                if goal_key(fresh.gis_chapter, fresh.user_goal) != validated_goal:
+                    logger.info(
+                        "[MapFinalizer] chapter superseded mid-run session=%s — persist skipped",
+                        session_id,
+                    )
+                    return result
+                # 验证后 revision 又被并发突变 → complete@R' 会盖住未验证的
+                # 状态；留给下一触发点重验。
+                if await _current_mapspec_revision(session_id) != revision_after_run:
+                    logger.info(
+                        "[MapFinalizer] revision moved mid-run session=%s — persist skipped",
+                        session_id,
+                    )
+                    return result
                 fresh.gis_chapter["map_product"] = map_product_block(
-                    result, await _current_mapspec_revision(session_id)
+                    result, revision_after_run
                 )
                 await save_session_plan(fresh)
     except Exception:  # noqa: BLE001 — 披露失败不阻断 turn；下一触发点重试
@@ -975,9 +1134,42 @@ async def maybe_finalize_map_product(
     return result
 
 
-def finalization_sse_payload(result: MapCompletionResult) -> Dict[str, Any]:
-    """前端 finalizer 消费的有界载荷（视口修复需要 bbox 与状态）。"""
+async def read_stored_map_product(session_id: str) -> Optional[Dict[str, Any]]:
+    """读取已持久化的完成块（turn 收尾的 task_complete 披露兜底）。
+
+    幂等门跳过终验时（complete + revision 一致），task_complete 仍应携带
+    完成态 —— 否则 happy path 下该字段永远缺席（review P2）。
+    """
+    from app.services.session_plan import load_session_plan
+
+    if not session_id:
+        return None
+    plan = await load_session_plan(session_id)
+    stored = plan.gis_chapter.get("map_product") if plan is not None else None
+    if not isinstance(stored, dict):
+        return None
     return {
+        "status": str(stored.get("status") or STATUS_PENDING),
+        "summary": str(stored.get("summary") or "")[:120],
+    }
+
+
+def finalization_sse_payload(
+    result: MapCompletionResult,
+    session_id: str = "",
+    *,
+    mapspec: Optional[Dict[str, Any]] = None,
+    mutation_revision: Optional[int] = None,
+) -> Dict[str, Any]:
+    """前端 finalizer 消费的有界载荷（视口修复需要 bbox 与状态）。
+
+    session_id 参与 frontend INV-2 跨会话守卫（review P1：载荷缺 sid 时
+    旧会话的迟到事件会把新会话相机 fit 走）。repair 改写了 desired state
+    时携带 mapspec + mutation_revision —— 前端通用 spec 提交通道
+    （use-sse-stream 对 data.mapspec 的既有消费）会把修复同步到 live
+    chrome/exporter，否则"complete"对着一张用户看不见的 spec 宣称。
+    """
+    payload = {
         "status": result.status,
         "viewport_status": result.viewport_status,
         "result_bbox": result.result_bbox,
@@ -985,3 +1177,20 @@ def finalization_sse_payload(result: MapCompletionResult) -> Dict[str, Any]:
         "issues": [f.to_dict() for f in result.findings[:4]],
         "repairs": list(result.repairs_applied[:4]),
     }
+    if session_id:
+        payload["session_id"] = session_id
+    if mapspec is not None and result.repairs_applied:
+        payload["mapspec"] = mapspec
+        payload["mutation_revision"] = mutation_revision
+    return payload
+
+
+async def current_mapspec_for_disclosure(session_id: str) -> tuple[Optional[Dict[str, Any]], Optional[int]]:
+    """修复披露用的当前 spec 快照（只在实际应用过修复时被读取）。"""
+    from app.services.mapspec_store import mapspec_store
+
+    try:
+        spec = await mapspec_store.get_mapspec(session_id)
+        return spec, await _current_mapspec_revision(session_id)
+    except Exception:  # noqa: BLE001 — 快照失败只影响附带披露
+        return None, None

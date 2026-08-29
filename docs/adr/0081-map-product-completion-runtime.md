@@ -167,7 +167,11 @@ Exporter 在 spec 组件在场时构建 `ExportChromeModel`（export-chrome.ts�
 
 - validators：图层/组件 O(N)、布局 O(C²)（C=chrome 组件数，个位数）、
   bbox 全部来自 O(1) ref descriptor（无 GeoJSON 复制、无逐 feature 扫描）；
-- 终验幂等门：complete + revision 一致时零成本跳过；
+- pending 不持久化、不披露（DAG 未终态是 turn 中段常态 —— 每工具结果的
+  pending 落块 + SSE 是纯写放大；未完成态由 [GIS Plan] 行投影表达）；
+- 终验幂等门：complete + revision 一致（且行状态仍终态）时跳过再验，
+  代价 = 一次计划读取 + 一次 revision 读取（非零但与 apply_tool_result
+  的既有读写同量级）；
 - `build_plan_graph` 真实计划毫秒级（ADR-0080 既有性能契约）；
 - 前端：每 finalization 载荷至多一次相机动作；导出 chrome 模型构建是一次
   纯派生（chartRef 拉取仅 chart_panel 大载荷时发生）。
@@ -194,6 +198,35 @@ Exporter 在 spec 组件在场时构建 `ExportChromeModel`（export-chrome.ts�
   为架构美观新增持久派生层违反"不为美观加层"；
 - **导出布局引擎重写**（完整 constraint solver）——保持第一版：anchor 槽位
   + floating 缩放 + 现有堆叠语义；auto 重排记为 follow-up。
+
+## 7.5 Independent Review Fixes（六路独立评审后落地）
+
+- artifact 校验 registry-driven：`stats_table`/`od_matrix`/raster 家族的
+  完成证据是工具成功（无 FC ref），不强求 bound_ref（否则常规 recipe 的
+  point_profile 路径被误判 failed）；
+- 末轮修复后强制终验一次（纯函数）—— status 与 repairs_applied 不再自相
+  矛盾；不可修复 error 在场时 failed 优先于 needs_repair；
+- 组件修复 family-aware + one-shot：slot 族内任一类型可满足 enable；
+  上轮已修过的同族 finding 不再对抗（组件通道无 layer 那样的 owner 守卫，
+  用户反复禁用时转为 needs_repair 披露）；
+- 渲染器两侧都无消费方的 required 类型（map_border 等）降级 warning，
+  不做"修复一个不可见组件"的完成度表演；
+- 幂等门增加行终态复检（行失败/重试不推 revision，只看 revision 会把
+  "final" 披露成陈旧）；锁内 goal/revision 双守卫（supersede 竞态与
+  验证后突变都不落块）；
+- repair 后的 SSE 载荷附带 mapspec + mutation_revision（前端通用 spec
+  提交通道同步 live chrome，否则 complete 对着用户看不见的 spec 宣称）；
+- pending 不发 SSE/task_complete 字段；task_complete 在幂等门跳过时回读
+  存储块（happy path 下该字段不再缺席）；
+- 前端：map_finalization 载荷带 session_id（INV-2 跨会话守卫，旧会话
+  迟到事件不得 fit 走新会话相机）；pending/无 bbox 不占命令队列；异常态
+  toast 披露；live helpers.resolvePosition 采纳 placement.anchor 优先级
+  （缺省槽位表与共享 resolver 合并为一份）；
+- 导出：anchor y 语义统一为"距所属边的 margin"（此前全部底部组件被画到
+  顶部）；marginY 一致 scalePx；north/scale 类型缺席时同 live 注入
+  fallback；fromSpec 只看可视组件（export_layout-only spec 不切换路径）；
+  热力图例在无量化色条时回落定性渐变；单色 palette 复制为两端；
+- LRU 驱逐与反注册共用 source 所有权转移。
 
 ## 8. Deferred Work
 

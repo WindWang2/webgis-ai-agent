@@ -119,7 +119,12 @@ function evictToBound(): void {
   while (registry.size > MAX_RUNTIME_LAYERS) {
     const oldest = registry.keys().next().value;
     if (oldest === undefined) break;
+    const entry = registry.get(oldest);
+    const snapshot = entry ? { ...entry, sourceDef: entry.sourceDef } : undefined;
     dropEntry(oldest);
+    // LRU 驱逐与反注册共用 source 所有权转移（review P2：两条路径一个
+    // 标准 —— 驱逐持有 sourceDef 的账目时不剥夺共享层的重放能力）。
+    if (snapshot) _transferSourceOwnership(snapshot);
     evicted += 1;
   }
   if (evicted > 0) {
@@ -245,15 +250,20 @@ export function unregisterRuntimeLayer(layerId: string): void {
   //（review 记录的防御性缺口：当前命令不铸造多层层共享 source，但账本
   // 语义必须自洽）。
   for (const entry of dropped) {
-    if (!entry.sourceDef) continue;
-    if (registry.get(entry.runtimeLayerId)) continue;
-    const survivor = [...registry.values()].find(
-      (e) => e.sourceId === entry.sourceId && !e.sourceDef && e.layerDef,
-    );
-    if (survivor) {
-      survivor.sourceDef = entry.sourceDef;
-      sourceIndex.set(survivor.sourceId, survivor.runtimeLayerId);
-    }
+    _transferSourceOwnership(entry);
+  }
+}
+
+/** 被移除账目的 sourceDef 移交给仍引用该 source 且无定义的存活层。 */
+function _transferSourceOwnership(dropped: RuntimeLayerDescriptor): void {
+  if (!dropped.sourceDef) return;
+  if (registry.get(dropped.runtimeLayerId)) return;
+  const survivor = [...registry.values()].find(
+    (e) => e.sourceId === dropped.sourceId && !e.sourceDef && e.layerDef,
+  );
+  if (survivor) {
+    survivor.sourceDef = dropped.sourceDef;
+    sourceIndex.set(survivor.sourceId, survivor.runtimeLayerId);
   }
 }
 

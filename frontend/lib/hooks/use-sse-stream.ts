@@ -896,25 +896,41 @@ export function useSSEStream(
         // ADR-0081：后端 Completion Runtime 的完成态披露（拼接在
         // tool_execution_end 后或 turn 收尾独立下发）。视口真相在前端 ——
         // 派发 MAP_FINALIZATION 命令做一次有界校验/修复（相交不动相机、
-        // 不相交 fitBounds 一次、空结果 no-op）；用户可见披露仅在异常态。
+        // 不相交 fitBounds 一次、空结果 no-op）。
         const payload = (data ?? {}) as {
           status?: string;
           result_bbox?: number[];
+          session_id?: string;
         };
-        dispatchAction({
-          command: 'MAP_FINALIZATION',
-          params: {
-            status: String(payload.status ?? 'pending'),
-            bbox: Array.isArray(payload.result_bbox)
-              ? (payload.result_bbox as [number, number, number, number])
-              : undefined,
-          },
-        });
+        // INV-2 同款跨会话守卫：载荷携带 session_id 时与当前会话比对 ——
+        // 旧会话迟到的 finalization 不得把新会话的相机 fit 走。
+        if (typeof payload.session_id === 'string' && payload.session_id && payload.session_id !== sessionIdRef.current) {
+          devOnly.warn('[MapFinalization] dropped cross-session finalization event');
+        } else if (
+          Array.isArray(payload.result_bbox) ||
+          (payload.status && payload.status !== 'pending')
+        ) {
+          // 无 bbox 且 pending → 无可执行的视口动作，不占命令队列
+          dispatchAction({
+            command: 'MAP_FINALIZATION',
+            params: {
+              status: String(payload.status ?? 'pending'),
+              bbox: Array.isArray(payload.result_bbox)
+                ? (payload.result_bbox as [number, number, number, number])
+                : undefined,
+            },
+          });
+        }
         const notice = finalizationUserNotice(
           payload as Parameters<typeof finalizationUserNotice>[0],
         );
         if (notice) {
-          devOnly.warn('[MapFinalization]', notice);
+          // 异常态的用户可见披露（toast）；完成态零噪声
+          try {
+            useToastStore.getState().addToast(notice, 'warning');
+          } catch {
+            devOnly.warn('[MapFinalization]', notice);
+          }
         }
       } else if (event.event === 'step_cancelled') {
         // B-P2: 步骤被抢占取消时后端下发 step_cancelled

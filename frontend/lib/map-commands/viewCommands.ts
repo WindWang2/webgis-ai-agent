@@ -1,7 +1,7 @@
 import type { CommandEntry, MapCommandContext, MapCommandResult } from './types';
 import * as navigation from '@/lib/map-kit/navigation';
 import { isUserGesturing, onUserGestureStart, waitForGestureEnd } from './camera-arbitration';
-import { isRepairableBbox, viewportIntersectsBbox } from '@/lib/map-product/finalizer';
+import { checkViewport } from '@/lib/map-product/finalizer';
 
 /**
  * View commands: camera/navigation.
@@ -306,18 +306,11 @@ export const viewCommands: Record<string, CommandEntry> = {
     run(ctx) {
       const { map, params } = ctx;
       const bbox = (params as { bbox?: unknown }).bbox;
-      // 纯校验先行：相交/无 bbox → 无相机动作（立即结算，不空转队列）
-      if (!isRepairableBbox(bbox)) {
-        return { status: 'succeeded', result: { viewport: 'not_applicable', repaired: false } };
-      }
-      let intersects = false;
-      try {
-        intersects = viewportIntersectsBbox(map.getBounds(), bbox);
-      } catch {
-        return { status: 'succeeded', result: { viewport: 'invalid', repaired: false } };
-      }
-      if (intersects) {
-        return { status: 'succeeded', result: { viewport: 'valid', repaired: false } };
+      // 纯校验（共享 helper，与测试同一实现）：相交/无 bbox/未就绪 →
+      // 无相机动作（立即结算，不空转队列）。
+      const check = checkViewport(map, bbox);
+      if (check !== 'repairable') {
+        return { status: 'succeeded', result: { viewport: check, repaired: false } };
       }
       // 修复动作放进 runCameraCommand 的 execute —— 用户手势仲裁/自中断
       // 语义对 finalizer 修复同样生效（用户正在拖图时不抢相机）。

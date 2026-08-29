@@ -654,18 +654,31 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
         # 以独立 SSE 事件披露给前端 finalizer（视口校验/修复在前端）。
         try:
             from app.services.gis_harness.map_completion import (
+                current_mapspec_for_disclosure as _finalization_spec_snapshot,
                 finalization_sse_payload,
                 maybe_finalize_map_product,
             )
             completion = await maybe_finalize_map_product(
                 session_id, reason=f"tool_result:{tool_name}"
             )
-            if completion is not None:
+            # pending 不披露（DAG 未终态是 turn 中段常态，[GIS Plan] 行投影
+            # 已表达；每个工具结果一条 pending SSE 是纯噪声 + 前端空转）。
+            # repair 改写 desired state 时附带 mapspec + revision —— 前端
+            # 通用 spec 提交通道同步到 live chrome/exporter。
+            if completion is not None and completion.status != "pending":
+                spec_snapshot = (None, None)
+                if completion.repairs_applied:
+                    spec_snapshot = await _finalization_spec_snapshot(session_id)
                 cache_session_plan_sse(
                     request.toolCallId,
                     sse_event(
                         "map_finalization",
-                        finalization_sse_payload(completion),
+                        finalization_sse_payload(
+                            completion,
+                            session_id,
+                            mapspec=spec_snapshot[0],
+                            mutation_revision=spec_snapshot[1],
+                        ),
                     ),
                     session_id,
                 )
@@ -1679,13 +1692,26 @@ class PiBridge:
                                     from app.services.gis_harness.map_completion import (
                                         finalization_sse_payload,
                                         maybe_finalize_map_product,
+                                        read_stored_map_product,
                                     )
                                     _completion = await maybe_finalize_map_product(
                                         turn_sid, reason="turn_settled"
                                     )
-                                    if _completion is not None:
+                                    if _completion is not None and _completion.status != "pending":
+                                        _spec_snapshot = (None, None)
+                                        if _completion.repairs_applied:
+                                            _spec_snapshot = await _finalization_spec_snapshot(turn_sid)
                                         _turn_map_product = finalization_sse_payload(
-                                            _completion
+                                            _completion,
+                                            turn_sid,
+                                            mapspec=_spec_snapshot[0],
+                                            mutation_revision=_spec_snapshot[1],
+                                        )
+                                    elif _completion is None:
+                                        # 幂等门跳过（complete+revision 一致）→
+                                        # task_complete 仍披露已存储的完成态。
+                                        _turn_map_product = await read_stored_map_product(
+                                            turn_sid
                                         )
                                 except Exception:  # noqa: BLE001 — 增值信号
                                     logger.exception(

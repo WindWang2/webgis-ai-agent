@@ -203,6 +203,15 @@ export function composeLayout(
     const d = {
       ctx, darkMode: dark_mode, scalePx, targetW, targetH, style: layoutStyle,
     };
+    // margin 一律经 scalePx（review P0：垂直 margin 未缩放，dpi>96 时相对
+    // 收缩）；anchorOrigin 的 y 语义 = 距所属边的 margin 距离。
+    const mTopTitle = scalePx(52);
+    const mTopSub = scalePx(82);
+    const mBottom = scalePx(52);
+    const mCompass = scalePx(64);
+    const mLegend = scalePx(56);
+    const mPanel = scalePx(90);
+    const mAttr = scalePx(22);
 
     // 1. Header gradient（无浮动 title 时保持顶部渐变；浮动 title 自带面板底）
     const headerText = chrome.title && !chrome.title.rect;
@@ -218,25 +227,25 @@ export function composeLayout(
 
     // 2. Title / subtitle（anchor 对齐 —— top-center 居中，与 live 一致）
     if (chrome.title?.text) {
-      drawChromeText(d, chrome.title, 32, layoutStyle.titleColor, { marginX, marginY: 52 });
+      drawChromeText(d, chrome.title, 32, layoutStyle.titleColor, { marginX, marginY: mTopTitle });
     }
     if (chrome.subtitle?.text) {
       drawChromeText(
         d, chrome.subtitle, 20,
         dark_mode ? "rgba(255,255,255,0.72)" : "rgba(30,41,59,0.72)",
-        { marginX, marginY: 82 },
+        { marginX, marginY: mTopSub },
       );
     }
 
     // 3. Scale bar（anchor 槽位 —— bottom-right 缺省，与 live 一致）
     if (chrome.scaleBar && showScale && mapCenter && mapZoom !== undefined) {
       const metersPerPx = metersPerPixelAt(mapZoom, mapCenter.lat);
-      drawChromeScaleBar(d, chrome.scaleBar, metersPerPx, pxPerLogical, { marginX, marginY: 52 });
+      drawChromeScaleBar(d, chrome.scaleBar, metersPerPx, pxPerLogical, { marginX, marginY: mBottom });
     }
 
     // 4. Compass（旋转符号与 live 对齐：-bearing）
     if (chrome.northArrow && showCompass) {
-      drawChromeNorthArrow(d, chrome.northArrow, mapBearing, { marginX, marginY: 64 });
+      drawChromeNorthArrow(d, chrome.northArrow, mapBearing, { marginX, marginY: mCompass });
     }
 
     // 4.5 Graticule（请求参数驱动，非 spec 组件 —— 保持不变）
@@ -246,24 +255,33 @@ export function composeLayout(
 
     // 5. Legend / colorbar（spec 组件 enabled 驱动；anchor 槽位）
     if (showLegend && chrome.legend) {
-      drawChromeLegend(d, chrome.legend, { marginX, marginY: 56 });
+      drawChromeLegend(d, chrome.legend, { marginX, marginY: mLegend });
     }
     if (showLegend && chrome.colorbar) {
-      drawChromeColorbar(d, chrome.colorbar, { marginX, marginY: 56 });
+      drawChromeColorbar(d, chrome.colorbar, { marginX, marginY: mLegend });
+    } else if (showLegend && options.heatmapLegend) {
+      // 热力图无量化色条（legend_spec 缺 min/max）时回落定性渐变图例 ——
+      // review P1：不能让热力图-only 成品完全丢图例。
+      _drawHeatmapLegend(
+        { ctx, dark_mode, scalePx, targetW, targetH },
+        options.heatmapLegend.name,
+        0,
+        options.heatmapLegend.paletteColors,
+      );
     }
 
     // 5.5 浮动面板（statistics/chart —— 此前导出完全缺席，live-only）
     for (const panel of chrome.panels) {
       if (panel.kind === 'statistics') {
-        drawChromeStatsPanel(d, panel, { marginX, marginY: 90 });
+        drawChromeStatsPanel(d, panel, { marginX, marginY: mPanel });
       } else if (panel.kind === 'chart') {
-        drawChromeChartPanel(d, panel, { marginX, marginY: 90 });
+        drawChromeChartPanel(d, panel, { marginX, marginY: mPanel });
       }
     }
 
     // 6. Attribution（spec 组件文本；请求 author/dataSource 仍在 metadata 行）
     if (chrome.attribution?.text) {
-      drawChromeAttribution(d, chrome.attribution, { marginX, marginY: 22 });
+      drawChromeAttribution(d, chrome.attribution, { marginX, marginY: mAttr });
     }
 
     // 7. Watermark / metadata（请求驱动，与 legacy 同款）
@@ -425,7 +443,7 @@ function _drawWatermarkAndMetadata(
     ctx.fillStyle = dark_mode ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.4)";
     ctx.textAlign = "right";
     ctx.font = `bold ${scalePx(16)} monospace`;
-    ctx.fillText(watermarkText || "WebGIS AI Agent", targetW - scalePx(36), targetH - scalePx(18));
+    ctx.fillText(watermarkText ?? "WebGIS AI Agent", targetW - scalePx(36), targetH - scalePx(18));
     ctx.textAlign = "left";
   }
   if (showMetadata) {

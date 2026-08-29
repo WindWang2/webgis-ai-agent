@@ -143,7 +143,18 @@ export async function buildExportChrome(
   canvas: { width: number; height: number },
 ): Promise<ExportChromeModel> {
   const resolved = resolveMapComponents(opts.spec);
-  const model: ExportChromeModel = { fromSpec: resolved.length > 0, panels: [] };
+  // review P0：只有**可视**组件在场才走 chrome 路径 —— 仅携带 export_layout
+  // 等非可视组件的 spec（#805 场景）不得把导出切到 chrome 路径（否则罗盘/
+  // 比例尺/默认标题全部从 legacy 回退中消失）。
+  const VISUAL_TYPES = new Set([
+    'title', 'subtitle', 'legend', 'categorical_legend', 'continuous_colorbar',
+    'north_arrow', 'scale_bar', 'attribution', 'statistics_panel', 'chart_panel',
+    'annotation',
+  ]);
+  const model: ExportChromeModel = {
+    fromSpec: resolved.some((c) => VISUAL_TYPES.has(c.type)),
+    panels: [],
+  };
   if (!model.fromSpec) return model;
 
   const titleComp = resolved.find((c) => c.type === 'title' && c.enabled);
@@ -177,6 +188,13 @@ export async function buildExportChrome(
       anchor: _anchorOf(northComp),
       rect: _floatingRectOf(northComp, opts.viewport, canvas),
     };
+  } else if (!northComp) {
+    // review P0：live 对缺席的 north_arrow 注入 fallback（map-spec-chrome），
+    // 导出同款 —— 类型缺席不是"用户显式关闭"（那会是 enabled=false）。
+    model.northArrow = {
+      kind: 'north_arrow',
+      anchor: DEFAULT_COMPONENT_ANCHOR['north_arrow'],
+    };
   }
 
   const scaleComp = resolved.find((c) => c.type === 'scale_bar');
@@ -185,6 +203,11 @@ export async function buildExportChrome(
       kind: 'scale_bar',
       anchor: _anchorOf(scaleComp),
       rect: _floatingRectOf(scaleComp, opts.viewport, canvas),
+    };
+  } else if (!scaleComp) {
+    model.scaleBar = {
+      kind: 'scale_bar',
+      anchor: DEFAULT_COMPONENT_ANCHOR['scale_bar'],
     };
   }
 
@@ -297,7 +320,12 @@ interface DrawCtx {
   style: LayoutStyle;
 }
 
-/** anchor → 画布槽锚点（左上原点；返回该槽内容盒的参考点）。 */
+/**
+ * anchor → 画布槽锚点。**y 一律是"距所属边的 margin 距离"**（top 槽距
+ * 顶边、bottom 槽距底边），vAlign 标明所属边 —— 消费端按 vAlign 恰好做
+ * 一次 targetH - y 换算（review P0：此前 bottom 槽返回画布坐标又被二次
+ * 相减，全部底部组件被画到顶部）。x 直接是画布坐标（左/中/右对齐基线）。
+ */
 export function anchorOrigin(
   anchor: ChromeAnchor,
   d: { targetW: number; targetH: number; marginX: number; marginY: number },
@@ -310,11 +338,11 @@ export function anchorOrigin(
     case 'top-right':
       return { x: d.targetW - d.marginX, y: d.marginY, align: 'right', vAlign: 'top' };
     case 'bottom-left':
-      return { x: d.marginX, y: d.targetH - d.marginY, align: 'left', vAlign: 'bottom' };
+      return { x: d.marginX, y: d.marginY, align: 'left', vAlign: 'bottom' };
     case 'bottom-center':
-      return { x: d.targetW / 2, y: d.targetH - d.marginY, align: 'center', vAlign: 'bottom' };
+      return { x: d.targetW / 2, y: d.marginY, align: 'center', vAlign: 'bottom' };
     case 'bottom-right':
-      return { x: d.targetW - d.marginX, y: d.targetH - d.marginY, align: 'right', vAlign: 'bottom' };
+      return { x: d.targetW - d.marginX, y: d.marginY, align: 'right', vAlign: 'bottom' };
     default:
       return { x: d.marginX, y: d.marginY, align: 'left', vAlign: 'top' };
   }
@@ -335,13 +363,14 @@ export function drawChromeText(
   opts: { marginX: number; marginY?: number; dy?: number },
 ) {
   if (!el.text) return;
-  const marginY = opts.marginY ?? 52;
   const origin = el.rect
     ? { x: el.rect.x, y: el.rect.y, align: 'left' as const, vAlign: 'top' as const }
-    : anchorOrigin(el.anchor, { targetW: d.targetW, targetH: d.targetH, marginX: opts.marginX, marginY });
+    : anchorOrigin(el.anchor, { targetW: d.targetW, targetH: d.targetH, marginX: opts.marginX, marginY: opts.marginY ?? 52 });
   d.ctx.fillStyle = color;
   d.ctx.font = `bold ${d.scalePx(fontPx)}px ${d.style.fontFamily}`;
-  const y = origin.vAlign === 'bottom' ? d.targetH - d.scalePx(marginY) : d.scalePx(marginY) + (opts.dy ?? 0);
+  // margin 语义统一：origin.y 已是画布像素（调用方传入 scalePx 后的值）；
+  // bottom 槽恰好一次 targetH - y 换算。
+  const y = origin.vAlign === 'bottom' ? d.targetH - origin.y : origin.y + (opts.dy ?? 0);
   _text(d, el.text, origin.x, y, origin.align);
 }
 
@@ -358,9 +387,12 @@ export function drawChromeNorthArrow(
     : (() => {
         const o = anchorOrigin(el.anchor, {
           targetW: d.targetW, targetH: d.targetH,
-          marginX: opts.marginX + r, marginY: (opts.marginY ?? 64),
+          marginX: opts.marginX, marginY: (opts.marginY ?? 64),
         });
-        return { x: o.align === 'right' ? o.x - r : o.align === 'center' ? o.x : o.x + r, y: o.vAlign === 'bottom' ? d.targetH - o.y + r : o.y };
+        return {
+          x: o.align === 'right' ? o.x - r : o.align === 'center' ? o.x : o.x + r,
+          y: o.vAlign === 'bottom' ? d.targetH - o.y - r : o.y + r,
+        };
       })();
   const { ctx } = d;
   ctx.save();
@@ -426,7 +458,7 @@ export function drawChromeScaleBar(
     ? { x: el.rect.x, y: el.rect.y, align: 'left' as const, vAlign: 'top' as const }
     : anchorOrigin(el.anchor, { targetW: d.targetW, targetH: d.targetH, marginX: opts.marginX, marginY: opts.marginY ?? 52 });
   const bx = origin.align === 'right' ? origin.x - barPx : origin.align === 'center' ? origin.x - barPx / 2 : origin.x;
-  const by = origin.vAlign === 'bottom' ? d.targetH - origin.y : origin.y;
+  const by = origin.vAlign === 'bottom' ? d.targetH - origin.y - barH : origin.y;
 
   ctx.strokeStyle = d.darkMode ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.8)';
   ctx.lineWidth = d.scalePx(1.5);
@@ -456,10 +488,14 @@ export function drawChromeColorbar(
     | { min?: number; max?: number; palette_colors?: string[]; unit?: string; field?: string }
     | undefined;
   if (!spec || typeof spec.min !== 'number' || typeof spec.max !== 'number') return;
+  // 单色 palette 复制为两端（review P2：静默替换成默认双色的 ramp 是错的）
+  const rawColors = spec.palette_colors ?? [];
   const colors =
-    spec.palette_colors && spec.palette_colors.length >= 2
-      ? spec.palette_colors
-      : ['#ffffb2', '#f03b20'];
+    rawColors.length >= 2
+      ? rawColors
+      : rawColors.length === 1
+        ? [rawColors[0], rawColors[0]]
+        : ['#ffffb2', '#f03b20'];
   const { ctx } = d;
   const padding = d.scalePx(10);
   const barW = d.scalePx(160);

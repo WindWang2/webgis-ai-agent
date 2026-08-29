@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   anchorOrigin,
   buildExportChrome,
+  drawChromeAttribution,
   drawChromeChartPanel,
   drawChromeColorbar,
   drawChromeLegend,
@@ -209,12 +210,52 @@ const DRAW_BASE = {
 };
 
 describe('anchorOrigin — 槽位语义', () => {
-  it('七槽坐标/对齐正确', () => {
+  it('七槽对齐/所属边正确；y 一律是距所属边的 margin 距离（review P0 契约）', () => {
     const d = { targetW: 1000, targetH: 800, marginX: 40, marginY: 40 };
     expect(anchorOrigin('top-center', d).align).toBe('center');
-    expect(anchorOrigin('top-left', d)).toMatchObject({ x: 40, y: 40, align: 'left' });
-    expect(anchorOrigin('bottom-right', d)).toMatchObject({ x: 960, y: 760, align: 'right', vAlign: 'bottom' });
+    expect(anchorOrigin('top-left', d)).toMatchObject({ x: 40, y: 40, align: 'left', vAlign: 'top' });
+    // bottom 槽：y=40（距底边），消费端恰好一次 targetH - y 换算
+    expect(anchorOrigin('bottom-right', d)).toMatchObject({ x: 960, y: 40, align: 'right', vAlign: 'bottom' });
+    expect(anchorOrigin('bottom-left', d)).toMatchObject({ x: 40, y: 40, vAlign: 'bottom' });
+    expect(anchorOrigin('bottom-center', d)).toMatchObject({ x: 500, vAlign: 'bottom' });
     expect(anchorOrigin('none', d).align).toBe('left');
+  });
+});
+
+describe('底部锚点绘制坐标（review P0 回归锁定）', () => {
+  it('bottom-right 比例尺画在画布底部（by ≈ targetH - margin）', () => {
+    const { ctx, calls } = mockCtx();
+    drawChromeScaleBar({ ctx, ...DRAW_BASE }, { kind: 'scale_bar', anchor: 'bottom-right' }, 10, 1, { marginX: 40, marginY: 52 });
+    const rect = calls.find((c) => c.op === 'strokeRect');
+    expect(rect).toBeDefined();
+    const [bx, by, bw, bh] = rect!.args as number[];
+    expect(by).toBeGreaterThan(1000); // targetH(1200) - 52 - 8 附近，绝不在顶部
+    expect(by + bh).toBeLessThanOrEqual(1200);
+    expect(bx + bw).toBeLessThanOrEqual(1600);
+    expect(bx).toBeGreaterThan(800);
+  });
+
+  it('bottom-left 图例画在画布底部（ly + legendH ≤ targetH）', () => {
+    const { ctx, calls } = mockCtx();
+    drawChromeLegend(
+      { ctx, ...DRAW_BASE },
+      {
+        kind: 'legend', anchor: 'bottom-left',
+        legendSpec: { type: 'graduated', field: '密度', breaks: [0, 10, 20], palette_colors: ['#1', '#2'] } as any,
+      },
+      { marginX: 40, marginY: 56 },
+    );
+    const rect = calls.find((c) => c.op === 'fillRect');
+    expect(rect).toBeDefined();
+    const [, ly] = rect!.args as number[];
+    expect(ly).toBeGreaterThan(600); // 底部区域
+  });
+
+  it('bottom-left attribution 不与标题区重叠（y 在画布底部）', () => {
+    const { ctx, calls } = mockCtx();
+    drawChromeAttribution({ ctx, ...DRAW_BASE }, { kind: 'attribution', anchor: 'bottom-left', text: '© X' }, { marginX: 40, marginY: 22 });
+    const text = calls.find((c) => c.op === 'fillText');
+    expect(text?.args[2]).toBeGreaterThan(1000); // y = targetH - 22（args[1] 是 x）
   });
 });
 

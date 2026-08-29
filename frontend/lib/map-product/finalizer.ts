@@ -15,7 +15,6 @@
  */
 
 import type { Map } from 'maplibre-gl';
-import * as navigation from '@/lib/map-kit/navigation';
 
 /** map_finalization SSE 载荷（后端 finalization_sse_payload 的镜像）。 */
 export interface MapFinalizationPayload {
@@ -54,33 +53,24 @@ export function viewportIntersectsBbox(
 }
 
 /**
- * 校验 + 有界修复（每载荷至多一次 fitBounds）。
- * 返回视口判定与是否执行了修复 —— 供命令 ack / dev 日志消费。
+ * 纯校验（无副作用）：viewCommands 的 map_finalization 命令消费 ——
+ * 修复动作在命令内经 runCameraCommand 执行（用户手势仲裁），本函数
+ * 只回答"要不要修"（review P2：不留与命令逻辑漂移的死代码副本）。
  */
-export function finalizeViewport(
-  map: Map,
-  bbox: unknown,
-  opts: { padding?: number } = {},
-): { check: ViewportCheck; repaired: boolean } {
+export function checkViewport(map: Map, bbox: unknown): ViewportCheck {
   if (!isRepairableBbox(bbox)) {
     // 空结果/无空间语义：不 fit（fit 到空集或垃圾值比不动更糟）
-    return { check: 'not_applicable', repaired: false };
+    return 'not_applicable';
   }
   try {
     const bounds = map.getBounds();
     if (viewportIntersectsBbox(bounds, bbox)) {
-      return { check: 'valid', repaired: false };
+      return 'valid';
     }
+    return 'repairable';
   } catch {
     // 地图未就绪（样式未加载）→ 不修复，下一次 finalization 再校验
-    return { check: 'invalid', repaired: false };
-  }
-  // 修复：一次 fitBounds（navigation 内部做 degenerate 拓宽 + maxZoom 上限）
-  try {
-    navigation.fitBounds(map, bbox, opts.padding ?? 80);
-    return { check: 'repairable', repaired: true };
-  } catch {
-    return { check: 'invalid', repaired: false };
+    return 'invalid';
   }
 }
 
