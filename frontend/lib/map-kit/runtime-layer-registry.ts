@@ -129,9 +129,12 @@ function dropEntry(key: string): void {
 
 /**
  * 登记/合并一条运行时图层（upsert：同 id 刷新定义与闭包，保持首挂插入
- * 位次）。查找顺序：层 id 键 → source id 吸附（source 先行建账、层随后
- * 到达时账目升级为层键）。家族前缀（`id-*` / `id__*`）属于同一命令栈，
- * 由 unregisterRuntimeLayer 统一清扫——这里不做前缀推断。
+ * 位次）。查找顺序：层 id 键 → source id 吸附——**仅吸附还没有 layerDef
+ * 的 source 记账**（review-A/B/C：source 先行建账、层随后到达时账目升级
+ * 为层键）；已持有别的层定义的条目绝不被覆盖或删除——一个 source 可以
+ * 服务多个层（如 fill+outline 对），吸附会静默丢掉第一个层的重放定义。
+ * 家族前缀（`id-*` / `id__*`）属于同一命令栈，由 unregisterRuntimeLayer
+ * 统一清扫——这里不做前缀推断。
  */
 export function registerRuntimeLayer(input: {
   id: string;
@@ -144,12 +147,15 @@ export function registerRuntimeLayer(input: {
   if (!input?.id) return;
   let existing = registry.get(input.id);
   if (!existing && input.sourceId) {
-    existing = findEntryBySource(input.sourceId);
+    const candidate = findEntryBySource(input.sourceId);
+    if (candidate && !candidate.layerDef) existing = candidate;
   }
-  if (!existing) {
+  if (!existing && input.layerDef) {
     // 闭包登记（rememberRuntimeRemount）不带 sourceId —— 按 id 或其
-    // source 记账吸附（add_raster_layer 闭包键 = 层 id）。
-    existing = findEntryBySource(input.id);
+    // source 记账吸附（add_raster_layer 闭包键 = 层 id），同样只吸附
+    // 无层定义的记账。
+    const candidate = findEntryBySource(input.id);
+    if (candidate && !candidate.layerDef) existing = candidate;
   }
   if (existing && existing.runtimeLayerId !== input.id) {
     // source 记账升级为层键：迁移到层 id（插入位次自然刷新）。

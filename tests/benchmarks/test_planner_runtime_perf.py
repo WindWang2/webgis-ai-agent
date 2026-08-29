@@ -95,12 +95,15 @@ class TestPlannerRuntimePerf:
             planner.plan_from_intent(intent)
         assert len(planner._plan_memo) == 1, "manifest 不变时同输入不得重复入账"
 
-    def test_manifest_change_invalidates_all(self):
+    def test_manifest_same_content_recompile_keeps_memo(self):
+        """同内容重编译指纹稳定（内容敏感指纹不含 compiled_at）→ memo 不失效；
+        真正的世代失效（内容变化）由 unit 侧
+        test_manifest_generation_change_invalidates 锁定。"""
         from app.lib.gis.runtime_manifest import refresh_runtime_manifest
         planner = get_planner_runtime()
         intent = resolve_map_request_intent("成都小学分布情况")
         planner.plan_from_intent(intent)
-        refresh_runtime_manifest()  # 重编译同内容 → 指纹不变（内容敏感）
+        refresh_runtime_manifest()
         planner.plan_from_intent(intent)
         assert len(planner._plan_memo) == 1, "同内容重编译指纹稳定，不得失效"
 
@@ -176,3 +179,55 @@ class TestPlanGraphPerf:
         steps[0]["status"] = "done"
         graph2 = build_plan_graph(chapter)
         assert graph2.ready_nodes() == ["cap_001"]
+
+    def test_graph_evaluate_unavailable_cascade_60_chain(self):
+        """review-D：级联 unavailable 传播真正走多轮固定点（头节点不可用
+        → 全链阻塞），受 ceiling 约束。"""
+        rows = []
+        steps = []
+        for i in range(60):
+            cap = f"cc_{i:03d}"
+            deps = [f"cc_{i - 1:03d}"] if i > 0 else []
+            status = "unavailable" if i == 0 else "pending"
+            rows.append({"capability": cap, "status": status, "depends_on": deps})
+            steps.append({"capability": cap, "status": status, "depends_on": deps})
+        chapter = {
+            "plan_id": "perf-cascade",
+            "data_requirements": rows,
+            "analysis_steps": steps,
+            "algorithm_selections": [],
+        }
+        t0 = time.perf_counter()
+        graph = build_plan_graph(chapter)
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        assert elapsed_ms < 400.0, f"60 节点级联传播过慢: {elapsed_ms:.3f}ms"
+        # 全链被头节点的不可用阻塞，且 blocked_by 指向直接前驱
+        assert graph.node("cc_001").status.value == "unavailable"
+        assert graph.node("cc_001").blocked_by == ["cc_000"]
+        assert graph.node("cc_059").status.value == "unavailable"
+        assert graph.ready_nodes() == []
+
+    def test_graph_evaluate_wide_fan_in_60_nodes(self):
+        """review-D：宽扇入（1 汇聚节点 + 59 个不可用上游）——最重的
+        `_dep_satisfied` 扫描形态，受 ceiling 约束。"""
+        rows = [{"capability": "sink", "status": "pending",
+                 "depends_on": [f"fan_{i:03d}" for i in range(59)]}]
+        steps = [{"capability": "sink", "status": "pending",
+                  "depends_on": [f"fan_{i:03d}" for i in range(59)]}]
+        for i in range(59):
+            cap = f"fan_{i:03d}"
+            rows.append({"capability": cap, "status": "unavailable", "depends_on": []})
+            steps.append({"capability": cap, "status": "unavailable", "depends_on": []})
+        chapter = {
+            "plan_id": "perf-fanin",
+            "data_requirements": rows,
+            "analysis_steps": steps,
+            "algorithm_selections": [],
+        }
+        t0 = time.perf_counter()
+        graph = build_plan_graph(chapter)
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        assert elapsed_ms < 400.0, f"60 节点宽扇入评估过慢: {elapsed_ms:.3f}ms"
+        sink = graph.node("sink")
+        assert sink.status.value == "unavailable"
+        assert len(sink.blocked_by) == 59

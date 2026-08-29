@@ -347,24 +347,28 @@ class MapProductPlanner:
                 or self.recipes.default_recipe()
             )
 
-        # 模板选择：显式 template_id 优先（plan 连续性）；否则由
-        # TemplateSelector 确定性评分（subject/task/outputs/priority）。
+        # 模板选择：TemplateSelector 确定性评分（subject/task/outputs/
+        # priority）是证据基线；显式 template_id（plan 连续性回放）只在
+        # **改写裁决**时覆盖证据。review-B P2：memo 键用裁决结果后，显式
+        # 回放与选择器一致时必须共用选择器 dump——否则两路径命中同一条目
+        # 会带回错误出处的 template_selection evidence；不一致时 resolved
+        # template id 本就分键，各持各的 dump。
         template: Optional[MapProductTemplate] = None
-        selection_dump: Dict[str, Any] = {}
+        selection = self.selector.select_product(
+            intent=intent, recipe_id=recipe.id,
+        )
+        selection_dump: Dict[str, Any] = selection.model_dump()
+        if selection.status == "selected":
+            template = self.catalog.get_product_template(selection.template_id)
         if template_id:
-            template = self.catalog.get_product_template(template_id)
-            selection_dump = {
-                "status": "selected" if template else "none",
-                "template_id": template.id if template else "",
-                "decision": {"reason": f"explicit_template_id:{template_id}"},
-            }
-        if template is None:
-            selection = self.selector.select_product(
-                intent=intent, recipe_id=recipe.id,
-            )
-            selection_dump = selection.model_dump()
-            if selection.status == "selected":
-                template = self.catalog.get_product_template(selection.template_id)
+            explicit = self.catalog.get_product_template(template_id)
+            if explicit is not None and (template is None or explicit.id != template.id):
+                template = explicit
+                selection_dump = {
+                    "status": "selected",
+                    "template_id": explicit.id,
+                    "decision": {"reason": f"explicit_template_id:{template_id}"},
+                }
 
         memo_key = None
         if use_memo:

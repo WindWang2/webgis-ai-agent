@@ -35,11 +35,10 @@ export function resetLiveState(): void {
   void import('../map-components/chart-artifact')
     .then((m) => m.resetChartArtifactCache())
     .catch(() => { /* best-effort：清缓存失败不影响切换 */ });
-  // #1078(G-1) 评审修复：custom-* 重挂登记随会话清空 —— 旧会话的命令层
-  // 不得在切换后 remount 进新会话的地图（重挂闭包持有旧会话 payload）。
-  void import('../map-commands/custom-overlay-registry')
-    .then((m) => m.resetCustomOverlayRegistry())
-    .catch(() => { /* best-effort */ });
+  // v3(Phase B, review-A/B P2)：custom-* 重挂账本**不在**这里清 —— 它由
+  // setMapSpecSessionCursor 的 id 变化分支清（clearCustomOverlayRegistry）。
+  // v2 这里清的是独立闭包账本（无害）；统一后这里清会违反同 id 重设
+  // （重连/重水合）不清的契约，把仍描述当前地图真实挂载的定义账目抹掉。
 }
 
 export function subscribeMapSpecLive(listener: () => void): () => void {

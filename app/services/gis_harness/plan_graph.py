@@ -220,19 +220,21 @@ def _algorithm_cost_class(selections: List[Dict[str, Any]], capability: str) -> 
 def _fallback_from_selection(selections: List[Dict[str, Any]], capability: str) -> str:
     """resolver 的 capability 级 fallback 裁决（reason 携带
     capability_fallback_available:<cap>）——preferred 不可用但 fallback
-    capability 可解析时记录，评估期 fallback 完成即解锁下游。"""
+    capability 可解析时记录，评估期 fallback 完成即解锁下游。
+
+    review-B P1：resolver 的 reason 形如
+    ``capability_fallback_available:density_surface; no_eligible_algorithm``
+    （分号后接拒绝理由）——解析必须截到首个 ``;``，否则 fallback_to 带着
+    后缀永远匹配不到节点，fallback-unlock 形同虚设。算法级 fallback_trail
+    的 to_element 是算法 id（命名空间不同），不落入 capability 级字段。
+    """
     for record in selections or []:
         if not (isinstance(record, dict) and record.get("capability") == capability):
             continue
         reason = str(record.get("reason") or "")
         marker = "capability_fallback_available:"
         if record.get("status") == "unavailable" and marker in reason:
-            return reason.split(marker, 1)[1].strip()
-        for trail in record.get("fallback_trail") or []:
-            if isinstance(trail, dict) and trail.get("to_element"):
-                # 算法级 fallback 已 resolved：记录实际裁决的替代元素。
-                if record.get("status") == "resolved":
-                    return str(trail.get("to_element"))
+            return reason.split(marker, 1)[1].split(";", 1)[0].strip()
     return ""
 
 
@@ -266,24 +268,28 @@ def build_plan_graph(
         if cap and cap not in capabilities:
             capabilities.append(cap)
 
-    # 依赖边：planner 编制时填充的 depends_on 优先（持久计划）；
-    # 缺失（旧计划 / 简化视图）读取侧重放 registry 推断。
-    declared: Dict[str, List[str]] = {}
+    # 依赖边：planner 编制时填充的 depends_on 优先（持久计划）；字段缺失
+    # （旧计划 / 简化视图）读取侧重放 registry 推断。**字段存在与否**用
+    # ``is not None`` 判别——显式空列表是 planner 的真实裁决（无依赖），
+    # 不得再叠加推断；推断惰性计算（全部行都带字段时零开销）。
+    declared: Dict[str, Optional[List[str]]] = {}
     for cap in capabilities:
         req = _row(requirements, cap)
         deps = req.get("depends_on")
         if deps is None:
             step = _row(steps, cap)
             deps = step.get("depends_on")
-        declared[cap] = [str(d) for d in deps] if deps else None
+        declared[cap] = [str(d) for d in deps] if deps is not None else None
 
-    inferred = infer_dependency_edges(capabilities)
+    inferred: Optional[Dict[str, List[str]]] = None
 
     graph = PlanGraph(plan_id=plan_id, manifest_fingerprint=fingerprint)
     by_id: Dict[str, List[str]] = {cap: [] for cap in capabilities}
     for cap in capabilities:
         deps = declared.get(cap)
         if deps is None:
+            if inferred is None:
+                inferred = infer_dependency_edges(capabilities)
             deps = inferred.get(cap, [])
         for dep in deps:
             if dep not in by_id:
@@ -351,59 +357,101 @@ def _evaluate(graph: PlanGraph) -> None:
 
     幂等纯函数——只读行状态与依赖边，不写回扁平行（那由 SessionPlan
     ``_mark_progress`` 负责；本投影下次读取时重算）。
+
+    review-B P1/P2 修正后的不变式：
+
+    - **complete 是行事实，永不覆盖**：已绑定 artifact 的节点即使有依赖
+      不可用也保持 complete（此前被传播洗成 unavailable）；
+    - **optional 消失不阻塞 mandatory 图**：optional 且 unavailable 的
+      节点先翻成 skipped（每轮最先执行），mandatory 下游把 skipped 视为
+      满足而继续 ready——包括传递依赖（opt 链被吸收后 mandatory 照常
+      推进）；只有 **mandatory** 依赖不可用才阻塞下游（blocked_by 如实
+      披露）；
+    - **blocked 恢复**：blocked_by 全部转为满足的 unavailable 节点回到
+      pending（轮间依赖态变化的恢复路径）。
     """
-    # 1) unavailable 传播（固定点：blocked 判定依赖其它节点的不可用态）。
+    by_cap = {n.capability: n for n in graph.nodes}
+
+    def _sat(cap: str) -> bool:
+        dep = by_cap.get(cap)
+        if dep is None:
+            return False
+        if dep.status in _SATISFIED:
+            return True
+        if dep.status == PlanNodeStatus.unavailable and dep.fallback_to:
+            fb = by_cap.get(dep.fallback_to)
+            if fb is not None and fb.status in _SATISFIED:
+                return True
+        return False
+
     for _round in range(len(graph.nodes) + 1):
         changed = False
+
+        # a) optional 自身 unavailable → skipped（fallback 已满足的除外——
+        #    那种节点保持 unavailable 作为披露，依赖经 fallback 满足）。
         for node in graph.nodes:
-            if node.status in (PlanNodeStatus.unavailable, PlanNodeStatus.skipped):
+            if (
+                node.status == PlanNodeStatus.unavailable
+                and node.optional
+                and not node.blocked_by
+            ):
+                if not (node.fallback_to and _sat(node.fallback_to)):
+                    node.status = PlanNodeStatus.skipped
+                    node.notes.append("skipped: optional capability unavailable")
+                    changed = True
+
+        # b) 阻塞判定：只有 **mandatory** 依赖不可用才阻塞（optional
+        #    unavailable 依赖在 a) 已翻 skipped——满足态）。
+        for node in graph.nodes:
+            if node.status != PlanNodeStatus.pending:
                 continue
-            unsatisfied = [
-                d for d in node.depends_on
-                if not _dep_satisfied(graph, d)
-            ]
+            unsatisfied = [d for d in node.depends_on if not _sat(d)]
             if not unsatisfied:
                 continue
-            blocking = []
-            for d in unsatisfied:
-                dep = graph.node(d)
-                if dep is not None and dep.status == PlanNodeStatus.unavailable and not _dep_satisfied(graph, d):
-                    blocking.append(d)
-            if blocking:
-                if node.optional:
-                    node.status = PlanNodeStatus.skipped
-                    node.notes.append(
-                        "skipped: unavailable optional deps " + ",".join(blocking)
-                    )
-                else:
-                    node.status = PlanNodeStatus.unavailable
-                    node.blocked_by = blocking
-                    node.notes.append(
-                        "unavailable: blocked_by " + ",".join(blocking)
-                    )
-                changed = True
+            blocking = [
+                d for d in unsatisfied
+                if by_cap.get(d) is not None
+                and by_cap[d].status == PlanNodeStatus.unavailable
+                and not by_cap[d].optional
+            ]
+            if not blocking:
+                continue
+            if node.optional:
+                node.status = PlanNodeStatus.skipped
+                node.notes.append(
+                    "skipped: unavailable deps " + ",".join(blocking)
+                )
+            else:
+                node.status = PlanNodeStatus.unavailable
+                node.blocked_by = blocking
+                node.notes.append(
+                    "unavailable: blocked_by " + ",".join(blocking)
+                )
+            changed = True
+
+        # c) blocked 恢复：blocker 全部满足 → 回 pending（下轮 ready 派生）。
+        for node in graph.nodes:
+            if node.status == PlanNodeStatus.unavailable and node.blocked_by:
+                if all(_sat(d) for d in node.blocked_by):
+                    node.status = PlanNodeStatus.pending
+                    node.blocked_by = []
+                    changed = True
+
         if not changed:
             break
 
-    # 2) optional 且自身 unavailable → skipped（不阻塞 mandatory 图；下游把
-    # skipped 视为满足，报告里仍可见）。
-    for node in graph.nodes:
-        if node.status == PlanNodeStatus.unavailable and node.optional and not node.blocked_by:
-            node.status = PlanNodeStatus.skipped
-            node.notes.append("skipped: optional capability unavailable")
-
-    # 3) ready 派生：pending 且依赖全满足。
+    # d) input_refs 投影 + ready 派生（ready 节点同样携带已绑定上游 ref——
+    #    Pi 需要"带什么输入执行"）。
     for node in graph.nodes:
         if node.status != PlanNodeStatus.pending:
             continue
-        if all(_dep_satisfied(graph, d) for d in node.depends_on):
+        node.input_refs = [
+            by_cap[d].bound_ref
+            for d in node.depends_on
+            if d in by_cap and by_cap[d].bound_ref
+        ]
+        if all(_sat(d) for d in node.depends_on):
             node.status = PlanNodeStatus.ready
-        else:
-            node.input_refs = [
-                graph.node(d).bound_ref
-                for d in node.depends_on
-                if graph.node(d) is not None and graph.node(d).bound_ref  # type: ignore[union-attr]
-            ]
 
 
 def recommended_next(graph: PlanGraph) -> str:

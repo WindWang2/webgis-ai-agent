@@ -217,9 +217,28 @@ describe('runtime-layer-registry — registerRuntimeLayer 直接登记', () => {
     recordRuntimeLayer({ id: 'custom-a', type: 'fill', source: 'custom-a' });
     expect(listRuntimeLayerIds()).toEqual(['custom-a', 'custom-b']);
   });
+
+  it('review-A/B/C：同一 source 上的第二个层不得吸附/删除第一个层的账目', () => {
+    recordRuntimeSource('custom-shared', { kind: 'geojson', data: FC });
+    recordRuntimeLayer({ id: 'custom-fill', type: 'fill', source: 'custom-shared' });
+    recordRuntimeLayer({ id: 'custom-line', type: 'line', source: 'custom-shared' });
+    const ids = listRuntimeLayerIds();
+    expect(ids).toContain('custom-fill');
+    expect(ids).toContain('custom-line');
+    expect(runtimeLayerCount()).toBe(2);
+    // 重放：source 一次 + 两个层都恢复
+    const { map, layers, sources } = fakeMap();
+    expect(remountRuntimeLayers(map)).toBe(2);
+    expect(sources.has('custom-shared')).toBe(true);
+    expect(layers.has('custom-fill')).toBe(true);
+    expect(layers.has('custom-line')).toBe(true);
+    // 反注册其中一个层不误伤另一个
+    unregisterRuntimeLayer('custom-fill');
+    expect(listRuntimeLayerIds()).toEqual(['custom-line']);
+  });
 });
 
-describe('runtime-layer-registry — 规模与重放性能契约', () => {
+describe('runtime-layer-registry — 规模与边界契约（确定性，非 wall-clock）', () => {
   beforeEach(() => resetRuntimeLayerRegistry());
 
   function fillLayers(n: number): void {

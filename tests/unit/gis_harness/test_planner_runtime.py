@@ -4,16 +4,19 @@
 
 - A2：``webgis_map_intent`` / ``webgis_map_product`` / plan_orchestrator 共享
   同一 PlannerRuntime —— memo 跨工具调用存活（intent→product 链第二次
-  规划命中缓存）；
+  规划命中缓存，且在 ToolRegistry dispatch 层面锁定）；
 - A3：plain ``dict.popitem(last=False)`` 是 TypeError（v2 遗留，被"每调用
-  新建 planner"掩盖）—— OrderedDict FIFO 驱逐必须真正可达且确定；
-- memo 键完整性：intent / available_tools / project_verified / manifest
-  指纹任一变化都 miss；
+  新建 planner"掩盖）—— OrderedDict FIFO 驱逐必须真正可达、确定；
+- memo 键完整性：intent / available_tools / manifest 指纹任一变化都
+  分键；project_verified 只经确定性裁决参与（改变 recipe 选择才分键，
+  裁决相同 ⇒ 输出相同，命中合法——由不可毒化不变式锁定）；
 - 深拷贝隔离：调用方可变返回值不污染 memo 基底；
 - registry 单例被替换（测试 reset）时共享 planner 重建；
 - manifest 世代变化（registry 内容变 + refresh）自动失效 memo。
 """
 import threading
+
+import pytest
 
 from app.lib.gis.runtime_manifest import refresh_runtime_manifest
 from app.services.gis_harness.intent import resolve_map_request_intent
@@ -126,22 +129,21 @@ def test_manifest_generation_change_invalidates():
 
 def test_fifo_eviction_deterministic_and_reachable():
     """A3：驱逐路径必须真正可达 —— v2 的 plain dict.popitem(last=False)
-    在第 65 个 key 插入时 TypeError。"""
+    在第 65 个 key 插入时 TypeError。FIFO 语义钉死：最早的 key 被驱逐、
+    边界上的 key 存活。"""
     planner = get_planner_runtime()
     max_entries = planner._plan_memo_max
     for i in range(max_entries + 8):
         planner.plan_from_intent(_intent(f"城市{i}小学分布情况"))
     assert len(planner._plan_memo) == max_entries, "memo 必须有界"
-    # FIFO：最早的 key 被驱逐，最近的仍在
-    assert len(planner._plan_memo) == max_entries
-    keys = list(planner._plan_memo.keys())
-    assert keys[-1] in keys and len(keys) == max_entries
-    # 驱逐后再次规划最早 intent → 重新计算（新插入）
-    planner.plan_from_intent(_intent("城市0小学分布情况"))
-    assert len(planner._plan_memo) == max_entries
-    # 最近插入的 key 应该是"城市0"重算后的键
-    last_key = list(planner._plan_memo.keys())[-1]
-    assert any("城市0" in k for k in [str(last_key)])
+    # FIFO：最早 8 个 key（城市0..城市7）被驱逐；城市8 起存活
+    key_texts = ["".join(str(k)) for k in planner._plan_memo.keys()]
+    for evicted in range(8):
+        assert not any(f"城市{evicted}小学" in t for t in key_texts), (
+            f"第 {evicted} 个插入的 key 必须被 FIFO 驱逐"
+        )
+    assert any("城市8小学" in t for t in key_texts), "边界上的 key 必须存活"
+    assert any(f"城市{max_entries + 7}小学" in t for t in key_texts), "最新 key 必须存活"
 
 
 def test_cached_mutation_does_not_poison_future_results():
@@ -206,3 +208,44 @@ def test_use_memo_false_bypasses():
     it = _intent()
     planner.plan_from_intent(it, use_memo=False)
     assert len(planner._plan_memo) == 0
+
+
+@pytest.mark.asyncio
+async def test_harness_tools_share_planner_runtime_at_dispatch_level():
+    """review-E P1：A2 契约必须在 ToolRegistry dispatch 层面锁定 ——
+    两个 harness 工具各 dispatch 一次，共享 memo 只长一个条目（若
+    tools.py 退回每调用 ``MapProductPlanner()``，本测试立即红）。"""
+    from app.services.session_data import session_data_manager
+    from app.tools.registry import ToolRegistry
+    from app.services.gis_harness.tools import register_gis_harness_tools
+
+    sid = "planner-runtime-dispatch-pin"
+    await session_data_manager.clear_session(sid)
+    registry = ToolRegistry()
+    register_gis_harness_tools(registry)
+    try:
+        intent_result = await registry.dispatch(
+            "webgis_map_intent", {"query": "成都小学分布情况"}, session_id=sid,
+        )
+        assert intent_result["success"] is True
+        planner = get_planner_runtime()
+        assert len(planner._plan_memo) == 1, "intent 工具必须落入共享 memo"
+        recipe = intent_result["plan"]["recipe_id"]
+        template = intent_result["plan"]["template_id"]
+        product_result = await registry.dispatch(
+            "webgis_map_product",
+            {
+                "query": "成都小学分布情况",
+                "recipe_id": recipe,
+                "template_id": template,
+                "layer_ids": [],
+            },
+            session_id=sid,
+        )
+        assert product_result.get("success") is True
+        # product 阶段显式回放同一裁决 → memo 命中，不新增条目
+        assert len(planner._plan_memo) == 1, (
+            f"product 工具复用共享 memo（现为 {len(planner._plan_memo)} 条）"
+        )
+    finally:
+        await session_data_manager.clear_session(sid)

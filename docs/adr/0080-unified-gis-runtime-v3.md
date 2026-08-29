@@ -82,8 +82,11 @@ facade（导出面不变，全部委托同一存储；adapter ≠ second storage
   `project_verified` 只在改变裁决时才分键（裁决相同 ⇒ 输出相同，命中合法）。
 - registry 身份守卫：`reset_recipe_registry` 等替换 registry 单例时自动重建
   planner（旧引用与旧 memo 键不存活）。
-- memo 键含 manifest 指纹：registry 内容变化（含 candidate 顺序——顺序即
-  解析优先级）自动失效。
+- memo 键含 manifest 指纹：registry 内容变化自动失效。指纹对
+  **algorithms 的 tool_candidates 顺序**（解析优先级）敏感；recipes 投影
+  只含 capability 集与 task（集合语义、无序）——recipe 内容重排的安全性
+  由裁决前置保证：排序变化若改变选择 → 解析后的 recipe/template id 变
+  → 分键；不变 → 输出不变，命中合法。
 
 ### 3. DataRequirement Graph / Analysis DAG — `app/services/gis_harness/plan_graph.py`
 
@@ -134,10 +137,41 @@ SessionPlan。
 | 缺陷 | 现象 | 修复 |
 |---|---|---|
 | A1 | `manifest_stale` 证据恒 False（API 漂移被 broad except 洗白） | 调用真实 `is_stale_plan`；移除 broad except（correctness signal 显式暴露）；回归测试锁定漂移必须 raise |
-| A2 | planner memo 跨调用零复用 | PlannerRuntime 共享 + memo 键用裁决结果（intent→product 链真命中） |
+| A2 | planner memo 跨调用零复用 | PlannerRuntime 共享 + memo 键用裁决结果（intent→product 链真命中；ToolRegistry dispatch 层测试锁定） |
 | A3 | `dict.popitem(last=False)` TypeError（被 A2 掩盖的潜伏 crash） | OrderedDict FIFO + RLock |
 | A4 | 双覆盖层账本（closure 账本永不重放）；native heatmap layer 定义缺账 | 单一 canonical registry + 双 facade；`addNativeHeatmap` 补记 layer def |
 | Phase H | 导出成品的 subtitle 不读 spec（title/subtitle 行为分叉） | 同一事实源链：请求参数 > spec 组件 > 内置空串 |
+
+## Review Findings（独立评审后修复）
+
+五个独立 reviewer（架构 / 正确性 / 前端运行时 / 性能 / 测试对抗）对分支
+的阻断性与建议性发现，已修复项：
+
+- **fallback 解析对真实 resolver 输出失效**（正确性 review P1）：
+  resolver 的 reason 形如 `capability_fallback_available:<cap>; <理由>`，
+  解析截到首个 `;`；测试 fixture 改用真实后缀格式。
+- **optional 依赖不可用阻塞 mandatory 下游**（正确性/架构 review P1）：
+  `_evaluate` 重排——optional-unavailable 先翻 skipped（每轮最先），
+  只有 mandatory 依赖不可用才阻塞；complete 是行事实永不覆盖；blocked
+  节点在 blocker 转满足后恢复。
+- **同一 source 的第二个层会吸附删除第一个层的账目**（三 review 共同
+  P1/P2）：source 吸附仅限**尚无 layerDef** 的记账；多层层共存 + 重放 +
+  反注册不误伤有回归测试。
+- **session-cursor 同 id 重设清空统一账本**（架构/正确性 review P2）：
+  账本清理只在会话 id 变化分支（`clearCustomOverlayRegistry`）；
+  `resetLiveState` 不再触碰（v2 清的是独立闭包账本，统一后清会违反
+  "同 id 重设不清"契约）。
+- **memo 命中带回错误出处的 template_selection 证据**（正确性 review
+  P2）：选择器 dump 是证据基线，显式 template_id 只在改写裁决时覆盖——
+  两路径对同一裁决产出 byte-identical 证据。
+- **死测试断言 / 缺 dispatch 层 A2 锁定 / FIFO 未钉死 / 条件断言空洞**
+  （测试 review P1/P2）：artifact-binding 测试补全全部依赖后无条件断言；
+  新增 ToolRegistry dispatch 层共享 memo 测试；FIFO 驱逐钉死边界 key；
+  guidance 投影的不变量先行断言。
+- **显式空 `depends_on` 被当作缺失重推断 + 推断不惰性**（架构/性能
+  review P2）：`is not None` 判别字段存在性，推断惰性计算。
+- **性能测试盲区**（性能 review P2）：级联 unavailable 与宽扇入传播
+  fixture 补齐；命名与实际断言对齐（同内容重编译 ≠ 失效）。
 
 ## Compatibility
 

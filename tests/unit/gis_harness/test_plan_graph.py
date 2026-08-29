@@ -79,28 +79,29 @@ def test_ready_nodes_require_all_deps_complete():
 
 def test_artifact_binding_unlocks_downstream():
     plan = _plan()
-    # 模拟 SessionPlan._mark_progress 的行推进：poi_query available + bound_ref
+    # 模拟 SessionPlan._mark_progress 的行推进：poi_query + point_profile
+    # （admin_aggregation 的全部依赖）available + bound_ref
+    done = {"poi_query": "ref:geojson:poi-1", "point_profile": "ref:geojson:prof-1"}
     for row in plan.data_requirements:
-        if row.capability == "poi_query":
+        if row.capability in done:
             row.status = "available"
-            row.bound_ref = "ref:geojson:poi-1"
+            row.bound_ref = done[row.capability]
     for step in plan.analysis_steps:
-        if step.capability == "poi_query":
+        if step.capability in done:
             step.status = "done"
-            step.bound_ref = "ref:geojson:poi-1"
+            step.bound_ref = done[step.capability]
     graph = build_plan_graph(plan)
-    poi = graph.node("poi_query")
-    assert poi.status == PlanNodeStatus.complete
-    assert poi.output_ref == "ref:geojson:poi-1"
+    for cap, ref in done.items():
+        node = graph.node(cap)
+        assert node is not None and node.status == PlanNodeStatus.complete
+        assert node.output_ref == ref
     agg = graph.node("admin_aggregation")
-    if agg is not None:
-        # poi_query 完成 + admin_boundary（若有）完成后解锁
-        if all(
-            graph.node(d).status == PlanNodeStatus.complete
-            for d in agg.depends_on
-        ):
-            assert agg.status == PlanNodeStatus.ready
-            assert "ref:geojson:poi-1" in agg.input_refs
+    assert agg is not None, "成都小学 recipe 必含 admin_aggregation（否则测试失去锚点）"
+    agg_deps = {d for d in agg.depends_on}
+    if agg_deps <= set(done):
+        # 全部依赖完成 → 解锁 + input_refs 携带上游 bound_ref
+        assert agg.status == PlanNodeStatus.ready
+        assert "ref:geojson:poi-1" in agg.input_refs
 
 
 def test_optional_unavailable_does_not_block_mandatory_graph():
@@ -117,11 +118,66 @@ def test_optional_unavailable_does_not_block_mandatory_graph():
             step.status = "unavailable"
     graph = build_plan_graph(plan)
     kde = graph.node("kde_density")
-    if kde is None:
-        pytest.skip("recipe 无 kde_density 节点")
+    assert kde is not None, "成都小学 recipe 必含 kde_density（否则测试失去锚点）"
     assert kde.status == PlanNodeStatus.skipped
     # mandatory 根节点不受影响
     assert "poi_query" in graph.ready_nodes()
+
+
+def test_optional_dep_unavailable_does_not_block_mandatory_dependent():
+    """review-B P1 复现：mandatory 节点依赖 optional-unavailable 节点 →
+    依赖翻 skipped 视为满足，dependent 照常 ready（不得 blocked）。"""
+    chapter = {
+        "plan_id": "p-opt-dep",
+        "data_requirements": [
+            {"capability": "opt_a", "status": "unavailable", "optional": True},
+            {"capability": "man_b", "status": "pending", "depends_on": ["opt_a"]},
+            {"capability": "man_c", "status": "pending", "depends_on": ["man_b"]},
+        ],
+        "analysis_steps": [
+            {"capability": "opt_a", "status": "unavailable", "optional": True},
+            {"capability": "man_b", "status": "pending", "depends_on": ["opt_a"]},
+            {"capability": "man_c", "status": "pending", "depends_on": ["man_b"]},
+        ],
+        "algorithm_selections": [],
+    }
+    graph = build_plan_graph(chapter)
+    assert graph.node("opt_a").status == PlanNodeStatus.skipped
+    b = graph.node("man_b")
+    assert b.status == PlanNodeStatus.ready, (
+        f"optional 依赖不可用不得阻塞 mandatory 下游（现为 {b.status}）"
+    )
+    assert b.blocked_by == []
+    # 传递语义：mandatory 链继续推进 —— man_b 未执行前 man_c 等待（pending），
+    # 不是被 optional 故障传染的 unavailable。
+    c = graph.node("man_c")
+    assert c.status == PlanNodeStatus.pending
+    assert c.blocked_by == []
+
+
+def test_complete_node_with_unavailable_dep_stays_complete():
+    """review-B P2 复现：complete 是行事实（artifact 已绑定），即使有依赖
+    不可用也不得被传播洗成 unavailable。"""
+    chapter = {
+        "plan_id": "p-complete-truth",
+        "data_requirements": [
+            {"capability": "dead_a", "status": "unavailable"},
+            {"capability": "done_b", "status": "available",
+             "bound_ref": "ref:geojson:b1", "depends_on": ["dead_a"]},
+            {"capability": "wait_c", "status": "pending", "depends_on": ["done_b"]},
+        ],
+        "analysis_steps": [
+            {"capability": "dead_a", "status": "unavailable"},
+            {"capability": "done_b", "status": "done",
+             "bound_ref": "ref:geojson:b1", "depends_on": ["dead_a"]},
+            {"capability": "wait_c", "status": "pending", "depends_on": ["done_b"]},
+        ],
+        "algorithm_selections": [],
+    }
+    graph = build_plan_graph(chapter)
+    assert graph.node("done_b").status == PlanNodeStatus.complete
+    # 下游照常按行事实解锁
+    assert graph.node("wait_c").status == PlanNodeStatus.ready
 
 
 def test_mandatory_unavailable_reported_with_blocked_by():
@@ -172,11 +228,13 @@ def test_fallback_unlocks_downstream():
             {"capability": "hotspot", "status": "pending",
              "depends_on": ["grid_binning"]},
         ],
-        # resolver 的 capability 级 fallback 裁决证据（reason 标记）
+        # resolver 的 capability 级 fallback 裁决证据（reason 标记）——
+        # 真实格式带 "; <拒绝理由>" 后缀（algorithm_resolver.py:237），
+        # 解析必须截到首个分号（review-B P1）。
         "algorithm_selections": [
             {"capability": "grid_binning", "status": "unavailable",
              "algorithm": "", "tool": "",
-             "reason": "capability_fallback_available:density_surface",
+             "reason": "capability_fallback_available:density_surface; no_eligible_algorithm",
              "fallback_trail": [], "fallback_candidates": ["density_surface"]},
         ],
     }
@@ -300,8 +358,10 @@ async def test_intent_guidance_discloses_dependency_order():
     )
     guidance = result.get("guidance") or []
     dep_lines = [g for g in guidance if g.startswith("依赖序")]
+    # 不变量先断言：该 recipe 的计划必有依赖边（否则 guidance 披露测试
+    # 会静默空洞化）。
     plan_has_deps = any(
         r.get("depends_on") for r in result.get("plan", {}).get("data_requirements", [])
     )
-    if plan_has_deps:
-        assert dep_lines, "plan 有依赖边时 guidance 必须披露依赖序"
+    assert plan_has_deps, "成都小学 recipe 的 data_requirements 必含依赖边"
+    assert dep_lines, "plan 有依赖边时 guidance 必须披露依赖序"
