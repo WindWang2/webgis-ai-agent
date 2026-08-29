@@ -124,3 +124,27 @@ describe('audit #841: radius windows', () => {
     mockState.layers[0].type = 'vector';
   });
 });
+
+describe('#1077 aliased spec-backed rows (runtimePatch mirror)', () => {
+  it('rows whose id is a geojson ref but _mapspecLayerId matches the spec are guarded', () => {
+    // runtimePatch 挂载行：id 是 ref，_mapspecLayerId 才是 spec 层 id ——
+    // 此前精确 id 匹配误判非 specBacked（样式控件可用但 compose 不消费）。
+    mockState.editingLayerId = 'ref:geojson-abc';
+    (mockState.layers as any)[0] = {
+      ...mockState.layers[0],
+      id: 'ref:geojson-abc',
+      _mapspecLayerId: 'poi-main',
+    };
+    committedSpec = { layers: [{ id: 'poi-main' }], sources: {} };
+    render(<LayerStylePanel />);
+    const fieldset = document.querySelector('fieldset');
+    expect(fieldset?.disabled).toBe(true);
+    // restore shared mock state
+    mockState.editingLayerId = 'layer-1';
+    (mockState.layers as any)[0] = {
+      id: 'layer-1', name: 'POI 层', type: 'vector', visible: true,
+      opacity: 0.8, style: { color: '#00f2ff', radius_px: 30 },
+    };
+    committedSpec = null;
+  });
+});

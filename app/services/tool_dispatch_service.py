@@ -323,7 +323,11 @@ class ToolDispatchService:
             # #1062: 消费 ToolCost 元数据（#996 承诺的「wave 并发可按档分桶」
             # 的最小落地）—— heavy 工具占 2 个并发槽，避免同波多个 heavy
             # 分析挤占全部 wave 预算让轻工具排队。light/medium 占 1 槽不变。
-            _wave_slots = 2 if self._registry.metadata(tool_name).get("cost") == "heavy" else 1
+            # registry duck-typing（workflow 测试的 _FakeRegistry 等不实现
+            # metadata —— 视为 light，与 metadata() 的未注册兜底一致）。
+            _meta_fn = getattr(self._registry, "metadata", None)
+            _cost = _meta_fn(tool_name).get("cost") if callable(_meta_fn) else None
+            _wave_slots = 2 if _cost == "heavy" else 1
             async with _MultiSlotAcquire(self._wave_semaphore, _wave_slots):
                 result = await self._registry.dispatch(tool_name, tool_args_raw, session_id=session_id)
         except OperationCancelled:

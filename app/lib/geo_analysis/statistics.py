@@ -47,7 +47,14 @@ def _assemble_features(
     n = len(gdf_wgs84)
     if n == 0:
         return []
+    # pandas：0 列 DataFrame（要素 properties 全空）的 to_dict("records")
+    # 返回 [] 而非 n 个空 dict —— 逐行兜底，保证 records 与行数对齐。
     props_records = gdf_wgs84.drop(columns="geometry").to_dict("records")
+    if len(props_records) != n:
+        props_records = [
+            props_records[i] if i < len(props_records) else {}
+            for i in range(n)
+        ]
     geoms = [mapping(g) for g in gdf_wgs84.geometry]
     extras = {k: list(v)[:n] for k, v in extra_props.items()}
     out = []

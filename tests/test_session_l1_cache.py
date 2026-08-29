@@ -91,28 +91,28 @@ async def test_metadata_l1_hit_then_invalidate():
     store = _store()
     await store.store("s1", {"x": 1})
     await store.get_session_metadata("s1")  # populate L1
-    assert ("s1", "metadata") in store._l1
+    assert ("s1", "metadata_raw") in store._l1
 
     # any write to the session invalidates metadata L1 too
     await store.set_map_state("s1", "is_3d", True)
-    assert ("s1", "metadata") not in store._l1
+    assert ("s1", "metadata_raw") not in store._l1
 
 
 @pytest.mark.asyncio
 async def test_store_invalidates_metadata_l1():
     """RUN-06: store() must invalidate the metadata L1 bundle.
 
-    get_session_metadata caches list_refs + event_log under the "metadata" key
+    get_session_metadata caches list_refs + event_log under the "metadata_raw" key (#1080 原始字段缓存)
     (2s TTL). If store() doesn't invalidate it, a freshly-stored ref is invisible
     to the next round for up to 2s — the cached bundle still has the old list_refs.
     """
     store = _store()
     await store.get_session_metadata("s1")  # populate L1 (empty list_refs)
-    assert ("s1", "metadata") in store._l1
+    assert ("s1", "metadata_raw") in store._l1
 
     ref = await store.store("s1", {"x": 1})
     # store() must drop the stale metadata bundle so the next read refetches
-    assert ("s1", "metadata") not in store._l1
+    assert ("s1", "metadata_raw") not in store._l1
 
     meta = await store.get_session_metadata("s1")
     # New ref visible immediately, WITHOUT waiting out the 2s TTL.
@@ -128,10 +128,10 @@ async def test_append_event_invalidates_metadata_l1():
     """
     store = _store()
     await store.get_session_metadata("s1")  # populate L1 (empty event_log)
-    assert ("s1", "metadata") in store._l1
+    assert ("s1", "metadata_raw") in store._l1
 
     await store.append_event("s1", "tool_executed", {"tool": "buffer_analysis"})
-    assert ("s1", "metadata") not in store._l1
+    assert ("s1", "metadata_raw") not in store._l1
 
     meta = await store.get_session_metadata("s1")
     # New event visible immediately, WITHOUT waiting out the 2s TTL.
@@ -198,7 +198,7 @@ async def test_metadata_l1_hit_returns_isolated_copy_809():
     store.clear_l1_cache()
 
     first = await store.get_session_metadata("s809")
-    assert ("s809", "metadata") in store._l1
+    assert ("s809", "metadata_raw") in store._l1
 
     # 就地污染尝试（嵌套层）
     first["map_state"]["layers"].append({"id": "POISON"})

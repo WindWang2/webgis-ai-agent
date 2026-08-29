@@ -7,6 +7,7 @@ import { devOnly } from '@/lib/utils/logger';
 import { parseFilter } from './parseFilter';
 import { isMvtLayer } from '@/lib/store/layer-data';
 import { getCommittedMapSpec } from '@/lib/mapspec/session-cursor';
+import { rememberCustomOverlay, forgetCustomOverlay } from './custom-overlay-registry';
 import { noteAgentDisplayed } from '@/lib/chat/turn-focus';
 import {
   isCustomSchemeMatch,
@@ -189,6 +190,21 @@ export const layerCommands: Record<string, CommandEntry> = {
           paint: style || {}
         });
       }
+      // #1078(G-1): 登记 basemap setStyle 后的重挂闭包（spec 承载层由
+      // 恢复 reconcile 重建，custom-* 此前被 wipe 后永不复现）。
+      rememberCustomOverlay(id, (m) => {
+        renderer.addGeoJsonSource(m, id, geojson);
+        if (style && ((style as any).type === 'choropleth' || (style as any).type === 'lisa')) {
+          renderer.addThematicLayer(m, id, geojson, style as any);
+        } else {
+          renderer.addVectorLayer(m, {
+            id,
+            type: (type || 'fill') as any,
+            source: id,
+            paint: style || {}
+          });
+        }
+      });
 
       if (flyTo) {
         // #668: descriptor.bbox is the fast path for MVT-backed large layers — full-FC scan only as fallback
@@ -249,6 +265,19 @@ export const layerCommands: Record<string, CommandEntry> = {
           'raster-opacity': opacity,
           'raster-fade-duration': 500
         }
+      });
+      // #1078(G-1): raster 覆盖层的 setStyle 后重挂（同 add_layer）。
+      rememberCustomOverlay(layerId, (m) => {
+        renderer.addImageSource(m, sourceId, imageUrl, coordinates);
+        renderer.addVectorLayer(m, {
+          id: layerId,
+          type: 'raster',
+          source: sourceId,
+          paint: {
+            'raster-opacity': opacity,
+            'raster-fade-duration': 500
+          },
+        });
       });
 
       navigation.fitBounds(map, bbox, 80);
@@ -323,6 +352,11 @@ export const layerCommands: Record<string, CommandEntry> = {
               sawFailure = true;
               continue;
             }
+            // #1078(G-1) 评审修复：显式移除即注销重挂登记 —— 否则本命令自身
+            // 触发的 reconcile 尾部 remountCustomOverlays 会把刚删的层复活。
+            forgetCustomOverlay(customId);
+            forgetCustomOverlay(`${customId}-layer`);
+            for (const id of customMatched) forgetCustomOverlay(id);
           } catch (e) {
             devOnly.warn('[MapActionHandler] REMOVE_LAYER failed:', e);
             sawFailure = true;

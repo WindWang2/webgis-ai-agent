@@ -251,7 +251,7 @@ async def test_stall_abort_also_cancels_turn_token(monkeypatch):
     # response (isError=False, details.cancelled=True) — not a raised
     # OperationCancelled / HTTP 500.
     resp = await dispatch
-    assert resp.isError is False
+    assert resp.isError is True  # #1069(A-6): 与 legacy 对齐——取消是失败语义（details.cancelled 仍标记）
     assert resp.details.get("cancelled") is True
 
 
@@ -370,7 +370,7 @@ async def test_dispatch_tool_binds_active_turn_cancellation_token(monkeypatch):
     # response (isError=False, details.cancelled=True) — not a raised
     # OperationCancelled / HTTP 500.
     resp = await dispatch
-    assert resp.isError is False
+    assert resp.isError is True  # #1069(A-6): 与 legacy 对齐——取消是失败语义（details.cancelled 仍标记）
     assert resp.details.get("cancelled") is True
 
 
@@ -489,7 +489,7 @@ async def test_prompt_publishes_active_turn_markers(monkeypatch, caplog):
     # response (isError=False, details.cancelled=True) — not a raised
     # OperationCancelled / HTTP 500.
     resp = await dispatch
-    assert resp.isError is False
+    assert resp.isError is True  # #1069(A-6): 与 legacy 对齐——取消是失败语义（details.cancelled 仍标记）
     assert resp.details.get("cancelled") is True
 
     # teardown: cancel the parked prompt turn; markers + lock must clear
