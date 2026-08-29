@@ -1,6 +1,5 @@
 """Redis-backed session data manager - persistent storage with TTL and LRU eviction"""
 import asyncio
-import copy
 import json
 import time
 import uuid
@@ -9,7 +8,11 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 import redis.asyncio as aioredis
-from app.services.session_data_protocol import BaseSessionStore, UNAVAILABLE_REF_PREFIX
+from app.services.session_data_protocol import (
+    BaseSessionStore,
+    UNAVAILABLE_REF_PREFIX,
+    _layer_matches_removal_family,
+)
 from app.lib.numpy_json import numpy_json_default as _numpy_json_default
 
 logger = logging.getLogger(__name__)
@@ -44,6 +47,7 @@ class RedisSessionStore(BaseSessionStore):
         socket_timeout: float = 5.0,
         redis: Optional[aioredis.Redis] = None,
     ):
+        self._ack_batch_script = None  # v2(P5)：ACK 批 Lua 的 EVALSHA 句柄
         # 审计 TEST-13：不要在此创建 Redis 客户端。Redis.from_url 返回的客户端在
         # 第一次 async 操作时会把它内部的连接池绑定到当时的 event loop；而本单例在
         # 模块 import 时就构造（session_data_manager = create_session_data_manager()），
@@ -593,6 +597,163 @@ class RedisSessionStore(BaseSessionStore):
             )
             return {}
 
+    async def leave_active_set(self, session_id: str) -> None:
+        """#1074(F-15): 把会话从 sessions:active / activity 有序集摘除。
+
+        tombstone 经通用写者落键时会把已删会话 re-add 进 active 集（滞留
+        ≤4h：清扫空转、活跃计数失真）。删除路径写完 tombstone 后定向摘除。
+        best-effort —— 失败只影响清理效率，不影响正确性。
+        """
+        try:
+            await self._ensure_connected()
+            async with self._r.pipeline(transaction=False) as pipe:
+                pipe.srem(self._active_key(), session_id)
+                pipe.zrem(self._activity_key(), session_id)
+                await pipe.execute()
+        except aioredis.RedisError as e:
+            logger.warning(
+                "leave_active_set failed for %s: %s", session_id, e
+            )
+
+    async def set_map_state_fields(self, session_id: str, fields: dict) -> bool:
+        """#1073: 单事务写多个状态字段（无 seq 语义的服务端真值）。
+
+        mapspec 与其 CAS 令牌（_cartographic_mutation_revision）此前是两笔
+        独立 WATCH/MULTI —— crash 落在两写之间会让 spec=世代 N+1 而令牌=N，
+        持旧 expected_revision 的客户端通过相等 CAS 在新 spec 上重复应用。
+        单 MULTI 保证原子。
+        """
+        if not fields:
+            return True
+        await self._ensure_connected()
+        payloads: dict[str, str] = {}
+        for key, value in fields.items():
+            try:
+                payloads[key] = await asyncio.to_thread(
+                    json.dumps, value, ensure_ascii=False, default=_numpy_json_default
+                )
+            except (TypeError, ValueError) as e:
+                logger.warning(
+                    "set_map_state_fields un-serializable value for %s %s: %s",
+                    session_id, key, e,
+                )
+                return False
+        state_key = self._state_key(session_id)
+        try:
+            async with self._r.pipeline(transaction=True) as pipe:
+                pipe.hsetnx(
+                    state_key,
+                    "_started_at",
+                    datetime.now(timezone.utc).isoformat(),
+                )
+                pipe.hset(state_key, mapping=payloads)
+                pipe.expire(state_key, STATE_TTL)
+                pipe.sadd(self._active_key(), session_id)
+                self._refresh_session_ttl(pipe, session_id)
+                await pipe.execute()
+            self._l1_invalidate_session(session_id)
+            return True
+        except aioredis.RedisError as e:
+            logger.error(
+                "set_map_state_fields failed for %s: %s", session_id, e
+            )
+            return False
+
+    async def commit_mapspec_state(
+        self,
+        session_id: str,
+        fields: dict,
+        layer_op: Optional[tuple] = None,
+    ) -> bool:
+        """v2(audit F4): MapSpec commit 单事务（spec+revision+指纹+runtime layers）。
+
+        此前 save_mapspec（spec/令牌一笔 MULTI）与 runtime layers 写
+        （update/remove_layer_in_state 另一笔 WATCH/MULTI）是两个事务，
+        crash 落在两写之间会留下 spec=世代 N+1 而 layers=世代 N 的错配。
+        本方法把 layers 的 read-modify-write 合入同一 WATCH/MULTI：EXEC 前
+        到达的并发 layers 写（WS 感知通道，不走分布式锁）触发 WatchError
+        重读合并 —— 保留 update/remove_layer_in_state 的合并语义。
+
+        layer_op: ("upsert", layer_id, layer_dict) | ("remove", layer_id, None)
+                  | ("replace", "", layers_list)。fields 为 Python 对象。
+        """
+        if not fields and layer_op is None:
+            return True
+        await self._ensure_connected()
+        state_key = self._state_key(session_id)
+        # v2(review 5/6-A4)：fields 预序列化在 WATCH 窗口外 —— 大 mapspec 的
+        # dumps（~10ms 级）此前持窗口，WS 感知写并发时 3 次重试的碰撞概率
+        # 被无谓放大（finalize 在用户拖动期间以百分比级概率假失败）。
+        pre_serialized: dict[str, str] = {}
+        for key, value in fields.items():
+            pre_serialized[key] = await asyncio.to_thread(
+                json.dumps, value, ensure_ascii=False,
+                default=_numpy_json_default,
+            )
+        for _attempt in range(3):
+            if _attempt:
+                # 小退避 + 抖动：削平 WS 写风暴下的连续碰撞。
+                await asyncio.sleep(0.01 * _attempt + (id(_attempt) % 100) / 10000)
+            try:
+                async with self._r.pipeline(transaction=True) as pipe:
+                    await pipe.watch(state_key)
+                    payloads: dict[str, str] = dict(pre_serialized)
+                    if layer_op is not None:
+                        op, layer_id, layer_payload = layer_op
+                        raw_layers = await pipe.hget(state_key, "layers")
+                        layers = list(json.loads(raw_layers)) if raw_layers is not None else []
+                        if op == "upsert":
+                            for layer in layers:
+                                if layer.get("id") == layer_id:
+                                    layer.update(layer_payload)
+                                    break
+                            else:
+                                layers.append({"id": layer_id, **layer_payload})
+                        elif op == "remove":
+                            layers = [
+                                layer for layer in layers
+                                if not _layer_matches_removal_family(
+                                    layer.get("id"), layer_id,
+                                )
+                            ]
+                        elif op == "replace":
+                            layers = list(layer_payload or [])
+                        payloads["layers"] = await asyncio.to_thread(
+                            json.dumps, layers, ensure_ascii=False,
+                            default=_numpy_json_default,
+                        )
+                    pipe.multi()
+                    pipe.hsetnx(
+                        state_key,
+                        "_started_at",
+                        datetime.now(timezone.utc).isoformat(),
+                    )
+                    pipe.hset(state_key, mapping=payloads)
+                    pipe.expire(state_key, STATE_TTL)
+                    pipe.sadd(self._active_key(), session_id)
+                    self._refresh_session_ttl(pipe, session_id)
+                    await pipe.execute()
+                self._l1_invalidate_session(session_id)
+                return True
+            except aioredis.WatchError:
+                continue  # 并发 layers 写 —— 重读合并后重试
+            except (TypeError, ValueError, json.JSONDecodeError) as e:
+                logger.warning(
+                    "commit_mapspec_state invalid payload for %s: %s",
+                    session_id, e,
+                )
+                return False
+            except aioredis.RedisError as e:
+                logger.error(
+                    "commit_mapspec_state failed for %s: %s", session_id, e
+                )
+                return False
+        logger.warning(
+            "commit_mapspec_state gave up after 3 retries for %s (contention)",
+            session_id,
+        )
+        return False
+
     async def set_map_state(self, session_id: str, key: str, value: Any, seq: Optional[int] = None) -> bool:
         await self._ensure_connected()
         # P1 (#521): serialize off the event loop (same as store()). The map_state
@@ -745,6 +906,31 @@ class RedisSessionStore(BaseSessionStore):
         return out
 
 
+    async def get_state_field(self, session_id: str, field: str) -> Any:
+        """#1064: 定向读单个状态字段（单 HGET，不 HGETALL/不解析 mapspec）。
+
+        授权/tombstone 检查只需要一个字段（owner_token_digest、
+        _cartographic_deleted），此前经 get_map_state/get_session_metadata
+        物化整个状态包（1MiB 级 mapspec 冷读/重解析/传输）。字段值按 JSON
+        解码（与 get_map_state 的 per-field 语义一致）；缺失或不可解析返回
+        None。
+        """
+        try:
+            await self._ensure_connected()
+            v = await self._r.hget(self._state_key(session_id), field)
+        except aioredis.RedisError as e:
+            logger.warning(
+                "Redis get_state_field(%s) failed for %s: %s — treating as miss",
+                field, session_id, e,
+            )
+            return None
+        if v is None:
+            return None
+        try:
+            return json.loads(v)
+        except (json.JSONDecodeError, TypeError):
+            return v
+
     async def get_map_spec_fingerprint(self, session_id: str) -> Optional[str]:
         """#687：定向读 mapspec 指纹字段（O(1)，不触发全字段冷解析/L1）。
 
@@ -863,7 +1049,11 @@ class RedisSessionStore(BaseSessionStore):
                             layers = json.loads(raw_layers)
                     else:
                         layers = []
-                    new_layers = [layer for layer in layers if layer.get("id") != layer_id]
+                    # #1074(F-12): 族谓词与 spec 侧删层对称（见内存后端注释）。
+                    new_layers = [
+                        layer for layer in layers
+                        if not _layer_matches_removal_family(layer.get("id"), layer_id)
+                    ]
                     # P1 (#521): serialize off the event loop (see update_layer_in_state).
                     payload_json = await asyncio.to_thread(
             json.dumps, new_layers, ensure_ascii=False, default=_numpy_json_default
@@ -1016,6 +1206,109 @@ class RedisSessionStore(BaseSessionStore):
         )
         return False
 
+    # #1081: 批量 ACK 落库 Lua —— 复刻 singular 路径的全部语义（首达终态
+    # 获胜去重、MAX 逐出、到达分严格单调、TTL 扇出一次），单脚本原子执行。
+    _ACK_BATCH_LUA = """
+local max_events = tonumber(ARGV[1])
+local state_ttl = tonumber(ARGV[2])
+local session_ttl = tonumber(ARGV[3])
+local now = tonumber(ARGV[4])
+local session_id = ARGV[5]
+local n = tonumber(ARGV[6])
+local results = {}
+local last = redis.call('ZRANGE', KEYS[2], -1, -1, 'WITHSCORES')
+local last_score = 0.0
+if #last >= 2 then last_score = tonumber(last[2]) end
+local arrival = now
+if arrival <= last_score then arrival = last_score + 0.000001 end
+for i = 0, n - 1 do
+  local action_id = ARGV[7 + i * 2]
+  local payload = ARGV[8 + i * 2]
+  if not action_id or action_id == '' then
+    results[#results + 1] = 'invalid'
+  elseif redis.call('HEXISTS', KEYS[1], action_id) == 1 then
+    results[#results + 1] = 'duplicate'
+  else
+    local count = redis.call('ZCARD', KEYS[2])
+    local overflow = count - max_events + 1
+    if overflow > 0 then
+      local oldest = redis.call('ZRANGE', KEYS[2], 0, overflow - 1)
+      for _, oid in ipairs(oldest) do
+        redis.call('HDEL', KEYS[1], oid)
+        redis.call('ZREM', KEYS[2], oid)
+      end
+    end
+    redis.call('HSET', KEYS[1], action_id, payload)
+    redis.call('ZADD', KEYS[2], arrival, action_id)
+    arrival = arrival + 0.000001
+    results[#results + 1] = 'stored'
+  end
+end
+redis.call('EXPIRE', KEYS[1], state_ttl)
+redis.call('EXPIRE', KEYS[2], state_ttl)
+redis.call('SADD', KEYS[3], session_id)
+for i = 4, #KEYS do
+  redis.call('EXPIRE', KEYS[i], session_ttl)
+end
+redis.call('ZADD', KEYS[#KEYS], now, session_id)
+return results
+"""
+
+    async def append_map_action_event_batch(
+        self, session_id: str, events: list
+    ) -> list:
+        """#1081: 单 Lua 脚本落整批 ACK（1 RTT，锁持有时长 ~250ms→~5ms 网络化）。"""
+        if not events:
+            return []
+        await self._ensure_connected()
+        prepared: list[tuple[str, str]] = []
+        for ev in events:
+            action_id = str((ev or {}).get("action_id") or "")
+            if not action_id:
+                prepared.append(("", "{}"))
+                continue
+            payload = await asyncio.to_thread(json.dumps, ev, ensure_ascii=False)
+            prepared.append((action_id, payload))
+        keys = [
+            self._map_actions_key(session_id),
+            self._map_actions_order_key(session_id),
+            self._active_key(),
+            self._aliases_key(session_id),
+            self._refs_key(session_id),
+            self._refs_order_key(session_id),
+            self._index_key(session_id),
+            self._state_key(session_id),
+            self._events_key(session_id),
+            self._activity_key(),
+        ]
+        args: list = [
+            str(MAX_MAP_ACTION_EVENTS),
+            str(STATE_TTL),
+            str(SESSION_TTL),
+            repr(time.time()),
+            session_id,
+            str(len(prepared)),
+        ]
+        for action_id, payload in prepared:
+            args.extend((action_id, payload))
+        try:
+            # v2(audit P5)：EVALSHA（register_script 缓存 Script 对象）——
+            # 每批 ~1.5KB 脚本体不再随请求传输；NOSCRIPT 时 redis-py 自动
+            # 回退 EVAL。
+            if self._ack_batch_script is None:
+                self._ack_batch_script = self._r.register_script(self._ACK_BATCH_LUA)
+            results = await self._ack_batch_script(keys=keys, args=args)
+            return [
+                r.decode() if isinstance(r, bytes) else str(r) for r in results
+            ]
+        except aioredis.RedisError as e:
+            logger.warning(
+                "Redis append_map_action_event_batch failed for %s: %s — falling "
+                "back to per-event path",
+                session_id, e,
+            )
+            return await super().append_map_action_event_batch(session_id, events)
+
     async def get_map_action_events(self, session_id: str) -> list[dict]:
         """返回该 session 当前全部地图动作 ACK（按到达顺序，与 memory 后端一致）。"""
         await self._ensure_connected()
@@ -1039,16 +1332,21 @@ class RedisSessionStore(BaseSessionStore):
             return []
 
     async def get_session_metadata(self, session_id: str) -> dict[str, Any]:
-        """Fetch session metadata in a single async pipeline."""
-        # L1 hot read — this is called at the start of every chat turn and
-        # bundles 4 Redis calls; cache for L1_TTL_SECONDS to collapse repeats.
-        cached = self._l1_get(session_id, "metadata")
+        """Fetch session metadata in a single async pipeline.
+
+        L1 hot read — this is called at the start of every chat turn and
+        bundles 4 Redis calls; cache for L1_TTL_SECONDS to collapse repeats.
+        #1080（#795 同型）：L1 命中路径此前 deepcopy 整个 bundle（含
+        mapspec 级 map_state，重会话实测 ~55ms）；改为缓存原始字节字段、
+        每读者在线程内重解析（C 级 json.loads，同负载 ~32ms，且不复制
+        list_refs/event_log 的 Python 对象树）。
+        """
+        cached = self._l1_get(session_id, "metadata_raw")
         if cached is not None:
-            # #809: the L1 bundle embeds map_state/list_refs/event_log and is
-            # shared by every reader within the TTL — return a copy so no
-            # caller can poison concurrent readers (same #749 discipline
-            # get_map_state already follows; copy off the loop like siblings).
-            return await asyncio.to_thread(copy.deepcopy, cached)
+            return await asyncio.to_thread(
+                self._parse_metadata_bundle_sync, cached[0], cached[1],
+                cached[2], cached[3],
+            )
         await self._ensure_connected()
         async with self._r.pipeline() as pipe:
             pipe.hgetall(self._state_key(session_id))
@@ -1065,7 +1363,19 @@ class RedisSessionStore(BaseSessionStore):
                     "event_log": await self.get_event_log(session_id),
                     "started_at": await self.get_started_at(session_id),
                 }
+        # #1080: 缓存原始字段（bytes），读者各自解析 —— 不再有共享对象树
+        # 需要 deepcopy 防污染（旧 "metadata" 键的解析树条目随之淘汰）。
+        self._l1_put(
+            session_id, "metadata_raw",
+            (state_raw, ref_ids_bytes, raw_refs, events_raw),
+        )
+        return await asyncio.to_thread(
+            self._parse_metadata_bundle_sync, state_raw, ref_ids_bytes,
+            raw_refs, events_raw,
+        )
 
+    def _parse_metadata_bundle_sync(self, state_raw, ref_ids_bytes, raw_refs, events_raw):
+        """#1080: 原始 Redis 字段 → metadata dict（同步、线程内执行）。"""
         map_state: dict = {}
         started_at = None
         if state_raw:
@@ -1097,19 +1407,12 @@ class RedisSessionStore(BaseSessionStore):
             except (json.JSONDecodeError, TypeError):
                 continue
 
-        result = {
+        return {
             "map_state": map_state,
             "list_refs": list_refs,
             "event_log": event_log,
             "started_at": started_at,
         }
-        # #809: 缓存存副本 —— 首个调用者拿到的对象不得与 L1 条目别名
-        # （否则它随后的就地改动会污染缓存与 2s TTL 内的所有并发读者）。
-        self._l1_put(
-            session_id, "metadata",
-            await asyncio.to_thread(copy.deepcopy, result),
-        )
-        return result
 
     def _clearing_key(self, session_id: str) -> str:
         return f"session:{session_id}:clearing"
@@ -1284,6 +1587,16 @@ class RedisSessionStore(BaseSessionStore):
             return None
         except aioredis.RedisError as e:
             logger.error("Redis get_ref_descriptor failed for %s/%s: %s", session_id, ref_id, e)
+            return None
+        except ValueError as e:
+            # #1061(b): 损坏的 descriptor/payload JSON（半写、截断）抛
+            # JSONDecodeError(ValueError 子类)——此前逃逸出本方法，在工具已
+            # 成功执行后把整个 dispatch 炸成失败。按「descriptor 不可得」
+            # 处理（调用方已有缺失语义），不吞连接类异常。
+            logger.error(
+                "Corrupt ref payload for %s/%s (%s); treating descriptor as missing",
+                session_id, ref_id, e,
+            )
             return None
 
     async def ref_exists(self, session_id: str, ref_id: str) -> bool:

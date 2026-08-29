@@ -8,7 +8,7 @@ from typing import Any, Optional
 from collections import OrderedDict, deque
 from datetime import datetime, timezone
 
-from app.services.session_data_protocol import BaseSessionStore
+from app.services.session_data_protocol import BaseSessionStore, _layer_matches_removal_family
 
 logger = logging.getLogger(__name__)
 
@@ -283,6 +283,72 @@ class MemorySessionStore(BaseSessionStore):
             for k in to_delete:
                 del aliases[k]
 
+    async def set_map_state_fields(self, session_id: str, fields: dict) -> bool:
+        """#1073: 一批状态字段一次写入（服务端真值，无 seq 语义）。
+
+        Redis 后端为单 WATCH/MULTI（spec 与 CAS 令牌原子落地）；内存后端
+        语义上等价（同进程锁内调用方本就串行）。
+        """
+        if not fields:
+            return True
+        if session_id not in self._map_state:
+            self._map_state[session_id] = {}
+            self._map_state[session_id].setdefault(
+                "_started_at", datetime.now(timezone.utc).isoformat()
+            )
+        self._map_state[session_id].update(fields)
+        return True
+
+    async def get_state_field(self, session_id: str, field: str) -> Any:
+        """v2(audit P6)：定向读单字段 —— 覆盖协议默认（全量 get_map_state
+        deepcopy 整个状态含 mapspec）为单字段浅拷贝（列表字段拷贝列表，
+        防 #701 的引用逃逸）。"""
+        state = self._map_state.get(session_id, {})
+        value = state.get(field)
+        if isinstance(value, list):
+            return list(value)
+        if isinstance(value, dict):
+            return dict(value)
+        return value
+
+    async def commit_mapspec_state(
+        self, session_id: str, fields: dict, layer_op: Optional[tuple] = None,
+    ) -> bool:
+        """v2(audit F4): MapSpec commit 单事务（内存后端语义等价实现）。
+
+        与 Redis 后端的 WATCH/MULTI 语义对齐：fields 写入 + layers 的
+        read-modify-write 原子完成（同进程内本就串行，无 crash 窗口）。
+        layer_op 语义见 RedisSessionStore.commit_mapspec_state。
+        """
+        if not fields and layer_op is None:
+            return True
+        if session_id not in self._map_state:
+            self._map_state[session_id] = {}
+            self._map_state[session_id].setdefault(
+                "_started_at", datetime.now(timezone.utc).isoformat()
+            )
+        state = self._map_state[session_id]
+        if layer_op is not None:
+            op, layer_id, layer_payload = layer_op
+            layers = list(state.get("layers") or [])
+            if op == "upsert":
+                for layer in layers:
+                    if layer.get("id") == layer_id:
+                        layer.update(layer_payload)
+                        break
+                else:
+                    layers.append({"id": layer_id, **layer_payload})
+            elif op == "remove":
+                layers = [
+                    layer for layer in layers
+                    if not _layer_matches_removal_family(layer.get("id"), layer_id)
+                ]
+            elif op == "replace":
+                layers = list(layer_payload or [])
+            state["layers"] = layers
+        state.update(fields)
+        return True
+
     async def set_map_state(self, session_id: str, key: str, value: Any, seq: Optional[int] = None) -> bool:
         """设置地图状态元数据
 
@@ -355,13 +421,21 @@ class MemorySessionStore(BaseSessionStore):
             return await self.set_map_state(session_id, "layers", layers)
 
     async def remove_layer_from_state(self, session_id: str, layer_id: str) -> bool:
-        """从地图状态中移除指定图层"""
+        """从地图状态中移除指定图层。
+
+        #1074(F-12): 族谓词（id / id-前缀子层）与 spec 侧
+        _should_remove_layer 对称 —— 此前精确 id 匹配让伴生子层
+        （x-label 等）从期望态消失却在 map_state.layers 残留。
+        """
         # BUG-14: same read-modify-write race as update_layer_in_state.
         async with self._lock:
             layers = self._map_state.get(session_id, {}).get("layers", [])
             return await self.set_map_state(
                 session_id, "layers",
-                [layer for layer in layers if layer.get("id") != layer_id],
+                [
+                    layer for layer in layers
+                    if not _layer_matches_removal_family(layer.get("id"), layer_id)
+                ],
             )
 
     async def append_event(self, session_id: str, event: str, data: dict) -> None:

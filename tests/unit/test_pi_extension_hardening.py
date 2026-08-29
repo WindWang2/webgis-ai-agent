@@ -82,8 +82,42 @@ def test_current_turn_token_falls_back_to_pinned():
 
 
 def test_post_to_bridge_409_provides_recovery_guidance():
-    """Item 1: 409 Conflict provides guidance to retry or check cartography status."""
+    """Item 1 (#1042): 409 现在语义是 TURN_CONTEXT_INACTIVE —— 扩展透传结构化
+    recovery guidance，并阻止对已过期 turn 的盲目重试。
+
+    旧语义（concurrent mutation → 建议 webgis_cartography_status）已被
+    multi-pod active-turn 协调取代：409 的 guidance 由后端 detail.guidance
+    携带，扩展只负责 surfacing，不得再建议「重试或查制图状态」。
+    """
     script = f"""
+      import {{ postToBridge }} from {json.dumps(EXTENSION_PATH.as_uri())};
+      globalThis.fetch = async () => ({{
+        ok: false,
+        status: 409,
+        statusText: "Conflict",
+        json: async () => ({{
+          detail: {{
+            error: "Pi turn context is no longer active",
+            code: "TURN_CONTEXT_INACTIVE",
+            session_id: "s1",
+            turn_id: "t1",
+            guidance: "Re-synchronize session state before issuing further tools.",
+          }},
+        }}),
+      }});
+      const res = await postToBridge("call-1", "webgis_map_intent", {{ query: "test" }}, "tok.123");
+      process.stdout.write(JSON.stringify(res));
+    """
+    res = _run_node_script(script)
+    data = json.loads(res.stdout)
+    assert data["isError"] is True
+    text = data["content"][0]["text"]
+    assert "409" in text
+    assert "Re-synchronize session state" in text
+    assert "webgis_cartography_status" not in text
+
+    # 字符串 detail（非结构化响应）也必须原样透传，不带旧的重试建议。
+    script_str_detail = f"""
       import {{ postToBridge }} from {json.dumps(EXTENSION_PATH.as_uri())};
       globalThis.fetch = async () => ({{
         ok: false,
@@ -94,13 +128,13 @@ def test_post_to_bridge_409_provides_recovery_guidance():
       const res = await postToBridge("call-1", "webgis_map_intent", {{ query: "test" }}, "tok.123");
       process.stdout.write(JSON.stringify(res));
     """
-    res = _run_node_script(script)
-    data = json.loads(res.stdout)
-    assert data["isError"] is True
-    text = data["content"][0]["text"]
-    assert "409" in text
-    assert "webgis_cartography_status" in text
-    assert "concurrent state mutation" in text
+    res2 = _run_node_script(script_str_detail)
+    data2 = json.loads(res2.stdout)
+    assert data2["isError"] is True
+    text2 = data2["content"][0]["text"]
+    assert "409" in text2
+    assert "concurrent state mutation" in text2
+    assert "webgis_cartography_status" not in text2
 
 
 def test_post_to_bridge_503_provides_recovery_guidance():

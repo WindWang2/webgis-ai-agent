@@ -2,7 +2,7 @@
 
 系统分层架构、核心数据链路与扩展纪律。
 
-> **版本**: v0.2.0 · **状态**: 活文档 · **最后更新**: 2026-08-27（对齐 #1012–#1014 与 2026-08-27 收敛轮）
+> **版本**: v0.3.0 · **状态**: 活文档 · **最后更新**: 2026-08-29（GIS Harness Runtime v2,ADR-0079）
 >
 > 配套阅读:[技术方案说明书](./技术方案说明书.md)(概念域与演进)、[API 文档](./api-docs.md)(接口契约)、[数据库设计](./database-design.md)(存储)、[GIS Harness](./gis-harness.md)(harness 分层)。
 
@@ -171,6 +171,24 @@ MapRequestIntent ──► Recipe/Template 选择 ──► MapProductPlanner（
 - **所有权与隔离**:任务/上传/探索按 `session_id` + `owner_token` 作用域;瓦片/ref 双通道鉴权。
 - **观测-修复回路护栏**:服务端修复 ≤2 轮;客户端每会话总预算 8 次(耗尽停发观测修复,ADR-0074)。
 - **限流 / 健康探针 / 分布式锁**(Lua token 释放/续期):同前。
+- **GIS Harness Runtime v2**(ADR-0079,2026-08-29):
+  - **原子状态不变量**:权威 MapSpec 载入先于 revision 捕获/CAS(磁盘复活
+    路径回写令牌,杜绝 N→1 回退);spec+revision+指纹+runtime layers 单
+    WATCH/MULTI 事务提交(`commit_mapspec_state`);回滚不回拨 CAS 令牌。
+  - **锁纪律**:全部共享 Redis 写路径(SessionPlan/观察/ACK/delete/
+    cartography 运行时/plan 执行)`fail_on_degraded=True` + 关键写前
+    `lock.lost` 复检;锁降级/丢失映射结构化 503。
+  - **GISMutationBatch**:`apply_presentation_batch` 把 N 个 presentation
+    patch 合并为一个引擎事务(单锁/单读/单校验/revision 恰 +1);finalize
+    的展示集与隐藏集同以 agent origin 服务端落盘(不再经 user 路由洗白)。
+  - **Compiled Runtime Manifest**:启动编译全部 registry 为不可变快照 +
+    分级校验(fatal fail-fast,`GIS_MANIFEST_STRICT=0` 逃生);O(1)
+    tool↔capability 反查;内容指纹入 plan,恢复比对不一致 → STALE_PLAN。
+  - **Layer Runtime**:custom-* 覆盖层挂载账本(setStyle 重挂);观察证据
+    家族键联合匹配;label 子层上活地图;样式面板对 spec 层走
+    `patch_layer_style` 持久通道(#1077)。
+  - **ComponentLayoutRuntime**:槽位模型 + 确定性堆叠求解器(顶槽对称
+    bottom U-2);FloatingChrome 键盘可达(方向键移动 + landmark 语义)。
 
 ## 6. 部署拓扑
 

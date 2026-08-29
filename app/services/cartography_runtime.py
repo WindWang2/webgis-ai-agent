@@ -164,7 +164,8 @@ async def _persist_cartographic_harness_context(
     if not session_lock_held:
         from app.services.distributed_lock import session_lock_registry
 
-        async with session_lock_registry.lock(session_id):
+        # v2(audit F2): harness context 是共享 Redis 投影 —— 降级锁 fail-closed。
+        async with session_lock_registry.lock(session_id, fail_on_degraded=True):
             from app.services.session_data import session_data_manager
             session_data_manager.invalidate_local_cache(session_id)
             return await _persist_cartographic_harness_context(
@@ -345,7 +346,8 @@ async def _persist_cartographic_issued_action(
     if not session_lock_held:
         from app.services.distributed_lock import session_lock_registry
 
-        async with session_lock_registry.lock(session_id):
+        # v2(audit F2): issued-action 投影是共享 Redis 写 —— 降级锁 fail-closed。
+        async with session_lock_registry.lock(session_id, fail_on_degraded=True):
             from app.services.session_data import session_data_manager
             session_data_manager.invalidate_local_cache(session_id)
             await _persist_cartographic_issued_action(
@@ -358,10 +360,18 @@ async def _persist_cartographic_issued_action(
         return
     from app.services.session_data import session_data_manager
 
-    state = await session_data_manager.get_map_state(session_id)
-    if state.get("_cartographic_deleted") is True:
-        return
-    context = state.get("_cartographic_harness_context")
+    # v2(audit P3)：两个字段的定向读（tombstone + harness context）——
+    # 旧实现全量解析 mapspec。
+    _get_field = getattr(session_data_manager, "get_state_field", None)
+    if callable(_get_field):
+        if await _get_field(session_id, "_cartographic_deleted") is True:
+            return
+        context = await _get_field(session_id, "_cartographic_harness_context")
+    else:
+        state = await session_data_manager.get_map_state(session_id)
+        if state.get("_cartographic_deleted") is True:
+            return
+        context = state.get("_cartographic_harness_context")
     if not isinstance(context, dict) or context.get("session_id") != session_id:
         return
     try:
@@ -390,6 +400,30 @@ async def _persist_cartographic_issued_action(
         raise RuntimeError("cartographic issued-action persistence rejected")
 
 
+def _not_evaluated_no_harness(session_id: str) -> dict[str, Any]:
+    """#1069(A-7): not_evaluated/no_session_harness 门（此前 4 处逐字粘贴）。"""
+    return {
+        "session_id": session_id,
+        "cartography": {
+            "status": "not_evaluated",
+            "trusted": False,
+            "evaluated": False,
+            "passed": False,
+            "termination_reason": "no_session_harness",
+        },
+        "gate": {
+            "score": 0.0,
+            "target": 100.0,
+            "passed": False,
+            "evaluated": False,
+            "reason": "not_evaluated_policy_fail",
+            "status": "not_evaluated",
+            "trusted": False,
+        },
+        "overall_passed": False,
+    }
+
+
 async def evaluate_cartographic_session(
     session_id: str, *, session_lock_held: bool = False,
     state: Optional[dict] = None,
@@ -402,57 +436,23 @@ async def evaluate_cartographic_session(
     if not session_lock_held:
         from app.services.distributed_lock import session_lock_registry
 
-        async with session_lock_registry.lock(session_id):
+        # v2(audit F2): 评估持锁读冷态 —— 降级锁下两 pod 并发评估/写评审，
+        # 世代守卫只在写侧兜底；fail-closed 保持读-判-写一致。
+        async with session_lock_registry.lock(session_id, fail_on_degraded=True):
             from app.services.session_data import session_data_manager
             session_data_manager.invalidate_local_cache(session_id)
+            # NOTE: 调用方快照读取于锁外，跨锁边界可能已被其它写者更新——
+            # 锁内必须重新冷读（#1064 的快照复用只发生在锁内路由）。
             return await evaluate_cartographic_session(
                 session_id, session_lock_held=True
             )
     if session_id in _deleted_cartography_sessions:
-        return {
-            "session_id": session_id,
-            "cartography": {
-                "status": "not_evaluated",
-                "trusted": False,
-                "evaluated": False,
-                "passed": False,
-                "termination_reason": "no_session_harness",
-            },
-            "gate": {
-                "score": 0.0,
-                "target": 100.0,
-                "passed": False,
-                "evaluated": False,
-                "reason": "not_evaluated_policy_fail",
-                "status": "not_evaluated",
-                "trusted": False,
-            },
-            "overall_passed": False,
-        }
+        return _not_evaluated_no_harness(session_id)
     harness = _get_session_harness(session_id, create=True)
     if harness is None or not await _hydrate_cartographic_harness(
         session_id, harness, state=state
     ):
-        return {
-            "session_id": session_id,
-            "cartography": {
-                "status": "not_evaluated",
-                "trusted": False,
-                "evaluated": False,
-                "passed": False,
-                "termination_reason": "no_session_harness",
-            },
-            "gate": {
-                "score": 0.0,
-                "target": 100.0,
-                "passed": False,
-                "evaluated": False,
-                "reason": "not_evaluated_policy_fail",
-                "status": "not_evaluated",
-                "trusted": False,
-            },
-            "overall_passed": False,
-        }
+        return _not_evaluated_no_harness(session_id)
     lock = _cartography_eval_locks.setdefault(session_id, asyncio.Lock())
     async with lock:
         return await _evaluate_cartographic_session_unlocked(session_id, state=state)
@@ -479,14 +479,8 @@ async def record_cartographic_dispatch_evidence(
         "status": outcome.status,
         "llm_payload_len": len(outcome.llm_payload),
     }
-    for key in (
-        "success", "is_compiled", "warnings", "checkpoint_id", "message",
-        "correction_hint", "cartography_findings", "cartographic_review",
-        "mapspec_fingerprint", "runtime_observation_seq",
-        "runtime_projection_fingerprint",
-        "mutation_revision",
-        "map_product_evidence",
-    ):
+    from app.lib.harness.evidence import CARTOGRAPHIC_RESULT_EVIDENCE_KEYS
+    for key in CARTOGRAPHIC_RESULT_EVIDENCE_KEYS:
         if key in raw:
             result_evidence[key] = raw[key]
     event = ToolCallEvent(
@@ -526,26 +520,7 @@ async def _evaluate_cartographic_session_unlocked(
 ) -> dict[str, Any]:
     harness = _get_session_harness(session_id)
     if harness is None:
-        return {
-            "session_id": session_id,
-            "cartography": {
-                "status": "not_evaluated",
-                "trusted": False,
-                "evaluated": False,
-                "passed": False,
-                "termination_reason": "no_session_harness",
-            },
-            "gate": {
-                "score": 0.0,
-                "target": 100.0,
-                "passed": False,
-                "evaluated": False,
-                "reason": "not_evaluated_policy_fail",
-                "status": "not_evaluated",
-                "trusted": False,
-            },
-            "overall_passed": False,
-        }
+        return _not_evaluated_no_harness(session_id)
     from app.lib.harness.evaluator import HarnessEvaluator
     from app.services.session_data import session_data_manager
 

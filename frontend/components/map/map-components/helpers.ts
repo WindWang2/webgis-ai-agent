@@ -1,6 +1,11 @@
 'use client';
 import React from 'react';
 import type { MapSpecComponent } from '@/lib/mapspec-compiler/types';
+import {
+  COMPONENT_LAYOUT_META,
+  DEFAULT_STACK_STEP_PX,
+  resolveSlotLayout,
+} from '@/lib/map-components/layout-runtime';
 
 export const POSITION_CLASS: Record<string, string> = {
   'top-left': 'top-3 left-3',
@@ -127,4 +132,32 @@ export function resolveVariant(component: MapSpecComponent, fallback = ''): stri
   if (typeof fromOptions === 'string' && fromOptions) return fromOptions;
   if (typeof component.variant === 'string' && component.variant) return component.variant;
   return fallback;
+}
+
+// ── v2(Phase 9, #1079)：顶槽堆叠原语（与 bottom U-2 对称）───────────────
+// chart/statistics/annotation 缺省同为 top-left —— 无堆叠时锚定同一点互相
+// 遮挡。槽位/优先级元数据统一在 layout-runtime（ComponentLayoutRuntime）。
+
+export function buildTopSlotIndexes(
+  renderable: MapSpecComponent[],
+): Map<MapSpecComponent, number> {
+  const indexes = new Map<MapSpecComponent, number>();
+  for (const [component, entry] of resolveSlotLayout(renderable)) {
+    if (entry.slot.startsWith('top-') && entry.slotSize > 1) {
+      indexes.set(component, entry.index);
+    }
+  }
+  return indexes;
+}
+
+export function stackedTopStyle(
+  component: MapSpecComponent,
+  topSlotIndexes?: Map<MapSpecComponent, number>,
+): React.CSSProperties | undefined {
+  const pos = resolvePosition(component);
+  if (!pos.startsWith('top-')) return undefined;
+  const idx = topSlotIndexes?.get(component) ?? 0;
+  if (idx === 0) return undefined;
+  const step = COMPONENT_LAYOUT_META[component.type]?.stackStepPx ?? DEFAULT_STACK_STEP_PX;
+  return { top: `calc(0.75rem + ${idx * step}px)` };
 }

@@ -50,20 +50,33 @@ def _now_iso() -> str:
 
 
 async def get_provenance(session_id: str) -> List[Dict[str, Any]]:
-    """读取 provenance 列表（旧→新）。不可用返回 []。"""
+    """读取 provenance 列表（旧→新）。不可用返回 []。
+
+    v2(audit P1)：定向读单字段 —— 旧实现全量 get_map_state（HGETALL +
+    ~1MiB mapspec 完整解析）只为读 64 条 ring；守卫环每 mutation 读两次，
+    是热路径 4 次全量解析中的 2 次。
+    """
     try:
-        state = await session_data_manager.get_map_state(session_id) or {}
+        get_field = getattr(session_data_manager, "get_state_field", None)
+        if callable(get_field):
+            entries = await get_field(session_id, _PROVENANCE_KEY)
+        else:
+            state = await session_data_manager.get_map_state(session_id) or {}
+            entries = state.get(_PROVENANCE_KEY)
     except Exception:  # noqa: BLE001
         return []
-    entries = state.get(_PROVENANCE_KEY)
     return list(entries) if isinstance(entries, list) else []
 
 
 async def append_provenance(session_id: str, entry: ProvenanceEntry) -> None:
     """追加一条记录并维持环形上限。best-effort。"""
     try:
-        state = await session_data_manager.get_map_state(session_id) or {}
-        entries = state.get(_PROVENANCE_KEY)
+        get_field = getattr(session_data_manager, "get_state_field", None)
+        if callable(get_field):
+            entries = await get_field(session_id, _PROVENANCE_KEY)
+        else:
+            state = await session_data_manager.get_map_state(session_id) or {}
+            entries = state.get(_PROVENANCE_KEY)
         entries = list(entries) if isinstance(entries, list) else []
         entries.append(entry.to_dict())
         if len(entries) > PROVENANCE_LIMIT:

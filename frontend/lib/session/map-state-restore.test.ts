@@ -338,3 +338,51 @@ describe('restoreSessionMapLayers', () => {
     expect(toast?.message).toMatch(/加载失败/);
   });
 });
+
+describe('#1078(G-9) syncSpecLayersToStore prunes removed mirror rows', () => {
+  it('spec 层消失后镜像行被修剪；非镜像命令层与 pending 压制行保留', async () => {
+    const { syncSpecLayersToStore } = await import('@/lib/session/map-state-restore');
+    useHudStore.getState().clearLayers();
+    // 初始：spec 有 ly-a/ly-b；面板行含两镜像 + 一个用户命令层 + 一个 pending 压制行
+    const spec = {
+      layers: [
+        { id: 'ly-a', type: 'circle', source: 's1' },
+        { id: 'ly-b', type: 'circle', source: 's2' },
+        { id: 'ly-pending', type: 'circle', source: 's3' },
+      ],
+      sources: {},
+    };
+    syncSpecLayersToStore(spec, 'sess-1');
+    useHudStore.getState().addLayer({
+      id: 'user-command-layer', name: '命令层', type: 'vector', visible: true, opacity: 1,
+    } as any);
+    const { markPendingRemoved } = await import('@/lib/mapspec/session-cursor');
+    markPendingRemoved('ly-pending');
+    // 后端改写层集：ly-a 被移除、ly-pending 也被移除（但面板侧 pending 压制）
+    const spec2 = {
+      layers: [{ id: 'ly-b', type: 'circle', source: 's2' }],
+      sources: {},
+    };
+    syncSpecLayersToStore(spec2, 'sess-1');
+    const ids = useHudStore.getState().layers.map((l: any) => l.id);
+    expect(ids).toContain('ly-b');
+    expect(ids).not.toContain('ly-a');
+    // pending 压制行保留（用户删除优先语义，由下次收敛处理）
+    expect(ids).toContain('ly-pending');
+    // 用户命令层（无 _mapspecLayerId）永不修剪
+    expect(ids).toContain('user-command-layer');
+  });
+
+  it('空层集同样触发修剪（全部层被移除）', async () => {
+    const { syncSpecLayersToStore } = await import('@/lib/session/map-state-restore');
+    useHudStore.getState().clearLayers();
+    syncSpecLayersToStore({
+      layers: [{ id: 'ly-x', type: 'circle', source: 's' }], sources: {},
+    }, 'sess-2');
+    expect(useHudStore.getState().layers.some((l: any) => l.id === 'ly-x')).toBe(true);
+    syncSpecLayersToStore({ layers: [], sources: {} }, 'sess-2');
+    expect(
+      useHudStore.getState().layers.filter((l: any) => l._mapspecLayerId === 'ly-x'),
+    ).toHaveLength(0);
+  });
+});

@@ -197,7 +197,9 @@ export function syncSpecLayersToStore(
   sessionId: string | undefined,
 ): void {
   const specLayers = mapspec?.layers;
-  if (!Array.isArray(specLayers) || specLayers.length === 0) return;
+  if (!Array.isArray(specLayers)) return;
+  // #1078(G-9): 空层集不再早退 —— 全部层被移除时镜像行同样需要修剪，
+  // 只有 add 循环天然跳过。
 
   const storeLayers = useHudStore.getState().layers ?? [];
   const known = new Set<string>();
@@ -254,6 +256,25 @@ export function syncSpecLayersToStore(
         : undefined,
     });
     known.add(id);
+  }
+
+  // #1078(G-9): spec 已不存在的层镜像行修剪 —— 后端驱动的层集改写（模板
+  // 应用/替换/其它客户端突变）后，compose 已不渲该层面板行残留；勾选它
+  // 会对服务端未知层发 patch。会话重入本就自愈（restore 的 allowedIds
+  // 过滤），live 路径此前只增不删。保留：pending 压制行 / 过程层行 /
+  // 非 spec 镜像的自建行（无 _mapspecLayerId 且 id 不在 spec——用户命令层）。
+  const specIds = new Set(specLayers.map(
+    (raw) => String((raw as Record<string, any>)?.id || ''),
+  ));
+  const keepRows = storeLayers.filter((row) => {
+    if (!row._mapspecLayerId) return true;
+    if (pendingIds.has(String(row._mapspecLayerId))) return true;
+    const mirrored = specIds.has(String(row._mapspecLayerId))
+      || specIds.has(String(row.id));
+    return mirrored;
+  });
+  if (keepRows.length !== storeLayers.length) {
+    useHudStore.getState().setLayers(keepRows);
   }
 }
 

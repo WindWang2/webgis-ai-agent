@@ -264,7 +264,7 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         capabilities=["service_area"],
         input_artifact_types=["poi_feature_set", "point_feature_set"],
         output_artifact_type="service_area",
-        tool_candidates=["isochrone_analysis"],
+        tool_candidates=["isochrone_analysis", "isochrone_network"],
         cpu_cost="high", memory_cost="medium", io_cost="high",
         preferred_execution_policy="ASYNC",
         compatible_map_models=["proximity_overlay"],
@@ -403,28 +403,133 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         preferred_execution_policy="THREAD", priority=20,
     ),
     # ── 网络 ─────────────────────────────────────────────────────────
+    # #1075(D-3): purpose-named 工具排在候选首位 —— 此前 shortest_path
+    # 解析到 isochrone 工具族、closest_facility 指向不存在的 nearest_facility。
     AlgorithmDescriptor(
         id="network.shortest_path", name="最短路径", category="network_analysis",
         capabilities=["shortest_path"],
-        output_artifact_type="line_feature_set", tool_candidates=["isochrone_network"],
+        output_artifact_type="line_feature_set",
+        # v2(audit R2): 移除 isochrone_network fallback 残留（#1075(D-3)
+        # 修正后 shortest_path 不应退化到等时圈工具族）。
+        tool_candidates=["network_shortest_path", "plan_route"],
         cpu_cost="high", memory_cost="medium", io_cost="high",
         preferred_execution_policy="ASYNC", priority=10,
     ),
     AlgorithmDescriptor(
         id="network.closest_facility", name="最近设施", category="network_analysis",
-        capabilities=["shortest_path"],
-        output_artifact_type="line_feature_set", tool_candidates=["nearest_facility"],
+        capabilities=["closest_facility"],
+        output_artifact_type="line_feature_set",
+        tool_candidates=["network_closest_facility", "nearest_facility"],
         cpu_cost="high", memory_cost="medium", io_cost="high",
         preferred_execution_policy="ASYNC", priority=20,
     ),
+    # v2(audit R2): accessibility 独立算法（此前 network_accessibility 是
+    # closest_facility 的 fallback 候选并反查到 shortest_path capability）。
+    AlgorithmDescriptor(
+        id="network.accessibility", name="网络可达性", category="network_analysis",
+        capabilities=["accessibility"],
+        output_artifact_type="stats_table",
+        tool_candidates=["network_accessibility"],
+        cpu_cost="high", memory_cost="medium", io_cost="high",
+        preferred_execution_policy="ASYNC", priority=20,
+    ),
+    # v2(audit R2): 真实拓扑服务区工具归位（此前 network_service_area 是
+    # 孤儿 —— service_area 只解析到 amap 等时圈或速度表近似）。
+    AlgorithmDescriptor(
+        id="network.service_area.topological", name="拓扑服务区", category="network_analysis",
+        capabilities=["service_area"],
+        output_artifact_type="service_area",
+        tool_candidates=["network_service_area"],
+        cpu_cost="high", memory_cost="medium", io_cost="high",
+        preferred_execution_policy="ASYNC", priority=5,
+    ),
+    # v2(audit R2): tier-3 网络优化工具接入 planner 可达面（此前无
+    # capability/algorithm，工具存在但不可规划）。
+    AlgorithmDescriptor(
+        id="network.location_allocation", name="区位配置", category="network_analysis",
+        capabilities=["location_allocation"],
+        output_artifact_type="point_feature_set",
+        tool_candidates=["location_allocation"],
+        cpu_cost="high", memory_cost="medium", io_cost="medium",
+        preferred_execution_policy="ASYNC", priority=30,
+    ),
+    AlgorithmDescriptor(
+        id="network.od_matrix", name="起讫点（OD）矩阵", category="network_analysis",
+        capabilities=["od_matrix"],
+        output_artifact_type="od_matrix",
+        tool_candidates=["network_od_matrix", "distance_matrix_cn"],
+        cpu_cost="high", memory_cost="medium", io_cost="medium",
+        preferred_execution_policy="ASYNC", priority=25,
+    ),
+    AlgorithmDescriptor(
+        id="network.optimize_route", name="路线优化（VRP）", category="network_analysis",
+        capabilities=["route_optimization"],
+        output_artifact_type="line_feature_set",
+        tool_candidates=["optimize_route"],
+        cpu_cost="high", memory_cost="medium", io_cost="medium",
+        preferred_execution_policy="ASYNC", priority=30,
+    ),
+    # ── 数据访问补全（D-3 孤儿工具）─────────────────────────────────
+    AlgorithmDescriptor(
+        id="admin.boundary_lookup", name="行政区边界获取", category="data_access",
+        capabilities=["admin_boundary_query"],
+        output_artifact_type="polygon_feature_set",
+        tool_candidates=["get_admin_division"],
+        cpu_cost="low", memory_cost="low", io_cost="medium",
+        preferred_execution_policy="THREAD", priority=10,
+    ),
+    AlgorithmDescriptor(
+        id="poi.area_search", name="区域 POI 检索", category="data_access",
+        capabilities=["poi_query"],
+        output_artifact_type="poi_feature_set",
+        tool_candidates=["search_poi_around", "search_poi_polygon"],
+        cpu_cost="low", memory_cost="low", io_cost="medium",
+        preferred_execution_policy="ASYNC", priority=20,
+    ),
+    AlgorithmDescriptor(
+        id="raster.algebra", name="栅格计算器", category="raster_analysis",
+        capabilities=["raster_source"],
+        input_artifact_types=["raster_surface"],
+        output_artifact_type="raster_surface",
+        tool_candidates=["raster_calculator"],
+        cpu_cost="high", memory_cost="high", io_cost="medium",
+        preferred_execution_policy="THREAD", priority=15,
+    ),
     # ── 时序 ─────────────────────────────────────────────────────────
+    # #1075(D-10): temporal_trend capability 就位（此前 if False 死条件把
+    # 时序算法挂到 spatial_interpolation 上污染候选表）；工具真实存在，
+    # 描述符按 native 登记。
     AlgorithmDescriptor(
         id="temporal.trend", name="时序趋势", category="temporal_analysis",
-        capabilities=["temporal_trend"] if False else ["spatial_interpolation"],
+        capabilities=["temporal_trend"],
         input_artifact_types=["stats_table"],
         output_artifact_type="stats_table", tool_candidates=["temporal_trend"],
         cpu_cost="low", memory_cost="low", io_cost="low",
-        preferred_execution_policy="INLINE", runtime_status="planned", priority=10,
+        preferred_execution_policy="INLINE", priority=10,
+    ),
+    AlgorithmDescriptor(
+        id="temporal.aggregate", name="时序聚合", category="temporal_analysis",
+        capabilities=["temporal_trend"],
+        input_artifact_types=["poi_feature_set"],
+        output_artifact_type="stats_table", tool_candidates=["temporal_aggregate"],
+        cpu_cost="low", memory_cost="low", io_cost="low",
+        preferred_execution_policy="THREAD", priority=20,
+    ),
+    AlgorithmDescriptor(
+        id="temporal.raster_ts", name="时序栅格", category="temporal_analysis",
+        capabilities=["temporal_trend"],
+        input_artifact_types=["raster_surface"],
+        output_artifact_type="raster_surface", tool_candidates=["temporal_raster"],
+        cpu_cost="medium", memory_cost="medium", io_cost="high",
+        preferred_execution_policy="THREAD", priority=30,
+    ),
+    AlgorithmDescriptor(
+        id="temporal.hotspot", name="时空热点", category="temporal_analysis",
+        capabilities=["temporal_trend"],
+        input_artifact_types=["poi_feature_set"],
+        output_artifact_type="stats_table", tool_candidates=["spatiotemporal_hotspot"],
+        cpu_cost="medium", memory_cost="medium", io_cost="low",
+        preferred_execution_policy="THREAD", priority=40,
     ),
 ]
 
@@ -433,6 +538,7 @@ class AlgorithmRegistry:
     """算法目录：by-id / by-capability O(1) 索引、禁止静默重复、稳定排序。"""
 
     def __init__(self) -> None:
+        self._tool_to_capability_cache: Optional[Dict[str, str]] = None
         self._by_id: Dict[str, AlgorithmDescriptor] = {}
         self._by_capability: Dict[str, List[str]] = {}
 
@@ -445,6 +551,7 @@ class AlgorithmRegistry:
     def register(self, algo: AlgorithmDescriptor) -> None:
         if algo.id in self._by_id:
             raise ValueError(f"duplicate algorithm id: {algo.id}")
+        self._tool_to_capability_cache = None
         self._by_id[algo.id] = algo
         for cap in algo.capabilities:
             candidates = self._by_capability.setdefault(cap, [])
@@ -485,7 +592,14 @@ class AlgorithmRegistry:
         该算法的主 capability（spatial_aggregate → admin_aggregation 而非
         把它列为第三候选的 analytical_density），再按 (priority, id) 稳定
         序补齐其余候选。
+
+        #1076(D-8): 注册表载入后静态 —— 结果按内容缓存，register 失效。
+        此前 webgis_map_product 每调用、session_plan 每工具结果都全量
+        重建（每算法两遍排序扫描）。
         """
+        cached = self._tool_to_capability_cache
+        if cached is not None:
+            return cached
         ordered = sorted(self._by_id.values(), key=lambda a: (a.priority, a.id))
         mapping: Dict[str, str] = {}
         for algo in ordered:
@@ -498,6 +612,7 @@ class AlgorithmRegistry:
                 continue
             for tool in algo.tool_candidates:
                 mapping.setdefault(tool, cap)
+        self._tool_to_capability_cache = mapping
         return mapping
 
     def capability_tool_map(self) -> Dict[str, List[str]]:

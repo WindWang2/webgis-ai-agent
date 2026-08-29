@@ -142,70 +142,154 @@ def register_layer_management_tools(registry: ToolRegistry):
         # 收敛——隐藏集的裁决权也在前端：group/pin/boundary 语境只有它有）。
         from app.lib.cartography.quality_loop import cartographic_fingerprint
         from app.services.mapspec.lifecycle_engine import (
-            MapSpecLifecycleEngine,
             PatchLayerPresentationIntent,
+            mapspec_lifecycle_engine,
         )
         from app.services.mapspec.store import mapspec_store_instance
 
-        engine = MapSpecLifecycleEngine()
+        # v2(audit H1/H2)：收口改为服务端 GISMutationBatch（单锁/单读/单
+        # 校验/revision 恰 +1），且**展示集与隐藏集同以 agent origin 落盘**。
+        # 旧行为的两个根因缺陷：
+        #  1. 逐层 apply_gis_mutation —— N 层 = N 个完整事务（N 次 checkpoint
+        #     物化全部 ref + N 次 revision 递增），是 409 风暴与锁窗口的
+        #     根因（每次新建 engine 还使 prior-blocking 指纹缓存永不命中）；
+        #  2. 隐藏集此前由前端经 user mutation 路由提交（durable:true）——
+        #     agent 决策被洗白为 presentation_owner="user"，此后 agent 无法
+        #     翻回（user-wins 误伤）且"谁决策"溯源失真。
+        # 隐藏集裁决：spec 内非 boundary 语境、当前可见、且不在展示集的层。
+        # user-owned 层由守卫逐项拒绝并如实上报（user_hidden_respected）。
+        engine = mapspec_lifecycle_engine
         spec = await mapspec_store_instance.get_mapspec(session_id) or {}
-        spec_layer_ids = {
-            str(layer.get("id")) for layer in spec.get("layers", []) if isinstance(layer, dict)
-        }
-        durability_patched: List[str] = []
-        # user_hidden 拒绝集：用户 durable 隐藏的层不因收口被 agent 翻回可见
-        #（G6 不变量——user interaction wins 的服务端强制，GISWorldState 守卫）。
-        user_guard_refusals: List[str] = []
-        from app.services.gis_world_state import apply_gis_mutation
-        for layer_id in resolved:
-            if layer_id not in spec_layer_ids:
+        show_set = set(resolved)
+        show_intents = []
+        hide_intents = []
+        for layer in spec.get("layers", []) or []:
+            if not isinstance(layer, dict):
                 continue
-            pres = await apply_gis_mutation(
-                session_id,
-                PatchLayerPresentationIntent(layer_id=layer_id, visible=True),
-                origin="agent",
-                actor="finalize_display",
-                engine=engine,
+            layer_id = str(layer.get("id"))
+            if not layer_id:
+                continue
+            if layer_id in show_set:
+                show_intents.append(
+                    PatchLayerPresentationIntent(layer_id=layer_id, visible=True)
+                )
+                continue
+            if layer.get("context_role") == "boundary":
+                continue
+            currently_visible = (
+                (layer.get("layout") or {}).get("visibility", "visible") != "none"
+                and layer.get("visible", True) is not False
             )
-            if not pres.is_error and not pres.superseded:
-                durability_patched.append(layer_id)
-            elif pres.is_error and "不覆盖用户显式操作" in (pres.error_msg or ""):
-                user_guard_refusals.append(layer_id)
+            if currently_visible:
+                hide_intents.append(
+                    PatchLayerPresentationIntent(layer_id=layer_id, visible=False)
+                )
+        # 展示集中 spec 不存在的 id（HUD-only/迟到挂载）：not_found 上报，
+        # 前端命令的 pending presentation 仍可局部收敛。
+        known_spec_ids = {
+            str(lyr.get("id")) for lyr in spec.get("layers", []) or [] if isinstance(lyr, dict)
+        }
+        for missing_id in [i for i in resolved if i not in known_spec_ids]:
+            show_intents.append(
+                PatchLayerPresentationIntent(layer_id=missing_id, visible=True)
+            )
+
+        from app.services.gis_world_state import apply_gis_mutation_batch
+        batch = await apply_gis_mutation_batch(
+            session_id,
+            show_intents + hide_intents,
+            origin="agent",
+            actor="finalize_display",
+            engine=engine,
+        )
+        durability_patched: List[str] = [
+            o.layer_id for o in batch.outcomes
+            if o.status == "applied" and o.visible is True
+        ]
+        hidden_patched: List[str] = [
+            o.layer_id for o in batch.outcomes
+            if o.status == "applied" and o.visible is False
+        ]
+        user_guard_refusals: List[str] = [
+            o.layer_id for o in batch.outcomes if o.status == "refused"
+        ]
+        unresolved_ids: List[str] = [
+            o.layer_id for o in batch.outcomes if o.status == "not_found"
+        ]
 
         final_spec = await mapspec_store_instance.get_mapspec(session_id) or {}
         fingerprint = cartographic_fingerprint(final_spec) if final_spec else ""
+        _revision = batch.mutation_revision if batch.committed else None
+        if _revision is None:
+            # no-op/失败批：读当前令牌（回传给前端游标，语义与旧路径一致）。
+            from app.services.session_data import session_data_manager as _sdm
+            _state = await _sdm.get_map_state(session_id)
+            _raw_rev = _state.get("_cartographic_mutation_revision", 0)
+            _revision = _raw_rev if isinstance(_raw_rev, int) else 0
 
-        # review P2-3/P1（409 风暴根因）：服务端 desired patch 推进了
-        # mutation_revision，但结果不带 revision/mapspec → 前端游标必然
-        # 过期 → finalize 突发提交全数 409。回传两项让 SSE 消费端
-        # （use-sse-stream 读 data.mutation_revision/data.mapspec）在命令
-        # 执行前收敛游标。
-        from app.services.session_data import session_data_manager as _sdm
-        _state = await _sdm.get_map_state(session_id)
-        _revision = _state.get("_cartographic_mutation_revision", 0)
-
-        return {
-            "success": True,
+        # v2(review R2-P1-1)：尊重集随 params 下发 —— 前端命令据此跳过
+        # 对这些层的本地呈现翻转（服务端守卫已拒绝，本地翻转会造成
+        # 运行时与 durable desired 态的会话内分叉且 pending 永不清除）。
+        respect_ids = sorted(set(user_guard_refusals))
+        # v2(review R2-P1-2)：失败/未提交批的 per-layer 列表如实清空
+        # （回滚后的 applied 记录会谎报已落盘），消息按裁决实况表述。
+        if batch.committed:
+            patched_show = durability_patched
+            patched_hide = hidden_patched
+        else:
+            patched_show = []
+            patched_hide = []
+        if batch.is_error:
+            message = (
+                f"收口事务失败已回滚：{batch.error_msg}。"
+                f"（correction: {batch.correction_hint}）"
+            )
+        elif not batch.committed and user_guard_refusals:
+            message = (
+                f"收口未落盘：全部 {len(user_guard_refusals)} 个目标层的显隐由用户手动设定"
+                "（user-wins），已保留用户决策。"
+            )
+        elif not batch.committed:
+            message = (
+                f"收口未落盘：展示集 {len(unresolved_ids)} 个层在 MapSpec 中"
+                "不存在（not_found）。"
+            )
+        else:
+            message = (
+                f"最终展示集已收口：显示 {len(patched_show)} 个图层"
+                f"（{', '.join(resolved[:3])}{'…' if len(resolved) > 3 else ''}），"
+                f"隐藏 {len(patched_hide)} 个分析图层"
+                + (f"；{len(respect_ids)} 个层保留用户手动设定" if respect_ids else "")
+            )
+        result = {
+            "success": not batch.is_error,
             "command": "FINALIZE_DISPLAY",
-            "params": {"show_layer_ids": resolved},
+            "params": {
+                "show_layer_ids": resolved,
+                # 服务端守卫拒绝集（用户手动设定，前端不得本地翻转）
+                "respect_layer_ids": respect_ids,
+            },
             # 门禁证据：fingerprint 存在 → dispatch 进入 cartographic gate，
             # 前端 ack（confirmed/store_updated + visible/hidden/unresolved
             # layer ids）参与收敛判定。
             "mapspec_fingerprint": fingerprint,
-            "mutation_revision": _revision if isinstance(_revision, int) else 0,
+            "mutation_revision": _revision,
             "mapspec": final_spec or None,
             "final_display": {
                 "show_layer_ids": resolved,
-                "desired_state_patched": durability_patched,
+                "desired_state_patched": patched_show,
+                "hidden_patched": patched_hide,
                 "user_hidden_respected": user_guard_refusals,
+                "unresolved_layer_ids": unresolved_ids,
+                "batch_committed": batch.committed,
                 "verification": "frontend_runtime",
             },
-            "message": (
-                f"最终展示集已收口：显示 {len(resolved)} 个图层"
-                f"（{', '.join(resolved[:3])}{'…' if len(resolved) > 3 else ''}），"
-                f"其余分析图层已隐藏"
-            ),
+            "message": message,
         }
+        if batch.is_error:
+            result["error"] = batch.error_msg or "finalize batch failed"
+            result["correction_hint"] = batch.correction_hint
+        return result
 
     @tool(registry, name="alias_layer",
            description="为当前会话中的数据引用（ref:xxx）设置一个语义化的别名。设置后，后续可以直呼其名（如：'核心保护区'）来引用该数据。",

@@ -162,6 +162,62 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
   });
 }
 
+/**
+ * #1077（v2 Phase 5）：spec 承载层的持久样式提交。
+ *
+ * 样式面板此前对 specBacked 层完全禁用样式控件（诚实但不可用）；命令路径
+ * 返回 durable:false（运行时 paint，recompile 即回滚）。本通道把样式
+ * patch 经 patch_layer_style 意图写入权威 MapSpec（CAS + 串行链，与
+ * presentation 提交同款纪律），成功后 applyCommittedMapSpec 让 reconcile
+ * 以 spec 为源应用 —— 不再有「UI 已改色但随后回滚」。
+ * HUD-only 层仍走本地 style（runtime patch），不进本通道。
+ */
+export async function commitLayerStyleAndCommit(
+  layerId: string,
+  paint: Record<string, unknown>,
+): Promise<void> {
+  const specLayerId = mapspecLayerId(layerId);
+  if (!specLayerId || Object.keys(paint).length === 0) return;
+  const enqueuedSessionId = getMapSpecSessionCursor().sessionId;
+  await enqueueUserMutation(async () => {
+    const { sessionId, revision, ownerToken } = getMapSpecSessionCursor();
+    if (!sessionId) return;
+    if (sessionId !== enqueuedSessionId) return;
+    try {
+      const data = await apiFetch<MutationResponse>(
+        `/api/v1/chat/sessions/${sessionId}/mapspec/mutations`,
+        {
+          method: 'POST',
+          body: {
+            intent: 'patch_layer_style',
+            expected_revision: revision,
+            layer_id: specLayerId,
+            paint,
+          },
+          ownerToken,
+          timeoutMs: 60_000,
+          label: 'MapSpec layer style mutation',
+        },
+      );
+      if (typeof data.mutation_revision === 'number') {
+        setMapSpecRevision(data.mutation_revision);
+      }
+      applyCommittedMapSpec(data.mapspec, data.mutation_revision);
+    } catch (err) {
+      const superseded = supersededFromError(err);
+      if (superseded) {
+        if (typeof superseded.mutation_revision === 'number') {
+          setMapSpecRevision(superseded.mutation_revision);
+        }
+        applyCommittedMapSpec(superseded.mapspec, superseded.mutation_revision);
+        if (!superseded.mapspec) throw err;
+        return;
+      }
+      throw err;
+    }
+  });
+}
+
 // U-3（#885）：非 409 失败（网络断开/5xx/会话过期）此前静默回滚——用户点
 // 删除图层消失一秒后又弹回，全程无解释，弱网下看起来像按钮坏了。复用
 // superseded 路径的 toast 模式，按操作语义给文案。
@@ -372,7 +428,16 @@ export async function removeLayerAndCommit(layerId: string): Promise<void> {
     );
   } catch (err) {
     // 网络/服务端错误：回滚本地删除（U-3 语义——不静默弹回，给出解释）。
-    useHudStore.getState().setLayers(previous);
+    // #1078(G-7): 外科式回滚 —— 只把被删的行按原位置放回，不用 await 窗口
+    // 前的整表快照覆盖（快照会抹掉窗口内 SSE 并发挂载的新行，直到下一个
+    // mapspec 事件才重新镜像）。
+    const removedIdx = previous.findIndex((l) => l.id === layerId);
+    const current = useHudStore.getState().layers;
+    if (removedIdx >= 0 && !current.some((l) => l.id === layerId)) {
+      const restored = [...current];
+      restored.splice(Math.min(removedIdx, restored.length), 0, previous[removedIdx]);
+      useHudStore.getState().setLayers(restored);
+    }
     toastRollback('删除图层', err);
     clearPendingRemoved(specLayerId);
     clearPendingRemoved(layerId);
@@ -406,7 +471,17 @@ export async function reorderLayersAndCommit(layers: { id: string; _mapspecLayer
       layer_ids: layers.map((layer) => String(layer._mapspecLayerId || layer.id)),
     });
   } catch (err) {
-    useHudStore.getState().setLayers(previous);
+    // #1078(G-7): 外科式回滚 —— 在**当前**数组上恢复提交前的相对顺序，
+    // await 窗口内并发挂载的新行保留在末尾；整表 setLayers(previous) 会
+    // 把这些新行一并抹掉（直到下一个 mapspec 事件才重新镜像）。
+    const current = useHudStore.getState().layers;
+    const prevIds = new Set(previous.map((row) => String(row.id)));
+    const byId = new Map(current.map((row) => [String(row.id), row]));
+    const ordered = previous
+      .map((row) => byId.get(String(row.id)))
+      .filter((row): row is NonNullable<typeof row> => row != null);
+    const additions = current.filter((row) => !prevIds.has(String(row.id)));
+    useHudStore.getState().setLayers([...ordered, ...additions]);
     toastRollback('图层排序', err);
   }
 }

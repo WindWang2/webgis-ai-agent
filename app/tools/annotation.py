@@ -112,7 +112,9 @@ def register_annotation_tools(registry: ToolRegistry):
             "\n关键约束：coordinates 至少 2 个点，每个 [lng, lat]；返回 km 数值 + 前端绘制折线。"
         ),
         args_model=MeasureDistanceArgs,
-        execution_policy=ToolExecutionPolicy.INLINE,
+        # #1062: Haversine 逐坐标循环在 ~20k 顶点时 10-30ms，超 INLINE <5ms
+        # 契约 —— 与 measure_area 一并迁 THREAD。
+        execution_policy=ToolExecutionPolicy.THREAD,
     )
     def measure_distance(coordinates: List[List[float]], label: Optional[str] = None) -> dict:
         err = _validate_coords(coordinates, 2)
@@ -145,7 +147,7 @@ def register_annotation_tools(registry: ToolRegistry):
             "顺/逆时针均返回正值。"
         ),
         args_model=MeasureAreaArgs,
-        execution_policy=ToolExecutionPolicy.INLINE,
+        execution_policy=ToolExecutionPolicy.THREAD,
     )
     def measure_area(coordinates: List[List[float]], label: Optional[str] = None) -> dict:
         err = _validate_coords(coordinates, 3)

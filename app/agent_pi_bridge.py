@@ -20,6 +20,7 @@ zero knowledge of the cache.
 """
 from __future__ import annotations
 
+from app.services.distributed_lock import LockDegradedError, LockLostError
 import asyncio
 import contextlib
 import json
@@ -172,6 +173,14 @@ def set_tool_registry(registry: "ToolRegistry") -> None:
     """Inject the live ToolRegistry so tool dispatch goes to real GIS tools."""
     global _tool_registry
     _tool_registry = registry
+    # 评审修复（#1084）：注入即重编译 Runtime Manifest —— 防止 lifespan 注入前
+    # 的首次访问把空工具面指纹钉死整个进程。v2 manifest 惰性缓存一次编译，
+    # refresh_runtime_manifest() 强制按新注入的 registry 重编译。
+    try:
+        from app.lib.gis.runtime_manifest import refresh_runtime_manifest
+        refresh_runtime_manifest()
+    except Exception:  # noqa: BLE001 - manifest 是投影，失效失败不阻断注入
+        pass
     logger.info(f"[PiBridge] Tool registry injected ({len(registry.list_tools())} tools)")
 
 
@@ -378,6 +387,31 @@ def _slim_pi_details_payload(result: Any) -> Any:
     return details_payload
 
 
+def _record_cancelled_tracker_step(request, tool_name: str, arguments: dict) -> None:
+    """#1069(A-6): 取消的 dispatch 也记 tracker 步骤（cancelled）。
+
+    此前取消/异常路径在 tracker 记录块之前 early-return/re-raise —— /tasks
+    对该工具完全无显示。与主记录块同款迟到回调守卫（#993）。
+    """
+    try:
+        from app.services.chat.engine_instance import try_get_chat_engine
+        engine = try_get_chat_engine()
+        if engine is None:
+            return
+        callback_turn = request.verifiedTurnId
+        active_turn, _run, _sid = active_turn_correlation()
+        if callback_turn is not None and callback_turn != active_turn:
+            return
+        tasks = engine.tracker.list_by_session(request.sessionId or "")
+        if tasks:
+            latest_task = tasks[-1]
+            if latest_task.status.value == "running":
+                step = engine.tracker.start_step(latest_task.id, tool_name, arguments)
+                engine.tracker.cancel_step(latest_task.id, step.id)
+    except Exception:
+        pass
+
+
 async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
     """Dispatch a GIS tool call via ToolDispatchService, cache the result for the SSE adapter.
 
@@ -484,8 +518,12 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
                 result = await service.dispatch(tc, session_id, executed)
         except OperationCancelled:
             # audit #821: 协作取消 ≠ 工具故障（ADR-0052 / legacy tool_pipeline 同义）
-            # —— 记 cancelled 证据（is_error=False）并返回结构化取消响应，
-            # 而不是落入 catch-all 的 is_error=True + HTTP 500。
+            # —— 记 cancelled 证据并返回结构化取消响应，而不是落入 catch-all
+            # 的 is_error=True + HTTP 500。
+            # #1069(A-6): isError=True 与 legacy 对齐（tool_pipeline 返回
+            # status=error + step_cancelled）—— 模型此前看到「成功」而文本说
+            # 取消，可能当作数据已到达继续推理。同时补记 tracker 步骤（此前
+            # 取消/异常 dispatch 完全不出现在 /tasks）。
             duration_ms = int((time.monotonic() - t0) * 1000)
             harness = _get_session_harness(session_id)
             if harness is not None:
@@ -499,11 +537,12 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
                     result={"cancelled": True},
                     session_id=session_id,
                 ))
+            _record_cancelled_tracker_step(request, tool_name, arguments)
             return PiToolResponse(
                 toolCallId=request.toolCallId,
                 content=[{"type": "text", "text": "工具执行已被用户取消"}],
                 details={"cancelled": True},
-                isError=False,
+                isError=True,
             )
         except Exception as exc:
             duration_ms = int((time.monotonic() - t0) * 1000)
@@ -550,7 +589,9 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
             tasks = engine.tracker.list_by_session(session_id)
             if tasks:
                 latest_task = tasks[-1]
-                if latest_task.status.value in ("pending", "running"):
+                # #1069(A-6): TaskStatus 无 "pending"（running/completed/
+                # failed/cancelled）—— 旧条件里的 "pending" 是死分支。
+                if latest_task.status.value == "running":
                     step = engine.tracker.start_step(latest_task.id, tool_name, arguments)
                     if result.status == "ok":
                         engine.tracker.complete_step(latest_task.id, step.id, result.raw_result)
@@ -627,21 +668,8 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
         ev = {"status": result.status, "llm_payload_len": len(result.llm_payload)}
         # ADR-0078: also forward cartography_findings so the Harness surfaces
         # thematic drift (paint↔legend equivalence) in semantic_errors.
-        for k in (
-            "success",
-            "is_compiled",
-            "warnings",
-            "checkpoint_id",
-            "message",
-            "correction_hint",
-            "cartography_findings",
-            "cartographic_review",
-            "mapspec_fingerprint",
-            "runtime_observation_seq",
-            "runtime_projection_fingerprint",
-            "mutation_revision",
-            "map_product_evidence",
-        ):
+        from app.lib.harness.evidence import CARTOGRAPHIC_RESULT_EVIDENCE_KEYS
+        for k in CARTOGRAPHIC_RESULT_EVIDENCE_KEYS:
             if k in raw:
                 ev[k] = raw[k]
         event = ToolCallEvent(
@@ -661,9 +689,20 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
             session_id=session_id,
         )
         if has_cartographic_generation and result.status == "ok":
-            generation_current = await _persist_cartographic_harness_context(
-                session_id, event, result.map_actions
-            )
+            # v2(review R1-P2-6)：工具已成功提交，此处降级锁（F2 fail-closed
+            # 引入）不得把成功调用标成裸 500 —— 兜底为跳过本帧 harness
+            # context（下一事件源会重建），与下方 evaluate 的兜底同款。
+            try:
+                generation_current = await _persist_cartographic_harness_context(
+                    session_id, event, result.map_actions
+                )
+            except (LockDegradedError, LockLostError) as lock_err:
+                logger.warning(
+                    "[PiBridge] harness context skipped (lock unavailable) "
+                    "session=%s tool=%s: %s",
+                    session_id, tool_name, lock_err,
+                )
+                generation_current = False
             if not generation_current:
                 # The GIS result is still returned, but a completion from an
                 # older MapSpec revision cannot enter or evaluate the current
@@ -1198,6 +1237,12 @@ class PiBridge:
                 _drained_complete = False
                 drain_started = time.monotonic()
                 last_event_at = drain_started
+                process_died = False
+                # #1069(A-5): 与 stream_prompt 同款 MagicMock 容错 —— 测试桩的
+                # process_died_event 可能不是 asyncio.Event，回退为永不置位。
+                process_died_event = getattr(self._rpc, "process_died_event", None)
+                if not isinstance(process_died_event, asyncio.Event):
+                    process_died_event = asyncio.Event()
                 while True:
                     # #786: keep draining while events keep arriving. A single
                     # expired wait is NOT a turn failure — declare a stall only
@@ -1213,37 +1258,61 @@ class PiBridge:
                     if wait_budget <= 0:
                         timed_out = True
                         break
+                    # #1069(A-5): 与 stream_prompt 同款进程死亡看护 —— 此前
+                    # 非流式 prompt 在子进程崩溃后只能挂满 stall 预算才报错。
+                    get_task = asyncio.ensure_future(self._rpc.events.get())
+                    died_task = asyncio.ensure_future(process_died_event.wait())
                     try:
-                        event = await asyncio.wait_for(
-                            self._rpc.events.get(), timeout=wait_budget
+                        done, _ = await asyncio.wait(
+                            {get_task, died_task},
+                            timeout=wait_budget,
+                            return_when=asyncio.FIRST_COMPLETED,
                         )
-                        last_event_at = time.monotonic()
-                        event_type = event.get("type")
-                        if event_type == "agent_settled":
-                            _drained_complete = True
+                        if died_task in done:
+                            process_died = True
                             break
-                        if event_type == "agent_end":
-                            # #855: stash the authoritative final text only from
-                            # a non-retrying agent_end; a willRetry=true end
-                            # carries the transient error message, not the turn
-                            # outcome — the retried run supersedes it.
-                            if not event.get("willRetry"):
-                                end_text = _extract_text_from_event(event)
-                                if end_text:
-                                    final_text = end_text
+                        if get_task in done:
+                            event = get_task.result()
+                            last_event_at = time.monotonic()
+                            event_type = event.get("type")
+                            if event_type == "agent_settled":
+                                _drained_complete = True
+                                break
+                            if event_type == "agent_end":
+                                # #855: stash the authoritative final text only from
+                                # a non-retrying agent_end; a willRetry=true end
+                                # carries the transient error message, not the turn
+                                # outcome — the retried run supersedes it.
+                                if not event.get("willRetry"):
+                                    end_text = _extract_text_from_event(event)
+                                    if end_text:
+                                        final_text = end_text
+                            else:
+                                text = _extract_text_from_event(event)
+                                if text:
+                                    final_text = text
                         else:
-                            text = _extract_text_from_event(event)
-                            if text:
-                                final_text = text
-                    except asyncio.TimeoutError:
-                        if (
-                            time.monotonic() - last_event_at >= PI_EVENT_STREAM_TIMEOUT
-                            or time.monotonic() - drain_started >= PI_TURN_TOTAL_TIMEOUT
-                        ):
-                            timed_out = True
-                            break
+                            # 超时且两任务都未完成 —— 连续静默/总预算检查
+                            if (
+                                time.monotonic() - last_event_at >= PI_EVENT_STREAM_TIMEOUT
+                                or time.monotonic() - drain_started >= PI_TURN_TOTAL_TIMEOUT
+                            ):
+                                timed_out = True
+                                break
+                    finally:
+                        for _t in (get_task, died_task):
+                            if not _t.done():
+                                _t.cancel()
                 # Best-effort: drain any leftover events so the next turn starts clean.
                 await self._drain_remaining_turn_events()
+                if process_died:
+                    # 子进程死亡：reader 的 finally 已失败所有 pending future；
+                    # 无需 abort RPC（进程已不在），外层 finally 会按需 respawn。
+                    rt_ev.settle(Outcome.FAILED, failure_class="process_died")
+                    raise PiRpcError(
+                        "Pi subprocess died mid-turn (non-streaming prompt); "
+                        "the turn did not complete."
+                    )
                 if timed_out:
                     # #554 defect 2: a drain that timed out without agent_settled
                     # is a PARTIAL turn. Previously the caller received a 200 with

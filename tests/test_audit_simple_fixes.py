@@ -135,6 +135,12 @@ class TestLockRenewTokenChecked:
 
         client = FakeClient()
         lock = _ResilientSessionLock(client, "k397", _InProcessLock())
+        # v2(gate)：不再 importlib.reload —— 重载会原地替换 distributed_lock
+        # 模块的全部类对象，晚绑定方法随后抛出「新」LockDegradedError，与
+        # 其它测试模块在收集期 from-import 的「旧」类身份不再匹配（全量
+        # 套件中 session_lock_resilience / runtime_v2 降级锁用例因此假败）。
+        # 手动恢复常量即可满足原本的清理意图。
+        original_interval = dl._RENEW_INTERVAL_S
         async with lock:
             assert lock._mode == "redis"
             # Shorten the renew interval for the test.
@@ -142,8 +148,7 @@ class TestLockRenewTokenChecked:
             try:
                 await asyncio.sleep(0.08)
             finally:
-                import importlib
-                importlib.reload(dl)
+                dl._RENEW_INTERVAL_S = original_interval
             assert client.calls >= 2, "renewal should have run at least twice"
             # Loop must have exited after the lost-ownership response.
             assert lock._renewer.done() or lock._renewer is None

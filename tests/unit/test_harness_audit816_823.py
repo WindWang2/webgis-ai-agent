@@ -134,7 +134,10 @@ class TestAudit821CancelledDispatch:
             verifiedTurnId = "t1"
 
         resp = await dispatch_tool(_Req())
-        assert resp.isError is False
+        # #1069(A-6): isError=True 与 legacy tool_pipeline 对齐（status=error
+        # + step_cancelled）—— 模型此前看到「成功」而文本说取消，可能当作
+        # 数据已到达继续推理。details.cancelled 仍是结构化取消标记。
+        assert resp.isError is True
         assert resp.details.get("cancelled") is True
         assert captured and captured[0].is_error is False
         assert captured[0].result.get("cancelled") is True

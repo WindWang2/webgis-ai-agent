@@ -472,6 +472,7 @@ def to_utm_gdf(geojson: Any, source_crs: Optional[str] = None) -> tuple[gpd.GeoD
         polar = abs_max_lat > 84.0
 
         utm_crs = None
+        result = None  # 跨 AM 分支成功时已填；#1063 守卫读取
         if not polar:
             if crosses_am:
                 center_shifted = (true_min + true_max) / 2.0
@@ -494,7 +495,9 @@ def to_utm_gdf(geojson: Any, source_crs: Optional[str] = None) -> tuple[gpd.GeoD
                 except Exception:
                     utm_crs = None
 
-        if utm_crs:
+        if utm_crs and result is None:
+            # #1063: 跨 AM 分支已在上方完成投影 + make_valid 并写入 result ——
+            # 此前无条件再次 to_crs 同一 CRS，白付一次全量投影 + make_valid。
             try:
                 projected = gdf.to_crs(utm_crs)
                 projected["geometry"] = projected.geometry.make_valid()

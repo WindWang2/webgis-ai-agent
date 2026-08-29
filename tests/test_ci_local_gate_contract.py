@@ -52,15 +52,16 @@ def test_ruff_gate_matches_workflow():
 
 def test_eslint_gate_matches_workflow():
     run = _job_run_text("lint")
-    assert "npx eslint . --max-warnings 0" in run, "workflow lint job 的 eslint 命令变了"
-    assert "npx eslint . --max-warnings 0" in _script(), (
+    assert "pnpm exec eslint . --max-warnings 0" in run, "workflow lint job 的 eslint 命令变了"
+    assert "pnpm exec eslint . --max-warnings 0" in _script(), (
         "ci-local.sh 必须跑仓级 eslint（--max-warnings 0），而非仅改动文件"
     )
 
 
 def test_frontend_test_and_typecheck_gates_match_workflow():
     run = _job_run_text("test-frontend")
-    for cmd in ("npm run test:ci", "npm run typecheck", "npm run build"):
+    # pnpm 是唯一包管理器（audit5 #1083）；断言带词边界，防 npm/pnpm 子串互混
+    for cmd in ("pnpm run test:ci", "pnpm run typecheck", "pnpm run build"):
         assert cmd in run, f"workflow test-frontend job 不再使用 {cmd}"
         assert cmd in _script(), f"ci-local.sh 未包含 {cmd}"
 

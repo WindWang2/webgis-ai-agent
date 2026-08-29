@@ -312,3 +312,29 @@ async def test_large_chart_goes_through_ref_channel(registry, clean_session):
     stored = await session_data_manager.get(clean_session, res["chart_ref"])
     assert stored["chart"]["title"] == "大数据"
     assert len(stored["chart"]["data"]) == 400
+
+
+@pytest.mark.asyncio
+async def test_component_update_change_is_json_serializable(registry, clean_session):
+    """#1065: placement 变更的 change 记录此前携带 pydantic ComponentPlacement
+    对象 —— dispatch 的 json.dumps(default=numpy_json_default) 抛 TypeError，
+    而变更已提交（重试=二次应用）。"""
+    import json as _json
+
+    from app.lib.numpy_json import numpy_json_default
+
+    await _seed_components(clean_session)
+    res = await registry.dispatch(
+        "webgis_component_update",
+        {"session_id": clean_session, "component_type": "north_arrow",
+         "placement": {"mode": "anchor", "anchor": "top-left"}},
+        session_id=clean_session,
+    )
+    assert res["success"] is True, res.get("message")
+    change = res.get("change") or {}
+    assert isinstance(change.get("placement"), dict), "change.placement 必须是 dict"
+    _json.dumps(res["change"], default=numpy_json_default)
+    _json.dumps(
+        res.get("component_mutation_evidence", {}).get("change", {}),
+        default=numpy_json_default,
+    )

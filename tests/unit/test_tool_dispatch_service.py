@@ -6,6 +6,8 @@
 harness 约定：clean_session fixture、fake_registry（MagicMock + AsyncMock）、
 _tc 工具调用辅助。
 """
+import json
+
 import pytest
 import shutil
 from unittest.mock import AsyncMock, MagicMock
@@ -740,3 +742,68 @@ async def test_native_heatmap_result_authors_heatmap_mapspec_layer(
     assert heat["heatmap"]["radius_px"] == 30
     assert heat["heatmap"]["bandwidth_m"] == 1500
     assert heat["provenance"]["algorithm"] == "heatmap_data"
+
+
+@pytest.mark.asyncio
+async def test_authoring_failure_drops_data_wrapped_body(
+    service, fake_registry, clean_session, monkeypatch,
+):
+    """#1061(a): #798 只修了成功路径 —— data-wrapped FC（#517 形族）在
+    authoring 失败时此前把全量要素体留在 raw_result 里。"""
+    feature_collection = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [104.0, 30.7]},
+            "properties": {"kind": "school"},
+        }],
+    }
+    fake_registry.dispatch.return_value = {
+        "success": True,
+        "summary": "poi result",
+        "data": feature_collection,
+    }
+    from app.services.mapspec_store import mapspec_store
+    monkeypatch.setattr(
+        mapspec_store,
+        "layer_upsert",
+        AsyncMock(side_effect=RuntimeError("authoring unavailable")),
+    )
+
+    result = await service.dispatch(
+        _tc("search_poi", {"q": "school"}, tc_id="call_1061a"), clean_session, set()
+    )
+    assert result.status == "ok"
+    assert result.raw_result.get("result_ref") is not None
+    assert "data" not in result.raw_result
+    assert "features" not in json.dumps(result.raw_result, default=str)
+
+
+@pytest.mark.asyncio
+async def test_corrupt_descriptor_does_not_fail_dispatch(
+    service, fake_registry, clean_session, monkeypatch,
+):
+    """#1061(b): authoring 前置 descriptor 抓取此前未守卫 —— 损坏的
+    descriptor JSON（ValueError）会在工具已成功执行、ref 已落库之后把
+    整个 dispatch 炸成失败。"""
+    feature_collection = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [104.1, 30.6]},
+            "properties": {},
+        }],
+    }
+    fake_registry.dispatch.return_value = feature_collection
+    from app.services.session_data import session_data_manager
+    monkeypatch.setattr(
+        session_data_manager,
+        "get_ref_descriptor",
+        AsyncMock(side_effect=ValueError("Expecting value: line 1 column 1 (char 0)")),
+    )
+    result = await service.dispatch(
+        _tc("search_poi", {"q": "x"}, tc_id="call_1061b"), clean_session, set()
+    )
+    # 工具已执行成功；descriptor 不可得只应降级元数据，不应整体失败
+    assert result.status == "ok"
+    assert result.geojson_ref and result.geojson_ref.startswith("ref:")

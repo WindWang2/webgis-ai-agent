@@ -47,7 +47,7 @@ function parseStats(raw: unknown): StatsPayload | null {
   return { title, items };
 }
 
-function StatisticsPanelView({ component }: { component: MapSpecComponent }) {
+function StatisticsPanelView({ component, ctx }: { component: MapSpecComponent; ctx?: RendererContext }) {
   const patched = usePlacementPatchedComponent(component);
   const variant = resolveVariant(patched, 'default') === 'compact' ? 'compact' : 'default';
   const stats = parseStats(patched.options?.['stats']);
@@ -57,6 +57,7 @@ function StatisticsPanelView({ component }: { component: MapSpecComponent }) {
     <FloatingChrome
       component={patched}
       title={title}
+      topSlotIndexes={ctx?.topSlotIndexes}
       testId="spec-chrome-statistics-panel"
       dataVariant={variant}
       bodyClassName={variant === 'compact' ? 'p-1.5' : 'p-2'}
@@ -99,7 +100,7 @@ function StatisticsPanelView({ component }: { component: MapSpecComponent }) {
 }
 
 function StatisticsPanelRenderer(component: MapSpecComponent, _ctx: RendererContext) {
-  return <StatisticsPanelView component={component} />;
+  return <StatisticsPanelView component={component} ctx={_ctx} />;
 }
 
 registerComponentRenderer('statistics_panel', StatisticsPanelRenderer);

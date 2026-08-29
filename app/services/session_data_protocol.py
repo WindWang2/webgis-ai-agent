@@ -176,6 +176,20 @@ class SessionStoreProtocol(Protocol):
         ...
 
 
+def _layer_matches_removal_family(layer_id, target_id) -> bool:
+    """#1074(F-12): 运行时删层的族谓词 —— 与 spec 侧 _should_remove_layer
+    （store.py：删 x 即删 x-label/x__*/x-* 族）语义对齐。此前运行时侧精确
+    id 匹配，伴生子层在 map_state.layers 残留（spec/运行时可见集分叉）。
+    """
+    if not isinstance(layer_id, str) or not isinstance(target_id, str) or not target_id:
+        return False
+    return (
+        layer_id == target_id
+        or layer_id.startswith(f"{target_id}-")
+        or layer_id.startswith(f"{target_id}__")
+    )
+
+
 class BaseSessionStore:
     """Abstract base class providing unified domain logic for SessionStore implementations.
 
@@ -196,6 +210,53 @@ class BaseSessionStore:
     async def resolve_alias(self, session_id: str, ref_or_alias: str) -> str:
         """Default fallback alias resolution. Overridden by subclasses if alias map is separate."""
         return ref_or_alias
+
+    async def append_map_action_event_batch(
+        self, session_id: str, events: list
+    ) -> list:
+        """#1081: 批量追加 ACK（每条返回 'stored'/'duplicate'/'dropped'）。
+
+        默认实现逐条走 singular 接口；append 返回 False 时按存储真相分类
+        （id 已存在 → duplicate；不存在 → dropped —— 与旧路由的快照分类
+        语义一致）。Redis 后端覆盖为单个 Lua 脚本（1 RTT、原子，
+        first-terminal-wins 保序保幂等，HEXISTS 即真 duplicate）。
+        """
+        out: list = []
+        unresolved: list[int] = []
+        for i, ev in enumerate(events):
+            action_id = str((ev or {}).get("action_id") or "")
+            if not action_id:
+                out.append("invalid")
+                continue
+            ok = await self.append_map_action_event(session_id, ev)
+            if ok:
+                out.append("stored")
+            else:
+                out.append(None)
+                unresolved.append(i)
+        if unresolved:
+            # 一次读取分类全部失败项（append-False = 首达获胜已存在，或
+            # 载荷非法被拒 —— 按存储是否存在区分 duplicate/dropped）。
+            try:
+                stored = await self.get_map_action_events(session_id)
+            except Exception:  # noqa: BLE001 - 分类尽力而为
+                stored = []
+            stored_ids = {
+                str((e or {}).get("action_id") or "") for e in stored or []
+            }
+            for i in unresolved:
+                action_id = str((events[i] or {}).get("action_id") or "")
+                out[i] = "duplicate" if action_id in stored_ids else "dropped"
+        return out
+
+    async def get_state_field(self, session_id: str, field: str) -> Any:
+        """#1064: 定向读单个 map_state 字段（授权/tombstone 检查用）。
+
+        默认实现回落到全量 get_map_state 后取字段（语义兜底）；Redis 后端
+        覆盖为单 HGET（不 HGETALL/不解析 1MiB 级 mapspec）。缺失返回 None。
+        """
+        state = await self.get_map_state(session_id)
+        return state.get(field)
 
     def _validate_owner_token(self, meta: Optional[Dict[str, Any]], owner_token: Optional[str]) -> Optional[SessionRefDataResult]:
         """Shared owner-token check for get_ref_data / get_ref_descriptor_authorized.
@@ -244,7 +305,15 @@ class BaseSessionStore:
         owner_token: Optional[str] = None,
     ) -> SessionRefDataResult:
         """Deep interface method: resolves alias, validates owner token if present, and returns deserialized data."""
-        meta = await self.get_session_metadata(session_id)
+        # #1064: 授权凭证只存在于两个特定状态字段。此前经
+        # get_session_metadata 物化整个会话包（mapspec 级 map_state 的
+        # HGETALL + deepcopy/L1 重解析）——15 层恢复扇出实测 195 条 Redis
+        # 命令 / 334ms（重会话 58ms/层）。定向读后 Redis 后端仅 2 次 HGET。
+        # 最小 meta 同时覆盖顶层与 map_state 嵌套两种读取形状。
+        meta: Dict[str, Any] = {
+            "owner_token_digest": await self.get_state_field(session_id, "owner_token_digest"),
+            "owner_token": await self.get_state_field(session_id, "owner_token"),
+        }
         denied = self._validate_owner_token(meta, owner_token)
         if denied is not None:
             return denied

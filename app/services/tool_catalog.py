@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import re
+import time
 from typing import Optional
 
 from app.tools.registry import ToolRegistry
@@ -180,7 +181,12 @@ class ToolCatalog:
         相同 turn_id，此时不重复衰减；跨用户轮传不同 turn_id 时衰减 1。未传
         时回退为按调用衰减（向后兼容）。
         """
-        active_domains = self._activate_domains(user_message, session_id, turn_id=turn_id)
+        # #1062: detect_domains 每 select 只跑一次（此前 _activate_domains 与
+        # _enforce_schema_budget 各跑一遍）。
+        fresh_domains = self.detect_domains(user_message or "")
+        active_domains = self._activate_domains(
+            user_message, session_id, turn_id=turn_id, _fresh=fresh_domains
+        )
         if declared_domains:
             active_domains = active_domains | set(declared_domains)
         names: set[str] = set()
@@ -200,6 +206,7 @@ class ToolCatalog:
         schemas = self.registry.get_schemas_subset(names)
         schemas = self._enforce_schema_budget(
             schemas, user_message, declared_domains, active_domains,
+            fresh_domains=fresh_domains,
         )
         logger.debug(
             "[ToolCatalog] session=%s domains=%s selected=%d/%d",
@@ -213,6 +220,7 @@ class ToolCatalog:
         user_message: Optional[str],
         declared_domains: Optional[set[str]],
         active_domains: set[str],
+        fresh_domains: Optional[set[str]] = None,
     ) -> list[dict]:
         """audit4 #981: tier-2 增量字节硬预算。
 
@@ -223,7 +231,7 @@ class ToolCatalog:
         if not schemas:
             return schemas
         budget = _TIER2_SCHEMA_BUDGET_BYTES
-        fresh = self.detect_domains(user_message or "")
+        fresh = fresh_domains if fresh_domains is not None else self.detect_domains(user_message or "")
         priority_domains: list[str] = sorted(fresh | set(declared_domains or ()))
         priority_domains += [d for d in sorted(active_domains) if d not in priority_domains]
         domain_rank = {d: i for i, d in enumerate(priority_domains)}
@@ -253,7 +261,13 @@ class ToolCatalog:
 
         sizes: dict[str, int] = {}
         for s in schemas:
-            sizes[s.get("function", {}).get("name", "")] = len(json.dumps(s, ensure_ascii=False))
+            name = s.get("function", {}).get("name", "")
+            # #1062: 优先走 registry 的注册期缓存；非 registry 来源（测试
+            # 自构 schema）回退直接 dumps。
+            cached_size = self.registry.schema_size(name)
+            sizes[name] = cached_size if cached_size is not None else len(
+                json.dumps(s, ensure_ascii=False)
+            )
         tier2.sort(key=_rank)
 
         kept_names = [name for name, _ in tier1]
@@ -333,9 +347,13 @@ class ToolCatalog:
         return triggered
 
     def _activate_domains(
-        self, user_message: str, session_id: Optional[str], turn_id: Optional[str] = None
+        self,
+        user_message: str,
+        session_id: Optional[str],
+        turn_id: Optional[str] = None,
+        _fresh: Optional[set[str]] = None,
     ) -> set[str]:
-        fresh = self.detect_domains(user_message or "")
+        fresh = _fresh if _fresh is not None else self.detect_domains(user_message or "")
         if not session_id or self.sticky_ttl == 0:
             return fresh
 
@@ -372,9 +390,32 @@ class ToolCatalog:
 
 
 def _local_osm_available() -> bool:
+    """本地 OSM GPKG 是否存在；60s TTL 缓存。
+
+    #1062：GPKG 可用性只能由运维动作改变，此前每次 catalog 选择（每个
+    LLM 轮）都在事件循环上做一次文件系统 stat。缓存按解析出的 GPKG 路径
+    键控 —— LOCAL_GEODATA_DIR 变更（测试 monkeypatch / 运维改配）不会
+    命中旧路径的缓存。
+    """
+    global _local_osm_cache
     try:
         from app.services.local_osm import theme_gpkg_path
 
-        return theme_gpkg_path("pois").exists()
+        gpkg = theme_gpkg_path("pois")
+        key = str(gpkg)
     except Exception:  # noqa: BLE001
         return False
+    now = time.monotonic()
+    cached = _local_osm_cache
+    if cached is not None and cached[0] == key and (now - cached[1]) < _LOCAL_OSM_CACHE_TTL:
+        return cached[2]
+    try:
+        available = gpkg.exists()
+    except Exception:  # noqa: BLE001
+        available = False
+    _local_osm_cache = (key, now, available)
+    return available
+
+
+_local_osm_cache: Optional[tuple[str, float, bool]] = None
+_LOCAL_OSM_CACHE_TTL = 60.0

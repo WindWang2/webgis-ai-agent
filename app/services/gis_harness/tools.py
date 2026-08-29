@@ -106,6 +106,24 @@ class ComponentUpdateArgs(BaseModel):
                                 "mutation_revision；落后即 superseded（用户最新交互优先）")
 
 
+def _manifest_stale(recorded: str) -> bool:
+    """#1084: 计划记录的 registry 指纹是否落后于当前编译（诚实披露）。"""
+    try:
+        from app.lib.gis.runtime_manifest import get_runtime_manifest
+        return get_runtime_manifest().stale(recorded)
+    except Exception:  # noqa: BLE001 - 指纹披露是增值信号，不阻断产品
+        return False
+
+
+# #1076(D-8): turn 级记忆 —— intent→product 链此前每个 harness 工具调用
+# 各查一次 DB（一条链 2 次往返）。缓存键为 (project_id, turn_id)：同 turn
+# 内的记忆漂移不可见（recipe 验证事实本 turn 内不会变），跨 turn 失效。
+_verified_recipes_cache: dict[tuple, tuple] = {}
+# #1076(D-8): 组件静态 variant 目录缓存（registry_version 失效）。
+_variant_catalog_cache: dict = {}
+_VERIFIED_CACHE_MAX = 64
+
+
 async def _project_verified_recipes() -> set:
     """当前 turn 的项目已验证 recipe id 集合（无项目上下文 → 空集）。
 
@@ -119,6 +137,11 @@ async def _project_verified_recipes() -> set:
     project_id = getattr(ctx, "project_id", None)
     if not project_id:
         return set()
+    turn_id = getattr(ctx, "turn_id", None) or ""
+    cache_key = (str(project_id), str(turn_id))
+    cached = _verified_recipes_cache.get(cache_key)
+    if cached is not None:
+        return set(cached)
 
     def _read() -> set:
         from app.core.database import SessionLocal
@@ -130,9 +153,13 @@ async def _project_verified_recipes() -> set:
     try:
         import asyncio as _asyncio
 
-        return await _asyncio.to_thread(_read)
+        verified = await _asyncio.to_thread(_read)
     except Exception:  # noqa: BLE001 — 记忆缺失退化为无加成
         return set()
+    _verified_recipes_cache[cache_key] = tuple(sorted(verified))
+    while len(_verified_recipes_cache) > _VERIFIED_CACHE_MAX:
+        _verified_recipes_cache.pop(next(iter(_verified_recipes_cache)))
+    return verified
 
 
 def register_gis_harness_tools(registry: ToolRegistry):
@@ -173,7 +200,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
         geometry_hint: Optional[str] = None,
     ) -> dict:
         from app.services.gis_harness.intent import merge_intent_hints, resolve_map_request_intent
-        from app.services.gis_harness.planner import MapProductPlanner, resolve_tool_for_capability
+        from app.services.gis_harness.planner import MapProductPlanner
 
         base = resolve_map_request_intent(query)
         hints: Dict[str, Any] = {}
@@ -222,8 +249,9 @@ def register_gis_harness_tools(registry: ToolRegistry):
         plan = planner.plan_from_intent(intent, available_tools=available or None)
 
         capabilities = []
-        # resolved_algorithm 与 plan 裁决证据同源；resolved_tool 保持与
-        # 真实注册表视图（available，含空视图）一致。
+        # #1076(D-7): resolved_tool 与 resolved_algorithm 同源于
+        # plan.algorithm_selections（此前 tool 字段对每 capability 再跑一遍
+        # resolver —— probe 实测恰 2× 解析，且两字段可能分叉）。
         selection_by_cap = {
             r.capability: r for r in plan.algorithm_selections
         }
@@ -232,7 +260,9 @@ def register_gis_harness_tools(registry: ToolRegistry):
             capabilities.append({
                 "capability": req.capability,
                 "purpose": req.purpose,
-                "resolved_tool": resolve_tool_for_capability(req.capability, available),
+                "resolved_tool": (
+                    record.tool if record and record.status == "resolved" else ""
+                ),
                 "resolved_algorithm": (
                     record.algorithm if record and record.status == "resolved"
                     else ""
@@ -346,6 +376,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
             template_id=template_id or "",
             recipe_id=_selected_recipe,
             available_tools=available or None,
+            project_verified=_verified,
         )
 
         # 主数据 profile（eligibility 复检输入）：优先 primary_ref descriptor，
@@ -563,6 +594,9 @@ def register_gis_harness_tools(registry: ToolRegistry):
                         "cartography": p_carto, "layer_type": p_type,
                         "authored": True,
                     })
+                    # #1068(E-7): points 层也转发证据 —— layout 后续失败时
+                    # 结果不再携带 heatmap 的过期 mutation_revision。
+                    out = _forward_evidence(res, out)
                 else:
                     msg = f"point layer authoring failed: {res.get('message')}"
                     out.setdefault("warnings", []).append(msg)
@@ -575,17 +609,21 @@ def register_gis_harness_tools(registry: ToolRegistry):
         # had to guess which layer/ramp the colorbar described.
         primary_bound = next(
             (b for b in bound_layers if b.get("role") == "primary"), None)
+        # #1067(E-8): 组合期 layer_bindings 恒空（finalize 在绑定回填之前
+        # 运行），legend 族组件此前永远 layerId=""。#718 只给 colorbar 补了
+        # 绑定 —— 扩展到全部 legend 族（legend / categorical_legend）。
+        _thematic_bound = primary_bound or next(iter(bound_layers), None)
         for comp in components:
-            if getattr(comp, "type", "") == "continuous_colorbar" and primary_bound:
+            _comp_type = getattr(comp, "type", "")
+            if _comp_type in ("continuous_colorbar", "legend", "categorical_legend") and _thematic_bound:
                 opts = dict(getattr(comp, "options", {}) or {})
-                opts.setdefault("layerId", primary_bound["layer_id"])
-                if opts.get("layerId") == "":
-                    opts["layerId"] = primary_bound["layer_id"]
-                if need_heatmap or any(
+                if not opts.get("layerId"):
+                    opts["layerId"] = _thematic_bound["layer_id"]
+                if _comp_type == "continuous_colorbar" and (need_heatmap or any(
                     b.get("layer_type") == "heatmap"
                     or b.get("cartography") == "visual_heatmap"
                     for b in bound_layers
-                ):
+                )):
                     opts["palette"] = palette
                 comp.options = opts
         if title:
@@ -593,6 +631,18 @@ def register_gis_harness_tools(registry: ToolRegistry):
             components = [c for c in components if c.type != "title"]
             components.append(title_component(title))
         component_dicts = [c.to_mapspec() for c in components]
+        # #1068(E-7): layout_set 整表替换组件表 —— 用户经
+        # webgis_component_update create=true 建的浮动面板（chart/statistics）
+        # 此前被静默丢弃。保留不在本产品组合内的既有用户面板；组合内的
+        # 以新组合（本次 agent 意图）为准。
+        _composed_ids = {str(c.get("id")) for c in component_dicts}
+        for _existing in (spec.get("layout") or {}).get("components") or []:
+            if (
+                isinstance(_existing, dict)
+                and _existing.get("type") in ("chart_panel", "statistics_panel")
+                and str(_existing.get("id")) not in _composed_ids
+            ):
+                component_dicts.append(_existing)
         layout_res = await mapspec_store.layout_set(
             session_id, components=component_dicts,
         )
@@ -640,8 +690,24 @@ def register_gis_harness_tools(registry: ToolRegistry):
         _caps_registry = get_capability_registry()
         _artifact_lineage: List[Dict[str, Any]] = []
         done_caps: set = set()
+        # #1067(E-4): 谱系查新 —— 此前用的是 :363 的变更前快照，本轮
+        # authored 的图层（heatmap/points）不在其中，producer_tool 恒空。
+        _post_spec = (
+            layout_res.get("mapspec") if isinstance(layout_res.get("mapspec"), dict) else None
+        )
+        if _post_spec is not None:
+            spec = _post_spec
         if primary_data is not None:
-            done_caps |= {"poi_query", "point_profile", "raster_source"}
+            # #1067: 此前无差别标 {poi_query, point_profile, raster_source} ——
+            # 栅格/面主数据也把点类能力标完成，completeness 谎报。按主数据
+            # 真实形态只标实际适用的来源能力。
+            _primary_geoms = set((profile or {}).get("geometryTypes") or [])
+            if str(primary_ref).startswith("ref:raster/"):
+                done_caps.add("raster_source")
+            elif "Point" in _primary_geoms or not _primary_geoms:
+                done_caps.update({"poi_query", "point_profile"})
+            else:
+                done_caps.add("poi_query")
         for entry in bound_layers:
             prov_layer = next(
                 (ly for ly in spec.get("layers", [])
@@ -760,13 +826,16 @@ def register_gis_harness_tools(registry: ToolRegistry):
             product_guidance.append(
                 f"⚠ {len(authoring_failures)} 项图层/组件提交失败 —— 产品不完整，需补数据或重试"
             )
+        _fallback_dicts = [
+            fb if isinstance(fb, dict) else fb.model_dump() for fb in plan.fallbacks
+        ]
         out.update({
             "recipe_id": plan.recipe_id,
             "template_id": plan.template_id,
             "status": plan.status,
             "layers": bound_layers,
             "components": component_dicts,
-            "fallbacks": [fb if isinstance(fb, dict) else fb.model_dump() for fb in plan.fallbacks],
+            "fallbacks": _fallback_dicts,
             "eligibility": plan.eligibility,
             "completeness": plan.completeness,
             "guidance": product_guidance[:10],
@@ -791,7 +860,9 @@ def register_gis_harness_tools(registry: ToolRegistry):
                     ] or [plan.recipe_id],
                 },
                 "recipe_eligibility": plan.eligibility,
-                "fallback_decisions": out.get("fallbacks", []),
+                # #1067: 此前是 out.get("fallbacks", []) —— 位于本字面量内部，
+                # 求值时 out 尚无该键，恒为 []（spec §2.7 要求证据携带回退转录）。
+                "fallback_decisions": _fallback_dicts,
                 # ── registry 编排证据（§27，有界转录）────────────────────
                 "capability_resolution": [
                     {"capability": r.capability, "status": r.status,
@@ -808,6 +879,10 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 "component_selection": [c["type"] for c in component_dicts],
                 "map_product_completeness": plan.completeness,
                 "bound_layers": bound_layers,
+                # #1084: 产品证据携带 registry 语义指纹；与当前编译指纹
+                # 不一致（计划跨部署重放）时如实披露 stale。
+                "manifest_fingerprint": plan.manifest_fingerprint,
+                "manifest_stale": _manifest_stale(plan.manifest_fingerprint),
             },
             "summary": (
                 f"产品组装完成 recipe={plan.recipe_id}；图层 {len(bound_layers)}，"
@@ -894,11 +969,13 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 "message": "至少提供一个突变字段 (enabled/position/placement/variant/style/options/chart/stats)",
             }
 
-        # payload 契约校验（与 chat generate_chart / statistics 面板同协议）
+        # #1068(E-3): spec 只读一次 —— 此前 component_id-only 分支读一次、
+        # 主路径再无条件读一次（每 single-component 编辑 2 次全量物化）。
+        _spec_early = None
         effective_type = component_type
         if component_id and not effective_type:
-            spec = await mapspec_store.get_mapspec(session_id) or {}
-            for c in (spec.get("layout") or {}).get("components") or []:
+            _spec_early = await mapspec_store.get_mapspec(session_id) or {}
+            for c in (_spec_early.get("layout") or {}).get("components") or []:
                 if isinstance(c, dict) and c.get("id") == component_id:
                     effective_type = str(c.get("type") or "")
                     break
@@ -925,6 +1002,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
         # chart 数据通道：小载荷 inline（options.chart），大载荷存 session
         # artifact ref（options.chartRef）——MapSpec 不背大数据（D2）。
         chart_options: Dict[str, Any] = {}
+        _pending_old_chart_ref: Optional[str] = None
         if chart is not None:
             from app.lib.json_size import estimate_json_bytes
             if estimate_json_bytes(chart) > 32 * 1024:
@@ -933,13 +1011,37 @@ def register_gis_harness_tools(registry: ToolRegistry):
                     session_id, {"chart": chart}, prefix="chart",
                 )
                 chart_options["chartRef"] = ref_id
+                # #1068(E-10): 被替换的旧 chartRef 从 options 排除但从不
+                # delete_ref —— 孤儿占 200 条/50MB LRU 预算，压力下可逐出
+                # 仍被 MapSpec source 引用的活 ref。记录待提交成功后删除
+                # （提前删会让失败路径的旧 ref 变悬空）。
+                _pending_old_chart_ref = None
+                _pre_spec = _spec_early if _spec_early is not None else (
+                    await mapspec_store.get_mapspec(session_id) or {}
+                )
+                for c in (_pre_spec.get("layout") or {}).get("components") or []:
+                    if not isinstance(c, dict) or not isinstance(c.get("options"), dict):
+                        continue
+                    matched = (
+                        (component_id and c.get("id") == component_id)
+                        or (not component_id and effective_type and c.get("type") == effective_type)
+                    )
+                    if matched and isinstance(c["options"].get("chartRef"), str):
+                        _pending_old_chart_ref = c["options"]["chartRef"]
+                        break
+                if _pending_old_chart_ref == ref_id:
+                    _pending_old_chart_ref = None
             else:
                 chart_options["chart"] = chart
         if stats is not None:
             chart_options["stats"] = stats
         merged_options = {**(options or {}), **chart_options} or None
 
-        spec = await mapspec_store.get_mapspec(session_id) or {}
+        spec = (
+            _spec_early
+            if _spec_early is not None
+            else await mapspec_store.get_mapspec(session_id) or {}
+        )
         raw_components = ((spec.get("layout") or {}).get("components")) or []
 
         # change 记录经同一纯函数预计算（引擎事务内再算一次，确定性一致）——
@@ -1007,6 +1109,14 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 "message": res.get("message") or "组件突变失败",
                 "correction_hint": res.get("correction_hint"),
             }
+
+        # #1068(E-10): 变更已提交，旧 chartRef 不再被 spec 引用 —— 现在删除
+        # 才安全（失败路径旧 ref 仍被引用）。
+        if _pending_old_chart_ref:
+            try:
+                await session_data_manager.delete_ref(session_id, _pending_old_chart_ref)
+            except Exception:  # noqa: BLE001 - 新 ref 已提交，旧 ref 清理 best-effort
+                pass
 
         final_components = (((res.get("mapspec") or {}).get("layout") or {}).get("components")) or []
         target_id = (change.get("id") if isinstance(change, dict) else None) or component_id
@@ -1091,15 +1201,23 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 summary["text"] = opts["text"][:60]
             return summary
 
+        # #1076(D-8): 静态目录进程级缓存（描述符载入后才变）—— 此前每次
+        # 调用全量排序重建。registry 版本号作为失效键（注册新描述符即变）。
         component_registry = get_component_registry()
-        variant_catalog = []
-        for desc in sorted(component_registry.native_descriptors(), key=lambda d: d.id):
-            variant_catalog.append({
-                "type": desc.type,
-                "variants": desc.variants,
-                "default_variant": desc.default_variant,
-                "default_position": desc.default_position,
-            })
+        _reg_version = component_registry.registry_version()
+        _cached_catalog = _variant_catalog_cache.get("catalog")
+        if _cached_catalog is None or _cached_catalog[0] != _reg_version:
+            variant_catalog = []
+            for desc in sorted(component_registry.native_descriptors(), key=lambda d: d.id):
+                variant_catalog.append({
+                    "type": desc.type,
+                    "variants": desc.variants,
+                    "default_variant": desc.default_variant,
+                    "default_position": desc.default_position,
+                })
+            _variant_catalog_cache["catalog"] = (_reg_version, variant_catalog)
+        else:
+            variant_catalog = _cached_catalog[1]
 
         # revision 唯一权威是 map_state._cartographic_mutation_revision
         # （引擎从不在 spec 文档内嵌该字段）。

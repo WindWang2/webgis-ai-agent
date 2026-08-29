@@ -89,3 +89,33 @@ def test_repair_json_string_quotes_and_braces():
     assert _repair_json(escaped_quote) == '{"name": "foo \\" {bar"}'
     assert json.loads(_repair_json(escaped_quote)) == {"name": 'foo " {bar'}
 
+
+
+def test_antimeridian_input_projects_exactly_once(monkeypatch):
+    """#1063: 跨 ±180° 输入此前被投影两次（AM 分支 + 通用分支），白付一次
+    全量 to_crs + make_valid。"""
+    import geopandas as gpd
+    from shapely.geometry import LineString
+    from app.lib.geo_processor.core import to_utm_gdf
+
+    gdf = gpd.GeoDataFrame(
+        {"name": ["am-line"]},
+        geometry=[LineString([(179.5, -18.0), (-179.5, -18.0)])],
+        crs="EPSG:4326",
+    )
+    calls = {"n": 0}
+    real_to_crs = gpd.GeoDataFrame.to_crs
+
+    def _counting(self, *a, **k):
+        calls["n"] += 1
+        return real_to_crs(self, *a, **k)
+
+    monkeypatch.setattr(gpd.GeoDataFrame, "to_crs", _counting)
+    res = to_utm_gdf(gdf.to_dict("records") or _fc(gdf))
+    assert res is not None and res[0] is not None
+    assert calls["n"] == 1, f"AM 输入应恰投影一次，实际 {calls['n']} 次"
+
+
+def _fc(gdf):
+    import json as _json
+    return _json.loads(gdf.to_json())

@@ -318,6 +318,44 @@ describe('MapPanel — basemap switch during in-flight reconcile (#459/#460/#461
     );
   });
 
+  it('#1078 FE1 (v2): custom-* overlays survive a basemap switch via the mount registry', async () => {
+    const specLayers = [pointLayer('poi', 'POI')];
+    const view = render(
+      <MapPanel layers={specLayers} onRemoveLayer={noop} onToggleLayer={noop} onViewportChange={noop} />,
+    );
+    await waitFor(() => expect(rmg.interactiveLayerIds).toEqual(['poi__point']), {
+      timeout: 3000,
+    });
+    await drainRuntime();
+
+    // 命令路径挂载 custom 覆盖层（经生产 renderer 缝 → 进挂载账本）
+    renderer.addGeoJsonSource(rmg.map as any, 'custom-v2-poi', {
+      type: 'FeatureCollection',
+      features: [],
+    });
+    renderer.addVectorLayer(rmg.map as any, {
+      id: 'custom-v2-poi',
+      type: 'circle',
+      source: 'custom-v2-poi',
+      paint: { 'circle-color': '#0ff' },
+    });
+    expect(rmg.map.getLayer('custom-v2-poi')).toBeTruthy();
+
+    // basemap 切换：setStyle 抹掉一切（含 custom 覆盖层）
+    basemap.index = 0;
+    rerenderPanel(view, specLayers);
+    expect(rmg.map.getLayer('custom-v2-poi')).toBeNull();
+
+    // 恢复 reconcile 完成后：spec 层与 custom 覆盖层都要回来
+    await drainRuntime();
+    expect(rmg.map.getSource('poi')).toBeTruthy();
+    expect(rmg.map.getLayer('custom-v2-poi')).toBeTruthy();
+    expect(rmg.map.getSource('custom-v2-poi')).toBeTruthy();
+    // 且 custom 带位于 spec 层之上（#461 序保持）
+    const order = rmg.map._layers.map((l: any) => l.id);
+    expect(order.indexOf('custom-v2-poi')).toBeGreaterThan(order.indexOf('poi__point'));
+  });
+
   it('#605: 3D terrain survives a basemap switch (style-epoch re-mount)', async () => {
     const specLayers = [pointLayer('poi', 'POI')];
     const view = render(

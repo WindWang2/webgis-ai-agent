@@ -34,7 +34,7 @@ def test_runtime_validator_lane_exists_and_is_nightly_only():
 def test_runtime_validator_lane_installs_playwright():
     steps = _workflow()["jobs"]["runtime-validator"]["steps"]
     run_text = "\n".join(str(s.get("run", "")) for s in steps if s.get("run"))
-    assert "npm ci" in run_text, "lane 必须 npm ci（playwright 包依赖）"
+    assert "pnpm install --frozen-lockfile" in run_text, "lane 必须 pnpm install --frozen-lockfile（playwright 包依赖；audit5 #1083 单一 lockfile）"
     assert "playwright install" in run_text, "lane 必须安装 playwright chromium"
 
 
