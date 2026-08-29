@@ -37,13 +37,13 @@ step "ruff (repo-wide, lint job)"
 ruff check --output-format=github app/ tests/ main.py manage.py
 
 step "eslint (repo-wide, lint job)"
-(cd frontend && npx eslint . --max-warnings 0)
+(cd frontend && pnpm exec eslint . --max-warnings 0)
 
 step "typecheck (test-frontend job)"
-(cd frontend && npm run typecheck)
+(cd frontend && pnpm run typecheck)
 
 step "vitest (test-frontend job)"
-(cd frontend && npm run test:ci)
+(cd frontend && pnpm run test:ci)
 
 # ── 契约层（#700 流程硬化）：根目录的跨模块契约/stub 测试不属任何 CI PR
 # lane 单独清单，历史上两次事故（#678 域词汇契约、#694 FrozenCatalog stub）
@@ -63,7 +63,7 @@ if [ "$FAST" = "1" ]; then
 fi
 
 step "next build (test-frontend job)"
-(cd frontend && npm run build)
+(cd frontend && pnpm run build)
 
 step "backend tests (test-backend job)"
 pytest --cov=app --cov-report=term-missing --cov-fail-under=75 \
