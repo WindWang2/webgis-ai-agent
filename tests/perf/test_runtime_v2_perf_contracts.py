@@ -12,7 +12,6 @@
 - PC-4: chat 准入 tombstone 检查走单字段读。
 """
 import uuid
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -67,7 +66,6 @@ async def test_pc1_finalize_batch_cost_independent_of_layer_count(clean_session)
                 full_reads["count"] += 1
                 return await orig(self, session_id)
 
-            from app.services.gis_world_state import mutation as mut_mod
             with pytest.MonkeyPatch.context() as mp:
                 mp.setattr(MemorySessionStore, "get_map_state", counting)
                 batch = await apply_gis_mutation_batch(

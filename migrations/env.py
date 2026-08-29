@@ -19,8 +19,12 @@ from alembic import context
 config = context.config
 
 # Interpret the config file for Python logging.
+# disable_existing_loggers=False：默认 True 会把进程内已配置的 logger 全部
+# 置 disabled（app.* 全静音）。对 CLI 迁移无感，但对同进程调用
+# `alembic.command.upgrade` 的单元测试是顺序污染源——之后所有 caplog
+# 断言都收不到 app.* 记录。
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # 审计 I6：优先从环境读 DATABASE_URL，覆盖 alembic.ini 的占位符。
 # 这让 `alembic upgrade head` 在 docker-compose / k8s 里直接可用。

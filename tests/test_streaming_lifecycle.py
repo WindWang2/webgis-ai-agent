@@ -254,6 +254,9 @@ async def test_dead_pi_bridge_falls_back_to_legacy_engine(monkeypatch):
     dead_bridge = MagicMock()
     dead_bridge._process_died = True
     dead_bridge.stream_prompt = AsyncMock()
+    # 路由先走 _ensure_pi_bridge_available：死桥会 await respawn_if_dead()
+    # 尝试复活；不配置 AsyncMock 的话 MagicMock 返回值不可 await。
+    dead_bridge.respawn_if_dead = AsyncMock(return_value=False)
     monkeypatch.setattr(chat_route, "pi_bridge", dead_bridge)
 
     # Legacy engine captures the turn.

@@ -187,7 +187,7 @@ def register_layer_management_tools(registry: ToolRegistry):
         # 展示集中 spec 不存在的 id（HUD-only/迟到挂载）：not_found 上报，
         # 前端命令的 pending presentation 仍可局部收敛。
         known_spec_ids = {
-            str(l.get("id")) for l in spec.get("layers", []) or [] if isinstance(l, dict)
+            str(lyr.get("id")) for lyr in spec.get("layers", []) or [] if isinstance(lyr, dict)
         }
         for missing_id in [i for i in resolved if i not in known_spec_ids]:
             show_intents.append(

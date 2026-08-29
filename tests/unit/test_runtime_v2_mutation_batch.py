@@ -10,24 +10,22 @@ Phase 2 + Phase 7 coverage:
 - H5: AUTO_SAFE set_layer_visibility updates the cartographic_intent stamp.
 """
 import uuid
-from unittest.mock import patch
 
 import pytest
 
 from app.services.mapspec.lifecycle_engine import (
-    MapSpecLifecycleEngine,
     PatchLayerPresentationIntent,
     UpsertLayerIntent,
     mapspec_lifecycle_engine,
 )
 from app.services.gis_world_state import apply_gis_mutation, apply_gis_mutation_batch
 from app.services.gis_world_state.provenance import append_provenance, ProvenanceEntry
-from app.services.session_data import session_data_manager, MemorySessionStore
+from app.services.session_data import session_data_manager
 
 
 async def _seed_layers(session_id: str, layer_ids: list[str], *, boundary: str | None = None) -> None:
     """以 spec-backed 层填充会话（复用生产 upsert 通道）。"""
-    engine = mapspec_lifecycle_engine
+    engine = mapspec_lifecycle_engine  # noqa: F841 — import 副作用锚定（engine 注册表装配）
     for lid in layer_ids:
         await engine.apply_mutation(
             session_id,
@@ -56,7 +54,7 @@ async def clean_session():
 async def test_finalize_batch_single_transaction_and_agent_origin(clean_session):
     """H1+H2：N 层收口 = 恰一次 commit、revision 恰 +1、owner=agent。"""
     await _seed_layers(clean_session, ["l-show", "l-hide-1", "l-hide-2", "l-b"], boundary="l-b")
-    engine = mapspec_lifecycle_engine
+    engine = mapspec_lifecycle_engine  # noqa: F841 — import 副作用锚定（engine 注册表装配）
 
     state0 = await session_data_manager.get_map_state(clean_session)
     rev0 = state0.get("_cartographic_mutation_revision", 0)
@@ -78,7 +76,7 @@ async def test_finalize_batch_single_transaction_and_agent_origin(clean_session)
     state1 = await session_data_manager.get_map_state(clean_session)
     assert state1["_cartographic_mutation_revision"] == rev0 + 1
     # H2：隐藏印记是 agent，不是 user
-    by_id = {l["id"]: l for l in state1["mapspec"]["layers"]}
+    by_id = {lyr["id"]: lyr for lyr in state1["mapspec"]["layers"]}
     for lid, expect_visible in [("l-show", True), ("l-hide-1", False), ("l-hide-2", False)]:
         intent = by_id[lid]["cartographic_intent"]
         assert intent["presentation_owner"] == "agent", (
@@ -95,7 +93,7 @@ async def test_finalize_via_tool_uses_batch(clean_session):
     from app.tools.registry import ToolRegistry
 
     await _seed_layers(clean_session, ["f-show", "f-mid", "f-b"], boundary="f-b")
-    engine = mapspec_lifecycle_engine
+    engine = mapspec_lifecycle_engine  # noqa: F841 — import 副作用锚定（engine 注册表装配）
     state0 = await session_data_manager.get_map_state(clean_session)
     rev0 = state0.get("_cartographic_mutation_revision", 0)
 
@@ -109,7 +107,7 @@ async def test_finalize_via_tool_uses_batch(clean_session):
     assert state1["_cartographic_mutation_revision"] == rev0 + 1, (
         "整批（show + 隐藏集）必须恰一次 revision 递增"
     )
-    by_id = {l["id"]: l for l in state1["mapspec"]["layers"]}
+    by_id = {lyr["id"]: lyr for lyr in state1["mapspec"]["layers"]}
     assert by_id["f-show"]["cartographic_intent"]["expected_visible"] is True
     assert by_id["f-mid"]["cartographic_intent"]["expected_visible"] is False
     assert by_id["f-mid"]["cartographic_intent"]["presentation_owner"] == "agent"
@@ -123,7 +121,7 @@ async def test_finalize_via_tool_uses_batch(clean_session):
 async def test_batch_refuses_user_hidden_and_noop_skips_commit(clean_session):
     """user-owned 隐藏层在展示集 → refused；全 refused 批不落盘不递增。"""
     await _seed_layers(clean_session, ["u-hidden"])
-    engine = mapspec_lifecycle_engine
+    engine = mapspec_lifecycle_engine  # noqa: F841 — import 副作用锚定（engine 注册表装配）
     # 用户 durable 隐藏（spec 印记路径）
     await apply_gis_mutation(
         clean_session,
@@ -148,7 +146,7 @@ async def test_batch_refuses_user_hidden_and_noop_skips_commit(clean_session):
     assert state1["_cartographic_mutation_revision"] == rev0, (
         "no-op 批（全 refused）不得递增 revision"
     )
-    by_id = {l["id"]: l for l in state1["mapspec"]["layers"]}
+    by_id = {lyr["id"]: lyr for lyr in state1["mapspec"]["layers"]}
     assert by_id["u-hidden"]["cartographic_intent"]["presentation_owner"] == "user"
     assert by_id["u-hidden"]["cartographic_intent"]["expected_visible"] is False
 
@@ -249,7 +247,7 @@ def test_auto_safe_visibility_updates_intent_stamp():
             {"operation": "set_layer_visibility", "layer_id": "y", "visible": True},
         ],
     )
-    by_id = {l["id"]: l for l in out["layers"]}
+    by_id = {lyr["id"]: lyr for lyr in out["layers"]}
     assert by_id["x"]["cartographic_intent"]["expected_visible"] is True
     assert by_id["x"]["cartographic_intent"]["presentation_owner"] == "system"
     # user-owned 印记不被系统修复改写；expected_visible 同步（review 5/6-B9：
@@ -264,7 +262,7 @@ async def test_patch_layer_style_intent_persists_paint(clean_session):
     from app.services.mapspec.lifecycle_engine import PatchLayerStyleIntent
 
     await _seed_layers(clean_session, ["sty-1"])
-    engine = mapspec_lifecycle_engine
+    engine = mapspec_lifecycle_engine  # noqa: F841 — import 副作用锚定（engine 注册表装配）
     res = await engine.apply_mutation(
         clean_session,
         PatchLayerStyleIntent(layer_id="sty-1", paint={"color": "#00ff00"}),
@@ -273,7 +271,7 @@ async def test_patch_layer_style_intent_persists_paint(clean_session):
     )
     assert res.is_error is False
     state = await session_data_manager.get_map_state(clean_session)
-    layer = next(l for l in state["mapspec"]["layers"] if l["id"] == "sty-1")
+    layer = next(lyr for lyr in state["mapspec"]["layers"] if lyr["id"] == "sty-1")
     assert layer["paint"]["color"] == "#00ff00"
     # 幂等合并：第二次 patch 保留第一次的键
     res2 = await engine.apply_mutation(
@@ -284,7 +282,7 @@ async def test_patch_layer_style_intent_persists_paint(clean_session):
     )
     assert res2.is_error is False
     state2 = await session_data_manager.get_map_state(clean_session)
-    layer2 = next(l for l in state2["mapspec"]["layers"] if l["id"] == "sty-1")
+    layer2 = next(lyr for lyr in state2["mapspec"]["layers"] if lyr["id"] == "sty-1")
     assert layer2["paint"] == {"color": "#00ff00", "radius": 12}
     # 未知层拒绝
     res3 = await engine.apply_mutation(
@@ -347,7 +345,7 @@ async def test_engine_batch_fails_closed_on_degraded_lock(clean_session):
 async def test_engine_batch_aborts_when_lock_lost_mid_batch(clean_session):
     """锁 TTL 丢失（commit 前置复检）→ 批中止、零持久化、结构化错误。"""
     await _seed_layers(clean_session, ["lost-1"])
-    engine = mapspec_lifecycle_engine
+    engine = mapspec_lifecycle_engine  # noqa: F841 — import 副作用锚定（engine 注册表装配）
     state0 = await session_data_manager.get_map_state(clean_session)
     rev0 = state0["_cartographic_mutation_revision"]
 
@@ -381,7 +379,7 @@ async def test_engine_batch_aborts_when_lock_lost_mid_batch(clean_session):
     assert "lost" in batch.error_msg.lower()
     state1 = await session_data_manager.get_map_state(clean_session)
     assert state1["_cartographic_mutation_revision"] == rev0, "lost 批不得递增 revision"
-    by_id = {l["id"]: l for l in state1["mapspec"]["layers"]}
+    by_id = {lyr["id"]: lyr for lyr in state1["mapspec"]["layers"]}
     assert by_id["lost-1"]["cartographic_intent"]["expected_visible"] is True
 
 
@@ -390,7 +388,7 @@ async def test_concurrent_user_hide_vs_agent_finalize_batch(clean_session):
     """并发 user hide vs agent finalize：无论交错，用户决策最终存活。"""
     import asyncio
     await _seed_layers(clean_session, ["race-a", "race-b"])
-    engine = mapspec_lifecycle_engine
+    engine = mapspec_lifecycle_engine  # noqa: F841 — import 副作用锚定（engine 注册表装配）
 
     async def user_hide():
         # 用户 durable 隐藏 race-a（CAS 重试至成功 —— 与 agent 批竞态）
@@ -428,7 +426,7 @@ async def test_concurrent_user_hide_vs_agent_finalize_batch(clean_session):
 
     await asyncio.gather(user_hide(), agent_finalize())
     state = await session_data_manager.get_map_state(clean_session)
-    by_id = {l["id"]: l for l in state["mapspec"]["layers"]}
+    by_id = {lyr["id"]: lyr for lyr in state["mapspec"]["layers"]}
     a_intent = by_id["race-a"]["cartographic_intent"]
     # 不变量：用户隐藏要么成立（owner=user/hidden），要么 agent 批从未翻回
     #（refused）—— 二者必居其一，绝无 agent-owned visible=true 覆盖用户隐藏。

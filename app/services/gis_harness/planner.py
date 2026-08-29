@@ -203,7 +203,7 @@ class MapProductPlanner:
         # plan_from_intent 是纯函数 —— 以 (query, recipe, template,
         # available_tools, manifest 指纹) 为键 memo；registry 内容变化
         # （manifest 指纹变）自动失效。有界 64。
-        self._plan_memo: "OrderedDictT" = {}
+        self._plan_memo: dict = {}
         self._plan_memo_max = 64
 
     # ── registry 裁决辅助 ─────────────────────────────────────────────
@@ -271,7 +271,6 @@ class MapProductPlanner:
         # available_tools 参与（工具面变化改变 resolution evidence）；
         # project_verified 参与（#864 项目记忆排序）。测试可用 use_memo=False
         # 绕过。
-        from collections import OrderedDict
         memo_key = None
         if use_memo:
             try:
@@ -739,7 +738,8 @@ __all__ = [
     "AlgorithmSelectionRecord",
     "PlannedLayer",
     "MapProductPlanner",
-    "CAPABILITY_TOOLS",
+    # CAPABILITY_TOOLS 经 PEP 562 __getattr__ 惰性提供，不在模块命名空间（ruff F822 豁免）
+    "CAPABILITY_TOOLS",  # noqa: F822
     "capability_tool_map",
     "resolve_tool_for_capability",
     "layer_type_for_cartography",

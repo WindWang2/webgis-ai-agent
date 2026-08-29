@@ -126,9 +126,12 @@ describe('audit #841: radius windows', () => {
 });
 
 describe('#1077 aliased spec-backed rows (runtimePatch mirror)', () => {
-  it('rows whose id is a geojson ref but _mapspecLayerId matches the spec are guarded', () => {
+  it('rows whose id is a geojson ref but _mapspecLayerId matches the spec route edits to the spec layer', () => {
     // runtimePatch 挂载行：id 是 ref，_mapspecLayerId 才是 spec 层 id ——
-    // 此前精确 id 匹配误判非 specBacked（样式控件可用但 compose 不消费）。
+    // 精确 id 匹配会把这类行误判为非 specBacked（样式控件可用但 compose
+    // 不消费 = 静默 no-op）。v2 守卫语义：行被识别为 spec-backed 后，
+    // 规范键控件启用且经 durable 通道按 _mapspecLayerId 提交到 spec 层；
+    // 非规范滤镜控件保持禁用 —— 不再整组 fieldset 禁用。
     mockState.editingLayerId = 'ref:geojson-abc';
     (mockState.layers as any)[0] = {
       ...mockState.layers[0],
@@ -138,7 +141,13 @@ describe('#1077 aliased spec-backed rows (runtimePatch mirror)', () => {
     committedSpec = { layers: [{ id: 'poi-main' }], sources: {} };
     render(<LayerStylePanel />);
     const fieldset = document.querySelector('fieldset');
-    expect(fieldset?.disabled).toBe(true);
+    expect(fieldset?.disabled).toBe(false);
+    // 规范键控件（填充颜色）启用 —— durable 提交按 spec 层键路由
+    const color = screen.getByLabelText('填充颜色') as HTMLInputElement;
+    expect(color.disabled).toBe(false);
+    // 滤镜类控件（线型，规范未建模）保持禁用
+    const dashButton = screen.getByText('虚线') as HTMLButtonElement;
+    expect(dashButton.disabled).toBe(true);
     // restore shared mock state
     mockState.editingLayerId = 'layer-1';
     (mockState.layers as any)[0] = {

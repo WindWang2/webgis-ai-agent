@@ -14,7 +14,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-import app.services.distributed_lock as dl
 from app.services.distributed_lock import (
     _InProcessLock,
     _ResilientSessionLock,
@@ -193,9 +192,6 @@ async def test_session_plan_fails_closed_on_degraded_lock(monkeypatch):
 
     旧行为：默认 fail_on_degraded=False → 两 pod 各持进程内锁 last-write-wins。
     """
-    from app.services.distributed_lock import (
-        _InProcessLock, _ResilientSessionLock, LockDegradedError,
-    )
     fake_client = MagicMock()
     fake_client.set = AsyncMock(side_effect=ConnectionError("redis down"))
 

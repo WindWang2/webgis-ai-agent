@@ -173,11 +173,12 @@ def set_tool_registry(registry: "ToolRegistry") -> None:
     """Inject the live ToolRegistry so tool dispatch goes to real GIS tools."""
     global _tool_registry
     _tool_registry = registry
-    # 评审修复（#1084）：注入即失效 Runtime Manifest —— 防止 lifespan 注入前
-    # 的首次访问把空工具面指纹钉死整个进程。
+    # 评审修复（#1084）：注入即重编译 Runtime Manifest —— 防止 lifespan 注入前
+    # 的首次访问把空工具面指纹钉死整个进程。v2 manifest 惰性缓存一次编译，
+    # refresh_runtime_manifest() 强制按新注入的 registry 重编译。
     try:
-        from app.lib.gis.runtime_manifest import reset_runtime_manifest
-        reset_runtime_manifest()
+        from app.lib.gis.runtime_manifest import refresh_runtime_manifest
+        refresh_runtime_manifest()
     except Exception:  # noqa: BLE001 - manifest 是投影，失效失败不阻断注入
         pass
     logger.info(f"[PiBridge] Tool registry injected ({len(registry.list_tools())} tools)")

@@ -58,25 +58,22 @@ describe('resolveVariant', () => {
   });
 });
 
-describe('#1079(G-8) top-slot stacking', () => {
-  it('two top-left panels get distinct stacking offsets', () => {
-    const chart = { id: 'c1', type: 'chart_panel', enabled: true } as any;
-    const stats = { id: 's1', type: 'statistics_panel', enabled: true } as any;
-    const title = { id: 't1', type: 'title', enabled: true } as any;
-    const idx = buildTopSlotIndexes([chart, stats, title]);
-    // title 为 pin 层（第 0 层）；两个面板分别 1、2 层上移
-    const offsets = [idx.get(chart), idx.get(stats)].sort();
-    expect(offsets).toEqual([1, 2]);
-    const styleChart = stackedTopStyle(chart, idx)!;
-    const styleStats = stackedTopStyle(stats, idx)!;
-    expect(styleChart.top).not.toEqual(styleStats.top);
-    expect(String(styleChart.top)).toContain('calc(var(--map-chrome-top');
+describe('#1079 top-slot stacking (v2 semantics)', () => {
+  it('single top-left panel gets no stacking offset (style undefined)', () => {
+    const stats = { id: 's1', type: 'statistics_panel', position: 'top-left', enabled: true } as any;
+    expect(stackedTopStyle(stats, buildTopSlotIndexes([stats]))).toBeUndefined();
   });
 
-  it('single-panel slot stays at the base offset (no stacking)', () => {
-    const stats = { id: 's1', type: 'statistics_panel', enabled: true } as any;
-    const idx = buildTopSlotIndexes([stats]);
-    expect(idx.get(stats)).toBeUndefined();
-    expect(stackedTopStyle(stats, idx)!.top).toContain('6px');
+  it('two top-left panels get distinct stacking offsets', () => {
+    const chart = { id: 'c1', type: 'chart_panel', position: 'top-left', enabled: true } as any;
+    const stats = { id: 's1', type: 'statistics_panel', position: 'top-left', enabled: true } as any;
+    const idx = buildTopSlotIndexes([chart, stats]);
+    // v2 语义：槽内第 0 层（priority 高者）贴基准位无偏移（style undefined），
+    // 第 1 层上移一个 step —— 两层面板不再互压。
+    const styleChart = stackedTopStyle(chart, idx);
+    const styleStats = stackedTopStyle(stats, idx);
+    expect(!!styleChart).not.toEqual(!!styleStats);
+    const offset = (styleChart ?? styleStats)!;
+    expect(offset.top).toContain('calc(0.75rem + 36px)');
   });
 });

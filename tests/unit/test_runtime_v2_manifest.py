@@ -12,7 +12,6 @@ Covers:
 import pytest
 
 from app.lib.gis.runtime_manifest import (
-    CompiledRuntimeManifest,
     compile_runtime_manifest,
     validate_runtime_manifest_strict,
 )
