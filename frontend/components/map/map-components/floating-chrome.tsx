@@ -81,6 +81,9 @@ export interface FloatingChromeProps {
   bodyClassName?: string;
   className?: string;
   testId?: string;
+  /** #1079(G-8): anchor 模式的槽位堆叠偏移（顶部同槽面板互压时由渲染器
+   * 经 ctx.topSlotIndexes 计算）；floating 模式忽略。 */
+  anchorStyle?: React.CSSProperties;
   children: React.ReactNode;
 }
 
@@ -92,6 +95,7 @@ export function FloatingChrome({
   bodyClassName,
   className,
   testId,
+  anchorStyle,
   children,
 }: FloatingChromeProps) {
   // 内部再合并一次 override（幂等）：直接使用 FloatingChrome 的调用方
@@ -262,6 +266,34 @@ export function FloatingChrome({
     commitPlacement(nextPlacement, nextPlacement);
   }
 
+  /**
+   * #1079(G-11): 键盘移动 —— 标题栏方向键微移（16px/步；Shift ×5）。
+   * 镜像 LayersTab 的 Alt+↑/↓ 键盘重排约定：拖拽/缩放此前仅指针可达。
+   * 锚定面板第一次移动即转 floating（与拖拽的锚定转换语义一致）。
+   */
+  function nudgeFromKeyboard(e: React.KeyboardEvent<HTMLDivElement>): void {
+    const stepMap: Record<string, [number, number]> = {
+      ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0],
+    };
+    const delta = stepMap[e.key];
+    if (!delta) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const el = containerRef.current;
+    if (!el) return;
+    const step = e.shiftKey ? 80 : 16;
+    const origin = measureOrigin(el);
+    const next: Geometry = {
+      x: origin.x + delta[0] * step,
+      y: origin.y + delta[1] * step,
+      width: origin.width,
+      height: origin.height,
+    };
+    const nextPlacement = toPlacement(next);
+    // 手感：本地立即生效（override），提交失败回滚由 commitPlacement 负责。
+    commitPlacement(nextPlacement, nextPlacement);
+  }
+
   /** 折叠：placement.collapsed 持久化（floating 原地折叠；锚定转 anchor placement）。 */
   function toggleCollapse() {
     const collapsed = !(placement?.collapsed ?? false);
@@ -299,13 +331,16 @@ export function FloatingChrome({
     }
     : floating
       ? placementStyle(merged)
-      : undefined;
+      // #1079(G-8): anchor 模式应用顶部同槽堆叠偏移（互压面板分层）。
+      : anchorStyle;
 
   return (
     <div
       ref={containerRef}
       data-testid={testId}
       data-variant={dataVariant}
+      role="region"
+      aria-label={title}
       className={`${transparent
         ? 'border border-map-chrome-border bg-transparent text-map-chrome-ink'
         : 'map-chrome text-map-chrome-ink'} absolute flex flex-col overflow-hidden rounded-chrome ${gestureActive || floating ? '' : `z-30 ${positionClass(merged)}`} ${className ?? ''}`}
@@ -314,6 +349,9 @@ export function FloatingChrome({
       <div
         data-testid={testId ? `${testId}-title-bar` : 'floating-chrome-title-bar'}
         className="flex cursor-grab select-none touch-none items-center justify-between gap-2 border-b border-map-chrome-border px-2 py-1 active:cursor-grabbing"
+        tabIndex={0}
+        aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight"
+        onKeyDown={nudgeFromKeyboard}
         onPointerDown={onTitlePointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={finishGesture}

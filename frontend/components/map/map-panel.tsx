@@ -35,6 +35,7 @@ import { LegendStack } from "./legend-stack"
 import { MapDecorations } from "./map-decorations"
 import { useHudStore, type HudState } from "@/lib/store/useHudStore"
 import * as renderer from "@/lib/map-kit/renderer"
+import { remountCustomOverlays } from "@/lib/map-commands/custom-overlay-registry"
 import { fitBounds as navFitBounds, calculateBBox, calculateBBoxAsync } from "@/lib/map-kit/navigation"
 import { MapSpecRuntime } from "@/lib/mapspec-runtime"
 import { composeLiveMapSpec } from "@/lib/mapspec/live-spec"
@@ -473,7 +474,13 @@ export function MapPanel({
         // layer-changing reconcile — syncLayerZOrder stacks all spec sublayers
         // on top and nothing re-raises the custom band. Restore it FIRST so
         // the ephemeral UX stacks below stay topmost.
-        if (map) renderer.raiseCustomOverlayLayers(map)
+        if (map) {
+          // #1078(G-1): basemap 切换的 setStyle 会把命令式 custom-* 覆盖层
+          // 连同源一起 wipe（注记/地形有重挂，custom 只有 z-raise）—— 恢复
+          // reconcile 收尾时先补挂缺失的登记项，再抬升 z-band。
+          remountCustomOverlays(map)
+          renderer.raiseCustomOverlayLayers(map)
+        }
         // FIX-3-2: syncLayerZOrder buried the selection highlight under the
         // spec sublayers — put it back on top now that the reconcile settled.
         raiseSelectionHighlight()

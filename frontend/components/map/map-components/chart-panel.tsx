@@ -9,7 +9,7 @@ import {
   loadChartArtifact,
 } from '@/lib/map-components/chart-artifact';
 import { registerComponentRenderer } from './registry';
-import { resolveVariant } from './helpers';
+import { resolveVariant, stackedTopStyle } from './helpers';
 import { FloatingChrome, usePlacementPatchedComponent } from './floating-chrome';
 import type { RendererContext } from './types';
 
@@ -60,7 +60,7 @@ function refChartState(chartRef: string, fetched: ChartData | null | undefined):
   return cached ? { status: 'ready', chart: cached } : { status: 'unavailable' };
 }
 
-function ChartPanelView({ component }: { component: MapSpecComponent }) {
+function ChartPanelView({ component, anchorStyle }: { component: MapSpecComponent; anchorStyle?: React.CSSProperties }) {
   const patched = usePlacementPatchedComponent(component);
   const variant = resolvePanelVariant(patched);
   const placement = patched.placement;
@@ -102,6 +102,7 @@ function ChartPanelView({ component }: { component: MapSpecComponent }) {
   return (
     <FloatingChrome
       component={patched}
+      anchorStyle={anchorStyle}
       title={title}
       testId="spec-chrome-chart-panel"
       dataVariant={variant}
@@ -127,8 +128,8 @@ function ChartPanelView({ component }: { component: MapSpecComponent }) {
   );
 }
 
-function ChartPanelRenderer(component: MapSpecComponent, _ctx: RendererContext) {
-  return <ChartPanelView component={component} />;
+function ChartPanelRenderer(component: MapSpecComponent, ctx: RendererContext) {
+  return <ChartPanelView component={component} anchorStyle={stackedTopStyle(component, ctx?.topSlotIndexes)} />;
 }
 
 registerComponentRenderer('chart_panel', ChartPanelRenderer);

@@ -6,6 +6,7 @@ import { devOnly } from '@/lib/utils/logger';
 import { parseFilter } from './parseFilter';
 import { isMvtLayer } from '@/lib/store/layer-data';
 import { getCommittedMapSpec } from '@/lib/mapspec/session-cursor';
+import { rememberCustomOverlay } from './custom-overlay-registry';
 import { noteAgentDisplayed } from '@/lib/chat/turn-focus';
 import {
   isCustomSchemeMatch,
@@ -188,6 +189,21 @@ export const layerCommands: Record<string, CommandEntry> = {
           paint: style || {}
         });
       }
+      // #1078(G-1): 登记 basemap setStyle 后的重挂闭包（spec 承载层由
+      // 恢复 reconcile 重建，custom-* 此前被 wipe 后永不复现）。
+      rememberCustomOverlay(id, (m) => {
+        renderer.addGeoJsonSource(m, id, geojson);
+        if (style && ((style as any).type === 'choropleth' || (style as any).type === 'lisa')) {
+          renderer.addThematicLayer(m, id, geojson, style as any);
+        } else {
+          renderer.addVectorLayer(m, {
+            id,
+            type: (type || 'fill') as any,
+            source: id,
+            paint: style || {}
+          });
+        }
+      });
 
       if (flyTo) {
         // #668: descriptor.bbox is the fast path for MVT-backed large layers — full-FC scan only as fallback
@@ -248,6 +264,19 @@ export const layerCommands: Record<string, CommandEntry> = {
           'raster-opacity': opacity,
           'raster-fade-duration': 500
         }
+      });
+      // #1078(G-1): raster 覆盖层的 setStyle 后重挂（同 add_layer）。
+      rememberCustomOverlay(layerId, (m) => {
+        renderer.addImageSource(m, sourceId, imageUrl, coordinates);
+        renderer.addVectorLayer(m, {
+          id: layerId,
+          type: 'raster',
+          source: sourceId,
+          paint: {
+            'raster-opacity': opacity,
+            'raster-fade-duration': 500
+          },
+        });
       });
 
       navigation.fitBounds(map, bbox, 80);
@@ -694,6 +723,27 @@ export const layerCommands: Record<string, CommandEntry> = {
       // exist on the map (getLayer) before we claim confirmed.
       for (const id of matched) {
         if (!map.getLayer?.(id)) return nonConfirmableAck(storeMatched);
+      }
+      // #1077: spec 承载层的样式命令没有持久通道（committed MapSpec 的
+      // paint 不被本命令改写，下一次同层 recompile 即回滚）—— 诚实返回
+      // store_updated 上限而非 confirmed（后者让 harness 视作已收敛，
+      // 随后的静默回滚与之矛盾）。需要持久样式时走重新 authoring。
+      const specLayerIds = new Set(
+        ((getCommittedMapSpec()?.layers || []) as any[]).map((l) => String(l.id)),
+      );
+      const specBackedTarget = matched.some(
+        (id) => specLayerIds.has(String(id))
+          || [...specLayerIds].some((sid) => String(id).startsWith(`${sid}__`)),
+      );
+      if (specBackedTarget) {
+        return {
+          status: 'succeeded',
+          result: {
+            store_updated: true,
+            durable: false,
+            note: '样式已应用到当前渲染与面板；该层由 MapSpec 承载，未写入 committed paint —— 同层任何重编译会回滚。需持久请重新 authoring 该层。',
+          },
+        };
       }
       // V3: verifiable marker (layer style update — harness convergence).
       return { status: 'succeeded', result: { confirmed: true } };

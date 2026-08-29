@@ -2,6 +2,7 @@ import type { CommandEntry } from './types';
 import type { ThematicStyleDef } from '@/lib/map-kit/types';
 import * as navigation from '@/lib/map-kit/navigation';
 import * as renderer from '@/lib/map-kit/renderer';
+import { rememberCustomOverlay } from './custom-overlay-registry';
 
 /**
  * Heatmap / thematic-map commands.
@@ -37,6 +38,16 @@ export const heatmapCommands: Record<string, CommandEntry> = {
         type: 'raster',
         source: id,
         paint: { 'raster-opacity': opacity || 0.7 }
+      });
+      // #1078(G-1): setStyle 后重挂登记（与 add_raster_layer 同型）。
+      rememberCustomOverlay(id, (m) => {
+        renderer.addImageSource(m, id, image, coords);
+        renderer.addVectorLayer(m, {
+          id,
+          type: 'raster',
+          source: id,
+          paint: { 'raster-opacity': opacity || 0.7 },
+        });
       });
 
       navigation.fitBounds(map, bbox, 50);
@@ -89,6 +100,19 @@ export const heatmapCommands: Record<string, CommandEntry> = {
         intensity: intensity ?? meta.intensity,
         opacity: 0.8
       });
+      // #1078(G-1): setStyle 后重挂登记。
+      rememberCustomOverlay(id, (m) => {
+        renderer.addGeoJsonSource(m, id, geojson);
+        renderer.addNativeHeatmap(m, {
+          id,
+          source: id,
+          palette: (heatPalette ?? palette ?? meta.palette) as any,
+          radiusPx: radiusPx ?? meta.radius_px,
+          radius: radius ?? meta.radius,
+          intensity: intensity ?? meta.intensity,
+          opacity: 0.8,
+        });
+      });
       // V3 round-2 FIX-B (issue #393): post-mutation verification — both the
       // source and the heatmap layer must exist before claiming success (was:
       // unconditional void → fake succeeded ack).
@@ -117,6 +141,11 @@ export const heatmapCommands: Record<string, CommandEntry> = {
       const id = `custom-${layerId || 'thematic-' + (field || Date.now())}`;
       renderer.addGeoJsonSource(map, id, geojson);
       renderer.addThematicLayer(map, id, geojson, style);
+      // #1078(G-1): setStyle 后重挂登记。
+      rememberCustomOverlay(id, (m) => {
+        renderer.addGeoJsonSource(m, id, geojson);
+        renderer.addThematicLayer(m, id, geojson, style);
+      });
       // V3 round-2 FIX-B (issue #393): post-mutation verification — the source
       // and the thematic layer must exist before claiming success (was:
       // unconditional void → fake succeeded ack).

@@ -2,7 +2,7 @@
 import React from 'react';
 import type { MapSpecComponent } from '@/lib/mapspec-compiler/types';
 import { registerComponentRenderer } from './registry';
-import { resolveVariant } from './helpers';
+import { resolveVariant, stackedTopStyle } from './helpers';
 import { FloatingChrome, usePlacementPatchedComponent } from './floating-chrome';
 import type { RendererContext } from './types';
 
@@ -47,7 +47,7 @@ function parseStats(raw: unknown): StatsPayload | null {
   return { title, items };
 }
 
-function StatisticsPanelView({ component }: { component: MapSpecComponent }) {
+function StatisticsPanelView({ component, anchorStyle }: { component: MapSpecComponent; anchorStyle?: React.CSSProperties }) {
   const patched = usePlacementPatchedComponent(component);
   const variant = resolveVariant(patched, 'default') === 'compact' ? 'compact' : 'default';
   const stats = parseStats(patched.options?.['stats']);
@@ -56,6 +56,7 @@ function StatisticsPanelView({ component }: { component: MapSpecComponent }) {
   return (
     <FloatingChrome
       component={patched}
+      anchorStyle={anchorStyle}
       title={title}
       testId="spec-chrome-statistics-panel"
       dataVariant={variant}
@@ -98,8 +99,8 @@ function StatisticsPanelView({ component }: { component: MapSpecComponent }) {
   );
 }
 
-function StatisticsPanelRenderer(component: MapSpecComponent, _ctx: RendererContext) {
-  return <StatisticsPanelView component={component} />;
+function StatisticsPanelRenderer(component: MapSpecComponent, ctx: RendererContext) {
+  return <StatisticsPanelView component={component} anchorStyle={stackedTopStyle(component, ctx?.topSlotIndexes)} />;
 }
 
 registerComponentRenderer('statistics_panel', StatisticsPanelRenderer);

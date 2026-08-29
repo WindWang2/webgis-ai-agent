@@ -114,7 +114,30 @@ export const createLayersSlice: StateCreator<HudState, [], [], Partial<HudState>
         )),
       };
     }),
-  reorderLayers: (layers) => set({ layers }),
+  reorderLayers: (layers) => set((s) => {
+    // #1078(G-6): 同数组 no-op 门（与 updateLayer 的 #739 同款）—— 等值
+    // reorder 不 bump layers 身份 / 不触发 reconcile effect。
+    if (layers === s.layers || layers.length === s.layers.length
+      && layers.every((l, i) => l === s.layers[i])) {
+      return s;
+    }
+    // reorder 是可见的意图变化：bump layerIntentGeneration 并只重标移动过
+    // 位置的行（观察证据 runtime-evidence 读 _intentGeneration —— 此前
+    // reorder 是唯一跳过记账的 mutation，观察证据里不可见、连续两次
+    // reorder 不可区分）。
+    const generation = s.layerIntentGeneration + 1;
+    const moved = new Set<number>();
+    layers.forEach((layer, idx) => {
+      const prev = s.layers.indexOf(layer);
+      if (prev !== -1 && prev !== idx) moved.add(idx);
+    });
+    return {
+      layerIntentGeneration: generation,
+      layers: layers.map((layer, idx) => (
+        moved.has(idx) ? { ...layer, _intentGeneration: generation } : layer
+      )),
+    };
+  }),
   setLayers: (layers) => set((s) => {
     const generation = s.layerIntentGeneration + 1;
     return {

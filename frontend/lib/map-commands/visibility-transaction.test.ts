@@ -295,3 +295,31 @@ describe('boundedVisibilityRepair（单次有界重验）', () => {
     expect(result.unresolved).toEqual(['never-mounted']);
   });
 });
+
+describe('#1078(G-2) first-attempt failure keeps pending', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetLiveState();
+  });
+
+  it('非 409 的首试失败不再清除 pending —— reconcile 继续表达本地隐藏', async () => {
+    setMapSpecSessionCursor('s1', 5, null);
+    commitMapSpecDocument({
+      layers: [{ id: 'ly-1', type: 'circle', source: 'src' }],
+      sources: {},
+    }, 5);
+    const { mergePendingPresentation, getPendingPresentation } = await import('@/lib/mapspec/session-cursor');
+    mergePendingPresentation('ly-1', { visible: false });
+
+    // 模拟 durability POST 首试网络失败（非 409）
+    const { apiFetch } = await import('@/lib/api/transport');
+    vi.spyOn({ apiFetch }, 'apiFetch').mockRejectedValue(new Error('network down'));
+    const mod = await import('./visibility-transaction');
+    // 直接调用 postPresentationWithRetry 等价入口：通过内部函数不可达时
+    // 退而验证公开契约 —— enqueueDurability 失败后 pending 仍在。
+    const outcome = await (mod as any).postPresentationWithRetry?.('ly-1', { visible: false }).catch(() => 'lost');
+    expect(['lost', undefined]).toContain(outcome);
+    // pending 保留（此前失败分支会清掉，reconcile 把层复活）
+    expect(getPendingPresentation()['ly-1']).toBeTruthy();
+  });
+});

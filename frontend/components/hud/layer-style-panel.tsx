@@ -20,11 +20,17 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
   // （composeLiveMapSpec 的 layers 完全取自 committed）—— 面板样式控件必须
   // 显式禁用并说明，而不是静默 no-op；opacity/visibility 走 presentation
   // mutation，仍然有效。
+  // #1077: 守卫解析别名 —— runtimePatch 挂载行的 id 是 geojson_ref 而
+  // _mapspecLayerId 才是 spec 层 id；精确 id 匹配会让这些行误判为
+  // 非 specBacked（样式控件可用但 compose 不消费 = 静默 no-op 被别名绕过）。
+  const specLayerKey = layer?._mapspecLayerId ?? editingLayerId;
   const committedSpec = useSyncExternalStore(subscribeMapSpecLive, getCommittedMapSpec);
   const specBacked = !!committedSpec
+    && !!specLayerKey
     && Array.isArray((committedSpec as { layers?: { id?: string }[] }).layers)
     && (committedSpec as { layers?: { id?: string }[] }).layers!.some(
-      (l) => l?.id === editingLayerId,
+      (l) => l?.id === specLayerKey
+        || (!!l?.id && l.id.startsWith(`${specLayerKey}__`)),
     );
 
   const updateStyle = (patch: Partial<LayerStyle>) => {

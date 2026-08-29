@@ -128,7 +128,11 @@ async function postPresentationOnce(
     const superseded = supersededFromError(err);
     if (!superseded) {
       devOnly.warn('[visibility-transaction] durability commit failed:', err);
-      clearPendingPresentation(specLayerId);
+      // #1078(G-2): 首试非 409 失败不清 pending —— 与 double-superseded 分支
+      // 同原则（ST-P3-2）：compose 继续表达本地期望（store 行已隐藏 +
+      // setLayoutProperty 已应用），清掉 pending 会让下一个 reconcile 把层
+      // 复活成服务端旧态（面板藏/地图显示，且修复环因指纹被事务自身清掉
+      // 而拒收）。重试由下一次 reconcile/pending 消费驱动。
       return 'lost';
     }
     // superseded：收敛 revision + 服务端真相；若真相已含期望值（并发同值
@@ -158,6 +162,8 @@ async function postPresentationWithRetry(
   // 本地期望真相，不静默丢决策（服务端偏差由下一次用户/agent 突变或修复
   // 循环收敛）。此前 'retry' 分支被类型断言吞掉且 pending 已清——agent
   // 隐藏决策在双 superseded 时无声丢失（ST-P3-2）。
+  // #1078(G-2): 'lost'（首试非 409 失败）同样保留 pending —— 首试失败
+  // 分支已不再清除，这里对二次 'lost' 补落，保证 pending 一定在。
   mergePendingPresentation(specLayerId, patch);
   return 'lost';
 }

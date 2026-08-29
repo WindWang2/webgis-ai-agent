@@ -58,21 +58,36 @@ const BOTTOM_STACK_BASE: Record<string, number> = {
 };
 const BOTTOM_STACK_STEP_PX = 36;
 
-export function buildBottomSlotIndexes(
+// #1079(G-8)：顶部同槽堆叠 —— chart/statistics/annotation 面板缺省同为
+// top-left 且此前无堆叠（只有 bottom 槽实现了分层），两个面板钉同一点
+// 互相遮挡。层距与底部一致。
+const TOP_STACK_BASE: Record<string, number> = {
+  'top-left': 6,
+  'top-center': 6,
+  'top-right': 6,
+};
+const TOP_STACK_STEP_PX = 36;
+
+type SlotIndexes = Map<MapSpecComponent, number>;
+
+function buildSlotIndexes(
   renderable: MapSpecComponent[],
-): Map<MapSpecComponent, number> {
+  stackBase: Record<string, number>,
+  pinTypes: Set<string>,
+): SlotIndexes {
   const perSlotCount: Record<string, number> = {};
   const perSlotStacked: Record<string, number> = {};
   for (const c of renderable) {
     const pos = resolvePosition(c);
-    if (pos in BOTTOM_STACK_BASE) perSlotCount[pos] = (perSlotCount[pos] ?? 0) + 1;
+    if (pos in stackBase) perSlotCount[pos] = (perSlotCount[pos] ?? 0) + 1;
   }
-  const indexes = new Map<MapSpecComponent, number>();
+  const indexes: SlotIndexes = new Map();
   for (const c of renderable) {
     const pos = resolvePosition(c);
-    if (!(pos in BOTTOM_STACK_BASE) || (perSlotCount[pos] ?? 0) <= 1) continue;
-    // scale_bar 恒为槽内第 0 层（贴底）；其余组件按 spec 声明序 1,2,… 上移
-    if (c.type === 'scale_bar') {
+    if (!(pos in stackBase) || (perSlotCount[pos] ?? 0) <= 1) continue;
+    // pinTypes（底部 scale_bar / 顶部 title）恒为槽内第 0 层；其余按
+    // spec 声明序 1,2,… 依次偏移。
+    if (pinTypes.has(c.type)) {
       indexes.set(c, 0);
     } else {
       perSlotStacked[pos] = (perSlotStacked[pos] ?? 0) + 1;
@@ -82,15 +97,40 @@ export function buildBottomSlotIndexes(
   return indexes;
 }
 
+export function buildBottomSlotIndexes(
+  renderable: MapSpecComponent[],
+): SlotIndexes {
+  return buildSlotIndexes(renderable, BOTTOM_STACK_BASE, new Set(['scale_bar']));
+}
+
+export function buildTopSlotIndexes(
+  renderable: MapSpecComponent[],
+): SlotIndexes {
+  return buildSlotIndexes(renderable, TOP_STACK_BASE, new Set(['title']));
+}
+
 export function stackedBottomStyle(
   component: MapSpecComponent,
-  slotIndexes?: Map<MapSpecComponent, number>,
+  slotIndexes?: SlotIndexes,
 ): React.CSSProperties | undefined {
   const pos = resolvePosition(component);
   const base = BOTTOM_STACK_BASE[pos];
-  if (base === undefined) return BOTTOM_OFFSET_STYLE[pos];
+  if (base === undefined) {
+    return stackedTopStyle(component, slotIndexes) ?? BOTTOM_OFFSET_STYLE[pos];
+  }
   const idx = slotIndexes?.get(component) ?? 0;
   return { bottom: `calc(var(--map-chrome-bottom, 10px) + ${base + idx * BOTTOM_STACK_STEP_PX}px)` };
+}
+
+export function stackedTopStyle(
+  component: MapSpecComponent,
+  slotIndexes?: SlotIndexes,
+): React.CSSProperties | undefined {
+  const pos = resolvePosition(component);
+  const base = TOP_STACK_BASE[pos];
+  if (base === undefined) return undefined;
+  const idx = slotIndexes?.get(component) ?? 0;
+  return { top: `calc(var(--map-chrome-top, 10px) + ${base + idx * TOP_STACK_STEP_PX}px)` };
 }
 
 // ── D1/D4：placement 自由布局原语 ────────────────────────────────────────

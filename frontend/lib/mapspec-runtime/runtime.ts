@@ -53,6 +53,12 @@ export class MapSpecRuntime {
   // This keeps the diff basis (`appliedSpec`) equal to the map's real state —
   // see the appliedSpec note in applyPatchDebounced.
   private reconcileTail: Promise<void> = Promise.resolve();
+  // #1078(G-5): 入队合并 —— 尚未开始 diff 的排队请求被更新的 spec 直接
+  // 替换（被超越的中间 spec 永远不需要 diff：应用它再应用后续等价于直接
+  // 应用后续）。一次 step_result 典型触发 2-3 次 reconcile effect，旧实现
+  // 链式逐个全量 worker diff。
+  private queuedSpec: MapSpec | null = null;
+  private queuedPromise: Promise<void> | null = null;
   private applySeq = 0;
   private currentApplyResolve: (() => void) | null = null;
   private lastError: string | null = null;
@@ -168,8 +174,24 @@ export class MapSpecRuntime {
    */
   reconcileAsync(nextSpec: MapSpec): Promise<void> {
     if (this.disposed || !this.map) return Promise.resolve();
-    this.reconcileTail = this.reconcileTail
-      .then(() => this.processOne(nextSpec, 0))
+    // #1078(G-5): 等价门 —— composeLiveMapSpec 对输入未变的重复 compose
+    // 返回同一对象（调用方 memo），对象身份即可判等（与同步路径同款），
+    // 主线程不付内容哈希。
+    if (this.appliedSpec === nextSpec) return Promise.resolve();
+    // 入队合并：尚未开始 diff 的排队请求被更新的 spec 直接替换（被超越的
+    // 中间 spec 不需要 diff —— 应用它再应用后续等价于直接应用后续）。
+    // 所有等待者共享同一 promise。
+    if (this.queuedPromise) {
+      this.queuedSpec = nextSpec;
+      return this.queuedPromise;
+    }
+    const promise = this.reconcileTail
+      .then(() => {
+        const spec = this.queuedSpec ?? nextSpec;
+        this.queuedSpec = null;
+        this.queuedPromise = null;
+        return this.processOne(spec, 0);
+      })
       .catch((err) => {
         // #692：链内兜底 catch 仅供断链保护——生产静默（此前裸 console.warn
         // 是生产噪声），dev 下保留可诊断性。map-panel 侧挂在该链尾部的
@@ -177,7 +199,10 @@ export class MapSpecRuntime {
         // #1008：手工 NODE_ENV 门禁统一收敛到 devOnly（同文件一致）。
         devOnly.warn("[MapSpecRuntime] reconcileAsync error:", err);
       });
-    return this.reconcileTail;
+    this.queuedSpec = nextSpec;
+    this.queuedPromise = promise;
+    this.reconcileTail = promise;
+    return promise;
   }
 
   private async processOne(nextSpec: MapSpec, retryAttempt: number): Promise<void> {

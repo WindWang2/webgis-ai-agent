@@ -372,7 +372,16 @@ export async function removeLayerAndCommit(layerId: string): Promise<void> {
     );
   } catch (err) {
     // 网络/服务端错误：回滚本地删除（U-3 语义——不静默弹回，给出解释）。
-    useHudStore.getState().setLayers(previous);
+    // #1078(G-7): 外科式回滚 —— 只把被删的行按原位置放回，不用 await 窗口
+    // 前的整表快照覆盖（快照会抹掉窗口内 SSE 并发挂载的新行，直到下一个
+    // mapspec 事件才重新镜像）。
+    const removedIdx = previous.findIndex((l) => l.id === layerId);
+    const current = useHudStore.getState().layers;
+    if (removedIdx >= 0 && !current.some((l) => l.id === layerId)) {
+      const restored = [...current];
+      restored.splice(Math.min(removedIdx, restored.length), 0, previous[removedIdx]);
+      useHudStore.getState().setLayers(restored);
+    }
     toastRollback('删除图层', err);
     clearPendingRemoved(specLayerId);
     clearPendingRemoved(layerId);
@@ -406,7 +415,17 @@ export async function reorderLayersAndCommit(layers: { id: string; _mapspecLayer
       layer_ids: layers.map((layer) => String(layer._mapspecLayerId || layer.id)),
     });
   } catch (err) {
-    useHudStore.getState().setLayers(previous);
+    // #1078(G-7): 外科式回滚 —— 在**当前**数组上恢复提交前的相对顺序，
+    // await 窗口内并发挂载的新行保留在末尾；整表 setLayers(previous) 会
+    // 把这些新行一并抹掉（直到下一个 mapspec 事件才重新镜像）。
+    const current = useHudStore.getState().layers;
+    const prevIds = new Set(previous.map((row) => String(row.id)));
+    const byId = new Map(current.map((row) => [String(row.id), row]));
+    const ordered = previous
+      .map((row) => byId.get(String(row.id)))
+      .filter((row): row is NonNullable<typeof row> => row != null);
+    const additions = current.filter((row) => !prevIds.has(String(row.id)));
+    useHudStore.getState().setLayers([...ordered, ...additions]);
     toastRollback('图层排序', err);
   }
 }

@@ -28,6 +28,13 @@ export function resetLiveState(): void {
   pendingRemoved = [];
   // ref 数据缓存随会话失效（ref 归会话所有；切换后旧数据不可复用）。
   resetRefSourceCache();
+  // #1078(G-4): chart artifact 缓存同样随会话失效 —— 此前生产代码从不
+  // 调 resetChartArtifactCache（只有测试调），旧会话的 ref 条目永久滞留
+  // 且随会话切换增长。动态 import 避免与 chart-artifact 的静态环
+  // （它 import 本模块取 cursor）。
+  void import('../map-components/chart-artifact')
+    .then((m) => m.resetChartArtifactCache())
+    .catch(() => { /* best-effort：清缓存失败不影响切换 */ });
 }
 
 export function subscribeMapSpecLive(listener: () => void): () => void {
