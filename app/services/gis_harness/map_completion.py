@@ -204,7 +204,10 @@ async def gather_completion_inputs(
             except Exception:  # noqa: BLE001 — 单 ref 失败不阻断整体校验
                 refs[ref] = None
 
-    required_types: List[str] = []
+    # required 组件以 composition slot 族语义表达（slot id ≠ 组件类型名：
+    # "legend" 槽可由 legend/categorical_legend/continuous_colorbar 任一满足
+    # —— 校验/修复按 allowed_component_types 族判定，不发明第二套 schema）。
+    required_slots: List[List[str]] = []
     compo_id = str(
         (chapter.get("template_selection") or {}).get("composition_template_id")
         or ""
@@ -217,22 +220,22 @@ async def gather_completion_inputs(
 
             tpl = get_composition_template_registry().get(compo_id)
             if tpl is not None:
-                required_types = [
-                    slot.id
-                    for slot in tpl.component_slots
-                    if slot.cardinality in ("required",)
-                ]
+                for slot in tpl.component_slots:
+                    if slot.cardinality != "required":
+                        continue
+                    allowed = [str(t) for t in (slot.allowed_component_types or [])]
+                    required_slots.append(allowed or [str(slot.id)])
         except Exception:  # noqa: BLE001 — 模板缺失退化为无 required 断言
-            required_types = []
-    if not required_types:
-        # 兜底：组合证据缺失时按产品模板默认组件的交集子集（title/scale）
-        # 断言 —— 与 composition seeds 的最小契约一致，避免旧章节误报。
-        required_types = ["title", "scale_bar"]
+            required_slots = []
+    if not required_slots:
+        # 兜底：组合证据缺失时按最小契约断言（title + scale_bar）—— 与
+        # composition seeds 一致，避免旧章节误报。
+        required_slots = [["title"], ["scale_bar"]]
 
     return {
         "mapspec": mapspec,
         "descriptors": refs,
-        "required_types": required_types,
+        "required_slots": required_slots,
     }
 
 
@@ -470,10 +473,15 @@ def validate_layers(
 
 def validate_components(
     mapspec: Dict[str, Any],
-    required_types: List[str],
+    required_slots: List[List[str]],
     layer_ids: List[str],
 ) -> List[MapCompletionFinding]:
-    """制图组件校验：模板 required 组件在场且启用（复用组合 cardinality）。"""
+    """制图组件校验：模板 required 槽在场且启用（slot 族语义）。
+
+    required 槽由 allowed_component_types 表达（如 "legend" 槽可由
+    legend/categorical_legend/continuous_colorbar 任一满足）；缺失/禁用均
+    可修复（修复取族的第一个类型）。
+    """
     findings: List[MapCompletionFinding] = []
     components = [
         c
@@ -484,24 +492,29 @@ def validate_components(
         str(c.get("type") or "") for c in components if c.get("enabled") is not False
     }
     present_types = {str(c.get("type") or "") for c in components}
-    for t in required_types:
-        if t not in present_types:
+    for family in required_slots:
+        family = [t for t in family if t] or ["title"]
+        primary = family[0]
+        if not any(t in present_types for t in family):
             findings.append(
                 MapCompletionFinding(
                     code=F_COMPONENT_MISSING,
                     severity="error",
-                    target=t,
-                    detail=f"required component type '{t}' absent",
+                    target=primary,
+                    detail=(
+                        f"required component slot '{primary}' absent "
+                        f"(any of {', '.join(family[:3])})"
+                    ),
                     repair=R_ADD_COMPONENT,
                 )
             )
-        elif t not in enabled_types:
+        elif not any(t in enabled_types for t in family):
             findings.append(
                 MapCompletionFinding(
                     code=F_COMPONENT_DISABLED,
                     severity="error",
-                    target=t,
-                    detail=f"required component type '{t}' is disabled",
+                    target=primary,
+                    detail=f"required component slot '{primary}' is disabled",
                     repair=R_ENABLE_COMPONENT,
                 )
             )
@@ -680,7 +693,7 @@ def _validate_all(inputs: Dict[str, Any], chapter: Dict[str, Any]) -> List[MapCo
     findings.extend(
         validate_components(
             mapspec,
-            inputs["required_types"],
+            inputs["required_slots"],
             [str(ly.get("id") or "") for ly in _spec_layers(mapspec)],
         )
     )

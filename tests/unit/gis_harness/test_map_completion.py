@@ -288,7 +288,7 @@ def _spec_with_components(components):
 def test_required_component_missing_is_repairable():
     findings = validate_components(
         _spec_with_components([{"id": "title", "type": "title"}]),
-        required_types=["title", "scale_bar"],
+        required_slots=[["title"], ["scale_bar"]],
         layer_ids=["poi-main"],
     )
     missing = [f for f in findings if f.code == F_COMPONENT_MISSING]
@@ -301,7 +301,7 @@ def test_required_component_disabled_is_repairable():
         _spec_with_components(
             [{"id": "title", "type": "title", "enabled": False}]
         ),
-        required_types=["title"],
+        required_slots=[["title"]],
         layer_ids=["poi-main"],
     )
     disabled = [f for f in findings if f.code == F_COMPONENT_DISABLED]
@@ -311,7 +311,7 @@ def test_required_component_disabled_is_repairable():
 def test_optional_component_missing_does_not_fail():
     findings = validate_components(
         _spec_with_components([{"id": "title", "type": "title"}]),
-        required_types=["title"],
+        required_slots=[["title"]],
         layer_ids=["poi-main"],
     )
     assert [f for f in findings if f.severity == "error"] == []
@@ -325,7 +325,7 @@ def test_singleton_duplicate_warns():
                 {"id": "t2", "type": "title", "options": {"text": "b"}},
             ]
         ),
-        required_types=["title"],
+        required_slots=[["title"]],
         layer_ids=[],
     )
     assert any(f.code == F_LAYOUT_CONFLICT and f.severity == "warning" for f in findings)
@@ -337,7 +337,7 @@ def test_orphan_layer_binding_warns():
             [{"id": "legend-main", "type": "legend",
               "options": {"layerId": "gone"}}]
         ),
-        required_types=[],
+        required_slots=[],
         layer_ids=["poi-main"],
     )
     assert any(f.code == F_ORPHAN_BINDING for f in findings)
