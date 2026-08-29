@@ -249,10 +249,19 @@ def _handle_agent_settled(event: dict, session_id: str, cache_lookup: Optional[C
     """
     stats = turn_stats() if callable(turn_stats) else {}
     summary_src = stats.get("final_text", "")
-    return sse_event("task_complete", _base_step_payload(event, session_id, {
+    payload = {
         "step_count": int(stats.get("tool_step_count", 0) or 0),
         "summary": str(summary_src)[:100],
-    }))
+    }
+    # ADR-0081：task_complete 有界披露地图成品完成态（DAG 完成 ≠ 地图
+    # 完成；前端据此区分“turn 结束且地图已验证”与“turn 结束但未验证”）。
+    map_product = stats.get("map_product")
+    if isinstance(map_product, dict) and map_product.get("status"):
+        payload["map_product"] = {
+            "status": str(map_product.get("status")),
+            "summary": str(map_product.get("summary") or "")[:120],
+        }
+    return sse_event("task_complete", _base_step_payload(event, session_id, payload))
 
 
 def _handle_auto_retry_start(event: dict, session_id: str, cache_lookup: Optional[Callable], *, turn_stats: Optional[Callable[[], dict]] = None) -> Optional[str]:

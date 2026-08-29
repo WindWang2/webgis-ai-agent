@@ -214,9 +214,17 @@ def format_session_plan_projection(plan: Optional[SessionPlan]) -> str:
         block = project_graph_block(graph)
     except Exception:  # noqa: BLE001 — 图投影是增值信号，绝不阻断 turn 上下文
         return head
+    # ADR-0081：地图成品完成度行（bounded、单行、派生自章节 map_product
+    # 块 —— finalizer 写入，这里只读投影；DAG 完成 ≠ 地图成品完成）。
+    product = plan.gis_chapter.get("map_product")
+    product_line = ""
+    if isinstance(product, dict):
+        line = str(product.get("projection") or "")
+        if line:
+            product_line = "\n" + line
     if not block:
-        return head
-    return head + "\n" + block
+        return head + product_line
+    return head + "\n" + block + product_line
 
 
 def events_to_sse(events: list[SessionPlanEvent], session_id: str = "") -> str:
