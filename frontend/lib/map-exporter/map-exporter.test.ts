@@ -382,3 +382,74 @@ describe('runExport — dark_mode 桥接 (#614)', () => {
     );
   });
 });
+
+describe('runExport — spec 组件事实源（v3 Phase H）', () => {
+  function spyCompose() {
+    return vi.spyOn(MapExporterEngine, 'composeLayout').mockImplementation(() => {});
+  }
+
+  async function commitSpecWithComponents(components: any[]) {
+    const cursor = await import('@/lib/mapspec/session-cursor');
+    cursor.setMapSpecSessionCursor(`spec-sub-${Math.random().toString(36).slice(2, 8)}`);
+    cursor.commitMapSpecDocument({
+      id: 'spec-sub',
+      version: '1.0',
+      layers: [],
+      layout: { components },
+      view: {},
+    } as any);
+  }
+
+  it('subtitle 组件文本进入导出成品（与 title 同链：请求参数 > spec > 空串）', async () => {
+    await commitSpecWithComponents([
+      { id: 'c-title', type: 'title', slot: 'title', enabled: true, options: { text: '成都小学分布' } },
+      { id: 'c-sub', type: 'subtitle', slot: 'subtitle', enabled: true, options: { text: '2026 年秋学期' } },
+    ]);
+    const deps = createDeps();
+    mockFetchSuccess();
+    const compose = spyCompose();
+
+    const outcome = await runExport(deps, { format: 'png' });
+    expect(outcome.ok).toBe(true);
+    expect(compose).toHaveBeenCalledWith(
+      expect.anything(),
+      '成都小学分布',
+      '2026 年秋学期',
+      expect.anything(),
+    );
+  });
+
+  it('显式 subtitle 请求参数优先于 spec 组件文本', async () => {
+    await commitSpecWithComponents([
+      { id: 'c-sub', type: 'subtitle', slot: 'subtitle', enabled: true, options: { text: 'spec 副标题' } },
+    ]);
+    const deps = createDeps();
+    mockFetchSuccess();
+    const compose = spyCompose();
+
+    await runExport(deps, { format: 'png', title: 'T', subtitle: 'req 副标题' });
+    expect(compose).toHaveBeenCalledWith(
+      expect.anything(),
+      'T',
+      'req 副标题',
+      expect.anything(),
+    );
+  });
+
+  it('禁用的 subtitle 组件不生效（enabled=false）', async () => {
+    await commitSpecWithComponents([
+      { id: 'c-sub', type: 'subtitle', slot: 'subtitle', enabled: false, options: { text: '不应出现' } },
+    ]);
+    const deps = createDeps();
+    mockFetchSuccess();
+    const compose = spyCompose();
+
+    await runExport(deps, { format: 'png', title: 'T' });
+    expect(compose).toHaveBeenCalledWith(
+      expect.anything(),
+      'T',
+      '',
+      expect.anything(),
+    );
+  });
+});
