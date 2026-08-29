@@ -863,7 +863,7 @@ async def test_p3_execute_claims_cross_process_plan_lock(env, monkeypatch):
             return False
 
     class _FakeLockRegistry:
-        def lock(self, key):
+        def lock(self, key, **_kw):
             acquired.append(key)
             return _AioLock()
 

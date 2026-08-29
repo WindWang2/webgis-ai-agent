@@ -53,6 +53,12 @@ export class MapSpecRuntime {
   // This keeps the diff basis (`appliedSpec`) equal to the map's real state —
   // see the appliedSpec note in applyPatchDebounced.
   private reconcileTail: Promise<void> = Promise.resolve();
+  // #1078(G-5): 入队合并 —— 尚未开始 diff 的排队请求被更新的 spec 直接
+  // 替换（被超越的中间 spec 永远不需要 diff：应用它再应用后续等价于直接
+  // 应用后续）。一次 step_result 典型触发 2-3 次 reconcile effect，旧实现
+  // 链式逐个全量 worker diff。
+  private queuedSpec: MapSpec | null = null;
+  private queuedPromise: Promise<void> | null = null;
   private applySeq = 0;
   private currentApplyResolve: (() => void) | null = null;
   private lastError: string | null = null;
@@ -168,8 +174,24 @@ export class MapSpecRuntime {
    */
   reconcileAsync(nextSpec: MapSpec): Promise<void> {
     if (this.disposed || !this.map) return Promise.resolve();
-    this.reconcileTail = this.reconcileTail
-      .then(() => this.processOne(nextSpec, 0))
+    // #1078(G-5): 等价门 —— composeLiveMapSpec 对输入未变的重复 compose
+    // 返回同一对象（调用方 memo），对象身份即可判等（与同步路径同款），
+    // 主线程不付内容哈希。
+    if (this.appliedSpec === nextSpec) return Promise.resolve();
+    // 入队合并：尚未开始 diff 的排队请求被更新的 spec 直接替换（被超越的
+    // 中间 spec 不需要 diff —— 应用它再应用后续等价于直接应用后续）。
+    // 所有等待者共享同一 promise。
+    if (this.queuedPromise) {
+      this.queuedSpec = nextSpec;
+      return this.queuedPromise;
+    }
+    const promise = this.reconcileTail
+      .then(() => {
+        const spec = this.queuedSpec ?? nextSpec;
+        this.queuedSpec = null;
+        this.queuedPromise = null;
+        return this.processOne(spec, 0);
+      })
       .catch((err) => {
         // #692：链内兜底 catch 仅供断链保护——生产静默（此前裸 console.warn
         // 是生产噪声），dev 下保留可诊断性。map-panel 侧挂在该链尾部的
@@ -177,7 +199,10 @@ export class MapSpecRuntime {
         // #1008：手工 NODE_ENV 门禁统一收敛到 devOnly（同文件一致）。
         devOnly.warn("[MapSpecRuntime] reconcileAsync error:", err);
       });
-    return this.reconcileTail;
+    this.queuedSpec = nextSpec;
+    this.queuedPromise = promise;
+    this.reconcileTail = promise;
+    return promise;
   }
 
   private async processOne(nextSpec: MapSpec, retryAttempt: number): Promise<void> {
@@ -566,6 +591,19 @@ export class MapSpecRuntime {
       // #462: keep the layer→source index + renderer id-order registry exact.
       this.layerSourceIndex.set(layer.id, layer.source);
       renderer.noteStyleLayerAdded(this.map, layer.id);
+      // v2(audit FE2)：spec 层 label 上活地图 —— headless compiler 一直为
+      // layer.label 生成 `${id}-label` symbol 子层，活路径从未挂载（导出
+      // 与屏幕内容漂移）。方言与编译器对齐：label 是 MapSpecLayerLabel
+      // 对象（field/size/color/halo*）或 layout.labelField 标量回退。
+      const labelSpecRaw = (layer as any).label;
+      const labelSpec = (
+        (labelSpecRaw && typeof labelSpecRaw === "object" && labelSpecRaw.field)
+          ? labelSpecRaw
+          : (layer.layout?.labelField ? { field: layer.layout.labelField } : undefined)
+      );
+      if (labelSpec?.field && layer.type !== "raster" && layer.type !== "heatmap") {
+        this.addLabelSublayerSafe(layer, labelSpec);
+      }
     } catch (err) {
       // Defensive: a recompile that races with a style swap may find the layer
       // already re-added by the styledata path. Log and continue rather than
@@ -584,6 +622,49 @@ export class MapSpecRuntime {
     }
     this.layerSourceIndex.delete(id);
     renderer.noteStyleLayerRemoved(this.map, id);
+    // FE2：label 子层（`${id}-label`）与主层同生命周期 —— 删主层必须
+    // 一并删除，否则留下无 source 消费者的 ghost 文本层。
+    const labelId = `${id}-label`;
+    if (this.map.getLayer(labelId)) {
+      try { this.map.removeLayer(labelId); } catch { /* already gone */ }
+      renderer.noteStyleLayerRemoved(this.map, labelId);
+    }
+  }
+
+  /** FE2：spec 层的 label symbol 子层（`${id}-label`，编译器同款方言/样式）。 */
+  private addLabelSublayerSafe(
+    layer: MapSpecLayer,
+    labelSpec: { field: string; size?: unknown; color?: unknown; haloColor?: string; haloWidth?: number },
+  ): void {
+    const labelId = `${layer.id}-label`;
+    const layout = (layer.layout as any) ?? {};
+    const def: any = {
+      id: labelId,
+      type: "symbol",
+      source: layer.source,
+      paint: {
+        // 与 compiler.ts 的默认一致：黑字 + 白晕（任意底图可读，#1007）。
+        "text-color": (labelSpec.color as any) ?? layout.labelColor ?? "#000000",
+        "text-halo-color": labelSpec.haloColor ?? "#ffffff",
+        "text-halo-width": labelSpec.haloWidth ?? 1,
+      },
+      layout: {
+        "text-field": ["get", String(labelSpec.field)],
+        "text-size": (labelSpec.size as any) ?? layout.labelSize ?? 12,
+        "text-allow-overlap": false,
+        visibility: layout.visibility ?? "visible",
+      },
+    };
+    const src = this.map.getSource(layer.source);
+    if (src && (src as any).type === "vector") def["source-layer"] = "data";
+    try {
+      if (this.map.getLayer(labelId)) this.removeLayerSafe(labelId);
+      this.map.addLayer(def);
+      this.layerSourceIndex.set(labelId, layer.source);
+      renderer.noteStyleLayerAdded(this.map, labelId);
+    } catch (err) {
+      devOnly.warn(`[MapSpecRuntime] label sublayer failed for ${layer.id}:`, err);
+    }
   }
 
   private removeSourceSafe(id: string): void {

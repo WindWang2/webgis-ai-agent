@@ -413,6 +413,8 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         preferred_execution_policy="THREAD", priority=20,
     ),
     # ── 网络 ─────────────────────────────────────────────────────────
+    # #1075(D-3): purpose-named 工具排在候选首位 —— 此前 shortest_path
+    # 解析到 isochrone 工具族、closest_facility 指向不存在的 nearest_facility。
     AlgorithmDescriptor(
         id="network.shortest_path", name="最短路径", category="network_analysis",
         capabilities=["shortest_path"],
@@ -455,19 +457,64 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         preferred_execution_policy="ASYNC",
         compatible_map_models=["proximity_overlay"], priority=10,
     ),
-    AlgorithmDescriptor(
-        id="network.location_allocation", name="选址配置", category="network_analysis",
-        capabilities=["location_allocation"],
-        output_artifact_type="stats_table", tool_candidates=["location_allocation"],
-        cpu_cost="high", memory_cost="medium", io_cost="high",
-        preferred_execution_policy="ASYNC", priority=10,
-    ),
+    # 合并去重：location_allocation 保留 R2 版（point_feature_set 输出，
+    # 与选址-分配工具真实产物一致），见下方 R2 条目。
     AlgorithmDescriptor(
         id="network.route_optimization", name="路线优化", category="network_analysis",
         capabilities=["route_optimization"],
         output_artifact_type="line_feature_set", tool_candidates=["optimize_route"],
         cpu_cost="high", memory_cost="medium", io_cost="high",
         preferred_execution_policy="ASYNC", priority=10,
+    ),
+    # 合并去重：accessibility 的 R2 独立算法语义由上方 phase-2 条目承载
+    #（service_area + proximity_overlay 模板兼容；同一工具 network_accessibility）。
+    # 合并去重：真实拓扑服务区工具（network_service_area）已由上方
+    # phase-2 的 service_area.multi 条目绑定 —— R2 独立条目不再重复。
+    # v2(audit R2): tier-3 网络优化工具接入 planner 可达面（此前无
+    # capability/algorithm，工具存在但不可规划）。
+    AlgorithmDescriptor(
+        id="network.location_allocation", name="区位配置", category="network_analysis",
+        capabilities=["location_allocation"],
+        output_artifact_type="point_feature_set",
+        tool_candidates=["location_allocation"],
+        cpu_cost="high", memory_cost="medium", io_cost="medium",
+        preferred_execution_policy="ASYNC", priority=30,
+    ),
+    # 合并去重：od_matrix 的 R2 版并入上方 phase-2 条目（flow_od_arc
+    # 模板兼容 + 同一候选工具族）。
+    AlgorithmDescriptor(
+        id="network.optimize_route", name="路线优化（VRP）", category="network_analysis",
+        capabilities=["route_optimization"],
+        output_artifact_type="line_feature_set",
+        tool_candidates=["optimize_route"],
+        cpu_cost="high", memory_cost="medium", io_cost="medium",
+        preferred_execution_policy="ASYNC", priority=30,
+    ),
+    # ── 数据访问补全（D-3 孤儿工具）─────────────────────────────────
+    AlgorithmDescriptor(
+        id="admin.boundary_lookup", name="行政区边界获取", category="data_access",
+        capabilities=["admin_boundary_query"],
+        output_artifact_type="polygon_feature_set",
+        tool_candidates=["get_admin_division"],
+        cpu_cost="low", memory_cost="low", io_cost="medium",
+        preferred_execution_policy="THREAD", priority=10,
+    ),
+    AlgorithmDescriptor(
+        id="poi.area_search", name="区域 POI 检索", category="data_access",
+        capabilities=["poi_query"],
+        output_artifact_type="poi_feature_set",
+        tool_candidates=["search_poi_around", "search_poi_polygon"],
+        cpu_cost="low", memory_cost="low", io_cost="medium",
+        preferred_execution_policy="ASYNC", priority=20,
+    ),
+    AlgorithmDescriptor(
+        id="raster.algebra", name="栅格计算器", category="raster_analysis",
+        capabilities=["raster_source"],
+        input_artifact_types=["raster_surface"],
+        output_artifact_type="raster_surface",
+        tool_candidates=["raster_calculator"],
+        cpu_cost="high", memory_cost="high", io_cost="medium",
+        preferred_execution_policy="THREAD", priority=15,
     ),
     # ── 时序 ─────────────────────────────────────────────────────────
     # temporal 工具族已在 app/tools/temporal_tools.py 全量实现，phase-2
@@ -489,6 +536,9 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         cpu_cost="medium", memory_cost="low", io_cost="low",
         preferred_execution_policy="THREAD", priority=10,
     ),
+    # #1075(D-10): temporal_trend capability 就位（此前 if False 死条件把
+    # 时序算法挂到 spatial_interpolation 上污染候选表）；工具真实存在，
+    # 描述符按 native 登记。
     AlgorithmDescriptor(
         id="temporal.trend", name="时序趋势", category="temporal_analysis",
         capabilities=["temporal_trend"],
@@ -513,6 +563,14 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         cpu_cost="high", memory_cost="medium", io_cost="low",
         preferred_execution_policy="THREAD", priority=15,
     ),
+    AlgorithmDescriptor(
+        id="temporal.raster_ts", name="时序栅格", category="temporal_analysis",
+        capabilities=["temporal_trend"],
+        input_artifact_types=["raster_surface"],
+        output_artifact_type="raster_surface", tool_candidates=["temporal_raster"],
+        cpu_cost="medium", memory_cost="medium", io_cost="high",
+        preferred_execution_policy="THREAD", priority=30,
+    ),
 ]
 
 
@@ -520,6 +578,7 @@ class AlgorithmRegistry:
     """算法目录：by-id / by-capability O(1) 索引、禁止静默重复、稳定排序。"""
 
     def __init__(self) -> None:
+        self._tool_to_capability_cache: Optional[Dict[str, str]] = None
         self._by_id: Dict[str, AlgorithmDescriptor] = {}
         self._by_capability: Dict[str, List[str]] = {}
 
@@ -532,6 +591,7 @@ class AlgorithmRegistry:
     def register(self, algo: AlgorithmDescriptor) -> None:
         if algo.id in self._by_id:
             raise ValueError(f"duplicate algorithm id: {algo.id}")
+        self._tool_to_capability_cache = None
         self._by_id[algo.id] = algo
         for cap in algo.capabilities:
             candidates = self._by_capability.setdefault(cap, [])
@@ -572,7 +632,14 @@ class AlgorithmRegistry:
         该算法的主 capability（spatial_aggregate → admin_aggregation 而非
         把它列为第三候选的 analytical_density），再按 (priority, id) 稳定
         序补齐其余候选。
+
+        #1076(D-8): 注册表载入后静态 —— 结果按内容缓存，register 失效。
+        此前 webgis_map_product 每调用、session_plan 每工具结果都全量
+        重建（每算法两遍排序扫描）。
         """
+        cached = self._tool_to_capability_cache
+        if cached is not None:
+            return cached
         ordered = sorted(self._by_id.values(), key=lambda a: (a.priority, a.id))
         mapping: Dict[str, str] = {}
         for algo in ordered:
@@ -585,6 +652,7 @@ class AlgorithmRegistry:
                 continue
             for tool in algo.tool_candidates:
                 mapping.setdefault(tool, cap)
+        self._tool_to_capability_cache = mapping
         return mapping
 
     def capability_tool_map(self) -> Dict[str, List[str]]:

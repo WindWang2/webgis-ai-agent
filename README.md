@@ -169,7 +169,7 @@ docker compose up -d --build   # 起 db + redis + api + celery-worker
 
 ```bash
 cd frontend
-npm install
+pnpm install
 # 编辑 .env.local,把后端地址指向 compose 暴露的 18000:
 #   NEXT_PUBLIC_API_URL=http://localhost:18000
 #   NEXT_PUBLIC_WS_URL=ws://localhost:18000

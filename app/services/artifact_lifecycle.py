@@ -190,7 +190,13 @@ async def sweep_aged_artifacts() -> Dict[str, int]:
         for entry in EXPORT_DIR.iterdir():
             try:
                 if entry.name.endswith(".owner"):
-                    continue  # removed alongside its primary file
+                    # #1068(E-11): 两次 unlink 之间崩溃会留下永生孤儿边车 ——
+                    # 超龄且主件已缺失的边车按孤儿一并清除。
+                    if entry.is_file() and entry.stat().st_mtime < cutoff:
+                        primary = entry.with_name(entry.name[: -len(".owner")])
+                        if not primary.exists():
+                            removed += int(_safe_unlink(entry))
+                    continue  # 有主件的随主件删除
                 if entry.is_file() and entry.stat().st_mtime < cutoff:
                     removed += int(_safe_unlink(entry))
                     sidecar = entry.with_name(entry.name + ".owner")
@@ -252,12 +258,17 @@ async def sweep_aged_artifacts() -> Dict[str, int]:
         async with async_db_session() as db:
             # uploads whose session row is GONE (deleted conversation) — join-free
             # anti-join via NOT EXISTS keeps it portable across sqlite/pg.
-            from sqlalchemy import exists
+            # #1068(E-11): NULL-session 上传（匿名上传是合法路径，upload.py:95）
+            # 此前被 `session_id.isnot(None)` 过滤排除 —— 既无会话可归属也
+            # 永不老化，磁盘永久泄漏。NULL + 超龄即孤儿。
+            from sqlalchemy import exists, or_
             orphan_stmt = select(UploadRecord).where(
-                UploadRecord.session_id.isnot(None),
+                or_(
+                    UploadRecord.session_id.is_(None),
+                    ~exists(select(Conversation.id).where(
+                        Conversation.id == UploadRecord.session_id)),
+                ),
                 UploadRecord.upload_time < cutoff,
-                ~exists(select(Conversation.id).where(
-                    Conversation.id == UploadRecord.session_id)),
             )
             rows = (await db.execute(orphan_stmt)).scalars().all()
             removed_rows = removed_dirs = 0

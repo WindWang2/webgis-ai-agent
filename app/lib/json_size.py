@@ -23,18 +23,6 @@ arg_size_hint_var: contextvars.ContextVar[tuple[int, bool] | None] = (
 )
 
 
-ESTIMATE_MAX_NODES = 20_000
-_ESTIMATE_SIZE_LIMIT = 262_144  # 256 KB — the cache/validation gate threshold
-
-# ContextVar to share the single args-size probe between registry and the
-# cached_tool wrapper (tool_cache.make_cache_key), so the same large args
-# dict is not walked 2-3 times per dispatch. Set in dispatch(), read in
-# make_cache_key(); fallback to a fresh walk when not set.
-_arg_size_hint_var: contextvars.ContextVar[tuple[int, bool] | None] = (
-    contextvars.ContextVar("_arg_size_hint", default=None)
-)
-
-
 def estimate_json_bytes(
     obj: Any, _depth: int = 0, _budget: list[int] | None = None
 ) -> int:

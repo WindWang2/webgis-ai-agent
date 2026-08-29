@@ -50,7 +50,7 @@ async def test_f13_clear_session_invalidates_l1():
     await store.get_map_state("s1")
     await store.get_session_metadata("s1")
     assert ("s1", "map_state") in store._l1
-    assert ("s1", "metadata") in store._l1
+    assert ("s1", "metadata_raw") in store._l1
 
     await store.clear_session("s1")
 

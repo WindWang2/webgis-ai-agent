@@ -87,6 +87,8 @@ function _filterForViewport(source: object | undefined, data: any, viewport: Vie
 export function addImageSource(map: Map, id: string, url: string, coordinates: [[number, number], [number, number], [number, number], [number, number]]) {
   const source = map.getSource(id) as ImageSource;
   if (source) {
+    // v2(review R4-P1-2)：image 更新路径同样刷新账本（同 GeoJSON 理由）。
+    recordCustomOverlaySource(id, { kind: 'image', url, coordinates });
     if (source.updateImage) {
       // 审计 F28：同 url 加 cache-buster，防 MapLibre 内部缓存命中显示旧图
       const lastUrl = _lastImageUrl.get(source);
@@ -104,6 +106,7 @@ export function addImageSource(map: Map, id: string, url: string, coordinates: [
     });
     const newSource = map.getSource(id);
     if (newSource) _lastImageUrl.set(newSource, url);
+    recordCustomOverlaySource(id, { kind: 'image', url, coordinates });
   }
 }
 
@@ -131,6 +134,9 @@ export function addGeoJsonSource(map: Map, id: string, data: any, options?: { vi
     source.setData(effective as any);
     _rawDataBySource.set(source, data);
     _registeredGeoJsonSourceIds.add(id);
+    // v2(review R4-P1-2)：更新路径同步刷新挂载账本 —— 只记首挂数据会让
+    // style 重载把覆盖层回退到最初的 GeoJSON。
+    recordCustomOverlaySource(id, { kind: 'geojson', data });
   } else {
     map.addSource(id, {
       type: 'geojson',
@@ -146,6 +152,8 @@ export function addGeoJsonSource(map: Map, id: string, data: any, options?: { vi
         _filteredBySource.set(newSource, { data: effective, viewport: [...options.viewport] });
       }
     }
+    // v2(#1078 FE1)：记录 raw data（重挂不走 viewport 裁剪 —— 首挂语义）。
+    recordCustomOverlaySource(id, { kind: 'geojson', data });
   }
 }
 
@@ -177,6 +185,7 @@ export function refreshGeoJsonSourcesByViewport(map: Map, viewport: ViewportBBox
 
 export function unregisterGeoJsonSource(id: string) {
   _registeredGeoJsonSourceIds.delete(id);
+  unregisterCustomOverlay(id);
 }
 
 /**
@@ -295,6 +304,14 @@ export function addVectorLayer(map: Map, options: VectorLayerOptions, beforeId?:
     ...(options.filter && { filter: options.filter }),
   } as any, beforeId);
   noteStyleLayerAdded(map, options.id);
+  recordCustomOverlayLayer({
+    id: options.id,
+    type: options.type,
+    source: options.source,
+    paint: options.paint ? { ...options.paint } : undefined,
+    layout: options.layout ? { ...options.layout } : undefined,
+    filter: options.filter,
+  });
 }
 
 /**
@@ -979,6 +996,12 @@ export function syncLayerZOrder(map: Map, prefix: string, orderedBaseIds: string
  * heatmapCommands.ts).
  */
 export const CUSTOM_OVERLAY_PREFIX = 'custom-';
+// v2(Phase 5, #1078 FE1)：custom-* 挂载记账 —— setStyle 重载后重挂。
+import {
+  recordCustomOverlayLayer,
+  recordCustomOverlaySource,
+  unregisterCustomOverlay,
+} from './custom-overlay-registry';
 
 /**
  * #461 (sibling of #401): re-raise the imperative `custom-*` overlays above

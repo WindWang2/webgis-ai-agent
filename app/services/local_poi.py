@@ -620,6 +620,21 @@ def _gpkg_blob_envelope(blob: Any) -> Optional[Tuple[float, float, float, float]
     return (minx, miny, maxx, maxy)
 
 
+def _gpkg_rtree_table(conn: sqlite3.Connection) -> Optional[str]:
+    """返回 pois 空间列的 R-tree 虚表名；不存在返回 None（#1058）。
+
+    GDAL 写 GPKG 默认为空间列建 ``rtree_<table>_<geom>``；存在性查
+    sqlite_master（一次主表 lookup，微秒级）。
+    """
+    try:
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='rtree_pois_geom'"
+        ).fetchone()
+    except sqlite3.Error:
+        return None
+    return row[0] if row else None
+
+
 def query_gd_poi(
     bbox: Any = None,
     *,
@@ -690,68 +705,81 @@ def query_gd_poi(
         ]
 
     # OGR/pyogrio needs an interpolated WHERE; sqlite3 uses bound params.
-    ogr_clauses: List[str] = []
-    sql_clauses: List[str] = []
-    sql_params: List[Any] = []
-    if name_like:
-        ogr_clauses.append(f"name LIKE ('%' || {_sql_like(name_like)} || '%') ESCAPE '\\'")
-        sql_clauses.append("name LIKE ('%' || ? || '%') ESCAPE '\\'")
-        sql_params.append(_sql_like_pattern(name_like))
-    if category:
-        cat = str(category)
-        ogr_clauses.append(f"LOWER(category) = LOWER('{cat.replace(chr(39), chr(39)*2)}')")
-        sql_clauses.append("LOWER(category) = LOWER(?)")
-        sql_params.append(cat)
-    subtype_ogr = None
-    subtype_sql = None
-    subtype_sql_params: List[Any] = []
-    if subtype_list:
-        # G-8（#872）：多值 OR —— 每个值独立 LIKE，括号包裹防与外层 AND 粘连。
-        ogr_parts = [
-            f"LOWER(subtype) LIKE LOWER('%'||{_sql_like(str(s))}||'%') ESCAPE '\\'"
-            for s in subtype_list
-        ]
-        sql_parts = [
-            "LOWER(subtype) LIKE LOWER('%'||?||'%') ESCAPE '\\'"
-            for _ in subtype_list
-        ]
-        subtype_ogr = "(" + " OR ".join(ogr_parts) + ")"
-        subtype_sql = "(" + " OR ".join(sql_parts) + ")"
-        subtype_sql_params = [_sql_like_pattern(str(s)) for s in subtype_list]
-    if adcode:
-        code = _adcode_literal(str(adcode).strip())
-        if len(code) >= 6:  # 区县级 6 位：精确（zfill 兜底补零）
-            padded = code.zfill(6)
-            ogr_clauses.append(f"adcode = '{padded}'")
-            sql_clauses.append("adcode = ?")
-            sql_params.append(padded)
-        elif code:
-            # 2/4 位省市级编码：前缀展开。用范围条件而非 LIKE——SQLite 的
-            # LIKE 默认大小写不敏感，无法用 idx_pois_adcode（实测 51M 行
-            # 全表扫 ~15s），范围条件走 B-tree 索引。
-            nxt = code[:-1] + chr(ord(code[-1]) + 1)
-            ogr_clauses.append(f"(adcode >= '{code}' AND adcode < '{nxt}')")
-            sql_clauses.append("(adcode >= ? AND adcode < ?)")
-            sql_params.extend((code, nxt))
-    for raw in district_codes:
-        code = _adcode_literal(str(raw).strip())
-        if not code:
-            continue
-        if len(code) == 4:  # 市级前缀
-            nxt = code[:-1] + chr(ord(code[-1]) + 1)
-            ogr_clauses.append(f"(adcode >= '{code}' AND adcode < '{nxt}')")
-            sql_clauses.append("(adcode >= ? AND adcode < ?)")
-            sql_params.extend((code, nxt))
-        else:  # 区县级精确
-            ogr_clauses.append(f"adcode = '{code}'")
-            sql_clauses.append("adcode = ?")
-            sql_params.append(code)
-    where = " AND ".join(ogr_clauses + ([subtype_ogr] if subtype_ogr else [])) or None
-    sql_where = " AND ".join(sql_clauses + ([subtype_sql] if subtype_sql else [])) or None
-    sql_where_params = list(sql_params) + subtype_sql_params
-    # subtype 之外的过滤（零命中 hint 的子类分布查询用）
-    base_sql = " AND ".join(sql_clauses) or None
-    base_sql_params = list(sql_params)
+    # #1058: 谓词必须可下推索引 —— `LOWER(category)=LOWER(?)` 对列套函数，
+    # EXPLAIN QUERY PLAN 显示退化为全索引扫描（1.7M 行 COUNT 实测 11.8s），
+    # 而 `category = ?` 走 COVERING INDEX（同 COUNT 0.17s，~69×）。中文类目
+    # LOWER 恒等，大小写容错只在零命中时用 casefold 变体重试一次兜底。
+    def _build_predicates(casefold: bool):
+        ogr_c: List[str] = []
+        sql_c: List[str] = []
+        sql_p: List[Any] = []
+        if name_like:
+            ogr_c.append(f"name LIKE ('%' || {_sql_like(name_like)} || '%') ESCAPE '\\'")
+            sql_c.append("name LIKE ('%' || ? || '%') ESCAPE '\\'")
+            sql_p.append(_sql_like_pattern(name_like))
+        if category:
+            cat = str(category)
+            esc = cat.replace(chr(39), chr(39) * 2)
+            if casefold:
+                ogr_c.append(f"LOWER(category) = LOWER('{esc}')")
+                sql_c.append("LOWER(category) = LOWER(?)")
+            else:
+                ogr_c.append(f"category = '{esc}'")
+                sql_c.append("category = ?")
+            sql_p.append(cat)
+        sub_ogr = None
+        sub_sql = None
+        sub_sql_p: List[Any] = []
+        if subtype_list:
+            # G-8（#872）：多值 OR —— 每个值独立 LIKE，括号包裹防与外层 AND 粘连。
+            # SQLite LIKE 对 ASCII 默认大小写不敏感（case_sensitive_like 关），
+            # 列侧无需再套 LOWER。
+            ogr_parts = [
+                f"subtype LIKE ('%'||{_sql_like(str(s))}||'%') ESCAPE '\\'"
+                for s in subtype_list
+            ]
+            sql_parts = [
+                "subtype LIKE ('%'||?||'%') ESCAPE '\\'"
+                for _ in subtype_list
+            ]
+            sub_ogr = "(" + " OR ".join(ogr_parts) + ")"
+            sub_sql = "(" + " OR ".join(sql_parts) + ")"
+            sub_sql_p = [_sql_like_pattern(str(s)) for s in subtype_list]
+        if adcode:
+            code = _adcode_literal(str(adcode).strip())
+            if len(code) >= 6:  # 区县级 6 位：精确（zfill 兜底补零）
+                padded = code.zfill(6)
+                ogr_c.append(f"adcode = '{padded}'")
+                sql_c.append("adcode = ?")
+                sql_p.append(padded)
+            elif code:
+                # 2/4 位省市级编码：前缀展开。用范围条件而非 LIKE——SQLite 的
+                # LIKE 默认大小写不敏感，无法用 idx_pois_adcode（实测 51M 行
+                # 全表扫 ~15s），范围条件走 B-tree 索引。
+                nxt = code[:-1] + chr(ord(code[-1]) + 1)
+                ogr_c.append(f"(adcode >= '{code}' AND adcode < '{nxt}')")
+                sql_c.append("(adcode >= ? AND adcode < ?)")
+                sql_p.extend((code, nxt))
+        for raw in district_codes:
+            code = _adcode_literal(str(raw).strip())
+            if not code:
+                continue
+            if len(code) == 4:  # 市级前缀
+                nxt = code[:-1] + chr(ord(code[-1]) + 1)
+                ogr_c.append(f"(adcode >= '{code}' AND adcode < '{nxt}')")
+                sql_c.append("(adcode >= ? AND adcode < ?)")
+                sql_p.extend((code, nxt))
+            else:  # 区县级精确
+                ogr_c.append(f"adcode = '{code}'")
+                sql_c.append("adcode = ?")
+                sql_p.append(code)
+        ogr_w = " AND ".join(ogr_c + ([sub_ogr] if sub_ogr else [])) or None
+        sql_w = " AND ".join(sql_c + ([sub_sql] if sub_sql else [])) or None
+        sql_w_p = list(sql_p) + sub_sql_p
+        base_sql = " AND ".join(sql_c) or None
+        return ogr_w, sql_w, sql_w_p, base_sql, list(sql_p)
+
+    where, sql_where, sql_where_params, base_sql, base_sql_params = _build_predicates(False)
 
     # polygon 精确过滤：bbox 候选量必须大于 limit（过滤后再截断）。
     read_cap = limit
@@ -770,16 +798,20 @@ def query_gd_poi(
     #（纯 Python 解析，无 WKB 开销）取 bbox 内候选 fid。
     total_matched: Optional[int] = None
     sample_fids: Optional[List[int]] = None
-
-    # 空间候选扫描上限：防止全国级 category 查询（属性命中百万行）把
-    # blob 扫描本身变成瓶颈；超限放弃采样回退旧行为。
-    _SPATIAL_SCAN_CAP = 100_000
+    spatial_count_skipped = False
 
     try:
         conn = sqlite3.connect(
             f"file:{gd_poi_gpkg_path()}?mode=ro", uri=True, timeout=10
         )
         try:
+            # 空间候选扫描上限：防止无 R-tree 的库（属性命中百万行）把
+            # blob 扫描本身变成瓶颈；超限放弃采样回退旧行为。
+            _SPATIAL_SCAN_CAP = 100_000
+            # #1058: bbox 命中超过该量级时跳过精确 join COUNT（全国级大
+            # bbox 的 COUNT 实测 ~26s），采样照常（均匀、无地域偏差），
+            # 计数披露为 None + note。
+            _SPATIAL_EXACT_COUNT_MAX_BBOX_ROWS = 2_000_000
             parts: List[str] = []
             params: List[Any] = []
             if sql_where:
@@ -809,38 +841,136 @@ def query_gd_poi(
                         )
                     ]
             else:
-                # G-1：空间路径 —— 属性谓词下推 SQL，bbox 在 Python 侧用
-                # GPKG blob envelope 过滤，再按 fid 哈希均匀采样。
+                # G-1（#865）+ #1058：空间路径优先走 GPKG R-tree（GDAL 为空间
+                # 列默认建 rtree_pois_geom 虚表）。候选枚举受 bbox 约束 ——
+                # 旧实现按 fid 序（省份-major 摄取序）全表扫描属性匹配行，
+                # 100k 扫描配额先被排在前部的省份耗尽（常见类目全国计数
+                # >10 万条必然触发），采样被静默禁用、total_matched=None，
+                # capped 回退取索引头部 = 系统性地域偏差（实测宽 bbox
+                # 餐饮服务 2000/2000 条全来自 5 个重庆 adcode）。
                 minx, miny, maxx, maxy = (float(v) for v in parsed)
-                predicate = " AND ".join(parts) if parts else "1=1"
-                candidates: List[int] = []
-                scanned = 0
-                capped = False
-                for row in conn.execute(
-                    _bound_sql("SELECT fid, geom FROM pois WHERE ", predicate),
-                    params,
-                ):
-                    scanned += 1
-                    if scanned > _SPATIAL_SCAN_CAP:
-                        capped = True
-                        break
-                    env = _gpkg_blob_envelope(row[1])
-                    if env is None:
-                        # 无 envelope（非常规写入）——保守保留为候选。
-                        candidates.append(int(row[0]))
-                        continue
-                    if not (
-                        env[0] > maxx or env[2] < minx
-                        or env[1] > maxy or env[3] < miny
+                predicate = " AND ".join(parts) if parts else None
+                rtree_table = _gpkg_rtree_table(conn)
+                if rtree_table:
+                    bbox_clause = (
+                        "r.minx <= ? AND r.maxx >= ? AND r.miny <= ? AND r.maxy >= ?"
+                    )
+                    bbox_params = [maxx, minx, maxy, miny]
+                    base_join = _bound_sql(
+                        f"SELECT p.fid FROM {rtree_table} r ",
+                        "CROSS JOIN pois p ON p.fid = r.id ",
+                        "WHERE ", bbox_clause,
+                    )
+                    # CROSS JOIN 固定 rtree 驱动（实测 1.4s vs 默认计划 3.6s）。
+                    # fid 哈希序 + LIMIT read_cap+1：一次查询同时拿到均匀采样
+                    # 与「是否截断」；未截断时 len 即精确 total_matched。
+                    sample_sql = base_join
+                    sample_params = list(bbox_params)
+                    if predicate:
+                        sample_sql += " AND " + predicate
+                        sample_params += params
+                    rows = conn.execute(
+                        _bound_sql(
+                            sample_sql,
+                            " ORDER BY (p.fid * 2654435761 % 2147483647)",
+                            f" LIMIT {int(read_cap) + 1}",
+                        ),
+                        sample_params,
+                    ).fetchall()
+                    if len(rows) <= read_cap:
+                        # 全量命中（≤ limit）：精确计数即行数，无需采样，
+                        # 走常规 bbox 读取路径（保持自然序）。
+                        total_matched = len(rows)
+                    else:
+                        bbox_rows = int(conn.execute(
+                            _bound_sql(
+                                f"SELECT COUNT(*) FROM {rtree_table} r WHERE ",
+                                bbox_clause,
+                            ),
+                            bbox_params,
+                        ).fetchone()[0])
+                        if bbox_rows <= _SPATIAL_EXACT_COUNT_MAX_BBOX_ROWS:
+                            count_sql = base_join
+                            count_params = list(bbox_params)
+                            if predicate:
+                                count_sql += " AND " + predicate
+                                count_params += params
+                            total_matched = int(conn.execute(
+                                _bound_sql(count_sql.replace("SELECT p.fid", "SELECT COUNT(*)", 1)),
+                                count_params,
+                            ).fetchone()[0])
+                        else:
+                            # 全国级大 bbox：精确 join COUNT 不成比例地昂贵
+                            #（实测 26s）；采样本身仍均匀，只缺计数。
+                            total_matched = None
+                            spatial_count_skipped = True
+                        sample_fids = [int(r[0]) for r in rows[:read_cap]]
+                else:
+                    # 无 R-tree 的库：保留 GPKG blob envelope 流式扫描 + cap。
+                    predicate_full = predicate or "1=1"
+                    candidates: List[int] = []
+                    scanned = 0
+                    capped = False
+                    for row in conn.execute(
+                        _bound_sql("SELECT fid, geom FROM pois WHERE ", predicate_full),
+                        params,
                     ):
-                        candidates.append(int(row[0]))
-                if not capped:
-                    total_matched = len(candidates)
-                    if read_cap < total_matched:
-                        candidates.sort(
-                            key=lambda f: (f * 2654435761) % 2147483647
-                        )
-                        sample_fids = candidates[:read_cap]
+                        scanned += 1
+                        if scanned > _SPATIAL_SCAN_CAP:
+                            capped = True
+                            break
+                        env = _gpkg_blob_envelope(row[1])
+                        if env is None:
+                            # 无 envelope（非常规写入）——保守保留为候选。
+                            candidates.append(int(row[0]))
+                            continue
+                        if not (
+                            env[0] > maxx or env[2] < minx
+                            or env[1] > maxy or env[3] < miny
+                        ):
+                            candidates.append(int(row[0]))
+                    if not capped:
+                        total_matched = len(candidates)
+                        if read_cap < total_matched:
+                            candidates.sort(
+                                key=lambda f: (f * 2654435761) % 2147483647
+                            )
+                            sample_fids = candidates[:read_cap]
+            # #1058: 可下推谓词零命中且带 category 时，用 casefold 变体重试
+            # 一次（LOWER 列套函数不可下推索引，只作为兜底而非主路径）。
+            if (
+                category
+                and total_matched == 0
+                and not sample_fids
+                and parsed is None
+            ):
+                (
+                    where_cf, sql_where_cf, sql_where_cf_params,
+                    _base_cf, _base_cf_params,
+                ) = _build_predicates(True)
+                predicate_cf = sql_where_cf
+                if predicate_cf:
+                    total_matched = int(
+                        conn.execute(
+                            _bound_sql("SELECT COUNT(*) FROM pois WHERE ", predicate_cf),
+                            sql_where_cf_params,
+                        ).fetchone()[0]
+                    )
+                    if read_cap < total_matched <= _SAMPLE_MAX_ROWS:
+                        sample_fids = [
+                            int(r[0])
+                            for r in conn.execute(
+                                _bound_sql(
+                                    "SELECT fid FROM pois WHERE ",
+                                    predicate_cf,
+                                    " ORDER BY (fid * 2654435761 % 2147483647) LIMIT ?",
+                                ),
+                                [*sql_where_cf_params, read_cap],
+                            )
+                        ]
+                    if total_matched:
+                        where = where_cf
+                        sql_where = sql_where_cf
         finally:
             conn.close()
     except Exception as exc:  # noqa: BLE001
@@ -903,6 +1033,11 @@ def query_gd_poi(
         if sample_fids and total_matched is not None:
             notes.append(
                 f"命中 {total_matched} 条超出 limit={limit}，已按 fid 均匀采样返回（空间分布覆盖整个查询范围，而非索引头部单一区县）"
+            )
+        elif sample_fids and spatial_count_skipped:
+            notes.append(
+                f"空间命中超过计数预算（bbox 过大），已按 fid 均匀采样返回 limit={limit} 条；"
+                "精确 total_matched 未计算——缩小 bbox 或增加属性过滤可获得精确计数。"
             )
         else:
             notes.append(f"结果截断至 limit={limit}，可缩小范围或加过滤。")

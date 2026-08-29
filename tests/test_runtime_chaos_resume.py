@@ -766,6 +766,21 @@ class _DroppingStore:
     async def get_map_action_events(self, session_id: str) -> list[dict]:
         return []
 
+    async def get_state_field(self, session_id: str, field: str):
+        return None
+
+    async def append_map_action_event_batch(self, session_id: str, events: list) -> list:
+        # #1081: 全拒路径走默认分类契约（append-False + 存储无此 id → dropped）。
+        out: list = []
+        for ev in events:
+            if not str((ev or {}).get("action_id") or ""):
+                out.append("invalid")
+                continue
+            ok = await self.append_map_action_event(session_id, ev)
+            out.append("stored" if ok else "dropped")
+        return out
+
+
     async def get_map_state(self, session_id: str) -> dict:
         return {}
 
@@ -854,7 +869,7 @@ async def test_ack_endpoint_evaluates_on_fresh_replica_without_local_harness(
     monkeypatch.setattr(session_data_mod, "session_data_manager", store)
     evaluated: list[str] = []
 
-    async def _evaluate(session_id: str, *, session_lock_held: bool = False):
+    async def _evaluate(session_id: str, *, session_lock_held: bool = False, state=None):
         evaluated.append(session_id)
         assert session_lock_held is True
         return {
@@ -900,6 +915,43 @@ class _ReadCountingStore:
             return {}
         return await getter(session_id)
 
+    async def get_state_field(self, session_id: str, field: str):
+        # #1064: 定向读透传（路由的 tombstone 检查走单字段接口）。
+        getter = getattr(self._inner, "get_state_field", None)
+        if getter is not None:
+            return await getter(session_id, field)
+        state = await self.get_map_state(session_id)
+        return state.get(field)
+
+    async def append_map_action_event_batch(self, session_id: str, events: list) -> list:
+        # #1081: 批量落库透传（保持与 singular 相同的语义计数）。append-False
+        # 按存储真相分类（一次回读）：存在 → duplicate，不存在 → dropped ——
+        # 与 BaseSessionStore 默认实现及 Redis Lua 的分类契约一致。
+        getter = getattr(self._inner, "append_map_action_event_batch", None)
+        if getter is not None:
+            return await getter(session_id, events)
+        out: list = []
+        unresolved: list[int] = []
+        for i, ev in enumerate(events):
+            if not str((ev or {}).get("action_id") or ""):
+                out.append("invalid")
+                continue
+            ok = await self.append_map_action_event(session_id, ev)
+            if ok:
+                out.append("stored")
+            else:
+                out.append(None)
+                unresolved.append(i)
+        if unresolved:
+            stored_ids = {
+                str((e or {}).get("action_id") or "")
+                for e in await self.get_map_action_events(session_id)
+            }
+            for i in unresolved:
+                action_id = str((events[i] or {}).get("action_id") or "")
+                out[i] = "duplicate" if action_id in stored_ids else "dropped"
+        return out
+
 
 @pytest.mark.asyncio
 async def test_ack_endpoint_all_rejected_reads_store_once(monkeypatch):
@@ -918,8 +970,10 @@ async def test_ack_endpoint_all_rejected_reads_store_once(monkeypatch):
         MagicMock(),
     )
     assert resp == {"accepted": 0, "duplicates": 0, "dropped": 50}, resp
-    assert store.read_calls == 1, (
-        f"one hoisted readback must classify all 50 rejects, got {store.read_calls}"
+    # #1081: 批量接口自带分类（stored/duplicate/dropped）—— 全拒批零回读
+    # （旧路由的 1 次快照读也省掉）；上界仍钉 1 防分类退化回逐条读。
+    assert store.read_calls <= 1, (
+        f"batch classification must not read back per reject, got {store.read_calls}"
     )
 
 
@@ -963,6 +1017,10 @@ async def test_ack_persist_redis_tombstone_is_410(monkeypatch):
     process-local is_cartographic_session_deleted set (cross-replica delete)."""
 
     class _TombstoneStore(MemorySessionStore):
+        # v2(Phase 6)：tombstone 检查走单字段读（get_state_field）
+        async def get_state_field(self, session_id: str, field: str):
+            return True if field == "_cartographic_deleted" else None
+
         async def get_map_state(self, session_id: str) -> dict:
             return {"_cartographic_deleted": True}
 

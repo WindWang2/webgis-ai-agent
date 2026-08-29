@@ -663,3 +663,48 @@ async def test_map_intent_reports_resolved_algorithm(full_registry):
     caps = {c["capability"]: c for c in res["capabilities"]}
     assert caps["grid_binning"]["resolved_tool"] == "h3_binning"
     assert caps["grid_binning"]["resolved_algorithm"] == "spatial.grid.h3"
+
+
+@pytest.mark.asyncio
+async def test_map_product_evidence_fallback_decisions_matches_fallbacks(registry, clean_session):
+    """#1067(E-2): fallback_decisions 此前恒 []（位于 out.update 字面量内部，
+    求值时 out 尚无 fallbacks 键）—— spec §2.7 要求证据携带回退转录。"""
+    ref = await session_data_manager.store(clean_session, _point_fc(7), prefix="geojson")
+    res = await registry.dispatch(
+        "webgis_map_product",
+        {"query": "成都小学的分布情况", "session_id": clean_session,
+         "primary_ref": ref},
+        session_id=clean_session,
+    )
+    ev = res["map_product_evidence"]
+    assert res["fallbacks"], "前置条件：7 点场景应有 fallback"
+    assert ev["fallback_decisions"] == res["fallbacks"]
+
+
+@pytest.mark.asyncio
+async def test_map_product_raster_primary_does_not_mark_point_caps(registry, clean_session):
+    """#1067: done_caps 此前无差别标 {poi_query, point_profile, raster_source}
+    —— 栅格/面主数据把点类能力也标完成（completeness 谎报）。"""
+    # 用面要素主数据（无 Point 几何）触发非点分支
+    poly_fc = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": [
+                [[104.0, 30.6], [104.1, 30.6], [104.1, 30.7], [104.0, 30.7], [104.0, 30.6]]]},
+            "properties": {"name": "区"},
+        }],
+    }
+    ref = await session_data_manager.store(clean_session, poly_fc, prefix="geojson")
+    res = await registry.dispatch(
+        "webgis_map_product",
+        {"query": "成都各区人口分布专题图", "session_id": clean_session,
+         "primary_ref": ref},
+        session_id=clean_session,
+    )
+    assert res["success"] is True
+    caps = {c["capability"]: c for c in res["map_product_evidence"]["capability_resolution"]}
+    # 面主数据：点档案能力不应被标记为 available
+    if "point_profile" in caps:
+        assert caps["point_profile"]["status"] != "available", \
+            "面主数据不得把 point_profile 标记为完成"

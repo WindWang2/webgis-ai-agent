@@ -3,7 +3,7 @@
  * variant 解析优先级。
  */
 import { describe, it, expect } from 'vitest';
-import { isFloating, placementStyle, resolveVariant } from './helpers';
+import { isFloating, placementStyle, resolveVariant, buildTopSlotIndexes, stackedTopStyle } from './helpers';
 import type { MapSpecComponent } from '@/lib/mapspec-compiler/types';
 
 function comp(partial: Partial<MapSpecComponent> & { id: string; type: MapSpecComponent['type'] }): MapSpecComponent {
@@ -55,5 +55,25 @@ describe('resolveVariant', () => {
     expect(resolveVariant(comp({ id: 'a', type: 'legend', variant: 'report' }), 'academic')).toBe('report');
     expect(resolveVariant(comp({ id: 'a', type: 'legend' }), 'academic')).toBe('academic');
     expect(resolveVariant(comp({ id: 'a', type: 'legend', options: { variant: 42 } as unknown as Record<string, unknown> }), 'x')).toBe('x');
+  });
+});
+
+describe('#1079 top-slot stacking (v2 semantics)', () => {
+  it('single top-left panel gets no stacking offset (style undefined)', () => {
+    const stats = { id: 's1', type: 'statistics_panel', position: 'top-left', enabled: true } as any;
+    expect(stackedTopStyle(stats, buildTopSlotIndexes([stats]))).toBeUndefined();
+  });
+
+  it('two top-left panels get distinct stacking offsets', () => {
+    const chart = { id: 'c1', type: 'chart_panel', position: 'top-left', enabled: true } as any;
+    const stats = { id: 's1', type: 'statistics_panel', position: 'top-left', enabled: true } as any;
+    const idx = buildTopSlotIndexes([chart, stats]);
+    // v2 语义：槽内第 0 层（priority 高者）贴基准位无偏移（style undefined），
+    // 第 1 层上移一个 step —— 两层面板不再互压。
+    const styleChart = stackedTopStyle(chart, idx);
+    const styleStats = stackedTopStyle(stats, idx);
+    expect(!!styleChart).not.toEqual(!!styleStats);
+    const offset = (styleChart ?? styleStats)!;
+    expect(offset.top).toContain('calc(0.75rem + 36px)');
   });
 });

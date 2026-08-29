@@ -549,7 +549,13 @@ def mutate_component(
         # 者兜底显示不漂移）
         if parsed.mode == "anchor":
             mutated.position = parsed.anchor  # type: ignore[assignment]
-        changes["placement"] = {"from": original.placement, "to": parsed}
+        # #1065: change 记录跨工具结果的 JSON 边界 —— pydantic 对象会在
+        # dispatch 的 json.dumps(default=numpy_json_default) 处抛 TypeError，
+        # 而此时变更已提交（重试 = 二次应用 + dedup 键滞留）。序列化为 dict。
+        changes["placement"] = {
+            "from": original.placement.model_dump() if original.placement else None,
+            "to": parsed.model_dump(),
+        }
         mutated.placement = parsed
     if variant is not None:
         coerced = coerce_variant(mutated.type, variant)

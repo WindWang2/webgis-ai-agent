@@ -156,6 +156,34 @@ def _referenced_session_refs(mapspec: Dict[str, Any]) -> list[str]:
     return refs
 
 
+async def discard_checkpoint(session_dir: Path, checkpoint_id: str) -> None:
+    """#1074(F-14): 丢弃一个未提交成功却已落盘的 auto-checkpoint。
+
+    apply_mutation 在提交前创建 checkpoint；提交失败回滚 spec/layers，
+    但此前不清理该 checkpoint —— 孤儿目录描述一个从未 commit 的候选
+    世代，后续 rollback(checkpoint_id) 会"恢复"到未提交状态，且占用
+    20 槽保留额。从 manifest 与目录一并移除（best-effort）。
+    """
+    if not checkpoint_id:
+        return
+    import shutil as _shutil
+
+    def _remove() -> None:
+        ckpt_dir = _checkpoints_root(session_dir) / checkpoint_id
+        try:
+            _shutil.rmtree(ckpt_dir)
+        except FileNotFoundError:
+            pass
+        manifest = _load_manifest(session_dir)
+        entries = manifest.get("entries") or {}
+        stale = [k for k, v in entries.items() if v == checkpoint_id]
+        for k in stale:
+            entries.pop(k, None)
+        _prune_and_write_manifest_sync(session_dir, manifest)
+
+    await asyncio.to_thread(_remove)
+
+
 def _manifest_path(session_dir: Path) -> Path:
     return _checkpoints_root(session_dir) / "manifest.json"
 
@@ -455,6 +483,7 @@ async def rollback(
                 ),
             }
         restored = 0
+        unrestorable: list[str] = []
         for ref_id, blob_hash in planned.items():
             blob_path = blob_dir / _blob_filename(blob_hash)
             payload = await asyncio.to_thread(_read_json_sync, blob_path)
@@ -469,8 +498,25 @@ async def rollback(
                         "disappeared mid-restore"
                     ),
                 }
-            await session_data_manager.overwrite(session_id_for_refs, ref_id, payload)
-            restored += 1
+            # #1072: overwrite 返回值此前未检查 —— Redis 抖动（RedisError →
+            # False）或内存后端 ref 已被 LRU 逐出（键不存在 → False，与
+            # Redis SET 会重建键不同）时，回滚静默"成功"，恢复出的 spec
+            # sources 指向无负载 ref（瓦片/要素解析为空）。计数比对失败
+            # 即响亮失败。
+            if not await session_data_manager.overwrite(session_id_for_refs, ref_id, payload):
+                unrestorable.append(ref_id)
+            else:
+                restored += 1
+        if unrestorable:
+            return {
+                "success": False,
+                "message": (
+                    f"Checkpoint '{checkpoint_id}' could not restore "
+                    f"{len(unrestorable)} ref(s): {unrestorable[:8]}"
+                    "（ref 键缺失或存储不可用；已恢复的 ref 构成 checkpoint "
+                    "状态的前缀）"
+                ),
+            }
         if mode != "presentation_only":
             ref_count = restored
     else:
@@ -480,9 +526,21 @@ async def rollback(
         refs_data = refs_data if isinstance(refs_data, dict) else {}
         ref_count = 0
         refs_reused = 0
+        _legacy_unrestorable: list[str] = []
         for ref_id, payload in refs_data.items():
-            await session_data_manager.overwrite(session_id_for_refs, ref_id, payload)
+            # #1072: 旧格式路径同样检查 overwrite 返回值。
+            if not await session_data_manager.overwrite(session_id_for_refs, ref_id, payload):
+                _legacy_unrestorable.append(ref_id)
+                continue
             ref_count += 1
+        if _legacy_unrestorable:
+            return {
+                "success": False,
+                "message": (
+                    f"Checkpoint '{checkpoint_id}' (legacy) could not restore "
+                    f"{len(_legacy_unrestorable)} ref(s): {_legacy_unrestorable[:8]}"
+                ),
+            }
 
     return {
         "success": True,

@@ -96,10 +96,10 @@ async def test_CORR2_fresh_session_set_view_persists_skeleton_defaults(monkeypat
     stored = {}
 
     class _Store:
-        async def get_mapspec(self, sid):
+        async def get_mapspec(self, sid, **_kw):
             return stored.get(sid)
 
-        async def save_mapspec(self, sid, spec):
+        async def save_mapspec(self, sid, spec, **_kw):
             stored[sid] = dict(spec)
 
         def get_session_dir(self, sid):

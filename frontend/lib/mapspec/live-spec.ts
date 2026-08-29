@@ -152,8 +152,35 @@ export function composeLiveMapSpec(
   pending: PendingPresentation = {},
   removed: string[] = [],
 ): MapSpec {
+  // #1078(G-5): 输入身份 memo —— reconcile effect 一次事件典型重跑 2-3 次
+  // 且多数输入未变；同输入返回同一对象让 runtime 的对象身份 no-op 门
+  // （同步路径既有）在异步路径同样生效，等价重复 compose 不再触发
+  // worker diff。hud.layers/processLayers/pending/removed 都是引用稳定
+  // 输入（zustand 切片与 session-cursor 模块状态只在变更时换引用）。
+  if (
+    composeMemo.committed === committed
+    && composeMemo.hudLayers === hud.layers
+    && composeMemo.hudProcess === hud.processLayers
+    && composeMemo.pending === pending
+    && composeMemo.removed === removed
+    && composeMemo.hudFilters === hud.activeFilters
+    && composeMemo.hud3D === hud.is3D
+    && composeMemo.result != null
+  ) {
+    return composeMemo.result;
+  }
   const hudSpec = hudStateToMapSpec(hud);
-  if (!committed) return hudSpec;
+  if (!committed) {
+    composeMemo.result = hudSpec;
+    composeMemo.committed = null;
+    composeMemo.hudLayers = hud.layers;
+    composeMemo.hudProcess = hud.processLayers;
+    composeMemo.pending = pending;
+    composeMemo.removed = removed;
+    composeMemo.hudFilters = hud.activeFilters;
+    composeMemo.hud3D = hud.is3D;
+    return hudSpec;
+  }
 
   const layers = (committed.layers || [])
     .filter((layer) => !isPendingRemoved(layer, removed))
@@ -162,9 +189,33 @@ export function composeLiveMapSpec(
       pending,
     ));
 
-  return {
+  const result: MapSpec = {
     ...committed,
     sources: mergeHudSources(committed, hud, hudSpec),
     layers,
   };
+  composeMemo.result = result;
+  composeMemo.committed = committed;
+  composeMemo.hudLayers = hud.layers;
+  composeMemo.hudProcess = hud.processLayers;
+  composeMemo.pending = pending;
+  composeMemo.removed = removed;
+  composeMemo.hudFilters = hud.activeFilters;
+  composeMemo.hud3D = hud.is3D;
+  return result;
 }
+
+const composeMemo: {
+  committed: MapSpec | null | undefined;
+  hudLayers: unknown;
+  hudProcess: unknown;
+  pending: PendingPresentation | undefined;
+  removed: string[] | undefined;
+  hudFilters: unknown;
+  hud3D: unknown;
+  result: MapSpec | null;
+} = {
+  committed: undefined, hudLayers: undefined, hudProcess: undefined,
+  pending: undefined, removed: undefined, hudFilters: undefined,
+  hud3D: undefined, result: null,
+};

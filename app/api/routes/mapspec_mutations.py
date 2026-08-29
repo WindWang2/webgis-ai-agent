@@ -6,12 +6,18 @@ from pydantic import BaseModel, Field
 
 from app.core.auth import require_owned_session
 from app.models.db_model import Conversation
+from app.services.distributed_lock import (
+    LockContentionError,
+    LockDegradedError,
+    LockLostError,
+)
 from app.services.gis_harness.components import ComponentPlacement
 from app.services.mapspec.lifecycle_engine import (
     InitProjectIntent,
     MapSpecLifecycleEngine,
     PatchComponentIntent,
     PatchLayerPresentationIntent,
+    PatchLayerStyleIntent,
     RemoveLayerIntent,
     ReorderLayersIntent,
     SetLayoutIntent,
@@ -29,6 +35,18 @@ class PatchLayerPresentationBody(BaseModel):
     layer_id: str = Field(min_length=1, max_length=200)
     visible: Optional[bool] = None
     opacity: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+
+
+class PatchLayerStyleBody(BaseModel):
+    """#1077：spec 承载层的持久样式突变（用户样式面板 durable 通道）。
+
+    paint 顶层键合并（部分更新）；族谓词与 presentation patch 一致。
+    """
+
+    intent: Literal["patch_layer_style"]
+    expected_revision: int = Field(ge=0)
+    layer_id: str = Field(min_length=1, max_length=200)
+    paint: dict[str, Any] = Field(min_length=1)
 
 
 class PatchComponentBody(BaseModel):
@@ -104,6 +122,7 @@ class InitProjectBody(BaseModel):
 UserMapSpecMutationRequest = Annotated[
     Union[
         PatchLayerPresentationBody,
+        PatchLayerStyleBody,
         PatchComponentBody,
         SetViewBody,
         RemoveLayerBody,
@@ -123,7 +142,11 @@ async def apply_user_mapspec_mutation(
     include_review: bool = False,
     _conv: Conversation = Depends(require_owned_session),
 ) -> dict[str, Any]:
-    if isinstance(req, PatchLayerPresentationBody):
+    if isinstance(req, PatchLayerStyleBody):
+        intent = PatchLayerStyleIntent(
+            layer_id=req.layer_id, paint=dict(req.paint),
+        )
+    elif isinstance(req, PatchLayerPresentationBody):
         if req.visible is None and req.opacity is None:
             raise HTTPException(
                 status_code=400,
@@ -199,14 +222,36 @@ async def apply_user_mapspec_mutation(
     # provenance（用户决策链——user-wins 守卫与 reload 审计的依据）。
     from app.services.gis_world_state import apply_gis_mutation
 
-    result = await apply_gis_mutation(
-        session_id,
-        intent,
-        origin="user",
-        actor="mapspec_route",
-        expected_revision=req.expected_revision,
-        engine=_engine,
-    )
+    try:
+        result = await apply_gis_mutation(
+            session_id,
+            intent,
+            origin="user",
+            actor="mapspec_route",
+            expected_revision=req.expected_revision,
+            engine=_engine,
+        )
+    except (TimeoutError, LockContentionError, LockDegradedError, LockLostError):
+        # #1071: 用户在 agent 持锁（大栅格摄取可 >30s）期间切换可见度，
+        # 等满获取预算后收到裸 500 —— 锁竞争是背压不是服务端故障，与
+        # chat.py 全部同型点一致映射 503 + retry 指引。
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "session_busy",
+                "message": "会话正被 Agent 操作占用，请稍后重试。",
+            },
+        )
+    except (LockDegradedError, LockLostError):
+        # v2(audit F2): engine fail-closed 抛出（#1071 引入）此前无路由
+        # 捕获 → 裸 500。同 503 语义：状态未写，客户端重读后重试安全。
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "session_lock_unavailable",
+                "message": "会话锁暂不可用（分布式所有权无法证明），状态未修改，请稍后重试。",
+            },
+        )
     payload = result.to_dict()
     if not include_review:
         # #732: the user chrome route fires per slider tick — the frontend

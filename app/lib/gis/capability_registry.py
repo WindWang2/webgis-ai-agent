@@ -246,13 +246,23 @@ _SEED_CAPS: List[CapabilityDescriptor] = [
         output_artifact_types=["line_feature_set"],
         purpose_template="最短路径",
     ),
-    # ── 网络族补齐（phase-2：真实路网工具整族接入 registry） ───────────
+    # ── 网络族（phase-2 接入 + v2(audit R2) parity 收口，两线合并取并集）──
+    # phase-2 给出更宽的输入面与版面兼容（flow_od_arc/proximity_overlay）；
+    # audit R2 保证五项网络语义全部有 capability 归属（无孤儿工具）。
     CapabilityDescriptor(
         id="closest_facility", name="最近设施", category="network",
-        domain="network", description="路网时间/距离最近的设施匹配。",
+        domain="network", description="从需求点到设施集合的 top-K 最近路径。",
         input_artifact_types=["poi_feature_set", "point_feature_set"],
         output_artifact_types=["line_feature_set"],
         purpose_template="最近设施分析",
+    ),
+    CapabilityDescriptor(
+        id="accessibility", name="网络可达性", category="network",
+        domain="network", description="需求点对设施集合的可达性指标计算（15 分钟生活圈等）。",
+        input_artifact_types=["point_feature_set"],
+        output_artifact_types=["service_area", "stats_table"],
+        compatible_map_models=["proximity_overlay"],
+        purpose_template="网络可达性分析",
     ),
     CapabilityDescriptor(
         id="od_matrix", name="OD 成本矩阵", category="network",
@@ -260,29 +270,23 @@ _SEED_CAPS: List[CapabilityDescriptor] = [
         input_artifact_types=["poi_feature_set", "point_feature_set"],
         output_artifact_types=["od_matrix"],
         compatible_map_models=["flow_od_arc"],
-        purpose_template="OD 成本矩阵",
+        purpose_template="起讫点（OD）矩阵",
     ),
     CapabilityDescriptor(
-        id="accessibility", name="可达性分析", category="network",
-        domain="network", description="15 分钟生活圈等网络可达性。",
-        output_artifact_types=["service_area"],
-        compatible_map_models=["proximity_overlay"],
-        purpose_template="网络可达性",
-    ),
-    CapabilityDescriptor(
-        id="location_allocation", name="选址配置", category="network",
-        domain="network", description="Location-Allocation 选址优化。",
+        id="location_allocation", name="区位配置", category="network",
+        domain="network", description="设施选址-分配优化（tier-3 门控）。",
         input_artifact_types=["poi_feature_set", "point_feature_set"],
-        output_artifact_types=["stats_table"],
-        purpose_template="选址优化",
+        output_artifact_types=["point_feature_set", "stats_table"],
+        purpose_template="区位配置优化",
     ),
     CapabilityDescriptor(
         id="route_optimization", name="路线优化", category="network",
-        domain="network", description="VRP 配送/巡检路线优化。",
+        domain="network", description="多站点访问顺序优化（VRP，tier-3 门控）。",
+        input_artifact_types=["point_feature_set"],
         output_artifact_types=["line_feature_set"],
-        purpose_template="路线优化",
+        purpose_template="访问路线优化",
     ),
-    # ── 时序族（phase-2：temporal 工具族正式词汇） ─────────────────────
+    # ── 时序族（phase-2 正式词汇 + #1075(D-10) temporal_trend 就位）──────
     CapabilityDescriptor(
         id="temporal_profile", name="时间画像", category="statistics",
         description="时间字段/跨度/粒度画像（元数据，不产新数据）。",
@@ -297,11 +301,13 @@ _SEED_CAPS: List[CapabilityDescriptor] = [
         output_artifact_types=["stats_table"],
         purpose_template="时间聚合统计",
     ),
+    # #1075(D-10): temporal_trend capability 就位 —— temporal.* 算法此前因
+    # 该 capability 缺失被 if False 挂到 spatial_interpolation 上。
     CapabilityDescriptor(
-        id="temporal_trend", name="时序趋势", category="statistics",
-        description="Sen's Slope / 移动平均等时序趋势。",
-        input_artifact_types=["stats_table"],
-        output_artifact_types=["stats_table"],
+        id="temporal_trend", name="时序趋势", category="analysis",
+        domain="statistics", description="时间维度的趋势/聚合/时空热点分析。",
+        input_artifact_types=["poi_feature_set", "raster_surface", "stats_table"],
+        output_artifact_types=["stats_table", "raster_surface"],
         purpose_template="时序趋势",
     ),
     CapabilityDescriptor(

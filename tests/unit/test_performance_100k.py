@@ -96,9 +96,9 @@ def test_mapspec_set_view_cow_no_source_copy(fc_100k):
     
     # Mock store that returns the same spec object (in-memory backend behavior)
     class _FakeStore:
-        async def get_mapspec(self, sid):
+        async def get_mapspec(self, sid, **_kw):
             return spec
-        async def save_mapspec(self, sid, mapspec):
+        async def save_mapspec(self, sid, mapspec, **_kw):
             return {"mapspec": mapspec}
         def get_session_dir(self, sid):
             from pathlib import Path
@@ -117,7 +117,7 @@ def test_mapspec_set_view_cow_no_source_copy(fc_100k):
             return True
     
     class _FakeLock:
-        def lock(self, sid):
+        def lock(self, sid, **_kw):
             class _Ctx:
                 async def __aenter__(self):
                     return None

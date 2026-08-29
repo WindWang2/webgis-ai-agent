@@ -694,3 +694,71 @@ def test_query_gd_poi_bound_params_without_ingest(tmp_path, monkeypatch):
     assert sampled["count"] == 2
     assert sampled.get("truncated") is True
     assert sampled.get("total_matched") == 4
+
+
+@pytest.mark.asyncio
+async def test_gd_poi_bbox_sampling_uses_rtree_without_fid_order_bias(stats_env):
+    """#1058: 空间采样必须不受 fid 摄取序偏差影响。
+
+    构造 12 条同 category 的 POI：前 10 条落在 bbox 外（fid 序在前），
+    后 2 条落在 bbox 内。旧实现按 fid 序扫描属性匹配行 —— 前部行先
+    耗尽配额/决定候选，bbox 内行是否被看到取决于扫描位置而非空间
+    谓词；R-tree 路径按 bbox 约束枚举，必然覆盖 bbox 内全部行。
+    """
+    from app.services import local_poi as lp
+
+    rows = []
+    for i in range(10):
+        # bbox 外（重庆附近），fid 序在前
+        rows.append({
+            "id": f"OUT{i:03d}", "name": f"外部点{i}", "type": "科教文化服务;小学",
+            "address": "", "location": _gcj_loc(106.5, 29.5),
+            "typecode": "141000", "pcode": "500000", "pname": "重庆市",
+            "citycode": "023", "cityname": "重庆市", "adcode": "500103",
+            "adname": "渝中区", "tel": "",
+        })
+    for i in range(2):
+        rows.append({
+            "id": f"IN{i:03d}", "name": f"bbox内小学{i}", "type": "科教文化服务;小学",
+            "address": "", "location": _gcj_loc(104.05, 30.65),
+            "typecode": "141000", "pcode": "510000", "pname": "四川省",
+            "citycode": "028", "cityname": "成都市", "adcode": "510104",
+            "adname": "锦江区", "tel": "",
+        })
+    import pandas as pd
+    df = pd.DataFrame(rows)
+    poi_dir = stats_env / "POI"
+    poi_dir.mkdir(parents=True, exist_ok=True)
+    import zipfile
+    import io
+    buf = io.BytesIO()
+    df.to_excel(buf, index=False, sheet_name="sheet1")
+    with zipfile.ZipFile(poi_dir / "gd_510000_poi.zip", "w") as zf:
+        zf.writestr("gd_510000_poi/x.xlsx", buf.getvalue())
+    lp.ingest_gd_poi()
+
+    fc = lp.query_gd_poi(
+        [103.9, 30.5, 104.2, 30.8], category="科教文化服务", subtype="小学", limit=2000
+    )
+    names = [f["properties"]["name"] for f in fc["features"]]
+    # bbox 内的两条必须全部命中 —— 不依赖它们在属性匹配集中的位置
+    assert "bbox内小学0" in names and "bbox内小学1" in names
+    assert not any(n.startswith("外部点") for n in names)
+    assert fc.get("total_matched") == 2
+    assert fc.get("truncated") is not True
+
+
+@pytest.mark.asyncio
+async def test_gd_poi_attribute_count_is_exact_and_fast_shape(stats_env):
+    """#1058: 纯属性路径的 category 谓词可下推索引（不套 LOWER 列函数），
+    total_matched 精确、超限走哈希采样。"""
+    from app.services import local_poi as lp
+
+    _ingest_all()
+    fc = lp.query_gd_poi(category="餐饮服务", limit=2)
+    # 坏坐标点（B004 无 location）在入库即被丢弃 —— 有效行只有海底捞。
+    assert fc.get("total_matched") == 1
+    assert fc.get("count") == 1
+    # limit 更小时触发截断 + 哈希采样语义
+    fc2 = lp.query_gd_poi(category="餐饮服务", limit=1)
+    assert fc2.get("total_matched") == 1

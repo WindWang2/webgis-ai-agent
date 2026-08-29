@@ -135,3 +135,44 @@ async def test_cancel_task_not_found(client):
     """测试取消不存在的任务（跨租户守卫先于 cancel 命中）"""
     resp = await client.delete("/api/v1/tasks/task-nonexistent")
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_cancel_task_aborts_active_pi_turn(client, monkeypatch):
+    """#1066: 任务的 session 即 Pi 活跃回合的 session 时，取消必须桥接
+    pi_bridge.abort —— 否则子进程继续生成/执行工具直到自然 settle。"""
+
+    task = _engine.tracker.create("pi-cancel-session", "取消 Pi 回合")
+    aborted = []
+
+    class _FakeBridge:
+        async def abort(self, session_id=None):
+            aborted.append(session_id)
+            return {}
+
+    monkeypatch.setattr(chat_mod, "pi_bridge", _FakeBridge())
+    monkeypatch.setattr(
+        "app.agent_pi_bridge.active_turn_correlation",
+        lambda: ("turn-1", "run-1", "pi-cancel-session"),
+    )
+    resp = await client.delete(f"/api/v1/tasks/{task.id}")
+    assert resp.status_code == 200
+    assert aborted == ["pi-cancel-session"]
+
+
+@pytest.mark.asyncio
+async def test_cancel_task_skips_abort_for_other_sessions(client, monkeypatch):
+    """跨 session 守卫：活跃回合属于其它 session 时不 abort（串号安全）。"""
+    task = _engine.tracker.create("other-cancel-session", "不相关任务")
+
+    class _FakeBridge:
+        async def abort(self, session_id=None):
+            raise AssertionError("must not abort another session's turn")
+
+    monkeypatch.setattr(chat_mod, "pi_bridge", _FakeBridge())
+    monkeypatch.setattr(
+        "app.agent_pi_bridge.active_turn_correlation",
+        lambda: ("turn-2", "run-2", "a-different-session"),
+    )
+    resp = await client.delete(f"/api/v1/tasks/{task.id}")
+    assert resp.status_code == 200

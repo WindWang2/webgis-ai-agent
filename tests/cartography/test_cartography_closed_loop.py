@@ -354,9 +354,11 @@ async def test_post_save_failure_rolls_back_mutation(clean_session):
     assert any(lyr["id"] == "base" for lyr in baseline["layers"])
 
     # Now mutate again; save succeeds, but the post-save redis-layers sync fails.
+    # v2(F4): spec+revision+layers 已并入 commit_mapspec_state 单事务 ——
+    # 旧失败窗（save 后 layers 独立写）不存在了，对抗点移至 commit 拒绝。
     with patch.object(
-        session_data_manager, "update_layer_in_state",
-        new=AsyncMock(side_effect=RuntimeError("redis down")),
+        session_data_manager, "commit_mapspec_state",
+        new=AsyncMock(return_value=False),
     ):
         res = await engine.apply_mutation(
             clean_session,
@@ -381,9 +383,11 @@ async def test_first_mutation_post_save_failure_discards_residual_mapspec(clean_
     engine = MapSpecLifecycleEngine()
     assert await mapspec_store_instance.get_mapspec(clean_session) is None
 
+    # v2(F4): spec+revision+layers 已并入 commit_mapspec_state 单事务 ——
+    # 旧失败窗（save 后 layers 独立写）不存在了，对抗点移至 commit 拒绝。
     with patch.object(
-        session_data_manager, "update_layer_in_state",
-        new=AsyncMock(side_effect=RuntimeError("redis down")),
+        session_data_manager, "commit_mapspec_state",
+        new=AsyncMock(return_value=False),
     ):
         res = await engine.apply_mutation(
             clean_session,

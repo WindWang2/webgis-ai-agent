@@ -46,6 +46,7 @@ vi.mock('@/lib/mapspec/session-cursor', () => ({
 const opacityCommit = vi.fn();
 vi.mock('@/lib/mapspec/user-mutation', () => ({
   setLayerOpacityAndCommit: (...args: unknown[]) => opacityCommit(...args),
+  commitLayerStyleAndCommit: vi.fn(async () => {}),
 }));
 
 const heatContractWindow = vi.fn(async () => {
@@ -68,20 +69,20 @@ describe('audit #840: spec-backed gating', () => {
     expect(screen.queryByText(/由 AI 生成的制图规范/)).toBeNull();
   });
 
-  it('disables style controls with an explanation on committed-spec layers', () => {
+  it('#1077 (v2): spec-backed layers expose durable canonical controls; filter controls stay gated', () => {
     committedSpec = { layers: [{ id: 'layer-1' }] };
     render(<LayerStylePanel />);
-    expect(screen.getByText(/由 AI 生成的制图规范/)).toBeTruthy();
-    // jsdom does not reflect fieldset-disable onto descendants' .disabled
-    // property — assert the fieldset gate itself and the notice.
+    // 说明文案更新：规范样式修改持久提交（#1077 durable 通道）
+    expect(screen.getByText(/持久提交到地图规范/)).toBeTruthy();
+    // 规范键控件（颜色等）启用 —— durable 通道经 patch_layer_style 写权威 spec
     const color = screen.getByLabelText('填充颜色') as HTMLInputElement;
     const fieldset = color.closest('fieldset') as HTMLFieldSetElement;
-    expect(fieldset.disabled).toBe(true);
-    // opacity stays functional: it renders outside the gated fieldset
-    const opacity = document.querySelector(
-      'input[type="range"]:not(fieldset[disabled] input)') as HTMLInputElement | null;
+    expect(fieldset.disabled).toBe(false);
+    // opacity 独立通道：滑杆存在且启用（presentation mutation，非样式面）
+    const sliders = screen.getAllByRole('slider') as HTMLInputElement[];
+    const opacity = sliders[sliders.length - 1];
     expect(opacity).toBeTruthy();
-    expect(opacity!.closest('fieldset')).toBeNull();
+    expect(opacity.disabled).toBe(false);
   });
 
   it('removes the never-consumed palette/intensity controls', () => {
@@ -121,5 +122,38 @@ describe('audit #841: radius windows', () => {
     expect(radiusSlider.min).toBe('4');
     expect(radiusSlider.max).toBe('80');
     mockState.layers[0].type = 'vector';
+  });
+});
+
+describe('#1077 aliased spec-backed rows (runtimePatch mirror)', () => {
+  it('rows whose id is a geojson ref but _mapspecLayerId matches the spec route edits to the spec layer', () => {
+    // runtimePatch 挂载行：id 是 ref，_mapspecLayerId 才是 spec 层 id ——
+    // 精确 id 匹配会把这类行误判为非 specBacked（样式控件可用但 compose
+    // 不消费 = 静默 no-op）。v2 守卫语义：行被识别为 spec-backed 后，
+    // 规范键控件启用且经 durable 通道按 _mapspecLayerId 提交到 spec 层；
+    // 非规范滤镜控件保持禁用 —— 不再整组 fieldset 禁用。
+    mockState.editingLayerId = 'ref:geojson-abc';
+    (mockState.layers as any)[0] = {
+      ...mockState.layers[0],
+      id: 'ref:geojson-abc',
+      _mapspecLayerId: 'poi-main',
+    };
+    committedSpec = { layers: [{ id: 'poi-main' }], sources: {} };
+    render(<LayerStylePanel />);
+    const fieldset = document.querySelector('fieldset');
+    expect(fieldset?.disabled).toBe(false);
+    // 规范键控件（填充颜色）启用 —— durable 提交按 spec 层键路由
+    const color = screen.getByLabelText('填充颜色') as HTMLInputElement;
+    expect(color.disabled).toBe(false);
+    // 滤镜类控件（线型，规范未建模）保持禁用
+    const dashButton = screen.getByText('虚线') as HTMLButtonElement;
+    expect(dashButton.disabled).toBe(true);
+    // restore shared mock state
+    mockState.editingLayerId = 'layer-1';
+    (mockState.layers as any)[0] = {
+      id: 'layer-1', name: 'POI 层', type: 'vector', visible: true,
+      opacity: 0.8, style: { color: '#00f2ff', radius_px: 30 },
+    };
+    committedSpec = null;
   });
 });

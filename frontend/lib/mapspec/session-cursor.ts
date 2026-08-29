@@ -28,6 +28,18 @@ export function resetLiveState(): void {
   pendingRemoved = [];
   // ref 数据缓存随会话失效（ref 归会话所有；切换后旧数据不可复用）。
   resetRefSourceCache();
+  // #1078(G-4): chart artifact 缓存同样随会话失效 —— 此前生产代码从不
+  // 调 resetChartArtifactCache（只有测试调），旧会话的 ref 条目永久滞留
+  // 且随会话切换增长。动态 import 避免与 chart-artifact 的静态环
+  // （它 import 本模块取 cursor）。
+  void import('../map-components/chart-artifact')
+    .then((m) => m.resetChartArtifactCache())
+    .catch(() => { /* best-effort：清缓存失败不影响切换 */ });
+  // #1078(G-1) 评审修复：custom-* 重挂登记随会话清空 —— 旧会话的命令层
+  // 不得在切换后 remount 进新会话的地图（重挂闭包持有旧会话 payload）。
+  void import('../map-commands/custom-overlay-registry')
+    .then((m) => m.resetCustomOverlayRegistry())
+    .catch(() => { /* best-effort */ });
 }
 
 export function subscribeMapSpecLive(listener: () => void): () => void {
@@ -46,6 +58,14 @@ export function setMapSpecSessionCursor(
   nextRevision = 0,
   nextOwnerToken: string | null = null,
 ): void {
+  // v2(#1078 FE1)：会话 id 变化 → custom-* 覆盖层挂载账本随旧会话失效
+  // （重挂注册表不清会让新会话的 style 切换复活旧会话的命令层）。
+  // 同 id 重设（重连/重水合）不清 —— 账本仍描述当前地图的真实挂载。
+  if (sessionId !== nextId) {
+    void import('../map-kit/custom-overlay-registry')
+      .then((m) => m.clearCustomOverlayRegistry())
+      .catch(() => { /* best-effort */ });
+  }
   sessionId = nextId;
   revision = Number.isFinite(nextRevision) ? nextRevision : 0;
   ownerToken = nextOwnerToken;

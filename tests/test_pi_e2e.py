@@ -226,12 +226,16 @@ class TestFeatureFlag:
             chat_mod.USE_NEW_AGENT = True
             alive_bridge = MagicMock()
             alive_bridge._process_died = False
+            # C-F15：_use_pi_bridge 会调用 is_alive() 探活；MagicMock 的
+            # 自动方法返回 MagicMock，须显式配置返回值。
+            alive_bridge.is_alive.return_value = True
             chat_mod.pi_bridge = alive_bridge
             assert _use_pi_bridge() is True
 
             # C-F15: flag on, bridge set but subprocess died -> False (legacy fallback)
             dead_bridge = MagicMock()
             dead_bridge._process_died = True
+            dead_bridge.is_alive.return_value = False
             chat_mod.pi_bridge = dead_bridge
             assert _use_pi_bridge() is False
         finally:

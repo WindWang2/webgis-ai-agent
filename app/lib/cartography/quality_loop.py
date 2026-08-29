@@ -397,6 +397,15 @@ def _apply_repairs(
                 layout = layer.get("layout")
                 if isinstance(layout, dict) and layout.get("visibility") == "none":
                     layout["visibility"] = "visible"
+                # v2(audit H5): 修复翻转可见性后 intent 印记必须同步 ——
+                # expected_visible/presentation_owner 描述状态的来历，不
+                # 更新会让 agent/repair 溯源失真（结构性维持 user-wins，
+                # 不再依赖"修复只计划于 expected_visible=True"的偶然前提）。
+                intent = layer.get("cartographic_intent")
+                if isinstance(intent, dict):
+                    intent["expected_visible"] = bool(repair.get("visible"))
+                    if intent.get("presentation_owner") != "user":
+                        intent["presentation_owner"] = "system"
             continue
         prop = repair.get("property")
         value = repair.get("value")

@@ -22,6 +22,7 @@ from app.services.gis_world_state.provenance import (
 from app.services.gis_world_state.state import build_world_state
 from app.services.gis_world_state.mutation import (
     apply_gis_mutation,
+    apply_gis_mutation_batch,
     UserPresentationGuardError,
 )
 
@@ -32,5 +33,6 @@ __all__ = [
     "PROVENANCE_LIMIT",
     "build_world_state",
     "apply_gis_mutation",
+    "apply_gis_mutation_batch",
     "UserPresentationGuardError",
 ]

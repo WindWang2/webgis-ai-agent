@@ -23,6 +23,26 @@ from typing import Any, Dict, List, Optional
 _MAX_CARTOGRAPHIC_CHECKS = 64
 _MAX_CARTOGRAPHIC_FINDINGS = 32
 # Two desired-state attempts plus two runtime convergence attempts.
+
+# #1069(A-7): 从工具结果向 harness 证据投影的键清单（单一事实源）。
+# 此前 agent_pi_bridge 与 cartography_runtime 各持一份逐字拷贝 —— 新增
+# 证据键（如 is_compiled 的下游依赖）只改一处会让另一条运行时的
+# validity ladder 缺料。两条 agent 路径（Pi 回调 / legacy seam）共用。
+CARTOGRAPHIC_RESULT_EVIDENCE_KEYS: tuple[str, ...] = (
+    "success",
+    "is_compiled",
+    "warnings",
+    "checkpoint_id",
+    "message",
+    "correction_hint",
+    "cartography_findings",
+    "cartographic_review",
+    "mapspec_fingerprint",
+    "runtime_observation_seq",
+    "runtime_projection_fingerprint",
+    "mutation_revision",
+    "map_product_evidence",
+)
 _MAX_REPAIR_ATTEMPTS = 4
 _MAX_VISUAL_EVIDENCE = 4
 _MAX_PRODUCT_FALLBACKS = 16

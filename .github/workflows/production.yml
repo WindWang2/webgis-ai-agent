@@ -31,14 +31,22 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v7
 
+      - name: Install pnpm
+        # pnpm 是唯一包管理器（audit5 #1083：npm lockfile 已删除，仓库只
+        # 维护 frontend/pnpm-lock.yaml）。action-setup 必须先于 setup-node，
+        # 否则 setup-node 的 pnpm 缓存找不到可执行文件。
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - name: Set up Node.js
         # 与 test-frontend job 保持一致：固定 Node 22（ESLint 9 要求
-        # node ^18.18 || ^20.9 || >=21.1），并启用 npm 缓存。
+        # node ^18.18 || ^20.9 || >=21.1），并启用 pnpm 缓存。
         uses: actions/setup-node@v7
         with:
           node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -59,7 +67,7 @@ jobs:
 
       - name: Install Frontend Deps
         working-directory: ./frontend
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: ESLint Check
         # ESLint 9 + flat config（eslint.config.mjs）已上线：eslint 升级到 9.x 并
@@ -68,7 +76,7 @@ jobs:
         # next build 已设 eslint.ignoreDuringBuilds（next 14 内置 lint 在
         # ESLint 9 下不兼容），构建期 lint 统一由这里把关。
         working-directory: ./frontend
-        run: npx eslint . --max-warnings 0
+        run: pnpm exec eslint . --max-warnings 0
 
   # ============ Stage 2: 单元测试 ============
   test-backend:
@@ -340,7 +348,7 @@ jobs:
         # 进 PR。test_perf_harness_v2.py（event-loop lag）与
         # test_perf_mapspec_e2e.py（1k/10k/50k + lag monitor）保持 nightly
         # 专属，避免打满本 job 的 180s thread timeout。
-        run: pytest tests/benchmarks/test_perf_harness.py tests/benchmarks/test_transport_perf.py tests/benchmarks/test_job_runtime_perf.py tests/benchmarks/test_provenance_perf.py tests/benchmarks/test_llm_http_pooling_perf.py tests/benchmarks/test_perf_mapspec_mutation_cost.py tests/benchmarks/test_dispatch_stall_perf.py tests/benchmarks/test_perf_large_workspace.py -m perf --no-cov --timeout=180 --timeout-method=thread -q
+        run: pytest tests/benchmarks/test_perf_harness.py tests/benchmarks/test_transport_perf.py tests/benchmarks/test_job_runtime_perf.py tests/benchmarks/test_provenance_perf.py tests/benchmarks/test_llm_http_pooling_perf.py tests/benchmarks/test_perf_mapspec_mutation_cost.py tests/benchmarks/test_dispatch_stall_perf.py tests/benchmarks/test_perf_large_workspace.py tests/perf/test_runtime_v2_perf_contracts.py -m perf --no-cov --timeout=180 --timeout-method=thread -q
 
   # ============ Stage 2c: 制图 / Harness 闭环 smoke（确定性，release-blocking）============
   cartography-smoke:
@@ -406,30 +414,36 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v7
 
+      - name: Install pnpm
+        # pnpm 是唯一包管理器（audit5 #1083）；action-setup 先于 setup-node。
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
           node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Install Frontend Deps
         working-directory: ./frontend
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Install Playwright Chromium
-        # playwright 包来自 npm ci；chromium 二进制需显式安装
+        # playwright 包来自 pnpm install；chromium 二进制需显式安装
         # （--with-deps 拉系统库，ubuntu-latest runner 有 sudo）。
         working-directory: ./frontend
-        run: npx playwright install --with-deps chromium
+        run: pnpm exec playwright install --with-deps chromium
 
       - name: Provision Compiler Runtime (tsx)
-        # 编译器/验证器子进程以 `npx tsx cli.ts` / `npx tsx runtime-validate.ts`
-        # 运行；tsx 只是前端工具链的 optional peer dep，npm ci 不装它 ——
-        # 显式装上（--no-save/--no-package-lock 不碰 package.json / lockfile），
-        # 否则子进程 CLI_UNAVAILABLE。
+        # 编译器/验证器子进程以 `pnpm exec tsx cli.ts` / `pnpm exec tsx
+        # runtime-validate.ts` 运行；tsx 只是前端工具链的 optional peer dep，
+        # pnpm install 不装它 —— 显式装上（--no-save 不碰 package.json /
+        # lockfile），否则子进程 CLI_UNAVAILABLE。
         working-directory: ./frontend
-        run: npm install --no-save --no-package-lock tsx@^4.8.1
+        run: pnpm add --no-save tsx@^4.8.1
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -491,27 +505,33 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v7
 
+      - name: Install pnpm
+        # pnpm 是唯一包管理器（audit5 #1083）；action-setup 先于 setup-node。
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - name: Set up Node.js
         # Node 20 已被 GitHub Actions 弃用（runner 强制升到 Node 24 运行 action）。
         # 用当前 LTS (22) 保持与本地开发环境兼容。
         uses: actions/setup-node@v7
         with:
           node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Install Dependencies
         working-directory: ./frontend
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Run Vitest
         working-directory: ./frontend
-        run: npm run test:ci
+        run: pnpm run test:ci
 
       - name: TypeScript Check
         # tsc --noEmit 抓类型错误（比 next build 快，单独跑让类型错误优先暴露）。
         working-directory: ./frontend
-        run: npm run typecheck
+        run: pnpm run typecheck
 
       - name: Production Build
         # 审计 CI-GAP（PR #151 暴露）：之前 test-frontend 只跑 vitest，不跑 next build。
@@ -519,7 +539,7 @@ jobs:
         # 已合入 master。在此 PR 阶段跑 next build，把生产构建错误前移到快速反馈环。
         # next build 同时校验：指令顺序、SSR 兼容性、静态导出、webpack 配置。
         working-directory: ./frontend
-        run: npm run build
+        run: pnpm run build
 
       - name: Upload Coverage
         uses: codecov/codecov-action@v7.0.0

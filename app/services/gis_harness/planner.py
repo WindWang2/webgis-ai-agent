@@ -20,6 +20,7 @@ MapModelRegistry、模板选择归 TemplateSelector —— 本文件不再持有
 from __future__ import annotations
 
 import hashlib
+import json
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -39,6 +40,7 @@ from app.services.gis_harness.recipes import (
     FallbackDecision,
     get_recipe_registry,
 )
+from app.lib.gis.runtime_manifest import get_runtime_manifest
 from app.services.gis_harness.template_catalog import get_template_catalog
 from app.services.gis_harness.template_selector import TemplateSelector
 
@@ -50,9 +52,15 @@ from app.services.gis_harness.template_selector import TemplateSelector
 # tests/unit/test_capability_registry_parity.py 锁定派生视图与真实
 # ToolRegistry / recipe 声明的 parity。
 def capability_tool_map() -> Dict[str, List[str]]:
-    """capability → 有序工具候选（AlgorithmRegistry 派生）。"""
-    from app.lib.gis.algorithm_registry import get_algorithm_registry
-    return get_algorithm_registry().capability_tool_map()
+    """capability → 有序工具候选。
+
+    v2(audit R4)：读 Compiled Runtime Manifest 的 O(1) 预排序视图 ——
+    AlgorithmRegistry.capability_tool_map() 此前每次调用全量重建，
+    plan_orchestrator 每步都调。manifest 编译时已按算法 priority 排序，
+    内容与 registry 派生视图一致（同一来源）。
+    """
+    from app.lib.gis.runtime_manifest import get_runtime_manifest
+    return dict(get_runtime_manifest().capability_to_tools)
 
 
 def resolve_tool_for_capability(
@@ -70,10 +78,15 @@ def resolve_tool_for_capability(
     return resolution.tool if resolution.status == "resolved" else None
 
 
-# 模块级兼容名（DEPRECATED：import 时快照，进程内重注册 registry 会过期；
-# 新代码用 capability_tool_map()）。旧导入方（tests 等）仍可
-# `from planner import CAPABILITY_TOOLS`。
-CAPABILITY_TOOLS: Dict[str, List[str]] = capability_tool_map()
+# 模块级兼容名（DEPRECATED：新代码用 capability_tool_map()）。
+# v2(review)：不再 import 时快照 —— 模块级调用会在 manifest 编译（持
+# threading.Lock）经 import 链重入 get_runtime_manifest() 时死锁（非重入
+# 锁 + 缓存未置的再编译）。PEP 562 惰性属性保持 `from planner import
+# CAPABILITY_TOOLS` 兼容，且首次访问才取当前视图（顺带消除快照过期）。
+def __getattr__(name: str):
+    if name == "CAPABILITY_TOOLS":
+        return capability_tool_map()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def layer_type_for_cartography(cartography: str, default: str = "circle") -> str:
@@ -164,6 +177,10 @@ class MapProductPlan(BaseModel):
     algorithm_selections: List[AlgorithmSelectionRecord] = []
     template_selection: Dict[str, Any] = Field(default_factory=dict)
     map_model_selection: List[Dict[str, Any]] = Field(default_factory=list)
+    # v2(Phase 4, #1084)：计划编制时的 registry 内容指纹 —— 恢复/续跑时与
+    # 当前 manifest 比对，不一致 → STALE_PLAN（旧计划不得静默套用新
+    # registry 语义）。空 = 历史计划（不判 stale）。
+    manifest_fingerprint: str = ""
 
 
 def _plan_id(query: str, recipe_id: str) -> str:
@@ -189,6 +206,13 @@ class MapProductPlanner:
         self.templates = get_product_template_registry()
         self.catalog = get_template_catalog()
         self.selector = TemplateSelector(catalog=self.catalog)
+        # v2(audit R4)：同一会话里 webgis_map_intent 与 webgis_map_product
+        # 对同一 query 各解析一次（加上 finalize_with_profile 共 2-3 次）。
+        # plan_from_intent 是纯函数 —— 以 (query, recipe, template,
+        # available_tools, manifest 指纹) 为键 memo；registry 内容变化
+        # （manifest 指纹变）自动失效。有界 64。
+        self._plan_memo: dict = {}
+        self._plan_memo_max = 64
 
     # ── registry 裁决辅助 ─────────────────────────────────────────────
     def _resolve_capabilities(
@@ -248,12 +272,42 @@ class MapProductPlanner:
         template_id: str = "",
         recipe_id: str = "",
         available_tools: Optional[Any] = None,
+        project_verified: Optional[set] = None,
+        use_memo: bool = True,
     ) -> MapProductPlan:
+        # v2(R4)：memo 命中直接返回既有 plan（确定性规划器，同输入同输出）。
+        # available_tools 参与（工具面变化改变 resolution evidence）；
+        # project_verified 参与（#864 项目记忆排序）。测试可用 use_memo=False
+        # 绕过。
+        memo_key = None
+        if use_memo:
+            try:
+                # v2(review R3-P1-3)：intent 全量参与键 —— task/subject/
+                # output_intents 等字段都改变 plan 输出，只按 query 键会在
+                # 同 query 不同 intent 时返回错误计划（复现于 review）。
+                intent_canonical = json.dumps(
+                    intent.model_dump(), ensure_ascii=False, sort_keys=True,
+                )
+                memo_key = (
+                    intent_canonical, recipe_id, template_id,
+                    tuple(sorted(available_tools)) if available_tools is not None else None,
+                    tuple(sorted(project_verified)) if project_verified else None,
+                    get_runtime_manifest().fingerprint,
+                )
+                cached = self._plan_memo.get(memo_key)
+                if cached is not None:
+                    return cached.model_copy(deep=True)
+            except Exception:  # noqa: BLE001 — memo 失败退直算
+                memo_key = None
         # recipe_id 显式指定（webgis_map_intent 阶段的推荐/LLM 纠偏）优先——
         # 保证意图阶段与产品阶段用同一份计划（plan 连续性）。
         recipe = self.recipes.get(recipe_id) if recipe_id else None
         if recipe is None:
-            candidates = self.recipes.select_candidates(intent)
+            # #1067(E-12): 回退重选此前不带 project_verified（#864 只修了
+            # 主路径）—— 应用 recipe 与 evidence 候选在项目记忆排序场景下分叉。
+            candidates = self.recipes.select_candidates(
+                intent, project_verified=project_verified
+            )
             recipe = candidates[0] if candidates else None
         if recipe is None:
             # 兜底：没有 task/cartography 命中时按通用 POI 分布 recipe
@@ -289,6 +343,7 @@ class MapProductPlanner:
             template_id=template.id if template else "",
             status="draft",
             template_selection=selection_dump,
+            manifest_fingerprint=get_runtime_manifest().fingerprint,
         )
 
         # 数据需求（能力去重，保持声明顺序）；simple_view 不过度分析——
@@ -350,6 +405,13 @@ class MapProductPlanner:
             plan.charts = ["category_bar"] if intent.task == "categorical_distribution" else ["admin_bar"]
 
         plan.validation = list(recipe.validation_rules)
+        if memo_key is not None:
+            # 存入即深拷贝：调用方持有返回对象并可变（plan1.data_requirements=[]
+            # 不得污染 memo 基底）。
+            self._plan_memo[memo_key] = plan.model_copy(deep=True)
+            while len(self._plan_memo) > self._plan_memo_max:
+                self._plan_memo.popitem(last=False)
+
         return plan
 
     def _map_model_evidence(self, layers: List[PlannedLayer]) -> List[Dict[str, Any]]:
@@ -737,7 +799,8 @@ __all__ = [
     "AlgorithmSelectionRecord",
     "PlannedLayer",
     "MapProductPlanner",
-    "CAPABILITY_TOOLS",
+    # CAPABILITY_TOOLS 经 PEP 562 __getattr__ 惰性提供，不在模块命名空间（ruff F822 豁免）
+    "CAPABILITY_TOOLS",  # noqa: F822
     "capability_tool_map",
     "resolve_tool_for_capability",
     "layer_type_for_cartography",

@@ -8,6 +8,8 @@ export interface RendererContext {
   bearing: number;
   /** U-2（#884）：底部同槽堆叠索引，单组件槽场景可省略 */
   bottomSlotIndexes?: Map<MapSpecComponent, number>;
+  /** v2(Phase 9, #1079)：顶部同槽堆叠索引（chart/statistics/annotation） */
+  topSlotIndexes?: Map<MapSpecComponent, number>;
 }
 
 export type ComponentRenderer = (component: MapSpecComponent, ctx: RendererContext) => React.ReactNode;

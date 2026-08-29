@@ -56,6 +56,23 @@ async def lifespan(app: FastAPI):
 
     registry = ToolRegistry()
     init_tools(registry)
+    # v2(Phase 3, audit R1)：启动即编译 Compiled GIS Runtime Manifest 并做
+    # cross-registry 校验 —— 此前 validate_gis_library 只有测试调用，悬空
+    # 引用（孤儿工具/错绑 capability/dangling alias）在运行期静默降级。
+    # fatal 议题 fail-fast（GIS_MANIFEST_STRICT=0 可逃生），warning/planned
+    # 记日志。
+    from app.lib.gis.runtime_manifest import (
+        compile_runtime_manifest,
+        validate_runtime_manifest_strict,
+    )
+    _manifest = compile_runtime_manifest(registry)
+    import app.lib.gis.runtime_manifest as _rm
+    _rm._cached_manifest = _manifest
+    validate_runtime_manifest_strict(_manifest)
+    logger.info(
+        "[lifespan] compiled GIS runtime manifest fp=%s %s",
+        _manifest.fingerprint[:12], _manifest.summary()["counts"],
+    )
     # E-2（#893）：单例注入下沉 services 层（路由模块全局保留赋值兼容旧引用）
     from app.services.chat.engine_instance import set_app_registry
     set_app_registry(registry)
