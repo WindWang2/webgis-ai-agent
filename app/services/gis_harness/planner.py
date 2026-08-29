@@ -120,6 +120,10 @@ class DataRequirement(BaseModel):
     bound_ref: str = ""
     resolved_tool: str = ""
     resolved_algorithm: str = ""
+    # v3(Phase D)：依赖边（capability id 列表，registry artifact 类型推断）。
+    # additive —— 旧持久计划无此字段，plan_graph 读取侧重放推断。
+    depends_on: List[str] = Field(default_factory=list)
+    optional: bool = False
 
 
 class AnalysisStep(BaseModel):
@@ -129,6 +133,8 @@ class AnalysisStep(BaseModel):
     bound_ref: str = ""
     resolved_tool: str = ""
     resolved_algorithm: str = ""
+    depends_on: List[str] = Field(default_factory=list)
+    optional: bool = False
 
 
 class AlgorithmSelectionRecord(BaseModel):
@@ -251,12 +257,18 @@ class MapProductPlanner:
         *,
         available_tools: Optional[Any] = None,
         profile: Optional[Dict[str, Any]] = None,
+        optional_capabilities: Optional[set] = None,
     ) -> tuple[List[DataRequirement], List[AnalysisStep], List[AlgorithmSelectionRecord]]:
         """capability → DataRequirement/AnalysisStep + 裁决证据。"""
         from app.lib.gis.algorithm_resolver import get_algorithm_resolver
         from app.lib.gis.capability_registry import get_capability_registry
+        from app.services.gis_harness.plan_graph import infer_dependency_edges
         caps = get_capability_registry()
         resolver = get_algorithm_resolver()
+        # v3(Phase D)：registry artifact 类型推断的依赖边（A.output ∩ B.input
+        # ⇒ A→B）随行持久化 —— 扁平行即携带依赖序，plan_graph 是其纯投影。
+        edges = infer_dependency_edges(capabilities)
+        optional_set = optional_capabilities or set()
         requirements: List[DataRequirement] = []
         steps: List[AnalysisStep] = []
         selections: List[AlgorithmSelectionRecord] = []
@@ -282,15 +294,19 @@ class MapProductPlanner:
                 available_tools is not None and record.status != "resolved"
             )
             status = "unavailable" if unavailable else "pending"  # type: ignore[assignment]
+            deps = edges.get(cap, [])
+            optional = cap in optional_set
             requirements.append(DataRequirement(
                 capability=cap, purpose=purpose, status=status,
                 resolved_tool=record.tool if record.status == "resolved" else "",
                 resolved_algorithm=record.algorithm if record.status == "resolved" else "",
+                depends_on=deps, optional=optional,
             ))
             steps.append(AnalysisStep(
                 capability=cap, purpose=purpose, status=status,  # type: ignore[arg-type]
                 resolved_tool=record.tool if record.status == "resolved" else "",
                 resolved_algorithm=record.algorithm if record.status == "resolved" else "",
+                depends_on=deps, optional=optional,
             ))
         return requirements, steps, selections
 
@@ -391,7 +407,8 @@ class MapProductPlanner:
                     capabilities.append(extra)
 
         requirements, steps, selections = self._resolve_capabilities(
-            capabilities, intent, available_tools=available_tools)
+            capabilities, intent, available_tools=available_tools,
+            optional_capabilities=set(recipe.optional_analysis))
         plan.data_requirements = requirements
         plan.analysis_steps = steps
         plan.algorithm_selections = selections
@@ -501,7 +518,10 @@ class MapProductPlanner:
             capabilities = [r.capability for r in finalized.data_requirements]
             _, _, selections = self._resolve_capabilities(
                 capabilities, plan.intent, profile=profile,
-                available_tools=available_tools)
+                available_tools=available_tools,
+                optional_capabilities={
+                    r.capability for r in finalized.data_requirements if r.optional
+                })
             finalized.algorithm_selections = selections
 
         disabled_elements = {d.element for d in report.disabled}

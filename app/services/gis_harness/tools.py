@@ -290,6 +290,19 @@ def register_gis_harness_tools(registry: ToolRegistry):
             guidance.append(
                 "⚠ 未解析能力: " + ", ".join(missing[:5]) + " —— 计划内无注册工具，需换路径"
             )
+        # v3(Phase D)：依赖序披露 —— plan 已携带 depends_on/optional；这里
+        # 给一行有界摘要（什么必须先执行）。无依赖边时不加行（零噪声）。
+        try:
+            from app.services.gis_harness.plan_graph import build_plan_graph
+            graph = build_plan_graph(plan)
+            dep_pairs = [
+                f"{n.capability} <- {','.join(n.depends_on)}"
+                for n in graph.nodes if n.depends_on
+            ]
+            if dep_pairs:
+                guidance.append("依赖序: " + "; ".join(dep_pairs[:4]))
+        except Exception:  # noqa: BLE001 — 增值信号不阻断意图解析
+            pass
 
         return {
             "success": True,

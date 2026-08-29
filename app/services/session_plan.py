@@ -174,7 +174,14 @@ def session_plan_stale(plan: Optional[SessionPlan]) -> bool:
 
 
 def format_session_plan_projection(plan: Optional[SessionPlan]) -> str:
-    """Bounded next-turn note. Not a Cartography Verdict block."""
+    """Bounded next-turn note. Not a Cartography Verdict block.
+
+    v3(Phase F)：首行契约不变（既有调用方/测试锁定）；其后追加有界
+    [GIS Plan] DAG 投影 —— Ready/Waiting/Completed/Unavailable/Recommended
+    next，由 gis_chapter 扁平行**派生**（plan_graph 纯投影，非第二事实源：
+    节点状态仍由 _mark_progress 的行状态推进，这里只读评估）。无数据需求
+    的章节（空 envelope / 组件-only）不输出图块。
+    """
     if plan is None or plan.gis_chapter is None:
         return (
             "[SessionPlan] recipe=none open= (call webgis_map_intent) "
@@ -189,12 +196,26 @@ def format_session_plan_projection(plan: Optional[SessionPlan]) -> str:
             "（计划编制于不同 registry 世代，工具/能力绑定可能已变；"
             "续跑前优先 webgis_map_intent 重规划或逐能力核验 resolved_tool）"
         )
-    return (
+    head = (
         f"[SessionPlan] recipe={recipe} open={open_caps} "
         f"replaced={'true' if plan.replaced else 'false'} "
         f"superseded={'true' if plan.superseded else 'false'}"
         f"{stale_note}"
     )
+    if not plan.gis_chapter.get("data_requirements"):
+        return head
+    try:
+        from app.services.gis_harness.plan_graph import (
+            build_plan_graph,
+            project_graph_block,
+        )
+        graph = build_plan_graph(plan.gis_chapter)
+        block = project_graph_block(graph)
+    except Exception:  # noqa: BLE001 — 图投影是增值信号，绝不阻断 turn 上下文
+        return head
+    if not block:
+        return head
+    return head + "\n" + block
 
 
 def events_to_sse(events: list[SessionPlanEvent], session_id: str = "") -> str:
