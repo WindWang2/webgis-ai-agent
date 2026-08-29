@@ -246,34 +246,36 @@ _SEED_CAPS: List[CapabilityDescriptor] = [
         output_artifact_types=["line_feature_set"],
         purpose_template="最短路径",
     ),
-    # v2(audit R2): 网络工具 parity 补全 —— 此前 closest_facility/
-    # accessibility/od_matrix/location_allocation/optimize_route 五个网络
-    # 语义无 capability 归属（孤儿工具或悬空 taxonomy 引用）。
+    # ── 网络族（phase-2 接入 + v2(audit R2) parity 收口，两线合并取并集）──
+    # phase-2 给出更宽的输入面与版面兼容（flow_od_arc/proximity_overlay）；
+    # audit R2 保证五项网络语义全部有 capability 归属（无孤儿工具）。
     CapabilityDescriptor(
         id="closest_facility", name="最近设施", category="network",
         domain="network", description="从需求点到设施集合的 top-K 最近路径。",
-        input_artifact_types=["point_feature_set"],
+        input_artifact_types=["poi_feature_set", "point_feature_set"],
         output_artifact_types=["line_feature_set"],
         purpose_template="最近设施分析",
     ),
     CapabilityDescriptor(
         id="accessibility", name="网络可达性", category="network",
-        domain="network", description="需求点对设施集合的可达性指标计算。",
+        domain="network", description="需求点对设施集合的可达性指标计算（15 分钟生活圈等）。",
         input_artifact_types=["point_feature_set"],
-        output_artifact_types=["stats_table"],
+        output_artifact_types=["service_area", "stats_table"],
+        compatible_map_models=["proximity_overlay"],
         purpose_template="网络可达性分析",
     ),
     CapabilityDescriptor(
-        id="od_matrix", name="起讫点矩阵", category="network",
-        domain="network", description="起点-终点集合间的网络代价矩阵。",
-        input_artifact_types=["point_feature_set"],
+        id="od_matrix", name="OD 成本矩阵", category="network",
+        domain="network", description="多起点×终点网络成本矩阵。",
+        input_artifact_types=["poi_feature_set", "point_feature_set"],
         output_artifact_types=["od_matrix"],
+        compatible_map_models=["flow_od_arc"],
         purpose_template="起讫点（OD）矩阵",
     ),
     CapabilityDescriptor(
         id="location_allocation", name="区位配置", category="network",
         domain="network", description="设施选址-分配优化（tier-3 门控）。",
-        input_artifact_types=["point_feature_set"],
+        input_artifact_types=["poi_feature_set", "point_feature_set"],
         output_artifact_types=["point_feature_set", "stats_table"],
         purpose_template="区位配置优化",
     ),
@@ -284,14 +286,58 @@ _SEED_CAPS: List[CapabilityDescriptor] = [
         output_artifact_types=["line_feature_set"],
         purpose_template="访问路线优化",
     ),
-    # #1075(D-10): 时序能力就位 —— temporal.* 算法此前因该 capability
-    # 缺失被 if False 挂到 spatial_interpolation 上。
+    # ── 时序族（phase-2 正式词汇 + #1075(D-10) temporal_trend 就位）──────
+    CapabilityDescriptor(
+        id="temporal_profile", name="时间画像", category="statistics",
+        description="时间字段/跨度/粒度画像（元数据，不产新数据）。",
+        input_artifact_types=["poi_feature_set", "point_feature_set"],
+        output_artifact_types=["stats_table"],
+        purpose_template="时间维度画像",
+    ),
+    CapabilityDescriptor(
+        id="temporal_aggregate", name="时间聚合", category="statistics",
+        description="按时间窗重采样汇总。",
+        input_artifact_types=["point_feature_set", "poi_feature_set"],
+        output_artifact_types=["stats_table"],
+        purpose_template="时间聚合统计",
+    ),
+    # #1075(D-10): temporal_trend capability 就位 —— temporal.* 算法此前因
+    # 该 capability 缺失被 if False 挂到 spatial_interpolation 上。
     CapabilityDescriptor(
         id="temporal_trend", name="时序趋势", category="analysis",
         domain="statistics", description="时间维度的趋势/聚合/时空热点分析。",
         input_artifact_types=["poi_feature_set", "raster_surface", "stats_table"],
         output_artifact_types=["stats_table", "raster_surface"],
         purpose_template="时序趋势",
+    ),
+    CapabilityDescriptor(
+        id="change_detection", name="变化检测", category="analysis",
+        description="双时相对比变化集。",
+        input_artifact_types=["raster_surface", "poi_feature_set", "point_feature_set"],
+        output_artifact_types=["change_set"],
+        purpose_template="变化检测",
+    ),
+    CapabilityDescriptor(
+        id="spatiotemporal_clustering", name="时空聚类", category="statistics",
+        description="ST-DBSCAN 等时空聚类（与 LISA 局部自相关是不同检验）。",
+        input_artifact_types=["poi_feature_set", "point_feature_set"],
+        output_artifact_types=["hotspot_result"],
+        purpose_template="时空聚类",
+    ),
+    # ── 几何/栅格统计错挂修复配套词汇 ──────────────────────────────────
+    CapabilityDescriptor(
+        id="spatial_join", name="空间连接", category="analysis",
+        description="按拓扑关系把右表属性挂到左表（区别于几何裁剪）。",
+        input_artifact_types=["poi_feature_set", "polygon_feature_set"],
+        output_artifact_types=["polygon_feature_set"],
+        purpose_template="空间连接",
+    ),
+    CapabilityDescriptor(
+        id="zonal_statistics", name="分区统计", category="raster",
+        domain="raster", description="面内栅格 min/max/mean/sum 统计。",
+        input_artifact_types=["raster_surface", "polygon_feature_set"],
+        output_artifact_types=["stats_table"],
+        purpose_template="分区统计",
     ),
 ]
 

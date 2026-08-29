@@ -179,7 +179,7 @@ class TestAlgorithmRegistry:
             "hotspot": ["hotspot_analysis"],
             "category_breakdown": ["spatial_stats"],
             "proximity_buffer": ["buffer_analysis"],
-            "service_area": ["network_service_area", "isochrone_analysis", "isochrone_network", "service_area_simple"],  # v2(R2): 拓扑服务区归位
+            "service_area": ["isochrone_analysis", "service_area_simple"],
             "raster_source": ["fetch_dem"],
             "grid_binning": ["h3_binning", "fishnet_grid"],
             "analytical_density": ["kde_contours", "heatmap_data", "spatial_aggregate"],

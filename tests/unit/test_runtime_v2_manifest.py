@@ -41,12 +41,14 @@ def test_network_parity_lookups(compiled):
     assert compiled.capability_for_tool("location_allocation") == ["location_allocation"]
     assert compiled.capability_for_tool("optimize_route") == ["route_optimization"]
     assert compiled.capability_for_tool("network_service_area") == ["service_area"]
-    # 拓扑服务区工具排在 service_area 候选首位（priority 5 < 等时圈/速度表）
-    assert compiled.tools_for_capability("service_area")[0] == "network_service_area"
-    # shortest_path 不再退化到 isochrone 工具族（R2 移除错误 fallback 残留）
+    # 真路网服务区工具必须在 service_area 候选集内（phase-2 兼容承诺：
+    # 缺省解析仍为 isochrone_analysis，故只断言成员而非首位）
+    assert "network_service_area" in compiled.tools_for_capability("service_area")
+    # shortest_path 不再退化到 isochrone 工具族（R2 移除错误 fallback 残留；
+    # phase-2 诚实契约进一步收敛：候选精确为真路网工具）
     assert compiled.tools_for_capability("shortest_path") == [
-        "network_shortest_path", "plan_route",
-    ]  # v2(review): plan_route（高德在线路由）归位为在线 fallback
+        "network_shortest_path",
+    ]
 
 
 def _unregister_algorithm(ar, probe_id: str, capability: str) -> None:

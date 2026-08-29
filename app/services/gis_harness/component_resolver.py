@@ -1,6 +1,14 @@
 """ComponentResolver — 根据 Composition / MapModel / Artifact 选择组件.
 
 确定性、 bounded、 registry-indexed；不把 template library 发给 LLM。
+
+本轮（component library phase-2）修正：
+- 多类型槽位（图例族 legend/categorical_legend/continuous_colorbar）不再
+  盲取 allowed_component_types[0]：required/conditional 一律按 descriptor
+  兼容性 + 模型库 recommended_components 解析（proportional_symbol 之类
+  模型此前会拿到错误的图例类型）；
+- descriptor.conflicts 从「纯声明」变为 selection 层执行：同批互斥类型
+  并存时保留 priority 小（语义优先）者，另一方以 conflict_with 记录剔除。
 """
 from __future__ import annotations
 
@@ -47,8 +55,16 @@ class ComponentResolver:
 
         # pick composition template — prefer model-specific density/academic maps for heatmap-like models
         compo = None
+        wired_discarded = False
         if composition_template_id:
             compo = compo_reg.get(composition_template_id)
+            # 显式指定的 composition 必须仍与最终 map model 兼容 ——
+            # 资格降级（如热力→点图回退）后 density_map 的必需 colorbar
+            # 会污染点图语境；不兼容则记因并走自动选择（select+fallback）。
+            if compo is not None and map_model_id and compo.compatible_map_models \
+                    and map_model_id not in compo.compatible_map_models:
+                compo = None
+                wired_discarded = True
         if compo is None:
             candidates = compo_reg.find_for_map_model(map_model_id, output_target)
             # prefer a template that explicitly declares compatible_map_models for this model
@@ -67,6 +83,13 @@ class ComponentResolver:
             return ComponentSelection(reason_codes=["no_composition_template"])
 
         sel = ComponentSelection(composition_template_id=compo.id)
+        if wired_discarded:
+            # 丢弃的接线模板记因（evidence 可追溯，不静默降级）
+            sel.rejected.append({
+                "slot": "composition", "reason": "wired_composition_incompatible_model",
+                "detail": f"{composition_template_id} not compatible with map model {map_model_id!r}",
+            })
+            sel.reason_codes.append("wired_composition_incompatible_model")
 
         for slot in compo.component_slots:
             if slot.cardinality == "forbidden":
@@ -108,35 +131,15 @@ class ComponentResolver:
             if not should_include:
                 continue
 
-            # check output compatibility for the preferred component type
-            chosen_type = slot.allowed_component_types[0] if slot.allowed_component_types else slot.id
+            # 统一的槽位类型解析：多类型槽位（图例族）按 map_model 兼容性选型
+            chosen_type = self._resolve_slot_type(slot, comp_reg, map_model_id)
             desc = comp_reg.get(chosen_type) or comp_reg.get_by_type(chosen_type)
+
+            # check output compatibility for the chosen component type
             if desc and output_target not in desc.supported_outputs:
                 sel.rejected.append({"slot": slot.id, "reason": f"output {output_target} not supported"})
                 sel.fallback.append(slot.id)
                 continue
-
-            # resolve conditional legend slot: pick the allowed type that matches map_model's recommended_components or descriptor compatibility
-            resolved_type = chosen_type
-            if slot.cardinality == "conditional" and len(slot.allowed_component_types) > 1:
-                # prefer legend type whose descriptor lists this map_model
-                for cand in slot.allowed_component_types:
-                    d = comp_reg.get(cand) or comp_reg.get_by_type(cand)
-                    if d and d.compatible_map_models and map_model_id in d.compatible_map_models:
-                        resolved_type = cand
-                        desc = d
-                        break
-                    # also check model_library recommended_components
-                    try:
-                        from app.lib.cartography.model_library import get_map_model_registry
-                        m = get_map_model_registry().resolve(map_model_id)
-                        if m and cand in (m.recommended_components or []):
-                            resolved_type = cand
-                            desc = comp_reg.get(cand) or comp_reg.get_by_type(cand)
-                            break
-                    except Exception:
-                        pass
-                chosen_type = resolved_type
 
             # check required_context (e.g., statistics_panel needs statistics)
             if desc and desc.required_context:
@@ -173,7 +176,65 @@ class ComponentResolver:
                 if cands:
                     sel.component_templates[chosen_type] = cands[0].id
 
+        self._enforce_conflicts(sel, comp_reg)
         return sel
+
+    def _resolve_slot_type(self, slot, comp_reg, map_model_id: str) -> str:
+        """多类型槽位选型：descriptor 兼容 > 模型库推荐 > 第一个 allowed.
+
+        单类型槽位直接返回（行为不变）。图例族槽位由此保证
+        choropleth→legend / heatmap→continuous_colorbar /
+        categorical_thematic→categorical_legend 的确定性配对。
+        """
+        if not slot.allowed_component_types:
+            return slot.id
+        if len(slot.allowed_component_types) == 1:
+            return slot.allowed_component_types[0]
+        for cand in slot.allowed_component_types:
+            d = comp_reg.get(cand) or comp_reg.get_by_type(cand)
+            if d and d.compatible_map_models and map_model_id in d.compatible_map_models:
+                return cand
+        try:
+            from app.lib.cartography.model_library import get_map_model_registry
+            model = get_map_model_registry().resolve(map_model_id)
+            if model and model.recommended_components:
+                for cand in slot.allowed_component_types:
+                    if cand in (model.recommended_components or []):
+                        return cand
+        except Exception:  # noqa: BLE001 - 模型库不可用时回退第一候选
+            pass
+        return slot.allowed_component_types[0]
+
+    def _enforce_conflicts(self, sel: ComponentSelection, comp_reg) -> None:
+        """descriptor.conflicts 执行：互斥类型并存时保留 priority 小者."""
+        def _priority(ctype: str) -> int:
+            d = comp_reg.get(ctype) or comp_reg.get_by_type(ctype)
+            return d.priority if d else 100
+
+        def _conflict_type(ctype: str) -> list:
+            d = comp_reg.get(ctype) or comp_reg.get_by_type(ctype)
+            return list(d.conflicts) if d else []
+
+        ordered = sorted(sel.selected, key=lambda t: (_priority(t), t))
+        kept: List[str] = []
+        for ctype in ordered:
+            keeper_conflict = None
+            for k in kept:
+                if ctype in _conflict_type(k) or k in _conflict_type(ctype):
+                    keeper_conflict = k
+                    break
+            if keeper_conflict is not None:
+                sel.rejected.append({
+                    "component_type": ctype, "reason": f"conflict_with:{keeper_conflict}",
+                })
+                continue
+            kept.append(ctype)
+        dropped = [t for t in sel.selected if t not in kept]
+        sel.selected = kept
+        for t in dropped:
+            sel.component_templates.pop(t, None)
+        if dropped:
+            sel.reason_codes.append("conflict_resolution_applied")
 
 
 _resolver: Optional[ComponentResolver] = None

@@ -264,7 +264,7 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         capabilities=["service_area"],
         input_artifact_types=["poi_feature_set", "point_feature_set"],
         output_artifact_type="service_area",
-        tool_candidates=["isochrone_analysis", "isochrone_network"],
+        tool_candidates=["isochrone_analysis"],
         cpu_cost="high", memory_cost="medium", io_cost="high",
         preferred_execution_policy="ASYNC",
         compatible_map_models=["proximity_overlay"],
@@ -311,7 +311,7 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
     ),
     AlgorithmDescriptor(
         id="geometry.spatial_join", name="空间连接", category="spatial_relationship",
-        capabilities=["geometry_clip"],
+        capabilities=["spatial_join"],
         input_artifact_types=["poi_feature_set", "polygon_feature_set"],
         output_artifact_type="polygon_feature_set", tool_candidates=["spatial_join"],
         cpu_cost="medium", memory_cost="medium", io_cost="low",
@@ -328,15 +328,25 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
     ),
     AlgorithmDescriptor(
         id="stats.h3_lisa", name="H3 LISA 局部自相关", category="spatial_statistics",
-        capabilities=["local_morans_i", "getis_ord_gi_star"],
+        capabilities=["local_morans_i"],
         input_artifact_types=["grid_aggregate", "admin_aggregate_table"],
         output_artifact_type="hotspot_result", tool_candidates=["h3_lisa"],
         cpu_cost="high", memory_cost="medium", io_cost="low",
         preferred_execution_policy="THREAD", compatible_map_models=["hotspot_overlay"], priority=10,
     ),
+    # 同一 h3_lisa 工具也输出 Gi* 显著性 —— 与 LISA 是不同检验，拆成独立
+    # descriptor/capability 归属（原双 capability 声明语义过宽）。
+    AlgorithmDescriptor(
+        id="stats.h3_hotspot", name="H3 Gi* 热点", category="spatial_statistics",
+        capabilities=["getis_ord_gi_star"],
+        input_artifact_types=["grid_aggregate", "admin_aggregate_table"],
+        output_artifact_type="hotspot_result", tool_candidates=["h3_lisa"],
+        cpu_cost="high", memory_cost="medium", io_cost="low",
+        preferred_execution_policy="THREAD", compatible_map_models=["hotspot_overlay"], priority=15,
+    ),
     AlgorithmDescriptor(
         id="stats.st_dbscan", name="时空 DBSCAN 聚类", category="point_pattern",
-        capabilities=["local_morans_i"],
+        capabilities=["spatiotemporal_clustering"],
         input_artifact_types=["poi_feature_set", "point_feature_set"],
         output_artifact_type="hotspot_result", tool_candidates=["st_dbscan", "spatial_cluster"],
         cpu_cost="high", memory_cost="medium", io_cost="low",
@@ -396,7 +406,7 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
     ),
     AlgorithmDescriptor(
         id="remote.zonal_stats", name="分区统计", category="raster_analysis",
-        capabilities=["raster_source"],
+        capabilities=["zonal_statistics"],
         input_artifact_types=["raster_surface", "polygon_feature_set"],
         output_artifact_type="stats_table", tool_candidates=["zonal_stats"],
         cpu_cost="medium", memory_cost="medium", io_cost="low",
@@ -408,10 +418,7 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
     AlgorithmDescriptor(
         id="network.shortest_path", name="最短路径", category="network_analysis",
         capabilities=["shortest_path"],
-        output_artifact_type="line_feature_set",
-        # v2(audit R2): 移除 isochrone_network fallback 残留（#1075(D-3)
-        # 修正后 shortest_path 不应退化到等时圈工具族）。
-        tool_candidates=["network_shortest_path", "plan_route"],
+        output_artifact_type="line_feature_set", tool_candidates=["network_shortest_path"],
         cpu_cost="high", memory_cost="medium", io_cost="high",
         preferred_execution_policy="ASYNC", priority=10,
     ),
@@ -421,28 +428,48 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         output_artifact_type="line_feature_set",
         tool_candidates=["network_closest_facility", "nearest_facility"],
         cpu_cost="high", memory_cost="medium", io_cost="high",
-        preferred_execution_policy="ASYNC", priority=20,
+        preferred_execution_policy="ASYNC", priority=10,
+        fallback_algorithms=["network.shortest_path"],
     ),
-    # v2(audit R2): accessibility 独立算法（此前 network_accessibility 是
-    # closest_facility 的 fallback 候选并反查到 shortest_path capability）。
+    # 真实路网族补齐：此前 registry 只有直线/简化近似实现
+    AlgorithmDescriptor(
+        id="network.od_matrix", name="OD 成本矩阵", category="network_analysis",
+        capabilities=["od_matrix"],
+        output_artifact_type="od_matrix",
+        tool_candidates=["network_od_matrix", "distance_matrix_cn"],
+        cpu_cost="high", memory_cost="medium", io_cost="high",
+        preferred_execution_policy="ASYNC",
+        compatible_map_models=["flow_od_arc"], priority=10,
+    ),
+    AlgorithmDescriptor(
+        id="network.service_area.multi", name="多断点服务区", category="network_analysis",
+        capabilities=["service_area"],
+        output_artifact_type="service_area", tool_candidates=["network_service_area"],
+        cpu_cost="high", memory_cost="medium", io_cost="high",
+        preferred_execution_policy="ASYNC",
+        compatible_map_models=["proximity_overlay"], priority=25,
+    ),
     AlgorithmDescriptor(
         id="network.accessibility", name="网络可达性", category="network_analysis",
         capabilities=["accessibility"],
-        output_artifact_type="stats_table",
-        tool_candidates=["network_accessibility"],
+        output_artifact_type="service_area", tool_candidates=["network_accessibility"],
         cpu_cost="high", memory_cost="medium", io_cost="high",
-        preferred_execution_policy="ASYNC", priority=20,
+        preferred_execution_policy="ASYNC",
+        compatible_map_models=["proximity_overlay"], priority=10,
     ),
-    # v2(audit R2): 真实拓扑服务区工具归位（此前 network_service_area 是
-    # 孤儿 —— service_area 只解析到 amap 等时圈或速度表近似）。
+    # 合并去重：location_allocation 保留 R2 版（point_feature_set 输出，
+    # 与选址-分配工具真实产物一致），见下方 R2 条目。
     AlgorithmDescriptor(
-        id="network.service_area.topological", name="拓扑服务区", category="network_analysis",
-        capabilities=["service_area"],
-        output_artifact_type="service_area",
-        tool_candidates=["network_service_area"],
+        id="network.route_optimization", name="路线优化", category="network_analysis",
+        capabilities=["route_optimization"],
+        output_artifact_type="line_feature_set", tool_candidates=["optimize_route"],
         cpu_cost="high", memory_cost="medium", io_cost="high",
-        preferred_execution_policy="ASYNC", priority=5,
+        preferred_execution_policy="ASYNC", priority=10,
     ),
+    # 合并去重：accessibility 的 R2 独立算法语义由上方 phase-2 条目承载
+    #（service_area + proximity_overlay 模板兼容；同一工具 network_accessibility）。
+    # 合并去重：真实拓扑服务区工具（network_service_area）已由上方
+    # phase-2 的 service_area.multi 条目绑定 —— R2 独立条目不再重复。
     # v2(audit R2): tier-3 网络优化工具接入 planner 可达面（此前无
     # capability/algorithm，工具存在但不可规划）。
     AlgorithmDescriptor(
@@ -453,14 +480,8 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         cpu_cost="high", memory_cost="medium", io_cost="medium",
         preferred_execution_policy="ASYNC", priority=30,
     ),
-    AlgorithmDescriptor(
-        id="network.od_matrix", name="起讫点（OD）矩阵", category="network_analysis",
-        capabilities=["od_matrix"],
-        output_artifact_type="od_matrix",
-        tool_candidates=["network_od_matrix", "distance_matrix_cn"],
-        cpu_cost="high", memory_cost="medium", io_cost="medium",
-        preferred_execution_policy="ASYNC", priority=25,
-    ),
+    # 合并去重：od_matrix 的 R2 版并入上方 phase-2 条目（flow_od_arc
+    # 模板兼容 + 同一候选工具族）。
     AlgorithmDescriptor(
         id="network.optimize_route", name="路线优化（VRP）", category="network_analysis",
         capabilities=["route_optimization"],
@@ -496,6 +517,25 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         preferred_execution_policy="THREAD", priority=15,
     ),
     # ── 时序 ─────────────────────────────────────────────────────────
+    # temporal 工具族已在 app/tools/temporal_tools.py 全量实现，phase-2
+    # 正式接入（此前 temporal.trend 是 planned + 错挂 spatial_interpolation
+    # 的死代码 hack）。
+    AlgorithmDescriptor(
+        id="temporal.profile", name="时间画像", category="temporal_analysis",
+        capabilities=["temporal_profile"],
+        input_artifact_types=["poi_feature_set", "point_feature_set"],
+        output_artifact_type="stats_table", tool_candidates=["temporal_profile"],
+        cpu_cost="low", memory_cost="low", io_cost="low",
+        preferred_execution_policy="INLINE", priority=10,
+    ),
+    AlgorithmDescriptor(
+        id="temporal.aggregate", name="时间聚合", category="temporal_analysis",
+        capabilities=["temporal_aggregate"],
+        input_artifact_types=["poi_feature_set", "point_feature_set"],
+        output_artifact_type="stats_table", tool_candidates=["temporal_aggregate"],
+        cpu_cost="medium", memory_cost="low", io_cost="low",
+        preferred_execution_policy="THREAD", priority=10,
+    ),
     # #1075(D-10): temporal_trend capability 就位（此前 if False 死条件把
     # 时序算法挂到 spatial_interpolation 上污染候选表）；工具真实存在，
     # 描述符按 native 登记。
@@ -508,12 +548,20 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         preferred_execution_policy="INLINE", priority=10,
     ),
     AlgorithmDescriptor(
-        id="temporal.aggregate", name="时序聚合", category="temporal_analysis",
-        capabilities=["temporal_trend"],
-        input_artifact_types=["poi_feature_set"],
-        output_artifact_type="stats_table", tool_candidates=["temporal_aggregate"],
-        cpu_cost="low", memory_cost="low", io_cost="low",
-        preferred_execution_policy="THREAD", priority=20,
+        id="temporal.change", name="时序变化", category="temporal_analysis",
+        capabilities=["change_detection"],
+        input_artifact_types=["poi_feature_set", "point_feature_set"],
+        output_artifact_type="change_set", tool_candidates=["temporal_change"],
+        cpu_cost="medium", memory_cost="low", io_cost="low",
+        preferred_execution_policy="THREAD", priority=10,
+    ),
+    AlgorithmDescriptor(
+        id="temporal.hotspot", name="时空热点", category="temporal_analysis",
+        capabilities=["spatiotemporal_clustering"],
+        input_artifact_types=["poi_feature_set", "point_feature_set"],
+        output_artifact_type="hotspot_result", tool_candidates=["spatiotemporal_hotspot"],
+        cpu_cost="high", memory_cost="medium", io_cost="low",
+        preferred_execution_policy="THREAD", priority=15,
     ),
     AlgorithmDescriptor(
         id="temporal.raster_ts", name="时序栅格", category="temporal_analysis",
@@ -522,14 +570,6 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         output_artifact_type="raster_surface", tool_candidates=["temporal_raster"],
         cpu_cost="medium", memory_cost="medium", io_cost="high",
         preferred_execution_policy="THREAD", priority=30,
-    ),
-    AlgorithmDescriptor(
-        id="temporal.hotspot", name="时空热点", category="temporal_analysis",
-        capabilities=["temporal_trend"],
-        input_artifact_types=["poi_feature_set"],
-        output_artifact_type="stats_table", tool_candidates=["spatiotemporal_hotspot"],
-        cpu_cost="medium", memory_cost="medium", io_cost="low",
-        preferred_execution_policy="THREAD", priority=40,
     ),
 ]
 

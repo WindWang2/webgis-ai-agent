@@ -29,6 +29,10 @@ ComponentType = Literal[
     "statistics_panel",
     "chart_panel",
     "export_layout",
+    # 区位插图（全国→省→市）：schema/registry/composition 已建模，
+    # descriptor.runtime_status=planned —— 渲染器未实现前 resolver 不会
+    # 选出，不伪装 native（renderer 豁免见 export_component_catalog）。
+    "inset_map",
 ]
 
 Position = Literal[

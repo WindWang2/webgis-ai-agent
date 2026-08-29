@@ -33,33 +33,19 @@ def _component_id_for_type(ctype: str) -> str:
     return mapping.get(ctype, ctype)
 
 
-def _default_position_for_type(ctype: str) -> str:
-    defaults = {
-        "title": "top-center",
-        "subtitle": "top-center",
-        "legend": "bottom-left",
-        "continuous_colorbar": "bottom-right",
-        "categorical_legend": "bottom-left",
-        "north_arrow": "top-right",
-        "scale_bar": "bottom-right",
-        "attribution": "bottom-left",
-        "graticule": "none",
-        "map_border": "none",
-        "statistics_panel": "top-left",
-        "chart_panel": "top-left",
-        "export_layout": "none",
-        "annotation": "top-left",
-        "inset_map": "top-right",
-    }
-    return defaults.get(ctype, "none")
+# 实例默认值（priority / default_position）单一权威是组件描述符目录
+# （component_registry.py descriptors）；_FALLBACK_* 仅在目录不可用时兜底，
+# 数值与 descriptor seed 保持一致（composition 校验测试锁定两者不漂移）。
+_FALLBACK_PRIORITY = 50
+_FALLBACK_POSITION = "none"
 
 
-_PRIORITY = {
-    "title": 10, "subtitle": 11, "continuous_colorbar": 15, "legend": 16,
-    "categorical_legend": 17, "scale_bar": 20, "north_arrow": 30,
-    "statistics_panel": 40, "chart_panel": 41, "attribution": 50,
-    "graticule": 60, "map_border": 70, "export_layout": 90, "inset_map": 65,
-}
+def _descriptor_defaults(ctype: str, comp_reg) -> tuple:
+    """从 descriptor 目录取 (priority, default_position)。"""
+    desc = comp_reg.get(ctype) or comp_reg.get_by_type(ctype)
+    if desc is None:
+        return _FALLBACK_PRIORITY, _FALLBACK_POSITION
+    return desc.priority, desc.default_position or _FALLBACK_POSITION
 
 
 class ComponentComposer:
@@ -124,16 +110,12 @@ class ComponentComposer:
             category = desc.category if desc else ""
             variant = ""
             template_id = template_map.get(ctype, "")
-            # #1075(D-11): position/priority 以描述符为权威（缺省回退表）——
-            # 此前只查硬编码表，annotation 的描述符 priority=55 被静默降为 50。
-            if desc is not None and desc.default_position:
-                position = slot_positions.get(ctype, desc.default_position)
+            desc_priority, desc_position = _descriptor_defaults(ctype, comp_reg)
+            if ctype in slot_positions:
+                position = slot_positions[ctype]
             else:
-                position = slot_positions.get(ctype, _default_position_for_type(ctype))
-            if desc is not None and desc.priority is not None:
-                priority = int(desc.priority)
-            else:
-                priority = _PRIORITY.get(ctype, 50)
+                position = desc_position
+            priority = desc_priority
 
             # resolve template variant / options
             options: Dict[str, Any] = {}

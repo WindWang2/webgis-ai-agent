@@ -124,6 +124,43 @@ def validate_gis_library(
                     f"product template {tid}: unknown source_artifact "
                     f"{role.source_artifact}")
 
+    # ── 组件体系（taxonomy / descriptor / variant / composition）自检 ──
+    from app.lib.cartography.component_registry import get_component_registry
+    from app.lib.cartography.component_taxonomy import (
+        get_component_category_registry,
+    )
+    from app.lib.cartography.component_templates import (
+        get_component_template_registry,
+    )
+    from app.lib.cartography.composition_templates import (
+        get_composition_template_registry,
+    )
+
+    component_registry = get_component_registry()
+    component_templates = get_component_template_registry()
+    compositions = get_composition_template_registry()
+
+    issues.extend(get_component_category_registry().validate())
+    issues.extend(component_registry.validate())  # 含 renderer 矩阵对账
+    issues.extend(component_templates.validate())
+    issues.extend(compositions.validate())
+
+    # ProductTemplate：composition_template_id / component_overrides /
+    # component_requirements 的引用存在性（声明了就必须指向真实目标）
+    for tid in products.all_ids:
+        tpl = products.get(tid)
+        assert tpl is not None
+        if tpl.composition_template_id and not compositions.has(tpl.composition_template_id):
+            issues.append(
+                f"product template {tid}: unknown composition_template_id "
+                f"{tpl.composition_template_id}")
+        for ctype in list(tpl.component_overrides) + list(tpl.component_requirements):
+            if not component_registry.has(ctype) \
+                    and component_registry.get_by_type(ctype) is None:
+                issues.append(
+                    f"product template {tid}: component reference '{ctype}' "
+                    f"not in ComponentRegistry")
+
     # ── Style templates / composite（catalog 汇总 template registry 校验）──
     issues.extend(catalog.validate())
 

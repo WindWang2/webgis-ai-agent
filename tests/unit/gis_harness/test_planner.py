@@ -167,3 +167,44 @@ class TestCapabilityResolution:
         resolved = resolve_tool_for_capability("poi_query", {"query_local_poi"})
         assert resolved == "query_local_poi"
         assert resolve_tool_for_capability("poi_query", {"nonexistent"}) is None
+
+
+class TestCompositionFallbackEvidence:
+    def test_validation_failure_falls_back_with_evidence(self, monkeypatch):
+        """组合校验失败 → build_default_components 兜底 + FallbackDecision 证据."""
+        from app.lib.cartography import composition_validation as cv
+
+        it = resolve_map_request_intent("成都小学的分布情况")
+        plan = PLANNER.plan_from_intent(it)
+
+        def _reject(*args, **kwargs):
+            return cv.CompositionValidationResult(
+                ok=False,
+                violations=[cv.CompositionViolation(
+                    code="conflicting_components", detail="test-injected violation")],
+            )
+
+        monkeypatch.setattr(cv, "validate_component_composition", _reject)
+        fin = PLANNER.finalize_with_profile(plan, _point_profile(500))
+
+        # 兜底组件存在且非空
+        assert fin.components
+        comp_types = {c.type for c in fin.components}
+        assert "title" in comp_types
+        # 证据落地：fallbacks + template_selection 双通道
+        codes = [f.reason_code for f in fin.fallbacks]
+        assert "COMPOSITION_INVALID" in codes
+        fb = next(f for f in fin.fallbacks if f.reason_code == "COMPOSITION_INVALID")
+        assert fb.evidence.get("violations")[0]["code"] == "conflicting_components"
+        assert fin.template_selection["composition_fallback"]["reason_code"] == "COMPOSITION_INVALID"
+
+    def test_report_product_composition_includes_export_layout(self):
+        """报告产品：接线组合（density_map）无必备版面 → 自动改选含 export_layout 的组合."""
+        it = resolve_map_request_intent("制作一张成都小学分布图用于报告")
+        plan = PLANNER.plan_from_intent(it)
+        fin = PLANNER.finalize_with_profile(plan, _point_profile(500))
+        comp_types = {c.type for c in fin.components}
+        assert "export_layout" in comp_types
+        assert fin.template_selection.get("composition_template_id", "") != "composition.density_map"
+        # 报告组合通过 pdf 输出目标的组合校验（含 map_border/export_layout）
+        assert "map_border" in comp_types

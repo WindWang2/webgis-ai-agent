@@ -49,3 +49,17 @@ def test_catalog_file_in_frontend_tree():
     path = Path(OUTPUT)
     assert "frontend" in path.parts
     assert path.name == "component-catalog.generated.json"
+
+
+def test_catalog_exports_renderer_and_exporter_support():
+    """phase-2：目录携带 rendererSupport/exporterSupport 机器真值字段."""
+    catalog = build_catalog()
+    by_type = {c["type"]: c for c in catalog["componentTypes"]}
+    # 与 component_renderers.py 矩阵一致的抽查
+    assert by_type["legend"]["exporterSupport"] == []
+    assert by_type["title"]["rendererSupport"] == ["interactive"]
+    assert sorted(by_type["title"]["exporterSupport"]) == ["pdf", "png", "svg"]
+    assert by_type["graticule"]["rendererSupport"] == []
+    assert by_type["inset_map"]["rendererSupport"] == []
+    assert by_type["inset_map"]["runtimeStatus"] == "planned"
+    assert by_type["inset_map"]["rendererRequired"] is False

@@ -68,9 +68,9 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         id="legend", category="legend.graduated", type="legend",
         name="Graduated Legend", name_zh="分级图例",
         placement_domain="overlay", supported_outputs=["interactive", "png", "pdf", "svg"],
-        compatible_map_models=["administrative_choropleth", "aggregate_grid", "hotspot_overlay", "proximity_overlay", "administrative_aggregation"],  # #1075(D-6): 移除悬空 "graduated"（非 id 非别名；真别名 graduated_choropleth/choropleth 均解析到已列出的 administrative_choropleth）
+        compatible_map_models=["administrative_choropleth", "aggregate_grid", "hotspot_overlay", "proximity_overlay", "administrative_aggregation", "proportional_symbol"],  # #1075(D-6): 移除悬空 "graduated"（非 id 非别名；真别名 graduated_choropleth/choropleth 均解析到已列出的 administrative_choropleth）
         compatible_artifact_types=["admin_aggregate_table", "grid_aggregate"],
-        renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
+        renderer_support=["interactive"], exporter_support=[],
         default_variant="academic", variants=["academic", "compact", "report"],
         default_position="bottom-left", allowed_positions=["bottom-left", "bottom-right", "top-left", "top-right", "none"],
         cardinality="single", requires_layer_binding=True, priority=16,
@@ -81,7 +81,7 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         placement_domain="overlay", supported_outputs=["interactive", "png", "pdf", "svg"],
         compatible_map_models=["visual_heatmap", "raster_surface", "density_overview"],
         compatible_artifact_types=["density_surface", "terrain_surface"],
-        renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
+        renderer_support=["interactive"], exporter_support=[],
         default_variant="horizontal", variants=["horizontal", "vertical", "slim"],
         default_position="bottom-right", allowed_positions=["bottom-right", "bottom-left", "bottom-center", "top-right", "none"],
         cardinality="single", requires_layer_binding=True, priority=15,
@@ -91,8 +91,8 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         id="categorical_legend", category="legend.categorical", type="categorical_legend",
         name="Categorical Legend", name_zh="分类图例",
         placement_domain="overlay", supported_outputs=["interactive", "png", "pdf", "svg"],
-        compatible_map_models=["categorical_thematic", "proportional_symbol"],
-        renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
+        compatible_map_models=["categorical_thematic"],
+        renderer_support=["interactive"], exporter_support=[],
         default_variant="academic", variants=["academic", "compact", "report"],
         default_position="bottom-left", allowed_positions=["bottom-left", "bottom-right", "top-left", "none"],
         cardinality="single", requires_layer_binding=True, priority=17,
@@ -111,7 +111,7 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         id="subtitle", category="annotation.subtitle", type="subtitle",
         name="Subtitle", name_zh="副标题",
         placement_domain="chrome", supported_outputs=["interactive", "png", "pdf", "svg"],
-        renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
+        renderer_support=["interactive"], exporter_support=[],
         default_variant="default", variants=["default", "academic"],
         default_position="top-center", allowed_positions=["top-center", "top-left", "none"],
         cardinality="zero_or_one", priority=11,
@@ -120,7 +120,7 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         id="attribution", category="annotation.attribution", type="attribution",
         name="Attribution", name_zh="版权信息",
         placement_domain="chrome", supported_outputs=["interactive", "png", "pdf", "svg"],
-        renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
+        renderer_support=["interactive"], exporter_support=[],
         default_variant="default", variants=["default", "compact"],
         default_position="bottom-left", allowed_positions=["bottom-left", "bottom-right", "none"],
         cardinality="single", priority=50,
@@ -131,8 +131,8 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         # #1075(D-5): 前端无 graticule 渲染器 —— renderer_support 如实为空，
         # interactive 输出从 supported_outputs 摘除（交互模板选中它只会渲染
         # 空白且无信号）。导出（png/pdf）路径真实支持，保留。
-        placement_domain="overlay", supported_outputs=["png", "pdf", "svg"],
-        renderer_support=[], exporter_support=["png", "pdf"],
+        placement_domain="overlay", supported_outputs=["interactive", "png", "pdf", "svg"],
+        renderer_support=[], exporter_support=[],
         default_variant="light", variants=["light", "geographic"],
         default_position="none", allowed_positions=["none"],
         cardinality="single", priority=60,
@@ -141,8 +141,7 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         id="map_border", category="frame.map_border", type="map_border",
         name="Map Border", name_zh="图框边框",
         placement_domain="chrome", supported_outputs=["png", "pdf", "svg"],
-        # #1075(D-5): 前端无 map_border 渲染器 —— renderer_support 如实为空。
-        renderer_support=[], exporter_support=["png", "pdf", "svg"],
+        renderer_support=[], exporter_support=[],
         default_variant="minimal", variants=["minimal", "academic", "report"],
         default_position="none", allowed_positions=["none"],
         cardinality="single", priority=70,
@@ -152,7 +151,7 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         name="Statistics Panel", name_zh="统计面板",
         placement_domain="panel", supported_outputs=["interactive", "png", "pdf"],
         required_context=["statistics"],
-        renderer_support=["interactive"], exporter_support=["png", "pdf"],
+        renderer_support=["interactive"], exporter_support=[],
         default_variant="default", variants=["default", "compact"],
         default_position="top-left", allowed_positions=["top-left", "top-right", "none"],
         cardinality="zero_or_one", priority=40,
@@ -162,7 +161,7 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         name="Chart Panel", name_zh="图表面板",
         placement_domain="panel", supported_outputs=["interactive", "png", "pdf"],
         required_context=["chart"],
-        renderer_support=["interactive"], exporter_support=["png", "pdf"],
+        renderer_support=["interactive"], exporter_support=[],
         default_variant="default", variants=["default", "compact", "transparent", "report"],
         default_position="top-left", allowed_positions=["top-left", "top-right", "bottom-left", "bottom-right", "none"],
         cardinality="zero_or_one", priority=41,
@@ -180,7 +179,7 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         id="annotation", category="annotation.text", type="annotation",
         name="Annotation", name_zh="文本注记",
         placement_domain="chrome", supported_outputs=["interactive", "png", "pdf", "svg"],
-        renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
+        renderer_support=["interactive"], exporter_support=[],
         default_variant="default", variants=["default"],
         default_position="top-left", allowed_positions=["top-left", "top-right", "bottom-left", "bottom-right", "none"],
         cardinality="multiple", priority=55,
@@ -273,14 +272,11 @@ class ComponentRegistry:
             return False
         if desc.runtime_status == "unavailable":
             return False
+        # 限定型组件（显式列出 compatible_map_models）必须命中当前模型；
+        # 通用型组件（空清单）对所有模型开放。当前仅 legend 族是限定型，
+        # 判定以「descriptor 是否限定」为准，不按类别硬编码。
         if desc.compatible_map_models and map_model_id not in desc.compatible_map_models:
-            # empty compatible_map_models means universal
-            # but descriptors with specific models must match
-            # legend/colorbar have restrictions, others are universal-ish
-            # Only enforce if descriptor explicitly lists models and current model not in list
-            # AND the descriptor is legend-family (requires specific model)
-            if desc.category.startswith("legend"):
-                return False
+            return False
         if output_target and output_target not in desc.supported_outputs:
             return False
         return True
@@ -288,6 +284,9 @@ class ComponentRegistry:
     def validate(self) -> List[str]:
         issues: List[str] = []
         try:
+            from app.lib.cartography.component_renderers import (
+                get_component_renderer_registry,
+            )
             from app.lib.cartography.component_taxonomy import get_component_category_registry
             cat_reg = get_component_category_registry()
             for desc in self._by_id.values():
@@ -301,6 +300,8 @@ class ComponentRegistry:
                 for conf in desc.conflicts:
                     if conf not in self._by_id and conf not in self._by_type:
                         issues.append(f"descriptor {desc.id}: conflict {conf} not registered")
+            # renderer/exporter 支持声明必须与机器真值矩阵一致（防契约撒谎）
+            issues.extend(get_component_renderer_registry().validate_against_descriptors())
         except Exception:
             pass
         return issues
