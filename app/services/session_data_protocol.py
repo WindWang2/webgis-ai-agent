@@ -214,21 +214,39 @@ class BaseSessionStore:
     async def append_map_action_event_batch(
         self, session_id: str, events: list
     ) -> list:
-        """#1081: 批量追加 ACK（每条返回 'stored'/'duplicate'/'invalid'）。
+        """#1081: 批量追加 ACK（每条返回 'stored'/'duplicate'/'dropped'）。
 
-        默认实现逐条走 singular 接口（语义等价）；Redis 后端覆盖为单个
-        Lua 脚本（1 RTT、原子、first-terminal-wins 保序保幂等）。
+        默认实现逐条走 singular 接口；append 返回 False 时按存储真相分类
+        （id 已存在 → duplicate；不存在 → dropped —— 与旧路由的快照分类
+        语义一致）。Redis 后端覆盖为单个 Lua 脚本（1 RTT、原子，
+        first-terminal-wins 保序保幂等，HEXISTS 即真 duplicate）。
         """
         out: list = []
-        for ev in events:
-            ok = await self.append_map_action_event(session_id, ev)
+        unresolved: list[int] = []
+        for i, ev in enumerate(events):
             action_id = str((ev or {}).get("action_id") or "")
             if not action_id:
                 out.append("invalid")
-            elif ok:
+                continue
+            ok = await self.append_map_action_event(session_id, ev)
+            if ok:
                 out.append("stored")
             else:
-                out.append("duplicate")
+                out.append(None)
+                unresolved.append(i)
+        if unresolved:
+            # 一次读取分类全部失败项（append-False = 首达获胜已存在，或
+            # 载荷非法被拒 —— 按存储是否存在区分 duplicate/dropped）。
+            try:
+                stored = await self.get_map_action_events(session_id)
+            except Exception:  # noqa: BLE001 - 分类尽力而为
+                stored = []
+            stored_ids = {
+                str((e or {}).get("action_id") or "") for e in stored or []
+            }
+            for i in unresolved:
+                action_id = str((events[i] or {}).get("action_id") or "")
+                out[i] = "duplicate" if action_id in stored_ids else "dropped"
         return out
 
     async def get_state_field(self, session_id: str, field: str) -> Any:
