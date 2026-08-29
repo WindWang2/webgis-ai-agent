@@ -396,4 +396,38 @@ describe('MapPanel — basemap switch during in-flight reconcile (#459/#460/#461
       source: 'terrain-aws',
     });
   });
+
+  it('v3(Phase B): native heatmap overlay survives a basemap switch (layer def 在账)', async () => {
+    const specLayers = [pointLayer('poi', 'POI')];
+    const view = render(
+      <MapPanel layers={specLayers} onRemoveLayer={noop} onToggleLayer={noop} onViewportChange={noop} />,
+    );
+    await waitFor(() => expect(rmg.interactiveLayerIds).toEqual(['poi__point']), {
+      timeout: 3000,
+    });
+    await drainRuntime();
+
+    // add_native_heatmap 命令路径：source 经 addGeoJsonSource 缝、layer 经
+    // addNativeHeatmap（v2 不入账 —— basemap 切换后图层永久消失）。
+    renderer.addGeoJsonSource(rmg.map as any, 'custom-heat-x', {
+      type: 'FeatureCollection',
+      features: [],
+    });
+    renderer.addNativeHeatmap(rmg.map as any, {
+      id: 'custom-heat-x', source: 'custom-heat-x',
+    });
+    expect(rmg.map.getLayer('custom-heat-x')).toBeTruthy();
+
+    basemap.index = 0;
+    rerenderPanel(view, specLayers);
+    expect(rmg.map.getLayer('custom-heat-x')).toBeNull();
+
+    await drainRuntime();
+    expect(rmg.map.getSource('custom-heat-x')).toBeTruthy();
+    expect(rmg.map.getLayer('custom-heat-x')).toBeTruthy();
+    expect(rmg.map.getLayer('custom-heat-x')?.type).toBe('heatmap');
+    // custom 带位于 spec 层之上
+    const order = rmg.map._layers.map((l: any) => l.id);
+    expect(order.indexOf('custom-heat-x')).toBeGreaterThan(order.indexOf('poi__point'));
+  });
 });

@@ -1,5 +1,5 @@
 /**
- * Runtime Layer Mount Registry —— imperative `custom-*` 覆盖层的重挂账本。
+ * Custom Overlay Mount Registry —— facade（GIS Runtime v3, Phase B）。
  *
  * #1078(G-1/FE1, v2 Phase 5)：MapLibre `setStyle()`（basemap 切换 / 自愈
  * watchdog）会抹掉一切命令式覆盖层。spec 承载层由 reconcile 全量重放，
@@ -8,11 +8,14 @@
  * MapLibre 里 —— 旧实现只有 `raiseCustomOverlayLayers`（z-raise，无法复活
  * 已被清除的层），basemap 切换后这些覆盖层**永久消失**。
  *
- * 本注册表在 renderer 的挂载缝（addGeoJsonSource / addImageSource /
- * addVectorLayer）记录 `custom-` 前缀的 source/layer 定义，style reload
- * 完成后由 `remountCustomOverlays` 按插入序重放（addSource → addLayer）。
+ * v3(A4)：本模块曾是命令式覆盖层的一套独立事实源（source/layer 定义
+ * Map），与 `lib/map-commands/custom-overlay-registry.ts`（重挂闭包 Map）
+ * 互不知道 —— 双事实源。现两套 facade 都委托唯一的
+ * `runtime-layer-registry`（adapter ≠ second storage）；本文件保持原
+ * 导出面（renderer 挂载缝 / map-panel 重放 / layerCommands 反注册 /
+ * session-cursor 清账的调用方零改动）。
  *
- * 生命周期：
+ * 生命周期（语义不变）：
  *  - 命令删除覆盖层（remove_layer 等）必须 `unregisterCustomOverlay`，
  *    否则重挂会复活已删除的层（layer resurrection 违例）；
  *  - 会话 id 变化时 `clearCustomOverlayRegistry`（旧会话的命令层不属于
@@ -20,14 +23,35 @@
  *  - 记录的是**原始**定义（GeoJSON 记录 raw data，不含 viewport 裁剪）。
  */
 
-export interface CustomOverlaySourceDef {
+import {
+  clearRuntimeLayerRegistry,
+  listRuntimeLayerIds,
+  recordRuntimeLayer,
+  recordRuntimeSource,
+  remountRuntimeLayers,
+  unregisterRuntimeLayer,
+} from './runtime-layer-registry';
+import type { RuntimeLayerDef, RuntimeLayerSourceDef } from './runtime-layer-registry';
+
+/** 兼容类型名（旧导出面；实现即 canonical 描述符的子集）。 */
+export type CustomOverlaySourceDef = RuntimeLayerSourceDef;
+export type CustomOverlayLayerDef = RuntimeLayerDef;
+
+function isCustomId(id: string | undefined | null): boolean {
+  return typeof id === 'string' && id.startsWith('custom-');
+}
+
+export function recordCustomOverlaySource(id: string, def: {
   kind: 'geojson' | 'image';
   data?: any;
   url?: string;
   coordinates?: [[number, number], [number, number], [number, number], [number, number]];
+}): void {
+  if (!isCustomId(id)) return;
+  recordRuntimeSource(id, def);
 }
 
-export interface CustomOverlayLayerDef {
+export function recordCustomOverlayLayer(def: {
   id: string;
   type: string;
   source: string;
@@ -35,39 +59,18 @@ export interface CustomOverlayLayerDef {
   layout?: Record<string, unknown>;
   filter?: unknown;
   beforeId?: string;
-}
-
-const sources = new Map<string, CustomOverlaySourceDef>();
-const layers = new Map<string, CustomOverlayLayerDef>();
-
-function isCustomId(id: string | undefined | null): boolean {
-  return typeof id === 'string' && id.startsWith('custom-');
-}
-
-export function recordCustomOverlaySource(id: string, def: CustomOverlaySourceDef): void {
-  if (!isCustomId(id)) return;
-  sources.set(id, def);
-}
-
-export function recordCustomOverlayLayer(def: CustomOverlayLayerDef): void {
+}): void {
   if (!isCustomId(def?.id)) return;
-  layers.set(def.id, def);
+  recordRuntimeLayer(def);
 }
 
 /** 命令删除覆盖层时反注册（层族 + 其独占 source）。幂等。 */
 export function unregisterCustomOverlay(layerId: string): void {
-  for (const id of [...layers.keys()]) {
-    if (id === layerId || id.startsWith(`${layerId}-`) || id.startsWith(`${layerId}__`)) {
-      const def = layers.get(id);
-      layers.delete(id);
-      if (def?.source) sources.delete(def.source);
-    }
-  }
+  unregisterRuntimeLayer(layerId);
 }
 
 export function clearCustomOverlayRegistry(): void {
-  sources.clear();
-  layers.clear();
+  clearRuntimeLayerRegistry();
 }
 
 /**
@@ -79,42 +82,10 @@ export function remountCustomOverlays(
   map: any,
   hooks?: { onLayerAdded?: (map: any, id: string) => void },
 ): number {
-  if (!map) return 0;
-  let remounted = 0;
-  // 先 sources 后 layers（MapLibre 层引用 source，顺序反了会 throw）。
-  for (const [id, def] of sources) {
-    if (map.getSource?.(id)) continue;
-    try {
-      if (def.kind === 'geojson') {
-        map.addSource(id, { type: 'geojson', data: def.data });
-      } else if (def.kind === 'image' && def.url && def.coordinates) {
-        map.addSource(id, { type: 'image', url: def.url, coordinates: def.coordinates });
-      }
-    } catch { /* 竞态下已被补挂/样式未就绪 —— 下次重放再试 */ }
-  }
-  for (const def of layers.values()) {
-    if (map.getLayer?.(def.id)) continue;
-    try {
-      const layer: Record<string, unknown> = {
-        id: def.id,
-        type: def.type,
-        source: def.source,
-      };
-      if (def.paint) layer.paint = def.paint;
-      if (def.layout) layer.layout = def.layout;
-      if (def.filter !== undefined) layer.filter = def.filter;
-      map.addLayer(layer as any, def.beforeId ?? undefined);
-      // v2(review R4-P1-3)：重挂的层必须补记 style-layer-id 账本 —— 否则
-      // 下一次 layer-changing reconcile 的 z 序同步看不到 custom 层，
-      // #461 的"埋没"缺陷在 style 重载后复现。
-      hooks?.onLayerAdded?.(map, def.id);
-      remounted += 1;
-    } catch { /* 同上 */ }
-  }
-  return remounted;
+  return remountRuntimeLayers(map, hooks);
 }
 
 /** 测试观测点：当前注册的层 id（插入序）。 */
 export function listCustomOverlayLayerIds(): string[] {
-  return [...layers.keys()];
+  return listRuntimeLayerIds();
 }
