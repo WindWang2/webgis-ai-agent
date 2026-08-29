@@ -25,6 +25,7 @@ import type { ExplorerStage, ExplorerStatus } from '@/lib/types/explorer';
 
 
 import { devOnly } from "@/lib/utils/logger";
+import { finalizationUserNotice } from "@/lib/map-product/finalizer";
 import { parseAgentRuntime, type AgentRuntime } from "@/lib/agent-runtime";
 
 // #742: stable identity — an inline options object churned send/bridge/
@@ -891,6 +892,30 @@ export function useSSEStream(
         // 在既有分发链里识别三个事件名并原样转交；信封关联与状态应用在
         // useSessionPlan。跨会话事件已被本函数顶部的 INV-2 守卫丢弃。
         onSessionPlanEvent?.(event.event, data as Record<string, unknown>);
+      } else if (event.event === 'map_finalization') {
+        // ADR-0081：后端 Completion Runtime 的完成态披露（拼接在
+        // tool_execution_end 后或 turn 收尾独立下发）。视口真相在前端 ——
+        // 派发 MAP_FINALIZATION 命令做一次有界校验/修复（相交不动相机、
+        // 不相交 fitBounds 一次、空结果 no-op）；用户可见披露仅在异常态。
+        const payload = (data ?? {}) as {
+          status?: string;
+          result_bbox?: number[];
+        };
+        dispatchAction({
+          command: 'MAP_FINALIZATION',
+          params: {
+            status: String(payload.status ?? 'pending'),
+            bbox: Array.isArray(payload.result_bbox)
+              ? (payload.result_bbox as [number, number, number, number])
+              : undefined,
+          },
+        });
+        const notice = finalizationUserNotice(
+          payload as Parameters<typeof finalizationUserNotice>[0],
+        );
+        if (notice) {
+          devOnly.warn('[MapFinalization]', notice);
+        }
       } else if (event.event === 'step_cancelled') {
         // B-P2: 步骤被抢占取消时后端下发 step_cancelled
         // ({task_id, step_id, tool, session_id})。把对应 running 的 tool-call
@@ -1022,7 +1047,7 @@ export function useSSEStream(
         applyExplorerProgressToStore(data as Record<string, unknown>);
       }
     },
-    [setSessionId, sessionIdRef, sessionTokenRef, rememberSessionToken, markToolCallStatus, finalizeToolCalls, startExplorerProgressStream, onSessionPlanEvent]
+    [setSessionId, sessionIdRef, sessionTokenRef, rememberSessionToken, dispatchAction, markToolCallStatus, finalizeToolCalls, startExplorerProgressStream, onSessionPlanEvent]
   );
 
   // DUP-1: bounded auto-reconnect for the chat stream. Opt-in by explicit

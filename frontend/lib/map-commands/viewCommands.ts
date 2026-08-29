@@ -1,6 +1,7 @@
 import type { CommandEntry, MapCommandContext, MapCommandResult } from './types';
 import * as navigation from '@/lib/map-kit/navigation';
 import { isUserGesturing, onUserGestureStart, waitForGestureEnd } from './camera-arbitration';
+import { isRepairableBbox, viewportIntersectsBbox } from '@/lib/map-product/finalizer';
 
 /**
  * View commands: camera/navigation.
@@ -291,6 +292,38 @@ export const viewCommands: Record<string, CommandEntry> = {
         },
         { center: requestedCenter, zoom: requestedZoom },
       );
+    },
+  },
+
+  /**
+   * ADR-0081：map_finalization 的前端终验命令。后端 Completion Runtime 的
+   * 完成态载荷到达时派发 —— 相机真相只在前端，这里做一次有界视口校验：
+   * 视口与结果 bbox 相交 → 不动相机；不相交 → fitBounds 一次（用户手势
+   * 仲裁经 runCameraCommand 获得）。无 bbox（空结果）→ no-op succeeded。
+   */
+  map_finalization: {
+    requiredParams: (p) => p.status !== undefined,
+    run(ctx) {
+      const { map, params } = ctx;
+      const bbox = (params as { bbox?: unknown }).bbox;
+      // 纯校验先行：相交/无 bbox → 无相机动作（立即结算，不空转队列）
+      if (!isRepairableBbox(bbox)) {
+        return { status: 'succeeded', result: { viewport: 'not_applicable', repaired: false } };
+      }
+      let intersects = false;
+      try {
+        intersects = viewportIntersectsBbox(map.getBounds(), bbox);
+      } catch {
+        return { status: 'succeeded', result: { viewport: 'invalid', repaired: false } };
+      }
+      if (intersects) {
+        return { status: 'succeeded', result: { viewport: 'valid', repaired: false } };
+      }
+      // 修复动作放进 runCameraCommand 的 execute —— 用户手势仲裁/自中断
+      // 语义对 finalizer 修复同样生效（用户正在拖图时不抢相机）。
+      return runCameraCommand(ctx, (c) => {
+        navigation.fitBounds(c.map, bbox as [number, number, number, number], 80);
+      });
     },
   },
 };

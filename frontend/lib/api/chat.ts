@@ -71,7 +71,9 @@ export type SSEEventType =
   | 'session_plan_superseded'
   | 'keep_alive'
   | 'resume_gap'
-  | 'heartbeat';
+  | 'heartbeat'
+  // ADR-0081: Map Product Completion Runtime 的完成态披露
+  | 'map_finalization';
 
 export interface SSEEvent {
   event: SSEEventType;
