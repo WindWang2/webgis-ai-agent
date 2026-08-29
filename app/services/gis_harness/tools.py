@@ -107,12 +107,17 @@ class ComponentUpdateArgs(BaseModel):
 
 
 def _manifest_stale(recorded: str) -> bool:
-    """#1084: 计划记录的 registry 指纹是否落后于当前编译（诚实披露）。"""
-    try:
-        from app.lib.gis.runtime_manifest import get_runtime_manifest
-        return get_runtime_manifest().stale(recorded)
-    except Exception:  # noqa: BLE001 - 指纹披露是增值信号，不阻断产品
-        return False
+    """#1084: 计划记录的 registry 指纹是否落后于当前编译（诚实披露）。
+
+    v3(audit A1)：此前调用不存在的 ``manifest.stale(...)``（真实 API 是
+    ``is_stale_plan``），AttributeError 被 broad except 洗成 ``False`` ——
+    指纹披露恒假，stale 信号被 API 漂移静默吞掉。stale/version mismatch
+    是 correctness signal：不做异常兜底，manifest 访问失败让它显式暴露
+    （``get_runtime_manifest`` 内部对各 registry 已有容错，走到异常即真
+    故障）。
+    """
+    from app.lib.gis.runtime_manifest import get_runtime_manifest
+    return get_runtime_manifest().is_stale_plan(recorded or None)
 
 
 # #1076(D-8): turn 级记忆 —— intent→product 链此前每个 harness 工具调用
@@ -200,7 +205,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
         geometry_hint: Optional[str] = None,
     ) -> dict:
         from app.services.gis_harness.intent import merge_intent_hints, resolve_map_request_intent
-        from app.services.gis_harness.planner import MapProductPlanner
+        from app.services.gis_harness.planner_runtime import get_planner_runtime
 
         base = resolve_map_request_intent(query)
         hints: Dict[str, Any] = {}
@@ -233,7 +238,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
                 intent.subject, intent.task)
             intent.hint_applied.append(f"subject->{subject_hint}")
 
-        planner = MapProductPlanner()
+        planner = get_planner_runtime()
         # ADR-0069 / spec 开放问题 3：推荐排序带项目记忆——本项目验证过的
         # recipe 前置。project_id 来自 turn 级 RuntimeContext（HTTP 入口
         # 绑定），无项目上下文时 verified 为空集，排序与既有行为一致。
@@ -339,7 +344,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
             merge_intent_hints,
             resolve_map_request_intent,
         )
-        from app.services.gis_harness.planner import MapProductPlanner
+        from app.services.gis_harness.planner_runtime import get_planner_runtime
         from app.services.gis_harness.recipes import FallbackDecision
         from app.services.mapspec_store import mapspec_store
         from app.services.spatial_meta_profiler import profile_from_descriptor
@@ -355,7 +360,9 @@ def register_gis_harness_tools(registry: ToolRegistry):
         intent = resolve_map_request_intent(query)
         if task_hint:
             intent = merge_intent_hints(intent, {"task": task_hint})
-        planner = MapProductPlanner()
+        # v3(Phase C)：共享 PlannerRuntime —— intent→product 链跨工具调用
+        # 复用同一 planner 与 memo（此前每调用新建，memo 从不跨调用命中）。
+        planner = get_planner_runtime()
         # H-9（#864）：与意图阶段同源的真实选择参数——
         # ① 注册表可见工具传给 planner，unavailable 能力不退回 pending
         #   （两阶段 evidence 的能力状态一致，audit #825 承诺）；

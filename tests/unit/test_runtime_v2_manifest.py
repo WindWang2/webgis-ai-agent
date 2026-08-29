@@ -160,3 +160,34 @@ def test_map_product_plan_carries_fingerprint():
     plan = planner.plan_from_intent(intent)
     m = compile_runtime_manifest()
     assert plan.manifest_fingerprint == m.fingerprint
+
+
+def test_manifest_stale_disclosure_uses_real_api(compiled):
+    """v3(audit A1)：``_manifest_stale`` 必须调用真实 manifest API。
+
+    post-merge 回归锁定：此前调用不存在的 ``manifest.stale(...)``，
+    AttributeError 被 broad except 洗成 ``False`` —— ``manifest_stale``
+    证据恒假。修复后：不同指纹披露 True；当前指纹披露 False；manifest
+    访问失败显式暴露（correctness signal 不允许 fail-open）。
+    """
+    from app.services.gis_harness import tools as harness_tools
+
+    assert harness_tools._manifest_stale("deadbeef" * 8) is True
+    assert harness_tools._manifest_stale(compiled.fingerprint) is False
+    # 空指纹（历史计划）不判 stale
+    assert harness_tools._manifest_stale("") is False
+
+    # API 漂移守卫：manifest 访问异常必须传播，不得静默洗成 not-stale
+    class _BrokenManifest:
+        pass
+
+    import app.lib.gis.runtime_manifest as rm
+    original = rm.get_runtime_manifest
+    rm.get_runtime_manifest = lambda *a, **kw: _BrokenManifest()
+    try:
+        with pytest.raises(AttributeError):
+            harness_tools._manifest_stale("deadbeef" * 8)
+    finally:
+        rm.get_runtime_manifest = original
+    # 复原后语义正常
+    assert harness_tools._manifest_stale("deadbeef" * 8) is True
