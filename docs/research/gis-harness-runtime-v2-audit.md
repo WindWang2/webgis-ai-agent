@@ -145,6 +145,14 @@ runtime）与 Review 5/6（perf、测试质量）全部完成。发现与处置�
 | P1 | 12 | 全部修复（批幂等短路→409 风暴、rev sidecar 撕裂、finalize 诚实性×2、respect 集下发、tool 元数据访问器、memo key 不完备、孤儿工具归位、WATCH 窗口序列化+退避、PC-2 空断言、CI perf 线、§14 对抗用例×4） |
 | P2 | 18 | 修复 14（owner 洗白、pre-lock upsert 守卫、降级锁兜底、label 对象方言、面板类型映射、键盘去抖、ring 批内单读、H5 钉死、计时器泄漏等）；记录 4（复用既有 §4 决议） |
 
+### 最终回归（分支 gate，全部既有失败已在 master 同位复现核验）
+
+- 后端全量：5631 passed / 35 failed（全部属下表既有集；分支较 master 净增 21 个通过用例）
+- tests/unit 单独对照：分支 3136 passed / 21 failed vs master 3115 passed / 21 failed（同失败集）
+- 前端全量：200 文件 / 1914 passed / 3 skipped / 0 failed
+- typecheck（tsc --noEmit）与 eslint（--max-warnings 0）均 0 问题
+- 性能契约（-m perf）：5/5 通过（已接入 CI test-perf lane）
+
 ### 已核验为既有（master e8e51c8 同样失败，非本分支回归）
 
 `test_workflow_provenance(7)` / `test_runtime_chaos_resume(4)` /
@@ -164,3 +172,13 @@ runtime）与 Review 5/6（perf、测试质量）全部完成。发现与处置�
 - `get_traffic_status` / `search_transit_route` 无 capability 绑定（在线信息
   工具，非 planner 可达分析面 —— manifest 持续警告是期望行为）。
 - source GC 维持 #1014 TE-P1-1 注册表语义（scenario_8 锁定）。
+
+
+### 套件内顺序污染修复（本分支顺带修复）
+
+`tests/test_audit_simple_fixes.py` 的 `importlib.reload(distributed_lock)`
+原地替换模块全部类对象 → 晚绑定方法抛「新」LockDegradedError，与其它测试
+模块收集期 from-import 的「旧」类身份不匹配 —— 全量套件中
+session_lock_resilience 与 v2 降级锁用例因此假败（单独跑通过）。改为
+手动恢复常量后，master 上同样存在的 tool_architecture_fixes 套件内失败
+面不受影响（该失败在 master 的 tests/unit 套件内同样复现，属既有）。

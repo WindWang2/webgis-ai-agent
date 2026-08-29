@@ -138,8 +138,6 @@ export function resolveVariant(component: MapSpecComponent, fallback = ''): stri
 // chart/statistics/annotation 缺省同为 top-left —— 无堆叠时锚定同一点互相
 // 遮挡。槽位/优先级元数据统一在 layout-runtime（ComponentLayoutRuntime）。
 
-const TOP_STACK_BASE_PX = 12; // top-3(12px) 与 POSITION_CLASS 对齐
-
 export function buildTopSlotIndexes(
   renderable: MapSpecComponent[],
 ): Map<MapSpecComponent, number> {
