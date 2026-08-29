@@ -203,8 +203,10 @@ describe('discoverLegendData — heatmap legend dedup & palette source', () => {
   it('heatmap layer feeds heatmapLegend (with palette_colors), not legendSpec', () => {
     const data = discoverLegendData([heatLayer]);
     expect(data.legendSpec).toBeUndefined();
+    // ADR-0081：量化口径（min/max/unit）随色带携带 —— 导出色条与 live
+    // FloatingLegend 同源，不再退化为定性 低/高 标签。
     expect(data.heatmapLegend).toEqual({
-      name: '学校热力', paletteColors: ['#428cd2', '#eb2828'],
+      name: '学校热力', paletteColors: ['#428cd2', '#eb2828'], min: 0, max: 1,
     });
   });
 

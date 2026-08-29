@@ -1,6 +1,19 @@
 import type { Map } from 'maplibre-gl';
 import type { LegendSpec } from './types';
 import { resolveStyle, type LayoutStyle } from './layout-style';
+import {
+  buildExportChrome,
+  drawChromeAttribution,
+  drawChromeChartPanel,
+  drawChromeColorbar,
+  drawChromeLegend,
+  drawChromeNorthArrow,
+  drawChromeScaleBar,
+  drawChromeStatsPanel,
+  drawChromeText,
+  type ExportChromeModel,
+} from './export-chrome';
+export type { ExportChromeModel } from './export-chrome';
 import { API_BASE } from '@/lib/api/config';
 import { apiFetch, isApiError } from '@/lib/api/transport';
 import { devOnly } from '@/lib/utils/logger';
@@ -72,6 +85,13 @@ export interface ComposeLayoutOptions {
   heatmapLegend?: { name?: string; paletteColors?: string[] };
   /** Layout template style overrides (colors, fonts, margins, graticule, watermark). */
   style?: LayoutStyle;
+  /**
+   * ADR-0081 Export Parity：spec 驱动的 chrome 模型（placement/anchor 语义
+   * 来自 resolveMapComponents —— live/export 共用解析层）。在场且 fromSpec
+   * 时，title/subtitle/罗盘/比例尺/图例/色条/署名/浮动面板全部按模型槽位
+   * 绘制；缺席时保持 legacy 固定槽（旧会话行为不变）。
+   */
+  chrome?: ExportChromeModel;
 }
 
 /**
@@ -174,6 +194,86 @@ export function composeLayout(
   const targetW = canvas.width;
   const targetH = canvas.height;
   const marginX = scalePx(layoutStyle.marginPx);
+
+  // ADR-0081：spec chrome 路径 —— placement/anchor 语义来自 MapSpec 组件
+  // （live/export 共用 resolveMapComponents），替代固定槽。legacy 路径仅在
+  // 无 spec 组件（chrome.fromSpec=false / 未传）时保留。
+  const chrome = options.chrome;
+  if (chrome?.fromSpec) {
+    const d = {
+      ctx, darkMode: dark_mode, scalePx, targetW, targetH, style: layoutStyle,
+    };
+
+    // 1. Header gradient（无浮动 title 时保持顶部渐变；浮动 title 自带面板底）
+    const headerText = chrome.title && !chrome.title.rect;
+    if (headerText) {
+      const headerH = chrome.subtitle?.text ? scalePx(130) : scalePx(100);
+      const headerGrad = ctx.createLinearGradient(0, 0, 0, headerH);
+      headerGrad.addColorStop(0, dark_mode ? "rgba(0,10,20,0.88)" : "rgba(255,255,255,0.96)");
+      headerGrad.addColorStop(0.65, dark_mode ? "rgba(0,10,20,0.45)" : "rgba(255,255,255,0.55)");
+      headerGrad.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = headerGrad;
+      ctx.fillRect(0, 0, targetW, headerH);
+    }
+
+    // 2. Title / subtitle（anchor 对齐 —— top-center 居中，与 live 一致）
+    if (chrome.title?.text) {
+      drawChromeText(d, chrome.title, 32, layoutStyle.titleColor, { marginX, marginY: 52 });
+    }
+    if (chrome.subtitle?.text) {
+      drawChromeText(
+        d, chrome.subtitle, 20,
+        dark_mode ? "rgba(255,255,255,0.72)" : "rgba(30,41,59,0.72)",
+        { marginX, marginY: 82 },
+      );
+    }
+
+    // 3. Scale bar（anchor 槽位 —— bottom-right 缺省，与 live 一致）
+    if (chrome.scaleBar && showScale && mapCenter && mapZoom !== undefined) {
+      const metersPerPx = metersPerPixelAt(mapZoom, mapCenter.lat);
+      drawChromeScaleBar(d, chrome.scaleBar, metersPerPx, pxPerLogical, { marginX, marginY: 52 });
+    }
+
+    // 4. Compass（旋转符号与 live 对齐：-bearing）
+    if (chrome.northArrow && showCompass) {
+      drawChromeNorthArrow(d, chrome.northArrow, mapBearing, { marginX, marginY: 64 });
+    }
+
+    // 4.5 Graticule（请求参数驱动，非 spec 组件 —— 保持不变）
+    if (showGraticules && mapCenter && mapZoom !== undefined) {
+      _drawGraticules(ctx, { dark_mode, scalePx, targetW, targetH, mapCenter, mapZoom, graticuleColor: layoutStyle.graticuleColor, pxPerLogical });
+    }
+
+    // 5. Legend / colorbar（spec 组件 enabled 驱动；anchor 槽位）
+    if (showLegend && chrome.legend) {
+      drawChromeLegend(d, chrome.legend, { marginX, marginY: 56 });
+    }
+    if (showLegend && chrome.colorbar) {
+      drawChromeColorbar(d, chrome.colorbar, { marginX, marginY: 56 });
+    }
+
+    // 5.5 浮动面板（statistics/chart —— 此前导出完全缺席，live-only）
+    for (const panel of chrome.panels) {
+      if (panel.kind === 'statistics') {
+        drawChromeStatsPanel(d, panel, { marginX, marginY: 90 });
+      } else if (panel.kind === 'chart') {
+        drawChromeChartPanel(d, panel, { marginX, marginY: 90 });
+      }
+    }
+
+    // 6. Attribution（spec 组件文本；请求 author/dataSource 仍在 metadata 行）
+    if (chrome.attribution?.text) {
+      drawChromeAttribution(d, chrome.attribution, { marginX, marginY: 22 });
+    }
+
+    // 7. Watermark / metadata（请求驱动，与 legacy 同款）
+    _drawWatermarkAndMetadata(ctx, {
+      dark_mode, scalePx, targetW, targetH,
+      showWatermark, showMetadata, author, dataSource, mapCenter,
+      watermarkText: layoutStyle.watermarkText,
+    });
+    return;
+  }
 
   // 1. Header gradient
   const headerH = subtitle ? scalePx(130) : scalePx(100);
@@ -296,16 +396,38 @@ export function composeLayout(
     });
   }
 
-  // 6. Watermark
+  // 6+7. Watermark + metadata（legacy 路径与 chrome 路径共用同一绘制）
+  _drawWatermarkAndMetadata(ctx, {
+    dark_mode, scalePx, targetW, targetH,
+    showWatermark, showMetadata, author, dataSource, mapCenter,
+    watermarkText: layoutStyle.watermarkText,
+  });
+}
+
+/** Watermark + metadata 行（legacy 与 chrome 路径共用同一绘制）。 */
+function _drawWatermarkAndMetadata(
+  ctx: CanvasRenderingContext2D,
+  opts: {
+    dark_mode: boolean;
+    scalePx: (v: number) => number;
+    targetW: number;
+    targetH: number;
+    showWatermark: boolean;
+    showMetadata: boolean;
+    author?: string;
+    dataSource?: string;
+    mapCenter?: { lat: number; lng: number };
+    watermarkText?: string;
+  },
+) {
+  const { dark_mode, scalePx, targetW, targetH, showWatermark, showMetadata, author, dataSource, mapCenter, watermarkText } = opts;
   if (showWatermark) {
     ctx.fillStyle = dark_mode ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.4)";
     ctx.textAlign = "right";
     ctx.font = `bold ${scalePx(16)} monospace`;
-    ctx.fillText(layoutStyle.watermarkText, targetW - scalePx(36), targetH - scalePx(18));
+    ctx.fillText(watermarkText || "WebGIS AI Agent", targetW - scalePx(36), targetH - scalePx(18));
     ctx.textAlign = "left";
   }
-
-  // 7. Metadata (author, date, CRS, data source)
   if (showMetadata) {
     const parts: string[] = [];
     if (author) parts.push(`作者: ${author}`);
@@ -790,7 +912,15 @@ export interface ExportOutcome {
 interface LegendData {
   legendSpec: any | undefined;
   thematicLayer: any | undefined;
-  heatmapLegend: { name?: string; paletteColors?: string[] } | undefined;
+  heatmapLegend: {
+    name?: string;
+    paletteColors?: string[];
+    /** ADR-0081 parity：热力图例的量化口径（min/max/unit）与 live
+     *  FloatingLegend 同源（legend_spec），不再只画定性 低/高 标签。 */
+    min?: number;
+    max?: number;
+    unit?: string;
+  } | undefined;
 }
 
 export function discoverLegendData(layers: any[]): LegendData {
@@ -824,7 +954,13 @@ export function discoverLegendData(layers: any[]): LegendData {
       ? thematicLayerInfo?.style
       : thematicLayerInfo,
     heatmapLegend: heatmapLayer
-      ? { name: heatmapLayer.name, paletteColors: heatColors }
+      ? {
+          name: heatmapLayer.name,
+          paletteColors: heatColors,
+          min: typeof heatSpec?.min === 'number' ? heatSpec.min : undefined,
+          max: typeof heatSpec?.max === 'number' ? heatSpec.max : undefined,
+          unit: typeof heatSpec?.unit === 'string' ? heatSpec.unit : undefined,
+        }
       : undefined,
   };
 }
@@ -1020,9 +1156,11 @@ export async function runExport(
     let specSubtitle = '';
     let specShowCompass: boolean | undefined;
     let specShowScale: boolean | undefined;
+    let committedSpec: { layout?: { components?: any[] }; layers?: any[] } | null = null;
     try {
       const { getCommittedMapSpec } = await import('@/lib/mapspec/session-cursor');
-      const specComps = getCommittedMapSpec()?.layout?.components ?? [];
+      committedSpec = getCommittedMapSpec() ?? null;
+      const specComps = committedSpec?.layout?.components ?? [];
       if (specComps.length) {
         const isEnabled = (t: string) =>
           specComps.some((c) => c.type === t && c.enabled !== false);
@@ -1043,6 +1181,67 @@ export async function runExport(
       }
     } catch {
       /* spec 面缺席 → 走请求/内置默认 */
+    }
+
+    // ADR-0081 Export Parity：spec 组件在场时构建 chrome 模型 —— placement
+    // （anchor 七槽 + floating 像素坐标）、图例/色条 enabled、统计卡/图表
+    // 面板全部从 MapSpec 组件出发（与 live 共用 resolveMapComponents）。
+    // 无 spec 组件 → fromSpec=false，composeLayout 走 legacy 固定槽。
+    let chromeModel: ExportChromeModel | undefined;
+    try {
+      const legendSpecsByLayer: Record<string, any> = {};
+      for (const l of (storeState.layers as any[]) || []) {
+        if (l?.id && l.legend_spec) legendSpecsByLayer[l.id] = l.legend_spec;
+      }
+      for (const l of committedSpec?.layers ?? []) {
+        if (l?.id && (l as any).legend_spec) legendSpecsByLayer[l.id] = (l as any).legend_spec;
+      }
+      const hasColorbarComp = (committedSpec?.layout?.components ?? []).some(
+        (c) => c.type === 'continuous_colorbar',
+      );
+      // 热力层无 colorbar 组件时，live 仍渲染 FloatingLegend（量化 min/max/unit）
+      // —— 导出同源合成一条连续色条，不再退化为定性 低/高 标签。
+      const fallbackColorbarSpec =
+        !hasColorbarComp && heatmapLegend?.paletteColors
+          ? {
+              type: 'continuous',
+              field: heatmapLegend.name,
+              min: heatmapLegend.min,
+              max: heatmapLegend.max,
+              palette_colors: heatmapLegend.paletteColors,
+              unit: heatmapLegend.unit,
+            }
+          : undefined;
+      chromeModel = await buildExportChrome(
+        {
+          spec: committedSpec,
+          viewport: {
+            width: baseCanvas.clientWidth || 0,
+            height: baseCanvas.clientHeight || 0,
+          },
+          requestTitle: title || undefined,
+          requestSubtitle: subtitle || undefined,
+          legendSpecsByLayer,
+          fallbackLegendSpec: legendSpec,
+          loadChart: async (ref) => {
+            const { loadChartArtifact } = await import(
+              '@/lib/map-components/chart-artifact'
+            );
+            return (await loadChartArtifact(ref)) as any;
+          },
+        },
+        { width: exportCanvas.width, height: exportCanvas.height },
+      );
+      if (fallbackColorbarSpec && typeof fallbackColorbarSpec.min === 'number') {
+        chromeModel.colorbar = {
+          kind: 'colorbar',
+          anchor: 'bottom-right',
+          legendSpec: fallbackColorbarSpec as any,
+        };
+      }
+    } catch (e) {
+      devOnly.warn('[MapExporter] chrome model build failed — legacy layout', e);
+      chromeModel = undefined;
     }
 
     // #614：经 MapExporterEngine 调 composeLayout（与 exportToPDF 同款路由），
@@ -1066,6 +1265,7 @@ export async function runExport(
       thematicLayer,
       legendSpec,
       heatmapLegend,
+      chrome: chromeModel,
     });
 
     const dataUrl = exportCanvas.toDataURL('image/png');
@@ -1081,12 +1281,20 @@ export async function runExport(
       );
       return { ok: true, format: 'svg', url: upload.url, filename: upload.filename };
     } else if (fmt === 'pdf') {
-      const pdfBlob = await MapExporterEngine.exportToPDF(exportCanvas, title || '', subtitle, {
-        paperSize: (paperSize === 'A3' ? 'A3' : 'A4') as 'A4' | 'A3',
-        orientation: orientation as 'landscape' | 'portrait',
-        author,
-        dataSource,
-      });
+      // ADR-0081：PDF 文本层 subtitle 与 canvas 同一事实源链（请求参数 >
+      // spec 组件 > 空串）—— 此前 PDF 只读请求参数，spec 副标题在 PDF
+      // 文本层静默丢失。
+      const pdfBlob = await MapExporterEngine.exportToPDF(
+        exportCanvas,
+        title || specTitle || '',
+        subtitle || specSubtitle || '',
+        {
+          paperSize: (paperSize === 'A3' ? 'A3' : 'A4') as 'A4' | 'A3',
+          orientation: orientation as 'landscape' | 'portrait',
+          author,
+          dataSource,
+        },
+      );
       const upload = await uploadExport(pdfBlob, 'export.pdf', title);
       recordExport(getHudState, title, upload.filename, 'pdf', pdfBlob.size);
       getHudState().setPendingSystemMessage(

@@ -157,7 +157,8 @@ describe('runExport', () => {
     expect(exportToPDFSpy).toHaveBeenCalledWith(
       expect.anything(),       // canvas
       'PDF Report',            // title
-      undefined,               // subtitle
+      // ADR-0081：PDF subtitle 与 canvas 同链（请求参数 > spec 组件 > 空串）
+      '',
       expect.objectContaining({ paperSize: 'A4', orientation: 'landscape', author: '作者' }),
     );
   });
@@ -377,7 +378,7 @@ describe('runExport — dark_mode 桥接 (#614)', () => {
     expect(exportToPDFSpy).toHaveBeenCalledWith(
       expect.anything(),
       'A3',
-      undefined,
+      '',
       expect.objectContaining({ paperSize: 'A3' }),
     );
   });
