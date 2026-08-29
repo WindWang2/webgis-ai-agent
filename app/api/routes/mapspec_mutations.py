@@ -6,7 +6,11 @@ from pydantic import BaseModel, Field
 
 from app.core.auth import require_owned_session
 from app.models.db_model import Conversation
-from app.services.distributed_lock import LockContentionError
+from app.services.distributed_lock import (
+    LockContentionError,
+    LockDegradedError,
+    LockLostError,
+)
 from app.services.gis_harness.components import ComponentPlacement
 from app.services.mapspec.lifecycle_engine import (
     InitProjectIntent,
@@ -209,7 +213,7 @@ async def apply_user_mapspec_mutation(
             expected_revision=req.expected_revision,
             engine=_engine,
         )
-    except (TimeoutError, LockContentionError):
+    except (TimeoutError, LockContentionError, LockDegradedError, LockLostError):
         # #1071: 用户在 agent 持锁（大栅格摄取可 >30s）期间切换可见度，
         # 等满获取预算后收到裸 500 —— 锁竞争是背压不是服务端故障，与
         # chat.py 全部同型点一致映射 503 + retry 指引。

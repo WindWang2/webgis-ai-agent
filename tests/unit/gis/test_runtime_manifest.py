@@ -51,7 +51,8 @@ def test_registry_change_changes_fingerprint():
         AlgorithmDescriptor, get_algorithm_registry,
     )
 
-    m1 = get_runtime_manifest(_real_registry())
+    reg = _real_registry()
+    m1 = compile_runtime_manifest(reg)
     areg = get_algorithm_registry()
     try:
         areg.register(AlgorithmDescriptor(
@@ -60,9 +61,12 @@ def test_registry_change_changes_fingerprint():
             output_artifact_type="line_feature_set",
             tool_candidates=["network_shortest_path"],
         ))
-        reset_runtime_manifest()
-        m2 = get_runtime_manifest()
+        # 同一显式注册表编译（评审修复：此前 m2 走未注入的 bridge 空工具面，
+        # 指纹变化来自工具集差异而非算法注册 —— 测试空洞通过）。
+        m2 = compile_runtime_manifest(reg)
         assert m2.fingerprint != m1.fingerprint
+        reset_runtime_manifest()
+        assert get_runtime_manifest(reg).fingerprint == m2.fingerprint
     finally:
         areg._by_id.pop("probe.fingerprint", None)
         areg._by_capability.get("shortest_path", []).remove("probe.fingerprint")

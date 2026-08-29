@@ -166,6 +166,20 @@ def compile_runtime_manifest(tool_registry: Optional[Any] = None) -> GISRuntimeM
     payload_parts.append(f"caps:{len(cap_ids)}")
     payload_parts.extend(sorted(cap_ids))
     payload_parts.append("t2c:" + ",".join(f"{t}={c}" for t, c in sorted(t2c.items())))
+    # 算法语义面（#1084 评审修复）：算法 id + priority + capabilities +
+    # 候选表必须进入指纹 —— 否则部署改变算法优先级/候选（正是本批
+    # #1075 做的事）后 manifest_stale 仍是 False（假保证）。
+    algo_ids = list(algos.all_ids) if not callable(getattr(algos, "all_ids", None)) else list(algos.all_ids())
+    algo_parts = []
+    for aid in algo_ids:
+        algo = algos.get(aid)
+        if algo is None:
+            continue
+        algo_parts.append(
+            f"{aid}@{algo.priority}:{'|'.join(algo.capabilities)}"
+            f"->{','.join(algo.tool_candidates)}"
+        )
+    payload_parts.append("algos:" + ";".join(sorted(algo_parts)))
     payload_parts.append("models:" + ",".join(sorted(model_ids)))
     payload_parts.append("alias:" + ",".join(f"{a}={m}" for a, m in sorted(model_aliases.items())))
     payload_parts.append("components:" + ",".join(sorted(comp_ids)))

@@ -6,7 +6,7 @@ import { devOnly } from '@/lib/utils/logger';
 import { parseFilter } from './parseFilter';
 import { isMvtLayer } from '@/lib/store/layer-data';
 import { getCommittedMapSpec } from '@/lib/mapspec/session-cursor';
-import { rememberCustomOverlay } from './custom-overlay-registry';
+import { rememberCustomOverlay, forgetCustomOverlay } from './custom-overlay-registry';
 import { noteAgentDisplayed } from '@/lib/chat/turn-focus';
 import {
   isCustomSchemeMatch,
@@ -351,6 +351,11 @@ export const layerCommands: Record<string, CommandEntry> = {
               sawFailure = true;
               continue;
             }
+            // #1078(G-1) 评审修复：显式移除即注销重挂登记 —— 否则本命令自身
+            // 触发的 reconcile 尾部 remountCustomOverlays 会把刚删的层复活。
+            forgetCustomOverlay(customId);
+            forgetCustomOverlay(`${customId}-layer`);
+            for (const id of customMatched) forgetCustomOverlay(id);
           } catch (e) {
             devOnly.warn('[MapActionHandler] REMOVE_LAYER failed:', e);
             sawFailure = true;

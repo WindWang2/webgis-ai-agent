@@ -1082,7 +1082,7 @@ class MapSpecLifecycleEngine:
                             if prior_fp is not None:
                                 self._prior_blocking_cache[prior_fp] = prior_blocking
                                 while len(self._prior_blocking_cache) > 256:
-                                    self._prior_blocking_cache.popitem(
+                                    self._prior_blocking_cache.pop(
                                         next(iter(self._prior_blocking_cache))
                                     )
                     new_blocking = self._blocking_error_codes(validation) - prior_blocking

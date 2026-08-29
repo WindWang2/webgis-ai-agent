@@ -35,6 +35,11 @@ export function resetLiveState(): void {
   void import('../map-components/chart-artifact')
     .then((m) => m.resetChartArtifactCache())
     .catch(() => { /* best-effort：清缓存失败不影响切换 */ });
+  // #1078(G-1) 评审修复：custom-* 重挂登记随会话清空 —— 旧会话的命令层
+  // 不得在切换后 remount 进新会话的地图（重挂闭包持有旧会话 payload）。
+  void import('../map-commands/custom-overlay-registry')
+    .then((m) => m.resetCustomOverlayRegistry())
+    .catch(() => { /* best-effort */ });
 }
 
 export function subscribeMapSpecLive(listener: () => void): () => void {
