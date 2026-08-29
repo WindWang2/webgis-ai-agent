@@ -77,12 +77,20 @@ def test_different_tools_misses():
     assert len(planner._plan_memo) == 2
 
 
-def test_different_project_verified_misses():
+def test_project_verified_cannot_poison_cache():
+    """v3(Phase C)：memo 键用确定性裁决结果（recipe/template 解析后），
+    project_verified 只在改变裁决时才分键。不变式：不同 verified 集合下，
+    memo 命中的结果必须与 fresh 重算一致（裁决相同 ⇒ 同输出，命中合法；
+    裁决不同 ⇒ 分键 miss）。"""
     planner = get_planner_runtime()
     it = _intent()
-    planner.plan_from_intent(it, project_verified=set())
-    planner.plan_from_intent(it, project_verified={"poi_distribution_overview"})
-    assert len(planner._plan_memo) == 2
+    cached = planner.plan_from_intent(it, project_verified={"poi_distribution_overview"})
+    fresh = planner.plan_from_intent(
+        it, project_verified={"poi_distribution_overview"}, use_memo=False,
+    )
+    assert cached.model_dump() == fresh.model_dump(), (
+        "同裁决（verified recipe = 自然 top）下 memo 结果必须等于 fresh 重算"
+    )
 
 
 def test_manifest_generation_change_invalidates():

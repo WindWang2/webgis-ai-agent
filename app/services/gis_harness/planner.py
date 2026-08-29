@@ -324,27 +324,12 @@ class MapProductPlanner:
         # available_tools 参与（工具面变化改变 resolution evidence）；
         # project_verified 参与（#864 项目记忆排序）。测试可用 use_memo=False
         # 绕过。
-        memo_key = None
-        if use_memo:
-            try:
-                # v2(review R3-P1-3)：intent 全量参与键 —— task/subject/
-                # output_intents 等字段都改变 plan 输出，只按 query 键会在
-                # 同 query 不同 intent 时返回错误计划（复现于 review）。
-                intent_canonical = json.dumps(
-                    intent.model_dump(), ensure_ascii=False, sort_keys=True,
-                )
-                memo_key = (
-                    intent_canonical, recipe_id, template_id,
-                    tuple(sorted(available_tools)) if available_tools is not None else None,
-                    tuple(sorted(project_verified)) if project_verified else None,
-                    get_runtime_manifest().fingerprint,
-                )
-                with self._plan_memo_lock:
-                    cached = self._plan_memo.get(memo_key)
-                    if cached is not None:
-                        return cached.model_copy(deep=True)
-            except Exception:  # noqa: BLE001 — memo 失败退直算
-                memo_key = None
+        #
+        # v3(Phase C)：**确定性裁决前置** —— recipe/template 选择是廉价排序
+        # （~10 recipe × ~7 模板），先裁决再查 memo，键用裁决结果而非原始
+        # 参数。intent 阶段（无显式参数）与 product 阶段（显式回放同一
+        # recipe/template，plan 连续性）由此命中同一条目；project_verified
+        # 只在改变裁决结果时才分键（裁决相同 ⇒ 输出相同，命中是正确语义）。
         # recipe_id 显式指定（webgis_map_intent 阶段的推荐/LLM 纠偏）优先——
         # 保证意图阶段与产品阶段用同一份计划（plan 连续性）。
         recipe = self.recipes.get(recipe_id) if recipe_id else None
@@ -380,6 +365,27 @@ class MapProductPlanner:
             selection_dump = selection.model_dump()
             if selection.status == "selected":
                 template = self.catalog.get_product_template(selection.template_id)
+
+        memo_key = None
+        if use_memo:
+            try:
+                # v2(review R3-P1-3)：intent 全量参与键 —— task/subject/
+                # output_intents 等字段都改变 plan 输出，只按 query 键会在
+                # 同 query 不同 intent 时返回错误计划（复现于 review）。
+                intent_canonical = json.dumps(
+                    intent.model_dump(), ensure_ascii=False, sort_keys=True,
+                )
+                memo_key = (
+                    intent_canonical, recipe.id, template.id if template else "",
+                    tuple(sorted(available_tools)) if available_tools is not None else None,
+                    get_runtime_manifest().fingerprint,
+                )
+                with self._plan_memo_lock:
+                    cached = self._plan_memo.get(memo_key)
+                    if cached is not None:
+                        return cached.model_copy(deep=True)
+            except Exception:  # noqa: BLE001 — memo 失败退直算
+                memo_key = None
 
         plan = MapProductPlan(
             plan_id=_plan_id(intent.query, recipe.id),
