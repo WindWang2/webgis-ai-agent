@@ -19,7 +19,7 @@
 
 ```bash
 cd frontend
-npm install
+pnpm install
 
 # 后端地址(按实际后端端口调整;manage.py dev / dev compose 为 18000)
 echo 'NEXT_PUBLIC_API_URL=http://localhost:18000' >> .env.local
