@@ -1,61 +1,50 @@
 /**
- * #1078(G-1): 命令式 custom-* 覆盖层的挂载登记簿。
+ * #1078(G-1): 命令式 custom-* 覆盖层的重挂闭包登记 —— facade
+ * （GIS Runtime v3, Phase B）。
  *
- * basemap 切换触发 MapLibre setStyle —— 所有非 style 层/源被整体丢弃。
- * spec 承载层由 MapSpecRuntime 的恢复 reconcile 重建，注记层有自己的重挂
- * （#460），唯独命令路径（add_layer / add_raster_layer /
- * create_thematic_map / add_heatmap_raster）铸的 custom-* 层此前只被
- * z-raise（#461）而不被重挂 —— 一次 basemap 切换即永久消失。
+ * v2 曾是独立的第二套事实源（重挂闭包 Map，LRU 64）—— 其
+ * remountCustomOverlays 在生产代码中**从未被调用**（真正的重放走
+ * map-kit 定义账本），闭包被 remember/forget 维护却永不重放，纯死重。
  *
- * 登记闭包在挂载成功时捕获重挂所需的全部输入（geojson/URL/样式），
- * remountCustomOverlays 在每次 reconcile 收尾时补挂地图上缺失的登记项
- * （幂等：getLayer 命中即跳过）。有界 LRU（默认 64）防长会话无限增长。
+ * v3(A4)：双账本收敛为唯一的 `runtime-layer-registry`。本 facade 保留原
+ * 导出面（heatmapCommands / layerCommands / session-cursor 调用方零改动），
+ * 闭包作为**定义重放的兜底**登记进 canonical registry —— 仅当某条目没有
+ * layerDef（挂载路径不经 renderer 缝）时，style reload 重放才回退到闭包。
  */
+
+import {
+  rememberRuntimeRemount,
+  remountRuntimeLayers,
+  resetRuntimeLayerRegistry,
+  runtimeRemountProviderCount,
+  unregisterRuntimeLayer,
+} from '../map-kit/runtime-layer-registry';
 
 type RemountFn = (map: any) => void;
 
-const MAX_REMEMBERED = 64;
-const registry = new Map<string, RemountFn>();
-
-/** 挂载成功后登记重挂闭包（同 id 覆盖旧闭包并刷新 LRU 位次）。 */
+/** 挂载成功后登记重挂闭包（兜底路径；定义重放优先）。 */
 export function rememberCustomOverlay(id: string, remount: RemountFn): void {
-  if (!id) return;
-  registry.delete(id);
-  registry.set(id, remount);
-  while (registry.size > MAX_REMEMBERED) {
-    const oldest = registry.keys().next().value;
-    if (oldest === undefined) break;
-    registry.delete(oldest);
-  }
+  rememberRuntimeRemount(id, remount);
 }
 
-/** 覆盖层被显式移除时注销（避免重挂幽灵）。 */
+/** 覆盖层被显式移除时注销（避免重挂幽灵；与定义账目同一存储）。 */
 export function forgetCustomOverlay(id: string): void {
-  registry.delete(id);
+  unregisterRuntimeLayer(id);
 }
 
 export function rememberedCustomOverlayCount(): number {
-  return registry.size;
+  return runtimeRemountProviderCount();
 }
 
 /**
- * 补挂地图上缺失的登记覆盖层。调用点：reconcile 收尾（与
- * raiseCustomOverlayLayers 并列）—— basemap 切换后的恢复 reconcile 之后
- * 正是覆盖层被 wipe 的时刻。
+ * 补挂地图上缺失的登记覆盖层（委托 canonical 重放：定义优先，闭包兜底）。
+ * 保留 v2 导出签名；返回重挂数（可观测超集）。
  */
-export function remountCustomOverlays(map: unknown): void {
-  if (!map || typeof (map as { getLayer?: unknown }).getLayer !== 'function') return;
-  for (const [id, remount] of registry) {
-    try {
-      if ((map as { getLayer: (id: string) => unknown }).getLayer(id)) continue;
-      remount(map);
-    } catch {
-      // 单项重挂失败不阻断其余项；下一轮 reconcile 再试。
-    }
-  }
+export function remountCustomOverlays(map: unknown): number {
+  return remountRuntimeLayers(map as any);
 }
 
-/** 测试隔离：清空登记簿。 */
+/** 测试隔离：清空登记簿（canonical 存储）。 */
 export function resetCustomOverlayRegistry(): void {
-  registry.clear();
+  resetRuntimeLayerRegistry();
 }

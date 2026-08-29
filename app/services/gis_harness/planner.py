@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
+from collections import OrderedDict
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -114,19 +116,26 @@ class DataRequirement(BaseModel):
     capability: str
     purpose: str = ""
     params: Dict[str, Any] = Field(default_factory=dict)
-    status: Literal["pending", "available", "unavailable"] = "pending"
+    # v3(Phase E)：failed = 执行尝试过但未产出 artifact（可重试）。
+    status: Literal["pending", "available", "unavailable", "failed"] = "pending"
     bound_ref: str = ""
     resolved_tool: str = ""
     resolved_algorithm: str = ""
+    # v3(Phase D)：依赖边（capability id 列表，registry artifact 类型推断）。
+    # additive —— 旧持久计划无此字段，plan_graph 读取侧重放推断。
+    depends_on: List[str] = Field(default_factory=list)
+    optional: bool = False
 
 
 class AnalysisStep(BaseModel):
     capability: str
     purpose: str = ""
-    status: Literal["pending", "done", "skipped", "unavailable"] = "pending"
+    status: Literal["pending", "done", "skipped", "unavailable", "failed"] = "pending"
     bound_ref: str = ""
     resolved_tool: str = ""
     resolved_algorithm: str = ""
+    depends_on: List[str] = Field(default_factory=list)
+    optional: bool = False
 
 
 class AlgorithmSelectionRecord(BaseModel):
@@ -211,8 +220,35 @@ class MapProductPlanner:
         # plan_from_intent 是纯函数 —— 以 (query, recipe, template,
         # available_tools, manifest 指纹) 为键 memo；registry 内容变化
         # （manifest 指纹变）自动失效。有界 64。
-        self._plan_memo: dict = {}
+        #
+        # v3(audit A2/A3)：planner 实例此前在每个 harness tool call 内新建
+        # （tools.py / plan_orchestrator.py），memo 只活在一次调用里 ——
+        # intent→product 链跨调用零复用。共享 PlannerRuntime 后 memo 真正
+        # 跨调用存活，eviction 路径随之可达：plain dict 的
+        # ``popitem(last=False)`` 是 TypeError（v2 遗留 bug，被"每调用新
+        # 实例"掩盖），必须 OrderedDict。memo 读写持锁（进程内多线程
+        # dispatch 并发规划安全）；命中与存入均深拷贝，调用方可变返回值
+        # 不污染 memo 基底。
+        self._plan_memo: OrderedDict = OrderedDict()
         self._plan_memo_max = 64
+        self._plan_memo_lock = threading.RLock()
+
+    def attached_to_current_registries(self) -> bool:
+        """共享 runtime 的 registry 身份守卫（v3 Phase C）。
+
+        ``reset_recipe_registry`` / 模板注册测试会替换 registry 单例——
+        共享 planner 持有旧引用时 memo 与裁决会漂移。身份不同即重建。
+        """
+        return (
+            self.recipes is get_recipe_registry()
+            and self.templates is get_product_template_registry()
+            and self.catalog is get_template_catalog()
+        )
+
+    def reset_memo(self) -> None:
+        """测试隔离：清空 memo（不重建 planner）。"""
+        with self._plan_memo_lock:
+            self._plan_memo.clear()
 
     # ── registry 裁决辅助 ─────────────────────────────────────────────
     def _resolve_capabilities(
@@ -222,12 +258,18 @@ class MapProductPlanner:
         *,
         available_tools: Optional[Any] = None,
         profile: Optional[Dict[str, Any]] = None,
+        optional_capabilities: Optional[set] = None,
     ) -> tuple[List[DataRequirement], List[AnalysisStep], List[AlgorithmSelectionRecord]]:
         """capability → DataRequirement/AnalysisStep + 裁决证据。"""
         from app.lib.gis.algorithm_resolver import get_algorithm_resolver
         from app.lib.gis.capability_registry import get_capability_registry
+        from app.services.gis_harness.plan_graph import infer_dependency_edges
         caps = get_capability_registry()
         resolver = get_algorithm_resolver()
+        # v3(Phase D)：registry artifact 类型推断的依赖边（A.output ∩ B.input
+        # ⇒ A→B）随行持久化 —— 扁平行即携带依赖序，plan_graph 是其纯投影。
+        edges = infer_dependency_edges(capabilities)
+        optional_set = optional_capabilities or set()
         requirements: List[DataRequirement] = []
         steps: List[AnalysisStep] = []
         selections: List[AlgorithmSelectionRecord] = []
@@ -253,15 +295,19 @@ class MapProductPlanner:
                 available_tools is not None and record.status != "resolved"
             )
             status = "unavailable" if unavailable else "pending"  # type: ignore[assignment]
+            deps = edges.get(cap, [])
+            optional = cap in optional_set
             requirements.append(DataRequirement(
                 capability=cap, purpose=purpose, status=status,
                 resolved_tool=record.tool if record.status == "resolved" else "",
                 resolved_algorithm=record.algorithm if record.status == "resolved" else "",
+                depends_on=deps, optional=optional,
             ))
             steps.append(AnalysisStep(
                 capability=cap, purpose=purpose, status=status,  # type: ignore[arg-type]
                 resolved_tool=record.tool if record.status == "resolved" else "",
                 resolved_algorithm=record.algorithm if record.status == "resolved" else "",
+                depends_on=deps, optional=optional,
             ))
         return requirements, steps, selections
 
@@ -279,26 +325,12 @@ class MapProductPlanner:
         # available_tools 参与（工具面变化改变 resolution evidence）；
         # project_verified 参与（#864 项目记忆排序）。测试可用 use_memo=False
         # 绕过。
-        memo_key = None
-        if use_memo:
-            try:
-                # v2(review R3-P1-3)：intent 全量参与键 —— task/subject/
-                # output_intents 等字段都改变 plan 输出，只按 query 键会在
-                # 同 query 不同 intent 时返回错误计划（复现于 review）。
-                intent_canonical = json.dumps(
-                    intent.model_dump(), ensure_ascii=False, sort_keys=True,
-                )
-                memo_key = (
-                    intent_canonical, recipe_id, template_id,
-                    tuple(sorted(available_tools)) if available_tools is not None else None,
-                    tuple(sorted(project_verified)) if project_verified else None,
-                    get_runtime_manifest().fingerprint,
-                )
-                cached = self._plan_memo.get(memo_key)
-                if cached is not None:
-                    return cached.model_copy(deep=True)
-            except Exception:  # noqa: BLE001 — memo 失败退直算
-                memo_key = None
+        #
+        # v3(Phase C)：**确定性裁决前置** —— recipe/template 选择是廉价排序
+        # （~10 recipe × ~7 模板），先裁决再查 memo，键用裁决结果而非原始
+        # 参数。intent 阶段（无显式参数）与 product 阶段（显式回放同一
+        # recipe/template，plan 连续性）由此命中同一条目；project_verified
+        # 只在改变裁决结果时才分键（裁决相同 ⇒ 输出相同，命中是正确语义）。
         # recipe_id 显式指定（webgis_map_intent 阶段的推荐/LLM 纠偏）优先——
         # 保证意图阶段与产品阶段用同一份计划（plan 连续性）。
         recipe = self.recipes.get(recipe_id) if recipe_id else None
@@ -316,24 +348,49 @@ class MapProductPlanner:
                 or self.recipes.default_recipe()
             )
 
-        # 模板选择：显式 template_id 优先（plan 连续性）；否则由
-        # TemplateSelector 确定性评分（subject/task/outputs/priority）。
+        # 模板选择：TemplateSelector 确定性评分（subject/task/outputs/
+        # priority）是证据基线；显式 template_id（plan 连续性回放）只在
+        # **改写裁决**时覆盖证据。review-B P2：memo 键用裁决结果后，显式
+        # 回放与选择器一致时必须共用选择器 dump——否则两路径命中同一条目
+        # 会带回错误出处的 template_selection evidence；不一致时 resolved
+        # template id 本就分键，各持各的 dump。
         template: Optional[MapProductTemplate] = None
-        selection_dump: Dict[str, Any] = {}
+        selection = self.selector.select_product(
+            intent=intent, recipe_id=recipe.id,
+        )
+        selection_dump: Dict[str, Any] = selection.model_dump()
+        if selection.status == "selected":
+            template = self.catalog.get_product_template(selection.template_id)
         if template_id:
-            template = self.catalog.get_product_template(template_id)
-            selection_dump = {
-                "status": "selected" if template else "none",
-                "template_id": template.id if template else "",
-                "decision": {"reason": f"explicit_template_id:{template_id}"},
-            }
-        if template is None:
-            selection = self.selector.select_product(
-                intent=intent, recipe_id=recipe.id,
-            )
-            selection_dump = selection.model_dump()
-            if selection.status == "selected":
-                template = self.catalog.get_product_template(selection.template_id)
+            explicit = self.catalog.get_product_template(template_id)
+            if explicit is not None and (template is None or explicit.id != template.id):
+                template = explicit
+                selection_dump = {
+                    "status": "selected",
+                    "template_id": explicit.id,
+                    "decision": {"reason": f"explicit_template_id:{template_id}"},
+                }
+
+        memo_key = None
+        if use_memo:
+            try:
+                # v2(review R3-P1-3)：intent 全量参与键 —— task/subject/
+                # output_intents 等字段都改变 plan 输出，只按 query 键会在
+                # 同 query 不同 intent 时返回错误计划（复现于 review）。
+                intent_canonical = json.dumps(
+                    intent.model_dump(), ensure_ascii=False, sort_keys=True,
+                )
+                memo_key = (
+                    intent_canonical, recipe.id, template.id if template else "",
+                    tuple(sorted(available_tools)) if available_tools is not None else None,
+                    get_runtime_manifest().fingerprint,
+                )
+                with self._plan_memo_lock:
+                    cached = self._plan_memo.get(memo_key)
+                    if cached is not None:
+                        return cached.model_copy(deep=True)
+            except Exception:  # noqa: BLE001 — memo 失败退直算
+                memo_key = None
 
         plan = MapProductPlan(
             plan_id=_plan_id(intent.query, recipe.id),
@@ -361,7 +418,8 @@ class MapProductPlanner:
                     capabilities.append(extra)
 
         requirements, steps, selections = self._resolve_capabilities(
-            capabilities, intent, available_tools=available_tools)
+            capabilities, intent, available_tools=available_tools,
+            optional_capabilities=set(recipe.optional_analysis))
         plan.data_requirements = requirements
         plan.analysis_steps = steps
         plan.algorithm_selections = selections
@@ -408,9 +466,10 @@ class MapProductPlanner:
         if memo_key is not None:
             # 存入即深拷贝：调用方持有返回对象并可变（plan1.data_requirements=[]
             # 不得污染 memo 基底）。
-            self._plan_memo[memo_key] = plan.model_copy(deep=True)
-            while len(self._plan_memo) > self._plan_memo_max:
-                self._plan_memo.popitem(last=False)
+            with self._plan_memo_lock:
+                self._plan_memo[memo_key] = plan.model_copy(deep=True)
+                while len(self._plan_memo) > self._plan_memo_max:
+                    self._plan_memo.popitem(last=False)
 
         return plan
 
@@ -470,7 +529,10 @@ class MapProductPlanner:
             capabilities = [r.capability for r in finalized.data_requirements]
             _, _, selections = self._resolve_capabilities(
                 capabilities, plan.intent, profile=profile,
-                available_tools=available_tools)
+                available_tools=available_tools,
+                optional_capabilities={
+                    r.capability for r in finalized.data_requirements if r.optional
+                })
             finalized.algorithm_selections = selections
 
         disabled_elements = {d.element for d in report.disabled}

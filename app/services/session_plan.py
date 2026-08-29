@@ -53,7 +53,7 @@ CANONICAL_PLAN_EVENT_NAMES = frozenset(
     {"plan_ready", "plan_step_done", "plan_finalized"}
 )
 
-ProgressStatus = Literal["pending", "complete", "voided", "unavailable"]
+ProgressStatus = Literal["pending", "complete", "voided", "unavailable", "failed"]
 
 
 class CapabilityProgress(BaseModel):
@@ -143,13 +143,14 @@ def _merge_progress(
 
 def open_capabilities(plan: Optional[SessionPlan]) -> list[str]:
     """Voided rows are open too — their completion is gone, the chapter
-    requirement is pending again."""
+    requirement is pending again. Failed rows are open in the retry sense:
+    execution was attempted, no artifact was produced (v3 Phase E)."""
     if plan is None:
         return []
     return [
         row.capability
         for row in plan.progress
-        if row.status in ("pending", "voided")
+        if row.status in ("pending", "voided", "failed")
     ]
 
 
@@ -174,7 +175,14 @@ def session_plan_stale(plan: Optional[SessionPlan]) -> bool:
 
 
 def format_session_plan_projection(plan: Optional[SessionPlan]) -> str:
-    """Bounded next-turn note. Not a Cartography Verdict block."""
+    """Bounded next-turn note. Not a Cartography Verdict block.
+
+    v3(Phase F)：首行契约不变（既有调用方/测试锁定）；其后追加有界
+    [GIS Plan] DAG 投影 —— Ready/Waiting/Completed/Unavailable/Recommended
+    next，由 gis_chapter 扁平行**派生**（plan_graph 纯投影，非第二事实源：
+    节点状态仍由 _mark_progress 的行状态推进，这里只读评估）。无数据需求
+    的章节（空 envelope / 组件-only）不输出图块。
+    """
     if plan is None or plan.gis_chapter is None:
         return (
             "[SessionPlan] recipe=none open= (call webgis_map_intent) "
@@ -189,12 +197,26 @@ def format_session_plan_projection(plan: Optional[SessionPlan]) -> str:
             "（计划编制于不同 registry 世代，工具/能力绑定可能已变；"
             "续跑前优先 webgis_map_intent 重规划或逐能力核验 resolved_tool）"
         )
-    return (
+    head = (
         f"[SessionPlan] recipe={recipe} open={open_caps} "
         f"replaced={'true' if plan.replaced else 'false'} "
         f"superseded={'true' if plan.superseded else 'false'}"
         f"{stale_note}"
     )
+    if not plan.gis_chapter.get("data_requirements"):
+        return head
+    try:
+        from app.services.gis_harness.plan_graph import (
+            build_plan_graph,
+            project_graph_block,
+        )
+        graph = build_plan_graph(plan.gis_chapter)
+        block = project_graph_block(graph)
+    except Exception:  # noqa: BLE001 — 图投影是增值信号，绝不阻断 turn 上下文
+        return head
+    if not block:
+        return head
+    return head + "\n" + block
 
 
 def events_to_sse(events: list[SessionPlanEvent], session_id: str = "") -> str:
@@ -416,15 +438,18 @@ async def apply_tool_result(
     geojson_ref: Optional[str] = None,
     store: Any = None,
 ) -> list[SessionPlanEvent]:
-    """Mutate the SessionPlan after a successful unified dispatch.
+    """Mutate the SessionPlan after a unified dispatch.
 
     Intent replaces / supersedes the GIS chapter. Product updates the same
-    envelope. Other tools complete matching capabilities. The whole
-    load→mutate→save runs under the per-session lock: a Pi turn may issue
-    parallel tool callbacks and the supersede branch must not be lost to a
-    last-write-wins interleave (ADR-0051 lock pattern).
+    envelope. Other tools complete matching capabilities. A failed dispatch
+    (v3 Phase E) marks the capabilities it would have served as ``failed`` —
+    retryable, disclosed in the projection, and blocking its DAG downstream
+    until retried or voided. The whole load→mutate→save runs under the
+    per-session lock: a Pi turn may issue parallel tool callbacks and the
+    supersede branch must not be lost to a last-write-wins interleave
+    (ADR-0051 lock pattern).
     """
-    if not session_id or not success:
+    if not session_id:
         return []
     # v2(audit F2): envelope 变更是共享 Redis 写（supersede 归档 + 进度
     # append），降级锁下两 pod last-write-wins —— fail-closed（lost 检查
@@ -434,6 +459,7 @@ async def apply_tool_result(
             session_id,
             tool_name,
             raw_result,
+            success=success,
             geojson_ref=geojson_ref,
             store=store,
             lock=lock,
@@ -445,6 +471,7 @@ async def _apply_tool_result_unlocked(
     tool_name: str,
     raw_result: Any,
     *,
+    success: bool = True,
     geojson_ref: Optional[str] = None,
     store: Any = None,
     lock: Any = None,
@@ -460,6 +487,24 @@ async def _apply_tool_result_unlocked(
             session_id,
         )
         return []
+
+    if not success:
+        # v3(Phase E)：失败对计划可见 —— 命中的能力行标 failed（可重试，
+        # 下次成功调用覆写为 complete；DAG 下游在重试前被阻塞）。规划入口
+        # 工具（webgis_*）失败不映射：没有确定受害的能力行，章节保持原状
+        # （意图/产品调用本身的失败由调用方 retry 语义处理）。
+        if tool_name.startswith("webgis_") or plan.gis_chapter is None:
+            return []
+        hits = capabilities_hit_by_tool(plan, tool_name)
+        if not hits:
+            return []
+        changed = _mark_progress(plan, hits, status="failed")
+        if not changed:
+            return []
+        if lock is not None and lock.lost:
+            return []
+        await save_session_plan(plan, store=backend)
+        return [_progress_event(plan, row) for row in changed]
 
     if tool_name == "webgis_map_intent":
         gis = raw.get("plan")

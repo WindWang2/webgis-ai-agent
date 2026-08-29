@@ -45,7 +45,7 @@ export const EMPTY_SESSION_PLAN_STATE: SessionPlanViewState = Object.freeze({
 });
 
 // 后端 ProgressStatus Literal 原样 —— 不造 UI 同义词（ADR-0076 契约）。
-const STATUSES: ReadonlySet<string> = new Set(['pending', 'complete', 'voided', 'unavailable']);
+const STATUSES: ReadonlySet<string> = new Set(['pending', 'complete', 'voided', 'unavailable', 'failed']);
 
 function str(v: unknown, fallback = ''): string {
   return typeof v === 'string' ? v : fallback;

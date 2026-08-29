@@ -10,8 +10,9 @@
  * 水合事实；session_plan_* SSE 事件（#1048）只在其上叠加增量。
  */
 
-/** 后端 Literal 原样照搬：pending / complete / voided / unavailable —— 不造 UI 同义词。 */
-export type SessionPlanCapabilityStatus = 'pending' | 'complete' | 'voided' | 'unavailable';
+/** 后端 Literal 原样照搬：pending / complete / voided / unavailable / failed
+ * （v3 Phase E：failed = 执行过但未产出 artifact，可重试）—— 不造 UI 同义词。 */
+export type SessionPlanCapabilityStatus = 'pending' | 'complete' | 'voided' | 'unavailable' | 'failed';
 
 export interface SessionPlanProgressRow {
   capability: string;

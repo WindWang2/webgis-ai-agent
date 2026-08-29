@@ -1017,6 +1017,7 @@ export async function runExport(
     // 显式请求参数 > spec 组件 > 内置默认 —— 旧 spec（无 components）行为
     // 完全不变。
     let specTitle = '';
+    let specSubtitle = '';
     let specShowCompass: boolean | undefined;
     let specShowScale: boolean | undefined;
     try {
@@ -1030,6 +1031,13 @@ export async function runExport(
         if (titleComp && typeof titleComp.options?.['text'] === 'string') {
           specTitle = titleComp.options['text'];
         }
+        // v3(Phase H)：subtitle 与 title 同一事实源链 —— 请求参数 > spec
+        // 组件 > 内置空串。此前 subtitle 只读请求参数，spec 里改了副标题
+        // 的导出成品不跟随（title/subtitle 行为分叉）。
+        const subtitleComp = specComps.find((c) => c.type === 'subtitle' && c.enabled !== false);
+        if (subtitleComp && typeof subtitleComp.options?.['text'] === 'string') {
+          specSubtitle = subtitleComp.options['text'];
+        }
         if (hasType('north_arrow')) specShowCompass = isEnabled('north_arrow');
         if (hasType('scale_bar')) specShowScale = isEnabled('scale_bar');
       }
@@ -1039,7 +1047,7 @@ export async function runExport(
 
     // #614：经 MapExporterEngine 调 composeLayout（与 exportToPDF 同款路由），
     // 便于测试 spyOn 断言 theme 选项（模块内直接绑定无法被 mock 拦截）。
-    MapExporterEngine.composeLayout(exportCanvas, title || specTitle || '', subtitle || '', {
+    MapExporterEngine.composeLayout(exportCanvas, title || specTitle || '', subtitle || specSubtitle || '', {
       dpi,
       theme,
       // #802: 按真实画布设备像素比换算（dpi 参数仍驱动布局字号/边距缩放）

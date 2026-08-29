@@ -1,0 +1,251 @@
+"""Planner Runtime v3（Phase C）—— 共享 planner 生命周期与 bounded memo 契约。
+
+锁定（post-merge audit A2/A3）：
+
+- A2：``webgis_map_intent`` / ``webgis_map_product`` / plan_orchestrator 共享
+  同一 PlannerRuntime —— memo 跨工具调用存活（intent→product 链第二次
+  规划命中缓存，且在 ToolRegistry dispatch 层面锁定）；
+- A3：plain ``dict.popitem(last=False)`` 是 TypeError（v2 遗留，被"每调用
+  新建 planner"掩盖）—— OrderedDict FIFO 驱逐必须真正可达、确定；
+- memo 键完整性：intent / available_tools / manifest 指纹任一变化都
+  分键；project_verified 只经确定性裁决参与（改变 recipe 选择才分键，
+  裁决相同 ⇒ 输出相同，命中合法——由不可毒化不变式锁定）；
+- 深拷贝隔离：调用方可变返回值不污染 memo 基底；
+- registry 单例被替换（测试 reset）时共享 planner 重建；
+- manifest 世代变化（registry 内容变 + refresh）自动失效 memo。
+"""
+import threading
+
+import pytest
+
+from app.lib.gis.runtime_manifest import refresh_runtime_manifest
+from app.services.gis_harness.intent import resolve_map_request_intent
+from app.services.gis_harness.planner_runtime import (
+    get_planner_runtime,
+    reset_planner_runtime,
+)
+
+
+def setup_function(_fn):
+    reset_planner_runtime()
+
+
+def teardown_function(_fn):
+    reset_planner_runtime()
+
+
+def _intent(query: str = "成都小学的分布情况"):
+    return resolve_map_request_intent(query)
+
+
+def test_shared_runtime_is_process_singleton():
+    a = get_planner_runtime()
+    b = get_planner_runtime()
+    assert a is b
+
+
+def test_same_input_hits_memo_across_planner_instances_of_runtime():
+    planner = get_planner_runtime()
+    it = _intent()
+    p1 = planner.plan_from_intent(it)
+    assert len(planner._plan_memo) == 1
+    p2 = planner.plan_from_intent(it)
+    assert len(planner._plan_memo) == 1, "同输入第二次规划必须命中 memo"
+    assert p1.model_dump() == p2.model_dump()
+    assert p1 is not p2, "命中返回深拷贝，不是同一对象"
+
+
+def test_intent_then_product_chain_shares_memo():
+    """A2 核心场景：intent 阶段与 product 阶段（两个工具调用）复用 memo。"""
+    planner = get_planner_runtime()
+    it = _intent()
+    planner.plan_from_intent(it)  # webgis_map_intent 阶段
+    before = len(planner._plan_memo)
+    planner.plan_from_intent(it)  # webgis_map_product 阶段（同 intent 重放）
+    assert len(planner._plan_memo) == before
+
+
+def test_different_intent_misses():
+    planner = get_planner_runtime()
+    planner.plan_from_intent(_intent("成都小学的分布情况"))
+    planner.plan_from_intent(_intent("北京医院分布密度"))
+    assert len(planner._plan_memo) == 2
+
+
+def test_different_tools_misses():
+    planner = get_planner_runtime()
+    it = _intent()
+    planner.plan_from_intent(it, available_tools={"search_poi_around"})
+    planner.plan_from_intent(it, available_tools={"search_poi_around", "extra_tool"})
+    assert len(planner._plan_memo) == 2
+
+
+def test_project_verified_cannot_poison_cache():
+    """v3(Phase C)：memo 键用确定性裁决结果（recipe/template 解析后），
+    project_verified 只在改变裁决时才分键。不变式：不同 verified 集合下，
+    memo 命中的结果必须与 fresh 重算一致（裁决相同 ⇒ 同输出，命中合法；
+    裁决不同 ⇒ 分键 miss）。"""
+    planner = get_planner_runtime()
+    it = _intent()
+    cached = planner.plan_from_intent(it, project_verified={"poi_distribution_overview"})
+    fresh = planner.plan_from_intent(
+        it, project_verified={"poi_distribution_overview"}, use_memo=False,
+    )
+    assert cached.model_dump() == fresh.model_dump(), (
+        "同裁决（verified recipe = 自然 top）下 memo 结果必须等于 fresh 重算"
+    )
+
+
+def test_manifest_generation_change_invalidates():
+    from app.lib.gis.algorithm_registry import (
+        AlgorithmDescriptor,
+        get_algorithm_registry,
+    )
+
+    planner = get_planner_runtime()
+    it = _intent()
+    planner.plan_from_intent(it)
+    assert len(planner._plan_memo) == 1
+
+    ar = get_algorithm_registry()
+    probe = AlgorithmDescriptor(
+        id="probe.planner-memo", name="memo 探针",
+        capabilities=["poi_query"], tool_candidates=["search_poi_around"],
+        priority=1,
+    )
+    ar.register(probe)
+    try:
+        refresh_runtime_manifest()
+        planner.plan_from_intent(it)
+        # registry 内容变化 → manifest 指纹变 → 同 intent 也 miss 重算
+        assert len(planner._plan_memo) == 2
+    finally:
+        ar._by_id.pop("probe.planner-memo", None)
+        bucket = ar._by_capability.get("poi_query")
+        if bucket and "probe.planner-memo" in bucket:
+            bucket.remove("probe.planner-memo")
+        refresh_runtime_manifest()
+
+
+def test_fifo_eviction_deterministic_and_reachable():
+    """A3：驱逐路径必须真正可达 —— v2 的 plain dict.popitem(last=False)
+    在第 65 个 key 插入时 TypeError。FIFO 语义钉死：最早的 key 被驱逐、
+    边界上的 key 存活。"""
+    planner = get_planner_runtime()
+    max_entries = planner._plan_memo_max
+    for i in range(max_entries + 8):
+        planner.plan_from_intent(_intent(f"城市{i}小学分布情况"))
+    assert len(planner._plan_memo) == max_entries, "memo 必须有界"
+    # FIFO：最早 8 个 key（城市0..城市7）被驱逐；城市8 起存活
+    key_texts = ["".join(str(k)) for k in planner._plan_memo.keys()]
+    for evicted in range(8):
+        assert not any(f"城市{evicted}小学" in t for t in key_texts), (
+            f"第 {evicted} 个插入的 key 必须被 FIFO 驱逐"
+        )
+    assert any("城市8小学" in t for t in key_texts), "边界上的 key 必须存活"
+    assert any(f"城市{max_entries + 7}小学" in t for t in key_texts), "最新 key 必须存活"
+
+
+def test_cached_mutation_does_not_poison_future_results():
+    planner = get_planner_runtime()
+    it = _intent()
+    p1 = planner.plan_from_intent(it)
+    p1.data_requirements = []
+    p1.recipe_id = "mutated"
+    p2 = planner.plan_from_intent(it)
+    assert p2.recipe_id != "mutated"
+    assert len(p2.data_requirements) > 0
+
+
+def test_registry_reset_rebuilds_shared_planner():
+    from app.services.gis_harness.recipes import (
+        get_recipe_registry,
+        reset_recipe_registry,
+    )
+
+    planner = get_planner_runtime()
+    it = _intent()
+    planner.plan_from_intent(it)
+    assert len(planner._plan_memo) == 1
+
+    old_registry = get_recipe_registry()
+    reset_recipe_registry()
+    try:
+        new_registry = get_recipe_registry()
+        assert new_registry is not old_registry
+        rebuilt = get_planner_runtime()
+        assert rebuilt is not planner, "registry 单例替换后共享 planner 必须重建"
+        assert len(rebuilt._plan_memo) == 0, "重建后 memo 清零（旧键不再可信）"
+    finally:
+        # 复原：reset 回内置种子（get 会重新加载 builtins），保证后续测试
+        # 看到与模块导入时相同内容的 registry。
+        reset_planner_runtime()
+        get_recipe_registry()
+
+
+def test_concurrent_planning_is_thread_safe():
+    planner = get_planner_runtime()
+    errors: list = []
+
+    def _worker(tag: int):
+        try:
+            for i in range(12):
+                planner.plan_from_intent(_intent(f"城市{tag}-{i}小学分布"))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_worker, args=(t,)) for t in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert len(planner._plan_memo) <= planner._plan_memo_max
+
+
+def test_use_memo_false_bypasses():
+    planner = get_planner_runtime()
+    it = _intent()
+    planner.plan_from_intent(it, use_memo=False)
+    assert len(planner._plan_memo) == 0
+
+
+@pytest.mark.asyncio
+async def test_harness_tools_share_planner_runtime_at_dispatch_level():
+    """review-E P1：A2 契约必须在 ToolRegistry dispatch 层面锁定 ——
+    两个 harness 工具各 dispatch 一次，共享 memo 只长一个条目（若
+    tools.py 退回每调用 ``MapProductPlanner()``，本测试立即红）。"""
+    from app.services.session_data import session_data_manager
+    from app.tools.registry import ToolRegistry
+    from app.services.gis_harness.tools import register_gis_harness_tools
+
+    sid = "planner-runtime-dispatch-pin"
+    await session_data_manager.clear_session(sid)
+    registry = ToolRegistry()
+    register_gis_harness_tools(registry)
+    try:
+        intent_result = await registry.dispatch(
+            "webgis_map_intent", {"query": "成都小学分布情况"}, session_id=sid,
+        )
+        assert intent_result["success"] is True
+        planner = get_planner_runtime()
+        assert len(planner._plan_memo) == 1, "intent 工具必须落入共享 memo"
+        recipe = intent_result["plan"]["recipe_id"]
+        template = intent_result["plan"]["template_id"]
+        product_result = await registry.dispatch(
+            "webgis_map_product",
+            {
+                "query": "成都小学分布情况",
+                "recipe_id": recipe,
+                "template_id": template,
+                "layer_ids": [],
+            },
+            session_id=sid,
+        )
+        assert product_result.get("success") is True
+        # product 阶段显式回放同一裁决 → memo 命中，不新增条目
+        assert len(planner._plan_memo) == 1, (
+            f"product 工具复用共享 memo（现为 {len(planner._plan_memo)} 条）"
+        )
+    finally:
+        await session_data_manager.clear_session(sid)

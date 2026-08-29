@@ -503,24 +503,35 @@ export function addNativeHeatmap(map: Map, options: HeatmapOptions) {
     14, 2.2,
   ];
 
+  const paint = {
+    'heatmap-weight': options.weight ?? 1,
+    'heatmap-intensity': intensity,
+    'heatmap-color': [
+      'interpolate',
+      ['linear'],
+      ['heatmap-density'],
+      ...palette
+    ],
+    'heatmap-radius': radiusPx,
+    'heatmap-opacity': options.opacity || 1
+  };
+
   map.addLayer({
     id: options.id,
     type: 'heatmap',
     source: options.source,
-    paint: {
-      'heatmap-weight': options.weight ?? 1,
-      'heatmap-intensity': intensity as any,
-      'heatmap-color': [
-        'interpolate',
-        ['linear'],
-        ['heatmap-density'],
-        ...palette
-      ],
-      'heatmap-radius': radiusPx,
-      'heatmap-opacity': options.opacity || 1
-    }
+    paint: paint as any
   });
   noteStyleLayerAdded(map, options.id);
+  // v3(Phase B)：native heatmap 的 layer 定义入运行时账本 —— 此前只有
+  // source（经 addGeoJsonSource 缝）被记账，layer 缺失使 basemap 切换后
+  // source 重挂而图层永久消失。custom- 前缀 guard 在账本入口。
+  recordCustomOverlayLayer({
+    id: options.id,
+    type: 'heatmap',
+    source: options.source,
+    paint: paint as Record<string, unknown>,
+  });
 }
 
 /**
