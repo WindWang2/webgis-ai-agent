@@ -45,8 +45,9 @@ _SUPPORT_MATRIX: Dict[str, ComponentRendererSupport] = {
         note="exporter runExport 读取 options.text 绘制画布标题",
     ),
     "subtitle": ComponentRendererSupport(
-        component_type="subtitle", renderers=[LIVE_TARGET], exporters=[],
-        note="导出路径不读 subtitle 组件",
+        component_type="subtitle", renderers=[LIVE_TARGET],
+        exporters=["png", "pdf", "svg"],
+        note="ADR-0081：exporter 经共享 resolveMapComponents 读 subtitle 组件（canvas 与 PDF 文本层同链）",
     ),
     "north_arrow": ComponentRendererSupport(
         component_type="north_arrow", renderers=[LIVE_TARGET],
@@ -59,29 +60,37 @@ _SUPPORT_MATRIX: Dict[str, ComponentRendererSupport] = {
         note="同 north_arrow（enabled 开关）",
     ),
     "legend": ComponentRendererSupport(
-        component_type="legend", renderers=[LIVE_TARGET], exporters=[],
-        note="导出图例走 HUD 图层发现（discoverLegendData），不读 spec 组件",
+        component_type="legend", renderers=[LIVE_TARGET],
+        exporters=["png", "pdf", "svg"],
+        note="ADR-0081：spec 组件在场时导出读组件（enabled/layerId/anchor），HUD 发现仅兜底",
     ),
     "categorical_legend": ComponentRendererSupport(
-        component_type="categorical_legend", renderers=[LIVE_TARGET], exporters=[],
+        component_type="categorical_legend", renderers=[LIVE_TARGET],
+        exporters=["png", "pdf", "svg"],
         note="同 legend",
     ),
     "continuous_colorbar": ComponentRendererSupport(
-        component_type="continuous_colorbar", renderers=[LIVE_TARGET], exporters=[],
-        note="同 legend",
+        component_type="continuous_colorbar", renderers=[LIVE_TARGET],
+        exporters=["png", "pdf", "svg"],
+        note="ADR-0081：导出绘制渐变 ramp + min/max/unit（与 live colorbar 同形态）",
     ),
     "annotation": ComponentRendererSupport(
         component_type="annotation", renderers=[LIVE_TARGET], exporters=[],
     ),
     "attribution": ComponentRendererSupport(
-        component_type="attribution", renderers=[LIVE_TARGET], exporters=[],
-        note="导出署名走请求参数 author，不读 spec 组件",
+        component_type="attribution", renderers=[LIVE_TARGET],
+        exporters=["png", "pdf", "svg"],
+        note="ADR-0081：导出读 spec attribution 组件（请求 author 仍在 metadata 行）",
     ),
     "statistics_panel": ComponentRendererSupport(
-        component_type="statistics_panel", renderers=[LIVE_TARGET], exporters=[],
+        component_type="statistics_panel", renderers=[LIVE_TARGET],
+        exporters=["png", "pdf", "svg"],
+        note="ADR-0081：canvas 导出绘制统计卡（placement 感知；collapsed 导出折叠条）",
     ),
     "chart_panel": ComponentRendererSupport(
-        component_type="chart_panel", renderers=[LIVE_TARGET], exporters=[],
+        component_type="chart_panel", renderers=[LIVE_TARGET],
+        exporters=["png", "pdf", "svg"],
+        note="ADR-0081：canvas 导出绘制静态图表（与 live 同一数据协议 chart/chartRef）",
     ),
     # ── 仅导出/非 chrome 家族 ──────────────────────────────────────────
     "export_layout": ComponentRendererSupport(

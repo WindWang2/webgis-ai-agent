@@ -640,6 +640,9 @@ export function updateLayerStyle(map: Map, id: string, style: StyleUpdateOptions
 
   if (style.visibility) {
     map.setLayoutProperty(id, 'visibility', style.visibility);
+    // ADR-0081：可见性变更同步统一账本 —— style reload 的定义重放恢复
+    // 隐藏态，不再把命令层复活为可见。
+    recordCustomOverlayVisibility(id, style.visibility !== 'none');
   }
 
   const layer = map.getLayer(id);
@@ -797,6 +800,7 @@ export function setLayerStackVisibility(map: Map, prefix: string, visible: boole
     if (id.startsWith(prefix)) {
       try {
         map.setLayoutProperty(id, 'visibility', value);
+        recordCustomOverlayVisibility(id, visible);
       } catch {
         /* layer 可能在迭代过程中被另一个 effect 移走，吃掉 */
       }
@@ -1011,6 +1015,7 @@ export const CUSTOM_OVERLAY_PREFIX = 'custom-';
 import {
   recordCustomOverlayLayer,
   recordCustomOverlaySource,
+  recordCustomOverlayVisibility,
   unregisterCustomOverlay,
 } from './custom-overlay-registry';
 
