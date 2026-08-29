@@ -104,7 +104,17 @@ legacy projection = graph projection，单一计算源：
   从已裁决算法的 complexity 取档，`input_refs`/`output_ref` 从依赖与自身的
   `bound_ref` 派生，`fallback_to` 从 resolver 的
   `capability_fallback_available:<cap>` 裁决证据提取；
-- **ready**：pending 且依赖全满足（complete/skipped/fallback-unlocked）；
+- **ready**：pending 且依赖全满足（complete/skipped/fallback-unlocked/
+  optional-failed-absorbed）；
+- **failed（Phase E 收尾，端到端接线）**：数据/分析工具 dispatch error 时，
+  Pi bridge 以 ``success=False`` 调 ``apply_tool_result``，命中的能力行
+  （``capabilities_hit_by_tool``）标 failed——progress 行、两类扁平行、
+  SSE progress 事件与 ``open=`` 投影一致；DAG 中 mandatory failed 阻塞
+  下游（``blocked_by`` 披露、等待重试），optional failed **不阻塞**
+  mandatory 图（节点保留 failed 披露，下游按"该增强缺席"继续）；重试成功
+  行翻 complete，下游经 blocked-recovery 解锁。规划入口工具
+  （``webgis_*``）失败不映射（无确定受害能力行）。合并优先序
+  complete > failed > unavailable > pending；
 - **unavailable 传播**：mandatory 依赖缺失 → 本节点 unavailable 并记录
   `blocked_by`；optional 依赖缺失 → 本节点（若 optional）skipped 级联，
   **不阻塞 mandatory 图**；
@@ -229,5 +239,11 @@ SessionPlan。
 3. full inset_map / graticule / map_border 组件渲染器（§13 排除项）。
 4. source GC：统一 registry 已能判断 source 独占性（entry 内聚合），但删除
    语义需按 scenario/ADR 审定后另行落地。
-5. `running`/`failed` DAG 状态已建模（枚举位），但当前无 runner 产生该状态
-   ——预留给执行器接线。
+5. ~~`running`/`failed` 预留~~ —— `failed` 已端到端接线（见上）；
+   `running` **有意不持久化**：Pi turn 严格串行（bridge `self._lock`），
+   投影只在 turn 开始时绑定（`bind_turn_prompt`）——turn 内设置的 running
+   标记在下一次可观测读之前必然已被 complete/failed 覆写，唯一存活场景
+   是 crash 中断的 turn，而那需要 stale-running 恢复逻辑才诚实。每工具
+   调用一次额外 store 写换取零可观测收益，违反"无消费字段不引入"原则；
+   in-flight 可见性属于 dispatch 层（bridge 的 SSE 流与 toolCallId 结果
+   缓存），不属于计划真相。

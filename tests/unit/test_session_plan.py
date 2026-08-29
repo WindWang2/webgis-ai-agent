@@ -369,3 +369,69 @@ async def test_supersede_survives_concurrent_capability_write(sid):
     archived = SessionPlan.model_validate(await session_data_manager.get(sid, ref))
     assert archived.superseded is True
     assert archived.envelope_id == old.envelope_id
+
+
+# ── v3(Phase E 收尾)：failed 标记 ────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_failed_dispatch_marks_capability_failed(sid):
+    """数据工具失败 → 命中的能力行标 failed（progress + 两类扁平行），
+    SSE progress 事件发出，open_capabilities 把 failed 视为 open（可重试）。"""
+    await apply_tool_result(sid, "webgis_map_intent", {"plan": _gis("成都小学分布", "成都")}, success=True)
+    events = await apply_tool_result(
+        sid, "query_local_poi", {"success": False, "message": "boom"}, success=False,
+    )
+    assert events and all(e.event == SESSION_PLAN_PROGRESS for e in events)
+    assert {e.data["capability"] for e in events} == {"poi_query"}
+    assert all(e.data["status"] == "failed" for e in events)
+
+    plan = await load_session_plan(sid)
+    row = next(r for r in plan.progress if r.capability == "poi_query")
+    assert row.status == "failed"
+    req = next(
+        r for r in plan.gis_chapter["data_requirements"] if r["capability"] == "poi_query"
+    )
+    assert req["status"] == "failed"
+    # fixture 的 analysis_steps 只有 heatmap 行（无 poi_query）——失败标记
+    # 的命中范围仅限真实存在的行，不凭空造行。
+    assert not any(
+        r["capability"] == "poi_query" for r in plan.gis_chapter["analysis_steps"]
+    )
+    assert "poi_query" in open_capabilities(plan)
+
+    # 投影披露 [GIS Plan] Failed（retry-able）行
+    text = format_session_plan_projection(plan)
+    assert "Failed (retry-able): poi_query" in text
+
+    # 重试成功覆写为 complete（failed 不是终态）
+    await apply_tool_result(
+        sid, "query_local_poi", {"success": True}, success=True,
+        geojson_ref="ref:geojson:retry-1",
+    )
+    plan2 = await load_session_plan(sid)
+    row2 = next(r for r in plan2.progress if r.capability == "poi_query")
+    assert row2.status == "complete"
+    assert row2.bound_ref == "ref:geojson:retry-1"
+
+
+@pytest.mark.asyncio
+async def test_failed_planner_tool_is_noop(sid):
+    """webgis_* 规划入口失败不映射到能力行（无确定受害能力，章节保持原状）。"""
+    await apply_tool_result(sid, "webgis_map_intent", {"plan": _gis("成都小学分布", "成都")}, success=True)
+    events = await apply_tool_result(
+        sid, "webgis_map_product", {"success": False}, success=False,
+    )
+    assert events == []
+    plan = await load_session_plan(sid)
+    assert all(r.status != "failed" for r in plan.progress)
+
+
+@pytest.mark.asyncio
+async def test_failed_dispatch_without_chapter_is_noop(sid):
+    """空 envelope（无章节）时失败标记无落点——不建章节、不发事件。"""
+    events = await apply_tool_result(
+        sid, "query_local_poi", {"success": False}, success=False,
+    )
+    assert events == []
+    plan = await load_session_plan(sid)
+    assert plan.gis_chapter is None

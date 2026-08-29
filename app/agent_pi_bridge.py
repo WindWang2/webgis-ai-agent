@@ -649,6 +649,29 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
                 "[PiBridge] SessionPlan apply failed session=%s tool=%s",
                 session_id, tool_name,
             )
+    elif result.status == "error":
+        # v3(Phase E)：失败对计划可见 —— 数据/分析工具 error 时，其命中的
+        # 能力行标 failed（可重试；DAG 下游阻塞到重试成功）。best-effort：
+        # 标记失败不阻断错误结果的正常返回。
+        try:
+            from app.services.session_plan import apply_tool_result, events_to_sse
+            plan_events = await apply_tool_result(
+                session_id,
+                tool_name,
+                result.raw_result,
+                success=False,
+            )
+            if plan_events:
+                cache_session_plan_sse(
+                    request.toolCallId,
+                    events_to_sse(plan_events, session_id),
+                    session_id,
+                )
+        except Exception:
+            logger.exception(
+                "[PiBridge] SessionPlan failure mark failed session=%s tool=%s",
+                session_id, tool_name,
+            )
 
     raw = result.raw_result if isinstance(result.raw_result, dict) else {}
     has_cartographic_generation = bool(raw.get("mapspec_fingerprint"))

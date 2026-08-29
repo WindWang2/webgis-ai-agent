@@ -41,6 +41,8 @@
  * 有界：LRU 256 条（Map 插入序驱逐最旧），防长会话无限增长。
  */
 
+import { devOnly } from '@/lib/utils/logger';
+
 export type RuntimeLayerFamily = 'vector' | 'raster' | 'heatmap' | 'annotation' | 'custom';
 export type RuntimeLayerOwnership = 'spec' | 'command' | 'harness' | 'user' | 'system';
 export type RuntimeLayerPersistence = 'durable' | 'session' | 'transient';
@@ -113,10 +115,20 @@ function findEntryBySource(sourceId: string): RuntimeLayerDescriptor | undefined
 }
 
 function evictToBound(): void {
+  let evicted = 0;
   while (registry.size > MAX_RUNTIME_LAYERS) {
     const oldest = registry.keys().next().value;
     if (oldest === undefined) break;
     dropEntry(oldest);
+    evicted += 1;
+  }
+  if (evicted > 0) {
+    // review-C P2：驱逐是覆盖性回归（被驱逐层的 style-reload 重放静默
+    // 消失）——devOnly 披露，长会话超界可观测（生产 no-console 边界外）。
+    devOnly.warn(
+      `[runtime-layer-registry] ${evicted} oldest overlay(s) evicted at cap ` +
+      `${MAX_RUNTIME_LAYERS} — they will no longer remount after a style reload`,
+    );
   }
 }
 

@@ -116,7 +116,8 @@ class DataRequirement(BaseModel):
     capability: str
     purpose: str = ""
     params: Dict[str, Any] = Field(default_factory=dict)
-    status: Literal["pending", "available", "unavailable"] = "pending"
+    # v3(Phase E)：failed = 执行尝试过但未产出 artifact（可重试）。
+    status: Literal["pending", "available", "unavailable", "failed"] = "pending"
     bound_ref: str = ""
     resolved_tool: str = ""
     resolved_algorithm: str = ""
@@ -129,7 +130,7 @@ class DataRequirement(BaseModel):
 class AnalysisStep(BaseModel):
     capability: str
     purpose: str = ""
-    status: Literal["pending", "done", "skipped", "unavailable"] = "pending"
+    status: Literal["pending", "done", "skipped", "unavailable", "failed"] = "pending"
     bound_ref: str = ""
     resolved_tool: str = ""
     resolved_algorithm: str = ""

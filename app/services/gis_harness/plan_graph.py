@@ -17,6 +17,10 @@ analysis DAG（Phase E）：
           ├── ready：deps 全满足（complete/skipped/fallback-unlocked）
           ├── unavailable 传播：mandatory dep 缺失阻塞下游；optional 缺失
           │   自身 skipped（不阻塞 mandatory 图）
+          ├── failed（Phase E 收尾）：执行过但无 artifact —— mandatory
+          │   failed 阻塞下游（等待重试），optional failed 不阻塞（节点
+          │   保留 failed 披露，下游按"该增强缺席"继续）；重试成功（行
+          │   翻 complete）后下游经 blocked-recovery 解锁
           └── fallback：capability 级 fallback 裁决（resolver 记录的
               capability_fallback_available:<cap>）——fallback 节点完成即
               视为原节点满足，解锁下游
@@ -61,6 +65,7 @@ _ROW_STATUS_TO_NODE: Dict[str, PlanNodeStatus] = {
     "pending": PlanNodeStatus.pending,
     "unavailable": PlanNodeStatus.unavailable,
     "skipped": PlanNodeStatus.skipped,
+    "failed": PlanNodeStatus.failed,
 }
 
 # 节点满足态：依赖处于这些状态即解锁下游（skipped 含 fallback-unlock）。
@@ -129,15 +134,20 @@ def _row(rows: Any, capability: str) -> Dict[str, Any]:
 
 
 def _merge_row_status(req: Dict[str, Any], step: Dict[str, Any]) -> PlanNodeStatus:
-    """requirement/step 两行状态合并（终态优先；冲突取更保守者）。"""
+    """requirement/step 两行状态合并（终态优先；冲突取更保守者）。
+
+    优先序：complete > failed > unavailable > pending —— complete 是绑定
+    事实（产品阶段只回填了 requirement 时 step 落后不算冲突）；failed
+    （执行过、无 artifact）比 unavailable（裁决期就不可用）信息更多。
+    """
     s_req = _ROW_STATUS_TO_NODE.get(str(req.get("status") or ""), PlanNodeStatus.pending)
     s_step = _ROW_STATUS_TO_NODE.get(str(step.get("status") or ""), PlanNodeStatus.pending)
     if PlanNodeStatus.complete in (s_req, s_step):
-        # 一行 complete 一行 pending：产品阶段只回填了 requirement（数据到
-        # 手）而 step 未判 done —— complete 优先（artifact 已绑定）。
         return PlanNodeStatus.complete
     if s_req == s_step:
         return s_req
+    if PlanNodeStatus.failed in (s_req, s_step):
+        return PlanNodeStatus.failed
     if PlanNodeStatus.unavailable in (s_req, s_step):
         return PlanNodeStatus.unavailable
     return PlanNodeStatus.pending
@@ -378,6 +388,10 @@ def _evaluate(graph: PlanGraph) -> None:
             return False
         if dep.status in _SATISFIED:
             return True
+        # optional 的失败不阻塞 mandatory 图（§17）——节点保留 failed 披露
+        # （不翻 skipped：执行尝试过是事实），下游按"该增强缺席"继续。
+        if dep.optional and dep.status == PlanNodeStatus.failed:
+            return True
         if dep.status == PlanNodeStatus.unavailable and dep.fallback_to:
             fb = by_cap.get(dep.fallback_to)
             if fb is not None and fb.status in _SATISFIED:
@@ -400,8 +414,9 @@ def _evaluate(graph: PlanGraph) -> None:
                     node.notes.append("skipped: optional capability unavailable")
                     changed = True
 
-        # b) 阻塞判定：只有 **mandatory** 依赖不可用才阻塞（optional
-        #    unavailable 依赖在 a) 已翻 skipped——满足态）。
+        # b) 阻塞判定：**mandatory** 依赖不可用/失败才阻塞（optional
+        #    unavailable 依赖在 a) 已翻 skipped、optional failed 在 _sat
+        #    已视为满足——都不阻塞 mandatory 图）。failed 阻塞 = 等待重试。
         for node in graph.nodes:
             if node.status != PlanNodeStatus.pending:
                 continue
@@ -411,7 +426,9 @@ def _evaluate(graph: PlanGraph) -> None:
             blocking = [
                 d for d in unsatisfied
                 if by_cap.get(d) is not None
-                and by_cap[d].status == PlanNodeStatus.unavailable
+                and by_cap[d].status in (
+                    PlanNodeStatus.unavailable, PlanNodeStatus.failed,
+                )
                 and not by_cap[d].optional
             ]
             if not blocking:
@@ -472,6 +489,7 @@ def project_graph_block(graph: PlanGraph, *, budget: int = 10) -> str:
     waiting = graph.waiting_nodes()
     done = graph.completed_nodes()
     unavailable = graph.unavailable_nodes()
+    failed = [n for n in graph.nodes if n.status == PlanNodeStatus.failed]
     skipped = [n for n in graph.nodes if n.status == PlanNodeStatus.skipped]
 
     def _cap(items: List[str], limit: int) -> str:
@@ -488,6 +506,9 @@ def project_graph_block(graph: PlanGraph, *, budget: int = 10) -> str:
     suffix = f" (+{len(waiting) - 4} more)" if len(waiting) > 4 else ""
     lines.append(f"Waiting: {','.join(wait_desc) or 'none'}{suffix}")
     lines.append(f"Completed: {_cap(done, 6)}")
+    if failed:
+        # failed = 执行过但无 artifact，可重试：重试成功即解锁下游。
+        lines.append("Failed (retry-able): " + _cap([n.capability for n in failed], 4))
     if unavailable:
         un = [
             f"{n.capability}" + (f" (fallback: {n.fallback_to})" if n.fallback_to else "")
