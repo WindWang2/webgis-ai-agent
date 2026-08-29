@@ -1,7 +1,7 @@
 /**
  * Frontend map-product finalizer（ADR-0081）—— 视口校验/修复契约。
  */
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   checkViewport,
   finalizationUserNotice,
@@ -9,7 +9,7 @@ import {
   viewportIntersectsBbox,
 } from './finalizer';
 
-function mockMap(view: { w: number; s: number; e: number; n: number }, fitBoundsImpl?: (bbox: unknown, pad?: number) => void) {
+function mockMap(view: { w: number; s: number; e: number; n: number }) {
   const onceHandlers: Record<string, (() => void)[]> = {};
   const map = {
     getBounds: () => ({
@@ -18,8 +18,7 @@ function mockMap(view: { w: number; s: number; e: number; n: number }, fitBounds
       getEast: () => view.e,
       getNorth: () => view.n,
     }),
-    fitBounds: vi.fn((bbox: unknown, opts?: unknown) => {
-      fitBoundsImpl?.(bbox);
+    fitBounds: vi.fn(() => {
       // 立即结算（runCameraCommand 等 moveend —— mock 同步触发）
       setTimeout(() => onceHandlers['moveend']?.forEach((h) => h()), 0);
     }),
