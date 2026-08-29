@@ -3,22 +3,24 @@
 # Stage 1: Frontend Dependencies
 FROM node:22-alpine AS frontend-deps
 WORKDIR /app/frontend
-COPY frontend/package.json frontend/package-lock.json frontend/.npmrc ./
-# .npmrc（legacy-peer-deps=true）必须在场：eslint-config-next@14 的 peer 仍声明
-# eslint ^7||^8，与 ESLint 9 冲突，只有 legacy-peer-deps 能跳过校验（与本地/CI 一致）。
+# pnpm 是唯一包管理器（audit5 #1083：npm lockfile 已删除）。corepack 随
+# node:22 内置；pin pnpm@10 与 CI workflow 的 pnpm/action-setup 版本一致。
+RUN corepack enable && corepack prepare pnpm@10.15.1 --activate
+COPY frontend/package.json frontend/pnpm-lock.yaml ./
 # node:22：jest-dom@7 / jsonlint-lines-primitives@2.0.3 等要求 node >=22（engine-strict）。
-RUN npm ci
+RUN pnpm install --frozen-lockfile
 
 # Stage 2: Frontend Builder
 FROM node:22-alpine AS frontend-builder
 WORKDIR /app/frontend
+RUN corepack enable && corepack prepare pnpm@10.15.1 --activate
 COPY --from=frontend-deps /app/frontend/node_modules ./node_modules
 COPY frontend/. .
 # transport goal E-F-2 (P0): inject the API base at build time (see Dockerfile.prod).
 ARG NEXT_PUBLIC_API_URL=""
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN npm run build
+RUN pnpm run build
 
 # Stage 3: Backend Dependencies
 FROM python:3.12-slim AS backend-deps
