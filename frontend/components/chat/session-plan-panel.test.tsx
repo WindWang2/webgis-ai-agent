@@ -25,6 +25,7 @@ const buildProjection = (): SessionPlanProjection => ({
     { capability: 'admin_boundary', status: 'pending', bound_ref: '' },
     { capability: 'heatmap', status: 'voided', bound_ref: '' },
     { capability: 'buffer', status: 'unavailable', bound_ref: '' },
+    { capability: 'kde_density', status: 'failed', bound_ref: '' },
   ],
   replaced: false,
   superseded: false,
@@ -54,7 +55,7 @@ describe('SessionPlanPanel', () => {
     expect(screen.getByText('admin_boundary')).toBeInTheDocument();
   });
 
-  it('renders all four capability statuses with distinct zh labels', async () => {
+  it('renders all five capability statuses with distinct zh labels', async () => {
     mockHydration(buildProjection());
     render(<SessionPlanPanel sessionId="s1" ownerToken="tok-1" />);
     await waitFor(() => expect(screen.getByText('poi_query')).toBeInTheDocument());
@@ -62,6 +63,46 @@ describe('SessionPlanPanel', () => {
     expect(screen.getByText('待完成')).toBeInTheDocument(); // pending
     expect(screen.getByText('已作废')).toBeInTheDocument(); // voided
     expect(screen.getByText('不可用')).toBeInTheDocument(); // unavailable
+    // v3(Phase E)：failed 行渲染不崩溃（STATUS_META 完备），label 区分于
+    // unavailable —— 此前后端拓宽 Literal 而前端未跟，水合 failed 行直接
+    // `STATUS_META[...].icon` TypeError（delta review P0）。
+    expect(screen.getByText('失败（可重试）')).toBeInTheDocument(); // failed
+  });
+
+  it('delta applies live failed progress events (not silently dropped)', async () => {
+    // v3(Phase E)：STATUSES 集合拓宽 —— failed 增量事件必须落到视图行，
+    // 而不是被未知状态守卫丢弃（静默丢失披露）。
+    mockHydration(buildProjection());
+    const { rerender } = render(
+      <SessionPlanPanel sessionId="s1" ownerToken="tok-1" />,
+    );
+    await waitFor(() => expect(screen.getByText('poi_query')).toBeInTheDocument());
+    const state: SessionPlanViewState = {
+      plan: {
+        ...buildProjection(),
+        envelope_id: 'sp-live',
+      },
+      supersede: null,
+    };
+    const next = applySessionPlanEvent(
+      state,
+      'session_plan_progress' as SessionPlanEventName,
+      {
+        session_id: 's1',
+        envelope_id: 'sp-live',
+        capability: 'admin_boundary',
+        status: 'failed',
+        bound_ref: '',
+      },
+    );
+    expect(next.plan?.progress.find((r) => r.capability === 'admin_boundary')?.status)
+      .toBe('failed');
+    rerender(
+      <SessionPlanPanel sessionId="s1" ownerToken="tok-1" live={next} />,
+    );
+    await waitFor(() => {
+      expect(screen.getAllByText('失败（可重试）').length).toBeGreaterThanOrEqual(2);
+    });
   });
 
   it('shows bound_ref on completed rows only', async () => {

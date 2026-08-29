@@ -14,7 +14,8 @@ analysis DAG（Phase E）：
     PlanGraph
           ├── 依赖边：registry artifact 类型推断（A.output ∩ B.input ⇒ A→B）
           ├── 节点状态：merge(requirement.status, step.status)
-          ├── ready：deps 全满足（complete/skipped/fallback-unlocked）
+          ├── ready：deps 全满足（complete/skipped/fallback-unlocked/
+          │   optional-failed-absorbed）
           ├── unavailable 传播：mandatory dep 缺失阻塞下游；optional 缺失
           │   自身 skipped（不阻塞 mandatory 图）
           ├── failed（Phase E 收尾）：执行过但无 artifact —— mandatory
@@ -89,6 +90,8 @@ class PlanNode(BaseModel):
     resolved_tool: str = ""
     bound_ref: str = ""
     output_ref: str = ""
+    # failed 行上的 bound_ref 语义：最近一次成功产出的 artifact（可能仍有
+    # 效）—— 重跑失败不清除既有绑定（清除会丢掉仍可复用的数据事实）。
     input_refs: List[str] = []
     optional: bool = False
     cost_class: str = ""

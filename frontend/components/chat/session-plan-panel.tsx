@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ClipboardList, Check, Circle, MinusCircle, CircleSlash } from 'lucide-react';
+import { ClipboardList, Check, Circle, MinusCircle, CircleSlash, RotateCcw } from 'lucide-react';
 import type { ReactElement } from 'react';
 import { getSessionPlan } from '@/lib/api/chat';
 import type {
@@ -43,6 +43,12 @@ const STATUS_META: Record<
   unavailable: {
     label: '不可用',
     icon: <CircleSlash className="h-3 w-3 text-status-warning" />,
+  },
+  failed: {
+    // v3(Phase E)：执行过但未产出 artifact —— 与 unavailable（裁决期就
+    // 不可用）区分：failed 可重试，重试成功覆写 complete。
+    label: '失败（可重试）',
+    icon: <RotateCcw className="h-3 w-3 text-status-warning" />,
   },
 };
 
