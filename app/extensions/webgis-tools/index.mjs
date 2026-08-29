@@ -29,6 +29,8 @@ const BRIDGE_TIMEOUT_MS = Number.parseInt(process.env.WEBGIS_BRIDGE_TIMEOUT_MS ?
   : 300_000;
 
 // 模型面的恢复指引：裸 "HTTP 409: Conflict" 只会诱发盲目重试。
+// 500 必须映射：dispatch 路径（registry 未注入的启动窗口等）真实返回的是
+// 500 而非 503 —— 只映射 503 会留一个无指引的盲重试洞（red team）。
 const STATUS_GUIDANCE = {
   401: {
     error: "turn_context_rejected",
@@ -37,6 +39,10 @@ const STATUS_GUIDANCE = {
   409: {
     error: "turn_not_active",
     text: "This turn is no longer active (it completed, was aborted, or was superseded by a newer message). Retrying will keep failing — stop calling GIS tools and summarize the results you already have for the user.",
+  },
+  500: {
+    error: "bridge_server_error",
+    text: "The WebGIS backend failed to dispatch this call (it may be starting up or transiently broken). Retry the same call once after a few seconds; if it fails again, report the error to the user instead of retrying further.",
   },
   503: {
     error: "bridge_unavailable",
@@ -86,55 +92,121 @@ function loadNativeTools() {
 
 // #1044：marker 钉在滚动窗口之外。此前只扫最近 24 条 session entry，一个
 // 工具密集回合（每步约 2-3 条）会在 ~8-10 步后把 turn marker 挤出窗口，
-// 之后所有回调都 401 missing_turn_context。改为：按 sessionManager 记住
-// 上次命中的 {index, token}，每次只扫上次命中之后的新 entry（追加型会话的
-// 稳态成本 = 新 entry 数 + 钉住点一次校验），扫不到新 marker 就沿用钉住的
-// token。新回合的 marker 一定在更高 index，回扫先命中，不会被记忆中的旧
-// token 遮蔽；钉住点越界或不再携带钉住 token（会话重置、压缩重写）时作废
-// 重扫。校验是子串级的：重写后原样引用旧 marker 的病态 entry 仍会沿用旧
-// token —— 服务端的签名/活跃 turn 校验（401/409）是最终裁决者。
+// 之后所有回调都 401 missing_turn_context。记忆按 sessionManager 存
+// {index, token, scanned}：
+// - scanned 高水位线以上的 entry 已扫过且无新 marker（追加型会话），每次
+//   只扫新 entry —— 每次调用 O(新 entry 数) + 钉住点一次校验，整个回合
+//   不再是 O(n²)（red team P1）。
+// - user-role 消息 entry 里的 marker 是权威来源；可识别的非 user 形状
+//   （assistant/toolResult/custom 消息）里的同形 marker 一律不采信 ——
+//   工具结果回显攻击文本不能遮蔽真实 token（red team S1）。未知形状
+//   （字符串等非 Pi entry 对象）保留旧语义（最新 marker 生效）以兼容
+//   独立运行/测试注入。
+// - 钉住点越界或不再携带钉住 token（会话重置、压缩重写）时作废进度、
+//   全量重扫；重扫无果时沿用被作废的 token（carry）而非本地返回空串 ——
+//   压缩恰好抹掉 marker entry 时，服务端签名 + 活跃 turn 校验（401/409
+//   带指引）仍是最终裁决者，本地空串死角会让整个回合的 GIS 面静默死亡
+//   （red team RT4）。校验是子串级的：重写后原样引用旧 marker 的病态
+//   entry 仍会沿用旧 token，同样交给服务端裁决。
 const TURN_TOKEN_MEMO = new WeakMap();
 
 function entryStillHasToken(entry, token) {
   try {
-    return JSON.stringify(entry).includes(`WEBGIS_TURN_CONTEXT:${token}`);
+    return typeof entry !== "undefined" && entry !== null
+      && JSON.stringify(entry).includes(`WEBGIS_TURN_CONTEXT:${token}`);
   } catch {
     return false;
   }
 }
 
+// Pi 的真实 entry 是 {type:"message", message:{role:"user"|...}}；只有
+// user 消息 entry 能被后端附加 marker（attach_turn_context 只装饰用户
+// 消息），也只有它铸造的 marker 可信。
+function isUserMessageEntry(entry) {
+  return entry !== null && typeof entry === "object"
+    && entry.type === "message"
+    && entry.message !== null && typeof entry.message === "object"
+    && entry.message.role === "user";
+}
+
+// 可识别的 Pi 消息 entry 但非 user：其中的 marker 一律视为回显，不采信。
+function isKnownNonUserMessageEntry(entry) {
+  return entry !== null && typeof entry === "object"
+    && entry.type === "message"
+    && entry.message !== null && typeof entry.message === "object"
+    && entry.message.role !== "user";
+}
+
+function lastMarkerIn(serialized) {
+  const matches = Array.from(serialized.matchAll(TURN_CONTEXT_RE));
+  // 取最后一个匹配：后端 marker 排在不可信用户文本之后，用户伪造的同形
+  // marker 不能遮蔽服务器能力。
+  return matches.length ? matches[matches.length - 1][1] : "";
+}
+
 export function currentTurnToken(ctx) {
   const manager = ctx?.sessionManager;
-  const entries = manager?.getEntries?.() ?? [];
-  let pinned = TURN_TOKEN_MEMO.get(manager);
-  if (pinned && (pinned.index >= entries.length || !entryStillHasToken(entries[pinned.index], pinned.token))) {
+  if (!manager) return "";
+  const entries = manager.getEntries?.() ?? [];
+  const memo = TURN_TOKEN_MEMO.get(manager);
+  // index < 0 是 carry-only 记忆（marker entry 已被压缩抹掉，token 无锚点）。
+  const pinValid = !!memo
+    && (memo.index < 0
+      ? entries.length >= memo.scanned
+      : memo.index < entries.length && entryStillHasToken(entries[memo.index], memo.token));
+  if (memo && !pinValid) {
     TURN_TOKEN_MEMO.delete(manager);
-    pinned = undefined;
   }
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    if (pinned && index === pinned.index) break;
+  // 只扫高水位以上的新 entry；钉住点之下（已扫过、无新 marker）不重扫。
+  const startFrom = memo
+    ? Math.max(pinValid ? memo.scanned : 0, pinValid ? memo.index + 1 : 0)
+    : 0;
+  let legacyAnswer = "";
+  for (let index = entries.length - 1; index >= startFrom; index -= 1) {
     let serialized = "";
     try {
       serialized = JSON.stringify(entries[index]);
     } catch {
       continue;
     }
-    const matches = Array.from(serialized.matchAll(TURN_CONTEXT_RE));
-    if (matches.length) {
-      // 取该 entry 的最后一个匹配：后端 marker 排在不可信用户文本之后，
-      // 用户伪造的同形 marker 不能遮蔽服务器能力。
-      const token = matches[matches.length - 1][1];
-      TURN_TOKEN_MEMO.set(manager, { index, token });
-      return token;
+    const marker = lastMarkerIn(serialized);
+    if (!marker) continue;
+    if (isUserMessageEntry(entries[index])) {
+      TURN_TOKEN_MEMO.set(manager, { index, token: marker, scanned: entries.length });
+      return marker;
+    }
+    if (!isKnownNonUserMessageEntry(entries[index]) && !legacyAnswer) {
+      // 未知形状（字符串/非 Pi entry 对象）：兼容旧语义，先记住再继续找
+      // 更权威的 user-role marker。
+      legacyAnswer = marker;
     }
   }
-  return pinned ? pinned.token : "";
+  const scanned = entries.length;
+  // 锚定 pin（index>=0，user-role marker 铸造）不受后续非 user marker 影响；
+  // carry/legacy 记忆（index<0）保持旧语义：新 marker（含未知形状）取代之。
+  if (legacyAnswer && (!pinValid || memo.index < 0)) {
+    TURN_TOKEN_MEMO.set(manager, { index: -1, token: legacyAnswer, scanned });
+    return legacyAnswer;
+  }
+  if (pinValid) {
+    memo.scanned = scanned;
+    return memo.token;
+  }
+  if (memo) {
+    // 钉住点被重写/压缩抹掉且重扫无果：carry 旧 token，服务端裁决。
+    TURN_TOKEN_MEMO.set(manager, { index: -1, token: memo.token, scanned });
+    return memo.token;
+  }
+  return "";
 }
 
 export async function postToBridge(toolCallId, name, args, turnToken) {
   if (!turnToken) {
     return {
-      content: [{ type: "text", text: "WebGIS tool execution rejected: missing turn context" }],
+      content: [{
+        type: "text",
+        text: "WebGIS tool execution rejected: no turn context marker exists in this session (it was compacted away before any tool ran, or the session was reset). Do not retry; tell the user to send a new message to start a fresh turn.",
+      }],
       details: { error: "missing_turn_context", toolName: name },
       isError: true,
     };
