@@ -138,15 +138,31 @@ async def test_cancelled_error_releases_dedup_key():
     assert ("slow_async_tool", '{"x": 1}') not in executed
 
 
-def test_reregistration_warns(caplog):
-    """#1062: 同名覆盖此前静默替换活工具 —— 现在必须留下 WARNING。"""
-    import logging
+def test_reregistration_warns(monkeypatch):
+    """#1062: 同名覆盖此前静默替换活工具 —— 现在必须留下 WARNING。
+
+    直接替换模块 logger 为记录器（monkeypatch 保证恢复）：全量套件中
+    先行测试（pi route auth 等）会扰动 logging 管线，任何经 handler/
+    propagate 的断言都不稳定。
+    """
+    import app.tools.registry as registry_mod
+
+    class _Recorder:
+        def __init__(self):
+            self.messages = []
+
+        def warning(self, msg, *args, **kwargs):
+            self.messages.append(msg % args if args else msg)
+
+    recorder = _Recorder()
+    monkeypatch.setattr(registry_mod, "logger", recorder)
 
     reg = ToolRegistry()
     reg.register("dup_tool", "v1", func=lambda **_: {"v": 1})
-    with caplog.at_level(logging.WARNING, logger="app.tools.registry"):
-        reg.register("dup_tool", "v2", func=lambda **_: {"v": 2})
-    assert any("重复注册" in r.message for r in caplog.records)
+    reg.register("dup_tool", "v2", func=lambda **_: {"v": 2})
+    assert any("重复注册" in m for m in recorder.messages), recorder.messages
+    # 覆盖仍生效（显式更新走 update_args_model 的契约另测）
+    assert reg._tools["dup_tool"](x=1) == {"v": 2}
 
 
 def test_schema_size_cached_and_invalidated():
