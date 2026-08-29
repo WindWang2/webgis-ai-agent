@@ -173,3 +173,44 @@ async def test_chatengine_intent_does_not_write_session_plan(registry, sid):
     )
     assert res.get("success") is True
     assert await load_session_plan(sid) is None
+
+
+@pytest.mark.asyncio
+async def test_failed_dispatch_marks_rows_and_retry_recovers(registry, sid):
+    """v3(Phase E) bridge 层：dispatch error → 命中能力行标 failed（SSE
+    progress 披露 + open 投影），重试成功覆写 complete。"""
+    intent = await dispatch_tool(_req(
+        "tf-intent", "webgis_map_intent", {"query": QUERY}, sid,
+    ))
+    assert not intent.isError, intent.content
+
+    # 失败的数据工具调用：参数校验错误 → dispatch status=error
+    failed = await dispatch_tool(_req(
+        "tf-fail", "query_local_poi",
+        {"district": {"bad": "type"}, "subtype": "小学", "limit": 5},
+        sid,
+    ))
+    assert failed.isError
+
+    plan = await load_session_plan(sid)
+    rows = {row.capability: row.status for row in plan.progress}
+    assert rows["poi_query"] == "failed", rows
+    # 其余能力不受牵连（失败只落在命中的能力行）
+    assert rows["admin_boundary_query"] == "pending"
+
+    # SSE：失败的 progress 事件随 toolCallId 缓存
+    sse = take_session_plan_sse("tf-fail", sid)
+    assert "event: session_plan_progress" in sse
+    assert '"capability": "poi_query"' in sse
+    assert '"status": "failed"' in sse
+
+    # 投影披露 Failed（retry-able）且计入 open
+    from app.services.session_plan import format_session_plan_projection
+    text = format_session_plan_projection(plan)
+    assert "Failed (retry-able): poi_query" in text
+    assert "poi_query" in text.splitlines()[0]
+
+    # 重试恢复（failed → complete 覆写）由 service 级测试锁定
+    # （tests/unit/test_session_plan.py::test_failed_dispatch_marks_capability_failed）
+    # —— bridge 级用真实工具无法确定性构造"重试即成功"（本机数据态工具
+    # 依赖 gd_pois.gpkg 导入）。
