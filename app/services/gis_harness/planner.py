@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
+from collections import OrderedDict
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -211,8 +213,35 @@ class MapProductPlanner:
         # plan_from_intent 是纯函数 —— 以 (query, recipe, template,
         # available_tools, manifest 指纹) 为键 memo；registry 内容变化
         # （manifest 指纹变）自动失效。有界 64。
-        self._plan_memo: dict = {}
+        #
+        # v3(audit A2/A3)：planner 实例此前在每个 harness tool call 内新建
+        # （tools.py / plan_orchestrator.py），memo 只活在一次调用里 ——
+        # intent→product 链跨调用零复用。共享 PlannerRuntime 后 memo 真正
+        # 跨调用存活，eviction 路径随之可达：plain dict 的
+        # ``popitem(last=False)`` 是 TypeError（v2 遗留 bug，被"每调用新
+        # 实例"掩盖），必须 OrderedDict。memo 读写持锁（进程内多线程
+        # dispatch 并发规划安全）；命中与存入均深拷贝，调用方可变返回值
+        # 不污染 memo 基底。
+        self._plan_memo: OrderedDict = OrderedDict()
         self._plan_memo_max = 64
+        self._plan_memo_lock = threading.RLock()
+
+    def attached_to_current_registries(self) -> bool:
+        """共享 runtime 的 registry 身份守卫（v3 Phase C）。
+
+        ``reset_recipe_registry`` / 模板注册测试会替换 registry 单例——
+        共享 planner 持有旧引用时 memo 与裁决会漂移。身份不同即重建。
+        """
+        return (
+            self.recipes is get_recipe_registry()
+            and self.templates is get_product_template_registry()
+            and self.catalog is get_template_catalog()
+        )
+
+    def reset_memo(self) -> None:
+        """测试隔离：清空 memo（不重建 planner）。"""
+        with self._plan_memo_lock:
+            self._plan_memo.clear()
 
     # ── registry 裁决辅助 ─────────────────────────────────────────────
     def _resolve_capabilities(
@@ -294,9 +323,10 @@ class MapProductPlanner:
                     tuple(sorted(project_verified)) if project_verified else None,
                     get_runtime_manifest().fingerprint,
                 )
-                cached = self._plan_memo.get(memo_key)
-                if cached is not None:
-                    return cached.model_copy(deep=True)
+                with self._plan_memo_lock:
+                    cached = self._plan_memo.get(memo_key)
+                    if cached is not None:
+                        return cached.model_copy(deep=True)
             except Exception:  # noqa: BLE001 — memo 失败退直算
                 memo_key = None
         # recipe_id 显式指定（webgis_map_intent 阶段的推荐/LLM 纠偏）优先——
@@ -408,9 +438,10 @@ class MapProductPlanner:
         if memo_key is not None:
             # 存入即深拷贝：调用方持有返回对象并可变（plan1.data_requirements=[]
             # 不得污染 memo 基底）。
-            self._plan_memo[memo_key] = plan.model_copy(deep=True)
-            while len(self._plan_memo) > self._plan_memo_max:
-                self._plan_memo.popitem(last=False)
+            with self._plan_memo_lock:
+                self._plan_memo[memo_key] = plan.model_copy(deep=True)
+                while len(self._plan_memo) > self._plan_memo_max:
+                    self._plan_memo.popitem(last=False)
 
         return plan
 

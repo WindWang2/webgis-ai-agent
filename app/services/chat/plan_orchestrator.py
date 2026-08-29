@@ -545,10 +545,10 @@ class AgentPlanOrchestrator:
         """
         try:
             from app.services.gis_harness import (
-                MapProductPlanner,
                 resolve_map_request_intent,
             )
             from app.services.gis_harness.planner import capability_tool_map
+            from app.services.gis_harness.planner_runtime import get_planner_runtime
         except Exception:  # noqa: BLE001 harness 不可用 → 回落 LLM 规划
             return None
         try:
@@ -558,7 +558,7 @@ class AgentPlanOrchestrator:
                 return None
             if float(getattr(intent, "confidence", 0.0) or 0.0) < _HARNESS_SYNTH_MIN_CONFIDENCE:
                 return None
-            gplanner = MapProductPlanner()
+            gplanner = get_planner_runtime()
             candidates = gplanner.recipes.select_candidates(intent)
             if not candidates:
                 return None
@@ -656,11 +656,11 @@ class AgentPlanOrchestrator:
         # LLM 规划不变；结构化意图供 plan_ready 事件/审计/产品组装消费。
         try:
             from app.services.gis_harness import (
-                MapProductPlanner,
                 resolve_map_request_intent,
             )
+            from app.services.gis_harness.planner_runtime import get_planner_runtime
             gis_intent = resolve_map_request_intent(user_message)
-            candidates = MapProductPlanner().recipes.select_candidates(gis_intent)
+            candidates = get_planner_runtime().recipes.select_candidates(gis_intent)
             plan.gis_intent = gis_intent.model_dump()
             plan.recipe_id = candidates[0].id if candidates else ""
         except Exception as e:  # noqa: BLE001 - harness 附着失败不阻断规划
