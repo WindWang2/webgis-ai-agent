@@ -38,6 +38,14 @@ export interface ComponentLayoutMeta {
 
 export const DEFAULT_STACK_STEP_PX = 36;
 
+/**
+ * 槽高预算比例（Scenario H fallback 规则）：槽内累积估算高度超过
+ * 画布高 × 本比例时，最低优先级尾部确定性侧让到 fallback 槽。
+ * 0.7：默认 800px 画布 ≈ 560px 预算 —— annotation+stats+chart（450px）
+ * 常规三面板仍同槽堆叠；仅真实受限视口才触发侧让（低扰动）。
+ */
+const SLOT_HEIGHT_BUDGET_RATIO = 0.7;
+
 /** 组件类型布局元数据（与 component-catalog defaultPosition 对齐，测试锁定）。 */
 export const COMPONENT_LAYOUT_META: Record<string, ComponentLayoutMeta> = {
   title: { defaultSlot: 'top-center', priority: 0, exclusive: true },
@@ -92,7 +100,7 @@ export interface SlotResolution {
 }
 
 export interface LayoutCollision {
-  kind: 'floating-floating' | 'floating-anchor';
+  kind: 'floating-floating' | 'floating-anchor' | 'slot-capacity';
   a: string;
   b: string;
 }
@@ -202,31 +210,93 @@ export function resolveComponentLayout(
     if (bucket) bucket.push(p);
     else groups.set(entry.slot, [p]);
   }
-  const ordered = new Map<LayoutSlot, LayoutParticipant[]>();
-  for (const [slot, bucket] of groups) {
-    const sorted = [...bucket].sort((a, b) => {
+  const sortBucket = (bucket: LayoutParticipant[]): LayoutParticipant[] =>
+    [...bucket].sort((a, b) => {
       const pa = a.type === 'scale_bar' ? -1 : (COMPONENT_LAYOUT_META[a.type]?.priority ?? 50);
       const pb = b.type === 'scale_bar' ? -1 : (COMPONENT_LAYOUT_META[b.type]?.priority ?? 50);
       return pa !== pb ? pa - pb : 0; // 稳定排序保声明序
     });
-    ordered.set(slot, sorted);
+
+  // 3.5 v2（Scenario H fallback 规则）：槽高预算内的确定性容量裁决 ——
+  // 预算 = 画布高 × SLOT_HEIGHT_BUDGET_RATIO，槽内按 (priority, 声明序)
+  // 累积估算高度；超预算的最低优先级尾部**单步侧让**到 ANCHOR_FALLBACK
+  // 槽（fallbackFrom 记因）；fallback 槽仍超限的尾部落位原槽披露
+  //（slot-capacity 碰撞），绝不三层挪动。小视口（mobile）预算变小 →
+  // 更早触发侧让；A4 画布预算变大 → 更多面板原槽堆叠。同一 MapSpec
+  // 在不同 target 下 derived 布局可不同，语义状态（组件/绑定/折叠）不变。
+  const budget = Math.max(
+    240,
+    (canvas?.height ?? 800) * SLOT_HEIGHT_BUDGET_RATIO,
+  );
+  const capacitySplit = (
+    bucket: LayoutParticipant[],
+  ): { kept: LayoutParticipant[]; overflow: LayoutParticipant[] } => {
+    const kept: LayoutParticipant[] = [];
+    const overflow: LayoutParticipant[] = [];
+    let cumulative = 0;
+    let first = true;
+    for (const p of bucket) {
+      const h = estHeight[p.type] ?? 90;
+      if (first || cumulative + h <= budget) {
+        kept.push(p);
+        cumulative += h;
+        first = false;
+      } else {
+        overflow.push(p);
+      }
+    }
+    return { kept, overflow };
+  };
+
+  const ordered = new Map<LayoutSlot, LayoutParticipant[]>();
+  const capacityMoved = new Map<string, LayoutSlot>(); // id → 侧让前原槽
+  const movedInto = new Map<LayoutSlot, LayoutParticipant[]>();
+  for (const slot of [...groups.keys()].sort()) {
+    const { kept, overflow } = capacitySplit(sortBucket(groups.get(slot)!));
+    ordered.set(slot, kept);
+    if (!overflow.length) continue;
+    const fb = ANCHOR_FALLBACK[slot];
+    if (fb) {
+      for (const p of overflow) capacityMoved.set(p.id, slot);
+      const into = movedInto.get(fb);
+      if (into) into.push(...overflow);
+      else movedInto.set(fb, overflow);
+    } else {
+      for (const p of overflow) {
+        collisions.push({ kind: 'slot-capacity', a: p.id, b: slot });
+      }
+    }
+  }
+  // pass 2：并入侧让者的 fallback 槽重排 + 一次容量复检（仍超限 → 披露，
+  // 不再挪动 —— user 浮动组件永不在这两条路径里，用户摆放优先）
+  for (const [fb, extras] of movedInto) {
+    const merged = sortBucket([...(ordered.get(fb) ?? []), ...extras]);
+    const { kept, overflow } = capacitySplit(merged);
+    ordered.set(fb, kept);
+    for (const p of overflow) {
+      collisions.push({ kind: 'slot-capacity', a: p.id, b: fb });
+    }
   }
 
   const slots = new Map<string, SlotResolution>();
   for (const p of participants) {
     const entry = resolvedAnchor.get(p.id);
     if (!entry) continue;
-    const bucket = ordered.get(entry.slot) ?? [];
+    const capacityFrom = capacityMoved.get(p.id);
+    const effectiveSlot = capacityFrom
+      ? (ANCHOR_FALLBACK[capacityFrom] as LayoutSlot)
+      : entry.slot;
+    const finalBucket = ordered.get(effectiveSlot);
     slots.set(p.id, {
-      slot: entry.slot,
-      index: Math.max(0, bucket.indexOf(p)),
-      slotSize: bucket.length,
-      fallbackFrom: entry.from,
+      slot: effectiveSlot,
+      index: Math.max(0, finalBucket?.indexOf(p) ?? 0),
+      slotSize: finalBucket?.length ?? 0,
+      fallbackFrom: entry.from ?? capacityFrom,
     });
     // 槽区（含侧让后）与 user 浮动盒仍重叠 → 披露（不强制挪动）
     if (userBoxes.length > 0) {
       const h = estHeight[p.type] ?? 90;
-      const box = slotBox(entry.slot, h);
+      const box = slotBox(effectiveSlot, h);
       if (userBoxes.some((ub) => _aabb(box, ub))) {
         collisions.push({ kind: 'floating-anchor', a: p.id, b: 'user-floating' });
       }

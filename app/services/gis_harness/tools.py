@@ -946,6 +946,15 @@ def register_gis_harness_tools(registry: ToolRegistry):
             "\n创建：create=true + component_type=chart_panel + chart=ChartData"
             "（bar/line/pie/scatter，与 generate_chart 同契约）可在地图上加"
             "浮动统计图；component_type=statistics_panel + stats 建统计卡。"
+            "\n多实例（legend/categorical_legend/continuous_colorbar/"
+            "chart_panel/annotation）：第二个实例必须 create=true + 显式 "
+            "component_id（如 chart-panel-2），并先在 catalog 的 components "
+            "里确认 id 未占用——禁止依赖「第一个同型」这种隐式寻址。"
+            "\n注记（annotation）：variant=text 静态卡 {text}；variant=callout "
+            "{text, anchor:[lng,lat]} 地理锚定+引线；variant=group {items:["
+            "{text, anchor?}] ≤12 条} 一组相关注记（Top N / 震中列表）。"
+            "\n插图（inset_map）：options 必填 bbox=[w,s,e,n]，可选 mainBbox"
+            "（主图范围指示）/boundary（≤512 点轮廓折线）/label。"
             "\n并发：先 webgis_component_catalog 读 mutation_revision，"
             "传 expected_revision 防止覆盖用户拖拽后的最新位置。"
         ),
@@ -1274,6 +1283,9 @@ def register_gis_harness_tools(registry: ToolRegistry):
 
         # #1076(D-8): 静态目录进程级缓存（描述符载入后才变）—— 此前每次
         # 调用全量排序重建。registry 版本号作为失效键（注册新描述符即变）。
+        # v2（§17）：多实例类型目录携带 cardinality —— Agent 由此知道
+        # legend/colorbar/chart_panel 可多实例，创建第二个实例必须显式
+        # component_id（不许靠数组序/「第一个同型」隐式寻址）。
         component_registry = get_component_registry()
         _reg_version = component_registry.registry_version()
         _cached_catalog = _variant_catalog_cache.get("catalog")
@@ -1285,6 +1297,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
                     "variants": desc.variants,
                     "default_variant": desc.default_variant,
                     "default_position": desc.default_position,
+                    "cardinality": desc.cardinality,
                 })
             _variant_catalog_cache["catalog"] = (_reg_version, variant_catalog)
         else:
@@ -1298,6 +1311,10 @@ def register_gis_harness_tools(registry: ToolRegistry):
             revision = 0
 
         from app.services.gis_harness.components import _FACTORY_BY_TYPE
+        multi_types = [
+            entry["type"] for entry in variant_catalog
+            if entry["cardinality"] == "multiple"
+        ]
         return {
             "success": True,
             "mutation_revision": revision,
@@ -1307,9 +1324,17 @@ def register_gis_harness_tools(registry: ToolRegistry):
             "available_variants": variant_catalog,
             # 可创建类型从工厂表派生（单一事实源，防目录撒谎）
             "creatable_types": sorted(_FACTORY_BY_TYPE.keys()),
+            # 多实例类型：再创建必须带显式 component_id（catalog 可发现的
+            # 既有实例 id 就在 components[].id —— 按 id 寻址，不按顺序猜）。
+            "multi_instance_types": multi_types,
             "summary": (
                 f"{len(raw_components)} 个组件；revision={revision}。"
                 "webgis_component_update 传 expected_revision=revision 防覆盖。"
+                + (
+                    f"多实例类型（{', '.join(multi_types[:6])}）新增实例须显式 "
+                    "component_id（先在 components 里确认未占用）。"
+                    if multi_types else ""
+                )
             ),
         }
 

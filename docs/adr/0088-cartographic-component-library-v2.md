@@ -158,3 +158,24 @@ SVG 与 PDF 均复用 PNG 画布链（SVG=位图包装、PDF=画布嵌入），�
 - **inset bbox 自动推导**：服务端当前只做上下文门控，bbox 由 Agent
   填充；自动从 scope/行政区边界推导需要边界 artifact 协议（boundary
   字段已预留）。
+
+## Follow-up（v2.1 hardening，同 PR 系列）
+
+- **Scenario H fallback 规则补全**：共享求解器 `resolveComponentLayout`
+  新增槽高预算容量裁决（画布高 × 0.7 预算，按 (priority, 声明序) 累积
+  estHeight）——超预算最低优先级尾部单步侧让到 ANCHOR_FALLBACK 槽
+  （fallbackFrom 记因），fallback 槽仍超限披露（`slot-capacity` 碰撞），
+  绝不三层挪动；user 浮动组件永不参与。live 与 export 同一实现。
+  至此 Scenario H 三规则（collapse / stack / fallback）全部确定性落地。
+- **§13 十维 parity 矩阵测试**（`export-chrome.parity.test.ts`）：一份
+  综合 MapSpec 逐维断言 live（resolveMapComponents）与 export
+  （buildExportChrome）一致 —— presence / placement / variant / binding /
+  collapsed / legend content / colorbar range / annotation text /
+  inset extent / chart data。
+- **collapsed chart parity 修复**：collapsed 的 chart_panel 此前导出仍
+  展开（E-2 只覆盖 statistics）—— 现导出折叠标题条（text 携带标题，
+  drawChromeChartPanel 同约定）。
+- **§17 工具多实例契约**：`webgis_component_catalog` 暴露
+  `cardinality` 与 `multi_instance_types`（图例族 + chart/annotation），
+  summary 指引「新增实例须显式 component_id」；`webgis_component_update`
+  description 补 annotation/inset payload 与多实例寻址规范。

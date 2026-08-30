@@ -125,6 +125,75 @@ describe('resolveComponentLayout — user-wins（user > agent > auto）', () => 
   });
 });
 
+describe('Scenario H fallback 规则：槽高预算容量裁决（v2）', () => {
+  const panel = (id: string, type: string, anchor = 'top-left') => ({
+    id, type, anchor, floating: false, origin: 'auto' as const,
+  });
+
+  it('常规三面板（450px @ 800 画布 ≈ 560 预算）仍同槽堆叠（低扰动）', () => {
+    const r = resolveComponentLayout(
+      [panel('a', 'annotation'), panel('b', 'statistics_panel'), panel('c', 'chart_panel')],
+      { width: 1200, height: 800 },
+    );
+    expect(r.slots.get('a')!.slot).toBe('top-left');
+    expect(r.slots.get('c')!.slot).toBe('top-left');
+    expect(r.slots.get('c')!.slotSize).toBe(3);
+  });
+
+  it('小画布预算不足 → 最低优先级尾部侧让 fallback 槽并记因', () => {
+    // 400px 高 → 预算 280：annotation(90)+statistics(160)=250 可留，
+    // chart(200) 超限 → top-left 侧让 top-center
+    const r = resolveComponentLayout(
+      [panel('a', 'annotation'), panel('b', 'statistics_panel'), panel('c', 'chart_panel')],
+      { width: 800, height: 400 },
+    );
+    expect(r.slots.get('c')!.slot).toBe('top-center');
+    expect(r.slots.get('c')!.fallbackFrom).toBe('top-left');
+    expect(r.slots.get('a')!.slot).toBe('top-left');
+  });
+
+  it('无 fallback 槽可用 / fallback 槽仍超限 → 原槽披露（不三层挪动）', () => {
+    // top-right fallback = top-center；制造两个槽都超限
+    const r = resolveComponentLayout(
+      [
+        panel('n', 'north_arrow', 'top-right'),
+        panel('i1', 'inset_map', 'top-right'),
+        panel('i2', 'inset_map', 'top-right'),  // 假想多 inset：超限候选
+        panel('s1', 'statistics_panel', 'top-center'),
+        panel('s2', 'chart_panel', 'top-center'),
+        panel('s3', 'chart_panel', 'top-center'),
+        panel('s4', 'chart_panel', 'top-center'),
+      ],
+      { width: 800, height: 300 }, // 预算 240
+    );
+    const collisions = r.collisions.filter((c) => c.kind === 'slot-capacity');
+    expect(collisions.length).toBeGreaterThan(0);
+  });
+
+  it('确定性：同输入同输出（容量裁决含声明序稳定性）', () => {
+    const participants = [
+      panel('a', 'annotation'), panel('b', 'statistics_panel'), panel('c', 'chart_panel'),
+    ];
+    const r1 = resolveComponentLayout(participants, { width: 800, height: 400 });
+    const r2 = resolveComponentLayout(participants, { width: 800, height: 400 });
+    expect([...r1.slots.entries()]).toEqual([...r2.slots.entries()]);
+  });
+
+  it('user 浮动组件永不因容量被挪动', () => {
+    const r = resolveComponentLayout(
+      [
+        panel('a', 'annotation'),
+        panel('b', 'statistics_panel'),
+        panel('c', 'chart_panel'),
+        { id: 'u', type: 'chart_panel', anchor: 'top-left', floating: true,
+          origin: 'user' as const, rect: { x: 10, y: 10, width: 320, height: 240 } },
+      ],
+      { width: 800, height: 300 },
+    );
+    expect(r.slots.get('u')).toBeUndefined(); // floating 不在锚定裁决里
+  });
+});
+
 describe('单一默认值源锁定（E-9）', () => {
   it('DEFAULT_COMPONENT_ANCHOR 与 COMPONENT_LAYOUT_META 与后端 catalog 逐项一致', () => {
     const entries = catalog.componentTypes as Array<{ type: string; defaultPosition: string }>;

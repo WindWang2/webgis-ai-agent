@@ -65,6 +65,30 @@ async def test_catalog_reports_components_variants_revision(registry, clean_sess
 
 
 @pytest.mark.asyncio
+async def test_catalog_exposes_multi_instance_contract(registry, clean_session):
+    """v2（§17）：目录暴露 cardinality 与多实例类型清单 —— Agent 由此
+    知道第二个实例必须显式 component_id（禁止「第一个同型」隐式寻址）。"""
+    await _seed_components(clean_session)
+    res = await registry.dispatch(
+        "webgis_component_catalog", {"session_id": clean_session},
+        session_id=clean_session,
+    )
+    assert res["success"] is True
+    by_type = {v["type"]: v for v in res["available_variants"]}
+    # 多实例契约：图例族 + chart/annotation cardinality=multiple
+    for t in ("legend", "categorical_legend", "continuous_colorbar",
+              "chart_panel", "annotation"):
+        assert by_type[t]["cardinality"] == "multiple", t
+    assert set(res["multi_instance_types"]) >= {
+        "legend", "categorical_legend", "continuous_colorbar", "chart_panel",
+    }
+    # 单例类型不在多实例清单
+    assert "title" not in res["multi_instance_types"]
+    # summary 指引显式 id
+    assert "component_id" in res["summary"]
+
+
+@pytest.mark.asyncio
 async def test_catalog_sees_user_drag_placement(registry, clean_session):
     """Golden G3（UI→Agent 感知）：用户拖拽提交后 catalog 读到新位置。"""
     await _seed_components(clean_session)
