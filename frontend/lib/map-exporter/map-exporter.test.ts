@@ -454,3 +454,36 @@ describe('runExport — spec 组件事实源（v3 Phase H）', () => {
     );
   });
 });
+
+describe('Scenario G — live vs PNG vs PDF vs SVG 关键组件语义一致（ADR-0081/0084）', () => {
+  it('三种格式共用同一 chrome 模型输入（组件语义与格式无关）', async () => {
+    const composeSpy = vi
+      .spyOn(MapExporterEngine, 'composeLayout')
+      .mockImplementation((async () => createMockCanvas()) as any);
+    vi.spyOn(MapExporterEngine, 'exportToPDF').mockResolvedValue(
+      new Blob(['pdf'], { type: 'application/pdf' }),
+    );
+    const chromes: unknown[] = [];
+    composeSpy.mockImplementation((((
+      _canvas: unknown,
+      _title: unknown,
+      _subtitle: unknown,
+      options: Record<string, unknown>,
+    ) => {
+      chromes.push(options.chrome);
+      return Promise.resolve(createMockCanvas());
+    }) as unknown) as any);
+
+    for (const format of ['png', 'svg', 'pdf'] as const) {
+      const deps = createDeps();
+      mockFetchUpload(`/exports/map.${format}`, `map.${format}`);
+      const outcome = await runExport(deps, { title: 'T', format });
+      expect(outcome.ok).toBe(true);
+    }
+    expect(chromes.length).toBe(3);
+    // 同一 spec/会话下三格式的 chrome 模型输入完全一致（共享 resolver +
+    // 布局求解器在模型构建层保证 parity —— 格式只影响画布封装）
+    expect(chromes[0]).toEqual(chromes[1]);
+    expect(chromes[1]).toEqual(chromes[2]);
+  });
+});
