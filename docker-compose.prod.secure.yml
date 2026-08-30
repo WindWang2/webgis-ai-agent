@@ -176,7 +176,7 @@ services:
       ENV: production
       RAG_EMBEDDING_OFFLINE: "true"  # #662: 离线加载 embedding 模型（缓存预置见 docs/DEPLOYMENT.md）
       DATABASE_URL: "postgresql://${DB_USER:-webgis_prod}:${DB_PWD}@db:5432/${DB_NAME:-webgis_prod}"
-      JWT_SECRET_KEY: "${JWT_SECRET_KEY}"
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY:?ERROR: JWT_SECRET_KEY not set. Set it in .env.Priv.}"
       REDIS_URL: "redis://:${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}@redis:6379/0"
       CELERY_BROKER_URL: "redis://:${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}@redis:6379/0"
       CELERY_RESULT_BACKEND: "redis://:${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}@redis:6379/1"
