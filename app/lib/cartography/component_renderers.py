@@ -75,7 +75,13 @@ _SUPPORT_MATRIX: Dict[str, ComponentRendererSupport] = {
         note="ADR-0081：导出绘制渐变 ramp + min/max/unit（与 live colorbar 同形态）",
     ),
     "annotation": ComponentRendererSupport(
-        component_type="annotation", renderers=[LIVE_TARGET], exporters=[],
+        component_type="annotation", renderers=[LIVE_TARGET],
+        exporters=["png", "pdf", "svg"],
+        note=(
+            "终审 F1：annotation 导出走 drawChromeAnnotation（文本注释卡）；"
+            "v2 注记框架扩展 callout/group 同链导出。此前矩阵谎报 exporters=[]"
+            "（exporter 实际消费）—— 真值修复"
+        ),
     ),
     "attribution": ComponentRendererSupport(
         component_type="attribution", renderers=[LIVE_TARGET],

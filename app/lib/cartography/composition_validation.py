@@ -59,6 +59,55 @@ def _descriptor_for(component_type: str):
     return reg.get(component_type) or reg.get_by_type(component_type)
 
 
+# 图例族语义家族：同一 layerId 上跨家族并存 = 对同一层的两种竞争语义。
+_LEGEND_FAMILY = {"legend", "categorical_legend", "continuous_colorbar"}
+
+
+def validate_binding_conflicts(
+    components: List[CartographyComponent],
+) -> List[tuple]:
+    """binding 级冲突检测（v2 图例族语义）。
+
+    规则（不同层互不干涉；未绑定 layerId 的实例不参与 —— HUD 发现语义）：
+    - 同一 layerId 上 图例家族成员 ≥2 且分属不同语义家族（离散 legend vs
+      连续 colorbar）→ 冲突（对同一层同时宣称离散与连续语义）；
+    - 同一 layerId 上同型组件重复 → 冲突（重复图例，无信息增益）。
+
+    返回 [(component_id, component_type, detail), ...]，由组合校验包装为
+    ``binding_conflict`` violation（error 级 —— planner 会走兜底重排）。
+    """
+    by_layer: Dict[str, List[CartographyComponent]] = {}
+    for comp in components:
+        layer_id = str((comp.options or {}).get("layerId") or "")
+        if not layer_id or comp.type not in _LEGEND_FAMILY:
+            continue
+        by_layer.setdefault(layer_id, []).append(comp)
+
+    issues: List[tuple] = []
+    for layer_id, comps in by_layer.items():
+        # 同型重复
+        seen_types: Dict[str, str] = {}
+        for comp in comps:
+            if comp.type in seen_types:
+                issues.append((
+                    comp.id, comp.type,
+                    f"duplicate {comp.type} bound to layer '{layer_id}' "
+                    f"(first: {seen_types[comp.type]})",
+                ))
+            else:
+                seen_types[comp.type] = comp.id
+        # 跨语义家族：离散（legend/categorical_legend）vs 连续（colorbar）
+        discrete = [c for c in comps if c.type in ("legend", "categorical_legend")]
+        continuous = [c for c in comps if c.type == "continuous_colorbar"]
+        if discrete and continuous:
+            issues.append((
+                continuous[0].id, continuous[0].type,
+                f"continuous_colorbar competes with discrete legend "
+                f"on the same layer '{layer_id}'",
+            ))
+    return issues
+
+
 def validate_component_composition(
     components: List[CartographyComponent],
     *,
@@ -66,12 +115,18 @@ def validate_component_composition(
     map_model_id: str = "",
     layer_ids: Optional[List[str]] = None,
     output_target: str = "interactive",
+    layer_model_ids: Optional[Dict[str, str]] = None,
 ) -> CompositionValidationResult:
-    """对最终组件实例列表执行组合规则校验（确定性、只读）。"""
+    """对最终组件实例列表执行组合规则校验（确定性、只读）。
+
+    ``layer_model_ids``：layerId → 该层 MapModel id（v2：图例族按绑定层
+    判模型兼容性；缺省按主模型判定 —— 行为向后兼容）。
+    """
     from app.lib.cartography.composition_templates import get_composition_template_registry
 
     result = CompositionValidationResult(composition_template_id=composition_template_id)
     layer_ids = layer_ids or []
+    layer_model_ids = layer_model_ids or {}
     enabled = [c for c in components if c.enabled]
 
     # ── 1. 组合模板槽位语义 ───────────────────────────────────────────
@@ -167,13 +222,28 @@ def validate_component_composition(
             ))
         # 限定型组件（如 legend 族）必须与当前主表达模型兼容 —— 防止
         # 「categorical_legend 挂在 heatmap 图上」这类模型错配实例。
-        if map_model_id and desc.compatible_map_models \
-                and map_model_id not in desc.compatible_map_models:
-            result.violations.append(CompositionViolation(
-                code="model_not_compatible",
-                component_id=comp.id, component_type=comp.type,
-                detail=f"{comp.type} not compatible with map model '{map_model_id}'",
-            ))
+        # v2：判定按组件自身绑定的图层的模型（layer_model_ids），无绑定
+        # 信息时退回主模型 —— 多图层地图上 choropleth 层的图例不应被
+        # heatmap 主模型误杀。
+        if desc.compatible_map_models:
+            bound_model = ""
+            if layer_model_ids:
+                bound_model = layer_model_ids.get(str((comp.options or {}).get("layerId") or ""), "")
+            effective_model = bound_model or map_model_id
+            if effective_model and effective_model not in desc.compatible_map_models:
+                result.violations.append(CompositionViolation(
+                    code="model_not_compatible",
+                    component_id=comp.id, component_type=comp.type,
+                    detail=f"{comp.type} not compatible with map model '{effective_model}'",
+                ))
+
+    # ── 2.5 binding 级冲突（v2：图例族互斥从 type 级升级为 binding 级）──
+    for issue in validate_binding_conflicts(enabled):
+        result.violations.append(CompositionViolation(
+            code="binding_conflict",
+            component_id=issue[0], component_type=issue[1],
+            detail=issue[2],
+        ))
 
     # ── 3. 布局碰撞 / 孤儿绑定（layout_constraints 复用） ────────────
     for issue in detect_collisions(enabled):
@@ -194,4 +264,5 @@ __all__ = [
     "CompositionViolation",
     "CompositionValidationResult",
     "validate_component_composition",
+    "validate_binding_conflicts",
 ]

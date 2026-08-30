@@ -700,10 +700,18 @@ class MapProductPlanner:
             )
             title_text = self._default_title(plan)
             subtitle_text = plan.intent.scope.name if plan.intent.scope.name else ""
-            # layer binding: primary layer id → legend/colorbar
+            # layer binding（v2）：全部图层角色 → layer_id（图例族
+            # all_thematic 槽位按层展开实例；无兼容图例类型的层由 composer
+            # 如实跳过 —— 例如纯边界参考层）。角色→层模型映射供 composer
+            # 按层选型（heatmap→colorbar、choropleth→legend）与组合校验按
+            # 绑定层判模型兼容。
             layer_bindings: dict = {}
-            if primary_layer and primary_layer.layer_id:
-                layer_bindings["primary"] = primary_layer.layer_id
+            layer_model_ids: dict = {}
+            for ly in finalized.map_layers:
+                if not ly.layer_id or not ly.enabled:
+                    continue
+                layer_bindings[ly.role] = ly.layer_id
+                layer_model_ids[ly.layer_id] = ly.cartography
             composer = get_component_composer()
             overrides = (template.component_overrides if template else {})  # type: ignore[attr-defined]
             composed = composer.compose(
@@ -713,6 +721,7 @@ class MapProductPlanner:
                 layer_bindings=layer_bindings,
                 composition_template_id=selection.composition_template_id,
                 overrides=overrides if isinstance(overrides, dict) else {},
+                layer_model_ids=layer_model_ids,
             )
             if not composed:
                 raise ValueError("empty composition")
@@ -726,6 +735,7 @@ class MapProductPlanner:
                 map_model_id=primary_carto,
                 layer_ids=[ly.layer_id for ly in finalized.map_layers if ly.layer_id],
                 output_target=output_target,
+                layer_model_ids=layer_model_ids,
             )
             if not validation.ok:
                 raise _CompositionRejectedError(
