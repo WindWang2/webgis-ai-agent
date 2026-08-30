@@ -481,3 +481,86 @@ describe('buildExportChrome — ADR-0084 布局引擎集成', () => {
     expect(ctx.fillRect).not.toHaveBeenCalled(); // 无 palette → 不绘制
   });
 });
+
+describe('P6 高级组件 —— map_border / graticule 导出通道', () => {
+  it('map_border enabled → 模型携带 border 元素与变体', async () => {
+    const model = await buildExportChrome(
+      {
+        spec: specOf([
+          comp({ id: 'border', type: 'map_border', variant: 'academic' }),
+        ]),
+        viewport: VIEWPORT,
+        legendSpecsByLayer: {},
+      },
+      CANVAS,
+    );
+    expect(model.fromSpec).toBe(true);
+    expect(model.border).toMatchObject({ kind: 'map_border', anchor: 'none', variant: 'academic' });
+  });
+
+  it('map_border disabled → 不出框（user-wins）', async () => {
+    const model = await buildExportChrome(
+      {
+        spec: specOf([comp({ id: 'border', type: 'map_border', enabled: false })]),
+        viewport: VIEWPORT,
+        legendSpecsByLayer: {},
+      },
+      CANVAS,
+    );
+    expect(model.fromSpec).toBe(false);
+    expect(model.border).toBeUndefined();
+  });
+
+  it('graticule 组件 enabled → graticuleEnabled=true（导出经纬网通道）', async () => {
+    const model = await buildExportChrome(
+      {
+        spec: specOf([
+          comp({ id: 'title', type: 'title', options: { text: 'T' } }),
+          comp({ id: 'gr', type: 'graticule', enabled: true }),
+        ]),
+        viewport: VIEWPORT,
+        legendSpecsByLayer: {},
+      },
+      CANVAS,
+    );
+    expect(model.graticuleEnabled).toBe(true);
+  });
+
+  it('graticule 组件缺席 → graticuleEnabled 不置位', async () => {
+    const model = await buildExportChrome(
+      {
+        spec: specOf([comp({ id: 'title', type: 'title', options: { text: 'T' } })]),
+        viewport: VIEWPORT,
+        legendSpecsByLayer: {},
+      },
+      CANVAS,
+    );
+    expect(model.graticuleEnabled).toBeFalsy();
+  });
+
+  it('drawChromeMapBorder：minimal 单框、academic 双框+角刻度', async () => {
+    const { drawChromeMapBorder } = await import('./export-chrome');
+    const mkCtx = () => {
+      const calls: string[] = [];
+      const ctx = {
+        strokeRect: vi.fn((x: number, y: number, w: number, h: number) => calls.push(`rect:${x},${y},${w},${h}`)),
+        beginPath: vi.fn(),
+        moveTo: vi.fn(),
+        lineTo: vi.fn(),
+        stroke: vi.fn(),
+      };
+      return { ctx, calls };
+    };
+    const d = (c: ReturnType<typeof mkCtx>) => ({
+      ctx: c.ctx, darkMode: false, scalePx: (v: number) => v,
+      targetW: 1600, targetH: 1200, style: { fontFamily: 'sans' },
+    } as never);
+    const minimal = mkCtx();
+    drawChromeMapBorder(d(minimal), { kind: 'map_border', anchor: 'none', variant: 'minimal' });
+    expect(minimal.ctx.strokeRect).toHaveBeenCalledTimes(1);
+    const academic = mkCtx();
+    drawChromeMapBorder(d(academic), { kind: 'map_border', anchor: 'none', variant: 'academic' });
+    expect(academic.ctx.strokeRect).toHaveBeenCalledTimes(2); // 双框
+    expect(academic.ctx.stroke).toHaveBeenCalledTimes(1);     // 角刻度路径
+  });
+});

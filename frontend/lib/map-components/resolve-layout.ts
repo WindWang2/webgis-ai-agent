@@ -51,6 +51,9 @@ export const COMPONENT_LAYOUT_META: Record<string, ComponentLayoutMeta> = {
   annotation: { defaultSlot: 'top-left', priority: 0 },
   statistics_panel: { defaultSlot: 'top-left', priority: 1 },
   chart_panel: { defaultSlot: 'top-left', priority: 2 },
+  // P6：全画布/叠加型 —— 无槽（求解器排除，catalog defaultPosition='none'）
+  map_border: { defaultSlot: 'none', priority: 70 },
+  graticule: { defaultSlot: 'none', priority: 60 },
 };
 
 /** auto 锚定组件与 user 浮动盒碰撞时的侧让槽（确定性、单步）。 */

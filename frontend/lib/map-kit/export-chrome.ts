@@ -51,6 +51,8 @@ export interface ExportChromeElement {
   /** 槽内组件总数（≤1 时消费方无需偏移）。 */
   slotSize?: number;
   text?: string;
+  /** 组件 variant（map_border 等变体驱动型组件）。 */
+  variant?: string;
   legendSpec?: LegendSpec;
   stats?: StatsPanelData;
   chart?: ChartPanelData;
@@ -66,6 +68,9 @@ export interface ExportChromeModel {
   legend?: ExportChromeElement;
   colorbar?: ExportChromeElement;
   attribution?: ExportChromeElement;
+  border?: ExportChromeElement;
+  /** P6：spec graticule 组件 enabled → 导出绘制经纬网（live 无渲染器）。 */
+  graticuleEnabled?: boolean;
   panels: ExportChromeElement[];
 }
 
@@ -156,7 +161,7 @@ export async function buildExportChrome(
   const VISUAL_TYPES = new Set([
     'title', 'subtitle', 'legend', 'categorical_legend', 'continuous_colorbar',
     'north_arrow', 'scale_bar', 'attribution', 'statistics_panel', 'chart_panel',
-    'annotation',
+    'annotation', 'map_border',
   ]);
   const model: ExportChromeModel = {
     fromSpec: resolved.some((c) => VISUAL_TYPES.has(c.type) && c.enabled),
@@ -312,6 +317,24 @@ export async function buildExportChrome(
       text: attrComp.text,
     };
   }
+
+  // P6：图框组件（全画布，anchor 'none' —— 不参与槽位堆叠）
+  const borderComp = resolved.find((c) => c.type === 'map_border' && c.enabled);
+  if (borderComp) {
+    model.border = {
+      kind: 'map_border',
+      anchor: 'none',
+      variant:
+        borderComp.variant ||
+        (borderComp.component.variant as string | undefined) ||
+        'minimal',
+    };
+  }
+
+  // P6：graticule 组件 enabled → 导出绘制经纬网（live 由请求参数通道承接）
+  model.graticuleEnabled = resolved.some(
+    (c) => c.type === 'graticule' && c.enabled,
+  );
 
   // 浮动面板族：statistics_panel / chart_panel（collapsed 面板导出为折叠
   // 标题条 —— 与 live 语义一致，不展开用户折叠的面板）。
@@ -880,4 +903,56 @@ function _chromePanel(d: DrawCtx, x: number, y: number, w: number, h: number) {
   ctx.arcTo(x, y, x + rad, y, rad);
   ctx.closePath();
   ctx.fill();
+}
+
+/** Map Border —— 全画布图框（P6：与 live map-border.tsx 三变体同语义）。 */
+export function drawChromeMapBorder(
+  d: DrawCtx,
+  el: ExportChromeElement,
+): void {
+  const { ctx } = d;
+  const variant = el.variant || 'minimal';
+  const ink = d.darkMode ? 'rgba(255,255,255,0.85)' : 'rgba(30,41,59,0.9)';
+  ctx.strokeStyle = ink;
+
+  const inset = variant === 'minimal' ? d.scalePx(8) : d.scalePx(10);
+  const w = d.targetW - inset * 2;
+  const h = d.targetH - inset * 2;
+
+  if (variant === 'report') {
+    ctx.lineWidth = d.scalePx(3);
+    ctx.strokeRect(inset, inset, w, h);
+    ctx.lineWidth = d.scalePx(1);
+    const inset2 = inset + d.scalePx(5);
+    ctx.strokeRect(inset2, inset2, d.targetW - inset2 * 2, d.targetH - inset2 * 2);
+    return;
+  }
+  if (variant === 'academic') {
+    // 外框
+    ctx.lineWidth = d.scalePx(2);
+    ctx.strokeRect(inset, inset, w, h);
+    // 内框
+    ctx.lineWidth = d.scalePx(1);
+    const inset2 = inset + d.scalePx(4);
+    ctx.strokeRect(inset2, inset2, d.targetW - inset2 * 2, d.targetH - inset2 * 2);
+    // 四角刻度（与 live 四角 tick 同位：外框角向内 12px）
+    const tick = d.scalePx(12);
+    ctx.lineWidth = d.scalePx(3);
+    ctx.beginPath();
+    // 左上/右上/左下/右下：横竖两段
+    ctx.moveTo(inset, inset + tick); ctx.lineTo(inset, inset);
+    ctx.lineTo(inset + tick, inset);
+    ctx.moveTo(d.targetW - inset - tick, inset); ctx.lineTo(d.targetW - inset, inset);
+    ctx.lineTo(d.targetW - inset, inset + tick);
+    ctx.moveTo(inset, d.targetH - inset - tick); ctx.lineTo(inset, d.targetH - inset);
+    ctx.lineTo(inset + tick, d.targetH - inset);
+    ctx.moveTo(d.targetW - inset - tick, d.targetH - inset);
+    ctx.lineTo(d.targetW - inset, d.targetH - inset);
+    ctx.lineTo(d.targetW - inset, d.targetH - inset - tick);
+    ctx.stroke();
+    return;
+  }
+  // minimal
+  ctx.lineWidth = d.scalePx(1.5);
+  ctx.strokeRect(inset, inset, w, h);
 }

@@ -143,7 +143,11 @@
       "runtimeStatus": "native",
       "rendererRequired": false,
       "rendererSupport": [],
-      "exporterSupport": []
+      "exporterSupport": [
+        "png",
+        "pdf",
+        "svg"
+      ]
     },
     {
       "type": "inset_map",
@@ -192,8 +196,14 @@
       "category": "frame.map_border",
       "runtimeStatus": "native",
       "rendererRequired": false,
-      "rendererSupport": [],
-      "exporterSupport": []
+      "rendererSupport": [
+        "interactive"
+      ],
+      "exporterSupport": [
+        "png",
+        "pdf",
+        "svg"
+      ]
     },
     {
       "type": "north_arrow",

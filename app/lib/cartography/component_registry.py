@@ -128,11 +128,11 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
     MapComponentDescriptor(
         id="graticule", category="navigation.graticule", type="graticule",
         name="Graticule", name_zh="经纬网",
-        # #1075(D-5): 前端无 graticule 渲染器 —— renderer_support 如实为空，
-        # interactive 输出从 supported_outputs 摘除（交互模板选中它只会渲染
-        # 空白且无信号）。导出（png/pdf）路径真实支持，保留。
+        # #1075(D-5): 前端无 graticule 渲染器 —— renderer_support 如实为空。
+        # P6（ADR-0084）：导出侧真实消费该组件（enabled → _drawGraticules），
+        # exporter_support 与现实对齐；live 由请求参数通道（uiSlice）承接。
         placement_domain="overlay", supported_outputs=["interactive", "png", "pdf", "svg"],
-        renderer_support=[], exporter_support=[],
+        renderer_support=[], exporter_support=["png", "pdf", "svg"],
         default_variant="light", variants=["light", "geographic"],
         default_position="none", allowed_positions=["none"],
         cardinality="single", priority=60,
@@ -140,8 +140,10 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
     MapComponentDescriptor(
         id="map_border", category="frame.map_border", type="map_border",
         name="Map Border", name_zh="图框边框",
-        placement_domain="chrome", supported_outputs=["png", "pdf", "svg"],
-        renderer_support=[], exporter_support=[],
+        # P6：全链路组件（live CSS 框 + 导出 strokeRect；variants 两侧同语义）
+        placement_domain="chrome",
+        supported_outputs=["interactive", "png", "pdf", "svg"],
+        renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
         default_variant="minimal", variants=["minimal", "academic", "report"],
         default_position="none", allowed_positions=["none"],
         cardinality="single", priority=70,

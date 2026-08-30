@@ -842,8 +842,6 @@ def assess_export_parity(mapspec: Dict[str, Any]) -> str:
             if support is not None and t not in (
                 "export_layout",
                 "basemap",
-                "graticule",
-                "map_border",
                 "inset_map",
                 "annotation",
             ) and not support.exporters:

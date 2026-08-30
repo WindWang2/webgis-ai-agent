@@ -39,6 +39,9 @@ export const DEFAULT_COMPONENT_ANCHOR: Record<string, ChromeAnchor> = {
   annotation: 'top-left',
   statistics_panel: 'top-left',
   chart_panel: 'top-left',
+  // P6：全画布/叠加型组件 —— 不参与槽位堆叠（'none'）
+  map_border: 'none',
+  graticule: 'none',
 };
 
 /** 解析后的 normalized 组件模型（live 渲染与导出共同消费）。 */

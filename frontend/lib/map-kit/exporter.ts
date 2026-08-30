@@ -7,6 +7,7 @@ import {
   drawChromeChartPanel,
   drawChromeColorbar,
   drawChromeLegend,
+  drawChromeMapBorder,
   drawChromeNorthArrow,
   drawChromeScaleBar,
   drawChromeStatsPanel,
@@ -257,9 +258,18 @@ export function composeLayout(
       drawChromeNorthArrow(d, chrome.northArrow, mapBearing, { marginX, marginY: stackOffset(chrome.northArrow, mCompass) });
     }
 
-    // 4.5 Graticule（请求参数驱动，非 spec 组件 —— 保持不变）
-    if (showGraticules && mapCenter && mapZoom !== undefined) {
+    // 4.5 Graticule（P6：请求参数 **或** spec graticule 组件 enabled ——
+    // 组件通道与请求通道同一条绘制路径，不建第二算法）
+    if (
+      (showGraticules || chrome.graticuleEnabled) &&
+      mapCenter && mapZoom !== undefined
+    ) {
       _drawGraticules(ctx, { dark_mode, scalePx, targetW, targetH, mapCenter, mapZoom, graticuleColor: layoutStyle.graticuleColor, pxPerLogical });
+    }
+
+    // 4.6 Map Border（P6：全画布图框，铺在其余 chrome 之下）
+    if (chrome.border) {
+      drawChromeMapBorder(d, chrome.border);
     }
 
     // 5. Legend / colorbar（spec 组件 enabled 驱动；anchor 槽位）

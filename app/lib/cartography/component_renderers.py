@@ -103,12 +103,20 @@ _SUPPORT_MATRIX: Dict[str, ComponentRendererSupport] = {
         note="类型占位：底图由 map-panel 底图逻辑承接，非 chrome 渲染",
     ),
     "graticule": ComponentRendererSupport(
-        component_type="graticule", renderers=[], exporters=[],
-        note="经纬网由导出请求参数 showGraticules 驱动，组件本身无消费方",
+        component_type="graticule",
+        renderers=[], exporters=["png", "pdf", "svg"],
+        note=(
+            "P6（ADR-0084）：导出侧消费该组件（enabled → _drawGraticules）"
+            "；live 渲染器未实现，renderers 如实为空（组件启用只影响导出）"
+        ),
     ),
     "map_border": ComponentRendererSupport(
-        component_type="map_border", renderers=[], exporters=[],
-        note="导出边框不读该组件（无消费方）",
+        component_type="map_border",
+        renderers=["interactive"], exporters=["png", "pdf", "svg"],
+        note=(
+            "P6：全链路落地 —— live CSS 图框渲染器（map-border.tsx）+ "
+            "导出 strokeRect（drawChromeMapBorder），三变体两侧同语义"
+        ),
     ),
     # ── planned 家族（schema/registry/composition 支持，renderer 未实现）──
     "inset_map": ComponentRendererSupport(
