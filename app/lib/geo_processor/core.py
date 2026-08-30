@@ -40,12 +40,18 @@ class GeoAnalysisResult:
     """
     Standard interface for geoprocessing tool results.
     Explicitly supports LLM narration and self-healing hints.
+
+    ``evidence``（V2 P9，additive）：轻量质量证据
+    （input/output/dropped/working_crs…，app/lib/geo_analysis/evidence.py
+    构造）。缺省 None —— 旧站点行为逐位不变；提供时经 to_llm_response
+    有界透传（证据是 metadata，不是报告）。
     """
     success: bool
     data: Any
     summary: str
     error_type: Optional[str] = None
     correction_hint: Optional[str] = None
+    evidence: Optional[dict] = None
 
     @property
     def error_message(self) -> Optional[str]:
@@ -72,6 +78,8 @@ class GeoAnalysisResult:
         }
         if self.stats is not None:
             result["stats"] = self.stats
+        if self.evidence:
+            result["quality_evidence"] = self.evidence
         return result
 
 

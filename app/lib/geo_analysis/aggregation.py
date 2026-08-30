@@ -5,6 +5,7 @@ import geopandas as gpd
 from shapely.geometry import box, Polygon
 from app.lib.geo_processor.core import GeoAnalysisResult
 from app.lib.geo_processor.core import to_utm_gdf, gdf_from_features
+from app.lib.geo_analysis.evidence import build_quality_evidence
 # ADR-0052: 协作式取消检查点。cancellable() 在 chunk 边界读一次 contextvar，
 # 未绑定 token 时开销为零；用户取消后长循环立即抛 OperationCancelled 退出，
 # 真正释放 CPU 而不是只改 UI 状态。
@@ -199,7 +200,14 @@ def spatial_aggregate(
         return GeoAnalysisResult(
             success=True,
             data=final_gdf.__geo_interface__,
-            summary=summary
+            summary=summary,
+            evidence=build_quality_evidence(
+                input_count=len(points),
+                output_count=len(final_gdf),
+                working_crs=str(utm_crs),
+                empty_count=int((final_gdf['count'] == 0).sum()) if 'count' in final_gdf.columns else 0,
+                extra={"stats": [str(s) for s in stats][:8]},
+            ),
         )
     except Exception as e:
         return GeoAnalysisResult(
@@ -312,7 +320,17 @@ def h3_binning(geojson: dict | str, resolution: int | None = None, stat_field: s
         return GeoAnalysisResult(
             success=True,
             data=data_out,
-            summary=summary
+            summary=summary,
+            evidence=build_quality_evidence(
+                input_count=len(gdf),
+                output_count=len(hex_gdf),
+                working_crs="EPSG:4326",
+                extra={
+                    "resolution": int(resolution),
+                    "stat_method": str(stat_method),
+                    "stat_degraded": _degraded_stat,
+                },
+            )
         )
     except Exception as e:
         return GeoAnalysisResult(

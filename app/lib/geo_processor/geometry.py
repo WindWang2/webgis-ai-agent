@@ -3,6 +3,7 @@ import logging
 from typing import Union, Optional
 import geopandas as gpd
 from app.lib.geo_processor.core import to_utm_gdf, safe_parse, to_feature_collection, GeoAnalysisResult, gdf_from_features, declare_crs
+from app.lib.geo_analysis.evidence import build_quality_evidence
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +102,18 @@ def buffer_smart(
         return GeoAnalysisResult(
             success=True,
             data=out_fc,
-            summary=summary
+            summary=summary,
+            evidence=build_quality_evidence(
+                input_count=len(gdf),
+                output_count=len(res_gdf),
+                working_crs=str(utm_crs),
+                extra={
+                    "reprojected": original_crs != utm_crs,
+                    "dissolve": dissolve,
+                    "distance": float(distance),
+                    "unit": unit,
+                },
+            ),
         )
     except Exception as e:
         logger.error(f"Buffer operation failed: {e}")
