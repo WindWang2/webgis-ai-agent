@@ -224,20 +224,22 @@ describe('collectRenderObservation', () => {
 
 describe('waitForRenderSettle', () => {
   it('resolves true on map idle and removes the one-shot listener', async () => {
-    let idleHandler: (() => void) | null = null;
+    // 用对象属性而非 let 闭包捕获 —— let + 闭包赋值会让调用点收窄成
+    // never（TS2349），对象属性在函数调用后不受控制流收窄影响。
+    const captured: { idle?: () => void } = {};
     const map = {
       once: (ev: string, h: () => void) => {
-        if (ev === 'idle') idleHandler = h;
+        if (ev === 'idle') captured.idle = h;
       },
       off: (ev: string) => {
-        if (ev === 'idle') idleHandler = null;
+        if (ev === 'idle') captured.idle = undefined;
       },
     };
     const promise = waitForRenderSettle(map as any);
-    idleHandler?.();
+    captured.idle?.();
     const idle = await promise;
     expect(idle).toBe(true);
-    expect(idleHandler).toBeNull();
+    expect(captured.idle).toBeUndefined();
   });
 
   it('resolves false (bounded) when idle never fires — no leaked listener', async () => {
