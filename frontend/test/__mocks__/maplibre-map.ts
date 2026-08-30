@@ -303,7 +303,7 @@ export function makeMockMaplibreMap(options: MakeMockMaplibreMapOptions = {}) {
     isStyleLoaded: vi.fn(() => styleLoaded),
     // P9 render observation：`loaded()` = 全部瓦片/渲染落定（MapLibre 契约）。
     // Mock 默认完全就绪（与 isStyleLoaded 默认 true 同理）—— settle 探测
-    // 立即通过；需要演练渲染未落定的测试可覆写为 () => false。
+    // 立即通过；需要演练渲染未落定的测试可 loaded.mockReturnValue(false)。
     loaded: vi.fn(() => true),
     getBounds: vi.fn(() => ({
       getWest: () => bounds[0],
