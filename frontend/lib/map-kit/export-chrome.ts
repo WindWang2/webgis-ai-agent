@@ -538,6 +538,10 @@ export async function buildExportChrome(
           stackIndex: _stackOf(c)?.index ?? 0,
           slotSize: _stackOf(c)?.slotSize ?? 0,
           chart,
+          // E-2 对称修复（§13 collapsed parity）：collapsed 的 chart 面板
+          // 此前导出仍展开 —— live 折叠、导出展开。text 携带标题 →
+          // drawChromeChartPanel 绘制折叠标题条（与 statistics 同约定）。
+          text: c.collapsed ? chart.title : undefined,
         });
       }
     }
@@ -927,6 +931,29 @@ export function drawChromeChartPanel(
   if (!el.chart || el.chart.data.length === 0) return;
   const { ctx } = d;
   const chart = el.chart;
+  // E-2 对称（§13 collapsed parity）：collapsed 面板只画标题条 —— 与
+  // live FloatingChrome 折叠态同语义，不展开用户折叠的面板。
+  if (el.text !== undefined) {
+    const collapsedH = d.scalePx(36);
+    const collapsedW = el.rect?.width ?? d.scalePx(300);
+    const collapsedOrigin = el.rect
+      ? { x: el.rect.x, y: el.rect.y }
+      : (() => {
+          const o = anchorOrigin(el.anchor, {
+            targetW: d.targetW, targetH: d.targetH,
+            marginX: opts.marginX, marginY: opts.marginY ?? 90,
+          });
+          return {
+            x: o.align === 'right' ? o.x - collapsedW : o.align === 'center' ? o.x - collapsedW / 2 : o.x,
+            y: o.vAlign === 'bottom' ? d.targetH - o.y - collapsedH : o.y,
+          };
+        })();
+    _chromePanel(d, collapsedOrigin.x, collapsedOrigin.y, collapsedW, collapsedH);
+    ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.9)' : '#1e293b';
+    ctx.font = `bold ${d.scalePx(12)}px sans-serif`;
+    _text(d, el.text || chart.title, collapsedOrigin.x + d.scalePx(12), collapsedOrigin.y + d.scalePx(22), 'left');
+    return;
+  }
   const padding = d.scalePx(12);
   const titleH = d.scalePx(24);
   const axisH = chart.type === 'pie' ? 0 : d.scalePx(26);
