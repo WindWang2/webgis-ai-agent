@@ -705,9 +705,31 @@ async def _register_plan_artifacts(
         )
     except Exception:  # noqa: BLE001
         descriptor = None
+    # V2(P2) 输出契约验证（§10）：声明 output_artifact_types vs 实况画像。
+    # 纯函数 + descriptor O(1) 画像，findings 只进 metadata["contract_check"]
+    # 与结构化日志 —— 注册是增值记录，验证绝不阻断 plan 路径。
+    contract_check = None
+    if outputs:
+        try:
+            from app.lib.gis.contract_validation import (
+                contract_check_metadata,
+                log_contract_findings,
+                validate_output_contract,
+            )
+            from app.lib.gis.dataset_profile import DatasetProfile
+
+            profile = DatasetProfile.from_ref_descriptor(descriptor)
+            findings = validate_output_contract(outputs, profile)
+            contract_check = contract_check_metadata(outputs, profile)
+            log_contract_findings(findings, session_id=session_id, ref=geojson_ref)
+        except Exception:  # noqa: BLE001 — 验证失败降级为无 findings
+            contract_check = None
     # 单次注册（review 终审 F1：N 个命中能力此前循环 N 次全量账本
     # read-modify-save，且标量 producer_capability 只留最后一个）——
     # 主能力作 producer，全部命中能力入 metadata（血统能力清单保留）。
+    plan_meta: dict = {"seam": "plan_apply", "capabilities": list(hits)[:8]}
+    if contract_check:
+        plan_meta["contract_check"] = contract_check
     await register_artifact(
         session_id,
         artifact_id=geojson_ref,
@@ -717,6 +739,6 @@ async def _register_plan_artifacts(
         producer_node=hits[0],
         inputs=inputs,
         descriptor=descriptor,
-        metadata={"seam": "plan_apply", "capabilities": list(hits)[:8]},
+        metadata=plan_meta,
         lock=lock,
     )

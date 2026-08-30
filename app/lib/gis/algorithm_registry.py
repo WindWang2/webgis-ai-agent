@@ -18,6 +18,10 @@ from app.lib.gis.capability_registry import get_capability_registry
 AlgorithmStatus = Literal["native", "planned", "unavailable"]
 CostLevel = Literal["low", "medium", "high"]
 
+# V2(P3)：unit_requirements 的封闭词表 —— 消费方（参数契约/测试）只认
+# 这几族；声明词表外的单位一律 validate() 报 issue（死 metadata 防御）。
+_UNIT_VOCABULARY = frozenset({"meters", "kilometers", "degrees", "pixels", "seconds"})
+
 
 ALGORITHM_TAXONOMY: Dict[str, List[str]] = {
     "data_access": ["poi_query", "admin_boundary_query", "raster_source"],
@@ -700,6 +704,15 @@ class AlgorithmRegistry:
             for fb in algo.fallback_algorithms:
                 if fb not in self._by_id:
                     issues.append(f"algorithm {algo.id}: fallback algorithm {fb} not registered")
+            # V2(P3) 契约一致性：unit_requirements 只接受已知单位词
+            # （封闭词表）；自由字符串等于永远无人可消费的死 metadata。
+            # （approximate 与 deterministic 正交：前者是精度折衷，后者是
+            # 可复现性 —— 不做静态矛盾判定，§27 的随机性披露由 descriptor
+            # 声明者负责。）
+            if algo.unit_requirements and algo.unit_requirements not in _UNIT_VOCABULARY:
+                issues.append(
+                    f"algorithm {algo.id}: unknown unit_requirements "
+                    f"'{algo.unit_requirements}' (vocabulary: {sorted(_UNIT_VOCABULARY)})")
         for cap in capabilities.all_ids:
             if not self._by_capability.get(cap):
                 issues.append(f"capability {cap}: no algorithm registered")
