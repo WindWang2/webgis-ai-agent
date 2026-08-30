@@ -205,15 +205,35 @@ async def gather_completion_inputs(
 
     refs: Dict[str, Optional[dict]] = {}
     pending_refs: List[str] = []
+
+    def _collect(ref: Any) -> None:
+        if (
+            isinstance(ref, str)
+            and ref.startswith("ref:")
+            # 磁盘态栅格（ref:raster/*）不在 session store —— 由
+            # artifact_lifecycle 的 mtime 巡检负责，这里不强判过期。
+            and not ref.startswith("ref:raster/")
+            and ref not in refs
+        ):
+            refs[ref] = None
+            pending_refs.append(ref)
+
     for row in list(chapter.get("data_requirements") or []) + list(
         chapter.get("analysis_steps") or []
     ):
         if not isinstance(row, dict):
             continue
-        ref = str(row.get("bound_ref") or "")
-        if ref and ref not in refs:
-            refs[ref] = None
-            pending_refs.append(ref)
+        _collect(row.get("bound_ref"))
+    # MapSpec source refs（P1/ADR-0082）：source 指针是第二个绑定面 ——
+    # 行 ref 存活不代表 spec source 的 ref 存活（TTL/LRU 按 ref 独立驱逐）。
+    raw_sources = mapspec.get("sources")
+    if isinstance(raw_sources, dict):
+        source_defs = [v for v in raw_sources.values() if isinstance(v, dict)]
+    else:
+        source_defs = [s for s in (raw_sources or []) if isinstance(s, dict)]
+    for src in source_defs:
+        for key in ("ref", "ref_id", "image_ref", "imageRef", "result_ref"):
+            _collect(src.get(key))
 
     if pending_refs:
         # 并发取 descriptor（review F-2）：逐个 await 在 Redis 后端是每 ref
@@ -464,20 +484,29 @@ def _layer_declared_visible(layer: Dict[str, Any]) -> bool:
 def validate_layers(
     chapter: Dict[str, Any],
     mapspec: Dict[str, Any],
+    descriptors: Optional[Dict[str, Optional[dict]]] = None,
 ) -> List[MapCompletionFinding]:
-    """图层校验：结果层存在、source 在册、可见；输出 machine-readable findings。"""
+    """图层校验：结果层存在、source 在册、可见、source ref 存活。
+
+    ``descriptors``（P1/ADR-0082）：MapSpec source 的 ref 指针也过存活
+    校验 —— 行 ref 存活而 source ref 被 TTL/LRU 驱逐时，此前会假
+    complete（review C-2）。缺省 None 时退化为旧行为（兼容直调测试）。
+    """
     findings: List[MapCompletionFinding] = []
     layers = _spec_layers(mapspec)
     raw_sources = mapspec.get("sources")
     if isinstance(raw_sources, dict):
-        sources = set(raw_sources.keys())
+        source_by_id = {
+            str(k): v for k, v in raw_sources.items() if isinstance(v, dict)
+        }
     else:
-        sources = {
-            s.get("id")
+        source_by_id = {
+            str(s.get("id") or ""): s
             for s in (raw_sources or [])
             if isinstance(s, dict)
         }
-        sources.discard(None)
+    sources = set(source_by_id.keys())
+    sources.discard("")
     by_id = {str(ly.get("id") or ""): ly for ly in layers}
 
     result_ids = [
@@ -511,6 +540,30 @@ def validate_layers(
                         detail=f"layer source '{src[:48]}' not registered in MapSpec sources",
                     )
                 )
+            elif src and descriptors is not None:
+                src_def = source_by_id.get(src) or {}
+                src_ref = next(
+                    (
+                        src_def.get(k)
+                        for k in ("ref", "ref_id", "image_ref", "imageRef", "result_ref")
+                        if isinstance(src_def.get(k), str)
+                        and src_def.get(k).startswith("ref:")
+                        and not src_def.get(k).startswith("ref:raster/")
+                    ),
+                    None,
+                )
+                if src_ref and descriptors.get(src_ref) is None:
+                    findings.append(
+                        MapCompletionFinding(
+                            code=F_ARTIFACT_EXPIRED,
+                            severity="error",
+                            target=lid,
+                            detail=(
+                                f"layer source ref '{src_ref[:48]}' expired from "
+                                "session store (TTL/LRU eviction)"
+                            ),
+                        )
+                    )
             if not _layer_declared_visible(layer):
                 intent = layer.get("cartographic_intent")
                 user_owned = (
@@ -806,7 +859,7 @@ def _validate_all(inputs: Dict[str, Any], chapter: Dict[str, Any]) -> List[MapCo
     mapspec = inputs["mapspec"]
     findings: List[MapCompletionFinding] = []
     findings.extend(validate_artifacts(chapter, inputs["descriptors"]))
-    findings.extend(validate_layers(chapter, mapspec))
+    findings.extend(validate_layers(chapter, mapspec, inputs["descriptors"]))
     findings.extend(
         validate_components(
             mapspec,
