@@ -216,3 +216,53 @@ def test_resolution_is_deterministic(resolver):
     assert a.algorithm == b.algorithm
     assert a.cost_score == b.cost_score
     assert a.reason == b.reason
+
+
+# ── ADR-0088 P6：运行策略词表 + 跨前后端阈值 parity ───────────────────
+
+
+def test_resolve_runtime_strategy_vocabulary():
+    from app.lib.gis.cost_model import RUNTIME_STRATEGIES, resolve_runtime_strategy
+
+    assert resolve_runtime_strategy(feature_count=None) == "frontend_native"
+    assert resolve_runtime_strategy(feature_count=5_000) == "frontend_native"
+    assert resolve_runtime_strategy(feature_count=20_000) == "frontend_native"
+    assert resolve_runtime_strategy(feature_count=20_001) == "preaggregated"
+    assert resolve_runtime_strategy(feature_count=50_000) == "preaggregated"
+    assert resolve_runtime_strategy(feature_count=50_001) == "server_vector"
+    # 栅格 artifact 走栅格通道（与 heatmap 通道现状一致）
+    assert resolve_runtime_strategy(
+        feature_count=100, artifact_type="raster_surface"
+    ) == "server_raster"
+    # 词表有限集合：每个返回值都在表内（防漂移）
+    for fc in (None, 0, 4_999, 20_001, 150_000):
+        assert resolve_runtime_strategy(feature_count=fc) in RUNTIME_STRATEGIES
+
+
+def test_strategy_thresholds_share_cost_model_constants():
+    """策略阈值与 ExecutionPolicy 推断同源（单一契约，不出现第二套数）。"""
+    from app.lib.gis import cost_model as cm
+
+    assert cm.resolve_runtime_strategy(feature_count=cm.FETCH_FEATURE_CAP) == "frontend_native"
+    assert cm.resolve_runtime_strategy(feature_count=cm.FETCH_FEATURE_CAP + 1) == "preaggregated"
+    # ExecutionPolicy 在同一断点切换 large_data
+    assert cm.infer_execution_policy(feature_count=cm.FETCH_FEATURE_CAP) != "large_data"
+    assert cm.infer_execution_policy(feature_count=cm.FETCH_FEATURE_CAP + 1) == "large_data"
+
+
+def test_frontend_fetch_cap_parity_with_backend():
+    """跨前后端 magic number parity：ref-source-resolver 的 FETCH_FEATURE_CAP
+    必须与后端 cost_model.FETCH_FEATURE_CAP 相等（contract 漂移即测试红）。"""
+    import re
+    from pathlib import Path
+
+    from app.lib.gis.cost_model import FETCH_FEATURE_CAP
+
+    ts_path = (
+        Path(__file__).resolve().parents[3]
+        / "frontend" / "lib" / "mapspec" / "ref-source-resolver.ts"
+    )
+    assert ts_path.exists(), f"frontend resolver missing: {ts_path}"
+    match = re.search(r"const FETCH_FEATURE_CAP = (\d+);", ts_path.read_text())
+    assert match, "FETCH_FEATURE_CAP constant not found in ref-source-resolver.ts"
+    assert int(match.group(1)) == FETCH_FEATURE_CAP
