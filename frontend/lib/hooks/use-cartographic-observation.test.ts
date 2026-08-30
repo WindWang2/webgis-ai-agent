@@ -207,4 +207,49 @@ describe('useCartographicObservation runtime repair spec commit (ADR-0088)', () 
     const commit = await issueOne({ observation_sequence: 3 });
     expect(commit).not.toHaveBeenCalled();
   });
+
+  it('still commits a runtime repair spec after the dispatch budget is exhausted', async () => {
+    const { commitMapSpecDocument } = await import('@/lib/mapspec/session-cursor');
+    vi.mocked(commitMapSpecDocument).mockClear();
+    const dispatchAction = vi.fn();
+    const runtimeRef = { current: null as MapSpecRuntime | null };
+    const hook = renderHook(
+      ({ sessionId }) => useCartographicObservation({
+        runtimeRef, sessionId, ownerToken: null, dispatchAction,
+      }),
+      { initialProps: { sessionId: 'sid-budget-rr' } },
+    );
+    let seq = 0;
+    let issuedFp = '';
+    vi.mocked(apiFetch).mockImplementation(async () => ({
+      repair_action: {
+        type: 'layer_visibility_update',
+        action_id: `repair-${seq++}`,
+        params: { mapspec_fingerprint: issuedFp },
+      },
+      // 仅最后一轮携带 runtime reassert 的 spec —— 预算耗尽不得吞掉提交
+      ...(seq >= 9 ? {
+        runtime_repair: {
+          applied: ['reassert_spec_layer:poi-main'],
+          exhausted: false,
+          mapspec: { layers: [{ id: 'poi-main' }], sources: {} },
+          mutation_revision: 7,
+        },
+      } : {}),
+    } as never));
+    const map = { getStyle: () => ({ layers: [] }) } as never;
+    for (let i = 0; i < 9; i += 1) {
+      issuedFp = `fp-rr-${i}`;
+      hook.result.current({
+        map, spec: { layers: [] } as never, layers: [makeLayer(issuedFp)],
+      });
+      await flushAsync();
+    }
+    // 预算 8：第 9 个 repair 不再派发，但其 runtime_repair spec 仍提交
+    expect(dispatchAction).toHaveBeenCalledTimes(8);
+    expect(commitMapSpecDocument).toHaveBeenCalledWith(
+      { layers: [{ id: 'poi-main' }], sources: {} },
+      7,
+    );
+  });
 });

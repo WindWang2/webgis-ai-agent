@@ -300,6 +300,7 @@ async def run_runtime_repair(
     reconcile 重跑 → 新观察 → 回路闭合）。
     """
     from app.services.session_data import session_data_manager
+    from app.services.gis_harness.render_observation import observation_revision
 
     outcome = RuntimeRepairOutcome()
     if map_state is None:
@@ -308,6 +309,13 @@ async def run_runtime_repair(
             map_state = await session_data_manager.get_map_state(session_id)
         except Exception:  # noqa: BLE001 — 读失败按无 ledger 处理
             map_state = None
+    # stale 观察提前退出：空计划 ≠ 收敛 —— stale（revision 落后）观察的
+    # 空计划若走下方清账分支，会把进行中发散的轮数记忆洗掉（修复推进
+    # revision 后，在途旧观察恰好 stale 到达 → 预算重置 → 无界对抗的种子）。
+    if observation is not None and observation_revision(observation) != int(
+        current_revision or 0
+    ):
+        return outcome
     plan = classify_runtime_repairs(
         chapter, mapspec,
         descriptors=descriptors,
@@ -318,7 +326,7 @@ async def run_runtime_repair(
     outcome.execution_debts = plan.execution_debts[:4]
     outcome.user_owned = list(plan.user_owned[:4])
     if not plan.has_actions:
-        # 收敛（或无可修复发散）：清 ledger（下次新发散有满预算）
+        # 收敛（新鲜观察 + 无可修复发散）：清 ledger（下次新发散有满预算）
         if isinstance(map_state, dict) and isinstance(
             map_state.get(REPAIR_STATE_KEY), dict
         ):

@@ -235,34 +235,36 @@ export function useCartographicObservation({
             | { mapspec_fingerprint?: string }
             | undefined
           // A repair targeting an older mapspec fingerprint must not mutate a
-          // map that has since advanced (INV-4). Only enforced when the backend
-          // echoes a fingerprint, so a future field change can't block a valid
-          // repair (INV-7).
+          // map that has since advanced (INV-4). The whole response (incl. a
+          // runtime_repair spec commit) is stale in that case — skip both.
+          // Only enforced when the backend echoes a fingerprint, so a future
+          // field change can't block a valid repair (INV-7).
           if (
             repairParams?.mapspec_fingerprint
             && latestIssuedCartographicFingerprintRef.current !== repairParams.mapspec_fingerprint
           ) return
-          // Duplicate response / retry must not re-apply the same repair (INV-3).
+          // Duplicate response / retry must not re-apply the same repair
+          // (INV-3); budget exhaustion suspends dispatch — but neither may
+          // suppress a runtime_repair spec commit below (the commit has its
+          // own bounds: backend exhaustion stops producing payloads, and
+          // commitMapSpecDocument's revision guard rejects stale specs).
           const repairId = repair.action_id
-          if (repairId && appliedRepairIdsRef.current.has(repairId)) return
-          if (totalRepairsRef.current >= MAX_TOTAL_SESSION_REPAIRS) {
-            if (!repairBudgetExhaustedWarnedRef.current) {
-              repairBudgetExhaustedWarnedRef.current = true
-              devOnly.warn(
-                '[map] cartographic repair budget exhausted; repairs suspended for this session',
-              )
-            }
-            return
-          }
-          totalRepairsRef.current += 1
-          dispatchAction(repair)
-          // Record AFTER dispatch so a dispatch throw leaves the repair re-issuable.
-          if (repairId) {
+          const duplicate = Boolean(repairId && appliedRepairIdsRef.current.has(repairId))
+          const budgetLeft = totalRepairsRef.current < MAX_TOTAL_SESSION_REPAIRS
+          if (repairId && !duplicate && budgetLeft) {
+            totalRepairsRef.current += 1
+            dispatchAction(repair)
+            // Record AFTER dispatch so a dispatch throw leaves the repair re-issuable.
             const seen = appliedRepairIdsRef.current
             seen.add(repairId)
             if (seen.size > MAX_APPLIED_REPAIR_IDS) {
               seen.delete(seen.keys().next().value as string)
             }
+          } else if (!duplicate && !budgetLeft && !repairBudgetExhaustedWarnedRef.current) {
+            repairBudgetExhaustedWarnedRef.current = true
+            devOnly.warn(
+              '[map] cartographic repair budget exhausted; repairs suspended for this session',
+            )
           }
         }
         // ADR-0088 runtime repair：reassert 推进了 revision —— 提交修复后的

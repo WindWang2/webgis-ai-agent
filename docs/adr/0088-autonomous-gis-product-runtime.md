@@ -130,6 +130,10 @@ ephemeral）按 **observation fingerprint 分代**：spec 内容变化（用户/
 `exhausted: true` 披露（交回 Pi），**绝不自循环**。失败的尝试同样入账
 （无重试上限的失败重放是无限循环的种子）。
 
+stale 观察（revision 落后）≠ 收敛：修复推进 revision 后在途旧观察可能
+恰好 stale 到达 —— 此时空计划**不得清账**（否则预算被洗掉、同一发散可
+无限重修）。只有新鲜观察确认无发散时才重置预算。
+
 ### 3.6 Big Dataset Contract（P6）
 
 `cost_model.resolve_runtime_strategy()`：规模/artifact 语义 → 运行通道

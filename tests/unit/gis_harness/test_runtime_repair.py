@@ -480,3 +480,39 @@ async def test_reassert_passes_expected_revision_cas(clean_session, monkeypatch)
         map_state=await session_data_manager.get_map_state(clean_session),
     )
     assert captured["expected_revision"] == revision
+
+
+async def test_stale_observation_does_not_clear_ledger(clean_session, monkeypatch):
+    """review F1：stale 观察的空计划 ≠ 收敛 —— 不得清轮数账本。
+
+    修复推进 revision 后在途旧观察恰好 stale 到达时，若清账则预算重置、
+    同一发散可无限重修（无界对抗的种子）。
+    """
+    await _patch_mutations(monkeypatch)
+    from app.services.gis_harness.runtime_repair import REPAIR_STATE_KEY
+
+    revision = await _seed_revision(clean_session)
+    first = await run_runtime_repair(
+        clean_session,
+        chapter=_chapter(),
+        mapspec=_mapspec(),
+        descriptors=_descriptors(),
+        observation=_observation(revision),
+        current_revision=revision,
+        map_state=await session_data_manager.get_map_state(clean_session),
+    )
+    assert first.applied
+    # stale 观察（revision 落后于当前）→ 空结果且账本原样保留
+    stale = await run_runtime_repair(
+        clean_session,
+        chapter=_chapter(),
+        mapspec=_mapspec(),
+        descriptors=_descriptors(),
+        observation=_observation(revision - 1),
+        current_revision=revision,
+        map_state=await session_data_manager.get_map_state(clean_session),
+    )
+    assert not stale.applied and not stale.exhausted
+    state = await session_data_manager.get_map_state(clean_session)
+    ledger = state.get(REPAIR_STATE_KEY) or {}
+    assert ledger.get("passes"), "stale observation must not reset the pass ledger"
