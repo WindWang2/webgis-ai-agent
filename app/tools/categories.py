@@ -85,6 +85,8 @@ _NAME_OVERRIDES: Dict[str, str] = {
     "raster_reclassify": "transformation",
     "raster_calculator": "transformation",
     "raster_resample": "transformation",
+    # 变化检测是分析（产出变化栅格，不是几何变换）
+    "detect_raster_change": "analysis",
     # spatial 模块：渲染态热力 + 只读查询
     "heatmap_data": "rendering",
     "query_map_features": "inspection",

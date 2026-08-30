@@ -494,6 +494,54 @@ class SpatialAnalyzer:
         return GeoAnalysisResult(True, result, summary)
 
     @classmethod
+    @spatial_operator(name="raster change detection")
+    def raster_change(
+        cls,
+        raster_a: str,
+        raster_b: str,
+        method: str = "difference",
+        threshold: Optional[float] = None,
+        band: int = 1,
+        callback: Optional[Callable] = None,
+    ) -> GeoAnalysisResult:
+        """双时相栅格变化检测（B 自动对齐到 A 网格；窗口化执行）。
+
+        失败语义：不可对齐/非法参数 → success=False 的结构化错误
+        （RasterAlignmentError 不上抛 —— 工具层契约是 GeoAnalysisResult）。
+        """
+        validated_paths, err_res = cls._prepare_raster_paths([raster_a, raster_b])
+        if err_res:
+            return err_res
+
+        from app.lib.geo_analysis.raster_change import detect_raster_change
+        from app.lib.geo_analysis.raster_grid import RasterAlignmentError
+        from app.lib.geo_analysis.raster_math import rasterio_env
+        with rasterio_env():
+            try:
+                result = detect_raster_change(
+                    validated_paths[0],
+                    validated_paths[1],
+                    method=method,
+                    threshold=threshold,
+                    band=band,
+                )
+            except RasterAlignmentError as e:
+                return GeoAnalysisResult(
+                    False, None,
+                    f"栅格不可对齐: {e.message}",
+                    error_type="RasterAlignmentError",
+                )
+            except ValueError as e:
+                return GeoAnalysisResult(False, None, str(e), error_type="ValidationError")
+        decision = result.get("alignment", {})
+        summary = (
+            f"Raster change detection ({result['method']}) completed: "
+            f"alignment={decision.get('status')}, valid pixels "
+            f"{result['stats'].get('valid_pixel_count')}."
+        )
+        return GeoAnalysisResult(True, result, summary)
+
+    @classmethod
     @spatial_operator(name="isochrone", feature_keys=["network_features", "facilities"])
     def isochrone_network(
         cls,

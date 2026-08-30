@@ -388,15 +388,37 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            description=(
                "栅格计算器：对两个栅格做像素级数学运算（A+B, A-B, (A-B)/(A+B) 等）。"
                "\n何时用：『NDVI = (NIR-Red)/(NIR+Red)』『DEM 差值 = A-B』『比值指数』；"
-               "任意两个同范围栅格的逐像素运算。"
+               "任意两个栅格的逐像素运算。"
                "\n何时不用：(1) 单栅格重分类 — 用 raster_reclassify；"
-               "(2) 需要地理加权（如 focal）— 未实现，先用 focal_stats。"
+               "(2) 双时相变化检测（差值+阈值分类一步到位）— 用 detect_raster_change；"
+               "(3) 需要地理加权（如 focal）— 未实现，先用 focal_stats。"
                "\n关键约束：expression 用 A/B 指代栅格；支持 numexpr 语法；自动 nodata 掩膜。"
+               "A 是基准网格：分辨率/CRS 不一致的 B 会自动虚拟重投影对齐到 A（连续量 bilinear），"
+               "对齐事实进 quality_evidence。"
            ),
            tier=2, domains=["raster"],
            args_model=RasterCalculatorArgs)
     def raster_calculator(raster_a: str, raster_b: Optional[str] = None, expression: str = "A + B", constant: Optional[float] = None, nodata: Optional[float] = None) -> dict:
         res = SpatialAnalyzer.raster_calculator(raster_a, raster_b, expression, constant, nodata)
+        return res.to_llm_response()
+
+    @tool(registry, name="detect_raster_change",
+           description=(
+               "双时相栅格变化检测：对本地两个栅格工件（如两期 NDVI/分类/DEM 产物）"
+               "做像元级变化检测，输出变化栅格 + 统计 + 质量证据。"
+               "\n何时用：『对比这两个时期的 NDVI 栅格哪里变了』『两期分类图差异』；"
+               "已上传/已生成两个 .tif 工件的变化分析。"
+               "\n何时不用：(1) 无本地栅格、只有 bbox+日期 — 用 detect_vegetation_change（在线 STAC）；"
+               "(2) 只要差值统计不要栅格 — temporal_raster；"
+               "(3) 两个栅格做任意表达式运算 — raster_calculator。"
+               "\n关键约束：raster_a（T1）是基准网格；B 分辨率/CRS 不一致时自动虚拟对齐"
+               "（对齐/重采样/裁剪事实进 quality_evidence）；method 可选 "
+               "difference/absolute_difference/normalized_difference；threshold 给定时"
+               "输出二分类变化栅格（1=变化，0=稳定，255=nodata）。"
+           ),
+           tier=2, domains=["raster"])
+    def detect_raster_change(raster_a: str, raster_b: str, method: str = "difference", threshold: Optional[float] = None, band: int = 1) -> dict:
+        res = SpatialAnalyzer.raster_change(raster_a, raster_b, method=method, threshold=threshold, band=band)
         return res.to_llm_response()
 
     @tool(registry, name="raster_resample",
