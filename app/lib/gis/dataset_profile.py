@@ -226,3 +226,30 @@ class DatasetProfile(BaseModel):
             crs=str(getattr(r, "crs", "") or ""),
             fields_status="unknown",
         )
+
+    @classmethod
+    def from_raster_descriptor(cls, descriptor: Optional[Dict[str, Any]]) -> "DatasetProfile":
+        """RasterArtifactDescriptor（dict/to_dict 形）→ 画像。O(1)，零栅格 IO。
+
+        Runtime V3（ADR-0089）：栅格产物画像此前无生产方（RasterProfile 是
+        死结构）。窗口化写者的 descriptor（写者已知，零重开）经本构造器进入
+        契约验证/规划层。栅格产物 feature_count 语义为像元数——只对分类
+        栅格有意义，这里如实置 None（不虚构）。
+        """
+        d = descriptor or {}
+        raster = RasterProfile(
+            width=d.get("width") or None,
+            height=d.get("height") or None,
+            band_count=d.get("band_count") or None,
+            nodata=d.get("nodata") if isinstance(d.get("nodata"), (int, float)) else None,
+            pixel_size=(d.get("resolution_x") if isinstance(d.get("resolution_x"), (int, float)) else None),
+            dtype=str(d.get("dtype") or ""),
+        )
+        bounds = d.get("bounds")
+        return cls(
+            source="ref_descriptor",
+            geometry_types=["raster"],
+            bbox=[float(b) for b in bounds] if isinstance(bounds, (list, tuple)) and len(bounds) == 4 else None,
+            crs=str(d.get("crs") or ""),
+            raster=raster,
+        )

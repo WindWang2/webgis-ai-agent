@@ -345,10 +345,20 @@ class ToolDispatchService:
                         analysis_key = compute_analysis_key(tool_name, _parsed)
                         if analysis_key is not None:
                             input_shapes = await snapshot_input_shapes(session_id, _parsed)
+                            raster_fps = None
+                            try:
+                                from app.lib.gis.analysis_reuse import (
+                                    snapshot_raster_fingerprints,
+                                )
+
+                                raster_fps = snapshot_raster_fingerprints(_parsed) or None
+                            except Exception:  # noqa: BLE001
+                                raster_fps = None
                             reuse = await find_reusable_artifact(
                                 session_id,
                                 analysis_key=analysis_key,
                                 input_shapes=input_shapes,
+                                raster_fingerprints=raster_fps,
                             )
                             if reuse:
                                 _fc = reuse.get("feature_count")
@@ -524,6 +534,14 @@ class ToolDispatchService:
             try:
                 from app.services.artifact_registry import register_tool_artifact
 
+                raster_fps = None
+                if _parsed is not None:
+                    from app.lib.gis.analysis_reuse import snapshot_raster_fingerprints
+
+                    try:
+                        raster_fps = snapshot_raster_fingerprints(_parsed) or None
+                    except Exception:  # noqa: BLE001 — 指纹是增值记录，绝不阻塞
+                        raster_fps = None
                 for minted in (geojson_ref, heatmap_ref):
                     if isinstance(minted, str) and minted.startswith("ref:"):
                         await register_tool_artifact(
@@ -533,6 +551,7 @@ class ToolDispatchService:
                             result=result if isinstance(result, dict) else None,
                             analysis_key=analysis_key,
                             input_shapes=input_shapes,
+                            raster_fingerprints=raster_fps,
                         )
             except Exception:  # noqa: BLE001 — 登记失败不影响产物本身
                 logger.debug(

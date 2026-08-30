@@ -43,6 +43,9 @@ ANALYSIS_KEY_VERSION = "v1"
 ANALYSIS_REUSE_MAX_AGE_S = 24 * 3600
 # 单条记录的输入形状指纹上限（ref 数；分析输入通常 1-3 个）。
 _MAX_INPUT_SHAPES = 8
+# 参与内容指纹的栅格路径上限（§有界：指纹本身是有界降采样读）。
+_MAX_RASTER_FPS = 4
+_RASTER_SUFFIXES = (".tif", ".tiff")
 
 
 def compute_analysis_key(tool_name: str, args: Any) -> Optional[str]:
@@ -111,6 +114,59 @@ def _collect_input_shapes(args: Any, resolved_descriptors: Dict[str, Optional[di
     return dict(list(shapes.items())[:_MAX_INPUT_SHAPES])
 
 
+def _raster_path_fingerprint(path: str) -> Optional[str]:
+    """栅格文件 → 有界内容指纹（grid 身份 + ≤1024 边降采样样本）。
+
+    V2 P10 的复用键只含 raster_path 字符串：同路径下内容被重写（in-place
+    overwrite）时旧产物会被错误命中。栅格指纹覆盖 grid+像元内容
+    （Raster & RS Runtime V3，ADR-0089 §内容身份）——只对存在的
+    .tif/.tiff 计算，成本与一次 inspect 同级，绝不整幅读。
+    """
+    if not isinstance(path, str) or not path.lower().endswith(_RASTER_SUFFIXES):
+        return None
+    try:
+        from app.schemas.raster_spec import raster_content_fingerprint
+
+        return raster_content_fingerprint(path)
+    except Exception:  # noqa: BLE001 — 指纹失败按未知，不阻塞
+        return None
+
+
+def snapshot_raster_fingerprints(args: Any, *, max_paths: int = _MAX_RASTER_FPS) -> Dict[str, str]:
+    """args 中的栅格文件路径 → 当前内容指纹（生产时快照；CPU 有界）。
+
+    复用复核时重算并比对：源内容变 → miss（§34 cache miss 条件）。
+    任何不可判定（文件缺失/读取失败）→ 该路径不进指纹表（保守：不因
+    指纹缺席阻止命中——路径本身已在 analysis_key 里，删除/改名 → key 变）。
+    """
+    import os as _os
+
+    fps: Dict[str, str] = {}
+
+    def _walk(node: Any) -> None:
+        if len(fps) >= max_paths:
+            return
+        if isinstance(node, str):
+            if node not in fps and _os.path.exists(node):
+                fp = _raster_path_fingerprint(node)
+                if fp is not None:
+                    fps[node] = fp
+            return
+        if isinstance(node, dict):
+            for v in node.values():
+                _walk(v)
+                if len(fps) >= max_paths:
+                    return
+        elif isinstance(node, list):
+            for v in node:
+                _walk(v)
+                if len(fps) >= max_paths:
+                    return
+
+    _walk(args)
+    return fps
+
+
 async def snapshot_input_shapes(
     session_id: str,
     args: Any,
@@ -162,7 +218,9 @@ async def find_reusable_artifact(
     session_id: str,
     *,
     analysis_key: Optional[str],
-    input_shapes: Optional[Dict[str, dict]],
+    input_shapes: Optional[Dict[str, dict]] = None,
+    raster_fingerprints: Optional[Dict[str, str]] = None,
+    args: Any = None,
     now: Optional[float] = None,
     max_age_s: int = ANALYSIS_REUSE_MAX_AGE_S,
 ) -> Optional[Dict[str, Any]]:
@@ -173,7 +231,9 @@ async def find_reusable_artifact(
     - metadata.analysis_key == 本调用 key（同算法+同参数+同输入指针）；
     - recency ≤ max_age_s（实现升级的兜底失效）；
     - 产物 ref 的 descriptor 仍可探测（store TTL/LRU 驱逐 → miss）；
-    - 输入 ref 形状指纹与生产时一致（in-place overwrite 守卫）。
+    - 输入 ref 形状指纹与生产时一致（in-place overwrite 守卫）；
+    - 输入栅格内容指纹与生产时一致（同路径重写守卫，V3；args 给定时
+      重算并比对 metadata.input_raster_fps）。
 
     返回 {"artifact_id", "feature_count", "bbox"} 或 None。
     """
@@ -215,6 +275,17 @@ async def find_reusable_artifact(
                 return None
             if cur != expected:
                 return None
+
+    # 输入栅格内容复核（V3 §34：different source content → miss）。生产时
+    # 记录了 input_raster_fps 的，此处对当前 args 重算指纹并比对；生产时
+    # 没有栅格指纹记录的旧产物不因此判 miss（向后兼容）。
+    if raster_fingerprints and isinstance(rec.metadata, dict):
+        recorded = rec.metadata.get("input_raster_fps")
+        if isinstance(recorded, dict) and recorded:
+            for path, expected_fp in list(recorded.items())[:_MAX_RASTER_FPS]:
+                cur_fp = _raster_path_fingerprint(str(path))
+                if cur_fp is None or cur_fp != expected_fp:
+                    return None
 
     fc = rec.feature_count if rec.feature_count is not None else out_desc.get("feature_count")
     return {

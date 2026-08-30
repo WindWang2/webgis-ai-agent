@@ -383,12 +383,16 @@ async def register_tool_artifact(
     result: Optional[Dict[str, Any]] = None,
     analysis_key: Optional[str] = None,
     input_shapes: Optional[Dict[str, dict]] = None,
+    raster_fingerprints: Optional[Dict[str, str]] = None,
 ) -> Optional[ArtifactRecord]:
     """dispatch/chart seam 的便捷注册（无 capability 上下文；type 由推断得出）。
 
     ``analysis_key``/``input_shapes``（V2 P10）：分析指纹与输入形状快照，
     写入 metadata 供 analysis_reuse 跨轮次确定性复用。任一缺席不阻塞
     注册（复用是增值记录，不是产物成立的条件）。
+    ``raster_fingerprints``（V3，ADR-0089）：输入栅格路径 → 内容指纹
+    （grid+降采样样本），复用复核时重算比对 —— 同路径 in-place 重写不再
+    错误命中旧产物。
     """
     if not ref or not str(ref).startswith("ref:"):
         return None
@@ -403,6 +407,13 @@ async def register_tool_artifact(
         metadata["input_shapes"] = {
             str(k)[:96]: dict(v) for k, v in list(input_shapes.items())[:8]
             if isinstance(v, dict)
+        }
+    if raster_fingerprints:
+        # 有界：最多 4 个栅格路径 × 64 hex 指纹。
+        metadata["input_raster_fps"] = {
+            str(k)[:128]: str(v)[:64]
+            for k, v in list(raster_fingerprints.items())[:4]
+            if isinstance(v, str)
         }
     return await register_artifact(
         session_id,

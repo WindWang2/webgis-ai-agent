@@ -31,6 +31,13 @@ C_GEOMETRY_KIND_MISMATCH = "contract_geometry_kind_mismatch"
 C_UNREGISTERED_TYPE = "contract_unregistered_type"
 C_EMPTY_ARTIFACT = "contract_empty_artifact"
 C_CRS_UNDECLARED = "contract_crs_undeclared"
+# Runtime V3（ADR-0089 §P13）：栅格输出契约 —— 声明栅格族的产物必须携带
+# 网格证据（宽高/波段数）；证据缺席/不完整只披露不判死（unknown ≠ mismatch）。
+C_RASTER_GRID_EVIDENCE_MISSING = "contract_raster_grid_evidence_missing"
+C_RASTER_GRID_EVIDENCE_INCOMPLETE = "contract_raster_grid_evidence_incomplete"
+
+# raster 族的 artifact type（geometry_kind == "raster"）
+_RASTER_KIND = "raster"
 
 
 @dataclass(frozen=True)
@@ -116,6 +123,35 @@ def validate_output_contract(
             target=declared[0],
             detail="artifact profile carries no CRS evidence",
         ))
+
+    # 5) 栅格网格证据（Runtime V3 §P13）：声明 raster 族的产物，宽高/波段
+    #    数是下游对齐/瓦片消费的硬前提。画像缺 raster 子结构 → 证据缺席
+    #    （warning）；有 raster 子结构但关键字段 unknown → 不完整（warning）。
+    declared_kinds_all = _declared_geometry_kinds(declared)
+    if _RASTER_KIND in declared_kinds_all:
+        raster_profile = getattr(profile, "raster", None)
+        if raster_profile is None:
+            findings.append(ContractFinding(
+                code=C_RASTER_GRID_EVIDENCE_MISSING,
+                severity="warning",
+                target=declared[0],
+                detail="raster artifact declared but profile carries no grid evidence",
+            ))
+        else:
+            missing = [
+                name for name, val in (
+                    ("width", raster_profile.width),
+                    ("height", raster_profile.height),
+                    ("band_count", raster_profile.band_count),
+                ) if not val
+            ]
+            if missing:
+                findings.append(ContractFinding(
+                    code=C_RASTER_GRID_EVIDENCE_INCOMPLETE,
+                    severity="warning",
+                    target=declared[0],
+                    detail=f"raster grid evidence incomplete: unknown {','.join(missing)}",
+                ))
 
     return findings[:MAX_CONTRACT_FINDINGS]
 
