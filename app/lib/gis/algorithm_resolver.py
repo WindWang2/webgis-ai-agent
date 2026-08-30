@@ -1,9 +1,11 @@
 """Algorithm Resolver —— capability → algorithm → tool 的确定性裁决点。
 
-规则（§8）：capability 匹配 → native 状态 → 工具已注册 → artifact/几何/
-字段/样本量兼容 → 成本 → fallback → 稳定排序。LLM 只能给 hint，最终由
-本 resolver 裁决；resolver 只读 descriptor/profile，不加载 FeatureCollection、
-不调 LLM、候选集有界。
+规则（§8 / ADR-0083）：capability 匹配 → native 状态 → 工具已注册 →
+artifact/几何/字段/样本量兼容（含 max_features_hint 渲染上限）→
+**成本模型**（ExecutionPolicy 加权；声明式 cpu/memory/io/approximate/
+transport）→ fallback → 稳定排序（score, priority, id）。LLM 只能给
+hint，最终由本 resolver 裁决；resolver 只读 descriptor/profile，不加载
+FeatureCollection、不调 LLM、候选集有界。
 """
 from __future__ import annotations
 
@@ -13,6 +15,10 @@ from pydantic import BaseModel, Field
 
 from app.lib.gis.algorithm_registry import AlgorithmDescriptor, AlgorithmRegistry
 from app.lib.gis.capability_registry import CapabilityRegistry
+from app.lib.gis.cost_model import (
+    infer_execution_policy,
+    score_algorithm,
+)
 
 _MAX_REJECTIONS = 8       # evidence 有界：每个候选的拒绝理由最多记录 8 条
 _MAX_FALLBACK_TRAIL = 8
@@ -38,6 +44,11 @@ class AlgorithmResolution(BaseModel):
     rejected: List[str] = Field(default_factory=list)     # 候选拒绝理由（有界）
     fallback_trail: List[FallbackStep] = Field(default_factory=list)
     fallback_candidates: List[str] = Field(default_factory=list)
+    # ADR-0083（additive）：成本感知裁决的 evidence —— 策略、成本分与
+    # 可解释 breakdown（空 = 单候选/无竞争，未走成本排序）。
+    execution_policy: str = ""
+    cost_score: Optional[int] = None
+    cost_breakdown: str = ""
 
 
 def _dominant_geometry(profile: Optional[Dict[str, Any]]) -> str:
@@ -112,6 +123,16 @@ class AlgorithmResolver:
                         f"insufficient_features:{algo.id}:"
                         f"{int(count)}<{algo.min_features}"
                     )
+            # ADR-0083：渲染上限门 —— 声明了 max_features_hint 的算法
+            # （原生渲染通道，如 density.visual.heatmap 的 FETCH_FEATURE_CAP）
+            # 在超限时拒绝，触发算法/能力级 fallback（聚合通道）。
+            if algo.max_features_hint is not None:
+                count = profile.get("featureCount")
+                if isinstance(count, (int, float)) and int(count) > algo.max_features_hint:
+                    return "", (
+                        f"over_render_cap:{algo.id}:"
+                        f"{int(count)}>{algo.max_features_hint}"
+                    )
             if algo.required_fields:
                 known = _profile_fields(profile)
                 if known is not None:
@@ -141,6 +162,8 @@ class AlgorithmResolver:
         *,
         profile: Optional[Dict[str, Any]] = None,
         available_tools: Optional[Any] = None,
+        policy_hint: str = "",
+        export: bool = False,
         _visited: Optional[set[str]] = None,
     ) -> AlgorithmResolution:
         visited = set(_visited or ())
@@ -173,20 +196,61 @@ class AlgorithmResolver:
                 reason="no_algorithm_for_capability",
             )
 
+        # ADR-0083：ExecutionPolicy 自动推断（规模 > 导出语境 > 定量输出 >
+        # 小数据 > 默认均衡）；hint 仅来自 planner 语境，用户不选。
+        feature_count = None
+        if profile is not None:
+            fc = profile.get("featureCount")
+            if isinstance(fc, (int, float)):
+                feature_count = int(fc)
+        policy = infer_execution_policy(
+            feature_count=feature_count,
+            export=export,
+            deterministic_output=bool(getattr(cap, "deterministic", False)),
+            policy_hint=policy_hint,
+        )
+
         rejected: List[str] = []
+        eligible: List[tuple[AlgorithmDescriptor, str]] = []
         for algo in candidates:
             tool, why = self._check_candidate(
                 algo, profile=profile, available_tools=available_tools)
             if tool:
-                return AlgorithmResolution(
-                    capability=capability,
-                    status="resolved",
-                    algorithm=algo.id,
-                    tool=tool,
-                    reason=self._candidate_reason(algo, tool, profile),
-                    rejected=rejected[:_MAX_REJECTIONS],
+                eligible.append((algo, tool))
+            else:
+                rejected.append(why)
+
+        if eligible:
+            # 成本感知选择：排序键（priority, 策略加权成本分, id）——
+            # registry 声明的 priority 仍是主偏好序（既有默认解析的前缀
+            # 兼容承诺不变，如 service_area → isochrone_analysis），成本
+            # 模型在同 priority 竞争者间裁决并提供 policy/scale evidence；
+            # 大规模切换由 max_features_hint 硬门 + capability fallback
+            # 承担。单候选直通（cost evidence 留空表示无竞争）。
+            scored = []
+            for algo, tool in eligible:
+                score, breakdown = score_algorithm(algo, policy=policy)
+                scored.append((algo.priority, score, algo.id, algo, tool, breakdown))
+            if len(scored) > 1:
+                scored.sort(key=lambda t: (t[0], t[1], t[2]))
+            _, best_score, _, best, best_tool, best_bd = scored[0]
+            reason = self._candidate_reason(best, best_tool, profile)
+            contested = len(scored) > 1
+            if contested:
+                reason += (
+                    f" + policy={policy} cost[{best_score}:{best_bd}]"
                 )
-            rejected.append(why)
+            return AlgorithmResolution(
+                capability=capability,
+                status="resolved",
+                algorithm=best.id,
+                tool=best_tool,
+                reason=reason,
+                rejected=rejected[:_MAX_REJECTIONS],
+                execution_policy=policy if contested else "",
+                cost_score=best_score if contested else None,
+                cost_breakdown=best_bd if contested else "",
+            )
 
         # 候选全拒 → 算法级 fallback 链（from/to/reason_code/evidence）。
         trail: List[FallbackStep] = []
@@ -219,7 +283,8 @@ class AlgorithmResolver:
         # 实际降级由 recipe eligibility / planner 图层回退执行）。
         for fb_cap in cap.fallback_capabilities:
             fb_resolution = self.resolve(
-                fb_cap, profile=profile, available_tools=available_tools, _visited=visited)
+                fb_cap, profile=profile, available_tools=available_tools,
+                policy_hint=policy_hint, export=export, _visited=visited)
             if fb_resolution.status == "resolved":
                 trail.append(FallbackStep(
                     from_element=capability,

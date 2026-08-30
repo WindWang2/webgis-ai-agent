@@ -180,6 +180,10 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         output_artifact_type="density_surface",
         geometry_requirements=["point"],
         min_features=10,               # heatmap_data 工具硬门槛（HEATMAP_MIN_POINTS）
+        # ADR-0083：原生渲染通道硬上限 —— 前端 ref-source-resolver 的
+        # FETCH_FEATURE_CAP（20k）：超过该点数前端拒绝挂载 ref，视觉热力
+        # 必须降级聚合/服务端通道（capability fallback → grid_binning）。
+        max_features_hint=20_000,
         approximate=True, deterministic=False,
         complexity="O(N) GPU/渲染端",
         tool_candidates=["heatmap_data"],

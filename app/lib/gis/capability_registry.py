@@ -86,6 +86,11 @@ _SEED_CAPS: List[CapabilityDescriptor] = [
         geometry_requirements=["point"],
         deterministic=False,
         compatible_map_models=["visual_heatmap"],
+        # ADR-0083：超过原生渲染上限（FETCH_FEATURE_CAP 20k）时的确定性
+        # 降级 —— 聚合通道（H3/渔网）承接大规模点数据。与 grid_binning 的
+        # 反向 fallback（稀疏点 → 视觉热力）构成双向边，环路由 resolver
+        # 的 _visited 守卫截断。
+        fallback_capabilities=["grid_binning"],
         purpose_template="密度面",
     ),
     CapabilityDescriptor(
