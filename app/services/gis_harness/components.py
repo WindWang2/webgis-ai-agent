@@ -153,11 +153,14 @@ class CartographyComponent(BaseModel):
         return cls.model_validate(data)
 
 
-# legend（离散）与 colorbar（连续）是两种不同的专题表达配套 —— 由
-# Recipe/表现类型决定，不混用：
-#   choropleth/graduated → legend
-#   heatmap/连续栅格     → continuous_colorbar
-#   分类 match 专题       → categorical_legend
+# legend（离散）与 colorbar（连续）是两种不同的专题表达配套 —— 由每层
+# 图层的 MapModel 决定（v2：图例族 cardinality=multiple，多图层地图各自
+# 绑定自己的图例/色条）：
+#   choropleth/graduated 层 → legend（binding=该层）
+#   heatmap/连续栅格层     → continuous_colorbar（binding=该层）
+#   分类 match 专题层      → categorical_legend（binding=该层）
+# 类型级互斥已废除：同一 layerId 上图例族互相竞争才是冲突
+# （composition_validation.validate_binding_conflicts 执行）。
 #
 # variant 的单一权威是组件描述符目录（component_registry.py descriptors
 # .variants）；组件工厂/突变校验一律经 valid_variants_for_type() 查目录，
@@ -283,6 +286,109 @@ def categorical_legend_component(
 MAX_CHART_DATA_POINTS = 500
 MAX_STAT_ITEMS = 24
 
+# v2 注记框架预算：group ≤ 12 条、单条文本 ≤ 200 字符、callout anchor 必须是
+# 合法经纬度。注记组件是 chrome DTO 的一部分 —— 无预算会被大 payload 撑爆
+# MapSpec 与导出画布（组件 DTO bounded 契约）。
+MAX_ANNOTATION_ITEMS = 12
+MAX_ANNOTATION_TEXT = 200
+
+
+def _valid_lnglat(raw: Any) -> bool:
+    """[lng, lat] 合法性（经度 [-180,180]、纬度 [-90,90]、非 bool 数值）。"""
+    if not (isinstance(raw, (list, tuple)) and len(raw) == 2):
+        return False
+    lng, lat = raw[0], raw[1]
+    for v in (lng, lat):
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return False
+    return -180 <= float(lng) <= 180 and -90 <= float(lat) <= 90
+
+
+def validate_annotation_payload(options: Any) -> "str | None":
+    """校验 annotation options（callout anchor / group items / 文本预算）。
+
+    合法形态：
+    - text：options.text 非空字符串；
+    - callout：options.text + options.anchor=[lng,lat]；
+    - group：options.items=[{text, anchor?}, ...] ≤ 12 条（anchor 条目即组内
+      callout，无 anchor 条目为普通注记）。
+    """
+    if not isinstance(options, dict):
+        return "annotation options 必须是对象"
+    variant = options.get("variant", "text")
+    if variant not in ("text", "callout", "group"):
+        return f"annotation.variant 必须是 text/callout/group，收到 {variant!r}"
+    anchor = options.get("anchor")
+    if anchor is not None and not _valid_lnglat(anchor):
+        return "annotation.anchor 必须是 [lng, lat]（经度 ±180、纬度 ±90）"
+    items = options.get("items")
+    if items is not None:
+        if not isinstance(items, list) or not items:
+            return "annotation.items 必须是非空数组"
+        if len(items) > MAX_ANNOTATION_ITEMS:
+            return f"annotation.items 超过上限 {MAX_ANNOTATION_ITEMS} 条"
+        for i, item in enumerate(items):
+            if not isinstance(item, dict):
+                return f"annotation.items[{i}] 必须是对象 {{text, anchor?}}"
+            text = item.get("text")
+            if not isinstance(text, str) or not text.strip():
+                return f"annotation.items[{i}].text 必须是非空字符串"
+            if len(text) > MAX_ANNOTATION_TEXT:
+                return f"annotation.items[{i}].text 超过 {MAX_ANNOTATION_TEXT} 字符"
+            item_anchor = item.get("anchor")
+            if item_anchor is not None and not _valid_lnglat(item_anchor):
+                return f"annotation.items[{i}].anchor 必须是 [lng, lat]"
+    else:
+        text = options.get("text")
+        if not isinstance(text, str) or not text.strip():
+            return "annotation.text 必须是非空字符串（group 形态用 items）"
+        if len(text) > MAX_ANNOTATION_TEXT:
+            return f"annotation.text 超过 {MAX_ANNOTATION_TEXT} 字符"
+        if variant == "callout" and anchor is None:
+            return "annotation.variant=callout 需要 options.anchor=[lng, lat]"
+    return None
+
+
+# v2 插图（inset）预算：边界折线 ≤ 512 点（简化后的概略轮廓）、bbox 有序。
+MAX_INSET_BOUNDARY_POINTS = 512
+
+
+def _valid_bbox4(raw: Any) -> bool:
+    if not (isinstance(raw, (list, tuple)) and len(raw) == 4):
+        return False
+    try:
+        w, s, e, n = (float(raw[0]), float(raw[1]), float(raw[2]), float(raw[3]))
+    except (TypeError, ValueError):
+        return False
+    return -180 <= w <= 180 and -180 <= e <= 180 and -90 <= s <= 90 and -90 <= n <= 90 and w <= e and s <= n
+
+
+def validate_inset_payload(options: Any) -> "str | None":
+    """校验 inset_map options（bbox / 边界折线 / 指示范围）。"""
+    if not isinstance(options, dict):
+        return "inset_map options 必须是对象"
+    bbox = options.get("bbox")
+    if bbox is None:
+        return "inset_map 需要 options.bbox=[w, s, e, n]（插图范围）"
+    if not _valid_bbox4(bbox):
+        return "inset_map.bbox 必须是有序 [w, s, e, n]（经纬度合法范围）"
+    main_bbox = options.get("mainBbox")
+    if main_bbox is not None and not _valid_bbox4(main_bbox):
+        return "inset_map.mainBbox 必须是有序 [w, s, e, n]（主图范围指示）"
+    boundary = options.get("boundary")
+    if boundary is not None:
+        if not isinstance(boundary, list) or len(boundary) < 3:
+            return "inset_map.boundary 必须是 ≥3 点的 [[lng, lat], ...] 折线/多边形"
+        if len(boundary) > MAX_INSET_BOUNDARY_POINTS:
+            return f"inset_map.boundary 超过上限 {MAX_INSET_BOUNDARY_POINTS} 点（简化后传入）"
+        for i, pt in enumerate(boundary):
+            if not _valid_lnglat(pt):
+                return f"inset_map.boundary[{i}] 必须是 [lng, lat]"
+    label = options.get("label")
+    if label is not None and (not isinstance(label, str) or len(label) > 64):
+        return "inset_map.label 必须是 ≤64 字符的字符串"
+    return None
+
 
 def validate_chart_payload(chart: Any) -> "str | None":
     """校验 inline ChartData。返回 None=合法，否则错误信息。"""
@@ -391,6 +497,69 @@ def map_border_component(component_id: str = "map-border") -> CartographyCompone
     return CartographyComponent(
         id=component_id, type="map_border", position="none", priority=70,
         options={"style": "neutral"},
+    )
+
+
+def annotation_component(
+    text: str = "",
+    component_id: str = "annotation",
+    variant: str = "text",
+    anchor: Optional[List[float]] = None,
+    items: Optional[List[Dict[str, Any]]] = None,
+    position: str = "top-left",
+) -> CartographyComponent:
+    """注记组件（v2 框架）：text 静态卡 / callout（anchor 坐标 + 引线）/
+    group（options.items 多条相关注记）。
+
+    三种形态共享同一组件类型与渲染/导出语义；payload 由
+    validate_annotation_payload 把关（有界）。
+    """
+    options: Dict[str, Any] = {"variant": variant}
+    if text:
+        options["text"] = text
+    if anchor is not None:
+        options["anchor"] = list(anchor)
+    if items is not None:
+        options["items"] = items
+    # 空载荷 = 工厂起步形态（upsert 后经突变填充），不做内容校验
+    if text or items or anchor is not None:
+        err = validate_annotation_payload(options)
+        if err:
+            raise ValueError(err)
+    return CartographyComponent(
+        id=component_id, type="annotation", position=position, priority=55,
+        variant=coerce_variant("annotation", variant),
+        options=options,
+    )
+
+
+def inset_map_component(
+    bbox: List[float],
+    component_id: str = "inset-map",
+    variant: str = "overview",
+    main_bbox: Optional[List[float]] = None,
+    boundary: Optional[List[List[float]]] = None,
+    label: str = "",
+    position: str = "top-right",
+) -> CartographyComponent:
+    """区位插图（v2）：轻量静态小地图（bbox 范围 + 可选边界折线 + 主图范围
+    指示框）。不 mount 第二个业务地图 runtime —— live 与 export 共享同一
+    纯几何投影语义（前端 geo-anchor 模块）。payload 由
+    validate_inset_payload 把关（有界）。"""
+    options: Dict[str, Any] = {"bbox": list(bbox)}
+    if main_bbox is not None:
+        options["mainBbox"] = list(main_bbox)
+    if boundary is not None:
+        options["boundary"] = [list(pt) for pt in boundary]
+    if label:
+        options["label"] = label
+    err = validate_inset_payload(options)
+    if err:
+        raise ValueError(err)
+    return CartographyComponent(
+        id=component_id, type="inset_map", position=position, priority=65,
+        variant=coerce_variant("inset_map", variant),
+        options=options,
     )
 
 
@@ -605,7 +774,11 @@ _FACTORY_BY_TYPE = {
     "export_layout": lambda component_id: export_layout_component(component_id=component_id),
     "annotation": lambda component_id: CartographyComponent(
         id=component_id, type="annotation", position="top-left", priority=55,
-        options={"text": ""},
+        variant="text", options={"variant": "text", "text": ""},
+    ),
+    "inset_map": lambda component_id: CartographyComponent(
+        id=component_id, type="inset_map", position="top-right", priority=65,
+        variant="overview", options={"variant": "overview", "bbox": []},
     ),
 }
 
@@ -620,6 +793,8 @@ __all__ = [
     "coerce_variant",
     "validate_chart_payload",
     "validate_stats_payload",
+    "validate_annotation_payload",
+    "validate_inset_payload",
     "north_arrow_component",
     "scale_bar_component",
     "title_component",
@@ -633,4 +808,8 @@ __all__ = [
     "export_layout_component",
     "graticule_component",
     "map_border_component",
+    "annotation_component",
+    "inset_map_component",
+    "MAX_ANNOTATION_ITEMS",
+    "MAX_INSET_BOUNDARY_POINTS",
 ]

@@ -31,6 +31,10 @@ class ComponentSlot(BaseModel):
     position_zone: str = "none"
     fallback_zones: List[str] = Field(default_factory=list)
     bind_role: str = ""  # e.g., "primary" for legend binding
+    # v2：图例族绑定范围 —— "primary" 只绑主层（旧行为）；"all_thematic"
+    # 按主题层角色逐层展开实例（legend-{role}/colorbar-{role}），多图层
+    # 地图（heatmap 主层 + choropleth 参考层）各自获得自己的图例/色条。
+    bind_scope: str = "primary"
     conditions: Dict[str, Any] = Field(default_factory=dict)
     stack_behavior: str = "exclusive"
 
@@ -65,7 +69,7 @@ SEED_COMPOSITION_TEMPLATES: List[MapCompositionTemplate] = [
         priority=10,
         component_slots=[
             ComponentSlot(id="title", category="annotation.title", cardinality="optional", min_count=0, max_count=1, allowed_component_types=["title"], position_zone="top-center"),
-            ComponentSlot(id="legend", category="legend.graduated", cardinality="conditional", min_count=0, max_count=1, allowed_component_types=["legend", "categorical_legend", "continuous_colorbar"], position_zone="bottom-left", bind_role="primary"),
+            ComponentSlot(id="legend", category="legend.graduated", cardinality="conditional", min_count=0, max_count=2, allowed_component_types=["legend", "categorical_legend", "continuous_colorbar"], position_zone="bottom-left", bind_role="primary", bind_scope="all_thematic"),
             ComponentSlot(id="north_arrow", category="navigation.north_arrow", cardinality="optional", allowed_component_types=["north_arrow"], position_zone="top-right"),
             ComponentSlot(id="scale_bar", category="navigation.scale_bar", cardinality="required", required=True, min_count=1, max_count=1, allowed_component_types=["scale_bar"], position_zone="bottom-right"),
             ComponentSlot(id="attribution", category="annotation.attribution", cardinality="required", required=True, allowed_component_types=["attribution"], position_zone="bottom-left"),
@@ -86,7 +90,7 @@ SEED_COMPOSITION_TEMPLATES: List[MapCompositionTemplate] = [
         component_slots=[
             ComponentSlot(id="title", category="annotation.title", cardinality="required", required=True, min_count=1, allowed_component_types=["title"], position_zone="top-center"),
             ComponentSlot(id="subtitle", category="annotation.subtitle", cardinality="optional", allowed_component_types=["subtitle"], position_zone="top-center", fallback_zones=["top-left"]),
-            ComponentSlot(id="legend", category="legend.graduated", cardinality="conditional", allowed_component_types=["legend", "categorical_legend", "continuous_colorbar"], position_zone="bottom-left", bind_role="primary"),
+            ComponentSlot(id="legend", category="legend.graduated", cardinality="conditional", max_count=2, allowed_component_types=["legend", "categorical_legend", "continuous_colorbar"], position_zone="bottom-left", bind_role="primary", bind_scope="all_thematic"),
             ComponentSlot(id="north_arrow", category="navigation.north_arrow", cardinality="required", required=True, allowed_component_types=["north_arrow"], position_zone="top-right"),
             ComponentSlot(id="scale_bar", category="navigation.scale_bar", cardinality="required", required=True, allowed_component_types=["scale_bar"], position_zone="bottom-right"),
             ComponentSlot(id="attribution", category="annotation.attribution", cardinality="required", required=True, allowed_component_types=["attribution"], position_zone="bottom-left"),
@@ -107,7 +111,7 @@ SEED_COMPOSITION_TEMPLATES: List[MapCompositionTemplate] = [
         component_slots=[
             ComponentSlot(id="title", category="annotation.title", cardinality="required", required=True, allowed_component_types=["title"], position_zone="top-center", preferred_templates=["title/academic"]),
             ComponentSlot(id="subtitle", category="annotation.subtitle", cardinality="optional", allowed_component_types=["subtitle"], position_zone="top-center"),
-            ComponentSlot(id="legend", category="legend.graduated", cardinality="conditional", allowed_component_types=["legend", "categorical_legend", "continuous_colorbar"], position_zone="bottom-left", bind_role="primary", preferred_templates=["legend/academic", "colorbar/horizontal"]),
+            ComponentSlot(id="legend", category="legend.graduated", cardinality="conditional", max_count=2, allowed_component_types=["legend", "categorical_legend", "continuous_colorbar"], position_zone="bottom-left", bind_role="primary", bind_scope="all_thematic", preferred_templates=["legend/academic", "colorbar/horizontal"]),
             ComponentSlot(id="north_arrow", category="navigation.north_arrow", cardinality="required", required=True, allowed_component_types=["north_arrow"], position_zone="top-right", preferred_templates=["north-arrow/compass-rose"]),
             ComponentSlot(id="scale_bar", category="navigation.scale_bar", cardinality="required", required=True, allowed_component_types=["scale_bar"], position_zone="bottom-right", preferred_templates=["scale-bar/academic"]),
             ComponentSlot(id="graticule", category="navigation.graticule", cardinality="optional", allowed_component_types=["graticule"], position_zone="none"),
@@ -133,7 +137,7 @@ SEED_COMPOSITION_TEMPLATES: List[MapCompositionTemplate] = [
         component_slots=[
             ComponentSlot(id="title", category="annotation.title", cardinality="required", required=True, allowed_component_types=["title"], position_zone="top-center", preferred_templates=["title/report"]),
             ComponentSlot(id="subtitle", category="annotation.subtitle", cardinality="recommended", allowed_component_types=["subtitle"], position_zone="top-center"),
-            ComponentSlot(id="legend", category="legend.graduated", cardinality="conditional", allowed_component_types=["legend", "categorical_legend", "continuous_colorbar"], position_zone="bottom-left", bind_role="primary", preferred_templates=["legend/report"]),
+            ComponentSlot(id="legend", category="legend.graduated", cardinality="conditional", max_count=2, allowed_component_types=["legend", "categorical_legend", "continuous_colorbar"], position_zone="bottom-left", bind_role="primary", bind_scope="all_thematic", preferred_templates=["legend/report"]),
             ComponentSlot(id="north_arrow", category="navigation.north_arrow", cardinality="required", required=True, allowed_component_types=["north_arrow"], position_zone="top-right"),
             ComponentSlot(id="scale_bar", category="navigation.scale_bar", cardinality="required", required=True, allowed_component_types=["scale_bar"], position_zone="bottom-right"),
             ComponentSlot(id="map_border", category="frame.map_border", cardinality="required", required=True, allowed_component_types=["map_border"], position_zone="none", preferred_templates=["frame/report"]),
@@ -154,7 +158,7 @@ SEED_COMPOSITION_TEMPLATES: List[MapCompositionTemplate] = [
         priority=22,
         component_slots=[
             ComponentSlot(id="title", category="annotation.title", cardinality="required", required=True, allowed_component_types=["title"], position_zone="top-center", preferred_templates=["title/presentation"]),
-            ComponentSlot(id="legend", category="legend.graduated", cardinality="conditional", allowed_component_types=["legend", "categorical_legend", "continuous_colorbar"], position_zone="bottom-left", preferred_templates=["legend/compact"]),
+            ComponentSlot(id="legend", category="legend.graduated", cardinality="conditional", max_count=2, allowed_component_types=["legend", "categorical_legend", "continuous_colorbar"], position_zone="bottom-left", bind_scope="all_thematic", preferred_templates=["legend/compact"]),
             ComponentSlot(id="north_arrow", category="navigation.north_arrow", cardinality="optional", allowed_component_types=["north_arrow"], position_zone="top-right"),
             ComponentSlot(id="scale_bar", category="navigation.scale_bar", cardinality="required", required=True, allowed_component_types=["scale_bar"], position_zone="bottom-right"),
             ComponentSlot(id="attribution", category="annotation.attribution", cardinality="required", required=True, allowed_component_types=["attribution"], position_zone="bottom-left"),
@@ -172,12 +176,12 @@ SEED_COMPOSITION_TEMPLATES: List[MapCompositionTemplate] = [
         priority=28,
         component_slots=[
             ComponentSlot(id="title", category="annotation.title", cardinality="required", required=True, allowed_component_types=["title"], position_zone="top-center"),
-            ComponentSlot(id="legend", category="legend.graduated", cardinality="required", required=True, allowed_component_types=["legend"], position_zone="bottom-left", bind_role="primary"),
+            ComponentSlot(id="legend", category="legend.graduated", cardinality="required", required=True, max_count=2, allowed_component_types=["legend"], position_zone="bottom-left", bind_role="primary", bind_scope="all_thematic"),
             ComponentSlot(id="north_arrow", category="navigation.north_arrow", cardinality="required", required=True, allowed_component_types=["north_arrow"], position_zone="top-right"),
             ComponentSlot(id="scale_bar", category="navigation.scale_bar", cardinality="required", required=True, allowed_component_types=["scale_bar"], position_zone="bottom-right"),
             ComponentSlot(id="attribution", category="annotation.attribution", cardinality="required", required=True, allowed_component_types=["attribution"], position_zone="bottom-left"),
             ComponentSlot(id="statistics_panel", category="analysis.statistics_panel", cardinality="recommended", allowed_component_types=["statistics_panel"], position_zone="top-left"),
-            ComponentSlot(id="chart_panel", category="analysis.chart_panel", cardinality="optional", allowed_component_types=["chart_panel"], position_zone="top-left", fallback_zones=["top-right"]),
+            ComponentSlot(id="chart_panel", category="analysis.chart_panel", cardinality="optional", max_count=3, allowed_component_types=["chart_panel"], position_zone="top-left", fallback_zones=["top-right"]),
             ComponentSlot(id="map_border", category="frame.map_border", cardinality="optional", allowed_component_types=["map_border"], position_zone="none"),
         ],
     ),
@@ -193,12 +197,12 @@ SEED_COMPOSITION_TEMPLATES: List[MapCompositionTemplate] = [
         priority=27,
         component_slots=[
             ComponentSlot(id="title", category="annotation.title", cardinality="required", required=True, allowed_component_types=["title"], position_zone="top-center"),
-            ComponentSlot(id="colorbar", category="legend.continuous_colorbar", cardinality="required", required=True, allowed_component_types=["continuous_colorbar"], position_zone="bottom-right", bind_role="primary", preferred_templates=["colorbar/horizontal"]),
+            ComponentSlot(id="colorbar", category="legend.continuous_colorbar", cardinality="required", required=True, max_count=2, allowed_component_types=["continuous_colorbar"], position_zone="bottom-right", bind_role="primary", bind_scope="all_thematic", preferred_templates=["colorbar/horizontal"]),
             ComponentSlot(id="north_arrow", category="navigation.north_arrow", cardinality="required", required=True, allowed_component_types=["north_arrow"], position_zone="top-right"),
             ComponentSlot(id="scale_bar", category="navigation.scale_bar", cardinality="required", required=True, allowed_component_types=["scale_bar"], position_zone="bottom-right", fallback_zones=["bottom-center"]),
             ComponentSlot(id="attribution", category="annotation.attribution", cardinality="required", required=True, allowed_component_types=["attribution"], position_zone="bottom-left"),
             ComponentSlot(id="statistics_panel", category="analysis.statistics_panel", cardinality="optional", allowed_component_types=["statistics_panel"], position_zone="top-left"),
-            ComponentSlot(id="chart_panel", category="analysis.chart_panel", cardinality="optional", allowed_component_types=["chart_panel"], position_zone="top-left", fallback_zones=["top-right"]),
+            ComponentSlot(id="chart_panel", category="analysis.chart_panel", cardinality="optional", max_count=3, allowed_component_types=["chart_panel"], position_zone="top-left", fallback_zones=["top-right"]),
         ],
     ),
     MapCompositionTemplate(
@@ -213,7 +217,7 @@ SEED_COMPOSITION_TEMPLATES: List[MapCompositionTemplate] = [
         priority=35,
         component_slots=[
             ComponentSlot(id="title", category="annotation.title", cardinality="required", required=True, allowed_component_types=["title"], position_zone="top-center"),
-            ComponentSlot(id="colorbar", category="legend.continuous_colorbar", cardinality="required", required=True, allowed_component_types=["continuous_colorbar"], position_zone="bottom-right", bind_role="primary"),
+            ComponentSlot(id="colorbar", category="legend.continuous_colorbar", cardinality="required", required=True, max_count=2, allowed_component_types=["continuous_colorbar"], position_zone="bottom-right", bind_role="primary", bind_scope="all_thematic"),
             ComponentSlot(id="north_arrow", category="navigation.north_arrow", cardinality="required", required=True, allowed_component_types=["north_arrow"], position_zone="top-right"),
             ComponentSlot(id="scale_bar", category="navigation.scale_bar", cardinality="required", required=True, allowed_component_types=["scale_bar"], position_zone="bottom-right"),
             ComponentSlot(id="attribution", category="annotation.attribution", cardinality="required", required=True, allowed_component_types=["attribution"], position_zone="bottom-left"),

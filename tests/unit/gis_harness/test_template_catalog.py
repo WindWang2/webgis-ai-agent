@@ -184,6 +184,24 @@ def test_seed_templates_no_structural_near_duplicates():
         sigs[sig] = tpl
 
 
+def test_seed_templates_declare_archetype():
+    """v2（P7）：非 deprecated 种子模板必须归属固定原型词表 —— 原型 +
+    组合 + subject 参数构成产品，禁止原型词表外的垂直模板膨胀。"""
+    from app.services.gis_harness.product_templates import (
+        PRODUCT_ARCHETYPES,
+        SEED_PRODUCT_TEMPLATES,
+    )
+
+    for tpl in SEED_PRODUCT_TEMPLATES:
+        if tpl.deprecated:
+            continue
+        assert tpl.archetype in PRODUCT_ARCHETYPES, (
+            f"template {tpl.id}: archetype {tpl.archetype!r} not in "
+            f"PRODUCT_ARCHETYPES —— 新原型须先入词表并经 review，"
+            f"垂直差异请用 subject/组件构成表达"
+        )
+
+
 def test_deprecated_template_resolves_but_not_selected():
     """deprecated 模板：旧持久会话的 template_id 仍可解析（迁移兼容），
     但 find_for_recipe 兜底不再选中它。"""

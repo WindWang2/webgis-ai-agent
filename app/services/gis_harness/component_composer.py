@@ -61,7 +61,11 @@ class ComponentComposer:
         layer_bindings: Optional[Dict[str, str]] = None,
         composition_template_id: str = "",
         overrides: Optional[Dict[str, Any]] = None,
+        layer_model_ids: Optional[Dict[str, str]] = None,
     ) -> List[CartographyComponent]:
+        """layer_bindings：role → layer_id（primary 必备；secondary/reference
+        为可选主题层）。``layer_model_ids``：role → 该层 MapModel id —— v2
+        图例族按层选型（heatmap 层→colorbar、choropleth 层→legend）。"""
         from app.lib.cartography.component_registry import get_component_registry
         from app.lib.cartography.component_templates import get_component_template_registry
         from app.lib.cartography.composition_templates import get_composition_template_registry
@@ -72,23 +76,23 @@ class ComponentComposer:
 
         layer_bindings = layer_bindings or {}
         overrides = overrides or {}
+        layer_model_ids = layer_model_ids or {}
 
         # slot position lookup from composition
         slot_positions: Dict[str, str] = {}
+        slot_by_type: Dict[str, Any] = {}
         if composition_template_id:
             compo = compo_reg.get(composition_template_id)
-            if compo:
-                for slot in compo.component_slots:
-                    for ctype in slot.allowed_component_types:
-                        if ctype not in slot_positions:
-                            slot_positions[ctype] = slot.position_zone
         elif hasattr(selection, "composition_template_id") and selection.composition_template_id:
             compo = compo_reg.get(selection.composition_template_id)
-            if compo:
-                for slot in compo.component_slots:
-                    for ctype in slot.allowed_component_types:
-                        if ctype not in slot_positions:
-                            slot_positions[ctype] = slot.position_zone
+        else:
+            compo = None
+        if compo:
+            for slot in compo.component_slots:
+                for ctype in slot.allowed_component_types:
+                    if ctype not in slot_positions:
+                        slot_positions[ctype] = slot.position_zone
+                    slot_by_type.setdefault(ctype, slot)
 
         components: List[CartographyComponent] = []
 
@@ -104,6 +108,28 @@ class ComponentComposer:
 
         for ctype in selected_types:
             if ctype in overrides and overrides[ctype] is False:
+                continue
+
+            slot = slot_by_type.get(ctype)
+            # v2：图例族 all_thematic 槽位 → 按主题层逐层展开实例
+            #（heatmap 主层→colorbar、choropleth 参考层→legend，各绑各层）。
+            if (
+                ctype in ("legend", "continuous_colorbar", "categorical_legend")
+                and slot is not None
+                and getattr(slot, "bind_scope", "primary") == "all_thematic"
+                and int(getattr(slot, "max_count", 1) or 1) >= 2
+                and layer_bindings
+            ):
+                components.extend(self._compose_per_layer_legends(
+                    slot=slot,
+                    primary_type=ctype,
+                    layer_bindings=layer_bindings,
+                    layer_model_ids=layer_model_ids,
+                    comp_reg=comp_reg,
+                    tmpl_reg=tmpl_reg,
+                    template_map=template_map,
+                    overrides=overrides,
+                ))
                 continue
 
             desc = comp_reg.get(ctype) or comp_reg.get_by_type(ctype)
@@ -169,6 +195,98 @@ class ComponentComposer:
 
         components.sort(key=lambda c: (c.priority, c.id))
         return components
+
+    # 图例族 per-role 实例 id：primary 层保留旧固定 id（向后兼容既有会话
+    # 与测试），其余角色 id 内嵌角色名（legend-secondary / colorbar-reference）。
+    _LEGEND_PRIMARY_IDS = {
+        "legend": "legend-main",
+        "continuous_colorbar": "colorbar-main",
+        "categorical_legend": "legend-categorical",
+    }
+
+    def _compose_per_layer_legends(
+        self,
+        *,
+        slot,
+        primary_type: str,
+        layer_bindings: Dict[str, str],
+        layer_model_ids: Dict[str, str],
+        comp_reg,
+        tmpl_reg,
+        template_map: Dict[str, str],
+        overrides: Dict[str, Any],
+    ) -> List[CartographyComponent]:
+        from app.lib.cartography.component_registry import get_component_registry  # noqa: F401
+
+        allowed = list(slot.allowed_component_types) or [primary_type]
+        out: List[CartographyComponent] = []
+        for role in sorted(layer_bindings):  # 确定性：角色字典序
+            layer_id = layer_bindings[role]
+            if not layer_id:
+                continue
+            layer_model = str(layer_model_ids.get(layer_id) or "")
+            chosen = self._legend_type_for_layer(
+                allowed, layer_model, comp_reg, primary_type,
+                fallback_allowed=(role == "primary"),
+            )
+            if chosen is None:
+                continue  # 该层无兼容图例类型（如 simple point 层）→ 如实跳过
+            desc = comp_reg.get(chosen) or comp_reg.get_by_type(chosen)
+            desc_priority, desc_position = _descriptor_defaults(chosen, comp_reg)
+            position = slot.position_zone if slot.position_zone else desc_position
+            template_id = template_map.get(chosen, "")
+            variant = ""
+            options: Dict[str, Any] = {"layerId": layer_id}
+            style: Dict[str, Any] = {}
+            if template_id:
+                tpl = tmpl_reg.get(template_id)
+                if tpl:
+                    variant = tpl.variant
+                    options = {"layerId": layer_id, **dict(tpl.default_options)}
+                    style = dict(tpl.default_style)
+            if role == "primary":
+                comp_id = self._LEGEND_PRIMARY_IDS.get(chosen, f"{chosen.replace('_', '-')}-primary")
+            else:
+                comp_id = f"{chosen.replace('_', '-')}-{role}"
+            if chosen in overrides and isinstance(overrides[chosen], dict):
+                for k, v in overrides[chosen].items():
+                    if k == "position":
+                        position = v
+                    elif k == "variant":
+                        variant = v
+                        options["variant"] = v
+                    elif k != "layerId":
+                        options[k] = v
+            out.append(CartographyComponent(
+                id=comp_id,
+                type=chosen,  # type: ignore[arg-type]
+                position=position,  # type: ignore[arg-type]
+                priority=desc_priority,
+                style=style,
+                options=options,
+                category=desc.category if desc else "",
+                variant=variant,
+                templateId=template_id,
+            ))
+        return out
+
+    def _legend_type_for_layer(
+        self, allowed: List[str], layer_model: str, comp_reg, fallback: str,
+        *, fallback_allowed: bool = True,
+    ) -> "str | None":
+        """按绑定层 MapModel 选图例类型；无兼容类型 → None（跳过该层）。
+
+        layer_model 未知时：primary 层回退 fallback（主层已选型 —— 行为
+        向后兼容）；非 primary 层不猜（给边界参考层挂 colorbar 是错误
+        语义）→ 跳过。
+        """
+        if not layer_model:
+            return fallback if fallback_allowed else None
+        for cand in allowed:
+            d = comp_reg.get(cand) or comp_reg.get_by_type(cand)
+            if d and d.compatible_map_models and layer_model in d.compatible_map_models:
+                return cand
+        return None
 
 
 _composer: Optional[ComponentComposer] = None

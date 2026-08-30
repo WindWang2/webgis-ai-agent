@@ -174,7 +174,8 @@ def test_renderer_registry_honesty():
     assert r.has_renderer("map_border")           # P6：live map-border.tsx
     assert r.has_exporter("map_border", "png")    # P6：drawChromeMapBorder
     assert r.has_exporter("graticule", "png")     # P6：spec 组件 → _drawGraticules
-    assert not r.has_renderer("inset_map")        # planned：仍未实现
+    assert r.has_renderer("inset_map")            # v2 P1：live inset-map.tsx
+    assert r.has_exporter("inset_map", "png")     # v2 P1：drawChromeInset
     for t in ("legend", "categorical_legend", "continuous_colorbar"):
         assert r.has_renderer(t)
         # ADR-0081：图例族经 spec 组件导出（共享 resolver 路径）
@@ -183,7 +184,8 @@ def test_renderer_registry_honesty():
         assert r.has_exporter(t, "png")
     assert r.has_exporter("export_layout", "pdf")
     assert not r.has_renderer("export_layout")
-    assert not r.has_renderer("inset_map")  # planned 不伪装 native
+    # v2 注记框架：annotation 导出真值（此前矩阵谎报 exporters=[]）
+    assert r.has_exporter("annotation", "png")
 
 
 def test_resolver_legend_family_model_aware():
@@ -200,29 +202,42 @@ def test_resolver_legend_family_model_aware():
 
 
 def test_resolver_enforces_conflicts():
-    """descriptor.conflicts 在 selection 层执行：互斥并存时保留 priority 小者.
+    """v2：图例族 type 级互斥废除 —— 同批 selection 中 legend 与 colorbar
+    并存合法（各自绑定不同语义层）；descriptor.conflicts 执行路径由仍在
+    冲突表中的类型对驱动（机制本身不得被误删）。"""
 
-    seed 组合模板没有 legend 族双槽，走 _enforce_conflicts 正向路径需要
-    显式构造双图例并存的 selection。
-    """
     from app.services.gis_harness.component_resolver import ComponentSelection
 
     resolver = get_component_resolver()
     comp_reg = get_component_registry()
 
+    # 图例族共存：type 级冲突废除后双双保留
     sel = ComponentSelection(
         selected=["legend", "continuous_colorbar", "title"],
         component_templates={"legend": "legend/academic", "continuous_colorbar": "colorbar/horizontal"},
     )
     resolver._enforce_conflicts(sel, comp_reg)
-    # colorbar priority=15 < legend=16 → 保留 colorbar，剔除 legend
     assert "continuous_colorbar" in sel.selected
-    assert "legend" not in sel.selected
-    assert any(r.get("reason") == "conflict_with:continuous_colorbar" for r in sel.rejected)
-    assert "conflict_resolution_applied" in sel.reason_codes
-    # 被剔除类型的组件模板引用同步清理
-    assert "legend" not in sel.component_templates
-    assert sel.component_templates["continuous_colorbar"] == "colorbar/horizontal"
+    assert "legend" in sel.selected
+    assert "conflict_resolution_applied" not in sel.reason_codes
+
+    # 仍登记为互斥的类型对：剔除机制继续成立（临时 descriptor 验证）
+    from app.lib.cartography.component_registry import MapComponentDescriptor
+
+    comp_reg.register(MapComponentDescriptor(
+        id="_tmp_a", category="t", type="_tmp_a", conflicts=["_tmp_b"], priority=10))
+    comp_reg.register(MapComponentDescriptor(id="_tmp_b", category="t", type="_tmp_b", priority=20))
+    try:
+        sel2 = ComponentSelection(selected=["_tmp_a", "_tmp_b"])
+        resolver._enforce_conflicts(sel2, comp_reg)
+        assert "_tmp_a" in sel2.selected
+        assert "_tmp_b" not in sel2.selected
+        assert any(r.get("reason") == "conflict_with:_tmp_a" for r in sel2.rejected)
+        assert "conflict_resolution_applied" in sel2.reason_codes
+    finally:
+        for tmp in ("_tmp_a", "_tmp_b"):
+            comp_reg._by_id.pop(tmp, None)
+            comp_reg._by_type.pop(tmp, None)
 
 
 def test_resolver_selection_stays_conflict_free_for_models():
@@ -262,16 +277,25 @@ def test_resolver_rejects_incompatible_wired_composition():
 
 
 def test_resolver_rejects_planned_inset():
-    """inset_map 槽位存在（schema/registry/composition 支持）但 planned 被排除."""
+    """v2：inset_map 渲染器落地转 native —— 槽位仍受 required_context 门控
+    （无 inset_context 不空选；bbox 由 Agent 填充，空 bbox 渲染端自弃）。"""
     from app.lib.cartography.composition_templates import get_composition_template_registry
     acad = get_composition_template_registry().get("composition.academic_map")
     assert any(s.id == "inset_map" for s in acad.component_slots)
+    # 无 inset_context → 槽位不选出（missing_context）
     sel = get_component_resolver().resolve(
         composition_template_id="composition.academic_map",
         map_model_id="visual_heatmap", output_target="pdf",
     )
     assert "inset_map" not in sel.selected
-    assert any(r.get("reason") == "runtime_planned" for r in sel.rejected)
+    assert any(r.get("reason", "").startswith("missing_context") for r in sel.rejected)
+    # 有 inset_context → 选出（native）
+    sel_ctx = get_component_resolver().resolve(
+        composition_template_id="composition.academic_map",
+        map_model_id="visual_heatmap", output_target="pdf",
+        available_context=["inset_context"],
+    )
+    assert "inset_map" in sel_ctx.selected
 
 
 def test_inset_map_component_type_supported():
@@ -325,19 +349,64 @@ def test_composition_validation_required_and_forbidden():
 def test_composition_validation_conflicts_and_planned():
     from app.lib.cartography.composition_validation import validate_component_composition
 
-    # legend 与 continuous_colorbar 互斥并存 → conflicting_components
+    # v2：未绑定的 legend 与 colorbar 并存不再冲突（type 级互斥废除）；
+    # 同一 layerId 上图例族竞争才是 binding 级冲突。
     comps = [
         CartographyComponent(id="t", type="title", position="top-center", priority=10),
         CartographyComponent(id="lg", type="legend", position="bottom-left", priority=16),
         CartographyComponent(id="cb", type="continuous_colorbar", position="bottom-right", priority=15),
     ]
     res = validate_component_composition(comps)
-    assert any(v.code == "conflicting_components" for v in res.errors)
+    assert not any(v.code == "conflicting_components" for v in res.errors)
+    assert not any(v.code == "binding_conflict" for v in res.errors)
 
-    # planned 组件（inset_map）进入最终地图 → error
-    comps2 = comps[:1] + [CartographyComponent(id="im", type="inset_map", position="top-right", priority=65)]
-    res2 = validate_component_composition(comps2)
-    assert any(v.code == "planned_component_present" for v in res2.errors)
+    # 同一 layerId：离散图例 + 连续色条 → binding_conflict
+    comps_bound = [
+        CartographyComponent(id="t", type="title", position="top-center", priority=10),
+        CartographyComponent(id="lg", type="legend", position="bottom-left", priority=16,
+                             options={"layerId": "heat-1"}),
+        CartographyComponent(id="cb", type="continuous_colorbar", position="bottom-right", priority=15,
+                             options={"layerId": "heat-1"}),
+    ]
+    res_bound = validate_component_composition(comps_bound)
+    assert any(v.code == "binding_conflict" for v in res_bound.errors)
+    # 不同 layerId：各自图例合法（Scenario A：heatmap→colorbar + choropleth→legend）
+    comps_multi = [
+        CartographyComponent(id="t", type="title", position="top-center", priority=10),
+        CartographyComponent(id="cb", type="continuous_colorbar", position="bottom-right", priority=15,
+                             options={"layerId": "heat-1"}),
+        CartographyComponent(id="lg2", type="legend", position="bottom-left", priority=16,
+                             options={"layerId": "district-fill"}),
+    ]
+    res_multi = validate_component_composition(comps_multi)
+    assert not any(v.code == "binding_conflict" for v in res_multi.errors)
+
+    # 同一 layerId 同型重复 → binding_conflict
+    comps_dup = [
+        CartographyComponent(id="lg", type="legend", position="bottom-left", priority=16,
+                             options={"layerId": "fill-1"}),
+        CartographyComponent(id="lg2", type="legend", position="bottom-left", priority=16,
+                             options={"layerId": "fill-1"}),
+    ]
+    res_dup = validate_component_composition(comps_dup)
+    assert any(v.code == "binding_conflict" for v in res_dup.errors)
+
+    # planned 组件进入最终地图 → error（机制锁：临时把 inset_map 打回
+    # planned；seed 目录 v2 已无 planned 组件 —— 渲染器落地转 native）
+    from app.lib.cartography.component_registry import get_component_registry
+    desc = get_component_registry().get("inset_map")
+    assert desc is not None
+    original_status = desc.runtime_status
+    desc.runtime_status = "planned"
+    try:
+        comps2 = [
+            CartographyComponent(id="t", type="title", position="top-center", priority=10),
+            CartographyComponent(id="im", type="inset_map", position="top-right", priority=65),
+        ]
+        res2 = validate_component_composition(comps2)
+        assert any(v.code == "planned_component_present" for v in res2.errors)
+    finally:
+        desc.runtime_status = original_status
 
 
 def test_composition_validation_orphan_and_position():

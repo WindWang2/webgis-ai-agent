@@ -75,7 +75,13 @@ _SUPPORT_MATRIX: Dict[str, ComponentRendererSupport] = {
         note="ADR-0081：导出绘制渐变 ramp + min/max/unit（与 live colorbar 同形态）",
     ),
     "annotation": ComponentRendererSupport(
-        component_type="annotation", renderers=[LIVE_TARGET], exporters=[],
+        component_type="annotation", renderers=[LIVE_TARGET],
+        exporters=["png", "pdf", "svg"],
+        note=(
+            "终审 F1：annotation 导出走 drawChromeAnnotation（文本注释卡）；"
+            "v2 注记框架扩展 callout/group 同链导出。此前矩阵谎报 exporters=[]"
+            "（exporter 实际消费）—— 真值修复"
+        ),
     ),
     "attribution": ComponentRendererSupport(
         component_type="attribution", renderers=[LIVE_TARGET],
@@ -121,9 +127,17 @@ _SUPPORT_MATRIX: Dict[str, ComponentRendererSupport] = {
         ),
     ),
     # ── planned 家族（schema/registry/composition 支持，renderer 未实现）──
+    # v2：inset_map 渲染器落地（live inset-map.tsx 静态 SVG 投影 + 导出
+    # drawChromeInset 同链）—— 从 planned 家族转入 native 真值。
     "inset_map": ComponentRendererSupport(
-        component_type="inset_map", renderers=[], exporters=[],
-        note="runtime_status=planned：区位插图能力已建模，渲染器未实现",
+        component_type="inset_map",
+        renderers=["interactive"],
+        exporters=["png", "pdf", "svg"],
+        note=(
+            "v2 P1 全链路：live 轻量静态 SVG 投影（不 mount 第二个 maplibre "
+            "runtime）+ 导出 drawChromeInset 同链；bbox 未填充时两侧同弃"
+            "（不虚构范围）"
+        ),
     ),
 }
 

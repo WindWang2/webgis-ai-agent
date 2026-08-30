@@ -31,7 +31,7 @@ RENDERER_EXEMPT = {
     "export_layout",    # exporter-side only
     # "graticule" moved out (P3): live renderer landed — rendererRequired=true
     "map_border",       # export frame (renderer optional)
-    "inset_map",        # runtime_status=planned (schema/registry only)
+    # "inset_map" moved out (v2): live renderer landed — rendererRequired=true
 }
 
 

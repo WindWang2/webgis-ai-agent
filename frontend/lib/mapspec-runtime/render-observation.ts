@@ -94,6 +94,7 @@ const CHROME_RENDERABLE_TYPES: ReadonlySet<string> = new Set([
   'title', 'subtitle', 'north_arrow', 'scale_bar', 'attribution',
   'continuous_colorbar', 'legend', 'categorical_legend',
   'annotation', 'statistics_panel', 'chart_panel', 'map_border', 'graticule',
+  'inset_map',
 ]);
 
 /**

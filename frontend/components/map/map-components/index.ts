@@ -17,6 +17,7 @@ import './statistics-panel';
 import './chart-panel';
 import './map-border';
 import './graticule';
+import './inset-map';
 
 export function renderComponent(component: MapSpecComponent, ctx: RendererContext): React.ReactNode {
   const renderer = getComponentRenderer(component.type);

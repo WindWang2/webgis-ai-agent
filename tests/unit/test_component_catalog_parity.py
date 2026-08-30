@@ -61,6 +61,8 @@ def test_catalog_exports_renderer_and_exporter_support():
     assert by_type["title"]["rendererSupport"] == ["interactive"]
     assert sorted(by_type["title"]["exporterSupport"]) == ["pdf", "png", "svg"]
     assert by_type["graticule"]["rendererSupport"] == ["interactive"]  # P3 live 落地
-    assert by_type["inset_map"]["rendererSupport"] == []
-    assert by_type["inset_map"]["runtimeStatus"] == "planned"
-    assert by_type["inset_map"]["rendererRequired"] is False
+    # v2 P1：inset_map 渲染器落地 —— native + rendererRequired
+    assert by_type["inset_map"]["rendererSupport"] == ["interactive"]
+    assert sorted(by_type["inset_map"]["exporterSupport"]) == ["pdf", "png", "svg"]
+    assert by_type["inset_map"]["runtimeStatus"] == "native"
+    assert by_type["inset_map"]["rendererRequired"] is True

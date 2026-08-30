@@ -64,6 +64,12 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         default_position="bottom-right", allowed_positions=["bottom-right", "bottom-left", "bottom-center", "none"],
         cardinality="single", priority=20,
     ),
+    # v2（component library 2.0）：图例族 cardinality=single → multiple。
+    # 多图层地图（heatmap 主层 + choropleth 参考层）本来就是
+    # 「colorbar + 分级图例」并存的合法构成；冲突语义从 type 级（谁在场
+    # 都报错）升级为 binding 级 —— 同一 layerId 上图例族互相竞争才是冲突
+    # （composition_validation.validate_binding_conflicts 执行），不同层
+    # 各自的图例/色条互不干涉。
     MapComponentDescriptor(
         id="legend", category="legend.graduated", type="legend",
         name="Graduated Legend", name_zh="分级图例",
@@ -73,7 +79,7 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
         default_variant="academic", variants=["academic", "compact", "report"],
         default_position="bottom-left", allowed_positions=["bottom-left", "bottom-right", "top-left", "top-right", "none"],
-        cardinality="single", requires_layer_binding=True, priority=16,
+        cardinality="multiple", requires_layer_binding=True, priority=16,
     ),
     MapComponentDescriptor(
         id="continuous_colorbar", category="legend.continuous_colorbar", type="continuous_colorbar",
@@ -84,8 +90,7 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
         default_variant="horizontal", variants=["horizontal", "vertical", "slim"],
         default_position="bottom-right", allowed_positions=["bottom-right", "bottom-left", "bottom-center", "top-right", "none"],
-        cardinality="single", requires_layer_binding=True, priority=15,
-        conflicts=["legend", "categorical_legend"],
+        cardinality="multiple", requires_layer_binding=True, priority=15,
     ),
     MapComponentDescriptor(
         id="categorical_legend", category="legend.categorical", type="categorical_legend",
@@ -95,8 +100,7 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
         default_variant="academic", variants=["academic", "compact", "report"],
         default_position="bottom-left", allowed_positions=["bottom-left", "bottom-right", "top-left", "none"],
-        cardinality="single", requires_layer_binding=True, priority=17,
-        conflicts=["continuous_colorbar"],
+        cardinality="multiple", requires_layer_binding=True, priority=17,
     ),
     MapComponentDescriptor(
         id="title", category="annotation.title", type="title",
@@ -166,7 +170,9 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
         default_variant="default", variants=["default", "compact", "transparent", "report"],
         default_position="top-left", allowed_positions=["top-left", "top-right", "bottom-left", "bottom-right", "none"],
-        cardinality="zero_or_one", priority=41,
+        # v2：多图表产品（各一 chart：各区数量/类别构成/排名）—— 每实例
+        # 独立 id/chartRef/placement；上游 artifact 协议复用 ref:chart-*。
+        cardinality="multiple", priority=41,
     ),
     MapComponentDescriptor(
         id="export_layout", category="export.page_layout", type="export_layout",
@@ -181,19 +187,27 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         id="annotation", category="annotation.text", type="annotation",
         name="Annotation", name_zh="文本注记",
         placement_domain="chrome", supported_outputs=["interactive", "png", "pdf", "svg"],
-        renderer_support=["interactive"], exporter_support=[],
-        default_variant="default", variants=["default"],
+        renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
+        # v2：注记框架 —— text（静态卡）/ callout（anchor 坐标 + 引线）/ 
+        # group（一个逻辑组 → 多条相关注记，options.items 有界）。三种形态
+        # 共享同一语义模型，live 与 export 同链（exporter.drawChromeAnnotation）。
+        default_variant="text", variants=["text", "callout", "group"],
         default_position="top-left", allowed_positions=["top-left", "top-right", "bottom-left", "bottom-right", "none"],
         cardinality="multiple", priority=55,
     ),
     MapComponentDescriptor(
         id="inset_map", category="inset.map", type="inset_map",
         name="Inset Map", name_zh="插图",
-        placement_domain="overlay", supported_outputs=["interactive", "png", "pdf"],
-        renderer_support=[], exporter_support=[],
+        # v2（P1 全链路）：live SVG 渲染器（inset-map.tsx，轻量静态投影 ——
+        # 不 mount 第二个 maplibre runtime）+ 导出 drawChromeInset 同链；
+        # renderer/exporter 真值由矩阵对账。bbox 未填充时渲染端自弃
+        # （不虚构范围），resolver 需要 inset_context 才会选出（防空选）。
+        placement_domain="overlay", supported_outputs=["interactive", "png", "pdf", "svg"],
+        renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
         default_variant="overview", variants=["overview", "location"],
         default_position="top-right", allowed_positions=["top-right", "top-left", "bottom-right", "bottom-left"],
-        cardinality="zero_or_one", priority=65, runtime_status="planned",
+        cardinality="zero_or_one", priority=65, runtime_status="native",
+        required_context=["inset_context"],
     ),
 ]
 
