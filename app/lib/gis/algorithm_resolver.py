@@ -196,8 +196,8 @@ class AlgorithmResolver:
                 reason="no_algorithm_for_capability",
             )
 
-        # ADR-0083：ExecutionPolicy 自动推断（规模 > 导出语境 > 定量输出 >
-        # 小数据 > 默认均衡）；hint 仅来自 planner 语境，用户不选。
+        # ADR-0083：ExecutionPolicy 自动推断（hint > 导出语境 > 规模 >
+        # 定量输出 > 小数据 > 默认均衡）；hint 仅来自 planner 语境，用户不选。
         feature_count = None
         if profile is not None:
             fc = profile.get("featureCount")

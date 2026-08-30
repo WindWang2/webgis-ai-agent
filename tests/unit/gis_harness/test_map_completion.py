@@ -881,3 +881,61 @@ def test_projection_line_mapping():
 
 def test_viewport_no_bbox_warning_code_exists():
     assert F_VIEWPORT_NO_BBOX == "viewport_no_bbox"
+
+
+# ── PR 终审回归 ──────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_fingerprint_gate_survives_truncation(clean_session):
+    """行指纹 >512 字符（≥8 行长 ref）时去重门仍生效（终审 F2：存储侧
+    截断、比较侧全量 → 永不匹配 → 门失效、每触发点重跑）。"""
+    from app.services.session_plan import load_session_plan
+
+    ref = await _store_ref(clean_session)
+    chapter = _chapter(bound_ref=ref)
+    # 长度超 512：附加带长 ref 的行
+    for i in range(8):
+        chapter["analysis_steps"].append(
+            {
+                "capability": f"cap_{i}",
+                "purpose": "pad",
+                "status": "done",
+                "bound_ref": f"ref:geojson-pad-{i}-{'x' * 40}",
+                "optional": True,
+            }
+        )
+    await _seed_mapspec(clean_session)
+    await _save_plan(clean_session, chapter)
+    first = await maybe_finalize_map_product(clean_session)
+    assert first is not None and first.status == STATUS_COMPLETE
+    plan = await load_session_plan(clean_session)
+    block = plan.gis_chapter["map_product"]
+    assert len(block["rows_fingerprint"]) == 512  # 存储侧确实截断
+    # 门在截断下仍跳过（修复前此处会重跑）
+    assert await maybe_finalize_map_product(clean_session) is None
+
+
+@pytest.mark.asyncio
+async def test_transient_descriptor_error_is_not_expiry(clean_session):
+    """descriptor 探测持续异常 = unknown（终审 F4）：跳过不判 —— 不把
+    存储抖动持久化成假 failed。确认缺失（None）才是 expired。"""
+    from app.services import session_data as sd_module
+
+    ref = await _store_ref(clean_session)
+    chapter = _chapter(bound_ref=ref)
+    await _seed_mapspec(clean_session)
+
+    original = sd_module.session_data_manager.get_ref_descriptor
+
+    async def _flaky(sid, ref_id):
+        raise RuntimeError("transient store error")
+
+    # 持续异常 → unknown → 不产 expired finding、不 failed
+    sd_module.session_data_manager.get_ref_descriptor = _flaky  # type: ignore[assignment]
+    try:
+        result = await run_map_finalization(clean_session, chapter=chapter)
+    finally:
+        sd_module.session_data_manager.get_ref_descriptor = original  # type: ignore[assignment]
+    assert not any(f.code == F_ARTIFACT_EXPIRED for f in result.findings)
+    assert result.status != STATUS_FAILED

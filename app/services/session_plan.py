@@ -692,16 +692,18 @@ async def _register_plan_artifacts(
         )
     except Exception:  # noqa: BLE001
         descriptor = None
-    for cap in hits:
-        await register_artifact(
-            session_id,
-            artifact_id=geojson_ref,
-            artifact_type=outputs[0] if outputs else None,
-            producer_capability=cap,
-            producer_tool=tool_name,
-            producer_node=cap,
-            inputs=inputs,
-            descriptor=descriptor,
-            metadata={"seam": "plan_apply"},
-            lock=lock,
-        )
+    # 单次注册（review 终审 F1：N 个命中能力此前循环 N 次全量账本
+    # read-modify-save，且标量 producer_capability 只留最后一个）——
+    # 主能力作 producer，全部命中能力入 metadata（血统能力清单保留）。
+    await register_artifact(
+        session_id,
+        artifact_id=geojson_ref,
+        artifact_type=outputs[0] if outputs else None,
+        producer_capability=hits[0],
+        producer_tool=tool_name,
+        producer_node=hits[0],
+        inputs=inputs,
+        descriptor=descriptor,
+        metadata={"seam": "plan_apply", "capabilities": list(hits)[:8]},
+        lock=lock,
+    )

@@ -262,9 +262,15 @@ export function buildSelectedFeatureSnapshot(
   };
 }
 
-// ADR-0081 披露去噪（review H-6）：同一会话内相同的 finalization 通知
-// 只 toast 一次 —— 卡在 needs_repair 的会话每个触发点都会重发披露。
-let lastFinalizationNotice: { sessionId: string; notice: string } | null = null;
+// ADR-0081 披露去噪（review H-6）：同一会话内**同状态**的相同 finalization
+// 通知只 toast 一次 —— 卡在 needs_repair 的会话每个触发点都会重发披露；
+// 状态变化（needs_repair → failed 等）仍会再次提醒（终审 F2：纯文本匹配
+// 会永久吞掉回归信号）。
+let lastFinalizationNotice: {
+  sessionId: string;
+  status: string;
+  notice: string;
+} | null = null;
 
 function extractEventSessionId(data: unknown): string | undefined {
   if (typeof data === 'object' && data !== null && typeof (data as Record<string, unknown>).session_id === 'string') {
@@ -929,15 +935,18 @@ export function useSSEStream(
           // 异常态的用户可见披露（toast）；完成态零噪声。同一会话内相同
           // 通知去重（review H-6）：卡在 needs_repair 的会话每个触发点都
           // 重发披露，重复 toast 只制造噪声不带来新信息。
+          const currentStatus = String(payload.status ?? '');
           if (
             lastFinalizationNotice &&
-            lastFinalizationNotice.sessionId === sessionIdRef.current &&
+            lastFinalizationNotice.sessionId === (sessionIdRef.current ?? '') &&
+            lastFinalizationNotice.status === currentStatus &&
             lastFinalizationNotice.notice === notice
           ) {
             // 同态重复披露 —— 静默
           } else {
             lastFinalizationNotice = {
               sessionId: sessionIdRef.current ?? '',
+              status: currentStatus,
               notice,
             };
             try {

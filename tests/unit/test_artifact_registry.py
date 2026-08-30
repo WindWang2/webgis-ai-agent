@@ -411,3 +411,40 @@ async def test_ledger_bounded(clean_session):
     # superseded 的前 10 个被优先淘汰
     remaining = {r.artifact_id for r in records}
     assert all(a not in remaining for a in ids[:10])
+
+
+@pytest.mark.asyncio
+async def test_gc_with_default_chapter_loads_plan_fresh(clean_session):
+    """终审 F3：chapter 缺省 → 实时加载计划 —— 行绑定的 ref 不因
+    默认参数被排除在活集合外而遭 GC 误删。"""
+    from app.services.artifact_registry import collect_orphan_refs
+    from app.services.session_plan import SessionPlan, _init_progress, save_session_plan
+    import uuid as _uuid
+
+    ref = await _store_geojson(clean_session)
+    await register_artifact(
+        clean_session, artifact_id=ref, producer_capability="poi_query"
+    )
+    chapter = {
+        "plan_id": "p1",
+        "query": "q",
+        "data_requirements": [
+            {"capability": "poi_query", "status": "available", "bound_ref": ref}
+        ],
+        "analysis_steps": [],
+        "map_layers": [],
+        "components": [],
+        "template_selection": {},
+    }
+    plan = SessionPlan(
+        envelope_id=f"env-{_uuid.uuid4().hex[:8]}",
+        session_id=clean_session,
+        user_goal="q",
+        gis_chapter=chapter,
+        progress=_init_progress(chapter),
+    )
+    await save_session_plan(plan)
+    # chapter=None（默认）→ 必须实时重载，行绑定保护 ref
+    deleted = await collect_orphan_refs(clean_session)  # mapspec 缺省同样重载
+    assert deleted == []
+    assert await session_data_manager.get_ref_descriptor(clean_session, ref) is not None

@@ -441,12 +441,36 @@ async def mark_status(session_id: str, artifact_id: str, status: str) -> bool:
         return False
 
 
+async def _load_chapter_fresh(session_id: str) -> Optional[Dict[str, Any]]:
+    """从 store 重载当前章节（活引用必须来自实时真相，不吃调用方快照）。"""
+    try:
+        from app.services.session_plan import load_session_plan
+
+        plan = await load_session_plan(session_id)
+        return plan.gis_chapter if plan is not None else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def _load_mapspec_fresh(session_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        from app.services.mapspec_store import mapspec_store
+
+        return await mapspec_store.get_mapspec(session_id)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 async def load_records_for_plan(
     session_id: str,
     chapter: Optional[Dict[str, Any]],
     mapspec: Optional[Dict[str, Any]],
 ) -> set[str]:
-    """当前活引用集合（章节行 + MapSpec sources + 组件 chartRef）。"""
+    """当前活引用集合（章节行 + MapSpec sources + 组件 chartRef）。
+
+    注意：本函数不做 I/O —— 传 None 只表示"该来源缺席"；sweep/GC 在
+    缺省时先经 `_load_chapter_fresh`/`_load_mapspec_fresh` 取实时真相。
+    """
     live: set[str] = set()
 
     def _add(ref: Any) -> None:
@@ -495,6 +519,10 @@ async def sweep_statuses(
     empty: Dict[str, List[str]] = {"expired": [], "stale": [], "valid": []}
     if not session_id:
         return empty
+    # chapter 缺省 → 实时加载（review 终审 F3：默认参数此前把行绑定整个
+    # 排除在活集合外，行绑定产物会被误判 stale）
+    if chapter is None:
+        chapter = await _load_chapter_fresh(session_id)
     try:
         records = await _load_records(session_id, session_data_manager)
     except Exception:  # noqa: BLE001
@@ -503,12 +531,7 @@ async def sweep_statuses(
         return empty
 
     if mapspec is None:
-        try:
-            from app.services.mapspec_store import mapspec_store
-
-            mapspec = await mapspec_store.get_mapspec(session_id)
-        except Exception:  # noqa: BLE001
-            mapspec = None
+        mapspec = await _load_mapspec_fresh(session_id)
 
     async def _probe(aid: str) -> Tuple[str, Optional[dict]]:
         try:
@@ -588,13 +611,13 @@ async def collect_orphan_refs(
         records = await _load_records(session_id, session_data_manager)
         if not records:
             return []
+        # 调用方快照只作加速初筛；活引用真相在锁内实时重载
+        # （review 终审 F2：此前"锁内复检"用同一份陈旧快照重算纯函数，
+        # 是空操作 —— 并发 rebind 刚救活的 ref 仍会被删）。
+        if chapter is None:
+            chapter = await _load_chapter_fresh(session_id)
         if mapspec is None:
-            try:
-                from app.services.mapspec_store import mapspec_store
-
-                mapspec = await mapspec_store.get_mapspec(session_id)
-            except Exception:  # noqa: BLE001
-                mapspec = None
+            mapspec = await _load_mapspec_fresh(session_id)
         live = await load_records_for_plan(session_id, chapter, mapspec)
         orphans = [
             aid
@@ -604,8 +627,13 @@ async def collect_orphan_refs(
         if not orphans:
             return []
         async with session_lock_registry.lock(session_id, fail_on_degraded=False):
-            # 锁内复检活引用（并发 rebind 保护）
-            live_now = await load_records_for_plan(session_id, chapter, mapspec)
+            # 锁内复检：重载实时章节与 spec，重算活集合（真正的并发 rebind
+            # 保护 —— 此刻任何行/源/组件指向的 ref 都不可删）
+            fresh_chapter = await _load_chapter_fresh(session_id)
+            fresh_mapspec = await _load_mapspec_fresh(session_id)
+            live_now = await load_records_for_plan(
+                session_id, fresh_chapter, fresh_mapspec
+            )
             for aid in orphans:
                 if aid in live_now:
                     continue

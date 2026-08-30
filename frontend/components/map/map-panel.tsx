@@ -814,8 +814,9 @@ export function MapPanel({
   const CHROME_RENDERABLE_TYPES = new Set([
     'title', 'subtitle', 'north_arrow', 'scale_bar', 'attribution',
     'continuous_colorbar', 'legend', 'categorical_legend',
-    'annotation', 'statistics_panel', 'chart_panel',
-  ])
+    'annotation', 'statistics_panel', 'chart_panel', 'map_border',
+  ])  // 终审 F4：map_border 有 live 渲染器（P6）—— map_border-only spec
+     // 此前不挂 MapSpecChrome，边框导出得出来、live 画不出来。
   const enabledSpecComponents = specComponents.filter((c) => c.enabled !== false)
   const hasSpecChrome = enabledSpecComponents.some(
     (c) => CHROME_RENDERABLE_TYPES.has(c.type),

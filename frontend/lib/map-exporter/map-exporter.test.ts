@@ -456,7 +456,32 @@ describe('runExport — spec 组件事实源（v3 Phase H）', () => {
 });
 
 describe('Scenario G — live vs PNG vs PDF vs SVG 关键组件语义一致（ADR-0081/0084）', () => {
-  it('三种格式共用同一 chrome 模型输入（组件语义与格式无关）', async () => {
+  it('三种格式共用同一 chrome 模型输入（组件语义与格式无关；经真实 spec 提交 seam）', async () => {
+    // 终审修复：此前空 deps → getCommittedMapSpec()=null → 三个空模型
+    // 互相相等（恒真）。现在经真实 seam 提交带组件的 spec。
+    const { commitMapSpecDocument, resetLiveState } = await import(
+      '@/lib/mapspec/session-cursor'
+    );
+    const spec = {
+      layers: [
+        {
+          id: 'ly', visible: true, type: 'fill',
+          legend_spec: { type: 'continuous', min: 0, max: 10, palette_colors: ['#ffffb2', '#f03b20'] },
+        },
+      ],
+      sources: {},
+      layout: {
+        components: [
+          { id: 'title', type: 'title', enabled: true, options: { text: '成都小学分布' } },
+          { id: 'scale-bar', type: 'scale_bar', enabled: true },
+          {
+            id: 'colorbar-main', type: 'continuous_colorbar', enabled: true,
+            options: { layerId: 'ly' },
+          },
+        ],
+      },
+    };
+    expect(commitMapSpecDocument(spec, 1)).toBe(true);
     const composeSpy = vi
       .spyOn(MapExporterEngine, 'composeLayout')
       .mockImplementation((async () => createMockCanvas()) as any);
@@ -468,22 +493,33 @@ describe('Scenario G — live vs PNG vs PDF vs SVG 关键组件语义一致（AD
       _canvas: unknown,
       _title: unknown,
       _subtitle: unknown,
-      options: Record<string, unknown>,
+      options: Record<string, any>,
     ) => {
       chromes.push(options.chrome);
       return Promise.resolve(createMockCanvas());
     }) as unknown) as any);
 
-    for (const format of ['png', 'svg', 'pdf'] as const) {
-      const deps = createDeps();
-      mockFetchUpload(`/exports/map.${format}`, `map.${format}`);
-      const outcome = await runExport(deps, { title: 'T', format });
-      expect(outcome.ok).toBe(true);
+    try {
+      for (const format of ['png', 'svg', 'pdf'] as const) {
+        const deps = createDeps();
+        mockFetchUpload(`/exports/map.${format}`, `map.${format}`);
+        const outcome = await runExport(deps, { title: '成都小学分布', format });
+        expect(outcome.ok).toBe(true);
+      }
+      expect(chromes.length).toBe(3);
+      // 非空：模型确实携带 spec 组件（title/scale/colorbar）—— 空模型恒等
+      // 的恒真断言已不可能
+      const first = chromes[0] as Record<string, any>;
+      expect(first?.fromSpec).toBe(true);
+      expect(first?.title?.text).toBe('成都小学分布');
+      expect(first?.scaleBar).toBeDefined();
+      expect(first?.colorbar).toBeDefined();
+      // 三格式 chrome 模型完全一致（共享 resolver + 布局求解器在模型构建
+      // 层保证 parity —— 格式只影响画布封装）
+      expect(chromes[0]).toEqual(chromes[1]);
+      expect(chromes[1]).toEqual(chromes[2]);
+    } finally {
+      resetLiveState();
     }
-    expect(chromes.length).toBe(3);
-    // 同一 spec/会话下三格式的 chrome 模型输入完全一致（共享 resolver +
-    // 布局求解器在模型构建层保证 parity —— 格式只影响画布封装）
-    expect(chromes[0]).toEqual(chromes[1]);
-    expect(chromes[1]).toEqual(chromes[2]);
   });
 });

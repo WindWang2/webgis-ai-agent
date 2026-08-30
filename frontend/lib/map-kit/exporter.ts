@@ -3,6 +3,7 @@ import type { LegendSpec } from './types';
 import { resolveStyle, type LayoutStyle } from './layout-style';
 import {
   buildExportChrome,
+  drawChromeAnnotation,
   drawChromeAttribution,
   drawChromeChartPanel,
   drawChromeColorbar,
@@ -267,7 +268,7 @@ export function composeLayout(
       _drawGraticules(ctx, { dark_mode, scalePx, targetW, targetH, mapCenter, mapZoom, graticuleColor: layoutStyle.graticuleColor, pxPerLogical });
     }
 
-    // 4.6 Map Border（P6：全画布图框，铺在其余 chrome 之下）
+    // 4.6 Map Border（P6：全画布图框；描边在 chrome 文本之下、栅格之上）
     if (chrome.border) {
       drawChromeMapBorder(d, chrome.border);
     }
@@ -289,12 +290,14 @@ export function composeLayout(
       );
     }
 
-    // 5.5 浮动面板（statistics/chart —— 此前导出完全缺席，live-only）
+    // 5.5 浮动面板（statistics/chart/annotation —— 终审 F1：注释卡导出）
     for (const panel of chrome.panels) {
       if (panel.kind === 'statistics') {
         drawChromeStatsPanel(d, panel, { marginX, marginY: stackOffset(panel, mPanel) });
       } else if (panel.kind === 'chart') {
         drawChromeChartPanel(d, panel, { marginX, marginY: stackOffset(panel, mPanel) });
+      } else if (panel.kind === 'annotation') {
+        drawChromeAnnotation(d, panel, { marginX, marginY: stackOffset(panel, mPanel) });
       }
     }
 

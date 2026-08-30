@@ -66,24 +66,30 @@ const BOTTOM_STACK_STEP_PX = 36;
 export function buildBottomSlotIndexes(
   renderable: MapSpecComponent[],
 ): Map<MapSpecComponent, number> {
+  // ADR-0084（终审 F3）：底槽迁移到共享求解器 —— 此前按声明序堆叠，
+  // 与导出侧的 (priority, 声明序) 排序不一致（legend/categorical_legend
+  // 声明序不同时 live 与导出的堆叠次序相反）。
   const perSlotCount: Record<string, number> = {};
-  const perSlotStacked: Record<string, number> = {};
   for (const c of renderable) {
     const pos = resolvePosition(c);
-    if (pos in BOTTOM_STACK_BASE) perSlotCount[pos] = (perSlotCount[pos] ?? 0) + 1;
+    if (pos.startsWith('bottom-')) perSlotCount[pos] = (perSlotCount[pos] ?? 0) + 1;
   }
+  const slotted = renderable.map((c) => ({
+    type: c.type,
+    anchor: resolvePosition(c),
+  }));
+  const layout = resolveSlotLayout(slotted);
   const indexes = new Map<MapSpecComponent, number>();
-  for (const c of renderable) {
-    const pos = resolvePosition(c);
-    if (!(pos in BOTTOM_STACK_BASE) || (perSlotCount[pos] ?? 0) <= 1) continue;
-    // scale_bar 恒为槽内第 0 层（贴底）；其余组件按 spec 声明序 1,2,… 上移
-    if (c.type === 'scale_bar') {
-      indexes.set(c, 0);
-    } else {
-      perSlotStacked[pos] = (perSlotStacked[pos] ?? 0) + 1;
-      indexes.set(c, perSlotStacked[pos]);
+  slotted.forEach((entry, i) => {
+    const resolved = layout.get(entry);
+    if (
+      resolved &&
+      resolved.slot.startsWith('bottom-') &&
+      (perSlotCount[resolved.slot] ?? 0) > 1
+    ) {
+      indexes.set(renderable[i], resolved.index);
     }
-  }
+  });
   return indexes;
 }
 

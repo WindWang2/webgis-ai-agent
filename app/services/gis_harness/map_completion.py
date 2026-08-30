@@ -43,6 +43,9 @@ MAX_FINALIZATION_PASSES = 2
 MAX_FINDINGS = 12
 MAX_FINDING_DETAIL = 160
 MAX_DISCLOSED_REPAIRS = 6
+# 修复记忆上限（> 披露上限：记忆是 one-shot 语义的载体，多组件/多层会话
+# 需要 >6 条 —— 挤掉最老记忆会复活 B-4 回归；披露面仍按 6 条有界）。
+MAX_REPAIR_MEMORY = 32
 # planner 的 role 词表是 primary | secondary | reference（planner.py 的
 # PlannedLayer.role）；"result" 只是历史防御值。secondary 是结果通道
 # （如成都场景的行政区统计 choropleth）—— 漏掉它会让副结果层整体逃逸
@@ -238,15 +241,45 @@ async def gather_completion_inputs(
     if pending_refs:
         # 并发取 descriptor（review F-2）：逐个 await 在 Redis 后端是每 ref
         # 一个串行往返 —— 1k 节点 ≈ 1k 次 RTT 且挂在工具回调关键路径上。
-        async def _fetch(ref: str) -> Optional[dict]:
+        # 三态区分（review 终审 F4）：ok（拿到 descriptor）/ missing（两次
+        # 探测都返回 None —— 确认驱逐，→ 过期 finding）/ unknown（持续
+        # 异常 —— 存储抖动，**从 refs 移除**：validators 对未知跳过，绝不
+        # 把瞬态错误判成过期并持久化假 failed）。
+        async def _fetch(ref: str) -> tuple[str, str, Optional[dict]]:
             try:
-                return await session_data_manager.get_ref_descriptor(session_id, ref)
-            except Exception:  # noqa: BLE001 — 单 ref 失败不阻断整体校验
-                return None
+                desc = await session_data_manager.get_ref_descriptor(session_id, ref)
+            except Exception:  # noqa: BLE001
+                desc = None
+                try:
+                    desc = await session_data_manager.get_ref_descriptor(
+                        session_id, ref
+                    )
+                    if desc is not None:
+                        return ref, "ok", desc
+                    return ref, "missing", None
+                except Exception:  # noqa: BLE001
+                    return ref, "unknown", None
+            if desc is not None:
+                return ref, "ok", desc
+            # None 可能是驱逐也可能是抖动 —— 复核一次
+            try:
+                recheck = await session_data_manager.get_ref_descriptor(
+                    session_id, ref
+                )
+                if recheck is not None:
+                    return ref, "ok", recheck
+                return ref, "missing", None
+            except Exception:  # noqa: BLE001
+                return ref, "unknown", None
 
         fetched = await asyncio.gather(*(_fetch(r) for r in pending_refs))
-        for ref, desc in zip(pending_refs, fetched):
-            refs[ref] = desc
+        for ref, state, desc in fetched:
+            if state == "ok":
+                refs[ref] = desc
+            elif state == "missing":
+                refs[ref] = None
+            else:  # unknown：从 refs 移除（validators 按未知跳过）
+                refs.pop(ref, None)
 
     # required 组件以 composition slot 族语义表达（slot id ≠ 组件类型名：
     # "legend" 槽可由 legend/categorical_legend/continuous_colorbar 任一满足
@@ -414,6 +447,8 @@ def validate_artifacts(
             continue
         desc = descriptors.get(ref)
         if desc is None:
+            if ref not in descriptors:
+                continue  # unknown（探测失败）：未知 ≠ 过期，跳过不判
             findings.append(
                 MapCompletionFinding(
                     code=F_ARTIFACT_EXPIRED,
@@ -552,7 +587,11 @@ def validate_layers(
                     ),
                     None,
                 )
-                if src_ref and descriptors.get(src_ref) is None:
+                if (
+                    src_ref
+                    and src_ref in descriptors
+                    and descriptors[src_ref] is None
+                ):
                     findings.append(
                         MapCompletionFinding(
                             code=F_ARTIFACT_EXPIRED,
@@ -796,7 +835,9 @@ def derive_result_bbox(
             continue
         desc = descriptors.get(ref)
         if not desc:
-            continue
+            if ref not in descriptors:
+                continue  # unknown（探测失败）：跳过不判（不虚构 bbox）
+            continue  # 确认缺失：无 bbox 可贡献（过期 finding 由 artifacts 侧报）
         bbox = desc.get("bbox")
         if not (isinstance(bbox, (list, tuple)) and len(bbox) == 4):
             continue
@@ -1094,30 +1135,33 @@ async def run_map_finalization(
         )
     else:
         result.viewport_status = "not_applicable"
-    # 截断放在 viewport finding 追加之后（review P3：否则第 13 条被静默丢弃）
+
+    # 状态先于披露截断计算（review 终审 F6）：findings[:MAX_FINDINGS] 只是
+    # 披露上界 —— 用全量 findings 判状态，否则 >12 条发现时第 13 条起的
+    # error 会被静默丢弃、误判 complete。
+    all_errors = [f for f in findings if f.severity == "error"]
     result.findings = findings[:MAX_FINDINGS]
     result.repairs_applied = all_repairs[:MAX_DISCLOSED_REPAIRS]
 
-    layer_err = [f for f in result.findings if f.code in (
+    layer_err = [f for f in findings if f.code in (
         F_NO_RESULT_LAYER, F_LAYER_MISSING, F_SOURCE_MISSING, F_LAYER_HIDDEN,
     )]
     result.layer_status = "issues" if layer_err else ("valid" if has_layers else "unknown")
-    comp_err = [f for f in result.findings if f.code in (
+    comp_err = [f for f in findings if f.code in (
         F_COMPONENT_MISSING, F_COMPONENT_DISABLED,
     )]
     result.component_status = "issues" if comp_err else "valid"
 
-    errors = [f for f in result.findings if f.severity == "error"]
-    unrepairable = [f for f in errors if f.repair is None]
-    still_repairable = [f for f in errors if f.repair is not None]
-    if not errors:
+    unrepairable = [f for f in all_errors if f.repair is None]
+    still_repairable = [f for f in all_errors if f.repair is not None]
+    if not all_errors:
         result.status = STATUS_COMPLETE
         result.summary = "map product validated"
     elif unrepairable:
         # 不可修复 error 在场 → failed 优先于 needs_repair（只靠修复到不了
         # complete，"needs repair" 会误导下一动作）。
         result.status = STATUS_FAILED
-        result.summary = f"{len(errors)} blocking findings ({len(unrepairable)} unrepairable)"
+        result.summary = f"{len(all_errors)} blocking findings ({len(unrepairable)} unrepairable)"
     else:
         result.status = STATUS_NEEDS_REPAIR
         result.summary = f"{len(still_repairable)} repairable findings remain"
@@ -1160,12 +1204,15 @@ def map_product_block(
 
     ``all_repairs``：跨轮累积修复记忆（prior ∪ 本轮 applied）。one-shot
     语义依赖它跨轮存活 —— 只写本轮 applied 时，下一次无修复运行会把
-    记忆清零，finalizer 将隔轮重新对抗用户决策（review B-4）。
+    记忆清零，finalizer 将隔轮重新对抗用户决策（review B-4）。披露面
+    ``repairs`` 有界（≤6）；完整记忆落 ``repair_memory``（≤32 —— 6 条
+    上限会在多组件/多层会话里挤掉最老记忆，复活同一回归，review 终审 F7）。
     """
     block = result.to_dict()
     if all_repairs is not None:
-        # 去重 + 有界（调用方通常已 union 去重，这里防御性兜底）
-        block["repairs"] = list(dict.fromkeys(all_repairs))[:MAX_DISCLOSED_REPAIRS]
+        merged = list(dict.fromkeys(all_repairs))
+        block["repairs"] = merged[:MAX_DISCLOSED_REPAIRS]
+        block["repair_memory"] = merged[:MAX_REPAIR_MEMORY]
     block["checked_revision"] = int(checked_revision)
     if rows_fingerprint:
         block["rows_fingerprint"] = rows_fingerprint[:512]
@@ -1230,22 +1277,33 @@ async def maybe_finalize_map_product(
     # 「MapSpec revision 一致 + 行指纹一致」时跳过重验 —— 行状态/ref
     # 变化或任何 cartographic 突变都会打破门，交给下一触发点重验。
     # 旧块无 rows_fingerprint 键 → 首次不跳过，重验一次即自愈补齐。
+    # 比较双侧截断（review 终审 F2）：存储侧 [:512]，比较侧同宽 ——
+    # 此前存储截断/比较全量，≥8 行章节永不匹配 → 门失效、每触发点重跑。
     if (
         not force
         and isinstance(stored, dict)
         and stored.get("status")
         in (STATUS_COMPLETE, STATUS_NEEDS_REPAIR, STATUS_FAILED)
         and _stored_checked_revision(stored) == revision
-        and str(stored.get("rows_fingerprint") or "") == _rows_fingerprint(chapter)
+        and str(stored.get("rows_fingerprint") or "")
+        == _rows_fingerprint(chapter)[:512]
     ):
         return None
 
+    validated_fingerprint = _rows_fingerprint(chapter)
     result = await run_map_finalization(
         session_id,
         chapter=chapter,
         reason=reason,
         prior_repairs=(
-            list(stored.get("repairs") or []) if isinstance(stored, dict) else None
+            list(
+                dict.fromkeys(
+                    list(stored.get("repair_memory") or [])
+                    + list(stored.get("repairs") or [])
+                )
+            )
+            if isinstance(stored, dict)
+            else None
         ),
     )
     if result is None:
@@ -1290,11 +1348,23 @@ async def maybe_finalize_map_product(
                         session_id,
                     )
                     return result
-                merged_repairs = list(
-                    dict.fromkeys(
-                        (list(stored.get("repairs") or []) if isinstance(stored, dict) else [])
-                        + list(result.repairs_applied)
+                # 行漂移守卫（review 终审 F1）：终验期间并行工具回调改了行
+                # 状态（行不推 revision）—— 旧指纹的结论不得盖上新指纹的
+                # 章节（否则陈旧 failed/complete 被门永久保护）。
+                if _rows_fingerprint(fresh.gis_chapter)[:512] != validated_fingerprint[:512]:
+                    logger.info(
+                        "[MapFinalizer] rows changed mid-run session=%s — persist skipped",
+                        session_id,
                     )
+                    return result
+                prior_repairs_merged = (
+                    list(stored.get("repair_memory") or [])
+                    + list(stored.get("repairs") or [])
+                    if isinstance(stored, dict)
+                    else []
+                )
+                merged_repairs = list(
+                    dict.fromkeys(prior_repairs_merged + list(result.repairs_applied))
                 )
                 fresh.gis_chapter["map_product"] = map_product_block(
                     result,
