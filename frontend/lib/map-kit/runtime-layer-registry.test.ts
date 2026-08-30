@@ -4,6 +4,7 @@ import {
   describeRuntimeLayers,
   listRuntimeLayerIds,
   recordRuntimeLayer,
+  recordRuntimeLayerVisibility,
   recordRuntimeSource,
   registerRuntimeLayer,
   rememberRuntimeRemount,
@@ -287,5 +288,72 @@ describe('runtime-layer-registry — 规模与边界契约（确定性，非 wal
       const idx = Number(id.slice('custom-p'.length));
       expect(idx).toBeLessThan(10);
     }
+  });
+});
+
+// ── ADR-0081：可见性记账 + source 所有权转移 ──────────────────────────
+
+describe('runtime-layer-registry — ADR-0081 可见性记账（隐藏复活修复）', () => {
+  beforeEach(() => resetRuntimeLayerRegistry());
+
+  it('隐藏后的命令层在 style reload 重放时恢复隐藏态（此前复活为可见）', () => {
+    recordRuntimeSource('custom-poi', { kind: 'geojson', data: FC });
+    recordRuntimeLayer({ id: 'custom-poi', type: 'circle', source: 'custom-poi' });
+    // renderer 缝：setLayoutProperty('visibility','none') 后记账
+    recordRuntimeLayerVisibility('custom-poi', false);
+
+    const { map, layers } = fakeMap();
+    remountRuntimeLayers(map);
+    const def = layers.get('custom-poi');
+    expect(def).toBeDefined();
+    expect((def.layout ?? {}).visibility).toBe('none');
+  });
+
+  it('重新显示后重放恢复 visible', () => {
+    recordRuntimeSource('custom-poi', { kind: 'geojson', data: FC });
+    recordRuntimeLayer({ id: 'custom-poi', type: 'circle', source: 'custom-poi' });
+    recordRuntimeLayerVisibility('custom-poi', false);
+    recordRuntimeLayerVisibility('custom-poi', true);
+    const { map, layers } = fakeMap();
+    remountRuntimeLayers(map);
+    expect((layers.get('custom-poi').layout ?? {}).visibility).toBe('visible');
+  });
+
+  it('未登记的层（spec 层不在账本）记账为 no-op', () => {
+    expect(() => recordRuntimeLayerVisibility('spec-layer', false)).not.toThrow();
+    expect(runtimeLayerCount()).toBe(0);
+  });
+});
+
+describe('runtime-layer-registry — ADR-0081 source 所有权转移', () => {
+  beforeEach(() => resetRuntimeLayerRegistry());
+
+  it('主层反注册后共享层的重放不丢 source（所有权移交存活者）', () => {
+    // 共享同一 source 的两层：主层持有 sourceDef，兄弟层无
+    recordRuntimeSource('custom-shared', { kind: 'geojson', data: FC });
+    recordRuntimeLayer({ id: 'custom-primary', type: 'circle', source: 'custom-shared' });
+    recordRuntimeLayer({ id: 'custom-sibling', type: 'line', source: 'custom-shared' });
+
+    unregisterRuntimeLayer('custom-primary');
+
+    // 兄弟层仍在账，且重放时 source 先于层恢复（不会因 source 缺失而失败）
+    expect(listRuntimeLayerIds()).toEqual(['custom-sibling']);
+    const { map, layers, sources, calls } = fakeMap();
+    const n = remountRuntimeLayers(map);
+    expect(n).toBe(1);
+    expect(layers.has('custom-sibling')).toBe(true);
+    expect(sources.has('custom-shared')).toBe(true);
+    // 重放顺序：source 在层之前
+    expect(calls.indexOf('source:custom-shared')).toBeLessThan(calls.indexOf('layer:custom-sibling'));
+  });
+
+  it('最后一个引用者也反注册时 source 一并出账（无泄漏）', () => {
+    recordRuntimeSource('custom-solo', { kind: 'geojson', data: FC });
+    recordRuntimeLayer({ id: 'custom-solo', type: 'circle', source: 'custom-solo' });
+    unregisterRuntimeLayer('custom-solo');
+    expect(runtimeLayerCount()).toBe(0);
+    const { map, sources } = fakeMap();
+    remountRuntimeLayers(map);
+    expect(sources.size).toBe(0);
   });
 });

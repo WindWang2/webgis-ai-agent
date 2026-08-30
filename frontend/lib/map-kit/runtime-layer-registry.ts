@@ -119,7 +119,12 @@ function evictToBound(): void {
   while (registry.size > MAX_RUNTIME_LAYERS) {
     const oldest = registry.keys().next().value;
     if (oldest === undefined) break;
+    const entry = registry.get(oldest);
+    const snapshot = entry ? { ...entry, sourceDef: entry.sourceDef } : undefined;
     dropEntry(oldest);
+    // LRU 驱逐与反注册共用 source 所有权转移（review P2：两条路径一个
+    // 标准 —— 驱逐持有 sourceDef 的账目时不剥夺共享层的重放能力）。
+    if (snapshot) _transferSourceOwnership(snapshot);
     evicted += 1;
   }
   if (evicted > 0) {
@@ -229,11 +234,51 @@ export function rememberRuntimeRemount(id: string, remount: (map: any) => void):
 /** 命令删除覆盖层时反注册（层族前缀清扫；source 记在层账目内一并移除）。幂等。 */
 export function unregisterRuntimeLayer(layerId: string): void {
   if (!layerId) return;
+  // 先快照将被清扫的账目（所有权转移需要 dropEntry 之前的 sourceDef）。
+  const dropped: RuntimeLayerDescriptor[] = [];
   for (const id of [...registry.keys()]) {
     if (id === layerId || id.startsWith(`${layerId}-`) || id.startsWith(`${layerId}__`)) {
+      const entry = registry.get(id);
+      if (entry) dropped.push({ ...entry, sourceDef: entry.sourceDef });
       dropEntry(id);
     }
   }
+  if (dropped.length === 0) return;
+  // source 所有权转移（ADR-0081 Source Lifecycle follow-up）：被清扫的账目若
+  // 持有 sourceDef 且仍有兄弟层引用同一 source，把定义移交存活者 —— 否则
+  // 主层反注册后共享层的 style-reload 重放会因 source 缺失而静默失败
+  //（review 记录的防御性缺口：当前命令不铸造多层层共享 source，但账本
+  // 语义必须自洽）。
+  for (const entry of dropped) {
+    _transferSourceOwnership(entry);
+  }
+}
+
+/** 被移除账目的 sourceDef 移交给仍引用该 source 且无定义的存活层。 */
+function _transferSourceOwnership(dropped: RuntimeLayerDescriptor): void {
+  if (!dropped.sourceDef) return;
+  if (registry.get(dropped.runtimeLayerId)) return;
+  const survivor = [...registry.values()].find(
+    (e) => e.sourceId === dropped.sourceId && !e.sourceDef && e.layerDef,
+  );
+  if (survivor) {
+    survivor.sourceDef = dropped.sourceDef;
+    sourceIndex.set(survivor.sourceId, survivor.runtimeLayerId);
+  }
+}
+
+/**
+ * 可见性记账（ADR-0081）：renderer 的 setLayoutProperty('visibility') 之后
+ * 同步 layerDef.layout —— style reload 的定义重放不再把隐藏中的命令层
+ * 复活为可见（此前 layerDef 记录于挂载时刻，不含后续 layout 变更）。
+ */
+export function recordRuntimeLayerVisibility(layerId: string, visible: boolean): void {
+  const entry = registry.get(layerId);
+  if (!entry?.layerDef) return;
+  entry.layerDef = {
+    ...entry.layerDef,
+    layout: { ...entry.layerDef.layout, visibility: visible ? 'visible' : 'none' },
+  };
 }
 
 /** 会话切换：清空全部命令层账目（旧会话命令层不得复活进新会话）。 */

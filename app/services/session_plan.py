@@ -203,8 +203,18 @@ def format_session_plan_projection(plan: Optional[SessionPlan]) -> str:
         f"superseded={'true' if plan.superseded else 'false'}"
         f"{stale_note}"
     )
+    # ADR-0081：地图成品完成度行（bounded、单行、派生自章节 map_product
+    # 块 —— finalizer 写入，这里只读投影；DAG 完成 ≠ 地图成品完成）。
+    # 先算再走任何提前返回 —— 组件-only / analysis-only 章节（无
+    # data_requirements）与图构建失败路径都保留该行（review P2）。
+    product = plan.gis_chapter.get("map_product")
+    product_line = ""
+    if isinstance(product, dict):
+        line = str(product.get("projection") or "")
+        if line:
+            product_line = "\n" + line
     if not plan.gis_chapter.get("data_requirements"):
-        return head
+        return head + product_line
     try:
         from app.services.gis_harness.plan_graph import (
             build_plan_graph,
@@ -213,10 +223,10 @@ def format_session_plan_projection(plan: Optional[SessionPlan]) -> str:
         graph = build_plan_graph(plan.gis_chapter)
         block = project_graph_block(graph)
     except Exception:  # noqa: BLE001 — 图投影是增值信号，绝不阻断 turn 上下文
-        return head
+        return head + product_line
     if not block:
-        return head
-    return head + "\n" + block
+        return head + product_line
+    return head + "\n" + block + product_line
 
 
 def events_to_sse(events: list[SessionPlanEvent], session_id: str = "") -> str:

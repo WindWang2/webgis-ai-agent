@@ -55,8 +55,9 @@ def test_catalog_exports_renderer_and_exporter_support():
     """phase-2：目录携带 rendererSupport/exporterSupport 机器真值字段."""
     catalog = build_catalog()
     by_type = {c["type"]: c for c in catalog["componentTypes"]}
-    # 与 component_renderers.py 矩阵一致的抽查
-    assert by_type["legend"]["exporterSupport"] == []
+    # 与 component_renderers.py 矩阵一致的抽查（ADR-0081：legend 族
+    # exporter 支持随 spec 组件导出落地）
+    assert sorted(by_type["legend"]["exporterSupport"]) == ["pdf", "png", "svg"]
     assert by_type["title"]["rendererSupport"] == ["interactive"]
     assert sorted(by_type["title"]["exporterSupport"]) == ["pdf", "png", "svg"]
     assert by_type["graticule"]["rendererSupport"] == []

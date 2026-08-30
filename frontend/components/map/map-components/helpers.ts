@@ -17,21 +17,11 @@ export const POSITION_CLASS: Record<string, string> = {
   none: 'hidden',
 };
 
-export const DEFAULT_POSITION: Record<string, string> = {
-  title: 'top-center',
-  subtitle: 'top-center',
-  north_arrow: 'top-right',
-  scale_bar: 'bottom-right',
-  attribution: 'bottom-left',
-  continuous_colorbar: 'bottom-right',
-  legend: 'bottom-left',
-  categorical_legend: 'bottom-left',
-  // 新组件缺省槽位与后端目录（component-catalog.generated.json
-  // defaultPosition）保持一致
-  annotation: 'top-left',
-  statistics_panel: 'top-left',
-  chart_panel: 'top-left',
-};
+// ADR-0081：缺省槽位表与共享 resolver（live/export 同源）同一份 —— 不再
+// 维护第二张字面量表（三表漂移是 review P1 的根因）。
+import { DEFAULT_COMPONENT_ANCHOR } from '@/lib/map-components/resolve-components';
+
+export const DEFAULT_POSITION: Record<string, string> = DEFAULT_COMPONENT_ANCHOR;
 
 export const BOTTOM_OFFSET_STYLE: Record<string, React.CSSProperties> = {
   'bottom-left': { bottom: 'calc(var(--map-chrome-bottom, 10px) + 6px)' },
@@ -39,7 +29,17 @@ export const BOTTOM_OFFSET_STYLE: Record<string, React.CSSProperties> = {
   'bottom-right': { bottom: 'calc(var(--map-chrome-bottom, 10px) + 30px)' },
 };
 
+/**
+ * anchor 解析优先级与共享 resolver 一致（ADR-0081 review P1）：
+ * placement.mode=anchor 的 anchor > 旧 position 字段 > 类型默认槽位。
+ * 此前 live 不读 placement.anchor —— spec 里 anchor 与 position 不一致
+ * （双写契约被绕过）时 live/export 各画各的，正是 parity 要消除的分叉。
+ */
 export function resolvePosition(component: MapSpecComponent): string {
+  const placement = component.placement;
+  if (placement?.mode === 'anchor' && typeof placement.anchor === 'string' && placement.anchor) {
+    return placement.anchor;
+  }
   return (component as unknown as { position?: string }).position ?? DEFAULT_POSITION[component.type] ?? 'none';
 }
 

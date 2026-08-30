@@ -173,7 +173,8 @@ def test_renderer_registry_honesty():
     assert not r.has_renderer("map_border")
     for t in ("legend", "categorical_legend", "continuous_colorbar"):
         assert r.has_renderer(t)
-        assert not r.has_exporter(t, "png")
+        # ADR-0081：图例族经 spec 组件导出（共享 resolver 路径）
+        assert r.has_exporter(t, "png")
     for t in ("title", "north_arrow", "scale_bar"):
         assert r.has_exporter(t, "png")
     assert r.has_exporter("export_layout", "pdf")

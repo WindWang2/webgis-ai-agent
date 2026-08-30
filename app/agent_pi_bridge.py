@@ -649,6 +649,44 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
                 "[PiBridge] SessionPlan apply failed session=%s tool=%s",
                 session_id, tool_name,
             )
+        # ADR-0081：DAG 完成 ≠ 地图成品完成 —— 工具结果落账后运行完成度
+        # 终验（幂等、有界；DAG 未终态时立即返回 pending，毫秒级）。结果
+        # 以独立 SSE 事件披露给前端 finalizer（视口校验/修复在前端）。
+        try:
+            from app.services.gis_harness.map_completion import (
+                current_mapspec_for_disclosure as _finalization_spec_snapshot,
+                finalization_sse_payload,
+                maybe_finalize_map_product,
+            )
+            completion = await maybe_finalize_map_product(
+                session_id, reason=f"tool_result:{tool_name}"
+            )
+            # pending 不披露（DAG 未终态是 turn 中段常态，[GIS Plan] 行投影
+            # 已表达；每个工具结果一条 pending SSE 是纯噪声 + 前端空转）。
+            # repair 改写 desired state 时附带 mapspec + revision —— 前端
+            # 通用 spec 提交通道同步到 live chrome/exporter。
+            if completion is not None and completion.status != "pending":
+                spec_snapshot = (None, None)
+                if completion.repairs_applied:
+                    spec_snapshot = await _finalization_spec_snapshot(session_id)
+                cache_session_plan_sse(
+                    request.toolCallId,
+                    sse_event(
+                        "map_finalization",
+                        finalization_sse_payload(
+                            completion,
+                            session_id,
+                            mapspec=spec_snapshot[0],
+                            mutation_revision=spec_snapshot[1],
+                        ),
+                    ),
+                    session_id,
+                )
+        except Exception:  # noqa: BLE001 — 终验是增值信号，绝不阻断工具返回
+            logger.exception(
+                "[PiBridge] map finalization failed session=%s tool=%s",
+                session_id, tool_name,
+            )
     elif result.status == "error":
         # v3(Phase E)：失败对计划可见 —— 数据/分析工具 error 时，其命中的
         # 能力行标 failed（可重试；DAG 下游阻塞到重试成功）。best-effort：
@@ -1642,6 +1680,44 @@ class PiBridge:
                                 _snap = _extract_text_from_event(event)
                                 if _snap:
                                     _turn_final_text = _snap
+                            # ADR-0081：turn 收尾终验 —— 在 task_complete 映射
+                            # 之前运行，兜住不经 SessionPlan 的展示类工具与
+                            # finalization repair 之后的新 desired state；结果
+                            # 经 turn_stats 进入 task_complete 负载（additive），
+                            # 并以独立 map_finalization SSE 事件披露给前端
+                            # finalizer（视口校验/修复在前端）。
+                            _turn_map_product = None
+                            if event.get("type") == "agent_settled":
+                                try:
+                                    from app.services.gis_harness.map_completion import (
+                                        finalization_sse_payload,
+                                        maybe_finalize_map_product,
+                                        read_stored_map_product,
+                                    )
+                                    _completion = await maybe_finalize_map_product(
+                                        turn_sid, reason="turn_settled"
+                                    )
+                                    if _completion is not None and _completion.status != "pending":
+                                        _spec_snapshot = (None, None)
+                                        if _completion.repairs_applied:
+                                            _spec_snapshot = await _finalization_spec_snapshot(turn_sid)
+                                        _turn_map_product = finalization_sse_payload(
+                                            _completion,
+                                            turn_sid,
+                                            mapspec=_spec_snapshot[0],
+                                            mutation_revision=_spec_snapshot[1],
+                                        )
+                                    elif _completion is None:
+                                        # 幂等门跳过（complete+revision 一致）→
+                                        # task_complete 仍披露已存储的完成态。
+                                        _turn_map_product = await read_stored_map_product(
+                                            turn_sid
+                                        )
+                                except Exception:  # noqa: BLE001 — 增值信号
+                                    logger.exception(
+                                        "[PiBridge] turn-settle finalization failed session=%s",
+                                        turn_sid,
+                                    )
                             sse = map_event_to_sse(
                                 event,
                                 turn_sid,
@@ -1651,6 +1727,7 @@ class PiBridge:
                                 turn_stats=lambda: {
                                     "tool_step_count": _turn_tool_steps,
                                     "final_text": _turn_final_text,
+                                    "map_product": _turn_map_product,
                                 },
                             )
                             # V3: 给原始 SSE 事件记录补 turn/run correlation（显式透传）。
@@ -1689,6 +1766,10 @@ class PiBridge:
                                     if _end_text:
                                         _turn_final_text = _end_text
                             elif event.get("type") == "agent_settled":
+                                if _turn_map_product is not None:
+                                    yield sse_event(
+                                        "map_finalization", _turn_map_product
+                                    )
                                 break
                             # Re-arm the queue waiter for the next event; the
                             # completed waiter task is dropped from `pending` by

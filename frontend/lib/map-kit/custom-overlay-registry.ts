@@ -28,6 +28,7 @@ import {
   listRuntimeLayerIds,
   recordRuntimeLayer,
   recordRuntimeSource,
+  recordRuntimeLayerVisibility,
   remountRuntimeLayers,
   unregisterRuntimeLayer,
 } from './runtime-layer-registry';
@@ -88,4 +89,13 @@ export function remountCustomOverlays(
 /** 测试观测点：当前注册的层 id（插入序）。 */
 export function listCustomOverlayLayerIds(): string[] {
   return listRuntimeLayerIds();
+}
+
+/**
+ * 可见性记账（ADR-0081）：renderer 隐藏/显示 custom-* 层后同步账本 ——
+ * style reload 定义重放恢复的是隐藏态，不再复活为可见。
+ */
+export function recordCustomOverlayVisibility(id: string, visible: boolean): void {
+  if (!isCustomId(id)) return;
+  recordRuntimeLayerVisibility(id, visible);
 }
