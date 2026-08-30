@@ -158,7 +158,7 @@ describe('runtime-layer-registry — canonical 存储', () => {
     expect(runtimeLayerCount()).toBe(0);
   });
 
-  it('有界 FIFO：256 上限，驱逐最旧', () => {
+  it('有界：256 上限，驱逐最近未触碰的（真 LRU，P5：此前是 FIFO）', () => {
     for (let i = 0; i < 300; i++) {
       recordRuntimeLayer({ id: `custom-l${i}`, type: 'circle', source: `custom-l${i}` });
     }
@@ -166,6 +166,32 @@ describe('runtime-layer-registry — canonical 存储', () => {
     const ids = listRuntimeLayerIds();
     expect(ids).not.toContain('custom-l0');
     expect(ids).toContain('custom-l299');
+  });
+
+  it('LRU 触碰：被再次更新的早期层不被驱逐（FIFO 会误逐）', () => {
+    // l0 最早插入，但中途被 upsert/可见性变更触碰过 → l1（未触碰）先走
+    recordRuntimeLayer({ id: 'custom-l0', type: 'circle', source: 'custom-l0' });
+    recordRuntimeLayer({ id: 'custom-l1', type: 'circle', source: 'custom-l1' });
+    recordRuntimeLayerVisibility('custom-l0', false);
+    for (let i = 2; i < 257; i++) {  // 2+255 = 257 条 → 恰好驱逐 1 个（l1）
+      recordRuntimeLayer({ id: `custom-l${i}`, type: 'circle', source: `custom-l${i}` });
+    }
+    expect(runtimeLayerCount()).toBe(256);
+    const ids = listRuntimeLayerIds();
+    expect(ids).toContain('custom-l0');  // 被触碰 → 存活
+    expect(ids).not.toContain('custom-l1');  // 最久未触碰 → 驱逐
+  });
+
+  it('驱逐可观测：recentlyEvictedLayerIds / wasRuntimeLayerEvicted（会话切换失效）', async () => {
+    const mod = await import('./runtime-layer-registry');
+    for (let i = 0; i < 260; i++) {
+      recordRuntimeLayer({ id: `custom-e${i}`, type: 'circle', source: `custom-e${i}` });
+    }
+    expect(mod.wasRuntimeLayerEvicted('custom-e0')).toBe(true);
+    expect(mod.wasRuntimeLayerEvicted('custom-e259')).toBe(false);
+    expect(mod.recentlyEvictedLayerIds()).toContain('custom-e0');
+    clearRuntimeLayerRegistry();
+    expect(mod.wasRuntimeLayerEvicted('custom-e0')).toBe(false);  // 环随会话清空
   });
 
   it('会话切换清空（clearRuntimeLayerRegistry）', () => {
@@ -355,5 +381,50 @@ describe('runtime-layer-registry — ADR-0081 source 所有权转移', () => {
     const { map, sources } = fakeMap();
     remountRuntimeLayers(map);
     expect(sources.size).toBe(0);
+  });
+});
+
+describe('runtime-layer-registry — P5 共享 source 生命周期', () => {
+  beforeEach(() => resetRuntimeLayerRegistry());
+
+  it('source 定义更新传播到所有共享账目（fill+outline 共享 source，D-4）', () => {
+    const FC = { type: 'FeatureCollection', features: [] };
+    // 共享 source 的两层（同 sourceId）
+    registerRuntimeLayer({
+      id: 'custom-f', sourceId: 's-shared',
+      sourceDef: { kind: 'geojson', data: FC },
+      layerDef: { id: 'custom-f', type: 'fill', source: 's-shared' },
+    });
+    registerRuntimeLayer({
+      id: 'custom-f-outline', sourceId: 's-shared',
+      layerDef: { id: 'custom-f-outline', type: 'line', source: 's-shared' },
+    });
+    // source 数据更新（addGeoJsonSource update seam）
+    const FC2 = { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [104, 30] }, properties: {} }] };
+    recordRuntimeSource('s-shared', { kind: 'geojson', data: FC2 });
+    const entries = describeRuntimeLayers();
+    for (const e of entries) {
+      if (e.sourceId === 's-shared') {
+        expect(e.sourceDef?.data).toBe(FC2);  // 两个账目都拿到新定义
+      }
+    }
+  });
+
+  it('upsert 保持首挂插入位次（重放序 = z 序稳定，LRU 序独立）', () => {
+    const FC = { type: 'FeatureCollection', features: [] };
+    registerRuntimeLayer({
+      id: 'custom-a', sourceId: 's-a', sourceDef: { kind: 'geojson', data: FC },
+      layerDef: { id: 'custom-a', type: 'fill', source: 's-a' },
+    });
+    registerRuntimeLayer({
+      id: 'custom-b', sourceId: 's-b', sourceDef: { kind: 'geojson', data: FC },
+      layerDef: { id: 'custom-b', type: 'fill', source: 's-b' },
+    });
+    // upsert custom-a（重paint）—— 插入位次不得移动
+    registerRuntimeLayer({
+      id: 'custom-a', sourceId: 's-a',
+      layerDef: { id: 'custom-a', type: 'fill', source: 's-a', paint: { 'fill-color': '#0f0' } },
+    });
+    expect(listRuntimeLayerIds()).toEqual(['custom-a', 'custom-b']);
   });
 });
