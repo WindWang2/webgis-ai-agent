@@ -132,7 +132,7 @@ _SUPPORT_MATRIX: Dict[str, ComponentRendererSupport] = {
     "inset_map": ComponentRendererSupport(
         component_type="inset_map",
         renderers=["interactive"],
-        exporters=["png", "pdf"],
+        exporters=["png", "pdf", "svg"],
         note=(
             "v2 P1 全链路：live 轻量静态 SVG 投影（不 mount 第二个 maplibre "
             "runtime）+ 导出 drawChromeInset 同链；bbox 未填充时两侧同弃"

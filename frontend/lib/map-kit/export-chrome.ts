@@ -485,6 +485,7 @@ export async function buildExportChrome(
     if (!insetBbox) continue;
     const mainBbox = parseBbox4(c.options['mainBbox']) ?? opts.viewportBounds ?? undefined;
     const labelOpt = c.options['label'];
+    const boundary = parseBoundary(c.options['boundary']);
     model.insets.push({
       kind: 'inset_map',
       anchor: _effectiveAnchor(c),
@@ -495,7 +496,7 @@ export async function buildExportChrome(
       text: typeof labelOpt === 'string' && labelOpt ? labelOpt : undefined,
       insetBbox,
       ...(mainBbox ? { insetMainBbox: mainBbox } : {}),
-      ...(parseBoundary(c.options['boundary']) ? { insetBoundary: parseBoundary(c.options['boundary'])! } : {}),
+      ...(boundary ? { insetBoundary: boundary } : {}),
     });
   }
 
@@ -1270,6 +1271,7 @@ function drawAnchoredCalloutBox(
 export function drawChromeInset(
   d: DrawCtx,
   el: ExportChromeElement,
+  opts?: { marginX?: number; marginY?: number },
 ): void {
   const bbox = el.insetBbox;
   if (!bbox) return;
@@ -1280,7 +1282,8 @@ export function drawChromeInset(
     ? { x: el.rect.x, y: el.rect.y, align: 'left' as const, vAlign: 'top' as const }
     : anchorOrigin(el.anchor, {
         targetW: d.targetW, targetH: d.targetH,
-        marginX: d.scalePx(12), marginY: d.scalePx(12),
+        marginX: opts?.marginX ?? d.scalePx(12),
+        marginY: opts?.marginY ?? d.scalePx(12),
       });
   const x = origin.align === 'right' ? origin.x - boxW : origin.align === 'center' ? origin.x - boxW / 2 : origin.x;
   const y = origin.vAlign === 'bottom' ? d.targetH - origin.y - boxH : origin.y;

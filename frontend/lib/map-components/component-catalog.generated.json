@@ -173,7 +173,8 @@
       ],
       "exporterSupport": [
         "png",
-        "pdf"
+        "pdf",
+        "svg"
       ]
     },
     {

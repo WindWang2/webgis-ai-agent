@@ -202,8 +202,8 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         # 不 mount 第二个 maplibre runtime）+ 导出 drawChromeInset 同链；
         # renderer/exporter 真值由矩阵对账。bbox 未填充时渲染端自弃
         # （不虚构范围），resolver 需要 inset_context 才会选出（防空选）。
-        placement_domain="overlay", supported_outputs=["interactive", "png", "pdf"],
-        renderer_support=["interactive"], exporter_support=["png", "pdf"],
+        placement_domain="overlay", supported_outputs=["interactive", "png", "pdf", "svg"],
+        renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
         default_variant="overview", variants=["overview", "location"],
         default_position="top-right", allowed_positions=["top-right", "top-left", "bottom-right", "bottom-left"],
         cardinality="zero_or_one", priority=65, runtime_status="native",

@@ -116,7 +116,10 @@ function AnchoredCallout({
         <line
           x1={leftPct} y1={topPct}
           x2={endFx * 100} y2={endFy * 100}
-          stroke="rgba(30,41,59,0.65)" strokeWidth={0.18}
+          stroke="rgba(30,41,59,0.65)"
+          // vectorEffect=non-scaling-stroke：strokeWidth 以屏幕像素解释
+          //（viewBox 拉伸到全视口后 0–100 坐标的单位宽会失真）
+          strokeWidth={1.25}
           vectorEffect="non-scaling-stroke"
         />
       </svg>

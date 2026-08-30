@@ -329,6 +329,7 @@ def test_scenario_g_export_truth_for_new_components():
     # inset 双面在场
     assert rr.has_renderer("inset_map")
     assert rr.has_exporter("inset_map", "pdf")
+    assert rr.has_exporter("inset_map", "svg")  # svg = png 位图包装链（同一画布 chrome）
     # 图例族逐类型导出真值
     for t in ("legend", "categorical_legend", "continuous_colorbar"):
         assert rr.has_exporter(t, "svg")

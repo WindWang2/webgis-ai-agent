@@ -313,9 +313,10 @@ export function composeLayout(
     }
 
     // 5.4 Inset maps（v2：区位插图 —— 纯 SVG 投影语义同链；bounds 缺省
-    // 由 insetMainBbox 携带，无指示范围只画范围示意）
+    // 由 insetMainBbox 携带，无指示范围只画范围示意；槽内堆叠与
+    // north_arrow 同侧时经 stackOffset 让位 —— 与 live topSlotIndexes 同语义）
     for (const inset of chrome.insets) {
-      drawChromeInset(d, inset);
+      drawChromeInset(d, inset, { marginX, marginY: stackOffset(inset, scalePx(12)) });
     }
 
     // 5.5 浮动面板（statistics/chart/annotation —— 终审 F1：注释卡导出）
