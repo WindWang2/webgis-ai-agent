@@ -67,6 +67,11 @@ export interface ResolvedMapComponent {
   variant: string;
   /** 图例/色条绑定的图层 id（options.layerId）。 */
   layerId: string;
+  /**
+   * 折叠态（mode 无关 —— ADR-0084 E-2 修复：此前 collapsed 只在 floating
+   * 分支捕获，锚定面板的折叠在导出侧永远丢失）。
+   */
+  collapsed: boolean;
   options: Record<string, unknown>;
 }
 
@@ -125,6 +130,7 @@ export function resolveMapComponent(component: MapSpecComponent): ResolvedMapCom
       (typeof component.variant === 'string' && component.variant) ||
       '',
     layerId: typeof layerIdOpt === 'string' ? layerIdOpt : '',
+    collapsed: placement?.collapsed === true,
     options,
   };
 }

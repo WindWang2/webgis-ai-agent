@@ -142,11 +142,20 @@ export function buildTopSlotIndexes(
   renderable: MapSpecComponent[],
 ): Map<MapSpecComponent, number> {
   const indexes = new Map<MapSpecComponent, number>();
-  for (const [component, entry] of resolveSlotLayout(renderable)) {
-    if (entry.slot.startsWith('top-') && entry.slotSize > 1) {
-      indexes.set(component, entry.index);
+  // E-6（ADR-0084）：传入解析后的 anchor（placement.anchor > position >
+  // 默认）—— 此前顶槽只认旧 position 字段，placement 锚定的 top-right
+  // chart_panel 会被当作 top-left 堆叠（live 自身漂移）。
+  const slotted = renderable.map((c) => ({
+    type: c.type,
+    anchor: resolvePosition(c),
+  }));
+  const layout = resolveSlotLayout(slotted);
+  slotted.forEach((entry, i) => {
+    const resolved = layout.get(entry);
+    if (resolved && resolved.slot.startsWith('top-') && resolved.slotSize > 1) {
+      indexes.set(renderable[i], resolved.index);
     }
-  }
+  });
   return indexes;
 }
 

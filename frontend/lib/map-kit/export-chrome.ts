@@ -24,6 +24,8 @@ import {
   type ChromeAnchor,
   type ResolvedMapComponent,
 } from '@/lib/map-components/resolve-components';
+import { resolveComponentLayout } from '@/lib/map-components/resolve-layout';
+import { computeNiceScale, formatScaleLabel } from './scale-math';
 
 export interface StatsPanelData {
   title?: string;
@@ -44,6 +46,10 @@ export interface ExportChromeElement {
   anchor: ChromeAnchor;
   /** floating 缩放后的画布坐标（anchor 元素为 undefined）。 */
   rect?: { x: number; y: number; width?: number; height?: number };
+  /** 槽内堆叠序（ADR-0084 共享求解器；0 贴边 —— 消费端加 index×层距偏移）。 */
+  stackIndex?: number;
+  /** 槽内组件总数（≤1 时消费方无需偏移）。 */
+  slotSize?: number;
   text?: string;
   legendSpec?: LegendSpec;
   stats?: StatsPanelData;
@@ -145,24 +151,47 @@ export async function buildExportChrome(
   const resolved = resolveMapComponents(opts.spec);
   // review P0：只有**可视**组件在场才走 chrome 路径 —— 仅携带 export_layout
   // 等非可视组件的 spec（#805 场景）不得把导出切到 chrome 路径（否则罗盘/
-  // 比例尺/默认标题全部从 legacy 回退中消失）。
+  // 比例尺/默认标题全部从 legacy 回退中消失）。E-10：enabled 过滤与 live
+  // 的 hasSpecChrome 对齐 —— 只有禁用 title 的 spec 走 HUD chrome 栈。
   const VISUAL_TYPES = new Set([
     'title', 'subtitle', 'legend', 'categorical_legend', 'continuous_colorbar',
     'north_arrow', 'scale_bar', 'attribution', 'statistics_panel', 'chart_panel',
     'annotation',
   ]);
   const model: ExportChromeModel = {
-    fromSpec: resolved.some((c) => VISUAL_TYPES.has(c.type)),
+    fromSpec: resolved.some((c) => VISUAL_TYPES.has(c.type) && c.enabled),
     panels: [],
   };
   if (!model.fromSpec) return model;
+
+  // ADR-0084（E-1）：槽位堆叠走共享求解器（与 live 同一实现）—— 导出
+  // 此前完全没有堆叠，scale_bar 与 continuous_colorbar 同锚 bottom-right
+  // 互相遮挡。floating 组件不参与（用户固定，坐标即位置）。
+  const solved = resolveComponentLayout(
+    resolved
+      .filter((c) => c.enabled && !c.floating)
+      .map((c) => ({
+        id: c.id,
+        type: c.type,
+        anchor: _anchorOf(c),
+        floating: false,
+        origin: 'auto' as const,
+      })),
+    canvas,
+  );
+  const _stackOf = (c: ResolvedMapComponent) => solved.slots.get(c.id);
+  /** 生效锚点 = 求解器裁决槽（user 浮动碰撞侧让后可能换槽）。 */
+  const _effectiveAnchor = (c: ResolvedMapComponent): ChromeAnchor =>
+    (_stackOf(c)?.slot as ChromeAnchor | undefined) ?? _anchorOf(c);
 
   const titleComp = resolved.find((c) => c.type === 'title' && c.enabled);
   if (titleComp) {
     model.title = {
       kind: 'title',
-      anchor: _anchorOf(titleComp),
+      anchor: _effectiveAnchor(titleComp),
       rect: _floatingRectOf(titleComp, opts.viewport, canvas),
+      stackIndex: _stackOf(titleComp)?.index ?? 0,
+      slotSize: _stackOf(titleComp)?.slotSize ?? 0,
       text: opts.requestTitle || titleComp.text,
     };
   } else if (opts.requestTitle) {
@@ -173,8 +202,10 @@ export async function buildExportChrome(
   if (subtitleComp) {
     model.subtitle = {
       kind: 'subtitle',
-      anchor: _anchorOf(subtitleComp),
+      anchor: _effectiveAnchor(subtitleComp),
       rect: _floatingRectOf(subtitleComp, opts.viewport, canvas),
+      stackIndex: _stackOf(subtitleComp)?.index ?? 0,
+      slotSize: _stackOf(subtitleComp)?.slotSize ?? 0,
       text: opts.requestSubtitle || subtitleComp.text,
     };
   } else if (opts.requestSubtitle) {
@@ -185,8 +216,10 @@ export async function buildExportChrome(
   if (northComp && northComp.enabled) {
     model.northArrow = {
       kind: 'north_arrow',
-      anchor: _anchorOf(northComp),
+      anchor: _effectiveAnchor(northComp),
       rect: _floatingRectOf(northComp, opts.viewport, canvas),
+      stackIndex: _stackOf(northComp)?.index ?? 0,
+      slotSize: _stackOf(northComp)?.slotSize ?? 0,
     };
   } else if (!northComp) {
     // review P0：live 对缺席的 north_arrow 注入 fallback（map-spec-chrome），
@@ -201,8 +234,10 @@ export async function buildExportChrome(
   if (scaleComp && scaleComp.enabled) {
     model.scaleBar = {
       kind: 'scale_bar',
-      anchor: _anchorOf(scaleComp),
+      anchor: _effectiveAnchor(scaleComp),
       rect: _floatingRectOf(scaleComp, opts.viewport, canvas),
+      stackIndex: _stackOf(scaleComp)?.index ?? 0,
+      slotSize: _stackOf(scaleComp)?.slotSize ?? 0,
     };
   } else if (!scaleComp) {
     model.scaleBar = {
@@ -213,10 +248,15 @@ export async function buildExportChrome(
 
   // 图例族：spec 组件的 layerId → legend_spec；组件 disabled → 不出图例
   // （此前导出无视 spec enabled，由 HUD 发现独裁 —— parity 修复）。
+  // E-4：族内取第一个 **enabled** 成员 —— 此前 disabled 的 legend 会
+  // shadow 掉 enabled 的 categorical_legend（导出丢图例）。
   const legendComp = resolved.find(
+    (c) => (c.type === 'legend' || c.type === 'categorical_legend') && c.enabled,
+  );
+  const anyLegendFamily = resolved.some(
     (c) => c.type === 'legend' || c.type === 'categorical_legend',
   );
-  if (legendComp && legendComp.enabled) {
+  if (legendComp) {
     const spec =
       (legendComp.layerId && opts.legendSpecsByLayer[legendComp.layerId]) ||
       Object.values(opts.legendSpecsByLayer).find(
@@ -226,12 +266,14 @@ export async function buildExportChrome(
     if (spec) {
       model.legend = {
         kind: 'legend',
-        anchor: _anchorOf(legendComp),
+        anchor: _effectiveAnchor(legendComp),
         rect: _floatingRectOf(legendComp, opts.viewport, canvas),
+        stackIndex: _stackOf(legendComp)?.index ?? 0,
+        slotSize: _stackOf(legendComp)?.slotSize ?? 0,
         legendSpec: spec,
       };
     }
-  } else if (!legendComp && opts.fallbackLegendSpec) {
+  } else if (!anyLegendFamily && opts.fallbackLegendSpec) {
     // spec 无图例组件（旧 spec）→ HUD 兜底（原行为），槽位用类型默认
     model.legend = {
       kind: 'legend',
@@ -250,8 +292,10 @@ export async function buildExportChrome(
     if (spec) {
       model.colorbar = {
         kind: 'colorbar',
-        anchor: _anchorOf(colorbarComp),
+        anchor: _effectiveAnchor(colorbarComp),
         rect: _floatingRectOf(colorbarComp, opts.viewport, canvas),
+        stackIndex: _stackOf(colorbarComp)?.index ?? 0,
+        slotSize: _stackOf(colorbarComp)?.slotSize ?? 0,
         legendSpec: spec,
       };
     }
@@ -261,8 +305,10 @@ export async function buildExportChrome(
   if (attrComp && attrComp.text) {
     model.attribution = {
       kind: 'attribution',
-      anchor: _anchorOf(attrComp),
+      anchor: _effectiveAnchor(attrComp),
       rect: _floatingRectOf(attrComp, opts.viewport, canvas),
+      stackIndex: _stackOf(attrComp)?.index ?? 0,
+      slotSize: _stackOf(attrComp)?.slotSize ?? 0,
       text: attrComp.text,
     };
   }
@@ -276,12 +322,14 @@ export async function buildExportChrome(
       if (stats) {
         model.panels.push({
           kind: 'statistics',
-          anchor: _anchorOf(c),
+          anchor: _effectiveAnchor(c),
           rect: _floatingRectOf(c, opts.viewport, canvas),
+          stackIndex: _stackOf(c)?.index ?? 0,
+          slotSize: _stackOf(c)?.slotSize ?? 0,
           stats,
-          text: c.floatingRect?.collapsed
-            ? stats.title || '统计'
-            : undefined,
+          // E-2：collapsed 是 mode 无关字段（锚定面板的折叠此前在导出侧
+          // 永远丢失 —— live 折叠、导出展开）。
+          text: c.collapsed ? stats.title || '统计' : undefined,
         });
       }
     } else if (c.type === 'chart_panel') {
@@ -298,8 +346,10 @@ export async function buildExportChrome(
       if (chart) {
         model.panels.push({
           kind: 'chart',
-          anchor: _anchorOf(c),
+          anchor: _effectiveAnchor(c),
           rect: _floatingRectOf(c, opts.viewport, canvas),
+          stackIndex: _stackOf(c)?.index ?? 0,
+          slotSize: _stackOf(c)?.slotSize ?? 0,
           chart,
         });
       }
@@ -444,14 +494,10 @@ export function drawChromeScaleBar(
   const { ctx } = d;
   const logicalW = d.targetW / pxPerLogical;
   const targetPx = Math.round(logicalW * 0.12);
-  const rawMeters = metersPerPx * targetPx;
-  const magnitude = Math.pow(10, Math.floor(Math.log10(rawMeters)));
-  const nice = [1, 2, 5, 10].reduce((prev, n) => {
-    const candidate = n * magnitude;
-    return Math.abs(candidate - rawMeters) < Math.abs(prev - rawMeters) ? candidate : prev;
-  }, magnitude);
-  const barPx = (nice / metersPerPx) * pxPerLogical;
-  const barLabel = nice >= 1000 ? `${nice / 1000} km` : `${nice} m`;
+  // ADR-0084（E-3）：与 live 共用同一 nice-number 算法（scale-math.ts）。
+  const { meters: nice, px: barPxLogical } = computeNiceScale(metersPerPx, targetPx);
+  const barPx = barPxLogical * pxPerLogical;
+  const barLabel = formatScaleLabel(nice);
   const barH = d.scalePx(8);
 
   const origin = el.rect
@@ -487,15 +533,16 @@ export function drawChromeColorbar(
   const spec = el.legendSpec as
     | { min?: number; max?: number; palette_colors?: string[]; unit?: string; field?: string }
     | undefined;
-  if (!spec || typeof spec.min !== 'number' || typeof spec.max !== 'number') return;
-  // 单色 palette 复制为两端（review P2：静默替换成默认双色的 ramp 是错的）
-  const rawColors = spec.palette_colors ?? [];
+  // E-5：与 live 同款退化语义 —— 无 palette 不绘制（不伪造默认 ramp）；
+  // 缺 min/max 只画裸条不带数值标签（live colorbar.tsx 同款），不再整体丢弃。
+  const rawColors = spec?.palette_colors ?? [];
+  if (rawColors.length === 0 || !spec) return;
   const colors =
-    rawColors.length >= 2
-      ? rawColors
-      : rawColors.length === 1
-        ? [rawColors[0], rawColors[0]]
-        : ['#ffffb2', '#f03b20'];
+    rawColors.length >= 2 ? rawColors : [rawColors[0], rawColors[0]];
+  const hasRange =
+    typeof spec.min === 'number' &&
+    typeof spec.max === 'number' &&
+    spec.min !== spec.max;
   const { ctx } = d;
   const padding = d.scalePx(10);
   const barW = d.scalePx(160);
@@ -531,17 +578,20 @@ export function drawChromeColorbar(
     n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : n.toFixed(1);
   const suffix = spec.unit ? ` ${spec.unit}` : '';
   y += barH + d.scalePx(4);
-  ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.6)' : 'rgba(100,116,139,0.8)';
-  ctx.font = `${d.scalePx(10)}px sans-serif`;
-  _text(d, `${fmt(spec.min)}${suffix}`, lx + padding, y + d.scalePx(10), 'left');
-  _text(
-    d,
-    `${fmt((spec.min + spec.max) / 2)}`,
-    lx + padding + barW / 2,
-    y + d.scalePx(10),
-    'center',
-  );
-  _text(d, `${fmt(spec.max)}${suffix}`, lx + padding + barW, y + d.scalePx(10), 'right');
+  if (hasRange) {
+    // 数值标签只在有量化范围时绘制（live 同款：无范围 = 裸条）
+    ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.6)' : 'rgba(100,116,139,0.8)';
+    ctx.font = `${d.scalePx(10)}px sans-serif`;
+    _text(d, `${fmt(spec.min!)}${suffix}`, lx + padding, y + d.scalePx(10), 'left');
+    _text(
+      d,
+      `${fmt((spec.min! + spec.max!) / 2)}`,
+      lx + padding + barW / 2,
+      y + d.scalePx(10),
+      'center',
+    );
+    _text(d, `${fmt(spec.max!)}${suffix}`, lx + padding + barW, y + d.scalePx(10), 'right');
+  }
 }
 
 /** 离散/分级图例（anchor 槽位版 _drawDiscreteLegend）。 */
