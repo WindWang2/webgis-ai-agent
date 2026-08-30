@@ -57,6 +57,15 @@ class MapProductTemplate(BaseModel):
     composition_template_id: str = ""
     component_overrides: Dict[str, object] = {}
     component_requirements: Dict[str, str] = {}
+    # v2（P7）：产品原型归属 —— 模板是「原型 + 组合 + 组件」的实例化，
+    # 差异应来自 subject/参数/组件构成而非新模板。固定词表：
+    #   distribution_overview   点/事件/POI 分布概览（热力+点+统计）
+    #   regional_comparison     行政区对比（choropleth+排名图+统计）
+    #   density_analysis        密度/格网分析（heatmap/grid+colorbar）
+    #   remote_sensing          遥感栅格产品（raster+colorbar+图框）
+    #   simple_view             轻量浏览（仅点图+导航件）
+    #   proportional_symbol     比例符号权重点图
+    archetype: str = ""
 
     @model_validator(mode="after")
     def _derive_compatible_map_models(self) -> "MapProductTemplate":
@@ -68,6 +77,19 @@ class MapProductTemplate(BaseModel):
                     models.append(mm)
             self.compatible_map_models = models
         return self
+
+
+# 原型词表（v2 §10）：新模板必须归属其一（regression guard 锁定 ——
+# 防垂直模板重新膨胀：school/hospital/earthquake 级差异属于 subject
+# 参数，不是新模板）。
+PRODUCT_ARCHETYPES = (
+    "distribution_overview",
+    "regional_comparison",
+    "density_analysis",
+    "remote_sensing",
+    "simple_view",
+    "proportional_symbol",
+)
 
 
 SEED_PRODUCT_TEMPLATES: List[MapProductTemplate] = [
@@ -91,6 +113,7 @@ SEED_PRODUCT_TEMPLATES: List[MapProductTemplate] = [
         exports=["png", "pdf"],
         title_pattern="{scope}{subject}分布",
         composition_template_id="composition.density_map",
+        archetype="distribution_overview",
     ),
     MapProductTemplate(
         id="education_facility_distribution",
@@ -112,6 +135,7 @@ SEED_PRODUCT_TEMPLATES: List[MapProductTemplate] = [
         exports=["png", "pdf", "csv"],
         title_pattern="{scope}{subject}分布",
         composition_template_id="composition.density_map",
+        archetype="distribution_overview",
     ),
     MapProductTemplate(
         # P7（模板/配方整合）：与 poi_distribution_overview 结构完全相同
@@ -153,6 +177,7 @@ SEED_PRODUCT_TEMPLATES: List[MapProductTemplate] = [
         exports=["png", "pdf", "csv"],
         title_pattern="{scope}{subject}统计",
         composition_template_id="composition.statistical_map",
+        archetype="regional_comparison",
     ),
     MapProductTemplate(
         id="simple_poi_view",
@@ -169,6 +194,7 @@ SEED_PRODUCT_TEMPLATES: List[MapProductTemplate] = [
         exports=[],
         title_pattern="{scope}{subject}",
         composition_template_id="composition.minimal_interactive",
+        archetype="simple_view",
     ),
     MapProductTemplate(
         id="grid_density_product",
@@ -186,6 +212,7 @@ SEED_PRODUCT_TEMPLATES: List[MapProductTemplate] = [
         exports=["png"],
         title_pattern="{scope}{subject}格网分布",
         composition_template_id="composition.statistical_map",
+        archetype="density_analysis",
     ),
     MapProductTemplate(
         id="proportional_symbol_product",
@@ -201,6 +228,27 @@ SEED_PRODUCT_TEMPLATES: List[MapProductTemplate] = [
         exports=["png"],
         title_pattern="{scope}{subject}规模分布",
         composition_template_id="composition.standard_analysis",
+        archetype="proportional_symbol",
+    ),
+    MapProductTemplate(
+        # v2（P7 archetype）：遥感栅格产品 —— raster_distribution 配方的
+        # 产品化接线（此前配方无产品模板，composition.remote_sensing_map
+        # 不可达）。栅格 + 连续色条 + 图框 + 版式。
+        id="remote_sensing_product",
+        name="遥感栅格产品",
+        description="栅格面/影像 + 连续色条 + 图框 + 导出版式（遥感原型）。",
+        recipe_id="raster_distribution",
+        archetype="remote_sensing",
+        layer_roles=[
+            LayerRoleSpec(role="primary", layer_type="raster", cartography="raster_surface",
+                          source_capability="raster_source", description="栅格面/影像"),
+        ],
+        default_components=["title", "continuous_colorbar", "north_arrow", "scale_bar",
+                            "attribution", "map_border", "export_layout"],
+        outputs=["interactive_map", "summary"],
+        exports=["png", "pdf"],
+        title_pattern="{scope}{subject}栅格产品",
+        composition_template_id="composition.remote_sensing_map",
     ),
 ]
 
