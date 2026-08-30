@@ -51,6 +51,8 @@ export const COMPONENT_LAYOUT_META: Record<string, ComponentLayoutMeta> = {
   annotation: { defaultSlot: 'top-left', priority: 0 },
   statistics_panel: { defaultSlot: 'top-left', priority: 1 },
   chart_panel: { defaultSlot: 'top-left', priority: 2 },
+  // v2：区位插图（与 north_arrow 同占 top-right 族，槽内按 priority 堆叠）
+  inset_map: { defaultSlot: 'top-right', priority: 3 },
   // P6：全画布/叠加型 —— 无槽（求解器排除，catalog defaultPosition='none'）
   map_border: { defaultSlot: 'none', priority: 70 },
   graticule: { defaultSlot: 'none', priority: 60 },
@@ -157,7 +159,7 @@ export function resolveComponentLayout(
     title: 48, subtitle: 28, north_arrow: 56, scale_bar: 26,
     attribution: 18, continuous_colorbar: 120, legend: 140,
     categorical_legend: 140, annotation: 90, statistics_panel: 160,
-    chart_panel: 200,
+    chart_panel: 200, inset_map: 168,
   };
   const slotBox = (slot: LayoutSlot, h: number): Box => {
     const W = canvas?.width ?? 1200;
@@ -242,4 +244,34 @@ export function stackOffsetPx(
   if (resolution.slotSize <= 1 || resolution.index <= 0) return 0;
   const step = COMPONENT_LAYOUT_META[type]?.stackStepPx ?? DEFAULT_STACK_STEP_PX;
   return resolution.index * step;
+}
+
+/**
+ * v2（Scenario H）：floating 盒确定性地夹取进画布 —— 小视口/移动端上
+ * 用户拖出界或历史像素越界的组件不得无限溢出（导出画布同理）。
+ * 纯函数、同输入同输出：x/y 夹取到 [8, canvas-最小可见 96px] 窗口，
+ * 宽高夹取到画布上界（面板不允许大于画布）。语义语义一致性：这是
+ * 渲染期的视口约束（derived），不改 MapSpec 的语义 placement。
+ */
+export function clampFloatingRect(
+  rect: { x: number; y: number; width?: number; height?: number },
+  canvas: { width: number; height: number },
+): { x: number; y: number; width?: number; height?: number } {
+  const MIN_VISIBLE = 96;
+  const EDGE = 8;
+  const w = rect.width ?? 0;
+  const h = rect.height ?? 0;
+  const maxX = Math.max(EDGE, canvas.width - Math.max(MIN_VISIBLE, Math.min(w, MIN_VISIBLE)) - EDGE);
+  const maxY = Math.max(EDGE, canvas.height - Math.max(MIN_VISIBLE, Math.min(h, MIN_VISIBLE)) - EDGE);
+  const out: { x: number; y: number; width?: number; height?: number } = {
+    x: Math.min(Math.max(rect.x, EDGE), maxX),
+    y: Math.min(Math.max(rect.y, EDGE), maxY),
+  };
+  if (rect.width !== undefined) {
+    out.width = Math.min(rect.width, Math.max(0, canvas.width - out.x - EDGE));
+  }
+  if (rect.height !== undefined) {
+    out.height = Math.min(rect.height, Math.max(0, canvas.height - out.y - EDGE));
+  }
+  return out;
 }

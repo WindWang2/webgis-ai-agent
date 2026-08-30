@@ -15,6 +15,7 @@
  */
 
 import type { MapSpecComponent } from '@/lib/mapspec-compiler/types';
+import { clampFloatingRect } from './resolve-layout';
 
 /** 七槽锚点（与后端 components.Position 字面量一致）。 */
 export type ChromeAnchor =
@@ -39,6 +40,8 @@ export const DEFAULT_COMPONENT_ANCHOR: Record<string, ChromeAnchor> = {
   annotation: 'top-left',
   statistics_panel: 'top-left',
   chart_panel: 'top-left',
+  // v2：区位插图 —— 与 north_arrow 同侧（top-right 族），槽内堆叠
+  inset_map: 'top-right',
   // P6：全画布/叠加型组件 —— 不参与槽位堆叠（'none'）
   map_border: 'none',
   graticule: 'none',
@@ -170,7 +173,10 @@ export function findOfType(
 
 /**
  * 导出侧视口→画布坐标换算：floating 坐标是 live 视口像素，导出画布尺寸
- * 不同 —— 按比例缩放（确定性，文档化于 ADR-0081）。
+ * 不同 —— 按比例缩放（确定性，文档化于 ADR-0081）。v2（Scenario H）：
+ * 缩放后经 clampFloatingRect 夹取进画布 —— live 视口里用户拖到边缘的
+ * 面板在导出画布上不得被裁出页面（视口约束是渲染期 derived 语义，不改
+ * MapSpec 的 user placement 真相；live 不夹取 —— 用户显式摆放优先）。
  */
 export function scaleFloatingRect(
   rect: NonNullable<ResolvedMapComponent['floatingRect']>,
@@ -179,10 +185,13 @@ export function scaleFloatingRect(
 ): { x: number; y: number; width?: number; height?: number } {
   const sx = viewport.width > 0 ? canvas.width / viewport.width : 1;
   const sy = viewport.height > 0 ? canvas.height / viewport.height : 1;
-  return {
-    x: rect.x * sx,
-    y: rect.y * sy,
-    width: rect.width !== undefined ? rect.width * sx : undefined,
-    height: rect.height !== undefined ? rect.height * sy : undefined,
-  };
+  return clampFloatingRect(
+    {
+      x: rect.x * sx,
+      y: rect.y * sy,
+      width: rect.width !== undefined ? rect.width * sx : undefined,
+      height: rect.height !== undefined ? rect.height * sy : undefined,
+    },
+    canvas,
+  );
 }

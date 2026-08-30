@@ -7,6 +7,7 @@ import {
   drawChromeAttribution,
   drawChromeChartPanel,
   drawChromeColorbar,
+  drawChromeInset,
   drawChromeLegend,
   drawChromeMapBorder,
   drawChromeNorthArrow,
@@ -278,21 +279,43 @@ export function composeLayout(
       drawChromeMapBorder(d, chrome.border);
     }
 
-    // 5. Legend / colorbar（spec 组件 enabled 驱动；anchor 槽位）
-    if (showLegend && chrome.legend) {
-      drawChromeLegend(d, chrome.legend, { marginX, marginY: stackOffset(chrome.legend, mLegend) });
+    // 5. Legend / colorbar（v2：图例族多实例 —— 每个绑定层独立绘制；
+    // 单实例字段 legend/colorbar 与数组首元素相同，向后兼容旧消费者）
+    if (showLegend) {
+      const legendEls = chrome.legends.length
+        ? chrome.legends
+        : chrome.legend
+          ? [chrome.legend]
+          : [];
+      for (const el of legendEls) {
+        drawChromeLegend(d, el, { marginX, marginY: stackOffset(el, mLegend) });
+      }
+      if (legendEls.length === 0 && options.heatmapLegend) {
+        // 热力图无量化色条（legend_spec 缺 min/max）时回落定性渐变图例 ——
+        // review P1：不能让热力图-only 成品完全丢图例。
+        _drawHeatmapLegend(
+          { ctx, dark_mode, scalePx, targetW, targetH },
+          options.heatmapLegend.name,
+          0,
+          options.heatmapLegend.paletteColors,
+        );
+      }
     }
-    if (showLegend && chrome.colorbar) {
-      drawChromeColorbar(d, chrome.colorbar, { marginX, marginY: stackOffset(chrome.colorbar, mLegend) });
-    } else if (showLegend && options.heatmapLegend) {
-      // 热力图无量化色条（legend_spec 缺 min/max）时回落定性渐变图例 ——
-      // review P1：不能让热力图-only 成品完全丢图例。
-      _drawHeatmapLegend(
-        { ctx, dark_mode, scalePx, targetW, targetH },
-        options.heatmapLegend.name,
-        0,
-        options.heatmapLegend.paletteColors,
-      );
+    if (showLegend) {
+      const colorbarEls = chrome.colorbars.length
+        ? chrome.colorbars
+        : chrome.colorbar
+          ? [chrome.colorbar]
+          : [];
+      for (const el of colorbarEls) {
+        drawChromeColorbar(d, el, { marginX, marginY: stackOffset(el, mLegend) });
+      }
+    }
+
+    // 5.4 Inset maps（v2：区位插图 —— 纯 SVG 投影语义同链；bounds 缺省
+    // 由 insetMainBbox 携带，无指示范围只画范围示意）
+    for (const inset of chrome.insets) {
+      drawChromeInset(d, inset);
     }
 
     // 5.5 浮动面板（statistics/chart/annotation —— 终审 F1：注释卡导出）
@@ -302,7 +325,10 @@ export function composeLayout(
       } else if (panel.kind === 'chart') {
         drawChromeChartPanel(d, panel, { marginX, marginY: stackOffset(panel, mPanel) });
       } else if (panel.kind === 'annotation') {
-        drawChromeAnnotation(d, panel, { marginX, marginY: stackOffset(panel, mPanel) });
+        drawChromeAnnotation(d, panel, {
+          marginX, marginY: stackOffset(panel, mPanel),
+          mapCenter, mapZoom, pxPerLogical,
+        });
       }
     }
 
@@ -1267,6 +1293,19 @@ export async function runExport(
           requestSubtitle: subtitle || undefined,
           legendSpecsByLayer,
           fallbackLegendSpec: legendSpec,
+          // v2：live 视口地理 bounds —— inset 指示框缺省 mainBbox 时的
+          // 自动确定来源（Scenario C：学术图 + 区位插图导出）
+          viewportBounds: (() => {
+            try {
+              const b = map.getBounds();
+              return {
+                west: b.getWest(), south: b.getSouth(),
+                east: b.getEast(), north: b.getNorth(),
+              };
+            } catch {
+              return undefined;
+            }
+          })(),
           loadChart: async (ref) => {
             const { loadChartArtifact } = await import(
               '@/lib/map-components/chart-artifact'

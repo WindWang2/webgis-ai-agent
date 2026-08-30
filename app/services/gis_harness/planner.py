@@ -692,6 +692,11 @@ class MapProductPlanner:
                 ctx.append("statistics")
             if plan.charts:
                 ctx.append("chart")
+            # v2：区位插图上下文 —— 有具名地理范围（scope.name）的报告产品
+            # 才供应 inset_context（resolver 据此选出 inset_map 槽位；bbox
+            # 由 Agent 经 component_update 填充，渲染端空 bbox 自弃）。
+            if plan.intent.report_product and plan.intent.scope.name:
+                ctx.append("inset_context")
             selection = resolver.resolve(
                 composition_template_id=comp_tmpl_id,
                 map_model_id=primary_carto,

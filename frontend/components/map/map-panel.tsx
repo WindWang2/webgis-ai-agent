@@ -829,6 +829,7 @@ export function MapPanel({
     'title', 'subtitle', 'north_arrow', 'scale_bar', 'attribution',
     'continuous_colorbar', 'legend', 'categorical_legend',
     'annotation', 'statistics_panel', 'chart_panel', 'map_border', 'graticule',
+    'inset_map',
   ])  // 终审 F4：map_border 有 live 渲染器（P6）—— map_border-only spec
      // 此前不挂 MapSpecChrome，边框导出得出来、live 画不出来。
      // P3：graticule live 渲染器落地（#1089 deferred 补齐）—— graticule-only

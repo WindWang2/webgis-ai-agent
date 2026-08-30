@@ -29,6 +29,8 @@ KIND_ANALYSIS = "analysis"
 KIND_STATISTICS = "statistics"
 KIND_CHART = "chart"
 KIND_ANNOTATION = "annotation"
+KIND_LEGEND = "legend"
+KIND_INSET = "inset"
 KIND_EXPORT = "export"
 KIND_NARRATIVE = "narrative"
 
@@ -56,6 +58,14 @@ _STAT_KINDS = {
     "statistics_panel": KIND_STATISTICS,
     "chart_panel": KIND_CHART,
     "annotation": KIND_ANNOTATION,
+    # v2（§18）：图例族 / 插图组件同样投影为 facet —— 多图层地图的
+    # legend:heatmap / legend:district / inset 在产品图上可分辨。
+    # legend facet 是信息性在场（不虚构 required —— 图例槽位本身是
+    # conditional）；状态仍投影自组件 enabled。
+    "legend": KIND_LEGEND,
+    "categorical_legend": KIND_LEGEND,
+    "continuous_colorbar": KIND_LEGEND,
+    "inset_map": KIND_INSET,
 }
 
 
@@ -86,11 +96,15 @@ class ProductGraph:
 
     @property
     def facets(self) -> List[ProductNode]:
-        """产品 facets：地图层 + 统计/图表/注记（分析是供给，不算 facet）。"""
+        """产品 facets：地图层 + 统计/图表/注记 + 图例/插图（分析是供给，
+        不算 facet）。"""
         return [
             n
             for n in self.nodes
-            if n.kind in (KIND_MAP_LAYER, KIND_STATISTICS, KIND_CHART, KIND_ANNOTATION)
+            if n.kind in (
+                KIND_MAP_LAYER, KIND_STATISTICS, KIND_CHART, KIND_ANNOTATION,
+                KIND_LEGEND, KIND_INSET,
+            )
         ]
 
     def summary_line(self) -> str:
@@ -103,6 +117,8 @@ class ProductGraph:
             (KIND_STATISTICS, "stats"),
             (KIND_CHART, "chart"),
             (KIND_ANNOTATION, "note"),
+            (KIND_LEGEND, "legend"),
+            (KIND_INSET, "inset"),
         ):
             nodes = self.by_kind(kind)
             if nodes:
@@ -118,6 +134,8 @@ class ProductGraph:
             (KIND_STATISTICS, "stats"),
             (KIND_CHART, "chart"),
             (KIND_ANNOTATION, "note"),
+            (KIND_LEGEND, "legend"),
+            (KIND_INSET, "inset"),
             (KIND_ANALYSIS, "analysis"),
         ):
             n = sum(
@@ -224,7 +242,8 @@ def build_product_graph(
             )
         )
 
-    # 组件 facets：statistics / chart / annotation（状态 = enabled 投影）
+    # 组件 facets：statistics / chart / annotation / legend 族 / inset
+    # （状态 = enabled 投影；图例/插图是信息性 facet —— 见 _STAT_KINDS 注）
     chart_seen = False
     for comp in ((mapspec or {}).get("layout") or {}).get("components") or []:
         if not isinstance(comp, dict):
@@ -236,15 +255,25 @@ def build_product_graph(
         if kind == KIND_CHART and comp.get("enabled") is not False:
             chart_seen = True
         cid = str(comp.get("id") or ctype)
-        chart_ref = (comp.get("options") or {}).get("chartRef")
+        options = comp.get("options") or {}
+        chart_ref = options.get("chartRef")
+        bound_layer = str(options.get("layerId") or "")
+        metadata: Dict[str, Any] = {}
+        if bound_layer:
+            metadata["layer_id"] = bound_layer
+        label = cid
+        if kind == KIND_LEGEND and bound_layer:
+            # 多图例可分辨：legend:{layer}（§18 的 legend:heatmap 形态）
+            label = f"{cid}@{bound_layer}"
         graph.nodes.append(
             ProductNode(
                 node_id=f"{kind}:{cid}",
                 kind=kind,
                 key=cid,
-                label=cid,
+                label=label,
                 status=S_DONE if comp.get("enabled") is not False else S_OFF,
                 artifact_ref=str(chart_ref) if isinstance(chart_ref, str) else "",
+                metadata=metadata,
             )
         )
 
@@ -527,6 +556,23 @@ def build_facet_completion(
                     facet.render_status = "verified"
         elif node.kind in (KIND_STATISTICS, KIND_CHART, KIND_ANNOTATION):
             facet.component_ids = [node.key]
+            # v2（Scenario F）：chart facet 的 chartRef 在 ref descriptor
+            # 里查无证据（artifact 缺失/过期被逐出）→ needs_repair —— 只
+            # 该 chart 面板欠修，不把整图判死。descriptors 缺席（无证据
+            # 输入）→ 不虚构，维持 enabled 投影状态。
+            if (
+                node.kind == KIND_CHART
+                and node.artifact_ref
+                and descriptors
+                and node.artifact_ref not in descriptors
+            ):
+                facet.status = FS_NEEDS_REPAIR
+                facet.render_status = "issues"
+        elif node.kind in (KIND_LEGEND, KIND_INSET):
+            # 信息性 facet：在场即构成，缺席不欠（conditional 槽位语义）
+            facet.required = False
+            facet.component_ids = [node.key]
+            facet.layer_ids = [node.metadata["layer_id"]] if node.metadata.get("layer_id") else []
         elif node.kind == KIND_EXPORT:
             facet.required = False  # 信息性 facet（导出动作不由计划真相追踪）
         facets.append(facet)

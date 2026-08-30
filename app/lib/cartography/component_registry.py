@@ -198,11 +198,16 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
     MapComponentDescriptor(
         id="inset_map", category="inset.map", type="inset_map",
         name="Inset Map", name_zh="插图",
+        # v2（P1 全链路）：live SVG 渲染器（inset-map.tsx，轻量静态投影 ——
+        # 不 mount 第二个 maplibre runtime）+ 导出 drawChromeInset 同链；
+        # renderer/exporter 真值由矩阵对账。bbox 未填充时渲染端自弃
+        # （不虚构范围），resolver 需要 inset_context 才会选出（防空选）。
         placement_domain="overlay", supported_outputs=["interactive", "png", "pdf"],
-        renderer_support=[], exporter_support=[],
+        renderer_support=["interactive"], exporter_support=["png", "pdf"],
         default_variant="overview", variants=["overview", "location"],
         default_position="top-right", allowed_positions=["top-right", "top-left", "bottom-right", "bottom-left"],
-        cardinality="zero_or_one", priority=65, runtime_status="planned",
+        cardinality="zero_or_one", priority=65, runtime_status="native",
+        required_context=["inset_context"],
     ),
 ]
 

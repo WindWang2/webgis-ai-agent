@@ -25,6 +25,10 @@ import {
   type ResolvedMapComponent,
 } from '@/lib/map-components/resolve-components';
 import { resolveComponentLayout } from '@/lib/map-components/resolve-layout';
+import {
+  anchorFractionInBounds,
+  boundsFromCenterZoom,
+} from '@/lib/map-components/geo-anchor';
 import { computeNiceScale, formatScaleLabel } from './scale-math';
 
 export interface StatsPanelData {
@@ -56,6 +60,14 @@ export interface ExportChromeElement {
   legendSpec?: LegendSpec;
   stats?: StatsPanelData;
   chart?: ChartPanelData;
+  /** v2 注记 callout：地理锚点 [lng, lat]（与 live annotation.tsx 同链投影）。 */
+  anchorCoordinate?: [number, number];
+  /** v2 注记 group：多条相关注记（≤12 条，与后端 MAX_ANNOTATION_ITEMS 同值）。 */
+  items?: Array<{ text: string; anchor?: [number, number] }>;
+  /** v2 插图：插图 bbox / 主图指示范围 / 边界折线（已夹取 ≤512 点）。 */
+  insetBbox?: { west: number; south: number; east: number; north: number };
+  insetMainBbox?: { west: number; south: number; east: number; north: number };
+  insetBoundary?: [number, number][];
 }
 
 export interface ExportChromeModel {
@@ -65,12 +77,20 @@ export interface ExportChromeModel {
   subtitle?: ExportChromeElement;
   northArrow?: ExportChromeElement;
   scaleBar?: ExportChromeElement;
+  /**
+   * v2：图例族多实例 —— 每个绑定层的图例/色条独立成元素（旧字段
+   * legend/colorbar 语义 = 第一个实例，保留供旧消费者/测试兼容）。
+   */
   legend?: ExportChromeElement;
   colorbar?: ExportChromeElement;
+  legends: ExportChromeElement[];
+  colorbars: ExportChromeElement[];
   attribution?: ExportChromeElement;
   border?: ExportChromeElement;
   /** P6：spec graticule 组件 enabled → 导出绘制经纬网（live 无渲染器）。 */
   graticuleEnabled?: boolean;
+  /** v2：区位插图元素（纯 SVG 投影语义，与 live inset-map 渲染器同链）。 */
+  insets: ExportChromeElement[];
   panels: ExportChromeElement[];
 }
 
@@ -88,10 +108,60 @@ export interface BuildExportChromeOptions {
   fallbackLegendSpec?: LegendSpec;
   /** chartRef → ChartData 的异步加载器（大载荷走 session artifact）。 */
   loadChart?: (ref: string) => Promise<ChartPanelData | null>;
+  /** v2：live 视口地理 bounds（inset 指示框缺省 mainBbox 时使用）。 */
+  viewportBounds?: { west: number; south: number; east: number; north: number };
 }
 
 function _anchorOf(c: ResolvedMapComponent): ChromeAnchor {
   return c.anchor ?? DEFAULT_COMPONENT_ANCHOR[c.type] ?? 'none';
+}
+
+/** [w, s, e, n] → GeoBounds（无效/退化 → null）。 */
+function parseBbox4(raw: unknown): { west: number; south: number; east: number; north: number } | null {
+  if (!Array.isArray(raw) || raw.length !== 4) return null;
+  const w = Number(raw[0]);
+  const s = Number(raw[1]);
+  const e = Number(raw[2]);
+  const n = Number(raw[3]);
+  if (![w, s, e, n].every(Number.isFinite)) return null;
+  if (e <= w || n <= s) return null;
+  return { west: w, south: s, east: e, north: n };
+}
+
+/** 边界折线（≤512 点；与 live inset-map 同一上限）。 */
+function parseBoundary(raw: unknown): [number, number][] | null {
+  if (!Array.isArray(raw)) return null;
+  const pts: [number, number][] = [];
+  for (const pt of raw.slice(0, 512)) {
+    if (Array.isArray(pt) && pt.length === 2 && Number.isFinite(Number(pt[0])) && Number.isFinite(Number(pt[1]))) {
+      pts.push([Number(pt[0]), Number(pt[1])]);
+    }
+  }
+  return pts.length >= 3 ? pts : null;
+}
+
+/** 注记 callout 锚点（[lng, lat] 合法性校验）。 */
+function parseAnchorCoordinate(raw: unknown): [number, number] | null {
+  if (!Array.isArray(raw) || raw.length !== 2) return null;
+  const lng = Number(raw[0]);
+  const lat = Number(raw[1]);
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+  if (lng < -180 || lng > 180 || lat < -90 || lat > 90) return null;
+  return [lng, lat];
+}
+
+/** 注记 group 条目（≤12 条；与后端 MAX_ANNOTATION_ITEMS 同值）。 */
+function parseAnnotationItems(raw: unknown): Array<{ text: string; anchor?: [number, number] }> | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const items: Array<{ text: string; anchor?: [number, number] }> = [];
+  for (const entry of raw.slice(0, 12)) {
+    if (!entry || typeof entry !== 'object') continue;
+    const rec = entry as Record<string, unknown>;
+    if (typeof rec['text'] !== 'string' || !rec['text'].trim()) continue;
+    const anchor = parseAnchorCoordinate(rec['anchor']);
+    items.push(anchor ? { text: rec['text'], anchor } : { text: rec['text'] });
+  }
+  return items;
 }
 
 function _floatingRectOf(
@@ -163,10 +233,13 @@ export async function buildExportChrome(
   const VISUAL_TYPES = new Set([
     'title', 'subtitle', 'legend', 'categorical_legend', 'continuous_colorbar',
     'north_arrow', 'scale_bar', 'attribution', 'statistics_panel', 'chart_panel',
-    'annotation', 'map_border', 'graticule',
+    'annotation', 'map_border', 'graticule', 'inset_map',
   ]);
   const model: ExportChromeModel = {
     fromSpec: resolved.some((c) => VISUAL_TYPES.has(c.type) && c.enabled),
+    legends: [],
+    colorbars: [],
+    insets: [],
     panels: [],
   };
   // graticule 组件通道在任何路径下都置位（早退前 —— 终审 F4：此前
@@ -294,57 +367,54 @@ export async function buildExportChrome(
 
   // 图例族：spec 组件的 layerId → legend_spec；组件 disabled → 不出图例
   // （此前导出无视 spec enabled，由 HUD 发现独裁 —— parity 修复）。
-  // E-4：族内取第一个 **enabled** 成员 —— 此前 disabled 的 legend 会
-  // shadow 掉 enabled 的 categorical_legend（导出丢图例）。
-  const legendComp = resolved.find(
-    (c) => (c.type === 'legend' || c.type === 'categorical_legend') && c.enabled,
+  // v2：图例族多实例 —— 每个绑定层一个元素（各绑各的 legend_spec），
+  // 未绑定 layerId 的实例按类型兜底发现一次（HUD 发现语义，防丢图例）。
+  const legendFamily = resolved.filter(
+    (c) => (c.type === 'legend' || c.type === 'categorical_legend' || c.type === 'continuous_colorbar'),
   );
-  const anyLegendFamily = resolved.some(
-    (c) => c.type === 'legend' || c.type === 'categorical_legend',
-  );
-  if (legendComp) {
+  const anyLegendFamily = legendFamily.length > 0;
+  let usedFallbackLegend = false;
+  for (const comp of legendFamily) {
+    if (!comp.enabled) continue;
+    const isColorbar = comp.type === 'continuous_colorbar';
     const spec =
-      (legendComp.layerId && opts.legendSpecsByLayer[legendComp.layerId]) ||
+      (comp.layerId && opts.legendSpecsByLayer[comp.layerId]) ||
       Object.values(opts.legendSpecsByLayer).find(
-        (s) => s.type === 'graduated' || s.type === 'categorical',
+        (s) => isColorbar
+          ? s.type === 'continuous' || s.type === 'divergent'
+          : s.type === 'graduated' || s.type === 'categorical',
       ) ||
-      opts.fallbackLegendSpec;
-    if (spec) {
-      model.legend = {
-        kind: 'legend',
-        anchor: _effectiveAnchor(legendComp),
-        rect: _floatingRectOf(legendComp, opts.viewport, canvas),
-        stackIndex: _stackOf(legendComp)?.index ?? 0,
-        slotSize: _stackOf(legendComp)?.slotSize ?? 0,
-        legendSpec: spec,
-      };
+      (!isColorbar ? opts.fallbackLegendSpec : undefined);
+    if (!spec) continue;
+    if (comp.layerId === '' ) {
+      // 未绑定实例共用一次兜底发现，避免 N 个未绑定实例画 N 份相同图例
+      if (usedFallbackLegend) continue;
+      usedFallbackLegend = true;
     }
-  } else if (!anyLegendFamily && opts.fallbackLegendSpec) {
+    const el: ExportChromeElement = {
+      kind: isColorbar ? 'colorbar' : 'legend',
+      anchor: _effectiveAnchor(comp),
+      rect: _floatingRectOf(comp, opts.viewport, canvas),
+      stackIndex: _stackOf(comp)?.index ?? 0,
+      slotSize: _stackOf(comp)?.slotSize ?? 0,
+      legendSpec: spec,
+    };
+    if (isColorbar) {
+      model.colorbars.push(el);
+      if (!model.colorbar) model.colorbar = el;
+    } else {
+      model.legends.push(el);
+      if (!model.legend) model.legend = el;
+    }
+  }
+  if (!anyLegendFamily && opts.fallbackLegendSpec) {
     // spec 无图例组件（旧 spec）→ HUD 兜底（原行为），槽位用类型默认
     model.legend = {
       kind: 'legend',
       anchor: DEFAULT_COMPONENT_ANCHOR['legend'],
       legendSpec: opts.fallbackLegendSpec,
     };
-  }
-
-  const colorbarComp = resolved.find((c) => c.type === 'continuous_colorbar');
-  if (colorbarComp && colorbarComp.enabled) {
-    const spec =
-      (colorbarComp.layerId && opts.legendSpecsByLayer[colorbarComp.layerId]) ||
-      Object.values(opts.legendSpecsByLayer).find(
-        (s) => s.type === 'continuous' || s.type === 'divergent',
-      );
-    if (spec) {
-      model.colorbar = {
-        kind: 'colorbar',
-        anchor: _effectiveAnchor(colorbarComp),
-        rect: _floatingRectOf(colorbarComp, opts.viewport, canvas),
-        stackIndex: _stackOf(colorbarComp)?.index ?? 0,
-        slotSize: _stackOf(colorbarComp)?.slotSize ?? 0,
-        legendSpec: spec,
-      };
-    }
+    model.legends.push(model.legend);
   }
 
   const attrComp = resolved.find((c) => c.type === 'attribution' && c.enabled);
@@ -374,8 +444,28 @@ export async function buildExportChrome(
 
   // 终审 F1：annotation 此前在 VISUAL_TYPES 里翻转 chrome 路径却从不导出
   // （导出静默丢注释 + 压制 legacy 回退）—— 现按 live 语义导出文本注释卡。
+  // v2：callout（anchorCoordinate）/ group（items）同链导出 —— 与
+  // live annotation.tsx 共用 geo-anchor 投影语义（画布像素侧由
+  // drawChromeAnnotation 换算，方向/避让规则一致）。
   for (const c of resolved) {
-    if (c.type !== 'annotation' || !c.enabled || !c.text.trim()) continue;
+    if (c.type !== 'annotation' || !c.enabled) continue;
+    const opts_ = c.options;
+    const items = parseAnnotationItems(opts_['items']);
+    const anchorCoord = parseAnchorCoordinate(opts_['anchor']);
+    if (items) {
+      if (!items.length) continue;
+      model.panels.push({
+        kind: 'annotation',
+        anchor: _effectiveAnchor(c),
+        rect: _floatingRectOf(c, opts.viewport, canvas),
+        stackIndex: _stackOf(c)?.index ?? 0,
+        slotSize: _stackOf(c)?.slotSize ?? 0,
+        items,
+        text: undefined,
+      });
+      continue;
+    }
+    if (!c.text.trim()) continue;
     model.panels.push({
       kind: 'annotation',
       anchor: _effectiveAnchor(c),
@@ -383,6 +473,29 @@ export async function buildExportChrome(
       stackIndex: _stackOf(c)?.index ?? 0,
       slotSize: _stackOf(c)?.slotSize ?? 0,
       text: c.text,
+      ...(anchorCoord ? { anchorCoordinate: anchorCoord } : {}),
+    });
+  }
+
+  // v2：区位插图 —— bbox 必备（缺省自弃，与 live inset-map 渲染器同门）；
+  // 主图指示范围缺省用请求携带的 live bounds（调用方传 viewportBounds）。
+  for (const c of resolved) {
+    if (c.type !== 'inset_map' || !c.enabled) continue;
+    const insetBbox = parseBbox4(c.options['bbox']);
+    if (!insetBbox) continue;
+    const mainBbox = parseBbox4(c.options['mainBbox']) ?? opts.viewportBounds ?? undefined;
+    const labelOpt = c.options['label'];
+    model.insets.push({
+      kind: 'inset_map',
+      anchor: _effectiveAnchor(c),
+      rect: _floatingRectOf(c, opts.viewport, canvas),
+      stackIndex: _stackOf(c)?.index ?? 0,
+      slotSize: _stackOf(c)?.slotSize ?? 0,
+      variant: c.variant || 'overview',
+      text: typeof labelOpt === 'string' && labelOpt ? labelOpt : undefined,
+      insetBbox,
+      ...(mainBbox ? { insetMainBbox: mainBbox } : {}),
+      ...(parseBoundary(c.options['boundary']) ? { insetBoundary: parseBoundary(c.options['boundary'])! } : {}),
     });
   }
 
@@ -1009,15 +1122,77 @@ export function drawChromeMapBorder(
 }
 
 /** Annotation —— 文本注释卡（终审 F1：与 live annotation.tsx 同语义：左边
- * 线强调 + 弱文本；多行按 \n 分行绘制）。 */
+ * 线强调 + 弱文本；多行按 \n 分行绘制）。v2：callout（anchorCoordinate）
+ * 用 boundsFromCenterZoom 推导 bounds —— 与 live 同一 geo-anchor 投影函数
+ * （象限避让规则一致）；group（items）逐条绘制（带 anchor 的条目为组内
+ * callout，无 anchor 条目合并为一张静态卡）。 */
 export function drawChromeAnnotation(
   d: DrawCtx,
   el: ExportChromeElement,
+  opts: {
+    marginX: number;
+    marginY?: number;
+    /** callout 投影输入（mapCenter/mapZoom + 逻辑像素 → bounds）。 */
+    mapCenter?: { lat: number; lng: number };
+    mapZoom?: number;
+    pxPerLogical?: number;
+  },
+): void {
+  const { ctx } = d;
+  // group 形态：带 anchor 条目逐条锚定 + 无 anchor 条目静态卡
+  if (el.items && el.items.length) {
+    const bounds =
+      opts.mapCenter && opts.mapZoom !== undefined
+        ? boundsFromCenterZoom(
+            opts.mapCenter,
+            opts.mapZoom,
+            d.targetW / (opts.pxPerLogical ?? 1),
+            d.targetH / (opts.pxPerLogical ?? 1),
+          )
+        : null;
+    const plain = el.items.filter((it) => !it.anchor);
+    if (bounds) {
+      for (const item of el.items) {
+        if (item.anchor) drawAnchoredCalloutBox(d, item.anchor, textCanvasLines(item.text), bounds);
+      }
+    }
+    if (plain.length) {
+      const lines = plain.flatMap((it) => textCanvasLines(it.text)).slice(0, 8);
+      drawStaticAnnotationBox(d, el, lines, opts);
+    }
+    return;
+  }
+
+  const lines = el.text ? el.text.split('\n').slice(0, 8) : [];
+  if (!lines.length) return;
+  // callout：anchor + 可推导 bounds → 地理锚定（否则降级静态卡 —— 与
+  // live 的 bounds 缺席降级同语义，不虚构位置）
+  if (el.anchorCoordinate && opts.mapCenter && opts.mapZoom !== undefined) {
+    const bounds = boundsFromCenterZoom(
+      opts.mapCenter,
+      opts.mapZoom,
+      d.targetW / (opts.pxPerLogical ?? 1),
+      d.targetH / (opts.pxPerLogical ?? 1),
+    );
+    if (bounds) {
+      drawAnchoredCalloutBox(d, el.anchorCoordinate, lines.map((l) => l.slice(0, 80)), bounds);
+      return;
+    }
+  }
+  drawStaticAnnotationBox(d, el, lines.map((l) => l.slice(0, 80)), opts);
+}
+
+function textCanvasLines(text: string): string[] {
+  return text.split('\n').slice(0, 8).map((l) => l.slice(0, 80));
+}
+
+function drawStaticAnnotationBox(
+  d: DrawCtx,
+  el: ExportChromeElement,
+  lines: string[],
   opts: { marginX: number; marginY?: number },
 ): void {
-  if (!el.text) return;
   const { ctx } = d;
-  const lines = el.text.split('\n').slice(0, 8); // 有界：注释卡 ≤8 行
   const padding = d.scalePx(10);
   const lineH = d.scalePx(16);
   const boxW = Math.min(d.scalePx(360), d.targetW * 0.5);
@@ -1036,6 +1211,167 @@ export function drawChromeAnnotation(
   ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.65)' : 'rgba(100,116,139,0.95)';
   ctx.font = `${d.scalePx(12)}px ${d.style.fontFamily}`;
   lines.forEach((line, i) => {
-    _text(d, line.slice(0, 80), x + padding + d.scalePx(2), y + padding + lineH * (i + 0.75), 'left');
+    _text(d, line, x + padding + d.scalePx(2), y + padding + lineH * (i + 0.75), 'left');
   });
+}
+
+/**
+ * callout 锚定盒（画布像素版 live AnchoredCallout）：anchor → bounds 比例
+ * → 画布坐标；象限避让规则与 live 一致（右半向左偏、上半向下偏）。
+ */
+function drawAnchoredCalloutBox(
+  d: DrawCtx,
+  anchor: [number, number],
+  lines: string[],
+  bounds: { west: number; south: number; east: number; north: number },
+): void {
+  const frac = anchorFractionInBounds(anchor, bounds);
+  if (!frac) return;
+  const { ctx } = d;
+  const fx = Math.min(1, Math.max(0, frac.fx));
+  const fy = Math.min(1, Math.max(0, frac.fy));
+  const ax = fx * d.targetW;
+  const ay = (1 - fy) * d.targetH;
+  const flipX = fx > 0.6;
+  const flipY = fy < 0.4;
+
+  const padding = d.scalePx(10);
+  const lineH = d.scalePx(16);
+  const boxW = Math.min(d.scalePx(180), d.targetW * 0.35);
+  const boxH = padding * 2 + lineH * lines.length;
+  const bx = flipX ? ax - boxW - d.scalePx(26) : ax + d.scalePx(26);
+  const by = flipY ? ay - boxH - d.scalePx(10) : ay + d.scalePx(10);
+
+  // 引线（anchor → 卡片方向；同一象限规则）+ 锚点
+  ctx.strokeStyle = d.darkMode ? 'rgba(255,255,255,0.65)' : 'rgba(30,41,59,0.65)';
+  ctx.lineWidth = d.scalePx(1.25);
+  ctx.beginPath();
+  ctx.moveTo(ax, ay);
+  ctx.lineTo(flipX ? bx + boxW : bx, by + (flipY ? boxH : 0));
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(ax, ay, d.scalePx(3), 0, 2 * Math.PI);
+  ctx.fillStyle = '#e11d48';
+  ctx.fill();
+
+  _chromePanel(d, bx, by, boxW, boxH);
+  ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.85)' : 'rgba(30,41,59,0.85)';
+  ctx.fillRect(bx, by, d.scalePx(2), boxH);
+  ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.65)' : 'rgba(100,116,139,0.95)';
+  ctx.font = `${d.scalePx(12)}px ${d.style.fontFamily}`;
+  lines.forEach((line, i) => {
+    _text(d, line, bx + padding + d.scalePx(2), by + padding + lineH * (i + 0.75), 'left');
+  });
+}
+
+/**
+ * v2：区位插图（画布版 live inset-map 渲染器 —— 同一 fit/投影语义：
+ * 等比适配 + 居中、边界折线、主图范围指示框、范围框 + 经纬十字示意）。
+ * insetBbox 缺省不绘制（不虚构范围 —— 与 live 自弃同门）。
+ */
+export function drawChromeInset(
+  d: DrawCtx,
+  el: ExportChromeElement,
+): void {
+  const bbox = el.insetBbox;
+  if (!bbox) return;
+  const { ctx } = d;
+  const boxW = d.scalePx(176);
+  const boxH = d.scalePx(156);
+  const origin = el.rect
+    ? { x: el.rect.x, y: el.rect.y, align: 'left' as const, vAlign: 'top' as const }
+    : anchorOrigin(el.anchor, {
+        targetW: d.targetW, targetH: d.targetH,
+        marginX: d.scalePx(12), marginY: d.scalePx(12),
+      });
+  const x = origin.align === 'right' ? origin.x - boxW : origin.align === 'center' ? origin.x - boxW / 2 : origin.x;
+  const y = origin.vAlign === 'bottom' ? d.targetH - origin.y - boxH : origin.y;
+
+  // 面板底 + 标题
+  _chromePanel(d, x, y, boxW, boxH);
+  const label = el.text || (el.variant === 'location' ? '区位' : '概览');
+  ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.9)' : '#1e293b';
+  ctx.font = `bold ${d.scalePx(10)}px ${d.style.fontFamily}`;
+  _text(d, label.slice(0, 24), x + d.scalePx(8), y + d.scalePx(14), 'left');
+
+  // 地理绘制区（等比适配）
+  const innerX = x + d.scalePx(8);
+  const innerY = y + d.scalePx(20);
+  const innerW = boxW - d.scalePx(16);
+  const innerH = boxH - d.scalePx(28);
+  const boundary = el.insetBoundary;
+  let west = bbox.west, south = bbox.south, east = bbox.east, north = bbox.north;
+  if (boundary) {
+    for (const [lng, lat] of boundary) {
+      west = Math.min(west, lng); east = Math.max(east, lng);
+      south = Math.min(south, lat); north = Math.max(north, lat);
+    }
+  }
+  const spanLng = east - west;
+  const spanLat = north - south;
+  if (!(spanLng > 0) || !(spanLat > 0)) return;
+  const scale = Math.min(innerW / spanLng, innerH / spanLat);
+  const drawW = spanLng * scale;
+  const drawH = spanLat * scale;
+  const offX = innerX + (innerW - drawW) / 2;
+  const offY = innerY + (innerH - drawH) / 2;
+  const project = (lng: number, lat: number): [number, number] => [
+    offX + (lng - west) * scale,
+    offY + (north - lat) * scale,
+  ];
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(innerX, innerY, innerW, innerH);
+  ctx.clip();
+  // 背景示意
+  ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.06)' : 'rgba(30,41,59,0.05)';
+  ctx.fillRect(offX, offY, drawW, drawH);
+  // 边界折线
+  if (boundary && boundary.length >= 3) {
+    ctx.beginPath();
+    boundary.forEach(([lng, lat], i) => {
+      const [px, py] = project(lng, lat);
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    });
+    ctx.closePath();
+    ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.12)' : 'rgba(30,41,59,0.12)';
+    ctx.fill();
+    ctx.strokeStyle = d.darkMode ? 'rgba(255,255,255,0.5)' : 'rgba(30,41,59,0.5)';
+    ctx.lineWidth = d.scalePx(1);
+    ctx.stroke();
+  }
+  // 经纬十字（范围中点示意）
+  ctx.strokeStyle = d.darkMode ? 'rgba(255,255,255,0.25)' : 'rgba(30,41,59,0.25)';
+  ctx.lineWidth = d.scalePx(0.5);
+  ctx.setLineDash([d.scalePx(3), d.scalePx(3)]);
+  const mid = project((west + east) / 2, (south + north) / 2);
+  ctx.beginPath();
+  ctx.moveTo(offX, mid[1]); ctx.lineTo(offX + drawW, mid[1]);
+  ctx.moveTo(mid[0], offY); ctx.lineTo(mid[0], offY + drawH);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  // 主图范围指示框（相交裁剪）
+  const main = el.insetMainBbox;
+  if (main) {
+    const cE = Math.min(Math.max(main.east, west), east);
+    const cW = Math.min(Math.max(main.west, west), east);
+    const cN = Math.min(Math.max(main.north, south), north);
+    const cS = Math.min(Math.max(main.south, south), north);
+    const [ix1, iy1] = project(cW, cN);
+    const [ix2, iy2] = project(cE, cS);
+    if (Math.abs(ix2 - ix1) > 2 && Math.abs(iy2 - iy1) > 2) {
+      ctx.fillStyle = 'rgba(225,29,72,0.14)';
+      ctx.fillRect(Math.min(ix1, ix2), Math.min(iy1, iy2), Math.abs(ix2 - ix1), Math.abs(iy2 - iy1));
+      ctx.strokeStyle = '#e11d48';
+      ctx.lineWidth = d.scalePx(1.5);
+      ctx.strokeRect(Math.min(ix1, ix2), Math.min(iy1, iy2), Math.abs(ix2 - ix1), Math.abs(iy2 - iy1));
+    }
+  }
+  ctx.restore();
+  // 范围框
+  ctx.strokeStyle = d.darkMode ? 'rgba(255,255,255,0.35)' : 'rgba(30,41,59,0.35)';
+  ctx.lineWidth = d.scalePx(1);
+  ctx.strokeRect(offX, offY, drawW, drawH);
 }

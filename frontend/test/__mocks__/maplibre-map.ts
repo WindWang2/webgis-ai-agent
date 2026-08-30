@@ -211,6 +211,15 @@ export function makeMockMaplibreMap(options: MakeMockMaplibreMapOptions = {}) {
     getZoom: vi.fn(() => viewport.zoom),
     getBearing: vi.fn(() => viewport.bearing),
     getPitch: vi.fn(() => viewport.pitch),
+    // v2：inset 指示框导出从 runExport 携带 live 视口 bounds（exporter
+    // viewportBounds → buildExportChrome）。默认 bounds 由 center ± 0.05°
+    // 合成（有界、确定性）；测试可经 vi.spyOn 覆盖。
+    getBounds: vi.fn(() => ({
+      getWest: () => viewport.center[0] - 0.05,
+      getSouth: () => viewport.center[1] - 0.05,
+      getEast: () => viewport.center[0] + 0.05,
+      getNorth: () => viewport.center[1] + 0.05,
+    })),
 
     // ─── Style bookkeeping ─────────────────────────────────────────────────
     getStyle: vi.fn(() => ({ sources, layers })),

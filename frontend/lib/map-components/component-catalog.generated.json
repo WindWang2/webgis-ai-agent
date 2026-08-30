@@ -5,9 +5,11 @@
     {
       "type": "annotation",
       "variants": [
-        "default"
+        "text",
+        "callout",
+        "group"
       ],
-      "defaultVariant": "default",
+      "defaultVariant": "text",
       "defaultPosition": "top-left",
       "category": "annotation.text",
       "runtimeStatus": "native",
@@ -15,7 +17,11 @@
       "rendererSupport": [
         "interactive"
       ],
-      "exporterSupport": []
+      "exporterSupport": [
+        "png",
+        "pdf",
+        "svg"
+      ]
     },
     {
       "type": "attribution",
@@ -160,10 +166,15 @@
       "defaultVariant": "overview",
       "defaultPosition": "top-right",
       "category": "inset.map",
-      "runtimeStatus": "planned",
-      "rendererRequired": false,
-      "rendererSupport": [],
-      "exporterSupport": []
+      "runtimeStatus": "native",
+      "rendererRequired": true,
+      "rendererSupport": [
+        "interactive"
+      ],
+      "exporterSupport": [
+        "png",
+        "pdf"
+      ]
     },
     {
       "type": "legend",

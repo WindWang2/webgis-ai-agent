@@ -174,7 +174,8 @@ def test_renderer_registry_honesty():
     assert r.has_renderer("map_border")           # P6：live map-border.tsx
     assert r.has_exporter("map_border", "png")    # P6：drawChromeMapBorder
     assert r.has_exporter("graticule", "png")     # P6：spec 组件 → _drawGraticules
-    assert not r.has_renderer("inset_map")        # planned：仍未实现
+    assert r.has_renderer("inset_map")            # v2 P1：live inset-map.tsx
+    assert r.has_exporter("inset_map", "png")     # v2 P1：drawChromeInset
     for t in ("legend", "categorical_legend", "continuous_colorbar"):
         assert r.has_renderer(t)
         # ADR-0081：图例族经 spec 组件导出（共享 resolver 路径）
@@ -183,7 +184,8 @@ def test_renderer_registry_honesty():
         assert r.has_exporter(t, "png")
     assert r.has_exporter("export_layout", "pdf")
     assert not r.has_renderer("export_layout")
-    assert not r.has_renderer("inset_map")  # planned 不伪装 native
+    # v2 注记框架：annotation 导出真值（此前矩阵谎报 exporters=[]）
+    assert r.has_exporter("annotation", "png")
 
 
 def test_resolver_legend_family_model_aware():
@@ -275,16 +277,25 @@ def test_resolver_rejects_incompatible_wired_composition():
 
 
 def test_resolver_rejects_planned_inset():
-    """inset_map 槽位存在（schema/registry/composition 支持）但 planned 被排除."""
+    """v2：inset_map 渲染器落地转 native —— 槽位仍受 required_context 门控
+    （无 inset_context 不空选；bbox 由 Agent 填充，空 bbox 渲染端自弃）。"""
     from app.lib.cartography.composition_templates import get_composition_template_registry
     acad = get_composition_template_registry().get("composition.academic_map")
     assert any(s.id == "inset_map" for s in acad.component_slots)
+    # 无 inset_context → 槽位不选出（missing_context）
     sel = get_component_resolver().resolve(
         composition_template_id="composition.academic_map",
         map_model_id="visual_heatmap", output_target="pdf",
     )
     assert "inset_map" not in sel.selected
-    assert any(r.get("reason") == "runtime_planned" for r in sel.rejected)
+    assert any(r.get("reason", "").startswith("missing_context") for r in sel.rejected)
+    # 有 inset_context → 选出（native）
+    sel_ctx = get_component_resolver().resolve(
+        composition_template_id="composition.academic_map",
+        map_model_id="visual_heatmap", output_target="pdf",
+        available_context=["inset_context"],
+    )
+    assert "inset_map" in sel_ctx.selected
 
 
 def test_inset_map_component_type_supported():
@@ -380,13 +391,22 @@ def test_composition_validation_conflicts_and_planned():
     res_dup = validate_component_composition(comps_dup)
     assert any(v.code == "binding_conflict" for v in res_dup.errors)
 
-    # planned 组件（inset_map）进入最终地图 → error
-    comps2 = [
-        CartographyComponent(id="t", type="title", position="top-center", priority=10),
-        CartographyComponent(id="im", type="inset_map", position="top-right", priority=65),
-    ]
-    res2 = validate_component_composition(comps2)
-    assert any(v.code == "planned_component_present" for v in res2.errors)
+    # planned 组件进入最终地图 → error（机制锁：临时把 inset_map 打回
+    # planned；seed 目录 v2 已无 planned 组件 —— 渲染器落地转 native）
+    from app.lib.cartography.component_registry import get_component_registry
+    desc = get_component_registry().get("inset_map")
+    assert desc is not None
+    original_status = desc.runtime_status
+    desc.runtime_status = "planned"
+    try:
+        comps2 = [
+            CartographyComponent(id="t", type="title", position="top-center", priority=10),
+            CartographyComponent(id="im", type="inset_map", position="top-right", priority=65),
+        ]
+        res2 = validate_component_composition(comps2)
+        assert any(v.code == "planned_component_present" for v in res2.errors)
+    finally:
+        desc.runtime_status = original_status
 
 
 def test_composition_validation_orphan_and_position():

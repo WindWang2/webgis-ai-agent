@@ -1084,6 +1084,47 @@ def register_gis_harness_tools(registry: ToolRegistry):
             CartographyComponent.model_validate(dict(c))
             for c in raw_components if isinstance(c, dict)
         ]
+        # v2 注记框架 / 插图：payload 有界校验在「合并既有 options 之后」
+        # 执行 —— callout 可先设 text 再补 anchor（分步突变不被卡）；非法
+        # 合并结果不进 MapSpec。
+        if merged_options and effective_type in ("annotation", "inset_map"):
+            existing_opts: Dict[str, Any] = {}
+            for c in parsed:
+                cid = component_id or ""
+                if (cid and c.id == cid) or (not cid and c.type == effective_type):
+                    existing_opts = dict(c.options or {})
+                    break
+            preview: Dict[str, Any] = {**existing_opts}
+            for k, v in merged_options.items():
+                if isinstance(v, dict) and isinstance(preview.get(k), dict):
+                    preview[k] = {**preview[k], **v}
+                else:
+                    preview[k] = v
+            if effective_type == "annotation":
+                from app.services.gis_harness.components import validate_annotation_payload
+
+                err = validate_annotation_payload(preview)
+                if err:
+                    return {
+                        "success": False,
+                        "message": f"annotation options 不合法: {err}",
+                        "correction_hint": (
+                            "text 形态 {text}; callout {text, anchor:[lng,lat]}; "
+                            "group {items:[{text, anchor?}] ≤12}"
+                        ),
+                    }
+            else:
+                from app.services.gis_harness.components import validate_inset_payload
+
+                err = validate_inset_payload(preview)
+                if err:
+                    return {
+                        "success": False,
+                        "message": f"inset_map options 不合法: {err}",
+                        "correction_hint": (
+                            "必填 bbox=[w,s,e,n]；可选 mainBbox / boundary(≤512 点) / label"
+                        ),
+                    }
         _, change = mutate_component(
             parsed,
             component_id=component_id,
