@@ -220,6 +220,24 @@ def _project_frontend_layers(raw_layers: Any) -> list[dict[str, Any]]:
     return layers
 
 
+def _bounded_observation_list(entries: Any) -> list[dict[str, Any]]:
+    """Bounded projection of observation sub-lists（P9 components/errors）。
+
+    逐条过 _bounded_observation_fragment（剥载荷/密钥、截尺寸），总量 ≤32 ——
+    与 DTO 的 max_length=32/8 双重有界（DTO 拒绝，这里防御旧客户端路径）。
+    """
+    out: list[dict[str, Any]] = []
+    if not isinstance(entries, list):
+        return out
+    for raw in entries[:32]:
+        if not isinstance(raw, dict):
+            continue
+        projected = _bounded_observation_fragment(raw)
+        if isinstance(projected, dict):
+            out.append(projected)
+    return out
+
+
 async def _record_frontend_cartographic_observation(
     session_id: Optional[str], map_state: Optional[dict]
 ) -> None:
@@ -1188,6 +1206,18 @@ class CartographicRuntimeObservationRequest(BaseModel):
     viewport: dict[str, Any] = Field(default_factory=dict)
     style_loaded: bool
     reconcile_error: str = Field(default="", max_length=500)
+    # P9 render observation（增维不换通道，全部 optional 向后兼容）：
+    # mapspec_revision 是客户端诊断值 —— 守卫语义由服务端在接受门通过后
+    # 盖章当前 _cartographic_mutation_revision（信任边界在服务端）。
+    mapspec_revision: Optional[int] = Field(default=None, ge=0, le=9_007_199_254_740_991)
+    # chrome 组件观察（resolveMapComponents 派生：id/type/enabled/mounted/
+    # anchor/floating/collapsed/rect —— ID 与布尔，无载荷体）。
+    components: list[dict[str, Any]] = Field(default_factory=list, max_length=32)
+    # 有界 runtime error 环（dedup 后 ≤8 条：message≤160 + target）。
+    runtime_errors: list[dict[str, Any]] = Field(default_factory=list, max_length=8)
+    # bounded settle 结果（map 'idle' race 超时）。
+    map_idle: Optional[bool] = None
+    observed_at: Optional[int] = Field(default=None, ge=0, le=9_007_199_254_740_991)
 
     @model_validator(mode="after")
     def _cap_serialized_size(self):
@@ -1283,17 +1313,33 @@ async def push_cartographic_runtime_observation(
                 )
             except (TypeError, ValueError):
                 sequence = 1
+            # P9：服务端 revision 盖章 —— fingerprint 门已保证观察描述的
+            # spec 内容 == 当前 revision 代表的内容；客户端值仅诊断不信任。
+            # 同锁内读取（MapSpec mutation 共用 session lock）无竞态窗口。
+            try:
+                stamped_revision = int(
+                    state.get("_cartographic_mutation_revision") or 0
+                )
+            except (TypeError, ValueError):
+                stamped_revision = 0
             observation = {
                 "session_id": session_id,
                 "sequence": sequence,
                 "client_generation": req.client_generation,
                 "source": "frontend_runtime",
                 "mapspec_fingerprint": req.mapspec_fingerprint,
+                "mapspec_revision": stamped_revision,
                 "layer_count": len(layers),
                 "layers": layers,
                 "viewport": viewport if isinstance(viewport, dict) else {},
                 "style_loaded": req.style_loaded,
                 "reconcile_error": req.reconcile_error,
+                # P9 增维：chrome 组件观察 + 有界 runtime error 环 + settle
+                # 语义（payload 全部 ID/布尔/小元数据，有界）。
+                "components": _bounded_observation_list(req.components),
+                "runtime_errors": _bounded_observation_list(req.runtime_errors),
+                "map_idle": bool(req.map_idle) if req.map_idle is not None else None,
+                "observed_at": req.observed_at,
             }
             persisted = await session_data_manager.set_map_state(
                 session_id, "_cartographic_observation", observation
@@ -1337,11 +1383,33 @@ async def push_cartographic_runtime_observation(
     except (LockDegradedError, LockLostError):
         # v2(audit F2/F3): 锁降级/丢失 —— 观察不写共享状态，客户端重试。
         raise _session_busy_503()
-    return {
+    # P9 render-observed closure：新观察到达即打破 finalizer 幂等门的
+    # render 代次钥匙 —— 重验把披露从 unverified/stale 升级为 verified
+    # （或暴露 runtime 缺席）。幂等门决定是否真跑；失败绝不影响观察接受。
+    map_product_summary: dict[str, Any] | None = None
+    try:
+        from app.services.gis_harness.map_completion import maybe_finalize_map_product
+
+        completion = await maybe_finalize_map_product(
+            session_id, reason="render_observation"
+        )
+        if completion is not None:
+            map_product_summary = {
+                "status": completion.status,
+                "render_status": completion.render_status,
+            }
+    except Exception:  # noqa: BLE001 — 终验是增值披露，不阻断观察响应
+        logger.warning(
+            "Post-observation map finalization failed for %s", session_id, exc_info=True
+        )
+    response: dict[str, Any] = {
         "observation_sequence": sequence,
         "observation_accepted": True,
         **review,
     }
+    if map_product_summary is not None:
+        response["map_product"] = map_product_summary
+    return response
 
 
 class MapActionAck(BaseModel):

@@ -78,6 +78,30 @@ F_LAYOUT_CONFLICT = "layout_conflict"
 F_ORPHAN_BINDING = "orphan_binding"
 F_VIEWPORT_NO_BBOX = "viewport_no_bbox"
 
+# P9 渲染级 finding codes（validator 在 render_observation.py —— 单一词表
+# 定义在此，避免两处漂移）。runtime 渲染缺口可自愈（re-render/re-observation
+# 收敛），状态归 needs_repair 而非 failed（transient semantics）。
+F_RENDER_UNVERIFIED = "render_unverified"
+F_RENDER_REVISION_STALE = "render_revision_stale"
+F_RENDER_LAYER_MISSING = "render_layer_missing"
+F_RENDER_SOURCE_MISSING = "render_source_missing"
+F_RENDER_COMPONENT_MISSING = "render_component_missing"
+F_RENDER_ERROR = "render_error"
+
+RUNTIME_RENDER_CODES = frozenset({
+    F_RENDER_LAYER_MISSING,
+    F_RENDER_SOURCE_MISSING,
+    F_RENDER_COMPONENT_MISSING,
+    F_RENDER_ERROR,
+})
+
+# render_status 词表（P9；validator 在 render_observation.py，词表同址定义）
+RENDER_VERIFIED = "verified"              # 匹配 revision 的观察在场且校验通过
+RENDER_ISSUES = "issues"                  # 匹配 revision 但结果层/源/必需组件缺席
+RENDER_STALE = "stale"                    # observation revision ≠ 当前 revision
+RENDER_UNKNOWN = "unknown"                # 无观察 / 旧客户端 / pre-revision 观察
+RENDER_NOT_APPLICABLE = "not_applicable"  # 无可观察的产品面
+
 # repair action codes（repairs_applied 里的字面量）
 R_ADD_COMPONENT = "add_component"
 R_ENABLE_COMPONENT = "enable_component"
@@ -142,6 +166,9 @@ class MapCompletionResult:
     layer_status: str = "unknown"  # valid | issues | unknown
     component_status: str = "unknown"  # valid | issues | unknown
     export_status: str = "unknown"  # parity | divergent | unknown
+    # P9 render observation：verified | issues | stale | unknown | not_applicable
+    # （render_observation.py 词表；unknown = 无观察/旧客户端，向后兼容披露）
+    render_status: str = "unknown"
     passes: int = 0
     result_bbox: Optional[List[float]] = None
     summary: str = ""
@@ -164,6 +191,7 @@ class MapCompletionResult:
             "layer_status": self.layer_status,
             "component_status": self.component_status,
             "export_status": self.export_status,
+            "render_status": self.render_status,
             "passes": self.passes,
             "result_bbox": self.result_bbox,
             "repairs": list(self.repairs_applied[:MAX_DISCLOSED_REPAIRS]),
@@ -175,6 +203,10 @@ class MapCompletionResult:
         codes = sorted({f.code for f in self.error_findings})[:3]
         tail = f" ({','.join(codes)})" if codes else ""
         if self.status == STATUS_COMPLETE:
+            # P9：stale 观察下的 final 是诚实披露（瞬态、re-observation 自愈）；
+            # unknown（无观察能力）保持旧行文案 —— 旧客户端完成语义零漂移。
+            if self.render_status == RENDER_STALE:
+                return "Map product: final (render:stale)"
             return "Map product: final"
         if self.status == STATUS_NEEDS_REPAIR:
             return f"Map product: needs repair{tail}"
@@ -191,15 +223,39 @@ async def gather_completion_inputs(
     chapter: Dict[str, Any],
     *,
     mapspec: Optional[Dict[str, Any]] = None,
+    map_state: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """读取完成度校验所需的全部既有真相（不新建状态）。
 
     - MapSpec（layers / sources / layout.components / visibility）；
     - bound refs 的 O(1) descriptor（存在性 + feature_count + bbox）；
     - 组合模板的 required/optional 组件契约（复用 composition cardinality，
-      不发明第二套 required/optional schema）。
+      不发明第二套 required/optional schema）；
+    - render observation + 当前 mutation revision（P9：渲染级校验输入，
+      与 revision 读取共用一次 map_state 读，不重复拉全量状态）。
     """
     from app.services.session_data import session_data_manager
+
+    if map_state is None:
+        try:
+            map_state = await session_data_manager.get_map_state(session_id)
+        except Exception:  # noqa: BLE001 — 状态读失败按缺席处理
+            map_state = None
+
+    render_observation = None
+    mapspec_revision = 0
+    if isinstance(map_state, dict):
+        from app.services.gis_harness.render_observation import (
+            load_render_observation,
+        )
+
+        render_observation = await load_render_observation(session_id, map_state)
+        try:
+            mapspec_revision = int(
+                map_state.get("_cartographic_mutation_revision") or 0
+            )
+        except (TypeError, ValueError):
+            mapspec_revision = 0
 
     if mapspec is None:
         from app.services.mapspec_store import mapspec_store
@@ -313,6 +369,8 @@ async def gather_completion_inputs(
         "mapspec": mapspec,
         "descriptors": refs,
         "required_slots": required_slots,
+        "render_observation": render_observation,
+        "mapspec_revision": mapspec_revision,
     }
 
 
@@ -1115,6 +1173,27 @@ async def run_map_finalization(
     if repaired_last_pass:
         findings = _validate_all(inputs, chapter)
 
+    # P9 渲染级校验（ADR-0086）：RenderObservation 是观察不是真相 —— 只产
+    # 出披露 findings，无修复动作；stale/unknown 如实降级（不 false
+    # complete），runtime 缺席归 needs_repair（可自愈），不落 failed。
+    try:
+        from app.services.gis_harness.render_observation import (
+            validate_render_observation,
+        )
+
+        render_status, render_findings = validate_render_observation(
+            chapter,
+            inputs["mapspec"],
+            inputs.get("render_observation"),
+            int(inputs.get("mapspec_revision") or 0),
+            inputs["required_slots"],
+        )
+        result.render_status = render_status
+        findings = list(findings) + list(render_findings)
+    except Exception:  # noqa: BLE001 — 渲染校验是增值披露，绝不阻断终验
+        logger.warning("[MapFinalizer] render validation failed session=%s", session_id)
+        result.render_status = "unknown"
+
     result.passes = passes
     result.result_bbox = derive_result_bbox(chapter, inputs["descriptors"])
     result.export_status = assess_export_parity(inputs["mapspec"])
@@ -1152,8 +1231,15 @@ async def run_map_finalization(
     )]
     result.component_status = "issues" if comp_err else "valid"
 
-    unrepairable = [f for f in all_errors if f.repair is None]
+    unrepairable = [
+        f
+        for f in all_errors
+        # P9：runtime 渲染缺口（层/源/组件未挂载、观察错误）不进 failed ——
+        # 期望态正确、可经 re-render/re-observation 自愈，归 needs_repair。
+        if f.repair is None and f.code not in RUNTIME_RENDER_CODES
+    ]
     still_repairable = [f for f in all_errors if f.repair is not None]
+    runtime_render = [f for f in all_errors if f.code in RUNTIME_RENDER_CODES]
     if not all_errors:
         result.status = STATUS_COMPLETE
         result.summary = "map product validated"
@@ -1162,6 +1248,11 @@ async def run_map_finalization(
         # complete，"needs repair" 会误导下一动作）。
         result.status = STATUS_FAILED
         result.summary = f"{len(all_errors)} blocking findings ({len(unrepairable)} unrepairable)"
+    elif runtime_render and not still_repairable:
+        result.status = STATUS_NEEDS_REPAIR
+        result.summary = (
+            f"{len(runtime_render)} render findings await runtime re-observation"
+        )
     else:
         result.status = STATUS_NEEDS_REPAIR
         result.summary = f"{len(still_repairable)} repairable findings remain"
@@ -1199,6 +1290,7 @@ def map_product_block(
     *,
     all_repairs: Optional[List[str]] = None,
     rows_fingerprint: str = "",
+    render_observation_seq: int = 0,
 ) -> Dict[str, Any]:
     """章节持久化块（additive、bounded、单一键 ``map_product``）。
 
@@ -1207,6 +1299,10 @@ def map_product_block(
     记忆清零，finalizer 将隔轮重新对抗用户决策（review B-4）。披露面
     ``repairs`` 有界（≤6）；完整记忆落 ``repair_memory``（≤32 —— 6 条
     上限会在多组件/多层会话里挤掉最老记忆，复活同一回归，review 终审 F7）。
+
+    ``render_observation_seq``（P9）：验证所依据的 render observation 代次 ——
+    幂等门的第三把钥匙：新观察到达（seq 前进）即打破门，重验把披露从
+    unverified/stale 升级为 verified（或反向暴露 render 缺席）。
     """
     block = result.to_dict()
     if all_repairs is not None:
@@ -1214,6 +1310,7 @@ def map_product_block(
         block["repairs"] = merged[:MAX_DISCLOSED_REPAIRS]
         block["repair_memory"] = merged[:MAX_REPAIR_MEMORY]
     block["checked_revision"] = int(checked_revision)
+    block["render_observation_seq"] = int(render_observation_seq)
     if rows_fingerprint:
         block["rows_fingerprint"] = rows_fingerprint[:512]
     block["projection"] = result.projection_line()
@@ -1241,6 +1338,17 @@ def _stored_checked_revision(stored: Dict[str, Any]) -> Optional[int]:
         return None
 
 
+def _stored_render_seq(stored: Dict[str, Any]) -> int:
+    """已存块记录的 render observation 代次（旧块无键 → -1 触发一次重验自愈）。"""
+    raw = stored.get("render_observation_seq")
+    if isinstance(raw, bool) or raw is None:
+        return -1
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return -1
+
+
 async def maybe_finalize_map_product(
     session_id: str,
     *,
@@ -1264,6 +1372,11 @@ async def maybe_finalize_map_product(
     """
     from app.services.session_plan import goal_key, load_session_plan, save_session_plan
     from app.services.distributed_lock import session_lock_registry
+    from app.services.session_data import session_data_manager
+    from app.services.gis_harness.render_observation import (
+        load_render_observation,
+        observation_sequence,
+    )
 
     if not session_id:
         return None
@@ -1271,11 +1384,22 @@ async def maybe_finalize_map_product(
     if plan is None or not isinstance(plan.gis_chapter, dict):
         return None
     chapter = plan.gis_chapter
-    revision = await _current_mapspec_revision(session_id)
+    # P9：revision + render observation 一次读取（门输入同源，不双拉状态）。
+    try:
+        map_state = await session_data_manager.get_map_state(session_id)
+    except Exception:  # noqa: BLE001 — 状态读失败按 0/None 处理（只影响去重门）
+        map_state = None
+    try:
+        revision = int((map_state or {}).get("_cartographic_mutation_revision") or 0)
+    except (TypeError, ValueError):
+        revision = 0
+    render_obs = await load_render_observation(session_id, map_state)
+    render_seq = observation_sequence(render_obs)
     stored = chapter.get("map_product")
     # 去重门（review 加固 + F-4）：任何终态结论（不止 complete）在
-    # 「MapSpec revision 一致 + 行指纹一致」时跳过重验 —— 行状态/ref
-    # 变化或任何 cartographic 突变都会打破门，交给下一触发点重验。
+    # 「MapSpec revision 一致 + 行指纹一致 + render observation 代次一致」
+    # 时跳过重验 —— 行状态/ref 变化、任何 cartographic 突变或新观察到达
+    # 都会打破门，交给下一触发点重验。
     # 旧块无 rows_fingerprint 键 → 首次不跳过，重验一次即自愈补齐。
     # 比较双侧截断（review 终审 F2）：存储侧 [:512]，比较侧同宽 ——
     # 此前存储截断/比较全量，≥8 行章节永不匹配 → 门失效、每触发点重跑。
@@ -1285,6 +1409,7 @@ async def maybe_finalize_map_product(
         and stored.get("status")
         in (STATUS_COMPLETE, STATUS_NEEDS_REPAIR, STATUS_FAILED)
         and _stored_checked_revision(stored) == revision
+        and _stored_render_seq(stored) == render_seq
         and str(stored.get("rows_fingerprint") or "")
         == _rows_fingerprint(chapter)[:512]
     ):
@@ -1357,6 +1482,21 @@ async def maybe_finalize_map_product(
                         session_id,
                     )
                     return result
+                # P9 观察漂移守卫：验证依据的 render observation 已被更新的
+                # 观察覆盖（新 POST 在锁外落账、等锁写入）→ 旧观察的结论不得
+                # 盖章 —— 留给下一触发点（含 POST 触发本身）按新观察重验。
+                try:
+                    fresh_state = await session_data_manager.get_map_state(session_id)
+                except Exception:  # noqa: BLE001 — 读失败按无漂移处理
+                    fresh_state = None
+                if observation_sequence(
+                    await load_render_observation(session_id, fresh_state)
+                ) != render_seq:
+                    logger.info(
+                        "[MapFinalizer] render observation advanced mid-run session=%s — persist skipped",
+                        session_id,
+                    )
+                    return result
                 prior_repairs_merged = (
                     list(stored.get("repair_memory") or [])
                     + list(stored.get("repairs") or [])
@@ -1371,6 +1511,7 @@ async def maybe_finalize_map_product(
                     revision_after_run,
                     all_repairs=merged_repairs,
                     rows_fingerprint=_rows_fingerprint(fresh.gis_chapter),
+                    render_observation_seq=render_seq,
                 )
                 await save_session_plan(fresh)
     except Exception:  # noqa: BLE001 — 披露失败不阻断 turn；下一触发点重试
