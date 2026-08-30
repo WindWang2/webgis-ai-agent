@@ -22,7 +22,6 @@ from app.lib.geo_analysis.raster_grid import (
     window_side_from_budget,
 )
 from app.lib.geo_analysis.raster_windowed import (
-    WindowStats,
     WindowedRasterWriter,
     build_output_profile,
 )
@@ -310,6 +309,7 @@ def raster_calculator(
     expression: str = "A + B",
     constant: Optional[float] = None,
     nodata: Optional[float] = None,
+    resampling: Optional[str] = None,
 ) -> dict:
     """Pixel-wise raster math.
 
@@ -320,6 +320,9 @@ def raster_calculator(
             Examples: "A + B", "A * 2", "(A - B) / (A + B)", "where(A > 0, A, 0)".
         constant: Scalar value used when raster_b is None.
         nodata: Output nodata value.
+        resampling: B→A 对齐重采样方法。缺省 bilinear（连续量）；输入是
+            分类栅格（土地覆盖等）时必须传 "nearest"——bilinear 会混合出
+            不存在的类别（§10）。
 
     Returns:
         dict with output_path, stats, alignment decision, quality evidence,
@@ -365,7 +368,12 @@ def raster_calculator(
             src_b_raw = rasterio.open(raster_b)
             try:
                 grid_b = RasterGridProfile.from_dataset(src_b_raw, raster_b)
-                decision = decide_alignment(grid_a, grid_b)
+                if resampling is not None and resampling not in RESAMPLING_MAP:
+                    raise ValueError(
+                        f"Unsupported resampling method: '{resampling}'. "
+                        f"Valid options: {list(RESAMPLING_MAP.keys())}"
+                    )
+                decision = decide_alignment(grid_a, grid_b, resampling=resampling)
                 if decision.incompatible:
                     raise RasterAlignmentError(
                         f"raster B cannot be aligned to A: {decision.reason}",
@@ -421,10 +429,9 @@ def raster_calculator(
                 result = np.where(np.isfinite(result), result, out_nodata)
                 return np.where(mask, result, out_nodata)
 
-            stats = WindowStats()
-
             # 窗口化：预算推导的窗口网格，内存 O(window)。首个窗口先算
-            # dtype，再建 profile 写文件。
+            # dtype，再建 profile 写文件。统计/证据/摘要由 writer 在写循环
+            # 内顺路累计（§36：零二次扫描）。
             windows = list(
                 iter_bounded_windows(
                     src_a.width, src_a.height, window_side=window_side, src=src_a

@@ -191,6 +191,8 @@ class WindowedRasterWriter:
         self._digest = hashlib.sha256()
         self._seeded = False
         self._finalized: Optional[Dict[str, Any]] = None
+        # overview 是否真实建成（build 失败被吞掉时 descriptor 不得谎报）
+        self.overviews_built = False
         self._tmp_ctx = None
         self._dst: Optional[rasterio.io.DatasetWriter] = None
 
@@ -216,6 +218,7 @@ class WindowedRasterWriter:
             factors = overview_factors(self.grid.width, self.grid.height)
             if factors and max(self.grid.width, self.grid.height) > OVERVIEW_MIN_SIDE:
                 self._dst.build_overviews(factors, resampling=self.overview_resampling)
+                self.overviews_built = True
         except Exception as e:  # noqa: BLE001 — overview 是增值，失败不阻断产物
             logger.warning("[raster_windowed] overview build skipped: %s", e)
         finally:
@@ -274,10 +277,8 @@ class WindowedRasterWriter:
             bands=[
                 RasterBandInfo(index=1, dtype=str(self.profile.get("dtype")), vmin=vmin, vmax=vmax)
             ] * int(self.profile.get("count", 1)),
-            has_overviews=bool(
-                overview_factors(self.grid.width, self.grid.height)
-                and max(self.grid.width, self.grid.height) > OVERVIEW_MIN_SIDE
-            ),
+            # 诚实披露：overview 建成与否的事实，不是“本应建成”的期望。
+            has_overviews=self.overviews_built,
             transform=[float(v) for v in self.grid.transform],
             resolution_x=self.grid.resolution_x,
             resolution_y=self.grid.resolution_y,

@@ -52,6 +52,7 @@ class RasterCalculatorArgs(BaseModel):
     expression: str = Field("A + B", description="运算表达式，用 A/B 指代栅格，如 A+B, (A-B)/(A+B), where(A>0,A,0)")
     constant: Optional[float] = Field(None, description="当 raster_b 留空时的常数")
     nodata: Optional[float] = Field(None, description="输出 NoData 值")
+    resampling: Optional[str] = Field(None, description="B 对齐到 A 的重采样方法（bilinear 默认；分类栅格必须 nearest）")
 
 class RasterResampleArgs(BaseModel):
     raster_path: str = Field(..., description="输入栅格文件路径（data/ 内）")
@@ -398,8 +399,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            ),
            tier=2, domains=["raster"],
            args_model=RasterCalculatorArgs)
-    def raster_calculator(raster_a: str, raster_b: Optional[str] = None, expression: str = "A + B", constant: Optional[float] = None, nodata: Optional[float] = None) -> dict:
-        res = SpatialAnalyzer.raster_calculator(raster_a, raster_b, expression, constant, nodata)
+    def raster_calculator(raster_a: str, raster_b: Optional[str] = None, expression: str = "A + B", constant: Optional[float] = None, nodata: Optional[float] = None, resampling: Optional[str] = None) -> dict:
+        res = SpatialAnalyzer.raster_calculator(raster_a, raster_b, expression, constant, nodata, resampling)
         return res.to_llm_response()
 
     @tool(registry, name="detect_raster_change",
@@ -414,11 +415,12 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "\n关键约束：raster_a（T1）是基准网格；B 分辨率/CRS 不一致时自动虚拟对齐"
                "（对齐/重采样/裁剪事实进 quality_evidence）；method 可选 "
                "difference/absolute_difference/normalized_difference；threshold 给定时"
-               "输出二分类变化栅格（1=变化，0=稳定，255=nodata）。"
+               "输出二分类变化栅格（1=变化，0=稳定，255=nodata）；分类图输入时"
+               "传 resampling=nearest（默认 bilinear 仅适用连续量）。"
            ),
            tier=2, domains=["raster"])
-    def detect_raster_change(raster_a: str, raster_b: str, method: str = "difference", threshold: Optional[float] = None, band: int = 1) -> dict:
-        res = SpatialAnalyzer.raster_change(raster_a, raster_b, method=method, threshold=threshold, band=band)
+    def detect_raster_change(raster_a: str, raster_b: str, method: str = "difference", threshold: Optional[float] = None, band: int = 1, resampling: Optional[str] = None) -> dict:
+        res = SpatialAnalyzer.raster_change(raster_a, raster_b, method=method, threshold=threshold, band=band, resampling=resampling)
         return res.to_llm_response()
 
     @tool(registry, name="raster_resample",

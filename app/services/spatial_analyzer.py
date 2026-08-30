@@ -454,6 +454,7 @@ class SpatialAnalyzer:
         expression: str = "A + B",
         constant: Optional[float] = None,
         nodata: Optional[float] = None,
+        resampling: Optional[str] = None,
         callback: Optional[Callable] = None,
     ) -> GeoAnalysisResult:
         raw_paths = [raster_a] + ([raster_b] if raster_b else [])
@@ -469,6 +470,7 @@ class SpatialAnalyzer:
                 expression,
                 constant,
                 nodata,
+                resampling=resampling,
             )
         summary = f"Raster calculator operation '{expression}' completed."
         return GeoAnalysisResult(True, result, summary)
@@ -502,6 +504,7 @@ class SpatialAnalyzer:
         method: str = "difference",
         threshold: Optional[float] = None,
         band: int = 1,
+        resampling: Optional[str] = None,
         callback: Optional[Callable] = None,
     ) -> GeoAnalysisResult:
         """双时相栅格变化检测（B 自动对齐到 A 网格；窗口化执行）。
@@ -524,6 +527,7 @@ class SpatialAnalyzer:
                     method=method,
                     threshold=threshold,
                     band=band,
+                    resampling=resampling,
                 )
             except RasterAlignmentError as e:
                 return GeoAnalysisResult(

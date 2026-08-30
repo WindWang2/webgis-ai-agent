@@ -749,3 +749,43 @@ def test_calculate_index_exposes_band_map_and_evidence():
         assert arr[0, 1] == 0.0
     finally:
         os.path.exists(p) and os.remove(p)
+
+
+def test_change_detection_band_out_of_range_rejected():
+    """波段越界在预检结构化拒绝，不在窗口循环中途炸 IndexError。"""
+    td = _td()
+    pa = _write(f"bo_{uuid.uuid4().hex[:6]}.tif", np.ones((2, 2), dtype="float32"))
+    pb = _write(f"bob_{uuid.uuid4().hex[:6]}.tif", np.ones((2, 2), dtype="float32"))
+    try:
+        with pytest.raises(ValueError, match="out of range"):
+            detect_raster_change(pa, pb, band=5)
+        with pytest.raises(ValueError, match="out of range"):
+            detect_raster_change(pa, pb, band_b=7)
+    finally:
+        os.remove(pa); os.remove(pb)
+
+
+def test_calculator_categorical_resampling_override():
+    """§10：分类 B 经 resampling=nearest 对齐（不混合类别）。"""
+    td = _td()
+    pa = _write(
+        f"cata_{uuid.uuid4().hex[:6]}.tif",
+        (np.arange(64, dtype="uint8").reshape(8, 8) % 4 + 1),
+        crs="EPSG:32650", transform=from_bounds(0, 0, 80, 80, 8, 8),
+    )
+    pb = _write(
+        f"catb_{uuid.uuid4().hex[:6]}.tif",
+        np.full((4, 4), 2, dtype="uint8"),
+        crs="EPSG:32650", transform=from_bounds(0, 0, 80, 80, 4, 4),
+    )
+    try:
+        r = raster_calculator(pa, pb, expression="A + B", resampling="nearest")
+        assert r["alignment"]["resampling"] == "nearest"
+        with rasterio.open(r["output_path"]) as out:
+            arr = out.read(1)
+        # nearest：每个输出像元都是真实类别 + 2，绝无混合出的中间值
+        assert set(np.unique(arr)).issubset({3.0, 4.0, 5.0, 6.0})
+        with pytest.raises(ValueError, match="resampling"):
+            raster_calculator(pa, pb, expression="A + B", resampling="magic")
+    finally:
+        os.remove(pa); os.remove(pb); os.remove(pa.replace(".tif", "_calc.tif"))

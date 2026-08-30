@@ -67,6 +67,7 @@ def detect_raster_change(
     band_b: Optional[int] = None,
     out_path: Optional[str] = None,
     window_side: Optional[int] = None,
+    resampling: Optional[str] = None,
 ) -> Dict:
     """窗口化双时相栅格变化检测（B 相对 A，T2 − T1）。
 
@@ -79,6 +80,8 @@ def detect_raster_change(
             否则 0；uint8，nodata=255），并附变化像元统计。
         band / band_b: A / B 的参与波段（1-based，默认 1）。
         out_path: 输出路径（缺省 ``<a>_change.tif``）。
+        resampling: B→A 对齐重采样；缺省 bilinear，输入为分类图时传
+            ``"nearest"``（分类禁 bilinear，§10）。
 
     Returns:
         dict：output_path / method / threshold / stats（含 changed_pixels、
@@ -97,6 +100,16 @@ def detect_raster_change(
     if threshold is not None and not (np.isfinite(threshold) and threshold > 0):
         raise ValueError(f"threshold must be a positive finite number, got {threshold!r}")
 
+    with rasterio.open(raster_a) as _probe_a, rasterio.open(raster_b) as _probe_b:
+        if not (1 <= band <= _probe_a.count):
+            raise ValueError(
+                f"band {band} out of range for raster A (1..{_probe_a.count})"
+            )
+        if not (1 <= (band_b or band) <= _probe_b.count):
+            raise ValueError(
+                f"band_b {band_b or band} out of range for raster B (1..{_probe_b.count})"
+            )
+
     if out_path is None:
         base, _ = os.path.splitext(raster_a)
         out_path = f"{base}_change.tif"
@@ -110,7 +123,7 @@ def detect_raster_change(
         src_b_raw = rasterio.open(raster_b)
         try:
             grid_b = RasterGridProfile.from_dataset(src_b_raw, raster_b)
-            decision = decide_alignment(grid_a, grid_b)
+            decision = decide_alignment(grid_a, grid_b, resampling=resampling)
             if decision.incompatible:
                 raise RasterAlignmentError(
                     f"raster B cannot be aligned to A: {decision.reason}", decision
@@ -215,6 +228,7 @@ def detect_raster_change(
             "threshold": threshold,
             "band": band,
             "band_b": band_b or band,
+            "resampling": decision.resampling,
         },
         "input_width": grid_a.width,
         "input_height": grid_a.height,

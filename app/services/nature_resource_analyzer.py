@@ -144,6 +144,8 @@ class NatureResourceAnalyzer:
             res = windowed_band_index(
                 resolved_tif_path, idx, band_map=band_map, out_path=result_path
             )
+            from app.lib.geo_analysis.raster_windowed import INDEX_VALID_RANGE
+            valid_range = INDEX_VALID_RANGE.get(idx)
             stats = res["stats"]
             with rasterio.open(resolved_tif_path) as src:
                 bbox = [
@@ -173,6 +175,7 @@ class NatureResourceAnalyzer:
                 "crs": crs,
                 "index_type": idx,
                 "band_map": res["band_map"],
+                "valid_range": list(valid_range) if valid_range else None,
                 "content_fingerprint": res["content_fingerprint"],
                 "descriptor": res["descriptor"].to_dict(),
                 "quality_evidence": {
