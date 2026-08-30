@@ -1387,6 +1387,7 @@ async def push_cartographic_runtime_observation(
     # render 代次钥匙 —— 重验把披露从 unverified/stale 升级为 verified
     # （或暴露 runtime 缺席）。幂等门决定是否真跑；失败绝不影响观察接受。
     map_product_summary: dict[str, Any] | None = None
+    completion = None
     try:
         from app.services.gis_harness.map_completion import maybe_finalize_map_product
 
@@ -1402,6 +1403,47 @@ async def push_cartographic_runtime_observation(
         logger.warning(
             "Post-observation map finalization failed for %s", session_id, exc_info=True
         )
+    # ADR-0088 P2：确定性有界 runtime 修复 —— 仅当终验报 render issues
+    # （新鲜匹配观察 + desired state 正确 + runtime 偏离）且本轮 finalizer
+    # 未应用 desired-state 修复（让其先收敛，两层修复不竞争同一轮）。
+    # 修复在锁外按 revision 门执行：观察盖章后若有并发突变，分类器按
+    # stale 观察（revision 不匹配）直接返回空计划 —— 不修复旧发散。
+    runtime_repair_payload: dict[str, Any] | None = None
+    if (
+        completion is not None
+        and completion.render_status == "issues"
+        and not completion.repairs_applied
+    ):
+        try:
+            from app.services.gis_harness.map_completion import (
+                gather_completion_inputs,
+            )
+            from app.services.gis_harness.runtime_repair import run_runtime_repair
+            from app.services.session_plan import load_session_plan
+
+            _plan = await load_session_plan(session_id)
+            _chapter = (
+                _plan.gis_chapter
+                if _plan is not None and isinstance(_plan.gis_chapter, dict)
+                else None
+            )
+            if _chapter:
+                _inputs = await gather_completion_inputs(session_id, _chapter)
+                _outcome = await run_runtime_repair(
+                    session_id,
+                    chapter=_chapter,
+                    mapspec=_inputs["mapspec"],
+                    descriptors=_inputs["descriptors"],
+                    observation=_inputs.get("render_observation"),
+                    current_revision=int(_inputs.get("mapspec_revision") or 0),
+                    required_slots=_inputs["required_slots"],
+                )
+                if _outcome.applied or _outcome.exhausted or _outcome.execution_debts:
+                    runtime_repair_payload = _outcome.to_dict()
+        except Exception:  # noqa: BLE001 — 修复是增值披露，绝不阻断观察响应
+            logger.warning(
+                "Runtime repair pass failed for %s", session_id, exc_info=True
+            )
     response: dict[str, Any] = {
         "observation_sequence": sequence,
         "observation_accepted": True,
@@ -1409,6 +1451,8 @@ async def push_cartographic_runtime_observation(
     }
     if map_product_summary is not None:
         response["map_product"] = map_product_summary
+    if runtime_repair_payload is not None:
+        response["runtime_repair"] = runtime_repair_payload
     return response
 
 

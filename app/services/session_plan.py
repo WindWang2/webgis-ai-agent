@@ -240,16 +240,26 @@ def format_session_plan_projection(
         ).summary_line()
     except Exception:  # noqa: BLE001 — 投影失败只少一行
         products_line = ""
-    # P9 §17/§18：欠账 facet → 确定性下一动作建议行（零 LLM/零 IO 的纯
-    # 投影；不构成 agent loop —— 执行仍归 Pi + harness）。无欠账零噪声。
+    # P9 §17/§18 + ADR-0088 P1：执行债/产品债 → 统一确定性下一动作建议行
+    # （零 LLM/零 IO 的纯投影；不构成 agent loop —— 执行仍归 Pi + harness）。
+    # GISActionIntent 并轨 ProductActionAdvisor 与 PlanGraph.recommended_next
+    # （ADR-0087 Future work 落地）：执行债优先于产品债，observation/血缘
+    # 输入缺席时诚实降级（只少一行，绝不阻断 turn 上下文）。
     next_action_line = ""
     try:
-        from app.services.gis_harness.product_action import next_action_projection
+        from app.services.gis_harness.action_intent import action_intent_projection
         from app.services.gis_harness.product_graph import build_facet_completion
+        from app.services.gis_harness.product_lineage import build_facet_lineage
 
-        next_action_line = "\n" + next_action_projection(
+        facets = build_facet_completion(plan.gis_chapter, mapspec)
+        # P4 最小重计算：血缘投影（纯函数零 IO，无 descriptor 时 liveness
+        # 诚实降级为 unknown —— 可复用 ref 仍随动作披露，死 ref 不虚构）。
+        lineage = build_facet_lineage(plan.gis_chapter, mapspec)
+        next_action_line = "\n" + action_intent_projection(
             plan.gis_chapter,
-            build_facet_completion(plan.gis_chapter, mapspec),
+            facets,
+            graph=graph,
+            lineage=lineage,
         )
     except Exception:  # noqa: BLE001 — 投影失败只少一行
         next_action_line = ""

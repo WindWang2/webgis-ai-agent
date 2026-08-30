@@ -128,3 +128,48 @@ def scale_tier(feature_count: Optional[int]) -> str:
     if feature_count <= DATA_FABRIC_MAX_FEATURES:
         return "aggregate"
     return "server_side"
+
+
+# ── 运行策略词表（ADR-0088 P6：跨前后端单一 contract）──────────────────
+#
+# resolver 的裁决（算法/能力级 fallback）已经隐式选择了通道；本词表把
+# 「规模 → 通道」的映射显式化为可测试/可披露的纯函数。每个值都有真实
+# 代码参照（不虚构数据通道）：
+#
+#   frontend_native   ref 源内联挂载（ref-source-resolver，≤FETCH_CAP）
+#   preaggregated     聚合算法通道（grid_binning/fishnet/h3，≤DATA_FABRIC）
+#   server_vector     服务端要素处理（ASYNC/CELERY 传输的大要素集）
+#   server_raster     栅格渲染通道（density.visual.heatmap → heatmap_data）
+#   vector_tile       HUD 大层 MVT 通道（前端瓦片渲染）
+#   raster_tile       服务端栅格瓦片（底图/影像层）
+RUNTIME_STRATEGIES: Tuple[str, ...] = (
+    "frontend_native",
+    "preaggregated",
+    "server_vector",
+    "server_raster",
+    "vector_tile",
+    "raster_tile",
+)
+
+
+def resolve_runtime_strategy(
+    *,
+    feature_count: Optional[int] = None,
+    artifact_type: str = "",
+) -> str:
+    """规模/artifact 语义 → 运行策略（确定性、有出处；诊断/披露/测试用）。
+
+    与 ``infer_execution_policy`` 的阈值同源（FETCH_CAP / DATA_FABRIC），
+    但回答的是「渲染/数据通道」而非「成本策略」—— 两者互补，不合并
+    （合并会迫使一边表达两套语义）。栅格类 artifact 无论规模都走栅格
+    通道（与 heatmap 通道的现状一致）。
+    """
+    if artifact_type in ("raster_surface", "terrain_surface", "remote_sensing_index"):
+        return "server_raster"
+    if feature_count is None:
+        return "frontend_native"
+    if feature_count <= FETCH_FEATURE_CAP:
+        return "frontend_native"
+    if feature_count <= DATA_FABRIC_MAX_FEATURES:
+        return "preaggregated"
+    return "server_vector"

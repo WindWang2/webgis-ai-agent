@@ -33,6 +33,13 @@ vi.mock('@/lib/utils/logger', () => ({
   devOnly: { warn: vi.fn(), log: vi.fn(), error: vi.fn() },
 }));
 
+// ADR-0088 runtime repair：保留真实 session-cursor（revision 游标），
+// 仅对 commitMapSpecDocument 打桩以便断言修复后 spec 的提交。
+vi.mock('@/lib/mapspec/session-cursor', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/mapspec/session-cursor')>();
+  return { ...actual, commitMapSpecDocument: vi.fn(() => true) };
+});
+
 const { apiFetch } = await import('@/lib/api/transport');
 
 function makeLayer(fingerprint: string) {
@@ -147,5 +154,102 @@ describe('useCartographicObservation repair budget (FE-P2-3)', () => {
       await flushAsync();
     }
     expect(dispatchAction).toHaveBeenCalledTimes(11);
+  });
+});
+
+
+describe('useCartographicObservation runtime repair spec commit (ADR-0088)', () => {
+  beforeEach(() => {
+    vi.mocked(apiFetch).mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  async function issueOne(response: Record<string, unknown>) {
+    const { commitMapSpecDocument } = await import('@/lib/mapspec/session-cursor');
+    vi.mocked(commitMapSpecDocument).mockClear();
+    const dispatchAction = vi.fn();
+    const runtimeRef = { current: null as MapSpecRuntime | null };
+    const hook = renderHook(
+      ({ sessionId }) => useCartographicObservation({
+        runtimeRef, sessionId, ownerToken: null, dispatchAction,
+      }),
+      { initialProps: { sessionId: 'sid-rr' } },
+    );
+    vi.mocked(apiFetch).mockImplementation(async () => response as never);
+    hook.result.current({
+      map: { getStyle: () => ({ layers: [] }) } as never,
+      spec: { layers: [] } as never,
+      layers: [makeLayer('fp-rr')],
+    });
+    await flushAsync();
+    return commitMapSpecDocument;
+  }
+
+  it('commits the reasserted spec with its revision after a runtime repair', async () => {
+    const commit = await issueOne({
+      runtime_repair: {
+        applied: ['reassert_spec_layer:poi-main'],
+        exhausted: false,
+        mapspec: { layers: [{ id: 'poi-main' }], sources: {} },
+        mutation_revision: 42,
+      },
+    });
+    expect(commit).toHaveBeenCalledWith(
+      { layers: [{ id: 'poi-main' }], sources: {} },
+      42,
+    );
+  });
+
+  it('does not commit when the response carries no runtime repair', async () => {
+    const commit = await issueOne({ observation_sequence: 3 });
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('still commits a runtime repair spec after the dispatch budget is exhausted', async () => {
+    const { commitMapSpecDocument } = await import('@/lib/mapspec/session-cursor');
+    vi.mocked(commitMapSpecDocument).mockClear();
+    const dispatchAction = vi.fn();
+    const runtimeRef = { current: null as MapSpecRuntime | null };
+    const hook = renderHook(
+      ({ sessionId }) => useCartographicObservation({
+        runtimeRef, sessionId, ownerToken: null, dispatchAction,
+      }),
+      { initialProps: { sessionId: 'sid-budget-rr' } },
+    );
+    let seq = 0;
+    let issuedFp = '';
+    vi.mocked(apiFetch).mockImplementation(async () => ({
+      repair_action: {
+        type: 'layer_visibility_update',
+        action_id: `repair-${seq++}`,
+        params: { mapspec_fingerprint: issuedFp },
+      },
+      // 仅最后一轮携带 runtime reassert 的 spec —— 预算耗尽不得吞掉提交
+      ...(seq >= 9 ? {
+        runtime_repair: {
+          applied: ['reassert_spec_layer:poi-main'],
+          exhausted: false,
+          mapspec: { layers: [{ id: 'poi-main' }], sources: {} },
+          mutation_revision: 7,
+        },
+      } : {}),
+    } as never));
+    const map = { getStyle: () => ({ layers: [] }) } as never;
+    for (let i = 0; i < 9; i += 1) {
+      issuedFp = `fp-rr-${i}`;
+      hook.result.current({
+        map, spec: { layers: [] } as never, layers: [makeLayer(issuedFp)],
+      });
+      await flushAsync();
+    }
+    // 预算 8：第 9 个 repair 不再派发，但其 runtime_repair spec 仍提交
+    expect(dispatchAction).toHaveBeenCalledTimes(8);
+    expect(commitMapSpecDocument).toHaveBeenCalledWith(
+      { layers: [{ id: 'poi-main' }], sources: {} },
+      7,
+    );
   });
 });
