@@ -1519,6 +1519,27 @@ async def maybe_finalize_map_product(
             "[MapFinalizer] chapter persist failed session=%s (will retry on next trigger)",
             session_id,
         )
+    # ADR-0088 P7：内部 trace（best-effort，绝不影响业务路径）
+    try:
+        from app.services.gis_harness.trace import (
+            COUNTER_FINALIZATION_REPAIRS,
+            COUNTER_FINALIZATIONS,
+            STAGE_FINALIZATION,
+            get_runtime_trace,
+        )
+        _trace = get_runtime_trace()
+        _trace.record(
+            session_id, STAGE_FINALIZATION,
+            status=result.status,
+            render=result.render_status,
+            passes=result.passes,
+            repairs=len(result.repairs_applied),
+        )
+        _trace.bump(COUNTER_FINALIZATIONS)
+        if result.repairs_applied:
+            _trace.bump(COUNTER_FINALIZATION_REPAIRS, len(result.repairs_applied))
+    except Exception:  # noqa: BLE001 — trace 故障不影响业务
+        pass
     if result.status == STATUS_COMPLETE:
         logger.info("[MapFinalizer] finalization_complete session=%s", session_id)
     else:
