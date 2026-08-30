@@ -19,11 +19,8 @@ import pytest
 from app.services.gis_harness.components import (
     CartographyComponent,
     ComponentPlacement,
-    annotation_component,
     chart_panel_component,
-    colorbar_component,
     inset_map_component,
-    legend_component,
     validate_annotation_payload,
     validate_inset_payload,
 )
