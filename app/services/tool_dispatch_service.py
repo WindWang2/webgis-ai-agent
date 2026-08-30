@@ -314,43 +314,102 @@ class ToolDispatchService:
                 )
             executed_tools.add(tool_key)
 
+        # 1.5 (V2 P10) analysis reuse —— artifact 层确定性复用。ref: 参数
+        # 是 cached_tool 的正确性盲区（ref 可变 → 拒缓存），本层靠
+        # ArtifactRegistry 状态 + descriptor 形状指纹补齐复用语义。仅对
+        # registry 认定的分析工具生效；任何不可判定 → miss 照常执行
+        # （纯加速，绝不因复用逻辑改变失败语义）。GIS_ANALYSIS_REUSE=0
+        # 整体关闭（复用查询只读，关闭只影响命中）。
+        analysis_key: Optional[str] = None
+        input_shapes: Optional[Dict[str, dict]] = None
+        reused_result: Optional[Dict[str, Any]] = None
+        if os.getenv("GIS_ANALYSIS_REUSE", "1") != "0":
+            try:
+                from app.lib.gis.algorithm_registry import get_algorithm_registry
+                from app.lib.gis.analysis_reuse import (
+                    compute_analysis_key,
+                    find_reusable_artifact,
+                    snapshot_input_shapes,
+                )
+
+                if tool_name in get_algorithm_registry().tool_to_capability():
+                    try:
+                        _parsed = (
+                            tool_args_raw
+                            if isinstance(tool_args_raw, (dict, list))
+                            else json.loads(tool_args_raw)
+                        )
+                    except (json.JSONDecodeError, TypeError):
+                        _parsed = None
+                    if _parsed is not None:
+                        analysis_key = compute_analysis_key(tool_name, _parsed)
+                        if analysis_key is not None:
+                            input_shapes = await snapshot_input_shapes(session_id, _parsed)
+                            reuse = await find_reusable_artifact(
+                                session_id,
+                                analysis_key=analysis_key,
+                                input_shapes=input_shapes,
+                            )
+                            if reuse:
+                                _fc = reuse.get("feature_count")
+                                reused_result = {
+                                    "success": True,
+                                    "summary": (
+                                        f"分析复用：本调用的工具、参数与输入引用与既有产物 "
+                                        f"{reuse['artifact_id']} 完全一致（analysis key 相同且输入未变），"
+                                        f"本次未重复计算，直接复用该产物。"
+                                    ),
+                                    "ref_id": reuse["artifact_id"],
+                                    "reused": True,
+                                    "feature_count": _fc,
+                                }
+                                if reuse.get("bbox"):
+                                    reused_result["bbox"] = reuse["bbox"]
+            except Exception:  # noqa: BLE001 — 复用是纯加速：查找失败绝不阻塞执行
+                logger.debug(
+                    "[AnalysisReuse] lookup skipped tool=%s", tool_name, exc_info=True
+                )
+
         # 2. 执行（registry 内部全权处理 ref 解析、校验、异常捕获与自愈）
         # #909 wave bound: the registry call (+ store + MapSpec authoring below) is
         # the blast radius. Guard it behind _wave_semaphore so an LLM round that
         # emits 12-20 concurrent tool_calls cannot burst the thread pool / Redis /
         # external APIs. _dedup_lock is already released, so only execution is gated.
-        try:
-            # #1062: 消费 ToolCost 元数据（#996 承诺的「wave 并发可按档分桶」
-            # 的最小落地）—— heavy 工具占 2 个并发槽，避免同波多个 heavy
-            # 分析挤占全部 wave 预算让轻工具排队。light/medium 占 1 槽不变。
-            # registry duck-typing（workflow 测试的 _FakeRegistry 等不实现
-            # metadata —— 视为 light，与 metadata() 的未注册兜底一致）。
-            _meta_fn = getattr(self._registry, "metadata", None)
-            _cost = _meta_fn(tool_name).get("cost") if callable(_meta_fn) else None
-            _wave_slots = 2 if _cost == "heavy" else 1
-            async with _MultiSlotAcquire(self._wave_semaphore, _wave_slots):
-                result = await self._registry.dispatch(tool_name, tool_args_raw, session_id=session_id)
-        except OperationCancelled:
-            # ADR-0052：取消上抛给工具管道处理（它会记成「已取消」而非工具故障）。
-            # 取消的调用不占用 dedup 槽位（本轮后续重试不被“已成功”谎言拦截）。
-            self._release_key(executed_tools, tool_key)
-            raise
-        except asyncio.CancelledError:
-            # #946/#1060：asyncio.CancelledError 是 BaseException，不会命中上面
-            # 两个 handler —— 硬取消（task.cancel()）若不在此外释放占位键，
-            # 本 turn 内同参重试会一直收到「并发在飞」谎言（实际无结果）。
-            self._release_key(executed_tools, tool_key)
-            raise
-        except Exception as e:
-            from app.tools._utils import std_error_response
-            error_msg = sanitize_error_msg(str(e))
-            result = std_error_response(
-                error_msg,
-                code="TOOL_ERROR",
-                error_type=type(e).__name__,
-                correction_hint=f"Execution error: {error_msg}",
-            )
-            self._release_key(executed_tools, tool_key)
+        if reused_result is not None:
+            result: Dict[str, Any] = reused_result
+        else:
+            try:
+                # #1062: 消费 ToolCost 元数据（#996 承诺的「wave 并发可按档分桶」
+                # 的最小落地）—— heavy 工具占 2 个并发槽，避免同波多个 heavy
+                # 分析挤占全部 wave 预算让轻工具排队。light/medium 占 1 槽不变。
+                # registry duck-typing（workflow 测试的 _FakeRegistry 等不实现
+                # metadata —— 视为 light，与 metadata() 的未注册兜底一致）。
+                _meta_fn = getattr(self._registry, "metadata", None)
+                _cost = _meta_fn(tool_name).get("cost") if callable(_meta_fn) else None
+                _wave_slots = 2 if _cost == "heavy" else 1
+                async with _MultiSlotAcquire(self._wave_semaphore, _wave_slots):
+                    result = await self._registry.dispatch(tool_name, tool_args_raw, session_id=session_id)
+            except OperationCancelled:
+                # ADR-0052：取消上抛给工具管道处理（它会记成「已取消」而非工具故障）。
+                # 取消的调用不占用 dedup 槽位（本轮后续重试不被“已成功”谎言拦截）。
+                self._release_key(executed_tools, tool_key)
+                raise
+            except asyncio.CancelledError:
+                # #946/#1060：asyncio.CancelledError 是 BaseException，不会命中上面
+                # 两个 handler —— 硬取消（task.cancel()）若不在此外释放占位键，
+                # 本 turn 内同参重试会一直收到「并发在飞」谎言（实际无结果）。
+                self._release_key(executed_tools, tool_key)
+                raise
+            except Exception as e:
+                from app.tools._utils import std_error_response
+                error_msg = sanitize_error_msg(str(e))
+                result = std_error_response(
+                    error_msg,
+                    code="TOOL_ERROR",
+                    error_type=type(e).__name__,
+                    correction_hint=f"Execution error: {error_msg}",
+                )
+                self._release_key(executed_tools, tool_key)
 
         # 3. (#529/#589) 归一化：~160 个工具点以失败形状正常返回（不抛异常、
         # 不返回 std_error_response 形状），此前只有 std_error_response 被
@@ -366,10 +425,14 @@ class ToolDispatchService:
         if is_error_like_result(result):
             result = dict(result)
             result.setdefault("code", "tool_error")
+            # summary 兜底：GeoAnalysisResult 失败族把失败原因放在 summary
+            # （无 error/message 键）—— 不回填则 LLM 收到空失败原因。
+            _summary = result.get("summary")
             result.setdefault(
                 "message",
                 result.get("error")
                 or result.get("error_message")
+                or (_summary if isinstance(_summary, str) and _summary else None)
                 or f"{tool_name} 执行失败",
             )
             result["success"] = False
@@ -404,7 +467,13 @@ class ToolDispatchService:
         heatmap_ref: Optional[str] = None
         ref_descriptor: Optional[dict] = None
         target_data = None
-        if isinstance(result, dict):
+        if reused_result is not None:
+            # 复用命中：产物 ref 已在 find_reusable_artifact 内探测存活，
+            # 直接作为 geojson_ref 走既有 descriptor/事件通道（不重跑
+            # MapSpec 显示授权 —— 该产物的显示已由首次执行授权过，重放
+            # 会重复挂层）。
+            geojson_ref = reused_result["ref_id"]
+        elif isinstance(result, dict):
             if isinstance(result.get("geojson"), (dict, list)):
                 target_data = result["geojson"]
             elif result.get("type") == "FeatureCollection" and "features" in result:
@@ -462,6 +531,8 @@ class ToolDispatchService:
                             minted,
                             tool=tool_name,
                             result=result if isinstance(result, dict) else None,
+                            analysis_key=analysis_key,
+                            input_shapes=input_shapes,
                         )
             except Exception:  # noqa: BLE001 — 登记失败不影响产物本身
                 logger.debug(
