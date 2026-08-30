@@ -154,3 +154,48 @@ class TestTemplateSelectorStyle:
     def test_none_for_unknown_model(self):
         selection = TemplateSelector().select_style_for_layer(map_model="ghost")
         assert selection.status == "none"
+
+
+# ── P7：模板/配方整合守卫 ────────────────────────────────────────────
+
+
+def test_seed_templates_no_structural_near_duplicates():
+    """P7：非 deprecated 种子模板不得结构重复（同 recipe + composition +
+    图层角色签名）—— school/hospital/earthquake 式垂直模板复发的守卫。
+    组件集差异属于 composition 模板职责，不构成新产品模板。"""
+    from app.services.gis_harness.product_templates import SEED_PRODUCT_TEMPLATES
+
+    sigs = {}
+    for tpl in SEED_PRODUCT_TEMPLATES:
+        if tpl.deprecated:
+            continue
+        sig = (
+            tpl.recipe_id,
+            tpl.composition_template_id,
+            tuple(
+                (r.role, r.cartography, r.source_capability)
+                for r in tpl.layer_roles
+            ),
+        )
+        assert sig not in sigs, (
+            f"structural near-duplicate product templates: "
+            f"{sigs[sig].id} vs {tpl.id}"
+        )
+        sigs[sig] = tpl
+
+
+def test_deprecated_template_resolves_but_not_selected():
+    """deprecated 模板：旧持久会话的 template_id 仍可解析（迁移兼容），
+    但 find_for_recipe 兜底不再选中它。"""
+    from app.services.gis_harness.product_templates import (
+        get_product_template_registry,
+    )
+
+    reg = get_product_template_registry()
+    # 兼容解析（alias/migration 语义）
+    assert reg.get("poi_density_overview") is not None
+    assert reg.get("poi_density_overview").deprecated is True
+    # 新计划选择走非 deprecated 泛型模板
+    chosen = reg.find_for_recipe("poi_distribution_overview")
+    assert chosen is not None and not chosen.deprecated
+    assert chosen.id == "poi_distribution_overview"
