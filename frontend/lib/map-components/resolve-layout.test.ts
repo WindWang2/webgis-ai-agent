@@ -2,6 +2,7 @@
  * Deterministic component layout solver tests (ADR-0084).
  */
 import { describe, expect, it } from 'vitest';
+import type { ChromeAnchor } from './resolve-components';
 import {
   COMPONENT_LAYOUT_META,
   DEFAULT_STACK_STEP_PX,
@@ -126,7 +127,7 @@ describe('resolveComponentLayout — user-wins（user > agent > auto）', () => 
 });
 
 describe('Scenario H fallback 规则：槽高预算容量裁决（v2）', () => {
-  const panel = (id: string, type: string, anchor = 'top-left') => ({
+  const panel = (id: string, type: string, anchor: ChromeAnchor = 'top-left') => ({
     id, type, anchor, floating: false, origin: 'auto' as const,
   });
 
