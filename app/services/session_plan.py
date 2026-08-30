@@ -174,7 +174,10 @@ def session_plan_stale(plan: Optional[SessionPlan]) -> bool:
         return False
 
 
-def format_session_plan_projection(plan: Optional[SessionPlan]) -> str:
+def format_session_plan_projection(
+    plan: Optional[SessionPlan],
+    mapspec: Optional[Dict[str, Any]] = None,
+) -> str:
     """Bounded next-turn note. Not a Cartography Verdict block.
 
     v3(Phase F)：首行契约不变（既有调用方/测试锁定）；其后追加有界
@@ -226,7 +229,20 @@ def format_session_plan_projection(plan: Optional[SessionPlan]) -> str:
         return head + product_line
     if not block:
         return head + product_line
-    return head + "\n" + block + product_line
+    # ADR-0085：目标→产品 facets 投影行（纯派生、单行有界；章节/MapSpec
+    # 之外零新状态 —— 让 Pi 看见"产品 = facets 集合"而非单个 heatmap）。
+    products_line = ""
+    try:
+        from app.services.gis_harness.product_graph import build_product_graph
+
+        products_line = "\n" + build_product_graph(
+            plan.gis_chapter, mapspec
+        ).summary_line()
+    except Exception:  # noqa: BLE001 — 投影失败只少一行
+        products_line = ""
+    if not products_line.strip():
+        return head + "\n" + block + product_line
+    return head + "\n" + block + products_line + product_line
 
 
 def events_to_sse(events: list[SessionPlanEvent], session_id: str = "") -> str:
