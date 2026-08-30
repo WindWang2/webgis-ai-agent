@@ -16,6 +16,7 @@ import './annotation';
 import './statistics-panel';
 import './chart-panel';
 import './map-border';
+import './graticule';
 
 export function renderComponent(component: MapSpecComponent, ctx: RendererContext): React.ReactNode {
   const renderer = getComponentRenderer(component.type);

@@ -141,8 +141,10 @@
       "defaultPosition": "none",
       "category": "navigation.graticule",
       "runtimeStatus": "native",
-      "rendererRequired": false,
-      "rendererSupport": [],
+      "rendererRequired": true,
+      "rendererSupport": [
+        "interactive"
+      ],
       "exporterSupport": [
         "png",
         "pdf",

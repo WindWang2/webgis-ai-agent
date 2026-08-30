@@ -29,7 +29,7 @@ OUTPUT = REPO_ROOT / "frontend" / "lib" / "map-components" / "component-catalog.
 RENDERER_EXEMPT = {
     "basemap",          # type-only union member (style, not chrome)
     "export_layout",    # exporter-side only
-    "graticule",        # export-oriented overlay (renderer optional)
+    # "graticule" moved out (P3): live renderer landed — rendererRequired=true
     "map_border",       # export frame (renderer optional)
     "inset_map",        # runtime_status=planned (schema/registry only)
 }

@@ -60,7 +60,7 @@ def test_catalog_exports_renderer_and_exporter_support():
     assert sorted(by_type["legend"]["exporterSupport"]) == ["pdf", "png", "svg"]
     assert by_type["title"]["rendererSupport"] == ["interactive"]
     assert sorted(by_type["title"]["exporterSupport"]) == ["pdf", "png", "svg"]
-    assert by_type["graticule"]["rendererSupport"] == []
+    assert by_type["graticule"]["rendererSupport"] == ["interactive"]  # P3 live 落地
     assert by_type["inset_map"]["rendererSupport"] == []
     assert by_type["inset_map"]["runtimeStatus"] == "planned"
     assert by_type["inset_map"]["rendererRequired"] is False

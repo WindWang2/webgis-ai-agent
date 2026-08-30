@@ -26,9 +26,11 @@ interface ChromeProps {
   centerLat: number;
   bearing: number;
   spec: MapSpec | null;
+  /** P3：真实地理 bounds（graticule live 渲染；缺席时渲染器自弃）。 */
+  bounds?: { west: number; south: number; east: number; north: number };
 }
 
-export const MapSpecChrome = React.memo(function MapSpecChrome({ components, zoom, centerLat, bearing, spec }: ChromeProps) {
+export const MapSpecChrome = React.memo(function MapSpecChrome({ components, zoom, centerLat, bearing, spec, bounds }: ChromeProps) {
   // ADR-0081：anchor/floating/enabled 的解析经共享 resolveMapComponents
   // （live 与 export 同一语义源 —— 渲染器内部经 helpers 消费同一解析结果）。
   const resolved = resolveMapComponents({ layout: { components } });
@@ -51,7 +53,7 @@ export const MapSpecChrome = React.memo(function MapSpecChrome({ components, zoo
   const bottomSlotIndexes = buildBottomSlotIndexes(renderableRaw);
   // v2(#1079)：顶槽堆叠索引（chart/statistics/annotation 同槽不再互压）
   const topSlotIndexes = buildTopSlotIndexes(renderableRaw);
-  const ctx = { spec, zoom, centerLat, bearing, bottomSlotIndexes, topSlotIndexes };
+  const ctx = { spec, zoom, centerLat, bearing, bottomSlotIndexes, topSlotIndexes, bounds };
 
   return (
     <>

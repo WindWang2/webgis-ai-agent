@@ -104,10 +104,12 @@ _SUPPORT_MATRIX: Dict[str, ComponentRendererSupport] = {
     ),
     "graticule": ComponentRendererSupport(
         component_type="graticule",
-        renderers=[], exporters=["png", "pdf", "svg"],
+        renderers=["interactive"],
+        exporters=["png", "pdf", "svg"],
         note=(
-            "P6（ADR-0084）：导出侧消费该组件（enabled → _drawGraticules）"
-            "；live 渲染器未实现，renderers 如实为空（组件启用只影响导出）"
+            "P3：live 经纬网渲染器落地（#1089 deferred 补齐）—— 与导出侧 "
+            "_drawGraticules 共享 graticule-math 间隔/吸附语义（live SVG "
+            "overlay，真实 bounds 比例定位）"
         ),
     ),
     "map_border": ComponentRendererSupport(
