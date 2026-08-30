@@ -6,7 +6,10 @@ import {
   RuntimeErrorRing,
   waitForRenderSettle,
 } from '@/lib/mapspec-runtime/render-observation';
-import { getMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
+import {
+  commitMapSpecDocument,
+  getMapSpecSessionCursor,
+} from '@/lib/mapspec/session-cursor';
 import { apiFetch, ApiTimeoutError } from '@/lib/api/transport';
 import { devOnly } from '@/lib/utils/logger';
 import type { Layer } from '@/lib/types/layer';
@@ -198,7 +201,16 @@ export function useCartographicObservation({
       observationAbortRef.current?.abort()
       const controller = new AbortController()
       observationAbortRef.current = controller
-      void apiFetch<{ repair_action?: import('@/lib/types').MapActionPayload }>(
+      void apiFetch<{
+        repair_action?: import('@/lib/types').MapActionPayload;
+        runtime_repair?: {
+          applied?: string[];
+          exhausted?: boolean;
+          passes?: number;
+          mapspec?: unknown;
+          mutation_revision?: number;
+        };
+      }>(
         `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/cartographic-observation`,
         {
           method: 'POST',
@@ -211,46 +223,60 @@ export function useCartographicObservation({
           label: 'Cartographic observation error',
         },
       ).then((response) => {
-        const repair = response.repair_action
-        if (!repair) return
-        // Generation-safe dispatch — latest generation/fingerprint wins.
+        // Generation-safe handling — latest generation/fingerprint wins.
         if (!mountedRef.current) return // unmounted: no side effects (INV-6)
         if (cartographicSessionIdRef.current !== sessionId) return // session switch (INV-2)
         if (cartographicObservationGenerationRef.current !== requestGeneration) {
           return // a newer observation was issued → this response is stale (INV-1/INV-7)
         }
-        const repairParams = repair.params as
-          | { mapspec_fingerprint?: string }
-          | undefined
-        // A repair targeting an older mapspec fingerprint must not mutate a
-        // map that has since advanced (INV-4). Only enforced when the backend
-        // echoes a fingerprint, so a future field change can't block a valid
-        // repair (INV-7).
-        if (
-          repairParams?.mapspec_fingerprint
-          && latestIssuedCartographicFingerprintRef.current !== repairParams.mapspec_fingerprint
-        ) return
-        // Duplicate response / retry must not re-apply the same repair (INV-3).
-        const repairId = repair.action_id
-        if (repairId && appliedRepairIdsRef.current.has(repairId)) return
-        if (totalRepairsRef.current >= MAX_TOTAL_SESSION_REPAIRS) {
-          if (!repairBudgetExhaustedWarnedRef.current) {
-            repairBudgetExhaustedWarnedRef.current = true
-            devOnly.warn(
-              '[map] cartographic repair budget exhausted; repairs suspended for this session',
-            )
+        const repair = response.repair_action
+        if (repair) {
+          const repairParams = repair.params as
+            | { mapspec_fingerprint?: string }
+            | undefined
+          // A repair targeting an older mapspec fingerprint must not mutate a
+          // map that has since advanced (INV-4). Only enforced when the backend
+          // echoes a fingerprint, so a future field change can't block a valid
+          // repair (INV-7).
+          if (
+            repairParams?.mapspec_fingerprint
+            && latestIssuedCartographicFingerprintRef.current !== repairParams.mapspec_fingerprint
+          ) return
+          // Duplicate response / retry must not re-apply the same repair (INV-3).
+          const repairId = repair.action_id
+          if (repairId && appliedRepairIdsRef.current.has(repairId)) return
+          if (totalRepairsRef.current >= MAX_TOTAL_SESSION_REPAIRS) {
+            if (!repairBudgetExhaustedWarnedRef.current) {
+              repairBudgetExhaustedWarnedRef.current = true
+              devOnly.warn(
+                '[map] cartographic repair budget exhausted; repairs suspended for this session',
+              )
+            }
+            return
           }
-          return
+          totalRepairsRef.current += 1
+          dispatchAction(repair)
+          // Record AFTER dispatch so a dispatch throw leaves the repair re-issuable.
+          if (repairId) {
+            const seen = appliedRepairIdsRef.current
+            seen.add(repairId)
+            if (seen.size > MAX_APPLIED_REPAIR_IDS) {
+              seen.delete(seen.keys().next().value as string)
+            }
+          }
         }
-        totalRepairsRef.current += 1
-        dispatchAction(repair)
-        // Record AFTER dispatch so a dispatch throw leaves the repair re-issuable.
-        if (repairId) {
-          const seen = appliedRepairIdsRef.current
-          seen.add(repairId)
-          if (seen.size > MAX_APPLIED_REPAIR_IDS) {
-            seen.delete(seen.keys().next().value as string)
-          }
+        // ADR-0088 runtime repair：reassert 推进了 revision —— 提交修复后的
+        // spec 触发 reconcile 重跑（重新挂载缺失层/组件），settle 后自动再
+        // 观察 → 修复回路闭合。commitMapSpecDocument 的旧代次保护拒掉迟到
+        // 信道上的旧 spec（同代重提交是幂等 emit）。
+        const runtimeRepair = response.runtime_repair
+        if (runtimeRepair?.mapspec) {
+          commitMapSpecDocument(
+            runtimeRepair.mapspec,
+            typeof runtimeRepair.mutation_revision === 'number'
+              ? runtimeRepair.mutation_revision
+              : undefined,
+          )
         }
       }).catch((error) => {
         // A supersede/unmount abort is expected: the newer request (or the
