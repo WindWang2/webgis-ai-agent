@@ -220,10 +220,11 @@ export function resolveComponentLayout(
   // 3.5 v2（Scenario H fallback 规则）：槽高预算内的确定性容量裁决 ——
   // 预算 = 画布高 × SLOT_HEIGHT_BUDGET_RATIO，槽内按 (priority, 声明序)
   // 累积估算高度；超预算的最低优先级尾部**单步侧让**到 ANCHOR_FALLBACK
-  // 槽（fallbackFrom 记因）；fallback 槽仍超限的尾部落位原槽披露
-  //（slot-capacity 碰撞），绝不三层挪动。小视口（mobile）预算变小 →
-  // 更早触发侧让；A4 画布预算变大 → 更多面板原槽堆叠。同一 MapSpec
-  // 在不同 target 下 derived 布局可不同，语义状态（组件/绑定/折叠）不变。
+  // 槽（fallbackFrom 记因）；fallback 槽仍超限者不再挪第三步 —— 追加在
+  // 该槽 kept 之后编号并披露（slot-capacity 碰撞），原生成员编号不受
+  // 挤占。小视口（mobile）预算变小 → 更早触发侧让；A4 画布预算变大 →
+  // 更多面板原槽堆叠。同一 MapSpec 在不同 target 下 derived 布局可不同，
+  // 语义状态（组件/绑定/折叠）不变。
   const budget = Math.max(
     240,
     (canvas?.height ?? 800) * SLOT_HEIGHT_BUDGET_RATIO,
@@ -251,6 +252,14 @@ export function resolveComponentLayout(
   const ordered = new Map<LayoutSlot, LayoutParticipant[]>();
   const capacityMoved = new Map<string, LayoutSlot>(); // id → 侧让前原槽
   const movedInto = new Map<LayoutSlot, LayoutParticipant[]>();
+  // 预算溢出但落位原槽的披露者（id → 槽）：追加在 kept 桶之后编号 ——
+  // 溢出组件仍获得确定性堆叠位（在原生成员之后），不挤占、不 index 归零。
+  const overflowBySlot = new Map<LayoutSlot, LayoutParticipant[]>();
+  const recordOverflow = (slot: LayoutSlot, ps: LayoutParticipant[]) => {
+    const list = overflowBySlot.get(slot);
+    if (list) list.push(...ps);
+    else overflowBySlot.set(slot, [...ps]);
+  };
   for (const slot of [...groups.keys()].sort()) {
     const { kept, overflow } = capacitySplit(sortBucket(groups.get(slot)!));
     ordered.set(slot, kept);
@@ -262,19 +271,38 @@ export function resolveComponentLayout(
       if (into) into.push(...overflow);
       else movedInto.set(fb, overflow);
     } else {
+      recordOverflow(slot, overflow);
       for (const p of overflow) {
         collisions.push({ kind: 'slot-capacity', a: p.id, b: slot });
       }
     }
   }
-  // pass 2：并入侧让者的 fallback 槽重排 + 一次容量复检（仍超限 → 披露，
-  // 不再挪动 —— user 浮动组件永不在这两条路径里，用户摆放优先）
+  // pass 2：并入侧让者的 fallback 槽重排 + 一次容量复检。**原生成员保护**
+  // fb 槽自己已在 pass 1 胜出的成员永不因并入的侧让者被挤出（挤掉已定位
+  // 成员会破坏其编号）—— 复检只淘汰后来 extras：仍超限 → 披露并追加在
+  // kept 之后（确定性编号，不挪第三步）。user 浮动组件永不在这两条路径
+  // 里（用户摆放优先）。
   for (const [fb, extras] of movedInto) {
-    const merged = sortBucket([...(ordered.get(fb) ?? []), ...extras]);
-    const { kept, overflow } = capacitySplit(merged);
+    const protectedOwn = new Set(ordered.get(fb) ?? []);
+    const merged = sortBucket([...protectedOwn, ...extras]);
+    const kept: LayoutParticipant[] = [];
+    const overflow: LayoutParticipant[] = [];
+    let cumulative = 0;
+    for (const p of merged) {
+      const h = estHeight[p.type] ?? 90;
+      if (protectedOwn.has(p) || cumulative + h <= budget) {
+        kept.push(p);
+        cumulative += h;
+      } else {
+        overflow.push(p);
+      }
+    }
     ordered.set(fb, kept);
-    for (const p of overflow) {
-      collisions.push({ kind: 'slot-capacity', a: p.id, b: fb });
+    if (overflow.length) {
+      recordOverflow(fb, overflow);
+      for (const p of overflow) {
+        collisions.push({ kind: 'slot-capacity', a: p.id, b: fb });
+      }
     }
   }
 
@@ -286,11 +314,17 @@ export function resolveComponentLayout(
     const effectiveSlot = capacityFrom
       ? (ANCHOR_FALLBACK[capacityFrom] as LayoutSlot)
       : entry.slot;
-    const finalBucket = ordered.get(effectiveSlot);
+    const keptBucket = ordered.get(effectiveSlot) ?? [];
+    const overflowList = overflowBySlot.get(effectiveSlot) ?? [];
+    const keptIndex = keptBucket.indexOf(p);
+    // 编号：kept 成员按桶序；溢出披露者追加在 kept 之后（桶内相对声明序）
+    const index = keptIndex >= 0
+      ? keptIndex
+      : keptBucket.length + Math.max(0, overflowList.indexOf(p));
     slots.set(p.id, {
       slot: effectiveSlot,
-      index: Math.max(0, finalBucket?.indexOf(p) ?? 0),
-      slotSize: finalBucket?.length ?? 0,
+      index,
+      slotSize: keptBucket.length + overflowList.length,
       fallbackFrom: entry.from ?? capacityFrom,
     });
     // 槽区（含侧让后）与 user 浮动盒仍重叠 → 披露（不强制挪动）

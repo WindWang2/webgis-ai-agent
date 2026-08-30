@@ -179,6 +179,40 @@ describe('Scenario H fallback 规则：槽高预算容量裁决（v2）', () => 
     expect([...r1.slots.entries()]).toEqual([...r2.slots.entries()]);
   });
 
+  it('pass2 原生成员保护：fallback 槽自己的成员永不因并入侧让者被挤出', () => {
+    // top-center 有两个本地面板（已胜出）；top-left 超限的 chart 侧让进
+    // top-center 后，重排复检不得把本地面板挤出（挤出会 index 落回 0）。
+    const r = resolveComponentLayout(
+      [
+        panel('s1', 'statistics_panel', 'top-center'),
+        panel('s2', 'chart_panel', 'top-center'),
+        panel('a', 'annotation', 'top-left'),
+        panel('c1', 'chart_panel', 'top-left'),
+        panel('c2', 'chart_panel', 'top-left'),
+      ],
+      { width: 800, height: 330 }, // 预算 240：top-left 仅 annotation 留守
+    );
+    // top-left 只剩 annotation（90px），chart 双双侧让 top-center
+    expect(r.slots.get('a')!.slot).toBe('top-left');
+    expect(r.slots.get('c1')!.slot).toBe('top-center');
+    expect(r.slots.get('c2')!.slot).toBe('top-center');
+    // 原生成员保护 + 溢出披露者追加编号：全参与者 (slot, index) 不重号
+    const s1 = r.slots.get('s1')!;
+    expect(s1.slot).toBe('top-center');
+    expect(s1.index).toBe(0); // 原生最高优先级恒贴边
+    const seen = new Set<string>();
+    for (const [id, res] of r.slots) {
+      const key = `${res.slot}#${res.index}`;
+      expect(seen.has(key), `${id} duplicate ${key}`).toBe(false);
+      seen.add(key);
+    }
+    // 超限者披露且获得 kept 之后的确定性编号
+    expect(r.collisions.some((c) => c.kind === 'slot-capacity')).toBe(true);
+    expect(r.slots.get('s2')!.index).toBe(1);
+    expect(r.slots.get('c1')!.index).toBe(1);
+    expect(r.slots.get('c2')!.index).toBe(2);
+  });
+
   it('user 浮动组件永不因容量被挪动', () => {
     const r = resolveComponentLayout(
       [
