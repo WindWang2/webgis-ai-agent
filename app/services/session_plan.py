@@ -240,9 +240,22 @@ def format_session_plan_projection(
         ).summary_line()
     except Exception:  # noqa: BLE001 — 投影失败只少一行
         products_line = ""
+    # P9 §17/§18：欠账 facet → 确定性下一动作建议行（零 LLM/零 IO 的纯
+    # 投影；不构成 agent loop —— 执行仍归 Pi + harness）。无欠账零噪声。
+    next_action_line = ""
+    try:
+        from app.services.gis_harness.product_action import next_action_projection
+        from app.services.gis_harness.product_graph import build_facet_completion
+
+        next_action_line = "\n" + next_action_projection(
+            plan.gis_chapter,
+            build_facet_completion(plan.gis_chapter, mapspec),
+        )
+    except Exception:  # noqa: BLE001 — 投影失败只少一行
+        next_action_line = ""
     if not products_line.strip():
         return head + "\n" + block + product_line
-    return head + "\n" + block + products_line + product_line
+    return head + "\n" + block + products_line + next_action_line + product_line
 
 
 def events_to_sse(events: list[SessionPlanEvent], session_id: str = "") -> str:

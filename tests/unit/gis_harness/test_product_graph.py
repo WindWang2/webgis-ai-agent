@@ -193,3 +193,138 @@ async def test_session_plan_projection_includes_products_line(clean_session):
     # 无 spec 路径也安全（facet 行退化为分析侧事实）
     text2 = format_session_plan_projection(plan, None)
     assert isinstance(text2, str)
+
+
+# ── P9: per-facet completion（派生投影；render 证据仅 revision 匹配时参与）──
+
+
+def _observation(revision, layers, *, seq=1, session_id="sid"):
+    return {
+        "session_id": session_id,
+        "sequence": seq,
+        "source": "frontend_runtime",
+        "mapspec_fingerprint": "fp-aaaaaaaaaaaaaaaa",
+        "mapspec_revision": revision,
+        "layers": layers,
+        "style_loaded": True,
+        "reconcile_error": "",
+        "components": [],
+        "runtime_errors": [],
+    }
+
+
+def test_facet_completion_full_product_all_complete():
+    from app.services.gis_harness.product_graph import (
+        FS_COMPLETE,
+        KIND_CHART,
+        KIND_MAP_LAYER,
+        KIND_STATISTICS,
+        build_facet_completion,
+    )
+
+    facets = build_facet_completion(_chapter(), _mapspec())
+    by_kind = {}
+    for f in facets:
+        by_kind.setdefault(f.kind, []).append(f)
+    layer_statuses = {f.status for f in by_kind[KIND_MAP_LAYER]}
+    assert layer_statuses == {FS_COMPLETE}
+    assert {f.status for f in by_kind[KIND_STATISTICS]} == {FS_COMPLETE}
+    assert {f.status for f in by_kind[KIND_CHART]} == {FS_COMPLETE}
+    # narrative 依赖 map_product 块（缺席 → pending，不虚构）
+    narrative = [f for f in facets if f.kind == "narrative"]
+    assert narrative and narrative[0].status == "pending"
+
+
+def test_facet_render_evidence_requires_revision_match():
+    """observation revision 不匹配 → render_status 留空（不虚构 verified）。"""
+    from app.services.gis_harness.product_graph import (
+        FS_COMPLETE,
+        KIND_MAP_LAYER,
+        build_facet_completion,
+    )
+
+    obs = _observation(9, [{"id": "poi-heatmap", "runtime_layer_count": 2, "visible": True}])
+    facets = build_facet_completion(
+        _chapter(), _mapspec(), observation=obs, current_revision=10
+    )
+    layer_facets = [f for f in facets if f.kind == KIND_MAP_LAYER]
+    assert all(f.render_status == "" for f in layer_facets)
+    assert all(f.status == FS_COMPLETE for f in layer_facets)
+
+    # 匹配 revision → verified
+    obs2 = _observation(10, [{"id": "poi-heatmap", "runtime_layer_count": 2, "visible": True}])
+    facets2 = build_facet_completion(
+        _chapter(), _mapspec(), observation=obs2, current_revision=10
+    )
+    primary = next(f for f in facets2 if f.kind == KIND_MAP_LAYER and f.key == "poi-heatmap")
+    assert primary.render_status == "verified"
+    assert primary.status == FS_COMPLETE
+
+
+def test_facet_render_missing_layer_flips_to_needs_repair():
+    from app.services.gis_harness.product_graph import (
+        FS_NEEDS_REPAIR,
+        KIND_MAP_LAYER,
+        build_facet_completion,
+    )
+
+    obs = _observation(10, [])  # runtime 无任何层挂载
+    facets = build_facet_completion(
+        _chapter(), _mapspec(), observation=obs, current_revision=10
+    )
+    primary = next(f for f in facets if f.kind == KIND_MAP_LAYER and f.key == "poi-heatmap")
+    assert primary.render_status == "issues"
+    assert primary.status == FS_NEEDS_REPAIR
+
+
+def test_facet_bbox_from_descriptor_else_null():
+    from app.services.gis_harness.product_graph import build_facet_completion
+
+    descriptors = {"ref:geojson-poi": {"bbox": [103.9, 30.5, 104.2, 30.8]}}
+    facets = build_facet_completion(
+        _chapter(), _mapspec(), descriptors=descriptors
+    )
+    analysis = next(f for f in facets if f.kind == "analysis" and f.key == "poi_query")
+    assert analysis.bbox == [103.9, 30.5, 104.2, 30.8]
+    layer = next(f for f in facets if f.kind == "map_layer" and f.key == "poi-heatmap")
+    # 层 bbox：source 无 ref/bounds → None（不虚构）
+    assert layer.bbox is None
+    # 无 descriptors → 全部 None
+    facets_none = build_facet_completion(_chapter(), _mapspec())
+    assert all(f.bbox is None for f in facets_none)
+
+
+def test_chart_required_owed_facet_synthesized():
+    """Scenario M 投影面：export_profile.chart=True 且无 chart 组件 → owed。"""
+    from app.services.gis_harness.product_graph import (
+        FS_PENDING,
+        KIND_CHART,
+        build_facet_completion,
+    )
+
+    chapter = _chapter()
+    chapter["template_selection"]["export_profile"] = {"formats": ["png"], "chart": True}
+    spec = _mapspec()
+    spec["layout"]["components"] = [
+        c for c in spec["layout"]["components"] if c["type"] != "chart_panel"
+    ]
+    facets = build_facet_completion(chapter, spec)
+    chart = [f for f in facets if f.kind == KIND_CHART]
+    assert len(chart) == 1
+    assert chart[0].facet_id == "chart:required"
+    assert chart[0].status == FS_PENDING
+    assert chart[0].required is True
+    # 图表组件在场 → 不合成
+    facets2 = build_facet_completion(chapter, _mapspec())
+    chart2 = [f for f in facets2 if f.kind == KIND_CHART]
+    assert all(f.facet_id != "chart:required" for f in chart2)
+
+
+def test_facet_projection_never_persists():
+    """派生只读：两次构建是独立对象，输入不变输出相等（无隐藏状态）。"""
+    from app.services.gis_harness.product_graph import build_facet_completion
+
+    a = build_facet_completion(_chapter(), _mapspec())
+    b = build_facet_completion(_chapter(), _mapspec())
+    assert [f.to_dict() for f in a] == [f.to_dict() for f in b]
+    assert a is not b

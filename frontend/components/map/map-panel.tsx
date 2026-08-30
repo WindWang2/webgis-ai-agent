@@ -138,6 +138,8 @@ export function MapPanel({
     zoom: DEFAULT_VIEW_STATE.zoom,
     centerLat: DEFAULT_VIEW_STATE.latitude,
     bearing: 0,
+    // P3：graticule 真实地理 bounds（move 结算时更新；缺席=渲染器自弃）。
+    bounds: undefined as { west: number; south: number; east: number; north: number } | undefined,
   })
   const [mapReady, setMapReady] = useState(false)
   const [runtimeRecoveryGeneration, setRuntimeRecoveryGeneration] = useState(0)
@@ -315,6 +317,10 @@ export function MapPanel({
   // (renderTimeoutRef/isUpdatingRef/renderLayersRef) + the styledata re-listen
   // machinery. The runtime owns the style-loaded retry internally.
   const runtimeRef = useRef<MapSpecRuntime | null>(null)
+  // P9：runtime error 观察用的 MapLibre 实例访问器 —— useCallback 固定身份，
+  // 否则内联箭头每帧换引用、observation 签发函数（及其依赖的 reconcile
+  // effect）随之失效重跑。
+  const getMapInstance = useCallback(() => mapRef.current?.getMap() ?? null, [])
   // 制图观测→修复回路整体下沉到 useCartographicObservation（#1009 分解）：
   // generation 门 / AbortController / 修复去重环 / 卸载中止都在 hook 内，
   // 这里只取回 reconcile 落定后要调用的签发函数。
@@ -323,6 +329,8 @@ export function MapPanel({
     sessionId,
     ownerToken,
     dispatchAction,
+    // P9：runtime error 观察需要真实 MapLibre 实例（监听生命周期归 hook）。
+    getMap: getMapInstance,
   })
 
   // FE-3 (design §7): derive interactiveLayerIds from the runtime's APPLIED
@@ -708,6 +716,11 @@ export function MapPanel({
         zoom: evt.viewState.zoom,
         centerLat: evt.viewState.latitude,
         bearing: evt.viewState.bearing ?? 0,
+        // P3：graticule live 渲染的真实地理 bounds（同一 debounce 结算，
+        // 不新增任何逐帧状态）。
+        bounds: bounds
+          ? { west: bounds[0], south: bounds[1], east: bounds[2], north: bounds[3] }
+          : undefined,
       })
       setViewport(
         [evt.viewState.longitude, evt.viewState.latitude],
@@ -796,6 +809,7 @@ export function MapPanel({
     zoom: decorState.zoom,
     centerLat: decorState.centerLat,
     bearing: decorState.bearing,
+    bounds: decorState.bounds,
   }), [decorState])
 
   // GIS Harness 组件面：committed MapSpec 的 layout.components（Cartography-
@@ -814,9 +828,11 @@ export function MapPanel({
   const CHROME_RENDERABLE_TYPES = new Set([
     'title', 'subtitle', 'north_arrow', 'scale_bar', 'attribution',
     'continuous_colorbar', 'legend', 'categorical_legend',
-    'annotation', 'statistics_panel', 'chart_panel', 'map_border',
+    'annotation', 'statistics_panel', 'chart_panel', 'map_border', 'graticule',
   ])  // 终审 F4：map_border 有 live 渲染器（P6）—— map_border-only spec
      // 此前不挂 MapSpecChrome，边框导出得出来、live 画不出来。
+     // P3：graticule live 渲染器落地（#1089 deferred 补齐）—— graticule-only
+     // spec 同理必须挂 chrome（导出画经纬网、live 也画）。
   const enabledSpecComponents = specComponents.filter((c) => c.enabled !== false)
   const hasSpecChrome = enabledSpecComponents.some(
     (c) => CHROME_RENDERABLE_TYPES.has(c.type),
@@ -919,6 +935,7 @@ export function MapPanel({
           zoom={decorProps.zoom}
           centerLat={decorProps.centerLat}
           bearing={decorProps.bearing}
+          bounds={decorProps.bounds}
           spec={committedSpec}
         />
       )}

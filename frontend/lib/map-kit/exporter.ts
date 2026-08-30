@@ -23,6 +23,11 @@ import { apiFetch, isApiError } from '@/lib/api/transport';
 import { devOnly } from '@/lib/utils/logger';
 import { hydrateMvtLayers } from '@/lib/store/layer-data';
 import { metersPerPixelAt } from './meters-per-pixel';
+import {
+  graticuleIntervalForZoom,
+  graticuleLngLines,
+  graticuleLatLines,
+} from './graticule-math';
 // Re-export the shared oversample helper so existing callers importing from
 // './exporter' keep working, while the single source of truth lives in
 // ./oversample (shared with the MapSpec-to-SVG compiler).
@@ -505,10 +510,9 @@ function _drawGraticules(
 ) {
   const { dark_mode, scalePx, targetW, targetH, mapCenter, mapZoom, graticuleColor, pxPerLogical = 1 } = opts;
 
-  // Calculate graticule interval from zoom level
-  const intervals = [30, 20, 10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01];
-  const zoomIndex = Math.max(0, Math.min(Math.floor((mapZoom - 1) / 2), intervals.length - 1));
-  const interval = intervals[zoomIndex];
+  // P3：间隔表 + zoom 映射 + 吸附抽取为共享模块 graticule-math.ts ——
+  // live 渲染器与导出侧单一语义源（ADR-0081 parity）。
+  const interval = graticuleIntervalForZoom(mapZoom);
 
   // Calculate geographic extent from center and zoom (via shared 512-tile helper)
   const metersPerPixel = metersPerPixelAt(mapZoom, mapCenter.lat);
@@ -527,8 +531,8 @@ function _drawGraticules(
   const maxLat = mapCenter.lat + halfHeightDeg;
 
   // Snap to interval grid
-  const startLng = Math.floor(minLng / interval) * interval;
-  const startLat = Math.floor(minLat / interval) * interval;
+  const lngLines = graticuleLngLines(minLng, maxLng, interval);
+  const latLines = graticuleLatLines(minLat, maxLat, interval);
 
   ctx.save();
   ctx.strokeStyle = graticuleColor || (dark_mode ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.12)");
@@ -538,7 +542,7 @@ function _drawGraticules(
   ctx.font = `${scalePx(9)}px sans-serif`;
 
   // Draw longitude lines (vertical)
-  for (let lng = startLng; lng <= maxLng; lng += interval) {
+  for (const { value: lng, label } of lngLines) {
     const x = ((lng - minLng) / (maxLng - minLng)) * targetW;
     ctx.beginPath();
     ctx.moveTo(x, 0);
@@ -546,11 +550,11 @@ function _drawGraticules(
     ctx.stroke();
     // Label at bottom
     ctx.textAlign = "center";
-    ctx.fillText(`${Math.abs(lng).toFixed(interval < 1 ? 1 : 0)}°${lng >= 0 ? 'E' : 'W'}`, x, targetH - scalePx(22));
+    ctx.fillText(label, x, targetH - scalePx(22));
   }
 
   // Draw latitude lines (horizontal)
-  for (let lat = startLat; lat <= maxLat; lat += interval) {
+  for (const { value: lat, label } of latLines) {
     const y = targetH - ((lat - minLat) / (maxLat - minLat)) * targetH;
     ctx.beginPath();
     ctx.moveTo(0, y);
@@ -558,7 +562,7 @@ function _drawGraticules(
     ctx.stroke();
     // Label at left
     ctx.textAlign = "left";
-    ctx.fillText(`${Math.abs(lat).toFixed(interval < 1 ? 1 : 0)}°${lat >= 0 ? 'N' : 'S'}`, scalePx(4), y - scalePx(3));
+    ctx.fillText(label, scalePx(4), y - scalePx(3));
   }
 
   ctx.setLineDash([]);

@@ -58,12 +58,52 @@ def test_scenario_matrix_anchored():
             ("tests.unit.gis_harness.test_map_completion",
              "test_failed_regression_overwrites_stored_complete_block"),
         ],
+        # H 渲染观察闭环：observation 匹配 revision → facet 全完成 → final
+        "H_render_observed_success": [
+            ("tests.unit.test_map_product_finalization_scenarios",
+             "test_scenario_h_render_observed_success"),
+        ],
+        # I MapSpec 正确而 runtime 缺层 → 不得静默宣称 verified
+        "I_runtime_layer_missing_detected": [
+            ("tests.unit.test_map_product_finalization_scenarios",
+             "test_scenario_i_mapspec_correct_runtime_layer_missing"),
+            ("tests.unit.gis_harness.test_render_observation",
+             "test_matched_revision_missing_layer_is_error"),
+        ],
+        # J 旧 revision 的观察不得验证新 spec
+        "J_stale_observation_guarded": [
+            ("tests.unit.test_map_product_finalization_scenarios",
+             "test_scenario_j_stale_observation_cannot_validate"),
+            ("tests.unit.gis_harness.test_render_observation",
+             "test_validate_stale_observation_cannot_validate_newer_spec"),
+        ],
+        # K style reload → 重放 → observation 再生成 → 门打破 → 重验
+        "K_style_reload_reobservation": [
+            ("tests.unit.test_map_product_finalization_scenarios",
+             "test_scenario_k_style_reload_replay_regenerates_observation"),
+            ("tests.unit.gis_harness.test_render_observation",
+             "test_finalizer_complete_with_stale_observation_discloses"),
+        ],
+        # L 用户隐藏层 → user-wins：观察如实披露、无修复对抗
+        "L_user_wins_render_observation": [
+            ("tests.unit.test_map_product_finalization_scenarios",
+             "test_scenario_l_user_hidden_layer_no_repair_fight"),
+        ],
+        # M chart facet 欠账 → 产品图点名 + 确定性 next action
+        "M_missing_chart_facet_next_action": [
+            ("tests.unit.test_map_product_finalization_scenarios",
+             "test_scenario_m_missing_chart_facet_next_action"),
+            ("tests.unit.gis_harness.test_product_action",
+             "test_chart_owed_maps_to_channel_not_tool_shortcut"),
+        ],
     }
     frontend_anchors = {
         # F style reload → 运行时图层/source/可见性恢复正确
         "F_style_reload_restoration": "lib/map-kit/runtime-layer-registry.test.ts",
         # G live vs PNG vs PDF vs SVG 关键组件语义一致
         "G_live_export_parity": "lib/map-exporter/map-exporter.test.ts",
+        # H 前端采集面：render observation（组件观察/错误环/settle/revision）
+        "H_render_observed_success": "lib/mapspec-runtime/render-observation.test.ts",
     }
 
     for scenario, anchors in backend_anchors.items():

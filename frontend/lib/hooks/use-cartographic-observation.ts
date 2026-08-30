@@ -1,7 +1,12 @@
 'use client';
 import { useCallback, useEffect, useRef } from 'react';
 import type { MapSpecRuntime } from '@/lib/mapspec-runtime';
-import { collectCartographicRuntimeObservation } from '@/lib/mapspec-runtime';
+import {
+  collectRenderObservation,
+  RuntimeErrorRing,
+  waitForRenderSettle,
+} from '@/lib/mapspec-runtime/render-observation';
+import { getMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import { apiFetch, ApiTimeoutError } from '@/lib/api/transport';
 import { devOnly } from '@/lib/utils/logger';
 import type { Layer } from '@/lib/types/layer';
@@ -20,6 +25,11 @@ interface UseCartographicObservationOptions {
   sessionId?: string | null;
   ownerToken?: string | null;
   dispatchAction: (action: MapActionPayload) => void;
+  /**
+   * P9：访问底层 MapLibre 实例以注册 runtime error 监听（mount→cleanup 生命周期
+   * 归本 hook）。缺省时不注册 —— 旧调用方/测试保持原行为。
+   */
+  getMap?: () => { on: (ev: string, h: (e: unknown) => void) => void; off: (ev: string, h: (e: unknown) => void) => void } | null;
 }
 
 /**
@@ -30,12 +40,19 @@ interface UseCartographicObservationOptions {
  * 响应守卫。返回 issueCartographicObservation —— 由 reconcile 的
  * .then() 以当次闭包的 map/spec/layers 调用（闭包捕获即原始语义：
  * 迟到响应与最新签发值比较后被丢弃）。
+ *
+ * P9 render-observed product closure：观测升级为 RenderObservation ——
+ * 在既有层收敛证据上补充 mapspec_revision（后端盖章为准）、bounded
+ * settle（map idle race 超时）、chrome 组件观察与有界 runtime error 环，
+ * 供后端 Map Product Finalizer 做渲染级完成度校验。观测仍是观察而非
+ * 地图真相：MapSpec 保持唯一 desired-state 权威。
  */
 export function useCartographicObservation({
   runtimeRef,
   sessionId,
   ownerToken,
   dispatchAction,
+  getMap,
 }: UseCartographicObservationOptions) {
   const lastCartographicObservationKeyRef = useRef<string>('')
   const cartographicObservationGenerationRef = useRef(Date.now() * 1000)
@@ -60,6 +77,11 @@ export function useCartographicObservation({
   const repairBudgetExhaustedWarnedRef = useRef(false)
   const mountedRef = useRef(true)
   const observationAbortRef = useRef<AbortController | null>(null)
+  // P9：有界 runtime error 环（map 'error' 事件 → dedup → 随观测上报）。
+  const runtimeErrorRingRef = useRef(new RuntimeErrorRing())
+  // P9：error 监听生命周期（首次 issue 时在真实 map 实例上注册，unmount 清理）。
+  const errorHandlerRef = useRef<((e: unknown) => void) | null>(null)
+  const errorMapRef = useRef<{ off: (ev: string, h: (e: unknown) => void) => void } | null>(null)
 
   // Cancel any in-flight observation on unmount so a late response can never
   // setState / dispatch a map action after the panel is gone (INV-6).
@@ -69,13 +91,21 @@ export function useCartographicObservation({
       mountedRef.current = false
       observationAbortRef.current?.abort()
       observationAbortRef.current = null
+      // P9：卸载时摘除 error 监听（listener 生命周期 mount→register→cleanup）。
+      const map = errorMapRef.current
+      const handler = errorHandlerRef.current
+      if (map && handler) map.off('error', handler)
+      errorMapRef.current = null
+      errorHandlerRef.current = null
     }
   }, [])
 
-  // FE-P2-3：修复总预算按会话重置（新会话 = 新的修复额度）。
+  // FE-P2-3：修复总预算按会话重置（新会话 = 新的修复额度）；error 环随会话
+  // 清空 —— 旧会话的 runtime error 不得污染新会话的观测。
   useEffect(() => {
     totalRepairsRef.current = 0
     repairBudgetExhaustedWarnedRef.current = false
+    runtimeErrorRingRef.current.drain()
   }, [sessionId])
 
   const issueCartographicObservation = useCallback(({
@@ -95,117 +125,150 @@ export function useCartographicObservation({
         : latest
     }, null)
     if (!map || !sessionId || !generation?._mapspecFingerprint) return
-    const observation = collectCartographicRuntimeObservation(
-      map,
-      spec,
-      layers,
-      generation._mapspecFingerprint,
-      runtimeRef.current?.getLastError() ?? '',
-      runtimeRef.current?.getAppliedSpec() ?? null,
-    )
-    // #692：去重键不 stringify 整个 observation——raster_image 是多 MB
-    // data URL（docstring 自称 bounded metadata only 被该字段违反），
-    // 每次 reconcile 在主线程序列化 MB 级 base64 仅为算键。用稳定字段
-    // + raster 载荷的长度引用计数替代（内容变化必然改变长度或指纹）。
-    const rasterImg = (observation as { raster_image?: string }).raster_image
-    // len + 首尾采样：同长异容（同 bbox 换调色板重渲染）也能变键
-    const rasterMark =
-      rasterImg === undefined
-        ? undefined
-        : `len:${rasterImg.length}:${rasterImg.slice(0, 24)}:${rasterImg.slice(-24)}`
-    const keyPayload = {
-      ...observation,
-      ...(rasterMark !== undefined ? { raster_image: rasterMark } : {}),
+    // 闭包内使用：narrowing 不跨 async 边界 —— 提前固化为 string。
+    const fingerprint: string = generation._mapspecFingerprint
+
+    // P9：error 监听一次性注册（幂等；卸载/替换时摘除旧监听）。
+    if (getMap && !errorHandlerRef.current) {
+      const mapInstance = getMap()
+      if (mapInstance) {
+        const handler = (e: unknown) => runtimeErrorRingRef.current.push(e)
+        try {
+          mapInstance.on('error', handler)
+          errorHandlerRef.current = handler
+          errorMapRef.current = mapInstance
+        } catch {
+          // 监听失败不阻断观测（错误环为空即可）
+        }
+      }
     }
-    const observationKey = `${sessionId}:${JSON.stringify(keyPayload)}`
-    if (observationKey === lastCartographicObservationKeyRef.current) return
-    lastCartographicObservationKeyRef.current = observationKey
-    const clientGeneration = Math.max(
-      cartographicObservationGenerationRef.current + 1,
-      Date.now() * 1000,
-    )
-    cartographicObservationGenerationRef.current = clientGeneration
-    // Capture THIS request's correlation in the closure so a late response
-    // compares against the newest issued values, not its own stale view.
-    const requestGeneration = clientGeneration
-    latestIssuedCartographicFingerprintRef.current = generation._mapspecFingerprint
-    // A newer observation supersedes any still in flight: abort it so its
-    // late response cannot dispatch a stale repair. The generation gate in
-    // the handler below is the authoritative guard; the abort just reclaims
-    // the round-trip and makes unmount deterministic.
-    observationAbortRef.current?.abort()
-    const controller = new AbortController()
-    observationAbortRef.current = controller
-    void apiFetch<{ repair_action?: import('@/lib/types').MapActionPayload }>(
-      `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/cartographic-observation`,
-      {
-        method: 'POST',
-        body: { ...observation, client_generation: clientGeneration },
-        ownerToken,
-        signal: controller.signal,
-        // Fire-and-forget: evaluation can exceed 30s under a Pi turn's
-        // session lock. Superseded by the next observation's abort.
-        timeoutMs: 0,
-        label: 'Cartographic observation error',
-      },
-    ).then((response) => {
-      const repair = response.repair_action
-      if (!repair) return
-      // Generation-safe dispatch — latest generation/fingerprint wins.
-      if (!mountedRef.current) return // unmounted: no side effects (INV-6)
-      if (cartographicSessionIdRef.current !== sessionId) return // session switch (INV-2)
-      if (cartographicObservationGenerationRef.current !== requestGeneration) {
-        return // a newer observation was issued → this response is stale (INV-1/INV-7)
+
+    // P9：签发改异步 —— bounded settle 后再采集（MapLibre idle 或超时，
+    // 先到为准）。settle 期间的 unmount/会话切换由下方守卫吸收；渲染观察
+    // 永不阻塞渲染本身（settle 是 race，无长等待）。
+    void (async () => {
+      const mapIdle = await waitForRenderSettle(map)
+      if (!mountedRef.current || cartographicSessionIdRef.current !== sessionId) return
+
+      const observation = collectRenderObservation({
+        map,
+        spec,
+        layers,
+        mapspecFingerprint: fingerprint,
+        mapspecRevision: getMapSpecSessionCursor().revision,
+        errorRing: runtimeErrorRingRef.current,
+        mapIdle,
+        reconcileError: runtimeRef.current?.getLastError() ?? '',
+        applied: runtimeRef.current?.getAppliedSpec() ?? null,
+      })
+      // #692：去重键不 stringify 整个 observation——raster_image 是多 MB
+      // data URL（docstring 自称 bounded metadata only 被该字段违反），
+      // 每次 reconcile 在主线程序列化 MB 级 base64 仅为算键。用稳定字段
+      // + raster 载荷的长度引用计数替代（内容变化必然改变长度或指纹）。
+      const rasterImg = (observation as { raster_image?: string }).raster_image
+      // len + 首尾采样：同长异容（同 bbox 换调色板重渲染）也能变键
+      const rasterMark =
+        rasterImg === undefined
+          ? undefined
+          : `len:${rasterImg.length}:${rasterImg.slice(0, 24)}:${rasterImg.slice(-24)}`
+      // P9：observed_at 是采集墙钟（每次都变），不参与去重键 —— 否则同
+      // 一渲染状态的重复采集永远不命中去重、每个 reconcile 都 POST。
+      const { observed_at: _volatileAt, ...stateFields } = observation
+      void _volatileAt
+      const keyPayload = {
+        ...stateFields,
+        ...(rasterMark !== undefined ? { raster_image: rasterMark } : {}),
       }
-      const repairParams = repair.params as
-        | { mapspec_fingerprint?: string }
-        | undefined
-      // A repair targeting an older mapspec fingerprint must not mutate a
-      // map that has since advanced (INV-4). Only enforced when the backend
-      // echoes a fingerprint, so a future field change can't block a valid
-      // repair (INV-7).
-      if (
-        repairParams?.mapspec_fingerprint
-        && latestIssuedCartographicFingerprintRef.current !== repairParams.mapspec_fingerprint
-      ) return
-      // Duplicate response / retry must not re-apply the same repair (INV-3).
-      const repairId = repair.action_id
-      if (repairId && appliedRepairIdsRef.current.has(repairId)) return
-      if (totalRepairsRef.current >= MAX_TOTAL_SESSION_REPAIRS) {
-        if (!repairBudgetExhaustedWarnedRef.current) {
-          repairBudgetExhaustedWarnedRef.current = true
-          devOnly.warn(
-            '[map] cartographic repair budget exhausted; repairs suspended for this session',
-          )
+      const observationKey = `${sessionId}:${JSON.stringify(keyPayload)}`
+      if (observationKey === lastCartographicObservationKeyRef.current) return
+      lastCartographicObservationKeyRef.current = observationKey
+      const clientGeneration = Math.max(
+        cartographicObservationGenerationRef.current + 1,
+        Date.now() * 1000,
+      )
+      cartographicObservationGenerationRef.current = clientGeneration
+      // Capture THIS request's correlation in the closure so a late response
+      // compares against the newest issued values, not its own stale view.
+      const requestGeneration = clientGeneration
+      latestIssuedCartographicFingerprintRef.current = fingerprint
+      // A newer observation supersedes any still in flight: abort it so its
+      // late response cannot dispatch a stale repair. The generation gate in
+      // the handler below is the authoritative guard; the abort just reclaims
+      // the round-trip and makes unmount deterministic.
+      observationAbortRef.current?.abort()
+      const controller = new AbortController()
+      observationAbortRef.current = controller
+      void apiFetch<{ repair_action?: import('@/lib/types').MapActionPayload }>(
+        `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/cartographic-observation`,
+        {
+          method: 'POST',
+          body: { ...observation, client_generation: clientGeneration },
+          ownerToken,
+          signal: controller.signal,
+          // Fire-and-forget: evaluation can exceed 30s under a Pi turn's
+          // session lock. Superseded by the next observation's abort.
+          timeoutMs: 0,
+          label: 'Cartographic observation error',
+        },
+      ).then((response) => {
+        const repair = response.repair_action
+        if (!repair) return
+        // Generation-safe dispatch — latest generation/fingerprint wins.
+        if (!mountedRef.current) return // unmounted: no side effects (INV-6)
+        if (cartographicSessionIdRef.current !== sessionId) return // session switch (INV-2)
+        if (cartographicObservationGenerationRef.current !== requestGeneration) {
+          return // a newer observation was issued → this response is stale (INV-1/INV-7)
         }
-        return
-      }
-      totalRepairsRef.current += 1
-      dispatchAction(repair)
-      // Record AFTER dispatch so a dispatch throw leaves the repair re-issuable.
-      if (repairId) {
-        const seen = appliedRepairIdsRef.current
-        seen.add(repairId)
-        if (seen.size > MAX_APPLIED_REPAIR_IDS) {
-          seen.delete(seen.keys().next().value as string)
+        const repairParams = repair.params as
+          | { mapspec_fingerprint?: string }
+          | undefined
+        // A repair targeting an older mapspec fingerprint must not mutate a
+        // map that has since advanced (INV-4). Only enforced when the backend
+        // echoes a fingerprint, so a future field change can't block a valid
+        // repair (INV-7).
+        if (
+          repairParams?.mapspec_fingerprint
+          && latestIssuedCartographicFingerprintRef.current !== repairParams.mapspec_fingerprint
+        ) return
+        // Duplicate response / retry must not re-apply the same repair (INV-3).
+        const repairId = repair.action_id
+        if (repairId && appliedRepairIdsRef.current.has(repairId)) return
+        if (totalRepairsRef.current >= MAX_TOTAL_SESSION_REPAIRS) {
+          if (!repairBudgetExhaustedWarnedRef.current) {
+            repairBudgetExhaustedWarnedRef.current = true
+            devOnly.warn(
+              '[map] cartographic repair budget exhausted; repairs suspended for this session',
+            )
+          }
+          return
         }
-      }
-    }).catch((error) => {
-      // A supersede/unmount abort is expected: the newer request (or the
-      // unmount) owns the state, so stay quiet and leave the key alone.
-      if (
-        !mountedRef.current
-        || error?.name === "AbortError"
-        || error instanceof ApiTimeoutError
-      ) return
-      // Only the LATEST request may reset the observation key for retry — a
-      // superseded request failing must not force a redundant re-POST of the
-      // newer observation (INV-5: retry without a storm).
-      if (cartographicObservationGenerationRef.current !== requestGeneration) return
-      lastCartographicObservationKeyRef.current = ''
-      devOnly.warn('[map] cartographic observation failed:', error)
-    })
-  }, [sessionId, ownerToken, dispatchAction, runtimeRef])
+        totalRepairsRef.current += 1
+        dispatchAction(repair)
+        // Record AFTER dispatch so a dispatch throw leaves the repair re-issuable.
+        if (repairId) {
+          const seen = appliedRepairIdsRef.current
+          seen.add(repairId)
+          if (seen.size > MAX_APPLIED_REPAIR_IDS) {
+            seen.delete(seen.keys().next().value as string)
+          }
+        }
+      }).catch((error) => {
+        // A supersede/unmount abort is expected: the newer request (or the
+        // unmount) owns the state, so stay quiet and leave the key alone.
+        if (
+          !mountedRef.current
+          || error?.name === "AbortError"
+          || error instanceof ApiTimeoutError
+        ) return
+        // Only the LATEST request may reset the observation key for retry — a
+        // superseded request failing must not force a redundant re-POST of the
+        // newer observation (INV-5: retry without a storm).
+        if (cartographicObservationGenerationRef.current !== requestGeneration) return
+        lastCartographicObservationKeyRef.current = ''
+        devOnly.warn('[map] cartographic observation failed:', error)
+      })
+    })()
+  }, [sessionId, ownerToken, dispatchAction, runtimeRef, getMap])
 
   return issueCartographicObservation
 }

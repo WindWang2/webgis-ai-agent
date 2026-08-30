@@ -331,3 +331,233 @@ def test_runtime_manifest_compiles_clean():
     """前置：manifest 编译无 fatal（场景回放依赖 registry 健康）。"""
     m = get_runtime_manifest()
     assert m is not None
+
+
+# ── P9 场景 H–M：render-observed product closure ─────────────────────
+
+
+def _matching_observation(sid: str, revision: int, *, layer_count: int = 2,
+                          visible: bool = True, seq: int = 1, components=None):
+    """与 _seed_full_product 的结果层匹配的 render observation（有界）。"""
+    return {
+        "session_id": sid,
+        "sequence": seq,
+        "client_generation": 1000 + seq,
+        "source": "frontend_runtime",
+        "mapspec_fingerprint": "fp-scenario-aaaaaaaa",
+        "mapspec_revision": revision,
+        "layer_count": 2,
+        "layers": [
+            {"id": "poi-heatmap", "runtime_layer_count": layer_count,
+             "visible": visible, "source_converged": True, "style_converged": True},
+            {"id": "district-aggregate", "runtime_layer_count": layer_count,
+             "visible": visible, "source_converged": True, "style_converged": True},
+        ],
+        "viewport": {"zoom": 9},
+        "style_loaded": True,
+        "reconcile_error": "",
+        "components": components if components is not None else [
+            {"id": "title", "type": "title", "enabled": True, "mounted": True},
+            {"id": "colorbar-main", "type": "continuous_colorbar", "enabled": True, "mounted": True},
+            {"id": "north-arrow", "type": "north_arrow", "enabled": True, "mounted": True},
+            {"id": "scale-bar", "type": "scale_bar", "enabled": True, "mounted": True},
+            {"id": "attribution", "type": "attribution", "enabled": True, "mounted": True},
+            {"id": "statistics", "type": "statistics_panel", "enabled": True, "mounted": True},
+            {"id": "chart-panel", "type": "chart_panel", "enabled": True, "mounted": True},
+        ],
+        "runtime_errors": [],
+        "map_idle": True,
+    }
+
+
+async def _current_revision(sid: str) -> int:
+    state = await session_data_manager.get_map_state(sid)
+    return int(state.get("_cartographic_mutation_revision") or 0)
+
+
+@pytest.mark.asyncio
+async def test_scenario_h_render_observed_success(clean_session):
+    """H：MapSpec committed → frontend 挂载全部结果层 → observation 匹配
+    revision → facet 全完成 → map product final（render verified）。"""
+    chapter = await _seed_full_product(clean_session)
+    rev = await _current_revision(clean_session)
+    await session_data_manager.set_map_state(
+        clean_session, "_cartographic_observation",
+        _matching_observation(clean_session, rev),
+    )
+
+    result = await run_map_finalization(clean_session, chapter=chapter, reason="scenario_h")
+
+    assert result.status == STATUS_COMPLETE, [f.to_dict() for f in result.findings]
+    assert result.render_status == "verified"
+    render_codes = {f.code for f in result.findings if f.code.startswith("render_")}
+    assert not render_codes
+    # facet 级：全部产品 facet complete（render 证据参与）
+    from app.services.gis_harness.product_graph import (
+        FS_COMPLETE,
+        KIND_MAP_LAYER,
+        build_facet_completion,
+    )
+    obs = await session_data_manager.get_map_state(clean_session)
+    facets = build_facet_completion(
+        chapter,
+        await mapspec_store_instance.get_mapspec(clean_session),
+        observation=obs.get("_cartographic_observation"),
+        current_revision=rev,
+    )
+    layer_facets = [f for f in facets if f.kind == KIND_MAP_LAYER]
+    assert layer_facets and all(
+        f.status == FS_COMPLETE and f.render_status == "verified" for f in layer_facets
+    )
+
+
+@pytest.mark.asyncio
+async def test_scenario_i_mapspec_correct_runtime_layer_missing(clean_session):
+    """I：MapSpec/armed/组件全部正确，但 MapLibre 层未挂载 → render
+    finding → 产品不得静默宣称 fully verified（needs_repair）。"""
+    chapter = await _seed_full_product(clean_session)
+    rev = await _current_revision(clean_session)
+    await session_data_manager.set_map_state(
+        clean_session, "_cartographic_observation",
+        _matching_observation(clean_session, rev, layer_count=0),
+    )
+
+    result = await run_map_finalization(clean_session, chapter=chapter, reason="scenario_i")
+
+    # desired-state 全过，但渲染级缺席 → needs_repair（非 complete 非 failed）
+    assert result.status == STATUS_NEEDS_REPAIR
+    assert result.render_status == "issues"
+    assert any(f.code == "render_layer_missing" for f in result.findings)
+
+
+@pytest.mark.asyncio
+async def test_scenario_j_stale_observation_cannot_validate(clean_session):
+    """J：spec rev N、observation rev N-1 → stale → 不 false verified。"""
+    chapter = await _seed_full_product(clean_session)
+    rev = await _current_revision(clean_session)
+    await session_data_manager.set_map_state(
+        clean_session, "_cartographic_observation",
+        _matching_observation(clean_session, rev - 1),
+    )
+
+    result = await run_map_finalization(clean_session, chapter=chapter, reason="scenario_j")
+
+    assert result.status == STATUS_COMPLETE  # desired-state 仍通过（向后兼容）
+    assert result.render_status == "stale"
+    assert any(f.code == "render_revision_stale" for f in result.findings)
+    assert result.projection_line() == "Map product: final (render:stale)"
+
+
+@pytest.mark.asyncio
+async def test_scenario_k_style_reload_replay_regenerates_observation(clean_session):
+    """K：style reload → RuntimeLayerRegistry 重放 → observation 再生成
+    （seq 前进、同 revision、同可见性）→ 幂等门被打破 → 重验 complete。"""
+    import uuid as _uuid
+
+    from app.services.gis_harness.map_completion import maybe_finalize_map_product
+    from app.services.session_plan import (
+        SessionPlan,
+        load_session_plan,
+        save_session_plan,
+    )
+
+    chapter = await _seed_full_product(clean_session)
+    await save_session_plan(SessionPlan(
+        envelope_id=f"env-{_uuid.uuid4().hex[:8]}",
+        session_id=clean_session,
+        user_goal=str(chapter.get("query") or "scenario-k"),
+        gis_chapter=chapter,
+    ))
+    rev = await _current_revision(clean_session)
+    obs1 = _matching_observation(clean_session, rev, seq=1)
+    await session_data_manager.set_map_state(
+        clean_session, "_cartographic_observation", obs1
+    )
+    first = await maybe_finalize_map_product(clean_session, reason="scenario_k_pre")
+    assert first is not None and first.status == STATUS_COMPLETE
+    plan = await load_session_plan(clean_session)
+    stored = plan.gis_chapter["map_product"]
+    assert stored["render_observation_seq"] == 1
+
+    # style reload → 重放 → 前端重新采集（同内容、seq 前进）
+    obs2 = _matching_observation(clean_session, rev, seq=2)
+    await session_data_manager.set_map_state(
+        clean_session, "_cartographic_observation", obs2
+    )
+    # 无其它变化：仅 render seq 变化也必须打破去重门（P9 升级路径）
+    second = await maybe_finalize_map_product(clean_session, reason="scenario_k_post")
+    assert second is not None, "render seq gate must break dedup on new observation"
+    plan = await load_session_plan(clean_session)
+    assert plan.gis_chapter["map_product"]["render_observation_seq"] == 2
+    assert plan.gis_chapter["map_product"]["status"] == STATUS_COMPLETE
+
+
+@pytest.mark.asyncio
+async def test_scenario_l_user_hidden_layer_no_repair_fight(clean_session):
+    """L：用户隐藏层 → observation 如实报告 hidden → user-wins：不自动
+    重开、render 校验不与用户对抗、无修复循环。"""
+    from app.services.gis_world_state.mutation import apply_gis_mutation_batch
+
+    chapter = await _seed_full_product(clean_session, layer_visibility="visible")
+    state = await session_data_manager.get_map_state(clean_session)
+    await apply_gis_mutation_batch(
+        clean_session,
+        [PatchLayerPresentationIntent(layer_id="poi-heatmap", visible=False)],
+        origin="user",
+        actor="manual-scenario-l",
+        expected_revision=int(state.get("_cartographic_mutation_revision") or 0),
+    )
+    rev = await _current_revision(clean_session)
+    # observation 与新 revision 匹配：热力层 runtime 也如实隐藏
+    obs = _matching_observation(clean_session, rev)
+    obs["layers"][0]["visible"] = False
+    await session_data_manager.set_map_state(
+        clean_session, "_cartographic_observation", obs
+    )
+
+    result = await run_map_finalization(clean_session, chapter=chapter, reason="scenario_l")
+
+    # user-wins：隐藏是合法期望态（warning 披露），无渲染层缺席误报
+    assert not any(f.code == "render_layer_missing" for f in result.findings)
+    hidden = [f for f in result.findings if f.code == "layer_hidden"]
+    assert hidden and hidden[0].severity == "warning"
+    assert not any(r.startswith("show_layer:") for r in result.repairs_applied)
+    spec = await mapspec_store_instance.get_mapspec(clean_session)
+    heat = next(ly for ly in spec["layers"] if ly["id"] == "poi-heatmap")
+    assert (heat.get("layout") or {}).get("visibility") == "none"
+
+
+@pytest.mark.asyncio
+async def test_scenario_m_missing_chart_facet_next_action(clean_session):
+    """M：地图 facets 全完成、chart required 但缺席 → 产品图显示 chart
+    owed → next action = chart 产出通道（capability 层语义，不 shortcut
+    到 tool）。"""
+    from app.services.gis_harness.product_action import advise_next_product_action
+    from app.services.gis_harness.product_graph import (
+        FS_PENDING,
+        KIND_CHART,
+        build_facet_completion,
+    )
+
+    chapter = await _seed_full_product(clean_session)
+    chapter["template_selection"]["export_profile"] = {"formats": ["png"], "chart": True}
+    spec = await mapspec_store_instance.get_mapspec(clean_session)
+    # chart 组件缺席（场景：agent 尚未产出图表）
+    spec["layout"]["components"] = [
+        c for c in spec["layout"]["components"] if c.get("type") != "chart_panel"
+    ]
+
+    facets = build_facet_completion(chapter, spec)
+    chart = [f for f in facets if f.kind == KIND_CHART]
+    assert chart and chart[0].facet_id == "chart:required"
+    assert chart[0].status == FS_PENDING
+
+    rec = advise_next_product_action(chapter, facets)
+    assert rec is not None
+    assert rec.action == "produce_chart"
+    assert rec.capability == ""  # 不把 tool id 冒充 capability
+
+    # [Products] 投影行点名 chart owed
+    from app.services.gis_harness.product_graph import build_product_graph
+    line = build_product_graph(chapter, spec).summary_line()
+    assert "chart 0/1" in line and "chart owed" in line

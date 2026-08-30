@@ -128,11 +128,11 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
     MapComponentDescriptor(
         id="graticule", category="navigation.graticule", type="graticule",
         name="Graticule", name_zh="经纬网",
-        # #1075(D-5): 前端无 graticule 渲染器 —— renderer_support 如实为空。
-        # P6（ADR-0084）：导出侧真实消费该组件（enabled → _drawGraticules），
-        # exporter_support 与现实对齐；live 由请求参数通道（uiSlice）承接。
+        # P3：live 渲染器落地（graticule.tsx SVG overlay）—— #1075(D-5) 的
+        # "前端无渲染器"现状解除；导出侧 _drawGraticules 与 live 共享
+        # graticule-math 间隔/吸附语义（单一矩阵见 component_renderers）。
         placement_domain="overlay", supported_outputs=["interactive", "png", "pdf", "svg"],
-        renderer_support=[], exporter_support=["png", "pdf", "svg"],
+        renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
         default_variant="light", variants=["light", "geographic"],
         default_position="none", allowed_positions=["none"],
         cardinality="single", priority=60,
