@@ -302,7 +302,12 @@ def cache_dispatch_result(
 def cache_session_plan_sse(tool_call_id: str, sse: str, session_id: str = "") -> None:
     if not sse:
         return
-    _session_plan_sse_cache[(session_id, tool_call_id)] = sse
+    # 追加而非覆盖（review A-1/B-2）：同一 tool call 可能既缓存
+    # session_plan progress 又缓存 map_finalization —— 覆盖会把前者静默
+    # 丢掉（take 只 pop 一次），旗舰场景（完成 DAG 的那个工具结果）前端
+    # 将丢失行进度事件。SSE 事件是行分隔文本，直接拼接即两个事件。
+    key = (session_id, tool_call_id)
+    _session_plan_sse_cache[key] = _session_plan_sse_cache.get(key, "") + sse
     _evict_session_plan_sse_cache()
 
 
@@ -1690,6 +1695,7 @@ class PiBridge:
                             if event.get("type") == "agent_settled":
                                 try:
                                     from app.services.gis_harness.map_completion import (
+                                        current_mapspec_for_disclosure as _finalization_spec_snapshot,
                                         finalization_sse_payload,
                                         maybe_finalize_map_product,
                                         read_stored_map_product,

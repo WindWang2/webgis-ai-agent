@@ -450,6 +450,25 @@ class ToolDispatchService:
                     raw_result=result,
                     error_msg="session store unavailable",
                 )
+            # P1（ADR-0082）：产物铸造即登记（dispatch seam 只登记 ref 与
+            # 工具名；plan-apply seam 稍后补充 capability/lineage 并 upsert）。
+            try:
+                from app.services.artifact_registry import register_tool_artifact
+
+                for minted in (geojson_ref, heatmap_ref):
+                    if isinstance(minted, str) and minted.startswith("ref:"):
+                        await register_tool_artifact(
+                            session_id,
+                            minted,
+                            tool=tool_name,
+                            result=result if isinstance(result, dict) else None,
+                        )
+            except Exception:  # noqa: BLE001 — 登记失败不影响产物本身
+                logger.debug(
+                    "[ArtifactRegistry] dispatch registration skipped tool=%s",
+                    tool_name,
+                    exc_info=True,
+                )
             # Canonical MapSpec layer authoring points at an existing
             # session-owned analysis ref instead of returning the dataset
             # again.  Preserve that stable identity through the existing SSE
@@ -881,6 +900,21 @@ class ToolDispatchService:
                 image_ref = result_ref
             else:
                 raise RuntimeError("raster display result has no addressable image")
+            # P1（ADR-0082）：栅格产物登记（ref:raster/*；capability 上下文
+            # 由 plan-apply seam 的 density 行补充）。
+            try:
+                from app.services.artifact_registry import register_tool_artifact
+
+                if isinstance(image_ref, str) and image_ref.startswith("ref:"):
+                    await register_tool_artifact(
+                        session_id, image_ref, tool=tool_name, result=result
+                    )
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "[ArtifactRegistry] raster registration skipped tool=%s",
+                    tool_name,
+                    exc_info=True,
+                )
             # #533: 把可寻址的 image URL 放回 authored + 命令 params。此前
             # authoring 把 producer 的 data-URL image 剥掉后，命令 params 里
             # 没有 image → 前端 add_heatmap_raster 校验器拒绝（invalid_params）

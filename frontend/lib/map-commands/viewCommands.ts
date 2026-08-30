@@ -314,7 +314,13 @@ export const viewCommands: Record<string, CommandEntry> = {
       }
       // 修复动作放进 runCameraCommand 的 execute —— 用户手势仲裁/自中断
       // 语义对 finalizer 修复同样生效（用户正在拖图时不抢相机）。
+      // 手势等待期间视口可能已变（review D-1）：execute 内重评一次相交
+      // 判定 —— 用户恰好把地图拖到结果区时不再 yank 相机。
       return runCameraCommand(ctx, (c) => {
+        const recheck = checkViewport(c.map, bbox);
+        if (recheck !== 'repairable') {
+          return;
+        }
         navigation.fitBounds(c.map, bbox as [number, number, number, number], 80);
       });
     },

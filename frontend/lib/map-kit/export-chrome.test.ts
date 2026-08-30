@@ -368,3 +368,199 @@ describe('drawChromeStatsPanel / drawChromeChartPanel — 面板导出', () => {
     expect(calls.filter((c) => c.op === 'fill').length).toBeGreaterThanOrEqual(2);
   });
 });
+
+describe('buildExportChrome — ADR-0084 布局引擎集成', () => {
+  it('scale_bar + colorbar 同锚 bottom-right：共享求解器给出堆叠序（不再同点遮挡）', async () => {
+    const model = await buildExportChrome(
+      {
+        spec: specOf([
+          comp({ id: 'sb', type: 'scale_bar' }),
+          comp({
+            id: 'cb', type: 'continuous_colorbar',
+            options: { layerId: 'ly' },
+          }),
+        ]),
+        viewport: VIEWPORT,
+        legendSpecsByLayer: { ly: { type: 'continuous', min: 0, max: 10, palette_colors: ['#fff', '#000'] } as never },
+      },
+      CANVAS,
+    );
+    expect(model.scaleBar?.anchor).toBe('bottom-right');
+    expect(model.colorbar?.anchor).toBe('bottom-right');
+    // 求解器：scale_bar 贴边 index 0，colorbar index 1（导出侧加层距偏移）
+    expect(model.scaleBar?.stackIndex).toBe(0);
+    expect(model.colorbar?.stackIndex).toBe(1);
+    expect(model.colorbar?.slotSize).toBe(2);
+  });
+
+  it('锚定面板的 collapsed 折叠态导出为标题条（E-2：此前锚定面板导出永远展开）', async () => {
+    const model = await buildExportChrome(
+      {
+        spec: specOf([
+          comp({
+            id: 'stats', type: 'statistics_panel',
+            placement: { mode: 'anchor', anchor: 'top-left', collapsed: true },
+            options: { stats: { title: '学校统计', items: [{ label: '总数', value: 5378 }] } },
+          }),
+        ]),
+        viewport: VIEWPORT,
+        legendSpecsByLayer: {},
+      },
+      CANVAS,
+    );
+    expect(model.panels).toHaveLength(1);
+    expect(model.panels[0].stats?.title).toBe('学校统计');
+    // 折叠 → 只导出标题条文本
+    expect(model.panels[0].text).toBe('学校统计');
+  });
+
+  it('disabled legend 不再 shadow enabled categorical_legend（E-4）', async () => {
+    const model = await buildExportChrome(
+      {
+        spec: specOf([
+          comp({ id: 'lg', type: 'legend', enabled: false, options: { layerId: 'a' } }),
+          comp({ id: 'cat', type: 'categorical_legend', options: { layerId: 'b' } }),
+        ]),
+        viewport: VIEWPORT,
+        legendSpecsByLayer: {
+          a: { type: 'graduated', breaks: [1, 2], palette_colors: ['#111', '#222'] } as never,
+          b: { type: 'categorical', categories: [{ color: '#333', label: 'X' }] } as never,
+        },
+      },
+      CANVAS,
+    );
+    expect(model.legend).toBeDefined();
+    // 绑定到 enabled 的 categorical_legend 的 layerId（b），不是被禁用的 a
+    expect(model.legend?.legendSpec).toMatchObject({ type: 'categorical' });
+  });
+
+  it('族内全 disabled（用户显式关闭）→ 无图例也不走 HUD 兜底（user-wins）', async () => {
+    const model = await buildExportChrome(
+      {
+        spec: specOf([
+          comp({ id: 'lg', type: 'legend', enabled: false, options: { layerId: 'a' } }),
+        ]),
+        viewport: VIEWPORT,
+        legendSpecsByLayer: { a: { type: 'graduated', breaks: [1], palette_colors: ['#111'] } as never },
+        fallbackLegendSpec: { type: 'graduated', breaks: [1], palette_colors: ['#111'] } as never,
+      },
+      CANVAS,
+    );
+    expect(model.legend).toBeUndefined();
+  });
+
+  it('只有 disabled 可视组件的 spec → fromSpec=false（E-10：与 live hasSpecChrome 对齐）', async () => {
+    const model = await buildExportChrome(
+      {
+        spec: specOf([comp({ id: 'title', type: 'title', enabled: false, options: { text: 'T' } })]),
+        viewport: VIEWPORT,
+        legendSpecsByLayer: {},
+      },
+      CANVAS,
+    );
+    expect(model.fromSpec).toBe(false);
+  });
+
+  it('colorbar 无 palette 不绘制、缺范围画裸条（E-5：与 live 退化语义一致）', async () => {
+    // 无 palette → 模型仍构建，但 drawer 直接返回（不伪造默认 ramp）
+    const model = await buildExportChrome(
+      {
+        spec: specOf([comp({ id: 'cb', type: 'continuous_colorbar', options: { layerId: 'ly' } })]),
+        viewport: VIEWPORT,
+        legendSpecsByLayer: { ly: { type: 'continuous', min: 0, max: 10 } as never },
+      },
+      CANVAS,
+    );
+    expect(model.colorbar).toBeDefined();
+    const ctx = { fillRect: vi.fn(), strokeRect: vi.fn(), createLinearGradient: vi.fn(() => ({ addColorStop: vi.fn() })), fillText: vi.fn() };
+    const d = {
+      ctx, darkMode: false, scalePx: (v: number) => v,
+      targetW: 1600, targetH: 1200, style: { fontFamily: 'sans' },
+    } as never;
+    drawChromeColorbar(d, model.colorbar!, { marginX: 40, marginY: 56 });
+    expect(ctx.fillRect).not.toHaveBeenCalled(); // 无 palette → 不绘制
+  });
+});
+
+describe('P6 高级组件 —— map_border / graticule 导出通道', () => {
+  it('map_border enabled → 模型携带 border 元素与变体', async () => {
+    const model = await buildExportChrome(
+      {
+        spec: specOf([
+          comp({ id: 'border', type: 'map_border', variant: 'academic' }),
+        ]),
+        viewport: VIEWPORT,
+        legendSpecsByLayer: {},
+      },
+      CANVAS,
+    );
+    expect(model.fromSpec).toBe(true);
+    expect(model.border).toMatchObject({ kind: 'map_border', anchor: 'none', variant: 'academic' });
+  });
+
+  it('map_border disabled → 不出框（user-wins）', async () => {
+    const model = await buildExportChrome(
+      {
+        spec: specOf([comp({ id: 'border', type: 'map_border', enabled: false })]),
+        viewport: VIEWPORT,
+        legendSpecsByLayer: {},
+      },
+      CANVAS,
+    );
+    expect(model.fromSpec).toBe(false);
+    expect(model.border).toBeUndefined();
+  });
+
+  it('graticule 组件 enabled → graticuleEnabled=true（导出经纬网通道）', async () => {
+    const model = await buildExportChrome(
+      {
+        spec: specOf([
+          comp({ id: 'title', type: 'title', options: { text: 'T' } }),
+          comp({ id: 'gr', type: 'graticule', enabled: true }),
+        ]),
+        viewport: VIEWPORT,
+        legendSpecsByLayer: {},
+      },
+      CANVAS,
+    );
+    expect(model.graticuleEnabled).toBe(true);
+  });
+
+  it('graticule 组件缺席 → graticuleEnabled 不置位', async () => {
+    const model = await buildExportChrome(
+      {
+        spec: specOf([comp({ id: 'title', type: 'title', options: { text: 'T' } })]),
+        viewport: VIEWPORT,
+        legendSpecsByLayer: {},
+      },
+      CANVAS,
+    );
+    expect(model.graticuleEnabled).toBeFalsy();
+  });
+
+  it('drawChromeMapBorder：minimal 单框、academic 双框+角刻度', async () => {
+    const { drawChromeMapBorder } = await import('./export-chrome');
+    const mkCtx = () => {
+      const calls: string[] = [];
+      const ctx = {
+        strokeRect: vi.fn((x: number, y: number, w: number, h: number) => calls.push(`rect:${x},${y},${w},${h}`)),
+        beginPath: vi.fn(),
+        moveTo: vi.fn(),
+        lineTo: vi.fn(),
+        stroke: vi.fn(),
+      };
+      return { ctx, calls };
+    };
+    const d = (c: ReturnType<typeof mkCtx>) => ({
+      ctx: c.ctx, darkMode: false, scalePx: (v: number) => v,
+      targetW: 1600, targetH: 1200, style: { fontFamily: 'sans' },
+    } as never);
+    const minimal = mkCtx();
+    drawChromeMapBorder(d(minimal), { kind: 'map_border', anchor: 'none', variant: 'minimal' });
+    expect(minimal.ctx.strokeRect).toHaveBeenCalledTimes(1);
+    const academic = mkCtx();
+    drawChromeMapBorder(d(academic), { kind: 'map_border', anchor: 'none', variant: 'academic' });
+    expect(academic.ctx.strokeRect).toHaveBeenCalledTimes(2); // 双框
+    expect(academic.ctx.stroke).toHaveBeenCalledTimes(1);     // 角刻度路径
+  });
+});

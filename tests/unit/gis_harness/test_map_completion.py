@@ -23,6 +23,7 @@ from app.services.gis_harness.map_completion import (
     F_COMPONENT_DISABLED,
     F_COMPONENT_MISSING,
     F_EMPTY_RESULT,
+    F_EXECUTION_BLOCKED,
     F_LAYER_HIDDEN,
     F_LAYER_MISSING,
     F_LAYOUT_CONFLICT,
@@ -33,6 +34,7 @@ from app.services.gis_harness.map_completion import (
     F_VIEWPORT_NO_BBOX,
     MAX_FINALIZATION_PASSES,
     R_ADD_COMPONENT,
+    R_ENABLE_COMPONENT,
     R_SHOW_LAYER,
     STATUS_COMPLETE,
     STATUS_FAILED,
@@ -43,7 +45,9 @@ from app.services.gis_harness.map_completion import (
     assess_export_parity,
     derive_result_bbox,
     finalization_sse_payload,
+    map_product_block,
     maybe_finalize_map_product,
+    read_stored_map_product,
     run_map_finalization,
     validate_artifacts,
     validate_components,
@@ -185,8 +189,11 @@ def test_pending_mandatory_blocks_finalization():
 
 
 def test_failed_mandatory_blocks_and_discloses_retry():
+    # blocked（failed/unavailable 终态行）与 open（pending）分码披露 ——
+    # blocked 不会被 pending 吞掉（review H-3）。
     findings = validate_execution(_chapter(step_status="failed"))
-    assert any(f.code == F_NEEDS_EXECUTION for f in findings)
+    assert any(f.code == F_EXECUTION_BLOCKED for f in findings)
+    assert not any(f.code == F_NEEDS_EXECUTION for f in findings)
 
 
 def test_optional_unavailable_does_not_block():
@@ -476,8 +483,9 @@ async def test_hidden_result_layer_repaired_via_mutation_batch(clean_session):
 
 @pytest.mark.asyncio
 async def test_user_hidden_layer_is_respected_not_overridden(clean_session):
-    """user-wins：用户显式隐藏的结果层，finalizer 的 show_layer 修复被
-    GISMutationBatch 既有守卫拒绝，状态保持 needs_repair（如实披露）。"""
+    """user-wins：用户显式隐藏的结果层，隐藏就是期望状态 —— 降级 warning
+    披露、不发起注定被拒的修复突变（否则每个触发点都重放一次被守卫拒绝
+    的 GISMutationBatch + 永续 needs_repair + 重复 toast，review B-6/H-6）。"""
     from app.services.gis_world_state.mutation import apply_gis_mutation_batch
     from app.services.mapspec.lifecycle_engine import PatchLayerPresentationIntent
 
@@ -495,9 +503,25 @@ async def test_user_hidden_layer_is_respected_not_overridden(clean_session):
         expected_revision=int(state.get("_cartographic_mutation_revision") or 0),
     )
     result = await run_map_finalization(clean_session, chapter=chapter)
-    assert result.status == STATUS_NEEDS_REPAIR
-    assert any(f.code == F_LAYER_HIDDEN for f in result.findings)
+    hidden = [f for f in result.findings if f.code == F_LAYER_HIDDEN]
+    assert hidden and hidden[0].severity == "warning"
+    assert hidden[0].repair is None  # 用户决策：不修复、不对抗
     assert not any(r.startswith(f"{R_SHOW_LAYER}:") for r in result.repairs_applied)
+    # 用户的隐藏即产品状态 → warning 不阻塞 complete
+    assert result.status == STATUS_COMPLETE
+
+
+@pytest.mark.asyncio
+async def test_agent_hidden_layer_still_repaired(clean_session):
+    """system/agent 隐藏（无 user owner 印记）仍是可修复 error ——
+    user-wins 降级只认 presentation_owner=="user"。"""
+    ref = await _store_ref(clean_session)
+    chapter = _chapter(bound_ref=ref)
+    spec = await _seed_mapspec(clean_session, visibility="none")
+    layer = next(ly for ly in spec["layers"] if ly["id"] == "poi-main")
+    assert (layer.get("cartographic_intent") or {}).get("presentation_owner") != "user"
+    result = await run_map_finalization(clean_session, chapter=chapter)
+    assert any(r.startswith(f"{R_SHOW_LAYER}:") for r in result.repairs_applied)
 
 
 @pytest.mark.asyncio
@@ -512,7 +536,11 @@ async def test_pending_dag_returns_pending_without_validation(clean_session):
 async def test_failed_capability_does_not_finalize_then_retry_completes(clean_session):
     chapter = _chapter(step_status="failed")
     result = await run_map_finalization(clean_session, chapter=chapter)
-    assert result.status == STATUS_PENDING
+    # blocked-only（failed 终态、无 open 行）：DAG 不会自愈 —— 按 failed
+    # 披露（pending 会被静默吞掉，turn 结束零产品级披露，review H-3）。
+    assert result.status == STATUS_FAILED
+    assert any(f.code == F_EXECUTION_BLOCKED for f in result.findings)
+    assert "Map product: incomplete" in result.projection_line()
 
     # 重试成功：行翻 complete + artifact 绑定 → 可终验
     ref = await _store_ref(clean_session)
@@ -525,13 +553,27 @@ async def test_failed_capability_does_not_finalize_then_retry_completes(clean_se
 
 
 @pytest.mark.asyncio
-async def test_empty_result_fails_with_clear_semantics(clean_session):
+async def test_open_and_blocked_rows_stay_pending(clean_session):
+    """open（pending）+ blocked（failed）并存 → 仍 pending 抑制（turn 中段，
+    blocked 披露等行终态后由 settle 触发）。"""
+    chapter = _chapter(req_status="pending", step_status="failed")
+    result = await run_map_finalization(clean_session, chapter=chapter)
+    assert result.status == STATUS_PENDING
+    assert any(f.code == F_NEEDS_EXECUTION for f in result.findings)
+    assert any(f.code == F_EXECUTION_BLOCKED for f in result.findings)
+
+
+@pytest.mark.asyncio
+async def test_empty_result_disclosed_as_warning_not_failure(clean_session):
+    """合法空结果（范围内无匹配）是正确答案 —— 披露但不 failed、不诱导
+    重试（review B-7/H-4）；Pi 依据 finding 决定向用户如何说明。"""
     ref = await _store_ref(clean_session, payload=_geojson(coords=[]))
     chapter = _chapter(bound_ref=ref)
     await _seed_mapspec(clean_session)
     result = await run_map_finalization(clean_session, chapter=chapter)
-    assert result.status == STATUS_FAILED
-    assert any(f.code == F_EMPTY_RESULT for f in result.findings)
+    empty = [f for f in result.findings if f.code == F_EMPTY_RESULT]
+    assert empty and empty[0].severity == "warning"
+    assert result.status == STATUS_COMPLETE
 
 
 # ── maybe_finalize：幂等门 + 章节块 + 投影 ───────────────────────────
@@ -606,6 +648,196 @@ async def test_maybe_finalize_reruns_after_spec_mutation(clean_session):
     assert any("enable_component" in r for r in second.repairs_applied)
 
 
+# ── P0 稳定化：secondary 角色 / raster 通道 / 降级 / 修复记忆 / 指纹门 ─
+
+
+def test_secondary_role_result_layer_validated():
+    """planner 的 role 词表是 primary|secondary|reference —— secondary 是
+    结果通道（行政区 choropleth 等）；漏掉会让副结果层逃逸校验（H-1）。"""
+    chapter = _chapter()
+    chapter["map_layers"].append(
+        {"role": "secondary", "layer_id": "district-choropleth", "enabled": True}
+    )
+    mapspec = {
+        "layers": [{"id": "poi-main", "source": "s", "type": "circle"}],
+        "sources": [{"id": "s"}],
+    }
+    findings = validate_layers(chapter, mapspec)
+    assert any(
+        f.code == F_LAYER_MISSING and f.target == "district-choropleth"
+        for f in findings
+    )
+
+
+def test_density_surface_without_ref_is_not_missing_artifact():
+    """density_surface 的 raster 渲染通道（density.visual.heatmap →
+    heatmap_data）不落 FC ref —— 无 bound_ref 是合法完成形态，不得误判
+    artifact_missing → 假 failed（review C-1）。绑定了 ref 时仍校验。"""
+    chapter = _chapter()
+    chapter["analysis_steps"][0]["bound_ref"] = ""  # raster 通道：无 FC ref
+    findings = validate_artifacts(chapter, {})
+    assert not any(f.code == F_ARTIFACT_MISSING for f in findings)
+
+    # vector 通道：绑了 ref 但 store 已无 descriptor → 照常过期披露
+    chapter["analysis_steps"][0]["bound_ref"] = "ref:geojson-x"
+    findings = validate_artifacts(chapter, {"ref:geojson-x": None})
+    assert any(f.code == F_ARTIFACT_EXPIRED for f in findings)
+
+
+@pytest.mark.asyncio
+async def test_pending_regression_demotes_stored_complete_block(clean_session):
+    """已存 complete 的章节出现新的 open 行（新增需求/重试重置）→ 陈旧
+    "final" 投影必须收回：落降级 pending 块（review A-2/B-3）。"""
+    from app.services.session_plan import load_session_plan
+
+    ref = await _store_ref(clean_session)
+    chapter = _chapter(bound_ref=ref)
+    await _seed_mapspec(clean_session)
+    await _save_plan(clean_session, chapter)
+    first = await maybe_finalize_map_product(clean_session)
+    assert first is not None and first.status == STATUS_COMPLETE
+
+    # 新增 open 行（新数据需求，pending）→ 回归（在含 map_product 块的
+    # 最新章节上改，避免覆写丢块）
+    from app.services.session_plan import load_session_plan as _load
+
+    plan = await _load(clean_session)
+    plan.gis_chapter["data_requirements"].append(
+        {"capability": "admin_boundary", "purpose": "district", "status": "pending"}
+    )
+    await save_session_plan(plan)
+    regressed = await maybe_finalize_map_product(clean_session, reason="turn_settled")
+    assert regressed is not None and regressed.status == STATUS_PENDING
+
+    plan = await load_session_plan(clean_session)
+    block = plan.gis_chapter["map_product"]
+    assert block["status"] == STATUS_PENDING
+    assert block["projection"] == "Map product: pending"
+    projection = format_session_plan_projection(plan)
+    assert "Map product: final" not in projection
+
+
+@pytest.mark.asyncio
+async def test_failed_regression_overwrites_stored_complete_block(clean_session):
+    """重试失败（行标 failed，无 revision 变化）→ blocked 披露覆盖陈旧
+    complete 块（不再持有 "final" 投影）。"""
+    from app.services.session_plan import load_session_plan
+
+    ref = await _store_ref(clean_session)
+    chapter = _chapter(bound_ref=ref)
+    await _seed_mapspec(clean_session)
+    await _save_plan(clean_session, chapter)
+    assert (await maybe_finalize_map_product(clean_session)).status == STATUS_COMPLETE
+
+    chapter["analysis_steps"][0]["status"] = "failed"  # 重试失败（行不推 revision）
+    await _save_plan(clean_session, chapter)
+    regressed = await maybe_finalize_map_product(clean_session, reason="turn_settled")
+    assert regressed is not None and regressed.status == STATUS_FAILED
+
+    plan = await load_session_plan(clean_session)
+    assert plan.gis_chapter["map_product"]["status"] == STATUS_FAILED
+
+
+@pytest.mark.asyncio
+async def test_repair_memory_union_survives_reruns(clean_session):
+    """one-shot 修复记忆跨轮存活（review B-4）：prior ∪ applied 持久化。
+    旧实现只写本轮 repairs —— 无修复的下一轮把记忆清零，finalizer 隔轮
+    重新对抗用户决策（enable→user disable→enable→user disable…）。"""
+    from app.services.session_plan import load_session_plan
+    from app.services.mapspec_store import mapspec_store
+
+    ref = await _store_ref(clean_session)
+    chapter = _chapter(bound_ref=ref)
+    await _seed_mapspec(clean_session)
+    await _save_plan(clean_session, chapter)
+    assert (await maybe_finalize_map_product(clean_session)).status == STATUS_COMPLETE
+
+    # 第一轮：用户禁用 title → finalizer 修复启用（记录修复记忆）
+    await mapspec_store.patch_component(
+        clean_session, component_id="title", component_type="title", enabled=False
+    )
+    second = await maybe_finalize_map_product(clean_session, reason="turn_settled")
+    assert any(r.startswith(f"{R_ENABLE_COMPONENT}:") for r in second.repairs_applied)
+
+    # 第二轮：用户再次禁用 → one-shot（prior 记忆在场）不再对抗 →
+    # needs_repair 披露；关键是持久化块保留修复记忆（union）。
+    await mapspec_store.patch_component(
+        clean_session, component_id="title", component_type="title", enabled=False
+    )
+    third = await maybe_finalize_map_product(clean_session, reason="turn_settled")
+    assert third.status == STATUS_NEEDS_REPAIR
+    assert not any(r.startswith(f"{R_ENABLE_COMPONENT}:") for r in third.repairs_applied)
+
+    plan = await load_session_plan(clean_session)
+    stored_repairs = plan.gis_chapter["map_product"]["repairs"]
+    assert any(r.startswith(f"{R_ENABLE_COMPONENT}:") for r in stored_repairs)
+
+    # 第三轮（同态再触发，force 绕过指纹门）：记忆仍在 → 仍不对抗
+    fourth = await maybe_finalize_map_product(
+        clean_session, reason="turn_settled", force=True
+    )
+    assert not any(
+        r.startswith(f"{R_ENABLE_COMPONENT}:") for r in fourth.repairs_applied
+    )
+
+
+@pytest.mark.asyncio
+async def test_fingerprint_gate_skips_unchanged_abnormal_state(clean_session):
+    """去重门覆盖全部终态（review F-4）：卡在 needs_repair 的会话在
+    「revision + 行指纹」双无变化时跳过重验，不再每个工具结果重放整轮。"""
+    from app.services.session_plan import load_session_plan
+    from app.services.mapspec_store import mapspec_store
+
+    ref = await _store_ref(clean_session)
+    chapter = _chapter(bound_ref=ref)
+    await _seed_mapspec(clean_session)
+    await _save_plan(clean_session, chapter)
+    assert (await maybe_finalize_map_product(clean_session)).status == STATUS_COMPLETE
+
+    # 制造持久的 needs_repair：两次禁用 title（第二次被 one-shot 拒绝修复）
+    for _ in range(2):
+        await mapspec_store.patch_component(
+            clean_session, component_id="title", component_type="title", enabled=False
+        )
+        await maybe_finalize_map_product(clean_session, reason="turn_settled")
+    plan = await load_session_plan(clean_session)
+    assert plan.gis_chapter["map_product"]["status"] == STATUS_NEEDS_REPAIR
+
+    # 无任何变化（revision / 行指纹一致）→ 跳过重验
+    assert await maybe_finalize_map_product(clean_session) is None
+
+
+def test_map_product_block_contract():
+    result = MapCompletionResult(status=STATUS_COMPLETE, summary="ok")
+    block = map_product_block(
+        result,
+        7,
+        all_repairs=["enable_component:title", "enable_component:title", "add_component:legend"],
+        rows_fingerprint="poi_query:available:ref:a|density_surface:done:",
+    )
+    # union 去重、有界
+    assert block["repairs"] == ["enable_component:title", "add_component:legend"]
+    assert block["checked_revision"] == 7
+    assert block["rows_fingerprint"] == "poi_query:available:ref:a|density_surface:done:"
+    assert block["projection"] == "Map product: final"
+
+
+@pytest.mark.asyncio
+async def test_read_stored_map_product_carries_session_id(clean_session):
+    """stored 兜底披露必须带 session_id —— 前端 INV-2 跨会话守卫读的
+    就是这个字段（review B-P3：缺 sid 的载荷绕过守卫）。"""
+    ref = await _store_ref(clean_session)
+    chapter = _chapter(bound_ref=ref)
+    await _seed_mapspec(clean_session)
+    await _save_plan(clean_session, chapter)
+    await maybe_finalize_map_product(clean_session)
+
+    stored = await read_stored_map_product(clean_session)
+    assert stored is not None
+    assert stored["session_id"] == clean_session
+    assert stored["status"] == STATUS_COMPLETE
+
+
 # ── 契约 ──────────────────────────────────────────────────────────────
 
 
@@ -626,9 +858,18 @@ def test_result_serializable_and_bounded():
 
 
 def test_viewport_status_derivation():
-    # 有 bbox → repairable（前端校验相机）；有层无 bbox → invalid + warning
-    result = MapCompletionResult(result_bbox=[1.0, 2.0, 3.0, 4.0])
-    assert result.result_bbox == [1.0, 2.0, 4 - 1, 4.0] or result.result_bbox == [1.0, 2.0, 3.0, 4.0]
+    # derive_result_bbox 是纯函数（review G-2：此前断言是恒真式）：
+    # 并集、缺 bbox 跳过、退化 bbox（w>e，跨日期变更线）跳过。
+    chapter = _chapter(bound_ref="ref:a")
+    chapter["analysis_steps"][0]["bound_ref"] = "ref:b"
+    descriptors = {
+        "ref:a": {"feature_count": 2, "bbox": [1.0, 2.0, 3.0, 4.0]},
+        "ref:b": {"feature_count": 2, "bbox": [0.0, 1.5, 10.0, 3.5]},
+        "ref:c": {"feature_count": 2, "bbox": [170.0, 1.0, -170.0, 2.0]},  # w>e 跳过
+        "ref:d": {"feature_count": 2},
+    }
+    assert derive_result_bbox(chapter, descriptors) == [0.0, 1.5, 10.0, 4.0]
+    assert derive_result_bbox(_chapter(), {"ref:geojson-x": {"feature_count": 1}}) is None
 
 
 def test_projection_line_mapping():
@@ -640,3 +881,61 @@ def test_projection_line_mapping():
 
 def test_viewport_no_bbox_warning_code_exists():
     assert F_VIEWPORT_NO_BBOX == "viewport_no_bbox"
+
+
+# ── PR 终审回归 ──────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_fingerprint_gate_survives_truncation(clean_session):
+    """行指纹 >512 字符（≥8 行长 ref）时去重门仍生效（终审 F2：存储侧
+    截断、比较侧全量 → 永不匹配 → 门失效、每触发点重跑）。"""
+    from app.services.session_plan import load_session_plan
+
+    ref = await _store_ref(clean_session)
+    chapter = _chapter(bound_ref=ref)
+    # 长度超 512：附加带长 ref 的行
+    for i in range(8):
+        chapter["analysis_steps"].append(
+            {
+                "capability": f"cap_{i}",
+                "purpose": "pad",
+                "status": "done",
+                "bound_ref": f"ref:geojson-pad-{i}-{'x' * 40}",
+                "optional": True,
+            }
+        )
+    await _seed_mapspec(clean_session)
+    await _save_plan(clean_session, chapter)
+    first = await maybe_finalize_map_product(clean_session)
+    assert first is not None and first.status == STATUS_COMPLETE
+    plan = await load_session_plan(clean_session)
+    block = plan.gis_chapter["map_product"]
+    assert len(block["rows_fingerprint"]) == 512  # 存储侧确实截断
+    # 门在截断下仍跳过（修复前此处会重跑）
+    assert await maybe_finalize_map_product(clean_session) is None
+
+
+@pytest.mark.asyncio
+async def test_transient_descriptor_error_is_not_expiry(clean_session):
+    """descriptor 探测持续异常 = unknown（终审 F4）：跳过不判 —— 不把
+    存储抖动持久化成假 failed。确认缺失（None）才是 expired。"""
+    from app.services import session_data as sd_module
+
+    ref = await _store_ref(clean_session)
+    chapter = _chapter(bound_ref=ref)
+    await _seed_mapspec(clean_session)
+
+    original = sd_module.session_data_manager.get_ref_descriptor
+
+    async def _flaky(sid, ref_id):
+        raise RuntimeError("transient store error")
+
+    # 持续异常 → unknown → 不产 expired finding、不 failed
+    sd_module.session_data_manager.get_ref_descriptor = _flaky  # type: ignore[assignment]
+    try:
+        result = await run_map_finalization(clean_session, chapter=chapter)
+    finally:
+        sd_module.session_data_manager.get_ref_descriptor = original  # type: ignore[assignment]
+    assert not any(f.code == F_ARTIFACT_EXPIRED for f in result.findings)
+    assert result.status != STATUS_FAILED

@@ -3,16 +3,20 @@ import type { LegendSpec } from './types';
 import { resolveStyle, type LayoutStyle } from './layout-style';
 import {
   buildExportChrome,
+  drawChromeAnnotation,
   drawChromeAttribution,
   drawChromeChartPanel,
   drawChromeColorbar,
   drawChromeLegend,
+  drawChromeMapBorder,
   drawChromeNorthArrow,
   drawChromeScaleBar,
   drawChromeStatsPanel,
   drawChromeText,
+  type ExportChromeElement,
   type ExportChromeModel,
 } from './export-chrome';
+import { DEFAULT_STACK_STEP_PX } from '@/lib/map-components/resolve-layout';
 export type { ExportChromeModel } from './export-chrome';
 import { API_BASE } from '@/lib/api/config';
 import { apiFetch, isApiError } from '@/lib/api/transport';
@@ -213,6 +217,13 @@ export function composeLayout(
     const mPanel = scalePx(90);
     const mAttr = scalePx(22);
 
+    // ADR-0084（E-1）：槽内堆叠偏移 —— stackIndex 来自与 live 同一求解器
+    // （scale_bar 贴边、其余按 priority 远离边；此前导出无堆叠，scale_bar
+    // 与 continuous_colorbar 同锚 bottom-right 互相遮挡）。marginY 语义是
+    // 距所属边的距离，top/bottom 槽的远离边方向天然由同一偏移承载。
+    const stackOffset = (el: ExportChromeElement | undefined, base: number): number =>
+      (el?.slotSize ?? 0) > 1 ? base + (el?.stackIndex ?? 0) * scalePx(DEFAULT_STACK_STEP_PX) : base;
+
     // 1. Header gradient（无浮动 title 时保持顶部渐变；浮动 title 自带面板底）
     const headerText = chrome.title && !chrome.title.rect;
     if (headerText) {
@@ -227,38 +238,47 @@ export function composeLayout(
 
     // 2. Title / subtitle（anchor 对齐 —— top-center 居中，与 live 一致）
     if (chrome.title?.text) {
-      drawChromeText(d, chrome.title, 32, layoutStyle.titleColor, { marginX, marginY: mTopTitle });
+      drawChromeText(d, chrome.title, 32, layoutStyle.titleColor, { marginX, marginY: stackOffset(chrome.title, mTopTitle) });
     }
     if (chrome.subtitle?.text) {
       drawChromeText(
         d, chrome.subtitle, 20,
         dark_mode ? "rgba(255,255,255,0.72)" : "rgba(30,41,59,0.72)",
-        { marginX, marginY: mTopSub },
+        { marginX, marginY: stackOffset(chrome.subtitle, mTopSub) },
       );
     }
 
     // 3. Scale bar（anchor 槽位 —— bottom-right 缺省，与 live 一致）
     if (chrome.scaleBar && showScale && mapCenter && mapZoom !== undefined) {
       const metersPerPx = metersPerPixelAt(mapZoom, mapCenter.lat);
-      drawChromeScaleBar(d, chrome.scaleBar, metersPerPx, pxPerLogical, { marginX, marginY: mBottom });
+      drawChromeScaleBar(d, chrome.scaleBar, metersPerPx, pxPerLogical, { marginX, marginY: stackOffset(chrome.scaleBar, mBottom) });
     }
 
     // 4. Compass（旋转符号与 live 对齐：-bearing）
     if (chrome.northArrow && showCompass) {
-      drawChromeNorthArrow(d, chrome.northArrow, mapBearing, { marginX, marginY: mCompass });
+      drawChromeNorthArrow(d, chrome.northArrow, mapBearing, { marginX, marginY: stackOffset(chrome.northArrow, mCompass) });
     }
 
-    // 4.5 Graticule（请求参数驱动，非 spec 组件 —— 保持不变）
-    if (showGraticules && mapCenter && mapZoom !== undefined) {
+    // 4.5 Graticule（P6：请求参数 **或** spec graticule 组件 enabled ——
+    // 组件通道与请求通道同一条绘制路径，不建第二算法）
+    if (
+      (showGraticules || chrome.graticuleEnabled) &&
+      mapCenter && mapZoom !== undefined
+    ) {
       _drawGraticules(ctx, { dark_mode, scalePx, targetW, targetH, mapCenter, mapZoom, graticuleColor: layoutStyle.graticuleColor, pxPerLogical });
+    }
+
+    // 4.6 Map Border（P6：全画布图框；描边在 chrome 文本之下、栅格之上）
+    if (chrome.border) {
+      drawChromeMapBorder(d, chrome.border);
     }
 
     // 5. Legend / colorbar（spec 组件 enabled 驱动；anchor 槽位）
     if (showLegend && chrome.legend) {
-      drawChromeLegend(d, chrome.legend, { marginX, marginY: mLegend });
+      drawChromeLegend(d, chrome.legend, { marginX, marginY: stackOffset(chrome.legend, mLegend) });
     }
     if (showLegend && chrome.colorbar) {
-      drawChromeColorbar(d, chrome.colorbar, { marginX, marginY: mLegend });
+      drawChromeColorbar(d, chrome.colorbar, { marginX, marginY: stackOffset(chrome.colorbar, mLegend) });
     } else if (showLegend && options.heatmapLegend) {
       // 热力图无量化色条（legend_spec 缺 min/max）时回落定性渐变图例 ——
       // review P1：不能让热力图-only 成品完全丢图例。
@@ -270,18 +290,20 @@ export function composeLayout(
       );
     }
 
-    // 5.5 浮动面板（statistics/chart —— 此前导出完全缺席，live-only）
+    // 5.5 浮动面板（statistics/chart/annotation —— 终审 F1：注释卡导出）
     for (const panel of chrome.panels) {
       if (panel.kind === 'statistics') {
-        drawChromeStatsPanel(d, panel, { marginX, marginY: mPanel });
+        drawChromeStatsPanel(d, panel, { marginX, marginY: stackOffset(panel, mPanel) });
       } else if (panel.kind === 'chart') {
-        drawChromeChartPanel(d, panel, { marginX, marginY: mPanel });
+        drawChromeChartPanel(d, panel, { marginX, marginY: stackOffset(panel, mPanel) });
+      } else if (panel.kind === 'annotation') {
+        drawChromeAnnotation(d, panel, { marginX, marginY: stackOffset(panel, mPanel) });
       }
     }
 
     // 6. Attribution（spec 组件文本；请求 author/dataSource 仍在 metadata 行）
     if (chrome.attribution?.text) {
-      drawChromeAttribution(d, chrome.attribution, { marginX, marginY: mAttr });
+      drawChromeAttribution(d, chrome.attribution, { marginX, marginY: stackOffset(chrome.attribution, mAttr) });
     }
 
     // 7. Watermark / metadata（请求驱动，与 legacy 同款）

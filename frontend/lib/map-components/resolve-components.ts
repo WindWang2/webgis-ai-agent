@@ -39,6 +39,9 @@ export const DEFAULT_COMPONENT_ANCHOR: Record<string, ChromeAnchor> = {
   annotation: 'top-left',
   statistics_panel: 'top-left',
   chart_panel: 'top-left',
+  // P6：全画布/叠加型组件 —— 不参与槽位堆叠（'none'）
+  map_border: 'none',
+  graticule: 'none',
 };
 
 /** 解析后的 normalized 组件模型（live 渲染与导出共同消费）。 */
@@ -67,6 +70,11 @@ export interface ResolvedMapComponent {
   variant: string;
   /** 图例/色条绑定的图层 id（options.layerId）。 */
   layerId: string;
+  /**
+   * 折叠态（mode 无关 —— ADR-0084 E-2 修复：此前 collapsed 只在 floating
+   * 分支捕获，锚定面板的折叠在导出侧永远丢失）。
+   */
+  collapsed: boolean;
   options: Record<string, unknown>;
 }
 
@@ -125,6 +133,7 @@ export function resolveMapComponent(component: MapSpecComponent): ResolvedMapCom
       (typeof component.variant === 'string' && component.variant) ||
       '',
     layerId: typeof layerIdOpt === 'string' ? layerIdOpt : '',
+    collapsed: placement?.collapsed === true,
     options,
   };
 }

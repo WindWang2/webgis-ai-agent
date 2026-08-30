@@ -262,6 +262,16 @@ export function buildSelectedFeatureSnapshot(
   };
 }
 
+// ADR-0081 披露去噪（review H-6）：同一会话内**同状态**的相同 finalization
+// 通知只 toast 一次 —— 卡在 needs_repair 的会话每个触发点都会重发披露；
+// 状态变化（needs_repair → failed 等）仍会再次提醒（终审 F2：纯文本匹配
+// 会永久吞掉回归信号）。
+let lastFinalizationNotice: {
+  sessionId: string;
+  status: string;
+  notice: string;
+} | null = null;
+
 function extractEventSessionId(data: unknown): string | undefined {
   if (typeof data === 'object' && data !== null && typeof (data as Record<string, unknown>).session_id === 'string') {
     return (data as Record<string, unknown>).session_id as string;
@@ -906,18 +916,15 @@ export function useSSEStream(
         // 旧会话迟到的 finalization 不得把新会话的相机 fit 走。
         if (typeof payload.session_id === 'string' && payload.session_id && payload.session_id !== sessionIdRef.current) {
           devOnly.warn('[MapFinalization] dropped cross-session finalization event');
-        } else if (
-          Array.isArray(payload.result_bbox) ||
-          (payload.status && payload.status !== 'pending')
-        ) {
-          // 无 bbox 且 pending → 无可执行的视口动作，不占命令队列
+        } else if (Array.isArray(payload.result_bbox)) {
+          // 只有携带 bbox 才有可执行的视口动作（review D-6）：幂等门让
+          // complete 会话每个 settle 重发披露 —— 无 bbox 的重发（如
+          // read_stored 兜底）不再占用命令队列空转。
           dispatchAction({
             command: 'MAP_FINALIZATION',
             params: {
               status: String(payload.status ?? 'pending'),
-              bbox: Array.isArray(payload.result_bbox)
-                ? (payload.result_bbox as [number, number, number, number])
-                : undefined,
+              bbox: payload.result_bbox as [number, number, number, number],
             },
           });
         }
@@ -925,11 +932,28 @@ export function useSSEStream(
           payload as Parameters<typeof finalizationUserNotice>[0],
         );
         if (notice) {
-          // 异常态的用户可见披露（toast）；完成态零噪声
-          try {
-            useToastStore.getState().addToast(notice, 'warning');
-          } catch {
-            devOnly.warn('[MapFinalization]', notice);
+          // 异常态的用户可见披露（toast）；完成态零噪声。同一会话内相同
+          // 通知去重（review H-6）：卡在 needs_repair 的会话每个触发点都
+          // 重发披露，重复 toast 只制造噪声不带来新信息。
+          const currentStatus = String(payload.status ?? '');
+          if (
+            lastFinalizationNotice &&
+            lastFinalizationNotice.sessionId === (sessionIdRef.current ?? '') &&
+            lastFinalizationNotice.status === currentStatus &&
+            lastFinalizationNotice.notice === notice
+          ) {
+            // 同态重复披露 —— 静默
+          } else {
+            lastFinalizationNotice = {
+              sessionId: sessionIdRef.current ?? '',
+              status: currentStatus,
+              notice,
+            };
+            try {
+              useToastStore.getState().addToast(notice, 'warning');
+            } catch {
+              devOnly.warn('[MapFinalization]', notice);
+            }
           }
         }
       } else if (event.event === 'step_cancelled') {

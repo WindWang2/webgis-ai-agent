@@ -130,7 +130,16 @@ async def bind_turn_prompt(
             )
             await ensure_session_plan_slot(session_id)
             plan = await load_session_plan(session_id)
-            plan_block = format_session_plan_projection(plan)
+            # ADR-0085：产品 facets 投影需要 MapSpec 在场/启用事实（缺省
+            # 时 layer facet 状态退化为 pending —— 只影响披露行，不影响真相）。
+            spec = None
+            try:
+                from app.services.mapspec_store import mapspec_store
+
+                spec = await mapspec_store.get_mapspec(session_id)
+            except Exception:  # noqa: BLE001 — spec 拉取失败按缺席投影
+                spec = None
+            plan_block = format_session_plan_projection(plan, spec)
         except Exception:
             logger.exception("[PiTurn] SessionPlan projection failed session=%s", session_id)
     return attach_turn_context(message, token, cartography_block, plan_block)

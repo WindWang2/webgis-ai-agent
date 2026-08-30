@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from typing import Any, Literal, Optional
+from typing import Any, Dict, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -174,7 +174,10 @@ def session_plan_stale(plan: Optional[SessionPlan]) -> bool:
         return False
 
 
-def format_session_plan_projection(plan: Optional[SessionPlan]) -> str:
+def format_session_plan_projection(
+    plan: Optional[SessionPlan],
+    mapspec: Optional[Dict[str, Any]] = None,
+) -> str:
     """Bounded next-turn note. Not a Cartography Verdict block.
 
     v3(Phase F)：首行契约不变（既有调用方/测试锁定）；其后追加有界
@@ -226,7 +229,20 @@ def format_session_plan_projection(plan: Optional[SessionPlan]) -> str:
         return head + product_line
     if not block:
         return head + product_line
-    return head + "\n" + block + product_line
+    # ADR-0085：目标→产品 facets 投影行（纯派生、单行有界；章节/MapSpec
+    # 之外零新状态 —— 让 Pi 看见"产品 = facets 集合"而非单个 heatmap）。
+    products_line = ""
+    try:
+        from app.services.gis_harness.product_graph import build_product_graph
+
+        products_line = "\n" + build_product_graph(
+            plan.gis_chapter, mapspec
+        ).summary_line()
+    except Exception:  # noqa: BLE001 — 投影失败只少一行
+        products_line = ""
+    if not products_line.strip():
+        return head + "\n" + block + product_line
+    return head + "\n" + block + products_line + product_line
 
 
 def events_to_sse(events: list[SessionPlanEvent], session_id: str = "") -> str:
@@ -601,4 +617,93 @@ async def _apply_tool_result_unlocked(
     if lock is not None and lock.lost:
         return []
     await save_session_plan(plan, store=backend)
+    # P1（ADR-0082）：成功绑定 ref 的能力行同步注册产物记录 —— capability/
+    # tool/血缘上下文在此最完整（dispatch seam 只登记 ref 本身）。锁内
+    # 直通（lock 透传跳过重取，避免非重入自锁）；失败降级为日志。
+    if geojson_ref and str(geojson_ref).startswith("ref:"):
+        await _register_plan_artifacts(
+            session_id, plan, hits, tool_name, geojson_ref, lock=lock
+        )
     return [_progress_event(plan, row) for row in changed]
+
+
+async def _register_plan_artifacts(
+    session_id: str,
+    plan: SessionPlan,
+    hits: list[str],
+    tool_name: str,
+    geojson_ref: str,
+    *,
+    lock: Any = None,
+) -> None:
+    """plan-apply seam 的产物注册（ADR-0082）：capability 上下文 + 实例级血缘。
+
+    lineage inputs = 依赖能力行的当前 bound_ref（depends_on → 实例映射；
+    plan_graph 的 depends_on 是类型级，这里落到具体产物）。
+    """
+    from app.services.artifact_registry import register_artifact
+
+    chapter = plan.gis_chapter or {}
+    bound: dict[str, str] = {}
+    depends: dict[str, list[str]] = {}
+    for row in list(chapter.get("data_requirements") or []) + list(
+        chapter.get("analysis_steps") or []
+    ):
+        if not isinstance(row, dict):
+            continue
+        cap = str(row.get("capability") or "")
+        if not cap:
+            continue
+        ref = str(row.get("bound_ref") or "")
+        if ref.startswith("ref:"):
+            bound[cap] = ref
+        deps = row.get("depends_on")
+        if isinstance(deps, list):
+            depends.setdefault(cap, []).extend(
+                str(d) for d in deps if isinstance(d, str)
+            )
+    if not depends:
+        # 旧行无 depends_on 字段 → 类型级推断兜底（与 plan_graph 同源）
+        try:
+            from app.services.gis_harness.plan_graph import infer_dependency_edges
+
+            depends = infer_dependency_edges(list(bound.keys()) or list(hits))
+        except Exception:  # noqa: BLE001
+            depends = {}
+    inputs: list[str] = []
+    for cap in hits:
+        for dep in depends.get(cap) or ():
+            dep_ref = bound.get(dep)
+            if dep_ref and dep_ref != geojson_ref and dep_ref not in inputs:
+                inputs.append(dep_ref)
+
+    outputs: list[str] = []
+    try:
+        from app.lib.gis.capability_registry import get_capability_registry
+
+        desc = get_capability_registry().get(hits[0])
+        if desc is not None:
+            outputs = [str(t) for t in (desc.output_artifact_types or [])]
+    except Exception:  # noqa: BLE001
+        outputs = []
+    try:
+        descriptor = await session_data_manager.get_ref_descriptor(
+            session_id, geojson_ref
+        )
+    except Exception:  # noqa: BLE001
+        descriptor = None
+    # 单次注册（review 终审 F1：N 个命中能力此前循环 N 次全量账本
+    # read-modify-save，且标量 producer_capability 只留最后一个）——
+    # 主能力作 producer，全部命中能力入 metadata（血统能力清单保留）。
+    await register_artifact(
+        session_id,
+        artifact_id=geojson_ref,
+        artifact_type=outputs[0] if outputs else None,
+        producer_capability=hits[0],
+        producer_tool=tool_name,
+        producer_node=hits[0],
+        inputs=inputs,
+        descriptor=descriptor,
+        metadata={"seam": "plan_apply", "capabilities": list(hits)[:8]},
+        lock=lock,
+    )

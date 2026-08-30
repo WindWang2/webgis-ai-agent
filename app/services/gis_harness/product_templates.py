@@ -114,10 +114,17 @@ SEED_PRODUCT_TEMPLATES: List[MapProductTemplate] = [
         composition_template_id="composition.density_map",
     ),
     MapProductTemplate(
+        # P7（模板/配方整合）：与 poi_distribution_overview 结构完全相同
+        # （同 recipe、同 composition、同 layer_roles），仅组件集略少 ——
+        # 组件差异属于 composition 模板的职责，不是另一个产品模板。
+        # 零外部引用（仅显式 template_id 可达）；标记 deprecated 并保留
+        # 注册：旧持久会话的 template_selection.composition_template_id
+        # 引用仍可解析（迁移兼容），selector 不再把它选进新计划。
         id="poi_density_overview",
-        name="POI 密度概览产品",
-        description="通用 POI 密度概览：热力 + 点 + 色条。",
+        name="POI 密度概览产品（已并入 poi_distribution_overview）",
+        description="deprecated：组件差异走 composition 模板，不再单独成模板。",
         recipe_id="poi_distribution_overview",
+        deprecated=True,
         layer_roles=[
             LayerRoleSpec(role="primary", layer_type="heatmap", cartography="visual_heatmap",
                           source_capability="poi_query"),
@@ -240,7 +247,10 @@ class ProductTemplateRegistry:
         for tpl in matches:
             if tpl.id == recipe_id:
                 return tpl
-        return matches[0]
+        # P7：兜底序优先非 deprecated（deprecated 仅作旧会话兼容解析，
+        # 不进新计划）。
+        live = [t for t in matches if not t.deprecated]
+        return (live or matches)[0]
 
     @property
     def all_ids(self) -> List[str]:

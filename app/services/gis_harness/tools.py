@@ -1031,6 +1031,16 @@ def register_gis_harness_tools(registry: ToolRegistry):
                     session_id, {"chart": chart}, prefix="chart",
                 )
                 chart_options["chartRef"] = ref_id
+                # P1（ADR-0082）：图表产物登记（chart_spec；GC 由 registry 的
+                # 活引用集合兜住 —— chartRef 在 MapSpec 组件 options 上）。
+                try:
+                    from app.services.artifact_registry import register_tool_artifact
+
+                    await register_tool_artifact(
+                        session_id, ref_id, tool="mutate_component"
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
                 # #1068(E-10): 被替换的旧 chartRef 从 options 排除但从不
                 # delete_ref —— 孤儿占 200 条/50MB LRU 预算，压力下可逐出
                 # 仍被 MapSpec source 引用的活 ref。记录待提交成功后删除

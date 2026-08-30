@@ -165,12 +165,16 @@ def test_renderer_registry_matches_descriptors():
 
 
 def test_renderer_registry_honesty():
-    """曾被谎报的支持不再出现：graticule/map_border 无 live 渲染器，
-    legend 族无导出器消费，title/north_arrow/scale_bar/export_layout 有."""
+    """曾被谎报的支持不再出现（P6 更新）：map_border 全链路落地（live
+    CSS 框 + 导出 strokeRect）；graticule 仍无 live 渲染器（如实为空），
+    但导出侧真实消费（exporter_support 对齐现实）；legend 族有导出器。"""
     from app.lib.cartography.component_renderers import get_component_renderer_registry
     r = get_component_renderer_registry()
     assert not r.has_renderer("graticule")
-    assert not r.has_renderer("map_border")
+    assert r.has_renderer("map_border")           # P6：live map-border.tsx
+    assert r.has_exporter("map_border", "png")    # P6：drawChromeMapBorder
+    assert r.has_exporter("graticule", "png")     # P6：spec 组件 → _drawGraticules
+    assert not r.has_renderer("inset_map")        # planned：仍未实现
     for t in ("legend", "categorical_legend", "continuous_colorbar"):
         assert r.has_renderer(t)
         # ADR-0081：图例族经 spec 组件导出（共享 resolver 路径）

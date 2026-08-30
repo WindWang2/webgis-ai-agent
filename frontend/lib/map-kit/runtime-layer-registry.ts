@@ -78,6 +78,8 @@ export interface RuntimeLayerDescriptor {
   zGroup: number;
   /** 插入世代（重放序 = 插入序）。 */
   seq: number;
+  /** LRU 触碰时间戳（驱逐序；与插入序分离 —— upsert 不扰动重放序）。 */
+  lastTouched: number;
   sourceDef?: RuntimeLayerSourceDef;
   layerDef?: RuntimeLayerDef;
   /** 闭包兜底重挂（命令路径登记；定义重放缺失时使用）。 */
@@ -85,12 +87,22 @@ export interface RuntimeLayerDescriptor {
 }
 
 const MAX_RUNTIME_LAYERS = 256;
+/** 驱逐披露环（有界）：最近被驱逐的层 id —— reconcile/诊断可观测。 */
+const MAX_EVICTED_LOG = 64;
 
 /** runtimeLayerId → descriptor（Map 保持插入序 = 重放序）。 */
 const registry = new Map<string, RuntimeLayerDescriptor>();
 /** sourceId → 账目键（O(1) 吸附查找；挂载 N 层不产生 O(N²) 扫描）。 */
 const sourceIndex = new Map<string, string>();
+/** 最近驱逐环（id 顺序，最旧在前）。 */
+const evictedLog: string[] = [];
 let generation = 0;
+let touchClock = 0;
+
+function _touch(): number {
+  touchClock += 1;
+  return touchClock;
+}
 
 function familyForLayerType(type: string | undefined): RuntimeLayerFamily {
   switch (type) {
@@ -117,11 +129,29 @@ function findEntryBySource(sourceId: string): RuntimeLayerDescriptor | undefined
 function evictToBound(): void {
   let evicted = 0;
   while (registry.size > MAX_RUNTIME_LAYERS) {
-    const oldest = registry.keys().next().value;
-    if (oldest === undefined) break;
-    const entry = registry.get(oldest);
+    // P5（ADR-0080 lifecycle）：按 lastTouched 驱逐（真 LRU）—— 插入序
+    // 是重放序（z 序稳定），驱逐序与之分离：最近未触碰的条目先走，
+    // 频繁 upsert/可见性变更的层不再被误逐（此前实现是 FIFO，upsert
+    // 不刷新位次）。
+    let oldestKey: string | undefined;
+    let oldestTouch = Infinity;
+    let oldestSeq = Infinity;
+    for (const [key, entry] of registry) {
+      if (
+        entry.lastTouched < oldestTouch ||
+        (entry.lastTouched === oldestTouch && entry.seq < oldestSeq)
+      ) {
+        oldestKey = key;
+        oldestTouch = entry.lastTouched;
+        oldestSeq = entry.seq;
+      }
+    }
+    if (oldestKey === undefined) break;
+    const entry = registry.get(oldestKey);
     const snapshot = entry ? { ...entry, sourceDef: entry.sourceDef } : undefined;
-    dropEntry(oldest);
+    dropEntry(oldestKey);
+    evictedLog.push(oldestKey);
+    if (evictedLog.length > MAX_EVICTED_LOG) evictedLog.shift();
     // LRU 驱逐与反注册共用 source 所有权转移（review P2：两条路径一个
     // 标准 —— 驱逐持有 sourceDef 的账目时不剥夺共享层的重放能力）。
     if (snapshot) _transferSourceOwnership(snapshot);
@@ -129,9 +159,9 @@ function evictToBound(): void {
   }
   if (evicted > 0) {
     // review-C P2：驱逐是覆盖性回归（被驱逐层的 style-reload 重放静默
-    // 消失）——devOnly 披露，长会话超界可观测（生产 no-console 边界外）。
+    // 消失）——devOnly 披露 + evictedLog 可观测（长会话超界可诊断）。
     devOnly.warn(
-      `[runtime-layer-registry] ${evicted} oldest overlay(s) evicted at cap ` +
+      `[runtime-layer-registry] ${evicted} least-recently-touched overlay(s) evicted at cap ` +
       `${MAX_RUNTIME_LAYERS} — they will no longer remount after a style reload`,
     );
   }
@@ -188,6 +218,7 @@ export function registerRuntimeLayer(input: {
     mountMode: 'imperative',
     zGroup: 0,
     seq: existing?.seq ?? ++generation,
+    lastTouched: _touch(),
     sourceDef: input.sourceDef ?? existing?.sourceDef,
     layerDef: input.layerDef ?? existing?.layerDef,
     remount: input.remount ?? existing?.remount,
@@ -200,13 +231,18 @@ export function registerRuntimeLayer(input: {
 /** 挂载缝：记录 source 定义（层未到时建独立账目，键为 source id）。 */
 export function recordRuntimeSource(sourceId: string, def: RuntimeLayerSourceDef): void {
   if (!sourceId || !def) return;
-  const existing = registry.get(sourceId) ?? findEntryBySource(sourceId);
-  if (existing) {
-    // 原位更新（保持首挂插入序 = 重放序）。
-    existing.sourceDef = def;
-    existing.sourceId = sourceId;
-    return;
+  // P5（D-4）：source 定义更新必须传播到**所有**共享该 source 的账目 —
+  // 此前只更新 sourceIndex 指向的最后一个注册者，兄弟层（fill+outline
+  // 共享 source）持有陈旧 def，style-reload 重放谁先谁赢、数据版本不定。
+  let touched = false;
+  for (const entry of registry.values()) {
+    if (entry.sourceId === sourceId) {
+      entry.sourceDef = def;
+      entry.lastTouched = _touch();
+      touched = true;
+    }
   }
+  if (touched) return;
   registerRuntimeLayer({ id: sourceId, sourceId, sourceDef: def });
 }
 
@@ -226,6 +262,7 @@ export function rememberRuntimeRemount(id: string, remount: (map: any) => void):
   const existing = registry.get(id) ?? findEntryBySource(id);
   if (existing) {
     existing.remount = remount;
+    existing.lastTouched = _touch();
     return;
   }
   registerRuntimeLayer({ id, remount });
@@ -275,6 +312,7 @@ function _transferSourceOwnership(dropped: RuntimeLayerDescriptor): void {
 export function recordRuntimeLayerVisibility(layerId: string, visible: boolean): void {
   const entry = registry.get(layerId);
   if (!entry?.layerDef) return;
+  entry.lastTouched = _touch(); // 可见性变更也是活跃信号（LRU）
   entry.layerDef = {
     ...entry.layerDef,
     layout: { ...entry.layerDef.layout, visibility: visible ? 'visible' : 'none' },
@@ -285,6 +323,17 @@ export function recordRuntimeLayerVisibility(layerId: string, visible: boolean):
 export function clearRuntimeLayerRegistry(): void {
   registry.clear();
   sourceIndex.clear();
+  evictedLog.length = 0;
+}
+
+/** P5：最近被驱逐的层 id（有界环，最旧在前；诊断/reconcile 观测点）。 */
+export function recentlyEvictedLayerIds(): string[] {
+  return [...evictedLog];
+}
+
+/** P5：该层是否被容量驱逐过（真值只在清空前有效 —— 会话切换即失效）。 */
+export function wasRuntimeLayerEvicted(layerId: string): boolean {
+  return evictedLog.includes(layerId);
 }
 
 /**
@@ -354,6 +403,7 @@ export function listRuntimeLayerIds(): string[] {
 export function resetRuntimeLayerRegistry(): void {
   registry.clear();
   sourceIndex.clear();
+  evictedLog.length = 0;
 }
 
 /** 测试观测：登记总数。 */

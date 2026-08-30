@@ -83,7 +83,10 @@ const MAX_COMPLETED_ACTIONS = 100;
 // recent 2000 need remembering for first-terminal-wins (bounded memory).
 const MAX_TERMINAL_IDS = 2000;
 // Camera commands coalesce: a new one supersedes still-QUEUED camera actions.
-const CAMERA_COMMANDS = new Set(['fly_to', 'set_map_view', 'zoom_to_bbox']);
+// map_finalization 参与 coalesce（review D-2）：终验修复是相机命令，须与
+// 排队中的 AI 相机命令互相仲裁 —— 否则排队的 fly_to 先执行、finalizer
+// 的 fitBounds 后执行，自动修复永远抢到最后话语权。
+const CAMERA_COMMANDS = new Set(['fly_to', 'set_map_view', 'zoom_to_bbox', 'map_finalization']);
 
 // ACK snapshot (requested/actual) guard — the backend caps each serialized ack
 // at 16KB (422 beyond). Heatmap/layer params carry base64 images / inline
