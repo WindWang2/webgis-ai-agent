@@ -37,6 +37,10 @@ _PRESERVED_META_KEYS = (
     # audit4 #979: harness 计划类工具的有界裁决投影（capability→resolved_tool
     # 表）。summary 分支此前把它整包丢弃 —— 计划骨架永远到不了 LLM。
     "guidance",
+    # V2 P9：分析质量证据（input/output/dropped/working_crs，有界 dict，
+    # app/lib/geo_analysis/evidence.py）。summary 分支此前丢弃它 —— 计数
+    # 与工作 CRS 正是 LLM 引用数值结论时要的证据。
+    "quality_evidence",
 )
 
 
@@ -218,6 +222,17 @@ def is_error_like_result(result: Any) -> bool:
         return True
     if result.get("success") is False and isinstance(result.get("message"), str):
         return True
+    # V2(§34) GeoAnalysisResult 失败族：to_llm_response 的失败形状是
+    # {success: False, summary: <message>, data: None}（无 error/message
+    # 键），此前逃过所有族 → 被标 completed、同参重试被“已成功执行”拦截。
+    # data 缺席守卫：带 data 的部分成功载荷不由本族分类。
+    if (
+        result.get("success") is False
+        and isinstance(result.get("summary"), str)
+        and result.get("summary")
+        and result.get("data") is None
+    ):
+        return True
     return False
 
 
@@ -233,7 +248,10 @@ def wrap_error_dict_for_llm(tool_name: str, result: dict) -> str:
     from app.services.chat.prompt import construct_self_healing_message
     code = result.get("code", "TOOL_ERROR")
     message = result.get("message", "")
-    error_type = result.get("error_type", code)
+    # `or code`：error_type 键存在但值为 None 的失败 dict（GeoAnalysisResult
+    # 族经 to_llm_response 携带 error_type=None）此前把 None 一路传进
+    # construct_self_healing_message，对 None 做 `in` 判断 TypeError 崩溃。
+    error_type = result.get("error_type") or code
     hint = result.get("correction_hint")
     if hint and hint not in message:
         message = f"{message}\n({hint})"

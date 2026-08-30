@@ -510,8 +510,8 @@ def calculate_nearest(geojson: dict) -> GeoAnalysisResult:
     res = to_utm_gdf(geojson)
     if res is None or res[0] is None:
         return GeoAnalysisResult(False, None, "Invalid input or no features found")
-    
-    gdf, _ = res
+
+    gdf, working_crs = res
     if len(gdf) < 2:
         return GeoAnalysisResult(False, None, "At least 2 points required for nearest neighbor analysis")
     
@@ -557,7 +557,16 @@ def calculate_nearest(geojson: dict) -> GeoAnalysisResult:
         "max_distance": float(nn_dist.max()),
         "pattern": pattern,
     }
-    return GeoAnalysisResult(True, data, summary)
+    from app.lib.geo_analysis.evidence import build_quality_evidence
+
+    return GeoAnalysisResult(
+        True, data, summary,
+        evidence=build_quality_evidence(
+            input_count=len(gdf),
+            working_crs=str(working_crs),
+            extra={"pattern": pattern, "r_ratio": round(float(r_ratio), 6)},
+        ),
+    )
 
 def calculate_central_feature(geojson: dict, method: str = "mean_center") -> GeoAnalysisResult:
     """Find the central feature or mean center."""

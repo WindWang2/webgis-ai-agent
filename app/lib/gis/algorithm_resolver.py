@@ -116,6 +116,20 @@ class AlgorithmResolver:
             if algo.geometry_requirements and geom != "unknown" and \
                     geom not in algo.geometry_requirements:
                 return "", f"geometry_mismatch:{algo.id}:input={geom}"
+            # V2(P3)：input_artifact_types 契约消费 —— 声明了输入词表的
+            # 算法，在画像携带已知 artifactType（DatasetProfile 适配）时
+            # 校验成员关系。未知（None/未注册词）不判死——诚实缺省。
+            if algo.input_artifact_types:
+                declared_input = profile.get("artifactType")
+                if isinstance(declared_input, str) and declared_input:
+                    from app.lib.gis.artifacts import artifact_type as _artifact_type
+
+                    if _artifact_type(declared_input) is not None and \
+                            declared_input not in algo.input_artifact_types:
+                        return "", (
+                            f"input_type_mismatch:{algo.id}:"
+                            f"have={declared_input}"
+                        )
             if algo.min_features is not None:
                 count = profile.get("featureCount")
                 if isinstance(count, (int, float)) and int(count) < algo.min_features:

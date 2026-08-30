@@ -381,19 +381,35 @@ async def register_tool_artifact(
     *,
     tool: str = "",
     result: Optional[Dict[str, Any]] = None,
+    analysis_key: Optional[str] = None,
+    input_shapes: Optional[Dict[str, dict]] = None,
 ) -> Optional[ArtifactRecord]:
-    """dispatch/chart seam 的便捷注册（无 capability 上下文；type 由推断得出）。"""
+    """dispatch/chart seam 的便捷注册（无 capability 上下文；type 由推断得出）。
+
+    ``analysis_key``/``input_shapes``（V2 P10）：分析指纹与输入形状快照，
+    写入 metadata 供 analysis_reuse 跨轮次确定性复用。任一缺席不阻塞
+    注册（复用是增值记录，不是产物成立的条件）。
+    """
     if not ref or not str(ref).startswith("ref:"):
         return None
+    metadata: Dict[str, Any] = {"seam": "dispatch"} if result is None else {
+        "seam": "dispatch",
+        "result_type": str(result.get("type") or "")[:32],
+    }
+    if analysis_key:
+        metadata["analysis_key"] = str(analysis_key)[:128]
+    if input_shapes:
+        # 有界：最多 8 个输入 ref × {feature_count, geometry_types}。
+        metadata["input_shapes"] = {
+            str(k)[:96]: dict(v) for k, v in list(input_shapes.items())[:8]
+            if isinstance(v, dict)
+        }
     return await register_artifact(
         session_id,
         artifact_id=ref,
         artifact_type=infer_artifact_type(ref, result=result),
         producer_tool=tool,
-        metadata={"seam": "dispatch"} if result is None else {
-            "seam": "dispatch",
-            "result_type": str(result.get("type") or "")[:32],
-        },
+        metadata=metadata,
     )
 
 
@@ -657,6 +673,15 @@ async def artifact_dependency_report(session_id: str) -> Dict[str, Any]:
         r.artifact_id: r for r in await list_artifacts(session_id)
     }
     graph = build_artifact_graph(records)
+    # V2(P2)：契约验证 findings 读回（无 contract_check 键的旧记录 → []）。
+    try:
+        from app.lib.gis.contract_validation import findings_from_metadata
+
+        contract_findings = {
+            aid: findings_from_metadata(r.metadata) for aid, r in records.items()
+        }
+    except Exception:  # noqa: BLE001 — 投影失败不影响报表主体
+        contract_findings = {}
     return {
         "artifacts": [
             {
@@ -670,6 +695,7 @@ async def artifact_dependency_report(session_id: str) -> Dict[str, Any]:
                 "empty": r.empty,
                 "bbox": r.bbox,
                 "replaces": r.replaces,
+                "contract_findings": contract_findings.get(r.artifact_id, []),
             }
             for r in records.values()
         ],

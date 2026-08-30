@@ -33,6 +33,21 @@ class ArtifactTypeDescriptor(BaseModel):
 
 
 SEED_ARTIFACT_TYPES: List[ArtifactTypeDescriptor] = [
+    # V2(P2)：registry 下位词（service 层 infer_artifact_type 的兜底产出）。
+    # 此前 ArtifactRecord.artifact_type 自由串漂移 —— infer 可产出
+    # feature_collection / chart_spec，但二者未注册，ArtifactDescriptor
+    # 校验与 registry 词表脱节。收编为正式类型，保证「registry 能产出的
+    # artifact_type 一定是注册词」。
+    ArtifactTypeDescriptor(
+        id="feature_collection", name_zh="通用要素集", geometry_kind="unknown",
+        category="feature_set",
+        description="无更细语义的通用 FeatureCollection（capability 上下文缺席时的兜底推断）。",
+    ),
+    ArtifactTypeDescriptor(
+        id="chart_spec", name_zh="图表规格", geometry_kind="table",
+        category="table",
+        description="chart 通道产物（chartRef 绑定的图表 payload）。",
+    ),
     ArtifactTypeDescriptor(
         id="point_feature_set", name_zh="点要素集", geometry_kind="point",
         category="feature_set",
