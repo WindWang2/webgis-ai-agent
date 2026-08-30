@@ -13,6 +13,19 @@ from rasterio.warp import reproject, calculate_default_transform
 # os.replace —— 取消/崩溃不再留下半个 GeoTIFF（规范 §12 raster window / §23）。
 from app.lib.artifacts import atomic_output
 from app.lib.cancellation import checkpoint
+from app.lib.geo_analysis.raster_grid import (
+    RasterAlignmentError,
+    RasterGridProfile,
+    aligned_reader,
+    decide_alignment,
+    iter_bounded_windows,
+    window_side_from_budget,
+)
+from app.lib.geo_analysis.raster_windowed import (
+    WindowStats,
+    WindowedRasterWriter,
+    build_output_profile,
+)
 
 
 # ─── Shared GDAL environment ────────────────────────────────────
@@ -27,11 +40,25 @@ def rasterio_env():
     instead of blocking the worker. Consolidates the 4 identical
     ``rasterio.Env(...)`` blocks previously inlined in ``SpatialAnalyzer``'s
     raster methods (ADR-0037 Win 2).
+
+    Runtime V3 resource governance (ADR-0089): GDAL block cache is capped
+    (``RASTER_GDAL_CACHE_MAX_MB``, default 64MB) and GDAL warp threads pinned
+    to 1 — raster windows are processed sequentially by design (§42: no
+    unbounded parallel windows), so extra GDAL threads only amplify peak
+    memory.
     """
+    try:
+        from app.core.config import settings
+
+        cache_max_mb = settings.RASTER_GDAL_CACHE_MAX_MB
+    except Exception:  # noqa: BLE001 — 配置缺席按保守默认
+        cache_max_mb = 64
     with rasterio.Env(
         GDAL_DISABLE_READDIR_ON_OPEN="TRUE",
         GDAL_HTTP_TIMEOUT=5,
         GDAL_HTTP_MAX_RETRY=0,
+        GDAL_CACHEMAX=int(cache_max_mb),
+        GDAL_NUM_THREADS=1,
     ):
         yield
 
@@ -63,10 +90,12 @@ MAX_OUTPUT_UPSCALE_RATIO = 10_000  # out px / in px, catches unit confusion on s
 # Pixel budgets used to suggest coarser target_resolution values in errors.
 _SUGGESTION_BUDGETS = (1_000_000, 10_000_000, MAX_OUTPUT_PIXELS)
 
-# Windowed processing: raster math iterates a fixed window grid so memory is
-# O(window) — even when the source file has a single giant block — instead of
-# O(full raster) with several full-size temporaries.
-_WINDOW_SIZE = 512
+# Windowed processing: windows are derived from the raster processing memory
+# budget (RASTER_PROCESSING_MEMORY_MB, see raster_grid.window_side_from_budget)
+# — memory is O(window) even when the source file has a single giant block —
+# instead of O(full raster) with several full-size temporaries.
+_WINDOW_SIZE = 512  # legacy constant: budget 推导的缺省在 256MB 下与 2048 重合；
+# 保留只为 reclassify 的窗口语义兼容，计算器/指数/变化检测已走预算推导窗口。
 
 
 
@@ -74,18 +103,22 @@ _WINDOW_SIZE = 512
 
 
 def _gtiff_profile(src_profile: dict, nodata: Optional[float] = None, count: int = 1) -> dict:
-    """Build a compressed, tiled GTiff write profile from a source raster profile."""
-    profile = src_profile.copy()
-    profile.update({
-        "driver": "GTiff",
-        "compress": "lzw",
-        "tiled": True,
-        "blockxsize": 256,
-        "blockysize": 256,
-        "count": count,
-    })
-    if nodata is not None:
-        profile["nodata"] = nodata
+    """Build a compressed, tiled GTiff write profile from a source raster profile.
+
+    P7：委托共享 ``build_output_profile``（driver/tiled/compression/count/
+    nodata 统一设置一次），源 profile 只贡献网格字段（crs/transform/宽高）
+    与缺省 nodata（未显式覆盖时继承 —— resample 等保持源 nodata 声明）。
+    """
+    effective_nodata = nodata if nodata is not None else src_profile.get("nodata")
+    profile = build_output_profile(
+        width=int(src_profile.get("width", 0)),
+        height=int(src_profile.get("height", 0)),
+        count=count,
+        dtype=str(src_profile.get("dtype") or "float32"),
+        crs=src_profile.get("crs"),
+        transform=src_profile.get("transform"),
+        nodata=effective_nodata,
+    )
     return profile
 
 
@@ -281,7 +314,7 @@ def raster_calculator(
     """Pixel-wise raster math.
 
     Args:
-        raster_a: Primary raster path.
+        raster_a: Primary raster path (the REFERENCE grid — B is aligned to it).
         raster_b: Optional secondary raster path. If None, `constant` is used.
         expression: Numexpr-compatible expression using A (raster_a) and B (raster_b).
             Examples: "A + B", "A * 2", "(A - B) / (A + B)", "where(A > 0, A, 0)".
@@ -289,13 +322,21 @@ def raster_calculator(
         nodata: Output nodata value.
 
     Returns:
-        dict with output_path, stats, and metadata.
+        dict with output_path, stats, alignment decision, quality evidence,
+        descriptor and content_fingerprint.
+
+    Runtime V3 (ADR-0089): execution is ``alignment decision → windowed read
+    A → windowed aligned read B (WarpedVRT, never a whole-raster in-RAM
+    reproject) → nodata mask → expression → windowed atomic write``. A is the
+    reference grid by contract; a B with no footprint overlap raises
+    ``RasterAlignmentError`` instead of producing an empty garbage raster.
     """
     import numexpr as ne
 
     out_path = _suffix_output_path(raster_a, "_calc.tif")
 
     with rasterio.open(raster_a) as src_a:
+        grid_a = RasterGridProfile.from_dataset(src_a, raster_a)
         nodata_a = src_a.nodata if src_a.nodata is not None else src_a.profile.get("nodata")
         RasterResourceGuard.check_grid(
             width=src_a.width,
@@ -311,99 +352,60 @@ def raster_calculator(
         else:
             out_nodata = nodata
 
-        # B 输入准备：对齐栅格（同 CRS/transform/shape）走窗口化路径；不对齐
-        # 的 B 需整幅重投影 —— 工具说明已建议先 resample 对齐，保留原实现。
-        src_b = None
-        data_b_full: Optional[np.ndarray] = None
-        footprint_b_full: Optional[np.ndarray] = None
-        aligned = False
-        try:
-            if raster_b:
-                src_b = rasterio.open(raster_b)
-                nodata_b = src_b.nodata if src_b.nodata is not None else src_b.profile.get("nodata", nodata_a)
-                aligned = (
-                    src_b.crs == src_a.crs
-                    and src_b.transform == src_a.transform
-                    and src_b.shape == src_a.shape
-                )
-                if not aligned:
-                    # Guard raster B's own footprint before the full-band
-                    # reproject: the A-grid guard above does not see B, so a
-                    # huge B paired with a small A would otherwise pass and the
-                    # reproject reads all of B. (R-F04)
-                    RasterResourceGuard.check_grid(
-                        width=src_b.width,
-                        height=src_b.height,
-                        bytes_per_pixel=np.dtype(src_b.dtypes[0]).itemsize,
-                        num_bands=1,
-                        input_pixels=src_a.width * src_a.height,
-                        bounds=src_b.bounds,
+        window_side = window_side_from_budget()
+
+        # B 输入准备（P3/P6）：对齐裁决先行。aligned → 原文件窗口读；
+        # needs_resample/needs_reproject → WarpedVRT 虚拟对齐（窗口读即对齐
+        # 读，零整幅重投影、零临时栅格）；incompatible → 结构化拒绝。
+        decision = None
+        b_ctx = None
+        src_b_reader = None
+        eff_nodata_b: Optional[float] = None
+        if raster_b:
+            src_b_raw = rasterio.open(raster_b)
+            try:
+                grid_b = RasterGridProfile.from_dataset(src_b_raw, raster_b)
+                decision = decide_alignment(grid_a, grid_b)
+                if decision.incompatible:
+                    raise RasterAlignmentError(
+                        f"raster B cannot be aligned to A: {decision.reason}",
+                        decision,
                     )
-                    fill_b = nodata_b if nodata_b is not None else 0
-                    data_b_full = np.full(src_a.shape, fill_value=fill_b, dtype=src_b.dtypes[0])
-                    gcps_b, gcps_crs_b = src_b.gcps if src_b.gcps else (None, None)
-                    reproject_kwargs = {
-                        "source": rasterio.band(src_b, 1),
-                        "destination": data_b_full,
-                        "dst_transform": src_a.transform,
-                        "dst_crs": src_a.crs,
-                        "resampling": Resampling.nearest,
-                        "src_nodata": nodata_b,
-                        "dst_nodata": fill_b,
-                    }
-                    if gcps_b:
-                        reproject_kwargs["gcps"] = gcps_b
-                        reproject_kwargs["gcps_crs"] = gcps_crs_b
-                        reproject_kwargs["src_crs"] = gcps_crs_b or src_b.crs
-                    else:
-                        reproject_kwargs["src_transform"] = src_b.transform
-                        reproject_kwargs["src_crs"] = src_b.crs
+                # Guard raster B's own footprint before any warped reads: a
+                # huge B paired with a small A must still fit the resource
+                # budget (R-F04).
+                RasterResourceGuard.check_grid(
+                    width=src_b_raw.width,
+                    height=src_b_raw.height,
+                    bytes_per_pixel=np.dtype(src_b_raw.dtypes[0]).itemsize,
+                    num_bands=1,
+                    input_pixels=grid_b.width * grid_b.height,
+                    bounds=src_b_raw.bounds,
+                )
+            finally:
+                src_b_raw.close()
+            b_cm = aligned_reader(raster_b, decision)
+            src_b_reader, eff_nodata_b = b_cm.__enter__()
+            b_ctx = b_cm  # 仅在成功进入后才交给 finally 清理
+        else:
+            const_val = constant if constant is not None else 0
 
-                    reproject(**reproject_kwargs)
-                    # Footprint of B in destination coordinates (#931): when
-                    # nodata_b is None, outside B's extent is filled with 0
-                    # and treated as valid (A+0=A). Reproject a mask of ones
-                    # to know which dest pixels are actually covered by B.
-                    footprint_b_full = np.zeros(src_a.shape, dtype=np.uint8)
-                    mask_src = np.ones((src_b.height, src_b.width), dtype=np.uint8)
-                    footprint_kwargs: dict = {
-                        "source": mask_src,
-                        "destination": footprint_b_full,
-                        "dst_transform": src_a.transform,
-                        "dst_crs": src_a.crs,
-                        "resampling": Resampling.nearest,
-                        "dst_nodata": 0,
-                    }
-                    if gcps_b:
-                        footprint_kwargs["gcps"] = gcps_b
-                        footprint_kwargs["gcps_crs"] = gcps_crs_b
-                        footprint_kwargs["src_crs"] = gcps_crs_b or src_b.crs
-                    else:
-                        footprint_kwargs["src_transform"] = src_b.transform
-                        footprint_kwargs["src_crs"] = src_b.crs
-                    reproject(**footprint_kwargs)
-            else:
-                const_val = constant if constant is not None else 0
-                nodata_b = nodata_a
-
+        try:
             def _get_b_window(win: Window, data_a_win: np.ndarray) -> np.ndarray:
-                if src_b is not None and aligned:
-                    return src_b.read(1, window=win)
-                if src_b is not None:
-                    return data_b_full[win.toslices()]
+                if src_b_reader is not None:
+                    return src_b_reader.read(1, window=win)
                 return np.full_like(data_a_win, fill_value=const_val, dtype=data_a_win.dtype)
 
-            def _compute_window(data_a_win: np.ndarray, data_b_win: np.ndarray, win: Window) -> np.ndarray:
-                mask_a = _nodata_valid_mask(data_a_win, nodata_a)
-                mask_b = (
-                    _nodata_valid_mask(data_b_win, nodata_b)
-                    if (raster_b and nodata_b is not None)
-                    else np.ones(data_a_win.shape, dtype=bool)
-                )
-                if footprint_b_full is not None:
-                    fw = footprint_b_full[win.toslices()]
-                    mask_b = mask_b & (fw == 1)
+            def _mask_b_window(data_b_win: np.ndarray) -> np.ndarray:
+                if src_b_reader is not None:
+                    nd = eff_nodata_b if eff_nodata_b is not None else src_b_reader.nodata
+                    if nd is not None:
+                        return _nodata_valid_mask(data_b_win, nd)
+                    return np.ones(data_b_win.shape, dtype=bool)
+                return np.ones(data_b_win.shape, dtype=bool)
 
+            def _compute_window(data_a_win: np.ndarray, data_b_win: np.ndarray, mask_b: np.ndarray) -> np.ndarray:
+                mask_a = _nodata_valid_mask(data_a_win, nodata_a)
                 mask = mask_a & mask_b
 
                 valid_a = np.where(mask, data_a_win, 0)
@@ -419,65 +421,81 @@ def raster_calculator(
                 result = np.where(np.isfinite(result), result, out_nodata)
                 return np.where(mask, result, out_nodata)
 
-            def _accumulate(res: np.ndarray) -> None:
-                nonlocal min_v, max_v, total, count
-                if isinstance(out_nodata, float) and np.isnan(out_nodata):
-                    valid = res[~np.isnan(res)]
-                else:
-                    valid = res[res != out_nodata]
-                count += int(valid.size)
-                if valid.size:
-                    total += float(valid.sum())
-                    vmin, vmax = float(valid.min()), float(valid.max())
-                    min_v = vmin if min_v is None else min(min_v, vmin)
-                    max_v = vmax if max_v is None else max(max_v, vmax)
+            stats = WindowStats()
 
-            # 窗口化：固定 512×512 网格，内存 O(window)（对齐/常数路径）。
-            # 首个窗口先算 dtype，再建 profile 写文件。
-            windows = [
-                Window(
-                    col0, row0,
-                    min(_WINDOW_SIZE, src_a.width - col0),
-                    min(_WINDOW_SIZE, src_a.height - row0),
+            # 窗口化：预算推导的窗口网格，内存 O(window)。首个窗口先算
+            # dtype，再建 profile 写文件。
+            windows = list(
+                iter_bounded_windows(
+                    src_a.width, src_a.height, window_side=window_side, src=src_a
                 )
-                for row0 in range(0, src_a.height, _WINDOW_SIZE)
-                for col0 in range(0, src_a.width, _WINDOW_SIZE)
-            ]
-
-            min_v: Optional[float] = None
-            max_v: Optional[float] = None
-            total = 0.0
-            count = 0
+            )
 
             first_win = windows[0]
             data_a0 = src_a.read(1, window=first_win)
-            result0 = _compute_window(data_a0, _get_b_window(first_win, data_a0), first_win)
+            b0 = _get_b_window(first_win, data_a0)
+            result0 = _compute_window(data_a0, b0, _mask_b_window(b0))
 
-            profile = _gtiff_profile(src_a.profile, nodata=out_nodata, count=1)
-            profile["dtype"] = result0.dtype
+            profile = build_output_profile(
+                width=src_a.width,
+                height=src_a.height,
+                count=1,
+                dtype=result0.dtype,
+                crs=src_a.crs,
+                transform=src_a.transform,
+                nodata=out_nodata,
+            )
 
-            with atomic_output(out_path) as _tmp_out, rasterio.open(_tmp_out, "w", **profile) as dst:
-                dst.write(result0, 1, window=first_win)
-                _accumulate(result0)
+            with WindowedRasterWriter(
+                out_path, profile=profile, grid=grid_a, window_side=window_side,
+            ) as writer:
+                writer.write(first_win, result0)
                 for win in windows[1:]:
                     checkpoint()
                     data_a_win = src_a.read(1, window=win)
-                    res = _compute_window(data_a_win, _get_b_window(win, data_a_win), win)
-                    dst.write(res, 1, window=win)
-                    _accumulate(res)
+                    b_win = _get_b_window(win, data_a_win)
+                    res = _compute_window(data_a_win, b_win, _mask_b_window(b_win))
+                    writer.write(win, res)
+            finalized = writer.finalize()
         finally:
-            if src_b is not None:
-                src_b.close()
+            if b_ctx is not None:
+                b_ctx.__exit__(None, None, None)
 
-    stats = {
+    # 质量证据（§35，有界）：对齐事实 + 输入/输出网格 + 有效/nodata 计数。
+    evidence: dict = {
+        "algorithm": "raster_calculator",
+        "parameters": {"expression": expression[:64], "constant": constant},
+        "input_width": grid_a.width,
+        "input_height": grid_a.height,
+        "input_crs": grid_a.crs,
+        "output_width": grid_a.width,
+        "output_height": grid_a.height,
+        "output_crs": grid_a.crs,
+        "valid_pixel_count": finalized["stats"]["valid_pixel_count"],
+        "nodata_pixel_count": finalized["stats"]["nodata_pixel_count"],
+    }
+    if decision is not None:
+        evidence["alignment"] = decision.to_dict()
+        if decision.other_bounds and decision.reference_bounds:
+            ob, rb = decision.other_bounds, decision.reference_bounds
+            evidence["cropped"] = bool(
+                ob[0] < rb[0] or ob[1] < rb[1] or ob[2] > rb[2] or ob[3] > rb[3]
+            )
+
+    stats_dict = {
         "output_path": out_path,
         "expression": expression,
-        "min": float(min_v) if count > 0 else 0.0,
-        "max": float(max_v) if count > 0 else 0.0,
-        "mean": float(total / count) if count > 0 else 0.0,
-        "pixel_count": count,
+        "min": finalized["stats"]["min"] or 0.0,
+        "max": finalized["stats"]["max"] or 0.0,
+        "mean": finalized["stats"]["mean"] or 0.0,
+        "pixel_count": finalized["stats"]["valid_pixel_count"] or 0,
+        "descriptor": finalized["descriptor"].to_dict(),
+        "content_fingerprint": finalized["content_fingerprint"],
+        "quality_evidence": evidence,
     }
-    return stats
+    if decision is not None:
+        stats_dict["alignment"] = decision.to_dict()
+    return stats_dict
 
 
 def resample_raster(

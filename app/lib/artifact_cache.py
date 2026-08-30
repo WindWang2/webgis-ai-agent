@@ -45,7 +45,10 @@ MAX_ARTIFACT_BYTES = int(os.environ.get("WEBGIS_ARTIFACT_CACHE_BYTES", 5 * 1024 
 
 # Software version namespace: bump when the compute algorithm / rasterio version
 # changes in a way that would invalidate existing artifacts.
-ARTIFACT_VERSION_NS = "raster_math-v1"
+# v2 (Runtime V3, ADR-0089): calculator/indices moved to budget-derived windows
+# + WarpedVRT alignment (bilinear for continuous B instead of nearest) + tiled
+# LZW outputs with overviews — cached v1 outputs no longer match recompute.
+ARTIFACT_VERSION_NS = "raster_math-v2"
 
 
 def _source_identity(source_path: str) -> str:
