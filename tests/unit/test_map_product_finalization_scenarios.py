@@ -312,8 +312,12 @@ async def test_scenario_c_user_wins_disclosed_not_overridden(clean_session):
     )
 
     result = await run_map_finalization(clean_session, chapter=chapter, reason="scenario_c3")
-    assert result.status == STATUS_NEEDS_REPAIR
-    assert any(f.code == "layer_hidden" for f in result.findings)
+    # user-wins（P0 稳定化）：用户隐藏即期望状态 —— warning 披露、零修复
+    # 突变（不再发起注定被守卫拒绝的 show_layer、不再永续 needs_repair）。
+    hidden = [f for f in result.findings if f.code == "layer_hidden"]
+    assert hidden and hidden[0].severity == "warning"
+    assert not any(r.startswith("show_layer:") for r in result.repairs_applied)
+    assert result.status == STATUS_COMPLETE
     # spec 保持用户决策（隐藏）
     spec = await mapspec_store_instance.get_mapspec(clean_session)
     heat = next(ly for ly in spec["layers"] if ly["id"] == "poi-heatmap")

@@ -31,6 +31,7 @@ O(C²)（C = chrome 组件数，个位数量级）、bbox 全部来自既有 ref
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -42,7 +43,11 @@ MAX_FINALIZATION_PASSES = 2
 MAX_FINDINGS = 12
 MAX_FINDING_DETAIL = 160
 MAX_DISCLOSED_REPAIRS = 6
-RESULT_LAYER_ROLES = ("primary", "result")
+# planner 的 role 词表是 primary | secondary | reference（planner.py 的
+# PlannedLayer.role）；"result" 只是历史防御值。secondary 是结果通道
+# （如成都场景的行政区统计 choropleth）—— 漏掉它会让副结果层整体逃逸
+# 校验、假 complete（review H-1）。reference 是语境层，不算结果。
+RESULT_LAYER_ROLES = ("primary", "secondary", "result")
 
 # 完成态：pending（DAG 未终态）→ needs_repair（存在可修复发现）→
 # complete（无 error 发现；warning 允许）/ failed（存在不可修复 error）。
@@ -53,6 +58,10 @@ STATUS_FAILED = "failed"
 
 # finding codes（machine-readable，前端/测试依赖这些字面量）
 F_NEEDS_EXECUTION = "needs_execution"
+# 终态阻塞（failed/unavailable 行）：DAG 不会再自愈 —— 与 needs_execution
+# （turn 中段的 open 行）分开披露，否则 blocked 场景被 pending 吞掉、
+# 零产品级披露（review H-3）。
+F_EXECUTION_BLOCKED = "execution_blocked"
 F_ARTIFACT_MISSING = "artifact_missing"
 F_ARTIFACT_EXPIRED = "artifact_expired"
 F_EMPTY_RESULT = "empty_result"
@@ -195,6 +204,7 @@ async def gather_completion_inputs(
         mapspec = await mapspec_store.get_mapspec(session_id) or {}
 
     refs: Dict[str, Optional[dict]] = {}
+    pending_refs: List[str] = []
     for row in list(chapter.get("data_requirements") or []) + list(
         chapter.get("analysis_steps") or []
     ):
@@ -202,12 +212,21 @@ async def gather_completion_inputs(
             continue
         ref = str(row.get("bound_ref") or "")
         if ref and ref not in refs:
+            refs[ref] = None
+            pending_refs.append(ref)
+
+    if pending_refs:
+        # 并发取 descriptor（review F-2）：逐个 await 在 Redis 后端是每 ref
+        # 一个串行往返 —— 1k 节点 ≈ 1k 次 RTT 且挂在工具回调关键路径上。
+        async def _fetch(ref: str) -> Optional[dict]:
             try:
-                refs[ref] = await session_data_manager.get_ref_descriptor(
-                    session_id, ref
-                )
+                return await session_data_manager.get_ref_descriptor(session_id, ref)
             except Exception:  # noqa: BLE001 — 单 ref 失败不阻断整体校验
-                refs[ref] = None
+                return None
+
+        fetched = await asyncio.gather(*(_fetch(r) for r in pending_refs))
+        for ref, desc in zip(pending_refs, fetched):
+            refs[ref] = desc
 
     # required 组件以 composition slot 族语义表达（slot id ≠ 组件类型名：
     # "legend" 槽可由 legend/categorical_legend/continuous_colorbar 任一满足
@@ -290,7 +309,7 @@ def validate_execution(chapter: Dict[str, Any]) -> List[MapCompletionFinding]:
             caps = ",".join(n.capability for n in blocked[:4])
             findings.append(
                 MapCompletionFinding(
-                    code=F_NEEDS_EXECUTION,
+                    code=F_EXECUTION_BLOCKED,
                     severity="error",
                     target=caps,
                     detail=(
@@ -320,7 +339,7 @@ def validate_execution(chapter: Dict[str, Any]) -> List[MapCompletionFinding]:
         caps = ",".join(str(r.get("capability") or "?") for r in failed_rows[:4])
         findings.append(
             MapCompletionFinding(
-                code=F_NEEDS_EXECUTION,
+                code=F_EXECUTION_BLOCKED,
                 severity="error",
                 target=caps,
                 detail=f"{len(failed_rows)} failed rows await retry",
@@ -356,18 +375,22 @@ def validate_artifacts(
         if cap in seen:
             continue
         seen.add(cap)
-        if not _capability_requires_artifact_ref(cap):
+        policy = _capability_fc_ref_policy(cap)
+        if policy == "none":
             continue
         ref = str(row.get("bound_ref") or "")
         if not ref:
-            findings.append(
-                MapCompletionFinding(
-                    code=F_ARTIFACT_MISSING,
-                    severity="error",
-                    target=cap,
-                    detail="capability marked complete without a bound artifact ref",
+            if policy == "required":
+                findings.append(
+                    MapCompletionFinding(
+                        code=F_ARTIFACT_MISSING,
+                        severity="error",
+                        target=cap,
+                        detail="capability marked complete without a bound artifact ref",
+                    )
                 )
-            )
+            # optional（raster 通道）：无 FC ref 是合法完成形态 —— 完成证据
+            # 是工具成功 + 已挂载的栅格图层（validate_layers 覆盖后者）。
             continue
         desc = descriptors.get(ref)
         if desc is None:
@@ -385,7 +408,7 @@ def validate_artifacts(
             findings.append(
                 MapCompletionFinding(
                     code=F_EMPTY_RESULT,
-                    severity="error",
+                    severity="warning",
                     target=cap,
                     detail=f"artifact {ref[:48]} has zero features — nothing to map",
                 )
@@ -396,22 +419,37 @@ def validate_artifacts(
 # 非空间输出类型：完成证据 = 工具成功（无 FC ref 可绑；见 dispatch 的
 # geojson_ref 语义）。raster 家族走 heatmap 栅格通道，同样不落 FC ref。
 _NON_SPATIAL_ARTIFACT_TYPES = {"stats_table", "od_matrix", "raster_surface", "terrain_surface"}
+# FC ref 可选的能力：density_surface 有两条产物通道 —— vector 通道落
+# FC ref、raster 渲染通道（density.visual.heatmap → heatmap_data 工具）
+# 刻意不落 geojson_ref（产物是 ref:heatmap-* / ref:raster/*）。对它强求
+# bound_ref 会把成功挂载的栅格热力图误判成 artifact_missing → 假 failed
+# （review C-1）；绑了 ref 时仍照常校验存在性/空结果。
+_OPTIONAL_FC_REF_TYPES = {"density_surface"}
 
 
-def _capability_requires_artifact_ref(capability: str) -> bool:
-    """该能力的输出是否包含空间 feature set（决定 bound_ref 断言适用性）。"""
+def _capability_fc_ref_policy(capability: str) -> str:
+    """该能力的 FC ref 策略：required / optional / none。
+
+    - required：输出含空间 feature set 且无 raster 旁路 → 必须绑定 ref；
+    - optional：存在 raster/栅格产物通道 → ref 有则校验、无则不判缺失；
+    - none：纯非空间输出（stats/od/raster 家族）→ 完成证据 = 工具成功。
+    """
     try:
         from app.lib.gis.capability_registry import get_capability_registry
 
         desc = get_capability_registry().get(capability)
         if desc is None:
-            return True  # 未知能力保守要求（缺 ref 时由 finding 披露）
+            return "required"  # 未知能力保守要求（缺 ref 时由 finding 披露）
         outputs = [str(t) for t in (desc.output_artifact_types or [])]
         if not outputs:
-            return True
-        return not all(t in _NON_SPATIAL_ARTIFACT_TYPES for t in outputs)
+            return "required"
+        if any(t in _OPTIONAL_FC_REF_TYPES for t in outputs):
+            return "optional"
+        if all(t in _NON_SPATIAL_ARTIFACT_TYPES for t in outputs):
+            return "none"
+        return "required"
     except Exception:  # noqa: BLE001 — registry 读失败保守要求
-        return True
+        return "required"
 
 
 def _spec_layers(mapspec: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -474,15 +512,34 @@ def validate_layers(
                     )
                 )
             if not _layer_declared_visible(layer):
-                findings.append(
-                    MapCompletionFinding(
-                        code=F_LAYER_HIDDEN,
-                        severity="error",
-                        target=lid,
-                        detail="result layer desired-visibility is none",
-                        repair=R_SHOW_LAYER,
-                    )
+                intent = layer.get("cartographic_intent")
+                user_owned = (
+                    isinstance(intent, dict)
+                    and intent.get("presentation_owner") == "user"
                 )
+                if user_owned:
+                    # user-wins（review B-6）：显隐权威在用户 —— 用户的隐藏
+                    # 就是期望状态。降级为 warning、不修复不对抗，否则每个
+                    # 触发点都重放一个注定被 owner 守卫拒绝的突变、永续
+                    # needs_repair + 重复 toast。
+                    findings.append(
+                        MapCompletionFinding(
+                            code=F_LAYER_HIDDEN,
+                            severity="warning",
+                            target=lid,
+                            detail="result layer hidden by user (user-wins, disclosed only)",
+                        )
+                    )
+                else:
+                    findings.append(
+                        MapCompletionFinding(
+                            code=F_LAYER_HIDDEN,
+                            severity="error",
+                            target=lid,
+                            detail="result layer desired-visibility is none",
+                            repair=R_SHOW_LAYER,
+                        )
+                    )
     elif layers:
         # 无 planned result layer 绑定（旧章节 / 纯展示路径）：退化为
         # “至少一个可见数据层”断言（basemap/label 子层不算 —— 有 source
@@ -902,10 +959,26 @@ async def run_map_finalization(
     result = MapCompletionResult()
     exec_findings = validate_execution(chapter)
     if exec_findings:
-        result.status = STATUS_PENDING
-        result.findings = exec_findings[:MAX_FINDINGS]
-        result.summary = "DAG not terminal — execution still owed"
+        blocked = [f for f in exec_findings if f.code == F_EXECUTION_BLOCKED]
+        has_open = any(f.code == F_NEEDS_EXECUTION for f in exec_findings)
+        if has_open or not blocked:
+            result.status = STATUS_PENDING
+            result.findings = exec_findings[:MAX_FINDINGS]
+            result.summary = "DAG not terminal — execution still owed"
+            result.passes = 0
+            return result
+        # blocked-only（failed/unavailable 终态行）：DAG 已终态、执行欠账
+        # 不会自愈 —— pending 会被静默吞掉（不落块不披露），turn 结束时
+        # 零产品级披露（review H-3）。按 failed 披露欠重试/欠降级，交还
+        # DAG/重试语义；finalizer 绝不自己重跑算法（ADR-0081）。
+        result.status = STATUS_FAILED
+        result.findings = blocked[:MAX_FINDINGS]
+        result.summary = f"{len(blocked)} blocked nodes await retry/replan"
         result.passes = 0
+        result.viewport_status = "not_applicable"
+        result.layer_status = "unknown"
+        result.component_status = "unknown"
+        result.export_status = "unknown"
         return result
 
 
@@ -1005,10 +1078,46 @@ async def run_map_finalization(
     return result
 
 
-def map_product_block(result: MapCompletionResult, checked_revision: int) -> Dict[str, Any]:
-    """章节持久化块（additive、bounded、单一键 ``map_product``）。"""
+def _rows_fingerprint(chapter: Dict[str, Any]) -> str:
+    """行状态指纹（去重门输入）：capability 行的状态/ref 绑定变化即改变。
+
+    比「行全终态」检查更强（review A-2/B-3/F-4）：行回退（重试标 failed、
+    重绑定新 ref）都会改变指纹 → 触发重验；同时让 needs_repair/failed
+    会话在无变化时跳过整轮重跑（此前只有 complete 享受去重门，异常会话
+    每个工具结果都重放整轮 finalization + SSE + toast）。
+    """
+    parts: List[str] = []
+    for row in list(chapter.get("data_requirements") or []) + list(
+        chapter.get("analysis_steps") or []
+    ):
+        if not isinstance(row, dict):
+            continue
+        parts.append(
+            f"{row.get('capability')}:{row.get('status')}:{row.get('bound_ref') or ''}"
+        )
+    return "|".join(sorted(parts))
+
+
+def map_product_block(
+    result: MapCompletionResult,
+    checked_revision: int,
+    *,
+    all_repairs: Optional[List[str]] = None,
+    rows_fingerprint: str = "",
+) -> Dict[str, Any]:
+    """章节持久化块（additive、bounded、单一键 ``map_product``）。
+
+    ``all_repairs``：跨轮累积修复记忆（prior ∪ 本轮 applied）。one-shot
+    语义依赖它跨轮存活 —— 只写本轮 applied 时，下一次无修复运行会把
+    记忆清零，finalizer 将隔轮重新对抗用户决策（review B-4）。
+    """
     block = result.to_dict()
+    if all_repairs is not None:
+        # 去重 + 有界（调用方通常已 union 去重，这里防御性兜底）
+        block["repairs"] = list(dict.fromkeys(all_repairs))[:MAX_DISCLOSED_REPAIRS]
     block["checked_revision"] = int(checked_revision)
+    if rows_fingerprint:
+        block["rows_fingerprint"] = rows_fingerprint[:512]
     block["projection"] = result.projection_line()
     return block
 
@@ -1042,14 +1151,13 @@ async def maybe_finalize_map_product(
 ) -> Optional[MapCompletionResult]:
     """Harness 侧触发入口：廉价门 + 终验 + 章节持久化（幂等、有界）。
 
-    去重门（review 加固）：章节已有 ``map_product`` 且 status=complete 且
-    checked_revision 与当前 MapSpec revision 一致，**且当前行状态仍全部
-    终态**（行失败/重试不推 revision —— 只看 revision 会把 "final" 披露成
-    陈旧）→ 跳过。
+    去重门（review 加固）：章节已有终态 ``map_product``（不止 complete）
+    且 checked_revision 与当前 MapSpec revision 一致、行指纹一致 → 跳过。
+    行状态/ref 或 spec revision 任一变化都会打破门 → 重验。
 
-    pending 不持久化、不披露（review 性能 P1：DAG 未终态是 turn 中段的
-    常态，每个工具结果都落块+SSE 是纯写放大；[GIS Plan] 的行投影已披露
-    未完成态）。
+    pending 不持久化、不披露 —— 除非章节里已有终态结论（review A-2/B-3：
+    重试把行标 failed 后，陈旧的 "final" 投影必须收回，落降级 pending 块；
+    [GIS Plan] 的行投影已披露未完成态，不发 SSE）。
 
     写入路径复用 SessionPlan 的 per-session lock（fail-closed）；只覆盖
     ``gis_chapter["map_product"]`` 单键，不触碰行状态（无第二事实源）。
@@ -1067,12 +1175,17 @@ async def maybe_finalize_map_product(
     chapter = plan.gis_chapter
     revision = await _current_mapspec_revision(session_id)
     stored = chapter.get("map_product")
+    # 去重门（review 加固 + F-4）：任何终态结论（不止 complete）在
+    # 「MapSpec revision 一致 + 行指纹一致」时跳过重验 —— 行状态/ref
+    # 变化或任何 cartographic 突变都会打破门，交给下一触发点重验。
+    # 旧块无 rows_fingerprint 键 → 首次不跳过，重验一次即自愈补齐。
     if (
         not force
         and isinstance(stored, dict)
-        and stored.get("status") == STATUS_COMPLETE
+        and stored.get("status")
+        in (STATUS_COMPLETE, STATUS_NEEDS_REPAIR, STATUS_FAILED)
         and _stored_checked_revision(stored) == revision
-        and not validate_execution(chapter)
+        and str(stored.get("rows_fingerprint") or "") == _rows_fingerprint(chapter)
     ):
         return None
 
@@ -1086,9 +1199,20 @@ async def maybe_finalize_map_product(
     )
     if result is None:
         return None
-    if result.status == STATUS_PENDING:
+    stored_terminal = isinstance(stored, dict) and stored.get("status") in (
+        STATUS_COMPLETE,
+        STATUS_NEEDS_REPAIR,
+        STATUS_FAILED,
+    )
+    if result.status == STATUS_PENDING and not stored_terminal:
         # 不持久化、不披露（见 docstring）；调用方拿 result 只做日志。
         return result
+    demoted = result.status == STATUS_PENDING
+    if demoted:
+        # 回退降级（review A-2/B-3）：已存终态结论的章节出现新的执行缺口
+        # （重试把行标 failed / 新增 pending 行）→ 陈旧的 "final" 投影必须
+        # 收回。落 pending 块（行投影已表达欠执行，不发 SSE、不 toast）。
+        result.summary = "execution re-owed — prior verdict withdrawn"
 
     validated_goal = goal_key(chapter, plan.user_goal)
     revision_after_run = await _current_mapspec_revision(session_id)
@@ -1115,8 +1239,17 @@ async def maybe_finalize_map_product(
                         session_id,
                     )
                     return result
+                merged_repairs = list(
+                    dict.fromkeys(
+                        (list(stored.get("repairs") or []) if isinstance(stored, dict) else [])
+                        + list(result.repairs_applied)
+                    )
+                )
                 fresh.gis_chapter["map_product"] = map_product_block(
-                    result, revision_after_run
+                    result,
+                    revision_after_run,
+                    all_repairs=merged_repairs,
+                    rows_fingerprint=_rows_fingerprint(fresh.gis_chapter),
                 )
                 await save_session_plan(fresh)
     except Exception:  # noqa: BLE001 — 披露失败不阻断 turn；下一触发点重试
@@ -1149,6 +1282,9 @@ async def read_stored_map_product(session_id: str) -> Optional[Dict[str, Any]]:
     if not isinstance(stored, dict):
         return None
     return {
+        # session_id 参与 frontend INV-2 跨会话守卫（review B-P3）：缺 sid
+        # 的载荷绕过守卫，可能把别的会话相机 fit 走 / 弹错 toast。
+        "session_id": session_id,
         "status": str(stored.get("status") or STATUS_PENDING),
         "summary": str(stored.get("summary") or "")[:120],
     }

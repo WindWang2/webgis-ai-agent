@@ -214,3 +214,27 @@ async def test_failed_dispatch_marks_rows_and_retry_recovers(registry, sid):
     # （tests/unit/test_session_plan.py::test_failed_dispatch_marks_capability_failed）
     # —— bridge 级用真实工具无法确定性构造"重试即成功"（本机数据态工具
     # 依赖 gd_pois.gpkg 导入）。
+
+
+def test_session_plan_sse_cache_appends_not_overwrites():
+    """同一 tool call 的 plan progress 与 map_finalization 事件必须都存活
+    （P0 稳定化，review A-1/B-2）：cache 是赋值时，finalization 事件会
+    覆盖刚缓存的行进度事件 —— 完成该 DAG 的那个工具结果在前端丢失
+    [GIS Plan] 行更新。"""
+    from app.agent_pi_bridge import cache_session_plan_sse, take_session_plan_sse
+
+    cache_session_plan_sse(
+        "tf-sse-concat",
+        'event: session_plan_progress\ndata: {"capability": "poi_query"}\n\n',
+        "sess-a",
+    )
+    cache_session_plan_sse(
+        "tf-sse-concat",
+        'event: map_finalization\ndata: {"status": "complete"}\n\n',
+        "sess-a",
+    )
+    merged = take_session_plan_sse("tf-sse-concat", "sess-a")
+    assert "event: session_plan_progress" in merged
+    assert "event: map_finalization" in merged
+    # 单次消费：take 后清空
+    assert take_session_plan_sse("tf-sse-concat", "sess-a") == ""

@@ -133,7 +133,49 @@ describe('map_finalization 命令 — viewCommands 集成（review P2 覆盖缺�
       [104, 30, 105, 31],
       expect.objectContaining({ padding: 80, maxZoom: 16 }),
     );
-    expect(result).toBeDefined();
+    expect(result).toMatchObject({ status: 'succeeded' });
+  });
+
+  it('手势等待期间用户已移到结果区 → execute 内重评，不再抢相机（review D-1）', async () => {
+    const { viewCommands } = await import('@/lib/map-commands/viewCommands');
+    // getBounds 第 1 次（命令入口校验）：视野外 → repairable；
+    // 第 2 次（execute 内重评，手势等待之后）：用户已把地图拖到结果区 →
+    // valid → 跳过 fitBounds（不得在用户刚拖完后 yank 相机）。
+    let boundsCalls = 0;
+    const onceHandlers: Record<string, (() => void)[]> = {};
+    const map = {
+      getBounds: () => {
+        boundsCalls += 1;
+        const v = boundsCalls === 1
+          ? { w: 0, s: 0, e: 1, n: 1 }
+          : { w: 104, s: 30, e: 106, n: 32 };
+        return {
+          getWest: () => v.w,
+          getSouth: () => v.s,
+          getEast: () => v.e,
+          getNorth: () => v.n,
+        };
+      },
+      fitBounds: vi.fn(),
+      once: vi.fn((ev: string, handler: () => void) => {
+        (onceHandlers[ev] ??= []).push(handler);
+      }),
+      stop: vi.fn(),
+      getCenter: () => ({ lng: 104.5, lat: 30.5 }),
+      getZoom: () => 10,
+      getBearing: () => 0,
+      getPitch: () => 0,
+    } as any;
+    const resultPromise = viewCommands['map_finalization'].run({
+      map,
+      params: { status: 'complete', bbox: [104, 30, 105, 31] },
+    } as any);
+    // 跳过 fitBounds 时无自然 moveend —— 手动结算
+    setTimeout(() => onceHandlers['moveend']?.forEach((h) => h()), 10);
+    const result = await resultPromise;
+    expect(boundsCalls).toBeGreaterThanOrEqual(2); // 重评确实发生
+    expect(map.fitBounds).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ status: 'succeeded' });
   });
 });
 
