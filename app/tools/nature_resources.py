@@ -30,11 +30,11 @@ def register_nature_resource_tools(registry: ToolRegistry):
     @tool(registry, name="analyze_vegetation_index",
           tier=2, domains=["raster"],
           description=(
-              "本地 TIFF 的 NDVI 计算 (Celery 异步)：用户上传遥感影像后调用，自动探测 RGBN/Sentinel-2 波段，"
-              "持久化为分析资产并入库。"
-              "\n何时用：用户已通过 /upload 上传 .tif/.tiff 后请求『算下 NDVI』；要把结果保存供后续 zonal_stats。"
+              "本地 TIFF 的光谱指数计算 (Celery 异步)：用户上传遥感影像后调用，自动探测 RGBN/Sentinel-2 波段，"
+              "支持 ndvi/ndwi/nbr/evi，持久化为分析资产并入库。"
+              "\n何时用：用户已通过 /upload 上传 .tif/.tiff 后请求『算下 NDVI/NDWI/NBR/EVI』；要把结果保存供后续 zonal_stats。"
               "\n何时不用：(1) 在线 bbox 计算 — 用 compute_ndvi（无需上传）；"
-              "(2) 双时相变化 — 用 detect_vegetation_change；"
+              "(2) 双时相变化 — 用 detect_vegetation_change（STAC）或 detect_raster_change（本地两个栅格资产）；"
               "(3) 不知道波段顺序 — 工具会自动探测，但 3 波段 RGB 无 NIR 时会失败。"
               "\n关键约束：raster_path 必须是 list_uploaded_data 返回过的路径；任务异步，返回 task_id 后需轮询。"
           ),
@@ -42,19 +42,29 @@ def register_nature_resource_tools(registry: ToolRegistry):
           # （run_ndvi_analysis.apply_async）——重工具显式标 heavy；提交路径
           # 本身只做 DB 写 + broker 入队，60s 预算绰绰有余。
           cost="heavy", timeout=60.0)
-    def analyze_vegetation_index(raster_path: str, nir_band: Optional[int] = None, red_band: Optional[int] = None, session_id: Optional[str] = None) -> dict:
+    def analyze_vegetation_index(raster_path: str, nir_band: Optional[int] = None, red_band: Optional[int] = None, index_type: Optional[str] = None, green_band: Optional[int] = None, blue_band: Optional[int] = None, swir_band: Optional[int] = None, session_id: Optional[str] = None) -> dict:
         # ADR-0052: 重计算走 durable job —— 返回 job_id 让用户能在任务中心看到进度
         # 并随时取消；幂等键防止双击/重连提交两次同样的分析。
+        # Runtime V3：index_type 缺省保持 ndvi（原 API 逐位兼容）；显式传
+        # ndwi/nbr/evi 时经各自波段角色（green/blue/swir）。
+        idx = (index_type or "ndvi").lower()
         return submit_durable_job(
             celery_task=run_ndvi_analysis,
             task_type="ndvi",
-            display_name="NDVI 植被指数分析",
+            display_name=f"{idx.upper()} 光谱指数分析",
             params={
                 "raster_path": raster_path,
                 "nir_band": nir_band,
                 "red_band": red_band,
+                "index_type": idx,
+                "green_band": green_band,
+                "blue_band": blue_band,
+                "swir_band": swir_band,
             },
-            task_args=(raster_path, nir_band, red_band, session_id),
+            task_args=(
+                raster_path, nir_band, red_band, session_id,
+                idx, green_band, blue_band, swir_band,
+            ),
             session_id=session_id,
         )
 
