@@ -1138,7 +1138,6 @@ export function drawChromeAnnotation(
     pxPerLogical?: number;
   },
 ): void {
-  const { ctx } = d;
   // group 形态：带 anchor 条目逐条锚定 + 无 anchor 条目静态卡
   if (el.items && el.items.length) {
     const bounds =
@@ -1192,7 +1191,6 @@ function drawStaticAnnotationBox(
   lines: string[],
   opts: { marginX: number; marginY?: number },
 ): void {
-  const { ctx } = d;
   const padding = d.scalePx(10);
   const lineH = d.scalePx(16);
   const boxW = Math.min(d.scalePx(360), d.targetW * 0.5);
@@ -1206,10 +1204,10 @@ function drawStaticAnnotationBox(
 
   _chromePanel(d, x, y, boxW, boxH);
   // 左边线强调（live border-l-2 同语义）
-  ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.85)' : 'rgba(30,41,59,0.85)';
-  ctx.fillRect(x, y, d.scalePx(2), boxH);
-  ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.65)' : 'rgba(100,116,139,0.95)';
-  ctx.font = `${d.scalePx(12)}px ${d.style.fontFamily}`;
+  d.ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.85)' : 'rgba(30,41,59,0.85)';
+  d.ctx.fillRect(x, y, d.scalePx(2), boxH);
+  d.ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.65)' : 'rgba(100,116,139,0.95)';
+  d.ctx.font = `${d.scalePx(12)}px ${d.style.fontFamily}`;
   lines.forEach((line, i) => {
     _text(d, line, x + padding + d.scalePx(2), y + padding + lineH * (i + 0.75), 'left');
   });

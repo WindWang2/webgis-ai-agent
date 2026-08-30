@@ -4,7 +4,7 @@ import type { MapSpecComponent } from '@/lib/mapspec-compiler/types';
 import { registerComponentRenderer } from './registry';
 import { isFloating, placementStyle, positionClass, resolveVariant, stackedTopStyle } from './helpers';
 import type { RendererContext } from './types';
-import { anchorFractionInBounds, bboxToBounds, validBounds, type GeoBounds } from '@/lib/map-components/geo-anchor';
+import { bboxToBounds, validBounds, type GeoBounds } from '@/lib/map-components/geo-anchor';
 
 /**
  * inset_map 渲染器（v2 P1）：轻量区位插图。
