@@ -10,9 +10,13 @@ import {
   subscribeComponentOverrides,
 } from '@/lib/mapspec/component-mutation';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useSmallViewport } from '@/lib/hooks/use-small-viewport';
 import { DEFAULT_POSITION, isFloating, placementStyle, positionClass, resolvePosition, stackedTopStyle } from './helpers';
 import { devOnly } from '@/lib/utils/logger';
 import { keyboardMoveDelta } from '@/lib/map-components/layout-runtime';
+
+/** 视口折叠建议的面板族（与 resolve-layout.COLLAPSIBLE_PANEL_TYPES 同表）。 */
+const PANEL_COLLAPSIBLE_TYPES: ReadonlySet<string> = new Set(['statistics_panel', 'chart_panel']);
 
 /**
  * FloatingChrome —— 浮动面板交互壳（D4）：拖拽 / 缩放 / 折叠 / 隐藏 / 复位。
@@ -112,6 +116,9 @@ export function FloatingChrome({
   const dockRegion = useHudStore((s) => s.dockPlacements[component.id] ?? 'float');
   const dockPanel = useHudStore((s) => s.dockPanel);
   const docked = dockRegion !== 'float';
+  // Scenario H 视口折叠建议（派生、非持久）：小视口上面板族折叠到标题
+  // 条 —— 用户 placement.collapsed 与浮动放置优先（建议不覆盖两者）。
+  const smallViewport = useSmallViewport();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const gestureRef = useRef<Gesture | null>(null);
   const keyCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -307,7 +314,9 @@ export function FloatingChrome({
     commitPlacement(nextPlacement, null);
   }
 
-  const collapsed = placement?.collapsed ?? false;
+  const collapsed =
+    (placement?.collapsed ?? false)
+    || (smallViewport && !docked && !floating && PANEL_COLLAPSIBLE_TYPES.has(merged.type));
   const gestureActive = transient !== null && !docked;
   // 手势期间 inline left/top 优先于槽位类；floating 正常态走 placementStyle
   const resolvedStyle: React.CSSProperties | undefined = gestureActive

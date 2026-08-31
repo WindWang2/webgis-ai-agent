@@ -27,11 +27,30 @@ const FAILED = Symbol('ref-source-fetch-failed');
 /** 拉取上限：超大 ref 不整包下发（HUD 大层走 MVT；这里保守放弃并告警）。 */
 const FETCH_FEATURE_CAP = 20000;
 
+/**
+ * 会话内缓存上限（F2）：条目值为整包 FeatureCollection（每条至多
+ * FETCH_FEATURE_CAP 要素）—— 无界缓存随长会话线性吃内存（数百 MB 量
+ * 级）。LRU 淘汰最旧条目；in-flight 去重保证并发期不重复拉取，淘汰后
+ * 的再访问走一次普通重拉（成本 = 一次网络往返，而非内存膨胀）。
+ */
+const MAX_CACHE_ENTRIES = 24;
+
 const cache = new Map<string, unknown>();
 const inFlight = new Map<string, Promise<void>>();
 const warned = new Set<string>();
 let generation = 0;
 const listeners = new Set<() => void>();
+
+function cacheSet(key: string, value: unknown): void {
+  // Map 迭代序即插入序：refresh 命中先删再插 → 真 LRU。
+  cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > MAX_CACHE_ENTRIES) {
+    const oldest = cache.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+}
 
 function emit(): void {
   generation += 1;
@@ -113,6 +132,7 @@ export function injectResolvedRefSources(
 
     const hit = cache.get(refId);
     if (hit && hit !== FAILED) {
+      cacheSet(refId, hit); // LRU refresh：活跃 ref 不被淘汰
       sources[sid] = { ...source, inlineData: hit } as unknown as MapSpecSource;
       changed = true;
       continue;
@@ -155,13 +175,13 @@ function scheduleFetch(refId: string, fetchContext: RefFetchContext | null | und
       );
       if (getMapSpecSessionCursor().sessionId !== fetchSessionId) return;
       if (geojson && (geojson.type === 'FeatureCollection' || Array.isArray(geojson.features))) {
-        cache.set(refId, geojson);
+        cacheSet(refId, geojson);
       } else {
-        cache.set(refId, FAILED);
+        cacheSet(refId, FAILED);
       }
     } catch {
       if (getMapSpecSessionCursor().sessionId === fetchSessionId) {
-        cache.set(refId, FAILED);
+        cacheSet(refId, FAILED);
       }
     } finally {
       inFlight.delete(refId);
