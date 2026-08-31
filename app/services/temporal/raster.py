@@ -395,22 +395,33 @@ class TemporalRasterEngine:
 
     @staticmethod
     def _validate_alignment(src1, src2) -> None:
-        """Rejects CRS/transform-mismatched raster pairs with a clear error."""
-        if (src1.crs is None) != (src2.crs is None) or (
-            src1.crs is not None and str(src1.crs) != str(src2.crs)
-        ):
+        """Rejects CRS/transform-mismatched raster pairs with a clear error.
+
+        Runtime V3（ADR-0089）：网格判定委托共享 ``raster_grid.grids_align``
+        （此前是仓库里第三份自制的 transform/CRS 等值实现）。语义保持：
+        CRS 不同、或仿射六参数超出 1e-6 相对容差 → 结构化拒绝，绝不静默
+        减去错位的像元。
+        """
+        from app.lib.geo_analysis.raster_grid import (
+            RasterGridProfile,
+            same_georeferencing,
+        )
+
+        g1 = RasterGridProfile.from_dataset(src1)
+        g2 = RasterGridProfile.from_dataset(src2)
+        aligned, reason = same_georeferencing(g1, g2)
+        if aligned:
+            return
+        if reason.startswith("crs"):
             raise ValueError(
                 f"Raster CRS mismatch in difference: {src1.crs} vs {src2.crs}. "
                 "Refusing to subtract misaligned rasters."
             )
-        t1, t2 = src1.transform, src2.transform
-        if not np.allclose([t1.a, t1.b, t1.c, t1.d, t1.e, t1.f],
-                           [t2.a, t2.b, t2.c, t2.d, t2.e, t2.f],
-                           rtol=1e-6, atol=1e-9):
-            raise ValueError(
-                f"Raster transform mismatch in difference: {tuple(t1)} vs {tuple(t2)}. "
-                "Refusing to subtract rasters with different pixel grids."
-            )
+        raise ValueError(
+            f"Raster transform mismatch in difference: {tuple(src1.transform)} "
+            f"vs {tuple(src2.transform)}. "
+            "Refusing to subtract rasters with different pixel grids."
+        )
 
     @staticmethod
     def _aoi_bounds_in_crs(src, aoi_geometry: Optional[Dict[str, Any]]) -> Optional[tuple]:

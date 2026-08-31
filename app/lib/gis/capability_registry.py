@@ -245,6 +245,30 @@ _SEED_CAPS: List[CapabilityDescriptor] = [
         output_artifact_types=["raster_surface"],
         purpose_template="NDVI 指数",
     ),
+    # Runtime V3（ADR-0089）：栅格计算器此前错挂在 raster_source（“栅格获取”）
+    # 上 —— tool_to_capability 因此把 raster_calculator 归为“数据获取”，语义
+    # 谎报。band_math 是它真实的语义位（逐像元波段/栅格代数）。
+    CapabilityDescriptor(
+        id="band_math", name="波段/栅格代数", category="raster",
+        domain="raster",
+        description="逐像元栅格代数（A/B 表达式、常数运算；A 为基准网格，B 自动对齐）。",
+        input_artifact_types=["raster_surface"],
+        output_artifact_types=["raster_surface"],
+        purpose_template="波段/栅格代数",
+    ),
+    # Runtime V3（ADR-0089 §变化语义）：raster 图像变化与 vector 时序变化是
+    # 两种不同的分析。既有 change_detection capability 只由 temporal.change
+    # （矢量时序）实现，此前把 raster_surface 列进输入词表是谎报 —— 栅格
+    # 变化现在有自己的 capability（detect_raster_change，native）。
+    CapabilityDescriptor(
+        id="raster_change_detection", name="双时相栅格变化检测", category="raster",
+        domain="raster",
+        description="两个栅格工件的对齐像元级变化检测（差值/绝对差/归一化差 + 阈值分类）。",
+        input_artifact_types=["raster_surface"],
+        output_artifact_types=["raster_surface", "change_set"],
+        compatible_map_models=["raster_surface"],
+        purpose_template="双时相栅格变化检测",
+    ),
     CapabilityDescriptor(
         id="shortest_path", name="最短路径", category="network",
         domain="network", description="网络最短路径。",
@@ -316,11 +340,11 @@ _SEED_CAPS: List[CapabilityDescriptor] = [
         purpose_template="时序趋势",
     ),
     CapabilityDescriptor(
-        id="change_detection", name="变化检测", category="analysis",
-        description="双时相对比变化集。",
-        input_artifact_types=["raster_surface", "poi_feature_set", "point_feature_set"],
+        id="change_detection", name="时序要素变化检测", category="analysis",
+        description="矢量要素的双时相对比变化集（栅格图像变化用 raster_change_detection）。",
+        input_artifact_types=["poi_feature_set", "point_feature_set"],
         output_artifact_types=["change_set"],
-        purpose_template="变化检测",
+        purpose_template="时序变化检测",
     ),
     CapabilityDescriptor(
         id="spatiotemporal_clustering", name="时空聚类", category="statistics",
@@ -343,6 +367,20 @@ _SEED_CAPS: List[CapabilityDescriptor] = [
         input_artifact_types=["raster_surface", "polygon_feature_set"],
         output_artifact_types=["stats_table"],
         purpose_template="分区统计",
+    ),
+    CapabilityDescriptor(
+        id="raster_reclassify", name="栅格重分类", category="raster",
+        domain="raster", description="连续栅格值按方案映射为离散类别。",
+        input_artifact_types=["raster_surface"],
+        output_artifact_types=["raster_surface"],
+        purpose_template="栅格重分类",
+    ),
+    CapabilityDescriptor(
+        id="raster_resample", name="栅格重采样", category="raster",
+        domain="raster", description="改变像元大小和/或 CRS（对齐预处理）。",
+        input_artifact_types=["raster_surface"],
+        output_artifact_types=["raster_surface"],
+        purpose_template="栅格重采样",
     ),
 ]
 

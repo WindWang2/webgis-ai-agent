@@ -40,6 +40,15 @@ class Settings(BaseSettings):
     # false，避免真实数据目录污染 Overpass/高德 mock。
     LOCAL_QUERY_FIRST: bool = True
 
+    # ── 栅格运行时资源预算（Raster & Remote Sensing Runtime V3，ADR-0089）──
+    # 单次窗口化栅格运算的工作内存预算（MB）。窗口边长由此推导：
+    # cells ≈ budget / WORKING_BYTES_PER_CELL（64B：窗口化循环峰值约 8 个
+    # float64/bool 工作数组），而不是拍脑袋的固定 512×512。保守默认。
+    RASTER_PROCESSING_MEMORY_MB: int = 256
+    # GDAL 块缓存上限（MB）——rasterio_env() 内生效；GDAL 缓存是进程内共享
+    # 的，独立于窗口预算可调。
+    RASTER_GDAL_CACHE_MAX_MB: int = 64
+
     def is_production(self) -> bool:
         """判断是否为生产环境"""
         return self.ENV.lower() == "production"

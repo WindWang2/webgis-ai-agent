@@ -515,14 +515,52 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         cpu_cost="low", memory_cost="low", io_cost="medium",
         preferred_execution_policy="ASYNC", priority=20,
     ),
+    # Runtime V3：此前 raster.algebra 错挂 raster_source（数据获取）capability
+    # —— tool_to_capability 因此把 raster_calculator 归为获取语义。窗口化
+    # 重写（对齐先行 + WarpedVRT）后 memory_cost 从 high 降为 medium
+    # （O(window)，ADR-0089）。version 提升使 analysis reuse / artifact cache
+    # 对新算法产物失效（不命中旧整幅实现的结果）。
     AlgorithmDescriptor(
-        id="raster.algebra", name="栅格计算器", category="raster_analysis",
-        capabilities=["raster_source"],
+        id="raster.algebra", name="栅格计算器（窗口化）", category="raster_analysis",
+        capabilities=["band_math"],
         input_artifact_types=["raster_surface"],
         output_artifact_type="raster_surface",
         tool_candidates=["raster_calculator"],
-        cpu_cost="high", memory_cost="high", io_cost="medium",
+        cpu_cost="high", memory_cost="medium", io_cost="medium",
         preferred_execution_policy="THREAD", priority=15,
+        version="3.0",
+    ),
+    AlgorithmDescriptor(
+        id="raster.reclassify.rule", name="规则重分类", category="raster_analysis",
+        capabilities=["raster_reclassify"],
+        input_artifact_types=["raster_surface"],
+        output_artifact_type="raster_surface",
+        tool_candidates=["raster_reclassify"],
+        cpu_cost="medium", memory_cost="medium", io_cost="medium",
+        preferred_execution_policy="THREAD", priority=10,
+    ),
+    AlgorithmDescriptor(
+        id="raster.resample.grid", name="网格重采样/重投影", category="raster_analysis",
+        capabilities=["raster_resample"],
+        input_artifact_types=["raster_surface"],
+        output_artifact_type="raster_surface",
+        tool_candidates=["raster_resample"],
+        cpu_cost="high", memory_cost="medium", io_cost="high",
+        preferred_execution_policy="THREAD", priority=10,
+    ),
+    # Runtime V3（ADR-0089）：双时相**栅格**变化检测 —— 与 temporal.change
+    # （矢量时序变化，change_detection capability）语义分家：不同输入
+    # artifact 族、不同工具、不同 capability，规划层不再靠一个含糊工具猜。
+    AlgorithmDescriptor(
+        id="remote.change.raster", name="双时相栅格变化检测", category="remote_sensing",
+        capabilities=["raster_change_detection"],
+        input_artifact_types=["raster_surface"],
+        output_artifact_type="raster_surface",
+        tool_candidates=["detect_raster_change"],
+        cpu_cost="high", memory_cost="medium", io_cost="medium",
+        preferred_execution_policy="THREAD",
+        compatible_map_models=["raster_surface"], priority=10,
+        version="1.0",
     ),
     # ── 时序 ─────────────────────────────────────────────────────────
     # temporal 工具族已在 app/tools/temporal_tools.py 全量实现，phase-2

@@ -35,7 +35,12 @@ class RasterBandInfo(BaseModel):
 
 
 class RasterArtifactDescriptor(BaseModel):
-    """栅格工件描述子（登记期一次计算；消费期零 IO）。"""
+    """栅格工件描述子（登记期一次计算；消费期零 IO）。
+
+    Runtime V3（ADR-0089）补齐网格身份字段：``transform`` / ``resolution_x``
+    / ``resolution_y`` / ``driver`` / ``block_size`` —— 网格契约（对齐裁决、
+    逐像元可运算判定、产物检视）不再需要重开文件。只登记真实使用的字段。
+    """
 
     file_path: str
     width: int = 0
@@ -47,9 +52,26 @@ class RasterArtifactDescriptor(BaseModel):
     band_count: int = 0
     bands: List[RasterBandInfo] = Field(default_factory=list)
     has_overviews: bool = False
+    # ── 网格身份（V3）：仿射 6 参数 [a, b, c, d, e, f] 与派生分辨率 ──
+    transform: Optional[List[float]] = None
+    resolution_x: Optional[float] = None
+    resolution_y: Optional[float] = None
+    driver: str = ""
+    block_size: Optional[List[int]] = None  # [blockxsize, blockysize]（tiled 时）
 
     def to_dict(self) -> Dict[str, Any]:
         return self.model_dump()
+
+    @property
+    def grid_identity(self) -> str:
+        """网格身份键（对齐/复用披露用；不含像元内容）。"""
+        return "|".join(
+            str(x) for x in (
+                self.width, self.height, self.crs,
+                tuple(round(v, 12) for v in (self.transform or ())),
+                self.dtype, self.nodata, self.band_count,
+            )
+        )
 
 
 def inspect_raster_artifact(file_path: str) -> Optional[RasterArtifactDescriptor]:
@@ -101,9 +123,66 @@ def inspect_raster_artifact(file_path: str) -> Optional[RasterArtifactDescriptor
                 band_count=src.count,
                 bands=band_infos,
                 has_overviews=bool(src.overviews(1)),
+                transform=[
+                    float(src.transform.a), float(src.transform.b), float(src.transform.c),
+                    float(src.transform.d), float(src.transform.e), float(src.transform.f),
+                ],
+                resolution_x=abs(float(src.transform.a)),
+                resolution_y=abs(float(src.transform.e)),
+                driver=str(src.driver),
+                block_size=(
+                    [int(src.block_shapes[0][1]), int(src.block_shapes[0][0])]
+                    if getattr(src, "block_shapes", None) else None
+                ),
             )
     except Exception as e:  # noqa: BLE001
         logger.warning("[raster_spec] inspect failed for %s: %s", file_path, e)
+        return None
+
+
+# 内容指纹的有界采样边长：指纹覆盖 grid 身份 + 全部波段的降采样样本
+# （同 inspect/stats 同数量级）。绝不为了 hash 重新读整幅几十 GB 栅格
+# （ADR-0089 §内容身份）。
+_FINGERPRINT_MAX_SIDE = 1024
+
+
+def raster_content_fingerprint(file_path: str) -> Optional[str]:
+    """栅格文件的**有界**内容指纹（sha256，十六进制）。
+
+    输入覆盖（§32）：grid（宽高/CRS/transform/dtype/nodata/band 数）+
+    像元内容（各波段降采样到 ≤1024 边的样本字节）。同内容不同
+    path/mtime → 同指纹；内容变 → 指纹变。成本 O(1024²·bands)，与一次
+    inspect 同级。文件缺失/不可读 → None（调用方降级，不阻塞）。
+    """
+    import hashlib
+
+    try:
+        import numpy as np
+        import rasterio
+        from rasterio.enums import Resampling
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        with rasterio.open(file_path) as src:
+            digest = hashlib.sha256()
+            grid_key = (
+                src.width, src.height, str(src.crs),
+                round(src.transform.a, 12), round(src.transform.e, 12),
+                str(src.dtypes[0]) if src.dtypes else "",
+                src.nodata, src.count,
+            )
+            digest.update(repr(grid_key).encode())
+            scale = min(1.0, _FINGERPRINT_MAX_SIDE / float(max(src.width, src.height)))
+            out_shape = (
+                src.count,
+                max(1, int(round(src.height * scale))),
+                max(1, int(round(src.width * scale))),
+            )
+            data = src.read(out_shape=out_shape, resampling=Resampling.average)
+            digest.update(np.ascontiguousarray(data).tobytes())
+            return digest.hexdigest()
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[raster_spec] fingerprint failed for %s: %s", file_path, e)
         return None
 
 
