@@ -87,6 +87,8 @@ _ENV_BASELINE = {
         "TOOL_TIMEOUT_S": "300",
         "SESSION_CACHE_SIZE": "200",
         "SESSION_MESSAGE_CAP": "200",
+        "RASTER_PROCESSING_MEMORY_MB": "256",
+        "RASTER_GDAL_CACHE_MAX_MB": "64",
         "CLEAR_QUIESCE_TIMEOUT_S": "5.0",
         "CANCEL_WAIT_TIMEOUT_S": "5.0",
         "CHAT_MAX_ROUNDS": "60",
