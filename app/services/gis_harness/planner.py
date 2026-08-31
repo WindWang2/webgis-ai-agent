@@ -416,6 +416,15 @@ class MapProductPlanner:
             for extra in recipe.optional_analysis:
                 if extra not in capabilities:
                     capabilities.append(extra)
+            # 任务条件能力（recipe.task_optional_analysis）：同一 recipe 服务
+            # 多个 intent task（如 raster_distribution 兼任 change_detection）
+            # 时，只有对应 task 才补的专属分析能力 —— 与 optional_analysis
+            # 的无条件并入不同（后者会污染共享该 recipe 的其他 task 产品）。
+            for extra in (getattr(recipe, "task_optional_analysis", None) or {}).get(
+                intent.task, []
+            ):
+                if extra not in capabilities:
+                    capabilities.append(extra)
 
         requirements, steps, selections = self._resolve_capabilities(
             capabilities, intent, available_tools=available_tools,
@@ -758,6 +767,11 @@ class MapProductPlanner:
                 "composition_template_id": selection.composition_template_id,
                 "component_templates": selection.component_templates,
                 "composition_warnings": [v.to_dict() for v in validation.warnings],
+                # recipe 数据面导出画像（chart 必需信号的既有读面 —— 此前
+                # 断线：product_graph 读 template_selection.export_profile
+                # 而 planner 从未写入；现随组合证据一并落盘，facet
+                # contract / chart:required 合成在真实会话路径生效）。
+                "export_profile": dict(getattr(recipe, "export_profile", None) or {}),
             }
         except Exception as exc:
             # 组合路径失败 → build_default_components 兜底，但必须留下可追溯
@@ -781,6 +795,7 @@ class MapProductPlanner:
             finalized.template_selection = {
                 **finalized.template_selection,
                 "composition_fallback": fallback_evidence,
+                "export_profile": dict(getattr(recipe, "export_profile", None) or {}),
             }
             finalized.components = build_default_components(
                 primary_cartography=primary_carto,

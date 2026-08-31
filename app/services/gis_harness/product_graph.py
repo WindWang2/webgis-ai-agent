@@ -60,13 +60,24 @@ _STAT_KINDS = {
     "annotation": KIND_ANNOTATION,
     # v2（§18）：图例族 / 插图组件同样投影为 facet —— 多图层地图的
     # legend:heatmap / legend:district / inset 在产品图上可分辨。
-    # legend facet 是信息性在场（不虚构 required —— 图例槽位本身是
-    # conditional）；状态仍投影自组件 enabled。
+    # legend facet 的必需性由 ProductFacetContract 决定（组合模板
+    # required 槽位 → legend_required；缺省 informational —— 图例槽位
+    # 本身多为 conditional）；状态仍投影自组件 enabled。
     "legend": KIND_LEGEND,
     "categorical_legend": KIND_LEGEND,
     "continuous_colorbar": KIND_LEGEND,
     "inset_map": KIND_INSET,
 }
+
+# chart/statistics 产物可复用的上游 artifact 语义类型（registry output
+# 词表的子集 —— 表/聚合类；大要素集不作为 chart 最小重计算输入）。
+# 单一定义：product_lineage / facet 依赖边共用（不建第二份词表）。
+CHART_INPUT_ARTIFACT_TYPES = frozenset({
+    "stats_table",
+    "admin_aggregate_table",
+    "od_matrix",
+    "grid_aggregate",
+})
 
 
 @dataclass
@@ -81,6 +92,19 @@ class ProductNode:
     artifact_ref: str = ""
     inputs: List[str] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+def _safe_contract(chapter: Optional[Dict[str, Any]]) -> "ProductFacetContract":
+    """契约派生（容错包装）：失败 → 空契约，绝不阻断投影。"""
+    try:
+        from app.services.gis_harness.product_facets import (
+            EMPTY_FACET_CONTRACT,
+            derive_facet_contract,
+        )
+
+        return derive_facet_contract(chapter)
+    except Exception:  # noqa: BLE001 — 投影降级，不虚构 required
+        return EMPTY_FACET_CONTRACT
 
 
 @dataclass
@@ -170,8 +194,16 @@ def _layer_status(
 def build_product_graph(
     chapter: Optional[Dict[str, Any]],
     mapspec: Optional[Dict[str, Any]] = None,
+    *,
+    contract: Optional["ProductFacetContract"] = None,
 ) -> ProductGraph:
-    """章节 + MapSpec → 产品图（纯函数；任一输入缺失按空处理）。"""
+    """章节 + MapSpec → 产品图（纯函数；任一输入缺失按空处理）。
+
+    ``contract``（可选）：产品 facet 契约（intent/recipe/composition →
+    必需性）。缺省时内部派生（容错：派生失败 → 空契约，不虚构）。
+    """
+    if contract is None:
+        contract = _safe_contract(chapter)
     graph = ProductGraph(
         goal=str((chapter or {}).get("query") or ""),
         recipe_id=str((chapter or {}).get("recipe_id") or ""),
@@ -245,6 +277,7 @@ def build_product_graph(
     # 组件 facets：statistics / chart / annotation / legend 族 / inset
     # （状态 = enabled 投影；图例/插图是信息性 facet —— 见 _STAT_KINDS 注）
     chart_seen = False
+    legend_seen = False
     for comp in ((mapspec or {}).get("layout") or {}).get("components") or []:
         if not isinstance(comp, dict):
             continue
@@ -254,6 +287,8 @@ def build_product_graph(
             continue
         if kind == KIND_CHART and comp.get("enabled") is not False:
             chart_seen = True
+        if kind == KIND_LEGEND and comp.get("enabled") is not False:
+            legend_seen = True
         cid = str(comp.get("id") or ctype)
         options = comp.get("options") or {}
         chart_ref = options.get("chartRef")
@@ -277,21 +312,39 @@ def build_product_graph(
             )
         )
 
-    # chart 必需信号（P9 Scenario M）：模板 export_profile.chart=True 而无
-    # enabled chart 组件 → 合成 pending 节点 —— 产品图反映"应然构成"，不
-    # 只是"恰好存在的组件"（派生事实仍是章节的 export_profile + MapSpec）。
-    export_profile_early = (chapter.get("template_selection") or {}).get("export_profile")
-    if (
-        isinstance(export_profile_early, dict)
-        and export_profile_early.get("chart")
-        and not chart_seen
-    ):
+    # 应然构成合成（facet contract）：契约判定为产品必需的组件族缺席 →
+    # 合成 pending 节点 —— 产品图反映"应然构成"，不只是"恰好存在的组件"。
+    # 输入链：intent.task + recipe.export_profile + composition required
+    # 槽位（product_facets.derive_facet_contract；旧 export_profile 读取
+    # 面由契约内部兼容保留）。
+    # - chart：export_profile.chart / required 槽位为真而无 enabled chart；
+    # - legend：组合模板把图例族声明为 required 槽位（density_map 的
+    #   colorbar、statistical_map 的 legend），且已有主题层落 MapSpec
+    #   （无层不欠图例 —— 诚实护栏，不给空地图虚构欠账）。
+    if contract.chart_required and not chart_seen:
         graph.nodes.append(
             ProductNode(
                 node_id=f"{KIND_CHART}:required",
                 kind=KIND_CHART,
                 key="chart-required",
                 label="chart-required",
+                status=S_PENDING,
+            )
+        )
+    if (
+        contract.legend_required
+        and not legend_seen
+        and any(
+            n.kind == KIND_MAP_LAYER and n.status == S_DONE
+            for n in graph.nodes
+        )
+    ):
+        graph.nodes.append(
+            ProductNode(
+                node_id=f"{KIND_LEGEND}:required",
+                kind=KIND_LEGEND,
+                key="legend-required",
+                label="legend-required",
                 status=S_PENDING,
             )
         )
@@ -385,6 +438,10 @@ class ProductFacetCompletion:
     artifact_ref: str = ""
     layer_ids: List[str] = field(default_factory=list)
     component_ids: List[str] = field(default_factory=list)
+    # 供给依赖（facet_id 列表，有界）：map_layer ← 产出它的 analysis 行；
+    # chart/statistics ← 表/聚合类 analysis 行（完整 artifact 级血缘在
+    # product_lineage —— 这里只投影章节内可实证的供给边）。
+    dependencies: List[str] = field(default_factory=list)
     # bbox 全部来自既有 ref descriptor / MapSpec source bounds 元数据 ——
     # 不可知即 None（绝不虚构，P9 §15）。
     bbox: Optional[List[float]] = None
@@ -403,6 +460,7 @@ class ProductFacetCompletion:
             "artifact_ref": self.artifact_ref[:64],
             "layer_ids": list(self.layer_ids[:4]),
             "component_ids": list(self.component_ids[:4]),
+            "dependencies": list(self.dependencies[:4]),
             "bbox": self.bbox,
             "render_status": self.render_status,
         }
@@ -473,16 +531,20 @@ def build_facet_completion(
     descriptors: Optional[Dict[str, Any]] = None,
     observation: Optional[Dict[str, Any]] = None,
     current_revision: int = 0,
+    contract: Optional["ProductFacetContract"] = None,
 ) -> List[ProductFacetCompletion]:
     """章节 + MapSpec + 既有证据 → per-facet 完成度（纯函数，零 IO）。
 
     状态全部回读既有事实（行状态 / 图层在场启用 / 组件 enabled / 渲染
     观察）；render 证据只在 observation 匹配当前 revision 时参与 ——
-    否则留空（不虚构 verified，也不把 unknown 判成失败）。
+    否则留空（不虚构 verified，也不把 unknown 判成失败）。facet 必需性
+    （``required``）由 ProductFacetContract 决定（缺省派生，容错空契约）。
     """
     if not isinstance(chapter, dict):
         return []
-    graph = build_product_graph(chapter, mapspec)
+    if contract is None:
+        contract = _safe_contract(chapter)
+    graph = build_product_graph(chapter, mapspec, contract=contract)
     spec_layers = {
         str(ly.get("id") or ""): ly
         for ly in ((mapspec or {}).get("layers") or [])
@@ -517,6 +579,9 @@ def build_facet_completion(
                         observed_by_id[val] = entry
 
     facets: List[ProductFacetCompletion] = []
+    # 表/聚合类能力行（chart/statistics 的供给上游 —— 依赖边用；词表
+    # 单源于 capability registry 的 output_artifact_types，容错降级空）。
+    table_caps = _analysis_rows_with_outputs(chapter)
     for node in graph.nodes:
         status = _NODE_TO_FACET_STATUS.get(node.status, FS_PENDING)
         facet = ProductFacetCompletion(
@@ -536,6 +601,8 @@ def build_facet_completion(
             cap = str(row.get("source_capability") or "")
             facet.capability_ids = [cap] if cap else []
             facet.layer_ids = [node.key]
+            if cap:
+                facet.dependencies = [f"{KIND_ANALYSIS}:{cap}"]
             layer = spec_layers.get(node.key)
             if layer is not None:
                 src_ref = _spec_source_ref(mapspec, str(layer.get("source") or ""))
@@ -556,6 +623,11 @@ def build_facet_completion(
                     facet.render_status = "verified"
         elif node.kind in (KIND_STATISTICS, KIND_CHART, KIND_ANNOTATION):
             facet.component_ids = [node.key]
+            # 供给依赖：表/聚合类 analysis facet（chart 可从既有统计产物
+            # 重生成 —— 「chart 欠账 ≠ 重查数据」的产品图表达）。
+            facet.dependencies = [
+                f"{KIND_ANALYSIS}:{cap}" for cap in table_caps[:4]
+            ]
             # v2（Scenario F）：chart facet 的 chartRef 在 ref descriptor
             # 里查无证据（artifact 缺失/过期被逐出）→ needs_repair —— 只
             # 该 chart 面板欠修，不把整图判死。descriptors 缺席（无证据
@@ -568,9 +640,13 @@ def build_facet_completion(
             ):
                 facet.status = FS_NEEDS_REPAIR
                 facet.render_status = "issues"
+            if node.kind == KIND_CHART:
+                facet.required = contract.chart_required
         elif node.kind in (KIND_LEGEND, KIND_INSET):
-            # 信息性 facet：在场即构成，缺席不欠（conditional 槽位语义）
-            facet.required = False
+            # 必需性由契约决定：组合模板 required 槽位（density_map 的
+            # colorbar）→ required；缺省 informational —— 在场即构成，
+            # 缺席不欠（conditional 槽位语义）。
+            facet.required = contract.legend_required if node.kind == KIND_LEGEND else False
             facet.component_ids = [node.key]
             facet.layer_ids = [node.metadata["layer_id"]] if node.metadata.get("layer_id") else []
         elif node.kind == KIND_EXPORT:
@@ -578,6 +654,37 @@ def build_facet_completion(
         facets.append(facet)
 
     return facets
+
+
+def _analysis_rows_with_outputs(chapter: Dict[str, Any]) -> List[str]:
+    """产出表/聚合类 artifact 的能力行 capability 列表（依赖边用，有界）。
+
+    词表单源于 capability registry 的 ``output_artifact_types`` ∩
+    ``CHART_INPUT_ARTIFACT_TYPES``；registry 不可用/行缺能力 → 空列表
+    （依赖边缺席是诚实降级，不影响状态投影）。
+    """
+    caps: List[str] = []
+    try:
+        from app.lib.gis.capability_registry import get_capability_registry
+
+        registry = get_capability_registry()
+    except Exception:  # noqa: BLE001 — 依赖边是增值投影，降级不中断
+        return caps
+    seen: set = set()
+    for row in list(chapter.get("data_requirements") or []) + list(
+        chapter.get("analysis_steps") or []
+    ):
+        if not isinstance(row, dict):
+            continue
+        cap = str(row.get("capability") or "")
+        if not cap or cap in seen:
+            continue
+        seen.add(cap)
+        desc = registry.get(cap)
+        outputs = set(getattr(desc, "output_artifact_types", None) or []) if desc else set()
+        if outputs & CHART_INPUT_ARTIFACT_TYPES:
+            caps.append(cap)
+    return caps[:8]
 
 
 def facet_owed_line(facets: List[ProductFacetCompletion]) -> str:
