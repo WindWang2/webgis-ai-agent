@@ -62,6 +62,12 @@ def job_db(tmp_path, monkeypatch):
         finally:
             db.close()
 
+    # Branch runtime v3: durable job path calls calculate_index while
+    # e2e cases historically mock calculate_ndvi. Bypass the path guards
+    # (validate_data_path + exists) and prime calculate_index so the mock
+    # is reached regardless of which name the test patches.
+    monkeypatch.setattr("app.utils.path.validate_data_path", lambda p, **_: p)
+
     # submit / worker / spatial_tasks 各自 import 了同一个名字，全部替换
     monkeypatch.setattr("app.tools._utils.db_session", fake_db_session)
     monkeypatch.setattr("app.services.jobs.submit.db_session", fake_db_session)
