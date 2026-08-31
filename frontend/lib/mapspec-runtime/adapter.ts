@@ -43,6 +43,10 @@ export interface HudToSpecInput {
   layers: Layer[];
   processLayers: Record<string, GeoJSONFeatureCollection>;
   activeFilters: Record<string, number[][]>;
+  /** Workspace V2（Goal D3）：chart→map 类别选择的 per-layer MapLibre
+   *  表达式（transient 选择态的渲染投影 —— 不进 MapSpec desired state，
+   *  只随 live compose 生效；清除即消失）。 */
+  selectionFilters?: Record<string, unknown[]>;
   is3D: boolean;
 }
 
@@ -152,7 +156,7 @@ function geometryProfileOf(layer: Layer): GeometryProfile {
 // ---- the adapter ----
 
 export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
-  const { layers, processLayers, activeFilters, is3D } = input;
+  const { layers, processLayers, activeFilters, selectionFilters, is3D } = input;
   const sources: Record<string, MapSpecSource> = {};
   const outLayers: MapSpecLayer[] = [];
 
@@ -235,6 +239,10 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
         const rangeFilters = filterRanges.map((range: number[]) => ["all", [">=", ["get", filterField], range[0]], ["<", ["get", filterField], range[1]]]);
         parts.push(["any", ...rangeFilters]);
       }
+      // Workspace V2（Goal D3）：共享选择的类别过滤（chart→map 高亮）——
+      // 与图例过滤同一 AND 组合面。
+      const selectionFilter = selectionFilters?.[layer.id];
+      if (selectionFilter) parts.push(selectionFilter);
       return parts.length === 1 ? base : ["all", ...parts];
     };
 

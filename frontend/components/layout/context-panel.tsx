@@ -36,6 +36,7 @@ import type { SessionPlanViewState } from '@/lib/session/session-plan-delta';
 import { PanelHeader } from '@/components/shared/panel-header';
 import { ChatTab } from '@/components/sidebar/chat-tab';
 import { LayersTab } from '@/components/sidebar/layers-tab';
+import { ComponentsTab } from '@/components/sidebar/components-tab';
 // U-1（#883）：恢复样式编辑面板的生产入口（editingLayerId 驱动的钻入视图）。
 import { LayerStylePanel } from '@/components/hud/layer-style-panel';
 import { AnalysisTab } from '@/components/sidebar/analysis-tab';
@@ -374,6 +375,11 @@ export function ContextPanel({
         {activeTab === 'layers' && (
           <PanelErrorBoundary label="图层">
             {editingLayerId ? <LayerStylePanel /> : <LayersTab />}
+          </PanelErrorBoundary>
+        )}
+        {activeTab === 'components' && (
+          <PanelErrorBoundary label="组件">
+            <ComponentsTab sessionId={sessionId} />
           </PanelErrorBoundary>
         )}
         {activeTab === 'analysis' && <AnalysisTab onSend={onSend} aiStatus={aiStatus} />}

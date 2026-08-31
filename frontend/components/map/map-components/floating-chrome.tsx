@@ -9,9 +9,13 @@ import {
   setComponentPlacementOverride,
   subscribeComponentOverrides,
 } from '@/lib/mapspec/component-mutation';
+import { useHudStore } from '@/lib/store/useHudStore';
+import { useSmallViewport } from '@/lib/hooks/use-small-viewport';
 import { DEFAULT_POSITION, isFloating, placementStyle, positionClass, resolvePosition, stackedTopStyle } from './helpers';
 import { devOnly } from '@/lib/utils/logger';
 import { keyboardMoveDelta } from '@/lib/map-components/layout-runtime';
+import { COLLAPSIBLE_PANEL_TYPES } from '@/lib/map-components/resolve-layout';
+
 
 /**
  * FloatingChrome —— 浮动面板交互壳（D4）：拖拽 / 缩放 / 折叠 / 隐藏 / 复位。
@@ -87,6 +91,12 @@ export interface FloatingChromeProps {
   children: React.ReactNode;
 }
 
+/**
+ * Workspace V2（Goal C5）：组件停靠在 dock 区时（dockSlice —— 工作区 UI
+ * 状态，与语义 placement 分离），本壳改为静态流式渲染（无拖拽/缩放手势、
+ * 无绝对定位）—— 同一渲染器在 chrome 与 dock 两个宿主下复用，语义
+ * 组件状态（placement/enabled/collapsed）不受停靠影响。
+ */
 export function FloatingChrome({
   component,
   title,
@@ -101,6 +111,13 @@ export function FloatingChrome({
   // 内部再合并一次 override（幂等）：直接使用 FloatingChrome 的调用方
   // （渲染器已合并过）与裸组件都能在乐观提交后即时重渲
   const merged = usePlacementPatchedComponent(component);
+  // 停靠区归属（工作区状态；单字段选择器，dock 变化才重渲）。
+  const dockRegion = useHudStore((s) => s.dockPlacements[component.id] ?? 'float');
+  const dockPanel = useHudStore((s) => s.dockPanel);
+  const docked = dockRegion !== 'float';
+  // Scenario H 视口折叠建议（派生、非持久）：小视口上面板族折叠到标题
+  // 条 —— 用户 placement.collapsed 与浮动放置优先（建议不覆盖两者）。
+  const smallViewport = useSmallViewport();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const gestureRef = useRef<Gesture | null>(null);
   const keyCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -296,8 +313,10 @@ export function FloatingChrome({
     commitPlacement(nextPlacement, null);
   }
 
-  const collapsed = placement?.collapsed ?? false;
-  const gestureActive = transient !== null;
+  const collapsed =
+    (placement?.collapsed ?? false)
+    || (smallViewport && !docked && !floating && COLLAPSIBLE_PANEL_TYPES.has(merged.type));
+  const gestureActive = transient !== null && !docked;
   // 手势期间 inline left/top 优先于槽位类；floating 正常态走 placementStyle
   const resolvedStyle: React.CSSProperties | undefined = gestureActive
     ? {
@@ -344,6 +363,55 @@ export function FloatingChrome({
       keyCommitTimerRef.current = null;
       commitPlacement(nextPlacement, nextPlacement);
     }, 500);
+  }
+
+  if (docked) {
+    // 停靠态：静态流式布局（宿主是 dock 区容器）；保留折叠/隐藏语义
+    // （placement.collapsed / enabled 走同一 CAS 通道），“复位”改为
+    // 取消停靠（回到地图 chrome 的浮动定位体系）。
+    return (
+      <div
+        role="region"
+        aria-label={`${title} 面板（已停靠）`}
+        data-testid={testId}
+        data-variant={dataVariant}
+        data-docked={dockRegion}
+        className={`${transparent
+          ? 'border border-map-chrome-border bg-transparent text-map-chrome-ink'
+          : 'map-chrome text-map-chrome-ink'} relative flex w-full flex-col overflow-hidden rounded-chrome ${className ?? ''}`}
+      >
+        <div className="flex select-none items-center justify-between gap-2 border-b border-map-chrome-border px-2 py-1">
+          <span className="min-w-0 truncate text-caption font-medium text-map-chrome-ink" title={title}>
+            {title}
+          </span>
+          <span className="flex shrink-0 items-center gap-0.5">
+            <button
+              type="button"
+              aria-label={collapsed ? '展开面板' : '折叠面板'}
+              onClick={toggleCollapse}
+              className="rounded p-0.5 text-map-chrome-ink-muted transition-colors hover:text-map-chrome-ink"
+            >
+              {collapsed ? (
+                <ChevronRight aria-hidden className="h-icon-sm w-icon-sm" />
+              ) : (
+                <ChevronDown aria-hidden className="h-icon-sm w-icon-sm" />
+              )}
+            </button>
+            <button
+              type="button"
+              aria-label="取消停靠"
+              onClick={() => dockPanel(component.id, 'float')}
+              className="rounded p-0.5 text-map-chrome-ink-muted transition-colors hover:text-map-chrome-ink"
+            >
+              <X aria-hidden className="h-icon-sm w-icon-sm" />
+            </button>
+          </span>
+        </div>
+        {collapsed ? null : (
+          <div className={`min-h-0 flex-1 ${bodyClassName ?? 'p-2'}`}>{children}</div>
+        )}
+      </div>
+    );
   }
 
   return (

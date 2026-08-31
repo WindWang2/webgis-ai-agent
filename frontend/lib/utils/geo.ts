@@ -51,12 +51,32 @@ interface FeatureCollectionLike {
 }
 
 /**
+ * Per-geometry bbox memo (F1)：viewport re-filter 对同一 geometry 对象每
+ * 次相机落定都重走完整坐标树（100k features × 每像素级 pan）。几何对象
+ * 在 store/ref 缓存中引用稳定 —— WeakMap 记忆化把重复过滤降为 O(1) 查
+ * 表；新几何对象（重拉取/属性更新产生新引用）自然重算，无失效风险。
+ */
+const geometryBBoxMemo = new WeakMap<object, [number, number, number, number] | null>();
+
+/**
  * Compute the bounding box [west, south, east, north] of a GeoJSON geometry.
  * Returns null for empty/invalid geometries. Recurses through all coordinate
  * nesting depths (Polygon/MultiPolygon/LineString/Point + collections).
  */
 export function geometryBBox(geometry: { type: string; coordinates: any } | null | undefined): [number, number, number, number] | null {
   if (!geometry || !geometry.coordinates) return null;
+  const memoized = geometryBBoxMemo.get(geometry);
+  if (memoized !== undefined) return memoized;
+  const computed = computeGeometryBBox(geometry);
+  try {
+    geometryBBoxMemo.set(geometry, computed);
+  } catch {
+    /* frozen/sealed geometry — memo 是增值，不可写时静默跳过 */
+  }
+  return computed;
+}
+
+function computeGeometryBBox(geometry: { type: string; coordinates: any }): [number, number, number, number] | null {
   let west = Infinity, south = Infinity, east = -Infinity, north = -Infinity;
   let found = false;
 

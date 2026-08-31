@@ -7,6 +7,7 @@ import { buildBottomSlotIndexes, stackedBottomStyle } from './map-components/hel
 import { buildTopSlotIndexes } from './map-components/helpers';
 import { metersPerPixelAt } from '@/lib/map-kit/meters-per-pixel';
 import { resolveMapComponents } from '@/lib/map-components/resolve-components';
+import { useHudStore } from '@/lib/store/useHudStore';
 
 // U-2（#884）同槽堆叠原语经 helpers 供渲染器与测试复用
 export { buildBottomSlotIndexes, stackedBottomStyle };
@@ -31,13 +32,20 @@ interface ChromeProps {
 }
 
 export const MapSpecChrome = React.memo(function MapSpecChrome({ components, zoom, centerLat, bearing, spec, bounds }: ChromeProps) {
+  // Workspace V2（Goal C5）：停靠中的面板实例由 PanelDockHost 渲染，
+  // chrome 面跳过（同一实例不双渲染）。dock 归属是工作区状态 —— 语义
+  // 组件真相（placement/enabled）不受影响。
+  const dockPlacements = useHudStore((s) => s.dockPlacements);
+  const undocked = components.filter((c) => dockPlacements[c.id] === undefined);
   // ADR-0081：anchor/floating/enabled 的解析经共享 resolveMapComponents
   // （live 与 export 同一语义源 —— 渲染器内部经 helpers 消费同一解析结果）。
-  const resolved = resolveMapComponents({ layout: { components } });
+  const resolved = resolveMapComponents({ layout: { components: undocked } });
   const enabled = resolved.filter((c) => c.enabled);
   if (!enabled.length) return null;
 
-  const hasType = (t: string) => resolved.some((c) => c.type === t);
+  const hasType = (t: string) => resolved.some((c) => c.type === t) || components.some(
+    (c) => c.type === t && dockPlacements[c.id] !== undefined,
+  );
   const fallbackDecor: MapSpecComponent[] = [];
   if (!hasType('north_arrow')) {
     fallbackDecor.push({ id: '__fallback_north_arrow', type: 'north_arrow', enabled: true } as MapSpecComponent);

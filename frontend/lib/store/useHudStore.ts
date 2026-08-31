@@ -28,6 +28,7 @@ import { createResultsSlice } from './slices/resultsSlice';
 import { createSettingsSlice } from './slices/settingsSlice';
 import { createTaskSlice } from './slices/taskSlice';
 import { createUiSlice } from './slices/uiSlice';
+import { createDockSlice } from './slices/dockSlice';
 
 // Type re-exports（保留旧导入习惯）
 export type {
@@ -100,6 +101,7 @@ export const useHudStore = create<HudState>()(
       ...createTaskSlice(...a),
       ...createSettingsSlice(...a),
       ...createUiSlice(...a),
+      ...createDockSlice(...a),
     }) as HudState,
     {
       name: PERSIST_KEY,

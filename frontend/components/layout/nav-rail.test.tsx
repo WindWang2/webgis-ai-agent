@@ -34,12 +34,13 @@ vi.mock('@/lib/store/useHudStore', () => ({
 // Import AFTER the mock is registered.
 import { NavRail } from './nav-rail';
 
-const TAB_ORDER = ['chat', 'project', 'data_sources', 'layers', 'analysis', 'tasks', 'results', 'export_layout'];
+const TAB_ORDER = ['chat', 'project', 'data_sources', 'layers', 'components', 'analysis', 'tasks', 'results', 'export_layout'];
 const TAB_LABELS: Record<string, string> = {
   chat: '对话',
   project: '项目',
   data_sources: '数据',
   layers: '图层',
+  components: '组件',
   analysis: '分析',
   tasks: '任务',
   results: '结果',
@@ -56,14 +57,14 @@ describe('NavRail', () => {
     store.results = [];
   });
 
-  it('renders 8 tabs with tablist semantics and roving tabindex', () => {
+  it('renders 9 tabs with tablist semantics and roving tabindex', () => {
     render(<NavRail />);
 
     const tablist = screen.getByRole('tablist', { name: '工作区面板' });
     expect(tablist).toHaveAttribute('aria-orientation', 'vertical');
 
     const tabs = screen.getAllByRole('tab');
-    expect(tabs).toHaveLength(8);
+    expect(tabs).toHaveLength(9);
     expect(tabs.map((t) => t.getAttribute('aria-label'))).toEqual(
       TAB_ORDER.map((k) => TAB_LABELS[k])
     );

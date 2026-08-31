@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from app.services.gis_harness.product_graph import (
+    CHART_INPUT_ARTIFACT_TYPES,
     KIND_ANALYSIS,
     KIND_CHART,
     KIND_MAP_LAYER,
@@ -44,14 +45,9 @@ from app.services.gis_harness.product_graph import (
     build_product_graph,
 )
 
-# chart/statistics 产物可复用的上游 artifact 语义类型（registry output
-# 词表的子集 —— 表/聚合类；大要素集不作为 chart 最小重计算输入）。
-_CHART_INPUT_ARTIFACT_TYPES = frozenset({
-    "stats_table",
-    "admin_aggregate_table",
-    "od_matrix",
-    "grid_aggregate",
-})
+# chart/statistics 产物可复用的上游 artifact 语义类型 —— 单一定义在
+# product_graph.CHART_INPUT_ARTIFACT_TYPES（facet 依赖边与血缘共用）。
+_CHART_INPUT_ARTIFACT_TYPES = CHART_INPUT_ARTIFACT_TYPES
 
 _MAX_LINEAGE_REFS_PER_FACET = 8
 
@@ -107,6 +103,10 @@ class FacetLineageEntry:
     artifact_refs: List[LineageRef] = field(default_factory=list)
     # 该 facet 若要补齐，欠哪些 capability 的（重）执行（空 = 无执行债）。
     recompute_capabilities: List[str] = field(default_factory=list)
+    # facet 级供给边（facet_id 列表，≤8）：map_layer ← 产出它的 analysis
+    # facet；chart/statistics ← 表/聚合类 analysis facet。「chart 欠账 ≠
+    # 重查数据」的血缘表达 —— 上游 facet 完成且 artifact 存活时只补产物。
+    depends_on_facets: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -204,6 +204,23 @@ def build_facet_lineage(
 
     caps = get_capability_registry()
 
+    # 表/聚合类能力行（chart/statistics facet 的供给上游 facet 集合）。
+    table_analysis_facets: List[str] = []
+    for row in list(chapter.get("data_requirements") or []) + list(
+        chapter.get("analysis_steps") or []
+    ):
+        if not isinstance(row, dict):
+            continue
+        cap = str(row.get("capability") or "")
+        if not cap:
+            continue
+        desc = caps.get(cap)
+        outs = set(getattr(desc, "output_artifact_types", None) or []) if desc else set()
+        if outs & _CHART_INPUT_ARTIFACT_TYPES:
+            fid = f"{KIND_ANALYSIS}:{cap}"
+            if fid not in table_analysis_facets:
+                table_analysis_facets.append(fid)
+
     for node in graph.nodes:
         entry = FacetLineageEntry(facet_id=node.node_id, kind=node.kind)
         if node.kind == KIND_ANALYSIS:
@@ -230,6 +247,8 @@ def build_facet_lineage(
         elif node.kind == KIND_MAP_LAYER:
             row = layer_rows.get(node.key) or {}
             cap = str(row.get("source_capability") or "")
+            if cap:
+                entry.depends_on_facets.append(f"{KIND_ANALYSIS}:{cap}")
             layer = spec_layers.get(node.key)
             if layer is not None:
                 src_ref = _spec_source_ref(mapspec, str(layer.get("source") or ""))
@@ -257,6 +276,7 @@ def build_facet_lineage(
                 entry.artifact_refs.append(LineageRef(
                     ref=ref, role="output", liveness=_live(ref),
                 ))
+            entry.depends_on_facets = list(table_analysis_facets[:_MAX_LINEAGE_REFS_PER_FACET])
             # 产物欠账（pending/owed）时的最小重计算输入：存活的表/聚合类
             # 上游 artifact（chart 可从既有统计产物重生成，不重跑分析链）。
             if node.status in (S_PENDING, S_OFF) or not ref:

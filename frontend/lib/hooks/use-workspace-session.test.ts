@@ -26,6 +26,7 @@ const hudState = vi.hoisted(() => ({
   setCartographyTitle: vi.fn(),
   focusLayer: vi.fn(),
   historyOpen: false,
+  resetDockState: vi.fn(),
 }));
 
 vi.mock('@/lib/store/useHudStore', () => ({

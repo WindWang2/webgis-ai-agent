@@ -42,11 +42,14 @@ describe('U-1 (#883) 图层样式编辑入口可达', () => {
     expect(src).toContain("editingLayerId ? <LayerStylePanel /> : <LayersTab />");
   });
 
-  it('settings 源码锚点：图层管理面板进入导航', async () => {
+  it('workspace 源码锚点：图层管理收敛到工作区 Layers 标签（设置面板不再保留第二入口）', async () => {
     const fs = await import('fs');
-    const src = fs.readFileSync('components/settings/settings-panel.tsx', 'utf-8');
-    expect(src).toContain("key: 'layers'");
-    expect(src).toContain('<LayerManagement />');
+    const src = fs.readFileSync('components/layout/context-panel.tsx', 'utf-8');
+    expect(src).toContain("<LayersTab />");
+    // Workspace V2（Goal C2 折叠）：settings 面板不再含图层 tab/组件。
+    const settings = fs.readFileSync('components/settings/settings-panel.tsx', 'utf-8');
+    expect(settings).not.toContain("key: 'layers'");
+    expect(settings).not.toContain('LayerManagement');
   });
 });
 
