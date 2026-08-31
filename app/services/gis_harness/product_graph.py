@@ -21,7 +21,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:  # 契约类型仅用于注解（运行时零 import 成本）
+    from app.services.gis_harness.product_facets import ProductFacetContract
 
 # 节点种类（有限集合）
 KIND_MAP_LAYER = "map_layer"

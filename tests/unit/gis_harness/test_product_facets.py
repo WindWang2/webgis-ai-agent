@@ -7,8 +7,6 @@
 - chart:required / legend:required 合成在真实 planner 路径上生效
   （export_profile 断线修复）。
 """
-import pytest
-
 from app.services.gis_harness.product_facets import (
     EMPTY_FACET_CONTRACT,
     derive_facet_contract,
@@ -17,7 +15,6 @@ from app.services.gis_harness.product_graph import (
     KIND_CHART,
     KIND_LEGEND,
     KIND_MAP_LAYER,
-    S_DONE,
     build_facet_completion,
     build_product_graph,
 )
