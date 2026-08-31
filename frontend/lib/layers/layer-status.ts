@@ -14,7 +14,8 @@
  * Semantics (distinct on purpose — see the goal's visibility architecture):
  *
  *   loading    ref-backed data has not landed yet (fetch in flight);
- *   ready      mounted, converged, observed visible;
+ *   ready      mounted+converged (observed); observation-absent layers
+ *              default to ready —— 无反面证据不虚构异常（诚实缺省）；
  *   rendering  desired state changed after the last observation settle
  *              (spec revision advanced past the observed one);
  *   hidden     desired visibility is off (user-owned or agent desired state);
@@ -59,6 +60,10 @@ function isRefPending(layer: Layer): boolean {
   // an empty placeholder FeatureCollection carrying metadata.ref_id, plus
   // `_refId`/`_tileUrl`. MVT-only rows stay "loaded" (tiles stream lazily).
   if (!layer._refId) return false;
+  // 服务端在 ref 铸造时就算好的 descriptor 计数：0 = 查询合法空结果
+  // （不是「未落地」）—— 空结果显示就绪，而不是永远加载中。
+  const d = layer._descriptor;
+  if (d && d.feature_count === 0) return false;
   const src = layer.source;
   const hasFeatures = !!src
     && typeof src === 'object'

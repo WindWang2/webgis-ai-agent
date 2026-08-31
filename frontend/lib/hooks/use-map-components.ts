@@ -20,8 +20,15 @@ import {
 import { resolveMapComponents } from '@/lib/map-components/resolve-components';
 
 export function useMapComponents() {
-  useSyncExternalStore(subscribeMapSpecLive, getMapSpecLiveGeneration);
-  useSyncExternalStore(subscribeComponentOverrides, getComponentOverridesGeneration);
+  const specGeneration = useSyncExternalStore(subscribeMapSpecLive, getMapSpecLiveGeneration);
+  const overridesGeneration = useSyncExternalStore(subscribeComponentOverrides, getComponentOverridesGeneration);
 
-  return useMemo(() => resolveMapComponents(getCommittedMapSpec()), []);
+  // Generations are the memo keys: component patches (including this tab's
+  // own actions) bump them and must re-resolve — an empty-deps memo would
+  // freeze the list at mount.
+  return useMemo(
+    () => resolveMapComponents(getCommittedMapSpec()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- generations are the change signals
+    [specGeneration, overridesGeneration],
+  );
 }

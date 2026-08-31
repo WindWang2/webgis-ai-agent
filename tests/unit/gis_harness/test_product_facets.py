@@ -365,3 +365,27 @@ def test_scenario_g_ndvi_missing_colorbar_owed_in_product_graph():
     })
     owed = [n for n in graph.nodes if n.key == "legend-required"]
     assert owed and owed[0].status == "pending"
+
+
+def test_annotation_facet_has_no_table_dependencies():
+    """annotation 是文本注记，不从统计表派生 —— 供给边只属于
+    chart/statistics（GIS review F7）。"""
+    chapter = _chapter()
+    chapter["analysis_steps"].append(
+        {"capability": "admin_aggregation", "status": "done", "bound_ref": "ref:stats-1"},
+    )
+    mapspec = {
+        "layers": [],
+        "sources": {},
+        "layout": {"components": [
+            {"id": "note-1", "type": "annotation", "enabled": True,
+             "options": {"text": "主城区"}},
+        ]},
+    }
+    facets = build_facet_completion(chapter, mapspec)
+    annotation = next(f for f in facets if f.kind == "annotation")
+    assert annotation.dependencies == []
+    chart_missing = next(
+        (f for f in facets if f.kind == KIND_CHART and f.key == "chart-required"), None)
+    if chart_missing:
+        assert "analysis:admin_aggregation" in chart_missing.dependencies

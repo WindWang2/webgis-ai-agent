@@ -62,7 +62,7 @@ import { devOnly } from "@/lib/utils/logger"
 import { buildTileTransformRequest } from "@/lib/map-kit/tile-auth"
 import {
   getSelection,
-  getSelectionFilter,
+  getSelectionFilterExpression,
   publishSelection,
   subscribeSelection,
   getSelectionGeneration,
@@ -156,18 +156,25 @@ export function MapPanel({
   const is3D = useHudStore((s: HudState) => s.is3D)
   const [activeFilters, setActiveFilters] = useState<Record<string, number[][]>>({})
   // Workspace V2（Goal D3）：chart→map 类别选择 → per-layer MapLibre 过滤
-  // 表达式（与图例 activeFilters 同一 compose/reconcile 通道：过滤变化只
-  // 重编译 filter，不重建 source/layer、不重拉数据）。空选择用冻结空表
-  // （稳定身份 → 无 reconcile 扰动）。
+  // 表达式（与图例 activeFilters 同一 compose/reconcile 通道）。成本语义：
+  // source 引用不变（零重拉/零数据重建），但 filter 变化会触发该层的
+  // recompile（remove+add —— 与图例过滤同款既有路径，可能有一帧闪烁）。
+  // 空选择用冻结空表（稳定身份 → 无 reconcile 扰动）。
+  // id 空间桥接：chart 绑定的是 spec 层 id，HUD 路径按行 id 过滤 ——
+  // 两个键都发（_mapspecLayerId 别名解析），别名缺席时如实只发原生键。
   const selectionGeneration = useSyncExternalStore(subscribeSelection, getSelectionGeneration)
   const selectionFilters = useMemo(() => {
     const selection = getSelection()
     if (!selection || selection.source !== 'chart') return EMPTY_SELECTION_FILTERS
-    const projection = getSelectionFilter(selection.layer_id)
-    if (!projection) return EMPTY_SELECTION_FILTERS
-    return {
-      [selection.layer_id]: ['in', ['get', projection.field], ...projection.categories] as unknown[],
+    const expression = getSelectionFilterExpression(selection.layer_id)
+    if (!expression) return EMPTY_SELECTION_FILTERS
+    const keys = new Set<string>([selection.layer_id])
+    for (const row of useHudStore.getState().layers) {
+      if (row._mapspecLayerId === selection.layer_id) keys.add(row.id)
     }
+    const out: Record<string, unknown[]> = {}
+    for (const key of keys) out[key] = expression
+    return out
     // eslint-disable-next-line react-hooks/exhaustive-deps -- generation is the change signal
   }, [selectionGeneration])
   const mapRef = useRef<MapRef>(null)

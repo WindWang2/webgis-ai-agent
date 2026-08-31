@@ -40,6 +40,8 @@ export interface DockSlice {
   setActiveDockPanel: (region: 'right' | 'bottom', panelId: string) => void;
   /** 会话切换清理（面板实例随 MapSpec 生命周期走，dock 状态不跨会话）。 */
   resetDockState: () => void;
+  /** spec 演进清理：组件实例离开 MapSpec 时，其 dock 归属随之失效。 */
+  pruneDockPanels: (validPanelIds: ReadonlySet<string>) => void;
 }
 
 const EMPTY_REGION: DockRegionState = { open: false, panels: [], activePanel: null };
@@ -85,11 +87,18 @@ export const createDockSlice: StateCreator<HudState, [], [], DockSlice> = (set, 
     set({ dockPlacements: placements, rightDock: right, bottomDock: bottom });
   },
 
-  toggleRightDock: () =>
-    set((s) => ({ rightDock: { ...s.rightDock, open: !s.rightDock.open } })),
+  // 「收起停靠区」语义 = 该区全部面板回到浮动（chrome 定位体系）——
+  // 只翻 open 会把面板渲染在两个宿主之外（chrome 跳过 + host 不渲染），
+  // 成为不可见面板。取消停靠保持组件真相不变（enabled/placement 原样）。
+  toggleRightDock: () => {
+    const { dockPanel } = get()
+    for (const id of get().rightDock.panels) dockPanel(id, 'float')
+  },
 
-  toggleBottomDock: () =>
-    set((s) => ({ bottomDock: { ...s.bottomDock, open: !s.bottomDock.open } })),
+  toggleBottomDock: () => {
+    const { dockPanel } = get()
+    for (const id of get().bottomDock.panels) dockPanel(id, 'float')
+  },
 
   setActiveDockPanel: (region, panelId) =>
     set((s) => {
@@ -105,4 +114,31 @@ export const createDockSlice: StateCreator<HudState, [], [], DockSlice> = (set, 
       rightDock: { ...EMPTY_REGION },
       bottomDock: { ...EMPTY_REGION },
     }),
+
+  pruneDockPanels: (validPanelIds) => {
+    const { dockPlacements, rightDock, bottomDock } = get();
+    const stale = Object.entries(dockPlacements)
+      .filter(([id]) => !validPanelIds.has(id))
+      .map(([id]) => id);
+    if (!stale.length) return;
+    const prune = (state: DockRegionState): DockRegionState => {
+      const panels = state.panels.filter((id) => validPanelIds.has(id));
+      return {
+        ...state,
+        panels,
+        open: panels.length > 0 ? state.open : false,
+        activePanel:
+          state.activePanel && panels.includes(state.activePanel)
+            ? state.activePanel
+            : (panels[panels.length - 1] ?? null),
+      };
+    };
+    const placements = { ...dockPlacements };
+    for (const id of stale) delete placements[id];
+    set({
+      dockPlacements: placements,
+      rightDock: prune(rightDock),
+      bottomDock: prune(bottomDock),
+    });
+  },
 });

@@ -28,7 +28,7 @@ export interface LayerRenderEvidence {
 }
 
 /** Cap on tracked layer ids (bounded memory; latest-wins per id). */
-export const MAX_TRACKED_LAYERS = 64;
+export const MAX_TRACKED_LAYERS = 128;
 
 const evidenceByHudId = new Map<string, LayerRenderEvidence>();
 const listeners = new Set<() => void>();
@@ -70,15 +70,29 @@ export function recordLayerEvidence(observation: {
   reconcile_error?: string;
 }, currentRevision: number): void {
   const layers = Array.isArray(observation.layers) ? observation.layers : [];
-  if (!layers.length) return;
+  // 空观察（合法数组、零层）= 全部层已离开 runtime —— 清空旧证据，
+  // 不让缺席层的 stale/failed 判定残留。
+  if (!layers.length) {
+    if (evidenceByHudId.size) {
+      evidenceByHudId.clear();
+      emit();
+    }
+    return;
+  }
   const at = Date.now();
   const next = new Map<string, LayerRenderEvidence>();
+  // spec 层 id → HUD 行 id（错误 target 是 MapLibre 层/源 id —— agent 授权
+  // 层的 spec id 与 HUD id 可能不同，双索引才能把错误归到行）。
+  const specIdToHud = new Map<string, string>();
   for (const entry of layers) {
     if (!entry || typeof entry !== 'object') continue;
     const hudId = typeof entry.runtime_store_id === 'string'
       ? entry.runtime_store_id
       : (typeof entry.id === 'string' ? entry.id : '');
     if (!hudId) continue;
+    if (typeof entry.id === 'string' && entry.id !== hudId) {
+      specIdToHud.set(entry.id.split('__')[0], hudId);
+    }
     const count = typeof entry.runtime_layer_count === 'number'
       ? entry.runtime_layer_count
       : 0;
@@ -94,13 +108,14 @@ export function recordLayerEvidence(observation: {
     if (!err || typeof err.target !== 'string' || !err.target) continue;
     // Errors may target a spec sublayer id (`layer__sub`) or the family id.
     const family = err.target.split('__')[0];
-    const hit = next.get(family);
+    const hit = next.get(family) ?? next.get(specIdToHud.get(family) ?? '');
     if (hit) hit.error = String(err.message ?? '').slice(0, 160);
   }
   if (observation.reconcile_error) {
     for (const value of next.values()) value.error = String(observation.reconcile_error).slice(0, 160);
   }
-  // Bounded: keep the newest entries only.
+  // Bounded: keep the first MAX_TRACKED_LAYERS entries in observation
+  // order (deterministic; observations are latest-wins per id already).
   const entries = [...next.entries()].slice(0, MAX_TRACKED_LAYERS);
   evidenceByHudId.clear();
   for (const [id, value] of entries) evidenceByHudId.set(id, value);

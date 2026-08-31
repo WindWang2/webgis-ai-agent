@@ -69,12 +69,14 @@ describe('dockSlice', () => {
     expect(s.rightDock.activePanel).toBe('chart-b');
   });
 
-  it('toggle open/close keeps panel membership', () => {
+  it('closing a region returns its panels to float (no orphaned instances)', () => {
+    // 「收起停靠区」= 全部面板取消停靠 —— 只翻 open 会把面板渲染在两个
+    // 宿主之外（chrome 跳过 + host 不渲染），成为不可见面板。
     useHudStore.getState().dockPanel('chart-a', 'bottom');
     useHudStore.getState().toggleBottomDock();
     const s = useHudStore.getState();
-    expect(s.bottomDock.open).toBe(false);
-    expect(s.bottomDock.panels).toEqual(['chart-a']);
+    expect(s.bottomDock.panels).toEqual([]);
+    expect(s.dockPlacements['chart-a']).toBeUndefined();
   });
 
   it('session reset clears all dock state', () => {
@@ -91,5 +93,34 @@ describe('dockSlice', () => {
     useHudStore.getState().dockPanel('chart-a', 'right');
     useHudStore.getState().dockPanel('chart-a', 'right');
     expect(useHudStore.getState().rightDock.panels).toEqual(['chart-a']);
+  });
+});
+
+describe('dockSlice spec pruning (review hardening)', () => {
+  beforeEach(() => {
+    useHudStore.getState().resetDockState();
+  });
+
+  it('drops placements for component ids that left the MapSpec', () => {
+    useHudStore.getState().dockPanel('chart-a', 'right');
+    useHudStore.getState().dockPanel('chart-b', 'bottom');
+    useHudStore.getState().pruneDockPanels(new Set(['chart-b']));
+    const s = useHudStore.getState();
+    expect(s.dockPlacements['chart-a']).toBeUndefined();
+    expect(s.rightDock.panels).toEqual([]);
+    expect(s.dockPlacements['chart-b']).toBe('bottom');
+  });
+
+  it('closes regions whose panels all left the spec', () => {
+    useHudStore.getState().dockPanel('chart-a', 'right');
+    useHudStore.getState().pruneDockPanels(new Set());
+    expect(useHudStore.getState().rightDock.open).toBe(false);
+  });
+
+  it('no-op when everything is still valid', () => {
+    useHudStore.getState().dockPanel('chart-a', 'right');
+    const before = useHudStore.getState().rightDock;
+    useHudStore.getState().pruneDockPanels(new Set(['chart-a']));
+    expect(useHudStore.getState().rightDock).toBe(before);
   });
 });

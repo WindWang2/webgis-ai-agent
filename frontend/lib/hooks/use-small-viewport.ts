@@ -13,16 +13,30 @@ import { VIEWPORT_COLLAPSE_CANVAS_HEIGHT } from '@/lib/map-components/resolve-la
  */
 const QUERY = `(max-height: ${VIEWPORT_COLLAPSE_CANVAS_HEIGHT - 1}px)`;
 
+/** Module-level MQL：snapshot 每次渲染都会读 —— 复用同一实例。 */
+let cachedMql: MediaQueryList | null = null;
+
+function mql(): MediaQueryList | null {
+  if (typeof window === 'undefined' || !window.matchMedia) return null;
+  if (cachedMql === null) {
+    try {
+      cachedMql = window.matchMedia(QUERY);
+    } catch {
+      return null;
+    }
+  }
+  return cachedMql;
+}
+
 function subscribe(onChange: () => void): () => void {
-  if (typeof window === 'undefined' || !window.matchMedia) return () => {};
-  const mql = window.matchMedia(QUERY);
-  mql.addEventListener('change', onChange);
-  return () => mql.removeEventListener('change', onChange);
+  const list = mql();
+  if (!list) return () => {};
+  list.addEventListener('change', onChange);
+  return () => list.removeEventListener('change', onChange);
 }
 
 function snapshot(): boolean {
-  if (typeof window === 'undefined' || !window.matchMedia) return false;
-  return window.matchMedia(QUERY).matches;
+  return mql()?.matches ?? false;
 }
 
 export function useSmallViewport(): boolean {

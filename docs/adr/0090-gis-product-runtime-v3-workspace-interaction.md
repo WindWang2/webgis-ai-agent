@@ -167,6 +167,16 @@ hidden（期望关闭）≠ stale（期望在场、runtime 分歧 → runtime re
 - 组件 remove 的专用 mutation intent（当前 hide 语义；多实例真移除需
   remove_component 意图 + CAS 设计）；
 - chart 创建工具自动填充 `selectionField`（协议已就位，agent 可经
-  component_update 填充）；
-- dock 区记忆（跨会话工作区布局持久化）；
-- slim_event_result 对无 bbox 内联 FC 的 O(features) 兜底（F4/F5，LOW）。
+  component_update 填充；缺席时 chart→map 仅状态高亮）；
+- 选择过滤的层级 recompile 优化：filter-only 变化目前走 reconciler 的
+  recompile 路径（remove+add，与图例过滤同款既有行为 —— source 引用不
+  变、零重拉，但可能有一帧闪烁）；`setFilter` 直通道是 reconciler 的
+  后续演进；
+- 错误 `selectionField` 可把图层过滤为空而状态词表仍显示 ready（过滤
+  对可见性证据不可见）—— 需要「过滤命中数为零」的披露通道；
+- SelectionContext 无 session 标记（会话切换经动态 import 微任务清空，
+  同任务批内的迟到发布理论上可穿透 —— 概率极低）；
+- 渲染证据 stash 上限 128 层（超出部分状态退化为无证据缺省）；
+- user_action 的 json.dumps 在截断前仍付 O(payload) CPU（输出已有界）；
+- slim_event_result 对无 bbox 内联 FC 的 O(features) 兜底（F4/F5，LOW）；
+- dock 区记忆（跨会话工作区布局持久化）。

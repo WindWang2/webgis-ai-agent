@@ -858,6 +858,20 @@ _LEGEND_KIND_TO_COMPONENT: Dict[str, str] = {
 }
 
 
+def _normalize_crs_for_wgs84(crs: str) -> str:
+    """CRS 是否 WGS84 系（渲染等价）：EPSG:4326/WGS84/CRS84 与 CGCS2000
+    （EPSG:4490 —— 同为经纬度地理坐标，中文地理数据标准）；OGC urn/URL
+    形式归一化取尾随 EPSG 码再判。返回归一化码（等价）或空串（需披露）。"""
+    normalized = crs.strip().upper().replace(" ", "")
+    if normalized in ("EPSG:4326", "WGS84", "CRS84", "EPSG:4326(0)", "EPSG:4490"):
+        return normalized
+    # OGC 形式：urn:ogc:def:crs:EPSG::4326 / .../crs/EPSG/0/4326
+    tail = normalized.rsplit(":", 1)[-1].rsplit("/", 1)[-1]
+    if tail.isdigit() and int(tail) in (4326, 4490):
+        return f"EPSG:{int(tail)}"
+    return ""
+
+
 def validate_semantics(
     chapter: Dict[str, Any],
     mapspec: Dict[str, Any],
@@ -901,8 +915,9 @@ def validate_semantics(
         if kind in _LEGEND_KIND_TO_COMPONENT:
             thematic[str(ly.get("id") or "")] = kind
 
-    # 1) 类型匹配（只判绑定了主题层的图例族实例）
-    legend_family = ("legend", "categorical_legend", "continuous_colorbar")
+    # 1) 类型匹配（只判绑定了主题层的图例族实例；词表单源于
+    #    product_facets.LEGEND_FAMILY —— 不建第三份字面量）
+    from app.services.gis_harness.product_facets import LEGEND_FAMILY as legend_family
     for c in enabled:
         ctype = str(c.get("type") or "")
         if ctype not in legend_family:
@@ -935,6 +950,14 @@ def validate_semantics(
                 for c in enabled
                 if str(c.get("type") or "") in legend_family
             }
+            # 未绑定 layerId 的图例（HUD 发现语义）按渲染现实覆盖全部主题层
+            # —— 不为它制造 per-layer 欠账噪声。
+            if any(
+                not str((c.get("options") or {}).get("layerId") or "")
+                for c in enabled
+                if str(c.get("type") or "") in legend_family
+            ):
+                covered = set(thematic) | set(covered)
             for lid in thematic:
                 if lid not in covered:
                     findings.append(
@@ -979,8 +1002,8 @@ def validate_semantics(
             crs = str(getattr(record, "crs", "") or "")
             if not crs:
                 continue  # 未知 ≠ 错
-            normalized = crs.strip().upper().replace(" ", "")
-            if normalized in ("EPSG:4326", "WGS84", "CRS84", "EPSG:4326(0)"):
+            normalized = _normalize_crs_for_wgs84(crs)
+            if normalized:
                 continue
             if ref in spec_refs:
                 findings.append(

@@ -197,3 +197,41 @@ def test_non_wgs84_record_not_feeding_spec_is_quiet():
         "provenance": {"result_ref": "ref:other"},
     }])
     assert validate_semantics({}, mapspec, [], records={"ref:geojson-x": record}) == []
+
+
+# ── review hardening：CRS 词表与未绑定图例 ──────────────────────────────
+
+
+def test_crs_allowlist_accepts_cgcs2000_and_ogc_urn_forms():
+    """EPSG:4490（CGCS2000）同为经纬度地理坐标 —— 中文地理数据标准，
+    渲染与 WGS84 等价；OGC urn/URL 归一化到尾随 EPSG 码再判。"""
+    from app.services.gis_harness.map_completion import _normalize_crs_for_wgs84
+
+    for crs in ("EPSG:4326", "epsg: 4326", "WGS84", "CRS84", "EPSG:4490",
+                "urn:ogc:def:crs:EPSG::4326", "http://www.opengis.net/def/crs/EPSG/0/4326",
+                "urn:ogc:def:crs:EPSG::4490"):
+        assert _normalize_crs_for_wgs84(crs), crs
+    for crs in ("EPSG:3857", "urn:ogc:def:crs:EPSG::3857", ""):
+        assert not _normalize_crs_for_wgs84(crs), crs
+
+
+def test_crs_4490_record_does_not_warn():
+    record = SimpleNamespace(crs="EPSG:4490")
+    mapspec = _mapspec(layers=[{
+        "id": "l1", "source": "s1", "type": "circle",
+        "provenance": {"result_ref": "ref:geojson-cgcs"},
+    }])
+    assert validate_semantics({}, mapspec, [], records={"ref:geojson-cgcs": record}) == []
+
+
+def test_unbound_legend_covers_thematic_layers():
+    """未绑定 layerId 的图例（HUD 发现语义）按渲染现实覆盖全部主题层 ——
+    不为它制造 per-layer 欠账噪声。"""
+    mapspec = _mapspec(
+        layers=[_heatmap_layer("a"), _heatmap_layer("b")],
+        components=[
+            {"id": "legend-hud", "type": "legend", "enabled": True},  # 未绑定
+        ],
+    )
+    findings = validate_semantics({}, mapspec, [], contract=_contract(True))
+    assert F_SEMANTIC_LEGEND_MISSING not in [f.code for f in findings]

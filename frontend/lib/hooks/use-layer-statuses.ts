@@ -25,9 +25,11 @@ import {
 
 export function useLayerStatuses(layers: Layer[]): Record<string, LayerStatus> {
   // Two independent external stores — one subscription each; both cheap
-  // (generation counters, no snapshots cloned per render).
-  useSyncExternalStore(subscribeLayerEvidence, getLayerEvidenceGeneration);
-  useSyncExternalStore(subscribeMapSpecLive, getMapSpecLiveGeneration);
+  // (generation counters, no snapshots cloned per render). The generations
+  // are ALSO the memo keys: evidence/revision changes must re-derive, or
+  // the badges freeze until an unrelated layers identity change.
+  const evidenceGeneration = useSyncExternalStore(subscribeLayerEvidence, getLayerEvidenceGeneration);
+  const specGeneration = useSyncExternalStore(subscribeMapSpecLive, getMapSpecLiveGeneration);
 
   return useMemo(() => {
     const { revision } = getMapSpecSessionCursor();
@@ -40,5 +42,6 @@ export function useLayerStatuses(layers: Layer[]): Record<string, LayerStatus> {
       });
     }
     return out;
-  }, [layers]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- generations are the change signals
+  }, [layers, evidenceGeneration, specGeneration]);
 }

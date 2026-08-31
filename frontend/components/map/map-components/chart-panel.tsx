@@ -2,6 +2,7 @@
 import React, { useEffect, useState, useSyncExternalStore } from 'react';
 import type { ChartData } from '@/lib/types';
 import type { MapSpecComponent } from '@/lib/mapspec-compiler/types';
+import { useHudStore } from '@/lib/store/useHudStore';
 import { adaptChartData } from '@/lib/chart-adapter';
 import { ChartCore } from '@/components/chat/chart-core';
 import {
@@ -13,6 +14,7 @@ import { resolveVariant } from './helpers';
 import { FloatingChrome, usePlacementPatchedComponent } from './floating-chrome';
 import type { RendererContext } from './types';
 import {
+  clearSelection,
   getSelection,
   getSelectionGeneration,
   publishSelection,
@@ -111,16 +113,39 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
     ? (options['selectionField'] as string)
     : '';
   const boundLayerId = typeof options['layerId'] === 'string' ? (options['layerId'] as string) : '';
+
+  // 面板卸载（隐藏 enabled:false / spec 移除 / dock 换页）时，清掉本面板
+  // 发布的 chart 选择 —— 否则一张不可见图表面板的过滤会持续作用于地图
+  // （无主的 stale filter）。只清自己 layer 上的 chart 选择（map/table
+  // 来源的选择不受影响）。
+  useEffect(() => {
+    return () => {
+      const sel = getSelection()
+      if (sel && sel.source === 'chart' && sel.layer_id === boundLayerId) {
+        clearSelection()
+      }
+    }
+  }, [boundLayerId])
+  // id 空间桥接（GIS review F18）：chart 绑定 spec 层 id，map 选择发布
+  // HUD 行 id —— 两空间可能不同（_mapspecLayerId 别名）。命中任一即视为
+  // 同一图层（别名缺席时如实只比原生键）。
+  const selectionMatchesLayer =
+    !!selection
+    && !!boundLayerId
+    && (selection.layer_id === boundLayerId
+      || useHudStore
+        .getState()
+        .layers.some((row: { _mapspecLayerId?: string; id: string }) =>
+          row._mapspecLayerId === boundLayerId && row.id === selection?.layer_id));
   const highlightedCategories =
     selection
     && selection.source === 'map'
-    && boundLayerId
-    && selection.layer_id === boundLayerId
-    && selectionField
-    && selection.properties
-    && selection.properties[selectionField] != null
-      ? [String(selection.properties[selectionField])]
-      : undefined;
+    && selectionMatchesLayer
+      && selectionField
+      && selection.properties
+      && selection.properties[selectionField] != null
+        ? [String(selection.properties[selectionField])]
+        : undefined;
   const handleSelectCategory =
     boundLayerId && state.status === 'ready'
       ? (name: string) => {

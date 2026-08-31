@@ -14,9 +14,8 @@ import { useSmallViewport } from '@/lib/hooks/use-small-viewport';
 import { DEFAULT_POSITION, isFloating, placementStyle, positionClass, resolvePosition, stackedTopStyle } from './helpers';
 import { devOnly } from '@/lib/utils/logger';
 import { keyboardMoveDelta } from '@/lib/map-components/layout-runtime';
+import { COLLAPSIBLE_PANEL_TYPES } from '@/lib/map-components/resolve-layout';
 
-/** 视口折叠建议的面板族（与 resolve-layout.COLLAPSIBLE_PANEL_TYPES 同表）。 */
-const PANEL_COLLAPSIBLE_TYPES: ReadonlySet<string> = new Set(['statistics_panel', 'chart_panel']);
 
 /**
  * FloatingChrome —— 浮动面板交互壳（D4）：拖拽 / 缩放 / 折叠 / 隐藏 / 复位。
@@ -316,7 +315,7 @@ export function FloatingChrome({
 
   const collapsed =
     (placement?.collapsed ?? false)
-    || (smallViewport && !docked && !floating && PANEL_COLLAPSIBLE_TYPES.has(merged.type));
+    || (smallViewport && !docked && !floating && COLLAPSIBLE_PANEL_TYPES.has(merged.type));
   const gestureActive = transient !== null && !docked;
   // 手势期间 inline left/top 优先于槽位类；floating 正常态走 placementStyle
   const resolvedStyle: React.CSSProperties | undefined = gestureActive
@@ -372,6 +371,8 @@ export function FloatingChrome({
     // 取消停靠（回到地图 chrome 的浮动定位体系）。
     return (
       <div
+        role="region"
+        aria-label={`${title} 面板（已停靠）`}
         data-testid={testId}
         data-variant={dataVariant}
         data-docked={dockRegion}

@@ -91,7 +91,7 @@ export function getSelectedCategories(layerId?: string): string[] | null {
   return current.selected_categories;
 }
 
-/** 地图过滤投影：类别选择 + filter_field 在场 → MapLibre 表达式。 */
+/** 地图过滤投影：类别选择 + filter_field 在场 → 字段/类别（否则 null）。 */
 export function getSelectionFilter(
   layerId: string,
 ): { field: string; categories: string[] } | null {
@@ -106,6 +106,19 @@ export function getSelectionFilter(
   return { field: current.filter_field, categories: current.selected_categories };
 }
 
+/**
+ * 编译为 MapLibre 过滤表达式（chart→map 高亮的渲染投影）。
+ *
+ * 形式合法性（GIS review F16）：`in` 的 haystack 必须是**单个** literal
+ * 数组 —— spread 多参（['in', ['get', f], ...cats]）会被 style-spec 拒绝，
+ * setFilter 静默丢弃整个过滤（特征：地图纹丝不动、无报错）。
+ */
+export function getSelectionFilterExpression(layerId: string): unknown[] | null {
+  const projection = getSelectionFilter(layerId);
+  if (!projection) return null;
+  return ['in', ['get', projection.field], ['literal', projection.categories]];
+}
+
 function boundedProperties(
   properties: Record<string, unknown> | undefined,
 ): SelectionContext['properties'] {
@@ -114,13 +127,12 @@ function boundedProperties(
   let count = 0;
   for (const [key, value] of Object.entries(properties)) {
     if (count >= MAX_SELECTION_PROPERTIES) break;
-    if (
-      value === null
-      || typeof value === 'string'
-      || typeof value === 'number'
-      || typeof value === 'boolean'
-    ) {
+    if (value === null || typeof value === 'number' || typeof value === 'boolean') {
       out[String(key).slice(0, 48)] = value;
+      count += 1;
+    } else if (typeof value === 'string') {
+      // 长文本属性截断（大字段不进 transient store / 事件环）
+      out[String(key).slice(0, 48)] = value.slice(0, 64);
       count += 1;
     }
   }

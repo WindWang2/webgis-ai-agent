@@ -123,7 +123,8 @@ export interface ComponentLayoutResult {
  */
 export const VIEWPORT_COLLAPSE_CANVAS_HEIGHT = 520;
 
-const COLLAPSIBLE_PANEL_TYPES: ReadonlySet<string> = new Set(['statistics_panel', 'chart_panel']);
+/** 面板族（有正文可折叠）—— 视口折叠规则的共享词表（live hook 与渲染器同源）。 */
+export const COLLAPSIBLE_PANEL_TYPES: ReadonlySet<string> = new Set(['statistics_panel', 'chart_panel']);
 
 const EMPTY_COLLAPSES: ReadonlySet<string> = new Set();
 

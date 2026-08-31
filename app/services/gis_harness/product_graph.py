@@ -621,13 +621,30 @@ def build_facet_completion(
                     facet.status = FS_NEEDS_REPAIR
                 else:
                     facet.render_status = "verified"
-        elif node.kind in (KIND_STATISTICS, KIND_CHART, KIND_ANNOTATION):
+        elif node.kind in (KIND_STATISTICS, KIND_CHART):
             facet.component_ids = [node.key]
-            # 供给依赖：表/聚合类 analysis facet（chart 可从既有统计产物
-            # 重生成 —— 「chart 欠账 ≠ 重查数据」的产品图表达）。
+            # 供给依赖：表/聚合类 analysis facet（chart/statistics 可从既有
+            # 统计产物重生成 —— 「chart 欠账 ≠ 重查数据」的产品图表达；
+            # annotation 是文本注记，不从统计表派生 —— 不挂该边）。
             facet.dependencies = [
                 f"{KIND_ANALYSIS}:{cap}" for cap in table_caps[:4]
             ]
+            # v2（Scenario F）：chart facet 的 chartRef 在 ref descriptor
+            # 里查无证据（artifact 缺失/过期被逐出）→ needs_repair —— 只
+            # 该 chart 面板欠修，不把整图判死。descriptors 缺席（无证据
+            # 输入）→ 不虚构，维持 enabled 投影状态。
+            if (
+                node.kind == KIND_CHART
+                and node.artifact_ref
+                and descriptors
+                and node.artifact_ref not in descriptors
+            ):
+                facet.status = FS_NEEDS_REPAIR
+                facet.render_status = "issues"
+            if node.kind == KIND_CHART:
+                facet.required = contract.chart_required
+        elif node.kind == KIND_ANNOTATION:
+            facet.component_ids = [node.key]
             # v2（Scenario F）：chart facet 的 chartRef 在 ref descriptor
             # 里查无证据（artifact 缺失/过期被逐出）→ needs_repair —— 只
             # 该 chart 面板欠修，不把整图判死。descriptors 缺席（无证据

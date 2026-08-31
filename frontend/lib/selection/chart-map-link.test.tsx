@@ -66,6 +66,7 @@ import { hudStateToMapSpec } from '@/lib/mapspec-runtime/adapter';
 import {
   clearSelection,
   getSelection,
+  getSelectionFilterExpression,
   publishSelection,
   resetSelectionStore,
 } from '@/lib/selection/selection-store';
@@ -154,7 +155,7 @@ describe('chart → map selection', () => {
       processLayers: {},
       activeFilters: {},
       selectionFilters: {
-        'district-choropleth': ['in', ['get', 'district'], '武侯区'],
+        'district-choropleth': ['in', ['get', 'district'], ['literal', ['武侯区']]],
       },
       is3D: false,
     });
@@ -168,6 +169,10 @@ describe('chart → map selection', () => {
     const nextFilter = JSON.stringify(filtered.layers[0].filter);
     expect(nextFilter).toContain('武侯区');
     expect(nextFilter).not.toEqual(baseFilter);
+    // MapLibre 表达式合法性（GIS review F16）：literal 数组经 AND 组合保留。
+    const filteredLayer = filtered.layers[0] as { filter?: unknown[] };
+    const filterJson = JSON.stringify(filteredLayer.filter);
+    expect(filterJson).toContain('["literal",["武侯区"]]');
   });
 
   it('clearing the selection restores the unfiltered composition', () => {
@@ -176,11 +181,39 @@ describe('chart → map selection', () => {
       hudStateToMapSpec({ layers, processLayers: {}, activeFilters: {}, selectionFilters, is3D: false });
     const base = compose();
     const withSelection = compose({
-      'district-choropleth': ['in', ['get', 'district'], '武侯区'],
+      'district-choropleth': ['in', ['get', 'district'], ['literal', ['武侯区']]],
     });
     const cleared = compose(undefined);
     expect(JSON.stringify(cleared.layers[0].filter)).toBe(JSON.stringify(base.layers[0].filter));
     expect(JSON.stringify(withSelection.layers[0].filter)).not.toBe(JSON.stringify(base.layers[0].filter));
+  });
+});
+
+describe('selection filter expression builder (MapLibre validity)', () => {
+  beforeEach(() => {
+    resetSelectionStore();
+  });
+
+  it('compiles to a single-literal haystack — spread form is rejected by style-spec', () => {
+    publishSelection('select', {
+      source: 'chart',
+      layer_id: 'l1',
+      selected_categories: ['武侯区', '锦江区'],
+      filter_field: 'district',
+    });
+    const expression = getSelectionFilterExpression('l1');
+    expect(expression).toEqual([
+      'in',
+      ['get', 'district'],
+      ['literal', ['武侯区', '锦江区']],
+    ]);
+    // 多类别不是 spread 进参数表（style-spec 只接受 2 参 in）
+    expect((expression as unknown[])[2]).toEqual(['literal', ['武侯区', '锦江区']]);
+  });
+
+  it('returns null without filter_field or categories (state-only highlight)', () => {
+    publishSelection('select', { source: 'chart', layer_id: 'l1', selected_categories: ['a'] });
+    expect(getSelectionFilterExpression('l1')).toBeNull();
   });
 });
 

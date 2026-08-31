@@ -9,7 +9,7 @@
  * - statuses stay semantically distinct: hidden (desired off) ≠ stale
  *   (desired present, runtime diverged) ≠ expired (data gone).
  */
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 import type { Layer } from '@/lib/types/layer';
 import {
   clearLayerEvidence,
@@ -19,6 +19,7 @@ import {
 import { deriveLayerStatus } from '@/lib/layers/layer-status';
 import {
   getRefSourceState,
+  markRefSourceFailed,
   resetRefSourceCache,
 } from '@/lib/mapspec/ref-source-resolver';
 
@@ -170,7 +171,7 @@ describe('render evidence stash', () => {
     recordLayerEvidence({ layers }, 1);
     let tracked = 0;
     for (let i = 0; i < 100; i += 1) if (getLayerEvidence(`layer-${i}`)) tracked += 1;
-    expect(tracked).toBeLessThanOrEqual(64);
+    expect(tracked).toBeLessThanOrEqual(128);
   });
 
   it('never carries feature payloads (ids/booleans only)', () => {
@@ -183,5 +184,60 @@ describe('render evidence stash', () => {
       expect.arrayContaining(['mounted', 'visible', 'converged', 'revision', 'at']),
     );
     expect(JSON.stringify(evidence).length).toBeLessThan(300);
+  });
+});
+
+describe('review hardening: empty results and dead refs', () => {
+  beforeEach(() => {
+    clearLayerEvidence();
+    resetRefSourceCache();
+  });
+
+  it('descriptor-known empty result is ready, not loading (legit empty query)', () => {
+    const l = layer({
+      _refId: 'ref:geojson-empty',
+      _descriptor: {
+        ref_id: 'ref:geojson-empty', feature_count: 0, point_count: 0,
+        geometry_types: ['Point'], bbox: null, mvt_capable: true,
+        estimated_bytes: 0, content_hash: null, raster_capable: false,
+      },
+      source: { type: 'FeatureCollection', features: [] },
+    });
+    expect(deriveLayerStatus({ layer: l })).toBe('ready');
+  });
+
+  it('marked-failed ref derives expired and recovers after the TTL window', () => {
+    vi.useFakeTimers();
+    try {
+      const l = layer({ _refId: 'ref:geojson-dead', source: { type: 'FeatureCollection', features: [] } });
+      markRefSourceFailed('ref:geojson-dead');
+      expect(deriveLayerStatus({ layer: l })).toBe('expired');
+      // TTL 窗口过后回到 unresolved → 未落地回到 loading（可重拉）
+      vi.advanceTimersByTime(31_000);
+      expect(deriveLayerStatus({ layer: l })).toBe('loading');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('zero-layer observation clears stale evidence for departed layers', () => {
+    recordLayerEvidence(
+      { layers: [{ runtime_store_id: 'gone', runtime_layer_count: 1 }] },
+      1,
+    );
+    expect(getLayerEvidence('gone')).not.toBeNull();
+    recordLayerEvidence({ layers: [] }, 2);
+    expect(getLayerEvidence('gone')).toBeNull();
+  });
+
+  it('runtime errors reach rows via the spec-id alias (agent-named layers)', () => {
+    recordLayerEvidence(
+      {
+        layers: [{ id: 'product-ndvi-layer', runtime_store_id: 'ref:geojson-x', runtime_layer_count: 1 }],
+        runtime_errors: [{ message: 'boom', target: 'product-ndvi-layer__raster' }],
+      },
+      3,
+    );
+    expect(getLayerEvidence('ref:geojson-x')?.error).toBe('boom');
   });
 });

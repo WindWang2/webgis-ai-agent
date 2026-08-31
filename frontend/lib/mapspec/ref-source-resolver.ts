@@ -34,14 +34,34 @@ const FETCH_FEATURE_CAP = 20000;
  * 的再访问走一次普通重拉（成本 = 一次网络往返，而非内存膨胀）。
  */
 const MAX_CACHE_ENTRIES = 24;
+const MAX_TOMBSTONES = 32;
+/** 失败墓碑 TTL（与 chart-artifact 的失败 TTL 同纪律）：确认失败在窗口
+ *  内不重试（防风暴），窗口过后回到 unresolved —— 后端重注册同一 ref
+ *  （修复/重放）时可恢复，不会永久卡死在 expired。 */
+const FAILED_TTL_MS = 30_000;
 
 const cache = new Map<string, unknown>();
+// 失败墓碑单独有界存放（≤ MAX_TOMBSTONES）：墓碑若混进 LRU，多层会话里
+// 连续失败会驱逐存活数据 → 活跃层状态在 expired/loading 间抖动并触发
+// 重拉风暴。墓碑只表达「确认失败」，不占数据缓存名额。
+const tombstones = new Map<string, number>();
 const inFlight = new Map<string, Promise<void>>();
 const warned = new Set<string>();
 let generation = 0;
 const listeners = new Set<() => void>();
 
 function cacheSet(key: string, value: unknown): void {
+  if (value === FAILED) {
+    cache.delete(key);
+    tombstones.set(key, Date.now());
+    while (tombstones.size > MAX_TOMBSTONES) {
+      const oldest = tombstones.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      tombstones.delete(oldest);
+    }
+    return;
+  }
+  tombstones.delete(key);
   // Map 迭代序即插入序：refresh 命中先删再插 → 真 LRU。
   cache.delete(key);
   cache.set(key, value);
@@ -70,6 +90,7 @@ export function getRefSourcesGeneration(): number {
 
 export function resetRefSourceCache(): void {
   cache.clear();
+  tombstones.clear();
   inFlight.clear();
   warned.clear();
 }
@@ -78,9 +99,27 @@ export function resetRefSourceCache(): void {
  *  client mirror of the backend artifact liveness vocabulary — `unresolved`
  *  (never fetched / evicted from tracking), `resolved`, or `failed`
  *  (definitive fetch failure ≈ expired/evicted ref). Read-only. */
+/** 墓碑是否仍在有效窗口内（过期即清理并返回 false —— 允许重拉）。 */
+function tombstoneActive(refId: string): boolean {
+  const at = tombstones.get(refId);
+  if (at === undefined) return false;
+  if (Date.now() - at > FAILED_TTL_MS) {
+    tombstones.delete(refId);
+    return false;
+  }
+  return true;
+}
+
+/** HUD/SSE 挂载路径的失败回执：写入带 TTL 的失败墓碑（30s 内状态投影为
+ *  expired/failed；窗口过后允许重拉 —— 真死 ref 有披露、瞬态错误可恢复）。 */
+export function markRefSourceFailed(refId: string): void {
+  if (!refId) return;
+  cacheSet(refId, FAILED);
+}
+
 export function getRefSourceState(refId: string): 'unresolved' | 'resolved' | 'failed' {
+  if (tombstoneActive(refId)) return 'failed';
   const value = cache.get(refId);
-  if (value === FAILED) return 'failed';
   if (value !== undefined) return 'resolved';
   return 'unresolved';
 }
@@ -137,7 +176,7 @@ export function injectResolvedRefSources(
       changed = true;
       continue;
     }
-    if (hit === FAILED || owned.has(refId)) continue;
+    if (tombstoneActive(refId) || owned.has(refId)) continue;
     const featureCount = (s.profile as any)?.featureCount;
     if (typeof featureCount === 'number' && featureCount > FETCH_FEATURE_CAP) {
       if (!warned.has(refId)) {

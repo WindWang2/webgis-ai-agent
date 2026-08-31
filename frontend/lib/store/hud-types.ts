@@ -235,6 +235,7 @@ export interface HudState {
   toggleBottomDock: import('./slices/dockSlice').DockSlice['toggleBottomDock'];
   setActiveDockPanel: import('./slices/dockSlice').DockSlice['setActiveDockPanel'];
   resetDockState: import('./slices/dockSlice').DockSlice['resetDockState'];
+  pruneDockPanels: import('./slices/dockSlice').DockSlice['pruneDockPanels'];
   settingsTab: SettingsTab;
   setSettingsTab: (tab: SettingsTab) => void;
   sessions: SessionSummary[];

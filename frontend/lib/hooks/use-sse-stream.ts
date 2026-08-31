@@ -5,6 +5,7 @@ import type { StepResultPayload } from '@/lib/api/chat';
 import type { StepResultEvent } from '@/lib/results/types';
 import { useMapBridge } from './useMapBridge';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { markRefSourceFailed } from '@/lib/mapspec/ref-source-resolver';
 import { apiFetch } from '@/lib/api/transport';
 import { API_BASE } from '@/lib/api/config';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
@@ -801,6 +802,16 @@ export function useSSEStream(
                   layerName,
                   err,
                 );
+                // Workspace V2：失败回执进 resolver 墓碑（TTL 有界）—— 否则
+                // HUD 挂载路径的死 ref 只留空占位 FC，状态词表会永远显示
+                // 「加载中」而不是「已过期」。
+                if (!(err instanceof DOMException && err.name === 'AbortError')) {
+                  try {
+                    markRefSourceFailed(fetchRef);
+                  } catch {
+                    /* 墓碑是增值投影，失败不阻断 */
+                  }
+                }
               });
           }
 

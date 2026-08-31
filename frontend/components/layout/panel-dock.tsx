@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo } from 'react';
 import { PanelRightClose, PanelBottomClose } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useSyncExternalStore } from 'react';
@@ -118,7 +118,7 @@ function DockChrome({
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-panel">
-        {activePanel ? <DockedPanelBody componentId={activePanel} /> : null}
+        {activePanel ? <DockedPanelBody key={activePanel} componentId={activePanel} /> : null}
       </div>
     </div>
   );
@@ -146,6 +146,11 @@ export function PanelDockHost() {
     return new Map((spec?.layout?.components ?? []).map((c) => [c.id, c] as const));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- generation drives the re-read
   }, [specGeneration]);
+  const pruneDockPanels = useHudStore((s) => s.pruneDockPanels);
+  useEffect(() => {
+    // spec 演进：离开 MapSpec 的组件实例，其 dock 归属失效（不留空壳/幽灵）。
+    pruneDockPanels(new Set(tabsById.keys()));
+  }, [tabsById, pruneDockPanels]);
   const tabsFor = useCallback(
     (ids: string[]) =>
       ids
@@ -159,26 +164,43 @@ export function PanelDockHost() {
 
   return (
     <>
-      {rightDock.open && rightDock.panels.length > 0 && (
-        <DockChrome
-          region="right"
-          title="停靠面板"
-          onClose={toggleRightDock}
-          tabs={tabsFor(rightDock.panels)}
-          activePanel={rightDock.activePanel ?? rightDock.panels[rightDock.panels.length - 1] ?? null}
-          onSelect={(id) => setActiveDockPanel('right', id)}
-        />
-      )}
-      {bottomDock.open && bottomDock.panels.length > 0 && (
-        <DockChrome
-          region="bottom"
-          title="停靠面板"
-          onClose={toggleBottomDock}
-          tabs={tabsFor(bottomDock.panels)}
-          activePanel={bottomDock.activePanel ?? bottomDock.panels[bottomDock.panels.length - 1] ?? null}
-          onSelect={(id) => setActiveDockPanel('bottom', id)}
-        />
-      )}
+      {(() => {
+        // 只渲染 spec 里仍存在的面板（同会话 spec 演进可能移除实例）；
+        // 全部失效时停靠区整体不渲染 —— 不出现空壳。
+        const rightTabs = tabsFor(rightDock.panels)
+        if (rightDock.open && rightTabs.length > 0) {
+          const fallback = rightTabs[rightTabs.length - 1].id
+          return (
+            <DockChrome
+              region="right"
+              title="停靠面板"
+              onClose={toggleRightDock}
+              tabs={rightTabs}
+              activePanel={rightTabs.some((t) => t.id === rightDock.activePanel)
+                ? (rightDock.activePanel as string)
+                : fallback}
+              onSelect={(id) => setActiveDockPanel('right', id)}
+            />
+          )
+        }
+        const bottomTabs = tabsFor(bottomDock.panels)
+        if (bottomDock.open && bottomTabs.length > 0) {
+          const fallback = bottomTabs[bottomTabs.length - 1].id
+          return (
+            <DockChrome
+              region="bottom"
+              title="停靠面板"
+              onClose={toggleBottomDock}
+              tabs={bottomTabs}
+              activePanel={bottomTabs.some((t) => t.id === bottomDock.activePanel)
+                ? (bottomDock.activePanel as string)
+                : fallback}
+              onSelect={(id) => setActiveDockPanel('bottom', id)}
+            />
+          )
+        }
+        return null
+      })()}
     </>
   );
 }
