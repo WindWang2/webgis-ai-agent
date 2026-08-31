@@ -274,3 +274,94 @@ def test_plain_raster_task_does_not_plan_change_capability():
         s.capability for s in plan.analysis_steps
     ]
     assert "raster_change_detection" not in caps
+
+
+# ── Scenario G：遥感产品闭环（NDVI 链）───────────────────────────────────
+
+
+def test_scenario_g_ndvi_product_closure():
+    """Scenario G（/goal §15）：NDVI 产品链 ——
+    遥感意图 → raster recipe/remote_sensing 模板 → raster_source 能力行 →
+    composition.remote_sensing_map（colorbar required 槽）→ facet contract
+    legend_required → 有 colorbar 绑定时语义 QA 零发现。
+
+    样式变化不重算 NDVI 由 raster runtime v3 契约锁定
+    （test_raster_runtime_v3：reuse 命中 + 样式仅进瓦片缓存键）—— 此处
+    锁定产品图/契约层的应然构成。
+    """
+    from app.services.gis_harness.map_completion import validate_semantics
+    from app.services.gis_harness.product_graph import KIND_MAP_LAYER
+
+    intent = resolve_map_request_intent("计算这片区域卫星影像的NDVI植被指数分布")
+    planner = _planner()
+    plan = planner.plan_from_intent(intent)
+    finalized = planner.finalize_with_profile(plan, None)
+
+    # 数据/能力面：raster_source 在计划行中（光谱指数由 raster runtime v3 执行）
+    caps = [r.capability for r in finalized.data_requirements] + [
+        s.capability for s in finalized.analysis_steps
+    ]
+    assert "raster_source" in caps
+
+    # 版面面：remote_sensing 组合 → colorbar 为 required 槽
+    contract = derive_facet_contract(finalized.model_dump())
+    assert contract.composition_template_id == "composition.remote_sensing_map"
+    assert contract.legend_required is True
+    assert "continuous_colorbar" in contract.required_component_types
+
+    # 产品图：raster 图层 facet 在场（绑定后的章节 —— layer_id 由执行期
+    # 回填，同真实会话流）。
+    chapter = finalized.model_dump()
+    chapter["map_layers"] = [
+        {"role": "primary", "layer_id": "ndvi-surface", "enabled": True,
+         "source_capability": "raster_source"},
+    ]
+    graph = build_product_graph(chapter, {
+        "layers": [{"id": "ndvi-surface", "source": "s1", "type": "raster",
+                    "legend_spec": {"type": "continuous", "field": "ndvi",
+                                    "min": -1, "max": 1, "palette_colors": ["#fff", "#000"]}}],
+        "sources": {},
+        "layout": {"components": [
+            {"id": "colorbar-main", "type": "continuous_colorbar", "enabled": True,
+             "options": {"layerId": "ndvi-surface"}},
+        ]},
+    })
+    assert any(n.kind == KIND_MAP_LAYER for n in graph.nodes)
+    assert not [n for n in graph.nodes if n.key == "legend-required"]  # colorbar 已满足
+
+    # 语义 QA：连续 legend_spec + 正确 colorbar 绑定 → 零发现
+    findings = validate_semantics(
+        chapter,
+        {
+            "layers": [{"id": "ndvi-surface", "source": "s1", "type": "raster",
+                        "legend_spec": {"type": "continuous", "field": "ndvi",
+                                        "min": -1, "max": 1, "palette_colors": ["#fff", "#000"]}}],
+            "sources": {},
+            "layout": {"components": [
+                {"id": "colorbar-main", "type": "continuous_colorbar", "enabled": True,
+                 "options": {"layerId": "ndvi-surface"}},
+            ]},
+        },
+        [],
+        contract=contract,
+    )
+    assert findings == []
+
+
+def test_scenario_g_ndvi_missing_colorbar_owed_in_product_graph():
+    """colorbar 缺席 → legend:required 欠账节点（QA/产品图双通道可见）。"""
+    intent = resolve_map_request_intent("计算这片区域卫星影像的NDVI植被指数分布")
+    planner = _planner()
+    finalized = planner.finalize_with_profile(planner.plan_from_intent(intent), None)
+    chapter = finalized.model_dump()
+    chapter["map_layers"] = [
+        {"role": "primary", "layer_id": "ndvi-surface", "enabled": True,
+         "source_capability": "raster_source"},
+    ]
+    graph = build_product_graph(chapter, {
+        "layers": [{"id": "ndvi-surface", "source": "s1", "type": "raster"}],
+        "sources": {},
+        "layout": {"components": []},
+    })
+    owed = [n for n in graph.nodes if n.key == "legend-required"]
+    assert owed and owed[0].status == "pending"
