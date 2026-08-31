@@ -164,6 +164,7 @@ export function composeLiveMapSpec(
     && composeMemo.pending === pending
     && composeMemo.removed === removed
     && composeMemo.hudFilters === hud.activeFilters
+    && composeMemo.hudSelectionFilters === hud.selectionFilters
     && composeMemo.hud3D === hud.is3D
     && composeMemo.result != null
   ) {
@@ -201,6 +202,7 @@ export function composeLiveMapSpec(
   composeMemo.pending = pending;
   composeMemo.removed = removed;
   composeMemo.hudFilters = hud.activeFilters;
+  composeMemo.hudSelectionFilters = hud.selectionFilters;
   composeMemo.hud3D = hud.is3D;
   return result;
 }
@@ -212,10 +214,11 @@ const composeMemo: {
   pending: PendingPresentation | undefined;
   removed: string[] | undefined;
   hudFilters: unknown;
+  hudSelectionFilters: unknown;
   hud3D: unknown;
   result: MapSpec | null;
 } = {
   committed: undefined, hudLayers: undefined, hudProcess: undefined,
   pending: undefined, removed: undefined, hudFilters: undefined,
-  hud3D: undefined, result: null,
+  hudSelectionFilters: undefined, hud3D: undefined, result: null,
 };
