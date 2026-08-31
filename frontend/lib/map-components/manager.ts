@@ -59,6 +59,8 @@ export interface ComponentManagerActions {
   expand: boolean;
   resetPosition: boolean;
   bringToFront: boolean;
+  /** 面板族可停靠（dock 归属是工作区状态 —— Goal C5）。 */
+  dock: boolean;
 }
 
 /** 该实例可用动作（纯派生：由类型/当前态决定）。 */
@@ -71,6 +73,7 @@ export function availableActions(resolved: ResolvedMapComponent): ComponentManag
     expand: resolved.enabled && hasBody && resolved.collapsed,
     resetPosition: resolved.floating,
     bringToFront: resolved.floating,
+    dock: DOCKABLE_PANEL_TYPES.has(resolved.type),
   };
 }
 

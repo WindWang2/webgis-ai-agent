@@ -9,7 +9,9 @@ import {
   Maximize,
   ArrowUpToLine,
   LayoutDashboard,
+  PanelRight,
 } from 'lucide-react';
+import { useHudStore } from '@/lib/store/useHudStore';
 import { EmptyState } from '@/components/shared/empty-state';
 import { IconButton } from '@/components/shared/icon-button';
 import { StatusBadge } from '@/components/shared/status-badge';
@@ -56,6 +58,9 @@ export function ComponentsTab({ sessionId }: { sessionId?: string | null }) {
   const resolved = useMapComponents();
   const manageable = useMemo(() => manageableComponents(resolved), [resolved]);
   const maxZ = useMemo(() => maxFloatingZIndex(resolved), [resolved]);
+
+  const dockPanel = useHudStore((s) => s.dockPanel);
+  const dockPlacements = useHudStore((s) => s.dockPlacements);
 
   const run = useCallback(
     (componentId: string, patch: Parameters<typeof commitComponentPatch>[1]) => {
@@ -125,6 +130,19 @@ export function ComponentsTab({ sessionId }: { sessionId?: string | null }) {
               {c.collapsed && c.enabled && <StatusBadge status="unknown" label="已折叠" />}
 
               <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                {actions.dock && (
+                  <IconButton
+                    size="sm"
+                    label={
+                      dockPlacements[c.id] === 'right'
+                        ? `取消停靠 ${typeLabel(c.type)}`
+                        : `停靠到右侧 ${typeLabel(c.type)}`
+                    }
+                    icon={PanelRight}
+                    active={dockPlacements[c.id] !== undefined}
+                    onClick={() => dockPanel(c.id, dockPlacements[c.id] === 'right' ? 'float' : 'right')}
+                  />
+                )}
                 {actions.collapse && (
                   <IconButton
                     size="sm"

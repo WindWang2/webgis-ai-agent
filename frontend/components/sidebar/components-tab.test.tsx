@@ -28,9 +28,11 @@ vi.mock('@/lib/mapspec/session-cursor', () => ({
 }));
 
 import { ComponentsTab } from './components-tab';
-import type { MapSpec } from '@/lib/mapspec-compiler/types';
+import type { MapSpec, MapSpecComponent } from '@/lib/mapspec-compiler/types';
 
-function specWith(components: MapSpec['layout']['components']): MapSpec {
+type ComponentsList = MapSpecComponent[];
+
+function specWith(components: ComponentsList): MapSpec {
   return {
     version: '1.0',
     sources: {},
@@ -53,7 +55,7 @@ describe('ComponentsTab', () => {
   it('renders empty state when the spec has no manageable components', () => {
     cursorState.spec = specWith([
       { id: 'grid', type: 'graticule', enabled: true },
-    ] as MapSpec['layout']['components']);
+    ]);
     render(<ComponentsTab sessionId="s1" />);
     expect(screen.getByText('暂无地图组件')).toBeTruthy();
   });
@@ -63,7 +65,7 @@ describe('ComponentsTab', () => {
       { id: 'title', type: 'title', enabled: true, options: { text: '成都小学分布' } },
       { id: 'legend-main', type: 'continuous_colorbar', enabled: true, options: { layerId: 'poi-heat' } },
       { id: 'chart-panel', type: 'chart_panel', enabled: false, options: { chartRef: 'ref:chart-1' } },
-    ] as MapSpec['layout']['components']);
+    ]);
     render(<ComponentsTab sessionId="s1" />);
     expect(screen.getByText('标题')).toBeTruthy();
     expect(screen.getByText('连续色条')).toBeTruthy();
@@ -75,7 +77,7 @@ describe('ComponentsTab', () => {
   it('hide action commits an enabled:false patch on the same component truth', async () => {
     cursorState.spec = specWith([
       { id: 'chart-panel', type: 'chart_panel', enabled: true, options: { chartRef: 'ref:chart-1' } },
-    ] as MapSpec['layout']['components']);
+    ]);
     render(<ComponentsTab sessionId="s1" />);
     await userEvent.click(screen.getByRole('button', { name: '隐藏 图表面板' }));
     expect(mutationMocks.commitComponentPatch).toHaveBeenCalledWith(
@@ -87,7 +89,7 @@ describe('ComponentsTab', () => {
   it('show action commits an enabled:true patch', async () => {
     cursorState.spec = specWith([
       { id: 'chart-panel', type: 'chart_panel', enabled: false, options: {} },
-    ] as MapSpec['layout']['components']);
+    ]);
     render(<ComponentsTab sessionId="s1" />);
     await userEvent.click(screen.getByRole('button', { name: '显示 图表面板' }));
     expect(mutationMocks.commitComponentPatch).toHaveBeenCalledWith(
@@ -99,7 +101,7 @@ describe('ComponentsTab', () => {
   it('collapse action preserves the anchored placement', async () => {
     cursorState.spec = specWith([
       { id: 'chart-panel', type: 'chart_panel', enabled: true, options: {} },
-    ] as MapSpec['layout']['components']);
+    ]);
     render(<ComponentsTab sessionId="s1" />);
     await userEvent.click(screen.getByRole('button', { name: '折叠 图表面板' }));
     expect(mutationMocks.commitComponentPatch).toHaveBeenCalledWith(
@@ -115,7 +117,7 @@ describe('ComponentsTab', () => {
         placement: { mode: 'floating', x: 20, y: 40, width: 220, height: 160 },
         options: { layerId: 'district' },
       },
-    ] as MapSpec['layout']['components']);
+    ]);
     render(<ComponentsTab sessionId="s1" />);
     await userEvent.click(screen.getByRole('button', { name: '重置位置 分级图例' }));
     expect(mutationMocks.commitComponentPatch).toHaveBeenCalledWith(

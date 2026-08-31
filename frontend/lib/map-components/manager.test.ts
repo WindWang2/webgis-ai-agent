@@ -61,7 +61,7 @@ describe('manager vocabularies', () => {
 describe('availableActions', () => {
   it('enabled chart panel can hide/collapse but not reset position while anchored', () => {
     const actions = availableActions(resolveMapComponent(component()));
-    expect(actions).toMatchObject({ show: false, hide: true, collapse: true, expand: false, resetPosition: false });
+    expect(actions).toMatchObject({ show: false, hide: true, collapse: true, expand: false, resetPosition: false, dock: true });
   });
 
   it('floating panel gains reset/bring-to-front', () => {
@@ -75,13 +75,14 @@ describe('availableActions', () => {
 
   it('disabled instance can only be shown', () => {
     const actions = availableActions(resolveMapComponent(component({ enabled: false })));
-    expect(actions).toMatchObject({ show: true, hide: false, collapse: false, expand: false });
+    expect(actions).toMatchObject({ show: true, hide: false, collapse: false, expand: false, dock: true });
   });
 
-  it('non-panel chrome (title) has no collapse semantics', () => {
+  it('non-panel chrome (title) has no collapse/dock semantics', () => {
     const actions = availableActions(resolveMapComponent(component({ id: 'title', type: 'title' })));
     expect(actions.collapse).toBe(false);
     expect(actions.expand).toBe(false);
+    expect(actions.dock).toBe(false);
   });
 });
 
