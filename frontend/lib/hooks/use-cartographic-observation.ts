@@ -15,6 +15,7 @@ import { devOnly } from '@/lib/utils/logger';
 import type { Layer } from '@/lib/types/layer';
 import type { MapSpec } from '@/lib/mapspec-compiler/types';
 import type { MapActionPayload } from '@/lib/types';
+import { recordLayerEvidence, clearLayerEvidence } from '@/lib/layers/render-evidence';
 
 // Cap on remembered applied repair action_ids (bounded memory; older ids are
 // stale generations that the generation gate already drops, so eviction is safe).
@@ -109,6 +110,8 @@ export function useCartographicObservation({
     totalRepairsRef.current = 0
     repairBudgetExhaustedWarnedRef.current = false
     runtimeErrorRingRef.current.drain()
+    // Workspace V2：per-layer 渲染证据随会话清空（证据属于该会话的 runtime）。
+    clearLayerEvidence()
   }, [sessionId])
 
   const issueCartographicObservation = useCallback(({
@@ -164,6 +167,15 @@ export function useCartographicObservation({
         reconcileError: runtimeRef.current?.getLastError() ?? '',
         applied: runtimeRef.current?.getAppliedSpec() ?? null,
       })
+      // Workspace V2（Goal C2）：把最新观察的 per-layer 判定投影进有界
+      // stash —— Layer Manager 的状态词表派生输入（只读投影，非第二真相；
+      // 与后端 finalizer 消费同一份观察）。best-effort：stash 失败绝不
+      // 影响观察上报。
+      try {
+        recordLayerEvidence(observation, getMapSpecSessionCursor().revision)
+      } catch {
+        /* bounded stash — non-essential by contract */
+      }
       // #692：去重键不 stringify 整个 observation——raster_image 是多 MB
       // data URL（docstring 自称 bounded metadata only 被该字段违反），
       // 每次 reconcile 在主线程序列化 MB 级 base64 仅为算键。用稳定字段

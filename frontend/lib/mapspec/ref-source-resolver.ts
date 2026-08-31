@@ -55,6 +55,17 @@ export function resetRefSourceCache(): void {
   warned.clear();
 }
 
+/** Ref fetch state probe (Layer Manager V2 status derivation): the bounded
+ *  client mirror of the backend artifact liveness vocabulary — `unresolved`
+ *  (never fetched / evicted from tracking), `resolved`, or `failed`
+ *  (definitive fetch failure ≈ expired/evicted ref). Read-only. */
+export function getRefSourceState(refId: string): 'unresolved' | 'resolved' | 'failed' {
+  const value = cache.get(refId);
+  if (value === FAILED) return 'failed';
+  if (value !== undefined) return 'resolved';
+  return 'unresolved';
+}
+
 /** ref-only geojson 源：有数据 ref，但没有任何 runtime 可直接应用的载荷。 */
 export function isRefOnlySource(source: MapSpecSource | undefined | null): boolean {
   if (!source || typeof source !== 'object') return false;

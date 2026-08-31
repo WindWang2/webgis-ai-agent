@@ -10,15 +10,14 @@ import {
   UserRound,
   X,
   ShieldCheck,
-  Layers,
 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
+import type { SettingsTab } from '@/lib/store/hud-types';
 import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
 import { LlmConfig } from './llm-config';
 import { SkillsHub } from './skills-hub';
 import { RagConfig } from './rag-config';
 import { MapConfig } from './map-config';
-import { LayerManagement } from './layer-management';
 import { SystemSettings } from './system-settings';
 import { AccountSection } from './account-section';
 
@@ -27,7 +26,7 @@ import { AccountSection } from './account-section';
 /* ------------------------------------------------------------------ */
 
 interface NavItem {
-  key: 'llm' | 'skills' | 'rag' | 'map' | 'layers' | 'system' | 'account';
+  key: SettingsTab;
   label: string;
   icon: React.ElementType;
   count?: number;
@@ -38,8 +37,9 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'skills', label: 'Skills', icon: Hash, count: 0 },
   { key: 'rag', label: '知识库', icon: Brain },
   { key: 'map', label: '地图配置', icon: Crosshair },
-  // U-1（#883）：图层管理面板此前完整实现却无导航入口（不可达死代码）。
-  { key: 'layers', label: '图层', icon: Layers },
+  // Workspace V2（Goal C2 折叠）：图层管理收敛到工作区 Layers 标签页
+  // （状态词表 + 样式 + 溯源 + 重排的单一入口）；设置面板不再保留第二
+  // 份图层列表 —— 同一真相两个 UI 是漂移源。
   { key: 'system', label: '系统', icon: Settings },
   { key: 'account', label: '账户', icon: UserRound },
 ];
@@ -58,8 +58,6 @@ function TabContent({ tab }: { tab: string }) {
       return <RagConfig />;
     case 'map':
       return <MapConfig />;
-    case 'layers':
-      return <LayerManagement />;
     case 'system':
       return <SystemSettings />;
     case 'account':
@@ -114,6 +112,11 @@ export function SettingsPanel() {
     },
     [settingsTab, setSettingsTab]
   );
+
+  // 旧持久化 settingsTab（已折叠的 'layers'）→ 回落到首个有效页。
+  const activeTab: SettingsTab = NAV_ITEMS.some((i) => i.key === settingsTab)
+    ? settingsTab
+    : 'llm';
 
   if (!settingsOpen) return null;
 
@@ -175,7 +178,7 @@ export function SettingsPanel() {
           >
             {navWithCounts.map((item) => {
               const Icon = item.icon;
-              const isActive = settingsTab === item.key;
+              const isActive = activeTab === item.key;
               return (
                 /* 选中项的 label/icon 是 accent 作文字，暗色下 2.96–3.40:1 ——
                    改用主题校正后的 --agent-accent；底色同源，
@@ -281,10 +284,10 @@ export function SettingsPanel() {
           <div
             role="tabpanel"
             id="settings-tabpanel"
-            aria-labelledby={`settings-tab-${settingsTab}`}
+            aria-labelledby={`settings-tab-${activeTab}`}
             className="flex-1 overflow-y-auto px-6 py-5"
           >
-            <TabContent tab={settingsTab} />
+            <TabContent tab={activeTab} />
           </div>
         </div>
       </div>
