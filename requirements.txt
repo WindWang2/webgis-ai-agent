@@ -42,11 +42,12 @@ aiohttp>=3.10.0
 
 # Science
 scipy>=1.12.0
-# numpy: esda 2.6+ 与 libpysal 4.11+ 已适配 numpy 2.x ABI，但 libpysal 的传递
-# 依赖 numba 其 numpy ABI 兼容窗口只到 2.4 —— 装到 numpy 2.5.x 时 libpysal 导入
-# 直接 ImportError，LISA 全族功能静默降级 (#1010)。上限对齐 numba 窗口，待
-# numba 支持 2.5 后放宽回 <3.0.0。
-numpy>=1.26.0,<2.5
+# numpy: esda 2.6+ 与 libpysal 4.11+ 已适配 numpy 2.x ABI。历史问题 (#1010)：
+# 旧版 numba 的 numpy ABI 兼容窗口只到 2.4 —— 装 numpy 2.5.x 时 libpysal 导入
+# 直接 ImportError，LISA 全族功能静默降级。numba 0.67 (2026-08 发布) 已支持
+# numpy 2.5，CI 全管线以 numpy 2.5.2 + libpysal 4.15.0 验证通过，上限由 <2.5
+# 放宽至 <2.6。待 numpy 2.6 生态兼容确认后再放宽回 <3.0.0。
+numpy>=1.26.0,<2.6
 scikit-learn>=1.4.0
 Pillow>=10.0.0
 # numexpr: app/lib/geo_analysis/raster_math.py 的栅格计算器（raster_calculator）依赖。
