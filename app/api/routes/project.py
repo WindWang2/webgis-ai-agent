@@ -3,12 +3,15 @@ Project Workspace, Persistent Workflow, Spatial Data Quality & Lineage API Endpo
 """
 import asyncio
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db, SessionLocal
 from app.core.auth import actor_ids, get_current_user, get_current_user_optional
+from app.models.project import WorkflowRun
+from app.services.map_product_service import MapProductService
 from app.services.project_service import ProjectService
 from app.services.workflow_engine import WorkflowEngine
 from app.services.lineage_service import LineageService
@@ -25,6 +28,7 @@ from app.schemas.project_schema import (
     RunComparisonResponse,
     WorkflowRevisionResponse, WorkflowRevisionSummary,
     RunReplayRequest, RunResumeRequest,
+    WorkflowRerunRequest, MapProductVersionCreate, MapProductVersionResponse,
 )
 from app.schemas.pagination import Page, clamp_pagination
 
@@ -485,6 +489,167 @@ async def resume_run(
             org_id=org_id,
             expected_project_id=project_id,
             allow_rerun=req.allow_rerun,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404 if "not found" in str(e) else 409, detail=str(e))
+
+
+@router.post("/{project_id}/runs/{run_id}/rerun", response_model=WorkflowRunResponse)
+async def rerun_from_step(
+    project_id: str,
+    run_id: str,
+    req: WorkflowRerunRequest,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Incremental re-run (ADR-0092 A5): re-execute ``from_step`` + descendants.
+
+    Upstream completed steps keep their results (fingerprint-checked); the
+    invalidated tail re-resolves capability → algorithm → tool through the
+    registries. Omitting ``from_step`` performs a full re-run with fresh
+    resolution.
+    """
+    user_id, org_id = actor_ids(user)
+    project = await _get_project_with_auth_offloaded(
+        project_id=project_id, user_id=user_id, org_id=org_id
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    tool_registry = get_tool_registry()
+    try:
+        if req.from_step:
+            return await _run_workflow_engine(
+                WorkflowEngine.rerun_from_step,
+                prior_run_id=run_id,
+                tool_registry=tool_registry,
+                from_step=req.from_step,
+                input_bindings=req.input_bindings,
+                user_id=user_id,
+                org_id=org_id,
+                expected_project_id=project_id,
+            )
+        prior = await _run_workflow_engine(
+            WorkflowEngine.replay_run,
+            prior_run_id=run_id,
+            tool_registry=tool_registry,
+            mode="latest",
+            user_id=user_id,
+            org_id=org_id,
+            expected_project_id=project_id,
+        )
+        return prior
+    except ValueError as e:
+        raise HTTPException(status_code=404 if "not found" in str(e) else 409, detail=str(e))
+
+
+@router.post("/{project_id}/runs/{run_id}/promote-artifacts")
+async def promote_run_artifacts_endpoint(
+    project_id: str,
+    run_id: str,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Confirm/refresh the durable promotion state of a run's artifacts.
+
+    NOTE (ADR-0092 A3): content materialization normally happens automatically
+    when the run completes inside a live session (the engine path carries the
+    session context). This REST path has NO session context, so artifacts not
+    yet materialized are reported as ``no_session_context`` — the session
+    payload may still be alive, only this caller cannot probe it. Sync DB/file
+    IO is offloaded to a worker thread (same convention as _run_workflow_engine).
+    """
+    user_id, org_id = actor_ids(user)
+
+    def _work() -> Dict[str, Any]:
+        with SessionLocal() as db:
+            project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+            if not project:
+                return {"__http_error__": (404, "Project not found")}
+            run = db.execute(
+                select(WorkflowRun).where(WorkflowRun.id == run_id)
+            ).scalar_one_or_none()
+            if run is None or (run.project_id and run.project_id != project_id):
+                return {"__http_error__": (404, "Run not found in project")}
+            from app.services.project_artifact_promotion import promote_run_artifacts
+
+            import asyncio as _asyncio
+
+            report = _asyncio.run(
+                promote_run_artifacts(db, run, session_id=None, project_id=project_id)
+            )
+            return {"report": report}
+
+    result = await asyncio.to_thread(_work)
+    if "__http_error__" in result:
+        code, detail = result["__http_error__"]
+        raise HTTPException(status_code=code, detail=detail)
+    report: List[Dict[str, Any]] = result["report"]
+    materialized = sum(1 for r in report if r.get("status") == "promoted")
+    return {
+        "status": "ok",
+        "run_id": run_id,
+        "materialized": materialized,
+        "artifacts": report,
+        "note": (
+            "no_session_context = 此调用无会话上下文，无法探测会话载荷；"
+            "内容物化发生在 run 完成时的会话内自动提升路径"
+        ),
+    }
+
+
+@router.get("/{project_id}/map-products", response_model=List[MapProductVersionResponse])
+def list_map_products(
+    project_id: str,
+    db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+):
+    """Map Product version ledger (ADR-0092 A6) — oldest → newest."""
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return MapProductService.list_versions(db, project_id)
+
+
+@router.get("/{project_id}/map-products/{version_no}", response_model=MapProductVersionResponse)
+def get_map_product_version(
+    project_id: str,
+    version_no: int,
+    db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+):
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    row = MapProductService.get_version(db, project_id, version_no)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Map product version not found")
+    return row
+
+
+@router.post("/{project_id}/map-products", response_model=MapProductVersionResponse, status_code=201)
+def record_map_product_version(
+    project_id: str,
+    req: MapProductVersionCreate,
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Record one Map Product version (diff vs previous computed when omitted)."""
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    try:
+        return MapProductService.record_version(
+            db,
+            project_id,
+            workflow_run_id=req.workflow_run_id,
+            mapspec_fingerprint=req.mapspec_fingerprint,
+            mapspec_revision=req.mapspec_revision,
+            recipe_id=req.recipe_id,
+            artifact_ids=req.artifact_ids,
+            input_dataset_fingerprints=req.input_dataset_fingerprints,
+            product_fingerprint=req.product_fingerprint,
+            diff_summary=req.diff_summary,
         )
     except ValueError as e:
         raise HTTPException(status_code=404 if "not found" in str(e) else 409, detail=str(e))

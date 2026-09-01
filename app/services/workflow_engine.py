@@ -101,7 +101,8 @@ class WorkflowEngine:
                 graph[dep].append(step.step_id)
                 in_degree[step.step_id] += 1
 
-        queue = deque([step_id for step_id, deg in in_degree.items() if deg == 0])
+        queue = deque(sorted(step_id for step_id, deg in in_degree.items() if deg == 0))
+
         topo_order = []
 
         while queue:
@@ -116,6 +117,66 @@ class WorkflowEngine:
             raise ValueError("Cycle detected in Workflow DAG specification")
 
         return topo_order
+
+    # ── capability re-resolution (ADR-0092 A5) ────────────────────────────
+
+    @staticmethod
+    def resolve_step_tool(
+        step_spec: WorkflowStepSpec, tool_registry
+    ) -> Tuple[str, Optional[str], Optional[str], Dict[str, Any]]:
+        """Resolve the tool a step executes, honoring capability semantics.
+
+        A capability-bearing step is re-resolved through AlgorithmResolver
+        (CapabilityRegistry → AlgorithmRegistry → ToolRegistry) at execution
+        time — the recorded ``tool_name`` is evidence, not a hard binding. When
+        re-resolution cannot produce a registered tool (registry view unknown,
+        capability retired), the recorded tool id is used and the fallback is
+        disclosed in the returned evidence so reruns stay explainable.
+
+        Returns (tool_name, capability, algorithm, resolution_evidence).
+        """
+        capability = step_spec.capability
+        if not capability:
+            return step_spec.tool_name, None, step_spec.algorithm_preference, {}
+        try:
+            from app.lib.gis.algorithm_resolver import get_algorithm_resolver
+
+            available = None
+            try:
+                available = set(tool_registry.list_tools())
+            except Exception:  # noqa: BLE001 — registry view unknown → resolver default
+                available = None
+            resolution = get_algorithm_resolver().resolve(
+                capability, available_tools=available
+            )
+            evidence: Dict[str, Any] = {
+                "resolver_status": resolution.status,
+                "resolver_reason": resolution.reason,
+                "recorded_tool": step_spec.tool_name,
+            }
+            if resolution.status == "resolved" and resolution.tool:
+                if step_spec.algorithm_preference and resolution.algorithm != step_spec.algorithm_preference:
+                    evidence["algorithm_changed_from"] = step_spec.algorithm_preference
+                return (
+                    resolution.tool,
+                    capability,
+                    resolution.algorithm,
+                    evidence,
+                )
+            # Honest fallback: recorded tool id may be stale; disclose it.
+            evidence["used_recorded_tool"] = True
+            return step_spec.tool_name, capability, step_spec.algorithm_preference, evidence
+        except Exception as e:  # noqa: BLE001 — resolver failure must not kill rerun
+            logger.warning(
+                "[WorkflowEngine] capability re-resolution failed for '%s' on step "
+                "'%s': %s — using recorded tool", capability, step_spec.step_id, e,
+            )
+            return (
+                step_spec.tool_name,
+                capability,
+                step_spec.algorithm_preference,
+                {"resolver_error": str(e)[:200], "used_recorded_tool": True},
+            )
 
     # ── authorization & revision helpers ───────────────────────────────────
 
@@ -269,6 +330,7 @@ class WorkflowEngine:
         seed_completed: Optional[List[str]] = None,
         seed_trace: Optional[List[Dict[str, Any]]] = None,
         seed_artifact_records: Optional[List[Dict[str, Any]]] = None,
+        rerun_disclosures: Optional[Dict[str, Any]] = None,
     ) -> WorkflowRun:
         """Run ``execution_order`` steps, snapshotting everything immutable.
 
@@ -331,6 +393,8 @@ class WorkflowEngine:
                 tool_version=entry.get("tool_version"),
                 status=entry.get("status", "success"),
                 args=entry.get("args"),
+                capability=entry.get("capability"),
+                algorithm=entry.get("algorithm"),
             )
         for rec in (seed_artifact_records or []):
             manifest_builder.add_artifact(**rec)
@@ -354,7 +418,11 @@ class WorkflowEngine:
         try:
             for step_id in execution_order:
                 step_spec = step_map[step_id]
-                tool_name = step_spec.tool_name
+                # ADR-0092 A5: capability-bearing steps re-resolve through the
+                # registries at execution time (never a blind tool-id replay).
+                tool_name, step_capability, step_algorithm, resolution_evidence = (
+                    WorkflowEngine.resolve_step_tool(step_spec, tool_registry)
+                )
                 tool_version = tool_registry.tool_version(tool_name)
                 step_start = datetime.now(timezone.utc)
 
@@ -391,6 +459,11 @@ class WorkflowEngine:
                     "args": tool_args,
                     "result_summary": str(tool_result)[:200],
                 }
+                if step_capability:
+                    trace_entry["capability"] = step_capability
+                    trace_entry["algorithm"] = step_algorithm
+                if resolution_evidence:
+                    trace_entry["resolution_evidence"] = resolution_evidence
                 execution_trace.append(trace_entry)
                 manifest_builder.add_step(
                     step_id=step_id,
@@ -398,11 +471,21 @@ class WorkflowEngine:
                     tool_version=tool_version,
                     status="success",
                     args=tool_args,
+                    capability=step_capability,
+                    algorithm=step_algorithm,
                 )
 
                 # Truthful artifact metadata from the real result (INV-ART1/2).
                 meta = extract_artifact_metadata(tool_name, tool_result)
                 artifact_id = f"art_{uuid.uuid4().hex[:16]}"
+                artifact_meta: Dict[str, Any] = {
+                    "step_id": step_id,
+                    "tool_name": tool_name,
+                }
+                if step_capability:
+                    artifact_meta["capability"] = step_capability
+                if step_algorithm:
+                    artifact_meta["algorithm"] = step_algorithm
                 artifact = Artifact(
                     id=artifact_id,
                     project_id=workflow.project_id,
@@ -412,7 +495,7 @@ class WorkflowEngine:
                     crs=meta["crs"],
                     storage_ref=meta["storage_ref"],
                     content_fingerprint=meta["content_fingerprint"],
-                    metadata_json={"step_id": step_id, "tool_name": tool_name},
+                    metadata_json=artifact_meta,
                     created_at=datetime.now(timezone.utc),
                 )
                 db.add(artifact)
@@ -432,6 +515,8 @@ class WorkflowEngine:
                     artifact_id=artifact_id,
                     producing_tool=tool_name,
                     tool_version=tool_version,
+                    producing_capability=step_capability,
+                    producing_algorithm=step_algorithm,
                     parent_artifact_ids=parent_artifact_ids,
                     workflow_run_id=run_id,
                     parameters=tool_args,
@@ -473,6 +558,8 @@ class WorkflowEngine:
                 "total_steps": len(execution_order) + len(seed_completed),
                 "total_duration_seconds": sum(t.get("duration_seconds", 0) for t in execution_trace),
             }
+            if rerun_disclosures:
+                run.cost_perf_summary["rerun_disclosures"] = rerun_disclosures
 
         except Exception as e:
             logger.error("[WorkflowEngine] step failed: %s", e, exc_info=True)
@@ -493,6 +580,15 @@ class WorkflowEngine:
         # completed (full or partial). Both fresh and resumed runs get a manifest
         # spanning every step that has a record (seed + executed).
         try:
+            # ADR-0092 A2: attach bounded product-outcome evidence when this run
+            # executed inside a session/map-product context. Every field is
+            # best-effort — an absent session or map state simply omits the
+            # block and keeps the legacy manifest shape.
+            await WorkflowEngine._attach_outcome_context(
+                manifest_builder,
+                run=run,
+                session_id=session_id,
+            )
             manifest = manifest_builder.build()
             run.run_manifest = manifest
             run.run_fingerprint = compute_run_fingerprint(manifest)
@@ -501,6 +597,30 @@ class WorkflowEngine:
                 db.refresh(run)
             except Exception:
                 run = db.merge(run)
+            # ADR-0092 A3: best-effort artifact promotion, AFTER the manifest
+            # commit — promotion's internal commits must never precede the
+            # run manifest landing (otherwise a crash mid-promotion leaves a
+            # completed run with run_manifest=NULL). Session-expired or store
+            # failures are disclosed per-artifact and never fail the run.
+            if session_id and workflow.project_id:
+                try:
+                    from app.services.project_artifact_promotion import (
+                        promote_run_artifacts,
+                    )
+
+                    promotion_report = await promote_run_artifacts(
+                        db, run, session_id=session_id, project_id=workflow.project_id
+                    )
+                    run.cost_perf_summary = {
+                        **(run.cost_perf_summary or {}),
+                        "artifact_promotion": promotion_report[:32],
+                    }
+                    db.commit()
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        "[WorkflowEngine] artifact promotion failed for run %s: %s",
+                        run_id, e,
+                    )
         finally:
             # INV-AUTH1 / §21: the ToolExecutionContext must be cleared on EVERY
             # path (success, step failure, manifest build failure) so caller
@@ -798,6 +918,246 @@ class WorkflowEngine:
             seed_completed=completed,
             seed_trace=seed_trace,
             seed_artifact_records=seed_artifacts,
+        )
+
+    @staticmethod
+    async def _attach_outcome_context(
+        manifest_builder: RunManifestBuilder,
+        *,
+        run: WorkflowRun,
+        session_id: Optional[str],
+    ) -> None:
+        """Best-effort product-outcome evidence for the run manifest (A2).
+
+        Attaches: the runtime manifest fingerprint (registry generation this run
+        executed under), and — when the run ran inside a live session — the
+        MapSpec fingerprint, product facet status, QA and finalization
+        summaries. Any failure simply omits the block: outcome evidence is
+        additive, never load-bearing for the fingerprint.
+        """
+        try:
+            from app.lib.gis.runtime_manifest import get_runtime_manifest
+
+            manifest_builder.set_outcome_context(
+                runtime_manifest_fingerprint=get_runtime_manifest().fingerprint
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        if not session_id:
+            return
+        mapspec: Optional[Dict[str, Any]] = None
+        try:
+            from app.lib.cartography.quality_loop import cartographic_fingerprint
+            from app.services.mapspec.store import mapspec_store_instance
+
+            mapspec = await mapspec_store_instance.get_mapspec(session_id)
+            if isinstance(mapspec, dict) and mapspec:
+                manifest_builder.set_outcome_context(
+                    mapspec_fingerprint=cartographic_fingerprint(mapspec)
+                )
+        except Exception:  # noqa: BLE001
+            mapspec = None
+        try:
+            from app.services.session_plan import load_session_plan
+            from app.services.gis_harness.product_graph import build_facet_completion
+
+            plan = await load_session_plan(session_id)
+            chapter = (plan.gis_chapter if plan else None) or {}
+            if chapter:
+                facets = build_facet_completion(chapter, mapspec)
+                manifest_builder.set_outcome_context(
+                    product_facets=[
+                        {
+                            "facet_id": f.facet_id,
+                            "kind": f.kind,
+                            "status": f.status,
+                            "required": f.required,
+                        }
+                        for f in facets.facets
+                    ][:32]
+                )
+                product = chapter.get("map_product")
+                if isinstance(product, dict):
+                    manifest_builder.set_outcome_context(
+                        finalization_summary={
+                            "status": product.get("status"),
+                            "projection": str(product.get("projection") or "")[:200],
+                        },
+                        qa_summary={
+                            "issue_summary": (product.get("qa_summary") or {}) if isinstance(product.get("qa_summary"), dict) else {},
+                            "fallback_count": len(chapter.get("fallbacks") or []),
+                        },
+                    )
+        except Exception:  # noqa: BLE001
+            pass
+
+    @staticmethod
+    def _stale_seed_steps(
+        steps: List[WorkflowStepSpec],
+        seed_completed: List[str],
+        tool_registry,
+    ) -> List[str]:
+        """Seed steps whose capability re-resolves to a different algorithm.
+
+        A reused step whose algorithm would resolve differently today is
+        stale compute (ADR-0092 A5): the caller invalidates it instead of
+        silently mixing outputs from two algorithm generations. Steps without
+        a capability (pure tool steps) are never stale by this definition —
+        tool-version drift is captured by compare_runs.
+        """
+        step_map = {s.step_id: s for s in steps}
+        stale: List[str] = []
+        for sid in seed_completed:
+            spec = step_map.get(sid)
+            if spec is None or not spec.capability:
+                continue
+            _tool, _cap, algo, evidence = WorkflowEngine.resolve_step_tool(
+                spec, tool_registry
+            )
+            if evidence.get("resolver_status") != "resolved":
+                continue  # registry unavailable → keep honest reuse
+            recorded = spec.algorithm_preference or ""
+            if recorded and algo and algo != recorded:
+                stale.append(sid)
+        return stale
+
+    @staticmethod
+    async def rerun_from_step(
+        db: Session,
+        prior_run_id: str,
+        tool_registry,
+        from_step: str,
+        input_bindings: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+        org_id: Optional[int] = None,
+        expected_project_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> WorkflowRun:
+        """Incremental re-run (ADR-0092 A5): re-execute ``from_step`` and its
+        descendants; keep every other already-completed step's results.
+
+        Unlike resume_run (which reuses prior steps only for *recovery*), this
+        is the deliberate invalidate-descendants entry: a changed dataset,
+        parameter or AOI invalidates exactly the affected subgraph. Reused
+        steps still require fingerprint equality (same guard as resume), and
+        re-executed steps re-resolve capability → algorithm → tool through the
+        registries — old tool calls are never replayed blindly.
+        """
+        prior = WorkflowEngine._load_and_authorize_run(
+            db, prior_run_id, expected_project_id, user_id, org_id
+        )
+        workflow = db.execute(select(Workflow).where(Workflow.id == prior.workflow_id)).scalar_one_or_none()
+        if not workflow:
+            raise ValueError(f"Workflow {prior.workflow_id} not found")
+        WorkflowEngine._authorize(workflow, expected_project_id, user_id, org_id)
+
+        graph_spec = prior.graph_snapshot or {"steps": []}
+        steps = [WorkflowStepSpec(**s) for s in graph_spec.get("steps", [])]
+        step_map = {s.step_id: s for s in steps}
+        if from_step not in step_map:
+            raise ValueError(f"from_step '{from_step}' is not part of workflow graph")
+        topo_order = WorkflowEngine.validate_dag(steps)
+
+        # Descendants via reachability over dependency edges (bounded).
+        descendants: set = {from_step}
+        changed = True
+        while changed:
+            changed = False
+            for step in steps:
+                if step.step_id in descendants:
+                    continue
+                if any(dep in descendants for dep in step.dependencies):
+                    descendants.add(step.step_id)
+                    changed = True
+
+        completed = set(prior.completed_steps or [])
+        invalidated = descendants & completed
+        seed_completed = [s for s in topo_order if s in (completed - descendants)]
+
+        # Current dataset fingerprints (drift detection like resume).
+        current_fps = WorkflowEngine._capture_dataset_fingerprints(db, workflow.project_id)
+        drift_disclosure: Dict[str, Any] = {}
+        if (prior.input_dataset_fingerprints or {}) != current_fps:
+            drifted = sorted(
+                k for k in set(prior.input_dataset_fingerprints or {}) | set(current_fps)
+                if (prior.input_dataset_fingerprints or {}).get(k) != current_fps.get(k)
+            )
+            logger.info(
+                "[WorkflowEngine] rerun_from_step of %s: input drift detected "
+                "(%s) — invalidation set honored, fingerprints refreshed",
+                prior.id, drifted,
+            )
+            drift_disclosure["input_drift"] = drifted
+
+        # Stale-compute guard (ADR-0092 A5): a seed step whose capability now
+        # re-resolves to a DIFFERENT algorithm must not silently ride on its
+        # old output — invalidate it (and its descendants) too, with a record.
+        stale_steps = WorkflowEngine._stale_seed_steps(
+            steps, seed_completed, tool_registry
+        )
+        if stale_steps:
+            logger.info(
+                "[WorkflowEngine] rerun_from_step of %s: capability re-resolution "
+                "changed for seed steps %s — invalidating them too",
+                prior.id, stale_steps,
+            )
+            seed_set = set(seed_completed) - set(stale_steps)
+            expanded = set(stale_steps)
+            changed = True
+            while changed:
+                changed = False
+                for step in steps:
+                    if step.step_id in expanded or step.step_id in (set(seed_completed) - seed_set):
+                        continue
+                    if any(dep in expanded for dep in step.dependencies):
+                        expanded.add(step.step_id)
+                        changed = True
+            seed_completed = [s for s in seed_completed if s in seed_set]
+            invalidated = sorted(set(invalidated) | expanded)
+            drift_disclosure["stale_algorithm_steps"] = stale_steps
+
+        seed_outputs, seed_trace, seed_artifacts, _ = await WorkflowEngine._reconstruct_prior(
+            db, prior, seed_completed, session_id
+        )
+        if seed_outputs is None and seed_completed:
+            raise ValueError(
+                f"cannot rerun from '{from_step}': reusable upstream steps' outputs "
+                f"are no longer reconstructable (session expired); run a full rerun"
+            )
+
+        execution_order = [s for s in topo_order if s not in set(seed_completed)]
+        revision = WorkflowEngine._revision_or_snapshot(
+            db, workflow, graph_spec, prior, user_id
+        )
+        project_datasets = list(db.execute(
+            select(ProjectDataset).where(
+                ProjectDataset.project_id == workflow.project_id,
+                ProjectDataset.detached_at.is_(None),
+            )
+        ).scalars().all())
+
+        merged_bindings: Dict[str, Any] = dict(prior.input_bindings or {})
+        if input_bindings:
+            merged_bindings.update(input_bindings)
+
+        return await WorkflowEngine._execute(
+            db=db,
+            workflow=workflow,
+            revision=revision,
+            tool_registry=tool_registry,
+            steps=steps,
+            execution_order=execution_order,
+            input_bindings=merged_bindings,
+            dataset_fingerprints=current_fps,
+            project_datasets=project_datasets,
+            user_id=user_id,
+            org_id=org_id,
+            session_id=session_id,
+            seed_outputs=seed_outputs,
+            seed_completed=seed_completed,
+            seed_trace=seed_trace,
+            seed_artifact_records=seed_artifacts,
+            rerun_disclosures=drift_disclosure or None,
         )
 
     # ── run loading / reconstruction helpers ────────────────────────────────

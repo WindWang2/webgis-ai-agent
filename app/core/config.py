@@ -153,6 +153,8 @@ class Settings(BaseSettings):
     # 数据目录
     DATA_DIR: str = "./data"
     TMP_DIR: str = "./tmp"
+    # 项目产物内容寻址存储根（ADR-0092 A3 artifact promotion）。空 = DATA_DIR/project_artifacts。
+    PROJECT_ARTIFACT_CONTENT_DIR: str = ""
 
     # CORS
     # 审计 P2：默认改为 localhost:3000（Next.js dev server），而非 ["*"]。

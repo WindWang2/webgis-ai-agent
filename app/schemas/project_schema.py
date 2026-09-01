@@ -65,6 +65,21 @@ class WorkflowStepSpec(BaseModel):
     execution_policy: Optional[Dict[str, Any]] = Field(default_factory=dict)
     output_names: List[str] = Field(default_factory=list)
     retry_policy: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    # ── Reproducible GIS runtime (ADR-0092) ─────────────────────────────
+    # Business semantics beyond the tool id: a promoted workflow keeps the
+    # capability (and its resolved algorithm at save time) as the primary
+    # meaning of a step; ``tool_name`` stays as execution evidence. On rerun a
+    # capability-bearing step is re-resolved through AlgorithmResolver so a
+    # renamed/retired tool does not silently replay a dead id.
+    capability: Optional[str] = Field(None, description="GIS capability id this step serves")
+    algorithm_preference: Optional[str] = Field(
+        None, description="Algorithm resolved at promotion time (evidence, not a hard binding)"
+    )
+    input_roles: Dict[str, str] = Field(
+        default_factory=dict,
+        description="arg key → semantic role, e.g. {'geojson': 'primary_dataset'}",
+    )
+    description: str = ""
 
 
 class WorkflowGraphSpec(BaseModel):
@@ -156,6 +171,54 @@ class RunResumeRequest(BaseModel):
     allow_rerun: bool = Field(False, description="Fall back to a full rerun if resume preconditions fail")
 
 
+class WorkflowRerunRequest(BaseModel):
+    """Incremental re-run (ADR-0092 A5): re-execute a step and its descendants.
+
+    Upstream steps that already completed keep their results (fingerprint-checked);
+    ``from_step`` and everything downstream of it is invalidated and re-executed
+    through CapabilityRegistry → AlgorithmResolver → ToolRegistry.
+    """
+
+    from_step: Optional[str] = Field(None, description="Re-execute this step and all its descendants")
+    input_bindings: Dict[str, Any] = Field(
+        default_factory=dict, description="Override dataset/AOI/parameters for the re-executed tail"
+    )
+
+
+class MapProductVersionCreate(BaseModel):
+    """Record one Map Product version for a project (ADR-0092 A6)."""
+
+    workflow_run_id: Optional[str] = None
+    mapspec_fingerprint: Optional[str] = None
+    mapspec_revision: Optional[int] = None
+    recipe_id: Optional[str] = None
+    artifact_ids: List[str] = Field(default_factory=list)
+    input_dataset_fingerprints: Dict[str, str] = Field(default_factory=dict)
+    product_fingerprint: Optional[str] = Field(None, description="Precomputed product fingerprint; computed when omitted")
+    diff_summary: Optional[Dict[str, Any]] = Field(
+        None, description="Precomputed diff vs previous version; computed when omitted"
+    )
+
+
+class MapProductVersionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    project_id: str
+    version_no: int
+    product_fingerprint: Optional[str] = None
+    input_dataset_fingerprints: Dict[str, Any] = Field(default_factory=dict)
+    compute_plan: List[Dict[str, Any]] = Field(default_factory=list)
+    workflow_id: Optional[str] = None
+    workflow_run_id: Optional[str] = None
+    mapspec_fingerprint: Optional[str] = None
+    mapspec_revision: Optional[int] = None
+    recipe_id: Optional[str] = None
+    artifact_ids: List[str] = Field(default_factory=list)
+    diff_summary: Dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+
 class ArtifactResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -181,6 +244,9 @@ class ArtifactLineageResponse(BaseModel):
     parent_artifact_id: Optional[str] = None
     producing_tool: str
     tool_version: Optional[str] = "1.0"
+    producing_capability: Optional[str] = None
+    producing_algorithm: Optional[str] = None
+    mapspec_fingerprint: Optional[str] = None
     workflow_run_id: Optional[str] = None
     parameters: Dict[str, Any] = Field(default_factory=dict)
     source_dataset_id: Optional[str] = None

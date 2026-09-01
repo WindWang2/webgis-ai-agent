@@ -252,6 +252,14 @@ class ArtifactLineage(Base):
     parent_artifact_id = Column(String(255), ForeignKey("artifacts.id", ondelete="CASCADE"), nullable=True)
     producing_tool = Column(String(100), nullable=True)
     tool_version = Column(String(50), nullable=True)
+    # ADR-0092 A4: capability/algorithm semantics on the lineage edge. The
+    # chain Dataset → Capability → Algorithm → Tool → Artifact becomes
+    # expressible without a second graph; NULL = legacy/pre-promotion edge.
+    producing_capability = Column(String(100), nullable=True)
+    producing_algorithm = Column(String(100), nullable=True)
+    # MapSpec generation the producing run finalized against (desired-state
+    # provenance); NULL for artifacts produced outside a map product context.
+    mapspec_fingerprint = Column(String(80), nullable=True)
     workflow_run_id = Column(String(255), ForeignKey("workflow_runs.id", ondelete="SET NULL"), nullable=True)
     parameters = Column(JSON, nullable=True)
     # Input-dataset provenance (INV-LIN4 / §26). A root artifact (no parent
@@ -334,6 +342,52 @@ class CartoProjectFact(Base):
     project = relationship("Project", backref="carto_facts", lazy="selectin")
 
 
+class MapProductVersion(Base):
+    """Map Product 版本账本（ADR-0092 A6）。
+
+    每次项目地图成品的实质落地（workflow run 产物集 + MapSpec 世代）记为一
+    个不可变版本行，支持"数周后还能解释这张图是怎么来的"。diff_summary 由
+    MapProductService 相对上一版本计算：data / algorithm / parameter /
+    style / output 五个维度各自是否变化 —— style-only 变化不得触发分析重算，
+    数据变化必须失效下游，这个判定就是版本对比的机器读面。
+    """
+
+    __tablename__ = "map_products"
+
+    id = Column(String(255), primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id = Column(String(255), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    version_no = Column(Integer, nullable=False, default=1)
+    # Product identity: canonical hash over (input fingerprints, workflow run
+    # manifest compute plan, mapspec fingerprint, artifact content set).
+    product_fingerprint = Column(String(64), nullable=True)
+    input_dataset_fingerprints = Column(JSON, nullable=True)
+    # Bounded compute-plan snapshot (step_id/capability/algorithm/tool + args)
+    # so the version diff can compare algorithms/parameters against the
+    # previous version without re-joining the run.
+    compute_plan = Column(JSON, nullable=True)
+    # Content fingerprints of the version's artifacts (bounded) — the
+    # output_changed dimension of the version diff.
+    output_fingerprints = Column(JSON, nullable=True)
+    workflow_id = Column(String(255), nullable=True)
+    workflow_run_id = Column(String(255), nullable=True)
+    mapspec_fingerprint = Column(String(80), nullable=True)
+    mapspec_revision = Column(Integer, nullable=True)
+    recipe_id = Column(String(100), nullable=True)
+    artifact_ids = Column(JSON, nullable=True)
+    # {data_changed, algorithm_changed, parameter_changed, style_changed,
+    #  output_changed, vs_version_no} — machine-readable diff vs previous row.
+    diff_summary = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        UniqueConstraint("project_id", "version_no", name="uq_map_product_version"),
+        Index("idx_map_product_project", "project_id"),
+        Index("idx_map_product_project_version", "project_id", "version_no"),
+        Index("idx_map_product_run", "workflow_run_id"),
+        CheckConstraint("version_no >= 1", name="ck_map_product_version_pos"),
+    )
+
+
 __all__ = [
     "Project",
     "ProjectDataset",
@@ -343,4 +397,5 @@ __all__ = [
     "Artifact",
     "ArtifactLineage",
     "CartoProjectFact",
+    "MapProductVersion",
 ]
