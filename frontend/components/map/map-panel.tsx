@@ -219,9 +219,30 @@ export function MapPanel({
   const [mapKey, setMapKey] = useState(0)
 
   const handleMapError = useCallback((e: any) => {
-    const msg = e?.error?.message || e?.message || (typeof e === 'string' ? e : 'WebGL context creation failed')
-    devOnly.warn('[MapPanel] WebGL/Map initialization error:', e)
-    setWebglError(msg)
+    const errorObj = e?.error || e
+    const msg = errorObj?.message || (typeof errorObj === 'string' ? errorObj : '')
+    const status = errorObj?.status
+    const type = errorObj?.type || e?.type
+
+    // Non-fatal network / tile / sprite / glyph errors should NOT trigger full WebGL fallback UI
+    const isTileOrNetwork =
+      status === 404 ||
+      status === 500 ||
+      status === 403 ||
+      /ajaxerror|fetch|tile|sprite|glyph|pbf|failed to load/i.test(msg)
+
+    // Only fatal WebGL context failure should trigger the full WebGL fallback modal
+    const isFatalWebGLError =
+      /webgl|context lost|contextloss|context creation|failed to initialize webgl/i.test(msg) ||
+      type === 'webglcontextcreationerror' ||
+      type === 'webglcontextlost'
+
+    if (isFatalWebGLError && !isTileOrNetwork) {
+      devOnly.warn('[MapPanel] Fatal WebGL context error:', e)
+      setWebglError(msg || 'WebGL context creation failed')
+    } else {
+      devOnly.warn('[MapPanel] Non-fatal map resource/render error:', e)
+    }
   }, [])
 
   const handleRetryWebGL = useCallback(() => {
@@ -229,6 +250,7 @@ export function MapPanel({
     setMapReady(false)
     setMapKey((k) => k + 1)
   }, [])
+
   const mapRef = useRef<MapRef>(null)
   const processLayers = useHudStore((s: HudState) => s.processLayers)
   const cartographyTitle = useHudStore((s: HudState) => s.cartographyTitle)
