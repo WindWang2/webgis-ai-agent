@@ -46,7 +46,7 @@ scipy>=1.12.0
 # 依赖 numba 其 numpy ABI 兼容窗口只到 2.4 —— 装到 numpy 2.5.x 时 libpysal 导入
 # 直接 ImportError，LISA 全族功能静默降级 (#1010)。上限对齐 numba 窗口，待
 # numba 支持 2.5 后放宽回 <3.0.0。
-numpy>=1.26.0,<2.5
+numpy>=1.26.0,<2.6
 scikit-learn>=1.4.0
 Pillow>=10.0.0
 # numexpr: app/lib/geo_analysis/raster_math.py 的栅格计算器（raster_calculator）依赖。
