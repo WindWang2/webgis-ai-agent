@@ -95,12 +95,17 @@ def attach_turn_context(
     token: str,
     cartography_block: str = "",
     session_plan_block: str = "",
+    env_block: str = "",
+    surface_block: str = "",
 ) -> str:
     """Attach the capability to the turn for the extension's local session view.
 
     ``cartography_block``（可选）是 harness 制图 verdict 的有界投影。
     ``session_plan_block``（可选）是 SessionPlan 的有界投影，不是 verdict。
-    两者都插在用户消息与 turn marker 之间；marker 必须保持最后——扩展的
+    ``env_block``/``surface_block``（可选，Pi 兼容补齐）：环境感知有界块
+    （用户选中/聚焦/位置/视口——legacy 引擎经 build_map_state_summary 注入，
+    Pi 路径此前整块丢失）与工具面偏好行（compile_tool_surface 纯派生）。
+    全部插在用户消息与 turn marker 之间；marker 必须保持最后——扩展的
     ``currentTurnToken`` 取最新 entry 的最后一个匹配。
     """
     parts = [message]
@@ -108,6 +113,10 @@ def attach_turn_context(
         parts.append(cartography_block)
     if session_plan_block:
         parts.append(session_plan_block)
+    if env_block:
+        parts.append(env_block)
+    if surface_block:
+        parts.append(surface_block)
     parts.append(f"[{TURN_CONTEXT_MARKER}:{token}]")
     parts.append("(Internal routing context; do not quote or modify this marker.)")
     return "\n\n".join(parts)
@@ -118,9 +127,17 @@ async def bind_turn_prompt(
     token: str,
     session_id: str,
     cartography_block: str = "",
+    env_block: str = "",
 ) -> str:
-    """Open the SessionPlan slot and attach verdict + bounded plan + turn marker."""
+    """Open the SessionPlan slot and attach verdict + bounded plan + turn marker.
+
+    Pi 兼容（V4 工具面）：从同一份 SessionPlan 信封纯派生一条有界的工具面
+    偏好行（阶段 + preferred 前门）注入 turn prompt —— Pi 无 per-round schema
+    选择（frozen native surface + webgis_execute 代理），偏好只能走 prompt
+    引导；这是 compile_tool_surface 的投影消费，不是第二计划真相。
+    """
     plan_block = ""
+    surface_block = ""
     if session_id:
         try:
             from app.services.session_plan import (
@@ -140,9 +157,36 @@ async def bind_turn_prompt(
             except Exception:  # noqa: BLE001 — spec 拉取失败按缺席投影
                 spec = None
             plan_block = format_session_plan_projection(plan, spec)
+            surface_block = _surface_block_for(plan)
         except Exception:
             logger.exception("[PiTurn] SessionPlan projection failed session=%s", session_id)
-    return attach_turn_context(message, token, cartography_block, plan_block)
+    return attach_turn_context(
+        message, token, cartography_block, plan_block,
+        env_block=env_block, surface_block=surface_block,
+    )
+
+
+def _surface_block_for(plan: Any) -> str:
+    """SessionPlan 信封 → 有界工具面提示行（纯派生；失败 → 空串不注入）。"""
+    try:
+        from app.services.gis_harness.tool_surface import compile_tool_surface
+
+        chapter = getattr(plan, "gis_chapter", None)
+        product_status = None
+        if isinstance(chapter, dict):
+            mp = chapter.get("map_product")
+            if isinstance(mp, dict):
+                product_status = mp.get("status")
+        surface = compile_tool_surface(chapter=chapter, product_status=product_status)
+        if not surface.preferred_tools:
+            return ""
+        names = "、".join(sorted(surface.preferred_tools))
+        return (
+            f"[工具面提示] 当前产品阶段={surface.phase}；本轮优先：{names}"
+            "（原生工具直调，其余经 webgis_execute 执行；提示是偏好不是限制）。"
+        )
+    except Exception:  # noqa: BLE001 — 提示是增值上下文，绝不阻断 turn
+        return ""
 
 
 class PiTurnRegistry:

@@ -74,9 +74,15 @@ function defineWebgisExecuteTool(): ToolDefinition<TSchema> {
 				};
 			}
 
+			// Pi compat: derive from the server tool budget (TOOL_TIMEOUT_S
+			// propagates via spawn env; registry default 300s) + 5s envelope —
+			// explicit WEBGIS_TOOL_TIMEOUT_MS still wins.
+			const serverBudgetS = Number(process.env.TOOL_TIMEOUT_S) > 0
+				? Number(process.env.TOOL_TIMEOUT_S)
+				: 300;
 			const timeoutMs = Number(process.env.WEBGIS_TOOL_TIMEOUT_MS) > 0
 				? Number(process.env.WEBGIS_TOOL_TIMEOUT_MS)
-				: 60000;
+				: Math.round((serverBudgetS + 5) * 1000);
 			const controller = new AbortController();
 			const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 

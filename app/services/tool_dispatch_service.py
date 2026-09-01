@@ -175,6 +175,10 @@ class ToolDispatchResult:
     error_msg: Optional[str]    # 仅 status=="error" 时有值
     map_actions: list = field(default_factory=list)  # V3: [{action_id, command, requested}]
     ref_descriptor: Optional[dict] = None  # V3 Performance: pre-computed alongside geojson_ref
+    # ADR-0052 parity（Pi 兼容）：本次执行期间创建的 durable job id ——
+    # legacy 由 tool_pipeline 从 JobOrigin.created_job_ids 回读；Pi dispatch
+    # 直调后由桥接层写入。SSE step_result 携带（前端 job 关联）。
+    background_job_ids: list = field(default_factory=list)
 
 
 # 重复调用拦截的 LLM 提示（独立常量，避免 ok/error 分支误用）
@@ -291,10 +295,15 @@ class ToolDispatchService:
         #    会在下方释放占位 —— 失败的同参调用可被 LLM 重试，且绝不会收到
         #    “已成功执行”的重复提示。
         tool_key = (tool_name, normalize_tool_args(tool_args_raw))
+        # Pi 兼容审查（NIT 修复）：共享 service 实例跨会话（Pi 桥接层 +
+        # legacy 引擎同款）—— completed 标记必须带会话维，否则另一会话的
+        # 同参调用会把「并发在飞」误报成「已成功执行」（executed_tools 由
+        # 调用方按会话/回合自持，不受影响）。
+        completed_key = (session_id or "", tool_key)
         async with self._dedup_lock:
             if tool_key in executed_tools:
                 # P2-9：区分「并发在飞」与「已完成」——在飞时绝不谎报成功。
-                if tool_key in self._completed_keys:
+                if completed_key in self._completed_keys:
                     note = _REPEAT_LLMPAYLOAD.format(tool=tool_name)
                 else:
                     note = _REPEAT_INFLIGHT_LLMPAYLOAD.format(tool=tool_name)
@@ -402,13 +411,13 @@ class ToolDispatchService:
             except OperationCancelled:
                 # ADR-0052：取消上抛给工具管道处理（它会记成「已取消」而非工具故障）。
                 # 取消的调用不占用 dedup 槽位（本轮后续重试不被“已成功”谎言拦截）。
-                self._release_key(executed_tools, tool_key)
+                self._release_key(executed_tools, tool_key, session_id or "")
                 raise
             except asyncio.CancelledError:
                 # #946/#1060：asyncio.CancelledError 是 BaseException，不会命中上面
                 # 两个 handler —— 硬取消（task.cancel()）若不在此外释放占位键，
                 # 本 turn 内同参重试会一直收到「并发在飞」谎言（实际无结果）。
-                self._release_key(executed_tools, tool_key)
+                self._release_key(executed_tools, tool_key, session_id or "")
                 raise
             except Exception as e:
                 from app.tools._utils import std_error_response
@@ -419,7 +428,7 @@ class ToolDispatchService:
                     error_type=type(e).__name__,
                     correction_hint=f"Execution error: {error_msg}",
                 )
-                self._release_key(executed_tools, tool_key)
+                self._release_key(executed_tools, tool_key, session_id or "")
 
         # 3. (#529/#589) 归一化：~160 个工具点以失败形状正常返回（不抛异常、
         # 不返回 std_error_response 形状），此前只有 std_error_response 被
@@ -450,7 +459,7 @@ class ToolDispatchService:
         # 3. registry 返回 std_error_response dict 的统一错误路径
         if is_error_dict(result):
             # 失败调用不占用 dedup 槽位：同参重试放行，且不会谎报“已成功执行”。
-            self._release_key(executed_tools, tool_key)
+            self._release_key(executed_tools, tool_key, session_id or "")
             error_msg = sanitize_error_msg(result.get("message", ""))
             result["message"] = error_msg
             if "correction_hint" in result and result["correction_hint"]:
@@ -514,7 +523,7 @@ class ToolDispatchService:
             # completed, and made the failure unrecoverable by the LLM. Detect
             # it and fail the dispatch truthfully instead.
             if is_unavailable_ref(geojson_ref) or is_unavailable_ref(heatmap_ref):
-                self._release_key(executed_tools, tool_key)
+                self._release_key(executed_tools, tool_key, session_id or "")
                 return ToolDispatchResult(
                     status="error",
                     llm_payload=(
@@ -579,7 +588,7 @@ class ToolDispatchService:
             # event-log entry / dedup-completed marking latch onto a phantom
             # ref with no payload anywhere.
             if is_unavailable_ref(result_ref):
-                self._release_key(executed_tools, tool_key)
+                self._release_key(executed_tools, tool_key, session_id or "")
                 return ToolDispatchResult(
                     status="error",
                     llm_payload=(
@@ -720,7 +729,7 @@ class ToolDispatchService:
                 pass  # non-fatal: frontend falls back to full download
 
         # P2-9：成功完成 → 标记 completed（后续同参重复走 post-success 文案）。
-        self._mark_completed(tool_key)
+        self._mark_completed(tool_key, session_id or "")
 
         return ToolDispatchResult(
             status="ok",
@@ -1155,18 +1164,18 @@ class ToolDispatchService:
 
     # ── P2-9: dedup 槽位生命周期 ─────────────────────────────────────
 
-    def _release_key(self, executed_tools: set, tool_key: tuple[str, str]) -> None:
+    def _release_key(self, executed_tools: set, tool_key: tuple[str, str], session_id: str = "") -> None:
         """失败/取消的调用释放 dedup 槽位（同参可重试），并清掉 completed 标记。
 
         ``executed_tools.discard`` / ``_completed_keys.discard`` 均为 set 原子
         操作（GIL），无需持锁；check-and-add 的原子性由 _dedup_lock 保证。
         """
         executed_tools.discard(tool_key)
-        self._completed_keys.discard(tool_key)
+        self._completed_keys.discard((session_id or "", tool_key))
 
-    def _mark_completed(self, tool_key: tuple[str, str]) -> None:
-        """成功完成的调用标记为 completed（post-success dedup 语义）。"""
-        self._completed_keys.add(tool_key)
+    def _mark_completed(self, tool_key: tuple[str, str], session_id: str = "") -> None:
+        """成功完成的调用标记为 completed（post-success dedup 语义；会话维键）。"""
+        self._completed_keys.add((session_id or "", tool_key))
         if len(self._completed_keys) > self._COMPLETED_KEYS_MAX:
             self._completed_keys.clear()
 

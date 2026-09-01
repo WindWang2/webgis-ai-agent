@@ -265,6 +265,7 @@ async def generate_chart_tool(
     session_id: str = "", attach_to_map: bool = False,
     position: str = "", variant: str = "default",
     layer_id: str = "",
+    data_ref: str = "",
 ) -> dict:
     """generate_chart 的注册面（async 包装）。
 
@@ -276,6 +277,12 @@ async def generate_chart_tool(
     Runtime V4（§15）：GeoJSON 字段映射路径自动携带 selectionField（类目
     字段）；layer_id 显式指定或从 data ref ↔ MapSpec source 自动解析 ——
     chart→map 类别过滤从此无需 agent 手工补字段。
+
+    Pi 兼容修复：`data` 在 dispatch 阶段被透明解引用成 GeoJSON 本体，
+    工具永远看不到 ref: 字符串 —— `_resolve_layer_for_data_ref(session_id,
+    data)` 在 Pi 与 legacy 两条路径上都是死代码。`data_ref` 由 registry
+    的 capture_ref_of 机制注入原始游标（LLM 无需也不应传它），自动解析
+    由此真正可达；显式 layer_id 恒优先。
     """
     out = generate_chart(
         chart_type=chart_type, title=title, data=data,
@@ -288,7 +295,9 @@ async def generate_chart_tool(
     if attach_to_map and session_id:
         bound_layer_id = layer_id.strip()
         if not bound_layer_id:
-            bound_layer_id = await _resolve_layer_for_data_ref(session_id, data)
+            # 优先 registry 注入的原始 ref 游标；data 本体已在 dispatch
+            # 解引用（不再可能是 ref: 字符串，传它只是防御）。
+            bound_layer_id = await _resolve_layer_for_data_ref(session_id, data_ref or data)
         out.update(await _attach_chart_panel(
             session_id, out["chart"], position, variant, layer_id=bound_layer_id,
         ))
@@ -424,6 +433,12 @@ def register_chart_tools(registry: ToolRegistry):
         tier=2, domains=["report"], name="generate_chart",
         description="【核心可视化工具】生成统计图表。所有数值统计结果【必须】通过此工具展示。data 可传 JSON 数组，也可直接传 GeoJSON/ref 引用并配合 x_field/y_field 取字段。attach_to_map=true（+session_id）可同时把图表作为地图浮动面板显示（组件突变，不重查数据）。**严禁**在回复中使用任何图片 Markdown (如 `![已通过图表工具渲染](...)`) 作为占位符或展示标记，这会导致前端由于无法找到图片而报错。只需调用工具并直接进行文字总结即可。",
         func=generate_chart_tool,
+        field_extras={
+            # data_ref：registry 在 data 被 ref: 透明解引用时注入原始游标
+            # （capture_ref_of）；同时声明 ref_cursor —— LLM 显式传 ref 时
+            # 也不被解引用。内部注入通道，不在 param_descriptions 里宣传。
+            "data_ref": {"ref_cursor": True, "capture_ref_of": "data"},
+        },
         param_descriptions={
             "chart_type": '图表类型: "bar"(柱状图), "line"(折线图), "pie"(饼图), "scatter"(散点图)（别名 type）',
             "title": "图表标题",

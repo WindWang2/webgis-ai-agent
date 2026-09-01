@@ -8,10 +8,7 @@ Tests:
 """
 from __future__ import annotations
 
-import os
-import uuid
 import pytest
-import numpy as np
 from affine import Affine
 
 from app.lib.geo_analysis.raster_grid import (
@@ -19,52 +16,29 @@ from app.lib.geo_analysis.raster_grid import (
     _transforms_equal,
     _as_affine,
     RasterGridProfile,
-    grids_align,
-    decide_alignment,
     RasterAlignmentError,
 )
 from app.services.gis_harness.tool_surface import (
     compile_tool_surface,
-    ToolSurface,
     PHASE_PLANNING,
-    PHASE_DATA,
     PHASE_ANALYSIS,
     PHASE_ASSEMBLY,
     PHASE_FINAL,
 )
 from app.services.gis_harness.components import (
     duplicate_component,
-    remove_component,
     rebind_component,
-    mutate_component,
     chart_panel_component,
     table_panel_component,
-    north_arrow_component,
-    scale_bar_component,
-    title_component,
     validate_table_binding,
-    validate_chart_payload,
-    validate_stats_payload,
-    validate_annotation_payload,
-    validate_inset_payload,
-    CartographyComponent,
     ComponentPlacement,
-    MULTI_INSTANCE_TYPES,
 )
 from app.services.artifact_registry import (
     is_raster_ref,
     raster_png_path,
-    raster_ref_exists,
-    probe_ref,
     register_artifact,
     sweep_statuses,
     collect_orphan_refs,
-    list_artifacts,
-    get_artifact,
-    A_VALID,
-    A_STALE,
-    A_EXPIRED,
-    A_SUPERSEDED,
 )
 
 # ════════════════════════════════════════════════════════════════════════════

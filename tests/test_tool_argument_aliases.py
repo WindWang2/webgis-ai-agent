@@ -1,5 +1,4 @@
-import pytest
-from app.tools.registry import _normalize_tool_arguments, ToolRegistry
+from app.tools.registry import _normalize_tool_arguments
 from pydantic import BaseModel, Field
 from typing import Optional, List, Any
 
@@ -39,10 +38,21 @@ class MockThematicModel(BaseModel):
 
 
 class MockProductModel(BaseModel):
-    map_title: str
+    """镜像真实 MapProductArgs（Pi 兼容修复：mock 必须跟真实签名走 ——
+    旧 mock 声明了不存在的 map_title/insight_summary，使别名测试与
+    normalizer 互相印证而双双偏离真实工具契约）。"""
+
+    query: str = ""
+    session_id: Optional[str] = None
+    layer_ids: List[str] = Field(default_factory=list)
     primary_ref: Optional[str] = None
     overlay_refs: List[str] = Field(default_factory=list)
-    insight_summary: Optional[str] = None
+    title: Optional[str] = None
+    template_id: Optional[str] = None
+    palette: str = "classic"
+    radius_px: Optional[int] = None
+    recipe_id: Optional[str] = None
+    task_hint: Optional[str] = None
 
 
 def test_heatmap_data_geojson_ref_normalization():
@@ -104,14 +114,29 @@ def test_thematic_map_aliases():
 
 
 def test_product_model_aliases():
+    """真实契约：声明的 title 原样保留（不折叠进不存在的 map_title）；
+    map_title 作为入向别名折叠到 title；summary 不再折进不存在的
+    insight_summary（保持原样，由未知参数门如实拒绝）。"""
     raw_args = {
         "title": "成都市小学热力图分析",
         "primary_layer": "ref:geojson-heatmap",
         "overlays": ["ref:geojson-boundary"],
-        "summary": "成都市小学主要集中在主城区",
     }
     normalized = _normalize_tool_arguments("webgis_map_product", raw_args, MockProductModel)
-    assert normalized["map_title"] == "成都市小学热力图分析"
+    assert normalized["title"] == "成都市小学热力图分析"
+    assert "map_title" not in normalized
     assert normalized["primary_ref"] == "ref:geojson-heatmap"
     assert normalized["overlay_refs"] == ["ref:geojson-boundary"]
-    assert normalized["insight_summary"] == "成都市小学主要集中在主城区"
+
+    # map_title（旧习惯/历史会话）→ 折叠到真实参数 title。
+    legacy = _normalize_tool_arguments(
+        "webgis_map_product", {"map_title": "旧标题"}, MockProductModel,
+    )
+    assert legacy["title"] == "旧标题"
+
+    # summary 别名不再被折叠成不存在的 insight_summary。
+    stale = _normalize_tool_arguments(
+        "webgis_map_product", {"summary": "x", "query": "q"}, MockProductModel,
+    )
+    assert stale.get("summary") == "x"
+    assert "insight_summary" not in stale

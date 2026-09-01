@@ -111,14 +111,18 @@ class ComponentUpdateArgs(BaseModel):
     new_component_id: Optional[str] = Field(
         None, max_length=128,
         description="action=duplicate 时的新组件 id（缺省自动 -copy 后缀）")
+    # Pi 兼容审查（BLOCKING）：rebind_* 携带的是 ref 游标/图层 id 本身 ——
+    # 若不加 ref_cursor 声明，registry 的透明解引用会把 "ref:chart-xxx"
+    # 整个替换成存储载荷，pydantic 校验随即将 dict 拒为 str（action=rebind
+    # 按文档用法即必然失败，Pi 与 legacy 两路同罪）。
     rebind_chart_ref: Optional[str] = Field(
-        None, max_length=200,
+        None, max_length=200, json_schema_extra={"ref_cursor": True},
         description="action=rebind：chart_panel 新 chartRef（ref:chart-*）")
     rebind_table_ref: Optional[str] = Field(
-        None, max_length=200,
+        None, max_length=200, json_schema_extra={"ref_cursor": True},
         description="action=rebind：table_panel 新 tableRef（表 artifact ref）")
     rebind_layer_id: Optional[str] = Field(
-        None, max_length=200,
+        None, max_length=200, json_schema_extra={"ref_cursor": True},
         description="action=rebind：新绑定图层 id（图例/色条/表格换数据面）")
     expected_revision: Optional[int] = Field(
         None, ge=0, description="乐观并发：webgis_component_catalog 读到的 "

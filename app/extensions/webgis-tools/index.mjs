@@ -33,7 +33,16 @@ const GIS_IDENTITY =
 const CODING_ASSISTANT_OPENING =
   "You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.";
 
-const DEFAULT_TOOL_TIMEOUT_MS = 60000;
+// Pi compat: the extension timeout must never undercut the server-side tool
+// budget (registry._TOOL_TIMEOUT_S, default 300s, env TOOL_TIMEOUT_S). The old
+// 60s default aborted heavy GIS tools (KDE/heatmaps, subagent loops) while the
+// server kept running — the model saw a timeout error AND the completed result
+// (SSE cache rendezvous) was silently dropped. Derive from TOOL_TIMEOUT_S
+// (propagated via spawn env) + 5s envelope; explicit WEBGIS_TOOL_TIMEOUT_MS wins.
+const SERVER_TOOL_BUDGET_S = Number(process.env.TOOL_TIMEOUT_S) > 0
+  ? Number(process.env.TOOL_TIMEOUT_S)
+  : 300;
+const DEFAULT_TOOL_TIMEOUT_MS = Math.round((SERVER_TOOL_BUDGET_S + 5) * 1000);
 
 export function loadNativeTools() {
   const path = process.env.WEBGIS_NATIVE_TOOLS_PATH;
