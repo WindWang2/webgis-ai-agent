@@ -26,8 +26,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from dataclasses import dataclass, field, asdict
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
@@ -268,6 +270,77 @@ def _descriptor_fields(descriptor: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if isinstance(crs, str) and crs:
         out["crs"] = crs[:64]
     return out
+
+
+# ── Raster Artifact V4（ADR-0091 §22-23）──────────────────────────────────
+# 磁盘态会话栅格（ref:raster/<id> → BASE_STORAGE_DIR/<sid>/raster/<id>.png）
+# 的一等生存期：注册 + 磁盘探测 + GC unlink。探测是 O(1) stat —— 与
+# session store 的 descriptor 探测同纪律（健康证据 ≠ registry 真相：探测
+# 结果只驱动 sweep 的派生状态刷新，不改写注册血缘）。
+
+_RASTER_REF_PREFIX = "ref:raster/"
+_RASTER_ID_RE = re.compile(r"^[A-Za-z0-9_-]+\Z")
+
+
+def is_raster_ref(ref: str) -> bool:
+    """会话磁盘栅格 ref（路径不透明 cursor；文件路径是实现细节）。"""
+    return isinstance(ref, str) and ref.startswith(_RASTER_REF_PREFIX)
+
+
+def raster_png_path(session_id: str, ref: str) -> Optional["Path"]:
+    """ref:raster/<id> → 会话 raster 目录下的 PNG 路径（非法 id → None）。
+
+    与 raster 路由同一 charset 白名单纪律（../ 与分隔符在边界即拒绝）。
+    BASE_STORAGE_DIR 从**定义模块**（mapspec.store）取值 —— adapter
+    （mapspec_store）在 import 时拷贝了一份，会错过 monkeypatch/配置变更。
+    """
+    raster_id = ref[len(_RASTER_REF_PREFIX):]
+    if not raster_id or not _RASTER_ID_RE.match(raster_id):
+        return None
+    if not _RASTER_ID_RE.match(session_id or ""):
+        return None
+    from app.services.mapspec import store as _mapspec_store_module
+
+    return _mapspec_store_module.BASE_STORAGE_DIR / session_id / "raster" / f"{raster_id}.png"
+
+
+def raster_ref_exists(session_id: str, ref: str) -> bool:
+    """磁盘栅格活性（O(1) stat；路径非法 → False）。"""
+    path = raster_png_path(session_id, ref)
+    if path is None:
+        return False
+    try:
+        return path.is_file()
+    except OSError:  # noqa: BLE001 — stat 失败按不存活（诚实保守）
+        return False
+
+
+async def probe_ref(
+    session_id: str,
+    ref: str,
+    *,
+    session_data_manager: Any = None,
+) -> Optional[Dict[str, Any]]:
+    """统一 ref 探测：session store descriptor（geojson/heatmap/chart…）或
+    磁盘栅格 stat（ref:raster/*）。返回 None = 不存活/不可判定。
+
+    raster 分支返回合成 descriptor（kind=raster_png）—— 消费方
+    （sweep/completion/repair）无需感知存储介质差异。
+    """
+    if is_raster_ref(ref):
+        # stat 是同步 O(1) —— 线程卸载避免事件循环阻塞（NFS 等慢盘纪律）。
+        import asyncio as _asyncio
+
+        exists = await _asyncio.to_thread(raster_ref_exists, session_id, ref)
+        return {"kind": "raster_png", "exists": exists} if exists else None
+    if session_data_manager is None:
+        from app.services.session_data import session_data_manager
+
+        session_data_manager = session_data_manager
+    try:
+        return await session_data_manager.get_ref_descriptor(session_id, ref)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _default_ttl() -> Optional[float]:
@@ -522,7 +595,11 @@ async def load_records_for_plan(
                 _add(src.get(key))
         for comp in (mapspec.get("layout") or {}).get("components") or []:
             if isinstance(comp, dict):
-                _add((comp.get("options") or {}).get("chartRef"))
+                opts = comp.get("options") or {}
+                _add(opts.get("chartRef"))
+                # V4 review 修复：table_panel 的 tableRef 是独立绑定面 ——
+                # 不入活集合会被 sweep 判 stale → GC 删掉仍在用的表数据。
+                _add(opts.get("tableRef"))
     return live
 
 
@@ -561,10 +638,9 @@ async def sweep_statuses(
         mapspec = await _load_mapspec_fresh(session_id)
 
     async def _probe(aid: str) -> Tuple[str, Optional[dict]]:
-        try:
-            return aid, await session_data_manager.get_ref_descriptor(session_id, aid)
-        except Exception:  # noqa: BLE001
-            return aid, None
+        # V4：统一探测面 —— 磁盘栅格（ref:raster/*）走 stat，其余走 store
+        # descriptor（sweep 对 raster 记录不再恒 None → 不再假 expired）。
+        return aid, await probe_ref(session_id, aid)
 
     probed = dict(
         await asyncio.gather(*(_probe(aid) for aid in records.keys()))
@@ -653,11 +729,15 @@ async def collect_orphan_refs(
         ]
         if not orphans:
             return []
-        async with session_lock_registry.lock(session_id, fail_on_degraded=False):
-            # 锁内复检：重载实时章节与 spec，重算活集合（真正的并发 rebind
-            # 保护 —— 此刻任何行/源/组件指向的 ref 都不可删）
+        async with session_lock_registry.lock(session_id, fail_on_degraded=True):
+            # 锁内复检：重载实时章节/spec 与**账本本身**（review M：外层加载
+            # 与获锁之间提交的注册会被 stale records 覆盖丢失），重算活集合
+            # （真正的并发 rebind 保护 —— 此刻任何行/源/组件指向的 ref 都不可删）。
+            # fail_on_degraded：这是破坏性路径（unlink/delete）—— 降级锁下
+            # 的跨 pod 并发不可证明，宁可本轮跳过。
             fresh_chapter = await _load_chapter_fresh(session_id)
             fresh_mapspec = await _load_mapspec_fresh(session_id)
+            records = await _load_records(session_id, session_data_manager)
             live_now = await load_records_for_plan(
                 session_id, fresh_chapter, fresh_mapspec
             )
@@ -665,7 +745,25 @@ async def collect_orphan_refs(
                 if aid in live_now:
                     continue
                 try:
-                    if await session_data_manager.delete_ref(session_id, aid):
+                    if is_raster_ref(aid):
+                        # V4：磁盘栅格孤儿 —— unlink PNG（同一活引用复检纪律）。
+                        import asyncio as _asyncio
+
+                        def _unlink(ref: str = aid) -> bool:
+                            path = raster_png_path(session_id, ref)
+                            if path is None or not path.is_file():
+                                return False
+                            try:
+                                path.unlink()
+                                return True
+                            except OSError:
+                                return False
+
+                        if await _asyncio.to_thread(_unlink):
+                            deleted.append(aid)
+                            records[aid].status = A_EXPIRED
+                            records[aid].updated_at = time.time()
+                    elif await session_data_manager.delete_ref(session_id, aid):
                         deleted.append(aid)
                         records[aid].status = A_EXPIRED
                         records[aid].updated_at = time.time()

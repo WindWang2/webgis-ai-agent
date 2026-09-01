@@ -83,6 +83,8 @@ export interface MakeMockMaplibreMapOptions {
   renderedFeatures?: unknown[] | (() => unknown[]);
   /** `project()` results — `{x, y}` pixel coords. Default `{x: 128, y: 128}`. */
   project?: (lngLat: [number, number]) => { x: number; y: number };
+  /** `unproject()` results — [lng, lat]. Default identity on (x, y). */
+  unproject?: (point: { x: number; y: number }) => [number, number];
   /** `getBounds()` corners as [west, south, east, north]. Default derives from
    *  center ± 0.1°, so the default viewport yields [116.3, 39.8, 116.5, 40.0]. */
   bounds?: [number, number, number, number];
@@ -163,6 +165,7 @@ export function makeMockMaplibreMap(options: MakeMockMaplibreMapOptions = {}) {
   const styleLoaded = options.styleLoaded ?? true;
   const renderedFeatures = options.renderedFeatures ?? [];
   const projectResolver = options.project ?? (() => ({ x: 128, y: 128 }));
+  const unprojectResolver = options.unproject ?? ((p: { x: number; y: number }) => [p.x, p.y] as [number, number]);
   let terrain: { source: string; exaggeration?: number } | null = null;
   let pixelRatio = 1;
   const images = new Set<string>();
@@ -321,6 +324,16 @@ export function makeMockMaplibreMap(options: MakeMockMaplibreMapOptions = {}) {
     }),
     // Standard MapLibre API: lng/lat → screen pixel {x, y}.
     project: vi.fn((lngLat: [number, number]) => projectResolver(lngLat)),
+    // Runtime V4 brush：screen pixel → {lng, lat}（与 project 互逆；默认
+    // 恒等映射 —— 测试按需覆写）。
+    unproject: vi.fn((point: { x: number; y: number }) => {
+      const r = unprojectResolver(point);
+      return { lng: r[0], lat: r[1] };
+    }),
+    // Runtime V4 brush：框选模式接管画布拖拽（disable/enable 对）。
+    // MapLibre 契约：dragPan/boxZoom 是 handler 对象（非函数）。
+    dragPan: { enable: vi.fn(), disable: vi.fn(), isEnabled: vi.fn(() => true) },
+    boxZoom: { enable: vi.fn(), disable: vi.fn(), isEnabled: vi.fn(() => true) },
     getCanvas: vi.fn(() => makeCanvasLike()),
     hasImage: vi.fn((id: string) => images.has(id)),
     removeImage: vi.fn((id: string) => {

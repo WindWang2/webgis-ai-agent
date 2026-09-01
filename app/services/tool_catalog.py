@@ -20,11 +20,19 @@ import logging
 import os
 import re
 import time
-from typing import Optional
+from typing import Optional, Protocol
 
 from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
+
+
+class ToolSurfaceLike(Protocol):
+    """Runtime V4 tool_surface.ToolSurface 的结构契约（避免循环 import）。"""
+
+    preferred_tools: frozenset
+    allowed_domains: frozenset
+    hidden_tools: frozenset
 
 
 # ─── 主题关键词库（双语，大小写不敏感） ────────────────────────────────────
@@ -171,6 +179,7 @@ class ToolCatalog:
         session_id: Optional[str] = None,
         declared_domains: Optional[set[str]] = None,
         turn_id: Optional[str] = None,
+        surface: Optional["ToolSurfaceLike"] = None,
     ) -> list[dict]:
         """根据用户消息 + 会话粘性 + 计划声明的 domain，返回本轮 schema 子集。
 
@@ -180,6 +189,10 @@ class ToolCatalog:
         turn_id：#684 按用户轮衰减的边界信号。同一用户轮内的多次 LLM 轮应传
         相同 turn_id，此时不重复衰减；跨用户轮传不同 turn_id 时衰减 1。未传
         时回退为按调用衰减（向后兼容）。
+
+        surface（Runtime V4 §28）：compile_tool_surface 的派生偏好 —— 阶段
+        激活域并入（并集语义）+ preferred 前门工具预算豁免。None → 行为与
+        既有完全一致（additive 集成）。
         """
         # #1062: detect_domains 每 select 只跑一次（此前 _activate_domains 与
         # _enforce_schema_budget 各跑一遍）。
@@ -189,6 +202,9 @@ class ToolCatalog:
         )
         if declared_domains:
             active_domains = active_domains | set(declared_domains)
+        if surface is not None and getattr(surface, "allowed_domains", None):
+            # 阶段域是**并入**不是替换 —— 关键词安全网语义保持。
+            active_domains = active_domains | set(surface.allowed_domains)
         names: set[str] = set()
         for name, meta in self.registry.all_metadata().items():
             tier = int(meta.get("tier", 1))
@@ -199,14 +215,20 @@ class ToolCatalog:
                 tool_domains = set(meta.get("domains", []))
                 if tool_domains & active_domains:
                     names.add(name)
+                # Runtime V4：阶段 preferred 前门无条件纳入 tier-2 面（预算
+                # 豁免由 _enforce_schema_budget 执行）。
+                elif surface is not None and name in getattr(surface, "preferred_tools", frozenset()):
+                    names.add(name)
                 continue
             # tier 3 永远不自动纳入；由 list_available_tools 显式查询
         if _local_osm_available():
             names.difference_update(_SUPPRESS_WHEN_LOCAL_OSM)
+        # surface preferred 若被本地抑制集命中则服从抑制（数据源事实优先）。
         schemas = self.registry.get_schemas_subset(names)
         schemas = self._enforce_schema_budget(
             schemas, user_message, declared_domains, active_domains,
             fresh_domains=fresh_domains,
+            surface=surface,
         )
         logger.debug(
             "[ToolCatalog] session=%s domains=%s selected=%d/%d",
@@ -221,12 +243,16 @@ class ToolCatalog:
         declared_domains: Optional[set[str]],
         active_domains: set[str],
         fresh_domains: Optional[set[str]] = None,
+        surface: Optional["ToolSurfaceLike"] = None,
     ) -> list[dict]:
         """audit4 #981: tier-2 增量字节硬预算。
 
         超预算时按域优先级（本轮关键词命中域 → 计划声明域 → 其余粘性域，
         域内按工具名排序保持确定性）截断 tier-2；tier-1 必发不截。LLM 的
         自救通道（list_available_tools，tier-1 恒可见）不受影响。
+
+        Runtime V4：surface.preferred_tools（阶段前门）与 tier-1 同列必发
+        —— assembly 阶段的 webgis_map_product 不再被同域字母序挤出预算。
         """
         if not schemas:
             return schemas
@@ -236,12 +262,16 @@ class ToolCatalog:
         priority_domains += [d for d in sorted(active_domains) if d not in priority_domains]
         domain_rank = {d: i for i, d in enumerate(priority_domains)}
         all_meta = self.registry.all_metadata()
+        preferred: frozenset = (
+            frozenset(getattr(surface, "preferred_tools", frozenset()) or ())
+            if surface is not None else frozenset()
+        )
 
         tier1: list[tuple[str, dict]] = []
         tier2: list[tuple[str, dict]] = []
         for s in schemas:
             name = s.get("function", {}).get("name", "")
-            if int(all_meta.get(name, {}).get("tier", 1)) == 1:
+            if int(all_meta.get(name, {}).get("tier", 1)) == 1 or name in preferred:
                 tier1.append((name, s))
             else:
                 tier2.append((name, s))

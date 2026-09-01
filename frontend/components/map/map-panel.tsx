@@ -72,12 +72,25 @@ import { devOnly } from "@/lib/utils/logger"
 import { buildTileTransformRequest } from "@/lib/map-kit/tile-auth"
 import {
   getSelection,
+  getSelectionEpoch,
   getSelectionFilterExpression,
+  getSelectionIdFilterExpression,
   publishSelection,
   subscribeSelection,
   getSelectionGeneration,
 } from "@/lib/selection/selection-store"
+import { publishViewportContext } from "@/lib/selection/viewport-context"
+import {
+  normalizeScreenRect,
+  isBrushRectViable,
+  projectBrushHits,
+} from "@/lib/selection/brush-select"
 import { commitExplicitView } from "@/lib/mapspec/user-mutation"
+import {
+  deriveFilterEvidence,
+  recordFilterEvidence,
+  type LayerFilterEvidence,
+} from "@/lib/layers/filter-evidence"
 import { useCartographicObservation } from "@/lib/hooks/use-cartographic-observation"
 import { useHoverTooltip } from "@/lib/hooks/use-hover-tooltip"
 import { useFeatureSelection } from "@/lib/hooks/use-feature-selection"
@@ -175,8 +188,14 @@ export function MapPanel({
   const selectionGeneration = useSyncExternalStore(subscribeSelection, getSelectionGeneration)
   const selectionFilters = useMemo(() => {
     const selection = getSelection()
-    if (!selection || selection.source !== 'chart') return EMPTY_SELECTION_FILTERS
-    const expression = getSelectionFilterExpression(selection.layer_id)
+    if (!selection) return EMPTY_SELECTION_FILTERS
+    // 两条投影通道（ADR-0091）：
+    // - chart 类别选择 → filter_field/类别表达式（既有 D3 路径）；
+    // - map 框选 / 表格点选的要素 id 选择 → id_field/ids 表达式（V4）。
+    // 二者互斥（id 投影在类别投影在场时让位）。
+    const expression = selection.source === 'chart'
+      ? getSelectionFilterExpression(selection.layer_id)
+      : getSelectionIdFilterExpression(selection.layer_id)
     if (!expression) return EMPTY_SELECTION_FILTERS
     const keys = new Set<string>([selection.layer_id])
     for (const row of useHudStore.getState().layers) {
@@ -187,6 +206,14 @@ export function MapPanel({
     return out
     // eslint-disable-next-line react-hooks/exhaustive-deps -- generation is the change signal
   }, [selectionGeneration])
+
+  // Runtime V4（§11）：矩形框选模式 —— 拖拽画矩形，queryRenderedFeatures
+  // 命中投影为有界选择载荷（ids ≤50 超限走 bbox 谓词 + 计数披露）。
+  // 矩形覆盖层走**命令式 ref 更新**（review：60Hz setState 会整组件重渲染
+  // 一整个 MapPanel —— 只有 transform 变化的矩形不需要 React 渲染）。
+  const [brushSelectActive, setBrushSelectActive] = useState(false)
+  const brushRectRef = useRef<HTMLDivElement | null>(null)
+  const brushStartRef = useRef<{ x: number; y: number } | null>(null)
 
   const [webglError, setWebglError] = useState<string | null>(null)
   const [mapKey, setMapKey] = useState(0)
@@ -587,6 +614,54 @@ export function MapPanel({
       .catch((e) => devOnly.error("[map] reconcile failed", e))
   }, [layers, processLayers, activeFilters, selectionFilters, is3D, liveGeneration, refSourcesGeneration, mapReady, currentMapStyle, runtimeRecoveryGeneration, syncInteractiveIds, raiseSelectionHighlight, sessionId, ownerToken, sessionTokenRef, issueCartographicObservation])
 
+  // Runtime V4（§14）：过滤命中证据 —— settle 后对「有过滤的内联层」做有界
+  // 单遍计数（≤20k 要素；MVT/超限层如实 unknown），latest-wins 记录进
+  // filter-evidence store（Layers 徽标消费）。删除已无过滤层的旧证据
+  // （review：不清 delta 会让「过滤后 0 要素」徽标在过滤取消后残留）。
+  // debounce 400ms：选择/图例过滤连续翻转时只结算最终态；结算回调核对
+  // 会话 id（迟到的旧会话结算不得写入新会话的证据面）。
+  const filterEvidenceSessionRef = useRef<string | null | undefined>(undefined)
+  useEffect(() => {
+    const settledSession = sessionId ?? null
+    filterEvidenceSessionRef.current = settledSession
+    const t = setTimeout(() => {
+      if (filterEvidenceSessionRef.current !== settledSession) return // 会话已切换
+      const spec = composeLiveMapSpec(
+        getCommittedMapSpec(),
+        { layers, processLayers, activeFilters, selectionFilters, is3D },
+        getPendingPresentation(),
+        getPendingRemoved(),
+      )
+      if (!spec || !Array.isArray(spec.layers)) return
+      const filtersByFamily = new globalThis.Map<string, unknown[][]>()
+      for (const sl of spec.layers) {
+        const family = String(sl.id ?? '').split('__')[0]
+        if (!family) continue
+        const filter = (sl as any).filter
+        if (Array.isArray(filter) && filter.length > 0) {
+          const list = filtersByFamily.get(family) ?? []
+          list.push(filter)
+          filtersByFamily.set(family, list)
+        }
+      }
+      const entries: Array<{ layerId: string; evidence: LayerFilterEvidence }> = []
+      for (const layer of layers) {
+        const sublayerFilters = filtersByFamily.get(layer.id)
+        if (!sublayerFilters) continue
+        const src: any = layer.source
+        const features = src && typeof src === 'object' && Array.isArray(src.features)
+          ? src.features
+          : undefined
+        entries.push({
+          layerId: layer.id,
+          evidence: deriveFilterEvidence({ layerId: layer.id, sublayerFilters, features }),
+        })
+      }
+      recordFilterEvidence(entries, { pruneTo: new Set(layers.map((l) => l.id).filter((id) => filtersByFamily.has(id))) })
+    }, 400)
+    return () => clearTimeout(t)
+  }, [layers, processLayers, activeFilters, selectionFilters, is3D, liveGeneration, sessionId])
+
 
   const setViewport = useHudStore((s: HudState) => s.setViewport)
   const aiStatus = useHudStore((s: HudState) => s.aiStatus)
@@ -755,8 +830,10 @@ export function MapPanel({
     }
     const point: [number, number] = [evt.lngLat.lng, evt.lngLat.lat]
     // v2 重设计：单/多要素统一进纯 DOM 悬浮窗（候选列表内置），只写快照，
-    // 不触发高亮图层、不触发自动聚焦。
-    commitSelection(features[0], point)
+    // 不触发高亮图层、不触发自动聚焦。Runtime V4：shift 点选在同层追加
+    // （多选），普通点击替换。
+    const additive = !!(evt as any).originalEvent?.shiftKey
+    commitSelection(features[0], point, { additive })
     setPoiPanel({
       x: evt.point.x,
       y: evt.point.y,
@@ -834,6 +911,152 @@ export function MapPanel({
     }
   }, [mapReady, handleMapMouseMove, handleMapMouseOut])
 
+  // Runtime V4（§11）：框选模式接管画布拖拽（dragPan/boxZoom 让位），
+  // 松手时 queryRenderedFeatures → 有界选择发布。矩形未达最小尺寸视为
+  // 普通点击（清空选择）。review 修复：
+  // - 清理路径恢复 dragPan/boxZoom（卸载/依赖翻转时不再永久锁死平移）；
+  // - 命中限定多数图层族（跨层混合 id 不进同一选择）且剔除 label 子层
+  //   （fill+outline+label 同要素多重命中只计一次）；
+  // - epoch 守卫：mousedown 捕获会话世代，mouseup 核对（中途切会话的
+  //   迟到发布丢弃）；
+  // - bbox 用两角 min/max 归一（bearing≠0 时角点顺序可倒置）。
+  const [brushFeedback, setBrushFeedback] = useState<string | null>(null)
+  useEffect(() => {
+    const map = mapRef.current?.getMap()
+    if (!map || !mapReady) return
+    if (!brushSelectActive) {
+      // 恢复默认交互（幂等：MapLibre 对已启用项重复 enable 无害）。
+      if (typeof map.dragPan?.enable === 'function') map.dragPan.enable()
+      if (typeof map.boxZoom?.enable === 'function') map.boxZoom.enable()
+      return
+    }
+    if (typeof map.dragPan?.disable === 'function') map.dragPan.disable()
+    if (typeof map.boxZoom?.disable === 'function') map.boxZoom.disable()
+    const canvas = map.getCanvas()
+    const handlersDisabled = true
+    let epochAtDown = 0
+    const rectOf = (e: MouseEvent) => {
+      const bounds = canvas.getBoundingClientRect()
+      return { x: e.clientX - bounds.left, y: e.clientY - bounds.top }
+    }
+    const paintRect = (rect: { x: number; y: number; w: number; h: number } | null) => {
+      const el = brushRectRef.current
+      if (!el) return
+      if (!rect || rect.w <= 0 || rect.h <= 0) {
+        el.style.display = 'none'
+        return
+      }
+      el.style.display = 'block'
+      el.style.transform = `translate(${rect.x}px, ${rect.y}px)`
+      el.style.width = `${rect.w}px`
+      el.style.height = `${rect.h}px`
+    }
+    const onDown = (e: MouseEvent) => {
+      if (e.button !== 0) return
+      brushStartRef.current = rectOf(e)
+      epochAtDown = getSelectionEpoch()
+    }
+    const onMove = (e: MouseEvent) => {
+      if (!brushStartRef.current) return
+      const p = rectOf(e)
+      paintRect(normalizeScreenRect(brushStartRef.current, p))
+    }
+    const onUp = (e: MouseEvent) => {
+      const start = brushStartRef.current
+      brushStartRef.current = null
+      paintRect(null)
+      if (!start) return
+      if (epochAtDown !== getSelectionEpoch()) return // 会话已切换
+      const rect = normalizeScreenRect(start, rectOf(e))
+      if (!isBrushRectViable(rect)) {
+        publishSelection('clear_selection', { source: 'map', layer_id: '' })
+        return
+      }
+      // label 子层（`${family}__${sub}-label`）不参与框选命中。
+      const queryLayers = interactiveIdsRef.current.filter((id) => !id.endsWith('-label'))
+      let hits: any[] = []
+      try {
+        hits = queryLayers.length
+          ? map.queryRenderedFeatures(
+              [[rect.x, rect.y], [rect.x + rect.w, rect.y + rect.h]] as any,
+              { layers: queryLayers },
+            )
+          : []
+      } catch {
+        hits = [] // 会话切换/重挂瞬间 layer id 失效 —— 静默收敛
+      }
+      if (!hits.length) {
+        setBrushFeedback('框选范围内没有可选要素')
+        return
+      }
+      // 目标图层族取命中多数（跨层重叠时比「最顶层」更可预期）；命中集
+      // 限定在该族（跨族 id 不混入同一选择 —— id 空间不同）。
+      const familyCounts = new globalThis.Map<string, number>()
+      for (const hit of hits) {
+        const fam = String(hit?.layer?.id ?? '').split('__')[0]
+        if (fam) familyCounts.set(fam, (familyCounts.get(fam) ?? 0) + 1)
+      }
+      let family = ''
+      let best = -1
+      for (const [fam, count] of familyCounts) {
+        if (count > best) { family = fam; best = count }
+      }
+      const familyHits = family
+        ? hits.filter((hit) => String(hit?.layer?.id ?? '').split('__')[0] === family)
+        : hits
+      const projection = projectBrushHits(familyHits)
+      const sw = map.unproject([rect.x, rect.y + rect.h])
+      const ne = map.unproject([rect.x + rect.w, rect.y])
+      const lngs = [sw?.lng, ne?.lng].filter((v) => Number.isFinite(v))
+      const lats = [sw?.lat, ne?.lat].filter((v) => Number.isFinite(v))
+      const bbox: [number, number, number, number] | undefined =
+        lngs.length === 2 && lats.length === 2
+          ? [Math.min(lngs[0], lngs[1]), Math.min(lats[0], lats[1]), Math.max(lngs[0], lngs[1]), Math.max(lats[0], lats[1])]
+          : undefined
+      publishSelection('brush', {
+        source: 'map',
+        layer_id: family,
+        selected_ids: projection.selected_ids,
+        id_field: projection.id_field ?? undefined,
+        predicate: projection.truncated && bbox ? { kind: 'bbox', bbox } : undefined,
+        matched_count: projection.matched_count,
+        bbox,
+      })
+      if (!projection.id_field) {
+        setBrushFeedback(`框选 ${projection.matched_count} 个要素（该层无稳定 id 字段，无法跨视图联动）`)
+      } else {
+        setBrushFeedback(
+          projection.truncated
+            ? `已框选 ${projection.matched_count} 个要素（高亮前 ${projection.selected_ids.length} 个）`
+            : `已框选 ${projection.matched_count} 个要素`,
+        )
+      }
+    }
+    canvas.addEventListener('mousedown', onDown)
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      canvas.removeEventListener('mousedown', onDown)
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      brushStartRef.current = null
+      paintRect(null)
+      // review 修复：非激活分支的 enable 不会在本 cleanup 执行时跑 ——
+      // 卸载/依赖翻转时在此恢复（handlersDisabled 标记曾禁用过）。
+      if (handlersDisabled) {
+        if (typeof map.dragPan?.enable === 'function') map.dragPan.enable()
+        if (typeof map.boxZoom?.enable === 'function') map.boxZoom.enable()
+      }
+    }
+  }, [brushSelectActive, mapReady])
+
+  // 框选反馈自动消隐（无需用户动作）。
+  useEffect(() => {
+    if (!brushFeedback) return
+    const t = setTimeout(() => setBrushFeedback(null), 2500)
+    return () => clearTimeout(t)
+  }, [brushFeedback])
+
   const handleMove = useCallback((evt: ViewStateChangeEvent) => {
     viewStateRef.current = evt.viewState
     // 悬浮窗锚定在点击时的屏幕像素：地图一动位置就失真，直接关闭。
@@ -869,6 +1092,12 @@ export function MapPanel({
       // 小 source 原样穿透（引用缓存跳过），无原始数据的 tile 源跳过。
       if (bounds && map) {
         renderer.refreshGeoJsonSourcesByViewport(map, bounds)
+      }
+      // Runtime V4（§12）：相机落定 → 有界空间上下文（300ms 二道 debounce +
+      // 指纹去重 + 会话 epoch 取消，见 viewport-context）。只有 cheap 消费方
+      // 订阅（表格视口过滤等）；expensive GIS 分析不属于交互运行时。
+      if (bounds) {
+        publishViewportContext(bounds, evt.viewState.zoom)
       }
     }, 100)
     onViewportChange?.(
@@ -1131,7 +1360,29 @@ export function MapPanel({
         measurePoints={measurePoints}
         onClearMeasurePoints={() => setMeasurePoints([])}
         onCompleteMeasurement={handleCompleteMeasurement}
+        brushSelectActive={brushSelectActive}
+        onToggleBrushSelect={() => setBrushSelectActive((v) => !v)}
       />
+
+      {/* Runtime V4：框选矩形覆盖层 —— 命令式更新（mousedown/mousemove 直接
+          写 style，60Hz 拖拽零 React 渲染；display 由 paintRect 管理）。 */}
+      {brushSelectActive && (
+        <div
+          ref={brushRectRef}
+          data-testid="brush-select-rect"
+          className="pointer-events-none absolute left-0 top-0 z-40 border border-status-accent bg-status-accent/10"
+          style={{ display: 'none', willChange: 'transform' }}
+        />
+      )}
+      {brushFeedback && (
+        <div
+          role="status"
+          data-testid="brush-select-feedback"
+          className="pointer-events-none absolute bottom-16 left-1/2 z-40 -translate-x-1/2 rounded-md border border-edge-subtle bg-surface-raised/95 px-3 py-1.5 text-micro font-medium text-ink shadow-agent-md"
+        >
+          {brushFeedback}
+        </div>
+      )}
 
       {/* Perception Rings — AI activity indicator at map center */}
       {showPerceptionRings && (

@@ -115,6 +115,83 @@ export async function commitComponentPatch(
   });
 }
 
+// ── Component Lifecycle V3（Runtime V4 §17-19）：remove/duplicate/rebind ──
+
+export type ComponentLifecycleAction =
+  | { action: 'remove' }
+  | { action: 'duplicate'; newId?: string }
+  | { action: 'rebind'; chartRef?: string; tableRef?: string; layerId?: string };
+
+/**
+ * 提交组件生命周期突变（POST mapspec/mutations intent=remove_component |
+ * duplicate_component | rebind_component）。
+ *
+ * 与 patch 同一串行链 + CAS 通道（不出现第二套 semantic state 写路径）；
+ * 409 superseded 静默收敛（回灌服务端真相）；语义错误（单例复制等）抛给
+ * 调用方 toast。删除后的 dock/selection 清理由既有「id 离开 spec」语义
+ * 自动收敛（dockSlice prune + 面板卸载清理）。
+ */
+export async function commitComponentLifecycle(
+  componentId: string,
+  mutation: ComponentLifecycleAction,
+): Promise<void> {
+  if (!componentId) return;
+  const enqueuedSessionId = getMapSpecSessionCursor().sessionId;
+  await enqueueUserMutation(async () => {
+    const { sessionId, revision, ownerToken } = getMapSpecSessionCursor();
+    if (!sessionId || sessionId !== enqueuedSessionId) return;
+    let body: Record<string, unknown>;
+    switch (mutation.action) {
+      case 'remove':
+        body = { intent: 'remove_component', expected_revision: revision, component_id: componentId };
+        break;
+      case 'duplicate':
+        body = {
+          intent: 'duplicate_component',
+          expected_revision: revision,
+          component_id: componentId,
+          ...(mutation.newId ? { new_id: mutation.newId } : {}),
+        };
+        break;
+      case 'rebind': {
+        if (!mutation.chartRef && !mutation.tableRef && !mutation.layerId) return;
+        body = {
+          intent: 'rebind_component',
+          expected_revision: revision,
+          component_id: componentId,
+          ...(mutation.chartRef ? { chart_ref: mutation.chartRef } : {}),
+          ...(mutation.tableRef ? { table_ref: mutation.tableRef } : {}),
+          ...(mutation.layerId ? { layer_id: mutation.layerId } : {}),
+        };
+        break;
+      }
+    }
+    try {
+      const data = await apiFetch<MutationResponse>(
+        `/api/v1/chat/sessions/${sessionId}/mapspec/mutations`,
+        {
+          method: 'POST',
+          body,
+          ownerToken,
+          label: `MapSpec component ${mutation.action} mutation`,
+        },
+      );
+      if (typeof data.mutation_revision === 'number') {
+        setMapSpecRevision(data.mutation_revision);
+      }
+      commitMapSpecDocument(data.mapspec, data.mutation_revision);
+    } catch (err) {
+      const superseded = supersededFromError(err);
+      if (!superseded) throw err;
+      if (typeof superseded.mutation_revision === 'number') {
+        setMapSpecRevision(superseded.mutation_revision);
+      }
+      commitMapSpecDocument(superseded.mapspec, superseded.mutation_revision);
+      devOnly.warn(`[component-mutation] ${mutation.action} superseded, converged to server truth`);
+    }
+  });
+}
+
 // ── 乐观 override store（tiny subscribe store，模式同 session-cursor）─────
 
 const overrides = new Map<string, ComponentPlacement>();

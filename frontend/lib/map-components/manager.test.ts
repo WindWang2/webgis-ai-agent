@@ -37,7 +37,7 @@ function component(overrides: Partial<MapSpecComponent> = {}): MapSpecComponent 
 describe('manager vocabularies', () => {
   it('multiple-instance set mirrors the backend registry seeds', () => {
     expect([...MULTIPLE_INSTANCE_TYPES].sort()).toEqual(
-      ['annotation', 'categorical_legend', 'chart_panel', 'continuous_colorbar', 'legend'].sort(),
+      ['annotation', 'categorical_legend', 'chart_panel', 'continuous_colorbar', 'legend', 'table_panel'].sort(),
     );
   });
 

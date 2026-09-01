@@ -175,6 +175,21 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         cardinality="multiple", priority=41,
     ),
     MapComponentDescriptor(
+        id="table_panel", category="analysis.table_panel", type="table_panel",
+        name="Table Panel", name_zh="表格面板",
+        # Runtime V4（§10）：artifact-backed 交互表格 —— 虚拟化 + 稳定行 id +
+        # 可排序可过滤 + SelectionContext 联动（table↔map↔chart）。数据绑定
+        # 双通道：options.tableRef（stats_table/admin_aggregate_table 等
+        # artifact ref）或 options.layerId（HUD 图层属性表，MVT 层按需水合）。
+        # 仅 interactive（工作区交互面，非制图产物面）。
+        placement_domain="panel", supported_outputs=["interactive"],
+        compatible_artifact_types=["stats_table", "admin_aggregate_table", "grid_aggregate", "feature_collection"],
+        renderer_support=["interactive"], exporter_support=[],
+        default_variant="default", variants=["default", "compact"],
+        default_position="bottom-right", allowed_positions=["top-left", "top-right", "bottom-left", "bottom-right", "none"],
+        cardinality="multiple", priority=42,
+    ),
+    MapComponentDescriptor(
         id="export_layout", category="export.page_layout", type="export_layout",
         name="Export Layout", name_zh="输出版式",
         placement_domain="export", supported_outputs=["png", "pdf", "print"],

@@ -98,6 +98,15 @@ _SUPPORT_MATRIX: Dict[str, ComponentRendererSupport] = {
         exporters=["png", "pdf", "svg"],
         note="ADR-0081：canvas 导出绘制静态图表（与 live 同一数据协议 chart/chartRef）",
     ),
+    "table_panel": ComponentRendererSupport(
+        component_type="table_panel", renderers=[LIVE_TARGET],
+        exporters=[],
+        note=(
+            "Runtime V4：交互表格面板（虚拟化 + 跨视图 SelectionContext 联动）。"
+            "仅 interactive —— 表格是工作区交互面不是制图产物面，导出画布"
+            "不复刻表格像素（完成度对表格只看在场/绑定语义，不做导出 parity）"
+        ),
+    ),
     # ── 仅导出/非 chrome 家族 ──────────────────────────────────────────
     "export_layout": ComponentRendererSupport(
         component_type="export_layout", renderers=[],

@@ -168,7 +168,9 @@ def classify_runtime_repairs(
         src = source_by_id.get(str(layer.get("source") or "")) or {}
         for key in ("ref", "ref_id", "image_ref", "imageRef", "result_ref"):
             val = src.get(key)
-            if isinstance(val, str) and val.startswith("ref:") and not val.startswith("ref:raster/"):
+            # V4：磁盘栅格（ref:raster/*）同样进入 descriptor 面（inputs 经
+            # probe_ref stat 探测）—— 过期判定对两类存储一致。
+            if isinstance(val, str) and val.startswith("ref:"):
                 return val
         return ""
 

@@ -303,6 +303,22 @@
       ]
     },
     {
+      "type": "table_panel",
+      "variants": [
+        "default",
+        "compact"
+      ],
+      "defaultVariant": "default",
+      "defaultPosition": "bottom-right",
+      "category": "analysis.table_panel",
+      "runtimeStatus": "native",
+      "rendererRequired": true,
+      "rendererSupport": [
+        "interactive"
+      ],
+      "exporterSupport": []
+    },
+    {
       "type": "title",
       "variants": [
         "academic",

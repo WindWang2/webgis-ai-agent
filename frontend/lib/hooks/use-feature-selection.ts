@@ -5,7 +5,7 @@ import { ensureLayerData } from '@/lib/store/layer-data';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { geometryBBox } from '@/lib/utils/geo';
 import type { Layer } from '@/lib/types/layer';
-import { publishSelection } from '@/lib/selection/selection-store';
+import { publishSelection, getSelection } from '@/lib/selection/selection-store';
 
 interface UseFeatureSelectionOptions {
   /** 图层 id 集合 ref（sublayer → 父层解析用）。 */
@@ -46,7 +46,7 @@ export function useFeatureSelection({
    * 聚焦相机——这些机制曾在部分会话触发「画布切空白底图」（静默、
    * 无报错，切底图可恢复），重设计后点击不接触任何 GL/样式/相机状态。
    */
-  const commitSelection = useCallback((feature: any, point: [number, number]) => {
+  const commitSelection = useCallback((feature: any, point: [number, number], opts?: { additive?: boolean }) => {
     const sublayerId = feature.layer?.id as string | undefined
     const parentId = sublayerId ? resolveParentLayerId(sublayerId, layerIdsSetRef.current) : undefined
     const layerInfo = parentId ? layersMapRef.current[parentId] : undefined
@@ -86,12 +86,28 @@ export function useFeatureSelection({
     })
     // Workspace V2（Goal D4）：map → 共享选择上下文（chart 侧订阅同一份
     // 派生高亮）。选择是 transient UI 状态 —— 不写 MapSpec。
+    // Runtime V4：id_field 使表格/框选共享同一稳定要素身份（id 过滤投影）；
+    // additive（shift 点选）只在**同层且同一 id 字段**上追加去重（跨 id 空间
+    // 合并会产生永远匹配不到的混合过滤），否则替换。
+    const prev = opts?.additive ? getSelection() : null
+    const sameLayer = prev != null && prev.layer_id === layerKey
+      && prev.source === 'map'
+      && (prev.id_field ?? '') === (feature.id != null
+        ? '$id'
+        : ((feature.properties as any)?.id != null ? 'id' : ((feature.properties as any)?.OBJECTID != null ? 'OBJECTID' : '')))
+    const idField = feature.id != null
+      ? '$id'
+      : ((feature.properties as any)?.id != null ? 'id' : ((feature.properties as any)?.OBJECTID != null ? 'OBJECTID' : undefined))
+    const mergedIds = sameLayer && rawFeatureId != null
+      ? Array.from(new Set([...prev!.selected_ids, String(rawFeatureId)]))
+      : (rawFeatureId != null ? [String(rawFeatureId)] : [])
     publishSelection('select', {
       source: 'map',
       layer_id: layerKey,
       artifact_ref: parentId?.startsWith('ref:') ? parentId : undefined,
       feature_id: rawFeatureId as string | number | undefined,
-      selected_ids: rawFeatureId != null ? [rawFeatureId] : [],
+      selected_ids: mergedIds,
+      id_field: idField != null && mergedIds.length > 0 ? idField : undefined,
       properties: (feature.properties || {}) as Record<string, unknown>,
       bbox: tileBbox ?? undefined,
     })

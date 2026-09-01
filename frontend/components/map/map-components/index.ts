@@ -15,6 +15,7 @@ import './legends';
 import './annotation';
 import './statistics-panel';
 import './chart-panel';
+import './table-panel';
 import './map-border';
 import './graticule';
 import './inset-map';

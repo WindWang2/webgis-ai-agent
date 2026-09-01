@@ -252,6 +252,8 @@ export class MapSpecRuntime {
         this.removeLayerSafe(change.id);
       }
       // `add` is handled below, after sources are ready.
+      // `filter` (Runtime V4 fast path) is applied below via setFilter — no
+      // remove/add churn, source untouched, z-order untouched.
     }
 
     // --- sources ---
@@ -273,6 +275,13 @@ export class MapSpecRuntime {
       }
     }
 
+    // --- filters (V4 fast path): setFilter only, after layers exist ---
+    for (const change of patch.layers) {
+      if (change.kind === "filter" && change.next) {
+        this.applyFilterSafe(change.id, change.next.filter);
+      }
+    }
+
     // --- z-order: re-sync when layers were modified OR the order changed ---
     // The order half is #375: diffSpecs never reports a pure reordering (empty
     // layer patch), so without this gate the drag-reorder in the Layers tab was
@@ -280,12 +289,19 @@ export class MapSpecRuntime {
     // unchanged orders, preserving fa108d3's no-op work-count contract.
     const orderedIds = nextSpec.layers.map((l) => l.id);
     const orderKey = orderedIds.join("\u0000");
-    if (patch.layers.length > 0 || orderKey !== this.lastLayerOrderKey) {
+    // V4 review：filter-only 变化不改结构/顺序 —— 不重跑全量 z 同步
+    // （选择翻转是最高频路径；z-order 幂等但白费）。
+    if (this.hasStructuralLayerChange(patch) || orderKey !== this.lastLayerOrderKey) {
       renderer.syncLayerZOrder(this.map, "", orderedIds);
       this.lastLayerOrderKey = orderKey;
     }
 
     if (!this.lastError) this.appliedSpec = nextSpec;
+  }
+
+  /** 结构性层变化 = 非 filter-only 的任一变化（add/remove/recompile）。 */
+  private hasStructuralLayerChange(patch: SpecPatch): boolean {
+    return patch.layers.some((c) => c.kind !== "filter");
   }
 
   /**
@@ -379,6 +395,22 @@ export class MapSpecRuntime {
       }
     }
 
+    // V4 filter fast path: setFilter after add/recompile ops are enqueued
+    // (same-frame ordering preserved — all high priority, FIFO within frame).
+    // Op id reuses `layer:add:${id}` discipline but with its own prefix so a
+    // rapid selection flip coalesces by layer (only the latest filter runs).
+    for (const change of patch.layers) {
+      if (change.kind === "filter" && change.next) {
+        const nextFilter = change.next.filter;
+        ops.push({
+          id: `layer:filter:${change.id}`,
+          type: "UPDATE_GEOJSON",
+          priority: "high",
+          execute: () => this.applyFilterSafe(change.id, nextFilter),
+        });
+      }
+    }
+
     const orderedIds = nextSpec.layers.map((l) => l.id);
     // #375: same order-key gate as applyPatchDirect — computed at enqueue time,
     // compared against the last EXECUTED order at op-run time (queued patches
@@ -394,7 +426,7 @@ export class MapSpecRuntime {
       type: "SET_STYLE",
       priority: "high",
       execute: () => {
-        if (patch.layers.length > 0 || orderKey !== this.lastLayerOrderKey) {
+        if (this.hasStructuralLayerChange(patch) || orderKey !== this.lastLayerOrderKey) {
           renderer.syncLayerZOrder(this.map, "", orderedIds);
           this.lastLayerOrderKey = orderKey;
         }
@@ -628,6 +660,36 @@ export class MapSpecRuntime {
     if (this.map.getLayer(labelId)) {
       try { this.map.removeLayer(labelId); } catch { /* already gone */ }
       renderer.noteStyleLayerRemoved(this.map, labelId);
+    }
+  }
+
+  /**
+   * V4 filter fast path: apply a filter-only layer change via map.setFilter.
+   *
+   * Semantics: absence of the layer on the map is a NO-OP (not lastError) —
+   * a spec layer whose source is still a pending `{ref_id}` placeholder was
+   * deliberately never mounted; when its data lands the diff re-detects the
+   * layer as add/recompile with the final filter. Genuine runtime divergence
+   * (layer lost) belongs to the render-observation/repair domain.
+   */
+  private applyFilterSafe(id: string, filter: unknown[] | undefined): void {
+    if (!this.map.getLayer(id)) {
+      devOnly.warn(`[MapSpecRuntime] setFilter skipped, layer absent: ${id}`);
+      return;
+    }
+    try {
+      this.map.setFilter(id, (filter ?? null) as any);
+      // V4 review：label 子层（`${id}-label`）与主层同生命周期 —— 主层
+      // 过滤翻转时同步应用，否则被滤要素的注记残留在画布上。
+      const labelId = `${id}-label`;
+      if (this.map.getLayer(labelId)) {
+        this.map.setFilter(labelId, (filter ?? null) as any);
+      }
+    } catch (err) {
+      // A structurally invalid expression (style-spec rejection) must surface
+      // as bounded runtime evidence, not silently swallow the change.
+      devOnly.warn(`[MapSpecRuntime] setFilter failed for ${id}:`, err);
+      this.lastError = `set_filter_failed:${id}`;
     }
   }
 

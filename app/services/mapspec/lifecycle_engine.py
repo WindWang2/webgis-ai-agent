@@ -284,6 +284,39 @@ class PatchComponentIntent:
 
 
 @dataclass
+class RemoveComponentIntent:
+    """Component Lifecycle V3（Runtime V4 §18）：组件真删除。
+
+    与 enabled=False（隐藏）相对：从 layout.components 移除实例。删除后
+    dock/selection/renderer 清理由消费侧按「id 离开 spec」既有语义收敛；
+    finalize 对「契约仍要求该族」的场景会按 component_missing 重新披露
+    （删除单例契约组件是 agent/用户决策，重评估由完成度运行时承接）。
+    """
+
+    component_id: str
+
+
+@dataclass
+class DuplicateComponentIntent:
+    """Component Lifecycle V3（§19）：复制多实例组件（新 id + floating 偏移）。"""
+
+    component_id: str
+    new_id: Optional[str] = None
+
+
+@dataclass
+class RebindComponentIntent:
+    """Component Lifecycle V3（§19）：重绑定引用字段（chartRef/tableRef/layerId）。
+
+    目标存在性（artifact ref 活性 / 图层在场）由调用方锁内守卫校验 ——
+    引擎只承接 schema 白名单与互斥纪律（纯函数 rebind_component）。
+    """
+
+    component_id: str
+    bindings: Dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
 class SetBasemapIntent:
     """Basemap chrome mutation (#722): keeps the persisted spec tracking the
     BASE_LAYER_CHANGE command the legacy basemap tools emit, so desired state
@@ -457,6 +490,9 @@ MutationIntent = Union[
     UpsertLayerIntent,
     PatchLayerPresentationIntent,
     PatchComponentIntent,
+    RemoveComponentIntent,
+    DuplicateComponentIntent,
+    RebindComponentIntent,
     RemoveLayerIntent,
     ReorderLayersIntent,
     SetLayoutIntent,
@@ -948,6 +984,148 @@ class MapSpecLifecycleEngine:
                         )
                     layout["components"] = sorted(
                         [c.to_mapspec() for c in mutated],
+                        key=lambda c: (c.get("priority", 0), c.get("id", "")),
+                    )
+                    mapspec["layout"] = layout
+
+                elif isinstance(intent, RemoveComponentIntent):
+                    # Component Lifecycle V3（Runtime V4 §18）：真删除 ——
+                    # mutate_component 的 enabled=False 是隐藏；这里是布局
+                    # 条目移除。纯函数 remove_component 与 patch 同源。
+                    from app.services.gis_harness.components import (
+                        CartographyComponent,
+                        remove_component,
+                    )
+
+                    old_mapspec_snapshot = loaded
+                    mapspec = {**loaded} if loaded else {}
+                    layout = dict(mapspec.get("layout", {}))
+                    raw_components = layout.get("components") or []
+                    components = [
+                        CartographyComponent.model_validate(dict(c))
+                        for c in raw_components if isinstance(c, dict)
+                    ]
+                    remaining, change = remove_component(
+                        components, component_id=intent.component_id,
+                    )
+                    if change is None:
+                        return MapSpecResult(
+                            is_error=True,
+                            origin=origin,
+                            error_msg=(
+                                f"Component {intent.component_id} not found."
+                            ),
+                            correction_hint=(
+                                "Current components: "
+                                + ", ".join(f"{c.id}({c.type})" for c in components)
+                            ),
+                        )
+                    layout["components"] = sorted(
+                        [c.to_mapspec() for c in remaining],
+                        key=lambda c: (c.get("priority", 0), c.get("id", "")),
+                    )
+                    mapspec["layout"] = layout
+
+                elif isinstance(intent, DuplicateComponentIntent):
+                    from app.services.gis_harness.components import (
+                        CartographyComponent,
+                        duplicate_component,
+                    )
+
+                    old_mapspec_snapshot = loaded
+                    mapspec = {**loaded} if loaded else {}
+                    layout = dict(mapspec.get("layout", {}))
+                    raw_components = layout.get("components") or []
+                    components = [
+                        CartographyComponent.model_validate(dict(c))
+                        for c in raw_components if isinstance(c, dict)
+                    ]
+                    # 注意不能用 ``copy`` 作局部名 —— 本函数上游用 stdlib
+                    # copy.deepcopy（同名局部会把它遮蔽成 UnboundLocal）。
+                    with_copy, copy_component, dup_error = duplicate_component(
+                        components,
+                        component_id=intent.component_id,
+                        new_id=intent.new_id or "",
+                    )
+                    if dup_error or copy_component is None:
+                        return MapSpecResult(
+                            is_error=True,
+                            origin=origin,
+                            error_msg=dup_error or "duplicate failed",
+                        )
+                    # 与 patch 分支同纪律：组件条目尺寸有界（96KB）。
+                    oversized_dup = [
+                        c.id for c in with_copy
+                        if _estimate_component_bytes(c.to_mapspec()) > _MAX_COMPONENT_BYTES
+                    ]
+                    if oversized_dup:
+                        return MapSpecResult(
+                            is_error=True,
+                            origin=origin,
+                            error_msg=(
+                                "duplicated layout.components entry exceeds "
+                                f"{_MAX_COMPONENT_BYTES // 1024}KB: "
+                                + ", ".join(oversized_dup[:5])
+                            ),
+                        )
+                    layout["components"] = sorted(
+                        [c.to_mapspec() for c in with_copy],
+                        key=lambda c: (c.get("priority", 0), c.get("id", "")),
+                    )
+                    mapspec["layout"] = layout
+
+                elif isinstance(intent, RebindComponentIntent):
+                    from app.services.gis_harness.components import (
+                        CartographyComponent,
+                        rebind_component,
+                    )
+
+                    old_mapspec_snapshot = loaded
+                    mapspec = {**loaded} if loaded else {}
+                    layout = dict(mapspec.get("layout", {}))
+                    raw_components = layout.get("components") or []
+                    components = [
+                        CartographyComponent.model_validate(dict(c))
+                        for c in raw_components if isinstance(c, dict)
+                    ]
+                    # review M：layerId 绑定目标在**锁内**对权威 spec 复核
+                    # （纯函数零 IO）；ref 活性探测留在调用方 best-effort
+                    # （探测是健康证据不是注册真相 —— 文档如实）。
+                    if "layerId" in intent.bindings:
+                        wanted = str(intent.bindings["layerId"])
+                        layer_present = any(
+                            isinstance(layer, dict)
+                            and (
+                                str(layer.get("id") or "") == wanted
+                                or str(layer.get("id") or "").startswith(f"{wanted}__")
+                                or str(layer.get("id") or "").startswith(f"{wanted}-")
+                            )
+                            for layer in (loaded or {}).get("layers", [])
+                        )
+                        if not layer_present:
+                            return MapSpecResult(
+                                is_error=True,
+                                origin=origin,
+                                error_msg=(
+                                    f"重绑定图层 {wanted} 不在当前 MapSpec"
+                                ),
+                                correction_hint=(
+                                    "先读当前 MapSpec 确认图层族 id 再重绑定。"
+                                ),
+                            )
+                    rebound, change, rebind_error = rebind_component(
+                        components,
+                        component_id=intent.component_id,
+                        bindings=dict(intent.bindings),
+                    )
+                    if rebind_error or change is None:
+                        return MapSpecResult(
+                            is_error=True,
+                            origin=origin,
+                            error_msg=rebind_error or "rebind failed",
+                        )
+                    layout["components"] = sorted(
+                        [c.to_mapspec() for c in rebound],
                         key=lambda c: (c.get("priority", 0), c.get("id", "")),
                     )
                     mapspec["layout"] = layout

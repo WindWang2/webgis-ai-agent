@@ -18,6 +18,9 @@ from app.services.mapspec.lifecycle_engine import (
     PatchComponentIntent,
     PatchLayerPresentationIntent,
     PatchLayerStyleIntent,
+    RemoveComponentIntent,
+    DuplicateComponentIntent,
+    RebindComponentIntent,
     RemoveLayerIntent,
     ReorderLayersIntent,
     SetLayoutIntent,
@@ -83,6 +86,38 @@ class RemoveLayerBody(BaseModel):
     layer_id: str = Field(min_length=1, max_length=200)
 
 
+class RemoveComponentBody(BaseModel):
+    """Component Lifecycle V3（Runtime V4 §18）：组件真删除（用户侧入口）。"""
+
+    intent: Literal["remove_component"]
+    expected_revision: int = Field(ge=0)
+    component_id: str = Field(min_length=1, max_length=128)
+
+
+class DuplicateComponentBody(BaseModel):
+    """Component Lifecycle V3（§19）：复制多实例组件。"""
+
+    intent: Literal["duplicate_component"]
+    expected_revision: int = Field(ge=0)
+    component_id: str = Field(min_length=1, max_length=128)
+    new_id: Optional[str] = Field(None, min_length=1, max_length=128)
+
+
+class RebindComponentBody(BaseModel):
+    """Component Lifecycle V3（§19）：重绑定（chartRef/tableRef/layerId）。
+
+    绑定字段在纯函数层按类型白名单校验；目标存在性由引擎事务内的
+    pre-commit 守卫复核（layer 在场 / artifact ref 活性）。
+    """
+
+    intent: Literal["rebind_component"]
+    expected_revision: int = Field(ge=0)
+    component_id: str = Field(min_length=1, max_length=128)
+    chart_ref: Optional[str] = Field(None, min_length=1, max_length=200)
+    table_ref: Optional[str] = Field(None, min_length=1, max_length=200)
+    layer_id: Optional[str] = Field(None, min_length=1, max_length=200)
+
+
 class ReorderLayersBody(BaseModel):
     intent: Literal["reorder_layers"]
     expected_revision: int = Field(ge=0)
@@ -126,6 +161,9 @@ UserMapSpecMutationRequest = Annotated[
         PatchComponentBody,
         SetViewBody,
         RemoveLayerBody,
+        RemoveComponentBody,
+        DuplicateComponentBody,
+        RebindComponentBody,
         ReorderLayersBody,
         SetLayoutBody,
         SetTimeBody,
@@ -195,6 +233,28 @@ async def apply_user_mapspec_mutation(
         )
     elif isinstance(req, RemoveLayerBody):
         intent = RemoveLayerIntent(layer_id=req.layer_id)
+    elif isinstance(req, RemoveComponentBody):
+        intent = RemoveComponentIntent(component_id=req.component_id)
+    elif isinstance(req, DuplicateComponentBody):
+        intent = DuplicateComponentIntent(
+            component_id=req.component_id, new_id=req.new_id,
+        )
+    elif isinstance(req, RebindComponentBody):
+        bindings: dict[str, str] = {}
+        if req.chart_ref:
+            bindings["chartRef"] = req.chart_ref
+        if req.table_ref:
+            bindings["tableRef"] = req.table_ref
+        if req.layer_id:
+            bindings["layerId"] = req.layer_id
+        if not bindings:
+            raise HTTPException(
+                status_code=400,
+                detail="rebind_component requires chart_ref, table_ref, or layer_id",
+            )
+        intent = RebindComponentIntent(
+            component_id=req.component_id, bindings=bindings,
+        )
     elif isinstance(req, ReorderLayersBody):
         intent = ReorderLayersIntent(layer_ids=req.layer_ids)
     elif isinstance(req, SetLayoutBody):

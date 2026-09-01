@@ -1125,6 +1125,41 @@ async def get_session_chart_artifact(
     raise HTTPException(status_code=404, detail="ref 不是图表 artifact")
 
 
+@router.get("/sessions/{session_id}/table-artifacts/{ref_id}")
+async def get_session_table_artifact(
+    session_id: str,
+    ref_id: str,
+    _conv: Conversation = Depends(require_owned_session),
+):
+    """table_panel 的 ref-backed 数据通道（Runtime V4 §10）。
+
+    与 chart-artifacts 同款纪律：小载荷 JSON 直返（存储侧已有界）。载荷
+    形态宽容（{table:{columns,rows}} / 记录数组），边界规整在前端
+    table-data 适配器完成 —— 服务端只做所有权与存在性。
+    """
+    # review 修复：前缀收紧到表族（chart 有专属端点；任意 ref:* 直通是
+    # 纵深防御回退）。表族 = table/stats/grid/admin 前缀。
+    _TABLE_REF_PREFIXES = ("ref:table-", "ref:stats-", "ref:grid-", "ref:admin-")
+    if (
+        not ref_id
+        or len(ref_id) > 200
+        or not ref_id.startswith(_TABLE_REF_PREFIXES)
+    ):
+        raise HTTPException(status_code=400, detail="非法 table artifact ref")
+    from app.services.session_data import session_data_manager
+
+    res = await session_data_manager.get_ref_data(session_id, ref_id)
+    if not res.success:
+        status_code = 403 if res.error_type == "PermissionDenied" else 404
+        raise HTTPException(status_code=status_code, detail=res.error or "表格数据不可用")
+    data = res.data
+    if isinstance(data, dict) and isinstance(data.get("table"), (dict, list)):
+        return data
+    if isinstance(data, list):
+        return {"table": data}
+    raise HTTPException(status_code=404, detail="ref 不是表格 artifact")
+
+
 @router.get("/sessions/{session_id}/plan")
 async def get_session_plan(
     session_id: str,

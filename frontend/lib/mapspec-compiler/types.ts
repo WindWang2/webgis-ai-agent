@@ -168,6 +168,8 @@ export interface MapSpecComponent {
     | "attribution"
     | "statistics_panel"
     | "chart_panel"
+    /** Runtime V4：artifact-backed 交互表格（虚拟化 + 选择联动；仅 interactive）。 */
+    | "table_panel"
     | "export_layout"
     /** 区位插图（后端 runtime_status=planned；渲染器落地前不消费）。 */
     | "inset_map";

@@ -16,13 +16,14 @@ import { DEFAULT_COMPONENT_ANCHOR } from './resolve-components';
 import type { ComponentPatch } from '@/lib/mapspec/component-mutation';
 
 /** 多实例词表 —— 与后端 component_registry 种子 cardinality=multiple 同表
- *  （图例族 + chart_panel + annotation；catalog JSON 不携带 cardinality，
- *  此处以注释锚定后端源，漂移由 manager 测试锁定）。 */
+ *  （图例族 + chart_panel + table_panel + annotation；catalog JSON 不携带
+ *  cardinality，此处以注释锚定后端源，漂移由 manager 测试锁定）。 */
 export const MULTIPLE_INSTANCE_TYPES: ReadonlySet<string> = new Set([
   'legend',
   'categorical_legend',
   'continuous_colorbar',
   'chart_panel',
+  'table_panel',
   'annotation',
 ]);
 
@@ -39,6 +40,7 @@ export const MANAGEABLE_TYPES: ReadonlySet<string> = new Set([
   'continuous_colorbar',
   'statistics_panel',
   'chart_panel',
+  'table_panel',
   'annotation',
   'inset_map',
 ]);
@@ -50,6 +52,7 @@ export const MAX_COMPONENT_ZINDEX = 200;
 export const DOCKABLE_PANEL_TYPES: ReadonlySet<string> = new Set([
   'chart_panel',
   'statistics_panel',
+  'table_panel',
 ]);
 
 export interface ComponentManagerActions {
@@ -61,11 +64,16 @@ export interface ComponentManagerActions {
   bringToFront: boolean;
   /** 面板族可停靠（dock 归属是工作区状态 —— Goal C5）。 */
   dock: boolean;
+  /** Runtime V4：生命周期动作 —— 多实例可复制，全部可真删除。 */
+  duplicate: boolean;
+  remove: boolean;
 }
 
 /** 该实例可用动作（纯派生：由类型/当前态决定）。 */
 export function availableActions(resolved: ResolvedMapComponent): ComponentManagerActions {
-  const hasBody = resolved.type === 'statistics_panel' || resolved.type === 'chart_panel';
+  const hasBody = resolved.type === 'statistics_panel'
+    || resolved.type === 'chart_panel'
+    || resolved.type === 'table_panel';
   return {
     show: !resolved.enabled,
     hide: resolved.enabled,
@@ -74,6 +82,8 @@ export function availableActions(resolved: ResolvedMapComponent): ComponentManag
     resetPosition: resolved.floating,
     bringToFront: resolved.floating,
     dock: DOCKABLE_PANEL_TYPES.has(resolved.type),
+    duplicate: MULTIPLE_INSTANCE_TYPES.has(resolved.type),
+    remove: true,
   };
 }
 

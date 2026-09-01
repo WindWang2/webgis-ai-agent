@@ -203,6 +203,7 @@ def generate_chart(chart_type: str = "", title: str = "", data: Any = "",
     # GeoJSON / 记录数组 → 数据点（字段映射路径）。带任一映射字段且元素是
     # dict（Feature 或裸记录）即走映射；已是 {name,value} 形态时不带映射
     # 字段，维持既有校验路径。
+    selection_field = ""
     if isinstance(parsed_data, dict) and isinstance(parsed_data.get("features"), list):
         parsed_data = parsed_data["features"]
     if (
@@ -216,6 +217,11 @@ def generate_chart(chart_type: str = "", title: str = "", data: Any = "",
         )
         if map_error:
             return {"error": f"GeoJSON 字段映射失败: {map_error}"}
+        # Runtime V4（§15）：selectionField 自动生成 —— 只对类目语义明确的
+        # bar/pie（review：line 的 x 常是时间/数值轴，作类别过滤键是伪推导）；
+        # 无映射字段的 [{name,value}] 路径无法可靠推导 → 如实省略。
+        if effective_type in ("bar", "pie"):
+            selection_field = (name_field or x_field or "").strip()
 
     # Validate structure
     if not isinstance(parsed_data, list):
@@ -243,6 +249,10 @@ def generate_chart(chart_type: str = "", title: str = "", data: Any = "",
         chart["x_label"] = safe_x_label
     if safe_y_label:
         chart["y_label"] = safe_y_label
+    if selection_field:
+        # Runtime V4：chart→map 类别过滤协议的映射字段（消费面在
+        # chart_panel.options.selectionField）；scatter 无类别语义不带。
+        chart["selectionField"] = selection_field
 
     return {"chart": chart}
 
@@ -254,6 +264,7 @@ async def generate_chart_tool(
     type: str = "",
     session_id: str = "", attach_to_map: bool = False,
     position: str = "", variant: str = "default",
+    layer_id: str = "",
 ) -> dict:
     """generate_chart 的注册面（async 包装）。
 
@@ -261,6 +272,10 @@ async def generate_chart_tool(
     组件写入 MapSpec（组件突变——不触发任何数据重查/图层重排）。与
     webgis_component_update(create=true) 走同一入口与校验。
     同步核心 generate_chart 保持既有 chat 图表契约与全部测试兼容。
+
+    Runtime V4（§15）：GeoJSON 字段映射路径自动携带 selectionField（类目
+    字段）；layer_id 显式指定或从 data ref ↔ MapSpec source 自动解析 ——
+    chart→map 类别过滤从此无需 agent 手工补字段。
     """
     out = generate_chart(
         chart_type=chart_type, title=title, data=data,
@@ -271,7 +286,12 @@ async def generate_chart_tool(
     if "error" in out:
         return out
     if attach_to_map and session_id:
-        out.update(await _attach_chart_panel(session_id, out["chart"], position, variant))
+        bound_layer_id = layer_id.strip()
+        if not bound_layer_id:
+            bound_layer_id = await _resolve_layer_for_data_ref(session_id, data)
+        out.update(await _attach_chart_panel(
+            session_id, out["chart"], position, variant, layer_id=bound_layer_id,
+        ))
     elif attach_to_map and not session_id:
         out["map_chart_panel"] = {
             "attached": False,
@@ -282,14 +302,63 @@ async def generate_chart_tool(
     return out
 
 
+async def _resolve_layer_for_data_ref(session_id: str, data: Any) -> str:
+    """data 是 ref: 引用时，解析 MapSpec 中以该 ref 为源的图层族 id。
+
+    确定性推导（不是猜测）：仅当恰好一个图层族的 source 携带该 ref 时
+    返回其 id；零个或多个命中 → 空串（agent 可用 layer_id 显式指定）。
+    """
+    ref = data.strip() if isinstance(data, str) else ""
+    if not ref.startswith("ref:"):
+        return ""
+    try:
+        from app.services.mapspec_store import mapspec_store
+
+        spec = await mapspec_store.get_mapspec(session_id) or {}
+    except Exception:  # noqa: BLE001 — 读失败 → 不绑定（诚实省略）
+        return ""
+    families: set = set()
+    raw_sources = spec.get("sources") or {}
+    # review 修复：旧会话 sources 可能是 list 形态 —— 与其它消费面同款
+    # dict/list 双防御（list 直接 .items() 会 AttributeError）。dict 形态
+    # 以键为 source id；list 形态条目自带 "id"。
+    if isinstance(raw_sources, dict):
+        source_items = [
+            (str(k), v) for k, v in raw_sources.items() if isinstance(v, dict)
+        ]
+    else:
+        source_items = [
+            (str(s.get("id") or ""), s) for s in raw_sources if isinstance(s, dict)
+        ]
+    for src_id, src in source_items:
+        src_refs = {
+            src.get(k) for k in ("ref", "ref_id", "result_ref")
+            if isinstance(src.get(k), str)
+        }
+        if ref in src_refs:
+            families.add(src_id)
+    if len(families) != 1:
+        return ""
+    # source id 与图层族 id 同名（adapter/converter 惯例）；按图层验证一次
+    for layer in spec.get("layers") or []:
+        if isinstance(layer, dict) and str(layer.get("source") or "") in families:
+            return str(layer.get("id") or "").split("__")[0]
+    return ""
+
+
 async def _attach_chart_panel(
     session_id: str, chart: dict, position: str, variant: str,
+    layer_id: str = "",
 ) -> dict:
     """把 chart 以 chart_panel 组件 upsert 进 MapSpec（组件突变，不动图层）。
 
     与 webgis_component_update(create=true) 同入口：小载荷 inline，大载荷
     （>32KB）存 session artifact ref（MapSpec 只持引用）。返回附加 evidence
     字段（合并进工具结果）。
+
+    Runtime V4（§15）：chart.selectionField（字段映射路径自动推导）与
+    layer_id（显式/ref 解析）随面板写入 options —— chart→map 类别过滤
+    协议（filter_field + layer_id）零手工配置即闭环；二者缺席则如实省略。
     """
     import json as _json
 
@@ -304,6 +373,12 @@ async def _attach_chart_panel(
         options["chartRef"] = ref_id
     else:
         options["chart"] = chart
+    # selectionField 协议透传（generate_chart 推导；已在 chart dict 里）
+    selection_field = str(chart.get("selectionField") or "").strip()
+    if selection_field:
+        options["selectionField"] = selection_field
+    if layer_id:
+        options["layerId"] = layer_id
 
     res = await mapspec_store.patch_component(
         session_id,
@@ -324,6 +399,10 @@ async def _attach_chart_panel(
     }
     if options.get("chartRef"):
         evidence["map_chart_panel"]["chart_ref"] = options["chartRef"]
+    if options.get("selectionField"):
+        evidence["map_chart_panel"]["selection_field"] = options["selectionField"]
+    if options.get("layerId"):
+        evidence["map_chart_panel"]["layer_id"] = options["layerId"]
     if res.get("success"):
         evidence["map_chart_panel"]["mutation_revision"] = res.get("mutation_revision")
         return evidence
@@ -355,8 +434,9 @@ def register_chart_tools(registry: ToolRegistry):
             "y_field": "GeoJSON 输入时的数值字段（bar/line/pie 的取值，scatter 的 y 值字段）",
             "name_field": "GeoJSON 输入时的名称字段（可选，缺省用 x_field）",
             "session_id": "当前会话 ID（attach_to_map 时必填）",
-            "attach_to_map": "true 时图表同时作为地图浮动 chart_panel 组件写入 MapSpec（『在地图上显示统计图』场景；组件突变，不重查数据）",
+            "attach_to_map": "true 时图表同时作为地图浮动 chart_panel 组件写入 MapSpec（『在地图上显示统计图』场景；组件突变，不重查数据）；GeoJSON 字段映射路径会自动携带 selectionField/layerId —— 图表类别点击即过滤地图图层",
             "position": "地图面板位置（可选）：top-left/top-right/bottom-left/bottom-right 等槽位",
             "variant": "面板样式 variant（可选）：default/compact/transparent/report",
+            "layer_id": "图表绑定的地图图层 id（可选；chart→map 类别过滤的锚点）。缺省时若 data 是 ref: 引用且恰有一层以它为源则自动解析",
         },
     )
