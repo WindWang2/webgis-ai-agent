@@ -32,6 +32,8 @@ TaskType = Literal[
     "accessibility_analysis",    # 「可达性/等时圈」→ 网络可达
     "raster_distribution",       # 栅格/遥感面状分布
     "change_detection",          # 变化检测
+    "vegetation_index",          # 「NDVI/植被指数」→ 光谱指数计算（ADR-0092）
+    "mobility_flow",             # 「通勤流/出行流/OD」→ 流动分析（ADR-0092）
 ]
 
 GeometryExpectation = Literal["point", "line", "polygon", "raster", "unknown"]
@@ -177,8 +179,28 @@ _TASK_RULES: List[tuple] = [
     ("categorical_breakdown",
      re.compile(r"(各类|各类型|分类别|按(?:类型|类别|种类)|类别分布|类型分布|占比|构成)", re.I),
      "categorical_distribution"),
+    # ADR-0092 G5：显式光谱指数请求（NDVI/植被指数等）是计算任务，不是
+    # 栅格分布概览 —— 必须先于 raster_subject_thematic 命中，否则 ndvi
+    # capability 永不进入计划（benchmark golden G5 锁定）。
+    ("vegetation_index_request",
+     re.compile(r"(ndvi|evi|ndwi|nbr|植被指数|植被覆盖)", re.I),
+     "vegetation_index"),
+    # ADR-0092 G11/G12：流动语义（通勤/出行/客流 OD）先于展示动词命中，
+    # 避免「展示…通勤流」被 simple_view 吞掉。
+    ("mobility_flow_request",
+     re.compile(r"(通勤流|出行流|客流|交通流|流向|od\s*矩阵|od分析|出行(od|分布))", re.I),
+     "mobility_flow"),
+    # ADR-0092 G2：展示动词不再要求句首 —— 「在地图上显示X」「帮我看下X」
+    # 同样是轻量点图意图；负向前瞻排除携带更强任务语义（分布/统计/密度/
+    # 热点…）的查询，避免吞掉分布/统计类请求（规则序保证更强规则先命中）。
     ("simple_view",
-     re.compile(r"^(给我看|看看|显示|查看|瞄一眼|瞧瞧|show\s+me)", re.I),
+     # ADR-0092 G2：展示动词支持「在地图上/帮我/把」等显式前缀（收紧为
+     # 枚举分支 + 可选短间隙，绝不放任意 6 字间隙 —— 否则「用气泡图展示…」
+     # 这类携带形态信号的查询会被误吞，proportional_symbol 路由被破坏）。
+     re.compile(r"^(?:在地图上|地图上|在地图中|(?:帮我|请|把|将)[^，。?？]{0,4})?"
+                r"(给我看|看看|显示|展示|查看|瞄一眼|瞧瞧|show\s+me)"
+                r"(?![^，。?？]*(?:分布|统计|密度|热点|变化|服务区|可达|占比|构成|聚类|均衡|选址|流(向|量)|通勤))",
+                re.I),
      "simple_view"),
     # #781: 栅格主体（遥感/影像/DEM/NDVI/气温/降水…）在无更强任务规则命中
     # 时归入 raster_distribution —— 此前栅格查询落入 distribution_overview
@@ -196,6 +218,7 @@ _EXPORT_RE = re.compile(r"(导出|下载|出图|存成|保存为|export)", re.I)
 _REPORT_RE = re.compile(r"(用于|做|做一份|生成|制作)[^，。?？]*(报告|汇报|论文|汇报材料|简报|插图|印刷|打印)|"
                         r"(报告|论文|简报)[^，。?？]*(用|插图|配图)", re.I)
 _DENSITY_WORD_RE = re.compile(r"密度", re.I)
+_CHART_WORD_RE = re.compile(r"(柱状图|条形图|饼图|折线图|直方图|散点图|箱线图|图表|对比图)", re.I)
 _MEASURE_COUNT_RE = re.compile(r"(数量|多少|几|个数|计数)", re.I)
 # 显式制图形态信号（模型库 aggregate_grid / proportional_symbol 的入口词）
 _GRID_AGG_RE = re.compile(r"(格网|网格|hexbin|六边形|蜂窝|h3)", re.I)
@@ -412,6 +435,13 @@ def resolve_map_request_intent(query: str) -> MapRequestIntent:
     analysis_intents, cartography_intents, output_intents, measure, group_by = (
         _task_specific_intents(task, query)
     )
+
+    # ADR-0092 G7：显式图表词族（柱状图/饼图/折线图/图表…）→ chart 输出
+    # 意图。此前只有 categorical_distribution 任务产出 chart intent，查询
+    # 点名要图时 output_intents 却不含 chart —— facet 契约随之欠账。
+    if _CHART_WORD_RE.search(query) and "chart" not in output_intents:
+        output_intents = list(dict.fromkeys(output_intents + ["chart"]))
+        matched.append("output:chart")
 
     # 密度词 + 非定量任务 → 保留视觉密度但标注假设（定量密度必须走
     # analytical_density 任务，规则序保证「每平方公里」优先命中）。
