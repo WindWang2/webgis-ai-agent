@@ -204,61 +204,185 @@ _TOOL_NAME_ALIASES: dict[str, str] = {
 }
 
 
-def _normalize_tool_arguments(name: str, arguments: dict) -> dict:
-    """归一化常见 LLM 实参字段别名偏差。"""
+def _normalize_tool_arguments(
+    name: str, arguments: dict, model: Optional[Type[BaseModel]] = None
+) -> dict:
+    """归一化常见 LLM 实参字段别名与命名习惯偏差。"""
     if not isinstance(arguments, dict):
         return arguments
 
-    # 浅拷贝以便安全修改
-    args = dict(arguments)
+    # 1. 浅拷贝并归一化 key 风格（例如 kebab-case -> snake_case: radius-px -> radius_px）
+    args: dict[str, Any] = {}
+    for k, v in arguments.items():
+        if isinstance(k, str) and "-" in k and not k.startswith("-"):
+            args[k.replace("-", "_")] = v
+        else:
+            args[k] = v
 
-    if name in ("search_poi", "query_local_poi"):
-        if "keywords" in args and "keyword" not in args:
-            args["keyword"] = args.pop("keywords")
-        if "query" in args and "keyword" not in args:
-            args["keyword"] = args.pop("query")
-        if "text" in args and "keyword" not in args:
-            args["keyword"] = args.pop("text")
+    model_fields = set(model.model_fields.keys()) if model is not None else set()
 
-    elif name in ("kde_surface", "kde_contours", "voronoi_polygons", "convex_hull", "multi_ring_buffer", "attribute_filter", "spatial_stats", "h3_binning"):
-        if "data" in args and "geojson" not in args:
-            args["geojson"] = args.pop("data")
-        elif "points_data" in args and "geojson" not in args:
-            args["geojson"] = args.pop("points_data")
-        elif "layer_data" in args and "geojson" not in args:
-            args["geojson"] = args.pop("layer_data")
-        elif "points" in args and "geojson" not in args:
-            args["geojson"] = args.pop("points")
-        elif "input_data" in args and "geojson" not in args:
-            args["geojson"] = args.pop("input_data")
+    # 2. 通用 GeoJSON / 空间要素引用别名映射
+    # 只要工具接收 geojson 参数，且未直接传 geojson，自动将 geojson_ref / data_ref / source_ref / data 等变体折叠为 geojson
+    GEOJSON_ALIASES = (
+        "geojson_ref",
+        "data_ref",
+        "source_ref",
+        "input_geojson",
+        "points_geojson",
+        "target_geojson",
+        "source_geojson",
+        "layer_data",
+        "points_data",
+        "data",
+        "input_data",
+        "feature_collection",
+        "features",
+        "points",
+        "ref",
+        "ref_id",
+        "layer_ref",
+    )
+    if ("geojson" in model_fields or name in (
+        "heatmap_data", "buffer_analysis", "spatial_stats", "nearest_neighbor",
+        "kde_surface", "kde_contours", "voronoi_polygons", "convex_hull",
+        "multi_ring_buffer", "attribute_filter", "h3_binning", "spatial_cluster",
+        "hotspot_analysis", "moran_i", "create_thematic_map", "isochrone_analysis",
+        "service_area_simple", "point_profile"
+    )) and "geojson" not in args:
+        for alias in GEOJSON_ALIASES:
+            if alias in args:
+                if alias in model_fields and alias not in ("geojson_ref", "data_ref", "source_ref", "input_geojson", "points_geojson", "target_geojson", "source_geojson"):
+                    continue
+                args["geojson"] = args.pop(alias)
+                break
 
-    elif name == "spatial_aggregate":
-        if "points_data" in args and "points" not in args:
-            args["points"] = args.pop("points_data")
-        elif "data" in args and "points" not in args:
-            args["points"] = args.pop("data")
+    # 3. 空间聚合 (spatial_aggregate)
+    if name == "spatial_aggregate":
+        if "points" not in args:
+            for alias in ("points_data", "points_ref", "points_geojson", "point_data", "data", "geojson", "geojson_ref", "ref"):
+                if alias in args:
+                    args["points"] = args.pop(alias)
+                    break
+        if "polygons" not in args:
+            for alias in ("polygons_data", "polygons_ref", "polygons_geojson", "polygon_data", "admin_data", "admin_boundary", "boundary_ref", "boundary", "admin_boundary_ref", "data", "geojson", "geojson_ref", "ref"):
+                if alias in args:
+                    args["polygons"] = args.pop(alias)
+                    break
 
-        if "polygons_data" in args and "polygons" not in args:
-            args["polygons"] = args.pop("polygons_data")
-        elif "admin_data" in args and "polygons" not in args:
-            args["polygons"] = args.pop("admin_data")
-        elif "admin_boundary" in args and "polygons" not in args:
-            args["polygons"] = args.pop("admin_boundary")
-        elif "polygon_data" in args and "polygons" not in args:
-            args["polygons"] = args.pop("polygon_data")
+    # 4. POI 搜索 (search_poi, query_local_poi, query_gd_poi, query_poi)
+    if name in ("search_poi", "query_local_poi", "query_gd_poi", "query_poi"):
+        if "keyword" not in args:
+            for alias in ("keywords", "query", "text", "search_text", "name"):
+                if alias in args:
+                    args["keyword"] = args.pop(alias)
+                    break
+        if ("subtype" in model_fields or name in ("query_local_poi", "query_gd_poi")) and "subtype" not in args:
+            for alias in ("poi_type", "type", "category", "sub_type", "class_name", "type_name"):
+                if alias in args:
+                    args["subtype"] = args.pop(alias)
+                    break
+        if ("district" in model_fields or name in ("query_local_poi", "query_gd_poi")) and "district" not in args:
+            for alias in ("district_name", "city_name", "city", "region", "admin_name", "address"):
+                if alias in args:
+                    args["district"] = args.pop(alias)
+                    break
+        if ("adcode" in model_fields or name in ("query_local_poi", "query_gd_poi")) and "adcode" not in args:
+            for alias in ("ad_code", "city_code", "district_code", "code"):
+                if alias in args:
+                    args["adcode"] = args.pop(alias)
+                    break
 
-    elif name in ("get_local_admin_boundary", "get_admin_division"):
-        if "admin_name" in args and "name" not in args and "keywords" not in args:
-            target_key = "name" if name == "get_local_admin_boundary" else "keywords"
-            args[target_key] = args.pop("admin_name")
-        elif "city" in args and "name" not in args and "keywords" not in args:
-            target_key = "name" if name == "get_local_admin_boundary" else "keywords"
-            args[target_key] = args.pop("city")
-        elif "district" in args and "name" not in args and "keywords" not in args:
-            target_key = "name" if name == "get_local_admin_boundary" else "keywords"
-            args[target_key] = args.pop("district")
+    # 5. 行政区划查询 (get_local_admin_boundary, get_admin_division, admin_boundary_query)
+    if name in ("get_local_admin_boundary", "get_admin_division", "admin_boundary_query"):
+        target_key = "keywords" if name == "get_admin_division" else "name"
+        if target_key not in args:
+            for alias in ("admin_name", "city", "district", "district_name", "region", "address", "location", "query", "keywords" if target_key == "name" else "name"):
+                if alias in args:
+                    args[target_key] = args.pop(alias)
+                    break
+        if "adcode" not in args:
+            for alias in ("ad_code", "city_code", "district_code", "code"):
+                if alias in args:
+                    args["adcode"] = args.pop(alias)
+                    break
+
+    # 6. 缓冲区分析 (buffer_analysis, multi_ring_buffer)
+    if name == "buffer_analysis":
+        if "distance" not in args:
+            for alias in ("buffer_distance", "dist", "radius", "buffer_radius"):
+                if alias in args:
+                    args["distance"] = args.pop(alias)
+                    break
+        if "unit" not in args:
+            for alias in ("dist_unit", "buffer_unit"):
+                if alias in args:
+                    args["unit"] = args.pop(alias)
+                    break
+    elif name == "multi_ring_buffer":
+        if "distances" not in args:
+            for alias in ("ring_distances", "radii", "distance_list", "distance"):
+                if alias in args:
+                    val = args.pop(alias)
+                    args["distances"] = val if isinstance(val, list) else [val]
+                    break
+
+    # 7. 专题图与模板 (create_thematic_map, apply_template)
+    if name in ("create_thematic_map", "apply_template"):
+        if "field" not in args:
+            for alias in ("classify_field", "field_name", "property", "property_name", "column", "attribute", "attr"):
+                if alias in args:
+                    args["field"] = args.pop(alias)
+                    break
+        if "palette" not in args:
+            for alias in ("color_palette", "color_scheme", "colors", "colormap", "color"):
+                if alias in args:
+                    args["palette"] = args.pop(alias)
+                    break
+        if "method" not in args:
+            for alias in ("classify_method", "classification", "classes_method", "scheme"):
+                if alias in args:
+                    args["method"] = args.pop(alias)
+                    break
+        if "n_classes" not in args:
+            for alias in ("num_classes", "bins", "k", "class_count", "classes"):
+                if alias in args and isinstance(args[alias], (int, float)):
+                    args["n_classes"] = int(args.pop(alias))
+                    break
+
+    # 8. 地图产品装配 (webgis_map_product)
+    if name == "webgis_map_product":
+        if "map_title" not in args:
+            for alias in ("title", "name", "project_title"):
+                if alias in args:
+                    args["map_title"] = args.pop(alias)
+                    break
+        if "primary_ref" not in args:
+            for alias in ("primary_layer", "primary_source", "base_ref", "base_layer", "main_ref", "ref", "geojson_ref"):
+                if alias in args:
+                    args["primary_ref"] = args.pop(alias)
+                    break
+        if "overlay_refs" not in args:
+            for alias in ("overlays", "overlay_layers", "layers", "other_refs", "sub_refs"):
+                if alias in args:
+                    val = args.pop(alias)
+                    args["overlay_refs"] = val if isinstance(val, list) else [val]
+                    break
+        if "insight_summary" not in args:
+            for alias in ("summary", "description", "insight", "conclusion", "insights"):
+                if alias in args:
+                    args["insight_summary"] = args.pop(alias)
+                    break
+
+    # 9. 图层增删改 (webgis_layer_upsert, webgis_component_update, webgis_layout_set)
+    if name == "webgis_layer_upsert":
+        if "source_data" not in args:
+            for alias in ("data", "source_ref", "geojson_ref", "geojson", "ref", "layer_data"):
+                if alias in args:
+                    args["source_data"] = args.pop(alias)
+                    break
 
     return args
+
 
 
 def _is_args_oversized(arguments: Any) -> bool:
@@ -822,7 +946,7 @@ class ToolRegistry:
                 )
 
         if isinstance(arguments, dict):
-            arguments = _normalize_tool_arguments(name, arguments)
+            arguments = _normalize_tool_arguments(name, arguments, model)
 
         # 注意：排除某些特殊字段（如 ref_id, layer_ref, layer_id, plan_id），
         # 这些字段本身就是为了接收引用 ID，绝不应被自动解引用为 GeoJSON 数据。
