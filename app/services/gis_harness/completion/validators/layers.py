@@ -82,13 +82,14 @@ def validate_layers(
                 )
             elif src and descriptors is not None:
                 src_def = source_by_id.get(src) or {}
+                # V4：磁盘栅格（ref:raster/*）与 store ref 同面探测（inputs
+                # 经 probe_ref 合成 descriptor）—— 过期栅格不再静默跳过。
                 src_ref = next(
                     (
                         src_def.get(k)
                         for k in ("ref", "ref_id", "image_ref", "imageRef", "result_ref")
                         if isinstance(src_def.get(k), str)
                         and src_def.get(k).startswith("ref:")
-                        and not src_def.get(k).startswith("ref:raster/")
                     ),
                     None,
                 )

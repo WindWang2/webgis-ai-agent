@@ -51,18 +51,23 @@ async def gather_completion_inputs(
 
     refs: Dict[str, Optional[dict]] = {}
     pending_refs: List[str] = []
+    # 磁盘态栅格（ref:raster/*，V4 一等产物）：走 stat 探测（probe_ref 的
+    # raster 分支），合成 descriptor 进 refs —— validators 对它的语义与
+    # store ref 一致（缺席 → source_missing finding，不再静默跳过）。
+    raster_refs: List[str] = []
 
     def _collect(ref: Any) -> None:
         if (
             isinstance(ref, str)
             and ref.startswith("ref:")
-            # 磁盘态栅格（ref:raster/*）不在 session store —— 由
-            # artifact_lifecycle 的 mtime 巡检负责，这里不强判过期。
-            and not ref.startswith("ref:raster/")
             and ref not in refs
+            and ref not in raster_refs
         ):
-            refs[ref] = None
-            pending_refs.append(ref)
+            if ref.startswith("ref:raster/"):
+                raster_refs.append(ref)
+            else:
+                refs[ref] = None
+                pending_refs.append(ref)
 
     for row in list(chapter.get("data_requirements") or []) + list(
         chapter.get("analysis_steps") or []
@@ -123,6 +128,19 @@ async def gather_completion_inputs(
                 refs[ref] = None
             else:  # unknown：从 refs 移除（validators 按未知跳过）
                 refs.pop(ref, None)
+
+    # 磁盘栅格探测（V4）：stat 存在 → 合成 descriptor；缺失 → None（validator
+    # 披露 source_missing）。stat 路径异常（会话目录不可达）→ 不进 refs
+    # （unknown 语义 —— 绝不把存储抖动判成过期）。
+    if raster_refs:
+        from app.services.artifact_registry import probe_ref
+
+        for ref in raster_refs:
+            try:
+                desc = await probe_ref(session_id, ref)
+            except Exception:  # noqa: BLE001
+                continue
+            refs[ref] = desc  # 存活 dict 或 None（缺失）
 
     # required 组件以 composition slot 族语义表达（slot id ≠ 组件类型名：
     # "legend" 槽可由 legend/categorical_legend/continuous_colorbar 任一满足
