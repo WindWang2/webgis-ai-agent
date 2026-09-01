@@ -392,16 +392,29 @@ SEED_MAP_MODELS: List[MapModel] = [
     ),
     # ── 目录完整但运行时未接线（诚实标记 planned）──────────────────────
     MapModel(
-        id="flow_od_arc", name_zh="OD 流向弧线图",
-        purpose_zh="起讫对之间的流量/迁徙表达",
-        geometry_kinds=["line", "point"],
+        id="flow_od_arc", name_zh="OD 流向图",
+        purpose_zh="起讫对之间的流量/迁徙表达：宽度 ← 权重，颜色 ← 权重分级（ADR-0092 Phase D 原生化）",
+        geometry_kinds=["line"],
         maplibre_layer_type="line",
+        classification="none",
         color_scheme_kind="sequential", default_palette="Plasma",
-        deck_gl_layer="ArcLayer", kepler_layer="arc / flow(experimental)",
+        deck_gl_layer="ArcLayer（对照；运行时以 MapLibre line 表达）",
+        kepler_layer="arc / flow(experimental)",
+        qgis_renderer="graduated line width（数据定义覆盖）",
+        runtime_status="native",
         accepted_artifact_types=["line_feature_set", "od_matrix"],
-        runtime_status="planned",
-        pitfalls_zh=["需要 OD 结构化输入（起终点坐标对 + 权重），当前工具面未提供"],
-        sources=[_DECKGL_URL, _KEPLER_URL],
+        recommended_components=["legend"],
+        supported_template_kinds=["thematic", "symbology"],
+        export_compatibility=["png", "pdf", "svg"],
+        # 视觉通道（D4 契约的机器可读面；运行时由 converter 授权 paint）：
+        # width ← weight（interpolate），color ← weight（continuous legend），
+        # opacity 0.85 缓解交叠；origin/destination 端点以 circle 层表达。
+        pitfalls_zh=[
+            "对所有 OD 对无差别画线是视觉灾难：必须 top-N / 阈值过滤（od_flow_edges 内建）",
+            "双向流应聚合（aggregate=bidirectional），两条重叠弧线会被误读为双倍流量",
+            "弧线是起终点直线段，不代表真实出行路径；SVG/PNG 导出与 live 视图同源（逐要素插值线宽），无静默丢失",
+        ],
+        sources=[_MAPLIBRE_SPEC_URL, _KEPLER_URL],
     ),
     MapModel(
         id="extrusion_3d", name_zh="3D 挤出柱状图",

@@ -302,6 +302,15 @@ _SEED_CAPS: List[CapabilityDescriptor] = [
         purpose_template="起讫点（OD）矩阵",
     ),
     CapabilityDescriptor(
+        # ADR-0092 D：OD 边 → 带权流向线要素（flow_od_arc 渲染输入）。
+        id="od_flow_mapping", name="OD 流向图", category="network",
+        domain="network", description="把 OD 对（坐标+权重）构建为有界流向线要素层。",
+        input_artifact_types=["od_matrix", "od_table", "line_feature_set"],
+        output_artifact_types=["line_feature_set"],
+        compatible_map_models=["flow_od_arc"],
+        purpose_template="OD 流向表达",
+    ),
+    CapabilityDescriptor(
         id="location_allocation", name="区位配置", category="network",
         domain="network", description="设施选址-分配优化（tier-3 门控）。",
         input_artifact_types=["poi_feature_set", "point_feature_set"],
