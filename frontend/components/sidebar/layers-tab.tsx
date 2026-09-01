@@ -8,6 +8,9 @@ import type { Layer } from '@/lib/types/layer';
 import { ConfirmAction } from '@/components/shared/confirm-action';
 import { EmptyState } from '@/components/shared/empty-state';
 import { IconButton } from '@/components/shared/icon-button';
+import { StatusBadge } from '@/components/shared/status-badge';
+import { useLayerStatuses } from '@/lib/hooks/use-layer-statuses';
+import { LAYER_STATUS_LABELS } from '@/lib/layers/layer-status';
 import {
   removeLayerAndCommit,
   reorderLayersAndCommit,
@@ -36,6 +39,19 @@ function getFeatureCount(layer: Layer): number {
   return 0;
 }
 
+/** 溯源提示（title）：产物 ref + 分组语义 + 数据通道 —— 只读既有事实。 */
+function provenanceTitle(layer: Layer): string {
+  const parts: string[] = [layer.name];
+  if (layer._refId) parts.push(`artifact: ${layer._refId}`);
+  if (layer._mapspecLayerId && layer._mapspecLayerId !== layer.id) {
+    parts.push(`spec layer: ${layer._mapspecLayerId}`);
+  }
+  if (layer._tileUrl) parts.push('通道: 矢量瓦片 (MVT)');
+  else if (layer._refId) parts.push('通道: ref GeoJSON');
+  parts.push(`分组: ${GROUP_NAMES[layer.group || 'default'] || layer.group || '未分组'}`);
+  return parts.join('\n');
+}
+
 /** UI V3：删除图层走 ConfirmAction 两段式确认（危险操作防误触 + 防双击绕过）。 */
 function DeleteLayerButton({ onDelete }: { onDelete: () => void }) {
   return <ConfirmAction label="删除图层" confirmLabel="确认删除？" onConfirm={onDelete} />;
@@ -45,6 +61,10 @@ export function LayersTab() {
   const layers = useHudStore((s) => s.layers);
   const updateLayer = useHudStore((s) => s.updateLayer);
   const setActiveLeftTab = useHudStore((s) => s.setActiveLeftTab);
+  // Workspace V2：状态词表（loading|ready|rendering|hidden|stale|failed|
+  // expired）从 MapSpec revision + artifact/ref 状态 + 最新渲染观察派生 ——
+  // 只读投影，不进 store、不进 MapSpec（无并行真相）。
+  const statuses = useLayerStatuses(layers);
 
   const [dragId, setDragId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
@@ -293,9 +313,23 @@ export function LayersTab() {
                           <span aria-hidden className="h-2 w-2 shrink-0 rounded-pill" style={{ backgroundColor: color }} />
                         )}
 
-                        <span className="min-w-0 flex-1 truncate text-body text-ink" title={layer.name}>
+                        <span
+                          className="min-w-0 flex-1 truncate text-body text-ink"
+                          title={provenanceTitle(layer)}
+                        >
                           {layer.name}
                         </span>
+
+                        {/* 状态徽标：ready 是健康常态，不占行宽（20 个绿徽标
+                            是噪声）；其余六态一望即知（含 layer.stale 的
+                            「待同步」——desired 在场而 runtime 分歧，交给
+                            runtime repair，不是数据问题）。 */}
+                        {statuses[layer.id] && statuses[layer.id] !== 'ready' && (
+                          <StatusBadge
+                            status={statuses[layer.id]}
+                            label={LAYER_STATUS_LABELS[statuses[layer.id]]}
+                          />
+                        )}
 
                         {featureCount > 0 && (
                           <span className="shrink-0 text-micro tabular-nums text-ink-muted">

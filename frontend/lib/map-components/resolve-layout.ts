@@ -111,6 +111,37 @@ export interface ComponentLayoutResult {
   collisions: LayoutCollision[];
 }
 
+/**
+ * Scenario H 视口折叠规则（Workspace V2 / Goal E）—— **派生**建议，非
+ * 持久真相：小画布（< VIEWPORT_COLLAPSE_CANVAS_HEIGHT）时面板族
+ * （statistics/chart）建议折叠到标题条。约束：
+ *
+ * - user-pinned 浮动面板绝不折叠（user > agent > auto 不变量）；
+ * - 不写 placement.collapsed（那是用户所有的工作真相）—— 消费方仅在
+ *   渲染层采纳建议，desired state 零改动，导出侧大画布天然不触发
+ *   （A4/演示画布高远超阈值 → live/export 语义分叉为「视口派生」）。
+ */
+export const VIEWPORT_COLLAPSE_CANVAS_HEIGHT = 520;
+
+/** 面板族（有正文可折叠）—— 视口折叠规则的共享词表（live hook 与渲染器同源）。 */
+export const COLLAPSIBLE_PANEL_TYPES: ReadonlySet<string> = new Set(['statistics_panel', 'chart_panel']);
+
+const EMPTY_COLLAPSES: ReadonlySet<string> = new Set();
+
+export function suggestViewportCollapses(
+  participants: LayoutParticipant[],
+  canvas?: { width: number; height: number },
+): ReadonlySet<string> {
+  if (!canvas || canvas.height >= VIEWPORT_COLLAPSE_CANVAS_HEIGHT) return EMPTY_COLLAPSES;
+  const out = new Set<string>();
+  for (const p of participants) {
+    if (!COLLAPSIBLE_PANEL_TYPES.has(p.type)) continue;
+    if (p.floating) continue; // 用户拖放结果优先，不折叠
+    out.add(p.id);
+  }
+  return out;
+}
+
 interface Box { x: number; y: number; w: number; h: number }
 
 function _aabb(a: Box, b: Box): boolean {

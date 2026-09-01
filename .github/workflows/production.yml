@@ -42,7 +42,7 @@ jobs:
         # pnpm 是唯一包管理器（audit5 #1083：npm lockfile 已删除，仓库只
         # 维护 frontend/pnpm-lock.yaml）。action-setup 必须先于 setup-node，
         # 否则 setup-node 的 pnpm 缓存找不到可执行文件。
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10
 
@@ -429,7 +429,7 @@ jobs:
 
       - name: Install pnpm
         # pnpm 是唯一包管理器（audit5 #1083）；action-setup 先于 setup-node。
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10
 
@@ -522,7 +522,7 @@ jobs:
 
       - name: Install pnpm
         # pnpm 是唯一包管理器（audit5 #1083）；action-setup 先于 setup-node。
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10
 

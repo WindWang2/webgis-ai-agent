@@ -58,6 +58,10 @@ from app.services.chat.context import (
     _build_truncation_notice,
 )
 
+
+# F3：user_action 事件体的系统上下文上限（客户端可写面的有界披露）。
+_MAX_USER_ACTION_JSON_CHARS = 1200
+
 logger = logging.getLogger(__name__)
 
 # 哪些工具结果的 status 字段代表"后台异步任务，前端正在跑"
@@ -270,6 +274,12 @@ async def build_map_state_summary(
         lines.append("- 近期用户操作:")
         for evt in user_actions[-3:]:
             _data_json = json.dumps(evt.get("data") or {}, ensure_ascii=False)
+            # F3：user_action 事件体是客户端可写面（WS 上行原样入账）——
+            # 无界 JSON 会随每轮系统上下文膨胀（大载荷事件毒化后续所有
+            # turn）。有界截断（与工具结果的 MSG_MAX_CHARS 同纪律）：
+            # 截断即失效语义，事件名保留、载荷截断披露。
+            if len(_data_json) > _MAX_USER_ACTION_JSON_CHARS:
+                _data_json = _data_json[:_MAX_USER_ACTION_JSON_CHARS] + "…(truncated)"
             _event_name = _untrusted(evt.get("event") or "?")
             lines.append(f"  * {_event_name}: {_xml_fence(TAG_UNTRUSTED_USER_ACTION, _data_json)}")
 

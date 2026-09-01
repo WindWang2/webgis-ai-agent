@@ -74,8 +74,11 @@ export interface CausalEntry {
   mapState?: Record<string, unknown>;
 }
 
-export type LeftTab = 'chat' | 'project' | 'layers' | 'analysis' | 'exports' | 'export_layout' | 'data_sources' | 'tasks' | 'results';
-export type SettingsTab = 'llm' | 'skills' | 'rag' | 'layers' | 'map' | 'system' | 'account';
+export type LeftTab = 'chat' | 'project' | 'layers' | 'components' | 'analysis' | 'exports' | 'export_layout' | 'data_sources' | 'tasks' | 'results';
+export type SettingsTab = 'llm' | 'skills' | 'rag' | 'map' | 'system' | 'account';
+
+// Workspace V2（Goal C5）：dock 基座 —— 工作区 UI 状态，与语义组件状态分离。
+export type { DockSlice, DockRegion, DockRegionState } from './slices/dockSlice';
 
 export interface SkillEntry {
   id: string;
@@ -223,6 +226,16 @@ export interface HudState {
   /** 模板库 V2 drawer（UI V3：与 history/settings 互斥的 overlay 之一） */
   templatesOpen: boolean;
   setTemplatesOpen: (open: boolean) => void;
+  /* ─── Dock（Workspace V2：工作区停靠，与语义组件状态分离）─── */
+  dockPlacements: import('./slices/dockSlice').DockSlice['dockPlacements'];
+  rightDock: import('./slices/dockSlice').DockSlice['rightDock'];
+  bottomDock: import('./slices/dockSlice').DockSlice['bottomDock'];
+  dockPanel: import('./slices/dockSlice').DockSlice['dockPanel'];
+  toggleRightDock: import('./slices/dockSlice').DockSlice['toggleRightDock'];
+  toggleBottomDock: import('./slices/dockSlice').DockSlice['toggleBottomDock'];
+  setActiveDockPanel: import('./slices/dockSlice').DockSlice['setActiveDockPanel'];
+  resetDockState: import('./slices/dockSlice').DockSlice['resetDockState'];
+  pruneDockPanels: import('./slices/dockSlice').DockSlice['pruneDockPanels'];
   settingsTab: SettingsTab;
   setSettingsTab: (tab: SettingsTab) => void;
   sessions: SessionSummary[];

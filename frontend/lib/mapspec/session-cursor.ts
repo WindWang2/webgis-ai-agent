@@ -28,6 +28,14 @@ export function resetLiveState(): void {
   pendingRemoved = [];
   // ref 数据缓存随会话失效（ref 归会话所有；切换后旧数据不可复用）。
   resetRefSourceCache();
+  // Workspace V2：per-layer 渲染证据与共享选择都是会话内 transient 态，
+  // 随会话切换清空（layer-status / map↔chart 联动不跨会话泄漏）。
+  void import('../layers/render-evidence')
+    .then((m) => m.clearLayerEvidence())
+    .catch(() => { /* best-effort */ });
+  void import('../selection/selection-store')
+    .then((m) => m.resetSelectionStore())
+    .catch(() => { /* best-effort */ });
   // #1078(G-4): chart artifact 缓存同样随会话失效 —— 此前生产代码从不
   // 调 resetChartArtifactCache（只有测试调），旧会话的 ref 条目永久滞留
   // 且随会话切换增长。动态 import 避免与 chart-artifact 的静态环

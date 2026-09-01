@@ -61,6 +61,12 @@ class CartographyRecipe(BaseModel):
     eligibility: List[EligibilityRule] = []
     preferred_analysis: List[str] = []   # 能力 id（capability，非工具名）
     optional_analysis: List[str] = []
+    # 任务条件能力（v3）：intent task → 专属补充能力。同一 recipe 服务多个
+    # task（raster_distribution 兼任 change_detection）时，只有命中该 task
+    # 的计划才并入 —— 与 optional_analysis 的无条件并入语义不同，避免污染
+    # 共享 recipe 的其他 task 产品。值域同 preferred/optional（capability
+    # id，registry_validation 校验存在性）。
+    task_optional_analysis: Dict[str, List[str]] = Field(default_factory=dict)
     primary_cartography: str = ""
     secondary_cartography: List[str] = []
     default_components: List[str] = []   # 组件类型列表
@@ -382,6 +388,10 @@ SEED_RECIPES: List[CartographyRecipe] = [
         intent_tasks=["raster_distribution", "change_detection"],
         intent_cartography=["raster_surface"],
         preferred_analysis=["raster_source", "point_profile"],
+        # change_detection task 的专属能力：双时相栅格变化检测（capability
+        # raster_change_detection / tool detect_raster_change）。此前该
+        # task 复用本 recipe 却从不计划变化检测能力 —— 任务语义断线。
+        task_optional_analysis={"change_detection": ["raster_change_detection"]},
         primary_cartography="raster_surface",
         secondary_cartography=[],
         default_components=["title", "continuous_colorbar", "north_arrow", "scale_bar", "attribution"],

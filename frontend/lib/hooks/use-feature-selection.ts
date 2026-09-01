@@ -5,6 +5,7 @@ import { ensureLayerData } from '@/lib/store/layer-data';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { geometryBBox } from '@/lib/utils/geo';
 import type { Layer } from '@/lib/types/layer';
+import { publishSelection } from '@/lib/selection/selection-store';
 
 interface UseFeatureSelectionOptions {
   /** 图层 id 集合 ref（sublayer → 父层解析用）。 */
@@ -69,9 +70,10 @@ export function useFeatureSelection({
     selectionBackfillAbortRef.current?.abort()
     const controller = new AbortController()
     selectionBackfillAbortRef.current = controller
+    const layerKey = parentId ?? sublayerId ?? 'unknown';
     setSelectedFeature({
       // 无主图层（process-* 等）时回退到原始 sublayer id。
-      layerId: parentId ?? sublayerId ?? 'unknown',
+      layerId: layerKey,
       layerName: layerInfo?.name,
       // 还原回 ref:xxx：sublayerId 形如 'ref:geojson-xxx__point'，父 id 即数据 ref。
       refId: parentId?.startsWith('ref:') ? parentId : undefined,
@@ -81,6 +83,17 @@ export function useFeatureSelection({
       featureId: rawFeatureId as string | number | undefined,
       bbox: tileBbox,
       ...(isMvt ? { isApproximate: true } : {}),
+    })
+    // Workspace V2（Goal D4）：map → 共享选择上下文（chart 侧订阅同一份
+    // 派生高亮）。选择是 transient UI 状态 —— 不写 MapSpec。
+    publishSelection('select', {
+      source: 'map',
+      layer_id: layerKey,
+      artifact_ref: parentId?.startsWith('ref:') ? parentId : undefined,
+      feature_id: rawFeatureId as string | number | undefined,
+      selected_ids: rawFeatureId != null ? [rawFeatureId] : [],
+      properties: (feature.properties || {}) as Record<string, unknown>,
+      bbox: tileBbox ?? undefined,
     })
     // #667/#668: selection truthfulness — backfill authoritative feature for MVT layers
     if (targetId && isMvt) {
