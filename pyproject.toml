@@ -28,7 +28,9 @@ dependencies = [
     "openai>=1.0.0",
     "aiohttp>=3.10.0",
     "scipy>=1.12.0",
-    # 上限对齐 numba 的 ABI 窗口 (<=2.4)，与 requirements.txt #1010 保持一致。
+    # 上限放宽记录：#1010 曾因旧版 numba 的 numpy ABI 窗口只到 2.4 而限死 <2.5；
+    # numba 0.67 (2026-08) 已支持 numpy 2.5，CI 全管线以 numpy 2.5.2 + libpysal
+    # 4.15.0 验证通过，放宽至 <2.6。待 numpy 2.6 生态兼容确认后再放宽回 <3.0.0。
     "numpy>=1.26.0,<2.6",
     "scikit-learn>=1.4.0",
     "Pillow>=10.0.0",
