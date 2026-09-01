@@ -1,7 +1,18 @@
 'use client';
 
-import { useId, useState, useEffect } from 'react';
-import { ChevronRight, ChevronDown, CheckCircle2, AlertCircle, AlertTriangle, Loader2, Clock, Wrench } from 'lucide-react';
+import React, { useId, useState, useEffect, useCallback } from 'react';
+import {
+  ChevronRight,
+  ChevronDown,
+  CheckCircle2,
+  AlertCircle,
+  AlertTriangle,
+  Loader2,
+  Clock,
+  Wrench,
+  Copy,
+  Check,
+} from 'lucide-react';
 import { CartographyResultCard } from './cartography-result-card';
 import { H3LisaResultCard } from './h3-lisa-result-card';
 import { IsochroneResultCard } from './isochrone-result-card';
@@ -113,9 +124,41 @@ function ToolName({ name }: { name: string }) {
   return <>{TOOL_NAMES[name] || name}</>;
 }
 
+/* ── Copy snippet helper ── */
+function CopyButton({ text, label = '复制' }: { text: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // ignore
+    }
+  }, [text]);
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-micro font-medium transition-all ${
+        copied
+          ? 'text-status-success bg-status-success-soft'
+          : 'text-ink-muted hover:text-ink hover:bg-surface-hover'
+      }`}
+      aria-label={copied ? '已复制' : label}
+      title={copied ? '已复制到剪贴板' : '复制到剪贴板'}
+    >
+      {copied ? <Check size={10} className="text-status-success" /> : <Copy size={10} />}
+      <span>{copied ? '已复制' : label}</span>
+    </button>
+  );
+}
+
 /* ── Single tool call card (minimal row when collapsed) ── */
 
-function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolean }) {
+export function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolean }) {
   const [open, setOpen] = useState(false);
   const duration =
     call.startedAt && call.completedAt
@@ -123,7 +166,13 @@ function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolea
       : null;
   const parsedArgs = parseArgs(call.arguments);
 
-  const CARTO_TOOLS = new Set(['create_thematic_map', 'h3_binning', 'kde_contours', 'heatmap_data', 'webgis_layer_upsert']);
+  const CARTO_TOOLS = new Set([
+    'create_thematic_map',
+    'h3_binning',
+    'kde_contours',
+    'heatmap_data',
+    'webgis_layer_upsert',
+  ]);
   const LISA_TOOLS = new Set(['h3_lisa', 'webgis_h3_lisa']);
   const ISOCHRONE_TOOLS = new Set(['isochrones', 'webgis_isochrones', 'service_area']);
 
@@ -144,43 +193,48 @@ function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolea
 
   const statusIcon =
     call.status === 'running' ? (
-      <Loader2 size={11} className="animate-spin text-status-info" />
+      <Loader2 size={12} className="animate-spin text-status-info shrink-0" />
     ) : call.status === 'completed' ? (
-      <CheckCircle2 size={11} className="text-status-success" />
+      <CheckCircle2 size={12} className="text-status-success shrink-0" />
     ) : (
-      <AlertCircle size={11} className="text-status-critical" />
+      <AlertCircle size={12} className="text-status-critical shrink-0" />
     );
 
   const panelId = `tool-row-panel-${call.id}`;
 
   return (
-    <div className={`rounded-sm border text-body overflow-hidden ${expanded ? 'border-edge-subtle bg-surface-raised' : 'border-transparent'}`}>
+    <div
+      className={`rounded-md border text-body overflow-hidden transition-all ${
+        expanded ? 'border-edge-subtle bg-surface-raised shadow-xs' : 'border-transparent'
+      }`}
+    >
       <button
+        type="button"
         onClick={() => setOpen(!open)}
         aria-expanded={open}
         aria-controls={panelId}
-        /* B: 删掉 focus:outline-none focus:ring-1 focus:ring-blue-400 —— 硬编码
-           blue 与全站焦点环词汇冲突；globals.css 的 unlayered *:focus-visible
-           已从 --focus-ring 提供统一焦点环。 */
-        className="w-full flex items-center gap-1.5 px-2 py-1 text-left hover:bg-surface-hover transition-colors"
+        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-surface-hover transition-colors cursor-pointer"
       >
         <ChevronRight
-          size={10}
-          className={`shrink-0 text-ink-disabled transition-transform ${open ? 'rotate-90' : ''}`}
+          size={11}
+          className={`shrink-0 text-ink-disabled transition-transform duration-200 ${
+            open ? 'rotate-90 text-ink-secondary' : ''
+          }`}
+          aria-hidden
         />
         {statusIcon}
-        <span className="font-mono text-ink-secondary">
+        <span className="font-mono text-ink-secondary font-medium text-caption">
           <ToolName name={call.tool} />
         </span>
         {call.hasGeojson && (
-          <span className="px-1 py-0 rounded-sm text-micro bg-status-accent-soft text-status-accent font-medium">
+          <span className="px-1.5 py-0.2 rounded text-micro bg-status-accent-soft text-status-accent font-medium border border-status-accent-border/40">
             GeoJSON
           </span>
         )}
         <span className="flex-1" />
         {duration && (
-          <span className="flex items-center gap-0.5 text-body text-ink-disabled">
-            <Clock size={9} />
+          <span className="flex items-center gap-1 text-caption text-ink-disabled font-mono">
+            <Clock size={10} aria-hidden />
             {duration}
           </span>
         )}
@@ -211,15 +265,25 @@ function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolea
       )}
 
       {open && (
-        <div id={panelId} role="region" aria-label={`${call.tool} 详细信息`} className="border-t border-edge-subtle px-2.5 py-1.5 space-y-1.5 bg-surface-sunken">
+        <div
+          id={panelId}
+          role="region"
+          aria-label={`${call.tool} 详细信息`}
+          className="border-t border-edge-subtle px-3 py-2 space-y-2 bg-surface-sunken/80"
+        >
           {parsedArgs && (
             <div>
-              <p className="text-body font-semibold text-ink-muted uppercase tracking-wider mb-0.5">参数</p>
-              <pre className="p-1.5 rounded-sm bg-surface-raised border border-edge-subtle text-body leading-relaxed text-ink-secondary font-mono overflow-x-auto max-h-[100px] overflow-y-auto">
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-micro font-semibold text-ink-muted uppercase tracking-wider">
+                  参数
+                </p>
+                <CopyButton text={formatJson(parsedArgs)} label="复制参数" />
+              </div>
+              <pre className="p-2 rounded-md bg-surface-raised border border-edge-subtle text-caption leading-relaxed text-ink-secondary font-mono overflow-x-auto max-h-[120px] overflow-y-auto">
                 {Object.entries(parsedArgs)
                   .map(([k, v]) => {
                     const val = typeof v === 'string' ? `"${v}"` : JSON.stringify(v);
-                    return `${k}: ${val.length > 80 ? val.slice(0, 80) + '...' : val}`;
+                    return `${k}: ${val.length > 100 ? val.slice(0, 100) + '...' : val}`;
                   })
                   .join('\n')}
               </pre>
@@ -227,8 +291,13 @@ function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolea
           )}
           {call.result && (
             <div>
-              <p className="text-body font-semibold text-ink-muted uppercase tracking-wider mb-0.5">结果</p>
-              <pre className="p-1.5 rounded-sm bg-surface-raised border border-edge-subtle text-body leading-relaxed text-ink-secondary font-mono overflow-x-auto max-h-[150px] overflow-y-auto">
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-micro font-semibold text-ink-muted uppercase tracking-wider">
+                  结果
+                </p>
+                <CopyButton text={formatJson(call.result)} label="复制结果" />
+              </div>
+              <pre className="p-2 rounded-md bg-surface-raised border border-edge-subtle text-caption leading-relaxed text-ink-secondary font-mono overflow-x-auto max-h-[160px] overflow-y-auto">
                 {formatJson(call.result).slice(0, 1500)}
                 {formatJson(call.result).length > 1500 ? '\n...' : ''}
               </pre>
@@ -236,8 +305,12 @@ function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolea
           )}
           {call.error && (
             <div>
-              <p className="text-body font-semibold text-status-critical uppercase tracking-wider mb-0.5">错误</p>
-              <pre className="p-1.5 rounded-sm bg-status-critical-soft border border-status-critical-border text-body text-status-critical font-mono">{call.error}</pre>
+              <p className="text-micro font-semibold text-status-critical uppercase tracking-wider mb-1">
+                错误
+              </p>
+              <pre className="p-2 rounded-md bg-status-critical-soft border border-status-critical-border text-caption text-status-critical font-mono whitespace-pre-wrap">
+                {call.error}
+              </pre>
             </div>
           )}
         </div>
@@ -279,40 +352,59 @@ export function ToolCallChain({ calls }: { calls: ToolCallEntry[] }) {
   const chainListId = useId();
 
   return (
-    <div className="my-1.5 rounded-md border border-edge-subtle bg-surface-raised overflow-hidden">
+    <div
+      className="my-2 rounded-md border border-edge-subtle bg-surface-raised shadow-raised overflow-hidden transition-all"
+      data-testid="tool-call-chain"
+    >
       {/* Chain header — click to expand */}
       <button
+        type="button"
         onClick={toggleExpanded}
         aria-expanded={expanded}
         aria-controls={chainListId}
-        /* B: 同 ToolCallRow —— 删掉 focus:ring-blue-400，交给全局 *:focus-visible。 */
-        className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-surface-hover transition-colors text-body"
+        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-surface-hover transition-colors text-body cursor-pointer select-none"
       >
         {expanded ? (
-          <ChevronDown size={12} className="shrink-0 text-ink-disabled" />
+          <ChevronDown size={13} className="shrink-0 text-ink-secondary" aria-hidden />
         ) : (
-          <ChevronRight size={12} className="shrink-0 text-ink-disabled" />
+          <ChevronRight size={13} className="shrink-0 text-ink-disabled" aria-hidden />
         )}
-        <Wrench size={11} className="text-ink-disabled" />
-        <span className="text-ink-muted">
+        <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-status-info-soft text-status-info">
+          <Wrench size={12} aria-hidden />
+        </div>
+        <span className="font-medium text-caption text-ink-secondary">
           {expanded ? '工具调用链' : statusText}
         </span>
         <span className="flex-1" />
         {allDone && !expanded && (
           failedCount > 0 ? (
-            <AlertTriangle size={11} className="text-status-warning" aria-label="部分或全部调用失败" />
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-micro bg-status-warning-soft text-status-warning font-medium">
+              <AlertTriangle size={11} aria-label="部分或全部调用失败" />
+              <span>{failedCount} 失败</span>
+            </span>
           ) : (
-            <CheckCircle2 size={11} className="text-status-success" />
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-micro bg-status-success-soft text-status-success font-medium">
+              <CheckCircle2 size={11} />
+              <span>已完成</span>
+            </span>
           )
         )}
         {!allDone && (
-          <Loader2 size={11} className="animate-spin text-status-info" />
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-micro bg-status-info-soft text-status-info font-medium">
+            <Loader2 size={11} className="animate-spin text-status-info" />
+            <span>执行中</span>
+          </span>
         )}
       </button>
 
       {/* Expanded: individual tool calls */}
       {expanded && (
-        <div id={chainListId} role="region" aria-label="工具调用链详情" className="border-t border-edge-subtle px-2 py-1 space-y-0.5 bg-surface-sunken">
+        <div
+          id={chainListId}
+          role="region"
+          aria-label="工具调用链详情"
+          className="border-t border-edge-subtle px-2.5 py-2 space-y-1 bg-surface-sunken/40"
+        >
           {calls.map((tc) => (
             <ToolCallRow key={tc.id} call={tc} expanded={expanded} />
           ))}

@@ -83,4 +83,15 @@ describe('UploadZone', () => {
     fireEvent.click(buttons[buttons.length - 1]);
     expect(screen.queryByText('Error')).not.toBeInTheDocument();
   });
+
+  it('correctly categorizes and styles file types with semantic tokens via getFileTypeInfo', async () => {
+    const { getFileTypeInfo } = await import('./upload-zone');
+    expect(getFileTypeInfo('image.tif')).toEqual({ type: '栅格', color: 'text-status-warning' });
+    expect(getFileTypeInfo('data.shp')).toEqual({ type: '矢量', color: 'text-status-success' });
+    expect(getFileTypeInfo('points.geojson')).toEqual({ type: '矢量', color: 'text-status-info' });
+    expect(getFileTypeInfo('routes.kml')).toEqual({ type: '矢量', color: 'text-status-accent' });
+    expect(getFileTypeInfo('dataset.gpkg')).toEqual({ type: '矢量', color: 'text-status-accent' });
+    expect(getFileTypeInfo('table.csv')).toEqual({ type: 'CSV', color: 'text-status-warning' });
+    expect(getFileTypeInfo('unknown.xyz')).toEqual({ type: '未知', color: 'text-ink-muted' });
+  });
 });

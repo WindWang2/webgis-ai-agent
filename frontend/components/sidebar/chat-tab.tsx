@@ -249,7 +249,10 @@ const ChatMessageItem = memo(function ChatMessageItem({
             padding: '8px 12px'
           }}>
             {msg.think && (
-              <CollapsibleThink content={msg.think} />
+              <CollapsibleThink
+                content={msg.think}
+                isStreaming={!msg.content && !!msg.think}
+              />
             )}
             {msg.agentPlan && (
               <PlanCard plan={msg.agentPlan} />

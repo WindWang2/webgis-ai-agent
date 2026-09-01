@@ -447,15 +447,31 @@ _district_codes_cache: Dict[str, List[str]] = {}
 
 
 def _resolve_district_codes(district: str) -> List[str]:
-    """行政区名 → adcode 列表（市名→4位前缀，区县名→6位精确）。
+    """行政区名/编码 → adcode 列表（市名→4位前缀，区县名→6位精确）。
 
     市级用前缀展开（如 成都市 510100 → '5101'，覆盖市内全部区县）；
     区县级精确匹配（如 锦江区 → '510104'）。多省同名区县全部返回
     （OR 连接），与按名查行政区工具的包含语义一致。
     """
-    key = district.strip()
+    key = str(district).strip()
+    if not key:
+        return []
     if key in _district_codes_cache:
         return _district_codes_cache[key]
+    
+    # 纯数字编码直接标准化
+    if key.isdigit():
+        if len(key) == 6 and key.endswith("0000"):
+            out = [key[:2]]
+        elif len(key) == 6 and key.endswith("00"):
+            out = [key[:4]]
+        elif len(key) in (2, 4, 6):
+            out = [key]
+        else:
+            out = [key]
+        _district_codes_cache[key] = out
+        return out
+
     codes: List[str] = []
     try:
         from app.tools.local_admin import _load_level
@@ -482,29 +498,69 @@ def _resolve_district_codes(district: str) -> List[str]:
 
 
 def _coerce_polygon(polygon: Any):
-    """GeoJSON Polygon/MultiPolygon（dict 或坐标数组）→ shapely 几何；非法返回 None。"""
+    """GeoJSON Polygon/MultiPolygon/FeatureCollection（dict/str/ref 或坐标数组）→ shapely 几何；非法返回 None。"""
     if polygon is None:
         return None
     try:
-        from shapely.geometry import shape
+        from shapely.geometry import shape, box
+        from shapely.ops import unary_union
+
+        if hasattr(polygon, "geom_type"):
+            return polygon if not polygon.is_empty else None
+
+        if isinstance(polygon, str):
+            polygon = polygon.strip()
+            if not polygon:
+                return None
+            if polygon.startswith("ref:"):
+                try:
+                    from app.services.ref_cache import get_ref_data
+                    data = get_ref_data(polygon)
+                    if data is not None:
+                        return _coerce_polygon(data)
+                except Exception:
+                    pass
+            if polygon.startswith("{") or polygon.startswith("["):
+                try:
+                    polygon = json.loads(polygon)
+                except Exception:
+                    return None
+            else:
+                return None
 
         if isinstance(polygon, dict):
-            if polygon.get("type") == "Feature":
-                polygon = polygon.get("geometry") or {}
-            if polygon.get("type") == "FeatureCollection":
+            t = polygon.get("type")
+            if t == "Feature":
+                return _coerce_polygon(polygon.get("geometry"))
+            if t == "FeatureCollection":
                 feats = polygon.get("features") or []
-                if not feats:
+                geoms = [_coerce_polygon(f.get("geometry")) for f in feats if f.get("geometry")]
+                valid_geoms = [g for g in geoms if g is not None]
+                if not valid_geoms:
                     return None
-                polygon = feats[0].get("geometry") or {}
-            elif polygon.get("type") not in ("Polygon", "MultiPolygon"):
-                return None
+                u = unary_union(valid_geoms)
+                return u if not u.is_empty else None
+            if t == "GeometryCollection":
+                geoms = [_coerce_polygon(g) for g in polygon.get("geometries", [])]
+                valid_geoms = [g for g in geoms if g is not None]
+                if not valid_geoms:
+                    return None
+                u = unary_union(valid_geoms)
+                return u if not u.is_empty else None
+            if t in ("Polygon", "MultiPolygon"):
+                geom = shape(polygon)
+                return geom if not geom.is_empty else None
+            return None
         elif isinstance(polygon, (list, tuple)):
+            if len(polygon) == 4 and all(isinstance(v, (int, float)) for v in polygon):
+                minx, miny, maxx, maxy = polygon
+                return box(minx, miny, maxx, maxy)
             # 裸坐标环 [[ [lng,lat], ... ], ...] → Polygon
-            polygon = {"type": "Polygon", "coordinates": polygon}
+            polygon_dict = {"type": "Polygon", "coordinates": polygon}
+            geom = shape(polygon_dict)
+            return geom if not geom.is_empty else None
         else:
             return None
-        geom = shape(polygon)
-        return geom if not geom.is_empty else None
     except Exception:  # noqa: BLE001 - 非法 geojson 一律当 None 处理
         return None
 
@@ -747,7 +803,24 @@ def query_gd_poi(
             sub_sql_p = [_sql_like_pattern(str(s)) for s in subtype_list]
         if adcode:
             code = _adcode_literal(str(adcode).strip())
-            if len(code) >= 6:  # 区县级 6 位：精确（zfill 兜底补零）
+            if len(code) == 6 and code.endswith("0000"):
+                pfx = code[:2]
+                nxt = pfx[:-1] + chr(ord(pfx[-1]) + 1)
+                ogr_c.append(f"(adcode >= '{pfx}' AND adcode < '{nxt}')")
+                sql_c.append("(adcode >= ? AND adcode < ?)")
+                sql_p.extend((pfx, nxt))
+            elif len(code) == 6 and code.endswith("00"):
+                pfx = code[:4]
+                nxt = pfx[:-1] + chr(ord(pfx[-1]) + 1)
+                ogr_c.append(f"(adcode >= '{pfx}' AND adcode < '{nxt}')")
+                sql_c.append("(adcode >= ? AND adcode < ?)")
+                sql_p.extend((pfx, nxt))
+            elif len(code) in (2, 4):
+                nxt = code[:-1] + chr(ord(code[-1]) + 1)
+                ogr_c.append(f"(adcode >= '{code}' AND adcode < '{nxt}')")
+                sql_c.append("(adcode >= ? AND adcode < ?)")
+                sql_p.extend((code, nxt))
+            elif len(code) >= 6:  # 区县级 6 位：精确（zfill 兜底补零）
                 padded = code.zfill(6)
                 ogr_c.append(f"adcode = '{padded}'")
                 sql_c.append("adcode = ?")

@@ -1,5 +1,6 @@
 'use client';
 
+import React from 'react';
 import { AlertTriangle, CheckCircle2, HelpCircle, Palette, Target } from 'lucide-react';
 import type { LegendSpec } from '@/lib/map-kit/types';
 
@@ -52,33 +53,38 @@ export function CartographyResultCard({ result, layerId, onFocus }: Props) {
   const desiredOnly = review?.stage === 'desired_state';
   const reviewUnknown = !review?.status || review.status === 'not_evaluated' || review.status === 'partial';
   const failedChecks = (review?.checks ?? []).filter((check) => check.status === 'fail').slice(0, 2);
+
   return (
-    <div className="my-2 p-3 rounded-md border border-edge-subtle bg-surface-raised">
-      <div className="flex items-center gap-2 mb-2">
-        <Palette className="h-4 w-4 text-status-accent" />
+    <div className="my-2 p-3.5 rounded-md border border-edge-subtle bg-surface-raised shadow-raised transition-all">
+      {/* Header */}
+      <div className="flex items-center gap-2 mb-2.5">
+        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-status-accent-soft text-status-accent">
+          <Palette className="h-3.5 w-3.5" />
+        </div>
         <span className="text-body font-semibold text-ink truncate">{title}</span>
       </div>
+
       {spec && (
         <>
-          <div className="flex items-center gap-1 mb-2">
+          <div className="flex items-center gap-1.5 mb-2.5">
             {colors.map((c, i) => (
               <div
                 key={i}
                 data-testid="card-swatch"
-                className="w-5 h-3 rounded-sm ring-1 ring-edge-subtle"
+                className="w-6 h-3.5 rounded-sm ring-1 ring-edge-subtle shadow-xs"
                 style={{ backgroundColor: c }}
               />
             ))}
           </div>
-          <div className="flex items-center justify-between">
-            <span className="text-body text-ink-muted">{summarize(spec)}</span>
+          <div className="flex items-center justify-between pt-1">
+            <span className="text-caption text-ink-muted font-medium">{summarize(spec)}</span>
             {onFocus && layerId ? (
               <button
                 type="button"
                 onClick={() => onFocus(layerId)}
-                className="inline-flex items-center gap-1 text-body font-medium text-status-accent hover:underline"
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-caption font-medium text-status-accent hover:bg-status-accent-soft transition-all cursor-pointer"
               >
-                <Target className="h-3 w-3" />
+                <Target className="h-3.5 w-3.5" />
                 高亮此图层
               </button>
             ) : (
@@ -86,30 +92,31 @@ export function CartographyResultCard({ result, layerId, onFocus }: Props) {
                 type="button"
                 disabled
                 aria-disabled="true"
-                className="inline-flex items-center gap-1 text-body font-medium text-ink-disabled cursor-not-allowed"
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-caption font-medium text-ink-disabled cursor-not-allowed"
                 title="无可聚焦图层"
               >
-                <Target className="h-3 w-3" />
+                <Target className="h-3.5 w-3.5" />
                 高亮此图层
               </button>
             )}
           </div>
         </>
       )}
+
       {review && (
         <div
-          className="mt-2 border-t border-edge-subtle pt-2"
+          className="mt-2.5 border-t border-edge-subtle pt-2.5"
           aria-label="制图质量"
           role="status"
           aria-live="polite"
         >
-          <div className="flex items-center gap-1.5 text-body text-ink-muted">
+          <div className="flex items-center gap-1.5 text-caption text-ink-secondary">
             {reviewPassed ? (
-              <CheckCircle2 className="h-3.5 w-3.5 text-status-success" />
+              <CheckCircle2 className="h-3.5 w-3.5 text-status-success shrink-0" />
             ) : reviewUnknown ? (
-              <HelpCircle className="h-3.5 w-3.5 text-status-warning" />
+              <HelpCircle className="h-3.5 w-3.5 text-status-warning shrink-0" />
             ) : (
-              <AlertTriangle className="h-3.5 w-3.5 text-status-danger" />
+              <AlertTriangle className="h-3.5 w-3.5 text-status-critical shrink-0" />
             )}
             <span>
               {reviewPassed
@@ -124,7 +131,7 @@ export function CartographyResultCard({ result, layerId, onFocus }: Props) {
             </span>
           </div>
           {failedChecks.map((check) => (
-            <p key={`${check.rule}-${check.message}`} className="mt-1 text-caption text-status-danger">
+            <p key={`${check.rule}-${check.message}`} className="mt-1 text-caption text-status-critical">
               {check.message || check.rule}
             </p>
           ))}
@@ -133,3 +140,5 @@ export function CartographyResultCard({ result, layerId, onFocus }: Props) {
     </div>
   );
 }
+
+export default CartographyResultCard;

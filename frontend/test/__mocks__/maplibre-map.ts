@@ -362,6 +362,23 @@ export function makeMockMaplibreMap(options: MakeMockMaplibreMapOptions = {}) {
     easeTo: vi.fn(() => {
       animating = true;
     }),
+    zoomIn: vi.fn((_opts?: any) => {
+      viewport.zoom += 1;
+      animating = true;
+    }),
+    zoomOut: vi.fn((_opts?: any) => {
+      viewport.zoom = Math.max(0, viewport.zoom - 1);
+      animating = true;
+    }),
+    zoomTo: vi.fn((zoom: number, _opts?: any) => {
+      viewport.zoom = zoom;
+      animating = true;
+    }),
+    resetNorthPitch: vi.fn((_opts?: any) => {
+      viewport.bearing = 0;
+      viewport.pitch = 0;
+      animating = true;
+    }),
     stop: vi.fn(() => {
       calls.stop.push(1);
       // Model MapLibre reality: stop() during an in-flight animation fires

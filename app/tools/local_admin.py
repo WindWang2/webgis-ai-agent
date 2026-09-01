@@ -174,6 +174,54 @@ def query_admin_boundary(
         return {"error": "name 与 adcode 至少提供一个"}
     gdf = _load_level(level)
     if gdf is None:
+        # 自动在线降级回退：当 LOCAL_GEODATA_DIR 外部磁盘未挂载或本地 SHP 不存在时，通过在线高德/天地图 API 自动获取政区轮廓
+        try:
+            import httpx
+            from shapely.geometry import Polygon, MultiPolygon
+            key = settings.AMAP_API_KEY
+            if key and (name or adcode):
+                search_kw = name or str(adcode)
+                resp = httpx.get(
+                    "https://restapi.amap.com/v3/config/district",
+                    params={
+                        "key": key,
+                        "keywords": search_kw,
+                        "subdistrict": "0",
+                        "extensions": "all",
+                    },
+                    timeout=10.0,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    districts = data.get("districts", [])
+                    if districts and districts[0].get("polyline"):
+                        polyline_str = districts[0]["polyline"]
+                        polys = []
+                        for poly_part in polyline_str.split("|"):
+                            coords = []
+                            for pt_str in poly_part.split(";"):
+                                if "," in pt_str:
+                                    x_s, y_s = pt_str.split(",")
+                                    coords.append((float(x_s), float(y_s)))
+                            if len(coords) >= 3:
+                                polys.append(Polygon(coords))
+                        if polys:
+                            geom = MultiPolygon(polys) if len(polys) > 1 else polys[0]
+                            gdf_online = gpd.GeoDataFrame(
+                                [{"name": districts[0].get("name", name), "adcode": districts[0].get("adcode", adcode)}],
+                                geometry=[geom],
+                            )
+                            gdf_online = _project_result(gdf_online, to_wgs84=to_wgs84, simplified=simplified)
+                            out = _to_feature_collection(
+                                gdf_online,
+                                note=_CRS_NOTE_WGS if to_wgs84 else _CRS_NOTE_GCJ,
+                                crs=None if to_wgs84 else "gcj02",
+                            )
+                            out["metadata"] = {**(out.get("metadata") or {}), "admin_level": level, "source": "amap_online_fallback"}
+                            return out
+        except Exception as exc:
+            logger.warning("[local_admin] query_admin_boundary online fallback failed: %s", exc)
+
         return {
             "error": "本地行政区数据不可用（未找到 ChinaAdminDivisonSHP 或读取失败）",
             "correction_hint": "请设置 LOCAL_GEODATA_DIR 指向含 ChinaAdminDivisonSHP/ 的目录，"
@@ -222,6 +270,61 @@ def query_child_districts(
         return {"error": f"parent_level 仅支持 {', '.join(parent_col_map)}"}
     gdf = _load_level("district")
     if gdf is None:
+        # 在线高德下级行政区查询降级
+        try:
+            import httpx
+            from shapely.geometry import Polygon, MultiPolygon
+            key = settings.AMAP_API_KEY
+            if key and parent_name:
+                resp = httpx.get(
+                    "https://restapi.amap.com/v3/config/district",
+                    params={
+                        "key": key,
+                        "keywords": parent_name,
+                        "subdistrict": "1",
+                        "extensions": "all",
+                    },
+                    timeout=10.0,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    districts = data.get("districts", [])
+                    if districts:
+                        sub_districts = districts[0].get("districts", [])
+                        features = []
+                        for sub in sub_districts:
+                            polyline_str = sub.get("polyline")
+                            if polyline_str:
+                                polys = []
+                                for poly_part in polyline_str.split("|"):
+                                    coords = []
+                                    for pt_str in poly_part.split(";"):
+                                        if "," in pt_str:
+                                            x_s, y_s = pt_str.split(",")
+                                            coords.append((float(x_s), float(y_s)))
+                                    if len(coords) >= 3:
+                                        polys.append(Polygon(coords))
+                                if polys:
+                                    geom = MultiPolygon(polys) if len(polys) > 1 else polys[0]
+                                    features.append({
+                                        "name": sub.get("name"),
+                                        "adcode": sub.get("adcode"),
+                                        "level": sub.get("level", "district"),
+                                        "geometry": geom,
+                                    })
+                        if features:
+                            gdf_online = gpd.GeoDataFrame(features, geometry="geometry")
+                            gdf_online = _project_result(gdf_online, to_wgs84=to_wgs84, simplified=simplified)
+                            out = _to_feature_collection(
+                                gdf_online,
+                                note=_CRS_NOTE_WGS if to_wgs84 else _CRS_NOTE_GCJ,
+                                crs=None if to_wgs84 else "gcj02",
+                            )
+                            out["metadata"] = {**(out.get("metadata") or {}), "admin_level": "district", "source": "amap_online_fallback"}
+                            return out
+        except Exception as exc:
+            logger.warning("[local_admin] query_child_districts online fallback failed: %s", exc)
+
         return {
             "error": "本地行政区数据不可用（district.shp 未找到）",
             "correction_hint": "请设置 LOCAL_GEODATA_DIR，或改用在线工具。",

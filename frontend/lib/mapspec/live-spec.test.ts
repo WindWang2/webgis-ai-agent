@@ -83,14 +83,15 @@ describe('composeLiveMapSpec', () => {
     expect(source.url).toBeUndefined();
   });
 
-  it('does not let a HUD-only layer survive when a committed MapSpec is present', () => {
+  it('preserves HUD-only analysis layers alongside a committed MapSpec', () => {
     const spec = composeLiveMapSpec(
       committedSpec(),
       { layers: [hudLayer(), hudLayer({ id: 'HUD_ONLY' })], processLayers: {}, activeFilters: {}, is3D: false },
       {},
     );
-    expect(spec.layers.map((layer) => layer.id)).toEqual(['L1']);
+    expect(spec.layers.map((layer) => layer.id)).toEqual(['L1', 'HUD_ONLY__point']);
     expect(spec.layers[0].layout?.visibility).toBe('visible');
+    expect(spec.layers[1].layout?.visibility).toBe('visible');
   });
 
   it('drops a pending-removed committed layer from the live spec', () => {

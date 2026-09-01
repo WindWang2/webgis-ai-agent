@@ -1,5 +1,6 @@
 "use client"
 import { useState, useRef, useCallback, useEffect, useMemo, useSyncExternalStore } from "react"
+import { AlertTriangle, RefreshCw } from "lucide-react"
 import { MAP_STYLES, MapStyleOption } from "@/lib/constants"
 
 const EMPTY_SELECTION_FILTERS: Record<string, unknown[]> = {}
@@ -35,10 +36,19 @@ export function resolveFilterState(
 import { MapActionHandler } from "./map-action-handler"
 import { LegendStack } from "./legend-stack"
 import { MapDecorations } from "./map-decorations"
+import { MapToolbarHUD, type MeasureMode } from "./map-toolbar-hud"
 import { useHudStore, type HudState } from "@/lib/store/useHudStore"
 import * as renderer from "@/lib/map-kit/renderer"
 import { remountCustomOverlays } from "@/lib/map-kit/custom-overlay-registry"
-import { fitBounds as navFitBounds, calculateBBox, calculateBBoxAsync } from "@/lib/map-kit/navigation"
+import {
+  fitBounds as navFitBounds,
+  calculateBBox,
+  calculateBBoxAsync,
+  haversineDistance,
+  polygonAreaKm2,
+  formatDistance,
+  formatArea,
+} from "@/lib/map-kit/navigation"
 import { MapSpecRuntime } from "@/lib/mapspec-runtime"
 import { composeLiveMapSpec } from "@/lib/mapspec/live-spec"
 import {
@@ -177,6 +187,21 @@ export function MapPanel({
     return out
     // eslint-disable-next-line react-hooks/exhaustive-deps -- generation is the change signal
   }, [selectionGeneration])
+
+  const [webglError, setWebglError] = useState<string | null>(null)
+  const [mapKey, setMapKey] = useState(0)
+
+  const handleMapError = useCallback((e: any) => {
+    const msg = e?.error?.message || e?.message || (typeof e === 'string' ? e : 'WebGL context creation failed')
+    devOnly.warn('[MapPanel] WebGL/Map initialization error:', e)
+    setWebglError(msg)
+  }, [])
+
+  const handleRetryWebGL = useCallback(() => {
+    setWebglError(null)
+    setMapReady(false)
+    setMapKey((k) => k + 1)
+  }, [])
   const mapRef = useRef<MapRef>(null)
   const processLayers = useHudStore((s: HudState) => s.processLayers)
   const cartographyTitle = useHudStore((s: HudState) => s.cartographyTitle)
@@ -534,7 +559,13 @@ export function MapPanel({
         // stacks every spec sublayer above it on any layer-changing patch.
         // Re-raise it alongside the selection highlight (no-op when the
         // stack isn't mounted, so reconcile-only patches stay cheap).
-        if (map) raiseAnnotationLayers(map)
+        if (map && typeof (map as any).getLayer === 'function') {
+          try {
+            raiseAnnotationLayers(map);
+          } catch {
+            // Guard against style lifecycle/destruction race
+          }
+        }
         // #605: a basemap switch (setStyle) sweeps the raster-dem source +
         // setTerrain along with every other imperative layer, but the 3D
         // effect (deps [is3D, mapReady]) never re-runs — mapReady stays true
@@ -629,9 +660,79 @@ export function MapPanel({
     features: any[]
   } | null>(null)
 
+  // 交互测量工具状态（HUD 联动）
+  const [measureMode, setMeasureMode] = useState<MeasureMode>('none')
+  const [measurePoints, setMeasurePoints] = useState<[number, number][]>([])
+
+  const handleCompleteMeasurement = useCallback(() => {
+    if (measurePoints.length < 2) return
+    const store = useHudStore.getState()
+    if (measureMode === 'distance') {
+      let totalKm = 0
+      for (let i = 0; i < measurePoints.length - 1; i++) {
+        totalKm += haversineDistance(measurePoints[i], measurePoints[i + 1])
+      }
+      const formatted = formatDistance(totalKm)
+      store.addAnnotation({
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: measurePoints.slice() },
+        properties: { label: `距离: ${formatted}`, kind: 'measure_line' },
+      })
+      const end = measurePoints[measurePoints.length - 1]
+      store.addAnnotation({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: end.slice() },
+        properties: { label: formatted, color: 'transparent', kind: 'measure_label' },
+      })
+    } else if (measureMode === 'area' && measurePoints.length >= 3) {
+      const ring = measurePoints.slice()
+      if (ring[0][0] !== ring[ring.length - 1][0] || ring[0][1] !== ring[ring.length - 1][1]) {
+        ring.push([ring[0][0], ring[0][1]])
+      }
+      const areaKm2 = polygonAreaKm2(ring)
+      const formatted = formatArea(areaKm2)
+      store.addAnnotation({
+        type: 'Feature',
+        geometry: { type: 'Polygon', coordinates: [ring] },
+        properties: { label: `面积: ${formatted}`, kind: 'measure_polygon' },
+      })
+      const cx = ring.reduce((s, p) => s + p[0], 0) / ring.length
+      const cy = ring.reduce((s, p) => s + p[1], 0) / ring.length
+      store.addAnnotation({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [cx, cy] },
+        properties: { label: formatted, color: 'transparent', kind: 'measure_label' },
+      })
+    }
+    setMeasurePoints([])
+    setMeasureMode('none')
+  }, [measureMode, measurePoints])
+
+  const handleZoomToFeature = useCallback((target: [number, number] | [number, number, number, number]) => {
+    const map = mapRef.current?.getMap()
+    if (!map) return
+    if (Array.isArray(target) && target.length === 4) {
+      navFitBounds(map, target as [number, number, number, number], 40)
+    } else if (Array.isArray(target) && target.length === 2) {
+      if (typeof map.flyTo === 'function') {
+        map.flyTo({ center: target as [number, number], zoom: Math.max(typeof map.getZoom === 'function' ? map.getZoom() : 14, 15), duration: 1000 })
+      } else if (typeof map.easeTo === 'function') {
+        map.easeTo({ center: target as [number, number], zoom: 15, duration: 1000 })
+      }
+    }
+  }, [])
+
   const handleMapClick = useCallback((evt: any) => {
     const map = mapRef.current?.getMap()
     if (!map) return
+
+    // 测距/测面模式优先：捕获坐标并追加到测量路径，不触发要素选择
+    if (measureMode !== 'none') {
+      const pt: [number, number] = [evt.lngLat.lng, evt.lngLat.lat]
+      setMeasurePoints((prev) => [...prev, pt])
+      return
+    }
+
     // 只查询我们自己添加的 __ 子图层；底图瓦片层不应吃 click。
     const ids = interactiveIdsRef.current
     if (ids.length === 0) {
@@ -662,7 +763,7 @@ export function MapPanel({
       lngLat: point,
       features: features.slice(0, 5),
     })
-  }, [setSelectedFeature, commitSelection])
+  }, [measureMode, setSelectedFeature, commitSelection])
 
   // 悬浮提示（rAF 节流 hover 查询 + mouseout/卸载清理）下沉到
   // useHoverTooltip（#1009 分解）；监听仍由下方手势仲裁 effect 挂载。
@@ -884,30 +985,74 @@ export function MapPanel({
     /* bg-surface-canvas 作为地图底衬：瓦片未到位（首帧、离线、瓦片报错）时
        暗色主题下会露出一整屏白色画布 —— 地图是主视觉，这里不该闪白。 */
     <div className="absolute inset-0 bg-surface-canvas">
-      {/* Map Canvas — Full Viewport */}
-      <Map
-        id="default"
-        ref={mapRef}
-        initialViewState={DEFAULT_VIEW_STATE}
-        onMove={handleMove}
-        onClick={handleMapClick}
-        interactiveLayerIds={interactiveIds}
-        onLoad={() => { setMapReady(true); useHudStore.getState().setMapLoaded(true); }}
-        style={{ position: "absolute", inset: 0 }}
-        mapStyle={currentMapStyle}
-        attributionControl={false}
-        transformRequest={transformRequest}
-        {...({ preserveDrawingBuffer: true } as any)}
-      >
+      {/* WebGL Error Fallback UI */}
+      {webglError ? (
+        <div className="absolute inset-0 flex flex-col items-center justify-center p-6 bg-surface-canvas/95 backdrop-blur-md z-30 text-ink-primary">
+          <div className="max-w-md w-full rounded-2xl border border-edge-subtle bg-surface-panel p-6 shadow-2xl space-y-4 text-center">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-500 ring-1 ring-amber-500/20">
+              <AlertTriangle className="h-7 w-7" />
+            </div>
+            <div>
+              <h3 className="text-base font-semibold tracking-tight text-ink-primary">WebGL 上下文丢失或被阻止</h3>
+              <p className="mt-1 text-xs text-ink-muted leading-relaxed">
+                浏览器 WebGL 渲染上下文发生丢失或被阻止 (Context Loss)。通常由于浏览器开启过多 3D/地图标签页或 GPU 资源受限导致。
+              </p>
+            </div>
+            <div className="rounded-lg bg-surface-base/80 p-3 text-left border border-edge-subtle text-[11px] text-ink-muted space-y-1">
+              <div className="font-medium text-ink-secondary">建议解决方案：</div>
+              <ul className="list-disc list-inside space-y-0.5 text-ink-muted">
+                <li>关闭占用显存的其他 3D / 地图标签页</li>
+                <li>确认浏览器设置中已启用「硬件加速」</li>
+                <li>点击下方按钮重试或刷新当前网页</li>
+              </ul>
+            </div>
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={handleRetryWebGL}
+                className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3.5 py-2 text-xs font-medium text-white shadow-sm hover:bg-primary-500 transition-colors"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                重试初始化地图
+              </button>
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="inline-flex items-center justify-center rounded-lg border border-edge-subtle bg-surface-base px-3.5 py-2 text-xs font-medium text-ink-primary hover:bg-surface-subtle transition-colors"
+              >
+                刷新页面
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* Map Canvas — Full Viewport */
+        <Map
+          key={`maplibre-instance-${mapKey}`}
+          id="default"
+          ref={mapRef}
+          initialViewState={DEFAULT_VIEW_STATE}
+          onMove={handleMove}
+          onClick={handleMapClick}
+          interactiveLayerIds={interactiveIds}
+          onLoad={() => { setMapReady(true); useHudStore.getState().setMapLoaded(true); }}
+          onError={handleMapError}
+          style={{ position: "absolute", inset: 0 }}
+          mapStyle={currentMapStyle}
+          attributionControl={false}
+          transformRequest={transformRequest}
+        >
         <MapActionHandler />
         {poiPanel && (
           <PoiInfoPanel
             x={poiPanel.x}
             y={poiPanel.y}
+            coordinates={poiPanel.lngLat}
             features={poiPanel.features}
             layerIds={layerIdsSetRef.current}
             layersMap={layersMapRef.current}
             onClose={() => { setPoiPanel(null); setSelectedFeature(null) }}
+            onZoomToFeature={handleZoomToFeature}
           />
         )}
         {!poiPanel && !selectedFeature && hoverInfo && (
@@ -934,6 +1079,7 @@ export function MapPanel({
           </Popup>
         )}
       </Map>
+      )}
 
       {/* Live cartography overlays — driven by layer.legend_spec */}
       {thematicLayers.length > 0 && !hasSpecLegend && (
@@ -974,6 +1120,18 @@ export function MapPanel({
           spec={committedSpec}
         />
       )}
+
+      {/* Interactive Floating GIS Toolbar HUD */}
+      <MapToolbarHUD
+        mapRef={mapRef}
+        bearing={decorProps.bearing}
+        pitch={is3D ? 60 : 0}
+        activeMeasureTool={measureMode}
+        onMeasureToolChange={setMeasureMode}
+        measurePoints={measurePoints}
+        onClearMeasurePoints={() => setMeasurePoints([])}
+        onCompleteMeasurement={handleCompleteMeasurement}
+      />
 
       {/* Perception Rings — AI activity indicator at map center */}
       {showPerceptionRings && (

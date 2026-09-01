@@ -140,7 +140,7 @@ def register_local_stats_tools(registry: ToolRegistry):
         # 空间过滤优先级：polygon（任意矢量区域，精确包含）> bbox（矩形）
         # > district/adcode（行政区精确归属——行政区查询首选，无矩形外溢）。
         raw_bbox = list(bbox) if isinstance(bbox, (list, tuple)) else (bbox or None)
-        return query_gd_poi(
+        res = query_gd_poi(
             raw_bbox,
             name_like=name_like,
             category=category,
@@ -150,6 +150,71 @@ def register_local_stats_tools(registry: ToolRegistry):
             polygon=polygon,
             limit=_to_int(limit, 2000),
         )
+        if isinstance(res, dict) and "error" in res and ("未生成" in str(res.get("error")) or "缺失" in str(res.get("error"))):
+            # 自动降级至在线高德 POI 检索通道
+            try:
+                import httpx
+                from app.core.config import settings
+                from app.utils.coord_transform import gcj02_to_wgs84, wgs84_to_gcj02
+                key = settings.AMAP_API_KEY
+                if key:
+                    kw = subtype or name_like or category or ""
+                    city = district or _to_str(adcode) or ""
+                    
+                    params = {
+                        "key": key,
+                        "keywords": kw or "POI",
+                        "extensions": "all",
+                        "page": "1",
+                    }
+                    if raw_bbox and isinstance(raw_bbox, (list, tuple)) and len(raw_bbox) == 4:
+                        minx, miny, maxx, maxy = raw_bbox
+                        g_minx, g_miny = wgs84_to_gcj02(minx, miny)
+                        g_maxx, g_maxy = wgs84_to_gcj02(maxx, maxy)
+                        params["polygon"] = f"{g_minx},{g_miny}|{g_maxx},{g_maxy}"
+                        params["offset"] = str(min(_to_int(limit, 50), 50))
+                        endpoint = "https://restapi.amap.com/v3/place/polygon"
+                    else:
+                        if city:
+                            params["city"] = city
+                            params["citylimit"] = "true"
+                        params["offset"] = str(min(_to_int(limit, 50), 50))
+                        endpoint = "https://restapi.amap.com/v3/place/text"
+
+                    resp = httpx.get(endpoint, params=params, timeout=10.0)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        pois = data.get("pois", [])
+                        features = []
+                        for p in pois:
+                            loc = p.get("location", "").split(",")
+                            if len(loc) == 2:
+                                w_lng, w_lat = gcj02_to_wgs84(float(loc[0]), float(loc[1]))
+                                features.append({
+                                    "type": "Feature",
+                                    "geometry": {"type": "Point", "coordinates": [w_lng, w_lat]},
+                                    "properties": {
+                                        "name": p.get("name"),
+                                        "category": p.get("type"),
+                                        "subtype": subtype or p.get("type"),
+                                        "adname": p.get("adname"),
+                                        "cityname": p.get("cityname"),
+                                        "address": p.get("address"),
+                                        "tel": p.get("tel"),
+                                    },
+                                })
+                        if features:
+                            return {
+                                "type": "FeatureCollection",
+                                "features": features,
+                                "count": len(features),
+                                "source": "amap_online_fallback",
+                                "note": "本地 gd_pois.gpkg 离线库未挂载，已自动降级使用在线高德 POI 接口检索。",
+                            }
+            except Exception as exc:
+                logger.warning("[local_stats] query_local_poi online fallback failed: %s", exc)
+
+        return res
 
     @tool(
         registry,

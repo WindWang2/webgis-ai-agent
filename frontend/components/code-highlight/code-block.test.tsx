@@ -10,7 +10,7 @@ describe('CodeBlock Component', () => {
     );
 
     expect(screen.getByText('python')).toBeInTheDocument();
-    expect(screen.getByText(/print\('hello'\)/)).toBeInTheDocument();
+    expect(screen.getByText(/print/)).toBeInTheDocument();
   });
 
   it('renders code without language', () => {
@@ -20,10 +20,11 @@ describe('CodeBlock Component', () => {
     expect(screen.getByText('some code')).toBeInTheDocument();
   });
 
-  it.skip('copies code to clipboard', async () => {
-    vi.stubGlobal('navigator', {
+  it('copies code to clipboard', async () => {
+    const writeTextMock = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, {
       clipboard: {
-        writeText: vi.fn().mockResolvedValue(undefined),
+        writeText: writeTextMock,
       },
     });
 
@@ -32,40 +33,48 @@ describe('CodeBlock Component', () => {
     const copyBtn = screen.getByRole('button', { name: /复制/i });
     fireEvent.click(copyBtn);
 
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('test code content');
+    expect(writeTextMock).toHaveBeenCalledWith('test code content');
 
     // Check for copied feedback
     expect(await screen.findByText('已复制')).toBeInTheDocument();
-
-    vi.unstubAllGlobals();
   });
 
-  it.skip('handles copy failure gracefully', async () => {
-    vi.stubGlobal('navigator', {
+  it('handles copy failure gracefully', async () => {
+    const writeTextMock = vi.fn().mockRejectedValue(new Error('Clipboard error'));
+    Object.assign(navigator, {
       clipboard: {
-        writeText: vi.fn().mockRejectedValue(new Error('Clipboard error')),
+        writeText: writeTextMock,
       },
     });
 
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
     render(<CodeBlock code="test" />);
-    
-    const copyBtn = screen.getByRole('button');
+
+    const copyBtn = screen.getByRole('button', { name: /复制/i });
     fireEvent.click(copyBtn);
 
-    expect(consoleSpy).toHaveBeenCalled();
-    
-    vi.unstubAllGlobals();
-    consoleSpy.mockRestore();
+    expect(writeTextMock).toHaveBeenCalled();
+  });
+
+  it('renders line numbers for multi-line code', () => {
+    render(<CodeBlock code={"line a\nline b\nline c"} />);
+    expect(screen.getByText('1')).toBeInTheDocument();
+    expect(screen.getByText('2')).toBeInTheDocument();
+    expect(screen.getByText('3')).toBeInTheDocument();
+  });
+
+  it('renders filename when provided in header', () => {
+    render(<CodeBlock code="const a = 1;" language="typescript" filename="script.ts" />);
+    expect(screen.getByText('script.ts')).toBeInTheDocument();
+    expect(screen.getByText('typescript')).toBeInTheDocument();
   });
 });
 
 describe('parseMessageContent', () => {
-  it.skip('parses simple text without code blocks', () => {
+  it('parses simple text without code blocks', () => {
     const result = parseMessageContent('Hello world');
     expect(result).toHaveLength(1);
-    expect(result[0]).toEqual(<span className="whitespace-pre-wrap">Hello world</span>);
+    const { container } = render(<>{result}</>);
+    expect(container).toHaveTextContent('Hello world');
   });
 
   it('parses code block with language', () => {

@@ -19,13 +19,13 @@ const ACCEPTED_EXTENSIONS = [
 
 function getFileTypeInfo(filename: string) {
   const ext = filename.split(".").pop()?.toLowerCase() || ""
-  if (["tif", "tiff"].includes(ext)) return { type: "栅格", color: "text-orange-500" }
-  if (["shp", "zip"].includes(ext)) return { type: "矢量", color: "text-green-500" }
-  if (["geojson", "json"].includes(ext)) return { type: "矢量", color: "text-blue-500" }
-  if (["kml"].includes(ext)) return { type: "矢量", color: "text-purple-500" }
-  if (["gpkg"].includes(ext)) return { type: "矢量", color: "text-teal-500" }
-  if (["csv"].includes(ext)) return { type: "CSV", color: "text-amber-500" }
-  return { type: "未知", color: "text-gray-500" }
+  if (["tif", "tiff"].includes(ext)) return { type: "栅格", color: "text-status-warning" }
+  if (["shp", "zip"].includes(ext)) return { type: "矢量", color: "text-status-success" }
+  if (["geojson", "json"].includes(ext)) return { type: "矢量", color: "text-status-info" }
+  if (["kml"].includes(ext)) return { type: "矢量", color: "text-status-accent" }
+  if (["gpkg"].includes(ext)) return { type: "矢量", color: "text-status-accent" }
+  if (["csv"].includes(ext)) return { type: "CSV", color: "text-status-warning" }
+  return { type: "未知", color: "text-ink-muted" }
 }
 
 export function UploadZone({ sessionId, ownerToken, onUploadSuccess, compact }: UploadZoneProps) {
@@ -81,7 +81,7 @@ export function UploadZone({ sessionId, ownerToken, onUploadSuccess, compact }: 
   if (compact) {
     return (
       <div className="flex items-center gap-2">
-        <label className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg border border-border hover:bg-card hover:border-primary/50 transition-all group">
+        <label className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg border border-edge-subtle hover:bg-surface-raised hover:border-status-accent-border transition-all group">
           <input
             ref={inputRef}
             type="file"
@@ -91,13 +91,13 @@ export function UploadZone({ sessionId, ownerToken, onUploadSuccess, compact }: 
             disabled={isUploading}
           />
           {isUploading ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-status-accent" />
           ) : (
-            <Upload className="h-3.5 w-3.5 text-muted-foreground group-hover:text-primary transition-colors" />
+            <Upload className="h-3.5 w-3.5 text-ink-muted group-hover:text-status-accent transition-colors" />
           )}
         </label>
         {isUploading && (
-          <span className="text-xs text-muted-foreground">{progress}%</span>
+          <span className="text-caption text-ink-muted">{progress}%</span>
         )}
       </div>
     )
@@ -114,8 +114,8 @@ export function UploadZone({ sessionId, ownerToken, onUploadSuccess, compact }: 
           flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed
           p-4 cursor-pointer transition-all duration-200
           ${isDragging
-            ? "border-primary bg-primary/5 scale-[1.01]"
-            : "border-border/60 hover:border-primary/40 hover:bg-card/50"
+            ? "border-status-accent bg-status-accent-soft scale-[1.01]"
+            : "border-edge-subtle hover:border-status-accent-border hover:bg-surface-hover"
           }
           ${isUploading ? "pointer-events-none opacity-60" : ""}
         `}
@@ -131,23 +131,23 @@ export function UploadZone({ sessionId, ownerToken, onUploadSuccess, compact }: 
 
         {isUploading ? (
           <>
-            <Loader2 className="h-6 w-6 animate-spin text-primary" />
-            <span className="text-xs text-muted-foreground">上传中 {progress}%</span>
-            <div className="w-full max-w-40 h-1.5 bg-muted rounded-full overflow-hidden">
+            <Loader2 className="h-6 w-6 animate-spin text-status-accent" />
+            <span className="text-caption text-ink-muted">上传中 {progress}%</span>
+            <div className="w-full max-w-40 h-1.5 bg-surface-sunken rounded-full overflow-hidden">
               <div
-                className="h-full bg-primary rounded-full transition-all duration-300"
+                className="h-full bg-status-accent rounded-full transition-all duration-300"
                 style={{ width: `${progress}%` }}
               />
             </div>
           </>
         ) : (
           <>
-            <Upload className="h-6 w-6 text-muted-foreground" />
+            <Upload className="h-6 w-6 text-ink-muted" />
             <div className="text-center">
-              <p className="text-xs font-medium text-foreground">
+              <p className="text-body font-medium text-ink">
                 拖放或点击上传 GIS 数据
               </p>
-              <p className="text-[14px] text-muted-foreground mt-0.5">
+              <p className="text-caption text-ink-muted mt-0.5">
                 GeoJSON / Shapefile / KML / GeoPackage / GeoTIFF / CSV
               </p>
             </div>
@@ -156,11 +156,11 @@ export function UploadZone({ sessionId, ownerToken, onUploadSuccess, compact }: 
       </div>
 
       {error && (
-        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800/50 rounded-lg">
-          <X className="h-3 w-3 text-red-500 shrink-0" />
-          <span className="text-xs text-red-600 dark:text-red-400">{error}</span>
-          <button onClick={() => setError(null)} aria-label="关闭错误提示" className="ml-auto">
-            <X className="h-3 w-3 text-red-400 hover:text-red-600" />
+        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-status-critical-soft border border-status-critical-border rounded-lg" role="alert">
+          <X className="h-3.5 w-3.5 text-status-critical shrink-0" />
+          <span className="text-caption text-status-critical font-medium">{error}</span>
+          <button onClick={() => setError(null)} aria-label="关闭错误提示" className="ml-auto cursor-pointer p-0.5 text-status-critical hover:opacity-80 transition-opacity">
+            <X className="h-3 w-3" />
           </button>
         </div>
       )}

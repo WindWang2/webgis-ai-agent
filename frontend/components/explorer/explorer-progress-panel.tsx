@@ -1,6 +1,7 @@
 "use client";
 
 import { X } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
 import { useHudStore } from "@/lib/store/useHudStore";
 import type { ExplorerTask, ExplorerStatus } from "@/lib/types/explorer";
 
@@ -32,7 +33,14 @@ function TaskCard({ task, onClose }: { task: ExplorerTask; onClose: () => void }
   const stageLabel = STAGE_LABELS[task.stage] || task.stage;
 
   return (
-    <div className="rounded-lg border border-edge-subtle bg-surface-sunken p-3">
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: -6, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.95, transition: { duration: 0.15 } }}
+      transition={{ type: "spring", stiffness: 450, damping: 35 }}
+      className="rounded-lg border border-edge-subtle bg-surface-sunken p-3"
+    >
       <div className="flex items-center justify-between gap-2">
         <span className="min-w-0 truncate text-sm font-medium text-ink">{task.query}</span>
         <span className="flex shrink-0 items-center gap-1.5">
@@ -87,7 +95,7 @@ function TaskCard({ task, onClose }: { task: ExplorerTask; onClose: () => void }
       {task.error && (
         <div className="mt-2 text-xs text-status-critical">{task.error}</div>
       )}
-    </div>
+    </motion.div>
   );
 }
 
@@ -102,15 +110,17 @@ export function ExplorerProgressPanel() {
       <h3 className="text-xs font-semibold uppercase tracking-wider text-ink-disabled">
         深度搜索
       </h3>
-      {tasks.map((task) => (
-        <TaskCard
-          key={task.taskId}
-          task={task}
-          // #548 polish: dismiss（而非 remove）—— in-flight 任务的进度事件
-          // 仍会持续到达，remove 只移卡片、下一事件又把它插回。
-          onClose={() => dismissExplorerTask(task.taskId)}
-        />
-      ))}
+      <AnimatePresence mode="popLayout">
+        {tasks.map((task) => (
+          <TaskCard
+            key={task.taskId}
+            task={task}
+            // #548 polish: dismiss（而非 remove）—— in-flight 任务的进度事件
+            // 仍会持续到达，remove 只移卡片、下一事件又把它插回。
+            onClose={() => dismissExplorerTask(task.taskId)}
+          />
+        ))}
+      </AnimatePresence>
     </div>
   );
 }

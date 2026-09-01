@@ -183,17 +183,39 @@ export function composeLiveMapSpec(
     return hudSpec;
   }
 
-  const layers = (committed.layers || [])
+  const committedLayers = (committed.layers || [])
     .filter((layer) => !isPendingRemoved(layer, removed))
     .map((layer) => applyPending(
       { ...layer, layout: { ...layer.layout }, paint: { ...layer.paint } },
       pending,
     ));
 
+  // Build a set of layer IDs already covered in committed
+  const committedIdSet = new Set<string>();
+  for (const l of committedLayers) {
+    if (l.id) {
+      committedIdSet.add(l.id);
+      for (const alias of layerAliases(l.id)) {
+        committedIdSet.add(alias);
+      }
+    }
+  }
+
+  // Also include HUD-only layers (such as active spatial analysis results, POI queries,
+  // heatmaps, and user layers) that are not shadowed by committed spec layers
+  const hudOnlyLayers: MapSpecLayer[] = [];
+  for (const hl of hudSpec.layers || []) {
+    if (!hl.id || isPendingRemoved(hl, removed)) continue;
+    const baseId = hl.id.split('__')[0];
+    if (!committedIdSet.has(hl.id) && !committedIdSet.has(baseId)) {
+      hudOnlyLayers.push(applyPending(hl, pending));
+    }
+  }
+
   const result: MapSpec = {
     ...committed,
     sources: mergeHudSources(committed, hud, hudSpec),
-    layers,
+    layers: [...committedLayers, ...hudOnlyLayers],
   };
   composeMemo.result = result;
   composeMemo.committed = committed;

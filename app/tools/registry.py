@@ -153,6 +153,113 @@ def _coerce_json_string_lists(
             )
     return out
 
+_TOOL_NAME_ALIASES: dict[str, str] = {
+    # 行政边界与政区查询别名
+    "admin_boundary_query": "get_local_admin_boundary",
+    "get_admin_boundary": "get_local_admin_boundary",
+    "query_admin_boundary": "get_local_admin_boundary",
+    "admin_boundary": "get_local_admin_boundary",
+    "admin_query": "get_admin_division",
+    "query_admin_division": "get_admin_division",
+    "get_boundary": "get_local_admin_boundary",
+    "get_child_district": "get_child_districts",
+    "get_local_districts": "get_local_child_districts",
+    "get_districts": "get_child_districts",
+
+    # POI 查询别名
+    "poi_query": "search_poi",
+    "query_poi": "search_poi",
+    "poi_search": "search_poi",
+    "search_pois": "search_poi",
+    "query_osm_pois": "query_osm_poi",
+
+    # 密度/表面分析别名
+    "density_surface": "kde_surface",
+    "density_analysis": "kde_surface",
+    "kernel_density": "kde_surface",
+    "kernel_density_estimation": "kde_surface",
+    "heatmap_analysis": "heatmap_data",
+    "kde_analysis": "kde_surface",
+
+    # 空间聚合别名
+    "admin_aggregation": "spatial_aggregate",
+    "spatial_aggregation": "spatial_aggregate",
+    "admin_aggregate": "spatial_aggregate",
+    "point_aggregation": "spatial_aggregate",
+    "aggregate_points": "spatial_aggregate",
+
+    # 缓冲区别名
+    "buffer": "buffer_analysis",
+    "buffer_layer": "buffer_analysis",
+
+    # 路径/网络分析别名
+    "shortest_path": "network_shortest_path",
+    "route_planning": "plan_route",
+    "isochrone": "isochrone_analysis",
+
+    # 空间叠加/属性
+    "overlay": "overlay_analysis",
+    "spatial_join_layers": "spatial_join",
+    "zonal_statistics": "zonal_stats",
+}
+
+
+def _normalize_tool_arguments(name: str, arguments: dict) -> dict:
+    """归一化常见 LLM 实参字段别名偏差。"""
+    if not isinstance(arguments, dict):
+        return arguments
+
+    # 浅拷贝以便安全修改
+    args = dict(arguments)
+
+    if name in ("search_poi", "query_local_poi"):
+        if "keywords" in args and "keyword" not in args:
+            args["keyword"] = args.pop("keywords")
+        if "query" in args and "keyword" not in args:
+            args["keyword"] = args.pop("query")
+        if "text" in args and "keyword" not in args:
+            args["keyword"] = args.pop("text")
+
+    elif name in ("kde_surface", "kde_contours", "voronoi_polygons", "convex_hull", "multi_ring_buffer", "attribute_filter", "spatial_stats", "h3_binning"):
+        if "data" in args and "geojson" not in args:
+            args["geojson"] = args.pop("data")
+        elif "points_data" in args and "geojson" not in args:
+            args["geojson"] = args.pop("points_data")
+        elif "layer_data" in args and "geojson" not in args:
+            args["geojson"] = args.pop("layer_data")
+        elif "points" in args and "geojson" not in args:
+            args["geojson"] = args.pop("points")
+        elif "input_data" in args and "geojson" not in args:
+            args["geojson"] = args.pop("input_data")
+
+    elif name == "spatial_aggregate":
+        if "points_data" in args and "points" not in args:
+            args["points"] = args.pop("points_data")
+        elif "data" in args and "points" not in args:
+            args["points"] = args.pop("data")
+
+        if "polygons_data" in args and "polygons" not in args:
+            args["polygons"] = args.pop("polygons_data")
+        elif "admin_data" in args and "polygons" not in args:
+            args["polygons"] = args.pop("admin_data")
+        elif "admin_boundary" in args and "polygons" not in args:
+            args["polygons"] = args.pop("admin_boundary")
+        elif "polygon_data" in args and "polygons" not in args:
+            args["polygons"] = args.pop("polygon_data")
+
+    elif name in ("get_local_admin_boundary", "get_admin_division"):
+        if "admin_name" in args and "name" not in args and "keywords" not in args:
+            target_key = "name" if name == "get_local_admin_boundary" else "keywords"
+            args[target_key] = args.pop("admin_name")
+        elif "city" in args and "name" not in args and "keywords" not in args:
+            target_key = "name" if name == "get_local_admin_boundary" else "keywords"
+            args[target_key] = args.pop("city")
+        elif "district" in args and "name" not in args and "keywords" not in args:
+            target_key = "name" if name == "get_local_admin_boundary" else "keywords"
+            args[target_key] = args.pop("district")
+
+    return args
+
 
 def _is_args_oversized(arguments: Any) -> bool:
     """#699 + #677：超大 args 的统一预算化门（Pydantic 旁路与 GeoJSON 校验共用）。
@@ -683,16 +790,14 @@ class ToolRegistry:
         """执行工具，包含 Pydantic 校验与透明解引用"""
         from app.tools._utils import std_error_response
 
-        # PERF/H1: resolve name → (func, meta, model) ONCE. The prior code
-        # re-resolved _tools[name] / _metadata.get(name) / _models.get(name) at
-        # four separate sites (existence check, signature probe, execution,
-        # policy read). All are O(1) but the repetition is needless work on the
-        # dispatch hot path and obscures intent.
-        tool_func = self._tools.get(name)
+        # 别名解析：支持常见大模型工具名变体与同义词映射
+        real_name = _TOOL_NAME_ALIASES.get(name, name)
+        tool_func = self._tools.get(real_name)
         if tool_func is None:
             return std_error_response(f"未知工具: {name}", code="UNKNOWN_TOOL")
-        meta = self._metadata.get(name, {})
-        model = self._models.get(name)
+        meta = self._metadata.get(real_name, {})
+        model = self._models.get(real_name)
+        name = real_name
 
         # SEC-F1: the dispatch chokepoint refuses tier-3 tools unless the
         # calling context carried an explicit confirmation (see confirm_tier3).
@@ -715,6 +820,9 @@ class ToolRegistry:
                     code="VALIDATION_ERROR",
                     error_type="JSONDecodeError",
                 )
+
+        if isinstance(arguments, dict):
+            arguments = _normalize_tool_arguments(name, arguments)
 
         # 注意：排除某些特殊字段（如 ref_id, layer_ref, layer_id, plan_id），
         # 这些字段本身就是为了接收引用 ID，绝不应被自动解引用为 GeoJSON 数据。

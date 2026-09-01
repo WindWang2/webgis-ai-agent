@@ -70,4 +70,17 @@ describe('LayerStylePanel', () => {
     fireEvent.click(buttons[0]);
     expect(setEditingLayerId).toHaveBeenCalledWith(null);
   });
+
+  it('applies semantic styling tokens to panel container and controls', () => {
+    const layer: Layer = { id: 'l1', name: 'L', type: 'vector', visible: true, opacity: 0.8 };
+    mockEditingLayerId = 'l1';
+    mockLayers = [layer];
+    const { container } = render(<LayerStylePanel />);
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.className).toContain('bg-surface-panel');
+    expect(root.className).toContain('text-ink');
+
+    const header = root.querySelector('div');
+    expect(header?.className).toContain('border-edge-subtle');
+  });
 });

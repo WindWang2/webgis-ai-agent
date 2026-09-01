@@ -1,23 +1,33 @@
 'use client';
-import React, { memo, useState, useCallback } from 'react';
-import { Copy, Check } from 'lucide-react';
 
+import React, { memo, useState, useCallback, useMemo } from 'react';
+import { Copy, Check, Terminal, Code2 } from 'lucide-react';
+import { devOnly } from '@/lib/utils/logger';
+import { tokenizeCode, getLanguageLabel, getTokenClassName } from './tokenizer';
 
-import { devOnly } from "@/lib/utils/logger";
-interface CodeBlockProps {
+export interface CodeBlockProps {
   /** 代码语言 */
   language?: string;
   /** 代码内容 */
   code: string;
+  /** 是否显示行号 (可选，默认多行时自动显示) */
+  showLineNumbers?: boolean;
+  /** 文件名或标题 (可选) */
+  filename?: string;
+  /** 自定义外层样式 */
+  className?: string;
 }
 
 /**
- * 代码块组件 - 带语法高亮和复制功能
- * T005-017: 代码块高亮和复制功能
+ * Modernized CodeBlock component with syntax highlighting, copy-to-clipboard,
+ * theme-adaptive contrast, and smooth layout stability during streaming.
  */
 export const CodeBlock = memo(function CodeBlock({
   language = '',
-  code,
+  code = '',
+  showLineNumbers,
+  filename,
+  className = '',
 }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
 
@@ -27,60 +37,105 @@ export const CodeBlock = memo(function CodeBlock({
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
-      devOnly.error('Failed to copy:', err);
+      devOnly.error('Failed to copy code:', err);
     }
   }, [code]);
 
-  // 语言映射到CSS类名
-  const langMap: Record<string, string> = {
-    python: 'language-python',
-    javascript: 'language-javascript',
-    js: 'language-javascript',
-    typescript: 'language-typescript',
-    ts: 'language-typescript',
-    json: 'language-json',
-    bash: 'language-bash',
-    shell: 'language-bash',
-    sql: 'language-sql',
-    html: 'language-html',
-    css: 'language-css',
-  };
+  const langLabel = useMemo(() => getLanguageLabel(language), [language]);
+  const tokenizedLines = useMemo(() => tokenizeCode(code, language), [code, language]);
+  const lineCount = tokenizedLines.length;
 
-  const langClass = langMap[language.toLowerCase()] || '';
+  // Multi-line code >= 3 lines shows line numbers by default unless explicitly disabled
+  const shouldShowLineNumbers = showLineNumbers !== undefined ? showLineNumbers : lineCount >= 3;
+
+  const isShell = language === 'bash' || language === 'shell' || language === 'sh' || language === 'zsh';
 
   return (
-    <div className="my-3 rounded-lg overflow-hidden bg-gray-900 text-gray-100">
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 bg-gray-800">
-        {language && (
-          <span className="text-xs text-gray-400 font-mono">{language}</span>
-        )}
+    <div
+      className={`my-2.5 rounded-md border border-edge-subtle bg-surface-sunken text-body shadow-sm overflow-hidden ${className}`}
+      data-testid="code-block"
+    >
+      {/* Header bar */}
+      <div className="flex items-center justify-between px-3 py-1.5 bg-surface-raised border-b border-edge-subtle text-caption select-none">
+        <div className="flex items-center gap-1.5 text-ink-secondary font-medium">
+          {isShell ? (
+            <Terminal size={13} className="text-status-info shrink-0" aria-hidden />
+          ) : (
+            <Code2 size={13} className="text-status-accent shrink-0" aria-hidden />
+          )}
+          {filename && <span className="font-mono text-ink font-semibold">{filename}</span>}
+          {language && (
+            <span
+              className="px-1.5 py-0.5 rounded text-micro font-mono font-medium bg-surface-sunken text-ink-secondary border border-edge-subtle"
+              data-testid="language-pill"
+            >
+              {language}
+            </span>
+          )}
+          {!language && !filename && (
+            <span className="text-micro font-mono text-ink-muted">Code</span>
+          )}
+        </div>
+
+        {/* Copy button */}
         <button
+          type="button"
           onClick={handleCopy}
-          className="flex items-center gap-1 text-xs text-gray-400 hover:text-white transition-colors"
+          className={`flex items-center gap-1 px-2 py-0.5 rounded text-caption font-medium transition-all cursor-pointer ${
+            copied
+              ? 'text-status-success bg-status-success-soft border border-status-success-border'
+              : 'text-ink-muted hover:text-ink hover:bg-surface-hover border border-transparent'
+          }`}
           aria-label={copied ? '已复制' : '复制代码'}
+          title={copied ? '已复制到剪贴板' : '复制代码到剪贴板'}
         >
           {copied ? (
             <>
-              <Check size={14} />
+              <Check size={12} className="text-status-success" aria-hidden />
               <span>已复制</span>
             </>
           ) : (
             <>
-              <Copy size={14} />
+              <Copy size={12} className="text-ink-muted" aria-hidden />
               <span>复制</span>
             </>
           )}
         </button>
       </div>
 
-      {/* Code Content */}
-      <pre
-        className="p-3 overflow-x-auto text-sm font-mono leading-relaxed"
-        aria-label={language ? `${language} 代码块` : '代码块'}
-      >
-        <code className={langClass}>{code}</code>
-      </pre>
+      {/* Code content */}
+      <div className="p-3 overflow-x-auto text-body font-mono leading-relaxed max-w-full">
+        <pre
+          className="m-0 p-0 bg-transparent text-ink font-mono"
+          aria-label={language ? `${langLabel || language} 代码块` : '代码块'}
+        >
+          <code>
+            {tokenizedLines.map((lineTokens, lineIdx) => (
+              <div key={lineIdx} className="flex min-w-full">
+                {shouldShowLineNumbers && (
+                  <span
+                    className="select-none text-right text-ink-disabled pr-3 mr-3 border-r border-edge-subtle/60 text-caption font-mono min-w-[2rem] tabular-nums"
+                    aria-hidden
+                  >
+                    {lineIdx + 1}
+                  </span>
+                )}
+                <span className="flex-1 whitespace-pre">
+                  {lineTokens.length === 0 || (lineTokens.length === 1 && lineTokens[0].value === '') ? (
+                    '\n'
+                  ) : (
+                    lineTokens.map((tok, tokIdx) => (
+                      <span key={tokIdx} className={getTokenClassName(tok.type)}>
+                        {tok.value}
+                      </span>
+                    ))
+                  )}
+                </span>
+              </div>
+            ))}
+          </code>
+        </pre>
+      </div>
     </div>
   );
 });
@@ -93,13 +148,13 @@ CodeBlock.displayName = 'CodeBlock';
  */
 export function parseMessageContent(content: string): React.ReactNode[] {
   const elements: React.ReactNode[] = [];
-  
+
   // 正则匹配 ```lang\ncode\n```
   const codeBlockRegex = /```(\w*)\n([\s\S]*?)```/g;
-  
+
   let lastIndex = 0;
   let match: RegExpExecArray | null;
-  
+
   while ((match = codeBlockRegex.exec(content)) !== null) {
     // 添加代码块之前的文本
     if (match.index > lastIndex) {
@@ -108,20 +163,16 @@ export function parseMessageContent(content: string): React.ReactNode[] {
         elements.push(
           <span key={`text-${lastIndex}`} className="whitespace-pre-wrap">
             {text}
-          </span>
+          </span>,
         );
       }
     }
 
     const language = match[1] || '';
     const code = match[2].trim();
-    
+
     elements.push(
-      <CodeBlock
-        key={`code-${match.index}`}
-        language={language}
-        code={code}
-      />
+      <CodeBlock key={`code-${match.index}`} language={language} code={code} />,
     );
 
     lastIndex = match.index + match[0].length;
@@ -134,7 +185,7 @@ export function parseMessageContent(content: string): React.ReactNode[] {
       elements.push(
         <span key={`text-end`} className="whitespace-pre-wrap">
           {remaining}
-        </span>
+        </span>,
       );
     }
   }

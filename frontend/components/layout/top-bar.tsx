@@ -100,7 +100,7 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
       </button>
 
       {/* logo */}
-      <div className="flex select-none items-center gap-1.5">
+      <div className="flex select-none items-center gap-1.5 shrink-0">
         <span
           aria-hidden
           className="flex h-6 w-6 items-center justify-center rounded-sm"
@@ -114,21 +114,21 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
           <span className="text-heading font-semibold text-ink">
             GeoAgent
           </span>
-          <span className="ml-1 text-caption text-ink-muted">All is Agent</span>
+          <span className="ml-1 hidden min-[480px]:inline text-caption text-ink-muted">All is Agent</span>
         </div>
       </div>
 
       {/* session name pill */}
-      <span className="ml-1 max-w-[180px] truncate rounded-pill border border-edge-subtle bg-surface-sunken px-2 py-0.5 text-meta text-ink-secondary">
+      <span className="ml-1 hidden sm:inline-block max-w-[140px] md:max-w-[180px] truncate rounded-pill border border-edge-subtle bg-surface-sunken px-2 py-0.5 text-meta text-ink-secondary">
         会话 / {sessionName}
       </span>
 
       {/* spacer */}
-      <div className="flex-1" />
+      <div className="flex-1 min-w-[4px]" />
 
       {/* agent status badge */}
       <span
-        className="flex items-center gap-1 rounded-pill px-2 py-0.5 text-meta font-medium"
+        className="flex shrink-0 items-center gap-1 rounded-pill px-2 py-0.5 text-meta font-medium"
         style={{ backgroundColor: status.bg }}
       >
         <span
@@ -140,7 +140,7 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
       </span>
 
       {/* right actions */}
-      <div className="flex items-center gap-0.5">
+      <div className="flex shrink-0 items-center gap-0.5">
         <button
           onClick={onNewSession}
           aria-label="新建会话"

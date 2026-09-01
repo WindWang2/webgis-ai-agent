@@ -2,17 +2,20 @@
 
 import React from 'react';
 
-interface GlassPanelProps {
+export interface GlassPanelProps extends React.HTMLAttributes<HTMLDivElement> {
   className?: string;
-  children: React.ReactNode;
+  children?: React.ReactNode;
 }
 
-export default function GlassPanel({ className = '', children }: GlassPanelProps) {
+export function GlassPanel({ className = '', children, ...props }: GlassPanelProps) {
   return (
     <div
-      className={`bg-[rgba(252,253,254,0.88)] backdrop-blur-[24px] border border-white/90 shadow-agent-md rounded-lg ${className}`}
+      className={`bg-surface-raised/90 dark:bg-surface-overlay/85 backdrop-blur-md border border-edge-subtle shadow-sm rounded-lg ${className}`}
+      {...props}
     >
       {children}
     </div>
   );
 }
+
+export default GlassPanel;

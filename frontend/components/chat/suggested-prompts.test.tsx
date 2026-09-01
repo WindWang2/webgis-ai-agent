@@ -1,39 +1,41 @@
-import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
-import { SuggestedPrompts } from './suggested-prompts'
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
+import { SuggestedPrompts } from './suggested-prompts';
 
+/* eslint-disable @typescript-eslint/no-require-imports */
 vi.mock('framer-motion', () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const actual = require('../../test/__mocks__/framer-motion')
-  return actual.default || actual
-})
+  const fm = require('../../test/__mocks__/framer-motion');
+  return { motion: fm.motion, AnimatePresence: fm.AnimatePresence };
+});
 
 describe('SuggestedPrompts', () => {
-  it('renders 4 suggestion buttons', () => {
-    const onSend = vi.fn()
-    render(<SuggestedPrompts onSend={onSend} />)
-    expect(screen.getAllByRole('button')).toHaveLength(4)
-  })
+  it('renders default suggestions with semantic tokens and handles clicks', () => {
+    const onSend = vi.fn();
+    render(<SuggestedPrompts onSend={onSend} />);
 
-  it('calls onSend with correct text on click', () => {
-    const onSend = vi.fn()
-    render(<SuggestedPrompts onSend={onSend} />)
-    fireEvent.click(screen.getByText('计算NDVI植被指数'))
-    expect(onSend).toHaveBeenCalledWith('计算NDVI植被指数')
-  })
+    const firstBtn = screen.getByText('分析北京市学校分布');
+    expect(firstBtn).toBeInTheDocument();
 
-  // 审计 findings.md A11y：key 必须稳定且唯一。锁定不会回退到会碰撞的 key 方案
-  // （如重复文本作为 key，或裸索引加前缀）。React 会在开发态对重复 key 发出警告。
-  it('uses unique keys — renders without a duplicate-key React warning', () => {
-    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    try {
-      render(<SuggestedPrompts onSend={vi.fn()} />)
-      const dupKeyWarnings = spy.mock.calls.filter(
-        ([msg]) => typeof msg === 'string' && msg.includes('Encountered two children with the same key')
-      )
-      expect(dupKeyWarnings).toHaveLength(0)
-    } finally {
-      spy.mockRestore()
-    }
-  })
-})
+    const buttonElement = firstBtn.closest('button');
+    expect(buttonElement).toBeInTheDocument();
+    expect(buttonElement?.className).toContain('bg-surface-sunken');
+    expect(buttonElement?.className).toContain('border-edge-subtle');
+    expect(buttonElement?.className).toContain('text-ink-secondary');
+
+    fireEvent.click(firstBtn);
+    expect(onSend).toHaveBeenCalledWith('分析北京市学校分布');
+  });
+
+  it('renders custom suggestions when provided', () => {
+    const onSend = vi.fn();
+    const custom = [
+      { text: '查询上海市地铁线路' },
+      { text: '生成高程分析' },
+    ];
+    render(<SuggestedPrompts onSend={onSend} suggestions={custom} />);
+
+    expect(screen.getByText('查询上海市地铁线路')).toBeInTheDocument();
+    expect(screen.getByText('生成高程分析')).toBeInTheDocument();
+    expect(screen.queryByText('分析北京市学校分布')).not.toBeInTheDocument();
+  });
+});

@@ -25,65 +25,70 @@ export function annotationFC() {
  * slice and the component's annotation-refresh useEffect.
  */
 export function ensureAnnotationLayers(map: Map) {
-  if (!map.getSource(ANNOTATION_SOURCE_ID)) {
-    map.addSource(ANNOTATION_SOURCE_ID, { type: 'geojson', data: annotationFC() as any });
+  if (!map || typeof map.getSource !== 'function' || typeof map.getLayer !== 'function' || typeof map.addSource !== 'function' || typeof map.addLayer !== 'function') return;
+  try {
+    if (!map.getSource(ANNOTATION_SOURCE_ID)) {
+      map.addSource(ANNOTATION_SOURCE_ID, { type: 'geojson', data: annotationFC() as any });
+    }
+    if (!map.getLayer(`${ANNOTATION_SOURCE_ID}-fill`)) {
+      map.addLayer({
+        id: `${ANNOTATION_SOURCE_ID}-fill`,
+        source: ANNOTATION_SOURCE_ID,
+        type: 'fill',
+        filter: ['==', ['geometry-type'], 'Polygon'],
+        paint: { 'fill-color': '#3b82f6', 'fill-opacity': 0.25 },
+      });
+    }
+    if (!map.getLayer(`${ANNOTATION_SOURCE_ID}-line`)) {
+      map.addLayer({
+        id: `${ANNOTATION_SOURCE_ID}-line`,
+        source: ANNOTATION_SOURCE_ID,
+        type: 'line',
+        filter: ['any', ['==', ['geometry-type'], 'LineString'], ['==', ['geometry-type'], 'Polygon']],
+        paint: { 'line-color': '#2563eb', 'line-width': 2 },
+      });
+    }
+    if (!map.getLayer(`${ANNOTATION_SOURCE_ID}-circle`)) {
+      map.addLayer({
+        id: `${ANNOTATION_SOURCE_ID}-circle`,
+        source: ANNOTATION_SOURCE_ID,
+        type: 'circle',
+        filter: ['==', ['geometry-type'], 'Point'],
+        paint: {
+          'circle-radius': 7,
+          'circle-color': ['coalesce', ['get', 'color'], '#ef4444'],
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 2,
+        },
+      });
+    }
+    if (!map.getLayer(`${ANNOTATION_SOURCE_ID}-label`)) {
+      map.addLayer({
+        id: `${ANNOTATION_SOURCE_ID}-label`,
+        source: ANNOTATION_SOURCE_ID,
+        type: 'symbol',
+        layout: {
+          'text-field': ['get', 'label'],
+          'text-size': 12,
+          'text-anchor': 'top',
+          'text-offset': [0, 0.8],
+          'text-allow-overlap': false,
+        },
+        paint: {
+          'text-color': '#0f172a',
+          'text-halo-color': '#ffffff',
+          'text-halo-width': 1.5,
+        },
+      });
+    }
+    // #462: keep the renderer's layer-id order registry exact for these adds.
+    noteStyleLayerAdded(map, `${ANNOTATION_SOURCE_ID}-fill`);
+    noteStyleLayerAdded(map, `${ANNOTATION_SOURCE_ID}-line`);
+    noteStyleLayerAdded(map, `${ANNOTATION_SOURCE_ID}-circle`);
+    noteStyleLayerAdded(map, `${ANNOTATION_SOURCE_ID}-label`);
+  } catch {
+    // Map was destroyed or in invalid transient state
   }
-  if (!map.getLayer(`${ANNOTATION_SOURCE_ID}-fill`)) {
-    map.addLayer({
-      id: `${ANNOTATION_SOURCE_ID}-fill`,
-      source: ANNOTATION_SOURCE_ID,
-      type: 'fill',
-      filter: ['==', ['geometry-type'], 'Polygon'],
-      paint: { 'fill-color': '#3b82f6', 'fill-opacity': 0.25 },
-    });
-  }
-  if (!map.getLayer(`${ANNOTATION_SOURCE_ID}-line`)) {
-    map.addLayer({
-      id: `${ANNOTATION_SOURCE_ID}-line`,
-      source: ANNOTATION_SOURCE_ID,
-      type: 'line',
-      filter: ['any', ['==', ['geometry-type'], 'LineString'], ['==', ['geometry-type'], 'Polygon']],
-      paint: { 'line-color': '#2563eb', 'line-width': 2 },
-    });
-  }
-  if (!map.getLayer(`${ANNOTATION_SOURCE_ID}-circle`)) {
-    map.addLayer({
-      id: `${ANNOTATION_SOURCE_ID}-circle`,
-      source: ANNOTATION_SOURCE_ID,
-      type: 'circle',
-      filter: ['==', ['geometry-type'], 'Point'],
-      paint: {
-        'circle-radius': 7,
-        'circle-color': ['coalesce', ['get', 'color'], '#ef4444'],
-        'circle-stroke-color': '#ffffff',
-        'circle-stroke-width': 2,
-      },
-    });
-  }
-  if (!map.getLayer(`${ANNOTATION_SOURCE_ID}-label`)) {
-    map.addLayer({
-      id: `${ANNOTATION_SOURCE_ID}-label`,
-      source: ANNOTATION_SOURCE_ID,
-      type: 'symbol',
-      layout: {
-        'text-field': ['get', 'label'],
-        'text-size': 12,
-        'text-anchor': 'top',
-        'text-offset': [0, 0.8],
-        'text-allow-overlap': false,
-      },
-      paint: {
-        'text-color': '#0f172a',
-        'text-halo-color': '#ffffff',
-        'text-halo-width': 1.5,
-      },
-    });
-  }
-  // #462: keep the renderer's layer-id order registry exact for these adds.
-  noteStyleLayerAdded(map, `${ANNOTATION_SOURCE_ID}-fill`);
-  noteStyleLayerAdded(map, `${ANNOTATION_SOURCE_ID}-line`);
-  noteStyleLayerAdded(map, `${ANNOTATION_SOURCE_ID}-circle`);
-  noteStyleLayerAdded(map, `${ANNOTATION_SOURCE_ID}-label`);
 }
 
 /**
@@ -98,10 +103,15 @@ export function ensureAnnotationLayers(map: Map) {
  * slice and the component's annotation-refresh useEffect.
  */
 export function refreshAnnotations(map: Map): boolean {
-  const src = map.getSource(ANNOTATION_SOURCE_ID) as GeoJSONSource | undefined;
-  if (src && typeof (src as any).setData === 'function') {
-    src.setData(annotationFC() as any);
-    return true;
+  if (!map || typeof map.getSource !== 'function') return false;
+  try {
+    const src = map.getSource(ANNOTATION_SOURCE_ID) as GeoJSONSource | undefined;
+    if (src && typeof (src as any).setData === 'function') {
+      src.setData(annotationFC() as any);
+      return true;
+    }
+  } catch {
+    return false;
   }
   return false;
 }
@@ -141,32 +151,48 @@ export const ANNOTATION_LAYER_IDS = [
  * the source + layers and push the data instead of early-returning.
  */
 export function raiseAnnotationLayers(map: Map): void {
-  const stackMounted = ANNOTATION_LAYER_IDS.some((id) => map.getLayer(id));
-  if (!stackMounted) {
-    // Post-wipe state: only remount when there is annotation data to show —
-    // maps that never used annotations stay free of the (empty) stack.
-    // (Defensive read: partial store harnesses may not carry the field.)
-    const annotations = useHudStore.getState().annotations ?? [];
-    if (annotations.length === 0) return;
-    // Style gate: right after a basemap setStyle the style is mid-reload and
-    // addSource would throw "Style is not done loading." Mount once ready;
-    // the re-check skips if the refresh effect re-mounted first. The cancel
-    // handle is intentionally dropped — a missed window is recovered by the
-    // next annotations change or raise call, never by a stale late mount.
-    whenStyleReady(map, () => {
-      if (ANNOTATION_LAYER_IDS.some((id) => map.getLayer(id))) return;
-      ensureAnnotationLayers(map);
-      refreshAnnotations(map);
+  if (!map || typeof map.getLayer !== 'function') return;
+  try {
+    const stackMounted = ANNOTATION_LAYER_IDS.some((id) => {
+      try {
+        return !!map.getLayer(id);
+      } catch {
+        return false;
+      }
     });
-  }
-  for (const id of ANNOTATION_LAYER_IDS) {
-    if (!map.getLayer(id)) continue;
-    try {
-      // moveLayer without beforeId → end of the layer order (top), i.e.
-      // directly above every spec layer syncLayerZOrder just stacked.
-      map.moveLayer(id);
-    } catch {
-      // Layer vanished mid-reconcile — nothing to re-raise.
+    if (!stackMounted) {
+      // Post-wipe state: only remount when there is annotation data to show —
+      // maps that never used annotations stay free of the (empty) stack.
+      // (Defensive read: partial store harnesses may not carry the field.)
+      const annotations = useHudStore.getState().annotations ?? [];
+      if (annotations.length === 0) return;
+      // Style gate: right after a basemap setStyle the style is mid-reload and
+      // addSource would throw "Style is not done loading." Mount once ready;
+      // the re-check skips if the refresh effect re-mounted first. The cancel
+      // handle is intentionally dropped — a missed window is recovered by the
+      // next annotations change or raise call, never by a stale late mount.
+      whenStyleReady(map, () => {
+        if (!map || typeof map.getLayer !== 'function') return;
+        try {
+          if (ANNOTATION_LAYER_IDS.some((id) => map.getLayer(id))) return;
+          ensureAnnotationLayers(map);
+          refreshAnnotations(map);
+        } catch {
+          // Ignore style lifecycle race
+        }
+      });
     }
+    for (const id of ANNOTATION_LAYER_IDS) {
+      try {
+        if (!map.getLayer(id)) continue;
+        // moveLayer without beforeId → end of the layer order (top), i.e.
+        // directly above every spec layer syncLayerZOrder just stacked.
+        map.moveLayer(id);
+      } catch {
+        // Layer vanished mid-reconcile — nothing to re-raise.
+      }
+    }
+  } catch {
+    // Map was destroyed or in invalid transient state
   }
 }

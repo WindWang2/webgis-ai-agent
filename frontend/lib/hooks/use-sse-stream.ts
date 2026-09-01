@@ -671,7 +671,7 @@ export function useSSEStream(
           const runtimePatch = data.result?.runtime_patch;
           const patchVisible = typeof runtimePatch?.visible === 'boolean'
             ? runtimePatch.visible
-            : !data.geojson_ref;
+            : true;
           const patchOpacity = typeof runtimePatch?.opacity === 'number'
             && Number.isFinite(runtimePatch.opacity)
             ? runtimePatch.opacity
