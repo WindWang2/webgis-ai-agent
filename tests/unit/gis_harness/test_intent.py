@@ -235,11 +235,17 @@ class TestIssue781RasterRouting:
     """#781: 栅格主体 → raster_distribution，不再落 POI 热力族。"""
 
     def test_raster_subject_maps_to_raster_distribution(self):
+        # ADR-0092 G5：显式 NDVI/植被指数请求升级为 vegetation_index 任务
+        # （ndvi capability 必须进入计划）；其余栅格主体仍走 raster_distribution。
         it = resolve_map_request_intent("分析某栅格NDVI并生成专题图")
-        assert it.task == "raster_distribution"
-        assert "raster_subject_thematic" in it.matched_rules
+        assert it.task == "vegetation_index"
+        assert "vegetation_index_request" in it.matched_rules
         assert it.subject.type == "raster"
         assert it.geometry_expectation == "raster"
+
+        it2 = resolve_map_request_intent("查看这个区域的气温分布")
+        assert it2.task == "raster_distribution"
+        assert "raster_subject_thematic" in it2.matched_rules
 
     def test_raster_candidates_lead_with_raster_recipe(self):
         from app.services.gis_harness.recipes import get_recipe_registry

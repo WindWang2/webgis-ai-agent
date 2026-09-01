@@ -581,6 +581,9 @@ def test_scenario09_new_goal_classified_and_forces_planning(env):
 async def test_scenario09_new_goal_supersedes_and_resets_sticky(env, monkeypatch):
     _patch_registry(monkeypatch, env)
     sid = "sess-s09-goal"
+    # ADR-0092: 「植被覆盖」类显式请求现走 harness 确定性合成（0 次 LLM），
+    # 第 1 轮改用 fallback 类消息以保持「LLM 规划 → new_goal 重规划」的
+    # 被测路径不变。
     responses = iter([
         '{"intent":"NDVI 分析","domains":["raster"],"steps":[{"n":1,"goal":"计算 NDVI","tool_family":"raster"}]}',
         '{"intent":"路线规划","domains":["network"],"steps":[{"n":1,"goal":"规划路线","tool_family":"network"}]}',
@@ -592,8 +595,9 @@ async def test_scenario09_new_goal_supersedes_and_resets_sticky(env, monkeypatch
     monkeypatch.setattr(planner_mod, "call_llm", fake_call_llm)
     engine = _make_engine(env)
 
-    # 第 1 轮：raster 计划 + raster 领域 sticky
-    p1 = await engine._maybe_plan(sid, "分析一下植被覆盖", [])
+    # 第 1 轮：raster 计划 + raster 领域 sticky（消息保持 fallback 分类，
+    # 让 LLM 规划路径消费第 1 条桩响应）
+    p1 = await engine._maybe_plan(sid, "分析一下这个区域的环境状况", [])
     assert p1 is not None and p1.domains == ["raster"]
     old_id = (await plan_store.load_current(sid)).plan_id
     env.catalog.select_schemas("NDVI", session_id=sid)  # 模拟 raster 粘性

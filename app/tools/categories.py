@@ -53,6 +53,8 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.spatial": "analysis",                    # heatmap/query 覆盖
     "app.tools.spatial_decision_tools": "analysis",
     "app.tools.spatial_reasoning": "analysis",
+    "app.tools.semantic_tools": "analysis",             # 语义画像/模式建议
+    "app.tools.flow_tools": "analysis",                 # OD 流向构建
     "app.tools.spatial_stats": "analysis",
     "app.tools.subagent": "debug_internal",
     "app.tools.templates": "rendering",                 # 模板/主题组合

@@ -60,7 +60,9 @@ class TestNewRecipeSelectionAndEligibility:
         reg = get_recipe_registry()
         expected_new = {"grid_density_aggregate", "proportional_symbol_map"}
         assert expected_new <= set(reg.all_ids)
-        assert reg.count == 10
+        # ADR-0092 D7: od_flow_overview joins the registry (mobility_flow).
+        assert "od_flow_overview" in set(reg.all_ids)
+        assert reg.count == 11
 
     @pytest.mark.parametrize(
         "query,winner", [
