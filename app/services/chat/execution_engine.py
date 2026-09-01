@@ -467,8 +467,23 @@ class ChatExecutionEngine:
             from app.services.chat import planner
             plan = planner.get_plan(session_id) if session_id else None
             declared = set(plan.domains) if plan and plan.domains else None
+            # Runtime V4（§28）：阶段感知工具面 —— plan（内存真相）纯派生的
+            # preferred/allowed 偏好，经 catalog 并入（零 IO、零持久化、
+            # 不是第二 planner）。None/异常 → 既有行为不变。
+            surface = None
+            try:
+                from app.services.gis_harness.tool_surface import compile_tool_surface
+
+                surface = compile_tool_surface(
+                    plan=plan,
+                    registry_meta=None,
+                )
+                logger.debug("[ToolSurface] %s", surface.projection_line())
+            except Exception:  # noqa: BLE001 — 面编译失败不阻断工具选择
+                surface = None
             schemas = self.catalog.select_schemas(
-                user_text, session_id=session_id, declared_domains=declared, turn_id=turn_id,
+                user_text, session_id=session_id, declared_domains=declared,
+                turn_id=turn_id, surface=surface,
             )
             return schemas or None
         all_schemas = self.registry.get_schemas()
