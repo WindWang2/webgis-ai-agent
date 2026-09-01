@@ -85,14 +85,29 @@ def register_meta_tools(registry: ToolRegistry) -> None:
             fn = schema.get("function", {})
             descriptions[fn.get("name", "")] = fn.get("description", "")
         matched = []
+        hidden_tier3 = 0
         for name, meta in registry.all_metadata().items():
-            if domain in set(meta.get("domains", [])):
-                matched.append({
-                    "name": name,
-                    "description": descriptions.get(name, ""),
-                    "tier": meta.get("tier", 1),
-                })
-        return {"domain": domain, "count": len(matched), "tools": matched}
+            if domain not in set(meta.get("domains", [])):
+                continue
+            # Pi 兼容审查：tier>=3 在两条 agent 路径都不可派发（registry 的
+            # tier3_confirmed 门 + Pi 桥接的硬拒）—— 列出来只会诱导一轮注定
+            # 失败的调用。如实过滤并披露数量（管理员通道不经本工具发现）。
+            if int(meta.get("tier", 1)) >= 3:
+                hidden_tier3 += 1
+                continue
+            matched.append({
+                "name": name,
+                "description": descriptions.get(name, ""),
+                "tier": meta.get("tier", 1),
+            })
+        out = {"domain": domain, "count": len(matched), "tools": matched}
+        if hidden_tier3:
+            out["hidden_tier3"] = hidden_tier3
+            out["message"] = (
+                f"另有 {hidden_tier3} 个 tier-3 管理员工具未列出"
+                "（需管理员确认通道，agent 不可执行）。"
+            )
+        return out
 
 
 def refresh_list_available_tools_args(registry: ToolRegistry) -> None:

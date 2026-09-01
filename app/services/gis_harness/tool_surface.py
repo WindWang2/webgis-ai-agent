@@ -82,6 +82,19 @@ _PHASE_DOMAINS: Dict[str, Tuple[str, ...]] = {
 }
 
 
+# product_action 建议动作 → 阶段（Pi 路径的权威相位信号：adviser 是
+# SessionPlan 派生的确定性投影，不引入第二计划真相）。
+_ACTION_PHASE: Dict[str, str] = {
+    "retry_analysis": PHASE_ANALYSIS,
+    "run_analysis": PHASE_ANALYSIS,
+    "produce_layer": PHASE_ASSEMBLY,
+    "repair_layer_render": PHASE_ASSEMBLY,
+    "produce_chart": PHASE_ASSEMBLY,
+    "produce_statistics": PHASE_ASSEMBLY,
+    "finalize_product": PHASE_FINAL,
+}
+
+
 @dataclass(frozen=True)
 class ToolSurface:
     """一轮工具面的派生偏好（只读；由 ToolCatalog 消费，不持久化）。"""
@@ -123,16 +136,52 @@ def _plan_phase(plan: Any) -> Tuple[str, Tuple[str, ...]]:
     return phase, (f"step {step_n} family={family} → {phase}",)
 
 
+def _chapter_phase(chapter: Any) -> Tuple[str, Tuple[str, ...]]:
+    """SessionPlan 信封（gis_chapter dict）→ (phase, evidence)。
+
+    Pi 路径的计划真相是 SessionPlan 信封（legacy Plan 只在 legacy 路径）——
+    阶段从信封行派生（读真相，不建第二份）：首个未完成 data_requirement
+    → data；首个未完成 analysis_step → analysis；全部完成 → 落到
+    product_status 覆盖层（无欠账时 planning）。防御式：非 dict → planning。
+    """
+    if not isinstance(chapter, dict):
+        return PHASE_PLANNING, ("chapter absent → planning",)
+    done_states = {"complete", "completed", "skipped", "done", "ok"}
+
+    def _pending(rows: Any) -> list:
+        out = []
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("status") or "").lower() not in done_states:
+                out.append(row)
+        return out
+
+    pending_data = _pending(chapter.get("data_requirements"))
+    if pending_data:
+        return PHASE_DATA, (f"{len(pending_data)} pending data rows → data",)
+    pending_steps = _pending(chapter.get("analysis_steps"))
+    if pending_steps:
+        return PHASE_ANALYSIS, (f"{len(pending_steps)} pending analysis rows → analysis",)
+    return PHASE_PLANNING, ("no pending chapter rows → planning",)
+
+
 def compile_tool_surface(
     *,
     plan: Any = None,
     product_status: Optional[str] = None,
     registry_meta: Optional[Dict[str, Dict[str, Any]]] = None,
+    chapter: Any = None,
+    next_action: Optional[str] = None,
 ) -> ToolSurface:
     """编译本轮工具面偏好。
 
     参数：
-    - plan：SessionPlan（进程内真相；None → 通用面）；
+    - plan：legacy Plan（legacy 路径进程内真相；None → 试试 chapter）；
+    - chapter：SessionPlan 信封的 gis_chapter dict（Pi 路径计划真相）——
+      plan 缺席时从信封行派生阶段；
+    - next_action：product_action adviser 的确定性建议动作（在场时优先于
+      plan/chapter 派生 —— adviser 是欠账 facets 的精确投影）；
     - product_status：可选的完成度状态（complete/needs_repair/…）——
       在场时覆盖阶段推导（产品欠账 → assembly；complete → final）；
     - registry_meta：可选的 registry.all_metadata() 快照 —— 在场时把
@@ -141,12 +190,18 @@ def compile_tool_surface(
     纯函数：同输入必同输出，无 IO 无状态。
     """
     evidence: list[str] = []
-    if plan is None:
-        phase = PHASE_PLANNING
-        evidence.append("no plan → planning (generic surface)")
-    else:
+    if next_action and next_action in _ACTION_PHASE:
+        phase = _ACTION_PHASE[next_action]
+        evidence.append(f"next_action={next_action} → {phase}")
+    elif plan is not None:
         phase, frags = _plan_phase(plan)
         evidence.extend(frags)
+    elif chapter is not None:
+        phase, frags = _chapter_phase(chapter)
+        evidence.extend(frags)
+    else:
+        phase = PHASE_PLANNING
+        evidence.append("no plan/chapter → planning (generic surface)")
 
     # 产品状态覆盖（显式事实优先于步骤推断）。
     if product_status == "complete":
@@ -180,6 +235,7 @@ def compile_tool_surface(
 __all__ = [
     "ToolSurface",
     "compile_tool_surface",
+    "_ACTION_PHASE",
     "PHASE_PLANNING",
     "PHASE_DATA",
     "PHASE_ANALYSIS",

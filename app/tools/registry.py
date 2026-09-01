@@ -7,7 +7,7 @@ import logging
 import os
 from contextlib import contextmanager
 from typing import Any, Callable, Literal, Optional, Type, List, Union
-from pydantic import BaseModel, ConfigDict, create_model, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, create_model, ValidationError
 
 from enum import Enum
 
@@ -204,6 +204,30 @@ _TOOL_NAME_ALIASES: dict[str, str] = {
 }
 
 
+def _fold_alias(
+    args: dict, target: str, aliases, model_fields: set, *, list_wrap: bool = False
+) -> None:
+    """target 缺席时把首个在场的别名折叠过去。
+
+    Pi 兼容审查（master 回归修复）：声明字段（= schema 正名或另一真实
+    参数）绝不折叠 —— LLM 按 schema 命名的参数永远优先于别名猜测。旧实现
+    把 webgis_map_product 声明的 ``title`` 改名成不存在的 ``map_title``，
+    pydantic 未知参数门必然拒绝（golden 流程三连挂）。list_wrap=True 时
+    标量包成单元素列表（overlay_refs 语义）。
+    """
+    if target in args:
+        return
+    for alias in aliases:
+        if alias in args:
+            if alias in model_fields:
+                continue
+            val = args.pop(alias)
+            if list_wrap and not isinstance(val, list):
+                val = [val]
+            args[target] = val
+            return
+
+
 def _normalize_tool_arguments(
     name: str, arguments: dict, model: Optional[Type[BaseModel]] = None
 ) -> dict:
@@ -251,135 +275,101 @@ def _normalize_tool_arguments(
     )) and "geojson" not in args:
         for alias in GEOJSON_ALIASES:
             if alias in args:
-                if alias in model_fields and alias not in ("geojson_ref", "data_ref", "source_ref", "input_geojson", "points_geojson", "target_geojson", "source_geojson"):
+                # Pi 兼容审查修复：声明过的字段一律保留 —— 包括 geojson_ref/
+                # data_ref 等保护名（此前例外清单写反：声明的保护名反而会被
+                # 折叠进 geojson，正是注释声称要防止的行为）。LLM 显式按
+                # schema 命名的参数永远优先于别名猜测。
+                if alias in model_fields:
                     continue
                 args["geojson"] = args.pop(alias)
                 break
 
     # 3. 空间聚合 (spatial_aggregate)
     if name == "spatial_aggregate":
-        if "points" not in args:
-            for alias in ("points_data", "points_ref", "points_geojson", "point_data", "data", "geojson", "geojson_ref", "ref"):
-                if alias in args:
-                    args["points"] = args.pop(alias)
-                    break
-        if "polygons" not in args:
-            for alias in ("polygons_data", "polygons_ref", "polygons_geojson", "polygon_data", "admin_data", "admin_boundary", "boundary_ref", "boundary", "admin_boundary_ref", "data", "geojson", "geojson_ref", "ref"):
-                if alias in args:
-                    args["polygons"] = args.pop(alias)
-                    break
+        _fold_alias(args, "points",
+                    ("points_data", "points_ref", "points_geojson", "point_data",
+                     "data", "geojson", "geojson_ref", "ref"), model_fields)
+        _fold_alias(args, "polygons",
+                    ("polygons_data", "polygons_ref", "polygons_geojson", "polygon_data",
+                     "admin_data", "admin_boundary", "boundary_ref", "boundary",
+                     "admin_boundary_ref", "data", "geojson", "geojson_ref", "ref"),
+                    model_fields)
 
     # 4. POI 搜索 (search_poi, query_local_poi, query_gd_poi, query_poi)
     if name in ("search_poi", "query_local_poi", "query_gd_poi", "query_poi"):
-        if "keyword" not in args:
-            for alias in ("keywords", "query", "text", "search_text", "name"):
-                if alias in args:
-                    args["keyword"] = args.pop(alias)
-                    break
-        if ("subtype" in model_fields or name in ("query_local_poi", "query_gd_poi")) and "subtype" not in args:
-            for alias in ("poi_type", "type", "category", "sub_type", "class_name", "type_name"):
-                if alias in args:
-                    args["subtype"] = args.pop(alias)
-                    break
-        if ("district" in model_fields or name in ("query_local_poi", "query_gd_poi")) and "district" not in args:
-            for alias in ("district_name", "city_name", "city", "region", "admin_name", "address"):
-                if alias in args:
-                    args["district"] = args.pop(alias)
-                    break
-        if ("adcode" in model_fields or name in ("query_local_poi", "query_gd_poi")) and "adcode" not in args:
-            for alias in ("ad_code", "city_code", "district_code", "code"):
-                if alias in args:
-                    args["adcode"] = args.pop(alias)
-                    break
+        _fold_alias(args, "keyword",
+                    ("keywords", "query", "text", "search_text", "name"), model_fields)
+        if "subtype" in model_fields or name in ("query_local_poi", "query_gd_poi"):
+            _fold_alias(args, "subtype",
+                        ("poi_type", "type", "category", "sub_type", "class_name",
+                         "type_name"), model_fields)
+        if "district" in model_fields or name in ("query_local_poi", "query_gd_poi"):
+            _fold_alias(args, "district",
+                        ("district_name", "city_name", "city", "region", "admin_name",
+                         "address"), model_fields)
+        if "adcode" in model_fields or name in ("query_local_poi", "query_gd_poi"):
+            _fold_alias(args, "adcode",
+                        ("ad_code", "city_code", "district_code", "code"), model_fields)
 
     # 5. 行政区划查询 (get_local_admin_boundary, get_admin_division, admin_boundary_query)
     if name in ("get_local_admin_boundary", "get_admin_division", "admin_boundary_query"):
         target_key = "keywords" if name == "get_admin_division" else "name"
-        if target_key not in args:
-            for alias in ("admin_name", "city", "district", "district_name", "region", "address", "location", "query", "keywords" if target_key == "name" else "name"):
-                if alias in args:
-                    args[target_key] = args.pop(alias)
-                    break
-        if "adcode" not in args:
-            for alias in ("ad_code", "city_code", "district_code", "code"):
-                if alias in args:
-                    args["adcode"] = args.pop(alias)
-                    break
+        _fold_alias(
+            args, target_key,
+            ("admin_name", "city", "district", "district_name", "region", "address",
+             "location", "query", "keywords" if target_key == "name" else "name"),
+            model_fields,
+        )
+        _fold_alias(args, "adcode",
+                    ("ad_code", "city_code", "district_code", "code"), model_fields)
 
     # 6. 缓冲区分析 (buffer_analysis, multi_ring_buffer)
     if name == "buffer_analysis":
-        if "distance" not in args:
-            for alias in ("buffer_distance", "dist", "radius", "buffer_radius"):
-                if alias in args:
-                    args["distance"] = args.pop(alias)
-                    break
-        if "unit" not in args:
-            for alias in ("dist_unit", "buffer_unit"):
-                if alias in args:
-                    args["unit"] = args.pop(alias)
-                    break
+        _fold_alias(args, "distance",
+                    ("buffer_distance", "dist", "radius", "buffer_radius"), model_fields)
+        _fold_alias(args, "unit", ("dist_unit", "buffer_unit"), model_fields)
     elif name == "multi_ring_buffer":
-        if "distances" not in args:
-            for alias in ("ring_distances", "radii", "distance_list", "distance"):
-                if alias in args:
-                    val = args.pop(alias)
-                    args["distances"] = val if isinstance(val, list) else [val]
-                    break
+        _fold_alias(args, "distances",
+                    ("ring_distances", "radii", "distance_list", "distance"),
+                    model_fields, list_wrap=True)
 
     # 7. 专题图与模板 (create_thematic_map, apply_template)
     if name in ("create_thematic_map", "apply_template"):
-        if "field" not in args:
-            for alias in ("classify_field", "field_name", "property", "property_name", "column", "attribute", "attr"):
-                if alias in args:
-                    args["field"] = args.pop(alias)
-                    break
-        if "palette" not in args:
-            for alias in ("color_palette", "color_scheme", "colors", "colormap", "color"):
-                if alias in args:
-                    args["palette"] = args.pop(alias)
-                    break
-        if "method" not in args:
-            for alias in ("classify_method", "classification", "classes_method", "scheme"):
-                if alias in args:
-                    args["method"] = args.pop(alias)
-                    break
+        _fold_alias(args, "field",
+                    ("classify_field", "field_name", "property", "property_name",
+                     "column", "attribute", "attr"), model_fields)
+        _fold_alias(args, "palette",
+                    ("color_palette", "color_scheme", "colors", "colormap", "color"),
+                    model_fields)
+        _fold_alias(args, "method",
+                    ("classify_method", "classification", "classes_method", "scheme"),
+                    model_fields)
         if "n_classes" not in args:
             for alias in ("num_classes", "bins", "k", "class_count", "classes"):
-                if alias in args and isinstance(args[alias], (int, float)):
+                if alias in args and alias not in model_fields and isinstance(args[alias], (int, float)):
                     args["n_classes"] = int(args.pop(alias))
                     break
 
-    # 8. 地图产品装配 (webgis_map_product)
+    # 8. 地图产品装配 (webgis_map_product) —— 目标必须是真实签名参数
+    #（MapProductArgs：title / primary_ref / overlay_refs；无 map_title、
+    # 无 insight_summary —— master 回归曾把声明的 title 改名成不存在的
+    # map_title、把 summary 折进不存在的 insight_summary，两条都会被
+    # 未知参数门拒绝）。map_title 保留为**入向**别名（旧会话/历史习惯）。
     if name == "webgis_map_product":
-        if "map_title" not in args:
-            for alias in ("title", "name", "project_title"):
-                if alias in args:
-                    args["map_title"] = args.pop(alias)
-                    break
-        if "primary_ref" not in args:
-            for alias in ("primary_layer", "primary_source", "base_ref", "base_layer", "main_ref", "ref", "geojson_ref"):
-                if alias in args:
-                    args["primary_ref"] = args.pop(alias)
-                    break
-        if "overlay_refs" not in args:
-            for alias in ("overlays", "overlay_layers", "layers", "other_refs", "sub_refs"):
-                if alias in args:
-                    val = args.pop(alias)
-                    args["overlay_refs"] = val if isinstance(val, list) else [val]
-                    break
-        if "insight_summary" not in args:
-            for alias in ("summary", "description", "insight", "conclusion", "insights"):
-                if alias in args:
-                    args["insight_summary"] = args.pop(alias)
-                    break
+        _fold_alias(args, "title",
+                    ("map_title", "name", "project_title"), model_fields)
+        _fold_alias(args, "primary_ref",
+                    ("primary_layer", "primary_source", "base_ref", "base_layer",
+                     "main_ref", "ref", "geojson_ref"), model_fields)
+        _fold_alias(args, "overlay_refs",
+                    ("overlays", "overlay_layers", "layers", "other_refs", "sub_refs"),
+                    model_fields, list_wrap=True)
 
     # 9. 图层增删改 (webgis_layer_upsert, webgis_component_update, webgis_layout_set)
     if name == "webgis_layer_upsert":
-        if "source_data" not in args:
-            for alias in ("data", "source_ref", "geojson_ref", "geojson", "ref", "layer_data"):
-                if alias in args:
-                    args["source_data"] = args.pop(alias)
-                    break
+        _fold_alias(args, "source_data",
+                    ("data", "source_ref", "geojson_ref", "geojson", "ref", "layer_data"),
+                    model_fields)
 
     return args
 
@@ -502,6 +492,7 @@ class ToolRegistry:
                  param_descriptions: Optional[dict[str, str]] = None,
                  args_model: Optional[Type[BaseModel]] = None,
                  parameters: Optional[dict] = None,
+                 field_extras: Optional[dict[str, dict]] = None,
                  tier: int = 1,
                  domains: Optional[List[str]] = None,
                  execution_policy: Optional[ToolExecutionPolicy | str] = None,
@@ -510,7 +501,14 @@ class ToolRegistry:
                  contract_version: int = 1,
                  cost: ToolCost = "light",
                  **kwargs: Any):
-        """注册一个工具函数"""
+        """注册一个工具函数
+
+        field_extras（Pi 兼容/V4）：参数名 → json_schema_extra dict —— 签名
+        推导模型（无显式 args_model）也能携带声明式 extras（如
+        ``{"ref_cursor": True}`` / ``{"capture_ref_of": "data"}``），不必为
+        声明一个 extra 重建整套 pydantic 模型。显式 args_model 优先（其
+        自带 extras 生效，此处忽略）。
+        """
         if name in self._tools and self._tools[name] is not func:
             # #1062: 此前静默覆盖同名工具 —— 两个模块撞名（或 skill 热重建
             # re-register）会无声替换一个活工具。显式告警留痕；显式更新走
@@ -534,12 +532,12 @@ class ToolRegistry:
             self._models[name] = (
                 args_model
                 if args_model is not None
-                else self._generate_model(name, func, param_descriptions)
+                else self._generate_model(name, func, param_descriptions, field_extras=field_extras)
             )
         else:
             # 如果没有显式提供 parameters 或 model，则根据函数签名自动推导
             if args_model is None:
-                args_model = self._generate_model(name, func, param_descriptions)
+                args_model = self._generate_model(name, func, param_descriptions, field_extras=field_extras)
 
             self._models[name] = args_model
 
@@ -634,7 +632,34 @@ class ToolRegistry:
                 keys.add(fname)
         return keys
 
-    def _generate_model(self, name: str, func: Callable, param_descriptions: Optional[dict[str, str]]) -> Type[BaseModel]:
+    @staticmethod
+    def _declared_cursor_capture_fields(model: Optional[Type[BaseModel]]) -> dict:
+        """Pi 兼容审查（V4）：提取声明式「解引用游标捕获」字段 → 源参数名。
+
+        字段带 json_schema_extra={"capture_ref_of": "data"} 时：若 LLM 未
+        显式提供该字段、且源参数（"data"）在透明解引用阶段被 ref: 替换为
+        载荷，则把**原始 ref 游标字符串**注入该字段。工具因此能区分
+        「数据本体」与「数据从哪个 ref 来」—— generate_chart 的
+        layer_id 自动解析（ADR-0091 §15）在解引用后本不可能看到 ref
+        字符串，此机制让它真正可达。仅支持 dict 形态 extra。
+        """
+        if model is None:
+            return {}
+        out: dict[str, str] = {}
+        for fname, finfo in model.model_fields.items():
+            extra = finfo.json_schema_extra
+            if (
+                isinstance(extra, dict)
+                and isinstance(extra.get("capture_ref_of"), str)
+                and extra["capture_ref_of"]
+            ):
+                out[fname] = extra["capture_ref_of"]
+        return out
+
+    def _generate_model(
+        self, name: str, func: Callable, param_descriptions: Optional[dict[str, str]],
+        field_extras: Optional[dict[str, dict]] = None,
+    ) -> Type[BaseModel]:
         """根据函数签名动态推导 Pydantic Model"""
         sig = inspect.signature(func)
         fields = {}
@@ -649,7 +674,11 @@ class ToolRegistry:
             p_type = param.annotation if param.annotation != inspect.Parameter.empty else Any
             default = param.default if param.default != inspect.Parameter.empty else ...
 
-            fields[p_name] = (p_type, default)
+            extra = (field_extras or {}).get(p_name)
+            if isinstance(extra, dict) and extra:
+                fields[p_name] = (p_type, Field(default, json_schema_extra=extra))
+            else:
+                fields[p_name] = (p_type, default)
 
         # #1059: 函数本身接受 **kwargs 时，模型必须 extra="allow" —— 否则
         # 签名推导的零/少字段模型会把函数有意接受的任意参数当未知参数拒绝
@@ -955,7 +984,14 @@ class ToolRegistry:
                 # audit #824: 与 Pydantic 旁路同门的预算探测提前到解析之前 ——
                 # oversized 内联载荷的字符串叶是数据不是别名，别名查表直接降级。
                 _oversized_for_resolver = _is_args_oversized(arguments)
-                skip_keys = {"ref_id", "layer_ref", "layer_id", "plan_id", "before_ref"}
+                # Pi 兼容审查：chartRef/tableRef 是组件绑定的 ref 游标（嵌套
+                # 在 options dict 里也会命中本集合 —— dict 分支按 key 跳过），
+                # imageRef 是磁盘栅格游标（从不在 session store）—— 三者都
+                # 不应被透明解引用成载荷。
+                skip_keys = {
+                    "ref_id", "layer_ref", "layer_id", "plan_id", "before_ref",
+                    "chartRef", "tableRef", "imageRef",
+                }
                 # #1004: 参数级声明式 ref 游标通道 —— args model 字段声明
                 # json_schema_extra={"ref_cursor": True} 即以游标语义传参
                 # （跳过解引用）。新工具接 ref 游标不再需要改 registry 核心
@@ -980,12 +1016,22 @@ class ToolRegistry:
                 # 会把列表里的 ref: 元素解成整个 FeatureCollection 载荷。
                 if name == "finalize_display":
                     skip_keys.add("show_refs")
+                # Pi 兼容（V4）：capture_ref_of 注入面 —— 记录源参数的原始
+                # ref 游标（解引用后注入声明字段，工具由此知道数据来源）。
+                capture_fields = self._declared_cursor_capture_fields(model)
+                cursor_sink: dict = {}
                 arguments = await self._resolve_references(
                     session_id,
                     arguments,
                     skip_keys=skip_keys,
                     oversized_hint=_oversized_for_resolver,
+                    cursor_sink=cursor_sink,
+                    cursor_track_keys=set(capture_fields.values()),
                 )
+                if capture_fields and cursor_sink:
+                    for field, source_arg in capture_fields.items():
+                        if field not in arguments and cursor_sink.get(source_arg):
+                            arguments[field] = cursor_sink[source_arg]
             except ValueError as e:
                 error_msg = str(e)
                 return std_error_response(
@@ -1287,6 +1333,8 @@ class ToolRegistry:
         self, session_id: str, arguments: Any,
         skip_keys: Optional[set[str]] = None,
         oversized_hint: bool = False,
+        cursor_sink: Optional[dict] = None,
+        cursor_track_keys: Optional[set[str]] = None,
     ) -> Any:
         """递归解析参数中的数据引用 ref:xxx 或 别名（批量版）。
 
@@ -1408,6 +1456,16 @@ class ToolRegistry:
                         r = await _resolve(v)
                         if r is not v:
                             changed = True
+                            # Pi 兼容（V4）：跟踪键的字符串值被替换为载荷 →
+                            # 记录原始 ref/别名游标（capture_ref_of 注入依据）。
+                            if (
+                                cursor_sink is not None
+                                and cursor_track_keys
+                                and k in cursor_track_keys
+                                and isinstance(v, str)
+                                and not isinstance(r, str)
+                            ):
+                                cursor_sink[k] = v
                         new_args[k] = r
                 # audit #824: identity short-circuit — a subtree with no
                 # resolution hits returns the ORIGINAL node (no O(tree) copy).

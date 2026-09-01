@@ -198,6 +198,11 @@ def _handle_tool_execution_end(event: dict, session_id: str, cache_lookup: Optio
             descriptor = getattr(cached, "ref_descriptor", None)
             if descriptor:
                 payload["ref_descriptor"] = descriptor
+        # ADR-0052 parity（Pi 兼容）：本步骤派生的 durable job —— 与 legacy
+        # step_result 同款携带，前端把后台 GIS job 挂到该 tool step 下。
+        bg_jobs = getattr(cached, "background_job_ids", None)
+        if bg_jobs:
+            payload["background_job_ids"] = list(bg_jobs)
         return sse_event("step_result", payload)
 
     # 缓存未命中（Pi 重复回传 / dispatch 未走 service 路径）：退化到旧行为

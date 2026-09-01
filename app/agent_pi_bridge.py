@@ -519,8 +519,34 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
                 and session_id == _active_turn_context[0]
                 else None
             )
-            with use_token(dispatch_token):
+            # Pi 兼容（ADR-0052 parity）：legacy tool_pipeline 在 dispatch 外
+            # 建 JobOrigin（contextvar），工具内创建的 durable job 由此带上
+            # session/turn/step 关联、且 created_job_ids 可回读成
+            # background_job_ids。Pi 直调 service.dispatch 此前没有 origin ——
+            # job 关联断链 + SSE 永不携带。同款包裹（turn 关联来自在飞 turn
+            # 的 correlation，与上面 evidence 同源）。
+            from app.services.jobs.context import JobOrigin, use_origin
+
+            _job_origin = JobOrigin(
+                session_id=session_id or None,
+                owner_id=None,
+                owner_token=None,
+                run_id=run_id,
+                turn_id=turn_id,
+                agent_task_id=None,
+                agent_step_id=None,
+                tool_call_id=request.toolCallId or None,
+                tool_name=tool_name,
+            )
+            with use_token(dispatch_token), use_origin(_job_origin):
                 result = await service.dispatch(tc, session_id, executed)
+                if _job_origin.created_job_ids:
+                    # 结果携带（SSE mapper 读取；ToolDispatchResult 字段为
+                    # additive 默认空）。
+                    try:
+                        result.background_job_ids = list(_job_origin.created_job_ids)
+                    except Exception:  # noqa: BLE001 — 披露是增值，不阻断
+                        pass
         except OperationCancelled:
             # audit #821: 协作取消 ≠ 工具故障（ADR-0052 / legacy tool_pipeline 同义）
             # —— 记 cancelled 证据并返回结构化取消响应，而不是落入 catch-all
@@ -598,6 +624,12 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
                 # failed/cancelled）—— 旧条件里的 "pending" 是死分支。
                 if latest_task.status.value == "running":
                     step = engine.tracker.start_step(latest_task.id, tool_name, arguments)
+                    # ADR-0052 parity：durable job 挂到该 tool step（与 legacy
+                    # tool_pipeline 的 step.background_job_ids 同义）。
+                    try:
+                        step.background_job_ids = list(getattr(result, "background_job_ids", []) or [])
+                    except Exception:  # noqa: BLE001
+                        pass
                     if result.status == "ok":
                         engine.tracker.complete_step(latest_task.id, step.id, result.raw_result)
                     else:
@@ -1211,6 +1243,7 @@ class PiBridge:
         message: str,
         session_id: Optional[str] = None,
         cartography_context: Optional[str] = None,
+        env_block: Optional[str] = None,
     ) -> dict:
         """Send a prompt to Pi agent (non-streaming).
 
@@ -1298,6 +1331,7 @@ class PiBridge:
                 await self._drain_stale_events()
                 data["message"] = await bind_turn_prompt(
                     message, turn_token, turn_sid, cartography_context or "",
+                    env_block=env_block or "",
                 )
                 try:
                     await self._rpc.request("prompt", data)
@@ -1489,6 +1523,7 @@ class PiBridge:
         session_id: Optional[str] = None,
         cartography_context: Optional[str] = None,
         on_turn_result: Optional[Callable[[dict], Any]] = None,
+        env_block: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """Stream a prompt to Pi agent, yielding SSE events.
 
@@ -1595,6 +1630,7 @@ class PiBridge:
                 await self._drain_stale_events()
                 data["message"] = await bind_turn_prompt(
                     message, turn_token, turn_sid, cartography_context or "",
+                    env_block=env_block or "",
                 )
 
                 # Send prompt command
