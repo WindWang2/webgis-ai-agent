@@ -36,6 +36,15 @@ export function resetLiveState(): void {
   void import('../selection/selection-store')
     .then((m) => m.resetSelectionStore())
     .catch(() => { /* best-effort */ });
+  // Runtime V4：视口空间上下文同属会话内 transient 态（extent_change 载荷
+  // 不跨会话泄漏；epoch bump 使挂起的 debounce 结算失效）。
+  void import('../selection/viewport-context')
+    .then((m) => m.resetViewportContext())
+    .catch(() => { /* best-effort */ });
+  // Runtime V4：过滤命中证据绑定会话的数据面（层/过滤随会话失效）。
+  void import('../layers/filter-evidence')
+    .then((m) => m.clearFilterEvidence())
+    .catch(() => { /* best-effort */ });
   // #1078(G-4): chart artifact 缓存同样随会话失效 —— 此前生产代码从不
   // 调 resetChartArtifactCache（只有测试调），旧会话的 ref 条目永久滞留
   // 且随会话切换增长。动态 import 避免与 chart-artifact 的静态环
@@ -43,6 +52,10 @@ export function resetLiveState(): void {
   void import('../map-components/chart-artifact')
     .then((m) => m.resetChartArtifactCache())
     .catch(() => { /* best-effort：清缓存失败不影响切换 */ });
+  // Runtime V4：table artifact 缓存同属会话内 transient 态。
+  void import('../map-components/table-data')
+    .then((m) => m.resetTableArtifactCache())
+    .catch(() => { /* best-effort */ });
   // v3(Phase B, review-A/B P2)：custom-* 重挂账本**不在**这里清 —— 它由
   // setMapSpecSessionCursor 的 id 变化分支清（clearCustomOverlayRegistry）。
   // v2 这里清的是独立闭包账本（无害）；统一后这里清会违反同 id 重设

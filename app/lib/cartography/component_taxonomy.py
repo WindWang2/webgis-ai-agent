@@ -97,6 +97,7 @@ _SEED_CATEGORIES: List[ComponentCategory] = [
     # ── analysis sub ───────────────────────────────────────────────
     ComponentCategory(id="analysis.statistics_panel", name="analysis.statistics_panel", name_zh="统计面板", parent="analysis", placement_domain="panel", output_targets=["interactive", "png", "pdf"]),
     ComponentCategory(id="analysis.chart_panel", name="analysis.chart_panel", name_zh="图表面板", parent="analysis", placement_domain="panel", output_targets=["interactive", "png", "pdf"]),
+    ComponentCategory(id="analysis.table_panel", name="analysis.table_panel", name_zh="表格面板", parent="analysis", placement_domain="panel", output_targets=["interactive"]),
     ComponentCategory(id="analysis.summary", name="analysis.summary", name_zh="摘要", parent="analysis", placement_domain="panel", output_targets=["interactive", "png", "pdf"]),
     ComponentCategory(id="analysis.indicator", name="analysis.indicator", name_zh="指标卡", parent="analysis", placement_domain="panel", output_targets=["interactive", "png", "pdf"]),
     # ── inset sub ──────────────────────────────────────────────────

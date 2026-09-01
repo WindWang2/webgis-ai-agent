@@ -24,13 +24,20 @@ export interface LayerChange {
   /**
    * `add` = new layer; `remove` = gone;
    * `recompile` = layer id kept but type/source/paint/layout/label changed.
+   * `filter` = ONLY the filter expression changed (Runtime V4 fast path) —
+   *   the runtime applies it via map.setFilter with zero layer churn.
    *
    * Per ADR-0036 Q3: rather than diffing individual paint properties, a changed
    * layer is reported as `recompile` and the runtime removes + re-adds it. This
    * keeps the pure diff simple and isolates the fiddly per-property expression
    * recompilation policy in the side-effectful layer.
+   *
+   * The `filter` kind is the ONE deliberate exception (ADR-0091): selection /
+   * legend-range / imperative filter flips are the highest-frequency mutation
+   * in the interactive workspace, and a filter-only change maps 1:1 onto
+   * map.setFilter — no remove/add, no recompile flicker, source untouched.
    */
-  kind: "add" | "remove" | "recompile";
+  kind: "add" | "remove" | "recompile" | "filter";
   /** Present for `add`/`recompile`. The next layer definition. */
   next?: MapSpecLayer;
 }
@@ -84,6 +91,19 @@ function isDeepEqual(a: unknown, b: unknown): boolean {
 function diffView(prev: MapSpecView | undefined, next: MapSpecView | undefined): ViewChange | undefined {
   if (isDeepEqual(prev, next)) return undefined;
   return { prev, next };
+}
+
+/**
+ * Runtime V4 filter fast path: true when the two layer definitions are
+ * deep-equal EXCEPT for the top-level `filter` field. Only that exact shape
+ * maps onto map.setFilter — anything else (paint/layout/type/label/source id)
+ * keeps the recompile semantics.
+ */
+function isFilterOnlyChange(prev: MapSpecLayer, next: MapSpecLayer): boolean {
+  if (prev.filter === next.filter) return false; // identical refs → not even a filter change
+  const { filter: _pf, ...prevRest } = prev;
+  const { filter: _nf, ...nextRest } = next;
+  return isDeepEqual(prevRest, nextRest);
 }
 
 
@@ -156,14 +176,19 @@ export function diffSpecs(prev: MapSpec | null, next: MapSpec): SpecPatch {
     const prevLayer = prevLayerById.get(layer.id);
     if (!prevLayer) {
       layers.push({ id: layer.id, kind: "add", next: layer });
-    } else if (
-      !isDeepEqual(prevLayer, layer)
-      || changedSourceIds.has(layer.source)
-    ) {
+    } else if (changedSourceIds.has(layer.source)) {
       // MapLibre source definitions are not uniformly mutable. Recompile all
       // dependent layers around a source replacement so a same-id vector,
       // raster, URL, or data-generation update cannot leave stale live data.
+      // (Checked BEFORE the filter-only fast path: a source update must win
+      // even when the layer dict differs only in `filter`.)
       layers.push({ id: layer.id, kind: "recompile", next: layer });
+    } else if (!isDeepEqual(prevLayer, layer)) {
+      if (isFilterOnlyChange(prevLayer, layer)) {
+        layers.push({ id: layer.id, kind: "filter", next: layer });
+      } else {
+        layers.push({ id: layer.id, kind: "recompile", next: layer });
+      }
     }
 
     // else: unchanged → omitted (no-op)

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo, useState, useCallback, useSyncExternalStore } from 'react';
 import clsx from 'clsx';
 import { Eye, EyeOff, GripVertical, Layers as LayersIcon, LocateFixed, Palette } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
@@ -10,6 +10,11 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { IconButton } from '@/components/shared/icon-button';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { useLayerStatuses } from '@/lib/hooks/use-layer-statuses';
+import {
+  getFilterEvidence,
+  getFilterEvidenceGeneration,
+  subscribeFilterEvidence,
+} from '@/lib/layers/filter-evidence';
 import { LAYER_STATUS_LABELS } from '@/lib/layers/layer-status';
 import {
   removeLayerAndCommit,
@@ -57,6 +62,50 @@ function DeleteLayerButton({ onDelete }: { onDelete: () => void }) {
   return <ConfirmAction label="删除图层" confirmLabel="确认删除？" onConfirm={onDelete} />;
 }
 
+interface FilterBadgeView {
+  label: string;
+  title: string;
+  tone: 'warn' | 'info';
+}
+
+/**
+ * Runtime V4（§14）：把 LayerFilterEvidence 投影为行内徽标视图。
+ * - empty / invalid → warn 色（内容被过滤清空 / 过滤字段不存在）；
+ * - active → 轻量命中数（有 matched_count 时）；
+ * - inactive / unknown / stale → 无徽标（未知 ≠ 异常，不为噪声占行宽）。
+ */
+function useFilterEvidenceBadges(layers: Layer[]): Record<string, FilterBadgeView> {
+  const generation = useSyncExternalStore(subscribeFilterEvidence, getFilterEvidenceGeneration);
+  return useMemo(() => {
+    const out: Record<string, FilterBadgeView> = {};
+    for (const layer of layers) {
+      const evidence = getFilterEvidence(layer.id);
+      if (!evidence) continue;
+      if (evidence.status === 'empty') {
+        out[layer.id] = {
+          label: '过滤后 0 要素',
+          title: '当前过滤条件没有命中任何要素（检查图例区间/选择过滤/字段拼写）',
+          tone: 'warn',
+        };
+      } else if (evidence.status === 'invalid') {
+        out[layer.id] = {
+          label: '过滤字段不存在',
+          title: '过滤引用的字段在该层要素属性中不存在',
+          tone: 'warn',
+        };
+      } else if (evidence.status === 'active' && evidence.matched_count != null) {
+        out[layer.id] = {
+          label: `过滤 ${evidence.matched_count}`,
+          title: `过滤命中 ${evidence.matched_count} 要素（扫描 ${evidence.scanned ?? '?'}）`,
+          tone: 'info',
+        };
+      }
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- generation is the change signal
+  }, [layers, generation]);
+}
+
 export function LayersTab() {
   const layers = useHudStore((s) => s.layers);
   const updateLayer = useHudStore((s) => s.updateLayer);
@@ -65,6 +114,8 @@ export function LayersTab() {
   // expired）从 MapSpec revision + artifact/ref 状态 + 最新渲染观察派生 ——
   // 只读投影，不进 store、不进 MapSpec（无并行真相）。
   const statuses = useLayerStatuses(layers);
+  // Runtime V4（§14）：过滤命中证据（独立于状态词表的派生证据）。
+  const filterBadges = useFilterEvidenceBadges(layers);
 
   const [dragId, setDragId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
@@ -329,6 +380,24 @@ export function LayersTab() {
                             status={statuses[layer.id]}
                             label={LAYER_STATUS_LABELS[statuses[layer.id]]}
                           />
+                        )}
+
+                        {/* Runtime V4（§14）：过滤命中证据徽标 —— 与状态词表
+                            分离的派生证据。empty/invalid 必须可见（「层就绪
+                            但被过滤清空/过滤字段拼错」此前不可披露）；active
+                            仅在带命中数时轻量展示。 */}
+                        {filterBadges[layer.id] && (
+                          <span
+                            className={`shrink-0 rounded-xs px-1 text-micro tabular-nums ${
+                              filterBadges[layer.id].tone === 'warn'
+                                ? 'bg-status-critical-soft text-status-critical'
+                                : 'bg-surface-subtle text-ink-muted'
+                            }`}
+                            title={filterBadges[layer.id].title}
+                            data-testid={`filter-evidence-${layer.id}`}
+                          >
+                            {filterBadges[layer.id].label}
+                          </span>
                         )}
 
                         {featureCount > 0 && (

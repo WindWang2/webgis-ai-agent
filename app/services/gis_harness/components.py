@@ -28,6 +28,8 @@ ComponentType = Literal[
     "attribution",
     "statistics_panel",
     "chart_panel",
+    # Runtime V4（§10）：artifact-backed 交互表格面板（虚拟化 + 选择联动）。
+    "table_panel",
     "export_layout",
     # 区位插图（全国→省→市）：schema/registry/composition 已建模，
     # descriptor.runtime_status=planned —— 渲染器未实现前 resolver 不会
@@ -486,6 +488,77 @@ def export_layout_component(
     )
 
 
+# Runtime V4（§10）：表格面板绑定契约上限 —— 绑定是引用不是数据。
+MAX_TABLE_COLUMNS = 32
+MAX_TABLE_COLUMN_NAME = 64
+
+
+def validate_table_binding(options: Any) -> "str | None":
+    """校验 table_panel options 的绑定面（合并后调用；数据本体不入 MapSpec）。
+
+    双通道：tableRef（stats_table/admin_aggregate_table 等 artifact ref）或
+    layerId（地图图层属性表）。columns/title 均有界。
+    """
+    if not isinstance(options, dict):
+        return "table options 必须是对象"
+    table_ref = options.get("tableRef")
+    layer_id = options.get("layerId")
+    if table_ref is None and layer_id is None:
+        return "table_panel 需要绑定：options.tableRef（表 artifact ref）或 options.layerId（图层 id）"
+    if table_ref is not None and (not isinstance(table_ref, str) or not table_ref.strip()):
+        return "tableRef 必须是非空字符串（ref: 前缀 artifact 引用）"
+    if layer_id is not None and (not isinstance(layer_id, str) or not layer_id.strip()):
+        return "layerId 必须是非空字符串"
+    if table_ref is not None and layer_id is not None:
+        return "tableRef 与 layerId 互斥（一个面板一个数据面）"
+    columns = options.get("columns")
+    if columns is not None:
+        if not isinstance(columns, list) or not columns:
+            return "columns 必须是非空数组（缺省由数据推导）"
+        if len(columns) > MAX_TABLE_COLUMNS:
+            return f"columns 超过上限 {MAX_TABLE_COLUMNS} 列"
+        for i, col in enumerate(columns):
+            if not isinstance(col, str) or not col.strip() or len(col) > MAX_TABLE_COLUMN_NAME:
+                return f"columns[{i}] 必须是 ≤{MAX_TABLE_COLUMN_NAME} 字符的非空列名"
+    title = options.get("title")
+    if title is not None and (not isinstance(title, str) or len(title) > 200):
+        return "title 必须是 ≤200 字符的字符串"
+    return None
+
+
+def table_panel_component(
+    position: str = "bottom-right",
+    component_id: str = "table-panel",
+    table_ref: str = "",
+    layer_id: str = "",
+    columns: Optional[List[str]] = None,
+    title: str = "",
+    variant: str = "default",
+    placement: Optional[ComponentPlacement] = None,
+) -> CartographyComponent:
+    """交互表格面板（Runtime V4 §10）：ref/图层绑定，数据本体不入 MapSpec。
+
+    与 chart_panel 同纪律：MapSpec 只持绑定引用（tableRef/layerId），表数据
+    由前端按 ref 拉取或从 HUD 图层读取（MVT 层经 attribute-table 水合）。
+    """
+    options: Dict[str, Any] = {}
+    if table_ref:
+        options["tableRef"] = table_ref
+    if layer_id:
+        options["layerId"] = layer_id
+    if columns:
+        options["columns"] = list(columns)
+    if title:
+        options["title"] = title
+    position, placement = normalize_placement(position, placement)  # type: ignore[arg-type]
+    return CartographyComponent(
+        id=component_id, type="table_panel", position=position,
+        placement=placement, priority=42,
+        variant=coerce_variant("table_panel", variant),
+        options=options,
+    )
+
+
 def graticule_component(enabled: bool = False, component_id: str = "graticule") -> CartographyComponent:
     return CartographyComponent(
         id=component_id, type="graticule", position="none", priority=60,
@@ -758,6 +831,163 @@ def mutate_component(
     return out, changes
 
 
+# ─── Component Lifecycle V3（Runtime V4 §17-19）────────────────────────────
+# 多实例组件的真删除 / 复制 / 重绑定 —— 纯函数，事务内由 lifecycle engine
+# 调用；与 mutate_component 同入口纪律（user route 与 agent tool 共用）。
+
+# 复制仅对多实例类型开放（单例复制 = 布局冲突源）。
+MULTI_INSTANCE_TYPES = frozenset({
+    "legend", "categorical_legend", "continuous_colorbar",
+    "chart_panel", "table_panel", "annotation", "inset_map",
+})
+
+# 重绑定字段白名单（per-type）：键是 options 字段，值是校验语义。
+_REBIND_FIELDS = {
+    "chart_panel": ("chartRef", "layerId"),
+    "table_panel": ("tableRef", "layerId"),
+    "legend": ("layerId",),
+    "categorical_legend": ("layerId",),
+    "continuous_colorbar": ("layerId",),
+    "statistics_panel": ("layerId",),
+    "inset_map": (),
+    "annotation": (),
+}
+
+
+def _find_component(
+    components: List[CartographyComponent],
+    component_id: str,
+) -> int:
+    for idx, comp in enumerate(components):
+        if comp.id == component_id:
+            return idx
+    return -1
+
+
+def remove_component(
+    components: List[CartographyComponent],
+    *,
+    component_id: str,
+) -> "tuple[List[CartographyComponent], Dict[str, Any] | None]":
+    """真删除：从 layout.components 移除命中组件（enabled=False 是隐藏不是删除）。
+
+    Returns (remaining, change_record)；未命中 → (原列表, None)。
+    """
+    idx = _find_component(components, component_id)
+    if idx < 0:
+        return list(components), None
+    removed = components[idx]
+    out = list(components)
+    out.pop(idx)
+    return out, {
+        "id": removed.id,
+        "type": removed.type,
+        "removed": True,
+        "had_binding": {
+            k: removed.options[k]
+            for k in ("chartRef", "tableRef", "layerId")
+            if k in removed.options
+        },
+    }
+
+
+def duplicate_component(
+    components: List[CartographyComponent],
+    *,
+    component_id: str,
+    new_id: str = "",
+) -> "tuple[List[CartographyComponent], CartographyComponent | None, str | None]":
+    """复制多实例组件：新 id + floating 偏移（+16px，避免完全重叠）。
+
+    Returns (list_with_copy, copy, error)。单例类型 / 未命中 / id 冲突 →
+    (原列表, None, error)。共享 artifact ref 是合法复制（引用不是所有权）。
+    """
+    idx = _find_component(components, component_id)
+    if idx < 0:
+        return list(components), None, f"component {component_id} not found"
+    source = components[idx]
+    if source.type not in MULTI_INSTANCE_TYPES:
+        return (
+            list(components),
+            None,
+            f"组件类型 {source.type} 是单例（cardinality=single），不支持复制",
+        )
+    base_id = new_id.strip() or f"{source.id}-copy"
+    dup_id = base_id
+    suffix = 2
+    existing = {c.id for c in components}
+    while dup_id in existing:
+        dup_id = f"{base_id}{suffix}"
+        suffix += 1
+        if suffix > 99:
+            return list(components), None, "无法生成唯一副本 id（上限 99）"
+    copy = source.model_copy(deep=True)
+    copy.id = dup_id
+    # 副本浮动偏移：锚点组件复制后转为 floating（同槽双锚是布局冲突源），
+    # 已 floating 的就地偏移。
+    if copy.placement and copy.placement.mode == "floating":
+        copy.placement = copy.placement.model_copy(update={
+            "x": max(-4096, (copy.placement.x or 0) + 16),
+            "y": max(-4096, (copy.placement.y or 0) + 16),
+        })
+    else:
+        copy.placement = ComponentPlacement(
+            mode="floating", x=32, y=96, width=360, height=280, zIndex=42,
+        )
+        copy.position = "none"
+    out = list(components)
+    out.append(copy)
+    return out, copy, None
+
+
+def rebind_component(
+    components: List[CartographyComponent],
+    *,
+    component_id: str,
+    bindings: Dict[str, str],
+) -> "tuple[List[CartographyComponent], Dict[str, Any] | None, str | None]":
+    """重绑定：改写组件 options 中的引用字段（chartRef/tableRef/layerId）。
+
+    绑定字段按类型白名单校验（chart_panel 不接受 tableRef 等）；互斥纪律
+    由调用方（工具层）对绑定目标存在性做权威校验 —— 纯函数只管 schema。
+    Returns (list, change_record, error)。
+    """
+    idx = _find_component(components, component_id)
+    if idx < 0:
+        return list(components), None, f"component {component_id} not found"
+    target = components[idx]
+    allowed = _REBIND_FIELDS.get(target.type, ())
+    if not bindings:
+        return list(components), None, "bindings 不能为空"
+    unknown = [k for k in bindings if k not in allowed]
+    if unknown:
+        return (
+            list(components),
+            None,
+            f"组件类型 {target.type} 不接受绑定字段 {unknown}（允许: {list(allowed) or '无'}）",
+        )
+    for k, v in bindings.items():
+        if not isinstance(v, str) or not v.strip():
+            return list(components), None, f"绑定 {k} 必须是非空字符串"
+    mutated = target.model_copy(deep=True)
+    changes: Dict[str, Any] = {"id": mutated.id, "type": mutated.type, "rebound": {}}
+    for k, v in bindings.items():
+        changes["rebound"][k] = {"from": mutated.options.get(k), "to": v}
+        mutated.options[k] = v
+    # 互斥纪律：换绑一个通道时清掉另一通道的残留（chartRef↔layerId /
+    # tableRef↔layerId），否则渲染端双通道歧义。
+    if "chartRef" in bindings:
+        mutated.options.pop("layerId", None)
+    elif "tableRef" in bindings:
+        mutated.options.pop("layerId", None)
+    elif "layerId" in bindings:
+        mutated.options.pop("chartRef", None)
+        mutated.options.pop("tableRef", None)
+    out = list(components)
+    out[idx] = mutated
+    return out, changes, None
+
+
 # upsert 用的类型默认工厂（新组件起步值；突变字段随后应用）
 _FACTORY_BY_TYPE = {
     "title": lambda component_id: title_component(text="", component_id=component_id),
@@ -767,6 +997,7 @@ _FACTORY_BY_TYPE = {
     "legend": lambda component_id: legend_component(component_id=component_id),
     "attribution": lambda component_id: attribution_component(text="© OpenStreetMap contributors", component_id=component_id),
     "chart_panel": lambda component_id: chart_panel_component(component_id=component_id),
+    "table_panel": lambda component_id: table_panel_component(component_id=component_id),
     "statistics_panel": lambda component_id: statistics_panel_component(component_id=component_id),
     "north_arrow": lambda component_id: north_arrow_component(component_id=component_id),
     "scale_bar": lambda component_id: scale_bar_component(component_id=component_id),
@@ -788,11 +1019,16 @@ __all__ = [
     "ComponentPlacement",
     "build_default_components",
     "mutate_component",
+    "remove_component",
+    "duplicate_component",
+    "rebind_component",
+    "MULTI_INSTANCE_TYPES",
     "normalize_placement",
     "valid_variants_for_type",
     "coerce_variant",
     "validate_chart_payload",
     "validate_stats_payload",
+    "validate_table_binding",
     "validate_annotation_payload",
     "validate_inset_payload",
     "north_arrow_component",
@@ -805,6 +1041,7 @@ __all__ = [
     "categorical_legend_component",
     "statistics_panel_component",
     "chart_panel_component",
+    "table_panel_component",
     "export_layout_component",
     "graticule_component",
     "map_border_component",

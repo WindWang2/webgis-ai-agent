@@ -17,6 +17,9 @@ from app.services.mapspec import (
     UpsertSourceIntent,
     UpsertLayerIntent,
     PatchComponentIntent,
+    RemoveComponentIntent,
+    DuplicateComponentIntent,
+    RebindComponentIntent,
     RemoveLayerIntent,
     SetLayoutIntent,
     CheckpointIntent,
@@ -320,6 +323,62 @@ class MapSpecStore:
                 options=options,
                 upsert=upsert,
             ),
+            expected_revision=expected_revision,
+        )
+        return _with_evidence(res, {
+            "success": not res.is_error and not res.superseded,
+            "mapspec": res.mapspec,
+        })
+
+    async def remove_component(
+        self,
+        session_id: str,
+        *,
+        component_id: str,
+        expected_revision: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Component Lifecycle V3（Runtime V4 §18）：组件真删除。"""
+        res = await self.engine.apply_mutation(
+            session_id,
+            RemoveComponentIntent(component_id=component_id),
+            expected_revision=expected_revision,
+        )
+        return _with_evidence(res, {
+            "success": not res.is_error and not res.superseded,
+            "mapspec": res.mapspec,
+        })
+
+    async def duplicate_component(
+        self,
+        session_id: str,
+        *,
+        component_id: str,
+        new_id: Optional[str] = None,
+        expected_revision: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Component Lifecycle V3（§19）：复制多实例组件。"""
+        res = await self.engine.apply_mutation(
+            session_id,
+            DuplicateComponentIntent(component_id=component_id, new_id=new_id),
+            expected_revision=expected_revision,
+        )
+        return _with_evidence(res, {
+            "success": not res.is_error and not res.superseded,
+            "mapspec": res.mapspec,
+        })
+
+    async def rebind_component(
+        self,
+        session_id: str,
+        *,
+        component_id: str,
+        bindings: Dict[str, str],
+        expected_revision: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Component Lifecycle V3（§19）：重绑定引用字段。"""
+        res = await self.engine.apply_mutation(
+            session_id,
+            RebindComponentIntent(component_id=component_id, bindings=dict(bindings)),
             expected_revision=expected_revision,
         )
         return _with_evidence(res, {

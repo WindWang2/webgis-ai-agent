@@ -46,6 +46,10 @@ const NON_API_WHITELIST: Record<string, string> = {
   // `map` holds inside the quoted string, so the access regex matches it;
   // it is not a MapLibre member (unlike `map.getCanvas()` etc.).
   png: 'string literal "map.png" (output file path) in lib/mapspec-compiler/runtime-validate.ts',
+  // Runtime V4 brush：dragPan/boxZoom 是 MapLibre 的 handler **对象**
+  // （{enable,disable,isEnabled}），不是方法 —— mock 同款对象形态。
+  dragPan: 'DragPanHandler object (map.dragPan.disable/enable) in map-panel brush mode',
+  boxZoom: 'BoxZoomHandler object (map.boxZoom.disable/enable) in map-panel brush mode',
 };
 
 const ACCESS_RE = /\bmap\.([A-Za-z_][A-Za-z0-9_]*)/g;

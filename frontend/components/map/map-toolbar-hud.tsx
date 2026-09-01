@@ -15,6 +15,7 @@ import {
   ChevronUp,
   ChevronDown,
   RotateCcw,
+  SquareDashedMousePointer,
 } from 'lucide-react'
 import type { MapRef } from 'react-map-gl/maplibre'
 import { useHudStore, type HudState } from '@/lib/store/useHudStore'
@@ -37,6 +38,9 @@ export interface MapToolbarHUDProps {
   measurePoints?: [number, number][]
   onClearMeasurePoints?: () => void
   onCompleteMeasurement?: () => void
+  /** Runtime V4：矩形框选模式（跨视图 SelectionContext 发布）。 */
+  brushSelectActive?: boolean
+  onToggleBrushSelect?: () => void
   className?: string
 }
 
@@ -52,6 +56,8 @@ export function MapToolbarHUD({
   measurePoints: controlledMeasurePoints,
   onClearMeasurePoints,
   onCompleteMeasurement,
+  brushSelectActive,
+  onToggleBrushSelect,
   className = '',
 }: MapToolbarHUDProps) {
   // Local state fallbacks if uncontrolled
@@ -244,6 +250,9 @@ export function MapToolbarHUD({
       } else if (e.key === 'a' || e.key === 'A') {
         e.preventDefault()
         setMeasureMode(activeMode === 'area' ? 'none' : 'area')
+      } else if (e.key === 'b' || e.key === 'B') {
+        e.preventDefault()
+        onToggleBrushSelect?.()
       } else if (e.key === 'Escape') {
         if (activeMode !== 'none') {
           e.preventDefault()
@@ -254,7 +263,7 @@ export function MapToolbarHUD({
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [activeMode, handleResetNorthPitch, handleToggle3D, handleZoomIn, handleZoomOut, setMeasureMode])
+  }, [activeMode, handleResetNorthPitch, handleToggle3D, handleZoomIn, handleZoomOut, setMeasureMode, onToggleBrushSelect])
 
   const compassRotation = -bearing
 
@@ -414,7 +423,22 @@ export function MapToolbarHUD({
 
             <div className="my-0.5 h-px w-5 bg-edge-subtle" />
 
-            {/* Group 2: Measurement & Annotation Tools */}
+            {/* Group 2: Measurement & Selection Tools */}
+            <button
+              type="button"
+              aria-label="矩形框选"
+              title="矩形框选（框选地图要素联动图表/表格，快捷键: B）"
+              aria-pressed={brushSelectActive}
+              onClick={() => onToggleBrushSelect?.()}
+              className={`flex h-8 w-8 items-center justify-center rounded-sm transition-colors ${
+                brushSelectActive
+                  ? 'bg-status-accent-soft text-status-accent font-bold ring-1 ring-status-accent'
+                  : 'text-ink-secondary hover:bg-surface-hover hover:text-ink'
+              }`}
+            >
+              <SquareDashedMousePointer className="h-4 w-4" />
+            </button>
+
             <button
               type="button"
               aria-label="距离测量"
