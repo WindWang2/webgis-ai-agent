@@ -107,3 +107,27 @@ class TestHeatmapNativeLegendSpec:
         assert result["metadata"]["render_type"] == "native"
         assert result["metadata"]["palette"] == "thermal"
         assert result["metadata"]["radius"] == 3000
+
+    async def test_native_accepts_intensity_and_optional_args(self):
+        """Verify heatmap_data accepts intensity, radius_px, weight_field, opacity without error."""
+        reg = ToolRegistry()
+        register_spatial_tools(reg)
+        result = await reg.dispatch(
+            "heatmap_data",
+            {
+                "geojson": _make_point_fc(15),
+                "radius_px": 30,
+                "intensity": 1.0,
+                "render_type": "native",
+                "weight_field": "weight",
+                "opacity": 0.85,
+            },
+            session_id=None,
+        )
+        assert isinstance(result, dict)
+        assert result.get("command") == "add_native_heatmap"
+        assert result["metadata"]["intensity"] == 1.0
+        assert result["metadata"]["radius_px"] == 30
+        assert result["metadata"]["weight_field"] == "weight"
+        assert result["metadata"]["opacity"] == 0.85
+

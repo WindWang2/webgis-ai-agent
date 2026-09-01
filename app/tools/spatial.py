@@ -75,6 +75,19 @@ class HeatmapDataArgs(BaseModel):
         "native", description="渲染模式: native(原生逐点密度，默认推荐), raster(服务端栅格PNG), grid(格网)")
     palette: Literal["classic", "magma", "viridis", "thermal"] = Field(
         "classic", description="配色方案: classic, magma, viridis, thermal")
+    intensity: Optional[float] = Field(
+        None, ge=0.0, le=10.0,
+        description="[可选] 热力强度乘数 / 权重强度 (MapLibre heatmap-intensity)，缺省 1.0")
+    weight_field: Optional[str] = Field(
+        None, description="[可选] 权重字段名称（用于加权热力图计算）")
+    weight: Optional[float] = Field(
+        None, ge=0.0, description="[可选] 统一要素权重值")
+    opacity: Optional[float] = Field(
+        None, ge=0.0, le=1.0, description="[可选] 图层透明度，范围 0-1")
+    max_zoom: Optional[int] = Field(
+        None, ge=0, le=24, description="[可选] 最大显示缩放级别")
+    min_zoom: Optional[int] = Field(
+        None, ge=0, le=24, description="[可选] 最小显示缩放级别")
 
 def register_spatial_tools(registry: ToolRegistry):
     """注册空间分析工具"""
@@ -156,7 +169,11 @@ def register_spatial_tools(registry: ToolRegistry):
     @cached_tool(ttl=3600)
     def heatmap_data(geojson: Any, cell_size: int = 500, radius: Optional[int] = None,
                      render_type: str = "native", palette: str = "classic",
-                     radius_px: Optional[int] = None, bandwidth_m: Optional[int] = None) -> dict:
+                     radius_px: Optional[int] = None, bandwidth_m: Optional[int] = None,
+                     intensity: Optional[float] = None, weight_field: Optional[str] = None,
+                     weight: Optional[float] = None, opacity: Optional[float] = None,
+                     max_zoom: Optional[int] = None, min_zoom: Optional[int] = None,
+                     **kwargs: Any) -> dict:
         from app.lib.cartography.heatmap_contract import normalize_heatmap_radius
         # 单位归一化唯一边界：legacy radius(米) → 显式 bandwidth_m(+视觉默认)，
         # 核心链路此后只消费显式字段，不再猜测单位。
@@ -228,12 +245,25 @@ def register_spatial_tools(registry: ToolRegistry):
                     # 旧前端只读 meta.radius —— 保持米值回显（旧启发式会回落
                     # 默认，与新契约一致），新前端优先 radius_px。
                     radius_meta["radius"] = contract.bandwidth_m
-                data["metadata"] = {
+                meta_dict = {
                     "render_type": "native",
                     "point_count": len(features),
                     "palette": palette,
                     **radius_meta,
                 }
+                if intensity is not None:
+                    meta_dict["intensity"] = intensity
+                if weight_field is not None:
+                    meta_dict["weight_field"] = weight_field
+                if weight is not None:
+                    meta_dict["weight"] = weight
+                if opacity is not None:
+                    meta_dict["opacity"] = opacity
+                if max_zoom is not None:
+                    meta_dict["max_zoom"] = max_zoom
+                if min_zoom is not None:
+                    meta_dict["min_zoom"] = min_zoom
+                data["metadata"] = meta_dict
                 # Generate legend_spec for native mode so the frontend can
                 # show a color gradient legend alongside the heatmap layer.
                 # 图例色与前端 heatmap-color 停靠点同源（palettes.NATIVE_HEATMAP_COLORS）。
