@@ -83,6 +83,8 @@ export interface MakeMockMaplibreMapOptions {
   renderedFeatures?: unknown[] | (() => unknown[]);
   /** `project()` results — `{x, y}` pixel coords. Default `{x: 128, y: 128}`. */
   project?: (lngLat: [number, number]) => { x: number; y: number };
+  /** `unproject()` results — [lng, lat]. Default identity on (x, y). */
+  unproject?: (point: { x: number; y: number }) => [number, number];
   /** `getBounds()` corners as [west, south, east, north]. Default derives from
    *  center ± 0.1°, so the default viewport yields [116.3, 39.8, 116.5, 40.0]. */
   bounds?: [number, number, number, number];

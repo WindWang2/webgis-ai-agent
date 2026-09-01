@@ -45,6 +45,12 @@ async def apply_repairs(
         for c in ((mapspec.get("layout") or {}).get("components") or [])
         if isinstance(c, dict)
     ]
+    # V4 review（user-wins 修复）：用户经 remove_component **真删除**的组件
+    # 不再被 add_component 修复复活 —— 用户删除是显式决策。按**默认组件
+    # id** 对账（修复 upsert 的正是 default id；多实例副本的复活不在
+    # required 修复面内）。provenance 有界环 64 条，best-effort：读取失败
+    # 按无记录处理（与既有 owner 守卫同一降级纪律）。
+    user_removed_ids = await _user_removed_component_ids(session_id)
     for f in findings:
         family = f.family or [f.target]
         if f.repair == R_ADD_COMPONENT and f.code == F_COMPONENT_MISSING:
@@ -55,6 +61,10 @@ async def apply_repairs(
                 continue
             repair_type = family[0]
             default_id = _COMPONENT_DEFAULT_IDS.get(repair_type, f"{repair_type}-main")
+            # user-wins（V4 review）：用户真删除过的默认 id 不复活（族内
+            # 其它成员不受影响）。
+            if default_id in user_removed_ids:
+                continue
             try:
                 res = await mapspec_store.patch_component(
                     session_id,
@@ -130,3 +140,24 @@ async def apply_repairs(
 # 旧名（原 map_completion 单体模块的私有入口 ``_apply_repairs``）——
 # pipeline 与历史调用方仍按此名引用；与 ``apply_repairs`` 是同一函数对象。
 _apply_repairs = apply_repairs
+
+
+async def _user_removed_component_ids(session_id: str) -> set:
+    """用户经 RemoveComponentIntent 删除过的组件 id（provenance 派生）。"""
+    try:
+        from app.services.gis_world_state.provenance import get_provenance
+
+        entries = await get_provenance(session_id)
+    except Exception:  # noqa: BLE001 — provenance 不可用 → 无用户删除记录
+        return set()
+    removed: set = set()
+    for entry in entries:
+        if (
+            isinstance(entry, dict)
+            and entry.get("kind") == "RemoveComponentIntent"
+            and entry.get("origin") == "user"
+        ):
+            cid = (entry.get("detail") or {}).get("removed_component_id") or entry.get("target")
+            if isinstance(cid, str) and cid:
+                removed.add(cid)
+    return removed

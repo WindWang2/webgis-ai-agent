@@ -29,7 +29,7 @@ describe('Scenario A — chart click drives map filter (zero refetch by contract
       artifact_ref: 'ref:chart-abc',
     });
     const expr = getSelectionFilterExpression('district-choropleth');
-    expect(expr).toEqual(['in', ['get', 'district'], ['literal', ['武侯区', '锦江区']]]);
+    expect(expr).toEqual(['in', ['to-string', ['get', 'district']], ['literal', ['武侯区', '锦江区']]]);
   });
 
   it('selection never emits MapSpec mutations (event ring is diagnostics-only)', () => {
@@ -70,7 +70,7 @@ describe('Scenario B — map brush stays bounded', () => {
       source: 'table', layer_id: 'poi-layer', selected_ids: ['osm-1'], id_field: 'osm_id',
     });
     expect(getSelectionIdFilterExpression('poi-layer')).toEqual(
-      ['in', ['get', 'osm_id'], ['literal', ['osm-1']]],
+      ['in', ['to-string', ['get', 'osm_id']], ['literal', ['osm-1']]],
     );
   });
 

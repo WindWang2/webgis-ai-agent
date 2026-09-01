@@ -48,9 +48,10 @@ describe('projectBrushHits', () => {
       { id: 2, properties: {} },
     ]);
     expect(proj.selected_ids).toEqual(['1', '2']);
-    // 去重后 ids 不覆盖全部命中（3 hits → 2 ids）—— truncated 如实为真。
-    expect(proj.truncated).toBe(true);
-    expect(proj.matched_count).toBe(3);
+    // V4 review 语义：matched_count = 跨子层去重后的唯一要素数；截断只
+    // 在唯一 id 超上限时发生（去重损耗不算截断）。
+    expect(proj.truncated).toBe(false);
+    expect(proj.matched_count).toBe(2);
   });
 
   it('no id field → empty ids + honest truncation flag', () => {

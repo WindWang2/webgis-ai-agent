@@ -926,9 +926,11 @@ def duplicate_component(
     # 副本浮动偏移：锚点组件复制后转为 floating（同槽双锚是布局冲突源），
     # 已 floating 的就地偏移。
     if copy.placement and copy.placement.mode == "floating":
+        # review M：model_copy(update=…) 不重校验 —— 上界必须显式 clamp
+        # （越界条目会让后续所有组件事务的 model_validate 失败）。
         copy.placement = copy.placement.model_copy(update={
-            "x": max(-4096, (copy.placement.x or 0) + 16),
-            "y": max(-4096, (copy.placement.y or 0) + 16),
+            "x": min(8192, max(-4096, (copy.placement.x or 0) + 16)),
+            "y": min(8192, max(-4096, (copy.placement.y or 0) + 16)),
         })
     else:
         copy.placement = ComponentPlacement(
@@ -965,6 +967,13 @@ def rebind_component(
             list(components),
             None,
             f"组件类型 {target.type} 不接受绑定字段 {unknown}（允许: {list(allowed) or '无'}）",
+        )
+    ref_keys = {"chartRef", "tableRef"}
+    if len(ref_keys & set(bindings)) + ("layerId" in bindings) > 1:
+        return (
+            list(components),
+            None,
+            "一次重绑定只能换一个通道（chartRef / tableRef / layerId 互斥）",
         )
     for k, v in bindings.items():
         if not isinstance(v, str) or not v.strip():

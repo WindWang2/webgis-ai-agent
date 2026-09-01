@@ -153,11 +153,15 @@ export function getSelectionFilter(
  * 形式合法性（GIS review F16）：`in` 的 haystack 必须是**单个** literal
  * 数组 —— spread 多参（['in', ['get', f], ...cats]）会被 style-spec 拒绝，
  * setFilter 静默丢弃整个过滤（特征：地图纹丝不动、无报错）。
+ *
+ * 类型纪律（Runtime V4 review）：MapLibre `in` 用严格 indexOf 相等 ——
+ * 数字属性（OBJECTID/osm_id 常态）永不匹配字符串 haystack。字段侧包
+ * `to-string` 归一（categories 恒字符串）。
  */
 export function getSelectionFilterExpression(layerId: string): unknown[] | null {
   const projection = getSelectionFilter(layerId);
   if (!projection) return null;
-  return ['in', ['get', projection.field], ['literal', projection.categories]];
+  return ['in', ['to-string', ['get', projection.field]], ['literal', projection.categories]];
 }
 
 /**
@@ -184,10 +188,12 @@ export function getSelectionIdFilterExpression(layerId: string): unknown[] | nul
   const projection = getSelectionIdFilter(layerId);
   if (!projection) return null;
   // '$id' = MapLibre 顶层 feature.id（不在 properties 里，必须用 ['id'] 表达式）。
+  // 两侧 to-string 归一（review BLOCKING 修复）：ids 在 store 里恒字符串，
+  // 而 feature.id/OBJECTID 常为数字 —— 严格 indexOf 下不归一即零命中。
   if (projection.field === '$id') {
-    return ['in', ['id'], ['literal', projection.ids]];
+    return ['in', ['to-string', ['id']], ['literal', projection.ids]];
   }
-  return ['in', ['get', projection.field], ['literal', projection.ids]];
+  return ['in', ['to-string', ['get', projection.field]], ['literal', projection.ids]];
 }
 
 function boundedProperties(

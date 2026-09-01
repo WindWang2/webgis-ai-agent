@@ -87,9 +87,14 @@ export function useFeatureSelection({
     // Workspace V2（Goal D4）：map → 共享选择上下文（chart 侧订阅同一份
     // 派生高亮）。选择是 transient UI 状态 —— 不写 MapSpec。
     // Runtime V4：id_field 使表格/框选共享同一稳定要素身份（id 过滤投影）；
-    // additive（shift 点选）在同层上追加去重，跨层则替换。
+    // additive（shift 点选）只在**同层且同一 id 字段**上追加去重（跨 id 空间
+    // 合并会产生永远匹配不到的混合过滤），否则替换。
     const prev = opts?.additive ? getSelection() : null
     const sameLayer = prev != null && prev.layer_id === layerKey
+      && prev.source === 'map'
+      && (prev.id_field ?? '') === (feature.id != null
+        ? '$id'
+        : ((feature.properties as any)?.id != null ? 'id' : ((feature.properties as any)?.OBJECTID != null ? 'OBJECTID' : '')))
     const idField = feature.id != null
       ? '$id'
       : ((feature.properties as any)?.id != null ? 'id' : ((feature.properties as any)?.OBJECTID != null ? 'OBJECTID' : undefined))

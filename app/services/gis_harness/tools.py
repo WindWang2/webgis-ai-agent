@@ -109,13 +109,17 @@ class ComponentUpdateArgs(BaseModel):
             "可用 new_component_id 指定新 id）；'rebind'=重绑定引用字段"
             "（需 rebind_chart_ref / rebind_table_ref / rebind_layer_id 其一）"))
     new_component_id: Optional[str] = Field(
-        None, description="action=duplicate 时的新组件 id（缺省自动 -copy 后缀）")
+        None, max_length=128,
+        description="action=duplicate 时的新组件 id（缺省自动 -copy 后缀）")
     rebind_chart_ref: Optional[str] = Field(
-        None, description="action=rebind：chart_panel 新 chartRef（ref:chart-*）")
+        None, max_length=200,
+        description="action=rebind：chart_panel 新 chartRef（ref:chart-*）")
     rebind_table_ref: Optional[str] = Field(
-        None, description="action=rebind：table_panel 新 tableRef（表 artifact ref）")
+        None, max_length=200,
+        description="action=rebind：table_panel 新 tableRef（表 artifact ref）")
     rebind_layer_id: Optional[str] = Field(
-        None, description="action=rebind：新绑定图层 id（图例/色条/表格换数据面）")
+        None, max_length=200,
+        description="action=rebind：新绑定图层 id（图例/色条/表格换数据面）")
     expected_revision: Optional[int] = Field(
         None, ge=0, description="乐观并发：webgis_component_catalog 读到的 "
                                 "mutation_revision；落后即 superseded（用户最新交互优先）")

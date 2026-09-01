@@ -5,11 +5,10 @@
  * - chart→table：类别选择 → 行过滤；
  * - 降级：未绑定 / 数据不可用不崩 chrome。
  */
-import { describe, expect, it, beforeEach, vi } from 'vitest';
+import { describe, expect, it, beforeEach } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import type { MapSpecComponent } from '@/lib/mapspec-compiler/types';
 import {
-  clearSelection,
   getSelection,
   publishSelection,
   resetSelectionStore,

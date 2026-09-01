@@ -1137,7 +1137,14 @@ async def get_session_table_artifact(
     形态宽容（{table:{columns,rows}} / 记录数组），边界规整在前端
     table-data 适配器完成 —— 服务端只做所有权与存在性。
     """
-    if not ref_id or not ref_id.startswith("ref:") or len(ref_id) > 200:
+    # review 修复：前缀收紧到表族（chart 有专属端点；任意 ref:* 直通是
+    # 纵深防御回退）。表族 = table/stats/grid/admin 前缀。
+    _TABLE_REF_PREFIXES = ("ref:table-", "ref:stats-", "ref:grid-", "ref:admin-")
+    if (
+        not ref_id
+        or len(ref_id) > 200
+        or not ref_id.startswith(_TABLE_REF_PREFIXES)
+    ):
         raise HTTPException(status_code=400, detail="非法 table artifact ref")
     from app.services.session_data import session_data_manager
 

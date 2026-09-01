@@ -68,11 +68,11 @@ describe('selection store V4', () => {
     publishSelection('brush', {
       source: 'map', layer_id: 'l1', selected_ids: ['a', 'b'], id_field: '$id',
     });
-    expect(getSelectionIdFilterExpression('l1')).toEqual(['in', ['id'], ['literal', ['a', 'b']]]);
+    expect(getSelectionIdFilterExpression('l1')).toEqual(['in', ['to-string', ['id']], ['literal', ['a', 'b']]]);
     publishSelection('select', {
       source: 'table', layer_id: 'l2', selected_ids: ['x'], id_field: 'fid',
     });
-    expect(getSelectionIdFilterExpression('l2')).toEqual(['in', ['get', 'fid'], ['literal', ['x']]]);
+    expect(getSelectionIdFilterExpression('l2')).toEqual(['in', ['to-string', ['get', 'fid']], ['literal', ['x']]]);
     expect(getSelectionIdFilter('l1')).toBeNull(); // layer mismatch
   });
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Eye,
   EyeOff,
@@ -68,8 +68,14 @@ export function ComponentsTab({ sessionId }: { sessionId?: string | null }) {
 
   const dockPanel = useHudStore((s) => s.dockPanel);
   const dockPlacements = useHudStore((s) => s.dockPlacements);
-  // Runtime V4：待删除确认（两段式，与图层删除同款防误触纪律）。
+  // Runtime V4：待删除确认（两段式，与图层删除同款防误触纪律）。目标组件
+  // 离开 spec（被并发删除）时自动复位，确认条不留残迹。
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
+  useEffect(() => {
+    if (confirmRemoveId && !manageable.some((c) => c.id === confirmRemoveId)) {
+      setConfirmRemoveId(null);
+    }
+  }, [manageable, confirmRemoveId]);
 
   const run = useCallback(
     (componentId: string, patch: Parameters<typeof commitComponentPatch>[1]) => {
@@ -80,11 +86,19 @@ export function ComponentsTab({ sessionId }: { sessionId?: string | null }) {
     [],
   );
 
+  // review 修复：语义错误（单例复制/绑定不存在等）必须生产可见 —— 行内
+  // 错误条 3s 自动消隐（CAS 冲突已在 mutation 层静默收敛，不会进这里）。
+  const [lifecycleError, setLifecycleError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!lifecycleError) return;
+    const t = setTimeout(() => setLifecycleError(null), 3000);
+    return () => clearTimeout(t);
+  }, [lifecycleError]);
   const runLifecycle = useCallback(
     (componentId: string, mutation: Parameters<typeof commitComponentLifecycle>[1]) => {
       void commitComponentLifecycle(componentId, mutation).catch((e) => {
-        // 语义错误（单例复制等）—— 提示可见（服务端 correction_hint 已收敛）。
-        devOnlyToast(e);
+        const msg = e instanceof Error ? e.message : String(e);
+        setLifecycleError(`${mutation.action} 失败：${msg.slice(0, 120)}`);
       });
     },
     [],
@@ -128,6 +142,16 @@ export function ComponentsTab({ sessionId }: { sessionId?: string | null }) {
           <span className="text-micro text-ink-muted">启用</span>
         </div>
       </div>
+
+      {lifecycleError && (
+        <div
+          role="alert"
+          data-testid="component-lifecycle-error"
+          className="mx-2 my-1 rounded-xs bg-status-critical-soft px-2 py-1 text-micro text-status-critical"
+        >
+          {lifecycleError}
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto py-1" role="list">
         {manageable.map((c) => {
@@ -255,15 +279,6 @@ export function ComponentsTab({ sessionId }: { sessionId?: string | null }) {
       </div>
     </div>
   );
-}
-
-/** 生命周期语义失败的轻量提示（不阻断；CAS 冲突已静默收敛）。 */
-function devOnlyToast(e: unknown): void {
-  // 保持零依赖：复用 hud opsLog 不合适（非地图操作）—— console 仅 dev。
-  if (process.env.NODE_ENV !== 'production') {
-    // eslint-disable-next-line no-console -- dev-only diagnostics
-    console.warn('[components-tab] lifecycle mutation rejected:', e);
-  }
 }
 
 export default ComponentsTab;

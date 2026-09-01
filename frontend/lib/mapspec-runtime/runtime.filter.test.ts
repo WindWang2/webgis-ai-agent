@@ -7,11 +7,6 @@ import { MapSpecRuntime } from './runtime';
 import { makeMockMaplibreMap } from '../../test/__mocks__/maplibre-map';
 import type { MapSpec, MapSpecLayer } from '@/lib/mapspec-compiler/types';
 
-function makeMap() {
-  const map = makeMockMaplibreMap();
-  return { map, calls: (map as unknown as { __calls?: any }).__calls ?? map };
-}
-
 function specWith(filter?: unknown[]): MapSpec {
   const layer: MapSpecLayer = {
     id: 'l__point', source: 's1', type: 'circle',

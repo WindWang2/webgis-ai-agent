@@ -1053,6 +1053,21 @@ class MapSpecLifecycleEngine:
                             origin=origin,
                             error_msg=dup_error or "duplicate failed",
                         )
+                    # 与 patch 分支同纪律：组件条目尺寸有界（96KB）。
+                    oversized_dup = [
+                        c.id for c in with_copy
+                        if _estimate_component_bytes(c.to_mapspec()) > _MAX_COMPONENT_BYTES
+                    ]
+                    if oversized_dup:
+                        return MapSpecResult(
+                            is_error=True,
+                            origin=origin,
+                            error_msg=(
+                                "duplicated layout.components entry exceeds "
+                                f"{_MAX_COMPONENT_BYTES // 1024}KB: "
+                                + ", ".join(oversized_dup[:5])
+                            ),
+                        )
                     layout["components"] = sorted(
                         [c.to_mapspec() for c in with_copy],
                         key=lambda c: (c.get("priority", 0), c.get("id", "")),
@@ -1073,6 +1088,31 @@ class MapSpecLifecycleEngine:
                         CartographyComponent.model_validate(dict(c))
                         for c in raw_components if isinstance(c, dict)
                     ]
+                    # review M：layerId 绑定目标在**锁内**对权威 spec 复核
+                    # （纯函数零 IO）；ref 活性探测留在调用方 best-effort
+                    # （探测是健康证据不是注册真相 —— 文档如实）。
+                    if "layerId" in intent.bindings:
+                        wanted = str(intent.bindings["layerId"])
+                        layer_present = any(
+                            isinstance(layer, dict)
+                            and (
+                                str(layer.get("id") or "") == wanted
+                                or str(layer.get("id") or "").startswith(f"{wanted}__")
+                                or str(layer.get("id") or "").startswith(f"{wanted}-")
+                            )
+                            for layer in (loaded or {}).get("layers", [])
+                        )
+                        if not layer_present:
+                            return MapSpecResult(
+                                is_error=True,
+                                origin=origin,
+                                error_msg=(
+                                    f"重绑定图层 {wanted} 不在当前 MapSpec"
+                                ),
+                                correction_hint=(
+                                    "先读当前 MapSpec 确认图层族 id 再重绑定。"
+                                ),
+                            )
                     rebound, change, rebind_error = rebind_component(
                         components,
                         component_id=intent.component_id,

@@ -51,11 +51,11 @@ function idOf(hit: BrushHit, idField: string): string | null {
 export interface BrushProjection {
   /** 去重后的稳定 id（≤ MAX_SELECTED_IDS）。 */
   selected_ids: string[];
-  /** 命中总数（披露用：『已框选 N 要素』）。 */
+  /** 命中要素数（跨子层去重后；披露用：『已框选 N 要素』）。 */
   matched_count: number;
   /** 解析出的稳定 id 字段（null = 数据无 id 字段）。 */
   id_field: string | null;
-  /** ids 是否被截断（截断时调用方应附带 bbox 谓词）。 */
+  /** ids 是否因达到上限被截断（调用方据此附带 bbox 谓词）。 */
   truncated: boolean;
 }
 
@@ -65,20 +65,22 @@ export function projectBrushHits(hits: BrushHit[]): BrushProjection {
   if (!idField) {
     return { selected_ids: [], matched_count: hits.length, id_field: null, truncated: hits.length > 0 };
   }
+  // 跨子层去重（fill+outline+label 同要素多次命中只计一次）。
+  const uniqueIds: string[] = [];
   const seen = new Set<string>();
-  const ids: string[] = [];
   for (const hit of hits) {
-    if (ids.length >= MAX_SELECTED_IDS) break;
     const id = idOf(hit, idField);
     if (id == null || seen.has(id)) continue;
     seen.add(id);
-    ids.push(id);
+    uniqueIds.push(id);
   }
+  // 截断 = 唯一 id 超过上限（review 修复：去重损耗不算截断）。
+  const truncated = uniqueIds.length > MAX_SELECTED_IDS;
   return {
-    selected_ids: ids,
-    matched_count: hits.length,
+    selected_ids: uniqueIds.slice(0, MAX_SELECTED_IDS),
+    matched_count: uniqueIds.length,
     id_field: idField,
-    truncated: ids.length < hits.length,
+    truncated,
   };
 }
 

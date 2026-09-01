@@ -89,16 +89,21 @@ function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
   const variant = TABLE_PANEL_VARIANTS.has(resolveVariant(patched, 'default'))
     ? resolveVariant(patched, 'default')
     : 'default';
-  const options = patched.options ?? {};
+  const options = useMemo(() => patched.options ?? {}, [patched]);
   const tableRef = typeof options['tableRef'] === 'string' && options['tableRef'].trim()
     ? (options['tableRef'] as string)
     : '';
   const layerId = typeof options['layerId'] === 'string' && options['layerId'].trim()
     ? (options['layerId'] as string)
     : '';
-  const preferredColumns = Array.isArray(options['columns'])
-    ? (options['columns'] as unknown[]).filter((c): c is string => typeof c === 'string')
-    : undefined;
+  // review 修复（M）：columns 过滤结果按 options 身份 memo —— inline 派生
+  // 每次渲染新数组身份，会让 50k 行的 state memo 在每个滚动/选择 tick 重建。
+  const preferredColumns = useMemo(
+    () => (Array.isArray(options['columns'])
+      ? (options['columns'] as unknown[]).filter((c): c is string => typeof c === 'string')
+      : undefined),
+    [options],
+  )
 
   // ── 数据通道 ─────────────────────────────────────────────────────────
   // ref 通道：模块缓存 + in-flight 去重（chart-artifact 同款）。
@@ -162,19 +167,17 @@ function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
       }
       if (features && features.length) {
         const records = features.map((f) => f.properties ?? {});
-        const model = buildTableModel(records, preferredColumns);
-        // 顶层 feature.id 优先（MVT/瓦片路径的稳定身份）。
-        return {
-          status: 'ready',
-          model,
-          idField: detectIdField(model) ?? (features.some((f) => f.id != null) ? '$id' : null),
-          features,
-        };
+        const topLevelIds = features.map((f) => f.id);
+        const model = buildTableModel(records, preferredColumns, topLevelIds);
+        // review 修复（M）：'$id' 只在样例要素确有顶层 id 时播报 —— 内容哈希
+        // 兜底行与 ['id'] 过滤永远不匹配，误报会制造单向断链。
+        const idField = detectIdField(model) ?? (features.some((f) => f.id != null) ? '$id' : null);
+        return { status: 'ready', model, idField, features };
       }
       return boundLayer ? { status: 'unavailable' } : { status: 'empty' };
     }
     return { status: 'empty' };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- layersGeneration identity + fetchedRef are the change signals
+     
   }, [tableRef, fetchedRef, layerId, boundLayer, hydrated, preferredColumns]);
 
   // ── 排序 / 过滤（行索引操作，零复制）─────────────────────────────────
@@ -238,14 +241,14 @@ function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
     if (selection.source === 'chart') return null; // chart 走行过滤（下方）
     if (!selection.selected_ids.length) return null;
     return new Set(selection.selected_ids);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [selection, selectionMatchesLayer]);
   // chart 来源（§9.5）：类别选择 → 行过滤（同字段同类别）
   const chartFilter = useMemo(() => {
     if (!selection || !selectionMatchesLayer || selection.source !== 'chart') return null;
     if (!selection.filter_field || !selection.selected_categories.length) return null;
     return { field: selection.filter_field, categories: new Set(selection.selected_categories) };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [selection, selectionMatchesLayer]);
 
   // 面板卸载：清掉本面板发布的 table 选择（chart-panel 同款纪律）。
@@ -287,19 +290,24 @@ function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
   const end = Math.min(total, Math.ceil((scrollTop + viewH) / ROW_HEIGHT) + OVERSCAN);
   const slice = visibleOrder.slice(start, end);
 
-  // map→table：选中行 scrollIntoView（首命中行）。
-  const lastSelectedIdRef = useRef<string | null>(null);
+  // map→table：选中行滚动到视口中心（首命中行；选择 revision 键控 ——
+  // 同一要素被重选时也重新定位）。review 修复：实时读 clientHeight（初始
+  // 240 的 stale viewH 会歪第一次定位）。
+  const lastScrollSelRef = useRef<number>(-1);
   useEffect(() => {
     if (!selectedRowIds || state.status !== 'ready' || !scrollRef.current) return;
     const first = selectedRowIds.values().next().value as string | undefined;
-    if (!first || lastSelectedIdRef.current === first) return;
-    lastSelectedIdRef.current = first;
+    if (!first) return;
+    const selRev = selection?.revision ?? -1;
+    if (lastScrollSelRef.current === selRev) return;
+    lastScrollSelRef.current = selRev;
     const rowIndex = visibleOrder.findIndex((i) => state.model.rows[i].rowId === first);
-    if (rowIndex >= 0 && scrollRef.current) {
-      scrollRef.current.scrollTop = Math.max(0, rowIndex * ROW_HEIGHT - viewH / 2);
+    const el = scrollRef.current;
+    if (rowIndex >= 0 && el) {
+      el.scrollTop = Math.max(0, rowIndex * ROW_HEIGHT - (el.clientHeight || 240) / 2);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedRowIds, visibleOrder, state]);
+     
+  }, [selectedRowIds, visibleOrder, state, selection?.revision]);
 
   const handleRowClick = (rowId: string) => {
     if (!layerId) return;

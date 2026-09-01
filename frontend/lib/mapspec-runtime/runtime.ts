@@ -289,12 +289,19 @@ export class MapSpecRuntime {
     // unchanged orders, preserving fa108d3's no-op work-count contract.
     const orderedIds = nextSpec.layers.map((l) => l.id);
     const orderKey = orderedIds.join("\u0000");
-    if (patch.layers.length > 0 || orderKey !== this.lastLayerOrderKey) {
+    // V4 review：filter-only 变化不改结构/顺序 —— 不重跑全量 z 同步
+    // （选择翻转是最高频路径；z-order 幂等但白费）。
+    if (this.hasStructuralLayerChange(patch) || orderKey !== this.lastLayerOrderKey) {
       renderer.syncLayerZOrder(this.map, "", orderedIds);
       this.lastLayerOrderKey = orderKey;
     }
 
     if (!this.lastError) this.appliedSpec = nextSpec;
+  }
+
+  /** 结构性层变化 = 非 filter-only 的任一变化（add/remove/recompile）。 */
+  private hasStructuralLayerChange(patch: SpecPatch): boolean {
+    return patch.layers.some((c) => c.kind !== "filter");
   }
 
   /**
@@ -419,7 +426,7 @@ export class MapSpecRuntime {
       type: "SET_STYLE",
       priority: "high",
       execute: () => {
-        if (patch.layers.length > 0 || orderKey !== this.lastLayerOrderKey) {
+        if (this.hasStructuralLayerChange(patch) || orderKey !== this.lastLayerOrderKey) {
           renderer.syncLayerZOrder(this.map, "", orderedIds);
           this.lastLayerOrderKey = orderKey;
         }
@@ -672,6 +679,12 @@ export class MapSpecRuntime {
     }
     try {
       this.map.setFilter(id, (filter ?? null) as any);
+      // V4 review：label 子层（`${id}-label`）与主层同生命周期 —— 主层
+      // 过滤翻转时同步应用，否则被滤要素的注记残留在画布上。
+      const labelId = `${id}-label`;
+      if (this.map.getLayer(labelId)) {
+        this.map.setFilter(labelId, (filter ?? null) as any);
+      }
     } catch (err) {
       // A structurally invalid expression (style-spec rejection) must surface
       // as bounded runtime evidence, not silently swallow the change.

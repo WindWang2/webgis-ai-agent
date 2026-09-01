@@ -197,3 +197,85 @@ class TestEngineIntents:
         )
         assert res.superseded
         assert not res.is_error
+
+
+class TestUserRemoveWinsOverRepair:
+    async def test_user_removed_title_not_resurrected(self, tmp_path, monkeypatch):
+        """V4 review（user-wins）：用户删除的必需单例不被 finalizer 复活。"""
+        from app.services.mapspec_store import mapspec_store
+        from app.services.gis_harness.completion.repairs import apply_repairs
+        from app.services.gis_harness.completion.contracts import (
+            F_COMPONENT_MISSING,
+            MapCompletionFinding,
+            R_ADD_COMPONENT,
+        )
+        from app.services.gis_world_state import mutation as world_state
+
+        monkeypatch.setattr(
+            "app.services.mapspec.store.BASE_STORAGE_DIR", tmp_path,
+        )
+        sid = "user-remove-wins"
+        await mapspec_store.patch_component(
+            sid, component_id="title", component_type="title",
+            options={"text": "T"}, upsert=True,
+        )
+        # 用户真删除（经 world_state 门面 → provenance 记 origin=user；
+        # user 路径 CAS 必填 —— patch upsert 后 revision=1）。
+        from app.services.mapspec.lifecycle_engine import RemoveComponentIntent
+
+        res = await world_state.apply_gis_mutation(
+            sid, RemoveComponentIntent(component_id="title"),
+            origin="user", actor="mapspec_route", expected_revision=1,
+        )
+        assert not res.is_error, res.error_msg
+        # finalizer 的 add_component 修复面对「title 缺失」发现 → 不复活。
+        spec = await mapspec_store.get_mapspec(sid) or {}
+        applied = await apply_repairs(
+            sid,
+            [MapCompletionFinding(
+                code=F_COMPONENT_MISSING, severity="error",
+                target="title", repair=R_ADD_COMPONENT, family=["title"],
+            )],
+            spec,
+        )
+        assert applied == []
+        spec_after = await mapspec_store.get_mapspec(sid) or {}
+        assert not any(
+            c.get("id") == "title"
+            for c in (spec_after.get("layout") or {}).get("components") or []
+        )
+
+    async def test_agent_remove_does_not_block_repair(self, tmp_path, monkeypatch):
+        """agent 删除不是用户决策 —— required 缺失仍走修复（对照语义）。"""
+        from app.services.mapspec_store import mapspec_store
+        from app.services.gis_harness.completion.repairs import apply_repairs
+        from app.services.gis_harness.completion.contracts import (
+            F_COMPONENT_MISSING,
+            MapCompletionFinding,
+            R_ADD_COMPONENT,
+        )
+        from app.services.gis_world_state import mutation as world_state
+        from app.services.mapspec.lifecycle_engine import RemoveComponentIntent
+
+        monkeypatch.setattr(
+            "app.services.mapspec.store.BASE_STORAGE_DIR", tmp_path,
+        )
+        sid = "agent-remove-repairs"
+        await mapspec_store.patch_component(
+            sid, component_id="title", component_type="title",
+            options={"text": "T"}, upsert=True,
+        )
+        await world_state.apply_gis_mutation(
+            sid, RemoveComponentIntent(component_id="title"),
+            origin="agent", actor="tool",
+        )
+        spec = await mapspec_store.get_mapspec(sid) or {}
+        applied = await apply_repairs(
+            sid,
+            [MapCompletionFinding(
+                code=F_COMPONENT_MISSING, severity="error",
+                target="title", repair=R_ADD_COMPONENT, family=["title"],
+            )],
+            spec,
+        )
+        assert applied == ["add_component:title"]

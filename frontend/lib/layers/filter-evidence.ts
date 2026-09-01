@@ -102,18 +102,41 @@ export function evaluateFilterBounded(expr: unknown, f: FeatureLike): boolean | 
     case '!=': {
       const a = getValue(expr[1], f);
       const b = getValue(expr[2], f);
-      if (expr[1] === '$type' || (Array.isArray(expr[1] as unknown[]) && (expr[1] as unknown[])[0] === '$type')) {
+      // 旧式裸键（adapter 实际发射的 ["==","$type",t]）：合法形式，
+      // 直接支持（$id 比较顶层 feature.id）。
+      if (expr[1] === '$type') {
         const geom = f.geometry?.type ?? '';
         const want = String(b);
-        // $type 词表：Point/Polygon/LineString —— geometry.type 含 Multi 前缀
-        const eq = want === 'Point' ? geom === 'Point'
+        const eq = want === 'Point' ? geom.includes('Point')
+          : want === 'Polygon' ? geom.includes('Polygon')
+            : want === 'LineString' ? geom.includes('Line')
+              : geom === want;
+        return op === '==' ? eq : !eq;
+      }
+      if (expr[1] === '$id') {
+        const eq = f.id != null && b != null && f.id === b;
+        return op === '==' ? eq : !eq;
+      }
+      // 未识别的操作数形状 → unknown（review：硬 false 会把正常渲染的层
+      // 误报为 empty；绝不猜）。
+      if (_isUnresolvedOperand(expr[1]) || _isUnresolvedOperand(expr[2])) {
+        return null;
+      }
+      if (Array.isArray(expr[1]) && (expr[1] as unknown[])[0] === '$type') {
+        const geom = f.geometry?.type ?? '';
+        const want = String(b);
+        // $type 词表：Point/Polygon/LineString —— Multi* 按几何族归约
+        // （MapLibre 瓦片分解语义；Point 也含 MultiPoint）。
+        const eq = want === 'Point' ? geom.includes('Point')
           : want === 'Polygon' ? geom.includes('Polygon')
             : want === 'LineString' ? geom.includes('Line')
               : geom === want;
         return op === '==' ? eq : !eq;
       }
       if (a === undefined || a === null) return op === '!=' ? true : false;
-      const eq = a === b || (typeof a === 'number' && typeof b === 'number' && a === b);
+      // MapLibre `==` 严格相等 —— 不做跨型字符串比较（类型不匹配正是
+      // 「过滤命中 0」的证据面，不能被 String() 强转掩盖）。
+      const eq = a === b;
       return op === '==' ? eq : !eq;
     }
     case '>=':
@@ -122,31 +145,57 @@ export function evaluateFilterBounded(expr: unknown, f: FeatureLike): boolean | 
     case '<': {
       const a = getValue(expr[1], f);
       const b = getValue(expr[2], f);
-      const an = typeof a === 'number' ? a : Number(a);
-      const bn = typeof b === 'number' ? b : Number(b);
-      if (!Number.isFinite(an) || !Number.isFinite(bn)) return false; // MapLibre：不可比较 → 不命中
+      if (_isUnresolvedOperand(expr[1]) || _isUnresolvedOperand(expr[2])) {
+        return null;
+      }
+      // MapLibre 比较算子要求数值操作数；Number(null/""/bool) → 0 的强转
+      // 会虚构命中 —— 非数值按不命中处理。
+      if (typeof a !== 'number' || typeof b !== 'number'
+        || !Number.isFinite(a) || !Number.isFinite(b)) {
+        return false;
+      }
       switch (op) {
-        case '>=': return an >= bn;
-        case '>': return an > bn;
-        case '<=': return an <= bn;
-        default: return an < bn;
+        case '>=': return a >= b;
+        case '>': return a > b;
+        case '<=': return a <= b;
+        default: return a < b;
       }
     }
     case 'in': {
       const v = getValue(expr[1], f);
+      if (_isUnresolvedOperand(expr[1])) return null;
       if (v === undefined || v === null) return false;
       const haystackRaw = expr[2];
       const haystack = Array.isArray(haystackRaw) && haystackRaw[0] === 'literal'
         ? haystackRaw[1]
-        : (Array.isArray(haystackRaw) && haystackRaw[0] !== 'get' && haystackRaw[0] !== 'id' && haystackRaw[0] !== 'literal'
+        : (Array.isArray(haystackRaw) && haystackRaw[0] !== 'get' && haystackRaw[0] !== 'id' && haystackRaw[0] !== 'literal' && haystackRaw[0] !== 'to-string'
           ? haystackRaw // spread 形式（防御性兼容）
           : null);
       if (!Array.isArray(haystack)) return null;
-      return haystack.some((item) => item === v || String(item) === String(v));
+      // MapLibre `in` 用严格 indexOf 相等 —— 数字 haystack 不匹配字符串
+      // needle（与地图真实行为一致，跨型即零命中）。
+      return haystack.some((item) => item === v);
     }
     default:
       return null; // 未知算子（imperative filter 任意形状等）→ unknown
   }
+}
+
+/**
+ * 操作数形状未识别（['geometry-type'] 等）或旧式裸键（'$id'/'$type' 直传
+ * —— getValue 会把它当字面量）→ 让步为 unknown，绝不产出确定的 false。
+ */
+function _isUnresolvedOperand(operand: unknown): boolean {
+  // 裸 '$type'/'$id' 只在 == 分支有明确语义；in/range 分支遇到仍按
+  // 未识别处理（== 分支先于本判定执行）。
+  if (operand === '$id' || operand === '$type') return true;
+  if (Array.isArray(operand)) {
+    const head = operand[0];
+    if (head !== 'get' && head !== 'id' && head !== 'literal' && head !== 'to-string') {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** 收集表达式里通过 ["get", f] 引用的字段名（invalid 判定输入）。 */
@@ -260,8 +309,19 @@ export function getFilterEvidence(layerId: string): LayerFilterEvidence | null {
 }
 
 /** 批量记录（latest-wins；越界裁剪保持有界）。 */
-export function recordFilterEvidence(entries: Array<{ layerId: string; evidence: LayerFilterEvidence }>): void {
-  if (!entries.length) return;
+export function recordFilterEvidence(
+  entries: Array<{ layerId: string; evidence: LayerFilterEvidence }>,
+  opts?: { pruneTo?: Set<string> },
+): void {
+  // pruneTo（review 修复）：本次结算仍带过滤的层集合 —— 不在集合内的旧
+  // 证据条目清除（过滤取消后「过滤后 0 要素」徽标不得残留）。
+  if (opts?.pruneTo) {
+    for (const key of Array.from(evidenceByLayer.keys())) {
+      if (!opts.pruneTo.has(key)) evidenceByLayer.delete(key);
+    }
+  } else if (!entries.length) {
+    return;
+  }
   for (const { layerId, evidence } of entries) {
     evidenceByLayer.set(layerId, evidence);
   }

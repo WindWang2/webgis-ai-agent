@@ -26,6 +26,7 @@ from app.services.mapspec.lifecycle_engine import (
     MutationIntent,
     MutationOrigin,
     PatchLayerPresentationIntent,
+    RemoveComponentIntent,
     UpsertLayerIntent,
 )
 from app.services.gis_world_state.provenance import (
@@ -273,6 +274,9 @@ async def apply_gis_mutation(
                 detail["visible"] = bool(intent.visible)
             if intent.opacity is not None:
                 detail["opacity"] = float(intent.opacity)
+        elif isinstance(intent, RemoveComponentIntent):
+            # V4：用户真删除的组件族（finalizer 的 user-wins 修复依据）。
+            detail["removed_component_id"] = str(intent.component_id)
         await append_provenance(
             session_id,
             ProvenanceEntry(

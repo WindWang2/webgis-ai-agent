@@ -279,7 +279,7 @@ def _descriptor_fields(descriptor: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 # 结果只驱动 sweep 的派生状态刷新，不改写注册血缘）。
 
 _RASTER_REF_PREFIX = "ref:raster/"
-_RASTER_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_RASTER_ID_RE = re.compile(r"^[A-Za-z0-9_-]+\Z")
 
 
 def is_raster_ref(ref: str) -> bool:
@@ -595,7 +595,11 @@ async def load_records_for_plan(
                 _add(src.get(key))
         for comp in (mapspec.get("layout") or {}).get("components") or []:
             if isinstance(comp, dict):
-                _add((comp.get("options") or {}).get("chartRef"))
+                opts = comp.get("options") or {}
+                _add(opts.get("chartRef"))
+                # V4 review 修复：table_panel 的 tableRef 是独立绑定面 ——
+                # 不入活集合会被 sweep 判 stale → GC 删掉仍在用的表数据。
+                _add(opts.get("tableRef"))
     return live
 
 
@@ -725,11 +729,15 @@ async def collect_orphan_refs(
         ]
         if not orphans:
             return []
-        async with session_lock_registry.lock(session_id, fail_on_degraded=False):
-            # 锁内复检：重载实时章节与 spec，重算活集合（真正的并发 rebind
-            # 保护 —— 此刻任何行/源/组件指向的 ref 都不可删）
+        async with session_lock_registry.lock(session_id, fail_on_degraded=True):
+            # 锁内复检：重载实时章节/spec 与**账本本身**（review M：外层加载
+            # 与获锁之间提交的注册会被 stale records 覆盖丢失），重算活集合
+            # （真正的并发 rebind 保护 —— 此刻任何行/源/组件指向的 ref 都不可删）。
+            # fail_on_degraded：这是破坏性路径（unlink/delete）—— 降级锁下
+            # 的跨 pod 并发不可证明，宁可本轮跳过。
             fresh_chapter = await _load_chapter_fresh(session_id)
             fresh_mapspec = await _load_mapspec_fresh(session_id)
+            records = await _load_records(session_id, session_data_manager)
             live_now = await load_records_for_plan(
                 session_id, fresh_chapter, fresh_mapspec
             )

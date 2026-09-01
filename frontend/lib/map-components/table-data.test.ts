@@ -66,7 +66,7 @@ describe('normalizeTablePayload', () => {
   });
 
   it('accepts {columns, rows} direct form', () => {
-    const model = normalizeTablePayload({ columns: ['a'], rows: [{ a: 1 }] });
+    const model = normalizeTablePayload({ columns: ['a'], rows: [{ a: 1 }] } as never);
     expect(model?.rows[0].props).toEqual({ a: 1 });
   });
 

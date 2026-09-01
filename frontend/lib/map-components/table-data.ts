@@ -42,11 +42,14 @@ export interface TableModel {
   totalCount: number;
 }
 
-/** 内容哈希兜底（无稳定 id 字段的要素）：短、确定性、只用于行寻址。 */
+/**
+ * 内容哈希兜底（无稳定 id 字段的要素）：确定性、只用于行寻址。
+ * review 修复：全部属性参与（此前只取前 8 键 —— 同前缀属性的不同要素
+ * 碰撞）；仍可能碰撞的场景由 buildRowModels 的重号后缀兜底。
+ */
 function contentHash(props: Record<string, unknown>): string {
   let h = 0;
-  const keys = Object.keys(props).slice(0, 8);
-  for (const k of keys) {
+  for (const k of Object.keys(props)) {
     const v = props[k];
     const s = `${k}:${typeof v === 'object' || v == null ? '' : String(v)}`;
     for (let i = 0; i < s.length; i++) {
@@ -79,16 +82,28 @@ function deriveColumns(records: Array<Record<string, unknown>>): string[] {
   return seen;
 }
 
-/** 记录数组 → TableModel（纯函数；行引用不克隆；超限截断）。 */
+/**
+ * 记录数组 → TableModel（纯函数；行引用不克隆；超限截断）。
+ * topLevelIds：与 records 同序的顶层 feature.id 数组（图层通道传入 ——
+ * 与 map 框选的 '$id' 身份一致；缺省回退属性 id 链）。
+ * 重号 rowId（内容哈希碰撞/重复 id）追加 `#序号` 后缀 —— React key 唯一
+ * 且高亮不误伤孪生行。
+ */
 export function buildTableModel(
   records: Array<Record<string, unknown>>,
   preferredColumns?: string[],
+  topLevelIds?: Array<string | number | undefined>,
 ): TableModel {
   const rows: TableRow[] = [];
+  const seen = new Map<string, number>();
   for (let i = 0; i < records.length && rows.length < MAX_TABLE_ROWS; i++) {
     const rec = records[i];
     if (!rec || typeof rec !== 'object') continue;
-    rows.push({ rowId: resolveRowId(rec, (rec as { id?: unknown }).id as string | number | undefined), props: rec });
+    let rowId = resolveRowId(rec, topLevelIds?.[i]);
+    const dup = seen.get(rowId) ?? 0;
+    seen.set(rowId, dup + 1);
+    if (dup > 0) rowId = `${rowId}#${dup}`;
+    rows.push({ rowId, props: rec });
   }
   const columns = preferredColumns && preferredColumns.length
     ? preferredColumns.slice(0, MAX_TABLE_COLUMNS)
@@ -151,7 +166,7 @@ export function getCachedTableArtifact(ref: string): TablePayload | undefined {
 export async function loadTableArtifact(ref: string): Promise<TablePayload> {
   const key = ref.trim();
   if (!key) return null;
-  const hit = cache.get(key);
+  const hit = getCachedTableArtifact(key);
   if (hit !== undefined) return hit;
   const pending = inFlight.get(key);
   if (pending) return pending;
@@ -163,10 +178,14 @@ export async function loadTableArtifact(ref: string): Promise<TablePayload> {
         `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/table-artifacts/${encodeURIComponent(key)}`,
         { ownerToken, label: 'Table artifact resolve error' },
       );
+      // review 修复（会话竞态）：请求跨过了 resetTableArtifactCache ——
+      // cursor 已指向新会话时丢弃结果（不污染新会话缓存）。
+      if (getMapSpecSessionCursor().sessionId !== sessionId) return null;
       const table = (data as { table?: unknown } | null)?.table;
       cache.set(key, table ?? null);
       return table ?? null;
     } catch (e) {
+      if (getMapSpecSessionCursor().sessionId !== sessionId) return null;
       devOnly.warn(`[table-data] ref ${key} 拉取失败`, e);
       cache.set(key, null);
       failureAt.set(key, Date.now());

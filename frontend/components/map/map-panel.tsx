@@ -72,6 +72,7 @@ import { devOnly } from "@/lib/utils/logger"
 import { buildTileTransformRequest } from "@/lib/map-kit/tile-auth"
 import {
   getSelection,
+  getSelectionEpoch,
   getSelectionFilterExpression,
   getSelectionIdFilterExpression,
   publishSelection,
@@ -86,7 +87,6 @@ import {
 } from "@/lib/selection/brush-select"
 import { commitExplicitView } from "@/lib/mapspec/user-mutation"
 import {
-  clearFilterEvidence,
   deriveFilterEvidence,
   recordFilterEvidence,
   type LayerFilterEvidence,
@@ -209,8 +209,10 @@ export function MapPanel({
 
   // Runtime V4（§11）：矩形框选模式 —— 拖拽画矩形，queryRenderedFeatures
   // 命中投影为有界选择载荷（ids ≤50 超限走 bbox 谓词 + 计数披露）。
+  // 矩形覆盖层走**命令式 ref 更新**（review：60Hz setState 会整组件重渲染
+  // 一整个 MapPanel —— 只有 transform 变化的矩形不需要 React 渲染）。
   const [brushSelectActive, setBrushSelectActive] = useState(false)
-  const [brushRect, setBrushRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+  const brushRectRef = useRef<HTMLDivElement | null>(null)
   const brushStartRef = useRef<{ x: number; y: number } | null>(null)
 
   const [webglError, setWebglError] = useState<string | null>(null)
@@ -614,10 +616,16 @@ export function MapPanel({
 
   // Runtime V4（§14）：过滤命中证据 —— settle 后对「有过滤的内联层」做有界
   // 单遍计数（≤20k 要素；MVT/超限层如实 unknown），latest-wins 记录进
-  // filter-evidence store（Layers 徽标 + cartographic observation 披露消费）。
-  // debounce 400ms：选择/图例过滤连续翻转时只结算最终态。
+  // filter-evidence store（Layers 徽标消费）。删除已无过滤层的旧证据
+  // （review：不清 delta 会让「过滤后 0 要素」徽标在过滤取消后残留）。
+  // debounce 400ms：选择/图例过滤连续翻转时只结算最终态；结算回调核对
+  // 会话 id（迟到的旧会话结算不得写入新会话的证据面）。
+  const filterEvidenceSessionRef = useRef<string | null | undefined>(undefined)
   useEffect(() => {
+    const settledSession = sessionId ?? null
+    filterEvidenceSessionRef.current = settledSession
     const t = setTimeout(() => {
+      if (filterEvidenceSessionRef.current !== settledSession) return // 会话已切换
       const spec = composeLiveMapSpec(
         getCommittedMapSpec(),
         { layers, processLayers, activeFilters, selectionFilters, is3D },
@@ -625,7 +633,6 @@ export function MapPanel({
         getPendingRemoved(),
       )
       if (!spec || !Array.isArray(spec.layers)) return
-      // `Map` 在本模块被 react-map-gl 组件导入遮蔽 —— 显式走 globalThis。
       const filtersByFamily = new globalThis.Map<string, unknown[][]>()
       for (const sl of spec.layers) {
         const family = String(sl.id ?? '').split('__')[0]
@@ -636,11 +643,6 @@ export function MapPanel({
           list.push(filter)
           filtersByFamily.set(family, list)
         }
-      }
-      if (!filtersByFamily.size) {
-        // 无任何活动过滤：全部层回到 inactive（无徽标）—— 清空旧证据。
-        clearFilterEvidence()
-        return
       }
       const entries: Array<{ layerId: string; evidence: LayerFilterEvidence }> = []
       for (const layer of layers) {
@@ -655,10 +657,10 @@ export function MapPanel({
           evidence: deriveFilterEvidence({ layerId: layer.id, sublayerFilters, features }),
         })
       }
-      recordFilterEvidence(entries)
+      recordFilterEvidence(entries, { pruneTo: new Set(layers.map((l) => l.id).filter((id) => filtersByFamily.has(id))) })
     }, 400)
     return () => clearTimeout(t)
-  }, [layers, processLayers, activeFilters, selectionFilters, is3D, liveGeneration])
+  }, [layers, processLayers, activeFilters, selectionFilters, is3D, liveGeneration, sessionId])
 
 
   const setViewport = useHudStore((s: HudState) => s.setViewport)
@@ -911,7 +913,13 @@ export function MapPanel({
 
   // Runtime V4（§11）：框选模式接管画布拖拽（dragPan/boxZoom 让位），
   // 松手时 queryRenderedFeatures → 有界选择发布。矩形未达最小尺寸视为
-  // 普通点击（清空选择）。
+  // 普通点击（清空选择）。review 修复：
+  // - 清理路径恢复 dragPan/boxZoom（卸载/依赖翻转时不再永久锁死平移）；
+  // - 命中限定多数图层族（跨层混合 id 不进同一选择）且剔除 label 子层
+  //   （fill+outline+label 同要素多重命中只计一次）；
+  // - epoch 守卫：mousedown 捕获会话世代，mouseup 核对（中途切会话的
+  //   迟到发布丢弃）；
+  // - bbox 用两角 min/max 归一（bearing≠0 时角点顺序可倒置）。
   const [brushFeedback, setBrushFeedback] = useState<string | null>(null)
   useEffect(() => {
     const map = mapRef.current?.getMap()
@@ -925,37 +933,53 @@ export function MapPanel({
     if (typeof map.dragPan?.disable === 'function') map.dragPan.disable()
     if (typeof map.boxZoom?.disable === 'function') map.boxZoom.disable()
     const canvas = map.getCanvas()
+    const handlersDisabled = true
+    let epochAtDown = 0
     const rectOf = (e: MouseEvent) => {
       const bounds = canvas.getBoundingClientRect()
       return { x: e.clientX - bounds.left, y: e.clientY - bounds.top }
     }
+    const paintRect = (rect: { x: number; y: number; w: number; h: number } | null) => {
+      const el = brushRectRef.current
+      if (!el) return
+      if (!rect || rect.w <= 0 || rect.h <= 0) {
+        el.style.display = 'none'
+        return
+      }
+      el.style.display = 'block'
+      el.style.transform = `translate(${rect.x}px, ${rect.y}px)`
+      el.style.width = `${rect.w}px`
+      el.style.height = `${rect.h}px`
+    }
     const onDown = (e: MouseEvent) => {
       if (e.button !== 0) return
       brushStartRef.current = rectOf(e)
-      setBrushRect({ x: brushStartRef.current.x, y: brushStartRef.current.y, w: 0, h: 0 })
+      epochAtDown = getSelectionEpoch()
     }
     const onMove = (e: MouseEvent) => {
       if (!brushStartRef.current) return
       const p = rectOf(e)
-      setBrushRect(normalizeScreenRect(brushStartRef.current, p))
+      paintRect(normalizeScreenRect(brushStartRef.current, p))
     }
     const onUp = (e: MouseEvent) => {
       const start = brushStartRef.current
       brushStartRef.current = null
-      setBrushRect(null)
+      paintRect(null)
       if (!start) return
+      if (epochAtDown !== getSelectionEpoch()) return // 会话已切换
       const rect = normalizeScreenRect(start, rectOf(e))
       if (!isBrushRectViable(rect)) {
         publishSelection('clear_selection', { source: 'map', layer_id: '' })
         return
       }
+      // label 子层（`${family}__${sub}-label`）不参与框选命中。
+      const queryLayers = interactiveIdsRef.current.filter((id) => !id.endsWith('-label'))
       let hits: any[] = []
       try {
-        const layers = interactiveIdsRef.current
-        hits = layers.length
+        hits = queryLayers.length
           ? map.queryRenderedFeatures(
               [[rect.x, rect.y], [rect.x + rect.w, rect.y + rect.h]] as any,
-              { layers },
+              { layers: queryLayers },
             )
           : []
       } catch {
@@ -965,7 +989,8 @@ export function MapPanel({
         setBrushFeedback('框选范围内没有可选要素')
         return
       }
-      // 目标图层族取命中多数（跨层重叠时比「最顶层」更可预期）。
+      // 目标图层族取命中多数（跨层重叠时比「最顶层」更可预期）；命中集
+      // 限定在该族（跨族 id 不混入同一选择 —— id 空间不同）。
       const familyCounts = new globalThis.Map<string, number>()
       for (const hit of hits) {
         const fam = String(hit?.layer?.id ?? '').split('__')[0]
@@ -976,12 +1001,17 @@ export function MapPanel({
       for (const [fam, count] of familyCounts) {
         if (count > best) { family = fam; best = count }
       }
-      const projection = projectBrushHits(hits)
+      const familyHits = family
+        ? hits.filter((hit) => String(hit?.layer?.id ?? '').split('__')[0] === family)
+        : hits
+      const projection = projectBrushHits(familyHits)
       const sw = map.unproject([rect.x, rect.y + rect.h])
       const ne = map.unproject([rect.x + rect.w, rect.y])
+      const lngs = [sw?.lng, ne?.lng].filter((v) => Number.isFinite(v))
+      const lats = [sw?.lat, ne?.lat].filter((v) => Number.isFinite(v))
       const bbox: [number, number, number, number] | undefined =
-        sw && ne && Number.isFinite(sw.lng) && Number.isFinite(ne.lng)
-          ? [sw.lng, sw.lat, ne.lng, ne.lat]
+        lngs.length === 2 && lats.length === 2
+          ? [Math.min(lngs[0], lngs[1]), Math.min(lats[0], lats[1]), Math.max(lngs[0], lngs[1]), Math.max(lats[0], lats[1])]
           : undefined
       publishSelection('brush', {
         source: 'map',
@@ -992,11 +1022,15 @@ export function MapPanel({
         matched_count: projection.matched_count,
         bbox,
       })
-      setBrushFeedback(
-        projection.truncated
-          ? `已框选 ${projection.matched_count} 个要素（高亮前 ${projection.selected_ids.length} 个）`
-          : `已框选 ${projection.matched_count} 个要素`,
-      )
+      if (!projection.id_field) {
+        setBrushFeedback(`框选 ${projection.matched_count} 个要素（该层无稳定 id 字段，无法跨视图联动）`)
+      } else {
+        setBrushFeedback(
+          projection.truncated
+            ? `已框选 ${projection.matched_count} 个要素（高亮前 ${projection.selected_ids.length} 个）`
+            : `已框选 ${projection.matched_count} 个要素`,
+        )
+      }
     }
     canvas.addEventListener('mousedown', onDown)
     window.addEventListener('mousemove', onMove)
@@ -1006,6 +1040,13 @@ export function MapPanel({
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
       brushStartRef.current = null
+      paintRect(null)
+      // review 修复：非激活分支的 enable 不会在本 cleanup 执行时跑 ——
+      // 卸载/依赖翻转时在此恢复（handlersDisabled 标记曾禁用过）。
+      if (handlersDisabled) {
+        if (typeof map.dragPan?.enable === 'function') map.dragPan.enable()
+        if (typeof map.boxZoom?.enable === 'function') map.boxZoom.enable()
+      }
     }
   }, [brushSelectActive, mapReady])
 
@@ -1016,7 +1057,8 @@ export function MapPanel({
     return () => clearTimeout(t)
   }, [brushFeedback])
 
-  const handleMove = useCallback((evt: ViewStateChangeEvent) => {    viewStateRef.current = evt.viewState
+  const handleMove = useCallback((evt: ViewStateChangeEvent) => {
+    viewStateRef.current = evt.viewState
     // 悬浮窗锚定在点击时的屏幕像素：地图一动位置就失真，直接关闭。
     setPoiPanel((p) => (p ? null : p))
     const map = mapRef.current?.getMap()
@@ -1322,12 +1364,14 @@ export function MapPanel({
         onToggleBrushSelect={() => setBrushSelectActive((v) => !v)}
       />
 
-      {/* Runtime V4：框选矩形覆盖层（画布坐标系，随拖拽更新） */}
-      {brushSelectActive && brushRect && brushRect.w > 0 && (
+      {/* Runtime V4：框选矩形覆盖层 —— 命令式更新（mousedown/mousemove 直接
+          写 style，60Hz 拖拽零 React 渲染；display 由 paintRect 管理）。 */}
+      {brushSelectActive && (
         <div
+          ref={brushRectRef}
           data-testid="brush-select-rect"
-          className="pointer-events-none absolute z-40 border border-status-accent bg-status-accent/10"
-          style={{ left: brushRect.x, top: brushRect.y, width: brushRect.w, height: brushRect.h }}
+          className="pointer-events-none absolute left-0 top-0 z-40 border border-status-accent bg-status-accent/10"
+          style={{ display: 'none', willChange: 'transform' }}
         />
       )}
       {brushFeedback && (

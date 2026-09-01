@@ -217,10 +217,10 @@ def generate_chart(chart_type: str = "", title: str = "", data: Any = "",
         )
         if map_error:
             return {"error": f"GeoJSON 字段映射失败: {map_error}"}
-        # Runtime V4（§15）：selectionField 自动生成 —— 类别字段是确定性
-        # 推导（bar/line/pie 的类目 = name_field ?? x_field），不是猜测；
+        # Runtime V4（§15）：selectionField 自动生成 —— 只对类目语义明确的
+        # bar/pie（review：line 的 x 常是时间/数值轴，作类别过滤键是伪推导）；
         # 无映射字段的 [{name,value}] 路径无法可靠推导 → 如实省略。
-        if effective_type != "scatter":
+        if effective_type in ("bar", "pie"):
             selection_field = (name_field or x_field or "").strip()
 
     # Validate structure
@@ -318,15 +318,25 @@ async def _resolve_layer_for_data_ref(session_id: str, data: Any) -> str:
     except Exception:  # noqa: BLE001 — 读失败 → 不绑定（诚实省略）
         return ""
     families: set = set()
-    for src_id, src in (spec.get("sources") or {}).items():
-        if not isinstance(src, dict):
-            continue
+    raw_sources = spec.get("sources") or {}
+    # review 修复：旧会话 sources 可能是 list 形态 —— 与其它消费面同款
+    # dict/list 双防御（list 直接 .items() 会 AttributeError）。dict 形态
+    # 以键为 source id；list 形态条目自带 "id"。
+    if isinstance(raw_sources, dict):
+        source_items = [
+            (str(k), v) for k, v in raw_sources.items() if isinstance(v, dict)
+        ]
+    else:
+        source_items = [
+            (str(s.get("id") or ""), s) for s in raw_sources if isinstance(s, dict)
+        ]
+    for src_id, src in source_items:
         src_refs = {
             src.get(k) for k in ("ref", "ref_id", "result_ref")
             if isinstance(src.get(k), str)
         }
         if ref in src_refs:
-            families.add(str(src_id))
+            families.add(src_id)
     if len(families) != 1:
         return ""
     # source id 与图层族 id 同名（adapter/converter 惯例）；按图层验证一次

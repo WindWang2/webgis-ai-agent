@@ -155,7 +155,7 @@ describe('chart → map selection', () => {
       processLayers: {},
       activeFilters: {},
       selectionFilters: {
-        'district-choropleth': ['in', ['get', 'district'], ['literal', ['武侯区']]],
+        'district-choropleth': ['in', ['to-string', ['get', 'district']], ['literal', ['武侯区']]],
       },
       is3D: false,
     });
@@ -181,7 +181,7 @@ describe('chart → map selection', () => {
       hudStateToMapSpec({ layers, processLayers: {}, activeFilters: {}, selectionFilters, is3D: false });
     const base = compose();
     const withSelection = compose({
-      'district-choropleth': ['in', ['get', 'district'], ['literal', ['武侯区']]],
+      'district-choropleth': ['in', ['to-string', ['get', 'district']], ['literal', ['武侯区']]],
     });
     const cleared = compose(undefined);
     expect(JSON.stringify(cleared.layers[0].filter)).toBe(JSON.stringify(base.layers[0].filter));
@@ -204,7 +204,7 @@ describe('selection filter expression builder (MapLibre validity)', () => {
     const expression = getSelectionFilterExpression('l1');
     expect(expression).toEqual([
       'in',
-      ['get', 'district'],
+      ['to-string', ['get', 'district']],
       ['literal', ['武侯区', '锦江区']],
     ]);
     // 多类别不是 spread 进参数表（style-spec 只接受 2 参 in）

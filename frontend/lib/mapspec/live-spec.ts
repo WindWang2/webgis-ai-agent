@@ -179,6 +179,9 @@ export function composeLiveMapSpec(
     composeMemo.pending = pending;
     composeMemo.removed = removed;
     composeMemo.hudFilters = hud.activeFilters;
+    // V4 review 修复：null-committed 分支漏存 selectionFilters —— A→B→A
+    // 翻转可命中带 stale selection 的 memo（选择过滤恰是 V4 高频翻转面）。
+    composeMemo.hudSelectionFilters = hud.selectionFilters;
     composeMemo.hud3D = hud.is3D;
     return hudSpec;
   }
