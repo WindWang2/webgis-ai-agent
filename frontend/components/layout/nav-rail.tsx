@@ -27,6 +27,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { LayoutDashboard } from 'lucide-react';
 import type { LeftTab } from '@/lib/store/hud-types';
 
 interface RailTabDef {
@@ -42,6 +43,7 @@ const RAIL_GROUPS: Array<Array<RailTabDef>> = [
     { key: 'project', icon: Folder, label: '项目' },
     { key: 'data_sources', icon: Database, label: '数据' },
     { key: 'layers', icon: Layers, label: '图层' },
+    { key: 'components', icon: LayoutDashboard, label: '组件' },
   ],
   [
     { key: 'analysis', icon: Triangle, label: '分析' },

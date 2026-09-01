@@ -89,7 +89,10 @@ def validate_gis_library(
     for rid in recipes.all_ids:
         recipe = recipes.get(rid)
         assert recipe is not None
-        for cap in list(recipe.preferred_analysis) + list(recipe.optional_analysis):
+        recipe_caps = list(recipe.preferred_analysis) + list(recipe.optional_analysis)
+        for task_caps in (getattr(recipe, "task_optional_analysis", None) or {}).values():
+            recipe_caps.extend(task_caps)
+        for cap in recipe_caps:
             if not capabilities.has(cap):
                 issues.append(f"recipe {rid}: unknown capability {cap}")
         for carto in [recipe.primary_cartography] + list(recipe.secondary_cartography):

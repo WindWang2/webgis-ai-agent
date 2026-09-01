@@ -50,6 +50,13 @@ const STATUS_MAP: Record<string, { label: string; tone: StatusTone; pulse?: bool
   ok: { label: '正常', tone: 'success' },
   error: { label: '异常', tone: 'critical' },
   unknown: { label: '未知', tone: 'neutral' },
+  // Layer Manager V2 的封闭状态词表（lib/layers/layer-status；派生自
+  // MapSpec + artifact state + RenderObservation，非并行真相）。
+  ready: { label: '就绪', tone: 'success' },
+  loading: { label: '加载中', tone: 'info', pulse: true },
+  rendering: { label: '渲染中', tone: 'info', pulse: true },
+  hidden: { label: '已隐藏', tone: 'neutral' },
+  expired: { label: '已过期', tone: 'warning' },
 };
 
 export function StatusBadge({ status, label }: StatusBadgeProps) {

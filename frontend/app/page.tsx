@@ -33,6 +33,7 @@ import TweaksPanel from '@/components/tweaks-panel';
 import { useToastStore } from '@/components/ui/toast';
 
 const RagIndependentPanel = dynamic(() => import('@/components/panel/rag-independent-panel'), { ssr: false });
+const PanelDockHost = dynamic(() => import('@/components/layout/panel-dock').then((m) => m.PanelDockHost), { ssr: false });
 const HistoryDrawer = dynamic(() => import('@/components/drawers/history-drawer').then(m => ({ default: m.HistoryDrawer })), { ssr: false });
 const SettingsPanel = dynamic(() => import('@/components/settings/settings-panel').then(m => ({ default: m.SettingsPanel })), { ssr: false });
 const ExportMask = dynamic(() => import('@/components/map/export-mask').then(m => ({ default: m.ExportMask })), { ssr: false });
@@ -303,6 +304,9 @@ export default function Home() {
             />
             <ExportMask />
             <MemoSpatialCrosshair />
+            {/* Workspace V2：停靠面板宿主（右/下 dock；面板实例从 chrome
+                面移入停靠区渲染，dock 状态与语义组件状态分离）。 */}
+            <PanelDockHost />
           </MapErrorBoundary>
         </div>
 

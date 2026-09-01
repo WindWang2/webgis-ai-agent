@@ -1,6 +1,8 @@
 "use client"
 import { useState, useRef, useCallback, useEffect, useMemo, useSyncExternalStore } from "react"
 import { MAP_STYLES, MapStyleOption } from "@/lib/constants"
+
+const EMPTY_SELECTION_FILTERS: Record<string, unknown[]> = {}
 import Map, { MapRef, ViewStateChangeEvent, Popup } from "react-map-gl/maplibre"
 import type { StyleSpecification } from "maplibre-gl"
 import type { Layer } from "@/lib/types/layer"
@@ -58,6 +60,13 @@ import { raiseAnnotationLayers } from "@/lib/map-commands/annotationHelpers"
 import { notifyUserGestureStart, notifyUserGestureEnd } from "@/lib/map-commands/camera-arbitration"
 import { devOnly } from "@/lib/utils/logger"
 import { buildTileTransformRequest } from "@/lib/map-kit/tile-auth"
+import {
+  getSelection,
+  getSelectionFilterExpression,
+  publishSelection,
+  subscribeSelection,
+  getSelectionGeneration,
+} from "@/lib/selection/selection-store"
 import { commitExplicitView } from "@/lib/mapspec/user-mutation"
 import { useCartographicObservation } from "@/lib/hooks/use-cartographic-observation"
 import { useHoverTooltip } from "@/lib/hooks/use-hover-tooltip"
@@ -146,6 +155,28 @@ export function MapPanel({
   // is3D 来自 store，与设置面板 setIs3D 联动。原先 useState 死锁在 false。
   const is3D = useHudStore((s: HudState) => s.is3D)
   const [activeFilters, setActiveFilters] = useState<Record<string, number[][]>>({})
+  // Workspace V2（Goal D3）：chart→map 类别选择 → per-layer MapLibre 过滤
+  // 表达式（与图例 activeFilters 同一 compose/reconcile 通道）。成本语义：
+  // source 引用不变（零重拉/零数据重建），但 filter 变化会触发该层的
+  // recompile（remove+add —— 与图例过滤同款既有路径，可能有一帧闪烁）。
+  // 空选择用冻结空表（稳定身份 → 无 reconcile 扰动）。
+  // id 空间桥接：chart 绑定的是 spec 层 id，HUD 路径按行 id 过滤 ——
+  // 两个键都发（_mapspecLayerId 别名解析），别名缺席时如实只发原生键。
+  const selectionGeneration = useSyncExternalStore(subscribeSelection, getSelectionGeneration)
+  const selectionFilters = useMemo(() => {
+    const selection = getSelection()
+    if (!selection || selection.source !== 'chart') return EMPTY_SELECTION_FILTERS
+    const expression = getSelectionFilterExpression(selection.layer_id)
+    if (!expression) return EMPTY_SELECTION_FILTERS
+    const keys = new Set<string>([selection.layer_id])
+    for (const row of useHudStore.getState().layers) {
+      if (row._mapspecLayerId === selection.layer_id) keys.add(row.id)
+    }
+    const out: Record<string, unknown[]> = {}
+    for (const key of keys) out[key] = expression
+    return out
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- generation is the change signal
+  }, [selectionGeneration])
   const mapRef = useRef<MapRef>(null)
   const processLayers = useHudStore((s: HudState) => s.processLayers)
   const cartographyTitle = useHudStore((s: HudState) => s.cartographyTitle)
@@ -455,7 +486,7 @@ export function MapPanel({
     if (!runtimeRef.current) return
     const spec0 = composeLiveMapSpec(
       getCommittedMapSpec(),
-      { layers, processLayers, activeFilters, is3D },
+      { layers, processLayers, activeFilters, selectionFilters, is3D },
       getPendingPresentation(),
       getPendingRemoved(),
     )
@@ -523,7 +554,7 @@ export function MapPanel({
       })
       // #1008：reconcile 失败的裸 console.error 泄漏内部细节 → devOnly。
       .catch((e) => devOnly.error("[map] reconcile failed", e))
-  }, [layers, processLayers, activeFilters, is3D, liveGeneration, refSourcesGeneration, mapReady, currentMapStyle, runtimeRecoveryGeneration, syncInteractiveIds, raiseSelectionHighlight, sessionId, ownerToken, sessionTokenRef, issueCartographicObservation])
+  }, [layers, processLayers, activeFilters, selectionFilters, is3D, liveGeneration, refSourcesGeneration, mapReady, currentMapStyle, runtimeRecoveryGeneration, syncInteractiveIds, raiseSelectionHighlight, sessionId, ownerToken, sessionTokenRef, issueCartographicObservation])
 
 
   const setViewport = useHudStore((s: HudState) => s.setViewport)
@@ -658,6 +689,9 @@ export function MapPanel({
     if (stillPresent) return
     setPoiPanel(null)
     setSelectedFeature(null)
+    // Workspace V2（Goal D）：选中层消失 → 清共享选择（既有清理缝的
+    // 连带行为；transient 状态不进 MapSpec）。
+    publishSelection('clear_selection', { source: 'map', layer_id: layerId })
   }, [layers, selectedFeature, setSelectedFeature])
 
   // FE-3: user gesture arbitration — report to camera-arbitration ONLY when the
