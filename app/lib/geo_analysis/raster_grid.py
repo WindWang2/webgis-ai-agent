@@ -43,13 +43,22 @@ _TRANSFORM_ATOL = 1e-9
 _RES_RTOL = 1e-6
 
 
-def _transform_tuple(transform) -> Tuple[float, ...]:
-    if isinstance(transform, tuple):
-        return tuple(float(v) for v in transform)
+def _transform_tuple(transform) -> Tuple[float, float, float, float, float, float]:
+    if hasattr(transform, "a") and hasattr(transform, "f"):
+        return (
+            float(transform.a), float(transform.b), float(transform.c),
+            float(transform.d), float(transform.e), float(transform.f),
+        )
+    if isinstance(transform, (tuple, list)):
+        vals = [float(v) for v in transform[:6]]
+        if len(vals) < 6:
+            raise ValueError(f"Expected 6 transform coefficients, got {len(transform)}")
+        return (vals[0], vals[1], vals[2], vals[3], vals[4], vals[5])
     return (
         float(transform.a), float(transform.b), float(transform.c),
         float(transform.d), float(transform.e), float(transform.f),
     )
+
 
 
 def _transforms_equal(t1, t2) -> bool:
@@ -406,8 +415,9 @@ def _as_affine(transform_tuple: Optional[Tuple[float, ...]]):
 
     if transform_tuple is None:
         raise RasterAlignmentError("alignment decision carries no target transform")
-    a, b, c, d, e, f = transform_tuple
+    a, b, c, d, e, f = transform_tuple[:6]
     return Affine(a, b, c, d, e, f)
+
 
 
 # ── 有界窗口迭代 ────────────────────────────────────────────────────
