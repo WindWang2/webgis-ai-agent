@@ -27,7 +27,7 @@ def raster_session(tmp_path, monkeypatch):
     raster_dir = tmp_path / sid / "raster"
     raster_dir.mkdir(parents=True)
     monkeypatch.setattr(
-        "app.services.mapspec_store.BASE_STORAGE_DIR", tmp_path,
+        "app.services.mapspec.store.BASE_STORAGE_DIR", tmp_path,
     )
     (raster_dir / "abc123.png").write_bytes(b"\x89PNG-fake")
     return sid

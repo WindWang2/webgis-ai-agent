@@ -291,15 +291,17 @@ def raster_png_path(session_id: str, ref: str) -> Optional["Path"]:
     """ref:raster/<id> → 会话 raster 目录下的 PNG 路径（非法 id → None）。
 
     与 raster 路由同一 charset 白名单纪律（../ 与分隔符在边界即拒绝）。
+    BASE_STORAGE_DIR 从**定义模块**（mapspec.store）取值 —— adapter
+    （mapspec_store）在 import 时拷贝了一份，会错过 monkeypatch/配置变更。
     """
     raster_id = ref[len(_RASTER_REF_PREFIX):]
     if not raster_id or not _RASTER_ID_RE.match(raster_id):
         return None
     if not _RASTER_ID_RE.match(session_id or ""):
         return None
-    from app.services.mapspec_store import BASE_STORAGE_DIR
+    from app.services.mapspec import store as _mapspec_store_module
 
-    return BASE_STORAGE_DIR / session_id / "raster" / f"{raster_id}.png"
+    return _mapspec_store_module.BASE_STORAGE_DIR / session_id / "raster" / f"{raster_id}.png"
 
 
 def raster_ref_exists(session_id: str, ref: str) -> bool:

@@ -54,7 +54,10 @@ type FeatureLike = {
   geometry?: { type?: string };
 };
 
-function getValue(expr: unknown[], f: FeatureLike): unknown {
+function getValue(expr: unknown, f: FeatureLike): unknown {
+  // MapLibre 过滤的叶子既可以是表达式（["get", f]）也可以是裸字面量
+  // （30 / '武侯区'）—— 非数组按字面量直返。
+  if (!Array.isArray(expr)) return expr;
   const op = expr[0];
   if (op === 'get') return (f.properties ?? {})[String(expr[1])];
   if (op === 'id') return f.id;
@@ -97,8 +100,8 @@ export function evaluateFilterBounded(expr: unknown, f: FeatureLike): boolean | 
     }
     case '==':
     case '!=': {
-      const a = getValue(expr[1] as unknown[], f);
-      const b = getValue(expr[2] as unknown[], f);
+      const a = getValue(expr[1], f);
+      const b = getValue(expr[2], f);
       if (expr[1] === '$type' || (Array.isArray(expr[1] as unknown[]) && (expr[1] as unknown[])[0] === '$type')) {
         const geom = f.geometry?.type ?? '';
         const want = String(b);
@@ -117,8 +120,8 @@ export function evaluateFilterBounded(expr: unknown, f: FeatureLike): boolean | 
     case '>':
     case '<=':
     case '<': {
-      const a = getValue(expr[1] as unknown[], f);
-      const b = getValue(expr[2] as unknown[], f);
+      const a = getValue(expr[1], f);
+      const b = getValue(expr[2], f);
       const an = typeof a === 'number' ? a : Number(a);
       const bn = typeof b === 'number' ? b : Number(b);
       if (!Number.isFinite(an) || !Number.isFinite(bn)) return false; // MapLibre：不可比较 → 不命中
@@ -130,7 +133,7 @@ export function evaluateFilterBounded(expr: unknown, f: FeatureLike): boolean | 
       }
     }
     case 'in': {
-      const v = getValue(expr[1] as unknown[], f);
+      const v = getValue(expr[1], f);
       if (v === undefined || v === null) return false;
       const haystackRaw = expr[2];
       const haystack = Array.isArray(haystackRaw) && haystackRaw[0] === 'literal'

@@ -993,6 +993,7 @@ class MapSpecLifecycleEngine:
                     # mutate_component 的 enabled=False 是隐藏；这里是布局
                     # 条目移除。纯函数 remove_component 与 patch 同源。
                     from app.services.gis_harness.components import (
+                        CartographyComponent,
                         remove_component,
                     )
 
@@ -1027,6 +1028,7 @@ class MapSpecLifecycleEngine:
 
                 elif isinstance(intent, DuplicateComponentIntent):
                     from app.services.gis_harness.components import (
+                        CartographyComponent,
                         duplicate_component,
                     )
 
@@ -1059,6 +1061,7 @@ class MapSpecLifecycleEngine:
 
                 elif isinstance(intent, RebindComponentIntent):
                     from app.services.gis_harness.components import (
+                        CartographyComponent,
                         rebind_component,
                     )
 
