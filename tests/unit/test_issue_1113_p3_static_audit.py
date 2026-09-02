@@ -15,19 +15,26 @@ def test_layer_data_header_is_nosniff():
 
 
 @pytest.mark.asyncio
-async def test_memory_overwrite_pops_descriptor():
-    """P3-5: overwrite must invalidate _descriptors like Redis D-4."""
+async def test_memory_overwrite_recomputes_descriptor():
+    """P3-5: overwrite must refresh _descriptors against the new payload.
+
+    Memory backend has no lazy recompute fallback (unlike Redis), so the
+    descriptor must stay live — feature_count must reflect the NEW data.
+    """
     from app.services.session_data import MemorySessionStore
 
     store = MemorySessionStore(capacity=10)
     sid = "sess-1113"
     ref = await store.store(sid, {"type": "FeatureCollection", "features": []}, prefix="t")
-    assert await store.get_ref_descriptor(sid, ref) is not None
+    d0 = await store.get_ref_descriptor(sid, ref)
+    assert d0 is not None and d0.get("feature_count") == 0
     ok = await store.overwrite(sid, ref, {"type": "FeatureCollection", "features": [
         {"type": "Feature", "geometry": {"type": "Point", "coordinates": [0, 0]}, "properties": {}}
     ]})
     assert ok is True
-    assert await store.get_ref_descriptor(sid, ref) is None
+    d1 = await store.get_ref_descriptor(sid, ref)
+    assert d1 is not None, "descriptor must stay resolvable after overwrite"
+    assert d1.get("feature_count") == 1
 
 
 def test_gdf_from_features_invalid_crs_warns(caplog):
