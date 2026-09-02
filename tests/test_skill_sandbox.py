@@ -241,3 +241,39 @@ class TestExistingSkillsRegression:
             elif path.suffix == ".py":
                 errors = _validate_skill_code(text)
                 assert errors == [], f"{path.name} rejected: {errors}"
+
+
+class TestIssue1113P3SkillSandbox:
+    """#1113 P3-2: alias bypass PoCs + expanded dunder string deny-list."""
+
+    def test_blocks_any_dunder_string_literal(self):
+        assert _validate_skill_code('x = "__globals__"')
+        assert _validate_skill_code('x = "__class__"')
+        assert _validate_skill_code('x = "__mro__"')
+
+    def test_blocks_eval_alias_poc_at_runtime_builtins(self, tmp_path):
+        """AST may miss `e = eval; e(...)`; restricted builtins must NameError."""
+        import importlib.util
+        from app.tools.skills import _restricted_skill_builtins
+
+        code = "e = eval\ne(\"1+1\")\n"
+        path = tmp_path / "evil.py"
+        path.write_text(code)
+        spec = importlib.util.spec_from_file_location("evil_skill", path)
+        module = importlib.util.module_from_spec(spec)
+        module.__dict__["__builtins__"] = _restricted_skill_builtins()
+        try:
+            spec.loader.exec_module(module)
+            raised = None
+        except Exception as exc:  # noqa: BLE001
+            raised = exc
+        assert raised is not None, "eval alias PoC must fail under restricted builtins"
+        assert isinstance(raised, NameError) or "eval" in str(raised).lower()
+
+    def test_blocks_getattr_globals_poc_string(self):
+        code = (
+            'g = getattr\n'
+            'glb = g(obj, "__globals__")\n'
+        )
+        errors = _validate_skill_code(code)
+        assert errors, "getattr + __globals__ string PoC must be rejected"
