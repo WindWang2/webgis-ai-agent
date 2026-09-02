@@ -60,6 +60,19 @@ class MemorySessionStore(BaseSessionStore):
         else:
             self._session_order[session_id] = None
 
+    @staticmethod
+    def _invalidate_derived_caches(session_id: str, *ref_ids: str) -> None:
+        """Drop every process-local cache derived from these refs (#1111 lesson).
+
+        The authoritative payload lives here; these caches are projections.
+        Forgetting one of the three was the #1111 ghost-data bug — route all
+        invalidation through this helper (V5-C will formalize the contract).
+        """
+        from app.services.mvt import spatial_index_cache, tile_lru_cache
+        for ref_id in ref_ids:
+            spatial_index_cache.invalidate_ref(session_id, ref_id)
+            tile_lru_cache.invalidate_ref(session_id, ref_id)
+
     async def store(self, session_id: str, data: Any, prefix: str = "data") -> str:
         """存储数据并返回生成的游标 ID"""
         if session_id not in self._store:
@@ -106,9 +119,7 @@ class MemorySessionStore(BaseSessionStore):
             self._remove_alias_by_ref(session_id, oldest_ref)
             if session_id in self._descriptors:
                 self._descriptors[session_id].pop(oldest_ref, None)
-            from app.services.mvt import spatial_index_cache, tile_lru_cache
-            spatial_index_cache.invalidate_ref(session_id, oldest_ref)
-            tile_lru_cache.invalidate_ref(session_id, oldest_ref)
+            self._invalidate_derived_caches(session_id, oldest_ref)
             logger.debug(f"Session {session_id}: evicted {oldest_ref} (capacity={self.capacity})")
 
         session_cache[ref_id] = data
@@ -141,6 +152,13 @@ class MemorySessionStore(BaseSessionStore):
         session_cache = self._store.get(session_id)
         if not session_cache or ref_id not in session_cache:
             return False
+        if data is session_cache[ref_id]:
+            # Same object re-persisted (plan_mode persists step_results after
+            # every wave) — nothing changed, skip the O(features) size
+            # estimate + descriptor recompute (G-2 hot-path guard).
+            session_cache.move_to_end(ref_id)
+            self._touch_session(session_id)
+            return True
         session_cache[ref_id] = data
         # DA-P2-1：覆写尺寸 O(1) 增减
         try:
@@ -154,13 +172,14 @@ class MemorySessionStore(BaseSessionStore):
                 self._session_bytes.get(session_id, 0) - sizes.get(ref_id, 0) + new_size
             )
             sizes[ref_id] = new_size
-        from app.services.mvt import spatial_index_cache, tile_lru_cache
-        spatial_index_cache.invalidate_ref(session_id, ref_id)
-        tile_lru_cache.invalidate_ref(session_id, ref_id)
+        self._invalidate_derived_caches(session_id, ref_id)
         # #1113 P3-5: recompute the descriptor against the new payload (same
-        # as store()) — popping alone would leave Memory-backend readers with
-        # a permanent None/NotFound (no lazy recompute fallback here, unlike
-        # RedisSessionStore.get_ref_descriptor).
+        # as store()). Before this fix overwrite left the OLD payload's stale
+        # descriptor in place; a plain pop would be worse still — Memory
+        # readers have no lazy recompute fallback (unlike
+        # RedisSessionStore.get_ref_descriptor) and would see NotFound.
+        # G-2: identical-object overwrites (plan_mode re-persisting the same
+        # payload) skip the O(features) recompute entirely.
         try:
             from app.schemas.ref_descriptor import compute_descriptor
             descriptor = await asyncio.to_thread(compute_descriptor, ref_id, data)
@@ -191,9 +210,7 @@ class MemorySessionStore(BaseSessionStore):
             self._session_bytes[session_id] = (
                 self._session_bytes.get(session_id, 0) - sizes.pop(ref_id)
             )
-        from app.services.mvt import spatial_index_cache, tile_lru_cache
-        spatial_index_cache.invalidate_ref(session_id, ref_id)
-        tile_lru_cache.invalidate_ref(session_id, ref_id)
+        self._invalidate_derived_caches(session_id, ref_id)
         return True
 
     async def set_alias(self, session_id: str, ref_id: str, alias: str) -> None:

@@ -376,6 +376,25 @@ def _normalize_tool_arguments(
 
 
 
+# G-1 (phase-E review): TypeAdapter construction costs ~29µs (scalars) up to
+# ~289µs (Annotated[float, Field(ge, le)]) — cache per (model, field) so the
+# oversized-bypass scalar validation stays sub-µs on the hot repeat.
+_TYPEADAPTER_CACHE: dict[tuple[type, str], "TypeAdapter"] = {}
+
+
+def _field_type_adapter(model: type, fname: str, ann: Any, metadata: tuple) -> "TypeAdapter":
+    key = (model, fname)
+    adapter = _TYPEADAPTER_CACHE.get(key)
+    if adapter is None:
+        from typing import Annotated as _Annotated
+        field_ann: Any = ann
+        if metadata:
+            field_ann = _Annotated[ann, *metadata]
+        adapter = TypeAdapter(field_ann)
+        _TYPEADAPTER_CACHE[key] = adapter
+    return adapter
+
+
 def _annotation_is_any(ann: Any) -> bool:
     """True when a field annotation is (Optional/Annotated) Any — large carriers."""
     if ann is Any:
@@ -1113,10 +1132,8 @@ class ToolRegistry:
                         ann = finfo.annotation
                         if _annotation_is_any(ann):
                             continue
-                        field_ann: Any = ann
-                        if finfo.metadata:
-                            field_ann = Annotated[ann, *finfo.metadata]
-                        TypeAdapter(field_ann).validate_python(arguments[fname])
+                        adapter = _field_type_adapter(model, fname, ann, tuple(finfo.metadata))
+                        adapter.validate_python(arguments[fname])
                 except ValidationError as e:
                     error_msgs = []
                     for error in e.errors():

@@ -266,7 +266,18 @@ async def _singleflight_async(key: str, ttl: int, lock_ttl_s: int, compute: Call
                 await set_cached_async(key, result, ttl)
             return result
         finally:
-            await _release_lock_async(key, token)
+            # Phase-E review (A-MINOR-2): the release must survive a
+            # cancellation re-delivered at this await — otherwise followers
+            # poll until the Redis lock TTL expires. shield + budget, same
+            # discipline as the bridge's teardown awaits (#1108 pattern).
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(_release_lock_async(key, token)), timeout=5.0
+                )
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+            except Exception:  # noqa: BLE001 — release is best-effort
+                pass
     # #1113 P3-6: same wait budget as sync path — avoid exhausting to_thread pool.
     cached = await asyncio.to_thread(_wait_for_cached, key, min(float(lock_ttl_s), _SYNC_WAIT_BUDGET_S), time.sleep)
     if cached is not None:

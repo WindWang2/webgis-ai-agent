@@ -107,11 +107,16 @@ def register_spatial_tools(registry: ToolRegistry):
     @cached_tool(ttl=86400)
     def buffer_analysis(geojson: Any, distance: float, unit: str = "m") -> dict:
         data = safe_parse_geojson(geojson)
-        features = data.get("features", [])
+        if not isinstance(data, dict):
+            # Unparseable input must surface as a standard tool error, not a
+            # silent empty-FC success (decorator would normalize None → []).
+            raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
         # ARCH-01 (deep-audit round 3): SpatialAnalysisEngine (a name-dispatch
         # seam ADR-0013 deleted) was removed; call SpatialAnalyzer directly like
         # every other spatial tool.
-        res = SpatialAnalyzer.buffer(features, distance, unit)
+        # #1110 review M1: forward the full FC — a bare features list is
+        # rebuilt into a CRS-less FC and projected input falls back to 4326.
+        res = SpatialAnalyzer.buffer(data, distance, unit)
         return res.to_llm_response()
 
     @tool(registry, name="spatial_stats",
@@ -126,8 +131,11 @@ def register_spatial_tools(registry: ToolRegistry):
            ))
     def spatial_stats(geojson: Any) -> dict:
         data = safe_parse_geojson(geojson)
-        features = data.get("features", [])
-        res = SpatialAnalyzer.statistics(features)
+        if not isinstance(data, dict):
+            raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
+        # #1110 review M2: forward the full FC so a declared CRS reaches
+        # to_utm_gdf — projected input previously degraded to count-only.
+        res = SpatialAnalyzer.statistics(data)
         return res.to_llm_response()
 
     @tool(registry, tier=2, domains=["statistics"], name="nearest_neighbor",
@@ -142,8 +150,10 @@ def register_spatial_tools(registry: ToolRegistry):
            ))
     def nearest_neighbor(geojson: Any) -> dict:
         data = safe_parse_geojson(geojson)
-        features = data.get("features", [])
-        res = SpatialAnalyzer.nearest(features)
+        if not isinstance(data, dict):
+            raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
+        # #1110 review M3: forward the full FC (CRS preservation, same as M1).
+        res = SpatialAnalyzer.nearest(data)
         return res.to_llm_response()
 
     @tool(registry, tier=2, domains=["statistics"], name="heatmap_data",

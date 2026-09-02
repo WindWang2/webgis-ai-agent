@@ -1699,7 +1699,18 @@ class PiBridge:
                     )
                     break
                 except asyncio.TimeoutError:
-                    yield ": keepalive\n\n"
+                    # MINOR (phase-E A): a client disconnect at this yield
+                    # (GeneratorExit) precedes the lease-protected try — the
+                    # evidence registered above would never be removed. Park
+                    # the registration removal here for that early-exit path.
+                    try:
+                        yield ": keepalive\n\n"
+                    except (GeneratorExit, asyncio.CancelledError):
+                        rt_ev.settle(Outcome.CANCELLED)
+                        rt_ev.mark_ended()
+                        emit_turn_summary(rt_ev)
+                        TURN_EVIDENCE.remove(turn_id)
+                        raise
             try:
                 _session_executed_sets.pop(turn_sid, None)
                 _clear_dispatch_cache(turn_sid)

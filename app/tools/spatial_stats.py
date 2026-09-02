@@ -27,9 +27,12 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                         eps: float = 1000, min_samples: int = 5,
                         value_field: str = "", value_weight: float = 1.0) -> dict:
         data = safe_parse_geojson(geojson)
-        features = data.get("features", [])
+        if not isinstance(data, dict):
+            raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
+        # #1110 review M4: forward the full FC — cluster eps is metre-typed and
+        # needs the declared CRS to survive the tool boundary.
         res = SpatialAnalyzer.cluster(
-            features, method=method, n_clusters=n_clusters, eps=eps,
+            data, method=method, n_clusters=n_clusters, eps=eps,
             min_samples=min_samples, value_field=value_field, value_weight=value_weight,
         )
         return res.to_llm_response()
@@ -42,8 +45,10 @@ def register_spatial_stats_tools(registry: ToolRegistry):
            })
     def standard_deviational_ellipse(geojson: Any) -> dict:
         data = safe_parse_geojson(geojson)
-        features = data.get("features", [])
-        res = SpatialAnalyzer.statistics(features, spatial_stats=True)
+        if not isinstance(data, dict):
+            raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
+        # #1110 review M5: forward the full FC (CRS preservation).
+        res = SpatialAnalyzer.statistics(data, spatial_stats=True)
         return res.to_llm_response()
 
     @tool(registry, name="moran_i",
@@ -55,8 +60,10 @@ def register_spatial_stats_tools(registry: ToolRegistry):
            })
     def moran_i(geojson: Any, value_field: str) -> dict:
         data = safe_parse_geojson(geojson)
-        features = data.get("features", [])
-        res = SpatialAnalyzer.statistics(features, field=value_field, spatial_stats=True)
+        if not isinstance(data, dict):
+            raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
+        # #1110 review M6: forward the full FC (CRS preservation).
+        res = SpatialAnalyzer.statistics(data, field=value_field, spatial_stats=True)
         return res.to_llm_response()
 
     @tool(registry, name="hotspot_analysis",
