@@ -958,6 +958,28 @@ from app.services.cartography_runtime import (  # noqa: F401
 # ── PiBridge: thin orchestrator (holds PiRpcClient + delegates mapping) ──────
 
 
+class _TurnLease:
+    """Explicit ownership handle for the singleton bridge's turn lock (#1108).
+
+    Lock invariants (V5 §18 precursor):
+      INV-P1 every successful acquire is released exactly once (``released``).
+      INV-P2 a turn can never release another turn's acquisition
+             (owner-checked in ``PiBridge._release_turn_lease``).
+      INV-P3 a cancelled/failed register cannot leak the lock (register runs
+             inside the try whose finally releases the lease).
+      INV-P4 a cancelled/failed unregister cannot leak the lock (release runs
+             BEFORE the post-lock unregister await).
+    """
+
+    __slots__ = ("turn_id", "session_id", "acquired_at", "released")
+
+    def __init__(self, turn_id: str, session_id: Optional[str]) -> None:
+        self.turn_id = turn_id
+        self.session_id = session_id
+        self.acquired_at = time.monotonic()
+        self.released = False
+
+
 class PiBridge:
     """Bridge to Pi agent via RPC mode.
 
@@ -976,6 +998,8 @@ class PiBridge:
     # stream_prompt). Class-level default so tests that bypass __init__
     # (PiBridge.__new__) still read None. None = no turn in flight.
     _active_turn_sid: Optional[str] = None
+    # #1108: current lock owner lease (class-level default for __new__ tests).
+    _lock_lease: Optional["_TurnLease"] = None
 
     def __init__(
         self,
@@ -1001,9 +1025,68 @@ class PiBridge:
         self._lock = asyncio.Lock()
         self._respawn_lock = asyncio.Lock()
         self._active_turn_sid: Optional[str] = None
+        # #1108: explicit lock ownership. ``_lock_lease`` names the turn that
+        # currently owns ``_lock``; release is owner-checked and idempotent so
+        # one turn can never release another turn's acquisition (INV-P2) and
+        # a double release is structurally impossible (INV-P1).
+        self._lock_lease: Optional["_TurnLease"] = None
         self._last_respawn_attempt: float = 0.0
         self._respawn_backoff_s: float = 1.0
         self._consecutive_respawn_failures: int = 0
+
+    async def _acquire_turn_lease(self, turn_id: str, session_id: Optional[str]) -> "_TurnLease":
+        """Acquire the turn lock and bind it to an explicit ownership lease.
+
+        The lease is the ONLY sanctioned way to release the lock afterwards
+        (see ``_release_turn_lease``); plain ``self._lock.release()`` calls are
+        forbidden outside these helpers (#1108).
+        """
+        await self._lock.acquire()
+        lease = _TurnLease(turn_id=turn_id, session_id=session_id)
+        self._lock_lease = lease
+        return lease
+
+    def _release_turn_lease(self, lease: "_TurnLease") -> None:
+        """Release the turn lock iff ``lease`` is still the registered owner.
+
+        Idempotent (double release is a no-op) and ownership-checked (a turn
+        can never release a later turn's acquisition). Synchronous on purpose:
+        it must run to completion inside a finally even when the surrounding
+        task is being cancelled.
+        """
+        if lease is None or lease.released:
+            return
+        if self._lock_lease is not lease:
+            logger.error(
+                "[PiBridge] refusing cross-turn lock release: caller lease "
+                "turn=%s session=%s but lock is owned by turn=%s — leak elsewhere?",
+                lease.turn_id, lease.session_id,
+                self._lock_lease.turn_id if self._lock_lease else None,
+            )
+            return
+        lease.released = True
+        self._lock_lease = None
+        self._lock.release()
+
+    async def _safe_unregister_active_pi_turn(self, session_id: str, turn_id: str) -> None:
+        """Best-effort active-turn unregister, hardened against cancellation.
+
+        #1108 INV-P4: callers invoke this AFTER releasing the turn lease, and
+        the underlying Redis eval only catches ``Exception`` (CancelledError
+        is a BaseException and would otherwise propagate out of the turn's
+        finally). Mirrors the abort-on-disconnect discipline: shield + budget
+        + swallow, so a re-delivered cancellation during teardown can never
+        skip subsequent cleanup.
+        """
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(unregister_active_pi_turn(session_id, turn_id)),
+                timeout=5.0,
+            )
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            pass
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[PiBridge] turn unregister failed (turn=%s): %s", turn_id, e)
 
     @property
     def _process_died(self) -> bool:
@@ -1290,227 +1373,243 @@ class PiBridge:
         # singleton bridge. Pi processes one prompt at a time, so this matches
         # the real execution model and prevents two turns' events interleaving
         # in the shared queue. Abort bypasses the lock (see abort()).
-        await self._lock.acquire()
-        # Clear caches only after the lock so a concurrent stream_prompt
-        # cannot wipe another in-flight turn's dispatch results / dedup set.
-        _session_executed_sets.pop(turn_sid, None)
-        _clear_dispatch_cache(turn_sid)
-        with rt_ctx.bind_runtime_context(turn_id=turn_id, run_id=run_id), bind_turn_evidence(rt_ev):
-            TURN_EVIDENCE.register(rt_ev)
-            cancelled = False
-            timed_out = False
-            send_failed = False
-            try:
-                # F5/F24: publish the active turn's identity + cancellation token
-                # while the lock is held — abort() reads the sid for session
-                # scoping, dispatch_tool binds the token via use_token. Same as
-                # stream_prompt; cleared in the finally. P1: prompt() previously
-                # never set these, so abort(session_id=other) saw active=None and
-                # the GLOBAL abort killed this turn, and HTTP-callback tool
-                # dispatches ran unbounded (F24 no-op) on this path.
-                self._active_turn_sid = turn_sid
-                await register_active_pi_turn(turn_sid, turn_id)
-                _active_turn_token = CancellationToken(job_id=turn_id)
-                _active_turn_turn_id = turn_id
-                _active_turn_run_id = run_id
-                _active_turn_session_id = turn_sid or None
-
+        # #1108: acquire returns an explicit ownership lease; the outer finally
+        # below is the absolute backstop that releases it (idempotent +
+        # owner-checked), so no cancellation re-delivery can strand the lock.
+        lease = await self._acquire_turn_lease(turn_id, turn_sid)
+        try:
+            # Clear caches only after the lock so a concurrent stream_prompt
+            # cannot wipe another in-flight turn's dispatch results / dedup set.
+            _session_executed_sets.pop(turn_sid, None)
+            _clear_dispatch_cache(turn_sid)
+            with rt_ctx.bind_runtime_context(turn_id=turn_id, run_id=run_id), bind_turn_evidence(rt_ev):
+                TURN_EVIDENCE.register(rt_ev)
+                cancelled = False
+                timed_out = False
+                send_failed = False
+                # #1108: initialize BEFORE register — a register failure must
+                # not leave the finally referencing an unbound local.
                 tracker_task_id = None
                 try:
-                    from app.services.chat.engine_instance import try_get_chat_engine
-                    engine = try_get_chat_engine()
-                    if engine is None:
-                        raise RuntimeError("ChatEngine not initialized")
-                    tracker_task = engine.tracker.create(turn_sid, message)
-                    tracker_task_id = tracker_task.id
-                except Exception:
-                    pass
+                    # F5/F24: publish the active turn's identity + cancellation token
+                    # while the lock is held — abort() reads the sid for session
+                    # scoping, dispatch_tool binds the token via use_token. Same as
+                    # stream_prompt; cleared in the finally. P1: prompt() previously
+                    # never set these, so abort(session_id=other) saw active=None and
+                    # the GLOBAL abort killed this turn, and HTTP-callback tool
+                    # dispatches ran unbounded (F24 no-op) on this path.
+                    self._active_turn_sid = turn_sid
+                    await register_active_pi_turn(turn_sid, turn_id)
+                    _active_turn_token = CancellationToken(job_id=turn_id)
+                    _active_turn_turn_id = turn_id
+                    _active_turn_run_id = run_id
+                    _active_turn_session_id = turn_sid or None
 
-                # Drop any residual events from a prior turn before sending, so they
-                # cannot be attributed to this turn.
-                await self._drain_stale_events()
-                data["message"] = await bind_turn_prompt(
-                    message, turn_token, turn_sid, cartography_context or "",
-                    env_block=env_block or "",
-                )
-                try:
-                    await self._rpc.request("prompt", data)
-                except PiRpcError as send_exc:
-                    # #790 (B-6 parity with stream_prompt's ``send_failed``): the
-                    # prompt RPC itself raised. Pi may already have started the
-                    # turn and its tools, so the finally MUST abort — without it
-                    # a retry duplicates side effects while this caller already
-                    # returned an error.
-                    send_failed = True
-                    rt_ev.settle(
-                        Outcome.FAILED,
-                        failure_class="pi_send_error",
-                        detail=str(send_exc)[:200],
-                    )
-                    raise
-
-                # Drain events from the queue (non-streaming mode).
-                # audit #816: message_update carries the ACCUMULATED partial
-                # snapshot — appending per event duplicated content O(n²).
-                # Keep only the latest snapshot; a non-retrying agent_end's
-                # messages[] list is the authoritative final text and overrides
-                # it. #855: agent_end is NOT the turn terminator — the vendor
-                # auto-retries behind willRetry=true and may continue even a
-                # willRetry=false run (compaction overflow recovery / queued
-                # follow-ups). The turn ends on agent_settled only, mirroring
-                # the vendor RpcClient.waitForIdle contract.
-                final_text = ""
-                _drained_complete = False
-                drain_started = time.monotonic()
-                last_event_at = drain_started
-                process_died = False
-                # #1069(A-5): 与 stream_prompt 同款 MagicMock 容错 —— 测试桩的
-                # process_died_event 可能不是 asyncio.Event，回退为永不置位。
-                process_died_event = getattr(self._rpc, "process_died_event", None)
-                if not isinstance(process_died_event, asyncio.Event):
-                    process_died_event = asyncio.Event()
-                while True:
-                    # #786: keep draining while events keep arriving. A single
-                    # expired wait is NOT a turn failure — declare a stall only
-                    # after CONTINUOUS silence reaching the stream path's stall
-                    # budget (PI_EVENT_STREAM_TIMEOUT) or the bounded total-turn
-                    # deadline, mirroring stream_prompt's silence accumulation.
-                    now = time.monotonic()
-                    remaining_stall = PI_EVENT_STREAM_TIMEOUT - (now - last_event_at)
-                    remaining_total = PI_TURN_TOTAL_TIMEOUT - (now - drain_started)
-                    wait_budget = min(
-                        PI_EVENT_DRAIN_TIMEOUT, remaining_stall, remaining_total
-                    )
-                    if wait_budget <= 0:
-                        timed_out = True
-                        break
-                    # #1069(A-5): 与 stream_prompt 同款进程死亡看护 —— 此前
-                    # 非流式 prompt 在子进程崩溃后只能挂满 stall 预算才报错。
-                    get_task = asyncio.ensure_future(self._rpc.events.get())
-                    died_task = asyncio.ensure_future(process_died_event.wait())
-                    try:
-                        done, _ = await asyncio.wait(
-                            {get_task, died_task},
-                            timeout=wait_budget,
-                            return_when=asyncio.FIRST_COMPLETED,
-                        )
-                        if died_task in done:
-                            process_died = True
-                            break
-                        if get_task in done:
-                            event = get_task.result()
-                            last_event_at = time.monotonic()
-                            event_type = event.get("type")
-                            if event_type == "agent_settled":
-                                _drained_complete = True
-                                break
-                            if event_type == "agent_end":
-                                # #855: stash the authoritative final text only from
-                                # a non-retrying agent_end; a willRetry=true end
-                                # carries the transient error message, not the turn
-                                # outcome — the retried run supersedes it.
-                                if not event.get("willRetry"):
-                                    end_text = _extract_text_from_event(event)
-                                    if end_text:
-                                        final_text = end_text
-                            else:
-                                text = _extract_text_from_event(event)
-                                if text:
-                                    final_text = text
-                        else:
-                            # 超时且两任务都未完成 —— 连续静默/总预算检查
-                            if (
-                                time.monotonic() - last_event_at >= PI_EVENT_STREAM_TIMEOUT
-                                or time.monotonic() - drain_started >= PI_TURN_TOTAL_TIMEOUT
-                            ):
-                                timed_out = True
-                                break
-                    finally:
-                        for _t in (get_task, died_task):
-                            if not _t.done():
-                                _t.cancel()
-                # Best-effort: drain any leftover events so the next turn starts clean.
-                await self._drain_remaining_turn_events()
-                if process_died:
-                    # 子进程死亡：reader 的 finally 已失败所有 pending future；
-                    # 无需 abort RPC（进程已不在），外层 finally 会按需 respawn。
-                    rt_ev.settle(Outcome.FAILED, failure_class="process_died")
-                    raise PiRpcError(
-                        "Pi subprocess died mid-turn (non-streaming prompt); "
-                        "the turn did not complete."
-                    )
-                if timed_out:
-                    # #554 defect 2: a drain that timed out without agent_settled
-                    # is a PARTIAL turn. Previously the caller received a 200 with
-                    # truncated content and NO abort RPC — Pi kept generating
-                    # tokens and executing tools (up to the 300s RPC timeout)
-                    # while the client believed the turn succeeded. Surface an
-                    # error instead; the finally below sends the abort RPC
-                    # (mirrors stream_prompt's stall handling). First-win settle
-                    # keeps this "drain_timeout" classification over the generic
-                    # failure_class in the except handler below.
-                    rt_ev.settle(Outcome.FAILED, failure_class="drain_timeout")
-                    raise PiRpcError(
-                        f"Pi agent did not emit agent_settled (continuous silence exceeded "
-                        f"{PI_EVENT_STREAM_TIMEOUT}s or the turn exceeded "
-                        f"{PI_TURN_TOTAL_TIMEOUT}s; event-drain timeout); "
-                        "the turn has been aborted."
-                    )
-                # Only a clean agent_settled reaches this point — a timeout
-                # already raised above, so PARTIAL is no longer reachable.
-                rt_ev.settle(Outcome.SUCCEEDED)
-            except asyncio.CancelledError:
-                cancelled = True
-                rt_ev.settle(Outcome.CANCELLED)
-                raise
-            except Exception as exc:  # noqa: BLE001
-                rt_ev.settle(Outcome.FAILED, failure_class=type(exc).__name__, detail=str(exc)[:200])
-                raise
-            finally:
-                if cancelled or timed_out or send_failed:
-                    # #554 defect 2: tell Pi to stop generating tokens / executing
-                    # tools when the non-streaming turn ends without a clean
-                    # agent_settled (drain timeout) or is cancelled mid-drain — a
-                    # retry otherwise duplicates side effects. #790: a failed
-                    # prompt RPC (send_failed) must abort for the same reason
-                    # (B-6, mirroring stream_prompt). Mirrors stream_prompt's
-                    # finally guard; abort() is lock-free by design, so it is
-                    # safe to call while the lock is still held.
-                    try:
-                        await asyncio.wait_for(
-                            asyncio.shield(self._abort_on_disconnect(turn_sid)),
-                            timeout=5.0,
-                        )
-                    except (asyncio.TimeoutError, asyncio.CancelledError):
-                        pass
-                    except Exception as e:  # noqa: BLE001
-                        logger.warning("[PiBridge] abort-on-failed-turn (turn=%s): %s", turn_sid, e)
-                if tracker_task_id:
                     try:
                         from app.services.chat.engine_instance import try_get_chat_engine
                         engine = try_get_chat_engine()
                         if engine is None:
                             raise RuntimeError("ChatEngine not initialized")
-                        if cancelled:
-                            engine.tracker.cancel(tracker_task_id)
-                        elif timed_out or send_failed:
-                            engine.tracker.fail_task(tracker_task_id, "turn failed or timed out")
-                        else:
-                            engine.tracker.complete_task(tracker_task_id)
+                        tracker_task = engine.tracker.create(turn_sid, message)
+                        tracker_task_id = tracker_task.id
                     except Exception:
                         pass
-                _cleanup_turn_state(turn_sid)
-                # Clear the active-turn markers before releasing the lock.
-                self._active_turn_sid = None
-                _active_turn_token = None
-                await unregister_active_pi_turn(turn_sid, turn_id)
-                _active_turn_turn_id = None
-                _active_turn_run_id = None
-                _active_turn_session_id = None
-                self._lock.release()
-                rt_ev.mark_ended()
-                emit_turn_summary(rt_ev)
-                TURN_EVIDENCE.remove(turn_id)
+
+                    # Drop any residual events from a prior turn before sending, so they
+                    # cannot be attributed to this turn.
+                    await self._drain_stale_events()
+                    data["message"] = await bind_turn_prompt(
+                        message, turn_token, turn_sid, cartography_context or "",
+                        env_block=env_block or "",
+                    )
+                    try:
+                        await self._rpc.request("prompt", data)
+                    except PiRpcError as send_exc:
+                        # #790 (B-6 parity with stream_prompt's ``send_failed``): the
+                        # prompt RPC itself raised. Pi may already have started the
+                        # turn and its tools, so the finally MUST abort — without it
+                        # a retry duplicates side effects while this caller already
+                        # returned an error.
+                        send_failed = True
+                        rt_ev.settle(
+                            Outcome.FAILED,
+                            failure_class="pi_send_error",
+                            detail=str(send_exc)[:200],
+                        )
+                        raise
+
+                    # Drain events from the queue (non-streaming mode).
+                    # audit #816: message_update carries the ACCUMULATED partial
+                    # snapshot — appending per event duplicated content O(n²).
+                    # Keep only the latest snapshot; a non-retrying agent_end's
+                    # messages[] list is the authoritative final text and overrides
+                    # it. #855: agent_end is NOT the turn terminator — the vendor
+                    # auto-retries behind willRetry=true and may continue even a
+                    # willRetry=false run (compaction overflow recovery / queued
+                    # follow-ups). The turn ends on agent_settled only, mirroring
+                    # the vendor RpcClient.waitForIdle contract.
+                    final_text = ""
+                    _drained_complete = False
+                    drain_started = time.monotonic()
+                    last_event_at = drain_started
+                    process_died = False
+                    # #1069(A-5): 与 stream_prompt 同款 MagicMock 容错 —— 测试桩的
+                    # process_died_event 可能不是 asyncio.Event，回退为永不置位。
+                    process_died_event = getattr(self._rpc, "process_died_event", None)
+                    if not isinstance(process_died_event, asyncio.Event):
+                        process_died_event = asyncio.Event()
+                    while True:
+                        # #786: keep draining while events keep arriving. A single
+                        # expired wait is NOT a turn failure — declare a stall only
+                        # after CONTINUOUS silence reaching the stream path's stall
+                        # budget (PI_EVENT_STREAM_TIMEOUT) or the bounded total-turn
+                        # deadline, mirroring stream_prompt's silence accumulation.
+                        now = time.monotonic()
+                        remaining_stall = PI_EVENT_STREAM_TIMEOUT - (now - last_event_at)
+                        remaining_total = PI_TURN_TOTAL_TIMEOUT - (now - drain_started)
+                        wait_budget = min(
+                            PI_EVENT_DRAIN_TIMEOUT, remaining_stall, remaining_total
+                        )
+                        if wait_budget <= 0:
+                            timed_out = True
+                            break
+                        # #1069(A-5): 与 stream_prompt 同款进程死亡看护 —— 此前
+                        # 非流式 prompt 在子进程崩溃后只能挂满 stall 预算才报错。
+                        get_task = asyncio.ensure_future(self._rpc.events.get())
+                        died_task = asyncio.ensure_future(process_died_event.wait())
+                        try:
+                            done, _ = await asyncio.wait(
+                                {get_task, died_task},
+                                timeout=wait_budget,
+                                return_when=asyncio.FIRST_COMPLETED,
+                            )
+                            if died_task in done:
+                                process_died = True
+                                break
+                            if get_task in done:
+                                event = get_task.result()
+                                last_event_at = time.monotonic()
+                                event_type = event.get("type")
+                                if event_type == "agent_settled":
+                                    _drained_complete = True
+                                    break
+                                if event_type == "agent_end":
+                                    # #855: stash the authoritative final text only from
+                                    # a non-retrying agent_end; a willRetry=true end
+                                    # carries the transient error message, not the turn
+                                    # outcome — the retried run supersedes it.
+                                    if not event.get("willRetry"):
+                                        end_text = _extract_text_from_event(event)
+                                        if end_text:
+                                            final_text = end_text
+                                else:
+                                    text = _extract_text_from_event(event)
+                                    if text:
+                                        final_text = text
+                            else:
+                                # 超时且两任务都未完成 —— 连续静默/总预算检查
+                                if (
+                                    time.monotonic() - last_event_at >= PI_EVENT_STREAM_TIMEOUT
+                                    or time.monotonic() - drain_started >= PI_TURN_TOTAL_TIMEOUT
+                                ):
+                                    timed_out = True
+                                    break
+                        finally:
+                            for _t in (get_task, died_task):
+                                if not _t.done():
+                                    _t.cancel()
+                    # Best-effort: drain any leftover events so the next turn starts clean.
+                    await self._drain_remaining_turn_events()
+                    if process_died:
+                        # 子进程死亡：reader 的 finally 已失败所有 pending future；
+                        # 无需 abort RPC（进程已不在），外层 finally 会按需 respawn。
+                        rt_ev.settle(Outcome.FAILED, failure_class="process_died")
+                        raise PiRpcError(
+                            "Pi subprocess died mid-turn (non-streaming prompt); "
+                            "the turn did not complete."
+                        )
+                    if timed_out:
+                        # #554 defect 2: a drain that timed out without agent_settled
+                        # is a PARTIAL turn. Previously the caller received a 200 with
+                        # truncated content and NO abort RPC — Pi kept generating
+                        # tokens and executing tools (up to the 300s RPC timeout)
+                        # while the client believed the turn succeeded. Surface an
+                        # error instead; the finally below sends the abort RPC
+                        # (mirrors stream_prompt's stall handling). First-win settle
+                        # keeps this "drain_timeout" classification over the generic
+                        # failure_class in the except handler below.
+                        rt_ev.settle(Outcome.FAILED, failure_class="drain_timeout")
+                        raise PiRpcError(
+                            f"Pi agent did not emit agent_settled (continuous silence exceeded "
+                            f"{PI_EVENT_STREAM_TIMEOUT}s or the turn exceeded "
+                            f"{PI_TURN_TOTAL_TIMEOUT}s; event-drain timeout); "
+                            "the turn has been aborted."
+                        )
+                    # Only a clean agent_settled reaches this point — a timeout
+                    # already raised above, so PARTIAL is no longer reachable.
+                    rt_ev.settle(Outcome.SUCCEEDED)
+                except asyncio.CancelledError:
+                    cancelled = True
+                    rt_ev.settle(Outcome.CANCELLED)
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    rt_ev.settle(Outcome.FAILED, failure_class=type(exc).__name__, detail=str(exc)[:200])
+                    raise
+                finally:
+                    if cancelled or timed_out or send_failed:
+                        # #554 defect 2: tell Pi to stop generating tokens / executing
+                        # tools when the non-streaming turn ends without a clean
+                        # agent_settled (drain timeout) or is cancelled mid-drain — a
+                        # retry otherwise duplicates side effects. #790: a failed
+                        # prompt RPC (send_failed) must abort for the same reason
+                        # (B-6, mirroring stream_prompt). Mirrors stream_prompt's
+                        # finally guard; abort() is lock-free by design, so it is
+                        # safe to call while the lock is still held.
+                        try:
+                            await asyncio.wait_for(
+                                asyncio.shield(self._abort_on_disconnect(turn_sid)),
+                                timeout=5.0,
+                            )
+                        except (asyncio.TimeoutError, asyncio.CancelledError):
+                            pass
+                        except Exception as e:  # noqa: BLE001
+                            logger.warning("[PiBridge] abort-on-failed-turn (turn=%s): %s", turn_sid, e)
+                    if tracker_task_id:
+                        try:
+                            from app.services.chat.engine_instance import try_get_chat_engine
+                            engine = try_get_chat_engine()
+                            if engine is None:
+                                raise RuntimeError("ChatEngine not initialized")
+                            if cancelled:
+                                engine.tracker.cancel(tracker_task_id)
+                            elif timed_out or send_failed:
+                                engine.tracker.fail_task(tracker_task_id, "turn failed or timed out")
+                            else:
+                                engine.tracker.complete_task(tracker_task_id)
+                        except Exception:
+                            pass
+                    _cleanup_turn_state(turn_sid)
+                    # Clear the active-turn markers before releasing the lock.
+                    self._active_turn_sid = None
+                    _active_turn_token = None
+                    _active_turn_turn_id = None
+                    _active_turn_run_id = None
+                    _active_turn_session_id = None
+                    # #1108 INV-P4: release the lease BEFORE the unregister await —
+                    # the release is synchronous (uncancellable) and the unregister
+                    # is a best-effort shielded call, so a re-delivered
+                    # CancelledError during Redis I/O can no longer skip the
+                    # release. The outer finally's backstop release is a no-op then.
+                    self._release_turn_lease(lease)
+                    await self._safe_unregister_active_pi_turn(turn_sid, turn_id)
+                    rt_ev.mark_ended()
+                    emit_turn_summary(rt_ev)
+                    TURN_EVIDENCE.remove(turn_id)
+        finally:
+            # #1108 INV-P1: backstop — whatever happened above (including a
+            # cancellation delivered inside the inner finally before its own
+            # release), the lease is released here exactly once.
+            self._release_turn_lease(lease)
 
         return {
             "sessionId": turn_sid,
@@ -1588,396 +1687,424 @@ class PiBridge:
             # connection before their turn even started. Poll the lock and emit
             # a keepalive SSE comment (ignored by the client parser, bytes on
             # the wire) at the heartbeat cadence until acquired.
+            # #1108: acquisition mints an explicit ownership lease; everything
+            # after it (register included — INV-P3) sits inside a try whose
+            # outer-finally backstop releases the lease, so a cancellation
+            # delivered at ANY await below can no longer strand the lock.
             while True:
                 try:
-                    await asyncio.wait_for(self._lock.acquire(), timeout=PI_HEARTBEAT_INTERVAL)
+                    lease = await asyncio.wait_for(
+                        self._acquire_turn_lease(turn_id, turn_sid),
+                        timeout=PI_HEARTBEAT_INTERVAL,
+                    )
                     break
                 except asyncio.TimeoutError:
                     yield ": keepalive\n\n"
-            _session_executed_sets.pop(turn_sid, None)
-            _clear_dispatch_cache(turn_sid)
-            cancelled = False
-            timed_out = False
-            send_failed = False
-            # G: set True when the pump observes the Pi subprocess dying mid-stream
-            # (see the process_died_event watcher below). Initialized here so the
-            # finally can read it even on the early-return send-failure path.
-            process_died = False
-            # F5/F24: publish the active turn's identity + cancellation token while
-            # the lock is held — abort() reads the sid for session scoping,
-            # dispatch_tool binds the token via use_token. Cleared in the finally.
-            self._active_turn_sid = turn_sid
-            await register_active_pi_turn(turn_sid, turn_id)
-            _active_turn_token = CancellationToken(job_id=turn_id)
-            _active_turn_turn_id = turn_id
-            _active_turn_run_id = run_id
-            _active_turn_session_id = turn_sid or None
-
-            tracker_task_id = None
             try:
-                from app.services.chat.engine_instance import try_get_chat_engine
-                engine = try_get_chat_engine()
-                if engine is None:
-                    raise RuntimeError("ChatEngine not initialized")
-                tracker_task = engine.tracker.create(turn_sid, message)
-                tracker_task_id = tracker_task.id
-            except Exception:
-                pass
+                _session_executed_sets.pop(turn_sid, None)
+                _clear_dispatch_cache(turn_sid)
+                cancelled = False
+                timed_out = False
+                send_failed = False
+                # G: set True when the pump observes the Pi subprocess dying mid-stream
+                # (see the process_died_event watcher below). Initialized here so the
+                # finally can read it even on the early-return send-failure path.
+                process_died = False
+                # #1108: initialize BEFORE register — a register failure must
+                # not leave the finally referencing an unbound local.
+                tracker_task_id = None
+                # F5/F24: publish the active turn's identity + cancellation token while
+                # the lock is held — abort() reads the sid for session scoping,
+                # dispatch_tool binds the token via use_token. Cleared in the finally.
+                self._active_turn_sid = turn_sid
+                # #1108 INV-P3: register sits INSIDE the lease-protected try —
+                # a cancellation/Redis failure during registration is funneled
+                # into the finally (abort + release) instead of leaking the lock.
+                await register_active_pi_turn(turn_sid, turn_id)
+                _active_turn_token = CancellationToken(job_id=turn_id)
+                _active_turn_turn_id = turn_id
+                _active_turn_run_id = run_id
+                _active_turn_session_id = turn_sid or None
 
-            try:
-                # Drop residual events from a prior turn so they can't be dequeued
-                # and attributed to this session.
-                await self._drain_stale_events()
-                data["message"] = await bind_turn_prompt(
-                    message, turn_token, turn_sid, cartography_context or "",
-                    env_block=env_block or "",
-                )
-
-                # Send prompt command
                 try:
-                    await self._rpc.request("prompt", data)
-                except PiRpcError as e:
-                    logger.error(f"[PiBridge] stream_prompt send failed: {e}")
-                    send_failed = True
-                    yield sse_event("task_error", {
+                    from app.services.chat.engine_instance import try_get_chat_engine
+                    engine = try_get_chat_engine()
+                    if engine is None:
+                        raise RuntimeError("ChatEngine not initialized")
+                    tracker_task = engine.tracker.create(turn_sid, message)
+                    tracker_task_id = tracker_task.id
+                except Exception:
+                    pass
+
+                try:
+                    # Drop residual events from a prior turn so they can't be dequeued
+                    # and attributed to this session.
+                    await self._drain_stale_events()
+                    data["message"] = await bind_turn_prompt(
+                        message, turn_token, turn_sid, cartography_context or "",
+                        env_block=env_block or "",
+                    )
+
+                    # Send prompt command
+                    try:
+                        await self._rpc.request("prompt", data)
+                    except PiRpcError as e:
+                        logger.error(f"[PiBridge] stream_prompt send failed: {e}")
+                        send_failed = True
+                        yield sse_event("task_error", {
+                            "task_id": turn_sid,
+                            "session_id": turn_sid,
+                            "turn_id": turn_id,
+                            "error": str(e),
+                        })
+                        yield sse_event("done", {"session_id": turn_sid})
+                        return
+
+                    # Stream events from Pi. task_start is a bridge-emitted structural
+                    # event (not a Pi event), so first_event is NOT marked here — it is
+                    # marked on the first REAL Pi event below, so first_event/TTFT-proxy
+                    # measures prompt→first-Pi-event, not lock+drain+RPC-send.
+                    yield sse_event("task_start", {
                         "task_id": turn_sid,
                         "session_id": turn_sid,
                         "turn_id": turn_id,
-                        "error": str(e),
+                        "agent_runtime": "pi",
                     })
-                    yield sse_event("done", {"session_id": turn_sid})
-                    return
 
-                # Stream events from Pi. task_start is a bridge-emitted structural
-                # event (not a Pi event), so first_event is NOT marked here — it is
-                # marked on the first REAL Pi event below, so first_event/TTFT-proxy
-                # measures prompt→first-Pi-event, not lock+drain+RPC-send.
-                yield sse_event("task_start", {
-                    "task_id": turn_sid,
-                    "session_id": turn_sid,
-                    "turn_id": turn_id,
-                    "agent_runtime": "pi",
-                })
+                    # G: watch the subprocess death signal alongside the event queue so
+                    # a mid-stream Pi crash ends the turn promptly (error + done +
+                    # no abort) instead of parking on heartbeat silence for the whole
+                    # PI_EVENT_STREAM_TIMEOUT=180s stall budget and then retrying with
+                    # duplicate side effects. Bare MagicMock rpc fakes (used by other
+                    # test suites) auto-create a MagicMock for ``process_died_event``,
+                    # which is not awaitable — fall back to a never-set event so those
+                    # fakes degrade to the old heartbeat-only behavior.
+                    process_died_event = getattr(self._rpc, "process_died_event", None)
+                    if not isinstance(process_died_event, asyncio.Event):
+                        process_died_event = asyncio.Event()
 
-                # G: watch the subprocess death signal alongside the event queue so
-                # a mid-stream Pi crash ends the turn promptly (error + done +
-                # no abort) instead of parking on heartbeat silence for the whole
-                # PI_EVENT_STREAM_TIMEOUT=180s stall budget and then retrying with
-                # duplicate side effects. Bare MagicMock rpc fakes (used by other
-                # test suites) auto-create a MagicMock for ``process_died_event``,
-                # which is not awaitable — fall back to a never-set event so those
-                # fakes degrade to the old heartbeat-only behavior.
-                process_died_event = getattr(self._rpc, "process_died_event", None)
-                if not isinstance(process_died_event, asyncio.Event):
-                    process_died_event = asyncio.Event()
-
-                silence_seconds = 0.0
-                # #982: whole-turn wall-clock budget. The stall budget below only
-                # covers CONTINUOUS silence — a drip-feed event stream (e.g.
-                # tool_execution_start/end pairs every <PI_EVENT_STREAM_TIMEOUT)
-                # could previously keep a dead-looped turn alive forever. Same
-                # env constant as the non-streaming drain (PI_TURN_TOTAL_TIMEOUT).
-                turn_started = time.monotonic()
-                # "" | "stall" | "total" — distinguishes the two timeout budgets
-                # in the error payload and the failure classification.
-                timeout_reason = ""
-                # audit #820: turn-scoped counters injected into the mapper's
-                # agent_end handler (task_complete step_count/summary).
-                _turn_tool_steps = 0
-                _turn_final_text = ""
-                get_task = asyncio.ensure_future(self._rpc.events.get())
-                died_task = asyncio.ensure_future(process_died_event.wait())
-                pending = {get_task, died_task}
-                try:
-                    while True:
-                        done, pending = await asyncio.wait(
-                            pending, timeout=PI_HEARTBEAT_INTERVAL,
-                            return_when=asyncio.FIRST_COMPLETED,
-                        )
-                        # #982: the total-budget check runs EVERY iteration, not
-                        # only in the silence branch — a steady drip of events
-                        # (each resetting silence_seconds) must not exempt a turn
-                        # from the whole-turn deadline.
-                        if time.monotonic() - turn_started >= PI_TURN_TOTAL_TIMEOUT:
-                            timed_out = True
-                            timeout_reason = "total"
-                            break
-                        if died_task in done:
-                            # Pi subprocess died mid-stream: the reader's finally
-                            # already failed every pending future; end the turn now
-                            # (error + done below), no abort RPC needed.
-                            process_died = True
-                            break
-                        if get_task in done:
-                            event = get_task.result()
-                            silence_seconds = 0.0
-                            rt_ev.mark_first_event()
-                            # audit #820: truthful task_complete counters — count
-                            # executed tool steps and accumulate the final text
-                            # the vendor streams (message.content snapshots).
-                            if event.get("type") == "tool_execution_end":
-                                _turn_tool_steps += 1
-                            if event.get("type") == "message_update":
-                                _snap = _extract_text_from_event(event)
-                                if _snap:
-                                    _turn_final_text = _snap
-                            # ADR-0081：turn 收尾终验 —— 在 task_complete 映射
-                            # 之前运行，兜住不经 SessionPlan 的展示类工具与
-                            # finalization repair 之后的新 desired state；结果
-                            # 经 turn_stats 进入 task_complete 负载（additive），
-                            # 并以独立 map_finalization SSE 事件披露给前端
-                            # finalizer（视口校验/修复在前端）。
-                            _turn_map_product = None
-                            if event.get("type") == "agent_settled":
-                                try:
-                                    from app.services.gis_harness.map_completion import (
-                                        current_mapspec_for_disclosure as _finalization_spec_snapshot,
-                                        finalization_sse_payload,
-                                        maybe_finalize_map_product,
-                                        read_stored_map_product,
-                                    )
-                                    _completion = await maybe_finalize_map_product(
-                                        turn_sid, reason="turn_settled"
-                                    )
-                                    if _completion is not None and _completion.status != "pending":
-                                        _spec_snapshot = (None, None)
-                                        if _completion.repairs_applied:
-                                            _spec_snapshot = await _finalization_spec_snapshot(turn_sid)
-                                        _turn_map_product = finalization_sse_payload(
-                                            _completion,
-                                            turn_sid,
-                                            mapspec=_spec_snapshot[0],
-                                            mutation_revision=_spec_snapshot[1],
-                                        )
-                                    elif _completion is None:
-                                        # 幂等门跳过（complete+revision 一致）→
-                                        # task_complete 仍披露已存储的完成态。
-                                        _turn_map_product = await read_stored_map_product(
-                                            turn_sid
-                                        )
-                                except Exception:  # noqa: BLE001 — 增值信号
-                                    logger.exception(
-                                        "[PiBridge] turn-settle finalization failed session=%s",
-                                        turn_sid,
-                                    )
-                            sse = map_event_to_sse(
-                                event,
-                                turn_sid,
-                                cache_lookup=lambda tool_call_id, _sid=turn_sid: get_cached_dispatch_result(
-                                    tool_call_id, _sid
-                                ),
-                                turn_stats=lambda: {
-                                    "tool_step_count": _turn_tool_steps,
-                                    "final_text": _turn_final_text,
-                                    "map_product": _turn_map_product,
-                                },
+                    silence_seconds = 0.0
+                    # #982: whole-turn wall-clock budget. The stall budget below only
+                    # covers CONTINUOUS silence — a drip-feed event stream (e.g.
+                    # tool_execution_start/end pairs every <PI_EVENT_STREAM_TIMEOUT)
+                    # could previously keep a dead-looped turn alive forever. Same
+                    # env constant as the non-streaming drain (PI_TURN_TOTAL_TIMEOUT).
+                    turn_started = time.monotonic()
+                    # "" | "stall" | "total" — distinguishes the two timeout budgets
+                    # in the error payload and the failure classification.
+                    timeout_reason = ""
+                    # audit #820: turn-scoped counters injected into the mapper's
+                    # agent_end handler (task_complete step_count/summary).
+                    _turn_tool_steps = 0
+                    _turn_final_text = ""
+                    get_task = asyncio.ensure_future(self._rpc.events.get())
+                    died_task = asyncio.ensure_future(process_died_event.wait())
+                    pending = {get_task, died_task}
+                    try:
+                        while True:
+                            done, pending = await asyncio.wait(
+                                pending, timeout=PI_HEARTBEAT_INTERVAL,
+                                return_when=asyncio.FIRST_COMPLETED,
                             )
-                            # V3: 给原始 SSE 事件记录补 turn/run correlation（显式透传）。
-                            # B-8: record against THIS turn's session harness, not the
-                            # module-global "most recently created" harness — otherwise
-                            # two interleaved sessions misattribute one session's events
-                            # to the other (record_sse_event stamps self.session_id).
-                            turn_harness = _get_session_harness(turn_sid)
-                            if turn_harness is not None:
-                                turn_harness.record_sse_event({
-                                    **event, "run_id": run_id, "turn_id": turn_id,
-                                })
-                            if event.get("type") == "tool_execution_end":
-                                extra_plan = take_session_plan_sse(
-                                    str(event.get("toolCallId") or ""), turn_sid,
-                                )
-                                if extra_plan:
-                                    sse = (sse or "") + extra_plan
-                            if sse:
-                                rt_ev.inc_sse_event()
-                                # V3: step_result 负载加 additive turn_id 字段（前端 ack 时
-                                # 通过 correlation 回传，闭环才完整）。
-                                yield _inject_turn_id(sse, turn_id)
-                            if event.get("type") == "agent_end":
-                                # #855: agent_end is NOT final — willRetry=true
-                                # precedes a vendor auto-retry, and even
-                                # willRetry=false may be followed by a compaction
-                                # or queued-message continuation run. Stash the
-                                # authoritative final text only from a
-                                # non-retrying agent_end (audit #818/#816); the
-                                # stream ends on agent_settled below, matching
-                                # vendor RpcClient.waitForIdle. task_complete is
-                                # emitted by the mapper on agent_settled.
-                                if not event.get("willRetry"):
-                                    _end_text = _extract_text_from_event(event)
-                                    if _end_text:
-                                        _turn_final_text = _end_text
-                            elif event.get("type") == "agent_settled":
-                                if _turn_map_product is not None:
-                                    yield sse_event(
-                                        "map_finalization", _turn_map_product
-                                    )
-                                break
-                            # Re-arm the queue waiter for the next event; the
-                            # completed waiter task is dropped from `pending` by
-                            # the next asyncio.wait round.
-                            get_task = asyncio.ensure_future(self._rpc.events.get())
-                            pending.add(get_task)
-                        else:
-                            # Neither an event nor a death within one heartbeat
-                            # interval -> accumulate silence, keepalive.
-                            silence_seconds += PI_HEARTBEAT_INTERVAL
-                            if silence_seconds >= PI_EVENT_STREAM_TIMEOUT:
-                                # True stall: no Pi event for the whole stall budget.
+                            # #982: the total-budget check runs EVERY iteration, not
+                            # only in the silence branch — a steady drip of events
+                            # (each resetting silence_seconds) must not exempt a turn
+                            # from the whole-turn deadline.
+                            if time.monotonic() - turn_started >= PI_TURN_TOTAL_TIMEOUT:
                                 timed_out = True
-                                timeout_reason = "stall"
+                                timeout_reason = "total"
                                 break
-                            # Keepalive: an SSE comment line (``: ...``) is ignored by
-                            # the client parser and never enters chat history or the
-                            # LLM context, but it produces bytes on the wire so proxies
-                            # and browsers see activity and don't drop the connection.
-                            yield ": keepalive\n\n"
-                finally:
-                    # G: cancel the parked wait tasks so no queue-get / death-wait
-                    # task outlives the turn; await their completion so nothing
-                    # lingers past loop teardown. Also covers generator
-                    # cancellation (client disconnect) mid-await.
-                    for task in pending:
-                        task.cancel()
-                    if pending:
-                        await asyncio.gather(*pending, return_exceptions=True)
+                            if died_task in done:
+                                # Pi subprocess died mid-stream: the reader's finally
+                                # already failed every pending future; end the turn now
+                                # (error + done below), no abort RPC needed.
+                                process_died = True
+                                break
+                            if get_task in done:
+                                event = get_task.result()
+                                silence_seconds = 0.0
+                                rt_ev.mark_first_event()
+                                # audit #820: truthful task_complete counters — count
+                                # executed tool steps and accumulate the final text
+                                # the vendor streams (message.content snapshots).
+                                if event.get("type") == "tool_execution_end":
+                                    _turn_tool_steps += 1
+                                if event.get("type") == "message_update":
+                                    _snap = _extract_text_from_event(event)
+                                    if _snap:
+                                        _turn_final_text = _snap
+                                # ADR-0081：turn 收尾终验 —— 在 task_complete 映射
+                                # 之前运行，兜住不经 SessionPlan 的展示类工具与
+                                # finalization repair 之后的新 desired state；结果
+                                # 经 turn_stats 进入 task_complete 负载（additive），
+                                # 并以独立 map_finalization SSE 事件披露给前端
+                                # finalizer（视口校验/修复在前端）。
+                                _turn_map_product = None
+                                if event.get("type") == "agent_settled":
+                                    try:
+                                        from app.services.gis_harness.map_completion import (
+                                            current_mapspec_for_disclosure as _finalization_spec_snapshot,
+                                            finalization_sse_payload,
+                                            maybe_finalize_map_product,
+                                            read_stored_map_product,
+                                        )
+                                        _completion = await maybe_finalize_map_product(
+                                            turn_sid, reason="turn_settled"
+                                        )
+                                        if _completion is not None and _completion.status != "pending":
+                                            _spec_snapshot = (None, None)
+                                            if _completion.repairs_applied:
+                                                _spec_snapshot = await _finalization_spec_snapshot(turn_sid)
+                                            _turn_map_product = finalization_sse_payload(
+                                                _completion,
+                                                turn_sid,
+                                                mapspec=_spec_snapshot[0],
+                                                mutation_revision=_spec_snapshot[1],
+                                            )
+                                        elif _completion is None:
+                                            # 幂等门跳过（complete+revision 一致）→
+                                            # task_complete 仍披露已存储的完成态。
+                                            _turn_map_product = await read_stored_map_product(
+                                                turn_sid
+                                            )
+                                    except Exception:  # noqa: BLE001 — 增值信号
+                                        logger.exception(
+                                            "[PiBridge] turn-settle finalization failed session=%s",
+                                            turn_sid,
+                                        )
+                                sse = map_event_to_sse(
+                                    event,
+                                    turn_sid,
+                                    cache_lookup=lambda tool_call_id, _sid=turn_sid: get_cached_dispatch_result(
+                                        tool_call_id, _sid
+                                    ),
+                                    turn_stats=lambda: {
+                                        "tool_step_count": _turn_tool_steps,
+                                        "final_text": _turn_final_text,
+                                        "map_product": _turn_map_product,
+                                    },
+                                )
+                                # V3: 给原始 SSE 事件记录补 turn/run correlation（显式透传）。
+                                # B-8: record against THIS turn's session harness, not the
+                                # module-global "most recently created" harness — otherwise
+                                # two interleaved sessions misattribute one session's events
+                                # to the other (record_sse_event stamps self.session_id).
+                                turn_harness = _get_session_harness(turn_sid)
+                                if turn_harness is not None:
+                                    turn_harness.record_sse_event({
+                                        **event, "run_id": run_id, "turn_id": turn_id,
+                                    })
+                                if event.get("type") == "tool_execution_end":
+                                    extra_plan = take_session_plan_sse(
+                                        str(event.get("toolCallId") or ""), turn_sid,
+                                    )
+                                    if extra_plan:
+                                        sse = (sse or "") + extra_plan
+                                if sse:
+                                    rt_ev.inc_sse_event()
+                                    # V3: step_result 负载加 additive turn_id 字段（前端 ack 时
+                                    # 通过 correlation 回传，闭环才完整）。
+                                    yield _inject_turn_id(sse, turn_id)
+                                if event.get("type") == "agent_end":
+                                    # #855: agent_end is NOT final — willRetry=true
+                                    # precedes a vendor auto-retry, and even
+                                    # willRetry=false may be followed by a compaction
+                                    # or queued-message continuation run. Stash the
+                                    # authoritative final text only from a
+                                    # non-retrying agent_end (audit #818/#816); the
+                                    # stream ends on agent_settled below, matching
+                                    # vendor RpcClient.waitForIdle. task_complete is
+                                    # emitted by the mapper on agent_settled.
+                                    if not event.get("willRetry"):
+                                        _end_text = _extract_text_from_event(event)
+                                        if _end_text:
+                                            _turn_final_text = _end_text
+                                elif event.get("type") == "agent_settled":
+                                    if _turn_map_product is not None:
+                                        yield sse_event(
+                                            "map_finalization", _turn_map_product
+                                        )
+                                    break
+                                # Re-arm the queue waiter for the next event; the
+                                # completed waiter task is dropped from `pending` by
+                                # the next asyncio.wait round.
+                                get_task = asyncio.ensure_future(self._rpc.events.get())
+                                pending.add(get_task)
+                            else:
+                                # Neither an event nor a death within one heartbeat
+                                # interval -> accumulate silence, keepalive.
+                                silence_seconds += PI_HEARTBEAT_INTERVAL
+                                if silence_seconds >= PI_EVENT_STREAM_TIMEOUT:
+                                    # True stall: no Pi event for the whole stall budget.
+                                    timed_out = True
+                                    timeout_reason = "stall"
+                                    break
+                                # Keepalive: an SSE comment line (``: ...``) is ignored by
+                                # the client parser and never enters chat history or the
+                                # LLM context, but it produces bytes on the wire so proxies
+                                # and browsers see activity and don't drop the connection.
+                                yield ": keepalive\n\n"
+                    finally:
+                        # G: cancel the parked wait tasks so no queue-get / death-wait
+                        # task outlives the turn; await their completion so nothing
+                        # lingers past loop teardown. Also covers generator
+                        # cancellation (client disconnect) mid-await.
+                        for task in pending:
+                            task.cancel()
+                        if pending:
+                            await asyncio.gather(*pending, return_exceptions=True)
 
-                if timed_out:
-                    if timeout_reason == "total":
-                        yield sse_event("error", {
-                            "session_id": turn_sid,
-                            "error": (
-                                f"Pi agent turn exceeded the total budget of "
-                                f"{int(PI_TURN_TOTAL_TIMEOUT)}s — events were still "
-                                "flowing but the whole turn ran too long. The turn "
-                                "has been aborted; please retry with a narrower request."
-                            ),
-                        })
-                    else:
-                        yield sse_event("error", {
-                            "session_id": turn_sid,
-                            "error": f"Pi agent stalled — no events for {int(PI_EVENT_STREAM_TIMEOUT)}s. The agent may be stuck; please retry.",
-                        })
-                if process_died:
-                    yield sse_event("error", {
-                        "session_id": turn_sid,
-                        "error": "Pi agent process exited unexpectedly mid-stream. The agent's tools may have run partially; please retry.",
-                    })
-
-                yield sse_event("done", {"session_id": turn_sid})
-            except (asyncio.CancelledError, GeneratorExit):
-                # Client disconnected (page close / new send / session switch /
-                # network drop). Re-raise after flagging so the finally sends the
-                # abort RPC — otherwise Pi keeps running against an abandoned turn.
-                cancelled = True
-                raise
-            finally:
-                if process_died:
-                    # G: the Pi subprocess is dead — the reader's finally already
-                    # failed every pending future, so an abort RPC would only
-                    # raise 'Pi process not started' (duplicate of the fast-fail).
-                    # Still ignite the turn's cancellation token so in-flight
-                    # HTTP-callback tool dispatches (bound via use_token) stop at
-                    # their next checkpoint() instead of running to completion
-                    # against a dead turn.
-                    logger.error(
-                        "[PiBridge] Pi subprocess exited mid-stream (turn=%s); "
-                        "skipping abort RPC (reader already failed pending futures)",
-                        turn_sid,
-                    )
-                    if _active_turn_token is not None:
-                        _active_turn_token.cancel("pi process exited unexpectedly")
-                elif cancelled or timed_out or send_failed:
-                    # Tell Pi to stop generating tokens / executing tools. F10:
-                    # this now covers the stall-timeout path too — previously a
-                    # stalled turn yielded error+done and returned WITHOUT the
-                    # abort RPC, so Pi kept executing tools (up to the 300s RPC
-                    # timeout) and a user retry duplicated side effects.
-                    # B-6: ``send_failed`` (the prompt RPC raised) must also
-                    # abort — Pi may already have started executing the prompt
-                    # and its tools, so without the abort a retry duplicates the
-                    # side effects (same class of bug F10 fixed for the stall).
-                    try:
-                        await asyncio.wait_for(
-                            asyncio.shield(self._abort_on_disconnect(turn_sid)),
-                            timeout=5.0,
-                        )
-                    except (asyncio.TimeoutError, asyncio.CancelledError):
-                        pass
-                    except Exception as e:  # noqa: BLE001
-                        logger.warning("[PiBridge] abort-on-disconnect failed (turn=%s): %s", turn_sid, e)
-                # Drain any leftover events so a timeout/disconnect doesn't poison
-                # the next turn. (On a normal agent_settled the queue is already
-                # empty; this is a no-op there.)
-                await self._drain_remaining_turn_events()
-                # Turn-end cleanup: drop this turn's dedup sets (incl. the "" bucket
-                # where sessionId-less Pi dispatches land) and orphaned dispatch
-                # results (written by the HTTP callback, never consumed after a
-                # disconnect). Without this they accumulate across sessions.
-                _cleanup_turn_state(turn_sid)
-                # Clear the active-turn markers AFTER the abort above (abort reads
-                # them to cancel the token) and before releasing the lock.
-                self._active_turn_sid = None
-                _active_turn_token = None
-                _active_turn_turn_id = None
-                _active_turn_run_id = None
-                _active_turn_session_id = None
-                await unregister_active_pi_turn(turn_sid, turn_id)
-                self._lock.release()
-                # Runtime observability: settle turn outcome (cancelled ≠ failed),
-                # emit the diagnostic summary, and unregister the evidence. Order:
-                # outcome settled from flags captured above.
-                if cancelled:
-                    rt_ev.settle(Outcome.CANCELLED)
-                elif timed_out or send_failed or process_died:
                     if timed_out:
-                        # #982: distinguish whole-turn budget exhaustion from a
-                        # heartbeat stall in the failure classification.
-                        failure_class = (
-                            "pi_turn_budget" if timeout_reason == "total" else "pi_stall"
-                        )
-                    elif process_died:
-                        failure_class = "pi_process_died"
-                    else:
-                        failure_class = "pi_send_error"
-                    rt_ev.settle(Outcome.FAILED, failure_class=failure_class)
-                else:
-                    rt_ev.settle(Outcome.SUCCEEDED)
-                rt_ev.mark_ended()
-                emit_turn_summary(rt_ev)
-                TURN_EVIDENCE.remove(turn_id)
-                # audit #818: surface the turn's final transcript state to the
-                # route (persistence parity with the legacy path). Best-effort —
-                # a sink failure must never mask the stream outcome.
-                if tracker_task_id:
-                    try:
-                        from app.services.chat.engine_instance import try_get_chat_engine
-                        engine = try_get_chat_engine()
-                        if engine is None:
-                            raise RuntimeError("ChatEngine not initialized")
-                        if cancelled:
-                            engine.tracker.cancel(tracker_task_id)
-                        elif timed_out or send_failed or process_died:
-                            engine.tracker.fail_task(tracker_task_id, "stream turn failed or timed out")
+                        if timeout_reason == "total":
+                            yield sse_event("error", {
+                                "session_id": turn_sid,
+                                "error": (
+                                    f"Pi agent turn exceeded the total budget of "
+                                    f"{int(PI_TURN_TOTAL_TIMEOUT)}s — events were still "
+                                    "flowing but the whole turn ran too long. The turn "
+                                    "has been aborted; please retry with a narrower request."
+                                ),
+                            })
                         else:
-                            engine.tracker.complete_task(tracker_task_id)
-                    except Exception:
-                        pass
-                if on_turn_result is not None:
-                    try:
-                        _res = {
+                            yield sse_event("error", {
+                                "session_id": turn_sid,
+                                "error": f"Pi agent stalled — no events for {int(PI_EVENT_STREAM_TIMEOUT)}s. The agent may be stuck; please retry.",
+                            })
+                    if process_died:
+                        yield sse_event("error", {
                             "session_id": turn_sid,
-                            "turn_id": turn_id,
-                            "final_text": _turn_final_text,
-                            "completed": rt_ev.outcome.outcome == Outcome.SUCCEEDED,
-                        }
-                        _r = on_turn_result(_res)
-                        if asyncio.iscoroutine(_r):
-                            await _r
-                    except Exception as e:  # noqa: BLE001
-                        logger.warning(
-                            "[PiBridge] on_turn_result sink failed (turn=%s): %s", turn_id, e
+                            "error": "Pi agent process exited unexpectedly mid-stream. The agent's tools may have run partially; please retry.",
+                        })
+
+                    yield sse_event("done", {"session_id": turn_sid})
+                except (asyncio.CancelledError, GeneratorExit):
+                    # Client disconnected (page close / new send / session switch /
+                    # network drop). Re-raise after flagging so the finally sends the
+                    # abort RPC — otherwise Pi keeps running against an abandoned turn.
+                    cancelled = True
+                    raise
+                finally:
+                    if process_died:
+                        # G: the Pi subprocess is dead — the reader's finally already
+                        # failed every pending future, so an abort RPC would only
+                        # raise 'Pi process not started' (duplicate of the fast-fail).
+                        # Still ignite the turn's cancellation token so in-flight
+                        # HTTP-callback tool dispatches (bound via use_token) stop at
+                        # their next checkpoint() instead of running to completion
+                        # against a dead turn.
+                        logger.error(
+                            "[PiBridge] Pi subprocess exited mid-stream (turn=%s); "
+                            "skipping abort RPC (reader already failed pending futures)",
+                            turn_sid,
                         )
+                        if _active_turn_token is not None:
+                            _active_turn_token.cancel("pi process exited unexpectedly")
+                    elif cancelled or timed_out or send_failed:
+                        # Tell Pi to stop generating tokens / executing tools. F10:
+                        # this now covers the stall-timeout path too — previously a
+                        # stalled turn yielded error+done and returned WITHOUT the
+                        # abort RPC, so Pi kept executing tools (up to the 300s RPC
+                        # timeout) and a user retry duplicated side effects.
+                        # B-6: ``send_failed`` (the prompt RPC raised) must also
+                        # abort — Pi may already have started executing the prompt
+                        # and its tools, so without the abort a retry duplicates the
+                        # side effects (same class of bug F10 fixed for the stall).
+                        try:
+                            await asyncio.wait_for(
+                                asyncio.shield(self._abort_on_disconnect(turn_sid)),
+                                timeout=5.0,
+                            )
+                        except (asyncio.TimeoutError, asyncio.CancelledError):
+                            pass
+                        except Exception as e:  # noqa: BLE001
+                            logger.warning("[PiBridge] abort-on-disconnect failed (turn=%s): %s", turn_sid, e)
+                    # Drain any leftover events so a timeout/disconnect doesn't poison
+                    # the next turn. (On a normal agent_settled the queue is already
+                    # empty; this is a no-op there.)
+                    await self._drain_remaining_turn_events()
+                    # NB: _drain_remaining_turn_events contains no suspension
+                    # points (get_nowait loop only), so a re-delivered
+                    # cancellation cannot interrupt it mid-cleanup (#1108).
+                    # Turn-end cleanup: drop this turn's dedup sets (incl. the "" bucket
+                    # where sessionId-less Pi dispatches land) and orphaned dispatch
+                    # results (written by the HTTP callback, never consumed after a
+                    # disconnect). Without this they accumulate across sessions.
+                    _cleanup_turn_state(turn_sid)
+                    # Clear the active-turn markers AFTER the abort above (abort reads
+                    # them to cancel the token) and before releasing the lock.
+                    self._active_turn_sid = None
+                    _active_turn_token = None
+                    _active_turn_turn_id = None
+                    _active_turn_run_id = None
+                    _active_turn_session_id = None
+                    # #1108 INV-P4: release the lease BEFORE the unregister
+                    # await — the release is synchronous (uncancellable) and
+                    # the unregister is shielded best-effort, so a re-delivered
+                    # CancelledError during Redis I/O can no longer skip the
+                    # release and hang every session on the singleton bridge.
+                    self._release_turn_lease(lease)
+                    await self._safe_unregister_active_pi_turn(turn_sid, turn_id)
+                    # Runtime observability: settle turn outcome (cancelled ≠ failed),
+                    # emit the diagnostic summary, and unregister the evidence. Order:
+                    # outcome settled from flags captured above.
+                    if cancelled:
+                        rt_ev.settle(Outcome.CANCELLED)
+                    elif timed_out or send_failed or process_died:
+                        if timed_out:
+                            # #982: distinguish whole-turn budget exhaustion from a
+                            # heartbeat stall in the failure classification.
+                            failure_class = (
+                                "pi_turn_budget" if timeout_reason == "total" else "pi_stall"
+                            )
+                        elif process_died:
+                            failure_class = "pi_process_died"
+                        else:
+                            failure_class = "pi_send_error"
+                        rt_ev.settle(Outcome.FAILED, failure_class=failure_class)
+                    else:
+                        rt_ev.settle(Outcome.SUCCEEDED)
+                    rt_ev.mark_ended()
+                    emit_turn_summary(rt_ev)
+                    TURN_EVIDENCE.remove(turn_id)
+                    # audit #818: surface the turn's final transcript state to the
+                    # route (persistence parity with the legacy path). Best-effort —
+                    # a sink failure must never mask the stream outcome.
+                    if tracker_task_id:
+                        try:
+                            from app.services.chat.engine_instance import try_get_chat_engine
+                            engine = try_get_chat_engine()
+                            if engine is None:
+                                raise RuntimeError("ChatEngine not initialized")
+                            if cancelled:
+                                engine.tracker.cancel(tracker_task_id)
+                            elif timed_out or send_failed or process_died:
+                                engine.tracker.fail_task(tracker_task_id, "stream turn failed or timed out")
+                            else:
+                                engine.tracker.complete_task(tracker_task_id)
+                        except Exception:
+                            pass
+                    if on_turn_result is not None:
+                        try:
+                            _res = {
+                                "session_id": turn_sid,
+                                "turn_id": turn_id,
+                                "final_text": _turn_final_text,
+                                "completed": rt_ev.outcome.outcome == Outcome.SUCCEEDED,
+                            }
+                            _r = on_turn_result(_res)
+                            if asyncio.iscoroutine(_r):
+                                await _r
+                        except Exception as e:  # noqa: BLE001
+                            logger.warning(
+                                "[PiBridge] on_turn_result sink failed (turn=%s): %s", turn_id, e
+                            )
+            finally:
+                # #1108 INV-P1: backstop — whatever happened above
+                # (including a cancellation delivered inside the inner
+                # finally before its own release), the lease is released
+                # here exactly once. Owner-checked, so a stale lease from a
+                # long-gone turn can never release the CURRENT turn's lock.
+                self._release_turn_lease(lease)
 
 
 
