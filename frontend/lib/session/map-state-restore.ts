@@ -14,6 +14,7 @@
  */
 import { apiFetch } from '@/lib/api/transport';
 import { API_BASE } from '@/lib/api/config';
+import { buildMvtTileUrl } from '@/lib/map-kit/tile-url';
 import type { GeoJSONFeatureCollection, MapActionPayload } from '@/lib/types';
 import { getPendingRemoved } from '@/lib/mapspec/session-cursor';
 import { useHudStore } from '@/lib/store/useHudStore';
@@ -162,7 +163,7 @@ export function buildLayerFromRestored(
     _refId: refId,
     _descriptor: observed._descriptor,
     _tileUrl: refId
-      ? `${API_BASE}/api/v1/layers/data/${refId}/tiles/{z}/{x}/{y}.mvt?session_id=${sessionId}`
+      ? buildMvtTileUrl(refId, sessionId, observed._descriptor?.content_revision)
       : undefined,
     _mapspecFingerprint: mapspecFingerprint,
     _mapspecLayerId: observed.id,
@@ -252,7 +253,7 @@ export function syncSpecLayersToStore(
       legend_spec: layer?.legend_spec,
       _mapspecLayerId: id,
       _tileUrl: refId && sessionId
-        ? `${API_BASE}/api/v1/layers/data/${refId}/tiles/{z}/{x}/{y}.mvt?session_id=${sessionId}`
+        ? buildMvtTileUrl(refId, sessionId, layer?._descriptor?.content_revision)
         : undefined,
     });
     known.add(id);

@@ -31,6 +31,8 @@ export interface RefDescriptor {
   mvt_capable: boolean;
   estimated_bytes: number;
   content_hash: string | null;
+  /** V5-E: monotonic per-ref content revision (bumped on overwrite/rollback). */
+  content_revision?: number;
   // #668: attribute whitelist for MVT tile filtering
   filterable_fields?: string[] | null;
   raster_capable: boolean;

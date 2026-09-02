@@ -34,6 +34,10 @@ class MemorySessionStore(BaseSessionStore):
         self._map_action_events: dict[str, OrderedDict[str, dict]] = {}
         # V3 Performance: session_id -> {ref_id -> descriptor_dict}
         self._descriptors: dict[str, dict[str, Any]] = {}
+        # V5-E: session_id -> {ref_id -> int} monotonic content revision
+        # (bumped on every overwrite; lets tile URLs/descriptor consumers
+        # detect same-ref content changes — the #1112 long-term mechanism).
+        self._ref_revisions: dict[str, dict[str, int]] = {}
         # DA-P2-1：增量字节记账——session_id -> {ref_id -> bytes} 与
         # session_id -> total_bytes。此前 store() 每次对全部存量条目重估
         # 字节（O(N×budget)/次写且跑在事件循环上，200 条满员时每写一次
@@ -61,17 +65,14 @@ class MemorySessionStore(BaseSessionStore):
             self._session_order[session_id] = None
 
     @staticmethod
-    def _invalidate_derived_caches(session_id: str, *ref_ids: str) -> None:
-        """Drop every process-local cache derived from these refs (#1111 lesson).
-
-        The authoritative payload lives here; these caches are projections.
-        Forgetting one of the three was the #1111 ghost-data bug — route all
-        invalidation through this helper (V5-C will formalize the contract).
-        """
-        from app.services.mvt import spatial_index_cache, tile_lru_cache
-        for ref_id in ref_ids:
-            spatial_index_cache.invalidate_ref(session_id, ref_id)
-            tile_lru_cache.invalidate_ref(session_id, ref_id)
+    def _invalidate_derived_caches(session_id: str, *ref_ids: str, reason: str = "REPLACE") -> None:
+        """V5-C: delegate to the unified ref lifecycle contract."""
+        from app.services.ref_lifecycle import invalidate_ref_caches, RefInvalidationReason
+        invalidate_ref_caches(
+            session_id, list(ref_ids),
+            reason=RefInvalidationReason(reason),
+            include_payload_cache=False,  # in-process store IS the payload truth
+        )
 
     async def store(self, session_id: str, data: Any, prefix: str = "data") -> str:
         """存储数据并返回生成的游标 ID"""
@@ -119,12 +120,14 @@ class MemorySessionStore(BaseSessionStore):
             self._remove_alias_by_ref(session_id, oldest_ref)
             if session_id in self._descriptors:
                 self._descriptors[session_id].pop(oldest_ref, None)
-            self._invalidate_derived_caches(session_id, oldest_ref)
+            self._ref_revisions.get(session_id, {}).pop(oldest_ref, None)
+            self._invalidate_derived_caches(session_id, oldest_ref, reason='EVICT')
             logger.debug(f"Session {session_id}: evicted {oldest_ref} (capacity={self.capacity})")
 
         session_cache[ref_id] = data
         sizes[ref_id] = _new_size
         self._session_bytes[session_id] = total_bytes + _new_size
+        self._ref_revisions.setdefault(session_id, {})[ref_id] = 1
         self._touch_session(session_id)
 
         # V3 Performance: compute descriptor once at store time so every subsequent
@@ -172,7 +175,10 @@ class MemorySessionStore(BaseSessionStore):
                 self._session_bytes.get(session_id, 0) - sizes.get(ref_id, 0) + new_size
             )
             sizes[ref_id] = new_size
-        self._invalidate_derived_caches(session_id, ref_id)
+        self._invalidate_derived_caches(session_id, ref_id, reason='OVERWRITE')
+        # V5-E: same ref identity, new content — bump the revision.
+        revs = self._ref_revisions.setdefault(session_id, {})
+        revs[ref_id] = revs.get(ref_id, 1) + 1
         # #1113 P3-5: recompute the descriptor against the new payload (same
         # as store()). Before this fix overwrite left the OLD payload's stale
         # descriptor in place; a plain pop would be worse still — Memory
@@ -210,7 +216,8 @@ class MemorySessionStore(BaseSessionStore):
             self._session_bytes[session_id] = (
                 self._session_bytes.get(session_id, 0) - sizes.pop(ref_id)
             )
-        self._invalidate_derived_caches(session_id, ref_id)
+        self._invalidate_derived_caches(session_id, ref_id, reason='DELETE')
+        self._ref_revisions.get(session_id, {}).pop(ref_id, None)
         return True
 
     async def set_alias(self, session_id: str, ref_id: str, alias: str) -> None:
@@ -521,8 +528,16 @@ class MemorySessionStore(BaseSessionStore):
         }
 
     async def get_ref_descriptor(self, session_id: str, ref_id: str) -> Optional[dict]:
-        """V3 Performance: return pre-computed descriptor (O(1)); None if not found."""
-        return self._descriptors.get(session_id, {}).get(ref_id)
+        """V3 Performance: return pre-computed descriptor (O(1)); None if not found.
+
+        V5-E: stamps the live content_revision onto the (cached) descriptor so
+        consumers always read the CURRENT revision, never a stale snapshot.
+        """
+        d = self._descriptors.get(session_id, {}).get(ref_id)
+        if d is None:
+            return None
+        d["content_revision"] = self._ref_revisions.get(session_id, {}).get(ref_id, d.get("content_revision", 0))
+        return d
 
     async def ref_exists(self, session_id: str, ref_id: str) -> bool:
         """O(1) existence check; mirrors ``get()``'s LRU recency side-effect.
@@ -564,6 +579,7 @@ class MemorySessionStore(BaseSessionStore):
         self._event_log.pop(session_id, None)
         self._map_action_events.pop(session_id, None)
         self._descriptors.pop(session_id, None)
+        self._ref_revisions.pop(session_id, None)
         self._ref_sizes.pop(session_id, None)
         self._session_bytes.pop(session_id, None)
         self._session_order.pop(session_id, None)

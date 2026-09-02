@@ -143,7 +143,7 @@ async def test_stream_cancel_during_register_releases_lock(monkeypatch):
     bridge = PiBridge(rpc=rpc)
     stream_task: asyncio.Task | None = None
 
-    async def slow_register(session_id, turn_id):
+    async def slow_register(session_id, turn_id, **kwargs):
         assert stream_task is not None
         stream_task.cancel()
         await asyncio.sleep(0)

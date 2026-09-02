@@ -8,6 +8,7 @@ import { useHudStore } from '@/lib/store/useHudStore';
 import { markRefSourceFailed } from '@/lib/mapspec/ref-source-resolver';
 import { apiFetch } from '@/lib/api/transport';
 import { API_BASE } from '@/lib/api/config';
+import { buildMvtTileUrl } from '@/lib/map-kit/tile-url';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
 import type { SSEEvent } from '@/lib/api/chat';
 import type { ToolCallEntry, PlanProposalPayload, PlanProposalStatus, SelectedFeatureInfo } from '@/lib/store/hud-types';
@@ -709,7 +710,7 @@ export function useSSEStream(
             _refId: data.geojson_ref ?? runtimePatch?.image_ref,
             // Data Plane: 大要素 ref 图层由 MVT 瓦片端点显示（替代整包 GeoJSON）。
             _tileUrl: data.geojson_ref
-              ? `${API_BASE}/api/v1/layers/data/${data.geojson_ref}/tiles/{z}/{x}/{y}.mvt?session_id=${sessionIdRef.current}`
+              ? buildMvtTileUrl(data.geojson_ref, sessionIdRef.current, descriptor?.content_revision)
               : undefined,
             _descriptor: descriptor,
             legend_spec: patchLegend,
