@@ -2,7 +2,8 @@
 
 **Date:** 2026-08-07
 **Status:** Accepted
-**Updated:** 2026-08-20 — V2 encoder / index / cache landed; doc was Point-only/stdlib/no-LRU.
+**Updated:** 2026-09-02 — tile Cache-Control shortened to max-age=30 (#1112; overwrite mutates same ref).
+**Prior update:** 2026-08-20 — V2 encoder / index / cache landed; doc was Point-only/stdlib/no-LRU.
 
 ## Context
 
@@ -47,8 +48,9 @@ is bounded at the source.
    - **Single-flight:** `SingleFlightManager` (`asyncio.Future`, `max_inflight=512`)
      dedupes concurrent same-tile requests (`single_flight.run(cache_key, _compute)`).
    - **HTTP semantics:** `Content-Type: application/vnd.mapbox-vector-tile` +
-     `Content-Encoding: gzip` + `Cache-Control: private, max-age=300` (ref data
-     immutable per session) + `ETag=sha256(gzip)[:16]` + 304 conditional (`If-None-Match`).
+     `Content-Encoding: gzip` + `Cache-Control: private, max-age=30` (short TTL;
+     overwrite/rollback may mutate the same ref_id — see #1112) +
+     `ETag=sha256(gzip)[:16]` + 304 conditional (`If-None-Match`).
      Endpoint uses the exact `/layers/data` auth (`require_owned_session` +
      `owner_token`); tile LRU checked first, then single-flight + `asyncio.to_thread`
      encode+gz.

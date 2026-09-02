@@ -263,7 +263,17 @@ def gdf_from_features(fc: dict | list, context: str = "") -> gpd.GeoDataFrame:
     try:
         gdf = gpd.GeoDataFrame.from_features(fc, crs=declared or "EPSG:4326")
     except Exception:
+        # #1113 P3-7: declared-but-invalid CRS previously fell back to WGS84
+        # silently (skipping the undeclared-path warning). Log the declared
+        # value and warn on suspicious coordinates.
+        logger.warning(
+            "%s: invalid declared CRS %r; falling back to EPSG:4326",
+            context or "geo_processor",
+            declared,
+        )
         gdf = gpd.GeoDataFrame.from_features(fc, crs="EPSG:4326")
+        warn_if_non_wgs84_coordinates(gdf, context or "geo_processor")
+        return gdf
     if declared is None:
         warn_if_non_wgs84_coordinates(gdf, context or "geo_processor")
     else:

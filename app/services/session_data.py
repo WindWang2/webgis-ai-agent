@@ -157,6 +157,19 @@ class MemorySessionStore(BaseSessionStore):
         from app.services.mvt import spatial_index_cache, tile_lru_cache
         spatial_index_cache.invalidate_ref(session_id, ref_id)
         tile_lru_cache.invalidate_ref(session_id, ref_id)
+        # #1113 P3-5: recompute the descriptor against the new payload (same
+        # as store()) — popping alone would leave Memory-backend readers with
+        # a permanent None/NotFound (no lazy recompute fallback here, unlike
+        # RedisSessionStore.get_ref_descriptor).
+        try:
+            from app.schemas.ref_descriptor import compute_descriptor
+            descriptor = await asyncio.to_thread(compute_descriptor, ref_id, data)
+            if session_id not in self._descriptors:
+                self._descriptors[session_id] = {}
+            self._descriptors[session_id][ref_id] = descriptor.to_dict()
+        except Exception as e:
+            self._descriptors.get(session_id, {}).pop(ref_id, None)
+            logger.warning(f"V3: Failed to recompute descriptor for {ref_id} on overwrite: {e}")
         # overwrite is the durability path for plans/checkpoints — bump LRU
         # recency so a just-updated plan is not the next eviction victim.
         session_cache.move_to_end(ref_id)

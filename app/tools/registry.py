@@ -6,8 +6,8 @@ import json
 import logging
 import os
 from contextlib import contextmanager
-from typing import Any, Callable, Literal, Optional, Type, List, Union
-from pydantic import BaseModel, ConfigDict, Field, create_model, ValidationError
+from typing import Any, Callable, Literal, Optional, Type, List, Union, get_args, get_origin, Annotated
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, create_model, ValidationError
 
 from enum import Enum
 
@@ -373,6 +373,29 @@ def _normalize_tool_arguments(
 
     return args
 
+
+
+
+def _annotation_is_any(ann: Any) -> bool:
+    """True when a field annotation is (Optional/Annotated) Any — large carriers."""
+    if ann is Any:
+        return True
+    origin = get_origin(ann)
+    if origin is Annotated:
+        args = get_args(ann)
+        return bool(args) and _annotation_is_any(args[0])
+    if origin is Union:
+        non_none = [a for a in get_args(ann) if a is not type(None)]
+        return len(non_none) == 1 and _annotation_is_any(non_none[0])
+    # PEP 604 unions (X | Y) on 3.10+
+    try:
+        from types import UnionType
+        if origin is UnionType:
+            non_none = [a for a in get_args(ann) if a is not type(None)]
+            return len(non_none) == 1 and _annotation_is_any(non_none[0])
+    except ImportError:
+        pass
+    return False
 
 
 def _is_args_oversized(arguments: Any) -> bool:
@@ -1080,8 +1103,37 @@ class ToolRegistry:
                     _pydantic_bypass = False
             if _pydantic_bypass:
                 # dict 直通：工具以 dict 形态收参，无需 normalize；跳过
-                # model_dump 的 O(features) 深拷贝
-                pass
+                # model_dump 的 O(features) 深拷贝。
+                # #1113 P3-3: still validate non-Any fields (ge/le/Literal etc.)
+                # — scalar TypeAdapter cost is tiny vs deep dump of carriers.
+                try:
+                    for fname, finfo in model.model_fields.items():
+                        if fname not in arguments:
+                            continue
+                        ann = finfo.annotation
+                        if _annotation_is_any(ann):
+                            continue
+                        field_ann: Any = ann
+                        if finfo.metadata:
+                            field_ann = Annotated[ann, *finfo.metadata]
+                        TypeAdapter(field_ann).validate_python(arguments[fname])
+                except ValidationError as e:
+                    error_msgs = []
+                    for error in e.errors():
+                        loc = ".".join(str(i) for i in error["loc"])
+                        msg = error["msg"]
+                        error_msgs.append(f"参数 '{loc}' 校验失败: {msg}")
+                    message = "\n".join(error_msgs)
+                    return std_error_response(
+                        message,
+                        code="VALIDATION_ERROR",
+                        error_type="ValidationError",
+                        correction_hint=(
+                            f"Validation Error: {message}. Please check the tool "
+                            "definition and ensure all required parameters are "
+                            "provided with correct types."
+                        ),
+                    )
             else:
                 # audit #828: 未知参数此前被 extra=ignore 静默丢弃 —— LLM 幻觉
                 # 出的参数无声失效。显式拒绝并列出合法参数集，走自愈通道。

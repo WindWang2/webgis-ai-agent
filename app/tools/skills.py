@@ -220,11 +220,9 @@ def _validate_skill_code(code: str) -> list[str]:
         # a computed string variable. A bare "__import__" literal anywhere in
         # skill code is a strong bypass signal; reject it with a correction hint.
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            if node.value in ("__import__", "__builtins__", "__loader__", "__spec__"):
-                # Allow the word appearing in a comment string that is also
-                # used in legitimate GIS tool docstrings only if the skill file
-                # is trivially small — here skill code is attacker-controlled
-                # LLM output, so be strict.
+            # #1113 P3-2: any dunder string literal can smuggle getattr/globals
+            # escapes (e.g. "__globals__"); deny-list is startswith("__").
+            if node.value.startswith("__"):
                 errors.append(f"Blocked dunder string literal: {node.value!r}")
 
     # Deduplicate while preserving order
@@ -278,6 +276,33 @@ async def create_new_skill(module_name: str, code: str, description: str) -> str
     if errors:
         return "Skill validation failed:\n" + "\n".join(f"- {e}" for e in errors) + "\nPlease revise your code to remove dangerous patterns."
 
+    # #1113 P3-2 follow-up: dry-run the module under restricted builtins
+    # BEFORE persisting — a poisoned file would otherwise fail every future
+    # load_skills. NameError here is correctable by the LLM (e.g. it used a
+    # builtin outside the whitelist).
+    import tempfile
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as _tf:
+            _tf.write(code)
+            _tmp_path = _tf.name
+        _spec = importlib.util.spec_from_file_location("_skill_dryrun", _tmp_path)
+        _mod = importlib.util.module_from_spec(_spec)
+        _mod.__dict__["__builtins__"] = _restricted_skill_builtins()
+        _spec.loader.exec_module(_mod)
+    except NameError as e:
+        return (
+            f"Skill dry-run failed under the sandbox builtins whitelist: {e}. "
+            "Only whitelisted builtins (abs/all/any/hasattr/len/sorted/... and "
+            "common exception types) are available; revise the code and retry."
+        )
+    except SyntaxError as e:
+        return f"Skill validation failed: syntax error: {e}"
+    finally:
+        try:
+            os.unlink(_tmp_path)
+        except Exception:
+            pass
+
     # #916 audit log: sha256 + truncated description + module name for forensics
     try:
         sha = _hashlib.sha256(code.encode()).hexdigest()[:16]
@@ -297,6 +322,50 @@ async def create_new_skill(module_name: str, code: str, description: str) -> str
     load_skills(app_registry)
     return result
 
+
+def _safe_skill_import(name, globals=None, locals=None, fromlist=(), level=0):
+    """Runtime import gate mirroring _BLOCKED_IMPORTS (P3-2 / #1113)."""
+    root = (name or "").split(".")[0]
+    if root in _BLOCKED_IMPORTS:
+        raise ImportError(f"Blocked import: {name}")
+    return __import__(name, globals, locals, fromlist, level)
+
+
+def _restricted_skill_builtins() -> dict:
+    """Whitelist builtins for dynamic skill exec_module (P3-2 / #1113).
+
+    Primary runtime defense against alias+getattr bypass of the AST deny-list.
+    Keeps a filtered __import__ so legitimate scientific imports still work.
+    """
+    import builtins as _builtins
+
+    allowed = {
+        "abs", "all", "any", "bin", "bool", "bytearray", "bytes", "callable",
+        "chr", "classmethod", "complex", "dict", "divmod", "enumerate",
+        "filter", "float", "format", "frozenset", "hasattr", "hash", "hex",
+        "id", "int", "isinstance", "issubclass", "iter", "len", "list", "map",
+        "max", "min", "next", "object", "oct", "ord", "pow", "print",
+        "property", "range", "repr", "reversed", "round", "set", "slice",
+        "sorted", "staticmethod", "str", "sum", "super", "tuple", "zip",
+        "__build_class__", "__name__",
+        "BaseException", "ArithmeticError", "AssertionError", "AttributeError",
+        "BufferError", "EOFError", "Exception", "GeneratorExit",
+        "ImportError", "ModuleNotFoundError", "IndexError", "KeyError",
+        "LookupError", "MemoryError", "NameError", "NotADirectoryError",
+        "NotImplementedError", "OSError", "FileExistsError", "FileNotFoundError",
+        "InterruptedError", "IsADirectoryError", "PermissionError",
+        "TimeoutError", "OverflowError", "RecursionError", "ReferenceError",
+        "RuntimeError", "StopIteration", "SystemError", "TypeError",
+        "UnboundLocalError", "UnicodeError", "UnicodeDecodeError",
+        "UnicodeEncodeError", "ValueError", "ZeroDivisionError",
+        "Warning", "UserWarning", "DeprecationWarning", "RuntimeWarning",
+        "True", "False", "None",
+    }
+    out = {name: getattr(_builtins, name) for name in allowed if hasattr(_builtins, name)}
+    out["__import__"] = _safe_skill_import
+    return out
+
+
 def _load_single_skill(registry: ToolRegistry, file_path: str, filename: str):
     """Load or reload a single skill file into the registry."""
     module_name = f"app.skills.{filename[:-3]}"
@@ -304,6 +373,9 @@ def _load_single_skill(registry: ToolRegistry, file_path: str, filename: str):
         spec = importlib.util.spec_from_file_location(module_name, file_path)
         if spec and spec.loader:
             module = importlib.util.module_from_spec(spec)
+            # #1113 P3-2: restrict builtins at exec time — AST deny-list alone
+            # is bypassable via aliases (e=eval; e(...)).
+            module.__dict__["__builtins__"] = _restricted_skill_builtins()
             sys.modules[module_name] = module
             spec.loader.exec_module(module)
 
@@ -315,8 +387,10 @@ def _load_single_skill(registry: ToolRegistry, file_path: str, filename: str):
                 logger.info(f"Loaded skill from {filename} via register")
             else:
                 logger.warning(f"Skill {filename} has no 'register' or 'register_skills' function.")
-    except (ImportError, SyntaxError, AttributeError) as e:
-        logger.error(f"Failed to load skill {filename}: {e}")
+    except Exception as e:  # noqa: BLE001
+        # One poisoned skill file (e.g. NameError from restricted builtins)
+        # must not abort the whole load_skills loop and unload healthy skills.
+        logger.error(f"Failed to load skill {filename}: {type(e).__name__}: {e}")
 
 
 def load_skills(registry: ToolRegistry, skills_dir: str = "app/skills"):

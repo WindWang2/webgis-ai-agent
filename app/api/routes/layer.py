@@ -70,7 +70,7 @@ async def get_session_layer_data(
     # P-7（#880）：compact 序列化（pretty 对 50k 要素层放大 ~1.8x）+ 客户端
     # 声明 gzip 时端点级压缩（dev/直连 uvicorn 无 nginx gzip 兜底）。
     body = await serialize_geojson(res.data, pretty=False)
-    vary = {"Vary": "Accept-Encoding", "X-Content-Type-Options": "nosn"}
+    vary = {"Vary": "Accept-Encoding", "X-Content-Type-Options": "nosniff"}
     if request is not None and "gzip" in (request.headers.get("accept-encoding") or ""):
         gz = await asyncio.to_thread(gzip.compress, body, 6)
         return Response(
@@ -216,7 +216,7 @@ def _tile_response(body: bytes, if_none_match: Optional[str]) -> Response:
         media_type="application/vnd.mapbox-vector-tile",
         headers={
             "Content-Encoding": "gzip",
-            "Cache-Control": "private, max-age=300",  # ref 数据会话内不可变
+            "Cache-Control": "private, max-age=30",  # short TTL: overwrite/rollback mutates same ref_id (#1112)
             "ETag": etag,
             "X-Content-Type-Options": "nosniff",
         },
@@ -567,7 +567,7 @@ def _png_tile_response(png_bytes: bytes, if_none_match: Optional[str]) -> Respon
         content=png_bytes,
         media_type="image/png",
         headers={
-            "Cache-Control": "private, max-age=300",
+            "Cache-Control": "private, max-age=30",  # short TTL: overwrite/rollback mutates same ref_id (#1112)
             "ETag": etag,
             "X-Content-Type-Options": "nosniff",
         },
