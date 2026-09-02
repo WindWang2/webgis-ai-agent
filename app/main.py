@@ -46,7 +46,7 @@ async def lifespan(app: FastAPI):
             "（身份 test-admin / admin 角色）。仅限测试环境；生产请立即关闭。"
         )
     # 守卫式 SQLite 迁移（_apply_runtime_migrations 内部已做 SQLite 检测）；
-    # 没这一行新增/重命名字段就只能靠手动 ALTER，跑久了必出 "no such column"。
+    # 没这一行新增/重命名字段就只能靠手动 ALTER，跑久了必出 \"no such column\"。
     try:
         from app.core.database import init_db
         init_db()
@@ -81,6 +81,9 @@ async def lifespan(app: FastAPI):
     # (called by the Pi extension via /pi-tools/execute) uses real GIS tools.
     from app.agent_pi_bridge import set_tool_registry as _set_pi_tool_registry
     _set_pi_tool_registry(registry)
+    # #1108: CancelledError during turn cleanup must not leak PiBridge._lock.
+    from app.services.chat.pi_bridge_cancel_safety import install as _install_pi_cancel_safety
+    _install_pi_cancel_safety()
     # 分层工具目录：按用户消息 + 会话粘性筛选 schema，cut token & 提升选择准确率
     catalog = ToolCatalog(registry)
     chat_engine = ChatEngine(registry, tool_catalog=catalog)
@@ -390,8 +393,8 @@ app.add_middleware(
     # (transformRequest, #514) attach it too — the header must be
     # preflight-legal for cross-origin dev setups.
     # X-Request-ID: transport.ts injects this on every request. Missing it from
-    # allow_headers makes the browser OPTIONS preflight 400 ("Disallowed CORS
-    # headers") and the chat UI surfaces TypeError "Failed to fetch".
+    # allow_headers makes the browser OPTIONS preflight 400 (\"Disallowed CORS
+    # headers\") and the chat UI surfaces TypeError \"Failed to fetch\".
     # Last-Event-ID: DUP-1 SSE resume header on chat stream reconnects.
     allow_headers=[
         "Authorization",
@@ -416,7 +419,7 @@ app.include_router(chat.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(mapspec_mutations.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(map.router, prefix="/api/v1", tags=["地图管理"])
 # ADR-0052: 统一任务中心必须先注册 —— task.router 的 GET /tasks/{task_id}
-# 会把字面量 "jobs" 当成 task_id 匹配掉。
+# 会把字面量 \"jobs\" 当成 task_id 匹配掉。
 app.include_router(jobs_routes.router, prefix="/api/v1", tags=["任务管理"])
 app.include_router(task.router, prefix="/api/v1", tags=["任务管理"])
 app.include_router(upload.router, prefix="/api/v1", tags=["数据上传"])
