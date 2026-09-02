@@ -220,3 +220,30 @@ def test_cache_key_still_built_for_small_ref_free_args():
 def test_cache_key_none_for_shallow_ref_args():
     """常规浅层 ref 语义保持：任一叶子是 ref: 开头即跳过缓存。"""
     assert make_cache_key("shallow_ref_tool", {"source": "ref:abc", "n": 1}) is None
+
+
+@pytest.mark.asyncio
+async def test_async_singleflight_wait_budget_capped(_mock_redis, monkeypatch):
+    """#1113 P3-6: async waiter uses min(lock_ttl, _SYNC_WAIT_BUDGET_S)."""
+    import app.lib.tool_cache as tc
+
+    seen = {}
+
+    def fake_wait(key, budget_s, sleep):
+        seen["budget_s"] = budget_s
+        return None
+
+    async def _async_false(*a, **k):
+        return False
+
+    monkeypatch.setattr(tc, "_wait_for_cached", fake_wait)
+    monkeypatch.setattr(tc, "_acquire_lock_async", _async_false)
+
+    # set_cached_async may still be called after compute fallback
+    async def compute():
+        return {"ok": True}
+
+    result = await tc._singleflight_async("k", ttl=60, lock_ttl_s=120, compute=compute)
+    assert result == {"ok": True}
+    assert seen["budget_s"] == min(120.0, tc._SYNC_WAIT_BUDGET_S)
+    assert seen["budget_s"] == tc._SYNC_WAIT_BUDGET_S
