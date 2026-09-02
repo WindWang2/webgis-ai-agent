@@ -84,6 +84,23 @@ async def test_redis_eviction_ghost_data_regression():
         ],
     }
     r1 = await store.store(sid, fc)
+    # Pre-populate the derived caches so the post-eviction assertions are
+    # discriminative (an unfixed eviction path leaves these entries behind).
+    def _seed_spatial():
+        from app.services.mvt import build_spatial_index_entry
+        return build_spatial_index_entry((sid, r1), fc)
+
+    spatial_index_cache.get_or_build((sid, r1), _seed_spatial)
+    tile_lru_cache.put((sid, r1, 5, 10, 10), b"stale-gzip-bytes")
+    assert spatial_index_cache.invalidate_ref(sid, r1) is True, (
+        "fixture error: spatial index entry was not seeded"
+    )
+    spatial_index_cache.get_or_build((sid, r1), _seed_spatial)
+    assert tile_lru_cache.invalidate_ref(sid, r1) == 1, (
+        "fixture error: tile bytes were not seeded"
+    )
+    tile_lru_cache.put((sid, r1, 5, 10, 10), b"stale-gzip-bytes")
+
     await store.store(sid, fc)
     await store.store(sid, fc)  # evicts r1
 
