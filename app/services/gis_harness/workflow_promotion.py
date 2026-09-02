@@ -82,7 +82,11 @@ def build_recipe_steps(gis_chapter: Dict[str, Any]) -> List[WorkflowStepSpec]:
 
     data_requirements (fetch/profile rows) and analysis_steps (capability rows)
     are merged capability-first: one step per capability, first occurrence
-    wins, dependency order preserved. Rows whose capability failed to resolve
+    wins, dependency order preserved (dependencies on a capability that
+    appears LATER in the chapter are dropped — plan rows only emit backward
+    ``depends_on`` references, so this matches producer semantics; forward
+    references would be unsatisfiable at execution anyway). Rows whose
+    capability failed to resolve
     a tool at plan time still promote (with their tool evidence empty) — the
     resolver gets a fresh chance at rerun; permanently unavailable rows are
     dropped by :func:`build_workflow_recipe` via ``promotable_rows``.

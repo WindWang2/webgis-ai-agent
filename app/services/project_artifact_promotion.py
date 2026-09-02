@@ -24,11 +24,12 @@ fabricating a summary.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from app.models.project import Artifact, WorkflowRun
 from app.services.provenance.fingerprint import canonical_dumps
@@ -41,32 +42,58 @@ _DEFAULT_STORE_DIRNAME = "project_artifacts"
 #: Bounded per-artifact projection: promotion metadata must stay compact.
 _MAX_SCHEMA_FIELDS = 32
 
+#: Promotion content-status vocabulary (machine contract, single source).
+#: promoted          — content materialized under content_location
+#: already_promoted  — idempotent re-entry on a promoted row
+#: no_session_context— caller had no session to probe (content may be alive)
+#: session_expired   — probed the session; payload gone
+#: store_unavailable — content write failed (disk full / IO error), disclosed
+ContentStatus = Literal[
+    "promoted",
+    "already_promoted",
+    "no_session_context",
+    "session_expired",
+    "store_unavailable",
+]
+
+_ROOT_CACHE: "Optional[Path]" = None
+
 
 def content_store_root() -> Path:
-    from app.core.config import settings
+    """Content-addressed store root (resolved + mkdir'd once per process)."""
+    global _ROOT_CACHE
+    if _ROOT_CACHE is None:
+        from app.core.config import settings
 
-    configured = str(getattr(settings, "PROJECT_ARTIFACT_CONTENT_DIR", "") or "").strip()
-    if configured:
-        root = Path(configured)
-    else:
-        root = Path(str(getattr(settings, "DATA_DIR", "./data") or "./data")) / _DEFAULT_STORE_DIRNAME
-    root.mkdir(parents=True, exist_ok=True)
-    return root
+        configured = str(getattr(settings, "PROJECT_ARTIFACT_CONTENT_DIR", "") or "").strip()
+        if configured:
+            root = Path(configured)
+        else:
+            root = Path(str(getattr(settings, "DATA_DIR", "./data") or "./data")) / _DEFAULT_STORE_DIRNAME
+        root.mkdir(parents=True, exist_ok=True)
+        _ROOT_CACHE = root
+    return _ROOT_CACHE
+
+
+def reset_content_store_root_cache() -> None:
+    """Test hook: settings monkeypatching must be able to re-resolve the root."""
+    global _ROOT_CACHE
+    _ROOT_CACHE = None
 
 
 def _content_path(content_fingerprint: str) -> Optional[Path]:
     """Content-addressed file path for a fingerprint (sha2-4 prefix shards)."""
     fp = str(content_fingerprint or "").strip()
-    if not fp or any(c in fp for c in ("/", "\\", "..")):
+    if not fp or any(c in fp for c in ("/", chr(92), "..")):
         return None
     shard = fp[:4]
     return content_store_root() / shard / f"{fp}.json"
 
 
-def _payload_sha256(payload: Any) -> str:
+def _sha256_of_blob(blob: str) -> str:
     import hashlib
 
-    return hashlib.sha256(canonical_dumps(payload).encode("utf-8")).hexdigest()
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
 def _schema_summary(payload: Any) -> Dict[str, Any]:
@@ -127,11 +154,13 @@ def _bbox_of(features: List[Any]) -> Optional[List[float]]:
     return [min(xs), min(ys), max(xs), max(ys)]
 
 
-def materialize_content(content_fingerprint: str, payload: Any) -> Optional[str]:
-    """Write payload to the content-addressed store; returns relative location.
+def materialize_blob(content_fingerprint: str, blob: str) -> Optional[str]:
+    """Write a pre-serialized canonical blob to the content-addressed store.
 
-    Idempotent: an existing file for the same fingerprint is left untouched.
-    Returns None when the payload cannot be persisted (caller discloses).
+    Single-serialization contract: the caller serializes the payload once and
+    reuses the same blob for the sha256 digest and the write, so stored bytes
+    always match the recorded digest. Returns the relative location, or None
+    when persistence failed (caller discloses).
     """
     path = _content_path(content_fingerprint)
     if path is None:
@@ -141,14 +170,19 @@ def materialize_content(content_fingerprint: str, payload: Any) -> Optional[str]
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
-        # Canonical serialization: the recorded content_payload_sha256 hashes
-        # the canonical form, so stored bytes must match it byte-for-byte or
-        # the recorded digest is unverifiable.
-        tmp.write_text(canonical_dumps(payload), encoding="utf-8")
+        tmp.write_text(blob, encoding="utf-8")
         os.replace(tmp, path)
         return str(path.relative_to(content_store_root()))
     except Exception as e:  # noqa: BLE001 — promotion must never break a run
         logger.warning("[artifact_promotion] content write failed for %s: %s", content_fingerprint, e)
+        return None
+
+
+def materialize_content(content_fingerprint: str, payload: Any) -> Optional[str]:
+    """Convenience wrapper: canonical-serialize then materialize the blob."""
+    try:
+        return materialize_blob(content_fingerprint, canonical_dumps(payload))
+    except Exception:  # noqa: BLE001 — unserializable payload → disclosed
         return None
 
 
@@ -181,7 +215,11 @@ def read_content(content_location: str, expected_sha256: str = "") -> Optional[A
                 )
                 return None
         return json.loads(raw)
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001 — unreadable content is disclosed
+        logger.warning(
+            "[artifact_promotion] content read failed for %s: %s",
+            content_location, e,
+        )
         return None
 
 
@@ -271,17 +309,37 @@ async def promote_run_artifacts(
         # result descriptor (different format, same logical output). Record an
         # independent, verifiable digest of the durable bytes instead of
         # pretending the two are equal (truthful provenance, INV-ART1).
-        payload_digest = ""
+        # Serialize ONCE (canonical blob); the same bytes back the digest, the
+        # write, and later read-back verification. Hash + file IO run off the
+        # event loop (this coroutine is awaited from the async engine path).
         try:
-            payload_digest = _payload_sha256(payload)
-            meta["content_payload_sha256"] = payload_digest
-        except Exception:  # noqa: BLE001 — digest is best-effort
-            pass
+            blob = canonical_dumps(payload)
+        except Exception as e:  # noqa: BLE001 — unserializable → disclosed
+            logger.warning(
+                "[artifact_promotion] payload serialization failed for %s: %s",
+                art.id, e,
+            )
+            blob = ""
+        payload_digest = ""
+        if blob:
+            try:
+                payload_digest = await asyncio.to_thread(_sha256_of_blob, blob)
+                meta["content_payload_sha256"] = payload_digest
+            except Exception as e:  # noqa: BLE001 — digest is best-effort
+                logger.warning(
+                    "[artifact_promotion] digest failed for %s: %s", art.id, e
+                )
         # Content-addressed key: run-time fingerprint when present, else the
         # durable payload digest (an artifact with no descriptor evidence still
         # materializes under its own content identity).
-        location = materialize_content(art.content_fingerprint or payload_digest, payload)
-        summary = _schema_summary(payload)
+        location = (
+            await asyncio.to_thread(
+                materialize_blob, art.content_fingerprint or payload_digest, blob
+            )
+            if blob
+            else None
+        )
+        summary = await asyncio.to_thread(_schema_summary, payload)
         if location:
             meta["content_status"] = "promoted"
             meta["content_location"] = location

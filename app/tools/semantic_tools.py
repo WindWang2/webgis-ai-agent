@@ -21,6 +21,7 @@ from app.tools._utils import trim_features
 from app.lib.gis.dataset_profile import DatasetProfile
 from app.lib.gis.semantic_profile import (
     MAX_VALUE_SAMPLES,
+    SemanticDatasetProfile,
     derive_semantic_profile,
 )
 from app.lib.gis.pattern_projection import project_patterns
@@ -60,14 +61,14 @@ class ProfileDatasetSemanticsArgs(BaseModel):
     geojson_ref: Optional[str] = Field(None, json_schema_extra={"ref_cursor": True})
     geojson: Optional[Dict[str, Any]] = None
     user_roles: Optional[Dict[str, str]] = None
-    session_id: str = ""
+    # session_id is injected by the registry from the dispatch context AFTER
+    # validation — never an LLM-facing field (cross-session read guard).
 
 
 class SuggestAnalysisPatternsArgs(BaseModel):
     query: str
     geojson_ref: Optional[str] = Field(None, json_schema_extra={"ref_cursor": True})
     semantic_profile: Optional[Dict[str, Any]] = None
-    session_id: str = ""
 
 
 def register_semantic_tools(registry: ToolRegistry) -> None:
@@ -108,17 +109,9 @@ def register_semantic_tools(registry: ToolRegistry) -> None:
         try:
             payload: Optional[Dict[str, Any]] = geojson
             if payload is None and geojson_ref and session_id:
-                from app.services.session_data import session_data_manager
+                from app.tools._utils import resolve_ref_payload
 
-                # ref/alias → payload via the session store's own resolution.
-                try:
-                    ref_id = await session_data_manager.resolve_alias(
-                        session_id, geojson_ref
-                    )
-                except Exception:  # noqa: BLE001
-                    ref_id = geojson_ref
-                if ref_id:
-                    payload = await session_data_manager.get(session_id, ref_id)
+                payload = await resolve_ref_payload(session_id, geojson_ref)
             if not isinstance(payload, dict) or not (
                 (payload.get("features") or [])
                 and payload.get("type") == "FeatureCollection"
@@ -202,17 +195,13 @@ def register_semantic_tools(registry: ToolRegistry) -> None:
         session_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         try:
-            sem: Optional[Any] = None
+            sem: Optional[SemanticDatasetProfile] = None
             if semantic_profile is None and geojson_ref:
                 # Reuse the semantic tool's derivation for the same ref.
                 built = await profile_dataset_semantics(geojson_ref=geojson_ref, session_id=session_id)
                 if built.get("success"):
-                    from app.lib.gis.semantic_profile import SemanticDatasetProfile
-
                     sem = SemanticDatasetProfile.model_validate(built["semantic_profile"])
             elif semantic_profile is not None:
-                from app.lib.gis.semantic_profile import SemanticDatasetProfile
-
                 sem = SemanticDatasetProfile.model_validate(semantic_profile)
             from app.services.gis_harness.intent import resolve_map_request_intent
 

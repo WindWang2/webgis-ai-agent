@@ -77,28 +77,22 @@ def upgrade() -> None:
         sa.Column("recipe_id", sa.String(length=100), nullable=True),
         sa.Column("artifact_ids", sa.JSON(), nullable=True),
         sa.Column("diff_summary", sa.JSON(), nullable=True),
-        sa.Column(
-            "created_at",
-            sa.DateTime(),
-            nullable=False,
-            server_default=sa.text("CURRENT_TIMESTAMP"),
-        ),
+        # Sibling convention (0014/0021): created_at is nullable with a
+        # client-side UTC default — no server default (CURRENT_TIMESTAMP in a
+        # TIMESTAMP WITHOUT TIME ZONE stores session-local wall time on PG,
+        # which diverges from the ORM's UTC values).
+        sa.Column("created_at", sa.DateTime(), nullable=True),
         sa.UniqueConstraint("project_id", "version_no", name="uq_map_product_version"),
         sa.CheckConstraint("version_no >= 1", name="ck_map_product_version_pos"),
     )
-    op.create_index(
-        "idx_map_product_project", "map_products", ["project_id"]
-    )
-    op.create_index(
-        "idx_map_product_project_version", "map_products", ["project_id", "version_no"]
-    )
+    # Index budget (0020 convention): the UNIQUE (project_id, version_no)
+    # backing index already serves project-scoped range scans — no redundant
+    # left-prefix duplicates. Only the run lookup gets its own index.
     op.create_index("idx_map_product_run", "map_products", ["workflow_run_id"])
 
 
 def downgrade() -> None:
     op.drop_index("idx_map_product_run", table_name="map_products")
-    op.drop_index("idx_map_product_project_version", table_name="map_products")
-    op.drop_index("idx_map_product_project", table_name="map_products")
     op.drop_table("map_products")
     op.drop_column("artifact_lineages", "mapspec_fingerprint")
     op.drop_column("artifact_lineages", "producing_algorithm")

@@ -3,7 +3,7 @@ Project Workspace, Persistent Workflow, Artifact, Lineage, and Quality API Schem
 """
 from typing import Optional, List, Dict, Any
 from datetime import datetime
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 
 class ProjectCreate(BaseModel):
@@ -186,7 +186,13 @@ class WorkflowRerunRequest(BaseModel):
 
 
 class MapProductVersionCreate(BaseModel):
-    """Record one Map Product version for a project (ADR-0092 A6)."""
+    """Record one Map Product version for a project (ADR-0092 A6).
+
+    Provenance fields (product_fingerprint / diff_summary) are intentionally
+    NOT client-suppliable: the ledger computes them server-side from the run
+    manifest — a forged diff would let a caller assert false provenance into
+    the durable version history.
+    """
 
     workflow_run_id: Optional[str] = None
     mapspec_fingerprint: Optional[str] = None
@@ -194,10 +200,11 @@ class MapProductVersionCreate(BaseModel):
     recipe_id: Optional[str] = None
     artifact_ids: List[str] = Field(default_factory=list)
     input_dataset_fingerprints: Dict[str, str] = Field(default_factory=dict)
-    product_fingerprint: Optional[str] = Field(None, description="Precomputed product fingerprint; computed when omitted")
-    diff_summary: Optional[Dict[str, Any]] = Field(
-        None, description="Precomputed diff vs previous version; computed when omitted"
-    )
+
+
+def _none_to_dict(v: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Nullable JSON column → response default (None reads as empty)."""
+    return v or {}
 
 
 class MapProductVersionResponse(BaseModel):
@@ -208,7 +215,14 @@ class MapProductVersionResponse(BaseModel):
     version_no: int
     product_fingerprint: Optional[str] = None
     input_dataset_fingerprints: Dict[str, Any] = Field(default_factory=dict)
-    compute_plan: List[Dict[str, Any]] = Field(default_factory=list)
+    compute_plan: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "Bounded per-step compute-plan snapshot: [{step_id, capability, "
+            "algorithm, tool_name, args}] (≤64 steps; args are the run "
+            "manifest's already-trimmed projections)"
+        ),
+    )
     workflow_id: Optional[str] = None
     workflow_run_id: Optional[str] = None
     mapspec_fingerprint: Optional[str] = None
@@ -217,6 +231,45 @@ class MapProductVersionResponse(BaseModel):
     artifact_ids: List[str] = Field(default_factory=list)
     diff_summary: Dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
+
+    # Nullable backing columns must never 500 the response on a NULL row.
+    @field_validator(
+        "input_dataset_fingerprints", "compute_plan", "artifact_ids",
+        "diff_summary", mode="before",
+    )
+    @classmethod
+    def _coerce_none_containers(cls, v):
+        return v if v is not None else []
+
+
+class MapProductVersionSummary(BaseModel):
+    """Slim version row — compute_plan/diff/inputs live on the detail endpoint
+    (F-FE-SD list convention)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    project_id: str
+    version_no: int
+    product_fingerprint: Optional[str] = None
+    workflow_run_id: Optional[str] = None
+    mapspec_fingerprint: Optional[str] = None
+    recipe_id: Optional[str] = None
+    created_at: datetime
+
+
+class PromoteArtifactsReportItem(BaseModel):
+    artifact_id: str
+    status: str = Field(description="promoted | already_promoted | no_session_context | session_expired | store_unavailable")
+    content_location: Optional[str] = None
+
+
+class PromoteArtifactsResponse(BaseModel):
+    status: str
+    run_id: str
+    materialized: int = Field(description="artifacts whose content was materialized by THIS call")
+    artifacts: List[PromoteArtifactsReportItem]
+    note: str = Field(description="Semantics of the per-artifact statuses for this session-less path")
 
 
 class ArtifactResponse(BaseModel):

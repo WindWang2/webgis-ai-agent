@@ -29,6 +29,7 @@ from app.schemas.project_schema import (
     WorkflowRevisionResponse, WorkflowRevisionSummary,
     RunReplayRequest, RunResumeRequest,
     WorkflowRerunRequest, MapProductVersionCreate, MapProductVersionResponse,
+    MapProductVersionSummary, PromoteArtifactsResponse,
 )
 from app.schemas.pagination import Page, clamp_pagination
 
@@ -579,7 +580,7 @@ def _promote_run_artifacts_sync(
         return {"report": report}
 
 
-@router.post("/{project_id}/runs/{run_id}/promote-artifacts")
+@router.post("/{project_id}/runs/{run_id}/promote-artifacts", response_model=PromoteArtifactsResponse)
 async def promote_run_artifacts_endpoint(
     project_id: str,
     run_id: str,
@@ -603,30 +604,43 @@ async def promote_run_artifacts_endpoint(
         raise HTTPException(status_code=code, detail=detail)
     report: List[Dict[str, Any]] = result["report"]
     materialized = sum(1 for r in report if r.get("status") == "promoted")
-    return {
-        "status": "ok",
-        "run_id": run_id,
-        "materialized": materialized,
-        "artifacts": report,
-        "note": (
+    return PromoteArtifactsResponse(
+        status="ok",
+        run_id=run_id,
+        materialized=materialized,
+        artifacts=report,
+        note=(
             "no_session_context = 此调用无会话上下文，无法探测会话载荷；"
             "内容物化发生在 run 完成时的会话内自动提升路径"
         ),
-    }
+    )
 
 
-@router.get("/{project_id}/map-products", response_model=List[MapProductVersionResponse])
+@router.get("/{project_id}/map-products", response_model=Page[MapProductVersionSummary])
 def list_map_products(
     project_id: str,
+    limit: Optional[int] = Query(None, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
-    """Map Product version ledger (ADR-0092 A6) — oldest → newest."""
+    """Map Product version ledger (ADR-0092 A6) — newest first, slim rows
+    (compute_plan/diff/inputs live on the version detail endpoint)."""
     user_id, org_id = actor_ids(user)
     project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    return MapProductService.list_versions(db, project_id)
+    limit, offset = clamp_pagination(limit, offset)
+    rows, total = MapProductService.list_versions_paginated(
+        db, project_id, limit=limit, offset=offset
+    )
+    return Page(
+        items=rows,
+        total=total,
+        limit=limit,
+        offset=offset,
+        has_more=offset + limit < total,
+    )
 
 
 @router.get("/{project_id}/map-products/{version_no}", response_model=MapProductVersionResponse)
@@ -668,8 +682,6 @@ def record_map_product_version(
             recipe_id=req.recipe_id,
             artifact_ids=req.artifact_ids,
             input_dataset_fingerprints=req.input_dataset_fingerprints,
-            product_fingerprint=req.product_fingerprint,
-            diff_summary=req.diff_summary,
         )
     except ValueError as e:
         raise HTTPException(status_code=404 if "not found" in str(e) else 409, detail=str(e))

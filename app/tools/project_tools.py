@@ -16,6 +16,24 @@ from app.schemas.project_schema import WorkflowCreate, WorkflowGraphSpec, Workfl
 logger = logging.getLogger(__name__)
 
 
+def _caller_identity() -> tuple[Optional[str], Optional[int], Optional[str]]:
+    """(user_id, org_id, session_id) from the tool execution context.
+
+    The Pi bridge binds caller identity into a ContextVar before dispatch;
+    engine calls made from tools must thread it through so run rows and the
+    ToolExecutionContext the engine sets carry the real caller, not NULL.
+    """
+    try:
+        from app.services.provenance.context import get_tool_execution_context
+
+        ctx = get_tool_execution_context()
+        if ctx is not None:
+            return ctx.user_id, ctx.org_id, ctx.session_id
+    except Exception:  # noqa: BLE001 — context unavailable → anonymous
+        pass
+    return None, None, None
+
+
 def register_project_tools(registry: ToolRegistry) -> None:
 
     @tool(registry,
@@ -74,11 +92,12 @@ def register_project_tools(registry: ToolRegistry) -> None:
         if steps is None:
             if not session_id:
                 return {
-                    "status": "error",
-                    "message": (
+                    "success": False,
+                    "error": (
                         "session_id is required to promote the current session plan "
                         "(or pass an explicit legacy steps list)"
                     ),
+                    "correction_hint": "retry without overriding session_id",
                 }
             from app.services.session_plan import load_session_plan
             from app.services.gis_harness.workflow_promotion import build_workflow_recipe
@@ -86,8 +105,9 @@ def register_project_tools(registry: ToolRegistry) -> None:
             plan = await load_session_plan(session_id)
             if plan is None or not plan.gis_chapter:
                 return {
-                    "status": "error",
-                    "message": "No GIS SessionPlan found for this session; run webgis_map_intent first",
+                    "success": False,
+                    "error": "No GIS SessionPlan found for this session; run webgis_map_intent first",
+                    "correction_hint": "call webgis_map_intent with the user's goal, then retry",
                 }
             recipe, blockers = build_workflow_recipe(
                 plan.gis_chapter,
@@ -97,14 +117,26 @@ def register_project_tools(registry: ToolRegistry) -> None:
             )
             if recipe is None:
                 return {
-                    "status": "error",
-                    "message": (
+                    "success": False,
+                    "error": (
                         "SessionPlan is not promotable — plan must be fully executed "
                         "before saving as a workflow. Blockers: " + ", ".join(blockers)
                     ),
+                    "correction_hint": "finish the open capabilities first, then retry",
                     "blockers": blockers,
                 }
         else:
+            # Legacy manual steps: disclose unknown tool ids at SAVE time — a
+            # hallucinated tool name would otherwise only fail at run time.
+            try:
+                known_tools = set(registry.list_tools())
+            except Exception:  # noqa: BLE001
+                known_tools = set()
+            unknown = sorted({
+                str(s.get("tool_name") or "")
+                for s in steps
+                if str(s.get("tool_name") or "") not in known_tools
+            })
             recipe = WorkflowCreate(
                 name=workflow_name,
                 description=description,
@@ -121,10 +153,28 @@ def register_project_tools(registry: ToolRegistry) -> None:
                 ),
                 created_from_session=session_id,
             )
+            if unknown:
+                return {
+                    "success": False,
+                    "error": (
+                        "steps reference tools that are not registered: "
+                        + ", ".join(unknown)
+                    ),
+                    "correction_hint": (
+                        "use tool ids from the registry (webgis_map_intent's resolved "
+                        "tools or list_available_tools); nothing was saved"
+                    ),
+                    "unknown_tools": unknown,
+                }
+        user_id, _org, _sess = _caller_identity()
         with SessionLocal() as db:
-            wf = ProjectService.save_workflow(db, project_id, recipe)
+            wf = ProjectService.save_workflow(db, project_id, recipe, user_id=user_id)
             if not wf:
-                return {"status": "error", "message": f"Project {project_id} not found"}
+                return {
+                    "success": False,
+                    "error": f"Project {project_id} not found",
+                    "correction_hint": "verify the project_id before saving",
+                }
             return {
                 "status": "success",
                 "workflow_id": wf.id,
@@ -185,8 +235,11 @@ def register_project_tools(registry: ToolRegistry) -> None:
                     "or neither for a full run"
                 ),
             }
+        user_id, org_id, ctx_session = _caller_identity()
         with SessionLocal() as db:
-            project = ProjectService.get_project_with_auth(db=db, project_id=project_id)
+            project = ProjectService.get_project_with_auth(
+                db=db, project_id=project_id, user_id=user_id, org_id=org_id
+            )
             if not project:
                 return {"status": "error", "message": f"Project {project_id} not found or permission denied"}
             if from_run_id and from_step:
@@ -196,6 +249,8 @@ def register_project_tools(registry: ToolRegistry) -> None:
                     tool_registry=registry,
                     from_step=from_step,
                     input_bindings=input_bindings,
+                    user_id=user_id,
+                    org_id=org_id,
                     expected_project_id=project_id,
                 )
             else:
@@ -205,7 +260,10 @@ def register_project_tools(registry: ToolRegistry) -> None:
                     tool_registry=registry,
                     input_bindings=input_bindings or {},
                     start_from_step=start_from_step,
+                    user_id=user_id,
+                    org_id=org_id,
                     expected_project_id=project_id,
+                    session_id=ctx_session,
                 )
             return {
                 "status": run.status,
