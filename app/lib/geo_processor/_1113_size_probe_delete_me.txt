@@ -1,0 +1,5 @@
+import json
+import logging
+# #1113 size probe — safe to delete
+PROBE_OK = True
+PROBE_LEN = 64
