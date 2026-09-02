@@ -289,6 +289,9 @@ class RedisSessionStore(BaseSessionStore):
                 pipe.set(descriptor_key, json.dumps(descriptor.to_dict(), ensure_ascii=False), ex=DATA_TTL)
                 # V5-E: mint content revision 1 for the new ref identity.
                 pipe.hset(self._ref_revisions_key(session_id), ref_id, 1)
+                # The revision hash must not outlive the session (no orphaned
+                # hashes after DATA_TTL) — refresh TTL alongside the state hash.
+                pipe.expire(self._ref_revisions_key(session_id), STATE_TTL)
                 pipe.zadd(order_key, {ref_id: time.time()})
                 pipe.sadd(self._index_key(session_id), ref_id)
                 self._refresh_session_ttl(pipe, session_id)
@@ -368,6 +371,7 @@ class RedisSessionStore(BaseSessionStore):
                 # V5-E: same ref identity, new content — bump the revision
                 # atomically with the payload write (S7 rollback semantics).
                 pipe.hincrby(self._ref_revisions_key(session_id), ref_id, 1)
+                pipe.expire(self._ref_revisions_key(session_id), STATE_TTL)
                 # D-4: the payload changed, so the cached descriptor (bbox /
                 # feature_count / geometry_types from the OLD payload) is stale.
                 # Drop it so the next get_ref_descriptor recomputes from the new
@@ -1475,6 +1479,7 @@ return results
                     self._refs_order_key(session_id),
                     self._map_actions_key(session_id),
                     self._map_actions_order_key(session_id),
+                    self._ref_revisions_key(session_id),
                 )
                 pipe.srem(self._active_key(), session_id)
                 pipe.zrem(self._activity_key(), session_id)

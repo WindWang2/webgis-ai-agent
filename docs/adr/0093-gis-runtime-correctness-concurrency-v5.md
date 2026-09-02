@@ -192,6 +192,12 @@ serialization V3 removed from the store hot path.
 
 ## Deferred Work
 
+- In-place mutation of an already-stored Memory-backend payload does not bump
+  `content_revision` (the same-object overwrite fast path skips it, and the
+  memory store hands out live objects — pre-V5 semantics). Callers that
+  produce new payloads (the plan/checkpoint writers) are unaffected; a
+  copy-on-write store contract would close this fully.
+
 - Browser-cache amplifiers on the frontend beyond the URL revision (e.g.
   ref-source FC cache lifetime) — tracked for V5.x.
 - Pool autoscaling / per-worker queue-depth telemetry.

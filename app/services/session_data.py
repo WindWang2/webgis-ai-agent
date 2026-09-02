@@ -579,6 +579,7 @@ class MemorySessionStore(BaseSessionStore):
         self._event_log.pop(session_id, None)
         self._map_action_events.pop(session_id, None)
         self._descriptors.pop(session_id, None)
+        self._ref_revisions.pop(session_id, None)
         self._ref_sizes.pop(session_id, None)
         self._session_bytes.pop(session_id, None)
         self._session_order.pop(session_id, None)
