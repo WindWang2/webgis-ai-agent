@@ -126,6 +126,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            args_model=AttributeFilterArgs)
     def attribute_filter(geojson: Any, query: str) -> dict:
         data = safe_parse_geojson(geojson)
+        if not isinstance(data, dict):
+            raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
         # #1110: forward the parsed FeatureCollection (not the bare features
         # list) — to_feature_collection() rebuilds a fresh FC from a list and
         # drops the declared `crs` member, so projected input fell back to
@@ -242,6 +244,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            })
     def central_feature(geojson: Any, method: str = "mean_center") -> dict:
         data = safe_parse_geojson(geojson)
+        if not isinstance(data, dict):
+            raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
         # #1110: forward the full FeatureCollection so the declared `crs`
         # member reaches to_utm_gdf() — a bare list was rebuilt into a CRS-less
         # FC and projected coordinates were misread as WGS84 degrees.

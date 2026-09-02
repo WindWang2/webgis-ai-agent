@@ -27,6 +27,8 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                         eps: float = 1000, min_samples: int = 5,
                         value_field: str = "", value_weight: float = 1.0) -> dict:
         data = safe_parse_geojson(geojson)
+        if not isinstance(data, dict):
+            raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
         # #1110 review M4: forward the full FC — cluster eps is metre-typed and
         # needs the declared CRS to survive the tool boundary.
         res = SpatialAnalyzer.cluster(
@@ -43,6 +45,8 @@ def register_spatial_stats_tools(registry: ToolRegistry):
            })
     def standard_deviational_ellipse(geojson: Any) -> dict:
         data = safe_parse_geojson(geojson)
+        if not isinstance(data, dict):
+            raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
         # #1110 review M5: forward the full FC (CRS preservation).
         res = SpatialAnalyzer.statistics(data, spatial_stats=True)
         return res.to_llm_response()
@@ -56,6 +60,8 @@ def register_spatial_stats_tools(registry: ToolRegistry):
            })
     def moran_i(geojson: Any, value_field: str) -> dict:
         data = safe_parse_geojson(geojson)
+        if not isinstance(data, dict):
+            raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
         # #1110 review M6: forward the full FC (CRS preservation).
         res = SpatialAnalyzer.statistics(data, field=value_field, spatial_stats=True)
         return res.to_llm_response()
