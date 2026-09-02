@@ -157,6 +157,9 @@ class MemorySessionStore(BaseSessionStore):
         from app.services.mvt import spatial_index_cache, tile_lru_cache
         spatial_index_cache.invalidate_ref(session_id, ref_id)
         tile_lru_cache.invalidate_ref(session_id, ref_id)
+        # #1113 P3-5: match Redis D-4 — drop stale descriptor so next read
+        # recomputes (feature_count/bbox/mvt_capable stay consistent).
+        self._descriptors.get(session_id, {}).pop(ref_id, None)
         # overwrite is the durability path for plans/checkpoints — bump LRU
         # recency so a just-updated plan is not the next eviction victim.
         session_cache.move_to_end(ref_id)
