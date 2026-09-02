@@ -48,17 +48,22 @@ def _write_upload_bytes(path: Path, content: bytes) -> None:
         f.write(content)
 
 
-async def _verify_session_owner(db, session_id: Optional[str], user_id) -> None:
+async def _verify_session_owner(
+    db, session_id: Optional[str], user_id, owner_token: Optional[str] = None
+) -> None:
     """跨租户守卫：若 upload 关联了 session_id，会话必须属于调用方（审计 S42）。
 
     UploadRecord 无 user_id 列；通过 session_id → Conversation.user_id 解析归属。
-    session_id 为 None 时（旧匿名上传）允许 —— 与历史匿名会话语义一致。
+    session_id 为 None 时（旧匿名上传）拒绝 —— 与历史匿名会话语义一致。
+    SEC-08：匿名会话需转发 X-Session-Token（owner_token），与 POST /upload 对齐。
     """
     if not session_id:
         # Session-less records used to skip this check, so GET/DELETE /uploads/{n}
         # was world-reachable for any sequential integer id.
         raise HTTPException(status_code=404, detail="上传记录不存在")
-    await verify_session_owner(db, session_id, user_id=user_id)
+    await verify_session_owner(
+        db, session_id, user_id=user_id, owner_token=owner_token
+    )
 
 
 # ==================== 响应模型 ====================
@@ -252,10 +257,12 @@ async def upload_files(
 # ==================== 查询接口 ====================
 
 @router.get("/uploads", response_model=UploadListResponse)
-async def list_uploads(_user: dict = Depends(get_current_user),
+async def list_uploads(
+    _user: dict = Depends(get_current_user),
     session_id: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
+    owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
 ):
     """获取上传文件列表
 
@@ -268,7 +275,9 @@ async def list_uploads(_user: dict = Depends(get_current_user),
             detail="session_id 为必填，避免跨租户泄漏",
         )
     async with async_db_session() as db:
-        await _verify_session_owner(db, session_id, _user.get("user_id"))
+        await _verify_session_owner(
+            db, session_id, _user.get("user_id"), owner_token=owner_token
+        )
         stmt = select(UploadRecord).where(UploadRecord.session_id == session_id).order_by(UploadRecord.upload_time.desc())
         count_stmt = select(func.count()).select_from(stmt.subquery())
         total_result = await db.execute(count_stmt)
@@ -296,17 +305,24 @@ async def list_uploads(_user: dict = Depends(get_current_user),
 
 
 @router.get("/uploads/{upload_id}", response_model=UploadResponse)
-async def get_upload(upload_id: int, _user: dict = Depends(get_current_user)):
+async def get_upload(
+    upload_id: int,
+    _user: dict = Depends(get_current_user),
+    owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
+):
     """获取单个上传文件的详情
 
     审计 S42：upload_id 是顺序整数易枚举；通过 record.session_id 解析归属。
+    SEC-08：转发 X-Session-Token，与 POST /upload 对齐（#1109）。
     """
     async with async_db_session() as db:
         result = await db.execute(select(UploadRecord).where(UploadRecord.id == upload_id))
         record = result.scalar_one_or_none()
         if not record:
             raise HTTPException(status_code=404, detail="上传记录不存在")
-        await _verify_session_owner(db, record.session_id, _user.get("user_id"))
+        await _verify_session_owner(
+            db, record.session_id, _user.get("user_id"), owner_token=owner_token
+        )
 
     return UploadResponse(
         id=record.id,
@@ -322,18 +338,25 @@ async def get_upload(upload_id: int, _user: dict = Depends(get_current_user)):
 
 
 @router.get("/uploads/{upload_id}/geojson")
-async def get_upload_geojson(upload_id: int, _user: dict = Depends(get_current_user)):
+async def get_upload_geojson(
+    upload_id: int,
+    _user: dict = Depends(get_current_user),
+    owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
+):
     """获取上传文件的 GeoJSON 数据（用于地图渲染）。
 
     审计 S49：之前无大小限制 -- 任意大的 GeoJSON 被 json.load 一次性读入内存
     并流式返回，超大文件可导致内存爆。加 50MB 上限（与 MAX_VECTOR_SIZE 一致）。
+    SEC-08：转发 X-Session-Token，与 POST /upload 对齐（#1109）。
     """
     async with async_db_session() as db:
         result = await db.execute(select(UploadRecord).where(UploadRecord.id == upload_id))
         record = result.scalar_one_or_none()
         if not record:
             raise HTTPException(status_code=404, detail="上传记录不存在")
-        await _verify_session_owner(db, record.session_id, _user.get("user_id"))
+        await _verify_session_owner(
+            db, record.session_id, _user.get("user_id"), owner_token=owner_token
+        )
 
     if record.file_type != "vector":
         raise HTTPException(status_code=400, detail="该文件不是矢量数据")
@@ -367,7 +390,11 @@ async def get_upload_geojson(upload_id: int, _user: dict = Depends(get_current_u
 
 
 @router.delete("/uploads/{upload_id}")
-async def delete_upload(upload_id: int, _user: dict = Depends(get_current_user)):
+async def delete_upload(
+    upload_id: int,
+    _user: dict = Depends(get_current_user),
+    owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
+):
     """删除上传记录及文件"""
     async with async_db_session() as db:
         result = await db.execute(select(UploadRecord).where(UploadRecord.id == upload_id))
@@ -375,7 +402,10 @@ async def delete_upload(upload_id: int, _user: dict = Depends(get_current_user))
         if not record:
             raise HTTPException(status_code=404, detail="上传记录不存在")
         # 审计 S42：删除前必须确认归属 —— 否则任何用户可枚举整数 id 删除他人数据。
-        await _verify_session_owner(db, record.session_id, _user.get("user_id"))
+        # SEC-08：转发 X-Session-Token，与 POST /upload 对齐（#1109）。
+        await _verify_session_owner(
+            db, record.session_id, _user.get("user_id"), owner_token=owner_token
+        )
 
         file_path = Path(record.filename)
         await db.delete(record)
