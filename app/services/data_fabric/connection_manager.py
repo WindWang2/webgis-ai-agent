@@ -2,6 +2,7 @@
 Geospatial Data Fabric: Connection Manager & Generic Adapter Reference Implementation
 Manages connected data source profiles and active adapter instances.
 """
+import ipaddress
 import logging
 from typing import Dict, Any, List, Optional, Tuple
 from app.schemas.data_fabric_schema import (
@@ -226,6 +227,34 @@ def create_adapter_for_profile(profile: ConnectionProfile) -> GeospatialDataSour
     return build_adapter(profile)
 
 
+def _ssrf_validate_profile(profile: ConnectionProfile) -> None:
+    """Run DataFabricSecurity.validate_url for url *or* host/port profiles.
+
+    Host/port-only PostGIS connections previously skipped the SSRF gate when
+    ``profile.url`` was empty (#1107). Construct a synthetic postgresql:// URL
+    so the same private/loopback/metadata IP checks apply.
+    """
+    if profile.url:
+        DataFabricSecurity.validate_url(profile.url, allow_private=profile.allow_private)
+        return
+    if not profile.host:
+        return
+
+    host = profile.host.strip()
+    # Bracket IPv6 literals so urlparse yields a correct hostname.
+    try:
+        ip = ipaddress.ip_address(host.strip("[]"))
+        if ip.version == 6:
+            host = f"[{ip}]"
+    except ValueError:
+        pass
+    port = profile.port if profile.port is not None else 5432
+    DataFabricSecurity.validate_url(
+        f"postgresql://{host}:{port}",
+        allow_private=profile.allow_private,
+    )
+
+
 class DataFabricConnectionManager:
     """
     Connection Manager for Data Fabric profiles and adapters.
@@ -239,10 +268,11 @@ class DataFabricConnectionManager:
         """
         Validates security policy and connects a new data source profile.
         Registers discovered dataset descriptors into SpatialCatalogService.
+
+        SSRF validation applies to both URL endpoints and host/port-only
+        database connections (e.g. PostGIS without a url field).
         """
-        # SSRF validation
-        if profile.url:
-            DataFabricSecurity.validate_url(profile.url, allow_private=profile.allow_private)
+        _ssrf_validate_profile(profile)
 
         adapter = create_adapter_for_profile(profile)
         adapter.sync()  # Registers dataset descriptors in catalog

@@ -69,14 +69,14 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "连接与注册地理空间数据源（PostGIS, OGC API, WFS, WMS, WMTS, ArcGIS, STAC, GeoParquet, PMTiles, S3 等；"
             "generic/mock/sample 为显式演示适配器，返回合成数据并以 is_demo 标注）。"
             "\n注意：未注册的类型（如 csv、geojson 远程 URL）会被拒绝并返回 UNSUPPORTED_SOURCE 错误——不会静默生成模拟数据。"
-            "\n安全策略：自动执行 SSRF 拦截（禁止私有网段/loopback/元数据地址），并在返回结果中自动脱敏敏感凭据。"
+            "\n安全策略：自动执行 SSRF 拦截（禁止私有网段/loopback/元数据地址），对 url 与 host/port 连接路径均生效，并在返回结果中自动脱敏敏感凭据。"
             "\n返回：{status, connection_profile, health, datasets_count, is_demo}"
         ),
         param_descriptions={
             "profile_id": "数据源连接配置的唯一标识符（如 'pg-main', 'wfs-usgs'）",
             "source_type": "适配器协议类型 ('postgis', 'ogc_api', 'wfs', 'wms', 'wmts', 'arcgis', 'stac', 'geoparquet', 'flatgeobuf', 'pmtiles', 's3'; 演示: 'generic')",
             "url": "远程服务 API Endpoint URL（执行 SSRF 安全校验）",
-            "host": "数据库主机地址",
+            "host": "数据库主机地址（与 url 相同的 SSRF 安全校验）",
             "port": "数据库端口",
             "database": "数据库名称",
             "username": "认证用户名",
@@ -103,6 +103,9 @@ def register_data_fabric_tools(registry: ToolRegistry):
         prompt-injectable. Private endpoints must be allow-listed server-side
         (mirrors the REST route in app/api/routes/data_fabric.py). See
         docs/research/deep-audit-performance-convergence.md SEC-01.
+
+        Both ``url`` and host/port-only profiles are SSRF-validated in
+        ``connection_manager.connect`` (#1107).
         """
         def _sync_run():
             profile = ConnectionProfile(
