@@ -58,7 +58,364 @@ async def _verify_session_owner(
     SEC-08：匿名会话需转发 X-Session-Token（owner_token），与 POST /upload 对齐。
     """
     if not session_id:
+        # Session-less records used to skip this check, so GET/DELETE /uploads/{n}
+        # was world-reachable for any sequential integer id.
         raise HTTPException(status_code=404, detail="上传记录不存在")
     await verify_session_owner(
         db, session_id, user_id=user_id, owner_token=owner_token
     )
+
+
+# ==================== 响应模型 ====================
+
+class UploadResponse(BaseModel):
+    """单文件上传响应"""
+    id: int
+    original_name: str
+    file_type: str
+    format: str
+    crs: str
+    geometry_type: Optional[str]
+    feature_count: int
+    bbox: Optional[List[float]]
+    file_size: int
+    message: str = "上传成功"
+
+
+class UploadListResponse(BaseModel):
+    """上传列表响应"""
+    total: int
+    uploads: List[UploadResponse]
+
+
+class ErrorResponse(BaseModel):
+    detail: str
+
+
+# ==================== 上传接口 ====================
+
+@router.post("/upload", response_model=UploadResponse)
+async def upload_files(
+    files: List[UploadFile] = File(..., description="GIS 数据文件（支持多文件上传）"),
+    session_id: Optional[str] = Form(None, description="关联的会话 ID"),
+    owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
+    _user: dict = Depends(get_current_user),
+):
+    """
+    上传 GIS 数据文件
+
+    支持格式:
+    - 矢量: .geojson, .json, .shp (zip), .kml, .gpkg, .csv (含经纬度列)
+    - 栅格: .tif, .tiff
+
+    限制: 矢量文件 50MB, 栅格文件 200MB
+    """
+    if not files:
+        raise HTTPException(status_code=400, detail="请选择至少一个文件")
+
+    # 只处理第一个文件（多文件上传可扩展）
+    file = files[0]
+    # —— 文件名清洗：剥离任何路径分隔符与 .. 防穿越 ——
+    raw_name = file.filename or "unknown"
+    filename = Path(raw_name).name
+    if not filename or filename.startswith("."):
+        raise HTTPException(status_code=400, detail="非法文件名")
+    ext = Path(filename).suffix.lower()
+
+    # 检查格式
+    if ext not in VECTOR_FORMATS and ext not in RASTER_FORMATS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的文件格式: {ext}。"
+                   f"支持的矢量格式: {', '.join(sorted(VECTOR_FORMATS))}；"
+                   f"栅格格式: {', '.join(sorted(RASTER_FORMATS))}",
+        )
+
+    # 读取文件内容 — SEC-F6: read at most cap+1 bytes so an oversized body is
+    # rejected BEFORE being fully buffered into memory (the old unconditional
+    # read() let a direct-exposure attacker OOM the process; nginx's 100M
+    # body cap only covers the proxied path).
+    _max_for_ext = MAX_RASTER_SIZE if ext in RASTER_FORMATS else MAX_VECTOR_SIZE
+    content = await file.read(_max_for_ext + 1)
+    file_size = len(content)
+
+    # 检查大小
+    if ext in RASTER_FORMATS and file_size > MAX_RASTER_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail="栅格文件大小超过限制 200MB",
+        )
+    if ext in VECTOR_FORMATS and file_size > MAX_VECTOR_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail="矢量文件大小超过限制 50MB",
+        )
+
+    # 创建上传目录
+    # 完整 uuid hex (32 字符, 128 位熵) — 旧的 [:12] 仅 48 位，公网静态 mount 下可枚举
+    upload_id = uuid.uuid4().hex
+    upload_dir = get_upload_dir(settings.DATA_DIR, upload_id)
+
+    # #546：单一清理纪律 —— 目录在 get_upload_dir 已被 eager 创建，此后任何
+    # 失败分支（临时文件写入 / 解析 / save_meta / DB，含 DBAPIError 逃逸）都
+    # 必须把本次上传的目录删掉，否则持久卷积累无法通过 API 删除的孤儿目录
+    # （ParseError 等 4xx/5xx + 未捕获的 SQLAlchemy DBAPIError 都会把目录留下）。
+    # 只删当前上传的 upload_dir，绝不碰 uploads/ 根目录。
+    try:
+        # 写入临时文件 — 二次防御：解析后必须仍在 upload_dir 之下
+        temp_path = upload_dir / filename
+        try:
+            resolved = temp_path.resolve()
+            upload_root = Path(upload_dir).resolve()
+            if upload_root not in resolved.parents:
+                raise HTTPException(status_code=400, detail="路径越界")
+            # #592：200MB 同步写盘移出事件循环（与下方 parse 的 executor 对称）。
+            await asyncio.to_thread(_write_upload_bytes, temp_path, content)
+        except OSError as e:
+            logger.error(f"文件保存失败: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="文件保存失败")
+
+        # 解析文件 — parse_vector / parse_raster 内含 gpd.read_file / rasterio.open
+        # 这些是同步 CPU+IO 操作，常常需要数秒。直接在 async def 里调用会阻塞整个
+        # uvicorn 事件循环，所有其它请求停滞（审计 B1 / V2.0 计算隔离不变式）。
+        # 走 run_in_executor 把工作扔到默认 threadpool。
+        loop = asyncio.get_running_loop()
+        try:
+            if ext in RASTER_FORMATS:
+                meta = await loop.run_in_executor(None, parse_raster, temp_path, upload_dir, upload_id)
+            else:
+                meta = await loop.run_in_executor(None, parse_vector, temp_path, upload_dir, upload_id)
+        except ParseError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except (OSError, RuntimeError) as e:
+            logger.error(f"文件解析异常: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="文件解析失败")
+
+        # 保存元信息
+        save_meta(upload_dir, meta)
+
+        # 写入数据库
+        try:
+            async with async_db_session() as db:
+                if session_id:
+                    from app.models.db_model import Conversation
+
+                    conv = (
+                        await db.execute(
+                            select(Conversation).where(Conversation.id == session_id)
+                        )
+                    ).scalar_one_or_none()
+                    # Same rules as get_session / materialize: missing row is a
+                    # first-turn write; an existing row needs user_id or SEC-08 token.
+                    if not authorize_session_write(
+                        conv, _user.get("user_id"), owner_token
+                    ):
+                        raise HTTPException(status_code=404, detail="Session not found")
+                record = UploadRecord(
+                    filename=meta.get("output_path", str(upload_dir / filename)),
+                    original_name=filename,
+                    file_type=meta["file_type"],
+                    format=meta["format"],
+                    crs=meta.get("crs", "EPSG:4326"),
+                    geometry_type=meta.get("geometry_type"),
+                    feature_count=meta.get("feature_count", 0),
+                    bbox=meta.get("bbox"),
+                    file_size=file_size,
+                    session_id=session_id,
+                )
+                db.add(record)
+                await db.flush()
+                await db.refresh(record)
+        except (OSError, RuntimeError, SQLAlchemyError) as e:
+            # #546：DBAPIError 是 SQLAlchemyError 子类而非 OSError/RuntimeError ——
+            # 旧代码漏捕导致 500 逃逸且目录残留。这里并入 SQLAlchemyError 一并处理。
+            logger.error(f"数据库写入失败: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="记录保存失败")
+    except HTTPException:
+        # 4xx/5xx 业务失败（校验/解析/元信息/DB）：清理本次上传目录后重抛
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        raise
+    except Exception:
+        # 兜底：任何未映射异常（如 save_meta 的 OSError）同样不能留孤儿目录
+        logger.error("上传失败，清理孤儿目录", exc_info=True)
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        raise
+
+    return UploadResponse(
+        id=record.id,
+        original_name=record.original_name,
+        file_type=record.file_type,
+        format=record.format,
+        crs=record.crs,
+        geometry_type=record.geometry_type,
+        feature_count=record.feature_count,
+        bbox=record.bbox,
+        file_size=record.file_size,
+    )
+
+
+# ==================== 查询接口 ====================
+
+@router.get("/uploads", response_model=UploadListResponse)
+async def list_uploads(
+    _user: dict = Depends(get_current_user),
+    session_id: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+    owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
+):
+    """获取上传文件列表
+
+    审计 S42：session_id 缺省时之前返回全局最近 100 条 —— 任何登录用户能拉到
+    他人上传文件名、bbox（常含真实位置 PII）。现在要求 session_id 必填且校验归属。
+    """
+    if not session_id:
+        raise HTTPException(
+            status_code=400,
+            detail="session_id 为必填，避免跨租户泄漏",
+        )
+    async with async_db_session() as db:
+        await _verify_session_owner(
+            db, session_id, _user.get("user_id"), owner_token=owner_token
+        )
+        stmt = select(UploadRecord).where(UploadRecord.session_id == session_id).order_by(UploadRecord.upload_time.desc())
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        total_result = await db.execute(count_stmt)
+        total = total_result.scalar_one()
+        result = await db.execute(stmt.offset(offset).limit(limit))
+        records = result.scalars().all()
+
+    return UploadListResponse(
+        total=total,
+        uploads=[
+            UploadResponse(
+                id=r.id,
+                original_name=r.original_name,
+                file_type=r.file_type,
+                format=r.format,
+                crs=r.crs,
+                geometry_type=r.geometry_type,
+                feature_count=r.feature_count,
+                bbox=r.bbox,
+                file_size=r.file_size,
+            )
+            for r in records
+        ],
+    )
+
+
+@router.get("/uploads/{upload_id}", response_model=UploadResponse)
+async def get_upload(
+    upload_id: int,
+    _user: dict = Depends(get_current_user),
+    owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
+):
+    """获取单个上传文件的详情
+
+    审计 S42：upload_id 是顺序整数易枚举；通过 record.session_id 解析归属。
+    SEC-08：转发 X-Session-Token，与 POST /upload 对齐（#1109）。
+    """
+    async with async_db_session() as db:
+        result = await db.execute(select(UploadRecord).where(UploadRecord.id == upload_id))
+        record = result.scalar_one_or_none()
+        if not record:
+            raise HTTPException(status_code=404, detail="上传记录不存在")
+        await _verify_session_owner(
+            db, record.session_id, _user.get("user_id"), owner_token=owner_token
+        )
+
+    return UploadResponse(
+        id=record.id,
+        original_name=record.original_name,
+        file_type=record.file_type,
+        format=record.format,
+        crs=record.crs,
+        geometry_type=record.geometry_type,
+        feature_count=record.feature_count,
+        bbox=record.bbox,
+        file_size=record.file_size,
+    )
+
+
+@router.get("/uploads/{upload_id}/geojson")
+async def get_upload_geojson(
+    upload_id: int,
+    _user: dict = Depends(get_current_user),
+    owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
+):
+    """获取上传文件的 GeoJSON 数据（用于地图渲染）。
+
+    审计 S49：之前无大小限制 -- 任意大的 GeoJSON 被 json.load 一次性读入内存
+    并流式返回，超大文件可导致内存爆。加 50MB 上限（与 MAX_VECTOR_SIZE 一致）。
+    SEC-08：转发 X-Session-Token，与 POST /upload 对齐（#1109）。
+    """
+    async with async_db_session() as db:
+        result = await db.execute(select(UploadRecord).where(UploadRecord.id == upload_id))
+        record = result.scalar_one_or_none()
+        if not record:
+            raise HTTPException(status_code=404, detail="上传记录不存在")
+        await _verify_session_owner(
+            db, record.session_id, _user.get("user_id"), owner_token=owner_token
+        )
+
+    if record.file_type != "vector":
+        raise HTTPException(status_code=400, detail="该文件不是矢量数据")
+
+    geojson_path = Path(record.filename)
+    if not geojson_path.exists():
+        raise HTTPException(status_code=404, detail="GeoJSON 文件不存在")
+
+    resolved = geojson_path.resolve()
+    data_root = Path(settings.DATA_DIR).resolve()
+    if data_root not in resolved.parents and resolved != data_root:
+        raise HTTPException(status_code=400, detail="非法文件路径")
+
+    # 审计 S49：文件大小检查 -- 防 OOM
+    file_size = geojson_path.stat().st_size
+    if file_size > MAX_VECTOR_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"GeoJSON 文件过大（{file_size / 1024 / 1024:.1f}MB > {MAX_VECTOR_SIZE / 1024 / 1024:.0f}MB 限制），请通过 /layers/data/{{ref_id}} 分片读取",
+        )
+
+    # 计算隔离不变式 1：ijson 解析 50MB GeoJSON 是同步 CPU 工作，直接在
+    # async def 里执行会阻塞整个事件循环（#386）。照抄本文件上传路径的
+    # run_in_executor 模式，把解析扔到默认 threadpool。
+    loop = asyncio.get_running_loop()
+    features = await loop.run_in_executor(None, _load_geojson_features, geojson_path)
+    # #590：响应侧序列化同样不能由默认 JSONResponse 在事件循环上整包编码
+    # —— 与 /layers/data 一致，分块 + to_thread 序列化后以 bytes 返回。
+    body = await serialize_geojson({"type": "FeatureCollection", "features": features})
+    return Response(content=body, media_type="application/json")
+
+
+@router.delete("/uploads/{upload_id}")
+async def delete_upload(
+    upload_id: int,
+    _user: dict = Depends(get_current_user),
+    owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
+):
+    """删除上传记录及文件"""
+    async with async_db_session() as db:
+        result = await db.execute(select(UploadRecord).where(UploadRecord.id == upload_id))
+        record = result.scalar_one_or_none()
+        if not record:
+            raise HTTPException(status_code=404, detail="上传记录不存在")
+        # 审计 S42：删除前必须确认归属 —— 否则任何用户可枚举整数 id 删除他人数据。
+        # SEC-08：转发 X-Session-Token，与 POST /upload 对齐（#1109）。
+        await _verify_session_owner(
+            db, record.session_id, _user.get("user_id"), owner_token=owner_token
+        )
+
+        file_path = Path(record.filename)
+        await db.delete(record)
+
+    # File cleanup AFTER DB commit succeeds
+    upload_dir = file_path.parent
+    if upload_dir.exists():
+        resolved = upload_dir.resolve()
+        uploads_root = Path(settings.DATA_DIR, "uploads").resolve()
+        if uploads_root in resolved.parents:
+            shutil.rmtree(upload_dir, ignore_errors=True)
+
+    return {"success": True, "message": "已删除"}
