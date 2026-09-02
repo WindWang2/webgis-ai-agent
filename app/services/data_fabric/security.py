@@ -98,6 +98,9 @@ class DataFabricSecurity:
         Blocks loopback, RFC1918 private subnets, IPv6 loopback/ULA/link-local,
         IPv4-mapped IPv6, and cloud metadata IPs across ALL resolved addresses.
 
+        Accepted schemes: http, https, s3, minio, and postgresql/postgres
+        (the latter two allow host/port-only DB connections to reuse this gate).
+
         A hostname that fails to resolve is treated as blocked (previously the
         check 'proceeded', which allowed unreachable-but-dangerous hostnames).
         Note: this validates at request time. For full DNS-rebinding defense the
@@ -109,7 +112,9 @@ class DataFabricSecurity:
 
         parsed = urlparse(url)
         scheme = parsed.scheme.lower()
-        if scheme not in ("http", "https", "s3", "minio"):
+        # postgresql/postgres: host/port DB profiles (#1107) construct a synthetic
+        # URL so the same private/loopback/metadata IP gates apply.
+        if scheme not in ("http", "https", "s3", "minio", "postgresql", "postgres"):
             raise DataFabricSecurityError(f"Unsupported or unsafe scheme '{scheme}'")
 
         hostname = parsed.hostname
@@ -262,7 +267,7 @@ class DataFabricSecurity:
             raise DataFabricSecurityError(f"Malformed or unsafe XML payload: {e}")
 
 
-# ── HTTP client SSRF hardening ──────────────────────────────────────────────
+# ── HTTP client SSRF hardening ──────────────────────────────────────
 #
 # validate_url() is a *pre-flight* gate: it runs once on the URL the user
 # registered. The original adapters then handed the URL to a plain
