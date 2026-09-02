@@ -450,6 +450,17 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         compatible_map_models=["flow_od_arc"], priority=10,
     ),
     AlgorithmDescriptor(
+        # ADR-0092 D：OD 边 → 有界带权流向线要素（flow_od_arc 渲染输入）。
+        id="flow.od_arc_build", name="OD 流向构建", category="flow_analysis",
+        capabilities=["od_flow_mapping"],
+        input_artifact_type="od_table",
+        output_artifact_type="line_feature_set",
+        tool_candidates=["od_flow_edges"],
+        cpu_cost="medium", memory_cost="medium", io_cost="medium",
+        preferred_execution_policy="ASYNC",
+        compatible_map_models=["flow_od_arc"], priority=10,
+    ),
+    AlgorithmDescriptor(
         id="network.service_area.multi", name="多断点服务区", category="network_analysis",
         capabilities=["service_area"],
         output_artifact_type="service_area", tool_candidates=["network_service_area"],

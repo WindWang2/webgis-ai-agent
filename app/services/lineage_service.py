@@ -43,6 +43,9 @@ class LineageService:
         source_dataset_id: Optional[str] = None,
         source_dataset_fingerprint: Optional[str] = None,
         content_fingerprint: Optional[str] = None,
+        producing_capability: Optional[str] = None,
+        producing_algorithm: Optional[str] = None,
+        mapspec_fingerprint: Optional[str] = None,
         commit: bool = True,
     ) -> List[ArtifactLineage]:
         """Record one lineage edge per parent (or a single root edge for inputs).
@@ -51,6 +54,10 @@ class LineageService:
         WorkflowEngine passes ``commit=False`` so the engine's per-step commit is
         the atomic boundary (INV-TX2) — artifact + lineage + run-trace land
         together, and a failed step never leaves orphan lineage behind.
+
+        ``producing_capability`` / ``producing_algorithm`` / ``mapspec_fingerprint``
+        (ADR-0092 A4) record the semantic chain Dataset → Capability → Algorithm
+        → Tool → Artifact → MapSpec on the existing edge — no second graph.
 
         Raises ``LineageCycleError`` for self- or multi-hop cycle attempts.
         """
@@ -128,6 +135,9 @@ class LineageService:
                 parent_artifact_id=parent_id,
                 producing_tool=producing_tool,
                 tool_version=tool_version,
+                producing_capability=producing_capability,
+                producing_algorithm=producing_algorithm,
+                mapspec_fingerprint=mapspec_fingerprint,
                 workflow_run_id=workflow_run_id,
                 parameters=parameters or {},
                 source_dataset_id=source_dataset_id if first else None,

@@ -141,6 +141,13 @@ SEED_ARTIFACT_TYPES: List[ArtifactTypeDescriptor] = [
         typical_map_models=["flow_od_arc"],
     ),
     ArtifactTypeDescriptor(
+        # ADR-0092 D1：结构化 OD 边表（origin/destination 坐标对 + weight）。
+        # 与 od_matrix（纯成本表）的区别：携带坐标，可直接构建流向线要素。
+        id="od_table", name_zh="OD 边表", geometry_kind="network",
+        category="network",
+        typical_map_models=["flow_od_arc"],
+    ),
+    ArtifactTypeDescriptor(
         id="network_graph", name_zh="网络图", geometry_kind="network",
         category="network",
     ),

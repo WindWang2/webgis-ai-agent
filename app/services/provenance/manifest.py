@@ -47,12 +47,26 @@ def build_run_manifest(
     steps: Iterable[Dict[str, Any]],
     tool_versions: Dict[str, str],
     artifacts: Iterable[Dict[str, Any]],
+    runtime_manifest_fingerprint: Optional[str] = None,
+    mapspec_fingerprint: Optional[str] = None,
+    product_facets: Optional[List[Dict[str, Any]]] = None,
+    qa_summary: Optional[Dict[str, Any]] = None,
+    finalization_summary: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Assemble the canonical run manifest (the full, storable document).
 
     ``steps`` items: {step_id, tool_name, tool_version, status, args} (args are
     trimmed for size). ``artifacts`` items carry the truthful per-artifact
     metadata + ids (ids are NOT part of the fingerprint).
+
+    ADR-0092 A2 executable-snapshot extensions (all bounded projections):
+    ``runtime_manifest_fingerprint`` (registry generation the run executed
+    under), ``mapspec_fingerprint`` (desired map state at run end),
+    ``product_facets`` / ``qa_summary`` / ``finalization_summary`` (product
+    outcome evidence). The outcome blocks are deliberately OUTSIDE the run
+    fingerprint projection (see _stable_projection): they describe results,
+    not the compute plan, and two replays may legitimately differ in render/QA
+    timing without being different runs.
     """
     steps_list: List[Dict[str, Any]] = []
     for s in steps:
@@ -62,11 +76,13 @@ def build_run_manifest(
                 "tool_name": s.get("tool_name"),
                 "tool_version": s.get("tool_version"),
                 "status": s.get("status"),
+                "capability": s.get("capability"),
+                "algorithm": s.get("algorithm"),
                 "args": _trim(s.get("args") or {}),
             }
         )
 
-    return {
+    manifest = {
         "workflow_revision_id": workflow_revision_id,
         "graph_fingerprint": graph_fingerprint,
         "inputs": _trim(input_bindings or {}),
@@ -86,6 +102,19 @@ def build_run_manifest(
             for a in artifacts
         ],
     }
+    # Bounded outcome evidence (present only when the caller supplied it —
+    # legacy engine paths keep their exact manifest shape).
+    if runtime_manifest_fingerprint:
+        manifest["runtime_manifest_fingerprint"] = runtime_manifest_fingerprint
+    if mapspec_fingerprint:
+        manifest["mapspec_fingerprint"] = mapspec_fingerprint
+    if product_facets:
+        manifest["product_facets"] = product_facets[:32]
+    if qa_summary:
+        manifest["qa_summary"] = qa_summary
+    if finalization_summary:
+        manifest["finalization_summary"] = finalization_summary
+    return manifest
 
 
 def _stable_projection(manifest: Dict[str, Any]) -> Dict[str, Any]:
@@ -97,8 +126,12 @@ def _stable_projection(manifest: Dict[str, Any]) -> Dict[str, Any]:
     hash differently, violating INV-MAN2); and any volatile field.
 
     Keeps: graph identity, declared inputs, input dataset fingerprints, and the
-    per-step (tool + tool_version + status) compute plan. Static per-step args
-    are already captured in ``graph_fingerprint``; bound inputs in ``inputs``.
+    per-step (tool + tool_version + status + capability/algorithm) compute plan.
+    Static per-step args are already captured in ``graph_fingerprint``; bound
+    inputs in ``inputs``. Per-step capability/algorithm ARE folded in (they are
+    deterministic functions of graph + registry generation) — a rerun that
+    re-resolves a capability to a different algorithm is a *different* compute
+    plan and must fingerprint differently (ADR-0092 A2).
     """
     steps = [
         {
@@ -106,6 +139,8 @@ def _stable_projection(manifest: Dict[str, Any]) -> Dict[str, Any]:
             "tool_name": s.get("tool_name"),
             "tool_version": s.get("tool_version"),
             "status": s.get("status"),
+            "capability": s.get("capability"),
+            "algorithm": s.get("algorithm"),
         }
         for s in manifest.get("steps", [])
     ]
@@ -148,6 +183,34 @@ class RunManifestBuilder:
         self._steps: List[Dict[str, Any]] = []
         self._tool_versions: Dict[str, str] = {}
         self._artifacts: List[Dict[str, Any]] = []
+        self._runtime_manifest_fp: Optional[str] = None
+        self._mapspec_fp: Optional[str] = None
+        self._product_facets: Optional[List[Dict[str, Any]]] = None
+        self._qa_summary: Optional[Dict[str, Any]] = None
+        self._finalization_summary: Optional[Dict[str, Any]] = None
+
+    def set_outcome_context(
+        self,
+        *,
+        runtime_manifest_fingerprint: Optional[str] = None,
+        mapspec_fingerprint: Optional[str] = None,
+        product_facets: Optional[List[Dict[str, Any]]] = None,
+        qa_summary: Optional[Dict[str, Any]] = None,
+        finalization_summary: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Attach bounded product-outcome evidence (ADR-0092 A2). Called once
+        before :meth:`build`; every field is optional and omitted fields keep
+        the legacy manifest shape."""
+        if runtime_manifest_fingerprint:
+            self._runtime_manifest_fp = runtime_manifest_fingerprint
+        if mapspec_fingerprint:
+            self._mapspec_fp = mapspec_fingerprint
+        if product_facets:
+            self._product_facets = product_facets
+        if qa_summary:
+            self._qa_summary = qa_summary
+        if finalization_summary:
+            self._finalization_summary = finalization_summary
 
     def add_step(
         self,
@@ -157,6 +220,8 @@ class RunManifestBuilder:
         tool_version: str,
         status: str,
         args: Optional[Dict[str, Any]] = None,
+        capability: Optional[str] = None,
+        algorithm: Optional[str] = None,
     ) -> None:
         self._steps.append(
             {
@@ -164,6 +229,8 @@ class RunManifestBuilder:
                 "tool_name": tool_name,
                 "tool_version": tool_version,
                 "status": status,
+                "capability": capability,
+                "algorithm": algorithm,
                 "args": _trim(args or {}),
             }
         )
@@ -182,4 +249,9 @@ class RunManifestBuilder:
             steps=self._steps,
             tool_versions=self._tool_versions,
             artifacts=self._artifacts,
+            runtime_manifest_fingerprint=self._runtime_manifest_fp,
+            mapspec_fingerprint=self._mapspec_fp,
+            product_facets=self._product_facets,
+            qa_summary=self._qa_summary,
+            finalization_summary=self._finalization_summary,
         )

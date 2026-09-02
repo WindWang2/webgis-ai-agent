@@ -47,6 +47,8 @@ _TOOL_MODULES = [
     ("app.tools.temporal_tools", "register_temporal_tools"),
     ("app.tools.spatial_decision_tools", "register_spatial_decision_tools"),
     ("app.tools.data_fabric_tools", "register_data_fabric_tools"),
+    ("app.tools.semantic_tools", "register_semantic_tools"),
+    ("app.tools.flow_tools", "register_flow_tools"),
 ]
 
 

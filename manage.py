@@ -309,6 +309,44 @@ def cmd_gd_poi_ingest(force, provinces):
     console.print_json(json.dumps(stats, ensure_ascii=False, default=str))
 
 
+def cmd_gis_benchmark(case_id, group, offline, report_path):
+    """GIS agent semantic regression benchmark (ADR-0092 Phase B).
+
+    Deterministic, offline, no CI dependency: plan tier always runs
+    (planner/registry assertions); execute tier dispatches the case's scripted
+    tools on fixtures. Skipped cases (tooling not registered) are disclosed,
+    never counted as passes.
+    """
+    from pathlib import Path as _Path
+
+    from app.evaluation import GISBenchmarkRunner, get_all_cases, render_markdown
+
+    cases = get_all_cases()
+    if case_id:
+        cases = [c for c in cases if c.id.upper() == str(case_id).upper()]
+    if group:
+        cases = [c for c in cases if c.group == group]
+    if offline:
+        cases = [c.model_copy(update={"plan_only": True}) for c in cases]
+    if not cases:
+        console.print("[red]No matching benchmark cases.[/red]")
+        sys.exit(2)
+
+    async def _run():
+        runner = GISBenchmarkRunner()
+        return await runner.run(cases)
+
+    results = asyncio.run(_run())
+    report = render_markdown(results)
+    console.print(report)
+    if report_path:
+        _Path(report_path).parent.mkdir(parents=True, exist_ok=True)
+        _Path(report_path).write_text(report, encoding="utf-8")
+        console.print(f"[green]Report written to {report_path}[/green]")
+    failed = [r for r in results if r.status == "fail"]
+    sys.exit(1 if failed else 0)
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="manage.py",
@@ -363,6 +401,13 @@ def main():
     p_gp.add_argument("--force", action="store_true", help="重建（默认按省幂等跳过；配合 --provinces 时只刷新指定省，其余省数据不动）")
     p_gp.add_argument("--provinces", default=None, help="逗号分隔省级 adcode，如 510000,540000（默认全部）")
 
+    # gis-benchmark (ADR-0092 B5)
+    p_gb = subparsers.add_parser("gis-benchmark", help="GIS agent semantic regression benchmark (deterministic, offline)")
+    p_gb.add_argument("--case", default=None, help="Run a single case id (e.g. G1)")
+    p_gb.add_argument("--group", default=None, help="Run one group (poi/raster/network/od/repair/semantics)")
+    p_gb.add_argument("--offline", action="store_true", help="Plan tier only (skip execute tier)")
+    p_gb.add_argument("--report", default=None, help="Write a markdown report to this path")
+
     args = parser.parse_args()
 
     if args.command == "init-db":
@@ -387,6 +432,8 @@ def main():
         cmd_yearbook_status()
     elif args.command == "gd-poi-ingest":
         cmd_gd_poi_ingest(args.force, args.provinces)
+    elif args.command == "gis-benchmark":
+        cmd_gis_benchmark(args.case, args.group, args.offline, args.report)
     else:
         parser.print_help()
         sys.exit(1)

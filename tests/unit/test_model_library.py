@@ -40,7 +40,10 @@ class TestModelLibraryIntegrity:
     def test_planned_models_are_honest(self):
         reg = get_map_model_registry()
         planned = set(reg.planned_ids())
-        assert {"flow_od_arc", "extrusion_3d", "isoline_contour"} <= planned
+        # ADR-0092 Phase D: flow_od_arc promoted to native (od_flow_edges
+        # tool + converter flow paint + frontend line channels).
+        assert "flow_od_arc" in set(reg.native_ids())
+        assert {"extrusion_3d", "isoline_contour"} <= planned
         for mid in planned:
             assert get_map_model(mid).runtime_status == "planned"
 

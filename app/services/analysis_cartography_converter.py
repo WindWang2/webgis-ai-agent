@@ -308,6 +308,19 @@ def convert_analysis_to_mapspec_layer(
         inferred_layer_type = cat_to_layer_type.get(geom_cat, "circle")
 
         type_hint = analysis_result.get("type_hint") or base_layer.get("type_hint")
+        # ADR-0092 D4: flow_od_arc 原生支持 —— OD 流向线要素（weight 属性）
+        # 落成 line 图层，宽度由权重驱动（见下方 paint 段）。几何不是线时
+        # 诚实回退为 line 语义不成立 → 保留推断类型并给警告。
+        flow_hint_active = False
+        if type_hint == "flow_od_arc":
+            if geom_cat == "line":
+                inferred_layer_type = "line"
+                flow_hint_active = True
+            else:
+                warnings.append(
+                    f"flow_od_arc_guard: 几何类别为 {geom_cat or 'unknown'}，"
+                    f"flow 图层需要线要素（origin/destination 坐标对），已回退常规表达"
+                )
         # #690: deterministic guard — do not flip to heatmap when unsuitable
         heatmap_guard_triggered = False
         heatmap_guard_reason = ""
@@ -400,6 +413,33 @@ def convert_analysis_to_mapspec_layer(
 
             if has_thematic_paint or "color" not in paint:
                 paint["color"] = paint_color
+
+            # ADR-0092 D4：flow 权重通道 —— width ← weight（interpolate），
+            # opacity 略降以缓解多层弧线的视觉交叠；color 仍走 legend/spec
+            # 投影（continuous legend → interpolate）或常量默认。
+            if flow_hint_active:
+                flow_meta = analysis_result.get("metadata") or {}
+                if isinstance(flow_meta, dict) and flow_meta.get("flow"):
+                    weight_field = str(flow_meta.get("weight_field") or "weight")
+                    try:
+                        w_min = float(flow_meta.get("weight_min") or 0.0)
+                        w_max = float(flow_meta.get("weight_max") or 0.0)
+                    except (TypeError, ValueError):
+                        w_min, w_max = 0.0, 0.0
+                    if w_max > w_min:
+                        try:
+                            width_max = float(flow_meta.get("width_max_px") or 8.0)
+                        except (TypeError, ValueError):
+                            width_max = 8.0
+                        paint["width"] = {
+                            "method": "interpolate",
+                            "field": weight_field,
+                            "stops": [[w_min, 1.0], [w_max, width_max]],
+                        }
+                        try:
+                            paint["opacity"] = float(flow_meta.get("opacity") or 0.85)
+                        except (TypeError, ValueError):
+                            paint["opacity"] = 0.85
 
         algorithm = (
             analysis_result.get("algorithm")

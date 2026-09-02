@@ -268,7 +268,7 @@ SEED_RECIPES: List[CartographyRecipe] = [
             ),
         ],
         validation_rules=["point_count>=10 for visual_heatmap", "choropleth requires admin aggregation result"],
-        export_profile={"formats": ["png", "pdf"], "layout": "report"},
+        export_profile={"formats": ["png", "pdf"], "chart": True},
         priority=40,
     ),
     CartographyRecipe(
@@ -368,6 +368,26 @@ SEED_RECIPES: List[CartographyRecipe] = [
         priority=35,
     ),
     CartographyRecipe(
+        # ADR-0092 D7：mobility_flow / od_flow 产品 recipe —— 自然语言
+        # 「分析 A 到 B 的出行流 / 展示各区通勤联系」→ OD 流向图产品。
+        # 能力链：od_matrix（成本/坐标对来源）→ od_flow_mapping（有界流向
+        # 线要素）→ flow_od_arc 主表达 + table/chart/statistics facets。
+        id="od_flow_overview",
+        name="OD 出行流向图",
+        description="『通勤流/出行流/客流』：OD 对 → 有界主流向线要素 + 流量统计。",
+        intent_tasks=["mobility_flow"],
+        intent_cartography=["flow_od_arc"],
+        preferred_analysis=["od_matrix", "od_flow_mapping", "point_profile"],
+        optional_analysis=["admin_boundary_query"],
+        primary_cartography="flow_od_arc",
+        secondary_cartography=[],
+        default_components=["title", "legend", "north_arrow", "scale_bar", "attribution", "statistics_panel"],
+        fallbacks=[],
+        validation_rules=["flow_bounded_output"],
+        export_profile={"formats": ["png", "pdf"], "chart": True},
+        priority=35,
+    ),
+    CartographyRecipe(
         id="accessibility_analysis",
         name="可达性/服务区分析",
         description="『等时圈/服务区/覆盖范围』：网络服务区 + 覆盖统计。",
@@ -385,13 +405,18 @@ SEED_RECIPES: List[CartographyRecipe] = [
         id="raster_distribution",
         name="栅格面分布",
         description="遥感/DEM/气象等栅格分布：raster surface + 连续色条。",
-        intent_tasks=["raster_distribution", "change_detection"],
+        intent_tasks=["raster_distribution", "change_detection", "vegetation_index"],
         intent_cartography=["raster_surface"],
         preferred_analysis=["raster_source", "point_profile"],
         # change_detection task 的专属能力：双时相栅格变化检测（capability
         # raster_change_detection / tool detect_raster_change）。此前该
         # task 复用本 recipe 却从不计划变化检测能力 —— 任务语义断线。
-        task_optional_analysis={"change_detection": ["raster_change_detection"]},
+        # vegetation_index task 同理：显式 NDVI/植被指数请求此前从不计划
+        # ndvi capability（remote.ndvi）—— benchmark golden G5 锁定。
+        task_optional_analysis={
+            "change_detection": ["raster_change_detection"],
+            "vegetation_index": ["ndvi"],
+        },
         primary_cartography="raster_surface",
         secondary_cartography=[],
         default_components=["title", "continuous_colorbar", "north_arrow", "scale_bar", "attribution"],

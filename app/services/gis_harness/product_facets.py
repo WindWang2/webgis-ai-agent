@@ -146,6 +146,19 @@ def derive_facet_contract(
         if not any(s.startswith("recipe.") for s in sources):
             sources.append("template_selection.export_profile.chart")
 
+    # 3) 意图信号（ADR-0092 G7）：查询显式要求图表（output_intents 含
+    #    "chart" 或计划 charts 非空）时 chart 是产品应然构成 —— 用户点名
+    #    要的 facet 不因 recipe 未声明而缺席。charts/output_intents 是既有
+    #    计划事实（非第二真相），此处只是把它们接进契约推导。
+    if not chart_required:
+        output_intents = (intent or {}).get("output_intents") if isinstance(intent, dict) else None
+        if (
+            (isinstance(output_intents, list) and "chart" in output_intents)
+            or chapter.get("charts")
+        ):
+            chart_required = True
+            sources.append("intent.output_intents.chart")
+
     return ProductFacetContract(
         product_type=product_type,
         recipe_id=recipe_id,
