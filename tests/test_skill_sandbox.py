@@ -1,5 +1,7 @@
 """Security: skill code AST validator must block all known bypass patterns."""
 import re
+
+import pytest
 from pathlib import Path
 
 from app.tools.skills import _validate_skill_code
@@ -241,3 +243,85 @@ class TestExistingSkillsRegression:
             elif path.suffix == ".py":
                 errors = _validate_skill_code(text)
                 assert errors == [], f"{path.name} rejected: {errors}"
+
+
+class TestIssue1113P3SkillSandbox:
+    """#1113 P3-2: alias bypass PoCs + expanded dunder string deny-list."""
+
+    def test_blocks_any_dunder_string_literal(self):
+        assert _validate_skill_code('x = "__globals__"')
+        assert _validate_skill_code('x = "__class__"')
+        assert _validate_skill_code('x = "__mro__"')
+
+    def test_blocks_eval_alias_poc_at_runtime_builtins(self, tmp_path):
+        """AST may miss `e = eval; e(...)`; restricted builtins must NameError."""
+        import importlib.util
+        from app.tools.skills import _restricted_skill_builtins
+
+        code = "e = eval\ne(\"1+1\")\n"
+        path = tmp_path / "evil.py"
+        path.write_text(code)
+        spec = importlib.util.spec_from_file_location("evil_skill", path)
+        module = importlib.util.module_from_spec(spec)
+        module.__dict__["__builtins__"] = _restricted_skill_builtins()
+        try:
+            spec.loader.exec_module(module)
+            raised = None
+        except Exception as exc:  # noqa: BLE001
+            raised = exc
+        assert raised is not None, "eval alias PoC must fail under restricted builtins"
+        assert isinstance(raised, NameError) or "eval" in str(raised).lower()
+
+    def test_blocks_getattr_globals_poc_string(self):
+        code = (
+            'g = getattr\n'
+            'glb = g(obj, "__globals__")\n'
+        )
+        errors = _validate_skill_code(code)
+        assert errors, "getattr + __globals__ string PoC must be rejected"
+
+
+class TestIssue1113P3LoadResilience:
+    """#1113 P3-2 follow-up: poisoned file must not kill load_skills loop."""
+
+    def test_poisoned_skill_does_not_abort_loop(self, tmp_path):
+        """One file using a non-whitelisted builtin (NameError at exec) is
+        skipped; other skills in the same dir still load."""
+        import app.tools.skills as skills_mod
+
+        (tmp_path / "good_skill.py").write_text(
+            "def register(registry):\n"
+            "    registry.marker = hasattr(object(), 'x')\n"
+        )
+        (tmp_path / "zz_poisoned.py").write_text(
+            "def register(registry):\n    pass\n\nsome_missing_builtin_call()\n"
+        )
+
+        class _Reg:
+            marker = "MISSING"
+
+        reg = _Reg()
+        skills_mod.load_skills(reg, skills_dir=str(tmp_path))
+        assert reg.marker is False, (
+            "good skill must still load after a poisoned sibling file"
+        )
+
+    @pytest.mark.asyncio
+    async def test_dryrun_rejects_non_whitelisted_builtin(self, tmp_path, monkeypatch):
+        """create_new_skill dry-run must return a correction hint (without
+        persisting) when exec under restricted builtins raises NameError."""
+        import app.tools.skills as skills_mod
+        from app.services.skill_creator import skill_creator
+
+        monkeypatch.setenv("ALLOW_DYNAMIC_SKILLS", "true")
+        monkeypatch.setattr(skill_creator, "skills_dir", str(tmp_path))
+
+        result = await skills_mod.create_new_skill(
+            "dryrun_needs_getattr",
+            "g = getattr\n\n\ndef register(registry):\n    g(registry, 'marker')\n",
+            "d",
+        )
+        assert "dry-run" in result or "whitelist" in result
+        assert not (tmp_path / "dryrun_needs_getattr.py").exists(), (
+            "rejected skill must not be persisted"
+        )

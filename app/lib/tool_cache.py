@@ -267,7 +267,8 @@ async def _singleflight_async(key: str, ttl: int, lock_ttl_s: int, compute: Call
             return result
         finally:
             await _release_lock_async(key, token)
-    cached = await asyncio.to_thread(_wait_for_cached, key, float(lock_ttl_s), time.sleep)
+    # #1113 P3-6: same wait budget as sync path — avoid exhausting to_thread pool.
+    cached = await asyncio.to_thread(_wait_for_cached, key, min(float(lock_ttl_s), _SYNC_WAIT_BUDGET_S), time.sleep)
     if cached is not None:
         return cached
     result = await compute()
