@@ -527,6 +527,14 @@ async def rerun_from_step(
                 org_id=org_id,
                 expected_project_id=project_id,
             )
+        if not req.from_step and req.input_bindings:
+            # Fail loudly instead of silently ignoring bindings (replay_run
+            # executes with the prior run's frozen inputs — dropping the
+            # caller's overrides here would be a silent no-op).
+            raise HTTPException(
+                status_code=422,
+                detail="input_bindings requires from_step; for a full rerun with new bindings use the workflow run endpoint",
+            )
         prior = await _run_workflow_engine(
             WorkflowEngine.replay_run,
             prior_run_id=run_id,
@@ -539,6 +547,36 @@ async def rerun_from_step(
         return prior
     except ValueError as e:
         raise HTTPException(status_code=404 if "not found" in str(e) else 409, detail=str(e))
+
+
+def _promote_run_artifacts_sync(
+    project_id: str,
+    run_id: str,
+    user_id: Optional[str],
+    org_id: Optional[int],
+) -> Dict[str, Any]:
+    """Worker-thread body for the promote-artifacts endpoint.
+
+    Module-level (NOT nested in the async route): the #565 AST guard forbids
+    any ``db.*`` call inside an async def body, including nested sync helpers.
+    """
+    with SessionLocal() as db:
+        project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+        if not project:
+            return {"__http_error__": (404, "Project not found")}
+        run = db.execute(
+            select(WorkflowRun).where(WorkflowRun.id == run_id)
+        ).scalar_one_or_none()
+        # Fail-closed (same invariant as _load_and_authorize_run): a NULL
+        # project_id on a legacy row must NOT match every project.
+        if run is None or run.project_id != project_id:
+            return {"__http_error__": (404, "Run not found in project")}
+        from app.services.project_artifact_promotion import promote_run_artifacts
+
+        report = asyncio.run(
+            promote_run_artifacts(db, run, session_id=None, project_id=project_id)
+        )
+        return {"report": report}
 
 
 @router.post("/{project_id}/runs/{run_id}/promote-artifacts")
@@ -557,27 +595,9 @@ async def promote_run_artifacts_endpoint(
     IO is offloaded to a worker thread (same convention as _run_workflow_engine).
     """
     user_id, org_id = actor_ids(user)
-
-    def _work() -> Dict[str, Any]:
-        with SessionLocal() as db:
-            project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
-            if not project:
-                return {"__http_error__": (404, "Project not found")}
-            run = db.execute(
-                select(WorkflowRun).where(WorkflowRun.id == run_id)
-            ).scalar_one_or_none()
-            if run is None or (run.project_id and run.project_id != project_id):
-                return {"__http_error__": (404, "Run not found in project")}
-            from app.services.project_artifact_promotion import promote_run_artifacts
-
-            import asyncio as _asyncio
-
-            report = _asyncio.run(
-                promote_run_artifacts(db, run, session_id=None, project_id=project_id)
-            )
-            return {"report": report}
-
-    result = await asyncio.to_thread(_work)
+    result = await asyncio.to_thread(
+        _promote_run_artifacts_sync, project_id, run_id, user_id, org_id
+    )
     if "__http_error__" in result:
         code, detail = result["__http_error__"]
         raise HTTPException(status_code=code, detail=detail)

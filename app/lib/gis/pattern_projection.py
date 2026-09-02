@@ -11,14 +11,12 @@ C4 的红线：不过度执行。没有人口数据时，spatial_equity 的披�
 """
 from __future__ import annotations
 
-import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
 from app.lib.gis.analysis_patterns import PATTERNS, AnalysisPattern
 from app.lib.gis.semantic_profile import (
-    RoleConfidence,
     SemanticDatasetProfile,
     SemanticFieldRole,
 )
@@ -146,7 +144,7 @@ def project_patterns(
     for score, p, via in scored[:6]:
         satisfied: List[str] = []
         missing: List[str] = []
-        disclosures: List[str] = []
+        role_disclosures: List[str] = []
         for role in p.required_roles:
             if _role_satisfied(role, semantic_profile):
                 satisfied.append(role.value)
@@ -154,7 +152,7 @@ def project_patterns(
                 missing.append(role.value)
                 text = _ROLE_MISSING_DISCLOSURES.get(role.value)
                 if text:
-                    disclosures.append(text)
+                    role_disclosures.append(text)
         for role in p.optional_roles:
             if _role_satisfied(role, semantic_profile):
                 satisfied.append(role.value)
@@ -168,7 +166,7 @@ def project_patterns(
             common_pitfalls=list(p.common_pitfalls)[:4],
             satisfied_roles=satisfied[:8],
             missing_roles=missing[:8],
-            disclosures=list(dict.fromkeys(disclosures))[:6],
+            disclosures=list(dict.fromkeys(role_disclosures))[:6],
         ))
     return PatternProjection(matches=matches, data_disclosures=disclosures[:4])
 

@@ -320,7 +320,6 @@ def cmd_gis_benchmark(case_id, group, offline, report_path):
     from pathlib import Path as _Path
 
     from app.evaluation import GISBenchmarkRunner, get_all_cases, render_markdown
-    from app.evaluation.case import GISBenchmarkCase as _Case
 
     cases = get_all_cases()
     if case_id:

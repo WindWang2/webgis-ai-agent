@@ -178,7 +178,7 @@ async def test_flow_layer_authored_via_dispatch_seam(registry, flow_session):
 
     spec = await mapspec_store_instance.get_mapspec(flow_session)
     assert spec, "flow tool must author a MapSpec layer"
-    line_layers = [l for l in spec.get("layers", []) if l.get("type") == "line"]
+    line_layers = [ly for ly in spec.get("layers", []) if ly.get("type") == "line"]
     assert line_layers, "flow_od_arc layer must be a line layer"
     paint = line_layers[-1].get("paint") or {}
     # Width channel ← weight (data-driven interpolate, never constant).
@@ -201,3 +201,24 @@ async def test_flow_selection_ids_survive_parking(registry, flow_session):
     ids = [f["id"] for f in parked["features"]]
     assert all("->" in i for i in ids), "selection ids must survive the ref round-trip"
     assert len(set(ids)) == len(ids), "flow ids must be unique for selection binding"
+
+
+async def test_od_flow_edges_reports_skipped_rows(registry, flow_session):
+    """Tool-level disclosure contract: invalid rows are counted, not silent."""
+    rows = {"type": "od_table", "rows": [
+        {"origin_id": "a", "destination_id": "b", "origin_lng": 104.0,
+         "origin_lat": 30.5, "destination_lng": 104.1, "destination_lat": 30.6,
+         "weight": 5},
+        {"origin_lng": "garbage", "origin_lat": 30.5, "destination_lng": 104.1,
+         "destination_lat": 30.6, "weight": 2},
+        {"origin_lng": 200.0, "origin_lat": 30.5, "destination_lng": 104.1,
+         "destination_lat": 30.6, "weight": 2},
+    ]}
+    alias = await _store_od(flow_session, rows, "odskip")
+    res = await registry.dispatch(
+        "od_flow_edges", {"od_table_ref": alias, "top_n": 10},
+        session_id=flow_session,
+    )
+    assert res["metadata"]["total_edges"] == 3
+    assert res["metadata"]["skipped_rows"] == 2
+    assert len(res["features"]) == 1

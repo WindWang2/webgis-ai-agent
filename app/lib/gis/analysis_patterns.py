@@ -13,7 +13,7 @@ Everything flows through the existing chain:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 from app.lib.gis.semantic_profile import SemanticFieldRole as R

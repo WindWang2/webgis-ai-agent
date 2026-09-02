@@ -20,7 +20,6 @@ from app.core.database import Base, Engine, SessionLocal
 from app.schemas.project_schema import WorkflowStepSpec
 from app.services.gis_harness.workflow_promotion import (
     build_workflow_recipe,
-    build_recipe_steps,
     promotion_blockers,
 )
 from app.services.provenance.manifest import RunManifestBuilder, compute_run_fingerprint
@@ -220,7 +219,8 @@ def test_resolve_step_tool_without_capability_is_passthrough():
 def _three_step_spec():
     return [
         WorkflowStepSpec(step_id="s1", tool_name="query_local_poi", capability="poi_query",
-                         args_template={"query": "小学"}),
+                         args_template={"query": "小学"},
+                         input_bindings={"query": "binding:query"}),
         WorkflowStepSpec(step_id="s2", tool_name="aggregate_admin_regions",
                          capability="admin_aggregation", dependencies=["s1"]),
         WorkflowStepSpec(step_id="s3", tool_name="generate_chart", dependencies=["s2"]),
@@ -230,7 +230,6 @@ def _three_step_spec():
 def test_rerun_from_step_invalidates_only_descendants(db):
     import asyncio
 
-    from app.models.project import WorkflowRun
 
     project_id, workflow_id = f"proj_{uuid.uuid4().hex[:8]}", f"wf_{uuid.uuid4().hex[:8]}"
     _mk_project_and_workflow(project_id, workflow_id, _three_step_spec())
@@ -260,7 +259,76 @@ def test_rerun_from_step_invalidates_only_descendants(db):
     assert man["steps"][0]["capability"] == "poi_query"
 
 
-def test_rerun_from_step_invalidates_stale_algorithm_seeds(db):
+def test_rerun_from_step_invalidates_genuinely_stale_seeds(db, monkeypatch):
+    """Real stale branch: capability re-resolves to a DIFFERENT algorithm →
+    seed + descendants invalidated, disclosure recorded (review follow-up)."""
+    import asyncio
+    from types import SimpleNamespace
+
+    class _V2Resolver:
+        def resolve(self, capability, available_tools=None, profile=None):
+            assert capability == "poi_query"
+            return SimpleNamespace(
+                status="resolved", tool="query_local_poi_v2",
+                algorithm="poi.query.v2", reason="upgraded",
+                rejected=[], fallback_trail=[], fallback_candidates=[],
+            )
+
+    # resolve_step_tool imports the resolver lazily inside the function —
+    # patch the source module's symbol (raising=True guards the anchor).
+    import app.lib.gis.algorithm_resolver as ar_mod
+    monkeypatch.setattr(ar_mod, "get_algorithm_resolver", lambda: _V2Resolver(), raising=True)
+
+    class _V2Registry(_CountingRegistry):
+        def __init__(self):
+            super().__init__()
+            self.arg_log = []
+
+        def list_tools(self):
+            return ["query_local_poi_v2", "aggregate_admin_regions", "generate_chart"]
+
+        async def dispatch(self, name, args, session_id=None):
+            import json as _json
+
+            if isinstance(args, str):
+                try:
+                    args = _json.loads(args)
+                except (TypeError, ValueError):
+                    args = {}
+            self.calls.append(name)
+            return {"success": True, "ref_id": f"ref:v2-{len(self.calls)}", "feature_count": 3}
+
+    steps = [
+        WorkflowStepSpec(step_id="s1", tool_name="query_local_poi", capability="poi_query",
+                         algorithm_preference="poi.query.local", args_template={"query": "小学"}),
+        WorkflowStepSpec(step_id="s2", tool_name="aggregate_admin_regions",
+                         capability="admin_aggregation", dependencies=["s1"]),
+    ]
+    project_id, workflow_id = f"proj_{uuid.uuid4().hex[:8]}", f"wf_{uuid.uuid4().hex[:8]}"
+    _mk_project_and_workflow(project_id, workflow_id, steps)
+    plain = _CountingRegistry()
+    with SessionLocal() as db:
+        run1 = asyncio.run(WorkflowEngine.execute_workflow_run(
+            db=db, workflow_id=workflow_id, tool_registry=plain, expected_project_id=project_id,
+        ))
+    assert run1.status == "completed"
+
+    v2 = _V2Registry()
+    with SessionLocal() as db:
+        run2 = asyncio.run(WorkflowEngine.rerun_from_step(
+            db=db, prior_run_id=run1.id, tool_registry=v2, from_step="s2",
+            expected_project_id=project_id,
+        ))
+    assert run2.status == "completed"
+    # s1 was stale (recorded poi.query.local ≠ resolved poi.query.v2) → NOT
+    # reused as a seed; it re-executed on the v2 tool.
+    assert "query_local_poi_v2" in v2.calls, "stale seed must re-execute on the new algorithm"
+    disclosures = (run2.cost_perf_summary or {}).get("rerun_disclosures") or {}
+    assert disclosures.get("stale_algorithm_steps") == ["s1"]
+    assert "s2" in run2.completed_steps and "s1" in run2.completed_steps
+
+
+def test_rerun_from_step_unavailable_resolution_keeps_honest_reuse(db):
     """ADR-0092 A5 + review: a seed step whose capability re-resolves to a
     DIFFERENT algorithm must not silently reuse its old output — it (and its
     descendants) re-executes, and the run record discloses the staleness."""
@@ -319,12 +387,35 @@ def test_rerun_from_step_rejects_unknown_step(db):
 
 
 def test_rerun_from_step_rebinds_inputs(db):
-    """Changed input → re-executed tail sees the new binding (A5 replace-inputs)."""
+    """Changed input → re-executed tail sees the new binding (A5 replace-inputs).
+
+    Asserts on the dispatched TOOL ARGS (not the run's echo of its own
+    input_bindings — that would be tautological)."""
     import asyncio
 
     project_id, workflow_id = f"proj_{uuid.uuid4().hex[:8]}", f"wf_{uuid.uuid4().hex[:8]}"
     _mk_project_and_workflow(project_id, workflow_id, _three_step_spec())
-    reg = _CountingRegistry()
+
+    class _ArgsRegistry(_CountingRegistry):
+        """Records dispatched args; tolerates JSON-string arguments (the
+        engine's dispatch seam passes tc.function.arguments as a string)."""
+
+        def __init__(self):
+            super().__init__()
+            self.arg_log = []
+
+        async def dispatch(self, name, args, session_id=None):
+            import json as _json
+
+            if isinstance(args, str):
+                try:
+                    args = _json.loads(args)
+                except (TypeError, ValueError):
+                    args = {}
+            self.arg_log.append((name, dict(args)))
+            return await super().dispatch(name, args, session_id=session_id)
+
+    reg = _ArgsRegistry()
 
     with SessionLocal() as db:
         run1 = asyncio.run(WorkflowEngine.execute_workflow_run(
@@ -336,11 +427,15 @@ def test_rerun_from_step_rebinds_inputs(db):
             input_bindings={"query": "中学"}, expected_project_id=project_id,
         ))
     assert run2.status == "completed"
-    # s1 re-executed with the overridden binding reaching its args.
-    tail = run2.execution_trace
-    s1_entry = next(t for t in tail if t["step_id"] == "s1" and t.get("duration_seconds") is not None)
-    # args recorded on the trace reflect the merged binding
+    # The re-executed s1 dispatch actually received the overridden binding.
     assert run2.input_bindings.get("query") == "中学"
+    s1_with_new_binding = [
+        (n, a) for n, a in reg.arg_log
+        if n == "query_local_poi" and a.get("query") == "中学"
+    ]
+    assert s1_with_new_binding, (
+        "re-executed s1 must receive the overridden binding in its tool args"
+    )
 
 
 # ── A2: executable snapshot manifest ──────────────────────────────────────
@@ -387,9 +482,8 @@ def test_manifest_fingerprint_sensitive_to_algorithm_not_outcomes():
 
 
 def test_lineage_records_capability_algorithm_mapspec(db):
-    import asyncio
 
-    from app.models.db_model import Organization, User
+    from app.models.db_model import User
     from app.models.project import Project, Artifact, ArtifactLineage
     from app.services.lineage_service import LineageService
 
@@ -434,7 +528,7 @@ def test_materialize_content_is_content_addressed_and_idempotent(tmp_path, monke
 def test_promote_run_artifacts_promotes_and_discloses(db, monkeypatch, tmp_path):
     import asyncio
 
-    from app.models.db_model import Organization, User
+    from app.models.db_model import User
     from app.models.project import Project, Workflow, WorkflowRun, Artifact
     from app.services import project_artifact_promotion as pap
 
@@ -519,7 +613,7 @@ def test_promote_run_artifacts_session_expired_is_truthful(db, monkeypatch, tmp_
     se_run_id = f"run_{uuid.uuid4().hex[:8]}"
     se_art_id = f"art_{uuid.uuid4().hex[:8]}"
     with SessionLocal() as s:
-        from app.models.db_model import Organization, User
+        from app.models.db_model import User
         from app.models.project import Project, Workflow
 
         s.merge(User(id="u_se", username="se", email="se@example.com",
@@ -550,7 +644,7 @@ def test_promote_run_artifacts_session_expired_is_truthful(db, monkeypatch, tmp_
 
 
 def test_map_product_versioning_and_diff(db):
-    from app.models.db_model import Organization, User
+    from app.models.db_model import User
     from app.models.project import Project
     from app.services.map_product_service import MapProductService
 
@@ -607,3 +701,98 @@ def test_map_product_versioning_and_diff(db):
         assert [v.version_no for v in versions] == [1, 2, 3]
         fps = {v.product_fingerprint for v in versions}
         assert len(fps) == 3, "distinct substantive states ⇒ distinct fingerprints"
+
+
+@pytest.mark.asyncio
+async def test_save_plan_as_workflow_flags_partial_rerun_pair():
+    """rerun_workflow: one-sided from_run_id/from_step is a structured error
+    with a correction hint, never a silent full run (review follow-up)."""
+    from app.tools import init_tools
+    from app.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+    init_tools(reg)
+    res = await reg.dispatch("rerun_workflow", {
+        "project_id": "proj_x", "workflow_id": "wf_x", "from_step": "s2",
+    }, session_id="sess-x")
+    assert res.get("success") is False
+    assert "from_run_id" in res.get("error", "")
+    assert res.get("correction_hint")
+
+
+@pytest.mark.asyncio
+async def test_semantic_tools_dispatch_with_ref_alias():
+    """Regression lock (review): semantic tools must be dispatchable with a
+    session ref/alias — the args model previously failed to build (missing
+    typing names under from __future__ annotations) and the alias was
+    transparently dereferenced into the param slot."""
+    import uuid as _uuid
+
+    from app.services.session_data import session_data_manager
+    from app.tools import init_tools
+    from app.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+    init_tools(reg)
+    sid = f"sem-{_uuid.uuid4().hex[:8]}"
+    try:
+        fc = {"type": "FeatureCollection", "features": [
+            {"type": "Feature",
+             "geometry": {"type": "Point", "coordinates": [104.0, 30.6]},
+             "properties": {"district": "锦江区", "resident_population": 100000}},
+        ]}
+        ref = await session_data_manager.store(sid, fc, prefix="bench")
+        await session_data_manager.set_alias(sid, ref, "ds")
+        res = await reg.dispatch(
+            "profile_dataset_semantics", {"geojson_ref": "ds"}, session_id=sid,
+        )
+        assert res.get("success") is True, res
+        roles = {
+            (r["field"], tuple(r["roles"]))
+            for r in res["semantic_profile"]["field_roles"]
+        }
+        assert ("district", ("admin_dimension",)) in roles
+        assert any("normalization_denominator" in r for _, r in roles)
+
+        res2 = await reg.dispatch(
+            "suggest_analysis_patterns",
+            {"query": "分析各区学校资源是否均衡", "geojson_ref": "ds"},
+            session_id=sid,
+        )
+        assert res2.get("success") is True, res2
+        equity = next(
+            m for m in res2["patterns"] if m["pattern_id"] == "spatial_equity"
+        )
+        assert "normalization_denominator" in equity["satisfied_roles"]
+        assert not equity["disclosures"]
+    finally:
+        await session_data_manager.clear_session(sid)
+
+
+def test_map_product_record_version_rejects_foreign_run(db):
+    """IDOR regression lock (review): a run from ANOTHER project must never
+    feed this project's map-product ledger."""
+
+    from app.models.db_model import User
+    from app.models.project import Project, Workflow, WorkflowRun
+    from app.services.map_product_service import MapProductService
+
+    proj_a = f"proj_{uuid.uuid4().hex[:8]}"
+    proj_b = f"proj_{uuid.uuid4().hex[:8]}"
+    wf_b = f"wf_{uuid.uuid4().hex[:8]}"
+    run_b = f"run_{uuid.uuid4().hex[:8]}"
+    with SessionLocal() as s:
+        s.merge(User(id="u_idor", username="idor", email="idor@example.com",
+                     password_hash="x", role="viewer", is_active=True))
+        s.add(Project(id=proj_a, name="a", owner_id="u_idor"))
+        s.add(Project(id=proj_b, name="b", owner_id="u_idor"))
+        s.add(Workflow(id=wf_b, project_id=proj_b, name="wf", version=1))
+        s.add(WorkflowRun(
+            id=run_b, workflow_id=wf_b, workflow_version=1, project_id=proj_b,
+            status="completed",
+            run_manifest={"steps": [{"step_id": "s1", "tool_name": "t"}],
+                          "artifacts": []},
+        ))
+        s.commit()
+        with pytest.raises(ValueError, match="not found in project"):
+            MapProductService.record_version(s, proj_a, workflow_run_id=run_b)

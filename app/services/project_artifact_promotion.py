@@ -202,15 +202,42 @@ async def promote_run_artifacts(
 
     from app.services.session_data import session_data_manager
 
-    rows = db.execute(
-        select(Artifact).where(
-            Artifact.project_id == project_id,
-            Artifact.metadata_json["step_id"].isnot(None),
+    # Authoritative binding: this run's manifest artifact ids (O(1) lookups).
+    manifest = run.run_manifest or {}
+    manifest_ids = {
+        str(rec.get("id"))
+        for rec in (manifest.get("artifacts") or [])
+        if rec.get("id")
+    }
+    if manifest_ids:
+        rows = db.execute(
+            select(Artifact).where(Artifact.id.in_(manifest_ids))
+        ).scalars().all()
+        # Trust but verify: a manifest id from another project would be a
+        # corrupt manifest; the project filter keeps promotion tenant-scoped.
+        rows = [a for a in rows if a.project_id == project_id]
+    else:
+        # Legacy rows (pre-manifest runs): bind via lineage edges scoped to
+        # THIS run — never project-wide step_id matching (cross-run
+        # contamination; same deliberate choice as the engine's
+        # _reconstruct_prior).
+        from app.models.project import ArtifactLineage
+
+        lineage_ids = list(
+            db.execute(
+                select(ArtifactLineage.artifact_id).where(
+                    ArtifactLineage.workflow_run_id == run.id
+                )
+            ).scalars().all()
         )
-    ).scalars().all()
-    # Only this run's artifacts (step_id recurring across runs — same guard as
-    # the engine's lineage reconstruction).
-    rows = [a for a in rows if _artifact_in_run(a, run)]
+        if not lineage_ids:
+            return []
+        rows = db.execute(
+            select(Artifact).where(
+                Artifact.project_id == project_id,
+                Artifact.id.in_(lineage_ids),
+            )
+        ).scalars().all()
     report: List[Dict[str, Any]] = []
     for art in rows:
         meta = dict(art.metadata_json or {})
@@ -269,15 +296,3 @@ async def promote_run_artifacts(
     return report
 
 
-def _artifact_in_run(art: Artifact, run: WorkflowRun) -> bool:
-    meta = art.metadata_json or {}
-    # The run manifest is the authoritative run ↔ artifact binding.
-    manifest = run.run_manifest or {}
-    for rec in manifest.get("artifacts") or []:
-        if rec.get("id") == art.id:
-            return True
-    # Legacy rows: fall back to run trace containment (bounded).
-    for entry in run.execution_trace or []:
-        if entry.get("step_id") == meta.get("step_id"):
-            return True
-    return False

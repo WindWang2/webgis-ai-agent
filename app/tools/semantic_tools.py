@@ -10,10 +10,11 @@ These are advisory/metadata tools — they never execute analysis and never
 replace the planner. Recommended capabilities still flow through
 SessionPlan → CapabilityRegistry → AlgorithmResolver.
 """
-from __future__ import annotations
 
 import logging
 from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
 from app.tools._utils import trim_features
@@ -51,6 +52,24 @@ def _collect_value_samples(geojson: Dict[str, Any]) -> Dict[str, List[Any]]:
     return samples
 
 
+class ProfileDatasetSemanticsArgs(BaseModel):
+    """geojson_ref is a declared ref cursor: the registry's transparent alias
+    resolution must NOT inline the dataset payload into the argument (the
+    tool resolves the ref itself, fetch-on-demand)."""
+
+    geojson_ref: Optional[str] = Field(None, json_schema_extra={"ref_cursor": True})
+    geojson: Optional[Dict[str, Any]] = None
+    user_roles: Optional[Dict[str, str]] = None
+    session_id: str = ""
+
+
+class SuggestAnalysisPatternsArgs(BaseModel):
+    query: str
+    geojson_ref: Optional[str] = Field(None, json_schema_extra={"ref_cursor": True})
+    semantic_profile: Optional[Dict[str, Any]] = None
+    session_id: str = ""
+
+
 def register_semantic_tools(registry: ToolRegistry) -> None:
 
     @tool(registry,
@@ -76,6 +95,7 @@ def register_semantic_tools(registry: ToolRegistry) -> None:
                 },
             },
         },
+        args_model=ProfileDatasetSemanticsArgs,
         tier=2, domains=["statistics"],
         tags=["semantic", "profile", "metadata"],
     )
@@ -171,6 +191,7 @@ def register_semantic_tools(registry: ToolRegistry) -> None:
             },
             "required": ["query"],
         },
+        args_model=SuggestAnalysisPatternsArgs,
         tier=2, domains=["statistics"],
         tags=["semantic", "pattern", "methodology"],
     )

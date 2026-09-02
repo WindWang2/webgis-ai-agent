@@ -5,7 +5,6 @@ rule_derived; unknown stays unknown).
 C3/C4: pattern library + honest disclosures (Scenario F: equity claims
 without a population denominator must disclose, never conclude).
 """
-import pytest
 
 from app.lib.gis.analysis_patterns import all_patterns, get_pattern
 from app.lib.gis.dataset_profile import DatasetProfile

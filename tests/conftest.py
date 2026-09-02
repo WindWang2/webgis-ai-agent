@@ -84,6 +84,7 @@ _ENV_BASELINE = {
         "DATA_FABRIC_LOCAL_FILE_MAX_BYTES": "1073741824",
         "DATA_DIR": "./data",
         "TMP_DIR": "./tmp",
+        "PROJECT_ARTIFACT_CONTENT_DIR": "",
         "TOOL_TIMEOUT_S": "300",
         "SESSION_CACHE_SIZE": "200",
         "SESSION_MESSAGE_CAP": "200",

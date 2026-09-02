@@ -1,7 +1,7 @@
 """Benchmark report rendering (ADR-0092 B3/B5)."""
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List
+from typing import Any, Iterable, List
 
 from app.evaluation.runner import CaseResult
 

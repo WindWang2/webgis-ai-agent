@@ -26,20 +26,36 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
-def upgrade() -> None:
-    op.add_column(
-        "artifact_lineages",
-        sa.Column("producing_capability", sa.String(length=100), nullable=True),
-    )
-    op.add_column(
-        "artifact_lineages",
-        sa.Column("producing_algorithm", sa.String(length=100), nullable=True),
-    )
-    op.add_column(
-        "artifact_lineages",
-        sa.Column("mapspec_fingerprint", sa.String(length=80), nullable=True),
-    )
+def _column_exists(table: str, column: str) -> bool:
+    """create_all-coexistence guard (repo convention: 0014 IF NOT EXISTS /
+    0016 ADD COLUMN IF NOT EXISTS / 0021 _table_exists). init_db() runs
+    Base.metadata.create_all on every dev DB, which already creates new
+    tables/columns defined on the models — an unguarded upgrade would die on
+    'duplicate column/table' there."""
+    bind = op.get_bind()
+    return column in {c["name"] for c in sa.inspect(bind).get_columns(table)}
 
+
+def upgrade() -> None:
+    if not _column_exists("artifact_lineages", "producing_capability"):
+        op.add_column(
+            "artifact_lineages",
+            sa.Column("producing_capability", sa.String(length=100), nullable=True),
+        )
+    if not _column_exists("artifact_lineages", "producing_algorithm"):
+        op.add_column(
+            "artifact_lineages",
+            sa.Column("producing_algorithm", sa.String(length=100), nullable=True),
+        )
+    if not _column_exists("artifact_lineages", "mapspec_fingerprint"):
+        op.add_column(
+            "artifact_lineages",
+            sa.Column("mapspec_fingerprint", sa.String(length=80), nullable=True),
+        )
+
+    if sa.inspect(op.get_bind()).has_table("map_products"):
+        # create_all-bootstrapped DB already carries the table (0021 guard style).
+        return
     op.create_table(
         "map_products",
         sa.Column("id", sa.String(length=255), primary_key=True),

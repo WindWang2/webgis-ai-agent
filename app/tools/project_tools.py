@@ -173,6 +173,18 @@ def register_project_tools(registry: ToolRegistry) -> None:
     ) -> Dict[str, Any]:
         # Project authz: refuse to run a workflow that isn't owned by this project,
         # and re-authorize each step via Tool Execution Policy inside dispatch.
+        if bool(from_run_id) != bool(from_step):
+            return {
+                "success": False,
+                "error": (
+                    "incremental rerun requires BOTH from_run_id and from_step "
+                    f"(got from_run_id={bool(from_run_id)}, from_step={bool(from_step)})"
+                ),
+                "correction_hint": (
+                    "pass from_run_id + from_step together for a subtree rerun, "
+                    "or neither for a full run"
+                ),
+            }
         with SessionLocal() as db:
             project = ProjectService.get_project_with_auth(db=db, project_id=project_id)
             if not project:

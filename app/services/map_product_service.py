@@ -86,11 +86,16 @@ class MapProductService:
         """
         run: Optional[WorkflowRun] = None
         if workflow_run_id:
+            # Project-scoped lookup (fail-closed, mirrors _load_and_authorize_run):
+            # a foreign project's run must never feed this project's ledger.
             run = db.execute(
-                select(WorkflowRun).where(WorkflowRun.id == workflow_run_id)
+                select(WorkflowRun).where(
+                    WorkflowRun.id == workflow_run_id,
+                    WorkflowRun.project_id == project_id,
+                )
             ).scalar_one_or_none()
             if run is None:
-                raise ValueError(f"WorkflowRun {workflow_run_id} not found")
+                raise ValueError(f"WorkflowRun {workflow_run_id} not found in project {project_id}")
 
         manifest = run_manifest if run_manifest is not None else (
             (run.run_manifest if run else None) or {}

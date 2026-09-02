@@ -46,17 +46,21 @@ async def test_g5_ndvi_numeric_golden():
     result = await runner.run_case(cases["G5"])
     assert result.passed, result.failures
     assert result.metrics["numerical_correct"] is True
-    assert abs(result.plan_evidence and 1 or 1) == 1  # evidence shape smoke
+    # Real evidence-shape lock (replaces a tautological smoke check).
+    ev = result.plan_evidence
+    assert ev.get("task") == "vegetation_index"
+    assert ev.get("recipe_id"), "plan evidence must carry a recipe"
+    assert any(a.startswith("remote.ndvi") for a in ev.get("algorithms", []))
     assert result.metrics["tool_call_count"] == 0  # offline lib-level golden
 
 
 @pytest.mark.asyncio
 async def test_benchmark_runner_is_deterministic():
-    """Same cases twice → identical verdicts (deterministic-first, B4)."""
-    cases = get_all_cases()
-    runner = GISBenchmarkRunner()
-    first = await runner.run(cases)
-    second = await runner.run(cases)
-    assert [(r.case_id, r.passed) for r in first] == [
-        (r.case_id, r.passed) for r in second
-    ]
+    """Independent runner instances → identical FULL evidence, not just
+    verdicts (deterministic-first, B4)."""
+    def _key(r):
+        return (r.case_id, r.passed, r.status, r.metrics, r.plan_evidence)
+
+    first = await GISBenchmarkRunner().run(get_all_cases())
+    second = await GISBenchmarkRunner().run(get_all_cases())
+    assert [_key(r) for r in first] == [_key(r) for r in second]
