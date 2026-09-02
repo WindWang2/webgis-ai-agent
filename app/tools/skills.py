@@ -23,6 +23,14 @@ _BLOCKED_IMPORTS = {
     # and executes modules from a zip; `pty.fork` spawns child processes.
     "platform", "_posixsubprocess", "posix", "nt", "runpy", "zipimport",
     "pty",
+    # Phase-E review M-2: frame/introspection escapes. `inspect.currentframe()
+    # .f_back.f_builtins` retrieves the LOADER frame's unrestricted builtins,
+    # defeating the restricted-builtins runtime layer wholesale; `gc` reaches
+    # arbitrary objects via the object graph (gc.get_objects → __subclasses__);
+    # traceback/bdb/symtable walk frames the same way; weakref/threading
+    # enable cross-object and cross-thread reachability.
+    "inspect", "gc", "traceback", "bdb", "symtable", "threading", "weakref",
+    "_thread",
 }
 _BLOCKED_BUILTINS = {
     "eval", "exec", "compile", "__import__", "open", "input",
@@ -45,6 +53,14 @@ _BLOCKED_ATTRS = {
     "__mro__", "__class__", "__import__", "__builtins__",
     "__loader__", "__spec__", "__getattribute__",
 }
+# Phase-E review M-2: dunder tokens rejected anywhere inside a string
+# literal (format-template smuggling: "{0.__init__.__globals__}".format(f)).
+_DUNDER_STRING_TOKENS = (
+    "__globals__", "__builtins__", "__class__", "__subclasses__", "__mro__",
+    "__init__", "__import__", "__loader__", "__spec__", "__code__",
+    "__frame", "__self__", "__func__", "__closure__", "__dict__",
+)
+
 # Issue #399: attribute-access chains (e.g. `platform.os.open`) bypass the
 # bare-name attribute check above. Any segment of a resolved chain that hits
 # this set is rejected. The set covers:
@@ -73,6 +89,13 @@ _BLOCKED_CHAIN_SEGMENTS = (
         "spawnvp", "spawnvpe", "posix_spawn", "posix_spawnp",
         "getoutput", "getstatusoutput", "check_output", "check_call",
         "load_module", "run_module", "run_path", "import_module", "reload",
+    }
+    | {
+        # Phase-E review M-2: frame/traceback walking segments — the
+        # inspect.currentframe() escape chain and its tb_* equivalents.
+        "currentframe", "f_back", "f_globals", "f_builtins", "f_locals",
+        "f_code", "f_frame", "tb_frame", "tb_next", "getobjects",
+        "get_objects", "get_referrers", "_getframe",
     }
 )
 
@@ -224,6 +247,16 @@ def _validate_skill_code(code: str) -> list[str]:
             # escapes (e.g. "__globals__"); deny-list is startswith("__").
             if node.value.startswith("__"):
                 errors.append(f"Blocked dunder string literal: {node.value!r}")
+            # Phase-E review M-2: format templates ("{0.__init__.__globals__}"
+            # ".format(f)") smuggle dunder access inside a string that does NOT
+            # start with "__" — the dunder is consumed later by str.format.
+            # Reject any string literal containing an escape-relevant dunder
+            # token (strict by design: skill code is attacker-controlled LLM
+            # output; legitimate skills have no reason to reference these).
+            elif any(tok in node.value for tok in _DUNDER_STRING_TOKENS):
+                errors.append(
+                    f"Blocked dunder token in string literal: {node.value[:40]!r}"
+                )
 
     # Deduplicate while preserving order
     seen: set[str] = set()

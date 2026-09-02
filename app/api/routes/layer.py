@@ -136,7 +136,11 @@ async def get_session_layer_feature(
         if not feature:
             raise HTTPException(status_code=404, detail="要素不存在")
         body = await serialize_geojson(feature, pretty=False)
-        return Response(content=body, media_type="application/json")
+        return Response(
+            content=body,
+            media_type="application/json",
+            headers={"X-Content-Type-Options": "nosniff"},
+        )
 
     res = await session_data_manager.get_ref_data(session_id, ref_id, owner_token=owner_token)
     if not res.success:
@@ -152,7 +156,11 @@ async def get_session_layer_feature(
         raise HTTPException(status_code=404, detail="要素不存在")
 
     body = await serialize_geojson(feature, pretty=False)
-    return Response(content=body, media_type="application/json")
+    return Response(
+            content=body,
+            media_type="application/json",
+            headers={"X-Content-Type-Options": "nosniff"},
+        )
 
 
 def _extract_points(data) -> list[tuple[tuple[float, float], dict]]:
@@ -210,7 +218,14 @@ def _tile_response(body: bytes, if_none_match: Optional[str]) -> Response:
     if if_none_match:
         candidate = if_none_match.strip()
         if candidate == "*" or candidate.strip('"') == etag.strip('"'):
-            return Response(status_code=304, headers={"ETag": etag})
+            return Response(
+                status_code=304,
+                headers={
+                    "ETag": etag,
+                    "Cache-Control": "private, max-age=30",
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
     return Response(
         content=body,
         media_type="application/vnd.mapbox-vector-tile",
@@ -562,7 +577,14 @@ def _png_tile_response(png_bytes: bytes, if_none_match: Optional[str]) -> Respon
     if if_none_match:
         candidate = if_none_match.strip()
         if candidate == "*" or candidate.strip('"') == etag.strip('"'):
-            return Response(status_code=304, headers={"ETag": etag})
+            return Response(
+                status_code=304,
+                headers={
+                    "ETag": etag,
+                    "Cache-Control": "private, max-age=30",
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
     return Response(
         content=png_bytes,
         media_type="image/png",

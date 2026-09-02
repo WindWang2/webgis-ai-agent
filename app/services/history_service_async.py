@@ -593,11 +593,14 @@ class AsyncHistoryService(HistoryStoreProtocol):
                 return False
         else:
             # SEC-08：匿名会话删除同样受 owner_token 保护（与 get_session 对齐）。
-            # owner_token 为 NULL 的旧记录 grandfather 放行。
-            if conv.owner_token is not None:
-                import hmac
-                if not owner_token or not hmac.compare_digest(conv.owner_token, owner_token):
-                    return False
+            # #1109: legacy NULL/NULL rows are fail-closed here too — the old
+            # grandfather comment was a latent trap for future internal
+            # callers (all current call sites pre-guard via _authorize).
+            if conv.owner_token is None:
+                return False
+            import hmac
+            if not owner_token or not hmac.compare_digest(conv.owner_token, owner_token):
+                return False
         await self.db.delete(conv)
         await self.db.commit()
         return True

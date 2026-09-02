@@ -47,7 +47,9 @@ class SessionStoreProtocol(Protocol):
     async def store(self, session_id: str, data: Any, prefix: str = "data") -> str:
         ...
 
-    async def overwrite(self, session_id: str, ref_id: str, data: Any) -> None:
+    async def overwrite(self, session_id: str, ref_id: str, data: Any) -> bool:
+        """Write back to an existing ref_id. True if the ref existed (both
+        backends return bool; callers like plan_mode branch on it)."""
         ...
 
     async def delete_ref(self, session_id: str, ref_id: str) -> bool:

@@ -226,6 +226,20 @@ class RedisSessionStore(BaseSessionStore):
     def _activity_key() -> str:
         return "sessions:activity"
 
+    @staticmethod
+    def _invalidate_derived_caches(session_id: str, *ref_ids: str) -> None:
+        """Drop every process-local cache derived from these refs (#1111).
+
+        Mirrors the Memory backend helper; the authoritative payload lives in
+        Redis, these are per-worker projections.
+        """
+        from app.services.mvt import spatial_index_cache, tile_lru_cache
+        from app.services.ref_payload_cache import ref_payload_cache
+        for ref_id in ref_ids:
+            ref_payload_cache.invalidate(session_id, ref_id)
+            spatial_index_cache.invalidate_ref(session_id, ref_id)
+            tile_lru_cache.invalidate_ref(session_id, ref_id)
+
     async def store(self, session_id: str, data: Any, prefix: str = "data") -> str:
         """存数据；Redis 不可达时降级返回伪 ref_id 而非抛错。
 
@@ -309,16 +323,14 @@ class RedisSessionStore(BaseSessionStore):
                         for old_ref in old_refs:
                             self._evict_ref(evict_pipe, session_id, old_ref, aliases.get(old_ref))
                         await evict_pipe.execute()
-                    # P-1（#874）：被驱逐 ref 的进程内 payload 缓存一并失效
-                    # #1111：spatial_index_cache / tile_lru_cache 同步失效 ——
-                    # 否则已逐出的 ref 仍可经瓦片/要素端点返回幽灵数据（对齐
-                    # delete_ref / overwrite / 内存后端淘汰路径）。
-                    from app.services.mvt import spatial_index_cache, tile_lru_cache
-                    from app.services.ref_payload_cache import ref_payload_cache
-                    for old_ref in old_refs:
-                        ref_payload_cache.invalidate(session_id, old_ref)
-                        spatial_index_cache.invalidate_ref(session_id, old_ref)
-                        tile_lru_cache.invalidate_ref(session_id, old_ref)
+                    # P-1（#874）/#1111：被驱逐 ref 的进程内三缓存一并失效
+                    # （对齐 delete_ref / overwrite / 内存后端淘汰路径）。
+                    self._invalidate_derived_caches(session_id, *old_refs)
+                    # m-2: the awaits above (zcard/zrange/hmget/execute) can
+                    # interleave with a get_session_metadata that re-populates
+                    # L1 with a refs_order still containing the evicted refs —
+                    # invalidate L1 again AFTER the eviction pipeline commits.
+                    self._l1_invalidate_session(session_id)
         except aioredis.RedisError as e:
             logger.error(
                 "Redis post-store eviction failed for session %s: %s — new ref kept",
@@ -362,12 +374,7 @@ class RedisSessionStore(BaseSessionStore):
                 session_id, ref_id, e,
             )
             return False
-        from app.services.mvt import spatial_index_cache, tile_lru_cache
-        spatial_index_cache.invalidate_ref(session_id, ref_id)
-        tile_lru_cache.invalidate_ref(session_id, ref_id)
-        # P-1（#874）：payload 变更/删除时进程内解析缓存同步失效
-        from app.services.ref_payload_cache import ref_payload_cache
-        ref_payload_cache.invalidate(session_id, ref_id)
+        self._invalidate_derived_caches(session_id, ref_id)
         return True
 
     async def delete_ref(self, session_id: str, ref_id: str) -> bool:
@@ -385,11 +392,7 @@ class RedisSessionStore(BaseSessionStore):
                 session_id, ref_id, e,
             )
             return False
-        from app.services.mvt import spatial_index_cache, tile_lru_cache
-        spatial_index_cache.invalidate_ref(session_id, ref_id)
-        tile_lru_cache.invalidate_ref(session_id, ref_id)
-        from app.services.ref_payload_cache import ref_payload_cache
-        ref_payload_cache.invalidate(session_id, ref_id)
+        self._invalidate_derived_caches(session_id, ref_id)
         return bool(exists)
 
     async def set_alias(self, session_id: str, ref_id: str, alias: str) -> None:
