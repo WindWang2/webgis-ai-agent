@@ -15,17 +15,12 @@ export interface EnsureLayerResult {
 const VECTOR_TILE_THRESHOLD = 5000;
 export const FEATURE_ID_KEYS = ['id', 'OBJECTID', 'fid', 'osm_id', '@id', 'featureId', 'feature_id'];
 
-let _currentSessionId: string | undefined;
-let _currentOwnerToken: string | null | undefined;
-
-export function setLayerDataSession(sessionId: string | undefined, ownerToken: string | null | undefined): void {
-  _currentSessionId = sessionId;
-  _currentOwnerToken = ownerToken;
-}
-
-export function getLayerDataSession(): { sessionId: string | undefined; ownerToken: string | null | undefined } {
-  return { sessionId: _currentSessionId, ownerToken: _currentOwnerToken };
-}
+// #1109: the session identity holder lives in the dependency-free leaf module
+// session-identity.ts (store slices need to read the owner token without
+// importing this file — it depends on useHudStore and would cycle).
+export { setSessionIdentity as setLayerDataSession } from './session-identity';
+export { getSessionIdentity as getLayerDataSession } from './session-identity';
+import { getSessionIdentity } from './session-identity';
 
 export function isMvtLayer(layer: Layer): boolean {
   return !!(
@@ -58,8 +53,9 @@ export async function ensureLayerData(
   if (!layer) return { status: 'not-found' };
   if (!layer._refId) return { status: 'no-ref', source: layer.source };
 
-  const sid = _currentSessionId ?? extractSessionIdFromTileUrl(layer._tileUrl);
-  const token = _currentOwnerToken;
+  const { sessionId, ownerToken } = getSessionIdentity();
+  const sid = sessionId ?? extractSessionIdFromTileUrl(layer._tileUrl);
+  const token = ownerToken;
 
   if (reason === 'selection-detail') {
     let fid: string | number | undefined = opts?.featureId;

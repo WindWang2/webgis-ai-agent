@@ -6,6 +6,7 @@
 import type { StateCreator } from 'zustand';
 import { listUploads } from '../../api/upload';
 import { isApiError } from '../../api/transport';
+import { getSessionIdentity } from '../session-identity';
 import type { HudState } from '../hud-types';
 
 
@@ -186,7 +187,10 @@ export const createLayersSlice: StateCreator<HudState, [], [], Partial<HudState>
       // listUploads goes through the Fast Path — parallel mount callers and
       // session-switch follow-up fetch share one roundtrip. errors flow as
       // typed ApiError so we can distinguish abort/timeout/HTTP.
-      const data = await listUploads(sessionId);
+      // #1109: anonymous sessions must forward X-Session-Token (the layer-data
+      // session holder tracks the token minted at session creation).
+      const { ownerToken } = getSessionIdentity();
+      const data = await listUploads(sessionId, { ownerToken });
       if (seq !== _analysisAssetsSeq) return; // superseded by a newer fetch
       const assets = (data.uploads || []).filter(
         (u) => u.geometry_type === 'raster_analysis'

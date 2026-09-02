@@ -115,18 +115,21 @@ def authorize_session_write(
     * Bound ``user_id`` — only that user.
     * Anonymous + ``owner_token`` set — caller must present the matching token
       (SEC-08). Session-id-only writes are the original IDOR.
-    * Anonymous + ``owner_token`` NULL — grandfather; session_id is capability.
+    * Anonymous + ``owner_token`` NULL — #1109: legacy rows are DENIED. The
+      old "session_id is capability" grandfather was an enumerable IDOR;
+      migration g1109 mints random tokens for existing rows, and this
+      fail-closed branch covers any un-migrated stragglers.
     """
     if conv is None:
         return True
     conv_uid = getattr(conv, "user_id", None)
     expected = getattr(conv, "owner_token", None)
     if conv_uid is None:
-        if expected is not None:
-            if not owner_token:
-                return False
-            return hmac.compare_digest(str(owner_token), str(expected))
-        return True
+        if expected is None:
+            return False  # #1109: legacy NULL/NULL — fail closed.
+        if not owner_token:
+            return False
+        return hmac.compare_digest(str(owner_token), str(expected))
     if user_id is None or str(user_id) in _ANONYMOUS_USER_IDS:
         return False
     return str(conv_uid) == str(user_id)

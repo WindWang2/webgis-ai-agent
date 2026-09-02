@@ -78,11 +78,14 @@ def test_require_existing_session_owner_blocks_foreign_conversation(db):
     assert ei.value.status_code == 404
     _require_existing_session_owner(db, "sess-alice", {"user_id": "alice"}, None)
 
-    # Grandfather anonymous (no owner_token): session_id is capability.
+    # #1109: legacy NULL/NULL anonymous — fail closed (was: session_id is
+    # capability, an enumerable IDOR; migration g1109 mints unknown tokens).
     anon = Conversation(id="sess-anon", title="t", user_id=None, owner_token=None)
     db.add(anon)
     db.commit()
-    _require_existing_session_owner(db, "sess-anon", {"user_id": "bob"}, None)
+    with pytest.raises(HTTPException) as ei_anon:
+        _require_existing_session_owner(db, "sess-anon", {"user_id": "bob"}, None)
+    assert ei_anon.value.status_code == 404
 
     # SEC-08 anonymous: token required. Bob without the header is a write-IDOR.
     sec08 = Conversation(id="sess-sec08", title="t", user_id=None, owner_token="tok-secret")
@@ -104,7 +107,8 @@ def test_authorize_session_write_matches_get_session_contract():
     assert authorize_session_write(_C("alice"), "alice", None) is True
     assert authorize_session_write(_C("alice"), "bob", None) is False
     assert authorize_session_write(_C("alice"), None, None) is False
-    assert authorize_session_write(_C(None, None), "bob", None) is True
+    # #1109: legacy NULL/NULL anonymous write — fail closed (was True).
+    assert authorize_session_write(_C(None, None), "bob", None) is False
     assert authorize_session_write(_C(None, "tok"), "bob", None) is False
     assert authorize_session_write(_C(None, "tok"), "bob", "wrong") is False
     assert authorize_session_write(_C(None, "tok"), "bob", "tok") is True
