@@ -59,9 +59,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Irreversible by design: we cannot reconstruct which rows were NULL
-    versus minted-and-later-set, and re-opening the NULL/NULL grandfather
-    would re-create the IDOR this migration closes."""
-    raise NotImplementedError(
-        "downgrade would re-open the legacy NULL/NULL ownership IDOR (#1109)"
-    )
+    """Deliberate no-op.
+
+    We cannot reconstruct which rows were NULL versus minted-and-later-set,
+    and resetting tokens to NULL would re-open the enumerable IDOR this
+    migration closes. Leaving the minted tokens in place is fail-closed under
+    BOTH code versions: the old grandfather only applied to owner_token IS
+    NULL, and a random token nobody holds denies access. A no-op also keeps
+    chain downgrades (e.g. tests walking to an earlier revision) functional.
+    """
+    pass

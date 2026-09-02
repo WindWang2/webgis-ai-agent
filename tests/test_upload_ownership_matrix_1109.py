@@ -259,9 +259,11 @@ def test_migration_g1109_mints_tokens_for_legacy_rows(tmp_path):
     assert tokens["lg-4"] is None, "user-bound row must not be touched"
 
 
-def test_migration_g1109_downgrade_refuses():
-    import pytest as _pytest
+def test_migration_g1109_downgrade_is_safe_noop():
+    """Downgrade must not reset minted tokens to NULL (that would re-open the
+    IDOR); leaving them in place is fail-closed under both code versions and
+    keeps chain downgrades functional."""
     from migrations.versions.g1109_legacy_owner_tokens import downgrade
 
-    with _pytest.raises(NotImplementedError):
-        downgrade()
+    # A deliberate no-op: returns without raising and without touching data.
+    assert downgrade() is None
