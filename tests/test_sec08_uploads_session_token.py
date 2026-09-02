@@ -1,1 +1,1 @@
-__LOAD_FROM_FILE__
+@/workspace/fix1109/test_sec08_uploads_session_token.py
