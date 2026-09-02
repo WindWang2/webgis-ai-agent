@@ -127,7 +127,9 @@ async def test_chat_stream_xml_tool_turn_persists_assistant_without_tool_calls(r
 def _conv_with_messages(msgs):
     from app.models.db_model import Conversation
 
-    conv = Conversation(id="sess-376-repair")
+    # #1109: bind a user so load_context's NULL/NULL fail-closed branch
+    # (ownership) doesn't shadow the tool-call-history logic under test.
+    conv = Conversation(id="sess-376-repair", user_id="u-376")
     conv.messages = msgs
     return conv
 
