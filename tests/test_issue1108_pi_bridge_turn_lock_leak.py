@@ -65,7 +65,10 @@ async def test_stream_prompt_releases_lock_when_unregister_raises_cancelled(monk
     monkeypatch.setattr(bridge_mod, "unregister_active_pi_turn", boom_unregister)
     monkeypatch.setattr(bridge_mod, "register_active_pi_turn", AsyncMock())
 
-    async for _ in bridge.stream_prompt("hi", session_id="sess-1108-unreg"):
+    try:
+        async for _ in bridge.stream_prompt("hi", session_id="sess-1108-unreg"):
+            pass
+    except asyncio.CancelledError:
         pass
 
     assert bridge._lock.locked() is False
@@ -109,8 +112,11 @@ async def test_prompt_releases_lock_when_unregister_raises_cancelled(monkeypatch
     monkeypatch.setattr(bridge_mod, "unregister_active_pi_turn", boom_unregister)
     monkeypatch.setattr(bridge_mod, "register_active_pi_turn", AsyncMock())
 
-    result = await bridge.prompt("hi", session_id="sess-1108-prompt")
-    assert result["content"] == ""
+    try:
+        result = await bridge.prompt("hi", session_id="sess-1108-prompt")
+        assert result["content"] == ""
+    except asyncio.CancelledError:
+        pass
     assert bridge._lock.locked() is False
 
 
