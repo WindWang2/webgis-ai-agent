@@ -190,6 +190,11 @@ class RedisSessionStore(BaseSessionStore):
         return f"session:{session_id}:refs"
 
     @staticmethod
+    def _ref_revisions_key(session_id: str) -> str:
+        """V5-E: hash of {ref_id -> content_revision} for this session."""
+        return f"session:{session_id}:ref_revisions"
+
+    @staticmethod
     def _state_key(session_id: str) -> str:
         return f"session:{session_id}:state"
 
@@ -227,18 +232,16 @@ class RedisSessionStore(BaseSessionStore):
         return "sessions:activity"
 
     @staticmethod
-    def _invalidate_derived_caches(session_id: str, *ref_ids: str) -> None:
-        """Drop every process-local cache derived from these refs (#1111).
-
-        Mirrors the Memory backend helper; the authoritative payload lives in
-        Redis, these are per-worker projections.
-        """
-        from app.services.mvt import spatial_index_cache, tile_lru_cache
-        from app.services.ref_payload_cache import ref_payload_cache
-        for ref_id in ref_ids:
-            ref_payload_cache.invalidate(session_id, ref_id)
-            spatial_index_cache.invalidate_ref(session_id, ref_id)
-            tile_lru_cache.invalidate_ref(session_id, ref_id)
+    def _invalidate_derived_caches(session_id: str, *ref_ids: str, reason: str = "REPLACE") -> None:
+        """V5-C: delegate to the unified ref lifecycle contract (payload cache
+        included — the authoritative payload lives in Redis, this process only
+        holds a parse cache)."""
+        from app.services.ref_lifecycle import invalidate_ref_caches, RefInvalidationReason
+        invalidate_ref_caches(
+            session_id, list(ref_ids),
+            reason=RefInvalidationReason(reason),
+            include_payload_cache=True,
+        )
 
     async def store(self, session_id: str, data: Any, prefix: str = "data") -> str:
         """存数据；Redis 不可达时降级返回伪 ref_id 而非抛错。
@@ -284,6 +287,8 @@ class RedisSessionStore(BaseSessionStore):
                 pipe.sadd(self._active_key(), session_id)
                 pipe.set(data_key, payload_json, ex=DATA_TTL)
                 pipe.set(descriptor_key, json.dumps(descriptor.to_dict(), ensure_ascii=False), ex=DATA_TTL)
+                # V5-E: mint content revision 1 for the new ref identity.
+                pipe.hset(self._ref_revisions_key(session_id), ref_id, 1)
                 pipe.zadd(order_key, {ref_id: time.time()})
                 pipe.sadd(self._index_key(session_id), ref_id)
                 self._refresh_session_ttl(pipe, session_id)
@@ -325,7 +330,7 @@ class RedisSessionStore(BaseSessionStore):
                         await evict_pipe.execute()
                     # P-1（#874）/#1111：被驱逐 ref 的进程内三缓存一并失效
                     # （对齐 delete_ref / overwrite / 内存后端淘汰路径）。
-                    self._invalidate_derived_caches(session_id, *old_refs)
+                    self._invalidate_derived_caches(session_id, *old_refs, reason='EVICT')
                     # m-2: the awaits above (zcard/zrange/hmget/execute) can
                     # interleave with a get_session_metadata that re-populates
                     # L1 with a refs_order still containing the evicted refs —
@@ -360,6 +365,9 @@ class RedisSessionStore(BaseSessionStore):
         try:
             async with self._r.pipeline() as pipe:
                 pipe.set(data_key, payload_json, ex=DATA_TTL)
+                # V5-E: same ref identity, new content — bump the revision
+                # atomically with the payload write (S7 rollback semantics).
+                pipe.hincrby(self._ref_revisions_key(session_id), ref_id, 1)
                 # D-4: the payload changed, so the cached descriptor (bbox /
                 # feature_count / geometry_types from the OLD payload) is stale.
                 # Drop it so the next get_ref_descriptor recomputes from the new
@@ -374,7 +382,7 @@ class RedisSessionStore(BaseSessionStore):
                 session_id, ref_id, e,
             )
             return False
-        self._invalidate_derived_caches(session_id, ref_id)
+        self._invalidate_derived_caches(session_id, ref_id, reason='OVERWRITE')
         return True
 
     async def delete_ref(self, session_id: str, ref_id: str) -> bool:
@@ -392,7 +400,7 @@ class RedisSessionStore(BaseSessionStore):
                 session_id, ref_id, e,
             )
             return False
-        self._invalidate_derived_caches(session_id, ref_id)
+        self._invalidate_derived_caches(session_id, ref_id, reason='DELETE')
         return bool(exists)
 
     async def set_alias(self, session_id: str, ref_id: str, alias: str) -> None:
@@ -1565,6 +1573,16 @@ return results
             pipe.hdel(self._aliases_key(session_id), alias)
         pipe.hdel(self._refs_key(session_id), ref_id)
 
+    async def _stamp_content_revision(self, session_id: str, ref_id: str, d: dict) -> dict:
+        """V5-E: write the authoritative content_revision into a descriptor dict."""
+        try:
+            rev = await self._r.hget(self._ref_revisions_key(session_id), ref_id)
+            if rev is not None:
+                d["content_revision"] = int(rev)
+        except aioredis.RedisError:
+            pass  # revision stamping is advisory — never fail the descriptor read
+        return d
+
     async def get_ref_descriptor(self, session_id: str, ref_id: str) -> "Optional[dict]":
         """V3 Performance: Return pre-computed descriptor; None if not found.
 
@@ -1578,7 +1596,10 @@ return results
             raw = await self._r.get(descriptor_key)
             if raw:
                 # 小对象，但为对称性仍在线程解析（避免任何量级的 GIL 停顿）。
-                return await asyncio.to_thread(json.loads, raw)
+                d = await asyncio.to_thread(json.loads, raw)
+                # V5-E: stamp the LIVE content revision (descriptor snapshots
+                # can lag an overwrite; the revision hash is authoritative).
+                return await self._stamp_content_revision(session_id, ref_id, d)
             # Fallback: compute from raw data if descriptor missing
             data_key = self._data_key(session_id, ref_id)
             data_raw = await self._r.get(data_key)
@@ -1591,6 +1612,7 @@ return results
                 from app.schemas.ref_descriptor import compute_descriptor
                 descriptor = await asyncio.to_thread(compute_descriptor, ref_id, data)
                 d = descriptor.to_dict()
+                await self._stamp_content_revision(session_id, ref_id, d)
                 await self._r.set(descriptor_key, json.dumps(d, ensure_ascii=False), ex=DATA_TTL)
                 return d
             return None

@@ -24,6 +24,7 @@ from app.services.distributed_lock import LockDegradedError, LockLostError
 import asyncio
 import contextlib
 import json
+import hashlib
 import logging
 import os
 import time
@@ -496,7 +497,9 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
     _evict_session_executed_set()
 
     # Runtime observability (W3): recover the active turn's correlation.
-    turn_id, run_id, active_session = active_turn_correlation()
+    # V5-B: resolve by the callback's verified session (pool-safe); the
+    # cross-session guard below still drops mismatched attributions.
+    turn_id, run_id, active_session = active_turn_correlation(session_id)
     if (
         request.sessionId
         and active_session
@@ -513,12 +516,19 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
             _rt_stack.enter_context(bind_turn_evidence(rt_ev))
         t0 = time.monotonic()
         try:
-            dispatch_token = (
-                _active_turn_token
-                if _active_turn_context is not None
-                and session_id == _active_turn_context[0]
-                else None
-            )
+            # V5-B: resolve the turn's cancellation token by SESSION from the
+            # active-turn table (pool-safe). Falls back to the legacy singleton
+            # slot for pool-size-1 flows that predate table registration.
+            _entry = get_active_turn_entry(session_id)
+            if _entry is not None:
+                dispatch_token = _entry.token
+            else:
+                dispatch_token = (
+                    _active_turn_token
+                    if _active_turn_context is not None
+                    and session_id == _active_turn_context[0]
+                    else None
+                )
             # Pi 兼容（ADR-0052 parity）：legacy tool_pipeline 在 dispatch 外
             # 建 JobOrigin（contextvar），工具内创建的 durable job 由此带上
             # session/turn/step 关联、且 created_job_ids 可回读成
@@ -876,11 +886,43 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
 # 每个 session 的已执行工具集合，供重复调用拦截（service 接受外部 set）。
 _session_executed_sets: dict[str, set[tuple[str, str]]] = {}
 
-# F24: 当前在飞 turn 的 CancellationToken。stream_prompt 在持锁期间设置/清除；
-# dispatch_tool（Pi HTTP 回调适配器）通过 use_token() 绑定它，使 checkpoint()
-# 协作式工具在 abort/disconnect 后及时停止，而不是对已被抛弃的 turn 跑到底。
-# 模块级而非实例级：dispatch_tool 是模块函数（ADR-0022 rendezvous），拿不到
-# bridge 实例；turn 在单例 bridge 上严格串行，全局唯一在飞 turn 语义安全。
+# F24/V5-B: active-turn registry keyed by SESSION (was: one module-global
+# token slot). A single process can now host multiple concurrent in-flight
+# turns (bridge pool, V5-B) because every lookup (dispatch_tool token binding,
+# abort, correlation) resolves by session id instead of "the" global slot.
+# The module-level aliases below stay as the single-active-turn view for
+# back-compat readers; with pool size 1 exactly one table entry exists and
+# behavior is byte-identical to the pre-V5 singleton.
+class _ActiveTurnEntry:
+    """Per-session in-flight turn identity (V5-B).
+
+    ``token`` is the turn's CancellationToken (checkpoint() cooperative
+    cancellation for tools dispatched via the HTTP callback); ``bridge`` is
+    the worker whose subprocess owns the turn (abort RPC routing).
+    """
+
+    __slots__ = ("session_id", "turn_id", "run_id", "token", "bridge", "context")
+
+    def __init__(
+        self,
+        session_id: str,
+        turn_id: str,
+        token: Optional[CancellationToken],
+        bridge: Optional["PiBridge"] = None,
+        run_id: Optional[str] = None,
+        context: Optional[tuple[str, str]] = None,
+    ) -> None:
+        self.session_id = session_id
+        self.turn_id = turn_id
+        self.run_id = run_id
+        self.token = token
+        self.bridge = bridge
+        self.context = context  # (session_id, turn_id) capability pair
+
+
+_active_turns: dict[str, _ActiveTurnEntry] = {}
+
+# Legacy single-slot view (pool size 1 fast path + back-compat readers).
 _active_turn_token: Optional[CancellationToken] = None
 # Exact active capability for the singleton Pi subprocess.  A valid HMAC is
 # necessary but insufficient: once its turn ends, a delayed callback must not
@@ -888,10 +930,24 @@ _active_turn_token: Optional[CancellationToken] = None
 _active_turn_context: Optional[tuple[str, str]] = None
 
 
-async def register_active_pi_turn(session_id: str, turn_id: str) -> None:
+async def register_active_pi_turn(
+    session_id: str,
+    turn_id: str,
+    token: Optional[CancellationToken] = None,
+    bridge: Optional["PiBridge"] = None,
+    run_id: Optional[str] = None,
+) -> None:
     """Register active turn in local process memory and Redis (if available)."""
     global _active_turn_context
     _active_turn_context = (session_id, turn_id)
+    _active_turns[session_id] = _ActiveTurnEntry(
+        session_id=session_id,
+        turn_id=turn_id,
+        token=token,
+        bridge=bridge,
+        run_id=run_id,
+        context=(session_id, turn_id),
+    )
     from app.services.chat.pi_turn_context import pi_turn_registry
     await pi_turn_registry.register_turn(session_id, turn_id)
 
@@ -901,8 +957,16 @@ async def unregister_active_pi_turn(session_id: str, turn_id: str) -> None:
     global _active_turn_context
     if _active_turn_context == (session_id, turn_id):
         _active_turn_context = None
+    entry = _active_turns.get(session_id)
+    if entry is not None and entry.turn_id == turn_id:
+        _active_turns.pop(session_id, None)
     from app.services.chat.pi_turn_context import pi_turn_registry
     await pi_turn_registry.unregister_turn(session_id, turn_id)
+
+
+def get_active_turn_entry(session_id: str) -> Optional[_ActiveTurnEntry]:
+    """V5-B: resolve the in-flight turn entry for a session (None if none)."""
+    return _active_turns.get(session_id)
 
 
 async def is_active_pi_turn(session_id: str, turn_id: str) -> bool:
@@ -924,13 +988,23 @@ _active_turn_run_id: Optional[str] = None
 _active_turn_session_id: Optional[str] = None
 
 
-def active_turn_correlation() -> tuple[Optional[str], Optional[str], Optional[str]]:
+def active_turn_correlation(
+    session_id: Optional[str] = None,
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
     """返回在飞 turn 的 (turn_id, run_id, session_id)。
 
     无在飞 turn 或已被清理时返回 (None, None, None)。供 dispatch_tool（独立 HTTP
-    回调 task）恢复 turn 级关联使用，并据 session_id 守卫串号回调。单例 bridge 严格
-    串行 turn，故全局唯一在飞 turn 语义安全（同 ``_active_turn_token``）。
+    回调 task）恢复 turn 级关联使用，并据 session_id 守卫串号回调。
+
+    V5-B: 传 session_id 时按 active-turn 表解析该会话的在飞 turn（bridge pool
+    下同进程可有多个在飞 turn）；不传时保持单例 bridge 视图（pool size 1 下
+    等价）。
     """
+    if session_id:
+        entry = _active_turns.get(session_id)
+        if entry is not None:
+            return entry.turn_id, entry.run_id, entry.session_id
+        return None, None, None
     return _active_turn_turn_id, _active_turn_run_id, _active_turn_session_id
 
 
@@ -1195,6 +1269,11 @@ class PiBridge:
         abort-relevant ones; a per-command pending registry would add
         bookkeeping for no additional safety.
         """
+        # V5-B: with a bridge pool, the targeted session's turn may live on a
+        # DIFFERENT worker than ``self`` — route the abort there.
+        _entry = get_active_turn_entry(session_id) if session_id else None
+        if _entry is not None and _entry.bridge is not None and _entry.bridge is not self:
+            return await _entry.bridge.abort(session_id)
         active = self._active_turn_sid
         if session_id is not None and active is not None and session_id != active:
             logger.warning(
@@ -1209,7 +1288,9 @@ class PiBridge:
         # page close → immediate resend is the most common disconnect pattern —
         # leaves _active_turn_sid UNCHANGED while the token and pending
         # futures belong to the NEW turn; sid equality alone would kill it.
-        abort_token = _active_turn_token
+        # V5-B: prefer the session-table token (accurate under a pool);
+        # fall back to the singleton slot for pre-table flows.
+        abort_token = (_entry.token if _entry is not None else None) or _active_turn_token
         abort_pending_ids = self._rpc.pending_request_ids()
         result = await self._rpc.request("abort")
         # P1 (TOCTOU) / R2-5: the active sid above was read lock-free BEFORE
@@ -1399,8 +1480,14 @@ class PiBridge:
                     # the GLOBAL abort killed this turn, and HTTP-callback tool
                     # dispatches ran unbounded (F24 no-op) on this path.
                     self._active_turn_sid = turn_sid
-                    await register_active_pi_turn(turn_sid, turn_id)
-                    _active_turn_token = CancellationToken(job_id=turn_id)
+                    # V5-B: mint the token BEFORE registering so the session-
+                    # keyed table carries it (dispatch_tool/abort resolve via
+                    # the table, not the singleton slot).
+                    _turn_token = CancellationToken(job_id=turn_id)
+                    await register_active_pi_turn(
+                        turn_sid, turn_id, token=_turn_token, bridge=self, run_id=run_id
+                    )
+                    _active_turn_token = _turn_token
                     _active_turn_turn_id = turn_id
                     _active_turn_run_id = run_id
                     _active_turn_session_id = turn_sid or None
@@ -1731,8 +1818,12 @@ class PiBridge:
                 # #1108 INV-P3: register sits INSIDE the lease-protected try —
                 # a cancellation/Redis failure during registration is funneled
                 # into the finally (abort + release) instead of leaking the lock.
-                await register_active_pi_turn(turn_sid, turn_id)
-                _active_turn_token = CancellationToken(job_id=turn_id)
+                # V5-B: token minted first, registered WITH the session table.
+                _turn_token = CancellationToken(job_id=turn_id)
+                await register_active_pi_turn(
+                    turn_sid, turn_id, token=_turn_token, bridge=self, run_id=run_id
+                )
+                _active_turn_token = _turn_token
                 _active_turn_turn_id = turn_id
                 _active_turn_run_id = run_id
                 _active_turn_session_id = turn_sid or None
@@ -2008,8 +2099,10 @@ class PiBridge:
                             "skipping abort RPC (reader already failed pending futures)",
                             turn_sid,
                         )
-                        if _active_turn_token is not None:
-                            _active_turn_token.cancel("pi process exited unexpectedly")
+                        # V5-B: cancel THIS turn's token (session-table
+                        # accurate under a pool), not the global slot.
+                        if _turn_token is not None:
+                            _turn_token.cancel("pi process exited unexpectedly")
                     elif cancelled or timed_out or send_failed:
                         # Tell Pi to stop generating tokens / executing tools. F10:
                         # this now covers the stall-timeout path too — previously a
@@ -2123,31 +2216,89 @@ class PiBridge:
 _pi_bridge: Optional[PiBridge] = None
 
 
-async def get_pi_bridge(extension_paths: Optional[list[str]] = None) -> PiBridge:
-    """Get or create the global Pi bridge instance.
+async def get_pi_bridge(
+    extension_paths: Optional[list[str]] = None,
+    session_id: Optional[str] = None,
+) -> PiBridge:
+    """Return the bridge that should run a turn (V5-B pool-aware).
 
-    Note: extension_paths is only honored on the first call. Subsequent calls
-    ignore the parameter because the bridge singleton is already initialized.
-    If you need to change extensions, call shutdown_pi_bridge() first.
+    ``PI_BRIDGE_POOL_SIZE`` (default 1) controls how many Pi subprocesses the
+    process hosts. With the default of 1 this is the historical singleton —
+    byte-identical behavior. With N>1, sessions get STABLE AFFINITY
+    (hash(session_id) % N) so a session's turns stay strictly ordered on its
+    worker while different sessions can execute in parallel on different
+    subprocesses. Omitting ``session_id`` returns worker 0 (management paths:
+    health, abort-all, respawn).
     """
-    global _pi_bridge
-    if _pi_bridge is None:
-        bridge = PiBridge(extension_paths=extension_paths or [])
-        try:
+    pool = await _ensure_bridge_pool(extension_paths)
+    if session_id:
+        return pool.bridge_for_session(session_id)
+    return pool.bridges[0]
+
+
+class PiBridgePool:
+    """Bounded set of PiBridge workers with session-affinity routing (V5-B).
+
+    Why affinity instead of a shared queue: the vendor Pi subprocess processes
+    one prompt at a time and all turn events land on that worker's own queue —
+    events are not routable across workers. Affinity preserves per-session
+    ordering (A1 → A2 on the same worker) while disjoint sessions genuinely
+    parallelize across subprocesses. All cross-worker coordination (active
+    turn identity, abort routing, dispatch callbacks) goes through the
+    session-keyed ``_active_turns`` table, which is worker-agnostic by design.
+    """
+
+    def __init__(self, bridges: list[PiBridge]) -> None:
+        self.bridges = bridges
+
+    def bridge_for_session(self, session_id: str) -> PiBridge:
+        if len(self.bridges) == 1:
+            return self.bridges[0]
+        # Stable affinity: hashlib (not hash()) so routing is deterministic
+        # across process restarts despite PYTHONHASHSEED.
+        idx = int(hashlib.md5(session_id.encode("utf-8")).hexdigest(), 16) % len(self.bridges)
+        return self.bridges[idx]
+
+
+_bridge_pool: Optional[PiBridgePool] = None
+
+
+async def _ensure_bridge_pool(extension_paths: Optional[list[str]] = None) -> PiBridgePool:
+    """Create the pool lazily; start only the workers a pool size requires."""
+    global _bridge_pool, _pi_bridge
+    if _bridge_pool is not None:
+        return _bridge_pool
+    import os as _os
+
+    size = max(1, int(_os.getenv("PI_BRIDGE_POOL_SIZE", "1")))
+    bridges: list[PiBridge] = []
+    try:
+        for _ in range(size):
+            bridge = PiBridge(extension_paths=extension_paths or [])
             await bridge.start()
-        except Exception:
-            # Don't leave a half-started singleton: a later get_pi_bridge()
-            # must retry the spawn (or fail loud again), not return a dead
-            # bridge whose rpc client never came up (native dump fail-fast).
-            _pi_bridge = None
-            raise
-        _pi_bridge = bridge
-    return _pi_bridge
+            bridges.append(bridge)
+    except Exception:
+        for b in bridges:
+            try:
+                await b.stop()
+            except Exception:  # noqa: BLE001
+                pass
+        raise
+    _bridge_pool = PiBridgePool(bridges)
+    _pi_bridge = bridges[0]  # legacy singleton alias (worker 0)
+    return _bridge_pool
 
 
 async def shutdown_pi_bridge() -> None:
-    """Shutdown the global Pi bridge instance."""
-    global _pi_bridge
+    """Shutdown the global Pi bridge instance (or every pool worker)."""
+    global _pi_bridge, _bridge_pool
+    if _bridge_pool is not None:
+        for bridge in _bridge_pool.bridges:
+            try:
+                await bridge.stop()
+            except Exception:  # noqa: BLE001 — best-effort shutdown
+                pass
+        _bridge_pool = None
     if _pi_bridge is not None:
         await _pi_bridge.stop()
         _pi_bridge = None

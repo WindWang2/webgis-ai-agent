@@ -46,6 +46,14 @@ class RefDescriptor:
     raster_capable: bool
     estimated_bytes: int
     content_hash: Optional[str] = None
+    # V5-E: monotonic per-ref content revision. ref identity ≠ content version:
+    # an overwrite (plan checkpoint, rollback restore) keeps the same ref_id
+    # but bumps this counter. Tile URLs/descriptor consumers use it to detect
+    # that the payload behind a stable ref_id has changed (the #1112 long-term
+    # mechanism). 0 = unknown/pre-revision payload. A counter — not a content
+    # hash — is sufficient for change DETECTION (cache invalidation never needs
+    # change identity) and costs O(1) per write instead of a full-payload hash.
+    content_revision: int = 0
     filterable_fields: Optional[List[str]] = None
     # 有界字段 schema（store 时同一次遍历产出，见 collect_field_schema）：
     # {field: {type, null_count, min/max?, sampleValues?}}。供
@@ -69,6 +77,7 @@ class RefDescriptor:
             "raster_capable": self.raster_capable,
             "estimated_bytes": self.estimated_bytes,
             "content_hash": self.content_hash,
+            "content_revision": self.content_revision,
             "filterable_fields": self.filterable_fields,
             "field_schema": self.field_schema,
             "field_schema_complete": self.field_schema_complete,
@@ -87,6 +96,7 @@ class RefDescriptor:
             raster_capable=d.get("raster_capable", False),
             estimated_bytes=d.get("estimated_bytes", 0),
             content_hash=d.get("content_hash"),
+            content_revision=d.get("content_revision", 0),
             filterable_fields=d.get("filterable_fields"),
             field_schema=d.get("field_schema"),
             field_schema_complete=d.get("field_schema_complete", True),
