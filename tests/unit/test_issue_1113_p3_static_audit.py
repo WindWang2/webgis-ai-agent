@@ -1,9 +1,8 @@
 """#1113 P3 static-audit miscellaneous fixes."""
 import logging
-import warnings
 
 import pytest
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 from typing import Any, Literal
 
 
