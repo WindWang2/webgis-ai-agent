@@ -8,6 +8,7 @@ TOCTOU window where a delayed callback can be attributed to the next turn.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -226,11 +227,31 @@ class PiTurnRegistry:
         client = self._get_redis_client()
         if client is not None:
             try:
-                await client.set(
-                    f"webgis:pi:active_turn:{session_id}",
-                    turn_id,
-                    ex=TURN_CONTEXT_MAX_AGE_SECONDS,
+                # #1108: Redis I/O is best-effort; CancelledError is BaseException
+                # and was previously uncaught (``except Exception`` only), so a
+                # cancel during register could escape past the caller's lock
+                # finally. Local ownership is already published above.
+                await asyncio.wait_for(
+                    asyncio.shield(
+                        client.set(
+                            f"webgis:pi:active_turn:{session_id}",
+                            turn_id,
+                            ex=TURN_CONTEXT_MAX_AGE_SECONDS,
+                        )
+                    ),
+                    timeout=2.0,
                 )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "PiTurnRegistry: Redis register timed out for %s", session_id
+                )
+            except asyncio.CancelledError:
+                # Local ownership already published; re-raise so the caller's
+                # try/finally can still release the turn lock (#1108).
+                logger.warning(
+                    "PiTurnRegistry: Redis register cancelled for %s", session_id
+                )
+                raise
             except Exception as e:
                 logger.warning("PiTurnRegistry: Redis register failed for %s: %s", session_id, e)
 
@@ -244,7 +265,21 @@ class PiTurnRegistry:
                     b"if redis.call('get', KEYS[1]) == ARGV[1] then "
                     b"return redis.call('del', KEYS[1]) else return 0 end"
                 )
-                await client.eval(script, 1, f"webgis:pi:active_turn:{session_id}", turn_id)
+                # #1108: same CancelledError discipline as register_turn — local
+                # ownership is already cleared; Redis delete must not re-raise
+                # CancelledError into a caller's finally ahead of lock.release().
+                await asyncio.wait_for(
+                    asyncio.shield(
+                        client.eval(
+                            script, 1, f"webgis:pi:active_turn:{session_id}", turn_id
+                        )
+                    ),
+                    timeout=2.0,
+                )
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                logger.warning(
+                    "PiTurnRegistry: Redis unregister interrupted for %s", session_id
+                )
             except Exception as e:
                 logger.warning("PiTurnRegistry: Redis unregister failed for %s: %s", session_id, e)
 
