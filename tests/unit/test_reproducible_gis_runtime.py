@@ -99,20 +99,19 @@ def db():
     from pathlib import Path
 
     Path("./data").mkdir(parents=True, exist_ok=True)
-    # Drop in reverse FK order, then create fresh (scoped to project tables —
-    # users/orgs/uploads stay for sibling suites).
-    metadata_tables = {
-        t.name: t for t in Base.metadata.sorted_tables
+    # Drop children-first, then create fresh (scoped to project tables —
+    # users/orgs/uploads stay for sibling suites). Drop order comes from the
+    # metadata's TOPOLOGICAL sort (parents first) iterated in reverse: a
+    # hand-written order flipped on PostgreSQL, which refuses to drop
+    # ``projects`` while dependents still exist (SQLite is lenient).
+    metadata_tables = [
+        t for t in Base.metadata.sorted_tables
         if t.name in _PROJECT_DOMAIN_TABLES
-    }
-    for name in reversed(_PROJECT_DOMAIN_TABLES):
-        tbl = metadata_tables.get(name)
-        if tbl is not None:
-            tbl.drop(bind=Engine, checkfirst=True)
-    for name in _PROJECT_DOMAIN_TABLES:
-        tbl = metadata_tables.get(name)
-        if tbl is not None:
-            tbl.create(bind=Engine, checkfirst=True)
+    ]
+    for tbl in reversed(metadata_tables):
+        tbl.drop(bind=Engine, checkfirst=True)
+    for tbl in metadata_tables:
+        tbl.create(bind=Engine, checkfirst=True)
 
 
 def _mk_project_and_workflow(project_id, workflow_id, steps, name="wf"):
