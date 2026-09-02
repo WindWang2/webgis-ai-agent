@@ -2,7 +2,7 @@
 
 描述工具产出的超大空间数据如何以引用(`ref:geojson-xxxx`)形式绕过 LLM 上下文与 SSE 通道,由前端按需拉取并直接交给 MapLibre 渲染;含 MVT 矢量瓦片显示路径的现状说明。
 
-> **版本**: v0.1.3 · **状态**: 活文档 · **最后更新**: 2026-08-17
+> **版本**: v0.1.3 · **状态**: 活文档 · **最后更新**: 2026-09-02
 
 ## 1. 机制动机:上下文防爆
 
@@ -66,7 +66,7 @@ ADR-0047(Data Plane: MVT vector tiles)已实施,当前行为:
 - **触发阈值**:前端 `use-sse-stream.ts` 中 `VECTOR_TILE_THRESHOLD = 5000`。有描述符、`mvt_capable` 且要素数 **> 5000** 的图层不再整包拉取 GeoJSON,改由 `_tileUrl` 模板让 MapLibre 按视口请求 MVT 瓦片;不满足条件(无描述符、不可瓦片化如纯栅格、或要素数 <= 5000)仍走内联 GeoJSON 全量拉取 + 视口裁剪。
 - **几何支持**:`app/services/mvt.py` 为纯标准库 MVT 2.1 编码器(V2),支持 Point/MultiPoint/LineString/MultiLineString/Polygon/MultiPolygon(正确绕向与孔,z < 14 做简化);GeometryCollection 不支持。
 - **服务端缓存**:瓦片 LRU 直接命中则零开销返回;未命中经 single-flight 去重并发请求后,在 `asyncio.to_thread` 中做空间索引查询 + 编码 + gzip;空间索引按 `(session_id, ref_id)` 常驻 LRU,同一份大数据只解析一次。
-- **HTTP 语义**:响应 gzip 压缩,携带 ETag(sha256 前 16 位)并支持 `If-None-Match` 条件请求(304);`Cache-Control: private, max-age=300`(ref 数据会话内不可变)。
+- **HTTP 语义**:响应 gzip 压缩,携带 ETag(sha256 前 16 位)并支持 `If-None-Match` 条件请求(304);`Cache-Control: private, max-age=30`（overwrite/rollback 可同 ref 覆写，短 TTL；ETag 保 304）。
 - **凭据注入**:MapLibre 原生瓦片请求无法携带自定义 header,前端经 `transformRequest`(`frontend/lib/map-kit/tile-auth.ts`)实时注入会话凭据——匿名会话注入 `X-Session-Token: <owner_token>`,登录会话注入 Bearer token。
 - **收益实测**(ADR-0047 记录):10 万 POI 城市视口,约 26 MB 原始 / 2.5 MB gzip 的 GeoJSON,替换为 4 张共 22 KiB 的 MVT 瓦片;浏览器端 `JSON.parse` 卡顿与 HUD store 大对象驻留同时消失。
 

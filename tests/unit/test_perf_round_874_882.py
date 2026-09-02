@@ -156,6 +156,20 @@ async def test_p4_scenario_compare_gathers_in_parallel(monkeypatch):
 
 # ─── P-5（#878）: 栅格瓦片 ETag/304 ───────────────────────────────────────
 
+
+def test_p5_mvt_tile_cache_control_short_ttl():
+    """#1112: MVT tiles must not claim long-lived immutability (overwrite mutates ref)."""
+    from fastapi import Response
+    from app.api.routes.layer import _tile_response
+
+    body = b"\x1f\x8b-fake-gzip-mvt"
+    r: Response = _tile_response(body, None)
+    assert r.status_code == 200
+    assert r.headers["cache-control"] == "private, max-age=30"
+    assert r.headers["etag"]
+    assert _tile_response(body, r.headers["etag"]).status_code == 304
+
+
 def test_p5_png_tile_etag_304():
     from fastapi import Response
     from app.api.routes.layer import _png_tile_response
@@ -164,6 +178,7 @@ def test_p5_png_tile_etag_304():
     r1: Response = _png_tile_response(body, None)
     assert r1.status_code == 200
     assert r1.headers["content-type"].startswith("image/png")
+    assert r1.headers["cache-control"] == "private, max-age=30"
     etag = r1.headers["etag"]
     assert etag
     r304: Response = _png_tile_response(body, etag)
