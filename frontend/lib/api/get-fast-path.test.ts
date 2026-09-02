@@ -140,3 +140,21 @@ describe('fastGet (F-FE-FGP)', () => {
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('fastGet ownerToken passthrough (#1109)', () => {
+  it('forwards ownerToken as the X-Session-Token header', async () => {
+    mockFetch.mockResolvedValue(jsonOk({ ok: true }));
+    await fastGet('/uploads', { params: { session_id: 's1' }, ownerToken: 'tok-1' });
+    const call = mockFetch.mock.calls[0];
+    const headers = call[1]?.headers as Record<string, string>;
+    expect(headers?.['X-Session-Token']).toBe('tok-1');
+  });
+
+  it('omits the header when no ownerToken is given', async () => {
+    mockFetch.mockResolvedValue(jsonOk({ ok: true }));
+    await fastGet('/uploads', { params: { session_id: 's1' } });
+    const call = mockFetch.mock.calls[0];
+    const headers = call[1]?.headers as Record<string, string>;
+    expect(headers?.['X-Session-Token']).toBeUndefined();
+  });
+});

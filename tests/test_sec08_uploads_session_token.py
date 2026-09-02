@@ -7,7 +7,7 @@ Mirrors tests/test_sec08_session_owner_token.py matrix for:
 
 Coverage:
   - SEC-08 anon session (owner_token set): no/wrong token → 404; correct → 200
-  - Legacy NULL/NULL grandfather: still reachable without token (compat)
+  - Legacy NULL/NULL: #1109 fail-closed (enumerable IDOR closed)
   - Authenticated user-bound session: owner OK, other user 404 (token irrelevant)
 """
 import os
@@ -236,8 +236,14 @@ async def test_sec08_anon_upload_delete_with_correct_token(client, db, app_and_d
 
 
 @pytest.mark.asyncio
-async def test_grandfather_legacy_anon_upload_without_token(client, db, app_and_db):
-    """Legacy NULL/NULL conversation uploads remain reachable without token."""
+async def test_legacy_null_null_upload_fail_closed(client, db, app_and_db):
+    """#1109: legacy NULL/NULL conversation uploads are DENIED (no token).
+
+    The grandfather made every legacy anonymous upload readable/deletable by
+    any authenticated caller who enumerated the sequential upload id. After
+    the closure (predicate fail-closed + migration g1109 minting random
+    tokens), access requires the minted token nobody holds.
+    """
     _, _, tmp_path = app_and_db
     async with db as session:
         session.add(
@@ -255,9 +261,19 @@ async def test_grandfather_legacy_anon_upload_without_token(client, db, app_and_
         await session.refresh(rec)
         uid = rec.id
 
-    resp = await client.get(f"/api/v1/uploads/{uid}")
-    assert resp.status_code == 200
-    assert resp.json()["id"] == uid
+    for method, path in (
+        ("get", f"/api/v1/uploads/{uid}"),
+        ("get", f"/api/v1/uploads/{uid}/geojson"),
+        ("delete", f"/api/v1/uploads/{uid}"),
+    ):
+        resp = await getattr(client, method)(path)
+        assert resp.status_code == 404, (method, path, resp.status_code)
+
+    # A wrong token is equally denied.
+    resp = await client.get(
+        f"/api/v1/uploads/{uid}", headers={"X-Session-Token": "guessed"}
+    )
+    assert resp.status_code == 404
 
 
 @pytest.mark.asyncio

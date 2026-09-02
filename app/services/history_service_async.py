@@ -499,9 +499,12 @@ class AsyncHistoryService(HistoryStoreProtocol):
 
         - 会话 user_id 已绑定：仅原用户可见（认证用户校验）
         - 会话 user_id IS NULL（匿名会话）：
-          - owner_token IS NULL：grandfather 旧记录，知道 session_id 即可访问
           - owner_token 已设置：调用方必须提供匹配的 owner_token（SEC-08），
             否则视为不存在（防止 session_id 泄漏后被任意人读取）
+          - owner_token IS NULL（#1109）：legacy 记录一律拒绝。旧 grandfather
+            （知道 session_id 即可访问）是可枚举 IDOR——任何持有效 Bearer 的
+            用户都能读/删这些会话与上传。迁移 g1109 已为存量行铸造随机
+            owner_token；此处 fail-closed 兜底未迁移行（含并发窗口）。
         - 不存在或越权：均返回 None（统一处理为 404，避免存在性泄露）
         """
         if conv is None:
@@ -509,11 +512,13 @@ class AsyncHistoryService(HistoryStoreProtocol):
         if conv.user_id is None:
             # SEC-08：匿名会话。若 owner_token 已设置则要求调用方提供匹配值；
             # 使用 hmac.compare_digest 做常量时间比较以防时序侧信道。
-            if conv.owner_token is not None:
-                import hmac
+            if conv.owner_token is None:
+                # #1109: legacy NULL/NULL — fail closed.
+                return None
+            import hmac
 
-                if not owner_token or not hmac.compare_digest(conv.owner_token, owner_token):
-                    return None
+            if not owner_token or not hmac.compare_digest(conv.owner_token, owner_token):
+                return None
             return conv
         if _is_anonymous(user_id):
             return None

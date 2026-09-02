@@ -130,13 +130,14 @@ export async function uploadFile(
  */
 export async function listUploads(
   sessionId?: string,
-  opts?: { forceRefresh?: boolean; signal?: AbortSignal }
+  opts?: { forceRefresh?: boolean; signal?: AbortSignal; ownerToken?: string | null }
 ): Promise<UploadListResponse> {
   const result = await fastGet<UploadListResponse>('/api/v1/uploads', {
     params: sessionId ? { session_id: sessionId } : undefined,
     forceRefresh: opts?.forceRefresh,
     signal: opts?.signal,
     label: UPLOAD_LABEL,
+    ownerToken: opts?.ownerToken,
   });
   return result.data;
 }
@@ -146,7 +147,7 @@ export async function listUploads(
  */
 export async function getUploadGeojson(
   uploadId: number,
-  opts?: { forceRefresh?: boolean; signal?: AbortSignal }
+  opts?: { forceRefresh?: boolean; signal?: AbortSignal; ownerToken?: string | null }
 ): Promise<GeoJSONFeatureCollection> {
   const result = await fastGet<GeoJSONFeatureCollection>(
     `/api/v1/uploads/${uploadId}/geojson`,
@@ -154,6 +155,7 @@ export async function getUploadGeojson(
       forceRefresh: opts?.forceRefresh,
       signal: opts?.signal,
       label: UPLOAD_LABEL,
+      ownerToken: opts?.ownerToken,
     }
   );
   return result.data;
@@ -164,13 +166,14 @@ export async function getUploadGeojson(
  */
 export async function deleteUpload(
   uploadId: number,
-  opts?: { signal?: AbortSignal }
+  opts?: { signal?: AbortSignal; ownerToken?: string | null }
 ): Promise<void> {
   await apiFetch<void>(`/api/v1/uploads/${uploadId}`, {
     method: "DELETE",
     parseJson: false,
     signal: opts?.signal,
     label: UPLOAD_LABEL,
+    ownerToken: opts?.ownerToken,
   });
   invalidateCache('/api/v1/uploads');
 }

@@ -4,7 +4,7 @@
   - 新建匿名会话签发 owner_token
   - 无 token / 错 token 访问匿名会话 → 404
   - 正确 token 访问 → 200
-  - 旧匿名会话（owner_token IS NULL）grandfather 放行（向后兼容）
+  - 旧匿名会话（owner_token IS NULL）#1109 起 fail-closed（可枚举 IDOR）
   - 认证会话不受 owner_token 影响
 """
 import os
@@ -124,13 +124,18 @@ async def test_new_anon_session_200_with_correct_token(client, db):
 
 
 @pytest.mark.asyncio
-async def test_grandfather_anon_session_accessible_without_token(client, db):
-    """owner_token IS NULL 的旧匿名会话仍可访问（向后兼容）。"""
+async def test_legacy_null_null_session_fail_closed(client, db):
+    """#1109: owner_token IS NULL 的旧匿名会话不再 grandfather 放行。
+
+    旧行为（知道 session_id 即可访问）是可枚举 IDOR——任何持有效 Bearer
+    的用户都能读取这些会话。现在 fail-closed；迁移 g1109 为存量行铸造
+    随机 token（调用方不可知 → 等效不可访问）。
+    """
     async with db as session:
         session.add(Conversation(id="sec08-legacy", user_id=None, owner_token=None, title="legacy"))
         await session.commit()
     resp = await client.get("/api/v1/chat/sessions/sec08-legacy")
-    assert resp.status_code == 200
+    assert resp.status_code == 404
 
 
 @pytest.mark.asyncio

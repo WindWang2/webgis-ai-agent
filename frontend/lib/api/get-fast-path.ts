@@ -52,6 +52,13 @@ export interface GetFastPathOptions {
   timeoutMs?: number;
   /** Request credentials mode (e.g. "include" for cookie-bearing endpoints). */
   credentials?: RequestCredentials;
+  /**
+   * SEC-08 (#1109): anonymous-session ownership token → X-Session-Token
+   * header (forwarded to the shared transport). Deliberately NOT part of the
+   * cache key — the key already includes params.session_id, and the token is
+   * constant within a session.
+   */
+  ownerToken?: string | null;
 }
 
 export interface GetFastPathResult<T> {
@@ -225,6 +232,7 @@ export async function fastGet<T = unknown>(
     label: options.label,
     timeoutMs: options.timeoutMs,
     credentials: options.credentials,
+    ownerToken: options.ownerToken,
   }).then((data) => {
     const cur = cache.get(key);
     if (cur && cur.generation === generation) {
