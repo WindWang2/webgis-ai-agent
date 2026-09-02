@@ -246,7 +246,7 @@ def test_tile_url_builder_appends_revision_when_present():
 async def test_memory_clear_session_drops_revisions():
     store = MemorySessionStore(capacity=10)
     sid = "sess-v5e-clear"
-    ref = await store.store(sid, _FC_V1)
+    await store.store(sid, _FC_V1)
     assert store._ref_revisions.get(sid)
     await store.clear_session(sid)
     assert sid not in store._ref_revisions, "revision table leaks cleared sessions"
@@ -259,7 +259,7 @@ async def test_redis_clear_session_drops_revisions():
         redis=fakeredis.aioredis.FakeRedis(decode_responses=False),
     )
     sid = "sess-v5e-rclear"
-    ref = await store.store(sid, _FC_V1)
+    await store.store(sid, _FC_V1)
     assert await store._r.hlen(store._ref_revisions_key(sid)) == 1
     await store.clear_session(sid)
     assert await store._r.hlen(store._ref_revisions_key(sid)) == 0, (
