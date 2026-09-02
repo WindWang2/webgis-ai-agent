@@ -122,7 +122,9 @@ class WorkflowEngine:
 
     @staticmethod
     def resolve_step_tool(
-        step_spec: WorkflowStepSpec, tool_registry
+        step_spec: WorkflowStepSpec,
+        tool_registry,
+        available: Optional[set] = None,
     ) -> Tuple[str, Optional[str], Optional[str], Dict[str, Any]]:
         """Resolve the tool a step executes, honoring capability semantics.
 
@@ -133,6 +135,10 @@ class WorkflowEngine:
         capability retired), the recorded tool id is used and the fallback is
         disclosed in the returned evidence so reruns stay explainable.
 
+        ``available``: a precomputed set of registered tool names — callers
+        that resolve many steps build it once instead of paying
+        O(steps × registry_size) rebuilding it per step.
+
         Returns (tool_name, capability, algorithm, resolution_evidence).
         """
         capability = step_spec.capability
@@ -141,11 +147,11 @@ class WorkflowEngine:
         try:
             from app.lib.gis.algorithm_resolver import get_algorithm_resolver
 
-            available = None
-            try:
-                available = set(tool_registry.list_tools())
-            except Exception:  # noqa: BLE001 — registry view unknown → resolver default
-                available = None
+            if available is None:
+                try:
+                    available = set(tool_registry.list_tools())
+                except Exception:  # noqa: BLE001 — registry view unknown → resolver default
+                    available = None
             resolution = get_algorithm_resolver().resolve(
                 capability, available_tools=available
             )
@@ -331,6 +337,7 @@ class WorkflowEngine:
         seed_trace: Optional[List[Dict[str, Any]]] = None,
         seed_artifact_records: Optional[List[Dict[str, Any]]] = None,
         rerun_disclosures: Optional[Dict[str, Any]] = None,
+        available_tools: Optional[set] = None,
     ) -> WorkflowRun:
         """Run ``execution_order`` steps, snapshotting everything immutable.
 
@@ -421,7 +428,9 @@ class WorkflowEngine:
                 # ADR-0092 A5: capability-bearing steps re-resolve through the
                 # registries at execution time (never a blind tool-id replay).
                 tool_name, step_capability, step_algorithm, resolution_evidence = (
-                    WorkflowEngine.resolve_step_tool(step_spec, tool_registry)
+                    WorkflowEngine.resolve_step_tool(
+                        step_spec, tool_registry, available=available_tools
+                    )
                 )
                 tool_version = tool_registry.tool_version(tool_name)
                 step_start = datetime.now(timezone.utc)
@@ -988,14 +997,44 @@ class WorkflowEngine:
                             "fallback_count": len(chapter.get("fallbacks") or []),
                         },
                     )
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001 — evidence loss must be visible
+            logger.warning(
+                "[WorkflowEngine] outcome context: product facets/QA summary "
+                "unavailable for run %s (session %s): %s",
+                getattr(run, "id", "?"), session_id, e,
+            )
+
+    @staticmethod
+    def _descendants_of(
+        steps: List[WorkflowStepSpec], seeds: set, step_map: Optional[Dict[str, WorkflowStepSpec]] = None
+    ) -> set:
+        """Transitive descendants of ``seeds`` over dependency edges.
+
+        Reverse-adjacency BFS — O(S + E), single pass (the previous fixed-point
+        rescans were O(S²) worst case on deep graphs).
+        """
+        step_map = step_map or {st.step_id: st for st in steps}
+        dependents: Dict[str, List[str]] = {}
+        for st in steps:
+            for dep in st.dependencies:
+                dependents.setdefault(dep, []).append(st.step_id)
+        out = set(seeds)
+        queue = deque(seeds)
+        while queue:
+            node = queue.popleft()
+            for nxt in dependents.get(node, []):
+                if nxt not in out:
+                    out.add(nxt)
+                    queue.append(nxt)
+        return out
 
     @staticmethod
     def _stale_seed_steps(
         steps: List[WorkflowStepSpec],
         seed_completed: List[str],
         tool_registry,
+        available: Optional[set] = None,
+        step_map: Optional[Dict[str, WorkflowStepSpec]] = None,
     ) -> List[str]:
         """Seed steps whose capability re-resolves to a different algorithm.
 
@@ -1005,14 +1044,14 @@ class WorkflowEngine:
         a capability (pure tool steps) are never stale by this definition —
         tool-version drift is captured by compare_runs.
         """
-        step_map = {s.step_id: s for s in steps}
+        step_map = step_map or {s.step_id: s for s in steps}
         stale: List[str] = []
         for sid in seed_completed:
             spec = step_map.get(sid)
             if spec is None or not spec.capability:
                 continue
             _tool, _cap, algo, evidence = WorkflowEngine.resolve_step_tool(
-                spec, tool_registry
+                spec, tool_registry, available=available
             )
             if evidence.get("resolver_status") != "resolved":
                 continue  # registry unavailable → keep honest reuse
@@ -1055,23 +1094,15 @@ class WorkflowEngine:
         steps = [WorkflowStepSpec(**s) for s in graph_spec.get("steps", [])]
         step_map = {s.step_id: s for s in steps}
         if from_step not in step_map:
-            raise ValueError(f"from_step '{from_step}' is not part of workflow graph")
+            raise ValueError(
+                f"from_step '{from_step}' not found in workflow graph"
+            )
         topo_order = WorkflowEngine.validate_dag(steps)
 
-        # Descendants via reachability over dependency edges (bounded).
-        descendants: set = {from_step}
-        changed = True
-        while changed:
-            changed = False
-            for step in steps:
-                if step.step_id in descendants:
-                    continue
-                if any(dep in descendants for dep in step.dependencies):
-                    descendants.add(step.step_id)
-                    changed = True
+        # Descendants via reverse-adjacency BFS (O(S + E), single pass).
+        descendants = WorkflowEngine._descendants_of(steps, {from_step}, step_map)
 
         completed = set(prior.completed_steps or [])
-        invalidated = descendants & completed
         seed_completed = [s for s in topo_order if s in (completed - descendants)]
 
         # Current dataset fingerprints (drift detection like resume).
@@ -1089,11 +1120,19 @@ class WorkflowEngine:
             )
             drift_disclosure["input_drift"] = drifted
 
+        # Registry view built once for every resolution below (stale-seed check
+        # + the re-executed steps in _execute).
+        try:
+            available_tools = set(tool_registry.list_tools())
+        except Exception:  # noqa: BLE001 — registry view unknown
+            available_tools = None
+
         # Stale-compute guard (ADR-0092 A5): a seed step whose capability now
         # re-resolves to a DIFFERENT algorithm must not silently ride on its
         # old output — invalidate it (and its descendants) too, with a record.
         stale_steps = WorkflowEngine._stale_seed_steps(
-            steps, seed_completed, tool_registry
+            steps, seed_completed, tool_registry,
+            available=available_tools, step_map=step_map,
         )
         if stale_steps:
             logger.info(
@@ -1101,20 +1140,15 @@ class WorkflowEngine:
                 "changed for seed steps %s — invalidating them too",
                 prior.id, stale_steps,
             )
-            seed_set = set(seed_completed) - set(stale_steps)
-            expanded = set(stale_steps)
-            changed = True
-            while changed:
-                changed = False
-                for step in steps:
-                    if step.step_id in expanded or step.step_id in (set(seed_completed) - seed_set):
-                        continue
-                    if any(dep in expanded for dep in step.dependencies):
-                        expanded.add(step.step_id)
-                        changed = True
+            expanded = WorkflowEngine._descendants_of(steps, set(stale_steps), step_map)
+            seed_set = set(seed_completed) - expanded
             seed_completed = [s for s in seed_completed if s in seed_set]
-            invalidated = sorted(set(invalidated) | expanded)
             drift_disclosure["stale_algorithm_steps"] = stale_steps
+        # Machine-readable invalidation record for the run row (audit trail:
+        # which completed steps this rerun threw away and why).
+        drift_disclosure["invalidated_steps"] = sorted(
+            completed - set(seed_completed)
+        )
 
         seed_outputs, seed_trace, seed_artifacts, _ = await WorkflowEngine._reconstruct_prior(
             db, prior, seed_completed, session_id
@@ -1158,6 +1192,7 @@ class WorkflowEngine:
             seed_trace=seed_trace,
             seed_artifact_records=seed_artifacts,
             rerun_disclosures=drift_disclosure or None,
+            available_tools=available_tools,
         )
 
     # ── run loading / reconstruction helpers ────────────────────────────────

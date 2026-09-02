@@ -83,15 +83,36 @@ def _gis_chapter(status="available", *, include_optional_row=False):
     }
 
 
+#: Project-domain tables this suite writes. The fixture drops + recreates
+#: them so (a) rows never pollute the shared dev DB across runs and (b) the
+#: schema is always THIS branch's (create_all does not ALTER existing tables,
+#: so a stale ./data/webgis.db would otherwise miss migration-0022 columns).
+_PROJECT_DOMAIN_TABLES = (
+    "map_products", "artifact_lineages", "artifacts",
+    "workflow_runs", "workflow_revisions", "workflows",
+    "project_datasets", "carto_project_facts", "projects",
+)
+
+
 @pytest.fixture
 def db():
-    # Same file-backed SQLite the API tests use; schema creation is idempotent
-    # and rows are isolated via unique ids, so no drop (matches test_workflow_api).
     from pathlib import Path
 
     Path("./data").mkdir(parents=True, exist_ok=True)
-    Base.metadata.create_all(bind=Engine)
-    yield
+    # Drop in reverse FK order, then create fresh (scoped to project tables —
+    # users/orgs/uploads stay for sibling suites).
+    metadata_tables = {
+        t.name: t for t in Base.metadata.sorted_tables
+        if t.name in _PROJECT_DOMAIN_TABLES
+    }
+    for name in reversed(_PROJECT_DOMAIN_TABLES):
+        tbl = metadata_tables.get(name)
+        if tbl is not None:
+            tbl.drop(bind=Engine, checkfirst=True)
+    for name in _PROJECT_DOMAIN_TABLES:
+        tbl = metadata_tables.get(name)
+        if tbl is not None:
+            tbl.create(bind=Engine, checkfirst=True)
 
 
 def _mk_project_and_workflow(project_id, workflow_id, steps, name="wf"):
@@ -379,7 +400,7 @@ def test_rerun_from_step_rejects_unknown_step(db):
             db=db, workflow_id=workflow_id, tool_registry=_CountingRegistry(),
             expected_project_id=project_id,
         ))
-        with pytest.raises(ValueError, match="not part of workflow graph"):
+        with pytest.raises(ValueError, match="not found in workflow graph"):
             asyncio.run(WorkflowEngine.rerun_from_step(
                 db=db, prior_run_id=run1.id, tool_registry=_CountingRegistry(),
                 from_step="nope", expected_project_id=project_id,
@@ -697,9 +718,10 @@ def test_map_product_versioning_and_diff(db):
         assert d3["output_changed"] is True
         assert d3["analysis_recomputation_expected"] is True
 
-        versions = MapProductService.list_versions(s, project_id)
-        assert [v.version_no for v in versions] == [1, 2, 3]
-        fps = {v.product_fingerprint for v in versions}
+        rows, total = MapProductService.list_versions_paginated(s, project_id, limit=10)
+        assert total == 3
+        assert [v.version_no for v in rows] == [3, 2, 1]  # newest first
+        fps = {v.product_fingerprint for v in rows}
         assert len(fps) == 3, "distinct substantive states ⇒ distinct fingerprints"
 
 
@@ -796,3 +818,126 @@ def test_map_product_record_version_rejects_foreign_run(db):
         s.commit()
         with pytest.raises(ValueError, match="not found in project"):
             MapProductService.record_version(s, proj_a, workflow_run_id=run_b)
+
+
+def test_rerun_from_step_corrupt_prior_run_rejected(db):
+    """Negative path: seed artifacts gone → ValueError, never a silent
+    full rerun over missing generations (review follow-up)."""
+    import asyncio
+
+    from sqlalchemy import delete as sa_delete
+
+    from app.models.project import Artifact, ArtifactLineage
+
+    project_id, workflow_id = f"proj_{uuid.uuid4().hex[:8]}", f"wf_{uuid.uuid4().hex[:8]}"
+    _mk_project_and_workflow(project_id, workflow_id, _three_step_spec())
+    with SessionLocal() as db:
+        run1 = asyncio.run(WorkflowEngine.execute_workflow_run(
+            db=db, workflow_id=workflow_id, tool_registry=_CountingRegistry(),
+            expected_project_id=project_id,
+        ))
+        assert run1.status == "completed"
+        # Corrupt: wipe the prior run's lineage + artifacts.
+        db.execute(sa_delete(ArtifactLineage).where(ArtifactLineage.workflow_run_id == run1.id))
+        db.execute(sa_delete(Artifact).where(Artifact.project_id == project_id))
+        db.commit()
+        with pytest.raises(ValueError, match="no longer reconstructable"):
+            asyncio.run(WorkflowEngine.rerun_from_step(
+                db=db, prior_run_id=run1.id, tool_registry=_CountingRegistry(),
+                from_step="s2", expected_project_id=project_id,
+            ))
+
+
+def test_promote_run_artifacts_store_write_failure_disclosed(db, monkeypatch, tmp_path):
+    """Negative path: content write failure → store_unavailable, no fake
+    content_location (review follow-up)."""
+    import asyncio
+
+    from app.models.db_model import User
+    from app.models.project import Project, Workflow, WorkflowRun, Artifact
+    from app.services import project_artifact_promotion as pap
+
+    monkeypatch.setattr(pap, "content_store_root", lambda: tmp_path)
+    monkeypatch.setattr(pap, "materialize_blob", lambda fp, blob: None)  # ENOSPC
+
+    project_id = f"proj_{uuid.uuid4().hex[:8]}"
+    wf_id = f"wf_{uuid.uuid4().hex[:8]}"
+    run_id = f"run_{uuid.uuid4().hex[:8]}"
+    art_id = f"art_{uuid.uuid4().hex[:8]}"
+    with SessionLocal() as s:
+        s.merge(User(id="u_sw", username="sw", email="sw@example.com",
+                     password_hash="x", role="viewer", is_active=True))
+        s.add(Project(id=project_id, name="p", owner_id="u_sw"))
+        s.add(Workflow(id=wf_id, project_id=project_id, name="wf", version=1))
+        s.add(WorkflowRun(
+            id=run_id, workflow_id=wf_id, workflow_version=1, project_id=project_id,
+            status="completed",
+            run_manifest={"artifacts": [{"id": art_id, "producing_step": "s1",
+                                         "content_fingerprint": "cfp_sw"}]},
+        ))
+        s.add(Artifact(
+            id=art_id, project_id=project_id, name="out", artifact_type="vector",
+            metadata_json={"step_id": "s1"}, content_fingerprint="cfp_sw",
+            storage_ref="ref:sw-1",
+        ))
+        s.commit()
+
+    from app.services.session_data import session_data_manager
+
+    async def _store():
+        return await session_data_manager.store(
+            "sess_sw", {"type": "FeatureCollection", "features": []}, prefix="bench",
+        )
+
+    ref = asyncio.run(_store())
+    with SessionLocal() as s:
+        art = s.execute(select(Artifact).where(Artifact.id == art_id)).scalars().first()
+        art.storage_ref = ref
+        s.commit()
+
+    with SessionLocal() as s:
+        run = s.execute(select(WorkflowRun).where(WorkflowRun.id == run_id)).scalars().first()
+        report = asyncio.run(pap.promote_run_artifacts(
+            s, run, session_id="sess_sw", project_id=project_id,
+        ))
+    assert report[0]["status"] == "store_unavailable"
+    with SessionLocal() as s:
+        art = s.execute(select(Artifact).where(Artifact.id == art_id)).scalars().first()
+        meta = art.metadata_json
+        assert meta["content_status"] == "store_unavailable"
+        assert "content_location" not in meta, "must not claim durability it does not have"
+
+
+@pytest.mark.asyncio
+async def test_save_plan_as_workflow_unknown_tool_rejected():
+    """Legacy steps path: hallucinated tool ids are disclosed at SAVE time —
+    nothing persisted (review follow-up)."""
+    from app.tools import init_tools
+    from app.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+    init_tools(reg)
+    res = await reg.dispatch("save_plan_as_workflow", {
+        "project_id": "proj_x", "workflow_name": "wf",
+        "steps": [{"step_id": "s1", "tool_name": "totally_not_a_tool",
+                   "args_template": {}}],
+    }, session_id="sess-x")
+    assert res.get("success") is False
+    assert "totally_not_a_tool" in res.get("error", "")
+    assert res.get("unknown_tools") == ["totally_not_a_tool"]
+    assert res.get("correction_hint")
+
+
+@pytest.mark.asyncio
+async def test_save_plan_as_workflow_no_plan_error_is_actionable():
+    """session_id without a GIS plan → structured error + correction hint."""
+    from app.tools import init_tools
+    from app.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+    init_tools(reg)
+    res = await reg.dispatch("save_plan_as_workflow", {
+        "project_id": "proj_x", "workflow_name": "wf",
+    }, session_id="sess-empty-plan")
+    assert res.get("success") is False
+    assert "webgis_map_intent" in res.get("correction_hint", "")

@@ -113,6 +113,7 @@ def _check_numeric(
     mapspec: Optional[Dict[str, Any]],
     fixture_docs: Dict[str, Any],
     quantities: Dict[str, Any],
+    step_blobs: Optional[List[str]] = None,
 ) -> bool:
     if assertion.source == "step_result_bytes":
         # LLM-facing boundedness: the serialized tool result must stay under
@@ -122,9 +123,12 @@ def _check_numeric(
         idx = assertion.step if assertion.step is not None else len(step_results) - 1
         if idx < 0 or idx >= len(step_results):
             return False
-        import json as _json
+        if step_blobs is not None and idx < len(step_blobs):
+            size = len(step_blobs[idx])  # reuse the dispatch-time serialization
+        else:
+            import json as _json
 
-        size = len(_json.dumps(step_results[idx], ensure_ascii=False, default=str))
+            size = len(_json.dumps(step_results[idx], ensure_ascii=False, default=str))
         return _check_op(size, assertion.op, assertion.value, assertion.tol)
     if assertion.source == "quantity":
         actual = quantities.get(assertion.quantity or "")
@@ -326,7 +330,6 @@ class GISBenchmarkRunner:
         # Materialize fixtures (bounded: large fixtures are NOT inlined into
         # any LLM-facing payload — they go straight into the session store).
         fixture_docs: Dict[str, Any] = {}
-        aliases: Dict[str, str] = {}
         from app.services.session_data import session_data_manager
 
         for alias in case.fixture_aliases:
@@ -340,11 +343,11 @@ class GISBenchmarkRunner:
             fixture_docs[alias] = doc
             ref = await session_data_manager.store(session_id, doc, prefix="bench")
             await session_data_manager.set_alias(session_id, ref, alias)
-            aliases[alias] = alias  # alias name is the ref cursor
 
         # Dispatch script.
         seen_calls: Dict[Tuple[str, str], int] = {}
         results: List[Dict[str, Any]] = []
+        _last_step_blobs: List[str] = []
         for i, step in enumerate(case.script):
             args = json.loads(json.dumps(step.args))  # deep copy
             for key, val in list(args.items()):
@@ -358,7 +361,12 @@ class GISBenchmarkRunner:
                 res = {"success": False, "error": str(e)[:300]}
             results.append(res if isinstance(res, dict) else {"value": res})
             evidence["tool_calls"] += 1
-            got = json.dumps(res, ensure_ascii=False, default=str)[:200]
+            # Serialize once per step: the same blob backs the bounded preview
+            # and the (later) step_result_bytes assertion — no double dump of
+            # large results.
+            blob = json.dumps(res, ensure_ascii=False, default=str)
+            _last_step_blobs.append(blob)
+            got = blob[:200]
             if step.expect_error_contains:
                 blob = got
                 if step.expect_error_contains not in blob:
@@ -425,6 +433,7 @@ class GISBenchmarkRunner:
                 mapspec=mapspec,
                 fixture_docs=fixture_docs,
                 quantities=quantities,
+                step_blobs=_last_step_blobs,
             ):
                 evidence["failures"].append(
                     f"numeric assertion failed: {assertion.label or assertion.model_dump()}"

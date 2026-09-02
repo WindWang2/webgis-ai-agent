@@ -287,3 +287,28 @@ def _iter_coords(coordinates):
         return
     for child in coordinates:
         yield from _iter_coords(child)
+
+
+async def resolve_ref_payload(session_id: str, ref_or_alias: str) -> Any:
+    """Session ref/alias → stored payload (single shared resolution path).
+
+    Alias resolution falls back to the raw value when the store cannot
+    resolve it (a bare ``ref:...`` id is already a valid key). Fetch failures
+    return None — callers disclose, they don't crash.
+    """
+    from app.services.session_data import session_data_manager
+
+    if not session_id or not ref_or_alias:
+        return None
+    ref_id = ref_or_alias
+    try:
+        alias_ref = await session_data_manager.resolve_alias(session_id, ref_or_alias)
+        if alias_ref and alias_ref != ref_or_alias:
+            ref_id = alias_ref
+    except Exception:  # noqa: BLE001 — unresolved alias: treat as raw ref id
+        pass
+    try:
+        return await session_data_manager.get(session_id, ref_id)
+    except Exception as e:  # noqa: BLE001 — store outage is disclosed upstream
+        logger.warning("[resolve_ref_payload] get failed for %s: %s", ref_id, e)
+        return None

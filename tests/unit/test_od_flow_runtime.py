@@ -100,6 +100,9 @@ async def test_od_flow_edges_threshold_and_validation(registry, flow_session):
         "od_flow_edges", {"od_table_ref": alias, "top_n": 50, "min_weight": 10},
         session_id=flow_session,
     )
+    # Non-vacuous: the fixture has weights ≥10, so an empty result would mean
+    # the filter (or the test) regressed — all() alone passes on [].
+    assert res["features"], "threshold must not empty the result for this fixture"
     assert all(f["properties"]["weight"] >= 10 for f in res["features"])
     # Unknown aggregation mode is a bounded, honest error.
     bad = await registry.dispatch(

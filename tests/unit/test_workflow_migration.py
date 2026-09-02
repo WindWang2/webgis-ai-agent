@@ -144,3 +144,63 @@ def test_models_match_migration_via_create_all(tmp_path):
     assert "content_fingerprint" in _columns(str(db_path), "artifacts")
     assert "source_dataset_id" in _columns(str(db_path), "artifact_lineages")
     assert "detached_at" in _columns(str(db_path), "project_datasets")
+
+
+def test_migration_0022_map_products_and_lineage_semantics(alembic_cfg):
+    """ADR-0092 migration: map_products ledger + lineage semantic columns,
+    constraint enforcement, and a full downgrade→re-upgrade cycle."""
+    import sqlite3
+
+    cfg, db_path = alembic_cfg
+    command.upgrade(cfg, "head")
+
+    assert "map_products" in _tables(db_path)
+    for col in (
+        "id", "project_id", "version_no", "product_fingerprint",
+        "input_dataset_fingerprints", "compute_plan", "output_fingerprints",
+        "workflow_id", "workflow_run_id", "mapspec_fingerprint",
+        "mapspec_revision", "recipe_id", "artifact_ids", "diff_summary",
+        "created_at",
+    ):
+        assert col in _columns(db_path, "map_products"), col
+    for col in ("producing_capability", "producing_algorithm", "mapspec_fingerprint"):
+        assert col in _columns(db_path, "artifact_lineages"), col
+    # Run-lookup index only: the UNIQUE backing index serves project scans
+    # (0020 no-left-prefix-duplicates convention).
+    idxs = _indexes(db_path, "map_products")
+    assert "idx_map_product_run" in idxs
+    assert "idx_map_product_project" not in idxs
+    assert "idx_map_product_project_version" not in idxs
+
+    con = sqlite3.connect(db_path)
+    con.execute("PRAGMA foreign_keys=ON")
+    con.execute("INSERT INTO organizations (id, name, slug) VALUES (1, 'o', 'o')")
+    con.execute(
+        "INSERT INTO projects (id, org_id, name, status) VALUES ('p1', 1, 'p', 'active')"
+    )
+    # CHECK: version_no >= 1.
+    with pytest.raises(sqlite3.IntegrityError):
+        con.execute(
+            "INSERT INTO map_products (id, project_id, version_no) "
+            "VALUES ('m0', 'p1', 0)"
+        )
+    con.execute(
+        "INSERT INTO map_products (id, project_id, version_no, created_at) "
+        "VALUES ('m1', 'p1', 1, '2026-09-02 00:00:00')"
+    )
+    # UNIQUE (project_id, version_no).
+    with pytest.raises(sqlite3.IntegrityError):
+        con.execute(
+            "INSERT INTO map_products (id, project_id, version_no, created_at) "
+            "VALUES ('m2', 'p1', 1, '2026-09-02 00:00:00')"
+        )
+    con.close()
+
+    # Downgrade removes everything 0022 added; re-upgrade succeeds.
+    command.downgrade(cfg, "0021_add_carto_project_facts")
+    assert "map_products" not in _tables(db_path)
+    for col in ("producing_capability", "producing_algorithm", "mapspec_fingerprint"):
+        assert col not in _columns(db_path, "artifact_lineages"), col
+    command.upgrade(cfg, "head")
+    assert "map_products" in _tables(db_path)
+    assert "producing_capability" in _columns(db_path, "artifact_lineages")

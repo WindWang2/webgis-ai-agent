@@ -356,7 +356,8 @@ class MapProductVersion(Base):
 
     id = Column(String(255), primary_key=True, default=lambda: str(uuid.uuid4()))
     project_id = Column(String(255), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
-    version_no = Column(Integer, nullable=False, default=1)
+    # server_default mirrors migration 0022 (raw-SQL inserts also get 1).
+    version_no = Column(Integer, nullable=False, default=1, server_default="1")
     # Product identity: canonical hash over (input fingerprints, workflow run
     # manifest compute plan, mapspec fingerprint, artifact content set).
     product_fingerprint = Column(String(64), nullable=True)
@@ -381,8 +382,8 @@ class MapProductVersion(Base):
 
     __table_args__ = (
         UniqueConstraint("project_id", "version_no", name="uq_map_product_version"),
-        Index("idx_map_product_project", "project_id"),
-        Index("idx_map_product_project_version", "project_id", "version_no"),
+        # No left-prefix project_id index duplicates (0020 write-amplification
+        # convention): the UNIQUE backing index serves project-scoped scans.
         Index("idx_map_product_run", "workflow_run_id"),
         CheckConstraint("version_no >= 1", name="ck_map_product_version_pos"),
     )

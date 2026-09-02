@@ -14,9 +14,15 @@ one across five dimensions:
 ``style_changed`` without the others is the machine-readable proof of the
 "style-only change ⇒ no analysis re-computation" contract; ``data_changed``
 is the trigger that *must* invalidate descendants on the next rerun.
+
+Provenance is always COMPUTED server-side from run manifests — the REST
+schema deliberately offers no client-supplied fingerprint/diff fields (a
+forged diff_summary would let an LLM assert false provenance into the
+durable ledger).
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -24,9 +30,40 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.project import MapProductVersion, WorkflowRun
-from app.services.provenance.fingerprint import canonical_dumps, _sha256
+from app.services.provenance.fingerprint import canonical_dumps
 
 logger = logging.getLogger(__name__)
+
+#: Bounded per-step compute-plan projection (steps capped, args trimmed by the
+#: manifest builder before landing here).
+_MAX_PLAN_STEPS = 64
+
+
+def _sha256(payload: str) -> str:
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _project_steps(
+    manifest: Dict[str, Any], *, include_args: bool = False, sort: bool = False
+) -> List[Dict[str, Any]]:
+    """Single per-step manifest projection (fingerprint / compute-plan / diff
+    all share this — four hand-rolled projections used to drift apart)."""
+    plan: List[Dict[str, Any]] = []
+    for s in (manifest.get("steps") or [])[:_MAX_PLAN_STEPS]:
+        if not isinstance(s, dict):
+            continue
+        row: Dict[str, Any] = {
+            "step_id": s.get("step_id"),
+            "capability": s.get("capability"),
+            "algorithm": s.get("algorithm"),
+            "tool_name": s.get("tool_name"),
+        }
+        if include_args:
+            row["args"] = s.get("args") or {}
+        plan.append(row)
+    if sort:
+        plan.sort(key=lambda r: str(r.get("step_id") or ""))
+    return plan
 
 
 def compute_product_fingerprint(
@@ -37,22 +74,9 @@ def compute_product_fingerprint(
     artifact_fingerprints: List[str],
 ) -> str:
     """Deterministic product identity over its substantive inputs/outputs."""
-    manifest = run_manifest or {}
-    steps = sorted(
-        (
-            {
-                "step_id": s.get("step_id"),
-                "tool_name": s.get("tool_name"),
-                "capability": s.get("capability"),
-                "algorithm": s.get("algorithm"),
-            }
-            for s in (manifest.get("steps") or [])
-        ),
-        key=lambda s: s.get("step_id") or "",
-    )
     payload = {
         "inputs": dict(sorted((input_dataset_fingerprints or {}).items())),
-        "compute_plan": steps,
+        "compute_plan": _project_steps(run_manifest or {}, sort=True),
         "mapspec": mapspec_fingerprint or "",
         "outputs": sorted(f for f in artifact_fingerprints if f),
     }
@@ -71,14 +95,12 @@ class MapProductService:
         recipe_id: Optional[str] = None,
         artifact_ids: Optional[List[str]] = None,
         input_dataset_fingerprints: Optional[Dict[str, str]] = None,
-        product_fingerprint: Optional[str] = None,
-        diff_summary: Optional[Dict[str, Any]] = None,
         run_manifest: Optional[Dict[str, Any]] = None,
     ) -> MapProductVersion:
         """Append one product version (per-project monotonic version_no).
 
-        When ``product_fingerprint`` / ``diff_summary`` are omitted they are
-        computed from the run manifest + previous version. An identical
+        Fingerprint and diff are ALWAYS computed here from the run manifest +
+        previous version (no client-supplied provenance). An identical
         fingerprint to the previous version is still recorded as a new row
         (the timeline is evidence); the diff simply reports no changes.
         ``run_manifest`` may be supplied directly for versions not bound to a
@@ -122,29 +144,26 @@ class MapProductService:
             .order_by(MapProductVersion.version_no.desc())
         ).scalars().first()
 
-        if product_fingerprint is None:
-            product_fingerprint = compute_product_fingerprint(
-                input_dataset_fingerprints=input_fps,
-                run_manifest=manifest,
-                mapspec_fingerprint=mapspec_fingerprint,
-                artifact_fingerprints=fingerprints,
-            )
-        if diff_summary is None:
-            diff_summary = MapProductService.diff_versions(previous, {
-                "input_dataset_fingerprints": input_fps,
-                "run_manifest": manifest,
-                "mapspec_fingerprint": mapspec_fingerprint,
-                "artifact_fingerprints": fingerprints,
-            })
+        product_fingerprint = compute_product_fingerprint(
+            input_dataset_fingerprints=input_fps,
+            run_manifest=manifest,
+            mapspec_fingerprint=mapspec_fingerprint,
+            artifact_fingerprints=fingerprints,
+        )
+        diff_summary = MapProductService.diff_versions(previous, {
+            "input_dataset_fingerprints": input_fps,
+            "run_manifest": manifest,
+            "mapspec_fingerprint": mapspec_fingerprint,
+            "artifact_fingerprints": fingerprints,
+        })
 
         version_no = (previous.version_no if previous else 0) + 1
-        compute_plan = MapProductService.bounded_compute_plan(manifest)
         row = MapProductVersion(
             project_id=project_id,
             version_no=version_no,
             product_fingerprint=product_fingerprint,
             input_dataset_fingerprints=input_fps,
-            compute_plan=compute_plan,
+            compute_plan=_project_steps(manifest, include_args=True),
             output_fingerprints=sorted(f for f in fingerprints if f)[:128],
             workflow_id=str(run.workflow_id) if run else None,
             workflow_run_id=workflow_run_id,
@@ -162,18 +181,7 @@ class MapProductService:
     @staticmethod
     def bounded_compute_plan(manifest: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Bounded per-step compute-plan projection stored with each version."""
-        plan: List[Dict[str, Any]] = []
-        for s in (manifest.get("steps") or [])[:64]:
-            if not isinstance(s, dict):
-                continue
-            plan.append({
-                "step_id": s.get("step_id"),
-                "capability": s.get("capability"),
-                "algorithm": s.get("algorithm"),
-                "tool_name": s.get("tool_name"),
-                "args": s.get("args") or {},
-            })
-        return plan
+        return _project_steps(manifest, include_args=True)
 
     @staticmethod
     def diff_versions(
@@ -187,29 +195,22 @@ class MapProductService:
         curr_inputs: Dict[str, str] = dict(current.get("input_dataset_fingerprints") or {})
 
         # Previous compute plan comes from the stored snapshot column; the
-        # current one from the (possibly inline) manifest.
-        prev_plan: List[Dict[str, Any]] = list(
-            getattr(previous, "compute_plan", None) or []
-        )
-        prev_manifest: Dict[str, Any] = {"steps": prev_plan}
+        # current one from the (possibly inline) manifest. Both use the
+        # shared projection so the diff compares like with like.
+        prev_manifest: Dict[str, Any] = {
+            "steps": list(getattr(previous, "compute_plan", None) or [])
+        }
         curr_manifest: Dict[str, Any] = current.get("run_manifest") or {}
 
-        def _algos(manifest: Dict[str, Any]) -> Dict[str, str]:
+        def _index(manifest: Dict[str, Any], key: str) -> Dict[str, Any]:
             return {
-                str(s.get("step_id")): str(s.get("algorithm") or "")
+                str(s.get("step_id")): (s.get(key) or "")
                 for s in (manifest.get("steps") or [])
-                if s.get("step_id")
+                if isinstance(s, dict) and s.get("step_id")
             }
 
-        def _args(manifest: Dict[str, Any]) -> Dict[str, Any]:
-            return {
-                str(s.get("step_id")): s.get("args") or {}
-                for s in (manifest.get("steps") or [])
-                if s.get("step_id")
-            }
-
-        prev_algos, curr_algos = _algos(prev_manifest), _algos(curr_manifest)
-        prev_args, curr_args = _args(prev_manifest), _args(curr_manifest)
+        prev_algos, curr_algos = _index(prev_manifest, "algorithm"), _index(curr_manifest, "algorithm")
+        prev_args, curr_args = _index(prev_manifest, "args"), _index(curr_manifest, "args")
 
         prev_outputs = sorted(
             str(fp)
@@ -243,14 +244,30 @@ class MapProductService:
         }
 
     @staticmethod
-    def list_versions(db: Session, project_id: str) -> List[MapProductVersion]:
-        return list(
+    def list_versions_paginated(
+        db: Session, project_id: str, *, limit: int = 50, offset: int = 0
+    ) -> tuple[List[MapProductVersion], int]:
+        """(rows, total) for the paginated ledger endpoint — newest first."""
+        from sqlalchemy import func
+
+        rows = list(
             db.execute(
                 select(MapProductVersion)
                 .where(MapProductVersion.project_id == project_id)
-                .order_by(MapProductVersion.version_no.asc())
+                .order_by(MapProductVersion.version_no.desc())
+                .offset(offset)
+                .limit(limit)
             ).scalars().all()
         )
+        total = int(
+            db.execute(
+                select(func.count(MapProductVersion.id)).where(
+                    MapProductVersion.project_id == project_id
+                )
+            ).scalar()
+            or 0
+        )
+        return rows, total
 
     @staticmethod
     def get_version(

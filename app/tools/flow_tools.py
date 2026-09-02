@@ -48,7 +48,10 @@ class ODFlowEdgesArgs(BaseModel):
     min_weight: float = 0.0
     aggregate: str = "none"
     normalize: bool = True
-    session_id: str = ""
+    # NOTE: session_id is intentionally NOT a model field — the registry
+    # injects it from the dispatch context AFTER validation, so an
+    # LLM/workflow-authored session_id is rejected here instead of reaching
+    # the session store (cross-session read guard).
 
 
 def _haversine_km(lng1: float, lat1: float, lng2: float, lat2: float) -> float:
@@ -71,8 +74,10 @@ def _extract_rows(payload: Any) -> Tuple[List[Dict[str, Any]], str]:
         return [r for r in rows if isinstance(r, dict)], "od_table"
     features = payload.get("features")
     if isinstance(features, list) and payload.get("type") == "FeatureCollection":
+        # Zero-copy: rows are only read (never mutated) downstream — the
+        # per-feature properties dict() copy doubled peak memory at 500k rows.
         return [
-            dict(f.get("properties") or {})
+            f["properties"]
             for f in features
             if isinstance(f, dict) and isinstance(f.get("properties"), dict)
         ], "feature_collection"
@@ -272,21 +277,9 @@ def register_flow_tools(registry: ToolRegistry) -> None:
 
 
 async def _resolve_payload(od_table_ref: str, session_id: Optional[str]) -> Any:
-    from app.services.session_data import session_data_manager
+    from app.tools._utils import resolve_ref_payload
 
-    if not session_id:
-        return None
-    ref_id = od_table_ref
-    try:
-        alias_ref = await session_data_manager.resolve_alias(session_id, od_table_ref)
-        if alias_ref and alias_ref != od_table_ref:
-            ref_id = alias_ref
-    except Exception:  # noqa: BLE001 — direct ref passthrough
-        pass
-    try:
-        return await session_data_manager.get(session_id, ref_id)
-    except Exception:  # noqa: BLE001
-        return None
+    return await resolve_ref_payload(session_id or "", od_table_ref)
 
 
 def _aggregate_rows(
