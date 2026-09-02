@@ -128,12 +128,15 @@ class KnowledgeEngine:
         org_id = tenant.org_id if tenant else None
         is_admin = tenant.is_admin if tenant else False
 
-        results = self._store.search(
+        # #1113 P3-1: store.search may cold-load via faiss.read_index (full
+        # index parse) — same event-loop hazard as embed_texts/add_vectors.
+        results = await asyncio.to_thread(
+            self._store.search,
             query_vectors,
-            top_k=top_k * 2,  # Over-fetch for candidate filtering
-            user_id=user_id,
-            org_id=org_id,
-            is_admin=is_admin,
+            top_k * 2,  # Over-fetch for candidate filtering
+            user_id,
+            org_id,
+            is_admin,
         )
 
         filtered = []
@@ -162,7 +165,8 @@ class KnowledgeEngine:
         self, doc_id: str, tenant: Optional[TenantContext] = None
     ) -> bool:
         """Mark document as deleted and trigger compaction if threshold exceeded."""
-        self._store.mark_deleted(doc_id)
+        # #1113 P3-1: mark_deleted rewrites full metadata.json + fsync — off-loop.
+        await asyncio.to_thread(self._store.mark_deleted, doc_id)
         logger.info(f"KnowledgeEngine: soft-deleted doc_id={doc_id}")
 
         stats = self._store.get_stats()
