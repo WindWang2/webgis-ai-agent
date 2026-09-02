@@ -41,7 +41,7 @@ async def test_delete_upload_preserves_file_when_db_fails(tmp_path, monkeypatch)
 
     monkeypatch.setattr(upload_module, "async_db_session", fake_async_db_session)
     # _verify_session_owner 在 session_id=None 时直接 return
-    async def noop_verify(db, sid, uid):
+    async def noop_verify(db, sid, uid, owner_token=None):
         return None
     monkeypatch.setattr(upload_module, "_verify_session_owner", noop_verify)
 
@@ -84,7 +84,7 @@ async def test_delete_upload_removes_file_when_db_succeeds(tmp_path, monkeypatch
         yield fake_db
 
     monkeypatch.setattr(upload_module, "async_db_session", fake_async_db_session)
-    async def noop_verify(db, sid, uid):
+    async def noop_verify(db, sid, uid, owner_token=None):
         return None
     monkeypatch.setattr(upload_module, "_verify_session_owner", noop_verify)
 
