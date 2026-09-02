@@ -229,6 +229,25 @@ class AsyncHistoryService(HistoryStoreProtocol):
         # 时才拒绝，空 token 拿到全量消息 + 真实 owner_token 回显。引擎内部
         # 的 post-auth 调用（execution_engine._load_session_from_db）走
         # internal_ok=True 的豁免通道。
+        # #1109: NULL/NULL legacy 行同样 fail-closed（与 _authorize /
+        # authorize_session_write 对齐）—— 残留 grandfather 会让任何未来的
+        # 内部调用方拿到全量消息 + owner_token 回显。
+        if (
+            conv.user_id is None
+            and conv.owner_token is None
+            and not self._internal_load_ok
+        ):
+            logger.warning(
+                "Legacy NULL/NULL session %s — returning empty context (#1109 fail-closed)",
+                session_id,
+            )
+            return HistoryContext(
+                session_id=session_id,
+                owner_token=None,
+                user_id=None,
+                llm_messages=[],
+                raw_conversation=None,
+            )
         if (
             conv.user_id is None
             and conv.owner_token is not None

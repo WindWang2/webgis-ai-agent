@@ -12,7 +12,7 @@ recoverable by an operator. The authorization predicates
 any residual NULL/NULL row regardless of this migration.
 
 Revision ID: g1109_legacy_owner
-Revises: f123456789ab
+Revises: 0022_reproducible_gis_runtime
 Create Date: 2026-09-02
 """
 import secrets

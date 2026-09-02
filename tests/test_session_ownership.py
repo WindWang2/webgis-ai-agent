@@ -68,17 +68,17 @@ async def test_get_session_allows_owner(session_factory):
 
 
 @pytest.mark.asyncio
-async def test_grandfather_anon_session_without_token_remains_accessible(session_factory):
-    """SEC-08 grandfather：owner_token IS NULL 的旧匿名记录仍按能力令牌语义放行。"""
+async def test_legacy_null_null_session_fail_closed(session_factory):
+    """#1109：owner_token IS NULL 的旧匿名记录不再按能力令牌语义放行（可枚举 IDOR）。"""
     from app.models.db_model import Conversation
     async with session_factory() as db:
         db.add(Conversation(id="s-legacy", user_id=None, owner_token=None, title="legacy"))
         await db.commit()
     async with session_factory() as db:
         svc = AsyncHistoryService(db)
-        # 无 token 也能访问（向后兼容）
-        assert (await svc.get_session("s-legacy", user_id=None)) is not None
-        assert (await svc.get_session("s-legacy", user_id="user-alice")) is not None
+        # fail-closed：匿名与任何认证用户（含他人）一律拒绝
+        assert (await svc.get_session("s-legacy", user_id=None)) is None
+        assert (await svc.get_session("s-legacy", user_id="user-alice")) is None
 
 
 @pytest.mark.asyncio
