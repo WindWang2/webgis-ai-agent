@@ -25,6 +25,8 @@ class _RecordingVectorStore:
         self.embed_thread: threading.Thread | None = None
         self.add_vectors_thread: threading.Thread | None = None
         self.add_vectors_calls = 0
+        self.search_thread: threading.Thread | None = None
+        self.mark_deleted_thread: threading.Thread | None = None
 
     def embed_texts(self, texts: List[str]) -> Any:
         self.embed_thread = threading.current_thread()
@@ -35,10 +37,11 @@ class _RecordingVectorStore:
         self.add_vectors_thread = threading.current_thread()
 
     def search(self, query_vector, top_k=5, user_id=None, org_id=None, is_admin=False):
+        self.search_thread = threading.current_thread()
         return []
 
     def mark_deleted(self, doc_id: str) -> None:
-        pass
+        self.mark_deleted_thread = threading.current_thread()
 
     def compact(self) -> Dict[str, Any]:
         return {}
@@ -183,3 +186,36 @@ async def test_search_runs_embed_off_loop():
     assert store.embed_thread is not None
     assert store.embed_thread is not threading.current_thread()
 
+
+@pytest.mark.asyncio
+async def test_search_runs_store_search_off_loop():
+    """#1113 P3-1: cold faiss.read_index path inside store.search must be off-loop."""
+    from app.services.rag.engine import KnowledgeEngine, TenantContext
+
+    store = _RecordingVectorStore()
+    engine = KnowledgeEngine(vector_store=store)
+
+    await engine.search("q", tenant=TenantContext(user_id="alice"))
+
+    assert store.search_thread is not None
+    assert store.search_thread is not threading.current_thread(), (
+        "store.search ran on the event loop's main thread; "
+        "asyncio.to_thread wrapping is missing or bypassed"
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_document_runs_mark_deleted_off_loop():
+    """#1113 P3-1: mark_deleted (full metadata rewrite) must be off-loop."""
+    from app.services.rag.engine import KnowledgeEngine, TenantContext
+
+    store = _RecordingVectorStore()
+    engine = KnowledgeEngine(vector_store=store)
+
+    await engine.delete_document("doc_x", tenant=TenantContext(user_id="alice"))
+
+    assert store.mark_deleted_thread is not None
+    assert store.mark_deleted_thread is not threading.current_thread(), (
+        "mark_deleted ran on the event loop's main thread; "
+        "asyncio.to_thread wrapping is missing or bypassed"
+    )
