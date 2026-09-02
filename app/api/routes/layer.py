@@ -1,1 +1,1 @@
-PLACEHOLDER
+FILE_CONTENT_FROM:/tmp/layer_restore.py
