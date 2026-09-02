@@ -310,9 +310,15 @@ class RedisSessionStore(BaseSessionStore):
                             self._evict_ref(evict_pipe, session_id, old_ref, aliases.get(old_ref))
                         await evict_pipe.execute()
                     # P-1（#874）：被驱逐 ref 的进程内 payload 缓存一并失效
+                    # #1111：spatial_index_cache / tile_lru_cache 同步失效 ——
+                    # 否则已逐出的 ref 仍可经瓦片/要素端点返回幽灵数据（对齐
+                    # delete_ref / overwrite / 内存后端淘汰路径）。
+                    from app.services.mvt import spatial_index_cache, tile_lru_cache
                     from app.services.ref_payload_cache import ref_payload_cache
                     for old_ref in old_refs:
                         ref_payload_cache.invalidate(session_id, old_ref)
+                        spatial_index_cache.invalidate_ref(session_id, old_ref)
+                        tile_lru_cache.invalidate_ref(session_id, old_ref)
         except aioredis.RedisError as e:
             logger.error(
                 "Redis post-store eviction failed for session %s: %s — new ref kept",
