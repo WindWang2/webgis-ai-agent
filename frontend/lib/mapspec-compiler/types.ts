@@ -45,6 +45,10 @@ export interface GeoJSONMapSpecSource {
   dataPath?: string;
   url?: string;
   inlineData?: any;
+  /** V5-E (P3-1): ref payload generation stamped at ingestion — lets the
+   * spec-restore/mirror path build revisioned (v=) tile URLs without a HUD
+   * descriptor. */
+  content_revision?: number;
 }
 
 export interface VectorMapSpecSource {

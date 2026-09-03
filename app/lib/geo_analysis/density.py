@@ -586,14 +586,53 @@ _HEATMAP_PALETTES = {
 }
 
 
+_WGS84_CRS_NAMES = {
+    "EPSG:4326", "EPSG:4490", "CRS:84", "OGC:CRS84", "WGS84",
+    "EPSG:4269",  # NAD83 ≈ WGS84 at mapping precision
+}
+
+
+def _reproject_point_features(features: list, transformer) -> list:
+    """Reproject Point coordinates to WGS84 degrees (P3-3); passes through
+    non-point/invalid features so _extract_heatmap_points keeps its contract."""
+    out = []
+    for f in features or []:
+        if not isinstance(f, dict):
+            out.append(f)
+            continue
+        geom = f.get("geometry") or {}
+        if geom.get("type") != "Point":
+            out.append(f)
+            continue
+        coords = geom.get("coordinates")
+        if not coords or len(coords) < 2:
+            out.append(f)
+            continue
+        try:
+            x, y = transformer.transform(float(coords[0]), float(coords[1]))
+        except Exception:
+            out.append(f)
+            continue
+        out.append({**f, "geometry": {**geom, "coordinates": [x, y]}})
+    return out
+
+
 def generate_heatmap_raster(features: list, cell_size: int = 500, radius: int = 1000,
-                            render_type: str = "raster", palette: str = "classic") -> dict:
+                            render_type: str = "raster", palette: str = "classic",
+                            declared_crs: str | None = None) -> dict:
     """Generate heatmap data without Celery. Supports raster and grid render types.
 
     Relocated verbatim from ``app/tools/spatial.py:_generate_heatmap`` (ADR-0037
     Win 3). All heavy imports (matplotlib, scipy) are kept lazy inside the body
     to avoid making them hard package-level dependencies and to avoid import
     cycles with ``app.services.spatial_tasks`` (whose helpers this calls).
+
+    ``declared_crs`` (prerelease review P3-3): the grid math below is WGS84-
+    degree-based. When the caller knows the FeatureCollection's declared CRS is
+    projected (3857/UTM/…), it passes it here and the points are reprojected to
+    EPSG:4326 first — metres silently consumed as degrees produced grids with
+    nonsense extents (and/or 'Resolution too high' failures). Celery callers
+    forward it via the ``declared_crs`` kwarg symmetrically.
     """
     import base64
     import io
@@ -603,6 +642,24 @@ def generate_heatmap_raster(features: list, cell_size: int = 500, radius: int = 
     import matplotlib.pyplot as plt
     from matplotlib.colors import LinearSegmentedColormap
     from scipy.ndimage import gaussian_filter
+
+    if declared_crs:
+        from app.lib.geo_processor.core import extract_declared_crs as _extract_declared_crs
+
+        effective = _extract_declared_crs({"crs": declared_crs}) or declared_crs
+        if str(effective).strip().upper().replace(" ", "") not in _WGS84_CRS_NAMES:
+            try:
+                from pyproj import Transformer
+
+                tr = Transformer.from_crs(str(effective), "EPSG:4326", always_xy=True)
+                features = _reproject_point_features(features, tr)
+            except Exception as exc:  # noqa: BLE001 — degrade loudly, not wrongly
+                return {
+                    "error": (
+                        f"heatmap input declares projected CRS {effective} "
+                        f"({type(exc).__name__}: {exc}); reprojection to WGS84 failed"
+                    )
+                }
 
     # E-3（#894）：网格原语已下沉本层 heatmap_grid.py（此前 lazy import
     # services/spatial_tasks 避免 cycle——现在依赖方向天然正确）。

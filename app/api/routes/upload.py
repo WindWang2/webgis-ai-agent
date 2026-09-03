@@ -54,7 +54,8 @@ async def _verify_session_owner(
     """跨租户守卫：若 upload 关联了 session_id，会话必须属于调用方（审计 S42）。
 
     UploadRecord 无 user_id 列；通过 session_id → Conversation.user_id 解析归属。
-    session_id 为 None 时（旧匿名上传）拒绝 —— 与历史匿名会话语义一致。
+    session_id 为 None 时（旧匿名上传）拒绝 —— #1109 起 legacy grandfather
+    （知道 session_id 即放行）已移除，与历史语义相反（fail-closed）。
     SEC-08：匿名会话需转发 X-Session-Token（owner_token），与 POST /upload 对齐。
     """
     if not session_id:
