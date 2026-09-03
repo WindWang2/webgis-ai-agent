@@ -1,0 +1,417 @@
+"""Capability-aware Spatial Query Planner（ADR-0094 §5）。
+
+``plan_query`` 是唯一计划入口：normalize 后的 QuerySpecV2 + DatasetDescriptor
++ capability 矩阵 → 确定性 QueryPlan。adapter 不得私自决定全局语义；本函数
+输出的计划与 adapter 执行共用同一决策（adapter 调用本函数并把 plan 附到
+QueryResult.metadata["query_plan"]）。
+
+决策内容：pushdown 划分、pagination 策略、result mode、估算、fallback、
+预算检查（QUERY_BUDGET_EXCEEDED）、CRS 一致性、反子午线、性能警告。
+"""
+from __future__ import annotations
+
+import math
+from typing import Any, Dict, List, Optional, Sequence
+
+from app.services.data_fabric.errors import (
+    CrsInvalidError,
+    InvalidQueryError,
+    QueryBudgetExceededError,
+    QueryUnsupportedError,
+)
+from app.services.data_fabric.query.capabilities import get_capabilities
+from app.services.data_fabric.query.models import (
+    AdapterCapabilitiesV2,
+    CursorPage,
+    DatasetVersion,
+    ExecutionFragment,
+    OffsetPage,
+    QueryPlan,
+    QuerySpecV2,
+    ResultMode,
+)
+from app.services.data_fabric.query.predicates import (
+    bbox_crosses_antimeridian,
+    predicate_summary,
+)
+
+# 估算参数（确定性；不精确但可用于 mode 决策与预算预警）
+_SELECTIVITY_EQ = 0.05          # 等值谓词默认选择率
+_SELECTIVITY_RANGE = 0.25       # 范围谓词默认选择率
+_SELECTIVITY_IN = 0.3           # IN 谓词按成员数增长
+_BBOX_FULL_COVER = 1.0
+_BYTE_PER_FEATURE_DEFAULT = 700
+_BYTE_PER_FEATURE_GEO = 1_800   # 含 geometry
+_AGG_GROUPS_ESTIMATE = 5_000
+
+
+def parse_epsg(crs: Optional[str]) -> Optional[int]:
+    """'EPSG:4326' / 'epsg:4326' / '4326' / CRS84 → SRID int；CRS84→4326。"""
+    if not crs:
+        return None
+    s = str(crs).strip()
+    if s.upper().endswith("CRS84") or s.upper() == "OGC:CRS84":
+        return 4326
+    if s.upper().startswith("EPSG:"):
+        body = s[5:]
+    else:
+        body = s
+    if not body.isdigit():
+        return None
+    v = int(body)
+    if not (0 < v <= 99_999_999):
+        return None
+    return v
+
+
+def dataset_srid(descriptor: Any) -> Optional[int]:
+    crs = getattr(descriptor, "srs", None) or getattr(descriptor, "crs", None)
+    srid = parse_epsg(crs)
+    if srid is None:
+        meta = getattr(descriptor, "metadata", None) or {}
+        raw = meta.get("srid") if isinstance(meta, dict) else None
+        srid = raw if isinstance(raw, int) else None
+    return srid
+
+
+def _desc_bbox_area(bbox: Optional[Sequence[float]]) -> Optional[float]:
+    if not bbox or len(bbox) != 4:
+        return None
+    minx, miny, maxx, maxy = bbox
+    return max(0.0, (maxx - minx)) * max(0.0, (maxy - miny))
+
+
+def _predicate_selectivity(node: Any) -> float:
+    """确定性选择率估算（供行数估算）。"""
+    if node is None:
+        return 1.0
+    op = getattr(node, "op", None)
+    if op == "and":
+        s = 1.0
+        for a in node.args:
+            s *= _predicate_selectivity(a)
+        return max(s, 1e-9)
+    if op == "or":
+        s = 0.0
+        for a in node.args:
+            s += _predicate_selectivity(a)
+        return min(s, 1.0)
+    if op == "not":
+        return max(0.0, 1.0 - _predicate_selectivity(node.arg))
+    if op in ("eq", "like"):
+        return _SELECTIVITY_EQ
+    if op == "is_null":
+        return 0.05 if not node.negated else 0.95
+    if op in ("gt", "ge", "lt", "le", "between", "before", "after", "during"):
+        return _SELECTIVITY_RANGE
+    if op == "in":
+        return min(0.9, _SELECTIVITY_IN * max(1, len(node.values)))
+    if op == "not_in":
+        return max(0.05, 1.0 - min(0.9, _SELECTIVITY_IN * max(1, len(node.values))))
+    if op == "ne":
+        return 0.95
+    return 0.5
+
+
+def _estimate_rows(spec: QuerySpecV2, descriptor: Any, bbox_ratio: float) -> Optional[int]:
+    total = getattr(descriptor, "feature_count", None)
+    if not isinstance(total, (int, float)) or total <= 0:
+        return None
+    sel = bbox_ratio * _predicate_selectivity(spec.filter) * _predicate_selectivity(spec.temporal)
+    est = max(1.0, float(total) * max(sel, 1e-9))
+    return int(min(est, float(total)))
+
+
+def plan_query(
+    spec: QuerySpecV2,
+    descriptor: Any,
+    caps: Optional[AdapterCapabilitiesV2] = None,
+    *,
+    source_id: Optional[str] = None,
+    dataset_fingerprint: Optional[str] = None,
+    query_fp: Optional[str] = None,
+) -> QueryPlan:
+    """产出确定性 QueryPlan；不可执行的查询抛 typed error。"""
+    from app.services.data_fabric.query.models import query_fingerprint
+
+    if caps is None:
+        caps = get_capabilities(getattr(descriptor, "source_type", "generic"))
+    dataset_id = getattr(descriptor, "id", "?")
+    if query_fp is None:
+        query_fp = query_fingerprint(spec, dataset_fingerprint)
+
+    warnings: List[str] = []
+    steps: List[ExecutionFragment] = []
+
+    # ---- CRS 一致性 ----
+    ds_srid = dataset_srid(descriptor)
+    query_spatial = spec.spatial
+    spatial_crs_srid = None
+    if query_spatial is not None:
+        spatial_crs_srid = parse_epsg(getattr(query_spatial, "crs", "EPSG:4326"))
+        if spatial_crs_srid is None:
+            raise CrsInvalidError(
+                f"invalid query CRS: {getattr(query_spatial, 'crs', None)!r}",
+                details={"hint": "use a valid EPSG code or CRS84"},
+            )
+    out_srid = parse_epsg(spec.output.crs)
+    if spec.output.crs and out_srid is None:
+        raise CrsInvalidError(f"invalid output CRS: {spec.output.crs!r}")
+
+    # 反子午线检测：非 4326 CRS 的 minx>maxx 在谓词校验已拒绝；4326 的交给
+    # 编译器显式 split，但 plan 需标注。
+    if query_spatial is not None and query_spatial.op == "bbox":
+        if bbox_crosses_antimeridian(query_spatial.bbox) and spatial_crs_srid != 4326:
+            raise InvalidQueryError("antimeridian-crossing bbox only supported in EPSG:4326")
+        if bbox_crosses_antimeridian(query_spatial.bbox):
+            warnings.append("bbox crosses antimeridian; compiled as split envelope OR")
+        if spatial_crs_srid != 4326 and ds_srid is not None and spatial_crs_srid != ds_srid and not caps.server_reprojection:
+            raise CrsInvalidError(
+                f"query CRS EPSG:{spatial_crs_srid} ≠ dataset CRS EPSG:{ds_srid} "
+                "and source cannot reproject",
+                details={"hint": "query in EPSG:4326 or the dataset's native CRS"},
+            )
+
+    # CRS 输出变换：dataset → output
+    if out_srid is not None and ds_srid is not None and out_srid != ds_srid:
+        if caps.server_reprojection:
+            steps.append(ExecutionFragment(
+                step="server_reprojection",
+                description=f"ST_Transform / outSR EPSG:{ds_srid}→{out_srid}",
+                pushed=True,
+            ))
+        else:
+            steps.append(ExecutionFragment(
+                step="local_reprojection",
+                description=f"local reprojection EPSG:{ds_srid}→{out_srid}",
+            ))
+            warnings.append(
+                f"output CRS EPSG:{out_srid} differs from dataset EPSG:{ds_srid}; "
+                "reprojection applied locally"
+            )
+    elif ds_srid is None and out_srid is not None and out_srid != 4326:
+        warnings.append("dataset CRS unknown; output CRS requested but may not be honored")
+
+    # ---- result mode 协商 ----
+    result_mode = spec.output.mode
+    if result_mode == ResultMode.VECTOR_TILE and not caps.vector_tiles:
+        # 回退：大数据走 MATERIALIZE + 客户端 tile 引擎（现有 MVT 管线）
+        result_mode = ResultMode.MATERIALIZE
+        warnings.append("source lacks server vector tiles; falling back to bounded materialization + client tiles")
+
+    # ---- pushdown 划分 ----
+    pushed_filters: List[str] = []
+    local_filters: List[str] = []
+
+    filter_ok = spec.filter is not None and caps.filter_pushdown
+    if spec.filter is not None:
+        if filter_ok:
+            pushed_filters.append(predicate_summary(spec.filter))
+        else:
+            local_filters.append(predicate_summary(spec.filter))
+
+    pushed_spatial = False
+    if spec.spatial is not None:
+        op = spec.spatial.op
+        if op == "bbox":
+            pushed_spatial = caps.bbox_pushdown
+        else:
+            pushed_spatial = caps.supports_spatial_op(op)
+        if not pushed_spatial:
+            local_filters.append(f"spatial:{op}")
+
+    pushed_temporal = spec.temporal is not None and caps.temporal_filter
+    if spec.temporal is not None and not pushed_temporal:
+        local_filters.append(f"temporal:{spec.temporal.op}")
+
+    pushed_projection = spec.select is not None and caps.projection_pushdown
+
+    aggregate_requested = bool(spec.aggregate)
+    pushed_aggregation = aggregate_requested and caps.aggregation
+    if aggregate_requested and not caps.aggregation:
+        # 本地聚合必须拉特征（危险）→ 除非预算允许且行数有界
+        warnings.append("source lacks aggregation pushdown; aggregation executes locally over bounded rows")
+
+    pushed_sort = bool(spec.order_by) and caps.sort_pushdown
+    if spec.order_by and not pushed_sort:
+        local_filters.append("sort(local)")
+
+    # ---- pagination 策略 ----
+    page = spec.page
+    pagination_strategy = "none"
+    pagination_note: Optional[str] = None
+    if isinstance(page, CursorPage):
+        if caps.cursor_pagination:
+            pagination_strategy = "cursor"
+        elif caps.offset_pagination:
+            pagination_strategy = "offset"
+            pagination_note = "cursor requested but source lacks keyset support; decoded to offset"
+        else:
+            pagination_strategy = "single_page"
+    elif isinstance(page, OffsetPage):
+        if caps.cursor_pagination and page.offset > 10_000 and aggregate_requested is False:
+            pagination_strategy = "cursor"
+            pagination_note = "deep offset upgraded to keyset cursor when stable order key exists"
+        elif caps.offset_pagination:
+            pagination_strategy = "offset"
+        else:
+            pagination_strategy = "single_page"
+    if pagination_strategy == "offset" and isinstance(page, OffsetPage) and page.offset > 100_000:
+        warnings.append("deep OFFSET pagination is O(offset); prefer cursor or narrower filters")
+
+    # 排序确定性：offset/cursor 分页必须有稳定排序
+    if pagination_strategy in ("offset", "cursor") and not spec.order_by:
+        if pushed_sort or caps.sort_pushdown:
+            pagination_note = (pagination_note or "") + " stable order key appended"
+        else:
+            warnings.append("source lacks sort pushdown; paginated results may not be stable across pages")
+
+    # ---- 估算 ----
+    bbox_ratio = 1.0
+    if spec.spatial is not None and spec.spatial.op == "bbox":
+        q_area = _desc_bbox_area(spec.spatial.bbox)
+        d_area = _desc_bbox_area(getattr(descriptor, "bbox", None))
+        if q_area is not None and d_area and d_area > 0:
+            bbox_ratio = max(0.000001, min(1.0, q_area / d_area))
+    estimated_rows = _estimate_rows(spec, descriptor, bbox_ratio)
+    if aggregate_requested and estimated_rows is not None:
+        if spec.group_by:
+            estimated_rows = min(estimated_rows, _AGG_GROUPS_ESTIMATE)
+        else:
+            estimated_rows = max(1, len(spec.aggregate or [1]))
+    estimated_bytes: Optional[int] = None
+    if estimated_rows is not None and result_mode in (ResultMode.FEATURES, ResultMode.MATERIALIZE, ResultMode.SAMPLE):
+        per_feat = _BYTE_PER_FEATURE_GEO if not spec.select else _BYTE_PER_FEATURE_DEFAULT
+        estimated_bytes = int(estimated_rows * per_feat)
+
+    # ---- 预算检查（planning-time；执行器仍有 runtime 检查）----
+    budget = spec.execution
+    effective_limit = page.limit
+    if estimated_rows is not None and effective_limit is not None:
+        pass  # limit 已由 schema 上限约束
+    if result_mode in (ResultMode.FEATURES, ResultMode.MATERIALIZE):
+        cap_rows = spec.output.max_features or budget.max_rows
+        if isinstance(page, OffsetPage):
+            max_possible = page.offset + page.limit
+        else:
+            max_possible = page.limit
+        if max_possible > cap_rows:
+            raise QueryBudgetExceededError(
+                f"page window ({max_possible}) exceeds row budget ({cap_rows})",
+                details={
+                    "hint": "reduce limit/offset, add bbox or filters, use aggregation, "
+                            "or request a sample",
+                },
+            )
+        if estimated_bytes is not None and estimated_bytes > budget.max_bytes:
+            raise QueryBudgetExceededError(
+                f"estimated result ~{estimated_bytes} bytes exceeds budget {budget.max_bytes}",
+                details={
+                    "hint": "narrow bbox, add filters, project fewer fields, or use "
+                            "aggregation/sample result mode",
+                    "estimated_bytes": estimated_bytes,
+                },
+            )
+
+    # ---- mode 降级建议（不是错误）：大数据 + FEATURES → 采样提示 ----
+    if (
+        result_mode == ResultMode.FEATURES
+        and estimated_rows is not None
+        and estimated_rows > budget.max_rows
+    ):
+        warnings.append(
+            f"estimated rows ({estimated_rows}) exceed feature budget ({budget.max_rows}); "
+            "consider SAMPLE mode, aggregation, or VECTOR_TILE"
+        )
+
+    # ---- 性能警告：geometry 无索引 ----
+    meta = getattr(descriptor, "metadata", None) or {}
+    if isinstance(meta, dict):
+        if meta.get("has_geometry_index") is False and spec.spatial is not None:
+            warnings.append(
+                "geometry column has no spatial index; spatial pushdown will full-scan "
+                "(admin may create a GiST index)"
+            )
+        if meta.get("revision_strength") == "weak":
+            warnings.append("dataset revision is weak; cached results may be stale")
+
+    # ---- 组装 ----
+    execution_mode = "pushdown"
+    if local_filters:
+        execution_mode = "hybrid" if (pushed_filters or pushed_spatial or pushed_aggregation) else "local_fallback"
+
+    steps.insert(0, ExecutionFragment(
+        step="normalize",
+        description=f"QuerySpecV2 normalized (fingerprint {query_fp})",
+    ))
+    if pushed_spatial or spec.spatial is not None:
+        steps.append(ExecutionFragment(
+            step="spatial",
+            description=(
+                f"{spec.spatial.op} pushed to source" if pushed_spatial
+                else f"{spec.spatial.op} evaluated locally"
+            ),
+            pushed=pushed_spatial,
+        ))
+    if pushed_filters:
+        steps.append(ExecutionFragment(step="filter_pushdown", description=" AND ".join(pushed_filters), pushed=True))
+    if pushed_projection:
+        steps.append(ExecutionFragment(step="projection", description=f"{len(spec.select or [])} fields", pushed=True))
+    if pushed_aggregation:
+        steps.append(ExecutionFragment(
+            step="aggregation",
+            description=", ".join(a.func + (f"({a.field})" if a.field else "()") for a in spec.aggregate or [])
+            + (f" GROUP BY {', '.join(spec.group_by)}" if spec.group_by else ""),
+            pushed=True,
+        ))
+    for lf in local_filters:
+        steps.append(ExecutionFragment(step="local_op", description=lf))
+
+    return QueryPlan(
+        source_type=caps.source_type,
+        source_id=source_id,
+        dataset_id=dataset_id,
+        dataset_fingerprint=dataset_fingerprint,
+        query_fingerprint=query_fp,
+        normalized_query=spec.canonical_dict(),
+        pushed_filters=pushed_filters,
+        local_filters=local_filters,
+        pushed_projection=pushed_projection,
+        pushed_spatial=pushed_spatial,
+        pushed_aggregation=pushed_aggregation,
+        pushed_sort=pushed_sort,
+        pagination_strategy=pagination_strategy,  # type: ignore[arg-type]
+        pagination_note=pagination_note.strip() if pagination_note else None,
+        estimated_rows=estimated_rows,
+        estimated_bytes=estimated_bytes,
+        execution_mode=execution_mode,  # type: ignore[arg-type]
+        result_mode=result_mode,
+        fallback_reason=(
+            "capability gaps forced local execution" if execution_mode == "local_fallback" else None
+        ),
+        warnings=warnings,
+        steps=steps,
+    )
+
+
+def dataset_version_from_descriptor(
+    descriptor: Any, fingerprint: Optional[str]
+) -> DatasetVersion:
+    """从 descriptor 提取 DatasetVersion（诚实标注 revision_strength）。"""
+    meta = getattr(descriptor, "metadata", None) or {}
+    if not isinstance(meta, dict):
+        meta = {}
+    content_hint = meta.get("etag") or meta.get("last_modified") or meta.get("content_hint")
+    observed = meta.get("observed_at")
+    strength = "strong" if (content_hint or fingerprint) else "weak"
+    return DatasetVersion(
+        descriptor_fingerprint=fingerprint,
+        schema_fingerprint=meta.get("schema_fingerprint"),
+        content_hint=str(content_hint) if content_hint else None,
+        source_revision=meta.get("source_revision"),
+        observed_at=str(observed) if observed else None,
+        revision_strength=strength,  # type: ignore[arg-type]
+    )
+
+
+__all__ = ["plan_query", "parse_epsg", "dataset_srid", "dataset_version_from_descriptor"]
