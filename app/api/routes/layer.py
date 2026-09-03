@@ -205,13 +205,22 @@ def _encode_tile_cached(session_id: str, ref_id: str, z: int, x: int, y: int, da
     index's pre-built geometries (no per-tile GeoJSON→Shapely reconstruction).
     """
     key = (session_id, ref_id)
+    # P1-1: capture the payload generation BEFORE building/encoding — an
+    # overwrite/rollback that lands mid-pipeline bumps it, and both the index
+    # insert (inside get_or_build) and the byte cache below refuse stale
+    # generations by raising, which sends the route through its
+    # refetch-and-retry path with the NEW payload.
+    tile_epoch = tile_lru_cache.get_epoch(session_id, ref_id)
     entry = spatial_index_cache.get_or_build(key, lambda: build_spatial_index_entry(key, data))
     raw = encode_tile_from_index(entry, z, x, y)
     # mtime=0: the ETag is sha256 of these gzip bytes — an embedded timestamp
     # would change the ETag on every post-eviction recomputation of IDENTICAL
     # content, degrading browser revalidation from 304 to full 200 refetches.
     body = gzip.compress(raw, mtime=0)
-    tile_lru_cache.put((session_id, ref_id, z, x, y), body)
+    if not tile_lru_cache.put_if_current((session_id, ref_id, z, x, y), body, tile_epoch):
+        raise RefDataUnavailableError(
+            f"tile build staled by concurrent invalidation: {key}"
+        )
     return body
 
 
@@ -513,8 +522,12 @@ async def get_raster_tile(
 
     async def _compute_png() -> bytes:
         safe_path = await _resolve_raster_tile_path(session_id, ref_id, owner_token)
+        png_epoch = tile_lru_cache.get_epoch(session_id, ref_id)
         png = await asyncio.to_thread(render_raster_tile, safe_path, z, x, y, 256, cmap, band_tuple)
-        tile_lru_cache.put(cache_key, png)
+        # P1-1: never cache bytes rendered concurrently with an invalidation of
+        # this ref — serving them once is bounded by the request itself, but a
+        # cached copy would resurrect ghost raster tiles indefinitely.
+        tile_lru_cache.put_if_current(cache_key, png, png_epoch)
         return png
 
     png_bytes = await single_flight.run(cache_key, _compute_png)
