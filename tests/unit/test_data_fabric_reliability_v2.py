@@ -342,3 +342,13 @@ def test_retry_policy_never_retries_permanent():
     assert not is_transient(SecurityBlockedError("ssrf"))
     assert is_transient(SourceBadResponseError("503 bad gateway"))
     assert is_transient(SourceRateLimitedError("429"))
+
+
+@pytest.fixture(autouse=True)
+def _reset_shared_meta_cache():
+    """共享 meta cache 是进程级的 —— 跨用例隔离（假连接复用同一 pool key）。"""
+    from app.services.data_fabric.adapters.postgis_adapter import reset_postgis_meta_cache
+
+    reset_postgis_meta_cache()
+    yield
+    reset_postgis_meta_cache()

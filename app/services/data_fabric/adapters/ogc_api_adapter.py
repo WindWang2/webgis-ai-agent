@@ -263,7 +263,14 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
                 "source or materialize + local aggregation"
             )
 
-        descriptor = self.describe(dataset_id)
+        try:
+            descriptor = self.describe(dataset_id)
+        except DataFabricError as e:
+            descriptor = DatasetDescriptor(
+                id=dataset_id, source_type="ogc_api", title=dataset_id,
+                metadata={"describe_error": str(e)[:200]},
+            )
+            logger.warning("OGC describe failed during query (using minimal descriptor): %s", e)
         from app.services.data_fabric.fingerprint import dataset_fingerprint_service
 
         fp = dataset_fingerprint_service.calculate_descriptor_fingerprint(descriptor)

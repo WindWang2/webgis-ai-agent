@@ -238,3 +238,13 @@ def test_planner_fingerprint_overhead_10k():
         plan_query(spec, desc, caps)
     dt = time.perf_counter() - t0
     assert dt < 10.0, f"10k 次规划应 < 10s（got {dt:.2f}s）"
+
+
+@pytest.fixture(autouse=True)
+def _reset_shared_meta_cache():
+    """共享 meta cache 是进程级的 —— 跨用例隔离（假连接复用同一 pool key）。"""
+    from app.services.data_fabric.adapters.postgis_adapter import reset_postgis_meta_cache
+
+    reset_postgis_meta_cache()
+    yield
+    reset_postgis_meta_cache()

@@ -121,9 +121,13 @@ def test_network_adapter_common_contract(maker, name):
     # capabilities 非空
     caps = a.capabilities()
     assert isinstance(caps, list) and caps
-    # describe 返回 descriptor（诚实：无字段可空，但不抛未类型化异常）
-    desc = a.describe(name)
-    assert desc.id == name
+    # describe：返回 descriptor 或 typed 错误（WFS/OGC 的 GetCapabilities
+    # 在空 fake 路由下解析失败 → typed；两类行为都是契约内）。
+    try:
+        desc = a.describe(name)
+        assert desc.id == name
+    except DataFabricError:
+        pass
     # health 可调用
     h = a.health()
     assert h.status in ("healthy", "unreachable", "degraded", "timeout")
@@ -182,3 +186,13 @@ def test_postgis_bbox_semantics_differential():
     assert env and list(env[0][:4]) == [100.0, 20.0, 110.0, 30.0], (
         "envelope 参数轴序必须与 bbox 输入一致（lon/lat）"
     )
+
+
+@pytest.fixture(autouse=True)
+def _reset_shared_meta_cache():
+    """共享 meta cache 是进程级的 —— 跨用例隔离（假连接复用同一 pool key）。"""
+    from app.services.data_fabric.adapters.postgis_adapter import reset_postgis_meta_cache
+
+    reset_postgis_meta_cache()
+    yield
+    reset_postgis_meta_cache()

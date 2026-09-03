@@ -11,6 +11,8 @@ through the typed AST spatial compiler; these tests keep asserting the three
 3. projected tables transform the envelope into the column SRID.
 """
 from app.schemas.data_fabric_schema import ConnectionProfile, QuerySpec
+import pytest
+
 from app.services.data_fabric.adapters.postgis_adapter import PostGISAdapter
 from app.services.data_fabric.query.capabilities import default_capabilities
 
@@ -155,3 +157,13 @@ def test_projected_table_pushdown_still_transforms_envelope():
         "projected table must transform the 4326 envelope into the column SRID"
     )
     assert res.metadata["pushdown_bbox"] is True
+
+
+@pytest.fixture(autouse=True)
+def _reset_shared_meta_cache():
+    """共享 meta cache 是进程级的 —— 跨用例隔离（假连接复用同一 pool key）。"""
+    from app.services.data_fabric.adapters.postgis_adapter import reset_postgis_meta_cache
+
+    reset_postgis_meta_cache()
+    yield
+    reset_postgis_meta_cache()

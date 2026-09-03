@@ -155,6 +155,12 @@ def _meta_cache_get(key: Tuple[str, str]) -> Any:
         return meta
 
 
+def reset_postgis_meta_cache() -> None:
+    """清空进程级表元数据缓存（测试隔离 / 管理操作）。"""
+    with _META_CACHE_LOCK:
+        _META_CACHE.clear()
+
+
 def _meta_cache_put(key: Tuple[str, str], meta: Any) -> None:
     with _META_CACHE_LOCK:
         _META_CACHE[key] = (time.monotonic(), meta)

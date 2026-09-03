@@ -94,14 +94,29 @@ class RedisSessionStore(BaseSessionStore):
         if self._injected_redis is not None:
             return self._injected_redis
 
-        # 快路径：当前 loop 已有客户端
-        client = self._loop_clients.get(id(loop)) if loop is not None else None
+        # 惰性字段（部分测试/旧调用路径绕过 __init__ 直接构造）
+        if getattr(self, "_loop_clients", None) is None:
+            self._loop_clients = {}
+            self._client_lock = asyncio.Lock()
+
+        # legacy 兼容快路径：手动注入/绑定的 _r（__new__ 构造 + _bound_loop
+        # 指向当前 loop，见审计 TEST-13 helper）原样复用。
+        if (
+            self._r is not None
+            and getattr(self, "_bound_loop", None) is loop
+        ):
+            return self._r
+
+        # 快路径：当前 loop 已有客户端（以 loop 对象为键 —— id() 在对象被
+        # GC 后会复用，复用 id 会拿到绑定已死 loop 的旧客户端）。
+        client = self._loop_clients.get(loop) if loop is not None else None
         if client is not None:
             return client
 
         async with self._client_lock:
+            self._prune_closed_loops()
             # 双检
-            client = self._loop_clients.get(id(loop)) if loop is not None else None
+            client = self._loop_clients.get(loop) if loop is not None else None
             if client is not None:
                 return client
             new_client = aioredis.Redis.from_url(
@@ -111,10 +126,20 @@ class RedisSessionStore(BaseSessionStore):
                 socket_connect_timeout=self._socket_timeout,
             )
             if loop is not None:
-                self._loop_clients[id(loop)] = new_client
+                self._loop_clients[loop] = new_client
+                # legacy 读取点（直接访问 self._r）保持可用：指向当前 loop 的
+                # 最新客户端。
+                self._r = new_client
+                self._bound_loop = loop
             else:
                 self._r = new_client
             return new_client
+
+    def _prune_closed_loops(self) -> None:
+        """清理绑定到已关闭 loop 的客户端（防止表无限增长）。"""
+        dead = [lp for lp in self._loop_clients if lp.is_closed()]
+        for lp in dead:
+            self._loop_clients.pop(lp, None)
 
 
     async def ping(self) -> None:

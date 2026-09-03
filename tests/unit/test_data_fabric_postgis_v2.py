@@ -529,3 +529,13 @@ def test_stddev_sample_semantics_local():
 
     expected = math.sqrt(sum((x - 2.5) ** 2 for x in [1, 2, 3, 4]) / 3)  # sample
     assert abs(out[0]["stddev_v"] - expected) < 1e-9
+
+
+@pytest.fixture(autouse=True)
+def _reset_shared_meta_cache():
+    """共享 meta cache 是进程级的 —— 跨用例隔离（假连接复用同一 pool key）。"""
+    from app.services.data_fabric.adapters.postgis_adapter import reset_postgis_meta_cache
+
+    reset_postgis_meta_cache()
+    yield
+    reset_postgis_meta_cache()

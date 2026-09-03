@@ -253,12 +253,24 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
             logger.warning("ArcGIS query error for '%s': %s", dataset_id, e)
             raise SourceBadResponseError(f"ArcGIS query error: {e}") from e
 
+    @staticmethod
+    def _minimal_descriptor(dataset_id: str, describe_error: str) -> DatasetDescriptor:
+        """describe 失败时的最小诚实 descriptor（查询容错路径专用）。"""
+        return DatasetDescriptor(
+            id=dataset_id, source_type="arcgis", title=dataset_id,
+            metadata={"describe_error": describe_error[:200]},
+        )
+
     def _execute_v2(self, dataset_id: str, v2, started: float) -> QueryResult:
         if not self.url:
             raise InvalidQueryError("ArcGIS REST adapter unconfigured (missing URL)")
         layer_id = _safe_layer_id(dataset_id)
 
-        descriptor = self.describe(dataset_id)
+        try:
+            descriptor = self.describe(dataset_id)
+        except DataFabricError as e:
+            descriptor = self._minimal_descriptor(dataset_id, str(e))
+            logger.warning("ArcGIS describe failed during query (minimal descriptor): %s", e)
         from app.services.data_fabric.fingerprint import dataset_fingerprint_service
 
         fp = dataset_fingerprint_service.calculate_descriptor_fingerprint(descriptor)
