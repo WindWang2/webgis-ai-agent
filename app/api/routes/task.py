@@ -161,14 +161,18 @@ async def cancel_task(
     # _active_turn_token（与 tracker 令牌相互独立）—— 只点燃 tracker 令牌
     # 时，子进程继续生成/执行工具直到自然 settle。任务的 session 即活跃
     # 回合的 session 时同步 abort（abort 自带跨 session 守卫，串号安全）。
+    # V5-B: 守卫按 session-keyed active-turn 表解析 —— 单例视图在 pool 下
+    # 读到的是「最后注册的任意 worker turn」，会漏掉本 session 的 abort。
     task_session = task_info.session_id if task_info else None
     if task_session:
         try:
             from app.api.routes import chat as chat_routes
-            from app.agent_pi_bridge import active_turn_correlation
+            from app.agent_pi_bridge import get_active_turn_entry
 
-            _, _, active_sid = active_turn_correlation()
-            if chat_routes.pi_bridge is not None and active_sid == task_session:
+            if (
+                chat_routes.pi_bridge is not None
+                and get_active_turn_entry(task_session) is not None
+            ):
                 await chat_routes.pi_bridge.abort(task_session)
         except Exception as abort_error:  # noqa: BLE001 - 取消已生效，abort 失败不回滚
             logger.warning(
