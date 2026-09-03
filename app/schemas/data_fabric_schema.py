@@ -53,6 +53,13 @@ class CatalogItemModel(BaseModel):
 
 
 class DatasetDescriptor(BaseModel):
+    """Dataset metadata contract (ADR-0094)。
+
+    诚实默认（V2 / 审计 C2 修复）：``srs``/``crs``/``bbox``/``feature_count``
+    默认 None = 未知，绝不伪造 EPSG:4326 / 全球 extent / 0 行。消费方必须
+    将 None 渲染为 "unknown" 并在 planner 中按未知处理。
+    """
+
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
     id: str
@@ -64,10 +71,10 @@ class DatasetDescriptor(BaseModel):
     geometry_type: Optional[str] = "Unknown"
     feature_type: Optional[str] = "vector"
     data_type: Optional[str] = "vector"
-    srs: Optional[str] = "EPSG:4326"
-    crs: Optional[str] = "EPSG:4326"
-    bbox: Optional[List[float]] = Field(default_factory=lambda: [-180.0, -90.0, 180.0, 90.0])
-    feature_count: Optional[int] = 0
+    srs: Optional[str] = None
+    crs: Optional[str] = None
+    bbox: Optional[List[float]] = None
+    feature_count: Optional[int] = None
     fields: List[Dict[str, Any]] = Field(default_factory=list)
     schema_fields: Dict[str, str] = Field(default_factory=dict)
     query_capabilities: List[str] = Field(default_factory=list)
@@ -117,6 +124,11 @@ class QueryResult(BaseModel):
     execution_time_seconds: float = 0.0
     schema_info: Dict[str, Any] = Field(default_factory=dict)
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    # ── V2 (ADR-0094) additive fields ─────────────────────────────────────
+    next_cursor: Optional[str] = None
+    has_more: bool = False
+    result_mode: Optional[str] = None       # descriptor|statistics|sample|features|materialize|vector_tile
+    is_demo: bool = False
 
 
 class DataFabricHealth(BaseModel):

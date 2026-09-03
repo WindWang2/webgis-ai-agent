@@ -147,7 +147,7 @@ def _sql_node(node: Any) -> SQLFragment:
     if op == "ne":
         if node.value is None:
             return f"{col} IS NOT NULL", []
-        return f"({col} IS DISTINCT FROM %s)", [node.value]
+        return f"{col} != %s", [node.value]
     if op == "gt":
         return f"{col} > %s", [node.value]
     if op == "ge":

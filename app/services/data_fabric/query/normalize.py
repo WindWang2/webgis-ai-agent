@@ -163,13 +163,39 @@ def _coerce_literal(v: str) -> Any:
     return parsed
 
 
+def _spec_attrs(spec: Any) -> Dict[str, Any]:
+    """pydantic QuerySpec 或 duck-typed 对象 → 已知字段 + extras 的扁平视图。"""
+    known = (
+        "bbox", "columns", "fields", "limit", "offset", "filter_expr", "where",
+        "datetime_range", "zoom", "tile_coords",
+    )
+    attrs: Dict[str, Any] = {}
+    for k in known:
+        v = getattr(spec, k, None)
+        if v is not None:
+            attrs[k] = v
+    extras = getattr(spec, "model_extra", None)
+    if isinstance(extras, dict):
+        for k, v in extras.items():
+            attrs.setdefault(k, v)
+    elif not hasattr(spec, "model_extra"):
+        # duck-typed：其余实例属性视为 extras
+        for k, v in vars(spec).items():
+            if not k.startswith("_") and k not in known:
+                attrs.setdefault(k, v)
+    return attrs
+
+
 def normalize_query_spec(spec: QuerySpec) -> QuerySpecV2:
-    """legacy ``QuerySpec`` → ``QuerySpecV2``。"""
-    extras: Dict[str, Any] = dict(spec.model_extra or {})
+    """legacy ``QuerySpec``（或 duck-typed 等价物）→ ``QuerySpecV2``。"""
+    extras_all = _spec_attrs(spec)
+    extras = {k: v for k, v in extras_all.items()
+              if k not in ("bbox", "columns", "fields", "limit", "offset",
+                           "filter_expr", "where", "datetime_range", "zoom", "tile_coords")}
 
     # ---- filter ----
     filter_ast: Optional[Predicate] = None
-    where_any = spec.where or spec.filter_expr or extras.get("filter")
+    where_any = extras_all.get("where") or extras_all.get("filter_expr") or extras.get("filter")
     if where_any is not None:
         filter_ast = _coerce_filter(where_any)
 
@@ -181,8 +207,8 @@ def normalize_query_spec(spec: QuerySpec) -> QuerySpecV2:
             spatial_ast = spatial_from_dict(spatial)
         except PredicateError as e:
             raise InvalidQueryError(f"invalid spatial predicate: {e}") from e
-    elif spec.bbox:
-        spatial_ast = _legacy_bbox_to_spatial(spec.bbox)
+    elif extras_all.get("bbox"):
+        spatial_ast = _legacy_bbox_to_spatial(extras_all["bbox"])
 
     # ---- temporal ----
     temporal = extras.get("temporal")
@@ -192,8 +218,8 @@ def normalize_query_spec(spec: QuerySpec) -> QuerySpecV2:
             temporal_ast = temporal_from_dict(temporal)
         except PredicateError as e:
             raise InvalidQueryError(f"invalid temporal predicate: {e}") from e
-    elif spec.datetime_range:
-        temporal_ast = _legacy_datetime_range(spec.datetime_range, extras)
+    elif extras_all.get("datetime_range"):
+        temporal_ast = _legacy_datetime_range(extras_all["datetime_range"], extras)
 
     # ---- aggregate / group_by / order_by / distinct ----
     aggregate = _coerce_aggregates(extras.get("aggregate"))
@@ -208,9 +234,9 @@ def normalize_query_spec(spec: QuerySpec) -> QuerySpecV2:
     cursor = extras.get("cursor")
     page: Any
     if cursor is not None or extras.get("page_kind") == "cursor":
-        page = CursorPage(limit=_int_extra(extras, "limit", spec.limit), cursor=cursor)
+        page = CursorPage(limit=_int_extra(extras, "limit", extras_all.get("limit", 100) or 100), cursor=cursor)
     else:
-        page = OffsetPage(limit=_int_extra(extras, "limit", spec.limit), offset=max(0, spec.offset or 0))
+        page = OffsetPage(limit=_int_extra(extras, "limit", extras_all.get("limit", 100) or 100), offset=max(0, extras_all.get("offset") or 0))
 
     # ---- output ----
     mode_raw = extras.get("result_mode")
@@ -239,7 +265,7 @@ def normalize_query_spec(spec: QuerySpec) -> QuerySpecV2:
     )
 
     v2 = QuerySpecV2(
-        select=(spec.fields or spec.columns or None),
+        select=(extras_all.get("fields") or extras_all.get("columns") or None),
         filter=filter_ast,
         spatial=spatial_ast,
         temporal=temporal_ast,
