@@ -51,4 +51,3 @@ def test_pushdown_bounded_payload():
     main = [sql for sql, _ in executed
             if 'FROM "public"."large_table"' in sql and "COUNT" not in sql]
     assert main and "ST_Intersects" in main[0]
-
