@@ -146,17 +146,130 @@ class DecisionEngineV3:
         rng = np.random.default_rng(problem.random_seed)
         n_samples = problem.mc_sample_count
 
-        if problem.uncertain_parameters:
-            # Generate stochastic draws
-            for alt in problem.alternatives:
-                # Stochastic variation around base scores
-                score_base = mcda_scores.get(alt.id, 0.0)
-                # Draw noise proportional to uncertain parameters
-                noise = rng.normal(0.0, 0.05, size=n_samples) if feasible_mask.get(alt.id, True) else np.zeros(n_samples)
-                simulated_draws = np.clip(score_base + noise, 0.0, 1.0)
-                sample_scores_map[alt.id] = simulated_draws
+        sample_feas_map: Dict[str, np.ndarray] = {
+            alt.id: np.full(n_samples, feasible_mask.get(alt.id, True), dtype=bool)
+            for alt in problem.alternatives
+        }
 
-                summary_dist = compute_distribution_summary(simulated_draws, metric_key="mcda_composite")
+        if problem.uncertain_parameters:
+            param_draws: Dict[str, np.ndarray] = {}
+            for u_param in problem.uncertain_parameters:
+                draws = sample_parameter_distribution(u_param, n_samples, rng)
+                param_draws[u_param.param_id] = draws
+                summary_dist = compute_distribution_summary(draws, metric_key=u_param.param_id)
+                for alt in problem.alternatives:
+                    outcome_distributions_map[alt.id][u_param.param_id] = summary_dist
+
+            for alt in problem.alternatives:
+                sample_scores_map[alt.id] = np.zeros(n_samples, dtype=float)
+
+            # Check which parameters map to criteria or constraints
+            has_matched_param = any(
+                u.param_id in raw_matrix or any(c.metric_key == u.param_id for c in problem.constraints if c.metric_key)
+                for u in problem.uncertain_parameters
+            )
+
+            for s in range(n_samples):
+                # Construct perturbed raw matrix for sample s
+                sample_raw_matrix: Dict[str, Dict[str, Optional[float]]] = {}
+                sample_alt_metrics: Dict[str, Dict[str, Any]] = {alt.id: {} for alt in problem.alternatives}
+
+                for crit in problem.criteria:
+                    sample_raw_matrix[crit.id] = {}
+                    u_draw = param_draws.get(crit.id)
+                    for alt in problem.alternatives:
+                        base_val = raw_matrix[crit.id].get(alt.id)
+                        if base_val is None:
+                            val_s = None
+                        elif u_draw is not None:
+                            p_val = float(u_draw[s])
+                            mean_p = float(np.mean(u_draw))
+                            if abs(mean_p) < 1.0:
+                                val_s = float(base_val) + p_val
+                            else:
+                                rel_delta = (p_val - mean_p) / max(abs(mean_p), 1.0)
+                                val_s = float(base_val) * (1.0 + rel_delta)
+                        else:
+                            val_s = base_val
+                        sample_raw_matrix[crit.id][alt.id] = val_s
+                        sample_alt_metrics[alt.id][crit.id] = val_s
+
+                # Check if parameters affect other constraint metric keys or attributes
+                for param_id, draws in param_draws.items():
+                    for alt in problem.alternatives:
+                        if param_id not in sample_alt_metrics[alt.id]:
+                            base_val = alt.attributes.get(param_id)
+                            if base_val is not None and isinstance(base_val, (int, float)):
+                                p_val = float(draws[s])
+                                mean_p = float(np.mean(draws))
+                                if abs(mean_p) < 1.0:
+                                    sample_alt_metrics[alt.id][param_id] = float(base_val) + p_val
+                                else:
+                                    rel_delta = (p_val - mean_p) / max(abs(mean_p), 1.0)
+                                    sample_alt_metrics[alt.id][param_id] = float(base_val) * (1.0 + rel_delta)
+                            else:
+                                sample_alt_metrics[alt.id][param_id] = float(draws[s])
+
+                # Evaluate constraints per sample s
+                sample_feasible_mask: Dict[str, bool] = {}
+                sample_soft_penalties: Dict[str, float] = {}
+                for alt in problem.alternatives:
+                    alt_sample = alt.model_copy(update={"attributes": {**alt.attributes, **sample_alt_metrics[alt.id]}})
+                    is_feas, hard_v, soft_v = evaluate_alternative_constraints(
+                        alternative=alt_sample,
+                        constraints=problem.constraints,
+                        metric_values=sample_alt_metrics[alt.id],
+                    )
+                    sample_feasible_mask[alt.id] = is_feas
+                    sample_feas_map[alt.id][s] = is_feas
+                    sample_soft_penalties[alt.id] = sum(v.penalty for v in soft_v)
+
+                # Normalize sample matrix
+                sample_norm_matrix: Dict[str, Dict[str, float]] = {}
+                for crit in problem.criteria:
+                    try:
+                        sample_norm_matrix[crit.id] = normalize_criterion_values(
+                            raw_values=sample_raw_matrix[crit.id],
+                            criterion=crit,
+                        )
+                    except Exception:
+                        sample_norm_matrix[crit.id] = {alt.id: 0.0 for alt in problem.alternatives}
+
+                # Evaluate sample MCDA scores
+                if problem.mcda_method.lower() == "topsis":
+                    s_scores = self.mcda_engine.evaluate_topsis(
+                        raw_matrix=sample_raw_matrix,
+                        criteria=problem.criteria,
+                        weights=weights,
+                        feasible_mask=sample_feasible_mask,
+                        soft_penalties=sample_soft_penalties,
+                    )
+                else:
+                    s_scores = self.mcda_engine.evaluate_wsm(
+                        normalized_matrix=sample_norm_matrix,
+                        weights=weights,
+                        feasible_mask=sample_feasible_mask,
+                        soft_penalties=sample_soft_penalties,
+                    )
+
+                if not has_matched_param:
+                    # Modulate score with normalized parameter draws
+                    agg_delta = sum(
+                        (param_draws[u.param_id][s] - np.mean(param_draws[u.param_id]))
+                        / max(float(np.std(param_draws[u.param_id])), 1.0)
+                        * 0.05
+                        for u in problem.uncertain_parameters
+                    )
+                    for alt in problem.alternatives:
+                        if sample_feasible_mask.get(alt.id, True):
+                            s_scores[alt.id] = float(np.clip(s_scores.get(alt.id, 0.0) + agg_delta, 0.0, 1.0))
+
+                for alt in problem.alternatives:
+                    sample_scores_map[alt.id][s] = s_scores.get(alt.id, 0.0)
+
+            # Record outcome distributions for composite score
+            for alt in problem.alternatives:
+                summary_dist = compute_distribution_summary(sample_scores_map[alt.id], metric_key="mcda_composite")
                 outcome_distributions_map[alt.id]["mcda_composite"] = summary_dist
         else:
             # Deterministic baseline draws for robustness engine
@@ -177,10 +290,6 @@ class DecisionEngineV3:
         )
 
         # 9. Robustness & Minimax Regret
-        sample_feas_map = {
-            alt.id: np.full(n_samples, feasible_mask.get(alt.id, True), dtype=bool)
-            for alt in problem.alternatives
-        }
         robustness_res = compute_robustness_and_regret(
             sample_scores=sample_scores_map,
             sample_feasibility=sample_feas_map,

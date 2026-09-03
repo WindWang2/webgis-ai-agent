@@ -188,12 +188,65 @@ async def apply_v3_decision_to_mapspec(
     layer_id = f"dec_v3_layer_{prob.problem_id}"
     result_ref = getattr(result, "comparison_ref_id", "") or ""
 
-    layer_dict = {
-        "id": layer_id,
-        "name": f"{prob.goal} - 决策推演与选址分析图层",
-        "type": "polygon",
-        "source": layer_id,
-        "style": {
+    source_data: Any = result.comparison_geojson
+    features = source_data.get("features", []) if isinstance(source_data, dict) else []
+
+    alt_features = [
+        f for f in features
+        if f.get("properties", {}).get("layer_type") != "constraint_exclusion_zone"
+    ]
+    constraint_features = [
+        f for f in features
+        if f.get("properties", {}).get("layer_type") == "constraint_exclusion_zone"
+    ]
+
+    target_features = alt_features if alt_features else features
+    geom_types = {
+        f.get("geometry", {}).get("type")
+        for f in target_features
+        if f.get("geometry")
+    }
+
+    is_point = any(t in ("Point", "MultiPoint") for t in geom_types)
+    is_line = any(t in ("LineString", "MultiLineString") for t in geom_types)
+
+    if is_point:
+        layer_type = "circle"
+        style = {
+            "color": {
+                "method": "match",
+                "field": "status",
+                "stops": [
+                    ["Recommended", "#10B981"],
+                    ["Feasible Candidate", "#3B82F6"],
+                    ["Infeasible (Violates Constraints)", "#EF4444"],
+                ],
+                "default": "#8B5CF6",
+            },
+            "opacity": 0.85,
+            "stroke_color": "#0F172A",
+            "stroke_width": 2.0,
+            "radius": 7.0,
+        }
+    elif is_line:
+        layer_type = "line"
+        style = {
+            "color": {
+                "method": "match",
+                "field": "status",
+                "stops": [
+                    ["Recommended", "#10B981"],
+                    ["Feasible Candidate", "#3B82F6"],
+                    ["Infeasible (Violates Constraints)", "#EF4444"],
+                ],
+                "default": "#8B5CF6",
+            },
+            "opacity": 0.8,
+            "stroke_width": 3.0,
+        }
+    else:
+        layer_type = "polygon"
+        style = {
             "color": {
                 "method": "match",
                 "field": "status",
@@ -207,7 +260,14 @@ async def apply_v3_decision_to_mapspec(
             "opacity": 0.55,
             "stroke_color": "#0F172A",
             "stroke_width": 2.0,
-        },
+        }
+
+    layer_dict = {
+        "id": layer_id,
+        "name": f"{prob.goal} - 决策推演与选址分析图层",
+        "type": layer_type,
+        "source": layer_id,
+        "style": style,
         "provenance": {
             "tool": "spatial_decision_v3",
             "problem_id": prob.problem_id,
@@ -215,8 +275,36 @@ async def apply_v3_decision_to_mapspec(
             "result_ref": result_ref,
         },
     }
-    source_data: Any = result.comparison_geojson
+
     try:
+        if constraint_features and alt_features:
+            # Upsert dedicated polygon layer for spatial constraint exclusion zones
+            constraint_layer_id = f"dec_v3_constraints_{prob.problem_id}"
+            constraint_layer_dict = {
+                "id": constraint_layer_id,
+                "name": f"{prob.goal} - 空间约束与禁建缓冲区",
+                "type": "polygon",
+                "source": constraint_layer_id,
+                "style": {
+                    "color": "#EF4444",
+                    "opacity": 0.25,
+                    "stroke_color": "#B91C1C",
+                    "stroke_width": 1.5,
+                },
+                "provenance": {
+                    "tool": "spatial_decision_v3",
+                    "problem_id": prob.problem_id,
+                    "decision_fingerprint": rec.decision_fingerprint,
+                    "result_ref": result_ref,
+                },
+            }
+            await _upsert_decision_layer(
+                session_id=session_id,
+                layer=constraint_layer_dict,
+                source_data={"type": "FeatureCollection", "features": constraint_features},
+            )
+            source_data = {"type": "FeatureCollection", "features": alt_features}
+
         return await _upsert_decision_layer(
             session_id=session_id,
             layer=layer_dict,

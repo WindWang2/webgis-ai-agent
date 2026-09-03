@@ -44,6 +44,18 @@ def _meters_to_degree_buffer(lat: float, meters: float) -> Tuple[float, float]:
     return d_lon, d_lat
 
 
+def _extract_leaf_geometries(geom: Any) -> List[Any]:
+    """Recursively extracts constituent single geometries from collections or multiparts."""
+    if geom is None or geom.is_empty:
+        return []
+    if hasattr(geom, "geoms"):
+        leaves = []
+        for g in geom.geoms:
+            leaves.extend(_extract_leaf_geometries(g))
+        return leaves
+    return [geom]
+
+
 def evaluate_spatial_constraint(
     alt_id: str,
     alt_geometry_dict: Optional[Dict[str, Any]],
@@ -177,7 +189,8 @@ def evaluate_spatial_constraint(
     # 3. MIN_DISTANCE Predicate (e.g. Must be at least 500m away from toxic site or existing hospital)
     elif predicate == SpatialPredicate.MIN_DISTANCE:
         threshold_m = float(constraint.threshold or 0.0)
-        if ref_geom is None:
+        ref_geoms = _extract_leaf_geometries(ref_geom)
+        if not ref_geoms:
             return ConstraintEvaluation(
                 constraint_id=constraint.id,
                 alternative_id=alt_id,
@@ -189,10 +202,17 @@ def evaluate_spatial_constraint(
                 evidence_statement="No reference feature to calculate distance against.",
             )
 
-        # Geodesic distance calculation between centroids
+        # Geodesic distance calculation to nearest reference feature
         alt_centroid = alt_geom.centroid
-        ref_centroid = ref_geom.centroid
-        dist_m = _compute_geodesic_distance_m(alt_centroid, ref_centroid)
+        distances = []
+        for g in ref_geoms:
+            if not g or g.is_empty:
+                continue
+            if g.intersects(alt_geom):
+                distances.append(0.0)
+            else:
+                distances.append(_compute_geodesic_distance_m(alt_centroid, g.centroid))
+        dist_m = min(distances) if distances else float("inf")
 
         passed = dist_m >= threshold_m
         margin = dist_m - threshold_m
@@ -216,7 +236,8 @@ def evaluate_spatial_constraint(
     # 4. MAX_DISTANCE Predicate (e.g. Accessibility distance <= threshold)
     elif predicate == SpatialPredicate.MAX_DISTANCE:
         threshold_m = float(constraint.threshold or 1000.0)
-        if ref_geom is None:
+        ref_geoms = _extract_leaf_geometries(ref_geom)
+        if not ref_geoms:
             return ConstraintEvaluation(
                 constraint_id=constraint.id,
                 alternative_id=alt_id,
@@ -229,8 +250,15 @@ def evaluate_spatial_constraint(
             )
 
         alt_centroid = alt_geom.centroid
-        ref_centroid = ref_geom.centroid
-        dist_m = _compute_geodesic_distance_m(alt_centroid, ref_centroid)
+        distances = []
+        for g in ref_geoms:
+            if not g or g.is_empty:
+                continue
+            if g.intersects(alt_geom):
+                distances.append(0.0)
+            else:
+                distances.append(_compute_geodesic_distance_m(alt_centroid, g.centroid))
+        dist_m = min(distances) if distances else float("inf")
 
         passed = dist_m <= threshold_m
         margin = threshold_m - dist_m

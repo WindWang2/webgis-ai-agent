@@ -64,9 +64,9 @@ def compute_robustness_and_regret(
     # 2. Probability of top rank
     top_indices = np.argmax(effective_scores, axis=0)
     top_counts = {alts[i]: 0 for i in range(len(alts))}
-    for idx in top_indices:
+    for s, idx in enumerate(top_indices):
         # Check if winner was actually feasible in this sample
-        if feas_matrix[idx, 0]:  # At least generally feasible
+        if feas_matrix[idx, s] and np.isfinite(effective_scores[idx, s]):
             top_counts[alts[idx]] += 1
 
     prob_top_ranked = {

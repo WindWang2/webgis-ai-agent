@@ -111,30 +111,123 @@ class MultiCriteriaDecisionEngine:
             valid_vals = [v for v in alt_vals.values() if v is not None and not math.isnan(v)]
             denom = math.sqrt(sum(v * v for v in valid_vals)) if valid_vals else 0.0
 
-            v_matrix[cid] = {}
-            col_weighted = []
+            if crit.direction == CriterionDirection.TARGET:
+                target_val = (
+                    crit.target_value
+                    if crit.target_value is not None
+                    else ((min(valid_vals) + max(valid_vals)) / 2.0 if valid_vals else 0.0)
+                )
+                dev_vals = {
+                    alt_id: abs(raw_v - target_val) if (raw_v is not None and not math.isnan(raw_v)) else None
+                    for alt_id, raw_v in alt_vals.items()
+                }
+                valid_devs = [v for v in dev_vals.values() if v is not None]
+                denom = math.sqrt(sum(v * v for v in valid_devs)) if valid_devs else 0.0
 
-            for alt_id in all_alts:
-                raw_v = alt_vals.get(alt_id)
-                if raw_v is None or denom == 0.0:
-                    norm_v = 0.0
-                else:
-                    norm_v = raw_v / denom
-                weighted_v = norm_v * w
-                v_matrix[cid][alt_id] = weighted_v
-                if feasible_mask.get(alt_id, True):
-                    col_weighted.append(weighted_v)
+                v_matrix[cid] = {}
+                col_weighted = []
 
-            if not col_weighted:
-                col_weighted = [0.0]
+                for alt_id in all_alts:
+                    dev_v = dev_vals.get(alt_id)
+                    if dev_v is None or denom == 0.0:
+                        norm_v = 0.0
+                    else:
+                        norm_v = dev_v / denom
+                    weighted_v = norm_v * w
+                    v_matrix[cid][alt_id] = weighted_v
+                    if feasible_mask.get(alt_id, True):
+                        col_weighted.append(weighted_v)
 
-            # Determine ideal and negative ideal
-            if crit.direction == CriterionDirection.MINIMIZE:
+                if not col_weighted:
+                    col_weighted = [0.0]
+
+                # Ideal deviation is 0.0 (exact target match)
+                # Negative ideal deviation is max deviation observed
+                v_plus[cid] = 0.0
+                v_minus[cid] = max(col_weighted)
+
+            elif crit.direction == CriterionDirection.RANGE:
+                bounds = crit.range_bounds or (
+                    (min(valid_vals), max(valid_vals)) if valid_vals else (0.0, 0.0)
+                )
+                r_min, r_max = min(bounds), max(bounds)
+
+                def _range_dev(val: Optional[float]) -> Optional[float]:
+                    if val is None or math.isnan(val):
+                        return None
+                    if val < r_min:
+                        return r_min - val
+                    if val > r_max:
+                        return val - r_max
+                    return 0.0
+
+                dev_vals = {alt_id: _range_dev(alt_vals.get(alt_id)) for alt_id in all_alts}
+                valid_devs = [v for v in dev_vals.values() if v is not None]
+                denom = math.sqrt(sum(v * v for v in valid_devs)) if valid_devs else 0.0
+
+                v_matrix[cid] = {}
+                col_weighted = []
+
+                for alt_id in all_alts:
+                    dev_v = dev_vals.get(alt_id)
+                    if dev_v is None or denom == 0.0:
+                        norm_v = 0.0
+                    else:
+                        norm_v = dev_v / denom
+                    weighted_v = norm_v * w
+                    v_matrix[cid][alt_id] = weighted_v
+                    if feasible_mask.get(alt_id, True):
+                        col_weighted.append(weighted_v)
+
+                if not col_weighted:
+                    col_weighted = [0.0]
+
+                # Ideal deviation is 0.0 (inside acceptable range)
+                # Negative ideal deviation is max deviation outside range
+                v_plus[cid] = 0.0
+                v_minus[cid] = max(col_weighted)
+
+            elif crit.direction == CriterionDirection.MINIMIZE:
+                v_matrix[cid] = {}
+                col_weighted = []
+
+                for alt_id in all_alts:
+                    raw_v = alt_vals.get(alt_id)
+                    if raw_v is None or denom == 0.0:
+                        norm_v = 0.0
+                    else:
+                        norm_v = raw_v / denom
+                    weighted_v = norm_v * w
+                    v_matrix[cid][alt_id] = weighted_v
+                    if feasible_mask.get(alt_id, True):
+                        col_weighted.append(weighted_v)
+
+                if not col_weighted:
+                    col_weighted = [0.0]
+
                 # Cost criterion: ideal is min, negative ideal is max
                 v_plus[cid] = min(col_weighted)
                 v_minus[cid] = max(col_weighted)
-            else:
-                # Benefit / Target / Range: ideal is max, negative ideal is min
+
+            else:  # MAXIMIZE or default
+                v_matrix[cid] = {}
+                col_weighted = []
+
+                for alt_id in all_alts:
+                    raw_v = alt_vals.get(alt_id)
+                    if raw_v is None or denom == 0.0:
+                        norm_v = 0.0
+                    else:
+                        norm_v = raw_v / denom
+                    weighted_v = norm_v * w
+                    v_matrix[cid][alt_id] = weighted_v
+                    if feasible_mask.get(alt_id, True):
+                        col_weighted.append(weighted_v)
+
+                if not col_weighted:
+                    col_weighted = [0.0]
+
+                # Benefit: ideal is max, negative ideal is min
                 v_plus[cid] = max(col_weighted)
                 v_minus[cid] = min(col_weighted)
 

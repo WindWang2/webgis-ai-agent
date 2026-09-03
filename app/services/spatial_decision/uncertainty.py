@@ -33,28 +33,36 @@ def sample_parameter_distribution(
         return np.full(n_samples, val, dtype=float)
 
     elif dist == DistributionType.INTERVAL:
-        min_v = p.get("min", 0.0)
-        max_v = p.get("max", min_v + 1.0)
+        min_v = float(p.get("min", 0.0))
+        max_v = float(p.get("max", min_v + 1.0))
         if max_v < min_v:
             min_v, max_v = max_v, min_v
+        if abs(max_v - min_v) < 1e-9:
+            return np.full(n_samples, min_v, dtype=float)
         return rng.uniform(min_v, max_v, size=n_samples)
 
     elif dist == DistributionType.TRIANGULAR:
-        min_v = p.get("min", 0.0)
-        max_v = p.get("max", min_v + 1.0)
-        mode_v = p.get("mode", (min_v + max_v) / 2.0)
+        min_v = float(p.get("min", 0.0))
+        max_v = float(p.get("max", min_v + 1.0))
+        if max_v < min_v:
+            min_v, max_v = max_v, min_v
+        if abs(max_v - min_v) < 1e-9:
+            return np.full(n_samples, min_v, dtype=float)
+        mode_v = float(p.get("mode", (min_v + max_v) / 2.0))
         if not (min_v <= mode_v <= max_v):
-            mode_v = (min_v + max_v) / 2.0
+            mode_v = min(max(mode_v, min_v), max_v)
         return rng.triangular(min_v, mode_v, max_v, size=n_samples)
 
     elif dist == DistributionType.NORMAL:
-        mean_v = p.get("mean", 0.0)
-        std_v = max(1e-6, p.get("std", 1.0))
+        mean_v = float(p.get("mean", 0.0))
+        std_v = max(1e-6, float(p.get("std", 1.0)))
         samples = rng.normal(mean_v, std_v, size=n_samples)
         # Optional clipping if min/max provided
         if "min" in p or "max" in p:
-            low = p.get("min", -np.inf)
-            high = p.get("max", np.inf)
+            low = float(p.get("min", -np.inf))
+            high = float(p.get("max", np.inf))
+            if high < low:
+                low, high = high, low
             samples = np.clip(samples, low, high)
         return samples
 

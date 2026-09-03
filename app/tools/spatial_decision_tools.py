@@ -381,7 +381,18 @@ def register_spatial_decision_tools(registry: ToolRegistry):
                     spred = None
                     if ccat == ConstraintCategory.SPATIAL:
                         spred_str = str(c_dict.get("spatial_predicate", "outside")).lower()
-                        spred = SpatialPredicate.OUTSIDE if spred_str == "outside" else SpatialPredicate.WITHIN
+                        pred_map = {
+                            "outside": SpatialPredicate.OUTSIDE,
+                            "within": SpatialPredicate.WITHIN,
+                            "min_distance": SpatialPredicate.MIN_DISTANCE,
+                            "max_distance": SpatialPredicate.MAX_DISTANCE,
+                            "intersects": SpatialPredicate.INTERSECTS,
+                            "disjoint": SpatialPredicate.DISJOINT,
+                            "buffer_exclusion": SpatialPredicate.BUFFER_EXCLUSION,
+                            "service_coverage": SpatialPredicate.SERVICE_COVERAGE,
+                            "overlap_ratio": SpatialPredicate.OVERLAP_RATIO,
+                        }
+                        spred = pred_map.get(spred_str, SpatialPredicate.OUTSIDE)
                     parsed_constraints.append(
                         Constraint(
                             id=cid,
