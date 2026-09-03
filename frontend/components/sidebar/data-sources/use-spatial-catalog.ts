@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { dataFabricApi, type CatalogItem } from '@/lib/api/data-fabric';
 import { useToastStore } from '@/components/ui/toast';
 
@@ -20,6 +20,10 @@ export const CATALOG_SEARCH_DEBOUNCE_MS = 300;
  *  - each fetch aborts the previous in-flight controller and bumps a sequence
  *    number, so a slow/stale response can never clobber newer results;
  *  - the latest controller is aborted on unmount.
+ *
+ * V2 (ADR-0094 §9)：新增 availability 客户端过滤。列表接口的 summary 载荷
+ * 暂未携带 availability 字段（缺省按「可用」处理），字段存在时
+ * 「已下线」chip 可滤出 sync 后从数据源消失的 stale 条目。
  */
 export function useSpatialCatalog() {
   const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
@@ -30,6 +34,8 @@ export function useSpatialCatalog() {
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [loadingCatalog, setLoadingCatalog] = useState(false);
   const [selectedSourceFilter, setSelectedSourceFilter] = useState('');
+  // V2 可用状态筛选：'' 全部 / 'available' / 'unavailable'（客户端过滤）。
+  const [availabilityFilter, setAvailabilityFilter] = useState('');
 
   const addToast = useToastStore((s) => s.addToast);
 
@@ -82,14 +88,25 @@ export function useSpatialCatalog() {
     fetchCatalog();
   }, [fetchCatalog]);
 
+  // V2：可用状态客户端过滤（缺省 availability 视为可用）。
+  const visibleCatalogItems = useMemo(
+    () =>
+      availabilityFilter
+        ? catalogItems.filter((it) => (it.availability ?? 'available') === availabilityFilter)
+        : catalogItems,
+    [catalogItems, availabilityFilter]
+  );
+
   return {
-    catalogItems,
+    catalogItems: visibleCatalogItems,
     catalogTotal,
     loadingCatalog,
     searchQuery,
     setSearchQuery,
     selectedSourceFilter,
     setSelectedSourceFilter,
+    availabilityFilter,
+    setAvailabilityFilter,
     refreshCatalog: () => fetchCatalog(),
   };
 }
