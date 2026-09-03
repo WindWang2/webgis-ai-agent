@@ -38,6 +38,10 @@ from app.services.session_data_protocol import is_unavailable_ref
 logger = logging.getLogger(__name__)
 
 
+class _SkipDescribe(Exception):
+    """sync_catalog 内部：describe 失败的条目跳过落库（M2 语义）。"""
+
+
 def _execute_remote_query(
     adapter: GeospatialDataSourceAdapter,
     source_key: str,
@@ -181,16 +185,16 @@ class DataFabricManager:
         return ds_model
 
     @classmethod
-    def sync_catalog(cls, db: Session, source_id: str) -> List[CatalogItemModel]:
-        """Discover and sync datasets from data source adapter into Spatial Catalog.
+    def sync_catalog(cls, db: Session, source_id: str) -> Dict[str, Any]:
+        """增量目录同步（ADR-0094 §9，修复审计 M2）。
 
-        Efficiency (Section 30/31):
-        - describe() calls run with bounded concurrency (network I/O), clamped to
-          a small pool — a 5000-dataset source no longer serializes ~5000 remote
-          round-trips;
-        - existing catalog rows are fetched in ONE batch query (no per-item N+1);
-        - incremental: each row's descriptor fingerprint is stored and compared;
-          unchanged rows are skipped (no needless write/updated_at churn).
+        - describe 失败的条目**跳过落库**（不再用合成 stub descriptor 污染
+          catalog 被 fingerprint 锁死）；失败计入 warnings。
+        - 消失的条目标记 ``availability='unavailable'``（保留元数据供 stale
+          检索），重新出现则恢复 available。
+        - 返回结构化 diff：{added, updated, unchanged, removed, warnings,
+          counts}。
+        - 既有并发/批查/熔断/TTL-cache 语义保留（Section 30/31）。
         """
         ds_model = db.query(DataSourceModel).filter(DataSourceModel.id == source_id).first()
         if not ds_model:
@@ -208,7 +212,6 @@ class DataFabricManager:
         adapter = cls.get_adapter(conn_profile)
         datasets = adapter.list_datasets()
 
-        # Resolve dataset names + keep the raw list-datasets dicts for fallbacks.
         names: List[str] = []
         raw: Dict[str, Dict[str, Any]] = {}
         for ds in datasets:
@@ -218,53 +221,63 @@ class DataFabricManager:
             names.append(dataset_name)
             raw[dataset_name] = ds
 
-        # Bounded-concurrency describe(). Adapter sessions are thread-safe for
-        # independent requests; keep the pool small to avoid hammering sources.
         from concurrent.futures import ThreadPoolExecutor, as_completed
         from app.core.config import settings as _settings
 
         max_workers = max(1, min(16, int(getattr(_settings, "DATA_FABRIC_SYNC_CONCURRENCY", 4))))
 
+        describe_errors: Dict[str, str] = {}
+
         def _describe(name: str) -> DatasetDescriptor:
-            # Tenant/source-scoped TTL cache (Section 37): avoids re-describing
-            # unchanged datasets on back-to-back syncs. scope is the source key —
-            # sync is server-side per source, never crosses tenants.
+            """describe（熔断 + TTL cache）；失败返回 None-marker 由收集方跳过。"""
             from app.services.data_fabric.metadata_cache import cached_describe
 
-            def _do(dataset_id: str) -> DatasetDescriptor:
-                try:
-                    # #770: describe runs under the per-source circuit breaker
-                    # so a repeatedly failing source fails fast during syncs.
-                    return get_breaker_registry().call(source_id, adapter.describe, dataset_id)
-                except Exception:
-                    return DatasetDescriptor(
-                        id=dataset_id, title=raw.get(dataset_id, {}).get("title", dataset_id),
-                        source_type=ds_model.source_type,
-                    )
+            class _DescribeFailed:
+                def __init__(self, err: str):
+                    self.error = err
 
-            return cached_describe(_do, source_id, name, scope=f"source:{source_id}")
+            def _do(dataset_id: str):
+                try:
+                    return get_breaker_registry().call(source_id, adapter.describe, dataset_id)
+                except Exception as e:  # describe 失败 → 跳过落库（M2）
+                    return _DescribeFailed(str(e))
+
+            out = cached_describe(_do, source_id, name, scope=f"source:{source_id}")
+            if isinstance(out, _DescribeFailed):
+                describe_errors[name] = out.error
+                raise _SkipDescribe(name)
+            return out
 
         descriptors: Dict[str, DatasetDescriptor] = {}
         if names:
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
                 futures = {pool.submit(_describe, n): n for n in names}
                 for fut in as_completed(futures):
-                    descriptors[futures[fut]] = fut.result()
+                    fname = futures[fut]
+                    try:
+                        descriptors[fname] = fut.result()
+                    except _SkipDescribe:
+                        continue
+                    except Exception:
+                        continue
 
-        # Batch DB lookup: ONE query for all existing items for this source.
         existing_rows = db.query(CatalogItemModel).filter(CatalogItemModel.source_id == source_id).all()
         existing_by_id: Dict[str, CatalogItemModel] = {row.id: row for row in existing_rows}
 
         synced_items: List[CatalogItemModel] = []
         now = datetime.now(timezone.utc)
+        added = updated = unchanged = 0
+        seen_ids = set()
         for name in names:
-            descriptor = descriptors.get(name) or DatasetDescriptor(id=name, source_type=ds_model.source_type)
+            descriptor = descriptors.get(name)
+            if descriptor is None:
+                continue  # describe 失败：跳过（不落 stub，不锁 fingerprint）
             ds = raw[name]
             item_id = f"cat_{source_id}_{name}".replace(".", "_").replace("/", "_")
+            seen_ids.add(item_id)
 
             item_title = descriptor.title or ds.get("title") or name
             item_desc = descriptor.description or ds.get("description", "")
-            # Metadata truthfulness (Section 27/28): normalize instead of fabricating.
             geom_type = normalize_geometry_type(descriptor.geometry_type or ds.get("geometry_type"))
             feature_type = classify_feature_type(geom_type)
             crs = normalize_crs(descriptor.srs or descriptor.crs)
@@ -278,10 +291,15 @@ class DataFabricManager:
 
             existing = existing_by_id.get(item_id)
             if existing:
-                # Incremental skip: descriptor unchanged since last sync → no write.
-                if existing.fingerprint == fp and existing.geometry_type == geom_type:
+                if (
+                    existing.fingerprint == fp
+                    and existing.geometry_type == geom_type
+                    and getattr(existing, "availability", "available") == "available"
+                ):
+                    unchanged += 1
                     synced_items.append(existing)
                     continue
+                was_unavailable = existing.availability != "available"
                 existing.title = item_title
                 existing.description = item_desc
                 existing.geometry_type = geom_type
@@ -291,7 +309,9 @@ class DataFabricManager:
                 existing.descriptor_json = descriptor_dict
                 existing.meta_profile_json = meta_profile
                 existing.fingerprint = fp
+                existing.availability = "available"
                 existing.updated_at = now
+                updated += 1 if not was_unavailable else 0
                 synced_items.append(existing)
             else:
                 new_item = CatalogItemModel(
@@ -308,12 +328,40 @@ class DataFabricManager:
                     descriptor_json=descriptor_dict,
                     meta_profile_json=meta_profile,
                     fingerprint=fp,
+                    availability="available",
                 )
                 db.add(new_item)
+                added += 1
                 synced_items.append(new_item)
 
+        # 消失的条目 → availability=unavailable（保留元数据，不物理删除）
+        removed = 0
+        for item_id, row in existing_by_id.items():
+            if item_id not in seen_ids and getattr(row, "availability", "available") == "available":
+                row.availability = "unavailable"
+                row.updated_at = now
+                removed += 1
+
+        warnings = [f"describe failed for '{n}': {e[:120]}" for n, e in describe_errors.items()]
+        if removed:
+            warnings.append(f"{removed} dataset(s) no longer listed by the source; marked unavailable")
+
         db.commit()
-        return synced_items
+        return {
+            "status": "synced",
+            "source_id": source_id,
+            "items": synced_items,
+            "added": added,
+            "updated": updated,
+            "unchanged": unchanged,
+            "removed": removed,
+            "warnings": warnings,
+            "counts": {
+                "total": len(synced_items),
+                "listed": len(names),
+                "describe_failures": len(describe_errors),
+            },
+        }
 
     @classmethod
     def query_catalog_item(
@@ -428,15 +476,14 @@ class DataFabricManager:
     ) -> Dict[str, Any]:
         """Materialize catalog query results into session ref_id and save audit log.
 
-        Truthfulness contract: the returned dict carries ``success``. On any
-        store or audit failure the result is ``success=False`` with ``ref_id=None``
-        and a typed ``error_type`` — no fake ref is persisted or returned, and no
-        audit row is written for a non-retrievable ref.
-
-        The blocking remote query runs off the event loop (see
-        ``query_catalog_item_async``); a supplied ``cancel_token`` aborts before
-        materialization if the operation was cancelled during the fetch.
+        V2（ADR-0094 §8/§43）：REST 与 agent 工具共用 MaterializationService
+        单管线（ref 前缀统一 ``data-fabric``，evidence 随 FC metadata 落库）；
+        审计行记录 query_fingerprint/result_mode。真实性契约保留：失败 =
+        ``success=False`` + ``ref_id=None`` + typed error_type；审计提交失败
+        补偿删除 ref（#618-6）。
         """
+        from app.services.data_fabric.materialization_service import materialization_service
+
         spec = query_spec or QuerySpec(limit=500)
         item = db.query(CatalogItemModel).filter(CatalogItemModel.id == item_id).first()
         if not item:
@@ -450,69 +497,67 @@ class DataFabricManager:
             "title": item.title,
         }
 
+        ds_model = item.data_source
+        if not ds_model:
+            ds_model = db.query(DataSourceModel).filter(DataSourceModel.id == item.source_id).first()
+        if not ds_model:
+            raise ValueError(f"Parent data source for item '{item_id}' not found")
+
+        if cancel_token is not None:
+            cancel_token.raise_if_cancelled()
+
+        conn_profile = ConnectionProfile(
+            id=ds_model.id,
+            name=ds_model.name,
+            source_type=ds_model.source_type,
+            url=ds_model.endpoint_url,
+            options=ds_model.connection_profile.get("options", {}),
+            allow_private=ds_model.connection_profile.get("allow_private", False),
+        )
+        adapter = cls.get_adapter(conn_profile)
+
+        # 单管线：REST 路径与 materialize_dataset 工具同一 MaterializationService
         try:
-            q_res = await cls.query_catalog_item_async(db, item_id, spec, cancel_token=cancel_token)
-        except DataFabricError as e:
-            # #766: the remote fetch failed (typed error — unreachable source,
-            # bad response, breaker open, ...). Do NOT materialize an empty
-            # FeatureCollection as success; report a typed failure with no ref
-            # and no audit row.
-            logger.error(
-                "[DataFabricManager] materialize query failed for item '%s': %s",
-                item_id, e,
+            mat = await materialization_service.materialize_dataset(
+                adapter, item.name, spec, session_id=session_id,
             )
+        except DataFabricError as e:
+            logger.error("[DataFabricManager] materialize query failed for item '%s': %s", item_id, e)
             d = e.to_dict()
             return {**base, "success": False, "ref_id": None,
                     "error_type": d["error_type"], "error": d["error"]}
-
-        base["feature_count"] = len(q_res.features)
-        base["total_count"] = q_res.total_count
-
-        feature_count = len(q_res.features)
-
-        # Resource guard (Section 22): reject oversized results before storing.
-        # Raises ResultTooLargeError with an actionable hint; the route maps it
-        # to HTTP 413.
-        enforce_result_bounds(q_res.features)
-
-        fc = {
-            "type": "FeatureCollection",
-            "features": q_res.features,
-            "metadata": {
-                "catalog_item_id": item_id,
-                "dataset_id": q_res.dataset_id,
-                "source_id": item.source_id,
-                "total_count": q_res.total_count,
-            },
-        }
-
-        # Store in SessionStore (Fetch-on-Demand cursor). A ref exists iff its
-        # payload is retrievable: an exception OR the store-unavailability
-        # sentinel is a real failure — never persist a fake audit ref.
-        try:
-            ref_id = await session_data_manager.store(session_id, fc, prefix="df")
         except Exception as e:
-            logger.error(
-                "[DataFabricManager] materialize store failed for item '%s': %s",
-                item_id, e,
-            )
+            logger.exception("[DataFabricManager] materialize failed for item '%s'", item_id)
             return {**base, "success": False, "ref_id": None,
                     "error_type": MATERIALIZATION_FAILED,
-                    "error": f"session store failed: {e}"}
+                    "error": f"materialization failed: {e}"}
 
-        if is_unavailable_ref(ref_id):
-            logger.error(
-                "[DataFabricManager] materialize store unavailable for item '%s': %s",
-                item_id, ref_id,
-            )
+        if not mat.get("success"):
             return {**base, "success": False, "ref_id": None,
-                    "error_type": MATERIALIZATION_FAILED,
-                    "error": "session store unavailable"}
+                    "error_type": mat.get("error_type", MATERIALIZATION_FAILED),
+                    "error": mat.get("error", "materialization failed")}
 
-        # Materialization atomicity: query success AND payload stored AND audit
-        # record committed must hold together. If the audit commit fails after
-        # the payload was stored, delete the session ref (#618-6) so a ref
-        # never exists without its audit row, then report failure.
+        if cancel_token is not None:
+            cancel_token.raise_if_cancelled()
+
+        ref_id = mat["ref_id"]
+        result_mode = mat.get("result_mode", "features")
+        evidence = mat.get("query_evidence") or {}
+
+        # 轻量模式（statistics/descriptor/vector_tile）：无 ref、无审计行
+        if ref_id is None:
+            return {
+                **base,
+                "success": True,
+                "ref_id": None,
+                "result_mode": result_mode,
+                "data": mat.get("data"),
+                "feature_count": 0,
+                "total_count": mat.get("total_count", 0),
+                "query_evidence": evidence,
+            }
+
+        # 审计原子性：payload 已存 + 审计必须同生共死（#618-6 补偿删除）。
         mat_id = f"mat_{uuid.uuid4().hex[:12]}"
         mat_record = MaterializationModel(
             id=mat_id,
@@ -520,7 +565,10 @@ class DataFabricManager:
             source_id=item.source_id,
             ref_id=ref_id,
             query_spec_json=spec.model_dump(),
-            record_count=feature_count,
+            fingerprint=mat.get("fingerprint"),
+            query_fingerprint=evidence.get("query_fingerprint"),
+            result_mode=result_mode,
+            record_count=mat.get("feature_count", 0),
             materialized_at=datetime.now(timezone.utc),
         )
         db.add(mat_record)
@@ -538,14 +586,91 @@ class DataFabricManager:
                     await deleter(session_id, ref_id)
                 except Exception:
                     logger.exception(
-                        "[DataFabricManager] failed to delete unaudited ref '%s'",
-                        ref_id,
-                    )
+                        "[DataFabricManager] failed to delete unaudited ref '%s'", ref_id)
             return {**base, "success": False, "ref_id": None,
                     "error_type": MATERIALIZATION_FAILED,
                     "error": "materialization audit failed"}
 
-        return {**base, "success": True, "ref_id": ref_id}
+        return {
+            **base,
+            "success": True,
+            "ref_id": ref_id,
+            "result_mode": result_mode,
+            "feature_count": mat.get("feature_count", 0),
+            "total_count": mat.get("total_count", 0),
+            "truncated": mat.get("truncated", False),
+            "next_cursor": mat.get("next_cursor"),
+            "has_more": mat.get("has_more", False),
+            "is_demo": mat.get("is_demo", False),
+            "query_evidence": evidence,
+        }
+
+    @classmethod
+    def explain_catalog_item(
+        cls,
+        db: Session,
+        item_id: str,
+        query_spec: Optional[QuerySpec] = None,
+    ) -> Dict[str, Any]:
+        """explain（dry-run 计划，不执行；ADR-0094 §5/§13）。
+
+        输出可读 plan lines + 结构化 QueryPlan + capability 矩阵。
+        永不包含 secret/连接 URI/password。
+        """
+        from app.services.data_fabric.query.capabilities import get_capabilities
+        from app.services.data_fabric.query.normalize import normalize_query_spec
+        from app.services.data_fabric.query.planner import plan_query
+
+        item = db.query(CatalogItemModel).filter(CatalogItemModel.id == item_id).first()
+        if not item:
+            raise ValueError(f"Catalog item '{item_id}' not found")
+
+        descriptor = DatasetDescriptor(
+            id=item.name,
+            source_type=(item.data_source.source_type if item.data_source else "generic"),
+            source_id=item.source_id,
+            title=item.title or item.name,
+            geometry_type=item.geometry_type,
+            srs=item.crs,
+            bbox=item.bbox_json,
+            feature_count=(item.meta_profile_json or {}).get("feature_count"),
+            fields=(item.meta_profile_json or {}).get("fields", []),
+            metadata=dict(item.descriptor_json or {}).get("metadata", {}),
+        )
+        fp = item.fingerprint or dataset_fingerprint_service.calculate_descriptor_fingerprint(descriptor)
+        try:
+            v2 = normalize_query_spec(query_spec or QuerySpec(limit=100))
+        except DataFabricError as e:
+            return {
+                "status": "error",
+                "error_type": e.code,
+                "error": str(e),
+                "dataset_id": item_id,
+            }
+        caps = get_capabilities(descriptor.source_type)
+        try:
+            plan = plan_query(v2, descriptor, caps, source_id=item.source_id, dataset_fingerprint=fp)
+        except DataFabricError as e:
+            return {
+                "status": "error",
+                "error_type": e.code,
+                "error": str(e),
+                "details": e.details,
+                "dataset_id": item_id,
+            }
+        return {
+            "status": "success",
+            "dataset_id": item_id,
+            "dataset_fingerprint": fp,
+            "explain": plan.summary_lines(),
+            "plan": plan.model_dump(),
+            "capabilities": caps.model_dump(),
+            "dataset": {
+                "geometry_type": descriptor.geometry_type,
+                "srs": descriptor.srs,
+                "feature_count": descriptor.feature_count,
+            },
+        }
 
 
 data_fabric_manager = DataFabricManager()

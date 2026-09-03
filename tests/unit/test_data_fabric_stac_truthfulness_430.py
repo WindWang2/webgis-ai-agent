@@ -273,8 +273,9 @@ def test_sync_catalog_with_failing_stac_endpoint_registers_nothing(monkeypatch):
         DataFabricManager, "get_adapter", staticmethod(lambda profile: _adapter())
     )
 
-    items = DataFabricManager.sync_catalog(db, "src_stac")
+    result = DataFabricManager.sync_catalog(db, "src_stac")
 
     # Zero datasets registered; the trailing commit is an empty transaction.
-    assert items == []
+    # V2（ADR-0094 §9）：sync 返回结构化 diff（items 为空列表）。
+    assert result["items"] == []
     db.add.assert_not_called()

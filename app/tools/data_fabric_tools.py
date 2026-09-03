@@ -20,6 +20,7 @@ from app.services.data_fabric.connection_manager import connection_manager
 from app.services.data_fabric.registry import build_adapter, resolve_adapter_spec
 from app.services.data_fabric.errors import (
     DATASET_NOT_FOUND,
+    SOURCE_UNREACHABLE,
     UNSUPPORTED_SOURCE,
     DataFabricError,
 )
@@ -280,17 +281,25 @@ def register_data_fabric_tools(registry: ToolRegistry):
         tier=2, domains=["dataset"],
       name="query_dataset",
         description=(
-            "针对数据集执行 QuerySpec 下推查询（支持 limit, offset, bbox 空间裁剪, where 属性过滤, fields 投影与 SRS 转换）。"
-            "\n返回：{dataset_id, features, total_count, schema_info, metadata}"
+            "针对数据集执行 QuerySpec V2 下推查询（limit/offset/cursor 分页、bbox 空间裁剪、where 属性过滤、"
+            "fields 投影、SRS 输出、聚合统计、确定性采样）。"
+            "\n返回：{dataset_id, features(stub), total_count, total_matching, next_cursor, has_more, "
+            "result_mode, metadata.query_plan, metadata.query_evidence}"
         ),
         param_descriptions={
             "dataset_id": "目标数据集/图层 ID",
             "limit": "最大获取要素条数，默认 100",
-            "offset": "分页偏移量，默认 0",
+            "offset": "分页偏移量，默认 0（深分页建议用 cursor）",
             "bbox": "空间裁剪包围盒 [minx, miny, maxx, maxy]",
-            "where": "属性过滤表达式（如 \"type = 'commercial'\"）",
+            "where": "属性过滤表达式（如 \"type = 'commercial' AND students > 500\"）",
             "fields": "需要选择/投影的字段列表",
             "srs": "输出目标空间参考系，默认 'EPSG:4326'",
+            "aggregate": "聚合规格列表，如 [{func: count}] 或 [{func: sum, field: students}]（触发 STATISTICS 模式，零几何传输）",
+            "group_by": "分组字段列表（配合 aggregate，如按区县统计）",
+            "order_by": "排序规格，如 ['students desc']",
+            "result_mode": "结果模式：features(默认) | statistics | sample | descriptor | vector_tile",
+            "cursor": "上一页返回的 next_cursor 令牌（keyset 分页）",
+            "sample_size": "sample 模式的采样大小（确定性，可复现）",
             "profile_id": "可选的数据源 profile_id",
         },
         execution_policy=ToolExecutionPolicy.ASYNC)
@@ -302,6 +311,12 @@ def register_data_fabric_tools(registry: ToolRegistry):
         where: Optional[str] = None,
         fields: Optional[list[str]] = None,
         srs: Optional[str] = "EPSG:4326",
+        aggregate: Optional[list[dict]] = None,
+        group_by: Optional[list[str]] = None,
+        order_by: Optional[list[str]] = None,
+        result_mode: Optional[str] = None,
+        cursor: Optional[str] = None,
+        sample_size: Optional[int] = None,
         profile_id: Optional[str] = None,
     ) -> dict:
         """执行 QuerySpec 下推查询"""
@@ -324,13 +339,27 @@ def register_data_fabric_tools(registry: ToolRegistry):
                     "features": [],
                 }
 
+            extras: dict = {"srs": srs or "EPSG:4326"}
+            if aggregate:
+                extras["aggregate"] = aggregate
+            if group_by:
+                extras["group_by"] = group_by
+            if order_by:
+                extras["order_by"] = order_by
+            if result_mode:
+                extras["result_mode"] = result_mode
+            if sample_size:
+                extras["sample_size"] = sample_size
+            if cursor:
+                extras["page_kind"] = "cursor"
+                extras["cursor"] = cursor
             spec = QuerySpec(
                 limit=limit,
                 offset=offset,
                 bbox=bbox,
                 where=where,
                 fields=fields,
-                srs=srs or "EPSG:4326",
+                **extras,
             )
 
             try:
@@ -392,6 +421,8 @@ def register_data_fabric_tools(registry: ToolRegistry):
         offset: int = 0,
         bbox: Optional[list[float]] = None,
         where: Optional[str] = None,
+        fields: Optional[list[str]] = None,
+        result_mode: Optional[str] = None,
         profile_id: Optional[str] = None,
     ) -> dict:
         """数据下推查询与本地物化流水线 (生成 ref_id)"""
@@ -413,11 +444,17 @@ def register_data_fabric_tools(registry: ToolRegistry):
                 "ref_id": None,
             }
 
+        extras: dict = {}
+        if fields:
+            extras["fields"] = fields
+        if result_mode:
+            extras["result_mode"] = result_mode
         spec = QuerySpec(
             limit=limit,
             offset=offset,
             bbox=bbox,
             where=where,
+            **extras,
         )
 
         return await materialization_service.materialize_dataset(
@@ -456,5 +493,225 @@ def register_data_fabric_tools(registry: ToolRegistry):
                 "sync_details": sync_details,
                 "health": health.model_dump(),
             }
+
+        return await asyncio.to_thread(_sync_run)
+
+    # ── V2 高价值工具（ADR-0094 §11）：explain / aggregate / federated ──────
+
+    @tool(
+        registry,
+        tier=2, domains=["dataset"], name="plan_data_query",
+        description=(
+            "dry-run 查询计划（explain）：不执行查询，返回 pushdown 划分、行数估算、"
+            "分页策略、结果模式与警告——用于判断'为什么快/为什么慢/为什么只采样'。"
+            "\n返回：{status, explain(lines), plan, capabilities, dataset}"
+        ),
+        param_descriptions={
+            "dataset_id": "目标数据集 ID",
+            "bbox": "可选空间裁剪 [minx, miny, maxx, maxy]",
+            "where": "可选属性过滤表达式",
+            "limit": "页大小（影响分页策略评估）",
+            "result_mode": "可选结果模式（features/statistics/sample/...）",
+            "profile_id": "可选数据源 profile_id",
+        },
+        execution_policy=ToolExecutionPolicy.ASYNC,
+    )
+    async def plan_data_query(
+        dataset_id: str,
+        bbox: Optional[list[float]] = None,
+        where: Optional[str] = None,
+        limit: int = 100,
+        result_mode: Optional[str] = None,
+        profile_id: Optional[str] = None,
+    ) -> dict:
+        """explain（dry-run）"""
+        def _sync_run():
+            pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id)
+            adapter = connection_manager.get_adapter(pid) if pid else None
+            if not adapter:
+                return {
+                    "status": "error",
+                    "error_type": UNSUPPORTED_SOURCE,
+                    "error": f"No connected data source adapter for dataset '{dataset_id}'.",
+                }
+            from app.services.data_fabric.query.capabilities import (
+                AdapterCapabilitiesV2,
+                get_capabilities,
+            )
+            from app.services.data_fabric.query.normalize import normalize_query_spec
+            from app.services.data_fabric.query.planner import plan_query
+
+            extras = {"srs": "EPSG:4326"}
+            if result_mode:
+                extras["result_mode"] = result_mode
+            spec = QuerySpec(limit=limit, bbox=bbox, where=where, **extras)
+            try:
+                descriptor = adapter.describe(dataset_id)
+            except DataFabricError as e:
+                return {"status": "error", "error_type": e.code, "error": str(e)}
+            except Exception as e:
+                return {"status": "error", "error_type": SOURCE_UNREACHABLE, "error": str(e)}
+            fp = dataset_fingerprint_service.calculate_descriptor_fingerprint(descriptor)
+            try:
+                v2 = normalize_query_spec(spec)
+                caps = getattr(adapter, "_caps", None)
+                if not isinstance(caps, AdapterCapabilitiesV2):
+                    caps = get_capabilities(
+                        getattr(getattr(adapter, "profile", None), "source_type", None) or "generic"
+                    )
+                plan = plan_query(v2, descriptor, caps, source_id=str(pid), dataset_fingerprint=fp)
+            except DataFabricError as e:
+                return {"status": "error", "error_type": e.code, "error": str(e),
+                        "details": e.details}
+            return {
+                "status": "success",
+                "dataset_id": dataset_id,
+                "dataset_fingerprint": fp,
+                "explain": plan.summary_lines(),
+                "plan": plan.model_dump(),
+                "capabilities": caps.model_dump(),
+            }
+
+        return await asyncio.to_thread(_sync_run)
+
+    @tool(
+        registry,
+        tier=2, domains=["dataset"], name="aggregate_dataset",
+        description=(
+            "数据集聚合统计（STATISTICS 模式，零几何传输）：count/sum/avg/min/max/stddev/"
+            "distinct_count，支持 group_by。支持聚合下推的源（如 PostGIS）在服务器执行，"
+            "只返回聚合结果——百万行也只传几十行统计。"
+            "\n返回：{status, rows, result_mode:'statistics', query_evidence}"
+        ),
+        param_descriptions={
+            "dataset_id": "目标数据集 ID",
+            "aggregate": "聚合规格列表 [{func: 'count'} | {func: 'sum', field: 'students'}]",
+            "group_by": "可选分组字段（如 ['district'] → 每区县统计）",
+            "bbox": "可选空间裁剪",
+            "where": "可选属性过滤",
+            "profile_id": "可选数据源 profile_id",
+        },
+        execution_policy=ToolExecutionPolicy.ASYNC,
+    )
+    async def aggregate_dataset(
+        dataset_id: str,
+        aggregate: list[dict],
+        group_by: Optional[list[str]] = None,
+        bbox: Optional[list[float]] = None,
+        where: Optional[str] = None,
+        profile_id: Optional[str] = None,
+    ) -> dict:
+        """聚合统计（STATISTICS 结果模式）"""
+        def _sync_run():
+            pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id)
+            adapter = connection_manager.get_adapter(pid) if pid else None
+            if not adapter:
+                return {
+                    "status": "error", "error_type": UNSUPPORTED_SOURCE,
+                    "error": f"No connected data source adapter for dataset '{dataset_id}'.",
+                }
+            extras: dict = {"aggregate": aggregate, "srs": "EPSG:4326"}
+            if group_by:
+                extras["group_by"] = group_by
+            spec = QuerySpec(limit=1000, bbox=bbox, where=where, **extras)
+            try:
+                result = materialization_service.execute_query(adapter, dataset_id, spec)
+            except DataFabricError as e:
+                return {"status": "error", "error_type": e.code, "error": str(e)}
+            evidence = result.metadata.get("query_evidence") or {}
+            return {
+                "status": "success",
+                "dataset_id": dataset_id,
+                "rows": result.data or [],
+                "row_count": len(result.data or []),
+                "result_mode": "statistics",
+                "pushdown": bool(result.metadata.get("query_plan", {}).get("pushed_aggregation")),
+                "query_evidence": evidence,
+                "is_demo": bool(getattr(result, "is_demo", False)),
+            }
+
+        return await asyncio.to_thread(_sync_run)
+
+    @tool(
+        registry,
+        tier=2, domains=["dataset"], name="query_federated_data",
+        description=(
+            "受控两源联邦查询（有硬预算）：属性等值连接 / 点面空间连接 / 聚合+连接。"
+            "同源 PostGIS 自动优先 server-side join；跨源用 STRtree 本地连接。"
+            "超预算返回 QUERY_BUDGET_EXCEEDED 与缩减建议——绝不拉全量大表。"
+            "\n返回：{status, rows, row_count, plan, strategy, pushdown_ratio}"
+        ),
+        param_descriptions={
+            "left_dataset_id": "左侧（事实/点）数据集 ID",
+            "right_dataset_id": "右侧（维表/多边形）数据集 ID",
+            "join_field_left": "属性连接：左侧字段",
+            "join_field_right": "属性连接：右侧字段",
+            "spatial_op": "空间连接操作：'within'（点在面内）| 'intersects'；与 join_field 二选一",
+            "group_by_right": "右侧分组字段（聚合+连接，如 ['district_name']）",
+            "aggregates": "聚合规格 [{func:'count'}]（需 group_by_right）",
+            "bbox": "可选空间裁剪（应用到两侧）",
+            "where_left": "可选左侧属性过滤",
+            "where_right": "可选右侧属性过滤",
+            "left_profile_id": "可选左侧数据源 ID",
+            "right_profile_id": "可选右侧数据源 ID",
+        },
+        execution_policy=ToolExecutionPolicy.ASYNC,
+    )
+    async def query_federated_data(
+        left_dataset_id: str,
+        right_dataset_id: str,
+        join_field_left: Optional[str] = None,
+        join_field_right: Optional[str] = None,
+        spatial_op: Optional[str] = None,
+        group_by_right: Optional[list[str]] = None,
+        aggregates: Optional[list[dict]] = None,
+        bbox: Optional[list[float]] = None,
+        where_left: Optional[str] = None,
+        where_right: Optional[str] = None,
+        left_profile_id: Optional[str] = None,
+        right_profile_id: Optional[str] = None,
+    ) -> dict:
+        """受控联邦查询"""
+        from app.services.data_fabric.query.federation import (
+            FederatedExecutor,
+            FederatedQueryRequest,
+        )
+
+        def _adapter_of(dataset_id: str, profile_id: Optional[str]):
+            pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id)
+            return (pid, connection_manager.get_adapter(pid)) if pid else (pid, None)
+
+        def _sync_run():
+            lp, left_adapter = _adapter_of(left_dataset_id, left_profile_id)
+            rp, right_adapter = _adapter_of(right_dataset_id, right_profile_id)
+            if not left_adapter or not right_adapter:
+                missing = left_dataset_id if not left_adapter else right_dataset_id
+                return {
+                    "status": "error",
+                    "error_type": UNSUPPORTED_SOURCE,
+                    "error": f"No connected data source adapter for dataset '{missing}'.",
+                }
+            req = FederatedQueryRequest(
+                left_source_id=lp or "left",
+                left_dataset_id=left_dataset_id,
+                right_source_id=rp or "right",
+                right_dataset_id=right_dataset_id,
+                join_field_left=join_field_left,
+                join_field_right=join_field_right,
+                spatial_op=spatial_op,
+                group_by_right=group_by_right,
+                aggregates=aggregates,
+                bbox=bbox,
+                left_where=where_left,
+                right_where=where_right,
+            )
+            executor = FederatedExecutor(
+                lambda sid: {lp: left_adapter, rp: right_adapter}.get(sid)
+            )
+            try:
+                return executor.execute(req)
+            except DataFabricError as e:
+                return {"status": "error", "error_type": e.code, "error": str(e),
+                        "details": e.details}
 
         return await asyncio.to_thread(_sync_run)

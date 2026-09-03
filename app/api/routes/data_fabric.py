@@ -4,7 +4,7 @@ Enterprise Geospatial Data Fabric REST Routes
 import asyncio
 import logging
 from typing import Dict, Any, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, Header
+from fastapi import APIRouter, Depends, HTTPException, Query, Header, Body
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, or_
@@ -426,21 +426,39 @@ async def sync_data_source_catalog(
 
     await _run_sync_orm(_authorize)
     try:
-        items = await _run_sync_orm(
-            lambda session: [
-                # Serialize INSIDE the worker: sync_catalog commits before
-                # returning, and SessionLocal has expire_on_commit=True —
-                # reading item.* after the worker session closes raises
-                # DetachedInstanceError, which the catch-all below misreports
-                # as 400 on success (#565 review).
+        # Serialize INSIDE the worker: sync_catalog commits before returning,
+        # and SessionLocal has expire_on_commit=True — reading item.* after the
+        # worker session closes raises DetachedInstanceError (#565 review)。
+        # V2 (ADR-0094 §9)：sync 返回结构化增量 diff（added/updated/unchanged/
+        # removed/warnings），条目序列化仍在此完成。
+        def _sync_and_serialize(session: Session):
+            result = data_fabric_manager.sync_catalog(session, source_id)
+            if isinstance(result, dict):
+                rows = result.get("items", [])
+                diff = {
+                    "added": result.get("added", 0),
+                    "updated": result.get("updated", 0),
+                    "unchanged": result.get("unchanged", 0),
+                    "removed": result.get("removed", 0),
+                }
+                warnings = result.get("warnings", [])
+            else:  # 兼容 mock/legacy list 返回
+                rows = result
+                diff = {}
+                warnings = []
+            items = [
                 {"id": item.id, "name": item.name, "title": item.title}
-                for item in data_fabric_manager.sync_catalog(session, source_id)
+                for item in rows
             ]
-        )
+            return {"items": items, "diff": diff, "warnings": warnings}
+
+        outcome = await _run_sync_orm(_sync_and_serialize)
         return {
             "success": True,
-            "synced_count": len(items),
-            "items": items,
+            "synced_count": len(outcome["items"]),
+            "items": outcome["items"],
+            "diff": outcome["diff"],
+            "warnings": outcome["warnings"],
         }
     except Exception as e:
         logger.error(f"Catalog sync failed for source '{source_id}': {e}", exc_info=True)
@@ -630,6 +648,45 @@ async def preview_catalog_item(
         logger.error(f"Catalog item preview failed for '{item_id}': {e}", exc_info=True)
         # 不回显原始异常；全文仅在服务端日志。
         raise HTTPException(status_code=400, detail="目录项预览失败")
+
+
+@router.post("/data-fabric/catalog/{item_id}/explain", tags=["Data Fabric / 数据织网"])
+async def explain_catalog_item(
+    item_id: str,
+    body: Optional[Dict[str, Any]] = Body(None),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Explain query plan (dry-run, ADR-0094 §13).
+
+    返回 pushdown 划分 / 估算 / pagination 策略 / result mode / warnings /
+    capability 矩阵 —— 不执行查询，不泄漏 secret/连接 URI。
+    """
+    from app.services.data_fabric.manager import DataFabricManager
+    from app.schemas.data_fabric_schema import QuerySpec
+
+    query_spec = None
+    if body and isinstance(body.get("query_spec"), dict):
+        try:
+            query_spec = QuerySpec(**body["query_spec"])
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=f"invalid query_spec: {e}")
+
+    async def _explain(session: Session):
+        _authorize_catalog_item(session, item_id, user)
+        return DataFabricManager.explain_catalog_item(session, item_id, query_spec)
+
+    try:
+        outcome = await _run_async_manager(_explain)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Explain failed for item '{item_id}': {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail="查询计划生成失败")
+    if outcome.get("status") == "error":
+        raise HTTPException(status_code=422, detail=outcome)
+    return outcome
 
 
 @router.post("/data-fabric/catalog/{item_id}/query", tags=["Data Fabric / 数据织网"])
