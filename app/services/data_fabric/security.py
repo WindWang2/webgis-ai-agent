@@ -316,6 +316,60 @@ def make_safe_session(allow_private: bool = False):
     return session
 
 
+# 解压后字节上限下限（防止配置归零）。stream 读取逐块累计，超限即断流——
+# 压缩炸弹在解析之前就被拒（审计 F-3 / ADR-0094 §10）。
+_MIN_HTTP_BODY_CAP = 16 * 1024 * 1024
+
+
+def bounded_get(session, url, *, params=None, timeout=15, max_bytes=None, headers=None):
+    """流式 + 有界 GET：Content-Length 预检 + 解压后逐块字节上限。
+
+    返回 ``bytes``；超限抛 ``SourceBadResponseError``（typed）。
+    所有 HTTP adapter 的 GET 都应经此（禁止裸 ``resp.content``）。
+    """
+    from app.services.data_fabric.errors import SourceBadResponseError
+    from app.services.data_fabric.limits import max_response_bytes
+
+    cap = max_bytes or max(max_response_bytes(), _MIN_HTTP_BODY_CAP)
+    resp = session.get(
+        url, params=params, timeout=timeout, stream=True,
+        headers=headers, allow_redirects=True,
+    )
+    resp.raise_for_status()
+    content_length = resp.headers.get("Content-Length")
+    if content_length and content_length.isdigit() and int(content_length) > cap:
+        resp.close()
+        raise SourceBadResponseError(
+            f"response Content-Length {content_length} exceeds cap {cap}",
+            details={"content_length": int(content_length), "cap": cap},
+        )
+    chunks = []
+    total = 0
+    try:
+        for chunk in resp.iter_content(chunk_size=256 * 1024):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > cap:
+                raise SourceBadResponseError(
+                    f"decompressed response exceeded cap {cap}",
+                    details={"cap": cap, "bytes_so_far": total},
+                )
+            chunks.append(chunk)
+    finally:
+        resp.close()
+    return b"".join(chunks)
+
+
+def safe_json_get(session, url, *, params=None, timeout=15, max_bytes=None, headers=None):
+    """bounded_get + JSON 解析（depth/size 由字节上限间接约束）。"""
+    import json as _json
+
+    body = bounded_get(session, url, params=params, timeout=timeout,
+                       max_bytes=max_bytes, headers=headers)
+    return _json.loads(body.decode("utf-8", errors="strict"))
+
+
 def resolve_safe_local_path(path, allowed_roots=None, max_bytes=None):
     """Validate a local file path for adapter reads (Section 44).
 

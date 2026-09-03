@@ -153,6 +153,14 @@ def _parse_literal(rest: str):
         return False, None
     if tok.upper() == "NULL":
         return None, None
+    # V1 兼容：单 token 裸词（无空格/引号/括号）作为字符串字面量 —— 值仍然
+    # 走参数绑定，无注入面（tests/unit/test_security_round2.py 契约）。
+    # SQL 关键字裸词依旧拒绝（V1 语义：x = DROP 是语法错误）。
+    if re.match(r"^[A-Za-z0-9_%.+\-]+$", tok) and tok.upper() not in (
+        "SELECT", "UNION", "DROP", "INSERT", "DELETE", "UPDATE", "AND", "OR",
+        "NULL", "TRUE", "FALSE",
+    ):
+        return tok, None
     return None, "value must be quoted string or numeric literal"
 
 
@@ -231,12 +239,18 @@ def normalize_query_spec(spec: QuerySpec) -> QuerySpecV2:
     distinct = bool(extras.get("distinct", False))
 
     # ---- page ----
+    # legacy 语义是 clamp（V1 min(limit, MAX)），保留：超界 limit 钳制而非报错。
+    raw_limit = extras_all.get("limit", 100) or 100
+    try:
+        clamped_limit = max(1, min(int(raw_limit), 10_000))
+    except (TypeError, ValueError):
+        raise InvalidQueryError("limit must be an integer") from None
     cursor = extras.get("cursor")
     page: Any
     if cursor is not None or extras.get("page_kind") == "cursor":
-        page = CursorPage(limit=_int_extra(extras, "limit", extras_all.get("limit", 100) or 100), cursor=cursor)
+        page = CursorPage(limit=clamped_limit, cursor=cursor)
     else:
-        page = OffsetPage(limit=_int_extra(extras, "limit", extras_all.get("limit", 100) or 100), offset=max(0, extras_all.get("offset") or 0))
+        page = OffsetPage(limit=clamped_limit, offset=max(0, extras_all.get("offset") or 0))
 
     # ---- output ----
     mode_raw = extras.get("result_mode")

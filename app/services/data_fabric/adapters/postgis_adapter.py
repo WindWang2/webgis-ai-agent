@@ -589,6 +589,10 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
         with self._connection_context() as conn:
             self._apply_statement_timeout(conn, timeout_s)
             meta = self._load_table_meta(dataset_id, conn)
+            if not meta.field_names:
+                raise InvalidQueryError(
+                    f"dataset '{dataset_id}' not found or has no readable columns"
+                )
             descriptor = self._descriptor_from_meta(dataset_id, meta)
             from app.services.data_fabric.fingerprint import dataset_fingerprint_service
 
