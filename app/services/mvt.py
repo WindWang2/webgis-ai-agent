@@ -1403,6 +1403,15 @@ class SpatialIndexCache:
         self._entries: "OrderedDict[tuple, SpatialIndexEntry]" = OrderedDict()
         self._total_bytes = 0
         self._lock = threading.Lock()
+        # P1-1: per-key generation counter, bumped on EVERY invalidation —
+        # including when no entry exists yet, which is exactly the
+        # invalidate-during-build window (build_fn holds the pre-invalidation
+        # epoch; the insert-time check below then discards the stale build).
+        self._epochs: dict[tuple, int] = {}
+        # Session-wide/clear events bump a GLOBAL generation: they also affect
+        # keys the per-key table has never seen (in-flight builds for
+        # brand-new keys). Captures are (global, per_key) composites.
+        self._global_gen = 0
 
     @property
     def total_bytes(self) -> int:
@@ -1437,13 +1446,24 @@ class SpatialIndexCache:
             if entry is not None:
                 self._entries.move_to_end(key)
                 return entry
+            build_epoch = (self._global_gen, self._epochs.get(key, 0))
         entry = build_fn()  # heavy work outside the lock
         entry_bytes = getattr(entry, "estimated_bytes", 0)
         with self._lock:
+            # P1-1: the authoritative payload was invalidated while this build
+            # ran — inserting would resurrect ghost geometry derived from the
+            # superseded payload. Raise so the caller refetches fresh data and
+            # retries (the tile route's existing RefDataUnavailableError path).
+            if (self._global_gen, self._epochs.get(key, 0)) != build_epoch:
+                self._prune_epochs_locked()
+                raise RefDataUnavailableError(
+                    f"spatial index build staled by concurrent invalidation: {key}"
+                )
             existing = self._entries.get(key)
             if existing is not None:
                 return existing
             self._entries[key] = entry
+            self._prune_epochs_locked()
             self._entries.move_to_end(key)
             self._total_bytes += entry_bytes
             while (
@@ -1458,19 +1478,39 @@ class SpatialIndexCache:
             return entry
 
     def invalidate_ref(self, session_id: str, ref_id: str) -> bool:
-        """Invalidate the spatial index entry for (session_id, ref_id)."""
+        """Invalidate the spatial index entry for (session_id, ref_id).
+
+        P1-1: bumps the key's build epoch even when no entry exists — the
+        bump is what discards in-flight builds based on the superseded
+        payload. Returns True when a materialized entry was removed.
+        """
         key = (session_id, ref_id)
         with self._lock:
+            self._epochs[key] = self._epochs.get(key, 0) + 1
             entry = self._entries.pop(key, None)
             if entry is not None:
                 self._total_bytes -= getattr(entry, "estimated_bytes", 0)
                 return True
             return False
 
+    def _prune_epochs_locked(self) -> None:
+        """Bound the epoch table: keep only keys that still hold an entry.
+
+        Called on the insert path. An in-flight build whose epoch row was
+        pruned simply sees 0 != captured and discards (safe over-invalidation).
+        """
+        if len(self._epochs) <= self._max_refs * 4:
+            return
+        for k in [k for k in self._epochs if k not in self._entries]:
+            del self._epochs[k]
+
     def invalidate_session(self, session_id: str) -> int:
         """Invalidate all spatial index entries for session_id."""
         with self._lock:
             to_remove = [k for k in self._entries if k[0] == session_id]
+            # Global bump covers every key of this session — including
+            # in-flight builds for keys the per-key table has never seen.
+            self._global_gen += 1
             removed = 0
             for k in to_remove:
                 entry = self._entries.pop(k, None)
@@ -1483,6 +1523,8 @@ class SpatialIndexCache:
         with self._lock:
             self._entries.clear()
             self._total_bytes = 0
+            self._epochs.clear()
+            self._global_gen += 1  # invalidates every outstanding capture
 
 
 # ─── tile LRU cache ─────────────────────────────────────────────────────────
@@ -1507,6 +1549,15 @@ class TileLRUCache:
         self._cache: "OrderedDict[tuple, bytes]" = OrderedDict()
         self._total_bytes = 0
         self._lock = threading.Lock()
+        # P1-1: per-(session_id, ref_id) generation, bumped on every
+        # invalidation; conditional puts refuse bytes computed from a
+        # superseded payload generation.
+        self._epochs: dict[tuple, int] = {}
+        # Session-wide and cache-wide events bump a GLOBAL generation: they
+        # affect keys the per-key table has never seen (an in-flight build for
+        # a brand-new key has no epoch row). get_epoch returns
+        # (global_gen, per_key_gen) so ANY global bump invalidates captures.
+        self._global_gen = 0
 
     @property
     def total_bytes(self) -> int:
@@ -1525,10 +1576,30 @@ class TileLRUCache:
             self._cache.move_to_end(key)
             return value
 
-    def put(self, key, value: bytes) -> None:
-        if value is None or len(value) > self._max_entry_bytes or len(value) > self._max_bytes:
-            return  # oversized single entry: don't cache
+    def get_epoch(self, session_id: str, ref_id: str) -> tuple:
+        """Current generation token for (session_id, ref_id) — capture before a
+        build, pass back to :meth:`put_if_current` afterwards (P1-1). Composite
+        of the global and per-key generations so session-wide/clear events
+        also invalidate captures for keys with no epoch row yet."""
         with self._lock:
+            return (self._global_gen, self._epochs.get((session_id, ref_id), 0))
+
+    def put(self, key, value: bytes) -> None:
+        self.put_if_current(key, value, self.get_epoch(key[0], key[1]))
+
+    def put_if_current(self, key, value: bytes, expected_epoch: int) -> bool:
+        """Insert only while (session_id, ref_id) is still at ``expected_epoch``.
+
+        P1-1: a build/encode that raced with an overwrite/rollback must not
+        cache (and the tile route must not serve) bytes derived from the
+        superseded payload. Returns False (nothing inserted) on epoch mismatch.
+        """
+        if value is None or len(value) > self._max_entry_bytes or len(value) > self._max_bytes:
+            return True  # oversized single entry: not cached (existing policy)
+        with self._lock:
+            current = (self._global_gen, self._epochs.get((key[0], key[1]), 0))
+            if current != expected_epoch:
+                return False
             old = self._cache.get(key)
             if old is not None:
                 self._total_bytes -= len(old)
@@ -1544,10 +1615,16 @@ class TileLRUCache:
             ):
                 _key, evicted = self._cache.popitem(last=False)
                 self._total_bytes -= len(evicted)
+            return True
 
     def invalidate_ref(self, session_id: str, ref_id: str) -> int:
-        """Invalidate all cached tiles for (session_id, ref_id)."""
+        """Invalidate all cached tiles for (session_id, ref_id).
+
+        P1-1: bumps the generation even when no tile bytes exist — the bump
+        is what rejects in-flight encodes based on the superseded payload.
+        """
         with self._lock:
+            self._epochs[(session_id, ref_id)] = self._epochs.get((session_id, ref_id), 0) + 1
             to_remove = [k for k in self._cache if k[0] == session_id and k[1] == ref_id]
             removed = 0
             for k in to_remove:
@@ -1558,8 +1635,9 @@ class TileLRUCache:
             return removed
 
     def invalidate_session(self, session_id: str) -> int:
-        """Invalidate all cached tiles for session_id."""
+        """Invalidate all cached tiles for session_id (bumps generations, P1-1)."""
         with self._lock:
+            self._global_gen += 1  # covers unseen/in-flight keys of this session
             to_remove = [k for k in self._cache if k[0] == session_id]
             removed = 0
             for k in to_remove:
@@ -1573,6 +1651,8 @@ class TileLRUCache:
         with self._lock:
             self._cache.clear()
             self._total_bytes = 0
+            self._epochs.clear()
+            self._global_gen += 1  # invalidates every outstanding capture
 
 
 # ─── single-flight dedup ────────────────────────────────────────────────────
