@@ -216,7 +216,7 @@ async def apply_v3_decision_to_mapspec(
             "color": {
                 "method": "match",
                 "field": "status",
-                "stops": [
+                "cases": [
                     ["Recommended", "#10B981"],
                     ["Feasible Candidate", "#3B82F6"],
                     ["Infeasible (Violates Constraints)", "#EF4444"],
@@ -234,7 +234,7 @@ async def apply_v3_decision_to_mapspec(
             "color": {
                 "method": "match",
                 "field": "status",
-                "stops": [
+                "cases": [
                     ["Recommended", "#10B981"],
                     ["Feasible Candidate", "#3B82F6"],
                     ["Infeasible (Violates Constraints)", "#EF4444"],
@@ -245,12 +245,12 @@ async def apply_v3_decision_to_mapspec(
             "stroke_width": 3.0,
         }
     else:
-        layer_type = "polygon"
+        layer_type = "fill"
         style = {
             "color": {
                 "method": "match",
                 "field": "status",
-                "stops": [
+                "cases": [
                     ["Recommended", "#10B981"],
                     ["Feasible Candidate", "#3B82F6"],
                     ["Infeasible (Violates Constraints)", "#EF4444"],
@@ -267,6 +267,7 @@ async def apply_v3_decision_to_mapspec(
         "name": f"{prob.goal} - 决策推演与选址分析图层",
         "type": layer_type,
         "source": layer_id,
+        "paint": style,
         "style": style,
         "provenance": {
             "tool": "spatial_decision_v3",
@@ -283,8 +284,14 @@ async def apply_v3_decision_to_mapspec(
             constraint_layer_dict = {
                 "id": constraint_layer_id,
                 "name": f"{prob.goal} - 空间约束与禁建缓冲区",
-                "type": "polygon",
+                "type": "fill",
                 "source": constraint_layer_id,
+                "paint": {
+                    "color": "#EF4444",
+                    "opacity": 0.25,
+                    "stroke_color": "#B91C1C",
+                    "stroke_width": 1.5,
+                },
                 "style": {
                     "color": "#EF4444",
                     "opacity": 0.25,

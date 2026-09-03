@@ -311,9 +311,109 @@ async def test_remediation_mapspec_geometry_type_point_detection():
         constraint_layer, constraint_data = upserted_layers[0]
         site_layer, site_data = upserted_layers[1]
 
-        assert constraint_layer["type"] == "polygon"
+        assert constraint_layer["type"] == "fill"
+        assert constraint_layer["paint"]["color"] == "#EF4444"
         assert constraint_data["features"][0]["properties"]["layer_type"] == "constraint_exclusion_zone"
 
         assert site_layer["type"] == "circle"
         assert site_layer["style"]["radius"] == 7.0
+        assert site_layer["style"]["color"]["cases"][0] == ["Recommended", "#10B981"]
+        assert "paint" in site_layer
         assert site_data["features"][0]["geometry"]["type"] == "Point"
+
+        # Verify evaluate_cartography_semantics passes on the emitted MapSpec
+        from app.lib.cartography.semantic_checks import evaluate_cartography_semantics
+        from app.services.mapspec_to_svg import compile_mapspec_to_svg
+
+        mapspec = {
+            "sources": {
+                constraint_layer["source"]: {
+                    "type": "geojson",
+                    "inlineData": constraint_data,
+                    "profile": {"geometryTypes": ["Polygon"], "featureCount": len(constraint_data["features"])},
+                },
+                site_layer["source"]: {
+                    "type": "geojson",
+                    "inlineData": site_data,
+                    "profile": {"geometryTypes": ["Point"], "featureCount": len(site_data["features"])},
+                },
+            },
+            "layers": [constraint_layer, site_layer],
+        }
+
+        report = evaluate_cartography_semantics(mapspec)
+        geom_checks = [c for c in report.checks if c.rule == "GEOMETRY_LAYER_TYPE"]
+        assert len(geom_checks) == 2
+        assert all(c.status == "pass" for c in geom_checks)
+
+        # Verify SVG compiler renders <path> elements without dropping polygons
+        svg = compile_mapspec_to_svg(mapspec)
+        assert "<path" in svg
+        assert "<circle" in svg
+
+
+@pytest.mark.asyncio
+async def test_remediation_mapspec_polygon_alternatives_semantic_and_svg():
+    """Polygon alternatives must emit layer type 'fill', with paint and cases, passing QA and rendering SVG <path>."""
+    from unittest.mock import patch
+    from app.lib.cartography.semantic_checks import evaluate_cartography_semantics
+    from app.services.mapspec_to_svg import compile_mapspec_to_svg
+
+    class DummyProb:
+        problem_id = "test_prob_poly"
+        goal = "Zone Planning"
+
+    class DummyRec:
+        decision_fingerprint = "poly123hash"
+
+    class DummyPolyResult:
+        problem = DummyProb()
+        recommendation = DummyRec()
+        comparison_ref_id = "ref_poly"
+        comparison_geojson = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[[116.4, 39.9], [116.5, 39.9], [116.5, 40.0], [116.4, 40.0], [116.4, 39.9]]],
+                    },
+                    "properties": {"alternative_id": "Parcel_1", "status": "Recommended"},
+                }
+            ],
+        }
+
+    upserted = []
+
+    async def mock_upsert(*, session_id, layer, source_data):
+        upserted.append((layer, source_data))
+        return {"success": True, "layer": layer}
+
+    with patch("app.services.spatial_decision.mapspec_integration._upsert_decision_layer", side_effect=mock_upsert):
+        res = await apply_v3_decision_to_mapspec("sess_456", DummyPolyResult())
+        assert res["success"] is True
+        assert len(upserted) == 1
+        layer, data = upserted[0]
+        assert layer["type"] == "fill"
+        assert "paint" in layer
+        assert "cases" in layer["style"]["color"]
+
+        mapspec = {
+            "sources": {
+                layer["source"]: {
+                    "type": "geojson",
+                    "inlineData": data,
+                    "profile": {"geometryTypes": ["Polygon"], "featureCount": 1},
+                }
+            },
+            "layers": [layer],
+        }
+        report = evaluate_cartography_semantics(mapspec)
+        geom_checks = [c for c in report.checks if c.rule == "GEOMETRY_LAYER_TYPE"]
+        assert len(geom_checks) == 1
+        assert geom_checks[0].status == "pass"
+
+        svg = compile_mapspec_to_svg(mapspec)
+        assert "<path" in svg
+
