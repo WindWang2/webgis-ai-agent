@@ -280,24 +280,24 @@ def plan_query(
         else:
             estimated_rows = max(1, len(spec.aggregate or [1]))
     estimated_bytes: Optional[int] = None
+    # 页窗口（本查询实际会传输的行上界）：字节估算与预算检查都以此为准——
+    # LIMIT 100 的页查询不应因数据集总量巨大而被拒（只看 fetch 窗口）。
+    if isinstance(page, OffsetPage):
+        page_window = page.offset + page.limit
+    else:
+        page_window = page.limit
     if estimated_rows is not None and result_mode in (ResultMode.FEATURES, ResultMode.MATERIALIZE, ResultMode.SAMPLE):
         per_feat = _BYTE_PER_FEATURE_GEO if not spec.select else _BYTE_PER_FEATURE_DEFAULT
-        estimated_bytes = int(estimated_rows * per_feat)
+        fetch_rows = min(estimated_rows, page_window)
+        estimated_bytes = int(fetch_rows * per_feat)
 
     # ---- 预算检查（planning-time；执行器仍有 runtime 检查）----
     budget = spec.execution
-    effective_limit = page.limit
-    if estimated_rows is not None and effective_limit is not None:
-        pass  # limit 已由 schema 上限约束
     if result_mode in (ResultMode.FEATURES, ResultMode.MATERIALIZE):
         cap_rows = spec.output.max_features or budget.max_rows
-        if isinstance(page, OffsetPage):
-            max_possible = page.offset + page.limit
-        else:
-            max_possible = page.limit
-        if max_possible > cap_rows:
+        if page_window > cap_rows:
             raise QueryBudgetExceededError(
-                f"page window ({max_possible}) exceeds row budget ({cap_rows})",
+                f"page window ({page_window}) exceeds row budget ({cap_rows})",
                 details={
                     "hint": "reduce limit/offset, add bbox or filters, use aggregation, "
                             "or request a sample",

@@ -47,7 +47,9 @@ class _RoutingCursor:
         elif "st_asmvt" in sql_l:
             self._result = (b"\x1a\x02tile",)
         elif "count(*)" in sql_l and "group by" not in sql_l:
-            self._result = (self._count,)
+            # 同时服务 describe-count（fetchone）与聚合 count-only（fetchall）
+            self.description = [("count",)]
+            self._result = [(self._count,)]
         elif "group by" in sql_l or "count(" in sql_l or "sum(" in sql_l or "avg(" in sql_l:
             self.description = [("district",), ("count",)]
             self._result = self._agg_rows if self._agg_rows is not None else [("金牛区", 12), ("武侯区", 8)]
@@ -118,7 +120,7 @@ class _FakeConn:
         pass
 
 
-def _adapter(executed, **cursor_kwargs):
+def _adapter(executed, *, srid=4326, **cursor_kwargs):
     adapter = PostGISAdapter.__new__(PostGISAdapter)
 
     class _ConnCtx:
@@ -126,7 +128,7 @@ def _adapter(executed, **cursor_kwargs):
             pass
 
         def __enter__(self):
-            return _FakeConn(_RoutingCursor(executed, **cursor_kwargs))
+            return _FakeConn(_RoutingCursor(executed, srid=srid, **cursor_kwargs))
 
         def __exit__(self, *a):
             return None

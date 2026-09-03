@@ -733,6 +733,10 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                 sql += " ORDER BY " + ", ".join(e for e, _f in order_cols)
             sql += " LIMIT %s"
             sql_params = base_params + [limit]
+            page_offset = page.offset if isinstance(page, OffsetPage) else 0
+            if page_offset > 0:
+                sql += " OFFSET %s"
+                sql_params.append(page_offset)
 
             cur = conn.cursor()
             cur.execute(sql, tuple(sql_params))

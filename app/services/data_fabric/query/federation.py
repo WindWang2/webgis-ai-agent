@@ -209,18 +209,19 @@ def spatial_join_local(
 
     返回 join 行：``{point_properties..., "__right__": right_properties}``。
     """
-    if len(points) * max(1, len(polygons)) > MAX_JOIN_CANDIDATES * 10:
-        # 候选积上限保护（即使 STRtree 也要防极端规模）
-        raise QueryBudgetExceededError(
-            f"join candidate space {len(points)}x{len(polygons)} too large",
-            details={"hint": "apply bbox or filters to reduce both sides first"},
-        )
     shp_polys = []
     for p in polygons:
         g = _shapely_from_geojson(p.get("geometry"))
         if g is not None and not g.is_empty:
             shp_polys.append((g, p))
     index = _LocalSpatialIndex([g for g, _ in shp_polys])
+    if index._tree is None and len(points) * max(1, len(shp_polys)) > MAX_JOIN_CANDIDATES * 10:
+        # 仅线性回退时产品积守卫才有意义；STRtree 的复杂度是 O(N·candidates)
+        raise QueryBudgetExceededError(
+            f"join candidate space {len(points)}x{len(shp_polys)} too large "
+            "(no STRtree available)",
+            details={"hint": "install shapely, or apply bbox/filters to reduce both sides"},
+        )
 
     out: List[Dict[str, Any]] = []
     for pt in points:
