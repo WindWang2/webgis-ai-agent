@@ -6,12 +6,11 @@
 - cancellation soak：200 次随机查询 30% 取消 → 无泄漏/无 ghost ref
 - concurrent soak：多 session × 多源并发查询 → 熔断隔离、无交叉
 """
-import asyncio
 import random
 
 import pytest
 
-from app.schemas.data_fabric_schema import ConnectionProfile, QueryResult, QuerySpec
+from app.schemas.data_fabric_schema import ConnectionProfile, QuerySpec
 from app.services.data_fabric.adapters.postgis_adapter import PostGISAdapter
 from app.services.data_fabric.circuit_breaker import (
     CircuitBreaker,
@@ -24,8 +23,6 @@ from app.services.data_fabric.errors import (
     SourceBadResponseError,
     SourceRateLimitedError,
 )
-from app.services.data_fabric.query.execution import decode_cursor
-from tests.unit.test_data_fabric_postgis_v2 import _adapter as _pg_adapter
 
 
 # ── Pagination ──────────────────────────────────────────────────────────────
@@ -60,7 +57,6 @@ class _PagedCursor:
             self._result = (self._total,)
         else:
             # 主查询：按 ORDER BY id + LIMIT/OFFSET 或 keyset 模拟
-            select_part = sql.split(" FROM ")[0]
             cols = [("id",), ("name",), ("_geojson",)]
             self.description = cols
             limit = params[-1] if params else 100
@@ -296,8 +292,6 @@ async def test_async_cancellation_propagates_before_store(monkeypatch):
         return "ref:data-fabric-xyz"
 
     monkeypatch.setattr(df_manager.session_data_manager, "store", fake_store)
-    # _run_async_manager 不参与：直接走 manager 单管线（需要 fake adapter）
-    db = None  # manager V2 不再直接依赖 db 的 query（explain/materialize 走单管线时需要）
     pytest.skip("materialize_catalog_item 需要 DB mock；已在 test_data_fabric_materialization_integrity 覆盖")
 
 

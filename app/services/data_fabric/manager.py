@@ -646,7 +646,24 @@ class DataFabricManager:
                 "error": str(e),
                 "dataset_id": item_id,
             }
-        caps = get_capabilities(descriptor.source_type)
+        # R1-M8：优先探测后 capability（与执行路径一致），静态默认兜底。
+        caps = None
+        try:
+            conn_profile = ConnectionProfile(
+                id=item.data_source.id,
+                name=item.data_source.name,
+                source_type=item.data_source.source_type,
+                url=item.data_source.endpoint_url,
+                options=item.data_source.connection_profile.get("options", {}),
+                allow_private=item.data_source.connection_profile.get("allow_private", False),
+            )
+            adapter = cls.get_adapter(conn_profile)
+            caps = getattr(adapter, "capabilities_v2", None)
+            caps = caps(descriptor) if caps else None
+        except Exception:
+            caps = None
+        if caps is None:
+            caps = get_capabilities(descriptor.source_type)
         try:
             plan = plan_query(v2, descriptor, caps, source_id=item.source_id, dataset_fingerprint=fp)
         except DataFabricError as e:

@@ -4,7 +4,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.schemas.data_fabric_schema import DatasetDescriptor, QueryResult
-from app.services.data_fabric.query.federation import FederatedQueryRequest
 from app.services.data_fabric.spatial_catalog import SpatialCatalogService
 
 

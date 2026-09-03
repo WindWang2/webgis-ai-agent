@@ -7,9 +7,7 @@
 - F-2：profile 脱敏覆盖 Authorization/x-api-key/passwd/pwd/private_key。
 - F-5：s3/minio scheme 的 endpoint 主机过 SSRF 门。
 """
-import asyncio
 import threading
-import time
 
 import pytest
 

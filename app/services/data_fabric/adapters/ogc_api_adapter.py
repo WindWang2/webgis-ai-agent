@@ -86,6 +86,9 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
         caps = get_capabilities("ogc_api")
         return caps.model_copy(update={"filter_pushdown": self._cql2_supported()})
 
+    def capabilities_v2(self):
+        return self._capabilities_v2()
+
     def probe(self) -> bool:
         """Lightweight reachability probe for OGC API landing page or collections."""
         if not self.url:
@@ -186,25 +189,25 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
                 source_type="ogc_api",
                 geometry_type=col_data.get("itemType", "Feature"),
                 srs=srs,
-                bbox=spatial_bbox or [-180.0, -90.0, 180.0, 90.0],
+                # R1-M6：extent 缺失 → None（unknown），绝不伪造全球框。
+                bbox=spatial_bbox,
                 feature_count=None,
                 fields=fields,
-                metadata={"collection_url": col_url, "links": col_data.get("links", [])},
+                metadata={
+                    # R1-M6：出目录的 URL 统一 redact（不携带 userinfo）
+                    "collection_url": DataFabricSecurity.redact_url(col_url),
+                    "links": col_data.get("links", []),
+                },
             )
         except Exception as e:
-            logger.warning(f"OGC API describe failed for collection '{dataset_id}': {e}")
-            return DatasetDescriptor(
-                id=dataset_id,
-                title=dataset_id,
-                description=f"OGC API Collection ({e})",
-                source_type="ogc_api",
-                geometry_type="Feature",
-                srs=None,
-                bbox=None,
-                feature_count=None,
-                fields=[],
-                metadata={"error": str(e)},
-            )
+            # R1-M6：describe 传输失败 → typed（stub descriptor 曾被 adapter
+            # sync 注册进 catalog —— 正是 ADR §9 禁止的 "失败 stub 落库"）。
+            logger.warning("OGC API describe failed for collection '%s': %s", dataset_id, e)
+            from app.services.data_fabric.errors import SourceUnreachableError
+
+            raise SourceUnreachableError(
+                f"OGC API describe failed for collection '{dataset_id}': {e}"
+            ) from e
 
     def preview(self, dataset_id: str, limit: int = 10) -> Dict[str, Any]:
         """Fetch bounded sample GeoJSON preview from OGC API items."""
@@ -251,6 +254,14 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
 
         if not self.url:
             raise InvalidQueryError("OGC API adapter unconfigured (missing URL)")
+        # R1-M2：聚合不支持 → typed。
+        if v2.aggregate:
+            from app.services.data_fabric.errors import QueryUnsupportedError
+
+            raise QueryUnsupportedError(
+                "OGC API Features does not support aggregation; use a PostGIS "
+                "source or materialize + local aggregation"
+            )
 
         descriptor = self.describe(dataset_id)
         from app.services.data_fabric.fingerprint import dataset_fingerprint_service
@@ -277,13 +288,25 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
                     decoded = None
                 if isinstance(decoded, list) and decoded and isinstance(decoded[0], str) \
                         and decoded[0].startswith("http"):
-                    items_url = decoded[0]
+                    # R3-M2：cursor 可能被伪造为任意 URL（凭证外带/代理滥用），
+                    # 必须与注册源同源。
+                    from app.services.data_fabric.security import ensure_same_origin_url
+
+                    items_url = ensure_same_origin_url(decoded[0], self.url)
                     params = {"limit": v2.page.limit}
                     plan = plan.model_copy(update={"pagination_note": "links.next token"})
                 else:
                     raise InvalidQueryError("malformed OGC cursor (expected links.next token)")
         elif offset and supports_offset:
             params["offset"] = offset
+        elif offset:
+            from app.services.data_fabric.errors import QueryUnsupportedError
+
+            raise QueryUnsupportedError(
+                f"server does not declare paging support; offset={offset} cannot be "
+                "honored (walk links.next cursors instead)",
+                details={"offset": offset},
+            )
 
         if v2.spatial is not None:
             if v2.spatial.op != "bbox":

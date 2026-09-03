@@ -18,7 +18,6 @@ from app.services.data_fabric.adapters import (
     OGCAPIAdapter,
     WFSAdapter,
 )
-from app.services.data_fabric.adapters.postgis_adapter import PostGISAdapter
 from app.services.data_fabric.errors import DataFabricError, InvalidQueryError
 from app.services.data_fabric.query.capabilities import default_capabilities
 from tests.unit.test_ogc_adapters_753 import FakeResponse, FakeSession
@@ -163,9 +162,7 @@ def test_network_adapters_transport_failure_is_typed(maker, name):
 def test_postgis_unsupported_capability_typed():
     """unknown-SRID 表 + 非bbox 空间谓词 → typed INVALID_QUERY（不静默）。"""
     executed = []
-    a = _pg_adapter(executed)
     # 把 srid 置 None（unknown）
-    from app.services.data_fabric.query.predicates import Intersects
 
     spec = QuerySpec(limit=5, spatial={
         "op": "intersects",

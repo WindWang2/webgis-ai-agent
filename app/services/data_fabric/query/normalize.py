@@ -83,7 +83,7 @@ def parse_legacy_where(where: str) -> Predicate:
             raise InvalidQueryError(f"forbidden token in where: {tok.strip()}")
 
     clauses: List[Predicate] = []
-    for raw_clause in re.split(r"\s+AND\s+|\s+and\s+", text):
+    for raw_clause in _split_quoted(text, r" AND "):
         clause = raw_clause.strip()
         if not clause:
             raise InvalidQueryError("empty clause in where")
@@ -91,6 +91,42 @@ def parse_legacy_where(where: str) -> Predicate:
     if not clauses:
         raise InvalidQueryError("empty where expression")
     return clauses[0] if len(clauses) == 1 else And(args=clauses)
+
+
+def _split_quoted(text: str, separator: str) -> List[str]:
+    """按分隔符切分但忽略引号内的分隔符（R2-M4：`'a,b'` / `'Rock AND Roll'`）。"""
+    parts: List[str] = []
+    buf: List[str] = []
+    i = 0
+    n = len(text)
+    sep_len = len(separator)
+    while i < n:
+        ch = text[i]
+        if ch in ("'", '"'):
+            quote = ch
+            buf.append(ch)
+            i += 1
+            while i < n:
+                buf.append(text[i])
+                if text[i] == quote:
+                    # 双写引号（''）是转义，继续
+                    if i + 1 < n and text[i + 1] == quote:
+                        buf.append(text[i + 1])
+                        i += 2
+                        continue
+                    i += 1
+                    break
+                i += 1
+            continue
+        if text[i:i + sep_len] == separator:
+            parts.append("".join(buf))
+            buf = []
+            i += sep_len
+            continue
+        buf.append(text[i])
+        i += 1
+    parts.append("".join(buf))
+    return parts
 
 
 def _parse_single_clause(clause: str) -> Predicate:
@@ -110,7 +146,7 @@ def _parse_single_clause(clause: str) -> Predicate:
         if close < 0:
             raise InvalidQueryError("unclosed IN list")
         inner = rest[:close].strip()
-        values = [_coerce_literal(v.strip()) for v in inner.split(",") if v.strip()]
+        values = [_coerce_literal(v.strip()) for v in _split_quoted(inner, ",") if v.strip()]
         if not values:
             raise InvalidQueryError("empty IN list")
         return (NotIn if not_in else In)(field=field, values=values)

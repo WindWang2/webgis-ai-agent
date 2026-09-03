@@ -176,6 +176,14 @@ class CircuitBreakerRegistry:
         except Exception as exc:
             self.record_failure(source_key, exc)
             raise
+        except BaseException:
+            # R1-m9：BaseException（如 asyncio.CancelledError）同样释放
+            # half-open trial，否则名额永久泄漏 → 熔断卡死 fail-fast。
+            with self._lock:
+                entry = self._entries.get(source_key)
+                if entry is not None:
+                    entry.half_open_trial_inflight = False
+            raise
         self.record_success(source_key)
         return result
 

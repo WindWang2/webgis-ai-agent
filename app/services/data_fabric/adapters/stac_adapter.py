@@ -445,7 +445,10 @@ class STACAdapter(GeospatialDataSourceAdapter):
                 payload["token"] = token
                 payload["next"] = token
             if next_url and next_url.startswith("http"):
-                search_url = next_url
+                # R3-M3：与 OGC cursor 同源校验（防伪造 URL 代理滥用）。
+                from app.services.data_fabric.security import ensure_same_origin_url
+
+                search_url = ensure_same_origin_url(next_url, self.url)
         elif offset:
             payload["page"] = offset // max(limit, 1) + 1
 

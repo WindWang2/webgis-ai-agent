@@ -230,9 +230,15 @@ class WFSAdapter(GeospatialDataSourceAdapter):
         try:
             entry = self._get_capabilities_entry(dataset_id)
         except Exception as e:
-            entry = None
-            describe_error = str(e)
+            # R1-M6：GetCapabilities 不可达 → typed（不再返回空 stub descriptor
+            # 被 sync 注册成 "无字段无 CRS" 的 catalog 条目）。FeatureType 存在但
+            # 未声明 SRS/bbox 的 partial-metadata 场景仍走下方 None 语义。
             logger.warning("WFS describe GetCapabilities failed for '%s': %s", dataset_id, e)
+            from app.services.data_fabric.errors import SourceUnreachableError
+
+            raise SourceUnreachableError(
+                f"WFS GetCapabilities unreachable while describing '{dataset_id}': {e}"
+            ) from e
 
         if entry is not None:
             raw_srs = entry.get("srs")
@@ -339,6 +345,14 @@ class WFSAdapter(GeospatialDataSourceAdapter):
     def _execute_v2(self, dataset_id: str, v2: QuerySpecV2, started: float) -> QueryResult:
         if not self.url:
             raise InvalidQueryError("WFS adapter unconfigured (missing URL)")
+        # R1-M2：聚合不支持 → typed（禁止把 features 页当 statistics 空成功）。
+        if v2.aggregate:
+            from app.services.data_fabric.errors import QueryUnsupportedError
+
+            raise QueryUnsupportedError(
+                "WFS does not support aggregation pushdown; use a PostGIS source "
+                "or materialize + local aggregation"
+            )
 
         descriptor = self.describe(dataset_id)
         from app.services.data_fabric.fingerprint import dataset_fingerprint_service
@@ -365,14 +379,21 @@ class WFSAdapter(GeospatialDataSourceAdapter):
             "srsName": srs_name,
         }
 
-        # startIndex（1.1+；1.0 不支持 → 如实记录 local 限制）
+        # startIndex（1.1+；1.0 不支持 → 本地切片：多取 offset+limit 条再切，
+        # R2-M7：此前页 2 恒等于页 1）
         offset_pushed = False
+        local_slice = None
         if offset and not self.version.startswith("1.0"):
             params["STARTINDEX"] = offset
             offset_pushed = True
         elif offset:
+            local_slice = (offset, limit)
+            params["COUNT"] = offset + limit
+            params["MAXFEATURES"] = offset + limit
             plan = plan.model_copy(update={
-                "warnings": plan.warnings + ["WFS 1.0 lacks startIndex; offset not pushed"],
+                "warnings": plan.warnings + [
+                    "WFS 1.0 lacks startIndex; fetched offset+limit rows and sliced locally"
+                ],
                 "local_filters": plan.local_filters + ["offset(slice-local)"],
             })
 
@@ -476,6 +497,8 @@ class WFSAdapter(GeospatialDataSourceAdapter):
         elif not isinstance(total_matched, int):
             total_matched = None
 
+        if local_slice is not None:
+            features = features[local_slice[0]: local_slice[0] + local_slice[1]]
         returned = len(features)
         truncated = returned >= limit
         if total_matched is not None:

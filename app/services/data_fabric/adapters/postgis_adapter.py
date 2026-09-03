@@ -15,6 +15,8 @@ V2 语义（相对 V1 的升级，全部由 AdapterContractTest 验证）：
 """
 import json
 import logging
+from decimal import Decimal
+from collections import OrderedDict
 import re
 import threading
 import time
@@ -91,14 +93,20 @@ def _geom_bounds(geom: Optional[Dict[str, Any]]) -> Optional[List[float]]:
 def _filter_features_by_bbox(
     features: List[Dict[str, Any]], bbox: Sequence[float]
 ) -> List[Dict[str, Any]]:
-    """保留与 bbox 相交（包围盒级判定）的 features。"""
+    """保留与 bbox 相交（包围盒级判定）的 features。反子午线 bbox
+    （minx > maxx，R2-m2）按西环/东环两段 OR 判定。"""
     minx, miny, maxx, maxy = bbox
+    antimeridian = minx > maxx
     out: List[Dict[str, Any]] = []
     for f in features:
         b = _geom_bounds(f.get("geometry"))
         if b is None:
             continue  # 无几何 → 空间过滤语义下不保留
-        if b[0] <= maxx and b[2] >= minx and b[1] <= maxy and b[3] >= miny:
+        if antimeridian:
+            x_hit = b[2] >= minx or b[0] <= maxx  # 西环 [minx,180] 或东环 [-180,maxx]
+        else:
+            x_hit = b[0] <= maxx and b[2] >= minx
+        if x_hit and b[1] <= maxy and b[3] >= miny:
             out.append(f)
     return out
 
@@ -123,6 +131,36 @@ _POOLS_LOCK = threading.Lock()
 # 失败退避：同一 key 在窗口内不重试创建（避免每次查询都尝试建池）。
 _POOL_RETRY_BACKOFF_S = 30.0
 _POOL_FAILURES: Dict[str, float] = {}
+
+# R4-C1/M1（ADR-0094 §10 性能）：表元数据缓存必须**进程级共享**——REST 路径
+# 每个 query/materialize/tile 请求都会 build_adapter 新建 adapter 实例，
+# 实例级 _meta_cache 恒冷 → 每请求 ~6 次 catalog 查询 + 全表 COUNT(*)。
+# 键 (pool_key, dataset_id)；TTL 60s（与 catalog sync 频率匹配）。
+_META_CACHE_TTL_S = 60.0
+_META_CACHE_LOCK = threading.Lock()
+_META_CACHE: "OrderedDict[Tuple[str, str], Tuple[float, Any]]" = OrderedDict()
+_META_CACHE_MAX = 2048
+
+
+def _meta_cache_get(key: Tuple[str, str]) -> Any:
+    with _META_CACHE_LOCK:
+        entry = _META_CACHE.get(key)
+        if entry is None:
+            return None
+        loaded_at, meta = entry
+        if time.monotonic() - loaded_at > _META_CACHE_TTL_S:
+            _META_CACHE.pop(key, None)
+            return None
+        _META_CACHE.move_to_end(key)
+        return meta
+
+
+def _meta_cache_put(key: Tuple[str, str], meta: Any) -> None:
+    with _META_CACHE_LOCK:
+        _META_CACHE[key] = (time.monotonic(), meta)
+        _META_CACHE.move_to_end(key)
+        while len(_META_CACHE) > _META_CACHE_MAX:
+            _META_CACHE.popitem(last=False)
 
 
 def _pool_key(host: str, port: int, dbname: str, user: str) -> str:
@@ -410,8 +448,23 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
 
     # ── describe（带索引/PK 探测）────────────────────────────────────
 
-    def _load_table_meta(self, dataset_id: str, conn: Any) -> _TableMeta:
-        cached = self._meta_cache.get(dataset_id)
+    def _load_table_meta(
+        self, dataset_id: str, conn: Any, *, lightweight: bool = False
+    ) -> _TableMeta:
+        """加载表元数据（进程级共享缓存，TTL 60s）。
+
+        ``lightweight=True``（MVT 瓦片热路径）：跳过全表 COUNT(*) 与
+        ST_EstimatedExtent 探测——瓦片路径不使用行数/范围，二者在大表上
+        各是秒级查询（R4-C1）。
+        """
+        pool_key = _pool_key(
+            getattr(self, "host", "localhost"),
+            getattr(self, "port", None) or 5432,
+            getattr(self, "database", "postgres"),
+            getattr(self, "username", "postgres"),
+        )
+        shared_key = (pool_key, dataset_id)
+        cached = _meta_cache_get(shared_key)
         if cached is not None:
             return cached
         schema_name, table_name = self._sanitize_identifier(dataset_id)
@@ -473,15 +526,16 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             except Exception:
                 conn.rollback()
                 cur = conn.cursor()
-        # 行数 + extent
-        try:
-            cur.execute(f'SELECT COUNT(*) FROM "{schema_name}"."{table_name}";')
-            row = cur.fetchone()
-            meta.feature_count = int(row[0]) if row and row[0] is not None else None
-        except Exception:
-            conn.rollback()
-            cur = conn.cursor()
-        if meta.geom_col and meta.srid:
+        # 行数 + extent（lightweight 跳过：瓦片路径不需要）
+        if not lightweight:
+            try:
+                cur.execute(f'SELECT COUNT(*) FROM "{schema_name}"."{table_name}";')
+                row = cur.fetchone()
+                meta.feature_count = int(row[0]) if row and row[0] is not None else None
+            except Exception:
+                conn.rollback()
+                cur = conn.cursor()
+        if not lightweight and meta.geom_col and meta.srid:
             try:
                 cur.execute(
                     'SELECT ST_XMin(e), ST_YMin(e), ST_XMax(e), ST_YMax(e) FROM '
@@ -494,7 +548,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             except Exception:
                 conn.rollback()
                 cur = conn.cursor()
-        self._meta_cache[dataset_id] = meta
+        _meta_cache_put(shared_key, meta)
         return meta
 
     def describe(self, dataset_id: str) -> DatasetDescriptor:
@@ -694,25 +748,48 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
 
             page = v2.page
             order_cols = self._order_columns(v2, meta)
-            # 隐式 PK 排序键不在投影里 → 以 _cursor_key 附加列支撑 keyset 游标
-            cursor_key_col: Optional[str] = None
-            pk_order_entries = [(e, f) for e, f in order_cols if f == meta.pk_col]
-            if pk_order_entries and meta.pk_col:
-                projected = set(v2.select or meta.field_names)
-                if meta.pk_col not in projected:
-                    select_list.append(f"{quote_ident(meta.pk_col)} AS _cursor_key")
-                    cursor_key_col = "_cursor_key"
-                else:
-                    cursor_key_col = meta.pk_col
+            # R2-C1/M8 修复：
+            # 1) 排除谓词用裸列名（不带 ASC/DESC——方向入行比较是语法错误）；
+            # 2) 比较方向跟随排序（全 ASC → `>`，全 DESC → `<`；混合方向不支持
+            #    keyset，降级 offset 并在 plan 注明——绝不静默错页）；
+            # 3) 游标键列泛化：排序键未投影时以 _cursor_key_N 附加列取值
+            #    （此前仅 PK 排序可用游标，显式 order_by + cursor 静默停摆）。
+            directions = [o.direction for o in v2.order_by]
+            uniform = "asc" if all(d == "asc" for d in directions) else (
+                "desc" if all(d == "desc" for d in directions) else None
+            )
+            keyset_ok = bool(order_cols) and (uniform is not None)
+            cmp_op = ">" if uniform == "asc" else "<"
+            if isinstance(page, CursorPage) and page.cursor and not keyset_ok:
+                raise InvalidQueryError(
+                    "keyset cursor requires a uniform (all-ASC or all-DESC) order key; "
+                    "use offset pagination for mixed-direction ordering"
+                )
 
+            # 游标键取值：排序字段若不在投影中，附加别名化列
+            cursor_key_aliases: List[Tuple[str, str]] = []  # (alias, field)
+            if keyset_ok:
+                projected = set(v2.select or meta.field_names)
+                for _e, fname in order_cols:
+                    if fname in projected:
+                        cursor_key_aliases.append((fname, fname))
+                    else:
+                        alias = f"_cursor_key_{len(cursor_key_aliases)}"
+                        select_list.append(f"{quote_ident(fname)} AS {alias}")
+                        cursor_key_aliases.append((alias, fname))
+
+            where_fragments: List[str] = []
+            if where_sql:
+                where_fragments.append(where_sql)
             base_params = list(params)  # where 参数（count 复用）
-            cursor_exclusion_sql = ""
-            if isinstance(page, CursorPage) and page.cursor and order_cols:
+            if isinstance(page, CursorPage) and page.cursor and keyset_ok:
                 cursor_vals = decode_cursor(page.cursor)
                 if len(cursor_vals) != len(order_cols):
                     raise InvalidQueryError("cursor arity mismatch with order key")
-                cursor_exclusion_sql = " AND (" + ", ".join(e for e, _f in order_cols) + \
-                    ") > (" + ", ".join(["%s"] * len(order_cols)) + ")"
+                where_fragments.append(
+                    "(" + ", ".join(quote_ident(f) for _e, f in order_cols) + ") "
+                    + cmp_op + " (" + ", ".join(["%s"] * len(order_cols)) + ")"
+                )
                 base_params = base_params + list(cursor_vals)
 
             if mode == ResultMode.SAMPLE and v2.sample:
@@ -726,7 +803,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                 f"SELECT {', '.join(select_list)} FROM "
                 f'"{meta.schema}"."{meta.table}"'
                 f"{sample_sql}"
-                f"{(' WHERE ' + where_sql + cursor_exclusion_sql) if (where_sql or cursor_exclusion_sql) else ''}"
+                f"{(' WHERE ' + ' AND '.join(where_fragments)) if where_fragments else ''}"
             )
             if order_cols:
                 sql += " ORDER BY " + ", ".join(e for e, _f in order_cols)
@@ -747,7 +824,9 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             for r in rows:
                 row_dict = dict(zip(columns, r))
                 raw_geo = row_dict.pop("_geojson", None)
-                row_dict.pop("_cursor_key", None)
+                # 游标键别名列不出现在属性中（_cursor_key*）
+                for k in [k for k in row_dict if k.startswith("_cursor_key")]:
+                    row_dict.pop(k)
                 geom = json.loads(raw_geo) if isinstance(raw_geo, str) else raw_geo
                 features.append({
                     "type": "Feature",
@@ -788,9 +867,9 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             else:
                 has_more = fetched >= limit
             next_cursor: Optional[str] = None
-            if has_more and order_cols and rows and cursor_key_col:
+            if has_more and rows and keyset_ok and cursor_key_aliases:
                 last_row = dict(zip(columns, rows[-1]))
-                next_cursor = encode_cursor([last_row.get(cursor_key_col)])
+                next_cursor = encode_cursor([last_row.get(alias) for alias, _f in cursor_key_aliases])
             truncated = has_more
             evidence = build_evidence(
                 plan, started_at=started, result_count=len(features),
@@ -984,7 +1063,13 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
         )
         if v2.group_by:
             sql += " GROUP BY " + ", ".join(quote_ident(g) for g in v2.group_by)
-        if order_cols:
+        # R2-m8：ORDER BY 列必须在 GROUP BY 内（否则 PG 报错）；无分组时用
+        # 第一排序键保证聚合页序稳定。
+        if v2.group_by and order_cols:
+            grouped_first = next((e for e, f in order_cols if f in v2.group_by), None)
+            if grouped_first:
+                sql += " ORDER BY " + grouped_first
+        elif order_cols and not v2.group_by:
             sql += " ORDER BY " + order_cols[0][0]
         sql += " LIMIT %s"
         page = v2.page
@@ -1005,6 +1090,8 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                     continue
                 elif isinstance(v, float):
                     d[c] = round(v, 6)
+                elif isinstance(v, Decimal):
+                    d[c] = float(round(v, 6))  # R2-m8：Decimal 不得进入 JSON 面
                 else:
                     d[c] = v
             out.append(d)
@@ -1044,11 +1131,17 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             raise InvalidQueryError(f"tile {z}/{x}/{y} out of range")
         with self._connection_context() as conn:
             self._apply_statement_timeout(conn, timeout_s)
-            meta = self._load_table_meta(dataset_id, conn)
+            meta = self._load_table_meta(dataset_id, conn, lightweight=True)
             if not meta.geom_col:
                 raise InvalidQueryError("dataset has no geometry column; tiles unsupported")
             gcol = quote_ident(meta.geom_col)
-            col_srid = meta.srid or 4326
+            # R2-M3 关联：未知 SRID 的瓦片路径禁止静默假定 4326（错瓦片）
+            if meta.srid is None:
+                raise InvalidQueryError(
+                    "dataset SRID is unknown (0); server-side tiles require a "
+                    "SRID-constrained geometry column"
+                )
+            col_srid = meta.srid
 
             props = []
             allowed = set(meta.field_names)
@@ -1058,7 +1151,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             prop_select = (", " + ", ".join(props)) if props else ""
 
             # zoom 感泛化：低 zoom 提高容差（Web Mercator 米）
-            tolerance = max(0.0, 4_0075_01.6 / (2 ** z) / 256.0 * 4.0) if z < 13 else 0.0
+            tolerance = max(0.0, 40_075_016.6 / (2 ** z) / 256.0 * 4.0) if z < 13 else 0.0
 
             # 额外属性过滤（typed AST 编译）
             extra_where = ""

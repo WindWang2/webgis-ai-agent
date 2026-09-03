@@ -247,10 +247,9 @@ def plan_query(
         else:
             pagination_strategy = "single_page"
     elif isinstance(page, OffsetPage):
-        if caps.cursor_pagination and page.offset > 10_000 and aggregate_requested is False:
-            pagination_strategy = "cursor"
-            pagination_note = "deep offset upgraded to keyset cursor when stable order key exists"
-        elif caps.offset_pagination:
+        # R1-M8/R2-m7：不再虚构 "offset→cursor 升级"（没有任何 adapter 实现
+        # OffsetPage 的 keyset 改写——plan 必须与执行一致）。
+        if caps.offset_pagination:
             pagination_strategy = "offset"
         else:
             pagination_strategy = "single_page"

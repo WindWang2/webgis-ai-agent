@@ -318,6 +318,7 @@ export const dataFabricApi = {
     source_id?: string;
     geometry_type?: string;
     feature_type?: string;
+    availability?: string;
     limit?: number;
     offset?: number;
     forceRefresh?: boolean;
@@ -326,6 +327,7 @@ export const dataFabricApi = {
     const queryParams: Record<string, string | number> = {};
     if (params?.q) queryParams.q = params.q;
     if (params?.source_id) queryParams.source_id = params.source_id;
+    if (params?.availability) queryParams.availability = params.availability;
     if (params?.geometry_type) queryParams.geometry_type = params.geometry_type;
     if (params?.feature_type) queryParams.feature_type = params.feature_type;
     if (params?.limit !== undefined) queryParams.limit = params.limit;

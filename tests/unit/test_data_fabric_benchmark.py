@@ -2,9 +2,8 @@
 Performance Benchmarks & Memory Boundary Harness for Data Fabric V1
 """
 import time
-from app.schemas.data_fabric_schema import ConnectionProfile, QuerySpec, DatasetDescriptor
+from app.schemas.data_fabric_schema import QuerySpec, DatasetDescriptor
 from app.services.data_fabric.spatial_catalog import SpatialCatalogService
-from app.services.data_fabric.adapters.postgis_adapter import PostGISAdapter
 
 
 def test_10k_catalog_items_search_benchmark():

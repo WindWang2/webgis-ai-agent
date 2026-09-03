@@ -459,18 +459,46 @@ def _like_to_regex(pattern: str) -> "re.Pattern[str]":
 
 
 def evaluate_predicate(node: Any, properties: Dict[str, Any]) -> bool:
-    """属性谓词本地求值（spatial/temporal 节点需走专用求值器）。"""
+    """属性谓词本地求值（SQL 三值逻辑对齐，R2-M6）。
+
+    NULL 语义与 SQL 一致：比较/IN/LIKE 遇 NULL → unknown（最终按 False 排除）；
+    NOT unknown → unknown（同样排除）——此前 NOT/ne/not_in 对 NULL 返回 True，
+    与服务器端行集不一致。
+    """
+    result = _eval_three_valued(node, properties)
+    return result is True  # unknown → False（行被排除，与 SQL WHERE 一致）
+
+
+def _eval_three_valued(node: Any, properties: Dict[str, Any]) -> Optional[bool]:
+    """True/False/None（unknown）三值求值。"""
     op = node.op
     if op == "and":
-        return all(evaluate_predicate(a, properties) for a in node.args)
+        results = [_eval_three_valued(a, properties) for a in node.args]
+        if any(r is False for r in results):
+            return False
+        if any(r is None for r in results):
+            return None
+        return True
     if op == "or":
-        return any(evaluate_predicate(a, properties) for a in node.args)
+        results = [_eval_three_valued(a, properties) for a in node.args]
+        if any(r is True for r in results):
+            return True
+        if any(r is None for r in results):
+            return None
+        return False
     if op == "not":
-        return not evaluate_predicate(node.arg, properties)
+        r = _eval_three_valued(node.arg, properties)
+        if r is None:
+            return None
+        return not r
 
     val = properties.get(node.field)
     if op == "is_null":
         return (val is None) != bool(node.negated)
+
+    # 以下操作遇 NULL → unknown
+    if val is None:
+        return None
 
     if op in ("in", "not_in"):
         members = node.values
@@ -483,8 +511,6 @@ def evaluate_predicate(node: Any, properties: Dict[str, Any]) -> bool:
             return lo <= nv <= hi
         return str(node.low) <= str(val) <= str(node.high)
     if op == "like":
-        if val is None:
-            return False
         return bool(_like_to_regex(node.pattern).match(str(val)))
 
     target = node.value
@@ -492,8 +518,6 @@ def evaluate_predicate(node: Any, properties: Dict[str, Any]) -> bool:
     if nv is not None and nt is not None:
         a, b = nv, nt
     else:
-        if val is None or target is None:
-            return op == "ne" if (val is None) != (target is None) else False
         a, b = str(val), str(target)
     if op == "eq":
         return a == b

@@ -31,10 +31,25 @@ SQLFragment = Tuple[str, List[Any]]
 # ── GeoJSON → WKT ───────────────────────────────────────────────────────────
 
 
-def _coords_to_wkt(coords: Any, fmt: Callable[[float], str] = repr) -> str:
-    if coords and isinstance(coords[0], (int, float)):
+_WKT_MAX_DEPTH = 16
+
+
+def _coords_to_wkt(coords: Any, fmt: Callable[[float], str] = repr, _depth: int = 0) -> str:
+    # R3-m3：严格数值元素 + 深度上限——非数值元素/超深嵌套抛 typed 错误
+    # （此前字符串元素触发无限递归 → RecursionError）。
+    if _depth > _WKT_MAX_DEPTH:
+        raise PredicateError("geometry nesting too deep")
+    if not isinstance(coords, (list, tuple)) or not coords:
+        raise PredicateError("geometry coordinates must be non-empty numeric arrays")
+    if isinstance(coords[0], (int, float)):
+        for c in coords:
+            if not isinstance(c, (int, float)) or isinstance(c, bool):
+                raise PredicateError("geometry coordinates must be numeric")
+            fv = float(c)
+            if fv != fv or fv in (float("inf"), float("-inf")):
+                raise PredicateError("non-finite coordinate in geometry")
         return " ".join(fmt(float(c)) for c in coords)
-    return ", ".join(_coords_to_wkt(c, fmt) for c in coords)
+    return ", ".join(_coords_to_wkt(c, fmt, _depth + 1) for c in coords)
 
 
 def _fmt_coord(v: float) -> str:
@@ -229,10 +244,21 @@ def compile_spatial_sql(
         return f"{fn}({gcol}, {geom_expr})", geom_params
 
     if op == "dwithin":
-        # geography cast：distance 单位 meters，测地语义（EPSG:4326）。
+        # R2-M3：geography 仅支持 lon/lat —— 4326 用 geography（测地米）；
+        # 投影列把查询几何变换到列 SRID 后做平面 ST_DWithin（CRS 单位）；
+        # 未知 SRID 拒绝（禁止静默错距）。
+        if col_srid == 4326:
+            return (
+                f"ST_DWithin({gcol}::geography, {geom_expr}::geography, %s)",
+                geom_params + [node.distance],
+            )
+        if col_srid in (0, -1):
+            raise PredicateError(
+                "DWithin requires a known column SRID (geography or projected)"
+            )
         return (
-            f"ST_DWithin({gcol}::geography, {geom_expr}::geography, %s)",
-            geom_params + [node.distance],
+            f"ST_DWithin({gcol}, ST_Transform({geom_expr}, %s), %s)",
+            geom_params + [col_srid, node.distance],
         )
 
     raise PredicateError(f"cannot compile spatial op {op!r} to SQL")
@@ -249,7 +275,7 @@ def _cql2_quote(v: Any) -> str:
     if isinstance(v, (int, float)):
         return repr(v)
     s = str(v)
-    if any(ch in s for ch in "\r\n\x00"):
+    if any(ord(ch) < 0x20 for ch in s):
         raise PredicateError("control characters not allowed in string value")
     return "'" + s.replace("'", "''") + "'"
 
@@ -272,9 +298,14 @@ def compile_predicate_cql2(node: Any) -> str:
         return "(NOT " + compile_predicate_cql2(node.arg) + ")"
     prop = node.field
     if op == "eq":
-        return "NULL" if node.value is None else f"{prop} = {_cql2_quote(node.value)}"
+        # R2-M5：NULL 比较在远端方言必须编译为 IS NULL（裸 NULL 谓词会被
+        # 服务器拒绝/恒假——与 PostGIS 编译语义对齐）。
+        return "prop IS NULL".replace("prop", prop) if node.value is None else f"{prop} = {_cql2_quote(node.value)}"
     if op == "ne":
-        return "NULL" if node.value is None else f"{prop} <> {_cql2_quote(node.value)}"
+        return (
+            f"{prop} IS NOT NULL" if node.value is None
+            else f"{prop} <> {_cql2_quote(node.value)}"
+        )
     if op == "gt":
         return f"{prop} > {_cql2_number(node.value)}"
     if op == "ge":
@@ -315,7 +346,7 @@ def _arcgis_quote(v: Any) -> str:
     if isinstance(v, (int, float)):
         return repr(v)
     s = str(v)
-    if any(ch in s for ch in "\r\n\x00"):
+    if any(ord(ch) < 0x20 for ch in s):
         raise PredicateError("control characters not allowed in string value")
     return "'" + s.replace("'", "''") + "'"
 
@@ -330,9 +361,9 @@ def compile_predicate_arcgis(node: Any) -> str:
         return "(NOT " + compile_predicate_arcgis(node.arg) + ")"
     f = node.field
     if op == "eq":
-        return "NULL" if node.value is None else f"{f} = {_arcgis_quote(node.value)}"
+        return f"{f} IS NULL" if node.value is None else f"{f} = {_arcgis_quote(node.value)}"
     if op == "ne":
-        return "NULL" if node.value is None else f"{f} <> {_arcgis_quote(node.value)}"
+        return f"{f} IS NOT NULL" if node.value is None else f"{f} <> {_arcgis_quote(node.value)}"
     if op == "gt":
         return f"{f} > {_arcgis_quote(node.value)}"
     if op == "ge":
@@ -410,12 +441,13 @@ def compile_predicate_fes(
             f"<ogc:UpperBoundary><ogc:Literal>{_fes_value(node.high)}</ogc:Literal></ogc:UpperBoundary>"
             f"</ogc:PropertyIsBetween>"
         )
+    if op == "eq" and node.value is None:
+        return f'<ogc:PropertyIsNull xmlns:ogc="{ns}"><ogc:PropertyName>{_fes_value(node.field)}</ogc:PropertyName></ogc:PropertyIsNull>'
+    if op == "ne" and node.value is None:
+        return f'<ogc:PropertyIsNotNull xmlns:ogc="{ns}"><ogc:PropertyName>{_fes_value(node.field)}</ogc:PropertyName></ogc:PropertyIsNotNull>'
     if op in _FES_OPS:
         tag = _FES_OPS[op]
-        if op == "like":
-            val = node.pattern
-        else:
-            val = node.value
+        val = node.pattern if op == "like" else node.value
         return (
             f'<ogc:{tag} xmlns:ogc="{ns}">'
             f"<ogc:PropertyName>{_fes_value(node.field)}</ogc:PropertyName>"
@@ -425,6 +457,10 @@ def compile_predicate_fes(
 
 
 def compile_bbox_fes(bbox: Sequence[float], *, srs_name: str = "urn:ogc:def:crs:OGC:1.3:CRS84") -> str:
+    # R3-m2：坐标必须为有限数值（防御纵深——pydantic 已校验，此处兜底）。
+    from app.services.data_fabric.query.predicates import _check_bbox
+
+    bbox = _check_bbox(bbox)
     minx, miny, maxx, maxy = bbox
     return (
         '<ogc:BBOX xmlns:ogc="http://www.opengis.net/ogc">'

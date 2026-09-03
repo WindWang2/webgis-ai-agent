@@ -62,6 +62,9 @@ class RedisSessionStore(BaseSessionStore):
         self._injected_redis = redis
         self._r: Optional[aioredis.Redis] = redis
         self._bound_loop: Optional[asyncio.AbstractEventLoop] = None
+        # R1-M4：per-loop 客户端表 + 交换锁（_ensure_connected 使用）
+        self._loop_clients: dict = {}
+        self._client_lock = asyncio.Lock()
         self.capacity = capacity
         # L1 in-process cache: { (session_id, kind): (value, expires_at_monotonic) }
         # kind ∈ {"map_state", "metadata"}. Read-through, write-invalidate.
@@ -70,14 +73,17 @@ class RedisSessionStore(BaseSessionStore):
         self._l1_order: list[tuple[str, str]] = []  # LRU order (MRU at end)
 
     async def _ensure_connected(self) -> aioredis.Redis:
-        """懒构造 Redis 客户端，绑定到当前运行中的 event loop。
+        """懒构造 Redis 客户端，按 event loop 隔离（R1-M4）。
 
-        首次 async 调用时触发；之后复用同一个客户端。这样连接池总是绑定到真正
-        运行测试/请求的 loop，避免 import 期 event loop 错配。
+        每个运行 loop 持有独立客户端（loop-affinity 是 redis-py 的硬约束）；
+        交换在 ``self._client_lock`` 内完成，且**永不 aclose 可能仍被其他
+        loop await 的客户端**——旧客户端交由 GC/连接池空闲回收处理。此前
+        "loop 变化即 aclose 共享客户端" 的实现会在 REST（manager loop）与
+        agent 工具（app loop）并发物化时把对方正在 await 的连接关掉，
+        制造间歇性 redis-unavailable（审计 C3 的根因之一）。
 
-        审计 TEST-13：pytest-asyncio 每个测试用新 event loop。如果上一个测试
-        的 loop 已关闭但 self._r 还绑定着它，下一个测试调用就会报
-        "Event loop is closed"。检测 loop 变化时重新创建客户端。
+        审计 TEST-13（每测试新 loop）语义保留：旧 loop 的客户端不再复用，
+        但也不被主动销毁。
         """
         try:
             loop = asyncio.get_running_loop()
@@ -88,25 +94,28 @@ class RedisSessionStore(BaseSessionStore):
         if self._injected_redis is not None:
             return self._injected_redis
 
-        # 如果客户端已存在且绑定的 loop 仍是当前 loop，复用
-        if self._r is not None and self._bound_loop is not None and self._bound_loop is loop:
-            return self._r
+        # 快路径：当前 loop 已有客户端
+        client = self._loop_clients.get(id(loop)) if loop is not None else None
+        if client is not None:
+            return client
 
-        # loop 变了（或首次创建）—— 重建客户端
-        if self._r is not None:
-            try:
-                await self._r.aclose()
-            except Exception:
-                pass  # 旧 loop 可能已关闭，aclose 会失败，忽略
+        async with self._client_lock:
+            # 双检
+            client = self._loop_clients.get(id(loop)) if loop is not None else None
+            if client is not None:
+                return client
+            new_client = aioredis.Redis.from_url(
+                self._redis_url,
+                decode_responses=False,
+                socket_timeout=self._socket_timeout,
+                socket_connect_timeout=self._socket_timeout,
+            )
+            if loop is not None:
+                self._loop_clients[id(loop)] = new_client
+            else:
+                self._r = new_client
+            return new_client
 
-        self._r = aioredis.Redis.from_url(
-            self._redis_url,
-            decode_responses=False,
-            socket_timeout=self._socket_timeout,
-            socket_connect_timeout=self._socket_timeout,
-        )
-        self._bound_loop = loop
-        return self._r
 
     async def ping(self) -> None:
         """Async health check. Lazily connects then pings.

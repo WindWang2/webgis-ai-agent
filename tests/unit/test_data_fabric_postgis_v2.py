@@ -4,7 +4,6 @@
 聚合/GROUP BY 下推、STATISTICS 零几何、cursor 分页、确定性采样子句、
 statement_timeout、MVT SQL、字段白名单、注入面回归。
 """
-import json
 
 import pytest
 
@@ -66,7 +65,8 @@ class _RoutingCursor:
                 elif ch == ")":
                     depth -= 1
                 if ch == "," and depth == 0:
-                    frags.append("".join(buf)); buf = []
+                    frags.append("".join(buf))
+                    buf = []
                 else:
                     buf.append(ch)
             if buf:
@@ -428,7 +428,6 @@ def test_df_tile_cache_eviction_and_invalidate():
 
 
 def test_df_tile_response_etag_304():
-    from fastapi.responses import Response
 
     from app.api.routes.data_fabric import _df_tile_response
 
@@ -442,3 +441,91 @@ def test_df_tile_response_etag_304():
     # fingerprint 变化 → ETag 变化（revision-aware）
     resp2 = _df_tile_response(b"tilebytes", "fp2", etag)
     assert resp2.status_code == 200 and resp2.headers["ETag"] != etag
+
+
+# ── Review Round 修复回归（R2-C1 keyset / R2-M3 DWithin / R2-m8 Decimal）────
+
+
+def test_keyset_cursor_no_where_clause_syntax():
+    """R2-C1.1：无过滤条件时 cursor 第二页不得生成 `WHERE  AND ...`。"""
+    executed = []
+    rows = [(i, f"s{i}", '{"type":"Point","coordinates":[104,30]}') for i in range(1, 11)]
+    a = _adapter(executed, rows=rows)
+    r1 = a.query("public.schools", QuerySpec(limit=5, page_kind="cursor"))
+    r2 = a.query("public.schools", QuerySpec(limit=5, page_kind="cursor", cursor=r1.next_cursor))
+    sql2 = [sql for sql, _ in executed if "> (" in sql][-1]
+    assert "WHERE  AND" not in sql2, "空 WHERE + 排除谓词不得产生语法错误"
+    assert 'ASC)' not in sql2 and 'DESC)' not in sql2, "方向不得进入行比较"
+    assert r2.features
+
+
+def test_keyset_cursor_desc_direction():
+    """R2-C1.3：DESC 排序的 keyset 必须用 `<` 比较。"""
+    executed = []
+    rows = [(i, f"s{i}", '{"type":"Point","coordinates":[104,30]}') for i in range(1, 11)]
+    a = _adapter(executed, rows=rows)
+    spec = QuerySpec(limit=5, page_kind="cursor", order_by=[{"field": "id", "direction": "desc"}])
+    r1 = a.query("public.schools", spec)
+    assert r1.next_cursor
+    a.query("public.schools", QuerySpec(
+        limit=5, page_kind="cursor", order_by=[{"field": "id", "direction": "desc"}],
+        cursor=r1.next_cursor))
+    page_sqls = [sql for sql, _ in executed if "> (" in sql or "< (" in sql]
+    assert page_sqls and any("< (" in sql for sql in page_sqls), "DESC keyset 需要 < 比较"
+
+
+def test_keyset_cursor_mixed_direction_typed():
+    """R2-C1.3：混合方向 + cursor → typed（不静默错页）。"""
+    a = _adapter([])
+    with pytest.raises(InvalidQueryError, match="uniform"):
+        a.query("public.schools", QuerySpec(
+            limit=5, page_kind="cursor",
+            order_by=[{"field": "id", "direction": "asc"}, {"field": "name", "direction": "desc"}],
+            cursor="abc",
+        ))
+
+
+def test_cursor_key_generalized_to_explicit_order_field():
+    """R2-M8：显式 order_by 的 keyset 游标可用（键列自动附加别名）。"""
+    executed = []
+    rows = [(i, f"s{i}", '{"type":"Point","coordinates":[104,30]}') for i in range(1, 6)]
+    a = _adapter(executed, rows=rows)
+    spec = QuerySpec(limit=2, page_kind="cursor", order_by=[{"field": "students", "direction": "asc"}])
+    r1 = a.query("public.schools", spec)
+    assert r1.next_cursor, "显式排序字段也必须产出游标"
+
+
+def test_dwithin_projected_uses_planar_transform():
+    executed = []
+    a = _adapter(executed, srid=32633, rows=[])
+    spec = QuerySpec(limit=5, spatial={
+        "op": "dwithin",
+        "geometry": {"type": "Point", "coordinates": [12.0, 60.0]},
+        "distance": 500.0,
+    })
+    a.query("public.schools_utm", spec)
+    dw = [sql for sql, _ in executed if "ST_DWithin" in sql]
+    assert dw and "::geography" not in dw[0], "投影列禁止 geography cast（R2-M3）"
+    assert "ST_Transform" in dw[0]
+
+
+def test_aggregate_decimal_sanitized():
+    from decimal import Decimal
+
+    executed = []
+    a = _adapter(executed, agg_rows=[("d1", Decimal("12.3456789"))])
+    res = a.query("public.schools", QuerySpec(limit=10, aggregate=[{"func": "count"}], group_by=["district"]))
+    assert isinstance(res.data[0]["count"], float), "Decimal 必须转 float（JSON 面）"
+
+
+def test_stddev_sample_semantics_local():
+    """R2-M1：本地聚合 stddev 与 Postgres STDDEV 同为样本口径。"""
+    from app.services.data_fabric.query.execution import compute_aggregates
+    from app.services.data_fabric.query.models import AggSpec
+
+    rows = [{"v": 1}, {"v": 2}, {"v": 3}, {"v": 4}]
+    out = compute_aggregates(rows, [AggSpec(func="stddev", field="v")], None)
+    import math
+
+    expected = math.sqrt(sum((x - 2.5) ** 2 for x in [1, 2, 3, 4]) / 3)  # sample
+    assert abs(out[0]["stddev_v"] - expected) < 1e-9

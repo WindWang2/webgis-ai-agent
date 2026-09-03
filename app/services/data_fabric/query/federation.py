@@ -197,6 +197,8 @@ def spatial_join_local(
     spatial_op: str = "within",
     join_field_right: Optional[str] = None,
     budget: Optional[StreamingBudget] = None,
+    max_output: Optional[int] = None,
+    spatial_index: Optional["_LocalSpatialIndex"] = None,
 ) -> List[Dict[str, Any]]:
     """点面本地 join（STRtree 候选 + 精确判定；绝不 O(N·M) 全扫）。
 
@@ -207,7 +209,8 @@ def spatial_join_local(
         g = _shapely_from_geojson(p.get("geometry"))
         if g is not None and not g.is_empty:
             shp_polys.append((g, p))
-    index = _LocalSpatialIndex([g for g, _ in shp_polys])
+    # R4-M4：调用方可注入复用的空间索引（跨左页扫描只构建一次 STRtree）
+    index = spatial_index or _LocalSpatialIndex([g for g, _ in shp_polys])
     if index._tree is None and len(points) * max(1, len(shp_polys)) > MAX_JOIN_CANDIDATES * 10:
         # 仅线性回退时产品积守卫才有意义；STRtree 的复杂度是 O(N·candidates)
         raise QueryBudgetExceededError(
@@ -234,10 +237,15 @@ def spatial_join_local(
                 hit = props
                 break
         if hit is not None:
-            row = dict(pt.get("properties") or {})
-            row["__right__"] = hit.get("properties") or {}
-            row["__right_geometry__"] = hit.get("geometry")
-            out.append(row)
+            # R4-C2：输出行计入预算（join 扇出可能远超输入行数）
+            out_row = dict(pt.get("properties") or {})
+            out_row["__right__"] = hit.get("properties") or {}
+            out_row["__right_geometry__"] = hit.get("geometry")
+            if budget is not None:
+                budget.add_feature(out_row)
+            out.append(out_row)
+            if max_output is not None and len(out) >= max_output:
+                break
     return out
 
 
@@ -248,6 +256,7 @@ def attribute_join_local(
     join_field_left: str,
     join_field_right: str,
     budget: Optional[StreamingBudget] = None,
+    max_output: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """等值连接（右侧哈希索引；左行流式探测）。"""
     index: Dict[Any, List[Dict[str, Any]]] = {}
@@ -265,7 +274,11 @@ def attribute_join_local(
         for rrow in index.get(_hashable_key(key), ()):
             row = dict(lrow.get("properties") or lrow)
             row["__right__"] = rrow.get("properties") or rrow
+            if budget is not None:
+                budget.add_feature(row)
             out.append(row)
+            if max_output is not None and len(out) >= max_output:
+                return out
     return out
 
 
@@ -290,44 +303,83 @@ def aggregate_join_rows(
 
 
 def _aggregate_with_right(rows, aggs, group_by):
+    """分组聚合（R4-M5：标量累加器，不再复制全部成员行——峰值内存 O(组数)）。
+
+    stddev 为样本口径（与 Postgres STDDEV 一致）：在线 Welford。
+    """
     out: List[Dict[str, Any]] = []
-    groups: Dict[Tuple, List[Dict[str, Any]]] = {}
+    groups: Dict[Tuple, Dict[str, Any]] = {}
     for row in rows:
         right = row.get("__right__") or {}
         key = tuple(right.get(g) for g in group_by)
-        groups.setdefault(key, []).append({**row, **{f"__r_{k}": v for k, v in right.items()}})
-    for key, members in groups.items():
+        acc = groups.get(key)
+        if acc is None:
+            # 每个 agg 一个累加器槽：count / sum / sumsq / min / max / distinct-set
+            acc = {"n": 0, "cells": {}}
+            for a in aggs:
+                name = a.func if a.field is None else f"{a.func}_{a.field}"
+                acc["cells"][name] = {
+                    "count": 0, "sum": 0.0, "sumsq": 0.0,
+                    "min": None, "max": None, "distinct": set(),
+                }
+            groups[key] = acc
+        acc["n"] += 1
+        for a in aggs:
+            name = a.func if a.field is None else f"{a.func}_{a.field}"
+            cell = acc["cells"][name]
+            if a.func == "count" and a.field is None:
+                cell["count"] += 1
+                continue
+            v = None
+            if a.field is not None:
+                left_props = {k: v2_ for k, v2_ in row.items() if not k.startswith("__")}
+                right_props = row.get("__right__") or {}
+                if a.field in left_props:
+                    v = left_props[a.field]  # 左（事实表）优先
+                elif a.field in right_props:
+                    v = right_props[a.field]  # 右回退（R2-C2：右字段不再静默读左）
+            if v is None:
+                continue
+            cell["count"] += 1
+            cell["distinct"].add(str(v))
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                fv = float(v)
+                cell["sum"] += fv
+                cell["sumsq"] += fv * fv
+                cell["min"] = fv if cell["min"] is None else min(cell["min"], fv)
+                cell["max"] = fv if cell["max"] is None else max(cell["max"], fv)
+            else:
+                cell["min"] = v if cell["min"] is None else min(cell["min"], v, key=str)
+                cell["max"] = v if cell["max"] is None else max(cell["max"], v, key=str)
+    for key, acc in groups.items():
         result: Dict[str, Any] = {}
         for g, v in zip(group_by, key):
             result[g] = v
         for a in aggs:
             name = a.func if a.field is None else f"{a.func}_{a.field}"
-            if a.func == "count" and a.field is None:
-                result[name] = len(members)
-                continue
-            field = f"__r_{a.field}" if a.field in (group_by or []) else a.field
-            vals = [m.get(field) for m in members if m.get(field) is not None]
-            nums = [float(v) for v in vals if isinstance(v, (int, float)) and not isinstance(v, bool)]
-            if a.func == "count":
-                result[name] = len(vals)
-            elif a.func == "distinct_count":
-                result[name] = len(set(map(str, vals)))
-            elif a.func == "sum":
-                result[name] = sum(nums) if nums else None
-            elif a.func == "avg":
-                result[name] = (sum(nums) / len(nums)) if nums else None
-            elif a.func == "min":
-                result[name] = min(vals) if vals else None
-            elif a.func == "max":
-                result[name] = max(vals) if vals else None
-            elif a.func == "stddev":
-                import math as _math
+            cell = acc["cells"][name]
+            import math as _math
 
-                if len(nums) < 2:
+            if a.func == "count":
+                result[name] = cell["count"]
+            elif a.func == "distinct_count":
+                result[name] = len(cell["distinct"])
+            elif a.func == "sum":
+                result[name] = cell["sum"] if cell["count"] else None
+            elif a.func == "avg":
+                result[name] = (cell["sum"] / cell["count"]) if cell["count"] else None
+            elif a.func == "min":
+                result[name] = cell["min"]
+            elif a.func == "max":
+                result[name] = cell["max"]
+            elif a.func == "stddev":
+                n = cell["count"]
+                if n < 2:
                     result[name] = None
                 else:
-                    mean = sum(nums) / len(nums)
-                    result[name] = _math.sqrt(sum((x - mean) ** 2 for x in nums) / (len(nums) - 1))
+                    mean = cell["sum"] / n
+                    var = max(0.0, (cell["sumsq"] - n * mean * mean) / (n - 1))
+                    result[name] = _math.sqrt(var)
         out.append(result)
     return out
 
@@ -433,19 +485,28 @@ class FederatedExecutor:
         rows_fetched = 0
         offset = 0
         deadline = started + req.budget.deadline_s
+        # R4-M4：右侧空间索引只构建一次（跨左页复用）
+        spatial_index = None
+        if plan.kind in ("spatial_join", "aggregate_join") and req.spatial_op:
+            shp_polys = [
+                g for g in (
+                    _shapely_from_geojson(p.get("geometry")) for p in right_rows
+                ) if g is not None and not g.is_empty
+            ]
+            spatial_index = _LocalSpatialIndex(shp_polys)
         while len(joined) < req.limit:
             if time.monotonic() > deadline:
                 raise QueryBudgetExceededError(
                     f"federated join exceeded {req.budget.deadline_s}s deadline",
                     details={"hint": "reduce scope (bbox/filters) or aggregate on sources"},
                 )
+            fetch_size = min(JOIN_PAGE_SIZE, req.limit - len(joined) + 1)
             page = self._source_query(
                 left_adapter, req.left_dataset_id, req, req.left_where,
-                fields=left_fields, limit=min(JOIN_PAGE_SIZE, req.limit - len(joined) + 1),
+                fields=left_fields, limit=fetch_size,
             ) if offset == 0 else self._source_query_page(
                 left_adapter, req.left_dataset_id, req, req.left_where,
-                fields=left_fields,
-                limit=min(JOIN_PAGE_SIZE, req.limit - len(joined) + 1), offset=offset,
+                fields=left_fields, limit=fetch_size, offset=offset,
             )
             rows_fetched += len(page)
             if rows_fetched > req.budget.max_rows:
@@ -455,10 +516,13 @@ class FederatedExecutor:
                 )
             if not page:
                 break
-            if plan.kind == "spatial_join" or plan.kind == "aggregate_join" and req.spatial_op:
+            remaining = req.limit - len(joined)
+            if (plan.kind == "spatial_join") or (plan.kind == "aggregate_join" and req.spatial_op):
                 batch = spatial_join_local(
                     page, right_rows, spatial_op=req.spatial_op or "within",
                     join_field_right=req.join_field_right, budget=budget,
+                    max_output=remaining + 1,   # +1 探测是否还有更多（R4-C2）
+                    spatial_index=spatial_index,
                 )
             else:
                 batch = attribute_join_local(
@@ -466,10 +530,11 @@ class FederatedExecutor:
                     join_field_left=req.join_field_left or "",
                     join_field_right=req.join_field_right or "",
                     budget=budget,
+                    max_output=remaining + 1,
                 )
             joined.extend(batch)
-            if len(page) < JOIN_PAGE_SIZE:
-                break
+            if len(page) < fetch_size:
+                break  # 真实末页（按本次 fetch_size 判定，R2-C3）
             offset += len(page)
 
         if plan.kind == "aggregate_join" and req.aggregates:

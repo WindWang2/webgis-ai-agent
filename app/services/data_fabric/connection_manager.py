@@ -185,7 +185,13 @@ class GenericDataSourceAdapter(GeospatialDataSourceAdapter):
             features=sliced_features,
             total_count=len(features),
             schema_info={"fields": desc.fields, "geometry_type": desc.geometry_type},
-            metadata={"query_spec": query_spec.model_dump(), "source_type": self.profile.source_type},
+            metadata={
+                "query_spec": query_spec.model_dump(),
+                "source_type": self.profile.source_type,
+                # R1-m11：demo adapter 的结果在 payload 自带 demo 标（物化后的
+                # ref 不再依赖工具层重建 flag）。
+                "is_demo": True,
+            },
         )
 
     def health(self) -> DataFabricHealth:

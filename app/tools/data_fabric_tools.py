@@ -203,6 +203,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
         },
         execution_policy=ToolExecutionPolicy.INLINE)
     def search_spatial_catalog(
+        session_id: Optional[str] = None,
         query: Optional[str] = None,
         bbox: Optional[list[float]] = None,
         crs: Optional[str] = None,
@@ -211,8 +212,9 @@ def register_data_fabric_tools(registry: ToolRegistry):
         limit: int = 50,
         offset: int = 0,
     ) -> dict:
-        """空间目录综合检索"""
+        """空间目录综合检索（owner 作用域，R3-M5）"""
         res = spatial_catalog_service.search(
+            owner=session_id,
             query=query,
             bbox=bbox,
             crs=crs,
@@ -244,7 +246,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
     )
     def describe_dataset(dataset_id: str, profile_id: Optional[str] = None, session_id: Optional[str] = None) -> dict:
         """获取数据集 Schema 描述与 Fingerprint"""
-        desc = spatial_catalog_service.get_dataset(dataset_id)
+        desc = spatial_catalog_service.get_dataset(dataset_id, owner=session_id)
         pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id, owner=session_id)
 
         if not desc and pid:
@@ -376,13 +378,16 @@ def register_data_fabric_tools(registry: ToolRegistry):
                     "dataset_id": dataset_id,
                     "features": [],
                 }
-            result_dict = query_result.model_dump()
+            # R4-minor3：features 本就要被 stub 替换 —— 不序列化（省一次
+            # 深拷贝 + 一次 bbox 全扫描；10k 特征时省百 ms 级）。
+            features = query_result.features or []
+            result_dict = query_result.model_dump(exclude={"features"})
             result_dict["is_demo"] = _is_demo_source_type(
                 getattr(adapter.profile, "source_type", None)
             )
-            features = result_dict.get("features") or []
             if isinstance(features, list):
                 from app.tools._utils import _feature_collection_bbox
+
                 fc = {"type": "FeatureCollection", "features": features}
                 result_dict["features"] = {
                     "feature_count": len(features),
@@ -557,7 +562,15 @@ def register_data_fabric_tools(registry: ToolRegistry):
             fp = dataset_fingerprint_service.calculate_descriptor_fingerprint(descriptor)
             try:
                 v2 = normalize_query_spec(spec)
-                caps = getattr(adapter, "_caps", None)
+                caps = None
+                probe = getattr(adapter, "capabilities_v2", None)
+                if probe is not None:
+                    try:
+                        caps = probe(descriptor)
+                    except Exception:
+                        caps = None
+                if not isinstance(caps, AdapterCapabilitiesV2):
+                    caps = getattr(adapter, "_caps", None)
                 if not isinstance(caps, AdapterCapabilitiesV2):
                     caps = get_capabilities(
                         getattr(getattr(adapter, "profile", None), "source_type", None) or "generic"

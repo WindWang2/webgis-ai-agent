@@ -459,3 +459,31 @@ def _local_file_max_bytes_from_settings():
     from app.core.config import settings
 
     return int(getattr(settings, "DATA_FABRIC_LOCAL_FILE_MAX_BYTES", 1024 * 1024 * 1024))
+
+
+def ensure_same_origin_url(candidate: str, base_url: str) -> str:
+    """校验 candidate 与 base 同 scheme+host+port（R3-M2/M3 cursor 防护）。
+
+    cursor/next-link 可能被调用方伪造为任意 URL——若直接以其发起携带
+    profile 凭证头的请求，会造成凭证外带 / SSRF 代理滥用。不同源抛
+    ``SourceBadResponseError``。
+    """
+    from urllib.parse import urlparse as _urlparse
+
+    from app.services.data_fabric.errors import SourceBadResponseError
+
+    c = _urlparse(str(candidate))
+    b = _urlparse(str(base_url))
+    c_origin = (c.scheme.lower(), (c.hostname or "").lower(), c.port)
+    b_origin = (b.scheme.lower(), (b.hostname or "").lower(), b.port or (443 if b.scheme == "https" else 80))
+    if c_origin[0] != b_origin[0] or c_origin[1] != b_origin[1]:
+        raise SourceBadResponseError(
+            "next-link cursor points to a different origin than the registered source",
+            details={"origin": f"{c_origin[0]}://{c_origin[1]}"},
+        )
+    c_port = c.port or (443 if c.scheme == "https" else 80)
+    if c_port != b_origin[2]:
+        raise SourceBadResponseError(
+            "next-link cursor port differs from the registered source"
+        )
+    return str(candidate)

@@ -56,6 +56,9 @@ export function useSpatialCatalog() {
       const res = await dataFabricApi.listSpatialCatalog({
         q: debouncedSearchQuery,
         source_id: selectedSourceFilter || undefined,
+        // ADR-0094 §9：availability 过滤走服务端（客户端页内过滤只能看到
+        // 当前页；服务端参数才能检索跨页的 stale 条目）。
+        availability: availabilityFilter || undefined,
         limit: 50,
         signal: controller.signal,
       });
@@ -68,7 +71,7 @@ export function useSpatialCatalog() {
     } finally {
       if (seq === catalogReqRef.current.seq) setLoadingCatalog(false);
     }
-  }, [debouncedSearchQuery, selectedSourceFilter, addToast]);
+  }, [debouncedSearchQuery, selectedSourceFilter, availabilityFilter, addToast]);
 
   // A-F-08: debounce search-as-you-type (the raw input stays immediate).
   useEffect(() => {

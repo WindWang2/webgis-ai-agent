@@ -17,22 +17,17 @@ import time
 
 import pytest
 
-from app.schemas.data_fabric_schema import QueryResult, QuerySpec
-from app.services.data_fabric.limits import enforce_result_bounds
+from app.schemas.data_fabric_schema import QuerySpec
 from app.services.data_fabric.query.execution import (
     StreamingBudget,
-    compute_aggregates,
     deterministic_sample,
 )
-from app.services.data_fabric.query.models import ExecutionBudget, SampleSpec
+from app.services.data_fabric.query.models import SampleSpec
 from app.services.data_fabric.query.normalize import normalize_query_spec
 from app.services.data_fabric.query.planner import plan_query
 from app.schemas.data_fabric_schema import DatasetDescriptor
 from app.services.data_fabric.query.capabilities import default_capabilities
-from app.services.data_fabric.fingerprint import dataset_fingerprint_service
 from tests.unit.test_data_fabric_postgis_v2 import _adapter as _pg_adapter
-
-pytestmark = pytest.mark.perf_v2 if False else []
 
 
 def _big_descriptor(n=1_000_000):
@@ -118,9 +113,10 @@ def test_b5_deep_offset_cost_surface():
     deep = normalize_query_spec(QuerySpec(
         limit=100, offset=500_000, max_rows=1_000_000, max_bytes=2 * 1024 * 1024 * 1024))
     plan = plan_query(deep, desc, default_capabilities("postgis"))
-    # 深偏移在支持 keyset 的源升级为 cursor 策略（比 OFFSET 全表跳过更优）
-    assert plan.pagination_strategy == "cursor", (
-        f"深 offset 应升级 cursor（got {plan.pagination_strategy}: {plan.pagination_note}）"
+    # R1-M8 修复后：plan 与执行一致（offset 即 offset），且深 offset 必须有警告
+    assert plan.pagination_strategy == "offset"
+    assert any("OFFSET" in w for w in plan.warnings), (
+        "深 offset 必须在计划中可见（提示用 cursor）"
     )
 
 
@@ -190,7 +186,6 @@ def test_b7_geoparquet_projection_arrow():
 
 def test_b8_remote_range_honest_failure():
     """无 fsspec/s3fs 时远程 GeoParquet → typed error（不整文件下载）。"""
-    from app.services.data_fabric.security import DataFabricSecurity
     from app.services.data_fabric.adapters.geoparquet_adapter import GeoParquetAdapter
     from app.schemas.data_fabric_schema import ConnectionProfile
 

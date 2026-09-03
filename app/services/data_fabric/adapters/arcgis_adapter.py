@@ -111,6 +111,18 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
             "arcgis_rest",
         ]
 
+    def capabilities_v2(self, descriptor=None):
+        """探测后 capability（maxRecordCount/supportsPagination，R1-M8）。"""
+        if descriptor is None:
+            return get_capabilities("arcgis")
+        meta = descriptor.metadata or {}
+        max_record_count = int(meta.get("max_record_count", _FALLBACK_MAX_RECORD_COUNT))
+        supports_pagination = bool(meta.get("supports_pagination"))
+        return get_capabilities("arcgis").model_copy(update={
+            "offset_pagination": supports_pagination,
+            "max_page_size": min(max_record_count, MAX_QUERY_LIMIT),
+        })
+
     def list_datasets(self) -> List[Dict[str, Any]]:
         if not self.url:
             return []
@@ -255,12 +267,8 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
         supports_pagination = bool(meta.get("supports_pagination"))
         oid_field = str(meta.get("object_id_field", "OBJECTID"))
 
-        caps = get_capabilities("arcgis").model_copy(update={
-            "offset_pagination": supports_pagination,
-            "max_page_size": min(max_record_count, MAX_QUERY_LIMIT),
-        })
+        caps = self.capabilities_v2(descriptor)
         plan = plan_query(v2, descriptor, caps, source_id=self.profile.id, dataset_fingerprint=fp)
-
         # STATISTICS：count-only（returnCountOnly，零几何传输）
         if plan.result_mode == ResultMode.STATISTICS:
             if v2.aggregate and len(v2.aggregate) == 1 and v2.aggregate[0].func == "count" and not v2.group_by:
@@ -303,13 +311,21 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
         offset = page.offset if isinstance(page, OffsetPage) else 0
 
         params = self._base_params(v2)
-        params["resultRecordCount"] = limit
+        local_slice = None
         if offset and supports_pagination:
             params["resultOffset"] = offset
+            params["resultRecordCount"] = limit
         elif offset:
+            # R2-M7：服务不支持分页 → 多取 offset+limit 条本地切片
+            local_slice = (offset, limit)
+            params["resultRecordCount"] = offset + limit
             plan = plan.model_copy(update={
-                "warnings": plan.warnings + ["layer lacks supportsPagination; offset not pushed"],
+                "warnings": plan.warnings + [
+                    "layer lacks supportsPagination; fetched offset+limit rows and sliced locally"
+                ],
             })
+        else:
+            params["resultRecordCount"] = limit
 
         # where：AST 编译（单引号 doubling）
         where_sql = "1=1"
@@ -339,11 +355,18 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
 
         params["where"] = where_sql
 
-        # outFields 投影
+        # outFields 投影（R1-M9：未知字段 typed，不再静默丢弃/回退 *）
         if v2.select is not None:
             allowed = set(f["name"] for f in descriptor.fields if f.get("name"))
-            proj = [f for f in v2.select if f in allowed]
-            params["outFields"] = ",".join(proj + [oid_field]) if proj else "*"
+            unknown = [f for f in v2.select if f not in allowed]
+            if unknown:
+                raise InvalidQueryError(
+                    f"select fields not in layer schema: {unknown[:5]}"
+                )
+            proj = list(v2.select)
+            params["outFields"] = (
+                ",".join(proj + [oid_field]) if oid_field not in proj else ",".join(proj)
+            )
         else:
             params["outFields"] = "*"
 
@@ -390,6 +413,8 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
         features = data.get("features", []) or []
         if not isinstance(features, list):
             features = []
+        if local_slice is not None:
+            features = features[local_slice[0]: local_slice[0] + local_slice[1]]
 
         # 诚实截断语义（审计 M-2）：exceededTransferLimit 说明还有数据
         exceeded = bool(data.get("exceededTransferLimit")) if isinstance(data, dict) else False

@@ -332,7 +332,7 @@ export function ExplainResultsPanel({
                     <button
                       type="button"
                       onClick={() => queryResult.next_cursor && onCursorNext(queryResult.next_cursor)}
-                      disabled={!queryResult.has_more && !queryResult.next_cursor}
+                      disabled={!queryResult.next_cursor}
                       className="flex items-center gap-1 rounded-sm bg-surface-sunken px-2 py-1 transition-colors hover:bg-surface-hover hover:text-ink disabled:opacity-50"
                     >
                       <ChevronRight size={12} aria-hidden />

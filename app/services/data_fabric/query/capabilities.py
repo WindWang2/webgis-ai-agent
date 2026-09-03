@@ -30,7 +30,7 @@ def _postgis_defaults() -> AdapterCapabilitiesV2:
         server_reprojection=True,
         vector_tiles=True,          # server-side ST_AsMVT 路径（Wave I）
         range_requests=False,
-        streaming=True,             # server-side cursor 流式读取
+        streaming=False,            # fetchall + LIMIT 有界读（非游标流式）
         max_page_size=10_000,
         server_side_spatial_join=True,
     )
@@ -93,7 +93,8 @@ def _arcgis_defaults() -> AdapterCapabilitiesV2:
         cursor_pagination=False,
         spatial_predicates=["bbox", "intersects", "within", "contains"],
         temporal_filter=True,        # 时间字段 where 片段
-        aggregation=True,            # returnCountOnly / outStatistics（探测后）
+        aggregation=False,           # 仅 count-only（R1-M9：裸 bool 无法表达
+                                     # count-only；sum/avg 等 → 本地回退/typed）
         group_by=False,              # groupByFieldsForStatistics 支持零散
         count=True,                  # returnCountOnly=true
         statistics=False,
@@ -167,7 +168,7 @@ def _pmtiles_defaults() -> AdapterCapabilitiesV2:
         count=False,
         statistics=False,
         server_reprojection=False,
-        vector_tiles=True,           # tile 服务（metadata + range）
+        vector_tiles=False,          # tile 字节服务归 Raster Runtime（fabric 仅元数据）
         range_requests=True,
         streaming=False,
         max_page_size=1,

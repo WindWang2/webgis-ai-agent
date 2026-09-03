@@ -223,6 +223,7 @@ def test_wfs_query_non_json_200_is_typed_error_766(wfs):
     server ignoring OUTPUTFORMAT) must be an in-band typed error — never a
     silently empty "successful" dataset."""
     wfs.session.routes = {
+        "GetCapabilities": FakeResponse(content=WFS_CAPABILITIES),
         "/wfs": FakeResponse(
             text="<wfs:FeatureCollection/>", headers={"Content-Type": "text/xml"}
         ),
@@ -235,6 +236,7 @@ def test_wfs_query_declared_non_4326_crs_is_typed_error_769(wfs):
     """#769: a FeatureCollection declaring a projected CRS must be refused with
     a typed error — projected coordinates must not flow on as WGS84 degrees."""
     wfs.session.routes = {
+        "GetCapabilities": FakeResponse(content=WFS_CAPABILITIES),
         "/wfs": FakeResponse(json_data={
             "type": "FeatureCollection",
             "crs": "urn:ogc:def:crs:EPSG::28992",

@@ -151,8 +151,8 @@ def compute_aggregates(
 ) -> List[Dict[str, Any]]:
     """对（已有界的）属性行执行聚合。值语义与 SQL 对齐（NULL 不计入聚合）。
 
-    stddev 为总体标准差（STDDEV_POP）；PostGIS 编译走 stddev_samp 时 planner
-    统一选择——本地与服务器差分测试以 same-population 口径对齐。
+    stddev 为样本标准差（n-1），与 Postgres STDDEV（= stddev_samp）及联邦
+    Welford 实现一致（R2-M1 统一口径；差分测试可比）。
     """
     groups: Dict[Tuple, Dict[str, Any]] = {}
     for row in rows:
@@ -190,11 +190,13 @@ def compute_aggregates(
             elif a.func == "max":
                 result[name] = max(vals) if vals else None
             elif a.func == "stddev":
+                # 样本口径（n-1），与 Postgres STDDEV / 联邦 Welford 一致
+                # （R2-M1：此前本地为总体口径，与下推结果分歧）。
                 if len(nums) < 2:
                     result[name] = None
                 else:
                     mean = sum(nums) / len(nums)
-                    var = sum((x - mean) ** 2 for x in nums) / len(nums)  # POP
+                    var = sum((x - mean) ** 2 for x in nums) / (len(nums) - 1)
                     result[name] = math.sqrt(var)
         out.append(result)
     if not group_by and out == [] and not groups:

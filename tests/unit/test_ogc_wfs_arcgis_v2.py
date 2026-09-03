@@ -9,7 +9,6 @@
   orderByFields 稳定排序、exceededTransferLimit 截断诚实（M-2）、maxRecordCount
   页钳制、returnCountOnly 统计模式
 """
-import json
 
 import pytest
 
@@ -100,8 +99,6 @@ def test_wfs_fes_filter_post_path(wfs):
         "GetCapabilities": FakeResponse(content=WFS_CAPABILITIES),
         "post": FakeResponse(json_data=WFS_FEATURES),
     }
-    original_post = wfs.session.post
-
     captured = {}
 
     def fake_post(url, data=None, **kw):
