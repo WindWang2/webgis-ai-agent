@@ -166,6 +166,25 @@ describe("MapSpec Runtime Adapter — hudStateToMapSpec (ADR-0036)", () => {
       expect(fill.paint!["fill-color"]).toBe("rgba(0,0,0,0)");
       expect(fill.paint!["fill-opacity"]).toBe(0);
     });
+
+    it("emits fill-extrusion natively when layer.type === 'fill-extrusion' regardless of is3D (ADR-0095)", () => {
+      const extLayer = baseLayer({
+        id: "pop-3d",
+        type: "fill-extrusion" as any,
+        paint: {
+          "fill-extrusion-color": "#ea580c",
+          "fill-extrusion-height": ["*", ["get", "pop"], 0.1],
+          "fill-extrusion-base": 0,
+          "fill-extrusion-opacity": 0.85,
+        } as any,
+        source: fc(polygonFeature()),
+      });
+      const spec = hudStateToMapSpec({ layers: [extLayer], processLayers: {}, activeFilters: {}, is3D: false });
+      const extrusions = spec.layers.filter((l) => l.type === "fill-extrusion");
+      expect(extrusions).toHaveLength(1);
+      expect(extrusions[0].paint!["fill-extrusion-color"]).toBe("#ea580c");
+      expect(extrusions[0].paint!["fill-extrusion-height"]).toEqual(["*", ["get", "pop"], 0.1]);
+    });
   });
 
   describe("mixed-geometry layer fans out to multiple sublayers", () => {
