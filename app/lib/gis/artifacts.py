@@ -60,6 +60,7 @@ SEED_ARTIFACT_TYPES: List[ArtifactTypeDescriptor] = [
     ArtifactTypeDescriptor(
         id="polygon_feature_set", name_zh="面要素集", geometry_kind="polygon",
         category="feature_set",
+        typical_map_models=["extrusion_3d"],
     ),
     ArtifactTypeDescriptor(
         id="poi_feature_set", name_zh="POI 要素集", geometry_kind="point",
@@ -77,7 +78,7 @@ SEED_ARTIFACT_TYPES: List[ArtifactTypeDescriptor] = [
         id="admin_aggregate_table", name_zh="行政区聚合表", geometry_kind="polygon",
         category="aggregate",
         description="按行政区聚合的统计结果（面 + 数值字段）。",
-        typical_map_models=["administrative_choropleth", "administrative_aggregation"],
+        typical_map_models=["administrative_choropleth", "administrative_aggregation", "extrusion_3d"],
     ),
     ArtifactTypeDescriptor(
         id="stats_table", name_zh="统计表", geometry_kind="table",
@@ -88,7 +89,7 @@ SEED_ARTIFACT_TYPES: List[ArtifactTypeDescriptor] = [
         id="density_surface", name_zh="密度面", geometry_kind="polygon",
         category="surface",
         description="KDE 等连续密度估计（面/等值线或网格载体）。",
-        typical_map_models=["visual_heatmap", "raster_surface"],
+        typical_map_models=["visual_heatmap", "raster_surface", "isoline_contour"],
     ),
     ArtifactTypeDescriptor(
         id="grid_aggregate", name_zh="格网聚合", geometry_kind="polygon",
@@ -122,7 +123,7 @@ SEED_ARTIFACT_TYPES: List[ArtifactTypeDescriptor] = [
         id="terrain_surface", name_zh="地形面", geometry_kind="raster",
         category="raster",
         description="DEM 派生的坡度/坡向/高程等栅格。",
-        typical_map_models=["raster_surface"],
+        typical_map_models=["raster_surface", "isoline_contour"],
     ),
     ArtifactTypeDescriptor(
         id="remote_sensing_index", name_zh="遥感指数面", geometry_kind="raster",

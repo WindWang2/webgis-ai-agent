@@ -67,7 +67,7 @@ _SEED_CAPS: List[CapabilityDescriptor] = [
         input_artifact_types=["poi_feature_set", "point_feature_set"],
         output_artifact_types=["admin_aggregate_table"],
         geometry_requirements=["point"],
-        compatible_map_models=["administrative_choropleth", "administrative_aggregation"],
+        compatible_map_models=["administrative_choropleth", "administrative_aggregation", "extrusion_3d"],
         purpose_template="按行政区聚合统计",
     ),
     CapabilityDescriptor(
@@ -100,7 +100,7 @@ _SEED_CAPS: List[CapabilityDescriptor] = [
         output_artifact_types=["density_surface"],
         geometry_requirements=["point"],
         deterministic=False,
-        compatible_map_models=["visual_heatmap"],
+        compatible_map_models=["visual_heatmap", "isoline_contour"],
         purpose_template="核密度分析",
     ),
     CapabilityDescriptor(
