@@ -13,7 +13,7 @@ from app.evaluation import GISBenchmarkRunner, get_all_cases
 @pytest.mark.asyncio
 async def test_golden_cases_no_semantic_regression():
     cases = get_all_cases()
-    assert len(cases) >= 10, "golden scenario set must stay >= 10 (B2)"
+    assert len(cases) >= 30, "golden scenario set must stay >= 30 (semantic-GIS expansion)"
     runner = GISBenchmarkRunner()
     results = await runner.run(cases)
     by_id = {r.case_id: r for r in results}

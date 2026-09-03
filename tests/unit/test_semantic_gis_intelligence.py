@@ -163,3 +163,123 @@ def test_projection_never_recommends_execution():
     for m in projection.matches:
         for cap in m.recommended_capabilities:
             assert not cap.startswith("query_"), "pattern must recommend capabilities, not tools"
+
+
+# ── Semantic GIS expansion: new roles + planner-level honesty ───────────────
+
+
+def test_geographic_coordinate_role_inferred():
+    """lon/lat name + numeric sample → geographic_coordinate (name-only
+    caps at metadata_derived per the confidence ladder)."""
+    from app.lib.gis.semantic_profile import SemanticFieldRole
+
+    profile = _profile({
+        "lng": "float64",
+        "lat": "float64",
+        "weight": "float64",
+        "名称": "string",
+    })
+    sem = derive_semantic_profile(
+        profile,
+        value_samples={"lng": [104.0, 104.1], "lat": [30.6, 30.7],
+                       "weight": [1.5, 2.0], "名称": ["a站", "b站"]},
+    )
+    def _roles(field):
+        row = next(fr for fr in sem.field_roles if fr.field == field)
+        return set(row.roles)
+
+    assert SemanticFieldRole.GEOGRAPHIC_COORDINATE.value in _roles("lng")
+    assert SemanticFieldRole.GEOGRAPHIC_COORDINATE.value in _roles("lat")
+    assert SemanticFieldRole.WEIGHT_MEASURE.value in _roles("weight")
+
+
+def test_planner_emits_equity_warning_without_denominator():
+    """「公平性」+ 无分母画像 → plan.methodology_warnings 披露（Phase 3
+    核心契约：诚实边界随计划证据下行）。"""
+    from app.services.gis_harness.intent import resolve_map_request_intent
+    from app.services.gis_harness.planner import MapProductPlanner
+
+    plan = MapProductPlanner().plan_from_intent(
+        resolve_map_request_intent("分析成都各区小学教育资源公平性"), use_memo=False
+    )
+    warns = [w["pattern"] for w in plan.methodology_warnings]
+    assert "spatial_equity" in warns
+    w = plan.methodology_warnings[0]
+    assert w["missing_roles"] == ["normalization_denominator"]
+    assert w["disclosures"], "the honest limitation text must ride with the plan"
+
+
+def test_planner_no_equity_noise_on_plain_statistics():
+    from app.services.gis_harness.intent import resolve_map_request_intent
+    from app.services.gis_harness.planner import MapProductPlanner
+
+    for q in ("生成成都各区小学数量柱状图", "成都小学分布情况", "给我看看成都的咖啡馆"):
+        plan = MapProductPlanner().plan_from_intent(
+            resolve_map_request_intent(q), use_memo=False
+        )
+        assert plan.methodology_warnings == [], (
+            f"keyword-gate must keep advisory patterns silent on: {q}"
+        )
+
+
+def test_equity_warning_survives_mixed_keyword_queries():
+    """Review F1: the projection's top-N truncation must never cut a
+    keyword-matched equity pattern — the honesty guarantee is not
+    probabilistic."""
+    from app.services.gis_harness.intent import resolve_map_request_intent
+    from app.services.gis_harness.planner import MapProductPlanner
+
+    plan = MapProductPlanner().plan_from_intent(
+        resolve_map_request_intent("成都各区小学分布热力图，公平性怎样"),
+        use_memo=False,
+    )
+    assert "spatial_equity" in [w["pattern"] for w in plan.methodology_warnings]
+
+
+def test_spatial_comparison_no_temporal_noise():
+    """Review F2: 「对比」 alone is SPATIAL comparison — the temporal
+    disclosure must not fire without a time signal."""
+    from app.services.gis_harness.intent import resolve_map_request_intent
+    from app.services.gis_harness.planner import MapProductPlanner
+
+    for q in ("对比成都各区人口", "成都各区人口密度对比"):
+        plan = MapProductPlanner().plan_from_intent(
+            resolve_map_request_intent(q), use_memo=False
+        )
+        patterns = [w["pattern"] for w in plan.methodology_warnings]
+        assert "temporal_change" not in patterns, q
+
+
+def test_per_capita_and_gap_phrasings_hit_equity():
+    """Review F3: 人均/差距 are equity phrasings too."""
+    from app.services.gis_harness.intent import resolve_map_request_intent
+    from app.services.gis_harness.planner import MapProductPlanner
+
+    for q in ("成都各区人均小学数量排名", "各区教育资源差距分析"):
+        plan = MapProductPlanner().plan_from_intent(
+            resolve_map_request_intent(q), use_memo=False
+        )
+        assert "spatial_equity" in [w["pattern"] for w in plan.methodology_warnings], q
+
+
+def test_real_change_detection_keeps_temporal_disclosure():
+    from app.services.gis_harness.intent import resolve_map_request_intent
+    from app.services.gis_harness.planner import MapProductPlanner
+
+    plan = MapProductPlanner().plan_from_intent(
+        resolve_map_request_intent("成都2023到2024年建成区变化"), use_memo=False
+    )
+    assert "temporal_change" in [w["pattern"] for w in plan.methodology_warnings]
+
+
+def test_numeric_dtype_required_for_coordinate_and_weight_roles():
+    """Review F9: string columns named lat/weight must not earn the roles
+    from names alone (metadata honesty)."""
+    sem = derive_semantic_profile(
+        _profile({"lat": "string", "weight": "string", "lng": "float64"}),
+    )
+    def _roles(field):
+        return set(next(fr for fr in sem.field_roles if fr.field == field).roles)
+    assert "geographic_coordinate" not in _roles("lat")
+    assert "weight_measure" not in _roles("weight")
+    assert "geographic_coordinate" in _roles("lng")

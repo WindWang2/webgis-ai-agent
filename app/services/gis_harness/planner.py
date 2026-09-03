@@ -190,6 +190,11 @@ class MapProductPlan(BaseModel):
     # 当前 manifest 比对，不一致 → STALE_PLAN（旧计划不得静默套用新
     # registry 语义）。空 = 历史计划（不判 stale）。
     manifest_fingerprint: str = ""
+    # Semantic GIS（方法论诚实）：规划期确定的方法论边界披露 —— e.g.
+    # 「缺分母不能谈公平性」。模式投影（pattern projection）的 required
+    # roles 缺席时在此留档；产品仍可产出（数量/密度可评），但结论边界
+    # 必须随 plan 证据下行，绝不允许把数量分布伪装成公平性结论。
+    methodology_warnings: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 def _plan_id(query: str, recipe_id: str) -> str:
@@ -472,6 +477,39 @@ class MapProductPlanner:
             plan.charts = ["category_bar"] if intent.task == "categorical_distribution" else ["admin_bar"]
 
         plan.validation = list(recipe.validation_rules)
+
+        # Semantic GIS（方法论诚实）：把 pattern projection 的 required-roles
+        # 缺席披露为计划级警告 —— 此前该信号只经 suggest_analysis_patterns
+        # advisory 工具（LLM 可忽略），规划证据链上无处留档。「缺分母不能谈
+        # 公平性」必须在 plan 里可见：产品仍可产出（数量/密度可评），但
+        # 结论边界随证据下行，benchmark 可断言（methodology-honesty）。
+        try:
+            from app.lib.gis.pattern_projection import project_patterns
+
+            projection = project_patterns(intent.query, intent_task=intent.task)
+            # Review F1: the projection's top-6 (alphabetical tie-break)
+            # could cut a keyword-matched equity pattern below rank 3 — the
+            # honesty guarantee must not be probabilistic, so walk ALL
+            # matches; the keyword gate below keeps the volume bounded.
+            for match in projection.matches:
+                if not match.missing_roles:
+                    continue
+                # Task-alias-only matches are generic (EVERY administrative
+                # statistic query aliases spatial_equity); a methodology
+                # warning is issued only when the query itself carries the
+                # pattern's semantic keywords (公平/均衡/是否合理/…).
+                if not any(v.startswith("keyword:") for v in match.matched_via):
+                    continue
+                plan.methodology_warnings.append({
+                    "pattern": match.pattern_id,
+                    "missing_roles": sorted(match.missing_roles),
+                    "disclosures": list(match.disclosures or []),
+                    "pitfalls": list(match.common_pitfalls or [])[:2],
+                    "stage": "planning",
+                })
+        except Exception:  # noqa: BLE001 — 披露是增值，绝不阻断规划
+            pass
+
         if memo_key is not None:
             # 存入即深拷贝：调用方持有返回对象并可变（plan1.data_requirements=[]
             # 不得污染 memo 基底）。

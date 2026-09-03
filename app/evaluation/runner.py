@@ -202,6 +202,14 @@ class GISBenchmarkRunner:
         algorithms = [
             r.algorithm for r in plan.algorithm_selections if r.algorithm
         ]
+        got_patterns = {w.get("pattern") for w in (plan.methodology_warnings or [])}
+        honesty_checked = bool(
+            case.expected_methodology_warnings or case.forbidden_methodology_warnings
+        )
+        honesty_ok = (
+            set(case.expected_methodology_warnings) <= got_patterns
+            and not (set(case.forbidden_methodology_warnings) & got_patterns)
+        ) if honesty_checked else None
         evidence = {
             "task": intent.task,
             "recipe_id": plan.recipe_id,
@@ -209,6 +217,10 @@ class GISBenchmarkRunner:
             "resolved_capabilities": resolved,
             "algorithms": algorithms,
             "tool_calls_planned": len([r for r in plan.data_requirements if r.resolved_tool]),
+            "methodology_warnings": [
+                w.get("pattern") for w in (plan.methodology_warnings or [])
+            ],
+            "methodology_honesty_ok": honesty_ok,
         }
         failures: List[str] = []
 
@@ -225,6 +237,23 @@ class GISBenchmarkRunner:
 
         if case.expected_task and intent.task != case.expected_task:
             failures.append(f"task: expected {case.expected_task}, got {intent.task}")
+        # Methodology honesty: the plan must carry the expected pattern-level
+        # warnings (e.g. equity without a denominator) — and honest-disclosure
+        # cases must NOT silently pass when the warning is missing.
+        if case.expected_methodology_warnings or case.forbidden_methodology_warnings:
+            got_patterns = {w.get("pattern") for w in (plan.methodology_warnings or [])}
+            missing_warn = sorted(set(case.expected_methodology_warnings) - got_patterns)
+            if missing_warn:
+                failures.append(
+                    f"methodology warnings missing: {missing_warn} (got {sorted(got_patterns)})"
+                )
+            forbidden_warn = sorted(
+                set(case.forbidden_methodology_warnings) & got_patterns
+            )
+            if forbidden_warn:
+                failures.append(
+                    f"methodology noise: {forbidden_warn} warned without semantic basis"
+                )
         missing_caps = sorted(expected_set - resolved_set)
         if missing_caps:
             failures.append(f"capabilities unresolved: {missing_caps}")
@@ -256,6 +285,8 @@ class GISBenchmarkRunner:
             "capability_precision": round(precision, 4),
             "capability_recall": round(recall, 4),
             "algorithm_correct": not forbidden_hits and (case.allowed_algorithms is None or ok),
+            # None = case declares no honesty contract (not checked ≠ passed)
+            "methodology_honesty_ok": honesty_ok,
         }
         evidence["metrics"] = metrics
         return evidence, failures

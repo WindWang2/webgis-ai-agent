@@ -78,8 +78,9 @@ _ROLE_LABELS: Dict[str, str] = {
 #: 缺角色时的诚实披露模板（角色 → 披露文案；C4 红线的落地处）。
 _ROLE_MISSING_DISCLOSURES: Dict[str, str] = {
     SemanticFieldRole.NORMALIZATION_DENOMINATOR.value: (
-        "当前数据没有人口/面积等分母字段，只能评价数量与密度；"
-        "若要评价人均/地均意义上的资源公平性，需要补充分母数据（如人口栅格或统计表）。"
+        "规划期尚未确认人口/面积等分母字段：可以评价数量与密度，"
+        "不能可靠评价人均/地均意义上的资源公平性；"
+        "若数据画像确认无分母，需补充分母数据（如人口栅格或统计表）后才能下公平性结论。"
     ),
     SemanticFieldRole.POPULATION_MEASURE.value: (
         "缺少人口数据：无法计算人均指标，公平性/覆盖率的结论只能停留在数量层面。"
