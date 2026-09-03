@@ -408,3 +408,35 @@ def test_describe_reports_index_and_pk():
     assert desc.srs == "EPSG:4326"
     assert desc.feature_count == 1234
     assert desc.bbox == [100.0, 30.0, 105.0, 32.0]
+
+
+# ── Wave I：server-side MVT 路由 ────────────────────────────────────────────
+
+
+def test_df_tile_cache_eviction_and_invalidate():
+    from app.api.routes.data_fabric import _DF_TILE_CACHE
+
+    cache = _DF_TILE_CACHE
+    cache._cache.clear()
+    for i in range(10):
+        cache.put(("item", 5, i, 0), (b"gz", f"fp{i}"))
+    assert cache.get(("item", 5, 9, 0)) == (b"gz", "fp9")
+    cache.invalidate_item("item")
+    assert cache.get(("item", 5, 9, 0)) is None
+
+
+def test_df_tile_response_etag_304():
+    from fastapi.responses import Response
+
+    from app.api.routes.data_fabric import _df_tile_response
+
+    resp = _df_tile_response(b"tilebytes", "fp1", None)
+    assert resp.status_code == 200
+    assert resp.headers["content-encoding"] == "gzip"
+    assert resp.headers["X-Dataset-Fingerprint"] == "fp1"[:16]
+    etag = resp.headers["ETag"]
+    resp304 = _df_tile_response(b"tilebytes", "fp1", etag)
+    assert resp304.status_code == 304
+    # fingerprint 变化 → ETag 变化（revision-aware）
+    resp2 = _df_tile_response(b"tilebytes", "fp2", etag)
+    assert resp2.status_code == 200 and resp2.headers["ETag"] != etag

@@ -3,9 +3,10 @@ Enterprise Geospatial Data Fabric REST Routes
 """
 import asyncio
 import logging
+import threading
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Header, Body
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
@@ -211,6 +212,63 @@ class MaterializeRequest(BaseModel):
     session_id: str = Field(..., description="Session identifier UUID")
     catalog_item_id: str = Field(..., description="Catalog item identifier")
     query_spec: Optional[QuerySpec] = Field(None, description="Optional query pushdown specification")
+
+
+# ── PostGIS server-side MVT tile cache（Wave I，ADR-0094）─────────────────────
+# 有界 LRU：键 (item_id, z, x, y)，值为 (gzip_bytes, fingerprint)。fingerprint
+# 参与响应 ETag；catalog 版本变化后旧条目自然失效（键重建 + LRU 逐出）。
+class _DfTileCache:
+    def __init__(self, max_entries: int = 2048):
+        from collections import OrderedDict
+
+        self._cache: "OrderedDict[tuple, tuple]" = OrderedDict()
+        self._lock = threading.Lock()
+        self._max = max_entries
+
+    def get(self, key):
+        with self._lock:
+            v = self._cache.get(key)
+            if v is not None:
+                self._cache.move_to_end(key)
+            return v
+
+    def put(self, key, value) -> None:
+        with self._lock:
+            self._cache[key] = value
+            self._cache.move_to_end(key)
+            while len(self._cache) > self._max:
+                self._cache.popitem(last=False)
+
+    def invalidate_item(self, item_id: str) -> None:
+        with self._lock:
+            for k in [k for k in self._cache if k[0] == item_id]:
+                del self._cache[k]
+
+
+_DF_TILE_CACHE = _DfTileCache()
+
+
+def _df_tile_response(gz_body: bytes, fingerprint: str, if_none_match: Optional[str]) -> Response:
+    """gzip MVT 响应 + fingerprint 参与 ETag + 304 支持（对齐 layer.py 契约）。"""
+    import hashlib as _hashlib
+
+    etag = '"%s"' % _hashlib.sha256(gz_body + fingerprint.encode()).hexdigest()[:16]
+    headers = {
+        "Content-Encoding": "gzip",
+        "Cache-Control": "private, max-age=60",
+        "ETag": etag,
+        "X-Content-Type-Options": "nosniff",
+        "X-Dataset-Fingerprint": fingerprint[:16],
+    }
+    if if_none_match:
+        candidate = if_none_match.strip()
+        if candidate == "*" or candidate.strip('"') == etag.strip('"'):
+            return Response(status_code=304, headers=headers)
+    return Response(
+        content=gz_body,
+        media_type="application/vnd.mapbox-vector-tile",
+        headers=headers,
+    )
 
 
 @router.post("/data-fabric/sources", tags=["Data Fabric / 数据织网"])
@@ -687,6 +745,85 @@ async def explain_catalog_item(
     if outcome.get("status") == "error":
         raise HTTPException(status_code=422, detail=outcome)
     return outcome
+
+
+@router.get("/data-fabric/catalog/{item_id}/tiles/{z}/{x}/{y}.pbf", tags=["Data Fabric / 数据织网"])
+async def get_catalog_mvt_tile(
+    item_id: str,
+    z: int,
+    x: int,
+    y: int,
+    user: Dict[str, Any] = Depends(get_current_user),
+    if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
+):
+    """PostGIS 数据集的 server-side MVT 瓦片（ADR-0094 §8 / ST_AsMVT）。
+
+    - 权限：与 /query 一致（auth + tenant 归属门）。
+    - revision-aware：缓存键包含 catalog fingerprint（dataset version）；
+      catalog sync 检测到版本变化自然切换到新键（旧键 LRU 逐出），
+      不破坏现有 tile cache contract。
+    - bounded：ST_AsMVT LIMIT 上限 + statement_timeout（Wave D serve_mvt_tile）。
+    - 空瓦片（无相交要素）返回 204；命中返回 gzip + ETag（If-None-Match 304）。
+    """
+    import gzip as _gzip
+    import hashlib as _hashlib
+
+    if not (0 <= z <= 22) or x < 0 or y < 0 or x >= (1 << z) or y >= (1 << z):
+        raise HTTPException(status_code=400, detail="非法瓦片坐标")
+
+    cache_key = (item_id, z, x, y)
+    cached = _DF_TILE_CACHE.get(cache_key)
+    if cached is not None:
+        return _df_tile_response(cached[0], cached[1], if_none_match)
+
+    async def _build(session: Session):
+        import logging as _logging
+
+        _authorize_catalog_item(session, item_id, user)
+        item = session.query(CatalogItemModel).filter(CatalogItemModel.id == item_id).first()
+        if not item:
+            raise ValueError(f"Catalog item '{item_id}' not found")
+        ds_model = item.data_source
+        if not ds_model or ds_model.source_type not in ("postgis", "postgres", "postgresql"):
+            raise HTTPException(
+                status_code=422,
+                detail="server-side tiles 仅支持 PostGIS 数据源（该数据集类型不支持）",
+            )
+        conn_profile = ConnectionProfile(
+            id=ds_model.id,
+            name=ds_model.name,
+            source_type=ds_model.source_type,
+            url=ds_model.endpoint_url,
+            options=ds_model.connection_profile.get("options", {}),
+            allow_private=ds_model.connection_profile.get("allow_private", False),
+        )
+        from app.services.data_fabric.adapters.postgis_adapter import PostGISAdapter
+
+        adapter = PostGISAdapter(conn_profile)
+        tile = await asyncio.to_thread(
+            adapter.serve_mvt_tile, item.name, z, x, y, timeout_s=30.0
+        )
+        fingerprint = item.fingerprint or "-"
+        if tile is None:
+            return None, fingerprint
+        gz = _gzip.compress(tile, 6, mtime=0)  # 确定性 gzip（ETag 稳定）
+        return gz, fingerprint
+
+    try:
+        gz, fingerprint = await _run_async_manager(_build)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"MVT tile build failed for '{item_id}' {z}/{x}/{y}: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail="瓦片生成失败")
+
+    if gz is None:
+        return Response(status_code=204)
+
+    _DF_TILE_CACHE.put(cache_key, (gz, fingerprint))
+    return _df_tile_response(gz, fingerprint, if_none_match)
 
 
 @router.post("/data-fabric/catalog/{item_id}/query", tags=["Data Fabric / 数据织网"])
