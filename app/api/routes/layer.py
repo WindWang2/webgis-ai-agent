@@ -207,7 +207,10 @@ def _encode_tile_cached(session_id: str, ref_id: str, z: int, x: int, y: int, da
     key = (session_id, ref_id)
     entry = spatial_index_cache.get_or_build(key, lambda: build_spatial_index_entry(key, data))
     raw = encode_tile_from_index(entry, z, x, y)
-    body = gzip.compress(raw)
+    # mtime=0: the ETag is sha256 of these gzip bytes — an embedded timestamp
+    # would change the ETag on every post-eviction recomputation of IDENTICAL
+    # content, degrading browser revalidation from 304 to full 200 refetches.
+    body = gzip.compress(raw, mtime=0)
     tile_lru_cache.put((session_id, ref_id, z, x, y), body)
     return body
 

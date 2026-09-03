@@ -2270,6 +2270,11 @@ async def _ensure_bridge_pool(extension_paths: Optional[list[str]] = None) -> Pi
         return _bridge_pool
     import os as _os
 
+    # REVIEW P2-1: pool routing is NOT wired into the production turn path yet
+    # (chat.py holds the lifespan-injected worker-0 reference; get_pi_bridge
+    # is never called with session_id). Values >1 spawn idle subprocesses and
+    # provide zero parallelism — keep 1 until the turn-acquisition seam is
+    # migrated (see ADR-0093 V5-B follow-up).
     size = max(1, int(_os.getenv("PI_BRIDGE_POOL_SIZE", "1")))
     bridges: list[PiBridge] = []
     try:
