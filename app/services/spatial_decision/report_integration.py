@@ -4,6 +4,7 @@ Extends report pipeline to compile structured SpatialDecisionResult and Scenario
 into publication-quality decision reports with high-resolution vector maps and audit lineage.
 """
 import logging
+from typing import Any
 from datetime import datetime, timezone
 
 from app.services.spatial_decision.models import (
@@ -130,3 +131,10 @@ def generate_comparison_report_markdown(comparison: ScenarioComparisonResult) ->
     lines.append(f"\n- **Pareto 非劣方案集合**: `{', '.join(comparison.pareto_optimal_scenarios)}`")
 
     return "\n".join(lines)
+
+
+def generate_v3_decision_report_markdown(result: Any) -> str:
+    """Generate comprehensive Markdown text for a SpatialDecisionResultV3."""
+    if hasattr(result, "report_markdown") and result.report_markdown:
+        return result.report_markdown
+    return "# 空间决策智能综合推演报告 (V3)\n无报告内容。"

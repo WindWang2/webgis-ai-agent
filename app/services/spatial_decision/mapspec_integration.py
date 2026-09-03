@@ -171,3 +171,57 @@ async def apply_comparison_to_mapspec(
     except Exception as exc:  # noqa: BLE001
         logger.warning("scenario comparison MapSpec authoring failed: %s", type(exc).__name__)
         return _authoring_unavailable(type(exc).__name__)
+
+
+async def apply_v3_decision_to_mapspec(
+    session_id: str,
+    result: Any,
+    lifecycle_engine: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """Ingest SpatialDecisionResultV3 through canonical MapSpec authoring."""
+    del lifecycle_engine
+    if not session_id:
+        return _authoring_unavailable("missing session_id")
+
+    prob = result.problem
+    rec = result.recommendation
+    layer_id = f"dec_v3_layer_{prob.problem_id}"
+    result_ref = getattr(result, "comparison_ref_id", "") or ""
+
+    layer_dict = {
+        "id": layer_id,
+        "name": f"{prob.goal} - 决策推演与选址分析图层",
+        "type": "polygon",
+        "source": layer_id,
+        "style": {
+            "color": {
+                "method": "match",
+                "field": "status",
+                "stops": [
+                    ["Recommended", "#10B981"],
+                    ["Feasible Candidate", "#3B82F6"],
+                    ["Infeasible (Violates Constraints)", "#EF4444"],
+                ],
+                "default": "#8B5CF6",
+            },
+            "opacity": 0.55,
+            "stroke_color": "#0F172A",
+            "stroke_width": 2.0,
+        },
+        "provenance": {
+            "tool": "spatial_decision_v3",
+            "problem_id": prob.problem_id,
+            "decision_fingerprint": rec.decision_fingerprint,
+            "result_ref": result_ref,
+        },
+    }
+    source_data: Any = result.comparison_geojson
+    try:
+        return await _upsert_decision_layer(
+            session_id=session_id,
+            layer=layer_dict,
+            source_data=source_data,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("spatial decision V3 MapSpec authoring failed: %s", type(exc).__name__)
+        return _authoring_unavailable(type(exc).__name__)
