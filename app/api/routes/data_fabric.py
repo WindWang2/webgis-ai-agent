@@ -551,6 +551,9 @@ async def list_spatial_catalog(
     source_id: Optional[str] = Query(None, description="Filter by source ID"),
     geometry_type: Optional[str] = Query(None, description="Filter by geometry type"),
     feature_type: Optional[str] = Query(None, description="Filter by feature type (vector/raster)"),
+    availability: Optional[str] = Query(
+        None, description="Filter by availability: 'available' | 'unavailable' (ADR-0094 §9)"
+    ),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     summary: bool = Query(
@@ -585,6 +588,10 @@ async def list_spatial_catalog(
             query = query.filter(CatalogItemModel.geometry_type.ilike(f"%{geometry_type}%"))
         if feature_type:
             query = query.filter(CatalogItemModel.feature_type == feature_type)
+        if availability:
+            # ADR-0094 §9：服务端 availability 过滤（unavailable = 数据集已从
+            # 源消失但保留元数据供 stale 检索）。
+            query = query.filter(CatalogItemModel.availability == availability)
         if q:
             kw = f"%{q}%"
             query = query.filter(
@@ -612,6 +619,7 @@ async def list_spatial_catalog(
                 "feature_type": item.feature_type,
                 "crs": item.crs,
                 "bbox": item.bbox_json,
+                "availability": getattr(item, "availability", "available"),
                 "updated_at": item.updated_at.isoformat() if item.updated_at else None,
             }
             if not summary:
