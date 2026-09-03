@@ -20,7 +20,13 @@ from app.schemas.data_fabric_schema import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_CHUNK_SIZE = 64 * 1024  # 64 KB chunk size for bounded memory footprint
-MAX_PREVIEW_BYTES = 512 * 1024  # 512 KB preview limit
+
+# 审计 minor-4：seam 的诚实边界声明 —— 仅对象/元数据列举，内容读取经
+# 格式适配器（geoparquet/pmtiles）的 s3:// 路径完成。
+_S3_SEAM_NOTE = (
+    "S3 seam lists objects/metadata only; content reads go through format "
+    "adapters (geoparquet/pmtiles) via s3:// URIs"
+)
 
 SYNTHETIC_S3_FIXTURES: Dict[str, Dict[str, Any]] = {
     "s3://geo-data-bucket/remote_sensing/sentinel2_beijing.parquet": {
@@ -305,13 +311,17 @@ class S3StorageSeam(GeospatialDataSourceAdapter):
         }
 
     def query(self, dataset_id: str, query_spec: QuerySpec) -> QueryResult:
-        """Execute bounded range request stream fetch on S3 object."""
+        """Execute bounded metadata query on S3 object (metadata-only seam).
+
+        审计 minor-4：本 seam 只列举对象/元数据，不读取内容字节 —— 旧的
+        ``bytes_read: max_bytes`` 是伪造的读取量声明。现在如实报告
+        ``bytes_read: 0`` 并附 note 说明内容读取经格式适配器（geoparquet/
+        pmtiles）走 s3:// URI。
+        """
         start_time = time.time()
         target_uri = dataset_id if dataset_id.startswith("s3://") else f"s3://geo-data-bucket/{dataset_id}"
         desc = self.describe(target_uri)
         meta = desc.metadata
-
-        max_bytes = min(query_spec.limit * 1024 if query_spec.limit else MAX_PREVIEW_BYTES, MAX_PREVIEW_BYTES)
 
         exec_time = round((time.time() - start_time) * 1000, 2)
         # Demo vs remote label: with no real endpoint configured the metadata is
@@ -319,12 +329,17 @@ class S3StorageSeam(GeospatialDataSourceAdapter):
         # probed remote object. With an endpoint configured, describe() is honest
         # (real head_object or a typed error), so "remote" is accurate — never
         # demo fixtures masquerading as remote data (#430).
-        src = "synthetic-demo" if (not self.endpoint or self.endpoint.startswith("s3://")) else "remote"
+        is_demo = not self.endpoint or self.endpoint.startswith("s3://")
+        src = "synthetic-demo" if is_demo else "remote"
         metadata = {
             "exec_time_ms": exec_time,
             "bounded_memory_stream": True,
             "chunk_size_bytes": DEFAULT_CHUNK_SIZE,
             "source": src,
+            "is_demo": is_demo,
+            # 审计 minor-4：诚实声明 —— 本调用未读取任何内容字节
+            "bytes_read": 0,
+            "note": _S3_SEAM_NOTE,
         }
         if meta.get("error"):
             # Surface the honest failure — empty result + typed error, no fake
@@ -339,12 +354,17 @@ class S3StorageSeam(GeospatialDataSourceAdapter):
                 "s3_uri": target_uri,
                 "bucket": meta.get("bucket", "geo-data-bucket"),
                 "key": meta.get("key", target_uri),
-                "bytes_read": max_bytes,
+                # 审计 minor-4：metadata-only seam —— 内容字节读取为 0（真实
+                # 内容读取经格式适配器的 s3:// 路径，见 note）
+                "bytes_read": 0,
                 "chunk_size": DEFAULT_CHUNK_SIZE,
                 "secret_sanitization": True,
+                "note": _S3_SEAM_NOTE,
             },
             total_count=1,
             returned_count=1,
+            result_mode="descriptor",
+            is_demo=is_demo,
             metadata=metadata,
         )
 

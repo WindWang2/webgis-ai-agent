@@ -60,11 +60,20 @@ def test_blocks_oversize_file(tmp_path):
 
 
 def test_guard_blocks_geoparquet_sensitive_path():
-    """The wired guard returns SECURITY_BLOCKED, never reads the file."""
+    """The wired guard raises typed SecurityBlockedError, never reads the file.
+
+    ADR-0094 Wave F: V2 adapters RAISE typed errors from query() instead of
+    returning in-band empty "successful" results — the guard contract moved
+    from metadata["error_type"] == "SECURITY_BLOCKED" to the typed raise
+    (same stable error code, now on the exception).
+    """
+    import pytest
+
     from app.schemas.data_fabric_schema import ConnectionProfile, QuerySpec
     from app.services.data_fabric.adapters.geoparquet_adapter import GeoParquetAdapter
+    from app.services.data_fabric.errors import SecurityBlockedError
 
     adapter = GeoParquetAdapter(ConnectionProfile(source_type="geoparquet", endpoint="/etc/passwd"))
-    res = adapter.query("/etc/passwd", QuerySpec(limit=5))
-    assert res.features == []
-    assert res.metadata["error_type"] == "SECURITY_BLOCKED"
+    with pytest.raises(SecurityBlockedError) as excinfo:
+        adapter.query("/etc/passwd", QuerySpec(limit=5))
+    assert excinfo.value.code == "SECURITY_BLOCKED"
