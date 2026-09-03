@@ -104,19 +104,21 @@ def register_spatial_stats_tools(registry: ToolRegistry):
 
     @tool(registry, name="kde_contours",
            description=(
-               "高斯核密度估计（等值面模式）：生成矢量等值线/面。"
-               "✅ 用于：制图与导出——平滑的等值面成果，便于叠加展示。"
+               "高斯核密度估计（等值线/等值面模式）：生成矢量等值线或等值面带（isoline_contour）。"
+               "✅ 用于：制图与导出——平滑的等值线或等值面成果，支持用户显式指定阈值列表（如 [100, 200, 300]）。"
                "\n❌ 不要用于：快速看分布趋势 — 用 heatmap_data。"
            ),
            tier=2, domains=["statistics"],
            param_descriptions={
                "geojson": "点要素集 GeoJSON 或引用(ref:xxx)",
-               "levels": "等值面级数，默认 8",
+               "levels": "等值面级数（整数，默认 8）或显式数值等级列表（如 [100, 200, 300]）",
                "bandwidth": "搜索半径（米），0表示自动",
+               "mode": "几何模式：'lines' (等值线) 或 'filled_bands' (等值面带，默认)",
+               "unit": "物理或统计单位，如 'm', 'people/km²'",
            })
     @cached_tool(ttl=86400)
-    def kde_contours(geojson: Any, levels: int = 8, bandwidth: float = 0) -> dict:
-        res = SpatialAnalyzer.kde_contours(geojson, levels=levels, bandwidth=bandwidth)
+    def kde_contours(geojson: Any, levels: Any = 8, bandwidth: float = 0, mode: str = "filled_bands", unit: str = "") -> dict:
+        res = SpatialAnalyzer.kde_contours(geojson, levels=levels, bandwidth=bandwidth, mode=mode, unit=unit)
         if not res.success:
             return std_error_response(
                 res.summary, code="VALIDATION_ERROR",

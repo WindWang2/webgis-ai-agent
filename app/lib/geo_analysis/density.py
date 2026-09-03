@@ -375,22 +375,24 @@ def kde_surface(
 
 def kde_contours(
     geojson: dict,
-    levels: int = 8,
+    levels: Any = 8,
     bandwidth: float = 0,
+    mode: str = "filled_bands",
+    unit: str = "",
 ) -> GeoAnalysisResult:
     """Gaussian KDE vector isarithmic contours.
 
     Args:
         geojson: input point FeatureCollection (WGS84).
-        levels: number of contour levels (default 8).
+        levels: number of contour levels (default 8) or explicit list of levels.
         bandwidth: search radius in meters; 0 = auto (Scott).
+        mode: geometry mode ('filled_bands' or 'lines').
+        unit: optional measurement unit string.
 
     Returns:
         ``GeoAnalysisResult`` whose ``data`` is a FeatureCollection of contour
-        polygons with ``level`` / ``density_value`` properties, plus
-        ``levels_count`` and (when features exist) ``legend_spec`` envelope keys.
-        The ``legend_spec`` (continuous: min/max + palette) is read by the
-        cartography converters as an analysis marker.
+        polygons or lines with ``level``, ``density_value``, ``value``, ``label``,
+        and ``legend_spec``.
     """
     try:
         import matplotlib
@@ -439,70 +441,103 @@ def kde_contours(
     positions = np.vstack([X.ravel(), Y.ravel()])
     Z = np.reshape(_evaluate_kde(kde, positions).T, X.shape)
 
+    # Resolve levels
+    if isinstance(levels, (list, tuple)):
+        clean_levels = sorted(list({float(x) for x in levels if not (math.isnan(x) or math.isinf(x))}))
+        resolved_levels = clean_levels if len(clean_levels) >= 2 else 8
+    else:
+        resolved_levels = int(levels) if isinstance(levels, (int, float)) else 8
+
     fig, ax = plt.subplots()
-    cs = ax.contourf(X, Y, Z, levels=levels)
-    plt.close(fig)
-
     out_features = []
-    from shapely.geometry import Polygon
+    from shapely.geometry import LineString, Polygon
     from shapely.ops import unary_union
-    raw_polys = []  # (poly, val, level_idx) - batch CRS transform after loop
-    for i, segs in enumerate(cs.allsegs):
-        val = float(cs.levels[i])
-        level_polys = []
-        for poly_coords in segs:
-            if len(poly_coords) < 3:
-                continue
-            poly = Polygon(poly_coords)
-            if not poly.is_valid:
-                poly = poly.buffer(0)
-            if not poly.is_empty and poly.area > 0:
-                level_polys.append(poly)
-        # #707: contourf band boundaries include the boundaries of enclosed
-        # holes — emitting every segment as an independent filled polygon
-        # paints enclosed local minima (e.g. a POI ring around a park) at the
-        # band's density level. Rebuild each level's region with even-odd
-        # containment so holes stay holes.
-        if not level_polys:
-            continue
-        level_polys.sort(key=lambda p: p.area, reverse=True)
-        outers, inners = [], []
-        # #762: parent of each hole = its smallest containing polygon. A global
-        # `union(outers).difference(union(inners))` subtracts every hole from
-        # ALL outers, erasing even-depth islands geometrically inside a hole
-        # (an enclosed secondary cluster inside a moat) — even-odd requires
-        # subtracting each inner only from its immediate parent.
-        inner_parent: dict[int, Any] = {}
-        for idx, poly in enumerate(level_polys):
-            containers = [prev for prev in level_polys[:idx] if prev.contains(poly)]
-            depth = len(containers)
-            if depth % 2 == 0:
-                outers.append(poly)
-            else:
-                inners.append(poly)
-                inner_parent[id(poly)] = min(containers, key=lambda p: p.area)
-        if not outers:
-            continue
-        region = unary_union([
-            o.difference(unary_union([i for i in inners if inner_parent[id(i)] is o]))
-            for o in outers
-        ])
-        for geom in getattr(region, "geoms", [region]):
-            if not geom.is_empty and getattr(geom, "area", 0) > 0:
-                raw_polys.append((geom, val, i))
 
-    # Batch CRS transform: one GeoSeries instead of N per-polygon calls
-    if raw_polys:
-        gs = gpd.GeoSeries([p for p, _, _ in raw_polys], crs=utm_crs).to_crs("EPSG:4326")
-        for (poly, val, level_idx), poly_wgs84 in zip(raw_polys, gs):
-            out_features.append({
-                "type": "Feature",
-                "geometry": mapping(poly_wgs84),
-                # BUGFIX: previously `level: i` leaked the final loop value of
-                # the enumerate(cs.allsegs) loop, assigning the same (last)
-                # level index to every feature. Carry the per-polygon level_idx.
-                "properties": {"level": level_idx, "density_value": val},
-            })
+    if mode == "lines":
+        cs = ax.contour(X, Y, Z, levels=resolved_levels)
+        plt.close(fig)
+        raw_lines = []
+        for i, segs in enumerate(cs.allsegs):
+            val = float(cs.levels[i])
+            is_index = bool((i + 1) % 5 == 0)
+            for line_coords in segs:
+                if len(line_coords) < 2:
+                    continue
+                ls = LineString(line_coords)
+                if not ls.is_empty and ls.length > 0:
+                    raw_lines.append((ls, val, i, is_index))
+        if raw_lines:
+            gs = gpd.GeoSeries([line for line, _, _, _ in raw_lines], crs=utm_crs).to_crs("EPSG:4326")
+            for (line, val, level_idx, is_idx), line_wgs84 in zip(raw_lines, gs):
+                label_str = f"{val:g} {unit}".strip()
+                out_features.append({
+                    "type": "Feature",
+                    "geometry": mapping(line_wgs84),
+                    "properties": {
+                        "level": level_idx,
+                        "density_value": val,
+                        "value": val,
+                        "unit": unit,
+                        "label": label_str,
+                        "is_index_contour": is_idx,
+                        "line_width": 3.0 if is_idx else 1.5,
+                        "layer_kind": "contour_line",
+                    },
+                })
+    else:
+        cs = ax.contourf(X, Y, Z, levels=resolved_levels)
+        plt.close(fig)
+        raw_polys = []
+        for i, segs in enumerate(cs.allsegs):
+            val = float(cs.levels[i])
+            level_polys = []
+            for poly_coords in segs:
+                if len(poly_coords) < 3:
+                    continue
+                poly = Polygon(poly_coords)
+                if not poly.is_valid:
+                    poly = poly.buffer(0)
+                if not poly.is_empty and poly.area > 0:
+                    level_polys.append(poly)
+            if not level_polys:
+                continue
+            level_polys.sort(key=lambda p: p.area, reverse=True)
+            outers, inners = [], []
+            inner_parent: dict[int, Any] = {}
+            for idx, poly in enumerate(level_polys):
+                containers = [prev for prev in level_polys[:idx] if prev.contains(poly)]
+                depth = len(containers)
+                if depth % 2 == 0:
+                    outers.append(poly)
+                else:
+                    inners.append(poly)
+                    inner_parent[id(poly)] = min(containers, key=lambda p: p.area)
+            if not outers:
+                continue
+            region = unary_union([
+                o.difference(unary_union([inp for inp in inners if inner_parent[id(inp)] is o]))
+                for o in outers
+            ])
+            for geom in getattr(region, "geoms", [region]):
+                if not geom.is_empty and getattr(geom, "area", 0) > 0:
+                    raw_polys.append((geom, val, i))
+
+        if raw_polys:
+            gs = gpd.GeoSeries([p for p, _, _ in raw_polys], crs=utm_crs).to_crs("EPSG:4326")
+            for (poly, val, level_idx), poly_wgs84 in zip(raw_polys, gs):
+                label_str = f"{val:g} {unit}".strip()
+                out_features.append({
+                    "type": "Feature",
+                    "geometry": mapping(poly_wgs84),
+                    "properties": {
+                        "level": level_idx,
+                        "density_value": val,
+                        "value": val,
+                        "unit": unit,
+                        "label": label_str,
+                        "layer_kind": "filled_contour_band",
+                    },
+                })
 
     # compute continuous legend_spec from contour level values
     legend_spec = None
@@ -514,12 +549,6 @@ def kde_contours(
         ]
         if level_vals:
             try:
-                # ADR-0078: route through the canonical continuous builder so the
-                # legend carries `field` (the live map's interpolate needs it) and
-                # the ramp resolves through one path — replacing the hand-built
-                # palette_colors[:5] truncation + missing-field drift. The builder
-                # accepts a flat domain (min==max) so a degenerate KDE still gets
-                # a legend overlay (paint falls back to constant).
                 from app.lib.cartography.thematic_spec import build_continuous_spec
                 legend_spec = build_continuous_spec(
                     min(level_vals), max(level_vals), "Viridis", field="density_value",
@@ -532,9 +561,17 @@ def kde_contours(
         "features": out_features,
         "count": len(out_features),
         "levels_count": len(cs.levels),
+        "type_hint": "isoline_contour",
+        "metadata": {
+            "isoline": {
+                "model": "isoline_contour",
+                "levels": [float(x) for x in cs.levels],
+                "unit": unit,
+                "mode": mode,
+            }
+        },
     }
     if n_points_used < n_points_total:
-        # #384: input was subsampled to the point cap; say so on the envelope.
         fc["sampled_points"] = {"used": n_points_used, "total": n_points_total}
     if legend_spec is not None:
         fc["legend_spec"] = legend_spec
