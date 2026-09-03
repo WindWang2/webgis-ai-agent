@@ -831,3 +831,116 @@ async def test_chat_completions_affinity_minting_for_none_session(pool2, monkeyp
     assert len(prompt_calls[w1.name]) > 0, "worker 1 received no turns (pool starved!)"
     assert len(prompt_calls[w0.name]) + len(prompt_calls[w1.name]) == 20
 
+
+@pytest.mark.asyncio
+async def test_chat_completions_message_persistence_saves_user_and_assistant(pool2, monkeypatch):
+    """Regression test: chat_completions message persistence must call
+    AsyncHistoryService.get_or_create_conversation with valid kwargs (only session_id
+    and user_id, without unexpected 'title' or 'project_id' kwargs), execute without
+    TypeError, and persist both user and assistant messages.
+    """
+    from contextlib import asynccontextmanager
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    from app.api.routes.chat import chat_completions, ChatRequest
+    from app.models.db_model import Base, Conversation, Message
+    from app.services.history_service_async import AsyncHistoryService
+
+    # Set up in-memory SQLite database
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    session_factory = async_sessionmaker(bind=engine, expire_on_commit=False)
+
+    @asynccontextmanager
+    async def fake_async_db_session():
+        async with session_factory() as db:
+            try:
+                yield db
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                raise
+
+    monkeypatch.setattr(chat_mod, "USE_NEW_AGENT", True)
+    monkeypatch.setattr(
+        chat_mod, "_record_frontend_cartographic_observation", AsyncMock()
+    )
+    monkeypatch.setattr(
+        chat_mod, "_build_cartography_turn_context", AsyncMock(return_value="")
+    )
+    monkeypatch.setattr(
+        chat_mod, "_build_environment_turn_context", MagicMock(return_value="")
+    )
+    monkeypatch.setattr(chat_mod, "harvest_project_memory", AsyncMock())
+    monkeypatch.setattr(chat_mod, "async_db_session", fake_async_db_session)
+
+    w0 = pool2.bridges[0]
+    w0.prompt = AsyncMock(return_value={"sessionId": "persisted-sid-1", "content": "Assistant answer on GIS"})
+
+    # Spy on AsyncHistoryService.get_or_create_conversation to verify exact keyword arguments
+    spy_calls = []
+    real_get_or_create = AsyncHistoryService.get_or_create_conversation
+
+    async def spy_get_or_create(self, session_id, user_id=None, **kwargs):
+        spy_calls.append({"session_id": session_id, "user_id": user_id, "kwargs": kwargs})
+        # If unexpected keyword arguments were passed, real_get_or_create will raise TypeError
+        return await real_get_or_create(self, session_id, user_id=user_id, **kwargs)
+
+    monkeypatch.setattr(AsyncHistoryService, "get_or_create_conversation", spy_get_or_create)
+
+    # Capture log warnings to ensure no persistence failure occurred
+    logged_warnings = []
+    original_warning = chat_mod.logger.warning
+
+    def capture_warning(msg, *args, **kwargs):
+        formatted = msg % args if args else msg
+        logged_warnings.append(formatted)
+        original_warning(msg, *args, **kwargs)
+
+    monkeypatch.setattr(chat_mod.logger, "warning", capture_warning)
+
+    test_sid = "persisted-sid-1"
+    user_msg = "Please render buffer zone for Shenzhen"
+    req = ChatRequest(message=user_msg, session_id=test_sid)
+
+    async with session_factory() as request_db:
+        resp = await chat_completions(
+            req,
+            request=MagicMock(),
+            _user={"user_id": "test-user-persist"},
+            owner_token=None,
+            db=request_db,
+        )
+
+    assert resp.session_id == test_sid
+    assert resp.content == "Assistant answer on GIS"
+
+    # Verify get_or_create_conversation was called without invalid kwargs
+    assert len(spy_calls) == 1
+    assert spy_calls[0]["session_id"] == test_sid
+    assert spy_calls[0]["user_id"] == "test-user-persist"
+    assert "title" not in spy_calls[0]["kwargs"]
+    assert "project_id" not in spy_calls[0]["kwargs"]
+    assert spy_calls[0]["kwargs"] == {}
+
+    # Verify no persistence failure was logged
+    persistence_errors = [w for w in logged_warnings if "message persistence failed" in w]
+    assert not persistence_errors, f"Persistence error was logged: {persistence_errors}"
+
+    # Verify database contents directly: conversation and both messages must be saved
+    async with session_factory() as db:
+        conv = await db.get(Conversation, test_sid)
+        assert conv is not None, "Conversation row was not created in DB!"
+
+        stmt = select(Message).where(Message.conversation_id == test_sid).order_by(Message.id)
+        result = await db.execute(stmt)
+        messages = result.scalars().all()
+
+        assert len(messages) == 2, f"Expected 2 messages saved, found {len(messages)}"
+        assert messages[0].role == "user"
+        assert messages[0].content == user_msg
+        assert messages[1].role == "assistant"
+        assert messages[1].content == "Assistant answer on GIS"
+
+

@@ -793,8 +793,6 @@ async def chat_completions(
                         await svc.get_or_create_conversation(
                             pi_session_id,
                             user_id=user_id,
-                            title=req.message[:30] if req.message else "新对话",
-                            project_id=req.project_id,
                         )
                         await svc.save_message(pi_session_id, "user", req.message)
                         if final_content:
