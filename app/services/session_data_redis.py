@@ -491,6 +491,9 @@ class RedisSessionStore(BaseSessionStore):
                 return cached
 
             data_key = self._data_key(session_id, ref_id)
+            # M7：读取源前捕获失效 epoch；解析耗时窗口内若发生
+            # overwrite/delete（invalidate 递增 epoch），旧 payload 不再入缓存。
+            epoch = ref_payload_cache.current_epoch(session_id, ref_id)
             raw = await self._r.get(data_key)
             if raw is None:
                 return None
@@ -499,7 +502,7 @@ class RedisSessionStore(BaseSessionStore):
                 data = await asyncio.to_thread(json.loads, raw_str)
             except Exception:  # noqa: BLE001 非 JSON payload 原样返回（与 get() 同语义），不入缓存
                 return raw_str
-            ref_payload_cache.put(session_id, ref_id, data, len(raw_str))
+            ref_payload_cache.put_if_current(session_id, ref_id, data, len(raw_str), epoch)
 
             # Best-effort TTL/recency 刷新（仅 miss 路径；失败不转为 miss）。
             try:

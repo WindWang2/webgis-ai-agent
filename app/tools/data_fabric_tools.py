@@ -89,6 +89,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
     async def connect_data_source(
         profile_id: str,
         source_type: str,
+        session_id: Optional[str] = None,
         url: Optional[str] = None,
         host: Optional[str] = None,
         port: Optional[int] = None,
@@ -123,7 +124,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
                 allow_private=False,
             )
 
-            connected_profile, adapter = connection_manager.connect(profile)
+            connected_profile, adapter = connection_manager.connect(profile, owner=session_id)
             sanitized_profile = DataFabricSecurity.sanitize_profile_dict(connected_profile.model_dump())
             health = data_fabric_health_check.check_health(adapter)
             datasets = adapter.list_datasets()
@@ -153,10 +154,10 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "profile_id": "要检查的数据源连接 profile_id",
         },
         execution_policy=ToolExecutionPolicy.ASYNC)
-    async def inspect_data_source(profile_id: str) -> dict:
+    async def inspect_data_source(profile_id: str, session_id: Optional[str] = None) -> dict:
         """检查数据源健康度与能力清单"""
         def _sync_run():
-            adapter = connection_manager.get_adapter(profile_id)
+            adapter = connection_manager.get_adapter(profile_id, owner=session_id)
             if not adapter:
                 profile = connection_manager.get_profile(profile_id)
                 if not profile:
@@ -241,13 +242,13 @@ def register_data_fabric_tools(registry: ToolRegistry):
         # a THREAD contract, not INLINE (<5ms event-loop budget).
         execution_policy=ToolExecutionPolicy.THREAD,
     )
-    def describe_dataset(dataset_id: str, profile_id: Optional[str] = None) -> dict:
+    def describe_dataset(dataset_id: str, profile_id: Optional[str] = None, session_id: Optional[str] = None) -> dict:
         """获取数据集 Schema 描述与 Fingerprint"""
         desc = spatial_catalog_service.get_dataset(dataset_id)
-        pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id)
+        pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id, owner=session_id)
 
         if not desc and pid:
-            adapter = connection_manager.get_adapter(pid)
+            adapter = connection_manager.get_adapter(pid, owner=session_id)
             if adapter:
                 desc = adapter.describe(dataset_id)
 
@@ -318,11 +319,12 @@ def register_data_fabric_tools(registry: ToolRegistry):
         cursor: Optional[str] = None,
         sample_size: Optional[int] = None,
         profile_id: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> dict:
         """执行 QuerySpec 下推查询"""
         def _sync_run():
-            pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id)
-            adapter = connection_manager.get_adapter(pid) if pid else None
+            pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id, owner=session_id)
+            adapter = connection_manager.get_adapter(pid, owner=session_id) if pid else None
 
             if not adapter:
                 # Do NOT fabricate a geojson mock adapter — that would serve
@@ -426,8 +428,8 @@ def register_data_fabric_tools(registry: ToolRegistry):
         profile_id: Optional[str] = None,
     ) -> dict:
         """数据下推查询与本地物化流水线 (生成 ref_id)"""
-        pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id)
-        adapter = connection_manager.get_adapter(pid) if pid else None
+        pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id, owner=session_id)
+        adapter = connection_manager.get_adapter(pid, owner=session_id) if pid else None
 
         if not adapter:
             # Do NOT fabricate a geojson mock adapter and materialize synthetic
@@ -477,14 +479,14 @@ def register_data_fabric_tools(registry: ToolRegistry):
         },
         execution_policy=ToolExecutionPolicy.ASYNC,
     )
-    async def refresh_data_source(profile_id: str) -> dict:
+    async def refresh_data_source(profile_id: str, session_id: Optional[str] = None) -> dict:
         """刷新数据源缓存与 Catalog 索引"""
         def _sync_run():
-            adapter = connection_manager.get_adapter(profile_id)
+            adapter = connection_manager.get_adapter(profile_id, owner=session_id)
             if not adapter:
                 raise RuntimeError(f"Connection profile '{profile_id}' not found. Cannot refresh.")
 
-            sync_details = adapter.sync()
+            sync_details = adapter.sync(owner=session_id)
             health = data_fabric_health_check.check_health(adapter)
 
             return {
@@ -523,11 +525,12 @@ def register_data_fabric_tools(registry: ToolRegistry):
         limit: int = 100,
         result_mode: Optional[str] = None,
         profile_id: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> dict:
         """explain（dry-run）"""
         def _sync_run():
-            pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id)
-            adapter = connection_manager.get_adapter(pid) if pid else None
+            pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id, owner=session_id)
+            adapter = connection_manager.get_adapter(pid, owner=session_id) if pid else None
             if not adapter:
                 return {
                     "status": "error",
@@ -600,11 +603,12 @@ def register_data_fabric_tools(registry: ToolRegistry):
         bbox: Optional[list[float]] = None,
         where: Optional[str] = None,
         profile_id: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> dict:
         """聚合统计（STATISTICS 结果模式）"""
         def _sync_run():
-            pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id)
-            adapter = connection_manager.get_adapter(pid) if pid else None
+            pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id, owner=session_id)
+            adapter = connection_manager.get_adapter(pid, owner=session_id) if pid else None
             if not adapter:
                 return {
                     "status": "error", "error_type": UNSUPPORTED_SOURCE,
@@ -670,6 +674,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
         where_right: Optional[str] = None,
         left_profile_id: Optional[str] = None,
         right_profile_id: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> dict:
         """受控联邦查询"""
         from app.services.data_fabric.query.federation import (
@@ -678,8 +683,8 @@ def register_data_fabric_tools(registry: ToolRegistry):
         )
 
         def _adapter_of(dataset_id: str, profile_id: Optional[str]):
-            pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id)
-            return (pid, connection_manager.get_adapter(pid)) if pid else (pid, None)
+            pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id, owner=session_id)
+            return (pid, connection_manager.get_adapter(pid, owner=session_id)) if pid else (pid, None)
 
         def _sync_run():
             lp, left_adapter = _adapter_of(left_dataset_id, left_profile_id)

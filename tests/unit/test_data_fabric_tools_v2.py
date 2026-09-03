@@ -124,7 +124,7 @@ def test_query_federated_data_tool(v2_catalog):
          "properties": {"name": "金牛", "pop": 100}},
     ], total_count=1))
     with patch("app.tools.data_fabric_tools.connection_manager") as cm:
-        cm.get_adapter.side_effect = lambda pid: {"pg1": left, "pg2": right}.get(pid)
+        cm.get_adapter.side_effect = lambda pid, owner=None: {"pg1": left, "pg2": right}.get(pid)
         res = _run(reg, "query_federated_data",
                    left_dataset_id="schools", right_dataset_id="districts",
                    spatial_op="within", group_by_right=["name"],

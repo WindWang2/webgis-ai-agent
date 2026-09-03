@@ -1,8 +1,11 @@
 """
 Geospatial Data Fabric: Base Adapter Seam & Unified Architecture
 """
+import logging
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any
+
+logger = logging.getLogger(__name__)
 from app.schemas.data_fabric_schema import (
     DatasetDescriptor,
     QuerySpec,
@@ -56,8 +59,12 @@ class GeospatialDataSourceAdapter(ABC):
         """Return diagnostic health check object."""
         pass
 
-    def sync(self) -> Dict[str, Any]:
-        """Metadata sync / cache refresh routine registering discovered datasets into SpatialCatalogService."""
+    def sync(self, owner=None) -> Dict[str, Any]:
+        """Metadata sync / cache refresh routine registering discovered datasets into SpatialCatalogService.
+
+        ``owner``（ADR-0094 §10 / 审计 C4）：目录条目的会话作用域；None=全局
+        legacy 语义。describe 失败的条目跳过（不再吞异常后注册残缺 stub）。
+        """
         from app.services.data_fabric.spatial_catalog import spatial_catalog_service
         datasets = self.list_datasets()
         synced_count = 0
@@ -67,8 +74,12 @@ class GeospatialDataSourceAdapter(ABC):
                 try:
                     desc = self.describe(did)
                     if desc:
-                        spatial_catalog_service.register_dataset(desc, profile_id=self.profile.id)
+                        spatial_catalog_service.register_dataset(
+                            desc, profile_id=self.profile.id, owner=owner
+                        )
                         synced_count += 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(
+                        "[DataFabricAdapter] sync describe failed for '%s': %s", did, e
+                    )
         return {"status": "synced", "count": synced_count, "profile_id": self.profile.id}

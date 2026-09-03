@@ -129,6 +129,25 @@ class DataFabricSecurity:
             # bucket name cannot smuggle through a private endpoint.
             if hostname_lower in BLOCKED_HOSTNAMES:
                 raise DataFabricSecurityError(f"SSRF Protection: hostname '{hostname}' is blocked")
+            # F-5 修复（ADR-0094 §10）：s3/minio endpoint 携带端口或非 bucket 形态
+            # 主机（MinIO/Wasabi 自建 endpoint）时，与 http 相同的
+            # literal-IP/解析 IP 门控必须生效——此前 `s3://169.254.169.254/bucket`
+            # 直接放行。bucket 名（无点、无端口、非常量 IP）不解析。
+            host_looks_like_endpoint = (
+                parsed.port is not None or "." in hostname_lower
+            )
+            literal_ip = DataFabricSecurity._try_parse_ip(hostname)
+            if literal_ip is not None and not allow_private:
+                if _is_blocked_ip(literal_ip):
+                    raise DataFabricSecurityError(
+                        f"SSRF Protection: Access to private IP '{hostname}' is blocked"
+                    )
+            elif host_looks_like_endpoint and not allow_private:
+                for ip_str in DataFabricSecurity._resolve_all(hostname):
+                    if _is_blocked_ip(ip_str):
+                        raise DataFabricSecurityError(
+                            f"SSRF Protection: hostname '{hostname}' resolves to blocked IP '{ip_str}'"
+                        )
             return url
 
         if not allow_private:
@@ -230,7 +249,14 @@ class DataFabricSecurity:
         in plaintext on every egress response. Lists of dicts are recursed per
         element; non-dict values are left untouched.
         """
-        sensitive_keys = {"password", "secret", "secret_key", "token", "api_key", "access_key", "credential"}
+        # 审计 F-2（ADR-0094 §10）：补齐常见凭证键（Authorization/x-api-key/
+        # apikey/passwd/pwd/private_key/client_secret）；headers 子树整体视为
+        # 敏感（认证头无法穷举键名）。
+        sensitive_keys = {
+            "password", "secret", "secret_key", "token", "api_key", "access_key",
+            "credential", "authorization", "auth", "x-api-key", "apikey",
+            "passwd", "pwd", "private_key", "client_secret", "session_token",
+        }
 
         def _redact(value: Any) -> Any:
             if isinstance(value, dict):

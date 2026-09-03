@@ -185,18 +185,39 @@ def _run_sync_orm(fn):
     return asyncio.to_thread(_worker)
 
 
-def _run_async_manager(fn):
-    """Run an async data_fabric manager call (``fn(session) -> coroutine``) in
-    a worker thread's own event loop with its own SessionLocal().
+# C3 修复（ADR-0094 §10 / 审计）：此前每个请求 ``asyncio.run`` 新建事件循环，
+# 与 loop-绑定的 RedisSessionDataManager 单例相互竞争（并发时 _ensure_connected
+# 无锁 aclose 他人正在 await 的客户端 → 普通并发负载下物化误报 redis-unavailable）。
+# 现在全部 manager 协程跑在一个常驻 worker loop 上：Redis 客户端绑定一次即稳定。
+_MANAGER_LOOP: Optional[asyncio.AbstractEventLoop] = None
+_MANAGER_LOOP_LOCK = threading.Lock()
 
-    Mirrors project.py's _run_workflow_engine (#386): the manager methods do
-    sync SQLAlchemy I/O on the session (lookups / commit), so they must not
-    run on the app event loop; the session-data store is loop-change resilient
-    by design (session_data_redis recreates its client when the loop changes).
+
+def _get_manager_loop() -> asyncio.AbstractEventLoop:
+    global _MANAGER_LOOP
+    with _MANAGER_LOOP_LOCK:
+        if _MANAGER_LOOP is None or _MANAGER_LOOP.is_closed():
+            loop = asyncio.new_event_loop()
+            t = threading.Thread(target=loop.run_forever, daemon=True, name="df-manager-loop")
+            t.start()
+            _MANAGER_LOOP = loop
+        return _MANAGER_LOOP
+
+
+def _run_async_manager(fn):
+    """Run an async data_fabric manager call (``fn(session) -> coroutine``) on
+    the shared manager event loop with its own SessionLocal().
+
+    Manager 方法在 session 上做同步 SQLAlchemy I/O，不能跑应用主循环；协程
+    经 run_coroutine_threadsafe 提交到常驻 df-manager-loop（会话对象自 worker
+    线程顺序移交，无并发访问）。
     """
+    loop = _get_manager_loop()
+
     def _worker():
         with SessionLocal() as thread_db:
-            return asyncio.run(fn(thread_db))
+            fut = asyncio.run_coroutine_threadsafe(fn(thread_db), loop)
+            return fut.result(timeout=600)
 
     return asyncio.to_thread(_worker)
 
