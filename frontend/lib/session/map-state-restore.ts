@@ -253,7 +253,12 @@ export function syncSpecLayersToStore(
       legend_spec: layer?.legend_spec,
       _mapspecLayerId: id,
       _tileUrl: refId && sessionId
-        ? buildMvtTileUrl(refId, sessionId, layer?._descriptor?.content_revision)
+        ? buildMvtTileUrl(refId, sessionId,
+            // P3-1: spec-restore has no HUD descriptor — read the revision the
+            // backend stamps onto the MapSpec source entry (pipeline.py).
+            (typeof source?.content_revision === 'number'
+              ? source.content_revision
+              : layer?._descriptor?.content_revision))
         : undefined,
     });
     known.add(id);

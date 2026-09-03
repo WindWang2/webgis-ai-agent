@@ -32,6 +32,8 @@ def process_layer_ingestion(
     layer: Dict[str, Any],
     source_data: Optional[Any] = None,
     session_dir: Optional[Path] = None,
+    session_id: Optional[str] = None,
+    ref_content_revisions: Optional[Dict[str, int]] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any], Optional[Dict[str, Any]]]:
     """处理图层转换与封装逻辑 (支持 GeoJSON, Raster, DataFabric 延迟/实例化源)"""
     processed_layer = dict(layer)
@@ -114,6 +116,21 @@ def process_layer_ingestion(
         source_entry["data_fingerprint"] = (
             "ref-sha256:" + hashlib.sha256(result_ref.encode()).hexdigest()
         )
+
+    # P3-1: stamp the ref's content_revision (V5-E) onto ref-carrying source
+    # entries so the frontend session-restore/mirror path can build revisioned
+    # tile URLs (v=<revision>) even for layers reconstructed purely from a
+    # committed MapSpec — same contract as the SSE descriptor path.
+    _ref_for_rev = source_entry.get("ref_id") or source_entry.get("ref")
+    if (
+        isinstance(_ref_for_rev, str)
+        and _ref_for_rev.startswith("ref:")
+        and ref_content_revisions
+        and _ref_for_rev in ref_content_revisions
+    ):
+        # Sync function (runs in to_thread): the async caller pre-fetches the
+        # revisions for the refs it knows about and passes them in.
+        source_entry["content_revision"] = int(ref_content_revisions[_ref_for_rev])
 
     suggested_view: Optional[Dict[str, Any]] = None
     if is_raster_entry(source_entry) or is_data_fabric_entry(source_entry):

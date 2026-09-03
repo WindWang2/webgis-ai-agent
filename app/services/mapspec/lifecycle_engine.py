@@ -784,11 +784,32 @@ class MapSpecLifecycleEngine:
                     mapspec["view"] = dict(loaded.get("view", {})) if loaded else {}
                     
                     session_dir = self.store.get_session_dir(session_id)
+                    # P3-1: pre-fetch content revisions (V5-E) for any ref the
+                    # ingestion may stamp onto the source entry — the sync
+                    # ingestion runs in a worker thread and cannot await.
+                    _ref_revs: dict = {}
+                    try:
+                        for _v in (intent.source_data, intent.layer.get("provenance")):
+                            _r = (
+                                _v.get("ref_id") or _v.get("result_ref")
+                                if isinstance(_v, dict) else None
+                            )
+                            if isinstance(_r, str) and _r.startswith("ref:"):
+                                _d = await session_data_manager.get_ref_descriptor(
+                                    session_id, _r
+                                )
+                                if isinstance(_d, dict) and isinstance(
+                                    _d.get("content_revision"), int
+                                ):
+                                    _ref_revs[_r] = _d["content_revision"]
+                    except Exception as e:  # noqa: BLE001 — stamping is advisory
+                        logger.debug("content_revision prefetch skipped: %s", e)
                     # 卸载重计算（GeoJSON profiling / raster PNG 渲染）到线程，
                     # 释放 event loop 给其它 session 的 I/O（REL-07）。
                     processed_layer, source_entry, suggested_view = await asyncio.to_thread(
                         process_layer_ingestion,
                         mapspec, intent.layer, intent.source_data, session_dir,
+                        ref_content_revisions=_ref_revs,
                     )
                     source_id = processed_layer.get("source", "default_source")
                     mapspec["sources"][source_id] = source_entry

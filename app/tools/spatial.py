@@ -291,10 +291,15 @@ def register_spatial_tools(registry: ToolRegistry):
 
         # raster/grid：分析密度路径，带宽按米消费（sigma = bandwidth / cell_size）
         bandwidth = contract.bandwidth_m
+        # P3-3: the density grid math is WGS84-degree based — forward the
+        # declared CRS (from the parsed FC) so projected input is reprojected
+        # instead of silently consumed as degrees.
+        from app.lib.geo_processor.core import extract_declared_crs
+        declared_crs = extract_declared_crs(data)
         try:
             from app.services.spatial_tasks import run_heatmap_generation
             task = run_heatmap_generation.apply_async(
-                kwargs={"features": features, "cell_size": cell_size, "radius": bandwidth, "render_type": render_type, "palette": palette}
+                kwargs={"features": features, "cell_size": cell_size, "radius": bandwidth, "render_type": render_type, "palette": palette, "declared_crs": declared_crs}
             )
             result = task.get(timeout=120)
         except Exception as exc:  # noqa: BLE001
@@ -302,7 +307,7 @@ def register_spatial_tools(registry: ToolRegistry):
             # Any Celery failure (ImportError, broker down, TimeoutError, WorkerLostError)
             # degrades gracefully to an in-process fallback.
             logger.warning(f"[heatmap_data] Celery fallback triggered: {type(exc).__name__}: {exc}")
-            result = generate_heatmap_raster(features, cell_size, bandwidth, render_type, palette)
+            result = generate_heatmap_raster(features, cell_size, bandwidth, render_type, palette, declared_crs)
         
         if result.get("success"):
             res_data = result.get("data")

@@ -40,7 +40,7 @@ from app.lib.geo_analysis.heatmap_grid import (  # noqa: F401
 
 
 
-def _do_heatmap_generation(features: List[Dict], cell_size: int = 500, radius: int = 1000, render_type: str = "raster", palette: str = "classic"):
+def _do_heatmap_generation(features: List[Dict], cell_size: int = 500, radius: int = 1000, render_type: str = "raster", palette: str = "classic", declared_crs: str | None = None):
     """Celery 路径的热力图入口：委托 density.generate_heatmap_raster。
 
     审计发现此前这里硬编码 ``plt.get_cmap('YlOrRd')``，palette 参数被忽略且
@@ -51,7 +51,7 @@ def _do_heatmap_generation(features: List[Dict], cell_size: int = 500, radius: i
     # lazy import：density 反向 lazy import 本模块的网格辅助函数，避免 import 环
     from app.lib.geo_analysis.density import generate_heatmap_raster
 
-    result = generate_heatmap_raster(features, cell_size, radius, render_type, palette)
+    result = generate_heatmap_raster(features, cell_size, radius, render_type, palette, declared_crs)
     if "error" in result and not result.get("success"):
         # density 的空点集分支只返回 {"error": ...}，补上 Celery 结果消费方
         # 依赖的 success=False 语义
@@ -68,8 +68,8 @@ def _do_heatmap_generation(features: List[Dict], cell_size: int = 500, radius: i
 #   - run_change_detection    (change_detection.py 经 submit_durable_job)
 
 @celery_app.task(name="app.services.spatial_tasks.run_heatmap_generation", bind=True)
-def run_heatmap_generation(self, features: List[Dict], cell_size: int = 500, radius: int = 1000, render_type: str = "raster", palette: str = "classic"):
-    return _do_heatmap_generation(features, cell_size, radius, render_type, palette)
+def run_heatmap_generation(self, features: List[Dict], cell_size: int = 500, radius: int = 1000, render_type: str = "raster", palette: str = "classic", declared_crs: str | None = None):
+    return _do_heatmap_generation(features, cell_size, radius, render_type, palette, declared_crs)
 
 # --- 自然资源与遥感任务 ---
 
