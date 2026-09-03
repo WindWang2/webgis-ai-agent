@@ -214,3 +214,39 @@ async def test_p7_compact_small_documents():
     for doc in ({"a": 1}, {}, [], {"features": [], "type": "FeatureCollection"}):
         expected = json.dumps(doc, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         assert await serialize_geojson(doc, pretty=False) == expected
+
+
+def test_p5_tile_gzip_deterministic_no_mtime():
+    """Prerelease review P2-2: tile gzip must embed no timestamp.
+
+    The tile ETag is sha256 of the gzip bytes; an embedded mtime changes the
+    ETag on every post-LRU-eviction recomputation of IDENTICAL content,
+    turning browser revalidations (304) into full 200 refetches.
+    """
+    from app.api.routes.layer import _encode_tile_cached
+    from app.services.mvt import spatial_index_cache, tile_lru_cache
+
+    sid, ref = "sess-etag-det", "ref:etag-det-1"
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {},
+             "geometry": {"type": "Point", "coordinates": [116.0, 39.9]}}
+        ],
+    }
+    spatial_index_cache.invalidate_ref(sid, ref)
+    tile_lru_cache.invalidate_ref(sid, ref)
+    try:
+        b1 = _encode_tile_cached(sid, ref, 5, 10, 10, fc)
+        # gzip header: bytes 4..8 are the MTIME field — must be zero.
+        assert b1[4:8] == b"\x00\x00\x00\x00", (
+            f"tile gzip embeds mtime {b1[4:8].hex()} — ETag unstable across recomputation"
+        )
+        # Force a full recompute (both derived caches dropped) — bytes identical.
+        spatial_index_cache.invalidate_ref(sid, ref)
+        tile_lru_cache.invalidate_ref(sid, ref)
+        b2 = _encode_tile_cached(sid, ref, 5, 10, 10, fc)
+        assert b1 == b2, "identical tile content must produce byte-identical gzip"
+    finally:
+        spatial_index_cache.invalidate_ref(sid, ref)
+        tile_lru_cache.invalidate_ref(sid, ref)
