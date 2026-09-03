@@ -739,12 +739,15 @@ async def chat_completions(
     _mid_req = (rt_ctx.current_runtime_context().request_id
                 if rt_ctx.current_runtime_context() else None)
     request_id = _mid_req or request.headers.get("x-request-id") or rt_ctx.new_request_id()
-    with rt_ctx.bind_runtime_context(request_id=request_id, session_id=req.session_id, project_id=req.project_id):
-        if await _ensure_pi_bridge_available(req.session_id):
-            turn_bridge = _pi_turn_bridge(req.session_id)
+    # V5-B: mint affinity session ID before availability check so non-streaming
+    # turns without session_id distribute evenly across workers in the pool.
+    _affinity_sid = req.session_id or str(uuid.uuid4())
+    with rt_ctx.bind_runtime_context(request_id=request_id, session_id=req.session_id or _affinity_sid, project_id=req.project_id):
+        if await _ensure_pi_bridge_available(_affinity_sid):
+            turn_bridge = _pi_turn_bridge(_affinity_sid)
             try:
                 try:
-                    await _record_frontend_cartographic_observation(req.session_id, req.map_state)
+                    await _record_frontend_cartographic_observation(_affinity_sid, req.map_state)
                 except (TimeoutError, asyncio.TimeoutError):
                     # #791: lock contention on the turn-start observation write
                     # is scoped back-pressure, not a 500.
@@ -753,16 +756,16 @@ async def chat_completions(
                     # v2(audit F2/F3): 锁降级/丢失同 #791 语义 —— back-pressure 503。
                     raise _session_busy_503()
                 cartography_context = await _build_cartography_turn_context(
-                    req.session_id, project_id=req.project_id
+                    _affinity_sid, project_id=req.project_id
                 )
                 environment_context = _build_environment_turn_context(req.map_state)
                 result = await turn_bridge.prompt(
                     req.message,
-                    session_id=req.session_id,
+                    session_id=_affinity_sid,
                     cartography_context=cartography_context,
                     env_block=environment_context,
                 )
-                pi_session_id = result.get("sessionId") or req.session_id or ""
+                pi_session_id = result.get("sessionId") or _affinity_sid or ""
                 final_content = result.get("content", "")
 
                 # Pi 兼容（stream parity）：流式路径在 agent_settled 收口时跑
@@ -787,6 +790,12 @@ async def chat_completions(
                 try:
                     async with async_db_session() as db:
                         svc = AsyncHistoryService(db)
+                        await svc.get_or_create_conversation(
+                            pi_session_id,
+                            user_id=user_id,
+                            title=req.message[:30] if req.message else "新对话",
+                            project_id=req.project_id,
+                        )
                         await svc.save_message(pi_session_id, "user", req.message)
                         if final_content:
                             await svc.save_message(pi_session_id, "assistant", final_content)
@@ -806,7 +815,7 @@ async def chat_completions(
                 # ADR-0069: harvest project memory AFTER this turn's verdict
                 # exists — memory lags evidence by one step and can never
                 # short-circuit review. Best-effort; never fails the turn.
-                await harvest_project_memory(req.session_id, req.project_id)
+                await harvest_project_memory(pi_session_id, req.project_id)
                 return ChatResponse(session_id=pi_session_id, content=final_content)
             except PiRpcError as e:
                 logger.error(f"Pi bridge error: {e}", exc_info=True)

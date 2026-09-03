@@ -977,6 +977,9 @@ def get_active_turn_entry(session_id: str) -> Optional[_ActiveTurnEntry]:
 
 async def is_active_pi_turn(session_id: str, turn_id: str) -> bool:
     """Return whether ``(session, turn)`` owns the live Pi prompt (local or cross-pod Redis)."""
+    entry = _active_turns.get(session_id)
+    if entry is not None and entry.turn_id == turn_id:
+        return True
     from app.services.chat.pi_turn_context import pi_turn_registry
     return await pi_turn_registry.is_active(session_id, turn_id)
 
@@ -1721,10 +1724,11 @@ class PiBridge:
                     _cleanup_turn_state(turn_sid)
                     # Clear the active-turn markers before releasing the lock.
                     self._active_turn_sid = None
-                    _active_turn_token = None
-                    _active_turn_turn_id = None
-                    _active_turn_run_id = None
-                    _active_turn_session_id = None
+                    if _active_turn_turn_id == turn_id:
+                        _active_turn_token = None
+                        _active_turn_turn_id = None
+                        _active_turn_run_id = None
+                        _active_turn_session_id = None
                     # #1108 INV-P4: release the lease BEFORE the unregister await —
                     # the release is synchronous (uncancellable) and the unregister
                     # is a best-effort shielded call, so a re-delivered
@@ -1739,7 +1743,16 @@ class PiBridge:
             # #1108 INV-P1: backstop — whatever happened above (including a
             # cancellation delivered inside the inner finally before its own
             # release), the lease is released here exactly once.
+            self._active_turn_sid = None
             self._release_turn_lease(lease)
+            await self._safe_unregister_active_pi_turn(turn_sid, turn_id)
+            TURN_EVIDENCE.remove(turn_id)
+            _cleanup_turn_state(turn_sid)
+            if _active_turn_turn_id == turn_id:
+                _active_turn_token = None
+                _active_turn_turn_id = None
+                _active_turn_run_id = None
+                _active_turn_session_id = None
 
         return {
             "sessionId": turn_sid,
@@ -2190,10 +2203,11 @@ class PiBridge:
                     # Clear the active-turn markers AFTER the abort above (abort reads
                     # them to cancel the token) and before releasing the lock.
                     self._active_turn_sid = None
-                    _active_turn_token = None
-                    _active_turn_turn_id = None
-                    _active_turn_run_id = None
-                    _active_turn_session_id = None
+                    if _active_turn_turn_id == turn_id:
+                        _active_turn_token = None
+                        _active_turn_turn_id = None
+                        _active_turn_run_id = None
+                        _active_turn_session_id = None
                     # #1108 INV-P4: release the lease BEFORE the unregister
                     # await — the release is synchronous (uncancellable) and
                     # the unregister is shielded best-effort, so a re-delivered
@@ -2261,6 +2275,7 @@ class PiBridge:
                 # finally before its own release), the lease is released
                 # here exactly once. Owner-checked, so a stale lease from a
                 # long-gone turn can never release the CURRENT turn's lock.
+                self._active_turn_sid = None
                 self._release_turn_lease(lease)
                 # INV-P3 corollary (review V5-B-3): a cancellation delivered
                 # while ``register_active_pi_turn`` awaits its Redis I/O
@@ -2272,6 +2287,13 @@ class PiBridge:
                 # idempotent on the normal path where the inner finally
                 # already unregistered.
                 await self._safe_unregister_active_pi_turn(turn_sid, turn_id)
+                TURN_EVIDENCE.remove(turn_id)
+                _cleanup_turn_state(turn_sid)
+                if _active_turn_turn_id == turn_id:
+                    _active_turn_token = None
+                    _active_turn_turn_id = None
+                    _active_turn_run_id = None
+                    _active_turn_session_id = None
 
 
 
@@ -2384,6 +2406,7 @@ async def shutdown_pi_bridge() -> None:
             except Exception:  # noqa: BLE001 — best-effort shutdown
                 pass
         _bridge_pool = None
+        _pi_bridge = None
     if _pi_bridge is not None:
         await _pi_bridge.stop()
         _pi_bridge = None

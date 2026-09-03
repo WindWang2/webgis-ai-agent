@@ -337,7 +337,6 @@ async def test_c4_abort_routed_to_owner_worker_other_session_unharmed(pool2):
     assert isinstance(b_victim._rpc, FakeRpc) and isinstance(b_bystander._rpc, FakeRpc)
 
     victim_prompt_started = asyncio.Event()
-    bystander_settled = asyncio.Event()
 
     async def victim_script(cmd, data=None):
         if cmd == "prompt":
@@ -550,8 +549,6 @@ async def test_c6_cancel_during_unregister_redis_io(pool2, monkeypatch):
     assert isinstance(bridge._rpc, FakeRpc)
     unreg_hang = asyncio.Event()
 
-    orig_unregister = bridge_mod.unregister_active_pi_turn
-
     async def hanging_unregister(session_id, turn_id):
         unreg_hang.set()
         await asyncio.sleep(3600)  # stuck Redis eval; shielded+budgeted inside
@@ -643,3 +640,194 @@ async def test_c7_worker_crash_mid_turn_recovers(pool2):
     )
     assert any("done" in c for c in chunks2)
     assert not bridge._lock.locked()
+
+
+# ─── PR 1133 Remediations: Regression Tests ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_concurrent_tool_callbacks_without_redis(pool2, monkeypatch):
+    """[CRITICAL 1] Concurrent turns across pool workers without Redis must both
+    be recognized as active by is_active_pi_turn, preventing 409 Conflict.
+    """
+    from app.agent_pi_bridge import (
+        is_active_pi_turn,
+        register_active_pi_turn,
+        unregister_active_pi_turn,
+    )
+    from app.services.chat.pi_turn_context import pi_turn_registry
+
+    # Ensure unpatched / clean local registry
+    pi_turn_registry._local_context = {}
+
+    w0, w1 = pool2.bridges[0], pool2.bridges[1]
+    sid_a, tid_a = "session-concurrent-a", "turn-a-1"
+    sid_b, tid_b = "session-concurrent-b", "turn-b-2"
+
+    await register_active_pi_turn(sid_a, tid_a, bridge=w0)
+    await register_active_pi_turn(sid_b, tid_b, bridge=w1)
+
+    # Both concurrent sessions MUST be recognized as active simultaneously
+    assert await is_active_pi_turn(sid_a, tid_a) is True
+    assert await is_active_pi_turn(sid_b, tid_b) is True
+
+    # Cross-turn / mismatched validations must reject
+    assert await is_active_pi_turn(sid_a, tid_b) is False
+    assert await is_active_pi_turn(sid_b, tid_a) is False
+    assert await is_active_pi_turn("unknown-session", tid_a) is False
+
+    # Unregistering session A does not invalidate session B
+    await unregister_active_pi_turn(sid_a, tid_a)
+    assert await is_active_pi_turn(sid_a, tid_a) is False
+    assert await is_active_pi_turn(sid_b, tid_b) is True
+
+    # Unregistering session B clears session B
+    await unregister_active_pi_turn(sid_b, tid_b)
+    assert await is_active_pi_turn(sid_b, tid_b) is False
+
+    # Verify fallback to real PiTurnRegistry when session is not in local _active_turns
+    monkeypatch.setattr(
+        pi_turn_registry,
+        "is_active",
+        pi_turn_registry.__class__.is_active.__get__(pi_turn_registry),
+    )
+    pi_turn_registry._local_context = {"remote-session": "remote-turn"}
+    assert await is_active_pi_turn("remote-session", "remote-turn") is True
+    assert await is_active_pi_turn("remote-session", "wrong-turn") is False
+    pi_turn_registry._local_context.clear()
+
+
+@pytest.mark.asyncio
+async def test_stream_prompt_respawn_after_registration_cancellation(monkeypatch):
+    """[CRITICAL 2] stream_prompt cancellation during registration must clear
+    _active_turn_sid and clean up TURN_EVIDENCE so dead worker can respawn.
+    """
+    from app.lib.runtime.evidence import TURN_EVIDENCE
+
+    bridge = _make_bridge("w0")
+
+    async def _failing_register(*args, **kwargs):
+        # Trigger cancellation while in registration
+        raise asyncio.CancelledError("registration cancelled")
+
+    monkeypatch.setattr(bridge_mod, "register_active_pi_turn", _failing_register)
+
+    sid = "sess-stream-reg-cancel"
+    with pytest.raises(asyncio.CancelledError):
+        await _drive_stream(bridge, sid)
+
+    # Invariants: no leak of active turn sid, lock released, table entry cleared, evidence cleared
+    assert bridge._active_turn_sid is None, "_active_turn_sid leaked on cancellation!"
+    assert not bridge._lock.locked(), "turn lease locked on cancellation!"
+    assert get_active_turn_entry(sid) is None, "active turn entry leaked!"
+    assert not any(getattr(ev, "session_id", None) == sid for ev in TURN_EVIDENCE._entries.values()), (
+        "TURN_EVIDENCE leaked for cancelled stream_prompt turn!"
+    )
+
+    # Subprocess dies subsequently
+    bridge._rpc.die()
+    assert bridge.is_alive() is False
+
+    # Worker MUST be able to respawn (not blocked by _active_turn_sid)
+    respawned = await bridge.respawn_if_dead()
+    assert respawned is True, "respawn_if_dead failed after registration cancellation!"
+    assert bridge.is_alive() is True
+
+
+@pytest.mark.asyncio
+async def test_prompt_outer_finally_cleanup_on_cancellation(monkeypatch):
+    """[MAJOR 3] prompt() outer finally backstop clears _active_turn_sid,
+    releases lease, and unregisters active turn on cancellation.
+    """
+    from app.lib.runtime.evidence import TURN_EVIDENCE
+
+    bridge = _make_bridge("w0")
+
+    async def _failing_register(*args, **kwargs):
+        raise asyncio.CancelledError("prompt registration cancelled")
+
+    monkeypatch.setattr(bridge_mod, "register_active_pi_turn", _failing_register)
+
+    sid = "sess-prompt-reg-cancel"
+    with pytest.raises(asyncio.CancelledError):
+        await bridge.prompt("test prompt message", session_id=sid)
+
+    assert bridge._active_turn_sid is None, "_active_turn_sid leaked on prompt cancellation!"
+    assert not bridge._lock.locked(), "turn lease locked on prompt cancellation!"
+    assert get_active_turn_entry(sid) is None, "active turn entry leaked!"
+    assert not any(getattr(ev, "session_id", None) == sid for ev in TURN_EVIDENCE._entries.values()), (
+        "TURN_EVIDENCE leaked for cancelled prompt turn!"
+    )
+
+    # Process death and respawn
+    bridge._rpc.die()
+    assert bridge.is_alive() is False
+    respawned = await bridge.respawn_if_dead()
+    assert respawned is True, "respawn_if_dead failed after prompt cancellation!"
+    assert bridge.is_alive() is True
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_affinity_minting_for_none_session(pool2, monkeypatch):
+    """[MAJOR 4] chat_completions mints an affinity session ID for session_id=None
+    requests so they distribute across the pool instead of starving worker 0.
+    """
+    from unittest.mock import AsyncMock
+    from app.api.routes.chat import chat_completions, ChatRequest
+
+    monkeypatch.setattr(chat_mod, "USE_NEW_AGENT", True)
+    monkeypatch.setattr(
+        chat_mod, "_record_frontend_cartographic_observation", AsyncMock()
+    )
+    monkeypatch.setattr(
+        chat_mod, "_build_cartography_turn_context", AsyncMock(return_value="")
+    )
+    monkeypatch.setattr(
+        chat_mod, "_build_environment_turn_context", MagicMock(return_value="")
+    )
+    monkeypatch.setattr(chat_mod, "harvest_project_memory", AsyncMock())
+
+    # Mock DB context manager to avoid real DB I/O
+    class FakeAsyncDbSession:
+        async def __aenter__(self):
+            db = MagicMock()
+            db.get = AsyncMock(return_value=None)
+            return db
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    monkeypatch.setattr(chat_mod, "async_db_session", FakeAsyncDbSession)
+
+    w0, w1 = pool2.bridges[0], pool2.bridges[1]
+    prompt_calls = {w0.name: [], w1.name: []}
+
+    async def _mock_prompt_w0(msg, session_id=None, **kwargs):
+        prompt_calls[w0.name].append(session_id)
+        return {"sessionId": session_id, "content": "reply from w0"}
+
+    async def _mock_prompt_w1(msg, session_id=None, **kwargs):
+        prompt_calls[w1.name].append(session_id)
+        return {"sessionId": session_id, "content": "reply from w1"}
+
+    w0.prompt = _mock_prompt_w0
+    w1.prompt = _mock_prompt_w1
+
+    responses = []
+    # Dispatch 20 anonymous turns; with UUID affinity they must hit both workers
+    for i in range(20):
+        req = ChatRequest(message=f"msg {i}", session_id=None)
+        resp = await chat_completions(
+            req, request=MagicMock(), _user={}, owner_token=None, db=None
+        )
+        responses.append(resp)
+
+    # Every response got a non-empty minted session ID
+    for resp in responses:
+        assert resp.session_id, "chat_completions returned empty session_id!"
+
+    # Traffic was distributed to BOTH workers, not 100% on worker 0
+    assert len(prompt_calls[w0.name]) > 0, "worker 0 received no turns"
+    assert len(prompt_calls[w1.name]) > 0, "worker 1 received no turns (pool starved!)"
+    assert len(prompt_calls[w0.name]) + len(prompt_calls[w1.name]) == 20
+
