@@ -138,3 +138,33 @@ class ScenarioComparisonResult(BaseModel):
     recommendation_rationale: str = Field(..., description="Evidence-grounded explanation for recommendation")
     comparison_geojson: Dict[str, Any] = Field(..., description="Merged multi-scenario FeatureCollection GeoJSON")
     comparison_ref_id: str = Field(..., description="Registered SessionStore ref ID for comparison map")
+
+# Spatial Decision Intelligence V3 Re-Exports
+from app.services.spatial_decision.models_v3 import (
+    BaselineTruthState,
+    CriterionDirection,
+    NormalizationStrategy,
+    WeightSource,
+    MissingPolicy,
+    ConstraintType,
+    ConstraintCategory,
+    SpatialPredicate,
+    DistributionType,
+    ParetoStatus,
+    RecommendationAdmissibility,
+    Criterion,
+    Constraint,
+    ConstraintEvaluation,
+    Assumption,
+    Alternative,
+    BaselineEvidenceContext,
+    UncertainParameter,
+    OutcomeDistribution,
+    DecisionScore,
+    SensitivityResult,
+    RobustnessResult,
+    StructuredExplanation,
+    DecisionProblem,
+    RecommendationResult,
+    SpatialDecisionResultV3,
+)
