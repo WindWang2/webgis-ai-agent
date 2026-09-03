@@ -194,3 +194,125 @@ def test_semantic_checks_3d_extrusion_rules():
     report_tilted = evaluate_cartography_semantics(mapspec_tilted)
     checks_by_rule_tilted = {c.rule: c for c in report_tilted.checks}
     assert checks_by_rule_tilted["EXTRUSION_PITCH_ADVISORY"].status == "pass"
+
+
+def test_extrusion_outlier_scaling_distribution():
+    """Verify extreme outliers do not squash 99% of normal features under log1p and linear scaling."""
+    # 9 normal district values and 1 extreme outlier
+    values = [10.0, 15.0, 20.0, 25.0, 30.0, 35.0, 40.0, 45.0, 50.0, 1000000.0]
+    stats = analyze_height_field_distribution(values)
+    assert stats["valid"] is True
+    assert stats["has_extreme_outlier"] is True
+    assert "p25" in stats and "p75" in stats
+    assert stats["p25"] > 0
+    assert stats["p75"] > stats["p25"]
+
+    # Test log1p transform
+    spec_log = ExtrusionHeightSpec(
+        height_field="val",
+        transform="log1p",
+        min_visual_height_m=10.0,
+        max_visual_height_m=5000.0,
+    )
+    expr_log = build_extrusion_height_expression(spec_log, stats)
+    assert isinstance(expr_log, list)
+    assert expr_log[0] == "interpolate"
+
+    # Extract stops: [domain, visual_height]
+    stops = []
+    for i in range(3, len(expr_log), 2):
+        stops.append((expr_log[i], expr_log[i + 1]))
+
+    # Domain stops must be strictly increasing
+    for i in range(len(stops) - 1):
+        assert stops[i][0] < stops[i + 1][0], f"Stops not strictly increasing: {stops}"
+
+    # Verify that value 50.0 is not squashed into near-zero visual height
+    # Stop 1 domain value should be near low values (~40.6), mapping to ~1257m
+    d0, h0 = stops[0]
+    d1, h1 = stops[1]
+    assert d0 <= 50.0
+    assert h1 >= 1000.0
+    assert stops[-1][0] == 1000000.0
+    assert stops[-1][1] == 5000.0
+
+
+def test_extrusion_svg_export_degraded_attributes():
+    """Verify fill-extrusion layers emit degraded export attributes in Python SVG compiler."""
+    from app.services.mapspec_to_svg import compile_mapspec_to_svg
+
+    mapspec = {
+        "sources": {
+            "s1": {
+                "type": "geojson",
+                "data": _make_polygon_fc([{"height": 200}]),
+            }
+        },
+        "layers": [
+            {
+                "id": "ext1",
+                "type": "fill-extrusion",
+                "source": "s1",
+                "paint": {
+                    "fill-extrusion-color": "#ea580c",
+                    "fill-extrusion-height": 200,
+                    "fill-extrusion-opacity": 0.85,
+                },
+            }
+        ],
+    }
+    svg = compile_mapspec_to_svg(mapspec, target_dpi=72)
+    assert '<path' in svg
+    assert 'data-export-degraded="true"' in svg
+    assert 'data-export-degraded-reason="3d_perspective_not_vectorized"' in svg
+    assert 'fill="#ea580c"' in svg
+
+
+def test_tool_create_3d_extrusion_dual_channel_legend():
+    """Verify create_3d_extrusion_map emits height scale legend when height_field != color_field (ADR-0095)."""
+    from app.tools.registry import ToolRegistry
+    from app.tools.cartography import register_cartography_tools
+
+    registry = ToolRegistry()
+    register_cartography_tools(registry)
+    tool_fn = registry._tools["create_3d_extrusion_map"]
+
+    fc = _make_polygon_fc([
+        {"gdp": 100, "pop": 1000},
+        {"gdp": 200, "pop": 2000},
+        {"gdp": 300, "pop": 3000},
+        {"gdp": 400, "pop": 4000},
+        {"gdp": 500, "pop": 5000},
+    ])
+
+    # Case 1: Dual channel (height != color)
+    res_dual = tool_fn(
+        geojson=fc,
+        height_field="gdp",
+        color_field="pop",
+        height_unit="亿元",
+        min_visual_height_m=50.0,
+        max_visual_height_m=3000.0,
+    )
+    assert "error" not in res_dual
+    assert "height_legend" in res_dual
+    hl = res_dual["height_legend"]
+    assert hl["type"] == "height_scale"
+    assert hl["field"] == "gdp"
+    assert hl["unit"] == "亿元"
+    assert hl["min_value"] == 100.0
+    assert hl["max_value"] == 500.0
+    assert hl["min_height_m"] == 50.0
+    assert hl["max_height_m"] == 3000.0
+    assert len(hl["stops"]) == 5
+    assert res_dual["metadata"]["extrusion"]["height_legend"] == hl
+
+    # Case 2: Single channel (height == color) -> no height legend needed
+    res_single = tool_fn(
+        geojson=fc,
+        height_field="gdp",
+        color_field="gdp",
+    )
+    assert "error" not in res_single
+    assert "height_legend" not in res_single
+

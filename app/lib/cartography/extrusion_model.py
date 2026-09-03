@@ -81,9 +81,11 @@ def analyze_height_field_distribution(
             "mean": 0.0,
             "std": 0.0,
             "p05": 0.0,
+            "p25": 0.0,
             "p50": 0.0,
+            "p75": 0.0,
             "p95": 0.0,
-            "is_all_zero": True,
+            "is_all_zero": False,
             "has_extreme_outlier": False,
         }
 
@@ -93,7 +95,9 @@ def analyze_height_field_distribution(
     mean_v = float(np.mean(arr))
     std_v = float(np.std(arr)) if len(arr) > 1 else 0.0
     p05 = float(np.percentile(arr, 5))
+    p25 = float(np.percentile(arr, 25))
     p50 = float(np.percentile(arr, 50))
+    p75 = float(np.percentile(arr, 75))
     p95 = float(np.percentile(arr, 95))
 
     # Outlier detection: if max > 10 * p50 (for N >= 4)
@@ -109,7 +113,9 @@ def analyze_height_field_distribution(
         "mean": round(mean_v, 2),
         "std": round(std_v, 2),
         "p05": round(p05, 2),
+        "p25": round(p25, 2),
         "p50": round(p50, 2),
+        "p75": round(p75, 2),
         "p95": round(p95, 2),
         "is_all_zero": bool(max_v == 0.0 and min_v == 0.0),
         "has_extreme_outlier": has_extreme_outlier,
@@ -140,36 +146,60 @@ def build_extrusion_height_expression(
     if spec.transform == "uniform":
         return min_h
 
-    # Determine stops based on transform
-    # Use 5 quantiles to ensure smooth non-linear interpolation
+    # Determine stops based on transform and distribution characteristics.
+    # Use 5 quantiles to ensure smooth non-linear interpolation.
     quantiles = [0.0, 0.25, 0.50, 0.75, 1.0]
     stops: List[List[Union[float, int]]] = []
 
-    for q in quantiles:
-        # Interpolate domain value
-        domain_v = min_v + q * (max_v - min_v)
+    has_outlier = bool(stats.get("has_extreme_outlier", False))
+    transform = spec.transform
 
-        # Apply transformation to get visual height fraction in [0, 1]
-        if spec.transform == "sqrt":
-            h_frac = math.sqrt(q)
-        elif spec.transform == "log1p":
-            h_frac = math.log1p(q * 9.0) / math.log1p(9.0)
-        else:  # linear
-            h_frac = q
+    if transform == "log1p":
+        # Sample non-linear steps logarithmically in domain space so transformed
+        # height stops distribute visual height fairly across the dataset instead
+        # of squashing normal values when extreme outliers exist.
+        span = max(max_v - min_v, 0.0)
+        for q in quantiles:
+            domain_v = min_v + ((1.0 + span) ** q - 1.0)
+            vis_h = round(min_h + q * (max_h - min_h), 1)
+            stops.append([round(domain_v, 2), vis_h])
+    elif transform == "sqrt":
+        # Sqrt distribution spacing in domain space
+        span = max(max_v - min_v, 0.0)
+        for q in quantiles:
+            domain_v = min_v + (q ** 2) * span
+            vis_h = round(min_h + q * (max_h - min_h), 1)
+            stops.append([round(domain_v, 2), vis_h])
+    elif has_outlier:
+        # Linear transform with extreme outliers: sample domain stops at distribution quantiles
+        p25 = float(stats.get("p25", min_v + 0.25 * (stats.get("p50", (min_v + max_v) / 2.0) - min_v)))
+        p50 = float(stats.get("p50", (min_v + max_v) / 2.0))
+        p75 = float(stats.get("p75", p50 + 0.5 * (max_v - p50)))
+        domain_points = [min_v, p25, p50, p75, max_v]
+        for q, domain_v in zip(quantiles, domain_points):
+            vis_h = round(min_h + q * (max_h - min_h), 1)
+            stops.append([round(domain_v, 2), vis_h])
+    else:
+        # Standard linear stepping across domain
+        for q in quantiles:
+            domain_v = min_v + q * (max_v - min_v)
+            vis_h = round(min_h + q * (max_h - min_h), 1)
+            stops.append([round(domain_v, 2), vis_h])
 
-        vis_h = round(min_h + h_frac * (max_h - min_h), 1)
-        stops.append([round(domain_v, 2), vis_h])
-
-    # Remove duplicate domain stops if any
+    # Remove non-increasing domain stops (MapLibre requires strictly increasing domain stops)
     unique_stops: List[List[Union[float, int]]] = []
-    seen_domains = set()
+    last_domain = None
     for s in stops:
-        if s[0] not in seen_domains:
-            seen_domains.add(s[0])
+        d_val = s[0]
+        if last_domain is None or d_val > last_domain:
             unique_stops.append(s)
+            last_domain = d_val
 
     if len(unique_stops) < 2:
-        return min_h
+        if max_v > min_v:
+            unique_stops = [[round(min_v, 2), min_h], [round(max_v, 2), max_h]]
+        else:
+            return min_h
 
     # MapLibre interpolate expression:
     # ["interpolate", ["linear"], ["coalesce", ["get", field], min_v], stop0_v, stop0_h, ...]

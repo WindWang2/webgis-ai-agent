@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 import numpy as np
 from pydantic import BaseModel, Field
 from shapely.geometry import LineString, MultiLineString, MultiPolygon, Polygon, mapping
+from shapely.geometry.polygon import orient
 from shapely.ops import unary_union
 
 logger = logging.getLogger(__name__)
@@ -189,34 +190,44 @@ def generate_contour_features_from_grid(
             if not band_polys:
                 continue
 
-            # Reconstruct topological even-odd containment for holes
+            # Reconstruct topological even-odd containment for holes (ADR-0095 & bug #762)
             band_polys.sort(key=lambda p: p.area, reverse=True)
             outers: List[Polygon] = []
             inners: List[Polygon] = []
+            inner_parent: Dict[int, Polygon] = {}
 
             for idx, p in enumerate(band_polys):
-                depth = sum(1 for prev in band_polys[:idx] if prev.contains(p))
+                containers = [prev for prev in band_polys[:idx] if prev.contains(p)]
+                depth = len(containers)
                 if depth % 2 == 0:
                     outers.append(p)
                 else:
                     inners.append(p)
+                    # Immediate enclosing parent outer polygon is the smallest container
+                    inner_parent[id(p)] = min(containers, key=lambda cp: cp.area)
 
-            resolved_band = outers
-            if inners:
-                # Subtract inners
-                diff_res = []
-                for out_p in outers:
-                    p_curr = out_p
-                    for inn_p in inners:
-                        if p_curr.intersects(inn_p):
-                            p_curr = p_curr.difference(inn_p)
-                    if not p_curr.is_empty:
-                        diff_res.append(p_curr)
-                resolved_band = diff_res
+            if not outers:
+                continue
 
-            for p in resolved_band:
-                if not p.is_empty and p.area > 0:
-                    raw_bands.append((p, lvl_val, max_val))
+            diff_parts: List[Any] = []
+            for o in outers:
+                assigned_inners = [inp for inp in inners if inner_parent.get(id(inp)) is o]
+                if assigned_inners:
+                    diff_geom = o.difference(unary_union(assigned_inners))
+                else:
+                    diff_geom = o
+                if not diff_geom.is_empty:
+                    diff_parts.append(diff_geom)
+
+            if not diff_parts:
+                continue
+
+            region = unary_union(diff_parts)
+            for geom in getattr(region, "geoms", [region]):
+                if not geom.is_empty and getattr(geom, "area", 0) > 0:
+                    if isinstance(geom, Polygon):
+                        geom = orient(geom, sign=1.0)
+                    raw_bands.append((geom, lvl_val, max_val))
 
         if raw_bands and utm_crs:
             gdf_bands = gpd.GeoDataFrame(
@@ -257,14 +268,19 @@ def generate_contour_features_from_grid(
 
     plt.close(fig)
 
+    meta_isoline = {
+        "model": "isoline_contour",
+        "levels": levels,
+        "levels_count": len(levels),
+        "mode": spec.mode,
+        "unit": spec.unit,
+    }
+
     return {
         "type": "FeatureCollection",
         "features": features,
-        "properties": {
-            "model": "isoline_contour",
-            "levels": levels,
-            "levels_count": len(levels),
-            "mode": spec.mode,
-            "unit": spec.unit,
+        "properties": meta_isoline,
+        "metadata": {
+            "isoline": meta_isoline,
         },
     }

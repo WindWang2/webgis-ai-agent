@@ -1,4 +1,4 @@
-import { compileStyleMethod } from "@/lib/mapspec-compiler/compiler";
+import { compileStyleMethod, isStyleMethodObject } from "@/lib/mapspec-compiler/compiler";
 import type { MapSpecLayer, StyleMethod } from "@/lib/mapspec-compiler/types";
 
 /**
@@ -40,6 +40,8 @@ const CANONICAL_PAINT_KEYS: Record<string, Record<string, string>> = {
   "fill-extrusion": {
     color: "fill-extrusion-color",
     opacity: "fill-extrusion-opacity",
+    height: "fill-extrusion-height",
+    base: "fill-extrusion-base",
   },
   heatmap: {
     radius: "heatmap-radius",
@@ -144,7 +146,9 @@ export function toMapLibrePaint(layer: MapSpecLayer): Record<string, unknown> {
     if (key in canonical) continue;
     if (layer.type === "heatmap" && key === "color") continue;
     if (!isNativePaintKey(layer.type, key)) continue;
-    if (out[key] === undefined) out[key] = value;
+    if (out[key] === undefined) {
+      out[key] = isStyleMethodObject(value) ? compileStyleMethod(value as StyleMethod) : value;
+    }
   }
 
   for (const [key, value] of Object.entries(out)) {

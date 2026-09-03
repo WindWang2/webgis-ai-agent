@@ -240,7 +240,7 @@ def register_cartography_tools(registry: ToolRegistry):
 
             # Validate geometry category
             from app.services.analysis_cartography_converter import _infer_geometry_category
-            geom_cat = _infer_geometry_category(data)
+            geom_cat, _ = _infer_geometry_category(data)
             if geom_cat != "polygon":
                 return {"error": f"3D 挤出图层需要多边形面要素 (Polygon)，当前几何类型为 {geom_cat or 'unknown'}"}
 
@@ -267,6 +267,44 @@ def register_cartography_tools(registry: ToolRegistry):
                 data, field=c_field, method=m, k=k, palette=palette,
             )
 
+            # ADR-0095 Decision 2.3: When height and color channels differ, emit height scale legend
+            height_legend = None
+            if c_field != height_field:
+                min_v = float(ext_stats.get("min", 0.0))
+                max_v = float(ext_stats.get("max", 1.0))
+                min_h = float(min_visual_height_m)
+                max_h = float(max_visual_height_m)
+                span = max(max_v - min_v, 0.0)
+
+                quantiles = [0.0, 0.25, 0.50, 0.75, 1.0]
+                stops = []
+                for q in quantiles:
+                    if transform == "log1p":
+                        domain_val = min_v + ((1.0 + span) ** q - 1.0)
+                    elif transform == "sqrt":
+                        domain_val = min_v + (q ** 2) * span
+                    else:
+                        domain_val = min_v + q * span
+                    vis_h = round(min_h + q * (max_h - min_h), 1)
+                    stops.append({
+                        "value": round(domain_val, 2),
+                        "height_m": vis_h,
+                        "label": f"{domain_val:g} {height_unit} → {vis_h:g}m".strip(),
+                    })
+
+                height_legend = {
+                    "type": "height_scale",
+                    "field": height_field,
+                    "unit": height_unit,
+                    "min_value": min_v,
+                    "max_value": max_v,
+                    "min_height_m": min_h,
+                    "max_height_m": max_h,
+                    "transform": transform,
+                    "title": f"{height_field} 高度标尺",
+                    "stops": stops,
+                }
+
             style_def = {
                 "type": "fill-extrusion",
                 "field": c_field,
@@ -282,21 +320,25 @@ def register_cartography_tools(registry: ToolRegistry):
                 else f"{height_field} (高度) × {c_field} (颜色) 3D 挤出图"
             )
 
+            extrusion_meta = {
+                "height_field": height_field,
+                "color_field": c_field,
+                "height_unit": height_unit,
+                "transform": transform,
+                "min_visual_height_m": min_visual_height_m,
+                "max_visual_height_m": max_visual_height_m,
+                "stats": ext_stats,
+            }
+            if height_legend is not None:
+                extrusion_meta["height_legend"] = height_legend
+
             return_dict = {
                 "geojson": data,
                 "type_hint": "extrusion_3d",
                 "group": group,
                 "style": style_def,
                 "metadata": {
-                    "extrusion": {
-                        "height_field": height_field,
-                        "color_field": c_field,
-                        "height_unit": height_unit,
-                        "transform": transform,
-                        "min_visual_height_m": min_visual_height_m,
-                        "max_visual_height_m": max_visual_height_m,
-                        "stats": ext_stats,
-                    },
+                    "extrusion": extrusion_meta,
                 },
                 "recommended_view": {
                     "pitch": 45.0,
@@ -308,6 +350,8 @@ def register_cartography_tools(registry: ToolRegistry):
             }
             if legend_spec is not None:
                 return_dict["legend_spec"] = legend_spec
+            if height_legend is not None:
+                return_dict["height_legend"] = height_legend
 
             return return_dict
         except (ValueError, TypeError, KeyError) as e:

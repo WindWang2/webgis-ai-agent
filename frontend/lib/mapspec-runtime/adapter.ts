@@ -380,10 +380,12 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
         }, buildLayerFilter("Polygon"));
       } else if (layer.type === "fill-extrusion") {
         // ADR-0095: Native 3D extrusion layer — committed desired state
-        const extPaint = (layer.paint as Record<string, unknown>) || {};
+        const extPaint = layer.paint || {};
         const extHeight = extPaint["fill-extrusion-height"]
           ?? (layer.style as any)?.height
-          ?? ((layer as any).extrusion?.height_field ? ["coalesce", ["get", (layer as any).extrusion.height_field], 20] : ["coalesce", ["get", "height"], 20]);
+          ?? ((layer as any).extrusion?.height_field
+            ? ["coalesce", ["get", (layer as any).extrusion.height_field], (layer as any).extrusion?.min_visual_height_m ?? 10]
+            : ["coalesce", ["get", "height"], (layer as any).extrusion?.min_visual_height_m ?? 10]);
         const extBase = extPaint["fill-extrusion-base"] ?? (layer.style as any)?.base ?? 0;
         const extOpacity = extPaint["fill-extrusion-opacity"] ?? layer.opacity ?? 0.85;
         const extColor = extPaint["fill-extrusion-color"] ?? thematicColor ?? color;
