@@ -108,18 +108,18 @@ def _arcgis_defaults() -> AdapterCapabilitiesV2:
 def _geoparquet_defaults() -> AdapterCapabilitiesV2:
     return AdapterCapabilitiesV2(
         source_type="geoparquet",
-        bbox_pushdown=True,          # row-group bbox 剪枝 + 读后精确过滤
-        filter_pushdown=True,        # pyarrow filters（统计/字典剪枝）
+        bbox_pushdown=True,          # row-group covering 剪枝 + 读后精确过滤
+        filter_pushdown=False,       # 本地逐行求值（诚实声明；pyarrow filters= 未实现）
         projection_pushdown=True,
         sort_pushdown=False,
         offset_pagination=True,
         cursor_pagination=False,
-        spatial_predicates=["bbox", "intersects", "within", "dwithin"],
-        temporal_filter=True,        # 谓词下推到 pyarrow filters
+        spatial_predicates=["bbox"],
+        temporal_filter=False,       # 本地求值，非下推（诚实声明）
         aggregation=False,           # 聚合在本地 batch 流上执行（bounded）
         group_by=False,
         count=True,                  # metadata num_rows（footer-only）
-        statistics=True,             # parquet statistics
+        statistics=False,            # row-group 剪枝内部使用，不作为查询能力暴露
         server_reprojection=False,
         vector_tiles=False,
         range_requests=True,         # 远程 parquet 经 fsspec range read
