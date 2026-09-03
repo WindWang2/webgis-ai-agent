@@ -35,7 +35,6 @@ from app.services.data_fabric.query.models import (
 )
 from app.services.data_fabric.query.predicates import (
     And,
-    Between,
     Eq,
     Ge,
     Gt,

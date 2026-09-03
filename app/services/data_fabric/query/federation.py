@@ -22,22 +22,15 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from app.schemas.data_fabric_schema import QuerySpec, QueryResult
+from app.schemas.data_fabric_schema import QuerySpec
 from app.services.data_fabric.errors import (
     DataFabricError,
-    InvalidQueryError,
     QueryBudgetExceededError,
 )
 from app.services.data_fabric.query.execution import StreamingBudget
-from app.services.data_fabric.query.models import ExecutionBudget, QuerySpecV2
-from app.services.data_fabric.query.normalize import normalize_query_spec
-from app.services.data_fabric.query.predicates import (
-    PredicateError,
-    evaluate_predicate,
-    evaluate_temporal,
-)
+from app.services.data_fabric.query.models import ExecutionBudget
 
 logger = logging.getLogger(__name__)
 

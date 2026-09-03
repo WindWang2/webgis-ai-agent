@@ -10,34 +10,16 @@
 """
 from __future__ import annotations
 
-import json
 import math
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from xml.sax.saxutils import escape as _xml_escape
 
 from app.services.data_fabric.query.predicates import (
     And,
-    BBox,
-    Between,
-    Contains,
-    DWithin,
     Eq,
-    Ge,
-    Gt,
-    Intersects,
-    In,
-    IsNull,
-    Le,
-    Like,
-    Lt,
     Ne,
-    Not,
-    NotIn,
     Or,
-    Overlaps,
     PredicateError,
-    Touches,
-    Within,
     bbox_crosses_antimeridian,
     split_antimeridian_bbox,
     validate_predicate_fields,
@@ -157,7 +139,6 @@ def _sql_node(node: Any) -> SQLFragment:
     if op == "le":
         return f"{col} <= %s", [node.value]
     if op == "in":
-        ph = ", ".join(["%s"] * len(node.values))
         return f"{col} = ANY(%s)", [list(node.values)]
     if op == "not_in":
         return f"({col} <> ALL(%s))", [list(node.values)]
@@ -399,7 +380,6 @@ def compile_predicate_fes(
     ns: str = "http://www.opengis.net/ogc",
 ) -> str:
     op = node.op
-    p = f"{{{ns}}}PropertyName"
     if op in ("and", "or"):
         tag = "And" if op == "and" else "Or"
         inner = "".join(compile_predicate_fes(a, ns=ns) for a in node.args)

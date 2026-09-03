@@ -795,7 +795,6 @@ async def get_catalog_mvt_tile(
     - 空瓦片（无相交要素）返回 204；命中返回 gzip + ETag（If-None-Match 304）。
     """
     import gzip as _gzip
-    import hashlib as _hashlib
 
     if not (0 <= z <= 22) or x < 0 or y < 0 or x >= (1 << z) or y >= (1 << z):
         raise HTTPException(status_code=400, detail="非法瓦片坐标")
@@ -806,7 +805,6 @@ async def get_catalog_mvt_tile(
         return _df_tile_response(cached[0], cached[1], if_none_match)
 
     async def _build(session: Session):
-        import logging as _logging
 
         _authorize_catalog_item(session, item_id, user)
         item = session.query(CatalogItemModel).filter(CatalogItemModel.id == item_id).first()

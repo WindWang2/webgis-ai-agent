@@ -7,14 +7,12 @@ from __future__ import annotations
 
 import time
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from app.services.data_fabric.query.models import (
     DatasetVersion,
     QueryEvidence,
     QueryPlan,
-    QuerySpecV2,
-    ResultMode,
 )
 from app.services.data_fabric.query.planner import dataset_version_from_descriptor
 

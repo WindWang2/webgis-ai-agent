@@ -46,8 +46,8 @@ from app.services.data_fabric.query.models import (
     ResultMode,
 )
 from app.services.data_fabric.query.normalize import normalize_query_spec
-from app.services.data_fabric.query.planner import dataset_srid, plan_query
-from app.services.data_fabric.query.predicates import PredicateError, validate_predicate_fields
+from app.services.data_fabric.query.planner import plan_query
+from app.services.data_fabric.query.predicates import PredicateError
 
 logger = logging.getLogger(__name__)
 
@@ -484,8 +484,8 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
         if meta.geom_col and meta.srid:
             try:
                 cur.execute(
-                    f'SELECT ST_XMin(e), ST_YMin(e), ST_XMax(e), ST_YMax(e) FROM '
-                    f'(SELECT ST_Transform(ST_EstimatedExtent(%s, %s, %s), 4326) AS e) s;',
+                    'SELECT ST_XMin(e), ST_YMin(e), ST_XMax(e), ST_YMax(e) FROM '
+                    '(SELECT ST_Transform(ST_EstimatedExtent(%s, %s, %s), 4326) AS e) s;',
                     (schema_name, table_name, meta.geom_col),
                 )
                 row = cur.fetchone()
@@ -543,7 +543,6 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
         bounded = max(1, min(limit, MAX_PREVIEW_LIMIT))
         try:
             spec = QuerySpec(limit=bounded)
-            v2 = normalize_query_spec(spec)
             result = self.query(dataset_id, spec)
             return {
                 "schema": {"table": dataset_id, "columns": result.schema_info.get("columns", [])},
@@ -1185,7 +1184,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                         },
                         latency_ms=latency,
                     )
-        except Exception as e:
+        except Exception:
             latency = round((time.time() - start_time) * 1000, 2)
             return DataFabricHealth(
                 status="unreachable",

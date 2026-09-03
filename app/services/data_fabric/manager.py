@@ -33,7 +33,6 @@ from app.services.data_fabric.metadata import (
 from app.services.data_fabric.registry import build_adapter, resolve_adapter_spec
 from app.services.data_fabric.security import DataFabricSecurity
 from app.services.session_data import session_data_manager
-from app.services.session_data_protocol import is_unavailable_ref
 
 logger = logging.getLogger(__name__)
 

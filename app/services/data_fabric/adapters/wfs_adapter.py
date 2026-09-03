@@ -14,7 +14,6 @@
 - V2：normalize → plan → 执行；QueryResult 附 plan/evidence；
   numberMatched 作为 total_matching；truncation 如实（不再 2000=全部）。
 """
-import re
 import time
 import logging
 from typing import Any, Dict, List, Optional, Tuple
@@ -23,7 +22,6 @@ from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.errors import (
     DataFabricError,
     InvalidQueryError,
-    SOURCE_BAD_RESPONSE,
     SourceBadResponseError,
 )
 from app.services.data_fabric.metadata import normalize_crs
@@ -40,7 +38,6 @@ from app.services.data_fabric.security import (
     DataFabricSecurity,
     bounded_get,
     make_safe_session,
-    safe_json_get,
 )
 from app.schemas.data_fabric_schema import (
     DatasetDescriptor,
@@ -558,7 +555,7 @@ class WFSAdapter(GeospatialDataSourceAdapter):
                 message="WFS probe returned non-200 status",
                 latency_ms=latency,
             )
-        except Exception as e:
+        except Exception:
             latency = round((time.time() - start_time) * 1000, 2)
             return DataFabricHealth(
                 status="unreachable",

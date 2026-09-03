@@ -10,10 +10,10 @@ import binascii
 import hashlib
 import json
 import math
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from app.services.data_fabric.errors import InvalidQueryError, QueryBudgetExceededError
-from app.services.data_fabric.query.models import AggSpec, QuerySpecV2, SampleSpec
+from app.services.data_fabric.query.models import AggSpec, SampleSpec
 
 
 # ── 确定性采样 ──────────────────────────────────────────────────────────────

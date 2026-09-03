@@ -10,14 +10,12 @@ QueryResult.metadata["query_plan"]）。
 """
 from __future__ import annotations
 
-import math
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, List, Optional, Sequence
 
 from app.services.data_fabric.errors import (
     CrsInvalidError,
     InvalidQueryError,
     QueryBudgetExceededError,
-    QueryUnsupportedError,
 )
 from app.services.data_fabric.query.capabilities import get_capabilities
 from app.services.data_fabric.query.models import (
