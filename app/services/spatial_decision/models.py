@@ -21,8 +21,8 @@ class TargetAreaSpec(BaseModel):
     bbox: Optional[List[float]] = Field(
         default=None, description="Bounding box [west, south, east, north]"
     )
-    resolved_name: str = Field(..., description="Canonical resolved name or geocoded address")
-    source: str = Field(..., description="Resolution source: geocode, session_ref, geojson, bbox")
+    resolved_name: str = Field(default="", description="Canonical resolved name or geocoded address")
+    source: str = Field(default="user_query", description="Resolution source: geocode, session_ref, geojson, bbox")
     confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Target resolution confidence")
     correction_hint: Optional[str] = Field(default=None, description="Correction hint if area unresolvable")
 
