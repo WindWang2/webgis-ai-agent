@@ -220,9 +220,171 @@ GOLDEN_CASES: list[GISBenchmarkCase] = [
         ],
         max_tool_calls=5,
     ),
-    # ── G13 显式克里金（Kriging vertical slice：explicit request 不换算法）─
+    # ═══ Semantic GIS expansion (G13–G30): category coverage + honesty ═══
+    # ── simple_view 抗过分析（变体锁定）──────────────────────────────
     GISBenchmarkCase(
-        id="G13",
+        id="G13", name="simple view 变体：给我看看咖啡馆", group="semantics",
+        query="给我看看成都的咖啡馆",
+        expected_task="simple_view",
+        allowed_algorithms=["poi.query", "profile.spatial"],
+        forbidden_algorithms=["spatial.kde", "density.analytical", "stats.h3_lisa",
+                              "admin.aggregate", "interpolation."],
+        max_tool_calls=3,
+    ),
+    GISBenchmarkCase(
+        id="G14", name="simple view：基础设施展示（地铁站）", group="semantics",
+        query="在地图上显示成都地铁站",
+        expected_task="simple_view",
+        forbidden_algorithms=["spatial.kde", "density.analytical", "stats."],
+        max_tool_calls=3,
+    ),
+    # ── distribution / density ────────────────────────────────────────
+    GISBenchmarkCase(
+        id="G15", name="显式热力图：kde 密度面", group="poi",
+        query="成都火锅店分布热力图",
+        expected_task="distribution_overview",
+        expected_capabilities=["poi_query", "kde_density"],
+        optional_capabilities=["admin_aggregation", "point_profile"],
+        allowed_algorithms=["poi.query", "density.", "admin.", "profile.spatial", "spatial."],
+        max_tool_calls=8,
+    ),
+    GISBenchmarkCase(
+        id="G16", name="人口密度分布：kde + 行政聚合产品族", group="poi",
+        query="成都各区人口密度分布图",
+        expected_task="distribution_overview",
+        expected_capabilities=["poi_query"],
+        optional_capabilities=["admin_aggregation", "kde_density"],
+        forbidden_methodology_warnings=["temporal_change"],
+        forbidden_algorithms=["interpolation."],
+        max_tool_calls=8,
+    ),
+    # ── choropleth / administrative comparison ─────────────────────────
+    GISBenchmarkCase(
+        id="G17", name="行政对比：admin_choropleth 产品族", group="poi",
+        query="成都各区人口密度对比",
+        expected_task="distribution_overview",
+        expected_recipe="poi_distribution_overview",
+        expected_capabilities=["poi_query", "admin_aggregation"],
+        optional_capabilities=["kde_density"],
+        forbidden_methodology_warnings=["temporal_change"],
+        max_tool_calls=8,
+    ),
+    # ── equity 方法论诚实（核心新增）──────────────────────────────────
+    GISBenchmarkCase(
+        id="G18", name="教育公平性（无分母）：必须披露方法论边界", group="semantics",
+        query="分析成都各区小学教育资源公平性",
+        expected_capabilities=["poi_query", "admin_aggregation"],
+        expected_methodology_warnings=["spatial_equity"],
+        max_tool_calls=8,
+    ),
+    GISBenchmarkCase(
+        id="G19", name="教育经费公平性（无分母）：披露且不过度公平结论", group="semantics",
+        query="成都各区教育经费公平性分析",
+        expected_methodology_warnings=["spatial_equity"],
+        forbidden_algorithms=["interpolation."],
+        max_tool_calls=8,
+    ),
+    GISBenchmarkCase(
+        id="G20", name="纯行政统计不带 equity 噪声", group="semantics",
+        query="生成成都各区小学数量柱状图",
+        expected_task="administrative_statistic",
+        expected_product_facets=["chart"],
+        forbidden_methodology_warnings=["spatial_equity"],
+    ),
+    # ── network / service area ────────────────────────────────────────
+    GISBenchmarkCase(
+        id="G21", name="服务覆盖：accessibility 产品族", group="network",
+        query="计算成都医院的服务覆盖范围",
+        expected_task="accessibility_analysis",
+        expected_recipe="accessibility_analysis",
+        expected_capabilities=["service_area"],
+        optional_capabilities=["poi_query"],
+        allowed_algorithms=["network.isochrone", "poi.query", "profile.spatial", "admin.boundary"],
+        max_tool_calls=8,
+    ),
+    # ── flow ───────────────────────────────────────────────────────────
+    GISBenchmarkCase(
+        id="G22", name="通勤流量：od_flow 产品族", group="od",
+        query="成都各区通勤流量图",
+        expected_task="mobility_flow",
+        expected_recipe="od_flow_overview",
+        expected_capabilities=["od_matrix", "od_flow_mapping"],
+        allowed_algorithms=["network.od_matrix", "flow.", "profile.spatial", "admin.boundary"],
+        max_tool_calls=6,
+    ),
+    # ── temporal ───────────────────────────────────────────────────────
+    GISBenchmarkCase(
+        id="G23", name="双时相变化：change_detection + temporal 诚实", group="raster",
+        query="成都2023到2024年建成区变化",
+        expected_task="change_detection",
+        expected_capabilities=["raster_change_detection"],
+        optional_capabilities=["raster_source", "ndvi"],
+        expected_methodology_warnings=["temporal_change"],
+    ),
+    # ── raster / remote sensing ────────────────────────────────────────
+    GISBenchmarkCase(
+        id="G24", name="植被指数显式请求：ndvi capability", group="raster",
+        query="计算成都平原的NDVI植被指数分布",
+        expected_task="vegetation_index",
+        expected_capabilities=["ndvi"],
+        optional_capabilities=["raster_source"],
+        allowed_algorithms=["remote.ndvi", "raster.source", "profile.spatial"],
+        max_tool_calls=6,
+    ),
+    # ── explicit chart ─────────────────────────────────────────────────
+    GISBenchmarkCase(
+        id="G25", name="显式图表：category_bar facet", group="poi",
+        query="成都小学按类别分类分布并给出类别占比图",
+        expected_task="categorical_distribution",
+        expected_product_facets=["chart"],
+        expected_capabilities=["poi_query", "category_breakdown"],
+        max_tool_calls=8,
+    ),
+    # ── explicit algorithm（master 语义：插值=栅格表面族）──────────────
+    GISBenchmarkCase(
+        id="G26", name="泛插值请求：raster_distribution 产品族", group="raster",
+        query="用插值生成成都气温表面",
+        expected_task="raster_distribution",
+        expected_recipe="raster_distribution",
+        expected_capabilities=["raster_source"],
+        forbidden_algorithms=["spatial.kde"],
+        max_tool_calls=5,
+    ),
+    # ── insufficient-data / 语义不足的诚实兜底 ─────────────────────────
+    GISBenchmarkCase(
+        id="G27", name="选址语义（无专属产品）：分布兜底不过度热点", group="semantics",
+        query="为成都新分校选址推荐最优位置",
+        expected_task="distribution_overview",
+        expected_recipe="poi_distribution_overview",
+        forbidden_algorithms=["stats.h3_lisa", "interpolation."],
+        max_tool_calls=8,
+    ),
+    GISBenchmarkCase(
+        id="G28", name="风险语义（无专属产品）：不伪装风险产品", group="semantics",
+        query="分析成都洪水风险区域",
+        expected_task="distribution_overview",
+        forbidden_algorithms=["interpolation."],
+        max_tool_calls=8,
+    ),
+    GISBenchmarkCase(
+        id="G29", name="适建区评价（无专属产品）：诚实兜底", group="semantics",
+        query="成都适建区评价",
+        expected_task="distribution_overview",
+        max_tool_calls=8,
+    ),
+    # ── categorical ────────────────────────────────────────────────────
+    GISBenchmarkCase(
+        id="G30", name="分类分布：categorical 产品族 + 类别图表", group="poi",
+        query="成都小学按类别分类分布",
+        expected_task="categorical_distribution",
+        expected_recipe="categorical_distribution",
+        expected_capabilities=["poi_query", "category_breakdown"],
+        expected_product_facets=["chart"],
+        max_tool_calls=8,
+    ),
+    # ── G31 显式克里金（Kriging vertical slice：explicit request 不换算法）─
+    GISBenchmarkCase(
+        id="G31",
         name="显式克里金：surface 产品 + prediction/uncertainty 双产物",
         group="interpolation",
         query="用克里金插值成都PM2.5监测站数据",
@@ -252,9 +414,9 @@ GOLDEN_CASES: list[GISBenchmarkCase] = [
         ],
         max_tool_calls=5,
     ),
-    # ── G14 泛插值（无算法点名 → 默认 IDW，不过度强制克里金）─────────────
+    # ── G32 泛插值（无算法点名 → 默认 IDW，不过度强制克里金）─────────────
     GISBenchmarkCase(
-        id="G14",
+        id="G32",
         name="泛插值请求：默认算法解析为 IDW",
         group="interpolation",
         query="对成都气温站点数据做插值生成连续表面",
@@ -264,9 +426,9 @@ GOLDEN_CASES: list[GISBenchmarkCase] = [
                             "raster.source", "profile.spatial"],
         forbidden_algorithms=["spatial.kde"],
     ),
-    # ── G15 样本不足（<10 站）：克里金被拒，IDW 兜底带证据 ────────────────
+    # ── G33 样本不足（<10 站）：克里金被拒，IDW 兜底带证据 ────────────────
     GISBenchmarkCase(
-        id="G15",
+        id="G33",
         name="稀疏样本：kriging min_features 拒绝 → idw fallback 证据",
         group="interpolation",
         query="用克里金插值这6个站点的数据",

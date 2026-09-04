@@ -66,6 +66,12 @@ class GISBenchmarkCase(BaseModel):
         default_factory=list, description="facet kinds the product contract must require"
     )
     max_tool_calls: Optional[int] = None
+    # Semantic GIS（方法论诚实）：期望 plan.methodology_warnings 命中的
+    # pattern id（如 equity-无分母 ⇒ ["spatial_equity"]）；空 = 不检查。
+    expected_methodology_warnings: List[str] = Field(default_factory=list)
+    # 反向契约：这些 pattern 的方法论警告**不得**出现（如纯统计查询不得
+    # 带 equity 噪声 —— keyword-gate 的回归锚）。
+    forbidden_methodology_warnings: List[str] = Field(default_factory=list)
 
     # ── execute tier ──────────────────────────────────────────────────
     plan_only: bool = False

@@ -41,6 +41,9 @@ class SemanticFieldRole(str, Enum):
     DISTANCE_MEASURE = "distance_measure"
     NORMALIZATION_DENOMINATOR = "normalization_denominator"
     LABEL = "label"
+    # Semantic-GIS 扩展：坐标与权重角色（规划/插值/流量语义的前提信号）
+    GEOGRAPHIC_COORDINATE = "geographic_coordinate"
+    WEIGHT_MEASURE = "weight_measure"
 
 
 class EvidenceSource(str, Enum):
@@ -88,6 +91,12 @@ _NAME_RULES: Dict[SemanticFieldRole, "re.Pattern"] = {
         r"(指数|得分|评分|温度|价格|score|index|price|temp|value$|amount)", re.I
     ),
     SemanticFieldRole.LABEL: re.compile(r"(名称|名字|标题|^name$|label|title)", re.I),
+    SemanticFieldRole.GEOGRAPHIC_COORDINATE: re.compile(
+        r"(^lon$|^lng$|^lon_?g?$|^lat$|经度|纬度|longitude|latitude|coords?_?[xy]?$|wgs84_x|wgs84_y)", re.I
+    ),
+    SemanticFieldRole.WEIGHT_MEASURE: re.compile(
+        r"(权重|权重值|重量|weight|^w$|吨位|吨)", re.I
+    ),
     SemanticFieldRole.CATEGORY: re.compile(
         r"(类别|类型|分类|种类|category|type|kind|class$|等级|级别|grade|level)", re.I
     ),
@@ -188,9 +197,14 @@ def _dtype_allows(dtype: str, role: SemanticFieldRole) -> bool:
         SemanticFieldRole.POPULATION_MEASURE,
         SemanticFieldRole.AREA_MEASURE,
         SemanticFieldRole.DISTANCE_MEASURE,
+        # Review F9: coordinates and weights are numeric measures — a string
+        # "lat"/"weight" column must not earn the role from its name alone.
+        SemanticFieldRole.GEOGRAPHIC_COORDINATE,
+        SemanticFieldRole.WEIGHT_MEASURE,
     }
     if role in numeric_roles:
-        return dtype in ("number", "integer", "float", "int", "double")
+        return dtype in ("number", "integer", "float", "int", "double",
+                         "float64", "float32", "int64", "int32", "int16", "int8")
     if role in (SemanticFieldRole.ADMIN_DIMENSION, SemanticFieldRole.CATEGORY,
                 SemanticFieldRole.LABEL, SemanticFieldRole.FEATURE_ID,
                 SemanticFieldRole.TEMPORAL_DIMENSION):

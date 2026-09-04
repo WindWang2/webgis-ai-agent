@@ -11,6 +11,7 @@ _METRIC_ORDER = [
     "capability_precision",
     "capability_recall",
     "algorithm_correct",
+    "methodology_honesty_ok",
     "numerical_correct",
     "artifact_contract_valid",
     "map_product_complete",

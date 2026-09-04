@@ -126,7 +126,7 @@ PATTERNS: Tuple[AnalysisPattern, ...] = (
         name_zh="空间公平",
         description="资源分配是否均衡：必须有分母（人均/地均）。",
         task_aliases=("administrative_statistic",),
-        query_keywords=("均衡", "公平", "是否合理", "差异"),
+        query_keywords=("均衡", "公平", "是否合理", "差异", "人均", "差距"),
         required_roles=(R.NORMALIZATION_DENOMINATOR,),
         optional_roles=(R.POPULATION_MEASURE, R.AREA_MEASURE),
         recommended_capabilities=("admin_aggregation", "admin_boundary_query"),
@@ -169,7 +169,10 @@ PATTERNS: Tuple[AnalysisPattern, ...] = (
         name_zh="时序变化",
         description="两期或多期对比：差值/变化检测/趋势。",
         task_aliases=("change_detection",),
-        query_keywords=("变化", "对比", "两期", "趋势", "历年"),
+        # Review F2: 「对比」 removed — purely SPATIAL comparisons (各区人口
+        # 对比) fired the temporal disclosure; temporal semantics need an
+        # explicit time signal (变化/两期/趋势/历年/时序/同比/环比).
+        query_keywords=("变化", "两期", "趋势", "历年", "时序", "同比", "环比"),
         required_roles=(R.TEMPORAL_DIMENSION,),
         recommended_capabilities=("raster_change_detection", "temporal_trend", "temporal_aggregate"),
         optional_capabilities=("ndvi",),
