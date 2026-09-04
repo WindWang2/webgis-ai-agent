@@ -241,9 +241,12 @@ async def test_late_tool_callback_step_not_misattributed(monkeypatch, caplog):
     monkeypatch.setattr(engine_instance, "_engine", engine)
 
     # New turn is active; the callback belongs to the cancelled previous turn.
-    monkeypatch.setattr(bridge_mod, "_active_turn_turn_id", "turn-new")
-    monkeypatch.setattr(bridge_mod, "_active_turn_run_id", "run-new")
-    monkeypatch.setattr(bridge_mod, "_active_turn_session_id", "s-late")
+    # V5-B: dispatch_tool 经 active_turn_correlation(session) 查 session-keyed
+    # 的 _active_turns 表（模块级单例 globals 只是 pool=1 的 back-compat 视图），
+    # 因此活跃 turn 必须注册进表里才能被识别。
+    monkeypatch.setitem(bridge_mod._active_turns, "s-late", bridge_mod._ActiveTurnEntry(
+        session_id="s-late", turn_id="turn-new", token=None, run_id="run-new",
+    ))
 
     with caplog.at_level(logging.WARNING, logger="app.agent_pi_bridge"):
         resp = await dispatch_tool(PiToolRequest(

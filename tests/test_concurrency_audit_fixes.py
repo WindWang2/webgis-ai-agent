@@ -64,8 +64,12 @@ async def test_F1_late_abort_spares_same_session_successor_turn(monkeypatch):
     b._rpc = rpc
 
     token_t1 = CancellationToken()
-    monkeypatch.setattr(bridge_mod, "_active_turn_sid", "s-A", raising=False)
-    monkeypatch.setattr(bridge_mod, "_active_turn_token", token_t1, raising=False)
+    # V5-B: abort() 经 session-keyed 的 _active_turns 表解析在飞 turn
+    # （模块级单例 globals 只是 pool=1 的 back-compat 视图），快照语义不变。
+    b._active_turn_sid = "s-A"
+    monkeypatch.setitem(bridge_mod._active_turns, "s-A", bridge_mod._ActiveTurnEntry(
+        session_id="s-A", turn_id="turn-t1", token=token_t1,
+    ))
 
     fut_t1 = rpc.register("prompt-t1")
 
@@ -75,7 +79,9 @@ async def test_F1_late_abort_spares_same_session_successor_turn(monkeypatch):
     # Same-session successor turn replaces the token + registers its own
     # prompt future while the abort RPC is still in flight.
     token_t2 = CancellationToken()
-    monkeypatch.setattr(bridge_mod, "_active_turn_token", token_t2, raising=False)
+    monkeypatch.setitem(bridge_mod._active_turns, "s-A", bridge_mod._ActiveTurnEntry(
+        session_id="s-A", turn_id="turn-t2", token=token_t2,
+    ))
     fut_t2 = rpc.register("prompt-t2")
 
     await abort_task
@@ -99,8 +105,10 @@ async def test_F1_abort_still_cancels_the_live_token(monkeypatch):
     b._rpc = rpc
 
     token = CancellationToken()
-    monkeypatch.setattr(bridge_mod, "_active_turn_sid", "s-A", raising=False)
-    monkeypatch.setattr(bridge_mod, "_active_turn_token", token, raising=False)
+    b._active_turn_sid = "s-A"
+    monkeypatch.setitem(bridge_mod._active_turns, "s-A", bridge_mod._ActiveTurnEntry(
+        session_id="s-A", turn_id="turn-live", token=token,
+    ))
     fut = rpc.register("prompt-live")
 
     await b.abort(session_id="s-A")
