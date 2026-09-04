@@ -144,7 +144,7 @@ _DISTRICT_RE = re.compile(r"([\u4e00-\u9fa5]{2,6}(?:区|县|旗))")
 _GROUPBY_RE = re.compile(r"(各|每个?|按)(?:个)?(?:区|县|市|街道|乡镇|镇|村)", re.I)
 # audit #835: 疑问限定词 —— 「哪个区/哪些县」是提问不是地名，不得捕获为
 # district scope（曾把 scope.name 钉成字面「哪个区」并渗入产品标题）。
-_INTERROGATIVE_RE = re.compile(r"(哪个|哪些|哪几|什么)")
+_INTERROGATIVE_RE = re.compile(r"(哪个|哪些|哪几|哪里|什么)")
 
 _POINT_SUBJECTS = (
     "小学", "中学", "大学", "学校", "医院", "诊所", "药店", "银行", "超市",
@@ -155,13 +155,18 @@ _POLYGON_SUBJECTS = (
     "边界", "行政区划", "行政区", "区划", "地块", "土地利用", "规划范围", "流域",
 )
 _LINE_SUBJECTS = ("道路", "路网", "河流", "水系", "轨道", "管线", "航线")
-_RASTER_SUBJECTS = ("遥感", "影像", "dem", "高程", "地形", "植被指数", "ndvi", "气温", "降水", "栅格")
+_RASTER_SUBJECTS = ("遥感", "影像", "dem", "高程", "地形", "植被指数", "ndvi", "气温", "降水", "栅格",
+                    "不透水面", "satellite", "imagery", "remote sensing", "elevation", "terrain",
+                    "precipitation", "rainfall", "land cover")
 
 # 任务规则：按特异性排序（先命中先停）。每条 = (rule_id, 正则, task)
 _TASK_RULES: List[tuple] = [
     ("analytical_density_per_area",
      re.compile(r"每(?:平方|平方千米|平方公里|km|公里)[^，。?？]*密度|"
-                r"密度[（(]?每|单位面积[^，。?？]*密度|density\s+per", re.I),
+                r"密度[（(]?每|密度[^，。?？]{0,12}每(?:平方|km|公里)|"
+                r"单位面积[^，。?？]*密度|"
+                r"density\s*(?:map|surface)?\s*per|per\s+square\s+(?:km|kilometer)|"
+                r"density\s*(?:\(|in\s)[^，。?？]{0,16}(?:km|square)", re.I),
      "analytical_density"),
     # ── Semantic V2（ADR-0098）：决策族一等任务规则 ────────────────────
     # 规则序说明：这四族是「问题语义」（评价/决策），比「形式语义」（聚合/
@@ -170,47 +175,75 @@ _TASK_RULES: List[tuple] = [
     # statistic / proximity / accessibility 之前，纯统计查询（无数词）不受
     # 影响（G20 回归锁定）。
     ("spatial_equity_request",
-     re.compile(r"(公平性|公平|均衡|是否合理|分布合理|教育资源不足|资源缺口|"
-                r"欠发达|不平等|差距[有大多小]?|equity|fairness|fair\s+access)", re.I),
+     re.compile(r"(公平性|公平|均衡|是否合理|分布合理|教育资源不足|资源(不足|缺口)|"
+                r"欠发达|不平等|差距[有大多小]?|equity|equitable|fairness|fair\s+access|"
+                r"fairly\s+(?:distributed|allocated)|balanced\s+distribution|"
+                r"underserved|under.?privileged)", re.I),
      "spatial_equity"),
     ("site_selection_request",
      re.compile(r"(选址|选址推荐|选址分析|最优位置|最佳位置|候选位置|候选址|"
-                r"新校址|新院址|新站址|布点|选址建议|site\s+selection|choose\s+a\s+site|"
-                r"best\s+location|candidate\s+site)", re.I),
+                r"新校址|新院址|新站址|布点|选址建议|(?:哪里|何处|哪些地方?|哪儿)适合建|"
+                r"(?:位置|地点)[^，。?？]{0,3}怎么选|怎么选(?:位置|地点)|"
+                r"适合建(?:新|一)|"
+                r"site\s+selection|choose\s+a\s+site|"
+                r"best\s+location|candidate\s+site|"
+                r"where\s+should\s+(?:we\s+)?(?:build|place|put)|"
+                r"best\s+(?:site|spot|location)\s+for|"
+                r"suitable\s+spots?\s+for\s+a?\s*new)", re.I),
      "site_selection"),
     ("suitability_assessment_request",
      re.compile(r"(适宜性|适建区|适建性|适宜程度|适宜性评价|适宜性分析|"
                 r"开发适宜|农业适宜|建设适宜|suitability|suitable\s+area)", re.I),
      "suitability_assessment"),
     ("risk_exposure_request",
-     re.compile(r"(风险|风险区|风险评估|风险分析|暴露|危险源|灾害易发|"
+     re.compile(r"(风险|风险区|风险评估|风险分析|暴露|危险源|灾害易发|地质灾害|"
                 r"安全隐患|risk\s+(?:assessment|zone|area|map)|hazard|exposure)", re.I),
      "risk_exposure"),
     ("administrative_statistic",
      re.compile(r"(各|每个|按?分?)(?:个)?(?:区|县|市|街道|乡镇|镇|村|州|省)[^，。?？]*"
                 r"(数量|多少|几|统计|计数|汇总|排名|最多|最少)|"
-                r"(数量|统计|汇总)按?(?:行政)?(?:区|县|市|街道|划分)", re.I),
+                r"(数量|统计|汇总)按?(?:行政)?(?:区|县|市|街道|划分)|"
+                r"(?:number|count|total)\s+of\s+[^，。?？]{1,40}?\s+"
+                r"(?:by|per|in)\s+(?:each\s+)?(?:district|county|borough|ward)|"
+                r"how\s+many[^，。?？]{0,40}(?:each\s+)?(?:district|county|borough|ward)|"
+                r"(?:count|counts|counting)\s+by\s+(?:district|county|borough)|"
+                r"(?:by|per)\s+(?:each\s+)?(?:district|county|borough|ward)\b|"
+                r"(?:district|county|borough)\s+(?:statistics|stats|ranking|breakdown)|"
+                r"by\s+(?:district|county|borough)\b[^，。?？]{0,20}"
+                r"(?:count|number|total|statistics|stats|ranking)", re.I),
      "administrative_statistic"),
     ("concentration_hotspot",
-     re.compile(r"(哪里|哪儿|何处|哪个地方|哪片)[^，。?？]*(最集中|最密|最热门|聚集|扎堆)|"
-                r"(最集中|热点|高发区|聚集区|核心区在哪)", re.I),
+     re.compile(r"(哪里|哪儿|何处|哪个|哪个地方|哪片|哪些)[^，。?？]*(最集中|最密|最热门|聚集|扎堆)|"
+                r"(最集中|热点|高发区|聚集区|聚集效应|核心区在哪)|"
+                r"(hottest|most\s+(?:concentrated|dense|crowded)|gathering\s+areas?)", re.I),
      "concentration_analysis"),
     ("accessibility_service_area",
      # #779: 「服务覆盖盲区/缺口/欠覆盖」是可达性-覆盖语义（教育/设施规划
      # 的核心问法），不是分布概览 —— 盲区/缺口/未覆盖/覆盖空白/欠覆盖 与
      # 可达性/服务区/覆盖范围 同族。
+     # VNext §15 矩阵补：语序变体「15分钟步行(可)到达/圈内」—— 分钟词在
+     # 步行/车程之前同样是最强可达信号（此前只匹配 步行…分钟内）。
      re.compile(r"(可达性|等时圈|服务区|覆盖范围|盲区|缺口|未覆盖|覆盖空白|欠覆盖|"
-                r"通勤时间|车程[^，。?？]*内|步行[^，。?？]*分钟内)", re.I),
+                r"通勤时间|车程[^，。?？]*内|步行[^，。?？]*分钟内|"
+                r"\d+\s*分钟[^，。?？]{0,6}(?:步行|车程|公交|骑行|到达|可达|圈)|"
+                r"(?:步行|骑行)(?:可)?到达|"
+                r"accessibility|isochrone|service\s+area|walkable|walking\s+access)", re.I),
      "accessibility_analysis"),
     ("proximity_buffer",
      re.compile(r"(\d+\s*(?:m|米|km|公里|千米)[^，。?？]*(内|之内|范围内|周边|附近)|"
-                r"(周边|附近|旁边|范围内)[^，。?？]*的)", re.I),
+                r"(?:周边|附近)[^，。?？]{0,8}\d+\s*(?:m\b|米|km|公里|千米)|"
+                r"within\s+\d+\s*(?:m\b|meters?|km|kilometers?)|"
+                r"within\s+(?:walking|cycling|short)\s+distance|"
+                r"(周边|附近|旁边|[^区县市旗]范围内)[^，。?？]*的)", re.I),
      "proximity_analysis"),
     ("change_detection",
-     re.compile(r"(变化|变迁|对比[^，。?？]*(年|期)|历年对比|两期)", re.I),
+     re.compile(r"(变化|变迁|对比[^，。?？]*(年|期)|历年对比|两期|"
+                r"changes?\s+(?:between|over|across)|change\s+detection|"
+                r"compare[^，。?？]{0,30}(?:periods?|years?|images?))", re.I),
      "change_detection"),
     ("categorical_breakdown",
-     re.compile(r"(各类|各类型|分类别|按(?:类型|类别|种类)|类别分布|类型分布|占比|构成)", re.I),
+     re.compile(r"(各类|各类型|分类别|分类分布|业态分类|按(?:类型|类别|种类)|类别分布|类型分布|占比|构成|"
+                r"category\s+breakdown|by\s+category|composition\s+of)", re.I),
      "categorical_distribution"),
     # ADR-0092 G5：显式光谱指数请求（NDVI/植被指数等）是计算任务，不是
     # 栅格分布概览 —— 必须先于 raster_subject_thematic 命中，否则 ndvi
@@ -221,7 +254,9 @@ _TASK_RULES: List[tuple] = [
     # ADR-0092 G11/G12：流动语义（通勤/出行/客流 OD）先于展示动词命中，
     # 避免「展示…通勤流」被 simple_view 吞掉。
     ("mobility_flow_request",
-     re.compile(r"(通勤流|出行流|客流|交通流|流向|od\s*矩阵|od分析|出行(od|分布))", re.I),
+     re.compile(r"(通勤流|出行流|客流|交通流|流向|流动|od\s*(?:矩阵|分析|联系|强度|流量|走廊)|"
+                r"出行(od|分布)|commuting\s+(?:flows?|flow)|origin.destination|od\s+matrix)",
+                re.I),
      "mobility_flow"),
     # ADR-0092 G2：展示动词不再要求句首 —— 「在地图上显示X」「帮我看下X」
     # 同样是轻量点图意图；负向前瞻排除携带更强任务语义（分布/统计/密度/
@@ -230,9 +265,13 @@ _TASK_RULES: List[tuple] = [
      # ADR-0092 G2：展示动词支持「在地图上/帮我/把」等显式前缀（收紧为
      # 枚举分支 + 可选短间隙，绝不放任意 6 字间隙 —— 否则「用气泡图展示…」
      # 这类携带形态信号的查询会被误吞，proportional_symbol 路由被破坏）。
-     re.compile(r"^(?:在地图上|地图上|在地图中|(?:帮我|请|把|将)[^，。?？]{0,4})?"
-                r"(给我看|看看|显示|展示|查看|瞄一眼|瞧瞧|show\s+me)"
-                r"(?![^，。?？]*(?:分布|统计|密度|热点|变化|服务区|可达|占比|构成|聚类|均衡|选址|流(向|量)|通勤|插值|克里金|公平|风险|适宜|interpolat|kriging))",
+     re.compile(r"^(?:在地图上|地图上|在地图中|(?:帮我|请|把|将|咱|麻烦)[^，。?？]{0,10})?"
+                r"(给我看|看看|显示|展示|查看|瞄一眼|瞧瞧|放到|放上|标到|"
+                r"show\s+me|show|display|map\s+the|map\b)"
+                r"(?![^，。?？]*(?:分布|散布|态势|格局|统计|密度|热点|变化|服务区|可达|"
+                r"占比|构成|聚类|均衡|选址|流(向|量)|通勤|插值|克里金|公平|风险|适宜|"
+                r"distribution|statistics|density|hotspot|changes?|flow|equity|risk|"
+                r"interpolat|kriging))",
                 re.I),
      "simple_view"),
     # #781: 栅格主体（遥感/影像/DEM/NDVI/气温/降水…）在无更强任务规则命中

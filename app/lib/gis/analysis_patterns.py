@@ -138,7 +138,12 @@ PATTERNS: Tuple[AnalysisPattern, ...] = (
         # Semantic V2（ADR-0098）：spatial_equity 现在是一等 intent task，
         # 不再只经 administrative_statistic 别名间接匹配。
         task_aliases=("spatial_equity", "administrative_statistic"),
-        query_keywords=("均衡", "公平", "是否合理", "差异", "人均", "差距"),
+        # VNext §15：警告关键词门与 intent 规则同词面（含英文与 分布合理/
+        # 教育资源不足 变体）—— task 命中而关键词缺席会把披露静默吞掉。
+        query_keywords=("均衡", "公平", "是否合理", "分布合理", "教育资源不足",
+                        "资源不足", "差异", "人均", "差距",
+                        "equity", "equitable", "fairness", "fairly", "balanced",
+                        "underserved"),
         required_roles=(R.NORMALIZATION_DENOMINATOR,),
         optional_roles=(R.POPULATION_MEASURE, R.AREA_MEASURE),
         recommended_capabilities=("admin_aggregation", "admin_boundary_query"),

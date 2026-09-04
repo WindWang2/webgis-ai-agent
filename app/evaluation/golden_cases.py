@@ -474,4 +474,8 @@ GOLDEN_CASES: list[GISBenchmarkCase] = [
 
 
 def get_all_cases() -> list[GISBenchmarkCase]:
-    return list(GOLDEN_CASES)
+    """Golden（G1–G33）+ 确定性矩阵（VNext §15：语义族 × 表述风格 × 语言
+    × 负例 × 形态 × scope × 决策披露）。合并总量 ≥300。"""
+    from app.evaluation.case_matrix import build_matrix_cases
+
+    return list(GOLDEN_CASES) + build_matrix_cases()

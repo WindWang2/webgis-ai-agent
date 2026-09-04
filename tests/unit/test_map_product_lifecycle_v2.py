@@ -18,8 +18,8 @@ from app.core.database import Base, Engine, SessionLocal
 from app.services.map_product_service import MapProductService
 
 
-@pytest.fixture()
-def lifecycle_project():
+def make_lifecycle_project():
+    """Plain helper (fixtures can't be called directly from other modules)."""
     from tests.unit.test_reproducible_gis_runtime import _PROJECT_DOMAIN_TABLES
 
     import app.models.db_model  # noqa: F401 — register metadata
@@ -81,6 +81,11 @@ def lifecycle_project():
         )
         versions = (int(v1.version_no), int(v2.version_no), int(v3.version_no))
     return project_id, versions
+
+
+@pytest.fixture()
+def lifecycle_project():
+    return make_lifecycle_project()
 
 
 # ── open ────────────────────────────────────────────────────────────────────
