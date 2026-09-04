@@ -195,6 +195,169 @@ def register_cartography_tools(registry: ToolRegistry):
             logger.error(f"Error creating thematic map: {e}")
             return {"error": str(e)}
 
+    @tool(registry, name="create_3d_extrusion_map",
+           description=(
+               "制作 3D 挤出立体多边形专题图（extrusion_3d）。"
+               "\n✅ 用于：以高度（米）直观表达要素的数值大小（如各区人口总量、GDP总量、建筑高度等），"
+               "辅以专题设色与 3D 相机视角推荐。"
+               "\n支持高度与颜色独立双通道（例如：高度=GDP总量，颜色=人均GDP）。"
+           ),
+           tier=2, domains=["report"],
+           param_descriptions={
+               "geojson": "多边形面要素 GeoJSON 或引用 (ref:xxx)",
+               "height_field": "用于驱动挤出高度的数值属性字段",
+               "color_field": "可选：用于专题填色的属性字段（缺省与 height_field 相同）",
+               "height_unit": "高度物理/统计单位（如 '人', '亿元', 'm'），默认 'm'",
+               "transform": "高度归一化数学变换：'linear', 'sqrt', 'log1p'，默认 'linear'",
+               "min_visual_height_m": "最小可视高度（米），默认 10.0",
+               "max_visual_height_m": "最大可视高度（米），默认 5000.0",
+               "palette": "色板名称，默认 'Oranges'",
+               "k": "颜色分级数，默认 5",
+               "method": "颜色分类方法：'natural_breaks', 'equal_interval', 'quantile' 等",
+               "group": "图层分组，默认 'analysis'",
+           })
+    def create_3d_extrusion_map(
+        geojson: Any,
+        height_field: str,
+        color_field: Optional[str] = None,
+        height_unit: str = "m",
+        transform: str = "linear",
+        min_visual_height_m: float = 10.0,
+        max_visual_height_m: float = 5000.0,
+        palette: str = "Oranges",
+        k: int = 5,
+        method: Optional[str] = None,
+        group: str = "analysis",
+    ) -> dict:
+        try:
+            data = _safe_parse_geojson(geojson)
+            if not data:
+                return {"error": "Invalid GeoJSON input"}
+
+            features = data.get("features") or []
+            if not features:
+                return {"error": "GeoJSON contains no features"}
+
+            # Validate geometry category
+            from app.services.analysis_cartography_converter import _infer_geometry_category
+            geom_cat, _ = _infer_geometry_category(data)
+            if geom_cat != "polygon":
+                return {"error": f"3D 挤出图层需要多边形面要素 (Polygon)，当前几何类型为 {geom_cat or 'unknown'}"}
+
+            c_field = color_field or height_field
+
+            from app.lib.cartography.extrusion_model import (
+                ExtrusionHeightSpec,
+                analyze_height_field_distribution,
+            )
+            from app.lib.cartography.thematic_spec import build_graduated_spec
+
+            height_values = [
+                f.get("properties", {}).get(height_field)
+                for f in features
+                if isinstance(f, dict)
+            ]
+            ext_stats = analyze_height_field_distribution(height_values)
+            if not ext_stats.get("valid"):
+                return {"error": f"高度字段 '{height_field}' 不存在或无有效数值"}
+
+            # Build color legend / thematic spec
+            m = method if method else "natural_breaks"
+            legend_spec = build_graduated_spec(
+                data, field=c_field, method=m, k=k, palette=palette,
+            )
+
+            # ADR-0095 Decision 2.3: When height and color channels differ, emit height scale legend
+            height_legend = None
+            if c_field != height_field:
+                min_v = float(ext_stats.get("min", 0.0))
+                max_v = float(ext_stats.get("max", 1.0))
+                min_h = float(min_visual_height_m)
+                max_h = float(max_visual_height_m)
+                span = max(max_v - min_v, 0.0)
+
+                quantiles = [0.0, 0.25, 0.50, 0.75, 1.0]
+                stops = []
+                for q in quantiles:
+                    if transform == "log1p":
+                        domain_val = min_v + ((1.0 + span) ** q - 1.0)
+                    elif transform == "sqrt":
+                        domain_val = min_v + (q ** 2) * span
+                    else:
+                        domain_val = min_v + q * span
+                    vis_h = round(min_h + q * (max_h - min_h), 1)
+                    stops.append({
+                        "value": round(domain_val, 2),
+                        "height_m": vis_h,
+                        "label": f"{domain_val:g} {height_unit} → {vis_h:g}m".strip(),
+                    })
+
+                height_legend = {
+                    "type": "height_scale",
+                    "field": height_field,
+                    "unit": height_unit,
+                    "min_value": min_v,
+                    "max_value": max_v,
+                    "min_height_m": min_h,
+                    "max_height_m": max_h,
+                    "transform": transform,
+                    "title": f"{height_field} 高度标尺",
+                    "stops": stops,
+                }
+
+            style_def = {
+                "type": "fill-extrusion",
+                "field": c_field,
+                "height_field": height_field,
+                "breaks": legend_spec.get("breaks", []) if legend_spec else [],
+                "colors": legend_spec.get("palette_colors", []) if legend_spec else [],
+                "legend_labels": legend_spec.get("labels", []) if legend_spec else [],
+            }
+
+            title_str = (
+                f"{height_field} 3D 挤出立体图"
+                if c_field == height_field
+                else f"{height_field} (高度) × {c_field} (颜色) 3D 挤出图"
+            )
+
+            extrusion_meta = {
+                "height_field": height_field,
+                "color_field": c_field,
+                "height_unit": height_unit,
+                "transform": transform,
+                "min_visual_height_m": min_visual_height_m,
+                "max_visual_height_m": max_visual_height_m,
+                "stats": ext_stats,
+            }
+            if height_legend is not None:
+                extrusion_meta["height_legend"] = height_legend
+
+            return_dict = {
+                "geojson": data,
+                "type_hint": "extrusion_3d",
+                "group": group,
+                "style": style_def,
+                "metadata": {
+                    "extrusion": extrusion_meta,
+                },
+                "recommended_view": {
+                    "pitch": 45.0,
+                    "bearing": -15.0,
+                },
+                "layer_meta": {
+                    "title": title_str,
+                },
+            }
+            if legend_spec is not None:
+                return_dict["legend_spec"] = legend_spec
+            if height_legend is not None:
+                return_dict["height_legend"] = height_legend
+
+            return return_dict
+        except (ValueError, TypeError, KeyError) as e:
+            logger.error(f"Error creating 3D extrusion map: {e}")
+            return {"error": str(e)}
+
     @tool(registry, tier=2, domains=["report"], name="export_thematic_map",
            description=(
                "当用户请求导出精美地图、制图排版、保存当前地图视图为图片或 PDF 时调用。"

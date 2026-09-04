@@ -401,5 +401,7 @@ describe("MapSpec-to-SVG Compiler Target", () => {
     expect(svg).toContain('<path d="M ');
     expect(svg).toContain('fill="#334155"');
     expect(svg).toContain('fill-opacity="0.9"');
+    expect(svg).toContain('data-export-degraded="true"');
+    expect(svg).toContain('data-export-degraded-reason="3d_perspective_not_vectorized"');
   });
 });

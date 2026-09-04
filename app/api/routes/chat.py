@@ -447,8 +447,37 @@ def get_registry() -> ToolRegistry:
     return registry
 
 
+def _bridge_alive(candidate) -> bool:
+    """Liveness for a bridge candidate (C-F15 semantics, parameterized)."""
+    if getattr(candidate, "_process_died", False):
+        return False
+    is_alive_fn = getattr(candidate, "is_alive", None)
+    if is_alive_fn and callable(is_alive_fn):
+        return bool(is_alive_fn())
+    return True
+
+
+def _pi_turn_bridge(session_id: Optional[str]):
+    """Return the bridge that should run THIS session's turn (V5-B routing).
+
+    Pool-aware acquisition seam: with ``PI_BRIDGE_POOL_SIZE > 1`` the session's
+    stable-affinity worker is returned so different sessions genuinely
+    parallelize on different subprocesses while a session's turns stay
+    strictly ordered on its own worker. At pool size 1 (and for test seams
+    that inject a mock ``chat.pi_bridge`` with no pool) this returns the
+    lifespan-injected reference — byte-identical to the historical singleton.
+    """
+    if session_id:
+        from app.agent_pi_bridge import get_bridge_pool
+
+        pool = get_bridge_pool()
+        if pool is not None and pool.size > 1:
+            return pool.bridge_for_session(session_id)
+    return pi_bridge
+
+
 def _use_pi_bridge() -> bool:
-    """Return True when the Pi agent path is enabled and the subprocess is alive.
+    """Return True when the Pi agent path is enabled and a worker is alive.
 
     C-F15: the Pi subprocess can die (crash, OOM, bad extension). Previously
     ``_use_pi_bridge`` only checked ``USE_NEW_AGENT and pi_bridge is not None``
@@ -457,25 +486,39 @@ def _use_pi_bridge() -> bool:
     legacy ChatEngine fallback the docstrings claimed did not exist. Now a dead
     bridge falls through to the always-initialised legacy ChatEngine so the
     service degrades instead of hard-failing until a restart.
+
+    V5-B: under a pool this is the service-level view — alive if ANY worker is
+    alive. Per-session availability (and respawn of the session's own worker)
+    is ``_ensure_pi_bridge_available(session_id)``.
     """
     if not USE_NEW_AGENT or pi_bridge is None:
         return False
-    if getattr(pi_bridge, "_process_died", False):
-        return False
-    is_alive_fn = getattr(pi_bridge, "is_alive", None)
-    if is_alive_fn and callable(is_alive_fn):
-        return is_alive_fn()
-    return True
+    from app.agent_pi_bridge import get_bridge_pool
+
+    pool = get_bridge_pool()
+    if pool is not None and pool.size > 1:
+        return any(_bridge_alive(b) for b in pool.bridges)
+    return _bridge_alive(pi_bridge)
 
 
-async def _ensure_pi_bridge_available() -> bool:
-    """Return True if Pi bridge is active or successfully respawned, False if degraded to ChatEngine."""
+async def _ensure_pi_bridge_available(session_id: Optional[str] = None) -> bool:
+    """Return True if the session's Pi worker is active or successfully
+    respawned, False if degraded to ChatEngine.
+
+    V5-B: the availability check and lazy respawn target the worker THIS
+    session's turn will actually run on (stable affinity), not just worker 0 —
+    otherwise a crashed worker 1 would keep its sessions on the legacy engine
+    while worker 0 users keep the Pi path.
+    """
     if not USE_NEW_AGENT or pi_bridge is None:
         return False
-    if _use_pi_bridge():
+    candidate = _pi_turn_bridge(session_id)
+    if candidate is None:
+        return False
+    if _bridge_alive(candidate):
         return True
     # Attempt lazy respawn if dead
-    respawn_fn = getattr(pi_bridge, "respawn_if_dead", None)
+    respawn_fn = getattr(candidate, "respawn_if_dead", None)
     if respawn_fn and callable(respawn_fn):
         return await respawn_fn()
     return False
@@ -696,11 +739,15 @@ async def chat_completions(
     _mid_req = (rt_ctx.current_runtime_context().request_id
                 if rt_ctx.current_runtime_context() else None)
     request_id = _mid_req or request.headers.get("x-request-id") or rt_ctx.new_request_id()
-    with rt_ctx.bind_runtime_context(request_id=request_id, session_id=req.session_id, project_id=req.project_id):
-        if await _ensure_pi_bridge_available():
+    # V5-B: mint affinity session ID before availability check so non-streaming
+    # turns without session_id distribute evenly across workers in the pool.
+    _affinity_sid = req.session_id or str(uuid.uuid4())
+    with rt_ctx.bind_runtime_context(request_id=request_id, session_id=req.session_id or _affinity_sid, project_id=req.project_id):
+        if await _ensure_pi_bridge_available(_affinity_sid):
+            turn_bridge = _pi_turn_bridge(_affinity_sid)
             try:
                 try:
-                    await _record_frontend_cartographic_observation(req.session_id, req.map_state)
+                    await _record_frontend_cartographic_observation(_affinity_sid, req.map_state)
                 except (TimeoutError, asyncio.TimeoutError):
                     # #791: lock contention on the turn-start observation write
                     # is scoped back-pressure, not a 500.
@@ -709,16 +756,16 @@ async def chat_completions(
                     # v2(audit F2/F3): 锁降级/丢失同 #791 语义 —— back-pressure 503。
                     raise _session_busy_503()
                 cartography_context = await _build_cartography_turn_context(
-                    req.session_id, project_id=req.project_id
+                    _affinity_sid, project_id=req.project_id
                 )
                 environment_context = _build_environment_turn_context(req.map_state)
-                result = await pi_bridge.prompt(
+                result = await turn_bridge.prompt(
                     req.message,
-                    session_id=req.session_id,
+                    session_id=_affinity_sid,
                     cartography_context=cartography_context,
                     env_block=environment_context,
                 )
-                pi_session_id = result.get("sessionId") or req.session_id or ""
+                pi_session_id = result.get("sessionId") or _affinity_sid or ""
                 final_content = result.get("content", "")
 
                 # Pi 兼容（stream parity）：流式路径在 agent_settled 收口时跑
@@ -743,6 +790,10 @@ async def chat_completions(
                 try:
                     async with async_db_session() as db:
                         svc = AsyncHistoryService(db)
+                        await svc.get_or_create_conversation(
+                            pi_session_id,
+                            user_id=user_id,
+                        )
                         await svc.save_message(pi_session_id, "user", req.message)
                         if final_content:
                             await svc.save_message(pi_session_id, "assistant", final_content)
@@ -762,7 +813,7 @@ async def chat_completions(
                 # ADR-0069: harvest project memory AFTER this turn's verdict
                 # exists — memory lags evidence by one step and can never
                 # short-circuit review. Best-effort; never fails the turn.
-                await harvest_project_memory(req.session_id, req.project_id)
+                await harvest_project_memory(pi_session_id, req.project_id)
                 return ChatResponse(session_id=pi_session_id, content=final_content)
             except PiRpcError as e:
                 logger.error(f"Pi bridge error: {e}", exc_info=True)
@@ -851,7 +902,12 @@ async def chat_stream(
     stream; the early close takes it to 0 during streaming).
     """
     user_id = _user.get("user_id")
-    use_pi = await _ensure_pi_bridge_available()
+    # V5-B: the Pi path needs a session id even when the client sent none;
+    # mint it BEFORE the availability check so the check (and any lazy
+    # respawn) targets the worker THIS turn will actually run on under
+    # ``PI_BRIDGE_POOL_SIZE > 1``. Discarded on the legacy path.
+    _affinity_sid = req.session_id or str(uuid.uuid4())
+    use_pi = await _ensure_pi_bridge_available(_affinity_sid)
     last_event_id = (
         last_event_id_header
         if last_event_id_header is not None
@@ -862,7 +918,7 @@ async def chat_stream(
     try:
         await _guard_body_session(db, req.session_id, user_id, owner_token)
         if use_pi and last_event_id is None:
-            pi_session_id = req.session_id or str(uuid.uuid4())
+            pi_session_id = _affinity_sid
             # Direct route tests use a minimal close-only DB stand-in. Real
             # requests always carry AsyncSession and persist the capability.
             if db is not None and hasattr(db, "execute"):
@@ -916,6 +972,10 @@ async def chat_stream(
 
     if use_pi:
         assert pi_session_id
+        # V5-B: resolve the affinity worker for THIS session once — prompt,
+        # abort and disconnect unwind all stay on it (abort routes via the
+        # session-keyed active-turn table when invoked from elsewhere).
+        turn_bridge = _pi_turn_bridge(pi_session_id)
         # 架构事实（#726，审计裁决）：Pi 路径（USE_NEW_AGENT=1）刻意不走
         # legacy 的 classify_followup/should_plan/make_plan/ToolCatalog 规划链
         # —— Pi 以单一 webgis_execute 代理工具 + promptSnippet 自主选择工具，
@@ -1020,7 +1080,7 @@ async def chat_stream(
                     # silently loses its own head. Replay re-splits per event.
                     async for chunk in _recorded(
                         _sse_batched(
-                            pi_bridge.stream_prompt(
+                            turn_bridge.stream_prompt(
                                 req.message,
                                 session_id=pi_session_id,
                                 cartography_context=cartography_context,

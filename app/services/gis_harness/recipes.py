@@ -488,6 +488,54 @@ SEED_RECIPES: List[CartographyRecipe] = [
         export_profile={"formats": ["png"]},
         priority=55,
     ),
+    CartographyRecipe(
+        id="extrusion_3d_thematic",
+        name="3D 挤出立体专题图",
+        description=(
+            "多边形 3D 柱状立体表达：以定量数值字段编码柱体高度（米），"
+            "辅以专题设色（相同或不同指标）与 3D 相机视角推荐。"
+        ),
+        intent_tasks=["spatial_distribution", "density_aggregation", "comparative_analysis"],
+        intent_cartography=["extrusion_3d"],
+        required_geometry=["Polygon", "MultiPolygon"],
+        preferred_analysis=["admin_aggregation", "point_profile"],
+        primary_cartography="extrusion_3d",
+        secondary_cartography=[],
+        default_components=["title", "legend", "north_arrow", "scale_bar", "attribution"],
+        fallbacks=[
+            RecipeFallback(
+                when="geometry not polygon", reason_code="GEOMETRY_NOT_SUPPORTED",
+                use="administrative_choropleth",
+            ),
+        ],
+        validation_rules=["height field must be numeric; clamp negative heights to 0"],
+        export_profile={"formats": ["png", "pdf", "svg"]},
+        priority=60,
+    ),
+    CartographyRecipe(
+        id="isoline_contour_map",
+        name="等值线/等值面专题图",
+        description=(
+            "连续表面、核密度估计或高程场的等值线/面制图：支持折线或面带，"
+            "支持用户显式指定分级等级、计曲线样式与标注。"
+        ),
+        intent_tasks=["density_distribution", "surface_interpolation", "topography"],
+        intent_cartography=["isoline_contour"],
+        allowed_geometry=["Point", "MultiPoint", "Polygon", "MultiPolygon", "LineString", "MultiLineString"],
+        preferred_analysis=["kde_density", "point_profile"],
+        primary_cartography="isoline_contour",
+        secondary_cartography=["point_overlay"],
+        default_components=["title", "legend", "continuous_colorbar", "north_arrow", "scale_bar", "attribution"],
+        fallbacks=[
+            RecipeFallback(
+                when="insufficient points or constant surface", reason_code="CONTOUR_UNAVAILABLE",
+                use="point_density",
+            ),
+        ],
+        validation_rules=["contour levels must be monotonic and have at least 2 distinct values"],
+        export_profile={"formats": ["png", "pdf", "svg"]},
+        priority=58,
+    ),
 ]
 
 

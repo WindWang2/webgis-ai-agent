@@ -3,9 +3,10 @@ Enterprise Geospatial Data Fabric REST Routes
 """
 import asyncio
 import logging
+import threading
 from typing import Dict, Any, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, Header
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Header, Body
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
@@ -184,18 +185,39 @@ def _run_sync_orm(fn):
     return asyncio.to_thread(_worker)
 
 
-def _run_async_manager(fn):
-    """Run an async data_fabric manager call (``fn(session) -> coroutine``) in
-    a worker thread's own event loop with its own SessionLocal().
+# C3 修复（ADR-0094 §10 / 审计）：此前每个请求 ``asyncio.run`` 新建事件循环，
+# 与 loop-绑定的 RedisSessionDataManager 单例相互竞争（并发时 _ensure_connected
+# 无锁 aclose 他人正在 await 的客户端 → 普通并发负载下物化误报 redis-unavailable）。
+# 现在全部 manager 协程跑在一个常驻 worker loop 上：Redis 客户端绑定一次即稳定。
+_MANAGER_LOOP: Optional[asyncio.AbstractEventLoop] = None
+_MANAGER_LOOP_LOCK = threading.Lock()
 
-    Mirrors project.py's _run_workflow_engine (#386): the manager methods do
-    sync SQLAlchemy I/O on the session (lookups / commit), so they must not
-    run on the app event loop; the session-data store is loop-change resilient
-    by design (session_data_redis recreates its client when the loop changes).
+
+def _get_manager_loop() -> asyncio.AbstractEventLoop:
+    global _MANAGER_LOOP
+    with _MANAGER_LOOP_LOCK:
+        if _MANAGER_LOOP is None or _MANAGER_LOOP.is_closed():
+            loop = asyncio.new_event_loop()
+            t = threading.Thread(target=loop.run_forever, daemon=True, name="df-manager-loop")
+            t.start()
+            _MANAGER_LOOP = loop
+        return _MANAGER_LOOP
+
+
+def _run_async_manager(fn):
+    """Run an async data_fabric manager call (``fn(session) -> coroutine``) on
+    the shared manager event loop with its own SessionLocal().
+
+    Manager 方法在 session 上做同步 SQLAlchemy I/O，不能跑应用主循环；协程
+    经 run_coroutine_threadsafe 提交到常驻 df-manager-loop（会话对象自 worker
+    线程顺序移交，无并发访问）。
     """
+    loop = _get_manager_loop()
+
     def _worker():
         with SessionLocal() as thread_db:
-            return asyncio.run(fn(thread_db))
+            fut = asyncio.run_coroutine_threadsafe(fn(thread_db), loop)
+            return fut.result(timeout=600)
 
     return asyncio.to_thread(_worker)
 
@@ -211,6 +233,74 @@ class MaterializeRequest(BaseModel):
     session_id: str = Field(..., description="Session identifier UUID")
     catalog_item_id: str = Field(..., description="Catalog item identifier")
     query_spec: Optional[QuerySpec] = Field(None, description="Optional query pushdown specification")
+
+
+# ── PostGIS server-side MVT tile cache（Wave I，ADR-0094）─────────────────────
+# 有界 LRU：键 (item_id, z, x, y)，值为 (gzip_bytes, fingerprint)。fingerprint
+# 参与响应 ETag；catalog 版本变化后旧条目自然失效（键重建 + LRU 逐出）。
+class _DfTileCache:
+    """条目 + 字节双上限 LRU（R3-m9/R4：单瓦片可达 MB 级，仅条目上限会
+    累积到 GB 级驻留内存）。"""
+
+    def __init__(self, max_entries: int = 2048, max_bytes: int = 256 * 1024 * 1024):
+        from collections import OrderedDict
+
+        self._cache: "OrderedDict[tuple, bytes]" = OrderedDict()
+        self._lock = threading.Lock()
+        self._max = max_entries
+        self._max_bytes = max_bytes
+        self._bytes = 0
+
+    def get(self, key):
+        with self._lock:
+            v = self._cache.get(key)
+            if v is not None:
+                self._cache.move_to_end(key)
+            return v
+
+    def put(self, key, value: bytes) -> None:
+        with self._lock:
+            old = self._cache.pop(key, None)
+            if old is not None:
+                self._bytes -= len(old)
+            self._cache[key] = value
+            self._bytes += len(value)
+            while (len(self._cache) > self._max) or (
+                self._bytes > self._max_bytes and len(self._cache) > 1
+            ):
+                _, evicted = self._cache.popitem(last=False)
+                self._bytes -= len(evicted)
+
+    def invalidate_item(self, item_id: str) -> None:
+        with self._lock:
+            for k in [k for k in self._cache if k[0] == item_id]:
+                self._bytes -= len(self._cache.pop(k))
+
+
+_DF_TILE_CACHE = _DfTileCache()
+
+
+def _df_tile_response(gz_body: bytes, fingerprint: str, if_none_match: Optional[str]) -> Response:
+    """gzip MVT 响应 + fingerprint 参与 ETag + 304 支持（对齐 layer.py 契约）。"""
+    import hashlib as _hashlib
+
+    etag = '"%s"' % _hashlib.sha256(gz_body + fingerprint.encode()).hexdigest()[:16]
+    headers = {
+        "Content-Encoding": "gzip",
+        "Cache-Control": "private, max-age=60",
+        "ETag": etag,
+        "X-Content-Type-Options": "nosniff",
+        "X-Dataset-Fingerprint": fingerprint[:16],
+    }
+    if if_none_match:
+        candidate = if_none_match.strip()
+        if candidate == "*" or candidate.strip('"') == etag.strip('"'):
+            return Response(status_code=304, headers=headers)
+    return Response(
+        content=gz_body,
+        media_type="application/vnd.mapbox-vector-tile",
+        headers=headers,
+    )
 
 
 @router.post("/data-fabric/sources", tags=["Data Fabric / 数据织网"])
@@ -426,21 +516,39 @@ async def sync_data_source_catalog(
 
     await _run_sync_orm(_authorize)
     try:
-        items = await _run_sync_orm(
-            lambda session: [
-                # Serialize INSIDE the worker: sync_catalog commits before
-                # returning, and SessionLocal has expire_on_commit=True —
-                # reading item.* after the worker session closes raises
-                # DetachedInstanceError, which the catch-all below misreports
-                # as 400 on success (#565 review).
+        # Serialize INSIDE the worker: sync_catalog commits before returning,
+        # and SessionLocal has expire_on_commit=True — reading item.* after the
+        # worker session closes raises DetachedInstanceError (#565 review)。
+        # V2 (ADR-0094 §9)：sync 返回结构化增量 diff（added/updated/unchanged/
+        # removed/warnings），条目序列化仍在此完成。
+        def _sync_and_serialize(session: Session):
+            result = data_fabric_manager.sync_catalog(session, source_id)
+            if isinstance(result, dict):
+                rows = result.get("items", [])
+                diff = {
+                    "added": result.get("added", 0),
+                    "updated": result.get("updated", 0),
+                    "unchanged": result.get("unchanged", 0),
+                    "removed": result.get("removed", 0),
+                }
+                warnings = result.get("warnings", [])
+            else:  # 兼容 mock/legacy list 返回
+                rows = result
+                diff = {}
+                warnings = []
+            items = [
                 {"id": item.id, "name": item.name, "title": item.title}
-                for item in data_fabric_manager.sync_catalog(session, source_id)
+                for item in rows
             ]
-        )
+            return {"items": items, "diff": diff, "warnings": warnings}
+
+        outcome = await _run_sync_orm(_sync_and_serialize)
         return {
             "success": True,
-            "synced_count": len(items),
-            "items": items,
+            "synced_count": len(outcome["items"]),
+            "items": outcome["items"],
+            "diff": outcome["diff"],
+            "warnings": outcome["warnings"],
         }
     except Exception as e:
         logger.error(f"Catalog sync failed for source '{source_id}': {e}", exc_info=True)
@@ -454,6 +562,9 @@ async def list_spatial_catalog(
     source_id: Optional[str] = Query(None, description="Filter by source ID"),
     geometry_type: Optional[str] = Query(None, description="Filter by geometry type"),
     feature_type: Optional[str] = Query(None, description="Filter by feature type (vector/raster)"),
+    availability: Optional[str] = Query(
+        None, description="Filter by availability: 'available' | 'unavailable' (ADR-0094 §9)"
+    ),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     summary: bool = Query(
@@ -488,6 +599,10 @@ async def list_spatial_catalog(
             query = query.filter(CatalogItemModel.geometry_type.ilike(f"%{geometry_type}%"))
         if feature_type:
             query = query.filter(CatalogItemModel.feature_type == feature_type)
+        if availability:
+            # ADR-0094 §9：服务端 availability 过滤（unavailable = 数据集已从
+            # 源消失但保留元数据供 stale 检索）。
+            query = query.filter(CatalogItemModel.availability == availability)
         if q:
             kw = f"%{q}%"
             query = query.filter(
@@ -515,6 +630,7 @@ async def list_spatial_catalog(
                 "feature_type": item.feature_type,
                 "crs": item.crs,
                 "bbox": item.bbox_json,
+                "availability": getattr(item, "availability", "available"),
                 "updated_at": item.updated_at.isoformat() if item.updated_at else None,
             }
             if not summary:
@@ -630,6 +746,122 @@ async def preview_catalog_item(
         logger.error(f"Catalog item preview failed for '{item_id}': {e}", exc_info=True)
         # 不回显原始异常；全文仅在服务端日志。
         raise HTTPException(status_code=400, detail="目录项预览失败")
+
+
+@router.post("/data-fabric/catalog/{item_id}/explain", tags=["Data Fabric / 数据织网"])
+async def explain_catalog_item(
+    item_id: str,
+    body: Optional[Dict[str, Any]] = Body(None),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Explain query plan (dry-run, ADR-0094 §13).
+
+    返回 pushdown 划分 / 估算 / pagination 策略 / result mode / warnings /
+    capability 矩阵 —— 不执行查询，不泄漏 secret/连接 URI。
+    """
+    from app.services.data_fabric.manager import DataFabricManager
+    from app.schemas.data_fabric_schema import QuerySpec
+
+    query_spec = None
+    if body and isinstance(body.get("query_spec"), dict):
+        try:
+            query_spec = QuerySpec(**body["query_spec"])
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=f"invalid query_spec: {e}")
+
+    async def _explain(session: Session):
+        _authorize_catalog_item(session, item_id, user)
+        return DataFabricManager.explain_catalog_item(session, item_id, query_spec)
+
+    try:
+        outcome = await _run_async_manager(_explain)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Explain failed for item '{item_id}': {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail="查询计划生成失败")
+    if outcome.get("status") == "error":
+        raise HTTPException(status_code=422, detail=outcome)
+    return outcome
+
+
+@router.get("/data-fabric/catalog/{item_id}/tiles/{z}/{x}/{y}.pbf", tags=["Data Fabric / 数据织网"])
+async def get_catalog_mvt_tile(
+    item_id: str,
+    z: int,
+    x: int,
+    y: int,
+    user: Dict[str, Any] = Depends(get_current_user),
+    if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
+):
+    """PostGIS 数据集的 server-side MVT 瓦片（ADR-0094 §8 / ST_AsMVT）。
+
+    - 权限：与 /query 一致（auth + tenant 归属门）。
+    - revision-aware：缓存键包含 catalog fingerprint（dataset version）；
+      catalog sync 检测到版本变化自然切换到新键（旧键 LRU 逐出），
+      不破坏现有 tile cache contract。
+    - bounded：ST_AsMVT LIMIT 上限 + statement_timeout（Wave D serve_mvt_tile）。
+    - 空瓦片（无相交要素）返回 204；命中返回 gzip + ETag（If-None-Match 304）。
+    """
+    import gzip as _gzip
+
+    if not (0 <= z <= 22) or x < 0 or y < 0 or x >= (1 << z) or y >= (1 << z):
+        raise HTTPException(status_code=400, detail="非法瓦片坐标")
+
+    cache_key = (item_id, z, x, y)
+    cached = _DF_TILE_CACHE.get(cache_key)
+    if cached is not None:
+        return _df_tile_response(cached[0], cached[1], if_none_match)
+
+    async def _build(session: Session):
+
+        _authorize_catalog_item(session, item_id, user)
+        item = session.query(CatalogItemModel).filter(CatalogItemModel.id == item_id).first()
+        if not item:
+            raise ValueError(f"Catalog item '{item_id}' not found")
+        ds_model = item.data_source
+        if not ds_model or ds_model.source_type not in ("postgis", "postgres", "postgresql"):
+            raise HTTPException(
+                status_code=422,
+                detail="server-side tiles 仅支持 PostGIS 数据源（该数据集类型不支持）",
+            )
+        conn_profile = ConnectionProfile(
+            id=ds_model.id,
+            name=ds_model.name,
+            source_type=ds_model.source_type,
+            url=ds_model.endpoint_url,
+            options=ds_model.connection_profile.get("options", {}),
+            allow_private=ds_model.connection_profile.get("allow_private", False),
+        )
+        from app.services.data_fabric.adapters.postgis_adapter import PostGISAdapter
+
+        adapter = PostGISAdapter(conn_profile)
+        tile = await asyncio.to_thread(
+            adapter.serve_mvt_tile, item.name, z, x, y, timeout_s=30.0
+        )
+        fingerprint = item.fingerprint or "-"
+        if tile is None:
+            return None, fingerprint
+        gz = _gzip.compress(tile, 6, mtime=0)  # 确定性 gzip（ETag 稳定）
+        return gz, fingerprint
+
+    try:
+        gz, fingerprint = await _run_async_manager(_build)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"MVT tile build failed for '{item_id}' {z}/{x}/{y}: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail="瓦片生成失败")
+
+    if gz is None:
+        return Response(status_code=204)
+
+    _DF_TILE_CACHE.put(cache_key, (gz, fingerprint))
+    return _df_tile_response(gz, fingerprint, if_none_match)
 
 
 @router.post("/data-fabric/catalog/{item_id}/query", tags=["Data Fabric / 数据织网"])

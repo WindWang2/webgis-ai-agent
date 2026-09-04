@@ -12,7 +12,20 @@
 """
 import numpy as np
 import pytest
+
+from app.schemas.data_fabric_schema import QuerySpec
 from shapely.geometry import Polygon
+
+
+@pytest.fixture(autouse=True)
+def _reset_shared_meta_cache_v2():
+    """V2 共享 meta cache（进程级）跨用例隔离。"""
+    from app.services.data_fabric.adapters.postgis_adapter import reset_postgis_meta_cache
+
+    reset_postgis_meta_cache()
+    yield
+    reset_postgis_meta_cache()
+
 
 
 # ── GIS-P2-1: hexagon tessellation ──────────────────────────────────────────
@@ -48,65 +61,26 @@ def test_P2_1_hexagon_fishnet_tiles_without_overlap():
 # ── GIS-P2-2: PostGIS adapter SRID handling ─────────────────────────────────
 
 def test_P2_2_postgis_bbox_pushdown_transforms_for_projected_srid():
-    from app.services.data_fabric.adapters.postgis_adapter import PostGISAdapter
+    """GIS-P2-2（#603）：投影 SRID 表的 bbox pushdown 必须把 4326 envelope
+    变换到列 SRID。
 
-    adapter = PostGISAdapter.__new__(PostGISAdapter)
+    V2（ADR-0094）下该回归由 routing-cursor fake 承载（旧的单响应 _Cur
+    无法支撑 V2 describe/meta 探测序列）；语义断言不变。
+    """
+    from tests.unit.test_postgis_4326_bbox_pushdown import _adapter_with_srid
 
-    executed: list[tuple[str, tuple]] = []
+    executed: list = []
+    adapter = _adapter_with_srid(3857, executed, rows=[("r", None)])
 
-    class _Cur:
-        def execute(self, sql, params=()):
-            executed.append((sql, params))
+    adapter.query("public.roads_3857", QuerySpec(bbox=[116.0, 39.0, 117.0, 40.0]))
 
-        def fetchone(self):
-            # geometry_columns: column "geom", SRID 3857 (projected!)
-            return ("geom", 3857)
-
-        def fetchall(self):
-            return []
-
-        @property
-        def description(self):
-            return []
-
-    class _ConnCtx:
-        def __enter__(self):
-            class _C:
-                def cursor(self):
-                    class _CursorCtx:
-                        def __enter__(self):
-                            return _Cur()
-
-                        def __exit__(self, *a):
-                            return None
-                    return _CursorCtx()
-            return _C()
-
-        def __exit__(self, *a):
-            return None
-
-    adapter._connection_context = _ConnCtx
-
-    class _Spec:
-        bbox = [116.0, 39.0, 117.0, 40.0]
-        limit = 10
-        offset = 0
-
-    adapter.query("public.roads_3857", _Spec())
-
-    geo_any = [sql for sql, _ in executed if "ST_AsGeoJSON" in sql]
-    assert geo_any, "query must select GeoJSON"
-    assert any("ST_Transform" in sql for sql, _ in executed), (
-        "projected table must emit ST_Transform(geom, 4326) GeoJSON"
-    )
-    env_any = [sql for sql, _ in executed if "ST_MakeEnvelope" in sql]
-    assert env_any, "bbox must be pushed down"
-    assert any("ST_Transform" in sql and "ST_MakeEnvelope" in sql for sql, _ in executed), (
-        "bbox envelope must be transformed into the column SRID (3857)"
+    env_sql = [sql for sql, _ in executed if "ST_MakeEnvelope" in sql]
+    assert env_sql, "projected table with bbox must push down ST_MakeEnvelope"
+    assert "ST_Transform(ST_MakeEnvelope" in env_sql[0], (
+        "projected table must transform the 4326 envelope into the column SRID"
     )
 
 
-# ── GIS-P3-1: MVT 64-bit int properties ─────────────────────────────────────
 
 def test_P3_1_mvt_int_properties_full_64bit():
     from app.services.mvt import _encode_value

@@ -80,6 +80,32 @@ def resolve_tool_for_capability(
     return resolution.tool if resolution.status == "resolved" else None
 
 
+# Kriging vertical slice: 显式插值语义的关键词投影（纯函数、确定性）。
+# 命中时 (a) 计划 spatial_interpolation 能力（关键词门控 —— 普通
+# raster_distribution 查询如「查看 DEM」不会过度计划插值），(b) 向
+# resolver 传 algorithm_hint —— 用户点名克里金时算法不被静默换成默认
+# IDW（hint 只在算法通过全部硬门后生效）。
+_INTERPOLATION_QUERY_RE = None  # lazily compiled below
+
+
+def _interpolation_query_signals(query: str) -> tuple[bool, str]:
+    """Return (plan_interpolation_capability, algorithm_hint) for a query."""
+    import re as _re
+
+    global _INTERPOLATION_QUERY_RE
+    if _INTERPOLATION_QUERY_RE is None:
+        _INTERPOLATION_QUERY_RE = _re.compile(
+            r"(克里金|kriging|插值|interpolat)", _re.I
+        )
+    q = query or ""
+    if not _INTERPOLATION_QUERY_RE.search(q):
+        return (False, "")
+    hint = "interpolation.kriging" if _re.search(
+        r"(克里金|kriging)", q, _re.I
+    ) else ""
+    return (True, hint)
+
+
 # 模块级兼容名（DEPRECATED：新代码用 capability_tool_map()）。
 # v2(review)：不再 import 时快照 —— 模块级调用会在 manifest 编译（持
 # threading.Lock）经 import 链重入 get_runtime_manifest() 时死锁（非重入
@@ -264,6 +290,7 @@ class MapProductPlanner:
         available_tools: Optional[Any] = None,
         profile: Optional[Dict[str, Any]] = None,
         optional_capabilities: Optional[set] = None,
+        algorithm_hint: str = "",
     ) -> tuple[List[DataRequirement], List[AnalysisStep], List[AlgorithmSelectionRecord]]:
         """capability → DataRequirement/AnalysisStep + 裁决证据。"""
         from app.lib.gis.algorithm_resolver import get_algorithm_resolver
@@ -282,7 +309,8 @@ class MapProductPlanner:
         for cap in capabilities:
             purpose = caps.purpose_for(cap, subject)
             resolution_result = resolver.resolve(
-                cap, profile=profile, available_tools=available_tools)
+                cap, profile=profile, available_tools=available_tools,
+                algorithm_hint=algorithm_hint)
             record = AlgorithmSelectionRecord(
                 capability=cap,
                 status=resolution_result.status,
@@ -410,6 +438,8 @@ class MapProductPlanner:
 
         # 数据需求（能力去重，保持声明顺序）；simple_view 不过度分析——
         # 只保留主数据获取 + 画像，砍掉聚合/密度/热点等衍生分析。
+        # Kriging slice：显式算法 hint 在分支前算一次（两个分支共用）。
+        _plan_interp, _hint = _interpolation_query_signals(intent.query)
         if intent.task == "simple_view":
             capabilities = [
                 c for c in recipe.preferred_analysis
@@ -430,10 +460,15 @@ class MapProductPlanner:
             ):
                 if extra not in capabilities:
                     capabilities.append(extra)
+            # Kriging vertical slice: 关键词门控的插值能力 —— 「克里金/插值」
+            # 语义才计划 spatial_interpolation（raster_surface 产品族）。
+            if _plan_interp and "spatial_interpolation" not in capabilities:
+                capabilities.append("spatial_interpolation")
 
         requirements, steps, selections = self._resolve_capabilities(
             capabilities, intent, available_tools=available_tools,
-            optional_capabilities=set(recipe.optional_analysis))
+            optional_capabilities=set(recipe.optional_analysis),
+            algorithm_hint=_hint)
         plan.data_requirements = requirements
         plan.analysis_steps = steps
         plan.algorithm_selections = selections
@@ -574,12 +609,17 @@ class MapProductPlanner:
         # 裁决证据，让 evidence 能解释『为什么这个算法没跑』）。
         if profile is not None:
             capabilities = [r.capability for r in finalized.data_requirements]
+            # Review F2（kriging slice）：显式算法 hint 必须与 draft 阶段同源
+            # —— finalize 不带 hint 会把「用户点名克里金」的 finalized 证据
+            # 静默翻回默认 IDW，与 draft/resolved_tool 矛盾。hint 是
+            # intent.query 的纯函数，这里重算零成本。
             _, _, selections = self._resolve_capabilities(
                 capabilities, plan.intent, profile=profile,
                 available_tools=available_tools,
                 optional_capabilities={
                     r.capability for r in finalized.data_requirements if r.optional
-                })
+                },
+                algorithm_hint=_interpolation_query_signals(plan.intent.query)[1])
             finalized.algorithm_selections = selections
 
         disabled_elements = {d.element for d in report.disabled}

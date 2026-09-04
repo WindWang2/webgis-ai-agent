@@ -29,6 +29,11 @@ MATERIALIZATION_FAILED = "MATERIALIZATION_FAILED"
 CANCELLED = "CANCELLED"
 SECURITY_BLOCKED = "SECURITY_BLOCKED"
 DATASET_NOT_FOUND = "DATASET_NOT_FOUND"
+# ── V2 (ADR-0094) additions ──────────────────────────────────────────────────
+QUERY_BUDGET_EXCEEDED = "QUERY_BUDGET_EXCEEDED"
+CRS_INVALID = "CRS_INVALID"
+QUERY_UNSUPPORTED = "QUERY_UNSUPPORTED"
+SOURCE_UNAVAILABLE = "SOURCE_UNAVAILABLE"
 
 
 # ── HTTP status classification (single source of truth for retry policy) ─────
@@ -115,6 +120,22 @@ class DatasetNotFoundError(DataFabricError):
     code = DATASET_NOT_FOUND
 
 
+class QueryBudgetExceededError(DataFabricError):
+    code = QUERY_BUDGET_EXCEEDED
+
+
+class CrsInvalidError(DataFabricError):
+    code = CRS_INVALID
+
+
+class QueryUnsupportedError(DataFabricError):
+    code = QUERY_UNSUPPORTED
+
+
+class SourceUnavailableError(DataFabricError):
+    code = SOURCE_UNAVAILABLE
+
+
 def classify_http_status(status: int) -> str:
     """Map a remote HTTP status to a canonical Data Fabric error code.
 
@@ -145,6 +166,15 @@ _ERROR_CLASS_BY_CODE: Dict[str, type] = {
     MATERIALIZATION_FAILED: MaterializationFailedError,
     CANCELLED: DataFabricCancelledError,
     SECURITY_BLOCKED: SecurityBlockedError,
+    # V2: previously these in-band codes degraded to SourceUnreachableError.
+    INVALID_QUERY: InvalidQueryError,
+    UNSUPPORTED_SOURCE: UnsupportedSourceError,
+    UNSUPPORTED_CAPABILITY: UnsupportedCapabilityError,
+    DATASET_NOT_FOUND: DatasetNotFoundError,
+    QUERY_BUDGET_EXCEEDED: QueryBudgetExceededError,
+    CRS_INVALID: CrsInvalidError,
+    QUERY_UNSUPPORTED: QueryUnsupportedError,
+    SOURCE_UNAVAILABLE: SourceUnavailableError,
 }
 
 
@@ -199,6 +229,10 @@ __all__ = [
     "CANCELLED",
     "SECURITY_BLOCKED",
     "DATASET_NOT_FOUND",
+    "QUERY_BUDGET_EXCEEDED",
+    "CRS_INVALID",
+    "QUERY_UNSUPPORTED",
+    "SOURCE_UNAVAILABLE",
     # classification
     "TRANSIENT_HTTP_STATUS",
     "PERMANENT_HTTP_STATUS",
@@ -219,4 +253,8 @@ __all__ = [
     "DataFabricCancelledError",
     "SecurityBlockedError",
     "DatasetNotFoundError",
+    "QueryBudgetExceededError",
+    "CrsInvalidError",
+    "QueryUnsupportedError",
+    "SourceUnavailableError",
 ]

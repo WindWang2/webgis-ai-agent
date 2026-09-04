@@ -321,6 +321,26 @@ def convert_analysis_to_mapspec_layer(
                     f"flow_od_arc_guard: 几何类别为 {geom_cat or 'unknown'}，"
                     f"flow 图层需要线要素（origin/destination 坐标对），已回退常规表达"
                 )
+        # ADR-0095: extrusion_3d 原生支持 —— 多边形 3D 挤出柱状图
+        extrusion_hint_active = False
+        if type_hint == "extrusion_3d":
+            if geom_cat == "polygon":
+                inferred_layer_type = "fill-extrusion"
+                extrusion_hint_active = True
+            else:
+                warnings.append(
+                    f"extrusion_3d_guard: 几何类别为 {geom_cat or 'unknown'}，"
+                    f"3D 挤出图层需要面要素（Polygon），已回退常规表达"
+                )
+        # ADR-0095: isoline_contour 原生支持 —— 连续表面/密度等值线与等值面
+        isoline_hint_active = False
+        if type_hint == "isoline_contour":
+            if geom_cat == "polygon":
+                inferred_layer_type = "fill"
+                isoline_hint_active = True
+            else:
+                inferred_layer_type = "line"
+                isoline_hint_active = True
         # #690: deterministic guard — do not flip to heatmap when unsuitable
         heatmap_guard_triggered = False
         heatmap_guard_reason = ""
@@ -441,6 +461,62 @@ def convert_analysis_to_mapspec_layer(
                         except (TypeError, ValueError):
                             paint["opacity"] = 0.85
 
+            # ADR-0095: 3D 挤出通道 —— fill-extrusion-height / fill-extrusion-base / opacity
+            if extrusion_hint_active:
+                from app.lib.cartography.extrusion_model import (
+                    ExtrusionHeightSpec,
+                    analyze_height_field_distribution,
+                    build_extrusion_height_expression,
+                    build_extrusion_base_expression,
+                )
+                meta = analysis_result.get("metadata") or {}
+                ext_meta = meta.get("extrusion") if isinstance(meta.get("extrusion"), dict) else {}
+                h_field = ext_meta.get("height_field") or meta.get("height_field") or meta.get("field") or "height"
+                h_unit = ext_meta.get("height_unit") or meta.get("height_unit") or "m"
+                transform = ext_meta.get("transform") or "linear"
+                scale_factor = float(ext_meta.get("scale_factor") or 1.0)
+                min_h = float(ext_meta.get("min_visual_height_m") or 10.0)
+                max_h = float(ext_meta.get("max_visual_height_m") or 5000.0)
+
+                height_spec = ExtrusionHeightSpec(
+                    height_field=h_field,
+                    height_unit=h_unit,
+                    transform=transform,
+                    scale_factor=scale_factor,
+                    min_visual_height_m=min_h,
+                    max_visual_height_m=max_h,
+                )
+                raw_features = list(_iter_features(inline_geojson)) if inline_geojson else []
+                val_list = [
+                    f.get("properties", {}).get(h_field)
+                    for f in raw_features
+                    if isinstance(f, dict)
+                ]
+                ext_stats = analyze_height_field_distribution(val_list)
+                h_expr = build_extrusion_height_expression(height_spec, ext_stats)
+                base_expr = build_extrusion_base_expression(height_spec)
+
+                paint["fill-extrusion-height"] = h_expr
+                paint["fill-extrusion-base"] = base_expr
+                paint["fill-extrusion-opacity"] = float(ext_meta.get("opacity") or 0.85)
+                paint["fill-extrusion-color"] = paint_color
+                if not ext_stats.get("valid"):
+                    warnings.append(f"extrusion_3d: 高度字段 '{h_field}' 无有效数值，已采用保底可视高度")
+
+            # ADR-0095: 等值线与等值面样式通道
+            if isoline_hint_active:
+                if layer_type == "line":
+                    paint["color"] = paint_color
+                    paint["width"] = [
+                        "case",
+                        ["boolean", ["get", "is_index_contour"], False],
+                        3.0,
+                        1.5,
+                    ]
+                elif layer_type == "fill":
+                    paint["color"] = paint_color
+                    paint["opacity"] = 0.7
+
         algorithm = (
             analysis_result.get("algorithm")
             or analysis_result.get("analysis_type")
@@ -521,6 +597,28 @@ def convert_analysis_to_mapspec_layer(
             and str(algorithm) in _BOUNDARY_OUTLINE_ALGORITHMS
         ):
             res_layer["context_role"] = "boundary"
+
+        # ADR-0095: 3D 挤出层元数据与推荐视角
+        if layer_type == "fill-extrusion" or extrusion_hint_active:
+            res_layer["extrusion"] = {
+                "height_field": h_field if "h_field" in locals() else "height",
+                "height_unit": h_unit if "h_unit" in locals() else "m",
+                "transform": transform if "transform" in locals() else "linear",
+                "scale_factor": scale_factor if "scale_factor" in locals() else 1.0,
+                "min_visual_height_m": min_h if "min_h" in locals() else 10.0,
+                "max_visual_height_m": max_h if "max_h" in locals() else 5000.0,
+                "stats": ext_stats if "ext_stats" in locals() else {},
+            }
+            res_layer["recommended_view"] = {"pitch": 45.0, "bearing": -15.0}
+
+        # ADR-0095: 等值线/面元数据
+        if isoline_hint_active:
+            isoline_meta = (analysis_result.get("metadata") or {}).get("isoline") or {}
+            res_layer["isoline"] = {
+                "model": "isoline_contour",
+                **isoline_meta,
+            }
+
         return res_layer, inline_geojson, unique_warnings
 
     except Exception as e:

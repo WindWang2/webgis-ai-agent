@@ -178,6 +178,7 @@ class AlgorithmResolver:
         available_tools: Optional[Any] = None,
         policy_hint: str = "",
         export: bool = False,
+        algorithm_hint: str = "",
         _visited: Optional[set[str]] = None,
     ) -> AlgorithmResolution:
         visited = set(_visited or ())
@@ -247,9 +248,23 @@ class AlgorithmResolver:
                 scored.append((algo.priority, score, algo.id, algo, tool, breakdown))
             if len(scored) > 1:
                 scored.sort(key=lambda t: (t[0], t[1], t[2]))
+            # 显式算法请求（克里金 vertical slice）：用户点名算法（如
+            # 「使用克里金插值」）时，只要它通过了全部硬门（native/工具/
+            # 几何/样本量），就把它排到首位——显式请求不被静默替换成
+            # 默认算法；未通过硬门则走既有 fallback 链并保留证据。
+            hinted = False
+            if algorithm_hint:
+                for entry in scored:
+                    if entry[2] == algorithm_hint:
+                        scored.remove(entry)
+                        scored.insert(0, entry)
+                        hinted = True
+                        break
             _, best_score, _, best, best_tool, best_bd = scored[0]
             reason = self._candidate_reason(best, best_tool, profile)
             contested = len(scored) > 1
+            if hinted:
+                reason += f" + explicit_request={algorithm_hint}"
             if contested:
                 reason += (
                     f" + policy={policy} cost[{best_score}:{best_bd}]"
@@ -298,7 +313,8 @@ class AlgorithmResolver:
         for fb_cap in cap.fallback_capabilities:
             fb_resolution = self.resolve(
                 fb_cap, profile=profile, available_tools=available_tools,
-                policy_hint=policy_hint, export=export, _visited=visited)
+                policy_hint=policy_hint, export=export,
+                algorithm_hint=algorithm_hint, _visited=visited)
             if fb_resolution.status == "resolved":
                 trail.append(FallbackStep(
                     from_element=capability,

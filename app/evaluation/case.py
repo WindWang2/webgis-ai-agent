@@ -50,7 +50,7 @@ class GISBenchmarkCase(BaseModel):
 
     id: str
     name: str
-    group: Literal["poi", "raster", "network", "od", "repair", "semantics"]
+    group: Literal["poi", "raster", "network", "od", "repair", "semantics", "interpolation"]
     query: str
     description: str = ""
 

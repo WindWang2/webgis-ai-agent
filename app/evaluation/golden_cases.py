@@ -382,6 +382,83 @@ GOLDEN_CASES: list[GISBenchmarkCase] = [
         expected_product_facets=["chart"],
         max_tool_calls=8,
     ),
+    # ── G31 显式克里金（Kriging vertical slice：explicit request 不换算法）─
+    GISBenchmarkCase(
+        id="G31",
+        name="显式克里金：surface 产品 + prediction/uncertainty 双产物",
+        group="interpolation",
+        query="用克里金插值成都PM2.5监测站数据",
+        expected_task="raster_distribution",
+        expected_capabilities=["spatial_interpolation"],
+        optional_capabilities=["raster_source", "point_profile"],
+        allowed_algorithms=["interpolation.kriging", "interpolation.idw", "raster.source", "profile.spatial"],
+        forbidden_algorithms=["spatial.kde"],
+        fixture_aliases=["pm25_stations"],
+        script=[
+            ScriptStep(tool="kriging_interpolation", args={
+                "geojson": "fixture:pm25_stations",
+                "value_field": "pm25",
+                "resolution": 6,
+                "cross_validate": True,
+            }),
+        ],
+        numeric_assertions=[
+            NumericAssertion(source="step_result", step=0, path="features",
+                             agg="len", op=">=", value=10, label="surface has cells"),
+            NumericAssertion(source="step_result", step=0,
+                             path="kriging_metadata.cross_validation.rmse",
+                             agg="value", op="<", value=8.0, label="kriging CV beats naive spread"),
+            NumericAssertion(source="step_result", step=0,
+                             path="kriging_metadata.variogram.range_meters",
+                             agg="value", op=">", value=500.0, label="non-degenerate range"),
+        ],
+        max_tool_calls=5,
+    ),
+    # ── G32 泛插值（无算法点名 → 默认 IDW，不过度强制克里金）─────────────
+    GISBenchmarkCase(
+        id="G32",
+        name="泛插值请求：默认算法解析为 IDW",
+        group="interpolation",
+        query="对成都气温站点数据做插值生成连续表面",
+        expected_task="raster_distribution",
+        expected_capabilities=["spatial_interpolation"],
+        allowed_algorithms=["interpolation.idw", "interpolation.kriging",
+                            "raster.source", "profile.spatial"],
+        forbidden_algorithms=["spatial.kde"],
+    ),
+    # ── G33 样本不足（<10 站）：克里金被拒，IDW 兜底带证据 ────────────────
+    GISBenchmarkCase(
+        id="G33",
+        name="稀疏样本：kriging min_features 拒绝 → idw fallback 证据",
+        group="interpolation",
+        query="用克里金插值这6个站点的数据",
+        expected_task="raster_distribution",
+        expected_capabilities=["spatial_interpolation"],
+        # Plan-time profile is unknown (data not loaded yet) — the explicit
+        # kriging hint selects kriging; the SAMPLE-SIZE gate fires at
+        # execution with a structured rejection. The script runs the honest
+        # IDW fallback directly.
+        allowed_algorithms=["interpolation.idw", "interpolation.kriging",
+                            "raster.source", "profile.spatial"],
+        forbidden_algorithms=["spatial.kde"],
+        fixture_aliases=["pm25_stations_sparse"],
+        script=[
+            # The explicit-kriging call on 6 stations must FAIL with the
+            # structured rejection (min samples) — this is the evidence the
+            # case name promises; the honest IDW fallback follows.
+            ScriptStep(tool="kriging_interpolation", args={
+                "geojson": "fixture:pm25_stations_sparse",
+                "value_field": "pm25",
+                "resolution": 6,
+            }, expect_error_contains="至少"),
+            ScriptStep(tool="idw_interpolation", args={
+                "geojson": "fixture:pm25_stations_sparse",
+                "value_field": "pm25",
+                "resolution": 6,
+            }),
+        ],
+        max_tool_calls=5,
+    ),
 ]
 
 

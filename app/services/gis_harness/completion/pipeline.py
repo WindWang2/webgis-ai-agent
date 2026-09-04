@@ -547,7 +547,11 @@ async def read_stored_map_product(session_id: str) -> Optional[Dict[str, Any]]:
     if not session_id:
         return None
     plan = await load_session_plan(session_id)
-    stored = plan.gis_chapter.get("map_product") if plan is not None else None
+    # gis_chapter is None for sessions whose plan never opened a GIS chapter
+    # (plain chat) — a bare ``plan.gis_chapter.get`` crashed the whole
+    # disclosure on every such turn's agent_settled.
+    chapter = getattr(plan, "gis_chapter", None) if plan is not None else None
+    stored = chapter.get("map_product") if isinstance(chapter, dict) else None
     if not isinstance(stored, dict):
         return None
     return {

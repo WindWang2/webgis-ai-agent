@@ -241,11 +241,18 @@ _SESSION_PLAN_CACHE_MAX = 128
 _SESSION_EXECUTED_SETS_MAX = 128
 
 
-def _get_active_session_id() -> str:
-    """Return the currently active turn's session_id, or empty string if none."""
-    if _active_turn_context and len(_active_turn_context) >= 1:
-        return _active_turn_context[0] or ""
-    return ""
+def _cache_session_is_active(sid: object) -> bool:
+    """Eviction guard: is this cache-key session running an in-flight turn?
+
+    V5-B production routing: the pool hosts one in-flight turn per session
+    concurrently, so every ``_active_turns`` key must be protected from cache
+    eviction — the old single-slot view only knew the most recent registrant
+    and left the other workers' sessions unprotected.
+    """
+    if isinstance(sid, str) and sid in _active_turns:
+        return True
+    ctx_sid = _active_turn_context[0] if _active_turn_context else None
+    return isinstance(sid, str) and sid == ctx_sid
 
 
 def _pop_session_entries(cache: dict, session_id: str) -> None:
@@ -263,13 +270,12 @@ def _evict_cache_protect_active(
     max_cap: int,
     is_tuple_key: bool = True,
 ) -> None:
-    """Evict oldest entries when cache exceeds max_cap, protecting the active session."""
+    """Evict oldest entries when cache exceeds max_cap, protecting active sessions."""
     if len(cache) <= max_cap:
         return
-    active_sid = _get_active_session_id()
     for key in list(cache.keys()):
         sid = key[0] if is_tuple_key else key
-        if not active_sid or sid != active_sid:
+        if not _cache_session_is_active(sid):
             cache.pop(key, None)
             if len(cache) <= max_cap:
                 return
@@ -405,7 +411,7 @@ def _record_cancelled_tracker_step(request, tool_name: str, arguments: dict) -> 
         if engine is None:
             return
         callback_turn = request.verifiedTurnId
-        active_turn, _run, _sid = active_turn_correlation()
+        active_turn, _run, _sid = active_turn_correlation(request.sessionId or "")
         if callback_turn is not None and callback_turn != active_turn:
             return
         tasks = engine.tracker.list_by_session(request.sessionId or "")
@@ -619,7 +625,7 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
         if engine is None:
             raise RuntimeError("ChatEngine not initialized")
         callback_turn = request.verifiedTurnId
-        active_turn, _run, _sid = active_turn_correlation()
+        active_turn, _run, _sid = active_turn_correlation(session_id)
         if callback_turn is not None and callback_turn != active_turn:
             logger.warning(
                 "[PiBridge] drop late tool step (tool=%s, turn=%s, session=%s): "
@@ -971,6 +977,9 @@ def get_active_turn_entry(session_id: str) -> Optional[_ActiveTurnEntry]:
 
 async def is_active_pi_turn(session_id: str, turn_id: str) -> bool:
     """Return whether ``(session, turn)`` owns the live Pi prompt (local or cross-pod Redis)."""
+    entry = _active_turns.get(session_id)
+    if entry is not None and entry.turn_id == turn_id:
+        return True
     from app.services.chat.pi_turn_context import pi_turn_registry
     return await pi_turn_registry.is_active(session_id, turn_id)
 
@@ -1197,6 +1206,20 @@ class PiBridge:
                 )
                 return False
 
+            # V5-B-3: a turn still in flight on this dead worker parks its
+            # death watcher on ``process_died_event``; ``start()`` CLEARS that
+            # event, which would strand the dying turn on the full stall
+            # budget instead of failing promptly. Let the turn unwind first —
+            # the next availability check performs the respawn.
+            if self._active_turn_sid is not None or self._lock.locked():
+                logger.warning(
+                    "[PiBridge] Deferring respawn: a turn is still unwinding on "
+                    "the dead worker (session=%s); it must observe the death "
+                    "signal before the event is cleared",
+                    self._active_turn_sid,
+                )
+                return False
+
             self._last_respawn_attempt = now
             try:
                 logger.info("[PiBridge] Attempting lazy respawn of Pi subprocess...")
@@ -1244,8 +1267,9 @@ class PiBridge:
         abort meant for an already-dead session would kill the wrong
         session's turn; skip the RPC + fail_all_pending and log a warning
         instead. When ``session_id`` matches the active turn, is None
-        (back-compat: existing callers pass nothing), or no turn is active,
-        behave as before.
+        (legacy single-slot semantics — all production callers now pass a
+        session id; a bare None under a pool would ignite whichever worker's
+        turn registered LAST), or no turn is active, behave as before.
 
         The RPC client's `request("abort")` matches vendor/pi's rpc-mode.js
         `case "abort"` handler. Failures (no process, RPC error) propagate;
@@ -1288,9 +1312,19 @@ class PiBridge:
         # page close → immediate resend is the most common disconnect pattern —
         # leaves _active_turn_sid UNCHANGED while the token and pending
         # futures belong to the NEW turn; sid equality alone would kill it.
-        # V5-B: prefer the session-table token (accurate under a pool);
-        # fall back to the singleton slot for pre-table flows.
-        abort_token = (_entry.token if _entry is not None else None) or _active_turn_token
+        # V5-B: the session-table token is the ONLY pool-accurate source. The
+        # singleton-slot fallback is additionally session-checked: under a
+        # pool, ``_active_turn_token`` holds whichever worker's turn registered
+        # LAST — an unguarded fallback would cancel ANOTHER worker's in-flight
+        # token when the aborting session has no active turn of its own.
+        if _entry is not None:
+            abort_token = _entry.token
+        elif _active_turn_context is not None and (
+            session_id is None or _active_turn_context[0] == session_id
+        ):
+            abort_token = _active_turn_token
+        else:
+            abort_token = None
         abort_pending_ids = self._rpc.pending_request_ids()
         result = await self._rpc.request("abort")
         # P1 (TOCTOU) / R2-5: the active sid above was read lock-free BEFORE
@@ -1468,6 +1502,10 @@ class PiBridge:
                 cancelled = False
                 timed_out = False
                 send_failed = False
+                # G/parity: initialized with the other flags so the finally's
+                # process_died branch is safe even when an exception fires
+                # before the drain loop assigns it.
+                process_died = False
                 # #1108: initialize BEFORE register — a register failure must
                 # not leave the finally referencing an unbound local.
                 tracker_task_id = None
@@ -1539,7 +1577,6 @@ class PiBridge:
                     _drained_complete = False
                     drain_started = time.monotonic()
                     last_event_at = drain_started
-                    process_died = False
                     # #1069(A-5): 与 stream_prompt 同款 MagicMock 容错 —— 测试桩的
                     # process_died_event 可能不是 asyncio.Event，回退为永不置位。
                     process_died_event = getattr(self._rpc, "process_died_event", None)
@@ -1643,7 +1680,16 @@ class PiBridge:
                     rt_ev.settle(Outcome.FAILED, failure_class=type(exc).__name__, detail=str(exc)[:200])
                     raise
                 finally:
-                    if cancelled or timed_out or send_failed:
+                    if process_died:
+                        # G-parity with stream_prompt: the subprocess is dead
+                        # (reader already failed pending futures; an abort RPC
+                        # would only raise) — still ignite THIS turn's token so
+                        # in-flight HTTP-callback tool dispatches bound via
+                        # use_token stop at their next checkpoint instead of
+                        # running to completion against a dead turn.
+                        if _turn_token is not None:
+                            _turn_token.cancel("pi process exited unexpectedly")
+                    elif cancelled or timed_out or send_failed:
                         # #554 defect 2: tell Pi to stop generating tokens / executing
                         # tools when the non-streaming turn ends without a clean
                         # agent_settled (drain timeout) or is cancelled mid-drain — a
@@ -1678,10 +1724,11 @@ class PiBridge:
                     _cleanup_turn_state(turn_sid)
                     # Clear the active-turn markers before releasing the lock.
                     self._active_turn_sid = None
-                    _active_turn_token = None
-                    _active_turn_turn_id = None
-                    _active_turn_run_id = None
-                    _active_turn_session_id = None
+                    if _active_turn_turn_id == turn_id:
+                        _active_turn_token = None
+                        _active_turn_turn_id = None
+                        _active_turn_run_id = None
+                        _active_turn_session_id = None
                     # #1108 INV-P4: release the lease BEFORE the unregister await —
                     # the release is synchronous (uncancellable) and the unregister
                     # is a best-effort shielded call, so a re-delivered
@@ -1696,7 +1743,16 @@ class PiBridge:
             # #1108 INV-P1: backstop — whatever happened above (including a
             # cancellation delivered inside the inner finally before its own
             # release), the lease is released here exactly once.
+            self._active_turn_sid = None
             self._release_turn_lease(lease)
+            await self._safe_unregister_active_pi_turn(turn_sid, turn_id)
+            TURN_EVIDENCE.remove(turn_id)
+            _cleanup_turn_state(turn_sid)
+            if _active_turn_turn_id == turn_id:
+                _active_turn_token = None
+                _active_turn_turn_id = None
+                _active_turn_run_id = None
+                _active_turn_session_id = None
 
         return {
             "sessionId": turn_sid,
@@ -1798,6 +1854,16 @@ class PiBridge:
                         emit_turn_summary(rt_ev)
                         TURN_EVIDENCE.remove(turn_id)
                         raise
+                except asyncio.CancelledError:
+                    # Same early-exit discipline for a cancellation delivered
+                    # AT the wait_for await (disconnect while queued behind
+                    # another same-session turn): the evidence registered
+                    # above must not outlive the abandoned generator.
+                    rt_ev.settle(Outcome.CANCELLED)
+                    rt_ev.mark_ended()
+                    emit_turn_summary(rt_ev)
+                    TURN_EVIDENCE.remove(turn_id)
+                    raise
             try:
                 _session_executed_sets.pop(turn_sid, None)
                 _clear_dispatch_cache(turn_sid)
@@ -2137,10 +2203,11 @@ class PiBridge:
                     # Clear the active-turn markers AFTER the abort above (abort reads
                     # them to cancel the token) and before releasing the lock.
                     self._active_turn_sid = None
-                    _active_turn_token = None
-                    _active_turn_turn_id = None
-                    _active_turn_run_id = None
-                    _active_turn_session_id = None
+                    if _active_turn_turn_id == turn_id:
+                        _active_turn_token = None
+                        _active_turn_turn_id = None
+                        _active_turn_run_id = None
+                        _active_turn_session_id = None
                     # #1108 INV-P4: release the lease BEFORE the unregister
                     # await — the release is synchronous (uncancellable) and
                     # the unregister is shielded best-effort, so a re-delivered
@@ -2208,7 +2275,25 @@ class PiBridge:
                 # finally before its own release), the lease is released
                 # here exactly once. Owner-checked, so a stale lease from a
                 # long-gone turn can never release the CURRENT turn's lock.
+                self._active_turn_sid = None
                 self._release_turn_lease(lease)
+                # INV-P3 corollary (review V5-B-3): a cancellation delivered
+                # while ``register_active_pi_turn`` awaits its Redis I/O
+                # propagates out BEFORE the inner finally ever runs — but the
+                # session table entry was already written synchronously, so
+                # without this backstop the ghost entry (and its
+                # eviction-protection) leaks until process restart. The call
+                # is turn-id-checked (no-op for a successor's entry) and
+                # idempotent on the normal path where the inner finally
+                # already unregistered.
+                await self._safe_unregister_active_pi_turn(turn_sid, turn_id)
+                TURN_EVIDENCE.remove(turn_id)
+                _cleanup_turn_state(turn_sid)
+                if _active_turn_turn_id == turn_id:
+                    _active_turn_token = None
+                    _active_turn_turn_id = None
+                    _active_turn_run_id = None
+                    _active_turn_session_id = None
 
 
 
@@ -2251,6 +2336,10 @@ class PiBridgePool:
     def __init__(self, bridges: list[PiBridge]) -> None:
         self.bridges = bridges
 
+    @property
+    def size(self) -> int:
+        return len(self.bridges)
+
     def bridge_for_session(self, session_id: str) -> PiBridge:
         if len(self.bridges) == 1:
             return self.bridges[0]
@@ -2261,6 +2350,21 @@ class PiBridgePool:
 
 
 _bridge_pool: Optional[PiBridgePool] = None
+# Serializes lazy pool creation so two concurrent first-callers cannot each
+# spawn a full set of workers (the loser's subprocesses would leak, running
+# and unreferenced). Lifespan is the only production caller today; the lock
+# makes the seam safe for future per-request lazy acquisition.
+_bridge_pool_init_lock = asyncio.Lock()
+
+
+def get_bridge_pool() -> Optional[PiBridgePool]:
+    """Return the existing pool WITHOUT creating one (None if not started).
+
+    Production turn routing resolves through this: a pool only exists after
+    the lifespan started it, so test seams that inject a mock
+    ``chat.pi_bridge`` never trigger subprocess creation here.
+    """
+    return _bridge_pool
 
 
 async def _ensure_bridge_pool(extension_paths: Optional[list[str]] = None) -> PiBridgePool:
@@ -2270,28 +2374,26 @@ async def _ensure_bridge_pool(extension_paths: Optional[list[str]] = None) -> Pi
         return _bridge_pool
     import os as _os
 
-    # REVIEW P2-1: pool routing is NOT wired into the production turn path yet
-    # (chat.py holds the lifespan-injected worker-0 reference; get_pi_bridge
-    # is never called with session_id). Values >1 spawn idle subprocesses and
-    # provide zero parallelism — keep 1 until the turn-acquisition seam is
-    # migrated (see ADR-0093 V5-B follow-up).
-    size = max(1, int(_os.getenv("PI_BRIDGE_POOL_SIZE", "1")))
-    bridges: list[PiBridge] = []
-    try:
-        for _ in range(size):
-            bridge = PiBridge(extension_paths=extension_paths or [])
-            await bridge.start()
-            bridges.append(bridge)
-    except Exception:
-        for b in bridges:
-            try:
-                await b.stop()
-            except Exception:  # noqa: BLE001
-                pass
-        raise
-    _bridge_pool = PiBridgePool(bridges)
-    _pi_bridge = bridges[0]  # legacy singleton alias (worker 0)
-    return _bridge_pool
+    async with _bridge_pool_init_lock:
+        if _bridge_pool is not None:  # double-check under the init lock
+            return _bridge_pool
+        size = max(1, int(_os.getenv("PI_BRIDGE_POOL_SIZE", "1")))
+        bridges: list[PiBridge] = []
+        try:
+            for _ in range(size):
+                bridge = PiBridge(extension_paths=extension_paths or [])
+                await bridge.start()
+                bridges.append(bridge)
+        except Exception:
+            for b in bridges:
+                try:
+                    await b.stop()
+                except Exception:  # noqa: BLE001
+                    pass
+            raise
+        _bridge_pool = PiBridgePool(bridges)
+        _pi_bridge = bridges[0]  # legacy singleton alias (worker 0)
+        return _bridge_pool
 
 
 async def shutdown_pi_bridge() -> None:
@@ -2304,6 +2406,7 @@ async def shutdown_pi_bridge() -> None:
             except Exception:  # noqa: BLE001 — best-effort shutdown
                 pass
         _bridge_pool = None
+        _pi_bridge = None
     if _pi_bridge is not None:
         await _pi_bridge.stop()
         _pi_bridge = None

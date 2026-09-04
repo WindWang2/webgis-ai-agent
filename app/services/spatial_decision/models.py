@@ -21,8 +21,8 @@ class TargetAreaSpec(BaseModel):
     bbox: Optional[List[float]] = Field(
         default=None, description="Bounding box [west, south, east, north]"
     )
-    resolved_name: str = Field(..., description="Canonical resolved name or geocoded address")
-    source: str = Field(..., description="Resolution source: geocode, session_ref, geojson, bbox")
+    resolved_name: str = Field(default="", description="Canonical resolved name or geocoded address")
+    source: str = Field(default="user_query", description="Resolution source: geocode, session_ref, geojson, bbox")
     confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Target resolution confidence")
     correction_hint: Optional[str] = Field(default=None, description="Correction hint if area unresolvable")
 
@@ -138,3 +138,33 @@ class ScenarioComparisonResult(BaseModel):
     recommendation_rationale: str = Field(..., description="Evidence-grounded explanation for recommendation")
     comparison_geojson: Dict[str, Any] = Field(..., description="Merged multi-scenario FeatureCollection GeoJSON")
     comparison_ref_id: str = Field(..., description="Registered SessionStore ref ID for comparison map")
+
+# Spatial Decision Intelligence V3 Re-Exports
+from app.services.spatial_decision.models_v3 import (
+    BaselineTruthState,
+    CriterionDirection,
+    NormalizationStrategy,
+    WeightSource,
+    MissingPolicy,
+    ConstraintType,
+    ConstraintCategory,
+    SpatialPredicate,
+    DistributionType,
+    ParetoStatus,
+    RecommendationAdmissibility,
+    Criterion,
+    Constraint,
+    ConstraintEvaluation,
+    Assumption,
+    Alternative,
+    BaselineEvidenceContext,
+    UncertainParameter,
+    OutcomeDistribution,
+    DecisionScore,
+    SensitivityResult,
+    RobustnessResult,
+    StructuredExplanation,
+    DecisionProblem,
+    RecommendationResult,
+    SpatialDecisionResultV3,
+)

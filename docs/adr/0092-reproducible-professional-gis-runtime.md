@@ -125,7 +125,7 @@ Session Artifact（ref，TTL 4h）→ promote → Project Artifact（content-add
 
 ## Deferred
 
-- **Phase E（Kriging + Uncertainty）**：`interpolation.kriging` planned → native（Ordinary Kriging 优先，spherical/exponential/gaussian 变差函数 + 有界自动拟合 fallback；RMSE/MAE/bias 交叉验证；prediction + uncertainty 双 artifact；IDW/Kriging resolver 裁决）。下一轮独立 ADR。
+- **Phase E（Kriging + Uncertainty）— 已落地（native）**：`interpolation.kriging` = native（Ordinary Kriging，spherical/exponential/gaussian 变异函数 + 有界自动拟合；RMSE/MAE/bias/R² K 折交叉验证；prediction + uncertainty 双 artifact 经 dispatch seam 双 ref 注册；IDW/Kriging resolver 裁决 —— 默认 IDW（priority 10），显式「克里金」请求经 algorithm_hint 钉选 kriging（min_features=10 不足时拒绝并留证据），泛「插值」语义经关键词门控计划 spatial_interpolation 能力）。
 - `extrusion_3d`、`isoline_contour` 仍 planned。
 - Map Product 前端 UI diff 编辑器（后端账本与 REST 已就绪）。
 - 行政区 choropleth 的 legend 必需性未由 composition 模板统一声明（G7 已覆盖 chart；legend 槽位在 statistical_map 家族已 required）。

@@ -199,7 +199,7 @@ _TASK_RULES: List[tuple] = [
      # 这类携带形态信号的查询会被误吞，proportional_symbol 路由被破坏）。
      re.compile(r"^(?:在地图上|地图上|在地图中|(?:帮我|请|把|将)[^，。?？]{0,4})?"
                 r"(给我看|看看|显示|展示|查看|瞄一眼|瞧瞧|show\s+me)"
-                r"(?![^，。?？]*(?:分布|统计|密度|热点|变化|服务区|可达|占比|构成|聚类|均衡|选址|流(向|量)|通勤))",
+                r"(?![^，。?？]*(?:分布|统计|密度|热点|变化|服务区|可达|占比|构成|聚类|均衡|选址|流(向|量)|通勤|插值|克里金|interpolat|kriging))",
                 re.I),
      "simple_view"),
     # #781: 栅格主体（遥感/影像/DEM/NDVI/气温/降水…）在无更强任务规则命中
@@ -208,6 +208,13 @@ _TASK_RULES: List[tuple] = [
     # 变化检测等更强语义先命中。
     ("raster_subject_thematic",
      re.compile("(" + "|".join(_RASTER_SUBJECTS) + ")", re.I),
+     "raster_distribution"),
+    # Kriging vertical slice: 「插值/克里金」是连续表面产品语义 —— 归入
+    # raster_distribution 产品族（raster_surface 主元素 + 连续色条），
+    # 且必须在 distribution_generic 之前命中（「插值后看分布」仍应是表
+    # 面产品而非点概览）。
+    ("interpolation_surface",
+     re.compile(r"(克里金|kriging|插值|interpolat)", re.I),
      "raster_distribution"),
     ("distribution_generic",
      re.compile(r"(分布|散布|散落|态势|格局|疏密)", re.I),

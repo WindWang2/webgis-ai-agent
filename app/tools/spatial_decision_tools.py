@@ -4,19 +4,35 @@ Registers spatial_decision_v2 and scenario_compare tools into ToolRegistry and T
 """
 import asyncio
 import logging
-from typing import Dict, List, Any
+import uuid
+from typing import Dict, List, Any, Optional
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, ToolExecutionPolicy, tool
 from app.services.spatial_decision.engine import DecisionEngine
 from app.services.spatial_decision.comparison_engine import ScenarioComparisonEngine
+from app.services.spatial_decision.decision_engine_v3 import DecisionEngineV3
+from app.services.spatial_decision.models_v3 import (
+    DecisionProblem,
+    Alternative,
+    Criterion,
+    Constraint,
+    CriterionDirection,
+    ConstraintType,
+    ConstraintCategory,
+    SpatialPredicate,
+    TargetAreaSpec,
+    WeightSource,
+)
 from app.services.spatial_decision.mapspec_integration import (
     apply_decision_to_mapspec,
     apply_comparison_to_mapspec,
+    apply_v3_decision_to_mapspec,
 )
 from app.services.spatial_decision.report_integration import (
     generate_decision_report_markdown,
     generate_comparison_report_markdown,
+    generate_v3_decision_report_markdown,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,6 +60,15 @@ class ScenarioCompareArgs(BaseModel):
         default_factory=dict,
         description="指标优化方向映射，如 {'housing_price': 'maximize', 'commute_time': 'minimize'}",
     )
+
+
+class SpatialDecisionV3Args(BaseModel):
+    goal: str = Field(..., description="空间决策目标或选址问题描述（如'新建区级综合医院选址评估'）")
+    target_area: str = Field(..., description="目标区域名称、行政区划或坐标范围")
+    alternatives: List[Dict[str, Any]] = Field(..., description="候选方案/备选选址列表（每项包含 id, name, geometry, attributes）")
+    criteria: Optional[List[Dict[str, Any]]] = Field(default_factory=list, description="决策准则列表（含 id, name, direction, weight, unit）")
+    constraints: Optional[List[Dict[str, Any]]] = Field(default_factory=list, description="约束条件列表（含 id, name, constraint_type, category, threshold）")
+    mcda_method: str = Field(default="wsm", description="多准则决策评估方法：'wsm' 或 'topsis'")
 
 
 def register_spatial_decision_tools(registry: ToolRegistry):
@@ -243,4 +268,183 @@ def register_spatial_decision_tools(registry: ToolRegistry):
             return {
                 "type": "error",
                 "message": f"多方案对比失败: {str(e)}",
+            }
+
+    engine_v3 = DecisionEngineV3()
+
+    @tool(
+        registry,
+        name="spatial_decision_v3",
+        description="Evidence-Grounded Spatial Decision Intelligence V3: 具备刚性/弹性空间约束检查、无量纲标准化、MCDA (WSM/TOPSIS)、Pareto 优越面、蒙特卡洛不确定性传播与权重敏感性分析的专业决策引擎。",
+        tier=2,
+        domains=["what_if"],
+        args_model=SpatialDecisionV3Args,
+        execution_policy=ToolExecutionPolicy.ASYNC,
+    )
+    async def spatial_decision_v3(
+        goal: str,
+        target_area: str,
+        alternatives: List[Dict[str, Any]],
+        criteria: Optional[List[Dict[str, Any]]] = None,
+        constraints: Optional[List[Dict[str, Any]]] = None,
+        mcda_method: str = "wsm",
+        session_id: str = "",
+    ) -> dict:
+        if not alternatives:
+            return {"type": "error", "message": "至少需要提供一个候选方案进行决策推演。"}
+
+        try:
+            target_spec = TargetAreaSpec(
+                query=target_area,
+                resolved_name=target_area,
+                source="user_request",
+                confidence=1.0,
+            )
+
+            parsed_alts: List[Alternative] = []
+            for alt_dict in alternatives:
+                alt_id = str(alt_dict.get("id", f"alt_{len(parsed_alts)+1}"))
+                alt_name = str(alt_dict.get("name", alt_id))
+                alt_desc = str(alt_dict.get("description", ""))
+                alt_geom = alt_dict.get("geometry")
+                alt_attrs = dict(alt_dict.get("attributes", {}))
+                for k, v in alt_dict.items():
+                    if k not in {"id", "name", "description", "geometry", "attributes"} and isinstance(v, (int, float, str, bool)):
+                        alt_attrs.setdefault(k, v)
+                parsed_alts.append(
+                    Alternative(
+                        id=alt_id,
+                        name=alt_name,
+                        description=alt_desc,
+                        geometry=alt_geom,
+                        attributes=alt_attrs,
+                    )
+                )
+
+            parsed_criteria: List[Criterion] = []
+            if criteria:
+                for c_dict in criteria:
+                    cid = str(c_dict.get("id", f"crit_{len(parsed_criteria)+1}"))
+                    cname = str(c_dict.get("name", cid))
+                    cunit = str(c_dict.get("unit", ""))
+                    cdir_str = str(c_dict.get("direction", "maximize")).lower()
+                    cdir = CriterionDirection.MINIMIZE if cdir_str == "minimize" else CriterionDirection.MAXIMIZE
+                    cw = float(c_dict.get("weight", 1.0))
+                    parsed_criteria.append(
+                        Criterion(
+                            id=cid,
+                            name=cname,
+                            unit=cunit,
+                            direction=cdir,
+                            weight=cw,
+                            weight_source=WeightSource.USER_DECLARED if "weight" in c_dict else WeightSource.EQUAL_DEFAULT,
+                        )
+                    )
+            else:
+                numeric_keys = set()
+                for alt in parsed_alts:
+                    for k, v in alt.attributes.items():
+                        if isinstance(v, (int, float)):
+                            numeric_keys.add(k)
+                cost_keywords = {"cost", "price", "time", "distance", "saturation", "noise", "slope", "congestion"}
+                for k in sorted(numeric_keys):
+                    is_cost = any(kw in k.lower() for kw in cost_keywords)
+                    parsed_criteria.append(
+                        Criterion(
+                            id=k,
+                            name=k.replace("_", " ").title(),
+                            direction=CriterionDirection.MINIMIZE if is_cost else CriterionDirection.MAXIMIZE,
+                            weight=1.0,
+                            weight_source=WeightSource.EQUAL_DEFAULT,
+                        )
+                    )
+
+            if not parsed_criteria:
+                parsed_criteria.append(
+                    Criterion(
+                        id="default_score",
+                        name="General Feasibility Score",
+                        direction=CriterionDirection.MAXIMIZE,
+                        weight=1.0,
+                    )
+                )
+
+            parsed_constraints: List[Constraint] = []
+            if constraints:
+                for c_dict in constraints:
+                    cid = str(c_dict.get("id", f"const_{len(parsed_constraints)+1}"))
+                    cname = str(c_dict.get("name", cid))
+                    ctype_str = str(c_dict.get("constraint_type", "hard")).lower()
+                    ctype = ConstraintType.SOFT if ctype_str == "soft" else ConstraintType.HARD
+                    ccat_str = str(c_dict.get("category", "numeric")).lower()
+                    ccat = ConstraintCategory.SPATIAL if ccat_str == "spatial" else ConstraintCategory.NUMERIC
+                    spred = None
+                    if ccat == ConstraintCategory.SPATIAL:
+                        spred_str = str(c_dict.get("spatial_predicate", "outside")).lower()
+                        pred_map = {
+                            "outside": SpatialPredicate.OUTSIDE,
+                            "within": SpatialPredicate.WITHIN,
+                            "min_distance": SpatialPredicate.MIN_DISTANCE,
+                            "max_distance": SpatialPredicate.MAX_DISTANCE,
+                            "intersects": SpatialPredicate.INTERSECTS,
+                            "disjoint": SpatialPredicate.DISJOINT,
+                            "buffer_exclusion": SpatialPredicate.BUFFER_EXCLUSION,
+                            "service_coverage": SpatialPredicate.SERVICE_COVERAGE,
+                            "overlap_ratio": SpatialPredicate.OVERLAP_RATIO,
+                        }
+                        spred = pred_map.get(spred_str, SpatialPredicate.OUTSIDE)
+                    parsed_constraints.append(
+                        Constraint(
+                            id=cid,
+                            name=cname,
+                            constraint_type=ctype,
+                            category=ccat,
+                            spatial_predicate=spred,
+                            metric_key=c_dict.get("metric_key"),
+                            operator=c_dict.get("operator", "<="),
+                            threshold=c_dict.get("threshold"),
+                            reference_geometry=c_dict.get("reference_geometry"),
+                            description=c_dict.get("description", ""),
+                        )
+                    )
+
+            problem = DecisionProblem(
+                problem_id=f"dec_{uuid.uuid4().hex[:10]}",
+                goal=goal,
+                target_area=target_spec,
+                alternatives=parsed_alts,
+                criteria=parsed_criteria,
+                constraints=parsed_constraints,
+                mcda_method=mcda_method,
+            )
+
+            v3_result = await engine_v3.solve_problem(problem, session_id=session_id)
+
+            mapspec_state = {}
+            if session_id:
+                mapspec_state = await apply_v3_decision_to_mapspec(session_id, v3_result)
+
+            res_dict = v3_result.model_dump()
+            res_dict["mapspec_applied"] = bool(mapspec_state.get("success"))
+            if mapspec_state.get("cartographic_review") is not None:
+                res_dict["cartographic_review"] = mapspec_state["cartographic_review"]
+
+            if "comparison_geojson" in res_dict:
+                fc = res_dict["comparison_geojson"]
+                from app.tools._utils import _feature_collection_bbox
+                res_dict["comparison_geojson"] = {
+                    "type": "FeatureCollection",
+                    "features_count": len(fc.get("features", [])),
+                    "bbox": _feature_collection_bbox(fc),
+                    "ref_id": v3_result.comparison_ref_id,
+                    "note": "Full GeoJSON stored in SessionStore cursor.",
+                }
+
+            return res_dict
+
+        except Exception as e:
+            logger.error(f"[spatial_decision_v3] Failed: {e}", exc_info=True)
+            return {
+                "type": "error",
+                "message": f"空间决策 V3 推演失败: {str(e)}",
             }

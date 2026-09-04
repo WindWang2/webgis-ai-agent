@@ -278,11 +278,13 @@ class SpatialAnalyzer:
     def kde_contours(
         cls,
         features: Any,
-        levels: int = 8,
+        levels: Any = 8,
         bandwidth: float = 0,
+        mode: str = "filled_bands",
+        unit: str = "",
         callback: Optional[Callable] = None,
     ) -> GeoAnalysisResult:
-        return _kde_contours(features, levels=levels, bandwidth=bandwidth)
+        return _kde_contours(features, levels=levels, bandwidth=bandwidth, mode=mode, unit=unit)
 
     @classmethod
     @spatial_operator(name="Voronoi tessellation")

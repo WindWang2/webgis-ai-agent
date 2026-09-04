@@ -1,5 +1,5 @@
 """
-Spatial Decision Intelligence V2 Package.
+Spatial Decision Intelligence Package (V2 & V3).
 """
 from app.services.spatial_decision.models import (
     SpatialDecisionResult,
@@ -10,6 +10,33 @@ from app.services.spatial_decision.models import (
     DomainRule,
     SpatialImpactZone,
     ScenarioComparisonResult,
+    # V3 Models
+    BaselineTruthState,
+    CriterionDirection,
+    NormalizationStrategy,
+    WeightSource,
+    MissingPolicy,
+    ConstraintType,
+    ConstraintCategory,
+    SpatialPredicate,
+    DistributionType,
+    ParetoStatus,
+    RecommendationAdmissibility,
+    Criterion,
+    Constraint,
+    ConstraintEvaluation,
+    Assumption,
+    Alternative,
+    BaselineEvidenceContext,
+    UncertainParameter,
+    OutcomeDistribution,
+    DecisionScore,
+    SensitivityResult,
+    RobustnessResult,
+    StructuredExplanation,
+    DecisionProblem,
+    RecommendationResult,
+    SpatialDecisionResultV3,
 )
 from app.services.spatial_decision.impact_engine import SpatialImpactEngine
 from app.services.spatial_decision.metric_evaluator import MetricEvaluator
@@ -17,6 +44,7 @@ from app.services.spatial_decision.target_resolver import TargetAreaResolver, re
 from app.services.spatial_decision.baseline_resolver import BaselineResolver, resolve_baseline_metrics
 
 __all__ = [
+    # V2
     "SpatialDecisionResult",
     "ScenarioSpec",
     "TargetAreaSpec",
@@ -31,5 +59,31 @@ __all__ = [
     "resolve_target_area",
     "BaselineResolver",
     "resolve_baseline_metrics",
+    # V3
+    "BaselineTruthState",
+    "CriterionDirection",
+    "NormalizationStrategy",
+    "WeightSource",
+    "MissingPolicy",
+    "ConstraintType",
+    "ConstraintCategory",
+    "SpatialPredicate",
+    "DistributionType",
+    "ParetoStatus",
+    "RecommendationAdmissibility",
+    "Criterion",
+    "Constraint",
+    "ConstraintEvaluation",
+    "Assumption",
+    "Alternative",
+    "BaselineEvidenceContext",
+    "UncertainParameter",
+    "OutcomeDistribution",
+    "DecisionScore",
+    "SensitivityResult",
+    "RobustnessResult",
+    "StructuredExplanation",
+    "DecisionProblem",
+    "RecommendationResult",
+    "SpatialDecisionResultV3",
 ]
-

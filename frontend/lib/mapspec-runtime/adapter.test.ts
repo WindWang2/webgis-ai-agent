@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { hudStateToMapSpec } from "./adapter";
+import { toMapLibrePaint } from "./paint-bridge";
 import type { Layer } from "@/lib/types/layer";
 import type { GeoJSONFeatureCollection, HeatmapRasterSource } from "@/lib/types";
 
@@ -165,6 +166,70 @@ describe("MapSpec Runtime Adapter — hudStateToMapSpec (ADR-0036)", () => {
       const fill = spec.layers.find((l) => l.type === "fill")!;
       expect(fill.paint!["fill-color"]).toBe("rgba(0,0,0,0)");
       expect(fill.paint!["fill-opacity"]).toBe(0);
+    });
+
+    it("emits fill-extrusion natively when layer.type === 'fill-extrusion' regardless of is3D (ADR-0095)", () => {
+      const extLayer = baseLayer({
+        id: "pop-3d",
+        type: "fill-extrusion",
+        paint: {
+          "fill-extrusion-color": "#ea580c",
+          "fill-extrusion-height": ["*", ["get", "pop"], 0.1],
+          "fill-extrusion-base": 0,
+          "fill-extrusion-opacity": 0.85,
+        },
+        source: fc(polygonFeature()),
+      });
+      const spec = hudStateToMapSpec({ layers: [extLayer], processLayers: {}, activeFilters: {}, is3D: false });
+      const extrusions = spec.layers.filter((l) => l.type === "fill-extrusion");
+      expect(extrusions).toHaveLength(1);
+      expect(extrusions[0].paint!["fill-extrusion-color"]).toBe("#ea580c");
+      expect(extrusions[0].paint!["fill-extrusion-height"]).toEqual(["*", ["get", "pop"], 0.1]);
+    });
+
+    it("fill-extrusion: paint bridge passes height and base canonical and style method (ADR-0095)", () => {
+      const canonicalPaint = toMapLibrePaint({
+        id: "l1",
+        type: "fill-extrusion",
+        source: "s1",
+        paint: {
+          color: "#f97316",
+          opacity: 0.85,
+          height: 200,
+          base: 15,
+        },
+      });
+      expect(canonicalPaint).toEqual({
+        "fill-extrusion-color": "#f97316",
+        "fill-extrusion-opacity": 0.85,
+        "fill-extrusion-height": 200,
+        "fill-extrusion-base": 15,
+      });
+
+      const styleMethodPaint = toMapLibrePaint({
+        id: "l2",
+        type: "fill-extrusion",
+        source: "s1",
+        paint: {
+          "fill-extrusion-height": {
+            method: "interpolate",
+            field: "gdp",
+            stops: [
+              [0, 10],
+              [100, 500],
+            ],
+          },
+        },
+      });
+      expect(styleMethodPaint["fill-extrusion-height"]).toEqual([
+        "interpolate",
+        ["linear"],
+        ["to-number", ["get", "gdp"]],
+        0,
+        10,
+        100,
+        500,
+      ]);
     });
   });
 

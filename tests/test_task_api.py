@@ -151,9 +151,12 @@ async def test_cancel_task_aborts_active_pi_turn(client, monkeypatch):
             return {}
 
     monkeypatch.setattr(chat_mod, "pi_bridge", _FakeBridge())
+    # V5-B: the guard resolves the session-keyed active-turn table (the old
+    # singleton active_turn_correlation view reads the LAST registered turn
+    # anywhere and misses the abort under a bridge pool).
     monkeypatch.setattr(
-        "app.agent_pi_bridge.active_turn_correlation",
-        lambda: ("turn-1", "run-1", "pi-cancel-session"),
+        "app.agent_pi_bridge.get_active_turn_entry",
+        lambda sid: object() if sid == "pi-cancel-session" else None,
     )
     resp = await client.delete(f"/api/v1/tasks/{task.id}")
     assert resp.status_code == 200
@@ -170,9 +173,10 @@ async def test_cancel_task_skips_abort_for_other_sessions(client, monkeypatch):
             raise AssertionError("must not abort another session's turn")
 
     monkeypatch.setattr(chat_mod, "pi_bridge", _FakeBridge())
+    # V5-B: session-keyed table view — no active turn entry for this session.
     monkeypatch.setattr(
-        "app.agent_pi_bridge.active_turn_correlation",
-        lambda: ("turn-2", "run-2", "a-different-session"),
+        "app.agent_pi_bridge.get_active_turn_entry",
+        lambda sid: object() if sid == "a-different-session" else None,
     )
     resp = await client.delete(f"/api/v1/tasks/{task.id}")
     assert resp.status_code == 200

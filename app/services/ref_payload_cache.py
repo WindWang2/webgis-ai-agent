@@ -44,6 +44,11 @@ class RefPayloadCache:
         # key -> (obj, expire_monotonic, approx_bytes)
         self._entries: "OrderedDict[Tuple[str, str], Tuple[Any, float, int]]" = OrderedDict()
         self._total_bytes = 0
+        # M7（ADR-0094 §10，对齐 85f60aa 的 MVT epoch 防复活语义）：
+        # (session, ref) → 单调 epoch。invalidate 递增；构建方在读取源数据前
+        # 捕获 epoch，完成后仅当 epoch 未变才入缓存 —— 关闭
+        # "invalidate-during-build → 旧 payload 复活 5s" 的窗口。
+        self._epochs: "OrderedDict[Tuple[str, str], int]" = OrderedDict()
         self._lock = threading.Lock()
 
     @property
@@ -70,6 +75,24 @@ class RefPayloadCache:
             self._entries.move_to_end(key)
             return obj
 
+    def current_epoch(self, session_id: str, ref_id: str) -> int:
+        """当前 (session, ref) 的失效 epoch（构建方在读取源数据前捕获）。"""
+        key = (session_id, ref_id)
+        with self._lock:
+            return self._epochs.get(key, 0)
+
+    def put_if_current(self, session_id: str, ref_id: str, obj: Any, approx_bytes: int, epoch: int) -> bool:
+        """仅当 epoch 未被 invalidate 递增时入缓存（防复活语义）。
+
+        返回是否真正写入。与 ``put`` 共享容量/LRU 逻辑。
+        """
+        key = (session_id, ref_id)
+        with self._lock:
+            if self._epochs.get(key, 0) != epoch:
+                return False
+        self.put(session_id, ref_id, obj, approx_bytes)
+        return True
+
     def put(self, session_id: str, ref_id: str, obj: Any, approx_bytes: int) -> None:
         """Store a parsed payload; evicts LRU entries beyond count/byte caps.
 
@@ -93,6 +116,13 @@ class RefPayloadCache:
                 self._total_bytes -= evicted[2]
 
     def invalidate(self, session_id: str, ref_id: str) -> None:
+        """移除条目并递增 epoch（正在构建的旧 payload 完成后不得复活）。"""
+        key = (session_id, ref_id)
+        with self._lock:
+            self._epochs[key] = self._epochs.get(key, 0) + 1
+            self._epochs.move_to_end(key)
+            while len(self._epochs) > 4 * self._max_entries:
+                self._epochs.popitem(last=False)
         key = (session_id, ref_id)
         with self._lock:
             entry = self._entries.pop(key, None)

@@ -660,6 +660,31 @@ def get_map_product_version(
     return row
 
 
+@router.get("/{project_id}/map-products/{from_version_no}/diff/{to_version_no}")
+def diff_map_product_versions(
+    project_id: str,
+    from_version_no: int,
+    to_version_no: int,
+    db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+):
+    """Pairwise five-dimension diff between ANY two stored product versions
+    (version-workspace UI): the 5 booleans + ``analysis_recomputation_expected``
+    plus bounded drill-down details (dataset fingerprints before/after,
+    changed algorithm/parameter steps, mapspec fingerprints, artifact
+    membership changes). Style-only change ⇒ recomputation False."""
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    try:
+        return MapProductService.diff_versions_pairwise(
+            db, project_id, from_version_no, to_version_no
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 @router.post("/{project_id}/map-products", response_model=MapProductVersionResponse, status_code=201)
 def record_map_product_version(
     project_id: str,

@@ -2,9 +2,8 @@
 Performance Benchmarks & Memory Boundary Harness for Data Fabric V1
 """
 import time
-from app.schemas.data_fabric_schema import ConnectionProfile, QuerySpec, DatasetDescriptor
+from app.schemas.data_fabric_schema import QuerySpec, DatasetDescriptor
 from app.services.data_fabric.spatial_catalog import SpatialCatalogService
-from app.services.data_fabric.adapters.postgis_adapter import PostGISAdapter
 
 
 def test_10k_catalog_items_search_benchmark():
@@ -37,15 +36,18 @@ def test_10k_catalog_items_search_benchmark():
 
 
 def test_pushdown_bounded_payload():
-    """Verify that pushdown query memory footprint remains bounded."""
-    profile = ConnectionProfile(
-        source_type="postgis",
-        endpoint_url="postgresql://user:pass@localhost:5432/gisdb",
-        name="test_postgis",
-    )
-    adapter = PostGISAdapter(profile)
-    q_spec = QuerySpec(limit=50, bbox=[100.0, 20.0, 110.0, 30.0])
+    """Pushdown 查询内存占用有界（V2 fake-connection 形式，不依赖本地 DB）。"""
+    from tests.unit.test_data_fabric_postgis_v2 import _adapter
 
-    res = adapter.query("public.large_table", q_spec)
-    assert res.is_pushed_down is True
+    executed: list = []
+    rows = [(i, f"n{i}", '{"type":"Point","coordinates":[104,30]}') for i in range(200)]
+    adapter = _adapter(executed, rows=rows)
+    res = adapter.query(
+        "public.large_table",
+        QuerySpec(limit=50, bbox=[100.0, 20.0, 110.0, 30.0]),
+    )
     assert len(res.features) <= 50
+    assert res.metadata.get("pushdown_bbox") is True
+    main = [sql for sql, _ in executed
+            if 'FROM "public"."large_table"' in sql and "COUNT" not in sql]
+    assert main and "ST_Intersects" in main[0]

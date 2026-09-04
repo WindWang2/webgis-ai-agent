@@ -185,7 +185,13 @@ class GenericDataSourceAdapter(GeospatialDataSourceAdapter):
             features=sliced_features,
             total_count=len(features),
             schema_info={"fields": desc.fields, "geometry_type": desc.geometry_type},
-            metadata={"query_spec": query_spec.model_dump(), "source_type": self.profile.source_type},
+            metadata={
+                "query_spec": query_spec.model_dump(),
+                "source_type": self.profile.source_type,
+                # R1-m11：demo adapter 的结果在 payload 自带 demo 标（物化后的
+                # ref 不再依赖工具层重建 flag）。
+                "is_demo": True,
+            },
         )
 
     def health(self) -> DataFabricHealth:
@@ -204,11 +210,13 @@ class GenericDataSourceAdapter(GeospatialDataSourceAdapter):
                 details={"error": str(e)},
             )
 
-    def sync(self) -> Dict[str, Any]:
-        """Sync metadata and update Spatial Catalog."""
+    def sync(self, owner: Optional[str] = None) -> Dict[str, Any]:
+        """Sync metadata and update Spatial Catalog（owner 作用域传播）。"""
         synced_count = 0
         for desc in self._datasets_cache.values():
-            spatial_catalog_service.register_dataset(desc, profile_id=self.profile.id)
+            spatial_catalog_service.register_dataset(
+                desc, profile_id=self.profile.id, owner=owner
+            )
             synced_count += 1
         return {"status": "synced", "count": synced_count, "profile_id": self.profile.id}
 
@@ -256,18 +264,30 @@ def _ssrf_validate_profile(profile: ConnectionProfile) -> None:
 
 
 class DataFabricConnectionManager:
-    """
-    Connection Manager for Data Fabric profiles and adapters.
+    """Connection Manager for Data Fabric profiles and adapters.
+
+    C4 修复（ADR-0094 §10 / 审计）：``owner`` 作用域键控 —— 连接按
+    (owner, profile_id) 隔离存储；不同会话（租户）不再互相覆盖/访问连接。
+    owner=None 保留 legacy 全局语义（单租户/测试路径）。并发访问加锁。
     """
 
     def __init__(self):
-        self._profiles: Dict[str, ConnectionProfile] = {}
-        self._adapters: Dict[str, GeospatialDataSourceAdapter] = {}
+        import threading
 
-    def connect(self, profile: ConnectionProfile) -> Tuple[ConnectionProfile, GeospatialDataSourceAdapter]:
-        """
-        Validates security policy and connects a new data source profile.
-        Registers discovered dataset descriptors into SpatialCatalogService.
+        self._profiles: Dict[Tuple[Optional[str], str], ConnectionProfile] = {}
+        self._adapters: Dict[Tuple[Optional[str], str], GeospatialDataSourceAdapter] = {}
+        self._lock = threading.RLock()
+
+    @staticmethod
+    def _key(profile_id: str, owner: Optional[str]) -> Tuple[Optional[str], str]:
+        return (owner, profile_id)
+
+    def connect(
+        self,
+        profile: ConnectionProfile,
+        owner: Optional[str] = None,
+    ) -> Tuple[ConnectionProfile, GeospatialDataSourceAdapter]:
+        """Connect a data source profile（owner 作用域）。
 
         SSRF validation applies to both URL endpoints and host/port-only
         database connections (e.g. PostGIS without a url field).
@@ -275,36 +295,62 @@ class DataFabricConnectionManager:
         _ssrf_validate_profile(profile)
 
         adapter = create_adapter_for_profile(profile)
-        adapter.sync()  # Registers dataset descriptors in catalog
+        adapter.sync(owner=owner)  # Registers dataset descriptors in catalog（同 owner 注册）
 
-        self._profiles[profile.id] = profile
-        self._adapters[profile.id] = adapter
+        with self._lock:
+            key = self._key(profile.id, owner)
+            self._profiles[key] = profile
+            self._adapters[key] = adapter
 
-        logger.info(f"[ConnectionManager] Connected profile '{profile.id}' (source_type={profile.source_type}, adapter={adapter.__class__.__name__})")
+        logger.info(
+            "[ConnectionManager] Connected profile '%s' (owner=%s, source_type=%s, adapter=%s)",
+            profile.id, owner, profile.source_type, adapter.__class__.__name__,
+        )
         return profile, adapter
 
-    def get_adapter(self, profile_id: str) -> Optional[GeospatialDataSourceAdapter]:
-        return self._adapters.get(profile_id)
+    def get_adapter(
+        self, profile_id: str, owner: Optional[str] = None
+    ) -> Optional[GeospatialDataSourceAdapter]:
+        with self._lock:
+            adapter = self._adapters.get(self._key(profile_id, owner))
+            if adapter is not None or owner is None:
+                return adapter
+            # 全局（legacy）连接对会话可见；其它会话的连接不可见
+            return self._adapters.get(self._key(profile_id, None))
 
-    def get_profile(self, profile_id: str) -> Optional[ConnectionProfile]:
-        return self._profiles.get(profile_id)
+    def get_profile(
+        self, profile_id: str, owner: Optional[str] = None
+    ) -> Optional[ConnectionProfile]:
+        with self._lock:
+            profile = self._profiles.get(self._key(profile_id, owner))
+            if profile is not None or owner is None:
+                return profile
+            return self._profiles.get(self._key(profile_id, None))
 
-    def list_profiles(self) -> List[ConnectionProfile]:
-        return list(self._profiles.values())
+    def list_profiles(self, owner: Optional[str] = None) -> List[ConnectionProfile]:
+        with self._lock:
+            return [
+                p for (o, _pid), p in self._profiles.items()
+                if owner is None or o is None or o == owner
+            ]
 
     def get_all_adapters(self) -> Dict[str, GeospatialDataSourceAdapter]:
-        return dict(self._adapters)
+        with self._lock:
+            return {f"{o or '_global'}:{pid}": a for (o, pid), a in self._adapters.items()}
 
-    def disconnect(self, profile_id: str) -> bool:
-        if profile_id in self._profiles:
-            del self._profiles[profile_id]
-            self._adapters.pop(profile_id, None)
-            return True
-        return False
+    def disconnect(self, profile_id: str, owner: Optional[str] = None) -> bool:
+        with self._lock:
+            key = self._key(profile_id, owner)
+            if key in self._profiles:
+                self._profiles.pop(key, None)
+                self._adapters.pop(key, None)
+                return True
+            return False
 
     def clear(self):
-        self._profiles.clear()
-        self._adapters.clear()
+        with self._lock:
+            self._profiles.clear()
+            self._adapters.clear()
 
 
 # Global singleton instance

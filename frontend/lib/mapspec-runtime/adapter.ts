@@ -378,6 +378,24 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
           "fill-opacity": (layer.opacity ?? 1) as any,
           "fill-antialias": true as any,
         }, buildLayerFilter("Polygon"));
+      } else if (layer.type === "fill-extrusion") {
+        // ADR-0095: Native 3D extrusion layer — committed desired state
+        const extPaint = layer.paint || {};
+        const extHeight = extPaint["fill-extrusion-height"]
+          ?? (layer.style as any)?.height
+          ?? ((layer as any).extrusion?.height_field
+            ? ["coalesce", ["get", (layer as any).extrusion.height_field], (layer as any).extrusion?.min_visual_height_m ?? 10]
+            : ["coalesce", ["get", "height"], (layer as any).extrusion?.min_visual_height_m ?? 10]);
+        const extBase = extPaint["fill-extrusion-base"] ?? (layer.style as any)?.base ?? 0;
+        const extOpacity = extPaint["fill-extrusion-opacity"] ?? layer.opacity ?? 0.85;
+        const extColor = extPaint["fill-extrusion-color"] ?? thematicColor ?? color;
+
+        pushLayer("extrusion", "fill-extrusion", {
+          "fill-extrusion-color": extColor as any,
+          "fill-extrusion-height": extHeight as any,
+          "fill-extrusion-base": extBase as any,
+          "fill-extrusion-opacity": extOpacity as any,
+        }, buildLayerFilter("Polygon"));
       } else {
         // Normal polygon: fill (map-panel.tsx:295-304)
         const fillEnabled = layer.style?.fill !== false;

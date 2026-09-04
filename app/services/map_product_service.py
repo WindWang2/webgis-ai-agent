@@ -279,3 +279,110 @@ class MapProductService:
                 MapProductVersion.version_no == version_no,
             )
         ).scalar_one_or_none()
+
+    @staticmethod
+    def _stored_version_diff_input(row: MapProductVersion) -> Dict[str, Any]:
+        """Project a STORED version row into the dict shape ``diff_versions``
+        expects for ``current`` (mirrors the columns the row was recorded
+        with, so a pairwise diff compares like with like)."""
+        return {
+            "input_dataset_fingerprints": dict(row.input_dataset_fingerprints or {}),
+            "run_manifest": {"steps": list(row.compute_plan or [])},
+            "artifact_fingerprints": list(row.output_fingerprints or []),
+            "mapspec_fingerprint": row.mapspec_fingerprint,
+        }
+
+    @staticmethod
+    def diff_versions_pairwise(
+        db: Session, project_id: str, from_version_no: int, to_version_no: int
+    ) -> Dict[str, Any]:
+        """Five-dimension diff between ANY two stored versions (ADR-0092 A6
+        + version-workspace UI): reuses ``diff_versions`` on the stored
+        projections, then attaches the drill-down details the UI renders
+        (before/after fingerprints, changed parameter keys, artifact
+        membership changes). Raises ValueError when either version is
+        missing (route maps to 404)."""
+        prev = MapProductService.get_version(db, project_id, from_version_no)
+        curr = MapProductService.get_version(db, project_id, to_version_no)
+        if prev is None or curr is None:
+            missing = from_version_no if prev is None else to_version_no
+            raise ValueError(f"map product version not found: {missing}")
+
+        diff = MapProductService.diff_versions(
+            prev, MapProductService._stored_version_diff_input(curr)
+        )
+        diff["from_version_no"] = from_version_no
+        diff["to_version_no"] = to_version_no
+
+        # ── drill-down (bounded, structured summaries — not raw dumps) ──
+        prev_inputs = dict(prev.input_dataset_fingerprints or {})
+        curr_inputs = dict(curr.input_dataset_fingerprints or {})
+
+        def _index_args(row: MapProductVersion) -> Dict[str, Any]:
+            return {
+                str(s.get("step_id")): (s.get("args") or "")
+                for s in (row.compute_plan or [])
+                if isinstance(s, dict) and s.get("step_id")
+            }
+
+        prev_args, curr_args = _index_args(prev), _index_args(curr)
+        changed_param_steps = [
+            {
+                "step_id": sid,
+                "from": prev_args.get(sid),
+                "to": curr_args.get(sid),
+            }
+            for sid in sorted(set(prev_args) | set(curr_args))
+            if prev_args.get(sid) != curr_args.get(sid)
+        ]
+
+        def _index_algo(row: MapProductVersion) -> Dict[str, str]:
+            return {
+                str(s.get("step_id")): str(s.get("algorithm") or "")
+                for s in (row.compute_plan or [])
+                if isinstance(s, dict) and s.get("step_id")
+            }
+
+        prev_algos, curr_algos = _index_algo(prev), _index_algo(curr)
+        changed_algo_steps = [
+            {
+                "step_id": sid,
+                "from": prev_algos.get(sid) or None,
+                "to": curr_algos.get(sid) or None,
+            }
+            for sid in sorted(set(prev_algos) | set(curr_algos))
+            if prev_algos.get(sid) != curr_algos.get(sid)
+        ]
+
+        # Membership uses output fingerprints — artifact_ids are only
+        # extracted when a WorkflowRun backs the version (inline-manifest
+        # versions record fingerprints alone).
+        prev_outs = set(str(f) for f in (prev.output_fingerprints or []) if f)
+        curr_outs = set(str(f) for f in (curr.output_fingerprints or []) if f)
+        diff["details"] = {
+            "input_dataset_fingerprints": {
+                "from": prev_inputs,
+                "to": curr_inputs,
+                "changed_keys": sorted(
+                    set(prev_inputs) ^ set(curr_inputs)
+                    | {k for k in set(prev_inputs) & set(curr_inputs)
+                       if prev_inputs[k] != curr_inputs[k]}
+                ),
+            },
+            "algorithm_steps": changed_algo_steps,
+            "parameter_steps": changed_param_steps,
+            "mapspec_fingerprint": {
+                "from": prev.mapspec_fingerprint,
+                "to": curr.mapspec_fingerprint,
+            },
+            "artifacts": {
+                "added": sorted(curr_outs - prev_outs),
+                "removed": sorted(prev_outs - curr_outs),
+                "unchanged_count": len(prev_outs & curr_outs),
+            },
+            "workflow_runs": {
+                "from": prev.workflow_run_id,
+                "to": curr.workflow_run_id,
+            },
+        }
+        return diff

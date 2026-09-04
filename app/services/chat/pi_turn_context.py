@@ -193,7 +193,7 @@ class PiTurnRegistry:
     """Encapsulated coordinator for active Pi turn registration (local + Redis)."""
 
     def __init__(self) -> None:
-        self._local_context: Optional[tuple[str, str]] = None
+        self._local_context: Optional[dict[str, str]] = {}
         self._client = None
         self._last_check_s = 0.0
 
@@ -222,7 +222,9 @@ class PiTurnRegistry:
         return self._client
 
     async def register_turn(self, session_id: str, turn_id: str) -> None:
-        self._local_context = (session_id, turn_id)
+        if not isinstance(self._local_context, dict):
+            self._local_context = {}
+        self._local_context[session_id] = turn_id
         client = self._get_redis_client()
         if client is not None:
             try:
@@ -235,8 +237,12 @@ class PiTurnRegistry:
                 logger.warning("PiTurnRegistry: Redis register failed for %s: %s", session_id, e)
 
     async def unregister_turn(self, session_id: str, turn_id: str) -> None:
-        if self._local_context == (session_id, turn_id):
-            self._local_context = None
+        if isinstance(self._local_context, dict):
+            if self._local_context.get(session_id) == turn_id:
+                self._local_context.pop(session_id, None)
+        elif isinstance(self._local_context, tuple):
+            if self._local_context == (session_id, turn_id):
+                self._local_context = None
         client = self._get_redis_client()
         if client is not None:
             try:
@@ -249,8 +255,12 @@ class PiTurnRegistry:
                 logger.warning("PiTurnRegistry: Redis unregister failed for %s: %s", session_id, e)
 
     async def is_active(self, session_id: str, turn_id: str) -> bool:
-        if self._local_context == (session_id, turn_id):
-            return True
+        if isinstance(self._local_context, dict):
+            if self._local_context.get(session_id) == turn_id:
+                return True
+        elif isinstance(self._local_context, tuple):
+            if self._local_context == (session_id, turn_id):
+                return True
         client = self._get_redis_client()
         if client is not None:
             try:
