@@ -255,28 +255,47 @@ def _build_pmtiles_v3_header(
     tile_type=1,
     min_zoom=0,
     max_zoom=14,
-    min_zoom_empty=0,
     center_zoom=2,
     center=(-10.5, 40.25),
     bounds=(-120.0, -20.0, 60.0, 70.0),
+    sections=None,
 ):
-    """按 PMTiles v3 spec（big-endian）构造 127 字节头。"""
+    """按 PMTiles v3 权威 spec（spec/v3/spec.md §3，小端）构造 127 字节头。
+
+    bytes 8-95 = 七组 u64 LE 段字段；96 clustered；97/98 压缩；99 tile_type；
+    100/101 zooms；102+ 位置（i32 LE × 1e-7）。
+    """
     center_lon, center_lat = center
     min_lon, min_lat, max_lon, max_lat = bounds
     buf = bytearray(127)
     buf[0:7] = b"PMTiles"
     buf[7] = 3                     # version
-    buf[8] = tile_type
-    buf[9] = min_zoom
-    buf[10] = max_zoom
-    buf[11] = min_zoom_empty
-    buf[12] = center_zoom
-    struct.pack_into(">i", buf, 13, int(center_lon * 1e7))
-    struct.pack_into(">i", buf, 17, int(center_lat * 1e7))
-    struct.pack_into(">i", buf, 21, int(min_lon * 1e7))
-    struct.pack_into(">i", buf, 25, int(min_lat * 1e7))
-    struct.pack_into(">i", buf, 29, int(max_lon * 1e7))
-    struct.pack_into(">i", buf, 33, int(max_lat * 1e7))
+    s = sections or {}
+    root = s.get("root_dir", {"offset": 127, "length": 0})
+    meta = s.get("metadata", {"offset": 127, "length": 0})
+    leaf = s.get("leaf_dirs", {"offset": 0, "length": 0})
+    tdata = s.get("tile_data", {"offset": 127, "length": 0})
+    struct.pack_into("<Q", buf, 8, root["offset"])
+    struct.pack_into("<Q", buf, 16, root["length"])
+    struct.pack_into("<Q", buf, 24, meta["offset"])
+    struct.pack_into("<Q", buf, 32, meta["length"])
+    struct.pack_into("<Q", buf, 40, leaf["offset"])
+    struct.pack_into("<Q", buf, 48, leaf["length"])
+    struct.pack_into("<Q", buf, 56, tdata["offset"])
+    struct.pack_into("<Q", buf, 64, tdata["length"])
+    struct.pack_into("<Q", buf, 72, s.get("num_addressed", 0))
+    struct.pack_into("<Q", buf, 80, s.get("num_entries", 0))
+    struct.pack_into("<Q", buf, 88, s.get("num_contents", 0))
+    buf[96] = s.get("clustered", 1)
+    buf[97] = s.get("internal_compression", 1)   # none
+    buf[98] = s.get("tile_compression", 1)       # none
+    buf[99] = tile_type
+    buf[100] = min_zoom
+    buf[101] = max_zoom
+    struct.pack_into("<2i", buf, 102, int(min_lon * 1e7), int(min_lat * 1e7))
+    struct.pack_into("<2i", buf, 110, int(max_lon * 1e7), int(max_lat * 1e7))
+    buf[118] = center_zoom
+    struct.pack_into("<2i", buf, 119, int(center_lon * 1e7), int(center_lat * 1e7))
     return bytes(buf)
 
 
@@ -292,9 +311,12 @@ def test_pmtiles_parse_header_bytes_v3_spec():
     assert info["tile_type"] == "MVT"
     assert info["min_zoom"] == 0
     assert info["max_zoom"] == 14
-    assert info["min_zoom_empty"] is False
     assert info["center"] == [-10.5, 40.25, 2]
     assert info["bounds"] == pytest.approx([-120.0, -20.0, 60.0, 70.0], abs=1e-6)
+    assert info["internal_compression"] == "none"
+    assert info["tile_compression"] == "none"
+    assert info["clustered"] is True
+    assert info["sections"]["root_dir"]["offset"] == 127
 
 
 def test_pmtiles_parse_header_rejects_wrong_magic_or_version():
@@ -390,3 +412,120 @@ def test_s3_describe_demo_metadata_labeled():
     adapter = S3StorageAdapter(ConnectionProfile(source_type="s3", endpoint="s3://bucket/x.fgb"))
     desc = adapter.describe("s3://bucket/x.fgb")
     assert desc.metadata["source"] == "synthetic-demo"
+
+
+# ── PMTiles V3 tile-byte serving（ADR-0096 / Data Fabric V3 §8）──────────────
+
+
+def _encode_varint(value: int) -> bytes:
+    out = bytearray()
+    while True:
+        b = value & 0x7F
+        value >>= 7
+        if value:
+            out.append(b | 0x80)
+        else:
+            out.append(b)
+            return bytes(out)
+
+
+def _build_pmtiles_archive(tiles: dict, *, gzip_dir: bool = False, tile_type: int = 2) -> bytes:
+    """构造最小合法 PMTiles v3 归档（header + 根目录 + 瓦片数据）。
+
+    tiles: {(z,x,y): body_bytes}；run_length=1、连续偏移、无叶子目录。
+    """
+    from app.services.data_fabric.adapters.pmtiles_adapter import zxy_to_tile_id
+
+    ids = sorted(zxy_to_tile_id(z, x, y) for (z, x, y) in tiles)
+    bodies = [tiles[t] for t in sorted(tiles, key=lambda t: zxy_to_tile_id(*t))]
+    entries = list(zip(ids, [1] * len(ids)))
+    # 目录五段 varint 流
+    dir_buf = bytearray()
+    dir_buf += _encode_varint(len(entries))
+    last = 0
+    for i, (tid, _rl) in enumerate(entries):
+        dir_buf += _encode_varint(tid - last)
+        last = tid
+    for _, rl in entries:
+        dir_buf += _encode_varint(rl)
+    for body in bodies:
+        dir_buf += _encode_varint(len(body))
+    for i in range(len(bodies)):
+        dir_buf += _encode_varint(1 if i == 0 else 0)  # 首块 offset+1，其余连续
+    dir_bytes = bytes(dir_buf)
+    internal_compression = 1
+    if gzip_dir:
+        import gzip
+
+        dir_bytes = gzip.compress(dir_bytes)
+        internal_compression = 2
+
+    root_off = 127
+    root_len = len(dir_bytes)
+    tile_data_off = root_off + root_len
+    blob = bytearray()
+    blob += _build_pmtiles_v3_header(
+        tile_type=tile_type,
+        min_zoom=min(t[0] for t in tiles),
+        max_zoom=max(t[0] for t in tiles),
+        sections={
+            "root_dir": {"offset": root_off, "length": root_len},
+            "metadata": {"offset": tile_data_off, "length": 0},
+            "tile_data": {"offset": tile_data_off, "length": sum(len(b) for b in bodies)},
+            "num_addressed": len(tiles),
+            "num_entries": len(tiles),
+            "num_contents": len(tiles),
+            "internal_compression": internal_compression,
+        },
+    )
+    blob += dir_bytes
+    for body in bodies:
+        blob += body
+    return bytes(blob)
+
+
+def test_pmtiles_tile_bytes_end_to_end(monkeypatch, tmp_path):
+    """真实归档字节读取：命中/未命中/越界 + gzip 目录 + 内容类型。"""
+    from app.services.data_fabric.adapters import pmtiles_adapter as pm_mod
+    from app.services.data_fabric.adapters.pmtiles_adapter import PMTilesAdapter
+
+    monkeypatch.setattr(pm_mod, "_local_file_roots_from_settings", lambda: [str(tmp_path)])
+    monkeypatch.setattr(pm_mod, "_local_file_max_bytes_from_settings", lambda: 64 * 1024 * 1024)
+    tiles = {
+        (0, 0, 0): b"\x89PNG-zero",
+        (2, 1, 1): b"\x89PNG-z2-1-1",
+        (3, 5, 3): b"\x89PNG-z3-5-3",
+    }
+    for gzip_dir in (False, True):
+        path = tmp_path / f"basemap-{'gz' if gzip_dir else 'raw'}.pmtiles"
+        path.write_bytes(_build_pmtiles_archive(tiles, gzip_dir=gzip_dir))
+        adapter = PMTilesAdapter(ConnectionProfile(source_type="pmtiles", endpoint_url=str(path)))
+        assert adapter.capabilities() and "tile_bytes_serving" in adapter.capabilities()
+
+        body, ctype = adapter.read_tile_bytes(2, 1, 1)
+        assert body == b"\x89PNG-z2-1-1"
+        assert ctype == "image/png"
+        assert adapter.read_tile_bytes(2, 3, 3) is None       # 归档中不存在
+        assert adapter.read_tile_bytes(9, 0, 0) is None       # 超出 max_zoom
+        # 越界 x/y → 类型化拒绝
+        with pytest.raises(ValueError, match="outside zoom"):
+            adapter.read_tile_bytes(1, 7, 0)
+
+
+def test_pmtiles_query_inlines_small_tile_bytes(monkeypatch, tmp_path):
+    from app.services.data_fabric.adapters import pmtiles_adapter as pm_mod
+    from app.services.data_fabric.adapters.pmtiles_adapter import PMTilesAdapter
+
+    monkeypatch.setattr(pm_mod, "_local_file_roots_from_settings", lambda: [str(tmp_path)])
+    monkeypatch.setattr(pm_mod, "_local_file_max_bytes_from_settings", lambda: 64 * 1024 * 1024)
+    path = tmp_path / "basemap.pmtiles"
+    path.write_bytes(_build_pmtiles_archive({(1, 0, 1): b"\x89PNG-tiny"}, tile_type=2))
+    adapter = PMTilesAdapter(ConnectionProfile(source_type="pmtiles", endpoint_url=str(path)))
+    res = adapter.query("basemap.pmtiles", QuerySpec(limit=1, tile_coords={"z": 1, "x": 0, "y": 1}))
+    import base64
+
+    assert base64.b64decode(res.data["tile_bytes_b64"]) == b"\x89PNG-tiny"
+    assert res.data["tile_content_type"] == "image/png"
+    # 未命中 → 诚实标记而非伪造
+    res_miss = adapter.query("basemap.pmtiles", QuerySpec(limit=1, tile_coords={"z": 1, "x": 1, "y": 0}))
+    assert res_miss.data["tile_read"] == "tile absent in archive"
