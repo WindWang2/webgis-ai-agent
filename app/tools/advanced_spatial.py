@@ -114,7 +114,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "\n何时不用：样本<8 或只求快速表面 — 用 idw_interpolation。"
                "\n失败语义：变异函数拟合失败时抛结构化错误(建议改用 IDW)，不静默降级。"
            ),
-           tier=2, domains=["statistics"], cost="heavy", execution_policy="celery",
+           tier=2, domains=["statistics"], cost="heavy",
            param_descriptions={
                "geojson": "输入点要素集 GeoJSON 或引用(ref:xxx)（Point 几何）",
                "value_field": "用于插值的数值字段名",
