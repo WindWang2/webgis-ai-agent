@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from app.schemas.data_fabric_schema import QuerySpec
 from app.services.data_fabric.errors import (
@@ -199,10 +199,15 @@ def spatial_join_local(
     budget: Optional[StreamingBudget] = None,
     max_output: Optional[int] = None,
     spatial_index: Optional["_LocalSpatialIndex"] = None,
+    carry_left_geometry: bool = False,
 ) -> List[Dict[str, Any]]:
-    """点面本地 join（STRtree 候选 + 精确判定；绝不 O(N·M) 全扫）。
+    """点面本地 join（STRtree 候选 + 精确判定；绝不 O(N·M) 双循环）。
 
     返回 join 行：``{point_properties..., "__right__": right_properties}``。
+
+    ``carry_left_geometry``（V3 链式联邦专用，缺省 False）：True 时输出行
+    额外携带 ``__left_geometry__``（左点原始几何），供链上后续空间跳重建
+    左要素再入 STRtree。缺省 False 时两源路径输出逐字节不变。
     """
     shp_polys = []
     for p in polygons:
@@ -241,6 +246,8 @@ def spatial_join_local(
             out_row = dict(pt.get("properties") or {})
             out_row["__right__"] = hit.get("properties") or {}
             out_row["__right_geometry__"] = hit.get("geometry")
+            if carry_left_geometry:
+                out_row["__left_geometry__"] = pt.get("geometry")
             if budget is not None:
                 budget.add_feature(out_row)
             out.append(out_row)
@@ -257,8 +264,15 @@ def attribute_join_local(
     join_field_right: str,
     budget: Optional[StreamingBudget] = None,
     max_output: Optional[int] = None,
+    left_key_resolver: Optional[Callable[[Dict[str, Any], str], Any]] = None,
 ) -> List[Dict[str, Any]]:
-    """等值连接（右侧哈希索引；左行流式探测）。"""
+    """等值连接（右侧哈希索引；左行流式探测）。
+
+    ``left_key_resolver``（V3 链式联邦专用，缺省 None）：给定 ``(左行, 字段)``
+    返回连接键。链式累积行是扁平属性 dict——上一跳的右属性嵌在 ``__right__``
+    下，需用 ``_chain_row_key`` 穿透取键；缺省 None 时保持两源路径的顶层取键
+    语义（逐字节不变）。
+    """
     index: Dict[Any, List[Dict[str, Any]]] = {}
     for r in right_rows:
         key = (r.get("properties") or r).get(join_field_right)
@@ -268,7 +282,10 @@ def attribute_join_local(
     for lrow in left_rows:
         if budget is not None:
             budget.add_feature(lrow if isinstance(lrow, dict) and "properties" in lrow else {"properties": lrow})
-        key = (lrow.get("properties") or lrow).get(join_field_left)
+        if left_key_resolver is not None:
+            key = left_key_resolver(lrow, join_field_left)
+        else:
+            key = (lrow.get("properties") or lrow).get(join_field_left)
         if key is None:
             continue
         for rrow in index.get(_hashable_key(key), ()):
@@ -587,18 +604,30 @@ MAX_FEDERATED_SOURCES = 4
 
 @dataclass
 class ChainSource:
-    """链中的一个源。``estimated_rows`` 是成本排序提示（诚实可未知）。"""
+    """链中的一个源。``estimated_rows`` 是成本排序提示（诚实可未知）。
+
+    ``srs``（可选）声明该源几何的 CRS（如 ``"EPSG:4326"``）。V3 链不做
+    在线坐标变换：≥2 个互不相同的非空 srs 在**计划期**即 typed fail-fast。
+    """
 
     source_id: str
     dataset_id: str
     where: Optional[Any] = None
     fields: Optional[List[str]] = None
     estimated_rows: Optional[int] = None
+    srs: Optional[str] = None
 
 
 @dataclass
 class ChainJoin:
-    """累积左侧行与下一个源的连接。语义与两源 plan 一致。"""
+    """累积左侧行与下一个源的连接。语义与两源 plan 一致。
+
+    ``aggregate_join``（F2 修正语义）：链上聚合**先**按 ``join_field_left``
+    /``join_field_right`` 将累积行与右源等值连接（右源行进入 ``__right__``），
+    **再**按 ``group_by_right``（右源字段）分组聚合 —— 与两源
+    ``_execute_local`` 的 aggregate_join 流程一致；跳过连接会让 ``right_rows``
+    被静默丢弃、分组键全部落空（单一全 None 组）。
+    """
 
     kind: str                                    # attribute_join | spatial_join | aggregate_join
     join_field_left: Optional[str] = None        # 累积行的键（顶层，或 "__right__.x"）
@@ -623,11 +652,36 @@ class FederatedChainRequest:
     warnings: List[str] = field(default_factory=list)
 
 
+def _chain_budget(req: FederatedChainRequest) -> ExecutionBudget:
+    """显式 ``budget=None`` 会击穿 dataclass ``default_factory`` —— 回落联邦默认。"""
+    if req.budget is None:
+        return ExecutionBudget(**FEDERATION_BUDGET.model_dump())
+    return req.budget
+
+
+def _chain_order_indices(req: FederatedChainRequest) -> List[int]:
+    """左深链成本排序（``estimated_rows`` 提示升序，None 视为最大；稳定）。
+
+    ``order_strategy="given"`` 时返回恒等序。plan 与 execute 共用，杜绝两份
+    排序实现漂移。
+    """
+    order = list(range(len(req.sources)))
+    if req.order_strategy == "cost":
+        order.sort(key=lambda i: (
+            req.sources[i].estimated_rows is None,
+            req.sources[i].estimated_rows or 0,
+            i,
+        ))
+    return order
+
+
 def plan_federated_chain(req: FederatedChainRequest) -> List[FederatedPlan]:
-    """校验并产出左深链计划（成本排序；纯函数，无 IO）。
+    """校验并产出左深链计划（成本排序；纯函数，无 IO，不改写请求）。
 
     排序按 ``estimated_rows`` 提示升序（小表建侧/先物化，None 视为最大），
-    稳定排序保证同序输入的确定性。fail-fast：limit/join 数预算先检。
+    稳定排序保证同序输入的确定性。fail-fast：limit/CRS 混用/join 数等预算
+    与结构先检。planner 产生的 warnings 附在 ``plans[0].warnings`` 返回
+    （不追加到 ``req.warnings``——本函数文档约定为纯函数）。
     """
     if len(req.sources) < 2:
         raise FederatedQueryError("chain federation requires at least 2 sources")
@@ -641,6 +695,13 @@ def plan_federated_chain(req: FederatedChainRequest) -> List[FederatedPlan]:
             f"chain requires exactly len(sources)-1 joins "
             f"({len(req.joins)} given for {len(req.sources)} sources)"
         )
+    # F4：链内 CRS 一致性 —— V3 链不做在线坐标变换，混用即计划期 typed 失败
+    srs_values = {src.srs for src in req.sources if src.srs}
+    if len(srs_values) > 1:
+        raise FederatedQueryError(
+            f"chain sources mix CRS: {sorted(srs_values)}; reproject the sources "
+            "upstream or declare a single srs (no on-the-fly transform in V3 chains)"
+        )
     for i, join in enumerate(req.joins):
         if join.kind not in ("attribute_join", "spatial_join", "aggregate_join"):
             raise FederatedQueryError(f"joins[{i}].kind {join.kind!r} unsupported")
@@ -648,32 +709,36 @@ def plan_federated_chain(req: FederatedChainRequest) -> List[FederatedPlan]:
             raise FederatedQueryError(f"joins[{i}] attribute join needs both join fields")
         if join.kind == "spatial_join" and join.spatial_op not in ("within", "intersects"):
             raise FederatedQueryError(f"joins[{i}] spatial join needs within|intersects")
-        if join.kind == "aggregate_join" and not join.group_by_right:
-            raise FederatedQueryError(f"joins[{i}] aggregate join needs group_by_right")
-    if req.limit > req.budget.max_rows:
+        if join.kind == "aggregate_join":
+            if not join.group_by_right:
+                raise FederatedQueryError(f"joins[{i}] aggregate join needs group_by_right")
+            # F2：链上聚合先连接后聚合 —— 必须给出连接字段，否则右源无法并入
+            if not (join.join_field_left and join.join_field_right):
+                raise FederatedQueryError(
+                    f"joins[{i}] aggregate join needs both join fields "
+                    "(chain aggregation groups over the joined right rows)"
+                )
+    budget = _chain_budget(req)
+    if req.limit > budget.max_rows:
         raise QueryBudgetExceededError(
-            f"chain limit {req.limit} exceeds budget {req.budget.max_rows}",
+            f"chain limit {req.limit} exceeds budget {budget.max_rows}",
             details={"hint": "reduce limit, add bbox/filters, or aggregate per source"},
         )
 
-    order = list(range(len(req.sources)))
+    order = _chain_order_indices(req)
+    chain_warnings: List[str] = []
     if req.order_strategy == "cost":
-        order.sort(key=lambda i: (
-            req.sources[i].estimated_rows is None,
-            req.sources[i].estimated_rows or 0,
-            i,
-        ))
         if req.sources[order[0]].estimated_rows is None:
-            req.warnings.append(
+            chain_warnings.append(
                 "join order uses given order (no estimated_rows hints available); "
                 "estimates are assumptions"
             )
         else:
-            req.warnings.append(
+            chain_warnings.append(
                 "join ordered by estimated_rows hints (cost-based, left-deep)"
             )
     else:
-        req.warnings.append(
+        chain_warnings.append(
             "join order uses given order (cost hints ignored); "
             "ordering is an assumption"
         )
@@ -697,13 +762,21 @@ def plan_federated_chain(req: FederatedChainRequest) -> List[FederatedPlan]:
             aggregates=join.aggregates,
             estimated_left_rows=ordered_sources[i].estimated_rows,
             estimated_right_rows=ordered_sources[i + 1].estimated_rows,
-            warnings=req.warnings if i == 0 else [],
+            warnings=chain_warnings if i == 0 else [],
         ))
     return plans
 
 
 def _chain_row_key(row: Dict[str, Any], field: str) -> Any:
-    """链行取键：顶层优先，回退 __right__ 携带的上一跳右侧属性。"""
+    """链行取键（形状感知）。
+
+    - 首跳累积行是源特性：属性在 ``properties`` 下，优先取键；
+    - 后续跳累积行是扁平属性 dict：顶层优先，回退 ``__right__``
+      携带的上一跳右侧属性（F1）。
+    """
+    props = row.get("properties")
+    if isinstance(props, dict) and field in props:
+        return props.get(field)
     if field in row:
         return row.get(field)
     right = row.get("__right__")
@@ -712,24 +785,70 @@ def _chain_row_key(row: Dict[str, Any], field: str) -> Any:
     return None
 
 
+def _chain_lift_next_join_key(rows: List[Dict[str, Any]], next_join: "ChainJoin") -> None:
+    """F1：把下一跳需要的连接键提升到累积行顶层（仅当顶层缺失；左字段优先）。
+
+    上一跳的右属性嵌在 ``__right__`` 下；下一跳 attribute/aggregate 连接的
+    ``join_field_left`` 若只存在于 ``__right__``，提升到顶层后连接才能命中，
+    且对后续投影/过滤顶层可寻址。原地修改——行是本跳 join 新建的 dict。
+    """
+    if next_join is None or next_join.kind not in ("attribute_join", "aggregate_join"):
+        return
+    field = next_join.join_field_left
+    if not field:
+        return
+    for row in rows:
+        if field in row:
+            continue
+        right = row.get("__right__")
+        if isinstance(right, dict) and field in right:
+            row[field] = right[field]
+
+
+def _chain_left_features(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """把累积行归一为 join 原语的左要素形状。
+
+    首跳的累积行就是源特性（含 ``properties``/``geometry``），原样透传；
+    后续跳的累积行是扁平属性 dict，几何（如有）由上一空间跳存于
+    ``__left_geometry__``（F3），据此重建可入 STRtree 的左要素。
+    """
+    feats: List[Dict[str, Any]] = []
+    for row in rows:
+        props = row.get("properties")
+        if isinstance(props, dict):
+            feats.append(row)
+        else:
+            feats.append({"properties": row, "geometry": row.get("__left_geometry__")})
+    return feats
+
+
 def execute_federated_chain(executor: "FederatedExecutor", req: FederatedChainRequest) -> Dict[str, Any]:
     """执行左深链（每源一次有界拉取；逐跳 join 预算 fail-fast）。
 
     与两源执行器共用 ``_source_query`` 的预算/有界语义。中间结果超过
     预算立即抛 ``QUERY_BUDGET_EXCEEDED``（绝无静默截断）。
+
+    链上不变量（V3 正确性修正）：
+    - attribute/aggregate 跳的左键经 ``_chain_row_key`` 穿透 ``__right__``
+      取键（F1）；每跳结束后把下一跳需要、但仅存于 ``__right__`` 的连接键
+      提升到累积行顶层（左字段优先，不覆盖）。
+    - aggregate 跳先与右源按 join 字段等值连接、再按右源字段分组聚合（F2），
+      与两源 ``_execute_local`` 流程一致。
+    - 空间跳把累积行重建为左要素再入 STRtree，几何取自上一空间跳写入的
+      ``__left_geometry__``（F3）；无任何几何可携带时 typed 失败，绝不静默 0 行。
     """
     import app.services.data_fabric.query.federation as _self
 
     started = time.monotonic()
+    if req.budget is None:  # F7：显式 None 击穿 default_factory → 回落联邦默认
+        req.budget = _chain_budget(req)
     plans = plan_federated_chain(req)
-    ordered_sources = list(req.sources)
-    if req.order_strategy == "cost":
-        order = sorted(range(len(req.sources)), key=lambda i: (
-            req.sources[i].estimated_rows is None,
-            req.sources[i].estimated_rows or 0,
-            i,
-        ))
-        ordered_sources = [req.sources[i] for i in order]
+    # F7：直接消费规划器产出的有序计划（left[0] 起头，right[i] 依次为链上
+    # 第 i+1 个源），按 source_id 映射回 ChainSource —— 不再本地重排第二份
+    # 排序逻辑（与 plan_federated_chain 共享同一份 _chain_order_indices）。
+    order_ids = [plans[0].left["source_id"]] + [p.right["source_id"] for p in plans]
+    by_id = {s.source_id: s for s in req.sources}
+    ordered_sources = [by_id[sid] for sid in order_ids]
 
     streaming = StreamingBudget(
         max_rows=req.budget.max_rows,
@@ -757,21 +876,43 @@ def execute_federated_chain(executor: "FederatedExecutor", req: FederatedChainRe
     for i, join in enumerate(req.joins):
         right_rows = adapters[i + 1]
         if join.kind == "attribute_join":
+            # F1：左键经 _chain_row_key 穿透（顶层优先，回退上一跳 __right__）
             accumulated = _self.attribute_join_local(
                 accumulated, right_rows,
                 join_field_left=str(join.join_field_left),
                 join_field_right=str(join.join_field_right),
                 budget=streaming, max_output=req.budget.max_rows,
+                left_key_resolver=_chain_row_key,
             )
         elif join.kind == "spatial_join":
+            # F3：累积行重建为左要素（几何来自上一空间跳的 __left_geometry__）
+            left_features = _chain_left_features(accumulated)
+            if i > 0 and not any(isinstance(f.get("geometry"), dict) for f in left_features):
+                raise FederatedQueryError(
+                    f"chain spatial join {i} has no left geometry: the preceding hop "
+                    "did not carry one",
+                    details={"hint": "make the preceding hop a spatial join (it stores "
+                                     "__left_geometry__), or reproject/carried geometry "
+                                     "before the chain"},
+                )
             accumulated = _self.spatial_join_local(
-                accumulated, right_rows,
+                left_features, right_rows,
                 spatial_op=join.spatial_op or "within",
                 budget=streaming, max_output=req.budget.max_rows,
+                carry_left_geometry=True,
             )
         else:  # aggregate_join
+            # F2：先连接（右源行进入 __right__），再按右源字段分组聚合 ——
+            # 否则 right_rows 被丢弃、分组键全部落空（单一全 None 组）
+            joined = _self.attribute_join_local(
+                accumulated, right_rows,
+                join_field_left=str(join.join_field_left or ""),
+                join_field_right=str(join.join_field_right or ""),
+                budget=streaming, max_output=req.budget.max_rows,
+                left_key_resolver=_chain_row_key,
+            )
             accumulated = _self.aggregate_join_rows(
-                accumulated, join.aggregates or [], join.group_by_right or [],
+                joined, join.aggregates or [], join.group_by_right or [],
             )
         joined_total = len(accumulated)
         if joined_total > req.budget.max_rows:
@@ -781,25 +922,29 @@ def execute_federated_chain(executor: "FederatedExecutor", req: FederatedChainRe
                 details={"hint": "filter sources harder, or aggregate before joining",
                          "per_source_rows": per_source_rows},
             )
+        # F1：为下一跳提升仅存于 __right__ 的连接键到顶层（原地；左字段优先）
+        if i + 1 < len(req.joins):
+            _chain_lift_next_join_key(accumulated, req.joins[i + 1])
 
     final_rows = accumulated[: req.limit]
+    rows_fetched = sum(per_source_rows)
     return {
         "status": "success",
         "strategy": "left_deep_chain",
         "order": [s.source_id for s in ordered_sources],
         "rows": final_rows,
         "row_count": len(final_rows),
-        "rows_fetched": sum(per_source_rows),
+        "rows_fetched": rows_fetched,
         "joined_row_count": joined_total,
         "per_source_rows": dict(
             zip((s.source_id for s in ordered_sources), per_source_rows)
         ),
         "plans": [p.to_dict() for p in plans],
         "pushdown_ratio": (
-            round(len(final_rows) / sum(per_source_rows), 6) if per_source_rows else None
+            round(len(final_rows) / rows_fetched, 6) if rows_fetched else None
         ),
         "execution_duration_s": round(time.monotonic() - started, 4),
-        "warnings": req.warnings,
+        "warnings": plans[0].warnings,   # F7：planner 收集的 warnings 随计划返回
     }
 
 

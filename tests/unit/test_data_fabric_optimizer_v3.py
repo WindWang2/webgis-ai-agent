@@ -21,7 +21,11 @@ from app.services.data_fabric.query.federation import (
 )
 from app.services.data_fabric.query.models import QuerySpecV2
 from app.services.data_fabric.query.planner import plan_query
-from app.services.data_fabric.query.predicates import predicate_from_dict
+from app.services.data_fabric.query.predicates import (
+    evaluate_predicate,
+    predicate_from_dict,
+    temporal_from_dict,
+)
 from app.services.data_fabric.query.statistics import (
     DatasetStatistics,
     ColumnStatistics,
@@ -341,3 +345,225 @@ class TestChainFederation:
         )
         plan = plan_federated(req)
         assert plan.kind == "attribute_join"
+
+    # ---------------------------------------- 链式正确性（对抗评审回归）--------
+
+    def test_chain_hop2_join_key_from_prior_right_props(self):
+        """F1：hop2 连接键只存在于 hop1 右属性（嵌在 __right__）→ 必须非空。
+
+        修复前：左键仅顶层取值 → hop2 全部 miss → 静默 0 行。
+        """
+        sources = [
+            ChainSource("s-a", "d-a", estimated_rows=100),
+            ChainSource("s-b", "d-b", estimated_rows=200),
+            ChainSource("s-c", "d-c", estimated_rows=300),
+        ]
+        joins = [
+            ChainJoin(kind="attribute_join", join_field_left="k",
+                      join_field_right="k"),
+            ChainJoin(kind="attribute_join", join_field_left="e",
+                      join_field_right="e"),
+        ]
+        rows = {
+            "d-a": [{"properties": {"k": "a1"}, "geometry": None}],
+            "d-b": [{"properties": {"k": "a1", "e": "E9"}, "geometry": None}],
+            "d-c": [{"properties": {"e": "E9", "c": 7}, "geometry": None}],
+        }
+
+        def factory(source_id):
+            return SimpleNamespace(query=lambda ds, spec: SimpleNamespace(
+                features=rows.get(ds, [])))
+
+        result = FederatedExecutor(factory).execute_chain(
+            FederatedChainRequest(sources=sources, joins=joins, limit=100)
+        )
+        assert result["row_count"] == 1
+        row = result["rows"][0]
+        assert row["k"] == "a1"
+        assert row["e"] == "E9"               # hop1 右属性的键已提升到顶层
+        assert row["__right__"]["c"] == 7     # __right__ 是最后一跳右属性
+
+    def test_chain_aggregate_hop_joins_right_source(self):
+        """F2：聚合跳先连接右源、再按右源字段分组 —— 分组与聚合值正确。
+
+        修复前：right_rows 被丢弃、分组键全部落空 → 单一全 None 组。
+        """
+        sources = [
+            ChainSource("s-fact", "d-fact", estimated_rows=10),
+            ChainSource("s-dim", "d-dim", estimated_rows=50),
+        ]
+        joins = [ChainJoin(
+            kind="aggregate_join",
+            join_field_left="zone", join_field_right="zone",
+            group_by_right=["zone_name"],
+            aggregates=[{"func": "count"}, {"func": "sum", "field": "v"}],
+        )]
+        rows = {
+            "d-fact": [
+                {"properties": {"zone": "z1", "v": 1}, "geometry": None},
+                {"properties": {"zone": "z1", "v": 2}, "geometry": None},
+                {"properties": {"zone": "z2", "v": 3}, "geometry": None},
+            ],
+            "d-dim": [
+                {"properties": {"zone": "z1", "zone_name": "north"}, "geometry": None},
+                {"properties": {"zone": "z2", "zone_name": "south"}, "geometry": None},
+            ],
+        }
+
+        def factory(source_id):
+            return SimpleNamespace(query=lambda ds, spec: SimpleNamespace(
+                features=rows.get(ds, [])))
+
+        result = FederatedExecutor(factory).execute_chain(
+            FederatedChainRequest(sources=sources, joins=joins, limit=100)
+        )
+        assert result["row_count"] == 2
+        by_name = {r["zone_name"]: r for r in result["rows"]}
+        assert by_name["north"]["count"] == 2
+        assert by_name["north"]["sum_v"] == 3
+        assert by_name["south"]["count"] == 1
+        assert by_name["south"]["sum_v"] == 3
+
+    def test_chain_spatial_then_spatial(self):
+        """F3：点在面在面 —— 左几何经 __left_geometry__ 跨跳携带，hop2 可入
+        STRtree；修复前 hop1 累积行是扁平 dict（几何被丢弃）→ 静默 0 行。"""
+        sources = [
+            ChainSource("s-pts", "d-pts", estimated_rows=10),
+            ChainSource("s-parcel", "d-parcel", estimated_rows=20),
+            ChainSource("s-district", "d-district", estimated_rows=30),
+        ]
+        joins = [
+            ChainJoin(kind="spatial_join", spatial_op="within"),
+            ChainJoin(kind="spatial_join", spatial_op="within"),
+        ]
+        rows = {
+            "d-pts": [{"properties": {"pid": 1},
+                       "geometry": {"type": "Point", "coordinates": [0.5, 0.5]}}],
+            "d-parcel": [{"properties": {"parcel": "P1"},
+                          "geometry": {"type": "Polygon", "coordinates": [
+                              [[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]}}],
+            "d-district": [{"properties": {"district": "D1"},
+                            "geometry": {"type": "Polygon", "coordinates": [
+                                [[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]]]}}],
+        }
+
+        def factory(source_id):
+            return SimpleNamespace(query=lambda ds, spec: SimpleNamespace(
+                features=rows.get(ds, [])))
+
+        result = FederatedExecutor(factory).execute_chain(
+            FederatedChainRequest(sources=sources, joins=joins, limit=100)
+        )
+        assert result["row_count"] == 1
+        row = result["rows"][0]
+        assert row["pid"] == 1
+        assert row["__right__"]["district"] == "D1"
+
+    def test_chain_spatial_hop_without_carried_geometry_is_typed_error(self):
+        """F3：前置跳未携带几何的空间跳 → typed 失败，绝不静默 0 行。"""
+        sources = [
+            ChainSource("s-a", "d-a", estimated_rows=10),
+            ChainSource("s-b", "d-b", estimated_rows=20),
+            ChainSource("s-poly", "d-poly", estimated_rows=30),
+        ]
+        joins = [
+            ChainJoin(kind="attribute_join", join_field_left="k",
+                      join_field_right="k"),
+            ChainJoin(kind="spatial_join", spatial_op="within"),
+        ]
+        rows = {
+            "d-a": [{"properties": {"k": "a"}, "geometry": None}],
+            "d-b": [{"properties": {"k": "a"}, "geometry": None}],
+            "d-poly": [{"properties": {"p": 1},
+                        "geometry": {"type": "Polygon", "coordinates": [
+                            [[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]}}],
+        }
+
+        def factory(source_id):
+            return SimpleNamespace(query=lambda ds, spec: SimpleNamespace(
+                features=rows.get(ds, [])))
+
+        with pytest.raises(FederatedQueryError, match="no left geometry"):
+            FederatedExecutor(factory).execute_chain(
+                FederatedChainRequest(sources=sources, joins=joins, limit=100)
+            )
+
+    def test_mixed_crs_chain_fails_at_plan_time(self):
+        """F4：≥2 个互不相同的非空 srs → 计划期 typed fail-fast；一致/缺省不报错。"""
+        req = self._req()
+        req.sources[0].srs = "EPSG:4326"
+        req.sources[1].srs = "EPSG:3857"
+        with pytest.raises(FederatedQueryError, match="mix CRS"):
+            plan_federated_chain(req)
+        same = self._req()
+        same.sources[0].srs = same.sources[1].srs = "EPSG:4326"
+        assert plan_federated_chain(same)
+
+    def test_explicit_none_budget_falls_back_to_default(self):
+        """F7：budget 显式 None（击穿 default_factory）→ 回落联邦默认，
+        计划/执行路径都不抛 AttributeError。"""
+        req = self._req()
+        req.budget = None
+        plans = plan_federated_chain(req)
+        assert plans and plans[0].warnings
+        rows: dict = {"d-small": [], "d-mid": [], "d-big": []}
+
+        def factory(source_id):
+            return SimpleNamespace(query=lambda ds, spec: SimpleNamespace(
+                features=rows.get(ds, [])))
+
+        result = FederatedExecutor(factory).execute_chain(req)
+        assert result["status"] == "success"
+        assert result["row_count"] == 0
+
+    def test_plan_does_not_mutate_request_warnings(self):
+        """F7：plan_federated_chain 是纯函数 —— warnings 随 plans[0] 返回，
+        不追加到 req.warnings。"""
+        req = self._req()
+        plans = plan_federated_chain(req)
+        assert req.warnings == []
+        assert any("cost-based" in w for w in plans[0].warnings)
+        assert plans[1].warnings == []
+
+
+# ------------------------------------------------- 谓词 NULL 三值逻辑回归 ----
+
+
+class TestPredicateNullSemantics:
+    def test_not_in_with_null_member_never_true(self):
+        """F5：SQL 三值逻辑 —— x NOT IN (1, NULL) 永不为 TRUE（unknown → 排除）。"""
+        pred = predicate_from_dict({"op": "not_in", "field": "x", "values": [1, None]})
+        assert evaluate_predicate(pred, {"x": 1}) is False     # 命中 → FALSE
+        assert evaluate_predicate(pred, {"x": 2}) is False     # NULL 成员 → unknown
+        assert evaluate_predicate(pred, {"x": None}) is False  # 左 NULL → unknown
+        strict = predicate_from_dict({"op": "not_in", "field": "x", "values": [1, 2]})
+        assert evaluate_predicate(strict, {"x": 3}) is True    # 无 NULL 成员保持 TRUE
+        assert evaluate_predicate(strict, {"x": 1}) is False
+
+
+# -------------------------------------------- 选择率时间谓词诚实标注回归 ----
+
+
+class TestSelectivityTemporalBasis:
+    def test_temporal_constant_fallback_is_assumption(self):
+        """F6：before/after/during 落常数 0.25 时标 assumption，不冒充 statistics。"""
+        stats = DatasetStatistics(
+            dataset_fingerprint="fp",
+            columns=[ColumnStatistics(name="t", min_value=0.0, max_value=100.0,
+                                      confidence="measured")],
+        )
+        after = temporal_from_dict({"op": "after", "field": "t", "value": "2024-01-01"})
+        est = selectivity.estimate_predicate_selectivity(after, stats)
+        assert est.value == pytest.approx(0.25)
+        assert est.basis == "assumption"
+        during = temporal_from_dict(
+            {"op": "during", "field": "t",
+             "start": "2024-01-01", "end": "2024-02-01"})
+        est2 = selectivity.estimate_predicate_selectivity(during, stats)
+        assert est2.value == pytest.approx(0.25)
+        assert est2.basis == "assumption"
+        # 数值 range 谓词仍由统计推导，标 statistics 不变
+        gt = predicate_from_dict({"op": "gt", "field": "t", "value": 25.0})
+        num = selectivity.estimate_predicate_selectivity(gt, stats)
+        assert num.value == pytest.approx(0.75)
+        assert num.basis == "statistics"

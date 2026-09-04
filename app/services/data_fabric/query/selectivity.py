@@ -98,6 +98,10 @@ def estimate_predicate_selectivity(
         value = SELECTIVITY_NULL if not node.negated else 1.0 - SELECTIVITY_NULL
         return SelectivityEstimate(value=value, basis="default")
     if op in _RANGE_OPS:
+        # F6：before/after/during 的常量是 ISO 字符串，无法参与数值 min/max
+        # 推导（float(lo) 必然 ValueError / 无 value 属性）——凡落到
+        # SELECTIVITY_RANGE 常数的时间谓词一律标 assumption，绝不冒充 statistics。
+        temporal = op in ("before", "after", "during")
         if col is not None and col.min_value is not None and col.max_value is not None:
             span = col.max_value - col.min_value
             if span and span > 0:
@@ -116,10 +120,16 @@ def estimate_predicate_selectivity(
                     frac = SELECTIVITY_RANGE
                 if 0.0 < frac < 1.0:
                     return SelectivityEstimate(
-                        value=_clamp(frac), basis="statistics",
-                        detail={"field": col.name, "min": col.min_value, "max": col.max_value},
+                        value=_clamp(frac),
+                        basis="assumption" if temporal else "statistics",
+                        detail={} if temporal else {
+                            "field": col.name, "min": col.min_value, "max": col.max_value,
+                        },
                     )
-        return SelectivityEstimate(value=SELECTIVITY_RANGE, basis="default")
+        return SelectivityEstimate(
+            value=SELECTIVITY_RANGE,
+            basis="assumption" if temporal else "default",
+        )
     if op == "in":
         k = max(1, len(getattr(node, "values", []) or []))
         if col is not None and col.ndv and col.ndv > 0:

@@ -23,7 +23,12 @@ MAX_ALTERNATIVES = 8
 
 
 class PlanCost(BaseModel):
-    """选中计划/备选计划的相对成本分解（全部可解释）。"""
+    """选中计划/备选计划的相对成本分解（全部可解释）。
+
+    口径诚实声明：``score()`` 是**逐页（per-page）**口径的排序分数，不做
+    数据集规模归一 —— 不同规模数据集之间的 score 不可直接比较，仅用于
+    同一查询内计划/备选的相对排序。
+    """
 
     rows_scanned: int = 0
     bytes_transferred: int = 0
