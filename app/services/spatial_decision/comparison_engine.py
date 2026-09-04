@@ -250,20 +250,20 @@ class ScenarioComparisonEngine:
                 else:
                     score -= delta_pct
             
-            # Boost score if in pareto optimal set
-            if scen_id in pareto_scenarios:
-                score += 10.0
-            
-            # Boost score by confidence
+            # Confidence-weighted score without arbitrary hidden bonuses
             score *= (0.5 + 0.5 * res.confidence)
             scores[scen_id] = round(score, 2)
 
-        best_id = max(scores, key=scores.get)
+        # Prioritize Pareto non-dominated scenarios if available
+        pareto_candidates = [sid for sid in pareto_scenarios if sid in scores]
+        candidate_pool = pareto_candidates if pareto_candidates else list(scores.keys())
+        best_id = max(candidate_pool, key=lambda sid: scores.get(sid, -float("inf")))
         best_res = next(r for r in results if r.scenario.scenario_id == best_id)
         
+        pareto_note = "（属于 Pareto 非支配前沿）" if best_id in pareto_scenarios else "（非支配集外候选）"
         rationale_lines = [
-            f"推荐采用方案 [{best_res.scenario.name}] (ID: {best_id})。",
-            f"综合得分: {scores[best_id]}，基于置信度 {round(best_res.confidence * 100, 1)}% 与 Pareto 优越性评估。",
+            f"推荐采用方案 [{best_res.scenario.name}] (ID: {best_id}){pareto_note}。",
+            f"综合得分: {scores[best_id]}，基于置信度 {round(best_res.confidence * 100, 1)}% 与多准则对比评估。",
             "核心优势:",
         ]
         
