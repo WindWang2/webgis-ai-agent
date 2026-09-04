@@ -3,31 +3,19 @@ Decision Engine V3 - Orchestrator for Evidence-Grounded Spatial Decision Intelli
 Coordinates Problem definition, Constraint checking, Normalization, MCDA (WSM/TOPSIS),
 Pareto Frontier, Sensitivity, Robustness, Recommendation Admissibility, and GeoJSON synthesis.
 """
-import uuid
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 import numpy as np
 
 from app.services.spatial_decision.models_v3 import (
-    Alternative,
-    BaselineEvidenceContext,
-    BaselineTruthState,
-    Constraint,
     ConstraintCategory,
     ConstraintEvaluation,
-    ConstraintType,
-    Criterion,
-    CriterionDirection,
     DecisionProblem,
     DecisionScore,
     OutcomeDistribution,
     ParetoStatus,
-    RecommendationAdmissibility,
     RecommendationResult,
-    RobustnessResult,
-    SensitivityResult,
     SpatialDecisionResultV3,
-    StructuredExplanation,
 )
 from app.services.spatial_decision.normalization import normalize_criterion_values, normalize_weights, NormalizationError
 from app.services.spatial_decision.constraints import evaluate_alternative_constraints
@@ -36,8 +24,7 @@ from app.services.spatial_decision.pareto import compute_pareto_frontier
 from app.services.spatial_decision.sensitivity import analyze_weight_sensitivity
 from app.services.spatial_decision.robustness import compute_robustness_and_regret
 from app.services.spatial_decision.uncertainty import sample_parameter_distribution, compute_distribution_summary
-from app.services.spatial_decision.recommendation_policy import evaluate_recommendation_policy, generate_decision_fingerprint
-from app.services.spatial_decision.evidence_hardening import detect_rule_conflicts, evaluate_evidence_quality_and_conflicts
+from app.services.spatial_decision.recommendation_policy import evaluate_recommendation_policy
 from app.services.session_data_protocol import get_session_store
 
 logger = logging.getLogger(__name__)
@@ -489,7 +476,7 @@ class DecisionEngineV3:
     ) -> str:
         """Generates rigorous Markdown decision analysis report."""
         lines = [
-            f"# 空间决策智能综合推演报告 (V3)",
+            "# 空间决策智能综合推演报告 (V3)",
             f"**决策目标:** {problem.goal}",
             f"**地理范围:** {problem.target_area.resolved_name or problem.target_area.query}",
             f"**决策指纹 (SHA256):** `{rec_result.decision_fingerprint}`",
@@ -572,7 +559,7 @@ class DecisionEngineV3:
                     lines.append(f"  - 方案 [{aid}]: 保持第一名概率 {stab}%")
 
         if rec_result.robustness:
-            lines.append(f"\n**鲁棒性与极小化后悔值 (Minimax Regret):**")
+            lines.append("\n**鲁棒性与极小化后悔值 (Minimax Regret):**")
             lines.append(f"{rec_result.robustness.summary}")
             for aid, reg in rec_result.robustness.alternative_regrets.items():
                 lines.append(f"- 方案 [{aid}]: 最大后悔值 = {reg:.4f} (可行概率: {rec_result.robustness.prob_feasible.get(aid, 1.0) * 100:.0f}%)")

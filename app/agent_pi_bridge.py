@@ -2344,8 +2344,12 @@ class PiBridgePool:
         if len(self.bridges) == 1:
             return self.bridges[0]
         # Stable affinity: hashlib (not hash()) so routing is deterministic
-        # across process restarts despite PYTHONHASHSEED.
-        idx = int(hashlib.md5(session_id.encode("utf-8")).hexdigest(), 16) % len(self.bridges)
+        # across process restarts despite PYTHONHASHSEED. MD5 is fine here —
+        # it is a routing bucket, not a security primitive.
+        idx = int(
+            hashlib.md5(session_id.encode("utf-8"), usedforsecurity=False).hexdigest(),
+            16,
+        ) % len(self.bridges)
         return self.bridges[idx]
 
 

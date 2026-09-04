@@ -4,10 +4,9 @@ Evaluates strict non-dominance across multiple criteria without arbitrary hidden
 Integrates feasibility awareness: infeasible alternatives are excluded from the Pareto set.
 """
 import logging
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set
 from pydantic import BaseModel, Field
 
-from app.services.spatial_decision.models_v3 import Criterion, CriterionDirection, ParetoStatus
 
 logger = logging.getLogger(__name__)
 

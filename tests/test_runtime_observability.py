@@ -419,7 +419,7 @@ def test_budget_terminal_outcome_recorded_exactly_once():
 # ──────────────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_dispatch_tool_records_tool_call_into_turn_evidence():
+async def test_dispatch_tool_records_tool_call_into_turn_evidence(monkeypatch):
     """P1-1 integration: the Pi HTTP-callback dispatch_tool path must record
     tool_calls into the live TurnEvidence via the registry chokepoint. Before the
     bind_turn_evidence fix this stayed 0 on the Pi path (separate task)."""
@@ -440,10 +440,12 @@ async def test_dispatch_tool_records_tool_call_into_turn_evidence():
     ev = TurnEvidence(request_id="r", session_id="s-integ",
                       turn_id=turn_id, run_id="ru-integ")
     TURN_EVIDENCE.register(ev)
-    # simulate the active-turn globals the bridge sets under its serial lock
-    bridge_mod._active_turn_turn_id = turn_id
-    bridge_mod._active_turn_run_id = "ru-integ"
-    bridge_mod._active_turn_session_id = "s-integ"
+    # V5-B: dispatch_tool resolves the in-flight turn from the session-keyed
+    # _active_turns table (the module globals are the pool-size-1 back-compat
+    # view only), so register the turn there for evidence correlation.
+    monkeypatch.setitem(bridge_mod._active_turns, "s-integ", bridge_mod._ActiveTurnEntry(
+        session_id="s-integ", turn_id=turn_id, token=None, run_id="ru-integ",
+    ))
     try:
         req = PiToolRequest(toolCallId="tc-integ", name="webgis_execute",
                             arguments={"toolName": "noop", "arguments": {}},

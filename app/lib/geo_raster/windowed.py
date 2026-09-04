@@ -19,13 +19,13 @@ Peak memory is bounded by ``(window + 2·halo)² × dtype × workers``.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from dataclasses import dataclass
+from typing import Callable, Optional
 
 import numpy as np
 
 from app.lib.cancellation import cancellable
-from app.lib.geo_raster.reader import RasterMetadata, RasterReader, RasterReaderError
+from app.lib.geo_raster.reader import RasterReader, RasterReaderError
 
 logger = logging.getLogger(__name__)
 

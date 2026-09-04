@@ -180,7 +180,9 @@ async def test_guard_contract_matches_full_get_session(session_factory):
     assert meta["owner"] is not None
     assert meta["non_owner"] is None
     assert meta["anon_token_wrong"] is None
-    assert meta["anon_legacy_ok"] is not None
+    # #1109: legacy NULL/NULL rows are fail-closed on BOTH paths (migration
+    # g1109 mints random owner_tokens for existing rows).
+    assert meta["anon_legacy_ok"] is None
     assert meta["miss"] is None
 
 

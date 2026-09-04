@@ -5,7 +5,6 @@ these exercise the ToolDispatchService artifact seam (uncertainty_ref is
 minted AND registered in ArtifactRegistry as its own artifact) and the
 deterministic IDW-vs-kriging accuracy comparison the benchmark gate needs.
 """
-import asyncio
 
 import numpy as np
 import pytest
@@ -93,7 +92,7 @@ def _fixture_arrays(n=240, seed=23):
     import random
 
     rng = random.Random(seed)
-    lonlat, vals = [], []
+    lonlat, _vals = [], []
     for _ in range(n):
         lon = 103.95 + rng.random() * 0.25
         lat = 30.55 + rng.random() * 0.2

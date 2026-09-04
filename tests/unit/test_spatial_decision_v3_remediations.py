@@ -11,7 +11,6 @@ Covers all 7 CRITICAL and MAJOR audit findings:
 """
 import pytest
 import numpy as np
-from typing import Any, Dict
 
 from app.services.spatial_decision.models_v3 import (
     Alternative,
@@ -29,7 +28,6 @@ from app.services.spatial_decision.models_v3 import (
 from app.services.spatial_decision.spatial_constraints import evaluate_spatial_constraint
 from app.services.spatial_decision.robustness import compute_robustness_and_regret
 from app.services.spatial_decision.mcda import MultiCriteriaDecisionEngine
-from app.services.spatial_decision.normalization import normalize_criterion_values, normalize_weights
 from app.services.spatial_decision.uncertainty import sample_parameter_distribution
 from app.services.spatial_decision.decision_engine_v3 import DecisionEngineV3
 from app.services.spatial_decision.mapspec_integration import apply_v3_decision_to_mapspec
@@ -267,7 +265,7 @@ def test_remediation_triangular_distribution_inverted_bounds():
 @pytest.mark.asyncio
 async def test_remediation_mapspec_geometry_type_point_detection():
     """Points in comparison_geojson must produce circle layer, not polygon layer."""
-    from unittest.mock import AsyncMock, patch
+    from unittest.mock import patch
 
     # Mock SpatialDecisionResultV3
     class DummyProb:

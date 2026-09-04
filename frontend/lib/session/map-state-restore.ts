@@ -13,7 +13,6 @@
  *     GeoJSON 拉取回填（SEC-08：匿名会话带 ownerToken）。
  */
 import { apiFetch } from '@/lib/api/transport';
-import { API_BASE } from '@/lib/api/config';
 import { buildMvtTileUrl } from '@/lib/map-kit/tile-url';
 import type { GeoJSONFeatureCollection, MapActionPayload } from '@/lib/types';
 import { getPendingRemoved } from '@/lib/mapspec/session-cursor';

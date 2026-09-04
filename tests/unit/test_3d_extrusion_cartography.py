@@ -1,10 +1,8 @@
 """Unit tests for 3D Extrusion Cartographic Model & Runtime (ADR-0095)."""
-import pytest
 from app.lib.cartography.extrusion_model import (
     ExtrusionHeightSpec,
     analyze_height_field_distribution,
     build_extrusion_height_expression,
-    build_extrusion_base_expression,
 )
 from app.services.analysis_cartography_converter import convert_analysis_to_mapspec_layer
 from app.lib.cartography.semantic_checks import evaluate_cartography_semantics

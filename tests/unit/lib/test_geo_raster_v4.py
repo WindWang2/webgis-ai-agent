@@ -325,7 +325,8 @@ def test_read_overview_validates_levels(tiled_raster):
     from app.lib.geo_raster.cog import write_cog
 
     path, _ = tiled_raster
-    import tempfile, os
+    import tempfile
+    import os
 
     cog = write_cog(str(path), os.path.join(tempfile.mkdtemp(), "c.tif"))
     with RasterReader.open(str(cog)) as r:

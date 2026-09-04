@@ -140,7 +140,8 @@ class ScenarioComparisonResult(BaseModel):
     comparison_ref_id: str = Field(..., description="Registered SessionStore ref ID for comparison map")
 
 # Spatial Decision Intelligence V3 Re-Exports
-from app.services.spatial_decision.models_v3 import (
+# Deliberate re-export surface: callers import these names from `.models`.
+from app.services.spatial_decision.models_v3 import (  # noqa: F401
     BaselineTruthState,
     CriterionDirection,
     NormalizationStrategy,

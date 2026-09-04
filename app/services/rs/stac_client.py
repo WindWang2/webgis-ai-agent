@@ -131,7 +131,6 @@ class StacClientPrimitive:
 
                 def _read_bands():
                     import math
-                    import rasterio
                     from rasterio.crs import CRS
                     from rasterio.enums import Resampling
                     from rasterio.warp import transform_bounds

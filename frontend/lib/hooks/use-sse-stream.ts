@@ -7,7 +7,6 @@ import { useMapBridge } from './useMapBridge';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { markRefSourceFailed } from '@/lib/mapspec/ref-source-resolver';
 import { apiFetch } from '@/lib/api/transport';
-import { API_BASE } from '@/lib/api/config';
 import { buildMvtTileUrl } from '@/lib/map-kit/tile-url';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
 import type { SSEEvent } from '@/lib/api/chat';

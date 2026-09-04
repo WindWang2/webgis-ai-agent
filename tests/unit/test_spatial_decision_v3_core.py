@@ -15,14 +15,9 @@ from app.services.spatial_decision.models_v3 import (
     ConstraintType,
     Criterion,
     CriterionDirection,
-    DecisionProblem,
-    DecisionScore,
     DistributionType,
     NormalizationStrategy,
-    ParetoStatus,
-    RecommendationAdmissibility,
     SpatialPredicate,
-    TargetAreaSpec,
     UncertainParameter,
     WeightSource,
 )
@@ -41,15 +36,10 @@ from app.services.spatial_decision.uncertainty import (
 )
 from app.services.spatial_decision.sensitivity import analyze_weight_sensitivity
 from app.services.spatial_decision.robustness import compute_robustness_and_regret
-from app.services.spatial_decision.recommendation_policy import (
-    evaluate_recommendation_policy,
-    generate_decision_fingerprint,
-)
 from app.services.spatial_decision.evidence_hardening import (
     detect_rule_conflicts,
-    evaluate_evidence_quality_and_conflicts,
 )
-from app.services.spatial_decision.models import DomainRule, EvidenceItem
+from app.services.spatial_decision.models import DomainRule
 
 
 # --- 1. Normalization & Unit Safety Tests ---

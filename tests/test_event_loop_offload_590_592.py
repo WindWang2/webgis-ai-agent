@@ -199,6 +199,10 @@ async def test_redis_descriptor_fallback_loads_off_loop(monkeypatch):
             self.sets.append((a, kw))
             return True
 
+        async def hget(self, key, field):
+            # V5-E content-revision stamping (advisory): no revisions recorded.
+            return None
+
     store = sdr.RedisSessionStore(redis_url="redis://unused", redis=_FakeRedis())
 
     result = await _assert_loop_responsive_while(

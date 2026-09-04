@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+import app.agent_pi_bridge as bridge_mod
 from app.agent_pi_bridge import register_active_pi_turn
 from app.core.bridge_secret import get_bridge_secret
 from app.main import app
@@ -46,8 +47,12 @@ async def test_multipod_turn_ownership_contract(async_client):
         # 1. Pod A registers active turn in Redis
         await register_active_pi_turn(sid, tid)
 
-        # 2. Simulate Pod B (empty in-process state) receiving callback
+        # 2. Simulate Pod B (empty in-process state) receiving callback.
+        # V5-B: the owner pod's session-keyed _active_turns table is checked
+        # BEFORE Redis (is_active_pi_turn), so a foreign pod must have an
+        # empty local table too.
         pi_turn_registry._local_context = None
+        bridge_mod._active_turns.pop(sid, None)
 
         mock_response = {
             "toolCallId": "call-1",

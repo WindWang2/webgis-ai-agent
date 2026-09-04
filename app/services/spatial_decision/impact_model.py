@@ -5,13 +5,12 @@ impact models supporting transparent assumptions, required inputs, and causal ho
 """
 from abc import ABC, abstractmethod
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from app.services.spatial_decision.models import (
     TargetAreaSpec,
     MetricDeltaV2,
-    MetricRange,
     DomainRule,
     EvidenceItem,
     SpatialImpactZone,

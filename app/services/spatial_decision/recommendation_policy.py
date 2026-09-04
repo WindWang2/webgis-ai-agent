@@ -6,11 +6,9 @@ INSUFFICIENT_EVIDENCE, NO_FEASIBLE_ALTERNATIVE) with complete audit-ready reason
 import hashlib
 import json
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from app.services.spatial_decision.models_v3 import (
-    Alternative,
-    Criterion,
     DecisionProblem,
     DecisionScore,
     ParetoStatus,

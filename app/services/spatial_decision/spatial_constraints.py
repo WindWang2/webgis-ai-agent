@@ -6,13 +6,11 @@ Uses pyproj.Geod and Shapely to avoid degree-to-meter distortions.
 import math
 import logging
 from typing import Any, Dict, List, Optional, Tuple
-from shapely.geometry import shape, Point, Polygon, MultiPolygon, GeometryCollection
-from shapely.ops import transform
-from pyproj import Geod, Transformer
+from shapely.geometry import shape, Point, GeometryCollection
+from pyproj import Geod
 
 from app.services.spatial_decision.models_v3 import (
     Constraint,
-    ConstraintCategory,
     ConstraintEvaluation,
     ConstraintType,
     SpatialPredicate,

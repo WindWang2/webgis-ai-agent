@@ -14,15 +14,20 @@ logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _CLI_PATH = PROJECT_ROOT / "frontend" / "lib" / "mapspec-compiler" / "cli.ts"
+# Prefer the pinned local jiti binary: `npx jiti` hits the npm registry when
+# node_modules is absent (cold CI runners blew the compile ceiling there).
+_CLI_LOCAL_BIN = PROJECT_ROOT / "frontend" / "node_modules" / ".bin" / "jiti"
 _CLI_COMPILE_TIMEOUT_SEC = 45
 
 
 async def compile_via_cli(mapspec_file: Path, target_out_dir: Path) -> Dict[str, Any]:
     """通过 TS CLI 编译 MapSpec 文件为 MapLibre style.json + index.html"""
     target_out_dir.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        "npx",
-        "jiti",
+    if _CLI_LOCAL_BIN.exists():
+        cmd = [str(_CLI_LOCAL_BIN)]
+    else:
+        cmd = ["npx", "jiti"]
+    cmd += [
         str(_CLI_PATH),
         "--input",
         str(mapspec_file),

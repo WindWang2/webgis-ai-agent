@@ -434,7 +434,9 @@ async def test_item13_anon_token_session_list_reports(report_app_and_db):
     """Logged-in caller + X-Session-Token can list an anonymous token session.
 
     Pre-fix: verify_session_owner was called without owner_token → 404 even
-    with a valid header. Legacy NULL-token sessions stay grandfathered.
+    with a valid header. #1109 later made legacy NULL-token sessions
+    fail-closed (migration g1109 mints random owner_tokens for existing
+    rows), so the unauthenticated legacy case now expects 404.
     """
     app, session_factory = report_app_and_db
     async with session_factory() as db:
@@ -477,6 +479,8 @@ async def test_item13_anon_token_session_list_reports(report_app_and_db):
     assert ok.status_code == 200, ok.text
     assert ok.json()["success"] is True
     assert ok.json()["data"]["total"] == 1
-    assert legacy.status_code == 200
+    # #1109: legacy NULL/NULL is fail-closed — knowing the session_id is
+    # no longer sufficient (enumerable IDOR).
+    assert legacy.status_code == 404
     assert detail_ok.status_code == 200
     assert detail_missing.status_code == 404

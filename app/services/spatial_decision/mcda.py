@@ -5,17 +5,12 @@ Guarantees unit safety via normalized decision matrices and excludes infeasible 
 """
 import math
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from app.services.spatial_decision.models_v3 import (
-    Alternative,
     Criterion,
     CriterionDirection,
-    DecisionScore,
-    NormalizationStrategy,
-    ParetoStatus,
 )
-from app.services.spatial_decision.normalization import normalize_criterion_values, normalize_weights
 
 logger = logging.getLogger(__name__)
 

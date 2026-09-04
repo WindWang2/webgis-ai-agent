@@ -52,14 +52,12 @@ def write_cog(
     out.parent.mkdir(parents=True, exist_ok=True)
     # Per-process unique tmp name: concurrent writers to one target must not
     # collide on a fixed ".tmp" suffix (review finding #12).
-    import os as _os
     import uuid as _uuid
 
     tmp = out.with_suffix(f"{out.suffix}.{_uuid.uuid4().hex[:8]}.tmp")
     try:
       with rasterio_env():
         with rasterio.open(source_uri) as src:
-            profile = src.profile.copy()
             if overviews is None:
                 overviews = []
                 dim = max(src.width, src.height)

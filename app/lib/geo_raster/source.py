@@ -253,7 +253,7 @@ def asyncio_run(coro: Any) -> Any:
     import asyncio
 
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(coro)
     # Called from a live loop (tool thread or async context): run on a

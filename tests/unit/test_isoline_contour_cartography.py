@@ -1,5 +1,4 @@
 """Unit tests for Isoline & Contour Cartographic Model & Runtime (ADR-0095)."""
-import pytest
 import numpy as np
 from app.lib.cartography.isoline_model import (
     IsolineContourSpec,

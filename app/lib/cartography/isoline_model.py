@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 import numpy as np
 from pydantic import BaseModel, Field
-from shapely.geometry import LineString, MultiLineString, MultiPolygon, Polygon, mapping
+from shapely.geometry import LineString, Polygon, mapping
 from shapely.geometry.polygon import orient
 from shapely.ops import unary_union
 
@@ -101,7 +101,6 @@ def generate_contour_features_from_grid(
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from shapely.geometry import LineString, Polygon, mapping
     import geopandas as gpd
 
     levels = resolve_contour_levels(Z, spec)

@@ -56,7 +56,6 @@ import { dataFabricApi } from '@/lib/api/data-fabric';
 import type {
   DatasetDescriptor,
   DataSource,
-  QueryResult,
 } from '@/lib/api/data-fabric';
 
 type CatalogResponse = Awaited<ReturnType<typeof dataFabricApi.listSpatialCatalog>>;
