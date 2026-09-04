@@ -35,6 +35,10 @@ ComponentType = Literal[
     # descriptor.runtime_status=planned —— 渲染器未实现前 resolver 不会
     # 选出，不伪装 native（renderer 豁免见 export_component_catalog）。
     "inset_map",
+    # ── VNext §5/§9/§13：披露族组件（方法论诚实的产品面）──────────────
+    "methodology_note",         # 方法论披露（警告码 + 文案，随产品渲染）
+    "uncertainty_panel",        # 不确定性面板（区间/置信度/样本限制）
+    "decision_panel",           # 决策面板（候选排名/权重来源/硬约束否决）
 ]
 
 Position = Literal[
@@ -632,6 +636,184 @@ def inset_map_component(
     return CartographyComponent(
         id=component_id, type="inset_map", position=position, priority=65,
         variant=coerce_variant("inset_map", variant),
+        options=options,
+    )
+
+
+# ── VNext 披露族：payload 契约 + 工厂 ─────────────────────────────────
+
+MAX_METHODOLOGY_NOTES = 6
+MAX_METHODOLOGY_TEXT = 240
+MAX_UNCERTAINTY_ITEMS = 8
+MAX_DECISION_ROWS = 12
+
+
+def validate_methodology_payload(options: Any) -> "str | None":
+    """methodology_note options.warnings：[{code?, pattern, text}]（有界）。"""
+    if not isinstance(options, dict):
+        return "options 必须是对象"
+    warnings = options.get("warnings")
+    if warnings is None:
+        return None  # 空占位面板合法（渲染端空态）
+    if not isinstance(warnings, list):
+        return "warnings 必须是数组 [{code?, pattern?, text}]"
+    if len(warnings) > MAX_METHODOLOGY_NOTES:
+        return f"warnings 超过上限 {MAX_METHODOLOGY_NOTES} 条"
+    for i, w in enumerate(warnings):
+        if not isinstance(w, dict):
+            return f"warnings[{i}] 必须是对象"
+        text = w.get("text")
+        if not isinstance(text, str) or not text.strip():
+            return f"warnings[{i}].text 必须是非空字符串"
+        if len(text) > MAX_METHODOLOGY_TEXT:
+            return f"warnings[{i}].text 超过 {MAX_METHODOLOGY_TEXT} 字符"
+    return None
+
+
+def methodology_note_component(
+    warnings: Optional[List[Dict[str, Any]]] = None,
+    component_id: str = "methodology-note",
+    variant: str = "default",
+    position: str = "bottom-left",
+) -> CartographyComponent:
+    """方法论披露组件（VNext §5）：稳定警告码 + 文案随产品渲染。
+
+    「缺分母不能谈公平性」必须长在地图产品上，不是藏在日志里。
+    """
+    options: Dict[str, Any] = {}
+    if warnings is not None:
+        options["warnings"] = [
+            {
+                "code": str(w.get("code") or "")[:64],
+                "pattern": str(w.get("pattern") or "")[:64],
+                "text": str(w.get("text") or w.get("disclosures") or "")[:MAX_METHODOLOGY_TEXT],
+            }
+            for w in warnings[:MAX_METHODOLOGY_NOTES]
+        ]
+    err = validate_methodology_payload(options)
+    if err:
+        raise ValueError(err)
+    return CartographyComponent(
+        id=component_id, type="methodology_note", position=position,
+        priority=46, variant=coerce_variant("methodology_note", variant),
+        options=options,
+    )
+
+
+def validate_uncertainty_payload(options: Any) -> "str | None":
+    """uncertainty_panel options.uncertainty：{items, sampleNote?}。"""
+    if not isinstance(options, dict):
+        return "options 必须是对象"
+    unc = options.get("uncertainty")
+    if unc is None:
+        return None
+    if not isinstance(unc, dict):
+        return "uncertainty 必须是对象 {items, sampleNote?}"
+    items = unc.get("items")
+    if items is not None:
+        if not isinstance(items, list) or not items:
+            return "uncertainty.items 必须是非空数组 [{label, kind, detail?}]"
+        if len(items) > MAX_UNCERTAINTY_ITEMS:
+            return f"uncertainty.items 超过上限 {MAX_UNCERTAINTY_ITEMS} 条"
+        for i, it in enumerate(items):
+            if not isinstance(it, dict) or not isinstance(it.get("label"), str):
+                return f"uncertainty.items[{i}] 必须含 label 字符串"
+    return None
+
+
+def uncertainty_panel_component(
+    items: Optional[List[Dict[str, Any]]] = None,
+    sample_note: str = "",
+    component_id: str = "uncertainty-panel",
+    variant: str = "default",
+    position: str = "bottom-right",
+) -> CartographyComponent:
+    """不确定性面板（VNext §5）：插值不确定性/样本限制/区间披露。"""
+    options: Dict[str, Any] = {}
+    if items is not None or sample_note:
+        unc: Dict[str, Any] = {}
+        if items is not None:
+            unc["items"] = [
+                {
+                    "label": str(it.get("label") or "")[:80],
+                    "kind": str(it.get("kind") or "interval")[:24],
+                    "detail": str(it.get("detail") or "")[:200],
+                }
+                for it in items[:MAX_UNCERTAINTY_ITEMS]
+            ]
+        if sample_note:
+            unc["sampleNote"] = sample_note[:200]
+        options["uncertainty"] = unc
+    err = validate_uncertainty_payload(options)
+    if err:
+        raise ValueError(err)
+    return CartographyComponent(
+        id=component_id, type="uncertainty_panel", position=position,
+        priority=47, variant=coerce_variant("uncertainty_panel", variant),
+        options=options,
+    )
+
+
+def validate_decision_payload(options: Any) -> "str | None":
+    """decision_panel options.decision：{method?, rows, weightSource?, vetoes?}。"""
+    if not isinstance(options, dict):
+        return "options 必须是对象"
+    dec = options.get("decision")
+    if dec is None:
+        return None
+    if not isinstance(dec, dict):
+        return "decision 必须是对象 {method?, rows, weightSource?, vetoes?}"
+    rows = dec.get("rows")
+    if rows is not None:
+        if not isinstance(rows, list) or not rows:
+            return "decision.rows 必须是非空数组 [{rank, name, score, basis?}]"
+        if len(rows) > MAX_DECISION_ROWS:
+            return f"decision.rows 超过上限 {MAX_DECISION_ROWS} 行"
+        for i, r in enumerate(rows):
+            if not isinstance(r, dict) or not isinstance(r.get("name"), str):
+                return f"decision.rows[{i}] 必须含 name 字符串"
+    return None
+
+
+def decision_panel_component(
+    rows: Optional[List[Dict[str, Any]]] = None,
+    method: str = "",
+    weight_source: str = "",
+    vetoes: Optional[List[str]] = None,
+    component_id: str = "decision-panel",
+    variant: str = "default",
+    position: str = "top-right",
+) -> CartographyComponent:
+    """决策面板（VNext §12）：候选排名 + 方法 + 权重来源 + 硬约束否决披露。
+
+    观测证据与用户假设必须可区分（weightSource 显式声明）—— 绝不合成。
+    """
+    options: Dict[str, Any] = {}
+    if rows is not None or method or weight_source or vetoes:
+        dec: Dict[str, Any] = {}
+        if method:
+            dec["method"] = method[:32]
+        if weight_source:
+            dec["weightSource"] = weight_source[:120]
+        if rows is not None:
+            dec["rows"] = [
+                {
+                    "rank": it.get("rank", i + 1),
+                    "name": str(it.get("name") or "")[:80],
+                    "score": it.get("score"),
+                    "basis": str(it.get("basis") or "observed")[:24],
+                }
+                for i, it in enumerate(rows[:MAX_DECISION_ROWS])
+            ]
+        if vetoes:
+            dec["vetoes"] = [str(v)[:120] for v in vetoes[:8]]
+        options["decision"] = dec
+    err = validate_decision_payload(options)
+    if err:
+        raise ValueError(err)
+    return CartographyComponent(
+        id=component_id, type="decision_panel", position=position,
+        priority=48, variant=coerce_variant("decision_panel", variant),
         options=options,
     )
 

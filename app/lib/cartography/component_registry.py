@@ -224,6 +224,45 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         cardinality="zero_or_one", priority=65, runtime_status="native",
         required_context=["inset_context"],
     ),
+    # ── VNext §5/§9/§13：披露族（方法论诚实的产品面）──────────────────
+    MapComponentDescriptor(
+        id="methodology_note", category="disclosure.methodology_note",
+        type="methodology_note",
+        name="Methodology Note", name_zh="方法论披露",
+        # 「缺分母不能谈公平性」长在地图产品上：稳定警告码 + 文案随 live
+        # 渲染。仅 interactive（披露是工作区语义；静态导出走报告文本）。
+        placement_domain="panel", supported_outputs=["interactive"],
+        renderer_support=["interactive"], exporter_support=[],
+        default_variant="default", variants=["default", "compact"],
+        default_position="bottom-left", allowed_positions=["bottom-left", "bottom-right", "top-left", "top-right", "none"],
+        cardinality="zero_or_one", priority=46, runtime_status="native",
+        required_context=["methodology"],
+    ),
+    MapComponentDescriptor(
+        id="uncertainty_panel", category="disclosure.uncertainty_panel",
+        type="uncertainty_panel",
+        name="Uncertainty Panel", name_zh="不确定性面板",
+        # 插值不确定性/样本限制/区间披露（VNext §5 interpolation honesty）。
+        placement_domain="panel", supported_outputs=["interactive"],
+        renderer_support=["interactive"], exporter_support=[],
+        default_variant="default", variants=["default", "compact"],
+        default_position="bottom-right", allowed_positions=["bottom-right", "bottom-left", "top-left", "top-right", "none"],
+        cardinality="zero_or_one", priority=47, runtime_status="native",
+        required_context=["uncertainty"],
+    ),
+    MapComponentDescriptor(
+        id="decision_panel", category="disclosure.decision_panel",
+        type="decision_panel",
+        name="Decision Panel", name_zh="决策面板",
+        # 候选排名 + 方法 + 权重来源 + 硬约束否决（VNext §12）。观测证据
+        # 与用户假设可区分 —— weightSource 必须显式，不合成。
+        placement_domain="panel", supported_outputs=["interactive"],
+        renderer_support=["interactive"], exporter_support=[],
+        default_variant="default", variants=["default", "compact"],
+        default_position="top-right", allowed_positions=["top-right", "top-left", "bottom-right", "bottom-left", "none"],
+        cardinality="zero_or_one", priority=48, runtime_status="native",
+        required_context=["decision"],
+    ),
 ]
 
 

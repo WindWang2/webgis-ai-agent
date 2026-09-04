@@ -854,6 +854,7 @@ class MapProductPlanner:
                     violations=[v.to_dict() for v in validation.errors],
                 )
             finalized.components = composed
+            self._append_methodology_disclosure(finalized)
             # stash composition evidence
             finalized.template_selection = {
                 **finalized.template_selection,
@@ -899,10 +900,51 @@ class MapProductPlanner:
                 subject_category=plan.intent.subject.category,
                 extra_types=recipe.default_components,
             )
+            self._append_methodology_disclosure(finalized)
 
         finalized.status = "finalized"
         finalized.completeness = self.assess_completeness(finalized)
         return finalized
+
+    @staticmethod
+    def _append_methodology_disclosure(finalized: MapProductPlan) -> None:
+        """VNext §5：计划带方法论警告 → methodology_note 组件随产品落地。
+
+        「缺分母不能谈公平性」长在地图产品上：终稿组件集携带警告码+文案
+        （live 渲染端 methodology-note.tsx）。幂等（已在场不重复追加）；
+        失败绝不阻断终稿（披露是增值，组件缺席由 QA 另行披露）。
+        """
+        if not finalized.methodology_warnings:
+            return
+        if any(
+            getattr(c, "type", "") == "methodology_note"
+            for c in finalized.components
+        ):
+            return
+        try:
+            from app.services.gis_harness.components import (
+                methodology_note_component,
+            )
+
+            notes = []
+            for w in finalized.methodology_warnings[:6]:
+                text = ""
+                disclosures = w.get("disclosures") or []
+                if disclosures:
+                    text = str(disclosures[0])
+                elif w.get("missing_roles"):
+                    text = "缺失角色: " + ",".join(map(str, w["missing_roles"][:4]))
+                if not text:
+                    continue
+                notes.append({
+                    "code": str(w.get("code") or ""),
+                    "pattern": str(w.get("pattern") or ""),
+                    "text": text,
+                })
+            if notes:
+                finalized.components.append(methodology_note_component(notes))
+        except Exception:  # noqa: BLE001 — 披露组件失败不阻断终稿
+            pass
 
     def check_recipe_eligibility(
         self,

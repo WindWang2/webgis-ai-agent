@@ -119,6 +119,22 @@
       ]
     },
     {
+      "type": "decision_panel",
+      "variants": [
+        "default",
+        "compact"
+      ],
+      "defaultVariant": "default",
+      "defaultPosition": "top-right",
+      "category": "disclosure.decision_panel",
+      "runtimeStatus": "native",
+      "rendererRequired": true,
+      "rendererSupport": [
+        "interactive"
+      ],
+      "exporterSupport": []
+    },
+    {
       "type": "export_layout",
       "variants": [
         "A4_landscape",
@@ -218,6 +234,22 @@
         "pdf",
         "svg"
       ]
+    },
+    {
+      "type": "methodology_note",
+      "variants": [
+        "default",
+        "compact"
+      ],
+      "defaultVariant": "default",
+      "defaultPosition": "bottom-left",
+      "category": "disclosure.methodology_note",
+      "runtimeStatus": "native",
+      "rendererRequired": true,
+      "rendererSupport": [
+        "interactive"
+      ],
+      "exporterSupport": []
     },
     {
       "type": "north_arrow",
@@ -338,6 +370,22 @@
         "pdf",
         "svg"
       ]
+    },
+    {
+      "type": "uncertainty_panel",
+      "variants": [
+        "default",
+        "compact"
+      ],
+      "defaultVariant": "default",
+      "defaultPosition": "bottom-right",
+      "category": "disclosure.uncertainty_panel",
+      "runtimeStatus": "native",
+      "rendererRequired": true,
+      "rendererSupport": [
+        "interactive"
+      ],
+      "exporterSupport": []
     }
   ]
 }

@@ -101,6 +101,12 @@ _SEED_CATEGORIES: List[ComponentCategory] = [
     ComponentCategory(id="analysis.summary", name="analysis.summary", name_zh="摘要", parent="analysis", placement_domain="panel", output_targets=["interactive", "png", "pdf"]),
     ComponentCategory(id="analysis.indicator", name="analysis.indicator", name_zh="指标卡", parent="analysis", placement_domain="panel", output_targets=["interactive", "png", "pdf"]),
     # ── inset sub ──────────────────────────────────────────────────
+    # ── disclosure sub（VNext §5/§9/§13：方法论诚实的产品面）─────────
+    ComponentCategory(id="disclosure", name="disclosure", name_zh="披露", parent=None, placement_domain="panel", output_targets=["interactive"]),
+    ComponentCategory(id="disclosure.methodology_note", name="disclosure.methodology_note", name_zh="方法论披露", parent="disclosure", placement_domain="panel", output_targets=["interactive"]),
+    ComponentCategory(id="disclosure.uncertainty_panel", name="disclosure.uncertainty_panel", name_zh="不确定性面板", parent="disclosure", placement_domain="panel", output_targets=["interactive"]),
+    ComponentCategory(id="disclosure.decision_panel", name="disclosure.decision_panel", name_zh="决策面板", parent="disclosure", placement_domain="panel", output_targets=["interactive"]),
+    # ── inset sub ──────────────────────────────────────────────────
     ComponentCategory(id="inset.map", name="inset.map", name_zh="插图", parent="inset", placement_domain="overlay", output_targets=["interactive", "png", "pdf"]),
     ComponentCategory(id="inset.overview_map", name="inset.overview_map", name_zh="总览图", parent="inset", placement_domain="overlay", output_targets=["interactive", "png", "pdf"]),
     ComponentCategory(id="inset.location_map", name="inset.location_map", name_zh="区位图", parent="inset", placement_domain="overlay", output_targets=["interactive", "png", "pdf"]),

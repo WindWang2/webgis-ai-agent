@@ -128,7 +128,16 @@ class TestRoute:
     def test_route_registered(self):
         from app.main import app
 
-        paths = {r.path for r in app.routes}
+        # FastAPI 版本差异：app.routes 可能含 _IncludedRouter 包装（无 path）
+        # —— 双路断言：展开具 path 的路由 + OpenAPI paths（权威）。
+        paths = {
+            r.path for r in app.routes
+            if hasattr(r, "path") and isinstance(getattr(r, "path"), str)
+        }
+        try:
+            paths |= set(app.openapi().get("paths", {}).keys())
+        except Exception:  # noqa: BLE001 — openapi 构建失败退回路由表
+            pass
         assert "/api/v1/sessions/{session_id}/analysis-graph" in paths
 
 

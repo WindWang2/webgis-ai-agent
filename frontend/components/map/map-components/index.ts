@@ -19,6 +19,10 @@ import './table-panel';
 import './map-border';
 import './graticule';
 import './inset-map';
+// VNext §5/§9/§13：披露族渲染器（方法论/不确定性/决策）。
+import './methodology-note';
+import './uncertainty-panel';
+import './decision-panel';
 
 export function renderComponent(component: MapSpecComponent, ctx: RendererContext): React.ReactNode {
   const renderer = getComponentRenderer(component.type);
