@@ -23,6 +23,7 @@ import { useWorkflowWorkspace } from '@/lib/hooks/use-workflow-workspace';
 import { formatCrs, formatOutcomeMessage, outcomeToastVariant, shortId } from '@/lib/workflow/recovery';
 import { RunInspector } from './workflow/run-inspector';
 import { CartoMemoryPanel } from './carto-memory-panel';
+import { MapProductVersionsPanel } from './map-product-versions';
 
 export function ProjectTab() {
   const uid = useId();
@@ -189,6 +190,16 @@ export function ProjectTab() {
                 {/* ADR-0069 / spec 开放问题 2：项目制图记忆治理面板。
                     放在数据集之下——记忆与数据集同属"项目的长期状态"。 */}
                 <CartoMemoryPanel projectId={ws.selectedProjectId} />
+
+                {/* ADR-0092 A6：Map Product 版本台账 + 五维差异（版本工作区）。
+                    只读真相 + 复用 rerun_from_step；仅样式变更不触发分析重算。 */}
+                <MapProductVersionsPanel
+                  projectId={ws.selectedProjectId}
+                  onRerunStarted={(runId) => {
+                    addToast(runId ? `已从分析步骤重跑（${shortId(runId, 8)}）` : '已触发重跑', 'success');
+                  }}
+                  onRerunError={(message) => addToast(message, 'error')}
+                />
 
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-meta font-medium text-ink-secondary">
