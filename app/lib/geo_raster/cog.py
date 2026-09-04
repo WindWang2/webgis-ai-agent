@@ -46,7 +46,7 @@ def write_cog(
     import rasterio
     from rasterio.shutil import copy as rio_copy
 
-    from app.lib.geo_analysis.raster_math import rasterio_env
+    from app.lib.geo_raster.env import rasterio_env
 
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
