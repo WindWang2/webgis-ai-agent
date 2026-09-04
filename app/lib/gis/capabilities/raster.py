@@ -95,4 +95,46 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             output_artifact_types=["raster_surface"],
             purpose_template="栅格重采样",
         ),
+
+        # ── VNext（ADR-0099）：类型化光谱指数 + SAR 域能力 ─────────────
+
+        CapabilityDescriptor(
+            id="spectral_index", name="类型化光谱指数", category="raster",
+            domain="raster",
+            description="按语义角色（red/nir/swir1/...）显式命名的 12 公式族光谱指数（含出处与值域诚实报告）。",
+            input_artifact_types=["raster_surface"],
+            output_artifact_types=["raster_surface"],
+            purpose_template="光谱指数计算",
+        ),
+
+        CapabilityDescriptor(
+            id="sar_analysis", name="SAR 时序/极化分析", category="raster",
+            domain="raster",
+            description="SAR 时序栈统计、VV/VH 极化比与双时相对数比值（无斑点滤波/无辐射定标的诚实边界）。",
+            input_artifact_types=["raster_surface"],
+            output_artifact_types=["raster_surface"],
+            purpose_template="SAR 时序/极化分析",
+        ),
+
+        # planned：诚实非可执行（无 native 算法实现；sar.speckle_filter /
+        # sar.radiometric_calibration 算法条目同为 planned、零工具候选）。
+        CapabilityDescriptor(
+            id="sar_speckle_filtering", name="SAR 斑点滤波", category="raster",
+            domain="raster",
+            description="SAR 相干斑点噪声抑制（Lee/Lee-Sigma 家族）——未实现，planned。",
+            input_artifact_types=["raster_surface"],
+            output_artifact_types=["raster_surface"],
+            purpose_template="SAR 斑点滤波",
+            status="planned",
+        ),
+
+        CapabilityDescriptor(
+            id="sar_radiometric_calibration", name="SAR 辐射定标", category="raster",
+            domain="raster",
+            description="DN → σ⁰/γ⁰ 辐射定标——未实现，planned。",
+            input_artifact_types=["raster_surface"],
+            output_artifact_types=["raster_surface"],
+            purpose_template="SAR 辐射定标",
+            status="planned",
+        ),
 ]

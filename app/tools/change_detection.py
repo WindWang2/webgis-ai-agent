@@ -1,9 +1,16 @@
 """
 变化检测工具包 - 自然资源遥感监测核心能力
 支持双时相植被指数变化检测与分类分析
+
+VNext（ADR-0099）：新增内存数组面的 CVA（变化向量分析，Malila 1980）
+与比值/对数比值变化（SAR 后向散射设计）工具——薄包装 + 科学证据块，
+实现位于 app/lib/geo_analysis/raster_change.py。反目标：CVA 只输出
+幅度/方向，不做土地覆盖语义归类。
 """
 import logging
-from typing import Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
+
+import numpy as np
 from pydantic import BaseModel, Field
 from app.tools.registry import ToolRegistry, tool
 from app.services.spatial_tasks import run_change_detection
@@ -96,4 +103,178 @@ def register_change_detection_tools(registry: ToolRegistry):
                 index_type.lower(), change_threshold, session_id,
             ),
             session_id=session_id,
+        )
+
+    # ── VNext（ADR-0099）：CVA + 比值变化（内存数组面，薄包装）────────
+
+    def _to_2d(name: str, data: List[List[float]]) -> np.ndarray:
+        arr = np.asarray(data, dtype=float)
+        if arr.ndim != 2:
+            raise ValueError(f"{name} 必须是 2D 数组，got ndim={arr.ndim}")
+        return arr
+
+    def _attach_evidence(
+        payload: dict,
+        algorithm_id: str,
+        *,
+        tool: str,
+        parameters_applied: dict,
+        diagnostics: Optional[List[Dict[str, Any]]] = None,
+        warnings: Optional[List[str]] = None,
+        dates: Optional[Dict[str, Optional[str]]] = None,
+    ) -> dict:
+        from app.lib.gis.algorithm_registry import get_algorithm_registry
+        from app.lib.gis.scientific_evidence import Diagnostic, build_evidence
+
+        descriptor = get_algorithm_registry().get(algorithm_id)
+        if descriptor is None:
+            logger.warning("scientific evidence requested for unknown algorithm %s", algorithm_id)
+            return payload
+        if dates:
+            # 时间元数据显式进参数面（缺省 None 也要可见——未知≠不存在）。
+            parameters_applied = {
+                **parameters_applied,
+                **{k: (v or "unknown") for k, v in dates.items()},
+            }
+        payload["scientific_evidence"] = build_evidence(
+            descriptor,
+            tool=tool,
+            parameters_applied=parameters_applied,
+            input_facts={"feature_count": payload.get("stats", {}).get("total_pixels")},
+            warnings=warnings,
+            diagnostics=[
+                d if isinstance(d, Diagnostic) else Diagnostic(**d)
+                for d in (diagnostics or [])
+            ],
+        )
+        return payload
+
+    @tool(registry, name="detect_change_cva",
+          description=(
+              "变化向量分析（CVA, Malila 1980）：对两期同角色波段集合计算逐像元变化幅度"
+              "（全部角色欧氏范数）与方向角（固定角色序前两分量 atan2，弧度）。"
+              "只回答『变了多大、朝哪个方向变』——不做土地覆盖语义归类"
+              "（不输出『植被→建筑』类命名）。"
+              "\n何时用：多波段双时相的强度/方向概览；SAR 双极化双时相；"
+              "\n关键约束：t1/t2 的角色键集合必须一致（缺角色拒绝，不按位置猜测）；"
+              "同一像元任一角色任一期无效（NaN）→ 该像元输出 NaN。"
+          ),
+          tier=2, domains=["raster"],
+          param_descriptions={
+              "t1_bands": "T1 波段 {role: 2D 数组}（角色显式命名，如 {\"red\": [[..]], \"nir\": [[..]]}）",
+              "t2_bands": "T2 波段（与 T1 完全相同的角色集合与形状）",
+              "t1_date": "T1 获取日期 YYYY-MM-DD（可选，进证据块）",
+              "t2_date": "T2 获取日期 YYYY-MM-DD（可选，进证据块）",
+          })
+    async def detect_change_cva(
+        t1_bands: Dict[str, List[List[float]]],
+        t2_bands: Dict[str, List[List[float]]],
+        t1_date: Optional[str] = None,
+        t2_date: Optional[str] = None,
+    ) -> dict:
+        from app.lib.geo_analysis.raster_change import change_vector_analysis
+
+        if set(t1_bands or {}) != set(t2_bands or {}):
+            from app.lib.gis.scientific_errors import UnsupportedBandSemantics
+
+            raise UnsupportedBandSemantics(
+                f"CVA 两景角色集不一致：t1={sorted(t1_bands or {})} vs "
+                f"t2={sorted(t2_bands or {})}；变化向量要求同一组语义角色",
+                correction_hint="两景提供完全相同的语义角色集合",
+            )
+        t1_arrays = {r: _to_2d(f"t1_bands[{r}]", d) for r, d in t1_bands.items()}
+        t2_arrays = {r: _to_2d(f"t2_bands[{r}]", d) for r, d in t2_bands.items()}
+
+        res = change_vector_analysis(
+            t1_arrays, t2_arrays, t1_date=t1_date, t2_date=t2_date)
+        finite = np.isfinite(res["magnitude"])
+        payload = {
+            "success": True,
+            "roles_used": res["roles_used"],
+            "role_order_contract": res["meta"]["role_order_contract"],
+            "stats": {
+                "magnitude_mean": float(np.nanmean(res["magnitude"])) if finite.any() else None,
+                "magnitude_max": float(np.nanmax(res["magnitude"])) if finite.any() else None,
+                "valid_pixels": int(np.sum(finite)),
+                "total_pixels": int(res["magnitude"].size),
+            },
+            "magnitude": res["magnitude"].round(6).tolist(),
+            "angle_rad": res["angle"].round(6).tolist(),
+            "meta": res["meta"],
+        }
+        return _attach_evidence(
+            payload, "remote.cva", tool="detect_change_cva",
+            parameters_applied={
+                "roles": ",".join(res["roles_used"]),
+                "angle_unit": "radians",
+            },
+            diagnostics=[
+                {"name": "magnitude_mean",
+                 "value": payload["stats"]["magnitude_mean"]},
+                {"name": "valid_pixels",
+                 "value": float(payload["stats"]["valid_pixels"])},
+            ],
+            warnings=[res["meta"]["disclosure"]],
+            dates={"t1_date": t1_date, "t2_date": t2_date},
+        )
+
+    @tool(registry, name="detect_ratio_change",
+          description=(
+              "双时相比值变化：ratio（a/b，零分母→NaN）或 log_ratio"
+              "（log(a)−log(b)，对数域对称——增强=衰减镜像）。"
+              "为 SAR 后向散射/强度双期比较设计（同量纲输入）。"
+              "\n何时用：SAR 双期后向散射变化（log_ratio 惯用）；强度量双期对比；"
+              "\n关键约束：a/b 同形状；log_ratio 输入须为正（线性强度或 dB）。"
+          ),
+          tier=2, domains=["raster"],
+          param_descriptions={
+              "a": "T1 强度/后向散射 2D 数组",
+              "b": "T2 强度/后向散射 2D 数组（与 a 同形状）",
+              "method": "ratio（默认，a/b） / log_ratio（log(a)−log(b)）",
+              "t1_date": "T1 获取日期 YYYY-MM-DD（可选，进证据块）",
+              "t2_date": "T2 获取日期 YYYY-MM-DD（可选，进证据块）",
+          })
+    async def detect_ratio_change(
+        a: List[List[float]],
+        b: List[List[float]],
+        method: str = "ratio",
+        t1_date: Optional[str] = None,
+        t2_date: Optional[str] = None,
+    ) -> dict:
+        from app.lib.gis.parameter_contracts import apply_contract
+        from app.lib.geo_analysis.raster_change import ratio_change
+
+        params = apply_contract("ratio_change_analysis", {"method": method})
+        a_arr = _to_2d("a", a)
+        b_arr = _to_2d("b", b)
+        res = ratio_change(
+            a_arr, b_arr, method=params["method"],
+            t1_date=t1_date, t2_date=t2_date)
+        finite = np.isfinite(res["array"])
+        payload = {
+            "success": True,
+            "method": res["method"],
+            "formula": res["meta"]["formula"],
+            "stats": {
+                "min": float(np.nanmin(res["array"])) if finite.any() else None,
+                "max": float(np.nanmax(res["array"])) if finite.any() else None,
+                "mean": float(np.nanmean(res["array"])) if finite.any() else None,
+                "valid_pixels": int(np.sum(finite)),
+                "total_pixels": int(res["array"].size),
+            },
+            "array": res["array"].round(6).tolist(),
+            "meta": res["meta"],
+        }
+        algorithm_id = (
+            "sar.log_ratio_change" if res["method"] == "log_ratio"
+            else "remote.ratio_change")
+        return _attach_evidence(
+            payload, algorithm_id, tool="detect_ratio_change",
+            parameters_applied={"method": res["method"]},
+            diagnostics=[
+                {"name": "mean", "value": payload["stats"]["mean"]},
+                {"name": "valid_pixels", "value": float(payload["stats"]["valid_pixels"])},
+            ],
+            warnings=[res["meta"]["disclosure"]],
+            dates={"t1_date": t1_date, "t2_date": t2_date},
         )

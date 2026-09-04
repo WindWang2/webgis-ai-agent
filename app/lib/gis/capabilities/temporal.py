@@ -42,4 +42,13 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             output_artifact_types=["change_set"],
             purpose_template="时序变化检测",
         ),
+
+        # ── VNext（ADR-0099）：CUSUM 均值变点 ─────────────────────────
+        CapabilityDescriptor(
+            id="temporal_change_point", name="时序均值变点", category="analysis",
+            description="CUSUM 单均值漂移定位 + 固定种子 bootstrap 显著性（多变点不在模型内）。",
+            input_artifact_types=["stats_table"],
+            output_artifact_types=["stats_table"],
+            purpose_template="时序均值变点检测",
+        ),
 ]
