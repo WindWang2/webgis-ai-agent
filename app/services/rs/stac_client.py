@@ -203,7 +203,14 @@ class StacClientPrimitive:
                                     logger.warning(f"Asset '{asset_key}' not found in STAC item {item.id}")
                                     continue
                                 href = item.assets[asset_key].href
-                                ds = rasterio.open(href)
+                                # V4 runtime entry: RasterReader.open routes
+                                # through the shared rasterio_env (HTTP
+                                # timeout/retry hardening) and wraps remote
+                                # open failures as structured errors instead
+                                # of a bare RasterioError.
+                                from app.lib.geo_raster.reader import RasterReader
+
+                                ds = RasterReader.open(href)._ds()
                                 opened.append((name, ds))
                                 if ds.crs is not None:
                                     crs_s = ds.crs.to_string()

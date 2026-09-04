@@ -126,7 +126,8 @@ def test_zonal_statistics_passes_through_when_no_crs(monkeypatch):
         called["input"] = input
         return [{"mean": 1.0}]
 
-    monkeypatch.setattr(raster_ops, "zonal_stats", _fake_zonal)
+    # V4: rasterstats 依赖已移除，zonal_statistics 经 _windowed_zonal_stats 取数。
+    monkeypatch.setattr(raster_ops, "_windowed_zonal_stats", _fake_zonal)
     res = raster_ops.zonal_statistics({"type": "FeatureCollection", "features": []}, "/x.tif")
     assert res == [{"mean": 1.0}]
     assert called["input"] == {"type": "FeatureCollection", "features": []}
