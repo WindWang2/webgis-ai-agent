@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Network, RefreshCw, AlertTriangle, ChevronRight } from 'lucide-react';
 import type {
   AnalysisGraph,
@@ -32,7 +32,7 @@ const EXEC_STATUS_CLASS: Record<string, string> = {
   complete: 'text-status-success',
   ready: 'text-status-info',
   running: 'text-status-info animate-pulse',
-  failed: 'text-status-warning',
+  failed: 'text-status-danger',
   unavailable: 'text-ink-disabled',
   skipped: 'text-ink-disabled',
   pending: 'text-ink-secondary',
@@ -49,7 +49,7 @@ const FACET_STATUS_LABEL: Record<string, string> = {
 const FACET_STATUS_CLASS: Record<string, string> = {
   complete: 'text-status-success',
   needs_repair: 'text-status-warning',
-  failed: 'text-status-warning',
+  failed: 'text-status-danger',
   pending: 'text-ink-secondary',
   off: 'text-ink-disabled',
 };
@@ -80,7 +80,7 @@ function MethodologyWarnings({ graph }: { graph: AnalysisGraph }) {
             {w.code ? (
               <span className="mr-1 font-mono text-ink-secondary">{w.code}</span>
             ) : null}
-            {w.disclosures[0] ?? `缺失角色: ${w.missing_roles.join(', ')}`}
+            {w.disclosures.length > 0 ? w.disclosures.join(' ') : `缺失角色：${w.missing_roles.join('、')}`}
           </li>
         ))}
       </ul>
@@ -97,24 +97,41 @@ function ExecutionRow({ node }: { node: ExecutionNode }) {
       node.fallback_to ||
       node.notes.length,
   );
+  if (!hasDetail) {
+    // review M-F8：无明细不渲染可聚焦的假展开按钮（控件必须真实可作用）。
+    return (
+      <li
+        className="flex items-center gap-1.5 rounded-md border border-edge-subtle px-2 py-1"
+        data-capability={node.capability}
+        data-status={node.status}
+      >
+        <span className="w-3 shrink-0" />
+        <span className="min-w-0 flex-1 truncate text-caption text-ink">
+          {node.purpose || node.capability}
+          {node.optional ? (
+            <span className="ml-1 text-micro text-ink-disabled">（可选）</span>
+          ) : null}
+        </span>
+        <span className={`shrink-0 text-micro ${EXEC_STATUS_CLASS[node.status] ?? ''}`}>
+          {EXEC_STATUS_LABEL[node.status] ?? node.status}
+        </span>
+      </li>
+    );
+  }
   return (
     <li className="rounded-md border border-edge-subtle">
       <button
         type="button"
         className="flex w-full items-center gap-1.5 px-2 py-1 text-left"
         aria-expanded={open}
-        onClick={() => hasDetail && setOpen((v) => !v)}
+        onClick={() => setOpen((v) => !v)}
         data-capability={node.capability}
         data-status={node.status}
       >
-        {hasDetail ? (
-          <ChevronRight
-            className={`h-3 w-3 shrink-0 text-ink-disabled transition-transform ${open ? 'rotate-90' : ''}`}
-            aria-hidden
-          />
-        ) : (
-          <span className="w-3 shrink-0" />
-        )}
+        <ChevronRight
+          className={`h-3 w-3 shrink-0 text-ink-disabled transition-transform ${open ? 'rotate-90' : ''}`}
+          aria-hidden
+        />
         <span className="min-w-0 flex-1 truncate text-caption text-ink">
           {node.purpose || node.capability}
           {node.optional ? (
@@ -207,13 +224,33 @@ interface Props {
 export function AnalysisGraphPanel({ sessionId, ownerToken, refreshKey = 0 }: Props) {
   const [graph, setGraph] = useState<AnalysisGraph | null>(null);
   const [loading, setLoading] = useState(false);
+  const [refreshFailed, setRefreshFailed] = useState(false);
+  // review M-F4：请求序号守卫 —— 手动刷新与 refreshKey 效果并发时，只有
+  // 最新一次请求的结果可入态（旧响应到达晚不回写）；卸载时整体失效。
+  const requestSeq = useRef(0);
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
 
   const refresh = useCallback(async () => {
     if (!sessionId) return;
+    const seq = ++requestSeq.current;
     setLoading(true);
     const g = await getAnalysisGraph(sessionId, ownerToken);
-    setGraph(g);
+    if (!alive.current || seq !== requestSeq.current) return; // 过期响应丢弃
     setLoading(false);
+    if (g === null) {
+      // review M-F5：刷新失败保留 last-good（面板不闪没、刷新按钮仍在）；
+      // 仅首载失败才是「隐藏面板」的诚实语义。
+      setRefreshFailed(true);
+      return;
+    }
+    setRefreshFailed(false);
+    setGraph(g);
   }, [sessionId, ownerToken]);
 
   useEffect(() => {
@@ -222,7 +259,24 @@ export function AnalysisGraphPanel({ sessionId, ownerToken, refreshKey = 0 }: Pr
 
   if (!sessionId) return null;
   if (!graph) {
-    return loading ? null : null; // 端点失败 → 面板隐藏（不阻塞）
+    // 首载中给骨架头（review m15：不留死表达式/无反馈空白）；首载失败 →
+    // 面板隐藏（与 SessionPlanPanel 同降级约定）。
+    if (loading) {
+      return (
+        <section
+          className="rounded-lg border border-edge-subtle bg-surface p-2"
+          data-testid="analysis-graph-panel"
+          aria-label="分析图"
+        >
+          <header className="flex items-center gap-1.5">
+            <Network className="h-3.5 w-3.5 text-ink-secondary" aria-hidden />
+            <h3 className="flex-1 text-meta font-semibold text-ink">分析图</h3>
+            <RefreshCw className="h-3 w-3 animate-spin text-ink-secondary" aria-hidden />
+          </header>
+        </section>
+      );
+    }
+    return null;
   }
   const execNodes = graph.nodes.filter(
     (n): n is ExecutionNode => n.kind === 'requirement' || n.kind === 'analysis',
@@ -269,6 +323,15 @@ export function AnalysisGraphPanel({ sessionId, ownerToken, refreshKey = 0 }: Pr
         </div>
       )}
 
+      {refreshFailed ? (
+        <div
+          className="mb-1.5 rounded-md border border-edge-subtle bg-surface-sunken px-2 py-1 text-micro text-ink-secondary"
+          role="status"
+          data-testid="analysis-graph-refresh-error"
+        >
+          分析图刷新失败，显示的是上次结果 —— 可点刷新重试。
+        </div>
+      ) : null}
       <MethodologyWarnings graph={graph} />
 
       {graph.next_action ? (

@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db, SessionLocal
-from app.core.auth import actor_ids, get_current_user, get_current_user_optional
+from app.core.auth import actor_ids, get_current_user, get_current_user_optional, get_owner_token
 from app.models.project import WorkflowRun
 from app.services.map_product_service import MapProductService
 from app.services.project_service import ProjectService
@@ -617,6 +617,29 @@ async def promote_run_artifacts_endpoint(
     )
 
 
+async def _verify_session_access(
+    session_id: str,
+    user: Dict[str, Any],
+    owner_token: Optional[str],
+) -> None:
+    """SEC-08 session ownership guard for lifecycle routes (review C1).
+
+    sync 路由（threadpool 自带新 loop）与 async 路由统一走这里：匿名凭
+    owner_token 匹配，登录用户凭 user_id 匹配；失败一律 404（不泄露存在
+    性）。
+    """
+    from app.core.auth import verify_session_owner
+    from app.core.database import AsyncSessionLocal
+
+    user_id = user.get("user_id") if isinstance(user, dict) else None
+    if AsyncSessionLocal is None:
+        raise HTTPException(status_code=503, detail="async db unavailable")
+    async with AsyncSessionLocal() as adb:
+        await verify_session_owner(
+            adb, session_id, user_id=user_id, owner_token=owner_token
+        )
+
+
 @router.get("/{project_id}/map-products", response_model=Page[MapProductVersionSummary])
 def list_map_products(
     project_id: str,
@@ -692,6 +715,7 @@ def record_map_product_version(
     req: MapProductVersionCreate,
     db: Session = Depends(get_db),
     user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
 ):
     """Record one Map Product version (diff vs previous computed when omitted)."""
     user_id, org_id = actor_ids(user)
@@ -701,10 +725,11 @@ def record_map_product_version(
     try:
         # ADR-0099：携带会话时服务端抓取 MapSpec 快照（restore/open 的
         # 授权依据）与操作者；指纹/差分仍然是服务端计算，客户端不可伪造。
+        # SEC-08：会话所有权校验先行 —— 跨租户 session_id 一律 404
+        # （review C1：无守卫的 session_id 是跨租户读写原语）。
         snapshot = None
         if req.session_id:
-            # sync 路由跑在 threadpool（自带新事件循环）；同线程已有 loop
-            # 时 asyncio.run 抛 RuntimeError → 快照缺席（best-effort 语义）。
+            asyncio.run(_verify_session_access(req.session_id, user, owner_token))
             try:
                 from app.services.mapspec_store import mapspec_store
 
@@ -767,6 +792,7 @@ async def restore_map_product_version(
     req: MapProductRestoreRequest,
     db: Session = Depends(get_db),
     user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
 ):
     """Restore a version into a live session (ADR-0099).
 
@@ -782,6 +808,9 @@ async def restore_map_product_version(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     if req.mode == "style_only":
+        # SEC-08：会话所有权校验（review C1）—— restore 是对活会话的
+        # MapSpec 突变，绝不允许指向他人会话。
+        await _verify_session_access(req.session_id, user, owner_token)
         try:
             return await MapProductService.restore_style_to_session(
                 db, project_id, version_no,
@@ -818,14 +847,19 @@ async def restore_map_product_version(
         raise
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=409, detail=f"full restore rerun failed: {e}")
-    new_row = MapProductService.record_version(
-        db, project_id,
-        workflow_run_id=run.id,
-        label=f"restore-full from V{version_no}",
-        actor=str(user.get("user_id") or "user"),
-        parent_version_no=version_no,
-        lineage_kind="restore",
-    )
+    # review M-A2：引擎已对完成的 run 幂等自动记录 —— 这里只在其缺席时
+    # 补一条谱系行（同 run+指纹去重），绝不双记。
+    new_row = MapProductService.maybe_auto_record_version(
+        db, run, label=f"restore-full from V{version_no}")
+    if new_row is None or new_row.lineage_kind != "restore":
+        new_row = MapProductService.record_version(
+            db, project_id,
+            workflow_run_id=run.id,
+            label=f"restore-full from V{version_no}",
+            actor=str(user.get("user_id") or "user"),
+            parent_version_no=version_no,
+            lineage_kind="restore",
+        )
     return {"restored_version_no": new_row.version_no, "source_version_no": version_no,
             "mode": "full", "run_id": run.id}
 
@@ -936,19 +970,34 @@ async def rerun_map_product_version(
         from_step = None
     tool_registry = get_tool_registry()
     try:
-        run = await _run_workflow_engine(
-            WorkflowEngine.rerun_from_step,
-            prior_run_id=row.workflow_run_id,
-            tool_registry=tool_registry,
-            from_step=from_step,
-            user_id=user_id,
-            org_id=org_id,
-            expected_project_id=project_id,
-        )
+        if from_step:
+            run = await _run_workflow_engine(
+                WorkflowEngine.rerun_from_step,
+                prior_run_id=row.workflow_run_id,
+                tool_registry=tool_registry,
+                from_step=from_step,
+                user_id=user_id,
+                org_id=org_id,
+                expected_project_id=project_id,
+            )
+        else:
+            # review M-A3：无 changed-step 锚点（V1 / 空 diff 明细）→ 完整
+            # 重放（与既有 run-rerun 路由同语义），不再抛 from_step None。
+            run = await _run_workflow_engine(
+                WorkflowEngine.replay_run,
+                prior_run_id=row.workflow_run_id,
+                tool_registry=tool_registry,
+                mode="latest",
+                user_id=user_id,
+                org_id=org_id,
+                expected_project_id=project_id,
+            )
     except HTTPException:
         raise
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=409, detail=f"rerun failed: {e}")
+    # review M-C3：auto-record 幂等；缺席时补谱系行（IntegrityError 由
+    # record_version 的重试路径消化 —— 并发完成同 run 不双记）。
     new_row = MapProductService.maybe_auto_record_version(
         db, run, label=f"rerun of V{version_no}")
     if new_row is None:

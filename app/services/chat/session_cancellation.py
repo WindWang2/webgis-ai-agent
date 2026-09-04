@@ -11,8 +11,7 @@ This module owns the two reusable joints:
 
 - :func:`abort_active_pi_turn` — the single bridge-abort primitive. Resolves
   the OWNING worker via the session-keyed ``_active_turns`` table (V5-B;
-  never the legacy singleton view), keeps the session-checked singleton
-  fallback for pool-less deployments, and applies the CONC-F7 bound so a
+  no entry → no active turn → no abort), and applies the CONC-F7 bound so a
   stuck Pi can never hold a caller hostage. Never raises — cancellation must
   not be blocked by its own cleanup.
 - :func:`cancel_agent_task_and_turn` — the agent-task cascade shared by
@@ -97,12 +96,12 @@ async def cancel_agent_task_and_turn(
     1. tracker.cancel — terminalize steps, ignite the task token, collect the
        turn's durable job ids;
     2. durable cancel requests land in the DB (cross-process truth) + local
-       registry ignition (same-process immediacy);
+       registry ignition (same-process immediacy), COMMITTED before step 3 —
+       review M-C2: the old inline choreographies committed before the abort;
+       a crash inside the 5s abort window must never lose the durable cancel;
     3. abort the session's active Pi turn via :func:`abort_active_pi_turn`
-       (#1066: the tracker token does not reach the subprocess).
-
-    The db commit is the caller's responsibility (route-level transaction
-    boundaries stay unchanged).
+       (#1066: the tracker token does not reach the subprocess) — in a
+       ``finally`` so per-job DB failures can never starve the abort.
     """
     from app.lib.cancellation import registry as cancellation_registry
     from app.services.jobs.store import DurableJobStore
@@ -114,14 +113,22 @@ async def cancel_agent_task_and_turn(
         list(task_info.background_job_ids) if task_info else []
     )
     cancelled = tracker.cancel(task_id)
-    for job_id in background_job_ids:
-        await DurableJobStore.request_cancel(db, job_id)
-        cancellation_registry.cancel(str(job_id), registry_cancel_reason)
-
-    session_id = task_info.session_id if task_info else None
-    abort = await abort_active_pi_turn(
-        session_id, reason=f"agent task {task_id} cancelled"
-    )
+    try:
+        for job_id in background_job_ids:
+            await DurableJobStore.request_cancel(db, job_id)
+            cancellation_registry.cancel(str(job_id), registry_cancel_reason)
+        # review M-C2：先落库（持久事实）再桥接 abort —— 5s abort 窗口内
+        # 的崩溃绝不丢取消请求（旧编排的顺序，回归点）。db 为 None（管理
+        # 路径/测试替身）时跳过提交，取消仍走 tracker+abort。
+        if db is not None and hasattr(db, "commit"):
+            await db.commit()
+    finally:
+        # review M-Adv6：abort 在 finally —— per-job DB 写失败绝不再饿死
+        # 桥接取消（#1066 的原始失败面）。
+        session_id = task_info.session_id if task_info else None
+        abort = await abort_active_pi_turn(
+            session_id, reason=f"agent task {task_id} cancelled"
+        )
     return {
         "cancelled": cancelled,
         "durable_cancels": background_job_ids,

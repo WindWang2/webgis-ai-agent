@@ -259,7 +259,9 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         placement_domain="panel", supported_outputs=["interactive"],
         renderer_support=["interactive"], exporter_support=[],
         default_variant="default", variants=["default", "compact"],
-        default_position="top-right", allowed_positions=["top-right", "top-left", "bottom-right", "bottom-left", "none"],
+        # review M-F3：默认 top-left —— top-right 是 inset_map 的 168px
+        # 大槽，decision 落那里必压插图（frontend layout-meta 同表）。
+        default_position="top-left", allowed_positions=["top-left", "top-right", "bottom-right", "bottom-left", "none"],
         cardinality="zero_or_one", priority=48, runtime_status="native",
         required_context=["decision"],
     ),

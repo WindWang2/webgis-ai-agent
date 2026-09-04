@@ -66,15 +66,17 @@ function UncertaintyPanelView({ component, ctx }: { component: MapSpecComponent;
       component={patched}
       title="不确定性"
       topSlotIndexes={ctx?.topSlotIndexes}
+      bottomSlotIndexes={ctx?.bottomSlotIndexes}
       testId="spec-chrome-uncertainty-panel"
       dataVariant={variant}
       bodyClassName={variant === 'compact' ? 'p-1.5' : 'p-2'}
     >
       {uncertainty ? (
-        <div className={`flex flex-col ${variant === 'compact' ? 'gap-0.5' : 'gap-1'}`}>
+        <div role="list" className={`flex flex-col ${variant === 'compact' ? 'gap-0.5' : 'gap-1'}`}>
           {uncertainty.items?.map((item, i) => (
             <div
               key={`${item.label}#${i}`}
+              role="listitem"
               className="flex items-baseline justify-between gap-2 px-1 py-0.5 text-map-chrome-ink"
             >
               <span className="min-w-0 truncate text-caption">

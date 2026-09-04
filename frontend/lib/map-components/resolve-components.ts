@@ -42,6 +42,11 @@ export const DEFAULT_COMPONENT_ANCHOR: Record<string, ChromeAnchor> = {
   chart_panel: 'top-left',
   // v2：区位插图 —— 与 north_arrow 同侧（top-right 族），槽内堆叠
   inset_map: 'top-right',
+  // VNext §5/§9/§13：披露族（与 backend registry defaultPosition 同表；
+  // 缺行会导致 resolver 落 'none' → hidden —— 组件静默不可见）。
+  methodology_note: 'bottom-left',
+  uncertainty_panel: 'bottom-right',
+  decision_panel: 'top-left',
   // P6：全画布/叠加型组件 —— 不参与槽位堆叠（'none'）
   map_border: 'none',
   graticule: 'none',

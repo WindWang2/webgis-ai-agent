@@ -1322,15 +1322,24 @@ class MapSpecLifecycleEngine:
                     # basemap/time/逐层 paint+presentation）来自版本快照，
                     # 数据层与计算计划不动。快照里存在而当前 spec 缺席的
                     # layer_id 如实跳过（记入 result notes —— 恢复是诚实
-                    # 的子集，不是虚构整图）。COW：拷贝所有被触碰分支。
+                    # 的子集，不是虚构整图）。
+                    # review M-A1：层可见性的权威字段是 layout.visibility
+                    # （+ cartographic_intent 印记）—— 快照的顶层 visible
+                    # 不是真实 spec 字段；恢复经 _patch_layer_presentation
+                    # 同源语义落账（expected_visible/presentation_owner），
+                    # 不留过期归属印记。
+                    # review m6：快照分支全部 deepcopy —— 快照同时活在
+                    # 账本行的 JSON 列里，任何浅别名都可能把候选态的变更
+                    # 泄回账本（JSON 列不侦测就地突变）。
                     old_mapspec_snapshot = loaded
-                    snap = intent.snapshot if isinstance(intent.snapshot, dict) else {}
+                    snap = copy.deepcopy(
+                        intent.snapshot if isinstance(intent.snapshot, dict) else {})
                     mapspec = {**loaded} if loaded else {}
                     for branch in ("view", "basemap", "time"):
                         if isinstance(snap.get(branch), dict):
-                            mapspec[branch] = dict(snap[branch])
+                            mapspec[branch] = copy.deepcopy(snap[branch])
                     if isinstance(snap.get("layout"), dict):
-                        mapspec["layout"] = dict(snap["layout"])
+                        mapspec["layout"] = copy.deepcopy(snap["layout"])
                     snap_layers = {
                         str(ly.get("id")): ly
                         for ly in (snap.get("layers") or [])
@@ -1346,10 +1355,26 @@ class MapSpecLifecycleEngine:
                             if src is None:
                                 merged_layers.append(ly)
                                 continue
-                            merged_layer = dict(ly)
-                            for key in ("paint", "visible", "opacity", "label"):
-                                if key in src:
-                                    merged_layer[key] = src[key]
+                            merged_layer = copy.deepcopy(ly)
+                            if isinstance(src.get("paint"), dict):
+                                merged_layer["paint"] = copy.deepcopy(src["paint"])
+                            if src.get("label") is not None:
+                                merged_layer["label"] = src["label"]
+                            # 可见性 → 权威字段（layout.visibility + intent 印记）
+                            snap_layout = (
+                                src.get("layout") if isinstance(src.get("layout"), dict) else {}
+                            )
+                            visible: Optional[bool]
+                            if isinstance(snap_layout.get("visibility"), str):
+                                visible = snap_layout["visibility"] == "visible"
+                            elif "visible" in src:
+                                visible = bool(src.get("visible"))  # 旧快照兼容
+                            else:
+                                visible = None
+                            if visible is not None:
+                                merged_layer = _patch_layer_presentation(
+                                    merged_layer, visible, None,
+                                    origin=str(origin))
                             merged_layers.append(merged_layer)
                             restored_layer_ids.append(lid)
                         skipped_layer_ids = sorted(

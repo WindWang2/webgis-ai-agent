@@ -154,9 +154,8 @@ async def cancel_task(
     # 各自记住 #1066 的教训，现在只有一个实现点。
     from app.services.chat.session_cancellation import cancel_agent_task_and_turn
 
+    # seam 已在 abort 前落库提交（review M-C2 顺序）；此处无需再提交。
     result = await cancel_agent_task_and_turn(db, task_id)
-    if result["durable_cancels"]:
-        await db.commit()
     return TaskCancelResponse(cancelled=result["cancelled"])
 
 

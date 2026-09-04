@@ -125,7 +125,7 @@
         "compact"
       ],
       "defaultVariant": "default",
-      "defaultPosition": "top-right",
+      "defaultPosition": "top-left",
       "category": "disclosure.decision_panel",
       "runtimeStatus": "native",
       "rendererRequired": true,

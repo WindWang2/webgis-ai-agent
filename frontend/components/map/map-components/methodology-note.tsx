@@ -46,6 +46,7 @@ function MethodologyNoteView({ component, ctx }: { component: MapSpecComponent; 
       component={patched}
       title="方法论披露"
       topSlotIndexes={ctx?.topSlotIndexes}
+      bottomSlotIndexes={ctx?.bottomSlotIndexes}
       testId="spec-chrome-methodology-note"
       dataVariant={variant}
       bodyClassName={variant === 'compact' ? 'p-1.5' : 'p-2'}
@@ -56,7 +57,7 @@ function MethodologyNoteView({ component, ctx }: { component: MapSpecComponent; 
             <li
               key={`${w.code ?? w.pattern ?? 'warn'}#${i}`}
               data-code={w.code}
-              className={`rounded-sm border-l-2 border-amber-500/80 px-1 ${
+              className={`rounded-sm border-l-2 border-status-warning/80 px-1 ${
                 variant === 'compact' ? 'py-0.5' : 'py-1'
               } text-map-chrome-ink`}
             >

@@ -213,7 +213,7 @@ _TASK_RULES: List[tuple] = [
                 r"(?:count|number|total|statistics|stats|ranking)", re.I),
      "administrative_statistic"),
     ("concentration_hotspot",
-     re.compile(r"(哪里|哪儿|何处|哪个|哪个地方|哪片|哪些)[^，。?？]*(最集中|最密|最热门|聚集|扎堆)|"
+     re.compile(r"(哪里|哪儿|何处|哪个|哪个地方|哪片|哪些)[^，。?？]{0,32}(最集中|最密|最热门|聚集|扎堆)|"
                 r"(最集中|热点|高发区|聚集区|聚集效应|核心区在哪)|"
                 r"(hottest|most\s+(?:concentrated|dense|crowded)|gathering\s+areas?)", re.I),
      "concentration_analysis"),
@@ -234,7 +234,7 @@ _TASK_RULES: List[tuple] = [
                 r"(?:周边|附近)[^，。?？]{0,8}\d+\s*(?:m\b|米|km|公里|千米)|"
                 r"within\s+\d+\s*(?:m\b|meters?|km|kilometers?)|"
                 r"within\s+(?:walking|cycling|short)\s+distance|"
-                r"(周边|附近|旁边|[^区县市旗]范围内)[^，。?？]*的)", re.I),
+                r"(周边|附近|旁边|[^区县市旗]范围内)[^，。?？]{0,32}的)", re.I),
      "proximity_analysis"),
     ("change_detection",
      re.compile(r"(变化|变迁|对比[^，。?？]*(年|期)|历年对比|两期|"
@@ -268,7 +268,7 @@ _TASK_RULES: List[tuple] = [
      re.compile(r"^(?:在地图上|地图上|在地图中|(?:帮我|请|把|将|咱|麻烦)[^，。?？]{0,10})?"
                 r"(给我看|看看|显示|展示|查看|瞄一眼|瞧瞧|放到|放上|标到|"
                 r"show\s+me|show|display|map\s+the|map\b)"
-                r"(?![^，。?？]*(?:分布|散布|态势|格局|统计|密度|热点|变化|服务区|可达|"
+                r"(?![^，。?？]{0,48}(?:分布|散布|态势|格局|统计|密度|热点|变化|服务区|可达|"
                 r"占比|构成|聚类|均衡|选址|流(向|量)|通勤|插值|克里金|公平|风险|适宜|"
                 r"distribution|statistics|density|hotspot|changes?|flow|equity|risk|"
                 r"interpolat|kriging))",

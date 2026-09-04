@@ -141,9 +141,10 @@ PATTERNS: Tuple[AnalysisPattern, ...] = (
         # VNext §15：警告关键词门与 intent 规则同词面（含英文与 分布合理/
         # 教育资源不足 变体）—— task 命中而关键词缺席会把披露静默吞掉。
         query_keywords=("均衡", "公平", "是否合理", "分布合理", "教育资源不足",
-                        "资源不足", "差异", "人均", "差距",
-                        "equity", "equitable", "fairness", "fairly", "balanced",
-                        "underserved"),
+                        "资源不足", "资源缺口", "欠发达", "不平等", "差异", "人均",
+                        "差距", "equity", "equitable", "fairness", "fairly",
+                        "fair access", "underprivileged", "underserved",
+                        "balanced"),
         required_roles=(R.NORMALIZATION_DENOMINATOR,),
         optional_roles=(R.POPULATION_MEASURE, R.AREA_MEASURE),
         recommended_capabilities=("admin_aggregation", "admin_boundary_query"),

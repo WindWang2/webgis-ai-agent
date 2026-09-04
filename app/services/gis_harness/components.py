@@ -9,6 +9,8 @@
 """
 from __future__ import annotations
 
+import math
+
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -772,6 +774,19 @@ def validate_decision_payload(options: Any) -> "str | None":
         for i, r in enumerate(rows):
             if not isinstance(r, dict) or not isinstance(r.get("name"), str):
                 return f"decision.rows[{i}] 必须含 name 字符串"
+            # review M-Adv5：score/rank 必须是有限数值 —— NaN/Inf 会产出
+            # 浏览器 JSON.parse 拒绝的非法 JSON（json.dumps 默认放行）。
+            score = r.get("score")
+            if score is not None:
+                if isinstance(score, bool) or not isinstance(score, (int, float)):
+                    return f"decision.rows[{i}].score 必须是数值"
+                if not math.isfinite(score):
+                    return f"decision.rows[{i}].score 必须是有限数值"
+            rank = r.get("rank")
+            if rank is not None and (
+                isinstance(rank, bool) or not isinstance(rank, int)
+            ):
+                return f"decision.rows[{i}].rank 必须是整数"
     return None
 
 
@@ -782,7 +797,7 @@ def decision_panel_component(
     vetoes: Optional[List[str]] = None,
     component_id: str = "decision-panel",
     variant: str = "default",
-    position: str = "top-right",
+    position: str = "top-left",
 ) -> CartographyComponent:
     """决策面板（VNext §12）：候选排名 + 方法 + 权重来源 + 硬约束否决披露。
 
@@ -796,11 +811,16 @@ def decision_panel_component(
         if weight_source:
             dec["weightSource"] = weight_source[:120]
         if rows is not None:
+            def _finite(v: Any) -> Any:
+                if isinstance(v, float) and not math.isfinite(v):
+                    return None
+                return v
+
             dec["rows"] = [
                 {
-                    "rank": it.get("rank", i + 1),
+                    "rank": _finite(it.get("rank", i + 1)),
                     "name": str(it.get("name") or "")[:80],
-                    "score": it.get("score"),
+                    "score": _finite(it.get("score")),
                     "basis": str(it.get("basis") or "observed")[:24],
                 }
                 for i, it in enumerate(rows[:MAX_DECISION_ROWS])

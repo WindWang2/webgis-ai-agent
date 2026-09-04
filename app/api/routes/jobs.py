@@ -192,8 +192,7 @@ async def cancel_job(
         # 两份手写同型编排 —— 漂移即漏 abort）。
         from app.services.chat.session_cancellation import cancel_agent_task_and_turn
 
-        await cancel_agent_task_and_turn(db, job_id)
-        await db.commit()
+        await cancel_agent_task_and_turn(db, job_id)  # seam 内已提交
         return JobCancelResponse(
             id=job_id,
             status=JobStatus.cancelling.value if not already else JobStatus.cancelled.value,

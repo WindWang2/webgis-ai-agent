@@ -398,7 +398,11 @@ export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, se
       {/* 显式分析图（ADR-0097）：与 SessionPlan 同一世界状态的图检视面 ——
           目标/方法论警告/执行 DAG/产品 facets/下一动作。只读投影，端点
           失败时整卡隐藏（与 SessionPlanPanel 同降级约定）。 */}
-      <AnalysisGraphPanel sessionId={sessionId} ownerToken={ownerToken} />
+      <AnalysisGraphPanel
+        sessionId={sessionId}
+        ownerToken={ownerToken}
+        refreshKey={messages.length}
+      />
       {/* Messages scroll area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {messages.length === 0 && !isBusy && (

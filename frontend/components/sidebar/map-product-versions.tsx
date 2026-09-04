@@ -12,7 +12,7 @@
  * dimension conflicts are refused by the backend and surfaced here.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GitCompare, GitBranch, RotateCcw, RefreshCw, GitMerge, FolderOpen } from 'lucide-react';
 import { EmptyState } from '@/components/shared/empty-state';
 import { InlineNotice } from '@/components/shared/inline-notice';
@@ -92,6 +92,7 @@ export function MapProductVersionsPanel({
   const [openDetail, setOpenDetail] = useState<MapProductVersionOpen | null>(null);
   const [lifecycleBusy, setLifecycleBusy] = useState<string | null>(null);
   const [lifecycleNotice, setLifecycleNotice] = useState<string | null>(null);
+  const openVersionRef = useRef<number | null>(null);
 
   const reload = useCallback(() => {
     const ctrl = new AbortController();
@@ -124,20 +125,29 @@ export function MapProductVersionsPanel({
     setDiff(null);
     setFromNo(null);
     setToNo(null);
-    reload();
+    // review M-F7：reload 返回 abort 清理函数 —— 接回 effect，快速切换
+    // 项目时旧请求被中止（不回写过期状态 / 不 setState after unmount）。
+    const abort = reload();
+    return abort;
   }, [projectId, reload]);
 
+  const diffAbortRef = useRef<AbortController | null>(null);
   const loadDiff = useCallback(
     (from: number | null, to: number | null) => {
+      diffAbortRef.current?.abort();
       if (from == null || to == null || from === to) {
         setDiff(null);
         return;
       }
       const ctrl = new AbortController();
+      diffAbortRef.current = ctrl;
       setDiffLoading(true);
       setDiffError(null);
       diffMapProductVersions(projectId, from, to, { signal: ctrl.signal })
-        .then(setDiff)
+        .then((d) => {
+          if (ctrl.signal.aborted) return;
+          setDiff(d);
+        })
         .catch((e) => {
           if (ctrl.signal.aborted) return;
           setDiff(null);
@@ -187,10 +197,13 @@ export function MapProductVersionsPanel({
       setOpenDetail(null);
       return;
     }
+    openVersionRef.current = versionNo;
     setOpenVersion(versionNo);
     setOpenDetail(null);
     try {
       const detail = await openMapProductVersion(projectId, versionNo);
+      // review minor14：慢响应期间用户已切换检视目标 → 丢弃过期明细。
+      if (versionNo !== openVersionRef.current) return;
       setOpenDetail(detail);
     } catch (e) {
       setLifecycleNotice(e instanceof Error ? e.message : '打开版本失败');
@@ -250,7 +263,7 @@ export function MapProductVersionsPanel({
     (versionNo: number) => {
       if (!sessionId) return false;
       const v = versions.find((x) => x.version_no === versionNo);
-      return Boolean(v && (v as MapProductVersionSummary & { snapshot_available?: boolean }).snapshot_available);
+      return Boolean(v?.snapshot_available);
     },
     [sessionId, versions],
   );
@@ -278,7 +291,7 @@ export function MapProductVersionsPanel({
         <>
           <ul className="space-y-1">
             {versions.map((v) => {
-              const lineage = (v as MapProductVersionSummary & { lineage_kind?: MapProductLineageKind }).lineage_kind;
+              const lineage = v.lineage_kind;
               const restorable = styleOnlyRestorable(v.version_no);
               return (
                 <li

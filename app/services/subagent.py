@@ -27,6 +27,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from dataclasses import dataclass, field
 from typing import Optional, TYPE_CHECKING
@@ -193,11 +194,24 @@ class SubagentDispatcher:
                     )
                 )
                 cancel_task = asyncio.create_task(sub_token.wait())
-                done, pending = await asyncio.wait(
-                    {chat_task, cancel_task}, return_when=asyncio.FIRST_COMPLETED
-                )
+                try:
+                    done, pending = await asyncio.wait(
+                        {chat_task, cancel_task},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                except BaseException:
+                    # review M-C1：派发器自身被硬取消（客户端断开/turn 拆除）
+                    # 时 CancelledError 先于下方 pending 清理传播 —— 在此
+                    # 兜底回收两个任务，子代理绝不泄漏续跑。
+                    for t in (chat_task, cancel_task):
+                        t.cancel()
+                    raise
             for t in pending:
                 t.cancel()
+            # review m2：被取消的 chat_task 若已带异常完成，必须取回异常
+            # （避免 GC 期 "exception never retrieved"）。
+            with contextlib.suppress(BaseException):
+                await chat_task
             if cancel_task in done and not sub_token.cancelled:
                 # cancel_task 因外层异常先完成（罕见）—— 走 chat 结果路径
                 cancel_task.cancel()

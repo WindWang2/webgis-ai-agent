@@ -27,6 +27,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.project import MapProductVersion, WorkflowRun
@@ -171,10 +172,22 @@ class MapProductService:
             "artifact_fingerprints": fingerprints,
         })
 
-        version_no = (previous.version_no if previous else 0) + 1
-        row = MapProductVersion(
-            project_id=project_id,
-            version_no=version_no,
+        # review M-C3：并发写者（lifecycle 路由线程池 + 引擎 auto-record
+        # 线程）会在 SELECT-max 与 INSERT 之间撞 uq_map_product_version ——
+        # 重读 max 重试（有界 3 次），不让证据行因竞态而丢失或 500。
+        last_err: Optional[Exception] = None
+        for attempt in range(3):
+            if attempt > 0:
+                db.rollback()
+                previous = db.execute(
+                    select(MapProductVersion)
+                    .where(MapProductVersion.project_id == project_id)
+                    .order_by(MapProductVersion.version_no.desc())
+                ).scalars().first()
+            version_no = (previous.version_no if previous else 0) + 1
+            row = MapProductVersion(
+                project_id=project_id,
+                version_no=version_no,
             product_fingerprint=product_fingerprint,
             input_dataset_fingerprints=input_fps,
             compute_plan=_project_steps(manifest, include_args=True),
@@ -186,16 +199,34 @@ class MapProductService:
             recipe_id=recipe_id,
             artifact_ids=artifact_ids[:128],
             diff_summary=diff_summary,
-            mapspec_snapshot=mapspec_snapshot,
-            label=label,
-            actor=actor,
-            parent_version_no=parent_version_no,
-            lineage_kind=lineage_kind,
+                mapspec_snapshot=mapspec_snapshot,
+                label=label,
+                actor=actor,
+                parent_version_no=parent_version_no,
+                lineage_kind=lineage_kind,
+            )
+            try:
+                db.add(row)
+                db.commit()
+                db.refresh(row)
+                return row
+            except IntegrityError:
+                last_err = None
+                continue
+        # 重试耗尽：并发同号插入仍冲突 —— 按幂等语义重查（同 run+指纹的
+        # auto-record 竞态对手可能已落行）。
+        db.rollback()
+        existing = db.execute(
+            select(MapProductVersion).where(
+                MapProductVersion.project_id == project_id,
+                MapProductVersion.version_no == version_no,
+            )
+        ).scalars().first()
+        if existing is not None:
+            return existing
+        raise last_err or RuntimeError(
+            f"map product version insert failed after retries (project {project_id})"
         )
-        db.add(row)
-        db.commit()
-        db.refresh(row)
-        return row
 
     # ── Lifecycle V2（ADR-0099）────────────────────────────────────────
     # 语义：版本行不可变，所有生命周期操作都是**新增行**（append-only 证据）。
@@ -207,7 +238,6 @@ class MapProductService:
         db: Session,
         run: WorkflowRun,
         *,
-        session_id: Optional[str] = None,
         mapspec_snapshot: Optional[Dict[str, Any]] = None,
         label: Optional[str] = None,
     ) -> Optional[MapProductVersion]:
@@ -353,6 +383,22 @@ class MapProductService:
             RestoreStyleIntent,
         )
 
+        # review M-Adv3：悬空 run 绑定（workflow 级联删除 run）会让恢复在
+        # 「会话已变、账本未记」的不诚实点失败 —— 先探测，悬空则恢复行不
+        # 绑 run（计算身份仍从来源版本行继承，append-only 语义不变）。
+        restore_run_id = row.workflow_run_id
+        if restore_run_id is not None:
+            from app.models.project import WorkflowRun
+
+            run_alive = db.execute(
+                select(WorkflowRun.id).where(
+                    WorkflowRun.id == restore_run_id,
+                    WorkflowRun.project_id == project_id,
+                )
+            ).scalar_one_or_none()
+            if run_alive is None:
+                restore_run_id = None
+
         engine = MapSpecLifecycleEngine()
         result = await engine.apply_mutation(
             session_id,
@@ -363,16 +409,25 @@ class MapProductService:
             raise ValueError(result.error_msg or "style restore mutation rejected")
 
         # 恢复本身是新的版本证据（append-only）：谱系指向来源版本。
+        # review m7：快照取恢复后的 spec（指纹与快照机器一致；来源行快照
+        # 是恢复前的表达 —— 复用它会让下一次 style 恢复复活旧样式）。
+        import copy as _copy
+
+        restored_snapshot = (
+            _copy.deepcopy(result.mapspec)
+            if getattr(result, "mapspec", None)
+            else _copy.deepcopy(row.mapspec_snapshot or {})
+        )
         new_row = MapProductService.record_version(
             db,
             project_id,
-            workflow_run_id=row.workflow_run_id,
+            workflow_run_id=restore_run_id,
             mapspec_fingerprint=result.mapspec_fingerprint or row.mapspec_fingerprint,
             mapspec_revision=getattr(result, "mutation_revision", None),
             recipe_id=row.recipe_id,
             input_dataset_fingerprints=row.input_dataset_fingerprints,
             run_manifest={"steps": list(row.compute_plan or [])},
-            mapspec_snapshot=dict(row.mapspec_snapshot or {}),
+            mapspec_snapshot=restored_snapshot,
             artifact_ids=list(row.artifact_ids or []),
             artifact_fingerprints=list(row.output_fingerprints or []),
             label=f"restore-style from V{version_no}",

@@ -923,24 +923,29 @@ class MapProductPlanner:
             return
         try:
             from app.services.gis_harness.components import (
+                MAX_METHODOLOGY_NOTES,
                 methodology_note_component,
             )
 
             notes = []
             for w in finalized.methodology_warnings[:6]:
-                text = ""
-                disclosures = w.get("disclosures") or []
-                if disclosures:
-                    text = str(disclosures[0])
-                elif w.get("missing_roles"):
-                    text = "缺失角色: " + ",".join(map(str, w["missing_roles"][:4]))
-                if not text:
-                    continue
-                notes.append({
-                    "code": str(w.get("code") or ""),
-                    "pattern": str(w.get("pattern") or ""),
-                    "text": text,
-                })
+                disclosures = [str(d) for d in (w.get("disclosures") or []) if d]
+                # review m2：每条披露一 note（有界）—— 硬约束否决等次级
+                # 披露不再被 [0] 吞掉。
+                for text in disclosures[:3]:
+                    notes.append({
+                        "code": str(w.get("code") or ""),
+                        "pattern": str(w.get("pattern") or ""),
+                        "text": text,
+                    })
+                if not disclosures and w.get("missing_roles"):
+                    notes.append({
+                        "code": str(w.get("code") or ""),
+                        "pattern": str(w.get("pattern") or ""),
+                        "text": "缺失角色: " + ",".join(
+                            map(str, w["missing_roles"][:4])),
+                    })
+            notes = notes[:MAX_METHODOLOGY_NOTES]
             if notes:
                 finalized.components.append(methodology_note_component(notes))
         except Exception:  # noqa: BLE001 — 披露组件失败不阻断终稿
