@@ -202,7 +202,7 @@ def register_cartography_tools(registry: ToolRegistry):
                "辅以专题设色与 3D 相机视角推荐。"
                "\n支持高度与颜色独立双通道（例如：高度=GDP总量，颜色=人均GDP）。"
            ),
-           tier=2, domains=["cartography"],
+           tier=2, domains=["report"],
            param_descriptions={
                "geojson": "多边形面要素 GeoJSON 或引用 (ref:xxx)",
                "height_field": "用于驱动挤出高度的数值属性字段",
