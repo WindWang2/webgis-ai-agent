@@ -32,8 +32,8 @@ _GEOM_LAYER_TYPE = {
     "MultiPoint": {"circle", "symbol", "heatmap"},
     "LineString": {"line"},
     "MultiLineString": {"line"},
-    "Polygon": {"fill"},
-    "MultiPolygon": {"fill"},
+    "Polygon": {"fill", "fill-extrusion"},
+    "MultiPolygon": {"fill", "fill-extrusion"},
 }
 
 
@@ -2326,6 +2326,8 @@ def evaluate_cartography_semantics(
         _check_visual_variable_overload(report, layer, lid, sid)
         _check_label_collision(report, mapspec, layer, lid, sid, profile)
         _check_scale_svs(report, mapspec, layer, lid, sid, profile)
+        _check_3d_extrusion_rules(report, mapspec, layer, lid, sid, profile)
+        _check_isoline_contour_rules(report, mapspec, layer, lid, sid)
 
     # 7pre. Component layout QA（C4）：zone 容量 / singleton 重复 / 悬空绑定 /
     # floating 矩形重叠——desired-state 证据即可评，不再恒 not_evaluated。
@@ -2461,4 +2463,172 @@ def _detect_floating_overlaps(components: List[Dict[str, Any]]) -> List[str]:
                     f"({overlap_x:.2f}x{overlap_y:.2f} normalized units)"
                 )
     return issues
+
+
+def _check_3d_extrusion_rules(
+    report: CartographyReport,
+    mapspec: Dict[str, Any],
+    layer: Dict[str, Any],
+    lid: str,
+    sid: str,
+    profile: Optional[Dict[str, Any]],
+) -> None:
+    """ADR-0095: 3D 挤出图层语义检查（高度字段存在性、极值/全零检测、相机俯仰建议、高倾角遮挡预警）。"""
+    ltype = layer.get("type")
+    ext_spec = layer.get("extrusion") or {}
+    if ltype != "fill-extrusion" and not ext_spec:
+        return
+
+    # 1. 高度字段检查
+    h_field = ext_spec.get("height_field")
+    if not h_field:
+        paint = layer.get("paint") or {}
+        raw_h = paint.get("fill-extrusion-height")
+        if isinstance(raw_h, str):
+            h_field = raw_h
+        elif isinstance(raw_h, list) and len(raw_h) >= 2 and raw_h[0] == "get":
+            h_field = raw_h[1]
+
+    if isinstance(h_field, str) and profile and profile.get("fields"):
+        fields = profile.get("fields")
+        if h_field not in fields:
+            report.add_check(
+                "EXTRUSION_HEIGHT_FIELD_VALID",
+                "fail",
+                f"3D 挤出图层 '{lid}' 绑定的高度字段 '{h_field}' 在数据集中不存在",
+                severity="error",
+                layer_id=lid,
+                source_id=sid,
+                evidence={"height_field": h_field, "available_fields": list(fields.keys())},
+            )
+            report.findings.append(CartographyFinding(
+                check="EXTRUSION_HEIGHT_FIELD_VALID",
+                severity="error",
+                message=f"3D 挤出图层 '{lid}' 绑定的高度字段 '{h_field}' 不存在",
+                layer_id=lid,
+                source_id=sid,
+            ))
+        else:
+            report.add_check(
+                "EXTRUSION_HEIGHT_FIELD_VALID",
+                "pass",
+                f"3D 挤出图层 '{lid}' 高度字段 '{h_field}' 验证通过",
+                layer_id=lid,
+                source_id=sid,
+                evidence={"height_field": h_field},
+            )
+
+    # 2. 统计特征检查（全零 / 极值离群）
+    stats = ext_spec.get("stats") or {}
+    if stats.get("is_all_zero"):
+        report.add_check(
+            "EXTRUSION_HEIGHT_DISTRIBUTION",
+            "warning",
+            f"3D 挤出图层 '{lid}' 高度字段全部为 0，要素将呈平坦无高差显示",
+            severity="warning",
+            layer_id=lid,
+            source_id=sid,
+        )
+    elif stats.get("has_extreme_outlier"):
+        report.add_check(
+            "EXTRUSION_HEIGHT_DISTRIBUTION",
+            "warning",
+            f"3D 挤出图层 '{lid}' 存在极大离群值，建议采用 log1p 或 sqrt 变换防止其他柱体被压平",
+            severity="warning",
+            layer_id=lid,
+            source_id=sid,
+        )
+
+    # 3. 相机俯仰角与遮挡检查
+    view = mapspec.get("view") if isinstance(mapspec.get("view"), dict) else {}
+    pitch = float(view.get("pitch", 0.0) or 0.0)
+    if pitch < 10.0:
+        report.add_check(
+            "EXTRUSION_PITCH_ADVISORY",
+            "warning",
+            f"3D 挤出图层 '{lid}' 已启用但相机处于平视模式 (pitch={pitch:.0f}°)，建议调整俯仰角为 35°-55° 以便立体观察",
+            severity="warning",
+            layer_id=lid,
+            source_id=sid,
+            evidence={"pitch": pitch},
+        )
+    else:
+        report.add_check(
+            "EXTRUSION_PITCH_ADVISORY",
+            "pass",
+            f"3D 挤出图层 '{lid}' 视角良好 (pitch={pitch:.0f}°)",
+            layer_id=lid,
+            source_id=sid,
+            evidence={"pitch": pitch},
+        )
+
+    max_h = float(ext_spec.get("max_visual_height_m", 5000.0) or 5000.0)
+    if pitch > 75.0 and max_h > 3000.0:
+        report.add_check(
+            "EXTRUSION_OCCLUSION_WARNING",
+            "warning",
+            f"大倾角 (pitch={pitch:.0f}°) 配合高柱体 ({max_h:.0f}m) 可能导致严重的前景遮挡",
+            severity="warning",
+            layer_id=lid,
+            source_id=sid,
+        )
+
+
+def _check_isoline_contour_rules(
+    report: CartographyReport,
+    mapspec: Dict[str, Any],
+    layer: Dict[str, Any],
+    lid: str,
+    sid: str,
+) -> None:
+    """ADR-0095: 等值线/等值面语义检查（单调递增性、级数充足性）。"""
+    iso_meta = layer.get("isoline")
+    if not isinstance(iso_meta, dict):
+        return
+
+    levels = iso_meta.get("levels")
+    if isinstance(levels, list):
+        if len(levels) < 2:
+            report.add_check(
+                "CONTOUR_LEVELS_VALID",
+                "fail",
+                f"等值线图层 '{lid}' 级数不足 2 级 (当前 {len(levels)} 级)，无法形成有效等值面",
+                severity="error",
+                layer_id=lid,
+                source_id=sid,
+            )
+            report.findings.append(CartographyFinding(
+                check="CONTOUR_LEVELS_VALID",
+                severity="error",
+                message=f"等值线图层 '{lid}' 级数不足 2 级",
+                layer_id=lid,
+                source_id=sid,
+            ))
+        else:
+            is_monotonic = all(levels[i] < levels[i + 1] for i in range(len(levels) - 1))
+            if not is_monotonic:
+                report.add_check(
+                    "CONTOUR_LEVELS_VALID",
+                    "fail",
+                    f"等值线图层 '{lid}' 等值级不是单调严格递增: {levels}",
+                    severity="error",
+                    layer_id=lid,
+                    source_id=sid,
+                )
+                report.findings.append(CartographyFinding(
+                    check="CONTOUR_LEVELS_VALID",
+                    severity="error",
+                    message=f"等值线图层 '{lid}' 等值级不是单调递增",
+                    layer_id=lid,
+                    source_id=sid,
+                ))
+            else:
+                report.add_check(
+                    "CONTOUR_LEVELS_VALID",
+                    "pass",
+                    f"等值线图层 '{lid}' {len(levels)} 级等值线单调有效",
+                    layer_id=lid,
+                    source_id=sid,
+                    evidence={"levels_count": len(levels)},
+                )
 

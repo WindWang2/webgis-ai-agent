@@ -41,12 +41,15 @@ export interface RefDescriptor {
 export interface Layer {
   id: string;
   name: string;
-  type: 'vector' | 'raster' | 'tile' | 'heatmap';
+  type: 'vector' | 'raster' | 'tile' | 'heatmap' | 'fill-extrusion';
   visible: boolean;
   opacity: number;
   group?: 'analysis' | 'base' | 'reference';
   source?: string | GeoJSONFeatureCollection | HeatmapRasterSource;
   style?: LayerStyle;
+  paint?: Record<string, unknown>;
+  extrusion?: Record<string, unknown>;
+  isoline?: Record<string, unknown>;
   /** Imperative MapLibre filter expression (APPLY_LAYER_FILTER). Persisted on the
    *  store layer so the MapSpecRuntime reconcile re-emits it (issue #393: a bare
    *  map.setFilter is rolled back by the next reconcile). null/absent = no filter. */

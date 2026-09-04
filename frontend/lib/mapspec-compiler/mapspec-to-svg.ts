@@ -422,6 +422,10 @@ export function compileMapSpecToSvg(
         const opacity = escapeSvgAttr(fmtNum(Number(resolvePaintValue(paint["fill-extrusion-opacity"] ?? paint["fill-opacity"] ?? paint["opacity"], props, defaultOpacity))));
         const outlineColor = escapeSvgAttr(resolvePaintValue(paint["fill-extrusion-base-color"] ?? paint["fill-outline-color"] ?? paint["fill-outline"] ?? paint["strokeColor"], props, defaultOutline));
         const outlineWidth = fmtNum(1.0 * dpiScale);
+        let extraAttrs = "";
+        if (layerType === "fill-extrusion") {
+          extraAttrs += ' data-export-degraded="true" data-export-degraded-reason="3d_perspective_not_vectorized"';
+        }
 
         polygons.forEach((polyRings: any) => {
           if (!Array.isArray(polyRings) || polyRings.length === 0) return;
@@ -433,7 +437,7 @@ export function compileMapSpecToSvg(
           });
           if (ringPaths.length === 0) return;
           const dStr = ringPaths.join(" ");
-          elementsSvg += `<path d="${dStr}" fill="${color}" fill-opacity="${opacity}" fill-rule="evenodd" stroke="${outlineColor}" stroke-width="${outlineWidth}" />\n`;
+          elementsSvg += `<path d="${dStr}" fill="${color}" fill-opacity="${opacity}" fill-rule="evenodd" stroke="${outlineColor}" stroke-width="${outlineWidth}"${extraAttrs} />\n`;
         });
       } else if (layerType === "heatmap") {
         const pts: [number, number][] = [];

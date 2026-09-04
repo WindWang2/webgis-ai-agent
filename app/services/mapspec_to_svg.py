@@ -578,6 +578,9 @@ def compile_mapspec_to_svg(
                             opacity = _escape_svg_attr(_fmt_num(_safe_float(_resolve_paint_value(paint.get("fill-extrusion-opacity") or paint.get("fill-opacity") or paint.get("opacity"), props, default_opacity), default_opacity)))
                             outline = _escape_svg_attr(_resolve_paint_value(paint.get("fill-extrusion-base-color") or paint.get("fill-outline-color") or paint.get("fill-outline") or paint.get("strokeColor"), props, default_outline))
                             outline_w = _fmt_num(1.0 * dpi_scale)
+                            extra_attrs = ""
+                            if layer_type == "fill-extrusion":
+                                extra_attrs = ' data-export-degraded="true" data-export-degraded-reason="3d_perspective_not_vectorized"'
 
                             for poly_rings in polygons:
                                 if not isinstance(poly_rings, list) or not poly_rings:
@@ -591,7 +594,7 @@ def compile_mapspec_to_svg(
                                 if not ring_paths:
                                     continue
                                 d_str = " ".join(ring_paths)
-                                elements_svg += f'<path d="{d_str}" fill="{color}" fill-opacity="{opacity}" fill-rule="evenodd" stroke="{outline}" stroke-width="{outline_w}" />\n'
+                                elements_svg += f'<path d="{d_str}" fill="{color}" fill-opacity="{opacity}" fill-rule="evenodd" stroke="{outline}" stroke-width="{outline_w}"{extra_attrs} />\n'
 
                         elif layer_type == "heatmap":
                             pts = []

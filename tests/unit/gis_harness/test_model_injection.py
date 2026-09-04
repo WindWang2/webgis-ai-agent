@@ -62,7 +62,10 @@ class TestNewRecipeSelectionAndEligibility:
         assert expected_new <= set(reg.all_ids)
         # ADR-0092 D7: od_flow_overview joins the registry (mobility_flow).
         assert "od_flow_overview" in set(reg.all_ids)
-        assert reg.count == 11
+        # V1 cartography runtime: extrusion_3d_thematic + isoline_contour_map join too.
+        assert "extrusion_3d_thematic" in set(reg.all_ids)
+        assert "isoline_contour_map" in set(reg.all_ids)
+        assert reg.count == 13
 
     @pytest.mark.parametrize(
         "query,winner", [

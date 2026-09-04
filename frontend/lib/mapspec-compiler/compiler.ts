@@ -184,7 +184,7 @@ function boundsToImageCorners(bounds: [number, number, number, number]) {
 function extractLegendForLayer(layer: MapSpecLayer): LegendDef | null {
   if (!layer.paint) return null;
   const items: LegendItem[] = [];
-  const colorProp = layer.paint.color;
+  const colorProp = layer.paint.color ?? (layer.paint as any)["fill-extrusion-color"];
 
   if (colorProp && isStyleMethodObject(colorProp)) {
     const m = colorProp as any;
@@ -387,6 +387,29 @@ export function compileMapSpec(
         // (already-emitted) `image` source by id.
         if (layer.paint.opacity !== undefined)
           maplibreLayer.paint["raster-opacity"] = compileStyleMethod(layer.paint.opacity);
+      } else if (layerType === "fill-extrusion") {
+        // ADR-0095: First-class 3D extrusion paint compiling
+        if (layer.paint.color !== undefined)
+          maplibreLayer.paint["fill-extrusion-color"] = compileStyleMethod(layer.paint.color);
+        if (layer.paint.opacity !== undefined)
+          maplibreLayer.paint["fill-extrusion-opacity"] = compileStyleMethod(layer.paint.opacity);
+        if ((layer.paint as any).height !== undefined)
+          maplibreLayer.paint["fill-extrusion-height"] = compileStyleMethod((layer.paint as any).height);
+        if ((layer.paint as any).base !== undefined)
+          maplibreLayer.paint["fill-extrusion-base"] = compileStyleMethod((layer.paint as any).base);
+
+        // MapLibre native paint property passthrough (expressions / direct keys)
+        for (const rawKey of [
+          "fill-extrusion-color",
+          "fill-extrusion-height",
+          "fill-extrusion-base",
+          "fill-extrusion-opacity",
+        ] as const) {
+          const rawValue = (layer.paint as Record<string, unknown>)[rawKey];
+          if (rawValue !== undefined && maplibreLayer.paint[rawKey] === undefined) {
+            maplibreLayer.paint[rawKey] = rawValue as unknown as StyleMethod;
+          }
+        }
       }
     }
 

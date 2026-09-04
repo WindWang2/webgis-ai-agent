@@ -571,4 +571,44 @@ describe("heatmap raw paint dialect bridge (GIS harness radius contract)", () =>
     const result = compileMapSpec(spec);
     expect((result.style as any).glyphs).toBeUndefined();
   });
+
+  // ADR-0095: 3D extrusion compilation
+  describe("fill-extrusion compilation (ADR-0095)", () => {
+    it("compiles fill-extrusion layer with height, color, base, opacity", () => {
+      const spec: MapSpec = {
+        version: "1.0",
+        view: { center: [104.06, 30.67], zoom: 12, pitch: 45, bearing: -15 },
+        sources: {
+          districts: {
+            type: "geojson",
+            inlineData: { type: "FeatureCollection", features: [] },
+          },
+        },
+        layers: [
+          {
+            id: "districts-extrusion",
+            source: "districts",
+            type: "fill-extrusion",
+            paint: {
+              "fill-extrusion-color": "#f97316",
+              "fill-extrusion-height": ["*", ["get", "population"], 0.05],
+              "fill-extrusion-base": 0,
+              "fill-extrusion-opacity": 0.85,
+            } as any,
+          },
+        ],
+      };
+      const result = compileMapSpec(spec);
+      expect(result.report.success).toBe(true);
+      const lyr = result.style.layers.find((l: any) => l.id === "districts-extrusion");
+      expect(lyr).toBeDefined();
+      expect(lyr.type).toBe("fill-extrusion");
+      expect(lyr.paint["fill-extrusion-color"]).toBe("#f97316");
+      expect(lyr.paint["fill-extrusion-height"]).toEqual(["*", ["get", "population"], 0.05]);
+      expect(lyr.paint["fill-extrusion-base"]).toBe(0);
+      expect(lyr.paint["fill-extrusion-opacity"]).toBe(0.85);
+      expect(result.style.pitch).toBe(45);
+      expect(result.style.bearing).toBe(-15);
+    });
+  });
 });

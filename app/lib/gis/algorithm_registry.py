@@ -145,7 +145,7 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         tool_candidates=["spatial_aggregate"],
         cpu_cost="medium", memory_cost="medium", io_cost="low",
         preferred_execution_policy="THREAD",
-        compatible_map_models=["administrative_choropleth", "administrative_aggregation"],
+        compatible_map_models=["administrative_choropleth", "administrative_aggregation", "extrusion_3d"],
         priority=10,
     ),
     AlgorithmDescriptor(
@@ -207,7 +207,7 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         tool_candidates=["kde_contours"],
         cpu_cost="high", memory_cost="high", io_cost="low",
         preferred_execution_policy="CELERY",
-        compatible_map_models=["visual_heatmap"],
+        compatible_map_models=["visual_heatmap", "isoline_contour"],
         fallback_algorithms=["spatial.kde.surface"],
         priority=10,
     ),
