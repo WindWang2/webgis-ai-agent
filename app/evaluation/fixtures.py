@@ -111,6 +111,40 @@ def ndvi_pair() -> Tuple[List[List[float]], List[List[float]], float]:
     return red, nir, 0.25
 
 
+def pm25_stations(n: int = 240, seed: int = 23) -> Dict[str, Any]:
+    """Deterministic PM2.5 monitoring stations over Chengdu (kriging golden).
+
+    A stationary gaussian-bump field plus bounded noise — variogram fitting
+    is well-posed, the field has a known peak (~104.06, 30.66), and the
+    sample count (240) clears every gate (min_features=10, CV ≥ 20).
+    """
+    import math as _math
+
+    rng = random.Random(seed)
+    features: List[Dict[str, Any]] = []
+    for _ in range(n):
+        lon = 103.95 + rng.random() * 0.25
+        lat = 30.55 + rng.random() * 0.2
+        d2 = (lon - 104.06) ** 2 + (lat - 30.66) ** 2
+        pm = (
+            42.0 * _math.exp(-d2 / (2 * 0.05 ** 2))
+            + 18.0 * _math.exp(-((lon - 104.15) ** 2 + (lat - 30.58) ** 2) / (2 * 0.04 ** 2))
+            + 8.0
+            + rng.uniform(-1.5, 1.5)
+        )
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [lon, lat]},
+            "properties": {"station_id": f"st{rng.randrange(10**6):06d}", "pm25": round(pm, 3)},
+        })
+    return {"type": "FeatureCollection", "features": features}
+
+
+def pm25_stations_sparse(n: int = 6, seed: int = 31) -> Dict[str, Any]:
+    """Six stations — below kriging's min_features gate (fallback golden)."""
+    return pm25_stations(n=n, seed=seed)
+
+
 #: alias → callable registry (runner resolves by name)
 FIXTURE_BUILDERS = {
     "chengdu_schools": chengdu_schools,
@@ -118,4 +152,6 @@ FIXTURE_BUILDERS = {
     "admin_boundaries_chengdu": admin_boundaries_chengdu,
     "od_edges": od_edges,
     "od_edges_50k": od_edges_50k,
+    "pm25_stations": pm25_stations,
+    "pm25_stations_sparse": pm25_stations_sparse,
 }

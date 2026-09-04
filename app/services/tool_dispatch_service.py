@@ -510,6 +510,27 @@ class ToolDispatchService:
                 target_data = result["data"]
             if target_data is not None:
                 geojson_ref = await session_data_manager.store(session_id, target_data, prefix="geojson")
+            # Kriging vertical slice: the tool returns a SECOND first-class
+            # surface (kriging stddev) under ``uncertainty`` — mint it as its
+            # own ref so ArtifactRegistry tracks prediction and uncertainty
+            # as separate artifacts instead of burying uncertainty in prose.
+            uncertainty_ref: Optional[str] = None
+            if (
+                isinstance(result, dict)
+                and isinstance(result.get("uncertainty"), dict)
+                and result["uncertainty"].get("type") == "FeatureCollection"
+            ):
+                uncertainty_ref = await session_data_manager.store(
+                    session_id, result["uncertainty"], prefix="geojson"
+                )
+                result = dict(result)
+                result["uncertainty_ref"] = uncertainty_ref
+                # The inline body rides no further once its ref exists: the
+                # slim payload/event log would otherwise carry the whole
+                # second FeatureCollection (review F3) while consumers use
+                # the ref. Registry-level dispatch (runner/tests) still sees
+                # the inline FC — the seam is the only minting consumer.
+                result.pop("uncertainty", None)
             if result.get("type") == "heatmap_raster":
                 heatmap_ref = await session_data_manager.store(
                     session_id, result, prefix="heatmap"
@@ -522,7 +543,11 @@ class ToolDispatchService:
             # layer pointing at a ref with NO payload, marked the call
             # completed, and made the failure unrecoverable by the LLM. Detect
             # it and fail the dispatch truthfully instead.
-            if is_unavailable_ref(geojson_ref) or is_unavailable_ref(heatmap_ref):
+            if (
+                is_unavailable_ref(geojson_ref)
+                or is_unavailable_ref(heatmap_ref)
+                or is_unavailable_ref(uncertainty_ref)
+            ):
                 self._release_key(executed_tools, tool_key, session_id or "")
                 return ToolDispatchResult(
                     status="error",
@@ -551,16 +576,29 @@ class ToolDispatchService:
                         raster_fps = snapshot_raster_fingerprints(_parsed) or None
                     except Exception:  # noqa: BLE001 — 指纹是增值记录，绝不阻塞
                         raster_fps = None
-                for minted in (geojson_ref, heatmap_ref):
+                # Kriging slice review F1: the uncertainty surface registers
+                # under a SUFFIXED analysis_key — find_reusable_artifact picks
+                # the newest record per key, so an identical-keyed derived
+                # surface would shadow the prediction on every repeat call
+                # (wrong ref returned + capability supersede below).
+                for minted, key, role in (
+                    (geojson_ref, analysis_key, "primary"),
+                    (heatmap_ref, analysis_key, "primary"),
+                    (
+                        uncertainty_ref,
+                        f"{analysis_key}::uncertainty" if analysis_key else None,
+                        "uncertainty",
+                    ),
+                ):
                     if isinstance(minted, str) and minted.startswith("ref:"):
                         await register_tool_artifact(
                             session_id,
                             minted,
                             tool=tool_name,
                             result=result if isinstance(result, dict) else None,
-                            analysis_key=analysis_key,
-                            input_shapes=input_shapes,
-                            raster_fingerprints=raster_fps,
+                            analysis_key=key,
+                            input_shapes=input_shapes if role == "primary" else None,
+                            raster_fingerprints=raster_fps if role == "primary" else None,
                         )
             except Exception:  # noqa: BLE001 — 登记失败不影响产物本身
                 logger.debug(

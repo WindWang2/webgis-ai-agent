@@ -99,11 +99,117 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         data = safe_parse_geojson(geojson)
         # Use the H3-based IDW implementation
         results = _idw_interpolation(data, value_field, resolution, power)
-        
+
         # Convert H3 results to GeoJSON Features (审计：消除重复的 H3-to-GeoJSON 转换)
         geojson_result = h3_to_geojson(results, value_field)
         geojson_result["summary"] = f"Generated IDW interpolation surface with {len(geojson_result['features'])} H3 cells (res={resolution})."
         return geojson_result
+
+    @tool(registry, name="kriging_interpolation",
+           description=(
+               "普通克里金插值(Ordinary Kriging)：拟合变异函数(spherical/exponential/gaussian)"
+               "后在 H3 网格上同时产出预测面与克里金方差(不确定性)面，附 K 折交叉验证指标"
+               "(RMSE/MAE/bias/R²)。适用于需要不确定性量化的连续变量建模(地统计)。"
+               "\n何时用：『用克里金插值』/ 需要置信度或误差棒的表面 / 样本≥8 且空间相关。"
+               "\n何时不用：样本<8 或只求快速表面 — 用 idw_interpolation。"
+               "\n失败语义：变异函数拟合失败时抛结构化错误(建议改用 IDW)，不静默降级。"
+           ),
+           tier=2, domains=["statistics"], cost="heavy",
+           param_descriptions={
+               "geojson": "输入点要素集 GeoJSON 或引用(ref:xxx)（Point 几何）",
+               "value_field": "用于插值的数值字段名",
+               "resolution": "H3 分辨率（5-9），默认 7",
+               "variogram_model": "变异函数模型: auto(默认)/spherical/exponential/gaussian",
+               "neighbors": "每个预测点的克里金邻域样本数(2-24)，默认 12",
+               "cross_validate": "是否运行 K 折交叉验证，默认 true",
+               "declared_crs": (
+                   "声明的输入 CRS: EPSG:4326(默认)/EPSG:4490/EPSG:3857/UTM(EPSG:326xx|327xx)。"
+                   "距离计算在投影坐标系执行；不支持的 CRS 结构化报错，绝不静默按 WGS84。"
+               ),
+           })
+    def kriging_interpolation(
+        geojson: Any,
+        value_field: str,
+        resolution: int = 7,
+        variogram_model: str = "auto",
+        neighbors: int = 12,
+        cross_validate: bool = True,
+        declared_crs: Optional[str] = None,
+    ) -> dict:
+        from app.lib.geo_analysis.interpolation import h3_to_geojson
+        from app.lib.geo_analysis.kriging import (
+            KrigingCrsError,
+            kriging_interpolation as _kriging,
+        )
+
+        data = safe_parse_geojson(geojson)
+        # Declared CRS precedence: explicit argument > FC-level crs member
+        # (#1110 discipline — an UNRECOGNIZED crs member is a structured
+        # rejection, never a silent WGS84 fallback that misreads projected
+        # metres as degrees).
+        fc_crs = None
+        if isinstance(data, dict):
+            crs_member = data.get("crs")
+            if isinstance(crs_member, dict):
+                name = str((crs_member.get("properties") or {}).get("name", ""))
+                if "4490" in name:
+                    fc_crs = "EPSG:4490"
+                elif "3857" in name:
+                    fc_crs = "EPSG:3857"
+                elif "4326" in name or "WGS84" in name.upper():
+                    fc_crs = "EPSG:4326"
+                elif name:
+                    raise KrigingCrsError(name)
+        declared = declared_crs or fc_crs
+        driver = _kriging(
+            data, value_field, resolution=resolution,
+            variogram_model=variogram_model, neighbors=neighbors,
+            cross_validate=cross_validate,
+            declared_crs=declared,
+        )
+        meta = driver["metadata"]
+
+        # Prediction surface: H3 cells carrying BOTH the interpolated value
+        # and the per-cell kriging stddev (first-class properties, not prose).
+        pred_records = [
+            {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
+        ]
+        prediction_fc = h3_to_geojson(pred_records, value_field)
+        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+            feat["properties"]["kriging_variance"] = round(rec["kriging_variance"], 6)
+            feat["properties"]["kriging_stddev"] = round(rec["kriging_stddev"], 6)
+
+        # Uncertainty surface: same cells, stddev as the primary value —
+        # a second, independently consumable artifact.
+        uncertainty_records = [
+            {"h3_index": r["h3_index"], "value": r["kriging_stddev"]}
+            for r in driver["records"]
+        ]
+        uncertainty_fc = h3_to_geojson(uncertainty_records, "kriging_stddev")
+
+        cv = meta["cross_validation"]
+        cv_text = ""
+        if cv:
+            if cv.get("rmse") is not None:
+                cv_text = (
+                    f"；交叉验证({cv['folds']}折): RMSE={cv['rmse']:.4f} "
+                    f"MAE={cv['mae']:.4f} bias={cv['bias']:.4f}"
+                    + (f" R²={cv['r2']:.4f}" if cv.get("r2") is not None else "")
+                )
+            elif cv.get("note"):
+                cv_text = f"；交叉验证: {cv['note']}"
+
+        prediction_fc.update({
+            "summary": (
+                f"克里金插值完成：{len(prediction_fc['features'])} 个 H3 单元"
+                f"(res={resolution}, 变异函数={meta['variogram']['model']}, "
+                f"sill={meta['variogram']['sill']}, range={meta['variogram']['range_meters']}m)；"
+                f"不确定面(克里金标准差)已随本结果输出。{cv_text}"
+            ),
+            "uncertainty": uncertainty_fc,
+            "kriging_metadata": meta,
+        })
+        return prediction_fc
 
     @tool(registry, name="overlay_analysis",
            description="对两个几何图层进行空间叠加分析（如求交、合并、擦除等），返回结果及其统计信息",

@@ -41,6 +41,9 @@ _PRESERVED_META_KEYS = (
     # app/lib/geo_analysis/evidence.py）。summary 分支此前丢弃它 —— 计数
     # 与工作 CRS 正是 LLM 引用数值结论时要的证据。
     "quality_evidence",
+    # Kriging slice：不确定面（克里金标准差）的独立 ref。工具 summary 声称
+    # 已输出不确定面 —— 没有这个键 LLM 永远拿不到 ref，声明就是假的。
+    "uncertainty_ref",
 )
 
 
