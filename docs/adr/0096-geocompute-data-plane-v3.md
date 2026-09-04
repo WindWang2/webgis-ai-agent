@@ -82,8 +82,9 @@ invariant is preserved by construction):
 - **Statistics**: bounded, truthful `DatasetStatistics` (row count, extent, geometry type, column
   null-fraction/NDV where the source exposes them, index presence, resolution/overview metadata,
   `revision_strength`, per-field `confidence`). Unknown stays unknown; assumptions are labeled.
-  Persisted per descriptor fingerprint in a new additive Alembic table; collection is best-effort and
-  never blocks queries.
+  Harvested from descriptor metadata (PostGIS meta profile incl. a best-effort `pg_stats` probe,
+  GeoParquet footer) and held in a bounded process-level TTL store keyed by descriptor fingerprint;
+  collection is best-effort, never blocks queries, and DB persistence is deferred (see Deferred).
 - **Selectivity**: replaces the four hard-coded constants with a stats-aware model whose no-stats
   defaults are exactly the V2 constants (behavior-preserving baseline), with bounded, explainable
   estimates for equality/IN/range/temporal/bbox/spatial predicates, group-by cardinality, and join keys.
@@ -187,6 +188,8 @@ semaphore; planner enumeration hard-capped.
 ## Deferred
 
 - FDW-style full-pushdown N-source federation (V3 ships bounded local-join N-source).
+- Durable (DB) persistence of dataset statistics (in-process TTL store ships first; stats are a
+  performance hint — loss on restart is honest and harmless).
 - Parallel branch execution inside WorkflowEngine tool graphs.
 - GeoArrow vector interchange carrier (vector large-data envelope documented; in-memory contract stays).
 - Cross-process stats/cache invalidation broadcast (in-process TTL + sync diff remains sufficient).
