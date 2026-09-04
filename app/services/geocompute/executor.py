@@ -275,20 +275,66 @@ class GeoExecutionEngine:
         budget: Any = None,
     ) -> None:
         ev = run.evidence[node.node_id]
-        if node.policy.value == "durable_job":
-            ev.status = "failed"
-            ev.error_code = "OPERATION_UNSUPPORTED"
-            ev.error_message = (
-                "durable_job policy dispatch lands with distributed execution "
-                "policies (ADR-0096 D5 follow-up); use in_process today"
-            )
-            tracing.emit("node_unsupported_policy", run_id=run.run_id,
-                         node_id=node.node_id, status="failed", error_code=ev.error_code)
-            return
-
         node_deadline = deadline_ts
         if node.deadline_s is not None:
             node_deadline = min(node_deadline, time.monotonic() + node.deadline_s)
+
+        if node.policy.value == "durable_job":
+            started_dj = time.monotonic()
+            try:
+                from app.services.geocompute import durable
+
+                if not session_id:
+                    raise NodeExecutionError(
+                        "durable_job policy requires a session context for "
+                        "result handoff (session ref)",
+                        retry_safe=False, node_id=node.node_id,
+                    )
+                ret = durable.dispatch_node(
+                    node,
+                    session_id=session_id,
+                    plan_fingerprint=run.plan_fingerprint,
+                    deadline_s=(node_deadline - time.monotonic())
+                    if node.deadline_s is not None else None,
+                )
+                done = durable.await_node_job(
+                    ret["job_id"],
+                    session_id=session_id,
+                    deadline_ts=node_deadline,
+                    cancel_token=cancel_token if node.cancellable else None,
+                )
+                payload = done["payload"]
+                if not payload:
+                    raise NodeExecutionError(
+                        "durable job produced no resolvable payload",
+                        retry_safe=False, node_id=node.node_id,
+                    )
+                outputs[node.node_id] = payload
+                ev.status = "completed"
+                ev.rows_emitted = self._count_rows(payload)
+                ev.duration_s = round(time.monotonic() - started_dj, 6)
+                ev.output_ref = payload.get("ref_id")
+                ev.attempts = 1
+                tracing.emit("node_completed", run_id=run.run_id, node_id=node.node_id,
+                             status="completed", rows=ev.rows_emitted,
+                             duration_s=ev.duration_s, job_id=done["job_id"],
+                             policy="durable_job")
+            except OperationCancelled:
+                ev.status = "cancelled"
+                ev.error_code = "CANCELLED"
+                ev.duration_s = round(time.monotonic() - started_dj, 6)
+                tracing.emit("node_cancelled", run_id=run.run_id, node_id=node.node_id,
+                             status="cancelled", policy="durable_job")
+            except GeoComputeError as exc:
+                ev.status = "failed"
+                ev.error_code = exc.code
+                ev.error_message = str(exc)
+                ev.retry_safe = getattr(exc, "retry_safe", False)
+                ev.duration_s = round(time.monotonic() - started_dj, 6)
+                tracing.emit("node_failed", run_id=run.run_id, node_id=node.node_id,
+                             status="failed", error_code=ev.error_code,
+                             policy="durable_job")
+            return
 
         # 复用：语义指纹命中 + 策略允许 → 跳过执行
         if node.reuse == NodeReusePolicy.ALLOW:

@@ -244,13 +244,15 @@ class TestExecutor:
         assert run.status is ExecutionRunStatus.FAILED
         assert run.evidence["n"].error_code == "OPERATION_UNSUPPORTED"
 
-    def test_durable_job_policy_honest_until_wired(self):
+    def test_durable_job_without_session_fails_typed(self):
+        # durable_job 已接线（ADR-0096 D5）：无会话上下文 → 类型化失败
         node = _node("n", NodeCategory.FILTER, policy=ExecutionPolicyKind.DURABLE_JOB,
                      parameters={"predicate": {"op": "eq", "field": "kind", "value": "a"},
                                  "features": _fc(2)})
         run = self._engine().execute_plan(ExecutionPlan(plan_id="p", nodes=[node]))
         assert run.status is ExecutionRunStatus.FAILED
-        assert run.evidence["n"].error_code == "OPERATION_UNSUPPORTED"
+        assert run.evidence["n"].error_code == "NODE_FAILED"
+        assert "session context" in (run.evidence["n"].error_message or "")
 
     def test_admission_rejects_overbudget_estimates(self):
         heavy = _node("h", NodeCategory.QUERY,

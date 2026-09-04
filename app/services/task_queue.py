@@ -15,7 +15,7 @@ celery_app = Celery(
     "webgis_tasks",
     broker=broker_url,
     backend=result_backend,
-    include=["app.services.spatial_tasks", "app.tasks.explorer.task_chain"]
+    include=["app.services.spatial_tasks", "app.tasks.explorer.task_chain", "app.services.geocompute.tasks"]
 )
 
 
