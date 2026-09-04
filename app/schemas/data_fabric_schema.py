@@ -36,6 +36,23 @@ class ConnectionProfile(BaseModel):
             self.endpoint = eff_url
         if not self.endpoint_url:
             self.endpoint_url = eff_url
+        # 审计 C2 配套（V2）：只配 DSN 的 profile 必须把 DSN 解析进结构化
+        # 字段——否则 adapter 只能拿到 None 并静默回退 localhost 空密码默认
+        # 值，把配置错误伪装成连接失败/空数据。显式传入的结构化字段优先，
+        # 绝不覆盖。
+        if eff_url.startswith(("postgresql://", "postgres://")) and self.host is None:
+            from urllib.parse import urlparse, unquote
+            u = urlparse(eff_url)
+            if u.hostname:
+                self.host = u.hostname
+                self.port = u.port or 5432
+                db = u.path.lstrip("/")
+                if db and not self.database:
+                    self.database = db
+                if u.username and not self.username:
+                    self.username = unquote(u.username)
+                if u.password is not None and not self.password:
+                    self.password = unquote(u.password)
 
 
 class CatalogItemModel(BaseModel):
