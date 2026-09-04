@@ -88,8 +88,24 @@ subprocesses. Cross-worker coordination (abort routing, callback token binding)
 is worker-agnostic because it flows through the session-keyed table and the
 session-scoped dispatch rendezvous.
 
-At the default pool size 1 the behavior is byte-identical to the historical
-singleton; N>1 is opt-in scaling, not a semantics change.
+At the default pool size 1 the behavior is identical to the historical
+singleton for in-flight turns; three end-of-turn cleanup windows are benignly
+stricter under the session-keyed table view (a settling turn's entry outlives
+the old singleton slot by the shielded-unregister window): task/job cancel
+guards may send one harmless no-op abort, late-callback tracker steps that
+the old singleton dropped as stale are now recorded, and empty-session
+dispatch entries gain eviction protection. N>1 is opt-in scaling, not a
+semantics change.
+
+**Production routing (V5-B-3, wired):** every real turn acquisition point
+resolves through the pool — `chat.py` routes `prompt`/`stream_prompt` via the
+session-affinity worker (`_pi_turn_bridge`), availability checks and lazy
+respawn target the session's own worker (not just worker 0), abort/cancel/
+task-cancellation guards resolve through the session-keyed active-turn table,
+and teardown stops every worker. The singleton-slot fallbacks inside
+`abort()`/`dispatch_tool` are session-checked so a pool can never cancel
+another worker's in-flight token. The previous "pool exists but turns all
+route to worker 0" state (idle subprocesses, zero parallelism) is closed.
 
 ## Ref Lifecycle (V5-C)
 

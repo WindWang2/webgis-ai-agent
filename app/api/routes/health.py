@@ -3,6 +3,7 @@
 import logging
 import time
 from datetime import datetime, timezone
+from typing import Optional
 from sqlalchemy import text
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
@@ -97,7 +98,27 @@ def health_check():
         "service": "WebGIS AI Agent",
         "version": "0.1.3",
         "agent_runtime": _live_agent_runtime(),
+        # V5-B: any-worker-alive is a service average — with a pool >1 some
+        # workers can be down (sessions on them degrade to ChatEngine) while
+        # the badge still says "pi". Disclose the per-worker split so the
+        # badge can be reconciled against reality.
+        "pi_workers_alive": _pi_workers_alive(),
     }
+
+
+def _pi_workers_alive() -> Optional[str]:
+    """"alive/total" for the bridge pool (None when no pool/single worker)."""
+    try:
+        from app.agent_pi_bridge import get_bridge_pool
+        from app.api.routes.chat import _bridge_alive
+
+        pool = get_bridge_pool()
+        if pool is None or pool.size <= 1:
+            return None
+        alive = sum(1 for b in pool.bridges if _bridge_alive(b))
+        return f"{alive}/{pool.size}"
+    except Exception:
+        return None
 
 
 @router.get("/health/live")

@@ -195,16 +195,17 @@ async def cancel_job(
             cancellation_registry.cancel(durable_id, "parent agent task cancelled")
         await db.commit()
         # #1066: agent job 的取消同样要桥接 Pi 活跃回合（与 DELETE /tasks/{id}
-        # 同型 —— tracker 令牌点燃不终止 Pi 子进程）。
+        # 同型 —— tracker 令牌点燃不终止 Pi 子进程）。V5-B: 守卫按
+        # session-keyed active-turn 表解析（单例视图在 pool 下读到的是
+        # 「最后注册的任意 worker turn」，会漏掉本 session 的 abort）。
         try:
             from app.api.routes import chat as chat_routes
-            from app.agent_pi_bridge import active_turn_correlation
+            from app.agent_pi_bridge import get_active_turn_entry
 
-            _, _, active_sid = active_turn_correlation()
             if (
                 chat_routes.pi_bridge is not None
                 and task_info.session_id
-                and active_sid == task_info.session_id
+                and get_active_turn_entry(task_info.session_id) is not None
             ):
                 await chat_routes.pi_bridge.abort(task_info.session_id)
         except Exception as abort_error:  # noqa: BLE001 - 取消已生效，abort 失败不回滚
