@@ -52,6 +52,17 @@ class DeadlineExceededError(GeoComputeError):
     code = "DEADLINE_EXCEEDED"
 
 
+class AuthorizationError(GeoComputeError):
+    """调用者对该资源/操作没有授权（数据平面内：目录项可见性、run 归属等）。
+
+    数据平面只做「允许/拒绝」的类型化判定，不决定 HTTP 状态码 —— REST 层
+    负责把 deny 映射为 404（而非 403），避免跨租户行存在性预言机（与
+    data_fabric 路由同一约定）。
+    """
+
+    code = "AUTHORIZATION_DENIED"
+
+
 class NodeExecutionError(GeoComputeError):
     """节点执行失败。
 

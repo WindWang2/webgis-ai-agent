@@ -69,7 +69,11 @@ def register_geocompute_tools(registry: ToolRegistry):
             "plan_id": "计划的稳定标识",
             "nodes": "节点列表（同 validate_execution_plan）",
             "budget": "可选预算 {max_rows, max_bytes, deadline_s, max_nodes}",
-            "session_id": "会话上下文（materialize / durable_job 策略必需）",
+            "session_id": (
+                "会话上下文（materialize / durable_job 策略必需）。必须是你自己的"
+                "当前会话 id —— 工具运行于调用方会话上下文并原样透传；传入他人"
+                "会话 id 的计划会被拒绝，且执行结果与缓存按身份隔离。"
+            ),
         },
         cost="heavy",
     )

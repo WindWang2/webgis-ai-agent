@@ -21,6 +21,7 @@ from typing import Any, Callable, Optional
 
 from app.lib.cancellation import CancellationToken, checkpoint
 from app.services.geocompute.errors import (
+    AuthorizationError,
     BudgetExceededError,
     NodeExecutionError,
     UnsupportedOperationError,
@@ -38,11 +39,17 @@ _MAX_PARAMS_BYTES = 8 * 1024 * 1024
 
 @dataclass
 class OperatorContext:
-    """传给算子的执行上下文（有界、无聊天语义）。"""
+    """传给算子的执行上下文（有界、无聊天语义）。
+
+    ``caller``：发起执行的认证身份（auth 依赖返回的 user dict）或 ``None``
+    （匿名 / 进程内无身份调用）。目录类算子（QUERY / SOURCE_SCAN）用它做
+    目录项准入 —— 与 data_fabric 路由同一租户谓词，fail closed。
+    """
 
     run_id: str
     node_id: str
     session_id: Optional[str] = None
+    caller: Optional[dict[str, Any]] = None
     budget: Optional[ResourceBudget] = None
     deadline_ts: Optional[float] = None  # time.monotonic() 绝对时刻
     cancel_token: Optional[CancellationToken] = None
@@ -85,6 +92,80 @@ def _default_query_catalog_fn(db: Any, item_id: str, query_spec: dict[str, Any])
 
 #: 模块级注入点（测试用 monkeypatch 替换；生产保持默认）。
 query_catalog_fn: QueryCatalogFn = _default_query_catalog_fn
+
+# ── 目录项准入（SEC 评审 CRITICAL：数据平面内的 catalog authz）──────────────
+#
+# QUERY / SOURCE_SCAN 之前必须先确认目录项对调用者可见 —— 与
+# app/api/routes/data_fabric.py::_authorize_catalog_item（→
+# _require_tenant_owned）同一租户谓词。路由层把 deny 映射为 HTTPException
+# 404；数据平面无法 import 路由模块（边界契约），因此把谓词提取为
+# 「逐行镜像」的本地实现，差异仅在 404/bool 的表达形式。谓词变化必须
+# 双向同步（两处都有 docstring 交叉引用）。
+
+
+#: 与 data_fabric 路由同一语义的匿名哨兵（app/core/auth._ANONYMOUS_USER_IDS
+#: 的本地副本；auth 模块不在 data-plane 边界内被禁止，但哨兵集合按值镜像
+#: 以保持判定自包含）。
+_ANONYMOUS_USER_IDS = frozenset({"anonymous", "anon"})
+
+
+def _caller_identity(caller: Optional[dict[str, Any]]) -> tuple[Optional[str], Optional[Any]]:
+    """auth user dict → (user_id, org_id)；匿名哨兵折叠为 None。
+
+    与 app/core/auth.actor_ids / data_fabric._real_user_id 同一判定：
+    接受 user_id / id / sub，"anonymous"/"anon" 视为未认证。
+    """
+    if not caller:
+        return None, None
+    uid = caller.get("user_id") or caller.get("id") or caller.get("sub")
+    if uid is None or str(uid) in _ANONYMOUS_USER_IDS:
+        return None, caller.get("org_id")
+    return str(uid), caller.get("org_id")
+
+
+#: 可注入的目录授权谓词：(db, item, caller) -> bool。
+#: ``item`` 是已解析的 CatalogItemModel 行；deny 一律 False（fail closed）。
+CatalogAuthorizeFn = Callable[[Any, Any, Optional[dict[str, Any]]], bool]
+
+
+def _default_catalog_authorize_fn(db: Any, item: Any, caller: Optional[dict[str, Any]]) -> bool:
+    """镜像 ``data_fabric._require_tenant_owned`` 的租户谓词（bool 形式）。
+
+    * 数据源行缺失 → False（路由层同一输入会 404）；
+    * 匿名 / 无真实 user_id → 仅 org_id 与 owner_id 都为 NULL 的真·全局行
+      可见（fail closed：caller=None 时一切有属主的条目一律拒绝）；
+    * 有 org claim → org 匹配 或 本人 owner；
+    * 无 org claim（当前 JWT 不携带 org_id）→ 本人 owner 或 真·全局行。
+    """
+    from app.models.data_fabric import DataSourceModel
+
+    src = db.query(DataSourceModel).filter(DataSourceModel.id == item.source_id).first()
+    if src is None:
+        return False
+    user_id, org_id = _caller_identity(caller)
+    if user_id is None:
+        return src.org_id is None and src.owner_id is None
+    if org_id is not None:
+        return src.org_id == org_id or src.owner_id == user_id
+    return src.owner_id == user_id or (src.org_id is None and src.owner_id is None)
+
+
+#: 模块级注入点（测试用 monkeypatch 替换；生产保持默认镜像谓词）。
+catalog_authorize_fn: CatalogAuthorizeFn = _default_catalog_authorize_fn
+
+
+def _authorize_catalog_for_ctx(
+    ctx: OperatorContext, db: Any, item: Any, dataset_id: str
+) -> None:
+    """QUERY / SOURCE_SCAN 共用的目录准入：deny → 类型化 AuthorizationError。
+
+    必须在任何适配器/数据传输执行之前调用（authz 先于副作用与出网）。
+    """
+    if not catalog_authorize_fn(db, item, ctx.caller):
+        raise AuthorizationError(
+            f"catalog item '{dataset_id}' is not visible to this caller",
+            details={"node_id": ctx.node_id, "dataset_id": str(dataset_id)},
+        )
 
 
 def _features_from_input(payloads: dict[str, NodePayload], node: ExecutionNode) -> list[dict]:
@@ -146,15 +227,26 @@ def _check_row_budget(rows: list[Any], ctx: OperatorContext, node: ExecutionNode
 
 
 def _op_query(ctx: OperatorContext, node: OperationNodeAny, payloads: dict[str, NodePayload]) -> NodePayload:
-    """QUERY：走 Data Fabric 目录查询（断路器/守卫/计划证据由管理器保证）。"""
+    """QUERY：走 Data Fabric 目录查询（断路器/守卫/计划证据由管理器保证）。
+
+    SEC：目录项准入（与 data_fabric 路由同一租户谓词）先于适配器执行 ——
+    任何调用路径（含注入的 query_catalog_fn）都不得绕过 authz。
+    """
     dataset_id = node.parameters.get("dataset_id")
     if not dataset_id:
         raise NodeExecutionError("QUERY node requires parameters.dataset_id", node_id=node.node_id)
     query_spec = dict(node.parameters.get("query") or {})
     from app.core.database import SessionLocal
+    from app.models.data_fabric import CatalogItemModel
 
     db = SessionLocal()
     try:
+        item = db.query(CatalogItemModel).filter(CatalogItemModel.id == str(dataset_id)).first()
+        if item is None:
+            raise NodeExecutionError(
+                f"catalog item '{dataset_id}' not found", node_id=node.node_id
+            )
+        _authorize_catalog_for_ctx(ctx, db, item, str(dataset_id))
         result = query_catalog_fn(db, str(dataset_id), query_spec)
     finally:
         db.close()
@@ -464,7 +556,10 @@ def _op_artifact_register(ctx: OperatorContext, node: "ExecutionNode", payloads:
 
 
 def _op_source_scan(ctx: OperatorContext, node: "ExecutionNode", payloads: dict[str, NodePayload]) -> NodePayload:
-    """SOURCE_SCAN：目录项描述（有界元数据；不做数据传输）。"""
+    """SOURCE_SCAN：目录项描述（有界元数据；不做数据传输）。
+
+    SEC：与 QUERY 同一目录项准入 —— 描述本身也是元数据泄漏面。
+    """
     dataset_id = node.parameters.get("dataset_id")
     if not dataset_id:
         raise NodeExecutionError("SOURCE_SCAN requires parameters.dataset_id", node_id=node.node_id)
@@ -474,6 +569,8 @@ def _op_source_scan(ctx: OperatorContext, node: "ExecutionNode", payloads: dict[
     db = SessionLocal()
     try:
         item = db.query(CatalogItemModel).filter(CatalogItemModel.id == str(dataset_id)).first()
+        if item is not None:
+            _authorize_catalog_for_ctx(ctx, db, item, str(dataset_id))
     finally:
         db.close()
     if item is None:

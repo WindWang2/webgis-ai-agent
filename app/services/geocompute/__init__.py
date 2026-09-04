@@ -5,6 +5,7 @@
 tests/unit/test_geocompute_boundary.py）。
 """
 from app.services.geocompute.errors import (
+    AuthorizationError,
     BudgetExceededError,
     DeadlineExceededError,
     GeoComputeError,
@@ -36,6 +37,7 @@ from app.services.geocompute.plan import (
 
 __all__ = [
     "EXECUTION_PLAN_VERSION",
+    "AuthorizationError",
     "BudgetExceededError",
     "CrsExpectation",
     "DeadlineExceededError",

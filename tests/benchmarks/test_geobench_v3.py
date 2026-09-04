@@ -63,6 +63,7 @@ import random
 import threading
 import time
 import tracemalloc
+from types import SimpleNamespace
 
 import pytest
 
@@ -136,8 +137,29 @@ def _dag_plan(n_features: int) -> ExecutionPlan:
     )
 
 
+def _stub_catalog_authz(monkeypatch: pytest.MonkeyPatch):
+    """目录准入接线（ops._op_query 先 authz 后查询）的 DB-free 放行替身。"""
+
+    class _StubDB:
+        def query(self, model):
+            return self
+
+        def filter(self, *a, **kw):
+            return self
+
+        def first(self):
+            return SimpleNamespace(source_id="src-bench")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("app.core.database.SessionLocal", lambda: _StubDB())
+    monkeypatch.setattr(ops, "catalog_authorize_fn", lambda db, item, caller: True)
+
+
 def _inject_source(monkeypatch: pytest.MonkeyPatch, features_by_limit: dict[int, list[dict]]):
     """Wire ops.query_catalog_fn to an in-memory fake (offline; no DB)."""
+    _stub_catalog_authz(monkeypatch)
 
     def fake_query(db, item_id, spec_dict):
         n = int((spec_dict or {}).get("limit") or 0)
@@ -297,7 +319,8 @@ def test_executor_dag_scaling_and_determinism(monkeypatch: pytest.MonkeyPatch):
     _inject_source(monkeypatch, features)
 
     def run_once(n: int):
-        engine = GeoExecutionEngine()  # fresh engine: no cross-run reuse pollution
+        # retain_outputs: determinism assertions read payloads post-run
+        engine = GeoExecutionEngine(retain_outputs=True)  # fresh engine: no cross-run reuse pollution
         t0 = time.perf_counter()
         run = engine.execute_plan(_dag_plan(n))
         return run, engine.get_node_output(run.run_id, "agg"), time.perf_counter() - t0
@@ -537,6 +560,7 @@ def test_cancelled_slow_dag_completes_bounded(monkeypatch: pytest.MonkeyPatch):
     warm = engine.execute_plan(_dag_plan(1_000))  # warm-up: pay one-time imports
     assert warm.status.value == "completed"
 
+    _stub_catalog_authz(monkeypatch)
     monkeypatch.setattr(ops, "query_catalog_fn", slow_source)
     token = CancellationToken("geobench-cancel")
     box: dict = {}

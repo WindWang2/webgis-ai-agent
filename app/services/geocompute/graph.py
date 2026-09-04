@@ -113,10 +113,16 @@ def invalidation_set(plan: ExecutionPlan, changed_fingerprints: set[str]) -> set
     return out
 
 
-def node_reuse_key(plan_fingerprint: str, node: ExecutionNode) -> str:
-    """复用存储键：计划指纹域内按节点指纹寻址。
+def node_reuse_key(plan_fingerprint: str, node: ExecutionNode, owner_scope: str) -> str:
+    """复用存储键：计划指纹域内按节点指纹寻址，并按 owner 域隔离。
 
     同一节点的语义指纹在不同计划间是可比的（纯语义），但复用键仍包含
     计划指纹 —— 避免跨计划的意外命中；跨计划复用留待显式产物链（M6）。
+
+    SEC（评审 MAJOR）：``owner_scope`` 由 executor 从调用者身份派生
+    （user id 优先，回退 session id；匿名固定 "anonymous"，见
+    ``executor.owner_scope_for``）。不同 owner 即使语义指纹完全相同也
+    绝不共享缓存条目 —— 堵住跨用户结果复用泄漏（A 用户的 QUERY 结果
+    曾可被 B 用户的同指纹节点直接命中）。
     """
-    return f"{plan_fingerprint}:{node.semantic_fingerprint()}"
+    return f"{owner_scope}:{plan_fingerprint}:{node.semantic_fingerprint()}"

@@ -12,6 +12,7 @@ project workflow 路由同一模式），绝不阻塞事件循环。
 """
 from __future__ import annotations
 
+import re
 import threading
 import time
 import uuid
@@ -37,6 +38,52 @@ from app.services.geocompute.plan import (
 
 #: 计划级最大并行度：独立于工具注册表信号量，小而有界（防线程池饥饿）。
 DEFAULT_MAX_WORKERS = 2
+
+#: 错误证据的字符上界（评审 MINOR：error_message 不承载无限文本）。
+_MAX_ERROR_MESSAGE_CHARS = 300
+
+#: 绝对路径段（≥2 段，如 /home/kevin/projects/…）→ "<path>"：错误证据不得
+#: 泄漏执行主机的目录拓扑；类型化 error_code 不受影响。
+_ABSOLUTE_PATH_RE = re.compile(r"(?:/[^/\s]+){2,}")
+
+
+def owner_scope_for(
+    caller: Optional[dict[str, Any]], session_id: Optional[str] = None
+) -> str:
+    """从调用者身份派生 owner 域（复用键 / run 归属共用）。
+
+    user id 优先（跨 run 稳定），回退 session id，都没有 → "anonymous"。
+    哈希而非原文：owner 域出现在复用键/注册表中，不落明文身份。
+    匿名哨兵（"anonymous"）经 auth.actor_ids 折叠为 None → 不与真实
+    用户共享任何域。
+    """
+    import hashlib
+
+    uid: Optional[str] = None
+    try:
+        from app.core.auth import actor_ids
+
+        uid, _ = actor_ids(caller)
+    except Exception:  # noqa: BLE001 - 身份解析失败按匿名处理（fail closed）
+        uid = None
+    if uid:
+        return "u:" + hashlib.sha1(uid.encode()).hexdigest()[:16]
+    if session_id:
+        return "s:" + hashlib.sha1(str(session_id).encode()).hexdigest()[:16]
+    return "anonymous"
+
+
+def _scrub_error_message(message: Any) -> str:
+    """证据 error_message 只保留有界、去本地拓扑的文本。
+
+    截断到 300 字符；绝对路径（≥2 段）替换为 "<path>"。类型化
+    ``error_code`` 单独存列，不受清洗影响。
+    """
+    text = str(message or "")
+    scrubbed = _ABSOLUTE_PATH_RE.sub("<path>", text)
+    if len(scrubbed) > _MAX_ERROR_MESSAGE_CHARS:
+        scrubbed = scrubbed[:_MAX_ERROR_MESSAGE_CHARS]
+    return scrubbed
 
 
 class NodeResultStore:
@@ -97,11 +144,18 @@ class GeoExecutionEngine:
         result_store: Optional[NodeResultStore] = None,
         max_workers: int = DEFAULT_MAX_WORKERS,
         run_cache_size: int = 128,
+        retain_outputs: bool = False,
     ):
         self._store = result_store or NodeResultStore()
         self._max_workers = max(1, min(int(max_workers), 8))
+        # 评审 M3 的逃生门：基准/测试需要在 run 终态后读取载荷做确定性
+        # 断言。生产路径保持默认 False（终态即清除，证据/摘要为准）。
+        self._retain_outputs = bool(retain_outputs)
         self._runs: OrderedDict[str, ExecutionRun] = OrderedDict()
         self._run_outputs: dict[str, dict[str, dict[str, Any]]] = {}
+        # SEC：run 归属域（owner_scope_for 派生）；REST 读路径按它做
+        # 读隔离（他人 run 一律 404，避免存在性预言机）。
+        self._run_owners: dict[str, str] = {}
         self._run_tokens: dict[str, CancellationToken] = {}
         self._run_lock = threading.Lock()
         self._run_cache_size = run_cache_size
@@ -113,6 +167,7 @@ class GeoExecutionEngine:
         plan: ExecutionPlan,
         *,
         session_id: Optional[str] = None,
+        caller: Optional[dict[str, Any]] = None,
         cancel_token: Optional[CancellationToken] = None,
         governor: Optional[Any] = None,
         governor_parent_path: Optional[str] = None,
@@ -121,7 +176,11 @@ class GeoExecutionEngine:
 
         ``governor``（可选，ResourceGovernor）：给定后在
         ``governor_parent_path``（默认根）下创建 execution 作用域，准入
-        与逐节点记账沿层级链生效（ADR-0096 D6）。"""
+        与逐节点记账沿层级链生效（ADR-0096 D6）。
+
+        ``caller``（可选，auth user dict）：贯穿到算子上下文 —— 目录项
+        准入、复用键 owner 域、run 归属都以它为准；缺省按匿名隔离。
+        """
         graph.validate_plan(plan)
         self._admission_check(plan)
         gov_path: Optional[str] = None
@@ -158,13 +217,16 @@ class GeoExecutionEngine:
         }
         deadline_ts = time.monotonic() + plan.budget.deadline_s
         outputs: dict[str, dict[str, Any]] = {}
+        owner_scope = owner_scope_for(caller, session_id)
         with self._run_lock:
             self._runs[run_id] = run
             self._run_outputs[run_id] = outputs
+            self._run_owners[run_id] = owner_scope
             while len(self._runs) > self._run_cache_size:
                 old = next(iter(self._runs))
                 self._runs.pop(old)
                 self._run_outputs.pop(old, None)
+                self._run_owners.pop(old, None)
         # run 级取消令牌注册（REST/工具凭 run_id 请求取消；M1）
         if cancel_token is None:
             cancel_token = CancellationToken(job_id=run_id)
@@ -176,6 +238,7 @@ class GeoExecutionEngine:
         started = time.monotonic()
         try:
             self._run_waves(run, plan, outputs, session_id=session_id,
+                            caller=caller, owner_scope=owner_scope,
                             cancel_token=cancel_token, deadline_ts=deadline_ts,
                             governor=governor, gov_path=gov_path)
         finally:
@@ -201,8 +264,9 @@ class GeoExecutionEngine:
                      error_code=run.error_code)
         # 载荷保留上限（并发评审 M3）：run 终态后立即丢弃原始节点输出 ——
         # 证据/摘要已在 run.evidence；复用走字节预算化的 NodeResultStore。
-        with self._run_lock:
-            self._run_outputs.pop(run_id, None)
+        if not self._retain_outputs:
+            with self._run_lock:
+                self._run_outputs.pop(run_id, None)
         self._run_tokens.pop(run_id, None)
         return run
 
@@ -218,8 +282,15 @@ class GeoExecutionEngine:
             return False
         return token.cancel(reason)
 
-    def get_run(self, run_id: str) -> Optional[ExecutionRun]:
+    def get_run(self, run_id: str, *, owner_scope: Optional[str] = None) -> Optional[ExecutionRun]:
+        """读取 run；给定 ``owner_scope`` 时做读隔离 —— 归属不符一律返回
+        None（调用方 404，不区分「不存在」与「他人 run」，避免存在性预言机）。
+
+        不传 ``owner_scope``（进程内工具/executor 自身路径）保持原有语义。
+        """
         with self._run_lock:
+            if owner_scope is not None and self._run_owners.get(run_id) != owner_scope:
+                return None
             return self._runs.get(run_id)
 
     def get_node_output(self, run_id: str, node_id: str) -> Optional[dict[str, Any]]:
@@ -269,6 +340,8 @@ class GeoExecutionEngine:
         outputs: dict[str, dict[str, Any]],
         *,
         session_id: Optional[str],
+        caller: Optional[dict[str, Any]],
+        owner_scope: str,
         cancel_token: Optional[CancellationToken],
         deadline_ts: float,
         governor: Optional[Any] = None,
@@ -299,7 +372,9 @@ class GeoExecutionEngine:
 
             if len(runnable) == 1:
                 self._execute_one(run, node_map[runnable[0]], outputs,
-                                  session_id=session_id, cancel_token=cancel_token,
+                                  session_id=session_id, caller=caller,
+                                  owner_scope=owner_scope,
+                                  cancel_token=cancel_token,
                                   deadline_ts=deadline_ts, budget=plan.budget,
                                   governor=governor, gov_path=gov_path)
             else:
@@ -310,7 +385,9 @@ class GeoExecutionEngine:
                     futures = {
                         nid: pool.submit(
                             self._execute_one, run, node_map[nid], outputs,
-                            session_id=session_id, cancel_token=cancel_token,
+                            session_id=session_id, caller=caller,
+                            owner_scope=owner_scope,
+                            cancel_token=cancel_token,
                             deadline_ts=deadline_ts, budget=plan.budget,
                             governor=governor, gov_path=gov_path,
                         )
@@ -329,6 +406,8 @@ class GeoExecutionEngine:
         outputs: dict[str, dict[str, Any]],
         *,
         session_id: Optional[str],
+        caller: Optional[dict[str, Any]],
+        owner_scope: str,
         cancel_token: Optional[CancellationToken],
         deadline_ts: float,
         budget: Any = None,
@@ -390,7 +469,7 @@ class GeoExecutionEngine:
             except GeoComputeError as exc:
                 ev.status = "failed"
                 ev.error_code = exc.code
-                ev.error_message = str(exc)
+                ev.error_message = _scrub_error_message(str(exc))
                 ev.retry_safe = getattr(exc, "retry_safe", False)
                 ev.duration_s = round(time.monotonic() - started_dj, 6)
                 tracing.emit("node_failed", run_id=run.run_id, node_id=node.node_id,
@@ -398,9 +477,10 @@ class GeoExecutionEngine:
                              policy="durable_job")
             return
 
-        # 复用：语义指纹命中 + 策略允许 → 跳过执行
+        # 复用：语义指纹命中 + owner 域隔离 + 策略允许 → 跳过执行。
+        # owner_scope 使不同用户/会话即使指纹相同也绝不共享缓存条目（SEC）。
         if node.reuse == NodeReusePolicy.ALLOW:
-            cached = self._store.get(graph.node_reuse_key(run.plan_fingerprint, node))
+            cached = self._store.get(graph.node_reuse_key(run.plan_fingerprint, node, owner_scope))
             if cached is not None and "__size__" in cached:
                 payload = {k: v for k, v in cached.items() if k != "__size__"}
                 outputs[node.node_id] = payload
@@ -424,6 +504,7 @@ class GeoExecutionEngine:
                     run_id=run.run_id,
                     node_id=node.node_id,
                     session_id=session_id,
+                    caller=caller,
                     budget=budget,
                     deadline_ts=node_deadline,
                     cancel_token=cancel_token,
@@ -432,7 +513,9 @@ class GeoExecutionEngine:
                 with use_token(token):
                     payload = ops.execute_node(ctx, node, outputs)
                 outputs[node.node_id] = payload
-                self._store.put(graph.node_reuse_key(run.plan_fingerprint, node), payload)
+                self._store.put(
+                    graph.node_reuse_key(run.plan_fingerprint, node, owner_scope), payload
+                )
                 self._governor_charge(governor, gov_path, node, payload)
                 ev.status = "completed"
                 ev.rows_emitted = self._count_rows(payload)
@@ -449,7 +532,7 @@ class GeoExecutionEngine:
             except OperationCancelled as exc:
                 ev.status = "cancelled"
                 ev.error_code = "CANCELLED"
-                ev.error_message = str(exc)
+                ev.error_message = _scrub_error_message(str(exc))
                 ev.duration_s = round(time.monotonic() - started, 6)
                 tracing.emit("node_cancelled", run_id=run.run_id, node_id=node.node_id,
                              status="cancelled", duration_s=ev.duration_s)
@@ -474,7 +557,7 @@ class GeoExecutionEngine:
 
         ev.status = "failed"
         ev.error_code = last_err.code if last_err else "NODE_FAILED"
-        ev.error_message = str(last_err) if last_err else "unknown failure"
+        ev.error_message = _scrub_error_message(str(last_err) if last_err else "unknown failure")
         if isinstance(last_err, NodeExecutionError):
             ev.retry_safe = last_err.retry_safe
         ev.duration_s = round(time.monotonic() - started, 6)

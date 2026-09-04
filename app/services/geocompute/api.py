@@ -98,11 +98,16 @@ def run_plan_sync(
     session_id: Optional[str] = None,
     cancel_token: Optional[Any] = None,
     governor: Optional[ResourceGovernor] = None,
+    caller: Optional[dict[str, Any]] = None,
 ):
     """同步执行入口（工具/线程上下文用；REST 走 to_thread 同一函数）。
 
     默认接入进程级 ``GOVERNOR``：global 上限 + 每 session 子作用域
     （稳定哈希派生，幂等挂载），执行作用域在 run 内创建并在 finally 摘除。
+
+    ``caller``（auth user dict 或 None）原样穿透到执行器：目录项准入、
+    复用键 owner 域与 run 归属都以它为准（SEC：数据平面内 authz 与
+    跨用户复用隔离的身份来源）。
     """
     import hashlib
 
@@ -116,6 +121,6 @@ def run_plan_sync(
     from app.services.geocompute.executor import engine
 
     return engine.execute_plan(
-        plan, session_id=session_id, cancel_token=cancel_token,
+        plan, session_id=session_id, caller=caller, cancel_token=cancel_token,
         governor=gov, governor_parent_path=parent,
     )

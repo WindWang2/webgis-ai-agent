@@ -3,6 +3,16 @@
 计划校验/指纹、执行、run 状态查询。执行是同步核心，统一 to_thread
 卸载（与 project workflow 路由同一模式），绝不阻塞事件循环。
 计划执行证据是**有界摘要**；节点载荷只经 ref/产物通道出平面。
+
+安全语义（SEC 评审）：
+- ``/plans/execute``、``/runs/*``、``/plans/drift-check`` 强制认证
+  （无/坏 Bearer → 401）；``/plans/validate`` 保持可选认证 —— 纯 CPU
+  校验，只暴露指纹/波次等派生信息，不触达数据与目录。
+- 执行请求的 ``session_id`` 若已存在 Conversation 行，必须属于当前
+  调用者（与 data_fabric 物化路由同一 ``authorize_session_write`` 判定；
+  陌生会话 → 404，不泄漏存在性）。
+- caller 身份贯穿执行器：目录项准入（与 data_fabric 同一租户谓词）、
+  节点复用键 owner 域、run 读隔离（他人 run → 404）。
 """
 from __future__ import annotations
 
@@ -13,7 +23,11 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.core.auth import get_current_user_optional
+from app.core.auth import (
+    get_current_user,
+    get_current_user_optional,
+    get_owner_token,
+)
 from app.services.geocompute import BudgetExceededError, GeoComputeError
 
 logger = logging.getLogger(__name__)
@@ -97,12 +111,40 @@ def _plan_fingerprint(data: ExecutionPlanIn) -> str:
     return _plan_from_request(data).graph_fingerprint()
 
 
+def _authorize_session_write_sync(
+    session_id: str,
+    user: Dict[str, Any],
+    owner_token: Optional[str],
+) -> None:
+    """执行前校验 session_id 的写归属（data_fabric._require_existing_session_owner
+    的镜像；在 to_thread 工作线程内跑同步 ORM）。
+
+    Conversation 行不存在 → 允许（首写创建，与首条聊天消息同一语义）；
+    存在则必须 user_id 匹配（匿名行须 X-Session-Token 匹配，legacy
+    NULL/NULL fail closed）→ 否则 404（不区分「不存在」与「他人会话」）。
+    """
+    from app.core.auth import actor_ids, authorize_session_write
+    from app.core.database import SessionLocal
+    from app.models.db_model import Conversation
+
+    uid, _ = actor_ids(user)
+    with SessionLocal() as db:
+        conv = db.query(Conversation).filter(Conversation.id == session_id).first()
+        if not authorize_session_write(conv, uid, owner_token):
+            raise HTTPException(status_code=404, detail="Session not found")
+
+
 @router.post("/plans/validate", tags=["GeoCompute / 执行平面"])
 async def validate_execution_plan(
     plan_in: ExecutionPlanIn,
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
-    """校验执行图并返回确定性指纹（不执行）。"""
+    """校验执行图并返回确定性指纹（不执行）。
+
+    安全说明（SEC 评审）：保持**可选认证** —— 纯 CPU 校验，无目录/数据
+    访问，响应只含指纹、波次与已接线类别等派生信息；未认证调用不构成
+    信息泄漏面。
+    """
     from app.services.geocompute import graph
 
     plan = _plan_from_request(plan_in)
@@ -124,9 +166,14 @@ async def validate_execution_plan(
 @router.post("/plans/execute", tags=["GeoCompute / 执行平面"])
 async def execute_execution_plan(
     body: ExecutePlanRequest,
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
 ):
-    """执行执行图（同步卸载到工作线程；预算/取消/deadline 全程生效）。"""
+    """执行执行图（同步卸载到工作线程；预算/取消/deadline 全程生效）。
+
+    强制认证（无/坏 Bearer → 401）。``session_id`` 归属校验与执行同一
+    工作线程顺序执行（校验先于任何节点运行）。
+    """
     from app.services.geocompute.executor import engine
     from app.services.geocompute import graph
 
@@ -137,7 +184,11 @@ async def execute_execution_plan(
         raise HTTPException(status_code=422, detail=exc.to_dict())
 
     def _run():
-        return engine.execute_plan(plan, session_id=body.session_id)
+        if body.session_id:
+            _authorize_session_write_sync(body.session_id, user, owner_token)
+        return engine.execute_plan(
+            plan, session_id=body.session_id, caller=dict(user)
+        )
 
     try:
         run = await asyncio.to_thread(_run)
@@ -151,11 +202,12 @@ async def execute_execution_plan(
 @router.get("/runs/{run_id}", tags=["GeoCompute / 执行平面"])
 async def get_execution_run(
     run_id: str,
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
-    from app.services.geocompute.executor import engine
+    """查询 run（强制认证 + 读隔离：他人 run 一律 404，避免存在性预言机）。"""
+    from app.services.geocompute.executor import engine, owner_scope_for
 
-    run = engine.get_run(run_id)
+    run = engine.get_run(run_id, owner_scope=owner_scope_for(user))
     if run is None:
         raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND"})
     return run.model_dump()
@@ -164,11 +216,12 @@ async def get_execution_run(
 @router.get("/runs/{run_id}/summary", tags=["GeoCompute / 执行平面"])
 async def get_execution_run_summary(
     run_id: str,
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
-    from app.services.geocompute.executor import engine
+    """查询 run 摘要（强制认证 + 与 GET /runs 相同的读隔离）。"""
+    from app.services.geocompute.executor import engine, owner_scope_for
 
-    run = engine.get_run(run_id)
+    run = engine.get_run(run_id, owner_scope=owner_scope_for(user))
     if run is None:
         raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND"})
     return {"lines": run.summary_lines()}
@@ -177,12 +230,13 @@ async def get_execution_run_summary(
 @router.post("/plans/drift-check", tags=["GeoCompute / 执行平面"])
 async def drift_check(
     body: Dict[str, Any],
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
     """对持久化计划记录做语义漂移判定（ADR-0096 D7）。
 
     body: {"stored": {...持久记录...}, "plan": {ExecutionPlanIn（可选）}}
     返回 DriftVerdict（current/stale_runtime/degraded_plan/unknown）。
+    强制认证：stored 记录可能携带计划元数据，不向匿名暴露。
     """
     from app.services.geocompute.drift import check_plan_drift
 

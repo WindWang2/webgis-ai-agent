@@ -1,9 +1,14 @@
-"""GeoCompute REST 路由（additive，ADR-0096）：校验/执行/run 查询。"""
+"""GeoCompute REST 路由（additive，ADR-0096）：校验/执行/run 查询。
+
+SEC 评审后：execute / runs / drift-check 强制认证（无 Bearer → 401）；
+validate 保持可选认证。非 401 断言一律携带同用户 Bearer token。
+"""
 
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from app.core.auth import create_access_token
 from app.main import app
 
 client = TestClient(app)
@@ -20,6 +25,11 @@ FILTER_NODE = {
         ],
     },
 }
+
+
+def _auth(user_id: str = "gc-rest-user") -> dict[str, str]:
+    token = create_access_token({"sub": user_id, "role": "editor"})
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _plan_body(**overrides):
@@ -47,24 +57,27 @@ def test_validate_rejects_unknown_input():
 
 
 def test_execute_plan_and_get_run():
-    resp = client.post("/api/v1/geocompute/plans/execute", json=_plan_body())
+    resp = client.post("/api/v1/geocompute/plans/execute", json=_plan_body(),
+                       headers=_auth())
     assert resp.status_code == 200, resp.text
     run = resp.json()
     assert run["status"] == "completed"
     assert run["evidence"]["f1"]["status"] in {"completed", "reused"}
     assert run["evidence"]["f1"]["rows_emitted"] == 2
 
-    got = client.get(f"/api/v1/geocompute/runs/{run['run_id']}")
+    got = client.get(f"/api/v1/geocompute/runs/{run['run_id']}", headers=_auth())
     assert got.status_code == 200
     assert got.json()["run_id"] == run["run_id"]
 
-    summary = client.get(f"/api/v1/geocompute/runs/{run['run_id']}/summary")
+    summary = client.get(f"/api/v1/geocompute/runs/{run['run_id']}/summary",
+                         headers=_auth())
     assert summary.status_code == 200
     assert any("f1" in line for line in summary.json()["lines"])
 
 
 def test_get_missing_run_404():
-    assert client.get("/api/v1/geocompute/runs/does-not-exist").status_code == 404
+    got = client.get("/api/v1/geocompute/runs/does-not-exist", headers=_auth())
+    assert got.status_code == 404
 
 
 def test_overbudget_admission_rejected_via_rest():
@@ -74,7 +87,8 @@ def test_overbudget_admission_rejected_via_rest():
         parameters={"dataset_id": "d"},
     )
     body["plan"]["budget"] = {"max_rows": 1000}
-    resp = client.post("/api/v1/geocompute/plans/execute", json=body)
+    resp = client.post("/api/v1/geocompute/plans/execute", json=body,
+                       headers=_auth())
     assert resp.status_code == 422
     detail = resp.json()["detail"]
     assert detail["code"] == "RESOURCE_BUDGET_EXCEEDED"
@@ -83,7 +97,8 @@ def test_overbudget_admission_rejected_via_rest():
 
 def test_unsupported_category_is_typed_failure():
     body = _plan_body(node_id="n9", category="network_operation", parameters={})
-    resp = client.post("/api/v1/geocompute/plans/execute", json=body)
+    resp = client.post("/api/v1/geocompute/plans/execute", json=body,
+                       headers=_auth())
     assert resp.status_code == 200  # 执行成功受理；节点级类型化失败在 run 证据里
     run = resp.json()
     assert run["status"] == "failed"

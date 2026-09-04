@@ -15,6 +15,7 @@ import asyncio
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -80,6 +81,22 @@ def test_db_disconnect_on_query_fails_typed_skips_descendants(monkeypatch):
         calls["n"] += 1
         raise RuntimeError("connection reset")
 
+    class _StubDB:
+        # 目录准入接线（SEC）后的 DB-free 替身：目录项存在、谓词注入放行。
+        def query(self, model):
+            return self
+
+        def filter(self, *a, **kw):
+            return self
+
+        def first(self):
+            return SimpleNamespace(source_id="src-1")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("app.core.database.SessionLocal", lambda: _StubDB())
+    monkeypatch.setattr(ops, "catalog_authorize_fn", lambda db, item, caller: True)
     monkeypatch.setattr(ops, "query_catalog_fn", reset_connection)
 
     query = ExecutionNode(

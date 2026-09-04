@@ -379,6 +379,23 @@ class TestOperators:
         assert payload["metadata"]["materialized_rows"] == 2
 
     def test_query_uses_injected_catalog_fn(self, monkeypatch):
+        class _StubDB:
+            # authz 接线后的 DB-free 替身：目录项存在、谓词注入放行。
+            def query(self, model):
+                return self
+
+            def filter(self, *a, **kw):
+                return self
+
+            def first(self):
+                return SimpleNamespace(source_id="src-1")
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr("app.core.database.SessionLocal", lambda: _StubDB())
+        monkeypatch.setattr(ops, "catalog_authorize_fn", lambda db, item, caller: True)
+
         def fake_query(db, item_id, spec):
             assert item_id == "cat-1"
             return SimpleNamespace(features=_fc(2), total_matching=2,
