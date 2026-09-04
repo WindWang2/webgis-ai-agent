@@ -172,3 +172,22 @@ async def get_execution_run_summary(
     if run is None:
         raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND"})
     return {"lines": run.summary_lines()}
+
+
+@router.post("/plans/drift-check", tags=["GeoCompute / 执行平面"])
+async def drift_check(
+    body: Dict[str, Any],
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+):
+    """对持久化计划记录做语义漂移判定（ADR-0096 D7）。
+
+    body: {"stored": {...持久记录...}, "plan": {ExecutionPlanIn（可选）}}
+    返回 DriftVerdict（current/stale_runtime/degraded_plan/unknown）。
+    """
+    from app.services.geocompute.drift import check_plan_drift
+
+    stored = body.get("stored")
+    plan_in = body.get("plan")
+    plan = _plan_from_request(ExecutionPlanIn(**plan_in)) if plan_in else None
+    verdict = check_plan_drift(stored, plan=plan)
+    return verdict.to_dict()

@@ -111,10 +111,34 @@ class GeoExecutionEngine:
         *,
         session_id: Optional[str] = None,
         cancel_token: Optional[CancellationToken] = None,
+        governor: Optional[Any] = None,
+        governor_parent_path: Optional[str] = None,
     ) -> ExecutionRun:
-        """执行整个计划（同步；调用方负责卸载到线程）。"""
+        """执行整个计划（同步；调用方负责卸载到线程）。
+
+        ``governor``（可选，ResourceGovernor）：给定后在
+        ``governor_parent_path``（默认根）下创建 execution 作用域，准入
+        与逐节点记账沿层级链生效（ADR-0096 D6）。"""
         graph.validate_plan(plan)
         self._admission_check(plan)
+        gov_path: Optional[str] = None
+        if governor is not None:
+            from app.services.geocompute.budgets import BudgetLimits, ScopeKind
+
+            parent = governor_parent_path or "global:root"
+            limits = BudgetLimits(
+                max_rows=plan.budget.max_rows,
+                max_bytes=plan.budget.max_bytes,
+                max_nodes=plan.budget.max_nodes,
+            )
+            gov_path = governor.create_scope(
+                parent, ScopeKind.EXECUTION, f"gexec-{id(plan) % 10**8}",
+                limits=limits,
+            )
+            total_rows = sum(
+                (n.estimate.rows or 0) for n in plan.nodes if n.estimate
+            )
+            governor.admit(gov_path, rows=total_rows or None, nodes=0)
 
         run_id = f"gexec-{uuid.uuid4().hex[:12]}"
         plan_fp = plan.graph_fingerprint()
@@ -138,11 +162,13 @@ class GeoExecutionEngine:
                 self._run_outputs.pop(old, None)
 
         tracing.emit("run_started", run_id=run_id, plan_fingerprint=plan_fp,
-                     nodes=len(plan.nodes), status="running")
+                     nodes=len(plan.nodes), status="running",
+                     budget_scope=gov_path)
         started = time.monotonic()
         try:
             self._run_waves(run, plan, outputs, session_id=session_id,
-                            cancel_token=cancel_token, deadline_ts=deadline_ts)
+                            cancel_token=cancel_token, deadline_ts=deadline_ts,
+                            governor=governor, gov_path=gov_path)
         finally:
             run.wall_time_s = round(time.monotonic() - started, 6)
 
@@ -216,6 +242,8 @@ class GeoExecutionEngine:
         session_id: Optional[str],
         cancel_token: Optional[CancellationToken],
         deadline_ts: float,
+        governor: Optional[Any] = None,
+        gov_path: Optional[str] = None,
     ) -> None:
         node_map = plan.node_map()
         for wave in graph.topo_wave_order(plan):
@@ -243,7 +271,8 @@ class GeoExecutionEngine:
             if len(runnable) == 1:
                 self._execute_one(run, node_map[runnable[0]], outputs,
                                   session_id=session_id, cancel_token=cancel_token,
-                                  deadline_ts=deadline_ts, budget=plan.budget)
+                                  deadline_ts=deadline_ts, budget=plan.budget,
+                                  governor=governor, gov_path=gov_path)
             else:
                 with ThreadPoolExecutor(
                     max_workers=min(self._max_workers, len(runnable)),
@@ -254,6 +283,7 @@ class GeoExecutionEngine:
                             self._execute_one, run, node_map[nid], outputs,
                             session_id=session_id, cancel_token=cancel_token,
                             deadline_ts=deadline_ts, budget=plan.budget,
+                            governor=governor, gov_path=gov_path,
                         )
                         for nid in runnable
                     }
@@ -273,6 +303,8 @@ class GeoExecutionEngine:
         cancel_token: Optional[CancellationToken],
         deadline_ts: float,
         budget: Any = None,
+        governor: Optional[Any] = None,
+        gov_path: Optional[str] = None,
     ) -> None:
         ev = run.evidence[node.node_id]
         node_deadline = deadline_ts
@@ -319,6 +351,7 @@ class GeoExecutionEngine:
                              status="completed", rows=ev.rows_emitted,
                              duration_s=ev.duration_s, job_id=done["job_id"],
                              policy="durable_job")
+                self._governor_charge(governor, gov_path, node, payload)
             except OperationCancelled:
                 ev.status = "cancelled"
                 ev.error_code = "CANCELLED"
@@ -342,6 +375,7 @@ class GeoExecutionEngine:
             if cached is not None and "__size__" in cached:
                 payload = {k: v for k, v in cached.items() if k != "__size__"}
                 outputs[node.node_id] = payload
+                self._governor_charge(governor, gov_path, node, payload)
                 ev.status = "reused"
                 ev.rows_emitted = self._count_rows(payload)
                 tracing.emit("node_reused", run_id=run.run_id, node_id=node.node_id,
@@ -370,6 +404,7 @@ class GeoExecutionEngine:
                     payload = ops.execute_node(ctx, node, outputs)
                 outputs[node.node_id] = payload
                 self._store.put(graph.node_reuse_key(run.plan_fingerprint, node), payload)
+                self._governor_charge(governor, gov_path, node, payload)
                 ev.status = "completed"
                 ev.rows_emitted = self._count_rows(payload)
                 ev.duration_s = round(time.monotonic() - started, 6)
@@ -417,6 +452,16 @@ class GeoExecutionEngine:
         tracing.emit("node_failed", run_id=run.run_id, node_id=node.node_id,
                      status="failed", error_code=ev.error_code,
                      duration_s=ev.duration_s)
+
+    @staticmethod
+    def _governor_charge(governor: Any, gov_path: Optional[str],
+                         node: ExecutionNode, payload: dict[str, Any]) -> None:
+        """节点完成 → 沿层级链记账（行数；字节计量的 O(N) 近似只在有
+        bytes 限额的作用域上才有意义，这里以行数为准，诚实有界）。"""
+        if governor is None or gov_path is None:
+            return
+        rows = len(payload.get("features") or payload.get("rows") or [])
+        governor.charge(gov_path, rows=rows, nodes=1)
 
     @staticmethod
     def _count_rows(payload: dict[str, Any]) -> Optional[int]:
