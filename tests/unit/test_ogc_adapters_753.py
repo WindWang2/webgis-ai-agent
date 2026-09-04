@@ -13,13 +13,21 @@ from app.services.data_fabric.adapters import (
     WMSWMTSAdapter,
 )
 from tests.unit.test_data_fabric_contract import verify_adapter_contract
+from app.services.data_fabric.errors import SourceBadResponseError
 
 
 class FakeResponse:
     def __init__(self, *, json_data=None, content=b"", text="", status_code=200,
                  headers=None):
+        import json as _json
         self._json = json_data
-        self.content = content if content else text.encode()
+        # bounded_get 走 iter_content：json fixture 需要落到 content
+        if content:
+            self.content = content
+        elif json_data is not None:
+            self.content = _json.dumps(json_data).encode()
+        else:
+            self.content = text.encode()
         self.text = text or (content.decode() if content else "")
         self.status_code = status_code
         self.headers = headers or {"Content-Type": "application/json"}
@@ -33,6 +41,14 @@ class FakeResponse:
             raise ValueError("no json")
         return self._json
 
+    def iter_content(self, chunk_size=65536):
+        body = self.content
+        for i in range(0, len(body), chunk_size):
+            yield body[i:i + chunk_size]
+
+    def close(self):
+        pass
+
 
 class FakeSession:
     """Records requests; routes by substring on the URL."""
@@ -42,7 +58,7 @@ class FakeSession:
         self.headers = {}
         self.routes = {}
 
-    def get(self, url, params=None, timeout=None):
+    def get(self, url, params=None, timeout=None, **kwargs):
         p = dict(params or {})
         self.calls.append({"url": url, "params": p})
         # route on URL + serialized params: OGC endpoints carry REQUEST in
@@ -132,7 +148,7 @@ def ogc():
     adapter = OGCAPIAdapter(profile)
     s = FakeSession()
 
-    def route(url, params=None, timeout=None):
+    def route(url, params=None, timeout=None, **kwargs):
         s.calls.append({"url": url, "params": dict(params or {})})
         if url.endswith("/collections") and params is None:
             return FakeResponse(json_data=OGC_COLLECTIONS)
@@ -155,7 +171,7 @@ def arcgis():
     profile.url = "https://example.com/arcgis/rest/services/Hosted/FS/FeatureServer"
     adapter = ArcGISAdapter(profile)
 
-    def route(url, params=None, timeout=None):
+    def route(url, params=None, timeout=None, **kwargs):
         adapter.session.calls.append({"url": url, "params": dict(params or {})})
         if url.rstrip("/").endswith("FeatureServer"):
             return FakeResponse(json_data=ARCGIS_SERVICE)
@@ -191,7 +207,8 @@ def test_wfs_query_bbox_pushdown_and_limit_bound(wfs):
     res = wfs.query("roads", QuerySpec(limit=5, bbox=[116.0, 39.5, 117.0, 40.5]))
     assert res.features and res.metadata["pushdown_bbox"] is True
     call = next(c for c in wfs.session.calls if c["params"].get("REQUEST") == "GetFeature")
-    assert call["params"]["BBOX"] == "116.0,39.5,117.0,40.5,EPSG:4326"
+    # V2（审计 M3）：WFS 2.0 srsName/BBOX 走 URN CRS84（显式 lon/lat 轴序）
+    assert call["params"]["BBOX"] == "116.0,39.5,117.0,40.5,urn:ogc:def:crs:OGC:1.3:CRS84"
     # absurd limit clamps to MAX_QUERY_LIMIT
     wfs.query("roads", QuerySpec(limit=999999))
     call2 = wfs.session.calls[-1]
@@ -206,20 +223,20 @@ def test_wfs_query_non_json_200_is_typed_error_766(wfs):
     server ignoring OUTPUTFORMAT) must be an in-band typed error — never a
     silently empty "successful" dataset."""
     wfs.session.routes = {
+        "GetCapabilities": FakeResponse(content=WFS_CAPABILITIES),
         "/wfs": FakeResponse(
             text="<wfs:FeatureCollection/>", headers={"Content-Type": "text/xml"}
         ),
     }
-    res = wfs.query("roads", QuerySpec(limit=5))
-    assert res.features == []
-    assert res.metadata["error_type"] == "SOURCE_BAD_RESPONSE"
-    assert "non-JSON" in res.schema_info["error"]
+    with pytest.raises(SourceBadResponseError, match="non-JSON|JSON"):
+        wfs.query("roads", QuerySpec(limit=5))
 
 
 def test_wfs_query_declared_non_4326_crs_is_typed_error_769(wfs):
     """#769: a FeatureCollection declaring a projected CRS must be refused with
     a typed error — projected coordinates must not flow on as WGS84 degrees."""
     wfs.session.routes = {
+        "GetCapabilities": FakeResponse(content=WFS_CAPABILITIES),
         "/wfs": FakeResponse(json_data={
             "type": "FeatureCollection",
             "crs": "urn:ogc:def:crs:EPSG::28992",
@@ -228,17 +245,20 @@ def test_wfs_query_declared_non_4326_crs_is_typed_error_769(wfs):
                           "properties": {}}],
         }),
     }
-    res = wfs.query("roads", QuerySpec(limit=5))
-    assert res.features == []
-    assert res.metadata["error_type"] == "SOURCE_BAD_RESPONSE"
-    assert "28992" in res.metadata["crs"]
+    with pytest.raises(SourceBadResponseError, match="28992"):
+        wfs.query("roads", QuerySpec(limit=5))
 
 
 def test_wfs_query_sends_srsname_4326_769(wfs):
     """#769: GetFeature must negotiate WGS84 output via SRSNAME/srsName."""
     wfs.query("roads", QuerySpec(limit=5))
     call = next(c for c in wfs.session.calls if c["params"].get("REQUEST") == "GetFeature")
-    assert call["params"]["SRSNAME"] == "EPSG:4326"
+    # WFS 2.0 → URN CRS84；WFS 1.0 → EPSG 短形式（轴序语义各自正确）
+    assert call["params"]["SRSNAME"] == "urn:ogc:def:crs:OGC:1.3:CRS84"
+    wfs.version = "1.0.0"
+    wfs.query("roads", QuerySpec(limit=5))
+    gf_calls = [c for c in wfs.session.calls if c["params"].get("REQUEST") == "GetFeature"]
+    assert gf_calls[-1]["params"]["SRSNAME"] == "EPSG:4326"
 
 
 WFS_CAPABILITIES_SRS = b"""<?xml version="1.0"?>
@@ -262,6 +282,7 @@ WFS_CAPABILITIES_SRS = b"""<?xml version="1.0"?>
 def test_wfs_describe_parses_default_srs_769(wfs):
     """#769: describe() reads DefaultSRS + WGS84BoundingBox from
     GetCapabilities instead of fabricating EPSG:4326 / a worldwide bbox."""
+    wfs._caps_cache = None
     wfs.session.routes = {"GetCapabilities": FakeResponse(content=WFS_CAPABILITIES_SRS)}
     desc = wfs.describe("bag:pand")
     assert desc.srs == "EPSG:28992"
@@ -271,6 +292,7 @@ def test_wfs_describe_parses_default_srs_769(wfs):
 def test_wfs_describe_no_srs_declared_is_none_769(wfs):
     """#769: a FeatureType with no DefaultSRS gets srs=None (never a fabricated
     EPSG:4326), and an unreachable capabilities document likewise."""
+    wfs._caps_cache = None
     wfs.session.routes = {"GetCapabilities": FakeResponse(content=WFS_CAPABILITIES)}
     desc = wfs.describe("roads")  # present in capabilities but no SRS declared
     assert desc.srs is None

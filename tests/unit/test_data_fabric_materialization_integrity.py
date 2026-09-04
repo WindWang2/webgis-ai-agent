@@ -118,27 +118,49 @@ async def test_materialize_set_alias_failure_keeps_valid_ref(monkeypatch):
 def _mock_db_with_item():
     item = MagicMock()
     item.id = "cat1"
+    item.name = "ds1"
     item.source_id = "src1"
     item.title = "T"
+    # data_source 提供真实字符串（V2 物化路径构造 ConnectionProfile 需要可校验值）
+    ds = MagicMock()
+    ds.id = "src1"
+    ds.name = "src1"
+    ds.source_type = "generic"
+    ds.endpoint_url = "https://example.com/api"
+    ds.connection_profile = {"options": {}, "allow_private": False}
+    item.data_source = ds
     db = MagicMock()
     db.query.return_value.filter.return_value.first.return_value = item
     return db, item
 
 
-async def _async_query(cls, db, item_id, spec, cancel_token=None):
-    """Async stand-in for query_catalog_item_async (bypasses real adapter build)."""
-    return _qr()
+class _FakeAdapter:
+    """V2 单管线 seam：get_adapter 返回的假适配器（query → 固定 QueryResult）。"""
+
+    def __init__(self, result=None, error=None):
+        self._result = result if result is not None else _qr()
+        self._error = error
+        self.profile = MagicMock()
+        self.profile.source_type = "generic"
+
+    def query(self, dataset_id, spec):
+        if self._error is not None:
+            raise self._error
+        return self._result
+
+
+def _patch_pipeline(monkeypatch, adapter=None):
+    """把 V2 物化管线固定为假适配器（绕过真实连接构造）。"""
+    monkeypatch.setattr(
+        DataFabricManager, "get_adapter", staticmethod(lambda profile: adapter or _FakeAdapter())
+    )
 
 
 @pytest.mark.asyncio
 async def test_manager_materialize_store_unavailable_writes_no_audit(monkeypatch):
     """Store-unavailable → success=False AND no audit row added/committed."""
     db, _item = _mock_db_with_item()
-    monkeypatch.setattr(
-        DataFabricManager,
-        "query_catalog_item_async",
-        classmethod(_async_query),
-    )
+    _patch_pipeline(monkeypatch)
 
     async def fake_store(session_id, data, prefix="data"):
         return f"{UNAVAILABLE_REF_PREFIX}xyz"
@@ -159,11 +181,7 @@ async def test_manager_materialize_audit_commit_failure_rolls_back(monkeypatch):
     """Audit commit failure after a successful store → success=False + rollback."""
     db, _item = _mock_db_with_item()
     db.commit.side_effect = RuntimeError("db gone")
-    monkeypatch.setattr(
-        DataFabricManager,
-        "query_catalog_item_async",
-        classmethod(_async_query),
-    )
+    _patch_pipeline(monkeypatch)
 
     async def fake_store(session_id, data, prefix="data"):
         return "ref:df-real456"
@@ -182,11 +200,7 @@ async def test_manager_materialize_audit_commit_failure_rolls_back(monkeypatch):
 async def test_manager_materialize_success_commits_audit(monkeypatch):
     """Happy path → success=True, real ref, audit committed once."""
     db, _item = _mock_db_with_item()
-    monkeypatch.setattr(
-        DataFabricManager,
-        "query_catalog_item_async",
-        classmethod(_async_query),
-    )
+    _patch_pipeline(monkeypatch)
 
     async def fake_store(session_id, data, prefix="data"):
         return "ref:df-real789"
@@ -267,14 +281,8 @@ async def test_manager_materialize_typed_source_failure_no_ref_no_audit(monkeypa
 
     db, _item = _mock_db_with_item()
 
-    async def _failing_async_query(cls, db, item_id, spec, cancel_token=None):
-        raise SourceBadResponseError("HTTP 503")
-
-    monkeypatch.setattr(
-        DataFabricManager,
-        "query_catalog_item_async",
-        classmethod(_failing_async_query),
-    )
+    # V2 单管线：假适配器抛 typed error
+    _patch_pipeline(monkeypatch, adapter=_FakeAdapter(error=SourceBadResponseError("HTTP 503")))
 
     res = await DataFabricManager.materialize_catalog_item(db=db, session_id="s1", item_id="cat1")
 

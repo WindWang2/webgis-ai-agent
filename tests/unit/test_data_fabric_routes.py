@@ -122,24 +122,29 @@ def test_data_fabric_rest_routes():
         db.add(item)
         db.commit()
 
-    async def _fake_async_query(cls, db, item_id, spec, cancel_token=None):
-        return QueryResult(
-            dataset_id=f"cat_{source_id}_default",
-            features=[{"type": "Feature", "geometry": {"type": "Point", "coordinates": [100.0, 0.0]}, "properties": {"name": "Sample"}}],
-            total_count=1,
-        )
+    # V2（ADR-0094 §8）：REST 物化走 MaterializationService 单管线 —— seam
+    # 从 query_catalog_item_async 换成 get_adapter（ref 前缀统一 data-fabric）。
+    class _FakeAdapter:
+        def query(self, dataset_id, spec):
+            return QueryResult(
+                dataset_id=f"cat_{source_id}_default",
+                features=[{"type": "Feature", "geometry": {"type": "Point", "coordinates": [100.0, 0.0]}, "properties": {"name": "Sample"}}],
+                total_count=1,
+            )
 
-    with patch("app.services.data_fabric.manager.DataFabricManager.query_catalog_item_async", classmethod(_fake_async_query)):
+    with patch("app.services.data_fabric.manager.DataFabricManager.get_adapter", staticmethod(lambda profile: _FakeAdapter())):
         mat_payload = {
             "session_id": "test_session_12345",
             "catalog_item_id": f"cat_{source_id}_default",
             "query_spec": {"limit": 5},
         }
         mat_res = client.post("/api/v1/data-fabric/materialize", json=mat_payload, headers=auth_headers)
-        assert mat_res.status_code == 200
+        assert mat_res.status_code == 200, mat_res.text
         mat_data = mat_res.json()
         assert mat_data["success"] is True
-        assert mat_data["ref_id"].startswith("ref:df-")
+        assert mat_data["ref_id"].startswith("ref:data-fabric-"), (
+            "V2 统一 ref 前缀（此前 REST df / 工具 data-fabric 双前缀）"
+        )
         assert mat_data["feature_count"] == 1
 
     # 8. Delete source

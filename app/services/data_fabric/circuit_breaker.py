@@ -10,6 +10,7 @@ The clock is injectable so tests are deterministic (no real sleeps). State is
 bounded: one entry per source id, evicted LRU beyond ``max_entries``.
 """
 import logging
+import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -95,7 +96,13 @@ class CircuitBreaker:
 
 
 class CircuitBreakerRegistry:
-    """Bounded registry of per-source breakers (LRU evict beyond max_entries)."""
+    """Bounded registry of per-source breakers (LRU evict beyond max_entries).
+
+    M1（ADR-0094 §10 / 审计）：registry 方法加 ``threading.Lock`` —— sync_catalog
+    以 ≤16 线程并发 describe 同一 source（同 breaker entry），query 走
+    ``asyncio.to_thread``；无锁的 ``consecutive_failures += 1`` 会丢失更新，
+    OrderedDict move_to_end/逐出同样需要互斥。
+    """
 
     def __init__(
         self,
@@ -105,8 +112,10 @@ class CircuitBreakerRegistry:
         self._breaker = breaker or CircuitBreaker()
         self._entries: "OrderedDict[str, _BreakerEntry]" = OrderedDict()
         self._max_entries = max_entries
+        self._lock = threading.Lock()
 
     def _entry(self, source_key: str) -> _BreakerEntry:
+        """调用方必须已持有 ``self._lock``。"""
         entry = self._entries.get(source_key)
         if entry is None:
             entry = _BreakerEntry()
@@ -118,16 +127,32 @@ class CircuitBreakerRegistry:
         return entry
 
     def state(self, source_key: str) -> CircuitState:
-        return self._breaker._state(self._entry(source_key))
+        with self._lock:
+            return self._breaker._state(self._entry(source_key))
 
     def allow(self, source_key: str) -> bool:
-        return self._breaker.allow(self._entry(source_key))
+        with self._lock:
+            return self._breaker.allow(self._entry(source_key))
+
+    def release_trial(self, source_key: str) -> None:
+        """M1：无条件释放 half-open trial 名额。
+
+        ``allow()`` 在 HALF_OPEN 下占用唯一 trial 名额；调用方若此后未走到
+        record_success/record_failure（如健康检查缓存命中提前返回），名额
+        永久泄漏 → 熔断卡死 fail-fast。本方法用于该路径的确定性释放。
+        """
+        with self._lock:
+            entry = self._entries.get(source_key)
+            if entry is not None:
+                entry.half_open_trial_inflight = False
 
     def record_success(self, source_key: str) -> None:
-        self._breaker.record_success(self._entry(source_key))
+        with self._lock:
+            self._breaker.record_success(self._entry(source_key))
 
     def record_failure(self, source_key: str, exc: BaseException) -> None:
-        self._breaker.record_failure(self._entry(source_key), exc)
+        with self._lock:
+            self._breaker.record_failure(self._entry(source_key), exc)
 
     def call(
         self,
@@ -150,6 +175,14 @@ class CircuitBreakerRegistry:
             result = fn(*args, **kwargs)
         except Exception as exc:
             self.record_failure(source_key, exc)
+            raise
+        except BaseException:
+            # R1-m9：BaseException（如 asyncio.CancelledError）同样释放
+            # half-open trial，否则名额永久泄漏 → 熔断卡死 fail-fast。
+            with self._lock:
+                entry = self._entries.get(source_key)
+                if entry is not None:
+                    entry.half_open_trial_inflight = False
             raise
         self.record_success(source_key)
         return result

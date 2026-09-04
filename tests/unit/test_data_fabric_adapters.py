@@ -2,6 +2,8 @@
 Unit Tests for All 10 Data Fabric Adapters Interface Contracts
 (PostGIS, OGC API Features, WFS, WMS/WMTS, ArcGIS REST, STAC, GeoParquet, FlatGeobuf, PMTiles, S3)
 """
+import os
+
 from app.schemas.data_fabric_schema import ConnectionProfile
 from app.services.data_fabric.adapters import (
     PostGISAdapter,
@@ -18,9 +20,14 @@ from app.services.data_fabric.adapters import (
 
 
 def test_postgis_adapter_interface():
+    # CI 的 Backend Tests job 提供真实 PostGIS service 并注入 DATABASE_URL；
+    # 本地缺省走 localhost trust。ConnectionProfile 现在会把 DSN 解析进
+    # 结构化字段（审计 C2 配套）——describe 若连接失败将诚实抛
+    # SourceUnreachableError，不再伪造 descriptor。
+    dsn = os.environ.get("DATABASE_URL", "postgresql://postgres@localhost:5432/postgres")
     profile = ConnectionProfile(
         source_type="postgis",
-        endpoint_url="postgresql://user:pass@localhost:5432/gisdb",
+        endpoint_url=dsn,
         name="test_postgis",
     )
     adapter = PostGISAdapter(profile)

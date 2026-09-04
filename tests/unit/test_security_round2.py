@@ -92,14 +92,14 @@ async def test_gov_adapter_fetch_allows_public_url(monkeypatch):
         ("score > 4.5", '"score" > %s', 4.5),
         ("name LIKE 'shop%'", '"name" LIKE %s', "shop%"),
         ("active = true", '"active" = %s', True),
-        ("deleted = null", '"deleted" = %s', None),
+        ("deleted = null", '"deleted" IS NULL', []),  # V2: NULL 字面量语义修正为 IS NULL（无参数）
         ("city != 'Beijing'", '"city" != %s', "Beijing"),
     ],
 )
 def test_parse_safe_where_valid(expr, expected_sql, expected_param):
     sql, params = _parse_safe_where(expr)
     assert sql == expected_sql
-    assert params == [expected_param]
+    assert params == (expected_param if isinstance(expected_param, list) else [expected_param])
 
 
 @pytest.mark.parametrize(
@@ -151,26 +151,25 @@ def test_parse_safe_where_binds_literal_percent_s():
 
 
 def test_postgis_query_failure_returns_empty_not_fabricated(monkeypatch):
-    """SEC-06: a failed PostGIS query must return EMPTY features with an
-    explicit error — never a fabricated Beijing sample polygon."""
+    """SEC-06: a failed PostGIS query must FAIL loudly (V2 typed raise) —
+    never fabricated features nor an empty-success (审计 C2/#766 语义升级）。"""
+    import pytest as _pytest
+
     from app.services.data_fabric.adapters.postgis_adapter import PostGISAdapter
     from app.schemas.data_fabric_schema import QuerySpec
 
     adapter = PostGISAdapter.__new__(PostGISAdapter)  # bypass __init__
 
-    def _boom(self, conn):
-        raise RuntimeError("connection refused")
+    class _Ctx:
+        def __enter__(self):
+            raise RuntimeError("connection refused")
 
-    monkeypatch.setattr(adapter, "_connection_context", lambda: _boom(None))
-    monkeypatch.setattr(adapter, "_sanitize_identifier", lambda ds: ("public", ds))
+        def __exit__(self, *a):
+            return None
 
-    result = adapter.query("some_table", QuerySpec(limit=10))
-    assert result.features == [], (
-        "SEC-06 regression: query failure returned fabricated features"
-    )
-    assert result.total_count == 0
-    assert result.metadata.get("success") is False
-    assert "error_hint" in result.metadata
+    monkeypatch.setattr(adapter, "_connection_context", _Ctx)
+    with _pytest.raises(RuntimeError, match="connection refused"):
+        adapter.query("some_table", QuerySpec(limit=10))
 
 
 # ---------------------------------------------------------------------------

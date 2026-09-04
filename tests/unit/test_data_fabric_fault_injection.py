@@ -154,8 +154,13 @@ def test_classify_http_status_mapping():
 
 def test_stac_real_endpoint_failure_returns_typed_error_not_synthetic():
     """When a real STAC endpoint is configured and returns 503, the adapter must
-    return empty features + a typed error_type — NOT synthetic fixtures
-    masquerading as remote results (the 'silent wrong data' P0)."""
+    raise a typed error — NOT synthetic fixtures masquerading as remote results
+    (the 'silent wrong data' P0).
+
+    ADR-0094 Wave F: V2 adapters RAISE typed errors from query() instead of
+    returning in-band empty "successful" results, so the old in-band
+    metadata["error_type"] assertion moved to pytest.raises (same stable
+    SOURCE_BAD_RESPONSE code, now on the exception)."""
     from app.schemas.data_fabric_schema import ConnectionProfile, QuerySpec
     from app.services.data_fabric.adapters.stac_adapter import STACAdapter
 
@@ -166,10 +171,9 @@ def test_stac_real_endpoint_failure_returns_typed_error_not_synthetic():
     adapter = STACAdapter(ConnectionProfile(provider_type="stac", endpoint=stac_base))
     adapter.session = fake_session  # inject the offline transport
 
-    res = adapter.query("landsat-8-c2-l2", QuerySpec(limit=10))
-    assert res.features == []           # no fabricated features
-    assert res.metadata["source"] == "remote"
-    assert res.metadata["error_type"] == "SOURCE_BAD_RESPONSE"
+    with pytest.raises(SourceBadResponseError) as excinfo:
+        adapter.query("landsat-8-c2-l2", QuerySpec(limit=10))
+    assert excinfo.value.code == "SOURCE_BAD_RESPONSE"
 
 
 def test_stac_no_endpoint_demo_mode_is_labeled_synthetic():
@@ -185,16 +189,19 @@ def test_stac_no_endpoint_demo_mode_is_labeled_synthetic():
 
 def test_geoparquet_configured_but_unreadable_returns_typed_error():
     """A configured GeoParquet source that isn't a readable local file must NOT
-    serve synthetic fixtures as real data — it returns empty + SOURCE_UNREACHABLE."""
+    serve synthetic fixtures as real data — it raises a typed error.
+
+    ADR-0094 Wave F: V2 adapters RAISE typed errors from query() instead of
+    returning in-band empty "successful" results (old in-band
+    metadata["error_type"] assertion moved to pytest.raises)."""
     from app.schemas.data_fabric_schema import ConnectionProfile, QuerySpec
     from app.services.data_fabric.adapters.geoparquet_adapter import GeoParquetAdapter
+    from app.services.data_fabric.errors import SourceUnreachableError
 
     adapter = GeoParquetAdapter(ConnectionProfile(source_type="geoparquet", endpoint="s3://bucket/data.parquet"))
     assert adapter.probe() is False  # configured but not a readable local file
-    res = adapter.query("data.parquet", QuerySpec(limit=5))
-    assert res.features == []
-    assert res.metadata["source"] == "remote"
-    assert res.metadata["error_type"] == "SOURCE_UNREACHABLE"
+    with pytest.raises(SourceUnreachableError):
+        adapter.query("data.parquet", QuerySpec(limit=5))
 
 
 def test_geoparquet_demo_mode_is_labeled_synthetic():
@@ -208,14 +215,16 @@ def test_geoparquet_demo_mode_is_labeled_synthetic():
 
 
 def test_flatgeobuf_configured_but_unreadable_returns_typed_error():
+    """ADR-0094 Wave F: configured-but-unreadable raises typed
+    SourceUnreachableError (was an in-band metadata["error_type"] marker)."""
     from app.schemas.data_fabric_schema import ConnectionProfile, QuerySpec
     from app.services.data_fabric.adapters.flatgeobuf_adapter import FlatGeobufAdapter
+    from app.services.data_fabric.errors import SourceUnreachableError
 
     adapter = FlatGeobufAdapter(ConnectionProfile(source_type="flatgeobuf", endpoint="s3://bucket/data.fgb"))
     assert adapter.probe() is False
-    res = adapter.query("data.fgb", QuerySpec(limit=5))
-    assert res.features == []
-    assert res.metadata["error_type"] == "SOURCE_UNREACHABLE"
+    with pytest.raises(SourceUnreachableError):
+        adapter.query("data.fgb", QuerySpec(limit=5))
 
 
 def test_pmtiles_and_s3_query_carry_source_label():

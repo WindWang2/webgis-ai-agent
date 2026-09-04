@@ -3,9 +3,26 @@ OGC API - Features Data Source Adapter
 """
 import time
 import logging
-from typing import List, Dict, Any
+from typing import Any, Dict, List, Optional, Tuple
+
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
-from app.services.data_fabric.security import DataFabricSecurity, make_safe_session
+from app.services.data_fabric.errors import (
+    DataFabricError,
+    InvalidQueryError,
+    SourceBadResponseError,
+)
+from app.services.data_fabric.query.capabilities import get_capabilities
+from app.services.data_fabric.query.compilers import compile_predicate_cql2
+from app.services.data_fabric.query.evidence import build_evidence
+from app.services.data_fabric.query.models import CursorPage, OffsetPage
+from app.services.data_fabric.query.normalize import normalize_query_spec
+from app.services.data_fabric.query.planner import plan_query
+from app.services.data_fabric.query.execution import decode_cursor, encode_cursor
+from app.services.data_fabric.security import (
+    DataFabricSecurity,
+    make_safe_session,
+    safe_json_get,
+)
 from app.schemas.data_fabric_schema import (
     DatasetDescriptor,
     QuerySpec,
@@ -35,6 +52,42 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
         self.session = make_safe_session(allow_private=self.profile.allow_private)
         if "headers" in self.options:
             self.session.headers.update(self.options["headers"])
+        self._conformance_cache: Optional[Tuple[float, List[str]]] = None
+
+    # ── conformance / capability V2 ───────────────────────────────────
+
+    def _get_conformance(self) -> List[str]:
+        """/conformance 声明（60s 缓存；失败返回空表=保守）。"""
+        if self._conformance_cache and (time.monotonic() - self._conformance_cache[0]) < 60:
+            return self._conformance_cache[1]
+        classes: List[str] = []
+        try:
+            data = safe_json_get(
+                self.session, self.url.rstrip("/") + "/conformance", timeout=5,
+                max_bytes=2 * 1024 * 1024,
+            )
+            raw = data.get("conformsTo", []) if isinstance(data, dict) else []
+            classes = [str(c) for c in raw if isinstance(c, str)]
+        except Exception:
+            classes = []
+        self._conformance_cache = (time.monotonic(), classes)
+        return classes
+
+    def _conformance_declares(self, uri_fragment: str) -> bool:
+        return any(uri_fragment in c for c in self._get_conformance())
+
+    def _cql2_supported(self) -> bool:
+        """仅当服务声明 CQL2（text 或 JSON）时启用 filter 下推。"""
+        return self._conformance_declares("cql2-text") or self._conformance_declares(
+            "ogcapi-features-2"
+        ) or any("cql2" in c.lower() for c in self._get_conformance())
+
+    def _capabilities_v2(self):
+        caps = get_capabilities("ogc_api")
+        return caps.model_copy(update={"filter_pushdown": self._cql2_supported()})
+
+    def capabilities_v2(self):
+        return self._capabilities_v2()
 
     def probe(self) -> bool:
         """Lightweight reachability probe for OGC API landing page or collections."""
@@ -136,25 +189,25 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
                 source_type="ogc_api",
                 geometry_type=col_data.get("itemType", "Feature"),
                 srs=srs,
-                bbox=spatial_bbox or [-180.0, -90.0, 180.0, 90.0],
+                # R1-M6：extent 缺失 → None（unknown），绝不伪造全球框。
+                bbox=spatial_bbox,
                 feature_count=None,
                 fields=fields,
-                metadata={"collection_url": col_url, "links": col_data.get("links", [])},
+                metadata={
+                    # R1-M6：出目录的 URL 统一 redact（不携带 userinfo）
+                    "collection_url": DataFabricSecurity.redact_url(col_url),
+                    "links": col_data.get("links", []),
+                },
             )
         except Exception as e:
-            logger.warning(f"OGC API describe failed for collection '{dataset_id}': {e}")
-            return DatasetDescriptor(
-                id=dataset_id,
-                title=dataset_id,
-                description=f"OGC API Collection ({e})",
-                source_type="ogc_api",
-                geometry_type="Feature",
-                srs=None,
-                bbox=None,
-                feature_count=None,
-                fields=[],
-                metadata={"error": str(e)},
-            )
+            # R1-M6：describe 传输失败 → typed（stub descriptor 曾被 adapter
+            # sync 注册进 catalog —— 正是 ADR §9 禁止的 "失败 stub 落库"）。
+            logger.warning("OGC API describe failed for collection '%s': %s", dataset_id, e)
+            from app.services.data_fabric.errors import SourceUnreachableError
+
+            raise SourceUnreachableError(
+                f"OGC API describe failed for collection '{dataset_id}': {e}"
+            ) from e
 
     def preview(self, dataset_id: str, limit: int = 10) -> Dict[str, Any]:
         """Fetch bounded sample GeoJSON preview from OGC API items."""
@@ -190,69 +243,171 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
             }
 
     def query(self, dataset_id: str, query_spec: QuerySpec) -> QueryResult:
-        """Execute pushdown query against OGC API items endpoint."""
-        bounded_limit = max(1, min(query_spec.limit or 100, MAX_QUERY_LIMIT))
-        bounded_offset = max(0, query_spec.offset or 0)
-        start_time = time.time()
+        """V2: normalize → plan → 有界执行（conformance 门控 CQL2，links.next 游标）。"""
+        import time as _time
+
+        started = _time.monotonic()
+        try:
+            v2 = normalize_query_spec(query_spec)
+        except DataFabricError:
+            raise
 
         if not self.url:
-            return QueryResult(
-                dataset_id=dataset_id,
-                features=[],
-                total_count=0,
-                schema_info={"error": "Missing URL"},
-                metadata={"error_hint": "OGC API adapter unconfigured (missing URL)"},
+            raise InvalidQueryError("OGC API adapter unconfigured (missing URL)")
+        # R1-M2：聚合不支持 → typed。
+        if v2.aggregate:
+            from app.services.data_fabric.errors import QueryUnsupportedError
+
+            raise QueryUnsupportedError(
+                "OGC API Features does not support aggregation; use a PostGIS "
+                "source or materialize + local aggregation"
             )
-
-        items_url = f"{self.url.rstrip('/')}/collections/{dataset_id}/items"
-        params: Dict[str, Any] = {
-            "limit": bounded_limit,
-            "offset": bounded_offset,
-        }
-
-        if query_spec.bbox and len(query_spec.bbox) == 4:
-            params["bbox"] = ",".join(str(b) for b in query_spec.bbox)
-
-        where_text = getattr(query_spec, "where", None) or getattr(query_spec, "filter_expr", None) or getattr(query_spec, "filter", None)
-        if where_text:
-            params["filter"] = where_text
 
         try:
-            resp = self.session.get(items_url, params=params, timeout=15)
-            resp.raise_for_status()
-            geojson = resp.json()
-
-            features = geojson.get("features", [])
-            matched = geojson.get("numberMatched") or len(features)
-            exec_time = round((time.time() - start_time) * 1000, 2)
-
-            return QueryResult(
-                dataset_id=dataset_id,
-                features=features,
-                total_count=matched,
-                schema_info={"returned": len(features)},
-                metadata={
-                    "exec_time_ms": exec_time,
-                    "pushdown_bbox": bool(query_spec.bbox),
-                    "url": resp.url,
-                },
+            descriptor = self.describe(dataset_id)
+        except DataFabricError as e:
+            descriptor = DatasetDescriptor(
+                id=dataset_id, source_type="ogc_api", title=dataset_id,
+                metadata={"describe_error": str(e)[:200]},
             )
+            logger.warning("OGC describe failed during query (using minimal descriptor): %s", e)
+        from app.services.data_fabric.fingerprint import dataset_fingerprint_service
+
+        fp = dataset_fingerprint_service.calculate_descriptor_fingerprint(descriptor)
+        caps = self._capabilities_v2()
+        plan = plan_query(v2, descriptor, caps, source_id=self.profile.id, dataset_fingerprint=fp)
+
+        items_url = f"{self.url.rstrip('/')}/collections/{dataset_id}/items"
+        params: Dict[str, Any] = {"limit": v2.page.limit}
+
+        # offset 非核心参数：仅在 conformance 声明 paging 扩展时发送（否则
+        # 走 links.next 游标语义——单页 + has_more）。
+        supports_offset = self._conformance_declares(
+            "http://www.opengis.net/doc/IS/ogcapi-features-2/1.0"
+        ) or any("paging" in c.lower() for c in self._get_conformance())
+        offset = getattr(v2.page, "offset", 0)
+        if isinstance(v2.page, CursorPage):
+            # links.next 是 URL 令牌：cursor 直接作为 next URL 使用
+            if v2.page.cursor:
+                try:
+                    decoded = decode_cursor(v2.page.cursor)
+                except DataFabricError:
+                    decoded = None
+                if isinstance(decoded, list) and decoded and isinstance(decoded[0], str) \
+                        and decoded[0].startswith("http"):
+                    # R3-M2：cursor 可能被伪造为任意 URL（凭证外带/代理滥用），
+                    # 必须与注册源同源。
+                    from app.services.data_fabric.security import ensure_same_origin_url
+
+                    items_url = ensure_same_origin_url(decoded[0], self.url)
+                    params = {"limit": v2.page.limit}
+                    plan = plan.model_copy(update={"pagination_note": "links.next token"})
+                else:
+                    raise InvalidQueryError("malformed OGC cursor (expected links.next token)")
+        elif offset and supports_offset:
+            params["offset"] = offset
+        elif offset:
+            from app.services.data_fabric.errors import QueryUnsupportedError
+
+            raise QueryUnsupportedError(
+                f"server does not declare paging support; offset={offset} cannot be "
+                "honored (walk links.next cursors instead)",
+                details={"offset": offset},
+            )
+
+        if v2.spatial is not None:
+            if v2.spatial.op != "bbox":
+                raise InvalidQueryError(
+                    f"OGC API supports bbox pushdown only (got '{v2.spatial.op}')"
+                )
+            from app.services.data_fabric.query.predicates import bbox_crosses_antimeridian
+
+            if bbox_crosses_antimeridian(v2.spatial.bbox):
+                raise InvalidQueryError(
+                    "antimeridian-crossing bbox not supported by OGC API bbox param"
+                )
+            params["bbox"] = ",".join(str(b) for b in v2.spatial.bbox)
+            # bbox-crs 显式声明（默认 CRS84）
+            params["bbox-crs"] = "<http://www.opengis.net/def/crs/OGC/1.3/CRS84>"
+            params["crs"] = "<http://www.opengis.net/def/crs/OGC/1.3/CRS84>"
+
+        if v2.temporal is not None:
+            if v2.temporal.op == "during":
+                params["datetime"] = f"{v2.temporal.start}/{v2.temporal.end}"
+            elif v2.temporal.op == "before":
+                params["datetime"] = f"../{v2.temporal.value}"
+            else:
+                params["datetime"] = f"{v2.temporal.value}/.."
+
+        # CQL2 filter：仅当 conformance 声明且为 AST 时编译（filter-lang 显式）
+        if v2.filter is not None:
+            if not self._cql2_supported():
+                raise InvalidQueryError(
+                    "server does not declare CQL2 conformance; attribute filter "
+                    "unsupported for this source"
+                )
+            params["filter"] = compile_predicate_cql2(v2.filter)
+            params["filter-lang"] = "cql2-text"
+
+        try:
+            geojson = safe_json_get(
+                self.session, items_url, params=params,
+                timeout=min(v2.execution.deadline_s, 30.0),
+            )
+        except DataFabricError:
+            raise
         except Exception as e:
-            exec_time = round((time.time() - start_time) * 1000, 2)
-            logger.warning(f"OGC API query error for '{dataset_id}': {e}")
-            return QueryResult(
-                dataset_id=dataset_id,
-                features=[],
-                total_count=0,
-                schema_info={"error": str(e)},
-                metadata={
-                    "exec_time_ms": exec_time,
-                    "error_hint": (
-                        f"OGC API Features query error: {e}. "
-                        "Hint: Check if collection exists, endpoint complies with OGC API Features standard, and network is accessible."
-                    ),
-                },
-            )
+            raise SourceBadResponseError(f"OGC API Features query error: {e}") from e
+
+        features = geojson.get("features", []) if isinstance(geojson, dict) else []
+        if not isinstance(features, list):
+            features = []
+        matched = geojson.get("numberMatched") if isinstance(geojson, dict) else None
+        if isinstance(matched, str) and matched.isdigit():
+            matched = int(matched)
+        elif not isinstance(matched, int):
+            matched = None
+
+        next_url = None
+        if isinstance(geojson, dict):
+            for link in geojson.get("links", []) or []:
+                if isinstance(link, dict) and link.get("rel") == "next" and link.get("href"):
+                    next_url = str(link["href"])
+                    break
+
+        returned = len(features)
+        truncated = returned >= v2.page.limit
+        if matched is not None and isinstance(v2.page, OffsetPage):
+            truncated = matched > (v2.page.offset + returned)
+        next_cursor = encode_cursor([next_url]) if (truncated and next_url) else None
+
+        evidence = build_evidence(
+            plan, started_at=started, result_count=returned,
+            total_matching=matched, truncated=truncated,
+            rows_fetched=returned, rows_returned=returned, http_requests=1,
+        )
+        return QueryResult(
+            dataset_id=dataset_id,
+            features=features,
+            total_count=returned,
+            total_matching=matched,
+            returned_count=returned,
+            truncated=truncated,
+            has_more=truncated,
+            next_cursor=next_cursor,
+            result_mode="features",
+            execution_time_seconds=round(_time.monotonic() - started, 4),
+            schema_info={"returned": returned},
+            metadata={
+                "exec_time_ms": round((_time.monotonic() - started) * 1000, 2),
+                "pushdown_bbox": plan.pushed_spatial,
+                "pushdown_filter": bool(plan.pushed_filters),
+                "cql2_used": bool(v2.filter is not None),
+                "query_plan": plan.model_dump(),
+                "query_evidence": evidence.model_dump(),
+                "is_demo": False,
+            },
+        )
 
     def health(self) -> DataFabricHealth:
         """Diagnostic health check for OGC API endpoint."""

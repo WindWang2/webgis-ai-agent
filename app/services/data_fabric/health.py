@@ -100,6 +100,14 @@ class DataFabricHealthCheck:
         """
         key = source_key or (adapter.profile.id if adapter and adapter.profile else "unknown")
 
+        # 缓存先行（M1 修复）：allow() 在 HALF_OPEN 下会占用唯一 trial 名额；
+        # 若缓存命中在 allow 之后提前返回，名额永不释放 → 源被永久 fail-fast。
+        # 顺序改为：缓存未命中才请求 breaker 名额。
+        if use_cache:
+            cached = self._cache_get(key)
+            if cached is not None:
+                return cached
+
         # Circuit-breaker fast-fail.
         try:
             from app.services.data_fabric.circuit_breaker import get_breaker_registry
@@ -116,11 +124,6 @@ class DataFabricHealthCheck:
         except Exception:  # pragma: no cover - defensive
             pass
 
-        if use_cache:
-            cached = self._cache_get(key)
-            if cached is not None:
-                return cached
-
         start_time = time.perf_counter()
         try:
             if adapter.profile.url:
@@ -131,6 +134,14 @@ class DataFabricHealthCheck:
                     )
                 except DataFabricSecurityError as se:
                     elapsed = (time.perf_counter() - start_time) * 1000.0
+                    # M1：该路径未走到 record_*（永久性配置错误不计入熔断），
+                    # 显式释放 allow() 占用的 half-open trial 名额。
+                    try:
+                        from app.services.data_fabric.circuit_breaker import get_breaker_registry
+
+                        get_breaker_registry().release_trial(key)
+                    except Exception:  # pragma: no cover - defensive
+                        pass
                     health = DataFabricHealth(
                         status=STATUS_UNREACHABLE,
                         message=f"SSRF Security Violation: {se}",

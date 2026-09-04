@@ -56,12 +56,16 @@ class DataFabricDataset(Base):
     descriptor_json = Column(JSON, nullable=False, default=dict)
     meta_profile_json = Column(JSON, nullable=False, default=dict)
     fingerprint = Column(String(255), nullable=True)
+    # ADR-0094 §9（Catalog V2）：条目可用性。available=最近一次同步可见；
+    # unavailable=源仍可达但该数据集已从源消失（保留元数据供 stale 检索）。
+    availability = Column(String(32), nullable=False, default="available", server_default="available")
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
         Index("idx_catalog_source_name", "source_id", "name"),
         Index("idx_catalog_geom_feature", "geometry_type", "feature_type"),
+        Index("idx_catalog_availability", "availability"),
     )
 
     # cascade="all, delete-orphan" mirrors the FK's ondelete="CASCADE": deleting a
@@ -85,6 +89,9 @@ class DataMaterializationRecord(Base):
     ref_id = Column(String(255), nullable=False, index=True)
     query_spec_json = Column(JSON, nullable=False, default=dict)
     fingerprint = Column(String(255), nullable=True)
+    # ADR-0094 §43：查询指纹 + 结果模式（QueryEvidence 供 ADR-0092 lineage）。
+    query_fingerprint = Column(String(64), nullable=True)
+    result_mode = Column(String(32), nullable=True)
     record_count = Column(Integer, nullable=True)
     materialized_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 

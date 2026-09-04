@@ -1,7 +1,8 @@
 'use client';
 
-import { Download, Eye, Info } from 'lucide-react';
+import { Download, Eye, Info, Table2 } from 'lucide-react';
 import type { CatalogItem } from '@/lib/api/data-fabric';
+import { StatusBadge } from '@/components/shared/status-badge';
 
 export interface CatalogItemCardProps {
   item: CatalogItem;
@@ -10,16 +11,25 @@ export interface CatalogItemCardProps {
   onShowDescriptor: (itemId: string) => void;
   onPreview: (itemId: string) => void;
   onMaterialize: (item: CatalogItem) => void;
+  /** V2 数据工作台：打开数据集检视器（契约 + 查询构建器）。 */
+  onInspect: (item: CatalogItem) => void;
 }
 
-/** 空间目录单条卡片：标题/描述 + 几何类型徽标 + 契约/预览/加载至地图操作。 */
+/**
+ * 空间目录单条卡片：标题/描述 + 几何类型徽标 + 可用性徽标（V2：sync 后
+ * 数据集消失 → availability='unavailable'，元数据保留）+ 契约/预览/数据集/
+ * 加载至地图操作。
+ */
 export function CatalogItemCard({
   item,
   materializing,
   onShowDescriptor,
   onPreview,
   onMaterialize,
+  onInspect,
 }: CatalogItemCardProps) {
+  // 列表 summary 载荷未携带 availability 时视为可用（向后兼容）。
+  const unavailable = (item.availability ?? 'available') === 'unavailable';
   return (
     /* 与 layers-tab 行同款交互配方：hover 底色 + 左侧 accent 指示条位
        （border-l-2 border-l-transparent）；垂直内边距收一步更密。 */
@@ -33,12 +43,23 @@ export function CatalogItemCard({
             {item.description || item.name}
           </p>
         </div>
-        <span className="shrink-0 rounded-sm bg-surface-sunken px-1.5 py-0.5 font-mono text-micro text-ink-secondary">
-          {item.geometry_type || 'Vector'}
-        </span>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {unavailable && <StatusBadge status="stale" label="已下线" />}
+          <span className="rounded-sm bg-surface-sunken px-1.5 py-0.5 font-mono text-micro text-ink-secondary">
+            {item.geometry_type || 'Vector'}
+          </span>
+        </div>
       </div>
 
       <div className="mt-2 flex items-center gap-2 border-t border-edge-subtle pt-2 text-caption">
+        <button
+          type="button"
+          onClick={() => onInspect(item)}
+          className="flex items-center gap-1 rounded-sm bg-surface-sunken px-2 py-1 text-ink-secondary transition-colors hover:bg-surface-hover"
+        >
+          <Table2 size={12} aria-hidden />
+          <span>数据集</span>
+        </button>
         <button
           type="button"
           onClick={() => onShowDescriptor(item.id)}

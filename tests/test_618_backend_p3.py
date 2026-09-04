@@ -82,19 +82,30 @@ async def test_item6_audit_commit_failure_deletes_stored_ref(monkeypatch):
     store = MemorySessionStore()
     monkeypatch.setattr(df_manager, "session_data_manager", store)
 
+    # V2（ADR-0094 §8）：物化走 MaterializationService 单管线 —— get_adapter
+    # 是 seam；item.data_source 需要真实字符串（构造 ConnectionProfile）。
+    class _FakeAdapter:
+        def query(self, dataset_id, spec):
+            return _qr_features()
+
     item = MagicMock()
     item.id = "cat1"
+    item.name = "ds1"
     item.source_id = "src1"
     item.title = "T"
+    ds = MagicMock()
+    ds.id = "src1"
+    ds.name = "src1"
+    ds.source_type = "generic"
+    ds.endpoint_url = "https://example.com/api"
+    ds.connection_profile = {"options": {}, "allow_private": False}
+    item.data_source = ds
     db = MagicMock()
     db.query.return_value.filter.return_value.first.return_value = item
     db.commit.side_effect = RuntimeError("db gone")
 
-    async def _async_query(cls, db, item_id, spec, cancel_token=None):
-        return _qr_features()
-
     monkeypatch.setattr(
-        DataFabricManager, "query_catalog_item_async", classmethod(_async_query)
+        DataFabricManager, "get_adapter", staticmethod(lambda profile: _FakeAdapter())
     )
 
     res = await DataFabricManager.materialize_catalog_item(

@@ -13,6 +13,8 @@ These tests are RED on the pre-fix adapter and GREEN after the fix.
 """
 from unittest.mock import MagicMock
 
+import json
+
 import pytest
 import requests
 
@@ -37,12 +39,45 @@ def _clear_describe_cache():
 
 
 class _FakeResp:
-    def __init__(self, status_code=200, json_data=None):
+    """Bounded-friendly fake response.
+
+    ADR-0094 Wave F: the adapter's GETs now go through ``safe_json_get`` →
+    ``bounded_get`` (stream=True + Content-Length precheck + chunked body),
+    so the fake must implement the streaming response protocol
+    (raise_for_status / headers / iter_content / close) in addition to
+    ``.json()``. The assertions in these tests are unchanged.
+    """
+
+    def __init__(self, status_code=200, json_data=None, content=None):
         self.status_code = status_code
-        self._json = json_data if json_data is not None else {}
+        if content is not None:
+            self._raw = content
+            self._json = None
+        else:
+            self._json = json_data if json_data is not None else {}
+            self._raw = json.dumps(self._json).encode("utf-8")
+        self.headers = {"Content-Length": str(len(self._raw))}
+
+    @property
+    def content(self):
+        return self._raw
 
     def json(self):
+        if self._json is None:
+            raise ValueError("non-json body")
         return self._json
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            err = requests.exceptions.HTTPError(f"HTTP {self.status_code}")
+            err.response = self
+            raise err
+
+    def iter_content(self, chunk_size=65536):
+        yield self._raw
+
+    def close(self):
+        pass
 
 
 def _adapter(endpoint: str = _ENDPOINT) -> STACAdapter:
@@ -86,10 +121,10 @@ def test_list_datasets_server_error_returns_empty(monkeypatch):
 
 
 def test_list_datasets_non_json_200_returns_empty(monkeypatch):
+    # ADR-0094 Wave F: GETs go through safe_json_get, so a 200 with a
+    # non-JSON body fails at bounded_get's json.loads — same truthful [].
     def _bad_json(url, **kwargs):
-        resp = _FakeResp(status_code=200)
-        resp.json = lambda: (_ for _ in ()).throw(ValueError("not json"))
-        return resp
+        return _FakeResp(status_code=200, content=b"<html>not json</html>")
 
     adapter = _adapter()
     _patch_session_get(monkeypatch, adapter, _bad_json)
@@ -238,8 +273,9 @@ def test_sync_catalog_with_failing_stac_endpoint_registers_nothing(monkeypatch):
         DataFabricManager, "get_adapter", staticmethod(lambda profile: _adapter())
     )
 
-    items = DataFabricManager.sync_catalog(db, "src_stac")
+    result = DataFabricManager.sync_catalog(db, "src_stac")
 
     # Zero datasets registered; the trailing commit is an empty transaction.
-    assert items == []
+    # V2（ADR-0094 §9）：sync 返回结构化 diff（items 为空列表）。
+    assert result["items"] == []
     db.add.assert_not_called()

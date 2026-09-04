@@ -129,6 +129,25 @@ class DataFabricSecurity:
             # bucket name cannot smuggle through a private endpoint.
             if hostname_lower in BLOCKED_HOSTNAMES:
                 raise DataFabricSecurityError(f"SSRF Protection: hostname '{hostname}' is blocked")
+            # F-5 修复（ADR-0094 §10）：s3/minio endpoint 携带端口或非 bucket 形态
+            # 主机（MinIO/Wasabi 自建 endpoint）时，与 http 相同的
+            # literal-IP/解析 IP 门控必须生效——此前 `s3://169.254.169.254/bucket`
+            # 直接放行。bucket 名（无点、无端口、非常量 IP）不解析。
+            host_looks_like_endpoint = (
+                parsed.port is not None or "." in hostname_lower
+            )
+            literal_ip = DataFabricSecurity._try_parse_ip(hostname)
+            if literal_ip is not None and not allow_private:
+                if _is_blocked_ip(literal_ip):
+                    raise DataFabricSecurityError(
+                        f"SSRF Protection: Access to private IP '{hostname}' is blocked"
+                    )
+            elif host_looks_like_endpoint and not allow_private:
+                for ip_str in DataFabricSecurity._resolve_all(hostname):
+                    if _is_blocked_ip(ip_str):
+                        raise DataFabricSecurityError(
+                            f"SSRF Protection: hostname '{hostname}' resolves to blocked IP '{ip_str}'"
+                        )
             return url
 
         if not allow_private:
@@ -230,7 +249,14 @@ class DataFabricSecurity:
         in plaintext on every egress response. Lists of dicts are recursed per
         element; non-dict values are left untouched.
         """
-        sensitive_keys = {"password", "secret", "secret_key", "token", "api_key", "access_key", "credential"}
+        # 审计 F-2（ADR-0094 §10）：补齐常见凭证键（Authorization/x-api-key/
+        # apikey/passwd/pwd/private_key/client_secret）；headers 子树整体视为
+        # 敏感（认证头无法穷举键名）。
+        sensitive_keys = {
+            "password", "secret", "secret_key", "token", "api_key", "access_key",
+            "credential", "authorization", "auth", "x-api-key", "apikey",
+            "passwd", "pwd", "private_key", "client_secret", "session_token",
+        }
 
         def _redact(value: Any) -> Any:
             if isinstance(value, dict):
@@ -316,6 +342,60 @@ def make_safe_session(allow_private: bool = False):
     return session
 
 
+# 解压后字节上限下限（防止配置归零）。stream 读取逐块累计，超限即断流——
+# 压缩炸弹在解析之前就被拒（审计 F-3 / ADR-0094 §10）。
+_MIN_HTTP_BODY_CAP = 16 * 1024 * 1024
+
+
+def bounded_get(session, url, *, params=None, timeout=15, max_bytes=None, headers=None):
+    """流式 + 有界 GET：Content-Length 预检 + 解压后逐块字节上限。
+
+    返回 ``bytes``；超限抛 ``SourceBadResponseError``（typed）。
+    所有 HTTP adapter 的 GET 都应经此（禁止裸 ``resp.content``）。
+    """
+    from app.services.data_fabric.errors import SourceBadResponseError
+    from app.services.data_fabric.limits import max_response_bytes
+
+    cap = max_bytes or max(max_response_bytes(), _MIN_HTTP_BODY_CAP)
+    resp = session.get(
+        url, params=params, timeout=timeout, stream=True,
+        headers=headers, allow_redirects=True,
+    )
+    resp.raise_for_status()
+    content_length = resp.headers.get("Content-Length")
+    if content_length and content_length.isdigit() and int(content_length) > cap:
+        resp.close()
+        raise SourceBadResponseError(
+            f"response Content-Length {content_length} exceeds cap {cap}",
+            details={"content_length": int(content_length), "cap": cap},
+        )
+    chunks = []
+    total = 0
+    try:
+        for chunk in resp.iter_content(chunk_size=256 * 1024):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > cap:
+                raise SourceBadResponseError(
+                    f"decompressed response exceeded cap {cap}",
+                    details={"cap": cap, "bytes_so_far": total},
+                )
+            chunks.append(chunk)
+    finally:
+        resp.close()
+    return b"".join(chunks)
+
+
+def safe_json_get(session, url, *, params=None, timeout=15, max_bytes=None, headers=None):
+    """bounded_get + JSON 解析（depth/size 由字节上限间接约束）。"""
+    import json as _json
+
+    body = bounded_get(session, url, params=params, timeout=timeout,
+                       max_bytes=max_bytes, headers=headers)
+    return _json.loads(body.decode("utf-8", errors="strict"))
+
+
 def resolve_safe_local_path(path, allowed_roots=None, max_bytes=None):
     """Validate a local file path for adapter reads (Section 44).
 
@@ -379,3 +459,31 @@ def _local_file_max_bytes_from_settings():
     from app.core.config import settings
 
     return int(getattr(settings, "DATA_FABRIC_LOCAL_FILE_MAX_BYTES", 1024 * 1024 * 1024))
+
+
+def ensure_same_origin_url(candidate: str, base_url: str) -> str:
+    """校验 candidate 与 base 同 scheme+host+port（R3-M2/M3 cursor 防护）。
+
+    cursor/next-link 可能被调用方伪造为任意 URL——若直接以其发起携带
+    profile 凭证头的请求，会造成凭证外带 / SSRF 代理滥用。不同源抛
+    ``SourceBadResponseError``。
+    """
+    from urllib.parse import urlparse as _urlparse
+
+    from app.services.data_fabric.errors import SourceBadResponseError
+
+    c = _urlparse(str(candidate))
+    b = _urlparse(str(base_url))
+    c_origin = (c.scheme.lower(), (c.hostname or "").lower(), c.port)
+    b_origin = (b.scheme.lower(), (b.hostname or "").lower(), b.port or (443 if b.scheme == "https" else 80))
+    if c_origin[0] != b_origin[0] or c_origin[1] != b_origin[1]:
+        raise SourceBadResponseError(
+            "next-link cursor points to a different origin than the registered source",
+            details={"origin": f"{c_origin[0]}://{c_origin[1]}"},
+        )
+    c_port = c.port or (443 if c.scheme == "https" else 80)
+    if c_port != b_origin[2]:
+        raise SourceBadResponseError(
+            "next-link cursor port differs from the registered source"
+        )
+    return str(candidate)
