@@ -10,6 +10,7 @@ import { CollapsibleThink } from '@/components/chat/collapsible-think';
 import { PlanProposalCard } from '@/components/chat/plan-proposal-card';
 import { PlanCard } from '@/components/chat/plan-card';
 import { SessionPlanPanel } from '@/components/chat/session-plan-panel';
+import { AnalysisGraphPanel } from '@/components/agent/analysis-graph-panel';
 import type { SessionPlanViewState } from '@/lib/session/session-plan-delta';
 import { InlineNotice } from '@/components/shared/inline-notice';
 import { apiFetch } from '@/lib/api/transport';
@@ -394,6 +395,10 @@ export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, se
           失败时整卡隐藏 —— ChatEngine 兜底会话的侧边栏与今天完全一致。
           #1048：sessionPlan（useSessionPlan.view）提供时由流式增量驱动。 */}
       <SessionPlanPanel sessionId={sessionId} ownerToken={ownerToken} live={sessionPlan} />
+      {/* 显式分析图（ADR-0097）：与 SessionPlan 同一世界状态的图检视面 ——
+          目标/方法论警告/执行 DAG/产品 facets/下一动作。只读投影，端点
+          失败时整卡隐藏（与 SessionPlanPanel 同降级约定）。 */}
+      <AnalysisGraphPanel sessionId={sessionId} ownerToken={ownerToken} />
       {/* Messages scroll area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {messages.length === 0 && !isBusy && (
