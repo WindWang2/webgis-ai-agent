@@ -3,8 +3,9 @@ Project Workspace, Persistent Workflow, Spatial Data Quality & Lineage API Endpo
 """
 import asyncio
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -698,6 +699,18 @@ def record_map_product_version(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     try:
+        # ADR-0099：携带会话时服务端抓取 MapSpec 快照（restore/open 的
+        # 授权依据）与操作者；指纹/差分仍然是服务端计算，客户端不可伪造。
+        snapshot = None
+        if req.session_id:
+            # sync 路由跑在 threadpool（自带新事件循环）；同线程已有 loop
+            # 时 asyncio.run 抛 RuntimeError → 快照缺席（best-effort 语义）。
+            try:
+                from app.services.mapspec_store import mapspec_store
+
+                snapshot = asyncio.run(mapspec_store.get_mapspec(req.session_id))
+            except Exception:  # noqa: BLE001 — 快照 best-effort
+                snapshot = None
         return MapProductService.record_version(
             db,
             project_id,
@@ -707,9 +720,245 @@ def record_map_product_version(
             recipe_id=req.recipe_id,
             artifact_ids=req.artifact_ids,
             input_dataset_fingerprints=req.input_dataset_fingerprints,
+            mapspec_snapshot=snapshot,
+            label=req.label,
+            actor=str(user.get("user_id") or "user") if isinstance(user, dict) else "user",
+            lineage_kind="linear",
         )
     except ValueError as e:
         raise HTTPException(status_code=404 if "not found" in str(e) else 409, detail=str(e))
+
+
+@router.get("/{project_id}/map-products/{version_no}/open")
+def open_map_product_version(
+    project_id: str,
+    version_no: int,
+    db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+):
+    """Read-only inspection of a historical version (ADR-0099 open).
+
+    Never touches current session state. Reports what the version carries
+    (snapshot, provenance) and which restore modes are honestly available —
+    capability gaps degrade inside ``restore_modes``, open itself always
+    succeeds for an existing version.
+    """
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    try:
+        return MapProductService.open_version(db, project_id, version_no)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+class MapProductRestoreRequest(BaseModel):
+    """style-only 恢复表达面；full 恢复 = 重放绑定 run（新鲜产物 + 输入
+    漂移披露）—— 不伪装原地还原。"""
+    mode: Literal["style_only", "full"] = "style_only"
+    session_id: str = Field(min_length=1, max_length=128)
+
+
+@router.post("/{project_id}/map-products/{version_no}/restore")
+async def restore_map_product_version(
+    project_id: str,
+    version_no: int,
+    req: MapProductRestoreRequest,
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Restore a version into a live session (ADR-0099).
+
+    ``style_only`` applies the version snapshot's presentation state through
+    the MapSpec lifecycle engine (lock + validation + transaction); the
+    five-dimension diff of the recorded restore row is the machine-readable
+    proof that no analysis recomputation happened. ``full`` requires a bound
+    workflow run and delegates to the rerun path (fresh artifacts, honest
+    input-drift disclosure) — never a silent in-place resurrection.
+    """
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if req.mode == "style_only":
+        try:
+            return await MapProductService.restore_style_to_session(
+                db, project_id, version_no,
+                session_id=req.session_id,
+                actor=str(user.get("user_id") or "user"),
+            )
+        except ValueError as e:
+            raise HTTPException(
+                status_code=404 if "not found" in str(e) else 409, detail=str(e))
+    # full restore = rerun the bound run from scratch (fresh artifacts).
+    row = MapProductService.get_version(db, project_id, version_no)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Map product version not found")
+    if not row.workflow_run_id:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "full restore unavailable: no workflow run bound to this "
+                "version (record versions from runs, or use style_only)"
+            ),
+        )
+    tool_registry = get_tool_registry()
+    try:
+        run = await _run_workflow_engine(
+            WorkflowEngine.replay_run,
+            prior_run_id=row.workflow_run_id,
+            tool_registry=tool_registry,
+            mode="exact",
+            user_id=user_id,
+            org_id=org_id,
+            expected_project_id=project_id,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=409, detail=f"full restore rerun failed: {e}")
+    new_row = MapProductService.record_version(
+        db, project_id,
+        workflow_run_id=run.id,
+        label=f"restore-full from V{version_no}",
+        actor=str(user.get("user_id") or "user"),
+        parent_version_no=version_no,
+        lineage_kind="restore",
+    )
+    return {"restored_version_no": new_row.version_no, "source_version_no": version_no,
+            "mode": "full", "run_id": run.id}
+
+
+class MapProductForkRequest(BaseModel):
+    label: Optional[str] = Field(default=None, max_length=200)
+
+
+@router.post("/{project_id}/map-products/{version_no}/fork", response_model=MapProductVersionResponse, status_code=201)
+def fork_map_product_version(
+    project_id: str,
+    version_no: int,
+    req: Optional[MapProductForkRequest] = None,
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Fork a new version lineage from a historical version (ADR-0099).
+
+    The fork row copies the source provenance (inputs/plan/outputs/snapshot)
+    and records the lineage edge; it is evidence of a branch point, not a
+    Git-style mutable pointer.
+    """
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    try:
+        return MapProductService.fork_version(
+            db, project_id, version_no,
+            label=(req.label if req else None),
+            actor=str(user.get("user_id") or "user"),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+class MapProductMergeRequest(BaseModel):
+    from_version_no: int = Field(ge=1)
+    to_version_no: int = Field(ge=1)
+    label: Optional[str] = Field(default=None, max_length=200)
+
+
+@router.post("/{project_id}/map-products/merge", response_model=MapProductVersionResponse, status_code=201)
+def merge_map_product_versions(
+    project_id: str,
+    req: MapProductMergeRequest,
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Constrained dimension merge (ADR-0099): combine a style-only change
+    with an analysis-only change. Both sides moving the same dimension is a
+    structural conflict and is refused honestly — no silent pick-a-winner."""
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    try:
+        return MapProductService.merge_dimensions(
+            db, project_id, req.from_version_no, req.to_version_no,
+            label=req.label,
+            actor=str(user.get("user_id") or "user"),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404 if "not found" in str(e) else 409, detail=str(e))
+
+
+@router.post("/{project_id}/map-products/{version_no}/rerun")
+async def rerun_map_product_version(
+    project_id: str,
+    version_no: int,
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Rerun the analysis a version represents (ADR-0099): bind version →
+    run → first changed step (five-dimension diff drill-down) → incremental
+    rerun. Style-only versions are refused — the machine contract says no
+    recomputation is needed (use restore style_only instead)."""
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    row = MapProductService.get_version(db, project_id, version_no)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Map product version not found")
+    if not row.workflow_run_id:
+        raise HTTPException(status_code=409, detail="version has no bound workflow run")
+    if row.version_no > 1:
+        diff = MapProductService.diff_versions_pairwise(
+            db, project_id, row.version_no - 1, row.version_no)
+        if not diff.get("analysis_recomputation_expected"):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "style-only version: the five-dimension diff proves no "
+                    "analysis recomputation is expected (use restore "
+                    "style_only for presentation state)"
+                ),
+            )
+        details = diff.get("details") or {}
+        changed_steps = [
+            st["step_id"] for st in (
+                (details.get("algorithm_steps") or [])
+                + (details.get("parameter_steps") or [])
+            ) if st.get("step_id")
+        ]
+        from_step = changed_steps[0] if changed_steps else None
+    else:
+        from_step = None
+    tool_registry = get_tool_registry()
+    try:
+        run = await _run_workflow_engine(
+            WorkflowEngine.rerun_from_step,
+            prior_run_id=row.workflow_run_id,
+            tool_registry=tool_registry,
+            from_step=from_step,
+            user_id=user_id,
+            org_id=org_id,
+            expected_project_id=project_id,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=409, detail=f"rerun failed: {e}")
+    new_row = MapProductService.maybe_auto_record_version(
+        db, run, label=f"rerun of V{version_no}")
+    if new_row is None:
+        new_row = MapProductService.record_version(
+            db, project_id, workflow_run_id=run.id,
+            label=f"rerun of V{version_no}",
+            actor=str(user.get("user_id") or "user"),
+            parent_version_no=version_no, lineage_kind="rerun")
+    return {"run_id": run.id, "recorded_version_no": new_row.version_no,
+            "from_step": from_step, "source_version_no": version_no}
 
 
 @router.post("/{project_id}/quality-audit")

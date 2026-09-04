@@ -630,6 +630,30 @@ class WorkflowEngine:
                         "[WorkflowEngine] artifact promotion failed for run %s: %s",
                         run_id, e,
                     )
+                # ADR-0099: run 完成 → 幂等自动记录一条 Map Product 版本
+                # （同 run+指纹去重；snapshot best-effort —— 会话缺席/过期
+                # 仍记录，只是 open 降级为 compare-only）。失败绝不影响 run。
+                if workflow.project_id:
+                    try:
+                        from app.services.map_product_service import MapProductService
+
+                        _snapshot = None
+                        if session_id:
+                            try:
+                                from app.services.mapspec_store import mapspec_store
+
+                                _snapshot = await mapspec_store.get_mapspec(session_id)
+                            except Exception:  # noqa: BLE001 — 快照缺席仍记录
+                                _snapshot = None
+                        MapProductService.maybe_auto_record_version(
+                            db, run, session_id=session_id,
+                            mapspec_snapshot=_snapshot,
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(
+                            "[WorkflowEngine] auto map-product record failed "
+                            "for run %s: %s", run_id, e,
+                        )
         finally:
             # INV-AUTH1 / §21: the ToolExecutionContext must be cleared on EVERY
             # path (success, step failure, manifest build failure) so caller

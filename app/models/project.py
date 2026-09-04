@@ -379,6 +379,23 @@ class MapProductVersion(Base):
     #  output_changed, vs_version_no} — machine-readable diff vs previous row.
     diff_summary = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    # ── Lifecycle V2（ADR-0099，migration 0024；全部可空新增列）─────────
+    # 版本定稿时的 MapSpec 文档快照（有界）。open/restore(style-only) 的
+    # 授权依据；旧行无快照 = 诚实的 open 降级（可对比、不可回放）。
+    mapspec_snapshot = Column(JSON, nullable=True)
+    # 人可读标记（"report-final"/fork 名）与操作者（审计）。
+    label = Column(String(200), nullable=True)
+    actor = Column(String(255), nullable=True)
+    # 谱系边：fork/restore/merge/rerun 的来源版本。版本行不可变 —— 生命
+    # 周期操作永远是新增行（append-only 证据），绝不改写历史。
+    parent_version_no = Column(Integer, nullable=True)
+    # linear（缺省/旧行 NULL）| fork | restore | merge | rerun | auto
+    lineage_kind = Column(String(20), nullable=True)
+
+    @property
+    def snapshot_available(self) -> bool:
+        """ADR-0099：快照在场性（response 投影用；旧行 = False 诚实缺省）。"""
+        return bool(self.mapspec_snapshot)
 
     __table_args__ = (
         UniqueConstraint("project_id", "version_no", name="uq_map_product_version"),

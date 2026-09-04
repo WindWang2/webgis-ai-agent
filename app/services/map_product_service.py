@@ -84,6 +84,9 @@ def compute_product_fingerprint(
 
 
 class MapProductService:
+    # ── Lifecycle V2（ADR-0099）lineage 词表 ──────────────────────────
+    LINEAGE_KINDS = ("linear", "fork", "restore", "merge", "rerun", "auto")
+
     @staticmethod
     def record_version(
         db: Session,
@@ -96,6 +99,12 @@ class MapProductService:
         artifact_ids: Optional[List[str]] = None,
         input_dataset_fingerprints: Optional[Dict[str, str]] = None,
         run_manifest: Optional[Dict[str, Any]] = None,
+        mapspec_snapshot: Optional[Dict[str, Any]] = None,
+        label: Optional[str] = None,
+        actor: Optional[str] = None,
+        parent_version_no: Optional[int] = None,
+        lineage_kind: Optional[str] = None,
+        artifact_fingerprints: Optional[List[str]] = None,
     ) -> MapProductVersion:
         """Append one product version (per-project monotonic version_no).
 
@@ -129,11 +138,16 @@ class MapProductService:
                 for a in (manifest.get("artifacts") or [])
                 if a.get("id")
             ]
-        fingerprints = [
-            str(a.get("content_fingerprint"))
-            for a in (manifest.get("artifacts") or [])
-            if a.get("content_fingerprint")
-        ]
+        if artifact_fingerprints is not None:
+            # Lifecycle rows (fork/restore/merge)：显式继承来源侧产物指纹 ——
+            # manifest 重提取会得到空集，diff 会谎报 output_changed。
+            fingerprints = [str(f) for f in artifact_fingerprints if f]
+        else:
+            fingerprints = [
+                str(a.get("content_fingerprint"))
+                for a in (manifest.get("artifacts") or [])
+                if a.get("content_fingerprint")
+            ]
         input_fps = dict(input_dataset_fingerprints or {})
         if not input_fps and run:
             input_fps = dict(run.input_dataset_fingerprints or {})
@@ -172,11 +186,342 @@ class MapProductService:
             recipe_id=recipe_id,
             artifact_ids=artifact_ids[:128],
             diff_summary=diff_summary,
+            mapspec_snapshot=mapspec_snapshot,
+            label=label,
+            actor=actor,
+            parent_version_no=parent_version_no,
+            lineage_kind=lineage_kind,
         )
         db.add(row)
         db.commit()
         db.refresh(row)
         return row
+
+    # ── Lifecycle V2（ADR-0099）────────────────────────────────────────
+    # 语义：版本行不可变，所有生命周期操作都是**新增行**（append-only 证据）。
+    # open = 只读检视（不落任何状态）；restore/fork/merge/rerun = 新行 +
+    # lineage 边；auto = run 完成后的幂等自动记录。绝无 "改历史"。
+
+    @staticmethod
+    def maybe_auto_record_version(
+        db: Session,
+        run: WorkflowRun,
+        *,
+        session_id: Optional[str] = None,
+        mapspec_snapshot: Optional[Dict[str, Any]] = None,
+        label: Optional[str] = None,
+    ) -> Optional[MapProductVersion]:
+        """Run 完成后的幂等自动记录（ADR-0099 auto-record）。
+
+        同一 (workflow_run_id, product_fingerprint) 已有行 → 返回既有行，
+        绝不重复记录。快照 best-effort：session 缺席/过期 → 行仍记录，
+        snapshot 为空（诚实的 open 降级）。
+        """
+        if run.status != "completed" or not run.project_id:
+            return None
+        manifest = run.run_manifest or {}
+        artifacts = manifest.get("artifacts") or []
+        fingerprints = [
+            str(a.get("content_fingerprint")) for a in artifacts
+            if a.get("content_fingerprint")
+        ]
+        mapspec_fp = None
+        try:
+            outcome = (manifest.get("outcome") or {})
+            mapspec_fp = outcome.get("mapspec_fingerprint") if isinstance(outcome, dict) else None
+        except Exception:  # noqa: BLE001
+            mapspec_fp = None
+        product_fingerprint = compute_product_fingerprint(
+            input_dataset_fingerprints=run.input_dataset_fingerprints or {},
+            run_manifest=manifest,
+            mapspec_fingerprint=mapspec_fp,
+            artifact_fingerprints=fingerprints,
+        )
+        existing = db.execute(
+            select(MapProductVersion).where(
+                MapProductVersion.project_id == run.project_id,
+                MapProductVersion.workflow_run_id == run.id,
+                MapProductVersion.product_fingerprint == product_fingerprint,
+            )
+        ).scalars().first()
+        if existing is not None:
+            return existing
+        return MapProductService.record_version(
+            db,
+            run.project_id,
+            workflow_run_id=run.id,
+            mapspec_fingerprint=mapspec_fp,
+            recipe_id=(manifest.get("product") or {}).get("recipe_id")
+            if isinstance(manifest.get("product"), dict) else None,
+            input_dataset_fingerprints=run.input_dataset_fingerprints or {},
+            mapspec_snapshot=mapspec_snapshot,
+            label=label,
+            actor="system:auto-record",
+            lineage_kind="auto",
+        )
+
+    @staticmethod
+    def open_version(
+        db: Session, project_id: str, version_no: int
+    ) -> Dict[str, Any]:
+        """只读检视一个历史版本（绝不触碰当前会话状态）。
+
+        返回版本事实 + 能力披露：snapshot 是否在场、哪些恢复模式可用、
+        provenance 摘要（inputs/plan/artifacts）。open 永远成功（版本存在
+        即可），能力不足只在 `restore_modes` 里如实降级。
+        """
+        row = MapProductService.get_version(db, project_id, version_no)
+        if row is None:
+            raise ValueError(f"map product version not found: {version_no}")
+
+        has_snapshot = isinstance(row.mapspec_snapshot, dict) and bool(
+            row.mapspec_snapshot
+        )
+        has_run = bool(row.workflow_run_id)
+        restore_modes: List[Dict[str, Any]] = []
+        if has_snapshot:
+            restore_modes.append({
+                "mode": "style_only",
+                "available": True,
+                "note": "presentation state from the version snapshot; no analysis recompute",
+            })
+        else:
+            restore_modes.append({
+                "mode": "style_only",
+                "available": False,
+                "note": "version predates snapshots (migration 0024); compare-only",
+            })
+        restore_modes.append({
+            "mode": "full",
+            "available": has_run,
+            "note": (
+                "re-executes the bound workflow run (fresh artifacts, input "
+                "drift disclosed) and records a new version"
+                if has_run else
+                "no workflow run bound to this version — full restore unavailable"
+            ),
+        })
+        plan = list(row.compute_plan or [])
+        return {
+            "version_no": row.version_no,
+            "product_fingerprint": row.product_fingerprint,
+            "recipe_id": row.recipe_id,
+            "workflow_run_id": row.workflow_run_id,
+            "mapspec_fingerprint": row.mapspec_fingerprint,
+            "mapspec_revision": row.mapspec_revision,
+            "lineage_kind": row.lineage_kind,
+            "parent_version_no": row.parent_version_no,
+            "label": row.label,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "diff_summary": row.diff_summary,
+            "snapshot_available": has_snapshot,
+            "restore_modes": restore_modes,
+            "provenance": {
+                "input_dataset_fingerprints": row.input_dataset_fingerprints or {},
+                "plan_steps": len(plan),
+                "artifact_count": len(row.artifact_ids or []),
+                "output_fingerprints": len(row.output_fingerprints or []),
+            },
+        }
+
+    @staticmethod
+    async def restore_style_to_session(
+        db: Session,
+        project_id: str,
+        version_no: int,
+        *,
+        session_id: str,
+        actor: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """style-only restore：版本快照的表达面 → 活会话（ADR-0099）。
+
+        数据/计算不动 —— 五维 diff 的 style-only 契约在此是操作语义：
+        恢复后记录的新版本 diff 只含 style 维（机器可证）。走
+        RestoreStyleIntent（apply_mutation 的锁/CAS/校验/回滚事务）。
+        """
+        row = MapProductService.get_version(db, project_id, version_no)
+        if row is None:
+            raise ValueError(f"map product version not found: {version_no}")
+        if not (isinstance(row.mapspec_snapshot, dict) and row.mapspec_snapshot):
+            raise ValueError(
+                f"version {version_no} has no mapspec snapshot — style restore "
+                "unavailable (compare-only)"
+            )
+
+        from app.services.mapspec.lifecycle_engine import (
+            MapSpecLifecycleEngine,
+            RestoreStyleIntent,
+        )
+
+        engine = MapSpecLifecycleEngine()
+        result = await engine.apply_mutation(
+            session_id,
+            RestoreStyleIntent(snapshot=row.mapspec_snapshot),
+            origin="system",
+        )
+        if getattr(result, "is_error", False):
+            raise ValueError(result.error_msg or "style restore mutation rejected")
+
+        # 恢复本身是新的版本证据（append-only）：谱系指向来源版本。
+        new_row = MapProductService.record_version(
+            db,
+            project_id,
+            workflow_run_id=row.workflow_run_id,
+            mapspec_fingerprint=result.mapspec_fingerprint or row.mapspec_fingerprint,
+            mapspec_revision=getattr(result, "mutation_revision", None),
+            recipe_id=row.recipe_id,
+            input_dataset_fingerprints=row.input_dataset_fingerprints,
+            run_manifest={"steps": list(row.compute_plan or [])},
+            mapspec_snapshot=dict(row.mapspec_snapshot or {}),
+            artifact_ids=list(row.artifact_ids or []),
+            artifact_fingerprints=list(row.output_fingerprints or []),
+            label=f"restore-style from V{version_no}",
+            actor=actor or "user",
+            parent_version_no=version_no,
+            lineage_kind="restore",
+        )
+        return {
+            "restored_version_no": new_row.version_no,
+            "source_version_no": version_no,
+            "mode": "style_only",
+            "mutation_revision": getattr(result, "mutation_revision", None),
+            "warnings": list(result.warnings or []),
+            # 机器证明：restore 行与**来源版本**的计算身份逐位相同（inputs
+            # + compute plan 排序后相等）—— 只有表达面移动，没有任何分析
+            # 执行。注意 diff_summary 是相对**账本前一行**的（若前一版本是
+            # 分析迁移者，diff 会如实报告 plan 差异 —— 那是时间线事实，
+            # 不是重算发生）。
+            "style_only_proof": {
+                "compute_identity_preserved": bool(
+                    dict(new_row.input_dataset_fingerprints or {})
+                    == dict(row.input_dataset_fingerprints or {})
+                    and _project_steps(
+                        {"steps": new_row.compute_plan or []}, sort=True)
+                    == _project_steps(
+                        {"steps": row.compute_plan or []}, sort=True)
+                ),
+                "analysis_executed": False,
+                "note": (
+                    "presentation restored from the version snapshot; no "
+                    "workflow rerun was performed"
+                ),
+            },
+        }
+
+    @staticmethod
+    def fork_version(
+        db: Session,
+        project_id: str,
+        version_no: int,
+        *,
+        label: Optional[str] = None,
+        actor: Optional[str] = None,
+    ) -> MapProductVersion:
+        """从历史版本开新谱系（ADR-0099 fork）。
+
+        fork 是证据行：复制来源版本的 provenance（inputs/plan/outputs/
+        snapshot），parent 指向来源，lineage_kind=fork。之后的版本按线性
+        继续 —— fork 行标记分支点。不做 Git 语义伪装（无 branch 列、
+        无移动指针）：谱系是 DAG 边 + 追溯，不是引用可变树。
+        """
+        row = MapProductService.get_version(db, project_id, version_no)
+        if row is None:
+            raise ValueError(f"map product version not found: {version_no}")
+        return MapProductService.record_version(
+            db,
+            project_id,
+            workflow_run_id=row.workflow_run_id,
+            mapspec_fingerprint=row.mapspec_fingerprint,
+            mapspec_revision=row.mapspec_revision,
+            recipe_id=row.recipe_id,
+            input_dataset_fingerprints=row.input_dataset_fingerprints,
+            run_manifest={"steps": list(row.compute_plan or [])},
+            mapspec_snapshot=dict(row.mapspec_snapshot or {})
+            if row.mapspec_snapshot else None,
+            artifact_ids=list(row.artifact_ids or []),
+            artifact_fingerprints=list(row.output_fingerprints or []),
+            label=label or f"fork of V{version_no}",
+            actor=actor or "user",
+            parent_version_no=version_no,
+            lineage_kind="fork",
+        )
+
+    @staticmethod
+    def merge_dimensions(
+        db: Session,
+        project_id: str,
+        from_version_no: int,
+        to_version_no: int,
+        *,
+        label: Optional[str] = None,
+        actor: Optional[str] = None,
+    ) -> MapProductVersion:
+        """受限合并（ADR-0099 constrained merge）。
+
+        只允许**维度不相交**的合并：一方仅样式变化（style-only），另一方
+        仅分析变化（data/algorithm/parameter-only）—— 合并 = 分析侧的
+        compute provenance + 样式侧的 mapspec 指纹/快照。双侧同时改样式
+        或同时改分析 → 结构性冲突，如实拒绝（不静默择一）。产物是新版本
+        行（append-only），parent 指向分析侧（计算身份所在），样式来源记
+        入 label 语义。
+        """
+        diff = MapProductService.diff_versions_pairwise(
+            db, project_id, from_version_no, to_version_no)
+        style_changed = bool(diff.get("style_changed"))
+        analysis_changed = bool(diff.get("analysis_recomputation_expected"))
+        other_changed = bool(diff.get("output_changed"))
+
+        a = MapProductService.get_version(db, project_id, from_version_no)
+        b = MapProductService.get_version(db, project_id, to_version_no)
+        if a is None or b is None:
+            raise ValueError("map product version not found")
+
+        style_side, analysis_side = None, None
+        if style_changed and not analysis_changed:
+            style_side, analysis_side = b, a
+        elif analysis_changed and not style_changed:
+            style_side, analysis_side = a, b
+        elif not style_changed and not analysis_changed:
+            raise ValueError(
+                "merge refused: versions are product-identical on all five "
+                "dimensions (nothing to merge)"
+            )
+        else:
+            raise ValueError(
+                "merge refused: conflicting changes — both versions moved the "
+                f"same dimension(s) (style={style_changed}, "
+                f"analysis={analysis_changed}); constrained merge only "
+                "combines a style-only change with an analysis-only change"
+            )
+        if other_changed and analysis_side.output_fingerprints != style_side.output_fingerprints:
+            # 输出内容随分析侧走 —— style 侧携带不同 artifact 集时它不是
+            # 纯样式变化，如实拒绝。
+            raise ValueError(
+                "merge refused: style side carries different artifacts "
+                "(output dimension moved on both sides)"
+            )
+
+        return MapProductService.record_version(
+            db,
+            project_id,
+            workflow_run_id=analysis_side.workflow_run_id,
+            mapspec_fingerprint=style_side.mapspec_fingerprint,
+            mapspec_revision=style_side.mapspec_revision,
+            recipe_id=analysis_side.recipe_id or style_side.recipe_id,
+            input_dataset_fingerprints=analysis_side.input_dataset_fingerprints,
+            run_manifest={"steps": list(analysis_side.compute_plan or [])},
+            mapspec_snapshot=dict(style_side.mapspec_snapshot or {})
+            if style_side.mapspec_snapshot else None,
+            artifact_ids=list(analysis_side.artifact_ids or []),
+            artifact_fingerprints=list(analysis_side.output_fingerprints or []),
+            label=label or (
+                f"merge V{from_version_no}+V{to_version_no} "
+                f"(analysis V{analysis_side.version_no}, style V{style_side.version_no})"
+            ),
+            actor=actor or "user",
+            parent_version_no=analysis_side.version_no,
+            lineage_kind="merge",
+        )
 
     @staticmethod
     def bounded_compute_plan(manifest: Dict[str, Any]) -> List[Dict[str, Any]]:
