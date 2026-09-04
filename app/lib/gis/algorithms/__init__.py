@@ -24,10 +24,27 @@ from app.lib.gis.algorithms.terrain import ALGORITHMS as _terrain
 from app.lib.gis.algorithms.temporal import ALGORITHMS as _temporal
 
 
+_ALL_PACKS = (
+    _data_access, _geometry, _aggregation, _density, _statistics,
+    _point_pattern, _interpolation, _network, _terrain, _raster,
+    _remote, _temporal, _decision,
+)
+
+
 def iter_domain_packs() -> Iterable[List[AlgorithmDescriptor]]:
     """确定性域序聚合（顺序 = 注册序；同 id 冲突仍由 register() 拒绝）。"""
-    yield from (
-        _data_access, _geometry, _aggregation, _density, _statistics,
-        _point_pattern, _interpolation, _network, _terrain, _raster,
-        _remote, _temporal, _decision,
-    )
+    yield from _ALL_PACKS
+
+
+def iter_contract_packs() -> Iterable[list]:
+    """各域模块导出的 PARAMETER_CONTRACTS（缺省空表）。
+
+    契约注册表聚合域契约 —— 域模块拥有自己的参数契约，中央
+    parameter_contracts.py 不再被多方追加。
+    """
+    from app.lib.gis.parameter_contracts import ParameterContract  # noqa: F401
+
+    for pack in _ALL_PACKS:
+        contracts = getattr(pack, "PARAMETER_CONTRACTS", None)
+        if contracts:
+            yield contracts

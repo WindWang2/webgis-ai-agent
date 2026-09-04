@@ -292,6 +292,15 @@ class ParameterContractRegistry:
         self._by_id.clear()
         for contract in _SEED_CONTRACTS:
             self.register(contract)
+        # 域包契约（ADR-0099 §34）：各算法域模块可导出
+        # ``PARAMETER_CONTRACTS: List[ParameterContract]`` —— 契约随域
+        # 演化，中央文件不再膨胀。惰性导入避免环（域模块 import 本模块
+        # 的 ParameterContract 类）。
+        from app.lib.gis.algorithms import iter_contract_packs
+
+        for pack in iter_contract_packs():
+            for contract in pack:
+                self.register(contract)
 
     def register(self, contract: ParameterContract) -> None:
         if not contract.id:

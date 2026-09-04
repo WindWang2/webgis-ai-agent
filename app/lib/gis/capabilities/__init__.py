@@ -14,10 +14,11 @@ from app.lib.gis.capabilities.network import CAPABILITIES as _network
 from app.lib.gis.capabilities.raster import CAPABILITIES as _raster
 from app.lib.gis.capabilities.statistics import CAPABILITIES as _statistics
 from app.lib.gis.capabilities.temporal import CAPABILITIES as _temporal
+from app.lib.gis.capabilities.terrain import CAPABILITIES as _terrain
 
 
 def iter_capability_packs() -> Iterable[List[CapabilityDescriptor]]:
     yield from (
         _data_access, _geometry, _aggregation, _density, _statistics,
-        _interpolation, _network, _raster, _temporal, _decision,
+        _interpolation, _network, _terrain, _raster, _temporal, _decision,
     )
