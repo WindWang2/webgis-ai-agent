@@ -3,7 +3,6 @@ Concrete Impact Models and Model Registry for Spatial Decision Intelligence V3.
 Provides specialized models for transit, schools, hospitals, green space, and generic spatial interventions.
 Enforces the fail-closed missing baseline contract: no fabricated forecasts without real evidence.
 """
-import uuid
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -13,7 +12,6 @@ from app.services.spatial_decision.models import (
     MetricRange,
     DomainRule,
     EvidenceItem,
-    SpatialImpactZone,
 )
 from app.services.spatial_decision.models_v3 import Assumption
 from app.services.spatial_decision.impact_model import ImpactModel, ImpactModelResult

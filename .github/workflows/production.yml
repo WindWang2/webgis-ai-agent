@@ -130,6 +130,24 @@ jobs:
         # pytest-cov, fakeredis). psycopg2-binary for CI's Postgres service.
         run: pip install -r requirements-dev.txt httpx psycopg2-binary
 
+      - name: Install pnpm
+        # test_mapspec_store 编译走 frontend/lib/mapspec-compiler（jiti 运行时）。
+        # 不装 frontend 依赖时 npx 每次现拉 npm 包，冷缓存下直接撞 45s 超时。
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install Frontend Dependencies (MapSpec CLI runtime)
+        working-directory: ./frontend
+        run: pnpm install --frozen-lockfile
+
       - name: Set Environment Variables
         run: |
           # CI 已配 Postgres + Redis service container。这里指向它们。

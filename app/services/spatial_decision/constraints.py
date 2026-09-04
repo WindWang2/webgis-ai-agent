@@ -4,7 +4,7 @@ Evaluates Hard and Soft constraints across numeric, spatial, categorical, and lo
 Enforces the inviolable principle: Infeasible alternatives CANNOT be recommended.
 """
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from app.services.spatial_decision.models_v3 import (
     Alternative,

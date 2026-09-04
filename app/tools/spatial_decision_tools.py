@@ -32,7 +32,6 @@ from app.services.spatial_decision.mapspec_integration import (
 from app.services.spatial_decision.report_integration import (
     generate_decision_report_markdown,
     generate_comparison_report_markdown,
-    generate_v3_decision_report_markdown,
 )
 
 logger = logging.getLogger(__name__)

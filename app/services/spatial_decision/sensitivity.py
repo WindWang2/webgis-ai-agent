@@ -4,7 +4,7 @@ Performs criterion weight perturbation, calculates rank stability, detects criti
 and identifies the specific criteria trade-offs that drive decision flips.
 """
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List
 import numpy as np
 
 from app.services.spatial_decision.models_v3 import SensitivityResult

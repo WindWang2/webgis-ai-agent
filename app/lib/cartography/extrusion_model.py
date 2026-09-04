@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 import numpy as np
 from pydantic import BaseModel, Field

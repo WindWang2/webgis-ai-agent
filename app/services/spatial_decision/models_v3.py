@@ -4,15 +4,13 @@ Defines explicit DecisionProblem, Alternative, Criterion, Constraint, Normalizat
 MCDA, Uncertainty, Sensitivity, Robustness, and RecommendationAdmissibility schemas.
 """
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 from pydantic import BaseModel, Field
 
 from app.services.spatial_decision.models import (
     TargetAreaSpec,
     EvidenceItem,
     MetricDeltaV2,
-    DomainRule,
-    SpatialImpactZone,
 )
 
 

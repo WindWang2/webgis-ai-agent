@@ -10,7 +10,6 @@ from typing import Dict, List, Optional, Tuple
 from app.services.spatial_decision.models_v3 import (
     Criterion,
     CriterionDirection,
-    NormalizationStrategy,
     MissingPolicy,
     WeightSource,
 )

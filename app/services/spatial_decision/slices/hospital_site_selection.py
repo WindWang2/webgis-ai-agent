@@ -3,7 +3,6 @@ Vertical Slice #1: Hospital Site Selection for Spatial Decision Intelligence V3.
 Demonstrates end-to-end evidence grounding, spatial exclusion constraint,
 MCDA evaluation, sensitivity analysis, and robust decision report.
 """
-from typing import Dict, Any, List
 from app.services.spatial_decision.models_v3 import (
     Alternative,
     BaselineEvidenceContext,

@@ -12,12 +12,10 @@ import numpy as np
 import pytest
 
 from app.lib.geo_analysis.kriging import (
-    CV_FOLDS,
     KrigingCrsError,
     KrigingInputError,
     MAX_FIT_POINTS,
     MIN_SAMPLES,
-    VariogramFit,
     cross_validate_kriging,
     empirical_variogram,
     fit_variogram,

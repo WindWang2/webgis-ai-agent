@@ -535,7 +535,11 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
         # 行数 + extent（lightweight 跳过：瓦片路径不需要）
         if not lightweight:
             try:
-                cur.execute(f'SELECT COUNT(*) FROM "{schema_name}"."{table_name}";')
+                # 与 PK 探测同款参数化：标识符经 %s::regclass 绑定，不做字符串拼接
+                cur.execute(
+                    "SELECT COUNT(*) FROM %s::regclass;",
+                    (f'"{schema_name}"."{table_name}"',),
+                )
                 row = cur.fetchone()
                 meta.feature_count = int(row[0]) if row and row[0] is not None else None
             except Exception:

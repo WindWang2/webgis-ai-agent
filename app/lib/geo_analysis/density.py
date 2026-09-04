@@ -15,6 +15,7 @@ were orphan algorithms doing deep math in the tool adapter layer while their
 statistical siblings already lived in this package.
 """
 import logging
+import math
 from typing import Any, Optional
 
 import numpy as np

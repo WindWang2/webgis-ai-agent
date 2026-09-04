@@ -7,8 +7,6 @@
  * changed step and posts from_step).
  */
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { clearCache } from './get-fast-path';
 
 const mockFetch = vi.fn();
@@ -46,24 +44,11 @@ const styleOnlyDiff = {
   },
 };
 
-const algorithmDiff = {
-  ...styleOnlyDiff,
-  from_version_no: 1, to_version_no: 3,
-  algorithm_changed: true, parameter_changed: true, output_changed: true,
-  analysis_recomputation_expected: true,
-  details: {
-    ...styleOnlyDiff.details,
-    algorithm_steps: [{ step_id: 's2', from: 'admin.aggregate', to: 'admin.aggregate_v2' }],
-    parameter_steps: [{ step_id: 's2', from: { by: 'district' }, to: { by: 'street' } }],
-  },
-};
-
 import {
   diffMapProductVersions,
   listMapProductVersions,
   rerunWorkflowRunFromStep,
 } from './map-product';
-import { MapProductVersionsPanel } from '@/components/sidebar/map-product-versions';
 
 beforeEach(() => {
   vi.clearAllMocks();

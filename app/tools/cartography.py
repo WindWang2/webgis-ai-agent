@@ -247,7 +247,6 @@ def register_cartography_tools(registry: ToolRegistry):
             c_field = color_field or height_field
 
             from app.lib.cartography.extrusion_model import (
-                ExtrusionHeightSpec,
                 analyze_height_field_distribution,
             )
             from app.lib.cartography.thematic_spec import build_graduated_spec

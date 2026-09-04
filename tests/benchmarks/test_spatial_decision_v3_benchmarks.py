@@ -15,14 +15,11 @@ Contains 25 comprehensive decision benchmark cases across 12 methodology categor
   - no feasible alternative
 """
 import time
-import numpy as np
 import pytest
 
 from app.services.spatial_decision.models_v3 import (
     Alternative,
     Assumption,
-    BaselineEvidenceContext,
-    BaselineTruthState,
     Constraint,
     ConstraintCategory,
     ConstraintType,
@@ -30,12 +27,9 @@ from app.services.spatial_decision.models_v3 import (
     CriterionDirection,
     DecisionProblem,
     NormalizationStrategy,
-    ParetoStatus,
     RecommendationAdmissibility,
     SpatialPredicate,
     TargetAreaSpec,
-    UncertainParameter,
-    WeightSource,
 )
 from app.services.spatial_decision.decision_engine_v3 import DecisionEngineV3
 from app.services.spatial_decision.slices.hospital_site_selection import create_hospital_site_selection_problem
@@ -44,7 +38,7 @@ from app.services.spatial_decision.evidence_hardening import (
     detect_rule_conflicts,
     evaluate_evidence_quality_and_conflicts,
 )
-from app.services.spatial_decision.models import DomainRule, EvidenceItem, MetricDeltaV2
+from app.services.spatial_decision.models import DomainRule, EvidenceItem
 
 
 @pytest.fixture
