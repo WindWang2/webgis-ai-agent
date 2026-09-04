@@ -294,8 +294,6 @@ def test_put_if_current_atomic_against_concurrent_invalidate():
                 if entry2 is not None and entry2[0]["gen"] < cache._epochs.get(("s", "r"), 0):
                     resurrects.append((entry2[0]["gen"], cache._epochs.get(("s", "r"), 0)))
 
-    import time as _t2
-
     threads = [threading.Thread(target=invalidator)] + [
         threading.Thread(target=builder) for _ in range(4)
     ]
