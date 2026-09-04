@@ -685,9 +685,14 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             from app.services.data_fabric.fingerprint import dataset_fingerprint_service
 
             fp = dataset_fingerprint_service.calculate_descriptor_fingerprint(descriptor)
+            from app.services.data_fabric.query.statistics import (
+                statistics_for_request,
+            )
+
             plan = plan_query(
                 v2, descriptor, self._caps,
                 source_id=self.profile.id, dataset_fingerprint=fp,
+                stats=statistics_for_request(descriptor, fp),
             )
             budget = v2.execution
 

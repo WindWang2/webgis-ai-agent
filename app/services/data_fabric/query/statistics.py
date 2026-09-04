@@ -121,6 +121,28 @@ def _coerce_bbox(v: Any) -> Optional[List[float]]:
     return None
 
 
+def statistics_for_request(descriptor: Any, fingerprint: Optional[str] = None) -> Optional[DatasetStatistics]:
+    """请求期统计收割（G-F3 生产接线）：缓存命中 → descriptor 收割 → None。
+
+    planner 的调用方（adapter.query 等）用它把真实统计送进 ``plan_query``；
+    未命中且有新统计时回填进程级 TTL 缓存。统计是性能提示 —— 收割失败
+    一律静默返回 None（planner 落回 V2 常数，行为可预期）。
+    """
+    try:
+        fp = str(fingerprint or getattr(descriptor, "id", "") or "")
+        if not fp:
+            return None
+        cached = _store.get(fp)
+        if cached is not None:
+            return cached
+        stats = statistics_from_descriptor(descriptor)
+        if stats is not None:
+            _store.put(stats)
+        return stats
+    except Exception:  # noqa: BLE001 - 统计绝不阻断查询路径
+        return None
+
+
 class StatisticsStore:
     """进程内有界统计缓存（TTL + LRU 双界）。缓存失效 = TTL 过期或显式
     指纹失效；**绝不以缓存寿命做正确性机制**（统计弱新鲜度由 planner
