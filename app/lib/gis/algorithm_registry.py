@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.lib.gis.artifacts import get_artifact_type_registry
 from app.lib.gis.capability_registry import get_capability_registry
@@ -21,6 +21,29 @@ CostLevel = Literal["low", "medium", "high"]
 # V2(P3)：unit_requirements 的封闭词表 —— 消费方（参数契约/测试）只认
 # 这几族；声明词表外的单位一律 validate() 报 issue（死 metadata 防御）。
 _UNIT_VOCABULARY = frozenset({"meters", "kilometers", "degrees", "pixels", "seconds"})
+
+# ── VNext（ADR-0099）科学元数据词表 ─────────────────────────────────
+# crs_class：resolver 硬门消费（crs_safety.crs_class_allows）。
+CRSSpatialClass = Literal[
+    "", "CRS_AGNOSTIC", "GEOGRAPHIC_OK", "PROJECTED_REQUIRED",
+    "LOCAL_METRIC_REQUIRED", "GEODESIC", "RASTER_GRID",
+]
+# fallback 科学等价性（resolver fallback trail 携带；proxy/degraded 必须
+# 显现在证据里 —— 「网络可达性不可用 → 欧氏缓冲」是 proxy，不是 equivalent）。
+FallbackSemanticsClass = Literal[
+    "equivalent", "approximation", "proxy", "degraded", "not_allowed",
+]
+ScientificStatus = Literal["", "EXPERIMENTAL", "VALIDATED", "PRODUCTION", "DEPRECATED"]
+RandomSeedPolicy = Literal[
+    "deterministic", "fixed_seed", "caller_seeded", "unseeded", "none",
+]
+# backend_variants 的实现后端词表（封闭；新增需同步 validate 消费方）。
+BACKEND_VOCABULARY = frozenset({
+    "pure_python", "numpy", "scipy", "shapely", "geopandas", "rasterio",
+    "gdal", "pysal", "scikit-learn", "networkx", "h3", "matplotlib",
+    "numexpr", "external",
+})
+
 
 
 ALGORITHM_TAXONOMY: Dict[str, List[str]] = {
@@ -41,6 +64,25 @@ ALGORITHM_TAXONOMY: Dict[str, List[str]] = {
     "change_detection": ["change_detection"],
     "cartographic_classification": ["graduated_classification", "categorical_classification"],
 }
+
+
+class BackendVariant(BaseModel):
+    """同一算法的一个实现变体（§28：Algorithm → Implementation Variant）。
+
+    所有变体必须通过同一 conformance 套件；resolver 可按规模/环境在
+    变体间选择（tool_candidates 顺序即默认偏好序）。
+    """
+
+    id: str                                  # 变体内唯一（如 "numpy_batched"）
+    backend: str                             # BACKEND_VOCABULARY
+    tool: str = ""                           # 绑定的工具实现（可空 = lib 内部）
+    deterministic: bool = True
+    notes: str = ""
+
+    @field_validator("notes")
+    @classmethod
+    def _bounded_notes(cls, v: str) -> str:
+        return v[:160]
 
 
 class AlgorithmDescriptor(BaseModel):
@@ -76,6 +118,60 @@ class AlgorithmDescriptor(BaseModel):
     priority: int = 50
     version: str = "1.0"
     contract_version: int = 1
+    # ── VNext（ADR-0099）：科学元数据（全部 additive；每个字段有
+    # validate() 校验器或明确消费方，杜绝学术百科式死元数据）─────────
+    algorithm_family: str = ""               # 如 "kriging" / "spatial_autocorrelation"
+    method_references: List[str] = Field(default_factory=list)   # method_references.py id
+    assumptions: List[str] = Field(default_factory=list)         # 进证据块
+    limitations: List[str] = Field(default_factory=list)
+    crs_class: CRSSpatialClass = ""          # resolver CRS 硬门
+    scientific_preconditions: List[str] = Field(default_factory=list)
+    uncertainty_outputs: List[str] = Field(default_factory=list)  # uncertainty 词表
+    random_seed_policy: RandomSeedPolicy = "deterministic"
+    numerical_tolerance: str = ""            # 容差声明（有界文本）
+    scientific_status: ScientificStatus = "" # 与 runtime_status 正交：验证强度
+    conformance_tests: List[str] = Field(default_factory=list)  # pytest 节点 id
+    backend_variants: List[BackendVariant] = Field(default_factory=list)
+    # target_id → 科学等价性分类；键必须是 fallback_algorithms 成员。
+    fallback_semantics: Dict[str, FallbackSemanticsClass] = Field(default_factory=dict)
+
+    @field_validator("assumptions", "limitations")
+    @classmethod
+    def _bounded_text_lists(cls, v: List[str]) -> List[str]:
+        return [str(x)[:160] for x in v[:8]]
+
+    @field_validator("method_references", "conformance_tests",
+                     "scientific_preconditions")
+    @classmethod
+    def _bounded_id_lists(cls, v: List[str]) -> List[str]:
+        return [str(x)[:96] for x in v[:8]]
+
+    @field_validator("uncertainty_outputs")
+    @classmethod
+    def _bounded_uncertainty(cls, v: List[str]) -> List[str]:
+        return [str(x)[:32] for x in v[:6]]
+
+    @field_validator("numerical_tolerance")
+    @classmethod
+    def _bounded_tolerance(cls, v: str) -> str:
+        return v[:160]
+
+    @field_validator("backend_variants")
+    @classmethod
+    def _bounded_variants(cls, v: List[BackendVariant]) -> List[BackendVariant]:
+        if len(v) > 4:
+            raise ValueError("backend_variants exceeds 4 entries")
+        ids = [b.id for b in v]
+        if len(ids) != len(set(ids)):
+            raise ValueError(f"duplicate backend variant ids: {ids}")
+        return v
+
+    @field_validator("algorithm_family")
+    @classmethod
+    def _family_shape(cls, v: str) -> str:
+        if v and (" " in v or not v.replace("_", "a").replace(".", "a").isidentifier()):
+            raise ValueError(f"invalid algorithm_family: {v!r}")
+        return v
 
 
 _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
@@ -161,6 +257,7 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         compatible_map_models=["aggregate_grid"],
         fallback_algorithms=["spatial.grid.fishnet"],
         priority=10,
+    fallback_semantics={"spatial.grid.fishnet": "approximation"},
     ),
     AlgorithmDescriptor(
         id="spatial.grid.fishnet", name="渔网格网聚合",
@@ -175,6 +272,7 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         compatible_map_models=["aggregate_grid"],
         fallback_algorithms=["spatial.grid.h3"],
         priority=20,
+    fallback_semantics={"spatial.grid.h3": "approximation"},
     ),
     # ── 密度 ─────────────────────────────────────────────────────────
     AlgorithmDescriptor(
@@ -195,6 +293,7 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         preferred_execution_policy="ASYNC",
         compatible_map_models=["visual_heatmap"],
         priority=10,
+    random_seed_policy="none",
     ),
     AlgorithmDescriptor(
         id="spatial.kde.contours", name="核密度等值线",
@@ -210,6 +309,8 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         compatible_map_models=["visual_heatmap", "isoline_contour"],
         fallback_algorithms=["spatial.kde.surface"],
         priority=10,
+    random_seed_policy="none",
+    fallback_semantics={"spatial.kde.surface": "equivalent"},
     ),
     AlgorithmDescriptor(
         id="spatial.kde.surface", name="核密度全格网表面",
@@ -225,6 +326,8 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         compatible_map_models=["visual_heatmap"],
         fallback_algorithms=["spatial.kde.contours"],
         priority=20,
+    random_seed_policy="none",
+    fallback_semantics={"spatial.kde.contours": "equivalent"},
     ),
     AlgorithmDescriptor(
         id="density.analytical.mixed", name="分析密度（KDE/聚合混合路径）",
@@ -241,6 +344,7 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         # tool_to_capability 的首选工具归属正确（kde_contours →
         # spatial.kde.contours/kde_density，而非本混合路径）。
         priority=30,
+    random_seed_policy="none",
     ),
     # ── 热点/邻近/网络 ───────────────────────────────────────────────
     AlgorithmDescriptor(
@@ -290,6 +394,7 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         compatible_map_models=["proximity_overlay"],
         fallback_algorithms=["network.isochrone"],
         priority=20,
+    fallback_semantics={"network.isochrone": "equivalent"},
     ),
     # ── 几何处理 ─────────────────────────────────────────────────────
     AlgorithmDescriptor(
@@ -370,6 +475,7 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         cpu_cost="high", memory_cost="high", io_cost="low",
         preferred_execution_policy="CELERY", compatible_map_models=["raster_surface"],
         fallback_algorithms=["interpolation.kriging"], priority=10,
+    fallback_semantics={"interpolation.kriging": "equivalent"},
     ),
     AlgorithmDescriptor(
         id="interpolation.kriging", name="普通克里金插值", category="interpolation",
@@ -383,6 +489,7 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         cpu_cost="high", memory_cost="high", io_cost="low",
         preferred_execution_policy="CELERY", compatible_map_models=["raster_surface"],
         fallback_algorithms=["interpolation.idw"], priority=20,
+    fallback_semantics={"interpolation.idw": "approximation"},
     ),
     # ── 地形 ─────────────────────────────────────────────────────────
     AlgorithmDescriptor(
@@ -444,6 +551,7 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         cpu_cost="high", memory_cost="medium", io_cost="high",
         preferred_execution_policy="ASYNC", priority=10,
         fallback_algorithms=["network.shortest_path"],
+    fallback_semantics={"network.shortest_path": "approximation"},
     ),
     # 真实路网族补齐：此前 registry 只有直线/简化近似实现
     AlgorithmDescriptor(
@@ -768,9 +876,115 @@ class AlgorithmRegistry:
                 issues.append(
                     f"algorithm {algo.id}: unknown unit_requirements "
                     f"'{algo.unit_requirements}' (vocabulary: {sorted(_UNIT_VOCABULARY)})")
+            # ── VNext（ADR-0099）科学元数据校验：每个声明字段都有
+            # 存在性/一致性消费方 —— 死 metadata 在注册表门被拒。──────
+            issues.extend(self._validate_scientific_metadata(algo))
         for cap in capabilities.all_ids:
             if not self._by_capability.get(cap):
                 issues.append(f"capability {cap}: no algorithm registered")
+        return issues
+
+    def _validate_scientific_metadata(self, algo: AlgorithmDescriptor) -> List[str]:
+        """VNext 科学字段的交叉校验（参数契约/出处/前置条件/不确定性/
+        复现策略/成熟度/fallback 语义）。"""
+        issues: List[str] = []
+        if algo.parameter_contract_ref:
+            from app.lib.gis.parameter_contracts import get_parameter_contract_registry
+
+            contract = get_parameter_contract_registry().get(algo.parameter_contract_ref)
+            if contract is None:
+                issues.append(
+                    f"algorithm {algo.id}: parameter_contract_ref "
+                    f"'{algo.parameter_contract_ref}' not registered")
+            elif not contract.parameters:
+                issues.append(
+                    f"algorithm {algo.id}: parameter contract "
+                    f"'{algo.parameter_contract_ref}' has zero parameters")
+        if algo.method_references:
+            from app.lib.gis.method_references import reference_exists
+
+            for ref in algo.method_references:
+                if not reference_exists(ref):
+                    issues.append(
+                        f"algorithm {algo.id}: unknown method reference {ref}")
+        if algo.scientific_preconditions:
+            from app.lib.gis.scientific_preconditions import precondition_exists
+
+            for pid in algo.scientific_preconditions:
+                if not precondition_exists(pid):
+                    issues.append(
+                        f"algorithm {algo.id}: unknown scientific precondition {pid}")
+        if algo.uncertainty_outputs:
+            from app.lib.gis.uncertainty import UNCERTAINTY_TYPE_VOCABULARY
+
+            for u in algo.uncertainty_outputs:
+                if u not in UNCERTAINTY_TYPE_VOCABULARY:
+                    issues.append(
+                        f"algorithm {algo.id}: unknown uncertainty output {u}")
+        # 复现策略与 deterministic 声明一致性：
+        #   "deterministic"（无随机）⇒ 必须 deterministic=True；
+        #   "unseeded"（随机不可控）⇒ 必须 deterministic=False；
+        #   "none"（方法无随机成分、种子不适用；复现性告警走 limitations）
+        #   / "fixed_seed"（内部固定种子，逐次可复现）/ "caller_seeded"
+        #   （种子是参数）与两旗兼容。
+        if algo.random_seed_policy == "deterministic" and not algo.deterministic:
+            issues.append(
+                f"algorithm {algo.id}: deterministic=False 不得声明 deterministic 种子策略")
+        if algo.random_seed_policy == "unseeded" and algo.deterministic:
+            issues.append(
+                f"algorithm {algo.id}: deterministic=True 与 unseeded 矛盾")
+        # backend_variants：后端词表 + 实现存在性（native 才谈变体）
+        for variant in algo.backend_variants:
+            if variant.backend not in BACKEND_VOCABULARY:
+                issues.append(
+                    f"algorithm {algo.id}: variant {variant.id} backend "
+                    f"'{variant.backend}' not in vocabulary")
+        if algo.backend_variants and algo.runtime_status == "native" \
+                and not algo.tool_candidates:
+            issues.append(
+                f"algorithm {algo.id}: native with backend_variants but no tools")
+        # fallback 语义：键合法 + not_allowed 不得同时是可自动回退目标
+        for target, semantics in algo.fallback_semantics.items():
+            if target not in algo.fallback_algorithms:
+                issues.append(
+                    f"algorithm {algo.id}: fallback_semantics key {target} "
+                    f"不在 fallback_algorithms 里")
+            if semantics == "not_allowed":
+                issues.append(
+                    f"algorithm {algo.id}: fallback {target} 标记 not_allowed "
+                    f"却列在 fallback_algorithms（resolver 会自动采用）")
+        for target in algo.fallback_algorithms:
+            if target not in algo.fallback_semantics:
+                issues.append(
+                    f"algorithm {algo.id}: fallback {target} 缺科学等价性声明 "
+                    f"(fallback_semantics)")
+        # 成熟度必要条件（PRODUCTION/VALIDATED 是可审计承诺）
+        if algo.scientific_status == "PRODUCTION":
+            if algo.runtime_status != "native" or not algo.tool_candidates:
+                issues.append(f"algorithm {algo.id}: PRODUCTION 需要 native 实现")
+            if not algo.parameter_contract_ref:
+                issues.append(f"algorithm {algo.id}: PRODUCTION 需要参数契约")
+            if not algo.method_references:
+                issues.append(f"algorithm {algo.id}: PRODUCTION 需要方法出处")
+            if not algo.conformance_tests:
+                issues.append(f"algorithm {algo.id}: PRODUCTION 需要 conformance tests")
+        elif algo.scientific_status == "VALIDATED" and not algo.conformance_tests:
+            issues.append(f"algorithm {algo.id}: VALIDATED 需要 conformance tests")
+        elif algo.scientific_status == "DEPRECATED" and not algo.fallback_algorithms:
+            issues.append(
+                f"algorithm {algo.id}: DEPRECATED 必须给出 fallback（否则规划死端）")
+        # conformance 节点：仓库布局可用时校验文件存在性（确定性、零导入）。
+        # 非 checkout 环境（tests/ 根不存在）无从校验 —— 诚实跳过。
+        if algo.conformance_tests:
+            import os
+
+            if os.path.isdir("tests"):
+                for node in algo.conformance_tests:
+                    path = node.split("::", 1)[0]
+                    if path.startswith("tests/") and not os.path.exists(path):
+                        issues.append(
+                            f"algorithm {algo.id}: conformance test file "
+                            f"missing: {path}")
         return issues
 
 

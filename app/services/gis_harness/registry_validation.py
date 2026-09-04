@@ -9,7 +9,7 @@ test_registry_validation.py）+ 可选 available_tools 视图下做 tool 存在�
 """
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from app.lib.cartography.model_library import (
     get_map_model_registry,
@@ -28,6 +28,8 @@ from app.services.gis_harness.template_catalog import get_template_catalog
 
 def validate_gis_library(
     available_tools: Optional[set] = None,
+    *,
+    tool_registry: Optional[Any] = None,
 ) -> List[str]:
     """全库交叉校验。返回违规列表（空 = 通过）。
 
@@ -49,6 +51,14 @@ def validate_gis_library(
     issues.extend(capabilities.validate())
     issues.extend(algorithms.validate(available_tools=available_tools))
     issues.extend(validate_model_library())
+    # 参数一致性门（§43 parity）：显式传 tool_registry 才做 schema 级
+    # 对账（构建注册表是校验专用成本；默认轻量）。
+    if tool_registry is not None:
+        issues.extend(
+            validate_algorithm_tool_parameter_parity(tool_registry=tool_registry))
+    else:
+        from app.lib.gis.parameter_contracts import get_parameter_contract_registry
+        issues.extend(get_parameter_contract_registry().validate())
 
     # ── MapModel：artifact 引用 + 组件类型合法 ────────────────────────
     valid_components = set(ComponentType.__args__) if hasattr(ComponentType, "__args__") else set()
@@ -170,4 +180,57 @@ def validate_gis_library(
     return issues
 
 
-__all__ = ["validate_gis_library"]
+def validate_algorithm_tool_parameter_parity(tool_registry=None) -> List[str]:
+    """算法/工具参数一致性门（ADR-0099 §43 parity）。
+
+    声明了 ``parameter_contract_ref`` 的算法，其每个候选工具的 OpenAI
+    schema 必须包含契约的全部 **required** 参数名 —— 参数错配是死契约的
+    最强信号（工具签名改了、契约没跟，或反之）。
+
+    ``tool_registry`` 缺省时惰性构建真实注册表（本函数是校验专用入口，
+    非热路径）。schema 不可得的环境返回空（诚实跳过，不误报）。
+    """
+    from app.lib.gis.parameter_contracts import get_parameter_contract_registry
+
+    contract_registry = get_parameter_contract_registry()
+    issues: List[str] = list(contract_registry.validate())
+    algorithms = get_algorithm_registry()
+
+    try:
+        if tool_registry is None:
+            from app.tools import init_tools
+            from app.tools.registry import ToolRegistry
+
+            tool_registry = ToolRegistry()
+            init_tools(tool_registry)
+        tool_schemas = {
+            s["function"]["name"]: s["function"].get("parameters") or {}
+            for s in tool_registry.get_schemas()
+        }
+    except Exception:  # noqa: BLE001
+        return issues
+
+    for algo_id in algorithms.all_ids:
+        algo = algorithms.get(algo_id)
+        assert algo is not None
+        if not algo.parameter_contract_ref:
+            continue
+        contract = contract_registry.get(algo.parameter_contract_ref)
+        if contract is None:
+            continue  # algorithm_registry.validate 已报悬空引用
+        for tool_name in algo.tool_candidates:
+            schema = tool_schemas.get(tool_name)
+            if schema is None:
+                continue  # 工具存在性由 algorithms.validate(available_tools) 管
+            props = set((schema.get("properties") or {}).keys())
+            missing = [p.name for p in contract.parameters
+                       if p.required and p.name not in props]
+            if missing:
+                issues.append(
+                    f"algorithm {algo_id}: tool {tool_name} schema 缺契约必填"
+                    f"参数 {missing}（parameter contract "
+                    f"{algo.parameter_contract_ref}）")
+    return issues
+
+
+__all__ = ["validate_gis_library", "validate_algorithm_tool_parameter_parity"]

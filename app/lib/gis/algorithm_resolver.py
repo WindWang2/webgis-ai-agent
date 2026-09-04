@@ -31,6 +31,9 @@ class FallbackStep(BaseModel):
     to_element: str
     reason_code: str
     evidence: Dict[str, Any] = Field(default_factory=dict)
+    # ADR-0099：回退的科学等价性分类（equivalent/approximation/proxy/
+    # degraded/not_allowed）—— proxy/degraded 必须显现在证据里。
+    semantics: str = ""
 
 
 class AlgorithmResolution(BaseModel):
@@ -49,6 +52,10 @@ class AlgorithmResolution(BaseModel):
     execution_policy: str = ""
     cost_score: Optional[int] = None
     cost_breakdown: str = ""
+    # ADR-0099（additive）：科学门 evidence —— 通过但带警告的条件 +
+    # 拒绝时建议的数据变换（如「重投影到 UTM」）。
+    scientific_warnings: List[str] = Field(default_factory=list)
+    required_transformations: List[str] = Field(default_factory=list)
 
 
 def _dominant_geometry(profile: Optional[Dict[str, Any]]) -> str:
@@ -97,16 +104,20 @@ class AlgorithmResolver:
         *,
         profile: Optional[Dict[str, Any]],
         available_tools: Optional[Any],
-    ) -> tuple[str, str]:
-        """返回 (tool, reason)；tool 为空表示拒绝，reason 是拒绝码。"""
+    ) -> tuple[str, str, List[str]]:
+        """返回 (tool, reason, warnings)；tool 为空表示拒绝。
+
+        warnings 只在通过时非空（科学前置条件的 PASS_WITH_WARNINGS），
+        随 resolution evidence 上报，不阻断选择。
+        """
         if algo.runtime_status != "native":
-            return "", f"algorithm_not_native:{algo.id}"
+            return "", f"algorithm_not_native:{algo.id}", []
         if not algo.tool_candidates:
-            return "", f"no_tool_candidates:{algo.id}"
+            return "", f"no_tool_candidates:{algo.id}", []
         if available_tools is not None:
             tool = next((t for t in algo.tool_candidates if t in available_tools), "")
             if not tool:
-                return "", f"tool_unavailable:{algo.id}"
+                return "", f"tool_unavailable:{algo.id}", []
         else:
             tool = algo.tool_candidates[0]
         # 以下检查只在 profile 提供了对应事实时生效（descriptor 派生画像
@@ -115,7 +126,7 @@ class AlgorithmResolver:
             geom = _dominant_geometry(profile)
             if algo.geometry_requirements and geom != "unknown" and \
                     geom not in algo.geometry_requirements:
-                return "", f"geometry_mismatch:{algo.id}:input={geom}"
+                return "", f"geometry_mismatch:{algo.id}:input={geom}", []
             # V2(P3)：input_artifact_types 契约消费 —— 声明了输入词表的
             # 算法，在画像携带已知 artifactType（DatasetProfile 适配）时
             # 校验成员关系。未知（None/未注册词）不判死——诚实缺省。
@@ -129,14 +140,14 @@ class AlgorithmResolver:
                         return "", (
                             f"input_type_mismatch:{algo.id}:"
                             f"have={declared_input}"
-                        )
+                        ), []
             if algo.min_features is not None:
                 count = profile.get("featureCount")
                 if isinstance(count, (int, float)) and int(count) < algo.min_features:
                     return "", (
                         f"insufficient_features:{algo.id}:"
                         f"{int(count)}<{algo.min_features}"
-                    )
+                    ), []
             # ADR-0083：渲染上限门 —— 声明了 max_features_hint 的算法
             # （原生渲染通道，如 density.visual.heatmap 的 FETCH_FEATURE_CAP）
             # 在超限时拒绝，触发算法/能力级 fallback（聚合通道）。
@@ -146,14 +157,58 @@ class AlgorithmResolver:
                     return "", (
                         f"over_render_cap:{algo.id}:"
                         f"{int(count)}>{algo.max_features_hint}"
-                    )
+                    ), []
             if algo.required_fields:
                 known = _profile_fields(profile)
                 if known is not None:
                     missing = [f for f in algo.required_fields if f not in known]
                     if missing:
-                        return "", f"missing_fields:{algo.id}:{','.join(missing)}"
-        return tool, ""
+                        return "", f"missing_fields:{algo.id}:{','.join(missing)}", []
+            # ── ADR-0099 科学门 1：CRS 类（crs_class 声明时才激活；
+            # 数据 CRS 未知 → 放行，诚实缺省哲学不变）。拒绝理由内嵌
+            # 重投影建议（;transform=…），由 resolve 汇入
+            # required_transformations。────────────────────────────────
+            if algo.crs_class:
+                from app.lib.gis.crs_safety import (
+                    classify_crs, crs_class_allows, recommend_metric_crs,
+                )
+
+                data_crs = profile.get("crs")
+                if isinstance(data_crs, str) and data_crs:
+                    data_class = classify_crs(data_crs)
+                    if not crs_class_allows(algo.crs_class, data_class):
+                        bbox = profile.get("bbox") \
+                            if isinstance(profile.get("bbox"), list) else None
+                        rec = recommend_metric_crs(bbox)
+                        hint = f"reproject to {rec}" if rec else "reproject to metric CRS"
+                        return "", (
+                            f"crs_class_mismatch:{algo.id}:"
+                            f"needs={algo.crs_class}:data={data_class}"
+                            f";transform={hint}"
+                        ), []
+            # ── ADR-0099 科学门 2：声明式前置条件（五值判定）──────────
+            if algo.scientific_preconditions:
+                from app.lib.gis.scientific_preconditions import (
+                    evaluate_preconditions,
+                )
+
+                warnings: List[str] = []
+                for result in evaluate_preconditions(
+                        algo.scientific_preconditions, profile):
+                    if result.verdict == "PASS_WITH_WARNINGS":
+                        warnings.append(
+                            f"{result.precondition_id}: {result.message}")
+                    elif result.verdict in (
+                            "REQUIRES_TRANSFORM", "INSUFFICIENT_DATA",
+                            "INVALID_METHOD"):
+                        reason = (
+                            f"scientific_precondition:{algo.id}:"
+                            f"{result.precondition_id}:{result.verdict}")
+                        if result.transform_hint:
+                            reason += f";transform={result.transform_hint}"
+                        return "", reason, []
+                return tool, "", warnings
+        return tool, "", []
 
     def _candidate_reason(
         self, algo: AlgorithmDescriptor, tool: str, profile: Optional[Dict[str, Any]],
@@ -226,12 +281,12 @@ class AlgorithmResolver:
         )
 
         rejected: List[str] = []
-        eligible: List[tuple[AlgorithmDescriptor, str]] = []
+        eligible: List[tuple[AlgorithmDescriptor, str, List[str]]] = []
         for algo in candidates:
-            tool, why = self._check_candidate(
+            tool, why, warns = self._check_candidate(
                 algo, profile=profile, available_tools=available_tools)
             if tool:
-                eligible.append((algo, tool))
+                eligible.append((algo, tool, warns))
             else:
                 rejected.append(why)
 
@@ -243,9 +298,10 @@ class AlgorithmResolver:
             # 大规模切换由 max_features_hint 硬门 + capability fallback
             # 承担。单候选直通（cost evidence 留空表示无竞争）。
             scored = []
-            for algo, tool in eligible:
+            for algo, tool, sci_warns in eligible:
                 score, breakdown = score_algorithm(algo, policy=policy)
-                scored.append((algo.priority, score, algo.id, algo, tool, breakdown))
+                scored.append(
+                    (algo.priority, score, algo.id, algo, tool, breakdown, sci_warns))
             if len(scored) > 1:
                 scored.sort(key=lambda t: (t[0], t[1], t[2]))
             # 显式算法请求（克里金 vertical slice）：用户点名算法（如
@@ -260,7 +316,7 @@ class AlgorithmResolver:
                         scored.insert(0, entry)
                         hinted = True
                         break
-            _, best_score, _, best, best_tool, best_bd = scored[0]
+            _, best_score, _, best, best_tool, best_bd, best_warns = scored[0]
             reason = self._candidate_reason(best, best_tool, profile)
             contested = len(scored) > 1
             if hinted:
@@ -279,16 +335,28 @@ class AlgorithmResolver:
                 execution_policy=policy if contested else "",
                 cost_score=best_score if contested else None,
                 cost_breakdown=best_bd if contested else "",
+                scientific_warnings=best_warns[:_MAX_REJECTIONS],
             )
 
+        # ADR-0099：全拒场景把拒绝理由里的 ;transform= 建议汇成有界
+        # 变换清单（dedup ≤4）—— planner/产品据此给出可执行的下一步。
+        transformations: List[str] = []
+        for why in rejected:
+            if ";transform=" in why:
+                hint = why.split(";transform=", 1)[1][:160]
+                if hint not in transformations:
+                    transformations.append(hint)
+        transformations = transformations[:4]
+
         # 候选全拒 → 算法级 fallback 链（from/to/reason_code/evidence）。
+        # ADR-0099：每步携带科学等价性分类（proxy/degraded 显性化）。
         trail: List[FallbackStep] = []
         for algo in candidates:
             for fb_id in algo.fallback_algorithms:
                 fb = self.algorithms.get(fb_id)
                 if fb is None or fb.runtime_status != "native":
                     continue
-                tool, why = self._check_candidate(
+                tool, why, fb_warns = self._check_candidate(
                     fb, profile=profile, available_tools=available_tools)
                 if tool:
                     trail.append(FallbackStep(
@@ -296,6 +364,7 @@ class AlgorithmResolver:
                         to_element=fb.id,
                         reason_code=rejected[0].split(":", 1)[0] if rejected else "INELIGIBLE",
                         evidence={"first_rejection": rejected[0] if rejected else ""},
+                        semantics=algo.fallback_semantics.get(fb_id, "approximation"),
                     ))
                     return AlgorithmResolution(
                         capability=capability,
@@ -306,6 +375,7 @@ class AlgorithmResolver:
                         rejected=rejected[:_MAX_REJECTIONS],
                         fallback_trail=trail[:_MAX_FALLBACK_TRAIL],
                         fallback_candidates=[fb.id],
+                        scientific_warnings=fb_warns[:_MAX_REJECTIONS],
                     )
         # 能力级 fallback（如 grid_binning → density_surface）：目标能力可
         # 运行时记录为 fallback 建议，但本能力保持 unavailable（诚实报告；
@@ -335,6 +405,7 @@ class AlgorithmResolver:
                     rejected=rejected[:_MAX_REJECTIONS],
                     fallback_trail=trail[:_MAX_FALLBACK_TRAIL],
                     fallback_candidates=[fb_cap],
+                    required_transformations=transformations,
                 )
 
         return AlgorithmResolution(
@@ -342,6 +413,7 @@ class AlgorithmResolver:
             status="unavailable",
             reason=rejected[0] if rejected else "no_eligible_algorithm",
             rejected=rejected[:_MAX_REJECTIONS],
+            required_transformations=transformations,
         )
 
 
