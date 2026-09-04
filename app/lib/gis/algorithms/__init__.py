@@ -9,42 +9,41 @@ from __future__ import annotations
 from typing import Iterable, List
 
 from app.lib.gis.algorithm_registry import AlgorithmDescriptor
-from app.lib.gis.algorithms.aggregation import ALGORITHMS as _aggregation
-from app.lib.gis.algorithms.data_access import ALGORITHMS as _data_access
-from app.lib.gis.algorithms.decision import ALGORITHMS as _decision
-from app.lib.gis.algorithms.density import ALGORITHMS as _density
-from app.lib.gis.algorithms.geometry import ALGORITHMS as _geometry
-from app.lib.gis.algorithms.interpolation import ALGORITHMS as _interpolation
-from app.lib.gis.algorithms.network import ALGORITHMS as _network
-from app.lib.gis.algorithms.point_pattern import ALGORITHMS as _point_pattern
-from app.lib.gis.algorithms.raster import ALGORITHMS as _raster
-from app.lib.gis.algorithms.remote_sensing import ALGORITHMS as _remote
-from app.lib.gis.algorithms.statistics import ALGORITHMS as _statistics
-from app.lib.gis.algorithms.terrain import ALGORITHMS as _terrain
-from app.lib.gis.algorithms.temporal import ALGORITHMS as _temporal
+from app.lib.gis.algorithms import aggregation as _aggregation_mod
+from app.lib.gis.algorithms import data_access as _data_access_mod
+from app.lib.gis.algorithms import decision as _decision_mod
+from app.lib.gis.algorithms import density as _density_mod
+from app.lib.gis.algorithms import geometry as _geometry_mod
+from app.lib.gis.algorithms import interpolation as _interpolation_mod
+from app.lib.gis.algorithms import network as _network_mod
+from app.lib.gis.algorithms import point_pattern as _point_pattern_mod
+from app.lib.gis.algorithms import raster as _raster_mod
+from app.lib.gis.algorithms import remote_sensing as _remote_mod
+from app.lib.gis.algorithms import statistics as _statistics_mod
+from app.lib.gis.algorithms import temporal as _temporal_mod
+from app.lib.gis.algorithms import terrain as _terrain_mod
 
-
-_ALL_PACKS = (
-    _data_access, _geometry, _aggregation, _density, _statistics,
-    _point_pattern, _interpolation, _network, _terrain, _raster,
-    _remote, _temporal, _decision,
+_ALL_MODULES = (
+    _data_access_mod, _geometry_mod, _aggregation_mod, _density_mod,
+    _statistics_mod, _point_pattern_mod, _interpolation_mod, _network_mod,
+    _terrain_mod, _raster_mod, _remote_mod, _temporal_mod, _decision_mod,
 )
 
 
 def iter_domain_packs() -> Iterable[List[AlgorithmDescriptor]]:
     """确定性域序聚合（顺序 = 注册序；同 id 冲突仍由 register() 拒绝）。"""
-    yield from _ALL_PACKS
+    for module in _ALL_MODULES:
+        yield module.ALGORITHMS
 
 
 def iter_contract_packs() -> Iterable[list]:
     """各域模块导出的 PARAMETER_CONTRACTS（缺省空表）。
 
     契约注册表聚合域契约 —— 域模块拥有自己的参数契约，中央
-    parameter_contracts.py 不再被多方追加。
+    parameter_contracts.py 不再被多方追加。注意属性在域**模块**上，
+    不在 ALGORITHMS 列表上（此前的实现读列表属性恒为 None）。
     """
-    from app.lib.gis.parameter_contracts import ParameterContract  # noqa: F401
-
-    for pack in _ALL_PACKS:
-        contracts = getattr(pack, "PARAMETER_CONTRACTS", None)
+    for module in _ALL_MODULES:
+        contracts = getattr(module, "PARAMETER_CONTRACTS", None)
         if contracts:
             yield contracts

@@ -37,6 +37,22 @@ CAPABILITIES: List[CapabilityDescriptor] = [
         ),
 
         CapabilityDescriptor(
+            id="global_gearys_c", name="全局 Geary 指数", category="statistics",
+            description="全局空间自相关检验（成对差版本，对局部差异更敏感）。",
+            input_artifact_types=["poi_feature_set", "point_feature_set", "admin_aggregate_table"],
+            output_artifact_types=["stats_table"],
+            purpose_template="全局 Geary 指数",
+        ),
+
+        CapabilityDescriptor(
+            id="general_g", name="Getis-Ord General G", category="statistics",
+            description="全局高值聚集检验（非负值；高值/低值聚集判别）。",
+            input_artifact_types=["poi_feature_set", "point_feature_set", "admin_aggregate_table"],
+            output_artifact_types=["stats_table"],
+            purpose_template="General G 高值聚集检验",
+        ),
+
+        CapabilityDescriptor(
             id="local_morans_i", name="局部莫兰/LISA", category="statistics",
             description="局部热点/冷点聚类。",
             input_artifact_types=["poi_feature_set", "point_feature_set", "admin_aggregate_table"],

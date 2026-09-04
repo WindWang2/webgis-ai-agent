@@ -58,4 +58,15 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             compatible_map_models=["administrative_choropleth", "aggregate_grid"],
             purpose_template="分析密度面/密度聚合",
         ),
+
+        CapabilityDescriptor(
+            id="point_pattern_analysis", name="点格局分析", category="density",
+            description="点格局统计（Ripley K / 样方 χ² / NNI / 密度聚类）——"
+                        "回答『点的空间分布是聚集/均匀/随机』，与密度面表达正交。",
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_types=["stats_table", "hotspot_result"],
+            geometry_requirements=["point"],
+            deterministic=True,
+            purpose_template="点格局分析",
+        ),
 ]
