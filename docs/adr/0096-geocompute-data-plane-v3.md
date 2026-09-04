@@ -95,14 +95,16 @@ invariant is preserved by construction):
   consumers keep working.
 - **Cost model**: explainable relative cost (rows/bytes scanned, bytes transferred, rows emitted, memory
   class, join candidates, remote requests, latency class). No fake precision; estimates carry confidence.
-- **N-source federation**: `FederatedQueryRequest` gains an additive multi-source form (hard cap 4
-  sources by default) with cost-based left-deep join ordering and fail-fast budget checks; the existing
-  two-source `left/right` API remains fully functional.
+- **N-source federation**: an additive `FederatedChainRequest` (hard cap 4 sources by default) with
+  cost-based left-deep join ordering and fail-fast budget checks; the existing two-source
+  `left/right` API remains fully functional.
 
 ### D4 — Raster Runtime V5 = consolidation, not a new runtime
 
-- One **content fingerprint authority** for raster products; the four existing schemes delegate to it
-  (old keys remain computable for compatibility during transition).
+- One **content fingerprint authority** for raster products (geo_raster/fingerprint);
+  `RasterReader._fingerprint` delegates to it (value-compatible). The artifact-plane persisted
+  fingerprint (`raster_spec.raster_content_fingerprint`) and the V3 writer digest remain frozen,
+  documented siblings in the same contract family — no persisted key format changed.
 - `rasterio_env` hardening becomes a **runtime property** used by all raster paths (tile service,
   temporal engine, STAC online math), not a reader-lifetime detail.
 - The temporal engine converges on the V3/V4 grid-alignment authority (removing the third alignment
@@ -120,19 +122,24 @@ task framework, no new job table, no external scheduler (re-affirming ADR-0052's
 
 ### D6 — Resource governance
 
-Hierarchical budgets (execution → node scopes over the existing query `ExecutionBudget`) enforced at
-admission (planning), during execution (bounded transfer/materialization), and in evidence. Budget
-exhaustion produces typed errors with actionable lower-cost alternatives. No billing system.
+Hierarchical budgets (session → execution → node scopes; tenant/project mounting is scaffolded in
+`ResourceGovernor` but not yet wired to identity providers) enforced at admission (atomic
+reserve-with-rollback along the scope chain), during execution (bounded transfer/materialization),
+and in evidence. Budget exhaustion produces typed errors with actionable lower-cost alternatives.
+No billing system. Node deadlines are cooperative: worker threads are unkillable (repo-wide
+constraint), so a non-checkpointing operation can exceed its deadline until its next checkpoint —
+hot loops in geo_analysis operators carry cooperative checkpoints.
 
 ### D7 — Reproducibility, caches, observability
 
 - Runtime manifests gain the execution-plan fingerprint; reopening persisted plans under incompatible
   runtime semantics yields explicit `stale`/degraded disclosure (extending `is_stale_plan`), never
   silent recomputation claims.
-- All derived caches invalidate via the existing `ref_lifecycle` contract and authoritative
-  fingerprints/`content_revision`; cache lifetime is never a correctness mechanism. Race windows
-  (invalidate-during-build, overwrite-during-encode, hit-after-revision, failed materialization,
-  rollback) are locked by tests.
+- ref_lifecycle-governed caches (payload/spatial-index/tile) invalidate via the existing contract
+  and authoritative fingerprints/`content_revision`; cache lifetime is never a correctness mechanism.
+  Race windows (invalidate-during-build, overwrite-during-encode, hit-after-revision, failed
+  materialization, rollback) are locked by tests. Engine-local stores (`StatisticsStore`,
+  `NodeResultStore`) are bounded TTL/LRU performance hints outside the ref_lifecycle contract.
 - Observability adds structured execution-trace events (correlation ids, node state transitions,
   counters) using the existing `RuntimeContext` + bounded-writer patterns; no new telemetry dependency;
   no secrets or raw payloads in events.
@@ -147,7 +154,7 @@ exhaustion produces typed errors with actionable lower-cost alternatives. No bil
 | Durable job row / state machine | `AnalysisTask` + `jobs/lifecycle` | nodes dispatch through it |
 | Workflow identity/fingerprints | WorkflowEngine + provenance | plan fingerprint is additive sibling |
 | Query truth | QuerySpecV2 + `plan_query` | optimizer lives inside |
-| Catalog truth | `spatial_catalog_items` | stats table is additive sibling |
+| Catalog truth | `spatial_catalog_items` | stats store is an in-process sibling (TTL, fingerprint-keyed) |
 | Cache invalidation | `ref_lifecycle` | reused, not extended |
 | Artifact identity | ArtifactRegistry / Artifact / MapProductVersion | plan lineage links are additive |
 

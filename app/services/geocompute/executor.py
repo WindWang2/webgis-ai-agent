@@ -51,14 +51,16 @@ class NodeResultStore:
 
     @staticmethod
     def _measure(payload: dict[str, Any]) -> int:
-        """近似字节量（有界测量：逐 feature 计量，超预算即停，不做全量序列化）。"""
+        """近似字节量：采样 64 条外推（评审 m2 —— 全量 str() 是大节点上的
+        瞬时垃圾源；采样估计对字节预算足够）。"""
         total = 0
-        feats = payload.get("features") or []
-        for f in feats[:50_000]:
-            total += len(str(f)) * 2  # 粗粒度近似，避免 O(全量) JSON 序列化
-        rows = payload.get("rows") or []
-        for r in rows[:50_000]:
-            total += len(str(r)) * 2
+        for key in ("features", "rows"):
+            items = payload.get(key) or []
+            if not items:
+                continue
+            sample = items[:64]
+            avg = sum(len(str(f)) for f in sample) / len(sample)
+            total += int(avg * len(items))
         return total
 
     def get(self, key: str) -> Optional[dict[str, Any]]:
@@ -100,6 +102,7 @@ class GeoExecutionEngine:
         self._max_workers = max(1, min(int(max_workers), 8))
         self._runs: OrderedDict[str, ExecutionRun] = OrderedDict()
         self._run_outputs: dict[str, dict[str, dict[str, Any]]] = {}
+        self._run_tokens: dict[str, CancellationToken] = {}
         self._run_lock = threading.Lock()
         self._run_cache_size = run_cache_size
 
@@ -132,13 +135,15 @@ class GeoExecutionEngine:
                 max_nodes=plan.budget.max_nodes,
             )
             gov_path = governor.create_scope(
-                parent, ScopeKind.EXECUTION, f"gexec-{id(plan) % 10**8}",
+                parent, ScopeKind.EXECUTION, f"gexec-{uuid.uuid4().hex[:8]}",
                 limits=limits,
             )
             total_rows = sum(
                 (n.estimate.rows or 0) for n in plan.nodes if n.estimate
             )
-            governor.admit(gov_path, rows=total_rows or None, nodes=0)
+            # 原子预留（评审 M2：admit→charge TOCTOU 修复）；估计值先行
+            # 预配，节点完成后的实际记账叠加 —— 保守方向（宁可多记）。
+            governor.reserve(gov_path, rows=total_rows, nodes=1)
 
         run_id = f"gexec-{uuid.uuid4().hex[:12]}"
         plan_fp = plan.graph_fingerprint()
@@ -160,6 +165,10 @@ class GeoExecutionEngine:
                 old = next(iter(self._runs))
                 self._runs.pop(old)
                 self._run_outputs.pop(old, None)
+        # run 级取消令牌注册（REST/工具凭 run_id 请求取消；M1）
+        if cancel_token is None:
+            cancel_token = CancellationToken(job_id=run_id)
+        self._run_tokens[run_id] = cancel_token
 
         tracing.emit("run_started", run_id=run_id, plan_fingerprint=plan_fp,
                      nodes=len(plan.nodes), status="running",
@@ -170,6 +179,9 @@ class GeoExecutionEngine:
                             cancel_token=cancel_token, deadline_ts=deadline_ts,
                             governor=governor, gov_path=gov_path)
         finally:
+            if governor is not None and gov_path:
+                # 摘除 execution 作用域（已发生用量保留在祖先链上）
+                governor.teardown_scope(gov_path)
             run.wall_time_s = round(time.monotonic() - started, 6)
 
         failed = [nid for nid, ev in run.evidence.items() if ev.status == "failed"]
@@ -187,7 +199,24 @@ class GeoExecutionEngine:
         tracing.emit("run_finished", run_id=run_id, plan_fingerprint=plan_fp,
                      status=run.status.value, duration_s=run.wall_time_s,
                      error_code=run.error_code)
+        # 载荷保留上限（并发评审 M3）：run 终态后立即丢弃原始节点输出 ——
+        # 证据/摘要已在 run.evidence；复用走字节预算化的 NodeResultStore。
+        with self._run_lock:
+            self._run_outputs.pop(run_id, None)
+        self._run_tokens.pop(run_id, None)
         return run
+
+    def cancel_run(self, run_id: str, reason: str = "cancelled by caller") -> bool:
+        """请求取消一个 run（幂等；未知 run → False）。
+
+        级联：run token 已在 execute_plan 内传入各节点 → durable 分支会把
+        取消请求写入 job 行（request_cancel_sync），worker 侧 checkpoint
+        生效。
+        """
+        token = self._run_tokens.get(run_id)
+        if token is None:
+            return False
+        return token.cancel(reason)
 
     def get_run(self, run_id: str) -> Optional[ExecutionRun]:
         with self._run_lock:

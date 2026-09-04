@@ -46,10 +46,12 @@ def emit(
         "rows": rows,
         "error_code": error_code,
     }
+    # 允许清单制（评审 S-M2）：只有显式登记的字段名可进入 trace，
+    # 未登记的一律丢弃 —— denylist 挡不住近形键（sql_text/query/where…）。
+    allowed = {"nodes", "reason", "attempts", "job_id", "policy", "budget_scope",
+               "plan_id", "scope", "wired", "category", "dataset_id"}
     for k, v in fields.items():
-        if k in ("payload", "features", "rows_data", "credentials", "token", "sql"):
-            continue  # 红线：载荷/凭据绝不进入 trace
-        if v is not None:
+        if k in allowed and v is not None:
             record[k] = v
     with _ring_lock:
         _ring.append(record)

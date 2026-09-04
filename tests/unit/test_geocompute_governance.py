@@ -63,15 +63,16 @@ class TestGovernor:
         exec_path = gov.create_scope(session_path, ScopeKind.EXECUTION, "e-1")
         gov.charge(exec_path, rows=40)
         with pytest.raises(BudgetExceededError) as ei:
-            gov.admit(exec_path, rows=20)
+            gov.reserve(exec_path, rows=20)
         assert "session:s-2" in ei.value.details["scope"]
         assert ei.value.details["suggestions"]
+        # 原子预留：拒绝路径必须回滚已记账的祖先（评审 M2 TOCTOU 修复）
+        assert gov.usage(exec_path) == (40, 0, 0)
 
     def test_unlimited_scope_passes(self):
         gov = ResourceGovernor()
         path = gov.create_scope("global:root", ScopeKind.SESSION, "s-3")
-        gov.admit(path, rows=10**9)
-        gov.charge(path, rows=10**9)
+        gov.reserve(path, rows=10**9)
         assert gov.usage(path)[0] == 10**9
 
     def test_concurrent_charge_is_thread_safe(self):

@@ -67,6 +67,36 @@ class ResourceGovernor:
         self._root = _Scope(ScopeKind.GLOBAL, "root", global_limits)
         self._lock = threading.Lock()
 
+    def ensure_scope(
+        self,
+        parent_path: str,
+        kind: ScopeKind,
+        scope_id: str,
+        limits: Optional[BudgetLimits] = None,
+    ) -> str:
+        """幂等获取或创建子作用域（session 级挂载用；id 由调用方稳定派生）。"""
+        existing = self._find(f"{parent_path}/{kind.value}:{scope_id}")
+        if existing is not None:
+            return f"{parent_path}/{kind.value}:{scope_id}"
+        return self.create_scope(parent_path, kind, scope_id, limits)
+
+    def teardown_scope(self, path: str) -> None:
+        """从父作用域摘除 execution 作用域（防 GLOBAL_GOVERNOR 子树无限增长）。
+
+        已发生的用量保留在祖先链上（记账不回滚）；仅移除树节点本身。
+        """
+        if "/" not in path:
+            return
+        parent_path, _, _ = path.rpartition("/")
+        parent = self._find(parent_path) if parent_path else self._root
+        if parent is None:
+            return
+        with self._lock:
+            parent.children = [
+                c for c in parent.children
+                if f"{parent.path}/{c.path}" != path and c.path != path
+            ]
+
     def create_scope(
         self,
         parent_path: str,
@@ -89,38 +119,56 @@ class ResourceGovernor:
             parent.children.append(child)
         return f"{parent_path}/{kind.value}:{scope_id}"
 
-    def admit(
+    def reserve(
         self,
         path: str,
         *,
-        rows: Optional[int] = None,
-        bytes_: Optional[int] = None,
+        rows: int = 0,
+        bytes_: int = 0,
         nodes: int = 0,
     ) -> None:
-        """准入检查：沿链向上核对每个作用域的剩余额度（只读，不记账）。"""
-        for scope in self._chain(path):
-            with scope.lock:
-                u = scope.usage
-                lim = scope.limits
-                if lim is None:
-                    continue
-                over: List[str] = []
-                if lim.max_rows is not None and rows is not None and u.rows + rows > lim.max_rows:
-                    over.append(f"rows {u.rows}+{rows} > {lim.max_rows}")
-                if lim.max_bytes is not None and bytes_ is not None and u.bytes + bytes_ > lim.max_bytes:
-                    over.append(f"bytes {u.bytes}+{bytes_} > {lim.max_bytes}")
-                if lim.max_nodes is not None and u.nodes + nodes > lim.max_nodes:
-                    over.append(f"nodes {u.nodes}+{nodes} > {lim.max_nodes}")
-            if over:
-                raise BudgetExceededError(
-                    f"admission denied at scope '{scope.path}': {'; '.join(over)}",
-                    suggestions=[
-                        "narrow the query extent or add filters",
-                        "aggregate per-source before transfer",
-                        "raise the scope budget explicitly for approved heavy paths",
-                    ],
-                    details={"scope": scope.path, "over": over},
-                )
+        """原子预留（评审 M2：admit→charge TOCTOU 的修复）。
+
+        沿链 root→leaf 逐作用域「检查并立即记账」（固定顺序，无死锁）；
+        链中途拒绝时对已记账的祖先做补偿回滚 —— 检查与记账之间不再留
+        TOCTOU 窗口。
+        """
+        charged: List[_Scope] = []
+        try:
+            for scope in self._chain(path):
+                with scope.lock:
+                    lim = scope.limits
+                    u = scope.usage
+                    if lim is not None:
+                        over: List[str] = []
+                        if lim.max_rows is not None and u.rows + rows > lim.max_rows:
+                            over.append(f"rows {u.rows}+{rows} > {lim.max_rows}")
+                        if lim.max_bytes is not None and u.bytes + bytes_ > lim.max_bytes:
+                            over.append(f"bytes {u.bytes}+{bytes_} > {lim.max_bytes}")
+                        if lim.max_nodes is not None and u.nodes + nodes > lim.max_nodes:
+                            over.append(f"nodes {u.nodes}+{nodes} > {lim.max_nodes}")
+                        if over:
+                            raise BudgetExceededError(
+                                f"admission denied at scope '{scope.path}': "
+                                + "; ".join(over),
+                                suggestions=[
+                                    "narrow the query extent or add filters",
+                                    "aggregate per-source before transfer",
+                                    "raise the scope budget explicitly for approved heavy paths",
+                                ],
+                                details={"scope": scope.path, "over": over},
+                            )
+                    u.rows += rows
+                    u.bytes += bytes_
+                    u.nodes += nodes
+                    charged.append(scope)
+        except BudgetExceededError:
+            for scope in charged:
+                with scope.lock:
+                    scope.usage.rows -= rows
+                    scope.usage.bytes -= bytes_
+                    scope.usage.nodes -= nodes
+            raise
 
     def charge(
         self,

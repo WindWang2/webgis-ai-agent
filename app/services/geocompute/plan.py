@@ -79,12 +79,16 @@ class ResourceEstimate(BaseModel):
 
 
 class ResourceBudget(BaseModel):
-    """计划级资源预算（admission control 的准入上界；M7 扩展层级作用域）。"""
+    """计划级资源预算（admission control 的准入上界；层级作用域见 budgets.py）。
 
-    max_rows: int = Field(default=200_000, ge=1)
-    max_bytes: int = Field(default=256 * 1024 * 1024, ge=1)
-    deadline_s: float = Field(default=300.0, gt=0)
-    max_nodes: int = Field(default=64, ge=1)
+    上界（``le``）是**服务端**红线：预算是调用方与运行时协商的配额，
+    不是无界声明（安全评审 F7 —— 客户端不得自授 1e9 行 / 1e9 秒）。
+    """
+
+    max_rows: int = Field(default=200_000, ge=1, le=10_000_000)
+    max_bytes: int = Field(default=256 * 1024 * 1024, ge=1, le=2 * 1024 * 1024 * 1024)
+    deadline_s: float = Field(default=300.0, gt=0, le=3600.0)
+    max_nodes: int = Field(default=64, ge=1, le=256)
 
 
 class CrsExpectation(BaseModel):

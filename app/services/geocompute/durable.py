@@ -13,7 +13,6 @@
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from typing import Any, Callable, Optional
@@ -89,10 +88,16 @@ def await_node_job(
         factory = session_factory
         with factory() as db:
             job = DurableJobStore.get_sync(db, int(job_id))
-            status = job.status if job is not None else None
+            if job is None:
+                raise NodeExecutionError(
+                    f"durable job {job_id} row does not exist",
+                    retry_safe=False,
+                    details={"job_id": str(job_id)},
+                )
+            status = job.status
             if status == JobStatus.completed:
                 terminal = {"result_ref": getattr(job, "result_ref", None)}
-            error_message = getattr(job, "error_message", None) if job is not None else None
+            error_message = getattr(job, "error_message", None)
         if terminal is not None:
             break
         if status in (JobStatus.failed, JobStatus.stale):
@@ -118,16 +123,15 @@ def await_node_job(
                 f"durable job {job_id} exceeded node deadline",
                 details={"job_id": str(job_id)},
             )
-        if status in (JobStatus.cancelling,) and cancel_token is None:
-            pass  # 等待 worker 收敛终态
         time.sleep(_POLL_INTERVAL_S)
 
     ref = terminal.get("result_ref")
     payload: dict[str, Any] = {}
     if ref:
+        from app.services.geocompute._async_bridge import run_coro_sync
         from app.services.session_data import session_data_manager
 
-        stored = asyncio.run(session_data_manager.get(session_id, ref))
+        stored = run_coro_sync(session_data_manager.get(session_id, ref))
         if stored is None:
             raise NodeExecutionError(
                 f"node result ref {ref} is no longer resolvable",

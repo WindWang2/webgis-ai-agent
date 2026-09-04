@@ -1,9 +1,9 @@
 """GeoCompute 节点的 durable job 任务体（ADR-0096 D5 / ADR-0052 修正案）。
 
 穿透既有 durable-job 运行时：``job_id`` 存在时走状态机（进度落库、取消
-从 DB 推进到 checkpoint、重复投递被入口守卫拒绝）；``job_id=None`` 的
-旧式直调路径**不存在** —— 节点派发只经 ``submit_durable_job``（诚实：
-没有第二种无持久语义的执行方式）。
+从 DB 推进到 checkpoint、重复投递被入口守卫拒绝）。生产派发只经
+``submit_durable_job``；``job_id=None`` 仅作为 eager/测试直调路径存在
+（任务体显式告警）—— 它没有持久语义，生产调用方不得使用。
 
 结果交接：载荷存 session ref（有界），``finish_job(result_ref=...)`` 把
 引用写回 job 行 —— 执行器轮询终态后按 ref 解析载荷。DB 行里只有有界
@@ -11,7 +11,6 @@
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from typing import Any, Optional
@@ -78,9 +77,10 @@ def _store_payload(session_id: Optional[str], payload: dict, node) -> Optional[s
     data = payload.get("features") or payload.get("rows")
     if data is None or not session_id:
         return None
+    from app.services.geocompute._async_bridge import run_coro_sync
     from app.services.session_data import session_data_manager
 
-    return asyncio.run(
+    return run_coro_sync(
         session_data_manager.store(
             session_id, data, prefix=f"geocompute-node-{node.semantic_fingerprint()}"
         )

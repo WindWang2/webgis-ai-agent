@@ -14,7 +14,6 @@
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
@@ -33,6 +32,8 @@ logger = logging.getLogger(__name__)
 
 #: 单节点内存载荷的行数硬上界（预算之外的最后一道防线；不静默截断，直接报错）。
 HARD_NODE_ROW_CAP = 500_000
+#: 节点内联参数字节上界（防巨型内联 payload 走 parameters 通道）。
+_MAX_PARAMS_BYTES = 8 * 1024 * 1024
 
 
 @dataclass
@@ -349,7 +350,9 @@ def _op_raster_window_operation(ctx: OperatorContext, node: "ExecutionNode", pay
             f"raster_window_operation '{op}' is not wired; wired: raster_calculator|resample",
             details={"node_id": node.node_id, "operation": str(op)},
         )
-    return {"raster_path": out_path, "metadata": {"raster_op": str(op), "source": str(raster_path)}}
+    import os as _os
+
+    return {"raster_path": out_path, "metadata": {"raster_op": str(op), "source": _os.path.basename(str(raster_path))}}
 
 
 def _raster_from_inputs(payloads: dict[str, NodePayload], node: "ExecutionNode", index: int = 0) -> Optional[str]:
@@ -415,7 +418,11 @@ def _op_materialize(ctx: OperatorContext, node: "ExecutionNode", payloads: dict[
     prefix = str(node.parameters.get("prefix", "geocompute"))
     from app.services.session_data import session_data_manager
 
-    ref_id = asyncio.run(session_data_manager.store(ctx.session_id, data, prefix=prefix))
+    from app.services.geocompute._async_bridge import run_coro_sync
+
+    ref_id = run_coro_sync(
+        session_data_manager.store(ctx.session_id, data, prefix=prefix)
+    )
     return {
         "ref_id": ref_id,
         "metadata": {"materialized_rows": len(list(data)), "prefix": prefix},
@@ -433,7 +440,9 @@ def _op_artifact_register(ctx: OperatorContext, node: "ExecutionNode", payloads:
         )
     from app.services.artifact_registry import register_artifact
 
-    record = asyncio.run(
+    from app.services.geocompute._async_bridge import run_coro_sync
+
+    record = run_coro_sync(
         register_artifact(
             ctx.session_id,
             artifact_id=str(ref_id),
@@ -518,6 +527,17 @@ def execute_node(ctx: OperatorContext, node: ExecutionNode, payloads: dict[str, 
             f"node category '{node.category.value}' has no wired executor "
             f"(wired: {', '.join(wired_categories())})",
             details={"node_id": node.node_id, "category": node.category.value},
+        )
+    # 内联参数字节上界（评审 S-M5）：parameters 不是无限输入通道；
+    # 大数据必须走 session ref / MATERIALIZE，而不是内联 JSON。
+    import json as _json
+
+    if len(_json.dumps(node.parameters, default=str)) > _MAX_PARAMS_BYTES:
+        raise BudgetExceededError(
+            f"node '{node.node_id}' inline parameters exceed {_MAX_PARAMS_BYTES} bytes",
+            suggestions=["materialize the data as a session ref and pass the ref",
+                         "query the source with filters instead of inlining features"],
+            details={"node_id": node.node_id},
         )
     try:
         ctx.checkpoint()

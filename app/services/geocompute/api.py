@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from app.services.geocompute.budgets import BudgetLimits, ResourceGovernor
 from app.services.geocompute.errors import GeoComputeError
 from app.services.geocompute.plan import (
     CrsExpectation,
@@ -41,6 +42,18 @@ def build_plan_from_json(data: dict[str, Any]) -> ExecutionPlan:
                 f"unknown node category '{category}'",
                 details={"wired": sorted(_WIRED_CATEGORIES)},
             )
+        policy_kind = ExecutionPolicyKind(raw.get("policy", "in_process"))
+        if policy_kind is ExecutionPolicyKind.DURABLE_JOB and category in (
+            "raster_window_operation", "artifact_register",
+        ):
+            # durable 交接只承载 features/rows 载荷（session ref）；
+            # raster_path 型输出 / 需在进程内解析输入的类别不支持。
+            raise GeoComputeError(
+                f"category '{category}' does not support durable_job policy "
+                "(payload handoff is session-ref features/rows only)",
+                details={"category": category,
+                         "hint": "use in_process, or materialize first"},
+            )
         retry = raw.get("retry") or {}
         nodes.append(
             ExecutionNode(
@@ -54,7 +67,7 @@ def build_plan_from_json(data: dict[str, Any]) -> ExecutionPlan:
                 parameters=dict(raw.get("parameters") or {}),
                 crs=CrsExpectation(**raw["crs"]) if raw.get("crs") else None,
                 estimate=ResourceEstimate(**raw["estimate"]) if raw.get("estimate") else None,
-                policy=ExecutionPolicyKind(raw.get("policy", "in_process")),
+                policy=policy_kind,
                 reuse=NodeReusePolicy(raw.get("reuse", "allow")),
                 retry=RetryPolicy(**retry) if retry else RetryPolicy(),
                 deadline_s=raw.get("deadline_s"),
@@ -72,13 +85,37 @@ def build_plan_from_json(data: dict[str, Any]) -> ExecutionPlan:
     )
 
 
+#: 生产 governor（评审 S-F7/A-F7：服务端准入不再依赖调用方自报预算）。
+#: session 作用域按稳定哈希挂载；执行作用域由 executor 创建/摘除。
+GOVERNOR = ResourceGovernor(
+    global_limits=BudgetLimits(max_rows=5_000_000, max_bytes=2 * 1024 * 1024 * 1024)
+)
+
+
 def run_plan_sync(
     plan: ExecutionPlan,
     *,
     session_id: Optional[str] = None,
     cancel_token: Optional[Any] = None,
+    governor: Optional[ResourceGovernor] = None,
 ):
-    """同步执行入口（工具/线程上下文用；REST 走 to_thread 同一函数）。"""
+    """同步执行入口（工具/线程上下文用；REST 走 to_thread 同一函数）。
+
+    默认接入进程级 ``GOVERNOR``：global 上限 + 每 session 子作用域
+    （稳定哈希派生，幂等挂载），执行作用域在 run 内创建并在 finally 摘除。
+    """
+    import hashlib
+
+    from app.services.geocompute.budgets import ScopeKind
+
+    gov = governor or GOVERNOR
+    parent = "global:root"
+    if session_id:
+        sid = hashlib.sha1(session_id.encode()).hexdigest()[:12]
+        parent = gov.ensure_scope(parent, ScopeKind.SESSION, sid)
     from app.services.geocompute.executor import engine
 
-    return engine.execute_plan(plan, session_id=session_id, cancel_token=cancel_token)
+    return engine.execute_plan(
+        plan, session_id=session_id, cancel_token=cancel_token,
+        governor=gov, governor_parent_path=parent,
+    )

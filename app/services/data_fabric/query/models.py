@@ -292,19 +292,15 @@ class QueryPlan(BaseModel):
         for w in self.warnings:
             lines.append(f"Warning: {w}")
         if self.cost:
+            # 分数计算复用 optimizer.PlanCost.score（单一权重真值；
+            # optimizer 不反依赖 models，无环）。
+            from app.services.data_fabric.query.optimizer import PlanCost
+
             c = self.cost
             lines.append(
                 "Cost: rows_scanned={rows_scanned} bytes={bytes_transferred} "
                 "emitted={rows_emitted} requests={remote_requests} score≈{score}".format(
-                    score=round(
-                        c.get("rows_scanned", 0) * 0.2
-                        + c.get("bytes_transferred", 0) * 1.0
-                        + c.get("remote_requests", 1) * 50.0
-                        + c.get("join_candidates", 0) * 0.05
-                        + c.get("local_cpu_rows", 0) * 0.5
-                        + c.get("memory_class", 1) * 100.0
-                        + c.get("latency_class", 2) * 25.0,
-                    ),
+                    score=round(PlanCost(**c).score()),
                     **{k: c.get(k, 0) for k in (
                         "rows_scanned", "bytes_transferred", "rows_emitted", "remote_requests")},
                 )
