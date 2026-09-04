@@ -435,6 +435,10 @@ class FederatedExecutor:
 
     # ── 内部 ─────────────────────────────────────────────────────────
 
+    def execute_chain(self, req) -> Dict[str, Any]:
+        """N 源左深链执行（V3 additive）。"""
+        return execute_federated_chain(self, req)
+
     def _source_query(
         self, adapter, dataset_id: str, req: FederatedQueryRequest,
         side_where: Optional[Any], *, fields: Optional[List[str]], limit: int,
@@ -575,6 +579,244 @@ class FederatedExecutor:
         }
 
 
+# ── N 源有界链式联邦（V3 additive，ADR-0096 D3；两源 API 保持原样）──────────
+
+#: 链式联邦的源数硬上限（左深链，绝不组合枚举）。
+MAX_FEDERATED_SOURCES = 4
+
+
+@dataclass
+class ChainSource:
+    """链中的一个源。``estimated_rows`` 是成本排序提示（诚实可未知）。"""
+
+    source_id: str
+    dataset_id: str
+    where: Optional[Any] = None
+    fields: Optional[List[str]] = None
+    estimated_rows: Optional[int] = None
+
+
+@dataclass
+class ChainJoin:
+    """累积左侧行与下一个源的连接。语义与两源 plan 一致。"""
+
+    kind: str                                    # attribute_join | spatial_join | aggregate_join
+    join_field_left: Optional[str] = None        # 累积行的键（顶层，或 "__right__.x"）
+    join_field_right: Optional[str] = None
+    spatial_op: Optional[str] = None             # within | intersects
+    group_by_right: Optional[List[str]] = None
+    aggregates: Optional[List[Dict[str, Any]]] = None
+
+
+@dataclass
+class FederatedChainRequest:
+    """N 源（2..MAX_FEDERATED_SOURCES）左深链式联邦请求。"""
+
+    sources: List[ChainSource] = field(default_factory=list)
+    joins: List[ChainJoin] = field(default_factory=list)
+    bbox: Optional[List[float]] = None
+    limit: int = 10_000
+    order_strategy: str = "cost"                 # cost | given
+    budget: ExecutionBudget = field(
+        default_factory=lambda: ExecutionBudget(**FEDERATION_BUDGET.model_dump())
+    )
+    warnings: List[str] = field(default_factory=list)
+
+
+def plan_federated_chain(req: FederatedChainRequest) -> List[FederatedPlan]:
+    """校验并产出左深链计划（成本排序；纯函数，无 IO）。
+
+    排序按 ``estimated_rows`` 提示升序（小表建侧/先物化，None 视为最大），
+    稳定排序保证同序输入的确定性。fail-fast：limit/join 数预算先检。
+    """
+    if len(req.sources) < 2:
+        raise FederatedQueryError("chain federation requires at least 2 sources")
+    if len(req.sources) > MAX_FEDERATED_SOURCES:
+        raise FederatedQueryError(
+            f"chain federation supports at most {MAX_FEDERATED_SOURCES} sources "
+            f"(got {len(req.sources)}); bounded planning is a V3 red line"
+        )
+    if len(req.joins) != len(req.sources) - 1:
+        raise FederatedQueryError(
+            f"chain requires exactly len(sources)-1 joins "
+            f"({len(req.joins)} given for {len(req.sources)} sources)"
+        )
+    for i, join in enumerate(req.joins):
+        if join.kind not in ("attribute_join", "spatial_join", "aggregate_join"):
+            raise FederatedQueryError(f"joins[{i}].kind {join.kind!r} unsupported")
+        if join.kind == "attribute_join" and not (join.join_field_left and join.join_field_right):
+            raise FederatedQueryError(f"joins[{i}] attribute join needs both join fields")
+        if join.kind == "spatial_join" and join.spatial_op not in ("within", "intersects"):
+            raise FederatedQueryError(f"joins[{i}] spatial join needs within|intersects")
+        if join.kind == "aggregate_join" and not join.group_by_right:
+            raise FederatedQueryError(f"joins[{i}] aggregate join needs group_by_right")
+    if req.limit > req.budget.max_rows:
+        raise QueryBudgetExceededError(
+            f"chain limit {req.limit} exceeds budget {req.budget.max_rows}",
+            details={"hint": "reduce limit, add bbox/filters, or aggregate per source"},
+        )
+
+    order = list(range(len(req.sources)))
+    if req.order_strategy == "cost":
+        order.sort(key=lambda i: (
+            req.sources[i].estimated_rows is None,
+            req.sources[i].estimated_rows or 0,
+            i,
+        ))
+        if req.sources[order[0]].estimated_rows is None:
+            req.warnings.append(
+                "join order uses given order (no estimated_rows hints available); "
+                "estimates are assumptions"
+            )
+        else:
+            req.warnings.append(
+                "join ordered by estimated_rows hints (cost-based, left-deep)"
+            )
+    else:
+        req.warnings.append(
+            "join order uses given order (cost hints ignored); "
+            "ordering is an assumption"
+        )
+
+    # 按排序重排 sources/joins，join[i] 连接累积行与 sources[i+1]
+    ordered_sources = [req.sources[i] for i in order]
+    plans: List[FederatedPlan] = []
+    for i, join in enumerate(req.joins):
+        plans.append(FederatedPlan(
+            kind=join.kind,
+            left={"source_id": ordered_sources[i].source_id,
+                  "dataset_id": ordered_sources[i].dataset_id,
+                  "chain_position": i},
+            right={"source_id": ordered_sources[i + 1].source_id,
+                   "dataset_id": ordered_sources[i + 1].dataset_id,
+                   "chain_position": i + 1},
+            join_field_left=join.join_field_left,
+            join_field_right=join.join_field_right,
+            spatial_op=join.spatial_op,
+            group_by_right=join.group_by_right,
+            aggregates=join.aggregates,
+            estimated_left_rows=ordered_sources[i].estimated_rows,
+            estimated_right_rows=ordered_sources[i + 1].estimated_rows,
+            warnings=req.warnings if i == 0 else [],
+        ))
+    return plans
+
+
+def _chain_row_key(row: Dict[str, Any], field: str) -> Any:
+    """链行取键：顶层优先，回退 __right__ 携带的上一跳右侧属性。"""
+    if field in row:
+        return row.get(field)
+    right = row.get("__right__")
+    if isinstance(right, dict):
+        return right.get(field)
+    return None
+
+
+def execute_federated_chain(executor: "FederatedExecutor", req: FederatedChainRequest) -> Dict[str, Any]:
+    """执行左深链（每源一次有界拉取；逐跳 join 预算 fail-fast）。
+
+    与两源执行器共用 ``_source_query`` 的预算/有界语义。中间结果超过
+    预算立即抛 ``QUERY_BUDGET_EXCEEDED``（绝无静默截断）。
+    """
+    import app.services.data_fabric.query.federation as _self
+
+    started = time.monotonic()
+    plans = plan_federated_chain(req)
+    ordered_sources = list(req.sources)
+    if req.order_strategy == "cost":
+        order = sorted(range(len(req.sources)), key=lambda i: (
+            req.sources[i].estimated_rows is None,
+            req.sources[i].estimated_rows or 0,
+            i,
+        ))
+        ordered_sources = [req.sources[i] for i in order]
+
+    streaming = StreamingBudget(
+        max_rows=req.budget.max_rows,
+        max_bytes=req.budget.max_bytes,
+        max_vertices=req.budget.max_vertices,
+    )
+    per_source_rows: List[int] = []
+    adapters: List[Any] = []
+    for src in ordered_sources:
+        adapter = executor._adapter_factory(src.source_id)
+        if adapter is None:
+            raise FederatedQueryError(
+                f"chain source '{src.source_id}' is not connected",
+                details={"source_id": src.source_id},
+            )
+        feats = executor._source_query(
+            adapter, src.dataset_id, _SideView(req, src),
+            src.where, fields=src.fields, limit=req.limit,
+        )
+        per_source_rows.append(len(feats))
+        adapters.append(feats)
+
+    accumulated: List[Dict[str, Any]] = adapters[0]
+    joined_total = 0
+    for i, join in enumerate(req.joins):
+        right_rows = adapters[i + 1]
+        if join.kind == "attribute_join":
+            accumulated = _self.attribute_join_local(
+                accumulated, right_rows,
+                join_field_left=str(join.join_field_left),
+                join_field_right=str(join.join_field_right),
+                budget=streaming, max_output=req.budget.max_rows,
+            )
+        elif join.kind == "spatial_join":
+            accumulated = _self.spatial_join_local(
+                accumulated, right_rows,
+                spatial_op=join.spatial_op or "within",
+                budget=streaming, max_output=req.budget.max_rows,
+            )
+        else:  # aggregate_join
+            accumulated = _self.aggregate_join_rows(
+                accumulated, join.aggregates or [], join.group_by_right or [],
+            )
+        joined_total = len(accumulated)
+        if joined_total > req.budget.max_rows:
+            raise QueryBudgetExceededError(
+                f"chain join {i} produced {joined_total} rows "
+                f"(budget {req.budget.max_rows}); fail-fast stops the chain",
+                details={"hint": "filter sources harder, or aggregate before joining",
+                         "per_source_rows": per_source_rows},
+            )
+
+    final_rows = accumulated[: req.limit]
+    return {
+        "status": "success",
+        "strategy": "left_deep_chain",
+        "order": [s.source_id for s in ordered_sources],
+        "rows": final_rows,
+        "row_count": len(final_rows),
+        "rows_fetched": sum(per_source_rows),
+        "joined_row_count": joined_total,
+        "per_source_rows": dict(
+            zip((s.source_id for s in ordered_sources), per_source_rows)
+        ),
+        "plans": [p.to_dict() for p in plans],
+        "pushdown_ratio": (
+            round(len(final_rows) / sum(per_source_rows), 6) if per_source_rows else None
+        ),
+        "execution_duration_s": round(time.monotonic() - started, 4),
+        "warnings": req.warnings,
+    }
+
+
+class _SideView:
+    """把 ChainSource 适配到两源 ``_source_query`` 的 req 形状（仅 bbox/budget）。"""
+
+    def __init__(self, req: FederatedChainRequest, src: ChainSource):
+        self.bbox = req.bbox
+        self.budget = req.budget
+        self.limit = req.limit
+
+
+def execute_chain(req: FederatedChainRequest, *, adapter_factory) -> Dict[str, Any]:
+    """模块级便捷入口：executor-free 链式执行。"""
+    return execute_federated_chain(FederatedExecutor(adapter_factory), req)
+
+
 __all__ = [
     "FederatedQueryRequest",
     "FederatedPlan",
@@ -585,4 +827,11 @@ __all__ = [
     "aggregate_join_rows",
     "FEDERATION_BUDGET",
     "MAX_JOIN_CANDIDATES",
+    "MAX_FEDERATED_SOURCES",
+    "ChainSource",
+    "ChainJoin",
+    "FederatedChainRequest",
+    "plan_federated_chain",
+    "execute_federated_chain",
+    "execute_chain",
 ]
