@@ -188,30 +188,12 @@ async def cancel_job(
             db, task_info.session_id, user_id=owner_id, owner_token=owner_token
         )
         already = bool(getattr(task_info, "_cancelled", False))
-        get_engine().tracker.cancel(job_id)
-        # 级联：本 turn 派生的 durable job 一起请求取消
-        for durable_id in task_info.background_job_ids:
-            await DurableJobStore.request_cancel(db, durable_id)
-            cancellation_registry.cancel(durable_id, "parent agent task cancelled")
-        await db.commit()
-        # #1066: agent job 的取消同样要桥接 Pi 活跃回合（与 DELETE /tasks/{id}
-        # 同型 —— tracker 令牌点燃不终止 Pi 子进程）。V5-B: 守卫按
-        # session-keyed active-turn 表解析（单例视图在 pool 下读到的是
-        # 「最后注册的任意 worker turn」，会漏掉本 session 的 abort）。
-        try:
-            from app.api.routes import chat as chat_routes
-            from app.agent_pi_bridge import get_active_turn_entry
+        # ADR-0100: 与 DELETE /tasks/{task_id} 共用同一取消级联实现（原为
+        # 两份手写同型编排 —— 漂移即漏 abort）。
+        from app.services.chat.session_cancellation import cancel_agent_task_and_turn
 
-            if (
-                chat_routes.pi_bridge is not None
-                and task_info.session_id
-                and get_active_turn_entry(task_info.session_id) is not None
-            ):
-                await chat_routes.pi_bridge.abort(task_info.session_id)
-        except Exception as abort_error:  # noqa: BLE001 - 取消已生效，abort 失败不回滚
-            logger.warning(
-                "Pi abort during job %s cancel failed: %s", job_id, abort_error
-            )
+        await cancel_agent_task_and_turn(db, job_id)
+        await db.commit()
         return JobCancelResponse(
             id=job_id,
             status=JobStatus.cancelling.value if not already else JobStatus.cancelled.value,

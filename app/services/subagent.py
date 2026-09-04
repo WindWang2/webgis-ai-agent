@@ -26,6 +26,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Optional, TYPE_CHECKING
@@ -165,12 +166,60 @@ class SubagentDispatcher:
 
         sub_engine = self._build_sub_engine(tool_subset, max_rounds)
 
+        # ADR-0100：子代理取消接线。此前取消只能以「任务已取消」文案形式
+        # 从工具层渗回来 —— 引擎循环本身不观察令牌，父 turn 取消后子代理
+        # 会把剩余轮次全部跑完。现在：子令牌链接父令牌（父取消 → 子取消），
+        # chat() 与 token.wait() 竞速；取消时诚实返回 success=False + 明确
+        # cancelled 语义（不再靠字符串比较猜）。
+        from app.lib.cancellation import (
+            CancellationToken,
+            OperationCancelled,
+            current_token,
+            use_token,
+        )
+
+        parent_token = current_token()
+        sub_token = CancellationToken(job_id=getattr(parent_token, "job_id", None))
+        if parent_token is not None:
+            parent_token.link(sub_token)
+
+        wrapped_task_text = f"{self.SUB_SYSTEM_PROMPT}\n\n# 子任务\n{task}"
         try:
-            # 给子代理一条复合 prompt：系统纪律 + 具体任务
-            wrapped_task = f"{self.SUB_SYSTEM_PROMPT}\n\n# 子任务\n{task}"
-            result = await sub_engine.chat(
-                message=wrapped_task,
-                session_id=self.parent_session_id,
+            with use_token(sub_token):
+                chat_task = asyncio.create_task(
+                    sub_engine.chat(
+                        message=wrapped_task_text,
+                        session_id=self.parent_session_id,
+                    )
+                )
+                cancel_task = asyncio.create_task(sub_token.wait())
+                done, pending = await asyncio.wait(
+                    {chat_task, cancel_task}, return_when=asyncio.FIRST_COMPLETED
+                )
+            for t in pending:
+                t.cancel()
+            if cancel_task in done and not sub_token.cancelled:
+                # cancel_task 因外层异常先完成（罕见）—— 走 chat 结果路径
+                cancel_task.cancel()
+            if sub_token.cancelled and chat_task not in done:
+                reason = sub_token.reason or "parent turn cancelled"
+                logger.info(
+                    "[Subagent] parent=%s cancelled mid-run: %s",
+                    self.parent_session_id, reason,
+                )
+                return SubagentResult(
+                    success=False,
+                    summary=f"子代理已取消: {reason}",
+                    refs=[],
+                    error="cancelled",
+                )
+            result = chat_task.result()
+        except OperationCancelled:
+            return SubagentResult(
+                success=False,
+                summary="子代理已取消",
+                refs=[],
+                error="cancelled",
             )
         except Exception as e:
             # #685: 非流式诚实 settle 后 chat() 会抛异常（empty / max_rounds / no_progress）
@@ -192,8 +241,8 @@ class SubagentDispatcher:
 
         # 诚实成功判定：content 非空才算 success，否则为 failed（与非流式 CORRECTNESS-4 对齐）
         # 注意：若 chat() 在 empty/max_rounds/no_progress 路径已抛异常，上方 except 已返回 False
-        # 合作取消返回普通 "任务已取消" dict（非异常）——不是成功
-        _honest_success = bool(summary) and summary != "任务已取消"
+        # 取消语义现在由令牌竞速显式判定（error="cancelled"），不再靠文案字符串猜测。
+        _honest_success = bool(summary) and not sub_token.cancelled
 
         # 子任务结束后新增的 refs
         try:

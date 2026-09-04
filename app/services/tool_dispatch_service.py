@@ -244,6 +244,55 @@ class _MultiSlotAcquire:
         self._held = 0
 
 
+class _SessionWaveGate:
+    """ADR-0100：进程级 wave 信号量之上的**按会话公平门**。
+
+    问题（/goal §11 fairness）：wave 信号量是进程级 FIFO —— 一个工具密集
+    会话一轮 12-20 个并发调用可以把全部槽位占满，跨会话（其它用户）的
+    单个轻工具排在其后饿等。会话内本就有天然的顺序需求（同 turn 工具
+    相互观察 MapSpec），跨会话才是公平性所在。
+
+    语义：每会话最多 ``cap`` 个并发工具进 wave；会话达到上限时**该会话
+    等待**（不持任何全局槽 —— 先过会话门再抢全局信号量，无死锁环）。
+    等待者经 Condition 唤醒，其它会话不受影响。
+
+    计数器归零即从表中删除 —— 会话表天然有界（活跃会话数）。
+    """
+
+    def __init__(self, cap: int = 2):
+        self._cap = max(1, int(cap))
+        self._held: dict = {}
+        self._cond: Optional[asyncio.Condition] = None
+
+    def _condition(self) -> asyncio.Condition:
+        # 惰性创建：绑定当前事件循环（多 loop 测试场景安全）。
+        if self._cond is None:
+            self._cond = asyncio.Condition()
+        return self._cond
+
+    async def acquire(self, session_id: str) -> None:
+        cond = self._condition()
+        async with cond:
+            await cond.wait_for(
+                lambda: self._held.get(session_id, 0) < self._cap
+            )
+            self._held[session_id] = self._held.get(session_id, 0) + 1
+
+    async def release(self, session_id: str) -> None:
+        cond = self._condition()
+        async with cond:
+            remaining = self._held.get(session_id, 0) - 1
+            if remaining <= 0:
+                self._held.pop(session_id, None)
+            else:
+                self._held[session_id] = remaining
+            cond.notify_all()
+
+    @property
+    def held_sessions(self) -> int:
+        return len(self._held)
+
+
 class ToolDispatchService:
     """工具调度的单一拥有者。两条 agent 路径都应经由本服务。"""
 
@@ -266,6 +315,10 @@ class ToolDispatchService:
         # _TOOL_THREAD_LIMIT only gates sync work; this gate bounds the wave.
         _wave_limit = max(1, int(os.getenv("TOOL_WAVE_CONCURRENCY") or os.getenv("TOOL_CONCURRENCY_LIMIT") or "5"))
         self._wave_semaphore = asyncio.Semaphore(_wave_limit)
+        # ADR-0100 fairness：会话级并发上限（默认 2）—— 工具密集会话不再
+        # 垄断进程级 wave 槽位。设为 1 恢复「会话内完全串行」；设大放宽。
+        _session_cap = max(1, int(os.getenv("TOOL_WAVE_SESSION_CONCURRENCY") or "2"))
+        self._session_wave_gate = _SessionWaveGate(_session_cap)
         # P2-9（adversarial P2-9 / recovery P2）：已完成（非在飞）的同参调用集合。
         # 重复命中时若 key ∈ _completed_keys → post-success 语义（原文案）；
         # 否则视为"并发在飞"→ 不谎报成功的软化文案。有界：超限整体清空只会
@@ -406,8 +459,14 @@ class ToolDispatchService:
                 _meta_fn = getattr(self._registry, "metadata", None)
                 _cost = _meta_fn(tool_name).get("cost") if callable(_meta_fn) else None
                 _wave_slots = 2 if _cost == "heavy" else 1
-                async with _MultiSlotAcquire(self._wave_semaphore, _wave_slots):
-                    result = await self._registry.dispatch(tool_name, tool_args_raw, session_id=session_id)
+                # 顺序（防死锁）：先过会话门（等待者不持全局槽），再抢全局
+                # wave 槽 —— 达到会话上限的会话在此排队，其它会话照常通过。
+                await self._session_wave_gate.acquire(session_id or "")
+                try:
+                    async with _MultiSlotAcquire(self._wave_semaphore, _wave_slots):
+                        result = await self._registry.dispatch(tool_name, tool_args_raw, session_id=session_id)
+                finally:
+                    await self._session_wave_gate.release(session_id or "")
             except OperationCancelled:
                 # ADR-0052：取消上抛给工具管道处理（它会记成「已取消」而非工具故障）。
                 # 取消的调用不占用 dedup 槽位（本轮后续重试不被“已成功”谎言拦截）。
