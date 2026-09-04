@@ -40,6 +40,7 @@ ALGORITHM_TAXONOMY: Dict[str, List[str]] = {
     "temporal_analysis": ["temporal_trend", "change_detection"],
     "change_detection": ["change_detection"],
     "cartographic_classification": ["graduated_classification", "categorical_classification"],
+    "decision_analysis": ["mcda_wsm", "mcda_topsis"],
 }
 
 
@@ -633,6 +634,21 @@ _SEED_ALGORITHMS: List[AlgorithmDescriptor] = [
         output_artifact_type="raster_surface", tool_candidates=["temporal_raster"],
         cpu_cost="medium", memory_cost="medium", io_cost="high",
         preferred_execution_policy="THREAD", priority=30,
+    ),
+    # ── Semantic V2（ADR-0098）：MCDA 决策评价 ────────────────────────
+    # 候选×准则×约束 → WSM/TOPSIS + Pareto + 敏感性/不确定性。引擎是
+    # DecisionEngineV3（确定性；蒙特卡洛档位固定种子可复现）。观测证据、
+    # 用户权重、假设在结果中必须可区分 —— 不合成证据。
+    AlgorithmDescriptor(
+        id="decision.mcda.wsm", name="MCDA 决策评价（WSM/TOPSIS）",
+        category="decision_analysis",
+        capabilities=["mcda_evaluation"],
+        input_artifact_types=["poi_feature_set", "point_feature_set",
+                              "polygon_feature_set", "admin_aggregate_table"],
+        output_artifact_type="stats_table",
+        tool_candidates=["spatial_decision_v3"],
+        cpu_cost="medium", memory_cost="medium", io_cost="low",
+        preferred_execution_policy="ASYNC", priority=40,
     ),
 ]
 

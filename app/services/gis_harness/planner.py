@@ -518,6 +518,13 @@ class MapProductPlanner:
         # advisory 工具（LLM 可忽略），规划证据链上无处留档。「缺分母不能谈
         # 公平性」必须在 plan 里可见：产品仍可产出（数量/密度可评），但
         # 结论边界随证据下行，benchmark 可断言（methodology-honesty）。
+        #
+        # Semantic V2（ADR-0098）：两类触发 ——
+        #  a) 角色缺口（keyword 门控）：查询词面携带模式语义词（公平/变化…）
+        #     且必需角色缺席 → 披露（既有语义，回归锁定）；
+        #  b) 决策族义务（task 门控）：一等决策 task（选址/适宜性/风险）命中
+        #     即披露准则/权重/受体义务 —— 评价类产品的诚实底线，非噪声。
+        # 每条警告携带稳定机器可读 code（warning_codes[0] 兼容单码断言）。
         try:
             from app.lib.gis.pattern_projection import project_patterns
 
@@ -527,18 +534,26 @@ class MapProductPlanner:
             # honesty guarantee must not be probabilistic, so walk ALL
             # matches; the keyword gate below keeps the volume bounded.
             for match in projection.matches:
-                if not match.missing_roles:
+                keyword_matched = any(
+                    v.startswith("keyword:") for v in match.matched_via)
+                role_gap = bool(match.missing_roles)
+                decision_duty = bool(match.decision_disclosures)
+                if role_gap and not keyword_matched:
+                    # Task-alias-only matches are generic (EVERY administrative
+                    # statistic query aliases spatial_equity); a methodology
+                    # warning is issued only when the query itself carries the
+                    # pattern's semantic keywords (公平/均衡/是否合理/…).
                     continue
-                # Task-alias-only matches are generic (EVERY administrative
-                # statistic query aliases spatial_equity); a methodology
-                # warning is issued only when the query itself carries the
-                # pattern's semantic keywords (公平/均衡/是否合理/…).
-                if not any(v.startswith("keyword:") for v in match.matched_via):
+                if not role_gap and not decision_duty:
                     continue
                 plan.methodology_warnings.append({
                     "pattern": match.pattern_id,
+                    "code": (match.warning_codes or [""])[0],
+                    "warning_codes": list(match.warning_codes),
                     "missing_roles": sorted(match.missing_roles),
-                    "disclosures": list(match.disclosures or []),
+                    "disclosures": list(
+                        (match.disclosures or []) +
+                        (match.decision_disclosures or [])),
                     "pitfalls": list(match.common_pitfalls or [])[:2],
                     "stage": "planning",
                 })

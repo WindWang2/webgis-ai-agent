@@ -34,6 +34,11 @@ TaskType = Literal[
     "change_detection",          # 变化检测
     "vegetation_index",          # 「NDVI/植被指数」→ 光谱指数计算（ADR-0092）
     "mobility_flow",             # 「通勤流/出行流/OD」→ 流动分析（ADR-0092）
+    # ── Semantic V2（ADR-0098）：决策族产品语义一等公民，不再落分布兜底 ──
+    "spatial_equity",            # 「公平/均衡/是否合理」→ 分母归一化公平评价
+    "site_selection",            # 「选址/最优位置」→ 多准则候选评价（MCDA）
+    "suitability_assessment",    # 「适宜性/适建区」→ 因子标准化加权适宜面
+    "risk_exposure",             # 「风险/暴露/危险源」→ 影响区×受体暴露评价
 ]
 
 GeometryExpectation = Literal["point", "line", "polygon", "raster", "unknown"]
@@ -52,6 +57,11 @@ AnalysisIntent = Literal[
     "service_area",
     "grid_binning",              # H3/渔网格网聚合
     "profile",
+    # ── Semantic V2（ADR-0098）：决策族分析意图 ──────────────────────
+    "equity_assessment",         # 公平性评价（分母归一化）
+    "mcda_evaluation",           # 多准则决策评价（WSM/TOPSIS）
+    "overlay_weighted",          # 因子标准化加权叠加（适宜性）
+    "exposure_assessment",       # 影响区×受体暴露评价
     "none",
 ]
 
@@ -153,6 +163,29 @@ _TASK_RULES: List[tuple] = [
      re.compile(r"每(?:平方|平方千米|平方公里|km|公里)[^，。?？]*密度|"
                 r"密度[（(]?每|单位面积[^，。?？]*密度|density\s+per", re.I),
      "analytical_density"),
+    # ── Semantic V2（ADR-0098）：决策族一等任务规则 ────────────────────
+    # 规则序说明：这四族是「问题语义」（评价/决策），比「形式语义」（聚合/
+    # 邻近/可达）更强 —— 「各区学校数量是否均衡」是公平性问题而非纯统计，
+    # 「选址…周边500米内」是选址问题而非邻近问题。置于 administrative_
+    # statistic / proximity / accessibility 之前，纯统计查询（无数词）不受
+    # 影响（G20 回归锁定）。
+    ("spatial_equity_request",
+     re.compile(r"(公平性|公平|均衡|是否合理|分布合理|教育资源不足|资源缺口|"
+                r"欠发达|不平等|差距[有大多小]?|equity|fairness|fair\s+access)", re.I),
+     "spatial_equity"),
+    ("site_selection_request",
+     re.compile(r"(选址|选址推荐|选址分析|最优位置|最佳位置|候选位置|候选址|"
+                r"新校址|新院址|新站址|布点|选址建议|site\s+selection|choose\s+a\s+site|"
+                r"best\s+location|candidate\s+site)", re.I),
+     "site_selection"),
+    ("suitability_assessment_request",
+     re.compile(r"(适宜性|适建区|适建性|适宜程度|适宜性评价|适宜性分析|"
+                r"开发适宜|农业适宜|建设适宜|suitability|suitable\s+area)", re.I),
+     "suitability_assessment"),
+    ("risk_exposure_request",
+     re.compile(r"(风险|风险区|风险评估|风险分析|暴露|危险源|灾害易发|"
+                r"安全隐患|risk\s+(?:assessment|zone|area|map)|hazard|exposure)", re.I),
+     "risk_exposure"),
     ("administrative_statistic",
      re.compile(r"(各|每个|按?分?)(?:个)?(?:区|县|市|街道|乡镇|镇|村|州|省)[^，。?？]*"
                 r"(数量|多少|几|统计|计数|汇总|排名|最多|最少)|"
@@ -199,7 +232,7 @@ _TASK_RULES: List[tuple] = [
      # 这类携带形态信号的查询会被误吞，proportional_symbol 路由被破坏）。
      re.compile(r"^(?:在地图上|地图上|在地图中|(?:帮我|请|把|将)[^，。?？]{0,4})?"
                 r"(给我看|看看|显示|展示|查看|瞄一眼|瞧瞧|show\s+me)"
-                r"(?![^，。?？]*(?:分布|统计|密度|热点|变化|服务区|可达|占比|构成|聚类|均衡|选址|流(向|量)|通勤|插值|克里金|interpolat|kriging))",
+                r"(?![^，。?？]*(?:分布|统计|密度|热点|变化|服务区|可达|占比|构成|聚类|均衡|选址|流(向|量)|通勤|插值|克里金|公平|风险|适宜|interpolat|kriging))",
                 re.I),
      "simple_view"),
     # #781: 栅格主体（遥感/影像/DEM/NDVI/气温/降水…）在无更强任务规则命中
@@ -379,6 +412,37 @@ def _task_specific_intents(task: str, query: str) -> tuple:
             ["map", "statistics", "summary"],
             "area", "",
         )
+    # ── Semantic V2（ADR-0098）：决策族派生意图 ────────────────────────
+    if task == "spatial_equity":
+        return (
+            ["administrative_aggregation", "administrative_summary",
+             "equity_assessment", "profile"],
+            ["administrative_choropleth", "point_overlay"],
+            ["map", "statistics", "chart", "summary"],
+            "ratio", "district",
+        )
+    if task == "site_selection":
+        return (
+            ["proximity_buffer", "service_area", "mcda_evaluation", "profile"],
+            ["proximity_overlay", "point_overlay"],
+            ["map", "statistics", "table", "summary"],
+            "score", "",
+        )
+    if task == "suitability_assessment":
+        return (
+            ["proximity_buffer", "overlay_weighted", "mcda_evaluation", "profile"],
+            ["raster_surface", "proximity_overlay"],
+            ["map", "statistics", "summary"],
+            "suitability", "",
+        )
+    if task == "risk_exposure":
+        return (
+            ["proximity_buffer", "exposure_assessment", "administrative_summary",
+             "profile"],
+            ["proximity_overlay", "point_overlay", "administrative_choropleth"],
+            ["map", "statistics", "summary"],
+            "exposure", "district",
+        )
     return (["profile"], ["point_overlay"], ["map"], "count", "")
 
 
@@ -513,8 +577,18 @@ _HINT_OVERRIDABLE = {
 # - analytical_density：定量密度不可降级为视觉热力（原有护栏）；
 # - administrative_statistic：『各区数量』首选行政聚合+choropleth 而非热力图
 #   （#780：此前只有 density 方向受保护，statistic 可被单个 hint 静默降级
-#   为热力产品族）。
-_HINT_PROTECTED_TASKS = ("analytical_density", "administrative_statistic")
+#   为热力产品族）；
+# - 决策族（ADR-0098）：公平/选址/适宜性/风险是不可降级的评价语义 ——
+#   降级为视觉分布会把「评价问题」伪装成「看一眼」，正是 Semantic V2
+#   要消灭的静默兜底。
+_HINT_PROTECTED_TASKS = (
+    "analytical_density",
+    "administrative_statistic",
+    "spatial_equity",
+    "site_selection",
+    "suitability_assessment",
+    "risk_exposure",
+)
 
 
 def merge_intent_hints(

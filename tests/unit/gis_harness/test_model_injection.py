@@ -65,7 +65,16 @@ class TestNewRecipeSelectionAndEligibility:
         # V1 cartography runtime: extrusion_3d_thematic + isoline_contour_map join too.
         assert "extrusion_3d_thematic" in set(reg.all_ids)
         assert "isoline_contour_map" in set(reg.all_ids)
-        assert reg.count == 13
+        # Semantic V2 (ADR-0098): decision-family recipes join the registry
+        # (spatial_equity / site_selection / suitability_assessment /
+        # risk_exposure) — first-class product paths replace the
+        # distribution fallback for 选址/适建/风险/公平 queries.
+        decision = {
+            "spatial_equity", "site_selection",
+            "suitability_assessment", "risk_exposure",
+        }
+        assert decision <= set(reg.all_ids)
+        assert reg.count == 17
 
     @pytest.mark.parametrize(
         "query,winner", [
