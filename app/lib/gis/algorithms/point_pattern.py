@@ -51,7 +51,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "tests/unit/lib/test_point_pattern_science.py::test_ripley_k_csr_within_simulation_envelope",
                 "tests/unit/lib/test_point_pattern_science.py::test_ripley_k_regular_grid_below_csr",
                 "tests/unit/lib/test_point_pattern_science.py::test_ripley_k_rejects_geographic_degrees",
-                "tests/unit/lib/test_point_pattern_science.py::test_ripley_k_deterministic",
+                "tests/unit/lib/test_point_pattern_science.py::test_ripley_k_deterministic_and_bounded",
             ],
             parameter_contract_ref="ripley_k_analysis",
             # （statistics 域包的 ensure_parameter_contracts_registered 注释）。

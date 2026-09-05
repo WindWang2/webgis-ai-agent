@@ -283,6 +283,7 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
             ParameterSpec(
                 name="distance_band", type="number", default=0, minimum=0,
                 unit="meters",
+                data_dependent_default="distance_band_8nn",
                 description="distance_band 权重阈值（米）；0=按 8 近邻平均距离自动",
             ),
             ParameterSpec(
@@ -313,6 +314,7 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
             ParameterSpec(
                 name="distance_band", type="number", default=0, minimum=0,
                 unit="meters",
+                data_dependent_default="distance_band_8nn",
                 description="distance_band 权重阈值（米）；0=按 8 近邻平均距离自动",
             ),
             ParameterSpec(

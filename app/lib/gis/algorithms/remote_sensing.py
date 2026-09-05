@@ -81,7 +81,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             preferred_execution_policy="INLINE", priority=15,
             algorithm_family="spectral_index",
             method_references=["rouse1974", "huete1988", "gao1996", "xu2006",
-                               "zha_woodcock2003", "key_nottrott2011", "mcfeeters1996"],
+                               "zha_woodcock2003", "key_benson2006", "mcfeeters1996"],
             assumptions=[
                 "波段按语义角色显式命名（band_map），绝不按波段位置猜测",
                 "线性定标先于公式（DN/10000→反射率）；零分母→NaN",

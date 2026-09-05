@@ -309,13 +309,35 @@ class AlgorithmResolver:
             # 几何/样本量），就把它排到首位——显式请求不被静默替换成
             # 默认算法；未通过硬门则走既有 fallback 链并保留证据。
             hinted = False
+            hint_trail: List[FallbackStep] = []
             if algorithm_hint:
+                # 评审 M2：显式点名的算法未进 eligible（硬门被拒）而低优先
+                # 候选顶上 —— 补偿性替补必须携带科学等价性分类进
+                # fallback_trail（"approximation" 顶替显式请求绝不能静默）。
+                hinted_algo = self.algorithms.get(algorithm_hint)
+                # 拒绝码形如 reason_code:algorithm_id[:detail] —— 算法 id
+                # 在第二个字段（此前误取首字段，判恒 False）。
+                hint_rejected = any(
+                    len(r.split(":")) > 1 and r.split(":")[1] == algorithm_hint
+                    for r in rejected)
                 for entry in scored:
                     if entry[2] == algorithm_hint:
                         scored.remove(entry)
                         scored.insert(0, entry)
                         hinted = True
                         break
+                if not hinted and hinted_algo is not None and hint_rejected:
+                    best_entry = scored[0]
+                    if best_entry[2] in hinted_algo.fallback_algorithms:
+                        hint_trail = [FallbackStep(
+                            from_element=algorithm_hint,
+                            to_element=best_entry[2],
+                            reason_code="explicit_request_substituted",
+                            evidence={"first_rejection": rejected[0]
+                                      if rejected else ""},
+                            semantics=hinted_algo.fallback_semantics.get(
+                                best_entry[2], "approximation"),
+                        )]
             _, best_score, _, best, best_tool, best_bd, best_warns = scored[0]
             reason = self._candidate_reason(best, best_tool, profile)
             contested = len(scored) > 1
@@ -332,6 +354,7 @@ class AlgorithmResolver:
                 tool=best_tool,
                 reason=reason,
                 rejected=rejected[:_MAX_REJECTIONS],
+                fallback_trail=hint_trail[:_MAX_FALLBACK_TRAIL],
                 execution_policy=policy if contested else "",
                 cost_score=best_score if contested else None,
                 cost_breakdown=best_bd if contested else "",

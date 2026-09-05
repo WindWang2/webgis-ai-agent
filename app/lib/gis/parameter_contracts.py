@@ -338,9 +338,16 @@ class ParameterContractRegistry:
                 if spec.data_dependent_default and "auto" not in (
                     spec.enum_values + [str(spec.default or "")]
                 ):
-                    issues.append(
-                        f"contract {contract.id}.{spec.name}: 数据依赖默认声明了"
-                        f" auto 规则，但 default/enum 不含 'auto' 通道")
+                    # 哨兵值约定：数值参数可用 0 表达「自动」（如
+                    # distance_band=0 → 8nn 自动带宽）—— 规则声明的语义
+                    # 由实现侧解释；无哨兵且无 auto 通道才报 issue。
+                    has_zero_sentinel = (
+                        spec.type in ("number", "integer")
+                        and spec.default == 0)
+                    if not has_zero_sentinel:
+                        issues.append(
+                            f"contract {contract.id}.{spec.name}: 数据依赖默认声明了"
+                            f" auto 规则，但 default/enum 不含 'auto' 通道")
                 if spec.type == "enum" and spec.required and spec.default is None:
                     pass  # required enum 无默认合法（用户必须显式给）
         return issues

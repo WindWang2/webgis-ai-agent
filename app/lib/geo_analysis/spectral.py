@@ -185,7 +185,7 @@ INDEX_FAMILY: Dict[str, SpectralIndexSpec] = {
             "nbr", ("nir", "swir2"),
             lambda nir, swir2: _safe_div(nir - swir2, nir + swir2),
             "(NIR − SWIR2) / (NIR + SWIR2)  [燃烧比]",
-            (-1.0, 1.0), "key_nottrott2011",
+            (-1.0, 1.0), "key_benson2006",
         ),
         SpectralIndexSpec(
             # EVI 的 +1 与 −7.5·B 项只在反射率单位下物理成立（#382）；

@@ -430,7 +430,7 @@ class TestTwoSFCAHandComputed:
         ev = out.get("scientific_evidence")
         assert ev, "accessibility tool result must carry scientific_evidence"
         assert ev["algorithm"] == "network.accessibility"
-        assert "radke_mu2010" in ev["method_references"]
+        assert "luo_qi2009" in ev["method_references"]
         diag = {d["name"]: d for d in ev["diagnostics"]}
         assert diag["catchment_radius_min"]["value"] == 15.0
         assert diag["demand_total"]["value"] == 4.0
@@ -523,7 +523,7 @@ class TestDescriptorHonesty:
 
     def test_accessibility_descriptor_references_2sfca(self):
         algo = get_algorithm_registry().get("network.accessibility")
-        assert "radke_mu2010" in algo.method_references
+        assert "luo_qi2009" in algo.method_references
         assert algo.algorithm_family == "accessibility"
         assert any("2SFCA" in a for a in algo.assumptions)
         assert any("E2SFCA" in lim for lim in algo.limitations)

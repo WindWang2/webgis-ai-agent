@@ -452,6 +452,10 @@ def register_network_tools(registry: ToolRegistry):
     ) -> dict:
         if breaks is None:
             breaks = [5.0, 10.0, 15.0]
+        # 评审 M3：无界 breaks 列表 = 无界 Dijkstra 轮次 —— 语义上界 32。
+        if not 1 <= len(breaks) <= 32:
+            raise ValueError(
+                f"breaks 列表长度超限：{len(breaks)}（允许 1-32 个时间断点）")
         try:
             # VNext 参数契约（§12）：breaks 为 JSON 数组（契约以 string+JSON
             # 语义声明，类型词表无 array —— terrain.extract_contours 先例），
@@ -498,7 +502,7 @@ def register_network_tools(registry: ToolRegistry):
                 session_id=session_id,
             )
             out = trim_network_result(res.model_dump())
-            # VNext（Task D）：方法学证据块 —— descriptor（radke_mu2010 /
+            # VNext（Task D）：方法学证据块 —— descriptor（luo_qi2009 /
             # 假设/局限）+ 运行时方法学诊断（捕获半径、供需总量）。
             acc_block = out.get("accessibility") if isinstance(out, dict) else None
             descriptor = get_algorithm_registry().get("network.accessibility")

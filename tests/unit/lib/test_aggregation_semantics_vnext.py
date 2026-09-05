@@ -233,7 +233,8 @@ def test_rate_descriptors_disclose_tool_surface_gap():
     contract = get_parameter_contract_registry().get("aggregate_with_denominator")
     assert contract is not None
     names = {p.name for p in contract.parameters}
-    assert names == {"numerator_field", "denominator_kind", "denominator_field"}
+    # m3 重命名：契约分母参数名与工具签名对齐（denominator_field → denominator）。
+    assert names == {"numerator_field", "denominator_kind", "denominator"}
     kind = contract.spec("denominator_kind")
     assert kind.enum_values == ["field", "area", "count"]
     assert kind.default == "count"

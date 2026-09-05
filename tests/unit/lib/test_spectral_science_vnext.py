@@ -81,7 +81,7 @@ def test_spectral_reference_provenance_registry():
         "mndwi": "xu2006",
         "ndbi": "zha_woodcock2003",
         "ndmi": "",
-        "nbr": "key_nottrott2011",
+        "nbr": "key_benson2006",
         "evi": "huete1988",
     }
     for index_id, ref in expected_refs.items():

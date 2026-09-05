@@ -174,6 +174,9 @@ def register_change_detection_tools(registry: ToolRegistry):
     ) -> dict:
         from app.lib.geo_analysis.raster_change import change_vector_analysis
 
+        from app.tools.remote_sensing import _bands_to_arrays
+        _bands_to_arrays(t1_bands or {})   # 资源包络守卫（评审 M3）
+        _bands_to_arrays(t2_bands or {})
         if set(t1_bands or {}) != set(t2_bands or {}):
             from app.lib.gis.scientific_errors import UnsupportedBandSemantics
 
@@ -247,6 +250,17 @@ def register_change_detection_tools(registry: ToolRegistry):
         params = apply_contract("ratio_change_analysis", {"method": method})
         a_arr = _to_2d("a", a)
         b_arr = _to_2d("b", b)
+        # 评审 M3：内联数组资源包络（与 remote_sensing 同一哨兵值）。
+        from app.tools.remote_sensing import _TOOL_ARRAY_MAX_VALUES
+        from app.lib.gis.scientific_errors import ResourceScaleMismatch
+        for _name, _arr in (("a", a_arr), ("b", b_arr)):
+            if _arr.size > _TOOL_ARRAY_MAX_VALUES:
+                raise ResourceScaleMismatch(
+                    f"detect_ratio_change {_name} 数组超限：{_arr.size} 值",
+                    estimated=f"{_arr.size * 8 / 1e6:.1f} MB float64",
+                    limit=f"≤{_TOOL_ARRAY_MAX_VALUES} values",
+                    correction_hint="分块处理或走栅格文件路径",
+                )
         res = ratio_change(
             a_arr, b_arr, method=params["method"],
             t1_date=t1_date, t2_date=t2_date)

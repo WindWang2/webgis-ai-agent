@@ -34,7 +34,8 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             output_artifact_type="service_area",
             tool_candidates=["isochrone_analysis"],
             cpu_cost="high", memory_cost="medium", io_cost="high",
-            preferred_execution_policy="ASYNC",
+            deterministic=False, random_seed_policy="none",
+        preferred_execution_policy="ASYNC",
             compatible_map_models=["proximity_overlay"],
             priority=10,
             algorithm_family="isochrone",
@@ -49,7 +50,8 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ],
             crs_class="GEOGRAPHIC_OK",
             uncertainty_outputs=[],
-            random_seed_policy="deterministic",
+            # m6（契约评审）：外部 API 语义依赖服务商（结果含 fetched_at），
+            # 诚实声明非确定性 —— 与同族 external 工具一致。
             scientific_status="EXPERIMENTAL",
         ),
 
@@ -183,7 +185,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             # ADR-0092 D：OD 边 → 有界带权流向线要素（flow_od_arc 渲染输入）。
             id="flow.od_arc_build", name="OD 流向构建", category="flow_analysis",
             capabilities=["od_flow_mapping"],
-            input_artifact_type="od_table",
+            input_artifact_types=["od_table"],
             output_artifact_type="line_feature_set",
             tool_candidates=["od_flow_edges"],
             cpu_cost="medium", memory_cost="medium", io_cost="medium",
@@ -271,7 +273,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             preferred_execution_policy="ASYNC",
             compatible_map_models=["proximity_overlay"], priority=10,
             algorithm_family="accessibility",
-            method_references=["radke_mu2010"],
+            method_references=["luo_qi2009"],
             assumptions=[
                 "2SFCA: 供给/需求两步浮动捕获 —— 第一步 R_j=容量_j/catchment 内需求权重和，第二步 A_i=Σ(cutoff 内 R_j)",
                 "15min_circle 法：需求点在 cutoff 内可达任一设施即计入 served（0/1 覆盖，非 2SFCA）",
@@ -470,17 +472,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
 PARAMETER_CONTRACTS: List[ParameterContract] = [
     ParameterContract(
-        id="network_shortest_path", version=1,
-        description="网络最短路径：起终点（必填）+ 阻抗/模式枚举；捕捉容差与警告在结果证据中披露。",
+        # 评审 B1 修复：origin/destination 是多态输入（数组/GeoJSON/串），
+        # apply_contract 的标量类型收敛无法处理 —— 必填语义由工具 schema
+        # （NetworkShortestPathArgs）承载；契约只覆盖算法参数。
+        id="network_shortest_path", version=2,
+        description="网络最短路径：阻抗/模式枚举；起终点必填语义在工具 schema；捕捉容差与警告在结果证据中披露。",
         parameters=[
-            ParameterSpec(
-                name="origin", type="string", required=True,
-                description="起点（多态：[lng,lat] 数组 / GeoJSON Point / 地址串；引擎 _parse_point 解析）",
-            ),
-            ParameterSpec(
-                name="destination", type="string", required=True,
-                description="终点（多态：[lng,lat] 数组 / GeoJSON Point / 地址串）",
-            ),
             ParameterSpec(
                 name="impedance", type="enum", default="travel_time_s",
                 enum_values=["length_m", "travel_time_s"],

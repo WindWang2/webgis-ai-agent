@@ -272,7 +272,7 @@ class TemporalTrendEngine:
         - ``mann_kendall``: 附加非参数 MK 检验（S / tie 校正方差 /
           连续性校正 z / 双侧 p / lag-1 秩自相关警告）；
         - ``seasonal_mann_kendall``: 季节 MK（需要逐点可解析日期；
-          逐季节 S/Var 按 hirsch_slack1984 池化）。
+          逐季节 S/Var 按 hirsch_slack1982 池化）。
 
         MK 族返回 ``TemporalTrendResultWithSignificance``（子类，携带
         ``trend_method`` / ``significance_evidence`` / ``method_warnings``）
@@ -583,7 +583,7 @@ def seasonal_mann_kendall(
     season: str = "monthly",
     alpha: float = 0.05,
 ) -> Dict[str, Any]:
-    """季节 Mann-Kendall（hirsch_slack1984：逐季 S/Var 独立池化求和）。
+    """季节 Mann-Kendall（hirsch_slack1982：逐季 S/Var 独立池化求和）。
 
     - ``season="monthly"``：月为季节（12 组）；``"quarterly"``：季度
       （(month−1)//3+1，4 组）；
@@ -668,7 +668,7 @@ def seasonal_mann_kendall(
         "direction": direction,
         "significant": bool(p < alpha),
         "limitations": limitations,
-        "reference": "hirsch_slack1984（逐季独立 + 池化 S/Var 求和）",
+        "reference": "hirsch_slack1982（逐季独立 + 池化 S/Var 求和）",
     }
 
 

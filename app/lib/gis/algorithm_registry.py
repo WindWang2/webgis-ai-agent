@@ -125,11 +125,17 @@ class AlgorithmDescriptor(BaseModel):
     def _bounded_text_lists(cls, v: List[str]) -> List[str]:
         return [str(x)[:160] for x in v[:8]]
 
-    @field_validator("method_references", "conformance_tests",
-                     "scientific_preconditions")
+    @field_validator("method_references", "scientific_preconditions")
     @classmethod
     def _bounded_id_lists(cls, v: List[str]) -> List[str]:
         return [str(x)[:96] for x in v[:8]]
+
+    @field_validator("conformance_tests")
+    @classmethod
+    def _bounded_conformance_nodes(cls, v: List[str]) -> List[str]:
+        # pytest 节点 id（文件::函数/类::函数）可远超 96 字符 —— 截断会让
+        # 节点级存在性校验误报（评审 M1 的 26 个误报根因）。
+        return [str(x)[:220] for x in v[:8]]
 
     @field_validator("uncertainty_outputs")
     @classmethod
@@ -400,18 +406,39 @@ class AlgorithmRegistry:
         elif algo.scientific_status == "DEPRECATED" and not algo.fallback_algorithms:
             issues.append(
                 f"algorithm {algo.id}: DEPRECATED 必须给出 fallback（否则规划死端）")
-        # conformance 节点：仓库布局可用时校验文件存在性（确定性、零导入）。
-        # 非 checkout 环境（tests/ 根不存在）无从校验 —— 诚实跳过。
+        # conformance 节点：仓库布局可用时校验文件存在性 + **节点级**
+        # 存在性（评审 M1：文件级检查放过节点改名腐烂 —— VALIDATED 的
+        # 可审计承诺必须钉到真实测试函数）。确定性 AST 解析，零导入。
         if algo.conformance_tests:
+            import ast
             import os
 
             if os.path.isdir("tests"):
                 for node in algo.conformance_tests:
-                    path = node.split("::", 1)[0]
-                    if path.startswith("tests/") and not os.path.exists(path):
-                        issues.append(
-                            f"algorithm {algo.id}: conformance test file "
-                            f"missing: {path}")
+                    path, _, func = node.partition("::")
+                    if not path.startswith("tests/") or not os.path.exists(path):
+                        if path.startswith("tests/"):
+                            issues.append(
+                                f"algorithm {algo.id}: conformance test file "
+                                f"missing: {path}")
+                        continue
+                    if func:
+                        try:
+                            tree = ast.parse(
+                                open(path, encoding="utf-8").read())
+                        except (OSError, SyntaxError):
+                            continue
+                        names = {
+                            n.name for n in ast.walk(tree)
+                            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                              ast.ClassDef))}
+                        # 节点路径可为 file::func 或 file::Class::method ——
+                        # 逐段存在性校验。
+                        segments = [s for s in func.split("::") if s]
+                        if any(s not in names for s in segments):
+                            issues.append(
+                                f"algorithm {algo.id}: conformance test node "
+                                f"missing: {node}")
         return issues
 
 

@@ -317,6 +317,17 @@ def register_rs_tools(registry: ToolRegistry):
 
         vv_arr = np.asarray(vv, dtype=float)
         vh_arr = np.asarray(vh, dtype=float)
+        # 评审 M3：内联数组与 _bands_to_arrays 同一资源包络（先拒绝不 OOM）。
+        for _name, _arr in (("vv", vv_arr), ("vh", vh_arr)):
+            if _arr.size > _TOOL_ARRAY_MAX_VALUES:
+                from app.lib.gis.scientific_errors import ResourceScaleMismatch
+
+                raise ResourceScaleMismatch(
+                    f"sar_vh_ratio {_name} 数组超限：{_arr.size} 值",
+                    estimated=f"{_arr.size * 8 / 1e6:.1f} MB float64",
+                    limit=f"≤{_TOOL_ARRAY_MAX_VALUES} values",
+                    correction_hint="分块处理或走栅格文件路径",
+                )
         if vv_arr.shape != vh_arr.shape:
             raise ValueError(
                 f"vv/vh 形状不一致：{vv_arr.shape} vs {vh_arr.shape}")

@@ -155,7 +155,7 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "on Kendall's Tau. JASA, 63(324), 1379–1389.",
         ),
         MethodReference(
-            "hirsch_slack1984",
+            "hirsch_slack1982",
             "Seasonal Mann-Kendall",
             "Hirsch, R. M., Slack, J. R., & Smith, R. A. (1982). Techniques of "
             "Trend Analysis for Monthly Water Quality Data. "
@@ -176,8 +176,8 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "Operations Research, 16(5), 955–961.",
         ),
         MethodReference(
-            "radke_mu2010",
-            "2SFCA accessibility",
+            "luo_qi2009",
+            "2SFCA / E2SFCA accessibility",
             "Luo, W., & Qi, Y. (2009). An Enhanced Two-Step Floating Catchment "
             "Area (E2SFCA) Method. IJHG, 11(1), 68–84.",
         ),
@@ -224,7 +224,7 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "TM Image. IJRS, 24(3), 583–594.",
         ),
         MethodReference(
-            "key_nottrott2011",
+            "key_benson2006",
             "NBR burn ratio (FireMON)",
             "Key, C. H., & Benson, N. C. (2006). Landscape Assessment: Ground "
             "Measure of Severity, the Composite Burn Index; and Remote Sensing "

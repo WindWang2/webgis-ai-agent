@@ -151,7 +151,7 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
                 description="分母口径：区分母字段/区真实面积 m²/要素计数（count 输出是比值非率）",
             ),
             ParameterSpec(
-                name="denominator_field", type="string",
+                name="denominator", type="string",
                 description="denominator_kind=field 时的区分母列名（如人口/暴露面积）",
             ),
         ],
