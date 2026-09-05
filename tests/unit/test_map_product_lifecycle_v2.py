@@ -309,9 +309,17 @@ def test_style_restore_without_snapshot_refused(lifecycle_project):
             run_manifest={"steps": [], "artifacts": []}).version_no
     import asyncio
 
-    with pytest.raises(ValueError, match="snapshot"):
-        asyncio.run(MapProductService.restore_style_to_session(
-            SessionLocal(), project_id, v_no, session_id="sess-x"))
+    # 服务先 get_version（SELECT）再因无快照拒绝 —— 这里必须显式 close：
+    # 裸 SessionLocal() 泄漏成 idle-in-transaction，域表上的 ACCESS SHARE
+    # 会卡死下一个用例 fixture 的 DROP TABLE（CI Postgres 实测 60s
+    # pytest-timeout；sqlite 本地不显形）。
+    s = SessionLocal()
+    try:
+        with pytest.raises(ValueError, match="snapshot"):
+            asyncio.run(MapProductService.restore_style_to_session(
+                s, project_id, v_no, session_id="sess-x"))
+    finally:
+        s.close()
 
 
 # ── REST contract ───────────────────────────────────────────────────────────
