@@ -14,9 +14,12 @@ from app.services.geocompute.plan import (
     ExecutionNode,
     ExecutionPlan,
     ExecutionPolicyKind,
+    LineageLink,
     NodeCategory,
     NodeReusePolicy,
+    PayloadKind,
     ResourceBudget,
+    ResourceClass,
     ResourceEstimate,
     RetryPolicy,
 )
@@ -55,6 +58,9 @@ def build_plan_from_json(data: dict[str, Any]) -> ExecutionPlan:
                          "hint": "use in_process, or materialize first"},
             )
         retry = raw.get("retry") or {}
+        produces_raw = raw.get("produces")
+        accepts_raw = raw.get("accepts") or []
+        rc_raw = raw.get("resource_class") or {}
         nodes.append(
             ExecutionNode(
                 node_id=str(raw["node_id"]),
@@ -74,6 +80,21 @@ def build_plan_from_json(data: dict[str, Any]) -> ExecutionPlan:
                 cancellable=bool(raw.get("cancellable", True)),
                 locality_hint=raw.get("locality_hint"),
                 description=raw.get("description"),
+                produces=PayloadKind(produces_raw) if produces_raw else None,
+                accepts=[PayloadKind(a) for a in accepts_raw][:8],
+                resource_class=ResourceClass(**rc_raw) if rc_raw else ResourceClass(),
+                deterministic=bool(raw.get("deterministic", True)),
+                upstream_fingerprints={
+                    str(k): str(v)
+                    for k, v in (raw.get("upstream_fingerprints") or {}).items()
+                },
+                lineage_inputs=[
+                    LineageLink(**link) for link in (raw.get("lineage_inputs") or [])
+                ][:16],
+                evidence_schema={
+                    str(k): str(v)
+                    for k, v in (raw.get("evidence_schema") or {}).items()
+                },
             )
         )
     budget_raw = dict(data.get("budget") or {})

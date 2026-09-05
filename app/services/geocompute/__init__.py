@@ -14,10 +14,17 @@ from app.services.geocompute.errors import (
 )
 from app.services.geocompute.executor import GeoExecutionEngine, NodeResultStore, engine
 from app.services.geocompute.graph import (
+    PlanValidationError,
+    descendants_of,
     invalidation_set,
     node_reuse_key,
     topo_wave_order,
     validate_plan,
+)
+from app.services.geocompute.normalization import (
+    canonical_dumps,
+    canonicalize,
+    normalize_crs_ref,
 )
 from app.services.geocompute.plan import (
     EXECUTION_PLAN_VERSION,
@@ -27,10 +34,13 @@ from app.services.geocompute.plan import (
     ExecutionPolicyKind,
     ExecutionRun,
     ExecutionRunStatus,
+    LineageLink,
     NodeCategory,
     NodeEvidence,
     NodeReusePolicy,
+    PayloadKind,
     ResourceBudget,
+    ResourceClass,
     ResourceEstimate,
     RetryPolicy,
 )
@@ -48,18 +58,26 @@ __all__ = [
     "ExecutionRunStatus",
     "GeoComputeError",
     "GeoExecutionEngine",
+    "LineageLink",
     "NodeCategory",
     "NodeEvidence",
     "NodeExecutionError",
     "NodeReusePolicy",
     "NodeResultStore",
+    "PayloadKind",
+    "PlanValidationError",
     "ResourceBudget",
+    "ResourceClass",
     "ResourceEstimate",
     "RetryPolicy",
     "UnsupportedOperationError",
+    "canonical_dumps",
+    "canonicalize",
+    "descendants_of",
     "engine",
     "invalidation_set",
     "node_reuse_key",
+    "normalize_crs_ref",
     "topo_wave_order",
     "validate_plan",
 ]
