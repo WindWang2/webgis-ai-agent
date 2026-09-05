@@ -172,6 +172,15 @@ class NetworkClosestFacilityService:
             "target_facility_count": target_facility_count,
             "cutoff_cost": cutoff_cost,
         }
+        # VNext（scientific-honesty pack）：网络不连通/全部设施超 cutoff 的
+        # 需求点此前只是「无路线」静默缺位 —— 现在逐一点名列出（unmatched），
+        # 使覆盖缺口可审计（unreachable 个体报告；全图不连通仍由上层
+        # DisconnectedNetwork 语义负责）。
+        unmatched_demand_ids = [
+            d.demand_id for d in normalized_demands if d.demand_id not in selected
+        ]
+        summary["unmatched_demand_count"] = len(unmatched_demand_ids)
+        summary["unmatched_demand_ids"] = unmatched_demand_ids
 
         return NetworkAnalysisResult(
             analysis_type="closest_facility",

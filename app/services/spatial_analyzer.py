@@ -14,6 +14,8 @@ from app.lib.geo_analysis.statistics import (
     calculate_sde,
     moran_i_narrated,
     hotspot_narrated,
+    geary_c_narrated,
+    general_g_narrated,
     cluster_narrated,
     calculate_central_feature,
     calculate_nearest,
@@ -22,6 +24,8 @@ from app.lib.geo_analysis.statistics import (
 from app.lib.geo_analysis.aggregation import spatial_aggregate
 from app.lib.geo_analysis.network import calculate_isochrones
 from app.lib.geo_analysis.density import kde_surface as _kde_surface, kde_contours as _kde_contours
+from app.lib.geo_analysis.point_pattern import ripley_k as _ripley_k, quadrat_test as _quadrat_test
+from app.lib.geo_analysis._vector import extract_centroids
 from app.lib.geo_analysis.geometry_ops import (
     voronoi_polygons as _voronoi_polygons,
     convex_hull as _convex_hull,
@@ -327,6 +331,93 @@ class SpatialAnalyzer:
         callback: Optional[Callable] = None,
     ) -> GeoAnalysisResult:
         return hotspot_narrated(features, value_field, distance_band)
+
+    # ── VNext（ADR-0099）统计/点格局缝合层委托 ──────────────────────
+    # 工具层不许绕过本类直接 import lib.geo_analysis（架构不变量测试
+    # test_no_direct_lib_bypass_in_spatial_stats_tools 守卫）。
+    @classmethod
+    @spatial_operator(name="Moran's I")
+    def moran_i(
+        cls,
+        features: Any,
+        value_field: str,
+        weights_scheme: str = "knn",
+        k: int = 8,
+        distance_band: float = 0,
+        permutations: int = 99,
+        callback: Optional[Callable] = None,
+    ) -> GeoAnalysisResult:
+        return moran_i_narrated(
+            features, value_field, weights_scheme=weights_scheme, k=k,
+            distance_band=distance_band, permutations=permutations)
+
+    @classmethod
+    @spatial_operator(name="Geary's C")
+    def geary_c(
+        cls,
+        features: Any,
+        value_field: str,
+        weights_scheme: str = "knn",
+        k: int = 8,
+        distance_band: float = 0,
+        permutations: int = 99,
+        analytic_variance: bool = False,
+        callback: Optional[Callable] = None,
+    ) -> GeoAnalysisResult:
+        return geary_c_narrated(
+            features, value_field, weights_scheme=weights_scheme, k=k,
+            distance_band=distance_band, permutations=permutations,
+            analytic_variance=analytic_variance)
+
+    @classmethod
+    @spatial_operator(name="General G")
+    def general_g(
+        cls,
+        features: Any,
+        value_field: str,
+        distance_band: float = 0,
+        permutations: int = 99,
+        callback: Optional[Callable] = None,
+    ) -> GeoAnalysisResult:
+        return general_g_narrated(
+            features, value_field, distance_band=distance_band,
+            permutations=permutations)
+
+    @classmethod
+    @spatial_operator(name="Ripley's K")
+    def ripley_k(
+        cls,
+        features: Any,
+        n_steps: int = 10,
+        max_distance_ratio: float = 0.25,
+        callback: Optional[Callable] = None,
+    ) -> Dict:
+        res = to_utm_gdf(features)
+        if res is None or res[0] is None:
+            from app.lib.gis.scientific_errors import NoValidObservations
+            raise NoValidObservations("输入无有效点要素")
+        gdf, _ = res
+        xy = extract_centroids(gdf)
+        return _ripley_k(xy, n_steps=n_steps,
+                         max_distance_ratio=max_distance_ratio)
+
+    @classmethod
+    @spatial_operator(name="Quadrat chi-square")
+    def quadrat_test(
+        cls,
+        features: Any,
+        grid_rows: int = 4,
+        grid_cols: int = 4,
+        callback: Optional[Callable] = None,
+    ) -> Dict:
+        res = to_utm_gdf(features)
+        if res is None or res[0] is None:
+            from app.lib.gis.scientific_errors import NoValidObservations
+            raise NoValidObservations("输入无有效点要素")
+        gdf, _ = res
+        xy = extract_centroids(gdf)
+        return _quadrat_test(xy, grid_rows=grid_rows,
+                             grid_cols=grid_cols)
 
     @classmethod
     @spatial_operator(name="LISA")

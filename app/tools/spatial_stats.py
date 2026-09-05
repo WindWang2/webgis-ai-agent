@@ -1,13 +1,59 @@
-"""空间统计与聚类分析工具 — DBSCAN/K-Means聚类、Moran's I、Getis-Ord Gi*、核密度估计"""
+"""空间统计与聚类分析工具 — DBSCAN/K-Means聚类、Moran's I、Geary's C、General G、
+Getis-Ord Gi*、Ripley's K、样方χ²检验、核密度估计"""
 import logging
 from typing import Any, Optional
 
 from app.tools.registry import ToolRegistry, tool
 from app.lib.geo_processor.core import safe_parse as safe_parse_geojson
+from app.lib.geo_processor.core import extract_declared_crs
 from app.services.spatial_analyzer import SpatialAnalyzer
 from app.tools._utils import cached_tool, trim_features, std_error_response
+from app.lib.gis.algorithm_registry import get_algorithm_registry
+from app.lib.gis.crs_safety import classify_crs
+from app.lib.gis.parameter_contracts import apply_contract
+from app.lib.gis.scientific_evidence import build_evidence
+from app.lib.gis.uncertainty import StatisticalSignificance
 
 logger = logging.getLogger(__name__)
+
+def _attach_scientific_evidence(
+    payload: dict,
+    algorithm_id: str,
+    *,
+    tool: str,
+    parameters_applied: dict,
+    feature_count: Optional[int],
+    crs: str = "",
+    uncertainty: Optional[list] = None,
+    seed: Optional[int] = None,
+) -> dict:
+    """Attach the VNext scientific-evidence block to a tool payload.
+
+    Thin-wrapper duty (ADR-0099 §1): validate → resolve refs → call the
+    implementation → attach evidence. The descriptor is the single source of
+    assumptions/limitations/references; the implementation supplies the
+    uncertainty blocks.
+    """
+    descriptor = get_algorithm_registry().get(algorithm_id)
+    if descriptor is None:
+        logger.warning("scientific evidence requested for unknown algorithm %s", algorithm_id)
+        return payload
+    input_facts = {"feature_count": feature_count} if feature_count is not None else {}
+    transformations = []
+    if crs:
+        input_facts["crs"] = crs
+        if classify_crs(crs) == "geographic":
+            transformations.append("auto-projected to local UTM for metric spatial statistics")
+    payload["scientific_evidence"] = build_evidence(
+        descriptor,
+        tool=tool,
+        parameters_applied=parameters_applied,
+        input_facts=input_facts,
+        uncertainty=uncertainty,
+        transformations=transformations or None,
+        seed=seed,
+    )
+    return payload
 
 def register_spatial_stats_tools(registry: ToolRegistry):
 
@@ -52,19 +98,244 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         return res.to_llm_response()
 
     @tool(registry, name="moran_i",
-           description="全局 Moran's I 空间自相关检验，判断空间分布模式（聚集/离散/随机）",
+           description="全局 Moran's I 空间自相关检验，判断空间分布模式（聚集/离散/随机）；"
+                       "支持 knn/queen/rook/distance_band 权重方案与 99/199/499/999 次置换（固定种子）",
            tier=2, domains=["statistics"],
            param_descriptions={
                "geojson": "输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
                "value_field": "待检验的数值字段名",
+               "weights_scheme": "空间权重方案：'knn'(默认) / 'queen' / 'rook'（后两者需面要素）/ 'distance_band'",
+               "k": "kNN 邻居数（仅 knn 方案，默认8，范围2-16）",
+               "distance_band": "distance_band 权重的距离阈值（米），0=按8近邻平均距离自动（默认）",
+               "permutations": "置换次数：99(默认)/199/499/999，固定种子42",
            })
-    def moran_i(geojson: Any, value_field: str) -> dict:
+    def moran_i(geojson: Any, value_field: str, weights_scheme: str = "knn",
+                k: int = 8, distance_band: float = 0, permutations: int = 99) -> dict:
         data = safe_parse_geojson(geojson)
         if not isinstance(data, dict):
             raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
+        params = apply_contract("moran_i_analysis", {
+            "value_field": value_field,
+            "weights_scheme": weights_scheme,
+            "k": k,
+            "permutations": permutations,
+        })
         # #1110 review M6: forward the full FC (CRS preservation).
-        res = SpatialAnalyzer.statistics(data, field=value_field, spatial_stats=True)
-        return res.to_llm_response()
+        res = SpatialAnalyzer.moran_i(
+            data, params["value_field"],
+            weights_scheme=params["weights_scheme"],
+            k=int(params["k"]),
+            distance_band=float(distance_band or 0),
+            permutations=int(params["permutations"]),
+        )
+        payload = res.to_llm_response()
+        if res.success:
+            _attach_scientific_evidence(
+                payload, "stats.morans_i", tool="moran_i",
+                parameters_applied={
+                    "value_field": params["value_field"],
+                    "weights_scheme": params["weights_scheme"],
+                    "k": int(params["k"]),
+                    "distance_band": float(distance_band or 0),
+                    "permutations": int(params["permutations"]),
+                },
+                feature_count=res.data.get("n_features"),
+                crs=extract_declared_crs(data) or "EPSG:4326",
+                uncertainty=[StatisticalSignificance(
+                    target="morans_i",
+                    statistic_name="Moran's I",
+                    statistic_value=res.data.get("moran_i"),
+                    p_value=res.data.get("p_value"),
+                    method="permutation",
+                    permutations=res.data.get("permutations"),
+                    alternative="two-sided",
+                )],
+                seed=42,
+            )
+        return payload
+
+    @tool(registry, name="geary_c",
+           description="全局 Geary's C 空间自相关检验（成对差版本，对局部差异比 Moran 更敏感）；"
+                       "C<1 聚集 / C>1 离散，置换 p 值（固定种子42），可选正态假设解析方差",
+           tier=2, domains=["statistics"],
+           param_descriptions={
+               "geojson": "输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
+               "value_field": "待检验的数值字段名",
+               "weights_scheme": "空间权重方案：'knn'(默认) / 'queen' / 'rook'（后两者需面要素）/ 'distance_band'",
+               "k": "kNN 邻居数（仅 knn 方案，默认8，范围2-16）",
+               "distance_band": "distance_band 权重的距离阈值（米），0=按8近邻平均距离自动（默认）",
+               "permutations": "置换次数：99(默认)/199/499/999，固定种子42",
+               "analytic_variance": "是否附加正态假设下的解析方差/z/p（默认 False）",
+           })
+    def geary_c(geojson: Any, value_field: str, weights_scheme: str = "knn",
+                k: int = 8, distance_band: float = 0, permutations: int = 99,
+                analytic_variance: bool = False) -> dict:
+        data = safe_parse_geojson(geojson)
+        if not isinstance(data, dict):
+            raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
+        params = apply_contract("geary_c_analysis", {
+            "value_field": value_field,
+            "weights_scheme": weights_scheme,
+            "k": k,
+            "permutations": permutations,
+        })
+        res = SpatialAnalyzer.geary_c(
+            data, params["value_field"],
+            weights_scheme=params["weights_scheme"],
+            k=int(params["k"]),
+            distance_band=float(distance_band or 0),
+            permutations=int(params["permutations"]),
+            analytic_variance=bool(analytic_variance),
+        )
+        payload = res.to_llm_response()
+        if res.success:
+            _attach_scientific_evidence(
+                payload, "stats.gearys_c", tool="geary_c",
+                parameters_applied={
+                    "value_field": params["value_field"],
+                    "weights_scheme": params["weights_scheme"],
+                    "k": int(params["k"]),
+                    "distance_band": float(distance_band or 0),
+                    "permutations": int(params["permutations"]),
+                    "analytic_variance": bool(analytic_variance),
+                },
+                feature_count=res.data.get("n_features"),
+                crs=extract_declared_crs(data) or "EPSG:4326",
+                uncertainty=[StatisticalSignificance(
+                    target="gearys_c",
+                    statistic_name="Geary's C",
+                    statistic_value=res.data.get("gearys_c"),
+                    p_value=res.data.get("p_value"),
+                    method="permutation",
+                    permutations=res.data.get("permutations"),
+                    alternative="two-sided",
+                )],
+                seed=42,
+            )
+        return payload
+
+    @tool(registry, name="general_g",
+           description="Getis-Ord General G 全局高值聚集检验（值须非负，如计数/强度）；"
+                       "G 显著偏高=高值聚集（clustered-high），显著偏低=低值聚集（clustered-low）",
+           tier=2, domains=["statistics"],
+           param_descriptions={
+               "geojson": "输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
+               "value_field": "非负数值字段名（计数/强度语义）",
+               "distance_band": "二值权重距离阈值（米），0=按8近邻平均距离自动（默认）",
+               "permutations": "置换次数：99(默认)/199/499/999，固定种子42",
+           })
+    def general_g(geojson: Any, value_field: str, distance_band: float = 0,
+                  permutations: int = 99) -> dict:
+        data = safe_parse_geojson(geojson)
+        if not isinstance(data, dict):
+            raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
+        params = apply_contract("general_g_analysis", {
+            "value_field": value_field,
+            "permutations": permutations,
+        })
+        res = SpatialAnalyzer.general_g(
+            data, params["value_field"],
+            distance_band=float(distance_band or 0),
+            permutations=int(params["permutations"]),
+        )
+        payload = res.to_llm_response()
+        if res.success:
+            _attach_scientific_evidence(
+                payload, "stats.general_g", tool="general_g",
+                parameters_applied={
+                    "value_field": params["value_field"],
+                    "distance_band": float(distance_band or 0),
+                    "permutations": int(params["permutations"]),
+                },
+                feature_count=res.data.get("n_features"),
+                crs=extract_declared_crs(data) or "EPSG:4326",
+                uncertainty=[StatisticalSignificance(
+                    target="general_g",
+                    statistic_name="General G",
+                    statistic_value=res.data.get("general_g"),
+                    p_value=res.data.get("p_value"),
+                    method="permutation",
+                    permutations=res.data.get("permutations"),
+                    alternative="two-sided",
+                )],
+                seed=42,
+            )
+        return payload
+
+    @tool(registry, name="ripley_k_analysis",
+           description="Ripley's K 点格局分析（各向同性边缘校正）：K(r)/L(r)/CSR参考πr²，"
+                       "描述性判断聚集/均匀/随机随半径的变化；需米制坐标（自动投影UTM），无显著性p值",
+           tier=2, domains=["statistics"],
+           param_descriptions={
+               "geojson": "输入点要素 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
+               "n_steps": "r 网格步数（4-32，默认10）",
+               "max_distance_ratio": "r_max = 比例×min(窗宽,窗高)，0.05-0.5（默认0.25）",
+           })
+    def ripley_k_analysis(geojson: Any, n_steps: int = 10,
+                          max_distance_ratio: float = 0.25) -> dict:
+        data = safe_parse_geojson(geojson)
+        if not isinstance(data, dict):
+            raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
+        params = apply_contract("ripley_k_analysis", {
+            "n_steps": n_steps,
+            "max_distance_ratio": max_distance_ratio,
+        })
+        result = SpatialAnalyzer.ripley_k(
+            data,
+            n_steps=int(params["n_steps"]),
+            max_distance_ratio=float(params["max_distance_ratio"]),
+        )
+        payload = {"success": True, "summary": result["summary"], "data": result}
+        _attach_scientific_evidence(
+            payload, "point_pattern.ripley_k", tool="ripley_k_analysis",
+            parameters_applied={
+                "n_steps": int(params["n_steps"]),
+                "max_distance_ratio": float(params["max_distance_ratio"]),
+            },
+            feature_count=result.get("n"),
+            crs=extract_declared_crs(data) or "EPSG:4326",
+        )
+        return payload
+
+    @tool(registry, name="quadrat_analysis",
+           description="样方 χ² 点格局离散检验（m×n 网格，期望N/(mn)，df=mn-1）+方差均值比VMR；"
+                       "双侧 p<0.05 拒绝完全空间随机（VMR>1 聚集 / VMR<1 均匀），需米制坐标（自动投影UTM）",
+           tier=2, domains=["statistics"],
+           param_descriptions={
+               "geojson": "输入点要素 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
+               "grid_rows": "样方行数（2-10，默认4）",
+               "grid_cols": "样方列数（2-10，默认4）",
+           })
+    def quadrat_analysis(geojson: Any, grid_rows: int = 4, grid_cols: int = 4) -> dict:
+        data = safe_parse_geojson(geojson)
+        if not isinstance(data, dict):
+            raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
+        params = apply_contract("quadrat_analysis", {
+            "grid_rows": grid_rows,
+            "grid_cols": grid_cols,
+        })
+        result = SpatialAnalyzer.quadrat_test(
+            data,
+            grid_rows=int(params["grid_rows"]),
+            grid_cols=int(params["grid_cols"]),
+        )
+        payload = {"success": True, "summary": result["summary"], "data": result}
+        _attach_scientific_evidence(
+            payload, "point_pattern.quadrat_test", tool="quadrat_analysis",
+            parameters_applied={
+                "grid_rows": int(params["grid_rows"]),
+                "grid_cols": int(params["grid_cols"]),
+            },
+            feature_count=result.get("n"),
+            crs=extract_declared_crs(data) or "EPSG:4326",
+            uncertainty=[StatisticalSignificance(
+                target="quadrat_chi2",
+                statistic_name=f"quadrat chi2 (df={result.get('df')})",
+                statistic_value=result.get("chi2"),
+                p_value=result.get("p_value"),
+            )],
+        )
+        return payload
 
     @tool(registry, name="hotspot_analysis",
            description="Getis-Ord Gi* 热点分析，识别统计显著的高值聚集区（热点）和低值聚集区（冷点）",

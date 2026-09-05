@@ -130,9 +130,14 @@ def test_registry_lookup_bounded():
 
 
 def test_algorithm_taxonomy():
-    from app.lib.gis.algorithm_registry import ALGORITHM_TAXONOMY, get_algorithm_registry
-    assert "geometry_processing" in ALGORITHM_TAXONOMY
-    assert "terrain_analysis" in ALGORITHM_TAXONOMY
+    # ALGORITHM_TAXONOMY（死元数据）已删除：域分组事实源 = 域包模块 +
+    # descriptor.category（真实注册内容断言，防再漂移）。
+    from app.lib.gis.algorithm_registry import get_algorithm_registry
+    reg = get_algorithm_registry()
+    assert any(a.category == "geometry_processing"
+               for a in (reg.get(i) for i in reg.all_ids))
+    assert any(a.category == "terrain_analysis"
+               for a in (reg.get(i) for i in reg.all_ids))
     reg = get_algorithm_registry()
     assert reg.count >= 20
     assert not reg.validate()

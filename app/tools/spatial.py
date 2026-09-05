@@ -51,6 +51,51 @@ def _build_legend_spec(palette: str, min_val: float = 0.0, max_val: float = 1.0,
 _PALETTE_MAP_NAMED = set(NATIVE_HEATMAP_COLORS)
 
 
+def _buffer_scientific_evidence(distance: float, unit: str, res: Any) -> Optional[dict]:
+    """Build the ADR-0099 ``scientific_evidence`` block for buffer_analysis.
+
+    Reads the REAL CRS transformation note threaded through
+    ``buffer_smart`` → ``to_utm_gdf_with_note`` (source frame / auto-UTM
+    target / gcj02 normalization via the quality-evidence ``extra``), so
+    ``transformations_applied`` reports what actually happened instead of
+    re-guessing from the input. Never raises: evidence is additive, a
+    descriptor lookup failure must not fail the analysis.
+    """
+    try:
+        from app.lib.gis.algorithm_registry import get_algorithm_registry
+        from app.lib.gis.scientific_evidence import build_evidence
+
+        descriptor = get_algorithm_registry().get("geometry.buffer")
+        if descriptor is None:
+            return None
+        qev = res.evidence if isinstance(res.evidence, dict) else {}
+        source_crs = str(qev.get("source_crs") or "EPSG:4326")
+        working_crs = str(qev.get("working_crs") or "")
+        transformations: List[str] = []
+        if qev.get("gcj02_normalized"):
+            transformations.append("gcj02/bd09 偏移框架已归一化为 WGS84（audit #813）")
+        if working_crs and working_crs != source_crs:
+            transformations.append(
+                f"auto UTM ({working_crs}) 用于度量缓冲，结果已转回 {source_crs}")
+        elif working_crs:
+            transformations.append(
+                f"输入已为投影 CRS（{source_crs}），缓冲直接在其线性单位下执行")
+        return build_evidence(
+            descriptor,
+            tool="buffer_analysis",
+            parameters_applied={"distance": float(distance), "unit": unit},
+            input_facts={
+                "feature_count": qev.get("input_count"),
+                "crs": source_crs,
+                "units": "meters",
+            },
+            transformations=transformations,
+        )
+    except Exception:  # noqa: BLE001 — evidence is additive, never fatal
+        logger.warning("buffer_analysis: scientific evidence build failed", exc_info=True)
+        return None
+
+
 class BufferAnalysisArgs(BaseModel):
     geojson: Any = Field(..., description="输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)")
     distance: float = Field(..., gt=0, description="缓冲距离（米），必须大于0")
@@ -117,7 +162,13 @@ def register_spatial_tools(registry: ToolRegistry):
         # #1110 review M1: forward the full FC — a bare features list is
         # rebuilt into a CRS-less FC and projected input falls back to 4326.
         res = SpatialAnalyzer.buffer(data, distance, unit)
-        return res.to_llm_response()
+        resp = res.to_llm_response()
+        # ADR-0099: attach the scientific evidence block (descriptor
+        # geometry.buffer + the real auto-UTM transformation note).
+        evidence = _buffer_scientific_evidence(distance, unit, res)
+        if evidence is not None:
+            resp["scientific_evidence"] = evidence
+        return resp
 
     @tool(registry, name="spatial_stats",
            description=(

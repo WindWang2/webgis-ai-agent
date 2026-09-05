@@ -53,9 +53,11 @@ class TestAlgorithmHonestyFixes:
         assert reg.get("stats.h3_hotspot").tool_candidates == ["h3_lisa"]
 
     def test_no_dead_code_capability_hacks(self):
-        from app.lib.gis.algorithm_registry import _SEED_ALGORITHMS
+        from app.lib.gis.algorithm_registry import get_algorithm_registry
 
-        for algo in _SEED_ALGORITHMS:
+        for algo in get_algorithm_registry().all_ids:
+            algo = get_algorithm_registry().get(algo)
+            assert algo is not None
             assert algo.capabilities, f"{algo.id} declares no capability"
             for cap in algo.capabilities:
                 assert "interpolation" not in cap or algo.id.startswith(("interpolation",)), (

@@ -1,7 +1,7 @@
 import hashlib
 import threading
 from collections import OrderedDict
-from typing import Any
+from typing import Any, Callable
 import numpy as np
 import pandas as pd
 import geopandas as gpd
@@ -11,6 +11,21 @@ from scipy.stats import norm
 from app.lib.geo_processor.core import GeoAnalysisResult
 from app.lib.geo_processor.core import to_utm_gdf
 from app.lib.geo_analysis._vector import extract_centroids
+from app.lib.geo_analysis.spatial_weights import (
+    WEIGHT_SCHEMES,
+    auto_band_8nn,
+    build_contiguity_weights,
+    build_distance_band_weights,
+    build_knn_weights,
+)
+from app.lib.gis.scientific_errors import (
+    DegenerateData,
+    InsufficientSamples,
+    MissingRequiredField,
+    NoValidObservations,
+    UnsupportedMethod,
+)
+from app.lib.gis.uncertainty import StatisticalSignificance
 # ADR-0052: 协作式取消检查点。cancellable() 在 chunk 边界读一次 contextvar，
 # 未绑定 token 时开销为零；用户取消后长循环立即抛 OperationCancelled 退出，
 # 真正释放 CPU 而不是只改 UI 状态。
@@ -120,10 +135,107 @@ def _build_weights(gdf: gpd.GeoDataFrame, k: int = 8) -> sparse.coo_matrix:
     # flattens row-major with column order preserved — O(n·k), no Python loop
     # (review G: the per-row loop was a 46x stage regression at n=10k).
     mask = idx != np.arange(n)[:, None]
-    cols = idx[mask]  # (n·k_actual,) row-major, each row's k_actual non-self
-    rows = np.repeat(np.arange(n), k_actual)
+    cols = idx[mask]  # row-major, per-row variable length
+    # 评审 MAJOR-1：重合点簇 >k+1 时 tie-break 可能把 self 排出 k+1 邻域，
+    # 逐行贡献数不再恒为 k_actual —— rows 从逐行计数派生（与
+    # spatial_weights.build_knn_weights 同一修复）。
+    per_row = mask.sum(axis=1)
+    rows = np.repeat(np.arange(n), per_row)
     data = np.ones(len(rows), dtype=float)
     return sparse.coo_matrix((data, (rows, cols)), shape=(n, n))
+
+
+# ── VNext（ADR-0099）全局空间自相关族的共享基础设施 ──────────────────
+# Moran / Geary / General G 共用：权重方案分发、固定种子置换分布、
+# 置换数契约。默认路径（knn, k=8, 99 perms, seed 42）与 #1002 时代的
+# moran_i_narrated 逐位一致 —— 种子参考测试
+# （test_moran_i_pvalue_matches_seeded_scalar_reference）钉住该流。
+
+#: 允许的置换次数（参数契约 moran_i_analysis / geary_c_analysis / general_g_analysis）。
+_PERMUTATION_CHOICES = (99, 199, 499, 999)
+_PERMUTATION_SEED = 42
+
+
+def _validate_permutations(permutations: int) -> int:
+    """Constrain permutations to the contracted choice set {99,199,499,999}."""
+    try:
+        p = int(permutations)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"permutations must be one of {_PERMUTATION_CHOICES} "
+            f"(got {permutations!r})") from exc
+    if p not in _PERMUTATION_CHOICES:
+        raise ValueError(
+            f"permutations must be one of {_PERMUTATION_CHOICES} (got {permutations})")
+    return p
+
+
+def _autocorr_weights(
+    gdf: gpd.GeoDataFrame,
+    n: int,
+    weights_scheme: str,
+    k: int,
+    distance_band: float,
+):
+    """Dispatch the weights scheme for the global autocorrelation family.
+
+    Returns a row-standardized :class:`WeightsMatrix` (islands keep zero
+    rows). queen/rook need polygonal units — anything else is an honest
+    ``UnsupportedMethod`` with a correction hint, not a silent fallback.
+    """
+    coords = np.column_stack((gdf.centroid.x.values, gdf.centroid.y.values))
+    scheme = str(weights_scheme or "knn").lower()
+    if scheme == "knn":
+        # Same semantics as the historical default: binary kNN symmetrized by
+        # union (#1002), then row-standardized.
+        return build_knn_weights(coords, k=min(int(k), n - 1))
+    if scheme in ("queen", "rook"):
+        return build_contiguity_weights(gdf, scheme=scheme, row_standardized=True)
+    if scheme == "distance_band":
+        if distance_band and float(distance_band) > 0:
+            threshold = float(distance_band)
+        else:
+            # E-7 auto-band rule (shared with hotspot_narrated): the 8-NN mean
+            # distance keeps most observations connected.
+            threshold = auto_band_8nn(coords)
+        return build_distance_band_weights(
+            coords, threshold=threshold, include_self=False,
+            row_standardized=True,
+        )
+    raise ValueError(
+        f"unknown weights_scheme {weights_scheme!r}; "
+        f"expected one of {WEIGHT_SCHEMES}")
+
+
+def _permutation_stats(
+    stat_of_values: Callable[[np.ndarray], float],
+    values: np.ndarray,
+    perms: int,
+) -> np.ndarray:
+    """Fixed-seed (42) permutation reference distribution.
+
+    ``stat_of_values`` receives a permuted copy of ``values`` and must apply
+    the exact same arithmetic as the observed statistic. Vectorized over the
+    sparse weight entries per draw — never materializes an n×perms matrix.
+    """
+    rng = np.random.default_rng(_PERMUTATION_SEED)
+    out = np.empty(perms, dtype=float)
+    for t in cancellable(range(perms)):
+        out[t] = stat_of_values(rng.permutation(values))
+    return out
+
+
+def _two_sided_permutation_pvalue(
+    perm_stats: np.ndarray, observed: float, expected: float, perms: int,
+) -> float:
+    """Two-sided permutation p with the +1 correction (E-8).
+
+    The raw fraction can return exactly 0.0, implying certainty; the
+    (count+1)/(perms+1) form bounds it away from zero.
+    """
+    deviations = np.abs(perm_stats - expected) >= np.abs(observed - expected)
+    return (int(np.sum(deviations)) + 1) / (perms + 1)
+
 
 
 
@@ -249,9 +361,27 @@ def calculate_sde(geojson: dict) -> GeoAnalysisResult:
     
     return GeoAnalysisResult(True, data_out, summary)
 
-def moran_i_narrated(geojson: dict, value_field: str) -> GeoAnalysisResult:
+def moran_i_narrated(
+    geojson: dict,
+    value_field: str,
+    weights_scheme: str = "knn",
+    k: int = 8,
+    distance_band: float = 0,
+    permutations: int = 99,
+) -> GeoAnalysisResult:
     """
     Global Moran's I spatial autocorrelation test with narrative summary.
+
+    ``weights_scheme``（VNext 参数化，默认 ``knn`` 保持历史行为逐位不变）：
+
+    - ``knn``: k 近邻二值权重，对称并集 + 行标准化（#1002 语义，k 默认 8）；
+    - ``queen`` / ``rook``: 面要素邻接（libpysal），需要 Polygon 输入，
+      点/线输入抛 ``UnsupportedMethod``；
+    - ``distance_band``: 距离阈值二值权重（``distance_band`` 米，0 = 按
+      8 近邻平均距离自动，E-7 规则）。
+
+    ``permutations`` ∈ {99, 199, 499, 999}（固定种子 42，双侧
+    (count+1)/(perms+1) 校正，E-8）。
     """
     res = to_utm_gdf(geojson)
     if res is None or res[0] is None:
@@ -281,80 +411,360 @@ def moran_i_narrated(geojson: dict, value_field: str) -> GeoAnalysisResult:
             error_type="ValueError",
         )
 
-    w = _build_weights(gdf, k=min(8, n-1))
+    perms = _validate_permutations(permutations)
+
     # #1002: KNN weights are directional (i being j's k-nearest does not imply
     # j is i's). Global Moran's I requires symmetric weights — otherwise it is
     # systematically biased vs the PySAL reference and inconsistent with the
-    # symmetric Queen contiguity weights h3_lisa uses. Symmetrize by union
-    # (elementwise maximum = w | w.T for binary weights), then row-standardize.
-    w_csr = w.tocsr()
-    w_sym = w_csr.maximum(w_csr.transpose())
-    row_sums = np.asarray(w_sym.sum(axis=1)).ravel()
-    inv_row = np.zeros_like(row_sums)
-    np.divide(1.0, row_sums, out=inv_row, where=row_sums > 0)
-    w = (sparse.diags(inv_row) @ w_sym).tocoo()
+    # symmetric Queen contiguity weights h3_lisa uses. The default (knn) path
+    # symmetrizes by union (elementwise maximum), then row-standardizes —
+    # exactly the historical op sequence, so the default stays bit-comparable.
+    wm = _autocorr_weights(gdf, n, weights_scheme, k, distance_band)
+    w = wm.matrix.tocoo()
     w_sum = float(w.sum())
     if w_sum == 0:
         return GeoAnalysisResult(False, None, "Spatial weights matrix is empty")
-    
+
     z = values - values.mean()
     s0 = w_sum
     # Keep sparse: compute numerator only over non-zero weight pairs
     # (avoids O(n²) dense outer product that would negate cKDTree benefit)
-    if sparse.issparse(w):
-        # COO matrix: directly access non-zero entries
-        w_vals = w.data
-        i_idx = w.row
-        j_idx = w.col
-        numerator = float(np.sum(w_vals * z[i_idx] * z[j_idx]))
-    else:
-        numerator = float(np.sum(w * np.outer(z, z)))
+    w_vals = w.data
+    i_idx = w.row
+    j_idx = w.col
+    numerator = float(np.sum(w_vals * z[i_idx] * z[j_idx]))
     denominator = np.sum(z**2)
-    
+
     moran_i_val = (n / s0) * (numerator / denominator) if denominator > 0 else 0
     expected_i = -1.0 / (n - 1)
-    
-    # Simplified permutation test for p-value
-    rng = np.random.default_rng(42)
-    perms = 99
-    perm_is = []
-    for _ in cancellable(range(perms)):
-        pv = rng.permutation(values)
+
+    # Simplified permutation test for p-value (fixed seed 42, E-8 +1
+    # correction, two-sided |I_perm − E| ≥ |I_obs − E|). The stat callable
+    # replays the historical per-draw arithmetic verbatim so the default RNG
+    # stream and float results are unchanged.
+    def _moran_stat(pv: np.ndarray) -> float:
         pz = pv - pv.mean()
-        if sparse.issparse(w):
-            p_num = np.sum(w.data * pz[w.row] * pz[w.col])
-        else:
-            p_num = np.sum(w * np.outer(pz, pz))
+        p_num = np.sum(w_vals * pz[i_idx] * pz[j_idx])
         p_den = np.sum(pz**2)
-        perm_is.append((n / s0) * (p_num / p_den) if p_den > 0 else 0)
-    
-    # Permutation p-value with the +1 correction (E-8): the raw fraction can
-    # return exactly 0.0, implying certainty. The standard (count+1)/(perms+1)
-    # form bounds it away from zero. Two-sided: |I_perm - E| >= |I_obs - E|.
-    perm_arr = np.abs(np.array(perm_is) - expected_i)
-    ge_count = int(np.sum(perm_arr >= np.abs(moran_i_val - expected_i)))
-    p_value = (ge_count + 1) / (perms + 1)
-    
+        return (n / s0) * (p_num / p_den) if p_den > 0 else 0
+
+    perm_is = _permutation_stats(_moran_stat, values, perms)
+    p_value = _two_sided_permutation_pvalue(perm_is, moran_i_val, expected_i, perms)
+
     if p_value < 0.05:
         pattern = "clustering" if moran_i_val > expected_i else "dispersion"
     else:
         pattern = "random"
-        
+
     if pattern == "clustering":
         narrative = f"There is a statistically significant clustering of {value_field} values (Moran's I: {moran_i_val:.4f}, p = {p_value:.4f}). Similar values tend to be near each other."
     elif pattern == "dispersion":
         narrative = f"There is a statistically significant spatial dispersion of {value_field} values (Moran's I: {moran_i_val:.4f}, p = {p_value:.4f}). High and low values tend to be alternated."
     else:
         narrative = f"The distribution of {value_field} appears to be spatially random (Moran's I: {moran_i_val:.4f}, p = {p_value:.4f}). No clear spatial pattern was detected."
-    
+
     data_out = {
         "moran_i": float(moran_i_val),
         "expected_i": float(expected_i),
         "p_value": float(p_value),
         "pattern": pattern,
-        "n_features": n
+        "n_features": n,
+        # VNext 披露：置换数 / 权重方案元数据 / 类型化不确定性块。
+        "permutations": perms,
+        "weights": wm.metadata(),
+        "uncertainty": StatisticalSignificance(
+            target="morans_i",
+            statistic_name="Moran's I",
+            statistic_value=float(moran_i_val),
+            p_value=float(p_value),
+            method="permutation",
+            permutations=perms,
+            alternative="two-sided",
+        ).to_evidence(),
     }
-    
+
+    return GeoAnalysisResult(True, data_out, narrative)
+
+
+def geary_c_narrated(
+    geojson: dict,
+    value_field: str,
+    weights_scheme: str = "knn",
+    k: int = 8,
+    distance_band: float = 0,
+    permutations: int = 99,
+    analytic_variance: bool = False,
+) -> GeoAnalysisResult:
+    """Global Geary's C spatial autocorrelation (Geary 1954).
+
+    C = (n−1)·Σᵢⱼ wᵢⱼ(xᵢ−xⱼ)² / (2·S₀·Σᵢ(zᵢ)²)（行标准化权重；esda.Geary
+    同式）。C < 1 正自相关（相似值邻接），C > 1 负自相关（checkerboard →
+    C = 2 − 2/n）。置换推断与 Moran 同策略：固定种子 42、双侧
+    (count+1)/(perms+1)；``analytic_variance=True`` 追加正态假设下的解析
+    方差 / z / p（Cliff-Ord 公式，与 esda.Geary.VC_norm 一致）。
+
+    科学性失败抛类型化错误（InsufficientSamples / DegenerateData /
+    MissingRequiredField / NoValidObservations / UnsupportedMethod），
+    correction_hint 随错误传递。
+    """
+    res = to_utm_gdf(geojson)
+    if res is None or res[0] is None:
+        raise NoValidObservations(
+            "invalid GeoJSON or no features found",
+            correction_hint="pass a FeatureCollection with at least 3 numeric features",
+        )
+
+    gdf, _ = res
+    aligned = _filter_numeric_gdf(gdf, value_field)
+    if aligned is None or len(aligned[1]) == 0:
+        raise MissingRequiredField(
+            f"field '{value_field}' is missing or non-numeric",
+            correction_hint=f"provide a numeric property '{value_field}' on every feature",
+        )
+    gdf, values = aligned
+
+    n = len(values)
+    if n < 3:
+        raise InsufficientSamples(
+            f"Geary's C needs at least 3 valid numeric features (got {n})",
+            correction_hint="add observations or use a method valid at this sample size",
+        )
+    # 与 Moran E-2 同理：零方差 → 统计量无定义（分母为 0）。
+    if float(np.ptp(values)) == 0.0:
+        raise DegenerateData(
+            f"all '{value_field}' values are identical; Geary's C is undefined",
+            correction_hint="check the numeric field for constant values or coincident samples",
+        )
+
+    perms = _validate_permutations(permutations)
+    wm = _autocorr_weights(gdf, n, weights_scheme, k, distance_band)
+    if wm.s0 == 0:
+        raise DegenerateData(
+            "spatial weights matrix is empty (every observation is an island)",
+            correction_hint="increase the distance band / k, or check geometry connectivity",
+        )
+
+    w = wm.matrix.tocoo()
+    w_vals, i_idx, j_idx = w.data, w.row, w.col
+    s0 = float(w.sum())
+
+    z = values - values.mean()
+    denominator = float(np.sum(z**2))
+    num = float(np.sum(w_vals * (values[i_idx] - values[j_idx]) ** 2))
+    geary_c_val = (n - 1) * num / (2.0 * s0 * denominator)
+    expected_c = 1.0
+
+    def _geary_stat(pv: np.ndarray) -> float:
+        pz = pv - pv.mean()
+        p_num = np.sum(w_vals * (pv[i_idx] - pv[j_idx]) ** 2)
+        p_den = np.sum(pz**2)
+        return (n - 1) * p_num / (2.0 * s0 * p_den) if p_den > 0 else 0.0
+
+    perm_cs = _permutation_stats(_geary_stat, values, perms)
+    p_value = _two_sided_permutation_pvalue(perm_cs, geary_c_val, expected_c, perms)
+
+    # 可选解析方差（正态假设，Cliff-Ord / esda.Geary.VC_norm 同式）：
+    # VC_norm = [ (2S₁ + S₂)(n−1) − 4S₀² ] / (2(n+1)S₀²)。
+    analytic: dict | None = None
+    if analytic_variance:
+        w_csr = wm.matrix.tocsr()
+        s1 = 0.5 * float(((w_csr + w_csr.transpose()).data ** 2).sum())
+        row_sums = np.asarray(w_csr.sum(axis=1)).ravel()
+        col_sums = np.asarray(w_csr.sum(axis=0)).ravel()
+        s2 = float(np.sum((row_sums + col_sums) ** 2))
+        vc_norm = (
+            (2.0 * s1 + s2) * (n - 1) - 4.0 * s0 * s0
+        ) / (2.0 * (n + 1) * s0 * s0)
+        if vc_norm > 0:
+            z_norm = (geary_c_val - expected_c) / np.sqrt(vc_norm)
+            analytic = {
+                "variance_norm": float(vc_norm),
+                "z_norm": float(z_norm),
+                "p_norm": float(2.0 * norm.sf(abs(z_norm))),
+                "method": "analytic variance under normality (Cliff & Ord 1981)",
+            }
+
+    if p_value < 0.05:
+        pattern = "clustering" if geary_c_val < expected_c else "dispersion"
+    else:
+        pattern = "random"
+
+    if pattern == "clustering":
+        narrative = (
+            f"There is a statistically significant clustering of {value_field} values "
+            f"(Geary's C: {geary_c_val:.4f}, expected 1.0, p = {p_value:.4f}). "
+            f"解读：C<1 且显著 —— 相似值（高-高 / 低-低）在空间上邻接聚集。"
+        )
+    elif pattern == "dispersion":
+        narrative = (
+            f"There is a statistically significant spatial dispersion of {value_field} values "
+            f"(Geary's C: {geary_c_val:.4f}, expected 1.0, p = {p_value:.4f}). "
+            f"解读：C>1 且显著 —— 高低值交替（棋盘式负自相关）。"
+        )
+    else:
+        narrative = (
+            f"The distribution of {value_field} appears to be spatially random "
+            f"(Geary's C: {geary_c_val:.4f}, expected 1.0, p = {p_value:.4f}). "
+            f"解读：未检测到显著空间自相关。"
+        )
+
+    data_out = {
+        "gearys_c": float(geary_c_val),
+        "expected_c": float(expected_c),
+        "p_value": float(p_value),
+        "pattern": pattern,
+        "n_features": n,
+        "permutations": perms,
+        "weights": wm.metadata(),
+        "uncertainty": StatisticalSignificance(
+            target="gearys_c",
+            statistic_name="Geary's C",
+            statistic_value=float(geary_c_val),
+            p_value=float(p_value),
+            method="permutation",
+            permutations=perms,
+            alternative="two-sided",
+        ).to_evidence(),
+    }
+    if analytic is not None:
+        data_out["analytic_variance"] = analytic
+
+    return GeoAnalysisResult(True, data_out, narrative)
+
+
+def general_g_narrated(
+    geojson: dict,
+    value_field: str,
+    distance_band: float = 0,
+    permutations: int = 99,
+) -> GeoAnalysisResult:
+    """Getis-Ord General G（Ord & Getis 1995）——高值聚集的全局检验。
+
+    G = Σᵢ≠ⱼ wᵢⱼxᵢxⱼ / Σᵢ≠ⱼ xᵢxⱼ（二值距离阈值权重，w_ii=0）。G 显著
+    高于期望 S₀/(n(n−1)) = 高值与高值邻接聚集（clustered-high）；显著低于
+    期望 = 低值聚集 / 高值分散（clustered-low）——**不是**"无聚集"的镜像
+    陈述，披露在叙事里。值必须非负（计数/强度语义）；负值抛
+    UnsupportedMethod。置换推断：固定种子 42，双侧 min 侧翻倍。
+    """
+    res = to_utm_gdf(geojson)
+    if res is None or res[0] is None:
+        raise NoValidObservations(
+            "invalid GeoJSON or no features found",
+            correction_hint="pass a FeatureCollection with at least 3 numeric features",
+        )
+
+    gdf, _ = res
+    aligned = _filter_numeric_gdf(gdf, value_field)
+    if aligned is None or len(aligned[1]) == 0:
+        raise MissingRequiredField(
+            f"field '{value_field}' is missing or non-numeric",
+            correction_hint=f"provide a numeric property '{value_field}' on every feature",
+        )
+    gdf, values = aligned
+
+    n = len(values)
+    if n < 3:
+        raise InsufficientSamples(
+            f"General G needs at least 3 valid numeric features (got {n})",
+            correction_hint="add observations or use a method valid at this sample size",
+        )
+    if float(np.min(values)) < 0:
+        raise UnsupportedMethod(
+            "General G requires non-negative values "
+            f"(min of '{value_field}' is {float(np.min(values)):.4g})",
+            correction_hint=(
+                "shift the field to non-negative (add the |min|), or use "
+                "moran_i / geary_c which accept signed values"
+            ),
+        )
+    if float(np.sum(values)) == 0.0:
+        raise DegenerateData(
+            f"all '{value_field}' values are zero; General G is undefined (0/0)",
+            correction_hint="check the numeric field for constant zero values",
+        )
+
+    perms = _validate_permutations(permutations)
+    coords = np.column_stack((gdf.centroid.x.values, gdf.centroid.y.values))
+    if distance_band and float(distance_band) > 0:
+        threshold = float(distance_band)
+    else:
+        threshold = auto_band_8nn(coords)  # E-7 auto-band rule
+    wm = build_distance_band_weights(
+        coords, threshold=threshold, include_self=False, row_standardized=False)
+    if wm.s0 == 0:
+        raise DegenerateData(
+            f"no neighbour pairs within the distance band ({threshold:.1f} m)",
+            correction_hint="increase distance_band or check coordinate units (metres expected)",
+        )
+
+    w = wm.matrix.tocoo()
+    w_vals, i_idx, j_idx = w.data, w.row, w.col
+    s0 = wm.s0
+    # Σ_{i≠j} x_i x_j = (Σx)² − Σx² —— 置换不变量，一次预计算。
+    den_sum = float(np.sum(values) ** 2 - np.sum(values**2))
+    if den_sum <= 0:
+        raise DegenerateData(
+            "General G denominator Σ_{i≠j} x_i x_j ≤ 0 (single nonzero value?)",
+            correction_hint="General G needs at least two nonzero observations",
+        )
+
+    g_val = float(np.sum(w_vals * values[i_idx] * values[j_idx]) / den_sum)
+    expected_g = s0 / (n * (n - 1))
+
+    def _g_stat(pv: np.ndarray) -> float:
+        return float(np.sum(w_vals * pv[i_idx] * pv[j_idx]) / den_sum)
+
+    perm_gs = _permutation_stats(_g_stat, values, perms)
+    # 双侧（min 侧翻倍，含 +1 校正）：G 偏高 / 偏低都是对 CSR 的偏离。
+    p_greater = (int(np.sum(perm_gs >= g_val)) + 1) / (perms + 1)
+    p_smaller = (int(np.sum(perm_gs <= g_val)) + 1) / (perms + 1)
+    p_value = min(1.0, 2.0 * min(p_greater, p_smaller))
+
+    if p_value < 0.05:
+        pattern = "clustered_high" if g_val > expected_g else "clustered_low"
+    else:
+        pattern = "random"
+
+    if pattern == "clustered_high":
+        narrative = (
+            f"High values of {value_field} cluster together "
+            f"(General G: {g_val:.4f}, expected {expected_g:.4f}, p = {p_value:.4f}). "
+            f"解读：G 显著偏高 —— 高值彼此邻接形成高值聚集区（clustered-high）。"
+        )
+    elif pattern == "clustered_low":
+        narrative = (
+            f"Low values of {value_field} cluster together "
+            f"(General G: {g_val:.4f}, expected {expected_g:.4f}, p = {p_value:.4f}). "
+            f"解读：G 显著偏低 —— 低值彼此邻接（clustered-low）；等价地，高值被"
+            f"彼此隔开，不可解读为『高值聚集』。"
+        )
+    else:
+        narrative = (
+            f"No significant clustering of {value_field} values "
+            f"(General G: {g_val:.4f}, expected {expected_g:.4f}, p = {p_value:.4f}). "
+            f"解读：与完全空间随机（CSR）无显著差异。"
+        )
+
+    data_out = {
+        "general_g": float(g_val),
+        "expected_g": float(expected_g),
+        "p_value": float(p_value),
+        "pattern": pattern,
+        "n_features": n,
+        "permutations": perms,
+        "distance_band_m": round(float(threshold), 2),
+        "weights": wm.metadata(),
+        "uncertainty": StatisticalSignificance(
+            target="general_g",
+            statistic_name="General G",
+            statistic_value=float(g_val),
+            p_value=float(p_value),
+            method="permutation",
+            permutations=perms,
+            alternative="two-sided",
+        ).to_evidence(),
+    }
+
     return GeoAnalysisResult(True, data_out, narrative)
 
 def hotspot_narrated(geojson: dict, value_field: str, distance_band: float = 0) -> GeoAnalysisResult:
@@ -429,7 +839,10 @@ def hotspot_narrated(geojson: dict, value_field: str, distance_band: float = 0) 
     denominators = np.where(denom_inners > 0, s * np.sqrt(denom_inners), 0)
     with np.errstate(invalid="ignore", divide="ignore"):
         gi_stars = np.where(denominators != 0, numerators / denominators, 0)
-    p_vals = 2 * (1 - norm.cdf(np.abs(gi_stars)))
+    # MINOR-4（科学评审）：解析 p 在 |Gi*| 极大时下溢为精确 0 ——
+    # 分支的 E-8「永不精确零」哲学同样适用于解析路径。
+    _TINY_P = 1e-16
+    p_vals = np.maximum(2 * (1 - norm.cdf(np.abs(gi_stars))), _TINY_P)
 
     # G-6（#870）：BH-FDR 校正 —— n 个单元各按 α=0.05 独立检验时，完全
     # 随机数据也期望产出 0.05×n 个"显著"热点并直接上图。q 值随要素输出，

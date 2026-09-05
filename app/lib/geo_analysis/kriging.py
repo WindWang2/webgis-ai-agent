@@ -22,6 +22,26 @@ contract applies, plus the kriging-specific ones:
   RMSE/MAE/bias/R² with the fold count actually used, and refuses to
   produce metrics when the sample is too small to validate (it says so).
 
+VNext (ADR-0099 additions, all additive — the ordinary-kriging path is
+byte-identical):
+
+* **Universal kriging** — ``method="universal"`` on the driver and the CV:
+  a linear drift ``E[Z(x)] = b0 + b1·x + b2·y`` is removed by OLS, the
+  variogram is fitted on the **detrended residuals** (UK assumes a
+  second-order-stationary residual process around the trend — raw-value
+  variography would credit the trend to spatial correlation), and the UK
+  system carries the trend-constrained Lagrange multipliers:
+
+      [Γ  F][w]   [γ0]      F rows = [1, x_i, y_i]
+      [Fᵀ  0][m] = [f0]     f0     = [1, x0, y0]
+
+  Prediction = wᵗz; kriging variance = wᵗγ0 + mᵗf0. Zero-residual
+  degenerate case (values exactly planar): the drift IS the signal — the
+  exact trend prediction is returned with zero variance and the honest
+  disclosure flag ``"zero_residual_variance"``; no variogram is fitted or
+  faked. UK needs ≥ ``UK_MIN_SAMPLES`` (12) points to constrain the drift
+  (:class:`~app.lib.gis.scientific_errors.InsufficientSamples` below that).
+
 All distances are computed in the CALLER-supplied projected (metric) CRS
 space — degree-space kriging silently distorts and is rejected at the tool
 boundary (``interpolation._pick_metric_crs`` is the sanctioned chooser).
@@ -30,13 +50,14 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 import numpy as np
 from scipy.spatial import cKDTree
 
 from app.lib.cancellation import cancellable
+from app.lib.gis.scientific_errors import InsufficientSamples
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +73,10 @@ MIN_CV_SAMPLES = 20               # below this CV cannot be trusted
 DEFAULT_N_LAGS = 16               # empirical variogram bins
 CV_FOLDS = 5
 _SOLVE_CHUNK = 1024               # batched OK system rows per np.linalg.solve
+
+# ── universal kriging (VNext) ───────────────────────────────────────────────
+UK_MIN_SAMPLES = 12               # drift [1,x,y] needs ≥12 samples to constrain
+_TREND_TERMS = 3                  # linear drift terms: [1, x, y]
 
 
 class KrigingInputError(ValueError):
@@ -300,11 +325,16 @@ class KrigingResult:
 
     predictions: np.ndarray
     variances: np.ndarray
-    variogram: VariogramFit
+    # OK always carries a fitted variogram; UK's zero-residual degenerate
+    # case honestly carries None (no variogram fitted, none faked).
+    variogram: Optional[VariogramFit]
     n_samples: int
     n_samples_fit: int
     neighbors: int
     degraded_cells: int = 0   # predictions that fell back to the local mean
+    # ── VNext additive fields (OK path leaves them at defaults) ────────────
+    disclosures: list[str] = field(default_factory=list)
+    drift_coefficients: Optional[np.ndarray] = None  # UK linear drift [1,x,y]
 
 
 def ordinary_kriging(
@@ -329,8 +359,13 @@ def ordinary_kriging(
     ``degraded_cells`` — never silent).
     """
     n = len(fit_vals)
-    if n < 1:
-        raise KrigingInputError("ordinary_kriging needs at least one sample")
+    if n < 2:
+        # MINOR-3（数值评审）：n=1 时 k=max(2,…) 越界 → cKDTree padding
+        # 索引触发 IndexError；公开 API 应类型化拒绝。
+        from app.lib.gis.scientific_errors import InsufficientSamples
+
+        raise InsufficientSamples(
+            f"ordinary kriging needs at least 2 samples (got {n})")
     k = int(max(2, min(k, MAX_NEIGHBORS, n)))
     tree = cKDTree(fit_pts)
     dist_t, idx_t = tree.query(target_pts, k=k)
@@ -431,6 +466,214 @@ def ordinary_kriging(
     )
 
 
+# ── universal kriging (VNext — additive; OK path untouched) ─────────────────
+
+def ols_linear_trend(
+    pts_metric: np.ndarray, values: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """OLS fit of the linear drift ``z ~ [1, x, y]``.
+
+    Returns ``(beta (3,), residuals (n,))`` — the drift coefficients and the
+    detrended residuals the UK variogram is fitted on.
+    """
+    pts = np.asarray(pts_metric, dtype=float)
+    F = np.column_stack([np.ones(len(pts)), pts])
+    beta, *_ = np.linalg.lstsq(F, np.asarray(values, dtype=float), rcond=None)
+    resid = np.asarray(values, dtype=float) - F @ beta
+    return beta, resid
+
+
+def _zero_residual_spread(resid: np.ndarray, values: np.ndarray) -> bool:
+    """True when the OLS residuals are zero to machine precision.
+
+    Values lying exactly on a plane (including the constant field) detrend to
+    residuals whose spread is ≤1e-9 of the value scale — treating them as
+    nonzero noise would fit a fake micro-variogram to float dust.
+    """
+    scale = float(np.max(np.abs(values))) if len(values) else 0.0
+    spread = float(np.max(np.abs(resid), initial=0.0))
+    if scale == 0.0:
+        return spread == 0.0
+    return spread <= 1e-9 * scale
+
+
+def _trend_only_result(
+    beta: np.ndarray, target_pts: np.ndarray, n_samples: int
+) -> KrigingResult:
+    """Exact-trend prediction for the zero-residual degenerate case.
+
+    Honest by construction: variance is exactly 0 (there is no residual
+    process), no variogram object is manufactured, and the disclosure flag
+    makes the degeneracy visible to the caller.
+    """
+    targets = np.asarray(target_pts, dtype=float)
+    F_t = np.column_stack([np.ones(len(targets)), targets])
+    return KrigingResult(
+        predictions=F_t @ beta,
+        variances=np.zeros(len(targets), dtype=float),
+        variogram=None,
+        n_samples=n_samples,
+        n_samples_fit=n_samples,
+        neighbors=0,
+        degraded_cells=0,
+        disclosures=["zero_residual_variance"],
+        drift_coefficients=beta,
+    )
+
+
+def universal_kriging(
+    fit_pts: np.ndarray,
+    fit_vals: np.ndarray,
+    target_pts: np.ndarray,
+    variogram: VariogramFit,
+    k: int = 12,
+) -> KrigingResult:
+    """Universal Kriging of ``target_pts`` from k-nearest neighbourhoods.
+
+    Same batching / ridge / clamp / degraded-cell accounting as the OK
+    solver, but each system carries the linear-drift trend constraints with
+    one Lagrange multiplier per drift term:
+
+        [Γ  F][w]   [γ0]      Γ/γ0 from the variogram fitted on the
+        [Fᵀ  0][m] = [f0]     OLS-detrended residuals (caller's duty)
+
+    Prediction = wᵗz; kriging variance = wᵗγ0 + mᵗf0 (clamped ≥ 0, counted
+    when negative). The neighbourhood needs ≥ ``_TREND_TERMS + 1`` samples —
+    k is raised to 4 when the caller asks for less (fewer samples cannot
+    constrain the drift and the system is singular).
+    """
+    n = len(fit_vals)
+    if n < _TREND_TERMS + 1:
+        raise KrigingInputError(
+            f"universal_kriging 需要至少 {_TREND_TERMS + 1} 个样本约束线性漂移，got {n}"
+        )
+    k = int(max(_TREND_TERMS + 1, min(k, MAX_NEIGHBORS, n)))
+    tree = cKDTree(fit_pts)
+    dist_t, idx_t = tree.query(target_pts, k=k)
+    n_t = len(target_pts)
+    dist_t = np.asarray(dist_t).reshape(n_t, k)
+    idx_t = np.asarray(idx_t).reshape(n_t, k)
+
+    g = variogram
+    preds = np.empty(n_t, dtype=float)
+    varis = np.empty(n_t, dtype=float)
+    degraded = 0
+    # Same solve-time stabilisation policy as OK: ridge on the diagonal
+    # (stronger for the ill-conditioned gaussian model), predictions clamped
+    # to ±3√sill beyond the sample range; every intervention counted in
+    # degraded_cells, never silent.
+    ridge = 1e-6 * max(abs(g.sill), abs(g.nugget), 1e-12)
+    if g.model == "gaussian":
+        ridge = max(ridge, 0.01 * abs(g.sill))
+    clamp_lo = float(fit_vals.min() - 3.0 * np.sqrt(abs(g.sill)))
+    clamp_hi = float(fit_vals.max() + 3.0 * np.sqrt(abs(g.sill)))
+
+    for start in cancellable(range(0, n_t, _SOLVE_CHUNK), every=1):
+        end = min(start + _SOLVE_CHUNK, n_t)
+        nb_idx = idx_t[start:end]
+        nb_d = dist_t[start:end]                      # (c, k)
+        nb_xy = fit_pts[nb_idx]                       # (c, k, 2)
+        nb_v = fit_vals[nb_idx]                       # (c, k)
+        c = end - start
+
+        # sample-sample semivariances WITH nugget, zero diagonal (canonical
+        # construction shared with OK)
+        diff = nb_xy[:, :, None, :] - nb_xy[:, None, :, :]
+        d_ss = np.sqrt((diff ** 2).sum(axis=-1))
+        gamma_ss = _gamma(g.model, d_ss, g.sill, g.range_m, g.nugget)
+        idx_diag = np.arange(k)
+        gamma_ss[:, idx_diag, idx_diag] = 0.0
+        gamma_ss[:, idx_diag, idx_diag] = ridge
+
+        # drift design: F rows [1, x_i, y_i]; f0 = [1, x0, y0]
+        F = np.concatenate([np.ones((c, k, 1)), nb_xy], axis=2)      # (c, k, 3)
+        f0 = np.column_stack([np.ones(c), target_pts[start:end]])    # (c, 3)
+
+        mat = np.zeros((c, k + _TREND_TERMS, k + _TREND_TERMS))
+        mat[:, :k, :k] = gamma_ss
+        mat[:, :k, k:] = F
+        mat[:, k:, :k] = F.transpose(0, 2, 1)
+        rhs = np.zeros((c, k + _TREND_TERMS))
+        # γ₀ carries the nugget (exact interpolation at sample sites honoured)
+        rhs[:, :k] = _gamma(g.model, nb_d, g.sill, g.range_m, g.nugget)
+        rhs[:, k:] = f0
+
+        chunk_pred = np.empty(c)
+        chunk_var = np.empty(c)
+        try:
+            sol = np.linalg.solve(mat, rhs[:, :, None])[:, :, 0]  # (c, k+3)
+            w = sol[:, :k]
+            m_lag = sol[:, k:]
+            chunk_pred = np.einsum("ck,ck->c", w, nb_v)
+            chunk_var = np.einsum("ck,ck->c", w, rhs[:, :k]) + np.einsum(
+                "cf,cf->c", m_lag, f0
+            )
+            bad = ~(np.isfinite(chunk_pred) & np.isfinite(chunk_var))
+            if bad.any():
+                raise np.linalg.LinAlgError("non-finite batch solution")
+        except np.linalg.LinAlgError:
+            for r in range(c):
+                try:
+                    s = np.linalg.solve(mat[r], rhs[r])
+                    chunk_pred[r] = float(np.dot(s[:k], nb_v[r]))
+                    chunk_var[r] = float(
+                        np.dot(s[:k], rhs[r, :k]) + np.dot(s[k:], f0[r])
+                    )
+                except np.linalg.LinAlgError:
+                    degraded += 1
+                    chunk_pred[r] = float(np.mean(nb_v[r]))
+                    chunk_var[r] = float(np.var(nb_v[r])) if k > 1 else float(g.sill)
+
+        neg_var = chunk_var < 0.0
+        if neg_var.any():
+            degraded += int(neg_var.sum())
+            np.clip(chunk_var, 0.0, None, out=chunk_var)
+        clamped = (chunk_pred < clamp_lo) | (chunk_pred > clamp_hi)
+        if clamped.any():
+            degraded += int(clamped.sum())
+            np.clip(chunk_pred, clamp_lo, clamp_hi, out=chunk_pred)
+        preds[start:end] = chunk_pred
+        varis[start:end] = chunk_var
+
+    return KrigingResult(
+        predictions=preds,
+        variances=varis,
+        variogram=g,
+        n_samples=n,
+        n_samples_fit=n,
+        neighbors=k,
+        degraded_cells=degraded,
+    )
+
+
+def universal_kriging_detrended(
+    fit_pts: np.ndarray,
+    fit_vals: np.ndarray,
+    target_pts: np.ndarray,
+    variogram_model: str = "auto",
+    k: int = 12,
+) -> KrigingResult:
+    """Full UK pipeline: OLS-detrend → residual variogram → UK solve.
+
+    The variogram is fitted on the residuals of the OLS linear drift
+    (``z − [1,x,y]·β̂``), NOT on the raw values: UK models a second-order
+    stationary residual process around the trend, so raw-value variography
+    would credit the trend to spatial correlation and inflate range/sill
+    (Isaaks & Srivastava ch. 12 practice).
+
+    Zero-residual degenerate case (values exactly planar): returns the exact
+    trend prediction with zero kriging variance and the disclosure flag
+    ``"zero_residual_variance"`` — no variogram is fitted or faked.
+    """
+    beta, resid = ols_linear_trend(fit_pts, fit_vals)
+    if _zero_residual_spread(resid, fit_vals):
+        return _trend_only_result(beta, target_pts, n_samples=len(fit_vals))
+    vfit = fit_variogram(fit_pts, resid, model=variogram_model)
+    res = universal_kriging(fit_pts, fit_vals, target_pts, vfit, k=k)
+    res.drift_coefficients = beta
+    return res
+
+
 # ── cross validation ────────────────────────────────────────────────────────
 
 @dataclass
@@ -461,12 +704,19 @@ def cross_validate_kriging(
     model: str = "auto",
     folds: int = CV_FOLDS,
     k: int = 12,
+    method: str = "ordinary",
 ) -> CrossValidationReport:
-    """K-fold CV where each fold refits the variogram on the training split.
+    """K-fold CV where each fold refits the full pipeline on the training
+    split — ordinary: refit the variogram; universal: refit the OLS trend AND
+    the residual variogram (no leakage across folds).
 
     Below ``MIN_CV_SAMPLES`` the report honestly declines to produce metrics
     instead of emitting statistically meaningless numbers.
     """
+    if method not in ("ordinary", "universal"):
+        raise KrigingInputError(
+            f"method 必须是 'ordinary' 或 'universal'，got {method!r}"
+        )
     n = len(values)
     if n < MIN_CV_SAMPLES:
         return CrossValidationReport(
@@ -488,8 +738,14 @@ def cross_validate_kriging(
         if len(train_v) < MIN_SAMPLES:
             continue
         try:
-            vfit = fit_variogram(train_xy, train_v, model=model)
-            res = ordinary_kriging(train_xy, train_v, pts_metric[test], vfit, k=k)
+            if method == "universal":
+                res = universal_kriging_detrended(
+                    train_xy, train_v, pts_metric[test],
+                    variogram_model=model, k=k,
+                )
+            else:
+                vfit = fit_variogram(train_xy, train_v, model=model)
+                res = ordinary_kriging(train_xy, train_v, pts_metric[test], vfit, k=k)
         except KrigingInputError:
             continue
         folds_used += 1
@@ -565,22 +821,31 @@ def kriging_interpolation(
     neighbors: int = 12,
     cross_validate: bool = True,
     declared_crs: Optional[str] = None,
+    method: str = "ordinary",
 ) -> dict:
-    """Ordinary-kriging surface over the sample bbox on an H3 grid.
+    """Kriging surface over the sample bbox on an H3 grid.
 
     Full driver: parse + validate samples (mirrors the IDW contract),
     resolve the metric working CRS from the declared one, fit the variogram
     (bounded), krige every H3 cell centre (prediction + kriging variance),
-    and optionally cross-validate. Returns a driver dict:
+    and optionally cross-validate. ``method="ordinary"`` (default) is the
+    bit-identical historical path; ``method="universal"`` detrends with an
+    OLS linear drift, fits the variogram on the residuals and solves the UK
+    system (needs ≥ ``UK_MIN_SAMPLES`` samples).
+
+    Returns a driver dict:
 
     ``{"records": [{"h3_index", "value", "kriging_variance"}...],
        "metadata": {crs, declared_crs, bbox, resolution, n_samples,
                     n_fit_samples, variogram, cross_validation,
-                    degraded_cells, value_range}}``
+                    degraded_cells, value_range, method, drift?,
+                    disclosures?}}``
 
     Raises:
         KrigingCrsError: declared CRS outside the supported vocabulary.
-        KrigingInputError: too few points / unfittable variogram.
+        KrigingInputError: too few points / unfittable variogram / unknown
+            method.
+        InsufficientSamples: universal kriging with < UK_MIN_SAMPLES points.
         InterpolationResourceExceededError: H3 cell ceiling (IDW contract).
     """
     import h3
@@ -598,6 +863,10 @@ def kriging_interpolation(
     if variogram_model not in ("auto",) + VariogramModelNames:
         raise KrigingInputError(
             f"variogram_model 必须是 auto/{'/'.join(VariogramModelNames)}，got {variogram_model!r}"
+        )
+    if method not in ("ordinary", "universal"):
+        raise KrigingInputError(
+            f"method 必须是 'ordinary' 或 'universal'，got {method!r}"
         )
 
     # --- parse + validate sample points (IDW contract mirror) -----------
@@ -648,6 +917,12 @@ def kriging_interpolation(
 
     lonlat = np.column_stack([np.asarray(lons, float), np.asarray(lats, float)])
     lonlat, vals = _aggregate_duplicates(lonlat, vals)
+    if method == "universal" and len(vals) < UK_MIN_SAMPLES:
+        raise InsufficientSamples(
+            f"泛克里金（universal kriging）至少需要 {UK_MIN_SAMPLES} 个去重后的采样点"
+            f"（约束线性漂移 [1,x,y]），got {len(vals)}",
+            correction_hint="样本不足时改用 ordinary kriging（≥8 点）或 IDW，或补充观测。",
+        )
     if len(vals) < MIN_SAMPLES:
         raise KrigingInputError(
             f"克里金至少需要 {MIN_SAMPLES} 个去重后的采样点，got {len(vals)}"
@@ -729,14 +1004,22 @@ def kriging_interpolation(
             ]],
         }
         target_cells = set(h3.geo_to_cells(bbox_polygon, resolution))
+    # MINOR-8（数值评审）：set 迭代序随 PYTHONHASHSEED 跨进程漂移 ——
+    # 复现性契约要求确定性记录序，统一排序后进入 latlng 循环。
+    target_cells = sorted(target_cells)
     if not target_cells:
         raise KrigingInputError(
             "H3 polyfill 返回 0 个单元（极地/全球边缘情况）；无法生成克里金表面。"
         )
 
-    # --- variogram fit (bounded, on stratified subsample) ----------------
+    # --- variogram fit (bounded; UK fits on OLS-detrended residuals) --------
     fit_pts_used, _ = stratified_subsample(pts_metric, vals, MAX_FIT_POINTS)
-    vfit = fit_variogram(pts_metric, vals, model=variogram_model)
+    if method == "ordinary":
+        vfit = fit_variogram(pts_metric, vals, model=variogram_model)
+    else:
+        # fitted inside universal_kriging_detrended on the detrended
+        # residuals; the zero-residual degenerate case fits none at all
+        vfit = None
 
     # --- krige cell centres (projected; H3 always speaks lon/lat) -------
     cell_latlng = np.array([h3.cell_to_latlng(c) for c in target_cells])
@@ -748,10 +1031,17 @@ def kriging_interpolation(
         (cell_gdf.geometry.x.values, cell_gdf.geometry.y.values)
     )
 
-    result = ordinary_kriging(pts_metric, vals, cell_metric, vfit, k=neighbors)
+    if method == "universal":
+        result = universal_kriging_detrended(
+            pts_metric, vals, cell_metric,
+            variogram_model=variogram_model, k=neighbors,
+        )
+        vfit = result.variogram
+    else:
+        result = ordinary_kriging(pts_metric, vals, cell_metric, vfit, k=neighbors)
 
     cv_report = (
-        cross_validate_kriging(pts_metric, vals, model=variogram_model)
+        cross_validate_kriging(pts_metric, vals, model=variogram_model, method=method)
         if cross_validate else None
     )
 
@@ -765,7 +1055,8 @@ def kriging_interpolation(
         for cell, v, var in zip(target_cells, result.predictions, result.variances)
     ]
     metadata = {
-        "algorithm": "interpolation.kriging",
+        "algorithm": "interpolation.kriging" if method == "ordinary" else "interpolation.universal_kriging",
+        "method": method,
         "declared_crs": declared_crs or "EPSG:4326",
         "working_crs": working_crs,
         "bbox": [min_lon, min_lat, max_lon, max_lat],
@@ -782,8 +1073,15 @@ def kriging_interpolation(
             round(float(result.variances.min()), 6),
             round(float(result.variances.max()), 6),
         ],
-        "variogram": vfit.params(),
+        "variogram": vfit.params() if vfit is not None else None,
         "cross_validation": cv_report.metrics() if cv_report else None,
         "value_field": value_field,
     }
+    if result.drift_coefficients is not None:
+        metadata["drift"] = {
+            "terms": ["1", "x", "y"],
+            "coefficients": [round(float(b), 6) for b in result.drift_coefficients],
+        }
+    if result.disclosures:
+        metadata["disclosures"] = list(result.disclosures)
     return {"records": records, "metadata": metadata}

@@ -6,9 +6,12 @@ and VRP route optimization.
 """
 from __future__ import annotations
 import asyncio
+import math
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import networkx as nx
+
+from app.lib.gis.scientific_errors import DisconnectedNetwork
 
 from app.services.network.models import (
     NetworkDataset,
@@ -33,6 +36,15 @@ from app.services.network.service_area import NetworkServiceAreaService
 from app.services.network.accessibility import NetworkAccessibilityService
 from app.services.network.allocation import NetworkLocationAllocationService
 from app.services.network.vrp import NetworkRouteOptimizationService
+
+
+# VNext（ADR-0099）：端点捕捉披露（scientific-honesty pack）。
+# snapping 对每个端点报告到路网的距离与置信度，但此前从不进入工具结果 ——
+# 捕捉是「最近边吸附」而非「容差内才命中」，超容差吸附必须逐端点可审计。
+# 证据按端点有界（超出截断并计数），超容差（snapping 默认 500 m）的端点
+# 同时浮出为结果警告。
+_SNAP_EVIDENCE_MAX_POINTS = 32
+_SNAP_DEFAULT_TOLERANCE_M = 500.0
 
 
 class NetworkGraphEngine:
@@ -391,6 +403,47 @@ class NetworkGraphEngine:
         """Builds or fetches cached graph, ensuring a non-None graph is returned."""
         return self.builder.build_graph(network, profile=profile)
 
+    def _snap_evidence(
+        self,
+        labeled_points: List[Tuple[str, Tuple[float, float]]],
+        network_dataset: NetworkDataset,
+    ) -> Tuple[Dict[str, Any], List[str]]:
+        """Bounded per-endpoint snapping disclosure (VNext, scientific-honesty).
+
+        Returns ``(evidence, warnings)``: ``evidence`` maps each labeled
+        endpoint to its snap distance (m) and confidence, capped at
+        ``_SNAP_EVIDENCE_MAX_POINTS`` entries (beyond that a truncation flag +
+        total count — batch inputs are already capped at the tool layer).
+        Endpoints whose snap distance exceeds the snapping service's default
+        tolerance additionally produce a warning string, so over-tolerance
+        snapping is visible in the tool result instead of silent.
+        """
+        evidence: Dict[str, Any] = {}
+        warnings: List[str] = []
+        total = len(labeled_points)
+        for idx, (label, pt) in enumerate(labeled_points):
+            if idx >= _SNAP_EVIDENCE_MAX_POINTS:
+                evidence["_truncated"] = True
+                evidence["_total_endpoints"] = total
+                break
+            try:
+                snap = self.snapper.snap_point(
+                    (float(pt[0]), float(pt[1])), network_dataset
+                )
+            except Exception:
+                continue  # 证据失败不改变分析本身
+            evidence[label] = {
+                "distance_m": round(float(snap.distance_to_network_m), 2),
+                "confidence": round(float(snap.confidence), 3),
+            }
+            if float(snap.distance_to_network_m) > _SNAP_DEFAULT_TOLERANCE_M:
+                warnings.append(
+                    f"snap_evidence: {label} 距路网 {float(snap.distance_to_network_m):.1f} m "
+                    f"超过默认捕捉容差 {_SNAP_DEFAULT_TOLERANCE_M:.0f} m（confidence=0，"
+                    f"已吸附最近边；结果精度受此影响）"
+                )
+        return evidence, warnings
+
     # --- High-level Async Tool/Harness Seam Interfaces ---
 
     async def solve_shortest_path(
@@ -424,9 +477,21 @@ class NetworkGraphEngine:
                 barriers=barrier_objs,
             )
 
+            # VNext：端点捕捉证据（有界）+ 可达性显式披露 —— 不可达路线
+            # （total_cost=inf）保留 origin/destination，绝不以欧氏替代。
+            snap_evidence, snap_warnings = self._snap_evidence(
+                [("origin", orig_pt), ("destination", dest_pt)], net_ds
+            )
+            summary: Dict[str, Any] = {
+                "snap_evidence": snap_evidence,
+                "reachable": math.isfinite(route.total_cost),
+            }
+
             return NetworkAnalysisResult(
                 analysis_type="shortest_path",
                 status="success",
+                summary=summary,
+                warnings=snap_warnings,
                 routes=[route],
                 result_geojson={
                     "type": "FeatureCollection",
@@ -461,9 +526,35 @@ class NetworkGraphEngine:
                 cutoff_s=cutoff_s,
             )
 
+            # VNext：不可达对显式计数（行永远齐全，绝不静默缺行）；仅当
+            # 全部起终点对均不可达（图从所有起点不连通）时抛科学错误。
+            unreachable_count = sum(1 for p in pairs if not p.reachable)
+            snap_evidence, snap_warnings = self._snap_evidence(
+                [(f"origin_{i}", pt) for i, pt in enumerate(orig_pts)]
+                + [(f"destination_{i}", pt) for i, pt in enumerate(dest_pts)],
+                net_ds,
+            )
+            summary: Dict[str, Any] = {
+                "pair_count": len(pairs),
+                "unreachable_pair_count": unreachable_count,
+                "unreachable_ratio": round(unreachable_count / len(pairs), 4) if pairs else 0.0,
+                "snap_evidence": snap_evidence,
+            }
+            if cutoff_s is None and pairs and unreachable_count == len(pairs):
+                # 仅在**未设 cutoff** 时全对不可达才构成结构事实（无截止的
+                # Dijkstra 已探索整个可达分量 —— 不可达 ⇔ 有向图不连通）。
+                # 紧 cutoff 把全部对裁掉是合法的预算选择，照常返回
+                # reachable=False 行，不误报科学错误。
+                raise DisconnectedNetwork(
+                    f"OD 矩阵的 {len(pairs)} 个起终点对全部不可达：图从所有起点出发均不连通"
+                    f"（岛屿分量/空图/单行方向隔离）。请检查路网连通性与捕捉容差。"
+                )
+
             return NetworkAnalysisResult(
                 analysis_type="od_matrix",
                 status="success",
+                summary=summary,
+                warnings=snap_warnings,
                 od_matrix=pairs,
             )
 
@@ -495,11 +586,22 @@ class NetworkGraphEngine:
                 target_facility_count=number_to_find,
                 profile=prof,
             )
-            return fac_res if isinstance(fac_res, NetworkAnalysisResult) else NetworkAnalysisResult(
+            fac_res = fac_res if isinstance(fac_res, NetworkAnalysisResult) else NetworkAnalysisResult(
                 analysis_type="closest_facility",
                 status="success",
                 routes=fac_res if isinstance(fac_res, list) else [],
             )
+            # VNext：端点捕捉证据（有界）合并进结果 summary —— 超容差吸附
+            # 必须可审计；未匹配需求点由 closest_facility 服务列入 summary。
+            snap_evidence, snap_warnings = self._snap_evidence(
+                [(f"incident_{i}", pt) for i, pt in enumerate(inc_pts)]
+                + [(f"facility_{i}", (f.geometry["coordinates"][0], f.geometry["coordinates"][1]))
+                   for i, f in enumerate(fac_objs)],
+                net_ds,
+            )
+            fac_res.summary = {**fac_res.summary, "snap_evidence": snap_evidence}
+            fac_res.warnings = [*fac_res.warnings, *snap_warnings]
+            return fac_res
 
         return await asyncio.to_thread(_sync_solve)
 
@@ -534,9 +636,33 @@ class NetworkGraphEngine:
                     elif hasattr(sa, "break_value"):
                         breaks_list.append(sa)
 
+            # VNext：未产出任何服务区的设施（捕捉节点不在图内/空图）显式
+            # 披露 —— 不再静默缺位，调用方据此判断覆盖缺口。
+            returned_ids = {
+                str(sa.facility_id)
+                for sa in (sa_breaks if isinstance(sa_breaks, list) else [])
+                if hasattr(sa, "facility_id")
+            }
+            unreachable_facility_ids = [
+                f.facility_id for f in fac_objs if str(f.facility_id) not in returned_ids
+            ]
+            snap_evidence, snap_warnings = self._snap_evidence(
+                [(f"facility_{i}", (f.geometry["coordinates"][0], f.geometry["coordinates"][1]))
+                 for i, f in enumerate(fac_objs)],
+                net_ds,
+            )
+            summary: Dict[str, Any] = {
+                "facility_count": len(fac_objs),
+                "unreachable_facility_count": len(unreachable_facility_ids),
+                "unreachable_facility_ids": unreachable_facility_ids,
+                "snap_evidence": snap_evidence,
+            }
+
             return NetworkAnalysisResult(
                 analysis_type="service_area",
                 status="success",
+                summary=summary,
+                warnings=snap_warnings,
                 service_area_breaks=breaks_list,
             )
 
@@ -589,9 +715,26 @@ class NetworkGraphEngine:
                 profile=prof,
             )
 
+            # VNext（Task D）：2SFCA/覆盖法方法学诊断 —— 供给总量、需求总量、
+            # 捕获半径。工具层据此挂 build_evidence 的 diagnostics。
+            supply_total = 0.0
+            for f in fac_objs:
+                try:
+                    supply_total += float(f.capacity)
+                except (TypeError, ValueError):
+                    supply_total += 1.0
+            summary: Dict[str, Any] = {
+                "catchment_radius_min": float(cutoff_minutes),
+                "demand_total": acc_res.total_demand,
+                "supply_total": round(supply_total, 4),
+                "demand_point_count": len(demands),
+                "facility_count": len(fac_objs),
+            }
+
             return NetworkAnalysisResult(
                 analysis_type="accessibility",
                 status="success",
+                summary=summary,
                 accessibility=acc_res,
             )
 

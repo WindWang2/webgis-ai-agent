@@ -326,7 +326,7 @@ def declare_crs(fc: dict, crs: Any) -> dict:
 # then can the address be reused.
 # ---------------------------------------------------------------------------
 _UTM_CACHE_MAX = 64
-_utm_cache: dict[tuple, tuple] = {}  # key -> (geojson_ref, gdf, utm_crs_str)
+_utm_cache: dict[tuple, tuple] = {}  # key -> (geojson_ref, gdf, utm_crs_str, crs_note)
 _utm_cache_order: list[tuple] = []   # LRU order (MRU at end)
 _utm_cache_lock = threading.Lock()
 
@@ -356,24 +356,24 @@ def _cache_key_for(geojson: Any, source_crs: Optional[str]) -> Optional[tuple]:
 
 
 def _cache_get(key: tuple) -> Optional[tuple]:
-    """Return (gdf, utm_crs_str) on hit; None on miss."""
+    """Return (gdf, utm_crs_str, crs_note) on hit; None on miss."""
     with _utm_cache_lock:
         if key not in _utm_cache:
             return None
         # move to MRU
         _utm_cache_order.remove(key)
         _utm_cache_order.append(key)
-        _geojson_ref, gdf, utm = _utm_cache[key]
-        return gdf, utm
+        _geojson_ref, gdf, utm, note = _utm_cache[key]
+        return gdf, utm, note
 
 
 def _cache_put(key: tuple, geojson_ref: Any, value: tuple) -> None:
-    """Store (gdf, utm_crs_str) keyed by id(geojson), pinning geojson_ref alive."""
+    """Store (gdf, utm_crs_str, crs_note) keyed by id(geojson), pinning geojson_ref alive."""
     with _utm_cache_lock:
         if key in _utm_cache:
             _utm_cache_order.remove(key)
-        gdf, utm = value
-        _utm_cache[key] = (geojson_ref, gdf, utm)  # 引用钉子：防 id 复用
+        gdf, utm, note = value
+        _utm_cache[key] = (geojson_ref, gdf, utm, note)  # 引用钉子：防 id 复用
         _utm_cache_order.append(key)
         # evict LRU entries beyond capacity
         while len(_utm_cache_order) > _UTM_CACHE_MAX:
@@ -381,36 +381,48 @@ def _cache_put(key: tuple, geojson_ref: Any, value: tuple) -> None:
             _utm_cache.pop(old, None)
 
 
-def to_utm_gdf(geojson: Any, source_crs: Optional[str] = None) -> tuple[gpd.GeoDataFrame, str] | tuple[None, None]:
-    """Convert GeoJSON to UTM GeoDataFrame with automatic zone detection.
+def to_utm_gdf_with_note(
+    geojson: Any, source_crs: Optional[str] = None,
+) -> tuple[gpd.GeoDataFrame, str, dict] | tuple[None, None, None]:
+    """Convert GeoJSON to UTM GeoDataFrame with automatic zone detection,
+    returning the CRS transformation note for scientific disclosure.
+
+    This is the canonical implementation; :func:`to_utm_gdf` is a thin
+    delegate that drops the note (behaviour byte-identical to the previous
+    inline body).
 
     Results are memoized by object identity to amortize parse+reproject across
     multi-step analyses. Cached hits return a fresh ``.copy()`` so caller
     mutations (column adds, geometry edits) never corrupt the cache.
 
     Returns:
-        tuple[gpd.GeoDataFrame, str]: (projected_gdf, utm_crs_string) or (None, None)
+        tuple: ``(projected_gdf, utm_crs_string, note)`` where ``note`` is the
+        CRS-disclosure dict ``{"target_crs": "EPSG:32650", "source_crs": ...,
+        "gcj02_normalized": bool}`` — or ``(None, None, None)`` when the input
+        cannot be parsed / has no usable features. For an already-projected
+        input ``target_crs == source_crs`` (identity: no transform happened),
+        which callers must report honestly rather than claim an auto-UTM.
     """
     # Identity-keyed cache lookup. None-keyed inputs (str/bytes) always recompute.
     cache_key = _cache_key_for(geojson, source_crs)
     if cache_key is not None:
         cached = _cache_get(cache_key)
         if cached is not None:
-            gdf_cached, utm = cached
+            gdf_cached, utm, note = cached
             # Defensive copy: callers may add columns / edit geometry.
             gdf_copy = gdf_cached.copy()
             gdf_copy._original_crs = gdf_cached._original_crs
-            return gdf_copy, utm
+            return gdf_copy, utm, note
 
     parsed = safe_parse(geojson)
     if parsed is None:
-        return None, None
+        return None, None, None
 
     fc = to_feature_collection(parsed)
     features = fc.get("features", [])
 
     if not features:
-        return None, None
+        return None, None, None
 
     if source_crs is None:
         source_crs = extract_declared_crs(fc)
@@ -439,7 +451,7 @@ def to_utm_gdf(geojson: Any, source_crs: Optional[str] = None) -> tuple[gpd.GeoD
             continue
 
     if not rows:
-        return None, None
+        return None, None, None
 
     if chinese_crs in ("gcj02", "bd09"):
         for r in rows:
@@ -562,14 +574,41 @@ def to_utm_gdf(geojson: Any, source_crs: Optional[str] = None) -> tuple[gpd.GeoD
                 lon_span, result[1],
             )
 
+    # CRS transformation note (scientific disclosure): what frame the data
+    # came in, what metric frame it was projected to, and whether a Chinese
+    # offset frame (gcj02/bd09) was normalized to true WGS84 first. For an
+    # already-projected input target == source (identity — no transform).
+    note = {
+        "target_crs": result[1],
+        "source_crs": gdf._original_crs,
+        "gcj02_normalized": chinese_crs in ("gcj02", "bd09"),
+    }
+
     # Cache the canonical result. Callers get copies; the cached gdf itself is
     # never handed out, so its geometry/columns stay pristine. `parsed` is
     # pinned as the strong reference that prevents id() reuse collisions.
     if cache_key is not None:
-        _cache_put(cache_key, parsed, result)
+        _cache_put(cache_key, parsed, (*result, note))
 
     gdf_out, utm_out = result
     gdf_copy = gdf_out.copy()
     gdf_copy._original_crs = gdf_out._original_crs
-    return gdf_copy, utm_out
+    return gdf_copy, utm_out, note
+
+
+def to_utm_gdf(geojson: Any, source_crs: Optional[str] = None) -> tuple[gpd.GeoDataFrame, str] | tuple[None, None]:
+    """Convert GeoJSON to UTM GeoDataFrame with automatic zone detection.
+
+    Thin delegate over :func:`to_utm_gdf_with_note` that drops the CRS
+    transformation note (behaviour unchanged for all existing callers).
+
+    Results are memoized by object identity to amortize parse+reproject across
+    multi-step analyses. Cached hits return a fresh ``.copy()`` so caller
+    mutations (column adds, geometry edits) never corrupt the cache.
+
+    Returns:
+        tuple[gpd.GeoDataFrame, str]: (projected_gdf, utm_crs_string) or (None, None)
+    """
+    gdf, utm_crs, _note = to_utm_gdf_with_note(geojson, source_crs=source_crs)
+    return gdf, utm_crs
 

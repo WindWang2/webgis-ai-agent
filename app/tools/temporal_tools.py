@@ -2,7 +2,14 @@
 Temporal GIS Runtime Tools for ToolRegistry.
 Exposes temporal_profile, temporal_filter, temporal_aggregate,
 temporal_change, temporal_trend, spatiotemporal_hotspot, and temporal_raster.
+
+VNext（ADR-0099）：temporal_trend 增加非参数方法分支
+（ols_sen 默认逐位不变 / mann_kendall / seasonal_mann_kendall，显著性
+证据块附加），新增 temporal_changepoint（CUSUM 均值变点，固定种子
+bootstrap 显著性）。实现位于 app/services/temporal/trend.py——工具只做
+validate → 调实现 → 挂证据。
 """
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
@@ -128,6 +135,14 @@ class TemporalTrendArgs(BaseModel):
     dataset: Any = Field(..., description="Time series dataset or SessionStore ref ID")
     temporal_field: Optional[str] = Field(default=None, description="Temporal column name")
     value_field: str = Field(..., description="Target value column to analyze trend")
+    method: str = Field(
+        default="ols_sen",
+        description=(
+            "Trend method: ols_sen (default: Sen's slope + OLS, historical behavior), "
+            "mann_kendall (nonparametric test with tie-corrected variance), "
+            "seasonal_mann_kendall (per-season pooled test; requires per-point dates)"
+        ),
+    )
 
 
 class SpatiotemporalHotspotArgs(BaseModel):
@@ -277,7 +292,11 @@ def register_temporal_tools(registry: ToolRegistry):
     @tool(
         registry,
         name="temporal_trend",
-        description="时间序列趋势分析：计算线性变化斜率（Sen's Slope / Trend）、移动平均线与异常点检测。",
+        description=(
+            "时间序列趋势分析：移动平均、Sen 斜率/OLS 回归与异常点检测；"
+            "method 可选 mann_kendall / seasonal_mann_kendall（非参数检验，"
+            "附 tie 校正方差、连续性校正 z、双侧 p 与序列相关警告的显著性证据）。"
+        ),
         tier=2,
         domains=["temporal"],
         args_model=TemporalTrendArgs,
@@ -287,16 +306,75 @@ def register_temporal_tools(registry: ToolRegistry):
         dataset: Any,
         value_field: str,
         temporal_field: Optional[str] = None,
+        method: str = "ols_sen",
         session_id: str = "",
     ) -> dict:
+        from app.lib.gis.parameter_contracts import apply_contract
+
         try:
-            res = await engine.execute_trend(
-                dataset=dataset,
-                value_field=value_field,
-                temporal_field=temporal_field,
-                session_id=session_id,
-            )
-            return trim_temporal_result(res.model_dump())
+            params = apply_contract("temporal_trend_analysis", {"method": method})
+            method_key = str(params["method"])
+            if method_key == "ols_sen":
+                # 缺省路径：与历史行为逐位一致。
+                res = await engine.execute_trend(
+                    dataset=dataset,
+                    value_field=value_field,
+                    temporal_field=temporal_field,
+                    session_id=session_id,
+                )
+                return trim_temporal_result(res.model_dump())
+
+            def _sync_mk():
+                from app.services.temporal.models import TemporalAnalysisResult
+
+                features = dataset.get("features", []) if isinstance(dataset, dict) else dataset
+                trend = engine.trend_engine.analyze_trend(
+                    data=features,
+                    metric_name=value_field or "value",
+                    time_field=temporal_field,
+                    method=method_key,
+                )
+                sig = getattr(trend, "significance_evidence", [])
+                method_warnings = list(getattr(trend, "method_warnings", []))
+                return TemporalAnalysisResult(
+                    analysis_type="temporal_trend",
+                    status="success",
+                    trend_metrics={
+                        "slope": trend.slope,
+                        "intercept": trend.intercept,
+                        "r_squared": trend.r_squared,
+                        "direction": trend.direction,
+                        "slope_unit": trend.slope_unit,
+                        "trend_method": method_key,
+                        "significance": sig,
+                        "total_points": trend.total_points,
+                    },
+                    warnings=method_warnings,
+                )
+
+            res = await asyncio.to_thread(_sync_mk)
+            payload = trim_temporal_result(res.model_dump())
+            # 显著性证据块（StatisticalSignificance.to_evidence 形状）已入
+            # trend_metrics.significance；此处再挂 VNext 科学证据块。
+            sig_blocks = res.trend_metrics.get("significance") or []
+            uncertainty = []
+            for blk in sig_blocks:
+                from app.lib.gis.uncertainty import StatisticalSignificance
+
+                uncertainty.append(StatisticalSignificance(
+                    target=blk.get("target", "trend"),
+                    statistic_name=blk.get("statistic_name", ""),
+                    statistic_value=blk.get("statistic_value"),
+                    p_value=blk.get("p_value"),
+                    method=blk.get("method", ""),
+                    alternative=blk.get("alternative", ""),
+                ))
+            _attach_trend_evidence(
+                payload, method=method_key,
+                n_points=res.trend_metrics.get("total_points"),
+                uncertainty=uncertainty,
+                warnings=res.warnings or None)
+            return payload
         except Exception as e:
             logger.error(f"[temporal_trend] Failed: {e}", exc_info=True)
             return {"type": "error", "message": f"时间序列趋势分析失败: {str(e)}"}
@@ -361,3 +439,126 @@ def register_temporal_tools(registry: ToolRegistry):
         except Exception as e:
             logger.error(f"[temporal_raster] Failed: {e}", exc_info=True)
             return {"type": "error", "message": f"栅格时间序列分析失败: {str(e)}"}
+
+    # VNext（ADR-0099）：时序科学工具（CUSUM 变点）——挂在既有注册入口
+    # 里（app/tools/__init__.py 只认 register_temporal_tools 这个模块入口）。
+    register_temporal_science_tools(registry)
+
+
+def _attach_trend_evidence(
+    payload: dict,
+    *,
+    method: str,
+    n_points: Optional[int],
+    uncertainty: Optional[list],
+    warnings: Optional[List[str]] = None,
+    algorithm_id: str = "temporal.trend",
+    tool: str = "temporal_trend",
+    seed: Optional[int] = None,
+) -> dict:
+    """挂 temporal.trend / temporal.changepoint 的 VNext 科学证据块。"""
+    from app.lib.gis.algorithm_registry import get_algorithm_registry
+    from app.lib.gis.scientific_evidence import build_evidence
+
+    descriptor = get_algorithm_registry().get(algorithm_id)
+    if descriptor is None:
+        logger.warning("scientific evidence requested for unknown algorithm %s", algorithm_id)
+        return payload
+    payload["scientific_evidence"] = build_evidence(
+        descriptor,
+        tool=tool,
+        parameters_applied={"method": method},
+        input_facts=(
+            {"feature_count": int(n_points)} if n_points is not None else {}),
+        warnings=warnings,
+        uncertainty=uncertainty,
+        seed=seed,
+    )
+    return payload
+
+
+def register_temporal_science_tools(registry: ToolRegistry):
+    """VNext（ADR-0099）时序科学工具：CUSUM 均值变点。
+
+    注意：本函数由 ``register_temporal_tools`` 尾部调用（app/tools/
+    __init__.py 的模块注册表只认既有入口名——新工具必须挂在既有注册
+    函数里，不能新增模块入口）。
+    """
+
+    @tool(
+        registry,
+        name="temporal_changepoint",
+        description=(
+            "CUSUM 均值变点检测：标准化累积和定位单一均值漂移位置，"
+            "固定种子 bootstrap 评估显著性（无变化零假设下重排 max-CUSUM 分布）。"
+            "p < 0.05 才给出 change_point_index（否则 None，candidate_index 恒给）。"
+            "\n何时用：时序均值台阶检测（政策生效/事故前后基线漂移）；"
+            "\n关键约束：至少 3 个观测（建议 n ≥ 10）；同 seed 同输入结果逐位可复现。"
+        ),
+        tier=2,
+        domains=["temporal"],
+        param_descriptions={
+            "values": "数值序列（按时间序；NaN/Inf 自动剔除）",
+            "bootstrap_draws": "bootstrap 重排次数（100-1000，默认 200）",
+            "seed": "随机种子（默认 42，固定种子策略）",
+        },
+    )
+    async def temporal_changepoint(
+        values: List[float],
+        bootstrap_draws: int = 200,
+        seed: int = 42,
+    ) -> dict:
+        from app.lib.gis.parameter_contracts import apply_contract
+        from app.lib.gis.uncertainty import StatisticalSignificance
+        from app.services.temporal.trend import cusum_change_point
+
+        try:
+            params = apply_contract(
+                "temporal_changepoint_analysis",
+                {"bootstrap_draws": bootstrap_draws, "seed": seed})
+            res = await asyncio.to_thread(
+                cusum_change_point,
+                values,
+                int(params["bootstrap_draws"]),
+                int(params["seed"]),
+            )
+            payload = {
+                "success": True,
+                "change_point_index": res["change_point_index"],
+                "candidate_index": res["candidate_index"],
+                "magnitude": res["magnitude"],
+                "p_value": res["p_value"],
+                "significant": res["significant"],
+                "alpha": res["alpha"],
+                "n": res["n"],
+                "bootstrap_draws": res["bootstrap_draws"],
+                "seed": res["seed"],
+                "warnings": res["warnings"],
+                "summary": (
+                    f"{'检测到' if res['significant'] else '未检测到'}显著均值变点"
+                    f"（候选位置 idx={res['candidate_index']}，p={res['p_value']:.4f}，"
+                    f"bootstrap={res['bootstrap_draws']} 次重排，seed={res['seed']}）"
+                ),
+            }
+            _attach_trend_evidence(
+                payload,
+                method="cusum",
+                n_points=res["n"],
+                uncertainty=[StatisticalSignificance(
+                    target="cusum_max",
+                    statistic_name="max CUSUM",
+                    statistic_value=res["max_cusum"],
+                    p_value=res["p_value"],
+                    method="bootstrap",
+                    permutations=res["bootstrap_draws"],
+                    alternative="greater",
+                )],
+                warnings=res["warnings"] or None,
+                algorithm_id="temporal.changepoint",
+                tool="temporal_changepoint",
+                seed=int(params["seed"]),
+            )
+            return payload
+        except Exception as e:
+            logger.error(f"[temporal_changepoint] Failed: {e}", exc_info=True)
+            return {"type": "error", "message": f"变点检测失败: {str(e)}"}

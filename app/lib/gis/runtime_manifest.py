@@ -41,7 +41,7 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-MANIFEST_VERSION = 2
+MANIFEST_VERSION = 3
 
 # severity 语义：
 #  fatal   —— 运行时必需 contract 破损：启动 fail-fast（GIS_MANIFEST_STRICT=0
@@ -79,6 +79,8 @@ class CompiledRuntimeManifest:
     templates: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     recipes: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     product_templates: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    # v3（ADR-0099）：参数契约投影（id → version + 参数名集）
+    parameter_contracts: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     # ── cross-registry 图（O(1) 反查）──────────────────────────────────
     tool_to_capability: Dict[str, List[str]] = field(default_factory=dict)
@@ -168,6 +170,18 @@ def _project_algorithm(algo) -> Dict[str, Any]:
         "contract_version": getattr(algo, "contract_version", 1),
         "priority": getattr(algo, "priority", 50),
         "fallback_algorithms": sorted(getattr(algo, "fallback_algorithms", None) or []),
+        # ── v3（ADR-0099）：科学语义进指纹 —— CRS 门/成熟度/参数契约
+        # 引用/前置条件/回退分类的变化都改变解析语义 ⇒ 旧 plan 判 stale。
+        "crs_class": getattr(algo, "crs_class", ""),
+        "scientific_status": getattr(algo, "scientific_status", ""),
+        "parameter_contract_ref": getattr(algo, "parameter_contract_ref", ""),
+        "scientific_preconditions": sorted(
+            getattr(algo, "scientific_preconditions", None) or []),
+        "fallback_semantics": {
+            str(k): str(v)
+            for k, v in sorted(
+                (getattr(algo, "fallback_semantics", None) or {}).items())
+        },
     }
 
 
@@ -224,6 +238,21 @@ def compile_runtime_manifest(tool_registry: Optional[Any] = None) -> CompiledRun
             manifest.algorithms[aid] = _project_algorithm(ar.get(aid))
     except Exception as e:  # noqa: BLE001
         _fatal("algorithm_registry_unavailable", str(e))
+    # v3（ADR-0099）：参数契约投影 —— 契约参数/默认值变化改变执行语义，
+    # 必须反映在指纹里（contract registry 只读投影，不反写）。
+    try:
+        from app.lib.gis.parameter_contracts import get_parameter_contract_registry
+        pcr = get_parameter_contract_registry()
+        for cid in _registry_ids(pcr):
+            contract = pcr.get(cid)
+            if contract is None:
+                continue
+            manifest.parameter_contracts[cid] = {
+                "version": contract.version,
+                "parameters": sorted(p.name for p in contract.parameters),
+            }
+    except Exception as e:  # noqa: BLE001
+        _warn("parameter_contract_registry_unavailable", str(e))
 
     # ── 2. tool registry（真实实例优先）──────────────────────────────
     tool_names: set = set()
@@ -386,6 +415,7 @@ def compile_runtime_manifest(tool_registry: Optional[Any] = None) -> CompiledRun
         "templates": manifest.templates,
         "recipes": manifest.recipes,
         "product_templates": manifest.product_templates,
+        "parameter_contracts": manifest.parameter_contracts,
     }
     manifest.fingerprint = hashlib.sha256(
         _canonical(fingerprint_payload).encode("utf-8"), usedforsecurity=False,

@@ -9,6 +9,9 @@ from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, ToolExecutionPolicy, tool
 from app.tools._utils import trim_features
+from app.lib.gis.algorithm_registry import get_algorithm_registry
+from app.lib.gis.parameter_contracts import apply_contract
+from app.lib.gis.scientific_evidence import Diagnostic, build_evidence
 from app.services.network.engine import NetworkGraphEngine
 from app.services.network.models import TravelProfile
 
@@ -324,7 +327,16 @@ def register_network_tools(registry: ToolRegistry):
         session_id: str = "",
     ) -> dict:
         try:
-            travel_profile = TravelProfile(name=profile, impedance_field=impedance)
+            # VNext 参数契约（§12）：origin/destination 为多态输入（坐标数组/
+            # GeoJSON/地址串），契约只声明其 required 语义，类型收敛留给引擎
+            # _parse_point —— 与 moran_i 契约外直传 distance_band 同款先例。
+            params = apply_contract("network_shortest_path", {
+                "impedance": impedance,
+                "profile": profile,
+            })
+            travel_profile = TravelProfile(
+                name=params["profile"], impedance_field=params["impedance"],
+            )
             res = await engine.solve_shortest_path(
                 network=network,
                 origin=origin,
@@ -369,13 +381,18 @@ def register_network_tools(registry: ToolRegistry):
                         f"请拆分起点/终点或缩小范围后重试。"
                     ),
                 }
+            # VNext 参数契约（§12）：cutoff_s 以活动阻抗单位（秒）为界。
+            contract_params = apply_contract(
+                "network_od_matrix",
+                {"cutoff_s": cutoff_s} if cutoff_s is not None else {},
+            )
             travel_profile = TravelProfile(name=profile)
             res = await engine.solve_od_matrix(
                 network=network,
                 origins=origins,
                 destinations=destinations,
                 profile=travel_profile,
-                cutoff_s=cutoff_s,
+                cutoff_s=contract_params.get("cutoff_s"),
                 session_id=session_id,
             )
             return trim_network_result(res.model_dump())
@@ -435,8 +452,16 @@ def register_network_tools(registry: ToolRegistry):
     ) -> dict:
         if breaks is None:
             breaks = [5.0, 10.0, 15.0]
+        # 评审 M3：无界 breaks 列表 = 无界 Dijkstra 轮次 —— 语义上界 32。
+        if not 1 <= len(breaks) <= 32:
+            raise ValueError(
+                f"breaks 列表长度超限：{len(breaks)}（允许 1-32 个时间断点）")
         try:
-            travel_profile = TravelProfile(name=profile)
+            # VNext 参数契约（§12）：breaks 为 JSON 数组（契约以 string+JSON
+            # 语义声明，类型词表无 array —— terrain.extract_contours 先例），
+            # 运行时直传真实列表；profile 走枚举收敛。
+            params = apply_contract("network_service_area", {"profile": profile})
+            travel_profile = TravelProfile(name=params["profile"])
             res = await engine.solve_service_area(
                 network=network,
                 facilities=facilities,
@@ -476,7 +501,41 @@ def register_network_tools(registry: ToolRegistry):
                 profile=travel_profile,
                 session_id=session_id,
             )
-            return trim_network_result(res.model_dump())
+            out = trim_network_result(res.model_dump())
+            # VNext（Task D）：方法学证据块 —— descriptor（luo_qi2009 /
+            # 假设/局限）+ 运行时方法学诊断（捕获半径、供需总量）。
+            acc_block = out.get("accessibility") if isinstance(out, dict) else None
+            descriptor = get_algorithm_registry().get("network.accessibility")
+            if descriptor is not None and isinstance(acc_block, dict) and acc_block:
+                summary = out.get("summary") or {}
+                out["scientific_evidence"] = build_evidence(
+                    descriptor,
+                    tool="network_accessibility",
+                    parameters_applied={
+                        "cutoff_minutes": cutoff_minutes,
+                        "profile": profile,
+                    },
+                    input_facts={"feature_count": summary.get("demand_point_count")},
+                    diagnostics=[
+                        Diagnostic(
+                            name="catchment_radius_min",
+                            value=float(acc_block.get("cutoff_minutes", cutoff_minutes)),
+                            unit="minutes",
+                            text="2SFCA/覆盖法浮动捕获半径（分钟）",
+                        ),
+                        Diagnostic(
+                            name="demand_total",
+                            value=float(acc_block.get("total_demand", 0.0)),
+                            text="需求权重总和（分母显式；零需求不 fabricated 覆盖率）",
+                        ),
+                        Diagnostic(
+                            name="supply_total",
+                            value=float(summary.get("supply_total", 0.0)),
+                            text="设施容量总和（capacity 缺省 1.0/设施）",
+                        ),
+                    ],
+                )
+            return out
         except Exception as e:
             logger.error(f"[network_accessibility] Failed: {e}", exc_info=True)
             return {"type": "error", "message": f"空间可达性评估失败: {str(e)}"}

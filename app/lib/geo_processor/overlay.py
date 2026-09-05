@@ -37,6 +37,16 @@ def overlay_smart(
         fc_a = to_feature_collection(t_parsed)
         fc_b = to_feature_collection(m_parsed)
 
+        # Degenerate-input honesty: an empty layer short-circuits to an empty
+        # success BEFORE gdf_from_features — geopandas raises
+        # ValueError("Assigning CRS to a GeoDataFrame without a geometry
+        # column") on a zero-feature list, which previously surfaced as a
+        # generic "Overlay operation failed" instead of the honest result.
+        if not fc_a.get("features") or not fc_b.get("features"):
+            return GeoAnalysisResult(
+                True, {"type": "FeatureCollection", "features": []},
+                "Input layer(s) empty, nothing to overlay.")
+
         # GIS-599: honor a declared `crs` member instead of hardcoding
         # EPSG:4326 — a declared projected input (e.g. EPSG:3857) was
         # previously misinterpreted as WGS84 and silently dropped.
