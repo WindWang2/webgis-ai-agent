@@ -88,8 +88,8 @@ planned 模型不得被 planner 选为最终产品（既有 gate 不变）。
 warning）。无循环、无随机、同输入同输出；page profile（viewport /
 a4_portrait / a4_landscape / presentation_16x9 / academic_figure）只影响
 容量与堆叠预算表。既有 `detect_collisions` QA 路径不变；
-`validate_component_composition` 增加可选 `solve_layout` 开关（默认关闭，
-行为兼容）。
+solver 以独立纯函数交付（`validate_component_composition` 保持零改动），
+golden corpus 直接消费 `solve_component_layout`。
 
 ### D6 — Renderer parity 补齐而非豁免
 

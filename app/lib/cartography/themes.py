@@ -247,7 +247,7 @@ SEED_THEMES: List[CartographicThemeDescriptor] = [
             # 留空，推荐一律走感知均匀族（亮端可辨、感知均匀）。
             sequential=[],
             diverging=["RdBu"],
-            qualitative=["Dark2", "Set1"],
+            qualitative=["Dark2", "Set2"],
             perceptual_uniform=["Viridis", "Magma", "Inferno", "Plasma"],
         ),
         colorblind_safe_first=True,
@@ -266,15 +266,20 @@ SEED_THEMES: List[CartographicThemeDescriptor] = [
         typography=TypographySpec(title_weight=700, min_chrome_px=9),
         spacing=SpacingSpec(stack_step_px=34),
         palettes=PaletteRecommendation(
+            # 严格灰度判据（ramp 序 ΔL>=0.06）下的 print_safe 色带才可入列
             sequential=["YlOrRd", "Blues", "Greens", "Reds", "Oranges", "Purples"],
-            diverging=["RdBu"],
-            qualitative=["Set2", "Dark2"],
-            perceptual_uniform=["Viridis", "Magma"],
+            diverging=["RdBu", "PuOr"],
+            # qualitative 族无一通过灰度判据 —— 留空并在 note 披露：
+            # 分类面黑白打印应以符号形状/标签区分，不依赖色相
+            qualitative=[],
+            perceptual_uniform=["Viridis"],
         ),
         colorblind_safe_first=True,
         notes_zh=[
-            "黑白打印安全：print_safe 色带优先（灰度 ΔL 可分级）",
-            "红绿色盲不友好的 RdYlGn 不进入推荐清单",
+            "黑白打印安全：推荐清单全部 print_safe（灰度 ΔL 严格可分级）",
+            "红绿色盲不友好的 RdYlGn 不进入推荐清单；发散用 RdBu/PuOr",
+            "qualitative 色带灰度打印均不可分级 —— 类别面黑白输出改用"
+            "符号形状/填充图案区分（映射由导出侧承担，planned）",
         ],
     ),
     CartographicThemeDescriptor(
@@ -386,8 +391,20 @@ class CartographicThemeRegistry:
             for pid in theme.palettes.ids():
                 if pid not in self._palettes:
                     issues.append(f"theme '{theme.id}' 推荐 '{pid}' 未注册")
+                elif theme.profile == "print":
+                    p = self._palettes[pid]
+                    if not p.print_safe:
+                        issues.append(
+                            f"theme '{theme.id}'（print）推荐 '{pid}' 不是 print_safe")
             if theme.profile == "print" and not theme.colorblind_safe_first:
                 issues.append(f"theme '{theme.id}': print 主题必须 colorblind_safe_first")
+            if theme.colorblind_safe_first:
+                for pid in theme.palettes.ids():
+                    p = self._palettes.get(pid)
+                    if p is not None and not p.colorblind_safe:
+                        issues.append(
+                            f"theme '{theme.id}'（colorblind_safe_first）推荐 "
+                            f"'{pid}' 不是色盲安全色带")
         return issues
 
 

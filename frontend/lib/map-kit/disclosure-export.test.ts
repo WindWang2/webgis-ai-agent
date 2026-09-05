@@ -187,6 +187,32 @@ describe('drawChromeDisclosurePanel — 画布绘制', () => {
     expect(formatImperialLabel(16100)).toBe('10 mi');
   });
 
+  it('colorbar 导出：vertical 布局 / stepped 色阶分派（R2 parity）', async () => {
+    const { drawChromeColorbar } = await import('./export-chrome');
+    const { ctx, calls } = mockCtx();
+    const gradArgs: number[] = [];
+    (ctx as any).createLinearGradient = (x0: number, y0: number, x1: number, y1: number) => {
+      gradArgs.push(x0, y0, x1, y1);
+      return { addColorStop: () => {} };
+    };
+    const d = { ctx, darkMode: false, scalePx: (v: number) => v, targetW: 1600, targetH: 1200 };
+    const spec = { min: 0, max: 100, palette_colors: ['#111', '#555', '#999'], unit: '人/km²' };
+    // vertical：渐变沿 y 轴（x0==x1）
+    drawChromeColorbar(d as any, {
+      kind: 'colorbar', anchor: 'bottom-right', variant: 'vertical', legendSpec: spec,
+    } as any, { marginX: 40 });
+    expect(gradArgs.length).toBe(4);
+    expect(gradArgs[0]).toBe(gradArgs[2]);
+    // stepped：等分色块 fillRect ≥ n（无渐变）
+    const { ctx: ctx2, calls: calls2 } = mockCtx();
+    const d2 = { ctx: ctx2, darkMode: false, scalePx: (v: number) => v, targetW: 1600, targetH: 1200 };
+    drawChromeColorbar(d2 as any, {
+      kind: 'colorbar', anchor: 'bottom-right', variant: 'stepped', legendSpec: spec,
+    } as any, { marginX: 40 });
+    const fills = calls2.filter((c) => c.op === 'fillRect').length;
+    expect(fills).toBeGreaterThanOrEqual(3);
+  });
+
   it('超宽行确定性截断（… 尾）', () => {
     const { ctx, calls } = mockCtx();
     const d = { ctx, darkMode: false, scalePx: (v: number) => v, targetW: 1600, targetH: 1200 };

@@ -642,7 +642,7 @@
         ],
         "qualitative": [
           "Dark2",
-          "Set1"
+          "Set2"
         ],
         "perceptual_uniform": [
           "Viridis",
@@ -848,15 +848,12 @@
           "Purples"
         ],
         "diverging": [
-          "RdBu"
+          "RdBu",
+          "PuOr"
         ],
-        "qualitative": [
-          "Set2",
-          "Dark2"
-        ],
+        "qualitative": [],
         "perceptual_uniform": [
-          "Viridis",
-          "Magma"
+          "Viridis"
         ]
       }
     }

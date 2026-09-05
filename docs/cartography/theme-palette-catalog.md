@@ -35,7 +35,7 @@
 - 输出：interactive, png, pdf, svg；适配版式：minimal, standard
 - 排版：text-title/text-caption，标题字重 600
 - chrome token 引用：surface=surface-panel, ink=text-primary, chrome-bg=map-chrome-bg
-- 推荐：sequential=[]；diverging=['RdBu']；qualitative=['Dark2', 'Set1']；perceptual=['Viridis', 'Magma', 'Inferno', 'Plasma']
+- 推荐：sequential=[]；diverging=['RdBu']；qualitative=['Dark2', 'Set2']；perceptual=['Viridis', 'Magma', 'Inferno', 'Plasma']
 - 注：暗背景优先感知均匀族（Viridis 系）—— 若必须用 sequential 色带，应反转使用顺序（高值→低亮度端）并披露
 - 注：深色 chrome token（map-chrome-* dark 分支）
 
@@ -65,7 +65,8 @@
 - 输出：png, pdf, svg, print；适配版式：academic, report
 - 排版：text-title/text-caption，标题字重 700
 - chrome token 引用：surface=surface-panel, ink=text-primary, chrome-bg=map-chrome-bg
-- 推荐：sequential=['YlOrRd', 'Blues', 'Greens', 'Reds', 'Oranges', 'Purples']；diverging=['RdBu']；qualitative=['Set2', 'Dark2']；perceptual=['Viridis', 'Magma']
-- 注：黑白打印安全：print_safe 色带优先（灰度 ΔL 可分级）
-- 注：红绿色盲不友好的 RdYlGn 不进入推荐清单
+- 推荐：sequential=['YlOrRd', 'Blues', 'Greens', 'Reds', 'Oranges', 'Purples']；diverging=['RdBu', 'PuOr']；qualitative=[]；perceptual=['Viridis']
+- 注：黑白打印安全：推荐清单全部 print_safe（灰度 ΔL 严格可分级）
+- 注：红绿色盲不友好的 RdYlGn 不进入推荐清单；发散用 RdBu/PuOr
+- 注：qualitative 色带灰度打印均不可分级 —— 类别面黑白输出改用符号形状/填充图案区分（映射由导出侧承担，planned）
 

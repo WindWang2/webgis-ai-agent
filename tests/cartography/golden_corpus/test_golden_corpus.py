@@ -103,6 +103,11 @@ def test_planned_models_never_get_keyed_templates_at_any_output() -> None:
     planned_ids = [
         case["model"] for case in build_cases() if case["kind"] == "planned-gate"
     ]
+    from app.lib.cartography.composition_templates import (
+        get_composition_template_registry,
+    )
+
+    compo_reg = get_composition_template_registry()
     for model in planned_ids:
         for output in ("interactive", "png", "pdf"):
             sel = ComponentResolver().resolve(
@@ -111,9 +116,12 @@ def test_planned_models_never_get_keyed_templates_at_any_output() -> None:
             assert "model_planned" in sel.reason_codes, (
                 f"{model}@{output}: 缺 model_planned 记因"
             )
-            assert not sel.composition_template_id.startswith(
-                ("composition.rs_", "composition.sar_")
-            ), f"{model}@{output}: 选中 planned-keyed 模板 {sel.composition_template_id}"
+            # generic 白名单断言（不是前缀黑名单 —— 未来新增 planned-keyed
+            # pack 模板也会被此拦截）：选中模板必须不声明任何模型
+            compo = compo_reg.get(sel.composition_template_id)
+            assert compo is not None and not compo.compatible_map_models, (
+                f"{model}@{output}: 选中非 generic 模板 {sel.composition_template_id}"
+            )
 
 
 def test_binding_conflicts_absent() -> None:

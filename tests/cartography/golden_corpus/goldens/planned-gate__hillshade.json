@@ -69,7 +69,7 @@
    "reason_codes": [
     "model_planned"
    ],
-   "rejected_count": 4,
+   "rejected_count": 3,
    "required_slots": [
     "attribution",
     "scale_bar"
@@ -88,5 +88,5 @@
    "warning_codes": []
   }
  },
- "sha": "5c81d4597a8ef4bc"
+ "sha": "78a965ab8f2cf68a"
 }

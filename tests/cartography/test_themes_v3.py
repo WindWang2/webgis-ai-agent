@@ -116,6 +116,32 @@ def test_print_theme_requires_colorblind_safe_first() -> None:
         assert "RdYlGn" not in theme.palettes.diverging
 
 
+def test_print_theme_recommendations_are_print_safe() -> None:
+    """R2：print 主题推荐清单必须全部 print_safe（严格灰度判据）。"""
+    reg = get_cartographic_theme_registry()
+    for theme in reg.themes_for_profile("print"):
+        for pid in theme.palettes.ids():
+            desc = reg.get_palette(pid)
+            assert desc is not None and desc.print_safe, (
+                f"{theme.id}: 推荐 '{pid}' 不是 print_safe"
+            )
+        # Set2/Dark2/Magma 在严格判据下不安全，不得回流
+        for pid in ("Set2", "Dark2", "Magma"):
+            assert pid not in theme.palettes.ids()
+
+
+def test_colorblind_safe_first_theme_recommends_only_safe_palettes() -> None:
+    reg = get_cartographic_theme_registry()
+    for theme in reg.themes():
+        if not theme.colorblind_safe_first:
+            continue
+        for pid in theme.palettes.ids():
+            desc = reg.get_palette(pid)
+            assert desc is not None and desc.colorblind_safe, (
+                f"{theme.id}（colorblind_safe_first）推荐 '{pid}' 非色盲安全"
+            )
+
+
 def test_recommend_converges_to_registered_ids() -> None:
     reg = get_cartographic_theme_registry()
     ids = reg.recommend("cartographic.print_paper", "sequential")
