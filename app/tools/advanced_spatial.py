@@ -85,32 +85,98 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         return res.to_llm_response()
 
     @tool(registry, name="idw_interpolation",
-           description="反距离加权插值(IDW)：将离散采样点转换为连续的 H3 六边形网格表面。适用于气象、污染等连续变量建模。",
+           description="反距离加权插值(IDW)：将离散采样点转换为连续的 H3 六边形网格表面。适用于气象、污染等连续变量建模。默认附 LOOCV 交叉验证指标与残差分位数证据（无理论方差，不确定性全部为经验残差）。",
            tier=2, domains=["statistics"],
            param_descriptions={
                "geojson": "输入点要素集 GeoJSON 或引用(ref:xxx)",
                "value_field": "用于插值的数值字段名",
                "resolution": "H3 分辨率（6-9），默认 8",
-               "power": "距离权重幂次，默认 2",
+               "power": "距离权重幂次，默认 2（0 < power ≤ 5）",
+               "cross_validate": "是否计算 LOOCV 验证指标（默认 true，附加 validation/uncertainty/scientific_evidence 证据块）",
            })
-    def idw_interpolation(geojson: Any, value_field: str, resolution: int = 8, power: int = 2) -> dict:
-        from app.lib.geo_analysis.interpolation import idw_interpolation as _idw_interpolation
+    def idw_interpolation(geojson: Any, value_field: str, resolution: int = 8, power: int = 2, cross_validate: bool = True) -> dict:
+        from app.lib.gis.algorithm_registry import get_algorithm_registry
+        from app.lib.gis.scientific_evidence import build_evidence
+        from app.lib.gis.uncertainty import (
+            ScalarUncertainty,
+            UncertaintyMeasure,
+            ValidationMetrics,
+        )
         from app.lib.geo_analysis.interpolation import h3_to_geojson
+        from app.lib.geo_analysis.interpolation import idw_surface as _idw_surface
+
         data = safe_parse_geojson(geojson)
-        # Use the H3-based IDW implementation
-        results = _idw_interpolation(data, value_field, resolution, power)
+        driver = _idw_surface(
+            data, value_field, resolution=resolution, power=power,
+            cross_validate=cross_validate,
+        )
+        meta = driver["metadata"]
 
         # Convert H3 results to GeoJSON Features (审计：消除重复的 H3-to-GeoJSON 转换)
-        geojson_result = h3_to_geojson(results, value_field)
+        geojson_result = h3_to_geojson(driver["records"], value_field)
         geojson_result["summary"] = f"Generated IDW interpolation surface with {len(geojson_result['features'])} H3 cells (res={resolution})."
+        geojson_result["idw_metadata"] = meta
+        # VNext additive evidence blocks (LOOCV residual evidence — IDW never
+        # claims a theoretical variance).
+        val_metrics = None
+        unc_blocks: list = []
+        if meta.get("validation") is not None:
+            geojson_result["validation"] = meta["validation"]
+            geojson_result["uncertainty"] = meta["uncertainty"]
+            val_metrics = ValidationMetrics(
+                target="idw_surface",
+                method="loocv",
+                rmse=meta["validation"]["rmse"],
+                mae=meta["validation"]["mae"],
+                bias=meta["validation"]["bias"],
+                sample_count=meta["validation"]["sample_count"],
+            )
+            quant = meta["uncertainty"]["quantiles"]
+            unc_blocks = [ScalarUncertainty(
+                target="idw_surface",
+                measures=[
+                    UncertaintyMeasure(
+                        measure="quantile", value=quant["p50"],
+                        method="loocv_residual_quantiles p50 (|residual|)",
+                    ),
+                    UncertaintyMeasure(
+                        measure="quantile", value=quant["p90"],
+                        method="loocv_residual_quantiles p90 (|residual|)",
+                    ),
+                ],
+            )]
+        descriptor = get_algorithm_registry().get("interpolation.idw")
+        if descriptor is not None:
+            geojson_result["scientific_evidence"] = build_evidence(
+                descriptor,
+                tool="idw_interpolation",
+                parameters_applied={
+                    "value_field": value_field,
+                    "resolution": int(resolution),
+                    "power": float(power),
+                    "cross_validate": bool(cross_validate),
+                },
+                input_facts={
+                    "artifact_type": "point_feature_set",
+                    "feature_count": meta.get("n_samples"),
+                    "crs": "EPSG:4326",
+                    "units": "m",
+                },
+                transformations=[
+                    "auto-projected to metric CRS (estimate_utm_crs/polar) before distance math",
+                ],
+                validation=val_metrics,
+                uncertainty=unc_blocks,
+            )
         return geojson_result
 
     @tool(registry, name="kriging_interpolation",
            description=(
-               "普通克里金插值(Ordinary Kriging)：拟合变异函数(spherical/exponential/gaussian)"
-               "后在 H3 网格上同时产出预测面与克里金方差(不确定性)面，附 K 折交叉验证指标"
-               "(RMSE/MAE/bias/R²)。适用于需要不确定性量化的连续变量建模(地统计)。"
-               "\n何时用：『用克里金插值』/ 需要置信度或误差棒的表面 / 样本≥8 且空间相关。"
+               "克里金插值：普通克里金(method=ordinary, 默认)或泛克里金(method=universal, 线性漂移+残差变异函数)。"
+               "拟合变异函数(spherical/exponential/gaussian)后在 H3 网格上同时产出预测面与克里金方差(不确定性)面，"
+               "附 K 折交叉验证指标(RMSE/MAE/bias/R²)。适用于需要不确定性量化的连续变量建模(地统计)。"
+               "\n何时用：『用克里金插值』/ 需要置信度或误差棒的表面 / 样本≥8 且空间相关；"
+               "趋势明显(如沿海拔线性变化)时选 method=universal（样本≥12）。"
                "\n何时不用：样本<8 或只求快速表面 — 用 idw_interpolation。"
                "\n失败语义：变异函数拟合失败时抛结构化错误(建议改用 IDW)，不静默降级。"
            ),
@@ -126,6 +192,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                    "声明的输入 CRS: EPSG:4326(默认)/EPSG:4490/EPSG:3857/UTM(EPSG:326xx|327xx)。"
                    "距离计算在投影坐标系执行；不支持的 CRS 结构化报错，绝不静默按 WGS84。"
                ),
+               "method": "克里金方法: ordinary(默认)/universal（泛克里金需样本≥12）",
            })
     def kriging_interpolation(
         geojson: Any,
@@ -135,7 +202,16 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         neighbors: int = 12,
         cross_validate: bool = True,
         declared_crs: Optional[str] = None,
+        method: str = "ordinary",
     ) -> dict:
+        from app.lib.gis.algorithm_registry import get_algorithm_registry
+        from app.lib.gis.crs_safety import classify_crs
+        from app.lib.gis.scientific_evidence import build_evidence
+        from app.lib.gis.uncertainty import (
+            RasterUncertainty,
+            UncertaintyMeasure,
+            ValidationMetrics,
+        )
         from app.lib.geo_analysis.interpolation import h3_to_geojson
         from app.lib.geo_analysis.kriging import (
             KrigingCrsError,
@@ -166,6 +242,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             variogram_model=variogram_model, neighbors=neighbors,
             cross_validate=cross_validate,
             declared_crs=declared,
+            method=method,
         )
         meta = driver["metadata"]
 
@@ -199,17 +276,200 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             elif cv.get("note"):
                 cv_text = f"；交叉验证: {cv['note']}"
 
+        vario = meta.get("variogram")
+        if vario:
+            vario_text = (
+                f"(res={resolution}, 变异函数={vario['model']}, "
+                f"sill={vario['sill']}, range={vario['range_meters']}m)"
+            )
+        else:
+            # UK zero-residual degenerate case: honest disclosure, no fake variogram
+            vario_text = f"(res={resolution}, 零残差退化：数据严格线性趋势，方差=0)"
+
         prediction_fc.update({
             "summary": (
                 f"克里金插值完成：{len(prediction_fc['features'])} 个 H3 单元"
-                f"(res={resolution}, 变异函数={meta['variogram']['model']}, "
-                f"sill={meta['variogram']['sill']}, range={meta['variogram']['range_meters']}m)；"
+                f"{vario_text}；"
                 f"不确定面(克里金标准差)已随本结果输出。{cv_text}"
             ),
             "uncertainty": uncertainty_fc,
             "kriging_metadata": meta,
         })
+
+        # VNext scientific evidence (descriptor = assumptions/limitations source)
+        descriptor = get_algorithm_registry().get(
+            "interpolation.universal_kriging"
+            if method == "universal" else "interpolation.kriging"
+        )
+        if descriptor is not None:
+            validation = None
+            if cv and cv.get("rmse") is not None:
+                validation = ValidationMetrics(
+                    target="kriging_surface",
+                    method="k_fold",
+                    rmse=cv.get("rmse"),
+                    mae=cv.get("mae"),
+                    bias=cv.get("bias"),
+                    r_squared=cv.get("r2"),
+                    folds=cv.get("folds"),
+                    sample_count=cv.get("n_samples"),
+                )
+            variance_range = meta.get("variance_range") or [None, None]
+            declared_eff = meta.get("declared_crs") or "EPSG:4326"
+            transformations = []
+            if classify_crs(declared_eff) == "geographic":
+                transformations.append(
+                    f"reprojected {declared_eff} -> {meta['working_crs']} for metric kriging"
+                )
+            prediction_fc["scientific_evidence"] = build_evidence(
+                descriptor,
+                tool="kriging_interpolation",
+                parameters_applied={
+                    "value_field": value_field,
+                    "resolution": int(resolution),
+                    "variogram_model": variogram_model,
+                    "neighbors": int(neighbors),
+                    "cross_validate": bool(cross_validate),
+                    "method": method,
+                },
+                input_facts={
+                    "artifact_type": "point_feature_set",
+                    "feature_count": meta.get("n_samples"),
+                    "crs": declared_eff,
+                    "units": "m",
+                },
+                transformations=transformations,
+                validation=validation,
+                uncertainty=[RasterUncertainty(
+                    target="kriging_variance",
+                    interpretation="kriging prediction variance (working CRS units squared)",
+                    summary=[UncertaintyMeasure(
+                        measure="value", value=variance_range[1],
+                        method="max kriging variance",
+                    )],
+                )],
+            )
         return prediction_fc
+
+    @tool(registry, name="rbf_interpolation",
+           description=(
+               "径向基函数(RBF)插值：scipy RBFInterpolator（thin_plate_spline 默认 / "
+               "linear / cubic / multiquadratic / quintic），在 H3 网格上生成平滑插值面，"
+               "附 LOOCV 验证指标与残差分位数证据。smoothing=0 时为精确插值器（过样本点）。"
+               "\n何时用：样本较规则、需要光滑表面（气温/地形类连续场）；比 IDW 更平滑。"
+               "\n何时不用：样本<3；样本>10 万（先确定性抽稀）；需要克里金方差 — 用 "
+               "kriging_interpolation。"
+           ),
+           tier=2, domains=["statistics"], cost="heavy",
+           param_descriptions={
+               "geojson": "输入点要素集 GeoJSON 或引用(ref:xxx)（Point 几何）",
+               "value_field": "用于插值的数值字段名",
+               "resolution": "H3 分辨率（5-9），默认 7",
+               "kernel": "RBF 核: thin_plate_spline(默认)/linear/cubic/multiquadratic/quintic",
+               "smoothing": "平滑系数 0-10，默认 0（0=精确过样本点）",
+               "neighbors": "局部 RBF 邻域样本数 1-64，默认 32",
+               "cross_validate": "是否计算 LOOCV 验证指标，默认 true",
+           })
+    def rbf_interpolation(
+        geojson: Any,
+        value_field: str,
+        resolution: int = 7,
+        kernel: str = "thin_plate_spline",
+        smoothing: float = 0.0,
+        neighbors: int = 32,
+        cross_validate: bool = True,
+    ) -> dict:
+        from app.lib.gis.algorithm_registry import get_algorithm_registry
+        from app.lib.gis.parameter_contracts import apply_contract
+        from app.lib.gis.scientific_evidence import build_evidence
+        from app.lib.gis.uncertainty import (
+            ScalarUncertainty,
+            UncertaintyMeasure,
+            ValidationMetrics,
+        )
+        from app.lib.geo_analysis.interpolation import h3_to_geojson
+        from app.lib.geo_analysis.rbf_interpolation import (
+            rbf_interpolation as _rbf,
+        )
+
+        params = apply_contract("rbf_interpolation", {
+            "value_field": value_field,
+            "kernel": kernel,
+            "smoothing": smoothing,
+            "neighbors": neighbors,
+            "resolution": resolution,
+        })
+        data = safe_parse_geojson(geojson)
+        driver = _rbf(
+            data, params["value_field"],
+            resolution=int(params["resolution"]),
+            kernel=params["kernel"],
+            smoothing=float(params["smoothing"]),
+            neighbors=int(params["neighbors"]),
+            cross_validate=cross_validate,
+        )
+        meta = driver["metadata"]
+
+        geojson_result = h3_to_geojson(driver["records"], value_field)
+        geojson_result["summary"] = (
+            f"RBF 插值完成：{len(geojson_result['features'])} 个 H3 单元"
+            f"(res={params['resolution']}, kernel={meta['kernel']}, "
+            f"smoothing={meta['smoothing']}, neighbors={meta['neighbors']})。"
+        )
+        geojson_result["rbf_metadata"] = meta
+        val_metrics = None
+        unc_blocks: list = []
+        if meta.get("validation") is not None:
+            geojson_result["validation"] = meta["validation"]
+            geojson_result["uncertainty"] = meta["uncertainty"]
+            val_metrics = ValidationMetrics(
+                target="rbf_surface",
+                method="loocv",
+                rmse=meta["validation"]["rmse"],
+                mae=meta["validation"]["mae"],
+                bias=meta["validation"]["bias"],
+                sample_count=meta["validation"]["sample_count"],
+            )
+            quant = meta["uncertainty"]["quantiles"]
+            unc_blocks = [ScalarUncertainty(
+                target="rbf_surface",
+                measures=[
+                    UncertaintyMeasure(
+                        measure="quantile", value=quant["p50"],
+                        method="loocv_residual_quantiles p50 (|residual|)",
+                    ),
+                    UncertaintyMeasure(
+                        measure="quantile", value=quant["p90"],
+                        method="loocv_residual_quantiles p90 (|residual|)",
+                    ),
+                ],
+            )]
+        descriptor = get_algorithm_registry().get("interpolation.rbf")
+        if descriptor is not None:
+            geojson_result["scientific_evidence"] = build_evidence(
+                descriptor,
+                tool="rbf_interpolation",
+                parameters_applied={
+                    "value_field": params["value_field"],
+                    "resolution": int(params["resolution"]),
+                    "kernel": params["kernel"],
+                    "smoothing": float(params["smoothing"]),
+                    "neighbors": int(params["neighbors"]),
+                    "cross_validate": bool(cross_validate),
+                },
+                input_facts={
+                    "artifact_type": "point_feature_set",
+                    "feature_count": meta.get("n_samples"),
+                    "crs": "EPSG:4326",
+                    "units": "m",
+                },
+                transformations=[
+                    "auto-projected to metric CRS (estimate_utm_crs/polar) before distance math",
+                ],
+                validation=val_metrics,
+                uncertainty=unc_blocks,
+            )
+        return geojson_result
 
     @tool(registry, name="overlay_analysis",
            description="对两个几何图层进行空间叠加分析（如求交、合并、擦除等），返回结果及其统计信息",

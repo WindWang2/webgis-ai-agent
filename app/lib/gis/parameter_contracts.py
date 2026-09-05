@@ -250,8 +250,10 @@ _SEED_CONTRACTS: List[ParameterContract] = [
         ],
     ),
     ParameterContract(
-        id="kriging_interpolation", version=1,
-        description="普通克里金（经验半变异函数 + 有界 LS 拟合 + k 邻域 OK 系统）。",
+        # v2：method 枚举（ordinary/universal）随插值域包 VNext 扩展加入；
+        # version 提升使指纹反映契约面变化（runtime manifest v3）。
+        id="kriging_interpolation", version=2,
+        description="克里金插值（OK 默认；UK 线性漂移）：经验半变异函数 + 有界 LS 拟合 + k 邻域系统。",
         parameters=[
             ParameterSpec(
                 name="value_field", type="string", required=True,
@@ -276,6 +278,11 @@ _SEED_CONTRACTS: List[ParameterContract] = [
             ParameterSpec(
                 name="cross_validate", type="boolean", default=True,
                 description="是否执行 5 折交叉验证",
+            ),
+            ParameterSpec(
+                name="method", type="enum", default="ordinary",
+                enum_values=["ordinary", "universal"],
+                description="ordinary=常均值 OK；universal=线性坐标漂移 UK（残差变异函数）",
             ),
         ],
     ),

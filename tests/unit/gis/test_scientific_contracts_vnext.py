@@ -461,8 +461,10 @@ class TestManifestV3:
             k for k in manifest.__dict__
         } or manifest.parameter_contracts
         assert manifest.parameter_contracts.get("kriging_interpolation", {}).get(
-            "version") == 1
+            "version") == 2  # v2: method enum [ordinary, universal]
         assert "variogram_model" in manifest.parameter_contracts[
+            "kriging_interpolation"]["parameters"]
+        assert "method" in manifest.parameter_contracts[
             "kriging_interpolation"]["parameters"]
 
     def test_fingerprint_stable_and_sensitive(self):
