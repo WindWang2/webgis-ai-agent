@@ -74,7 +74,17 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         id="legend", category="legend.graduated", type="legend",
         name="Graduated Legend", name_zh="分级图例",
         placement_domain="overlay", supported_outputs=["interactive", "png", "pdf", "svg"],
-        compatible_map_models=["administrative_choropleth", "aggregate_grid", "hotspot_overlay", "proximity_overlay", "administrative_aggregation", "proportional_symbol"],  # #1075(D-6): 移除悬空 "graduated"（非 id 非别名；真别名 graduated_choropleth/choropleth 均解析到已列出的 administrative_choropleth）
+        # #1075(D-6) + V3：兼容模型清单 —— V3 扩容的全部离散分级语义模型
+        # （choropleth 族/分级点线/决策评分面）都要能挂 graduated 图例。
+        compatible_map_models=[
+            "administrative_choropleth", "aggregate_grid", "hotspot_overlay",
+            "proximity_overlay", "administrative_aggregation", "proportional_symbol",
+            # V3（ADR-0101 B1/B7）
+            "normalized_choropleth", "diverging_choropleth", "suitability_classes",
+            "risk_exposure_classes", "vulnerability_index", "equity_assessment",
+            "change_comparison_map", "site_selection_result", "mcda_score_map",
+            "graduated_point", "graduated_line", "flow_od_arc",
+        ],
         compatible_artifact_types=["admin_aggregate_table", "grid_aggregate"],
         renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
         default_variant="academic", variants=["academic", "compact", "report", "horizontal"],
@@ -85,7 +95,8 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         id="continuous_colorbar", category="legend.continuous_colorbar", type="continuous_colorbar",
         name="Continuous Colorbar", name_zh="连续色条",
         placement_domain="overlay", supported_outputs=["interactive", "png", "pdf", "svg"],
-        compatible_map_models=["visual_heatmap", "raster_surface", "density_overview"],
+        compatible_map_models=["visual_heatmap", "raster_surface", "density_overview",
+                               "terrain_analytical_surface", "spectral_index_surface"],
         compatible_artifact_types=["density_surface", "terrain_surface"],
         renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
         default_variant="horizontal", variants=["horizontal", "vertical", "slim", "scientific", "stepped"],
@@ -96,7 +107,9 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         id="categorical_legend", category="legend.categorical", type="categorical_legend",
         name="Categorical Legend", name_zh="分类图例",
         placement_domain="overlay", supported_outputs=["interactive", "png", "pdf", "svg"],
-        compatible_map_models=["categorical_thematic"],
+        compatible_map_models=["categorical_thematic", "zoning_planning",
+                               "categorized_point", "categorized_line",
+                               "service_area_overlay"],
         renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
         default_variant="academic", variants=["academic", "compact", "report", "horizontal"],
         default_position="bottom-left", allowed_positions=["bottom-left", "bottom-right", "top-left", "none"],
