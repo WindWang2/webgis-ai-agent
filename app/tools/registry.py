@@ -83,7 +83,27 @@ _VALID_TOOL_COSTS = ("light", "medium", "heavy")
 # 同步工具并发上限（见 _dispatch_impl 的 to_thread 路径）。GIL 下 CPU-bound
 # 工具超过核数无收益；给足核数余量 + 小缓冲，避免并行工具波互相拖累。
 _TOOL_THREAD_LIMIT = max(4, min(16, (os.cpu_count() or 4) + 4))
-_tool_thread_semaphore = asyncio.Semaphore(_TOOL_THREAD_LIMIT)
+# Wave 6 竞态审计修复：信号量按运行中事件循环惰性创建（LLMHttpClientRegistry
+# 同款 loop-aware 先例）。此前模块级 `asyncio.Semaphore(...)` 在首次 acquire 时
+# 绑定到当时的循环 —— pytest 函数级循环/多循环嵌入场景下，后续循环的每次
+# THREAD 工具执行都抛 "bound to a different event loop"（真实缺陷，竞态测试
+# 捕获）。既有测试 monkeypatch `_tool_thread_semaphore` 注入自定义限额的 seam
+# 保持兼容（见 _get_tool_thread_semaphore）。
+_tool_thread_semaphore: Optional[asyncio.Semaphore] = None
+_tool_thread_semaphore_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+def _get_tool_thread_semaphore() -> asyncio.Semaphore:
+    global _tool_thread_semaphore, _tool_thread_semaphore_loop
+    loop = asyncio.get_running_loop()
+    sem = _tool_thread_semaphore
+    if sem is not None:
+        bound = getattr(sem, "_loop", None)
+        if bound is None or bound is loop:
+            return sem
+    _tool_thread_semaphore = asyncio.Semaphore(_TOOL_THREAD_LIMIT)
+    _tool_thread_semaphore_loop = loop
+    return _tool_thread_semaphore
 
 # 单次工具执行的墙钟预算（秒）。默认 300s，TOOL_TIMEOUT_S 环境变量可覆盖；
 # 注册时工具声明了 timeout 元数据则优先于此处（见 _dispatch_impl）。注意
@@ -508,6 +528,20 @@ class ToolRegistry:
             "result_size_policy": result_size_policy,
             "required_fields": sorted(str(k) for k in (required or [])),
         }
+        # ADR-0101 Wave 6：注册期执行策略审计（warning 级留痕不阻断；
+        # error 级发现由 tests/unit/test_execution_policy_audit.py 对活注册表钉零）。
+        try:
+            from app.tools.policy_audit import audit_registration
+
+            for _f in audit_registration(name, func, policy, cost, timeout):
+                if _f.severity.value == "error":
+                    logger.error("[policy-audit] %s: %s (%s)", _f.tool, _f.detail, _f.code)
+                elif _f.severity.value == "warning":
+                    logger.warning("[policy-audit] %s: %s (%s)", _f.tool, _f.detail, _f.code)
+                else:
+                    logger.info("[policy-audit] %s: %s (%s)", _f.tool, _f.detail, _f.code)
+        except Exception:  # noqa: BLE001
+            pass
         # 描述符 / 指纹缓存失效（同 schema_size 失效语义）
         self._descriptor_cache.pop(name, None)
         self._schema_fp_cache.pop(name, None)
@@ -1392,14 +1426,15 @@ class ToolRegistry:
             res = tool_func(**arguments)
             return res, cache_hit_var.get()
 
-        await _tool_thread_semaphore.acquire()
+        semaphore = _get_tool_thread_semaphore()
+        await semaphore.acquire()
         try:
             thread_task = asyncio.create_task(asyncio.to_thread(_run_sync_with_cache_var))
         except BaseException:
-            _tool_thread_semaphore.release()
+            semaphore.release()
             raise
         # 槽位在线程真实结束时归还（回调在事件循环中执行）
-        thread_task.add_done_callback(lambda _t: _tool_thread_semaphore.release())
+        thread_task.add_done_callback(lambda _t: semaphore.release())
         try:
             result, thread_cache_hit = await asyncio.shield(thread_task)
         except asyncio.CancelledError:

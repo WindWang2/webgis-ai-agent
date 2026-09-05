@@ -37,6 +37,10 @@ class ToolExecutionResult:
     background_job_ids: list[str] = field(default_factory=list)
     #: 工具是否因取消而中止（区别于普通错误 —— 取消绝不触发 retry，规范 §17）
     cancelled: bool = False
+    #: ADR-0101 Wave 6：canonical 调用签名（无进展检测/replay/trace 共用词汇）
+    call_signature: str = ""
+    #: 模式级无进展原因码（exact_repeat_failure / alias_oscillation / ...）
+    no_progress_reasons: list[str] = field(default_factory=list)
 
 
 class ToolExecutionPipeline:
@@ -241,7 +245,7 @@ class ToolExecutionPipeline:
                     session_id,
                     review_error,
                 )
-        return ToolExecutionResult(
+        result = ToolExecutionResult(
             tool_name=tool_name,
             tool_call_id=tool_call_id,
             raw_result=outcome.raw_result,
@@ -252,3 +256,12 @@ class ToolExecutionPipeline:
             background_job_ids=list(origin.created_job_ids),
             cancelled=cancelled,
         )
+        # ADR-0101 Wave 6：canonical 签名 + 模式级原因码（additive 观测，
+        # 绝不改变成功/失败判定 —— 连败阈值语义保持既有）。
+        try:
+            from app.services.chat.no_progress import canonical_call_signature
+
+            result.call_signature = canonical_call_signature(tool_name, args_dict)
+        except Exception:  # noqa: BLE001
+            result.call_signature = ""
+        return result
