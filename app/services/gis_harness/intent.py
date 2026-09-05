@@ -39,6 +39,13 @@ TaskType = Literal[
     "site_selection",            # 「选址/最优位置」→ 多准则候选评价（MCDA）
     "suitability_assessment",    # 「适宜性/适建区」→ 因子标准化加权适宜面
     "risk_exposure",             # 「风险/暴露/危险源」→ 影响区×受体暴露评价
+    # ── Workflow V2（Goal C / ADR-0101）：专业领域任务族（纯加法）──────
+    "terrain_analysis",          # 「坡度/坡向/山体阴影/视域」→ 地形衍生产品
+    "watershed_analysis",        # 「流域/汇水/水文」→ DEM 水文产品
+    "spatial_autocorrelation",   # 「莫兰/空间自相关」→ global/local 统计产品
+    "temporal_trend",            # 「趋势/逐年/时序」→ 多期趋势产品（非两期对比）
+    "sar_analysis",              # 「SAR/InSAR/形变」→ 雷达产品族
+    "network_route",             # 「最短路径/最近设施/路径规划」→ 网络路径产品
 ]
 
 GeometryExpectation = Literal["point", "line", "polygon", "raster", "unknown"]
@@ -62,6 +69,13 @@ AnalysisIntent = Literal[
     "mcda_evaluation",           # 多准则决策评价（WSM/TOPSIS）
     "overlay_weighted",          # 因子标准化加权叠加（适宜性）
     "exposure_assessment",       # 影响区×受体暴露评价
+    # ── Workflow V2（Goal C / ADR-0101）：专业领域分析意图（纯加法）────
+    "terrain_derivatives",       # 地形衍生（坡度/坡向/山体阴影/视域）
+    "hydrology_analysis",        # 水文分析（填洼/流向/汇流累积/流域划分）
+    "autocorrelation_analysis",  # 空间自相关（global/local Moran/Geary）
+    "trend_analysis",            # 时序趋势（多期斜率/显著性）
+    "sar_interpretation",        # SAR 语义解译（极化/定标义务）
+    "route_analysis",            # 网络路径（最短路径/最近设施）
     "none",
 ]
 
@@ -156,7 +170,8 @@ _POLYGON_SUBJECTS = (
 )
 _LINE_SUBJECTS = ("道路", "路网", "河流", "水系", "轨道", "管线", "航线")
 _RASTER_SUBJECTS = ("遥感", "影像", "dem", "高程", "地形", "植被指数", "ndvi", "气温", "降水", "栅格",
-                    "不透水面", "satellite", "imagery", "remote sensing", "elevation", "terrain",
+                    "不透水面", "sar", "insar", "雷达", "合成孔径", "satellite", "imagery",
+                    "remote sensing", "elevation", "terrain",
                     "precipitation", "rainfall", "land cover")
 
 # 任务规则：按特异性排序（先命中先停）。每条 = (rule_id, 正则, task)
@@ -251,6 +266,50 @@ _TASK_RULES: List[tuple] = [
     ("vegetation_index_request",
      re.compile(r"(ndvi|evi|ndwi|nbr|植被指数|植被覆盖)", re.I),
      "vegetation_index"),
+    # ── Workflow V2（Goal C / ADR-0101）：专业领域任务规则（纯加法）────
+    # 规则序契约：都是词汇高度特异的专业语义，置于 mobility/simple_view/
+    # raster_subject 等宽规则之前；不影响既有规则的命中（corpus 回归锁定）。
+    # SAR 语义（含形变/沉降应用）是最强的栅格计算信号 —— 先于 raster 主体。
+    ("sar_analysis_request",
+     re.compile(r"(\bsar\b|\binsar\b|合成孔径|雷达影像|干涉测量|差分干涉|"
+                r"形变监测|地表形变|地面沉降|沉降监测|deformation\s+monitoring|"
+                r"ground\s+settlement|interferometric)", re.I),
+     "sar_analysis"),
+    # 地形衍生（坡度/坡向/山体阴影/视域）是计算任务；「地形/dem/高程」的
+    # 单纯查看仍归 raster_subject → raster_distribution（数据查看 ≠ 衍生分析）。
+    ("terrain_analysis_request",
+     re.compile(r"(坡度|坡向|山体阴影|地形因子|地形分析|地形起伏|地势|"
+                r"视域|通视|可视域|hillshade|slope\s+(?:analysis|map)|aspect\s+map|"
+                r"viewshed|ruggedness|terrain\s+derivatives?|tint\s+band)", re.I),
+     "terrain_analysis"),
+    # 流域/汇水/水文是 DEM 水文计算语义（「流域」同时是 polygon 主体词，
+    # 但任务规则先于主体派生，保证 watershed_analysis 一等路由）。
+    ("watershed_analysis_request",
+     re.compile(r"(流域|汇水|集水|水文分析|分水岭|河流提取|汇流累积|"
+                r"watershed|catchment|hydrology|drainage|flow\s+accumulation|"
+                r"stream\s+extraction|pour\s+point)", re.I),
+     "watershed_analysis"),
+    # 空间自相关（莫兰/Geary/LISA）是统计检验语义，与「热点」
+    # (concentration_hotspot) 分属不同方法族；「热点」规则在先且词表不相交。
+    ("spatial_autocorrelation_request",
+     re.compile(r"(空间自相关|自相关|莫兰|moran|geary|lisa|局部聚集指数|"
+                r"聚集显著性|spatial\s+autocorrelation|local\s+clusters?|"
+                r"cluster\s+significance|cluster\s+map)", re.I),
+     "spatial_autocorrelation"),
+    # 时序趋势（多期斜率/显著性）强于两期对比 —— 必须先于 change_detection
+    # 命中（「变化趋势」「逐年变化」含「变化」子串）。
+    ("temporal_trend_request",
+     re.compile(r"(变化趋势|趋势分析|动态趋势|逐年|年际|多(?:年|期)变化|时间序列|时序分析|"
+                r"长系列|季节性趋势|temporal\s+trend|time\s+series|trend\s+analysis|"
+                r"annual\s+(?:change|variation)|interannual)", re.I),
+     "temporal_trend"),
+    # 网络路径（最短路径/最近设施）与可达性（服务区/等时圈）分属不同产品；
+    # 词表不相交（「可达/服务区」仍归 accessibility 规则）。
+    ("network_route_request",
+     re.compile(r"(最短路径|最短路线|最短距离|最近设施|最近的(?:医院|站点|设施)|"
+                r"路径规划|导航路线|配送路线|shortest\s+path|shortest\s+route|"
+                r"closest\s+facility|nearest\s+facility|route\s+planning|directions?\s+between)", re.I),
+     "network_route"),
     # ADR-0092 G11/G12：流动语义（通勤/出行/客流 OD）先于展示动词命中，
     # 避免「展示…通勤流」被 simple_view 吞掉。
     ("mobility_flow_request",
@@ -482,6 +541,50 @@ def _task_specific_intents(task: str, query: str) -> tuple:
             ["map", "statistics", "summary"],
             "exposure", "district",
         )
+    # ── Workflow V2（Goal C / ADR-0101）：专业领域派生意图 ──────────────
+    if task == "terrain_analysis":
+        return (
+            ["terrain_derivatives", "profile"],
+            ["raster_surface", "isoline_contour"],
+            ["map", "statistics", "summary"],
+            "area", "",
+        )
+    if task == "watershed_analysis":
+        return (
+            ["hydrology_analysis", "terrain_derivatives", "profile"],
+            ["raster_surface", "proximity_overlay"],
+            ["map", "statistics", "summary"],
+            "area", "",
+        )
+    if task == "spatial_autocorrelation":
+        return (
+            ["autocorrelation_analysis", "administrative_aggregation",
+             "administrative_summary"],
+            ["administrative_choropleth", "hotspot_overlay"],
+            ["map", "statistics", "chart", "summary"],
+            "statistic", "district",
+        )
+    if task == "temporal_trend":
+        return (
+            ["trend_analysis", "profile"],
+            ["raster_surface", "point_overlay"],
+            ["map", "chart", "statistics", "summary"],
+            "trend", "",
+        )
+    if task == "sar_analysis":
+        return (
+            ["sar_interpretation", "profile"],
+            ["raster_surface"],
+            ["map", "statistics", "summary"],
+            "area", "",
+        )
+    if task == "network_route":
+        return (
+            ["route_analysis", "profile"],
+            ["proximity_overlay", "point_overlay"],
+            ["map", "statistics", "summary"],
+            "length", "",
+        )
     return (["profile"], ["point_overlay"], ["map"], "count", "")
 
 
@@ -627,6 +730,13 @@ _HINT_PROTECTED_TASKS = (
     "site_selection",
     "suitability_assessment",
     "risk_exposure",
+    # Workflow V2（Goal C）：专业分析族是确定性规则推导的科学结论，LLM hint
+    # 只能纠偏更弱的判定，不得降级为视觉/概览任务。
+    "terrain_analysis",
+    "watershed_analysis",
+    "spatial_autocorrelation",
+    "temporal_trend",
+    "sar_analysis",
 )
 
 

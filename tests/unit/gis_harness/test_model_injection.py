@@ -74,7 +74,10 @@ class TestNewRecipeSelectionAndEligibility:
             "suitability_assessment", "risk_exposure",
         }
         assert decision <= set(reg.all_ids)
-        assert reg.count == 17
+        # Workflow V2（Goal C / ADR-0101）：17 个 V1 seed 之外，24 个领域包
+        # 追加 147 个专业工作流 recipe（catalog 由 registry 生成，见
+        # docs/workflows/workflow-catalog.md）。规模锚点扩容为 164。
+        assert reg.count == 17 + 147
 
     @pytest.mark.parametrize(
         "query,winner", [
