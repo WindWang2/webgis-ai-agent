@@ -3,7 +3,9 @@
 Companion to :mod:`app.lib.geo_analysis.interpolation` (IDW) — the same GIS
 contract applies, plus the RBF-specific ones:
 
-* **Kernels** — thin_plate_spline (default) / linear / cubic / multiquadratic
+* **Kernels** — thin_plate_spline (default) / linear / cubic / quintic
+*   （``multiquadratic`` 已移除：scipy≥1.17 删除该核且需要本包装不
+*    暴露的 epsilon —— 模式校验接受它只会让合法请求必然崩溃。）
   / quintic, with ``smoothing`` (0 = exact interpolant through the samples)
   and a local-RBF ``neighbors`` cap (scipy's KdTree neighbourhood, 1-64).
   Deterministic: no RNG anywhere on the path.
@@ -44,7 +46,7 @@ from app.lib.gis.uncertainty import ValidationMetrics
 
 logger = logging.getLogger(__name__)
 
-RBF_KERNELS = ("thin_plate_spline", "linear", "cubic", "multiquadratic", "quintic")
+RBF_KERNELS = ("thin_plate_spline", "linear", "cubic", "quintic")
 
 # ── scale guards (execution-policy contract) ────────────────────────────────
 RBF_SUBSAMPLE_TARGET = 20_000   # above this: deterministic stride subsample
@@ -58,7 +60,7 @@ def _validate_kernel(kernel: str) -> str:
     if kernel not in RBF_KERNELS:
         raise UnsupportedMethod(
             f"RBF kernel 必须是 {RBF_KERNELS} 之一，got {kernel!r}",
-            correction_hint="选择 thin_plate_spline（默认）/linear/cubic/multiquadratic/quintic。",
+            correction_hint="选择 thin_plate_spline（默认）/linear/cubic/quintic。",
         )
     return kernel
 

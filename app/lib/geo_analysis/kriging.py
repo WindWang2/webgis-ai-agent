@@ -359,8 +359,13 @@ def ordinary_kriging(
     ``degraded_cells`` — never silent).
     """
     n = len(fit_vals)
-    if n < 1:
-        raise KrigingInputError("ordinary_kriging needs at least one sample")
+    if n < 2:
+        # MINOR-3（数值评审）：n=1 时 k=max(2,…) 越界 → cKDTree padding
+        # 索引触发 IndexError；公开 API 应类型化拒绝。
+        from app.lib.gis.scientific_errors import InsufficientSamples
+
+        raise InsufficientSamples(
+            f"ordinary kriging needs at least 2 samples (got {n})")
     k = int(max(2, min(k, MAX_NEIGHBORS, n)))
     tree = cKDTree(fit_pts)
     dist_t, idx_t = tree.query(target_pts, k=k)
@@ -999,6 +1004,9 @@ def kriging_interpolation(
             ]],
         }
         target_cells = set(h3.geo_to_cells(bbox_polygon, resolution))
+    # MINOR-8（数值评审）：set 迭代序随 PYTHONHASHSEED 跨进程漂移 ——
+    # 复现性契约要求确定性记录序，统一排序后进入 latlng 循环。
+    target_cells = sorted(target_cells)
     if not target_cells:
         raise KrigingInputError(
             "H3 polyfill 返回 0 个单元（极地/全球边缘情况）；无法生成克里金表面。"

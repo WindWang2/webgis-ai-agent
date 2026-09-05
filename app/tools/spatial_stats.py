@@ -299,7 +299,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
 
     @tool(registry, name="quadrat_analysis",
            description="样方 χ² 点格局离散检验（m×n 网格，期望N/(mn)，df=mn-1）+方差均值比VMR；"
-                       "p<0.05 拒绝完全空间随机（聚集/均匀判别），需米制坐标（自动投影UTM）",
+                       "双侧 p<0.05 拒绝完全空间随机（VMR>1 聚集 / VMR<1 均匀），需米制坐标（自动投影UTM）",
            tier=2, domains=["statistics"],
            param_descriptions={
                "geojson": "输入点要素 GeoJSON FeatureCollection 或数据引用(ref:xxx)",

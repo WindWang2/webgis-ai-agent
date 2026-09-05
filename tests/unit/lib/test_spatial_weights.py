@@ -161,10 +161,13 @@ def test_distance_band_binary_and_include_self():
     assert dense[0, 1] == 1 and dense[1, 2] == 1 and dense[0, 2] == 0
     assert np.trace(dense) == 0
     assert wm.islands == [3]
-    # Gi* form keeps w_ii = 1
+    # Gi* form: w_ii = 1 ADDED ON TOP of off-diagonal neighbours
+    # （B1 回归锁：include_self 不得丢弃非对角项 —— 单位阵 = bug）
     wm_star = build_distance_band_weights(coords, threshold=10.0, include_self=True)
     dense_star = wm_star.matrix.toarray()
     assert np.allclose(np.diag(dense_star), 1.0)
+    assert dense_star[0, 1] == 1 and dense_star[1, 2] == 1 and dense_star[0, 2] == 0
+    assert wm_star.s0 == pytest.approx(1.0 * len(coords) + 2 * 2.0)  # diag + 2 对称边
     assert wm_star.include_self is True
     assert wm_star.threshold == 10.0
 

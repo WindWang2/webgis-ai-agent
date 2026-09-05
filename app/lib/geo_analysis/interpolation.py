@@ -290,7 +290,7 @@ def _target_cells_for_samples(
         bbox_b = {"type": "Polygon", "coordinates": [[[-180.0, min_lat], [raw_min_lon, min_lat], [raw_min_lon, max_lat], [-180.0, max_lat], [-180.0, min_lat]]]}
         cells_a = h3.geo_to_cells(bbox_a, resolution) if raw_max_lon < 180.0 else set()
         cells_b = h3.geo_to_cells(bbox_b, resolution) if raw_min_lon > -180.0 else set()
-        target_cells: Any = set(cells_a) | set(cells_b)
+        target_cells: Any = sorted(set(cells_a) | set(cells_b))
         # Fallback: if split produced nothing (tiny band at exact 180), fall back to narrow strip
         if not target_cells:
             narrow = {"type": "Polygon", "coordinates": [[[min_lon, min_lat], [max_lon, min_lat], [max_lon, max_lat], [min_lon, max_lat], [min_lon, min_lat]]]}

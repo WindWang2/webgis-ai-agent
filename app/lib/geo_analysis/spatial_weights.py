@@ -194,13 +194,15 @@ def build_knn_weights(
         )
     k_actual = max(1, min(int(k), n - 1))
     tree = cKDTree(coords)
-    # Query one extra neighbour so dropping self always leaves k_actual.
+    # Query one extra neighbour so dropping self *usually* leaves k_actual.
+    # 重合点簇（>k+1 个重合点）：tie-break 可能把 self 排出 k+1 邻域，
+    # 行贡献数不再恒为 k_actual —— rows 必须从逐行计数派生（评审
+    # MAJOR-1：此前 np.repeat(·, k_actual) 在该场景引发 COO 长度失配）。
     _, idx = tree.query(coords, k=k_actual + 1)
-    # Vectorized self-exclusion (E-4): boolean-index flattens row-major,
-    # each row's k_actual non-self neighbours in distance order — O(n·k).
     mask = idx != np.arange(n)[:, None]
     cols = idx[mask]
-    rows = np.repeat(np.arange(n), k_actual)
+    per_row = mask.sum(axis=1)
+    rows = np.repeat(np.arange(n), per_row)
     data = np.ones(len(rows), dtype=float)
     w = sparse.coo_matrix((data, (rows, cols)), shape=(n, n)).tocsr()
     if symmetrize:
@@ -240,7 +242,10 @@ def build_distance_band_weights(
     tree = cKDTree(coords)
     coo = tree.sparse_distance_matrix(
         tree, max_distance=threshold, output_type="coo_matrix")
-    keep = (coo.row == coo.col) if include_self else (coo.row != coo.col)
+    # B1（科学评审）：include_self 是在非对角项**之上**加 w_ii=1，
+    # 不是只留对角 —— 此前的条件表达式把 Gi* 权重变成了单位阵。
+    keep = (coo.row != coo.col) | \
+        (include_self & (coo.row == coo.col))
     m = sparse.csr_matrix(
         (np.ones(int(keep.sum()), dtype=float), (coo.row[keep], coo.col[keep])),
         shape=(n, n),
@@ -281,14 +286,19 @@ def build_inverse_distance_weights(
             limit=f"{_MAX_IDW_OBSERVATIONS}×{_MAX_IDW_OBSERVATIONS} pairs",
             correction_hint="reduce the observation count or use knn/distance_band weights",
         )
-    if power <= 0:
-        raise ValueError(f"power must be > 0 (got {power})")
+    # MINOR-6（数值评审）：power 上限与 IDW 契约一致 —— 极端幂次在
+    # ε=1e-9 下溢出 → w=0 → 全岛矩阵（形式合法但退化）。
+    if not 0 < power <= 5:
+        from app.lib.gis.scientific_errors import UnsupportedMethod
+
+        raise UnsupportedMethod(
+            f"inverse-distance power must be in (0, 5] (got {power})",
+            correction_hint="use power 1-2 for typical inverse-distance weights")
     if epsilon <= 0:
         raise ValueError(f"epsilon must be > 0 (got {epsilon})")
     d = cdist(coords, coords)
     np.fill_diagonal(d, np.inf)  # self excluded → weight 0
-    with np.errstate(over="ignore"):
-        w = 1.0 / np.power(d + epsilon, power)
+    w = 1.0 / np.power(d + epsilon, power)
     w[~np.isfinite(w)] = 0.0
     m = sparse.csr_matrix(w)
     if row_standardized:

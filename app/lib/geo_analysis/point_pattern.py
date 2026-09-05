@@ -26,6 +26,7 @@ from app.lib.gis.scientific_errors import (
 # Ripley K 是 O(n²) 级成对统计（r_max 内的成对距离）——超过该上限诚实拒绝
 # （ResourceScaleMismatch 先于 OOM）。
 _MAX_RIPLEY_OBSERVATIONS = 20000
+_MAX_RIPLEY_PAIRS = 50_000_000   # ~0.8 GB COO; estimate-before-allocate
 
 # 1/w 的下限：角落处 inside-fraction 可以很小，但 1/w 必须有界。
 _MIN_INSIDE_FRACTION = 1e-9
@@ -178,6 +179,20 @@ def ripley_k(
     from scipy.spatial import cKDTree
 
     tree = cKDTree(xy)
+    # 评审 MAJOR-2：内存由 r_max 内的**配对数**驱动，n 上限不构成 OOM
+    # 防线（紧簇 + 大窗 → 数亿配对）。先以 count_neighbors 估算配对
+    # 预算（每查询点 O(log n)），超限先拒绝。
+    pair_budget = _MAX_RIPLEY_PAIRS
+    n_pairs_est = int(tree.count_neighbors(tree, r_max)) - n  # 含自身，去对角
+    if n_pairs_est > pair_budget:
+        raise ResourceScaleMismatch(
+            f"Ripley's K pair budget exceeded: ~{n_pairs_est} pairs within "
+            f"r_max={r_max:.1f} m",
+            estimated=f"~{n_pairs_est * 16 / 1e9:.2f} GB COO pairs",
+            limit=f"{pair_budget} pairs",
+            correction_hint="reduce max_distance_ratio, aggregate to a grid "
+                            "(h3_binning), or subsample",
+        )
     coo = tree.sparse_distance_matrix(
         tree, max_distance=r_max, output_type="coo_matrix")
     keep = coo.row != coo.col
@@ -260,9 +275,9 @@ def quadrat_test(
             correction_hint="add observations or reduce the quadrat grid",
         )
 
-    window = _require_window(xy, window)
+    window = _require_window(xy, window)   # 恒非 None（缺省取数据 bbox）
     xmin, ymin, xmax, ymax = window
-    if window is not None:
+    if True:
         # Fixed study area: points outside it would be silently dropped by
         # histogram2d — refuse instead (a window/points mismatch, not CSR).
         inside = (
@@ -288,7 +303,11 @@ def quadrat_test(
 
     chi2_stat = float(np.sum((counts - expected) ** 2 / expected))
     df = n_cells - 1
-    p_value = float(chi2_dist.sf(chi2_stat, df))
+    # M1（科学评审修复）：双侧离散检验 —— 单侧上尾在数学上永远到不了
+    # "regular" 分支（p<0.05 ⇒ VMR>1）。分散（均匀）备择假设用下尾。
+    p_upper = float(chi2_dist.sf(chi2_stat, df))     # 聚集备择
+    p_lower = float(chi2_dist.cdf(chi2_stat, df))    # 均匀备择
+    p_value = float(min(1.0, 2.0 * min(p_upper, p_lower)))  # 双侧
 
     counts_var = float(np.var(counts, ddof=1))
     vmr = counts_var / expected if expected > 0 else 0.0
@@ -300,18 +319,18 @@ def quadrat_test(
 
     if pattern == "clustered":
         interp = (
-            f"样方计数显著偏离均匀（χ²={chi2_stat:.2f}, df={df}, p={p_value:.4f}），"
-            f"VMR={vmr:.2f}>1：点呈聚集分布。"
+            f"样方计数显著高于均匀离散（χ²={chi2_stat:.2f}, df={df}, "
+            f"双侧 p={p_value:.4f}），VMR={vmr:.2f}>1：点呈聚集分布。"
         )
     elif pattern == "regular":
         interp = (
-            f"样方计数显著偏离均匀（χ²={chi2_stat:.2f}, df={df}, p={p_value:.4f}），"
-            f"VMR={vmr:.2f}<1：点呈规则/均匀分布。"
+            f"样方计数显著低于均匀离散（χ²={chi2_stat:.2f}, df={df}, "
+            f"双侧 p={p_value:.4f}），VMR={vmr:.2f}<1：点呈规则/均匀分布。"
         )
     else:
         interp = (
-            f"未拒绝完全空间随机（χ²={chi2_stat:.2f}, df={df}, p={p_value:.4f}），"
-            f"VMR={vmr:.2f}：与 CSR 一致。"
+            f"未拒绝完全空间随机（χ²={chi2_stat:.2f}, df={df}, "
+            f"双侧 p={p_value:.4f}），VMR={vmr:.2f}：与 CSR 一致。"
         )
     summary = f"Quadrat test ({grid_rows}×{grid_cols}, n={n}): {interp}"
 

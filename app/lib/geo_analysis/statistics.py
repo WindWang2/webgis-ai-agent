@@ -135,8 +135,12 @@ def _build_weights(gdf: gpd.GeoDataFrame, k: int = 8) -> sparse.coo_matrix:
     # flattens row-major with column order preserved — O(n·k), no Python loop
     # (review G: the per-row loop was a 46x stage regression at n=10k).
     mask = idx != np.arange(n)[:, None]
-    cols = idx[mask]  # (n·k_actual,) row-major, each row's k_actual non-self
-    rows = np.repeat(np.arange(n), k_actual)
+    cols = idx[mask]  # row-major, per-row variable length
+    # 评审 MAJOR-1：重合点簇 >k+1 时 tie-break 可能把 self 排出 k+1 邻域，
+    # 逐行贡献数不再恒为 k_actual —— rows 从逐行计数派生（与
+    # spatial_weights.build_knn_weights 同一修复）。
+    per_row = mask.sum(axis=1)
+    rows = np.repeat(np.arange(n), per_row)
     data = np.ones(len(rows), dtype=float)
     return sparse.coo_matrix((data, (rows, cols)), shape=(n, n))
 
@@ -835,7 +839,10 @@ def hotspot_narrated(geojson: dict, value_field: str, distance_band: float = 0) 
     denominators = np.where(denom_inners > 0, s * np.sqrt(denom_inners), 0)
     with np.errstate(invalid="ignore", divide="ignore"):
         gi_stars = np.where(denominators != 0, numerators / denominators, 0)
-    p_vals = 2 * (1 - norm.cdf(np.abs(gi_stars)))
+    # MINOR-4（科学评审）：解析 p 在 |Gi*| 极大时下溢为精确 0 ——
+    # 分支的 E-8「永不精确零」哲学同样适用于解析路径。
+    _TINY_P = 1e-16
+    p_vals = np.maximum(2 * (1 - norm.cdf(np.abs(gi_stars))), _TINY_P)
 
     # G-6（#870）：BH-FDR 校正 —— n 个单元各按 α=0.05 独立检验时，完全
     # 随机数据也期望产出 0.05×n 个"显著"热点并直接上图。q 值随要素输出，

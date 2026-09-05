@@ -385,15 +385,24 @@ def aggregate_with_denominator(
     if numerator_field is None:
         counts = joined.groupby("index_right").size()
         numerator = zones.index.map(counts).fillna(0).astype("int64")
+    support_counts = joined.groupby("index_right").size()
+    has_support = zones.index.map(support_counts).fillna(0) > 0
+    if numerator_field is None:
+        numerator = zones.index.map(counts).fillna(0).astype("int64")
     else:
         values = pd.to_numeric(joined[numerator_field], errors="coerce")
         nan_numerator_excluded = int(values.isna().sum())
         sums = values.groupby(joined["index_right"]).sum(min_count=1)
         numerator = zones.index.map(sums).astype("float64").fillna(0.0)
-        # Zones whose features were ALL NaN keep numerator 0 but must not look
-        # like a true zero — has_support below distinguishes support.
-    support_counts = joined.groupby("index_right").size()
-    has_support = zones.index.map(support_counts).fillna(0) > 0
+        # M2（科学评审修复）：有相交要素但数值**全部** NaN 的区 —— 分子
+        # 无任何有效观测，绝不能伪装成真零（rate=0 + has_support=True 会
+        # 把它与真实零混淆）→ NaN（rate=None）。无要素区的 0 是真实计数
+        # 零，保留（has_support=False 已经区分了支撑语义）。
+        valid_counts = values.dropna().groupby(joined["index_right"]).size()
+        fabricated = has_support & (zones.index.map(valid_counts).fillna(0) == 0)
+        numerator = pd.Series(
+            np.asarray(numerator, dtype="float64"), index=zones.index
+        ).mask(fabricated, np.nan)
 
     # Explicit denominator (never implicit, never invented).
     area_crs = ""

@@ -458,9 +458,23 @@ def _average_ranks(x: np.ndarray) -> np.ndarray:
     return ranks
 
 
+_MK_MAX_N = 1024   # 与 Sen 斜率同策略：n×n 差矩阵的确定性上限
+
+
 def _mk_s_and_var(vals: np.ndarray) -> Tuple[int, float, int]:
-    """Mann-Kendall S、tie 校正 Var(S)、并列组数（kendall1975）。"""
+    """Mann-Kendall S、tie 校正 Var(S)、并列组数（kendall1975）。
+
+    评审 MAJOR-3：n×n 差矩阵无上限会在 n=20k 时吃 3.2 GB+。与
+    ``compute_sens_slope`` 同策略 —— 超限时确定性等距子采样（披露给
+    调用方），统计结论仍有效但需在 evidence 中注明。
+    """
     n = int(vals.size)
+    subsampled = False
+    if n > _MK_MAX_N:
+        stride = int(np.ceil(n / _MK_MAX_N))
+        vals = vals[::stride]
+        n = int(vals.size)
+        subsampled = True
     # D[i, j] = x_j − x_i；上三角 (i<j) 的符号和即 S = Σ_{i<j} sign(x_j − x_i)。
     d = vals[None, :] - vals[:, None]
     iu = np.triu_indices(n, k=1)
@@ -469,7 +483,7 @@ def _mk_s_and_var(vals: np.ndarray) -> Tuple[int, float, int]:
     _, counts = np.unique(vals, return_counts=True)
     tie_term = int(np.sum([t * (t - 1) * (2 * t + 5) for t in counts if t > 1]))
     var_s = (n * (n - 1) * (2 * n + 5) - tie_term) / 18.0
-    return s, float(var_s), int(np.sum(counts > 1))
+    return s, float(var_s), int(np.sum(counts > 1)), subsampled
 
 
 def _mk_z_and_p(s: int, var_s: float) -> Tuple[float, float]:
@@ -529,9 +543,13 @@ def mann_kendall(values: Sequence[float], alpha: float = 0.05) -> Dict[str, Any]
     if n < 8:
         warnings.append(f"样本过少（n={n}），仅描述性解读")
 
-    s, var_s, tie_groups = _mk_s_and_var(vals)
+    s, var_s, tie_groups, mk_subsampled = _mk_s_and_var(vals)
     if var_s <= 0:
         warnings.append("序列并列结构使 Var(S)=0（常量/近常量序列）——无趋势可检")
+    if mk_subsampled:
+        warnings.append(
+            f"序列长度超过 {_MK_MAX_N}，已确定性等距子采样后计算 MK "
+            f"（评审 MAJOR-3 内存护栏；p 值为子采样近似）")
     z, p = _mk_z_and_p(s, var_s)
 
     r1 = _lag1_rank_autocorr(vals)
@@ -609,7 +627,7 @@ def seasonal_mann_kendall(
                 "reason": "观测数 < 3，跳过（不并入池化）",
             })
             continue
-        s_k, var_k, ties_k = _mk_s_and_var(season_vals)
+        s_k, var_k, ties_k, _ = _mk_s_and_var(season_vals)
         s_total += s_k
         var_total += var_k
         per_season.append({

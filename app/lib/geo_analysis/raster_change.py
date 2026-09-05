@@ -432,8 +432,11 @@ def ratio_change(
             out=np.full(af.shape, np.nan, dtype=float),
             where=valid & (bf != 0),
         )
-        with np.errstate(invalid="ignore", divide="ignore"):
-            out = np.log(np.where(ratio > 0, ratio, np.nan))
+        with np.errstate(invalid="ignore", divide="ignore", over="ignore"):
+            # MINOR-1（数值评审）：非有限 ratio（溢出/下正规）同样 gate 掉，
+            # 不让 Inf 泄漏进输出数组。
+            out = np.log(np.where(
+                np.isfinite(ratio) & (ratio > 0), ratio, np.nan))
         formula = "log(a) − log(b) == log(a / b)（对数域对称）"
 
     out = np.where(valid, out, np.nan)

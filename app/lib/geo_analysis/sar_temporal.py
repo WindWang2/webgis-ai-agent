@@ -151,17 +151,24 @@ def temporal_stack_statistics(
         valid &= arr != float(nodata)
 
     filled = np.where(valid, arr, np.nan)
-    with np.errstate(invalid="ignore"):
-        if product_key == "mean":
-            out = np.nanmean(filled, axis=0)
-        elif product_key == "std":
-            out = np.nanstd(filled, axis=0)   # 总体标准差（ddof=0），文档化
-        elif product_key == "min":
-            out = np.nanmin(filled, axis=0)
-        elif product_key == "max":
-            out = np.nanmax(filled, axis=0)
-        else:  # range
-            out = np.nanmax(filled, axis=0) - np.nanmin(filled, axis=0)
+    # MINOR-7（数值评审）：全无效切片的 nan-statistics 会经 warnings 模块
+    # 发 RuntimeWarning（errstate 管不住）——显式压制；无效计数已在 meta
+    # 诚实披露，警告是重复噪声。
+    import warnings as _warnings
+
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("ignore", RuntimeWarning)
+        with np.errstate(invalid="ignore"):
+            if product_key == "mean":
+                out = np.nanmean(filled, axis=0)
+            elif product_key == "std":
+                out = np.nanstd(filled, axis=0)   # 总体标准差（ddof=0），文档化
+            elif product_key == "min":
+                out = np.nanmin(filled, axis=0)
+            elif product_key == "max":
+                out = np.nanmax(filled, axis=0)
+            else:  # range
+                out = np.nanmax(filled, axis=0) - np.nanmin(filled, axis=0)
     out = np.asarray(out, dtype=float)
 
     counts = np.sum(valid, axis=0)
@@ -185,17 +192,33 @@ def temporal_stack_statistics(
 def vh_ratio(
     vv_arr: np.ndarray, vh_arr: np.ndarray, *, nodata: Optional[np.ndarray] = None
 ) -> Dict[str, object]:
-    """VV/VH 极化比（ vegetation structure 代理；VH=0 → NaN）。
+    """VV/VH 极化比（结构对比代理；VH=0 → NaN）。
 
-    线性比例假设：dB 域输入时结果是 dB 差（等价的对比度量）——单位
-    语义由输入决定并在 disclosure 声明。
+    C1（科学评审修复）：本函数计算的是**线性功率/强度域**的比值
+    ``vv/vh``。dB 域（对数域）输入的等价对比度量是差值 VV−VH，与本
+    实现完全不同 —— 此前 "dB 域输入结果是 dB 差" 的声明是错误的
+    （负 dB 值相除会产生无意义的符号比值）。线性功率非负：负值输入
+    抛 UnsupportedMethod（提示先做线性定标或改用 log_ratio_change）。
     """
+    vv = np.asarray(vv_arr, dtype=float)
+    vh = np.asarray(vh_arr, dtype=float)
+    finite = np.isfinite(vv) & np.isfinite(vh)
+    if nodata is not None:
+        finite &= ~np.equal(nodata, True)
+    if finite.any() and ((vv[finite] < 0) | (vh[finite] < 0)).any():
+        from app.lib.gis.scientific_errors import UnsupportedMethod
+
+        raise UnsupportedMethod(
+            "vh_ratio 需要线性功率/强度域输入（非负）；检测到负值 —— "
+            "输入疑似 dB 对数域。请先做线性定标，或改用 "
+            "temporal_log_ratio_change（dB 差语义）",
+            correction_hint="linear-power calibration first, or use log-ratio")
     result = ratio_change(
         vv_arr, vh_arr, method="ratio", nodata=nodata)
     result["meta"]["disclosure"] = (
-        "VV/VH 极化比：线性域为比值、dB 域为 dB 差（VV−VH）；"
-        "无辐射定标假定下仅作结构对比代理")
-    result["meta"]["formula"] = "vv / vh"
+        "VV/VH 极化比（线性功率域比值 vv/vh）；dB 域输入请改用 "
+        "log-ratio（VV−VH）；无辐射定标假定下仅作结构对比代理")
+    result["meta"]["formula"] = "vv / vh (linear power)"
     return result
 
 

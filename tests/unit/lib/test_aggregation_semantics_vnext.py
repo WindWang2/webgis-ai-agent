@@ -194,8 +194,11 @@ def test_nan_numerator_excluded_and_disclosed():
         feats, zones, numerator_field="val", denominator="pop",
         denominator_kind="field")
     assert ev["nan_numerator_excluded"] == 2
-    assert out["numerator"].tolist() == [0.0]
-    assert out["has_support"].tolist() == [True]  # features existed, all-NaN
+    # M2 修正语义：有相交要素但数值全 NaN → 分子 NaN（绝不伪装真零）、
+    # 无 rate 支撑（此前 numerator=0.0 + has_support=True 是伪造证据）。
+    assert out["numerator"].isna().tolist() == [True]
+    assert out["has_support"].tolist() == [True]      # 有相交要素
+    assert out["rate"].isna().tolist() == [True]      # 但无有效分子
 
 
 # ── 10. rate ≠ count honesty (descriptors) ────────────────────────────

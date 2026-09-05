@@ -170,3 +170,24 @@ def test_quadrat_csr_not_significant():
     with pytest.raises(ValueError, match="outside"):
         quadrat_test(np.array([[150.0, 50.0]] * 10), crs=METRIC_CRS,
                      window=WINDOW)
+
+
+# ── M1 回归锁：双侧离散检验 —— regular 分支必须可达 ──────────────────
+def test_quadrat_two_sided_regular_branch():
+    """完美晶格（每样方恰 1 点，χ²=0）→ regular（单侧检验永远到不了）。"""
+    import numpy as np
+    xs, ys = np.meshgrid(np.linspace(5, 95, 4), np.linspace(5, 95, 4))
+    xy = np.column_stack([xs.ravel(), ys.ravel()])
+    out = quadrat_test(xy, grid_rows=4, grid_cols=4)
+    assert out["pattern"] == "regular"
+    assert out["p_value"] <= 0.05
+
+
+def test_quadrat_clustered_branch_survives_two_sided():
+    import numpy as np
+    rng = np.random.RandomState(42)
+    xy = np.column_stack([
+        rng.normal(30, 3, 60), rng.normal(30, 3, 60)]).clip(0, 100)
+    out = quadrat_test(xy, grid_rows=4, grid_cols=4)
+    assert out["pattern"] == "clustered"
+    assert out["p_value"] < 0.05

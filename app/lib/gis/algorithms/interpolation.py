@@ -221,7 +221,7 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
             ParameterSpec(
                 name="kernel", type="enum", default="thin_plate_spline",
                 enum_values=["thin_plate_spline", "linear", "cubic",
-                             "multiquadratic", "quintic"],
+                             "quintic"],
                 description="RBF 核（薄板样条默认；无 gaussian 核——病态风险）",
             ),
             ParameterSpec(

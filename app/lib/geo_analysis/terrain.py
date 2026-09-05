@@ -170,7 +170,12 @@ def topographic_position_index(
 def roughness(
     dem: np.ndarray, window: int = 3, nodata: Optional[float] = None,
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
-    """粗糙度（Wilson et al. 2007）：邻域窗口内高程标准差（总体 std，ddof=0）。"""
+    """粗糙度：邻域窗口内高程标准差（总体 std，ddof=0）。
+
+    注：Wilson et al. (2007) 的 roughness 原口径是 max−min；本实现
+    采用窗口标准差（也是常见 GIS 实现口径），引用 wilson2007 指
+    「多尺度地形分析」语境而非公式本身。
+    """
     window = _validate_window(window)
     z, valid = _prepare(dem, nodata)
     zv = np.where(valid, z, 0.0)
@@ -184,7 +189,8 @@ def roughness(
     meta = _meta_base(
         "terrain.roughness", valid, window=window,
         units="same as input elevation",
-        method="roughness = population stddev over k x k window (Wilson et al. 2007)",
+        method="roughness = population stddev over k x k window "
+                      "(stddev convention; cf. Wilson et al. 2007)",
         numerical_tolerance=(
             "integral-image variance can lose precision when window means are"
             " large relative to their spread; integer-valued fixtures are exact"),
@@ -198,7 +204,9 @@ def roughness(
 def terrain_ruggedness_index(
     dem: np.ndarray, nodata: Optional[float] = None,
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
-    """TRI（Riley et al. 1999, Wilson et al. 2007 口径）：
+    """TRI（Riley et al. 1999 sqrt-of-sum 口径；Wilson et al. 2007 的口径
+
+    是均方差 —— 本实现取 Riley 形式）：
     sqrt(Σ (z − z_neighbor)²) over 8 个直接邻域（边界收缩为可得邻域）。"""
     z, valid = _prepare(dem, nodata)
     acc = np.zeros_like(z)
@@ -358,11 +366,11 @@ def viewshed(
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """布尔视域：扇区化视线角扫描（R3 型判据的向量化实现）。
 
-    判据（精确）：观察点 O（高程 = 观察点地形 + observer_height），目标
-    T（= 目标地形 + target_height）。O→T 视线在沿途每一点的仰角恒等于
-    atan2(z_T − z_O, dist(T))；故 T 可见 ⇔ 沿 O→T 射线的全部中间地形
-    采样（~1 像元步长，扇区中心方向 bilinear 采样）的仰角都 ≤ 目标仰角
-    （相切记为可见，容差 1e-12 rad）。无地球曲率/大气折射（meta 披露）。
+    判据（R3 型近似）：观察点 O（高程 = 观察点地形 + observer_height），
+    目标 T（= 目标地形 + target_height）。T 可见 ⇔ 沿 O→T 射线的中间
+    地形采样（~1 像元步长，**扇区中心方向** bilinear 采样 —— 非逐目标
+    精确射线，扇区角离散是公开近似）的仰角都 ≤ 目标仰角（相切记为
+    可见，容差 1e-12 rad）。无地球曲率/大气折射（meta 披露）。
 
     扇区宽 ≈ 最大距离处 1 像元弧长；目标按仰角落入扇区，与该扇区
     距离 bin 前的运行最大仰角比较 —— 2000×2000 窗口秒级。

@@ -354,7 +354,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
     @tool(registry, name="rbf_interpolation",
            description=(
                "径向基函数(RBF)插值：scipy RBFInterpolator（thin_plate_spline 默认 / "
-               "linear / cubic / multiquadratic / quintic），在 H3 网格上生成平滑插值面，"
+               "linear / cubic / quintic），在 H3 网格上生成平滑插值面，"
                "附 LOOCV 验证指标与残差分位数证据。smoothing=0 时为精确插值器（过样本点）。"
                "\n何时用：样本较规则、需要光滑表面（气温/地形类连续场）；比 IDW 更平滑。"
                "\n何时不用：样本<3；样本>10 万（先确定性抽稀）；需要克里金方差 — 用 "
@@ -365,7 +365,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "geojson": "输入点要素集 GeoJSON 或引用(ref:xxx)（Point 几何）",
                "value_field": "用于插值的数值字段名",
                "resolution": "H3 分辨率（5-9），默认 7",
-               "kernel": "RBF 核: thin_plate_spline(默认)/linear/cubic/multiquadratic/quintic",
+               "kernel": "RBF 核: thin_plate_spline(默认)/linear/cubic/quintic",
                "smoothing": "平滑系数 0-10，默认 0（0=精确过样本点）",
                "neighbors": "局部 RBF 邻域样本数 1-64，默认 32",
                "cross_validate": "是否计算 LOOCV 验证指标，默认 true",
@@ -581,8 +581,10 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             )
             from app.lib.gis.scientific_evidence import build_evidence
             from app.lib.gis.algorithm_registry import get_algorithm_registry
-            pts_gdf = to_utm_gdf(pts)[0] if to_utm_gdf(pts)[0] is not None else None
-            zones_gdf = to_utm_gdf(polys)[0] if to_utm_gdf(polys)[0] is not None else None
+            _pts = to_utm_gdf(pts)
+            _zones = to_utm_gdf(polys)
+            pts_gdf = _pts[0] if _pts[0] is not None else None
+            zones_gdf = _zones[0] if _zones[0] is not None else None
             if pts_gdf is None or zones_gdf is None:
                 raise ValueError("invalid input: empty points or polygons layer")
             out_gdf, norm_evidence = aggregate_with_denominator(
