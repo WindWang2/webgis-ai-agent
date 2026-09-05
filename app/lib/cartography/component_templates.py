@@ -227,6 +227,169 @@ SEED_COMPONENT_TEMPLATES: List[ComponentTemplate] = [
         id="categorical-legend/compact", component_type="categorical_legend", category="legend.categorical",
         name="Compact Categorical", variant="compact", priority=20,
     ),
+    # ── V3（ADR-0101 D3）：variant library 扩容 ────────────────────────
+    # 新变体的 priority 一律大于该类型既有首个模板 —— resolver 无偏好时
+    # 取 (priority, id) 首个，扩容不得改变既有缺省选型（golden 兼容）。
+    ComponentTemplate(
+        id="title/minimal", component_type="title", category="annotation.title",
+        name="Minimal Title", variant="minimal",
+        default_style={"fontWeight": "500", "fontSize": "14px"}, priority=40,
+    ),
+    ComponentTemplate(
+        id="title/government", component_type="title", category="annotation.title",
+        name="Government Title", variant="government",
+        default_style={"fontWeight": "700", "fontSize": "20px", "letterSpacing": "0.08em"}, priority=50,
+    ),
+    ComponentTemplate(
+        id="subtitle/report", component_type="subtitle", category="annotation.subtitle",
+        name="Report Subtitle", variant="report",
+        default_style={"fontSize": "12px", "opacity": "0.75"}, priority=30,
+    ),
+    ComponentTemplate(
+        id="north-arrow/monochrome", component_type="north_arrow", category="navigation.north_arrow",
+        name="Monochrome Compass", variant="monochrome",
+        default_options={"variant": "monochrome"}, priority=50,
+        supported_outputs=["interactive", "png", "pdf", "svg"],
+    ),
+    ComponentTemplate(
+        id="scale-bar/dual-unit", component_type="scale_bar", category="navigation.scale_bar",
+        name="Dual Unit", variant="dual_unit",
+        default_options={"orientation": "horizontal", "unit": "dual", "style": "dual_unit"}, priority=40,
+    ),
+    ComponentTemplate(
+        id="colorbar/scientific", component_type="continuous_colorbar", category="legend.continuous_colorbar",
+        name="Scientific Colorbar", variant="scientific",
+        default_options={"orientation": "horizontal", "style": "scientific", "ticks": 3}, priority=40,
+        compatible_map_models=["visual_heatmap", "raster_surface"],
+    ),
+    ComponentTemplate(
+        id="colorbar/stepped", component_type="continuous_colorbar", category="legend.continuous_colorbar",
+        name="Stepped Colorbar", variant="stepped",
+        default_options={"orientation": "horizontal", "style": "stepped"}, priority=50,
+        compatible_map_models=["visual_heatmap", "raster_surface"],
+    ),
+    ComponentTemplate(
+        id="legend/horizontal", component_type="legend", category="legend.graduated",
+        name="Horizontal Legend", variant="horizontal",
+        default_options={"style": "horizontal", "orientation": "horizontal"}, priority=40,
+    ),
+    ComponentTemplate(
+        id="categorical-legend/horizontal", component_type="categorical_legend", category="legend.categorical",
+        name="Horizontal Categorical", variant="horizontal",
+        default_options={"style": "horizontal", "orientation": "horizontal"}, priority=30,
+    ),
+    ComponentTemplate(
+        id="frame/neatline", component_type="map_border", category="frame.map_border",
+        name="Neatline Frame", variant="neatline",
+        default_options={"style": "neatline"}, priority=40,
+        supported_outputs=["png", "pdf", "svg"],
+    ),
+    ComponentTemplate(
+        id="statistics-panel/kpi", component_type="statistics_panel", category="analysis.statistics_panel",
+        name="KPI Statistics", variant="kpi",
+        default_style={"fontSize": "18px"}, priority=30,
+    ),
+    # ── V3：descriptor 词表 ↔ 模板目录补全（既有缺口收编）─────────────
+    # 此前若干 descriptor variants 从未有模板条目（annotation 三形态、
+    # inset 两变体、table/披露族、chart 透明/报告、categorical report）；
+    # variant 是一等公民就必须在模板目录可寻址、catalog 可导出。
+    ComponentTemplate(
+        id="categorical-legend/report", component_type="categorical_legend", category="legend.categorical",
+        name="Report Categorical", variant="report", priority=40,
+    ),
+    ComponentTemplate(
+        id="chart-panel/transparent", component_type="chart_panel", category="analysis.chart_panel",
+        name="Transparent Chart", variant="transparent",
+        default_style={"background": "transparent"}, priority=30,
+    ),
+    ComponentTemplate(
+        id="chart-panel/report", component_type="chart_panel", category="analysis.chart_panel",
+        name="Report Chart", variant="report",
+        default_style={"fontSize": "13px"}, priority=40,
+    ),
+    ComponentTemplate(
+        id="table-panel/default", component_type="table_panel", category="analysis.table_panel",
+        name="Default Table", variant="default", priority=10,
+    ),
+    ComponentTemplate(
+        id="table-panel/compact", component_type="table_panel", category="analysis.table_panel",
+        name="Compact Table", variant="compact",
+        default_style={"fontSize": "11px"}, priority=20,
+    ),
+    ComponentTemplate(
+        id="annotation/text", component_type="annotation", category="annotation.text",
+        name="Text Annotation", variant="text",
+        default_options={"variant": "text"}, priority=10,
+    ),
+    ComponentTemplate(
+        id="annotation/callout", component_type="annotation", category="annotation.callout",
+        name="Callout Annotation", variant="callout",
+        default_options={"variant": "callout"}, priority=20,
+    ),
+    ComponentTemplate(
+        id="annotation/group", component_type="annotation", category="annotation.text",
+        name="Group Annotation", variant="group",
+        default_options={"variant": "group"}, priority=30,
+    ),
+    ComponentTemplate(
+        id="inset-map/overview", component_type="inset_map", category="inset.map",
+        name="Overview Inset", variant="overview",
+        default_options={"variant": "overview"}, priority=10,
+    ),
+    ComponentTemplate(
+        id="inset-map/location", component_type="inset_map", category="inset.location_map",
+        name="Location Inset", variant="location",
+        default_options={"variant": "location"}, priority=20,
+    ),
+    ComponentTemplate(
+        id="methodology-note/default", component_type="methodology_note", category="disclosure.methodology_note",
+        name="Default Methodology Note", variant="default", priority=10,
+    ),
+    ComponentTemplate(
+        id="methodology-note/compact", component_type="methodology_note", category="disclosure.methodology_note",
+        name="Compact Methodology Note", variant="compact",
+        default_style={"fontSize": "11px"}, priority=20,
+    ),
+    ComponentTemplate(
+        id="uncertainty-panel/default", component_type="uncertainty_panel", category="disclosure.uncertainty_panel",
+        name="Default Uncertainty Panel", variant="default", priority=10,
+    ),
+    ComponentTemplate(
+        id="uncertainty-panel/compact", component_type="uncertainty_panel", category="disclosure.uncertainty_panel",
+        name="Compact Uncertainty Panel", variant="compact",
+        default_style={"fontSize": "11px"}, priority=20,
+    ),
+    ComponentTemplate(
+        id="decision-panel/default", component_type="decision_panel", category="disclosure.decision_panel",
+        name="Default Decision Panel", variant="default", priority=10,
+    ),
+    ComponentTemplate(
+        id="decision-panel/compact", component_type="decision_panel", category="disclosure.decision_panel",
+        name="Compact Decision Panel", variant="compact",
+        default_style={"fontSize": "11px"}, priority=20,
+    ),
+    # ── V3：前瞻变体（roadmap 目录；runtime_status=planned，resolver 不选）──
+    ComponentTemplate(
+        id="legend/bivariate", component_type="legend", category="legend.bivariate",
+        name="Bivariate Legend (planned)", variant="bivariate",
+        default_options={"style": "bivariate"}, priority=90,
+        runtime_status="planned",
+        tags=["planned", "bivariate"],
+    ),
+    ComponentTemplate(
+        id="legend/uncertainty", component_type="legend", category="legend.graduated",
+        name="Uncertainty Legend (planned)", variant="uncertainty",
+        default_options={"style": "uncertainty"}, priority=91,
+        runtime_status="planned",
+        tags=["planned", "uncertainty"],
+    ),
+    ComponentTemplate(
+        id="inset-map/hierarchy-locator", component_type="inset_map", category="inset.map",
+        name="Hierarchy Locator Inset (planned)", variant="hierarchy_locator",
+        default_options={"variant": "hierarchy_locator"}, priority=90,
+        runtime_status="planned",
+        tags=["planned", "inset"],
+    ),
 ]
 
 
@@ -289,6 +452,21 @@ class ComponentTemplateRegistry:
                         issues.append(f"template {tpl.id}: unknown component type {tpl.component_type}")
                 if not cat_reg.has(tpl.category):
                     issues.append(f"template {tpl.id}: unknown category {tpl.category}")
+                # V3（ADR-0101 D3）：native 模板的 variant 必须在 descriptor
+                # variants 词表内（渲染器真实支持集）；planned 模板豁免 ——
+                # 它们就是尚未落地的 roadmap 变体，resolver 不会选择。
+                desc = comp_reg.get(tpl.component_type) or comp_reg.get_by_type(tpl.component_type)
+                if desc is not None and tpl.runtime_status == "native":
+                    if desc.variants and tpl.variant not in desc.variants:
+                        issues.append(
+                            f"template {tpl.id}: variant '{tpl.variant}' not in "
+                            f"descriptor variants {desc.variants}")
+                # options 中的 variant 双写必须与模板 variant 一致（既有约定）
+                opt_variant = tpl.default_options.get("variant")
+                if opt_variant is not None and opt_variant != tpl.variant:
+                    issues.append(
+                        f"template {tpl.id}: default_options.variant '{opt_variant}' "
+                        f"!= template variant '{tpl.variant}'")
         except Exception:
             pass
         return issues

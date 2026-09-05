@@ -28,6 +28,23 @@ class ComponentSelection(BaseModel):
     component_templates: Dict[str, str] = Field(default_factory=dict)
 
 
+def _template_selectable(tmpl_reg, template_id: str) -> bool:
+    """V3（ADR-0101 D3）：planned/unavailable 模板不可被选入最终产品。
+
+    前瞻变体（如 legend/bivariate）以 planned 模板登记 roadmap，目录可见、
+    resolver 不选 —— 与 descriptor 级 runtime_status 门控同语义。
+    """
+    tpl = tmpl_reg.get(template_id)
+    return tpl is None or tpl.runtime_status == "native"
+
+
+def _first_selectable_template(tmpl_reg, cands) -> str:
+    for cand in cands:
+        if _template_selectable(tmpl_reg, cand.id):
+            return cand.id
+    return ""
+
+
 class ComponentResolver:
     """确定性组件解析：CompositionTemplate + MapModel + output → ComponentSelection."""
 
@@ -160,21 +177,23 @@ class ComponentResolver:
 
             # pick component template for this slot
             preferred = preferred_variants.get(chosen_type, "")
-            if preferred and tmpl_reg.has(preferred):
+            if preferred and tmpl_reg.has(preferred) and _template_selectable(tmpl_reg, preferred):
                 sel.component_templates[chosen_type] = preferred
             elif slot.preferred_templates:
                 for pt in slot.preferred_templates:
-                    if tmpl_reg.has(pt):
+                    if tmpl_reg.has(pt) and _template_selectable(tmpl_reg, pt):
                         sel.component_templates[chosen_type] = pt
                         break
                 if chosen_type not in sel.component_templates:
                     cands = tmpl_reg.find_by_type(chosen_type)
-                    if cands:
-                        sel.component_templates[chosen_type] = cands[0].id
+                    tpl_id = _first_selectable_template(tmpl_reg, cands)
+                    if tpl_id:
+                        sel.component_templates[chosen_type] = tpl_id
             else:
                 cands = tmpl_reg.find_by_type(chosen_type)
-                if cands:
-                    sel.component_templates[chosen_type] = cands[0].id
+                tpl_id = _first_selectable_template(tmpl_reg, cands)
+                if tpl_id:
+                    sel.component_templates[chosen_type] = tpl_id
 
         self._enforce_conflicts(sel, comp_reg)
         return sel

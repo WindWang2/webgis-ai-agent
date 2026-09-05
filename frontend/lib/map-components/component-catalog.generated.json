@@ -59,7 +59,8 @@
       "variants": [
         "academic",
         "compact",
-        "report"
+        "report",
+        "horizontal"
       ],
       "defaultVariant": "academic",
       "defaultPosition": "bottom-left",
@@ -102,7 +103,9 @@
       "variants": [
         "horizontal",
         "vertical",
-        "slim"
+        "slim",
+        "scientific",
+        "stepped"
       ],
       "defaultVariant": "horizontal",
       "defaultPosition": "bottom-right",
@@ -198,7 +201,8 @@
       "variants": [
         "academic",
         "compact",
-        "report"
+        "report",
+        "horizontal"
       ],
       "defaultVariant": "academic",
       "defaultPosition": "bottom-left",
@@ -219,7 +223,8 @@
       "variants": [
         "minimal",
         "academic",
-        "report"
+        "report",
+        "neatline"
       ],
       "defaultVariant": "minimal",
       "defaultPosition": "none",
@@ -257,7 +262,8 @@
         "compass_minimal_black",
         "compass_needle",
         "compass_rose",
-        "arrow_simple"
+        "arrow_simple",
+        "monochrome"
       ],
       "defaultVariant": "compass_minimal_black",
       "defaultPosition": "top-right",
@@ -278,7 +284,8 @@
       "variants": [
         "minimal",
         "boxed",
-        "academic"
+        "academic",
+        "dual_unit"
       ],
       "defaultVariant": "minimal",
       "defaultPosition": "bottom-right",
@@ -298,7 +305,8 @@
       "type": "statistics_panel",
       "variants": [
         "default",
-        "compact"
+        "compact",
+        "kpi"
       ],
       "defaultVariant": "default",
       "defaultPosition": "top-left",
@@ -318,7 +326,8 @@
       "type": "subtitle",
       "variants": [
         "default",
-        "academic"
+        "academic",
+        "report"
       ],
       "defaultVariant": "default",
       "defaultPosition": "top-center",
@@ -355,7 +364,9 @@
       "variants": [
         "academic",
         "report",
-        "presentation"
+        "presentation",
+        "minimal",
+        "government"
       ],
       "defaultVariant": "academic",
       "defaultPosition": "top-center",

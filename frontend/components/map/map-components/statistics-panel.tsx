@@ -9,7 +9,7 @@ import type { RendererContext } from './types';
 /**
  * statistics_panel 渲染器（D2）：统计摘要面板。
  * options.stats = {title?, items:[{label, value, unit?, emphasis?}]}；
- * 防御式校验（坏载荷 → 空态卡片，不崩 chrome）；variant default | compact。
+ * 防御式校验（坏载荷 → 空态卡片，不崩 chrome）；variant default | compact | kpi。
  */
 
 interface StatItem {
@@ -49,7 +49,10 @@ function parseStats(raw: unknown): StatsPayload | null {
 
 function StatisticsPanelView({ component, ctx }: { component: MapSpecComponent; ctx?: RendererContext }) {
   const patched = usePlacementPatchedComponent(component);
-  const variant = resolveVariant(patched, 'default') === 'compact' ? 'compact' : 'default';
+  // V3（ADR-0101 D3）：kpi —— 大数字指标卡（执行摘要/汇报场景）；
+  // 未知变体回退 default（与 legend 族约定一致）。
+  const rawVariant = resolveVariant(patched, 'default');
+  const variant = rawVariant === 'compact' || rawVariant === 'kpi' ? rawVariant : 'default';
   const stats = parseStats(patched.options?.['stats']);
   const title = stats?.title || '统计摘要';
 
@@ -60,23 +63,33 @@ function StatisticsPanelView({ component, ctx }: { component: MapSpecComponent; 
       topSlotIndexes={ctx?.topSlotIndexes}
       testId="spec-chrome-statistics-panel"
       dataVariant={variant}
-      bodyClassName={variant === 'compact' ? 'p-1.5' : 'p-2'}
+      bodyClassName={variant === 'compact' ? 'p-1.5' : variant === 'kpi' ? 'p-2' : 'p-2'}
     >
       {stats ? (
-        <dl className={`flex flex-col ${variant === 'compact' ? 'gap-0.5' : 'gap-1'}`}>
+        <dl className={variant === 'kpi' ? 'grid grid-cols-2 gap-1.5' : `flex flex-col ${variant === 'compact' ? 'gap-0.5' : 'gap-1'}`}>
           {stats.items.map((item, i) => (
             <div
               key={`${item.label}#${i}`}
               data-emphasis={item.emphasis ? 'true' : undefined}
-              className={`flex items-baseline justify-between gap-3 ${variant === 'compact' ? 'px-1 py-0.5' : 'px-1 py-1'} ${
-                item.emphasis
-                  ? 'rounded-sm border-l-2 border-map-chrome-ink bg-[color:var(--surface-sunken)] font-semibold text-map-chrome-ink'
-                  : 'text-map-chrome-ink-muted'
-              }`}
+              className={
+                variant === 'kpi'
+                  ? `flex flex-col rounded-sm border-l-2 border-map-chrome-ink px-1.5 py-1 ${item.emphasis ? 'bg-[color:var(--surface-sunken)]' : ''}`
+                  : `flex items-baseline justify-between gap-3 ${variant === 'compact' ? 'px-1 py-0.5' : 'px-1 py-1'} ${
+                      item.emphasis
+                        ? 'rounded-sm border-l-2 border-map-chrome-ink bg-[color:var(--surface-sunken)] font-semibold text-map-chrome-ink'
+                        : 'text-map-chrome-ink-muted'
+                    }`
+              }
             >
-              <dt className="min-w-0 truncate text-caption">{item.label}</dt>
+              <dt className={variant === 'kpi' ? 'text-micro text-map-chrome-ink-muted' : 'min-w-0 truncate text-caption'}>{item.label}</dt>
               <dd className="flex shrink-0 items-baseline gap-1 tabular-nums">
-                <span className={variant === 'compact' ? 'text-caption font-medium text-map-chrome-ink' : 'text-body font-medium text-map-chrome-ink'}>
+                <span className={
+                  variant === 'kpi'
+                    ? 'text-title font-bold leading-tight text-map-chrome-ink'
+                    : variant === 'compact'
+                      ? 'text-caption font-medium text-map-chrome-ink'
+                      : 'text-body font-medium text-map-chrome-ink'
+                }>
                   {item.value}
                 </span>
                 {item.unit ? (

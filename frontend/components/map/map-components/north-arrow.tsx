@@ -27,8 +27,11 @@ function Glyph({ variant }: { variant: string }) {
 function NorthArrowRenderer(component: MapSpecComponent, ctx: RendererContext) {
   const variant = typeof (component as unknown as { options?: Record<string, unknown> }).options?.['variant'] === 'string'
     ? (component as unknown as { options: Record<string, string> }).options['variant'] : 'compass_minimal_black';
+  // V3（ADR-0101 D3）：monochrome —— 灰度渲染（黑白出版/打印友好），
+  // glyph 仍是 compass（单色语义），仅色彩通道去饱和。
+  const mono = variant === 'monochrome';
   return (
-    <div data-testid="spec-chrome-north-arrow" className={`map-chrome absolute z-30 flex h-control-lg w-control-lg flex-col items-center justify-center gap-px rounded-chrome ${positionClass(component)}`} style={{ transform: `rotate(${-ctx.bearing}deg)` }} aria-label={`指北针（${variant}），当前方位角 ${Math.round(ctx.bearing)}°`}>
+    <div data-testid="spec-chrome-north-arrow" data-variant={variant} className={`map-chrome absolute z-30 flex h-control-lg w-control-lg flex-col items-center justify-center gap-px rounded-chrome ${mono ? 'grayscale opacity-80' : ''} ${positionClass(component)}`} style={{ transform: `rotate(${-ctx.bearing}deg)` }} aria-label={`指北针（${variant}），当前方位角 ${Math.round(ctx.bearing)}°`}>
       <Glyph variant={variant} />
       <span aria-hidden className="text-micro font-semibold leading-none text-map-chrome-ink-muted">N</span>
     </div>

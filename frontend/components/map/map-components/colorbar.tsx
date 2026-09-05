@@ -35,8 +35,12 @@ function ColorbarRenderer(component: MapSpecComponent, ctx: RendererContext) {
   const vertical = (component as unknown as { options?: Record<string, unknown> }).options?.['orientation'] === 'vertical';
   // D7：slim = 更细色条；compact = 紧凑内边距；report = 卡片加宽 + 刻度强调
   // （horizontal/vertical 是 orientation 载体，不改变 padding 语义）
+  // V3（ADR-0101 D3）：scientific = 中间刻度行（两端 + 3 个内插读数）；
+  // stepped = 离散色阶块（palette_colors 分箱，而非连续渐变）。
   const variant = resolveVariant(component, '');
   const slim = variant === 'slim';
+  const scientific = variant === 'scientific';
+  const stepped = variant === 'stepped';
   const padClass = variant === 'compact' ? 'px-1.5 py-1' : variant === 'report' ? 'px-3 py-2' : 'px-2 py-1.5';
   const barClass = vertical
     ? `${slim ? 'w-1.5' : 'w-2.5'} rounded-sm`
@@ -44,11 +48,31 @@ function ColorbarRenderer(component: MapSpecComponent, ctx: RendererContext) {
   const gradient = `linear-gradient(to ${vertical ? 'bottom' : 'right'}, ${colors.join(', ')})`;
   const range = legend as unknown as { min?: number; max?: number; unit?: string };
   const hasRange = range.min !== undefined && range.max !== undefined;
+  // scientific 中间刻度：3 个内插读数（25/50/75%），与两端同一 formatter。
+  const ticks = scientific && hasRange
+    ? [0.25, 0.5, 0.75].map((t) => formatLegendValue(Number(range.min) + (Number(range.max) - Number(range.min)) * t))
+    : [];
+  const ariaLabel = `连续密度色条${scientific ? '（科学刻度）' : ''}${stepped ? '（分级色阶）' : ''}`;
   return (
-    <div data-testid="spec-chrome-colorbar" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${padClass} ${positionClass(component)}`} aria-label="连续密度色条">
+    <div data-testid="spec-chrome-colorbar" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${padClass} ${positionClass(component)}`} aria-label={ariaLabel}>
       {hasRange ? (
         <div className={`flex ${vertical ? 'flex-row gap-1' : 'flex-col gap-0.5'} text-micro tabular-nums text-map-chrome-ink`}>
-          <div aria-hidden className={barClass} style={{ background: gradient, backgroundImage: gradient }} data-gradient={gradient} />
+          {stepped ? (
+            <div aria-hidden className={`flex ${vertical ? 'flex-col' : ''} overflow-hidden rounded-sm`} data-stepped="true">
+              {colors.map((c, i) => (
+                <span key={`${c}#${i}`} className={vertical ? 'h-3 w-2.5' : 'h-2.5 w-9'} style={{ background: c }} />
+              ))}
+            </div>
+          ) : (
+            <div aria-hidden className={barClass} style={{ background: gradient, backgroundImage: gradient }} data-gradient={gradient} />
+          )}
+          {ticks.length ? (
+            <div aria-hidden className={`flex w-full ${vertical ? 'flex-col-reverse justify-between' : 'flex-row justify-between'} text-map-chrome-ink-muted`}>
+              {ticks.map((t, i) => (
+                <span key={`${t}#${i}`}>{t}</span>
+              ))}
+            </div>
+          ) : null}
           <div className="flex w-full items-baseline justify-between gap-1 text-map-chrome-ink-muted">
             {/* #998：两端刻度走统一 formatLegendValue（千分位 / M-k 压缩 /
                 非零不打印零），与图例读数一致——固定 toFixed(1) 会把

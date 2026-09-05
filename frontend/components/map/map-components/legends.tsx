@@ -65,10 +65,15 @@ function LegendRenderer(component: MapSpecComponent, ctx: RendererContext) {
   const variant = resolveVariant(component, 'academic');
   const classes = legendVariantClasses(variant);
   const compact = variant === 'compact';
+  // V3（ADR-0101 D3）：horizontal —— 图例项横向排布换行（窄图幅横向空间
+  // 充裕时），其余变体保持纵向。
+  const layoutClass = variant === 'horizontal'
+    ? `flex flex-row flex-wrap ${compact ? 'mt-0.5 gap-x-2 gap-y-0.5' : 'mt-1 gap-x-3 gap-y-1'}`
+    : `flex flex-col ${compact ? 'mt-0.5 gap-0.5' : 'mt-1 gap-1'}`;
   return (
     <div data-testid="spec-chrome-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${classes.root} ${positionClass(component)}`} aria-label="分级图例">
       {(legend as unknown as { title?: string }).title && <div className={`text-map-chrome-ink ${classes.title}`}>{(legend as unknown as { title: string }).title}</div>}
-      <div className={`flex flex-col ${compact ? 'mt-0.5 gap-0.5' : 'mt-1 gap-1'}`}>
+      <div className={layoutClass}>
         {entries.slice(0, 8).map((e, j) => (
           <div key={j} className="flex items-center gap-1.5">
             <span aria-hidden className="h-2.5 w-4 rounded-sm" style={{ background: e.color }} />
@@ -88,10 +93,13 @@ function CategoricalLegendRenderer(component: MapSpecComponent, ctx: RendererCon
   const variant = resolveVariant(component, 'academic');
   const classes = legendVariantClasses(variant);
   const compact = variant === 'compact';
+  const layoutClass = variant === 'horizontal'
+    ? `flex flex-row flex-wrap ${compact ? 'mt-0.5 gap-x-2 gap-y-0.5' : 'mt-1 gap-x-3 gap-y-1'}`
+    : `flex flex-col ${compact ? 'mt-0.5 gap-0.5' : 'mt-1 gap-1'}`;
   return (
     <div data-testid="spec-chrome-categorical-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${classes.root} ${positionClass(component)}`} aria-label="分类图例">
       {(legend as unknown as { title?: string }).title && <div className={`text-map-chrome-ink ${classes.title}`}>{(legend as unknown as { title: string }).title}</div>}
-      <div className={`flex flex-col ${compact ? 'mt-0.5 gap-0.5' : 'mt-1 gap-1'}`}>
+      <div className={layoutClass}>
         {entries.slice(0, 8).map((e, j) => (
           <div key={j} className="flex items-center gap-1.5">
             <span aria-hidden className="h-2.5 w-4 rounded-sm" style={{ background: e.color }} />
