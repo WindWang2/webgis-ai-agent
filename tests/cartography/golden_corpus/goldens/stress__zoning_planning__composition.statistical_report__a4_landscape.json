@@ -1,0 +1,153 @@
+{
+ "digest": {
+  "case": "stress::zoning_planning::composition.statistical_report::a4_landscape",
+  "components": [
+   {
+    "id": "title",
+    "layerId": "",
+    "position": "top-center",
+    "priority": 10,
+    "templateId": "title/government",
+    "title": "Chengdu Territorial Spatial Planning Implementation Assessment & Urban Renewal Unit Delineation Thematic Map (2021-2035)",
+    "type": "title",
+    "variant": "government"
+   },
+   {
+    "id": "subtitle",
+    "layerId": "",
+    "position": "top-center",
+    "priority": 11,
+    "templateId": "subtitle/default",
+    "title": "副标题：数据口径与评价方法说明（极端长度换行压力用例 / extreme-length wrapping stress）",
+    "type": "subtitle",
+    "variant": "default"
+   },
+   {
+    "id": "legend-categorical",
+    "layerId": "layer-primary",
+    "position": "bottom-left",
+    "priority": 17,
+    "templateId": "categorical-legend/horizontal",
+    "title": "",
+    "type": "categorical_legend",
+    "variant": "horizontal"
+   },
+   {
+    "id": "scale-bar",
+    "layerId": "",
+    "position": "bottom-right",
+    "priority": 20,
+    "templateId": "scale-bar/dual-unit",
+    "title": "",
+    "type": "scale_bar",
+    "variant": "dual_unit"
+   },
+   {
+    "id": "north-arrow",
+    "layerId": "",
+    "position": "top-right",
+    "priority": 30,
+    "templateId": "north-arrow/minimal-black",
+    "title": "",
+    "type": "north_arrow",
+    "variant": "compass_minimal_black"
+   },
+   {
+    "id": "attribution",
+    "layerId": "",
+    "position": "bottom-left",
+    "priority": 50,
+    "templateId": "attribution/compact",
+    "title": "",
+    "type": "attribution",
+    "variant": "compact"
+   },
+   {
+    "id": "map-border",
+    "layerId": "",
+    "position": "none",
+    "priority": 70,
+    "templateId": "frame/neatline",
+    "title": "",
+    "type": "map_border",
+    "variant": "neatline"
+   },
+   {
+    "id": "export-layout",
+    "layerId": "",
+    "position": "none",
+    "priority": 90,
+    "templateId": "export-layout/A4-portrait",
+    "title": "",
+    "type": "export_layout",
+    "variant": "A4_portrait"
+   }
+  ],
+  "kind": "stress",
+  "layout": {
+   "moved": [
+    "subtitle"
+   ],
+   "placements": {
+    "attribution": "bottom-left",
+    "export-layout": "none",
+    "legend-categorical": "bottom-left",
+    "map-border": "none",
+    "north-arrow": "top-right",
+    "scale-bar": "bottom-right",
+    "subtitle": "top-left",
+    "title": "top-center"
+   },
+   "suppressed": [],
+   "warning_count": 0
+  },
+  "model": "zoning_planning",
+  "output": "pdf",
+  "profile": "a4_landscape",
+  "selection": {
+   "component_templates": {
+    "attribution": "attribution/compact",
+    "categorical_legend": "categorical-legend/horizontal",
+    "export_layout": "export-layout/A4-portrait",
+    "map_border": "frame/neatline",
+    "north_arrow": "north-arrow/minimal-black",
+    "scale_bar": "scale-bar/dual-unit",
+    "subtitle": "subtitle/default",
+    "title": "title/government"
+   },
+   "composition_template_id": "composition.zoning_plan_map",
+   "reason_codes": [
+    "wired_composition_incompatible_model"
+   ],
+   "rejected_count": 1,
+   "required_slots": [
+    "attribution",
+    "export_layout",
+    "legend",
+    "map_border",
+    "north_arrow",
+    "scale_bar",
+    "title"
+   ],
+   "selected": [
+    "attribution",
+    "categorical_legend",
+    "export_layout",
+    "map_border",
+    "north_arrow",
+    "scale_bar",
+    "subtitle",
+    "title"
+   ]
+  },
+  "template": "composition.statistical_report",
+  "validation": {
+   "error_codes": [],
+   "ok": true,
+   "warning_codes": [
+    "zone_collision"
+   ]
+  }
+ },
+ "sha": "3463a4491d4d748b"
+}
