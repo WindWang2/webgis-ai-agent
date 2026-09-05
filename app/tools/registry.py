@@ -16,6 +16,16 @@ from app.lib.geo_processor.core import GeoAnalysisResult
 
 from app.services.jobs.cancellation import OperationCancelled
 from app.services.llm_result_formatter import is_error_like_result
+from app.tools.descriptor import (
+    SideEffectClass,
+    ToolDescriptor,
+    ToolStatus,
+    descriptor_fingerprint as _descriptor_fingerprint,
+    manifest_fingerprint as _manifest_fingerprint,
+    registry_fingerprint as _registry_fingerprint_fn,
+    schema_fingerprint as _schema_fingerprint_fn,
+    validate_descriptor_fields,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -500,6 +510,11 @@ class ToolRegistry:
         #       3 = 仅在 LLM 显式 list_available_tools 后才看见 (rare / heavy)
         # domains: tier 2 工具属于哪些主题，用于关键词触发
         self._metadata: dict[str, dict[str, Any]] = {}
+        # ADR-0101: 描述符/指纹缓存（register / update_args_model 时失效）。
+        self._descriptor_cache: dict[str, ToolDescriptor] = {}
+        self._schema_fp_cache: dict[str, str] = {}
+        self._descriptor_fp_cache: dict[str, str] = {}
+        self._registry_fp: Optional[str] = None
 
     def tool(self, name: str, description: str,
              param_descriptions: Optional[dict[str, str]] = None,
@@ -512,7 +527,7 @@ class ToolRegistry:
              contract_version: int = 1,
              cost: ToolCost = "light",
              **kwargs: Any) -> Callable:
-        """装饰器：注册工具到此 registry 实例"""
+        """装饰器：注册工具到此 registry 实例（描述符扩展字段见 register）。"""
         def decorator(func: Callable):
             self.register(
                 name, description, func,
@@ -529,6 +544,20 @@ class ToolRegistry:
             )
             return func
         return decorator
+
+    # ADR-0101：描述符扩展字段（全部可选，缺省派生；存量工具零改动兼容）。
+    # 未知 kwarg 一律注册期显式失败 —— 此前 **kwargs 静默吞掉拼写错误，
+    # 声明了半天字段实际没生效，是描述符契约最大的隐性漂移源。
+    _DESCRIPTOR_KWARGS = (
+        "status", "summary", "deprecation_of",
+        "side_effect", "requires_credentials",
+        "capabilities", "algorithms", "provider_dependencies", "tags",
+        "output_semantic_type", "produced_refs", "accepts_ref_types",
+        "network", "deterministic", "result_size_policy",
+    )
+    _KNOWN_REGISTER_KWARGS = frozenset(_DESCRIPTOR_KWARGS) | {
+        "parameters", "field_extras",
+    }
 
     def register(self, name: str, description: str, func: Callable,
                  param_descriptions: Optional[dict[str, str]] = None,
@@ -550,7 +579,39 @@ class ToolRegistry:
         ``{"ref_cursor": True}`` / ``{"capture_ref_of": "data"}``），不必为
         声明一个 extra 重建整套 pydantic 模型。显式 args_model 优先（其
         自带 extras 生效，此处忽略）。
+
+        描述符扩展字段（ADR-0101，全部可选）：
+        status / summary / deprecation_of / side_effect / requires_credentials /
+        capabilities / algorithms / provider_dependencies / output_semantic_type /
+        produced_refs / accepts_ref_types / network / deterministic /
+        result_size_policy —— 语义见 app/tools/descriptor.py。
         """
+        unknown = set(kwargs) - self._KNOWN_REGISTER_KWARGS
+        if unknown:
+            raise ValueError(
+                f"工具 {name} 注册时传入了未知的描述符字段: {', '.join(sorted(unknown))}。"
+                f"合法扩展字段: {', '.join(sorted(self._KNOWN_REGISTER_KWARGS))}"
+            )
+        status = str(kwargs.get("status") or ToolStatus.STABLE.value)
+        side_effect = str(kwargs.get("side_effect") or SideEffectClass.UNCLASSIFIED.value)
+        result_size_policy = str(kwargs.get("result_size_policy") or "unknown")
+        deprecation_of = kwargs.get("deprecation_of")
+        summary = str(kwargs.get("summary") or "")
+        desc_errors = validate_descriptor_fields(
+            name=name, status=status, deprecation_of=deprecation_of,
+            side_effect=side_effect, result_size_policy=result_size_policy,
+            summary=summary,
+            capabilities=kwargs.get("capabilities"),
+            algorithms=kwargs.get("algorithms"),
+            produced_refs=kwargs.get("produced_refs"),
+            accepts_ref_types=kwargs.get("accepts_ref_types"),
+            requires_credentials=kwargs.get("requires_credentials"),
+            provider_dependencies=kwargs.get("provider_dependencies"),
+            domains=domains,
+            tags=kwargs.get("tags"),
+        )
+        if desc_errors:
+            raise ValueError("; ".join(desc_errors))
         if name in self._tools and self._tools[name] is not func:
             # #1062: 此前静默覆盖同名工具 —— 两个模块撞名（或 skill 热重建
             # re-register）会无声替换一个活工具。显式告警留痕；显式更新走
@@ -646,6 +707,17 @@ class ToolRegistry:
             raise ValueError(
                 f"工具 {name} 声明了非法 cost={cost!r}，合法值: {', '.join(_VALID_TOOL_COSTS)}"
             )
+
+        def _str_tuple(key: str) -> tuple:
+            val = kwargs.get(key)
+            return tuple(val) if val else ()
+
+        # ADR-0101：描述符字段与 tier/domains 同源存入 _metadata（单一存储，
+        # descriptor() 只是投影构造器）。tier>=3 强制 destructive 副作用类，
+        # 未标注也不许低于 destructive —— 安全分类不允许「忘了标就是纯读」。
+        effective_side_effect = side_effect
+        if int(tier) >= 3 and effective_side_effect != SideEffectClass.DESTRUCTIVE.value:
+            effective_side_effect = SideEffectClass.DESTRUCTIVE.value
         self._metadata[name] = {
             "tier": tier,
             "domains": list(domains or []),
@@ -654,7 +726,28 @@ class ToolRegistry:
             "version": str(version or "1.0"),
             "contract_version": int(contract_version or 1),
             "cost": cost,
+            "status": status,
+            "summary": summary,
+            "deprecation_of": deprecation_of,
+            "side_effect": effective_side_effect,
+            "requires_credentials": list(kwargs.get("requires_credentials") or []),
+            "capabilities": list(kwargs.get("capabilities") or []),
+            "algorithms": list(kwargs.get("algorithms") or []),
+            "provider_dependencies": list(kwargs.get("provider_dependencies") or []),
+            "tags": list(kwargs.get("tags") or []),
+            "output_semantic_type": kwargs.get("output_semantic_type"),
+            "produced_refs": list(kwargs.get("produced_refs") or []),
+            "accepts_ref_types": list(kwargs.get("accepts_ref_types") or []),
+            "network": kwargs.get("network"),
+            "deterministic": kwargs.get("deterministic"),
+            "result_size_policy": result_size_policy,
+            "required_fields": sorted(str(k) for k in (required or [])),
         }
+        # 描述符 / 指纹缓存失效（同 schema_size 失效语义）
+        self._descriptor_cache.pop(name, None)
+        self._schema_fp_cache.pop(name, None)
+        self._descriptor_fp_cache.pop(name, None)
+        self._registry_fp = None
 
     @staticmethod
     def _declared_ref_cursor_keys(model: Optional[Type[BaseModel]]) -> set[str]:
@@ -760,6 +853,11 @@ class ToolRegistry:
         for s in self._schemas:
             if s["function"]["name"] == name:
                 s["function"]["parameters"] = new_params
+        # ADR-0101：schema 变更 → 入参指纹/描述符/全库指纹全部失效
+        self._schema_fp_cache.pop(name, None)
+        self._descriptor_cache.pop(name, None)
+        self._descriptor_fp_cache.pop(name, None)
+        self._registry_fp = None
 
     def get_schemas_subset(self, names: set[str]) -> list[dict]:
         """按名称白名单返回 schema 子集；用于 ToolCatalog 分层选择。"""
@@ -811,6 +909,136 @@ class ToolRegistry:
     def all_metadata(self) -> dict[str, dict[str, Any]]:
         """获取全部工具的元数据快照。"""
         return dict(self._metadata)
+
+    # ------------------------------------------------------------------
+    # ADR-0101: ToolDescriptor V2 投影与指纹
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def resolve_name(name: str) -> str:
+        """入向工具名别名折叠为 canonical 名（dispatch 同款语义，公开只读）。"""
+        return _TOOL_NAME_ALIASES.get(name, name)
+
+    def aliases_for(self, name: str) -> list[str]:
+        """指向 canonical 工具 ``name`` 的全部入向别名（含自反时排除自身）。"""
+        return sorted(a for a, target in _TOOL_NAME_ALIASES.items() if target == name)
+
+    def descriptor(self, name: str) -> ToolDescriptor:
+        """构造（并缓存）工具描述符 —— 从注册元数据 + schema 派生的只读投影。
+
+        未注册工具 raise KeyError（调用方先用 list_tools/contains 判定）。
+        """
+        canonical = self.resolve_name(name)
+        cached = self._descriptor_cache.get(canonical)
+        if cached is not None:
+            return cached
+        meta = self._metadata.get(canonical)
+        if meta is None:
+            raise KeyError(f"tool {canonical!r} not registered")
+        schema = next(
+            (s for s in self._schemas if s["function"]["name"] == canonical), None
+        )
+        required_fields: tuple[str, ...] = ()
+        if schema is not None:
+            required_fields = tuple(sorted(schema["function"]["parameters"].get("required", [])))
+        try:
+            status = ToolStatus(meta.get("status", ToolStatus.STABLE.value))
+        except ValueError:
+            status = ToolStatus.STABLE
+        try:
+            side_effect = SideEffectClass(meta.get("side_effect", SideEffectClass.UNCLASSIFIED.value))
+        except ValueError:
+            side_effect = SideEffectClass.UNCLASSIFIED
+        desc = ToolDescriptor(
+            name=canonical,
+            description=next(
+                (s["function"]["description"] for s in self._schemas
+                 if s["function"]["name"] == canonical),
+                "",
+            ),
+            summary=str(meta.get("summary") or ""),
+            version=str(meta.get("version", "1.0")),
+            contract_version=int(meta.get("contract_version", 1) or 1),
+            status=status,
+            deprecation_of=meta.get("deprecation_of"),
+            tier=int(meta.get("tier", 1)),
+            domains=tuple(meta.get("domains") or ()),
+            cost=str(meta.get("cost", "light")),
+            execution_policy=(
+                meta["execution_policy"].value
+                if isinstance(meta.get("execution_policy"), ToolExecutionPolicy)
+                else str(meta.get("execution_policy", "thread"))
+            ),
+            timeout=meta.get("timeout"),
+            side_effect=side_effect,
+            requires_credentials=tuple(meta.get("requires_credentials") or ()),
+            capabilities=tuple(meta.get("capabilities") or ()),
+            algorithms=tuple(meta.get("algorithms") or ()),
+            provider_dependencies=tuple(meta.get("provider_dependencies") or ()),
+            tags=tuple(meta.get("tags") or ()),
+            output_semantic_type=meta.get("output_semantic_type"),
+            produced_refs=tuple(meta.get("produced_refs") or ()),
+            accepts_ref_types=tuple(meta.get("accepts_ref_types") or ()),
+            required_fields=required_fields,
+            network=meta.get("network"),
+            deterministic=meta.get("deterministic"),
+            result_size_policy=str(meta.get("result_size_policy", "unknown")),
+            aliases=tuple(self.aliases_for(canonical)),
+        )
+        self._descriptor_cache[canonical] = desc
+        return desc
+
+    def descriptors(self) -> dict[str, ToolDescriptor]:
+        """全部已注册工具的描述符（canonical 名 → 描述符）。"""
+        return {name: self.descriptor(name) for name in self._tools}
+
+    def schema_fingerprint(self, name: str) -> Optional[str]:
+        """工具入参契约指纹（描述变更不敏感）。未注册返回 None。"""
+        canonical = self.resolve_name(name)
+        cached = self._schema_fp_cache.get(canonical)
+        if cached is not None:
+            return cached
+        schema = next(
+            (s for s in self._schemas if s["function"]["name"] == canonical), None
+        )
+        if schema is None:
+            return None
+        fp = _schema_fingerprint_fn(schema)
+        self._schema_fp_cache[canonical] = fp
+        return fp
+
+    def descriptor_fingerprint(self, name: str) -> Optional[str]:
+        """完整描述符指纹（契约字段 + schema 指纹）。未注册返回 None。"""
+        canonical = self.resolve_name(name)
+        cached = self._descriptor_fp_cache.get(canonical)
+        if cached is not None:
+            return cached
+        schema_fp = self.schema_fingerprint(canonical)
+        if schema_fp is None:
+            return None
+        fp = _descriptor_fingerprint(self.descriptor(canonical), schema_fp)
+        self._descriptor_fp_cache[canonical] = fp
+        return fp
+
+    def registry_fingerprint(self) -> str:
+        """全库内容指纹（顺序无关；register/update_args_model 失效）。
+
+        供 Surface 投影缓存、eval catalog 与 replay 兼容性判定做「注册表
+        是否变过」的廉价判定。
+        """
+        if self._registry_fp is None:
+            self._registry_fp = _registry_fingerprint_fn(
+                (name, self.schema_fingerprint(name) or "")
+                for name in self._tools
+            )
+        return self._registry_fp
+
+    def fingerprints(self) -> dict[str, tuple[str, str]]:
+        """全部工具的 (schema_fingerprint, descriptor_fingerprint) 映射。"""
+        return {
+            name: (self.schema_fingerprint(name) or "", self.descriptor_fingerprint(name) or "")
+            for name in self._tools
+        }
 
     async def dispatch(self, name: str, arguments: dict | str, session_id: Optional[str] = None) -> Any:
         """执行工具，包含 Pydantic 校验与透明解引用。
@@ -993,6 +1221,14 @@ class ToolRegistry:
         meta = self._metadata.get(real_name, {})
         model = self._models.get(real_name)
         name = real_name
+
+        # ADR-0101：PLANNED = 占位声明、未实现 —— 绝不可执行（别名也不可借道）。
+        if meta.get("status") == ToolStatus.PLANNED.value:
+            return std_error_response(
+                f"工具 {name} 状态为 planned（尚未实现），不可执行",
+                code="TOOL_NOT_EXECUTABLE",
+                error_type="ToolNotExecutable",
+            )
 
         # SEC-F1: the dispatch chokepoint refuses tier-3 tools unless the
         # calling context carried an explicit confirmation (see confirm_tier3).
