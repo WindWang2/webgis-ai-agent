@@ -515,6 +515,36 @@ async def apply_tool_result(
         )
 
 
+def merge_map_product_result(chapter: Dict[str, Any], raw: Dict[str, Any]) -> None:
+    """webgis_map_product 结果 → 章节合并（R2-1：presence 语义）。
+
+    Workflow V2（Goal C / R1-A1）：finalize 期产物（契约摘要/方法论警告/
+    语义回退）合并进 chapter，完成管线 derive_product_verdict 从这里读
+    workflow_contract 推导七维与 BLOCKED_BY_*。
+
+    键语义（R2-1 修复）：
+    - ``workflow_contract`` 键**在场**即整体替换（None = 本次 finalize 无
+      契约，如 V1 recipe —— 旧值一并清除，recipe 切换不留残影）；
+    - ``methodology_warnings`` / ``fallbacks`` 键在场即整体替换（**空列表
+      也是证据**：修复后重跑的空回退列表必须清掉上一轮的 not_allowed 阻
+      断，否则修复循环永久 BLOCKED）；
+    - 键**缺席**（旧版本工具结果）→ 保持 chapter 原值，零漂移。
+    """
+    if raw.get("completeness") is not None:
+        chapter["completeness"] = raw["completeness"]
+    if raw.get("status"):
+        chapter["status"] = raw["status"]
+    if raw.get("recipe_id"):
+        chapter["recipe_id"] = raw["recipe_id"]
+    if "workflow_contract" in raw:
+        chapter["workflow_contract"] = raw.get("workflow_contract")
+    if "methodology_warnings" in raw:
+        chapter["methodology_warnings"] = list(
+            raw.get("methodology_warnings") or [])[:8]
+    if "fallbacks" in raw:
+        chapter["fallbacks"] = list(raw.get("fallbacks") or [])[:8]
+
+
 async def _apply_tool_result_unlocked(
     session_id: str,
     tool_name: str,
@@ -600,24 +630,7 @@ async def _apply_tool_result_unlocked(
         return events
 
     if tool_name == "webgis_map_product" and plan.gis_chapter is not None:
-        if raw.get("completeness") is not None:
-            plan.gis_chapter["completeness"] = raw["completeness"]
-        if raw.get("status"):
-            plan.gis_chapter["status"] = raw["status"]
-        if raw.get("recipe_id"):
-            plan.gis_chapter["recipe_id"] = raw["recipe_id"]
-        # Workflow V2（Goal C / R1-A1）：finalize 期产物（契约摘要/方法论
-        # 警告/语义回退）合并进 chapter —— 完成管线 derive_product_verdict
-        # 从这里读 workflow_contract 推导七维与 BLOCKED_BY_*。缺失键保持
-        # chapter 原值（旧工具版本零漂移）；警告/回退以 finalize 为准整体
-        # 替换（finalize 证据新于 draft）。
-        if raw.get("workflow_contract") is not None:
-            plan.gis_chapter["workflow_contract"] = raw["workflow_contract"]
-        if raw.get("methodology_warnings"):
-            plan.gis_chapter["methodology_warnings"] = list(
-                raw["methodology_warnings"])[:8]
-        if raw.get("fallbacks"):
-            plan.gis_chapter["fallbacks"] = list(raw["fallbacks"])[:8]
+        merge_map_product_result(plan.gis_chapter, raw)
         evidence = raw.get("map_product_evidence") or {}
         resolution = evidence.get("capability_resolution") or []
         done_caps = [

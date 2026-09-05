@@ -1027,10 +1027,12 @@ class MapProductPlanner:
             # done 且带 bound_ref）才把对应角色升为 bound；capability_hint
             # 存在 ≠ 数据在场。data_blockers 因此在生产路径可达。
             bound_refs: Dict[str, str] = {}
-            role_by_cap = {
-                req.capability_hint: req.role
-                for req in wf_profile.data_roles if req.capability_hint
-            }
+            role_by_cap: Dict[str, str] = {}
+            for req in wf_profile.data_roles:
+                # R2-9：同一 capability_hint 服务多个角色时按声明序首个胜出
+                # （确定性；词表校验另约束必选 block 角色不得复用 hint）。
+                if req.capability_hint and req.capability_hint not in role_by_cap:
+                    role_by_cap[req.capability_hint] = req.role
             for row in plan.data_requirements:
                 role_name = role_by_cap.get(row.capability)
                 if (role_name and row.status in ("available", "done")

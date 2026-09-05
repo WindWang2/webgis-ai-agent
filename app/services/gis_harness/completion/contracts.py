@@ -145,7 +145,9 @@ def evaluate_completion_contract(
         str(fb.get("reason_code") or "")
         for fb in chapter.get("fallbacks") or []
         if isinstance(fb, dict)
-        and (fb.get("evidence") or {}).get("downgrade_class") == "not_allowed"
+        and isinstance(fb.get("evidence"), dict)
+        and fb["evidence"].get("downgrade_class") == "not_allowed"
+        and fb.get("reason_code")
     ]
 
     # ── 七维推导（缺证据的维度诚实置 False）──────────────────────────

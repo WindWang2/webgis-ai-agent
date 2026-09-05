@@ -817,24 +817,38 @@ class RecipeRegistry:
         lookaround 方案同一红线）。"""
         if keyword not in self._ascii_keywords:
             return keyword in lowered_query
-        # 词缘只看 ASCII 字母数字（与 intent.py 的 (?<![a-zA-Z]) 方案一致）：
-        # 汉字邻接不算词内（「看看sar」应命中），ASCII 字母邻接才算词内
-        # （「caesar」不命中 sar）。
-        ascii_alnum = "abcdefghijklmnopqrstuvwxyz0123456789"
+        # 词缘只看 ASCII 字母（与 intent.py 的 (?<![a-zA-Z]) 方案完全一致，
+        # R2-5：数字邻接如 sar2 仍命中 —— intent 规则已路由 task，关键词层
+        # 不得再分叉）；汉字邻接不算词内（「看看sar」应命中），ASCII 字母
+        # 邻接才算词内（「caesar」不命中 sar）。
+        ascii_letters = "abcdefghijklmnopqrstuvwxyz"
         hits = 0
         start = lowered_query.find(keyword)
         while start != -1:
             end = start + len(keyword)
             before = lowered_query[start - 1] if start > 0 else " "
             after = lowered_query[end] if end < len(lowered_query) else " "
-            if before not in ascii_alnum and after not in ascii_alnum:
+            if before not in ascii_letters and after not in ascii_letters:
                 hits += 1
             start = lowered_query.find(keyword, start + 1)
         return hits > 0
 
     def content_fingerprint_of(self, recipe_id: str) -> str:
-        """单 recipe 内容指纹（registry 缓存；runtime manifest 投影复用）。"""
-        return self._content_fps.get(recipe_id, "")
+        """单 recipe 内容指纹（registry 缓存；runtime manifest 投影复用）。
+
+        缓存未命中（只可能来自绕过 register() 的 _by_id 改写）时现场计算，
+        绝不静默返回空指纹 —— 空串会无声搅动 manifest 指纹 → 假 stale。
+        """
+        fp = self._content_fps.get(recipe_id)
+        if fp is None:
+            recipe = self._by_id.get(recipe_id)
+            if recipe is None:
+                return ""
+            from app.services.gis_harness.workflow_schema import (
+                recipe_content_fingerprint,
+            )
+            fp = recipe_content_fingerprint(recipe)
+        return fp
 
     def keyword_hits(self, query: str) -> List[CartographyRecipe]:
         """query 命中的专业关键词 recipe（去重，命中关键词多者优先）。
@@ -964,8 +978,12 @@ _registry: Optional[RecipeRegistry] = None
 def get_recipe_registry() -> RecipeRegistry:
     global _registry
     if _registry is None:
-        _registry = RecipeRegistry()
-        _registry.load_builtins()
+        # R2-2：先构建后赋值 —— 加载失败（知识库不完整）时不留半量单例，
+        # 每次访问重新抛错；生产 startup 的 try/except 只能记日志，不能把
+        # 半量 registry 当作健康实例缓存下来静默服役。
+        candidate = RecipeRegistry()
+        candidate.load_builtins()
+        _registry = candidate
     return _registry
 
 

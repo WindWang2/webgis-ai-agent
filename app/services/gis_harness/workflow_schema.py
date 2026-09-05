@@ -309,6 +309,20 @@ def validate_workflow_profile(
                 violations.append(f"{tag}: precondition kind 需要 precondition_id")
             elif precondition_exists and not precondition_exists(obl.precondition_id):
                 violations.append(f"{tag}: precondition {obl.precondition_id} 未注册")
+        elif obl.kind == "temporal" and obl.precondition_id:
+            # R2-6：temporal 义务的 precondition 引用在此校验 —— 既支持
+            # 声明性引用已注册 id（如 temporal_field_required），也支持
+            # 参数化 min_temporal_observations:N（评估分支按前缀解析 N，
+            # typo 会静默回落默认 2，必须在静态期拦下）。
+            if obl.precondition_id.startswith("min_temporal_observations:"):
+                try:
+                    n = int(obl.precondition_id.split(":", 1)[1])
+                    if not 2 <= n <= 365:
+                        violations.append(f"{tag}: min_temporal_observations 越界 {n}")
+                except (TypeError, ValueError):
+                    violations.append(f"{tag}: min_temporal_observations:N 语法错误")
+            elif precondition_exists and not precondition_exists(obl.precondition_id):
+                violations.append(f"{tag}: precondition {obl.precondition_id} 未注册")
 
     seen_dim: set = set()
     for req in profile.completion_requirements:
@@ -524,6 +538,22 @@ def evaluate_workflow_obligations(
                     detail="缺少归一化分母：不得下人均/率/公平性结论",
                 )
         elif obl.kind == "temporal":
+            # R2-6：画像完全缺席时间事实（无 hasTimeField/temporalObservation
+            # Count 键）= unknown ≠ unsatisfied；画像**在场**但事实不足才是
+            # blocked/warning（InSAR 栈门槛的严格语义以画像在手为前提）。
+            if not rp or (
+                "hasTimeField" not in rp
+                and "temporalObservationCount" not in rp
+                and not _field_lower_contains(fields, _TIME_FIELD_HINTS)
+            ):
+                ev = ObligationEvaluation(
+                    obligation_id=obl.obligation_id, kind=obl.kind,
+                    status="unknown", warning_code=obl.warning_code,
+                    on_violation=obl.on_violation,
+                    detail="画像无时间事实：未知（不虚构满足也不虚构违反）",
+                )
+                report.obligations.append(ev)
+                continue
             has_time = bool(rp.get("hasTimeField")) or _field_lower_contains(fields, _TIME_FIELD_HINTS)
             obs = rp.get("temporalObservationCount")
             min_obs = 2

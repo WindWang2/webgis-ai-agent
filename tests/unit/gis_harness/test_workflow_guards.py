@@ -79,13 +79,11 @@ class TestFailLoudPackLoading:
 
 class TestChapterWiring:
     def test_webgis_map_product_merge_persists_workflow_contract(self):
-        """R1-A1（CRITICAL）：finalize 契约必须能进入 chapter —— 完成管线
-        的 verdict V2 在生产路径可达（直接测 apply_tool_result 的 merge 分支
-        依赖过重，此处锁定 merge 语义与数据形状）。"""
-        from app.services.session_plan import SessionPlan
+        """R1-A1（CRITICAL）+ R2-1/R2-7：驱动真实 merge helper —— finalize
+        契约进入 chapter，完成管线 verdict V2 生产可达；空列表也是证据。"""
+        from app.services.session_plan import merge_map_product_result
 
-        plan = SessionPlan(envelope_id="e", session_id="s", user_goal="q")
-        plan.gis_chapter = {"query": "q", "recipe_id": "education_equity_per_capita"}
+        chapter = {"query": "q", "recipe_id": "education_equity_per_capita"}
         raw = {
             "completeness": {"complete": True},
             "status": "finalized",
@@ -105,16 +103,9 @@ class TestChapterWiring:
             "fallbacks": [{"reason_code": "X", "evidence": {
                 "downgrade_class": "degraded"}}],
         }
-        # merge 逻辑内联断言（与 session_plan.apply_tool_result 同键集合）
-        if raw.get("workflow_contract") is not None:
-            plan.gis_chapter["workflow_contract"] = raw["workflow_contract"]
-        if raw.get("methodology_warnings"):
-            plan.gis_chapter["methodology_warnings"] = raw["methodology_warnings"]
-        if raw.get("fallbacks"):
-            plan.gis_chapter["fallbacks"] = raw["fallbacks"]
-        assert plan.gis_chapter["workflow_contract"]["domain"] == "equity"
+        merge_map_product_result(chapter, raw)
+        assert chapter["workflow_contract"]["domain"] == "equity"
 
-        # 完成管线从该 chapter 推导 verdict（生产读路径）
         from app.services.gis_harness.completion.contracts import (
             MapCompletionResult,
             evaluate_completion_contract,
@@ -125,10 +116,58 @@ class TestChapterWiring:
             render_status="not_applicable",
         )
         contract = evaluate_completion_contract(
-            result, raw["methodology_warnings"], plan.gis_chapter,
+            result, raw["methodology_warnings"], chapter,
         )
         assert contract["workflow_present"] is True
         assert contract["dimensions"]["methodology_disclosure"] is True
+
+    def test_repair_rerun_clears_stale_blocking_fallback(self):
+        """R2-1 主断言：修复后重跑（fallbacks=[]）必须清掉上一轮的
+        not_allowed 阻断 —— 修复循环不得永久 BLOCKED。"""
+        from app.services.session_plan import merge_map_product_result
+        from app.services.gis_harness.completion.contracts import (
+            MapCompletionResult,
+            derive_product_verdict,
+        )
+
+        chapter = {"query": "q", "fallbacks": [
+            {"reason_code": "INSAR_STACK_INSUFFICIENT",
+             "evidence": {"downgrade_class": "not_allowed"}}]}
+        # 第一轮：阻断生效
+        blocked = MapCompletionResult(
+            status="complete", layer_status="valid", component_status="valid",
+            render_status="verified")
+        v1 = derive_product_verdict(blocked, [], chapter=chapter)
+        assert v1["verdict"] == "BLOCKED_BY_METHOD"
+
+        # 修复后重跑：新结果带回空 fallbacks → 旧阻断清除
+        merge_map_product_result(chapter, {"fallbacks": []})
+        v2 = derive_product_verdict(blocked, [], chapter=chapter)
+        assert v2["verdict"] == "READY"
+
+        # 旧版本工具结果（键缺席）→ chapter 保持零漂移
+        chapter["fallbacks"] = [{"reason_code": "OLD", "evidence": {
+            "downgrade_class": "not_allowed"}}]
+        merge_map_product_result(chapter, {"status": "finalized"})
+        v3 = derive_product_verdict(blocked, [], chapter=chapter)
+        assert v3["verdict"] == "BLOCKED_BY_METHOD"
+
+    def test_non_dict_evidence_never_crashes_verdict(self):
+        """R2-4：旧/损坏章节的 fallback.evidence 非字典时裁决不崩。"""
+        from app.services.gis_harness.completion.contracts import (
+            MapCompletionResult,
+            derive_product_verdict,
+        )
+
+        chapter = {"fallbacks": [
+            {"reason_code": "LEGACY", "evidence": "not-a-dict"},
+            {"reason_code": "", "evidence": {"downgrade_class": "not_allowed"}},
+        ]}
+        result = MapCompletionResult(
+            status="complete", layer_status="valid", component_status="valid",
+            render_status="verified")
+        verdict = derive_product_verdict(result, [], chapter=chapter)
+        assert verdict["verdict"] == "READY"
 
     def test_not_allowed_fallback_blocks_completion(self):
         """R1-A2：not_allowed 语义降级触发 → science 维失败 → BLOCKED_BY_METHOD。"""
