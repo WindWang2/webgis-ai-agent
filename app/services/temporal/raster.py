@@ -183,7 +183,15 @@ class TemporalRasterEngine:
         """
         try:
             import rasterio
-            with rasterio.open(rpath) as src:
+
+            from app.lib.geo_raster.env import rasterio_env
+
+            # Env held for the open's lifetime (runtime property, see
+            # geo_raster.env). Raw header-only open kept on purpose: routing
+            # through RasterReader.metadata() would add fingerprint block
+            # reads to a per-raster hot path — an IO-characteristics change
+            # for zero numerical gain.
+            with rasterio_env(), rasterio.open(rpath) as src:
                 b = src.bounds
                 crs = str(src.crs) if src.crs is not None else "EPSG:4326"
         except Exception:
@@ -206,7 +214,13 @@ class TemporalRasterEngine:
         """
         try:
             import rasterio
-            with rasterio.open(rpath) as src:
+
+            from app.lib.geo_raster.env import rasterio_env
+
+            # Env held for the open's lifetime; raw header-only open kept
+            # (same rationale as _scene_aoi — no pixel IO today, and
+            # RasterReader.metadata() would add fingerprint block reads).
+            with rasterio_env(), rasterio.open(rpath) as src:
                 aoi_bounds = self._aoi_bounds_in_crs(src, aoi_geometry)
                 if aoi_bounds is None:
                     return True
@@ -276,20 +290,32 @@ class TemporalRasterEngine:
         if p1 and p2 and os.path.exists(p1) and os.path.exists(p2):
             try:
                 import rasterio
-                with rasterio.open(p1) as src1, rasterio.open(p2) as src2:
-                    self._validate_alignment(src1, src2)
-                    window = self._difference_window(src1, src2, aoi_geometry)
-                    if window is None or window.width <= 0 or window.height <= 0:
-                        # AOI / overlap does not intersect either raster.
-                        return self._empty_difference()
-                    result = self._streamed_difference_stats(src1, src2, window)
-                    result["analyzed_window"] = {
-                        "col_off": int(window.col_off),
-                        "row_off": int(window.row_off),
-                        "width": int(window.width),
-                        "height": int(window.height),
-                    }
-                    return result
+
+                from app.lib.geo_raster.env import rasterio_env
+
+                # Env held for the lifetime of BOTH opens (runtime property,
+                # ADR-0089). Raw opens kept on purpose — routing through
+                # RasterReader/ read_window is NOT numerics-neutral here:
+                # read_window's bounds guard raises RasterReaderError (a
+                # ValueError) where today an edge sub-window surfaces as a
+                # rasterio error caught below → empty difference; converting
+                # that into a re-raised ValueError would change results for
+                # boundary AOIs. The streamed block loop stays byte-identical.
+                with rasterio_env():
+                    with rasterio.open(p1) as src1, rasterio.open(p2) as src2:
+                        self._validate_alignment(src1, src2)
+                        window = self._difference_window(src1, src2, aoi_geometry)
+                        if window is None or window.width <= 0 or window.height <= 0:
+                            # AOI / overlap does not intersect either raster.
+                            return self._empty_difference()
+                        result = self._streamed_difference_stats(src1, src2, window)
+                        result["analyzed_window"] = {
+                            "col_off": int(window.col_off),
+                            "row_off": int(window.row_off),
+                            "width": int(window.width),
+                            "height": int(window.height),
+                        }
+                        return result
             except ValueError:
                 raise
             except Exception as e:
@@ -397,22 +423,32 @@ class TemporalRasterEngine:
     def _validate_alignment(src1, src2) -> None:
         """Rejects CRS/transform-mismatched raster pairs with a clear error.
 
-        Runtime V3（ADR-0089）：网格判定委托共享 ``raster_grid.grids_align``
-        （此前是仓库里第三份自制的 transform/CRS 等值实现）。语义保持：
+        Runtime V3/V5：判定全部来自对齐权威模块 ``raster_grid``——
+        ``decide_alignment``（内部即 ``grids_align``）做主裁决，本地零自制
+        比较。差值是"交集窗口"运算，所以权威模块为其定义的接受边界是弱判定
+        ``same_georeferencing``（CRS+仿射一致，宽高可不同——交集窗口逐像元
+        仍然配准；纯逐像元运算必须用强判定 ``grids_align``）。语义保持：
         CRS 不同、或仿射六参数超出 1e-6 相对容差 → 结构化拒绝，绝不静默
         减去错位的像元。
         """
         from app.lib.geo_analysis.raster_grid import (
             RasterGridProfile,
+            decide_alignment,
             same_georeferencing,
         )
 
         g1 = RasterGridProfile.from_dataset(src1)
         g2 = RasterGridProfile.from_dataset(src2)
-        aligned, reason = same_georeferencing(g1, g2)
-        if aligned:
+
+        decision = decide_alignment(g1, g2)
+        if decision.aligned:
             return
-        if reason.startswith("crs"):
+        aligned_weak, weak_reason = same_georeferencing(g1, g2)
+        if aligned_weak:
+            # 同 CRS+仿射、仅宽高不同（或足迹无交集）：窗口交集推导
+            # （_difference_window）会收敛为合法窗口或空结果，不在此拒绝。
+            return
+        if weak_reason.startswith("crs") or decision.status == "needs_reproject":
             raise ValueError(
                 f"Raster CRS mismatch in difference: {src1.crs} vs {src2.crs}. "
                 "Refusing to subtract misaligned rasters."

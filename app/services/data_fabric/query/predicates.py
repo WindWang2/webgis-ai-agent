@@ -503,7 +503,15 @@ def _eval_three_valued(node: Any, properties: Dict[str, Any]) -> Optional[bool]:
     if op in ("in", "not_in"):
         members = node.values
         hit = any(val == m or (isinstance(val, (int, float)) and _to_number(m) == _to_number(val)) for m in members)
-        return hit if op == "in" else not hit
+        if op == "in":
+            return hit
+        # F5/SQL 三值逻辑：x NOT IN (a, NULL) 永不为 TRUE —— 命中 → FALSE；
+        # 未命中但成员含 NULL → unknown（行被 WHERE 排除），与服务器端一致。
+        if hit:
+            return False
+        if any(m is None for m in members):
+            return None
+        return True
     if op == "between":
         lo, hi = _to_number(node.low), _to_number(node.high)
         nv = _to_number(val)

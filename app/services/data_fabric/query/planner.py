@@ -32,11 +32,13 @@ from app.services.data_fabric.query.predicates import (
     bbox_crosses_antimeridian,
     predicate_summary,
 )
+from app.services.data_fabric.query.selectivity import (
+    estimate_group_cardinality,
+    estimate_predicate_selectivity,
+)
+from app.services.data_fabric.query.statistics import DatasetStatistics
 
-# 估算参数（确定性；不精确但可用于 mode 决策与预算预警）
-_SELECTIVITY_EQ = 0.05          # 等值谓词默认选择率
-_SELECTIVITY_RANGE = 0.25       # 范围谓词默认选择率
-_SELECTIVITY_IN = 0.3           # IN 谓词按成员数增长
+# 估算参数（确定性；V2 常数仍在 selectivity.py 作为无统计兜底，逐位一致）
 _BBOX_FULL_COVER = 1.0
 _BYTE_PER_FEATURE_DEFAULT = 700
 _BYTE_PER_FEATURE_GEO = 1_800   # 含 geometry
@@ -79,43 +81,29 @@ def _desc_bbox_area(bbox: Optional[Sequence[float]]) -> Optional[float]:
     return max(0.0, (maxx - minx)) * max(0.0, (maxy - miny))
 
 
-def _predicate_selectivity(node: Any) -> float:
-    """确定性选择率估算（供行数估算）。"""
-    if node is None:
-        return 1.0
-    op = getattr(node, "op", None)
-    if op == "and":
-        s = 1.0
-        for a in node.args:
-            s *= _predicate_selectivity(a)
-        return max(s, 1e-9)
-    if op == "or":
-        s = 0.0
-        for a in node.args:
-            s += _predicate_selectivity(a)
-        return min(s, 1.0)
-    if op == "not":
-        return max(0.0, 1.0 - _predicate_selectivity(node.arg))
-    if op in ("eq", "like"):
-        return _SELECTIVITY_EQ
-    if op == "is_null":
-        return 0.05 if not node.negated else 0.95
-    if op in ("gt", "ge", "lt", "le", "between", "before", "after", "during"):
-        return _SELECTIVITY_RANGE
-    if op == "in":
-        return min(0.9, _SELECTIVITY_IN * max(1, len(node.values)))
-    if op == "not_in":
-        return max(0.05, 1.0 - min(0.9, _SELECTIVITY_IN * max(1, len(node.values))))
-    if op == "ne":
-        return 0.95
-    return 0.5
+def _predicate_selectivity(node: Any, stats: Optional[DatasetStatistics] = None) -> float:
+    """确定性选择率估算（供行数估算）。
+
+    V3：委托 selectivity 模块 —— 无统计时与历史常数逐位一致；有统计时
+    按列 NDV/null_frac/min-max 估计。保留本包装以兼容既有调用方。
+    """
+    return estimate_predicate_selectivity(node, stats).value
 
 
-def _estimate_rows(spec: QuerySpecV2, descriptor: Any, bbox_ratio: float) -> Optional[int]:
+def _estimate_rows(
+    spec: QuerySpecV2,
+    descriptor: Any,
+    bbox_ratio: float,
+    stats: Optional[DatasetStatistics] = None,
+) -> Optional[int]:
     total = getattr(descriptor, "feature_count", None)
     if not isinstance(total, (int, float)) or total <= 0:
         return None
-    sel = bbox_ratio * _predicate_selectivity(spec.filter) * _predicate_selectivity(spec.temporal)
+    sel = (
+        bbox_ratio
+        * estimate_predicate_selectivity(spec.filter, stats).value
+        * estimate_predicate_selectivity(spec.temporal, stats).value
+    )
     est = max(1.0, float(total) * max(sel, 1e-9))
     return int(min(est, float(total)))
 
@@ -128,8 +116,14 @@ def plan_query(
     source_id: Optional[str] = None,
     dataset_fingerprint: Optional[str] = None,
     query_fp: Optional[str] = None,
+    stats: Optional[DatasetStatistics] = None,
 ) -> QueryPlan:
-    """产出确定性 QueryPlan；不可执行的查询抛 typed error。"""
+    """产出确定性 QueryPlan；不可执行的查询抛 typed error。
+
+    V3（ADR-0096 D3）：可选 ``stats``（DatasetStatistics）驱动选择性
+    估算；无统计路径与 V2 逐位一致。产出的计划附加相对成本分解与
+    有界备选（EXPLAIN 投影）—— 选中决策仍由本函数单一确定，备选
+    不构成第二执行真相。"""
     from app.services.data_fabric.query.models import query_fingerprint
 
     if caps is None:
@@ -270,10 +264,11 @@ def plan_query(
         d_area = _desc_bbox_area(getattr(descriptor, "bbox", None))
         if q_area is not None and d_area and d_area > 0:
             bbox_ratio = max(0.000001, min(1.0, q_area / d_area))
-    estimated_rows = _estimate_rows(spec, descriptor, bbox_ratio)
+    estimated_rows = _estimate_rows(spec, descriptor, bbox_ratio, stats)
     if aggregate_requested and estimated_rows is not None:
         if spec.group_by:
-            estimated_rows = min(estimated_rows, _AGG_GROUPS_ESTIMATE)
+            groups_est = estimate_group_cardinality(spec.group_by, stats, estimated_rows)
+            estimated_rows = min(estimated_rows, groups_est or _AGG_GROUPS_ESTIMATE)
         else:
             estimated_rows = max(1, len(spec.aggregate or [1]))
     estimated_bytes: Optional[int] = None
@@ -364,7 +359,7 @@ def plan_query(
     for lf in local_filters:
         steps.append(ExecutionFragment(step="local_op", description=lf))
 
-    return QueryPlan(
+    plan = QueryPlan(
         source_type=caps.source_type,
         source_id=source_id,
         dataset_id=dataset_id,
@@ -389,6 +384,46 @@ def plan_query(
         warnings=warnings,
         steps=steps,
     )
+
+    # ---- V3：成本分解 + 有界备选 + 假设标注（additive；不改选中决策）----
+    from app.services.data_fabric.query import optimizer
+
+    pushed_any = bool(pushed_filters or pushed_spatial or pushed_aggregation or pushed_sort)
+    local_rows = estimated_rows if local_filters else 0
+    plan.cost = optimizer.cost_of_chosen(
+        estimated_rows=estimated_rows,
+        estimated_bytes=estimated_bytes,
+        pushed_any=pushed_any,
+        local_rows=local_rows,
+    ).model_dump()
+    plan.alternatives = [
+        alt.model_dump()
+        for alt in optimizer.generate_alternatives(
+            source_type=caps.source_type,
+            estimated_rows=estimated_rows,
+            page_window=page_window,
+            budget_max_rows=spec.output.max_features or budget.max_rows,
+            budget_max_bytes=budget.max_bytes,
+            filter_pushed=filter_ok or spec.filter is None,
+            spatial_pushed=pushed_spatial or spec.spatial is None,
+            aggregation_pushed=pushed_aggregation or not aggregate_requested,
+            aggregate_requested=aggregate_requested,
+            projection_pushed=pushed_projection,
+            has_select=spec.select is None,
+            order_by=bool(spec.order_by),
+            sort_pushed=pushed_sort,
+            vector_tiles=caps.vector_tiles,
+            result_mode=result_mode.value if hasattr(result_mode, "value") else str(result_mode),
+        )
+    ]
+    filter_est = estimate_predicate_selectivity(spec.filter, stats)
+    if stats is None or filter_est.is_default:
+        plan.assumptions.append(
+            "selectivity uses built-in default constants (no column statistics "
+            "available); estimates are assumptions, not measurements"
+        )
+    plan.statistics_confidence = stats.confidence if stats is not None else None
+    return plan
 
 
 def dataset_version_from_descriptor(

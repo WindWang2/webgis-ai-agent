@@ -1,5 +1,4 @@
 """Raster math operations: reclassify, calculator, resample."""
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -30,36 +29,18 @@ from app.lib.geo_analysis.raster_windowed import (
 # ─── Shared GDAL environment ────────────────────────────────────
 
 
-@contextmanager
 def rasterio_env():
-    """Shared GDAL env for all raster reads/writes.
+    """Shared GDAL env for all raster reads/writes (兼容导入路径)。
 
-    Disables read-dir-on-open (avoids scanning adjacent files), sets a short
-    HTTP timeout, and forbids retries — so a hanging remote source fails fast
-    instead of blocking the worker. Consolidates the 4 identical
-    ``rasterio.Env(...)`` blocks previously inlined in ``SpatialAnalyzer``'s
-    raster methods (ADR-0037 Win 2).
-
-    Runtime V3 resource governance (ADR-0089): GDAL block cache is capped
-    (``RASTER_GDAL_CACHE_MAX_MB``, default 64MB) and GDAL warp threads pinned
-    to 1 — raster windows are processed sequentially by design (§42: no
-    unbounded parallel windows), so extra GDAL threads only amplify peak
-    memory.
+    Runtime V5 起 env 的规范归属是 ``app.lib.geo_raster.env``（env 是运行时
+    属性——任何栅格 open 路径都必须持有它，而不是某个 reader 的实现细节）；
+    本函数仅委托保留原导入路径（SpatialAnalyzer/STAC client 等既有调用方）。
+    Knobs 语义（ADR-0037 Win 2 + ADR-0089：GDAL_CACHEMAX 上限 + 单线程 warp）
+    见 canonical 模块 docstring。
     """
-    try:
-        from app.core.config import settings
+    from app.lib.geo_raster.env import rasterio_env as _canonical
 
-        cache_max_mb = settings.RASTER_GDAL_CACHE_MAX_MB
-    except Exception:  # noqa: BLE001 — 配置缺席按保守默认
-        cache_max_mb = 64
-    with rasterio.Env(
-        GDAL_DISABLE_READDIR_ON_OPEN="TRUE",
-        GDAL_HTTP_TIMEOUT=5,
-        GDAL_HTTP_MAX_RETRY=0,
-        GDAL_CACHEMAX=int(cache_max_mb),
-        GDAL_NUM_THREADS=1,
-    ):
-        yield
+    return _canonical()
 
 
 RESAMPLING_MAP = {
