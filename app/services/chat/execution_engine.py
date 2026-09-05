@@ -540,6 +540,28 @@ class ChatExecutionEngine:
             else:
                 logger.debug("[ToolSurfaceV2] %s", proj.summary_line())
             self.last_surface_projection = proj
+            # ADR-0101 Wave 8：工具面选定事件 → trace（turn 缺席时静默）
+            try:
+                _turn = ""
+                try:
+                    _rt = rt_ctx.current_runtime_context()
+                    _turn = getattr(_rt, "turn_id", "") or "" if _rt else ""
+                except Exception:  # noqa: BLE001
+                    pass
+                if _turn:
+                    from app.lib.runtime.trace import (
+                        EVENT_TOOL_SURFACE_SELECTED,
+                        get_trace_registry,
+                    )
+
+                    get_trace_registry().emit(
+                        _turn, EVENT_TOOL_SURFACE_SELECTED,
+                        tools=len(proj.schemas), bytes=proj.bytes_used,
+                        fingerprint=proj.fingerprint,
+                        retrieval_added=len(proj.retrieval_added),
+                    )
+            except Exception:  # noqa: BLE001
+                pass
             return proj.schemas
         except Exception:  # noqa: BLE001 — 投影失败绝不阻断工具选择
             logger.debug("[ToolSurfaceV2] augment failed; falling back", exc_info=True)

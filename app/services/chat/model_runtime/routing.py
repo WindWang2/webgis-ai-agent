@@ -209,7 +209,25 @@ class ModelRouter:
         latency_s: float = 0.0,
         failure: Optional[FailureKind] = None,
     ) -> None:
-        """调用方回报结果（成功/失败）→ 健康表。"""
+        """调用方回报结果（成功/失败）→ 健康表 + trace fallback 事件。"""
+        if failure is not None:
+            try:
+                from app.lib.runtime.context import current_runtime_context
+                from app.lib.runtime.trace import (
+                    EVENT_FALLBACK,
+                    get_trace_registry,
+                )
+
+                _rt = current_runtime_context()
+                _turn = getattr(_rt, "turn_id", "") if _rt else ""
+                if _turn:
+                    get_trace_registry().emit(
+                        _turn, EVENT_FALLBACK,
+                        model=decision.model_id, failure=failure.value,
+                        role=decision.role,
+                    )
+            except Exception:  # noqa: BLE001
+                pass
         if failure is None:
             self._health.record_success(
                 decision.provider_id, decision.model_id, latency_s=latency_s

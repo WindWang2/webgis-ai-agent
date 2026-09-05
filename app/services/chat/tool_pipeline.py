@@ -20,6 +20,18 @@ from app.services.tool_dispatch_service import (
     normalize_tool_name,
 )
 
+
+def _trace_emit(turn_id: str, kind: str, /, **meta) -> None:
+    """ADR-0101 Wave 8：trace 事件发射（turn 缺席时静默 —— 观测绝不阻断执行）。"""
+    if not turn_id:
+        return
+    try:
+        from app.lib.runtime.trace import get_trace_registry
+
+        get_trace_registry().emit(turn_id, kind, **meta)
+    except Exception:  # noqa: BLE001
+        pass
+
 logger = logging.getLogger(__name__)
 
 
@@ -107,6 +119,15 @@ class ToolExecutionPipeline:
         # 2. Sentinel check / fallback
         sentinels = executed_tools if executed_tools is not None else set()
 
+        _trace_turn = ""
+        try:
+            _rt = current_runtime_context()
+            if _rt is not None:
+                _trace_turn = getattr(_rt, "turn_id", "") or ""
+        except Exception:  # noqa: BLE001
+            _trace_turn = ""
+        _trace_emit(_trace_turn, "tool_call_proposed", tool=tool_name,
+                    tool_call_id=tool_call_id)
         # 3. Execute tool dispatch inside TaskTracker step context.
         # RUN-02: when the caller already opened a step (and emitted step_start),
         # use it directly instead of opening a second track_step.
@@ -137,10 +158,34 @@ class ToolExecutionPipeline:
         )
 
         async def _dispatch() -> ToolDispatchResult:
+            _trace_emit(_trace_turn, "dispatch_started", tool=tool_name,
+                        tool_call_id=tool_call_id)
             with use_token(cancel_token), use_origin(origin):
                 if self.dispatch_fn is not None:
-                    return await self.dispatch_fn(tc, session_id, sentinels)
-                return await self.dispatch_service.dispatch(tc, session_id, sentinels)
+                    _outcome = await self.dispatch_fn(tc, session_id, sentinels)
+                else:
+                    _outcome = await self.dispatch_service.dispatch(tc, session_id, sentinels)
+            _trace_emit(
+                _trace_turn, "dispatch_completed", tool=tool_name,
+                tool_call_id=tool_call_id,
+                status=_outcome.status,
+                duration_ms=round(elapsed_ms, 1) if (elapsed_ms := time.time() - start_time) else 0,
+            )
+            # 归一化修复证据（registry 经 ContextVar 暴露）→ trace
+            try:
+                from app.tools.argument_normalization import normalization_report_var
+
+                _repairs = normalization_report_var.get()
+                if _repairs:
+                    _trace_emit(
+                        _trace_turn, "tool_args_normalized", tool=tool_name,
+                        tool_call_id=tool_call_id,
+                        repairs=len(_repairs),
+                        kinds=",".join(sorted({r.kind for r in _repairs}))[:120],
+                    )
+            except Exception:  # noqa: BLE001
+                pass
+            return _outcome
 
         def _error_outcome(exc: BaseException) -> ToolDispatchResult:
             err_msg = f"工具执行异常 ({type(exc).__name__}): {exc}"
