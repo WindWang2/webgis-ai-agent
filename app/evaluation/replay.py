@@ -191,10 +191,28 @@ async def simulate_agent_loop(
                 f"step {idx}: expected ok, got error {view.error_code}: {view.message[:80]}"
             )
 
-        # 不变量 c：no-progress 模式联动
+        # 不变量 c：no-progress 模式联动（工具类别由描述符声明 —— 波 1 语义
+        # 分类驱动波 6 模式检测的闭环）
+        is_read_only = False
+        is_mutation = False
+        try:
+            _desc = registry.descriptor(step.tool)
+            is_read_only = _desc.side_effect in (
+                SideEffectClass.PURE,
+                SideEffectClass.DETERMINISTIC_COMPUTE,
+                SideEffectClass.CACHEABLE_READ,
+            )
+            is_mutation = _desc.side_effect in (
+                SideEffectClass.STATE_MUTATION,
+                SideEffectClass.ARTIFACT_CREATION,
+            )
+        except KeyError:
+            pass
         reasons = tracker.record(
             step.tool, step.arguments,
             "ok" if view.ok else "error",
+            is_read_only=is_read_only,
+            is_mutation=is_mutation,
         )
         if step.expect_no_progress_reasons:
             for expected in step.expect_no_progress_reasons:

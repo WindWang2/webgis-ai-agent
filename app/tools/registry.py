@@ -280,6 +280,34 @@ def validate_geojson_structure(obj: Any) -> None:
                 validate_geojson_structure(val)
 
 
+_NONFINITE_SCAN_MAX_NODES = 4096
+
+
+def _find_nonfinite_numbers(obj: Any, _budget: Optional[list] = None) -> list:
+    """预算化扫描实参树中的 NaN / ±Infinity（返回至多 5 个字段路径）。"""
+    if _budget is None:
+        _budget = [_NONFINITE_SCAN_MAX_NODES]
+    found: list = []
+
+    def _walk(node, path):
+        if _budget[0] <= 0 or len(found) >= 5:
+            return
+        _budget[0] -= 1
+        if isinstance(node, float):
+            if node != node or node in (float("inf"), float("-inf")):
+                found.append(path or "$")
+            return
+        if isinstance(node, dict):
+            for k, v in list(node.items())[:64]:
+                _walk(v, f"{path}.{k}" if path else str(k))
+        elif isinstance(node, list):
+            for i, v in enumerate(node[:64]):
+                _walk(v, f"{path}[{i}]")
+
+    _walk(obj, "")
+    return found
+
+
 class ToolRegistry:
     def __init__(self):
         self._tools: dict[str, Callable] = {}
@@ -1236,6 +1264,24 @@ class ToolRegistry:
                         error_type="ValidationError",
                         correction_hint=f"Validation Error: {message}. Please check the tool definition and ensure all required parameters are provided with correct types."
                     )
+
+        # ADR-0101 Wave 9（§40 载荷安全）：非有限浮点（NaN/±Infinity）在
+        # JSON 标准里不存在，但 Python json.loads 默认接受 —— 下游
+        # json.dumps(strict)/前端/DB 全会炸，且错误在远离注入点的位置爆发。
+        # 预算化扫描（与 GeoJSON 校验同门：oversized 载荷跳过深扫，交给
+        # 工具自检 —— 大载荷本就走旁路）。
+        if isinstance(arguments, dict) and not _args_oversized_now:
+            _nonfinite = _find_nonfinite_numbers(arguments)
+            if _nonfinite:
+                return std_error_response(
+                    f"参数含非法数值 NaN/Infinity: {', '.join(_nonfinite[:5])}",
+                    code="VALIDATION_ERROR",
+                    error_type="ValueError",
+                    correction_hint=(
+                        "NaN/Infinity are not valid JSON numbers. Remove or "
+                        "replace them with finite values and retry."
+                    ),
+                )
 
         # GeoJSON 几何结构校验 (BE-AUDIT-08)
         # PERF-F2 + #699 + #677：与上节 Pydantic 旁路同门（_is_args_oversized）。
