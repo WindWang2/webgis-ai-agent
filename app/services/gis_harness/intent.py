@@ -192,7 +192,8 @@ _TASK_RULES: List[tuple] = [
     # 影响（G20 回归锁定）。
     ("spatial_equity_request",
      re.compile(r"(公平性|公平|均衡|是否合理|分布合理|教育资源不足|资源(不足|缺口)|"
-                r"欠发达|不平等|差距[有大多小]?|equity|equitable|fairness|fair\s+access|"
+                r"欠发达|不平等|差距[有大多小]?|人均|万人拥有|千人拥有|"
+                r"equity|equitable|fairness|fair\s+access|"
                 r"fairly\s+(?:distributed|allocated)|balanced\s+distribution|"
                 r"underserved|under.?privileged)", re.I),
      "spatial_equity"),
@@ -213,30 +214,36 @@ _TASK_RULES: List[tuple] = [
      "suitability_assessment"),
     ("risk_exposure_request",
      re.compile(r"(风险|风险区|风险评估|风险分析|暴露|危险源|灾害易发|地质灾害|"
-                r"安全隐患|risk\s+(?:assessment|zone|area|map)|hazard|exposure)", re.I),
+                r"安全隐患|卫生防护距离|安全距离|防护距离|"
+                r"risk\s+(?:assessment|zone|area|map)|hazard|exposure)", re.I),
      "risk_exposure"),
     # ── Workflow V2（Goal C / ADR-0101）：专业领域任务规则（纯加法）────
     # 规则序契约：都是词汇高度特异的专业语义，置于 mobility/simple_view/
     # raster_subject 等宽规则之前；不影响既有规则的命中（corpus 回归锁定）。
     # SAR 语义（含形变/沉降应用）是最强的栅格计算信号 —— 先于 raster 主体。
     ("sar_analysis_request",
-     re.compile(r"(\bsar\b|\binsar\b|合成孔径|雷达影像|干涉测量|差分干涉|"
+     # 中文邻接的拉丁词不能用 \b（Python re 中汉字是 \w，「看看sar」无边界）：
+     # 用显式字母 lookaround 限定词缘。
+     re.compile(r"((?<![a-zA-Z])sar(?![a-zA-Z])|(?<![a-zA-Z])insar(?![a-zA-Z])|"
+                r"合成孔径|雷达影像|雷达数据|干涉测量|差分干涉|"
                 r"形变监测|地表形变|地面沉降|沉降监测|deformation\s+monitoring|"
-                r"ground\s+settlement|interferometric)", re.I),
+                r"ground\s+settlement|interferometric|后向散射)", re.I),
      "sar_analysis"),
     # 地形衍生（坡度/坡向/山体阴影/视域）是计算任务；「地形/dem/高程」的
     # 单纯查看仍归 raster_subject → raster_distribution（数据查看 ≠ 衍生分析）。
     ("terrain_analysis_request",
-     re.compile(r"(坡度|坡向|山体阴影|地形因子|地形分析|地形起伏|地势|"
-                r"视域|通视|可视域|hillshade|slope\s+(?:analysis|map)|aspect\s+map|"
-                r"viewshed|ruggedness|terrain\s+derivatives?|tint\s+band)", re.I),
+     re.compile(r"(坡度|坡向|山体阴影|地形因子|地形分析|地形起伏|地势|地形渲染|晕渲|"
+                r"等高线|等值线|"
+                r"视域|通视|可视域|hillshade|shaded\s+relief|slope\s+(?:analysis|map)|aspect\s+map|"
+                r"viewshed|ruggedness|terrain\s+derivatives?|contour)", re.I),
      "terrain_analysis"),
     # 流域/汇水/水文是 DEM 水文计算语义（「流域」同时是 polygon 主体词，
     # 但任务规则先于主体派生，保证 watershed_analysis 一等路由）。
     ("watershed_analysis_request",
-     re.compile(r"(流域|汇水|集水|水文分析|分水岭|河流提取|汇流累积|"
+     re.compile(r"(流域|汇水|集水|水文分析|分水岭|河流提取|河网提取|河道提取|水系提取|汇流累积|"
+                r"淹没范围|淹没初筛|水位推演|内涝淹没|"
                 r"watershed|catchment|hydrology|drainage|flow\s+accumulation|"
-                r"stream\s+extraction|pour\s+point)", re.I),
+                r"stream\s+extraction|pour\s+point|flood\s+extent|inundation)", re.I),
      "watershed_analysis"),
     # 空间自相关（莫兰/Geary/LISA）是统计检验语义，与「热点」
     # (concentration_hotspot) 分属不同方法族；「热点」规则在先且词表不相交。
@@ -249,15 +256,17 @@ _TASK_RULES: List[tuple] = [
     # 命中（「变化趋势」「逐年变化」含「变化」子串）。
     ("temporal_trend_request",
      re.compile(r"(变化趋势|趋势分析|动态趋势|逐年|年际|多(?:年|期)变化|时间序列|时序分析|"
-                r"长系列|季节性趋势|temporal\s+trend|time\s+series|trend\s+analysis|"
+                r"长系列|季节性趋势|突变点|拐点|转折点|变化节点|"
+                r"temporal\s+trend|time\s+series|trend\s+analysis|"
                 r"annual\s+(?:change|variation)|interannual)", re.I),
      "temporal_trend"),
     # 网络路径（最短路径/最近设施）与可达性（服务区/等时圈）分属不同产品；
     # 词表不相交（「可达/服务区」仍归 accessibility 规则）。
     ("network_route_request",
-     re.compile(r"(最短路径|最短路线|最短距离|最近设施|最近的(?:医院|站点|设施)|"
-                r"路径规划|导航路线|配送路线|shortest\s+path|shortest\s+route|"
-                r"closest\s+facility|nearest\s+facility|route\s+planning|directions?\s+between)", re.I),
+     re.compile(r"(最短路径|最短路线|最短距离|最近设施|最近的[\u4e00-\u9fa5]{2,8}|"
+                r"路径规划|路线规划|导航路线|配送路线|"
+                r"shortest\s+path|shortest\s+route|closest\s+facility|nearest\s+facility|"
+                r"route\s+planning|directions?\s+between)", re.I),
      "network_route"),
     ("administrative_statistic",
      re.compile(r"(各|每个|按?分?)(?:个)?(?:区|县|市|街道|乡镇|镇|村|州|省)[^，。?？]*"
@@ -283,7 +292,7 @@ _TASK_RULES: List[tuple] = [
      # 可达性/服务区/覆盖范围 同族。
      # VNext §15 矩阵补：语序变体「15分钟步行(可)到达/圈内」—— 分钟词在
      # 步行/车程之前同样是最强可达信号（此前只匹配 步行…分钟内）。
-     re.compile(r"(可达性|等时圈|服务区|覆盖范围|盲区|缺口|未覆盖|覆盖空白|欠覆盖|"
+     re.compile(r"(可达性|等时圈|服务区|服务域|泰森多边形|voronoi|覆盖范围|盲区|缺口|未覆盖|覆盖空白|空白区|欠覆盖|"
                 r"通勤时间|车程[^，。?？]*内|步行[^，。?？]*分钟内|"
                 r"\d+\s*分钟[^，。?？]{0,6}(?:步行|车程|公交|骑行|到达|可达|圈)|"
                 r"(?:步行|骑行)(?:可)?到达|"
@@ -297,7 +306,9 @@ _TASK_RULES: List[tuple] = [
                 r"(周边|附近|旁边|[^区县市旗]范围内)[^，。?？]{0,32}的)", re.I),
      "proximity_analysis"),
     ("change_detection",
-     re.compile(r"(变化|变迁|对比[^，。?？]*(年|期)|历年对比|两期|"
+     re.compile(r"(变化|变迁|前后对比|对比[^，。?？]*(年|期)|历年对比|两期|城市扩张|城镇扩展|扩张监测|扩展监测|"
+                r"urban\s+expansion|"
+                r"(?:城市|城镇|建成区)(?:扩张|扩展)(?:监测|分析)?|扩张监测|扩展监测|"
                 r"changes?\s+(?:between|over|across)|change\s+detection|"
                 r"compare[^，。?？]{0,30}(?:periods?|years?|images?))", re.I),
      "change_detection"),
@@ -309,7 +320,7 @@ _TASK_RULES: List[tuple] = [
     # 栅格分布概览 —— 必须先于 raster_subject_thematic 命中，否则 ndvi
     # capability 永不进入计划（benchmark golden G5 锁定）。
     ("vegetation_index_request",
-     re.compile(r"(ndvi|evi|ndwi|nbr|植被指数|植被覆盖)", re.I),
+     re.compile(r"(ndvi|evi|ndwi|nbr|植被指数|植被覆盖度?|绿度)", re.I),
      "vegetation_index"),
     # ADR-0092 G11/G12：流动语义（通勤/出行/客流 OD）先于展示动词命中，
     # 避免「展示…通勤流」被 simple_view 吞掉。

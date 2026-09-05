@@ -542,9 +542,21 @@ def evaluate_workflow_obligations(
                     evidence={"temporalObservationCount": obs if obs is not None else "unknown",
                               "hasTimeField": bool(has_time)},
                 )
+        elif obl.kind in ("transformation", "disclosure"):
+            # 变换/披露类义务是「处理/披露义务」：规划期即作为披露浮出
+            # （material 时用户必须可见），运行期证据到齐后由完成契约核验
+            # 是否解除 —— unknown 的是「是否已满足」，不是「是否该披露」。
+            ev = ObligationEvaluation(
+                obligation_id=obl.obligation_id, kind=obl.kind,
+                status=("warning"
+                        if obl.on_violation == "degrade_with_disclosure"
+                        else "unknown"),
+                warning_code=obl.warning_code,
+                on_violation=obl.on_violation,
+                detail=obl.description or "处理/披露义务：运行期证据核验",
+            )
         else:
-            # uncertainty / transformation / disclosure：需要运行期证据，
-            # 规划期诚实 unknown（unknown ≠ unsatisfied，不假违反也不假满足）。
+            # uncertainty 等：需要运行期证据，规划期诚实 unknown。
             ev = ObligationEvaluation(
                 obligation_id=obl.obligation_id, kind=obl.kind,
                 status="unknown", warning_code=obl.warning_code,

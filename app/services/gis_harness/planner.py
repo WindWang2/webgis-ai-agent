@@ -1003,6 +1003,17 @@ class MapProductPlanner:
                 if str(warning.get("code")) not in existing_codes:
                     plan.methodology_warnings.append(warning)
                     existing_codes.add(str(warning.get("code")))
+            # 证据刷新：已被正向证据满足的义务，其规划期披露（同码）过时
+            # —— 确定性移除（finalize 的 profile 事实优先于 draft 假设）。
+            satisfied_codes = {
+                ev.warning_code for ev in contract.obligations
+                if ev.status == "satisfied" and ev.warning_code
+            }
+            if satisfied_codes:
+                plan.methodology_warnings = [
+                    w for w in plan.methodology_warnings
+                    if str(w.get("code")) not in satisfied_codes
+                ]
 
             # 触发的语义回退 → 结构化 FallbackDecision（匹配工作流声明的
             # 降级策略；未声明策略时按 degraded 保守合成，绝不静默）。

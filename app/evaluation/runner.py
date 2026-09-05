@@ -203,8 +203,15 @@ class GISBenchmarkRunner:
             r.algorithm for r in plan.algorithm_selections if r.algorithm
         ]
         got_patterns = {w.get("pattern") for w in (plan.methodology_warnings or [])}
+        got_codes = set()
+        for w in (plan.methodology_warnings or []):
+            for code in (w.get("warning_codes") or []):
+                got_codes.add(str(code))
+            if w.get("code"):
+                got_codes.add(str(w.get("code")))
         honesty_checked = bool(
             case.expected_methodology_warnings or case.forbidden_methodology_warnings
+            or case.expected_warning_codes or case.forbidden_warning_codes
         )
         honesty_ok = (
             set(case.expected_methodology_warnings) <= got_patterns
@@ -212,6 +219,7 @@ class GISBenchmarkRunner:
         ) if honesty_checked else None
         evidence = {
             "task": intent.task,
+            "warning_codes": sorted(got_codes),
             "recipe_id": plan.recipe_id,
             "template_id": plan.template_id,
             "resolved_capabilities": resolved,
@@ -235,7 +243,12 @@ class GISBenchmarkRunner:
         if optional_resolved:
             precision = min(1.0, (len(hits)) / max(1, len(resolved_set) - len(optional_resolved)))
 
-        if case.expected_task and intent.task != case.expected_task:
+        if case.expected_tasks:
+            if intent.task not in case.expected_tasks:
+                failures.append(
+                    f"task: expected one of {case.expected_tasks}, got {intent.task}"
+                )
+        elif case.expected_task and intent.task != case.expected_task:
             failures.append(f"task: expected {case.expected_task}, got {intent.task}")
         # Methodology honesty: the plan must carry the expected pattern-level
         # warnings (e.g. equity without a denominator) — and honest-disclosure
@@ -254,6 +267,15 @@ class GISBenchmarkRunner:
                 failures.append(
                     f"methodology noise: {forbidden_warn} warned without semantic basis"
                 )
+            # Workflow V2（C10）：稳定警告码断言（比 pattern 更细的反声明锚）。
+            missing_codes = sorted(set(case.expected_warning_codes) - got_codes)
+            if missing_codes:
+                failures.append(f"warning codes missing: {missing_codes}")
+            noise_codes = sorted(set(case.forbidden_warning_codes) & got_codes)
+            if noise_codes:
+                failures.append(
+                    f"forbidden warning codes present: {noise_codes}"
+                )
         missing_caps = sorted(expected_set - resolved_set)
         if missing_caps:
             failures.append(f"capabilities unresolved: {missing_caps}")
@@ -269,7 +291,12 @@ class GISBenchmarkRunner:
                 failures.append(
                     f"algorithms outside allowed set {case.allowed_algorithms}: {algorithms}"
                 )
-        if case.expected_recipe and plan.recipe_id != case.expected_recipe:
+        if case.expected_recipes:
+            if plan.recipe_id not in case.expected_recipes:
+                failures.append(
+                    f"recipe: expected one of {case.expected_recipes}, got {plan.recipe_id}"
+                )
+        elif case.expected_recipe and plan.recipe_id != case.expected_recipe:
             failures.append(f"recipe: expected {case.expected_recipe}, got {plan.recipe_id}")
         if case.max_tool_calls is not None:
             planned_calls = evidence["tool_calls_planned"]

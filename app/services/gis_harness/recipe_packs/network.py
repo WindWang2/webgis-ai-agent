@@ -42,7 +42,7 @@ _RECIPES: List[CartographyRecipe] = [
         schema_version=2,
         workflow=wf(
             "network", "shortest_path",
-            zh=["最短路径", "路线规划", "怎么走", "导航"],
+            zh=["最短路径", "最短路线", "路径规划", "路线规划", "怎么走", "导航"],
             en=["shortest path", "route planning"],
             roles=[subject_role(), _NETWORK_ROLE],
             obligations=[
