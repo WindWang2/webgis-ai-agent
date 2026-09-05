@@ -89,4 +89,40 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             output_artifact_types=["line_feature_set"],
             purpose_template="访问路线优化",
         ),
+
+        # ── VNext（ADR-0099）：外部服务商网络服务绑定（消除 network_tool_orphan）──
+        # 这三个能力是外部 API 客户端语义（高德/百度），不是本地路网分析：
+        # deterministic=False（服务商侧实时数据，逐次调用不可复现），
+        # 外部依赖（API Key / 配额）在算法 limitations 中披露。
+        CapabilityDescriptor(
+            id="external_route_planning", name="外部路径规划", category="network",
+            domain="network",
+            description="经外部服务商（高德/百度）API 的点对点路径规划（驾车/步行/骑行/公交），"
+                        "返回距离、耗时与路线坐标；依赖服务商 API Key。",
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_types=["line_feature_set"],
+            deterministic=False,
+            purpose_template="外部路径规划",
+        ),
+
+        CapabilityDescriptor(
+            id="transit_routing", name="公交路径规划", category="network",
+            domain="network",
+            description="起终点间公交/地铁换乘方案查询（步行段+乘车段，含换乘次数、总耗时、票价；"
+                        "外部服务商 API，当前仅高德）。",
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_types=["line_feature_set"],
+            deterministic=False,
+            purpose_template="公交换乘方案查询",
+        ),
+
+        CapabilityDescriptor(
+            id="traffic_status", name="实时路况", category="network",
+            domain="network",
+            description="指定矩形/圆形范围内的实时道路拥堵状态查询（拥堵等级+路段长度；"
+                        "外部服务商 API，实时语义、结果不缓存）。",
+            output_artifact_types=["stats_table"],
+            deterministic=False,
+            purpose_template="实时路况查询",
+        ),
 ]
