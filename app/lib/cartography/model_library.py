@@ -177,6 +177,9 @@ class MapModel(BaseModel):
     # 几何多态模型按输入几何族切换 layer_type（audit #832 知识收编；
     # 非多态模型缺省 maplibre_layer_type）
     geometry_layer_types: Dict[str, str] = Field(default_factory=dict)
+    # V3（ADR-0101）：表达能力降级链 —— 当前模型不可用（数据形态不满足等）
+    # 时推荐退到的模型 id；空 = 无声明。validate 校验其可解析且无环。
+    fallback_model_id: str = ""
 
 
 _MAPLIBRE_SPEC_URL = "https://maplibre.org/maplibre-style-spec/layers/"
@@ -472,6 +475,12 @@ class MapModelRegistry:
         self._alias.clear()
         for model in SEED_MAP_MODELS:
             self.register(model)
+        # V3（ADR-0101 D1）：seed 之后按确定性顺序载入域包扩充模型。
+        # seed id / 别名不受影响；pack 与 seed 撞 id 时静默忽略（与既有
+        # register 语义一致），撞别名记 warning（register 内建）。
+        from app.lib.cartography.model_packs import MODEL_PACK_MODELS
+        for model in MODEL_PACK_MODELS:
+            self.register(model)
 
     def register(self, model: MapModel) -> None:
         if model.id in self._by_id:
@@ -556,6 +565,27 @@ def validate_model_library() -> List[str]:
             model.classification not in CLASSIFICATION_METHODS
         ):
             issues.append(f"{model.id}: classification '{model.classification}' 非法")
+        # V3（ADR-0101 D2/D7）：降级链可解析 + 无自环；推荐组件必须是
+        # ComponentType 词表成员；native 模型图层必须在前端运行时支持族内。
+        if model.fallback_model_id:
+            if model.fallback_model_id == model.id:
+                issues.append(f"{model.id}: fallback_model_id 自环")
+            elif registry.resolve(model.fallback_model_id) is None:
+                issues.append(f"{model.id}: fallback_model_id '{model.fallback_model_id}' 未注册")
+        from app.services.gis_harness.components import ComponentType
+        from typing import get_args as _get_args
+        component_type_ids = set(_get_args(ComponentType))
+        for comp in model.recommended_components:
+            if comp not in component_type_ids:
+                issues.append(f"{model.id}: recommended_component '{comp}' 非 ComponentType 成员")
+        if model.runtime_status == "native":
+            from app.lib.cartography.model_packs import FRONTEND_RUNTIME_LAYER_TYPES
+            if mid not in FRONTEND_RUNTIME_LAYER_TYPES:
+                issues.append(
+                    f"{model.id}: native 模型图层 '{mid}' 不在前端运行时支持族内"
+                    f"（应为 planned）")
+        if model.runtime_status == "planned" and not model.pitfalls_zh:
+            issues.append(f"{model.id}: planned 模型必须登记 pitfalls（不伪装可用的原因）")
 
     for pid in COLOR_PALETTES:
         if pid not in PALETTE_KINDS:
