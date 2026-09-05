@@ -221,6 +221,10 @@ class MapProductPlan(BaseModel):
     # roles 缺席时在此留档；产品仍可产出（数量/密度可评），但结论边界
     # 必须随 plan 证据下行，绝不允许把数量分布伪装成公平性结论。
     methodology_warnings: List[Dict[str, Any]] = Field(default_factory=list)
+    # Workflow V2（Goal C / ADR-0101）：workflow 契约评估摘要（有界 dict，
+    # schema_version/roles/obligations/method_blockers/data_blockers）。
+    # None = 纯 V1 recipe（无 workflow 画像），行为与历史一致。
+    workflow_contract: Optional[Dict[str, Any]] = None
 
 
 def _plan_id(query: str, recipe_id: str) -> str:
@@ -619,6 +623,15 @@ class MapProductPlanner:
         }
         finalized.fallbacks = list(report.fallbacks)
 
+        # Workflow V2（Goal C / C4+C6）：workflow 契约评估 —— 数据角色解析 +
+        # 科学义务联动（precondition 委托算法层裁决，不重复实现）。仅对带
+        # workflow 画像的 recipe 生效；产出的警告并入 methodology_warnings
+        # （复用 verdict 联动：READY 永远让位于披露），触发的语义回退产出
+        # 带降级分类的结构化 FallbackDecision。失败不阻断终稿（诚实留痕）。
+        finalized.workflow_contract = self._evaluate_workflow_contract(
+            finalized, recipe, profile,
+        )
+
         # algorithm applicability 复检：带 profile 重裁决（不改变
         # DataRequirement 的 available 状态——那是绑定回填的职责；只更新
         # 裁决证据，让 evidence 能解释『为什么这个算法没跑』）。
@@ -950,6 +963,104 @@ class MapProductPlanner:
                 finalized.components.append(methodology_note_component(notes))
         except Exception:  # noqa: BLE001 — 披露组件失败不阻断终稿
             pass
+
+    def _evaluate_workflow_contract(
+        self,
+        plan: MapProductPlan,
+        recipe: CartographyRecipe,
+        profile: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """workflow 画像的确定性评估（finalize 阶段，Goal C / C4+C6）。
+
+        返回有界摘要 dict（写入 plan.workflow_contract）；无 workflow 画像
+        返回 None。副作用：把义务/角色警告并入 plan.methodology_warnings，
+        把触发的语义回退追加为 FallbackDecision（带 downgrade_class 与
+        用户可见 disclosure ——「模型 fallback 不得隐去语义降级」）。
+        任何异常都不得阻断终稿（评估失败如实留痕为 status=error）。
+        """
+        wf_profile = getattr(recipe, "workflow", None)
+        if wf_profile is None:
+            return None
+        try:
+            from app.services.gis_harness.workflow_schema import (
+                evaluate_workflow_obligations,
+                resolve_data_roles,
+            )
+
+            role_resolutions = resolve_data_roles(
+                recipe.id, wf_profile, resolver_profile=profile,
+            )
+            contract = evaluate_workflow_obligations(
+                recipe.id, wf_profile,
+                resolver_profile=profile, role_resolutions=role_resolutions,
+            )
+            # 合并去重：同一 warning_code 已在 plan（如 pattern projection 的
+            # 规划期披露）时不再重复追加 —— 披露幂等，证据不冗余。
+            existing_codes = {
+                str(w.get("code")) for w in plan.methodology_warnings if w.get("code")
+            }
+            for warning in contract.warnings[:8]:
+                if str(warning.get("code")) not in existing_codes:
+                    plan.methodology_warnings.append(warning)
+                    existing_codes.add(str(warning.get("code")))
+
+            # 触发的语义回退 → 结构化 FallbackDecision（匹配工作流声明的
+            # 降级策略；未声明策略时按 degraded 保守合成，绝不静默）。
+            declared = {p.reason_code: p for p in wf_profile.fallback_policies}
+            triggered: List[tuple] = []  # (reason_code, from_element, to_element, evidence)
+            for res in role_resolutions:
+                if res.status == "degraded":
+                    triggered.append((
+                        res.reason_code, f"role:{res.role}", "",
+                        {"role": res.role, "policy": res.missing_policy},
+                    ))
+            for ev in contract.obligations:
+                if ev.status in ("degraded", "blocked") and ev.on_violation == "degrade_with_disclosure":
+                    triggered.append((
+                        ev.warning_code or f"OBLIGATION_{ev.obligation_id.upper()}_UNMET",
+                        f"obligation:{ev.obligation_id}", "",
+                        {"verdict": ev.detail[:80]},
+                    ))
+            for reason_code, from_el, to_el, evidence in triggered[:8]:
+                policy = declared.get(reason_code)
+                plan.fallbacks.append(FallbackDecision(
+                    from_element=from_el,
+                    to_element=(policy.to_element if policy else to_el),
+                    reason_code=reason_code,
+                    evidence={
+                        **evidence,
+                        "downgrade_class": policy.downgrade_class if policy else "degraded",
+                        "disclosure": (
+                            (policy.disclosure if policy else "")
+                            or next(
+                                (w for w in contract.warnings
+                                 if w.get("code") == reason_code and w.get("disclosures")),
+                                {},
+                            ).get("disclosures", [""])[0]
+                        ),
+                    },
+                    downgrade_class=policy.downgrade_class if policy else "degraded",
+                    disclosure=(policy.disclosure if policy else ""),
+                ))
+
+            return {
+                "schema_version": 2,
+                "domain": wf_profile.domain,
+                "workflow_family": wf_profile.workflow_family,
+                "roles": [r.to_bounded_dict() for r in role_resolutions[:16]],
+                "obligations": [o.to_bounded_dict() for o in contract.obligations[:16]],
+                "method_blockers": contract.method_blockers[:8],
+                "data_blockers": contract.data_blockers[:8],
+                "stage": "finalize",
+            }
+        except Exception as exc:  # noqa: BLE001 - 评估失败诚实留痕，不阻断终稿
+            return {
+                "schema_version": 2,
+                "domain": getattr(wf_profile, "domain", ""),
+                "status": "error",
+                "error": str(exc)[:200],
+                "stage": "finalize",
+            }
 
     def check_recipe_eligibility(
         self,

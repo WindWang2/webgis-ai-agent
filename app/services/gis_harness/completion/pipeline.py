@@ -278,6 +278,7 @@ def map_product_block(
     rows_fingerprint: str = "",
     render_observation_seq: int = 0,
     methodology_warnings: Optional[List[Dict[str, Any]]] = None,
+    chapter: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """章节持久化块（additive、bounded、单一键 ``map_product``）。
 
@@ -290,6 +291,10 @@ def map_product_block(
     ``render_observation_seq``（P9）：验证所依据的 render observation 代次 ——
     幂等门的第三把钥匙：新观察到达（seq 前进）即打破门，重验把披露从
     unverified/stale 升级为 verified（或反向暴露 render 缺席）。
+
+    ``chapter``（Workflow V2 / Goal C / C7）：ganchapter 引用，用于读取
+    planner 落盘的 ``workflow_contract`` 摘要 —— 七维完成契约与 BLOCKED
+    裁决（方法/数据硬违反）参与推导；缺省 None 时行为与历史一致。
     """
     block = result.to_dict()
     if all_repairs is not None:
@@ -310,7 +315,7 @@ def map_product_block(
         )
 
         block["product_verdict"] = derive_product_verdict(
-            result, methodology_warnings)
+            result, methodology_warnings, chapter=chapter)
     except Exception:  # noqa: BLE001 — 裁决是增值投影，绝不阻断 finalization
         pass
     return block
@@ -513,6 +518,7 @@ async def maybe_finalize_map_product(
                     render_observation_seq=render_seq,
                     methodology_warnings=list(
                         fresh.gis_chapter.get("methodology_warnings") or []),
+                    chapter=fresh.gis_chapter,
                 )
                 await save_session_plan(fresh)
     except Exception:  # noqa: BLE001 — 披露失败不阻断 turn；下一触发点重试

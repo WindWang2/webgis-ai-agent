@@ -383,14 +383,12 @@ def resolve_data_roles(
     if profile is None:
         return []
     del recipe_id  # 预留 evidence 关联；当前以调用方聚合为准
-    from app.services.gis_harness.recipes import get_recipe_registry  # 延迟导入防循环
 
-    capability_ids = set(get_recipe_registry().capability_ids()) if hasattr(
-        get_recipe_registry(), "capability_ids"
-    ) else set()
+    capability_ids: set = set()
     try:
         from app.lib.gis.capability_registry import get_capability_registry
-        capability_ids = set(get_capability_registry().all_ids())
+        ids = get_capability_registry().all_ids
+        capability_ids = set(ids() if callable(ids) else ids)
     except Exception:  # noqa: BLE001 - registry 缺席时退化为保守 unresolved
         capability_ids = set()
 
@@ -406,10 +404,20 @@ def resolve_data_roles(
             missing_policy=req.missing_policy,
             reason_code=code,
         )
+        # 字段事实优先于获取通道：profile 已能证明角色数据在场时（如分母
+        # 字段），无论 local 还是 data_fabric 获取通道都视为 bound ——
+        # unknown ≠ unsatisfied 的对称面：evidence ≠ unsatisfied。
+        profile_backed = (
+            req.role == "denominator"
+            and _field_lower_contains(fields, _DENOMINATOR_FIELD_HINTS)
+        )
         if req.role in bound_refs:
             res.status = "bound"
             res.bound_ref = bound_refs[req.role]
             res.source_capability = req.capability_hint
+        elif profile_backed:
+            res.status = "bound"
+            res.source_capability = "profile_fields"
         elif req.acquisition in ("data_fabric", "user_upload"):
             res.status = "external"
             res.disclosure = req.degrade_disclosure or (
@@ -428,11 +436,6 @@ def resolve_data_roles(
                 res.disclosure = req.degrade_disclosure or (
                     f"缺少 {req.role} 数据：已降级处理，不得出依赖该数据的结论。"
                 )
-        # 字段事实可以在 profile 明确时强化判断（如 denominator 字段存在）
-        if req.role == "denominator" and res.status == "unresolved":
-            if _field_lower_contains(fields, _DENOMINATOR_FIELD_HINTS):
-                res.status = "bound"
-                res.source_capability = "profile_fields"
         resolutions.append(res)
     return resolutions
 

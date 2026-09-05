@@ -386,10 +386,26 @@ def compile_runtime_manifest(tool_registry: Optional[Any] = None) -> CompiledRun
     try:
         from app.services.gis_harness.recipes import get_recipe_registry
         rr = get_recipe_registry()
+        # Workflow V2（Goal C / C12）：recipe 投影从「空壳」修正为真实编排面
+        # + 内容指纹。历史代码读 r.capabilities / r.task —— CartographyRecipe
+        # 上不存在这两个属性，投影恒空、recipe 内容从不参与指纹；capability
+        # 悬空 fatal 实际从未生效。修正后：capability 引用悬空 fatal（真正
+        # 生效），workflow 语义变化必然改变 manifest.fingerprint → 旧计划
+        # 经 is_stale_plan 可感知 stale（复用既有 manifest 体系，无第二套）。
         for rid in _registry_ids(rr):
             r = rr.get(rid)
-            caps = sorted(getattr(r, "capabilities", None) or [])
-            manifest.recipes[rid] = {"capabilities": caps, "task": getattr(r, "task", "")}
+            from app.services.gis_harness.workflow_schema import (
+                recipe_capability_ids,
+                recipe_content_fingerprint,
+            )
+            caps = sorted(recipe_capability_ids(r))
+            manifest.recipes[rid] = {
+                "capabilities": caps,
+                "tasks": sorted(str(t) for t in (getattr(r, "intent_tasks", None) or [])),
+                "schema_version": int(getattr(r, "schema_version", 1) or 1),
+                "content_fingerprint": recipe_content_fingerprint(r)[:32],
+                "primary_cartography": str(getattr(r, "primary_cartography", "") or ""),
+            }
             for c in caps:
                 if c not in cap_ids:
                     _fatal("recipe_dangling_capability", f"recipe {rid} → capability {c} 不存在")

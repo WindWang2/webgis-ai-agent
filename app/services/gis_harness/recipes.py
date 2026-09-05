@@ -862,6 +862,12 @@ class RecipeRegistry:
                 if kw in low:
                     for recipe in recipes:
                         keyword_scores[recipe.id] = keyword_scores.get(recipe.id, 0) + 1
+        # V1 seed 服务的任务集合：V2 recipe 与 V1 seed 竞争「同一通用任务」
+        # 时才有资历压制；新任务族（无 V1 seed）V2 之间正常路由。
+        v1_served_tasks = {
+            t for r in self._by_id.values() if r.workflow is None
+            for t in r.intent_tasks
+        }
         scored: List[tuple] = []
         for recipe in self._by_id.values():
             task_hit = task in recipe.intent_tasks
@@ -878,19 +884,16 @@ class RecipeRegistry:
             explicit_hit = bool(explicit and explicit in cart_set)
             cart_hit = len(cartography & cart_set)
             kw_hits = keyword_scores.get(recipe.id, 0)
-            # V2 专业性守卫（两层）：
-            # a) seed_seniority —— V1 seed 对 V2 recipe 恒有资历优势（该层先于
-            #    task 层）：旧任务族的既有产品族契约不因知识库扩容而漂移，
-            #    包括 V2 recipe 声明通用任务（如 distribution_overview）的情况
-            #    （corpus 306 案例锁定）。新任务族（terrain/watershed/sar/
-            #    autocorrelation/trend/network_route）没有 V1 seed，全部候选
-            #    同为 V2 → 该层同分，族内由关键词/交集正常路由。
-            # b) v2_generic_penalty —— 同为 V2 时，无专业关键词命中者后置：
-            #    专业 recipe 靠专业词路由，不靠通用任务的交集计数。
             v2_generic_penalty = (
                 1 if (recipe.workflow is not None and kw_hits == 0) else 0
             )
-            seed_seniority = 1 if recipe.workflow is not None else 0
+            # seed_seniority：仅当本任务已有 V1 seed 服务时，V2 后置 ——
+            # 通用短语（「各区小学数量」「地表覆盖分布」）保持历史产品族；
+            # 新任务族（terrain/watershed/sar/autocorrelation/trend/route）
+            # 没有 V1 seed，V2 候选不受压制，由关键词/交集正常路由。
+            seed_seniority = (
+                1 if (recipe.workflow is not None and task in v1_served_tasks) else 0
+            )
             score = (
                 geometry_mismatch,
                 seed_seniority,

@@ -103,11 +103,86 @@ _DATA_BLOCK_CODES = frozenset({
 })
 
 
+#: Workflow V2（Goal C / C7）完成契约维度词表 —— 与
+#: workflow_schema.COMPLETION_DIMENSIONS 同词表（此处平铺避免循环 import；
+#: parity 测试锁定两表一致）。
+COMPLETION_DIMENSION_VOCAB = (
+    "data", "analysis", "science", "cartography",
+    "observed_map", "methodology_disclosure", "uncertainty_disclosure",
+)
+
+
+def evaluate_completion_contract(
+    result: "MapCompletionResult",
+    methodology_warnings: Optional[List[Dict[str, Any]]] = None,
+    chapter: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """七维完成契约评估（C7）：从「工具跑过」到可审计的完成语义。
+
+    纯函数、确定性、有界。chapter 携带 planner 落盘的 ``workflow_contract``
+    （workflow 契约评估摘要）；无该键（纯 V1 recipe / 旧会话）时维度按
+    经典管线证据推导 —— 不虚构满足，也不倒退历史行为。
+    """
+    mw = [w for w in (methodology_warnings or []) if isinstance(w, dict)]
+    chapter = chapter if isinstance(chapter, dict) else {}
+    wf_contract = chapter.get("workflow_contract")
+    wf_contract = wf_contract if isinstance(wf_contract, dict) else {}
+
+    errors = result.error_findings
+    obligations = wf_contract.get("obligations") or []
+    method_blockers = [str(b) for b in (wf_contract.get("method_blockers") or [])]
+    data_blockers = [str(b) for b in (wf_contract.get("data_blockers") or [])]
+
+    disclosed_codes = {str(w.get("code")) for w in mw if w.get("code")}
+    obligation_codes = {
+        str(o.get("warning_code")) for o in obligations
+        if o.get("warning_code") and o.get("status") in ("warning", "degraded", "blocked")
+    }
+
+    # ── 七维推导（缺证据的维度诚实置 False）──────────────────────────
+    data_ok = not data_blockers and not any(
+        f.code in _DATA_BLOCK_CODES for f in errors)
+    analysis_ok = not any(f.code == F_NEEDS_EXECUTION for f in errors) \
+        and result.status != STATUS_PENDING
+    science_ok = not method_blockers and not any(
+        str(o.get("status")) == "blocked"
+        and str(o.get("on_violation")) == "block_method"
+        for o in obligations)
+    cartography_ok = (
+        result.layer_status == "valid" and result.component_status == "valid"
+        and not any(f.code in (F_LAYER_MISSING, F_NO_RESULT_LAYER, F_COMPONENT_MISSING)
+                    for f in errors)
+    )
+    observed_ok = result.render_status in ("verified", "not_applicable")
+    methodology_ok = obligation_codes.issubset(disclosed_codes)
+    uncertainty_ok = not any(
+        str(o.get("kind")) == "uncertainty" and str(o.get("status")) == "blocked"
+        for o in obligations)
+
+    dimensions = {
+        "data": data_ok,
+        "analysis": analysis_ok,
+        "science": science_ok,
+        "cartography": cartography_ok,
+        "observed_map": observed_ok,
+        "methodology_disclosure": methodology_ok,
+        "uncertainty_disclosure": uncertainty_ok,
+    }
+    return {
+        "dimensions": dimensions,
+        "method_blockers": method_blockers[:8],
+        "data_blockers": data_blockers[:8],
+        "workflow_present": bool(wf_contract),
+    }
+
+
 def derive_product_verdict(
     result: "MapCompletionResult",
     methodology_warnings: Optional[List[Dict[str, Any]]] = None,
+    *,
+    chapter: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """MapCompletionResult (+章节方法论警告) → 单字产品裁决 + 证据。
+    """MapCompletionResult (+章节方法论警告 + workflow 契约) → 产品裁决。
 
     纯函数、确定性、有界：
     - failed 且错误全部是数据族 → BLOCKED_BY_DATA；
@@ -117,12 +192,19 @@ def derive_product_verdict(
     - complete 且零警告（含方法论警告）→ READY；
     - complete 带警告（含方法论警告）→ READY_WITH_WARNINGS —— 方法论
       披露永远压低裁决档位，不允许「带分母缺失披露的 READY」。
+    - Workflow V2（Goal C / C7）：``chapter["workflow_contract"]`` 的
+      block_method 违反（science 维不满足）→ 即使渲染完美也裁决
+      BLOCKED_BY_METHOD ——「方法不成立不能被漂亮地图掩盖」；block 策略
+      数据角色缺失 → BLOCKED_BY_DATA。输出附七维完成契约
+      （``completion_dimensions``），additive：旧读者忽略零漂移。
     """
     errors = result.error_findings
     warnings = [f for f in result.findings if f.severity == "warning"]
     mw = [w for w in (methodology_warnings or []) if isinstance(w, dict)]
     data_errors = [f.code for f in errors if f.code in _DATA_BLOCK_CODES]
     method_errors = [f.code for f in errors if f.code not in _DATA_BLOCK_CODES]
+
+    contract = evaluate_completion_contract(result, mw, chapter)
 
     if result.status == STATUS_FAILED:
         # 双族并存时数据先行（上游因）—— method_errors 仍随行披露。
@@ -138,6 +220,16 @@ def derive_product_verdict(
         )
         reasons = sorted({f.code for f in warnings})[:6]
 
+    # V2 追加裁决：workflow 契约的数据维/科学维硬违反压过 complete 档位
+    # （数据族先行，与 failed 分支同序）。
+    if verdict in (VERDICT_READY, VERDICT_READY_WITH_WARNINGS):
+        if contract["data_blockers"]:
+            verdict = VERDICT_BLOCKED_BY_DATA
+            reasons = sorted(set(contract["data_blockers"]))[:6]
+        elif contract["method_blockers"]:
+            verdict = VERDICT_BLOCKED_BY_METHOD
+            reasons = sorted(set(contract["method_blockers"]))[:6]
+
     return {
         "verdict": verdict,
         "reasons": reasons,
@@ -149,6 +241,8 @@ def derive_product_verdict(
             "errors": len(errors),
             "warnings": len(warnings),
         },
+        "completion_dimensions": contract["dimensions"],
+        "workflow_contract_present": contract["workflow_present"],
     }
 
 

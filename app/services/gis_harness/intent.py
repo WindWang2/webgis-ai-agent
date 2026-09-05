@@ -90,6 +90,7 @@ CartographyIntent = Literal[
     "hotspot_overlay",           # 热点标注/等值面
     "aggregate_grid",            # H3/渔网格网聚合填色
     "proportional_symbol",       # 比例符号（气泡）图
+    "isoline_contour",           # 等值线/等高线（Workflow V2：地形衍生产品族）
 ]
 
 OutputIntent = Literal[
@@ -214,6 +215,50 @@ _TASK_RULES: List[tuple] = [
      re.compile(r"(风险|风险区|风险评估|风险分析|暴露|危险源|灾害易发|地质灾害|"
                 r"安全隐患|risk\s+(?:assessment|zone|area|map)|hazard|exposure)", re.I),
      "risk_exposure"),
+    # ── Workflow V2（Goal C / ADR-0101）：专业领域任务规则（纯加法）────
+    # 规则序契约：都是词汇高度特异的专业语义，置于 mobility/simple_view/
+    # raster_subject 等宽规则之前；不影响既有规则的命中（corpus 回归锁定）。
+    # SAR 语义（含形变/沉降应用）是最强的栅格计算信号 —— 先于 raster 主体。
+    ("sar_analysis_request",
+     re.compile(r"(\bsar\b|\binsar\b|合成孔径|雷达影像|干涉测量|差分干涉|"
+                r"形变监测|地表形变|地面沉降|沉降监测|deformation\s+monitoring|"
+                r"ground\s+settlement|interferometric)", re.I),
+     "sar_analysis"),
+    # 地形衍生（坡度/坡向/山体阴影/视域）是计算任务；「地形/dem/高程」的
+    # 单纯查看仍归 raster_subject → raster_distribution（数据查看 ≠ 衍生分析）。
+    ("terrain_analysis_request",
+     re.compile(r"(坡度|坡向|山体阴影|地形因子|地形分析|地形起伏|地势|"
+                r"视域|通视|可视域|hillshade|slope\s+(?:analysis|map)|aspect\s+map|"
+                r"viewshed|ruggedness|terrain\s+derivatives?|tint\s+band)", re.I),
+     "terrain_analysis"),
+    # 流域/汇水/水文是 DEM 水文计算语义（「流域」同时是 polygon 主体词，
+    # 但任务规则先于主体派生，保证 watershed_analysis 一等路由）。
+    ("watershed_analysis_request",
+     re.compile(r"(流域|汇水|集水|水文分析|分水岭|河流提取|汇流累积|"
+                r"watershed|catchment|hydrology|drainage|flow\s+accumulation|"
+                r"stream\s+extraction|pour\s+point)", re.I),
+     "watershed_analysis"),
+    # 空间自相关（莫兰/Geary/LISA）是统计检验语义，与「热点」
+    # (concentration_hotspot) 分属不同方法族；「热点」规则在先且词表不相交。
+    ("spatial_autocorrelation_request",
+     re.compile(r"(空间自相关|自相关|莫兰|moran|geary|lisa|局部聚集指数|"
+                r"聚集显著性|spatial\s+autocorrelation|local\s+clusters?|"
+                r"cluster\s+significance|cluster\s+map)", re.I),
+     "spatial_autocorrelation"),
+    # 时序趋势（多期斜率/显著性）强于两期对比 —— 必须先于 change_detection
+    # 命中（「变化趋势」「逐年变化」含「变化」子串）。
+    ("temporal_trend_request",
+     re.compile(r"(变化趋势|趋势分析|动态趋势|逐年|年际|多(?:年|期)变化|时间序列|时序分析|"
+                r"长系列|季节性趋势|temporal\s+trend|time\s+series|trend\s+analysis|"
+                r"annual\s+(?:change|variation)|interannual)", re.I),
+     "temporal_trend"),
+    # 网络路径（最短路径/最近设施）与可达性（服务区/等时圈）分属不同产品；
+    # 词表不相交（「可达/服务区」仍归 accessibility 规则）。
+    ("network_route_request",
+     re.compile(r"(最短路径|最短路线|最短距离|最近设施|最近的(?:医院|站点|设施)|"
+                r"路径规划|导航路线|配送路线|shortest\s+path|shortest\s+route|"
+                r"closest\s+facility|nearest\s+facility|route\s+planning|directions?\s+between)", re.I),
+     "network_route"),
     ("administrative_statistic",
      re.compile(r"(各|每个|按?分?)(?:个)?(?:区|县|市|街道|乡镇|镇|村|州|省)[^，。?？]*"
                 r"(数量|多少|几|统计|计数|汇总|排名|最多|最少)|"
@@ -266,50 +311,6 @@ _TASK_RULES: List[tuple] = [
     ("vegetation_index_request",
      re.compile(r"(ndvi|evi|ndwi|nbr|植被指数|植被覆盖)", re.I),
      "vegetation_index"),
-    # ── Workflow V2（Goal C / ADR-0101）：专业领域任务规则（纯加法）────
-    # 规则序契约：都是词汇高度特异的专业语义，置于 mobility/simple_view/
-    # raster_subject 等宽规则之前；不影响既有规则的命中（corpus 回归锁定）。
-    # SAR 语义（含形变/沉降应用）是最强的栅格计算信号 —— 先于 raster 主体。
-    ("sar_analysis_request",
-     re.compile(r"(\bsar\b|\binsar\b|合成孔径|雷达影像|干涉测量|差分干涉|"
-                r"形变监测|地表形变|地面沉降|沉降监测|deformation\s+monitoring|"
-                r"ground\s+settlement|interferometric)", re.I),
-     "sar_analysis"),
-    # 地形衍生（坡度/坡向/山体阴影/视域）是计算任务；「地形/dem/高程」的
-    # 单纯查看仍归 raster_subject → raster_distribution（数据查看 ≠ 衍生分析）。
-    ("terrain_analysis_request",
-     re.compile(r"(坡度|坡向|山体阴影|地形因子|地形分析|地形起伏|地势|"
-                r"视域|通视|可视域|hillshade|slope\s+(?:analysis|map)|aspect\s+map|"
-                r"viewshed|ruggedness|terrain\s+derivatives?|tint\s+band)", re.I),
-     "terrain_analysis"),
-    # 流域/汇水/水文是 DEM 水文计算语义（「流域」同时是 polygon 主体词，
-    # 但任务规则先于主体派生，保证 watershed_analysis 一等路由）。
-    ("watershed_analysis_request",
-     re.compile(r"(流域|汇水|集水|水文分析|分水岭|河流提取|汇流累积|"
-                r"watershed|catchment|hydrology|drainage|flow\s+accumulation|"
-                r"stream\s+extraction|pour\s+point)", re.I),
-     "watershed_analysis"),
-    # 空间自相关（莫兰/Geary/LISA）是统计检验语义，与「热点」
-    # (concentration_hotspot) 分属不同方法族；「热点」规则在先且词表不相交。
-    ("spatial_autocorrelation_request",
-     re.compile(r"(空间自相关|自相关|莫兰|moran|geary|lisa|局部聚集指数|"
-                r"聚集显著性|spatial\s+autocorrelation|local\s+clusters?|"
-                r"cluster\s+significance|cluster\s+map)", re.I),
-     "spatial_autocorrelation"),
-    # 时序趋势（多期斜率/显著性）强于两期对比 —— 必须先于 change_detection
-    # 命中（「变化趋势」「逐年变化」含「变化」子串）。
-    ("temporal_trend_request",
-     re.compile(r"(变化趋势|趋势分析|动态趋势|逐年|年际|多(?:年|期)变化|时间序列|时序分析|"
-                r"长系列|季节性趋势|temporal\s+trend|time\s+series|trend\s+analysis|"
-                r"annual\s+(?:change|variation)|interannual)", re.I),
-     "temporal_trend"),
-    # 网络路径（最短路径/最近设施）与可达性（服务区/等时圈）分属不同产品；
-    # 词表不相交（「可达/服务区」仍归 accessibility 规则）。
-    ("network_route_request",
-     re.compile(r"(最短路径|最短路线|最短距离|最近设施|最近的(?:医院|站点|设施)|"
-                r"路径规划|导航路线|配送路线|shortest\s+path|shortest\s+route|"
-                r"closest\s+facility|nearest\s+facility|route\s+planning|directions?\s+between)", re.I),
-     "network_route"),
     # ADR-0092 G11/G12：流动语义（通勤/出行/客流 OD）先于展示动词命中，
     # 避免「展示…通勤流」被 simple_view 吞掉。
     ("mobility_flow_request",
