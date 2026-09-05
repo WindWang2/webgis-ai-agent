@@ -73,6 +73,18 @@ class ComponentResolver:
         # pick composition template — prefer model-specific density/academic maps for heatmap-like models
         compo = None
         wired_discarded = False
+        # V3（架构审查 R1）：planned 模型的 resolver 级门控 —— planner 不选
+        # planned 模型（recipes 只引用 native id），但 resolver 自身也要保证
+        # planned 模型不会拿到为其「先行登记」的特化模板：记因后仅按
+        # generic 模板（空 compatible_map_models）选型。
+        model_planned = False
+        try:
+            from app.lib.cartography.model_library import get_map_model_registry
+            _model = get_map_model_registry().resolve(map_model_id) if map_model_id else None
+            model_planned = bool(_model and _model.runtime_status == "planned")
+        except Exception:  # noqa: BLE001 - 模型库不可用时不阻断选型
+            model_planned = False
+
         if composition_template_id:
             compo = compo_reg.get(composition_template_id)
             # 显式指定的 composition 必须仍与最终 map model 兼容 ——
@@ -82,8 +94,15 @@ class ComponentResolver:
                     and map_model_id not in compo.compatible_map_models:
                 compo = None
                 wired_discarded = True
+            if compo is not None and model_planned and compo.compatible_map_models:
+                # 显式接线命中 planned-keyed 特化模板 → 同样拒绝
+                compo = None
+                wired_discarded = True
         if compo is None:
             candidates = compo_reg.find_for_map_model(map_model_id, output_target)
+            if model_planned:
+                # planned 模型：特化（模型 keyed）模板一概不可用 → 仅 generic
+                candidates = [c for c in candidates if not c.compatible_map_models]
             # prefer a template that explicitly declares compatible_map_models for this model
             specific = [c for c in candidates if c.compatible_map_models and map_model_id in c.compatible_map_models]
             if specific:
@@ -94,6 +113,8 @@ class ComponentResolver:
                 compo = candidates[0]
             else:
                 all_cands = [c for c in compo_reg.all_templates() if not output_target or output_target in c.output_targets]
+                if model_planned:
+                    all_cands = [c for c in all_cands if not c.compatible_map_models]
                 compo = all_cands[0] if all_cands else None
 
         if compo is None:
@@ -107,6 +128,13 @@ class ComponentResolver:
                 "detail": f"{composition_template_id} not compatible with map model {map_model_id!r}",
             })
             sel.reason_codes.append("wired_composition_incompatible_model")
+        if model_planned:
+            sel.rejected.append({
+                "slot": "composition", "reason": "model_planned",
+                "detail": f"map model {map_model_id!r} is runtime_status=planned — "
+                          f"model-keyed composition templates are not eligible",
+            })
+            sel.reason_codes.append("model_planned")
 
         for slot in compo.component_slots:
             if slot.cardinality == "forbidden":

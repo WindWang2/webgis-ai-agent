@@ -94,6 +94,28 @@ def test_pdf_cases_satisfy_required_slots() -> None:
         )
 
 
+def test_planned_models_never_get_keyed_templates_at_any_output() -> None:
+    """R1 架构审查：planned 模型在**任意 output target** 下都不得选中
+    为其特化登记的 composition 模板（resolver 记因 model_planned）。
+    """
+    from app.services.gis_harness.component_resolver import ComponentResolver
+
+    planned_ids = [
+        case["model"] for case in build_cases() if case["kind"] == "planned-gate"
+    ]
+    for model in planned_ids:
+        for output in ("interactive", "png", "pdf"):
+            sel = ComponentResolver().resolve(
+                map_model_id=model, output_target=output,
+            )
+            assert "model_planned" in sel.reason_codes, (
+                f"{model}@{output}: 缺 model_planned 记因"
+            )
+            assert not sel.composition_template_id.startswith(
+                ("composition.rs_", "composition.sar_")
+            ), f"{model}@{output}: 选中 planned-keyed 模板 {sel.composition_template_id}"
+
+
 def test_binding_conflicts_absent() -> None:
     for case in build_cases():
         digest = digest_case(case)

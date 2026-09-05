@@ -96,7 +96,7 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         id="continuous_colorbar", category="legend.continuous_colorbar", type="continuous_colorbar",
         name="Continuous Colorbar", name_zh="连续色条",
         placement_domain="overlay", supported_outputs=["interactive", "png", "pdf", "svg"],
-        compatible_map_models=["visual_heatmap", "raster_surface", "density_overview",
+        compatible_map_models=["visual_heatmap", "raster_surface",
                                "terrain_analytical_surface", "spectral_index_surface",
                                "flow_od_arc"],
         compatible_artifact_types=["density_surface", "terrain_surface"],
@@ -386,6 +386,19 @@ class ComponentRegistry:
                 for conf in desc.conflicts:
                     if conf not in self._by_id and conf not in self._by_type:
                         issues.append(f"descriptor {desc.id}: conflict {conf} not registered")
+                # V3：compatible_map_models 必须可解析（canonical id 或已注册
+                # 别名）—— 防目录虚构模型契约（与 composition validate 同语义）。
+                if desc.compatible_map_models:
+                    try:
+                        from app.lib.cartography.model_library import get_map_model_registry
+                        model_reg = get_map_model_registry()
+                        for mid in desc.compatible_map_models:
+                            if model_reg.resolve(mid) is None:
+                                issues.append(
+                                    f"descriptor {desc.id}: compatible_map_model "
+                                    f"'{mid}' 未注册")
+                    except Exception:  # pragma: no cover - 防御性
+                        pass
             # renderer/exporter 支持声明必须与机器真值矩阵一致（防契约撒谎）
             issues.extend(get_component_renderer_registry().validate_against_descriptors())
         except Exception:

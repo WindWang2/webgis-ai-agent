@@ -128,7 +128,10 @@ def build_cases() -> List[Dict[str, Any]]:
             "layer_models": layer_models,
         })
 
-    # ── planned 泄漏门（planned 模型不得产出任何组件实例）───────────────
+    # ── planned 门（实际不变量：planned 模型层不得获得任何绑定组件实例；
+    # 组合选型不得落在按 planned 模型特化的模板上 —— resolver 记因
+    # model_planned 后仅 generic 兜底。通用 chrome（title/scale_bar 等
+    # 与模型无关）合法在场，不是门禁对象。）────────────────────────
     for model_id in model_reg.planned_ids():
         cases.append({
             "id": f"planned-gate::{model_id}",

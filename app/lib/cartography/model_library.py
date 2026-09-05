@@ -478,10 +478,12 @@ class MapModelRegistry:
         for model in SEED_MAP_MODELS:
             self.register(model)
         # V3（ADR-0101 D1）：seed 之后按确定性顺序载入域包扩充模型。
-        # seed id / 别名不受影响；pack 与 seed 撞 id 时静默忽略（与既有
-        # register 语义一致），撞别名记 warning（register 内建）。
+        # pack 与既有 id 撞车时显式抛错（与 composition packs 同策略）——
+        # 静默忽略会让 pack 模型无信号丢失。
         from app.lib.cartography.model_packs import MODEL_PACK_MODELS
         for model in MODEL_PACK_MODELS:
+            if model.id in self._by_id:
+                raise ValueError(f"duplicate map model id: {model.id}")
             self.register(model)
 
     def register(self, model: MapModel) -> None:

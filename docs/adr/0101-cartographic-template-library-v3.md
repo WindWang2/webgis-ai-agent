@@ -25,8 +25,10 @@ binding 强化、结构化 golden corpus。核心是**建库与统一契约**，
 
 ## 非目标
 
-- 不新增 ComponentType union 成员（前端类型面不变；表达能力经 variant
-  与 template 扩展）。
+- 后端 ComponentType union 不新增成员；前端 MapSpecComponent.type union
+  通过**补齐 3 个后端既有成员**（methodology_note/uncertainty_panel/
+  decision_panel —— 渲染器早已注册，仅类型面漂移）实现对齐，不引入
+  新 union 语义。表达能力经 variant 与 template 扩展。
 - 不改 vendor/pi 核心、不改 `app/services/gis_harness/planner.py` /
   `recipes.py` 的主流程（resolver 仅加 template runtime_status 门控）。
 - 不实现 SVG 矢量孪生的 marginalia（报告 vector SVG 无 chrome 是已知

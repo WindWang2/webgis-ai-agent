@@ -66,8 +66,10 @@
     "title": "title/academic"
    },
    "composition_template_id": "composition.minimal_interactive",
-   "reason_codes": [],
-   "rejected_count": 3,
+   "reason_codes": [
+    "model_planned"
+   ],
+   "rejected_count": 4,
    "required_slots": [
     "attribution",
     "scale_bar"
@@ -86,5 +88,5 @@
    "warning_codes": []
   }
  },
- "sha": "d7e6b69b2008155e"
+ "sha": "93767ee0b95cdaa7"
 }
