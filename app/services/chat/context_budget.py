@@ -198,7 +198,7 @@ def measure_assembled_context(
         max_output_tokens=max_output_tokens,
     )
     items: List[BudgetItem] = []
-    history_text_parts: List[str] = []
+    history_est_tokens = 0
     for idx, m in enumerate(messages):
         role = m.get("role")
         content = m.get("content")
@@ -212,10 +212,12 @@ def measure_assembled_context(
                 category=Category.USER_PROMPT, name=f"user_final[{idx}]", text=text,
             ))
         else:
-            history_text_parts.append(text)
-    history_text = "\n".join(history_text_parts)
+            # PERF（review R1）：逐消息累加估算（_estimate_tokens 带 memo，命中
+            # 既有字符串对象）—— 不再 join 成新字符串重扫一遍。
+            history_est_tokens += _estimate_tokens(text)
     items.append(BudgetItem(
-        category=Category.HISTORY, name="history", text=history_text,
+        category=Category.HISTORY, name="history",
+        est_tokens=history_est_tokens,
         hard_limit_tokens=history_budget_tokens,
     ))
     if tools_payload:

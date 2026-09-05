@@ -217,8 +217,11 @@ class ToolSurfaceProjector:
                 logger.debug("[ToolSurfaceV2] retrieval augment failed", exc_info=True)
 
         # --- 压缩 + 度量 + 指纹（保持 registry 序，检索新增按分数序追加） ---
+        # PERF（review R1）：compress=none 时不做任何序列化 —— 字节走 registry
+        # 注册期缓存（#1062）；压缩档的尺寸按 (name, level, summary) 确定性缓存。
         final: List[Dict[str, Any]] = []
         used_bytes = 0
+        compressed_sizes: Dict[str, int] = {}
         for s in kept:
             name = s["function"]["name"]
             if req.compress != "none":
@@ -226,9 +229,20 @@ class ToolSurfaceProjector:
                     summary = self.registry.descriptor(name).summary or None
                 except KeyError:
                     summary = None
-                s = compress_schema(s, level=req.compress, summary=summary)
+                cache_key = f"{name}|{req.compress}|{summary or ''}"
+                size = compressed_sizes.get(cache_key)
+                if size is None:
+                    s = compress_schema(s, level=req.compress, summary=summary)
+                    size = schema_bytes(s)
+                    compressed_sizes[cache_key] = size
+                else:
+                    s = compress_schema(s, level=req.compress, summary=summary)
+            else:
+                size = self.registry.schema_size(name)
+                if size is None:
+                    size = schema_bytes(s)
             final.append(s)
-            used_bytes += schema_bytes(s)
+            used_bytes += size
 
         from app.tools.descriptor import canonical_json, _short_digest
 

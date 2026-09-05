@@ -222,19 +222,23 @@ class SubagentDispatcher:
 
         # §32 层级预算：turn → agent → subagent → tools。工具调用计数经
         # dispatch 实例包装实现（引擎零改动）；墙钟由下方 asyncio.timeout 执行。
+        # 防御：测试桩引擎可能没有 dispatch_service（如 cancellation 单测的
+        # _SubEngine）—— 此时跳过包装（预算只覆盖真实引擎路径）。
         budget = SubagentBudget(
             max_tool_calls=role_obj.max_tool_calls if role_obj else 40,
             max_heavy_tool_calls=role_obj.max_heavy_tool_calls if role_obj else 8,
             max_wall_time_s=role_obj.max_wall_time_s if role_obj else 300.0,
         )
-        _orig_dispatch = sub_engine.dispatch_service.dispatch
+        _dispatch_service = getattr(sub_engine, "dispatch_service", None)
+        if _dispatch_service is not None and hasattr(_dispatch_service, "dispatch"):
+            _orig_dispatch = _dispatch_service.dispatch
 
-        async def _budgeted_dispatch(tc, session_id, executed_tools=None):
-            return await wrap_dispatch_with_budget(_orig_dispatch, budget, self.registry)(
-                tc, session_id, executed_tools
-            )
+            async def _budgeted_dispatch(tc, session_id, executed_tools=None):
+                return await wrap_dispatch_with_budget(_orig_dispatch, budget, self.registry)(
+                    tc, session_id, executed_tools
+                )
 
-        sub_engine.dispatch_service.dispatch = _budgeted_dispatch  # type: ignore[method-assign]
+            _dispatch_service.dispatch = _budgeted_dispatch  # type: ignore[method-assign]
 
         # ADR-0100：子代理取消接线。此前取消只能以「任务已取消」文案形式
         # 从工具层渗回来 —— 引擎循环本身不观察令牌，父 turn 取消后子代理

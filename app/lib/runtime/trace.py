@@ -73,10 +73,13 @@ def bound_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
                 v[:_META_VALUE_MAX_CHARS] + f"…({len(v)} chars)"
             )
         elif isinstance(v, (list, tuple, dict)):
-            blob = repr(v)
-            out[k] = blob if len(blob) <= 200 else (
-                f"<{type(v).__name__} len={len(v)}>"
-            )
+            # PERF（review R1）：先看长度再决定是否 repr —— 避免热路径上对大
+            # 容器做全量 repr 物化。
+            if len(v) <= 8:
+                blob = repr(v)
+                out[k] = blob if len(blob) <= 200 else f"<{type(v).__name__} len={len(v)}>"
+            else:
+                out[k] = f"<{type(v).__name__} len={len(v)}>"
         else:
             out[k] = repr(v)[:120]
     return out

@@ -281,27 +281,34 @@ def validate_geojson_structure(obj: Any) -> None:
 
 
 _NONFINITE_SCAN_MAX_NODES = 4096
+_NONFINITE_POS = float("inf")
+_NONFINITE_NEG = float("-inf")
 
 
 def _find_nonfinite_numbers(obj: Any, _budget: Optional[list] = None) -> list:
-    """预算化扫描实参树中的 NaN / ±Infinity（返回至多 5 个字段路径）。"""
+    """预算化扫描实参树中的 NaN / ±Infinity（返回至多 5 个字段路径）。
+
+    PERF（review R1）：路径字符串仅在命中时构造；dict/list 迭代 islice 截断，
+    不物化全量 items 列表。
+    """
     if _budget is None:
         _budget = [_NONFINITE_SCAN_MAX_NODES]
     found: list = []
+    import itertools as _itertools
 
     def _walk(node, path):
         if _budget[0] <= 0 or len(found) >= 5:
             return
         _budget[0] -= 1
         if isinstance(node, float):
-            if node != node or node in (float("inf"), float("-inf")):
+            if node != node or node == _NONFINITE_POS or node == _NONFINITE_NEG:
                 found.append(path or "$")
             return
         if isinstance(node, dict):
-            for k, v in list(node.items())[:64]:
+            for k, v in _itertools.islice(node.items(), 64):
                 _walk(v, f"{path}.{k}" if path else str(k))
         elif isinstance(node, list):
-            for i, v in enumerate(node[:64]):
+            for i, v in _itertools.islice(enumerate(node), 64):
                 _walk(v, f"{path}[{i}]")
 
     _walk(obj, "")

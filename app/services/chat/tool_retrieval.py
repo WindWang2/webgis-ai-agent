@@ -78,10 +78,11 @@ def tokenize(text: str) -> Tuple[str, ...]:
 
 @dataclass(frozen=True)
 class ToolLexicon:
-    """单个工具的检索语料（由 ToolDescriptor 派生）。"""
+    """单个工具的检索语料（由 ToolDescriptor 派生；查询期零重建 —— PERF R1）。"""
 
     name: str
-    name_tokens: Tuple[str, ...]
+    name_token_set: frozenset
+    norm_name: str
     tags: Tuple[str, ...]
     domains: Tuple[str, ...]
     capabilities: Tuple[str, ...]
@@ -96,7 +97,8 @@ class ToolLexicon:
         cap_text = " ".join(descriptor.capabilities) + " " + " ".join(descriptor.algorithms)
         return cls(
             name=descriptor.name,
-            name_tokens=tokenize(hay),
+            name_token_set=frozenset(tokenize(hay)),
+            norm_name=descriptor.name.lower(),
             tags=tuple(t.lower() for t in descriptor.tags),
             domains=tuple(d.lower() for d in descriptor.domains),
             capabilities=tuple(tokenize(cap_text)),
@@ -171,13 +173,11 @@ class ToolRetrievalIndex:
         for lex in self._lexicons:
             score = 0.0
             matched: List[str] = []
-            name_token_set = set(lex.name_tokens)
-            norm_name = lex.name.lower()
             for t in terms:
                 local = 0.0
-                if t in name_token_set:
+                if t in lex.name_token_set:
                     local = max(local, _W_NAME_EXACT if len(t) > 3 else _W_NAME_PREFIX)
-                elif len(t) > 3 and t in norm_name:
+                elif len(t) > 3 and t in lex.norm_name:
                     local = max(local, _W_NAME_SUBSTR)
                 if t in lex.tags:
                     local = max(local, _W_TAG)

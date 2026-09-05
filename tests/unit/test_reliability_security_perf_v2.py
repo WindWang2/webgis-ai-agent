@@ -255,8 +255,35 @@ def test_large_registry_scalability(size):
     assert fingerprint_s < fp_budget, f"fingerprint {fingerprint_s:.3f}s"
     assert retrieval_s < ret_budget, f"retrieval {retrieval_s:.3f}s"
     assert audit_s < audit_budget, f"audit {audit_s:.3f}s"
-    # 缓存索引后的第二次检索必须显著复用（这里只锁正确性 + 不慢于首次）
-    assert retrieval_cached_s <= max(retrieval_s, 1.0)
+    # 缓存索引后的第二次检索有绝对预算（review R1：防止 ~1000x 回归漏检）
+    assert retrieval_cached_s < 0.05, f"cached retrieval {retrieval_cached_s:.3f}s"
+
+
+def test_surface_augment_hot_path_bounded():
+    """review R1 MAJOR 回归锁：augment 每轮运行，compress=none 时绝不重新
+    序列化 schema（走 registry 注册期字节缓存）。"""
+    from app.services.tool_surface_v2 import SurfaceRequest, ToolSurfaceProjector
+
+    reg = _build_synthetic_registry(200)
+
+    class FullCatalog:
+        def __init__(self, reg_):
+            self.registry = reg_
+
+        def select_schemas(self, user_message, **kwargs):
+            return self.registry.get_schemas()
+
+        @staticmethod
+        def detect_domains(text):
+            return set()
+
+    proj = ToolSurfaceProjector(reg, FullCatalog(reg))
+    t0 = time.perf_counter()
+    r = proj.project(SurfaceRequest(user_message="负载 关键词", retrieval=False))
+    elapsed = time.perf_counter() - t0
+    assert len(r.schemas) == 200
+    assert r.bytes_used > 0
+    assert elapsed < 0.15, f"augment at 200 tools took {elapsed:.3f}s"
 
 
 def test_large_registry_fingerprint_invalidation_correct():
