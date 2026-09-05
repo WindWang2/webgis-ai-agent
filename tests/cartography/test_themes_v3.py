@@ -70,6 +70,35 @@ def test_print_safe_derivation_deterministic_and_sane() -> None:
     assert reg_a.get_palette("Viridis").print_safe
 
 
+def test_print_safe_criterion_discriminates_known_counterexamples() -> None:
+    """判据必须真实可失败 —— ColorBrewer 灰度打印声誉一致性：
+
+    - sequential 族 + RdBu/PuOr/Viridis：灰度逐级可辨 → print_safe；
+    - Set1（相邻灰度差可低至 ~0.002）/ RdYlGn（中段 ~0.02）/ Dark2/Set2
+      （3 类安全承诺之外的灰度坍缩）：必须判不安全。
+    """
+    reg = get_cartographic_theme_registry()
+    for pid in ("YlOrRd", "Blues", "Greens", "Reds", "Oranges", "Purples",
+                "RdBu", "PuOr", "Viridis"):
+        assert reg.get_palette(pid).print_safe, f"{pid} 应为打印安全"
+    for pid in ("Set1", "Set2", "Dark2", "Pastel1", "RdYlGn"):
+        assert not reg.get_palette(pid).print_safe, f"{pid} 不应标为打印安全"
+        assert reg.get_palette(pid).min_gray_delta < 0.06
+
+
+def test_colorblind_safe_max_classes_constrained() -> None:
+    """ColorBrewer 按「色带 × 类数」标注：Set2/Dark2 仅 ≤3 类色盲安全。"""
+    reg = get_cartographic_theme_registry()
+    for pid in ("Set2", "Dark2"):
+        desc = reg.get_palette(pid)
+        assert desc.colorblind_safe and desc.colorblind_safe_max_classes == 3
+    for pid in ("YlOrRd", "Blues", "RdBu", "PuOr", "Viridis"):
+        desc = reg.get_palette(pid)
+        assert desc.colorblind_safe and desc.colorblind_safe_max_classes >= 5
+    for pid in ("Set1", "Pastel1", "RdYlGn"):
+        assert not reg.get_palette(pid).colorblind_safe
+
+
 def test_theme_palette_recommendations_resolve() -> None:
     reg = get_cartographic_theme_registry()
     for theme in reg.themes():
@@ -116,6 +145,22 @@ def test_theme_validate_catches_stale_palette_reference() -> None:
     )
     issues = reg.validate()
     assert any("cartographic.bad" in i for i in issues)
+
+
+def test_chrome_token_refs_vocabulary() -> None:
+    """ChromeTokenRefs 缺省引用集 = 前端 theme-contrast 测试锁定的同表。
+
+    两侧（themes.py ↔ theme-contrast.test.ts DESCRIPTOR_TOKEN_REFS）必须
+    同步更名 —— token 引用是跨语言契约。
+    """
+    from app.lib.cartography.themes import ChromeTokenRefs
+
+    refs = ChromeTokenRefs().model_dump()
+    assert set(refs.values()) == {
+        "surface-panel", "surface-raised", "text-primary", "text-secondary",
+        "map-chrome-border", "map-chrome-bg", "map-chrome-text",
+        "map-chrome-text-muted",
+    }
 
 
 def test_seed_theme_ids_stable() -> None:

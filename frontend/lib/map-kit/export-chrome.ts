@@ -25,6 +25,7 @@ import {
   type ResolvedMapComponent,
 } from '@/lib/map-components/resolve-components';
 import { resolveComponentLayout } from '@/lib/map-components/resolve-layout';
+import { uncertaintyKindLabel as _uncertaintyKindLabel } from './disclosure-labels';
 import {
   anchorFractionInBounds,
   boundsFromCenterZoom,
@@ -73,7 +74,13 @@ export interface ExportChromeElement {
    * —— 三种面板归一化为「标题 + 文本行」，与 live 渲染器同一防御式解析
    * 语义（坏载荷 → 面板缺席，不伪造）。
    */
-  disclosure?: { title: string; rows: string[]; accent: boolean };
+  disclosure?: {
+    title: string;
+    rows: string[];
+    accent: boolean;
+    /** 需要删除线呈现的行下标（decision vetoed —— 与 live line-through 同义）。 */
+    strikeRows?: number[];
+  };
 }
 
 export interface ExportChromeModel {
@@ -246,9 +253,11 @@ function _parseUncertainty(raw: unknown): ExportChromeElement['disclosure'] {
       if (!item || typeof item !== 'object') continue;
       const r = item as Record<string, unknown>;
       if (typeof r['label'] !== 'string' || !r['label'].trim()) continue;
-      const kind = typeof r['kind'] === 'string' ? r['kind'] : '';
+      // kind → live 同款中文标签（共享 UNCERTAINTY_KIND_LABELS，不漏内码）
+      const kindRaw = typeof r['kind'] === 'string' ? r['kind'] : '';
+      const kind = _uncertaintyKindLabel(kindRaw);
       const detail = typeof r['detail'] === 'string' && r['detail'] ? `：${r['detail']}` : '';
-      rows.push(`${kind ? `[${kind}] ` : ''}${r['label']}${detail}`);
+      rows.push(`${kind} · ${r['label']}${detail}`);
     }
   }
   if (typeof rec['sampleNote'] === 'string' && rec['sampleNote'].trim()) {
@@ -260,22 +269,38 @@ function _parseUncertainty(raw: unknown): ExportChromeElement['disclosure'] {
 function _parseDecision(raw: unknown): ExportChromeElement['disclosure'] {
   if (!raw || typeof raw !== 'object') return undefined;
   const rec = raw as Record<string, unknown>;
-  const rowsRaw = rec['rows'];
-  if (!Array.isArray(rowsRaw) || rowsRaw.length === 0) return undefined;
+  const method = typeof rec['method'] === 'string' && rec['method'].trim() ? rec['method'] : '';
+  const title = method ? `决策（${method}）` : '决策';
   const rows: string[] = [];
-  for (const item of rowsRaw.slice(0, 12)) {
-    if (!item || typeof item !== 'object') continue;
-    const r = item as Record<string, unknown>;
-    if (typeof r['name'] !== 'string' || !r['name'].trim()) continue;
-    const rank = typeof r['rank'] === 'number' ? `${r['rank']}. ` : '';
-    const score = typeof r['score'] === 'number' || typeof r['score'] === 'string' ? ` — ${r['score']}` : '';
-    const basis = typeof r['basis'] === 'string' && r['basis'] ? `（${r['basis']}）` : '';
-    rows.push(`${rank}${r['name']}${score}${basis}`);
-  }
-  if (typeof rec['weightSource'] === 'string' && rec['weightSource']) {
+  const strike: number[] = [];
+  // weightSource 首行（与 live 顺序一致）
+  if (typeof rec['weightSource'] === 'string' && rec['weightSource'].trim()) {
     rows.push(`权重来源：${rec['weightSource']}`);
   }
-  return rows.length > 0 ? { title: '决策面板', rows, accent: false } : undefined;
+  const rowsRaw = rec['rows'];
+  if (Array.isArray(rowsRaw)) {
+    // 与 live decision-panel 同语义：行数不设上限（boxH 随行数伸缩）；
+    // basis 仅区分 vetoed（删除线），不做内联文本（live 用 data-basis）。
+    for (const item of rowsRaw) {
+      if (!item || typeof item !== 'object') continue;
+      const r = item as Record<string, unknown>;
+      if (typeof r['name'] !== 'string' || !r['name'].trim()) continue;
+      const rank = typeof r['rank'] === 'number' ? `${r['rank']}. ` : '';
+      const score = typeof r['score'] === 'number' || typeof r['score'] === 'string' ? ` — ${r['score']}` : '';
+      const vetoed = r['basis'] === 'vetoed';
+      if (vetoed) strike.push(rows.length);
+      rows.push(`${rank}${r['name']}${score}`);
+    }
+  }
+  const vetoesRaw = rec['vetoes'];
+  if (Array.isArray(vetoesRaw)) {
+    const vetoes = vetoesRaw.filter((v): v is string => typeof v === 'string' && !!v.trim());
+    if (vetoes.length) {
+      rows.push('硬约束否决：');
+      for (const v of vetoes) rows.push(`· ${v}`);
+    }
+  }
+  return rows.length > 0 ? { title, rows, accent: false, strikeRows: strike } : undefined;
 }
 
 /**
@@ -419,6 +444,8 @@ export async function buildExportChrome(
       rect: _floatingRectOf(scaleComp, opts.viewport, canvas),
       stackIndex: _stackOf(scaleComp)?.index ?? 0,
       slotSize: _stackOf(scaleComp)?.slotSize ?? 0,
+      // V3：dual_unit 变体驱动导出第二行英制换算（与 live scale-bar 同式）
+      variant: scaleComp.variant || undefined,
     };
   } else if (!scaleComp) {
     model.scaleBar = {
@@ -818,6 +845,23 @@ export function drawChromeScaleBar(
   ctx.font = `bold ${d.scalePx(13)}px ${d.style.fontFamily}`;
   _text(d, '0', bx, by - d.scalePx(4), 'left');
   _text(d, barLabel, bx + barPx, by - d.scalePx(4), 'right');
+  // V3：dual_unit —— 同一根比例尺条的实际代表距离换算英制第二行
+  // （与 live scale-bar formatImperial 同式；非独立第二根尺）。
+  if (el.variant === 'dual_unit') {
+    ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.6)' : 'rgba(71,85,105,0.9)';
+    ctx.font = `${d.scalePx(11)}px ${d.style.fontFamily}`;
+    _text(d, formatImperialLabel(nice), bx + barPx, by + barH + d.scalePx(12), 'right');
+  }
+}
+
+/** 英制比例标签（ft/mi；与 live scale-bar.tsx formatImperial 同式）。 */
+export function formatImperialLabel(meters: number): string {
+  const feet = meters * 3.28084;
+  if (feet >= 5280) {
+    const miles = feet / 5280;
+    return `${miles.toFixed(miles >= 10 ? 0 : 1)} mi`;
+  }
+  return `${Math.round(feet)} ft`;
 }
 
 /** 连续色条 —— 渐变 ramp + min/mid/max + unit（与 live colorbar 同形态）。 */
@@ -1069,10 +1113,26 @@ export function drawChromeDisclosurePanel(
   ctx.font = `bold ${d.scalePx(12)}px sans-serif`;
   _text(d, el.disclosure.title, lx + padding, y + d.scalePx(12), 'left');
   y += titleH;
-  for (const row of el.disclosure.rows) {
-    ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.85)' : '#1e293b';
+  const strike = new Set(el.disclosure.strikeRows ?? []);
+  for (let i = 0; i < el.disclosure.rows.length; i++) {
+    const row = el.disclosure.rows[i];
+    const text = _clipText(ctx, row, boxW - padding * 2);
+    ctx.fillStyle = strike.has(i)
+      ? d.darkMode ? 'rgba(255,255,255,0.5)' : 'rgba(100,116,139,0.9)'
+      : d.darkMode ? 'rgba(255,255,255,0.85)' : '#1e293b';
     ctx.font = `${d.scalePx(11)}px sans-serif`;
-    _text(d, _clipText(ctx, row, boxW - padding * 2), lx + padding, y + d.scalePx(12), 'left');
+    const textY = y + d.scalePx(12);
+    _text(d, text, lx + padding, textY, 'left');
+    if (strike.has(i)) {
+      // vetoed 删除线（与 live line-through 同语义）
+      const w = ctx.measureText(text).width;
+      ctx.strokeStyle = d.darkMode ? 'rgba(255,255,255,0.5)' : 'rgba(71,85,105,0.8)';
+      ctx.lineWidth = d.scalePx(1);
+      ctx.beginPath();
+      ctx.moveTo(lx + padding, textY - d.scalePx(3));
+      ctx.lineTo(lx + padding + w, textY - d.scalePx(3));
+      ctx.stroke();
+    }
     y += rowH;
   }
 }
@@ -1307,6 +1367,19 @@ export function drawChromeMapBorder(
     ctx.lineTo(d.targetW - inset, d.targetH - inset);
     ctx.lineTo(d.targetW - inset, d.targetH - inset - tick);
     ctx.stroke();
+    return;
+  }
+  // V3（ADR-0101 D6）：neatline —— 外细实线 + 内虚线（与 live map-border
+  // neatline 同语义：经典内图廓）。
+  if (variant === 'neatline') {
+    ctx.lineWidth = d.scalePx(1);
+    ctx.strokeRect(inset, inset, w, h);
+    ctx.save();
+    ctx.setLineDash([d.scalePx(6), d.scalePx(4)]);
+    ctx.globalAlpha = 0.65;
+    const inset2 = inset + d.scalePx(4);
+    ctx.strokeRect(inset2, inset2, d.targetW - inset2 * 2, d.targetH - inset2 * 2);
+    ctx.restore();
     return;
   }
   // minimal

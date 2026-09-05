@@ -54,7 +54,7 @@ function StatisticsPanelView({ component, ctx }: { component: MapSpecComponent; 
   const rawVariant = resolveVariant(patched, 'default');
   const variant = rawVariant === 'compact' || rawVariant === 'kpi' ? rawVariant : 'default';
   const stats = parseStats(patched.options?.['stats']);
-  const title = stats?.title || '统计摘要';
+  const title = stats?.title || (variant === 'kpi' ? 'KPI 摘要' : '统计摘要');
 
   return (
     <FloatingChrome

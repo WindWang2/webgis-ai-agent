@@ -183,7 +183,7 @@
 - 槽位：
   - `title`：required（title）@ top-center
   - `subtitle`：optional（subtitle）@ top-center；fallback_zones=top-left
-  - `legend`：required（legend, categorical_legend）@ bottom-left；bind_scope=all_thematic
+  - `legend`：required（legend, categorical_legend, continuous_colorbar）@ bottom-left；bind_scope=all_thematic
   - `north_arrow`：required（north_arrow）@ top-right
   - `scale_bar`：required（scale_bar）@ bottom-right
   - `attribution`：required（attribution）@ bottom-left
@@ -201,7 +201,7 @@
 - 标签：network, accessibility, service-area
 - 槽位：
   - `title`：required（title）@ top-center
-  - `legend`：required（categorical_legend, legend）@ bottom-left；bind_scope=all_thematic
+  - `legend`：required（legend, categorical_legend）@ bottom-left；bind_scope=all_thematic；preferred=legend/report
   - `north_arrow`：required（north_arrow）@ top-right
   - `scale_bar`：required（scale_bar）@ bottom-right
   - `attribution`：required（attribution）@ bottom-left
@@ -322,7 +322,7 @@
 
 ## composition.risk_exposure_report（Risk Exposure Report）
 
-- 描述：风险暴露报告版式：风险分级面 + 统计面板 + 图表 + A4 版式；不确定性披露为可选槽（interactive 生效）。
+- 描述：风险暴露报告版式：风险分级面 + 统计面板 + 图表 + A4 版式；不确定性披露随 context 注入（live 与导出同链）。
 - 版式：report；输出：interactive, png, pdf
 - 兼容模型：risk_exposure_classes, vulnerability_index, hotspot_overlay
 - fallback：composition.statistical_report
@@ -409,7 +409,7 @@
   - `scale_bar`：required（scale_bar）@ bottom-right
   - `attribution`：required（attribution）@ bottom-left
   - `decision_panel`：optional（decision_panel）@ top-left；fallback_zones=top-right
-  - `methodology_note`：optional（methodology_note）@ bottom-left
+  - `methodology_note`：recommended（methodology_note）@ bottom-left
   - `statistics_panel`：recommended（statistics_panel）@ top-left
   - `chart_panel`：optional（chart_panel）@ top-left；fallback_zones=top-right
   - `export_layout`：required（export_layout）@ none；preferred=export-layout/A4-landscape
@@ -428,7 +428,7 @@
   - `north_arrow`：required（north_arrow）@ top-right
   - `scale_bar`：required（scale_bar）@ bottom-right
   - `attribution`：required（attribution）@ bottom-left
-  - `methodology_note`：optional（methodology_note）@ bottom-left
+  - `methodology_note`：recommended（methodology_note）@ bottom-left
   - `statistics_panel`：recommended（statistics_panel）@ top-left
   - `chart_panel`：optional（chart_panel）@ top-left；fallback_zones=top-right
   - `map_border`：required（map_border）@ none；preferred=frame/report

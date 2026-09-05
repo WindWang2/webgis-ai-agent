@@ -120,6 +120,8 @@ PALETTE_KINDS: Dict[str, PaletteKind] = {
                     note_zh="以有意义的中点为中心（阈值/均值）；红绿色盲不友好，正式出版用 PuOr/RdBu"),
         PaletteKind(palette="RdBu", kind="diverging", colorblind_safe=True,
                     note_zh="正负偏差/相关性的安全发散方案"),
+        PaletteKind(palette="PuOr", kind="diverging", colorblind_safe=True,
+                    note_zh="紫橙发散（色盲安全）；正式出版替代 RdYlGn"),
         PaletteKind(palette="Set1", kind="qualitative",
                     note_zh="最多 9 类；类别专题默认"),
         PaletteKind(palette="Set2", kind="qualitative", colorblind_safe=True,

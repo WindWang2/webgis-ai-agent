@@ -51,7 +51,9 @@ DECISION_PACK: List[MapCompositionTemplate] = [
                           fallback_zones=["top-right"]),
             ComponentSlot(id="methodology_note", category="disclosure.methodology_note",
                           allowed_component_types=["methodology_note"],
-                          cardinality="optional", position_zone="bottom-left"),
+                          # 模型 pitfalls 声明『必须随图披露』→ 组合层给
+                          # recommended（context 缺席才合法缺席，缺席即告警）
+                          cardinality="recommended", position_zone="bottom-left"),
             stats_slot(cardinality="recommended"),
             charts_slot(max_count=2),
             export_slot(cardinality="required", required=True,
@@ -80,7 +82,8 @@ DECISION_PACK: List[MapCompositionTemplate] = [
             attribution_slot(),
             ComponentSlot(id="methodology_note", category="disclosure.methodology_note",
                           allowed_component_types=["methodology_note"],
-                          cardinality="optional", position_zone="bottom-left"),
+                          # weightSource 必须显式（模型 pitfalls）→ recommended
+                          cardinality="recommended", position_zone="bottom-left"),
             stats_slot(cardinality="recommended"),
             charts_slot(max_count=3),
             map_border_slot(cardinality="required", required=True,

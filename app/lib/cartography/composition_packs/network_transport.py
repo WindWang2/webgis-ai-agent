@@ -22,7 +22,7 @@ from app.lib.cartography.composition_packs._base import (
 )
 from app.lib.cartography.composition_templates import MapCompositionTemplate
 
-DISCRETE_LEGEND = ["legend", "categorical_legend"]
+FLOW_LEGEND_FAMILY = ["legend", "categorical_legend", "continuous_colorbar"]
 
 NETWORK_TRANSPORT_PACK: List[MapCompositionTemplate] = [
     composition(
@@ -39,7 +39,7 @@ NETWORK_TRANSPORT_PACK: List[MapCompositionTemplate] = [
         slots=[
             title_slot(),
             subtitle_slot(),
-            legend_slot(DISCRETE_LEGEND, cardinality="required", required=True),
+            legend_slot(FLOW_LEGEND_FAMILY, cardinality="required", required=True),
             north_arrow_slot(),
             scale_bar_slot(),
             attribution_slot(),
@@ -63,8 +63,9 @@ NETWORK_TRANSPORT_PACK: List[MapCompositionTemplate] = [
         tags=["network", "accessibility", "service-area"],
         slots=[
             title_slot(),
-            legend_slot(["categorical_legend", "legend"],
-                        cardinality="required", required=True),
+            legend_slot(["legend", "categorical_legend"],
+                        cardinality="required", required=True,
+                        preferred_templates=["legend/report"]),
             north_arrow_slot(),
             scale_bar_slot(),
             attribution_slot(),

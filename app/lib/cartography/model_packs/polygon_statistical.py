@@ -64,12 +64,14 @@ POLYGON_STATISTICAL_PACK: List[MapModel] = [
         purpose_zh="两个字段的联合分级（3×3 色阵）表达共现/相关",
         geometry_kinds=["polygon"], maplibre_layer_type="fill",
         classification="graduated",
-        color_scheme_kind="sequential", default_palette="Purples",
+        # 单一 sequential 色带对双变量是错误契约 —— planned 阶段留空，
+        # 待 bivariate 色阵族建立（与 legend/bivariate 前瞻变体互链）
+        color_scheme_kind="none", default_palette="",
         runtime_status="planned",
         accepted_artifact_types=["admin_aggregate_table"],
         qgis_renderer="data-defined override（双字段表达式）",
         pitfalls_zh=[
-            "planned：paint 投影与图例（3×3 色阵 legend）未实现，不伪装 native",
+            "planned：paint 投影与图例（3×3 色阵 legend）未实现，不伪装 native；色阵族未建，缺省色带留空",
             "双变量图读者负荷高 —— 仅在两变量确有交互语义时使用",
         ],
         sources=[_QGIS_URL],
@@ -131,7 +133,7 @@ POLYGON_STATISTICAL_PACK: List[MapModel] = [
         recommended_classifiers=["natural_breaks", "quantiles"],
         default_class_count=4,
         aliases=["risk_classes"],
-        accepted_artifact_types=["admin_aggregate_table", "hotspot_result",
+        accepted_artifact_types=["admin_aggregate_table", "grid_aggregate",
                                  "polygon_feature_set"],
         recommended_components=["legend", "uncertainty_panel"],
         export_compatibility=["png", "pdf"],
@@ -166,7 +168,9 @@ POLYGON_STATISTICAL_PACK: List[MapModel] = [
         purpose_zh="资源配置/服务可达的相对公平偏差（发散、以公平中点为零点）",
         geometry_kinds=["polygon"], maplibre_layer_type="fill",
         classification="graduated",
-        color_scheme_kind="diverging", default_palette="RdYlGn",
+        # 色盲安全 RdBu 为缺省（RdYlGn 仅限红绿偏好语义明确且受众明确的
+        # 场景显式选用；正式出版可用 PuOr）
+        color_scheme_kind="diverging", default_palette="RdBu",
         recommended_classifiers=["std_dev", "natural_breaks"],
         default_class_count=5,
         aliases=["equity_map"],
@@ -177,7 +181,7 @@ POLYGON_STATISTICAL_PACK: List[MapModel] = [
         qgis_renderer="graduated（diverging 色带）",
         pitfalls_zh=[
             "缺分母不能谈公平性 —— 指标必须显式归一（人均/覆盖缺口）",
-            "红绿语义只在『偏好方向明确』时成立；正式出版建议 PuOr/RdBu 替代",
+            "缺省 RdBu（色盲安全）；红绿语义确有必要的场景才显式换 RdYlGn，正式出版可用 PuOr",
         ],
         sources=[_GEODA_URL],
     ),
@@ -194,7 +198,7 @@ POLYGON_STATISTICAL_PACK: List[MapModel] = [
         fallback_model_id="categorical_thematic",
         qgis_renderer="categorized",
         pitfalls_zh=[
-            "地类配色宜沿用规划惯例（绿地绿、工业褐），Pastel1 供大面积不打架",
+            "地类配色宜沿用规划惯例（绿地绿、工业褐）；Pastel1 低饱和，大面积填色互不干扰",
             "类别数可能很多 —— 图例超限时分组披露，禁止省略图例",
         ],
         sources=[_QGIS_URL],

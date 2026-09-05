@@ -39,7 +39,7 @@ RASTER_REMOTE_SENSING_PACK: List[MapModel] = [
     ),
     m(
         id="spectral_index_surface", name_zh="光谱指数面",
-        purpose_zh="NDVI/NDBI/NDWI 等遥感指数的连续/发散色面渲染",
+        purpose_zh="NDVI/NDBI/NDWI 等遥感指数的连续色面渲染",
         geometry_kinds=["raster"], maplibre_layer_type="raster",
         classification="none",
         color_scheme_kind="perceptual_uniform", default_palette="Viridis",
@@ -52,6 +52,7 @@ RASTER_REMOTE_SENSING_PACK: List[MapModel] = [
         pitfalls_zh=[
             "指数有定义域（NDVI ∈ [-1,1]）—— colorbar 端点按定义域 clamp，不得按样本 min/max 误导",
             "云/水体掩膜应保持透明而非置最低档色",
+            "以 0 为语义中点的发散渲染（水负/植被正）需 diverging 契约，走 change_comparison_map 语义（planned）",
         ],
         sources=[_QGIS_URL],
     ),
@@ -72,6 +73,7 @@ RASTER_REMOTE_SENSING_PACK: List[MapModel] = [
         pitfalls_zh=[
             "变化量为 0 必须是色带中点 —— 图例中点标注『无变化』",
             "两期数据口径/分类体系不一致时变化量撒谎 —— 披露两期来源",
+            "本模型承载带符号变化量分级；类别型变化（from/to 图斑）走 categorical_thematic",
         ],
         sources=[_QGIS_URL],
     ),
@@ -115,6 +117,7 @@ RASTER_REMOTE_SENSING_PACK: List[MapModel] = [
         accepted_artifact_types=["terrain_surface"],
         pitfalls_zh=[
             "planned：依赖 hillshade（未接线）与多层栅格合成顺序契约",
+            "受限于已注册色带库存，以 Oranges 近似经典 hypsometric 多色分层方案",
         ],
         sources=[_MAPLIBRE_SPEC_URL],
     ),
@@ -160,7 +163,7 @@ RASTER_REMOTE_SENSING_PACK: List[MapModel] = [
         sources=[],
     ),
     m(
-        id="anomaly_surface", name_zh="异常距平面",
+        id="anomaly_surface", name_zh="距平（异常场）图",
         purpose_zh="相对气候态/背景值的距平（anomaly）发散渲染",
         geometry_kinds=["raster"], maplibre_layer_type="raster",
         classification="graduated",

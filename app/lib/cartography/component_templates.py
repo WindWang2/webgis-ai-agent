@@ -230,20 +230,19 @@ SEED_COMPONENT_TEMPLATES: List[ComponentTemplate] = [
     # ── V3（ADR-0101 D3）：variant library 扩容 ────────────────────────
     # 新变体的 priority 一律大于该类型既有首个模板 —— resolver 无偏好时
     # 取 (priority, id) 首个，扩容不得改变既有缺省选型（golden 兼容）。
+    # V3 标题/副标题模板不带 default_style —— 标题排版唯一真值是渲染器
+    # 的 TITLE_VARIANT_CLASS（style 通道当前无消费方，双写即漂移温床）。
     ComponentTemplate(
         id="title/minimal", component_type="title", category="annotation.title",
-        name="Minimal Title", variant="minimal",
-        default_style={"fontWeight": "500", "fontSize": "14px"}, priority=40,
+        name="Minimal Title", variant="minimal", priority=40,
     ),
     ComponentTemplate(
         id="title/government", component_type="title", category="annotation.title",
-        name="Government Title", variant="government",
-        default_style={"fontWeight": "700", "fontSize": "20px", "letterSpacing": "0.08em"}, priority=50,
+        name="Government Title", variant="government", priority=50,
     ),
     ComponentTemplate(
         id="subtitle/report", component_type="subtitle", category="annotation.subtitle",
-        name="Report Subtitle", variant="report",
-        default_style={"fontSize": "12px", "opacity": "0.75"}, priority=30,
+        name="Report Subtitle", variant="report", priority=30,
     ),
     ComponentTemplate(
         id="north-arrow/monochrome", component_type="north_arrow", category="navigation.north_arrow",

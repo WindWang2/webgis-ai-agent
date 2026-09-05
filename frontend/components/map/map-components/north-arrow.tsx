@@ -3,7 +3,7 @@ import React from 'react';
 import { Compass, Navigation2, Rose } from 'lucide-react';
 import type { MapSpecComponent } from '@/lib/mapspec-compiler/types';
 import { registerComponentRenderer } from './registry';
-import { positionClass } from './helpers';
+import { positionClass, resolveVariant } from './helpers';
 import type { RendererContext } from './types';
 
 // D7：arrow_simple —— 简单箭头字形（实心北向箭头 + 尾杆），随容器
@@ -25,8 +25,9 @@ function Glyph({ variant }: { variant: string }) {
 }
 
 function NorthArrowRenderer(component: MapSpecComponent, ctx: RendererContext) {
-  const variant = typeof (component as unknown as { options?: Record<string, unknown> }).options?.['variant'] === 'string'
-    ? (component as unknown as { options: Record<string, string> }).options['variant'] : 'compass_minimal_black';
+  // V3：统一走 resolveVariant（options.variant > 目录 variant 字段 >
+  // 缺省）—— 组件变体的目录通道不再被绕过。
+  const variant = resolveVariant(component, 'compass_minimal_black');
   // V3（ADR-0101 D3）：monochrome —— 灰度渲染（黑白出版/打印友好），
   // glyph 仍是 compass（单色语义），仅色彩通道去饱和。
   const mono = variant === 'monochrome';

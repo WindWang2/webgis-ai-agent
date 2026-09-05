@@ -32,12 +32,14 @@ function ColorbarRenderer(component: MapSpecComponent, ctx: RendererContext) {
   const legend = legendForComponent(component, ctx.spec);
   const colors = legend && (legend.type === 'continuous' || legend.type === 'divergent') ? (legend as unknown as { palette_colors: string[] }).palette_colors : undefined;
   if (!colors || colors.length < 2) return null;
-  const vertical = (component as unknown as { options?: Record<string, unknown> }).options?.['orientation'] === 'vertical';
   // D7：slim = 更细色条；compact = 紧凑内边距；report = 卡片加宽 + 刻度强调
-  // （horizontal/vertical 是 orientation 载体，不改变 padding 语义）
   // V3（ADR-0101 D3）：scientific = 中间刻度行（两端 + 3 个内插读数）；
   // stepped = 离散色阶块（palette_colors 分箱，而非连续渐变）。
   const variant = resolveVariant(component, '');
+  // 方向载体：options.orientation 优先；variant horizontal/vertical 与
+  // 目录词表一致（仅在缺 orientation 时作为回退，不再是无操作值）。
+  const orientationOpt = (component as unknown as { options?: Record<string, unknown> }).options?.['orientation'];
+  const vertical = orientationOpt === 'vertical' || (orientationOpt === undefined && variant === 'vertical');
   const slim = variant === 'slim';
   const scientific = variant === 'scientific';
   const stepped = variant === 'stepped';
@@ -52,7 +54,7 @@ function ColorbarRenderer(component: MapSpecComponent, ctx: RendererContext) {
   const ticks = scientific && hasRange
     ? [0.25, 0.5, 0.75].map((t) => formatLegendValue(Number(range.min) + (Number(range.max) - Number(range.min)) * t))
     : [];
-  const ariaLabel = `连续密度色条${scientific ? '（科学刻度）' : ''}${stepped ? '（分级色阶）' : ''}`;
+  const ariaLabel = `密度色条${scientific ? '（科学刻度）' : ''}${stepped ? '（分级色阶）' : ''}`;
   return (
     <div data-testid="spec-chrome-colorbar" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${padClass} ${positionClass(component)}`} aria-label={ariaLabel}>
       {hasRange ? (
@@ -67,7 +69,7 @@ function ColorbarRenderer(component: MapSpecComponent, ctx: RendererContext) {
             <div aria-hidden className={barClass} style={{ background: gradient, backgroundImage: gradient }} data-gradient={gradient} />
           )}
           {ticks.length ? (
-            <div aria-hidden className={`flex w-full ${vertical ? 'flex-col-reverse justify-between' : 'flex-row justify-between'} text-map-chrome-ink-muted`}>
+            <div aria-hidden className={`flex ${vertical ? 'flex-1 flex-col-reverse justify-between' : 'w-full flex-row justify-between'} text-map-chrome-ink-muted`}>
               {ticks.map((t, i) => (
                 <span key={`${t}#${i}`}>{t}</span>
               ))}

@@ -23,13 +23,13 @@
     "variant": "default"
    },
    {
-    "id": "legend-categorical",
+    "id": "legend-main",
     "layerId": "layer-primary",
     "position": "bottom-left",
-    "priority": 17,
+    "priority": 16,
     "templateId": "legend/report",
     "title": "",
-    "type": "categorical_legend",
+    "type": "legend",
     "variant": "report"
    },
    {
@@ -91,7 +91,7 @@
    "placements": {
     "attribution": "bottom-left",
     "export-layout": "none",
-    "legend-categorical": "bottom-left",
+    "legend-main": "bottom-left",
     "map-border": "none",
     "north-arrow": "top-right",
     "scale-bar": "bottom-right",
@@ -107,8 +107,8 @@
   "selection": {
    "component_templates": {
     "attribution": "attribution/default",
-    "categorical_legend": "legend/report",
     "export_layout": "export-layout/A4-portrait",
+    "legend": "legend/report",
     "map_border": "frame/report",
     "north_arrow": "north-arrow/minimal-black",
     "scale_bar": "scale-bar/minimal",
@@ -128,8 +128,8 @@
    ],
    "selected": [
     "attribution",
-    "categorical_legend",
     "export_layout",
+    "legend",
     "map_border",
     "north_arrow",
     "scale_bar",
@@ -147,5 +147,5 @@
    ]
   }
  },
- "sha": "577182ee4b2b8322"
+ "sha": "abcef54f46607f85"
 }

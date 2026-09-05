@@ -8,19 +8,20 @@
 | id | 语义族 | 色盲安全 | 打印安全 | 灰度最小ΔL |
 |---|---|---|---|---|
 | Blues | sequential | ✓ | ✓ | 0.1196 |
-| Dark2 | qualitative | ✓ | ✓ | 0.0178 |
+| Dark2 | qualitative | ✓ | — | 0.0178 |
 | Greens | sequential | ✓ | ✓ | 0.1637 |
-| Inferno | perceptual_uniform | ✓ | ✓ | 0.0237 |
-| Magma | perceptual_uniform | ✓ | ✓ | 0.0243 |
+| Inferno | perceptual_uniform | ✓ | — | 0.0237 |
+| Magma | perceptual_uniform | ✓ | — | 0.0243 |
 | Oranges | sequential | ✓ | ✓ | 0.126 |
-| Pastel1 | qualitative | — | ✓ | 0.0258 |
-| Plasma | perceptual_uniform | ✓ | ✓ | 0.0388 |
+| Pastel1 | qualitative | — | — | 0.0258 |
+| Plasma | perceptual_uniform | ✓ | — | 0.0388 |
+| PuOr | diverging | ✓ | ✓ | 0.242 |
 | Purples | sequential | ✓ | ✓ | 0.1215 |
 | RdBu | diverging | ✓ | ✓ | 0.3509 |
-| RdYlGn | diverging | — | ✓ | 0.021 |
+| RdYlGn | diverging | — | — | 0.021 |
 | Reds | sequential | ✓ | ✓ | 0.0915 |
-| Set1 | qualitative | — | ✓ | 0.0188 |
-| Set2 | qualitative | ✓ | ✓ | 0.035 |
+| Set1 | qualitative | — | — | 0.0188 |
+| Set2 | qualitative | ✓ | — | 0.035 |
 | Viridis | perceptual_uniform | ✓ | ✓ | 0.0694 |
 | YlOrRd | sequential | ✓ | ✓ | 0.108 |
 | classic | native_heatmap | — | — | 0.0 |
@@ -34,8 +35,8 @@
 - 输出：interactive, png, pdf, svg；适配版式：minimal, standard
 - 排版：text-title/text-caption，标题字重 600
 - chrome token 引用：surface=surface-panel, ink=text-primary, chrome-bg=map-chrome-bg
-- 推荐：sequential=['YlOrRd', 'Blues', 'Purples']；diverging=['RdBu']；qualitative=['Dark2', 'Set1']；perceptual=['Viridis', 'Magma', 'Inferno', 'Plasma']
-- 注：暗色底上优先感知均匀族（暗背景上低亮度 sequential 端不可辨）
+- 推荐：sequential=[]；diverging=['RdBu']；qualitative=['Dark2', 'Set1']；perceptual=['Viridis', 'Magma', 'Inferno', 'Plasma']
+- 注：暗背景优先感知均匀族（Viridis 系）—— 若必须用 sequential 色带，应反转使用顺序（高值→低亮度端）并披露
 - 注：深色 chrome token（map-chrome-* dark 分支）
 
 ### cartographic.high_contrast（高对比无障碍主题，profile=high_contrast）

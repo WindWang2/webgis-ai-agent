@@ -136,6 +136,7 @@ POINT_LINE_PACK: List[MapModel] = [
         fallback_model_id="flow_od_arc",
         pitfalls_zh=[
             "宽度分级时同级线段重叠会互相吞没 —— 细级优先绘制（宽线在下）",
+            "network_graph 仅消费其边表（几何 network 的线段部分），节点表另走点模型",
         ],
         sources=[_QGIS_URL],
     ),
@@ -157,17 +158,21 @@ POINT_LINE_PACK: List[MapModel] = [
         id="service_area_overlay", name_zh="服务区叠加",
         purpose_zh="设施服务区（等时/网络缓冲）分级面叠加，回答『N 分钟能到哪』",
         geometry_kinds=["polygon"], maplibre_layer_type="fill",
-        classification="categorical",
-        color_scheme_kind="qualitative", default_palette="Set2",
+        # 等时/距离带是有序量 —— 缺省 graduated + Blues（顺序感）；
+        # 按设施多框叠加（每设施一色）的用法显式换 categorical_thematic
+        classification="graduated",
+        recommended_classifiers=["equal_interval"],
+        color_scheme_kind="sequential", default_palette="Blues",
         aliases=["isochrone_overlay"],
         accepted_artifact_types=["service_area", "proximity_zone"],
-        recommended_components=["categorical_legend"],
+        recommended_components=["legend"],
         supported_template_kinds=["thematic", "symbology"],
         export_compatibility=["png", "pdf"],
         qgis_renderer="rule-based（服务区分级）",
         fallback_model_id="proximity_overlay",
         pitfalls_zh=[
-            "服务区等级（5/10/15 分钟）语义固定为有序 —— 需要顺序感时改 Blues 渐变",
+            "服务区等级（5/10/15 分钟）语义固定为有序 —— 缺省 Blues 渐变；"
+            "『按设施分色』场景改走 categorical_thematic",
             "网络服务区 ≠ 欧氏缓冲；数据来自 network 分析时图例须注明方法",
         ],
         sources=[_DECKGL_URL],
@@ -177,7 +182,7 @@ POINT_LINE_PACK: List[MapModel] = [
         purpose_zh="网络可达性指标沿线/沿网表达（通行成本、可达机会数）",
         geometry_kinds=["line"], maplibre_layer_type="line",
         classification="graduated",
-        color_scheme_kind="sequential", default_palette="Viridis",
+        color_scheme_kind="perceptual_uniform", default_palette="Viridis",
         runtime_status="planned",
         accepted_artifact_types=["network_graph"],
         pitfalls_zh=[
@@ -190,7 +195,7 @@ POINT_LINE_PACK: List[MapModel] = [
         purpose_zh="节点/边中心性指标（度/接近/介数）分级表达",
         geometry_kinds=["point", "line"], maplibre_layer_type="line",
         classification="graduated",
-        color_scheme_kind="sequential", default_palette="Magma",
+        color_scheme_kind="perceptual_uniform", default_palette="Magma",
         recommended_classifiers=["natural_breaks", "quantiles"],
         runtime_status="planned",
         accepted_artifact_types=["network_graph"],
@@ -198,6 +203,7 @@ POINT_LINE_PACK: List[MapModel] = [
         pitfalls_zh=[
             "planned：需要中心性计算 artifact（本分支网络算法未含 centrality）",
             "中心性对网络边界截断极敏感 —— 截断窗口必须在披露组件声明",
+            "节点+边联合编码需多层组合；本模型按输入几何族单族渲染",
         ],
         sources=[],
     ),

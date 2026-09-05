@@ -71,7 +71,7 @@ function LegendRenderer(component: MapSpecComponent, ctx: RendererContext) {
     ? `flex flex-row flex-wrap ${compact ? 'mt-0.5 gap-x-2 gap-y-0.5' : 'mt-1 gap-x-3 gap-y-1'}`
     : `flex flex-col ${compact ? 'mt-0.5 gap-0.5' : 'mt-1 gap-1'}`;
   return (
-    <div data-testid="spec-chrome-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${classes.root} ${positionClass(component)}`} aria-label="分级图例">
+    <div data-testid="spec-chrome-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${classes.root} ${positionClass(component)}`} aria-label={`分级图例${variant === 'horizontal' ? '（横向）' : ''}`}>
       {(legend as unknown as { title?: string }).title && <div className={`text-map-chrome-ink ${classes.title}`}>{(legend as unknown as { title: string }).title}</div>}
       <div className={layoutClass}>
         {entries.slice(0, 8).map((e, j) => (
@@ -97,7 +97,7 @@ function CategoricalLegendRenderer(component: MapSpecComponent, ctx: RendererCon
     ? `flex flex-row flex-wrap ${compact ? 'mt-0.5 gap-x-2 gap-y-0.5' : 'mt-1 gap-x-3 gap-y-1'}`
     : `flex flex-col ${compact ? 'mt-0.5 gap-0.5' : 'mt-1 gap-1'}`;
   return (
-    <div data-testid="spec-chrome-categorical-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${classes.root} ${positionClass(component)}`} aria-label="分类图例">
+    <div data-testid="spec-chrome-categorical-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${classes.root} ${positionClass(component)}`} aria-label={`分类图例${variant === 'horizontal' ? '（横向）' : ''}`}>
       {(legend as unknown as { title?: string }).title && <div className={`text-map-chrome-ink ${classes.title}`}>{(legend as unknown as { title: string }).title}</div>}
       <div className={layoutClass}>
         {entries.slice(0, 8).map((e, j) => (

@@ -68,25 +68,39 @@ class PaletteDescriptor(BaseModel):
     id: str                       # == COLOR_PALETTES / NATIVE_HEATMAP_COLORS key
     kind: Literal["sequential", "diverging", "qualitative", "perceptual_uniform", "native_heatmap"]
     colorblind_safe: bool = False  # 承接 PALETTE_KINDS（native_heatmap 无 kind 记录 → 显式）
+    # ColorBrewer 的色盲安全按「色带 × 类数」标注（如 Set2/Dark2 仅 ≤3 类
+    # 安全）—— 超过该类数使用时安全承诺失效，消费方必须按类数过滤。
+    colorblind_safe_max_classes: int = 9
     max_recommended_classes: int = 7
     roles_zh: List[str] = Field(default_factory=list)
     note_zh: str = ""
     # 以下为推导字段（build 时计算，不手填）
     print_safe: bool = False
     min_gray_delta: float = 0.0
+    gray_levels: int = 0          # 灰度可辨级数（≥0.06 邻距链）
+
+
+def _gray_chain(grays: List[float], min_gap: float = 0.06) -> int:
+    """灰度可辨级数：排序去重后相邻差 ≥ min_gap 的贪心链长度。"""
+    levels: List[float] = []
+    for g in sorted(grays):
+        if not levels or g - levels[-1] >= min_gap:
+            levels.append(g)
+    return len(levels)
 
 
 def _derive_print_safety(hexes: List[str]) -> tuple:
-    """灰度可分级性：相邻色灰度亮度差的最小值（黑底打印首尾可辨）。
+    """灰度可分级性（判据必须真实可失败，无 OR 兜底）：
 
-    返回 (print_safe, min_delta)。qualitative 色带用「去重后灰度级数」
-    近似（类别色主要靠色相区分，灰度打印需至少 3 个可辨灰度级）。
+    读者逐级读图时**相邻两级**必须可辨 —— 因此判据是 ramp 序上
+    最小相邻灰度差 ≥ 0.06（严格；类别族 Set1 的相邻灰度差可低至
+    0.001，必须判为不安全）。
     """
     grays = [grayscale_luminance(h) for h in hexes]
     deltas = [abs(grays[i + 1] - grays[i]) for i in range(len(grays) - 1)]
-    min_delta = min(deltas) if deltas else 0.0
-    distinct_levels = len({round(g, 2) for g in grays})
-    return (min_delta >= 0.06 or distinct_levels >= 3), round(min_delta, 4)
+    min_delta = round(min(deltas), 4) if deltas else 0.0
+    levels = _gray_chain(grays)
+    return (min_delta >= 0.06), min_delta, levels
 
 
 def build_palette_descriptors() -> List[PaletteDescriptor]:
@@ -98,24 +112,34 @@ def build_palette_descriptors() -> List[PaletteDescriptor]:
     from app.lib.cartography.model_library import PALETTE_KINDS
     from app.lib.cartography.palettes import COLOR_PALETTES, NATIVE_HEATMAP_COLORS
 
+    # ColorBrewer 官方按「色带 × 类数」标注色盲安全：qualitative 族中
+    # Set2/Dark2 仅 ≤3 类安全（n≥4 仅 Paired，未入库）；Qualitative 上限
+    # 9（Set1/Pastel1）本身不承诺色盲安全。sequential/diverging 按
+    # ColorBrewer 全域安全标注（YlOrRd/Blues/…/RdBu）与类数无关。
+    CB_MAX_BY_ID = {"Set2": 3, "Dark2": 3, "Set1": 0, "Pastel1": 0}
+
     out: List[PaletteDescriptor] = []
     for pid in sorted(COLOR_PALETTES):
         kind_meta = PALETTE_KINDS.get(pid)
+        cb_safe = bool(kind_meta.colorblind_safe) if kind_meta else False
         desc = PaletteDescriptor(
             id=pid,
             kind=kind_meta.kind if kind_meta else "sequential",
-            colorblind_safe=bool(kind_meta.colorblind_safe) if kind_meta else False,
+            colorblind_safe=cb_safe,
+            colorblind_safe_max_classes=CB_MAX_BY_ID.get(pid, 9) if cb_safe else 0,
             note_zh=kind_meta.note_zh if kind_meta else "",
             roles_zh=(["counts", "density", "intensity"] if kind_meta and kind_meta.kind == "sequential" else []),
         )
-        print_safe, min_delta = _derive_print_safety(COLOR_PALETTES[pid])
+        print_safe, min_delta, levels = _derive_print_safety(COLOR_PALETTES[pid])
         desc.print_safe = print_safe
         desc.min_gray_delta = min_delta
+        desc.gray_levels = levels
         out.append(desc)
     for pid in sorted(NATIVE_HEATMAP_COLORS):
         out.append(PaletteDescriptor(
             id=pid, kind="native_heatmap",
             colorblind_safe=pid in ("viridis", "magma"),
+            colorblind_safe_max_classes=0,   # 连续色带无类数概念
             note_zh="原生热力色带（首色透明；图例取不透明 6 段）",
         ))
     return out
@@ -219,14 +243,17 @@ SEED_THEMES: List[CartographicThemeDescriptor] = [
         profile="dark",
         layout_profiles=["minimal", "standard"],
         palettes=PaletteRecommendation(
-            sequential=["YlOrRd", "Blues", "Purples"],
+            # 暗底上低亮度端（暗红/深蓝/深紫）不可辨 —— sequential 槽
+            # 留空，推荐一律走感知均匀族（亮端可辨、感知均匀）。
+            sequential=[],
             diverging=["RdBu"],
             qualitative=["Dark2", "Set1"],
             perceptual_uniform=["Viridis", "Magma", "Inferno", "Plasma"],
         ),
         colorblind_safe_first=True,
         notes_zh=[
-            "暗色底上优先感知均匀族（暗背景上低亮度 sequential 端不可辨）",
+            "暗背景优先感知均匀族（Viridis 系）—— 若必须用 sequential 色带，"
+            "应反转使用顺序（高值→低亮度端）并披露",
             "深色 chrome token（map-chrome-* dark 分支）",
         ],
     ),

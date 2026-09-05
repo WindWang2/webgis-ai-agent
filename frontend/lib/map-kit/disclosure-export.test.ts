@@ -80,11 +80,11 @@ describe('buildExportChrome — 披露族面板归一化', () => {
     );
     const panel = model.panels.find((p) => p.kind === 'uncertainty');
     expect(panel?.disclosure?.rows).toHaveLength(2);
-    expect(panel?.disclosure?.rows[0]).toContain('[variance]');
+    expect(panel?.disclosure?.rows[0]).toContain('方差');
     expect(panel?.disclosure?.rows[1]).toContain('样本 12 个');
   });
 
-  it('decision_panel：排名行 + weightSource 显式入卡', async () => {
+  it('decision_panel：method 入标题、weightSource 首行、vetoed 删除线、行不封顶', async () => {
     const model = await buildExportChrome(
       {
         spec: { layout: { components: [comp({
@@ -92,7 +92,12 @@ describe('buildExportChrome — 披露族面板归一化', () => {
           options: { decision: {
             method: 'MCDA',
             weightSource: '用户设定',
-            rows: [{ rank: 1, name: '地块 A', score: 0.87, basis: 'observed' }],
+            rows: [
+              { rank: 1, name: '地块 A', score: 0.87, basis: 'observed' },
+              { rank: 2, name: '地块 B', score: 0.42, basis: 'vetoed' },
+              ...Array.from({ length: 15 }, (_, i) => ({ rank: i + 3, name: `候选 ${i + 3}`, score: 0.1 })),
+            ],
+            vetoes: ['不得占用永久基本农田'],
           } },
         })] } },
         viewport: VIEWPORT,
@@ -101,8 +106,16 @@ describe('buildExportChrome — 披露族面板归一化', () => {
       CANVAS,
     );
     const panel = model.panels.find((p) => p.kind === 'decision');
-    expect(panel?.disclosure?.rows.some((r) => r.includes('地块 A'))).toBe(true);
-    expect(panel?.disclosure?.rows.some((r) => r.includes('权重来源：用户设定'))).toBe(true);
+    expect(panel?.disclosure?.title).toBe('决策（MCDA）');
+    const rows = panel?.disclosure?.rows ?? [];
+    // 与 live 同序：weightSource → 全部排名行（不封顶）→ 否决段
+    expect(rows[0]).toContain('权重来源：用户设定');
+    expect(rows.filter((r) => r.includes('候选')).length).toBe(15);
+    expect(rows.some((r) => r.includes('硬约束否决：'))).toBe(true);
+    expect(rows.some((r) => r.includes('· 不得占用永久基本农田'))).toBe(true);
+    // basis 仅区分 vetoed（删除线），不做内联文本（与 live data-basis 同义）
+    expect(panel?.disclosure?.strikeRows).toEqual([2]);
+    expect(rows[2]).not.toContain('vetoed');
   });
 
   it('坏载荷 → 面板缺席（与 live 空态语义一致）', async () => {
@@ -165,6 +178,13 @@ describe('drawChromeDisclosurePanel — 画布绘制', () => {
     const texts = calls.filter((c) => c.op === 'fillText').map((c) => String(c.args[0]));
     expect(texts).toContain('不确定性');
     expect(texts).not.toContain('不应出现');
+  });
+
+  it('formatImperialLabel：英制换算与 live 同式', async () => {
+    const { formatImperialLabel } = await import('./export-chrome');
+    expect(formatImperialLabel(1000)).toBe('3281 ft');
+    expect(formatImperialLabel(1610)).toBe('1.0 mi');
+    expect(formatImperialLabel(16100)).toBe('10 mi');
   });
 
   it('超宽行确定性截断（… 尾）', () => {

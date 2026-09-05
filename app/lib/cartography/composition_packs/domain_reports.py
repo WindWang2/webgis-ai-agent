@@ -54,7 +54,7 @@ RISK_ENVIRONMENT_PACK: List[MapCompositionTemplate] = [
         cid="composition.risk_exposure_report",
         name="Risk Exposure Report",
         description="风险暴露报告版式：风险分级面 + 统计面板 + 图表 + "
-                    "A4 版式；不确定性披露为可选槽（interactive 生效）。",
+                    "A4 版式；不确定性披露随 context 注入（live 与导出同链）。",
         models=["risk_exposure_classes", "vulnerability_index", "hotspot_overlay"],
         outputs=["interactive", "png", "pdf"],
         profile="report",

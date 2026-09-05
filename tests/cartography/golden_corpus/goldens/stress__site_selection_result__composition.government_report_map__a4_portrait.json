@@ -145,9 +145,10 @@
    "error_codes": [],
    "ok": true,
    "warning_codes": [
+    "recommended_slot_missing",
     "zone_collision"
    ]
   }
  },
- "sha": "1ef04cd3a30ff4b3"
+ "sha": "17608b89fb72750b"
 }

@@ -68,7 +68,29 @@ function contrast(fg: string, bg: string): number {
 const lightSection = css.slice(0, css.indexOf('.dark'));
 const darkSection = css.slice(css.indexOf('.dark'));
 
+// 后端 themes.py ChromeTokenRefs 的缺省引用集（由
+// tests/cartography/test_themes_v3.py::test_chrome_token_refs_vocabulary
+// 锁定同表）—— token 更名必须两侧同步。
+const DESCRIPTOR_TOKEN_REFS = [
+  'surface-panel',
+  'surface-raised',
+  'text-primary',
+  'text-secondary',
+  'map-chrome-border',
+  'map-chrome-bg',
+  'map-chrome-text',
+  'map-chrome-text-muted',
+] as const;
+
 describe('V3 cartographic theme contrast gates (WCAG AA)', () => {
+  it('主题描述层引用的 token 全部存在于 globals.css（light + dark 两 profile）', () => {
+    for (const [profile, vars] of profiles) {
+      for (const token of DESCRIPTOR_TOKEN_REFS) {
+        expect(vars[token], `${profile} 缺少主题描述层引用的 token: --${token}`).toBeTruthy();
+      }
+    }
+  });
+
   const profiles: Array<[string, Vars, boolean]> = [
     ['light', parseHexVars(lightSection), false],
     ['dark', parseHexVars(darkSection), true],
