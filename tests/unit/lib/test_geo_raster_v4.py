@@ -121,25 +121,27 @@ def test_reader_full_read_budget_guard(tmp_path):
 
 
 def test_reader_routes_through_shared_env(tiled_raster):
-    """RasterReader.open must go through raster_math.rasterio_env (HTTP
-    hardening + GDAL knobs) — not its own env (audit tension #2)."""
+    """RasterReader.open must hold the canonical shared GDAL env
+    (app.lib.geo_raster.env — HTTP hardening + GDAL knobs), not its own env
+    (audit tension #2; canonical home moved from raster_math in V5,
+    raster_math.rasterio_env delegates)."""
     path, _ = tiled_raster
-    from app.lib.geo_analysis import raster_math
+    from app.lib.geo_raster import env
 
-    original = raster_math.rasterio_env
+    original = env.rasterio_env
     called = {"n": 0}
 
     def spy(*a, **kw):
         called["n"] += 1
         return original(*a, **kw)
 
-    raster_math.rasterio_env = spy
+    env.rasterio_env = spy
     try:
         with RasterReader.open(str(path)):
             pass
         assert called["n"] >= 1
     finally:
-        raster_math.rasterio_env = original
+        env.rasterio_env = original
 
 
 # ── windowed execution ──────────────────────────────────────────────────────

@@ -24,6 +24,11 @@ export interface MapProductVersionSummary {
   workflow_run_id?: string | null;
   mapspec_revision?: number | null;
   created_at: string;
+  /** ADR-0099 lifecycle（旧行缺省 null/undefined）。 */
+  label?: string | null;
+  lineage_kind?: MapProductLineageKind;
+  parent_version_no?: number | null;
+  snapshot_available?: boolean;
 }
 
 /** Full version row (detail endpoint). */
@@ -142,4 +147,127 @@ export async function rerunWorkflowRunFromStep(
     timeoutMs: opts.timeoutMs ?? 120_000,
     label: 'Map product rerun error',
   });
+}
+
+// ── Lifecycle V2（ADR-0099）──────────────────────────────────────────────────
+
+/** Lineage badge vocabulary (fork/restore/merge/rerun/auto; null = linear). */
+export type MapProductLineageKind =
+  | 'linear'
+  | 'fork'
+  | 'restore'
+  | 'merge'
+  | 'rerun'
+  | 'auto'
+  | null;
+
+export interface MapProductRestoreMode {
+  mode: 'style_only' | 'full';
+  available: boolean;
+  note: string;
+}
+
+/** GET /{v}/open — read-only version inspection w/ honest restore modes. */
+export interface MapProductVersionOpen {
+  version_no: number;
+  product_fingerprint: string;
+  recipe_id: string | null;
+  workflow_run_id: string | null;
+  mapspec_fingerprint: string | null;
+  mapspec_revision: number | null;
+  lineage_kind: MapProductLineageKind;
+  parent_version_no: number | null;
+  label: string | null;
+  created_at: string | null;
+  diff_summary: MapProductVersionDetail['diff_summary'];
+  snapshot_available: boolean;
+  restore_modes: MapProductRestoreMode[];
+  provenance: {
+    input_dataset_fingerprints: Record<string, string>;
+    plan_steps: number;
+    artifact_count: number;
+    output_fingerprints: number;
+  };
+}
+
+export async function openMapProductVersion(
+  projectId: string,
+  versionNo: number,
+): Promise<MapProductVersionOpen> {
+  return apiFetch<MapProductVersionOpen>(
+    `${API}/${projectId}/map-products/${versionNo}/open`,
+    { label: 'Map product open error' },
+  );
+}
+
+export interface MapProductRestoreResult {
+  restored_version_no: number;
+  source_version_no: number;
+  mode: 'style_only' | 'full';
+  mutation_revision?: number | null;
+  warnings?: string[];
+  style_only_proof?: {
+    compute_identity_preserved: boolean;
+    analysis_executed: boolean;
+    note: string;
+  };
+  run_id?: string;
+}
+
+/** POST /{v}/restore — style_only applies presentation to a live session. */
+export async function restoreMapProductVersion(
+  projectId: string,
+  versionNo: number,
+  sessionId: string,
+  mode: 'style_only' | 'full' = 'style_only',
+): Promise<MapProductRestoreResult> {
+  return apiFetch<MapProductRestoreResult>(
+    `${API}/${projectId}/map-products/${versionNo}/restore`,
+    {
+      method: 'POST',
+      body: { mode, session_id: sessionId },
+      timeoutMs: 60_000,
+      label: 'Map product restore error',
+    },
+  );
+}
+
+/** POST /{v}/fork — new lineage branch from a historical version. */
+export async function forkMapProductVersion(
+  projectId: string,
+  versionNo: number,
+  label?: string,
+): Promise<MapProductVersionDetail> {
+  return apiFetch<MapProductVersionDetail>(
+    `${API}/${projectId}/map-products/${versionNo}/fork`,
+    { method: 'POST', body: label ? { label } : {}, label: 'Map product fork error' },
+  );
+}
+
+/** POST /merge — constrained dimension merge (style-only × analysis-only). */
+export async function mergeMapProductVersions(
+  projectId: string,
+  fromVersionNo: number,
+  toVersionNo: number,
+  label?: string,
+): Promise<MapProductVersionDetail> {
+  return apiFetch<MapProductVersionDetail>(
+    `${API}/${projectId}/map-products/merge`,
+    {
+      method: 'POST',
+      body: { from_version_no: fromVersionNo, to_version_no: toVersionNo, ...(label ? { label } : {}) },
+      label: 'Map product merge error',
+    },
+  );
+}
+
+/** POST /{v}/rerun — version-bound incremental rerun. */
+export async function rerunMapProductVersion(
+  projectId: string,
+  versionNo: number,
+): Promise<{ run_id: string; recorded_version_no: number; from_step: string | null }> {
+  return apiFetch(
+    `${API}/${projectId}/map-products/${versionNo}/rerun`,
+    { method: 'POST', body: {}, timeoutMs: 120_000, label: 'Map product version rerun error' },
+  );
 }

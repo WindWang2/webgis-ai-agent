@@ -536,6 +536,138 @@ SEED_RECIPES: List[CartographyRecipe] = [
         export_profile={"formats": ["png", "pdf", "svg"]},
         priority=58,
     ),
+    # ── Semantic V2（ADR-0098）：决策族一等产品 recipe ─────────────────
+    # 此前 选址/适建/风险/公平 查询落入 distribution 兜底（G27–G29 锁定的
+    # 旧行为）—— 本组 recipe 给它们专属的计划路径：诚实的角色需求（分母/
+    # 受体/准则）、推荐能力（含 mcda_evaluation）、方法论校验与回退。
+    CartographyRecipe(
+        id="spatial_equity",
+        name="空间公平评价",
+        description=(
+            "『资源分配是否公平/均衡』：行政区聚合 + 分母归一化比率 + "
+            "公平性专题图。无分母时只能产出数量/密度结论并强制披露方法论"
+            "边界 —— 绝不把数量差异伪装成公平性判断。"
+        ),
+        intent_tasks=["spatial_equity"],
+        intent_cartography=["administrative_choropleth"],
+        allowed_geometry=["Point", "MultiPoint", "Polygon", "MultiPolygon"],
+        preferred_analysis=["poi_query", "admin_boundary_query",
+                            "admin_aggregation", "point_profile"],
+        optional_analysis=["global_morans_i", "local_morans_i"],
+        primary_cartography="administrative_choropleth",
+        secondary_cartography=["point_overlay"],
+        default_components=["title", "legend", "north_arrow", "scale_bar",
+                            "attribution", "statistics_panel"],
+        fallbacks=[
+            RecipeFallback(
+                when="无归一化分母（人口/面积）数据",
+                reason_code="MISSING_DENOMINATOR",
+                use="administrative_choropleth",
+            ),
+        ],
+        validation_rules=[
+            "equity conclusion requires a normalization denominator; "
+            "counts-only products must carry the missing-denominator disclosure",
+        ],
+        export_profile={"formats": ["png"], "chart": True},
+        priority=50,
+    ),
+    CartographyRecipe(
+        id="site_selection",
+        name="选址分析（多准则）",
+        description=(
+            "『新设施选址/最优位置』：范围底图 + 准则图层（缓冲/服务区）+ "
+            "候选方案 MCDA 评价（WSM/TOPSIS）。硬约束（禁建区等）是 否决项；"
+            "权重来源（用户指定/假设）必须显式，不合成准则值。"
+        ),
+        intent_tasks=["site_selection"],
+        intent_cartography=["proximity_overlay"],
+        allowed_geometry=["Point", "MultiPoint", "Polygon", "MultiPolygon"],
+        preferred_analysis=["admin_boundary_query", "proximity_buffer",
+                            "service_area", "mcda_evaluation", "point_profile"],
+        optional_analysis=["poi_query", "spatial_join", "admin_aggregation"],
+        primary_cartography="proximity_overlay",
+        secondary_cartography=["point_overlay"],
+        default_components=["title", "legend", "north_arrow", "scale_bar",
+                            "attribution", "statistics_panel"],
+        fallbacks=[
+            RecipeFallback(
+                when="无候选方案可评价（仅范围）",
+                reason_code="NO_CANDIDATES",
+                use="proximity_overlay",
+            ),
+        ],
+        validation_rules=[
+            "hard-constraint violations must remain vetoes in any recommendation",
+            "criterion values must be evidence-backed or disclosed as assumptions",
+        ],
+        export_profile={"formats": ["png", "pdf"]},
+        priority=50,
+    ),
+    CartographyRecipe(
+        id="suitability_assessment",
+        name="适宜性评价（加权叠加）",
+        description=(
+            "『适建区/适宜性评价』：因子标准化（重分类到统一等级）+ 加权"
+            "叠加得适宜面。量纲不一致的原始值不得直接相加；权重敏感性与"
+            "硬约束（禁建区）必须披露。"
+        ),
+        intent_tasks=["suitability_assessment"],
+        intent_cartography=["raster_surface", "proximity_overlay"],
+        allowed_geometry=["Point", "MultiPoint", "Polygon", "MultiPolygon"],
+        preferred_analysis=["admin_boundary_query", "proximity_buffer",
+                            "raster_reclassify", "mcda_evaluation"],
+        optional_analysis=["raster_source", "geometry_clip", "spatial_join"],
+        primary_cartography="raster_surface",
+        secondary_cartography=["proximity_overlay"],
+        default_components=["title", "continuous_colorbar", "north_arrow",
+                            "scale_bar", "attribution", "statistics_panel"],
+        fallbacks=[
+            RecipeFallback(
+                when="无栅格因子（仅矢量约束）",
+                reason_code="NO_RASTER_FACTORS",
+                use="proximity_overlay",
+            ),
+        ],
+        validation_rules=[
+            "factors must be normalized to a common scale before weighting",
+            "suitability map must disclose weight provenance and hard constraints",
+        ],
+        export_profile={"formats": ["png", "pdf"]},
+        priority=50,
+    ),
+    CartographyRecipe(
+        id="risk_exposure",
+        name="风险暴露评价",
+        description=(
+            "『风险区/暴露/危险源』：影响范围（缓冲半径需有依据）× 受体"
+            "叠加 → 暴露量统计 + 风险专题图。只画影响范围不统计受体是"
+            "半成品；无受体数据时必须披露。"
+        ),
+        intent_tasks=["risk_exposure"],
+        intent_cartography=["proximity_overlay", "administrative_choropleth"],
+        allowed_geometry=["Point", "MultiPoint", "Polygon", "MultiPolygon"],
+        preferred_analysis=["poi_query", "proximity_buffer", "spatial_join",
+                            "admin_aggregation"],
+        optional_analysis=["zonal_statistics", "service_area"],
+        primary_cartography="proximity_overlay",
+        secondary_cartography=["point_overlay", "administrative_choropleth"],
+        default_components=["title", "legend", "north_arrow", "scale_bar",
+                            "attribution", "statistics_panel"],
+        fallbacks=[
+            RecipeFallback(
+                when="无受体数据（仅危险源）",
+                reason_code="NO_RECEPTORS",
+                use="proximity_overlay",
+            ),
+        ],
+        validation_rules=[
+            "buffer radius must cite a basis (standard/literature/user-declared)",
+            "exposure statistics require receptor data; disclose when absent",
+        ],
+        export_profile={"formats": ["png"]},
+        priority=50,
+    ),
 ]
 
 

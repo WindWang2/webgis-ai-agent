@@ -5,7 +5,7 @@
 > 各域包 `PARAMETER_CONTRACTS`（参数契约）。
 > 再生成：`python scripts/gen_science_catalog.py`。
 
-统计：63 能力 · 87 算法 · 22 参数契约。
+统计：64 能力 · 88 算法 · 22 参数契约。
 
 ## `accessibility` — 网络可达性
 
@@ -192,6 +192,14 @@ KDE 连续密度面/等值线（定量密度表达）。
 - **`network.location_allocation`** 区位配置（`native`·成熟度 已验证，出处: `teitz_bart1968`）
   - 假设：p_median 目标 = 最小化 Σ w_i·min_{j∈S} C_ij；max_coverage = 最大化 cutoff 内覆盖需求权重；代价矩阵 = 路网 OD 行程时间（不可达 = inf，参与目标时按 1e9 惩罚）
   - 局限：启发式 >20k 组合；exact ≤20k —— C(m,p) 枚举在预算内给出精确最优，超出切 Teitz-Bart 顶点替换 / 贪婪覆盖（近优非最优，summary.solver 披露）；不可达需求点列入 summary.unassigned_ids（不参与选址目标）；Teitz-Bart 收敛依赖初始化（前 p 个候选），无多起点重启
+
+## `mcda_evaluation` — 多准则决策评价
+
+候选方案×准则×约束的 MCDA 评价（WSM/TOPSIS + Pareto + 敏感性）。
+
+- **`decision.mcda.wsm`** MCDA 决策评价（WSM/TOPSIS）（`native`·成熟度 已验证，出处: `hwang_yoon1981`）
+  - 假设：权重/准则方向由声明给定；蒙特卡洛不确定性仅在声明不确定参数时激活
+  - 局限：不合成证据：无不确定参数时不注入伪噪声分布
 
 ## `multi_ring_buffer` — 多环缓冲
 

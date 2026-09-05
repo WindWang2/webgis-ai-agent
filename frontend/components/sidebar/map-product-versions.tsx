@@ -1,26 +1,33 @@
 'use client';
 
 /**
- * Map Product version workspace (ADR-0092 A6): version timeline + pairwise
- * five-dimension diff inspector.
+ * Map Product version workspace (ADR-0092 A6 + ADR-0099 lifecycle V2):
+ * version timeline + pairwise five-dimension diff inspector + lifecycle
+ * operations (open / fork / restore-style / merge).
  *
- * Truth sources: the version ledger (read-only list/detail/diff) and the
- * existing rerun_from_step API for recomputation. Style-only changes show
- * "无需分析重算" and offer NO rerun (the analysis did not change); data/
- * algorithm/parameter changes surface 重算 with the earliest changed step
- * as the rerun seed.
+ * Truth sources: the version ledger (read-only list/detail/diff/open) and
+ * the lifecycle APIs. Style-only changes show “无需分析重算” and offer NO
+ * rerun; restore style-only applies the version snapshot's presentation to
+ * the live session (never triggers analysis). Merge is constrained —
+ * dimension conflicts are refused by the backend and surfaced here.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { GitCompare, RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { GitCompare, GitBranch, RotateCcw, RefreshCw, GitMerge, FolderOpen } from 'lucide-react';
 import { EmptyState } from '@/components/shared/empty-state';
 import { InlineNotice } from '@/components/shared/inline-notice';
 import { LoadingState } from '@/components/shared/loading-state';
 import {
   diffMapProductVersions,
+  forkMapProductVersion,
   listMapProductVersions,
+  mergeMapProductVersions,
+  openMapProductVersion,
+  restoreMapProductVersion,
   rerunWorkflowRunFromStep,
+  type MapProductLineageKind,
   type MapProductVersionDiff,
+  type MapProductVersionOpen,
   type MapProductVersionSummary,
 } from '@/lib/api/map-product';
 
@@ -34,6 +41,15 @@ const DIMENSIONS: Array<{
   { key: 'style_changed', label: '样式' },
   { key: 'output_changed', label: '输出' },
 ];
+
+const LINEAGE_LABEL: Record<NonNullable<MapProductLineageKind>, string> = {
+  linear: '',
+  fork: '分叉',
+  restore: '恢复',
+  merge: '合并',
+  rerun: '重跑',
+  auto: '自动',
+};
 
 function formatTime(iso: string): string {
   try {
@@ -50,6 +66,8 @@ function shortFp(fp?: string | null, n = 10): string {
 
 export interface MapProductVersionsPanelProps {
   projectId: string;
+  /** 活会话（style-only restore 的目标）；缺席时恢复入口降级隐藏。 */
+  sessionId?: string | null;
   /** Toast/error channel from the host (kept dumb here). */
   onRerunStarted?: (runId: string | null) => void;
   onRerunError?: (message: string) => void;
@@ -57,6 +75,7 @@ export interface MapProductVersionsPanelProps {
 
 export function MapProductVersionsPanel({
   projectId,
+  sessionId,
   onRerunStarted,
   onRerunError,
 }: MapProductVersionsPanelProps) {
@@ -69,20 +88,21 @@ export function MapProductVersionsPanel({
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffError, setDiffError] = useState<string | null>(null);
   const [rerunBusy, setRerunBusy] = useState(false);
+  const [openVersion, setOpenVersion] = useState<number | null>(null);
+  const [openDetail, setOpenDetail] = useState<MapProductVersionOpen | null>(null);
+  const [lifecycleBusy, setLifecycleBusy] = useState<string | null>(null);
+  const [lifecycleNotice, setLifecycleNotice] = useState<string | null>(null);
+  const openVersionRef = useRef<number | null>(null);
 
-  useEffect(() => {
+  const reload = useCallback(() => {
     const ctrl = new AbortController();
     setLoading(true);
     setError(null);
-    setVersions([]);
-    setDiff(null);
-    setFromNo(null);
-    setToNo(null);
     listMapProductVersions(projectId, { limit: 50, signal: ctrl.signal })
       .then((page) => {
+        if (ctrl.signal.aborted) return;
         const rows = page.items;
         setVersions(rows);
-        // Default selection: two most recent versions (newest as "to").
         if (rows.length >= 2) {
           setFromNo(rows[1].version_no);
           setToNo(rows[0].version_no);
@@ -100,17 +120,34 @@ export function MapProductVersionsPanel({
     return () => ctrl.abort();
   }, [projectId]);
 
+  useEffect(() => {
+    setVersions([]);
+    setDiff(null);
+    setFromNo(null);
+    setToNo(null);
+    // review M-F7：reload 返回 abort 清理函数 —— 接回 effect，快速切换
+    // 项目时旧请求被中止（不回写过期状态 / 不 setState after unmount）。
+    const abort = reload();
+    return abort;
+  }, [projectId, reload]);
+
+  const diffAbortRef = useRef<AbortController | null>(null);
   const loadDiff = useCallback(
     (from: number | null, to: number | null) => {
+      diffAbortRef.current?.abort();
       if (from == null || to == null || from === to) {
         setDiff(null);
         return;
       }
       const ctrl = new AbortController();
+      diffAbortRef.current = ctrl;
       setDiffLoading(true);
       setDiffError(null);
       diffMapProductVersions(projectId, from, to, { signal: ctrl.signal })
-        .then(setDiff)
+        .then((d) => {
+          if (ctrl.signal.aborted) return;
+          setDiff(d);
+        })
         .catch((e) => {
           if (ctrl.signal.aborted) return;
           setDiff(null);
@@ -154,6 +191,83 @@ export function MapProductVersionsPanel({
     }
   };
 
+  const handleOpen = async (versionNo: number) => {
+    if (openVersion === versionNo) {
+      setOpenVersion(null);
+      setOpenDetail(null);
+      return;
+    }
+    openVersionRef.current = versionNo;
+    setOpenVersion(versionNo);
+    setOpenDetail(null);
+    try {
+      const detail = await openMapProductVersion(projectId, versionNo);
+      // review minor14：慢响应期间用户已切换检视目标 → 丢弃过期明细。
+      if (versionNo !== openVersionRef.current) return;
+      setOpenDetail(detail);
+    } catch (e) {
+      setLifecycleNotice(e instanceof Error ? e.message : '打开版本失败');
+      setOpenVersion(null);
+    }
+  };
+
+  const handleFork = async (versionNo: number) => {
+    setLifecycleBusy(`fork-${versionNo}`);
+    setLifecycleNotice(null);
+    try {
+      await forkMapProductVersion(projectId, versionNo);
+      setLifecycleNotice(`已从 V${versionNo} 创建分叉（新版本行已记录谱系）`);
+      reload();
+    } catch (e) {
+      setLifecycleNotice(e instanceof Error ? e.message : '分叉失败');
+    } finally {
+      setLifecycleBusy(null);
+    }
+  };
+
+  const handleRestoreStyle = async (versionNo: number) => {
+    if (!sessionId) return;
+    setLifecycleBusy(`restore-${versionNo}`);
+    setLifecycleNotice(null);
+    try {
+      const result = await restoreMapProductVersion(projectId, versionNo, sessionId, 'style_only');
+      const proof = result.style_only_proof;
+      setLifecycleNotice(
+        `已恢复 V${versionNo} 的样式态（新版本 V${result.restored_version_no}）` +
+          (proof?.analysis_executed === false ? ' — 未触发分析重算' : ''),
+      );
+      reload();
+    } catch (e) {
+      setLifecycleNotice(e instanceof Error ? e.message : '恢复失败');
+    } finally {
+      setLifecycleBusy(null);
+    }
+  };
+
+  const handleMerge = async () => {
+    if (fromNo == null || toNo == null) return;
+    setLifecycleBusy('merge');
+    setLifecycleNotice(null);
+    try {
+      const merged = await mergeMapProductVersions(projectId, fromNo, toNo);
+      setLifecycleNotice(`已合并 V${fromNo} + V${toNo} → V${merged.version_no}`);
+      reload();
+    } catch (e) {
+      setLifecycleNotice(e instanceof Error ? e.message : '合并被拒绝');
+    } finally {
+      setLifecycleBusy(null);
+    }
+  };
+
+  const styleOnlyRestorable = useCallback(
+    (versionNo: number) => {
+      if (!sessionId) return false;
+      const v = versions.find((x) => x.version_no === versionNo);
+      return Boolean(v?.snapshot_available);
+    },
+    [sessionId, versions],
+  );
+
   return (
     <section aria-labelledby="mp-versions-heading" className="space-y-2">
       <h3
@@ -162,6 +276,11 @@ export function MapProductVersionsPanel({
       >
         产品版本
       </h3>
+      {lifecycleNotice ? (
+        <InlineNotice variant="info" data-testid="mp-lifecycle-notice">
+          {lifecycleNotice}
+        </InlineNotice>
+      ) : null}
       {loading ? (
         <LoadingState label="加载产品版本…" />
       ) : error ? (
@@ -171,30 +290,110 @@ export function MapProductVersionsPanel({
       ) : (
         <>
           <ul className="space-y-1">
-            {versions.map((v) => (
-              <li
-                key={v.version_no}
-                className="flex items-center justify-between gap-2 rounded-md border border-edge-subtle bg-surface-raised px-2.5 py-1.5"
-              >
-                <span className="min-w-0">
-                  <span className="block text-micro font-mono text-ink">
-                    V{v.version_no}
-                    {v.version_no === versions[0].version_no && (
-                      <span className="ml-1.5 rounded-sm bg-surface-sunken px-1 text-micro text-ink-secondary">
-                        当前
+            {versions.map((v) => {
+              const lineage = v.lineage_kind;
+              const restorable = styleOnlyRestorable(v.version_no);
+              return (
+                <li
+                  key={v.version_no}
+                  className="rounded-md border border-edge-subtle bg-surface-raised px-2.5 py-1.5"
+                  data-version={v.version_no}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="min-w-0">
+                      <span className="block text-micro font-mono text-ink">
+                        V{v.version_no}
+                        {v.version_no === versions[0].version_no && (
+                          <span className="ml-1.5 rounded-sm bg-surface-sunken px-1 text-micro text-ink-secondary">
+                            当前
+                          </span>
+                        )}
+                        {lineage ? (
+                          <span
+                            className="ml-1.5 rounded-sm bg-[color:var(--agent-accent)]/15 px-1 text-micro text-ink-secondary"
+                            data-lineage={lineage}
+                          >
+                            {LINEAGE_LABEL[lineage]}
+                          </span>
+                        ) : null}
                       </span>
-                    )}
-                  </span>
-                  <span className="block truncate text-micro text-ink-muted">
-                    {formatTime(v.created_at)}
-                    {v.recipe_id ? ` · ${v.recipe_id}` : ''}
-                  </span>
-                </span>
-                <span className="font-mono text-micro text-ink-muted" title={v.product_fingerprint}>
-                  {shortFp(v.product_fingerprint)}
-                </span>
-              </li>
-            ))}
+                      <span className="block truncate text-micro text-ink-muted">
+                        {formatTime(v.created_at)}
+                        {v.recipe_id ? ` · ${v.recipe_id}` : ''}
+                      </span>
+                    </span>
+                    <span className="flex shrink-0 items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => void handleOpen(v.version_no)}
+                        aria-expanded={openVersion === v.version_no}
+                        aria-label={`检视版本 V${v.version_no}`}
+                        className="rounded p-1 text-ink-secondary hover:bg-surface-sunken hover:text-ink"
+                      >
+                        <FolderOpen className="h-3 w-3" aria-hidden />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleFork(v.version_no)}
+                        disabled={lifecycleBusy === `fork-${v.version_no}`}
+                        aria-label={`从 V${v.version_no} 分叉`}
+                        className="rounded p-1 text-ink-secondary hover:bg-surface-sunken hover:text-ink disabled:opacity-50"
+                      >
+                        <GitBranch className="h-3 w-3" aria-hidden />
+                      </button>
+                      {restorable ? (
+                        <button
+                          type="button"
+                          onClick={() => void handleRestoreStyle(v.version_no)}
+                          disabled={lifecycleBusy === `restore-${v.version_no}`}
+                          aria-label={`恢复 V${v.version_no} 的样式态`}
+                          className="rounded p-1 text-ink-secondary hover:bg-surface-sunken hover:text-ink disabled:opacity-50"
+                        >
+                          <RotateCcw className="h-3 w-3" aria-hidden />
+                        </button>
+                      ) : null}
+                    </span>
+                  </div>
+                  {openVersion === v.version_no ? (
+                    openDetail ? (
+                      <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 border-t border-edge-subtle pt-1 text-micro text-ink-secondary" data-testid="mp-version-open">
+                        <dt className="font-medium">指纹</dt>
+                        <dd className="truncate font-mono" title={openDetail.product_fingerprint}>
+                          {shortFp(openDetail.product_fingerprint, 16)}
+                        </dd>
+                        <dt className="font-medium">快照</dt>
+                        <dd>{openDetail.snapshot_available ? '在场（可恢复样式态）' : '缺席（仅可对比）'}</dd>
+                        <dt className="font-medium">来源</dt>
+                        <dd>
+                          {openDetail.workflow_run_id ? `运行 ${shortFp(openDetail.workflow_run_id, 10)}` : '无绑定运行'}
+                        </dd>
+                        <dt className="font-medium">谱系</dt>
+                        <dd>
+                          {LINEAGE_LABEL[openDetail.lineage_kind ?? 'linear'] || '线性'}
+                          {openDetail.parent_version_no ? ` ← V${openDetail.parent_version_no}` : ''}
+                        </dd>
+                        <dt className="font-medium">证明</dt>
+                        <dd>
+                          输入 {Object.keys(openDetail.provenance.input_dataset_fingerprints).length} 项 ·
+                          计划 {openDetail.provenance.plan_steps} 步 ·
+                          产物 {openDetail.provenance.artifact_count} 件
+                        </dd>
+                        {openDetail.restore_modes.map((m) => (
+                          <dt key={m.mode} className="font-medium">
+                            {m.mode === 'style_only' ? '样式恢复' : '完整恢复'}
+                            <dd className={m.available ? '' : 'text-ink-disabled'}>
+                              {m.available ? '可用' : `不可用 — ${m.note}`}
+                            </dd>
+                          </dt>
+                        ))}
+                      </dl>
+                    ) : (
+                      <div className="mt-1 border-t border-edge-subtle pt-1 text-micro text-ink-muted">检视中…</div>
+                    )
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
 
           {versions.length >= 2 && (
@@ -284,6 +483,17 @@ export function MapProductVersionsPanel({
                       从分析步骤重跑（{rerunStep}）
                     </button>
                   )}
+                  {/* ADR-0099 constrained merge：样式-only × 分析-only 可合；
+                      同维冲突由后端拒绝（409），文案如实呈现。 */}
+                  <button
+                    type="button"
+                    onClick={() => void handleMerge()}
+                    disabled={lifecycleBusy === 'merge' || fromNo === toNo}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-sm border border-edge-subtle py-1 text-micro text-ink-secondary hover:bg-surface-sunken disabled:opacity-50"
+                  >
+                    <GitMerge className="h-3 w-3" aria-hidden />
+                    合并两版本（样式侧 × 分析侧）
+                  </button>
                   <details className="text-micro text-ink-secondary">
                     <summary className="cursor-pointer select-none">差异明细</summary>
                     <div className="mt-1 space-y-1.5 pl-1">

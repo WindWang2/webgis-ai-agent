@@ -58,6 +58,12 @@ PUBLIC_MUTATING_ALLOWLIST: dict[tuple[str, str], str] = {
     ("auth.py", "register"): "public registration issues the first JWT",
     ("auth.py", "login"): "public login issues JWT",
     ("auth.py", "refresh"): "public refresh-token rotation; no access JWT yet",
+    # geocompute plan validation is pure-CPU over the caller-submitted DAG:
+    # no catalog/data access, response carries only derived fingerprints —
+    # deliberately optional-auth (contract: test_validate_stays_optional_auth).
+    ("geocompute.py", "validate_execution_plan"): (
+        "stateless pure-CPU plan validation; no data/catalog access"
+    ),
 }
 
 

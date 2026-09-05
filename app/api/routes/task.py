@@ -149,36 +149,14 @@ async def cancel_task(
     行为与新的 ``DELETE /tasks/jobs/{job_id}`` 端点一致。
     """
     await _verify_task_owner(db, task_id, _user.get("user_id"))
-    tracker = get_engine().tracker
-    task_info = tracker.get(task_id)
-    background_job_ids = list(task_info.background_job_ids) if task_info else []
-    cancelled = tracker.cancel(task_id)
-    for job_id in background_job_ids:
-        await DurableJobStore.request_cancel(db, job_id)
-    if background_job_ids:
-        await db.commit()
-    # #1066: Pi 路径的活跃回合与其 dispatch 绑定的是 bridge 的
-    # _active_turn_token（与 tracker 令牌相互独立）—— 只点燃 tracker 令牌
-    # 时，子进程继续生成/执行工具直到自然 settle。任务的 session 即活跃
-    # 回合的 session 时同步 abort（abort 自带跨 session 守卫，串号安全）。
-    # V5-B: 守卫按 session-keyed active-turn 表解析 —— 单例视图在 pool 下
-    # 读到的是「最后注册的任意 worker turn」，会漏掉本 session 的 abort。
-    task_session = task_info.session_id if task_info else None
-    if task_session:
-        try:
-            from app.api.routes import chat as chat_routes
-            from app.agent_pi_bridge import get_active_turn_entry
+    # ADR-0100: 统一取消级联（tracker token + durable 落库 + registry 点燃
+    # + Pi 活跃回合 abort）—— 原先三处手写编排（task/job/session-delete）
+    # 各自记住 #1066 的教训，现在只有一个实现点。
+    from app.services.chat.session_cancellation import cancel_agent_task_and_turn
 
-            if (
-                chat_routes.pi_bridge is not None
-                and get_active_turn_entry(task_session) is not None
-            ):
-                await chat_routes.pi_bridge.abort(task_session)
-        except Exception as abort_error:  # noqa: BLE001 - 取消已生效，abort 失败不回滚
-            logger.warning(
-                "Pi abort during task %s cancel failed: %s", task_id, abort_error
-            )
-    return TaskCancelResponse(cancelled=cancelled)
+    # seam 已在 abort 前落库提交（review M-C2 顺序）；此处无需再提交。
+    result = await cancel_agent_task_and_turn(db, task_id)
+    return TaskCancelResponse(cancelled=result["cancelled"])
 
 
 # ── Celery Task Status API ──────────────────────────────────────────

@@ -261,6 +261,13 @@ class QueryPlan(BaseModel):
     warnings: List[str] = Field(default_factory=list)
     steps: List[ExecutionFragment] = Field(default_factory=list)
 
+    # ── V3 additive（ADR-0096 D3）：成本分解 / 备选 / 假设标注 / 统计强度 ──
+    # dict 形态避免 models → optimizer 反向依赖；序列化直接进 EXPLAIN。
+    cost: Optional[Dict[str, Any]] = None
+    alternatives: List[Dict[str, Any]] = Field(default_factory=list)
+    assumptions: List[str] = Field(default_factory=list)
+    statistics_confidence: Optional[str] = None
+
     def summary_lines(self) -> List[str]:
         """explain 输出（不含 secret/连接信息）。"""
         lines = [
@@ -284,6 +291,27 @@ class QueryPlan(BaseModel):
             lines.append(f"Reason: {self.fallback_reason}")
         for w in self.warnings:
             lines.append(f"Warning: {w}")
+        if self.cost:
+            # 分数计算复用 optimizer.PlanCost.score（单一权重真值；
+            # optimizer 不反依赖 models，无环）。
+            from app.services.data_fabric.query.optimizer import PlanCost
+
+            c = self.cost
+            lines.append(
+                "Cost: rows_scanned={rows_scanned} bytes={bytes_transferred} "
+                "emitted={rows_emitted} requests={remote_requests} score≈{score}".format(
+                    score=round(PlanCost(**c).score()),
+                    **{k: c.get(k, 0) for k in (
+                        "rows_scanned", "bytes_transferred", "rows_emitted", "remote_requests")},
+                )
+            )
+        for a in self.alternatives[:6]:
+            reason = f" ({a['rejected_reason']})" if a.get("rejected_reason") else ""
+            lines.append(f"Alternative[{a.get('feasible', False)}]: {a['name']}{reason}")
+        if self.statistics_confidence:
+            lines.append(f"Statistics confidence: {self.statistics_confidence}")
+        for asm in self.assumptions[:6]:
+            lines.append(f"Assumption: {asm}")
         return lines
 
 

@@ -71,6 +71,14 @@ def execute_windowed(
     so ``core - read`` offsets locate the core inside ``window_data`` even
     on the boundary). It must return an array matching the core shape.
     Raises :class:`RasterReaderError` for non-window-safe profiles.
+
+    Band scope: execution is single-band (``band=``) by contract. Multi-band
+    INPUT is available at the read level (``RasterReader.read_window(bands=…)``
+    returns a stacked array) but wiring it through this executor is a
+    documented extension point, NOT a wired capability — it requires an
+    ``fn`` contract for stacked inputs and a merge policy for stacked
+    outputs, and this module will not grow a second, diverging execution
+    path until a real consumer needs one.
     """
     if not profile.window_safe:
         raise RasterReaderError(

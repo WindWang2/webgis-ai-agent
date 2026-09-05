@@ -611,6 +611,8 @@ class WorkflowEngine:
             # run manifest landing (otherwise a crash mid-promotion leaves a
             # completed run with run_manifest=NULL). Session-expired or store
             # failures are disclosed per-artifact and never fail the run.
+            # review m8：auto-record 对无会话的项目 run 也必须可达 ——
+            # promotion 保留会话前提，auto-record 从该前提中拆出（见下）。
             if session_id and workflow.project_id:
                 try:
                     from app.services.project_artifact_promotion import (
@@ -629,6 +631,37 @@ class WorkflowEngine:
                     logger.warning(
                         "[WorkflowEngine] artifact promotion failed for run %s: %s",
                         run_id, e,
+                    )
+            # ADR-0099: run 完成 → 幂等自动记录一条 Map Product 版本
+            # （同 run+指纹去重；snapshot best-effort —— 会话缺席/过期仍记
+            # 录，只是 open 降级为 compare-only）。失败绝不影响 run。
+            # review m8：置于 session 守卫之外 —— 无会话的项目 run 同样入账。
+            if workflow.project_id:
+                try:
+                    from app.services.map_product_service import MapProductService
+
+                    _snapshot = None
+                    if session_id:
+                        try:
+                            from app.services.mapspec_store import mapspec_store
+
+                            _snapshot = await mapspec_store.get_mapspec(session_id)
+                        except Exception:  # noqa: BLE001 — 快照缺席仍记录
+                            _snapshot = None
+                    MapProductService.maybe_auto_record_version(
+                        db, run,
+                        mapspec_snapshot=_snapshot,
+                    )
+                    # 账本提交会使 run 属性过期（expire_on_commit）—— 重载，
+                    # 调用方在 session 关闭后读取 run.status 不炸 Detached。
+                    try:
+                        db.refresh(run)
+                    except Exception:  # noqa: BLE001 — 已过期属性按旧值读
+                        pass
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        "[WorkflowEngine] auto map-product record failed "
+                        "for run %s: %s", run_id, e,
                     )
         finally:
             # INV-AUTH1 / §21: the ToolExecutionContext must be cleared on EVERY

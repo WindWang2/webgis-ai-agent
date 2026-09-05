@@ -148,6 +148,29 @@ _SUPPORT_MATRIX: Dict[str, ComponentRendererSupport] = {
             "（不虚构范围）"
         ),
     ),
+    # ── VNext §5/§9/§13：披露族（live 渲染器已落地 —— methodology-note/
+    # uncertainty-panel/decision-panel.tsx；工作区交互面，非导出产物面）──
+    "methodology_note": ComponentRendererSupport(
+        component_type="methodology_note",
+        renderers=["interactive"], exporters=[],
+        note=(
+            "VNext：方法论披露随产品渲染（稳定警告码 + 文案）；仅 interactive "
+            "—— 披露是工作区语义，静态导出由报告文本承载"
+        ),
+    ),
+    "uncertainty_panel": ComponentRendererSupport(
+        component_type="uncertainty_panel",
+        renderers=["interactive"], exporters=[],
+        note="VNext：不确定性披露（区间/置信度/样本限制）随产品渲染",
+    ),
+    "decision_panel": ComponentRendererSupport(
+        component_type="decision_panel",
+        renderers=["interactive"], exporters=[],
+        note=(
+            "VNext：决策面板（候选排名 + 权重来源 + 硬约束否决）；行级 basis "
+            "区分 observed/assumed/vetoed"
+        ),
+    ),
 }
 
 

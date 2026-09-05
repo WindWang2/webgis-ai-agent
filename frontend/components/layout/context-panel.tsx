@@ -371,7 +371,7 @@ export function ContextPanel({
             sessionPlan={sessionPlan}
           />
         )}
-        {activeTab === 'project' && <ProjectTab />}
+        {activeTab === 'project' && <ProjectTab sessionId={sessionId} />}
         {activeTab === 'layers' && (
           <PanelErrorBoundary label="图层">
             {editingLayerId ? <LayerStylePanel /> : <LayersTab />}

@@ -11,7 +11,7 @@ import {
 } from '@/lib/mapspec/component-mutation';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useSmallViewport } from '@/lib/hooks/use-small-viewport';
-import { DEFAULT_POSITION, isFloating, placementStyle, positionClass, resolvePosition, stackedTopStyle } from './helpers';
+import { DEFAULT_POSITION, isFloating, placementStyle, positionClass, resolvePosition, stackedBottomStyle, stackedTopStyle } from './helpers';
 import { devOnly } from '@/lib/utils/logger';
 import { keyboardMoveDelta } from '@/lib/map-components/layout-runtime';
 import { COLLAPSIBLE_PANEL_TYPES } from '@/lib/map-components/resolve-layout';
@@ -88,6 +88,8 @@ export interface FloatingChromeProps {
   testId?: string;
   /** v2(#1079)：顶槽堆叠索引（锚定态同槽避让）；floating 态忽略。 */
   topSlotIndexes?: Map<MapSpecComponent, number>;
+  /** VNext：底槽堆叠索引（methodology/uncertainty 等底部面板用）。 */
+  bottomSlotIndexes?: Map<MapSpecComponent, number>;
   children: React.ReactNode;
 }
 
@@ -106,6 +108,7 @@ export function FloatingChrome({
   className,
   testId,
   topSlotIndexes,
+  bottomSlotIndexes,
   children,
 }: FloatingChromeProps) {
   // 内部再合并一次 override（幂等）：直接使用 FloatingChrome 的调用方
@@ -329,7 +332,9 @@ export function FloatingChrome({
     }
     : floating
       ? placementStyle(merged)
-      : stackedTopStyle(merged, topSlotIndexes);
+      : resolvePosition(merged).startsWith('bottom-')
+        ? stackedBottomStyle(merged, bottomSlotIndexes)
+        : stackedTopStyle(merged, topSlotIndexes);
 
   // v2(#1079)：键盘移动 —— 方向键 8px、Shift/Alt+方向键 24px；以当前
   // 几何为原点换算 delta 后走与指针手势相同的提交通道（乐观 override +

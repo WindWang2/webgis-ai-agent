@@ -83,6 +83,75 @@ RENDER_STALE = "stale"                    # observation revision ≠ 当前 revi
 RENDER_UNKNOWN = "unknown"                # 无观察 / 旧客户端 / pre-revision 观察
 RENDER_NOT_APPLICABLE = "not_applicable"  # 无可观察的产品面
 
+# ── Product Verdict（VNext §14 —— 专业产品裁决词表）────────────────
+# 完成管线之上的**单字产品裁决**：前端/评估/发布门消费的最终状态面。
+# 词表冻结（机器读契约）；推导是纯函数（derive_product_verdict）。
+VERDICT_READY = "READY"
+VERDICT_READY_WITH_WARNINGS = "READY_WITH_WARNINGS"
+VERDICT_NEEDS_REPAIR = "NEEDS_REPAIR"
+VERDICT_BLOCKED_BY_DATA = "BLOCKED_BY_DATA"
+VERDICT_BLOCKED_BY_METHOD = "BLOCKED_BY_METHOD"
+
+#: 数据族阻断码（不可自愈的数据缺席/过期/空结果/执行终态阻塞）。
+_DATA_BLOCK_CODES = frozenset({
+    F_ARTIFACT_MISSING,
+    F_ARTIFACT_EXPIRED,
+    F_EMPTY_RESULT,
+    F_EXECUTION_BLOCKED,
+    F_SOURCE_MISSING,
+    F_RENDER_SOURCE_MISSING,
+})
+
+
+def derive_product_verdict(
+    result: "MapCompletionResult",
+    methodology_warnings: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """MapCompletionResult (+章节方法论警告) → 单字产品裁决 + 证据。
+
+    纯函数、确定性、有界：
+    - failed 且错误全部是数据族 → BLOCKED_BY_DATA；
+    - failed 且存在非数据族错误 → BLOCKED_BY_METHOD（方法/表达层无法
+      在修复预算内收敛）；
+    - needs_repair / pending → NEEDS_REPAIR（修复中，未到裁决）；
+    - complete 且零警告（含方法论警告）→ READY；
+    - complete 带警告（含方法论警告）→ READY_WITH_WARNINGS —— 方法论
+      披露永远压低裁决档位，不允许「带分母缺失披露的 READY」。
+    """
+    errors = result.error_findings
+    warnings = [f for f in result.findings if f.severity == "warning"]
+    mw = [w for w in (methodology_warnings or []) if isinstance(w, dict)]
+    data_errors = [f.code for f in errors if f.code in _DATA_BLOCK_CODES]
+    method_errors = [f.code for f in errors if f.code not in _DATA_BLOCK_CODES]
+
+    if result.status == STATUS_FAILED:
+        # 双族并存时数据先行（上游因）—— method_errors 仍随行披露。
+        verdict = VERDICT_BLOCKED_BY_DATA if data_errors else VERDICT_BLOCKED_BY_METHOD
+        reasons = sorted(set(data_errors + method_errors))[:6]
+    elif result.status in (STATUS_NEEDS_REPAIR, STATUS_PENDING):
+        verdict = VERDICT_NEEDS_REPAIR
+        reasons = sorted({f.code for f in result.findings if f.severity == "error"})[:6]
+    else:
+        verdict = (
+            VERDICT_READY if not warnings and not mw
+            else VERDICT_READY_WITH_WARNINGS
+        )
+        reasons = sorted({f.code for f in warnings})[:6]
+
+    return {
+        "verdict": verdict,
+        "reasons": reasons,
+        "methodology_warning_count": len(mw),
+        "methodology_warning_codes": sorted({
+            str(w.get("code")) for w in mw if w.get("code")
+        })[:8],
+        "finding_counts": {
+            "errors": len(errors),
+            "warnings": len(warnings),
+        },
+    }
+
+
 # repair action codes（repairs_applied 里的字面量）
 R_ADD_COMPONENT = "add_component"
 R_ENABLE_COMPONENT = "enable_component"

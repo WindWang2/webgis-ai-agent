@@ -35,6 +35,11 @@ class PatternMatch(BaseModel):
     satisfied_roles: List[str] = Field(default_factory=list)
     missing_roles: List[str] = Field(default_factory=list)
     disclosures: List[str] = Field(default_factory=list)
+    # Semantic V2（ADR-0098）：决策族规划期义务披露（task 命中即触发）。
+    decision_disclosures: List[str] = Field(default_factory=list)
+    # 机器可读方法论警告码（稳定契约：UI 渲染 / benchmark 断言 / 版本化
+    # 证据消费方依赖它；文案可演进，code 不可复用为其它含义）。
+    warning_codes: List[str] = Field(default_factory=list)
 
     def to_bounded_dict(self) -> Dict[str, Any]:
         return {
@@ -48,6 +53,8 @@ class PatternMatch(BaseModel):
             "satisfied_roles": self.satisfied_roles[:8],
             "missing_roles": self.missing_roles[:8],
             "disclosures": self.disclosures[:6],
+            "decision_disclosures": self.decision_disclosures[:4],
+            "warning_codes": self.warning_codes[:4],
         }
 
 
@@ -88,6 +95,22 @@ _ROLE_MISSING_DISCLOSURES: Dict[str, str] = {
     SemanticFieldRole.TEMPORAL_DIMENSION.value: (
         "缺少时间字段：无法做时序对比，只能给出单期快照。"
     ),
+}
+
+#: (pattern_id, missing role) → 稳定机器可读警告码（Semantic V2 §5：
+#: 方法论诚实不变量的可断言契约）。文案可演进；code 语义冻结。
+_ROLE_WARNING_CODES: Dict[Tuple[str, str], str] = {
+    ("spatial_equity", SemanticFieldRole.NORMALIZATION_DENOMINATOR.value):
+        "EQUITY_MISSING_DENOMINATOR",
+    ("temporal_change", SemanticFieldRole.TEMPORAL_DIMENSION.value):
+        "CHANGE_MISSING_TEMPORAL_FIELD",
+}
+
+#: 决策族（一等 task）→ 规划期义务披露的稳定警告码。
+_DECISION_WARNING_CODES: Dict[str, str] = {
+    "site_selection": "SITE_SELECTION_CRITERIA_UNDECLARED",
+    "suitability": "SUITABILITY_WEIGHT_PROVENANCE",
+    "risk_exposure": "RISK_RECEPTORS_UNCONFIRMED",
 }
 
 
@@ -146,6 +169,7 @@ def project_patterns(
         satisfied: List[str] = []
         missing: List[str] = []
         role_disclosures: List[str] = []
+        warning_codes: List[str] = []
         for role in p.required_roles:
             if _role_satisfied(role, semantic_profile):
                 satisfied.append(role.value)
@@ -154,9 +178,27 @@ def project_patterns(
                 text = _ROLE_MISSING_DISCLOSURES.get(role.value)
                 if text:
                     role_disclosures.append(text)
+                code = _ROLE_WARNING_CODES.get((p.id, role.value))
+                if code:
+                    warning_codes.append(code)
         for role in p.optional_roles:
             if _role_satisfied(role, semantic_profile):
                 satisfied.append(role.value)
+        # 决策族义务披露：只在 intent.task 精确命中该模式的一等 task 时
+        # 触发 —— 借位别名（proximity 等）不触发（否则每个邻近查询都背
+        # 上风险披露噪声）。规划期决策要素（准则/权重/受体）必然未确认，
+        # 披露是产品的一部分而非噪声。
+        decision: List[str] = []
+        if (
+            p.decision_disclosures
+            and intent_task
+            and p.first_class_task
+            and intent_task == p.first_class_task
+        ):
+            decision = list(p.decision_disclosures)[:4]
+            code = _DECISION_WARNING_CODES.get(p.id)
+            if code:
+                warning_codes.append(code)
         matches.append(PatternMatch(
             pattern_id=p.id,
             name_zh=p.name_zh,
@@ -168,6 +210,8 @@ def project_patterns(
             satisfied_roles=satisfied[:8],
             missing_roles=missing[:8],
             disclosures=list(dict.fromkeys(role_disclosures))[:6],
+            decision_disclosures=decision,
+            warning_codes=warning_codes[:4],
         ))
     return PatternProjection(matches=matches, data_disclosures=disclosures[:4])
 

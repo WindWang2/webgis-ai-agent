@@ -150,13 +150,20 @@ async def test_cancel_task_aborts_active_pi_turn(client, monkeypatch):
             aborted.append(session_id)
             return {}
 
-    monkeypatch.setattr(chat_mod, "pi_bridge", _FakeBridge())
+    fake_bridge = _FakeBridge()
+    monkeypatch.setattr(chat_mod, "pi_bridge", fake_bridge)
+
+    class _FakeEntry:
+        # ADR-0100: abort 经统一取消 seam 解析 entry.bridge（真实
+        # _ActiveTurnEntry 契约含 bridge = 拥有该回合的 worker）。
+        bridge = fake_bridge
+
     # V5-B: the guard resolves the session-keyed active-turn table (the old
     # singleton active_turn_correlation view reads the LAST registered turn
     # anywhere and misses the abort under a bridge pool).
     monkeypatch.setattr(
         "app.agent_pi_bridge.get_active_turn_entry",
-        lambda sid: object() if sid == "pi-cancel-session" else None,
+        lambda sid: _FakeEntry() if sid == "pi-cancel-session" else None,
     )
     resp = await client.delete(f"/api/v1/tasks/{task.id}")
     assert resp.status_code == 200

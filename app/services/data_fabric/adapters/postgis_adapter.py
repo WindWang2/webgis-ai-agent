@@ -210,10 +210,11 @@ def _get_or_create_postgis_pool(host: str, port: int, dbname: str, user: str, pa
 
 
 class _TableMeta:
-    """describe 缓存的表元数据（字段/几何列/SRID/PK/索引/行数）。"""
+    """describe 缓存的表元数据（字段/几何列/SRID/PK/索引/行数/V3 列统计）。"""
 
     __slots__ = ("schema", "table", "fields", "field_names", "geom_col", "srid",
-                 "geom_type", "pk_col", "has_geometry_index", "feature_count", "bbox")
+                 "geom_type", "pk_col", "has_geometry_index", "feature_count", "bbox",
+                 "column_statistics")
 
     def __init__(self):
         self.schema = "public"
@@ -227,6 +228,7 @@ class _TableMeta:
         self.has_geometry_index: Optional[bool] = None
         self.feature_count: Optional[int] = None
         self.bbox: Optional[List[float]] = None
+        self.column_statistics: Optional[Dict[str, Any]] = None  # V3: pg_stats 尽力探针
 
 
 class PostGISAdapter(GeospatialDataSourceAdapter):
@@ -558,6 +560,23 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             except Exception:
                 conn.rollback()
                 cur = conn.cursor()
+        # V3 列统计（pg_stats 尽力探针；失败静默 None —— 统计绝不阻断查询）
+        if not lightweight:
+            try:
+                from app.services.data_fabric.query.statistics import (
+                    collect_postgis_statistics,
+                )
+
+                def _fetch_all(sql: str, params: tuple):
+                    cur.execute(sql, params)
+                    return cur.fetchall()
+
+                stats = collect_postgis_statistics(_fetch_all, schema_name, table_name)
+                meta.column_statistics = stats or None
+            except Exception:
+                conn.rollback()
+                cur = conn.cursor()
+                meta.column_statistics = None
         _meta_cache_put(shared_key, meta)
         return meta
 
@@ -573,6 +592,12 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                     "primary_key": meta.pk_col,
                     "has_geometry_index": meta.has_geometry_index,
                 }
+                # V3：列统计进 descriptor.metadata，statistics_from_descriptor 统一收割
+                if meta.column_statistics:
+                    md["column_statistics"] = [
+                        {"name": name, **info}
+                        for name, info in meta.column_statistics.items()
+                    ]
                 if meta.has_geometry_index is False and meta.geom_col:
                     md["index_suggestion"] = (
                         f'CREATE INDEX ON "{schema_name}"."{table_name}" '
@@ -660,9 +685,14 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             from app.services.data_fabric.fingerprint import dataset_fingerprint_service
 
             fp = dataset_fingerprint_service.calculate_descriptor_fingerprint(descriptor)
+            from app.services.data_fabric.query.statistics import (
+                statistics_for_request,
+            )
+
             plan = plan_query(
                 v2, descriptor, self._caps,
                 source_id=self.profile.id, dataset_fingerprint=fp,
+                stats=statistics_for_request(descriptor, fp),
             )
             budget = v2.execution
 

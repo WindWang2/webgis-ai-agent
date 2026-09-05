@@ -277,6 +277,7 @@ def map_product_block(
     all_repairs: Optional[List[str]] = None,
     rows_fingerprint: str = "",
     render_observation_seq: int = 0,
+    methodology_warnings: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """章节持久化块（additive、bounded、单一键 ``map_product``）。
 
@@ -300,6 +301,18 @@ def map_product_block(
     if rows_fingerprint:
         block["rows_fingerprint"] = rows_fingerprint[:512]
     block["projection"] = result.projection_line()
+    # VNext §14：单字产品裁决（READY / READY_WITH_WARNINGS / NEEDS_REPAIR /
+    # BLOCKED_BY_DATA / BLOCKED_BY_METHOD）—— 章节方法论警告参与推导
+    # （有披露永不 READY）。additive：旧读者忽略该键零漂移。
+    try:
+        from app.services.gis_harness.completion.contracts import (
+            derive_product_verdict,
+        )
+
+        block["product_verdict"] = derive_product_verdict(
+            result, methodology_warnings)
+    except Exception:  # noqa: BLE001 — 裁决是增值投影，绝不阻断 finalization
+        pass
     return block
 
 
@@ -498,6 +511,8 @@ async def maybe_finalize_map_product(
                     all_repairs=merged_repairs,
                     rows_fingerprint=_rows_fingerprint(fresh.gis_chapter),
                     render_observation_seq=render_seq,
+                    methodology_warnings=list(
+                        fresh.gis_chapter.get("methodology_warnings") or []),
                 )
                 await save_session_plan(fresh)
     except Exception:  # noqa: BLE001 — 披露失败不阻断 turn；下一触发点重试

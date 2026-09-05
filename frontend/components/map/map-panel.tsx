@@ -1278,6 +1278,10 @@ export function MapPanel({
         </div>
       ) : (
         /* Map Canvas — Full Viewport */
+        /* VNext §18：地图画布可访问名 —— MapLibre 自带键盘导航（方向键
+           平移、+/- 缩放），role=application 告知辅助技术这是自定义键盘
+           交互区（键盘语义由 MapLibre canvas 承载）。 */
+        <div className="absolute inset-0" role="application" aria-label="地图画布（方向键平移，加号/减号缩放）">
         <Map
           key={`maplibre-instance-${mapKey}`}
           id="default"
@@ -1330,6 +1334,7 @@ export function MapPanel({
           </Popup>
         )}
       </Map>
+      </div>
       )}
 
       {/* Live cartography overlays — driven by layer.legend_spec */}

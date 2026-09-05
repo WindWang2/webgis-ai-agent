@@ -33,6 +33,8 @@ _TOOL_MODULES = [
     ("app.tools.change_detection", "register_change_detection_tools"),
     ("app.tools.monitoring_report", "register_monitoring_report_tools"),
     ("app.tools.skills", "register_skill_tools"),
+    # ADR-0100: 如实的技能面刷新（注册表层可热刷；native 面冻结于 spawn）。
+    ("app.tools.skill_surface_refresh", "register_skill_surface_refresh"),
     ("app.tools.explorer_tools", "register_explorer_tools"),
     ("app.tools.coord_transform", "register_coord_transform_tools"),
     ("app.tools.coord_transform", "register_epsg_transform_tools"),
@@ -49,6 +51,7 @@ _TOOL_MODULES = [
     ("app.tools.data_fabric_tools", "register_data_fabric_tools"),
     ("app.tools.semantic_tools", "register_semantic_tools"),
     ("app.tools.flow_tools", "register_flow_tools"),
+    ("app.tools.geocompute_tools", "register_geocompute_tools"),
 ]
 
 
