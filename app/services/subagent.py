@@ -71,6 +71,7 @@ def select_tools_for_subagent(
     domains: Optional[list[str]] = None,
     extra_tools: Optional[list[str]] = None,
     exclude_tier3: bool = True,
+    allow_mutation: Optional[bool] = None,
 ) -> list[dict]:
     """根据 domains + 显式工具白名单挑选子代理可见的 schema 子集。
 
@@ -80,10 +81,23 @@ def select_tools_for_subagent(
     - extra_tools 按名字白名单纳入 — 用于强制带上某个具体工具（SEC-F2：
       tier-3 工具仍受 exclude_tier3 约束，父 turn 无可委托的确认）。
     - 子代理永远看不到 spawn_subagent / propose_plan，防止递归与计划嵌套。
+    - ADR-0101 Wave 7：allow_mutation=False 时，描述符副作用类为
+      state_mutation / artifact_creation / external_side_effect / destructive
+      的工具全部剔除（角色库的权限面 —— 分类缺失的 unclassified 工具保守
+      视为可突变，宁可多留不可错杀？不：**unclassified 保守保留**与 tier-1
+      基础工具兼容；只剔除**已声明**为突变类的工具）。
     """
+    from app.tools.descriptor import SideEffectClass
+
     domain_set = set(domains or [])
     extra_set = set(extra_tools or [])
     _BLACKLIST_ALWAYS = {"spawn_subagent", "propose_plan", "execute_plan", "get_plan_status"}
+    _MUTATION_CLASSES = {
+        SideEffectClass.STATE_MUTATION,
+        SideEffectClass.ARTIFACT_CREATION,
+        SideEffectClass.EXTERNAL_SIDE_EFFECT,
+        SideEffectClass.DESTRUCTIVE,
+    }
     selected: set[str] = set()
 
     for name, meta in registry.all_metadata().items():
@@ -109,6 +123,12 @@ def select_tools_for_subagent(
             tool_domains = set(meta.get("domains") or [])
             if tool_domains & domain_set:
                 selected.add(name)
+
+    if allow_mutation is False:
+        selected = {
+            name for name in selected
+            if registry.descriptor(name).side_effect not in _MUTATION_CLASSES
+        }
 
     return registry.get_schemas_subset(selected)
 
@@ -145,17 +165,50 @@ class SubagentDispatcher:
         domains: Optional[list[str]] = None,
         extra_tools: Optional[list[str]] = None,
         max_rounds: int = 10,
+        role: Optional["str | SubagentRole"] = None,
     ) -> SubagentResult:
+        # ADR-0101 Wave 7：角色档（显式策略，无未约束子代理）。角色提供的
+        # 域/预算与调用方显式参数取**交集/更严者** —— 角色收紧，调用方不能
+        # 经参数越权放宽。
+        from app.services.subagent_roles import (
+            SubagentBudget,
+            SubagentRole as _SubagentRole,
+            get_subagent_role,
+            wrap_dispatch_with_budget,
+        )
+
+        role_obj: Optional[_SubagentRole]
+        if isinstance(role, _SubagentRole):
+            role_obj = role
+        elif isinstance(role, str):
+            role_obj = get_subagent_role(role)
+        else:
+            role_obj = None
+        if role_obj is not None:
+            if role_obj.allowed_domains:
+                domain_set = set(domains or [])
+                domains = sorted(
+                    domain_set & set(role_obj.allowed_domains)
+                    if domain_set else set(role_obj.allowed_domains)
+                )
+            max_rounds = min(max_rounds, role_obj.max_rounds)
+        allow_mutation = role_obj.allow_mutation if role_obj is not None else None
+
         tool_subset = select_tools_for_subagent(
             self.registry,
             domains=domains,
             extra_tools=extra_tools,
             exclude_tier3=True,
+            allow_mutation=allow_mutation,
         )
+        if role_obj is not None and role_obj.max_tool_calls == 0:
+            tool_subset = []
         tool_names = [s["function"]["name"] for s in tool_subset]
         logger.info(
-            "[Subagent] parent=%s task=%r tools=%d (%s)",
-            self.parent_session_id, task[:80], len(tool_subset),
+            "[Subagent] parent=%s role=%s task=%r tools=%d (%s)",
+            self.parent_session_id,
+            role_obj.name if role_obj else "adhoc",
+            task[:80], len(tool_subset),
             ", ".join(tool_names[:8]) + ("..." if len(tool_names) > 8 else ""),
         )
 
@@ -166,6 +219,22 @@ class SubagentDispatcher:
             refs_before = set()
 
         sub_engine = self._build_sub_engine(tool_subset, max_rounds)
+
+        # §32 层级预算：turn → agent → subagent → tools。工具调用计数经
+        # dispatch 实例包装实现（引擎零改动）；墙钟由下方 asyncio.timeout 执行。
+        budget = SubagentBudget(
+            max_tool_calls=role_obj.max_tool_calls if role_obj else 40,
+            max_heavy_tool_calls=role_obj.max_heavy_tool_calls if role_obj else 8,
+            max_wall_time_s=role_obj.max_wall_time_s if role_obj else 300.0,
+        )
+        _orig_dispatch = sub_engine.dispatch_service.dispatch
+
+        async def _budgeted_dispatch(tc, session_id, executed_tools=None):
+            return await wrap_dispatch_with_budget(_orig_dispatch, budget, self.registry)(
+                tc, session_id, executed_tools
+            )
+
+        sub_engine.dispatch_service.dispatch = _budgeted_dispatch  # type: ignore[method-assign]
 
         # ADR-0100：子代理取消接线。此前取消只能以「任务已取消」文案形式
         # 从工具层渗回来 —— 引擎循环本身不观察令牌，父 turn 取消后子代理
@@ -185,6 +254,14 @@ class SubagentDispatcher:
             parent_token.link(sub_token)
 
         wrapped_task_text = f"{self.SUB_SYSTEM_PROMPT}\n\n# 子任务\n{task}"
+        if role_obj is not None:
+            wrapped_task_text = (
+                f"[角色] {role_obj.title}\n"
+                f"[纪律] 工具调用上限 {budget.max_tool_calls} 次（重工具 ≤ "
+                f"{budget.max_heavy_tool_calls}）、墙钟 ≤ {budget.max_wall_time_s:.0f}s、"
+                f"{'禁止修改任何会话/地图状态' if not role_obj.allow_mutation else '允许读写会话数据'}。\n\n"
+                + wrapped_task_text
+            )
         try:
             with use_token(sub_token):
                 chat_task = asyncio.create_task(
@@ -227,6 +304,15 @@ class SubagentDispatcher:
                     refs=[],
                     error="cancelled",
                 )
+            if sub_token.cancelled and chat_task in done:
+                # chat_task 可能已因工具层取消而异常/失败完成 —— 取其结果按取消语义
+                reason = sub_token.reason or "parent turn cancelled"
+                return SubagentResult(
+                    success=False,
+                    summary=f"子代理已取消: {reason}",
+                    refs=[],
+                    error="cancelled",
+                )
             result = chat_task.result()
         except OperationCancelled:
             return SubagentResult(
@@ -235,10 +321,35 @@ class SubagentDispatcher:
                 refs=[],
                 error="cancelled",
             )
+        except asyncio.TimeoutError:
+            budget_used = budget.usage()
+            logger.warning(
+                "[Subagent] parent=%s wall-time budget exceeded: %s",
+                self.parent_session_id, budget_used,
+            )
+            return SubagentResult(
+                success=False,
+                summary=f"子代理超过墙钟预算（{budget.max_wall_time_s:.0f}s）被终止",
+                refs=[],
+                error="budget_exceeded:wall_time",
+            )
         except Exception as e:
             # #685: 非流式诚实 settle 后 chat() 会抛异常（empty / max_rounds / no_progress）
             # 这里统一判失败，不再假成功；summary 保留失败原因以便父循环决策。
             # refs=None（无法可靠计算 after-set）；父循环按无新增 refs 处理。
+            from app.services.subagent_roles import BudgetExceeded as _BudgetExceeded
+
+            if isinstance(e, _BudgetExceeded):
+                logger.warning(
+                    "[Subagent] parent=%s tool budget exceeded: %s",
+                    self.parent_session_id, e,
+                )
+                return SubagentResult(
+                    success=False,
+                    summary=f"子代理超过工具预算被终止: {e}",
+                    refs=[],
+                    error="budget_exceeded:tools",
+                )
             logger.exception("[Subagent] sub-engine failed")
             return SubagentResult(
                 success=False,
