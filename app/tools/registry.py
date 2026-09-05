@@ -16,6 +16,15 @@ from app.lib.geo_processor.core import GeoAnalysisResult
 
 from app.services.jobs.cancellation import OperationCancelled
 from app.services.llm_result_formatter import is_error_like_result
+from app.tools import argument_normalization as _anorm
+from app.tools.argument_normalization import (
+    TOOL_NAME_ALIASES as _TOOL_NAME_ALIASES,
+    coerce_json_string_lists as _coerce_json_string_lists_pairs,
+    normalize_tool_arguments as _normalize_tool_arguments_pairs,
+    resolve_tool_name as _resolve_tool_name,
+    validate_normalization_tables,
+    normalization_report_var,
+)
 from app.tools.descriptor import (
     SideEffectClass,
     ToolDescriptor,
@@ -116,279 +125,35 @@ from app.lib.json_size import (  # noqa: F401
 _ALIAS_LOOKUP_MAX_DISTINCT = 1024
 
 
-def _is_list_annotation(annotation: Any) -> bool:
-    """annotation 是否为 list 族（list / list[T] / List[T] / Optional[List[T]]）。"""
-    import typing as _typing
+# ---------------------------------------------------------------------------
+# ADR-0101 Wave 2：参数归一化已下沉 app/tools/argument_normalization.py
+# （声明式规则表 + 修复证据）。此处保留私有兼容别名 —— 既有测试与内部
+# 引用不经改写继续工作；行为契约由声明表逐字迁移并有测试钉住。
+# ---------------------------------------------------------------------------
 
-    ann = annotation
-    # Union 语义（含 Optional）：任一 arm 是 list 族即认。
-    if _typing.get_origin(ann) is Union:
-        return any(_is_list_annotation(a) for a in _typing.get_args(ann))
-    if ann is list or ann is List:
-        return True
-    return _typing.get_origin(ann) is list
+_is_list_annotation = _anorm._is_list_annotation
 
 
-def _coerce_json_string_lists(
-    arguments: dict, model: Type[BaseModel]
-) -> dict:
-    """列表参数的 JSON 字符串宽容解码（2026-08-25 会话：webgis_map_product）。
-
-    LLM 常把本该是数组的参数编码成 JSON 字符串（``"[\"a\",\"b\"]"``）——
-    pydantic 拒以 ``Input should be a valid list``，且模型自愈重试不改形
-    （实测连错 3 轮触发无进展终止）。凡模型字段注解为 list 族、实参是
-    str 且 json.loads 结果确为 list 的，就地解码替换；其余形态不动，
-    留给 pydantic 出原本的校验错误。
-    """
-    coerced = False
-    out = arguments
-    for fname, finfo in model.model_fields.items():
-        if fname not in arguments or not _is_list_annotation(finfo.annotation):
-            continue
-        val = arguments[fname]
-        if not isinstance(val, str) or not val.strip():
-            continue
-        try:
-            parsed = json.loads(val)
-        except (json.JSONDecodeError, ValueError):
-            continue
-        if isinstance(parsed, list):
-            if not coerced:
-                out = dict(arguments)
-                coerced = True
-            out[fname] = parsed
-            logger.debug(
-                "registry: coerced JSON-string list arg %r (%d items)",
-                fname, len(parsed),
-            )
+def _coerce_json_string_lists(arguments: dict, model):
+    """兼容包装：返回归一化后的 dict（修复证据走 ContextVar/trace）。"""
+    out, _repairs = _coerce_json_string_lists_pairs(arguments, model)
     return out
-
-_TOOL_NAME_ALIASES: dict[str, str] = {
-    # 行政边界与政区查询别名
-    "admin_boundary_query": "get_local_admin_boundary",
-    "get_admin_boundary": "get_local_admin_boundary",
-    "query_admin_boundary": "get_local_admin_boundary",
-    "admin_boundary": "get_local_admin_boundary",
-    "admin_query": "get_admin_division",
-    "query_admin_division": "get_admin_division",
-    "get_boundary": "get_local_admin_boundary",
-    "get_child_district": "get_child_districts",
-    "get_local_districts": "get_local_child_districts",
-    "get_districts": "get_child_districts",
-
-    # POI 查询别名
-    "poi_query": "search_poi",
-    "query_poi": "search_poi",
-    "poi_search": "search_poi",
-    "search_pois": "search_poi",
-    "query_osm_pois": "query_osm_poi",
-
-    # 密度/表面分析别名
-    "density_surface": "kde_surface",
-    "density_analysis": "kde_surface",
-    "kernel_density": "kde_surface",
-    "kernel_density_estimation": "kde_surface",
-    "heatmap_analysis": "heatmap_data",
-    "kde_analysis": "kde_surface",
-
-    # 空间聚合别名
-    "admin_aggregation": "spatial_aggregate",
-    "spatial_aggregation": "spatial_aggregate",
-    "admin_aggregate": "spatial_aggregate",
-    "point_aggregation": "spatial_aggregate",
-    "aggregate_points": "spatial_aggregate",
-
-    # 缓冲区别名
-    "buffer": "buffer_analysis",
-    "buffer_layer": "buffer_analysis",
-
-    # 路径/网络分析别名
-    "shortest_path": "network_shortest_path",
-    "route_planning": "plan_route",
-    "isochrone": "isochrone_analysis",
-
-    # 空间叠加/属性
-    "overlay": "overlay_analysis",
-    "spatial_join_layers": "spatial_join",
-    "zonal_statistics": "zonal_stats",
-}
-
-
-def _fold_alias(
-    args: dict, target: str, aliases, model_fields: set, *, list_wrap: bool = False
-) -> None:
-    """target 缺席时把首个在场的别名折叠过去。
-
-    Pi 兼容审查（master 回归修复）：声明字段（= schema 正名或另一真实
-    参数）绝不折叠 —— LLM 按 schema 命名的参数永远优先于别名猜测。旧实现
-    把 webgis_map_product 声明的 ``title`` 改名成不存在的 ``map_title``，
-    pydantic 未知参数门必然拒绝（golden 流程三连挂）。list_wrap=True 时
-    标量包成单元素列表（overlay_refs 语义）。
-    """
-    if target in args:
-        return
-    for alias in aliases:
-        if alias in args:
-            if alias in model_fields:
-                continue
-            val = args.pop(alias)
-            if list_wrap and not isinstance(val, list):
-                val = [val]
-            args[target] = val
-            return
 
 
 def _normalize_tool_arguments(
-    name: str, arguments: dict, model: Optional[Type[BaseModel]] = None
+    name: str, arguments: dict, model=None
 ) -> dict:
-    """归一化常见 LLM 实参字段别名与命名习惯偏差。"""
-    if not isinstance(arguments, dict):
-        return arguments
-
-    # 1. 浅拷贝并归一化 key 风格（例如 kebab-case -> snake_case: radius-px -> radius_px）
-    args: dict[str, Any] = {}
-    for k, v in arguments.items():
-        if isinstance(k, str) and "-" in k and not k.startswith("-"):
-            args[k.replace("-", "_")] = v
-        else:
-            args[k] = v
-
-    model_fields = set(model.model_fields.keys()) if model is not None else set()
-
-    # 2. 通用 GeoJSON / 空间要素引用别名映射
-    # 只要工具接收 geojson 参数，且未直接传 geojson，自动将 geojson_ref / data_ref / source_ref / data 等变体折叠为 geojson
-    GEOJSON_ALIASES = (
-        "geojson_ref",
-        "data_ref",
-        "source_ref",
-        "input_geojson",
-        "points_geojson",
-        "target_geojson",
-        "source_geojson",
-        "layer_data",
-        "points_data",
-        "data",
-        "input_data",
-        "feature_collection",
-        "features",
-        "points",
-        "ref",
-        "ref_id",
-        "layer_ref",
-    )
-    if ("geojson" in model_fields or name in (
-        "heatmap_data", "buffer_analysis", "spatial_stats", "nearest_neighbor",
-        "kde_surface", "kde_contours", "voronoi_polygons", "convex_hull",
-        "multi_ring_buffer", "attribute_filter", "h3_binning", "spatial_cluster",
-        "hotspot_analysis", "moran_i", "create_thematic_map", "isochrone_analysis",
-        "service_area_simple", "point_profile"
-    )) and "geojson" not in args:
-        for alias in GEOJSON_ALIASES:
-            if alias in args:
-                # Pi 兼容审查修复：声明过的字段一律保留 —— 包括 geojson_ref/
-                # data_ref 等保护名（此前例外清单写反：声明的保护名反而会被
-                # 折叠进 geojson，正是注释声称要防止的行为）。LLM 显式按
-                # schema 命名的参数永远优先于别名猜测。
-                if alias in model_fields:
-                    continue
-                args["geojson"] = args.pop(alias)
-                break
-
-    # 3. 空间聚合 (spatial_aggregate)
-    if name == "spatial_aggregate":
-        _fold_alias(args, "points",
-                    ("points_data", "points_ref", "points_geojson", "point_data",
-                     "data", "geojson", "geojson_ref", "ref"), model_fields)
-        _fold_alias(args, "polygons",
-                    ("polygons_data", "polygons_ref", "polygons_geojson", "polygon_data",
-                     "admin_data", "admin_boundary", "boundary_ref", "boundary",
-                     "admin_boundary_ref", "data", "geojson", "geojson_ref", "ref"),
-                    model_fields)
-
-    # 4. POI 搜索 (search_poi, query_local_poi, query_gd_poi, query_poi)
-    if name in ("search_poi", "query_local_poi", "query_gd_poi", "query_poi"):
-        _fold_alias(args, "keyword",
-                    ("keywords", "query", "text", "search_text", "name"), model_fields)
-        if "subtype" in model_fields or name in ("query_local_poi", "query_gd_poi"):
-            _fold_alias(args, "subtype",
-                        ("poi_type", "type", "category", "sub_type", "class_name",
-                         "type_name"), model_fields)
-        if "district" in model_fields or name in ("query_local_poi", "query_gd_poi"):
-            _fold_alias(args, "district",
-                        ("district_name", "city_name", "city", "region", "admin_name",
-                         "address"), model_fields)
-        if "adcode" in model_fields or name in ("query_local_poi", "query_gd_poi"):
-            _fold_alias(args, "adcode",
-                        ("ad_code", "city_code", "district_code", "code"), model_fields)
-
-    # 5. 行政区划查询 (get_local_admin_boundary, get_admin_division, admin_boundary_query)
-    if name in ("get_local_admin_boundary", "get_admin_division", "admin_boundary_query"):
-        target_key = "keywords" if name == "get_admin_division" else "name"
-        _fold_alias(
-            args, target_key,
-            ("admin_name", "city", "district", "district_name", "region", "address",
-             "location", "query", "keywords" if target_key == "name" else "name"),
-            model_fields,
-        )
-        _fold_alias(args, "adcode",
-                    ("ad_code", "city_code", "district_code", "code"), model_fields)
-
-    # 6. 缓冲区分析 (buffer_analysis, multi_ring_buffer)
-    if name == "buffer_analysis":
-        _fold_alias(args, "distance",
-                    ("buffer_distance", "dist", "radius", "buffer_radius"), model_fields)
-        _fold_alias(args, "unit", ("dist_unit", "buffer_unit"), model_fields)
-    elif name == "multi_ring_buffer":
-        _fold_alias(args, "distances",
-                    ("ring_distances", "radii", "distance_list", "distance"),
-                    model_fields, list_wrap=True)
-
-    # 7. 专题图与模板 (create_thematic_map, apply_template)
-    if name in ("create_thematic_map", "apply_template"):
-        _fold_alias(args, "field",
-                    ("classify_field", "field_name", "property", "property_name",
-                     "column", "attribute", "attr"), model_fields)
-        _fold_alias(args, "palette",
-                    ("color_palette", "color_scheme", "colors", "colormap", "color"),
-                    model_fields)
-        _fold_alias(args, "method",
-                    ("classify_method", "classification", "classes_method", "scheme"),
-                    model_fields)
-        if "n_classes" not in args:
-            for alias in ("num_classes", "bins", "k", "class_count", "classes"):
-                if alias in args and alias not in model_fields and isinstance(args[alias], (int, float)):
-                    args["n_classes"] = int(args.pop(alias))
-                    break
-
-    # 8. 地图产品装配 (webgis_map_product) —— 目标必须是真实签名参数
-    #（MapProductArgs：title / primary_ref / overlay_refs；无 map_title、
-    # 无 insight_summary —— master 回归曾把声明的 title 改名成不存在的
-    # map_title、把 summary 折进不存在的 insight_summary，两条都会被
-    # 未知参数门拒绝）。map_title 保留为**入向**别名（旧会话/历史习惯）。
-    if name == "webgis_map_product":
-        _fold_alias(args, "title",
-                    ("map_title", "name", "project_title"), model_fields)
-        _fold_alias(args, "primary_ref",
-                    ("primary_layer", "primary_source", "base_ref", "base_layer",
-                     "main_ref", "ref", "geojson_ref"), model_fields)
-        _fold_alias(args, "overlay_refs",
-                    ("overlays", "overlay_layers", "layers", "other_refs", "sub_refs"),
-                    model_fields, list_wrap=True)
-
-    # 9. 图层增删改 (webgis_layer_upsert, webgis_component_update, webgis_layout_set)
-    if name == "webgis_layer_upsert":
-        _fold_alias(args, "source_data",
-                    ("data", "source_ref", "geojson_ref", "geojson", "ref", "layer_data"),
-                    model_fields)
-
-    return args
+    """兼容包装：返回归一化后的 dict（修复证据丢弃 —— dispatch 路径请用
+    ``_normalize_with_report`` 以保留 trace 证据）。"""
+    out, _repairs = _normalize_tool_arguments_pairs(name, arguments, model)
+    return out
 
 
+def _normalize_with_report(name: str, arguments: dict, model=None):
+    """dispatch 内部入口：归一化并返回 (args, repairs)。"""
+    return _normalize_tool_arguments_pairs(name, arguments, model)
 
 
-# G-1 (phase-E review): TypeAdapter construction costs ~29µs (scalars) up to
-# ~289µs (Annotated[float, Field(ge, le)]) — cache per (model, field) so the
-# oversized-bypass scalar validation stays sub-µs on the hot repeat.
 _TYPEADAPTER_CACHE: dict[tuple[type, str], "TypeAdapter"] = {}
 
 
@@ -917,7 +682,7 @@ class ToolRegistry:
     @staticmethod
     def resolve_name(name: str) -> str:
         """入向工具名别名折叠为 canonical 名（dispatch 同款语义，公开只读）。"""
-        return _TOOL_NAME_ALIASES.get(name, name)
+        return _resolve_tool_name(name)
 
     def aliases_for(self, name: str) -> list[str]:
         """指向 canonical 工具 ``name`` 的全部入向别名（含自反时排除自身）。"""
@@ -1213,6 +978,10 @@ class ToolRegistry:
         """执行工具，包含 Pydantic 校验与透明解引用"""
         from app.tools._utils import std_error_response
 
+        # ADR-0101 Wave 2：每次 dispatch 开始先清报告（last-dispatch-wins，
+        # dispatch 返回后调用方可读取本次修复证据 —— trace/pipeline 消费）。
+        normalization_report_var.set(())
+
         # 别名解析：支持常见大模型工具名变体与同义词映射
         real_name = _TOOL_NAME_ALIASES.get(name, name)
         tool_func = self._tools.get(real_name)
@@ -1253,7 +1022,9 @@ class ToolRegistry:
                 )
 
         if isinstance(arguments, dict):
-            arguments = _normalize_tool_arguments(name, arguments, model)
+            arguments, _norm_repairs = _normalize_with_report(name, arguments, model)
+        else:
+            _norm_repairs = ()
 
         # 注意：排除某些特殊字段（如 ref_id, layer_ref, layer_id, plan_id），
         # 这些字段本身就是为了接收引用 ID，绝不应被自动解引用为 GeoJSON 数据。
@@ -1412,9 +1183,10 @@ class ToolRegistry:
                     # LLM 常把 list 参数编码成 JSON 字符串（webgis_map_product
                     # 的 layer_ids/overlay_refs 连错 3 轮触发无进展终止）——
                     # 校验前先做宽容解码，解码不了仍走 pydantic 原错误。
-                    arguments = _coerce_json_string_lists(arguments, model)
+                    arguments, _list_repairs = _coerce_json_string_lists_pairs(arguments, model)
                     validated_args = model.model_validate(arguments)
                     arguments = validated_args.model_dump()
+                    _norm_repairs = _norm_repairs + _list_repairs
                 except ValidationError as e:
                     # 构造友好的错误信息，帮助 LLM "自愈"
                     error_msgs = []
@@ -1454,6 +1226,9 @@ class ToolRegistry:
                 error_type="ValueError",
                 correction_hint=f"GeoJSON Validation Error: {str(e)}"
             )
+
+        # ADR-0101 Wave 2：归一化修复证据暴露给 trace（dispatch() finally 中复位）。
+        normalization_report_var.set(_norm_repairs)
 
         # 执行函数
         # 探测函数签名，如果需要 session_id 则传入。dispatch 的第三参是 harness
