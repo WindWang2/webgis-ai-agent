@@ -75,14 +75,15 @@ def test_summarizer_role_zero_tools():
 # ---------------------------------------------------------------------------
 
 def test_no_mutation_role_filters_mutation_tools(reg):
+    """allow-list 语义：只读类显式声明才保留（review R1 MAJOR）。"""
     subset = select_tools_for_subagent(
         reg, domains=["mapspec", "dataset", "statistics"], allow_mutation=False
     )
     names = {s["function"]["name"] for s in subset}
-    assert "webgis_component_update" not in names
-    assert "external_webhook" not in names
-    assert "search_poi" in names            # 只读保留
-    assert "cheap_analyze" in names         # 确定性计算保留
+    assert "webgis_component_update" not in names   # state_mutation
+    assert "external_webhook" not in names          # external_side_effect
+    assert "search_poi" in names                    # cacheable_read（显式声明）
+    assert "cheap_analyze" in names                 # deterministic_compute
 
 
 def test_mutation_allowed_by_default(reg):
@@ -108,14 +109,16 @@ def test_tier3_never_via_extra_tools(reg):
     assert {s["function"]["name"] for s in subset}.isdisjoint({"danger_tool"})
 
 
-def test_unclassified_side_effect_kept_for_readonly_role(reg):
-    """未分类副作用保守保留（只剔除已声明为突变类的工具）。"""
+def test_unclassified_side_effect_excluded_for_readonly_role(reg):
+    """review R1 MAJOR（fail-closed）：UNCLASSIFIED = 未知，未知不入只读面。
+    全库存量工具默认 UNCLASSIFIED —— 描述符富化完成前 no-mutation 角色的
+    可见工具为空（诚实的失败方向，见 tool-descriptor.md）。"""
     reg.register(
         name="legacy_tool", description="老工具",
         func=lambda a: {"success": True}, tier=1,
     )
     subset = select_tools_for_subagent(reg, allow_mutation=False)
-    assert "legacy_tool" in {s["function"]["name"] for s in subset}
+    assert "legacy_tool" not in {s["function"]["name"] for s in subset}
 
 
 # ---------------------------------------------------------------------------
@@ -203,3 +206,38 @@ async def test_subengine_engine_not_polluted_by_roles_module():
     import app.services.subagent_roles as sr
     assert not hasattr(sr, "ChatEngine")
     assert not hasattr(sr, "SubagentDispatcher")
+
+
+@pytest.mark.asyncio
+async def test_wall_clock_budget_enforced():
+    """review R1 MAJOR 回归锁：纯 LLM 子代理（零工具）也受墙钟约束。"""
+    from app.services.subagent import SubagentDispatcher
+
+    class _Reg:
+        def all_metadata(self):
+            return {}
+
+        def get_schemas_subset(self, names):
+            return []
+
+    class _SlowEngine:
+        def __init__(self):
+            self.dispatch_service = None
+
+        async def chat(self, message, session_id):
+            while True:
+                await asyncio.sleep(0.05)
+
+    dispatcher = SubagentDispatcher(_Reg(), "sess-wall")
+    dispatcher._build_sub_engine = lambda subset, rounds: _SlowEngine()
+
+    result = await dispatcher.run(
+        task="慢任务", max_rounds=3,
+        role=SubagentRole(
+            name="slow_probe", title="探针", model_role="subagent_worker",
+            max_rounds=3, max_wall_time_s=0.2, max_tool_calls=0,
+            max_heavy_tool_calls=0,
+        ),
+    )
+    assert result.success is False
+    assert result.error == "budget_exceeded:wall_time"

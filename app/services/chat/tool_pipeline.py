@@ -34,6 +34,12 @@ def _trace_emit(turn_id: str, kind: str, /, **meta) -> None:
 
 logger = logging.getLogger(__name__)
 
+try:
+    from app.services.subagent_roles import BudgetExceeded
+except ImportError:  # noqa: BLE001 — 子代理模块缺席时预算闸不存在
+    class BudgetExceeded(Exception):
+        pass
+
 
 @dataclass
 class ToolExecutionResult:
@@ -219,6 +225,11 @@ class ToolExecutionPipeline:
                 logger.info(f"[ToolPipeline] {tool_name} cancelled by user")
                 cancelled = True
                 outcome = _cancelled_outcome()
+            except BudgetExceeded:
+                # review R1 CRITICAL：子代理预算超限必须上抛到 SubagentDispatcher
+                # 的显式失败语义（budget_exceeded:tools）—— 吞成工具错误会让
+                # 预算治理静默退化为 no-progress 兜底。
+                raise
             except Exception as e:
                 logger.error(f"[ToolPipeline] Dispatch error for {tool_name}: {e}", exc_info=True)
                 outcome = _error_outcome(e)
@@ -245,6 +256,8 @@ class ToolExecutionPipeline:
                     logger.info(f"[ToolPipeline] {tool_name} cancelled by user")
                     cancelled = True
                     outcome = _cancelled_outcome()
+                except BudgetExceeded:
+                    raise
                 except Exception as e:
                     logger.error(f"[ToolPipeline] Dispatch error for {tool_name}: {e}", exc_info=True)
                     outcome = _error_outcome(e)

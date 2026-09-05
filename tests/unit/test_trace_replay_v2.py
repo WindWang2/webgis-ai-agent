@@ -215,3 +215,18 @@ async def test_simulation_script_expectation_mismatch_is_violation(reg):
     ]
     report = await simulate_agent_loop(reg, "sess", script)
     assert not report.invariants_held
+
+
+@pytest.mark.asyncio
+async def test_replay_unclassified_is_skipped():
+    """review R1 MAJOR 回归锁：UNCLASSIFIED = 未知 → 不重放（allow-list）。"""
+    registry = ToolRegistry()
+    registry.register(
+        name="mystery_tool", description="未分类存量工具",
+        func=lambda x: {"success": True},
+    )
+    outcomes = await replay_tools(
+        registry, "sess", [ReplayEntry(tool="mystery_tool", arguments={"x": 1})]
+    )
+    assert outcomes[0].action == "skipped_unsafe"
+    assert "unclassified" in outcomes[0].detail

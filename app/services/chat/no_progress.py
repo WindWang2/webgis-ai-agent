@@ -131,16 +131,19 @@ class CallPatternTracker:
         self.records.append(rec)
         self._by_signature[signature] = rec
         self._name_variants.setdefault(signature, set()).add((tool_name or "").strip())
-        # 有界
+        # 有界（review R1 minor：_name_variants 与 records 同步修剪 ——
+        # 此前变体表无界增长，「有界 tracker」名不副实；别名振荡检测只需要
+        # 环内最近记录的签名）
         if len(self.records) > self.max_records:
             drop = self.records[: len(self.records) - self.max_records]
             self.records = self.records[len(self.records) - self.max_records:]
+            kept_sigs = {r.signature for r in self.records}
             for d in drop:
-                if self._by_signature.get(d.signature) is d:
+                if self._by_signature.get(d.signature) is d and d.signature not in kept_sigs:
                     self._by_signature.pop(d.signature, None)
-        for sig in list(self._name_variants):
-            if sig not in self._by_signature:
-                pass  # 变体表保持（别名振荡需要历史），由 records 界约束
+            for sig in list(self._name_variants):
+                if sig not in kept_sigs:
+                    self._name_variants.pop(sig, None)
         return reasons
 
     def reason_summary(self) -> str:

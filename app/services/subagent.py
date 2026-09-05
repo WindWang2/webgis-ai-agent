@@ -81,22 +81,23 @@ def select_tools_for_subagent(
     - extra_tools 按名字白名单纳入 — 用于强制带上某个具体工具（SEC-F2：
       tier-3 工具仍受 exclude_tier3 约束，父 turn 无可委托的确认）。
     - 子代理永远看不到 spawn_subagent / propose_plan，防止递归与计划嵌套。
-    - ADR-0101 Wave 7：allow_mutation=False 时，描述符副作用类为
-      state_mutation / artifact_creation / external_side_effect / destructive
-      的工具全部剔除（角色库的权限面 —— 分类缺失的 unclassified 工具保守
-      视为可突变，宁可多留不可错杀？不：**unclassified 保守保留**与 tier-1
-      基础工具兼容；只剔除**已声明**为突变类的工具）。
+    - ADR-0101 Wave 7 + review R1 MAJOR（fail-closed）：allow_mutation=False
+      采用**allow-list** —— 只保留显式声明为只读类（pure /
+      deterministic_compute / cacheable_read）的工具。UNCLASSIFIED（存量全库
+      默认）意味着「未知」，未知不可入只读面（此前黑名单式剔除对未分类工具
+      是 no-op —— 全库 200+ 工具无一声明，角色权限面形同虚设）。代价：描述符
+      富化完成前，no-mutation 角色的可见工具为空 —— 这是诚实的失败方向
+      （富化是角色带工具的前置条件，见 docs/agent-runtime/tool-descriptor.md）。
     """
     from app.tools.descriptor import SideEffectClass
 
     domain_set = set(domains or [])
     extra_set = set(extra_tools or [])
     _BLACKLIST_ALWAYS = {"spawn_subagent", "propose_plan", "execute_plan", "get_plan_status"}
-    _MUTATION_CLASSES = {
-        SideEffectClass.STATE_MUTATION,
-        SideEffectClass.ARTIFACT_CREATION,
-        SideEffectClass.EXTERNAL_SIDE_EFFECT,
-        SideEffectClass.DESTRUCTIVE,
+    _READONLY_CLASSES = {
+        SideEffectClass.PURE,
+        SideEffectClass.DETERMINISTIC_COMPUTE,
+        SideEffectClass.CACHEABLE_READ,
     }
     selected: set[str] = set()
 
@@ -127,7 +128,7 @@ def select_tools_for_subagent(
     if allow_mutation is False:
         selected = {
             name for name in selected
-            if registry.descriptor(name).side_effect not in _MUTATION_CLASSES
+            if registry.descriptor(name).side_effect in _READONLY_CLASSES
         }
 
     return registry.get_schemas_subset(selected)
@@ -221,12 +222,16 @@ class SubagentDispatcher:
         sub_engine = self._build_sub_engine(tool_subset, max_rounds)
 
         # §32 层级预算：turn → agent → subagent → tools。工具调用计数经
-        # dispatch 实例包装实现（引擎零改动）；墙钟由下方 asyncio.timeout 执行。
+        # dispatch 实例包装实现（引擎零改动）；墙钟在下方 asyncio.wait 的
+        # timeout 参数上执行（超时 → budget_exceeded:wall_time 诚实失败）。
         # 防御：测试桩引擎可能没有 dispatch_service（如 cancellation 单测的
         # _SubEngine）—— 此时跳过包装（预算只覆盖真实引擎路径）。
+        # review R1 minor：adhoc（无角色）子代理不再静默吃固定 40 次硬预算 ——
+        # 按轮次推导（每轮多工具波余量），行为对齐既有「只有 max_rounds 约束」
+        # 的基线，同时保留失控保护。
         budget = SubagentBudget(
-            max_tool_calls=role_obj.max_tool_calls if role_obj else 40,
-            max_heavy_tool_calls=role_obj.max_heavy_tool_calls if role_obj else 8,
+            max_tool_calls=role_obj.max_tool_calls if role_obj else max(40, max_rounds * 6),
+            max_heavy_tool_calls=role_obj.max_heavy_tool_calls if role_obj else max(8, max_rounds * 2),
             max_wall_time_s=role_obj.max_wall_time_s if role_obj else 300.0,
         )
         _dispatch_service = getattr(sub_engine, "dispatch_service", None)
@@ -276,9 +281,13 @@ class SubagentDispatcher:
                 )
                 cancel_task = asyncio.create_task(sub_token.wait())
                 try:
+                    # review R1 MAJOR：墙钟预算真实执行 —— asyncio.wait 带
+                    # 剩余预算超时（此前只有注释宣称 asyncio.timeout，纯 LLM
+                    # 子代理完全不受墙钟约束，timeout 处理分支是死代码）。
                     done, pending = await asyncio.wait(
                         {chat_task, cancel_task},
                         return_when=asyncio.FIRST_COMPLETED,
+                        timeout=max(0.1, budget.max_wall_time_s),
                     )
                 except BaseException:
                     # review M-C1：派发器自身被硬取消（客户端断开/turn 拆除）
@@ -287,6 +296,23 @@ class SubagentDispatcher:
                     for t in (chat_task, cancel_task):
                         t.cancel()
                     raise
+                if not done:
+                    # 墙钟预算耗尽（wait 超时返回空集）
+                    chat_task.cancel()
+                    cancel_task.cancel()
+                    with contextlib.suppress(BaseException):
+                        await chat_task
+                    budget_used = budget.usage()
+                    logger.warning(
+                        "[Subagent] parent=%s wall-time budget exceeded: %s",
+                        self.parent_session_id, budget_used,
+                    )
+                    return SubagentResult(
+                        success=False,
+                        summary=f"子代理超过墙钟预算（{budget.max_wall_time_s:.0f}s）被终止",
+                        refs=[],
+                        error="budget_exceeded:wall_time",
+                    )
             for t in pending:
                 t.cancel()
             # review m2：被取消的 chat_task 若已带异常完成，必须取回异常

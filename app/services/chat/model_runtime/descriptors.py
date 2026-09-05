@@ -112,6 +112,9 @@ class ModelDescriptorRegistry:
                     provider_id="webgis",
                     model_id=settings.LLM_MODEL,
                     max_output=settings.LLM_MAX_TOKENS,
+                    # review R1 minor：与 context_budget 共用一个旋钮 ——
+                    # 运维声明的窗口必须同时驱动路由 context 护栏。
+                    context_window=getattr(settings, "LLM_CONTEXT_WINDOW", None) or None,
                     source="defaults",
                 ),
             ]

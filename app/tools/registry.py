@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from contextlib import contextmanager
-from typing import Any, Callable, Literal, Optional, Type, List, Union, get_args, get_origin, Annotated
+from typing import Any, Callable, Literal, Optional, Type, List, Tuple, Union, get_args, get_origin, Annotated
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, create_model, ValidationError
 
 from enum import Enum
@@ -90,11 +90,14 @@ _TOOL_THREAD_LIMIT = max(4, min(16, (os.cpu_count() or 4) + 4))
 # 捕获）。既有测试 monkeypatch `_tool_thread_semaphore` 注入自定义限额的 seam
 # 保持兼容（见 _get_tool_thread_semaphore）。
 _tool_thread_semaphore: Optional[asyncio.Semaphore] = None
-_tool_thread_semaphore_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 def _get_tool_thread_semaphore() -> asyncio.Semaphore:
-    global _tool_thread_semaphore, _tool_thread_semaphore_loop
+    """review R1 INFO：去掉写后不读的 _tool_thread_semaphore_loop 全局 ——
+    绑定判定直接内省 asyncio.Semaphore 的私有 ``_loop``（无该属性的信号量
+    —— 含测试 monkeypatch 注入的新建信号量 —— 视为未绑定，原样复用）。
+    已知权衡：循环轮转后各自循环持独立信号量，全局上限短暂按循环计。"""
+    global _tool_thread_semaphore
     loop = asyncio.get_running_loop()
     sem = _tool_thread_semaphore
     if sem is not None:
@@ -102,7 +105,6 @@ def _get_tool_thread_semaphore() -> asyncio.Semaphore:
         if bound is None or bound is loop:
             return sem
     _tool_thread_semaphore = asyncio.Semaphore(_TOOL_THREAD_LIMIT)
-    _tool_thread_semaphore_loop = loop
     return _tool_thread_semaphore
 
 # 单次工具执行的墙钟预算（秒）。默认 300s，TOOL_TIMEOUT_S 环境变量可覆盖；
@@ -280,39 +282,46 @@ def validate_geojson_structure(obj: Any) -> None:
                 validate_geojson_structure(val)
 
 
-_NONFINITE_SCAN_MAX_NODES = 4096
+# review R1 MAJOR：扫描预算必须**覆盖全部非 oversized 实参树**（oversized 门
+# 本身 ≤ _ESTIMATE_MAX_NODES 节点）—— 此前 4096 节点静默截断会让预算耗尽后的
+# NaN 漏检；且去掉 [:64] 广度截断（截断 = 漏检 = 安全面失效）。
+_NONFINITE_SCAN_MAX_NODES = _ESTIMATE_MAX_NODES * 2
 _NONFINITE_POS = float("inf")
 _NONFINITE_NEG = float("-inf")
 
 
-def _find_nonfinite_numbers(obj: Any, _budget: Optional[list] = None) -> list:
-    """预算化扫描实参树中的 NaN / ±Infinity（返回至多 5 个字段路径）。
+def _find_nonfinite_numbers(obj: Any, max_nodes: int = _NONFINITE_SCAN_MAX_NODES) -> Tuple[list, bool]:
+    """扫描实参树中的 NaN / ±Infinity。返回 (命中路径至多 5 个, 是否扫描不完整)。
 
-    PERF（review R1）：路径字符串仅在命中时构造；dict/list 迭代 islice 截断，
-    不物化全量 items 列表。
+    review R1 MAJOR：**不允许静默截断** —— 预算耗尽时 incomplete=True，调用方
+    拒绝（漏检 = 安全面失效）。默认预算 2× oversized 节点门，覆盖全部非
+    oversized 实参树；无广度截断（截断同样漏检）。
     """
-    if _budget is None:
-        _budget = [_NONFINITE_SCAN_MAX_NODES]
+    budget = [max_nodes]
+    incomplete = [False]
     found: list = []
     import itertools as _itertools
 
     def _walk(node, path):
-        if _budget[0] <= 0 or len(found) >= 5:
+        if len(found) >= 5 or incomplete[0]:
             return
-        _budget[0] -= 1
+        if budget[0] <= 0:
+            incomplete[0] = True
+            return
+        budget[0] -= 1
         if isinstance(node, float):
             if node != node or node == _NONFINITE_POS or node == _NONFINITE_NEG:
                 found.append(path or "$")
             return
         if isinstance(node, dict):
-            for k, v in _itertools.islice(node.items(), 64):
+            for k, v in _itertools.islice(node.items(), None):
                 _walk(v, f"{path}.{k}" if path else str(k))
         elif isinstance(node, list):
-            for i, v in _itertools.islice(enumerate(node), 64):
+            for i, v in _itertools.islice(enumerate(node), None):
                 _walk(v, f"{path}[{i}]")
 
     _walk(obj, "")
-    return found
+    return found, incomplete[0]
 
 
 class ToolRegistry:
@@ -575,8 +584,11 @@ class ToolRegistry:
                     logger.warning("[policy-audit] %s: %s (%s)", _f.tool, _f.detail, _f.code)
                 else:
                     logger.info("[policy-audit] %s: %s (%s)", _f.tool, _f.detail, _f.code)
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as _audit_exc:  # noqa: BLE001
+            # review R1 minor：审计器自身缺陷不得静默吞掉（审计是 warning 级
+            # 不阻断注册，但审计器坏了必须留痕）。
+            logger.warning("[policy-audit] audit_registration failed for %s: %s",
+                           name, _audit_exc)
         # 描述符 / 指纹缓存失效（同 schema_size 失效语义）
         self._descriptor_cache.pop(name, None)
         self._schema_fp_cache.pop(name, None)
@@ -1277,8 +1289,20 @@ class ToolRegistry:
         # json.dumps(strict)/前端/DB 全会炸，且错误在远离注入点的位置爆发。
         # 预算化扫描（与 GeoJSON 校验同门：oversized 载荷跳过深扫，交给
         # 工具自检 —— 大载荷本就走旁路）。
-        if isinstance(arguments, dict) and not _args_oversized_now:
-            _nonfinite = _find_nonfinite_numbers(arguments)
+        if isinstance(arguments, dict):
+            if _args_oversized_now:
+                # oversized 载荷走旁路是既有性能契约 —— 但安全门不因此完全
+                # 失明：仍对 depth-1 标量做廉价扫描（顶级实参最可能是 LLM 注入
+                # 的数值形态）；深层 GeoJSON 数字交给 GeoJSON 规范与工具自检。
+                _nonfinite, _nf_incomplete = _find_nonfinite_numbers(
+                    {k: v for k, v in arguments.items()
+                     if isinstance(v, (int, float))},
+                    max_nodes=4096,
+                )
+            else:
+                _nonfinite, _nf_incomplete = _find_nonfinite_numbers(arguments)
+            if _nf_incomplete:
+                _nonfinite = _nonfinite[:5] + ["<scan incomplete>"]
             if _nonfinite:
                 return std_error_response(
                     f"参数含非法数值 NaN/Infinity: {', '.join(_nonfinite[:5])}",

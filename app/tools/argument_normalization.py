@@ -473,3 +473,12 @@ def validate_normalization_tables() -> List[str]:
         if errors:
             break
     return errors
+
+# review R1 INFO：声明表静态不变式在导入期强制执行（此前只有测试调用 ——
+# 违规规则直到 CI 才暴露）。表是静态的且已通过全部规则自检，导入期失败
+# 只可能来自未来提交的坏规则 —— 这正是期望的失败方式。
+_table_errors = validate_normalization_tables()
+if _table_errors:
+    raise ImportError(
+        "argument_normalization 声明表自检失败: " + "; ".join(_table_errors)
+    )

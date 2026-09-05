@@ -186,8 +186,15 @@ def inspect_tool_result(result: Any) -> ToolResultView:
             warnings=warnings,
         )
     except Exception as exc:  # noqa: BLE001 — 视图永不影响执行
+        # review R1 minor：fail-CLOSED —— 视图构建失败不能伪装成「成功未知
+        # 类型」（no-progress / replay 会把失败当进展）。诚实返回失败视图。
         logger.debug("inspect_tool_result failed: %s", exc)
-        return ToolResultView(ok=True, semantic_type=OutputSemanticType.UNKNOWN)
+        return ToolResultView(
+            ok=False,
+            semantic_type=OutputSemanticType.UNKNOWN,
+            error_code="INSPECTION_FAILED",
+            message=str(exc)[:200],
+        )
 
 
 def bounded_summary(result: Any, max_chars: int = 400) -> str:

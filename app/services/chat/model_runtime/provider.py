@@ -69,9 +69,14 @@ def classify_exception(exc: BaseException) -> FailureKind:
     """异常 → FailureKind（与 llm_client 的重试门同源词汇）。"""
     name = type(exc).__name__.lower()
     msg = str(exc).lower()
+    if "connecttimeout" in name or "connecttimeout" in msg:
+        # review R1 minor：ConnectTimeout 是连接相位失败（可重试类），
+        # 显式归类 TRANSPORT 而非落入 TIMEOUT。
+        return FailureKind.TRANSPORT
     if "timeout" in name or "timed out" in msg:
         return FailureKind.TIMEOUT
-    if "connect" in name or "connect" in msg and "error" in name:
+    # review R1 minor：修正 or/and 优先级（原式 = a or (b and c)）。
+    if "connect" in name or ("connect" in msg and "error" in name):
         return FailureKind.TRANSPORT
     if "pool" in msg:
         return FailureKind.TRANSPORT
@@ -150,7 +155,10 @@ def view_response(result: Any) -> ProviderResponseView:
 # ---------------------------------------------------------------------------
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
-_FENCE_BREAK = re.compile(r"</?(?:system|tool|env|untrusted)[^>]*>", re.IGNORECASE)
+_FENCE_BREAK = re.compile(
+    r"</?(?:system|tool|env|untrusted|user|assistant|instructions|role|context)[^>]*>",
+    re.IGNORECASE,
+)
 
 
 def sanitize_provider_error(text: str, max_chars: int = 600) -> str:

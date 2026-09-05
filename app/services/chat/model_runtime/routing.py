@@ -123,7 +123,8 @@ class ModelRouter:
             return None
 
         selected: Optional[str] = None
-        fallback_chain: List[str] = []
+        healthy_chain: List[str] = []
+        degraded_chain: List[str] = []
         for idx, model in enumerate(candidates):
             skip = _capable_skip(model)
             if skip:
@@ -133,21 +134,24 @@ class ModelRouter:
                 if not self._health.available(self._provider_id, model):
                     reasons.append(f"health_skip:{model}:cooldown")
                     continue
+                # review R1 MAJOR：劣后语义真实实现 —— 限流/能力不匹配候选进
+                # degraded 链，排在健康候选**之后**（此前同位追加，等于没排）。
                 if self._health.has_capability_mismatch(self._provider_id, model):
                     reasons.append(f"health_deprioritize:{model}:mismatch")
-                    fallback_chain.append(model)
+                    degraded_chain.append(model)
                     continue
                 if self._health.rate_limited_recently(self._provider_id, model):
                     reasons.append(f"health_deprioritize:{model}:rate_limit")
-                    fallback_chain.append(model)
+                    degraded_chain.append(model)
                     continue
-                fallback_chain.append(model)
+                healthy_chain.append(model)
             else:
                 # 主模型即使冷却也保留为选中（它就是 operator 决定的事实；
                 # 冷却信息以 reason code 披露，由调用方决定是否快速失败）
                 if not self._health.available(self._provider_id, model):
                     reasons.append(f"primary_cooldown:{int(self._health.cooldown_remaining(self._provider_id, model))}s")
                 selected = model
+        fallback_chain = healthy_chain + degraded_chain
         if selected is None:
             # 主模型被能力护栏跳过（如 prefer_model 非工具模型 + 要求工具）
             # → 沿链取第一个健康候选；整链不可用 → 回落主模型并如实留痕。

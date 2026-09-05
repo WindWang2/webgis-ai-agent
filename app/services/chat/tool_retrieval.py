@@ -165,7 +165,9 @@ class ToolRetrievalIndex:
         """
         self.build_if_stale(registry)
         assert self._lexicons is not None
-        terms = tokenize(query)
+        # review R1 INFO：查询长度钳制 —— 多 MB 用户消息不该在事件循环上
+        # 做 O(terms × tools) 检索。
+        terms = tokenize((query or "")[:2048])
         if not terms:
             return []
         boosts = boosts or {}

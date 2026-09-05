@@ -74,11 +74,15 @@ class MockThematicModel(BaseModel):
 # 行为对齐（与旧实现的既有测试逐字一致）
 # ---------------------------------------------------------------------------
 
-def test_parity_with_legacy_wrapper():
+def test_normalization_locked_behavior():
+    """review R1 minor：registry 的旧包装现已委托本模块 —— 与其比较是循环
+    的。真实 parity 由 migrated 规则表 + 下方字面量断言 + 既有
+    tests/test_tool_argument_aliases.py（基线时代写就，锚定旧实现行为）
+    共同锁定。"""
     raw = {"geojson_ref": "ref:abc", "radius-px": 25, "render-type": "native"}
     new_args, repairs = normalize_tool_arguments("heatmap_data", raw, MockHeatmapModel)
-    legacy_args = _normalize_tool_arguments("heatmap_data", dict(raw), MockHeatmapModel)
-    assert new_args == legacy_args
+    # 字面量锚定（不依赖任何包装器）
+    assert new_args == {"geojson": "ref:abc", "radius_px": 25, "render_type": "native"}
     kinds = {r.kind for r in repairs}
     assert "field_alias" in kinds and "key_style" in kinds
 

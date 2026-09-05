@@ -130,7 +130,8 @@ class ProjectionCache:
 
     §24 复用语义：真相未变（指纹不变）→ 投影直接复用；真相变了 → 仅相关
     键失效（指纹变化即 miss）。无 TTL 也安全（指纹是内容指纹），但提供 TTL
-    兜底防御调用方传伪指纹（如常量）。线程安全、有界（LRU 逐出）。
+    兜底防御调用方传伪指纹（如常量）。线程安全；逐出策略 = 过期优先 →
+    字典序首个（review R1 minor：非 LRU，按文档如实标注）。
     """
 
     def __init__(self, max_entries: int = 256, default_ttl_s: float = 300.0) -> None:
@@ -163,13 +164,16 @@ class ProjectionCache:
                 return entry.value, True
             self.misses += 1
         value = builder()
+        # review R1 minor：TTL 以 builder 完成时刻起算（此前用构建前的 now，
+        # 构建耗时被无谓吃掉）。
+        built_at = time.monotonic()
         with self._lock:
             if len(self._store) >= self._max:
-                # 简单确定性逐出：过期优先，其次字典序首个（进程内缓存无需花哨 LRU）
-                expired = [k for k, v in self._store.items() if v.expires_at <= now]
+                # 确定性逐出：过期优先，其次字典序首个（进程内缓存无需花哨 LRU）
+                expired = [k for k, v in self._store.items() if v.expires_at <= built_at]
                 evict = expired[0] if expired else sorted(self._store.keys())[0]
                 self._store.pop(evict, None)
-            self._store[cache_key] = _CacheEntry(value, now + self._ttl)
+            self._store[cache_key] = _CacheEntry(value, built_at + self._ttl)
             self._fps[(namespace, key)] = fingerprint
         return value, False
 

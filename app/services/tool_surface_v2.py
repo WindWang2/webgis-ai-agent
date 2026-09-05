@@ -149,6 +149,12 @@ class ToolSurfaceProjector:
             if desc is not None and desc.status is ToolStatus.EXTERNAL_UNAVAILABLE:
                 dropped[name] = "lifecycle:external_unavailable"
                 continue
+            # review R1 MAJOR：tier 闸对**基线来源**同样生效（此前只在检索
+            # 分支）—— no-catalog 退化路径（get_schemas() 全量）曾把 tier-3
+            # schema 直接漏进投影面。
+            if desc is not None and int(desc.tier) >= 3:
+                dropped[name] = "tier3"
+                continue
             kept.append(s)
             r: List[str] = []
             if desc is None:
@@ -180,7 +186,18 @@ class ToolSurfaceProjector:
                     top_k=req.retrieval_k + len(kept),
                 )
                 existing = {s["function"]["name"] for s in kept}
+                # review R1 MAJOR：检索补强默认继承 ToolCatalog 的 tier-2 字节
+                # 预算（此前 None = 无预算，最多 6 个大 schema 每轮无界膨胀）。
                 budget = req.byte_budget
+                if budget is None:
+                    try:
+                        from app.services.tool_catalog import (
+                            _TIER2_SCHEMA_BUDGET_BYTES as _CATALOG_BUDGET,
+                        )
+
+                        budget = _CATALOG_BUDGET
+                    except Exception:  # noqa: BLE001
+                        budget = 24 * 1024
                 for hit in hits:
                     if len(retrieval_added) >= req.retrieval_k:
                         break
@@ -192,6 +209,9 @@ class ToolSurfaceProjector:
                     try:
                         _desc = self.registry.descriptor(hit.name)
                         if int(_desc.tier) >= 3:
+                            continue
+                        # review R1 minor：不可用工具不得被检索复活
+                        if _desc.status is ToolStatus.EXTERNAL_UNAVAILABLE:
                             continue
                     except KeyError:
                         pass

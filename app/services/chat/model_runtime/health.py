@@ -85,6 +85,9 @@ class LLMProviderHealth:
             st = self._state(provider_id, model_id)
             st.consecutive_failures = 0
             st.cooldown_until = 0.0
+            # review R1：能力不匹配可被「后来一次成功调用」证伪（例如换了更小的
+            # 请求后成功）—— 不清位会永久劣化该候选。
+            st.capability_mismatch = False
             st.last_success_ts = time.monotonic()
             st.last_latency_bucket = latency_bucket(latency_s)
             st.total_success += 1

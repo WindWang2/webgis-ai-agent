@@ -337,7 +337,16 @@ class ToolDispatchService:
         tc: OpenAI 风格的 tool_call（{"id", "function": {"name", "arguments"}}）。
         executed_tools: 同一任务内已执行过的 (tool_name, normalized_args) 集合，
                         会被本调用按需更新（重复拦截语义）。
+
+        review R1 minor：dedup 命中在进入 registry 之前返回 —— 不复位归一化
+        报告的话，pipeline 会把上一个工具的修复证据错记到本次（去重）调用。
         """
+        try:
+            from app.tools.argument_normalization import normalization_report_var
+
+            normalization_report_var.set(())
+        except Exception:  # noqa: BLE001
+            pass
         raw_tool_name = tc["function"]["name"]
         tool_name = normalize_tool_name(raw_tool_name)
         tool_args_raw = tc["function"]["arguments"]

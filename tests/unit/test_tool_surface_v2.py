@@ -139,13 +139,15 @@ def test_projection_reasons_annotate_base_selection(reg, catalog):
     assert any(x.startswith("domain:") for x in r.reasons["voronoi_polygons"])
 
 
-def test_projection_without_catalog_uses_full_registry(reg):
+def test_projection_without_catalog_filters_tier3(reg):
+    """review R1 MAJOR 回归锁：no-catalog 退化路径同样过 tier 闸 ——
+    此前 get_schemas() 全量基线把 tier-3 schema 直接漏进投影面。"""
     proj = ToolSurfaceProjector(reg, catalog=None)
     r = proj.project(SurfaceRequest(user_message="", retrieval=False))
     names = {s["function"]["name"] for s in r.schemas}
     assert "query_local_poi" in names
-    # tier-3 也在（无 catalog 时基线是全注册表 —— 投影不改变 tier 语义）
-    assert "spawn_subagent" in names
+    assert "spawn_subagent" not in names
+    assert r.dropped.get("spawn_subagent") == "tier3"
 
 
 # ---------------------------------------------------------------------------
@@ -237,10 +239,12 @@ def test_compress_reduces_bytes_keeps_contract():
 
 
 def test_compress_truncates_long_enum_with_count_hint():
+    """review R1 MAJOR 回归锁：截断提示进 description，绝不伪造 enum 成员。"""
     c = compress_schema(_sample_schema(), level="compact")
-    enum = c["function"]["parameters"]["properties"]["method"]["enum"]
-    assert len(enum) <= 13
-    assert any(str(x).startswith("…(") for x in enum)
+    method = c["function"]["parameters"]["properties"]["method"]
+    assert len(method["enum"]) <= 12
+    assert not any(str(x).startswith("…(") for x in method["enum"])
+    assert "more valid values" in method.get("description", "")
 
 
 def test_compress_prefers_summary():
@@ -248,9 +252,15 @@ def test_compress_prefers_summary():
     assert c["function"]["description"] == "专题图制作"
 
 
-def test_compress_none_returns_original():
+def test_compress_none_returns_detached_copy():
+    """review R1 minor 回归锁：none 档也返回深拷贝（注册 schema 是活引用，
+    投影消费方就地修改不得污染注册表）。"""
     s = _sample_schema()
-    assert compress_schema(s, level="none") is s
+    out = compress_schema(s, level="none")
+    assert out == s
+    assert out is not s
+    out["function"]["parameters"]["required"].clear()
+    assert s["function"]["parameters"]["required"] == ["geojson"]
 
 
 def test_compression_report_measures():

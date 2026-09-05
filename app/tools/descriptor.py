@@ -178,7 +178,9 @@ class ToolDescriptor:
 
     @property
     def requires_confirmation(self) -> bool:
-        return self.destructive_level >= 3
+        # review R1 minor：显式声明 destructive 副作用类的低 tier 工具同样
+        # 要求确认语义（tier-3 闸仍只认 tier —— 此处是描述符层的诚实性）。
+        return self.destructive_level >= 3 or self.side_effect is SideEffectClass.DESTRUCTIVE
 
     @property
     def executable(self) -> bool:

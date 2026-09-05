@@ -32,8 +32,13 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 
-class BudgetExceeded(RuntimeError):
-    """子代理预算耗尽（工具调用/重工具/墙钟）。父循环可据此决策。"""
+class BudgetExceeded(BaseException):
+    """子代理预算耗尽（工具调用/重工具/墙钟）。父循环可据此决策。
+
+    继承 BaseException（review R1 CRITICAL）：镜像 OperationCancelled 的既有
+    模式 —— 引擎/管道各层宽泛的 ``except Exception`` 兜底不得吞掉预算信号，
+    否则显式预算失败退化为 no-progress 兜底。
+    """
 
 
 @dataclass(frozen=True)

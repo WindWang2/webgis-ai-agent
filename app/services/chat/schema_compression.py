@@ -26,7 +26,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -48,13 +48,12 @@ def _truncate_text(text: str, max_chars: int) -> str:
     return cut.rstrip() + "…"
 
 
-def _shrink_enum(values: List[Any], max_items: int = _ENUM_MAX_ITEMS) -> List[Any]:
+def _shrink_enum(values: List[Any], max_items: int = _ENUM_MAX_ITEMS) -> Tuple[List[Any], int]:
+    """展示截断 + 截断计数（提示进 description，绝不伪造 enum 成员 —— review R1
+    MAJOR：模型按 schema 合法输出伪成员必然 VALIDATION_ERROR）。"""
     if len(values) <= max_items:
-        return values
-    kept = values[:max_items]
-    out = list(kept)
-    out.append(f"…({len(values) - max_items} more)")
-    return out
+        return values, 0
+    return list(values[:max_items]), len(values) - max_items
 
 
 def compress_schema(
@@ -64,7 +63,9 @@ def compress_schema(
 ) -> Dict[str, Any]:
     """返回压缩后的 schema（深拷贝，不修改注册原版）。"""
     if level == "none":
-        return schema
+        # review R1 minor：注册 schema 是活引用 —— 按本函数契约返回深拷贝，
+        # 防止投影消费方就地修改污染注册表。
+        return copy.deepcopy(schema)
     out = copy.deepcopy(schema)
     fn = out.get("function")
     if not isinstance(fn, dict):
@@ -90,23 +91,34 @@ def compress_schema(
                     d = pval.get("description")
                     if isinstance(d, str):
                         pval["description"] = _truncate_text(d, _PARAM_DESC_MAX_CHARS)
-                    if level == "minimal":
-                        continue
+                # review R1 minor：minimal 继承 compact 的 enum 截断与噪音剥离
+                # （此前 minimal 提前 continue，两者被跳过，违背自身契约）。
                 enum = pval.get("enum")
                 if isinstance(enum, list) and len(enum) > _ENUM_MAX_ITEMS:
-                    pval["enum"] = _shrink_enum(enum)
+                    shrunk, omitted = _shrink_enum(enum)
+                    pval["enum"] = shrunk
+                    if omitted:
+                        note = f"(enum truncated; {omitted} more valid values exist server-side)"
+                        existing = pval.get("description")
+                        pval["description"] = (
+                            f"{existing} {note}" if isinstance(existing, str) else note
+                        )
                 # pydantic 序列化噪音
-                for noise in ("additionalProperties", "$defs", "format"):
+                for noise in ("additionalProperties", "format"):
                     pval.pop(noise, None)
+                # review R1 minor：$defs 仅在无残留 $ref 时可剥，否则跳过该级
+                if "$defs" in pval and "$ref" not in pval:
+                    pval.pop("$defs", None)
                 if "allOf" in pval and len(pval) == 1 and isinstance(pval["allOf"], list):
                     # pydantic v2 $ref-free 单元素 allOf 常见于 Any/约束透传
                     inner = pval["allOf"][0] if pval["allOf"] else None
                     if isinstance(inner, dict):
                         pval.clear()
                         pval.update(inner)
-        # 顶层噪音
+        # 顶层噪音（$defs 同门：有 $ref 残留则保留）
         params.pop("additionalProperties", None)
-        params.pop("$defs", None)
+        if "$defs" in params and "$ref" not in json.dumps(params, default=str):
+            params.pop("$defs", None)
     # minimal 级别剥顶层 title 类噪音
     fn.pop("title", None)
     return out

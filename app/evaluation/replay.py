@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from app.lib.runtime.result_contract import inspect_tool_result
 from app.lib.runtime.trace import (
     EVENT_DISPATCH_COMPLETED,
+    EVENT_DISPATCH_STARTED,
     EVENT_FALLBACK,
     EVENT_MODEL_SELECTED,
     EVENT_NO_PROGRESS,
@@ -87,16 +88,17 @@ async def replay_tools(
                 tool=entry.tool, action="error", detail="unknown tool",
             ))
             continue
-        if desc.replay_safe is False or desc.side_effect in (
-            SideEffectClass.DESTRUCTIVE, SideEffectClass.EXTERNAL_SIDE_EFFECT,
-        ):
+        # review R1 MAJOR：allow-list 语义 —— 只有**显式声明**为可安全重放
+        # （replay_safe is True）的工具才自动再执行；UNCLASSIFIED（全库存量
+        # 默认）意味着「未知」，未知不重放。tier-3 强制 destructive → 天然
+        # 被拒；confirm_tier3 参数永不授予（红线：重放绝不自动执行破坏性
+        # /外部副作用操作）。
+        if desc.replay_safe is not True:
             outcomes.append(ToolReplayOutcome(
                 tool=entry.tool, action="skipped_unsafe",
-                detail=f"side_effect={desc.side_effect.value}",
+                detail=f"side_effect={desc.side_effect.value} (replay_safe={desc.replay_safe})",
             ))
             continue
-        if desc.status not in ():
-            pass  # 状态由 dispatch 自身把关（planned 拒绝）
         result = await registry.dispatch(entry.tool, dict(entry.arguments), session_id)
         view = inspect_tool_result(result)
         outcome = ToolReplayOutcome(tool=entry.tool, action="replayed")
@@ -242,7 +244,7 @@ def check_trace_invariants(trace: TurnTrace) -> List[str]:
     for event in trace.events:
         if event.kind == EVENT_MODEL_SELECTED:
             saw_model_selected = True
-        elif event.kind == "dispatch_started":
+        elif event.kind == EVENT_DISPATCH_STARTED:
             open_dispatches.add(event.tool_call_id)
         elif event.kind == EVENT_DISPATCH_COMPLETED:
             if event.tool_call_id and event.tool_call_id not in open_dispatches:

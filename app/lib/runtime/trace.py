@@ -53,7 +53,10 @@ KNOWN_EVENT_KINDS = frozenset({
     EVENT_SUBAGENT_COMPLETED, EVENT_TURN_SETTLED,
 })
 
-_SENSITIVE_KEY_HINTS = ("key", "token", "secret", "password", "authorization", "api")
+_SENSITIVE_KEY_HINTS = (
+    "key", "token", "secret", "password", "authorization", "api",
+    "auth", "credential", "passwd", "pwd", "cookie", "private",
+)
 _META_VALUE_MAX_CHARS = 512
 _MAX_META_ENTRIES = 16
 
@@ -66,8 +69,14 @@ def bound_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
         if any(h in k.lower() for h in _SENSITIVE_KEY_HINTS):
             out[k] = "[REDACTED]"
             continue
-        if v is None or isinstance(v, (bool, int, float)):
+        if v is None or isinstance(v, bool):
             out[k] = v
+        elif isinstance(v, int):
+            # review R1 INFO：巨整数在 strict JSON 序列化时会炸（int→str 限
+            # 制）—— 钳制表示。
+            out[k] = v if -10**15 < v < 10**15 else str(v)[:32]
+        elif isinstance(v, float):
+            out[k] = v if v == v and abs(v) != float("inf") else None
         elif isinstance(v, str):
             out[k] = v if len(v) <= _META_VALUE_MAX_CHARS else (
                 v[:_META_VALUE_MAX_CHARS] + f"…({len(v)} chars)"
@@ -176,6 +185,16 @@ class TraceRegistry:
         """发一个事件（turn 不存在则自动建；未知 kind 忽略 —— 封闭词表）。"""
         if kind not in KNOWN_EVENT_KINDS:
             return
+        event = TraceEvent(
+            kind=kind,
+            ts=time.time(),
+            turn_id=turn_id,
+            session_id=session_id,
+            tool_call_id=tool_call_id,
+            meta=bound_meta(meta),
+        )
+        # review R1 minor：append（含环截断与 dropped 记账）在锁内完成，
+        # 否则并发 emit 会丢失 dropped_count / 交错截断。
         with self._lock:
             trace = self._traces.get(turn_id)
             if trace is None:
@@ -183,14 +202,7 @@ class TraceRegistry:
                 self._traces[turn_id] = trace
                 while len(self._traces) > self._max_turns:
                     self._traces.popitem(last=False)
-        trace.append(TraceEvent(
-            kind=kind,
-            ts=time.time(),
-            turn_id=turn_id,
-            session_id=session_id,
-            tool_call_id=tool_call_id,
-            meta=bound_meta(meta),
-        ))
+            trace.append(event)
 
     def pop(self, turn_id: str) -> Optional[TurnTrace]:
         with self._lock:
