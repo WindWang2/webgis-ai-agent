@@ -25,7 +25,7 @@ import { RunInspector } from './workflow/run-inspector';
 import { CartoMemoryPanel } from './carto-memory-panel';
 import { MapProductVersionsPanel } from './map-product-versions';
 
-export function ProjectTab() {
+export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
   const uid = useId();
   const [newProjName, setNewProjName] = useState('');
   const [showCreate, setShowCreate] = useState(false);
@@ -195,6 +195,7 @@ export function ProjectTab() {
                     只读真相 + 复用 rerun_from_step；仅样式变更不触发分析重算。 */}
                 <MapProductVersionsPanel
                   projectId={ws.selectedProjectId}
+                  sessionId={sessionId}
                   onRerunStarted={(runId) => {
                     addToast(runId ? `已从分析步骤重跑（${shortId(runId, 8)}）` : '已触发重跑', 'success');
                   }}

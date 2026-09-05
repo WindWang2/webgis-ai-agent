@@ -200,6 +200,10 @@ class MapProductVersionCreate(BaseModel):
     recipe_id: Optional[str] = None
     artifact_ids: List[str] = Field(default_factory=list)
     input_dataset_fingerprints: Dict[str, str] = Field(default_factory=dict)
+    # ADR-0099: 显式记录时可选携带会话 —— 服务端从该会话抓取 MapSpec
+    # 快照（restore/open 的授权依据）与操作者标记。
+    session_id: Optional[str] = None
+    label: Optional[str] = Field(default=None, max_length=200)
 
 
 def _none_to_dict(v: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -231,6 +235,11 @@ class MapProductVersionResponse(BaseModel):
     artifact_ids: List[str] = Field(default_factory=list)
     diff_summary: Dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
+    # ADR-0099 lifecycle 字段（旧行 NULL → 诚实缺省）。
+    label: Optional[str] = None
+    lineage_kind: Optional[str] = None
+    parent_version_no: Optional[int] = None
+    snapshot_available: bool = False
 
     # Nullable backing columns must never 500 the response on a NULL row.
     @field_validator(
@@ -256,6 +265,11 @@ class MapProductVersionSummary(BaseModel):
     mapspec_fingerprint: Optional[str] = None
     recipe_id: Optional[str] = None
     created_at: datetime
+    # ADR-0099：谱系与快照在场性（列表页直接展示 fork/restore 标记）。
+    label: Optional[str] = None
+    lineage_kind: Optional[str] = None
+    parent_version_no: Optional[int] = None
+    snapshot_available: bool = False
 
 
 class PromoteArtifactsReportItem(BaseModel):

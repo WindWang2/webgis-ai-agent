@@ -391,6 +391,21 @@ _SEED_CAPS: List[CapabilityDescriptor] = [
         output_artifact_types=["raster_surface"],
         purpose_template="栅格重采样",
     ),
+    # ── Semantic V2（ADR-0098）：多准则决策评价能力 ────────────────────
+    # 候选方案 × 准则 × 约束 → WSM/TOPSIS 评分 + Pareto/敏感性/不确定性。
+    # 与空间叠加能力（proximity_buffer/spatial_join）互补：叠加产生候选与
+    # 准则图层，MCDA 在候选集合上做透明加权的评价与排序。实现落在
+    # DecisionEngineV3（spatial_decision_v3 工具）—— 观测证据、用户权重、
+    # 假设在结果里必须可区分（不合成证据）。
+    CapabilityDescriptor(
+        id="mcda_evaluation", name="多准则决策评价", category="analysis",
+        description="候选方案×准则×约束的 MCDA 评价（WSM/TOPSIS + Pareto + 敏感性）。",
+        input_artifact_types=["poi_feature_set", "point_feature_set",
+                              "polygon_feature_set", "admin_aggregate_table"],
+        output_artifact_types=["stats_table"],
+        deterministic=True,
+        purpose_template="多准则决策评价（MCDA）",
+    ),
 ]
 
 

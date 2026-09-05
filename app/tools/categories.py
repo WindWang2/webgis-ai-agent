@@ -51,6 +51,7 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.remote_sensing": "data_access",          # fetch_*；指数分析覆盖
     "app.tools.report": "export",
     "app.tools.skills": "debug_internal",
+    "app.tools.skill_surface_refresh": "debug_internal",  # ADR-0100 技能面刷新
     "app.tools.spatial": "analysis",                    # heatmap/query 覆盖
     "app.tools.spatial_decision_tools": "analysis",
     "app.tools.spatial_reasoning": "analysis",

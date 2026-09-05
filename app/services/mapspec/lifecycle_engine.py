@@ -241,6 +241,20 @@ class RollbackIntent:
 
 
 @dataclass
+class RestoreStyleIntent:
+    """Map Product 版本的样式态恢复（ADR-0099 style-only restore）。
+
+    从版本携带的 mapspec_snapshot 恢复**表达面**：view / layout+components /
+    basemap / time / 逐层 paint+visible+opacity（按 layer_id 匹配当前 spec，
+    快照里有而当前不存在的层跳过 —— 数据层不由本意图增删）。数据与计算
+    计划不动 —— style-only 恢复绝不触发分析重算（五维 diff 的机器读契约）。
+    走 apply_mutation 的锁 + CAS + 校验 + 失败回滚全事务，不是裸写。
+    """
+
+    snapshot: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class PatchLayerStyleIntent:
     """#1077：spec 承载层的持久样式突变（paint 顶层键合并）。
 
@@ -498,6 +512,7 @@ MutationIntent = Union[
     SetLayoutIntent,
     CheckpointIntent,
     RollbackIntent,
+    RestoreStyleIntent,
     SetBasemapIntent,
     SetTimeIntent,
     PatchLayerStyleIntent,
@@ -630,6 +645,7 @@ class MapSpecLifecycleEngine:
                     ReorderLayersIntent,
                     InitProjectIntent,
                     RollbackIntent,
+                    RestoreStyleIntent,
                 )
             )
             old_layers_snapshot = (
@@ -735,6 +751,8 @@ class MapSpecLifecycleEngine:
                 pending_layer_op: Optional[Tuple[str, str, Optional[Dict[str, Any]]]] = None
                 # rollback 意图需要恢复 refs，单独走快路径（不经 candidate 校验拒绝）
                 is_rollback = False
+                # ADR-0099 RestoreStyleIntent 的诚实子集披露（其它意图为 None）
+                restore_notes: Optional[Dict[str, Any]] = None
 
                 if isinstance(intent, InitProjectIntent):
                     # Full spec build, no snapshot needed (nothing to roll back)
@@ -1299,6 +1317,75 @@ class MapSpecLifecycleEngine:
                     # 恢复后的 mapspec.layers（用特殊 op 标记）。
                     is_rollback = True
 
+                elif isinstance(intent, RestoreStyleIntent):
+                    # ADR-0099 style-only restore：表达面（view/layout/
+                    # basemap/time/逐层 paint+presentation）来自版本快照，
+                    # 数据层与计算计划不动。快照里存在而当前 spec 缺席的
+                    # layer_id 如实跳过（记入 result notes —— 恢复是诚实
+                    # 的子集，不是虚构整图）。
+                    # review M-A1：层可见性的权威字段是 layout.visibility
+                    # （+ cartographic_intent 印记）—— 快照的顶层 visible
+                    # 不是真实 spec 字段；恢复经 _patch_layer_presentation
+                    # 同源语义落账（expected_visible/presentation_owner），
+                    # 不留过期归属印记。
+                    # review m6：快照分支全部 deepcopy —— 快照同时活在
+                    # 账本行的 JSON 列里，任何浅别名都可能把候选态的变更
+                    # 泄回账本（JSON 列不侦测就地突变）。
+                    old_mapspec_snapshot = loaded
+                    snap = copy.deepcopy(
+                        intent.snapshot if isinstance(intent.snapshot, dict) else {})
+                    mapspec = {**loaded} if loaded else {}
+                    for branch in ("view", "basemap", "time"):
+                        if isinstance(snap.get(branch), dict):
+                            mapspec[branch] = copy.deepcopy(snap[branch])
+                    if isinstance(snap.get("layout"), dict):
+                        mapspec["layout"] = copy.deepcopy(snap["layout"])
+                    snap_layers = {
+                        str(ly.get("id")): ly
+                        for ly in (snap.get("layers") or [])
+                        if isinstance(ly, dict) and ly.get("id")
+                    }
+                    restored_layer_ids: list = []
+                    skipped_layer_ids: list = []
+                    if snap_layers:
+                        merged_layers = []
+                        for ly in (mapspec.get("layers") or []):
+                            lid = str(ly.get("id") or "")
+                            src = snap_layers.get(lid)
+                            if src is None:
+                                merged_layers.append(ly)
+                                continue
+                            merged_layer = copy.deepcopy(ly)
+                            if isinstance(src.get("paint"), dict):
+                                merged_layer["paint"] = copy.deepcopy(src["paint"])
+                            if src.get("label") is not None:
+                                merged_layer["label"] = src["label"]
+                            # 可见性 → 权威字段（layout.visibility + intent 印记）
+                            snap_layout = (
+                                src.get("layout") if isinstance(src.get("layout"), dict) else {}
+                            )
+                            visible: Optional[bool]
+                            if isinstance(snap_layout.get("visibility"), str):
+                                visible = snap_layout["visibility"] == "visible"
+                            elif "visible" in src:
+                                visible = bool(src.get("visible"))  # 旧快照兼容
+                            else:
+                                visible = None
+                            if visible is not None:
+                                merged_layer = _patch_layer_presentation(
+                                    merged_layer, visible, None,
+                                    origin=str(origin))
+                            merged_layers.append(merged_layer)
+                            restored_layer_ids.append(lid)
+                        skipped_layer_ids = sorted(
+                            set(snap_layers) - set(restored_layer_ids)
+                        )
+                        mapspec["layers"] = merged_layers
+                    restore_notes = {
+                        "restored_layers": restored_layer_ids[:64],
+                        "skipped_snapshot_layers": skipped_layer_ids[:64],
+                    }
+
                 elif isinstance(intent, SetBasemapIntent):
                     # V3 COW: basemap-only mutation (#722), same discipline as
                     # SetView/SetTime — shallow copy + copy touched branch.
@@ -1504,6 +1591,12 @@ class MapSpecLifecycleEngine:
                 cartography_findings = (
                     cartographic_review.get("review", {}).get("findings", [])
                 )
+                if restore_notes and restore_notes.get("skipped_snapshot_layers"):
+                    warnings = list(warnings) + [
+                        "restore-style: snapshot layers not present in current "
+                        "spec were skipped: "
+                        + ",".join(restore_notes["skipped_snapshot_layers"][:8])
+                    ]
                 return MapSpecResult(
                     mapspec=mapspec,
                     warnings=warnings,

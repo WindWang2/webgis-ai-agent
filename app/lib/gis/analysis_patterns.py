@@ -37,6 +37,16 @@ class AnalysisPattern:
     # 归一化指引（专业 GIS 方法判断的核心）
     normalization_guidance: str = ""
     common_pitfalls: Tuple[str, ...] = ()
+    # Semantic V2（ADR-0098）：决策族规划期义务披露 —— 一等 task 命中即
+    # 触发（非关键词门控）：准则/权重/受体等决策要素在规划期必然未确认，
+    # 披露「先声明、不合成」的边界是这些产品族的诚实底线。
+    decision_disclosures: Tuple[str, ...] = ()
+    # 本模式的一等 intent task（词表内值）。决策族义务披露只在
+    # intent.task **精确等于**该值时触发 —— task_aliases 里的借位别名
+    # （proximity/accessibility/administrative_statistic 等前 V2 时期的
+    # 匹配面）只参与角色/能力建议，不触发义务披露（否则每个邻近查询
+    # 都会背上风险披露的噪声）。
+    first_class_task: str = ""
 
 
 PATTERNS: Tuple[AnalysisPattern, ...] = (
@@ -125,8 +135,16 @@ PATTERNS: Tuple[AnalysisPattern, ...] = (
         id="spatial_equity",
         name_zh="空间公平",
         description="资源分配是否均衡：必须有分母（人均/地均）。",
-        task_aliases=("administrative_statistic",),
-        query_keywords=("均衡", "公平", "是否合理", "差异", "人均", "差距"),
+        # Semantic V2（ADR-0098）：spatial_equity 现在是一等 intent task，
+        # 不再只经 administrative_statistic 别名间接匹配。
+        task_aliases=("spatial_equity", "administrative_statistic"),
+        # VNext §15：警告关键词门与 intent 规则同词面（含英文与 分布合理/
+        # 教育资源不足 变体）—— task 命中而关键词缺席会把披露静默吞掉。
+        query_keywords=("均衡", "公平", "是否合理", "分布合理", "教育资源不足",
+                        "资源不足", "资源缺口", "欠发达", "不平等", "差异", "人均",
+                        "差距", "equity", "equitable", "fairness", "fairly",
+                        "fair access", "underprivileged", "underserved",
+                        "balanced"),
         required_roles=(R.NORMALIZATION_DENOMINATOR,),
         optional_roles=(R.POPULATION_MEASURE, R.AREA_MEASURE),
         recommended_capabilities=("admin_aggregation", "admin_boundary_query"),
@@ -143,26 +161,43 @@ PATTERNS: Tuple[AnalysisPattern, ...] = (
     AnalysisPattern(
         id="site_selection",
         name_zh="选址分析",
-        description="多准则叠加选优：缓冲/可达/约束相交。",
-        task_aliases=("proximity_analysis",),
+        description="多准则叠加选优：缓冲/可达/约束相交 + MCDA 候选评价。",
+        # Semantic V2（ADR-0098）：一等 task；MCDA 候选评价进入推荐能力。
+        task_aliases=("site_selection", "proximity_analysis"),
         query_keywords=("选址", "适合", "评估", "布局"),
-        recommended_capabilities=("proximity_buffer", "spatial_join", "geometry_clip"),
-        optional_capabilities=("service_area", "admin_boundary_query"),
+        recommended_capabilities=("admin_boundary_query", "proximity_buffer",
+                                  "spatial_join", "mcda_evaluation"),
+        optional_capabilities=("service_area", "admin_aggregation"),
         required_output_facets=("map", "legend", "title"),
-        normalization_guidance="多准则要先统一量纲（打分/分级）再叠加，不要把原始值直接相加。",
-        common_pitfalls=("准则权重无依据地拍定", "把『离得近』当唯一准则"),
+        normalization_guidance="多准则要先统一量纲（打分/分级）再叠加，不要把原始值直接相加；权重来源（用户指定/假设）必须显式记录。",
+        common_pitfalls=("准则权重无依据地拍定", "把『离得近』当唯一准则",
+                         "未声明硬约束（禁建区/保护区）就推荐候选"),
+        decision_disclosures=(
+            "准则与权重尚未声明：MCDA 评价前必须由用户确认准则集合与权重，"
+            "或显式标记为默认假设 —— 绝不合成准则值。",
+            "硬约束（禁建区/保护区/规划红线）未确认前，推荐结果只能作为"
+            "初筛候选，不得表述为『最优选址』。",
+        ),
+        first_class_task="site_selection",
     ),
     AnalysisPattern(
         id="risk_exposure",
         name_zh="风险暴露",
         description="危险源与受体的空间叠加：影响范围内有多少暴露。",
-        task_aliases=("proximity_analysis", "accessibility_analysis"),
+        # Semantic V2（ADR-0098）：一等 task。
+        task_aliases=("risk_exposure", "proximity_analysis", "accessibility_analysis"),
         query_keywords=("风险", "暴露", "影响范围", "安全"),
         recommended_capabilities=("proximity_buffer", "spatial_join", "admin_aggregation"),
         optional_capabilities=("zonal_statistics",),
         required_output_facets=("map", "statistics", "legend", "title"),
-        normalization_guidance="暴露量 = 影响区内的受体量（人/户/设施），需要受体数据而不只是危险源。",
+        normalization_guidance="暴露量 = 影响区内的受体量（人/户/设施），需要受体数据而不只是危险源；缓冲半径必须给出依据（规范/文献/用户声明）。",
         common_pitfalls=("只画影响范围不统计暴露受体", "缓冲半径无依据"),
+        decision_disclosures=(
+            "受体数据未确认：暴露评价需要影响范围内的受体（人口/设施）；"
+            "只有危险源时只能呈现影响范围，不得表述为暴露量。",
+            "缓冲半径依据未声明：半径值必须给出规范/文献/用户声明来源。",
+        ),
+        first_class_task="risk_exposure",
     ),
     AnalysisPattern(
         id="temporal_change",
@@ -203,13 +238,22 @@ PATTERNS: Tuple[AnalysisPattern, ...] = (
         id="suitability",
         name_zh="适宜性评价",
         description="多因子加权适宜性面：因子标准化 + 加权叠加。",
-        task_aliases=("site_selection", "proximity_analysis"),
+        # Semantic V2（ADR-0098）：一等 task；MCDA 评价进入推荐能力。
+        task_aliases=("suitability_assessment", "site_selection", "proximity_analysis"),
         query_keywords=("适宜性", "适应性", "评价"),
-        recommended_capabilities=("raster_reclassify", "raster_resample"),
+        recommended_capabilities=("raster_reclassify", "raster_resample",
+                                  "mcda_evaluation"),
         optional_capabilities=("geometry_clip", "proximity_buffer"),
         required_output_facets=("map", "legend", "title"),
-        normalization_guidance="各因子重分类到统一等级再加权；权重敏感性要做说明。",
+        normalization_guidance="各因子重分类到统一等级再加权；权重敏感性要做说明；用户权重与观测证据必须可区分。",
         common_pitfalls=("量纲不一致直接叠加", "遗漏硬约束（禁建区等）"),
+        decision_disclosures=(
+            "因子与权重来源未声明：适宜性评价前必须确认因子清单、标准化"
+            "方案与权重来源（用户指定/默认假设），并在结果中区分观测证据"
+            "与假设。",
+            "硬约束（禁建区/保护区）未确认前，适宜面只能作为初筛参考。",
+        ),
+        first_class_task="suitability_assessment",
     ),
 )
 

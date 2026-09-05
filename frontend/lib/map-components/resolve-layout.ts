@@ -61,6 +61,13 @@ export const COMPONENT_LAYOUT_META: Record<string, ComponentLayoutMeta> = {
   chart_panel: { defaultSlot: 'top-left', priority: 2 },
   // v2：区位插图（与 north_arrow 同占 top-right 族，槽内按 priority 堆叠）
   inset_map: { defaultSlot: 'top-right', priority: 3 },
+  // VNext 披露族：methodology 落 bottom-left（attribution 之上）；
+  // uncertainty 落 bottom-right（scale_bar/colorbar 之上）；
+  // decision 改占 top-left（statistics/chart 之上）—— review M-F3：
+  // top-right 是 inset_map 的 168px 大槽，decision 落那里必然压插图。
+  methodology_note: { defaultSlot: 'bottom-left', priority: 3, stackStepPx: 34 },
+  uncertainty_panel: { defaultSlot: 'bottom-right', priority: 3, stackStepPx: 34 },
+  decision_panel: { defaultSlot: 'top-left', priority: 3, stackStepPx: 40 },
   // P6：全画布/叠加型 —— 无槽（求解器排除，catalog defaultPosition='none'）
   map_border: { defaultSlot: 'none', priority: 70 },
   graticule: { defaultSlot: 'none', priority: 60 },

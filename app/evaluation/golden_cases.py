@@ -350,27 +350,38 @@ GOLDEN_CASES: list[GISBenchmarkCase] = [
         forbidden_algorithms=["spatial.kde"],
         max_tool_calls=5,
     ),
-    # ── insufficient-data / 语义不足的诚实兜底 ─────────────────────────
+    # ── Semantic V2（ADR-0098）：决策族一等产品路径 ────────────────────
+    # 此前（G27–G29 旧形态）这些查询落入 distribution 兜底 —— 现在有专属
+    # task/recipe/能力计划 + 方法论义务披露。回退锁定的不再是「兜底不过度
+    # 分析」，而是「专属产品不过度热点/插值 + 义务披露随行」。
     GISBenchmarkCase(
-        id="G27", name="选址语义（无专属产品）：分布兜底不过度热点", group="semantics",
+        id="G27", name="选址语义：一等 site_selection 产品 + 准则义务披露", group="semantics",
         query="为成都新分校选址推荐最优位置",
-        expected_task="distribution_overview",
-        expected_recipe="poi_distribution_overview",
+        expected_task="site_selection",
+        expected_recipe="site_selection",
+        expected_capabilities=["admin_boundary_query", "proximity_buffer", "mcda_evaluation"],
+        expected_methodology_warnings=["site_selection"],
         forbidden_algorithms=["stats.h3_lisa", "interpolation."],
-        max_tool_calls=8,
+        max_tool_calls=10,
     ),
     GISBenchmarkCase(
-        id="G28", name="风险语义（无专属产品）：不伪装风险产品", group="semantics",
+        id="G28", name="风险语义：一等 risk_exposure 产品 + 受体义务披露", group="semantics",
         query="分析成都洪水风险区域",
-        expected_task="distribution_overview",
+        expected_task="risk_exposure",
+        expected_recipe="risk_exposure",
+        expected_capabilities=["proximity_buffer", "spatial_join"],
+        expected_methodology_warnings=["risk_exposure"],
         forbidden_algorithms=["interpolation."],
-        max_tool_calls=8,
+        max_tool_calls=10,
     ),
     GISBenchmarkCase(
-        id="G29", name="适建区评价（无专属产品）：诚实兜底", group="semantics",
+        id="G29", name="适建区评价：一等 suitability 产品 + 权重披露", group="semantics",
         query="成都适建区评价",
-        expected_task="distribution_overview",
-        max_tool_calls=8,
+        expected_task="suitability_assessment",
+        expected_recipe="suitability_assessment",
+        expected_capabilities=["raster_reclassify", "mcda_evaluation"],
+        expected_methodology_warnings=["suitability"],
+        max_tool_calls=10,
     ),
     # ── categorical ────────────────────────────────────────────────────
     GISBenchmarkCase(
@@ -463,4 +474,8 @@ GOLDEN_CASES: list[GISBenchmarkCase] = [
 
 
 def get_all_cases() -> list[GISBenchmarkCase]:
-    return list(GOLDEN_CASES)
+    """Golden（G1–G33）+ 确定性矩阵（VNext §15：语义族 × 表述风格 × 语言
+    × 负例 × 形态 × scope × 决策披露）。合并总量 ≥300。"""
+    from app.evaluation.case_matrix import build_matrix_cases
+
+    return list(GOLDEN_CASES) + build_matrix_cases()

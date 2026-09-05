@@ -13,7 +13,9 @@ from app.evaluation import GISBenchmarkRunner, get_all_cases
 @pytest.mark.asyncio
 async def test_golden_cases_no_semantic_regression():
     cases = get_all_cases()
-    assert len(cases) >= 30, "golden scenario set must stay >= 30 (semantic-GIS expansion)"
+    # VNext §15 Phase 2：golden(33) + 确定性矩阵 ≥300（语义族×表述风格×
+    # 语言×负例×形态×scope×决策披露×复合意图）。
+    assert len(cases) >= 300, "case matrix must stay >= 300 (VNext evaluation V2)"
     runner = GISBenchmarkRunner()
     results = await runner.run(cases)
     by_id = {r.case_id: r for r in results}
