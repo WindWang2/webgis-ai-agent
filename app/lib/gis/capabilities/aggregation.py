@@ -31,4 +31,16 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             fallback_capabilities=["density_surface"],
             purpose_template="H3/渔网格网聚合",
         ),
+
+        # ── VNext：显式分母聚合（率/密度）——配套 spatial.aggregate.rates ──
+        CapabilityDescriptor(
+            id="rate_aggregation", name="率/密度聚合", category="analysis",
+            description="显式分母的逐区归一化：分子（字段求和/计数）÷ 分母（区字段/真实面积/要素计数）；"
+                        "count 聚合不是率/密度，分母缺失/≤0 的区不产率值（rate=null）。",
+            input_artifact_types=["poi_feature_set", "point_feature_set",
+                                  "polygon_feature_set", "admin_boundary_set"],
+            output_artifact_types=["admin_aggregate_table"],
+            compatible_map_models=["administrative_choropleth", "administrative_aggregation"],
+            purpose_template="按显式分母计算率/密度",
+        ),
 ]

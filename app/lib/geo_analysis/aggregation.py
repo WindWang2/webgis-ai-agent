@@ -1,4 +1,6 @@
 import logging
+from typing import Literal
+
 import numpy as np
 import pandas as pd
 import geopandas as gpd
@@ -218,6 +220,244 @@ def spatial_aggregate(
 
 # Alias for backward compatibility with plan
 aggregate_points_to_polygons = spatial_aggregate
+
+
+# ── VNext（ADR-0099）：显式分母聚合 ─────────────────────────────────────
+#
+# 反目标（CONTRACT_BACKBONE §10）：count 永不冒充 rate/density —— 分母必须
+# 显式；零分母策略必须披露（rate=None，从不编造 0/inf）。本函数是库层的
+# 归一化通道：工具参数面（spatial_aggregate）尚未暴露这些参数（由编排方
+# 中央接线），descriptor spatial.aggregate.rates 已声明该缺口。
+
+DenominatorKind = Literal["field", "area", "count"]
+
+
+def _metric_zone_area_m2(zones_gdf: gpd.GeoDataFrame) -> tuple[pd.Series, str, str]:
+    """Zone areas in true m².
+
+    Returns ``(areas, crs_used, area_crs_class)``. Geographic input → auto
+    UTM (polar fallback), mirroring to_utm_gdf's zone selection. A projected
+    LOCAL-METRIC CRS (UTM/polar stereographic) is used directly (with the
+    axis factor for non-metre units); a world-scale projected CRS (Web
+    Mercator) distorts areas at high latitudes, so it is NOT trusted — the
+    zones are re-projected to UTM instead.
+    """
+    from app.lib.gis.crs_safety import classify_crs
+
+    crs = zones_gdf.crs
+    data_class = classify_crs(str(crs)) if crs is not None else "unknown"
+    if data_class == "projected_local_metric":
+        # Non-metre local CRS (state-plane feet etc.): convert to m² via the
+        # axis factor (metres per CRS unit), same contract as #524/#588.
+        factor = 1.0
+        try:
+            axis = crs.axis_info[0]
+            factor = float(getattr(axis, "unit_conversion_factor", 1.0) or 1.0)
+        except Exception:
+            factor = 1.0
+        areas = zones_gdf.geometry.area * factor * factor
+        return areas, str(crs), data_class
+
+    # Geographic / world-scale projected / unknown → UTM estimate (polar
+    # fallback), the same metric-frame policy as to_utm_gdf.
+    metric_crs = None
+    try:
+        metric_crs = zones_gdf.estimate_utm_crs()
+    except Exception:
+        metric_crs = None
+    if metric_crs is None:
+        try:
+            centroid = zones_gdf.geometry.union_all().centroid
+        except Exception:
+            centroid = zones_gdf.geometry.iloc[0].centroid
+        lon = (float(centroid.x) + 180.0) % 360.0 - 180.0
+        zone = max(1, min(60, int((lon + 180) / 6) + 1))
+        hemisphere = 32600 if float(centroid.y) >= 0 else 32700
+        metric_crs = f"EPSG:{hemisphere + zone}"
+    areas = zones_gdf.geometry.to_crs(metric_crs).area
+    return areas, str(metric_crs), data_class
+
+
+def aggregate_with_denominator(
+    features_gdf: gpd.GeoDataFrame,
+    zones_gdf: gpd.GeoDataFrame,
+    numerator_field: str | None = None,
+    denominator: str | None = None,
+    denominator_kind: DenominatorKind = "count",
+) -> tuple[gpd.GeoDataFrame, dict]:
+    """Per-zone explicit-denominator aggregation: numerator / denominator → rate.
+
+    Count aggregation (``spatial_aggregate``) is NOT a rate or density — this
+    function is the library-level normalization channel where the denominator
+    is explicit and auditable.
+
+    Args:
+        features_gdf: numerator features (points/lines/polygons). CRS must be
+            interpretable; reprojected onto the zones' CRS when they differ.
+        zones_gdf: zone polygons defining the aggregation units.
+        numerator_field: numeric field on ``features_gdf`` to SUM per zone.
+            ``None`` → the numerator is the per-zone FEATURE COUNT. NaN values
+            in the field are excluded from the sum and counted in the returned
+            evidence (``nan_numerator_excluded``).
+        denominator: with ``denominator_kind="field"`` — name of a numeric
+            zone-level column in ``zones_gdf`` (population, exposed area...).
+            Ignored (may be None) for the other kinds.
+        denominator_kind: ``"field"`` (zone column), ``"area"`` (zone area in
+            true m² via a metric CRS), ``"count"`` (per-zone feature count).
+
+    Returns:
+        ``(zones_gdf_like, evidence)`` — a GeoDataFrame carrying the original
+        zone geometry/properties plus columns:
+
+        - ``numerator``: sum of ``numerator_field`` (or feature count), 0 for
+          zones with no intersecting features;
+        - ``denominator``: the explicit denominator value;
+        - ``rate``: numerator / denominator — **None** where the denominator
+          is missing/NaN/≤0 (zero-denominator policy: never fabricate 0 or
+          inf; consumers see JSON null);
+        - ``has_support``: True when at least one feature intersected the zone
+          (distinguishes a true zero rate from a no-data zone, #693 contract).
+
+        ``evidence`` is the normalization evidence dict (denominator kind and
+        unit, zero-denominator policy + zone count, excluded-NaN count, area
+        CRS). ``rate_unit`` labels a count-denominator output as a RATIO, not
+        a rate/density — the library never lets a count masquerade as one.
+
+    Raises:
+        MissingRequiredField: numerator_field / denominator column absent.
+        InvalidCRS: features CRS cannot be aligned onto the zones' CRS.
+        DegenerateData: empty features or zones.
+        ValueError: unknown denominator_kind.
+    """
+    from app.lib.gis.scientific_errors import (
+        DegenerateData,
+        InvalidCRS,
+        MissingRequiredField,
+    )
+
+    if denominator_kind not in ("field", "area", "count"):
+        raise ValueError(
+            f"unknown denominator_kind {denominator_kind!r} (field/area/count)")
+    if features_gdf is None or len(features_gdf) == 0:
+        raise DegenerateData(
+            "aggregate_with_denominator: features_gdf is empty",
+            correction_hint="提供非空的分子要素集（点/线/面）")
+    if zones_gdf is None or len(zones_gdf) == 0:
+        raise DegenerateData(
+            "aggregate_with_denominator: zones_gdf is empty",
+            correction_hint="提供非空的分区面要素集")
+    if numerator_field is not None and numerator_field not in features_gdf.columns:
+        raise MissingRequiredField(
+            f"numerator field {numerator_field!r} not in features_gdf columns",
+            correction_hint=f"可用字段: {[c for c in features_gdf.columns if c != 'geometry'][:8]}")
+    if denominator_kind == "field":
+        if not denominator:
+            raise MissingRequiredField(
+                "denominator_kind='field' requires a denominator column name",
+                correction_hint="传入 zones 的数值分母列名（如人口/暴露面积）")
+        if denominator not in zones_gdf.columns:
+            raise MissingRequiredField(
+                f"denominator column {denominator!r} not in zones_gdf columns",
+                correction_hint=f"可用字段: {[c for c in zones_gdf.columns if c != 'geometry'][:8]}")
+
+    # Align the numerator features onto the zones' frame (spatial join needs
+    # one frame; alignment is disclosed in evidence).
+    feats = features_gdf
+    crs_aligned = False
+    try:
+        if zones_gdf.crs is not None and feats.crs is not None \
+                and str(feats.crs) != str(zones_gdf.crs):
+            feats = feats.to_crs(zones_gdf.crs)
+            crs_aligned = True
+    except Exception as exc:  # noqa: BLE001 — alignment failure is honest
+        raise InvalidCRS(
+            f"features_gdf CRS {feats.crs} could not be aligned to zones CRS "
+            f"{zones_gdf.crs}: {exc}") from exc
+
+    zones = zones_gdf.copy()
+    zones["geometry"] = zones.geometry.make_valid()
+
+    # Aggregate convention (same as spatial_aggregate): intersects, so a
+    # boundary point is counted for the zone it lies on the edge of.
+    joined = gpd.sjoin(feats, zones, how="inner", predicate="intersects")
+
+    nan_numerator_excluded = 0
+    if numerator_field is None:
+        counts = joined.groupby("index_right").size()
+        numerator = zones.index.map(counts).fillna(0).astype("int64")
+    else:
+        values = pd.to_numeric(joined[numerator_field], errors="coerce")
+        nan_numerator_excluded = int(values.isna().sum())
+        sums = values.groupby(joined["index_right"]).sum(min_count=1)
+        numerator = zones.index.map(sums).astype("float64").fillna(0.0)
+        # Zones whose features were ALL NaN keep numerator 0 but must not look
+        # like a true zero — has_support below distinguishes support.
+    support_counts = joined.groupby("index_right").size()
+    has_support = zones.index.map(support_counts).fillna(0) > 0
+
+    # Explicit denominator (never implicit, never invented).
+    area_crs = ""
+    area_crs_class = ""
+    if denominator_kind == "field":
+        denom_values = pd.to_numeric(zones[denominator], errors="coerce")
+        denom_unit = f"zone_field:{denominator}"
+    elif denominator_kind == "area":
+        denom_values, area_crs, area_crs_class = _metric_zone_area_m2(zones)
+        denom_unit = "m2"
+    else:  # count
+        denom_values = pd.Series(np.asarray(support_counts.reindex(zones.index).fillna(0)),
+                                 index=zones.index, dtype="float64")
+        denom_unit = "count"
+
+    denom = pd.to_numeric(denom_values, errors="coerce")
+
+    # Zero-denominator policy: rate is None (JSON null) where the denominator
+    # is missing/NaN/≤0 — NEVER 0, NEVER inf.
+    valid = denom.notna() & (denom > 0)
+    rates: list = []
+    num_list = numerator.tolist()
+    den_list = [float(v) if pd.notna(v) else None for v in denom]
+    for i in range(len(zones)):
+        if bool(valid.iloc[i]):
+            rates.append(float(num_list[i]) / float(denom.iloc[i]))
+        else:
+            rates.append(None)
+
+    zero_denominator_zones = int((~valid).sum())
+
+    out = zones.copy()
+    out["numerator"] = num_list
+    out["denominator"] = den_list
+    # object dtype is load-bearing: a plain list assignment makes pandas
+    # infer float64 and coerce None → NaN, hiding the explicit zero-denominator
+    # contract. Consumers must see None (JSON null), never a fabricated value.
+    out["rate"] = pd.Series(rates, index=zones.index, dtype=object)
+    out["has_support"] = [bool(v) for v in has_support.tolist()]
+
+    if denominator_kind == "count":
+        # Anti-goal guard: a count denominator is a RATIO (numerator per
+        # feature), not a rate/density — label it honestly.
+        rate_unit = "count_ratio_not_rate"
+    elif denominator_kind == "area":
+        rate_unit = "per_m2"
+    else:
+        rate_unit = f"numerator_per_{denominator}"
+
+    evidence = {
+        "denominator_kind": denominator_kind,
+        "denominator_unit": denom_unit,
+        "rate_unit": rate_unit,
+        "zero_denominator_policy": "rate=None（分母缺失/≤0 的区不产率值——从不编造 0 或 inf）",
+        "zero_denominator_zones": zero_denominator_zones,
+        "nan_numerator_excluded": nan_numerator_excluded,
+        "numerator_aggregation": "sum" if numerator_field else "feature_count",
+        "join_predicate": "intersects",
+        "crs_aligned": crs_aligned,
+        "area_crs": area_crs,
+        "area_crs_class": area_crs_class,
+        "zones_total": int(len(out)),
+    }
+    return out, evidence
 
 def h3_binning(geojson: dict | str, resolution: int | None = None, stat_field: str | None = None, stat_method: str = 'count') -> GeoAnalysisResult:
     """

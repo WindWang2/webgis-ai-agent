@@ -5,16 +5,9 @@ from typing import Any, Optional
 
 from app.tools.registry import ToolRegistry, tool
 from app.lib.geo_processor.core import safe_parse as safe_parse_geojson
-from app.lib.geo_processor.core import extract_declared_crs, to_utm_gdf
+from app.lib.geo_processor.core import extract_declared_crs
 from app.services.spatial_analyzer import SpatialAnalyzer
 from app.tools._utils import cached_tool, trim_features, std_error_response
-from app.lib.geo_analysis._vector import extract_centroids
-from app.lib.geo_analysis.point_pattern import quadrat_test, ripley_k
-from app.lib.geo_analysis.statistics import (
-    geary_c_narrated,
-    general_g_narrated,
-    moran_i_narrated,
-)
 from app.lib.gis.algorithm_registry import get_algorithm_registry
 from app.lib.gis.crs_safety import classify_crs
 from app.lib.gis.parameter_contracts import apply_contract
@@ -128,7 +121,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
             "permutations": permutations,
         })
         # #1110 review M6: forward the full FC (CRS preservation).
-        res = moran_i_narrated(
+        res = SpatialAnalyzer.moran_i(
             data, params["value_field"],
             weights_scheme=params["weights_scheme"],
             k=int(params["k"]),
@@ -186,7 +179,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
             "k": k,
             "permutations": permutations,
         })
-        res = geary_c_narrated(
+        res = SpatialAnalyzer.geary_c(
             data, params["value_field"],
             weights_scheme=params["weights_scheme"],
             k=int(params["k"]),
@@ -240,7 +233,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
             "value_field": value_field,
             "permutations": permutations,
         })
-        res = general_g_narrated(
+        res = SpatialAnalyzer.general_g(
             data, params["value_field"],
             distance_band=float(distance_band or 0),
             permutations=int(params["permutations"]),
@@ -287,13 +280,8 @@ def register_spatial_stats_tools(registry: ToolRegistry):
             "n_steps": n_steps,
             "max_distance_ratio": max_distance_ratio,
         })
-        utm = to_utm_gdf(data)
-        if utm is None or utm[0] is None:
-            raise ValueError("invalid GeoJSON input: no point features found")
-        gdf, working_crs = utm
-        xy = extract_centroids(gdf)
-        result = ripley_k(
-            xy, crs=working_crs,
+        result = SpatialAnalyzer.ripley_k(
+            data,
             n_steps=int(params["n_steps"]),
             max_distance_ratio=float(params["max_distance_ratio"]),
         )
@@ -326,13 +314,8 @@ def register_spatial_stats_tools(registry: ToolRegistry):
             "grid_rows": grid_rows,
             "grid_cols": grid_cols,
         })
-        utm = to_utm_gdf(data)
-        if utm is None or utm[0] is None:
-            raise ValueError("invalid GeoJSON input: no point features found")
-        gdf, working_crs = utm
-        xy = extract_centroids(gdf)
-        result = quadrat_test(
-            xy, crs=working_crs,
+        result = SpatialAnalyzer.quadrat_test(
+            data,
             grid_rows=int(params["grid_rows"]),
             grid_cols=int(params["grid_cols"]),
         )

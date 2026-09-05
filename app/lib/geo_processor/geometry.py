@@ -2,7 +2,14 @@ import json
 import logging
 from typing import Union, Optional
 import geopandas as gpd
-from app.lib.geo_processor.core import to_utm_gdf, safe_parse, to_feature_collection, GeoAnalysisResult, gdf_from_features, declare_crs
+from app.lib.geo_processor.core import (
+    to_utm_gdf_with_note,
+    safe_parse,
+    to_feature_collection,
+    GeoAnalysisResult,
+    gdf_from_features,
+    declare_crs,
+)
 from app.lib.geo_analysis.evidence import build_quality_evidence
 
 logger = logging.getLogger(__name__)
@@ -40,12 +47,15 @@ def buffer_smart(
         if unit == 'km':
             dist = dist * 1000
         
-        # Use to_utm_gdf for high precision
-        res = to_utm_gdf(parsed, source_crs=source_crs)
+        # Use to_utm_gdf_with_note for high precision + CRS disclosure note
+        # (VNext ADR-0099: the tool layer reports the real transformation —
+        # source frame, auto-UTM target, gcj02 normalization — instead of
+        # re-guessing it from the input).
+        res = to_utm_gdf_with_note(parsed, source_crs=source_crs)
         if not res or res[0] is None:
             return GeoAnalysisResult(False, None, "Failed to project data for buffering")
-            
-        gdf, utm_crs = res
+
+        gdf, utm_crs, crs_note = res
         original_crs = source_crs or getattr(gdf, "_original_crs", None) or (gdf.crs if gdf is not None and gdf.crs is not None else "EPSG:4326")
 
         # GIS-P3-8: to_utm_gdf returns an already-projected input UNCHANGED —
@@ -112,6 +122,11 @@ def buffer_smart(
                     "dissolve": dissolve,
                     "distance": float(distance),
                     "unit": unit,
+                    # ADR-0099 CRS disclosure (V-F04/F05/F06 family): the real
+                    # transform note from to_utm_gdf_with_note, consumed by the
+                    # tool layer to build transformations_applied honestly.
+                    "source_crs": str(crs_note["source_crs"]) if crs_note else "",
+                    "gcj02_normalized": bool(crs_note["gcj02_normalized"]) if crs_note else False,
                 },
             ),
         )
@@ -138,7 +153,15 @@ def clip_smart(target_layer: Union[dict, str, list], mask_layer: Union[dict, str
             
         t_fc = to_feature_collection(t_parsed)
         m_fc = to_feature_collection(m_parsed)
-        
+
+        # Degenerate-input honesty (same contract as overlay_smart): an empty
+        # layer short-circuits BEFORE gdf_from_features — geopandas raises on
+        # a zero-feature from_features call instead of yielding an empty GDF.
+        if not t_fc.get("features") or not m_fc.get("features"):
+            return GeoAnalysisResult(
+                True, {"type": "FeatureCollection", "features": []},
+                "Input layer(s) empty, nothing to clip.")
+
         # GIS-599: honor a declared `crs` member instead of hardcoding
         # EPSG:4326 — a declared projected input (e.g. EPSG:3857) was
         # previously misinterpreted as WGS84 and silently dropped.

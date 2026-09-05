@@ -546,13 +546,23 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "空间聚合：统计落在每个多边形（如行政区）内的点位（如 POI）数量。"
                "✅ 用于：矢量点要素的计数聚合，返回带统计结果的多边形图层。"
                "\n❌ 不要用于：多边形内的栅格统计（人口/降雨/海拔）— 用 zonal_stats。"
+               "\n科学语义（ADR-0099）：count 不是率/密度 —— 需要 rate/density 时"
+               "必须显式给分母（denominator_kind=field/area），零分母区 rate=null。"
            ),
            param_descriptions={
                "points": "点要素集 GeoJSON 或引用(ref:xxx)",
                "polygons": "多边形要素集（如行政区）GeoJSON 或引用(ref:xxx)",
                "count_field": "存储统计数量的字段名，默认 'point_count'",
+               "numerator_field": "可选：点要素数值字段（按区求和作为分子）；缺省=要素计数",
+               "denominator": "denominator_kind=field 时的分母字段名（区面属性，如人口）",
+               "denominator_kind": "分母类型：count(默认,纯计数)/field(区字段)/area(区面积密度)",
            })
-    def spatial_aggregate(points: Any, polygons: Any, count_field: str = "point_count") -> dict:
+    def spatial_aggregate(
+        points: Any, polygons: Any, count_field: str = "point_count",
+        numerator_field: Optional[str] = None,
+        denominator: Optional[str] = None,
+        denominator_kind: str = "count",
+    ) -> dict:
         pts = safe_parse_geojson(points)
         polys = safe_parse_geojson(polygons)
         # #764: count_field names the OUTPUT count column, it is not a point
@@ -562,6 +572,47 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         # rename the output column afterwards.
         # #765: pass the parsed FeatureCollections (not bare features
         # lists) so declared `crs` members reach to_utm_gdf.
+        if denominator_kind != "count" or numerator_field:
+            # ADR-0099 显式分母通道（库层 aggregate_with_denominator）：
+            # rate 语义 —— 零/负分母 → rate=null（绝不静默 0/inf）。
+            from app.lib.geo_analysis.aggregation import aggregate_with_denominator
+            from app.lib.geo_processor.core import (
+                declare_crs, to_utm_gdf,
+            )
+            from app.lib.gis.scientific_evidence import build_evidence
+            from app.lib.gis.algorithm_registry import get_algorithm_registry
+            pts_gdf = to_utm_gdf(pts)[0] if to_utm_gdf(pts)[0] is not None else None
+            zones_gdf = to_utm_gdf(polys)[0] if to_utm_gdf(polys)[0] is not None else None
+            if pts_gdf is None or zones_gdf is None:
+                raise ValueError("invalid input: empty points or polygons layer")
+            out_gdf, norm_evidence = aggregate_with_denominator(
+                pts_gdf, zones_gdf,
+                numerator_field=numerator_field,
+                denominator=denominator,
+                denominator_kind=denominator_kind,
+            )
+            import json as _json
+            fc = _json.loads(out_gdf.to_json())
+            descriptor = get_algorithm_registry().get("spatial.aggregate.rates")
+            evidence = build_evidence(
+                descriptor, tool="spatial_aggregate",
+                parameters_applied={
+                    "numerator_field": numerator_field,
+                    "denominator": denominator,
+                    "denominator_kind": denominator_kind,
+                },
+                diagnostics=[],
+            ) if descriptor else {}
+            evidence["normalization"] = norm_evidence
+            return {
+                "success": True,
+                "data": declare_crs(fc, "EPSG:4326"),
+                "summary": {
+                    "rate_kind": denominator_kind,
+                    "zones": int(len(out_gdf)),
+                },
+                "scientific_evidence": evidence,
+            }
         res = SpatialAnalyzer.aggregate(
             pts,
             polys,

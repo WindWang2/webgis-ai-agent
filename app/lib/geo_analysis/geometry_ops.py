@@ -46,7 +46,10 @@ def voronoi_polygons(
         cells with the original point properties plus ``area_km2``.
     """
     result = to_utm_gdf(geojson)
-    if result is None:
+    # to_utm_gdf returns the 2-tuple (None, None) on unparseable/empty input —
+    # the previous `is None` guard let it through and crashed with a raw
+    # TypeError/AttributeError instead of the honest typed failure below.
+    if result is None or result[0] is None:
         return GeoAnalysisResult(
             False, None, "无法解析矢量数据",
             error_type="ValueError", correction_hint="检查 GeoJSON 是否为有效的点要素集合",
@@ -158,7 +161,10 @@ def convex_hull(
         polygons with ``feature_count`` and ``area_km2``.
     """
     result = to_utm_gdf(geojson)
-    if result is None:
+    # to_utm_gdf returns the 2-tuple (None, None) on unparseable/empty input —
+    # the previous `is None` guard let it through and crashed with a raw
+    # TypeError/AttributeError instead of the honest typed failure below.
+    if result is None or result[0] is None:
         return GeoAnalysisResult(
             False, None, "无法解析矢量数据",
             error_type="ValueError", correction_hint="检查 GeoJSON 是否为有效的要素集合",
@@ -248,7 +254,10 @@ def multi_ring_buffer(
         features with ``distance_m`` and ``area_km2``.
     """
     result = to_utm_gdf(geojson)
-    if result is None:
+    # to_utm_gdf returns the 2-tuple (None, None) on unparseable/empty input —
+    # the previous `is None` guard let it through and crashed with a raw
+    # TypeError/AttributeError instead of the honest typed failure below.
+    if result is None or result[0] is None:
         return GeoAnalysisResult(
             False, None, "无法解析矢量数据",
             error_type="ValueError", correction_hint="检查 GeoJSON 是否为有效的要素集合",
