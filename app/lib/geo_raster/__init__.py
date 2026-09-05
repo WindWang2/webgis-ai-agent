@@ -38,6 +38,12 @@ from app.lib.geo_raster.windowed import (
     WindowResult,
     execute_windowed,
 )
+from app.lib.geo_raster.env import rasterio_env
+from app.lib.geo_raster.fingerprint import (
+    content_digest,
+    content_fingerprint,
+    raster_content_fingerprint_v5,
+)
 
 __all__ = [
     "RasterSource",
@@ -53,4 +59,8 @@ __all__ = [
     "AlgorithmProfile",
     "WindowResult",
     "execute_windowed",
+    "rasterio_env",
+    "content_digest",
+    "content_fingerprint",
+    "raster_content_fingerprint_v5",
 ]

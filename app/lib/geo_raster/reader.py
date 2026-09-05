@@ -17,10 +17,9 @@ or non-raster dataset raises :class:`RasterReaderError`.
 """
 from __future__ import annotations
 
-import hashlib
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 import numpy as np
 
@@ -87,12 +86,13 @@ class RasterReader:
     # ── lifecycle ────────────────────────────────────────────────────
     @classmethod
     def open(cls, uri: str) -> "RasterReader":
-        # Delegate to the shared V3 env (GDAL_HTTP_TIMEOUT/RETRY/READDIR +
-        # GDAL_CACHEMAX from RASTER_GDAL_CACHE_MAX_MB + GDAL_NUM_THREADS=1).
-        # The env is HELD for the reader lifetime: knobs at open() only would
-        # leave every later read in a default env (cache back to GDAL's
-        # ~5%-of-RAM default, no HTTP hardening) — review finding #3.
-        from app.lib.geo_analysis.raster_math import rasterio_env
+        # Delegate to the canonical shared env (GDAL_HTTP_TIMEOUT/RETRY/
+        # READDIR + GDAL_CACHEMAX from RASTER_GDAL_CACHE_MAX_MB +
+        # GDAL_NUM_THREADS=1 — app/lib/geo_raster/env.py). The env is HELD
+        # for the reader lifetime: knobs at open() only would leave every
+        # later read in a default env (cache back to GDAL's ~5%-of-RAM
+        # default, no HTTP hardening) — review finding #3.
+        from app.lib.geo_raster.env import rasterio_env
 
         env_cm = rasterio_env()
         env_cm.__enter__()
@@ -182,34 +182,22 @@ class RasterReader:
 
     @staticmethod
     def _fingerprint(ds: Any) -> str:
-        """Cheap content identity: structure + downsampled min/max digest.
+        """Cheap content identity: structure + corner-block digest.
 
-        A full-pixel sha256 costs an O(pixels) read — exactly what V4
-        removes from hot paths. The structural digest (shape/dtype/crs/
-        transform/nodata + first/last blocks' bytes) detects rewrite with
-        bounded cost, mirroring the analysis_reuse raster fingerprint
-        philosophy. CAVEAT: it is deliberately blind to mid-raster edits
-        (corner blocks only) — identity, NOT a cache-invalidation key.
+        Delegates to the unified bounded content digest
+        (``app.lib.geo_raster.fingerprint.content_digest``) — one scheme for
+        reader-plane identity. Format/semantics preserved: full sha256
+        hexdigest truncated to 32 hex chars; V5's ``content_fingerprint()``
+        returns the SAME digest truncated to 16 (strict prefix, so values
+        compare via ``startswith`` across entry points). Composition and
+        block budget (two ≤256×64 corner samples, never a whole read) are
+        documented there. CAVEAT inherited: deliberately blind to
+        mid-raster edits (corner blocks only) — identity, NOT a
+        cache-invalidation key.
         """
-        h = hashlib.sha256()
-        h.update(
-            f"{ds.width}x{ds.height}x{ds.count}|{ds.dtypes}|{ds.crs}|"
-            f"{ds.transform}|{ds.nodata}".encode()
-        )
-        try:
-            from rasterio.windows import Window
+        from app.lib.geo_raster.fingerprint import content_digest
 
-            w = min(256, ds.width)
-            hgt = min(64, ds.height)
-            block = ds.read(1, window=Window(0, 0, w, hgt))
-            h.update(np.ascontiguousarray(block).tobytes())
-            tail = ds.read(
-                1, window=Window(max(0, ds.width - w), max(0, ds.height - hgt), w, hgt)
-            )
-            h.update(np.ascontiguousarray(tail).tobytes())
-        except Exception:  # noqa: BLE001 — digest is best-effort
-            h.update(b"|unreadable")
-        return h.hexdigest()[:32]
+        return content_digest(ds)[:32]
 
     @staticmethod
     def cog_structure_ok(uri_or_ds: Any) -> bool:
@@ -235,11 +223,23 @@ class RasterReader:
         self,
         window: tuple[int, int, int, int],
         band: int = 1,
+        bands: Optional[Sequence[int]] = None,
     ) -> np.ndarray:
-        """Read ``(col_off, row_off, width, height)`` from one band at FULL
-        resolution. Overview reads have their own entry (read_overview) —
-        mixing overview decimation into window offsets produced broken
-        bounds semantics (review finding #4), so the combination is gone."""
+        """Read ``(col_off, row_off, width, height)`` at FULL resolution.
+
+        ``bands=None`` (default) → single-band read of ``band`` — the
+        historical behavior, preserved exactly (including: no byte budget —
+        windowed single-band reads were and stay bounded by the window).
+        ``bands=(i, j, …)`` → one stacked read of the requested 1-based
+        bands, shape ``(len(bands), h, w)``. The stacked read is guarded by
+        the same whole-read byte budget per call (window cells × Σ band
+        itemsize ≤ DEFAULT_FULL_READ_BUDGET_BYTES) — the multi-band path is
+        new, so it ships with the guard instead of inheriting the legacy
+        path's unbounded window allowance. Out-of-range band indices raise.
+        Multi-band output of :func:`execute_windowed` / WindowedRasterWriter
+        is a documented extension point, not a wired capability (see
+        windowed.execute_windowed).
+        """
         from rasterio.windows import Window
 
         ds = self._ds()
@@ -250,7 +250,27 @@ class RasterReader:
             raise RasterReaderError(
                 f"window {window!r} outside raster {ds.width}x{ds.height}"
             )
-        return ds.read(band, window=Window(col, row, w, h))
+        if bands is None:
+            return ds.read(band, window=Window(col, row, w, h))
+        if not bands:
+            raise RasterReaderError("bands must be a non-empty sequence of 1-based indices")
+        for b in bands:
+            if not (1 <= int(b) <= ds.count):
+                raise RasterReaderError(
+                    f"band {b} out of range (1..{ds.count}) for {self.uri!r}"
+                )
+        win = Window(col, row, w, h)
+        est = w * h * sum(
+            np.dtype(ds.dtypes[int(b) - 1]).itemsize for b in bands
+        )
+        if est > DEFAULT_FULL_READ_BUDGET_BYTES:
+            raise RasterReaderError(
+                f"multi-band window read of {self.uri!r} would take "
+                f"~{est / 1e6:.0f} MB (budget "
+                f"{DEFAULT_FULL_READ_BUDGET_BYTES // 1e6:.0f} MB); shrink the "
+                "window or the band selection"
+            )
+        return ds.read([int(b) for b in bands], window=win)
 
     def read_band(self, band: int = 1) -> np.ndarray:
         """Whole-band read via the budget guard (see read_full)."""

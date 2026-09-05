@@ -209,7 +209,12 @@ def render_raster_tile(
     dst_transform = rasterio.transform.from_bounds(*bounds_3857, tile_size, tile_size)
 
     try:
-        with rasterio.open(raster_path) as src:
+        from app.lib.geo_raster.env import rasterio_env
+
+        # Env is a runtime property (geo_raster.env), held per tile for the
+        # open+read+reproject lifetime — previously this open path ran in the
+        # default GDAL env (audit bypass #3).
+        with rasterio_env(), rasterio.open(raster_path) as src:
             # A GeoTIFF does NOT guarantee a CRS (unlike GeoJSON RFC 7946).
             # Previously a missing CRS was silently treated as EPSG:4326, which
             # produced wildly wrong tile windows for projected (UTM/3857)

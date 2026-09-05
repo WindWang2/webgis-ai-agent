@@ -84,14 +84,32 @@ class RefPayloadCache:
     def put_if_current(self, session_id: str, ref_id: str, obj: Any, approx_bytes: int, epoch: int) -> bool:
         """仅当 epoch 未被 invalidate 递增时入缓存（防复活语义）。
 
-        返回是否真正写入。与 ``put`` 共享容量/LRU 逻辑。
+        返回是否真正写入。epoch 检查与插入必须在**同一临界区**内完成：
+        先检查后经由 ``put`` 重新拿锁插入会留下 TOCTOU 窗口（检查之后、
+        插入之前发生 invalidate → 过期 payload 复活 5s）。
         """
         key = (session_id, ref_id)
+        size = max(0, int(approx_bytes))
         with self._lock:
             if self._epochs.get(key, 0) != epoch:
                 return False
-        self.put(session_id, ref_id, obj, approx_bytes)
+            self._insert_locked(key, obj, size)
         return True
+
+    def _insert_locked(self, key: Tuple[str, str], obj: Any, size: int) -> None:
+        """插入 + LRU 容量收敛。调用方必须已持有 ``self._lock``。"""
+        old = self._entries.get(key)
+        if old is not None:
+            self._total_bytes -= old[2]
+            del self._entries[key]
+        self._entries[key] = (obj, time.monotonic() + self._ttl, size)
+        self._total_bytes += size
+        while self._entries and (
+            len(self._entries) > self._max_entries
+            or self._total_bytes > self._max_bytes
+        ):
+            _, evicted = self._entries.popitem(last=False)
+            self._total_bytes -= evicted[2]
 
     def put(self, session_id: str, ref_id: str, obj: Any, approx_bytes: int) -> None:
         """Store a parsed payload; evicts LRU entries beyond count/byte caps.
@@ -99,42 +117,44 @@ class RefPayloadCache:
         ``approx_bytes`` 由调用方给出（Redis 路径用原始 JSON 字符串长度），
         只用于字节预算控制，不要求精确。
         """
-        key = (session_id, ref_id)
         size = max(0, int(approx_bytes))
         with self._lock:
-            old = self._entries.get(key)
-            if old is not None:
-                self._total_bytes -= old[2]
-                del self._entries[key]
-            self._entries[key] = (obj, time.monotonic() + self._ttl, size)
-            self._total_bytes += size
-            while self._entries and (
-                len(self._entries) > self._max_entries
-                or self._total_bytes > self._max_bytes
-            ):
-                _, evicted = self._entries.popitem(last=False)
-                self._total_bytes -= evicted[2]
+            self._insert_locked((session_id, ref_id), obj, size)
 
     def invalidate(self, session_id: str, ref_id: str) -> None:
-        """移除条目并递增 epoch（正在构建的旧 payload 完成后不得复活）。"""
+        """移除条目并递增 epoch（正在构建的旧 payload 完成后不得复活）。
+
+        epoch 递增与条目移除在**同一临界区**内完成 —— 分两段会让观察者
+        看到「epoch 已新、旧条目还在」的瞬态。
+        """
         key = (session_id, ref_id)
         with self._lock:
             self._epochs[key] = self._epochs.get(key, 0) + 1
             self._epochs.move_to_end(key)
             while len(self._epochs) > 4 * self._max_entries:
                 self._epochs.popitem(last=False)
-        key = (session_id, ref_id)
-        with self._lock:
             entry = self._entries.pop(key, None)
             if entry is not None:
                 self._total_bytes -= entry[2]
 
     def invalidate_session(self, session_id: str) -> None:
+        """清空会话条目并递增其全部 epoch。
+
+        与 SpatialIndexCache.invalidate_session 同语义：只 pop 条目不递增
+        epoch 会让**在飞构建者**（捕获的是旧 epoch）在会话清空后仍能把
+        payload 发布回来。
+        """
         with self._lock:
-            for key in [k for k in self._entries if k[0] == session_id]:
+            session_keys = {
+                k for k in self._epochs if k[0] == session_id
+            } | {k for k in self._entries if k[0] == session_id}
+            for key in session_keys:
+                self._epochs[key] = self._epochs.get(key, 0) + 1
                 entry = self._entries.pop(key, None)
                 if entry is not None:
                     self._total_bytes -= entry[2]
+            while len(self._epochs) > 4 * self._max_entries:
+                self._epochs.popitem(last=False)
 
 
 #: 进程级单例（与 spatial_index_cache 同生命周期）。

@@ -35,6 +35,7 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.data_fabric_tools": "data_access",
     "app.tools.explorer_tools": "data_access",
     "app.tools.geocoding": "data_access",
+    "app.tools.geocompute_tools": "analysis",           # 执行平面；validate/run 查询名字覆盖
     "app.tools.layer_manager": "map_mutation",
     "app.tools.local_admin": "data_access",
     "app.tools.local_osm": "data_access",
@@ -111,6 +112,9 @@ _NAME_OVERRIDES: Dict[str, str] = {
     # project_tools：空间质检是检视（只读评估）
     "audit_spatial_quality": "inspection",
     "repair_spatial_dataset": "transformation",
+    # geocompute_tools：计划校验与 run 查询是只读检视
+    "validate_execution_plan": "inspection",
+    "get_execution_run": "inspection",
 }
 
 #: 分类有限集合（审计与披露依赖）

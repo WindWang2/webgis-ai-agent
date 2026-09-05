@@ -153,6 +153,15 @@ def raster_content_fingerprint(file_path: str) -> Optional[str]:
     像元内容（各波段降采样到 ≤1024 边的样本字节）。同内容不同
     path/mtime → 同指纹；内容变 → 指纹变。成本 O(1024²·bands)，与一次
     inspect 同级。文件缺失/不可读 → None（调用方降级，不阻塞）。
+
+    Runtime V5 指纹统一说明：本函数是**工件平面**的持久化指纹——值已进
+    analysis-reuse 键与产物记录（app/lib/gis/analysis_reuse.py），因此
+    格式与取值**冻结**，不得随读侧实现漂移。它与 V3 写者流式摘要
+    （WindowedRasterWriter，摘要种子=网格身份 + 窗口字节）以及 V5 读侧
+    统一指纹（app/lib/geo_raster/fingerprint.content_fingerprint，sha256[:16]
+    = 结构身份 + 角块采样）同属 §31/§32「有界、内容敏感、path/mtime 无关」
+    的同一契约族，但三者的摘要格式各自独立——这是持久化兼容的刻意选择，
+    不是未完成的迁移。新读侧消费方一律用 V5 入口。
     """
     import hashlib
 
