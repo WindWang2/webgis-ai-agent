@@ -39,7 +39,7 @@ def register_skill_surface_refresh(registry: ToolRegistry) -> None:
             "重新扫描技能目录并刷新注册表工具面（注册表层）。新技能立即可经 "
             "webgis_execute 调用；原生 schema 面在 Pi worker spawn 时冻结，"
             "新 native 工具需 respawn 后才对 schema 选择可见 —— 返回的报告"
-            "会如实区分这两层。不自动 respawn（会终止活跃回合）。",
+            "会如实区分这两层。不自动 respawn（会终止活跃回合）。"
         ),
         tier=3,
         domains=["skills"],

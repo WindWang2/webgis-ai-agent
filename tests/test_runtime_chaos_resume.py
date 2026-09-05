@@ -716,9 +716,12 @@ async def test_clear_session_route_purges_resume_buffers(_pi_path, monkeypatch, 
 @pytest.mark.asyncio
 async def test_clear_session_aborts_deleted_session(monkeypatch):
     """F5: the route must pass the deleted session's id to
-    ``pi_bridge.abort(session_id=...)`` so the bridge can skip the abort when
-    a DIFFERENT session's turn is in flight (contract:
-    ``PiBridge.abort(session_id: str | None = None)``)."""
+    ``bridge.abort(session_id=...)`` so the abort is scoped to the deleted
+    session (contract: ``PiBridge.abort(session_id: str | None = None)``).
+    ADR-0100: the route goes through the unified cancellation seam, which
+    resolves the session's OWNING worker bridge from the session-keyed
+    active-turn table — so the abort must reach that bridge (not the
+    singleton blindly) carrying the deleted session's id."""
 
     class _RecordingBridge:
         def __init__(self) -> None:
@@ -732,10 +735,20 @@ async def test_clear_session_aborts_deleted_session(monkeypatch):
         async def clear_session(self, session_id, user_id=None, owner_token=None):
             return True
 
-    bridge = _RecordingBridge()
+    owner_bridge = _RecordingBridge()
+
+    class _FakeEntry:
+        # ADR-0100 seam contract: entry.bridge is the owning worker.
+        bridge = owner_bridge
+
     monkeypatch.setattr(chat_route, "USE_NEW_AGENT", True)
-    monkeypatch.setattr(chat_route, "pi_bridge", bridge)
+    monkeypatch.setattr(chat_route, "pi_bridge", owner_bridge)
     monkeypatch.setattr(chat_route, "engine", _ClearableEngine())
+    # Other sessions have no active-turn entry → no abort may leave this seam.
+    monkeypatch.setattr(
+        "app.agent_pi_bridge.get_active_turn_entry",
+        lambda sid: _FakeEntry() if sid == "victim-session" else None,
+    )
 
     result = await chat_route.clear_session(
         session_id="victim-session",
@@ -744,7 +757,7 @@ async def test_clear_session_aborts_deleted_session(monkeypatch):
         _conv=MagicMock(),
     )
     assert result == {"status": "ok"}
-    assert bridge.abort_calls == ["victim-session"], (
+    assert owner_bridge.abort_calls == ["victim-session"], (
         "clear_session must scope the abort to the deleted session"
     )
 
