@@ -30,13 +30,14 @@ import asyncio
 import contextlib
 import logging
 from dataclasses import dataclass, field
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, Union
 
 from app.services.session_data import session_data_manager
 from app.tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
     from app.services.chat_engine import ChatEngine
+    from app.services.subagent_roles import SubagentRole
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +167,7 @@ class SubagentDispatcher:
         domains: Optional[list[str]] = None,
         extra_tools: Optional[list[str]] = None,
         max_rounds: int = 10,
-        role: Optional["str | SubagentRole"] = None,
+        role: Optional[Union[str, "SubagentRole"]] = None,
     ) -> SubagentResult:
         # ADR-0101 Wave 7：角色档（显式策略，无未约束子代理）。角色提供的
         # 域/预算与调用方显式参数取**交集/更严者** —— 角色收紧，调用方不能

@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple
+from dataclasses import dataclass
+from typing import Dict, Tuple
 
 # 冷却策略（与 geodata tracker 的 5 连错/300s 语义同族，按模型粒度收紧）
 _FAILURE_THRESHOLD = 3

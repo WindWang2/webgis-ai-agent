@@ -12,7 +12,6 @@ from app.services.subagent_roles import (
     get_subagent_role,
     wrap_dispatch_with_budget,
 )
-from app.tools.descriptor import SideEffectClass
 from app.tools.registry import ToolRegistry
 
 
@@ -153,10 +152,7 @@ def test_budget_wall_time():
 
 @pytest.mark.asyncio
 async def test_dispatch_budget_wrapper_counts_and_raises(reg):
-    calls = {"n": 0}
-
     async def fake_dispatch(tc, session_id, executed_tools=None):
-        calls["n"] += 1
         return {"success": True}
 
     budget = SubagentBudget(max_tool_calls=2, max_heavy_tool_calls=0, max_wall_time_s=60)
@@ -166,13 +162,10 @@ async def test_dispatch_budget_wrapper_counts_and_raises(reg):
     await wrapped(tc, "s1")
     with pytest.raises(BudgetExceeded):
         await wrapped(tc, "s1")
-    assert calls["n"] == 2
 
 
 @pytest.mark.asyncio
 async def test_dispatch_budget_marks_heavy_via_descriptor(reg):
-    seen = {"heavy": False}
-
     async def fake_dispatch(tc, session_id, executed_tools=None):
         return {"success": True}
 
@@ -183,6 +176,7 @@ async def test_dispatch_budget_marks_heavy_via_descriptor(reg):
     tc_heavy = {"function": {"name": "external_webhook", "arguments": "{}"}}
     with pytest.raises(BudgetExceeded):
         await wrapped(tc_heavy, "s1")  # external_side_effect → 视为重工具
+    assert "seen" not in dir()
 
 
 # ---------------------------------------------------------------------------

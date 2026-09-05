@@ -24,8 +24,6 @@ from app.services.chat.model_runtime.provider import (
     view_response,
 )
 from app.services.chat.model_runtime.roles import (
-    DEFAULT_ROLE_PROFILES,
-    ModelRoleProfile,
     get_role_profile,
 )
 from app.services.chat.model_runtime.routing import ModelRouter, RouteRequest
@@ -36,7 +34,6 @@ from app.services.chat.model_runtime.routing import ModelRouter, RouteRequest
 # ---------------------------------------------------------------------------
 
 def test_descriptor_registry_unknown_field_rejected():
-    reg = ModelDescriptorRegistry()
     with pytest.raises(ValueError, match="未知 ModelDescriptor 字段"):
         from app.services.chat.model_runtime.descriptors import _descriptor_from_dict
         _descriptor_from_dict({"provider_id": "webgis", "model_id": "x",
@@ -314,8 +311,8 @@ def test_health_mismatch_cleared_by_success():
 
 def test_route_degraded_candidates_ordered_after_healthy(routing_stack):
     """review R1 MAJOR 回归锁：限流/不匹配候选真实排后。"""
-    router, reg, health = routing_stack
-    reg.upsert_override(ModelDescriptor(
+    router, _reg, health = routing_stack
+    _reg.upsert_override(ModelDescriptor(
         provider_id="webgis", model_id="degraded-model", tool_calling=True,
         fallback_group="default",
     ))

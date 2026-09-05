@@ -17,7 +17,7 @@ llm_payload、ref: 游标、GeoJSON FC……），这是既成事实契约，重
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field as dc_field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, Optional, Tuple
 

@@ -122,22 +122,6 @@ def test_corpus_categories_covered():
 # 安全强化（§38/§39/§40）
 # ---------------------------------------------------------------------------
 
-def test_alias_cannot_bypass_tier3_gate(corpus_registry):
-    """tier-3 经别名调用：canonical 名先解析 → 闸仍然命中。"""
-    TOOL_NAME_ALIASES["wipe_alias"] = "wipe"
-    try:
-
-        async def _run():
-            return await corpus_registry.dispatch("wipe_alias", {"confirm": True})
-
-        import asyncio
-
-        result = asyncio.get_event_loop().run_until_complete(_run()) if False else None
-        # asyncio_mode=auto 环境下直接用 pytest 的 loop：
-    finally:
-        TOOL_NAME_ALIASES.pop("wipe_alias", None)
-
-
 @pytest.mark.asyncio
 async def test_alias_cannot_bypass_tier3_gate_async(corpus_registry):
     TOOL_NAME_ALIASES["wipe_alias"] = "wipe"

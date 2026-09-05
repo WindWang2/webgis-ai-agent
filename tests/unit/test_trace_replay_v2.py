@@ -13,7 +13,6 @@ from app.lib.runtime.trace import (
     EVENT_DISPATCH_STARTED,
     EVENT_FALLBACK,
     EVENT_MODEL_SELECTED,
-    EVENT_NO_PROGRESS,
     EVENT_TURN_SETTLED,
     TraceRegistry,
     bound_meta,

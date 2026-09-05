@@ -23,11 +23,10 @@ domains/extra_tools，max_rounds 是唯一预算。V2 引入**显式角色档**�
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Tuple
 
 logger = logging.getLogger(__name__)
 

@@ -22,7 +22,6 @@ import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Any, Dict, List, Optional
 
 # 事件种类（封闭词表；新种类必须显式加入）

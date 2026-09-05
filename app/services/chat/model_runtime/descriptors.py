@@ -16,7 +16,7 @@ import json
 import logging
 import os
 import threading
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)

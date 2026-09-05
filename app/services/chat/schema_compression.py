@@ -71,7 +71,6 @@ def compress_schema(
     if not isinstance(fn, dict):
         return out
 
-    desc = summary or fn.get("description") or ""
     if summary:
         fn["description"] = _truncate_text(summary, _SUMMARY_MAX_CHARS)
     else:

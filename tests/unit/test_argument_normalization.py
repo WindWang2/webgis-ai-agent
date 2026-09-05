@@ -12,7 +12,6 @@ from pydantic import BaseModel, Field
 from typing import Any, List, Optional
 
 from app.tools.argument_normalization import (
-    ArgRepair,
     FIELD_RULES_BY_TOOL,
     GEOJSON_FAMILY_TOOLS,
     TOOL_NAME_ALIASES,
@@ -21,7 +20,7 @@ from app.tools.argument_normalization import (
     resolve_tool_name,
     validate_normalization_tables,
 )
-from app.tools.registry import ToolRegistry, _normalize_tool_arguments
+from app.tools.registry import ToolRegistry
 
 
 # --- 与既有测试同款 mock 模型（tests/test_tool_argument_aliases.py 镜像） ---

@@ -8,7 +8,6 @@
 - 压缩保留 required/enum 语义，度量字节；
 - 检索质量基准（离线 golden 用例，无 LLM/无网络）。
 """
-import json
 
 import pytest
 

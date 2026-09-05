@@ -7,7 +7,6 @@
 - 投影原语有界且确定性（bound_text/bound_lines/layer/ref 投影）；
 - ProjectionCache 指纹命中/失效、有界、线程内一致性。
 """
-import pytest
 
 from app.services.chat.context_budget import (
     Category,
@@ -76,7 +75,6 @@ def test_measure_components_classifies_and_detects_violations():
 
 
 def test_measure_history_hard_limit():
-    plan = plan_budget(context_window=100_000, max_output_tokens=8_000)
     big_history = "轮次内容。" * 5_000  # 远超 6000
     rep = measure_assembled_context(
         [

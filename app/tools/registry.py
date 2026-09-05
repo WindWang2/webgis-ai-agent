@@ -22,7 +22,6 @@ from app.tools.argument_normalization import (
     coerce_json_string_lists as _coerce_json_string_lists_pairs,
     normalize_tool_arguments as _normalize_tool_arguments_pairs,
     resolve_tool_name as _resolve_tool_name,
-    validate_normalization_tables,
     normalization_report_var,
 )
 from app.tools.descriptor import (
@@ -30,7 +29,6 @@ from app.tools.descriptor import (
     ToolDescriptor,
     ToolStatus,
     descriptor_fingerprint as _descriptor_fingerprint,
-    manifest_fingerprint as _manifest_fingerprint,
     registry_fingerprint as _registry_fingerprint_fn,
     schema_fingerprint as _schema_fingerprint_fn,
     validate_descriptor_fields,
