@@ -95,6 +95,9 @@ class Settings(BaseSettings):
     LLM_TIMEOUT_S: float = 120.0        # 非流式请求超时；流式 read = max(180, 1.5×)
     LLM_MAX_TOKENS: int = 16384         # 执行角色默认输出预算
     LLM_TEMPERATURE: Optional[float] = None  # None = 不发送（用 provider 默认）
+    # ADR-0101/0102：主模型上下文窗（tokens）。None/0 = 未知（预算器按 8k
+    # 保守规划）；按模型精细值可配 MODEL_DESCRIPTORS_FILE 描述符。
+    LLM_CONTEXT_WINDOW: Optional[int] = None
     # 标题/摘要等辅助任务的廉价模型；空回退 LLM_MODEL
     LLM_TITLE_MODEL: str = ""
 
