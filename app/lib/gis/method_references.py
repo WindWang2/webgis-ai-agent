@@ -245,6 +245,295 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "Hwang, C. L., & Yoon, K. (1981). Multiple Attribute Decision "
             "Making: Methods and Applications. Springer.",
         ),
+        # ── 空间统计 V2（Foundation V2 · shared A1）──────────────────
+        MethodReference(
+            "cliff_ord1973",
+            "Join count statistics / spatial autocorrelation theory",
+            "Cliff, A. D., & Ord, J. K. (1973). Spatial Autocorrelation. "
+            "Pion, London.",
+        ),
+        MethodReference(
+            "wartenberg1985",
+            "Bivariate Moran's I",
+            "Wartenberg, D. (1985). Multivariate Spatial Correlation: A "
+            "Method for Exploratory Geographical Analysis. Geographical "
+            "Analysis, 17(4), 263–283.",
+        ),
+        MethodReference(
+            "wang2010",
+            "Geographical detector (q-statistic)",
+            "Wang, J.-F., Li, X.-H., Christakos, G., Liao, Y.-L., Zhang, T., "
+            "Gu, X., & Zheng, X.-Y. (2010). Geographical Detectors-Based "
+            "Health Risk Assessment and Its Application in the Neural Tube "
+            "Defects Study of the Heshun Region, China. IJGIS, 24(1), 107–128.",
+        ),
+        MethodReference(
+            "anselin1988",
+            "Spatial econometrics (LM-lag / LM-error diagnostics, ML SAR/SEM)",
+            "Anselin, L. (1988). Spatial Econometrics: Methods and Models. "
+            "Kluwer Academic Publishers.",
+        ),
+        MethodReference(
+            "ord1975",
+            "ML estimation of spatial lag/error models (eigen log-Jacobian)",
+            "Ord, J. K. (1975). Estimation Methods for Models of Spatial "
+            "Interaction. JASA, 70(349), 120–126.",
+        ),
+        MethodReference(
+            "brunsdon1996",
+            "Geographically weighted regression",
+            "Brunsdon, C., Fotheringham, A. S., & Charlton, M. E. (1996). "
+            "Geographically Weighted Regression: A Method for Exploring "
+            "Spatial Nonstationarity. Geographical Analysis, 28(4), 281–298.",
+        ),
+        MethodReference(
+            "fotheringham2002",
+            "GWR bandwidth selection / AICc",
+            "Fotheringham, A. S., Brunsdon, C., & Charlton, M. (2002). "
+            "Geographically Weighted Regression: The Analysis of Spatially "
+            "Varying Relationships. Wiley.",
+        ),
+        MethodReference(
+            "jarque_bera1980",
+            "Jarque-Bera normality test (OLS residual diagnostics)",
+            "Jarque, C. M., & Bera, A. K. (1980). Efficient Tests for "
+            "Normality, Homoscedasticity and Serial Independence of "
+            "Regression Residuals. Economics Letters, 6(3), 255–259.",
+        ),
+        MethodReference(
+            "breusch_pagan1979",
+            "Breusch-Pagan heteroscedasticity test",
+            "Breusch, T. S., & Pagan, A. R. (1979). A Simple Test for "
+            "Heteroscedasticity and Random Coefficient Variation. "
+            "Econometrica, 47(5), 1287–1294.",
+        ),
+        MethodReference(
+            "holm1979",
+            "Holm step-down multiple testing correction",
+            "Holm, S. (1979). A Simple Sequentially Rejective Multiple Test "
+            "Procedure. Scandinavian Journal of Statistics, 6(2), 65–70.",
+        ),
+        # ── 点格局 V2（shared A3）────────────────────────────────────
+        MethodReference(
+            "diggle1983",
+            "G / F nearest-neighbour distance functions",
+            "Diggle, P. J. (1983). Statistical Analysis of Spatial Point "
+            "Patterns. Academic Press.",
+        ),
+        MethodReference(
+            "van_lieshout_baddeley1996",
+            "J function (spatial interaction measure)",
+            "van Lieshout, M.-C. N. M., & Baddeley, A. J. (1996). A "
+            "Nonparametric Measure of Spatial Interaction in Point Patterns. "
+            "Statistica Neerlandica, 50(3), 344–361.",
+        ),
+        MethodReference(
+            "illian2008",
+            "Pair correlation function / summary statistics",
+            "Illian, J., Penttinen, A., Stoyan, H., & Stoyan, D. (2008). "
+            "Statistical Analysis and Modelling of Spatial Point Patterns. "
+            "Wiley.",
+        ),
+        MethodReference(
+            "besag1977",
+            "Cross-K under random labelling",
+            "Besag, J. (1977). Contribution to the Discussion of Dr Ripley's "
+            "Paper. JRSS-B, 39(2), 193–195.",
+        ),
+        MethodReference(
+            "knox1964",
+            "Knox space-time interaction test",
+            "Knox, G. (1964). The Detection of Space-Time Interactions. "
+            "Journal of the Royal Statistical Society: Series C (Applied "
+            "Statistics), 13(1), 25–30.",
+        ),
+        # ── 插值 V2（shared A2）──────────────────────────────────────
+        MethodReference(
+            "matern1986",
+            "Matérn covariance family",
+            "Matérn, B. (1986). Spatial Variation (2nd ed.). Lecture Notes "
+            "in Statistics 36. Springer.",
+        ),
+        MethodReference(
+            "webster_oliver2007",
+            "Variogram fitting / anisotropy / geostatistical practice",
+            "Webster, R., & Oliver, M. A. (2007). Geostatistics for "
+            "Environmental Scientists (2nd ed.). Wiley.",
+        ),
+        MethodReference(
+            "odeh1995",
+            "Regression kriging",
+            "Odeh, I. O. A., McBratney, A. B., & Chittleborough, D. J. "
+            "(1995). Further Results on Prediction of Soil Properties from "
+            "Terrain Attributes: Heterotopic Cokriging and Regression-Kriging. "
+            "Geoderma, 67(3-4), 215–226.",
+        ),
+        MethodReference(
+            "watson1981",
+            "Delaunay triangulation interpolation",
+            "Watson, D. F. (1981). Computing the n-dimensional Delaunay "
+            "Tessellation with Application to Voronoi Polytopes. "
+            "The Computer Journal, 24(2), 167–172.",
+        ),
+        MethodReference(
+            "clough_tocher1966",
+            "C1 cubic triangulated interpolation (Clough-Tocher)",
+            "Clough, R. W., & Tocher, J. L. (1966). Finite Element "
+            "Stiffness Matrices for Analysis of Plates in Bending. "
+            "Proc. 1st Conf. Matrix Methods in Structural Mechanics, 515–545.",
+        ),
+        # ── 网络 V2（shared A4）──────────────────────────────────────
+        MethodReference(
+            "hakimi1964",
+            "Absolute centers / p-center problem",
+            "Hakimi, S. L. (1964). Optimum Locations of Switching Centers "
+            "and the Absolute Centers and Medians of a Graph. Operations "
+            "Research, 12(3), 450–459.",
+        ),
+        MethodReference(
+            "church_revelle1974",
+            "Maximal covering location problem (MCLP)",
+            "Church, R., & ReVelle, C. (1974). The Maximal Covering "
+            "Location Problem. Papers of the Regional Science Association, "
+            "32(1), 101–118.",
+        ),
+        MethodReference(
+            "huff1964",
+            "Huff spatial interaction / trade area model",
+            "Huff, D. L. (1964). Defining and Estimating a Trading Area. "
+            "Journal of Marketing, 28(3), 34–38.",
+        ),
+        MethodReference(
+            "zipf1946",
+            "Gravity model (P1·P2/D inverse-distance interaction)",
+            "Zipf, G. K. (1946). The P1 P2/D Hypothesis: On the Intercity "
+            "Movement of Persons. American Sociological Review, 11(6), 677–686.",
+        ),
+        MethodReference(
+            "hansen1959",
+            "Accessibility potential (gravity-type)",
+            "Hansen, W. G. (1959). How Accessibility Shapes Land Use. "
+            "Journal of the American Institute of Planners, 25(2), 73–76.",
+        ),
+        MethodReference(
+            "brandes2001",
+            "Betweenness centrality (Brandes' algorithm)",
+            "Brandes, U. (2001). A Faster Algorithm for Betweenness "
+            "Centrality. Journal of Mathematical Sociology, 25(2), 163–177.",
+        ),
+        # ── 地形 V2（shared A5）──────────────────────────────────────
+        MethodReference(
+            "barnes2014",
+            "Priority-Flood depression filling",
+            "Barnes, R., Lehman, C., & Mulla, D. (2014). Priority-Flood: An "
+            "Optimal Depression-Filling and Watershed-Labeling Algorithm for "
+            "Digital Elevation Models. Computers & Geosciences, 62, 117–127.",
+        ),
+        MethodReference(
+            "strahler1957",
+            "Strahler stream order / watershed morphometry",
+            "Strahler, A. N. (1957). Quantitative Analysis of Watershed "
+            "Geomorphology. Transactions, American Geophysical Union, "
+            "38(6), 913–920.",
+        ),
+        MethodReference(
+            "beven_kirkby1979",
+            "Topographic Wetness Index (TWI)",
+            "Beven, K. J., & Kirkby, M. J. (1979). A Physically Based, "
+            "Variable Contributing Area Model of Basin Hydrology. "
+            "Hydrological Bulletin, 23(1), 43–69.",
+        ),
+        MethodReference(
+            "wischmeier_smith1978",
+            "USLE LS factor",
+            "Wischmeier, W. H., & Smith, D. D. (1978). Predicting Rainfall "
+            "Erosion Losses: A Guide to Conservation Planning. USDA "
+            "Agriculture Handbook 537.",
+        ),
+        MethodReference(
+            "desmet_govers1996",
+            "Grid-based USLE LS factor",
+            "Desmet, P. J. J., & Govers, G. (1996). A GIS Procedure for "
+            "Automatically Calculating the USLE LS Factor on Grid Cells. "
+            "Journal of Soil and Water Conservation, 51(5), 427–433.",
+        ),
+        MethodReference(
+            "yokoyama2002",
+            "Terrain openness (positive/negative)",
+            "Yokoyama, R., Shirasawa, M., & Pike, R. J. (2002). Visualizing "
+            "Topography by Openness: A New Approach to Quantifying Visual "
+            "Significance of Terrain. PE&RS, 68(3), 257–265.",
+        ),
+        MethodReference(
+            "jasiewicz_stepinski2013",
+            "Geomorphons landform pattern classification",
+            "Jasiewicz, J., & Stepinski, T. F. (2013). Geomorphons — A "
+            "Pattern Recognition Approach to Classification and Mapping of "
+            "Landforms. Geomorphology, 182-183, 147–156.",
+        ),
+        # ── 遥感 / SAR V2（shared A6）────────────────────────────────
+        MethodReference(
+            "lee1980",
+            "Lee speckle filter (local statistics)",
+            "Lee, J.-S. (1980). Digital Image Enhancement and Noise "
+            "Filtering by Use of Local Statistics. IEEE TPAMI, 2(2), 165–168.",
+        ),
+        MethodReference(
+            "lee1981",
+            "Refined Lee speckle filter (edge-directed)",
+            "Lee, J.-S. (1981). Refined Filtering of Image Noise Using Local "
+            "Statistics. Computer Graphics and Image Processing, 15(4), 380–389.",
+        ),
+        MethodReference(
+            "lopes1990",
+            "Adaptive speckle filters and scene heterogeneity (MAP/Refined-Lee)",
+            "Lopes, A., Touzi, R., & Nezry, E. (1990). Adaptive Speckle "
+            "Filters and Scene Heterogeneity. IEEE Trans. Geoscience and "
+            "Remote Sensing, 28(6), 992–1000.",
+        ),
+        MethodReference(
+            "frost1982",
+            "Frost speckle filter",
+            "Frost, V. S., Stiles, J. A., Shanmugan, K. S., & Holtzman, "
+            "J. C. (1982). A Model for Radar Images and Its Application to "
+            "Adaptive Digital Filtering of Multiplicative Noise. IEEE TPAMI, "
+            "4(2), 157–166.",
+        ),
+        MethodReference(
+            "oliver_quegan1998",
+            "SAR statistics / radiometric calibration semantics",
+            "Oliver, C., & Quegan, S. (1998). Understanding Synthetic "
+            "Aperture Radar Images. Artech House.",
+        ),
+        MethodReference(
+            "haralick1973",
+            "GLCM texture features",
+            "Haralick, R. M., Shanmugam, K., & Dinstein, I. (1973). Textural "
+            "Features for Image Classification. IEEE Trans. Systems, Man, "
+            "and Cybernetics, SMC-3(6), 610–621.",
+        ),
+        MethodReference(
+            "crist_cicone1984",
+            "Tasseled Cap (Landsat TM)",
+            "Crist, E. P., & Cicone, R. C. (1984). A Physically-Based "
+            "Transformation of Thematic Mapper Data—The Tasseled Cap. "
+            "IEEE Trans. Geoscience and Remote Sensing, GE-22(3), 256–263.",
+        ),
+        MethodReference(
+            "baig2014",
+            "Tasseled Cap (Landsat 8 OLI)",
+            "Baig, M. H. A., Zhang, L., Shuai, T., & Tong, Q. (2014). "
+            "Derivation of a Tasselled Cap Transformation Based on Landsat 8 "
+            "At-Satellite Reflectance. RSE, 140, 111–119.",
+        ),
+        MethodReference(
+            "shi_xu2019",
+            "Tasseled Cap (Sentinel-2)",
+            "Shi, T., & Xu, H. (2019). Derivation of Tasseled Cap "
+            "Transformation Coefficients for Sentinel-2 At-Satellite "
+            "Reflectance. IEEE Geoscience and Remote Sensing Letters, "
+            "16(1), 111–115.",
+        ),
     ]
 }
 

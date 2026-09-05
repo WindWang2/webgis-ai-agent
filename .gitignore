@@ -9,6 +9,7 @@ scripts/
 !/scripts/
 /scripts/*
 !/scripts/ci-local.sh
+!/scripts/gen_science_catalog.py
 webgis-ai-agent/
 
 # 系统与临时文件
