@@ -68,6 +68,12 @@ export interface ExportChromeElement {
   insetBbox?: { west: number; south: number; east: number; north: number };
   insetMainBbox?: { west: number; south: number; east: number; north: number };
   insetBoundary?: [number, number][];
+  /**
+   * V3（ADR-0101 D6）：披露族（methodology/uncertainty/decision）导出载荷
+   * —— 三种面板归一化为「标题 + 文本行」，与 live 渲染器同一防御式解析
+   * 语义（坏载荷 → 面板缺席，不伪造）。
+   */
+  disclosure?: { title: string; rows: string[]; accent: boolean };
 }
 
 export interface ExportChromeModel {
@@ -215,6 +221,63 @@ function _parseChart(raw: unknown): ChartPanelData | undefined {
   };
 }
 
+// ── V3（ADR-0101 D6）：披露族导出解析（与 live 渲染器同语义）────────────
+// 归一化为「标题 + 文本行」；坏载荷 → undefined（面板缺席，不伪造）。
+
+function _parseMethodology(raw: unknown): ExportChromeElement['disclosure'] {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const rows: string[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const rec = item as Record<string, unknown>;
+    if (typeof rec['text'] !== 'string' || !rec['text'].trim()) continue;
+    const code = typeof rec['code'] === 'string' && rec['code'] ? `${rec['code']} ` : '';
+    rows.push(`${code}${rec['text']}`);
+  }
+  return rows.length > 0 ? { title: '方法论披露', rows, accent: true } : undefined;
+}
+
+function _parseUncertainty(raw: unknown): ExportChromeElement['disclosure'] {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const rec = raw as Record<string, unknown>;
+  const rows: string[] = [];
+  if (Array.isArray(rec['items'])) {
+    for (const item of rec['items']) {
+      if (!item || typeof item !== 'object') continue;
+      const r = item as Record<string, unknown>;
+      if (typeof r['label'] !== 'string' || !r['label'].trim()) continue;
+      const kind = typeof r['kind'] === 'string' ? r['kind'] : '';
+      const detail = typeof r['detail'] === 'string' && r['detail'] ? `：${r['detail']}` : '';
+      rows.push(`${kind ? `[${kind}] ` : ''}${r['label']}${detail}`);
+    }
+  }
+  if (typeof rec['sampleNote'] === 'string' && rec['sampleNote'].trim()) {
+    rows.push(rec['sampleNote']);
+  }
+  return rows.length > 0 ? { title: '不确定性', rows, accent: false } : undefined;
+}
+
+function _parseDecision(raw: unknown): ExportChromeElement['disclosure'] {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const rec = raw as Record<string, unknown>;
+  const rowsRaw = rec['rows'];
+  if (!Array.isArray(rowsRaw) || rowsRaw.length === 0) return undefined;
+  const rows: string[] = [];
+  for (const item of rowsRaw.slice(0, 12)) {
+    if (!item || typeof item !== 'object') continue;
+    const r = item as Record<string, unknown>;
+    if (typeof r['name'] !== 'string' || !r['name'].trim()) continue;
+    const rank = typeof r['rank'] === 'number' ? `${r['rank']}. ` : '';
+    const score = typeof r['score'] === 'number' || typeof r['score'] === 'string' ? ` — ${r['score']}` : '';
+    const basis = typeof r['basis'] === 'string' && r['basis'] ? `（${r['basis']}）` : '';
+    rows.push(`${rank}${r['name']}${score}${basis}`);
+  }
+  if (typeof rec['weightSource'] === 'string' && rec['weightSource']) {
+    rows.push(`权重来源：${rec['weightSource']}`);
+  }
+  return rows.length > 0 ? { title: '决策面板', rows, accent: false } : undefined;
+}
+
 /**
  * 构建导出 chrome 模型（异步：chartRef 可能需要拉取 session artifact）。
  * 纯派生 —— 不读 DOM、不碰 map 实例；画布尺寸由调用方传入。
@@ -234,6 +297,9 @@ export async function buildExportChrome(
     'title', 'subtitle', 'legend', 'categorical_legend', 'continuous_colorbar',
     'north_arrow', 'scale_bar', 'attribution', 'statistics_panel', 'chart_panel',
     'annotation', 'map_border', 'graticule', 'inset_map',
+    // V3（ADR-0101 D6）：披露族落地 canvas 导出 —— 计入可视组件
+    //（disclosure-only spec 也走 chrome 路径，否则面板被 fromSpec 门饿死）
+    'methodology_note', 'uncertainty_panel', 'decision_panel',
   ]);
   const model: ExportChromeModel = {
     fromSpec: resolved.some((c) => VISUAL_TYPES.has(c.type) && c.enabled),
@@ -542,6 +608,45 @@ export async function buildExportChrome(
           // 此前导出仍展开 —— live 折叠、导出展开。text 携带标题 →
           // drawChromeChartPanel 绘制折叠标题条（与 statistics 同约定）。
           text: c.collapsed ? chart.title : undefined,
+        });
+      }
+    } else if (c.type === 'methodology_note') {
+      const disclosure = _parseMethodology(c.options['warnings']);
+      if (disclosure) {
+        model.panels.push({
+          kind: 'methodology',
+          anchor: _effectiveAnchor(c),
+          rect: _floatingRectOf(c, opts.viewport, canvas),
+          stackIndex: _stackOf(c)?.index ?? 0,
+          slotSize: _stackOf(c)?.slotSize ?? 0,
+          disclosure,
+          text: c.collapsed ? disclosure.title : undefined,
+        });
+      }
+    } else if (c.type === 'uncertainty_panel') {
+      const disclosure = _parseUncertainty(c.options['uncertainty']);
+      if (disclosure) {
+        model.panels.push({
+          kind: 'uncertainty',
+          anchor: _effectiveAnchor(c),
+          rect: _floatingRectOf(c, opts.viewport, canvas),
+          stackIndex: _stackOf(c)?.index ?? 0,
+          slotSize: _stackOf(c)?.slotSize ?? 0,
+          disclosure,
+          text: c.collapsed ? disclosure.title : undefined,
+        });
+      }
+    } else if (c.type === 'decision_panel') {
+      const disclosure = _parseDecision(c.options['decision']);
+      if (disclosure) {
+        model.panels.push({
+          kind: 'decision',
+          anchor: _effectiveAnchor(c),
+          rect: _floatingRectOf(c, opts.viewport, canvas),
+          stackIndex: _stackOf(c)?.index ?? 0,
+          slotSize: _stackOf(c)?.slotSize ?? 0,
+          disclosure,
+          text: c.collapsed ? disclosure.title : undefined,
         });
       }
     }
@@ -920,6 +1025,66 @@ export function drawChromeStatsPanel(
     _text(d, value, lx + boxW - padding, y + d.scalePx(14), 'right');
     y += rowH;
   }
+}
+
+/**
+ * V3（ADR-0101 D6）：披露族导出（methodology / uncertainty / decision）。
+ * 归一化「标题 + 文本行」卡片；methodology 带警示色左边条（与 live
+ * border-status-warning 同语义）。collapsed 导出折叠标题条（E-2 约定）。
+ */
+export function drawChromeDisclosurePanel(
+  d: DrawCtx,
+  el: ExportChromeElement,
+  opts: { marginX: number; marginY?: number },
+) {
+  if (!el.disclosure || el.disclosure.rows.length === 0) return;
+  const { ctx } = d;
+  const padding = d.scalePx(12);
+  const rowH = d.scalePx(20);
+  const titleH = d.scalePx(24);
+  const collapsed = el.text !== undefined;
+  const boxW = el.rect?.width ?? d.scalePx(250);
+  const boxH = collapsed ? d.scalePx(36) : padding * 2 + titleH + el.disclosure.rows.length * rowH;
+
+  const origin = el.rect
+    ? { x: el.rect.x, y: el.rect.y, align: 'left' as const, vAlign: 'top' as const }
+    : anchorOrigin(el.anchor, { targetW: d.targetW, targetH: d.targetH, marginX: opts.marginX, marginY: opts.marginY ?? 90 });
+  const lx = origin.align === 'right' ? origin.x - boxW : origin.align === 'center' ? origin.x - boxW / 2 : origin.x;
+  const ly = origin.vAlign === 'bottom' ? d.targetH - origin.y - boxH : origin.y;
+
+  _chromePanel(d, lx, ly, boxW, boxH);
+  let y = ly + padding;
+  if (collapsed) {
+    ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.9)' : '#1e293b';
+    ctx.font = `bold ${d.scalePx(12)}px sans-serif`;
+    _text(d, el.text || el.disclosure.title, lx + padding, y + d.scalePx(12), 'left');
+    return;
+  }
+  // 标题（methodology 带警示色标记条）
+  if (el.disclosure.accent) {
+    ctx.fillStyle = d.darkMode ? 'rgba(250, 204, 21, 0.9)' : 'rgba(217, 119, 6, 0.95)';
+    ctx.fillRect(lx, ly, d.scalePx(3), boxH);
+  }
+  ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.9)' : '#1e293b';
+  ctx.font = `bold ${d.scalePx(12)}px sans-serif`;
+  _text(d, el.disclosure.title, lx + padding, y + d.scalePx(12), 'left');
+  y += titleH;
+  for (const row of el.disclosure.rows) {
+    ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.85)' : '#1e293b';
+    ctx.font = `${d.scalePx(11)}px sans-serif`;
+    _text(d, _clipText(ctx, row, boxW - padding * 2), lx + padding, y + d.scalePx(12), 'left');
+    y += rowH;
+  }
+}
+
+/** 画布单行文本截断（导出侧无自动换行；与 stats 卡同一裁剪约定）。 */
+function _clipText(ctx: CanvasRenderingContext2D, text: string, maxW: number): string {
+  if (ctx.measureText(text).width <= maxW) return text;
+  let clipped = text;
+  while (clipped.length > 1 && ctx.measureText(`${clipped}…`).width > maxW) {
+    clipped = clipped.slice(0, -1);
+  }
+  return `${clipped}…`;
 }
 
 /** 静态图表（bar/line/pie/scatter 的确定性 canvas 绘制）。 */

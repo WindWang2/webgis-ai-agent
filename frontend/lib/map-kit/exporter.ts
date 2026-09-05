@@ -7,6 +7,7 @@ import {
   drawChromeAttribution,
   drawChromeChartPanel,
   drawChromeColorbar,
+  drawChromeDisclosurePanel,
   drawChromeInset,
   drawChromeLegend,
   drawChromeMapBorder,
@@ -319,7 +320,8 @@ export function composeLayout(
       drawChromeInset(d, inset, { marginX, marginY: stackOffset(inset, scalePx(12)) });
     }
 
-    // 5.5 浮动面板（statistics/chart/annotation —— 终审 F1：注释卡导出）
+    // 5.5 浮动面板（statistics/chart/annotation —— 终审 F1：注释卡导出；
+    //     V3：disclosure 族（methodology/uncertainty/decision）同链导出）
     for (const panel of chrome.panels) {
       if (panel.kind === 'statistics') {
         drawChromeStatsPanel(d, panel, { marginX, marginY: stackOffset(panel, mPanel) });
@@ -330,6 +332,8 @@ export function composeLayout(
           marginX, marginY: stackOffset(panel, mPanel),
           mapCenter, mapZoom, pxPerLogical,
         });
+      } else if (panel.kind === 'methodology' || panel.kind === 'uncertainty' || panel.kind === 'decision') {
+        drawChromeDisclosurePanel(d, panel, { marginX, marginY: stackOffset(panel, mPanel) });
       }
     }
 

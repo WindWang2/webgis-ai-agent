@@ -135,7 +135,11 @@
       "rendererSupport": [
         "interactive"
       ],
-      "exporterSupport": []
+      "exporterSupport": [
+        "png",
+        "pdf",
+        "svg"
+      ]
     },
     {
       "type": "export_layout",
@@ -254,7 +258,11 @@
       "rendererSupport": [
         "interactive"
       ],
-      "exporterSupport": []
+      "exporterSupport": [
+        "png",
+        "pdf",
+        "svg"
+      ]
     },
     {
       "type": "north_arrow",
@@ -396,7 +404,11 @@
       "rendererSupport": [
         "interactive"
       ],
-      "exporterSupport": []
+      "exporterSupport": [
+        "png",
+        "pdf",
+        "svg"
+      ]
     }
   ]
 }

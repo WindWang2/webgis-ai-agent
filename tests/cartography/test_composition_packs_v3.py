@@ -24,7 +24,9 @@ from app.services.gis_harness.component_resolver import ComponentResolver
 
 pytestmark = pytest.mark.cartography
 
-PDF_EXPORT_ONLY_TYPES = {"table_panel", "methodology_note", "uncertainty_panel", "decision_panel"}
+# V3 后仅 table_panel 仍是 interactive-only（产品决策，矩阵 note 说明）；
+# 披露族已落地 canvas 导出（drawChromeDisclosurePanel）。
+PDF_EXPORT_ONLY_TYPES = {"table_panel"}
 
 
 def test_pack_loads_and_seed_intact() -> None:

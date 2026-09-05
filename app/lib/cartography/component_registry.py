@@ -243,9 +243,9 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         type="methodology_note",
         name="Methodology Note", name_zh="方法论披露",
         # 「缺分母不能谈公平性」长在地图产品上：稳定警告码 + 文案随 live
-        # 渲染。仅 interactive（披露是工作区语义；静态导出走报告文本）。
-        placement_domain="panel", supported_outputs=["interactive"],
-        renderer_support=["interactive"], exporter_support=[],
+        # 渲染。V3：canvas 导出绘制披露卡（与矩阵 D6 升级同步）。
+        placement_domain="panel", supported_outputs=["interactive", "png", "pdf", "svg"],
+        renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
         default_variant="default", variants=["default", "compact"],
         default_position="bottom-left", allowed_positions=["bottom-left", "bottom-right", "top-left", "top-right", "none"],
         cardinality="zero_or_one", priority=46, runtime_status="native",
@@ -256,8 +256,8 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         type="uncertainty_panel",
         name="Uncertainty Panel", name_zh="不确定性面板",
         # 插值不确定性/样本限制/区间披露（VNext §5 interpolation honesty）。
-        placement_domain="panel", supported_outputs=["interactive"],
-        renderer_support=["interactive"], exporter_support=[],
+        placement_domain="panel", supported_outputs=["interactive", "png", "pdf", "svg"],
+        renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
         default_variant="default", variants=["default", "compact"],
         default_position="bottom-right", allowed_positions=["bottom-right", "bottom-left", "top-left", "top-right", "none"],
         cardinality="zero_or_one", priority=47, runtime_status="native",
@@ -269,8 +269,8 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         name="Decision Panel", name_zh="决策面板",
         # 候选排名 + 方法 + 权重来源 + 硬约束否决（VNext §12）。观测证据
         # 与用户假设可区分 —— weightSource 必须显式，不合成。
-        placement_domain="panel", supported_outputs=["interactive"],
-        renderer_support=["interactive"], exporter_support=[],
+        placement_domain="panel", supported_outputs=["interactive", "png", "pdf", "svg"],
+        renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
         default_variant="default", variants=["default", "compact"],
         # review M-F3：默认 top-left —— top-right 是 inset_map 的 168px
         # 大槽，decision 落那里必压插图（frontend layout-meta 同表）。
