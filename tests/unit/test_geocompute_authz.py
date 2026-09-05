@@ -328,13 +328,31 @@ class TestRoutesAuthz:
         assert ok.json()["state"] == "unknown"
 
     def test_foreign_session_denied(self):
+        from datetime import datetime, timezone
+
         from app.core.database import SessionLocal
-        from app.models.db_model import Conversation
+        from app.models.db_model import Conversation, User
 
         sess_id = "gc-authz-foreign-sess"
+        foreign_uid = "gc-someone-else"
         db = SessionLocal()
         try:
-            db.add(Conversation(id=sess_id, user_id="gc-someone-else"))
+            # Postgres（CI）强制 conversations.user_id → users.id 外键；
+            # sqlite（本地）不强制 —— seed 外来用户行使两个环境判定一致
+            # （与 test_data_fabric_routes 的 seed 惯例相同）。
+            if db.get(User, foreign_uid) is None:
+                db.add(User(
+                    id=foreign_uid,
+                    username="gc-foreign",
+                    email="gc-foreign@example.com",
+                    password_hash="scrypt$16384$8$1$00$00",
+                    role="editor",
+                    is_active=True,
+                    token_version=0,
+                    created_at=datetime.now(timezone.utc),
+                ))
+                db.commit()
+            db.add(Conversation(id=sess_id, user_id=foreign_uid))
             db.commit()
         finally:
             db.close()
@@ -350,6 +368,10 @@ class TestRoutesAuthz:
                 row = db.query(Conversation).filter(Conversation.id == sess_id).first()
                 if row is not None:
                     db.delete(row)
+                    db.commit()
+                urow = db.get(User, foreign_uid)
+                if urow is not None:
+                    db.delete(urow)
                     db.commit()
             finally:
                 db.close()

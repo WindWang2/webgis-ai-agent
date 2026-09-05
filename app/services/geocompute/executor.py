@@ -67,9 +67,11 @@ def owner_scope_for(
     except Exception:  # noqa: BLE001 - 身份解析失败按匿名处理（fail closed）
         uid = None
     if uid:
-        return "u:" + hashlib.sha1(uid.encode()).hexdigest()[:16]
+        return "u:" + hashlib.sha1(uid.encode(), usedforsecurity=False).hexdigest()[:16]
     if session_id:
-        return "s:" + hashlib.sha1(str(session_id).encode()).hexdigest()[:16]
+        return "s:" + hashlib.sha1(
+            str(session_id).encode(), usedforsecurity=False
+        ).hexdigest()[:16]
     return "anonymous"
 
 

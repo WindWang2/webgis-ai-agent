@@ -116,7 +116,7 @@ def run_plan_sync(
     gov = governor or GOVERNOR
     parent = "global:root"
     if session_id:
-        sid = hashlib.sha1(session_id.encode()).hexdigest()[:12]
+        sid = hashlib.sha1(session_id.encode(), usedforsecurity=False).hexdigest()[:12]
         parent = gov.ensure_scope(parent, ScopeKind.SESSION, sid)
     from app.services.geocompute.executor import engine
 
