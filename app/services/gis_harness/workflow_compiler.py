@@ -314,9 +314,9 @@ def compile_workflow(
             "secondary": list(selected.secondary_cartography)[:4],
             "template_id": plan_dump.get("template_id", ""),
             "layers": [
-                {"role": l.get("role"), "cartography": l.get("cartography"),
-                 "layer_type": l.get("layer_type")}
-                for l in (plan_dump.get("map_layers") or [])[:6]
+                {"role": layer.get("role"), "cartography": layer.get("cartography"),
+                 "layer_type": layer.get("layer_type")}
+                for layer in (plan_dump.get("map_layers") or [])[:6]
             ],
         },
     ))
@@ -339,16 +339,16 @@ def compile_workflow(
     # ── 12 produce_completion_contract ───────────────────────────────
     from app.services.gis_harness.workflow_schema import COMPLETION_DIMENSIONS
     wc = plan_dump.get("workflow_contract") or {}
-    dim_states: Dict[str, bool] = {}
+    dim_states: Dict[str, Optional[bool]] = {}
     for dim in COMPLETION_DIMENSIONS:
         if dim == "data":
             dim_states[dim] = not (wc.get("data_blockers") or [])
         elif dim == "science":
             dim_states[dim] = not (wc.get("method_blockers") or [])
         else:
-            # 规划期只声明契约与义务；执行期维度由 completion 管线在
-            # 证据到手后核验（planning 期不虚构满足）。
-            dim_states[dim] = True
+            # R1-A12：规划期只声明契约与义务；执行期维度证据未到，诚实置
+            # None（unknown）—— True 会诱导下游当作已满足。
+            dim_states[dim] = None
     compilation.completion_contract = {
         "dimensions_declared": list(COMPLETION_DIMENSIONS),
         "planning_time_states": dim_states,

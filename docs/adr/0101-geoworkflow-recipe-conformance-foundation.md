@@ -44,7 +44,7 @@ Registry + Map Product 体系已建立「LLM 理解语言、代码保证 GIS 语
    悬空 fatal 自此真正可达；MANIFEST_VERSION 保持 3（ADR-0099 锁定），
    指纹内容自然变化即触发 plan stale。
 10. **一致性语料库（C9）+ 反声明（C10）+ 场景（C11）**：47 个人工审定
-    语义族 × 确定性表述扩展 = 3,540 plan-tier 案例；反声明契约
+    语义族 × 确定性表述扩展 = 3,240 plan-tier 案例；反声明契约
     （分母/准则/受体/显著性/代理语义）；11 个 workflow 契约案例；147
     recipe 编译覆盖 sweep；7 个端到端确定性场景。
 11. **路由守卫**：seed 资历层 + V2 通用罚 + 专业关键词倒排索引 ——
@@ -65,5 +65,5 @@ Registry + Map Product 体系已建立「LLM 理解语言、代码保证 GIS 语
 
 - recipe/workflow library：17 seeds → 164（24 领域包，147 V2）
 - 全部测试绿灯：既有 816 + 新增 ~60（schema/compiler/corpus/场景）
-- 离线语料：3,540 一致性案例 + 7 反声明 + 11 契约 + 7 场景，零 LLM
+- 离线语料：3,240 一致性案例 + 7 反声明 + 11 契约 + 7 场景，零 LLM
 - 两轮独立 review 后无未修 BLOCKER / CRITICAL / MAJOR

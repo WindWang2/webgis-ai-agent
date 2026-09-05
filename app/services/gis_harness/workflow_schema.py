@@ -338,9 +338,11 @@ def validate_workflow_profile(
 
 # ── 评估（确定性；compiler 阶段 5/7 与 finalize 共用）───────────────────
 
+#: 强分母字段提示：仅这些证据能把 denominator 角色升为 bound（review R1-A11：
+#: total/count/bed 等弱提示会把分子字段误判成分母 —— 公平性红线的字段证据
+#: 必须保守；弱提示一律只走义务 warning，永不满足）。
 _DENOMINATOR_FIELD_HINTS = (
-    "population", "pop", "人口", "area", "面积", "total", "count_",
-    "household", "户数", "staff", "bed",
+    "population", "pop_", "人口", "household", "户数",
 )
 _TIME_FIELD_HINTS = ("time", "date", "year", "month", "day", "时间", "日期", "年份", "时期")
 
@@ -486,9 +488,17 @@ def evaluate_workflow_obligations(
                     "INSUFFICIENT_DATA": "blocked",
                     "INVALID_METHOD": "blocked",
                 }
+                status = status_map.get(result.verdict, "unknown")
+                # R1-A9：声明 block_method 的义务遇到「需先变换」（如角度
+                # 坐标要先投影）时，变换完成前方法同样不成立 —— 升级为
+                # blocked，让声明的阻断真正可达（否则 on_violation=
+                # block_method + REQUIRES_TRANSFORM 既不阻断也无回退）。
+                if (status == "degraded"
+                        and obl.on_violation == "block_method"):
+                    status = "blocked"
                 ev = ObligationEvaluation(
                     obligation_id=obl.obligation_id, kind=obl.kind,
-                    status=status_map.get(result.verdict, "unknown"),
+                    status=status,
                     warning_code=obl.warning_code,
                     on_violation=obl.on_violation,
                     detail=result.message,

@@ -606,6 +606,18 @@ async def _apply_tool_result_unlocked(
             plan.gis_chapter["status"] = raw["status"]
         if raw.get("recipe_id"):
             plan.gis_chapter["recipe_id"] = raw["recipe_id"]
+        # Workflow V2（Goal C / R1-A1）：finalize 期产物（契约摘要/方法论
+        # 警告/语义回退）合并进 chapter —— 完成管线 derive_product_verdict
+        # 从这里读 workflow_contract 推导七维与 BLOCKED_BY_*。缺失键保持
+        # chapter 原值（旧工具版本零漂移）；警告/回退以 finalize 为准整体
+        # 替换（finalize 证据新于 draft）。
+        if raw.get("workflow_contract") is not None:
+            plan.gis_chapter["workflow_contract"] = raw["workflow_contract"]
+        if raw.get("methodology_warnings"):
+            plan.gis_chapter["methodology_warnings"] = list(
+                raw["methodology_warnings"])[:8]
+        if raw.get("fallbacks"):
+            plan.gis_chapter["fallbacks"] = list(raw["fallbacks"])[:8]
         evidence = raw.get("map_product_evidence") or {}
         resolution = evidence.get("capability_resolution") or []
         done_caps = [

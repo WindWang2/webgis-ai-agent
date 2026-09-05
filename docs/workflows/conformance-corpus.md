@@ -7,7 +7,7 @@
 
 | 层 | 规模 | 判定内容 |
 | --- | --- | --- |
-| Conformance corpus | 3,540 plan-tier 案例（47 族 × 表述变体） | task / recipe / 核心能力 / 警告码的语义身份不变量 |
+| Conformance corpus | 3,240 plan-tier 案例（47 族 × 表述变体） | task / recipe / 核心能力 / 警告码的语义身份不变量 |
 | Anti-claim plan cases | 7 | 反声明：无分母/无准则/无受体/噪声不得出现 |
 | Workflow contract cases | 11 | 义务状态 / 角色绑定 / 语义降级 / 阻断 / verdict V2 |
 | Scenario benchmarks | 7 场景（plan+execute+contract 复合） | 代表性端到端走查 |

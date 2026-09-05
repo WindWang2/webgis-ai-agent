@@ -263,7 +263,14 @@ _TASK_RULES: List[tuple] = [
     # 网络路径（最短路径/最近设施）与可达性（服务区/等时圈）分属不同产品；
     # 词表不相交（「可达/服务区」仍归 accessibility 规则）。
     ("network_route_request",
-     re.compile(r"(最短路径|最短路线|最短距离|最近设施|最近的[\u4e00-\u9fa5]{2,8}|"
+     # R1-B2：「最近的X」必须是就近可达/分配语义（离/距…最近的 或 显式
+     # 设施名词），裸「最近的X(的)分布」仍是 distribution/simple_view 语义
+     # —— 否则日常浏览表述被静默改路由（corpus 负例锁）。
+     re.compile(r"(最短路径|最短路线|最短距离|最近设施|"
+                r"(?:离|距)[^，。?？]{1,12}的?最近的?[\u4e00-\u9fa5]{2,8}|"
+                r"最近的(?:医院|消防站|站点|设施|派出所)"
+                r"(?![^，。?？]{0,10}(?:分布|有哪些|清单|统计|构成))|"
+                r"就近分配|"
                 r"路径规划|路线规划|导航路线|配送路线|"
                 r"shortest\s+path|shortest\s+route|closest\s+facility|nearest\s+facility|"
                 r"route\s+planning|directions?\s+between)", re.I),
@@ -749,6 +756,7 @@ _HINT_PROTECTED_TASKS = (
     "spatial_autocorrelation",
     "temporal_trend",
     "sar_analysis",
+    "network_route",
 )
 
 

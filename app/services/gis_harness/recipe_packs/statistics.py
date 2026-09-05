@@ -32,7 +32,8 @@ _RECIPES: List[CartographyRecipe] = [
     CartographyRecipe(
         id="global_moran_autocorrelation",
         name="全局空间自相关（Moran's I）",
-        description="全局 Moran's I 检验：数值字段 + 空间权重选择 + 显著性披露；角度坐标直接算距离被 preconditions 拒绝。",
+        description="全局 Moran's I 检验：数值字段 + 空间权重选择 + 显著性披露；"
+                    "权重方案与距离度量（含地理坐标下的投影/反距离处理）必须披露。",
         intent_tasks=["spatial_autocorrelation", "administrative_statistic"],
         intent_cartography=["administrative_choropleth"],
         required_geometry=["Polygon", "MultiPolygon"],

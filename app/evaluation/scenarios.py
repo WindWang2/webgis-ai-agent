@@ -10,9 +10,8 @@ fixture 数据，零 LLM / 零网络）。
 """
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List
 
 from app.evaluation.anti_claim import (
     ContractCaseResult,

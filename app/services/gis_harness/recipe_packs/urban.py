@@ -10,7 +10,6 @@ from app.services.gis_harness.recipe_packs._kit import (
     denominator_role,
     fb,
     obl,
-    role,
     standard_completion,
     subject_role,
     wf,

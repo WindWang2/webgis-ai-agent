@@ -394,16 +394,15 @@ def compile_runtime_manifest(tool_registry: Optional[Any] = None) -> CompiledRun
         # 经 is_stale_plan 可感知 stale（复用既有 manifest 体系，无第二套）。
         for rid in _registry_ids(rr):
             r = rr.get(rid)
-            from app.services.gis_harness.workflow_schema import (
-                recipe_capability_ids,
-                recipe_content_fingerprint,
-            )
+            from app.services.gis_harness.workflow_schema import recipe_capability_ids
             caps = sorted(recipe_capability_ids(r))
+            # R1-B10：指纹复用 registry 的注册期缓存（单一计算点），避免
+            # 双份计算漂移（registry 原地改 recipe 时两处指纹会分叉）。
             manifest.recipes[rid] = {
                 "capabilities": caps,
                 "tasks": sorted(str(t) for t in (getattr(r, "intent_tasks", None) or [])),
                 "schema_version": int(getattr(r, "schema_version", 1) or 1),
-                "content_fingerprint": recipe_content_fingerprint(r)[:32],
+                "content_fingerprint": rr.content_fingerprint_of(rid)[:32],
                 "primary_cartography": str(getattr(r, "primary_cartography", "") or ""),
             }
             for c in caps:

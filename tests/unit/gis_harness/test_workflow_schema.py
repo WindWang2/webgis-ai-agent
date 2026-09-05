@@ -76,7 +76,6 @@ class TestDataRoleResolution:
 
 class TestObligationEvaluation:
     def _report(self, obligations, profile=None, roles=None):
-        from app.services.gis_harness.recipe_packs._kit import obl
         from app.services.gis_harness.workflow_schema import (
             WorkflowProfile,
             evaluate_workflow_obligations,
@@ -277,7 +276,6 @@ def test_pack_workflows_validate_clean(recipe_id):
     from app.services.gis_harness.recipes import get_recipe_registry
     from app.services.gis_harness.workflow_schema import validate_workflow_profile
 
-    from app.lib.cartography.model_library import get_map_model_registry
 
     caps = set(get_capability_registry().all_ids)
     arts = {a.id for a in SEED_ARTIFACT_TYPES}

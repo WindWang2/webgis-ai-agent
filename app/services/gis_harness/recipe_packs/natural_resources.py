@@ -7,7 +7,6 @@ from app.services.gis_harness.recipe_packs._kit import (
     MAP_COMPONENTS_CHART,
     MAP_COMPONENTS_STATS,
     boundary_role,
-    denominator_role,
     fb,
     obl,
     role,

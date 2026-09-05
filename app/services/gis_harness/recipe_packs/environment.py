@@ -7,8 +7,6 @@ from app.services.gis_harness.recipe_packs._kit import (
     MAP_COMPONENTS_CHART,
     MAP_COMPONENTS_CONTINUOUS,
     boundary_role,
-    fb,
-    min_points_rule,
     obl,
     point_fallback,
     role,
@@ -16,7 +14,7 @@ from app.services.gis_harness.recipe_packs._kit import (
     subject_role,
     wf,
 )
-from app.services.gis_harness.recipes import CartographyRecipe, RecipeFallback
+from app.services.gis_harness.recipes import CartographyRecipe
 
 _MONITOR_SUBJECT = subject_role(capability="poi_query",
                                 artifacts=("point_feature_set", "poi_feature_set"),

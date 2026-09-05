@@ -5,17 +5,15 @@ from typing import List
 
 from app.services.gis_harness.recipe_packs._kit import (
     MAP_COMPONENTS_CONTINUOUS,
-    boundary_role,
     fb,
     min_points_rule,
     obl,
     point_fallback,
     role,
     standard_completion,
-    subject_role,
     wf,
 )
-from app.services.gis_harness.recipes import CartographyRecipe, RecipeFallback
+from app.services.gis_harness.recipes import CartographyRecipe
 
 _NUMERIC_SUBJECT = lambda note="": role(  # noqa: E731
     "subject", capability="poi_query",
@@ -217,7 +215,7 @@ _RECIPES: List[CartographyRecipe] = [
         id="air_quality_surface",
         name="空气质量插值面",
         description="空气质量（PM2.5/PM10/AQI）站点插值：数值字段 + 时间切片义务，超标阈值分级。",
-        intent_tasks=["raster_distribution", "raster_distribution"],
+        intent_tasks=["raster_distribution"],
         intent_cartography=["raster_surface", "administrative_choropleth"],
         required_geometry=["Point", "MultiPoint"],
         eligibility=[min_points_rule("visual_heatmap")],

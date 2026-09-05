@@ -6,7 +6,7 @@
 
 - Registry 总量：**164**（V1 seeds 17 + 领域包 147）
 - 领域包：**24** 个
-- Registry 内容指纹：`e56ef460ded63040…`
+- Registry 内容指纹：`d2c638a08bd8e1f6…`
 
 ## 领域总览
 
@@ -373,8 +373,8 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 主制图：`simple_point_map`
 - 核心能力：`poi_query`, `point_profile`
 - 数据角色：`subject`*（block）（`*` = 必选）
-- 路由关键词：看看、看一下、标出来、show me
-- 内容指纹：`7b30db89753bfd41…`
+- 路由关键词：在地图上标出、地图上显示、map the、display on map
+- 内容指纹：`77ab388a882f00bd…`
 
 ### `logistics_facility_distribution` — 物流网点分布
 
@@ -396,8 +396,8 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 主制图：`categorical_thematic`；辅：`point_overlay`
 - 核心能力：`poi_query`, `category_breakdown`, `admin_boundary_query`, `admin_aggregation`
 - 数据角色：`subject`*（block）, `boundary`*（block）（`*` = 必选）
-- 路由关键词：要素清单、本底调查、有哪些、清查、台账、inventory、catalog of、asset list
-- 内容指纹：`f3b66ca4137f2ce6…`
+- 路由关键词：要素清单、本底调查、清查台账、资源台账、inventory、catalog of、asset list
+- 内容指纹：`deb30f6821dfffbd…`
 
 ### `transit_station_distribution` — 公交地铁站点分布
 
@@ -490,14 +490,14 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 
 空气质量（PM2.5/PM10/AQI）站点插值：数值字段 + 时间切片义务，超标阈值分级。
 
-- 任务族：`raster_distribution`, `raster_distribution`
+- 任务族：`raster_distribution`
 - 主制图：`raster_surface`；辅：`administrative_aggregation`
 - 核心能力：`poi_query`, `spatial_interpolation`, `point_profile`, `zonal_statistics`
 - 数据角色：`subject`*（block）（`*` = 必选）
 - 科学义务：`aqi_min_samples`（precondition → AQI_INSUFFICIENT_STATIONS）
 - 语义回退：`AQI_INSUFFICIENT_STATIONS` → station_points（degraded）
 - 路由关键词：空气质量、pm2.5、pm10、aqi、污染分布、air quality、pm25 surface、aqi map
-- 内容指纹：`f2a107d6951db5a8…`
+- 内容指纹：`10b326d8217cbcc3…`
 
 ### `env_sensitivity_zoning` — 环境敏感区划
 
@@ -673,10 +673,10 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 主制图：`proximity_overlay`；辅：`administrative_aggregation`
 - 核心能力：`raster_source`, `terrain_hydrology`, `point_profile`, `zonal_statistics`, `admin_boundary_query`
 - 数据角色：`elevation`*（block）, `reference`*（block）（`*` = 必选）
-- 科学义务：`hydro_dem_conditioned`（transformation → HYDRO_DEM_CONDITIONING_REQUIRED）；`hydro_metric_crs`（precondition → HYDRO_METRIC_CRS_REQUIRED）
+- 科学义务：`hydro_dem_band_required`（precondition → TERRAIN_DEM_BAND_REQUIRED）；`hydro_dem_conditioned`（transformation → HYDRO_DEM_CONDITIONING_REQUIRED）；`hydro_metric_crs`（precondition → HYDRO_METRIC_CRS_REQUIRED）
 - 语义回退：`HYDRO_METRIC_CRS_REQUIRED` → dem_view（degraded）; `TERRAIN_DEM_BAND_REQUIRED` → summary（not_allowed）
 - 路由关键词：出口断面、水文站流域、控制断面、pour point、pour point basin
-- 内容指纹：`9f5e63779e745941…`
+- 内容指纹：`7d18aa453c25465f…`
 
 ### `drainage_density_stats` — 排水分区密度统计
 
@@ -686,10 +686,10 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 主制图：`administrative_choropleth`；辅：`proximity_overlay`
 - 核心能力：`raster_source`, `terrain_hydrology`, `admin_boundary_query`, `admin_aggregation`, `rate_aggregation`
 - 数据角色：`elevation`*（block）, `boundary`*（block）（`*` = 必选）
-- 科学义务：`hydro_dem_conditioned`（transformation → HYDRO_DEM_CONDITIONING_REQUIRED）；`hydro_metric_crs`（precondition → HYDRO_METRIC_CRS_REQUIRED）；`drainage_density_denominator`（denominator → DRAINAGE_DENSITY_MISSING_AREA）
+- 科学义务：`hydro_dem_band_required`（precondition → TERRAIN_DEM_BAND_REQUIRED）；`hydro_dem_conditioned`（transformation → HYDRO_DEM_CONDITIONING_REQUIRED）；`hydro_metric_crs`（precondition → HYDRO_METRIC_CRS_REQUIRED）；`drainage_density_denominator`（denominator → DRAINAGE_DENSITY_MISSING_AREA）
 - 语义回退：`HYDRO_METRIC_CRS_REQUIRED` → dem_view（degraded）; `TERRAIN_DEM_BAND_REQUIRED` → summary（not_allowed）; `DATA_ROLE_MISSING_DENOMINATOR` → stream_length_stats（degraded）
 - 路由关键词：排水密度、河网密度、水系密度、drainage density
-- 内容指纹：`c0dedc965b73ded9…`
+- 内容指纹：`5a7f12319961501b…`
 
 ### `flood_extent_screening` — 淹没范围初筛
 
@@ -699,10 +699,10 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 主制图：`raster_surface`；辅：`proximity_overlay`
 - 核心能力：`raster_source`, `terrain_hydrology`, `terrain_derivatives`, `raster_reclassify`
 - 数据角色：`elevation`*（block）（`*` = 必选）
-- 科学义务：`hydro_dem_conditioned`（transformation → HYDRO_DEM_CONDITIONING_REQUIRED）；`hydro_metric_crs`（precondition → HYDRO_METRIC_CRS_REQUIRED）；`flood_not_hydrodynamic`（disclosure → FLOOD_GEOMETRIC_APPROXIMATION）
+- 科学义务：`hydro_dem_band_required`（precondition → TERRAIN_DEM_BAND_REQUIRED）；`hydro_dem_conditioned`（transformation → HYDRO_DEM_CONDITIONING_REQUIRED）；`hydro_metric_crs`（precondition → HYDRO_METRIC_CRS_REQUIRED）；`flood_not_hydrodynamic`（disclosure → FLOOD_GEOMETRIC_APPROXIMATION）
 - 语义回退：`HYDRO_METRIC_CRS_REQUIRED` → dem_view（degraded）; `TERRAIN_DEM_BAND_REQUIRED` → summary（not_allowed）
 - 路由关键词：淹没范围、洪水淹没、内涝初筛、水位推演、flood extent、inundation screening
-- 内容指纹：`fdc334dddef4df54…`
+- 内容指纹：`d6fdd2eeb3c0a25e…`
 
 ### `flow_accumulation_mapping` — 汇流累积制图
 
@@ -712,10 +712,10 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 主制图：`raster_surface`
 - 核心能力：`raster_source`, `terrain_hydrology`, `terrain_derivatives`
 - 数据角色：`elevation`*（block）（`*` = 必选）
-- 科学义务：`hydro_dem_conditioned`（transformation → HYDRO_DEM_CONDITIONING_REQUIRED）；`hydro_metric_crs`（precondition → HYDRO_METRIC_CRS_REQUIRED）
+- 科学义务：`hydro_dem_band_required`（precondition → TERRAIN_DEM_BAND_REQUIRED）；`hydro_dem_conditioned`（transformation → HYDRO_DEM_CONDITIONING_REQUIRED）；`hydro_metric_crs`（precondition → HYDRO_METRIC_CRS_REQUIRED）
 - 语义回退：`HYDRO_METRIC_CRS_REQUIRED` → dem_view（degraded）; `TERRAIN_DEM_BAND_REQUIRED` → summary（not_allowed）
 - 路由关键词：汇流累积、流累积量、径流路径、flow accumulation
-- 内容指纹：`50c5c047bfdfef10…`
+- 内容指纹：`e3ab6652212deb38…`
 
 ### `stream_network_extraction` — 河网提取
 
@@ -725,10 +725,10 @@ H3 六边形格网聚合密度：格网计数 choropleth（聚合表达，非核
 - 主制图：`proximity_overlay`；辅：`raster_surface`
 - 核心能力：`raster_source`, `terrain_hydrology`, `terrain_derivatives`
 - 数据角色：`elevation`*（block）（`*` = 必选）
-- 科学义务：`hydro_dem_conditioned`（transformation → HYDRO_DEM_CONDITIONING_REQUIRED）；`hydro_metric_crs`（precondition → HYDRO_METRIC_CRS_REQUIRED）；`stream_threshold_disclosure`（disclosure → STREAM_THRESHOLD_SENSITIVITY）
+- 科学义务：`hydro_dem_band_required`（precondition → TERRAIN_DEM_BAND_REQUIRED）；`hydro_dem_conditioned`（transformation → HYDRO_DEM_CONDITIONING_REQUIRED）；`hydro_metric_crs`（precondition → HYDRO_METRIC_CRS_REQUIRED）；`stream_threshold_disclosure`（disclosure → STREAM_THRESHOLD_SENSITIVITY）
 - 语义回退：`HYDRO_METRIC_CRS_REQUIRED` → dem_view（degraded）; `TERRAIN_DEM_BAND_REQUIRED` → summary（not_allowed）
 - 路由关键词：河网提取、水系提取、河道提取、stream extraction、river network
-- 内容指纹：`eb8c5ed82e590397…`
+- 内容指纹：`e78997f3052b7e8d…`
 
 ### `watershed_delineation_workflow` — 流域划分
 
@@ -738,10 +738,10 @@ DEM 流域划分：填洼 → 流向 → 汇流累积 → 出口点流域提取�
 - 主制图：`raster_surface`；辅：`proximity_overlay`
 - 核心能力：`raster_source`, `terrain_hydrology`, `terrain_derivatives`, `zonal_statistics`
 - 数据角色：`elevation`*（block）（`*` = 必选）
-- 科学义务：`hydro_dem_conditioned`（transformation → HYDRO_DEM_CONDITIONING_REQUIRED）；`hydro_metric_crs`（precondition → HYDRO_METRIC_CRS_REQUIRED）
+- 科学义务：`hydro_dem_band_required`（precondition → TERRAIN_DEM_BAND_REQUIRED）；`hydro_dem_conditioned`（transformation → HYDRO_DEM_CONDITIONING_REQUIRED）；`hydro_metric_crs`（precondition → HYDRO_METRIC_CRS_REQUIRED）
 - 语义回退：`HYDRO_METRIC_CRS_REQUIRED` → dem_view（degraded）; `TERRAIN_DEM_BAND_REQUIRED` → summary（not_allowed）
 - 路由关键词：流域划分、集水区、分水岭、汇水区、watershed delineation、catchment
-- 内容指纹：`b37f61b8110718d7…`
+- 内容指纹：`120f7e0069ad22d4…`
 
 ## interpolation
 
@@ -1285,10 +1285,10 @@ InSAR 地表形变筛查：干涉处理链（planned 能力诚实呈现），不
 - 主制图：`raster_surface`；辅：`point_overlay`
 - 核心能力：`raster_source`, `sar_analysis`
 - 数据角色：`subject`*（block）（`*` = 必选）
-- 科学义务：`insar_processing_chain_planned`（precondition → INSAR_STACK_INSUFFICIENT）；`insar_temporal_baseline`（temporal → INSAR_TEMPORAL_BASELINE_REQUIRED）
+- 科学义务：`insar_processing_chain_planned`（temporal → INSAR_STACK_INSUFFICIENT）；`insar_temporal_baseline`（temporal → INSAR_TEMPORAL_BASELINE_REQUIRED）
 - 语义回退：`INSAR_STACK_INSUFFICIENT` → summary（not_allowed）
 - 路由关键词：insar、形变、沉降监测、地面沉降、干涉、insar、deformation mapping、subsidence
-- 内容指纹：`d0e41e8f14050bd9…`
+- 内容指纹：`aed9d99ed1c8e0a3…`
 
 ### `sar_backscatter_overview` — SAR 后向散射概览
 
@@ -1483,7 +1483,7 @@ Gi* 统计显著性热点/冷点图：只有检验条件满足才出显著结论
 
 ### `global_moran_autocorrelation` — 全局空间自相关（Moran's I）
 
-全局 Moran's I 检验：数值字段 + 空间权重选择 + 显著性披露；角度坐标直接算距离被 preconditions 拒绝。
+全局 Moran's I 检验：数值字段 + 空间权重选择 + 显著性披露；权重方案与距离度量（含地理坐标下的投影/反距离处理）必须披露。
 
 - 任务族：`spatial_autocorrelation`, `administrative_statistic`
 - 主制图：`administrative_choropleth`；辅：`hotspot_overlay`
@@ -1492,7 +1492,7 @@ Gi* 统计显著性热点/冷点图：只有检验条件满足才出显著结论
 - 科学义务：`autocorr_numeric_field`（precondition → AUTOCORR_NUMERIC_FIELD_REQUIRED）；`autocorr_min_units`（precondition → AUTOCORR_INSUFFICIENT_UNITS）；`autocorr_multiple_testing_note`（disclosure → AUTOCORR_MULTIPLE_TESTING）
 - 语义回退：`AUTOCORR_INSUFFICIENT_UNITS` → descriptive_summary（degraded）
 - 路由关键词：全局自相关、莫兰指数、moran、空间自相关、global moran、spatial autocorrelation
-- 内容指纹：`afccafcf5cc9b1a8…`
+- 内容指纹：`bb4c94db9c6f8ba8…`
 
 ### `local_moran_lisa` — 局部自相关聚类图（LISA）
 

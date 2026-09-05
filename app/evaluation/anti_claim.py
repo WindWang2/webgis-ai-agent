@@ -150,8 +150,12 @@ def build_workflow_contract_cases() -> List[WorkflowContractCase]:
         WorkflowContractCase(
             "WC-kriging-angle-crs", "kriging_interpolation_workflow",
             "用克里金插值生成浓度表面", profile=_PROFILE_NUMERIC_FEW,
-            expect_obligation_status={"kriging_projected_crs": "degraded"},
+            # R1-A9：block_method 义务遇到 REQUIRES_TRANSFORM（角度坐标需先
+            # 投影）升级为 blocked —— 变换前方法不成立，声明的阻断可达。
+            expect_obligation_status={"kriging_projected_crs": "blocked"},
+            expect_method_blockers=("kriging_projected_crs",),
             expect_warning_codes=["KRIGING_PROJECTED_CRS_REQUIRED"],
+            expect_verdict="BLOCKED_BY_METHOD",
         ),
         WorkflowContractCase(
             "WC-kriging-ok", "kriging_interpolation_workflow",
@@ -233,7 +237,6 @@ def run_workflow_contract_case(case: WorkflowContractCase) -> ContractCaseResult
     compilation = compile_workflow(
         case.query, recipe_id=case.recipe_id, profile=case.profile,
     )
-    stages = {s.stage: s for s in compilation.stages}
     if len(compilation.stages) != 12:
         failures.append(f"stages: expected 12, got {len(compilation.stages)}")
 

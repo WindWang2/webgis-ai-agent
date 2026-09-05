@@ -269,7 +269,7 @@ _RECIPES: List[CartographyRecipe] = [
         schema_version=2,
         workflow=wf(
             "distribution", "inventory_catalog",
-            zh=["要素清单", "本底调查", "有哪些", "清查", "台账"],
+            zh=["要素清单", "本底调查", "清查台账", "资源台账"],
             en=["inventory", "catalog of", "asset list"],
             roles=[subject_role(), boundary_role()],
             completion=standard_completion(),
@@ -323,8 +323,8 @@ _RECIPES: List[CartographyRecipe] = [
         schema_version=2,
         workflow=wf(
             "distribution", "simple_view",
-            zh=["看看", "看一下", "标出来"],
-            en=["show me"],
+            zh=["在地图上标出", "地图上显示"],
+            en=["map the", "display on map"],
             roles=[subject_role()],
             completion=standard_completion(),
         ),

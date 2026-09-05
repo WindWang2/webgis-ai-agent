@@ -114,10 +114,15 @@ _RECIPES: List[CartographyRecipe] = [
             en=["insar", "deformation mapping", "subsidence"],
             roles=[_SAR_SUBJECT],
             obligations=[
-                obl("insar_processing_chain_planned", "precondition",
-                    precondition="raster_band_required:2",
+                # R1-A8：干涉测量的门槛是「景数」（时间栈基数），不是单景
+                # 波段数 —— 双极化单景（VV+VH = 2 band）不构成干涉对。用
+                # min_temporal_observations:2 表达 ≥2 景（同一 precondition
+                # 引擎，语义 = 场景级时间观测数）。
+                obl("insar_processing_chain_planned", "temporal",
+                    precondition="min_temporal_observations:2",
                     code="INSAR_STACK_INSUFFICIENT",
-                    desc="干涉测量需要双景及以上 SLC 栈；单景禁止形变结论。",
+                    desc="干涉测量需要双景及以上 SLC 栈（≥2 景时间观测）；"
+                         "双极化单景不构成干涉对，禁止形变结论。",
                     action="block_method"),
                 obl("insar_temporal_baseline", "temporal",
                     code="INSAR_TEMPORAL_BASELINE_REQUIRED",

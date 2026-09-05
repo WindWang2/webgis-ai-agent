@@ -8,7 +8,6 @@ from __future__ import annotations
 from typing import List
 
 from app.services.gis_harness.recipe_packs._kit import (
-    MAP_COMPONENTS_BASE,
     MAP_COMPONENTS_CHART,
     MAP_COMPONENTS_CONTINUOUS,
     boundary_role,

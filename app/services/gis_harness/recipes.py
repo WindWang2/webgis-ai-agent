@@ -699,6 +699,7 @@ class RecipeRegistry:
         # O(命中数)，避免每 turn O(all recipes × all keywords) 重扫）。
         self._by_domain: Dict[str, List[CartographyRecipe]] = {}
         self._keyword_index: Dict[str, List[CartographyRecipe]] = {}
+        self._ascii_keywords: set = set()
         self._content_fps: Dict[str, str] = {}
 
     def load_builtins(self) -> None:
@@ -706,18 +707,32 @@ class RecipeRegistry:
         self._by_task.clear()
         self._by_domain.clear()
         self._keyword_index.clear()
+        self._ascii_keywords.clear()
         self._content_fps.clear()
         for recipe in SEED_RECIPES:
             self.register(recipe)
         # V2 领域包（Goal C / C2）：seed 之外的专业工作流知识库。注册顺序
         # 决定性（包内按声明序、包间按模块名序），重复 id 仍按 keep-first
         # ——seed 优先，包之间先注册者胜（确定性问题可由 parity 测试锁定）。
-        try:
-            from app.services.gis_harness.recipe_packs import iter_recipe_packs
-            for recipe in iter_recipe_packs():
-                self.register(recipe)
-        except Exception as e:  # noqa: BLE001 - 包缺失退化为 seed-only（留痕）
-            logger.error("recipe packs 加载失败，退化为 seed-only：%s", e)
+        # R1-B3：逐模块加载并 fail-loud —— 此前整段一个 except，包 #13 崩溃
+        # 会静默留下 1-12 的半量知识库继续服役。语义知识库不完整必须启动期
+        # 显性失败，不得退化服役。
+        import importlib
+
+        from app.services.gis_harness.recipe_packs import PACK_MODULES, _BASE
+        failed_modules: List[str] = []
+        for module_name in PACK_MODULES:
+            try:
+                module = importlib.import_module(_BASE + module_name)
+                for recipe in getattr(module, "RECIPES", []):
+                    self.register(recipe)
+            except Exception as e:  # noqa: BLE001 - 收集后统一 fail loud
+                failed_modules.append(f"{module_name}: {e}")
+        if failed_modules:
+            raise RuntimeError(
+                "recipe packs 加载失败（知识库不完整，拒绝退化服役）："
+                + "; ".join(failed_modules)
+            )
 
     def register(self, recipe: CartographyRecipe) -> None:
         if recipe.id in self._by_id:
@@ -735,6 +750,11 @@ class RecipeRegistry:
                 key = kw.strip().lower()
                 if key:
                     self._keyword_index.setdefault(key, []).append(recipe)
+                    if key.isascii() and key.isalnum():
+                        # R1-A5/B1：纯 ASCII 词必须整词命中（"sar" 不得命中
+                        # "caesar salad"；与 intent.py 的 lookaround 方案同一
+                        # 红线）。非 ASCII（中文）词保持子串语义。
+                        self._ascii_keywords.add(key)
         from app.services.gis_harness.workflow_schema import recipe_content_fingerprint
         self._content_fps[recipe.id] = recipe_content_fingerprint(recipe)
 
@@ -791,6 +811,31 @@ class RecipeRegistry:
         )
         return hashlib.sha256(payload.encode("utf-8"), usedforsecurity=False).hexdigest()
 
+    def _keyword_matches(self, keyword: str, lowered_query: str) -> bool:
+        """关键词命中判定：中文子串；纯 ASCII 词整词（字母数字边缘判定，
+        R1-A5/B1：「sar」不得命中「caesar salad」，与 intent.py 的
+        lookaround 方案同一红线）。"""
+        if keyword not in self._ascii_keywords:
+            return keyword in lowered_query
+        # 词缘只看 ASCII 字母数字（与 intent.py 的 (?<![a-zA-Z]) 方案一致）：
+        # 汉字邻接不算词内（「看看sar」应命中），ASCII 字母邻接才算词内
+        # （「caesar」不命中 sar）。
+        ascii_alnum = "abcdefghijklmnopqrstuvwxyz0123456789"
+        hits = 0
+        start = lowered_query.find(keyword)
+        while start != -1:
+            end = start + len(keyword)
+            before = lowered_query[start - 1] if start > 0 else " "
+            after = lowered_query[end] if end < len(lowered_query) else " "
+            if before not in ascii_alnum and after not in ascii_alnum:
+                hits += 1
+            start = lowered_query.find(keyword, start + 1)
+        return hits > 0
+
+    def content_fingerprint_of(self, recipe_id: str) -> str:
+        """单 recipe 内容指纹（registry 缓存；runtime manifest 投影复用）。"""
+        return self._content_fps.get(recipe_id, "")
+
     def keyword_hits(self, query: str) -> List[CartographyRecipe]:
         """query 命中的专业关键词 recipe（去重，命中关键词多者优先）。
 
@@ -802,7 +847,7 @@ class RecipeRegistry:
         hit_count: Dict[int, int] = {}
         hit_recipes: Dict[int, CartographyRecipe] = {}
         for kw, recipes in self._keyword_index.items():
-            if kw in low:
+            if self._keyword_matches(kw, low):
                 for recipe in recipes:
                     hit_count.setdefault(recipe.id, 0)
                     hit_count[recipe.id] += 1
@@ -859,7 +904,7 @@ class RecipeRegistry:
         if query:
             low = query.lower()
             for kw, recipes in self._keyword_index.items():
-                if kw in low:
+                if self._keyword_matches(kw, low):
                     for recipe in recipes:
                         keyword_scores[recipe.id] = keyword_scores.get(recipe.id, 0) + 1
         # V1 seed 服务的任务集合：V2 recipe 与 V1 seed 竞争「同一通用任务」

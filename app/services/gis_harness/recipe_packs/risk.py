@@ -14,7 +14,6 @@ from app.services.gis_harness.recipe_packs._kit import (
     obl,
     role,
     standard_completion,
-    subject_role,
     wf,
 )
 from app.services.gis_harness.recipes import CartographyRecipe, RecipeFallback

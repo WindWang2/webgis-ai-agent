@@ -4,7 +4,6 @@ from __future__ import annotations
 from typing import List
 
 from app.services.gis_harness.recipe_packs._kit import (
-    boundary_role,
     fb,
     min_points_rule,
     obl,

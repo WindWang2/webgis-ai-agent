@@ -564,6 +564,42 @@ class MapProductPlanner:
         except Exception:  # noqa: BLE001 — 披露是增值，绝不阻断规划
             pass
 
+        # Workflow V2（Goal C / R1-A4）：专业关键词命中、但被 seed 资历守卫
+        # 压制的 V2 recipe，其科学义务的**披露面**必须随胜出 plan 下行 ——
+        # 「显著性热点」即便路由到描述性产品族，检验条件义务（数值字段/
+        # 空间单元下限）也不得丢失。有界（≤2 recipe × ≤4 警告）、去重、
+        # 纯披露（不改路由、不加能力 —— 路由语义仍由 seed 资历守卫锁定）。
+        try:
+            overlay_recipes = [
+                r for r in self.recipes.keyword_hits(intent.query)
+                if r.id != plan.recipe_id and r.workflow is not None
+            ][:2]
+            existing_codes = {
+                str(w.get("code")) for w in plan.methodology_warnings if w.get("code")
+            }
+            for overlay in overlay_recipes:
+                # 无 profile 时义务评估恒 PASS（unknown ≠ unsatisfied），
+                # 因此 overlay 直接下发**声明义务的披露面**（义务的存在
+                # 本身就是披露），不经过评估 —— 有界 ≤4/recipe。
+                for obl_decl in overlay.workflow.obligations[:4]:
+                    code = obl_decl.warning_code or (
+                        f"OBLIGATION_{obl_decl.obligation_id.upper()}_UNMET")
+                    if not code or code in existing_codes:
+                        continue
+                    plan.methodology_warnings.append({
+                        "pattern": "workflow_obligation_overlay",
+                        "code": code,
+                        "warning_codes": [code],
+                        "obligation_id": obl_decl.obligation_id,
+                        "on_violation": obl_decl.on_violation,
+                        "disclosures": [obl_decl.description] if obl_decl.description else [],
+                        "stage": "routing_overlay",
+                        "overlay_from": overlay.id,
+                    })
+                    existing_codes.add(code)
+        except Exception:  # noqa: BLE001 — 披露是增值，绝不阻断规划
+            pass
+
         if memo_key is not None:
             # 存入即深拷贝：调用方持有返回对象并可变（plan1.data_requirements=[]
             # 不得污染 memo 基底）。
@@ -987,8 +1023,23 @@ class MapProductPlanner:
                 resolve_data_roles,
             )
 
+            # R1-A3：角色绑定用**真实计划行**证据 —— 数据行已落（available/
+            # done 且带 bound_ref）才把对应角色升为 bound；capability_hint
+            # 存在 ≠ 数据在场。data_blockers 因此在生产路径可达。
+            bound_refs: Dict[str, str] = {}
+            role_by_cap = {
+                req.capability_hint: req.role
+                for req in wf_profile.data_roles if req.capability_hint
+            }
+            for row in plan.data_requirements:
+                role_name = role_by_cap.get(row.capability)
+                if (role_name and row.status in ("available", "done")
+                        and row.bound_ref):
+                    bound_refs[role_name] = row.bound_ref
+
             role_resolutions = resolve_data_roles(
                 recipe.id, wf_profile, resolver_profile=profile,
+                bound_refs=bound_refs,
             )
             contract = evaluate_workflow_obligations(
                 recipe.id, wf_profile,
@@ -1034,6 +1085,13 @@ class MapProductPlanner:
                     ))
             for reason_code, from_el, to_el, evidence in triggered[:8]:
                 policy = declared.get(reason_code)
+                # R1-A14：未声明策略的回退也必须带用户可见披露 —— 兜底取
+                # 同码义务/角色警告的 detail，绝不落空字符串（「绝不静默」）。
+                warning_detail = next(
+                    (w["disclosures"][0] for w in contract.warnings
+                     if w.get("code") == reason_code and w.get("disclosures")),
+                    "",
+                )
                 plan.fallbacks.append(FallbackDecision(
                     from_element=from_el,
                     to_element=(policy.to_element if policy else to_el),
@@ -1043,15 +1101,11 @@ class MapProductPlanner:
                         "downgrade_class": policy.downgrade_class if policy else "degraded",
                         "disclosure": (
                             (policy.disclosure if policy else "")
-                            or next(
-                                (w for w in contract.warnings
-                                 if w.get("code") == reason_code and w.get("disclosures")),
-                                {},
-                            ).get("disclosures", [""])[0]
+                            or warning_detail
                         ),
                     },
                     downgrade_class=policy.downgrade_class if policy else "degraded",
-                    disclosure=(policy.disclosure if policy else ""),
+                    disclosure=(policy.disclosure if policy else "") or warning_detail,
                 ))
 
             return {

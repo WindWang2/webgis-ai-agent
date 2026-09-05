@@ -16,6 +16,12 @@ from app.services.gis_harness.recipe_packs._kit import (
 from app.services.gis_harness.recipes import CartographyRecipe, RecipeFallback
 
 HYDRO_OBLIGATIONS = [
+    # R1-A10：与回退策略 TERRAIN_DEM_BAND_REQUIRED（not_allowed）配套的
+    # 硬门槛 —— 无有效 DEM 时水文分析必须阻断（此前策略声明了却无义务触发）。
+    obl("hydro_dem_band_required", "precondition",
+        precondition="raster_band_required:1",
+        code="TERRAIN_DEM_BAND_REQUIRED",
+        desc="水文衍生需要单波段 DEM 输入。", action="block_method"),
     obl("hydro_dem_conditioned", "transformation",
         code="HYDRO_DEM_CONDITIONING_REQUIRED",
         desc="流向计算前需要 DEM 填洼（conditioning）；未填洼结果不得用于流域划分。",

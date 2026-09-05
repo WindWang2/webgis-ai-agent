@@ -138,16 +138,29 @@ def evaluate_completion_contract(
         str(o.get("warning_code")) for o in obligations
         if o.get("warning_code") and o.get("status") in ("warning", "degraded", "blocked")
     }
+    # R1-A2：not_allowed 语义降级（声明 blocks_completion 的工作流回退）
+    # 是 science 维的硬违反 —— 触发证据在章节 fallbacks 的
+    # evidence.downgrade_class == "not_allowed"。
+    blocking_fallbacks = [
+        str(fb.get("reason_code") or "")
+        for fb in chapter.get("fallbacks") or []
+        if isinstance(fb, dict)
+        and (fb.get("evidence") or {}).get("downgrade_class") == "not_allowed"
+    ]
 
     # ── 七维推导（缺证据的维度诚实置 False）──────────────────────────
     data_ok = not data_blockers and not any(
         f.code in _DATA_BLOCK_CODES for f in errors)
     analysis_ok = not any(f.code == F_NEEDS_EXECUTION for f in errors) \
         and result.status != STATUS_PENDING
-    science_ok = not method_blockers and not any(
-        str(o.get("status")) == "blocked"
-        and str(o.get("on_violation")) == "block_method"
-        for o in obligations)
+    science_ok = (
+        not method_blockers
+        and not blocking_fallbacks
+        and not any(
+            str(o.get("status")) == "blocked"
+            and str(o.get("on_violation")) == "block_method"
+            for o in obligations)
+    )
     cartography_ok = (
         result.layer_status == "valid" and result.component_status == "valid"
         and not any(f.code in (F_LAYER_MISSING, F_NO_RESULT_LAYER, F_COMPONENT_MISSING)
@@ -172,6 +185,7 @@ def evaluate_completion_contract(
         "dimensions": dimensions,
         "method_blockers": method_blockers[:8],
         "data_blockers": data_blockers[:8],
+        "blocking_fallbacks": blocking_fallbacks[:8],
         "workflow_present": bool(wf_contract),
     }
 
@@ -226,9 +240,11 @@ def derive_product_verdict(
         if contract["data_blockers"]:
             verdict = VERDICT_BLOCKED_BY_DATA
             reasons = sorted(set(contract["data_blockers"]))[:6]
-        elif contract["method_blockers"]:
+        elif contract["method_blockers"] or contract["blocking_fallbacks"]:
             verdict = VERDICT_BLOCKED_BY_METHOD
-            reasons = sorted(set(contract["method_blockers"]))[:6]
+            reasons = sorted(
+                set(contract["method_blockers"]) | set(contract["blocking_fallbacks"])
+            )[:6]
 
     return {
         "verdict": verdict,

@@ -11,7 +11,6 @@ from __future__ import annotations
 from typing import Iterable, List, Optional
 
 from app.services.gis_harness.recipes import (
-    CartographyRecipe,
     EligibilityRule,
     RecipeFallback,
 )

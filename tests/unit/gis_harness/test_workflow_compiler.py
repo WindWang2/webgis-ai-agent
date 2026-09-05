@@ -10,7 +10,6 @@
 """
 from __future__ import annotations
 
-import pytest
 
 from app.services.gis_harness.workflow_compiler import (
     COMPILER_STAGES,
@@ -92,7 +91,6 @@ class TestCompilerRouting:
 class TestVerdictV2:
     def _result(self, status="complete", findings=(), render_status="verified"):
         from app.services.gis_harness.completion.contracts import (
-            MapCompletionFinding,
             MapCompletionResult,
         )
 

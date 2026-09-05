@@ -6,7 +6,6 @@ from typing import List
 from app.services.gis_harness.recipe_packs._kit import (
     MAP_COMPONENTS_BASE,
     MAP_COMPONENTS_CHART,
-    boundary_role,
     fb,
     obl,
     role,

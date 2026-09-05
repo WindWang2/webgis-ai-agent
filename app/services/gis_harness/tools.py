@@ -1045,6 +1045,11 @@ def register_gis_harness_tools(registry: ToolRegistry):
             "fallbacks": _fallback_dicts,
             "eligibility": plan.eligibility,
             "completeness": plan.completeness,
+            # Workflow V2（Goal C / R1-A1）：finalize 期契约摘要与方法论警告
+            # 必须随工具结果上行 —— SessionPlan chapter 合并后，完成管线的
+            # verdict V2（七维 + BLOCKED_BY_*）在生产路径才真正可达。
+            "workflow_contract": plan.workflow_contract,
+            "methodology_warnings": list(plan.methodology_warnings)[:8],
             "guidance": product_guidance[:10],
             "intent": {"task": intent.task, "scope": intent.scope.name,
                        "subject": intent.subject.category},
