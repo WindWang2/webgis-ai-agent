@@ -479,9 +479,28 @@ def _op_raster_window_operation(ctx: OperatorContext, node: "ExecutionNode", pay
             resampling=str(params.get("resampling", "bilinear")),
         )
         out_path = str(result["output_path"])
+    elif op == "windowed_band_index":
+        # ADR-0101 D9（§20）：光谱指数窗口化执行进入 Data Plane 算子层
+        # （科学公式 truth 仍在 rs/band_math；这里只接线执行底座）。
+        from app.lib.geo_analysis.raster_windowed import windowed_band_index
+
+        index_type = str(params.get("index_type", ""))
+        band_map = params.get("band_map") or {}
+        if not index_type or not band_map:
+            raise NodeExecutionError(
+                "windowed_band_index requires parameters.index_type and band_map",
+                node_id=node.node_id,
+            )
+        result = windowed_band_index(
+            str(raster_path), index_type,
+            band_map={str(k): int(v) for k, v in band_map.items()},
+            out_path=params.get("out_path"),
+        )
+        out_path = str(result.get("output_path"))
     else:
         raise UnsupportedOperationError(
-            f"raster_window_operation '{op}' is not wired; wired: raster_calculator|resample",
+            f"raster_window_operation '{op}' is not wired; wired: "
+            "raster_calculator|resample|windowed_band_index",
             details={"node_id": node.node_id, "operation": str(op)},
         )
     import os as _os
