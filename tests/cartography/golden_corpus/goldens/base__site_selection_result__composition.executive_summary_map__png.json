@@ -1,0 +1,126 @@
+{
+ "digest": {
+  "case": "base::site_selection_result::composition.executive_summary_map::png",
+  "components": [
+   {
+    "id": "title",
+    "layerId": "",
+    "position": "top-center",
+    "priority": 10,
+    "templateId": "title/presentation",
+    "title": "site_selection_result 专题图",
+    "type": "title",
+    "variant": "presentation"
+   },
+   {
+    "id": "subtitle",
+    "layerId": "",
+    "position": "top-center",
+    "priority": 11,
+    "templateId": "subtitle/default",
+    "title": "",
+    "type": "subtitle",
+    "variant": "default"
+   },
+   {
+    "id": "legend-main",
+    "layerId": "layer-primary",
+    "position": "bottom-left",
+    "priority": 16,
+    "templateId": "legend/compact",
+    "title": "",
+    "type": "legend",
+    "variant": "compact"
+   },
+   {
+    "id": "scale-bar",
+    "layerId": "",
+    "position": "bottom-right",
+    "priority": 20,
+    "templateId": "scale-bar/minimal",
+    "title": "",
+    "type": "scale_bar",
+    "variant": "minimal"
+   },
+   {
+    "id": "north-arrow",
+    "layerId": "",
+    "position": "top-right",
+    "priority": 30,
+    "templateId": "north-arrow/minimal-black",
+    "title": "",
+    "type": "north_arrow",
+    "variant": "compass_minimal_black"
+   },
+   {
+    "id": "attribution",
+    "layerId": "",
+    "position": "bottom-left",
+    "priority": 50,
+    "templateId": "attribution/compact",
+    "title": "",
+    "type": "attribution",
+    "variant": "compact"
+   }
+  ],
+  "kind": "base",
+  "layout": {
+   "conflicts": [],
+   "moved": [
+    "subtitle"
+   ],
+   "placements": {
+    "attribution": "bottom-left",
+    "legend-main": "bottom-left",
+    "north-arrow": "top-right",
+    "scale-bar": "bottom-right",
+    "subtitle": "top-left",
+    "title": "top-center"
+   },
+   "reasons": {
+    "subtitle": "fallback_zone"
+   },
+   "suppressed": [],
+   "warning_count": 0
+  },
+  "model": "site_selection_result",
+  "output": "png",
+  "profile": "viewport",
+  "selection": {
+   "component_templates": {
+    "attribution": "attribution/compact",
+    "legend": "legend/compact",
+    "north_arrow": "north-arrow/minimal-black",
+    "scale_bar": "scale-bar/minimal",
+    "subtitle": "subtitle/default",
+    "title": "title/presentation"
+   },
+   "composition_template_id": "composition.executive_summary_map",
+   "reason_codes": [],
+   "rejected_count": 1,
+   "required_slots": [
+    "attribution",
+    "scale_bar",
+    "title"
+   ],
+   "selected": [
+    "attribution",
+    "legend",
+    "north_arrow",
+    "scale_bar",
+    "subtitle",
+    "title"
+   ]
+  },
+  "template": "composition.executive_summary_map",
+  "validation": {
+   "error_codes": [],
+   "ok": true,
+   "warning_codes": [
+    "recommended_slot_missing",
+    "zone_collision"
+   ]
+  }
+ },
+ "sha": "c769d75ae8864ace"
+}

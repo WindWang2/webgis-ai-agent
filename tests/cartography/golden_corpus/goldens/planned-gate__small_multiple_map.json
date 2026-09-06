@@ -45,6 +45,7 @@
   ],
   "kind": "planned-gate",
   "layout": {
+   "conflicts": [],
    "moved": [],
    "placements": {
     "attribution": "bottom-left",
@@ -52,6 +53,7 @@
     "scale-bar": "bottom-right",
     "title": "top-center"
    },
+   "reasons": {},
    "suppressed": [],
    "warning_count": 0
   },
@@ -88,5 +90,5 @@
    "warning_codes": []
   }
  },
- "sha": "61927f80c75816e5"
+ "sha": "28376a4392004ff1"
 }

@@ -13,6 +13,16 @@
     "variant": "presentation"
    },
    {
+    "id": "legend-main",
+    "layerId": "layer-primary",
+    "position": "bottom-left",
+    "priority": 16,
+    "templateId": "legend/compact",
+    "title": "",
+    "type": "legend",
+    "variant": "compact"
+   },
+   {
     "id": "scale-bar",
     "layerId": "",
     "position": "bottom-right",
@@ -45,13 +55,16 @@
   ],
   "kind": "base",
   "layout": {
+   "conflicts": [],
    "moved": [],
    "placements": {
     "attribution": "bottom-left",
+    "legend-main": "bottom-left",
     "north-arrow": "top-right",
     "scale-bar": "bottom-right",
     "title": "top-center"
    },
+   "reasons": {},
    "suppressed": [],
    "warning_count": 0
   },
@@ -61,13 +74,14 @@
   "selection": {
    "component_templates": {
     "attribution": "attribution/default",
+    "legend": "legend/compact",
     "north_arrow": "north-arrow/minimal-black",
     "scale_bar": "scale-bar/minimal",
     "title": "title/presentation"
    },
    "composition_template_id": "composition.presentation_map",
    "reason_codes": [],
-   "rejected_count": 1,
+   "rejected_count": 0,
    "required_slots": [
     "attribution",
     "scale_bar",
@@ -75,6 +89,7 @@
    ],
    "selected": [
     "attribution",
+    "legend",
     "north_arrow",
     "scale_bar",
     "title"
@@ -87,5 +102,5 @@
    "warning_codes": []
   }
  },
- "sha": "64c58bf6dff3477e"
+ "sha": "610144829ba7b41d"
 }

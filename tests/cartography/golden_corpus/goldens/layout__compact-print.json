@@ -1,0 +1,42 @@
+{
+ "digest": {
+  "case": "layout::compact-print",
+  "components": [],
+  "kind": "layout",
+  "layout": {
+   "compact": true,
+   "conflicts": [],
+   "has_fallback_plan": true,
+   "moved": [],
+   "placements": {
+    "chart": "top-left",
+    "legend": "bottom-left"
+   },
+   "reasons": {},
+   "suppressed": [
+    "stats"
+   ],
+   "warning_count": 1
+  },
+  "model": "administrative_choropleth",
+  "output": "interactive",
+  "profile": "a4_portrait",
+  "selection": {
+   "component_templates": {},
+   "composition_template_id": "",
+   "reason_codes": [
+    "scenario_case"
+   ],
+   "rejected_count": 0,
+   "required_slots": [],
+   "selected": []
+  },
+  "template": "",
+  "validation": {
+   "error_codes": [],
+   "ok": true,
+   "warning_codes": []
+  }
+ },
+ "sha": "1e2063a8aa42f8d3"
+}

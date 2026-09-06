@@ -13,6 +13,16 @@
     "variant": "academic"
    },
    {
+    "id": "legend-categorical",
+    "layerId": "layer-primary",
+    "position": "bottom-left",
+    "priority": 17,
+    "templateId": "categorical-legend/academic",
+    "title": "",
+    "type": "categorical_legend",
+    "variant": "academic"
+   },
+   {
     "id": "scale-bar",
     "layerId": "",
     "position": "bottom-right",
@@ -45,13 +55,16 @@
   ],
   "kind": "base",
   "layout": {
+   "conflicts": [],
    "moved": [],
    "placements": {
     "attribution": "bottom-left",
+    "legend-categorical": "bottom-left",
     "north-arrow": "top-right",
     "scale-bar": "bottom-right",
     "title": "top-center"
    },
+   "reasons": {},
    "suppressed": [],
    "warning_count": 0
   },
@@ -61,19 +74,21 @@
   "selection": {
    "component_templates": {
     "attribution": "attribution/default",
+    "categorical_legend": "categorical-legend/academic",
     "north_arrow": "north-arrow/minimal-black",
     "scale_bar": "scale-bar/minimal",
     "title": "title/academic"
    },
    "composition_template_id": "composition.minimal_interactive",
    "reason_codes": [],
-   "rejected_count": 3,
+   "rejected_count": 2,
    "required_slots": [
     "attribution",
     "scale_bar"
    ],
    "selected": [
     "attribution",
+    "categorical_legend",
     "north_arrow",
     "scale_bar",
     "title"
@@ -86,5 +101,5 @@
    "warning_codes": []
   }
  },
- "sha": "f3008aaf3f283eda"
+ "sha": "7b256c652479308b"
 }

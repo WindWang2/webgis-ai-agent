@@ -1,0 +1,46 @@
+{
+ "digest": {
+  "case": "labels::shield-line",
+  "components": [],
+  "kind": "labels",
+  "labels": {
+   "placed": [],
+   "stats": {
+    "callout": 0,
+    "candidates": 1,
+    "placed": 0,
+    "suppressed": 1,
+    "total": 1
+   },
+   "suppressed": []
+  },
+  "layout": {
+   "conflicts": [],
+   "moved": [],
+   "placements": {},
+   "reasons": {},
+   "suppressed": [],
+   "warning_count": 0
+  },
+  "model": "administrative_choropleth",
+  "output": "interactive",
+  "profile": "viewport",
+  "selection": {
+   "component_templates": {},
+   "composition_template_id": "",
+   "reason_codes": [
+    "scenario_case"
+   ],
+   "rejected_count": 0,
+   "required_slots": [],
+   "selected": []
+  },
+  "template": "",
+  "validation": {
+   "error_codes": [],
+   "ok": true,
+   "warning_codes": []
+  }
+ },
+ "sha": "06cbf6cd0e15ff02"
+}
