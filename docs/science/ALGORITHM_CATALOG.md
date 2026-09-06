@@ -48,7 +48,7 @@ x 与 W·y 的空间共变（Wartenberg 1985；共位相关非因果）。
 
 - **`stats.bivariate_moran`** 双变量 Moran's I（x vs W·y）（`native`·成熟度 已验证，契约: `bivariate_moran_analysis`，出处: `wartenberg1985`, `moran1950`）
   - 假设：I=(n/S0)·Σ x_i(Wy)_i/(‖x-x̄‖·‖y-ȳ‖)，行标准化权重；x=y 时与单变量 Moran 严格一致（属性测试钉住）；置换只打乱 y（固定种子 42，双侧 (count+1)/(perms+1)）
-  - 局限：共位相关 ≠ 因果/超前-滞后；方向解读需领域模型支撑；x 与 y 量纲无关（分子分母同除范数），但受离群值影响
+  - 局限：共位相关 ≠ 因果/超前-滞后；方向解读需领域模型支撑；x 与 y 量纲无关（分子分母同除范数），但受离群值影响；与 esda 归一化对齐仅在无 island 权重时成立（S0=n）；含 island 发散 n/S0
 
 ## `category_breakdown` — 类别构成统计
 

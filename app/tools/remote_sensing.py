@@ -594,6 +594,14 @@ def register_rs_tools(registry: ToolRegistry):
                 "sar.radiometric_calibration", int(arr.size))],
         )
 
+    def _bounded_sample(arr, max_side: int = 64, decimals: int = 4):
+        """64×64 步进抽样（与 terrain 工具同约定），把平面载荷钉到有界。"""
+        step = max(1, int(np.ceil(max(
+            arr.shape[0] / max_side, arr.shape[1] / max_side, 1.0))))
+        sub = arr[::step, ::step]
+        return [[None if not np.isfinite(v) else round(float(v), decimals)
+                 for v in row] for row in sub]
+
     @tool(registry, name="sar_glcm_texture",
           description=(
               "GLCM 窗口纹理特征（Haralick 1973）：contrast/dissimilarity/homogeneity/"
@@ -643,14 +651,18 @@ def register_rs_tools(registry: ToolRegistry):
             arr, window=int(params["window"]), levels=int(params["levels"]),
             directions=params["directions"],
             properties=params["properties"], nodata=nodata_value)
+        # 多属性 × 全幅 .tolist() 最坏可达 ~9× 单幅载荷上限（评审 R3
+        # MINOR-2）—— 属性平面只回 64×64 有界抽样，全幅统计照常返回；
+        # 全幅栅格走栅格工件路径。
         prop_payload = {}
         prop_stats = {}
         for name, plane in res["properties"].items():
             finite = np.isfinite(plane)
-            prop_payload[name] = plane.round(6).tolist()
+            prop_payload[name] = _bounded_sample(plane.astype(float))
             prop_stats[name] = {
                 "min": float(np.nanmin(plane)) if finite.any() else None,
                 "max": float(np.nanmax(plane)) if finite.any() else None,
+                "mean": float(np.nanmean(plane)) if finite.any() else None,
                 "valid_pixels": int(np.sum(finite)),
             }
         payload = {
@@ -659,7 +671,7 @@ def register_rs_tools(registry: ToolRegistry):
             "levels": res["levels"],
             "directions_used": res["directions_used"],
             "quantiles": [round(q, 6) for q in res["quantiles"]],
-            "properties": prop_payload,
+            "properties_sampled": prop_payload,
             "property_stats": prop_stats,
             "disclosure": res["meta"]["disclosure"],
         }

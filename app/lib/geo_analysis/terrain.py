@@ -1782,26 +1782,29 @@ GEOMORPHON_CLASSES: Tuple[str, ...] = (
 
 
 def _geomorphon_class(dn: np.ndarray, up: np.ndarray) -> np.ndarray:
-    """(最长 -1 环长, 最长 +1 环长) → 10 类编码（1..10；0 = 未定）。
+    """(最长 −1 环长, 最长 +1 环长) → 10 类编码（1..10）。
 
-    决策表（文档化优先级级联；Jasiewicz & Stepinski 2013 图 3 的角度
-    分档 —— 凸形 = 周边更低（−1 环主导），凹形 = 周边更高（+1 环主导），
-    slope = 双向 135°-225° 环（3-5 腿）并存）：
+    规范决策表（Jasiewicz & Stepinski 2013 图 3 / GRASS r.geomorphon
+    同款级联；评审 R2 MAJOR-3 对齐）：
 
         dn == 8 → summit(2)；up == 8 → depression(10)；
         dn ≥ 6 → ridge(3)；up ≥ 6 → valley(9)；
-        dn ≥ 3 且 up ≥ 3 → slope(6)；
-        dn ≥ 3 → shoulder(4)；up ≥ 3 → hollow(7)；
-        dn ≥ 1 → spur(5)；up ≥ 1 → footslope(8)；否则 flat(1)。
+        dn ≥ 3 且 up ≥ 3 → slope(6)（双侧 135°-225° 环并存）；
+        dn == 5 → shoulder(4)；up == 5 → footslope(8)；
+        dn ∈ {3,4} → spur(5)；up ∈ {3,4} → hollow(7)；否则 flat(1)。
+
+    级联顺序（低优先级先写、后写覆盖）：hollow → spur → footslope →
+    shoulder → slope → valley → ridge → depression → summit；带内界由
+    ``dn≥6``/``up≥6`` 分支先行截住（dn+up ≤ 8，dn≥6 ⇒ up≤2，反之亦然）。
     """
     out = np.full(dn.shape, 1, dtype=np.int8)          # flat（兜底）
-    out = np.where(up >= 1, 8, out)                    # footslope
-    out = np.where(dn >= 1, 5, out)                    # spur
-    out = np.where(up >= 3, 7, out)                    # hollow
-    out = np.where(dn >= 3, 4, out)                    # shoulder
+    out = np.where(up >= 3, 7, out)                    # hollow (up 3..4)
+    out = np.where(dn >= 3, 5, out)                    # spur (dn 3..4)
+    out = np.where(up >= 5, 8, out)                    # footslope (up == 5)
+    out = np.where(dn >= 5, 4, out)                    # shoulder (dn == 5)
     out = np.where((dn >= 3) & (up >= 3), 6, out)      # slope（双 135°-225° 环）
-    out = np.where(up >= 6, 9, out)                    # valley
-    out = np.where(dn >= 6, 3, out)                    # ridge
+    out = np.where(up >= 6, 9, out)                    # valley (up 6..7)
+    out = np.where(dn >= 6, 3, out)                    # ridge (dn 6..7)
     out = np.where(up == 8, 10, out)                   # depression
     out = np.where(dn == 8, 2, out)                    # summit
     return out.astype(np.int8)
@@ -1937,8 +1940,9 @@ def geomorphons(
         class_codes={str(i + 1): name for i, name in enumerate(GEOMORPHON_CLASSES)},
         class_distribution=distribution,
         decision_table=(
-            "dn==8 summit; up==8 depression; dn>=6 ridge; up>=6 valley; dn>=4&up>=4 "
-            "slope; dn>=3 shoulder; up>=3 hollow; dn>=1 spur; up>=1 footslope; else flat"),
+            "dn==8 summit; up==8 depression; dn>=6 ridge; up>=6 valley; dn>=3&up>=3 "
+            "slope; dn==5 shoulder; up==5 footslope; dn 3-4 spur; up 3-4 hollow; "
+            "else flat (Jasiewicz-Stepinski 2013 / GRASS r.geomorphon canonical)"),
         unsampled_leg_policy="legs with no valid in-grid sample count as 0 (flat) — disclosed corner degradation",
         edge_policy=EDGE_POLICY,
     )

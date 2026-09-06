@@ -291,7 +291,11 @@ def anisotropy_transform(angle_deg: float, ratio: float) -> np.ndarray:
         raise KrigingInputError(f"anisotropy_angle 必须是有限角度（度），got {angle_deg!r}")
     t = math.radians(angle_f)
     c, s = math.cos(t), math.sin(t)
-    rot = np.array([[c, -s], [s, c]], dtype=float)
+    # R(−θ)：把主轴方向的位移先旋回 +x，再沿 y 拉伸 ratio —— 这样
+    # |A·u_major| = 1（长轴变程 α 不变）、|A·u_minor| = ratio（短轴
+    # 变程 α/ratio）。用 R(+θ) 会把主轴映到 2θ，非正交角下完全翻转
+    # 椭圆朝向（评审 R2 CRITICAL-1）。
+    rot = np.array([[c, s], [-s, c]], dtype=float)
     return np.array([[1.0, 0.0], [0.0, ratio_f]], dtype=float) @ rot
 
 

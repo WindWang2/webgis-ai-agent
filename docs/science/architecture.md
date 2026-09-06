@@ -147,6 +147,15 @@ p-center、重力/Huff、中心性）、地形水文（填洼、D∞、流长、
 tasseled-cap、时序 CV/稳健分位/合成）。数量与状态以 `ALGORITHM_CATALOG.md`
 生成投影为准。
 
+## crs_class 语义分层说明（Foundation V2）
+
+历史空间统计描述符（`stats.morans_i`/`stats.gearys_c`）声明
+`GEOGRAPHIC_OK`（运行时自动 UTM 投影后度量正确，故接受度输入）；Foundation
+V2 的新统计族（local geary/join count/bivariate moran/geodetector/回归族）
+统一声明 `PROJECTED_REQUIRED`（resolver 对度输入硬门 + 重投影建议）。两代
+语义并存是有意的从严分层：旧描述符行为不回改（回归兼容），新算法一律从严；
+后续如统一旧描述符，属独立迁移决策（附 migration 说明）。
+
 ## 已知限制（Foundation V2 补充，诚实清单）
 
 - G/F/J 为无边缘校正的原始估计（矩形窗 reduced-sample 未实现），显著性

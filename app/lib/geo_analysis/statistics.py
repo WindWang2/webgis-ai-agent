@@ -1849,15 +1849,30 @@ def join_count_narrated(
         den2 = n * (n - 1.0)
         den4 = den2 * (n - 2.0) * (n - 3.0)
         p = num2 / den2
-        q = num4 / den4
         expected = joins * p
-        var = joins * p * (1.0 - p) + 2.0 * joins * (joins - 1.0) * (q - p * p)
-        var = max(var, 0.0)
-        z_stat = (observed - expected) / np.sqrt(var) if var > 0 else 0.0
+        # 经典 free-sampling 二阶矩在稀少类别（m<4 → num4=0）或高聚集
+        # 下可能为负 —— 经典式把所有 join 对当端点不相交，漏掉共享顶点
+        # 的交叉矩。负方差钳零并报 p=1 是**伪造的「无证据」答案**
+        # （评审 R2 MAJOR-2）：这里改为类型化拒绝解析推断，要求置换。
+        var = joins * p * (1.0 - p) + 2.0 * joins * (joins - 1.0) * (
+            num4 / den4 - p * p)
+        if var <= 0.0:
+            # 经典式漏共享顶点交叉矩，稀少类别（m<4 → num4=0）下可为负；
+            # 钳零并报 p=1 是伪造的「无证据」答案（评审 R2 MAJOR-2）。
+            # 诚实降级：计数/期望照常返回，解析 z/p 显式不可用（None），
+            # 置换推断（permutations>0）不受影响。
+            return {
+                "observed": float(observed), "expected": float(expected),
+                "variance": None, "z": None, "p_value": None,
+                "analytic_note": (
+                    "free-sampling 方差非正（类别过稀 m<4 或分布极端）——"
+                    "解析 z/p 不可用，请用 permutations 置换推断"),
+            }
+        z_stat = (observed - expected) / np.sqrt(var)
         return {
             "observed": float(observed), "expected": float(expected),
             "variance": float(var), "z": float(z_stat),
-            "p_value": float(2.0 * norm.sf(abs(z_stat))) if var > 0 else 1.0,
+            "p_value": float(2.0 * norm.sf(abs(z_stat))),
         }
 
     stats_bb = _free_sampling(n_bb, black * (black - 1.0),
@@ -1893,11 +1908,26 @@ def join_count_narrated(
             "permutations": perms,
         }
 
+    _analytic_ok = all(s["p_value"] is not None
+                       for s in (stats_bb, stats_bw, stats_ww))
     pattern = "random"
-    if max(stats_bw["p_value"], 0.0) < 0.05 and stats_bw["z"] > 0:
-        pattern = "negative_spatial_autocorrelation"
-    elif max(stats_bb["p_value"], stats_ww["p_value"]) < 0.05:
-        pattern = "positive_spatial_autocorrelation"
+    if _analytic_ok:
+        if max(stats_bw["p_value"], 0.0) < 0.05 and stats_bw["z"] > 0:
+            pattern = "negative_spatial_autocorrelation"
+        elif max(stats_bb["p_value"], stats_ww["p_value"]) < 0.05:
+            pattern = "positive_spatial_autocorrelation"
+    elif perm_p is not None:
+        # 解析方差简并（free-sampling 二阶矩的已知局限）→ 用置换 p 分类：
+        # 置换本是零假设分布的金标准（评审 R2 MAJOR-2 修复路径）。
+        if (perm_p["n_bw"] < 0.05
+                and n_bw > stats_bw["expected"]):
+            pattern = "negative_spatial_autocorrelation"
+        elif max(perm_p["n_bb"], perm_p["n_ww"]) < 0.05:
+            pattern = "positive_spatial_autocorrelation"
+        else:
+            pattern = "random"
+    else:
+        pattern = "analytic_inference_unavailable"  # 无置换则拒绝判别
 
     data_out = {
         "n_features": n,
@@ -1920,7 +1950,7 @@ def join_count_narrated(
                 target="join_count_bw",
                 statistic_name="n_BW join count (free sampling z-test)",
                 statistic_value=n_bw,
-                p_value=stats_bw["p_value"],
+                p_value=stats_bw["p_value"] if stats_bw["p_value"] is not None else 1.0,
                 method="analytic_normal",
                 alternative="two-sided",
             ).to_evidence(),
@@ -1928,24 +1958,35 @@ def join_count_narrated(
                 target="join_count_bb",
                 statistic_name="n_BB join count (free sampling z-test)",
                 statistic_value=n_bb,
-                p_value=stats_bb["p_value"],
+                p_value=stats_bb["p_value"] if stats_bb["p_value"] is not None else 1.0,
                 method="analytic_normal",
                 alternative="two-sided",
             ).to_evidence(),
         ],
     }
+    if stats_bw.get("analytic_note") or stats_bb.get("analytic_note"):
+        data_out["analytic_notes"] = [
+            s["analytic_note"] for s in (stats_bb, stats_bw, stats_ww)
+            if s.get("analytic_note")]
     if perm_p is not None:
         data_out["p_value_permutation"] = perm_p
 
+    def _fmt_p(s: dict) -> str:
+        return f"p={s['p_value']:.4f}" if s["p_value"] is not None else "p=不可用"
+
     summary = (
         f"Join Count（{wm.scheme}，{joins:.0f} 个无序连接，B={black:.0f}/W={white:.0f}）："
-        f"n_BB={n_bb:.0f}（期望 {stats_bb['expected']:.1f}，p={stats_bb['p_value']:.4f}）、"
-        f"n_BW={n_bw:.0f}（期望 {stats_bw['expected']:.1f}，p={stats_bw['p_value']:.4f}）、"
-        f"n_WW={n_ww:.0f}（期望 {stats_ww['expected']:.1f}，p={stats_ww['p_value']:.4f}）。")
+        f"n_BB={n_bb:.0f}（期望 {stats_bb['expected']:.1f}，{_fmt_p(stats_bb)}）、"
+        f"n_BW={n_bw:.0f}（期望 {stats_bw['expected']:.1f}，{_fmt_p(stats_bw)}）、"
+        f"n_WW={n_ww:.0f}（期望 {stats_ww['expected']:.1f}，{_fmt_p(stats_ww)}）。")
     if pattern == "negative_spatial_autocorrelation":
         summary += " 异类连接显著偏高 —— 同类不相邻（棋盘式负关联）。"
     elif pattern == "positive_spatial_autocorrelation":
         summary += " 同类连接显著偏高 —— 同类聚集（正关联）。"
+    elif pattern == "analytic_inference_unavailable":
+        summary += " 解析推断不可用（free-sampling 方差非正）—— 用 permutations 置换推断。"
+    if not _analytic_ok and perm_p is not None:
+        summary += "（解析方差简并，判别基于置换检验）"
     else:
         summary += " 与 free-sampling 零假设无显著差异。"
     return GeoAnalysisResult(True, data_out, summary)

@@ -280,7 +280,9 @@ def _ols_core(y: np.ndarray, x_mat: np.ndarray) -> Dict:
     p_vals = 2.0 * sps.t.sf(np.abs(t_stats), df=dof)
     # 高斯似然（σ² 用 n 除，与 ML/空间模型可比）：
     sigma2_ml = sse / n
-    log_lik = -0.5 * n * (np.log(2.0 * np.pi) + np.log(sigma2_ml))
+    # 含 +1 项（与 GWR 的 AIC 同约定；缺项会让 OLS 与 GWR 的 AIC
+    # 相差整整 n，评审 R2 MAJOR-1）
+    log_lik = -0.5 * n * (np.log(2.0 * np.pi) + np.log(sigma2_ml) + 1.0)
     aic = -2.0 * log_lik + 2.0 * (p + 1)  # +1 计 σ²
     f_stat = float("nan")
     f_p = float("nan")
@@ -495,7 +497,7 @@ def _ml_lag_fit(
         ld = _log_jacobian(rho, kappa)
         if not np.isfinite(ld):
             return float("inf")
-        ll = -0.5 * n * (np.log(2.0 * np.pi) + np.log(sse / n)) + ld
+        ll = -0.5 * n * (np.log(2.0 * np.pi) + np.log(sse / n) + 1.0) + ld
         return -ll
 
     lo, hi = _feasible_interval(kappa)
@@ -535,7 +537,7 @@ def _ml_error_fit(
         ld = _log_jacobian(lam, kappa)
         if not np.isfinite(ld):
             return float("inf")
-        ll = -0.5 * n * (np.log(2.0 * np.pi) + np.log(sse / n)) + ld
+        ll = -0.5 * n * (np.log(2.0 * np.pi) + np.log(sse / n) + 1.0) + ld
         return -ll
 
     lo, hi = _feasible_interval(kappa)
@@ -981,7 +983,8 @@ def _gwr_local_fit(
     """逐观测 bisquare-kNN 局地 WLS。
 
     返回 (betas[n×p], fitted[n], sse_global, tr_S)。``leave_self_out=True``
-    用于带宽 CV（LOO 预测：邻域剔除自身，带宽计数不含自身）。
+    用于带宽 CV（LOO 预测剔除自身；带宽 k = 含自身的邻域点数，两条路径
+    取相同数量的其他邻居，核尺度一致）。
     局部奇异系统抛 ``IllConditionedSystem``（如实报，不静默 pinv 吞掉）。
     """
     from scipy.spatial import cKDTree
@@ -989,7 +992,10 @@ def _gwr_local_fit(
     n, p = x_mat.shape
     k = int(bandwidth)
     tree = cKDTree(coords)
-    take = k if leave_self_out else max(k - 1, 1)
+    # 语义统一（评审 R2 MINOR-3）：带宽 k = 含自身的邻域点数。终拟合 =
+    # (k−1) 个其他点 + 自身；带宽 CV 的 LOO 预测剔除自身后仍取 (k−1) 个
+    # 邻居 —— 两条路径的 bisquare 核尺度（d_max 分位）完全一致。
+    take = max(k - 1, 1)
     take = min(take, n - 1)
     query_k = min(k + 1, n)
     # cKDTree.query 返回 (distances, indices) —— 顺序别反。

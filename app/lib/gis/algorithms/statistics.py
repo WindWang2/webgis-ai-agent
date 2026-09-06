@@ -352,6 +352,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             limitations=[
                 "共位相关 ≠ 因果/超前-滞后；方向解读需领域模型支撑",
                 "x 与 y 量纲无关（分子分母同除范数），但受离群值影响",
+                "与 esda 归一化对齐仅在无 island 权重时成立（S0=n）；含 island 发散 n/S0",
             ],
             crs_class="PROJECTED_REQUIRED",
             scientific_preconditions=[
@@ -522,6 +523,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             scientific_status="VALIDATED",
             conformance_tests=[
                 "tests/unit/lib/test_spatial_regression_v2.py::test_sem_ml_recovers_lambda",
+                "tests/unit/lib/test_spatial_regression_v2.py::test_sar_ml_scale_guard_and_degenerate_inputs",
             ],
             fallback_algorithms=["spatial.ols_regression"],
             fallback_semantics={"spatial.ols_regression": "approximation"},

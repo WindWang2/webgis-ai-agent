@@ -35,7 +35,13 @@ _RATIONALE_MAX = 160
 
 @dataclass(frozen=True)
 class ScaleProfile:
-    """触发 backend 选择的规模画像（全部可缺省 —— 缺省按 unknown 处理）。"""
+    """触发 backend 选择的规模画像（全部可缺省 —— 缺省按 unknown 处理）。
+
+    ``raster_cells`` 目前是**保留字段**：变体规模窗口只按
+    ``feature_count`` 匹配（与 BackendVariant.min/max_features 的语义
+    一致）；栅格类调用方应把像元规模折算进 feature_count 或直接以
+    feature_count 传入。未消费前不参与任何判定（评审 R1 MINOR-3）。
+    """
 
     feature_count: Optional[int] = None
     raster_cells: Optional[int] = None

@@ -168,7 +168,8 @@ def pca_bands(
         "scores_preview_rows": preview_rows,
         "streaming": "none（本迭代无流式实现；规模守卫先拒绝）",
         "disclosure": (
-            "SVD 全量实现（确定性）；公共有效掩膜（任一波段无效 → 整行"
+            "SVD 全量实现（确定性）；载荷/分量的代数符号依 LAPACK 约定"
+            "（同一构建内稳定，跨构建可能整体翻转）；公共有效掩膜（任一波段无效 → 整行"
             "剔除，非 pairwise-complete）；explained_variance 为样本方差"
             "（ddof=1）；得分预览行数有界（全量得分不在证据内）"),
     }

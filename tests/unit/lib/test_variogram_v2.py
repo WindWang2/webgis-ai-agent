@@ -250,6 +250,26 @@ def test_anisotropy_invalid_ratio_rejected():
         anisotropy_transform(0.0, 0.5)
 
 
+def test_anisotropy_axis_lengths_golden():
+    """评审 R2 CRITICAL-1 锁：主轴映长 1、垂直主轴映长 ratio（不可翻转）。
+
+    R(−θ) 约定：沿声明主轴 (cosθ, sinθ) 的位移映射后长度 = d（变程 α），
+    垂直方向 = d·ratio（变程 α/ratio）。R(+θ) 会把主轴映到 2θ —— 在
+    θ=45° 时主/短轴完全互换，属科学错误，这里按轴向长度精确钉死。
+    """
+    angle, ratio = 30.0, 3.0
+    A = anisotropy_transform(angle, ratio)
+    t = np.deg2rad(angle)
+    u_major = np.array([np.cos(t), np.sin(t)])
+    u_minor = np.array([-np.sin(t), np.cos(t)])
+    assert np.isclose(np.linalg.norm(A @ u_major), 1.0, atol=1e-12)
+    assert np.isclose(np.linalg.norm(A @ u_minor), ratio, atol=1e-12)
+    # 45° 是最易翻转朝向的情形（R(+θ) 下主轴长度 = ratio）
+    A45 = anisotropy_transform(45.0, ratio)
+    u = np.array([np.cos(np.pi / 4), np.sin(np.pi / 4)])
+    assert np.isclose(np.linalg.norm(A45 @ u), 1.0, atol=1e-12)
+
+
 # ── explicit solve backend (A7 wiring) ──────────────────────────────────────
 
 def test_solve_backends_identical_on_well_conditioned_data():
