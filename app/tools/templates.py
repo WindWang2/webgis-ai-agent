@@ -171,6 +171,14 @@ def register_template_tools(registry: ToolRegistry):
             "\nkind 可选值：basemap (底图), symbology (符号化), layout (版式), thematic (专题图)。"
         ),
         args_model=ListTemplatesArgs,
+        side_effect="pure",
+        deterministic=False,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        tags=("模板", "template", "样式画廊", "查找", "底图模板", "版式", "专题模板"),
+        output_semantic_type="list",
+        result_size_policy="bounded",
     )
     def list_templates(
         kind: Optional[str] = None, q: Optional[str] = None, limit: int = 20
@@ -241,6 +249,18 @@ def register_template_tools(registry: ToolRegistry):
             "\n内部自动按 kind 分发：symbology→样式注入；basemap→底图切换；layout→版式导出；thematic→专题图映射。"
         ),
         args_model=ApplyTemplateArgs,
+        side_effect="state_mutation",
+        deterministic=False,
+        latency_class="medium",
+        memory_class="medium",
+        scale_class="medium",
+        tags=("套用模板", "一键成图", "样式预设", "专题模板", "底图切换", "版式"),
+        output_semantic_type="text",
+        result_size_policy="ref_offload",
+        required_context=("map_state", "cartography_state"),
+        map_mutations=("add_layer", "style_layer", "theme", "map_product"),
+        data_mutations=("session_state",),
+        failure_modes=("invalid_args", "missing_data"),
     )
     async def apply_template(
         template_id: str,
@@ -615,6 +635,18 @@ def register_template_tools(registry: ToolRegistry):
             "模块化组合地图主题工具。支持通过自由组合 5 大正交组件槽位（basemap 底图件, symbology 符号件, thematic 配色件, layout 版式件, viewport 视口件）或快捷组合预设名称一键合成为目标地图。"
         ),
         args_model=CombineMapThemeArgs,
+        side_effect="state_mutation",
+        deterministic=False,
+        latency_class="medium",
+        memory_class="medium",
+        scale_class="medium",
+        tags=("组合", "主题合成", "预设", "组件槽位", "一键成图", "mapspec"),
+        output_semantic_type="map_product",
+        result_size_policy="inline_small",
+        required_context=("map_state", "cartography_state"),
+        map_mutations=("add_layer", "style_layer", "theme", "camera", "map_product"),
+        data_mutations=("session_state",),
+        failure_modes=("invalid_args", "missing_data"),
     )
     async def _combine_map_theme_tool(
         preset: str = "",
@@ -648,6 +680,18 @@ def register_template_tools(registry: ToolRegistry):
             "规范化地图组件组合工具 (Canonical alias for combine_map_theme)。合成 5 大地图正交组件槽位为 MapSpec。"
         ),
         args_model=CombineMapThemeArgs,
+        side_effect="state_mutation",
+        deterministic=False,
+        latency_class="medium",
+        memory_class="medium",
+        scale_class="medium",
+        tags=("组合", "map combine", "规范化组合", "组件槽位", "mapspec"),
+        output_semantic_type="map_product",
+        result_size_policy="inline_small",
+        required_context=("map_state", "cartography_state"),
+        map_mutations=("add_layer", "style_layer", "theme", "camera", "map_product"),
+        data_mutations=("session_state",),
+        failure_modes=("invalid_args", "missing_data"),
     )
     async def _webgis_map_combine_tool(
         preset: str = "",

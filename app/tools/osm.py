@@ -215,6 +215,16 @@ def register_osm_tools(registry: ToolRegistry):
                "\n关键约束：area 必须能被本地行政区或 Nominatim 解析；POI 类别基于 OSM amenity/shop/leisure tag。"
            ),
            tier=2, domains=["osm"],
+           side_effect="cacheable_read",
+           network=True,
+           deterministic=False,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=["poi", "兴趣点", "osm", "overpass", "设施查询", "区域检索"],
+           output_semantic_type="geojson_fc",
+           result_size_policy="bounded",
+           failure_modes=["network_error", "rate_limit", "empty_result"],
            args_model=QueryOsmPoiArgs)
     async def query_osm_poi(area: str, category: str = "restaurant", limit: int = 50) -> dict:
         from app.services.local_first import try_local_osm_poi
@@ -379,6 +389,16 @@ def register_osm_tools(registry: ToolRegistry):
                "\n关键约束：road_type 是 OSM highway tag 值，常见: motorway/primary/secondary/tertiary/residential/footway。"
            ),
            tier=2, domains=["osm"],
+           side_effect="cacheable_read",
+           network=True,
+           deterministic=False,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=["道路", "路网", "osm", "highway", "交通", "路网密度", "road network"],
+           output_semantic_type="geojson_fc",
+           result_size_policy="bounded",
+           failure_modes=["network_error", "rate_limit", "empty_result"],
            param_descriptions={
                "area": "区域名称，如 '成都' '海淀区'。会先地理编码取 bbox",
                "road_type": "OSM highway tag 值。常用 primary(主干) / secondary(次干) / residential(支路)",
@@ -425,6 +445,16 @@ def register_osm_tools(registry: ToolRegistry):
                "\n关键约束：大城市中心 (如北京三环内) 一次拉可能 10k+ 要素，建议先缩小 area。"
            ),
            tier=2, domains=["osm"],
+           side_effect="cacheable_read",
+           network=True,
+           deterministic=False,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="large",
+           tags=["建筑", "building", "轮廓", "osm", "建筑密度", "容积率", "城市肌理"],
+           output_semantic_type="geojson_fc",
+           result_size_policy="bounded",
+           failure_modes=["network_error", "rate_limit", "empty_result"],
            param_descriptions={
                "area": "区域名称（街道/小区/POI 级精度更好），如 '成都春熙路'。会被地理编码为 bbox",
                "limit": "返回上限，默认 100。Overpass 服务器对超量请求会拒绝",
@@ -462,10 +492,22 @@ def register_osm_tools(registry: ToolRegistry):
                "\n关键约束：admin_level 是 OSM 体系（4=省级/state, 6=市级/prefecture, 8=区/county, 10=街道）；不同国家约定不同。"
            ),
            tier=2, domains=["osm"],
+           side_effect="cacheable_read",
+           network=True,
+           deterministic=False,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="large",
+           tags=["行政边界", "boundary", "osm", "admin_level", "行政区轮廓", "边界"],
+           output_semantic_type="geojson_fc",
+           result_size_policy="bounded",
+           failure_modes=["network_error", "rate_limit"],
+           fallback_tool="get_local_admin_boundary",
            param_descriptions={
                "name": "行政区名称，需与 OSM 数据一致。如 '海淀区' '成都市' 'California'",
                "admin_level": "OSM admin_level，中国常用 4(省) / 6(市) / 8(区县)。默认 8",
-           })
+           },
+           capabilities=["admin_boundary_query"])
     async def query_osm_boundary(name: str, admin_level: int = 8) -> dict:
         from app.services.local_first import try_local_osm_boundary
 

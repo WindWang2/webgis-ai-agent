@@ -40,7 +40,18 @@ def register_upload_tools(registry: ToolRegistry):
 
     @tool(registry,
           tier=2, domains=["dataset"], name="list_uploaded_data",
-          description="列出当前会话中用户上传的 GIS 数据文件列表。返回文件名、类型、格式、要素数量等摘要信息。")
+          description="列出当前会话中用户上传的 GIS 数据文件列表。返回文件名、类型、格式、要素数量等摘要信息。",
+          side_effect="pure",
+          network=False,
+          deterministic=False,
+          latency_class="fast",
+          memory_class="light",
+          scale_class="small",
+          tags=["上传", "数据列表", "uploads", "会话数据", "文件"],
+          output_semantic_type="list",
+          result_size_policy="bounded",
+          failure_modes=["empty_result"],
+          )
     def list_uploaded_data(session_id: Optional[str] = None) -> dict:
         """列出上传数据"""
         session_id = _resolve_session_id(session_id)
@@ -90,7 +101,19 @@ def register_upload_tools(registry: ToolRegistry):
           description="获取某个上传数据文件的详细信息，包括坐标范围、属性字段等。可用于分析用户上传的数据概况。",
           param_descriptions={
               "upload_id": "上传记录的 ID（从 list_uploaded_data 获取）"
-          })
+          },
+          side_effect="pure",
+          network=False,
+          deterministic=True,
+          latency_class="fast",
+          memory_class="light",
+          scale_class="small",
+          tags=["上传", "详情", "属性字段", "坐标范围", "元数据", "upload info"],
+          output_semantic_type="text",
+          result_size_policy="inline_small",
+          required_context=["uploaded_data"],
+          failure_modes=["missing_data"],
+          )
     def get_upload_info(upload_id: int, session_id: Optional[str] = None) -> dict:
         """获取上传数据详情"""
         session_id = _resolve_session_id(session_id)

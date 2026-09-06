@@ -36,7 +36,7 @@ from pydantic import BaseModel
 
 from app.utils.sse import sse_event, sse_event_type
 from app.services.chat.pi_event_mapper import map_event_to_sse, _extract_text_from_event
-from app.services.chat.pi_native_surface import resolve_pi_tool_call
+from app.services.chat.pi_native_surface import NATIVE_TOOL_NAME_SET, resolve_pi_tool_call
 from app.services.jobs.cancellation import CancellationToken, OperationCancelled, use_token
 from app.services.tool_dispatch_service import ToolDispatchService, normalize_tool_name
 from app.lib.harness.tool_call_event import ToolCallEvent
@@ -445,9 +445,21 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
     if not session_id:
         raise PiRpcError("Pi tool callback has no verified turn session")
 
-    # Unknown bare names reject with discover guidance — the extension only
-    # sends the 7 natives + webgis_execute, so no legitimate call crosses this.
-    resolved = resolve_pi_tool_call(tool_name, arguments, allow_passthrough=False)
+    # Unknown bare names reject with discover guidance. ADR-0103: names on the
+    # dynamic registered surface (spawn dump == extension registration) dispatch
+    # straight through the shared pipeline — same tier/confirm gates. The
+    # classification set is the *registered surface* (model-visible, non-tier-3),
+    # not the full registry: hidden/tier-3 names stay proxy-only or rejected,
+    # matching the extension's registration reality.
+    try:
+        from app.services.chat.pi_native_surface import registered_surface_names
+
+        _registered = set(registered_surface_names(registry)) | NATIVE_TOOL_NAME_SET
+    except Exception:  # noqa: BLE001 — 分类退化为冻结面行为
+        _registered = None
+    resolved = resolve_pi_tool_call(
+        tool_name, arguments, allow_passthrough=False, registered_surface=_registered
+    )
     if resolved.kind == "reject":
         return PiToolResponse(
             toolCallId=request.toolCallId,
@@ -881,6 +893,42 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
 
     details_payload = _slim_pi_details_payload(result)
 
+    # ADR-0103（§十）：证据链 TOOL_CALLS / ARGUMENTS / TOOL_RESULTS /
+    # MAP_MUTATIONS 阶段（有活跃 turn 才记；记录绝不阻断工具返回）。
+    try:
+        from app.lib.runtime.gis_trace import Stage, record_stage
+
+        _chain_turn, _chain_run, _chain_sid = active_turn_correlation(session_id)
+        if _chain_turn:
+            record_stage(_chain_turn, Stage.TOOL_CALLS, tool=tool_name,
+                         call_id=request.toolCallId or "")
+            record_stage(_chain_turn, Stage.ARGUMENTS, tool=tool_name,
+                         args=str(arguments)[:_RECORD_ARGS_BOUND])
+            record_stage(_chain_turn, Stage.TOOL_RESULTS, tool=tool_name,
+                         status=result.status,
+                         latency_ms=int((time.monotonic() - t0) * 1000))
+            if result.map_actions:
+                record_stage(_chain_turn, Stage.MAP_MUTATIONS, tool=tool_name,
+                             actions=[ma.get("action_id", "") for ma in result.map_actions[:8]],
+                             commands=[ma.get("command", "") for ma in result.map_actions[:8]])
+    except Exception:  # noqa: BLE001
+        logger.debug("[PiBridge] gis trace record failed", exc_info=True)
+
+    # ADR-0103（§九）：GIS-aware 无进展诊断 —— 每次真实 dispatch 后观测
+    # mapspec 指纹与 SessionPlan 进度代数；达到停滞阈值时把 reason codes
+    # 以 no_progress_hints 附进 details（模型可读的诚实诊断），并由调用方
+    # 决策切换 fallback/repair。诊断绝不改变工具结果本身。
+    try:
+        _hints = await _record_gis_progress(
+            session_id, tool_name, arguments,
+            outcome=("ok" if result.status == "ok" else "error"),
+        )
+        if _hints:
+            details_payload = dict(details_payload or {})
+            details_payload["no_progress_hints"] = _hints
+    except Exception:  # noqa: BLE001 — 诊断绝不阻断工具返回
+        logger.debug("[PiBridge] gis progress diagnose failed", exc_info=True)
+
     return PiToolResponse(
         toolCallId=request.toolCallId,
         content=[{"type": "text", "text": result.llm_payload}],
@@ -891,6 +939,98 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
 
 # 每个 session 的已执行工具集合，供重复调用拦截（service 接受外部 set）。
 _session_executed_sets: dict[str, set[tuple[str, str]]] = {}
+
+# ADR-0103：per-session GIS 无进展诊断器（有界；只存代数与签名，无内容）。
+_gis_progress_trackers: dict[str, "GisProgressTracker"] = {}
+_GIS_TRACKER_MAX_SESSIONS = 64
+
+_SIDE_EFFECT_MUTATION = {"state_mutation", "external_side_effect", "destructive", "artifact_creation"}
+_SIDE_EFFECT_READ = {"pure", "deterministic_compute", "cacheable_read"}
+
+#: 证据链参数记录的字节上限（脱脂由 bound_meta 兜底，这里先钳原始长度）
+_RECORD_ARGS_BOUND = 512
+
+
+def _stable_state_epoch(map_epoch: str, workflow_epoch: str) -> int:
+    """(map, workflow) 双维指纹 → 稳定 int 状态代（确定性；跨进程可复现）。"""
+    import hashlib as _h
+
+    return int(_h.sha256(f"{map_epoch}|{workflow_epoch}".encode("utf-8")).hexdigest()[:8], 16)
+
+
+async def _record_gis_progress(
+    session_id: str,
+    tool_name: str,
+    arguments: dict,
+    *,
+    outcome: str,
+) -> list[str]:
+    """记录一次 dispatch 的进程观测，返回达到阈值的 no-progress reason codes。
+
+    map_epoch = mapspec 指纹（session_data_manager 定向读）；
+    workflow_epoch = SessionPlan capability 进度的内容 hash。
+    任一读取失败按空串处理（该维度本轮不参与停滞判定 —— 诚实缺省）。
+    """
+    from app.services.chat.no_progress import GisProgressTracker
+
+    tracker = _gis_progress_trackers.get(session_id)
+    if tracker is None:
+        if len(_gis_progress_trackers) >= _GIS_TRACKER_MAX_SESSIONS:
+            # review R2 minor：LRU 淘汰最旧会话（整体 clear 会把活跃会话的
+            # 停滞 streak 一起清零，no-progress 检测间歇性失效）。
+            _gis_progress_trackers.pop(next(iter(_gis_progress_trackers)))
+        tracker = GisProgressTracker()
+        _gis_progress_trackers[session_id] = tracker
+
+    registry = get_tool_registry()
+    try:
+        side_effect = registry.descriptor(tool_name).side_effect.value
+    except Exception:  # noqa: BLE001
+        side_effect = ""
+    is_mutation = side_effect in _SIDE_EFFECT_MUTATION
+    is_read_only = side_effect in _SIDE_EFFECT_READ
+
+    map_epoch = ""
+    try:
+        from app.services.session_data import session_data_manager
+        fp = await session_data_manager.get_map_spec_fingerprint(session_id)
+        map_epoch = str(fp) if fp else ""
+    except Exception:  # noqa: BLE001
+        map_epoch = ""
+
+    workflow_epoch = ""
+    try:
+        from app.services.session_plan import load_session_plan
+        plan = await load_session_plan(session_id)
+        if plan is not None:
+            rows = tuple(sorted(
+                (r.capability, r.status) for r in (plan.progress or ())
+            ))
+            import hashlib as _hashlib
+            workflow_epoch = _hashlib.sha256(
+                repr(rows).encode("utf-8")
+            ).hexdigest()[:12] if rows else ""
+    except Exception:  # noqa: BLE001
+        workflow_epoch = ""
+
+    reasons = tracker.record_call(
+        tool_name, arguments, outcome,
+        # review R2 MAJOR：state_epoch 用 (map_epoch, workflow_epoch) 的稳定
+        # 摘要 —— 形态级 reason codes（exact_repeat_failure / repeated_read /
+        # repeated_mutation_no_state_change）据此识别「真实状态已变化」，
+        # 消除假阳性（tracker 的设计前提：state_epoch 由调用方传入）。
+        state_epoch=_stable_state_epoch(map_epoch, workflow_epoch),
+        map_epoch=map_epoch,
+        workflow_epoch=workflow_epoch,
+        is_read_only=is_read_only,
+        is_mutation=is_mutation,
+    )
+    if reasons:
+        logger.warning(
+            "[PiBridge] no-progress detected session=%s tool=%s reasons=%s diagnose=%s",
+            session_id, tool_name, reasons, tracker.diagnose(),
+        )
+    return reasons
 
 # F24/V5-B: active-turn registry keyed by SESSION (was: one module-global
 # token slot). A single process can now host multiple concurrent in-flight

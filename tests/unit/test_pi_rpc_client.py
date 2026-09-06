@@ -72,7 +72,7 @@ async def test_start_popen_uses_binary_pipes(monkeypatch, tmp_path):
     # 本测试聚焦管道/spawn 参数：native dump 走 strict 路径（无 registry 即
     # raise），与二进制管道无关，patch 掉以隔离。
     monkeypatch.setattr(
-        "app.services.chat.pi_native_surface.dump_native_tools",
+        "app.services.chat.pi_native_surface.dump_surface_file",
         lambda _p: tmp_path / "native-tools.json",
     )
     # CI 不构建 vendor/pi dist：rpc-entry 前置条件由测试自备。
@@ -283,7 +283,7 @@ async def test_start_can_respawn_after_natural_death(monkeypatch, tmp_path):
     entry = tmp_path / "rpc-entry.js"
     entry.write_text("// stub", encoding="utf-8")
     monkeypatch.setattr(
-        "app.services.chat.pi_native_surface.dump_native_tools",
+        "app.services.chat.pi_native_surface.dump_surface_file",
         lambda _p: tmp_path / "native-tools.json",
     )
     client = PiRpcClient(pi_rpc_entry=entry)
@@ -499,7 +499,7 @@ async def test_start_fails_fast_when_native_dump_fails(monkeypatch, tmp_path):
     entry = tmp_path / "rpc-entry.js"
     entry.write_text("// stub", encoding="utf-8")
     monkeypatch.setattr(
-        "app.services.chat.pi_native_surface.dump_native_tools", _boom
+        "app.services.chat.pi_native_surface.dump_surface_file", _boom
     )
     monkeypatch.setattr(
         mod.subprocess,

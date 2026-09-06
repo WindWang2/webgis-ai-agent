@@ -104,6 +104,20 @@ def register_local_osm_tools(registry: ToolRegistry):
         domains=["osm", "dataset"],
         execution_policy=ToolExecutionPolicy.THREAD,
         timeout=120.0,
+        side_effect="pure",
+        network=False,
+        deterministic=True,
+        latency_class="fast",
+        memory_class="medium",
+        scale_class="medium",
+        crs_semantics="wgs84",
+        tags=["osm", "本地", "离线", "道路", "铁路", "水系", "bbox查询"],
+        output_semantic_type="geojson_fc",
+        result_size_policy="bounded",
+        failure_modes=["missing_data", "empty_result"],
+        summary="按主题（roads/railways/waterways/pois 等）在 bbox 内查本地预处理 OSM 要素，支持名称/标签过滤，离线秒级，坐标 WGS84。",
+        examples=["这个 bbox 范围内的主干路有哪些", "查成都范围内的铁路线"],
+        anti_examples=["查中文商户 POI（主力是 query_local_poi）"],
     )
     def query_local_osm(
         theme: str,
@@ -138,6 +152,16 @@ def register_local_osm_tools(registry: ToolRegistry):
             "✅ 用于：query_local_osm 之前确认主题可用性。"
         ),
         execution_policy=ToolExecutionPolicy.INLINE,
+        side_effect="pure",
+        network=False,
+        deterministic=True,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        tags=["osm", "目录", "主题", "数据覆盖", "catalog", "离线"],
+        output_semantic_type="list",
+        result_size_policy="inline_small",
+        failure_modes=["missing_data"],
     )
     def get_local_osm_catalog() -> dict:
         return catalog()

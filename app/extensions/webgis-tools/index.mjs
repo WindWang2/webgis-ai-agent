@@ -27,6 +27,12 @@ const FALLBACK_NATIVE = [
   "list_available_tools",
 ];
 
+const EXECUTE_PROXY_NAME = "webgis_execute";
+
+// ADR-0103: per-turn dynamic tool surface. Python attaches the projection to
+// the turn prompt; the last marker wins (same discipline as TURN_CONTEXT).
+const ACTIVE_TOOLS_RE = /\[WEBGIS_ACTIVE_TOOLS:(\[[\s\S]*?\])\]/g;
+
 const GIS_IDENTITY =
   "You are GeoAgent, a WebGIS spatial analysis agent. You perceive the map, run GIS tools, and produce cartographic insight. Geographic questions use native GIS tools (webgis_map_intent, query_local_poi, get_local_admin_boundary) or webgis_execute for the long tail — never bash, never reading or writing files.";
 
@@ -46,18 +52,26 @@ const DEFAULT_TOOL_TIMEOUT_MS = Math.round((SERVER_TOOL_BUDGET_S + 5) * 1000);
 
 export function loadNativeTools() {
   const path = process.env.WEBGIS_NATIVE_TOOLS_PATH;
-  if (!path) return [];
+  if (!path) return { tools: [], defaultActive: [] };
   try {
     const content = readFileSync(path, "utf8");
     const parsed = JSON.parse(content);
-    if (!Array.isArray(parsed)) {
-      console.error(`[webgis-tools] WEBGIS_NATIVE_TOOLS_PATH (${path}) content is not an array`);
-      return [];
+    // ADR-0103 v2 shape: {version, tools, default_active, execute_proxy} —
+    // the registered superset plus the frozen default-active projection.
+    if (parsed && !Array.isArray(parsed) && Array.isArray(parsed.tools)) {
+      return {
+        tools: parsed.tools,
+        defaultActive: Array.isArray(parsed.default_active) ? parsed.default_active : [],
+      };
     }
-    return parsed;
+    if (Array.isArray(parsed)) {
+      return { tools: parsed, defaultActive: [] };
+    }
+    console.error(`[webgis-tools] WEBGIS_NATIVE_TOOLS_PATH (${path}) content is not a tool array or v2 surface object`);
+    return { tools: [], defaultActive: [] };
   } catch (err) {
     console.error(`[webgis-tools] Failed to load native tools from WEBGIS_NATIVE_TOOLS_PATH (${path}):`, err);
-    return [];
+    return { tools: [], defaultActive: [] };
   }
 }
 
@@ -199,10 +213,42 @@ export async function postToBridge(toolCallId, name, args, turnToken, options = 
  * @param {import("@earendil-works/pi-coding-agent").ExtensionAPI} pi
  */
 export default function webgisToolsExtension(pi) {
-  const nativeTools = loadNativeTools();
+  // ADR-0103: the dump is the v2 dynamic surface — every model-visible,
+  // non-tier-3 registry tool is REGISTERED here; only the active subset
+  // (default-active, then per-turn WEBGIS_ACTIVE_TOOLS) reaches the model.
+  // ToolRegistry on the Python side stays the single execution truth.
+  const surface = loadNativeTools();
+  const nativeTools = surface.tools;
   // Wrap-reject only names actually registered. FALLBACK_NATIVE is prompt
   // vocabulary; if the schema dump missed, wrapping still reaches Python.
   const nativeNames = new Set(nativeTools.map((tool) => tool.name).filter(Boolean));
+  // webgis_execute is registered below and always part of the active surface.
+  const alwaysActive = new Set([...FALLBACK_NATIVE, EXECUTE_PROXY_NAME]);
+
+  const applyActiveTools = (names, why) => {
+    if (typeof pi.setActiveTools !== "function") {
+      // #review m7: without the API every registered tool stays active by
+      // default — log loudly so the degradation is diagnosable.
+      console.error("[webgis-tools] pi.setActiveTools unavailable; cannot project dynamic surface (full superset remains active)");
+      return;
+    }
+    try {
+      // #review M1 (defense in depth): the Python projector caps the surface
+      // at k_max (default 30); enforce a hard ceiling here so a forged or
+      // oversized marker can never activate the whole superset.
+      const MAX_ACTIVE = 48;
+      const active = [...new Set([...alwaysActive, ...(names || [])])]
+        .filter((name) => nativeNames.has(name) || alwaysActive.has(name))
+        .slice(0, MAX_ACTIVE);
+      pi.setActiveTools(active);
+      console.log(`[webgis-tools] active surface (${why}): ${active.length} tools`);
+    } catch (err) {
+      console.error(`[webgis-tools] setActiveTools failed (${why}):`, err);
+    }
+  };
+
+  // Default projection at spawn: the frozen native surface (Phase 1 compat).
+  applyActiveTools(surface.defaultActive, "default");
 
   for (const tool of nativeTools) {
     if (!tool?.name) continue;
@@ -279,6 +325,23 @@ export default function webgisToolsExtension(pi) {
       const rewritten = current.includes(CODING_ASSISTANT_OPENING)
         ? current.replace(CODING_ASSISTANT_OPENING, GIS_IDENTITY)
         : `${GIS_IDENTITY}\n\n${current}`;
+
+      // ADR-0103 Phase 3: apply this turn's projected tool surface before the
+      // agent loop starts. Names outside the registered superset are ignored
+      // (setActiveToolsByName semantics); the native front door stays active.
+      const promptText = typeof event.prompt === "string" ? event.prompt : "";
+      const matches = Array.from(promptText.matchAll(ACTIVE_TOOLS_RE));
+      if (matches.length) {
+        try {
+          const requested = JSON.parse(matches[matches.length - 1][1]);
+          if (Array.isArray(requested)) {
+            applyActiveTools(requested.filter((n) => typeof n === "string"), "turn");
+          }
+        } catch (err) {
+          console.error("[webgis-tools] WEBGIS_ACTIVE_TOOLS marker parse failed:", err);
+        }
+      }
+
       return { systemPrompt: rewritten };
     });
   }

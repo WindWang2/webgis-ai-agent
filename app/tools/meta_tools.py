@@ -62,6 +62,18 @@ def register_meta_tools(registry: ToolRegistry) -> None:
         args_model=_build_list_available_tools_args_model(registry),
         tier=1,
         execution_policy=ToolExecutionPolicy.INLINE,
+        side_effect="pure",
+        network=False,
+        deterministic=True,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        tags=["工具发现", "工具列表", "list tools", "领域", "discovery", "元工具"],
+        output_semantic_type="list",
+        result_size_policy="bounded",
+        failure_modes=["invalid_args"],
+        summary="按领域列出当前注册表中全部可用工具（含默认未推送的 tier-2/tier-3 重型工具），用于 schema 子集外的工具自救发现。",
+        examples=["列出 network 域下有哪些工具", "查一下 chinese 域的全部可用工具"],
     )
     async def list_available_tools(domain: str) -> dict:
         # audit4 #983: 运行时兜底 —— json_schema_extra 的 enum 只是文档层提示，

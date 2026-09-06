@@ -44,6 +44,14 @@ def register_skill_surface_refresh(registry: ToolRegistry) -> None:
         tier=3,
         domains=["skills"],
         args_model=SkillSurfaceRefreshArgs,
+        network=False,
+        deterministic=False,
+        latency_class="medium",
+        memory_class="light",
+        scale_class="small",
+        tags=["技能", "刷新", "skill", "工具面", "热加载", "registry"],
+        output_semantic_type="text",
+        result_size_policy="inline_small",
     )
     async def refresh_skill_surface(reason: Optional[str] = None) -> dict:
         try:

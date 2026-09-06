@@ -116,7 +116,20 @@ def register_point_pattern_tools(registry: ToolRegistry):
                "n_steps": "r 网格步数（4-32，默认10）",
                "max_distance_ratio": "r_max = 比例×min(窗宽,窗高)，0.05-0.5（默认0.25）",
                "envelopes": "CSR 模拟包络次数（0-499，固定种子42）；0=关（默认，仅描述性输出）",
-           })
+           },
+           side_effect="deterministic_compute",
+           deterministic=True,
+           network=False,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="auto_project",
+           unit_semantics="meters",
+           tags=("点格局", "g函数", "f函数", "最近邻", "csr", "聚集分析"),
+           failure_modes=("invalid_args", "empty_result"),
+           )
     def g_f_j_analysis(geojson: Any, n_steps: int = 10,
                        max_distance_ratio: float = 0.25, envelopes: int = 0) -> dict:
         data = safe_parse_geojson(geojson)
@@ -199,7 +212,20 @@ def register_point_pattern_tools(registry: ToolRegistry):
                "max_distance_ratio": "r_max = 比例×min(窗宽,窗高)，0.05-0.5（默认0.25）",
                "bandwidth": "Epanechnikov 平滑带宽（米，r 单位）；0=自动（一个 r 步宽，默认）",
                "envelopes": "CSR 模拟包络次数（0-499，固定种子42）；0=关（默认）",
-           })
+           },
+           side_effect="deterministic_compute",
+           deterministic=True,
+           network=False,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="auto_project",
+           unit_semantics="meters",
+           tags=("点格局", "成对相关函数", "pcf", "聚集", "空间模式", "平滑"),
+           failure_modes=("invalid_args", "empty_result"),
+           )
     def pcf_analysis(geojson: Any, n_steps: int = 10, max_distance_ratio: float = 0.25,
                      bandwidth: float = 0, envelopes: int = 0) -> dict:
         data = safe_parse_geojson(geojson)
@@ -274,7 +300,20 @@ def register_point_pattern_tools(registry: ToolRegistry):
                "n_steps": "r 网格步数（4-32，默认10）",
                "max_distance_ratio": "r_max = 比例×min(窗宽,窗高)，0.05-0.5（默认0.25）",
                "permutations": "随机标记置换次数：99/199(默认)/499，固定种子42",
-           })
+           },
+           side_effect="deterministic_compute",
+           deterministic=True,
+           network=False,
+           latency_class="slow",
+           memory_class="medium",
+           scale_class="medium",
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="auto_project",
+           unit_semantics="meters",
+           tags=("点格局", "交叉k函数", "双变量", "随机标记", "空间吸引", "两类点"),
+           failure_modes=("invalid_args", "missing_data", "empty_result"),
+           )
     def cross_k_analysis(geojson: Any, type_field: str, n_steps: int = 10,
                          max_distance_ratio: float = 0.25,
                          permutations: str = "199") -> dict:
@@ -362,7 +401,20 @@ def register_point_pattern_tools(registry: ToolRegistry):
                "critical_distance": "空间阈值（米）；0=自动取中位最近邻距离（默认，输出披露）",
                "critical_time": "时间阈值（秒，必须为正）",
                "permutations": "时间置换次数：99/199(默认)/499/999，固定种子42",
-           })
+           },
+           side_effect="deterministic_compute",
+           deterministic=True,
+           network=False,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="auto_project",
+           unit_semantics="meters",
+           tags=("knox", "时空交互", "时空检验", "事件对", "near-repeat", "时空聚集"),
+           failure_modes=("invalid_args", "missing_data", "empty_result"),
+           )
     def knox_analysis(geojson: Any, time_field: str, critical_time: float,
                       critical_distance: float = 0,
                       permutations: str = "199") -> dict:
@@ -455,7 +507,20 @@ def register_point_pattern_tools(registry: ToolRegistry):
                "n_steps": "r 网格步数（4-32，默认10）",
                "max_distance_ratio": "r_max = 比例×min(窗宽,窗高)，0.05-0.5（默认0.25）",
                "envelopes": "CSR 模拟包络次数（1-499，默认99，固定种子42）",
-           })
+           },
+           side_effect="deterministic_compute",
+           deterministic=True,
+           network=False,
+           latency_class="slow",
+           memory_class="medium",
+           scale_class="medium",
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="auto_project",
+           unit_semantics="meters",
+           tags=("ripley", "k函数", "点格局", "包络", "csr检验", "空间聚集"),
+           failure_modes=("invalid_args", "empty_result"),
+           )
     def ripley_k_envelope_analysis(geojson: Any, n_steps: int = 10,
                                    max_distance_ratio: float = 0.25,
                                    envelopes: int = 99) -> dict:

@@ -282,7 +282,17 @@ def register_skill_tools(registry: ToolRegistry):
             "module_name": "技能模块名称 (如 hydrology_analysis, change_detection)",
             "code": "完整的 Python 代码块。必须包含 register_skills(registry) 函数来注册在该模块内定义的工具。",
             "description": "对该技能功能的简要描述"
-        }
+        },
+        network=False,
+        deterministic=False,
+        latency_class="medium",
+        memory_class="medium",
+        scale_class="small",
+        tags=["技能", "创建", "skill", "动态工具", "代码部署", "进化"],
+        output_semantic_type="text",
+        result_size_policy="inline_small",
+        data_mutations=["artifact_write"],
+        failure_modes=["invalid_args"],
     )
 
 async def create_new_skill(module_name: str, code: str, description: str) -> str:

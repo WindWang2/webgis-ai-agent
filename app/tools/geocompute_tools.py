@@ -36,6 +36,16 @@ def register_geocompute_tools(registry: ToolRegistry):
             "budget": "可选预算 {max_rows, max_bytes, deadline_s, max_nodes}",
         },
         cost="light",
+        side_effect="deterministic_compute",
+        network=False,
+        deterministic=True,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        tags=["执行计划", "校验", "dag", "指纹", "波次", "plan validate"],
+        output_semantic_type="text",
+        result_size_policy="inline_small",
+        failure_modes=["invalid_args"],
     )
     def validate_execution_plan(
         plan_id: str,
@@ -76,6 +86,16 @@ def register_geocompute_tools(registry: ToolRegistry):
             ),
         },
         cost="heavy",
+        side_effect="artifact_creation",
+        data_mutations=["cache_write", "artifact_write"],
+        deterministic=False,
+        latency_class="slow",
+        memory_class="heavy",
+        scale_class="large",
+        tags=["执行计划", "运行", "dag", "波次并行", "预算", "物化", "execute"],
+        output_semantic_type="text",
+        result_size_policy="bounded",
+        failure_modes=["timeout", "invalid_args", "partial_coverage"],
     )
     def execute_execution_plan(
         plan_id: str,
@@ -123,6 +143,16 @@ def register_geocompute_tools(registry: ToolRegistry):
         ),
         param_descriptions={"run_id": "execute_execution_plan 返回的 run 标识"},
         cost="light",
+        side_effect="pure",
+        network=False,
+        deterministic=False,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        tags=["执行", "run", "状态查询", "evidence", "运行记录"],
+        output_semantic_type="text",
+        result_size_policy="inline_small",
+        failure_modes=["missing_data"],
     )
     def get_execution_run(run_id: str) -> dict:
         from app.services.geocompute.executor import engine

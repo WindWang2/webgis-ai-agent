@@ -50,7 +50,18 @@ def register_explorer_tools(registry: ToolRegistry):
 
     @tool(registry, tier=2, domains=["osm"], name="deep_explore",
           description="深度空间数据探索：当标准API无法获取足够数据时，自动发现、下载、解析外部数据源（政府开放数据等）并转化为地图图层。",
-          args_model=DeepExploreArgs)
+          args_model=DeepExploreArgs,
+          side_effect="state_mutation",
+          network=True,
+          deterministic=False,
+          latency_class="slow",
+          memory_class="medium",
+          scale_class="large",
+          tags=("深度探索", "数据发现", "开放数据", "政府数据", "下载", "explore", "数据获取"),
+          output_semantic_type="text",
+          result_size_policy="inline_small",
+          data_mutations=("session_state",),
+          failure_modes=("network_error", "timeout"))
     async def deep_explore(
         query: str,
         expected_data_type: str = "poi_list",

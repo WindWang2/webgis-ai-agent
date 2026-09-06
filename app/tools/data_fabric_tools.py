@@ -85,6 +85,17 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "options": "协议特定配置选项 key-value 字典",
         },
         execution_policy=ToolExecutionPolicy.ASYNC,
+        side_effect="state_mutation",
+        data_mutations=["session_state"],
+        network=True,
+        deterministic=False,
+        latency_class="medium",
+        memory_class="light",
+        scale_class="small",
+        tags=["数据源", "连接", "connection", "postgis", "数据接入", "ssrf"],
+        output_semantic_type="text",
+        result_size_policy="inline_small",
+        failure_modes=["network_error", "timeout", "invalid_args"],
     )
     async def connect_data_source(
         profile_id: str,
@@ -153,7 +164,19 @@ def register_data_fabric_tools(registry: ToolRegistry):
         param_descriptions={
             "profile_id": "要检查的数据源连接 profile_id",
         },
-        execution_policy=ToolExecutionPolicy.ASYNC)
+        execution_policy=ToolExecutionPolicy.ASYNC,
+        side_effect="cacheable_read",
+        network=True,
+        deterministic=False,
+        latency_class="medium",
+        memory_class="light",
+        scale_class="medium",
+        tags=["数据源", "诊断", "健康检查", "capabilities", "数据集列表", "inspect"],
+        output_semantic_type="list",
+        result_size_policy="bounded",
+        required_context=["data_profile"],
+        failure_modes=["network_error", "timeout", "missing_data"],
+    )
     async def inspect_data_source(profile_id: str, session_id: Optional[str] = None) -> dict:
         """检查数据源健康度与能力清单"""
         def _sync_run():
@@ -201,7 +224,18 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "limit": "返回最大数量限制，默认 50",
             "offset": "分页偏移量，默认 0",
         },
-        execution_policy=ToolExecutionPolicy.INLINE)
+        execution_policy=ToolExecutionPolicy.INLINE,
+        side_effect="pure",
+        network=False,
+        deterministic=False,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="medium",
+        tags=["目录", "检索", "catalog", "搜索", "数据集", "bbox", "标签"],
+        output_semantic_type="list",
+        result_size_policy="bounded",
+        failure_modes=["empty_result"],
+    )
     def search_spatial_catalog(
         session_id: Optional[str] = None,
         query: Optional[str] = None,
@@ -243,6 +277,16 @@ def register_data_fabric_tools(registry: ToolRegistry):
         # SYNCHRONOUS network I/O (WFS GetCapabilities up to 10-15s) — that is
         # a THREAD contract, not INLINE (<5ms event-loop budget).
         execution_policy=ToolExecutionPolicy.THREAD,
+        side_effect="cacheable_read",
+        network=True,
+        deterministic=False,
+        latency_class="medium",
+        memory_class="light",
+        scale_class="small",
+        tags=["数据集", "元数据", "schema", "describe", "指纹", "fingerprint"],
+        output_semantic_type="text",
+        result_size_policy="inline_small",
+        failure_modes=["network_error", "timeout", "missing_data"],
     )
     def describe_dataset(dataset_id: str, profile_id: Optional[str] = None, session_id: Optional[str] = None) -> dict:
         """获取数据集 Schema 描述与 Fingerprint"""
@@ -305,7 +349,19 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "sample_size": "sample 模式的采样大小（确定性，可复现）",
             "profile_id": "可选的数据源 profile_id",
         },
-        execution_policy=ToolExecutionPolicy.ASYNC)
+        execution_policy=ToolExecutionPolicy.ASYNC,
+        side_effect="cacheable_read",
+        network=True,
+        deterministic=False,
+        latency_class="medium",
+        memory_class="light",
+        scale_class="large",
+        tags=["查询", "query", "下推", "分页", "bbox", "过滤", "聚合"],
+        output_semantic_type="stats",
+        result_size_policy="bounded",
+        required_context=["data_profile"],
+        failure_modes=["network_error", "timeout", "missing_data"],
+    )
     async def query_dataset(
         dataset_id: str,
         limit: int = 100,
@@ -419,6 +475,19 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "profile_id": "可选的数据源 profile_id",
         },
         execution_policy=ToolExecutionPolicy.ASYNC,
+        side_effect="state_mutation",
+        data_mutations=["cache_write"],
+        required_context=["data_profile"],
+        produced_refs=["data"],
+        network=True,
+        deterministic=False,
+        latency_class="medium",
+        memory_class="medium",
+        scale_class="medium",
+        tags=["物化", "materialize", "ref", "数据落地", "远程数据", "缓存"],
+        output_semantic_type="ref",
+        result_size_policy="ref_offload",
+        failure_modes=["network_error", "timeout", "missing_data"],
     )
     async def materialize_dataset(
         dataset_id: str,
@@ -483,6 +552,18 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "profile_id": "要刷新的数据源 profile_id",
         },
         execution_policy=ToolExecutionPolicy.ASYNC,
+        side_effect="cacheable_read",
+        data_mutations=["cache_write"],
+        network=True,
+        deterministic=False,
+        latency_class="medium",
+        memory_class="light",
+        scale_class="small",
+        tags=["刷新", "refresh", "重新发现", "缓存", "健康检查", "同步"],
+        output_semantic_type="text",
+        result_size_policy="inline_small",
+        required_context=["data_profile"],
+        failure_modes=["network_error", "timeout", "missing_data"],
     )
     async def refresh_data_source(profile_id: str, session_id: Optional[str] = None) -> dict:
         """刷新数据源缓存与 Catalog 索引"""
@@ -522,6 +603,17 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "profile_id": "可选数据源 profile_id",
         },
         execution_policy=ToolExecutionPolicy.ASYNC,
+        side_effect="cacheable_read",
+        network=True,
+        deterministic=False,
+        latency_class="medium",
+        memory_class="light",
+        scale_class="small",
+        tags=["查询计划", "explain", "dry-run", "性能", "预算", "planner"],
+        output_semantic_type="text",
+        result_size_policy="inline_small",
+        required_context=["data_profile"],
+        failure_modes=["missing_data", "invalid_args"],
     )
     async def plan_data_query(
         dataset_id: str,
@@ -608,6 +700,17 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "profile_id": "可选数据源 profile_id",
         },
         execution_policy=ToolExecutionPolicy.ASYNC,
+        side_effect="cacheable_read",
+        network=True,
+        deterministic=False,
+        latency_class="medium",
+        memory_class="light",
+        scale_class="large",
+        tags=["聚合", "统计", "aggregate", "分组统计", "count", "sum", "下推"],
+        output_semantic_type="stats",
+        result_size_policy="bounded",
+        required_context=["data_profile"],
+        failure_modes=["network_error", "timeout", "missing_data"],
     )
     async def aggregate_dataset(
         dataset_id: str,
@@ -673,6 +776,17 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "right_profile_id": "可选右侧数据源 ID",
         },
         execution_policy=ToolExecutionPolicy.ASYNC,
+        side_effect="cacheable_read",
+        network=True,
+        deterministic=False,
+        latency_class="slow",
+        memory_class="heavy",
+        scale_class="large",
+        tags=["联邦查询", "join", "连接", "空间连接", "两源", "federated"],
+        output_semantic_type="table",
+        result_size_policy="bounded",
+        required_context=["data_profile"],
+        failure_modes=["network_error", "timeout", "partial_coverage"],
     )
     async def query_federated_data(
         left_dataset_id: str,

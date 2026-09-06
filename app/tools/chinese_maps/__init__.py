@@ -312,7 +312,18 @@ def register_chinese_map_tools(registry: ToolRegistry):
                "city": "城市名称，如'成都'、'成都市'（天地图需可解析为 adcode，否则显式失败）",
                "provider": "已忽略。中国境内固定本地 OSM。",
                "limit": "返回结果数量，默认20；本地 gd_poi 单次 ≤2000，在线单页 ≤25（无翻页，超限自动钳制；返回 count 为本页条数，total 为 provider 上报总命中数如有）",
-           })
+           },
+           side_effect="cacheable_read",
+           network=True,
+           latency_class="fast",
+           memory_class="light",
+           scale_class="small",
+           tags=("poi", "兴趣点", "关键词搜索", "地点查询", "place search", "本地osm"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="bounded",
+           crs_semantics="wgs84",
+           failure_modes=("empty_result", "network_error"),
+           capabilities=("poi_query",))
     async def search_poi(keyword: str, city: str = "", provider: str = "amap", limit: int = 20) -> dict:
         from app.services.local_first import try_local_search_poi
 
@@ -331,14 +342,36 @@ def register_chinese_map_tools(registry: ToolRegistry):
              "address": "中文地址，如'北京市海淀区中关村'",
              "city": "限定城市，如'北京'",
              "provider": "服务商: 'amap'(默认), 'baidu', 'tianditu'",
-         })(geocode_cn)
+         },
+         side_effect="cacheable_read",
+         network=True,
+         deterministic=False,
+         latency_class="fast",
+         memory_class="light",
+         scale_class="small",
+         tags=("地理编码", "geocode", "地址转坐标", "中文地址", "坐标"),
+         output_semantic_type="list",
+         result_size_policy="inline_small",
+         crs_semantics="wgs84",
+         failure_modes=("empty_result", "network_error", "rate_limit"))(geocode_cn)
 
     @tool(registry, tier=2, domains=["chinese"], name="reverse_geocode_cn",
            description="坐标转中文地址，返回详细地址和附近 POI，可选高德/百度/天地图",
            param_descriptions={
                "location": "WGS84 坐标 [经度, 纬度]",
                "provider": "服务商: 'amap'(默认), 'baidu', 'tianditu'",
-           })
+           },
+           side_effect="cacheable_read",
+           network=True,
+           deterministic=False,
+           latency_class="fast",
+           memory_class="light",
+           scale_class="small",
+           tags=("逆地理编码", "reverse geocode", "坐标转地址", "地址"),
+           output_semantic_type="text",
+           result_size_policy="inline_small",
+           crs_semantics="wgs84",
+           failure_modes=("network_error", "rate_limit"))
     @cached_tool(ttl=GEOCODE_CACHE_TTL_S)
     async def reverse_geocode_cn(location: list, provider: str = "amap") -> dict:
         if len(location) != 2:
@@ -364,7 +397,18 @@ def register_chinese_map_tools(registry: ToolRegistry):
                "mode": "出行方式: 'driving'(默认), 'walking', 'cycling', 'transit'",
                "city": "城市名（公交模式必填）",
                "provider": "服务商: 'amap'(默认) 或 'baidu'（天地图不支持路径规划）",
-           })
+           },
+           side_effect="cacheable_read",
+           network=True,
+           deterministic=False,
+           latency_class="fast",
+           memory_class="light",
+           scale_class="small",
+           tags=("路径规划", "route", "导航", "驾车", "公交", "距离时间"),
+           output_semantic_type="text",
+           result_size_policy="inline_small",
+           crs_semantics="wgs84",
+           failure_modes=("empty_result", "network_error"))
     @cached_tool(ttl=ROUTE_CACHE_TTL_S)
     async def plan_route(origin: list, destination: list,
                          # #995: 分类参数 schema 层枚举（合法值与 amap/baidu
@@ -398,7 +442,19 @@ def register_chinese_map_tools(registry: ToolRegistry):
                "level": "级别: 'province', 'city', 'district'",
                "provider": "服务商: 'amap'(默认), 'baidu', 'tianditu'",
                "return_geometry": "返回几何类型: 'point'(默认,中心点), 'polygon'(返回完整的行政边界轮廓)",
-           })
+           },
+           side_effect="cacheable_read",
+           network=True,
+           deterministic=False,
+           latency_class="fast",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("行政区划", "行政边界", "轮廓", "district boundary", "高德"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="inline_small",
+           crs_semantics="wgs84",
+           failure_modes=("empty_result", "network_error"),
+           capabilities=("admin_boundary_query",))
     @cached_tool(ttl=GEOCODE_CACHE_TTL_S)
     async def get_district(keywords: str, level: str = "district", provider: str = "amap",
                            return_geometry: str = "point") -> dict:
@@ -422,7 +478,18 @@ def register_chinese_map_tools(registry: ToolRegistry):
              "addresses": "地址列表，最多100条，例如 ['北京市朝阳区','上海市浦东新区']",
              "provider": "服务商: 'amap'(默认，高德国内准确率最高)，'baidu'，'tianditu'",
              "max_concurrency": "最大并发调用数（默认3，防止触发限流）",
-         })(batch_geocode_cn)
+         },
+         side_effect="cacheable_read",
+         network=True,
+         deterministic=False,
+         latency_class="medium",
+         memory_class="light",
+         scale_class="medium",
+         tags=("批量地理编码", "batch geocode", "地址列表", "批量转坐标"),
+         output_semantic_type="list",
+         result_size_policy="bounded",
+         crs_semantics="wgs84",
+         failure_modes=("partial_coverage", "rate_limit", "network_error"))(batch_geocode_cn)
 
     @tool(registry, tier=2, domains=["network", "chinese"], name="distance_matrix_cn",
            description="OD距离矩阵：计算多个起点到多个终点之间的驾驶/步行/骑行距离和时间，结果为二维矩阵。适合物流选址、通勤可达性分析。",
@@ -431,7 +498,18 @@ def register_chinese_map_tools(registry: ToolRegistry):
                "destinations": "终点坐标列表 [[lng, lat], ...]，最多10个（WGS84）",
                "mode": "出行方式: 'driving'(默认)，'walking'，'riding'",
                "provider": "服务商: 'amap'(默认)，'baidu'",
-           })
+           },
+           side_effect="cacheable_read",
+           network=True,
+           deterministic=False,
+           latency_class="medium",
+           memory_class="light",
+           scale_class="medium",
+           tags=("距离矩阵", "od matrix", "可达性", "物流选址", "通勤"),
+           output_semantic_type="table",
+           result_size_policy="bounded",
+           crs_semantics="wgs84",
+           failure_modes=("invalid_args", "partial_coverage", "network_error"))
     @cached_tool(ttl=ROUTE_CACHE_TTL_S)
     async def distance_matrix_cn(
         origins: list[list],
@@ -464,7 +542,19 @@ def register_chinese_map_tools(registry: ToolRegistry):
                "minutes": "时间（分钟），如 5, 10, 15",
                "mode": "出行方式: 'driving'(默认)，'walking'，'riding'",
                "provider": "服务商: 'amap'(默认，当前仅支持高德)",
-           })
+           },
+           side_effect="cacheable_read",
+           network=True,
+           deterministic=False,
+           latency_class="medium",
+           memory_class="light",
+           scale_class="medium",
+           tags=("等时圈", "isochrone", "可达范围", "时间圈", "通勤圈"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="inline_small",
+           crs_semantics="wgs84",
+           unit_semantics="meters",
+           failure_modes=("network_error", "invalid_args"))
     @cached_tool(ttl=ROUTE_CACHE_TTL_S)
     async def isochrone_analysis(
         center: list,
@@ -499,7 +589,18 @@ def register_chinese_map_tools(registry: ToolRegistry):
                "types": "POI 分类编码或中文分类（可选），如 '050000'(餐饮) 或 '餐饮'",
                "provider": "服务商: 'amap'(默认), 'baidu', 'tianditu'",
                "limit": "返回结果数量，默认 20",
-           })
+           },
+           side_effect="cacheable_read",
+           network=True,
+           latency_class="fast",
+           memory_class="light",
+           scale_class="small",
+           tags=("周边搜索", "poi around", "半径搜索", "附近", "设施"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="bounded",
+           crs_semantics="wgs84",
+           failure_modes=("empty_result", "invalid_args", "network_error"),
+           capabilities=("poi_query",))
     async def search_poi_around(
         center: list,
         radius_m: int = 1000,
@@ -540,7 +641,18 @@ def register_chinese_map_tools(registry: ToolRegistry):
                "types": "POI 类型，如'餐饮服务'",
                "provider": "服务商: 'amap'(默认), 'baidu'",
                "limit": "返回数量限制，默认 50",
-           })
+           },
+           side_effect="cacheable_read",
+           network=True,
+           latency_class="fast",
+           memory_class="light",
+           scale_class="medium",
+           tags=("多边形搜索", "区域内poi", "polygon search", "范围查询"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="bounded",
+           crs_semantics="wgs84",
+           failure_modes=("invalid_args", "empty_result", "network_error"),
+           capabilities=("poi_query",))
     async def search_poi_polygon(
         polygon: Any,
         keyword: str = "",
@@ -601,7 +713,19 @@ def register_chinese_map_tools(registry: ToolRegistry):
                "city": "限定城市（可选）",
                "location": "附近优先排序的坐标 [lng,lat]（可选）",
                "provider": "服务商: 'amap'(默认), 'baidu'",
-           })
+           },
+           side_effect="cacheable_read",
+           network=True,
+           deterministic=False,
+           latency_class="fast",
+           memory_class="light",
+           scale_class="small",
+           tags=("输入联想", "input tips", "地名提示", "模糊搜索", "地名纠错"),
+           output_semantic_type="list",
+           result_size_policy="bounded",
+           crs_semantics="wgs84",
+           failure_modes=("empty_result", "network_error"),
+           capabilities=("poi_query",))
     @cached_tool(ttl=GEOCODE_CACHE_TTL_S)
     async def input_tips(
         keyword: str,
@@ -631,7 +755,18 @@ def register_chinese_map_tools(registry: ToolRegistry):
                "city": "起点城市名（必填），如'北京'",
                "city_d": "终点城市名（跨城公交才需要）",
                "strategy": "策略: 0=最快捷, 1=最经济, 2=最少换乘, 3=最少步行, 5=不乘地铁。默认 0",
-           })
+           },
+           side_effect="cacheable_read",
+           network=True,
+           deterministic=False,
+           latency_class="fast",
+           memory_class="light",
+           scale_class="small",
+           tags=("公交", "地铁", "换乘", "transit", "公共交通"),
+           output_semantic_type="list",
+           result_size_policy="bounded",
+           crs_semantics="wgs84",
+           failure_modes=("empty_result", "invalid_args", "network_error"))
     @cached_tool(ttl=ROUTE_CACHE_TTL_S)
     async def search_transit_route(
         origin: list,
@@ -658,7 +793,18 @@ def register_chinese_map_tools(registry: ToolRegistry):
                "center": "圆心 [lng,lat]（mode=circle 时）",
                "radius_m": "圆半径米数（mode=circle，默认 1000）",
                "level": "拥堵等级过滤: 0=全部 1=畅通 2=缓行 3=拥堵 4=严重拥堵。默认 0",
-           })
+           },
+           side_effect="cacheable_read",
+           network=True,
+           deterministic=False,
+           latency_class="fast",
+           memory_class="light",
+           scale_class="small",
+           tags=("实时路况", "traffic", "拥堵", "交通状态"),
+           output_semantic_type="table",
+           result_size_policy="bounded",
+           crs_semantics="wgs84",
+           failure_modes=("network_error", "missing_data"))
     # #702：get_traffic_status 显式不缓存——实时语义，缓存即错误信息。
     async def get_traffic_status(
         mode: str = "rectangle",
@@ -691,7 +837,18 @@ def register_chinese_map_tools(registry: ToolRegistry):
                "child_level": "是否查询下一级行政单元: 0=不查询(默认), 1=查询一级, 2=查询二级",
                "extensions": "是否返回行政边界轮廓（GeoJSON）: 'base'=不返回, 'all'=返回(默认)",
                "provider": "服务商: 'tianditu'(默认)",
-           })
+           },
+           side_effect="cacheable_read",
+           network=True,
+           latency_class="fast",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("行政区划", "行政边界", "天地图", "tianditu", "geojson", "下级行政区"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="inline_small",
+           crs_semantics="wgs84",
+           failure_modes=("empty_result", "missing_data", "network_error"),
+           capabilities=("admin_boundary_query",))
     async def get_admin_division(
         keywords: str,
         child_level: int = 0,
@@ -725,7 +882,18 @@ def register_chinese_map_tools(registry: ToolRegistry):
                "keywords": "父级行政区名称，如'成都市'、'锦江区'",
                "return_geometry": "返回几何类型: 'point'(默认), 'polygon'(返回下级单位的完整轮廓)",
                "provider": "服务商: 'amap'(默认), 'tianditu'",
-           })
+           },
+           side_effect="cacheable_read",
+           network=True,
+           latency_class="fast",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("下级行政区", "区县", "街道", "行政边界", "boundary"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="bounded",
+           crs_semantics="wgs84",
+           failure_modes=("empty_result", "missing_data"),
+           capabilities=("admin_boundary_query",))
     async def get_child_districts(keywords: str, return_geometry: str = "point", provider: str = "amap") -> dict:
         """获取下级行政区的列表及几何边界"""
         if not keywords:
@@ -747,7 +915,18 @@ def register_chinese_map_tools(registry: ToolRegistry):
            param_descriptions={
                "keywords": "行政区名称，如'锦江区'、'成都市'",
                "provider": "服务商: 'amap'(默认), 'tianditu'",
-           })
+           },
+           side_effect="cacheable_read",
+           network=True,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("街道边界", "子区域", "多边形", "下级轮廓", "街道级"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="bounded",
+           crs_semantics="wgs84",
+           failure_modes=("empty_result", "missing_data"),
+           capabilities=("admin_boundary_query",))
     async def get_sub_districts_polygons(keywords: str, provider: str = "amap") -> dict:
         """获取下级行政区的多边形边界"""
         # 封装 get_child_districts 的 polygon 模式，更方便 AI 发现和调用

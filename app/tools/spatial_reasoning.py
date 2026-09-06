@@ -322,6 +322,15 @@ def register_spatial_reasoning(registry: ToolRegistry):
         tier=3,
         domains=["what_if"],
         args_model=SpatialReasoningArgs,
+        network=False,
+        deterministic=False,
+        latency_class="medium",
+        memory_class="light",
+        scale_class="small",
+        tags=["空间推理", "规则推演", "选址", "reasoning", "规则库", "可解释"],
+        output_semantic_type="text",
+        result_size_policy="inline_small",
+        failure_modes=["empty_result"],
     )
     async def _spatial_reasoning_wrapper(
         query: str,

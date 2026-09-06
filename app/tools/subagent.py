@@ -40,6 +40,17 @@ def register_subagent_tools(registry: ToolRegistry):
             "extra_tools": "可选：强制纳入工具白名单（按名字），无视 tier/domain。用于强制带上某个具体工具。",
             "max_rounds": "可选：子代理最大对话轮次，默认 10（比主 30 短）。复杂子任务可以调高。",
         },
+        side_effect="state_mutation",
+        data_mutations=["session_state"],
+        network=False,
+        deterministic=False,
+        latency_class="slow",
+        memory_class="medium",
+        scale_class="medium",
+        tags=["子代理", "委派", "批量", "subagent", "子任务", "隔离子任务"],
+        output_semantic_type="text",
+        result_size_policy="bounded",
+        failure_modes=["timeout", "invalid_args"],
     )
     async def spawn_subagent(
         task: str,

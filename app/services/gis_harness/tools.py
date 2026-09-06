@@ -383,6 +383,29 @@ def register_gis_harness_tools(registry: ToolRegistry):
             "『各区数量』首选行政聚合+choropleth 而非热力图。"
         ),
         args_model=MapIntentArgs,
+        side_effect="deterministic_compute",
+        deterministic=True,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        tags=("意图解析", "制图计划", "recipe", "做图", "分布", "密度", "map intent"),
+        output_semantic_type="text",
+        result_size_policy="inline_small",
+        summary=(
+            "GIS 制图意图解析器（确定性、无副作用）：把『做一张图/分布/密度/各区"
+            "统计/周边/报告配图』类请求解析为结构化 MapRequestIntent、候选制图 "
+            "recipe 与 MapProductPlan 骨架（数据需求/分析步骤/图层角色/组件/输出）。"
+            "任何成图类请求的第一步；数据工具执行完后再调 webgis_map_product "
+            "组装产品。『每平方公里密度』不会被降级为视觉热力。"
+        ),
+        examples=(
+            "看看成都的大学分布，做一张图",
+            "统计各区小学数量，配上分级色带和图例",
+        ),
+        anti_examples=(
+            "把地图缩放到北京——那是视角操作，用 webgis_view_set 或 fly_to_location",
+            "直接生成分析报告文档——那是报告导出，用 generate_analysis_report",
+        ),
     )
     async def webgis_map_intent(
         query: str,
@@ -526,6 +549,33 @@ def register_gis_harness_tools(registry: ToolRegistry):
             "\n注意：本工具不重跑分析；只做资格复检、角色绑定、组件与版面。"
         ),
         args_model=MapProductArgs,
+        side_effect="state_mutation",
+        deterministic=False,
+        latency_class="medium",
+        memory_class="medium",
+        scale_class="medium",
+        tags=("地图产品", "组装", "图例", "色条", "标题", "指北针", "map product", "成图"),
+        output_semantic_type="map_product",
+        result_size_policy="inline_small",
+        required_context=("map_state", "cartography_state", "ref_cursor"),
+        map_mutations=("add_layer", "style_layer", "component", "map_product"),
+        data_mutations=("session_state",),
+        failure_modes=("invalid_args", "missing_data"),
+        summary=(
+            "地图产品组装器：数据/图层到位后按 recipe 复检资格（几何/最小点数/"
+            "字段），把已授权图层绑定到产品角色、补齐缺失图层（如热力+点叠加+组"
+            "件）、写标题/色条/图例/指北针/比例尺/署名等组件并提交 MapSpec。在 "
+            "webgis_map_intent 出计划、数据工具执行完之后调用；不重跑分析，样本"
+            "不足时热力层自动降级为点图。"
+        ),
+        examples=(
+            "数据都齐了，把这些图层组装成最终分布图",
+            "热力图上叠加原始点，加上标题、色条和指北针",
+        ),
+        anti_examples=(
+            "重新跑一遍缓冲区分析——本工具不重跑分析，只做资格复检与组装",
+            "只改指南针样式——那是组件局部突变，用 webgis_component_update",
+        ),
     )
     async def webgis_map_product(
         query: str,
@@ -1157,6 +1207,32 @@ def register_gis_harness_tools(registry: ToolRegistry):
             "传 expected_revision 防止覆盖用户拖拽后的最新位置。"
         ),
         args_model=ComponentUpdateArgs,
+        side_effect="state_mutation",
+        deterministic=False,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        tags=("组件", "指北针", "比例尺", "图例", "色条", "标题", "统计卡", "注记", "component"),
+        output_semantic_type="text",
+        result_size_policy="inline_small",
+        required_context=("map_state", "cartography_state"),
+        map_mutations=("component",),
+        data_mutations=("session_state",),
+        failure_modes=("invalid_args",),
+        summary=(
+            "制图组件局部突变：只改命中的单个组件（指北针/比例尺/图例/色条/标题/"
+            "统计图/统计卡/表格/注记/插图），其余组件与所有数据图层完全不动，不触"
+            "发数据重查。支持 create/remove/duplicate/rebind 与乐观并发（先读 "
+            "webgis_component_catalog 的 mutation_revision 再传 expected_revision）。"
+        ),
+        examples=(
+            "把比例尺放到左下角",
+            "标题改成『2026年成都高校分布图』，图例放右下",
+        ),
+        anti_examples=(
+            "删掉这个统计图层——那是数据图层删除，用 webgis_layer_remove",
+            "重新查一遍统计数据——本工具只突变组件，不重查数据",
+        ),
     )
     async def webgis_component_update(
         session_id: Optional[str] = None,
@@ -1478,6 +1554,14 @@ def register_gis_harness_tools(registry: ToolRegistry):
             "\n『当前有哪些组件？统计图在哪？用什么数据？』『把刚才用户移动过的"
             "统计图恢复到左上角』——先读本工具拿最新状态与 revision，再突变。"
         ),
+        side_effect="pure",
+        deterministic=False,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        tags=("组件目录", "只读", "revision", "组件状态", "variant 清单"),
+        output_semantic_type="list",
+        result_size_policy="bounded",
     )
     async def webgis_component_catalog(session_id: Optional[str] = None) -> dict:
         if not session_id:
@@ -1590,6 +1674,14 @@ def register_gis_harness_tools(registry: ToolRegistry):
             "\n『地图现在什么状态？』『哪些层是用户手动藏的？』『这个层为什么看不见？』"
             "——先读世界状态再决策/再解释。"
         ),
+        side_effect="pure",
+        deterministic=False,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        tags=("世界状态", "快照", "图层清单", "视口", "底图", "用户隐藏", "只读"),
+        output_semantic_type="text",
+        result_size_policy="bounded",
     )
     async def webgis_world_state(session_id: Optional[str] = None) -> dict:
         if not session_id:

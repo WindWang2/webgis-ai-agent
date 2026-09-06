@@ -99,6 +99,18 @@ def register_map_view_tools(registry: ToolRegistry):
         ),
         args_model=FlyToLocationArgs,
         execution_policy=ToolExecutionPolicy.INLINE,
+        side_effect="state_mutation",
+        deterministic=True,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        tags=("飞行", "定位", "移动地图", "视角", "fly_to", "camera"),
+        output_semantic_type="text",
+        result_size_policy="inline_small",
+        crs_semantics="wgs84",
+        required_context=("map_state",),
+        map_mutations=("camera",),
+        failure_modes=("invalid_args",),
     )
     def fly_to_location(
         longitude: float,
@@ -139,6 +151,18 @@ def register_map_view_tools(registry: ToolRegistry):
         ),
         args_model=ZoomToBBoxArgs,
         execution_policy=ToolExecutionPolicy.INLINE,
+        side_effect="state_mutation",
+        deterministic=True,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        tags=("缩放", "包围盒", "bbox", "自适应", "视野"),
+        output_semantic_type="text",
+        result_size_policy="inline_small",
+        crs_semantics="wgs84",
+        required_context=("map_state",),
+        map_mutations=("camera",),
+        failure_modes=("invalid_args",),
     )
     def zoom_to_bbox(bbox: List[float], padding: int = 50) -> dict:
         if not isinstance(bbox, list) or len(bbox) < 4:
@@ -168,6 +192,19 @@ def register_map_view_tools(registry: ToolRegistry):
         ),
         args_model=ZoomToLayerArgs,
         execution_policy=ToolExecutionPolicy.ASYNC,
+        side_effect="state_mutation",
+        deterministic=False,
+        latency_class="medium",
+        memory_class="medium",
+        scale_class="medium",
+        tags=("缩放到图层", "图层范围", "自适应", "定位图层", "zoom to layer"),
+        output_semantic_type="text",
+        result_size_policy="inline_small",
+        crs_semantics="wgs84",
+        required_context=("map_state", "cartography_state"),
+        map_mutations=("camera",),
+        data_mutations=("session_state",),
+        failure_modes=("missing_data", "invalid_args"),
     )
     async def zoom_to_layer(layer_ref: str, padding: int = 60, session_id: Optional[str] = None) -> dict:
         if not session_id:
@@ -218,6 +255,17 @@ def register_map_view_tools(registry: ToolRegistry):
             "\n何时不用：只是想看某个特定地区 — 用 fly_to_location / zoom_to_layer。"
         ),
         execution_policy=ToolExecutionPolicy.INLINE,
+        side_effect="state_mutation",
+        deterministic=True,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        tags=("重置视图", "初始视角", "全国视角", "复位", "reset view"),
+        output_semantic_type="text",
+        result_size_policy="inline_small",
+        crs_semantics="wgs84",
+        required_context=("map_state",),
+        map_mutations=("camera",),
     )
     def reset_map_view() -> dict:
         return {
@@ -239,6 +287,18 @@ def register_map_view_tools(registry: ToolRegistry):
         ),
         args_model=SetMapViewArgs,
         execution_policy=ToolExecutionPolicy.INLINE,
+        side_effect="state_mutation",
+        deterministic=True,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        tags=("缩放级别", "倾角", "方位角", "俯仰", "3d", "pitch", "bearing"),
+        output_semantic_type="text",
+        result_size_policy="inline_small",
+        crs_semantics="wgs84",
+        required_context=("map_state",),
+        map_mutations=("camera",),
+        failure_modes=("invalid_args",),
     )
     def set_map_view(
         zoom: Optional[float] = None,

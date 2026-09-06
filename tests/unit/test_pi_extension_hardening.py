@@ -219,7 +219,7 @@ def test_load_native_tools_logs_on_invalid_json(tmp_path: Path):
       process.stdout.write(JSON.stringify(res));
     """
     res = _run_node_script(script)
-    assert res.stdout == "[]"
+    assert json.loads(res.stdout) == {"tools": [], "defaultActive": []}
     assert "Failed to load native tools" in res.stderr or "WEBGIS_NATIVE_TOOLS_PATH" in res.stderr
 
 
