@@ -98,6 +98,74 @@ class NetworkLocationAllocationService:
                         improved = True
         return best_subset
 
+    def _solve_p_center_heuristic(
+        self, cost_matrix: List[List[float]], demand_weights: List[float], p_count: int
+    ) -> Tuple[int, ...]:
+        """Greedy-add start + vertex-substitution swaps for p-center.
+
+        Initialization is greedy-add: repeatedly add the candidate that
+        minimizes the max-min objective (classic k-center greedy) — the raw
+        "first p facilities" start stalls in local optima on corridor
+        networks. The subsequent vertex-substitution phase accepts a swap
+        when it lowers the (max_cost, total_cost) lexicographic objective,
+        ≤10 passes. Unreachable demand is excluded from max_cost (disclosed
+        as unassigned) but penalized in total_cost so the search prefers
+        subsets that reach more demand.
+        """
+        m_fac = len(cost_matrix[0]) if cost_matrix else 0
+        if p_count <= 0 or m_fac == 0:
+            return ()
+
+        def evaluate(subset: Tuple[int, ...]) -> Tuple[float, float]:
+            max_c = 0.0
+            total = 0.0
+            for i, w in enumerate(demand_weights):
+                min_c = min(cost_matrix[i][j] for j in subset) if subset else float("inf")
+                if min_c == float("inf"):
+                    total += 1e9 * w  # 结构性不可达惩罚进 total，不进 max
+                else:
+                    max_c = max(max_c, min_c)
+                    total += min_c * w
+            return max_c, total
+
+        # Greedy-add initialization: at each step pick the candidate whose
+        # addition minimizes the objective of the GROWN set (candidates are
+        # compared against each other — the max component is not comparable
+        # across set sizes). Deterministic: strict <, first wins ties.
+        best_subset: Tuple[int, ...] = ()
+        for _ in range(p_count):
+            best_cand = -1
+            best_obj: Optional[Tuple[float, float]] = None
+            for cand in range(m_fac):
+                if cand in best_subset:
+                    continue
+                obj = evaluate(best_subset + (cand,))
+                if best_obj is None or obj < best_obj:
+                    best_obj = obj
+                    best_cand = cand
+            if best_cand < 0:
+                break  # no candidate left (m_fac < p is clamped upstream)
+            best_subset = best_subset + (best_cand,)
+        best_obj = evaluate(best_subset)
+
+        improved = True
+        passes = 0
+        while improved and passes < 10:
+            improved = False
+            passes += 1
+            for out_idx in range(len(best_subset)):
+                for cand in range(m_fac):
+                    if cand in best_subset:
+                        continue
+                    trial = list(best_subset)
+                    trial[out_idx] = cand
+                    trial_obj = evaluate(tuple(trial))
+                    if trial_obj < best_obj:
+                        best_subset = tuple(trial)
+                        best_obj = trial_obj
+                        improved = True
+        return best_subset
+
     def _solve_max_coverage_heuristic(
         self,
         cost_matrix: List[List[float]],
@@ -149,13 +217,13 @@ class NetworkLocationAllocationService:
         profile: Optional[TravelProfile] = None,
     ) -> NetworkAnalysisResult:
         """
-        Solves Location-Allocation problem (P-Median or Max Coverage).
+        Solves Location-Allocation problem (P-Median, Max Coverage or P-Center).
 
         Args:
             candidate_facilities: List of candidate Facility objects.
             demand_points: List of DemandPoint objects.
             p_count: Number of facilities to select.
-            problem_type: 'p_median' or 'max_coverage'.
+            problem_type: 'p_median', 'max_coverage' or 'p_center'.
             cutoff_cost: Optional cost cutoff threshold.
             graph: NetworkX DiGraph.
             network_dataset: NetworkDataset model.
@@ -204,7 +272,25 @@ class NetworkLocationAllocationService:
 
         demand_weights = [d.weight for d in demand_points]
 
-        if problem_type.lower() == "max_coverage":
+        # p-center（Hakimi 1964 max-min）目标：可达需求的最大服务成本最小化。
+        # 不可达需求不参与目标（inf 不是服务成本），事后以 unassigned 披露；
+        # max 打平时用总加权成本做次级判据，避免局部搜索在平台上停滞。
+        problem_norm = problem_type.lower()
+        if problem_norm == "p_center":
+
+            def p_center_objective(subset: Tuple[int, ...]) -> Tuple[float, float]:
+                max_c = 0.0
+                total = 0.0
+                for i, w in enumerate(demand_weights):
+                    min_c = min(cost_matrix[i][j] for j in subset)
+                    if min_c == float("inf"):
+                        total += 1e9 * w
+                    else:
+                        max_c = max(max_c, min_c)
+                        total += min_c * w
+                return max_c, total
+
+        if problem_norm == "max_coverage":
             cutoff = cutoff_cost if cutoff_cost is not None else 900.0  # default 15 min
             if use_exact:
                 best_coverage = -1.0
@@ -226,6 +312,24 @@ class NetworkLocationAllocationService:
                 )
                 best_subset = self._solve_max_coverage_heuristic(
                     cost_matrix, demand_weights, p_count, cutoff
+                )
+        elif problem_norm == "p_center":
+            if use_exact:
+                best_obj: Tuple[float, float] = (float("inf"), float("inf"))
+                best_subset = tuple(range(p_count))
+                for combo in itertools.combinations(range(m_fac), p_count):
+                    obj = p_center_objective(combo)
+                    if obj < best_obj:
+                        best_obj = obj
+                        best_subset = combo
+            else:
+                logger.info(
+                    "location_allocation p_center: C(%d,%d)=%d combinations exceed exact "
+                    "limit (%d); using greedy + vertex-substitution heuristic",
+                    m_fac, p_count, n_combos, _MAX_EXACT_COMBINATIONS,
+                )
+                best_subset = self._solve_p_center_heuristic(
+                    cost_matrix, demand_weights, p_count
                 )
         else:
             # P-Median: minimize sum_i w_i * min_{j in S} C_{i,j}
@@ -301,6 +405,13 @@ class NetworkLocationAllocationService:
             "unassigned_count": len(unassigned_ids),
             "unassigned_ids": unassigned_ids,
         }
+
+        if problem_norm == "p_center":
+            # p-center 披露：目标值 = 可达需求的最大服务成本（不可达需求已
+            # 从目标剔除并列入 unassigned_ids —— inf 不冒充服务成本）。
+            max_service_cost, total_weighted_cost = p_center_objective(best_subset)
+            summary["max_service_cost"] = round(max_service_cost, 2)
+            summary["total_weighted_cost"] = round(total_weighted_cost, 2)
 
         return NetworkAnalysisResult(
             analysis_type="location_allocation",
