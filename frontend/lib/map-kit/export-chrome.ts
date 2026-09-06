@@ -25,6 +25,7 @@ import {
   type ResolvedMapComponent,
 } from '@/lib/map-components/resolve-components';
 import { resolveComponentLayout } from '@/lib/map-components/resolve-layout';
+import { uncertaintyKindLabel as _uncertaintyKindLabel } from './disclosure-labels';
 import {
   anchorFractionInBounds,
   boundsFromCenterZoom,
@@ -68,6 +69,18 @@ export interface ExportChromeElement {
   insetBbox?: { west: number; south: number; east: number; north: number };
   insetMainBbox?: { west: number; south: number; east: number; north: number };
   insetBoundary?: [number, number][];
+  /**
+   * V3（ADR-0101 D6）：披露族（methodology/uncertainty/decision）导出载荷
+   * —— 三种面板归一化为「标题 + 文本行」，与 live 渲染器同一防御式解析
+   * 语义（坏载荷 → 面板缺席，不伪造）。
+   */
+  disclosure?: {
+    title: string;
+    rows: string[];
+    accent: boolean;
+    /** 需要删除线呈现的行下标（decision vetoed —— 与 live line-through 同义）。 */
+    strikeRows?: number[];
+  };
 }
 
 export interface ExportChromeModel {
@@ -215,6 +228,87 @@ function _parseChart(raw: unknown): ChartPanelData | undefined {
   };
 }
 
+// ── V3（ADR-0101 D6）：披露族导出解析（与 live 渲染器同语义）────────────
+// 归一化为「标题 + 文本行」；坏载荷 → undefined（面板缺席，不伪造）。
+
+function _parseMethodology(raw: unknown): ExportChromeElement['disclosure'] {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const rows: string[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const rec = item as Record<string, unknown>;
+    if (typeof rec['text'] !== 'string' || !rec['text'].trim()) continue;
+    const code = typeof rec['code'] === 'string' && rec['code'] ? `${rec['code']} ` : '';
+    rows.push(`${code}${rec['text']}`);
+  }
+  return rows.length > 0 ? { title: '方法论披露', rows, accent: true } : undefined;
+}
+
+function _parseUncertainty(raw: unknown): ExportChromeElement['disclosure'] {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const rec = raw as Record<string, unknown>;
+  const rows: string[] = [];
+  if (Array.isArray(rec['items'])) {
+    for (const item of rec['items']) {
+      if (!item || typeof item !== 'object') continue;
+      const r = item as Record<string, unknown>;
+      if (typeof r['label'] !== 'string' || !r['label'].trim()) continue;
+      // kind → live 同款中文标签（共享 UNCERTAINTY_KIND_LABELS，不漏内码）
+      const kindRaw = typeof r['kind'] === 'string' ? r['kind'] : '';
+      const kind = _uncertaintyKindLabel(kindRaw);
+      const detail = typeof r['detail'] === 'string' && r['detail'] ? `：${r['detail']}` : '';
+      rows.push(`${kind} · ${r['label']}${detail}`);
+    }
+  }
+  if (typeof rec['sampleNote'] === 'string' && rec['sampleNote'].trim()) {
+    rows.push(rec['sampleNote']);
+  }
+  return rows.length > 0 ? { title: '不确定性', rows, accent: false } : undefined;
+}
+
+function _parseDecision(raw: unknown): ExportChromeElement['disclosure'] {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const rec = raw as Record<string, unknown>;
+  const method = typeof rec['method'] === 'string' && rec['method'].trim() ? rec['method'] : '';
+  const title = method ? `决策（${method}）` : '决策';
+  const rows: string[] = [];
+  const strike: number[] = [];
+  // weightSource 首行（与 live 顺序一致）
+  if (typeof rec['weightSource'] === 'string' && rec['weightSource'].trim()) {
+    rows.push(`权重来源：${rec['weightSource']}`);
+  }
+  const rowsRaw = rec['rows'];
+  if (Array.isArray(rowsRaw)) {
+    // 与 live decision-panel 同语义：行数不设上限（boxH 随行数伸缩）；
+    // rank 缺失回退 rows.length+1（live 同式）；basis 仅区分 vetoed
+    //（删除线），不做内联文本（live 用 data-basis）。
+    let seq = 0;
+    for (const item of rowsRaw) {
+      if (!item || typeof item !== 'object') continue;
+      const r = item as Record<string, unknown>;
+      if (typeof r['name'] !== 'string' || !r['name'].trim()) continue;
+      seq += 1;
+      const rank = typeof r['rank'] === 'number' ? `${r['rank']}. ` : `${seq}. `;
+      const score = typeof r['score'] === 'number' || typeof r['score'] === 'string' ? ` — ${r['score']}` : '';
+      const vetoed = r['basis'] === 'vetoed';
+      if (vetoed) strike.push(rows.length);
+      rows.push(`${rank}${r['name']}${score}`);
+    }
+  }
+  const vetoesRaw = rec['vetoes'];
+  if (Array.isArray(vetoesRaw)) {
+    const vetoes = vetoesRaw.filter((v): v is string => typeof v === 'string' && !!v.trim());
+    if (vetoes.length) {
+      rows.push('硬约束否决：');
+      for (const v of vetoes) rows.push(`· ${v}`);
+    }
+  }
+  // 出现条件与 live 对齐：live 仅在 rows 或 vetoes 存在时渲染正文
+  //（weightSource 单独存在 → live 空态『暂无决策结果』；导出等价物是
+  // 面板缺席 —— 导出画布不画空态卡）。
+  return rows.length > 0 ? { title, rows, accent: false, strikeRows: strike } : undefined;
+}
+
 /**
  * 构建导出 chrome 模型（异步：chartRef 可能需要拉取 session artifact）。
  * 纯派生 —— 不读 DOM、不碰 map 实例；画布尺寸由调用方传入。
@@ -234,6 +328,9 @@ export async function buildExportChrome(
     'title', 'subtitle', 'legend', 'categorical_legend', 'continuous_colorbar',
     'north_arrow', 'scale_bar', 'attribution', 'statistics_panel', 'chart_panel',
     'annotation', 'map_border', 'graticule', 'inset_map',
+    // V3（ADR-0101 D6）：披露族落地 canvas 导出 —— 计入可视组件
+    //（disclosure-only spec 也走 chrome 路径，否则面板被 fromSpec 门饿死）
+    'methodology_note', 'uncertainty_panel', 'decision_panel',
   ]);
   const model: ExportChromeModel = {
     fromSpec: resolved.some((c) => VISUAL_TYPES.has(c.type) && c.enabled),
@@ -353,6 +450,8 @@ export async function buildExportChrome(
       rect: _floatingRectOf(scaleComp, opts.viewport, canvas),
       stackIndex: _stackOf(scaleComp)?.index ?? 0,
       slotSize: _stackOf(scaleComp)?.slotSize ?? 0,
+      // V3：dual_unit 变体驱动导出第二行英制换算（与 live scale-bar 同式）
+      variant: scaleComp.variant || undefined,
     };
   } else if (!scaleComp) {
     model.scaleBar = {
@@ -398,6 +497,13 @@ export async function buildExportChrome(
       stackIndex: _stackOf(comp)?.index ?? 0,
       slotSize: _stackOf(comp)?.slotSize ?? 0,
       legendSpec: spec,
+      // V3（R2）：色条变体进导出 —— vertical（方向回退）/scientific/stepped
+      // 与 live colorbar 同词表（options.orientation 优先，variant 兜底）
+      variant:
+        isColorbar
+          ? (comp.variant ||
+             (comp.options?.['orientation'] === 'vertical' ? 'vertical' : undefined))
+          : undefined,
     };
     if (isColorbar) {
       model.colorbars.push(el);
@@ -542,6 +648,45 @@ export async function buildExportChrome(
           // 此前导出仍展开 —— live 折叠、导出展开。text 携带标题 →
           // drawChromeChartPanel 绘制折叠标题条（与 statistics 同约定）。
           text: c.collapsed ? chart.title : undefined,
+        });
+      }
+    } else if (c.type === 'methodology_note') {
+      const disclosure = _parseMethodology(c.options['warnings']);
+      if (disclosure) {
+        model.panels.push({
+          kind: 'methodology',
+          anchor: _effectiveAnchor(c),
+          rect: _floatingRectOf(c, opts.viewport, canvas),
+          stackIndex: _stackOf(c)?.index ?? 0,
+          slotSize: _stackOf(c)?.slotSize ?? 0,
+          disclosure,
+          text: c.collapsed ? disclosure.title : undefined,
+        });
+      }
+    } else if (c.type === 'uncertainty_panel') {
+      const disclosure = _parseUncertainty(c.options['uncertainty']);
+      if (disclosure) {
+        model.panels.push({
+          kind: 'uncertainty',
+          anchor: _effectiveAnchor(c),
+          rect: _floatingRectOf(c, opts.viewport, canvas),
+          stackIndex: _stackOf(c)?.index ?? 0,
+          slotSize: _stackOf(c)?.slotSize ?? 0,
+          disclosure,
+          text: c.collapsed ? disclosure.title : undefined,
+        });
+      }
+    } else if (c.type === 'decision_panel') {
+      const disclosure = _parseDecision(c.options['decision']);
+      if (disclosure) {
+        model.panels.push({
+          kind: 'decision',
+          anchor: _effectiveAnchor(c),
+          rect: _floatingRectOf(c, opts.viewport, canvas),
+          stackIndex: _stackOf(c)?.index ?? 0,
+          slotSize: _stackOf(c)?.slotSize ?? 0,
+          disclosure,
+          text: c.collapsed ? disclosure.title : undefined,
         });
       }
     }
@@ -713,6 +858,23 @@ export function drawChromeScaleBar(
   ctx.font = `bold ${d.scalePx(13)}px ${d.style.fontFamily}`;
   _text(d, '0', bx, by - d.scalePx(4), 'left');
   _text(d, barLabel, bx + barPx, by - d.scalePx(4), 'right');
+  // V3：dual_unit —— 同一根比例尺条的实际代表距离换算英制第二行
+  // （与 live scale-bar formatImperial 同式；非独立第二根尺）。
+  if (el.variant === 'dual_unit') {
+    ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.6)' : 'rgba(71,85,105,0.9)';
+    ctx.font = `${d.scalePx(11)}px ${d.style.fontFamily}`;
+    _text(d, formatImperialLabel(nice), bx + barPx, by + barH + d.scalePx(12), 'right');
+  }
+}
+
+/** 英制比例标签（ft/mi；与 live scale-bar.tsx formatImperial 同式）。 */
+export function formatImperialLabel(meters: number): string {
+  const feet = meters * 3.28084;
+  if (feet >= 5280) {
+    const miles = feet / 5280;
+    return `${miles.toFixed(miles >= 10 ? 0 : 1)} mi`;
+  }
+  return `${Math.round(feet)} ft`;
 }
 
 /** 连续色条 —— 渐变 ramp + min/mid/max + unit（与 live colorbar 同形态）。 */
@@ -734,19 +896,93 @@ export function drawChromeColorbar(
     typeof spec.min === 'number' &&
     typeof spec.max === 'number' &&
     spec.min !== spec.max;
+  // V3（R2 parity）：导出侧与 live colorbar 同词表 —— vertical（方向）、
+  // stepped（离散色阶块）、scientific（中间刻度行）。
+  const variant = el.variant || '';
+  const vertical = variant === 'vertical';
+  const stepped = variant === 'stepped';
+  const scientific = variant === 'scientific';
   const { ctx } = d;
   const padding = d.scalePx(10);
-  const barW = d.scalePx(160);
-  const barH = d.scalePx(10);
-  const titleH = spec.field ? d.scalePx(18) : 0;
-  // 终审 F6：无量化范围 = 裸条 —— 不预留数值标签带（此前空占 ~16px）
-  const labelsH = hasRange ? d.scalePx(16) : 0;
-  const boxW = padding * 2 + barW;
-  const boxH = padding * 2 + titleH + barH + labelsH;
+  const fmt = (n: number) =>
+    n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : n.toFixed(1);
+  const suffix = spec.unit ? ` ${spec.unit}` : '';
 
   const origin = el.rect
     ? { x: el.rect.x, y: el.rect.y, align: 'left' as const, vAlign: 'top' as const }
     : anchorOrigin(el.anchor, { targetW: d.targetW, targetH: d.targetH, marginX: opts.marginX, marginY: opts.marginY ?? 56 });
+
+  const strokeRampBorder = (x: number, y2: number, w: number, h: number) => {
+    ctx.strokeStyle = 'rgba(128,128,128,0.4)';
+    ctx.lineWidth = d.scalePx(0.5);
+    ctx.strokeRect(x, y2, w, h);
+  };
+  /** 连续渐变或离散色阶（stepped），方向随 vertical。 */
+  const drawRamp = (x: number, y2: number, w: number, h: number) => {
+    if (stepped) {
+      // 离散色阶：等分色块（与 live stepped basis-0/grow 等分同语义）
+      const n = colors.length;
+      for (let i = 0; i < n; i++) {
+        ctx.fillStyle = colors[i];
+        if (vertical) {
+          const cellH = h / n;
+          ctx.fillRect(x, y2 + i * cellH, w, cellH);
+        } else {
+          const cellW = w / n;
+          ctx.fillRect(x + i * cellW, y2, cellW, h);
+        }
+      }
+      strokeRampBorder(x, y2, w, h);
+      return;
+    }
+    const grad = vertical
+      ? ctx.createLinearGradient(0, y2, 0, y2 + h)
+      : ctx.createLinearGradient(x, 0, x + w, 0);
+    colors.forEach((c, i) => grad.addColorStop(colors.length === 1 ? 1 : i / (colors.length - 1), c));
+    ctx.fillStyle = grad;
+    ctx.fillRect(x, y2, w, h);
+    strokeRampBorder(x, y2, w, h);
+  };
+
+  if (vertical) {
+    // 纵向：窄高条 + 右侧 min/max（live 竖排同构）；条内首色=顶部（min 在顶，
+    // 与 live linear-gradient(to bottom) 同向）
+    const barW = d.scalePx(12);
+    const barH = d.scalePx(120);
+    const titleH = spec.field ? d.scalePx(18) : 0;
+    const labelsW = hasRange ? d.scalePx(56) : 0;
+    const boxW = padding * 2 + barW + (labelsW ? d.scalePx(6) + labelsW : 0);
+    const boxH = padding * 2 + titleH + barH;
+    const lx = origin.align === 'right' ? origin.x - boxW : origin.align === 'center' ? origin.x - boxW / 2 : origin.x;
+    const ly = origin.vAlign === 'bottom' ? d.targetH - origin.y - boxH : origin.y;
+    _chromePanel(d, lx, ly, boxW, boxH);
+    let y = ly + padding;
+    if (spec.field) {
+      ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.7)' : 'rgba(100,116,139,0.9)';
+      ctx.font = `${d.scalePx(10)}px monospace`;
+      _text(d, spec.field.toUpperCase(), lx + padding, y + d.scalePx(10), 'left');
+      y += titleH;
+    }
+    drawRamp(lx + padding, y, barW, barH);
+    if (hasRange) {
+      const tx = lx + padding + barW + d.scalePx(6);
+      ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.6)' : 'rgba(100,116,139,0.8)';
+      ctx.font = `${d.scalePx(10)}px sans-serif`;
+      _text(d, `${fmt(spec.max!)}${suffix}`, tx, y + d.scalePx(8), 'left');
+      _text(d, `${fmt(spec.min!)}${suffix}`, tx, y + barH, 'left');
+    }
+    return;
+  }
+
+  // 横向（缺省）：渐变/色阶条 +（scientific）中间刻度行 + 两端读数
+  const barW = d.scalePx(160);
+  const barH = d.scalePx(10);
+  const titleH = spec.field ? d.scalePx(18) : 0;
+  const ticksH = scientific && hasRange ? d.scalePx(14) : 0;
+  // 终审 F6：无量化范围 = 裸条 —— 不预留数值标签带（此前空占 ~16px）
+  const labelsH = hasRange ? d.scalePx(16) : 0;
+  const boxW = padding * 2 + barW;
+  const boxH = padding * 2 + titleH + barH + ticksH + labelsH;
   const lx = origin.align === 'right' ? origin.x - boxW : origin.align === 'center' ? origin.x - boxW / 2 : origin.x;
   const ly = origin.vAlign === 'bottom' ? d.targetH - origin.y - boxH : origin.y;
 
@@ -758,22 +994,20 @@ export function drawChromeColorbar(
     _text(d, spec.field.toUpperCase(), lx + padding, y + d.scalePx(10), 'left');
     y += titleH;
   }
-  const grad = ctx.createLinearGradient(lx + padding, 0, lx + padding + barW, 0);
-  colors.forEach((c, i) => grad.addColorStop(colors.length === 1 ? 1 : i / (colors.length - 1), c));
-  ctx.fillStyle = grad;
-  ctx.fillRect(lx + padding, y, barW, barH);
-  ctx.strokeStyle = 'rgba(128,128,128,0.4)';
-  ctx.lineWidth = d.scalePx(0.5);
-  ctx.strokeRect(lx + padding, y, barW, barH);
-
-  const fmt = (n: number) =>
-    n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : n.toFixed(1);
-  const suffix = spec.unit ? ` ${spec.unit}` : '';
+  drawRamp(lx + padding, y, barW, barH);
   y += barH + d.scalePx(4);
   if (hasRange) {
-    // 数值标签只在有量化范围时绘制（live 同款：无范围 = 裸条）
     ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.6)' : 'rgba(100,116,139,0.8)';
     ctx.font = `${d.scalePx(10)}px sans-serif`;
+    if (scientific) {
+      // 与 live scientific 同式：25/50/75% 内插读数行
+      for (const t of [0.25, 0.5, 0.75]) {
+        const v = Number(spec.min) + (Number(spec.max) - Number(spec.min)) * t;
+        _text(d, fmt(v), lx + padding + barW * t, y + d.scalePx(10), 'center');
+      }
+      y += ticksH;
+    }
+    // 数值标签只在有量化范围时绘制（live 同款：无范围 = 裸条）
     _text(d, `${fmt(spec.min!)}${suffix}`, lx + padding, y + d.scalePx(10), 'left');
     _text(
       d,
@@ -920,6 +1154,82 @@ export function drawChromeStatsPanel(
     _text(d, value, lx + boxW - padding, y + d.scalePx(14), 'right');
     y += rowH;
   }
+}
+
+/**
+ * V3（ADR-0101 D6）：披露族导出（methodology / uncertainty / decision）。
+ * 归一化「标题 + 文本行」卡片；methodology 带警示色左边条（与 live
+ * border-status-warning 同语义）。collapsed 导出折叠标题条（E-2 约定）。
+ */
+export function drawChromeDisclosurePanel(
+  d: DrawCtx,
+  el: ExportChromeElement,
+  opts: { marginX: number; marginY?: number },
+) {
+  if (!el.disclosure || el.disclosure.rows.length === 0) return;
+  const { ctx } = d;
+  const padding = d.scalePx(12);
+  const rowH = d.scalePx(20);
+  const titleH = d.scalePx(24);
+  const collapsed = el.text !== undefined;
+  const boxW = el.rect?.width ?? d.scalePx(250);
+  const boxH = collapsed ? d.scalePx(36) : padding * 2 + titleH + el.disclosure.rows.length * rowH;
+
+  const origin = el.rect
+    ? { x: el.rect.x, y: el.rect.y, align: 'left' as const, vAlign: 'top' as const }
+    : anchorOrigin(el.anchor, { targetW: d.targetW, targetH: d.targetH, marginX: opts.marginX, marginY: opts.marginY ?? 90 });
+  const lx = origin.align === 'right' ? origin.x - boxW : origin.align === 'center' ? origin.x - boxW / 2 : origin.x;
+  const ly = origin.vAlign === 'bottom' ? d.targetH - origin.y - boxH : origin.y;
+
+  _chromePanel(d, lx, ly, boxW, boxH);
+  let y = ly + padding;
+  if (collapsed) {
+    ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.9)' : '#1e293b';
+    ctx.font = `bold ${d.scalePx(12)}px sans-serif`;
+    _text(d, el.text || el.disclosure.title, lx + padding, y + d.scalePx(12), 'left');
+    return;
+  }
+  // 标题（methodology 带警示色标记条）
+  if (el.disclosure.accent) {
+    ctx.fillStyle = d.darkMode ? 'rgba(250, 204, 21, 0.9)' : 'rgba(217, 119, 6, 0.95)';
+    ctx.fillRect(lx, ly, d.scalePx(3), boxH);
+  }
+  ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.9)' : '#1e293b';
+  ctx.font = `bold ${d.scalePx(12)}px sans-serif`;
+  _text(d, el.disclosure.title, lx + padding, y + d.scalePx(12), 'left');
+  y += titleH;
+  const strike = new Set(el.disclosure.strikeRows ?? []);
+  for (let i = 0; i < el.disclosure.rows.length; i++) {
+    const row = el.disclosure.rows[i];
+    const text = _clipText(ctx, row, boxW - padding * 2);
+    ctx.fillStyle = strike.has(i)
+      ? d.darkMode ? 'rgba(255,255,255,0.5)' : 'rgba(100,116,139,0.9)'
+      : d.darkMode ? 'rgba(255,255,255,0.85)' : '#1e293b';
+    ctx.font = `${d.scalePx(11)}px sans-serif`;
+    const textY = y + d.scalePx(12);
+    _text(d, text, lx + padding, textY, 'left');
+    if (strike.has(i)) {
+      // vetoed 删除线（与 live line-through 同语义）
+      const w = ctx.measureText(text).width;
+      ctx.strokeStyle = d.darkMode ? 'rgba(255,255,255,0.5)' : 'rgba(71,85,105,0.8)';
+      ctx.lineWidth = d.scalePx(1);
+      ctx.beginPath();
+      ctx.moveTo(lx + padding, textY - d.scalePx(3));
+      ctx.lineTo(lx + padding + w, textY - d.scalePx(3));
+      ctx.stroke();
+    }
+    y += rowH;
+  }
+}
+
+/** 画布单行文本截断（导出侧无自动换行；与 stats 卡同一裁剪约定）。 */
+function _clipText(ctx: CanvasRenderingContext2D, text: string, maxW: number): string {
+  if (ctx.measureText(text).width <= maxW) return text;
+  let clipped = text;
+  while (clipped.length > 1 && ctx.measureText(`${clipped}…`).width > maxW) {
+    clipped = clipped.slice(0, -1);
+  }
+  return `${clipped}…`;
 }
 
 /** 静态图表（bar/line/pie/scatter 的确定性 canvas 绘制）。 */
@@ -1142,6 +1452,19 @@ export function drawChromeMapBorder(
     ctx.lineTo(d.targetW - inset, d.targetH - inset);
     ctx.lineTo(d.targetW - inset, d.targetH - inset - tick);
     ctx.stroke();
+    return;
+  }
+  // V3（ADR-0101 D6）：neatline —— 外细实线 + 内虚线（与 live map-border
+  // neatline 同语义：经典内图廓）。
+  if (variant === 'neatline') {
+    ctx.lineWidth = d.scalePx(1);
+    ctx.strokeRect(inset, inset, w, h);
+    ctx.save();
+    ctx.setLineDash([d.scalePx(6), d.scalePx(4)]);
+    ctx.globalAlpha = 0.65;
+    const inset2 = inset + d.scalePx(4);
+    ctx.strokeRect(inset2, inset2, d.targetW - inset2 * 2, d.targetH - inset2 * 2);
+    ctx.restore();
     return;
   }
   // minimal

@@ -28,6 +28,23 @@ class ComponentSelection(BaseModel):
     component_templates: Dict[str, str] = Field(default_factory=dict)
 
 
+def _template_selectable(tmpl_reg, template_id: str) -> bool:
+    """V3（ADR-0101 D3）：planned/unavailable 模板不可被选入最终产品。
+
+    前瞻变体（如 legend/bivariate）以 planned 模板登记 roadmap，目录可见、
+    resolver 不选 —— 与 descriptor 级 runtime_status 门控同语义。
+    """
+    tpl = tmpl_reg.get(template_id)
+    return tpl is None or tpl.runtime_status == "native"
+
+
+def _first_selectable_template(tmpl_reg, cands) -> str:
+    for cand in cands:
+        if _template_selectable(tmpl_reg, cand.id):
+            return cand.id
+    return ""
+
+
 class ComponentResolver:
     """确定性组件解析：CompositionTemplate + MapModel + output → ComponentSelection."""
 
@@ -56,19 +73,48 @@ class ComponentResolver:
         # pick composition template — prefer model-specific density/academic maps for heatmap-like models
         compo = None
         wired_discarded = False
+        wired_planned = False
+        # V3（架构审查 R2）：别名规范化 —— 模板 compatible_map_models 与
+        # 组件 descriptor 的匹配全是集合成员判定，别名不规范化会让
+        # resolve("choropleth") 与 resolve("administrative_choropleth")
+        # 静默分叉（别名路径丢图例槽）。入口 canonicalize 一次。
+        canonical_model_id = map_model_id
+        # V3（架构审查 R1）：planned 模型的 resolver 级门控 —— planner 不选
+        # planned 模型（recipes 只引用 native id），但 resolver 自身也要保证
+        # planned 模型不会拿到为其「先行登记」的特化模板：记因后仅按
+        # generic 模板（空 compatible_map_models）选型。
+        model_planned = False
+        try:
+            from app.lib.cartography.model_library import get_map_model_registry
+            if map_model_id:
+                _model = get_map_model_registry().resolve(map_model_id)
+                if _model is not None:
+                    canonical_model_id = _model.id
+                    model_planned = _model.runtime_status == "planned"
+        except Exception:  # noqa: BLE001 - 模型库不可用时不阻断选型
+            model_planned = False
+
         if composition_template_id:
             compo = compo_reg.get(composition_template_id)
             # 显式指定的 composition 必须仍与最终 map model 兼容 ——
             # 资格降级（如热力→点图回退）后 density_map 的必需 colorbar
             # 会污染点图语境；不兼容则记因并走自动选择（select+fallback）。
-            if compo is not None and map_model_id and compo.compatible_map_models \
-                    and map_model_id not in compo.compatible_map_models:
+            if compo is not None and canonical_model_id and compo.compatible_map_models \
+                    and canonical_model_id not in compo.compatible_map_models:
                 compo = None
                 wired_discarded = True
+            elif compo is not None and model_planned and compo.compatible_map_models:
+                # 显式接线命中 planned-keyed 特化模板：模型兼容但 planned
+                # 不可选 —— 记因必须是 model_planned（不是"不兼容"）
+                compo = None
+                wired_planned = True
         if compo is None:
-            candidates = compo_reg.find_for_map_model(map_model_id, output_target)
+            candidates = compo_reg.find_for_map_model(canonical_model_id, output_target)
+            if model_planned:
+                # planned 模型：特化（模型 keyed）模板一概不可用 → 仅 generic
+                candidates = [c for c in candidates if not c.compatible_map_models]
             # prefer a template that explicitly declares compatible_map_models for this model
-            specific = [c for c in candidates if c.compatible_map_models and map_model_id in c.compatible_map_models]
+            specific = [c for c in candidates if c.compatible_map_models and canonical_model_id in c.compatible_map_models]
             if specific:
                 # prioritize density_map for heatmap-type models so legend resolves to colorbar
                 density_pref = [c for c in specific if "density" in c.id]
@@ -77,6 +123,8 @@ class ComponentResolver:
                 compo = candidates[0]
             else:
                 all_cands = [c for c in compo_reg.all_templates() if not output_target or output_target in c.output_targets]
+                if model_planned:
+                    all_cands = [c for c in all_cands if not c.compatible_map_models]
                 compo = all_cands[0] if all_cands else None
 
         if compo is None:
@@ -87,9 +135,21 @@ class ComponentResolver:
             # 丢弃的接线模板记因（evidence 可追溯，不静默降级）
             sel.rejected.append({
                 "slot": "composition", "reason": "wired_composition_incompatible_model",
-                "detail": f"{composition_template_id} not compatible with map model {map_model_id!r}",
+                "detail": f"{composition_template_id} not compatible with map model {canonical_model_id!r}",
             })
             sel.reason_codes.append("wired_composition_incompatible_model")
+        elif wired_planned:
+            sel.rejected.append({
+                "slot": "composition", "reason": "model_planned",
+                "detail": f"{composition_template_id} is compatible with map model "
+                          f"{canonical_model_id!r} but the model is runtime_status=planned "
+                          f"— model-keyed composition templates are not eligible",
+            })
+            sel.reason_codes.append("model_planned")
+        elif model_planned:
+            # planned 模型 + generic 兜底：无实际拒绝发生，仅 reason_codes
+            # 记因（rejected 只承载真实发生的剔除，不承载状态注记）
+            sel.reason_codes.append("model_planned")
 
         for slot in compo.component_slots:
             if slot.cardinality == "forbidden":
@@ -112,7 +172,7 @@ class ComponentResolver:
                     desc = comp_reg.get(ctype)
                     if desc is None:
                         desc = comp_reg.get_by_type(ctype)
-                    if desc and (not desc.compatible_map_models or map_model_id in desc.compatible_map_models):
+                    if desc and (not desc.compatible_map_models or canonical_model_id in desc.compatible_map_models):
                         should_include = True
                         break
                     if not desc:
@@ -132,7 +192,7 @@ class ComponentResolver:
                 continue
 
             # 统一的槽位类型解析：多类型槽位（图例族）按 map_model 兼容性选型
-            chosen_type = self._resolve_slot_type(slot, comp_reg, map_model_id)
+            chosen_type = self._resolve_slot_type(slot, comp_reg, canonical_model_id)
             desc = comp_reg.get(chosen_type) or comp_reg.get_by_type(chosen_type)
 
             # check output compatibility for the chosen component type
@@ -160,21 +220,23 @@ class ComponentResolver:
 
             # pick component template for this slot
             preferred = preferred_variants.get(chosen_type, "")
-            if preferred and tmpl_reg.has(preferred):
+            if preferred and tmpl_reg.has(preferred) and _template_selectable(tmpl_reg, preferred):
                 sel.component_templates[chosen_type] = preferred
             elif slot.preferred_templates:
                 for pt in slot.preferred_templates:
-                    if tmpl_reg.has(pt):
+                    if tmpl_reg.has(pt) and _template_selectable(tmpl_reg, pt):
                         sel.component_templates[chosen_type] = pt
                         break
                 if chosen_type not in sel.component_templates:
                     cands = tmpl_reg.find_by_type(chosen_type)
-                    if cands:
-                        sel.component_templates[chosen_type] = cands[0].id
+                    tpl_id = _first_selectable_template(tmpl_reg, cands)
+                    if tpl_id:
+                        sel.component_templates[chosen_type] = tpl_id
             else:
                 cands = tmpl_reg.find_by_type(chosen_type)
-                if cands:
-                    sel.component_templates[chosen_type] = cands[0].id
+                tpl_id = _first_selectable_template(tmpl_reg, cands)
+                if tpl_id:
+                    sel.component_templates[chosen_type] = tpl_id
 
         self._enforce_conflicts(sel, comp_reg)
         return sel

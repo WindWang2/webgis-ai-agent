@@ -50,7 +50,7 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         placement_domain="overlay", supported_outputs=["interactive", "png", "pdf", "svg"],
         renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
         default_variant="compass_minimal_black",
-        variants=["compass_minimal_black", "compass_needle", "compass_rose", "arrow_simple"],
+        variants=["compass_minimal_black", "compass_needle", "compass_rose", "arrow_simple", "monochrome"],
         default_position="top-right", allowed_positions=["top-right", "top-left", "bottom-right", "bottom-left", "none"],
         cardinality="single", priority=30, tags=["navigation"],
     ),
@@ -60,7 +60,7 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         placement_domain="overlay", supported_outputs=["interactive", "png", "pdf", "svg"],
         renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
         default_variant="minimal",
-        variants=["minimal", "boxed", "academic"],
+        variants=["minimal", "boxed", "academic", "dual_unit"],
         default_position="bottom-right", allowed_positions=["bottom-right", "bottom-left", "bottom-center", "none"],
         cardinality="single", priority=20,
     ),
@@ -74,10 +74,21 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         id="legend", category="legend.graduated", type="legend",
         name="Graduated Legend", name_zh="分级图例",
         placement_domain="overlay", supported_outputs=["interactive", "png", "pdf", "svg"],
-        compatible_map_models=["administrative_choropleth", "aggregate_grid", "hotspot_overlay", "proximity_overlay", "administrative_aggregation", "proportional_symbol"],  # #1075(D-6): 移除悬空 "graduated"（非 id 非别名；真别名 graduated_choropleth/choropleth 均解析到已列出的 administrative_choropleth）
+        # #1075(D-6) + V3：兼容模型清单 —— V3 扩容的全部离散分级语义模型
+        # （choropleth 族/分级点线/决策评分面）都要能挂 graduated 图例。
+        compatible_map_models=[
+            "administrative_choropleth", "aggregate_grid", "hotspot_overlay",
+            "proximity_overlay", "administrative_aggregation", "proportional_symbol",
+            # V3（ADR-0101 B1/B7）
+            "normalized_choropleth", "diverging_choropleth", "suitability_classes",
+            "risk_exposure_classes", "vulnerability_index", "equity_assessment",
+            "change_comparison_map", "site_selection_result", "mcda_score_map",
+            "graduated_point", "graduated_line", "flow_od_arc",
+            "service_area_overlay",
+        ],
         compatible_artifact_types=["admin_aggregate_table", "grid_aggregate"],
         renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
-        default_variant="academic", variants=["academic", "compact", "report"],
+        default_variant="academic", variants=["academic", "compact", "report", "horizontal"],
         default_position="bottom-left", allowed_positions=["bottom-left", "bottom-right", "top-left", "top-right", "none"],
         cardinality="multiple", requires_layer_binding=True, priority=16,
     ),
@@ -85,10 +96,12 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         id="continuous_colorbar", category="legend.continuous_colorbar", type="continuous_colorbar",
         name="Continuous Colorbar", name_zh="连续色条",
         placement_domain="overlay", supported_outputs=["interactive", "png", "pdf", "svg"],
-        compatible_map_models=["visual_heatmap", "raster_surface", "density_overview"],
+        compatible_map_models=["visual_heatmap", "raster_surface",
+                               "terrain_analytical_surface", "spectral_index_surface",
+                               "flow_od_arc"],
         compatible_artifact_types=["density_surface", "terrain_surface"],
         renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
-        default_variant="horizontal", variants=["horizontal", "vertical", "slim"],
+        default_variant="horizontal", variants=["horizontal", "vertical", "slim", "scientific", "stepped"],
         default_position="bottom-right", allowed_positions=["bottom-right", "bottom-left", "bottom-center", "top-right", "none"],
         cardinality="multiple", requires_layer_binding=True, priority=15,
     ),
@@ -96,9 +109,10 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         id="categorical_legend", category="legend.categorical", type="categorical_legend",
         name="Categorical Legend", name_zh="分类图例",
         placement_domain="overlay", supported_outputs=["interactive", "png", "pdf", "svg"],
-        compatible_map_models=["categorical_thematic"],
+        compatible_map_models=["categorical_thematic", "zoning_planning",
+                               "categorized_point", "categorized_line"],
         renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
-        default_variant="academic", variants=["academic", "compact", "report"],
+        default_variant="academic", variants=["academic", "compact", "report", "horizontal"],
         default_position="bottom-left", allowed_positions=["bottom-left", "bottom-right", "top-left", "none"],
         cardinality="multiple", requires_layer_binding=True, priority=17,
     ),
@@ -107,7 +121,7 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         name="Title", name_zh="标题",
         placement_domain="chrome", supported_outputs=["interactive", "png", "pdf", "svg"],
         renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
-        default_variant="academic", variants=["academic", "report", "presentation"],
+        default_variant="academic", variants=["academic", "report", "presentation", "minimal", "government"],
         default_position="top-center", allowed_positions=["top-center", "top-left", "none"],
         cardinality="single", priority=10,
     ),
@@ -116,7 +130,7 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         name="Subtitle", name_zh="副标题",
         placement_domain="chrome", supported_outputs=["interactive", "png", "pdf", "svg"],
         renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
-        default_variant="default", variants=["default", "academic"],
+        default_variant="default", variants=["default", "academic", "report"],
         default_position="top-center", allowed_positions=["top-center", "top-left", "none"],
         cardinality="zero_or_one", priority=11,
     ),
@@ -148,7 +162,7 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         placement_domain="chrome",
         supported_outputs=["interactive", "png", "pdf", "svg"],
         renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
-        default_variant="minimal", variants=["minimal", "academic", "report"],
+        default_variant="minimal", variants=["minimal", "academic", "report", "neatline"],
         default_position="none", allowed_positions=["none"],
         cardinality="single", priority=70,
     ),
@@ -158,7 +172,7 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         placement_domain="panel", supported_outputs=["interactive", "png", "pdf"],
         required_context=["statistics"],
         renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
-        default_variant="default", variants=["default", "compact"],
+        default_variant="default", variants=["default", "compact", "kpi"],
         default_position="top-left", allowed_positions=["top-left", "top-right", "none"],
         cardinality="zero_or_one", priority=40,
     ),
@@ -230,9 +244,9 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         type="methodology_note",
         name="Methodology Note", name_zh="方法论披露",
         # 「缺分母不能谈公平性」长在地图产品上：稳定警告码 + 文案随 live
-        # 渲染。仅 interactive（披露是工作区语义；静态导出走报告文本）。
-        placement_domain="panel", supported_outputs=["interactive"],
-        renderer_support=["interactive"], exporter_support=[],
+        # 渲染。V3：canvas 导出绘制披露卡（与矩阵 D6 升级同步）。
+        placement_domain="panel", supported_outputs=["interactive", "png", "pdf", "svg"],
+        renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
         default_variant="default", variants=["default", "compact"],
         default_position="bottom-left", allowed_positions=["bottom-left", "bottom-right", "top-left", "top-right", "none"],
         cardinality="zero_or_one", priority=46, runtime_status="native",
@@ -243,8 +257,8 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         type="uncertainty_panel",
         name="Uncertainty Panel", name_zh="不确定性面板",
         # 插值不确定性/样本限制/区间披露（VNext §5 interpolation honesty）。
-        placement_domain="panel", supported_outputs=["interactive"],
-        renderer_support=["interactive"], exporter_support=[],
+        placement_domain="panel", supported_outputs=["interactive", "png", "pdf", "svg"],
+        renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
         default_variant="default", variants=["default", "compact"],
         default_position="bottom-right", allowed_positions=["bottom-right", "bottom-left", "top-left", "top-right", "none"],
         cardinality="zero_or_one", priority=47, runtime_status="native",
@@ -256,8 +270,8 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         name="Decision Panel", name_zh="决策面板",
         # 候选排名 + 方法 + 权重来源 + 硬约束否决（VNext §12）。观测证据
         # 与用户假设可区分 —— weightSource 必须显式，不合成。
-        placement_domain="panel", supported_outputs=["interactive"],
-        renderer_support=["interactive"], exporter_support=[],
+        placement_domain="panel", supported_outputs=["interactive", "png", "pdf", "svg"],
+        renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
         default_variant="default", variants=["default", "compact"],
         # review M-F3：默认 top-left —— top-right 是 inset_map 的 168px
         # 大槽，decision 落那里必压插图（frontend layout-meta 同表）。
@@ -372,6 +386,19 @@ class ComponentRegistry:
                 for conf in desc.conflicts:
                     if conf not in self._by_id and conf not in self._by_type:
                         issues.append(f"descriptor {desc.id}: conflict {conf} not registered")
+                # V3：compatible_map_models 必须可解析（canonical id 或已注册
+                # 别名）—— 防目录虚构模型契约（与 composition validate 同语义）。
+                if desc.compatible_map_models:
+                    try:
+                        from app.lib.cartography.model_library import get_map_model_registry
+                        model_reg = get_map_model_registry()
+                        for mid in desc.compatible_map_models:
+                            if model_reg.resolve(mid) is None:
+                                issues.append(
+                                    f"descriptor {desc.id}: compatible_map_model "
+                                    f"'{mid}' 未注册")
+                    except Exception:  # pragma: no cover - 防御性
+                        pass
             # renderer/exporter 支持声明必须与机器真值矩阵一致（防契约撒谎）
             issues.extend(get_component_renderer_registry().validate_against_descriptors())
         except Exception:

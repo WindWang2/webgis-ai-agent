@@ -236,6 +236,13 @@ class CompositionTemplateRegistry:
         self._by_id.clear()
         for tpl in SEED_COMPOSITION_TEMPLATES:
             self._by_id[tpl.id] = tpl
+        # V3（ADR-0101 D1）：seed 之后按确定性顺序载入域包模板。
+        # seed id 不受影响；pack 撞 id 直接拒绝（域包必须自洽）。
+        from app.lib.cartography.composition_packs import COMPOSITION_PACK_TEMPLATES
+        for tpl in COMPOSITION_PACK_TEMPLATES:
+            if tpl.id in self._by_id:
+                raise ValueError(f"duplicate composition template id: {tpl.id}")
+            self._by_id[tpl.id] = tpl
 
     def register(self, tpl: MapCompositionTemplate) -> None:
         if tpl.id in self._by_id:
@@ -293,6 +300,17 @@ class CompositionTemplateRegistry:
                     for pt in slot.preferred_templates:
                         if not tmpl_reg.has(pt):
                             issues.append(f"composition {tpl.id} slot {slot.id}: preferred template {pt} not found")
+                # V3（ADR-0101 D2）：compatible_map_models 必须可解析
+                # （模型目录真实存在；别名也接受），防模板虚构模型契约。
+                try:
+                    from app.lib.cartography.model_library import get_map_model_registry
+                    model_reg = get_map_model_registry()
+                    for mid in tpl.compatible_map_models:
+                        if model_reg.resolve(mid) is None:
+                            issues.append(
+                                f"composition {tpl.id}: compatible_map_model '{mid}' 未注册")
+                except Exception as e:  # pragma: no cover - 防御性
+                    issues.append(f"composition {tpl.id}: model cross-check error: {e}")
         except Exception as e:
             issues.append(f"composition validation error: {e}")
         return issues

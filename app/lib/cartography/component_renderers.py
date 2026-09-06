@@ -148,27 +148,29 @@ _SUPPORT_MATRIX: Dict[str, ComponentRendererSupport] = {
             "（不虚构范围）"
         ),
     ),
-    # ── VNext §5/§9/§13：披露族（live 渲染器已落地 —— methodology-note/
-    # uncertainty-panel/decision-panel.tsx；工作区交互面，非导出产物面）──
+    # ── V3（ADR-0101 D6）：披露族导出真值升级 ─────────────────────────
+    # 此前 exporters=[]（披露是工作区语义）；V3 落地 canvas 导出绘制
+    # （drawChromeDisclosurePanel：方法论/不确定性/决策三面板归一化
+    # 「标题 + 文本行」卡片），exporter.ts 同链分发 —— 不再靠豁免掩盖。
     "methodology_note": ComponentRendererSupport(
         component_type="methodology_note",
-        renderers=["interactive"], exporters=[],
+        renderers=["interactive"], exporters=["png", "pdf", "svg"],
         note=(
-            "VNext：方法论披露随产品渲染（稳定警告码 + 文案）；仅 interactive "
-            "—— 披露是工作区语义，静态导出由报告文本承载"
+            "V3：方法论披露随产品渲染（稳定警告码 + 文案）；canvas 导出"
+            "绘制警示色披露卡（drawChromeDisclosurePanel，collapsed 折叠条）"
         ),
     ),
     "uncertainty_panel": ComponentRendererSupport(
         component_type="uncertainty_panel",
-        renderers=["interactive"], exporters=[],
-        note="VNext：不确定性披露（区间/置信度/样本限制）随产品渲染",
+        renderers=["interactive"], exporters=["png", "pdf", "svg"],
+        note="V3：不确定性披露（区间/置信度/样本限制）live + canvas 导出同链",
     ),
     "decision_panel": ComponentRendererSupport(
         component_type="decision_panel",
-        renderers=["interactive"], exporters=[],
+        renderers=["interactive"], exporters=["png", "pdf", "svg"],
         note=(
-            "VNext：决策面板（候选排名 + 权重来源 + 硬约束否决）；行级 basis "
-            "区分 observed/assumed/vetoed"
+            "V3：决策面板（候选排名 + 权重来源 + 硬约束否决）；canvas 导出"
+            "绘制排名卡，weightSource 显式入卡"
         ),
     ),
 }

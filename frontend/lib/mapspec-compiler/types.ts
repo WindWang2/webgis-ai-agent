@@ -175,8 +175,12 @@ export interface MapSpecComponent {
     /** Runtime V4：artifact-backed 交互表格（虚拟化 + 选择联动；仅 interactive）。 */
     | "table_panel"
     | "export_layout"
-    /** 区位插图（后端 runtime_status=planned；渲染器落地前不消费）。 */
-    | "inset_map";
+    /** 区位插图（v2 全链路：live 静态投影 + 导出 drawChromeInset 同链）。 */
+    | "inset_map"
+    /** V3（ADR-0101 D6）：披露族 —— live 渲染器 + canvas 导出披露卡。 */
+    | "methodology_note"
+    | "uncertainty_panel"
+    | "decision_panel";
   enabled?: boolean;
   position?:
     | "top-left"

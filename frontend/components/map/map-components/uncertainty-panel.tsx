@@ -4,6 +4,7 @@ import type { MapSpecComponent } from '@/lib/mapspec-compiler/types';
 import { registerComponentRenderer } from './registry';
 import { resolveVariant } from './helpers';
 import { FloatingChrome, usePlacementPatchedComponent } from './floating-chrome';
+import { uncertaintyKindLabel } from '@/lib/map-kit/disclosure-labels';
 import type { RendererContext } from './types';
 
 /**
@@ -48,14 +49,6 @@ function parseUncertainty(raw: unknown): UncertaintyPayload | null {
   return payload.items || payload.sampleNote ? payload : null;
 }
 
-const KIND_LABELS: Record<string, string> = {
-  interval: '区间',
-  variance: '方差',
-  confidence: '置信度',
-  sample: '样本',
-  model: '模型',
-};
-
 function UncertaintyPanelView({ component, ctx }: { component: MapSpecComponent; ctx?: RendererContext }) {
   const patched = usePlacementPatchedComponent(component);
   const variant = resolveVariant(patched, 'default') === 'compact' ? 'compact' : 'default';
@@ -81,7 +74,7 @@ function UncertaintyPanelView({ component, ctx }: { component: MapSpecComponent;
             >
               <span className="min-w-0 truncate text-caption">
                 <span className="mr-1 text-micro text-map-chrome-ink-muted">
-                  {KIND_LABELS[item.kind] ?? item.kind}
+                  {uncertaintyKindLabel(item.kind)}
                 </span>
                 {item.label}
               </span>

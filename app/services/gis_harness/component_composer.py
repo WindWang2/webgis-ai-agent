@@ -95,6 +95,10 @@ class ComponentComposer:
                     slot_by_type.setdefault(ctype, slot)
 
         components: List[CartographyComponent] = []
+        # V3（ADR-0101 D7）：实例 id 确定性唯一 —— 同 id 冲突时保先
+        # （组合输入受 resolver 类型唯一性约束，正常不触发；防御 overrides
+        # /展开路径的退化输入，保证 MapSpec 组件 id 恢复可寻址）。
+        seen_ids: set = set()
 
         selected_types: List[str] = []
         if hasattr(selection, "selected"):
@@ -129,6 +133,7 @@ class ComponentComposer:
                     tmpl_reg=tmpl_reg,
                     template_map=template_map,
                     overrides=overrides,
+                    seen_ids=seen_ids,
                 ))
                 continue
 
@@ -191,6 +196,9 @@ class ComponentComposer:
                 variant=variant,
                 templateId=template_id,
             )
+            if comp.id in seen_ids:
+                continue
+            seen_ids.add(comp.id)
             components.append(comp)
 
         components.sort(key=lambda c: (c.priority, c.id))
@@ -215,6 +223,7 @@ class ComponentComposer:
         tmpl_reg,
         template_map: Dict[str, str],
         overrides: Dict[str, Any],
+        seen_ids: set,
     ) -> List[CartographyComponent]:
         from app.lib.cartography.component_registry import get_component_registry  # noqa: F401
 
@@ -257,6 +266,9 @@ class ComponentComposer:
                         options["variant"] = v
                     elif k != "layerId":
                         options[k] = v
+            if comp_id in seen_ids:
+                continue
+            seen_ids.add(comp_id)
             out.append(CartographyComponent(
                 id=comp_id,
                 type=chosen,  # type: ignore[arg-type]
