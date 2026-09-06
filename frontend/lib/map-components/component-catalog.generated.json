@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "exportedFrom": "app/lib/cartography/component_registry.py",
   "componentTypes": [
     {
@@ -7,7 +7,12 @@
       "variants": [
         "text",
         "callout",
-        "group"
+        "group",
+        "footer",
+        "timestamp",
+        "projection_note",
+        "data_source",
+        "highlight"
       ],
       "defaultVariant": "text",
       "defaultPosition": "top-left",
@@ -60,7 +65,8 @@
         "academic",
         "compact",
         "report",
-        "horizontal"
+        "horizontal",
+        "nested"
       ],
       "defaultVariant": "academic",
       "defaultPosition": "bottom-left",
@@ -82,7 +88,25 @@
         "default",
         "compact",
         "transparent",
-        "report"
+        "report",
+        "bar",
+        "horizontal_bar",
+        "grouped_bar",
+        "stacked_bar",
+        "line",
+        "area",
+        "scatter",
+        "histogram",
+        "box_plot",
+        "pie",
+        "donut",
+        "radar",
+        "rose",
+        "timeseries",
+        "cumulative",
+        "heat_matrix",
+        "kpi_card",
+        "ranking_list"
       ],
       "defaultVariant": "default",
       "defaultPosition": "top-left",
@@ -164,7 +188,8 @@
       "type": "graticule",
       "variants": [
         "light",
-        "geographic"
+        "geographic",
+        "projected"
       ],
       "defaultVariant": "light",
       "defaultPosition": "none",
@@ -184,7 +209,8 @@
       "type": "inset_map",
       "variants": [
         "overview",
-        "location"
+        "location",
+        "hierarchy"
       ],
       "defaultVariant": "overview",
       "defaultPosition": "top-right",
@@ -206,7 +232,12 @@
         "academic",
         "compact",
         "report",
-        "horizontal"
+        "horizontal",
+        "bivariate",
+        "uncertainty",
+        "size",
+        "line",
+        "composite"
       ],
       "defaultVariant": "academic",
       "defaultPosition": "bottom-left",
@@ -248,7 +279,8 @@
       "type": "methodology_note",
       "variants": [
         "default",
-        "compact"
+        "compact",
+        "data_quality"
       ],
       "defaultVariant": "default",
       "defaultPosition": "bottom-left",
@@ -271,7 +303,8 @@
         "compass_needle",
         "compass_rose",
         "arrow_simple",
-        "monochrome"
+        "monochrome",
+        "dual_convention"
       ],
       "defaultVariant": "compass_minimal_black",
       "defaultPosition": "top-right",
@@ -314,7 +347,8 @@
       "variants": [
         "default",
         "compact",
-        "kpi"
+        "kpi",
+        "explanation"
       ],
       "defaultVariant": "default",
       "defaultPosition": "top-left",
@@ -335,7 +369,8 @@
       "variants": [
         "default",
         "academic",
-        "report"
+        "report",
+        "compact"
       ],
       "defaultVariant": "default",
       "defaultPosition": "top-center",
@@ -355,7 +390,8 @@
       "type": "table_panel",
       "variants": [
         "default",
-        "compact"
+        "compact",
+        "dense"
       ],
       "defaultVariant": "default",
       "defaultPosition": "bottom-right",
@@ -374,7 +410,9 @@
         "report",
         "presentation",
         "minimal",
-        "government"
+        "government",
+        "banner",
+        "compact"
       ],
       "defaultVariant": "academic",
       "defaultPosition": "top-center",
@@ -429,6 +467,15 @@
       "printSafe": false,
       "grayLevels": 4,
       "minGrayDelta": 0.0178
+    },
+    {
+      "id": "Gray",
+      "kind": "sequential",
+      "colorblindSafe": true,
+      "colorblindSafeMaxClasses": 9,
+      "printSafe": false,
+      "grayLevels": 4,
+      "minGrayDelta": 0.0513
     },
     {
       "id": "Greens",
@@ -856,6 +903,141 @@
           "Viridis"
         ]
       }
+    }
+  ],
+  "chartKinds": [
+    {
+      "id": "area",
+      "dataShape": "series",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": false
+    },
+    {
+      "id": "bar",
+      "dataShape": "series",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": true
+    },
+    {
+      "id": "box_plot",
+      "dataShape": "series",
+      "liveEngine": "custom-svg",
+      "exportLevel": "full",
+      "selectionLinkage": false
+    },
+    {
+      "id": "cumulative",
+      "dataShape": "series",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": false
+    },
+    {
+      "id": "donut",
+      "dataShape": "series",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": true
+    },
+    {
+      "id": "grouped_bar",
+      "dataShape": "table",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": true
+    },
+    {
+      "id": "heat_matrix",
+      "dataShape": "matrix",
+      "liveEngine": "custom-svg",
+      "exportLevel": "full",
+      "selectionLinkage": false
+    },
+    {
+      "id": "histogram",
+      "dataShape": "series",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": false
+    },
+    {
+      "id": "horizontal_bar",
+      "dataShape": "series",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": true
+    },
+    {
+      "id": "kpi_card",
+      "dataShape": "kpi",
+      "liveEngine": "custom-svg",
+      "exportLevel": "full",
+      "selectionLinkage": false
+    },
+    {
+      "id": "line",
+      "dataShape": "series",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": false
+    },
+    {
+      "id": "pie",
+      "dataShape": "series",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": true
+    },
+    {
+      "id": "radar",
+      "dataShape": "table",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": false
+    },
+    {
+      "id": "ranking_list",
+      "dataShape": "table",
+      "liveEngine": "custom-svg",
+      "exportLevel": "full",
+      "selectionLinkage": true
+    },
+    {
+      "id": "rose",
+      "dataShape": "series",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": false
+    },
+    {
+      "id": "scatter",
+      "dataShape": "xy",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": true
+    },
+    {
+      "id": "stacked_bar",
+      "dataShape": "table",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": true
+    },
+    {
+      "id": "timeseries",
+      "dataShape": "series",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": false
+    },
+    {
+      "id": "violin",
+      "dataShape": "series",
+      "liveEngine": "planned",
+      "exportLevel": "unsupported",
+      "selectionLinkage": false
     }
   ]
 }

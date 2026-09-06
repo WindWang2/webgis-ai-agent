@@ -82,9 +82,10 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         placement_domain="overlay", supported_outputs=["interactive", "png", "pdf", "svg"],
         renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
         default_variant="compass_minimal_black",
-        variants=["compass_minimal_black", "compass_needle", "compass_rose", "arrow_simple", "monochrome"],
+        variants=["compass_minimal_black", "compass_needle", "compass_rose", "arrow_simple", "monochrome", "dual_convention"],
         default_position="top-right", allowed_positions=["top-right", "top-left", "bottom-right", "bottom-left", "none"],
         cardinality="single", priority=30, tags=["navigation"],
+        collision_class="chrome", accessibility={"role": "img", "label_zh": "指北针"},
     ),
     MapComponentDescriptor(
         id="scale_bar", category="navigation.scale_bar", type="scale_bar",
@@ -95,6 +96,7 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         variants=["minimal", "boxed", "academic", "dual_unit"],
         default_position="bottom-right", allowed_positions=["bottom-right", "bottom-left", "bottom-center", "none"],
         cardinality="single", priority=20,
+        collision_class="chrome", accessibility={"role": "img", "label_zh": "比例尺"},
     ),
     # v2（component library 2.0）：图例族 cardinality=single → multiple。
     # 多图层地图（heatmap 主层 + choropleth 参考层）本来就是
@@ -120,9 +122,17 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         ],
         compatible_artifact_types=["admin_aggregate_table", "grid_aggregate"],
         renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
-        default_variant="academic", variants=["academic", "compact", "report", "horizontal"],
+        default_variant="academic", variants=[
+            "academic", "compact", "report", "horizontal",
+            # V4：双变量色阵 / 不确定性区间 / 比例符号尺寸 / 线宽分级 /
+            # 多层复合图例（planned 前瞻模板转正）
+            "bivariate", "uncertainty", "size", "line", "composite",
+        ],
         default_position="bottom-left", allowed_positions=["bottom-left", "bottom-right", "top-left", "top-right", "none"],
         cardinality="multiple", requires_layer_binding=True, priority=16,
+        states=["visible", "hidden", "collapsed"], collision_class="legend",
+        interactions=["collapse", "selection_linkage"],
+        accessibility={"role": "img", "label_zh": "分级图例"},
     ),
     MapComponentDescriptor(
         id="continuous_colorbar", category="legend.continuous_colorbar", type="continuous_colorbar",
@@ -136,6 +146,8 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         default_variant="horizontal", variants=["horizontal", "vertical", "slim", "scientific", "stepped"],
         default_position="bottom-right", allowed_positions=["bottom-right", "bottom-left", "bottom-center", "top-right", "none"],
         cardinality="multiple", requires_layer_binding=True, priority=15,
+        states=["visible", "hidden", "collapsed"], collision_class="legend",
+        accessibility={"role": "img", "label_zh": "连续色条"},
     ),
     MapComponentDescriptor(
         id="categorical_legend", category="legend.categorical", type="categorical_legend",
@@ -144,27 +156,34 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         compatible_map_models=["categorical_thematic", "zoning_planning",
                                "categorized_point", "categorized_line"],
         renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
-        default_variant="academic", variants=["academic", "compact", "report", "horizontal"],
+        default_variant="academic", variants=["academic", "compact", "report", "horizontal", "nested"],
         default_position="bottom-left", allowed_positions=["bottom-left", "bottom-right", "top-left", "none"],
         cardinality="multiple", requires_layer_binding=True, priority=17,
+        states=["visible", "hidden", "collapsed"], collision_class="legend",
+        interactions=["collapse", "selection_linkage"],
+        accessibility={"role": "img", "label_zh": "分类图例"},
     ),
     MapComponentDescriptor(
         id="title", category="annotation.title", type="title",
         name="Title", name_zh="标题",
         placement_domain="chrome", supported_outputs=["interactive", "png", "pdf", "svg"],
         renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
-        default_variant="academic", variants=["academic", "report", "presentation", "minimal", "government"],
+        default_variant="academic", variants=["academic", "report", "presentation", "minimal", "government", "banner", "compact"],
         default_position="top-center", allowed_positions=["top-center", "top-left", "none"],
         cardinality="single", priority=10,
+        collision_class="chrome", responsive="collapse",
+        accessibility={"role": "heading", "label_zh": "标题"},
     ),
     MapComponentDescriptor(
         id="subtitle", category="annotation.subtitle", type="subtitle",
         name="Subtitle", name_zh="副标题",
         placement_domain="chrome", supported_outputs=["interactive", "png", "pdf", "svg"],
         renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
-        default_variant="default", variants=["default", "academic", "report"],
+        default_variant="default", variants=["default", "academic", "report", "compact"],
         default_position="top-center", allowed_positions=["top-center", "top-left", "none"],
         cardinality="zero_or_one", priority=11,
+        collision_class="chrome",
+        accessibility={"role": "text", "label_zh": "副标题"},
     ),
     MapComponentDescriptor(
         id="attribution", category="annotation.attribution", type="attribution",
@@ -174,6 +193,7 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         default_variant="default", variants=["default", "compact"],
         default_position="bottom-left", allowed_positions=["bottom-left", "bottom-right", "none"],
         cardinality="single", priority=50,
+        collision_class="chrome", accessibility={"role": "note", "label_zh": "版权信息"},
     ),
     MapComponentDescriptor(
         id="graticule", category="navigation.graticule", type="graticule",
@@ -183,9 +203,11 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         # graticule-math 间隔/吸附语义（单一矩阵见 component_renderers）。
         placement_domain="overlay", supported_outputs=["interactive", "png", "pdf", "svg"],
         renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
-        default_variant="light", variants=["light", "geographic"],
+        default_variant="light", variants=["light", "geographic", "projected"],
         default_position="none", allowed_positions=["none"],
         cardinality="single", priority=60,
+        collision_class="canvas", states=["visible", "hidden"],
+        accessibility={"role": "img", "label_zh": "坐标网格"},
     ),
     MapComponentDescriptor(
         id="map_border", category="frame.map_border", type="map_border",
@@ -197,6 +219,8 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         default_variant="minimal", variants=["minimal", "academic", "report", "neatline"],
         default_position="none", allowed_positions=["none"],
         cardinality="single", priority=70,
+        collision_class="canvas", states=["visible", "hidden"],
+        accessibility={"role": "img", "label_zh": "图框"},
     ),
     MapComponentDescriptor(
         id="statistics_panel", category="analysis.statistics_panel", type="statistics_panel",
@@ -204,9 +228,12 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         placement_domain="panel", supported_outputs=["interactive", "png", "pdf"],
         required_context=["statistics"],
         renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
-        default_variant="default", variants=["default", "compact", "kpi"],
+        default_variant="default", variants=["default", "compact", "kpi", "explanation"],
         default_position="top-left", allowed_positions=["top-left", "top-right", "none"],
         cardinality="zero_or_one", priority=40,
+        states=["visible", "hidden", "collapsed", "expanded"],
+        interactions=["collapse", "close"], collision_class="panel",
+        accessibility={"role": "group", "label_zh": "统计面板"},
     ),
     MapComponentDescriptor(
         id="chart_panel", category="analysis.chart_panel", type="chart_panel",
@@ -214,11 +241,30 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         placement_domain="panel", supported_outputs=["interactive", "png", "pdf"],
         required_context=["chart"],
         renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
-        default_variant="default", variants=["default", "compact", "transparent", "report"],
+        default_variant="default",
+        # V4：kind 变体（chart_kinds.py 词表的 live 引擎已实现 18 种，
+        # violin planned 不入 native 词表）+ 4 风格变体。kind 变体是
+        # 目录的 preset 句柄：模板 default_options.chartType 预设图表类型。
+        variants=[
+            "default", "compact", "transparent", "report",
+            "bar", "horizontal_bar", "grouped_bar", "stacked_bar",
+            "line", "area", "scatter", "histogram", "box_plot",
+            "pie", "donut", "radar", "rose", "timeseries", "cumulative",
+            "heat_matrix", "kpi_card", "ranking_list",
+        ],
         default_position="top-left", allowed_positions=["top-left", "top-right", "bottom-left", "bottom-right", "none"],
         # v2：多图表产品（各一 chart：各区数量/类别构成/排名）—— 每实例
         # 独立 id/chartRef/placement；上游 artifact 协议复用 ref:chart-*。
         cardinality="multiple", priority=41,
+        # V4：七态状态机（chart_kinds.CHART_STATES 同词表）+ Agent/用户
+        # 共享操作词表（AGENT_CHART_OPERATIONS 同表）
+        states=["hidden", "visible", "collapsed", "expanded",
+                "floating", "docked", "anchored"],
+        interactions=["move", "resize", "pin", "collapse", "expand",
+                      "close", "restore", "switch_chart_type",
+                      "switch_field", "filter", "highlight"],
+        collision_class="panel", responsive="collapse",
+        accessibility={"role": "img", "label_zh": "统计图表"},
     ),
     MapComponentDescriptor(
         id="table_panel", category="analysis.table_panel", type="table_panel",
@@ -231,9 +277,12 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         placement_domain="panel", supported_outputs=["interactive"],
         compatible_artifact_types=["stats_table", "admin_aggregate_table", "grid_aggregate", "feature_collection"],
         renderer_support=["interactive"], exporter_support=[],
-        default_variant="default", variants=["default", "compact"],
+        default_variant="default", variants=["default", "compact", "dense"],
         default_position="bottom-right", allowed_positions=["top-left", "top-right", "bottom-left", "bottom-right", "none"],
         cardinality="multiple", priority=42,
+        states=["visible", "hidden", "collapsed"],
+        interactions=["move", "resize", "collapse", "close"],
+        collision_class="panel", accessibility={"role": "table", "label_zh": "数据表"},
     ),
     MapComponentDescriptor(
         id="export_layout", category="export.page_layout", type="export_layout",
@@ -243,6 +292,9 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         default_variant="A4_landscape", variants=["A4_landscape", "A4_portrait", "A3_landscape", "letter"],
         default_position="none", allowed_positions=["none"],
         cardinality="single", priority=90,
+        states=["visible"], collision_class="none",
+        accessibility={"role": "dialog", "label_zh": "输出版式",
+                       "keyboard_operable": False},
     ),
     MapComponentDescriptor(
         id="annotation", category="annotation.text", type="annotation",
@@ -252,9 +304,16 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         # v2：注记框架 —— text（静态卡）/ callout（anchor 坐标 + 引线）/ 
         # group（一个逻辑组 → 多条相关注记，options.items 有界）。三种形态
         # 共享同一语义模型，live 与 export 同链（exporter.drawChromeAnnotation）。
-        default_variant="text", variants=["text", "callout", "group"],
+        default_variant="text",
+        variants=["text", "callout", "group",
+                  # V4：版面附注族（页脚/时间戳/投影注记/数据来源）与
+                  # 高亮区域（语义 highlight，非交互 selection）
+                  "footer", "timestamp", "projection_note", "data_source",
+                  "highlight"],
         default_position="top-left", allowed_positions=["top-left", "top-right", "bottom-left", "bottom-right", "none"],
         cardinality="multiple", priority=55,
+        interactions=["move", "close"], collision_class="panel",
+        accessibility={"role": "note", "label_zh": "文本注记"},
     ),
     MapComponentDescriptor(
         id="inset_map", category="inset.map", type="inset_map",
@@ -265,10 +324,12 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         # （不虚构范围），resolver 需要 inset_context 才会选出（防空选）。
         placement_domain="overlay", supported_outputs=["interactive", "png", "pdf", "svg"],
         renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
-        default_variant="overview", variants=["overview", "location"],
+        default_variant="overview", variants=["overview", "location", "hierarchy"],
         default_position="top-right", allowed_positions=["top-right", "top-left", "bottom-right", "bottom-left"],
         cardinality="zero_or_one", priority=65, runtime_status="native",
         required_context=["inset_context"],
+        states=["visible", "hidden"], collision_class="panel",
+        responsive="hide", accessibility={"role": "img", "label_zh": "区位插图"},
     ),
     # ── VNext §5/§9/§13：披露族（方法论诚实的产品面）──────────────────
     MapComponentDescriptor(
@@ -279,10 +340,12 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         # 渲染。V3：canvas 导出绘制披露卡（与矩阵 D6 升级同步）。
         placement_domain="panel", supported_outputs=["interactive", "png", "pdf", "svg"],
         renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
-        default_variant="default", variants=["default", "compact"],
+        default_variant="default", variants=["default", "compact", "data_quality"],
         default_position="bottom-left", allowed_positions=["bottom-left", "bottom-right", "top-left", "top-right", "none"],
         cardinality="zero_or_one", priority=46, runtime_status="native",
         required_context=["methodology"],
+        states=["visible", "hidden", "collapsed"], collision_class="panel",
+        accessibility={"role": "note", "label_zh": "方法论披露"},
     ),
     MapComponentDescriptor(
         id="uncertainty_panel", category="disclosure.uncertainty_panel",
@@ -295,6 +358,8 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         default_position="bottom-right", allowed_positions=["bottom-right", "bottom-left", "top-left", "top-right", "none"],
         cardinality="zero_or_one", priority=47, runtime_status="native",
         required_context=["uncertainty"],
+        states=["visible", "hidden", "collapsed"], collision_class="panel",
+        accessibility={"role": "note", "label_zh": "不确定性面板"},
     ),
     MapComponentDescriptor(
         id="decision_panel", category="disclosure.decision_panel",
@@ -310,6 +375,8 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         default_position="top-left", allowed_positions=["top-left", "top-right", "bottom-right", "bottom-left", "none"],
         cardinality="zero_or_one", priority=48, runtime_status="native",
         required_context=["decision"],
+        states=["visible", "hidden", "collapsed"], collision_class="panel",
+        accessibility={"role": "group", "label_zh": "决策面板"},
     ),
 ]
 

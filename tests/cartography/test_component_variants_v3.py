@@ -74,22 +74,48 @@ def test_native_template_variants_in_descriptor_vocabulary() -> None:
 
 
 def test_planned_templates_registered_but_not_selectable() -> None:
+    """V4：V3 的三个前瞻模板（bivariate/uncertainty/hierarchy）已随渲染链
+    落地转正为 native —— 见 test_v4_former_planned_templates_promoted。
+    resolver 的『planned 不可选』语义仍需成立，用合成 planned 模板验证。"""
+    from app.lib.cartography.component_templates import (
+        reset_component_template_registry,
+    )
     tmpl_reg = get_component_template_registry()
-    for tid in V3_PLANNED_TEMPLATES:
+    try:
+        tmpl_reg.register(_copy_as_planned(tmpl_reg.get("legend/academic")))
+        sel = ComponentResolver().resolve(
+            composition_template_id="composition.standard_analysis",
+            map_model_id="administrative_choropleth",
+            output_target="interactive",
+            # 显式点名 planned 模板 —— 也必须被拒绝
+            preferred_variants={"legend": "legend/synthetic-planned"},
+        )
+        assert sel.component_templates.get("legend") != "legend/synthetic-planned"
+        chosen = tmpl_reg.get(sel.component_templates.get("legend", ""))
+        assert chosen is None or chosen.runtime_status == "native"
+    finally:
+        reset_component_template_registry()
+
+
+def _copy_as_planned(tpl):
+    return tpl.model_copy(update={"id": "legend/synthetic-planned",
+                                  "runtime_status": "planned"})
+
+
+def test_v4_former_planned_templates_promoted() -> None:
+    """V4：原前瞻模板转正 —— native 状态、variant 在 descriptor 词表内。"""
+    tmpl_reg = get_component_template_registry()
+    reg = get_component_registry()
+    for tid, variant in [
+        ("legend/bivariate", "bivariate"),
+        ("legend/uncertainty", "uncertainty"),
+        ("inset-map/hierarchy-locator", "hierarchy"),
+    ]:
         tpl = tmpl_reg.get(tid)
         assert tpl is not None, f"{tid} 未登记"
-        assert tpl.runtime_status == "planned"
-
-    sel = ComponentResolver().resolve(
-        composition_template_id="composition.standard_analysis",
-        map_model_id="administrative_choropleth",
-        output_target="interactive",
-        # 显式点名 planned 模板 —— 也必须被拒绝
-        preferred_variants={"legend": "legend/bivariate"},
-    )
-    assert sel.component_templates.get("legend") != "legend/bivariate"
-    chosen = tmpl_reg.get(sel.component_templates.get("legend", ""))
-    assert chosen is None or chosen.runtime_status == "native"
+        assert tpl.runtime_status == "native"
+        desc = reg.get_by_type(tpl.component_type)
+        assert variant in desc.variants
 
 
 def test_default_template_selection_unchanged_for_existing_types() -> None:

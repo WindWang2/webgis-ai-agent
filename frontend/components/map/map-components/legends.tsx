@@ -13,7 +13,12 @@ function legendForComponent(component: MapSpecComponent, spec: RendererContext['
     const layer = spec.layers.find((l) => l.id === layerId) as unknown as { legend_spec?: LegendSpec } | undefined;
     if (layer?.legend_spec) return layer.legend_spec;
   }
-  const wanted: Record<string, string[]> = { legend: ['graduated'], categorical_legend: ['categorical'] };
+  // V4：legend 类型自动发现扩展 —— bivariate/continuous 色阵与连续色带
+  // 也参与兜底发现（显式 layerId 绑定仍优先）。
+  const wanted: Record<string, string[]> = {
+    legend: ['graduated', 'bivariate', 'continuous'],
+    categorical_legend: ['categorical'],
+  };
   const types = wanted[component.type] ?? [];
   const found = spec?.layers.find((l) => {
     const ls = (l as unknown as { legend_spec?: { type?: string } }).legend_spec;
@@ -57,30 +62,132 @@ function legendVariantClasses(variant: string): { root: string; title: string } 
   return { root: 'px-2 py-1.5', title: 'text-micro font-medium' };
 }
 
+function BivariateMatrix({ legend, title }: { legend: LegendSpec; title?: string }) {
+  // V4：3×3 双变量色阵（行=变量 B，列=变量 A；颜色与 paint match 逐格同源）
+  const colors = (legend as unknown as { colors?: string[] }).colors ?? [];
+  const n = Math.min(4, Math.max(2, Number((legend as unknown as { n?: number }).n ?? 3)));
+  const labelA = String((legend as unknown as { label_a?: string }).label_a ?? '');
+  const labelB = String((legend as unknown as { label_b?: string }).label_b ?? '');
+  if (colors.length < n * n) return null;
+  return (
+    <div data-testid="spec-chrome-bivariate-legend" className="map-chrome absolute z-30 rounded-chrome px-2 py-1.5 bottom-8 left-2">
+      {title && <div className="text-micro font-medium text-map-chrome-ink">{title}</div>}
+      <div className="mt-1 flex flex-col gap-0.5">
+        <div className="flex items-center gap-1">
+          <span className="w-4 text-right text-micro text-map-chrome-ink-muted" aria-hidden>↑{labelB.slice(0, 4)}</span>
+          <div className="grid gap-px" style={{ gridTemplateColumns: `repeat(${n}, 14px)` }}>
+            {Array.from({ length: n * n }, (_, i) => (
+              <span key={i} aria-hidden className="h-3.5 w-3.5" style={{ background: colors[i] }} />
+            ))}
+          </div>
+        </div>
+        <div className="flex items-center gap-1 text-micro text-map-chrome-ink-muted">
+          <span className="w-4" aria-hidden />
+          <span>→{labelA.slice(0, 10)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LegendRenderer(component: MapSpecComponent, ctx: RendererContext) {
   const legend = legendForComponent(component, ctx.spec);
-  if (!legend || legend.type !== 'graduated') return null;
+  if (!legend) return null;
+  const variant = resolveVariant(component, 'academic');
+  // V4：composite 变体显式要求多图层复合（优先于单图层类型分派）
+  if (variant === 'composite') {
+    return renderComposite(component, ctx, variant);
+  }
+  // V4：双变量色阵图例 —— legend.type === 'bivariate'（bivariate_choropleth
+  // / bivariate_raster 的 legend_spec 同源投影）
+  if (legend.type === 'bivariate') {
+    return <BivariateMatrix legend={legend} title={(legend as unknown as { title?: string }).title} />;
+  }
   const entries = legendEntries(legend);
   if (!entries.length) return null;
-  const variant = resolveVariant(component, 'academic');
   const classes = legendVariantClasses(variant);
+  // V4：size 变体 —— 比例符号尺寸图例（半径 ∝ sqrt(value) 契约的可视化）
+  if (variant === 'size') {
+    const sizes = [6, 10, 15];
+    return (
+      <div data-testid="spec-chrome-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${classes.root} ${positionClass(component)}`} aria-label="尺寸图例">
+        <div className="text-micro font-medium text-map-chrome-ink">尺寸（∝√值）</div>
+        <div className="mt-1 flex items-end gap-2">
+          {sizes.map((r, i) => (
+            <span key={i} aria-hidden className="rounded-full border border-map-chrome-border bg-map-chrome-ink/20" style={{ width: r * 2, height: r * 2 }} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+  // V4：line 变体 —— 线宽分级图例（graduated_line/network_flow 同契约）
+  if (variant === 'line') {
+    return (
+      <div data-testid="spec-chrome-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${classes.root} ${positionClass(component)}`} aria-label="线宽图例">
+        <div className="text-micro font-medium text-map-chrome-ink">线宽分级</div>
+        <div className="mt-1 flex flex-col gap-1">
+          {[1, 2.5, 4.5].map((w, i) => (
+            <div key={i} className="flex items-center gap-1.5">
+              <span aria-hidden className="inline-block w-5 rounded-sm bg-map-chrome-ink" style={{ height: w }} />
+              <span className="text-micro tabular-nums text-map-chrome-ink-muted">{entries[i]?.label ?? ''}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
   const compact = variant === 'compact';
   // V3（ADR-0101 D3）：horizontal —— 图例项横向排布换行（窄图幅横向空间
   // 充裕时），其余变体保持纵向。
   const layoutClass = variant === 'horizontal'
     ? `flex flex-row flex-wrap ${compact ? 'mt-0.5 gap-x-2 gap-y-0.5' : 'mt-1 gap-x-3 gap-y-1'}`
     : `flex flex-col ${compact ? 'mt-0.5 gap-0.5' : 'mt-1 gap-1'}`;
+  // V4：uncertainty 变体 —— 分级条目按透明度递减渲染（与
+  // UNCERTAINTY_OPACITY 的 fill-opacity 反向插值契约一致：越透明越不确定）
+  const opacityFor = (idx: number) => variant === 'uncertainty' ? 0.25 + (0.6 * idx) / Math.max(1, entries.length - 1) : 1;
   return (
-    <div data-testid="spec-chrome-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${classes.root} ${positionClass(component)}`} aria-label={`分级图例${variant === 'horizontal' ? '（横向）' : ''}`}>
+    <div data-testid="spec-chrome-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${classes.root} ${positionClass(component)}`} aria-label={`分级图例${variant === 'horizontal' ? '（横向）' : ''}${variant === 'uncertainty' ? '（透明度=不确定性）' : ''}`}>
       {(legend as unknown as { title?: string }).title && <div className={`text-map-chrome-ink ${classes.title}`}>{(legend as unknown as { title: string }).title}</div>}
       <div className={layoutClass}>
         {entries.slice(0, 8).map((e, j) => (
           <div key={j} className="flex items-center gap-1.5">
-            <span aria-hidden className="h-2.5 w-4 rounded-sm" style={{ background: e.color }} />
+            <span aria-hidden className="h-2.5 w-4 rounded-sm" style={{ background: e.color, opacity: opacityFor(j) }} />
             <span className="text-micro tabular-nums text-map-chrome-ink-muted">{e.label}</span>
           </div>
         ))}
       </div>
+      {variant === 'uncertainty' && (
+        <div className="mt-1 border-t border-map-chrome-border pt-0.5 text-micro text-map-chrome-ink-muted">越透明 = 不确定性越高</div>
+      )}
+    </div>
+  );
+}
+
+// V4：composite 变体 —— 多层复合图例（所有携带 legend_spec 的图层分组）
+function renderComposite(component: MapSpecComponent, ctx: RendererContext, variant: string) {
+  const groups = (ctx.spec?.layers ?? [])
+    .map((l) => l as unknown as { id: string; legend_spec?: LegendSpec & { title?: string } })
+    .filter((l) => l.legend_spec != null)
+    .slice(0, 3);
+  return (
+    <div data-testid="spec-chrome-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome px-2 py-1.5 ${positionClass(component)}`} aria-label="复合图例">
+      {groups.map((g) => {
+        const gEntries = legendEntries(g.legend_spec).slice(0, 6);
+        if (!gEntries.length) return null;
+        return (
+          <div key={g.id} className="mb-1 last:mb-0">
+            <div className="text-micro font-medium text-map-chrome-ink">{g.legend_spec?.title || g.id}</div>
+            <div className="mt-0.5 flex flex-col gap-0.5">
+              {gEntries.map((e, j) => (
+                <div key={j} className="flex items-center gap-1.5">
+                  <span aria-hidden className="h-2.5 w-4 rounded-sm" style={{ background: e.color }} />
+                  <span className="text-micro tabular-nums text-map-chrome-ink-muted">{e.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
