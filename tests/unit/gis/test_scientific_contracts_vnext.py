@@ -461,7 +461,7 @@ class TestManifestV3:
             k for k in manifest.__dict__
         } or manifest.parameter_contracts
         assert manifest.parameter_contracts.get("kriging_interpolation", {}).get(
-            "version") == 2  # v2: method enum [ordinary, universal]
+            "version") == 3  # v3 (Foundation V2): +solve_backend/anisotropy/block-CV 等 optional 参数
         assert "variogram_model" in manifest.parameter_contracts[
             "kriging_interpolation"]["parameters"]
         assert "method" in manifest.parameter_contracts[
