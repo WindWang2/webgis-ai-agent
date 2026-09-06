@@ -201,6 +201,7 @@ class AlgorithmRegistry:
 
     def __init__(self) -> None:
         self._tool_to_capability_cache: Optional[Dict[str, str]] = None
+        self._tool_to_algorithms_cache: Optional[Dict[str, List[str]]] = None
         self._by_id: Dict[str, AlgorithmDescriptor] = {}
         self._by_capability: Dict[str, List[str]] = {}
 
@@ -214,6 +215,7 @@ class AlgorithmRegistry:
         if algo.id in self._by_id:
             raise ValueError(f"duplicate algorithm id: {algo.id}")
         self._tool_to_capability_cache = None
+        self._tool_to_algorithms_cache = None
         self._by_id[algo.id] = algo
         for cap in algo.capabilities:
             candidates = self._by_capability.setdefault(cap, [])
@@ -275,6 +277,25 @@ class AlgorithmRegistry:
             for tool in algo.tool_candidates:
                 mapping.setdefault(tool, cap)
         self._tool_to_capability_cache = mapping
+        return mapping
+
+    def tool_to_algorithms(self) -> Dict[str, List[str]]:
+        """派生的 tool → 关联算法 id 列表反查索引（ADR-0103 descriptor 回填用）。
+
+        与 tool_to_capability 同门：注册表静态后按内容缓存，register 失效；
+        顺序 = (priority, id) 稳定序（capability_tool_map 同款语义）。
+        """
+        cached = self._tool_to_algorithms_cache
+        if cached is not None:
+            return cached
+        ordered = sorted(self._by_id.values(), key=lambda a: (a.priority, a.id))
+        mapping: Dict[str, List[str]] = {}
+        for algo in ordered:
+            for tool in algo.tool_candidates:
+                bucket = mapping.setdefault(tool, [])
+                if algo.id not in bucket:
+                    bucket.append(algo.id)
+        self._tool_to_algorithms_cache = mapping
         return mapping
 
     def capability_tool_map(self) -> Dict[str, List[str]]:

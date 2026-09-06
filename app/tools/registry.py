@@ -36,6 +36,43 @@ from app.tools.descriptor import (
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# ADR-0103（V3）：能力派生回填。
+#
+# ToolDescriptor.capabilities 的第二真相来源是 AlgorithmRegistry 的
+# tool_candidates 声明（app/lib/gis/algorithm_registry.py）—— 工具未显式
+# 声明 capabilities/algorithms 时，从既有语义真相**反查派生**（引用，不是
+# 新真相），并以 capability_source="derived:algorithm_registry" 溯源。
+# 进程级缓存：algorithm registry 是不可变种子，派生结果稳定；
+# 查询失败一律静默回空（派生是补强，绝不阻断描述符构造）。
+# ---------------------------------------------------------------------------
+
+_DERIVED_CAPABILITY_CACHE: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}
+
+
+def _derive_capability_backfill(tool_name: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """(capabilities, algorithms) 的派生回填；无来源返回 ((), ())。"""
+    if tool_name in _DERIVED_CAPABILITY_CACHE:
+        return _DERIVED_CAPABILITY_CACHE[tool_name]
+    caps: tuple[str, ...] = ()
+    algos: tuple[str, ...] = ()
+    try:
+        from app.lib.gis.algorithm_registry import get_algorithm_registry
+
+        ar = get_algorithm_registry()
+        cap = ar.tool_to_capability().get(tool_name, "")
+        caps = (cap,) if cap else ()
+        algos = tuple(ar.tool_to_algorithms().get(tool_name, ()))
+    except Exception:  # noqa: BLE001 — 派生失败不阻断（诚实回 none 溯源）
+        logger.debug("[descriptor-v3] capability derivation failed for %s", tool_name,
+                     exc_info=True)
+    result = (caps, algos)
+    if len(_DERIVED_CAPABILITY_CACHE) > 4096:
+        _DERIVED_CAPABILITY_CACHE.clear()
+    _DERIVED_CAPABILITY_CACHE[tool_name] = result
+    return result
+
+
 # SEC-F1: tier-3 (destructive / RCE-class) tools may only be dispatched through
 # an execution context that explicitly confirmed them. Route-level checks
 # (chat /tools/execute confirm_destructive, Pi-bridge rejection) are NOT a
@@ -375,12 +412,20 @@ class ToolRegistry:
     # ADR-0101：描述符扩展字段（全部可选，缺省派生；存量工具零改动兼容）。
     # 未知 kwarg 一律注册期显式失败 —— 此前 **kwargs 静默吞掉拼写错误，
     # 声明了半天字段实际没生效，是描述符契约最大的隐性漂移源。
+    # ADR-0103（V3）：新增 I/O 工件契约 / 会话态 / 资源分级 / 安全权限 /
+    # 示例与失败类型字段；capability_source 是构造期溯源，不是注册 kwarg。
     _DESCRIPTOR_KWARGS = (
         "status", "summary", "deprecation_of",
         "side_effect", "requires_credentials",
         "capabilities", "algorithms", "provider_dependencies", "tags",
         "output_semantic_type", "produced_refs", "accepts_ref_types",
         "network", "deterministic", "result_size_policy",
+        # V3
+        "input_artifacts", "required_context", "map_mutations", "data_mutations",
+        "latency_class", "memory_class", "scale_class",
+        "crs_semantics", "unit_semantics", "idempotent",
+        "security_tier", "required_permission",
+        "examples", "anti_examples", "failure_modes", "fallback_tool",
     )
     _KNOWN_REGISTER_KWARGS = frozenset(_DESCRIPTOR_KWARGS) | {
         "parameters", "field_extras",
@@ -436,6 +481,19 @@ class ToolRegistry:
             provider_dependencies=kwargs.get("provider_dependencies"),
             domains=domains,
             tags=kwargs.get("tags"),
+            input_artifacts=kwargs.get("input_artifacts"),
+            required_context=kwargs.get("required_context"),
+            map_mutations=kwargs.get("map_mutations"),
+            data_mutations=kwargs.get("data_mutations"),
+            latency_class=str(kwargs.get("latency_class") or "unknown"),
+            memory_class=str(kwargs.get("memory_class") or "unknown"),
+            scale_class=str(kwargs.get("scale_class") or "unknown"),
+            idempotent=kwargs.get("idempotent"),
+            security_tier=kwargs.get("security_tier"),
+            examples=kwargs.get("examples"),
+            anti_examples=kwargs.get("anti_examples"),
+            failure_modes=kwargs.get("failure_modes"),
+            fallback_tool=kwargs.get("fallback_tool"),
         )
         if desc_errors:
             raise ValueError("; ".join(desc_errors))
@@ -569,6 +627,23 @@ class ToolRegistry:
             "deterministic": kwargs.get("deterministic"),
             "result_size_policy": result_size_policy,
             "required_fields": sorted(str(k) for k in (required or [])),
+            # ADR-0103（V3）
+            "input_artifacts": list(kwargs.get("input_artifacts") or []),
+            "required_context": list(kwargs.get("required_context") or []),
+            "map_mutations": list(kwargs.get("map_mutations") or []),
+            "data_mutations": list(kwargs.get("data_mutations") or []),
+            "latency_class": str(kwargs.get("latency_class") or "unknown"),
+            "memory_class": str(kwargs.get("memory_class") or "unknown"),
+            "scale_class": str(kwargs.get("scale_class") or "unknown"),
+            "crs_semantics": kwargs.get("crs_semantics"),
+            "unit_semantics": kwargs.get("unit_semantics"),
+            "idempotent": kwargs.get("idempotent"),
+            "security_tier": kwargs.get("security_tier"),
+            "required_permission": kwargs.get("required_permission"),
+            "examples": list(kwargs.get("examples") or []),
+            "anti_examples": list(kwargs.get("anti_examples") or []),
+            "failure_modes": list(kwargs.get("failure_modes") or []),
+            "fallback_tool": kwargs.get("fallback_tool"),
         }
         # ADR-0101 Wave 6：注册期执行策略审计（warning 级留痕不阻断；
         # error 级发现由 tests/unit/test_execution_policy_audit.py 对活注册表钉零）。
@@ -793,6 +868,15 @@ class ToolRegistry:
             side_effect = SideEffectClass(meta.get("side_effect", SideEffectClass.UNCLASSIFIED.value))
         except ValueError:
             side_effect = SideEffectClass.UNCLASSIFIED
+        declared_capabilities = tuple(meta.get("capabilities") or ())
+        declared_algorithms = tuple(meta.get("algorithms") or ())
+        derived_caps, derived_algos = _derive_capability_backfill(canonical)
+        if declared_capabilities:
+            capability_source = "declared"
+        elif derived_caps:
+            capability_source = "derived:algorithm_registry"
+        else:
+            capability_source = "none"
         desc = ToolDescriptor(
             name=canonical,
             description=next(
@@ -816,8 +900,8 @@ class ToolRegistry:
             timeout=meta.get("timeout"),
             side_effect=side_effect,
             requires_credentials=tuple(meta.get("requires_credentials") or ()),
-            capabilities=tuple(meta.get("capabilities") or ()),
-            algorithms=tuple(meta.get("algorithms") or ()),
+            capabilities=declared_capabilities or derived_caps,
+            algorithms=declared_algorithms or derived_algos,
             provider_dependencies=tuple(meta.get("provider_dependencies") or ()),
             tags=tuple(meta.get("tags") or ()),
             output_semantic_type=meta.get("output_semantic_type"),
@@ -828,6 +912,24 @@ class ToolRegistry:
             deterministic=meta.get("deterministic"),
             result_size_policy=str(meta.get("result_size_policy", "unknown")),
             aliases=tuple(self.aliases_for(canonical)),
+            # ADR-0103（V3）
+            input_artifacts=tuple(meta.get("input_artifacts") or ()),
+            required_context=tuple(meta.get("required_context") or ()),
+            map_mutations=tuple(meta.get("map_mutations") or ()),
+            data_mutations=tuple(meta.get("data_mutations") or ()),
+            latency_class=str(meta.get("latency_class") or "unknown"),
+            memory_class=str(meta.get("memory_class") or "unknown"),
+            scale_class=str(meta.get("scale_class") or "unknown"),
+            crs_semantics=meta.get("crs_semantics"),
+            unit_semantics=meta.get("unit_semantics"),
+            idempotent=meta.get("idempotent"),
+            security_tier=meta.get("security_tier"),
+            required_permission=meta.get("required_permission"),
+            examples=tuple(meta.get("examples") or ()),
+            anti_examples=tuple(meta.get("anti_examples") or ()),
+            failure_modes=tuple(meta.get("failure_modes") or ()),
+            fallback_tool=meta.get("fallback_tool"),
+            capability_source=capability_source,
         )
         self._descriptor_cache[canonical] = desc
         return desc

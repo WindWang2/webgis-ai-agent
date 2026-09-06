@@ -116,6 +116,41 @@ class SideEffectClass(str, Enum):
 #: 结果尺寸策略（§8 result-size policy）。
 RESULT_SIZE_POLICIES = ("unknown", "inline_small", "bounded", "ref_offload")
 
+# ---------------------------------------------------------------------------
+# ToolDescriptor V3（ADR-0103）：调度/资源/语义分级词表与能力溯源。
+# 全部字段可选、默认 unknown/None/() —— 存量工具零改动兼容；
+# 富化必须来自代码事实或既有 registry 引用，绝不虚构（V3_PLAN 红线）。
+# ---------------------------------------------------------------------------
+
+LATENCY_CLASSES = ("unknown", "fast", "medium", "slow")
+MEMORY_CLASSES = ("unknown", "light", "medium", "heavy")
+SCALE_CLASSES = ("unknown", "small", "medium", "large")
+
+#: capabilities 溯源（capability_source）。
+#: - declared: 工具模块显式声明；
+#: - derived:algorithm_registry: 从 AlgorithmRegistry.tool_candidates 反查派生
+#:   （既有语义真相的引用，不是新真相）；
+#: - none: 无任何来源（诚实留空）。
+CAPABILITY_SOURCES = ("none", "declared", "derived:algorithm_registry")
+
+#: required_context 词汇（工具执行需要的会话态）。
+REQUIRED_CONTEXT_KINDS = (
+    "map_state", "session_plan", "data_profile", "ref_cursor",
+    "project_memory", "credentials", "uploaded_data", "cartography_state",
+)
+
+#: map_mutations 词汇（地图面 mutation 种类，trace 记录用）。
+MAP_MUTATION_KINDS = (
+    "add_layer", "remove_layer", "style_layer", "camera", "marker",
+    "component", "map_product", "annotation", "theme", "filter",
+)
+
+#: data_mutations 词汇（数据面 mutation 种类）。
+DATA_MUTATION_KINDS = (
+    "upload", "cache_write", "project_memory_write", "artifact_write",
+    "external_write", "session_state",
+)
+
 
 @dataclass(frozen=True)
 class ToolDescriptor:
@@ -165,6 +200,33 @@ class ToolDescriptor:
 
     # --- 别名（入向工具名别名，registry._TOOL_NAME_ALIASES 的同源快照）---
     aliases: Tuple[str, ...] = ()
+
+    # --- V3（ADR-0103）：I/O 工件契约 / 所需会话态 / 副作用细分 ---
+    input_artifacts: Tuple[str, ...] = ()    # 消费的 artifact 类型（对齐 capability 词表）
+    required_context: Tuple[str, ...] = ()   # 执行所需会话态（REQUIRED_CONTEXT_KINDS）
+    map_mutations: Tuple[str, ...] = ()      # 地图面变更种类（MAP_MUTATION_KINDS）
+    data_mutations: Tuple[str, ...] = ()     # 数据面变更种类（DATA_MUTATION_KINDS）
+
+    # --- V3：资源 / 语义分级（调度与上下文预算的先验）---
+    latency_class: str = "unknown"           # fast | medium | slow
+    memory_class: str = "unknown"            # light | medium | heavy
+    scale_class: str = "unknown"             # small | medium | large（适用数据规模）
+    crs_semantics: Optional[str] = None      # CRS 语义（"wgs84"/"gcj02"/"crs_agnostic"/…）
+    unit_semantics: Optional[str] = None     # 单位语义（"meters"/"degrees"/"ratio"/…）
+    idempotent: Optional[bool] = None        # None = 由 side_effect 派生（effective_idempotent）
+
+    # --- V3：安全 / 权限 ---
+    security_tier: Optional[int] = None      # None = tier（effective_security_tier）
+    required_permission: Optional[str] = None  # e.g. "admin" / "tier3_confirm" / "bridge_secret"
+
+    # --- V3：检索 / 评测辅助（真实示例，不是营销文案）---
+    examples: Tuple[str, ...] = ()           # 典型正确调用意图（自然语言短句）
+    anti_examples: Tuple[str, ...] = ()      # 已知误用模式（negative retrieval 证据）
+    failure_modes: Tuple[str, ...] = ()      # 失败类型词（failure taxonomy 自由词表）
+    fallback_tool: Optional[str] = None      # 失败时的建议替代工具（canonical 名）
+
+    # --- V3：能力溯源（非注册 kwarg；descriptor() 构造期写入）---
+    capability_source: str = "none"          # none | declared | derived:algorithm_registry
 
     @property
     def tool_id(self) -> str:
@@ -220,6 +282,31 @@ class ToolDescriptor:
             return False
         return self.side_effect.replay_safe
 
+    @property
+    def effective_security_tier(self) -> int:
+        """生效安全层：显式 security_tier 优先，缺省回落 tier。"""
+        if self.security_tier is not None:
+            return int(self.security_tier)
+        return int(self.tier)
+
+    @property
+    def effective_idempotent(self) -> Optional[bool]:
+        """生效幂等性：显式声明优先；未声明时按副作用类保守派生。
+
+        只有「无状态副作用类」能派生 True；任何 mutation 类未知就是未知
+        （None），不替作者断言幂等 —— 例如 STATE_MUTATION 可能幂等（set 样式）
+        也可能不幂等（append 标注）。
+        """
+        if self.idempotent is not None:
+            return bool(self.idempotent)
+        if self.side_effect in (
+            SideEffectClass.PURE,
+            SideEffectClass.DETERMINISTIC_COMPUTE,
+            SideEffectClass.CACHEABLE_READ,
+        ):
+            return True
+        return None
+
     def contract_payload(self) -> Dict[str, Any]:
         """指纹载荷：全部契约字段的 canonical 形态（不含派生字段与 schema 本体）。"""
         return {
@@ -248,6 +335,24 @@ class ToolDescriptor:
             "network": self.network,
             "deterministic": self.deterministic,
             "result_size_policy": self.result_size_policy,
+            # V3（ADR-0103）
+            "input_artifacts": sorted(self.input_artifacts),
+            "required_context": sorted(self.required_context),
+            "map_mutations": sorted(self.map_mutations),
+            "data_mutations": sorted(self.data_mutations),
+            "latency_class": self.latency_class,
+            "memory_class": self.memory_class,
+            "scale_class": self.scale_class,
+            "crs_semantics": self.crs_semantics,
+            "unit_semantics": self.unit_semantics,
+            "idempotent": self.idempotent,
+            "security_tier": self.security_tier,
+            "required_permission": self.required_permission,
+            "examples": sorted(self.examples),
+            "anti_examples": sorted(self.anti_examples),
+            "failure_modes": sorted(self.failure_modes),
+            "fallback_tool": self.fallback_tool,
+            "capability_source": self.capability_source,
         }
 
 
@@ -313,6 +418,20 @@ def validate_descriptor_fields(
     provider_dependencies: Optional[List[str]],
     domains: Optional[List[str]],
     tags: Optional[List[str]] = None,
+    # --- V3（ADR-0103）---
+    input_artifacts: Optional[List[str]] = None,
+    required_context: Optional[List[str]] = None,
+    map_mutations: Optional[List[str]] = None,
+    data_mutations: Optional[List[str]] = None,
+    latency_class: str = "unknown",
+    memory_class: str = "unknown",
+    scale_class: str = "unknown",
+    idempotent: Optional[bool] = None,
+    security_tier: Optional[int] = None,
+    examples: Optional[List[str]] = None,
+    anti_examples: Optional[List[str]] = None,
+    failure_modes: Optional[List[str]] = None,
+    fallback_tool: Optional[str] = None,
 ) -> List[str]:
     """注册期校验门：返回**致命**错误列表（空列表 = 通过）。
 
@@ -343,6 +462,54 @@ def validate_descriptor_fields(
         )
     if len(summary) > 600:
         errors.append(f"工具 {name} 的 summary 超长（{len(summary)} > 600 字符）")
+    if latency_class not in LATENCY_CLASSES:
+        errors.append(
+            f"工具 {name} 声明了非法 latency_class={latency_class!r}，合法值: {', '.join(LATENCY_CLASSES)}"
+        )
+    if memory_class not in MEMORY_CLASSES:
+        errors.append(
+            f"工具 {name} 声明了非法 memory_class={memory_class!r}，合法值: {', '.join(MEMORY_CLASSES)}"
+        )
+    if scale_class not in SCALE_CLASSES:
+        errors.append(
+            f"工具 {name} 声明了非法 scale_class={scale_class!r}，合法值: {', '.join(SCALE_CLASSES)}"
+        )
+    if idempotent is not None and not isinstance(idempotent, bool):
+        errors.append(f"工具 {name} 的 idempotent 必须是 bool 或 None（派生）")
+    if security_tier is not None and (
+        not isinstance(security_tier, int) or isinstance(security_tier, bool) or not 0 <= security_tier <= 3
+    ):
+        errors.append(f"工具 {name} 的 security_tier 必须是 0-3 整数")
+    if fallback_tool is not None and (not isinstance(fallback_tool, str) or not fallback_tool.strip()):
+        errors.append(f"工具 {name} 的 fallback_tool 必须是非空字符串或 None")
+    for label, seq, vocab in (
+        ("required_context", required_context, REQUIRED_CONTEXT_KINDS),
+        ("map_mutations", map_mutations, MAP_MUTATION_KINDS),
+        ("data_mutations", data_mutations, DATA_MUTATION_KINDS),
+    ):
+        if seq is not None:
+            if not isinstance(seq, (list, tuple)) or any(
+                not isinstance(x, str) or not x.strip() for x in seq
+            ):
+                errors.append(f"工具 {name} 的 {label} 必须是非空字符串列表")
+            elif len(set(seq)) != len(seq):
+                errors.append(f"工具 {name} 的 {label} 含重复项")
+            else:
+                unknown = sorted(set(seq) - set(vocab))
+                if unknown:
+                    errors.append(
+                        f"工具 {name} 的 {label} 含未知值: {', '.join(unknown)}，"
+                        f"合法值: {', '.join(vocab)}"
+                    )
+    for label in ("input_artifacts", "examples", "anti_examples", "failure_modes"):
+        seq = locals()[label]
+        if seq is not None:
+            if not isinstance(seq, (list, tuple)) or any(
+                not isinstance(x, str) or not x.strip() for x in seq
+            ):
+                errors.append(f"工具 {name} 的 {label} 必须是非空字符串列表")
+            elif len(set(seq)) != len(seq):
+                errors.append(f"工具 {name} 的 {label} 含重复项")
     for label, seq in (
         ("capabilities", capabilities),
         ("algorithms", algorithms),
