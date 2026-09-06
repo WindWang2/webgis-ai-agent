@@ -4,6 +4,11 @@ VNext 地形科学工具（ADR-0099）：TPI/TRI/粗糙度/曲率、视域、D8 
 汇流累积、流域圈定、等值线提取。薄包装职责：validate → 读有界窗口 →
 调 app/lib/geo_analysis/terrain.py 纯函数 → 挂 scientific_evidence →
 返回有界结果。算法语义一律在注册表 descriptor 与 lib 层，本层不复算。
+
+Foundation V2（A5）新增：Priority-Flood 填洼、D∞ 多向流、流程长度、
+河网提取 + Strahler 分级、流域形态量测、TWI/SPI、USLE LS、地形开放度、
+geomorphons、Weiss 地类分级、多方位山体阴影（护栏/米制换算/证据模式
+与既有工具逐一同构；select_backend 决策进 diagnostics）。
 """
 import json
 import logging
@@ -14,7 +19,7 @@ import numpy as np
 
 from app.tools.registry import ToolRegistry, tool
 from app.services.rs.spectral_engine import spectral_engine
-from app.services.rs.band_math import compute_raster_stats
+from app.services.rs.band_math import compute_raster_stats, compute_slope
 from app.tools._utils import parse_bbox, trim_features
 from app.utils.path import validate_data_path
 
@@ -22,6 +27,7 @@ from app.lib.geo_analysis import terrain as terrain_lib
 from app.lib.geo_analysis.raster_guard import RasterResourceGuard
 from app.lib.geo_analysis.raster_math import rasterio_env
 from app.lib.gis.algorithm_registry import get_algorithm_registry
+from app.lib.gis.backend_selection import ScaleProfile, select_backend
 from app.lib.gis.crs_safety import classify_crs
 from app.lib.gis.parameter_contracts import apply_contract
 from app.lib.gis.scientific_evidence import Diagnostic, build_evidence
@@ -38,6 +44,25 @@ _DERIVATIVE_ALGORITHMS = {
     "plan_curvature": "terrain.curvature",
     "profile_curvature": "terrain.curvature",
 }
+
+
+def _backend_diagnostic(
+    algorithm_id: str, raster_cells: Optional[int],
+) -> Optional[Diagnostic]:
+    """select_backend 决策 → 证据诊断（additive，失败不阻塞主结果）。"""
+    try:
+        decision = select_backend(
+            algorithm_id, ScaleProfile(raster_cells=raster_cells))
+        raw = decision.to_diagnostic()
+        value = raw.get("value")
+        return Diagnostic(
+            name=str(raw.get("name") or "backend_selection"),
+            value=float(value) if isinstance(value, (int, float))
+            and not isinstance(value, bool) else None,
+            text=str(raw.get("text") or ""),
+        )
+    except Exception:  # noqa: BLE001 — 诊断是 additive，不阻塞主结果
+        return None
 
 
 def _terrain_evidence(
@@ -512,5 +537,672 @@ def register_terrain_tools(registry: ToolRegistry):
                 transform, arr.shape[0], arr.shape[1],
                 extra=(Diagnostic(name="nodata_effective", value=eff_nodata),
                        Diagnostic(name="features", value=float(payload["feature_count"])))),
+            warnings=_non_metric_warning(crs) or None,
+        )
+
+    # ── Foundation V2（A5）：水文与地貌量测工具（护栏/换算/证据同构）──
+
+    def _load_dem(raster_path: str, nodata_override: Optional[float]):
+        """读 DEM + 米制像元（depression_fill / openness / geomorphons 等）。"""
+        arr, transform, crs, eff_nodata, bounds = _read_terrain_window(
+            raster_path, nodata_override)
+        cy, cx, transformations = _metric_cell_sizes(crs, transform, bounds)
+        return arr, transform, crs, eff_nodata, bounds, cy, cx, transformations
+
+    def _dem_slope_and_accum(
+        raster_path: str, z_factor: float,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Tuple[float, ...], str, List[str], Optional[float], float, float]:
+        """DEM → (z 掩膜数组, slope_deg, flow_accum, transform, crs, 变换, nodata, cy, cx)。
+
+        供 TWI/SPI/LS 工具复用。变换披露：z = arr·z_factor；nodata 标记
+        像元 → NaN（坡度/水文在接缝处不被哨兵值污染）；slope = Horn
+        （band_math.compute_slope，度）；accum = D8 拓扑累积。
+        """
+        arr, transform, crs, eff_nodata, bounds = _read_terrain_window(raster_path, None)
+        cy, cx, transformations = _metric_cell_sizes(crs, transform, bounds)
+        z = arr * z_factor
+        if eff_nodata is not None:
+            z = np.where(arr == eff_nodata, np.nan, z)
+        transformations = list(transformations) + [
+            f"z = arr * {z_factor} (vertical units)",
+            "nodata-marked cells -> NaN before slope/hydrology",
+            "slope = Horn 3x3 (band_math.compute_slope, degrees)",
+        ]
+        slope_deg = compute_slope(z, cy, cell_size_x=cx)
+        d8, _ = terrain_lib.d8_flow(z, cy, cell_size_x=cx, nodata=eff_nodata)
+        acc, _ = terrain_lib.flow_accumulation(d8)
+        return z, slope_deg, acc, transform, crs, transformations, eff_nodata, cy, cx
+
+    @tool(registry, name="depression_fill",
+           description=(
+               "DEM 填洼（Priority-Flood，Barnes 2014）：洼地填至溢流高程；"
+               "epsilon>0 变体给平地注入梯度 → 填后表面严格单调可排（D8/D∞ 前置）。"
+               "\n何时用：水文分析前的 DEM 预处理（平地/洼地即汇的解药）。"
+               "\n何时不用：(1) 只要洼地/汇位置 — flow_analysis 的 sink 统计；"
+               "(2) 需要填洼后流向 — 本工具后接 flow_analysis。"
+               "\n关键约束：nodata/边界视作排水出口；返回填深统计+降采样样本+科学证据。"
+           ),
+           tier=2, domains=["raster"], cost="heavy",
+           param_descriptions={
+               "raster_path": "DEM GeoTIFF 路径（data_dir 内）",
+               "epsilon": "逐像元抬升量（米，默认 0 = 纯填洼；如 0.01 → 单调可排）",
+               "nodata": "可选 nodata 覆盖值（缺省用文件声明/NaN）",
+           })
+    def depression_fill(raster_path: str, epsilon: float = 0.0,
+                        nodata: float | None = None) -> dict:
+        contract_params: Dict[str, Any] = {"epsilon": epsilon}
+        if nodata is not None:
+            contract_params["nodata"] = nodata
+        params = apply_contract("sink_fill", contract_params)
+        epsilon_v = float(params["epsilon"])
+        nodata_v = params.get("nodata")
+        nodata_v = float(nodata_v) if nodata_v is not None else None
+
+        arr, transform, crs, eff_nodata, bounds, cy, cx, transformations = _load_dem(
+            raster_path, nodata_v)
+        filled, meta = terrain_lib.fill_depressions(
+            arr, cy, cell_size_x=cx, epsilon=epsilon_v, nodata=eff_nodata)
+        depth = filled - arr
+        payload = {
+            "success": True,
+            "filled_volume_z_m2": meta["filled_volume"],
+            "filled_cell_count": meta["filled_cell_count"],
+            "max_fill_depth": meta["max_fill_depth"],
+            "statistics": compute_raster_stats(depth),
+            "sample": _bounded_sample(filled),
+            "meta": meta,
+        }
+        diagnostics = _base_diagnostics(
+            transform, arr.shape[0], arr.shape[1],
+            extra=(Diagnostic(name="nodata_effective", value=eff_nodata),
+                   Diagnostic(name="epsilon", value=epsilon_v),
+                   Diagnostic(name="filled_cells", value=float(meta["filled_cell_count"]))))
+        backend = _backend_diagnostic("terrain.sink_fill", arr.size)
+        if backend is not None:
+            diagnostics.append(backend)
+        return _terrain_evidence(
+            payload, "terrain.sink_fill", tool="depression_fill",
+            parameters_applied={"epsilon": epsilon_v, "nodata": nodata_v},
+            crs=crs,
+            diagnostics=diagnostics,
+            transformations=transformations or None,
+            warnings=_non_metric_warning(crs) or None,
+        )
+
+    @tool(registry, name="dinf_flow_analysis",
+           description=(
+               "DEM D∞ 多向流（Tarboton 1997）：flow_direction（弧度角，x=东 y=北，"
+               "-1=平地/洼地哨兵）或 flow_accumulation（面内角度比例分流累积）。"
+               "\n何时用：需要比 D8 更平滑的汇流方向/分配（格网平行流向偏差缓解）。"
+               "\n何时不用：(1) DEM 有洼地 — 先 depression_fill(epsilon>0)；"
+               "(2) 只要简单 D8 — flow_analysis。"
+               "\n关键约束：函数内不填洼（平地/洼地 = 哨兵 -1，诚实披露）。"
+           ),
+           tier=2, domains=["raster"], cost="heavy",
+           param_descriptions={
+               "raster_path": "DEM GeoTIFF 路径（data_dir 内）",
+               "product": "输出产品: 'flow_accumulation'(默认) | 'flow_direction'",
+           })
+    def dinf_flow_analysis(raster_path: str, product: str = "flow_accumulation") -> dict:
+        params = apply_contract("dinf_analysis", {"product": product})
+        product = str(params["product"])
+        arr, transform, crs, eff_nodata, bounds, cy, cx, transformations = _load_dem(
+            raster_path, None)
+        dinf, meta = terrain_lib.dinf_flow_direction(
+            arr, cy, cell_size_x=cx, nodata=eff_nodata)
+
+        if product == "flow_direction":
+            ang = dinf["angle"]
+            valid = dinf["valid"]
+            no_flow = int(np.count_nonzero(valid & (ang == terrain_lib._DINF_NO_FLOW)))
+            statistics: Dict[str, Any] = {
+                "valid_cells": int(valid.sum()),
+                "no_flow_cells": no_flow,
+                "nodata_cells": int((~valid).sum()),
+            }
+            sample = _bounded_sample(ang)
+        else:
+            acc, acc_meta = terrain_lib.dinf_flow_accumulation(dinf)
+            meta["accumulation"] = acc_meta["counting_convention"]
+            statistics = compute_raster_stats(acc)
+            statistics["max_accumulation"] = round(float(acc.max()), 6)
+            sample = _bounded_sample(acc)
+
+        payload = {
+            "success": True,
+            "product": product,
+            "statistics": statistics,
+            "sample": sample,
+            "meta": meta,
+        }
+        diagnostics = _base_diagnostics(
+            transform, arr.shape[0], arr.shape[1],
+            extra=(Diagnostic(name="nodata_effective", value=eff_nodata),))
+        backend = _backend_diagnostic("terrain.dinf_flow", arr.size)
+        if backend is not None:
+            diagnostics.append(backend)
+        return _terrain_evidence(
+            payload, "terrain.dinf_flow", tool="dinf_flow_analysis",
+            parameters_applied={"product": product},
+            crs=crs,
+            diagnostics=diagnostics,
+            transformations=transformations or None,
+            warnings=_non_metric_warning(crs) or None,
+        )
+
+    @tool(registry, name="flow_length_analysis",
+           description=(
+               "DEM 流程长度（米，D8 接收者拓扑）：downstream = 沿流路到出口的累计"
+               "距离；upstream = 距最远山脊源的累计距离（MAX 口径）。"
+               "\n何时用：USLE 坡长因子输入、流域汇水时间估算、Horton 分析前奏。"
+               "\n何时不用：(1) 需要多向流路径长 — D∞ 路径长未实现（D8 折线口径）；"
+               "(2) 汇流面积 — flow_analysis。"
+               "\n关键约束：继承 D8 语义（平地/洼地即出口，长度归零）。"
+           ),
+           tier=2, domains=["raster"], cost="heavy",
+           param_descriptions={
+               "raster_path": "DEM GeoTIFF 路径（data_dir 内）",
+               "mode": "长度口径: 'downstream'(默认) | 'upstream'",
+           })
+    def flow_length_analysis(raster_path: str, mode: str = "downstream") -> dict:
+        params = apply_contract("flow_length_analysis", {"mode": mode})
+        mode_v = str(params["mode"])
+        arr, transform, crs, eff_nodata, bounds, cy, cx, transformations = _load_dem(
+            raster_path, None)
+        d8, _d8_meta = terrain_lib.d8_flow(arr, cy, cell_size_x=cx, nodata=eff_nodata)
+        lengths, meta = terrain_lib.flow_length(d8, mode_v, cy, cell_size_x=cx)
+        payload = {
+            "success": True,
+            "mode": mode_v,
+            "max_length_m": meta["max_length_m"],
+            "mean_length_m": meta["mean_length_m"],
+            "statistics": compute_raster_stats(lengths),
+            "sample": _bounded_sample(lengths),
+            "meta": meta,
+        }
+        diagnostics = _base_diagnostics(
+            transform, arr.shape[0], arr.shape[1],
+            extra=(Diagnostic(name="nodata_effective", value=eff_nodata),
+                   Diagnostic(name="max_length_m", value=float(meta["max_length_m"]))))
+        backend = _backend_diagnostic("terrain.flow_length", arr.size)
+        if backend is not None:
+            diagnostics.append(backend)
+        return _terrain_evidence(
+            payload, "terrain.flow_length", tool="flow_length_analysis",
+            parameters_applied={"mode": mode_v},
+            crs=crs,
+            diagnostics=diagnostics,
+            transformations=transformations or None,
+            warnings=_non_metric_warning(crs) or None,
+        )
+
+    @tool(registry, name="stream_network",
+           description=(
+               "DEM 河网提取：汇流累积 ≥ 阈值 → 河网掩膜（stream_mask）或 Strahler "
+               "河流分级图 + 等级分布（stream_order）。"
+               "\n何时用：水系制图、流域形态量测（排水密度）输入、栖息地走廊分析。"
+               "\n何时不用：(1) 阈值未知想看累积分布 — flow_analysis 先行；"
+               "(2) DEM 有大量洼地 — 先 depression_fill 否则河网破碎。"
+               "\n关键约束：阈值单位 = 上游贡献像元数（按流域尺度率定，无普适默认）。"
+           ),
+           tier=2, domains=["raster"], cost="heavy",
+           param_descriptions={
+               "raster_path": "DEM GeoTIFF 路径（data_dir 内）",
+               "threshold": "河网阈值（上游贡献像元数，≥1；如 100、1000）",
+               "product": "输出产品: 'stream_order'(默认) | 'stream_mask'",
+           })
+    def stream_network(raster_path: str, threshold: float,
+                       product: str = "stream_order") -> dict:
+        params = apply_contract("stream_network", {"threshold": threshold, "product": product})
+        threshold_v = float(params["threshold"])
+        product_v = str(params["product"])
+        arr, transform, crs, eff_nodata, bounds, cy, cx, transformations = _load_dem(
+            raster_path, None)
+        d8, _d8_meta = terrain_lib.d8_flow(arr, cy, cell_size_x=cx, nodata=eff_nodata)
+        acc, _acc_meta = terrain_lib.flow_accumulation(d8)
+
+        if product_v == "stream_order":
+            order, meta = terrain_lib.stream_order(d8, acc, threshold_v)
+            statistics: Dict[str, Any] = {
+                "order_distribution": meta["order_distribution"],
+                "max_order": meta["max_order"],
+                "stream_cells": meta["stream_cells"],
+            }
+            sample = _bounded_sample(order.astype("float64"))
+            algorithm_id = "terrain.strahler"
+        else:
+            mask, meta = terrain_lib.extract_streams(acc, threshold_v)
+            statistics = {
+                "stream_cells": meta["stream_cells"],
+                "cells_total": meta["cells_total"],
+                "stream_fraction": round(float(mask.sum()) / max(1, mask.size), 6),
+            }
+            sample = _bounded_sample(mask.astype("float64"))
+            algorithm_id = "terrain.streams"
+
+        payload = {
+            "success": True,
+            "product": product_v,
+            "threshold": threshold_v,
+            "statistics": statistics,
+            "sample": sample,
+            "meta": meta,
+        }
+        diagnostics = _base_diagnostics(
+            transform, arr.shape[0], arr.shape[1],
+            extra=(Diagnostic(name="nodata_effective", value=eff_nodata),
+                   Diagnostic(name="threshold", value=threshold_v)))
+        backend = _backend_diagnostic(algorithm_id, arr.size)
+        if backend is not None:
+            diagnostics.append(backend)
+        return _terrain_evidence(
+            payload, algorithm_id, tool="stream_network",
+            parameters_applied={"threshold": threshold_v, "product": product_v},
+            crs=crs,
+            diagnostics=diagnostics,
+            transformations=transformations or None,
+            warnings=_non_metric_warning(crs) or None,
+        )
+
+    @tool(registry, name="watershed_morphometry_analysis",
+           description=(
+               "流域形态量测（Strahler 1957）：pour point 逆 D8 圈流域后一次性给出 "
+               "面积/周长/盆地长（MAX 流程长口径）/form factor/elongation/relief/"
+               "relief ratio；给 stream_threshold 时附河网长度与排水密度。"
+               "\n何时用：水文响应单元刻画、流域对比（Horton-Strahler 定律）。"
+               "\n何时不用：(1) 只要流域掩膜 — watershed_delineation；"
+               "(2) 只要河网 — stream_network。"
+               "\n关键约束：pour point 取最近像元中心；盆地长 = MAX 上游流程长（文档化）。"
+           ),
+           tier=2, domains=["raster"], cost="heavy",
+           param_descriptions={
+               "raster_path": "DEM GeoTIFF 路径（data_dir 内）",
+               "pour_x": "pour point 世界 x（栅格 CRS 单位；应落在河道上）",
+               "pour_y": "pour point 世界 y（栅格 CRS 单位）",
+               "stream_threshold": "可选河网阈值（上游像元数；给定时计算排水密度）",
+           })
+    def watershed_morphometry_analysis(raster_path: str, pour_x: float, pour_y: float,
+                                       stream_threshold: float | None = None) -> dict:
+        contract_params: Dict[str, Any] = {"pour_x": pour_x, "pour_y": pour_y}
+        if stream_threshold is not None:
+            contract_params["stream_threshold"] = stream_threshold
+        params = apply_contract("morphometry_analysis", contract_params)
+        threshold_v = params.get("stream_threshold")
+        threshold_v = float(threshold_v) if threshold_v is not None else None
+
+        arr, transform, crs, eff_nodata, bounds, cy, cx, transformations = _load_dem(
+            raster_path, None)
+        d8, _d8_meta = terrain_lib.d8_flow(arr, cy, cell_size_x=cx, nodata=eff_nodata)
+        metrics, meta = terrain_lib.watershed_morphometry(
+            arr, d8, (float(params["pour_x"]), float(params["pour_y"])), cy,
+            cell_size_x=cx, transform=transform, stream_threshold=threshold_v,
+            nodata=eff_nodata)
+        payload = {
+            "success": True,
+            "metrics": metrics,
+            "meta": meta,
+        }
+        diagnostics = _base_diagnostics(
+            transform, arr.shape[0], arr.shape[1],
+            extra=(Diagnostic(name="nodata_effective", value=eff_nodata),
+                   Diagnostic(name="basin_cells", value=float(metrics["cell_count"]))))
+        backend = _backend_diagnostic("terrain.morphometry", arr.size)
+        if backend is not None:
+            diagnostics.append(backend)
+        return _terrain_evidence(
+            payload, "terrain.morphometry", tool="watershed_morphometry_analysis",
+            parameters_applied={
+                "pour_x": float(params["pour_x"]), "pour_y": float(params["pour_y"]),
+                "stream_threshold": threshold_v,
+            },
+            crs=crs,
+            diagnostics=diagnostics,
+            transformations=transformations or None,
+            warnings=_non_metric_warning(crs) or None,
+        )
+
+    @tool(registry, name="topographic_index",
+           description=(
+               "DEM 湿润/水力指数：TWI = ln(SCA/tanβ)（Beven-Kirkby 1979，湿润度）"
+               "或 SPI = SCA·tanβ（水力侵蚀潜势）。内部自动计算 Horn 坡度与 D8 汇流。"
+               "\n何时用：土壤湿润格局、潜在饱和带识别、侵蚀潜势粗评。"
+               "\n何时不用：(1) 需要降雨-径流过程模拟 — 静态地形指数不适用；"
+               "(2) 需要多向流 SCA — 当前 κ=1 单流向口径（披露）。"
+               "\n关键约束：SCA 等流宽度 = cell_size；tanβ 下限 1e-6（平地为截断上界）。"
+           ),
+           tier=2, domains=["raster"], cost="heavy",
+           param_descriptions={
+               "raster_path": "DEM GeoTIFF 路径（data_dir 内）",
+               "product": "输出产品: 'twi'(默认) | 'spi'",
+               "z_factor": "垂直单位比例（英尺 DEM ≈0.3048，默认 1）",
+           })
+    def topographic_index(raster_path: str, product: str = "twi",
+                          z_factor: float = 1) -> dict:
+        params = apply_contract("wetness_index", {"product": product})
+        product_v = str(params["product"])
+        z, slope_deg, acc, transform, crs, transformations, eff_nodata, cy, cx = \
+            _dem_slope_and_accum(raster_path, float(z_factor))
+        if product_v == "twi":
+            result, meta = terrain_lib.topographic_wetness_index(
+                slope_deg, acc, cy, cell_size_x=cx, slope_units="degrees")
+            algorithm_id = "terrain.twi"
+        else:
+            result, meta = terrain_lib.stream_power_index(
+                slope_deg, acc, cy, cell_size_x=cx, slope_units="degrees")
+            algorithm_id = "terrain.spi"
+        payload = {
+            "success": True,
+            "product": product_v,
+            "statistics": compute_raster_stats(result),
+            "sample": _bounded_sample(result),
+            "meta": meta,
+        }
+        diagnostics = _base_diagnostics(
+            transform, slope_deg.shape[0], slope_deg.shape[1],
+            extra=(Diagnostic(name="nodata_effective", value=eff_nodata),
+                   Diagnostic(name="z_factor", value=float(z_factor))))
+        backend = _backend_diagnostic(algorithm_id, result.size)
+        if backend is not None:
+            diagnostics.append(backend)
+        return _terrain_evidence(
+            payload, algorithm_id, tool="topographic_index",
+            parameters_applied={"product": product_v, "z_factor": float(z_factor)},
+            crs=crs,
+            diagnostics=diagnostics,
+            transformations=transformations,
+            warnings=_non_metric_warning(crs) or None,
+        )
+
+    @tool(registry, name="ls_factor_analysis",
+           description=(
+               "USLE LS 因子栅格：mccool（坡长经验式，Wischmeier-Smith 1978 + McCool "
+               "1987 m 表）或 desmet_govers（比集水面积式，Desmet & Govers 1996）。"
+               "\n何时用：土壤流失通用方程的坡长坡度因子输入、侵蚀敏感性制图。"
+               "\n何时不用：(1) 完整 USLE/RUSLE 侵蚀量 — 还需 R/K/C/P 因子；"
+               "(2) 流程长度本身 — flow_length_analysis。"
+               "\n关键约束：desmet_govers 自动用内部 D8 汇流做 SCA；n=1.3 固定。"
+           ),
+           tier=2, domains=["raster"], cost="heavy",
+           param_descriptions={
+               "raster_path": "DEM GeoTIFF 路径（data_dir 内）",
+               "method": "方法: 'mccool'(默认) | 'desmet_govers'",
+               "flow_length": "mccool 坡长 λ（米，默认 100；建议用上游流程长度替代）",
+               "z_factor": "垂直单位比例（英尺 DEM ≈0.3048，默认 1）",
+           })
+    def ls_factor_analysis(raster_path: str, method: str = "mccool",
+                           flow_length: float = 100.0, z_factor: float = 1) -> dict:
+        params = apply_contract("ls_factor_analysis", {
+            "method": method, "flow_length": flow_length,
+        })
+        method_v = str(params["method"])
+        flow_length_v = float(params["flow_length"])
+        z, slope_deg, acc, transform, crs, transformations, eff_nodata, cy, cx = \
+            _dem_slope_and_accum(raster_path, float(z_factor))
+        result, meta = terrain_lib.ls_factor(
+            slope_deg, flow_length_v, cy, cell_size_x=cx, method=method_v,
+            slope_units="percent",
+            flow_accum=acc if method_v == "desmet_govers" else None)
+        payload = {
+            "success": True,
+            "method": method_v,
+            "statistics": compute_raster_stats(result),
+            "sample": _bounded_sample(result),
+            "meta": meta,
+        }
+        diagnostics = _base_diagnostics(
+            transform, slope_deg.shape[0], slope_deg.shape[1],
+            extra=(Diagnostic(name="nodata_effective", value=eff_nodata),
+                   Diagnostic(name="z_factor", value=float(z_factor)),
+                   Diagnostic(name="flow_length_m", value=flow_length_v)))
+        backend = _backend_diagnostic("terrain.ls_factor", result.size)
+        if backend is not None:
+            diagnostics.append(backend)
+        return _terrain_evidence(
+            payload, "terrain.ls_factor", tool="ls_factor_analysis",
+            parameters_applied={
+                "method": method_v, "flow_length": flow_length_v,
+                "z_factor": float(z_factor),
+            },
+            crs=crs,
+            diagnostics=diagnostics,
+            transformations=transformations,
+            warnings=_non_metric_warning(crs) or None,
+        )
+
+    @tool(registry, name="terrain_openness_analysis",
+           description=(
+               "DEM 地形开放度（Yokoyama 2002）：positive = 周边俯角均值（山脊/开阔 "
+               "高），negative = 仰角均值（谷地/封闭高），单位度。"
+               "\n何时用：地貌制图（脊/谷增强）、边坡稳定与风场暴露粗评、天际线分析。"
+               "\n何时不用：(1) 需要 TPI 地类分级 — landform_classify；"
+               "(2) 视域布尔判定 — viewshed_analysis。"
+               "\n关键约束：半径 ≤100 像元；无采样方位从均值剔除（栅格角隅披露）。"
+           ),
+           tier=2, domains=["raster"], cost="heavy",
+           param_descriptions={
+               "raster_path": "DEM GeoTIFF 路径（data_dir 内）",
+               "radius_cells": "搜索半径（像元，1-100，默认 8）",
+               "azimuth_count": "方位数（4-64 等角距，默认 16）",
+           })
+    def terrain_openness_analysis(raster_path: str, radius_cells: int = 8,
+                                  azimuth_count: int = 16) -> dict:
+        params = apply_contract("openness_analysis", {
+            "radius_cells": radius_cells, "azimuth_count": azimuth_count,
+        })
+        radius_v = int(params["radius_cells"])
+        azimuths_v = int(params["azimuth_count"])
+        arr, transform, crs, eff_nodata, bounds, cy, cx, transformations = _load_dem(
+            raster_path, None)
+        res, meta = terrain_lib.terrain_openness(
+            arr, cy, cell_size_x=cx, radius_cells=radius_v,
+            azimuth_count=azimuths_v, nodata=eff_nodata)
+        payload = {
+            "success": True,
+            "positive_openness": {
+                "statistics": compute_raster_stats(res["positive"]),
+                "sample": _bounded_sample(res["positive"]),
+            },
+            "negative_openness": {
+                "statistics": compute_raster_stats(res["negative"]),
+                "sample": _bounded_sample(res["negative"]),
+            },
+            "meta": meta,
+        }
+        diagnostics = _base_diagnostics(
+            transform, arr.shape[0], arr.shape[1],
+            extra=(Diagnostic(name="nodata_effective", value=eff_nodata),
+                   Diagnostic(name="radius_cells", value=float(radius_v))))
+        backend = _backend_diagnostic("terrain.openness", arr.size)
+        if backend is not None:
+            diagnostics.append(backend)
+        return _terrain_evidence(
+            payload, "terrain.openness", tool="terrain_openness_analysis",
+            parameters_applied={"radius_cells": radius_v, "azimuth_count": azimuths_v},
+            crs=crs,
+            diagnostics=diagnostics,
+            transformations=transformations or None,
+            warnings=_non_metric_warning(crs) or None,
+        )
+
+    @tool(registry, name="geomorphon_analysis",
+           description=(
+               "DEM geomorphons 地貌形态分类（Jasiewicz & Stepinski 2013）：8 方位视线"
+               "三元码 → 10 类（flat/summit/ridge/shoulder/spur/slope/hollow/"
+               "footslope/valley/depression），返回类图 + 类分布。"
+               "\n何时用：无监督地貌制图、土地形态单元划分、遥感地貌对比。"
+               "\n何时不用：(1) 需要绝对坡度分级 — compute_terrain；"
+               "(2) 双尺度 TPI 地类 — landform_classify。"
+               "\n关键约束：相对高程形态学（缓坡大尺度可判 flat）；flatten 容差按 DEM 噪声定。"
+           ),
+           tier=2, domains=["raster"], cost="heavy",
+           param_descriptions={
+               "raster_path": "DEM GeoTIFF 路径（data_dir 内）",
+               "lookup_radius_cells": "视线查找半径（像元，1-128，默认 8）",
+               "flatten": "平地容差（度，默认 0；建议 ≈ DEM 高程噪声）",
+               "far": "近场跳过半径（像元，默认 0 = 不跳过）",
+           })
+    def geomorphon_analysis(raster_path: str, lookup_radius_cells: int = 8,
+                            flatten: float = 0.0, far: float = 0.0) -> dict:
+        params = apply_contract("geomorphon_analysis", {
+            "lookup_radius_cells": lookup_radius_cells, "flatten": flatten, "far": far,
+        })
+        lookup_v = int(params["lookup_radius_cells"])
+        flatten_v = float(params["flatten"])
+        far_v = float(params["far"])
+        arr, transform, crs, eff_nodata, bounds, cy, cx, transformations = _load_dem(
+            raster_path, None)
+        res, meta = terrain_lib.geomorphons(
+            arr, cy, cell_size_x=cx, lookup_radius_cells=lookup_v,
+            flatten=flatten_v, far=far_v, nodata=eff_nodata)
+        payload = {
+            "success": True,
+            "class_distribution": meta["class_distribution"],
+            "class_codes": meta["class_codes"],
+            "sample": _bounded_sample(res["classes"].astype("float64")),
+            "meta": meta,
+        }
+        diagnostics = _base_diagnostics(
+            transform, arr.shape[0], arr.shape[1],
+            extra=(Diagnostic(name="nodata_effective", value=eff_nodata),
+                   Diagnostic(name="lookup_radius_cells", value=float(lookup_v)),
+                   Diagnostic(name="flatten_degrees", value=flatten_v)))
+        backend = _backend_diagnostic("terrain.geomorphons", arr.size)
+        if backend is not None:
+            diagnostics.append(backend)
+        return _terrain_evidence(
+            payload, "terrain.geomorphons", tool="geomorphon_analysis",
+            parameters_applied={
+                "lookup_radius_cells": lookup_v, "flatten": flatten_v, "far": far_v,
+            },
+            crs=crs,
+            diagnostics=diagnostics,
+            transformations=transformations or None,
+            warnings=_non_metric_warning(crs) or None,
+        )
+
+    @tool(registry, name="landform_classify",
+           description=(
+               "DEM 双尺度 TPI 地类分级（Weiss 2001）：10 类地貌（canyons…mountain "
+               "tops…plains），返回类图 + 类分布 + 科学证据。"
+               "\n何时用：地貌单元制图、生态分区、土壤-地形组合分析。"
+               "\n何时不用：(1) 视线形态学 10 类 — geomorphon_analysis；"
+               "(2) 常量面/无起伏 DEM — 分类阈值无定义（报错）。"
+               "\n关键约束：TPI 窗口 3/25 格 + 百分位容差 0.1 为海报惯例起点（按尺度率定）。"
+           ),
+           tier=2, domains=["raster"], cost="heavy",
+           param_descriptions={
+               "raster_path": "DEM GeoTIFF 路径（data_dir 内）",
+               "tpi_window_small": "小尺度 TPI 窗口（奇数 3-101，默认 3）",
+               "tpi_window_large": "大尺度 TPI 窗口（奇数，默认 25）",
+               "elevation_tolerance": "平地带高程百分位容差（0-0.5，默认 0.1）",
+           })
+    def landform_classify(raster_path: str, tpi_window_small: int = 3,
+                          tpi_window_large: int = 25,
+                          elevation_tolerance: float = 0.1) -> dict:
+        params = apply_contract("landform_analysis", {
+            "tpi_window_small": tpi_window_small,
+            "tpi_window_large": tpi_window_large,
+            "elevation_tolerance": elevation_tolerance,
+        })
+        ws = int(params["tpi_window_small"])
+        wl = int(params["tpi_window_large"])
+        tol_v = float(params["elevation_tolerance"])
+        arr, transform, crs, eff_nodata, bounds, cy, cx, transformations = _load_dem(
+            raster_path, None)
+        res, meta = terrain_lib.landform_classification(
+            arr, cy, cell_size_x=cx, tpi_window_small=ws, tpi_window_large=wl,
+            elevation_tolerance=tol_v, nodata=eff_nodata)
+        payload = {
+            "success": True,
+            "class_distribution": meta["class_distribution"],
+            "class_codes": meta["class_codes"],
+            "sample": _bounded_sample(res["classes"].astype("float64")),
+            "meta": meta,
+        }
+        diagnostics = _base_diagnostics(
+            transform, arr.shape[0], arr.shape[1],
+            extra=(Diagnostic(name="nodata_effective", value=eff_nodata),
+                   Diagnostic(name="tpi_window_small", value=float(ws)),
+                   Diagnostic(name="tpi_window_large", value=float(wl))))
+        backend = _backend_diagnostic("terrain.landform", arr.size)
+        if backend is not None:
+            diagnostics.append(backend)
+        return _terrain_evidence(
+            payload, "terrain.landform", tool="landform_classify",
+            parameters_applied={
+                "tpi_window_small": ws, "tpi_window_large": wl,
+                "elevation_tolerance": tol_v,
+            },
+            crs=crs,
+            diagnostics=diagnostics,
+            transformations=transformations or None,
+            warnings=_non_metric_warning(crs) or None,
+        )
+
+    @tool(registry, name="multiazimuth_hillshade",
+           description=(
+               "DEM 多方位山体阴影：多太阳方位照度合成（mean = 去阴影均值，min = "
+               "制图最小），单方位公式与 compute_terrain 的 hillshade 逐位一致。"
+               "\n何时用：地形制图增强（多方位去阴影）、坡向可视化。"
+               "\n何时不用：(1) 单幅标准阴影 — compute_terrain；"
+               "(2) 需要坡度/坡向产品 — compute_terrain。"
+               "\n关键约束：altitude 0-90 度；azimuths 罗盘度列表（如 '315,135,45,225'）。"
+           ),
+           tier=2, domains=["raster"], cost="medium",
+           param_descriptions={
+               "raster_path": "DEM GeoTIFF 路径（data_dir 内）",
+               "altitude": "太阳高度角（度，0-90，默认 45）",
+               "azimuths": "太阳方位列表（罗盘度，逗号分隔，默认 '315,135'）",
+               "combine": "合成方式: 'mean'(默认) | 'min'",
+           })
+    def multiazimuth_hillshade(raster_path: str, altitude: float = 45.0,
+                               azimuths: str | list[float] | None = None,
+                               combine: str = "mean") -> dict:
+        contract_params: Dict[str, Any] = {"altitude": altitude, "combine": combine}
+        if azimuths is not None:
+            contract_params["azimuths"] = (
+                azimuths if isinstance(azimuths, str) else ",".join(str(a) for a in azimuths))
+        params = apply_contract("hillshade_multiazimuth", contract_params)
+        altitude_v = float(params["altitude"])
+        combine_v = str(params["combine"])
+        az_raw = params.get("azimuths") or "315,135"
+        if isinstance(az_raw, str):
+            try:
+                parsed = json.loads(az_raw)
+                az_list = [float(v) for v in parsed] if isinstance(parsed, list) else [float(parsed)]
+            except (ValueError, TypeError):
+                az_list = [float(v) for v in az_raw.replace(",", " ").split()]
+        else:
+            az_list = [float(v) for v in az_raw]
+
+        arr, transform, crs, eff_nodata, bounds, cy, cx, transformations = _load_dem(
+            raster_path, None)
+        shade, meta = terrain_lib.hillshade_multiazimuth(
+            arr, cy, cell_size_x=cx, altitude=altitude_v, azimuths=az_list,
+            combine=combine_v, nodata=eff_nodata)
+        payload = {
+            "success": True,
+            "azimuths": az_list,
+            "combine": combine_v,
+            "statistics": compute_raster_stats(shade),
+            "sample": _bounded_sample(shade, decimals=2),
+            "meta": meta,
+        }
+        diagnostics = _base_diagnostics(
+            transform, arr.shape[0], arr.shape[1],
+            extra=(Diagnostic(name="nodata_effective", value=eff_nodata),
+                   Diagnostic(name="altitude", value=altitude_v)))
+        backend = _backend_diagnostic("terrain.hillshade_multi", arr.size)
+        if backend is not None:
+            diagnostics.append(backend)
+        return _terrain_evidence(
+            payload, "terrain.hillshade_multi", tool="multiazimuth_hillshade",
+            parameters_applied={
+                "altitude": altitude_v, "azimuths": ",".join(str(a) for a in az_list),
+                "combine": combine_v,
+            },
+            crs=crs,
+            diagnostics=diagnostics,
+            transformations=transformations or None,
             warnings=_non_metric_warning(crs) or None,
         )

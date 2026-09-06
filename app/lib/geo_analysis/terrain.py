@@ -4,6 +4,12 @@ VNext 地形科学库：TPI / TRI / 粗糙度 / 曲率（Zevenbergen-Thorne）/
 视域（扇区视线角扫描）/ D8 流向与汇流累积（拓扑序）/ 逆 D8 流域 /
 等值线（matplotlib Agg marching squares）。
 
+Foundation V2（A5 地形水文与地貌量测扩展）：Priority-Flood 填洼
+（Barnes 2014）/ D∞ 多向流（Tarboton 1997）/ 流程长度 / Strahler 河流
+分级 / 流域形态量测 / TWI-SPI-USLE LS 指数 / 地形开放度（Yokoyama
+2002）/ geomorphons 地貌分类（Jasiewicz & Stepinski 2013）/
+Weiss 双尺度 TPI 地类分级 / 多方位山体阴影。
+
 职责边界（CONTRACT_BACKBONE §1）：本模块只做纯 NumPy/标量数学 ——
 不读文件、不写 artifact、不挂证据块（工具层职责）。所有函数
 
@@ -20,12 +26,17 @@ neighbors** —— 窗口统计在边界收缩为可得像元，不发明填充�
 """
 from __future__ import annotations
 
+import heapq
 import math
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from app.lib.gis.scientific_errors import NoValidObservations
+from app.lib.gis.scientific_errors import (
+    DegenerateData,
+    NoValidObservations,
+    ResourceScaleMismatch,
+)
 
 __all__ = [
     "EDGE_POLICY",
@@ -39,12 +50,31 @@ __all__ = [
     "flow_accumulation",
     "upstream_watershed",
     "extract_contours",
+    "fill_depressions",
+    "dinf_flow_direction",
+    "dinf_flow_accumulation",
+    "flow_length",
+    "extract_streams",
+    "stream_order",
+    "watershed_morphometry",
+    "topographic_wetness_index",
+    "stream_power_index",
+    "ls_factor",
+    "terrain_openness",
+    "geomorphons",
+    "landform_classification",
+    "hillshade_multiazimuth",
 ]
 
 EDGE_POLICY = "edge cells use available neighbors (window statistics shrink at the border; no padding values are invented)"
 
 MIN_WINDOW = 3
 MAX_WINDOW = 101
+
+# Foundation V2（A5）：网格规模护栏（先拒绝、后分配）与射线半径上限。
+MAX_HYDRO_CELLS = 50_000_000
+MAX_OPENNESS_RADIUS_CELLS = 100
+MAX_GEOMORPHON_RADIUS_CELLS = 128
 
 # ESRI D8 powers-of-two encoding (row 0 = north, col 0 = west):
 # 1=E, 2=SE, 4=S, 8=SW, 16=W, 32=NW, 64=N, 128=NE; 0 = sink/outlet
@@ -813,3 +843,1303 @@ def watershed(
     meta["d8"] = {k: d8_meta[k] for k in ("encoding", "tie_break", "flats", "boundary")}
     meta["algorithm"] = "terrain.watershed"
     return mask, meta
+
+
+# ══ Foundation V2（A5）：水文与地貌量测扩展 ══════════════════════════
+
+
+def _validate_cell_sizes(
+    cell_size: float, cell_size_x: Optional[float],
+) -> Tuple[float, float]:
+    if cell_size is None or cell_size <= 0 or (
+            cell_size_x is not None and cell_size_x <= 0):
+        raise ValueError(
+            f"cell sizes must be positive (got cell_size={cell_size!r}, "
+            f"cell_size_x={cell_size_x!r})")
+    return float(cell_size), float(cell_size_x if cell_size_x is not None else cell_size)
+
+
+def _guard_cells(shape: Tuple[int, int], algorithm: str,
+                 cap: Optional[int] = None) -> None:
+    """规模护栏：在分配任何大数组**之前**拒绝（estimate-before-allocate）。
+
+    cap 缺省读模块常量 ``MAX_HYDRO_CELLS``（调用时读取 —— 测试可注入）。
+    """
+    limit = MAX_HYDRO_CELLS if cap is None else cap
+    n = int(shape[0]) * int(shape[1])
+    if n > limit:
+        raise ResourceScaleMismatch(
+            f"{algorithm}: grid {tuple(shape)} has {n} cells above the safe "
+            f"envelope ({limit})",
+            estimated=f"{n} cells", limit=f"{limit} cells",
+            correction_hint="tile the DEM or coarsen resolution before this analysis")
+
+
+def _topology_order(z: np.ndarray, valid: np.ndarray,
+                    descending: bool) -> np.ndarray:
+    """有效像元的确定性拓扑序（高程降/升序；同高程按 (row, col) 兜底）。"""
+    h, w = z.shape
+    cells = np.flatnonzero(valid.ravel())
+    rows_c = cells // w
+    cols_c = cells % w
+    elev = z.ravel()[cells]
+    key = -elev if descending else elev
+    return cells[np.lexsort((cols_c, rows_c, key))]
+
+
+def _child_table(receiver: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """逆 D8 邻接表：按 parent flat index 排序的 (children, parents)。"""
+    flowing = np.flatnonzero(receiver >= 0)
+    parents = receiver[flowing]
+    order = np.argsort(parents, kind="stable")
+    return flowing[order], parents[order]
+
+
+# ── V2-1. Priority-Flood 填洼（Barnes et al. 2014）───────────────────
+
+
+def fill_depressions(
+    dem: np.ndarray, cell_size: float,
+    cell_size_x: Optional[float] = None,
+    *,
+    epsilon: float = 0.0,
+    nodata: Optional[float] = None,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Priority-Flood 填洼（Barnes, Lehman & Mulla 2014；O(N log N) heapq）。
+
+    种子 = 网格边界上的有效像元 + 与 nodata/非有限像元相邻的有效像元
+    （nodata 视作排水边界）；自种子向内漫水，洼地被抬升到溢流高程。
+    ``epsilon > 0`` 时逐像元抬升 ``max(z[n], filled[cur] + epsilon)`` →
+    填后表面严格单调可排（平地获得 epsilon 梯度，无二次洼地）；
+    ``epsilon == 0``（默认）为纯填洼：平地/洼地仍为汇（与 d8_flow 的
+    「不发明路由」语义衔接 —— 先 fill 再 d8 是推荐组合）。
+
+    meta 报告 filled_volume（Σ(filled−z)，z_units·m²）、filled_cell_count、
+    max_fill_depth。确定性：堆并列用自增计数器裁决（结果本身与弹出序无关 ——
+    Priority-Flood 填充面是唯一的）。护栏：网格 ≤ 50M 像元（先拒绝后分配）。
+    """
+    cy, cx = _validate_cell_sizes(cell_size, cell_size_x)
+    if epsilon < 0:
+        raise ValueError(f"epsilon must be >= 0 (got {epsilon!r})")
+    z_raw = np.asarray(dem)
+    if getattr(z_raw, "ndim", 0) != 2:
+        raise NoValidObservations(
+            f"DEM must be a 2D array (got ndim {getattr(z_raw, 'ndim', 0)})")
+    _guard_cells(z_raw.shape, "terrain.sink_fill")
+    z, valid = _prepare(dem, nodata)
+    h, w = z.shape
+    del z_raw
+
+    filled = z.copy()
+    # 种子 = 网格边界上的有效像元 + 与无效像元（nodata/非有限）相邻的
+    # 有效像元（8 邻域；网格外/nodata 视作排水出口 —— 不发明填充边界值）。
+    invalid = ~valid
+    border = ~_border_inside(h, w)
+    near_invalid = np.zeros((h, w), dtype=bool)
+    for _, _, dr, dc in _D8_NEIGHBORS:
+        r0, r1 = max(0, -dr), min(h, h - dr)
+        c0, c1 = max(0, -dc), min(w, w - dc)
+        shifted = np.zeros((h, w), dtype=bool)
+        shifted[r0:r1, c0:c1] = invalid[r0 + dr:r1 + dr, c0 + dc:c1 + dc]
+        near_invalid |= shifted
+    seed = valid & (border | near_invalid)
+    del invalid, border, near_invalid
+
+    known = seed.copy()
+    heap: List[Tuple[float, int, int]] = []
+    counter = 0
+    for flat in np.flatnonzero(seed.ravel()).tolist():
+        heapq.heappush(heap, (float(filled.ravel()[flat]), counter, flat))
+        counter += 1
+
+    n_cells = h * w
+    while heap:
+        elev, _, cur = heapq.heappop(heap)
+        cur_r, cur_c = divmod(cur, w)
+        for _, _, dr, dc in _D8_NEIGHBORS:
+            nb_r, nb_c = cur_r + dr, cur_c + dc
+            if not (0 <= nb_r < h and 0 <= nb_c < w):
+                continue
+            nb = nb_r * w + nb_c
+            if not valid.ravel()[nb] or known.ravel()[nb]:
+                continue
+            known.ravel()[nb] = True
+            target = elev + epsilon
+            z_nb = float(z.ravel()[nb])
+            filled.ravel()[nb] = z_nb if z_nb > target else target
+            heapq.heappush(heap, (filled.ravel()[nb], counter, nb))
+            counter += 1
+    del known, heap
+
+    lift = filled - z
+    meta = _meta_base(
+        "terrain.sink_fill", valid,
+        cell_size=cy, cell_size_x=cx,
+        epsilon=float(epsilon),
+        method=(
+            "Priority-Flood depression filling (Barnes et al. 2014, heapq); "
+            "seeds = boundary + nodata-adjacent valid cells; epsilon>0 yields a "
+            "monotonically draining surface"),
+        edge_policy=(
+            "sink-fill edge policy: cells adjacent to nodata/non-finite cells act "
+            "as drainage seeds (nodata is an outlet); no padding values invented"),
+        filled_volume=round(float(lift.sum()), 9),
+        filled_volume_units="z_units * m2 (metric cells)",
+        filled_cell_count=int(np.count_nonzero(lift > 0.0)),
+        max_fill_depth=round(float(lift.max()) if valid.any() else 0.0, 9),
+        grid_cells=int(n_cells),
+    )
+    return filled, meta
+
+
+def _border_inside(h: int, w: int) -> np.ndarray:
+    """True=非边界像元（边界一圈 False）。"""
+    inside = np.ones((h, w), dtype=bool)
+    inside[0, :] = False
+    inside[-1, :] = False
+    inside[:, 0] = False
+    inside[:, -1] = False
+    return inside
+
+
+# ── V2-2. D∞ 多向流（Tarboton 1997）──────────────────────────────────
+
+# D∞ 哨兵：有效像元但无严格下降（平地/洼地）→ 角度 -1（弧度）；
+# 无效像元（nodata/非有限）→ NaN。诚实披露：函数内部**不做**填洼 ——
+# 平地/洼地是哨兵 -1，推荐先 fill_depressions(epsilon>0) 再算 D∞。
+_DINF_NO_FLOW = -1.0
+
+# CCW（自东逆时针）排列的 _D8_NEIGHBORS 索引：E, NE, N, NW, W, SW, S, SE。
+_DINF_CCW: Tuple[int, ...] = (0, 7, 6, 5, 4, 3, 2, 1)
+
+
+def dinf_flow_direction(
+    dem: np.ndarray, cell_size: float,
+    cell_size_x: Optional[float] = None,
+    nodata: Optional[float] = None,
+) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
+    """D∞ 多向流方向（Tarboton 1997，8 三角面最陡下降）。
+
+    每像元在 8 个三角面（相邻两邻域与中心构成的平面）上解平面梯度：
+
+    - 面内最陡下降方向落在面的角域内 → 取平面梯度方向与幅值；
+    - 落在角域外 → 截断到较陡的边（该边邻域方向的坡降）；
+    - 严格为正的下降才计流；面并列取最低面索引（确定性）；
+    - 角度弧度制 ∈ [0, 2π)（数学约定：x=东、y=北，atan2(vy, vx)）；
+    - 平地/洼地 → 角度 -1（哨兵；本函数**不填洼**，组合
+      ``fill_depressions(epsilon>0)`` 先行是推荐用法）；nodata → NaN；
+    - 边缘策略：缺任一角邻域的面跳过（只用可得邻域，不发明填充值）。
+
+    返回 dict：angle/slope（幅值）、receiver_a/frac_a、receiver_b/frac_b
+    （下游两邻域 flat 索引与角度比例分配权重；无流时 receiver=-1）。
+    汇流分配 = 面内角度比例（β 靠近哪条边哪条边分得多；Tarboton 1997）。
+    """
+    cy, cx = _validate_cell_sizes(cell_size, cell_size_x)
+    z_raw = np.asarray(dem)
+    if getattr(z_raw, "ndim", 0) != 2:
+        raise NoValidObservations(
+            f"DEM must be a 2D array (got ndim {getattr(z_raw, 'ndim', 0)})")
+    _guard_cells(z_raw.shape, "terrain.dinf_flow")
+    z, valid = _prepare(dem, nodata)
+    h, w = z.shape
+
+    # 每个邻域的米制向量（东、北）与方位角（数学约定）。
+    vec_x = np.empty(8)
+    vec_y = np.empty(8)
+    vec_d = np.empty(8)
+    for idx, (_, _, dr, dc) in enumerate(_D8_NEIGHBORS):
+        vec_x[idx] = dc * cx
+        vec_y[idx] = -dr * cy
+        vec_d[idx] = math.hypot(vec_x[idx], vec_y[idx])
+
+    angle = np.full((h, w), np.nan)
+    slope_out = np.full((h, w), np.nan)
+    recv_a = np.full(h * w, -1, dtype=np.int64)
+    recv_b = np.full(h * w, -1, dtype=np.int64)
+    frac_a = np.zeros(h * w, dtype=np.float64)
+    frac_b = np.zeros(h * w, dtype=np.float64)
+
+    for k in range(8):
+        i1 = _DINF_CCW[k]
+        i2 = _DINF_CCW[(k + 1) % 8]
+        _, _, dr1, dc1 = _D8_NEIGHBORS[i1]
+        _, _, dr2, dc2 = _D8_NEIGHBORS[i2]
+        z1 = np.full_like(z, np.nan)
+        z2 = np.full_like(z, np.nan)
+        v1 = np.zeros_like(valid)
+        v2 = np.zeros_like(valid)
+        r0, r1 = max(0, -dr1), min(h, h - dr1)
+        c0, c1 = max(0, -dc1), min(w, w - dc1)
+        z1[r0:r1, c0:c1] = z[r0 + dr1:r1 + dr1, c0 + dc1:c1 + dc1]
+        v1[r0:r1, c0:c1] = valid[r0 + dr1:r1 + dr1, c0 + dc1:c1 + dc1]
+        r0, r1 = max(0, -dr2), min(h, h - dr2)
+        c0, c1 = max(0, -dc2), min(w, w - dc2)
+        z2[r0:r1, c0:c1] = z[r0 + dr2:r1 + dr2, c0 + dc2:c1 + dc2]
+        v2[r0:r1, c0:c1] = valid[r0 + dr2:r1 + dr2, c0 + dc2:c1 + dc2]
+
+        facet = valid & v1 & v2
+        if not facet.any():
+            continue
+        s1 = np.where(facet, (z - z1) / vec_d[i1], 0.0)
+        s2 = np.where(facet, (z - z2) / vec_d[i2], 0.0)
+        det = vec_x[i1] * vec_y[i2] - vec_x[i2] * vec_y[i1]
+        with np.errstate(invalid="ignore", divide="ignore"):
+            p = ((z1 - z) * vec_y[i2] - (z2 - z) * vec_y[i1]) / det
+            q = (vec_x[i1] * (z2 - z) - vec_x[i2] * (z1 - z)) / det
+        g = np.hypot(p, q)
+        beta = np.arctan2(-q, -p)
+        theta1 = math.atan2(vec_y[i1], vec_x[i1]) % (2.0 * math.pi)
+        theta2 = math.atan2(vec_y[i2], vec_x[i2]) % (2.0 * math.pi)
+        span = (theta2 - theta1) % (2.0 * math.pi)
+        d_ang = (beta - theta1) % (2.0 * math.pi)
+
+        # 面内 → 平面梯度；角域外 → 截断到较陡边（s 并列取边 1）。
+        inside = (d_ang <= span) & (g > 0.0)
+        facet_slope = np.where(inside, g, np.where(s1 >= s2, s1, s2))
+        facet_angle = np.where(inside, beta, np.where(s1 >= s2, theta1, theta2))
+        cand = facet & (facet_slope > 0)
+        if not cand.any():
+            continue
+
+        rows_c, cols_c = np.nonzero(cand)
+        ang = facet_angle[rows_c, cols_c] % (2.0 * math.pi)
+        slp = facet_slope[rows_c, cols_c]
+        # 面内分配比例（角度比例）；截断到边 → 全量走该边。
+        d_in = (ang - theta1) % (2.0 * math.pi)
+        w1 = np.clip(1.0 - d_in / span, 0.0, 1.0)
+        w2 = 1.0 - w1
+        # 面索引升序遍历 + 严格 >：并列最陡面保留最低面索引（确定性）。
+        prev = slope_out[rows_c, cols_c]
+        upd = np.isnan(prev) | (slp > prev)
+        rows_u = rows_c[upd]
+        cols_u = cols_c[upd]
+        flat_u = rows_u * w + cols_u
+        angle[rows_u, cols_u] = ang[upd]
+        slope_out[rows_u, cols_u] = slp[upd]
+        recv_a[flat_u] = (rows_u + dr1) * w + (cols_u + dc1)
+        recv_b[flat_u] = (rows_u + dr2) * w + (cols_u + dc2)
+        frac_a[flat_u] = w1[upd]
+        frac_b[flat_u] = w2[upd]
+
+    # 无严格下降的有效像元 → 哨兵 -1（平地/洼地/边界外流终止）。
+    no_flow = valid & np.isnan(angle)
+    angle[no_flow] = _DINF_NO_FLOW
+    slope_out[no_flow] = 0.0
+
+    result = {
+        "angle": angle,        # 弧度 [0, 2π)；-1 = 平地/洼地（无下降）；NaN = 无效
+        "slope": slope_out,    # 最陡下降幅值（dz/dm）；0 = 无流；NaN = 无效
+        "receiver_a": recv_a,  # 下游邻域 1 flat 索引；-1 = 无
+        "receiver_b": recv_b,  # 下游邻域 2 flat 索引；-1 = 无
+        "frac_a": frac_a,
+        "frac_b": frac_b,
+        "valid": valid,
+        "dem": z,
+    }
+    meta = _meta_base(
+        "terrain.dinf_flow", valid,
+        cell_size=cy, cell_size_x=cx,
+        method=(
+            "D-infinity flow (Tarboton 1997): steepest descent over 8 triangular "
+            "facets; angle in radians [0, 2*pi), math convention (x=east, y=north)"),
+        no_flow_sentinel="-1.0 rad = valid cell with no strictly positive descent (flat/pit); NaN = nodata",
+        flow_split="fractional split between the two bracketing facet edges, proportional to in-facet angle",
+        flats=(
+            "no depression filling inside (honest: flats/pits keep the -1 sentinel); "
+            "compose with fill_depressions(epsilon>0) first for monotone drainage"),
+        edge_policy=(
+            "dinf edge policy: facets needing an out-of-grid or nodata corner are "
+            "skipped; only available neighbors are used"),
+    )
+    return result, meta
+
+
+def dinf_flow_accumulation(
+    dinf: Dict[str, np.ndarray],
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """D∞ 汇流累积（比例分流；拓扑序 = 高程降序）。
+
+    每像元向下游两邻域按角度比例分配 ``(acc + 1)``（上游贡献像元数，
+    自身计 1）；接收者严格更低 → 单遍 O(N) 松弛（排序 O(N log N)）。
+    计数口径与 d8 版一致：全流域出口处累积 = N−1（分数之和，比例分流
+    下为期望值）。守恒性质：Σacc = N_valid − sink 数（流只终止于汇）。
+    """
+    valid = dinf["valid"]
+    z = np.asarray(dinf["dem"], dtype=np.float64)
+    recv_a = dinf["receiver_a"]
+    recv_b = dinf["receiver_b"]
+    frac_a = dinf["frac_a"]
+    frac_b = dinf["frac_b"]
+    acc = np.zeros(z.shape, dtype=np.float64)
+    acc_flat = acc.ravel()
+
+    contrib = _topology_order(z, valid, descending=True)
+    ra = recv_a[contrib]
+    rb = recv_b[contrib]
+    fa = frac_a[contrib]
+    fb = frac_b[contrib]
+    for i, src in enumerate(contrib.tolist()):
+        unit = acc_flat[src] + 1.0
+        if ra[i] >= 0 and fa[i] > 0.0:
+            acc_flat[ra[i]] += unit * fa[i]
+        if rb[i] >= 0 and fb[i] > 0.0:
+            acc_flat[rb[i]] += unit * fb[i]
+
+    meta = {
+        "algorithm": "terrain.dinf_accumulation",
+        "method": "topological accumulation in descending elevation order (D-infinity fractional splitting)",
+        "counting_convention": (
+            "fractional upstream contributing cells (self included in each unit "
+            "passed on; outlet of a full N-cell single-sink basin sums to N-1)"),
+        "cells_valid": int(valid.sum()),
+    }
+    return acc, meta
+
+
+# ── V2-3. 流程长度（D8 编码复用）─────────────────────────────────────
+
+
+def flow_length(
+    d8: Dict[str, np.ndarray],
+    mode: str = "downstream",
+    cell_size: float = 1.0,
+    cell_size_x: Optional[float] = None,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """流程长度（米；基于 ``d8_flow`` 的接收者索引，各向异性像元感知）。
+
+    - ``mode="downstream"``：每像元沿流路到出口的累计距离
+      （升序高程拓扑松弛：dist[src] = step + dist[receiver]）；
+    - ``mode="upstream"``：每像元距其最远分水岭（山脊源）的累计距离
+      （降序高程松弛：len[p] = max(len[child] + step(child→p))；
+      **max** 口径 —— 文档化：长度 = 最长上游路径）；
+    - 步长 = hypot(Δcol·cx, Δrow·cy)（米制；地理栅格由调用方传入
+      cos(lat) 修正后的 cx）；
+    - 无接收者（汇/出口）→ downstream 距离 0；无上游 → upstream 0。
+    """
+    cy, cx = _validate_cell_sizes(cell_size, cell_size_x)
+    if mode not in ("downstream", "upstream"):
+        raise ValueError(f"mode must be 'downstream' or 'upstream' (got {mode!r})")
+    direction = d8["direction"]
+    receiver = d8["receiver"]
+    valid = d8["valid"]
+    z = np.asarray(d8["dem"], dtype=np.float64)
+    h, w = direction.shape
+    _guard_cells((h, w), "terrain.flow_length")
+
+    n = h * w
+    flat = np.arange(n, dtype=np.int64)
+    has_recv = receiver >= 0
+    rows = flat // w
+    cols = flat % w
+    recv_r = np.where(has_recv, receiver, flat) // w
+    recv_c = np.where(has_recv, receiver, flat) % w
+    step = np.hypot((recv_c - cols) * cx, (recv_r - rows) * cy)
+    step = np.where(has_recv, step, 0.0)
+
+    out = np.zeros(n, dtype=np.float64)
+    if mode == "downstream":
+        order = _topology_order(z, valid, descending=False)
+        for src in order.tolist():
+            dst = receiver[src]
+            if dst >= 0:
+                out[src] = step[src] + out[dst]
+    else:
+        order = _topology_order(z, valid, descending=True)
+        children, parents = _child_table(receiver)
+        for parent in order.tolist():
+            lo = np.searchsorted(parents, parent, side="left")
+            hi = np.searchsorted(parents, parent, side="right")
+            if hi > lo:
+                out[parent] = float(np.max(out[children[lo:hi]] + step[children[lo:hi]]))
+
+    result = out.reshape(h, w)
+    where_valid = np.where(valid, result, np.nan)
+    meta = _meta_base(
+        "terrain.flow_length", valid,
+        cell_size=cy, cell_size_x=cx,
+        mode=mode,
+        method=(
+            "flow length along D8 receivers: downstream = distance to outlet, "
+            "upstream = max distance from ridgeline source (topological relaxation)"),
+        length_convention=(
+            "downstream: sum of metric cell-to-cell steps to the outlet (sinks = 0); "
+            "upstream: MAX upstream path length from the farthest ridge source"),
+        max_length_m=round(float(np.nanmax(where_valid)) if valid.any() else 0.0, 6),
+        mean_length_m=round(float(np.nanmean(where_valid)) if valid.any() else 0.0, 6),
+    )
+    return where_valid, meta
+
+
+# ── V2-4. 河网提取与 Strahler 分级（Strahler 1957）───────────────────
+
+
+def extract_streams(
+    flow_accum: np.ndarray, threshold: float,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """河网像元掩膜：``flow_accum >= threshold``（确定性阈值口径）。
+
+    threshold 单位 = 上游贡献像元数（与 flow_accumulation 同口径）。
+    全部输入像元参与（NaN → 非河网）；返回 bool 掩膜 + 统计 meta。
+    """
+    acc = np.asarray(flow_accum, dtype=np.float64)
+    if acc.ndim != 2 or acc.size == 0:
+        raise NoValidObservations(
+            f"flow_accum must be a non-empty 2D array (got shape {tuple(acc.shape)})")
+    if not (threshold >= 1):
+        raise ValueError(
+            f"threshold must be >= 1 upstream cell (got {threshold!r})")
+    finite = np.isfinite(acc)
+    mask = finite & (acc >= float(threshold))
+    meta = {
+        "algorithm": "terrain.streams",
+        "method": "stream cells = flow accumulation >= threshold (D8/D∞ accumulation input)",
+        "threshold": float(threshold),
+        "stream_cells": int(mask.sum()),
+        "cells_total": int(acc.size),
+        "cells_valid_accum": int(finite.sum()),
+    }
+    return mask, meta
+
+
+def stream_order(
+    d8: Dict[str, np.ndarray], flow_accum: np.ndarray, threshold: float,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Strahler 河流分级（Strahler 1957；拓扑序 = 高程降序）。
+
+    河网像元 = ``flow_accum >= threshold``。处理序（降序高程）保证某像元
+    被处理时其全部上游河段已终结：
+
+    - 无上游河段（源头）→ order 1；
+    - 上游最高级 m 唯一 → order m；并列（≥2 条 m 级汇入）→ order m+1
+      （二元树汇流升级的 Strahler 语义）；
+    - 非河网像元 → 0。
+
+    meta 报告 order_distribution（各等级河网像元数）与 max_order。
+    """
+    acc = np.asarray(flow_accum, dtype=np.float64)
+    direction = d8["direction"]
+    receiver = d8["receiver"]
+    valid = d8["valid"]
+    z = np.asarray(d8["dem"], dtype=np.float64)
+    h, w = direction.shape
+    if acc.shape != (h, w):
+        raise ValueError(
+            f"flow_accum shape {acc.shape} does not match d8 grid {(h, w)}")
+    if not (threshold >= 1):
+        raise ValueError(f"threshold must be >= 1 upstream cell (got {threshold!r})")
+    _guard_cells((h, w), "terrain.strahler")
+
+    streams = np.isfinite(acc) & (acc >= float(threshold)) & valid
+    order = np.zeros((h, w), dtype=np.int16)
+    children, parents = _child_table(receiver)
+    for parent in _topology_order(z, valid & streams, descending=True).tolist():
+        lo = np.searchsorted(parents, parent, side="left")
+        hi = np.searchsorted(parents, parent, side="right")
+        if hi == lo:
+            order.ravel()[parent] = 1  # 源头
+            continue
+        child_orders = order.ravel()[children[lo:hi]]
+        child_orders = child_orders[child_orders > 0]
+        if child_orders.size == 0:
+            order.ravel()[parent] = 1
+            continue
+        m = int(child_orders.max())
+        order.ravel()[parent] = m if int(np.count_nonzero(child_orders == m)) == 1 else m + 1
+
+    codes = order[streams]
+    unique, counts = np.unique(codes, return_counts=True)
+    meta = _meta_base(
+        "terrain.strahler", valid,
+        threshold=float(threshold),
+        method=(
+            "Strahler stream order on cells with accumulation >= threshold: order = "
+            "max(upstream) if the max is unique else max+1 (Strahler 1957)"),
+        processing_order="descending elevation (receivers are strictly lower; deterministic (row, col) tie-break)",
+        stream_cells=int(streams.sum()),
+        max_order=int(codes.max()) if codes.size else 0,
+        order_distribution={str(int(o)): int(n) for o, n in zip(unique, counts)},
+    )
+    return order, meta
+
+
+# ── V2-5. 流域形态量测（Strahler 1957 水文地貌）──────────────────────
+
+
+def watershed_morphometry(
+    dem: np.ndarray, d8: Dict[str, np.ndarray],
+    pour_point: Tuple[float, float],
+    cell_size: float,
+    cell_size_x: Optional[float] = None,
+    *,
+    transform: Optional[Sequence[float]] = None,
+    stream_threshold: Optional[float] = None,
+    nodata: Optional[float] = None,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """流域形态量测（Strahler 1957 水文地貌学口径；复用 upstream_watershed）。
+
+    - 圈定：pour point 逆 D8 BFS 上流域（(row, col) 数组坐标，或给
+      transform 时的 (x, y) 世界坐标 —— 与 ``watershed`` 同约定）；
+    - area_m2 / area_km2：像元数 × 各向异性像元面积；
+    - perimeter_m：流域边界 4 邻域边缘长度和（水平边 = cx，垂直边 = cy；
+      网格外视作流域外）；
+    - basin_length_m：流域内 **max upstream 流程长度**（最长山脊→出口
+      路径；max 口径在 flow_length 文档化）；
+    - form_factor = area / basin_length²；elongation_ratio = 2·sqrt(area/π)
+      / basin_length（Strahler 1957）；relief = max−min z；relief_ratio =
+      relief / basin_length；
+    - 给 stream_threshold 时：Strahler 河网（流域内）→ stream_length_m
+      （河网像元到其流域内河网接收者的步长和）与 drainage_density
+      （km/km²）；缺省披露「未计算」。
+
+    返回 (metrics dict, meta dict)。
+    """
+    cy, cx = _validate_cell_sizes(cell_size, cell_size_x)
+    z, valid = _prepare(dem, nodata)
+    h, w = z.shape
+    if d8["valid"].shape != (h, w):
+        raise ValueError(
+            f"d8 grid {d8['valid'].shape} does not match dem shape {(h, w)}")
+    _guard_cells((h, w), "terrain.morphometry")
+
+    if transform is not None:
+        col, row = _world_to_cell(transform, float(pour_point[0]), float(pour_point[1]))
+    else:
+        row, col = float(pour_point[0]), float(pour_point[1])
+    basin, w_meta = upstream_watershed(d8, [(int(round(row)), int(round(col)))])
+
+    n_basin = int(basin.sum())
+    if n_basin == 0:
+        raise NoValidObservations("pour point produced an empty watershed")
+    area_m2 = n_basin * cx * cy
+    z_basin = z[basin]
+    relief = float(z_basin.max() - z_basin.min())
+
+    padded = np.zeros((h + 2, w + 2), dtype=bool)
+    padded[1:-1, 1:-1] = basin
+    v_edges = int(np.count_nonzero(basin & ~padded[:-2, 1:-1])) \
+        + int(np.count_nonzero(basin & ~padded[2:, 1:-1]))
+    h_edges = int(np.count_nonzero(basin & ~padded[1:-1, :-2])) \
+        + int(np.count_nonzero(basin & ~padded[1:-1, 2:]))
+    perimeter_m = v_edges * cx + h_edges * cy
+
+    fl, _ = flow_length(d8, mode="upstream", cell_size=cy, cell_size_x=cx)
+    basin_length = float(np.nanmax(np.where(basin, fl, np.nan)))
+    if basin_length <= 0:
+        basin_length = max(math.hypot(cx, cy), 1e-12)  # 单像元流域退化保护
+
+    metrics: Dict[str, Any] = {
+        "pour_point_row_col": (int(round(row)), int(round(col))),
+        "cell_count": n_basin,
+        "area_m2": round(area_m2, 6),
+        "area_km2": round(area_m2 / 1e6, 9),
+        "perimeter_m": round(perimeter_m, 6),
+        "basin_length_m": round(basin_length, 6),
+        "form_factor": round(area_m2 / (basin_length * basin_length), 9),
+        "elongation_ratio": round(2.0 * math.sqrt(area_m2 / math.pi) / basin_length, 9),
+        "relief_m": round(relief, 6),
+        "relief_ratio": round(relief / basin_length, 9),
+    }
+
+    if stream_threshold is not None:
+        acc, _acc_meta = flow_accumulation(d8)
+        order, _s_meta = stream_order(d8, acc, stream_threshold)
+        in_stream = basin & (order > 0)
+        receiver = d8["receiver"]
+        flat_idx = np.arange(h * w, dtype=np.int64)
+        has_recv = receiver >= 0
+        rows_f = flat_idx // w
+        cols_f = flat_idx % w
+        rr = np.where(has_recv, receiver, flat_idx) // w
+        cc = np.where(has_recv, receiver, flat_idx) % w
+        step_flat = np.hypot((cc - cols_f) * cx, (rr - rows_f) * cy)
+        step_flat = np.where(has_recv, step_flat, 0.0).reshape(h, w)
+        recv2 = receiver.reshape(h, w)
+        downstream_stream = np.zeros((h, w), dtype=bool)
+        ok = recv2 >= 0
+        downstream_stream[ok] = (order.ravel()[recv2[ok]] > 0)
+        stream_len_m = float(np.sum(step_flat[in_stream & downstream_stream]))
+        metrics["stream_cells"] = int(in_stream.sum())
+        metrics["max_stream_order"] = int(order[in_stream].max()) if in_stream.any() else 0
+        metrics["stream_length_m"] = round(stream_len_m, 6)
+        metrics["drainage_density_km_per_km2"] = round(
+            1000.0 * stream_len_m / area_m2, 9)
+    else:
+        metrics["drainage_density_km_per_km2"] = None
+
+    meta = {
+        "algorithm": "terrain.morphometry",
+        "method": (
+            "watershed morphometry (Strahler 1957): area/perimeter from the "
+            "reverse-D8 upstream mask; basin length = MAX upstream flow length; "
+            "form factor = area/length^2; elongation = 2*sqrt(area/pi)/length"),
+        "pour_point": w_meta["pour_cells"],
+        "basin_length_convention": (
+            "max upstream flow length within the basin (longest ridge-to-outlet "
+            "D8 path), documented max convention"),
+        "drainage_density": (
+            f"streams from accumulation >= {stream_threshold} (pass stream_threshold "
+            "to enable)" if stream_threshold is None
+            else f"stream length / area; streams = accumulation >= {stream_threshold}"),
+        "cells_valid": int(d8["valid"].sum()),
+    }
+    return metrics, meta
+
+
+# ── V2-6/7/8. 湿度与侵蚀指数（TWI / SPI / USLE LS）───────────────────
+
+
+def _specific_catchment_area(
+    flow_accum: np.ndarray, cx: float, cy: float, contour_width: float,
+) -> np.ndarray:
+    """比集水面积 SCA = (accum + 1)·cell_area / contour_width（米）。
+
+    口径（文档化约定）：accum 为上游贡献像元数（不含自身）→ +1 计入
+    自身；等流宽度 contour_width = cell_size（y 向像元尺寸；κ 汇流
+    系数恒取 1 —— 无多向流分解，flat 口径披露在 meta）。
+    """
+    return (np.asarray(flow_accum, dtype=np.float64) + 1.0) * (cx * cy) / contour_width
+
+
+def _slope_to_radians(slope: np.ndarray, slope_units: str) -> np.ndarray:
+    s = np.asarray(slope, dtype=np.float64)
+    if slope_units == "degrees":
+        return np.radians(s)
+    if slope_units == "radians":
+        return s
+    if slope_units == "percent":
+        return np.arctan(s / 100.0)
+    raise ValueError(
+        f"slope_units must be 'degrees', 'radians' or 'percent' (got {slope_units!r})")
+
+
+def _aligned(a: np.ndarray, b: np.ndarray, name_a: str, name_b: str) -> None:
+    if np.asarray(a).shape != np.asarray(b).shape:
+        raise ValueError(
+            f"{name_a} shape {np.asarray(a).shape} does not match "
+            f"{name_b} shape {np.asarray(b).shape} — inputs must be aligned grids")
+
+
+_TAN_BETA_FLOOR = 1e-6
+
+
+def topographic_wetness_index(
+    slope: np.ndarray, flow_accum: np.ndarray,
+    cell_size: float, cell_size_x: Optional[float] = None,
+    *,
+    slope_units: str = "degrees",
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """地形湿润指数 TWI = ln(SCA / tanβ)（Beven & Kirkby 1979）。
+
+    - SCA = (accum + 1)·cell_area / contour_width，等流宽度 = cell_size
+      （y 向像元尺寸；κ=1 的 flat 口径，meta 披露 —— D8 单向流下 SCA
+      是随像元面积变化的近似，非完备集水面积）；
+    - β 由 slope（degrees/radians/percent）换算；tanβ 下限 1e-6（近平地
+      保护 —— 平地处 TWI 被截断为上界，meta 披露 floor）；
+    - slope/accum 形状必须一致；任一非有限 → NaN。
+    """
+    cy, cx = _validate_cell_sizes(cell_size, cell_size_x)
+    _aligned(slope, flow_accum, "slope", "flow_accum")
+    beta = _slope_to_radians(slope, slope_units)
+    sca = _specific_catchment_area(flow_accum, cx, cy, cy)
+    with np.errstate(invalid="ignore", over="ignore"):
+        tan_beta = np.maximum(np.tan(beta), _TAN_BETA_FLOOR)
+        twi = np.log(sca / tan_beta)
+    meta = _meta_base(
+        "terrain.twi", np.isfinite(twi),
+        cell_size=cy, cell_size_x=cx,
+        method="TWI = ln(SCA / tan(beta)) (Beven & Kirkby 1979)",
+        sca_convention="SCA = (accum + 1) * cell_area / contour_width; contour_width = cell_size (y); kappa = 1 (flat convention, single-flow approximation)",
+        tan_beta_floor=_TAN_BETA_FLOOR,
+        slope_units=slope_units,
+        limitations_extra="flat cells (beta -> 0) clamp tan(beta) at the floor: TWI is an upper bound there, not a physically resolved wetness",
+    )
+    return twi, meta
+
+
+def stream_power_index(
+    slope: np.ndarray, flow_accum: np.ndarray,
+    cell_size: float, cell_size_x: Optional[float] = None,
+    *,
+    slope_units: str = "degrees",
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """水流功率指数 SPI = SCA·tanβ（与 TWI 同 SCA 口径；Beven-Kirkby 派生）。
+
+    SCA = (accum + 1)·cell_area / contour_width（等流宽度 = cell_size）；
+    tanβ 无下限（平地 → SPI 0）。slope/accum 必须同形。
+    """
+    cy, cx = _validate_cell_sizes(cell_size, cell_size_x)
+    _aligned(slope, flow_accum, "slope", "flow_accum")
+    beta = _slope_to_radians(slope, slope_units)
+    sca = _specific_catchment_area(flow_accum, cx, cy, cy)
+    with np.errstate(invalid="ignore", over="ignore"):
+        spi = sca * np.tan(beta)
+    meta = _meta_base(
+        "terrain.spi", np.isfinite(spi),
+        cell_size=cy, cell_size_x=cx,
+        method="SPI = SCA * tan(beta) (specific catchment area x slope tangent)",
+        sca_convention="SCA = (accum + 1) * cell_area / contour_width; contour_width = cell_size (y); kappa = 1 (flat convention, single-flow approximation)",
+        slope_units=slope_units,
+    )
+    return spi, meta
+
+
+# McCool 1987 m 系数表（坡度 % 分档；两法共用，文档化）。升序声明、
+# 升序覆盖：最终 slope_pct < 1 → 0.2，< 3 → 0.3，< 5 → 0.4，否则 0.5。
+_MCCOOL_M_TABLE = ((1.0, 0.2), (3.0, 0.3), (5.0, 0.4))
+_MCCOOL_M_DEFAULT = 0.5  # slope >= 5%
+_DESMET_N = 1.3  # Desmet & Govers (1996) 指数 n（McCool 1989 语境）
+_LS_EDGE = 22.13  # USLE 标准径流小区坡长（米）
+
+
+def ls_factor(
+    slope: np.ndarray,
+    flow_length_m: float = 100.0,
+    cell_size: float = 1.0,
+    cell_size_x: Optional[float] = None,
+    *,
+    method: str = "mccool",
+    slope_units: str = "percent",
+    flow_accum: Optional[np.ndarray] = None,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """USLE LS 因子（Wischmeier & Smith 1978；Desmet & Govers 1996）。
+
+    - ``method="mccool"``（默认）：
+      LS = (λ/22.13)^m · (65.41·sin²θ + 4.56·sinθ + 0.065)，
+      λ = slope_length_m（米；标量或与 slope 同形数组 —— 建议传 upstream
+      流程长度），m 取 McCool 1987 坡度分档表：
+      <1% → 0.2；1–3% → 0.3；3–5% → 0.4；≥5% → 0.5（θ = 坡度角）；
+    - ``method="desmet_govers"``：
+      LS = (m+1)·(SCA/22.13)^m·(sinβ/0.0896)^n，n = 1.3（m 表同上）；
+      SCA = (accum + 1)·cell_area / contour_width（等流宽度 = cell_size；
+      κ=1 flat 口径）—— **需要 flow_accum**（缺省抛 ValueError）；
+    - slope_units: percent（默认）/ degrees / radians；非有限 → NaN。
+    """
+    cy, cx = _validate_cell_sizes(cell_size, cell_size_x)
+    if method not in ("mccool", "desmet_govers"):
+        raise ValueError(f"method must be 'mccool' or 'desmet_govers' (got {method!r})")
+    s = np.asarray(slope, dtype=np.float64)
+    theta = _slope_to_radians(s, slope_units)
+    slope_pct = np.tan(theta) * 100.0
+    # 升序覆盖：最后应用的是最小分档（<1% → 0.2）—— 高档先写、低档覆盖。
+    m = np.full(s.shape, float(_MCCOOL_M_DEFAULT))
+    for bound, m_val in reversed(_MCCOOL_M_TABLE):
+        m = np.where(slope_pct < bound, float(m_val), m)
+    sin_t = np.sin(theta)
+    with np.errstate(invalid="ignore", over="ignore"):
+        if method == "mccool":
+            lam = np.asarray(flow_length_m, dtype=np.float64)
+            if lam.ndim == 0:
+                lam_full = np.full(s.shape, float(lam))
+            else:
+                _aligned(lam, s, "flow_length_m", "slope")
+                lam_full = lam
+            ls = np.power(lam_full / _LS_EDGE, m) * (
+                65.41 * sin_t * sin_t + 4.56 * sin_t + 0.065)
+            length_note = (
+                f"slope length = flow_length_m parameter "
+                f"({float(flow_length_m)} m scalar or per-cell array)")
+        else:
+            if flow_accum is None:
+                raise ValueError(
+                    "method='desmet_govers' requires flow_accum (D8 accumulation grid)")
+            _aligned(flow_accum, s, "flow_accum", "slope")
+            sca = _specific_catchment_area(flow_accum, cx, cy, cy)
+            ls = (m + 1.0) * np.power(sca / _LS_EDGE, m) * np.power(
+                sin_t / 0.0896, _DESMET_N)
+            length_note = "slope length replaced by SCA = (accum + 1) * cell_area / contour_width (contour width = cell_size, kappa = 1)"
+
+    meta = _meta_base(
+        "terrain.ls_factor", np.isfinite(ls),
+        cell_size=cy, cell_size_x=cx,
+        method=method,
+        formula=(
+            "mccool: LS = (L/22.13)^m * (65.41*sin^2 + 4.56*sin + 0.065); "
+            "desmet_govers: LS = (m+1) * (SCA/22.13)^m * (sin/0.0896)^1.3"),
+        m_table="McCool 1987: m = 0.2 (<1%), 0.3 (1-3%), 0.4 (3-5%), 0.5 (>=5%)",
+        desmet_n=_DESMET_N,
+        slope_units=slope_units,
+        length_convention=length_note,
+        method_references_note="Wischmeier & Smith 1978 + Desmet & Govers 1996 (n = 1.3)",
+    )
+    return ls, meta
+
+
+# ── V2-9. 地形开放度（Yokoyama et al. 2002）──────────────────────────
+
+
+def terrain_openness(
+    dem: np.ndarray, cell_size: float,
+    cell_size_x: Optional[float] = None,
+    *,
+    radius_cells: int = 8,
+    azimuth_count: int = 16,
+    nodata: Optional[float] = None,
+) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
+    """正/负地形开放度（Yokoyama, Shirasawa & Pike 2002，度）。
+
+    沿 ``azimuth_count`` 个方位（自北顺时针等角距），对 d = 1..R 像元
+    步长取仰角极值：
+
+    - 正开放度 Φ₊ = mean_φ max_d arctan((z₀ − z(d))/d_m)（沿方位看出的
+      最大俯角 —— 山脊/开阔地形高）；平地 ≡ 0；
+    - 负开放度 Φ₋ = mean_φ max_d arctan((z(d) − z₀)/d_m)（最大仰角 ——
+      谷地/封闭地形高；与 Φ₊ 同式取负差）；
+    - d_m = 圆整偏移的实际米制距离（各向异性感知）；某方位全程无有效
+      采样（栅格角隅）→ 该方位从均值剔除；无任何有效方位 → NaN；
+    - 输出 NaN = 无效像元。
+
+    护栏：radius_cells ≤ 100、网格 ≤ 50M 像元（先拒绝后分配）。
+    """
+    cy, cx = _validate_cell_sizes(cell_size, cell_size_x)
+    if isinstance(radius_cells, bool) or not isinstance(radius_cells, (int, np.integer)) \
+            or not (1 <= int(radius_cells)):
+        raise ValueError(f"radius_cells must be a positive integer (got {radius_cells!r})")
+    radius_cells = int(radius_cells)
+    if radius_cells > MAX_OPENNESS_RADIUS_CELLS:
+        raise ResourceScaleMismatch(
+            f"terrain.openness: radius_cells {radius_cells} > "
+            f"{MAX_OPENNESS_RADIUS_CELLS} (ray walk memory/time envelope)",
+            estimated=f"radius_cells={radius_cells}",
+            limit=f"radius_cells<={MAX_OPENNESS_RADIUS_CELLS}",
+            correction_hint="reduce the openness search radius")
+    if isinstance(azimuth_count, bool) or not isinstance(azimuth_count, (int, np.integer)) \
+            or not (4 <= int(azimuth_count) <= 64):
+        raise ValueError(
+            f"azimuth_count must be an integer in [4, 64] (got {azimuth_count!r})")
+    azimuth_count = int(azimuth_count)
+
+    z_raw = np.asarray(dem)
+    if getattr(z_raw, "ndim", 0) != 2:
+        raise NoValidObservations(
+            f"DEM must be a 2D array (got ndim {getattr(z_raw, 'ndim', 0)})")
+    _guard_cells(z_raw.shape, "terrain.openness")
+    z, valid = _prepare(dem, nodata)
+    h, w = z.shape
+
+    n_az = azimuth_count
+    pos_max = np.full((n_az, h, w), -np.inf)
+    neg_max = np.full((n_az, h, w), -np.inf)
+    az_has = np.zeros((n_az, h, w), dtype=bool)
+
+    z0 = np.where(valid, z, 0.0)
+    for j in range(n_az):
+        az = 2.0 * math.pi * j / n_az  # 自北顺时针
+        for k in range(1, radius_cells + 1):
+            dc = int(round(k * math.sin(az)))
+            dr = -int(round(k * math.cos(az)))
+            if dc == 0 and dr == 0:
+                continue
+            dist = math.hypot(dc * cx, dr * cy)
+            r0, r1 = max(0, -dr), min(h, h - dr)
+            c0, c1 = max(0, -dc), min(w, w - dc)
+            zd = np.full((h, w), np.nan)
+            vd = np.zeros((h, w), dtype=bool)
+            zd[r0:r1, c0:c1] = z[r0 + dr:r1 + dr, c0 + dc:c1 + dc]
+            vd[r0:r1, c0:c1] = valid[r0 + dr:r1 + dr, c0 + dc:c1 + dc]
+            usable = valid & vd
+            if not usable.any():
+                continue
+            with np.errstate(invalid="ignore"):
+                up = np.degrees(np.arctan((zd - z0) / dist))
+                down = np.degrees(np.arctan((z0 - zd) / dist))
+            up = np.where(usable, up, -np.inf)
+            down = np.where(usable, down, -np.inf)
+            np.fmax(pos_max[j], down, out=pos_max[j])
+            np.fmax(neg_max[j], up, out=neg_max[j])
+            az_has[j] |= usable
+
+    pos_sum = np.where(az_has, pos_max, 0.0).sum(axis=0)
+    neg_sum = np.where(az_has, neg_max, 0.0).sum(axis=0)
+    az_count = az_has.sum(axis=0).astype(np.float64)
+    has_any = az_count > 0
+    denom = np.where(has_any, az_count, 1.0)
+    positive = np.where(valid & has_any, pos_sum / denom, np.nan)
+    negative = np.where(valid & has_any, neg_sum / denom, np.nan)
+
+    result = {"positive": positive, "negative": negative}
+    meta = _meta_base(
+        "terrain.openness", valid,
+        cell_size=cy, cell_size_x=cx,
+        radius_cells=radius_cells, azimuth_count=n_az,
+        method=(
+            "openness (Yokoyama et al. 2002): mean over azimuths of the max "
+            "arctan((z0 - z(d))/d) angle within the radius; positive = downward "
+            "(open terrain), negative = upward (enclosed terrain), degrees"),
+        units="degrees",
+        distance_convention="actual metric distance of the rounded per-step offsets (anisotropic cell sizes honoured)",
+        azimuth_policy="azimuths with no valid in-grid sample are dropped from the mean; cells with none are NaN",
+        edge_policy=EDGE_POLICY,
+    )
+    return result, meta
+
+
+# ── V2-10. Geomorphons（Jasiewicz & Stepinski 2013）──────────────────
+
+GEOMORPHON_CLASSES: Tuple[str, ...] = (
+    "flat", "summit", "ridge", "shoulder", "spur",
+    "slope", "hollow", "footslope", "valley", "depression",
+)
+
+
+def _geomorphon_class(dn: np.ndarray, up: np.ndarray) -> np.ndarray:
+    """(最长 -1 环长, 最长 +1 环长) → 10 类编码（1..10；0 = 未定）。
+
+    决策表（文档化优先级级联；Jasiewicz & Stepinski 2013 图 3 的角度
+    分档 —— 凸形 = 周边更低（−1 环主导），凹形 = 周边更高（+1 环主导），
+    slope = 双向 135°-225° 环（3-5 腿）并存）：
+
+        dn == 8 → summit(2)；up == 8 → depression(10)；
+        dn ≥ 6 → ridge(3)；up ≥ 6 → valley(9)；
+        dn ≥ 3 且 up ≥ 3 → slope(6)；
+        dn ≥ 3 → shoulder(4)；up ≥ 3 → hollow(7)；
+        dn ≥ 1 → spur(5)；up ≥ 1 → footslope(8)；否则 flat(1)。
+    """
+    out = np.full(dn.shape, 1, dtype=np.int8)          # flat（兜底）
+    out = np.where(up >= 1, 8, out)                    # footslope
+    out = np.where(dn >= 1, 5, out)                    # spur
+    out = np.where(up >= 3, 7, out)                    # hollow
+    out = np.where(dn >= 3, 4, out)                    # shoulder
+    out = np.where((dn >= 3) & (up >= 3), 6, out)      # slope（双 135°-225° 环）
+    out = np.where(up >= 6, 9, out)                    # valley
+    out = np.where(dn >= 6, 3, out)                    # ridge
+    out = np.where(up == 8, 10, out)                   # depression
+    out = np.where(dn == 8, 2, out)                    # summit
+    return out.astype(np.int8)
+
+
+def geomorphons(
+    dem: np.ndarray, cell_size: float,
+    cell_size_x: Optional[float] = None,
+    *,
+    lookup_radius_cells: int = 8,
+    flatten: float = 0.0,
+    far: float = 0.0,
+    nodata: Optional[float] = None,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Geomorphons 地貌形态分类（Jasiewicz & Stepinski 2013）。
+
+    每像元沿 8 方位（自北起 45° 步进）做视线扫描至 ``lookup_radius_cells``：
+
+    - 每腿 zenith = max_d arctan((z(d) − z₀)/d)（地形更高），nadir =
+      max_d arctan((z₀ − z(d))/d)（地形更低），度；
+    - 三元码：zenith > flatten 且 zenith ≥ nadir → +1（更高）；否则
+      nadir > flatten → −1（更低）；否则 0（平）—— ``flatten`` 为平地
+      容差（度）；``far`` > 0 时跳过 ≤ far 像元的近场采样（skip 半径）；
+    - 8 码环上最长 −1 环 / +1 环 → 10 类（决策表见 _geomorphon_class，
+      代码 1..10 = flat/summit/ridge/shoulder/spur/slope/hollow/footslope/
+      valley/depression；代码 0 = 无效像元）；
+    - 无有效采样的腿按 0（平）计（meta 披露 —— 栅格角隅诚实退化）。
+
+    确定性；护栏：lookup_radius_cells ≤ 128、网格 ≤ 50M 像元。
+    """
+    cy, cx = _validate_cell_sizes(cell_size, cell_size_x)
+    if isinstance(lookup_radius_cells, bool) \
+            or not isinstance(lookup_radius_cells, (int, np.integer)) \
+            or not (1 <= int(lookup_radius_cells)):
+        raise ValueError(
+            f"lookup_radius_cells must be a positive integer (got {lookup_radius_cells!r})")
+    lookup_radius_cells = int(lookup_radius_cells)
+    if lookup_radius_cells > MAX_GEOMORPHON_RADIUS_CELLS:
+        raise ResourceScaleMismatch(
+            f"terrain.geomorphons: lookup_radius_cells {lookup_radius_cells} > "
+            f"{MAX_GEOMORPHON_RADIUS_CELLS}",
+            estimated=f"lookup_radius_cells={lookup_radius_cells}",
+            limit=f"lookup_radius_cells<={MAX_GEOMORPHON_RADIUS_CELLS}",
+            correction_hint="reduce the geomorphon lookup radius")
+    if flatten < 0:
+        raise ValueError(f"flatten must be >= 0 degrees (got {flatten!r})")
+    if far < 0 or far >= lookup_radius_cells:
+        raise ValueError(
+            f"far must be in [0, lookup_radius_cells) (got far={far!r}, "
+            f"lookup={lookup_radius_cells})")
+
+    z_raw = np.asarray(dem)
+    if getattr(z_raw, "ndim", 0) != 2:
+        raise NoValidObservations(
+            f"DEM must be a 2D array (got ndim {getattr(z_raw, 'ndim', 0)})")
+    _guard_cells(z_raw.shape, "terrain.geomorphons")
+    z, valid = _prepare(dem, nodata)
+    h, w = z.shape
+
+    codes = np.zeros((8, h, w), dtype=np.int8)
+    z0 = np.where(valid, z, 0.0)
+    for leg in range(8):
+        az = math.radians(45.0 * leg)  # 自北顺时针
+        zenith = np.full((h, w), -np.inf)
+        nadir = np.full((h, w), -np.inf)
+        leg_has = np.zeros((h, w), dtype=bool)
+        for k in range(int(math.floor(far)) + 1, lookup_radius_cells + 1):
+            dc = int(round(k * math.sin(az)))
+            dr = -int(round(k * math.cos(az)))
+            if dc == 0 and dr == 0:
+                continue
+            dist = math.hypot(dc * cx, dr * cy)
+            r0, r1 = max(0, -dr), min(h, h - dr)
+            c0, c1 = max(0, -dc), min(w, w - dc)
+            zd = np.full((h, w), np.nan)
+            vd = np.zeros((h, w), dtype=bool)
+            zd[r0:r1, c0:c1] = z[r0 + dr:r1 + dr, c0 + dc:c1 + dc]
+            vd[r0:r1, c0:c1] = valid[r0 + dr:r1 + dr, c0 + dc:c1 + dc]
+            usable = valid & vd
+            if not usable.any():
+                continue
+            with np.errstate(invalid="ignore"):
+                up = np.degrees(np.arctan((zd - z0) / dist))
+                down = np.degrees(np.arctan((z0 - zd) / dist))
+            zenith = np.fmax(zenith, np.where(usable, up, -np.inf))
+            nadir = np.fmax(nadir, np.where(usable, down, -np.inf))
+            leg_has |= usable
+        with np.errstate(invalid="ignore"):
+            higher = (zenith > flatten) & (zenith >= nadir)
+            lower = (~higher) & (nadir > flatten)
+        code = np.zeros((h, w), dtype=np.int8)
+        code[higher] = 1
+        code[lower] = -1
+        code[~leg_has] = 0  # 全程无采样（角隅）→ 平（披露）
+        codes[leg] = code
+
+    # 环上最长同值游程（向量化：起点 0..7 × 窗口长度 1..8 的循环移位与）。
+    dn = np.zeros((h, w), dtype=np.int8)
+    up = np.zeros((h, w), dtype=np.int8)
+    for sign, acc_arr in ((-1, dn), (1, up)):
+        eq = (codes == sign)
+        for start in range(8):
+            run = eq[start].copy()
+            for offset in range(8):
+                if offset > 0:
+                    run = run & eq[(start + offset) % 8]
+                    if not run.any():
+                        break
+                np.maximum(acc_arr, np.where(run, offset + 1, 0), out=acc_arr)
+
+    klass = np.where(valid, _geomorphon_class(dn, up), 0).astype(np.int8)
+
+    valid_k = klass[klass > 0]
+    unique, counts = np.unique(valid_k, return_counts=True)
+    distribution = {GEOMORPHON_CLASSES[int(o) - 1]: int(n)
+                    for o, n in zip(unique, counts)}
+    result = {
+        "classes": klass,           # 1..10（顺序见 GEOMORPHON_CLASSES）；0 = 无效
+        "class_names": GEOMORPHON_CLASSES,
+        "ternary_legs": codes,
+        "dn_run": dn,
+        "up_run": up,
+    }
+    meta = _meta_base(
+        "terrain.geomorphons", valid,
+        cell_size=cy, cell_size_x=cx,
+        lookup_radius_cells=lookup_radius_cells,
+        flatten_degrees=float(flatten), far_cells=float(far),
+        method=(
+            "geomorphons (Jasiewicz & Stepinski 2013): 8 line-of-sight ternary "
+            "codes from zenith/nadir angles vs the flatten tolerance; longest "
+            "cyclic -1/+1 runs map to 10 landform classes"),
+        class_codes={str(i + 1): name for i, name in enumerate(GEOMORPHON_CLASSES)},
+        class_distribution=distribution,
+        decision_table=(
+            "dn==8 summit; up==8 depression; dn>=6 ridge; up>=6 valley; dn>=4&up>=4 "
+            "slope; dn>=3 shoulder; up>=3 hollow; dn>=1 spur; up>=1 footslope; else flat"),
+        unsampled_leg_policy="legs with no valid in-grid sample count as 0 (flat) — disclosed corner degradation",
+        edge_policy=EDGE_POLICY,
+    )
+    return result, meta
+
+
+# ── V2-11. Weiss 双尺度 TPI 地类分级（Weiss 2001）────────────────────
+
+
+LANDFORM_CLASSES: Tuple[str, ...] = (
+    "canyons_deeply_incised",          # 1
+    "midslope_drainages_shallow_vals",  # 2
+    "upland_drainages_mountain_vals",   # 3
+    "plains_small",                     # 4
+    "open_slopes",                      # 5
+    "upper_slopes_mesas",               # 6
+    "local_ridges_in_valleys",          # 7
+    "midslope_ridges_small_hills",      # 8
+    "mountain_tops_high_ridges",        # 9
+    "plains",                           # 10
+)
+
+
+def landform_classification(
+    dem: np.ndarray, cell_size: float,
+    cell_size_x: Optional[float] = None,
+    *,
+    tpi_window_small: int = 3,
+    tpi_window_large: int = 25,
+    elevation_tolerance: float = 0.1,
+    nodata: Optional[float] = None,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """双尺度 TPI 地类分级（Weiss 2001 决策表；10 类）。
+
+    s = TPI(window_small)/SD_s、l = TPI(window_large)/SD_l（标准化 TPI；
+    SD 为全图有效像元 TPI 标准差，SD = 0 → DegenerateData）；
+    p = 高程百分位（0..1，平均秩）。决策表（文档化，Weiss 2001 海报
+    口径 —— 中性带 |TPI/SD| < 1，elevation_tolerance 截 percentile）：
+
+    1 canyons (s≤−1, l≤−1)｜2 midslope drainages (s≤−1, −1<l<1)｜
+    3 upland drainages (s≤−1, l≥1)｜4 plains small (|s|<1, l<1, p≤tol)｜
+    5 open slopes (|s|<1, |l|<1, tol<p<1−tol)｜6 upper slopes/mesas
+    (|s|<1 且 [|l|<1, p≥1−tol 或 l≥1])｜7 local ridges in valleys
+    (s≥1, l≤−1)｜8 midslope ridges (s≥1, −1<l<1)｜9 mountain tops
+    (s≥1, l≥1)｜10 plains (|s|<1, l≤−1, p>tol)。代码 0 = 无效像元。
+
+    TPI 含中心像元（与 topographic_position_index 同口径）；边缘收缩
+    （EDGE_POLICY）。输出类图 + 类分布 meta。
+    """
+    cy, cx = _validate_cell_sizes(cell_size, cell_size_x)
+    del cy, cx  # TPI 与像元尺寸无关；仅做参数一致性校验
+    if not (0.0 <= float(elevation_tolerance) <= 0.5):
+        raise ValueError(
+            f"elevation_tolerance must be in [0, 0.5] (got {elevation_tolerance!r})")
+    ws = _validate_window(tpi_window_small)
+    wl = _validate_window(tpi_window_large)
+    if wl < ws:
+        raise ValueError(
+            f"tpi_window_large ({wl}) must be >= tpi_window_small ({ws})")
+    z, valid = _prepare(dem, nodata)
+    _guard_cells(z.shape, "terrain.landform")
+    tpi_s, _ = topographic_position_index(z, window=ws, nodata=nodata)
+    tpi_l, _ = topographic_position_index(z, window=wl, nodata=nodata)
+
+    sd_s = float(np.nanstd(tpi_s[valid]))
+    sd_l = float(np.nanstd(tpi_l[valid]))
+    if sd_s <= 0 or sd_l <= 0:
+        raise DegenerateData(
+            "TPI standard deviation is 0 — standardized classification "
+            "thresholds are undefined for a constant surface",
+            correction_hint="classify a DEM with relief, or use slope-based classes")
+    s_arr = tpi_s / sd_s
+    l_arr = tpi_l / sd_l
+
+    from scipy.stats import rankdata
+
+    z_valid = z[valid]
+    pct = rankdata(z_valid, method="average")
+    pct = pct / max(1, z_valid.size - 1)
+    p = np.zeros(z.shape)
+    p[valid] = pct
+    tol = float(elevation_tolerance)
+
+    neutral_s = (s_arr > -1) & (s_arr < 1)
+    one = (s_arr <= -1) & (l_arr <= -1)
+    two = (s_arr <= -1) & (l_arr > -1) & (l_arr < 1)
+    three = (s_arr <= -1) & (l_arr >= 1)
+    four = neutral_s & (l_arr < 1) & (p <= tol)
+    five = neutral_s & (np.abs(l_arr) < 1) & (p > tol) & (p < 1 - tol)
+    six = neutral_s & (((np.abs(l_arr) < 1) & (p >= 1 - tol)) | (l_arr >= 1))
+    seven = (s_arr >= 1) & (l_arr <= -1)
+    eight = (s_arr >= 1) & (l_arr > -1) & (l_arr < 1)
+    nine = (s_arr >= 1) & (l_arr >= 1)
+    ten = neutral_s & (l_arr <= -1) & (p > tol)
+
+    klass = np.zeros(z.shape, dtype=np.int8)
+    for code, cond in ((1, one), (2, two), (3, three), (4, four), (5, five),
+                       (6, six), (7, seven), (8, eight), (9, nine), (10, ten)):
+        klass[cond & valid] = code
+
+    valid_k = klass[klass > 0]
+    unique, counts = np.unique(valid_k, return_counts=True)
+    distribution = {LANDFORM_CLASSES[int(o) - 1]: int(n)
+                    for o, n in zip(unique, counts)}
+    result = {
+        "classes": klass,          # 1..10（顺序见 LANDFORM_CLASSES）；0 = 无效
+        "class_names": LANDFORM_CLASSES,
+        "tpi_standardized_small": s_arr,
+        "tpi_standardized_large": l_arr,
+        "elevation_percentile": np.where(valid, p, np.nan),
+    }
+    meta = _meta_base(
+        "terrain.landform", valid,
+        tpi_window_small=ws, tpi_window_large=wl,
+        elevation_tolerance=tol,
+        tpi_window_includes_center=True,
+        sd_small=round(sd_s, 9), sd_large=round(sd_l, 9),
+        method=(
+            "two-scale standardized TPI landform classes (Weiss 2001): "
+            "|TPI/SD| < 1 is the neutral band; flat band split by elevation "
+            "percentile with the given tolerance"),
+        class_codes={str(i + 1): name for i, name in enumerate(LANDFORM_CLASSES)},
+        class_distribution=distribution,
+        decision_table=(
+            "1 canyon s<=-1,l<=-1; 2 midslope drainage s<=-1,-1<l<1; 3 upland "
+            "valley s<=-1,l>=1; 4 plains-small |s|<1,l<1,p<=tol; 5 open slope "
+            "|l|<1,middle p; 6 mesa/upper |l|<1,p>=1-tol or l>=1; 7 local ridge "
+            "s>=1,l<=-1; 8 midslope ridge s>=1,-1<l<1; 9 mountaintop s>=1,l>=1; "
+            "10 plains |s|<1,l<=-1,p>tol"),
+        edge_policy=EDGE_POLICY,
+    )
+    return result, meta
+
+
+# ── V2-12. 多方位山体阴影 ────────────────────────────────────────────
+
+
+def hillshade_multiazimuth(
+    dem: np.ndarray, cell_size: float,
+    cell_size_x: Optional[float] = None,
+    *,
+    altitude: float = 45.0,
+    azimuths: Sequence[float] = (315.0, 135.0),
+    combine: str = "mean",
+    nodata: Optional[float] = None,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """多方位山体阴影（0-255；罗盘光照模型，#379 修复语义）。
+
+    单方位公式与 ``app/services/rs/band_math.compute_hillshade`` 逐位一致
+    （照度 = sin(alt)·cos(θ) + cos(alt)·sin(θ)·cos(az − aspect)；aspect
+    罗盘角；3×3 Horn 梯度 edge 复制延拓 —— band_math 是真相源，此处仅
+    复算以避免 services 依赖）。``combine="mean"`` 取多方位均值（去阴影），
+    ``"min"`` 取逐像元最小（经典多方位制图）。NaN 像元传播为 NaN（与
+    band_math 渲染掩膜一致）。
+
+    altitude ∈ (0, 90]；azimuths 为罗盘度列表（≥1 个）；确定性。
+    """
+    cy, cx = _validate_cell_sizes(cell_size, cell_size_x)
+    if not (0 < float(altitude) <= 90):
+        raise ValueError(f"altitude must be in (0, 90] degrees (got {altitude!r})")
+    az_list = [float(a) for a in azimuths]
+    if not az_list:
+        raise ValueError("azimuths must contain at least one compass bearing")
+    if combine not in ("mean", "min"):
+        raise ValueError(f"combine must be 'mean' or 'min' (got {combine!r})")
+
+    z, valid = _prepare(dem, nodata)
+    _guard_cells(z.shape, "terrain.hillshade_multi")
+
+    # 与 band_math.compute_hillshade 逐位相同的单方位实现（真相源注释）。
+    pad = np.pad(z, 1, mode="edge")
+    dzdx = (pad[1:-1, 2:] - pad[1:-1, :-2]) / (2 * cx)
+    dzdy = (pad[2:, 1:-1] - pad[:-2, 1:-1]) / (2 * cy)
+    slope_rad = np.arctan(np.sqrt(dzdx ** 2 + dzdy ** 2))
+    aspect_rad = np.arctan2(-dzdx, dzdy)  # 罗盘坡向（顺时针自北）
+    alt_rad = np.radians(float(altitude))
+    sin_alt = np.sin(alt_rad)
+    cos_alt = np.cos(alt_rad)
+    shade_slope_part = sin_alt * np.cos(slope_rad)
+    shade_aspect_part = cos_alt * np.sin(slope_rad)
+    shades = []
+    for az in az_list:
+        az_rad = np.radians(az)
+        hs = shade_slope_part + shade_aspect_part * np.cos(az_rad - aspect_rad)
+        shades.append(np.clip(hs * 255.0, 0.0, 255.0))
+
+    stack = np.stack(shades, axis=0)
+    shade = np.mean(stack, axis=0) if combine == "mean" else np.min(stack, axis=0)
+
+    meta = _meta_base(
+        "terrain.hillshade_multi", valid,
+        cell_size=cy, cell_size_x=cx,
+        altitude_degrees=float(altitude),
+        azimuths=[round(a, 6) for a in az_list],
+        combine=combine,
+        method=(
+            "multi-azimuth hillshade: per-azimuth compass illumination identical to "
+            "band_math.compute_hillshade (Horn gradient, #379 compass semantics); "
+            "combined by mean or per-cell min"),
+        truth_source="app/services/rs/band_math.py compute_hillshade (replicated to avoid a lib->services dependency)",
+        units="0-255 illumination",
+        edge_policy="3x3 Horn stencil edge-replicated (same as band_math slope/hillshade)",
+    )
+    return shade, meta

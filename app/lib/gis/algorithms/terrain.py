@@ -9,6 +9,13 @@ VNext（ADR-0099）：为既有 slope/hillshade/aspect 补科学元数据
 （TPI/TRI/粗糙度/曲率/视域/D8 流向与汇流/流域/等值线）。实现层：
 app/lib/geo_analysis/terrain.py；工具层：app/tools/terrain_analysis.py。
 全部 crs_class=RASTER_GRID（网格语义，不承诺矢量 CRS 类）。
+
+Foundation V2（A5）：追加水文与地貌量测算法族 —— Priority-Flood 填洼
+（barnes2014）、D∞ 多向流（tarboton1997）、流程长度、Strahler 河流分级
+与流域形态量测（strahler1957）、TWI/SPI（beven_kirkby1979）、USLE LS
+（wischmeier_smith1978 + desmet_govers1996）、开放度（yokoyama2002）、
+geomorphons（jasiewicz_stepinski2013）、Weiss 地类分级（weiss2001）、
+多方位山体阴影（horn1981），及配套参数契约。
 """
 from __future__ import annotations
 
@@ -341,6 +348,408 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ],
             parameter_contract_ref="extract_contours",
         ),
+
+        # ── Foundation V2（A5）：水文与地貌量测扩展（实现同 geo_analysis/terrain.py）──
+
+        AlgorithmDescriptor(
+            id="terrain.sink_fill", name="Priority-Flood 填洼", category="terrain_analysis",
+            capabilities=["terrain_hydrology_advanced"],
+            input_artifact_types=["terrain_surface"],
+            output_artifact_type="raster_surface", tool_candidates=["depression_fill"],
+            cpu_cost="medium", memory_cost="high", io_cost="low",
+            preferred_execution_policy="THREAD", compatible_map_models=["raster_surface"], priority=48,
+            algorithm_family="terrain_hydrology_d8", complexity="O(N log N)",
+            method_references=["barnes2014"],
+            assumptions=[
+                "Priority-Flood（Barnes 2014）heapq 漫水；种子 = 网格边界 + nodata 邻接有效像元",
+                "nodata/网格外视作排水出口；epsilon>0 时逐像元抬升 → 表面严格单调可排",
+                "meta 报告 filled_volume（z_units·m²）/filled_cell_count/max_fill_depth",
+            ],
+            limitations=[
+                "epsilon=0 时填后平地仍为汇（与 d8 不发明路由语义衔接）",
+                "纯 Python 堆循环，>10M 像元耗时显著（护栏 50M 像元先拒绝）",
+                "无嵌套洼地深度分层报告（单层溢流面）",
+            ],
+            crs_class="RASTER_GRID",
+            scientific_preconditions=["raster_band_required:1"],
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            numerical_tolerance="5×7 单洼地 fixture：洼底恰填至溢流高程（浮点精确）",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_terrain_hydrology_v2.py::test_fill_depressions_single_pit_spill_elevation_exact",
+                "tests/unit/lib/test_terrain_hydrology_v2.py::test_fill_depressions_volume_and_epsilon_monotone",
+                "tests/unit/lib/test_terrain_hydrology_v2.py::test_hydrology_nodata_adversarial_and_guards",
+            ],
+            parameter_contract_ref="sink_fill",
+        ),
+
+        AlgorithmDescriptor(
+            id="terrain.dinf_flow", name="D∞ 多向流", category="terrain_analysis",
+            capabilities=["terrain_hydrology_advanced"],
+            input_artifact_types=["terrain_surface"],
+            output_artifact_type="raster_surface", tool_candidates=["dinf_flow_analysis"],
+            cpu_cost="medium", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="THREAD", compatible_map_models=["raster_surface"], priority=49,
+            algorithm_family="terrain_hydrology_dinf", complexity="O(N log N)",
+            method_references=["tarboton1997"],
+            assumptions=[
+                "8 三角面平面梯度最陡下降（Tarboton 1997）；角度弧度 ∈ [0,2π)，x=东 y=北",
+                "汇流按面内角度比例分流到两下游邻域；拓扑序（高程降序）累积",
+                "平地/洼地 → 角度 -1 哨兵；nodata → NaN；函数内不填洼",
+            ],
+            limitations=[
+                "D∞ 不消解格网平行流向偏差的极端情形（面离散 45°）",
+                "推荐组合 fill_depressions(epsilon>0) 先行获得单调可排面",
+                "缺角邻域的面跳过（边缘只用可得邻域）",
+            ],
+            crs_class="RASTER_GRID",
+            scientific_preconditions=["raster_band_required:1"],
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            numerical_tolerance="线性坡面 z=-x：中心角 = 0（正东）浮点精确；碗形 Σacc 与 D8 相等",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_terrain_hydrology_v2.py::test_dinf_ramp_direction_angle_exact",
+                "tests/unit/lib/test_terrain_hydrology_v2.py::test_dinf_pit_sentinel_and_accumulation_sum_matches_d8",
+            ],
+            parameter_contract_ref="dinf_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="terrain.flow_length", name="流程长度", category="terrain_analysis",
+            capabilities=["terrain_hydrology_advanced"],
+            input_artifact_types=["terrain_surface"],
+            output_artifact_type="raster_surface", tool_candidates=["flow_length_analysis"],
+            cpu_cost="medium", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="THREAD", compatible_map_models=["raster_surface"], priority=50,
+            algorithm_family="terrain_hydrology_d8", complexity="O(N log N)",
+            method_references=["tarboton1997", "strahler1957"],
+            assumptions=[
+                "downstream = 沿 D8 接收者到出口的米制步长和（汇/出口 = 0）",
+                "upstream = 距最远山脊源的最大路径长（MAX 口径，文档化）",
+                "步长 = hypot(Δcol·cx, Δrow·cy)；地理栅格由调用方传 cos(lat) 修正 cx",
+            ],
+            limitations=[
+                "继承 D8 格网流向偏差（路径沿 8 邻域折线）",
+                "平地不路由（d8 code 0）→ 平地内长度为 0",
+            ],
+            crs_class="RASTER_GRID",
+            scientific_preconditions=["raster_band_required:1"],
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            numerical_tolerance="单通道直线流路：downstream = (n-1)·cell 精确",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_terrain_hydrology_v2.py::test_flow_length_straight_channel_golden",
+            ],
+            parameter_contract_ref="flow_length_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="terrain.streams", name="河网提取", category="terrain_analysis",
+            capabilities=["terrain_hydrology_advanced"],
+            input_artifact_types=["terrain_surface"],
+            output_artifact_type="raster_surface", tool_candidates=["stream_network"],
+            cpu_cost="low", memory_cost="low", io_cost="low",
+            preferred_execution_policy="INLINE", compatible_map_models=["raster_surface"], priority=51,
+            algorithm_family="terrain_hydrology_d8",
+            method_references=["strahler1957"],
+            assumptions=[
+                "河网像元 = 汇流累积 ≥ threshold（上游贡献像元数口径）",
+                "阈值由调用方按流域尺度率定（无普适默认）",
+            ],
+            limitations=[
+                "阈值敏感：过低生成伪河网、过高断头（无自动率定）",
+                "继承 D8 单向流的河网走向偏差",
+            ],
+            crs_class="RASTER_GRID",
+            scientific_preconditions=["raster_band_required:1"],
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_terrain_hydrology_v2.py::test_strahler_confluence_orders_exact",
+            ],
+            parameter_contract_ref="stream_network",
+        ),
+
+        AlgorithmDescriptor(
+            id="terrain.strahler", name="Strahler 河流分级", category="terrain_analysis",
+            capabilities=["terrain_hydrology_advanced"],
+            input_artifact_types=["terrain_surface"],
+            output_artifact_type="raster_surface", tool_candidates=["stream_network"],
+            cpu_cost="medium", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="THREAD", compatible_map_models=["raster_surface"], priority=52,
+            algorithm_family="terrain_hydrology_d8", complexity="O(N log N)",
+            method_references=["strahler1957"],
+            assumptions=[
+                "Strahler 1957：源头 = 1 级；最高上游级唯一 → 同级，并列 → +1",
+                "拓扑序 = 高程降序（接收者严格更低；同高程 (row,col) 兜底）",
+                "meta 报告 order_distribution 与 max_order",
+            ],
+            limitations=[
+                "河网输入依赖 accumulation 阈值（见 terrain.streams 局限）",
+                "格网平行汇流会高估并列（+1 升级）频率",
+            ],
+            crs_class="RASTER_GRID",
+            scientific_preconditions=["raster_band_required:1"],
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            numerical_tolerance="二元树汇流 fixture：1+1 → 2 级精确",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_terrain_hydrology_v2.py::test_strahler_confluence_orders_exact",
+            ],
+            parameter_contract_ref="stream_network",
+        ),
+
+        AlgorithmDescriptor(
+            id="terrain.morphometry", name="流域形态量测", category="terrain_analysis",
+            capabilities=["terrain_hydrology_advanced"],
+            input_artifact_types=["terrain_surface"],
+            output_artifact_type="raster_surface", tool_candidates=["watershed_morphometry_analysis"],
+            cpu_cost="medium", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="THREAD", compatible_map_models=["raster_surface"], priority=53,
+            algorithm_family="terrain_hydrology_d8",
+            method_references=["strahler1957"],
+            assumptions=[
+                "面积/周长来自逆 D8 上流域掩膜；周长 = 边界边缘长度和（网格外视作流域外）",
+                "basin length = 流域内 MAX upstream 流程长度（最长山脊→出口路径）",
+                "form factor = A/L²；elongation = 2√(A/π)/L（Strahler 1957）",
+                "给 stream_threshold 时报告河网长度与排水密度（km/km²）",
+            ],
+            limitations=[
+                "basin length 的 MAX 口径对狭长流域外的形状敏感（非主轴拟合）",
+                "排水密度继承河网阈值敏感性",
+                "pour point 不做河道 snap",
+            ],
+            crs_class="RASTER_GRID",
+            scientific_preconditions=["raster_band_required:1"],
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            numerical_tolerance="圆形流域 fixture：form factor/elongation 相对误差 ≤1e-6",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_terrain_hydrology_v2.py::test_watershed_morphometry_circular_basin_golden",
+            ],
+            parameter_contract_ref="morphometry_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="terrain.twi", name="地形湿润指数 TWI", category="terrain_analysis",
+            capabilities=["terrain_wetness_indices"],
+            input_artifact_types=["terrain_surface"],
+            output_artifact_type="raster_surface", tool_candidates=["topographic_index"],
+            cpu_cost="low", memory_cost="low", io_cost="low",
+            preferred_execution_policy="INLINE", compatible_map_models=["raster_surface"], priority=54,
+            algorithm_family="terrain_wetness_index",
+            method_references=["beven_kirkby1979"],
+            assumptions=[
+                "TWI = ln(SCA/tanβ)；SCA = (accum+1)·cell_area/contour_width",
+                "等流宽度 = cell_size（y 向）；κ=1 flat 口径（单流向近似，meta 披露）",
+                "tanβ 下限 1e-6：平地处 TWI 为截断上界（非物理解）",
+            ],
+            limitations=[
+                "D8/D∞ 单向累积低估发散坡的 SCA（无多向 κ 分解）",
+                "slope 与 accum 网格必须同形对齐（无重采样）",
+            ],
+            crs_class="RASTER_GRID",
+            scientific_preconditions=["raster_band_required:1"],
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            numerical_tolerance="均匀坡+均匀累积 fixture：TWI 恒定（浮点精确）",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_terrain_hydrology_v2.py::test_twi_spi_uniform_golden_and_floor",
+            ],
+            parameter_contract_ref="wetness_index",
+        ),
+
+        AlgorithmDescriptor(
+            id="terrain.spi", name="水流功率指数 SPI", category="terrain_analysis",
+            capabilities=["terrain_wetness_indices"],
+            input_artifact_types=["terrain_surface"],
+            output_artifact_type="raster_surface", tool_candidates=["topographic_index"],
+            cpu_cost="low", memory_cost="low", io_cost="low",
+            preferred_execution_policy="INLINE", compatible_map_models=["raster_surface"], priority=55,
+            algorithm_family="terrain_wetness_index",
+            method_references=["beven_kirkby1979"],
+            assumptions=[
+                "SPI = SCA·tanβ（侵蚀/输沙潜势代理）；SCA 口径同 terrain.twi",
+                "tanβ 无下限（平地 → SPI 0）",
+            ],
+            limitations=[
+                "静态地形代理，无降雨/土壤参数（非过程模型）",
+                "SCA 单流向近似偏差同 terrain.twi",
+            ],
+            crs_class="RASTER_GRID",
+            scientific_preconditions=["raster_band_required:1"],
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            numerical_tolerance="均匀坡+均匀累积 fixture：SPI 恒定（浮点精确）",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_terrain_hydrology_v2.py::test_twi_spi_uniform_golden_and_floor",
+            ],
+            parameter_contract_ref="wetness_index",
+        ),
+
+        AlgorithmDescriptor(
+            id="terrain.ls_factor", name="USLE LS 因子", category="terrain_analysis",
+            capabilities=["terrain_wetness_indices"],
+            input_artifact_types=["terrain_surface"],
+            output_artifact_type="raster_surface", tool_candidates=["ls_factor_analysis"],
+            cpu_cost="low", memory_cost="low", io_cost="low",
+            preferred_execution_policy="INLINE", compatible_map_models=["raster_surface"], priority=56,
+            algorithm_family="erosion_index",
+            method_references=["wischmeier_smith1978", "desmet_govers1996"],
+            assumptions=[
+                "mccool：LS=(λ/22.13)^m·(65.41sin²θ+4.56sinθ+0.065)；m 表 McCool 1987："
+                "<1%→0.2、1-3%→0.3、3-5%→0.4、≥5%→0.5",
+                "desmet_govers：LS=(m+1)·(SCA/22.13)^m·(sinβ/0.0896)^1.3；SCA 口径同 TWI",
+                "λ 建议传 upstream 流程长度（缺省固定 100 m，meta 披露）",
+            ],
+            limitations=[
+                "标准径流小区经验式的栅格外推（无降雨/植被因子）",
+                "n=1.3 固定（Desmet-Govers 1996 实现惯例），不暴露调参",
+            ],
+            crs_class="RASTER_GRID",
+            scientific_preconditions=["raster_band_required:1"],
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            numerical_tolerance="m 分档边界与 desmet_govers 均匀坡手算式 1e-10 一致",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_terrain_hydrology_v2.py::test_ls_factor_mccool_table_and_desmet_govers_hand",
+            ],
+            parameter_contract_ref="ls_factor_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="terrain.openness", name="地形开放度", category="terrain_analysis",
+            capabilities=["terrain_geomorphometry"],
+            input_artifact_types=["terrain_surface"],
+            output_artifact_type="raster_surface", tool_candidates=["terrain_openness_analysis"],
+            cpu_cost="medium", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="THREAD", compatible_map_models=["raster_surface"], priority=57,
+            algorithm_family="terrain_geomorphometry",
+            method_references=["yokoyama2002"],
+            assumptions=[
+                "正开放度 = mean_φ max_d arctan((z₀−z(d))/d)；负开放度同式取反向差（度）",
+                "16 方位（4-64 可调）× 半径 1..R 像元；偏移圆整后的实际米制距离",
+                "平地 ≡ 0；山脊高正开放度、谷地高负开放度幅值",
+            ],
+            limitations=[
+                "方位离散 ≤ 360/azimuth_count（默认 22.5°）角分辨率",
+                "无有效采样的方位从均值剔除（栅格角隅诚实退化）",
+                "半径 ≤ 100 像元护栏（射线行走内存/时间包络）",
+            ],
+            crs_class="RASTER_GRID",
+            scientific_preconditions=["raster_band_required:1"],
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            numerical_tolerance="平地 fixture 正/负开放度 ≡ 0.0（浮点精确）",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_terrain_geomorphometry_v2.py::test_openness_flat_zero_and_ridge_crest_high",
+                "tests/unit/lib/test_terrain_geomorphometry_v2.py::test_geomorphometry_guards_radius_caps_and_nodata",
+            ],
+            parameter_contract_ref="openness_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="terrain.geomorphons", name="Geomorphons 地貌分类", category="terrain_analysis",
+            capabilities=["terrain_geomorphometry"],
+            input_artifact_types=["terrain_surface"],
+            output_artifact_type="raster_surface", tool_candidates=["geomorphon_analysis"],
+            cpu_cost="medium", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="THREAD", compatible_map_models=["raster_surface"], priority=58,
+            algorithm_family="terrain_geomorphometry",
+            method_references=["jasiewicz_stepinski2013"],
+            assumptions=[
+                "8 方位视线三元码（zenith/nadir 角 vs flatten 容差）→ 10 类决策表",
+                "决策表（优先级级联）：全-1 summit；全+1 depression；≥6 环 ridge/valley；"
+                "双 3-5 环 slope；单 3-5 环 shoulder/hollow；1-2 环 spur/footslope；否则 flat",
+                "far>0 跳过近场采样（skip 半径）；无采样腿按 0（平）计并披露",
+            ],
+            limitations=[
+                "相对高程形态学：无绝对坡度语义（缓坡大尺度可判 flat）",
+                "lookup ≤ 128 像元护栏；flatten=0 时 DEM 噪声直通分类",
+                "角隅像元方位被网格截断（无采样腿按平计）",
+            ],
+            crs_class="RASTER_GRID",
+            scientific_preconditions=["raster_band_required:1"],
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            numerical_tolerance="合成峰/洼/坡 fixture：中心类 = summit/depression/slope 精确",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_terrain_geomorphometry_v2.py::test_geomorphons_peak_pit_ramp_classes_and_distribution",
+            ],
+            parameter_contract_ref="geomorphon_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="terrain.landform", name="双尺度 TPI 地类分级", category="terrain_analysis",
+            capabilities=["terrain_geomorphometry"],
+            input_artifact_types=["terrain_surface"],
+            output_artifact_type="raster_surface", tool_candidates=["landform_classify"],
+            cpu_cost="medium", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="THREAD", compatible_map_models=["raster_surface"], priority=59,
+            algorithm_family="terrain_geomorphometry",
+            method_references=["weiss2001"],
+            assumptions=[
+                "Weiss 2001 双尺度标准化 TPI（TPI/SD）+ 高程百分位 10 类决策表",
+                "中性带 |TPI/SD|<1；平地带按 elevation_tolerance 截 percentile 分档",
+                "TPI 窗口含中心像元（与 terrain.tpi 同口径）；边缘收缩",
+            ],
+            limitations=[
+                "窗口与容差需按景观尺度率定（缺省 3/25 格、0.1 为海报惯例起点）",
+                "常量面（TPI SD=0）→ DegenerateData（分类阈值无定义）",
+            ],
+            crs_class="RASTER_GRID",
+            scientific_preconditions=["raster_band_required:1"],
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            numerical_tolerance="线性坡 fixture 中心 = open_slopes(5)；山脊 fixture 中心 = mountaintops(9)",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_terrain_geomorphometry_v2.py::test_landform_ramp_open_slope_and_ridge_class",
+            ],
+            parameter_contract_ref="landform_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="terrain.hillshade_multi", name="多方位山体阴影", category="terrain_analysis",
+            capabilities=["terrain_geomorphometry"],
+            input_artifact_types=["terrain_surface"],
+            output_artifact_type="raster_surface", tool_candidates=["multiazimuth_hillshade"],
+            cpu_cost="medium", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="THREAD", compatible_map_models=["raster_surface"], priority=60,
+            algorithm_family="terrain_gradient",
+            method_references=["horn1981"],
+            assumptions=[
+                "单方位公式与 band_math.compute_hillshade 逐位一致（#379 罗盘语义）",
+                "combine=mean 多方位均值（去阴影）/ min 逐像元最小（制图）",
+                "NaN 像元传播为 NaN（与渲染掩膜一致）",
+            ],
+            limitations=[
+                "朗伯面近似：无次级散射/大气效应",
+                "3×3 Horn 梯度 edge 复制延拓（单侧差分）",
+            ],
+            crs_class="RASTER_GRID",
+            scientific_preconditions=["raster_band_required:1"],
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            numerical_tolerance="单方位 (315,) 与 band_math.compute_hillshade 逐位相等",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_terrain_geomorphometry_v2.py::test_hillshade_multiazimuth_single_equals_band_math",
+                "tests/unit/lib/test_terrain_geomorphometry_v2.py::test_hillshade_multiazimuth_mean_min_and_validation",
+            ],
+            parameter_contract_ref="hillshade_multiazimuth",
+        ),
 ]
 
 # ── 参数契约（§12；工具签名与契约参数名一致 —— parity 门校验）────────
@@ -427,6 +836,186 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
             ParameterSpec(
                 name="levels", type="string",
                 description="显式等值线水平（JSON 数组或逗号分隔文本；优先于 interval/n_levels）",
+            ),
+        ],
+    ),
+
+    # ── Foundation V2（A5）：水文与地貌量测扩展 ────────────────────────
+
+    ParameterContract(
+        id="sink_fill", version=1,
+        description="Priority-Flood 填洼：epsilon 变体与 nodata 覆盖。",
+        parameters=[
+            ParameterSpec(
+                name="epsilon", type="number", default=0.0, minimum=0.0,
+                unit="m",
+                description="逐像元抬升量（>0 → 填后表面严格单调可排；0 = 纯填洼）",
+            ),
+            ParameterSpec(
+                name="nodata", type="number",
+                description="nodata 覆盖值（缺省用文件声明或 NaN 语义）",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="dinf_analysis", version=1,
+        description="D∞ 多向流产品选择。",
+        parameters=[
+            ParameterSpec(
+                name="product", type="enum", default="flow_accumulation",
+                enum_values=["flow_direction", "flow_accumulation"],
+                description="输出产品：D∞ 方向角（弧度）或比例分流汇流累积（默认累积）",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="flow_length_analysis", version=1,
+        description="流程长度方向口径。",
+        parameters=[
+            ParameterSpec(
+                name="mode", type="enum", default="downstream",
+                enum_values=["downstream", "upstream"],
+                description="downstream = 到出口距离；upstream = 距最远山脊源（MAX 口径）",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="stream_network", version=1,
+        description="河网提取阈值与产品。",
+        parameters=[
+            ParameterSpec(
+                name="threshold", type="number", required=True, minimum=1,
+                unit="count",
+                description="河网阈值（上游贡献像元数；accum ≥ threshold 即河网）",
+            ),
+            ParameterSpec(
+                name="product", type="enum", default="stream_order",
+                enum_values=["stream_mask", "stream_order"],
+                description="输出产品：河网掩膜或 Strahler 分级图（默认分级）",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="morphometry_analysis", version=1,
+        description="流域形态量测：pour point 与可选河网阈值。",
+        parameters=[
+            ParameterSpec(
+                name="pour_x", type="number", required=True,
+                description="pour point 世界 x（栅格 CRS 单位）",
+            ),
+            ParameterSpec(
+                name="pour_y", type="number", required=True,
+                description="pour point 世界 y（栅格 CRS 单位）",
+            ),
+            ParameterSpec(
+                name="stream_threshold", type="number", minimum=1,
+                unit="count",
+                description="河网阈值（上游像元数；给定时报告排水密度）",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="wetness_index", version=1,
+        description="湿润/水力指数产品选择。",
+        parameters=[
+            ParameterSpec(
+                name="product", type="enum", default="twi",
+                enum_values=["twi", "spi"],
+                description="输出产品：TWI = ln(SCA/tanβ) 或 SPI = SCA·tanβ",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="ls_factor_analysis", version=1,
+        description="USLE LS 因子方法与坡长。",
+        parameters=[
+            ParameterSpec(
+                name="method", type="enum", default="mccool",
+                enum_values=["mccool", "desmet_govers"],
+                description="mccool = 坡长经验式（Wischmeier-Smith）；desmet_govers = 比集水面积式",
+            ),
+            ParameterSpec(
+                name="flow_length", type="number", default=100.0, minimum=0.1,
+                unit="m",
+                description="mccool 坡长 λ（米；desmet_govers 用内部 SCA 替代）",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="openness_analysis", version=1,
+        description="地形开放度射线参数。",
+        parameters=[
+            ParameterSpec(
+                name="radius_cells", type="integer", default=8, minimum=1, maximum=100,
+                unit="pixels",
+                description="开放度搜索半径（像元；≤100 护栏）",
+            ),
+            ParameterSpec(
+                name="azimuth_count", type="integer", default=16, minimum=4, maximum=64,
+                unit="count",
+                description="方位数（等角距，自北顺时针）",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="geomorphon_analysis", version=1,
+        description="Geomorphons 视线参数。",
+        parameters=[
+            ParameterSpec(
+                name="lookup_radius_cells", type="integer", default=8, minimum=1, maximum=128,
+                unit="pixels",
+                description="视线查找半径（像元；≤128 护栏）",
+            ),
+            ParameterSpec(
+                name="flatten", type="number", default=0.0, minimum=0.0,
+                unit="degrees",
+                description="平地容差（度；zenith/nadir 超过它才记 +1/-1）",
+            ),
+            ParameterSpec(
+                name="far", type="number", default=0.0, minimum=0.0,
+                unit="pixels",
+                description="近场跳过半径（像元；只扫 > far 的距离）",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="landform_analysis", version=1,
+        description="Weiss 双尺度 TPI 地类分级参数。",
+        parameters=[
+            ParameterSpec(
+                name="tpi_window_small", type="integer", default=3, minimum=3, maximum=101,
+                unit="pixels",
+                description="小尺度 TPI 窗口（奇数）",
+            ),
+            ParameterSpec(
+                name="tpi_window_large", type="integer", default=25, minimum=3, maximum=101,
+                unit="pixels",
+                description="大尺度 TPI 窗口（奇数；≥ 小窗口）",
+            ),
+            ParameterSpec(
+                name="elevation_tolerance", type="number", default=0.1, minimum=0.0, maximum=0.5,
+                unit="ratio",
+                description="平地带高程百分位容差（0-0.5）",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="hillshade_multiazimuth", version=1,
+        description="多方位山体阴影：太阳高度、方位集合与合成方式。",
+        parameters=[
+            ParameterSpec(
+                name="altitude", type="number", default=45.0, minimum=0.0001, maximum=90.0,
+                unit="degrees",
+                description="太阳高度角（度；0 < alt ≤ 90）",
+            ),
+            ParameterSpec(
+                name="azimuths", type="string",
+                description="太阳方位列表（罗盘度；逗号分隔，如 '315,135'；缺省 315,135）",
+            ),
+            ParameterSpec(
+                name="combine", type="enum", default="mean",
+                enum_values=["mean", "min"],
+                description="合成方式：多方位均值（去阴影）或逐像元最小（制图）",
             ),
         ],
     ),
