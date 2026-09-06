@@ -784,7 +784,8 @@ def _chain_plan_order(req: FederatedChainRequest) -> tuple:
     import itertools
 
     n = len(req.sources)
-    candidates = list(itertools.permutations(range(n)))[:MAX_ORDER_CANDIDATES]
+    # islice 结构性封顶（评审 MINOR：n 上限将来放宽也不会失去界限）。
+    candidates = list(itertools.islice(itertools.permutations(range(n)), MAX_ORDER_CANDIDATES))
     if not id_joins:
         # 位置寻址的 join 无法安全跟随重排 —— 诚实回落 V3 排序并披露。
         warning = (
@@ -793,8 +794,21 @@ def _chain_plan_order(req: FederatedChainRequest) -> tuple:
             "to enable bounded enumeration)"
         )
         return _chain_order_indices(req), [], warning
+    # 评审 MAJOR：成本枚举只在**可成链**的排列上选优 —— 否则统计变化会
+    # 让原本可执行的请求突然 typed 失败（最便宜序未必 join-连通）。
+    def _connected(p) -> bool:
+        return all(
+            f"{req.sources[p[i]].source_id}>{req.sources[p[i + 1]].source_id}" in id_joins
+            for i in range(n - 1)
+        )
+
+    connected = [p for p in candidates if _connected(p)]
+    if not connected:
+        # 无任何连通排列 → 保持 V3 排序，由 _map_chain_joins_to_order 给出
+        # typed 失败（诚实、可行动）。
+        return _chain_order_indices(req), [], None
     scored = sorted(
-        ((_chain_order_cost(list(p), req, id_joins), p) for p in candidates),
+        ((_chain_order_cost(list(p), req, id_joins), p) for p in connected),
         key=lambda t: (t[0], t[1]),
     )
     best_cost, best = scored[0]
@@ -845,6 +859,15 @@ def derive_chain_fields(req: FederatedChainRequest, ordered_sources: List[ChainS
     （= 不投影）。派生是输出形状变更 —— 由调用方显式 opt-in。
     """
     required: Dict[str, set] = {s.source_id: set() for s in ordered_sources}
+    # 评审 CRITICAL：参与空间跳的源**绝不投影** —— 空间连接的右侧行必须
+    # 带几何（spatial_join_local 对无几何右行静默跳过）；仅按属性需求
+    # 推导会在「属性跳后接空间跳」的链里把几何裁没（成功 0 行的静默
+    # 错答）。空间跳两端源整段排除在派生之外（宁可多取，绝不缺几何）。
+    spatial_sources: set = set()
+    for pos, join in enumerate(ordered_joins):
+        if join.kind == "spatial_join":
+            spatial_sources.add(ordered_sources[pos].source_id)
+            spatial_sources.add(ordered_sources[pos + 1].source_id)
     for pos, join in enumerate(ordered_joins):
         left_id = ordered_sources[pos].source_id
         right_id = ordered_sources[pos + 1].source_id
@@ -873,6 +896,8 @@ def derive_chain_fields(req: FederatedChainRequest, ordered_sources: List[ChainS
             required[right_id] = set()
     out: Dict[str, List[str]] = {}
     for s in ordered_sources:
+        if s.source_id in spatial_sources:
+            continue  # 空间跳端点：不派生投影（几何不变量优先）
         fields = sorted(f for f in required.get(s.source_id, set()) if f)
         if fields and s.fields is None:
             out[s.source_id] = fields
@@ -933,9 +958,9 @@ def plan_federated_chain(req: FederatedChainRequest) -> List[FederatedPlan]:
     chain_warnings: List[str] = []
     if order_warning:
         chain_warnings.append(order_warning)
-    if req.order_strategy == "cost_stats" and order_warning is None:
-        pass  # warning text already carries enumeration evidence
-    elif req.order_strategy == "cost":
+    elif req.order_strategy == "cost_stats":
+        pass  # 无回落警告 = 枚举路径自带证据（不重复追加 V3/given 文案）
+    if req.order_strategy == "cost":
         if req.sources[order[0]].estimated_rows is None:
             chain_warnings.append(
                 "join order uses given order (no estimated_rows hints available); "
@@ -1098,7 +1123,8 @@ def execute_federated_chain(executor: "FederatedExecutor", req: FederatedChainRe
 
     V4（ADR-0101 D7）：
     - 首跳同源（同 source_id）且 adapter 支持 ``server_spatial_join`` →
-      服务端快路径（失败回退本地，记录 warning）—— 与两源路径同权。
+      服务端快路径；**typed DataFabricError 原样上抛（不回退）**，仅
+      非 typed 异常回退本地并记录 warning —— 与两源路径同一语义。
     - attribute/aggregate 跳先做半连接右侧行约减（键集有界）。
     - derive_projection 时按计划的派生字段投影拉取。
     """

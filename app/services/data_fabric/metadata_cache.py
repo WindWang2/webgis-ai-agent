@@ -78,6 +78,9 @@ class SafeTTLCache:
 
 
 # Per-process describe cache. source_key + dataset_id + scope are all required.
+# 惰性初始化（模块导入期不做重活；首次 describe 时创建）。
+_describe_singleflight = None  # type: SingleFlight | None（惰性初始化）
+
 _describe_cache = SafeTTLCache(default_ttl=30.0)
 
 
@@ -102,7 +105,16 @@ def cached_describe(
     hit = c.get(key)
     if hit is not None:
         return hit
-    value = describe_fn(dataset_id)
+    # ADR-0101 D11（评审 MAJOR：single-flight 接入生产路径）：同一 key 的
+    # 并发 describe 只允许一个真正执行，其余等待共享结果 —— describe 是
+    # 出网/重 I/O，防击穿的价值即在于此。builder 异常原样传播给等待者
+    # （诚实失败）；线程上下文，与 asyncio 版 mvt.SingleFlightManager 互补。
+    global _describe_singleflight
+    if _describe_singleflight is None:
+        from app.services.singleflight import SingleFlight
+
+        _describe_singleflight = SingleFlight(max_inflight=512, wait_timeout=30.0)
+    value = _describe_singleflight.run(key, lambda: describe_fn(dataset_id))
     c.put(key, value, ttl=ttl)
     return value
 

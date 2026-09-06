@@ -148,6 +148,8 @@ def build_strtree_index(
         cached = runtime.get(key)
         if cached is not None:
             tree, _geoms = cached
+            # 契约：第二个返回值恒为 ``features``（评审 MINOR —— hit/miss
+            # 两路返回形状一致；tree.query() 下标以 features 对齐）。
             return tree, features
     try:
         from shapely import STRtree

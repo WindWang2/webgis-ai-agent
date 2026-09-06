@@ -102,9 +102,55 @@ class TestBoundedOrderEnumeration:
     def test_rejected_orders_disclosed(self):
         req = self._req("cost_stats")
         plans = plan_federated_chain(req)
-        assert 1 <= len(plans[0].rejected_orders) <= 3
-        assert all("order" in r and "cost" in r for r in plans[0].rejected_orders)
+        # 该拓扑（tiny>big, big>mid）只有一条连通链 → 无落选序。
+        assert plans[0].rejected_orders == []
         assert any("bounded enumeration" in w for w in plans[0].warnings)
+
+    def test_derived_projection_never_strips_spatial_hop_geometry(self):
+        """评审 CRITICAL 锁定：空间跳端点源绝不派生投影（几何不变量）。"""
+        sources = [
+            ChainSource("pts", "d-pts"),
+            ChainSource("polys", "d-polys"),
+            ChainSource("attrs", "d-attrs"),
+        ]
+        joins = [
+            ChainJoin(kind="spatial_join", spatial_op="within"),
+            ChainJoin(kind="attribute_join", join_field_left="pid",
+                      join_field_right="pid"),
+        ]
+        req = FederatedChainRequest(
+            sources=sources, joins=joins, order_strategy="given",
+            derive_projection=True,
+        )
+        plans = plan_federated_chain(req)
+        # 空间跳两端源不出现在派生投影里；只有属性跳的纯属性源被投影。
+        assert "fields" not in plans[0].left
+        assert "fields" not in plans[0].right
+        assert plans[1].right.get("fields") == ["pid"]
+
+    def test_hostile_hints_still_find_chainable_order(self):
+        """评审 MAJOR 场景：统计变化让最便宜序不再是 join-连通序 ——
+        枚举只在连通排列上选优，可执行的请求不会因 hints 突然失败。"""
+        sources = [
+            ChainSource(source_id="a", dataset_id="d-a", estimated_rows=2),
+            ChainSource(source_id="b", dataset_id="d-b", estimated_rows=3),
+            ChainSource(source_id="c", dataset_id="d-c", estimated_rows=1),
+        ]
+        joins = [
+            ChainJoin(kind="attribute_join", join_field_left="key",
+                      join_field_right="key", left_source_id="a", right_source_id="b"),
+            ChainJoin(kind="attribute_join", join_field_left="key",
+                      join_field_right="key", left_source_id="b", right_source_id="c"),
+        ]
+        req = FederatedChainRequest(
+            sources=sources, joins=joins, order_strategy="cost_stats",
+            stats_hints={s: ChainSourceStats(estimated_rows=1)
+                         for s in ("a", "b", "c")},
+        )
+        plans = plan_federated_chain(req)
+        # 唯一连通链 [a, b, c] 被选中（不受 estimated_rows 排序影响）。
+        assert plans[0].left["source_id"] == "a"
+        assert [p.right["source_id"] for p in plans] == ["b", "c"]
 
     def test_cost_model_prefers_high_ndv_first_pair(self):
         """显式验证成本排序方向：tiny→big 首跳基数远小于 big→mid。"""

@@ -161,8 +161,11 @@ def test_deadline_expiration_midrun_fails_node_and_bounds_wall_time(monkeypatch)
     run = engine.execute_plan(plan)
 
     ev = run.evidence["slow"]
-    assert ev.status == "failed"
-    assert ev.error_code == "DEADLINE_EXCEEDED"
+    # V4（ADR-0101 D3）：deadline 触发时升级为 run 级取消 —— 在飞节点经
+    # 协作 checkpoint 收敛为 cancelled（与节点自身 DEADLINE_EXCEEDED 竞速，
+    # 两者皆为诚实终态；wall clock 由 escalate 路径严格钉在 deadline）。
+    assert ev.status in {"failed", "cancelled"}
+    assert ev.error_code in {"DEADLINE_EXCEEDED", "CANCELLED", None}
     # Wave-level deadline check precedes ancestor-skip, so the pending
     # descendant is marked cancelled with the deadline reason (never executed).
     child_ev = run.evidence["child"]
@@ -173,7 +176,9 @@ def test_deadline_expiration_midrun_fails_node_and_bounds_wall_time(monkeypatch)
     assert run.status in {ExecutionRunStatus.FAILED, ExecutionRunStatus.CANCELLED}
     assert run.status is not ExecutionRunStatus.COMPLETED
     assert run.wall_time_s is not None and run.wall_time_s < 2.0, "deadline did not bound the run"
-    assert run.wall_time_s >= 0.15, "deadline fired before it expired (too early)"
+    # V4：deadline 升级为 run 级取消后，run 在 deadline 时刻即刻收敛
+    #（不再等操作员自己的 checkpoint 撞线），下界相应放宽（评审后调整）。
+    assert run.wall_time_s >= 0.1, "deadline fired before it expired (too early)"
     assert engine.get_node_output(run.run_id, "child") is None
 
 

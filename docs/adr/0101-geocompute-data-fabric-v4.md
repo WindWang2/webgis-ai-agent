@@ -91,8 +91,10 @@ deadline-exceeded / cancelled / scientific / partial-materialization, with only 
 safe classes retried. Backoff is bounded exponential from `RetryPolicy` fields; jitter applies
 only when deterministic replay is not required (`jitter=false` for replayed runs); retries are
 deadline-aware (no retry that cannot finish inside the deadline) and never apply to invalid
-parameters or deterministic scientific failures. Provider-level retries reuse the existing
-`data_fabric` circuit breaker / `is_transient` classifier — no second reliability truth.
+parameters or deterministic scientific failures. Provider-level health reuses
+the existing `data_fabric` circuit breaker; remote raster (GDAL) errors are
+classified by a local conservative string-marker classifier (rasterio errors
+are not `DataFabricError`) — breaker shared, classifier local by necessity.
 
 ### D6 — Durable advisory statistics + adaptive collection + bounded feedback
 
@@ -101,9 +103,10 @@ A new bounded DB persistence (additive Alembic migration, dual-dialect, idempote
 repo convention) keys rows by dataset fingerprint + revision identity with explicit
 `collected_at`/`confidence`/`revision_strength`; retention is bounded; invalidation is safe
 (stale rows are disclosed, not silently trusted). Collection stays bounded and best-effort:
-PostGIS metadata/pg_stats (existing), GeoParquet footer (honest producer for the declared
-`geoparquet_footer` collector), FlatGeobuf metadata, raster headers/overviews, and optional
-bounded sampling. Estimates carry confidence classes (exact / metadata-derived / sampled /
+PostGIS metadata/pg_stats (existing) and the GeoParquet footer (an honest producer for the
+previously declared `geoparquet_footer` collector) ship in this increment; FlatGeobuf
+metadata, raster headers/overviews, and bounded sampling are deferred (the store's
+`collector` label makes adding them additive). Estimates carry confidence classes (exact / metadata-derived / sampled /
 heuristic / unknown). A bounded, explainable, disableable feedback loop folds observed
 rows/bytes/latency back into future estimates for the same (dataset fingerprint, operator class),
 scoped by version, TTL-bounded, never learning from failed/partial executions, with drift
@@ -118,20 +121,23 @@ left-deep vs bushy comparison at the capped N (no exponential search). Pushdown 
 capability model: adapters declare per-predicate-class support as **exact**, **equivalent
 transform**, **coarse prefilter** (e.g. remote bbox → local exact geometry predicate), or
 **unsupported**; the planner never pushes unsupported semantics and EXPLAIN/evidence discloses
-which class ran. A database-native variant executes same-PostGIS multi-source chains inside the
-database (server-side joins/aggregation) when sources, semantics, security, and cost favor it;
-local bounded federation remains the first-class fallback — no FDW deployment is required.
+which class ran. Database-native execution covers same-source chains: the first hop of a
+chain whose two sides share a source id and support `server_spatial_join` runs server-side
+(typed failures surface; unexpected failures fall back locally with a warning); multi-hop
+in-database federation stays deferred. Local bounded federation remains the first-class
+fallback — no FDW deployment is required.
 
 ### D8 — Large vector foundation
 
 A GeoArrow-family interchange carrier is added behind an availability probe: if `pyarrow` is
-importable, chunked Arrow/GeoArrow-encoded payloads move between data-plane seams (scan → filter →
-aggregate → materialize) with schema/nulls/CRS metadata preserved and zero-copy paths where
-practical; if unavailable, every seam degrades honestly (feature payloads, typed disclosure) —
-pyarrow/geoarrow do **not** become required dependencies. Tool/LLM context never receives raw
-Arrow payloads; large results remain ArtifactRef/session-ref bound; feature/byte limits stay
-enforced. Streaming execution seams (bounded batches under governor pressure) cover scan, attribute
-filter, bbox filter, projection, lightweight transform, aggregate, and streaming materialization.
+importable, features convert to chunked Arrow/GeoArrow-encoded tables and back (and to GeoParquet)
+with schema/nulls/CRS metadata preserved; if unavailable, the carrier raises a typed
+`VECTOR_CARRIER_UNAVAILABLE` and callers keep the feature-payload path — pyarrow/geoarrow do
+**not** become required dependencies. In this increment the carrier is a self-contained
+conversion/interop module; flowing Arrow batches *between* the streaming seams is deferred — the
+seams themselves (bounded batches under governor pressure) cover scan, attribute filter, bbox
+filter, projection, lightweight transform, aggregate, partition, and streaming materialization on
+feature dicts with the same semantics as the local operators.
 An execution-time partition/index facility (STRtree reuse, grid/tile and H3 (v4 API) partitions,
 bbox partition) is fingerprint-scoped, bounded, thread-safe, invalidated through authoritative
 revision identity, and never a correctness mechanism.
@@ -146,8 +152,8 @@ remaining duplicate in `spatial_tasks` is removed); alignment plans declare resa
 missing-acquisition and nodata policy, target grid, and time-order determinism — no silent
 resampling. Remote raster access gains request budgets, bounded retry (transient-only), range-read
 semantics per COG, connection reuse, provider health via the existing circuit breaker, cancellation
-checkpoints between windows/blocks, and bounded prefetch — never a full remote download where a
-window suffices (test-enforced).
+checkpoints between windows/blocks — never a full remote download where a window suffices
+(test-enforced). Bounded prefetch is deferred (reads are window-granular).
 
 ### D10 — ResourceGovernor V4
 
@@ -164,17 +170,20 @@ errors with lower-cost suggestions.
 pub/sub — Redis is a declared dependency, runtime-optional via `USE_REDIS`) carries **ids and
 reasons only**, never payloads; in-process mode works unchanged; correctness never depends on
 receiving a broadcast (fingerprint/revision validation stays authoritative; missed broadcasts
-recover safely). Per-key single-flight coordination prevents stampede rebuilds in both modes;
+recover safely): ref invalidation publishes, the app lifespan starts the listener, and the listen
+path applies events through `ref_lifecycle` with the authority's own types. Per-key single-flight
+coordination prevents stampede rebuilds in both modes (wired into describe cache rebuilds);
 builder crash/timeout/invalidation-during-build keep the existing race-window guarantees.
 
 ### D12 — Lineage, reproducibility, observability
 
 Execution nodes link to existing `ArtifactLineage`/provenance identities via `lineage_inputs`;
 lineage projections are bounded and project-scoped, and never leak payloads to LLM context. A
-reproducibility bundle (runtime manifest fingerprint + plan fingerprint + dataset versions + node
-implementation versions + parameters + CRS + backend variant + seed metadata + materialized refs)
-classifies runs as reproducible / conditionally reproducible / stale / source-unavailable /
-non-deterministic. Tracing extends the existing bounded ring with the full node lifecycle
+reproducibility bundle (runtime manifest fingerprint + plan/execution-plan version + per-node
+fingerprints and bounded parameter digests + declared dataset fingerprints + CRS + backend variant
++ materialized refs + drift verdict) classifies runs as reproducible / conditionally reproducible /
+stale / source-unavailable / non-deterministic; dataset *revision* identities and seed metadata are
+deferred (declared fingerprints are disclosed as such). Tracing extends the existing bounded ring with the full node lifecycle
 (admitted/optimized/queued/admitted-started/cache-hit/ checkpoint/retry/fallback/durable-dispatch/
 progress/completed/failed/cancelled/deadline/materialized/artifact-registered/finished) with
 correlation ids, reason codes, and bounded counters. Replay tooling is **test-only**: recorded

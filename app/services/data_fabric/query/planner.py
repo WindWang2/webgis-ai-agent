@@ -275,7 +275,8 @@ def plan_query(
             estimated_rows = max(1, len(spec.aggregate or [1]))
     # ---- 有界计划反馈修正（ADR-0101 D6）：可解释、可关闭、样本足够才生效。
     # 修正只作用于「估计」这个性能提示维度，绝不触碰语义（谓词/投影/下推
-    # 决策在前面的规则阶段已经落定）。
+    # 决策在前面的规则阶段已经落定）。注意：估计参与预算准入检查 ——
+    # 修正可能改变 admit/deny 结果（预期行为；拒绝详情含 estimates）。
     feedback_note: Optional[str] = None
     if estimated_rows is not None:
         ds_fp = str(

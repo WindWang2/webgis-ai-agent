@@ -176,7 +176,10 @@ class NodeResultStore:
                 self._bytes -= old.get("__size__", 0)
             if size > self._max_bytes:
                 return  # 超预算的大结果不入复用存储（仍可作为本 run 内节点输出）
-            self._entries[key] = {"__size__": size, **payload}
+            # dunder 键是存储保留命名空间：载荷侧同名键丢弃（评审 MINOR ——
+            # 否则载荷 __size__ 会腐蚀字节记账，evaluation 期 TypeError）。
+            clean = {k: v for k, v in payload.items() if not k.startswith("__")}
+            self._entries[key] = {"__size__": size, **clean}
             self._bytes += size
             while len(self._entries) > self._max_entries or self._bytes > self._max_bytes:
                 _, evicted = self._entries.popitem(last=False)
@@ -254,9 +257,16 @@ class GeoExecutionEngine:
             total_rows = sum(
                 (n.estimate.rows or 0) for n in plan.nodes if n.estimate
             )
-            # 原子预留（评审 M2：admit→charge TOCTOU 修复）；估计值先行
-            # 预配，节点完成后的实际记账叠加 —— 保守方向（宁可多记）。
-            governor.reserve(gov_path, rows=total_rows, nodes=1)
+            try:
+                # 原子预留（评审 M2：admit→charge TOCTOU 修复）；估计值先行
+                # 预配，节点完成后的实际记账叠加 —— 保守方向（宁可多记）。
+                governor.reserve(gov_path, rows=total_rows, nodes=1)
+            except Exception:
+                # 评审 MINOR：计划级预留被祖先链拒绝时，必须摘除刚建的
+                # execution 作用域（否则每次被拒 run 永久泄漏一个树节点）。
+                governor.teardown_scope(gov_path)
+                gov_path = None
+                raise
 
         run_id = f"gexec-{uuid.uuid4().hex[:12]}"
         plan_fp = plan.graph_fingerprint()
@@ -269,11 +279,13 @@ class GeoExecutionEngine:
                                     policy=n.policy.value)
             for n in plan.nodes
         }
-        deadline_ts = time.monotonic() + plan.budget.deadline_s
         outputs: dict[str, dict[str, Any]] = {}
         # 本 run 内各节点的输出内容指纹（checkpoint 上游一致性校验用）。
         outputs_fp: dict[str, str] = {}
+        # 评审 MINOR：deadline 从**调度开始**计时 —— 身份解析/首次导入等
+        # 一次性准备成本（可达数百毫秒）不再侵蚀执行预算。
         owner_scope = owner_scope_for(caller, session_id)
+        deadline_ts = time.monotonic() + plan.budget.deadline_s
         with self._run_lock:
             self._runs[run_id] = run
             self._run_outputs[run_id] = outputs
@@ -431,7 +443,7 @@ class GeoExecutionEngine:
             if ready:
                 ready.sort()
 
-        def _sweep_remaining(reason: str) -> None:
+        def _sweep_remaining(reason: str, *, escalate: bool = False) -> None:
             for nid in ready:
                 ev = run.evidence[nid]
                 if ev.status == "pending":
@@ -440,6 +452,11 @@ class GeoExecutionEngine:
                     tracing.emit("node_marked", run_id=run.run_id, node_id=nid,
                                  status="cancelled", reason=reason)
             ready.clear()
+            if escalate and cancel_token is not None:
+                # 评审 MAJOR 修正：deadline 触发时升级为 run 级取消 —— 在飞
+                # 的协作节点（raster 窗口/时间块循环）经由各自 checkpoint
+                # 观察 token 收敛，而不是跑完整个自然生命周期。
+                cancel_token.cancel(reason)
 
         with ThreadPoolExecutor(
             max_workers=self._max_workers, thread_name_prefix="geocompute-node",
@@ -450,7 +467,7 @@ class GeoExecutionEngine:
                 if cancel_token is not None and cancel_token.cancelled:
                     _sweep_remaining(cancel_token.reason or "cancelled by caller")
                 elif deadline_ts - time.monotonic() <= 0:
-                    _sweep_remaining("deadline exceeded")
+                    _sweep_remaining("deadline exceeded", escalate=True)
                 if not ready and not inflight:
                     break
 
@@ -562,6 +579,8 @@ class GeoExecutionEngine:
             if cached is not None and _SIZE_KEY in cached:
                 stale = self._checkpoint_stale(node, cached, outputs_fp)
                 if stale is None:
+                    # 浅拷贝：复用载荷与缓存条目解除别名（评审 MINOR ——
+                    # 操作数约定不改写输入；拷贝兜底防缓存腐蚀）。
                     payload = {k: v for k, v in cached.items()
                                if not k.startswith("__")}
                     outputs[node.node_id] = payload

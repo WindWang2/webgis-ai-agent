@@ -30,18 +30,20 @@ class VectorCarrierUnavailable(DataFabricError):
     code = "VECTOR_CARRIER_UNAVAILABLE"
 
 
+class VectorCarrierEncodeError(DataFabricError):
+    """几何/属性编码失败（诚实失败：绝不把坏几何静默降级为 null）。"""
+
+    code = "VECTOR_CARRIER_ENCODE_ERROR"
+
+
 def arrow_available() -> bool:
-    """pyarrow 可用性探测（进程内缓存一次的诚实探测）。"""
-    global _ARROW_OK
+    """pyarrow 可用性探测（每次调用诚实重探；导入开销可忽略）。"""
     try:
         import pyarrow  # noqa: F401
 
         return True
     except Exception:  # noqa: BLE001 - 缺依赖/损坏 = 不可用
         return False
-
-
-_ARROW_OK: Optional[bool] = None
 
 
 def _require_arrow() -> Any:
@@ -59,12 +61,14 @@ def _require_pa() -> Tuple[Any, Any]:
 
 def _geo_metadata(crs: Optional[str]) -> Dict[str, Any]:
     """GeoArrow/GeoParquet 同族的 ``geo`` schema 元数据（WKB 编码）。"""
+    # encoding 大写 "WKB" 是 GeoParquet 1.1 规范拼写（评审 MINOR：
+    # 小写会破坏严格第三方读取器的互操作）。
     meta: Dict[str, Any] = {
         "version": GEOARROW_META_VERSION,
         "primary_column": "geometry",
         "columns": {
             "geometry": {
-                "encoding": "wkb",
+                "encoding": "WKB",
                 "metadata": {},
             }
         },
@@ -91,21 +95,30 @@ def _features_to_columns(features: List[Dict[str, Any]]) -> Tuple[List[str], Dic
     return order, columns, wkb_list
 
 
-def _geometry_to_wkb(geom: Optional[Dict[str, Any]]) -> bytes:
-    if not geom:
-        return b""
+def _geometry_to_wkb(geom: Optional[Dict[str, Any]]) -> Optional[bytes]:
+    """None 几何 → None（合法缺失）；**解析失败 → 抛 typed 错误**（评审
+    MAJOR：坏几何静默降级为 null 会与合法缺失不可区分 —— 数据损失）。"""
+    if geom is None:
+        return None
+    if not isinstance(geom, dict) or not geom:
+        raise VectorCarrierEncodeError(
+            f"geometry is not a GeoJSON geometry object: {type(geom).__name__}")
     try:
         import shapely
 
         shape = shapely.from_geojson(json.dumps(geom))
         import shapely.io
 
+        if shape is None:
+            raise VectorCarrierEncodeError("geometry is not valid GeoJSON")
         return shapely.to_wkb(shape)
-    except Exception:
-        return b""
+    except VectorCarrierEncodeError:
+        raise
+    except Exception as exc:
+        raise VectorCarrierEncodeError(f"geometry WKB encode failed: {exc}") from exc
 
 
-def _wkb_to_geometry(wkb: bytes) -> Optional[Dict[str, Any]]:
+def _wkb_to_geometry(wkb: Optional[bytes]) -> Optional[Dict[str, Any]]:
     if not wkb:
         return None
     try:
@@ -130,8 +143,16 @@ def features_to_arrow(
         )
     pa, _ = _require_pa()
     order, columns, wkb_list = _features_to_columns(features)
-    arrays = [pa.array(columns[k], type=pa.string() if _mostly_str(columns[k]) else None)
-              for k in order]
+    arrays = []
+    for k in order:
+        try:
+            arrays.append(pa.array(
+                columns[k],
+                type=pa.string() if _mostly_str(columns[k]) else None))
+        except Exception as exc:
+            # 评审 MINOR F7：原始 pyarrow 异常 → typed 错误并指名列。
+            raise VectorCarrierEncodeError(
+                f"column '{k}' has mixed/unencodable value types: {exc}") from exc
     fields = []
     for k, arr in zip(order, arrays):
         fields.append(pa.field(k, arr.type))

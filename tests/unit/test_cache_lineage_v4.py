@@ -149,10 +149,20 @@ class TestSingleFlight:
 
 
 class TestCacheBroadcast:
+    @pytest.fixture(autouse=True)
+    def _reset_client_cache(self):
+        import app.services.cache_broadcast as cb
+
+        cb._cached_client = None
+        cb._client_failed = False
+        yield
+        cb._cached_client = None
+        cb._client_failed = False
+
     def test_no_redis_returns_false_and_never_raises(self, monkeypatch):
         import app.services.cache_broadcast as cb
 
-        monkeypatch.setattr(cb, "_redis_client", lambda: None)
+        monkeypatch.setattr(cb, "_client_cached", lambda: None)
         assert cb.broadcast_ref_invalidation("s", "ref:geojson-x", "OVERWRITE") is False
         assert cb.start_listener() is False
 
@@ -166,7 +176,7 @@ class TestCacheBroadcast:
                 published["message"] = message
                 return 1
 
-        monkeypatch.setattr(cb, "_redis_client", lambda: FakeClient())
+        monkeypatch.setattr(cb, "_client_cached", lambda: FakeClient())
         assert cb.broadcast_ref_invalidation(
             "sess-1", "ref:geojson-abc", "OVERWRITE") is True
         assert published["channel"] == cb.CHANNEL
@@ -177,23 +187,32 @@ class TestCacheBroadcast:
         assert "features" not in published["message"]  # 无载荷
 
     def test_apply_event_invokes_local_authority(self, monkeypatch):
+        """评审 MAJOR 修正锁定：监听端以正确类型调用失效权威
+        (ref_ids: list[str], reason: RefInvalidationReason)。"""
+        import json
+
         import app.services.cache_broadcast as cb
 
         called = {}
         import app.services.ref_lifecycle as rl
+        from app.services.ref_lifecycle import RefInvalidationReason
 
-        monkeypatch.setattr(rl, "invalidate_ref_caches",
-                            lambda sid, ref, reason="REPLACE": called.update(
-                                {"sid": sid, "ref": ref, "reason": reason}))
-        import json
+        def fake_invalidate(session_id, ref_ids, reason=RefInvalidationReason.REPLACE,
+                            include_payload_cache=True):
+            called.update({"sid": session_id, "refs": list(ref_ids), "reason": reason})
 
+        monkeypatch.setattr(rl, "invalidate_ref_caches", fake_invalidate)
         cb._apply_event(json.dumps({
             "kind": "ref_invalidation", "session_id": "s", "ref_id": "r",
             "reason": "OVERWRITE"}))
-        assert called == {"sid": "s", "ref": "r", "reason": "OVERWRITE"}
-        # 非 kind/坏消息：静默忽略。
+        assert called == {"sid": "s", "refs": ["r"],
+                          "reason": RefInvalidationReason.OVERWRITE}
+        # 非 kind/坏消息：静默忽略（绝不 raise）。
         cb._apply_event("not json")
         cb._apply_event(json.dumps({"kind": "other"}))
+        cb._apply_event(json.dumps({
+            "kind": "ref_invalidation", "session_id": "s", "ref_id": "r",
+            "reason": "not-a-reason"}))  # 未知 reason → REPLACE 兜底
 
 
 # ------------------------------------------------- 可复现执行包 / lineage

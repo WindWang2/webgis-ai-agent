@@ -73,6 +73,14 @@ def invalidate_ref_caches(
             from app.services.ref_payload_cache import ref_payload_cache
             ref_payload_cache.invalidate(session_id, ref_id)
         _emit(RefLifecycleEvent.REF_INVALIDATED, session_id, ref_id, reason.value)
+        # ADR-0101 D11：向其他进程**通知**本次失效（best-effort，无载荷；
+        # 本模块仍是唯一失效权威 —— 通知丢失不影响正确性）。
+        try:
+            from app.services.cache_broadcast import broadcast_ref_invalidation
+
+            broadcast_ref_invalidation(session_id, ref_id, reason.value)
+        except Exception:  # noqa: BLE001 - 通知绝不阻断失效路径
+            pass
         count += 1
     return count
 

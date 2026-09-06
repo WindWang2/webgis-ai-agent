@@ -87,6 +87,15 @@ def build_output_profile(
         if len(colorinterp) != int(count):
             raise ValueError(
                 f"colorinterp length {len(colorinterp)} != band count {count}")
+        # 成员名在构造期硬校验（评审 MINOR：无效名之前只在 open 期被
+        # 静默吞成 warning —— 输出悄悄丢失颜色解释，正是本特性要修的）。
+        from rasterio.enums import ColorInterp
+
+        bad = [c for c in colorinterp if str(c).lower() not in ColorInterp.__members__]
+        if bad:
+            raise ValueError(
+                f"invalid colorinterp names: {bad}; valid: "
+                f"{sorted(ColorInterp.__members__)}")
         profile["colorinterp"] = list(colorinterp)
     return profile
 

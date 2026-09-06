@@ -50,11 +50,32 @@ def _redis_client() -> Optional[Any]:
         return None
 
 
+_client_lock = threading.Lock()
+_cached_client: Optional[Any] = None
+_client_failed = False
+
+
+def _client_cached() -> Optional[Any]:
+    """复用 Redis 客户端（评审 MINOR：每事件一次 TCP 握手 → 惰性单例）。"""
+    global _cached_client, _client_failed
+    with _client_lock:
+        if _cached_client is not None:
+            return _cached_client
+        if _client_failed:
+            return None
+        client = _redis_client()
+        if client is None:
+            _client_failed = True
+            return None
+        _cached_client = client
+        return client
+
+
 def broadcast_ref_invalidation(
     session_id: str, ref_id: str, reason: str = "REPLACE"
 ) -> bool:
     """发布 ref 失效事件（有界、无载荷；失败静默 = 依赖权威校验兜底）。"""
-    client = _redis_client()
+    client = _client_cached()
     if client is None:
         return False
     try:
@@ -68,6 +89,10 @@ def broadcast_ref_invalidation(
         client.publish(CHANNEL, message)
         return True
     except Exception as exc:  # noqa: BLE001
+        global _cached_client, _client_failed
+        with _client_lock:
+            _cached_client = None
+            _client_failed = True  # 下次发布重新探测（Redis 恢复后自愈）
         logger.debug("[cache-broadcast] publish failed (harmless): %s", exc)
         return False
 
@@ -80,12 +105,22 @@ def _apply_event(message: str) -> None:
             return
         session_id = event.get("session_id")
         ref_id = event.get("ref_id")
-        reason = event.get("reason", "REPLACE")
+        raw_reason = event.get("reason", "REPLACE")
         if not session_id or not ref_id:
             return
-        from app.services.ref_lifecycle import invalidate_ref_caches
+        from app.services.ref_lifecycle import (
+            RefInvalidationReason,
+            invalidate_ref_caches,
+        )
 
-        invalidate_ref_caches(str(session_id), str(ref_id), reason=str(reason))
+        try:
+            reason = RefInvalidationReason(str(raw_reason))
+        except ValueError:
+            reason = RefInvalidationReason.REPLACE
+        # 签名是 (session_id, ref_ids: list[str], reason: RefInvalidationReason)
+        # —— 评审 MAJOR：此前传 (str, str, str) 会逐字符迭代 ref 且在
+        # reason.value 上 AttributeError（被吞）→ 跨进程失效静默失效。
+        invalidate_ref_caches(str(session_id), [str(ref_id)], reason=reason)
     except Exception as exc:  # noqa: BLE001 - 监听路径永不外溢
         logger.debug("[cache-broadcast] apply failed (harmless): %s", exc)
 

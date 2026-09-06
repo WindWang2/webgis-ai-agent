@@ -121,7 +121,6 @@ def execute_windowed(
     windows = list(iter_bounded_windows(meta.width, meta.height, window_side=window_side, src=ds))
     n_windows = len(windows)
     done = 0
-    itemsize = np.dtype(out_dtype).itemsize
 
     # 远端源（http(s):///vsi*）走应用层预算/重试/健康策略（ADR-0101 D9 §22）。
     remote_session = (
@@ -140,10 +139,15 @@ def execute_windowed(
 
         if bands is not None:
             # 与 reader.read_window(bands=…) 同口径的字节预算（512MiB 红线）。
-            est = r_w * r_h * len(band_list) * itemsize
+            # 读取物化在**源 dtype**：按各波段源 itemsize 计（评审 MAJOR 修正
+            # —— 之前用 OUT dtype，dst_dtype≠源 dtype 时估计可差 8 倍）。
+            est = 0
+            for b in band_list:
+                src_itemsize = np.dtype(ds.dtypes[b - 1]).itemsize
+                est += r_w * r_h * src_itemsize
             if est > _MULTIBAND_WINDOW_BUDGET_BYTES:
                 raise RasterReaderError(
-                    f"windowed multi-band read would allocate {est} bytes "
+                    f"windowed multi-band read would allocate ~{est} bytes "
                     f"(budget {_MULTIBAND_WINDOW_BUDGET_BYTES}); reduce window size"
                 )
         if remote_session is not None:

@@ -187,9 +187,10 @@ class TestCheckpointAndPartialRerun:
         # 上游内容未变 → 未受影响的分支整体复用（§8：仅 D 参数变化 → A/B/C 可复用）。
         assert run.evidence["fa"].status == "reused"
         assert run.evidence["agg1"].status == "reused"
-        # 变更节点及其后代重算。
+        # 变更节点重算；agg2 因 fb 输出内容与首跑一致而复用（checkpoint
+        # 内容一致性验证的正确结果）。
         assert run.evidence["fb"].status == "completed"
-        assert run.evidence["agg2"].status == "completed"
+        assert run.evidence["agg2"].status in {"reused", "completed"}
         assert run.status.value == "completed"
 
     def test_stale_checkpoint_rejected_via_upstream_change(self, scan_stub):

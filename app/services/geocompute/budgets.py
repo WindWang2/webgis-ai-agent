@@ -172,13 +172,17 @@ class ResourceGovernor:
                     u = scope.usage
                     if lim is not None:
                         over: List[str] = []
-                        if lim.max_rows is not None and u.rows + rows > lim.max_rows:
+                        # 评审 CRITICAL 修正：只检查本次**有增量**的维度 ——
+                        # 零增量维度不再参与上限判定（否则计划级估计预留 +
+                        # 逐节点实际记账的双计一旦触顶，后续纯 concurrency
+                        # 预留会被 rows 检查永久拒绝 → 调度器假性饿死）。
+                        if rows and lim.max_rows is not None and u.rows + rows > lim.max_rows:
                             over.append(f"rows {u.rows}+{rows} > {lim.max_rows}")
-                        if lim.max_bytes is not None and u.bytes + bytes_ > lim.max_bytes:
+                        if bytes_ and lim.max_bytes is not None and u.bytes + bytes_ > lim.max_bytes:
                             over.append(f"bytes {u.bytes}+{bytes_} > {lim.max_bytes}")
-                        if lim.max_nodes is not None and u.nodes + nodes > lim.max_nodes:
+                        if nodes and lim.max_nodes is not None and u.nodes + nodes > lim.max_nodes:
                             over.append(f"nodes {u.nodes}+{nodes} > {lim.max_nodes}")
-                        if lim.max_concurrency is not None and (
+                        if concurrency and lim.max_concurrency is not None and (
                             u.concurrency + concurrency > lim.max_concurrency
                         ):
                             over.append(
@@ -217,13 +221,16 @@ class ResourceGovernor:
 
         调度器在节点落定（completed/failed/cancelled/skipped）后释放其
         concurrency 槽位 —— 与 ``reserve(concurrency=1)`` 严格配对。
+        下限钳制在 0（评审 MINOR：重复 release 不得把用量记负、变相
+        抬高其他作用域的可用容量）。
         """
         for scope in self._chain(path):
             with scope.lock:
-                scope.usage.rows -= rows
-                scope.usage.bytes -= bytes_
-                scope.usage.nodes -= nodes
-                scope.usage.concurrency -= concurrency
+                u = scope.usage
+                u.rows = max(0, u.rows - rows)
+                u.bytes = max(0, u.bytes - bytes_)
+                u.nodes = max(0, u.nodes - nodes)
+                u.concurrency = max(0, u.concurrency - concurrency)
 
     def charge(
         self,

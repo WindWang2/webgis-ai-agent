@@ -198,15 +198,19 @@ def stream_aggregate(
 def _accumulate(acc: Dict[str, Any], name: str, agg: Dict[str, Any], props: Dict[str, Any]) -> None:
     func = agg.get("func")
     field = agg.get("field")
-    if func == "count":
-        return
     v = props.get(field)
+    if func == "count":
+        # count(field) 与本地聚合器同语义：非 null 计数（评审 MINOR F6）。
+        if field is not None and v is not None:
+            acc[name] = acc.get(name, 0) + 1
+        return
     if func == "distinct_count":
         seen = acc.setdefault(name, set())
         if v is not None:
             seen.add(v)
         return
-    if v is None:
+    if v is None or isinstance(v, bool):
+        # bool 不参与数值聚合（与本地聚合器同一排除口径）。
         return
     state = acc.setdefault(name, {"n": 0, "sum": 0.0, "sumsq": 0.0, "min": None, "max": None})
     try:
@@ -235,9 +239,11 @@ def _finalize(state: Any, func: Optional[str]) -> Any:
     if func == "max":
         return state["max"]
     if func == "stddev":
+        if n < 2:
+            return None  # 样本口径与 PG STDDEV_SAMP 对齐：n<2 → None
         mean = s / n
         var = max(0.0, state["sumsq"] / n - mean * mean)
-        return math.sqrt(var * n / max(1, n - 1))  # 样本口径
+        return math.sqrt(var * n / (n - 1))  # 样本口径
     return None
 
 

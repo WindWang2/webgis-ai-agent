@@ -323,7 +323,13 @@ class DurableStatisticsStore:
     - 写：INSERT 新行（append-only；旧行由 prune 有界清理），绝不 UPDATE
       既有行的 stats —— stale 语义 = 时间戳比较，不是改写。
     - 所有 DB 故障吞掉并回 None/False：统计绝不阻断查询，绝不成为真相。
+    - **超时防护**（评审 MAJOR F1）：DB 调用在旁路线程执行并有硬超时 ——
+      黑洞式 DB 只会损失统计（回退无统计基线），绝不阻塞查询热路径。
+      病态挂死会占用旁路线程（最多 2 个），后续统计调用快速降级。
     """
+
+    #: 旁路 DB 调用的硬超时（秒）。
+    DB_TIMEOUT_S = 3.0
 
     def __init__(
         self,
@@ -335,6 +341,22 @@ class DurableStatisticsStore:
         self._ttl_s = ttl_s
         self._max_rows = max_rows
         self._prune_batch = prune_batch
+        self._pool: Optional[Any] = None
+        self._pool_lock = threading.Lock()
+        self._save_count = 0
+
+    def _executor(self) -> Any:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with self._pool_lock:
+            if self._pool is None:
+                self._pool = ThreadPoolExecutor(
+                    max_workers=2, thread_name_prefix="stats-db")
+            return self._pool
+
+    def _call_with_timeout(self, fn, *args):
+
+        return self._executor().submit(fn, *args).result(timeout=self.DB_TIMEOUT_S)
 
     def _session(self) -> Any:
         from app.core.database import SessionLocal
@@ -350,19 +372,20 @@ class DurableStatisticsStore:
             cutoff = now or datetime.now(timezone.utc).replace(tzinfo=None)
             with self._session() as db:
                 row = (
-                    db.query(DatasetStatisticsRecord)
-                    .filter(DatasetStatisticsRecord.dataset_fingerprint == str(dataset_fingerprint))
-                    .order_by(DatasetStatisticsRecord.collected_at.desc())
-                    .limit(1)
-                    .first()
+                    self._call_with_timeout(
+                        lambda: db.query(DatasetStatisticsRecord)
+                        .filter(DatasetStatisticsRecord.dataset_fingerprint == str(dataset_fingerprint))
+                        .order_by(DatasetStatisticsRecord.collected_at.desc())
+                        .limit(1)
+                        .first()
+                    )
                 )
                 if row is None:
                     return None
                 if row.expires_at is not None and row.expires_at < cutoff:
                     return None  # 显式过期 = 无统计（诚实 stale 语义）
-                stats = _stats_from_row(row)
-                return stats
-        except Exception as exc:  # noqa: BLE001 - advisory 层 fail-open
+                return _stats_from_row(row)
+        except Exception as exc:  # noqa: BLE001 - advisory 层 fail-open（含超时）
             logger.debug("[statistics] durable load unavailable: %s", exc)
             return None
 
@@ -373,19 +396,31 @@ class DurableStatisticsStore:
             from app.models.data_fabric import DatasetStatisticsRecord
 
             now = datetime.now(timezone.utc).replace(tzinfo=None)
-            with self._session() as db:
-                db.add(DatasetStatisticsRecord(
-                    dataset_fingerprint=stats.dataset_fingerprint[:64],
-                    source_type=stats.source_type,
-                    collector=stats.collector,
-                    confidence=stats.confidence,
-                    revision_strength=stats.revision_strength,
-                    stats_json=stats.model_dump(mode="json"),
-                    collected_at=now,
-                    expires_at=now + timedelta(seconds=self._ttl_s),
-                ))
-                db.commit()
-            return True
+
+            def _insert() -> None:
+                with self._session() as db:
+                    db.add(DatasetStatisticsRecord(
+                        dataset_fingerprint=stats.dataset_fingerprint[:64],
+                        source_type=stats.source_type,
+                        collector=stats.collector,
+                        confidence=stats.confidence,
+                        revision_strength=stats.revision_strength,
+                        stats_json=stats.model_dump(mode="json"),
+                        collected_at=now,
+                        expires_at=now + timedelta(seconds=self._ttl_s),
+                    ))
+                    db.commit()
+
+            ok = self._call_with_timeout(_insert)
+            # 评审 MINOR F2：机会式有界清理（每 100 次写入触发一次，
+            # 失败静默 —— 让「有界保留」真正发生而不需要外部调度）。
+            self._save_count += 1
+            if self._save_count % 100 == 0:
+                try:
+                    self.prune()
+                except Exception:  # noqa: BLE001
+                    pass
+            return bool(ok is None)
         except Exception as exc:  # noqa: BLE001 - advisory 层 fail-open
             logger.debug("[statistics] durable save unavailable: %s", exc)
             return False
