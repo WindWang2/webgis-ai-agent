@@ -12,14 +12,16 @@ from app.lib.cartography.model_packs._base import FRONTEND_RUNTIME_LAYER_TYPES
 from app.lib.cartography.model_packs.decision_analysis import DECISION_ANALYSIS_PACK
 from app.lib.cartography.model_packs.point_line import POINT_LINE_PACK
 from app.lib.cartography.model_packs.polygon_statistical import POLYGON_STATISTICAL_PACK
+from app.lib.cartography.model_packs.presentation_views import PRESENTATION_VIEWS_PACK
 from app.lib.cartography.model_packs.raster_remote_sensing import RASTER_REMOTE_SENSING_PACK
 
-# 确定性顺序（点线 → 面 → 栅格 → 决策）；新增域包在此追加。
+# 确定性顺序（点线 → 面 → 栅格 → 决策 → 多视图）；新增域包在此追加。
 MODEL_PACK_MODELS: List[MapModel] = [
     *POINT_LINE_PACK,
     *POLYGON_STATISTICAL_PACK,
     *RASTER_REMOTE_SENSING_PACK,
     *DECISION_ANALYSIS_PACK,
+    *PRESENTATION_VIEWS_PACK,
 ]
 
 __all__ = [

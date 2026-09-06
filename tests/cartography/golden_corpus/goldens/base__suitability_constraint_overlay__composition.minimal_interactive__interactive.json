@@ -1,0 +1,90 @@
+{
+ "digest": {
+  "case": "base::suitability_constraint_overlay::composition.minimal_interactive::interactive",
+  "components": [
+   {
+    "id": "title",
+    "layerId": "",
+    "position": "top-center",
+    "priority": 10,
+    "templateId": "title/academic",
+    "title": "suitability_constraint_overlay 专题图",
+    "type": "title",
+    "variant": "academic"
+   },
+   {
+    "id": "scale-bar",
+    "layerId": "",
+    "position": "bottom-right",
+    "priority": 20,
+    "templateId": "scale-bar/minimal",
+    "title": "",
+    "type": "scale_bar",
+    "variant": "minimal"
+   },
+   {
+    "id": "north-arrow",
+    "layerId": "",
+    "position": "top-right",
+    "priority": 30,
+    "templateId": "north-arrow/minimal-black",
+    "title": "",
+    "type": "north_arrow",
+    "variant": "compass_minimal_black"
+   },
+   {
+    "id": "attribution",
+    "layerId": "",
+    "position": "bottom-left",
+    "priority": 50,
+    "templateId": "attribution/default",
+    "title": "",
+    "type": "attribution",
+    "variant": "default"
+   }
+  ],
+  "kind": "base",
+  "layout": {
+   "moved": [],
+   "placements": {
+    "attribution": "bottom-left",
+    "north-arrow": "top-right",
+    "scale-bar": "bottom-right",
+    "title": "top-center"
+   },
+   "suppressed": [],
+   "warning_count": 0
+  },
+  "model": "suitability_constraint_overlay",
+  "output": "interactive",
+  "profile": "viewport",
+  "selection": {
+   "component_templates": {
+    "attribution": "attribution/default",
+    "north_arrow": "north-arrow/minimal-black",
+    "scale_bar": "scale-bar/minimal",
+    "title": "title/academic"
+   },
+   "composition_template_id": "composition.minimal_interactive",
+   "reason_codes": [],
+   "rejected_count": 3,
+   "required_slots": [
+    "attribution",
+    "scale_bar"
+   ],
+   "selected": [
+    "attribution",
+    "north_arrow",
+    "scale_bar",
+    "title"
+   ]
+  },
+  "template": "composition.minimal_interactive",
+  "validation": {
+   "error_codes": [],
+   "ok": true,
+   "warning_codes": []
+  }
+ },
+ "sha": "194e43594dde65da"
+}

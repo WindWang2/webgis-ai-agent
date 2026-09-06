@@ -260,11 +260,13 @@ export function compileMapSpec(
       sources[key] = {
         type: "geojson",
         data: source.inlineData,
+        ...(source.cluster ? { cluster: true, clusterRadius: source.cluster.radius ?? 60, clusterMaxZoom: source.cluster.maxzoom ?? 14 } : {}),
       };
     } else if (source.type === "geojson" && (source.url || source.dataPath)) {
       sources[key] = {
         type: "geojson",
         data: source.url || source.dataPath,
+        ...(source.cluster ? { cluster: true, clusterRadius: source.cluster.radius ?? 60, clusterMaxZoom: source.cluster.maxzoom ?? 14 } : {}),
       };
     } else if ((source as any).type === "vector") {
       const v = source as any;
@@ -413,6 +415,74 @@ export function compileMapSpec(
       }
     }
 
+    // ── V4 point_cluster：活动簇三子层（MapLibre 官方聚簇范式）────────
+    // base circle 层即「未聚类点」（filter 排除簇）；簇圆按 point_count
+    // 分级半径/色深；计数标注复用 style 级 glyphs。
+    const clusterCfg = (layer as any).cluster ?? ((layer as any).style?.cluster) ?? ((layer.paint as any)?.cluster);
+    let labelLayerCountDelta = 0;
+    if (clusterCfg && layerType === "circle") {
+      maplibreLayer.filter = ["!", ["has", "point_count"]];
+      const radius = clusterCfg.radius ?? 60;
+      const clusterLayer: any = {
+        id: `${layer.id}__clusters`,
+        type: "circle",
+        source: layer.source,
+        filter: ["has", "point_count"],
+        paint: {
+          "circle-color": [
+            "step", ["get", "point_count"],
+            "#9ecae1", 10, "#6baed6", 50, "#3182bd", 200, "#08519c",
+          ],
+          "circle-radius": [
+            "step", ["get", "point_count"],
+            14, 10, 20, 50, 26, 200, 34,
+          ],
+          "circle-stroke-width": 1.5,
+          "circle-stroke-color": "#ffffff",
+          "circle-opacity": 0.9,
+        },
+      };
+      if (srcDef?.type === "vector") {
+        clusterLayer["source-layer"] = (layer as any).sourceLayer ?? "data";
+      }
+      compiledLayers.push(clusterLayer);
+
+      const countLayer: any = {
+        id: `${layer.id}__cluster-count`,
+        type: "symbol",
+        source: layer.source,
+        filter: ["has", "point_count"],
+        layout: {
+          "text-field": ["get", "point_count_abbreviated"],
+          "text-size": 12,
+          "text-allow-overlap": false,
+        },
+        paint: {
+          "text-color": "#ffffff",
+          "text-halo-color": "rgba(0,0,0,0.35)",
+          "text-halo-width": 0.8,
+        },
+      };
+      if (srcDef?.type === "vector") {
+        countLayer["source-layer"] = (layer as any).sourceLayer ?? "data";
+      }
+      compiledLayers.push(countLayer);
+      labelLayerCountDelta = 1;
+      // 簇色板像素色（hex）进 legend 摘要（计数分级），有组件在场时由
+      // 组件渲染；无组件时导出 HUD 图例兜底同链。
+      const clusterLegend = {
+        layerId: layer.id,
+        title: (layer as any).label?.field ?? undefined,
+        entries: [
+          { color: "#9ecae1", label: "1–9" },
+          { color: "#6baed6", label: "10–49" },
+          { color: "#3182bd", label: "50–199" },
+          { color: "#08519c", label: "200+" },
+        ],
+      };
+      legends.push(clusterLegend as any);
+    }
+
     compiledLayers.push(maplibreLayer);
 
     const legend = extractLegendForLayer(layer);
@@ -449,6 +519,9 @@ export function compileMapSpec(
       }
 
       compiledLayers.push(labelLayer);
+    }
+    if (labelLayerCountDelta > 0) {
+      labelLayerCount += labelLayerCountDelta;
     }
   }
 

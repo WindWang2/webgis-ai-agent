@@ -9,6 +9,7 @@
 |---|---|---|---|---|
 | Blues | sequential | ✓ | ✓ | 0.1196 |
 | Dark2 | qualitative | ✓ | — | 0.0178 |
+| Gray | sequential | ✓ | — | 0.0513 |
 | Greens | sequential | ✓ | ✓ | 0.1637 |
 | Inferno | perceptual_uniform | ✓ | — | 0.0237 |
 | Magma | perceptual_uniform | ✓ | — | 0.0243 |

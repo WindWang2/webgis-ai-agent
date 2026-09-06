@@ -288,6 +288,53 @@ def convert_analysis_to_mapspec_layer(
             analysis_result = {}
 
         inline_geojson = _extract_geojson(analysis_result)
+        # ── V4（Design System）：dot_density_map —— 面单元按值确定性撒点。
+        # 在几何推断之前完成多态替换（polygons → points），下游按 circle
+        # 链渲染；撒点上限/披露随 payload 元数据透传（诚实披露）。
+        type_hint_early = analysis_result.get("type_hint") or base_layer.get("type_hint")
+        if type_hint_early == "dot_density_map" and inline_geojson:
+            try:
+                from app.lib.cartography.dot_density import (
+                    generate_dot_density_features,
+                    suggest_unit_value,
+                )
+                feats = [f for f in _iter_features(inline_geojson) if isinstance(f, dict)]
+                meta_dd = analysis_result.get("metadata") or {}
+                value_field = str(meta_dd.get("value_field") or "value")
+                unit_value = meta_dd.get("unit_value")
+                if not (isinstance(unit_value, (int, float)) and unit_value > 0):
+                    vals = [
+                        (f.get("properties") or {}).get(value_field)
+                        for f in feats
+                    ]
+                    finite = [float(v) for v in vals if isinstance(v, (int, float))]
+                    unit_value = suggest_unit_value(finite)
+                dots = generate_dot_density_features(
+                    feats, value_field=value_field, unit_value=float(unit_value),
+                    id_field=str(meta_dd.get("id_field") or ""),
+                )
+                dd_meta = dots.get("__dot_density_meta") or {}
+                inline_geojson = {
+                    "type": "FeatureCollection",
+                    "features": dots.get("features", []),
+                }
+                analysis_result = dict(analysis_result)
+                analysis_result["metadata"] = {
+                    **(meta_dd or {}),
+                    "dot_density": dd_meta,
+                }
+                # 点密度图例：单位披露（『1 点 = N』），不是数值色阶
+                legend_spec = {
+                    "type": "categorical",
+                    "field": "__dot_value",
+                    "categories": [
+                        {"key": "dot", "label": f"1 点 = {unit_value:g}", "color": "#c44f27"},
+                    ],
+                }
+                analysis_result["legend_spec"] = legend_spec
+            except Exception as dd_exc:
+                warnings.append(
+                    f"dot_density_error: 撒点失败回退面表达（{dd_exc}）")
         # #688 收尾：授权路径传入 descriptor 派生的 profile 时，几何类别与
         # 点数零遍历可得（featureCount/geometryTypes 在 store 时已算好）；
         # 无 profile 才对 FC 自行推断（其他调用方向后兼容）。
@@ -341,6 +388,27 @@ def convert_analysis_to_mapspec_layer(
             else:
                 inferred_layer_type = "line"
                 isoline_hint_active = True
+        # ── V4（Design System）语义通道：诚实降级（契约不满足 → 回退+警告）──
+        cluster_hint_active = False
+        if type_hint == "point_cluster":
+            if geom_cat == "point":
+                cluster_hint_active = True
+            else:
+                warnings.append(
+                    f"point_cluster_guard: 几何类别为 {geom_cat or 'unknown'}，"
+                    f"聚簇需要点要素，已回退常规表达")
+        bivariate_hint_active = False
+        if type_hint == "bivariate_choropleth" and geom_cat == "polygon":
+            bivariate_hint_active = True
+        uncertainty_poly_hint_active = False
+        if type_hint == "uncertainty_choropleth" and geom_cat == "polygon":
+            uncertainty_poly_hint_active = True
+        uncertainty_point_hint_active = False
+        if type_hint == "uncertainty_point_symbol" and geom_cat == "point":
+            uncertainty_point_hint_active = True
+        route_hint_active = False
+        if type_hint == "route_map" and geom_cat == "line":
+            route_hint_active = True
         # #690: deterministic guard — do not flip to heatmap when unsuitable
         heatmap_guard_triggered = False
         heatmap_guard_reason = ""
@@ -390,6 +458,49 @@ def convert_analysis_to_mapspec_layer(
         # which is_analysis_result rejects ("GeoJSON wins") before this converter
         # runs — so the fallback was unreachable dead code. See ADR-0015.
         legend_spec = analysis_result.get("legend_spec")
+
+        # V4 bivariate：双字段 → 逐要素 3×3 类别（__biv_class）+ 色阵
+        # legend_spec（spec_to_paint 投影为 match 表达式）。字段契约缺失时
+        # 诚实回退常量色 + 警告，不伪装双变量。
+        bivariate_meta = None
+        if bivariate_hint_active:
+            try:
+                from app.lib.cartography.bivariate import (
+                    bivariate_legend_spec,
+                    compute_bivariate_classes,
+                )
+                bmeta = analysis_result.get("metadata") or {}
+                field_a = str(bmeta.get("field_a") or "")
+                field_b = str(bmeta.get("field_b") or "")
+                if field_a and field_b and field_a != field_b:
+                    feats = [f for f in _iter_features(inline_geojson) if isinstance(f, dict)]
+                    bv = compute_bivariate_classes(
+                        feats,
+                        field_a=field_a, field_b=field_b,
+                        n=int(bmeta.get("n") or 3),
+                        method=str(bmeta.get("method") or "quantiles"),
+                    )
+                    matrix = str(bmeta.get("matrix") or "BiPurpleOrange")
+                    legend_spec = bivariate_legend_spec(
+                        matrix,
+                        label_a=str(bmeta.get("label_a") or field_a),
+                        label_b=str(bmeta.get("label_b") or field_b),
+                        breaks_a=bv["breaks_a"], breaks_b=bv["breaks_b"],
+                        n=bv["n"],
+                    )
+                    legend_spec["class_field"] = bv["class_field"]
+                    legend_spec["field"] = bv["class_field"]
+                    bivariate_meta = bv
+                    analysis_result = dict(analysis_result)
+                    analysis_result["legend_spec"] = legend_spec
+                else:
+                    warnings.append(
+                        "bivariate_field_contract_missing: metadata.field_a/"
+                        "field_b 缺失或相同，回退常量色")
+                    bivariate_hint_active = False
+            except Exception as bv_exc:
+                warnings.append(f"bivariate_error: {bv_exc}")
+                bivariate_hint_active = False
 
         paint_color, has_thematic_paint, legend_warnings = _resolve_paint_color(legend_spec, layer_type)
         warnings.extend(legend_warnings)
@@ -502,6 +613,76 @@ def convert_analysis_to_mapspec_layer(
                 paint["fill-extrusion-color"] = paint_color
                 if not ext_stats.get("valid"):
                     warnings.append(f"extrusion_3d: 高度字段 '{h_field}' 无有效数值，已采用保底可视高度")
+
+            # V4 point_cluster：cluster 语义随图层透传（前端编译器据此
+            # 生成簇圆 + 计数标注 + 未聚类点三子层，并开启 source cluster）。
+            if cluster_hint_active:
+                meta = analysis_result.get("metadata") or {}
+                try:
+                    cluster_radius = float(meta.get("cluster_radius") or 60)
+                except (TypeError, ValueError):
+                    cluster_radius = 60.0
+                layer_extras = base_layer.setdefault("style", {})
+                if isinstance(layer_extras, dict):
+                    layer_extras["cluster"] = {"radius": cluster_radius}
+                paint["cluster"] = {"radius": cluster_radius}
+
+            # V4 uncertainty_choropleth：透明度 ← 不确定度反向插值
+            #（越不确定越透明）；颜色仍走估计值的 graduated legend 投影。
+            if uncertainty_poly_hint_active:
+                meta = analysis_result.get("metadata") or {}
+                u_field = str(meta.get("uncertainty_field") or "")
+                u_min = meta.get("uncertainty_min")
+                u_max = meta.get("uncertainty_max")
+                if u_field and isinstance(u_min, (int, float)) and isinstance(u_max, (int, float)) and u_min < u_max:
+                    from app.lib.cartography.thematic_spec import UNCERTAINTY_OPACITY
+                    opacity_method, _ = spec_to_paint(
+                        {
+                            "type": UNCERTAINTY_OPACITY,
+                            "field": u_field,
+                            "min": u_min,
+                            "max": u_max,
+                        },
+                        "",
+                    )
+                    if opacity_method is not None:
+                        paint["opacity"] = opacity_method
+                else:
+                    warnings.append(
+                        "uncertainty_field_contract_missing: metadata."
+                        "uncertainty_field/min/max 缺失，退回普通分级面")
+
+            # V4 uncertainty_point_symbol：描边宽 ← 不确定度（越宽越不确定）
+            if uncertainty_point_hint_active:
+                meta = analysis_result.get("metadata") or {}
+                u_field = str(meta.get("uncertainty_field") or "")
+                u_min = meta.get("uncertainty_min")
+                u_max = meta.get("uncertainty_max")
+                if u_field and isinstance(u_min, (int, float)) and isinstance(u_max, (int, float)) and u_min < u_max:
+                    paint["strokeWidth"] = {
+                        "method": "interpolate",
+                        "field": u_field,
+                        "stops": [
+                            [round(float(u_min), 6), 1.0],
+                            [round(float(u_max), 6), 8.0],
+                        ],
+                    }
+                    paint["strokeColor"] = "#54278f"
+                else:
+                    warnings.append(
+                        "uncertainty_field_contract_missing: metadata."
+                        "uncertainty_field/min/max 缺失，退回普通分级点")
+
+            # V4 route_map：推荐路径（route_rank=0）加粗、备选细线（单层
+            # 宽度插值；casing 双子层语义由运行时 adapter 承担，converter
+            # 不虚构）。
+            if route_hint_active:
+                paint["width"] = {
+                    "method": "interpolate",
+                    "field": str((analysis_result.get("metadata") or {}).get(
+                        "rank_field") or "route_rank"),
+                    "stops": [[0, 5.0], [1, 2.5], [3, 1.5]],
+                }
 
             # ADR-0095: 等值线与等值面样式通道
             if isoline_hint_active:

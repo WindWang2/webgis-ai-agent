@@ -1,10 +1,12 @@
-"""Polygon / 统计面表达模型域包（ADR-0101 §B1）。
+"""Polygon / 统计面表达模型域包（ADR-0101 §B1 + Design System V4）。
 
 native：normalized/diverging choropleth、suitability/risk/vulnerability/
-equity/zoning 语义分级面 —— 全部落在「fill + classify + legend 投影」
-既有机制族。
-planned：bivariate、uncertainty choropleth、dasymetric —— 需要双字段色阵 /
-区间字段 / 控制要素数据契约。
+equity/zoning 语义分级面（V3）+ V4 原生化的 bivariate choropleth（双变量
+色阵 + match 投影 + bivariate 图例）与 uncertainty choropleth（透明度双
+编码契约）。
+V4 新增：temporal comparison / classification result / confusion matrix /
+voronoi partition / suitability constraint overlay。
+planned：dasymetric —— 控制要素重分配算法未实现（诚实保留）。
 """
 from __future__ import annotations
 
@@ -63,28 +65,50 @@ POLYGON_STATISTICAL_PACK: List[MapModel] = [
         purpose_zh="两个字段的联合分级（3×3 色阵）表达共现/相关",
         geometry_kinds=["polygon"], maplibre_layer_type="fill",
         classification="graduated",
-        # 单一 sequential 色带对双变量是错误契约 —— planned 阶段留空，
-        # 待 bivariate 色阵族建立（与 legend/bivariate 前瞻变体互链）
-        color_scheme_kind="none", default_palette="",
-        runtime_status="planned",
-        accepted_artifact_types=["admin_aggregate_table"],
+        # 双变量色阵是独立语义族（BIVARIATE_MATRICES）：行=变量 B 分级、
+        # 列=变量 A 分级 —— 不是单一 sequential ramp 的错误契约
+        color_scheme_kind="sequential", default_palette="BiPurpleOrange",
+        recommended_classifiers=["quantiles", "equal_interval"],
+        aliases=["bivariate_map"],
+        accepted_artifact_types=["admin_aggregate_table", "grid_aggregate",
+                                 "polygon_feature_set"],
+        recommended_components=["legend"],
+        export_compatibility=["png", "pdf", "svg"],
+        chart_needs=["scatter"],
+        data_preconditions_zh=[
+            "要素同时携带两个数值字段（field_a/field_b）",
+            "每轴独立分位/等距 n 分级 → row*n+col 类别 → match 色阵投影",
+            "任一字段缺失的要素透明（无数据 ≠ 最低类）",
+        ],
         qgis_renderer="data-defined override（双字段表达式）",
+        fallback_model_id="normalized_choropleth",
         pitfalls_zh=[
-            "planned：paint 投影与图例（3×3 色阵 legend）未实现，不伪装 native；色阵族未建，缺省色带留空",
             "双变量图读者负荷高 —— 仅在两变量确有交互语义时使用",
+            "先看散点图（chart_needs: scatter）确认相关形态再上双变量色阵",
         ],
         sources=[_QGIS_URL],
     ),
     m(
         id="uncertainty_choropleth", name_zh="不确定性分级统计图",
-        purpose_zh="估计值 + 可靠性双表达（主色 ← 估计，hatch/饱和度 ← 区间宽度）",
+        purpose_zh="估计值 + 可靠性双表达（主色 ← 估计，透明度 ← 不确定度）",
         geometry_kinds=["polygon"], maplibre_layer_type="fill",
         classification="graduated",
         color_scheme_kind="sequential", default_palette="Purples",
-        runtime_status="planned",
-        accepted_artifact_types=["admin_aggregate_table"],
+        recommended_classifiers=["natural_breaks", "quantiles"],
+        aliases=["reliability_map"],
+        accepted_artifact_types=["admin_aggregate_table", "polygon_feature_set"],
+        recommended_components=["legend", "uncertainty_panel"],
+        export_compatibility=["png", "pdf"],
+        fallback_model_id="normalized_choropleth",
+        data_preconditions_zh=[
+            "要素同时携带估计值字段与不确定度字段（区间半宽/方差/样本量）",
+            "双编码契约：fill 颜色 ← 估计分级；fill-opacity ← 不确定度"
+            "反向插值（越不确定越透明）",
+        ],
         pitfalls_zh=[
-            "planned：需要区间/方差字段契约与 hatch 填充渲染，本分支未实现",
+            "不确定度字段缺失时退回 normalized_choropleth 并披露",
+            "透明度编码在深色底图上语义反转（透=露底色）—— 暗色主题需换"
+            "置灰编码并在披露组件说明",
         ],
         sources=[],
     ),
@@ -201,5 +225,113 @@ POLYGON_STATISTICAL_PACK: List[MapModel] = [
             "类别数可能很多 —— 图例超限时分组披露，禁止省略图例",
         ],
         sources=[_QGIS_URL],
+    ),
+    # ── V4 新增（Design System）：时相对比/分类/误差/分区几何族 ─────────
+    m(
+        id="temporal_comparison_map", name_zh="时相对比双专题图",
+        purpose_zh="同一指标两期分级面对照（双图层同色带 + 时相图例）",
+        geometry_kinds=["polygon"], maplibre_layer_type="fill",
+        classification="graduated",
+        color_scheme_kind="sequential", default_palette="Blues",
+        recommended_classifiers=["natural_breaks", "quantiles"],
+        aliases=["period_comparison_map"],
+        accepted_artifact_types=["change_set", "admin_aggregate_table"],
+        recommended_components=["legend", "chart_panel"],
+        export_compatibility=["png", "pdf"],
+        chart_needs=["grouped_bar"],
+        fallback_model_id="change_comparison_map",
+        data_preconditions_zh=[
+            "两期数值字段（t1/t2）同口径同边界；固定同一分级断点保证可比",
+        ],
+        pitfalls_zh=[
+            "两期必须用同一组分级断点 —— 各自自动分级会让对比失效",
+            "需要单值变化量语义时改走 change_comparison_map（发散）",
+        ],
+        sources=[_QGIS_URL],
+    ),
+    m(
+        id="classification_result_map", name_zh="分类结果图",
+        purpose_zh="监督/非监督分类或重分类的类别面（分类器输出主表达）",
+        geometry_kinds=["polygon"], maplibre_layer_type="fill",
+        classification="categorical",
+        color_scheme_kind="qualitative", default_palette="Set2",
+        aliases=["classified_areas_map"],
+        accepted_artifact_types=["polygon_feature_set", "grid_aggregate",
+                                 "admin_aggregate_table"],
+        recommended_components=["categorical_legend", "statistics_panel"],
+        export_compatibility=["png", "pdf"],
+        chart_needs=["pie", "bar"],
+        data_preconditions_zh=[
+            "要素携带类别字段（class id/名称）；类别数 ≤ 定性色带上限",
+        ],
+        pitfalls_zh=[
+            "类别精度未知时必须联合 confusion_matrix_map 披露误差",
+            "超色带上限的长尾类别并入『其他』并在图例披露合并规则",
+        ],
+        sources=[_QGIS_URL],
+    ),
+    m(
+        id="confusion_matrix_map", name_zh="误差/混淆可视化图",
+        purpose_zh="分类结果 vs 参考真值的逐图斑一致性/混淆类别空间表达",
+        geometry_kinds=["polygon"], maplibre_layer_type="fill",
+        classification="categorical",
+        color_scheme_kind="qualitative", default_palette="Set1",
+        aliases=["error_matrix_map", "accuracy_map"],
+        accepted_artifact_types=["polygon_feature_set", "admin_aggregate_table",
+                                 "stats_table"],
+        recommended_components=["legend", "chart_panel", "uncertainty_panel"],
+        export_compatibility=["png", "pdf"],
+        chart_needs=["heat_matrix", "stacked_bar"],
+        fallback_model_id="categorical_thematic",
+        data_preconditions_zh=[
+            "要素携带 from/to 双类别字段；一致图斑 vs 混淆图斑分类表达",
+            "总体精度/Kappa 随 KPI 面板或 heat_matrix 披露",
+        ],
+        pitfalls_zh=[
+            "『一致』类必须低饱和底色，混淆类别用高辨识色 —— 反过来会让误差淹没",
+            "混淆矩阵热图（heat_matrix）是本模型的必备伴随图表",
+        ],
+        sources=[],
+    ),
+    m(
+        id="voronoi_partition_map", name_zh="Voronoi 分割图",
+        purpose_zh="按生成点构建泰森多边形并按所属生成点/数值着色的服务范围图",
+        geometry_kinds=["polygon"], maplibre_layer_type="fill",
+        classification="categorical",
+        color_scheme_kind="qualitative", default_palette="Pastel1",
+        aliases=["thiessen_map"],
+        accepted_artifact_types=["polygon_feature_set", "point_feature_set"],
+        recommended_components=["categorical_legend"],
+        export_compatibility=["png", "pdf"],
+        fallback_model_id="categorical_thematic",
+        data_preconditions_zh=[
+            "生成点集 → Voronoi 面 → 按点 id 或点数值着色",
+        ],
+        pitfalls_zh=[
+            "Voronoi 边界是欧氏最近语义，不是服务可达边界 —— 交通语义走"
+            " service_area_overlay",
+            "边界截断于数据范围 —— 范围外『最近设施』可能不同，须披露",
+        ],
+        sources=[_QGIS_URL],
+    ),
+    m(
+        id="suitability_constraint_overlay", name_zh="硬约束掩膜叠加",
+        purpose_zh="MCDA/选址的硬约束排除区（一票否决掩膜）二元叠加表达",
+        geometry_kinds=["polygon"], maplibre_layer_type="fill",
+        classification="categorical",
+        color_scheme_kind="qualitative", default_palette="Reds",
+        aliases=["constraint_mask_map", "exclusion_overlay"],
+        accepted_artifact_types=["polygon_feature_set", "admin_aggregate_table"],
+        recommended_components=["legend", "decision_panel"],
+        export_compatibility=["png", "pdf"],
+        fallback_model_id="proximity_overlay",
+        data_preconditions_zh=[
+            "二元掩膜语义：0=通过 1=否决（否决区高对比红色 + 透明度）",
+        ],
+        pitfalls_zh=[
+            "掩膜是布尔语义 —— 禁止用渐变色带表达（暗示了不存在的程度）",
+            "否决准则清单必须随 decision_panel 披露（哪条约束否了哪片）",
+        ],
+        sources=[],
     ),
 ]

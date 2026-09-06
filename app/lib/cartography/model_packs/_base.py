@@ -39,6 +39,11 @@ def m(
     pitfalls_zh: List[str] | None = None,
     sources: List[str] | None = None,
     deck_gl_layer: str = "", kepler_layer: str = "", qgis_renderer: str = "",
+    # ── V4（Design System）：模型级产品需求描述 ─────────────────────────
+    default_theme: str = "",
+    chart_needs: List[str] | None = None,
+    interaction_needs: List[str] | None = None,
+    data_preconditions_zh: List[str] | None = None,
 ) -> MapModel:
     """紧凑构造 MapModel（pack 文件可读性；字段语义见 MapModel）。"""
     return MapModel(
@@ -61,6 +66,10 @@ def m(
         export_compatibility=export_compatibility or [],
         geometry_layer_types=geometry_layer_types or {},
         fallback_model_id=fallback_model_id,
+        default_theme=default_theme,
+        chart_needs=chart_needs or [],
+        interaction_needs=interaction_needs or [],
+        data_preconditions_zh=data_preconditions_zh or [],
     )
 
 

@@ -135,6 +135,9 @@ PALETTE_KINDS: Dict[str, PaletteKind] = {
         PaletteKind(palette="Magma", kind="perceptual_uniform", colorblind_safe=True),
         PaletteKind(palette="Inferno", kind="perceptual_uniform", colorblind_safe=True),
         PaletteKind(palette="Plasma", kind="perceptual_uniform", colorblind_safe=True),
+        # V4：灰度（hillshade 预渲染 / 灰度打印诊断）
+        PaletteKind(palette="Gray", kind="sequential", colorblind_safe=True,
+                    note_zh="灰度带：hillshade 预渲染与黑白打印诊断参考"),
     ]
 }
 
@@ -566,6 +569,9 @@ def validate_model_library() -> List[str]:
 
     issues: List[str] = []
     known_palettes = set(COLOR_PALETTES) | set(NATIVE_HEATMAP_COLORS)
+    # V4：双变量色阵是独立语义族（非单色 ramp），登记为合法 default_palette
+    from app.lib.cartography.bivariate import BIVARIATE_MATRICES
+    known_palettes |= set(BIVARIATE_MATRICES)
     registry = get_map_model_registry()
 
     for model in registry._by_id.values():
