@@ -25,7 +25,7 @@ class TestCompilerStages:
     def test_fixed_stage_order(self):
         c = compile_workflow("成都小学的分布情况")
         assert [s.stage for s in c.stages] == list(COMPILER_STAGES)
-        assert len(c.stages) == 13
+        assert len(c.stages) == 14
 
     def test_deterministic_same_input_same_output(self):
         c1 = compile_workflow("成都各区小学数量是否均衡", profile=_PROFILE_POINTS)
