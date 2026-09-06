@@ -40,17 +40,34 @@ def test_every_algorithm_tool_candidate_is_a_registered_tool(registry_names):
     assert not dead, f"algorithm tool candidates not in registry: {dead}"
 
 
+def _planned_capabilities() -> set:
+    """能力注册表里 status=planned 的能力 id（诚实未实现，不伪装 native）。"""
+    from app.lib.gis.capabilities import iter_capability_packs
+
+    return {
+        c.id
+        for pack in iter_capability_packs()
+        for c in pack
+        if getattr(c, "status", "native") == "planned"
+    }
+
+
 def test_every_recipe_capability_resolves_to_a_live_tool(registry_names):
     from app.lib.gis.algorithm_resolver import get_algorithm_resolver
     from app.services.gis_harness.recipes import get_recipe_registry
 
     resolver = get_algorithm_resolver()
+    planned = _planned_capabilities()
     missing = set()
     for rid in get_recipe_registry().all_ids:
         recipe = get_recipe_registry().get(rid)
         for cap in (recipe.preferred_analysis or []) + (recipe.optional_analysis or []):
             resolution = resolver.resolve(cap, available_tools=registry_names)
             if resolution.status != "resolved":
+                # planned 能力允许出现在 optional_analysis（可选步骤、
+                # 诚实降级），但绝不允许出现在 preferred_analysis。
+                if cap in planned and cap in (recipe.optional_analysis or []):
+                    continue
                 missing.add((rid, cap))
     assert not missing, f"recipe capabilities without a live tool: {sorted(missing)}"
 
@@ -60,12 +77,15 @@ def test_derived_capability_tools_view_matches_recipe_vocabulary(registry_names)
     from app.services.gis_harness.recipes import get_recipe_registry
 
     derived = capability_tool_map()
+    planned = _planned_capabilities()
     recipe_caps = set()
     for rid in get_recipe_registry().all_ids:
         recipe = get_recipe_registry().get(rid)
         recipe_caps.update(recipe.preferred_analysis or [])
         recipe_caps.update(recipe.optional_analysis or [])
-    unmapped = recipe_caps - set(derived)
+    # planned 能力（诚实未实现、零工具候选）不进入派生视图 —— recipe 的
+    # optional_analysis 允许引用它们（可选步骤、运行期诚实降级）。
+    unmapped = recipe_caps - set(derived) - planned
     assert not unmapped, f"recipe capabilities missing from derived view: {sorted(unmapped)}"
     # 派生视图里的每个候选都必须是真实工具（不再是手写字典的幽灵名）
     dead = {
