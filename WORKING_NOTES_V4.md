@@ -147,3 +147,34 @@
 6. STAC online math = single path (bbox crop + ds_factor decimation + max_items=1), bounded-preview semantics.
 
 **Line refs**: env.py:28-46; reader.py:87-108(open/lifetime env),222-273(read_window),313-327(_budgeted_read); windowed.py:56-135(execute_windowed),138-173(overview_statistics); raster_windowed.py:163-293(writer),348-452(windowed_band_index); raster_grid.py:86-142(profile),293-337(decide_alignment),356-410(aligned_reader),428-451(budget); raster_tile_service.py:104-180(caches),183-411(render); fingerprint.py:43-82.
+
+## Review round 1 (2026-09-06) — findings and dispositions
+
+Six independent reviewers (architecture, distributed-systems, data-engineering,
+raster/vector, security, adversarial probes) over diff 544a09c..5488b35.
+
+| # | Severity | Finding | Disposition |
+|---|---|---|---|
+| DS-1 | CRITICAL | zero-delta reserve denied by unrelated dimensions → completable plans stall to deadline | fixed: limit checks skip zero deltas (budgets.reserve) |
+| ADV-1 | CRITICAL | derive_projection × spatial hop strips geometry → silent 0-row success | fixed: spatial-hop endpoints never projected |
+| DS-2 | MAJOR | deadline never escalated to in-flight nodes | fixed: sweep escalates to run-level cancel |
+| ADV-2 | MINOR | deadline eroded by one-time imports | fixed: deadline clock starts at scheduling |
+| ADV-3 | MAJOR | cost ordering ignored join chainability | fixed: enumeration restricted to connected permutations |
+| RV-4 | MAJOR | multi-band window budget used OUT dtype | fixed: per-band SOURCE dtype (reader parity) |
+| RV-9 | MAJOR | temporal metadata claimed ascending order falsely | fixed: honest `input_order_preserved` + ts fallback keys |
+| RV-14 | MAJOR | carrier silently nulled bad geometries | fixed: typed VectorCarrierEncodeError |
+| DE-1 | MAJOR | durable stats DB call could hang query hot path | fixed: side pool + 3s timeout + opportunistic prune |
+| ARCH-2/3/4 | MAJOR | ADR overpromised carrier seams / broadcast wiring / single-flight | fixed: wired publish+listener+describe single-flight; ADR wording aligned to as-built |
+| SEC-1 | MAJOR | broadcast listener called authority with wrong types (silent no-op) | fixed: [ref] + RefInvalidationReason; publish hook in ref_lifecycle; lifespan listener |
+| ~15 minor | MINOR | release clamps, scope teardown, dunder collisions, islice cap, streaming parity, colorinterp validation, strtree contract, WKB casing, doc drift, tools identity plumbing | all fixed (commit aa4abaf) |
+
+Adversarial probes that PASSED (no change): governor-denial convergence at
+deadline, SystemExit in operator, 30-run cache race, singleflight hammering,
+semi-join key typing, retry/deadline race, hostile broadcast payloads,
+unserializable bundle params.
+
+## Review round 2 (2026-09-06) — clean verification
+
+Two reviewers over `git show aa4abaf`: (1) fix-by-fix correctness + regression
+hunt incl. full suite re-run; (2) ADR/docs truth pass + security spot-check of
+new paths. Outcome recorded in the final PR summary.
