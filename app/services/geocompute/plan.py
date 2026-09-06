@@ -1,9 +1,10 @@
-"""统一 Geo 执行图契约（ADR-0096 D2）：ExecutionNode / ExecutionPlan。
+"""统一 Geo 执行图契约（ADR-0096 D2；ADR-0101 D2 扩展）：ExecutionNode / ExecutionPlan。
 
 这是 Data Plane 拥有的**低层执行计划**契约：
 - 可序列化（pydantic，additive 演进）；
 - 确定性指纹（semantic fingerprint 只含影响结果的字段 —— 类别、操作、
-  输入边、数据集指纹、参数、CRS 期望；估计值/策略/deadline 不参与）；
+  输入边、数据集指纹、参数、CRS 期望、载荷类型契约；估计值/策略/deadline
+  不参与），指纹前经 ``normalization.canonicalize`` 归一化；
 - 节点输出可按指纹复用（reuse policy 显式声明）。
 
 它不替代 WorkflowEngine（项目域、工具级运行时），而是可以被工具/工作流
@@ -18,8 +19,12 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
+from app.services.geocompute.normalization import canonical_dumps, normalize_crs_ref
+
 #: 节点输出指纹/复用存储的命名空间。行为语义变化时必须 bump（ADR-0089 惯例）。
-EXECUTION_PLAN_VERSION = 1
+#: V2（ADR-0101）：canonical 归一化进入指纹 + 载荷类型契约（produces/accepts）
+#: 参与语义指纹 —— 与 V1 的指纹值域不相交，旧条目自然失效。
+EXECUTION_PLAN_VERSION = 2
 
 
 class NodeCategory(str, Enum):
@@ -62,10 +67,54 @@ class NodeReusePolicy(str, Enum):
 
 
 class RetryPolicy(BaseModel):
-    """重试策略：只对 transient-safe 失败生效，次数硬上界。"""
+    """重试策略：只对 transient-safe 失败生效，次数硬上界。
+
+    V4（ADR-0101 D5）：有界指数退避；``jitter`` 仅在不需要确定性重放时
+    开启（默认开 —— 控制重试风暴；重放型执行应显式关闭）。
+    """
 
     max_attempts: int = Field(default=1, ge=1, le=4)
     retry_transient_only: bool = True
+    backoff_s: float = Field(default=0.05, ge=0, le=60.0)
+    backoff_multiplier: float = Field(default=2.0, ge=1.0, le=10.0)
+    max_backoff_s: float = Field(default=2.0, ge=0, le=300.0)
+    jitter: bool = True
+
+
+class PayloadKind(str, Enum):
+    """节点载荷类型契约（V4 §5 typed inputs/outputs 的最小诚实形式）。
+
+    与 ops 的 payload 真值对齐：features | rows | ref_id（session ref）|
+    raster_path | none。``ANY`` 仅用于 accepts（不过问上游类型）。
+    """
+
+    FEATURES = "features"
+    ROWS = "rows"
+    REF = "ref"
+    RASTER_PATH = "raster_path"
+    NONE = "none"
+    ANY = "any"
+
+
+class ResourceClass(BaseModel):
+    """节点资源类别（调度/路由提示，1..5；不参与语义指纹）。"""
+
+    memory: int = Field(default=1, ge=1, le=5)
+    cpu: int = Field(default=1, ge=1, le=5)
+    io: int = Field(default=1, ge=1, le=5)
+
+
+class LineageLink(BaseModel):
+    """到既有身份真相的 lineage 边（不建第二 lineage 存储，ADR-0101 D8）。
+
+    ``ref_id`` 是 ArtifactRef / DatasetVersion / session ref 的既有 id，
+    ``kind`` 声明其身份族；执行期 lineage 投影据此连接 ArtifactLineage。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    ref_id: str = Field(min_length=1, max_length=256)
+    kind: str = Field(default="artifact")  # artifact | dataset_version | ref
 
 
 class ResourceEstimate(BaseModel):
@@ -99,9 +148,9 @@ class CrsExpectation(BaseModel):
 
 
 class ExecutionNode(BaseModel):
-    """可执行节点：有界、可序列化、可指纹化。"""
+    """可执行节点：有界、可序列化、可指纹化（ADR-0101 D2 完整契约）。"""
 
-    node_id: str
+    node_id: str = Field(min_length=1, max_length=128)
     category: NodeCategory
     operation: str = ""
     inputs: list[str] = Field(default_factory=list)
@@ -116,12 +165,30 @@ class ExecutionNode(BaseModel):
     cancellable: bool = True
     locality_hint: Optional[str] = None
     description: Optional[str] = None
+    # ---- V4 additive（ADR-0101 D2）：契约补全，向后兼容（全部有默认值）----
+    #: 载荷类型契约：produces 声明输出形态；accepts 声明可接受的输入形态
+    #: （空 = 不过问；ANY = 任意）。校验期做边级兼容检查。
+    produces: Optional[PayloadKind] = None
+    accepts: list[PayloadKind] = Field(default_factory=list, max_length=8)
+    #: 资源类别（调度/路由提示；不参与语义指纹）。
+    resource_class: ResourceClass = Field(default_factory=ResourceClass)
+    #: 确定性声明：False 的节点禁止结果复用（校验期强制 reuse=DISALLOW）。
+    deterministic: bool = True
+    #: 已知上游内容指纹集（node_id → fingerprint）：checkpoint 校验 /
+    #: 部分重跑时验证缓存结果仍与上游一致。不参与语义指纹（可由图推导）。
+    upstream_fingerprints: dict[str, str] = Field(default_factory=dict, max_length=64)
+    #: 到既有身份真相的 lineage 边（不建第二 lineage 存储）。
+    lineage_inputs: list[LineageLink] = Field(default_factory=list, max_length=16)
+    #: 节点证据 schema（字段 → 类型名，≤32 项）：消费者契约声明。
+    evidence_schema: dict[str, str] = Field(default_factory=dict, max_length=32)
 
     def semantic_fingerprint(self) -> str:
         """确定性语义指纹：只含影响输出的字段。
 
-        排除 estimate/policy/deadline/reuse/locality —— 换执行策略不改变
-        结果语义；数据集指纹变化或参数变化 → 指纹变化 → 后代失效。
+        排除 estimate/policy/deadline/reuse/locality/resource_class/
+        deterministic/upstream_fingerprints/lineage/evidence_schema ——
+        换执行策略或调度提示不改变结果语义；数据集指纹、参数或载荷
+        类型契约变化 → 指纹变化 → 后代失效。
         """
         payload = {
             "v": EXECUTION_PLAN_VERSION,
@@ -130,10 +197,21 @@ class ExecutionNode(BaseModel):
             "inputs": sorted(self.inputs),
             "dataset_fingerprints": dict(sorted(self.dataset_fingerprints.items())),
             "parameters": self.parameters,
-            "crs": self.crs.model_dump() if self.crs else None,
+            "crs": self._normalized_crs(),
+            "produces": self.produces.value if self.produces else None,
+            "accepts": sorted(a.value for a in self.accepts),
         }
-        canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
+        canonical = canonical_dumps(payload)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+    def _normalized_crs(self) -> Optional[dict[str, Any]]:
+        """CRS 期望归一化（等价拼写 → 同一指纹）。"""
+        if self.crs is None:
+            return None
+        dumped = self.crs.model_dump()
+        if dumped.get("output_crs"):
+            dumped["output_crs"] = normalize_crs_ref(dumped["output_crs"])
+        return dumped
 
 
 class ExecutionPlan(BaseModel):
@@ -183,6 +261,11 @@ class NodeEvidence(BaseModel):
     retry_safe: Optional[bool] = None
     fingerprint: Optional[str] = None
     policy: Optional[str] = None
+    # ---- V4 additive（ADR-0101 D2/D5）：重试与 checkpoint 证据 ----
+    #: 每次失败尝试的 error_code 序列（≤ max_attempts 项；重试证据）。
+    failure_codes: list[str] = Field(default_factory=list, max_length=4)
+    #: 复用命中时：缓存条目的上游指纹是否与当前计划一致（stale 拒绝证据）。
+    checkpoint_verified: Optional[bool] = None
 
 
 class ExecutionRunStatus(str, Enum):

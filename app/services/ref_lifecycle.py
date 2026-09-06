@@ -56,12 +56,17 @@ def invalidate_ref_caches(
     ref_ids: list[str],
     reason: RefInvalidationReason = RefInvalidationReason.REPLACE,
     include_payload_cache: bool = True,
+    publish_broadcast: bool = True,
 ) -> int:
     """Drop every process-local projection of the given refs.
 
     The single invalidation contract (V5-C). Both backends route every
     write/evict/delete path through here. Returns the number of ref entries
     invalidated (for tests/observability).
+
+    ``publish_broadcast``: 本地失效向其他进程发布通知（ADR-0101 D11）。
+    广播监听路径（cache_broadcast._apply_event）必须传 **False** —— 否则
+    收到通知 → 再失效 → 再发布 → 无限广播风暴（round-2 评审 CRITICAL）。
     """
     from app.services.mvt import spatial_index_cache, tile_lru_cache
 
@@ -73,6 +78,16 @@ def invalidate_ref_caches(
             from app.services.ref_payload_cache import ref_payload_cache
             ref_payload_cache.invalidate(session_id, ref_id)
         _emit(RefLifecycleEvent.REF_INVALIDATED, session_id, ref_id, reason.value)
+        # ADR-0101 D11：向其他进程**通知**本次失效（best-effort，无载荷；
+        # 本模块仍是唯一失效权威 —— 通知丢失不影响正确性）。监听路径
+        # 传入 publish_broadcast=False 打断「失效→发布→收到→失效」环。
+        if publish_broadcast:
+            try:
+                from app.services.cache_broadcast import broadcast_ref_invalidation
+
+                broadcast_ref_invalidation(session_id, ref_id, reason.value)
+            except Exception:  # noqa: BLE001 - 通知绝不阻断失效路径
+                pass
         count += 1
     return count
 

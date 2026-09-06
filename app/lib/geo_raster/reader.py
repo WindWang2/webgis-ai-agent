@@ -237,8 +237,8 @@ class RasterReader:
         new, so it ships with the guard instead of inheriting the legacy
         path's unbounded window allowance. Out-of-range band indices raise.
         Multi-band output of :func:`execute_windowed` / WindowedRasterWriter
-        is a documented extension point, not a wired capability (see
-        windowed.execute_windowed).
+        is a wired capability since ADR-0101 D9 (see
+        windowed.execute_windowed, ``bands=``).
         """
         from rasterio.windows import Window
 

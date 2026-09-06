@@ -49,6 +49,9 @@ class DatasetStatistics(BaseModel):
     revision_strength: str = "weak"               # strong | weak
     collected_at: Optional[str] = None
     collector: str = "descriptor"                 # descriptor | postgis_pgstats | geoparquet_footer
+    # ---- V4 additive（ADR-0101 D6）：footer/文件级事实 ----
+    row_group_count: Optional[int] = Field(default=None, ge=0)
+    total_bytes: Optional[int] = Field(default=None, ge=0)  # 压缩后文件字节
 
     def column(self, name: str) -> Optional[ColumnStatistics]:
         for c in self.columns:
@@ -87,8 +90,11 @@ def statistics_from_descriptor(descriptor: Any) -> Optional[DatasetStatistics]:
         has_spatial_index=_coerce_bool(meta.get("has_geometry_index")),
         resolution=_coerce_float(meta.get("resolution")),
         overview_levels=_coerce_int(meta.get("overview_levels")),
+        row_group_count=_coerce_int(meta.get("num_row_groups")),
         revision_strength=meta.get("revision_strength", "weak"),
-        collector="descriptor",
+        # ADR-0101 D6：采集器由 descriptor 显式标注（geoparquet footer 生产者），
+        # 缺省仍是 descriptor 收割。
+        collector=meta.get("stats_collector") or "descriptor",
     )
     col_stats = meta.get("column_statistics")
     if isinstance(col_stats, list):
@@ -122,11 +128,11 @@ def _coerce_bbox(v: Any) -> Optional[List[float]]:
 
 
 def statistics_for_request(descriptor: Any, fingerprint: Optional[str] = None) -> Optional[DatasetStatistics]:
-    """请求期统计收割（G-F3 生产接线）：缓存命中 → descriptor 收割 → None。
+    """请求期统计收割（G-F3 生产接线；V4 增加持久层旁路）。
 
-    planner 的调用方（adapter.query 等）用它把真实统计送进 ``plan_query``；
-    未命中且有新统计时回填进程级 TTL 缓存。统计是性能提示 —— 收割失败
-    一律静默返回 None（planner 落回 V2 常数，行为可预期）。
+    进程 TTL 缓存 → descriptor 收割 → **durable store**（advisory，
+    fail-open）→ None。descriptor 有新鲜统计时回填两级缓存。统计是
+    性能提示 —— 任何一级失败都静默降级（planner 落回 V2 常数）。
     """
     try:
         fp = str(fingerprint or getattr(descriptor, "id", "") or "")
@@ -138,7 +144,13 @@ def statistics_for_request(descriptor: Any, fingerprint: Optional[str] = None) -
         stats = statistics_from_descriptor(descriptor)
         if stats is not None:
             _store.put(stats)
-        return stats
+            _durable_store.save(stats)
+            return stats
+        durable = _durable_store.load(fp)
+        if durable is not None:
+            _store.put(durable)
+            return durable
+        return None
     except Exception:  # noqa: BLE001 - 统计绝不阻断查询路径
         return None
 
@@ -226,3 +238,249 @@ def collect_postgis_statistics(fetch_all: Any, schema: str, table: str, limit_co
         except (TypeError, ValueError, IndexError):
             continue
     return out
+
+
+def collect_geoparquet_statistics(path: str, dataset_fingerprint: str) -> Optional[DatasetStatistics]:
+    """GeoParquet footer 统计（V4：兑现 V3 声明过的 collector，诚实生产者）。
+
+    只读 footer/metadata，**绝不读列数据**：
+    - pyarrow.parquet 可用时：num_rows、row-group 数、列名/类型、文件级
+      geo metadata 的 bbox（GeoParquet 1.1 ``geo`` covering，存在才填）；
+    - 否则回退 pyogrio.read_info（features_count / geometry_type / fields，
+      零要素读取）。
+    非本地路径诚实返回 None（footer 统计先覆盖本地文件场景）。
+    """
+    if not path or path.startswith(("http://", "https://", "s3://", "gs://")):
+        return None
+    row_count: Optional[int] = None
+    geometry_type: Optional[str] = None
+    extent: Optional[List[float]] = None
+    columns: List[ColumnStatistics] = []
+    row_group_count: Optional[int] = None
+    total_bytes: Optional[int] = None
+    try:
+        try:
+            import pyarrow.parquet as pq  # type: ignore
+
+            pf = pq.ParquetFile(path)
+            md = pf.metadata
+            row_count = int(md.num_rows)
+            row_group_count = int(md.num_row_groups)
+            total_bytes = int(getattr(md, "serialized_size", 0) or 0) or None
+            names = [md.schema.column(i).name for i in range(md.num_columns)]
+            geo_extent = _geoparquet_covering_bbox(pf)
+            if geo_extent is not None:
+                extent = geo_extent
+        except ImportError:
+            import pyogrio  # type: ignore
+
+            info = pyogrio.read_info(path)
+            row_count = _coerce_int(int(info.get("features") or 0)) if info.get("features") is not None else None
+            geometry_type = info.get("geometry_type")
+            names = [f.get("name") for f in (info.get("fields") or [])]
+    except Exception as exc:  # noqa: BLE001 - 统计收集绝不阻断查询路径
+        logger.debug("[statistics] geoparquet footer unavailable for %s: %s", path, exc)
+        return None
+    for name in names or []:
+        if isinstance(name, str) and name:
+            # footer 只证明列存在；null/NDV 未知 → 每列 honest assumption。
+            columns.append(ColumnStatistics(name=name, confidence="assumption"))
+    stats = DatasetStatistics(
+        dataset_fingerprint=str(dataset_fingerprint),
+        source_type="geoparquet",
+        row_count=row_count,
+        extent=extent,
+        geometry_type=geometry_type,
+        columns=columns,
+        row_group_count=row_group_count,
+        total_bytes=total_bytes,
+        revision_strength="strong",  # footer 是文件内容元数据：内容变 → 指纹变
+        collector="geoparquet_footer",
+    )
+    return stats
+
+
+def _geoparquet_covering_bbox(parquet_file: Any) -> Optional[List[float]]:
+    """读 GeoParquet 文件级 ``geo`` metadata 的 bbox（存在才填，绝不猜）。"""
+    try:
+        kv = parquet_file.metadata.metadata or {}
+        raw = kv.get(b"geo") or kv.get("geo")
+        if not raw:
+            return None
+        import json
+
+        geo = json.loads(raw)
+        bbox = geo.get("bbox") if isinstance(geo, dict) else None
+        return _coerce_bbox(bbox)
+    except Exception:  # noqa: BLE001 - metadata 解析失败 = 没有这个事实
+        return None
+
+
+class DurableStatisticsStore:
+    """统计的 **advisory** DB 持久层（ADR-0101 D6，fail-open）。
+
+    - 读：按 dataset 指纹取最新行；过期行（expires_at 已过）拒绝并视为无。
+    - 写：INSERT 新行（append-only；旧行由 prune 有界清理），绝不 UPDATE
+      既有行的 stats —— stale 语义 = 时间戳比较，不是改写。
+    - 所有 DB 故障吞掉并回 None/False：统计绝不阻断查询，绝不成为真相。
+    - **超时防护**（评审 MAJOR F1）：DB 调用在旁路线程执行并有硬超时 ——
+      黑洞式 DB 只会损失统计（回退无统计基线），绝不阻塞查询热路径。
+      病态挂死会占用旁路线程（最多 2 个），后续统计调用快速降级。
+    """
+
+    #: 旁路 DB 调用的硬超时（秒）。
+    DB_TIMEOUT_S = 3.0
+
+    def __init__(
+        self,
+        *,
+        ttl_s: float = 3600.0,
+        max_rows: int = 10_000,
+        prune_batch: int = 500,
+    ):
+        self._ttl_s = ttl_s
+        self._max_rows = max_rows
+        self._prune_batch = prune_batch
+        self._pool: Optional[Any] = None
+        self._pool_lock = threading.Lock()
+        self._save_count = 0
+
+    def _executor(self) -> Any:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with self._pool_lock:
+            if self._pool is None:
+                self._pool = ThreadPoolExecutor(
+                    max_workers=2, thread_name_prefix="stats-db")
+            return self._pool
+
+    def _call_with_timeout(self, fn, *args):
+
+        return self._executor().submit(fn, *args).result(timeout=self.DB_TIMEOUT_S)
+
+    def _session(self) -> Any:
+        from app.core.database import SessionLocal
+
+        return SessionLocal()
+
+    def load(self, dataset_fingerprint: str, *, now: Optional[Any] = None) -> Optional[DatasetStatistics]:
+        from datetime import datetime, timezone
+
+        try:
+            from app.models.data_fabric import DatasetStatisticsRecord
+
+            cutoff = now or datetime.now(timezone.utc).replace(tzinfo=None)
+
+            def _query_latest():
+                # 会话在**旁路线程内**创建并关闭（round-2 评审 MAJOR：
+                # 会话在调用线程创建/关闭而查询在池线程执行 = 跨线程
+                # 共用非线程安全的 Session/连接 → 连接池投毒风险）。
+                with self._session() as db:
+                    return (
+                        db.query(DatasetStatisticsRecord)
+                        .filter(DatasetStatisticsRecord.dataset_fingerprint == str(dataset_fingerprint))
+                        .order_by(DatasetStatisticsRecord.collected_at.desc())
+                        .limit(1)
+                        .first()
+                    )
+
+            row = self._call_with_timeout(_query_latest)
+            if row is None:
+                return None
+            if row.expires_at is not None and row.expires_at < cutoff:
+                return None  # 显式过期 = 无统计（诚实 stale 语义）
+            return _stats_from_row(row)
+        except Exception as exc:  # noqa: BLE001 - advisory 层 fail-open（含超时）
+            logger.debug("[statistics] durable load unavailable: %s", exc)
+            return None
+
+    def save(self, stats: DatasetStatistics) -> bool:
+        from datetime import datetime, timedelta, timezone
+
+        try:
+            from app.models.data_fabric import DatasetStatisticsRecord
+
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+            def _insert() -> None:
+                with self._session() as db:
+                    db.add(DatasetStatisticsRecord(
+                        dataset_fingerprint=stats.dataset_fingerprint[:64],
+                        source_type=stats.source_type,
+                        collector=stats.collector,
+                        confidence=stats.confidence,
+                        revision_strength=stats.revision_strength,
+                        stats_json=stats.model_dump(mode="json"),
+                        collected_at=now,
+                        expires_at=now + timedelta(seconds=self._ttl_s),
+                    ))
+                    db.commit()
+
+            ok = self._call_with_timeout(_insert)
+            # 评审 MINOR F2：机会式有界清理（每 100 次写入触发一次，
+            # 失败静默 —— 让「有界保留」真正发生而不需要外部调度）。
+            self._save_count += 1
+            if self._save_count % 100 == 0:
+                try:
+                    self.prune()
+                except Exception:  # noqa: BLE001
+                    pass
+            return bool(ok is None)
+        except Exception as exc:  # noqa: BLE001 - advisory 层 fail-open
+            logger.debug("[statistics] durable save unavailable: %s", exc)
+            return False
+
+    def prune(self, *, now: Optional[Any] = None) -> int:
+        """有界清理：过期行 + 超出保留上限的旧行（best-effort）。"""
+        from datetime import datetime, timezone
+
+        try:
+            from app.core.database import SessionLocal
+            from app.models.data_fabric import DatasetStatisticsRecord
+            from sqlalchemy import delete
+
+            cutoff = now or datetime.now(timezone.utc).replace(tzinfo=None)
+            removed = 0
+            with SessionLocal() as db:
+                expired = [
+                    r[0] for r in db.query(DatasetStatisticsRecord.id).filter(
+                        DatasetStatisticsRecord.expires_at.isnot(None),
+                        DatasetStatisticsRecord.expires_at < cutoff,
+                    ).limit(self._prune_batch).all()
+                ]
+                if expired:
+                    db.execute(delete(DatasetStatisticsRecord).where(
+                        DatasetStatisticsRecord.id.in_(expired)))
+                    removed += len(expired)
+                # 保留上限：按 collected_at 倒序保留 max_rows，多余删除。
+                extra = [
+                    r[0] for r in db.query(DatasetStatisticsRecord.id).order_by(
+                        DatasetStatisticsRecord.collected_at.desc()
+                    ).offset(self._max_rows).limit(self._prune_batch).all()
+                ]
+                if extra:
+                    db.execute(delete(DatasetStatisticsRecord).where(
+                        DatasetStatisticsRecord.id.in_(extra)))
+                    removed += len(extra)
+                db.commit()
+            return removed
+        except Exception as exc:  # noqa: BLE001 - advisory 层 fail-open
+            logger.debug("[statistics] durable prune unavailable: %s", exc)
+            return 0
+
+
+def _stats_from_row(row: Any) -> Optional[DatasetStatistics]:
+    try:
+        payload = row.stats_json
+        if not isinstance(payload, dict):
+            return None
+        stats = DatasetStatistics.model_validate(payload)
+        # 采集器/置信度以行为准（行是持久事实）。
+        stats.collector = str(getattr(row, "collector", stats.collector))
+        return stats
+    except Exception:  # noqa: BLE001
+        return None
+
+
+#: 进程级 durable store 单例（与 _store 同一惯例；TTL 为 DB 侧行保留期）。
+_durable_store = DurableStatisticsStore()
