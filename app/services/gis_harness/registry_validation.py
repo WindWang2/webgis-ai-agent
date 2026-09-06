@@ -108,6 +108,24 @@ def validate_gis_library(
         for carto in [recipe.primary_cartography] + list(recipe.secondary_cartography):
             if carto and models.resolve(carto) is None:
                 issues.append(f"recipe {rid}: cartography '{carto}' not in MapModelRegistry")
+        # Workflow V2（Goal C / R1-A7）：workflow 画像静态完整性校验 —— 角色
+        # 词表 / 义务 precondition 注册存在性 / 降级分类 / artifact 类型引用
+        # 全部在此收口（此前是死代码，typo 的 precondition id 会静默降级为
+        # unknown，科学门槛无痕消失）。
+        wf_profile = getattr(recipe, "workflow", None)
+        if wf_profile is not None:
+            from app.lib.gis.scientific_preconditions import precondition_exists
+            from app.services.gis_harness.workflow_schema import validate_workflow_profile
+
+            issues.extend(
+                f"recipe {rid}: {violation}"
+                for violation in validate_workflow_profile(
+                    wf_profile,
+                    capability_exists=capabilities.has,
+                    artifact_type_exists=artifacts.has,
+                    precondition_exists=precondition_exists,
+                )
+            )
 
     # ── ProductTemplate：recipe / map model / capability / layer_type ──
     for tid in products.all_ids:

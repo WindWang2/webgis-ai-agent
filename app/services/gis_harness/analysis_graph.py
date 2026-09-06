@@ -131,7 +131,7 @@ def _goal_node(
             })
         if len(warnings) >= _MAX_WARNINGS:
             break
-    return {
+    goal_block: Dict[str, Any] = {
         "id": "goal",
         "kind": "goal",
         "label": _bounded(goal, 200),
@@ -143,6 +143,31 @@ def _goal_node(
         "replaced": bool(getattr(plan, "replaced", False)),
         "methodology_warnings": warnings,
     }
+    # Workflow V2（Goal C / C8）：workflow 契约摘要作为 goal 节点的可解释
+    # 扩展 —— 数据角色绑定/科学义务/阻断项随图可追踪（有界、projection，
+    # 事实源仍是 chapter.workflow_contract，零第二真相）。
+    wf_contract = (chapter or {}).get("workflow_contract")
+    if isinstance(wf_contract, dict) and wf_contract:
+        goal_block["workflow"] = {
+            "domain": str(wf_contract.get("domain") or ""),
+            "workflow_family": str(wf_contract.get("workflow_family") or ""),
+            "roles": [
+                {"role": str(r.get("role") or ""), "status": str(r.get("status") or ""),
+                 "source_capability": str(r.get("source_capability") or "")[:48]}
+                for r in (wf_contract.get("roles") or [])[:10]
+                if isinstance(r, dict)
+            ],
+            "obligations": [
+                {"obligation_id": str(o.get("obligation_id") or "")[:48],
+                 "status": str(o.get("status") or ""),
+                 "warning_code": str(o.get("warning_code") or "")[:48]}
+                for o in (wf_contract.get("obligations") or [])[:10]
+                if isinstance(o, dict)
+            ],
+            "method_blockers": [str(b)[:48] for b in (wf_contract.get("method_blockers") or [])[:6]],
+            "data_blockers": [str(b)[:48] for b in (wf_contract.get("data_blockers") or [])[:6]],
+        }
+    return goal_block
 
 
 def build_analysis_graph(

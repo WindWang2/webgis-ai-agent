@@ -19,6 +19,11 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from app.services.gis_harness.workflow_schema import (
+    RECIPE_SCHEMA_VERSION,
+    WorkflowProfile,  # noqa: F401 - re-export 供 recipe packs / 测试使用
+)
+
 GeometryType = Literal["Point", "MultiPoint", "LineString", "MultiLineString",
                        "Polygon", "MultiPolygon", "GeometryCollection"]
 
@@ -74,6 +79,12 @@ class CartographyRecipe(BaseModel):
     validation_rules: List[str] = []
     export_profile: Dict[str, Any] = Field(default_factory=dict)
     priority: int = 50                  # 同分候选时的稳定排序
+    # ── V2（Goal C / ADR-0101）：Workflow Recipe DSL 扩展（additive）────
+    # schema_version=1 为 V1 seed 语义；带 workflow 画像的 recipe 声明 V2。
+    schema_version: int = 1
+    # 工作流画像：数据角色 / 科学义务 / 完成契约 / 语义回退 / 专业关键词。
+    # None = 纯 V1 制图 recipe，选择与规划行为与历史完全一致。
+    workflow: Optional[WorkflowProfile] = None
 
 
 class DisabledElement(BaseModel):
@@ -88,6 +99,11 @@ class FallbackDecision(BaseModel):
     to_element: str = ""
     reason_code: str
     evidence: Dict[str, Any] = Field(default_factory=dict)
+    # V2（Goal C / C6）：语义降级分类（equivalent/approximation/proxy/
+    # degraded/not_allowed，与算法层 fallback_semantics 同词表）与用户可见
+    # 披露 —— additive，旧记录两字段缺省为空，消费方按「空 = 未声明」处理。
+    downgrade_class: str = ""
+    disclosure: str = ""
 
 
 class EligibilityReport(BaseModel):
@@ -678,12 +694,45 @@ class RecipeRegistry:
         self._by_id: Dict[str, CartographyRecipe] = {}
         self._by_task: Dict[str, List[CartographyRecipe]] = {}
         self._lock_ids: set = set()
+        # V2（Goal C）：专业关键词倒排 + 领域索引 + 内容指纹缓存。
+        # 在 register 时一次性构建（immutable registry projection，查询
+        # O(命中数)，避免每 turn O(all recipes × all keywords) 重扫）。
+        self._by_domain: Dict[str, List[CartographyRecipe]] = {}
+        self._keyword_index: Dict[str, List[CartographyRecipe]] = {}
+        self._ascii_keywords: set = set()
+        self._content_fps: Dict[str, str] = {}
 
     def load_builtins(self) -> None:
         self._by_id.clear()
         self._by_task.clear()
+        self._by_domain.clear()
+        self._keyword_index.clear()
+        self._ascii_keywords.clear()
+        self._content_fps.clear()
         for recipe in SEED_RECIPES:
             self.register(recipe)
+        # V2 领域包（Goal C / C2）：seed 之外的专业工作流知识库。注册顺序
+        # 决定性（包内按声明序、包间按模块名序），重复 id 仍按 keep-first
+        # ——seed 优先，包之间先注册者胜（确定性问题可由 parity 测试锁定）。
+        # R1-B3：逐模块加载并 fail-loud —— 此前整段一个 except，包 #13 崩溃
+        # 会静默留下 1-12 的半量知识库继续服役。语义知识库不完整必须启动期
+        # 显性失败，不得退化服役。
+        import importlib
+
+        from app.services.gis_harness.recipe_packs import PACK_MODULES, _BASE
+        failed_modules: List[str] = []
+        for module_name in PACK_MODULES:
+            try:
+                module = importlib.import_module(_BASE + module_name)
+                for recipe in getattr(module, "RECIPES", []):
+                    self.register(recipe)
+            except Exception as e:  # noqa: BLE001 - 收集后统一 fail loud
+                failed_modules.append(f"{module_name}: {e}")
+        if failed_modules:
+            raise RuntimeError(
+                "recipe packs 加载失败（知识库不完整，拒绝退化服役）："
+                + "; ".join(failed_modules)
+            )
 
     def register(self, recipe: CartographyRecipe) -> None:
         if recipe.id in self._by_id:
@@ -694,6 +743,20 @@ class RecipeRegistry:
         self._by_id[recipe.id] = recipe
         for task in recipe.intent_tasks:
             self._by_task.setdefault(task, []).append(recipe)
+        wf = recipe.workflow
+        if wf is not None:
+            self._by_domain.setdefault(wf.domain or "general", []).append(recipe)
+            for kw in list(wf.keywords_zh) + list(wf.keywords_en):
+                key = kw.strip().lower()
+                if key:
+                    self._keyword_index.setdefault(key, []).append(recipe)
+                    if key.isascii() and key.isalnum():
+                        # R1-A5/B1：纯 ASCII 词必须整词命中（"sar" 不得命中
+                        # "caesar salad"；与 intent.py 的 lookaround 方案同一
+                        # 红线）。非 ASCII（中文）词保持子串语义。
+                        self._ascii_keywords.add(key)
+        from app.services.gis_harness.workflow_schema import recipe_content_fingerprint
+        self._content_fps[recipe.id] = recipe_content_fingerprint(recipe)
 
     def get(self, recipe_id: str) -> Optional[CartographyRecipe]:
         return self._by_id.get(recipe_id)
@@ -713,6 +776,99 @@ class RecipeRegistry:
     def count(self) -> int:
         return len(self._by_id)
 
+    def domains(self) -> List[str]:
+        """已注册领域包名（排序，catalog/文档生成用）。"""
+        return sorted(self._by_domain.keys())
+
+    def recipes_for_domain(self, domain: str) -> List[CartographyRecipe]:
+        """领域内 recipe（注册序，确定性）。"""
+        return list(self._by_domain.get(domain, []))
+
+    def capability_ids(self) -> List[str]:
+        """全部 recipe 引用的 capability id 并集（排序）。"""
+        caps: set = set()
+        for recipe in self._by_id.values():
+            caps.update(getattr(recipe, "preferred_analysis", None) or [])
+            caps.update(getattr(recipe, "optional_analysis", None) or [])
+            for caps_list in (getattr(recipe, "task_optional_analysis", None) or {}).values():
+                caps.update(caps_list or [])
+            wf = getattr(recipe, "workflow", None)
+            if wf is not None:
+                for req in getattr(wf, "data_roles", []) or []:
+                    if req.capability_hint:
+                        caps.add(req.capability_hint)
+        return sorted(caps)
+
+    def content_fingerprint(self) -> str:
+        """registry 级内容指纹：per-recipe 指纹的 SHA256（C12）。
+
+        workflow 语义变化必然改变本指纹 → 经 runtime manifest 投影传导到
+        plan stale 检测（复用既有 manifest 体系，不另造第二套 manifest）。
+        """
+        import hashlib
+        payload = ";".join(
+            f"{rid}={self._content_fps.get(rid, '')}" for rid in sorted(self._content_fps)
+        )
+        return hashlib.sha256(payload.encode("utf-8"), usedforsecurity=False).hexdigest()
+
+    def _keyword_matches(self, keyword: str, lowered_query: str) -> bool:
+        """关键词命中判定：中文子串；纯 ASCII 词整词（字母数字边缘判定，
+        R1-A5/B1：「sar」不得命中「caesar salad」，与 intent.py 的
+        lookaround 方案同一红线）。"""
+        if keyword not in self._ascii_keywords:
+            return keyword in lowered_query
+        # 词缘只看 ASCII 字母（与 intent.py 的 (?<![a-zA-Z]) 方案完全一致，
+        # R2-5：数字邻接如 sar2 仍命中 —— intent 规则已路由 task，关键词层
+        # 不得再分叉）；汉字邻接不算词内（「看看sar」应命中），ASCII 字母
+        # 邻接才算词内（「caesar」不命中 sar）。
+        ascii_letters = "abcdefghijklmnopqrstuvwxyz"
+        hits = 0
+        start = lowered_query.find(keyword)
+        while start != -1:
+            end = start + len(keyword)
+            before = lowered_query[start - 1] if start > 0 else " "
+            after = lowered_query[end] if end < len(lowered_query) else " "
+            if before not in ascii_letters and after not in ascii_letters:
+                hits += 1
+            start = lowered_query.find(keyword, start + 1)
+        return hits > 0
+
+    def content_fingerprint_of(self, recipe_id: str) -> str:
+        """单 recipe 内容指纹（registry 缓存；runtime manifest 投影复用）。
+
+        缓存未命中（只可能来自绕过 register() 的 _by_id 改写）时现场计算，
+        绝不静默返回空指纹 —— 空串会无声搅动 manifest 指纹 → 假 stale。
+        """
+        fp = self._content_fps.get(recipe_id)
+        if fp is None:
+            recipe = self._by_id.get(recipe_id)
+            if recipe is None:
+                return ""
+            from app.services.gis_harness.workflow_schema import (
+                recipe_content_fingerprint,
+            )
+            fp = recipe_content_fingerprint(recipe)
+        return fp
+
+    def keyword_hits(self, query: str) -> List[CartographyRecipe]:
+        """query 命中的专业关键词 recipe（去重，命中关键词多者优先）。
+
+        供 select_candidates 的 keyword 路由层与 compiler 阶段 4 使用。
+        """
+        if not query:
+            return []
+        low = query.lower()
+        hit_count: Dict[int, int] = {}
+        hit_recipes: Dict[int, CartographyRecipe] = {}
+        for kw, recipes in self._keyword_index.items():
+            if self._keyword_matches(kw, low):
+                for recipe in recipes:
+                    hit_count.setdefault(recipe.id, 0)
+                    hit_count[recipe.id] += 1
+                    hit_recipes[recipe.id] = recipe
+        ordered = sorted(hit_recipes.values(), key=lambda r: (-hit_count[r.id], r.id))
+        return ordered
+
     def select_candidates(
         self,
         intent,
@@ -721,24 +877,27 @@ class RecipeRegistry:
     ) -> List[CartographyRecipe]:
         """按 intent 选择候选 recipe（确定性排序）。
 
-        排序键（稳定六元组）：
+        排序键（稳定七元组）：
             1. geometry 期望失配（#781：geometry_expectation=='raster' 时
                非栅格面族候选全部后置——栅格主体绝不推荐 POI 热力族）
             2. task 精确命中
-            3. 显式制图意图（图末尾的 aggregate_grid / proportional_symbol
+            3. **专业关键词命中**（V2/Goal C：recipe.workflow 关键词与
+               query 子串匹配，命中多者优先。无 workflow 的候选该层恒 0
+               ——纯加法层，V1 候选排序不变）
+            4. 显式制图意图（图末尾的 aggregate_grid / proportional_symbol
                等加法信号）是否命中 recipe.intent_cartography
-            4. cartography_intents 交集多
-            5. 项目验证加成（ADR-0069 / spec 开放问题 3）：本项目
+            5. cartography_intents 交集多
+            6. 项目验证加成（ADR-0069 / spec 开放问题 3）：本项目
                recipe_outcome 事实 ACTIVE 的 recipe 前置——同语义信号下
                优先复用本项目已验证的制图方法。放在 priority 之前：
                项目证据比静态种子优先级更有资格定序。
-            6. priority 小（同分稳定排序）
+            7. priority 小（同分稳定排序）
 
         显式信号那一层解决「同一 distribution_overview 任务下，宽口径
         recipe 交集计数把用户明确的形态词请求压掉」的优先级错置；其余
         回归锚（Golden Case A/D/E）保持原有行为。
 
-        ``project_verified`` 为 None（无项目上下文）时第 5 层恒 0，
+        ``project_verified`` 为 None（无项目上下文）时第 6 层恒 0，
         排序与既有行为完全一致——记忆只在本项目内改变起点（决策 1/2）。
         """
         task = getattr(intent, "task", "")
@@ -753,6 +912,21 @@ class RecipeRegistry:
             if candidate in cartography:
                 explicit = candidate
                 break
+        # V2 keyword 路由层：一次倒排查询，避免每候选全文扫描。
+        keyword_scores: Dict[str, int] = {}
+        query = str(getattr(intent, "query", "") or "")
+        if query:
+            low = query.lower()
+            for kw, recipes in self._keyword_index.items():
+                if self._keyword_matches(kw, low):
+                    for recipe in recipes:
+                        keyword_scores[recipe.id] = keyword_scores.get(recipe.id, 0) + 1
+        # V1 seed 服务的任务集合：V2 recipe 与 V1 seed 竞争「同一通用任务」
+        # 时才有资历压制；新任务族（无 V1 seed）V2 之间正常路由。
+        v1_served_tasks = {
+            t for r in self._by_id.values() if r.workflow is None
+            for t in r.intent_tasks
+        }
         scored: List[tuple] = []
         for recipe in self._by_id.values():
             task_hit = task in recipe.intent_tasks
@@ -768,9 +942,23 @@ class RecipeRegistry:
             cart_set = set(recipe.intent_cartography or [])
             explicit_hit = bool(explicit and explicit in cart_set)
             cart_hit = len(cartography & cart_set)
+            kw_hits = keyword_scores.get(recipe.id, 0)
+            v2_generic_penalty = (
+                1 if (recipe.workflow is not None and kw_hits == 0) else 0
+            )
+            # seed_seniority：仅当本任务已有 V1 seed 服务时，V2 后置 ——
+            # 通用短语（「各区小学数量」「地表覆盖分布」）保持历史产品族；
+            # 新任务族（terrain/watershed/sar/autocorrelation/trend/route）
+            # 没有 V1 seed，V2 候选不受压制，由关键词/交集正常路由。
+            seed_seniority = (
+                1 if (recipe.workflow is not None and task in v1_served_tasks) else 0
+            )
             score = (
                 geometry_mismatch,
+                seed_seniority,
                 0 if task_hit else 1,
+                v2_generic_penalty,
+                -kw_hits,
                 0 if (explicit is not None and explicit_hit) else (
                     1 if explicit is not None else 0
                 ),
@@ -790,8 +978,12 @@ _registry: Optional[RecipeRegistry] = None
 def get_recipe_registry() -> RecipeRegistry:
     global _registry
     if _registry is None:
-        _registry = RecipeRegistry()
-        _registry.load_builtins()
+        # R2-2：先构建后赋值 —— 加载失败（知识库不完整）时不留半量单例，
+        # 每次访问重新抛错；生产 startup 的 try/except 只能记日志，不能把
+        # 半量 registry 当作健康实例缓存下来静默服役。
+        candidate = RecipeRegistry()
+        candidate.load_builtins()
+        _registry = candidate
     return _registry
 
 
@@ -812,4 +1004,6 @@ __all__ = [
     "get_recipe_registry",
     "reset_recipe_registry",
     "check_eligibility",
+    "WorkflowProfile",       # V2 re-export（recipe packs / 测试 / 文档用）
+    "RECIPE_SCHEMA_VERSION",
 ]
