@@ -31,17 +31,23 @@ class ScopeKind(str, Enum):
 
 
 class BudgetLimits(BaseModel):
-    """作用域限额（None = 该维不在此作用域设限）。"""
+    """作用域限额（None = 该维不在此作用域设限）。
+
+    ``max_concurrency``（ADR-0101 D3/D10）：该作用域链上同时占用的
+    execution 槽位上界 —— 调度器的 weighted admission 以它为背压源。
+    """
 
     max_rows: Optional[int] = Field(default=None, ge=1)
     max_bytes: Optional[int] = Field(default=None, ge=1)
     max_nodes: Optional[int] = Field(default=None, ge=1)
+    max_concurrency: Optional[int] = Field(default=None, ge=1)
 
 
 class ScopeUsage(BaseModel):
     rows: int = 0
     bytes: int = 0
     nodes: int = 0
+    concurrency: int = 0
 
 
 class _Scope:
@@ -74,11 +80,25 @@ class ResourceGovernor:
         scope_id: str,
         limits: Optional[BudgetLimits] = None,
     ) -> str:
-        """幂等获取或创建子作用域（session 级挂载用；id 由调用方稳定派生）。"""
-        existing = self._find(f"{parent_path}/{kind.value}:{scope_id}")
-        if existing is not None:
-            return f"{parent_path}/{kind.value}:{scope_id}"
-        return self.create_scope(parent_path, kind, scope_id, limits)
+        """幂等获取或创建子作用域（session 级挂载用；id 由调用方稳定派生）。
+
+        ADR-0101 D10：find-then-create 在 governor 级锁内完成 —— 并发首次
+        挂载不再可能产生重复子作用域。
+        """
+        target = f"{parent_path}/{kind.value}:{scope_id}"
+        with self._lock:
+            existing = self._find(target)
+            if existing is not None:
+                return target
+            parent = self._find(parent_path)
+            if parent is None:
+                raise BudgetExceededError(
+                    f"budget scope '{parent_path}' does not exist",
+                    suggestions=["create the parent scope first"],
+                )
+            child = _Scope(kind, scope_id, limits)
+            parent.children.append(child)
+            return target
 
     def teardown_scope(self, path: str) -> None:
         """从父作用域摘除 execution 作用域（防 GLOBAL_GOVERNOR 子树无限增长）。
@@ -126,13 +146,24 @@ class ResourceGovernor:
         rows: int = 0,
         bytes_: int = 0,
         nodes: int = 0,
+        concurrency: int = 0,
     ) -> None:
         """原子预留（评审 M2：admit→charge TOCTOU 的修复）。
 
         沿链 root→leaf 逐作用域「检查并立即记账」（固定顺序，无死锁）；
         链中途拒绝时对已记账的祖先做补偿回滚 —— 检查与记账之间不再留
-        TOCTOU 窗口。
+        TOCTOU 窗口。``concurrency`` 是调度槽位预留（ADR-0101 D3）：
+        节点派发前占用、落定后由 :meth:`release` 释放。
         """
+
+        def _apply(scope: _Scope, sign: int) -> None:
+            # 调用方负责持锁（+1 路径在下方 with scope.lock 内；补偿路径
+            # 在 except 分支逐个持锁）—— threading.Lock 不可重入。
+            scope.usage.rows += sign * rows
+            scope.usage.bytes += sign * bytes_
+            scope.usage.nodes += sign * nodes
+            scope.usage.concurrency += sign * concurrency
+
         charged: List[_Scope] = []
         try:
             for scope in self._chain(path):
@@ -147,6 +178,13 @@ class ResourceGovernor:
                             over.append(f"bytes {u.bytes}+{bytes_} > {lim.max_bytes}")
                         if lim.max_nodes is not None and u.nodes + nodes > lim.max_nodes:
                             over.append(f"nodes {u.nodes}+{nodes} > {lim.max_nodes}")
+                        if lim.max_concurrency is not None and (
+                            u.concurrency + concurrency > lim.max_concurrency
+                        ):
+                            over.append(
+                                f"concurrency {u.concurrency}+{concurrency} > "
+                                f"{lim.max_concurrency}"
+                            )
                         if over:
                             raise BudgetExceededError(
                                 f"admission denied at scope '{scope.path}': "
@@ -158,17 +196,34 @@ class ResourceGovernor:
                                 ],
                                 details={"scope": scope.path, "over": over},
                             )
-                    u.rows += rows
-                    u.bytes += bytes_
-                    u.nodes += nodes
+                    _apply(scope, +1)
                     charged.append(scope)
         except BudgetExceededError:
             for scope in charged:
                 with scope.lock:
-                    scope.usage.rows -= rows
-                    scope.usage.bytes -= bytes_
-                    scope.usage.nodes -= nodes
+                    _apply(scope, -1)
             raise
+
+    def release(
+        self,
+        path: str,
+        *,
+        rows: int = 0,
+        bytes_: int = 0,
+        nodes: int = 0,
+        concurrency: int = 0,
+    ) -> None:
+        """沿链归还预留（无上限检查；compensation 方向）。
+
+        调度器在节点落定（completed/failed/cancelled/skipped）后释放其
+        concurrency 槽位 —— 与 ``reserve(concurrency=1)`` 严格配对。
+        """
+        for scope in self._chain(path):
+            with scope.lock:
+                scope.usage.rows -= rows
+                scope.usage.bytes -= bytes_
+                scope.usage.nodes -= nodes
+                scope.usage.concurrency -= concurrency
 
     def charge(
         self,
@@ -186,12 +241,20 @@ class ResourceGovernor:
                 scope.usage.nodes += nodes
 
     def usage(self, path: str) -> Tuple[int, int, int]:
-        """链末作用域的累计用量（诊断/证据用）。"""
+        """链末作用域的累计用量（诊断/证据用；兼容三元组形状）。"""
         scope = self._find(path)
         if scope is None:
             return (0, 0, 0)
         with scope.lock:
             return (scope.usage.rows, scope.usage.bytes, scope.usage.nodes)
+
+    def usage_full(self, path: str) -> Optional[ScopeUsage]:
+        """链末作用域的完整用量（含 concurrency 槽位；诊断/证据用）。"""
+        scope = self._find(path)
+        if scope is None:
+            return None
+        with scope.lock:
+            return scope.usage.model_copy()
 
     # ── 内部 ─────────────────────────────────────────────────────────
 

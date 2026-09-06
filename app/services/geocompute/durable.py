@@ -19,6 +19,7 @@ from typing import Any, Callable, Optional
 
 from app.services.geocompute.errors import (
     DeadlineExceededError,
+    FailureClass,
     NodeExecutionError,
 )
 from app.services.geocompute.plan import ExecutionNode
@@ -97,10 +98,23 @@ def await_node_job(
             status = job.status
             if status == JobStatus.completed:
                 terminal = {"result_ref": getattr(job, "result_ref", None)}
-            error_message = getattr(job, "error_message", None)
+            # AnalysisTask 存的是 error_trace（redaction 后的单行文本）——
+            # V3 读 error_message 永远为 None，诚实错误文本丢失（V4 修复）。
+            error_message = getattr(job, "error_trace", None)
         if terminal is not None:
             break
-        if status in (JobStatus.failed, JobStatus.stale):
+        if status == JobStatus.stale:
+            # worker 死亡（心跳过期 → stale）：任务体幂等时可安全重派
+            # （幂等键在终态行上已释放，重派会建新行）。分类为 WORKER_LOSS，
+            # 是否真的重试由节点 RetryPolicy 决定（默认 max_attempts=1）。
+            raise NodeExecutionError(
+                error_message or f"durable job {job_id} worker lost (stale)",
+                retry_safe=True,
+                failure_class=FailureClass.WORKER_LOSS,
+                node_id=None,
+                details={"job_id": str(job_id), "job_status": str(status)},
+            )
+        if status == JobStatus.failed:
             raise NodeExecutionError(
                 error_message or f"durable job {job_id} ended {status}",
                 retry_safe=False,

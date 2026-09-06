@@ -48,8 +48,13 @@ def emit(
     }
     # 允许清单制（评审 S-M2）：只有显式登记的字段名可进入 trace，
     # 未登记的一律丢弃 —— denylist 挡不住近形键（sql_text/query/where…）。
+    # V4（ADR-0101 D12）新增：checkpoint（verified|stale）、failure_class、
+    # correlation_id、estimate/actual 有界计数器、bytes。
     allowed = {"nodes", "reason", "attempts", "job_id", "policy", "budget_scope",
-               "plan_id", "scope", "wired", "category", "dataset_id"}
+               "plan_id", "scope", "wired", "category", "dataset_id",
+               "checkpoint", "failure_class", "correlation_id",
+               "estimated_rows", "actual_rows", "estimated_bytes", "actual_bytes",
+               "bytes", "concurrency", "rewrite", "backend"}
     for k, v in fields.items():
         if k in allowed and v is not None:
             record[k] = v

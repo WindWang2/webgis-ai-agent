@@ -15,6 +15,7 @@ from app.services.geocompute.errors import (
 from app.services.geocompute.executor import GeoExecutionEngine, NodeResultStore, engine
 from app.services.geocompute.graph import (
     PlanValidationError,
+    checkpoint_reuse_key,
     descendants_of,
     invalidation_set,
     node_reuse_key,
@@ -73,6 +74,7 @@ __all__ = [
     "UnsupportedOperationError",
     "canonical_dumps",
     "canonicalize",
+    "checkpoint_reuse_key",
     "descendants_of",
     "engine",
     "invalidation_set",

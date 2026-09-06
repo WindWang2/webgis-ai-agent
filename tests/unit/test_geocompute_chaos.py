@@ -295,7 +295,8 @@ def test_await_node_job_raises_typed_on_stale_swept_job(job_db, monkeypatch):
     """Worker killed mid-node: the job's heartbeat ages out, the real
     ``DurableJobStore.sweep_stale`` flips it to stale, and
     ``durable.await_node_job`` (unit-tested directly with an injected
-    session factory) surfaces a typed non-retryable NodeExecutionError."""
+    session factory) surfaces a typed NodeExecutionError carrying the
+    WORKER_LOSS failure class (ADR-0101 D5)."""
     from app.services.geocompute import durable as durable_mod
     from app.services.geocompute.durable import await_node_job
     from app.services.jobs import DurableJobStore, JobStatus, coerce_status
@@ -320,7 +321,11 @@ def test_await_node_job_raises_typed_on_stale_swept_job(job_db, monkeypatch):
     with pytest.raises(NodeExecutionError) as ei:
         await_node_job(job_id, session_id="sess-a", deadline_ts=None, cancel_token=None)
     assert ei.value.code == "NODE_FAILED"
-    assert ei.value.retry_safe is False
+    # ADR-0101 D5：worker loss 是显式重试类别（WORKER_LOSS）—— 是否真的
+    # 重派由节点 RetryPolicy 决定（默认 max_attempts=1 → 不重试），
+    # 幂等键保证重派不产生第二 job 行。
+    assert ei.value.retry_safe is True
+    assert ei.value.failure_class.value == "worker_loss"
     assert "stale" in str(ei.value)
     assert "stale" in str(ei.value.details.get("job_status", ""))
 

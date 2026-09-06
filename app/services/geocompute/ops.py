@@ -93,6 +93,20 @@ def _default_query_catalog_fn(db: Any, item_id: str, query_spec: dict[str, Any])
 #: 模块级注入点（测试用 monkeypatch 替换；生产保持默认）。
 query_catalog_fn: QueryCatalogFn = _default_query_catalog_fn
 
+#: 可注入的目录项解析入口：(db, item_id) -> CatalogItemModel | None。
+#: 生产默认就是 DB 精确查找；注入仅用于测试桩（authz 谓词与查询入口
+#: 不变 —— 准入仍对解析出的 item 执行，绝不因注入而绕过）。
+CatalogItemResolver = Callable[[Any, str], Any]
+
+
+def _default_catalog_item_resolver(db: Any, item_id: str) -> Any:
+    from app.models.data_fabric import CatalogItemModel
+
+    return db.query(CatalogItemModel).filter(CatalogItemModel.id == str(item_id)).first()
+
+
+catalog_item_resolver: CatalogItemResolver = _default_catalog_item_resolver
+
 # ── 目录项准入（SEC 评审 CRITICAL：数据平面内的 catalog authz）──────────────
 #
 # QUERY / SOURCE_SCAN 之前必须先确认目录项对调用者可见 —— 与
@@ -237,11 +251,10 @@ def _op_query(ctx: OperatorContext, node: OperationNodeAny, payloads: dict[str, 
         raise NodeExecutionError("QUERY node requires parameters.dataset_id", node_id=node.node_id)
     query_spec = dict(node.parameters.get("query") or {})
     from app.core.database import SessionLocal
-    from app.models.data_fabric import CatalogItemModel
 
     db = SessionLocal()
     try:
-        item = db.query(CatalogItemModel).filter(CatalogItemModel.id == str(dataset_id)).first()
+        item = catalog_item_resolver(db, str(dataset_id))
         if item is None:
             raise NodeExecutionError(
                 f"catalog item '{dataset_id}' not found", node_id=node.node_id
@@ -564,11 +577,10 @@ def _op_source_scan(ctx: OperatorContext, node: "ExecutionNode", payloads: dict[
     if not dataset_id:
         raise NodeExecutionError("SOURCE_SCAN requires parameters.dataset_id", node_id=node.node_id)
     from app.core.database import SessionLocal
-    from app.models.data_fabric import CatalogItemModel
 
     db = SessionLocal()
     try:
-        item = db.query(CatalogItemModel).filter(CatalogItemModel.id == str(dataset_id)).first()
+        item = catalog_item_resolver(db, str(dataset_id))
         if item is not None:
             _authorize_catalog_for_ctx(ctx, db, item, str(dataset_id))
     finally:
