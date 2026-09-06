@@ -23,6 +23,7 @@ DB 来源（uploads / project datasets）是 best-effort：引擎不可用或
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -30,6 +31,14 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger(__name__)
+
+
+def _aware(dt: Optional[datetime]) -> Optional[datetime]:
+    """naive datetime（DB 列常见形态）→ UTC aware；catalog 排序要求同质。"""
+    if dt is None:
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
 
 _DEFAULT_LIMIT = 20
 _MAX_LIMIT = 100
@@ -253,8 +262,8 @@ def _entry_from_upload_record(row: Any) -> CatalogEntry:
         source_ref=str(getattr(row, "filename", "") or ""),
         tags=["upload"],
         lifecycle="available",
-        updated_at=getattr(row, "upload_time", None),
-        created_at=getattr(row, "upload_time", None),
+        updated_at=_aware(getattr(row, "upload_time", None)),
+        created_at=_aware(getattr(row, "upload_time", None)),
     )
 
 
@@ -342,9 +351,14 @@ class DataCatalog:
             except Exception as e:  # noqa: BLE001
                 sources.append(SourceStatus(source="session", error=str(e)))
 
-        # 2) uploads（DB；best-effort）
+        # 2) uploads（DB；best-effort；同步 ORM 访问卸载到线程 —— 不阻塞事件循环）
         if session_id and (not flt.scope or flt.scope == "upload"):
-            up_entries, err = self._load_upload_entries(session_id)
+            try:
+                up_entries, err = await asyncio.to_thread(
+                    self._load_upload_entries, session_id
+                )
+            except Exception as e:  # noqa: BLE001 — to_thread 自身失败的兜底
+                up_entries, err = [], f"uploads unavailable: {e}"
             entries.extend(up_entries)
             sources.append(
                 SourceStatus(source="uploads", count=len(up_entries), error=err)
@@ -360,7 +374,7 @@ class DataCatalog:
 
         matched = [e for e in entries if flt.matches(e)]
         matched.sort(
-            key=lambda e: e.updated_at or e.created_at or _EPOCH,
+            key=lambda e: _aware(e.updated_at) or _aware(e.created_at) or _EPOCH,
             reverse=True,
         )
         total = len(matched)

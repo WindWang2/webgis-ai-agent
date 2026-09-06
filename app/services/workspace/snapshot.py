@@ -173,7 +173,7 @@ def _extract_layer_refs(mapspec: Optional[Dict[str, Any]]) -> List[SnapshotLayer
     raw_sources = mapspec.get("sources")
     if isinstance(raw_sources, dict):
         source_defs = [
-            {"id": k, **v} if isinstance(v, dict) else {"id": k}
+            {**(v if isinstance(v, dict) else {}), "id": k}
             for k, v in raw_sources.items()
         ]
     else:
@@ -241,8 +241,11 @@ class WorkspaceSnapshotService:
         path = _snapshot_path(session_id, snapshot.snapshot_id)
         if path is None:
             return None
+        def _write() -> None:
+            _atomic_write_json(path, snapshot.model_dump(mode="json"))
+
         try:
-            await asyncio.to_thread(_atomic_write_json, path, snapshot.model_dump(mode="json"))
+            await asyncio.to_thread(_write)
         except OSError as e:
             logger.warning("[WorkspaceSnapshot] disk write failed session=%s: %s", session_id, e)
             return None
@@ -314,8 +317,10 @@ class WorkspaceSnapshotService:
         snapshot = self._load_snapshot(session_id, snapshot_id)
         if snapshot is None:
             return report
+        # integrity_ok 语义 = 「快照文件可解析为合法模型」——不对比载荷
+        # 指纹（profile_fingerprint 只是与 live profile 的对照提示）。
         report.exists = True
-        report.integrity_ok = True  # 读到合法模型即通过（指纹见 mapspec_available）
+        report.integrity_ok = True
         report.mapspec_available = bool(snapshot.mapspec_fingerprint)
 
         from app.services.artifact_registry import probe_ref
@@ -366,9 +371,10 @@ class WorkspaceSnapshotService:
         if snapshot is None:
             result["error"] = "snapshot not found or unreadable"
             return result
-        from app.services.artifact_registry import register_artifact
+        from app.services.artifact_registry import mark_status, register_artifact
 
         registered = 0
+        missing_ids = set(verification.artifacts_missing)
         for contract in snapshot.artifact_contracts:
             inputs = list(contract.lineage.parents)
             metadata: Dict[str, Any] = {
@@ -388,6 +394,11 @@ class WorkspaceSnapshotService:
             )
             if ok is not None:
                 registered += 1
+                # 载荷已亡的产物：血缘重绑定但状态如实回落 expired ——
+                # register_artifact 的复活语义不得伪造「可用」。
+                if contract.artifact_id in missing_ids:
+                    await mark_status(session_id, contract.artifact_id, "expired")
+                    result.setdefault("marked_expired", []).append(contract.artifact_id)
         result["registered"] = registered
         return result
 

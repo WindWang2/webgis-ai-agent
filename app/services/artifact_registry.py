@@ -754,6 +754,34 @@ async def sweep_statuses(
     return result
 
 
+# V3 data foundation（§十四保护规则）：这些持久层是用户/工作空间级资产，
+# 即使处于 GC 态也绝不由孤儿回收删除（plan/execute 双侧同规则 —— 仅在
+# planner 里声明而执行器不执行 = 假保护）。
+_GC_PROTECTED_TIERS = ("workspace", "persistent")
+
+
+def _gc_protection_skip(aid: str, records: Dict[str, ArtifactRecord]) -> Optional[str]:
+    """孤儿回收的额外保护判定（返回保护原因；None = 不保护）。
+
+    - 持久层 workspace/persistent：用户/工作空间资产；
+    - 血缘根保留：仍是任一 ``valid`` 记录上游的记录（删除断链会让
+      replay/resume 失去重建依据）。
+    """
+    rec = records.get(aid)
+    if rec is not None:
+        md = rec.metadata if isinstance(rec.metadata, dict) else {}
+        if str(md.get("persistence_tier") or "") in _GC_PROTECTED_TIERS:
+            return f"persistence_tier={md.get('persistence_tier')}"
+    valid_inputs: set = set()
+    for other in records.values():
+        if other.status == A_VALID:
+            for parent in other.inputs:
+                valid_inputs.add(parent)
+    if aid in valid_inputs:
+        return "retained lineage root (has live downstream)"
+    return None
+
+
 async def collect_orphan_refs(
     session_id: str,
     *,
@@ -764,7 +792,8 @@ async def collect_orphan_refs(
 
     只删 registry 记录为 superseded/stale/expired/failed 且行/spec/组件
     均不引用的 ref —— 活引用（哪怕记录态未刷新）绝不删除。retry/replan
-    产生的新 ref 天然在活集合（行已重绑）。
+    产生的新 ref 天然在活集合（行已重绑）。V3：持久层保护与血缘根
+    保护在**锁内新鲜账本**上复检（与 gc planner 同规则）。
     """
     from app.services.distributed_lock import session_lock_registry
     from app.services.session_data import session_data_manager
@@ -788,6 +817,7 @@ async def collect_orphan_refs(
             aid
             for aid, rec in records.items()
             if rec.status in _TERMINAL_GC_STATUSES and aid not in live
+            and _gc_protection_skip(aid, records) is None
         ]
         if not orphans:
             return []
@@ -806,6 +836,8 @@ async def collect_orphan_refs(
             for aid in orphans:
                 if aid in live_now:
                     continue
+                if _gc_protection_skip(aid, records) is not None:
+                    continue  # V3 保护规则按新鲜账本复检
                 try:
                     if is_raster_ref(aid):
                         # V4：磁盘栅格孤儿 —— unlink PNG（同一活引用复检纪律）。

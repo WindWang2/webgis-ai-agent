@@ -235,7 +235,9 @@ class DatasetProfiler:
     ) -> DatasetProfileV3:
         """栅格文件 → 剖析（头部 + ≤sample_size 边降采样读；重活在 to_thread）。"""
         try:
-            rp = await asyncio.to_thread(self._read_raster_profile, path, sample_size)
+            rp, read_diagnostics = await asyncio.to_thread(
+                self._read_raster_profile, path, sample_size
+            )
         except ImportError as e:
             return DatasetProfileV3(
                 target_ref=ref_id or path,
@@ -259,10 +261,11 @@ class DatasetProfiler:
             extent=rp.extent,
             raster=rp,
             profile_quality=ProfileQuality.COMPLETE,
+            diagnostics=[str(d) for d in read_diagnostics][:8],
         )
 
     @staticmethod
-    def _read_raster_profile(path: str, sample_size: int) -> RasterProfileData:
+    def _read_raster_profile(path: str, sample_size: int) -> Tuple[RasterProfileData, List[str]]:
         import rasterio
 
         with rasterio.open(path) as ds:
@@ -274,9 +277,11 @@ class DatasetProfiler:
             band_stats: List[RasterBandStats] = []
             # 降采样读：≤sample_size 边（与 raster_spec.raster_content_fingerprint
             # 同一「绝不整幅读」纪律）；统计是近似口径，忠实声明。
+            import math as _math
+
             scale = max(
                 1,
-                max((ds.width or 1) // sample_size, (ds.height or 1) // sample_size, 1),
+                _math.ceil(max(ds.width or 1, ds.height or 1) / sample_size),
             )
             out_w = max(1, (ds.width or 1) // scale)
             out_h = max(1, (ds.height or 1) // scale)
@@ -284,14 +289,26 @@ class DatasetProfiler:
                 out_shape=(ds.count, out_h, out_w),
                 boundless=False,
             )
-            for b in range(ds.count):
-                band = data[b]
-                valid = band[band != nodata[b]] if nodata[b] is not None else band.ravel()
+            # 波段读取封顶（波段数是数据可控维度，1000 波段 × 512² × 8B ≈ 2GB）。
+            bands_read = min(ds.count, 16)
+            diagnostics: list = []
+            if bands_read < ds.count:
+                diagnostics.append(f"band_stats_truncated_to_{bands_read}")
+            for b in range(bands_read):
+                band = data[b].ravel()
                 total = band.size
-                if nodata[b] is not None:
-                    valid_count = int((band != nodata[b]).sum())
+                nd = nodata[b]
+                if nd is not None and isinstance(nd, float) and _math.isnan(nd):
+                    # NaN nodata：band != nan 恒真 —— 必须按 isnan 掩膜
+                    valid = band[~_np.isnan(band)]
+                elif nd is not None:
+                    valid = band[band != nd]
                 else:
-                    valid_count = total
+                    valid = band
+                # 非有限值不进 min/max/mean（NaN/Inf 会毒化全部统计）
+                if valid.size and valid.dtype.kind == "f":
+                    valid = valid[_np.isfinite(valid)]
+                valid_count = int(valid.size)
                 if valid.size:
                     bmin = float(valid.min())
                     bmax = float(valid.max())
@@ -324,18 +341,29 @@ class DatasetProfiler:
                 compression=str(getattr(ds, "compression", "") or ""),
                 band_stats=band_stats,
             )
-            # 时间元数据（§二十八）：TIFF tag 约定（TIFFTAG_DATETIME / 自定义 acq 项）。
+            # 时间元数据（§二十八）：TIFF tag 约定（TIFFTAG_DATETIME 是
+            # "YYYY:MM:DD HH:MM:SS" 冒号格式 / 自定义 acquisition_time 项）。
             tags = ds.tags()
-            acq = tags.get("acquisition_time") or tags.get("TIFFTAG_DATETIME") or ""
+            acq = str(tags.get("acquisition_time") or tags.get("TIFFTAG_DATETIME") or "")
             if acq:
-                try:
-                    from datetime import datetime as _dt
+                from datetime import datetime as _dt
+                import re as _re
 
-                    profile.acquisition_time = _dt.fromisoformat(str(acq).replace("Z", "+00:00").replace(" ", "T", 1) if " " in str(acq) and "T" not in str(acq) else str(acq))
+                parsed = None
+                m = _re.match(r"(\d{4}):(\d{2}):(\d{2})[ T](\d{2}:\d{2}(?::\d{2})?)", acq)
+                iso_candidate = (
+                    f"{m.group(1)}-{m.group(2)}-{m.group(3)}T{m.group(4)}" if m else acq
+                )
+                try:
+                    parsed = _dt.fromisoformat(iso_candidate.replace("Z", "+00:00"))
                 except ValueError:
-                    pass
+                    parsed = None
+                if parsed is not None:
+                    profile.acquisition_time = parsed
+                else:
+                    diagnostics.append(f"acquisition_time_unparsed: {acq[:32]}")
             profile.temporal_resolution = str(tags.get("temporal_resolution") or "")
-            return profile
+            return profile, diagnostics
 
 
 _profiler: Optional[DatasetProfiler] = None

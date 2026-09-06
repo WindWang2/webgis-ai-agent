@@ -142,3 +142,45 @@ P1 contract/vocabulary → P2 profiler → P3 quality → P4 lifecycle+versionin
 P5 lineage → P6 catalog → P7 workspace snapshots → P8 reuse/materialization → P9 GC →
 P10 agent tools + ingest → P11 large-data policy → P12 perf → P13 reliability corpus →
 P14 review/docs.
+
+
+## 5. Review outcomes (Phase 14) & wiring status
+
+Four independent reviewers (architecture/regression, GIS metadata/reproducibility,
+storage/security, integration/performance) audited the branch. Fixed majors:
+
+- GC plan/execute protection consistency: persistence-tier (workspace/persistent)
+  and retained-lineage-root rules are now enforced inside `collect_orphan_refs`
+  (the single delete path), not just in the dry-run planner.
+- Workspace snapshot restore no longer fabricates `valid` status for dead
+  payloads: re-bound lineage records whose ref is unprobeable are marked
+  `expired` (`marked_expired` in the result).
+- DataCatalog.search: naive/aware datetime sort crash fixed (uploads coerced
+  to UTC-aware); blocking sync DB access moved off the event loop.
+- Disk artifact sweep: grace period (default 1h, `ARTIFACT_SWEEP_GRACE_S`)
+  protects in-flight publishes and meta-write-failure artifacts from orphan sweeps.
+- CRS classification: structural token classifier (`classify_crs_kind`) with
+  unknown → no-assumption semantics; compound projected names ("WGS 84 / UTM
+  zone 50N", proj4 `+datum=`) no longer misread as geographic.
+- Redis overwrite: revision bump now requires a payload digest change —
+  byte-identical re-persist (checkpoint/rollback restore) no longer produces
+  false reuse misses.
+- Staleness propagation is wired: ref overwrite/rollback now triggers
+  downstream `stale` marking via the ref_lifecycle hook (fire-and-forget,
+  best-effort, ledger-metadata only — no invalidation-storm surface).
+- Misc: `PropagationReport.to_dict` AttributeError, fingerprint crs priority,
+  contract fingerprint.crs population, ingest CRS dict-form normalization +
+  off-loop payload hashing, raster NaN-nodata masking / band cap / TIFF
+  colon-date parsing, profile honesty fixes (absent-key null_rate, no
+  fabricated geometry counts, (0,0) excluded from extent, malformed
+  coordinates tolerated).
+
+Deliberately deferred (foundation scope, explicit contract for follow-ups):
+
+- `SessionLineageQuery.project_lineage` DB bridge is tested-by-contract only
+  (no consumer yet); gate on callers before expanding.
+- GC planner/snapshot save-restore/ingest pipeline are service-layer complete
+  with tests but have no tier-2 tools/routes yet; agent surface today is the
+  six discovery tools + the wired staleness hook.
+- `DatasetProfileV3` → AlgorithmResolver camelCase adapter intentionally left
+  to the workflow-planner lane (V2 `DatasetProfile` remains the resolver input).

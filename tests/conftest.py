@@ -167,10 +167,13 @@ def _offline_embedding_model(monkeypatch):
     （test_rag_durability.patch_embed 等），其余路径走文档化的 RAG 降级。
     """
     # Windows 开发机没有 fcntl（faiss_store 的 Unix-only 依赖）：守卫降级为
-    # no-op，其余平台行为不变 —— 守卫缺位会让整个套件在 setup 阶段全量 ERROR。
+    # no-op —— 仅针对缺 fcntl 这一类 ImportError；faiss_store 自身的真实
+    # 损坏（缺可选依赖等）仍然照常抛出，不静默吞掉。
     try:
         from app.services.rag.faiss_store import FaissVectorStore
     except ImportError as _import_error:  # pragma: no cover - Windows-only path
+        if "fcntl" not in str(_import_error):
+            raise
         import warnings
 
         warnings.warn(

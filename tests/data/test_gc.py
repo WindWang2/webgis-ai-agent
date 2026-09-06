@@ -39,6 +39,14 @@ class TestDiskSweep:
         _mk(tmp_path / "dddddddddddddddd.meta", b"{}")
         os.utime(tmp_path / "dddddddddddddddd.meta", (old, old))
 
+        # 宽限期内的孤儿/临时件不删（publish 落盘窗口保护）—— 把孤儿
+        # backdate 到宽限期外再扫
+        import os as _os
+        import time as _time
+
+        old_stamp = _time.time() - 2 * 3600
+        for name in ("tmpabc123.tif", "bbbbbbbbbbbbbbbb.tif", "cccccccccccccccc.meta"):
+            _os.utime(tmp_path / name, (old_stamp, old_stamp))
         result = sweep_orphan_disk_artifacts()
         assert result["temp_leftovers"] == 1
         assert result["orphan_tif"] == 1

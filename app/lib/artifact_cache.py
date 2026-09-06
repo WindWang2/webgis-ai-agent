@@ -247,6 +247,14 @@ def clear_artifact_cache() -> int:
 _KEY_RE = re.compile(r"^[0-9a-f]{16}$")
 
 
+def _sweep_grace_seconds() -> float:
+    raw = os.environ.get("ARTIFACT_SWEEP_GRACE_S", "")
+    try:
+        return max(float(raw), 0.0)
+    except (TypeError, ValueError):
+        return 3600.0
+
+
 def _disk_retention_seconds() -> float:
     raw = os.environ.get("ARTIFACT_DISK_RETENTION_DAYS", "")
     try:
@@ -265,10 +273,16 @@ def sweep_orphan_disk_artifacts(*, now: Optional[float] = None) -> dict:
       见 / 指向已消失的产物）；
     - ``aged``：mtime 超过 ARTIFACT_DISK_RETENTION_DAYS 的完整条目
       （写路径 LRU 只保字节上限，没有时间下限）。
+
+    宽限期：temp/孤儿半边分支跳过 mtime 在 ``ARTIFACT_SWEEP_GRACE_S``
+    （默认 1h）内的新文件 —— publish 在 ``os.replace`` 与 .meta 落盘
+    之间存在毫秒级窗口，.meta 写失败也可能留下刚发布的合法 .tif；
+    刚出生的文件绝不因「暂时配不上对」而被误删。
     """
     result = {"temp_leftovers": 0, "orphan_tif": 0, "orphan_meta": 0, "aged": 0}
     current = time.time() if now is None else now
     cutoff = current - _disk_retention_seconds()
+    grace_cutoff = current - _sweep_grace_seconds()
     try:
         names = os.listdir(ARTIFACT_DIR)
     except OSError:
@@ -282,22 +296,26 @@ def sweep_orphan_disk_artifacts(*, now: Optional[float] = None) -> dict:
         elif ext == "meta" and _KEY_RE.match(stem):
             meta_keys.add(stem)
         else:
-            # 非 <16hex>.tif/.meta 命名 = publish 临时件遗留
+            # 非 <16hex>.tif/.meta 命名 = publish 临时件遗留（宽限期内跳过）
             p = os.path.join(ARTIFACT_DIR, name)
             try:
-                if os.path.isfile(p):
+                if os.path.isfile(p) and os.stat(p).st_mtime < grace_cutoff:
                     os.unlink(p)
                     result["temp_leftovers"] += 1
             except OSError:
                 continue
     for stem in tif_keys - meta_keys:
         try:
+            if os.stat(_artifact_path(stem)).st_mtime >= grace_cutoff:
+                continue  # 新发布的 .tif：.meta 可能尚未落盘 —— 宽限
             os.unlink(_artifact_path(stem))
             result["orphan_tif"] += 1
         except OSError:
             continue
     for stem in meta_keys - tif_keys:
         try:
+            if os.stat(_meta_path(stem)).st_mtime >= grace_cutoff:
+                continue
             os.unlink(_meta_path(stem))
             result["orphan_meta"] += 1
         except OSError:

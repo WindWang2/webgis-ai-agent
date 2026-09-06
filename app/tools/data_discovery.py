@@ -120,10 +120,16 @@ def register_data_discovery_tools(registry: ToolRegistry) -> None:
             return {"success": False, "code": "NOT_FOUND",
                     "error": f"未找到数据引用 {ref_id}（可能已过期）"}
         report = run_quality_checks(profile)
+        # §三十二 large-data policy：按要素数估档，给出允许的访问形态
+        from app.lib.data.large_data import access_policy, classify_features
+
+        size_class = classify_features(profile.vector.row_count if profile.vector else None)
         return {
             "success": True,
             "profile": profile.summary(),
             "quality": report.summary(),
+            "size_class": size_class.value,
+            "access_policy": access_policy(size_class).value,
         }
 
     @tool(

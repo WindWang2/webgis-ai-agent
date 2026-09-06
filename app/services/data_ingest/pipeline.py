@@ -71,12 +71,32 @@ class IngestResult:
 
 
 def compute_payload_fingerprint(data: Any) -> str:
-    """载荷 → sha256（canonical JSON；去重键。不可序列化 → str 兜底）。"""
+    """载荷 → sha256（canonical JSON；去重键。不可序列化/含 NaN → repr 兜底）。
+
+    与 fingerprints.canonical_fingerprint 的差异：dedup 键必须对**任意**
+    运行时载荷可用（含 NaN/set），故兜底 repr —— 语义是同进程内
+    「同指纹 ⇒ 同载荷」，跨进程稳定性不是目标。
+    """
     try:
         canonical = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     except (TypeError, ValueError):
         canonical = repr(data)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _normalize_crs(value: Any) -> str:
+    """CRS 证据归一：pre-RFC GeoJSON 的 crs 成员是 dict（取 properties.name）；
+    其余标量 str()；无法提取 → ""（诚实未知）。"""
+    if isinstance(value, dict):
+        props = value.get("properties")
+        if isinstance(props, dict):
+            return str(props.get("name") or "")[:64]
+        return ""
+    if isinstance(value, str):
+        return value[:64]
+    if value is None:
+        return ""
+    return str(value)[:64]
 
 
 def _extract_fc(data: Any) -> Optional[Dict[str, Any]]:
@@ -124,8 +144,11 @@ class IngestPipeline:
             return result
         result.steps_completed.append("detect")
 
-        # 2) Validate：载荷指纹（去重键）+ 基本形状
-        fingerprint = compute_payload_fingerprint(data)
+        # 2) Validate：载荷指纹（去重键）+ 基本形状（大载荷 O(n) 串行化
+        # 与哈希卸载到线程 —— 不阻塞事件循环）。
+        import asyncio as _asyncio
+
+        fingerprint = await _asyncio.to_thread(compute_payload_fingerprint, data)
         result.steps_completed.append("validate")
 
         from app.services.session_data import session_data_manager
@@ -144,11 +167,10 @@ class IngestPipeline:
 
         # 4) Profile（有界）+ Quality
         features = fc.get("features") if isinstance(fc.get("features"), list) else []
-        declared_crs = str(
+        declared_crs = _normalize_crs(
             crs
             or fc.get("crs")
             or (data.get("crs") if isinstance(data, dict) else "")
-            or ""
         )
         vp, quality = profile_features(features, crs=declared_crs)
         profile = DatasetProfileV3(

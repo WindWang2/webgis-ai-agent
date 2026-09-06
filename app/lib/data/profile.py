@@ -392,7 +392,8 @@ def _iter_leaf_coords(coordinates: Any):
     if not isinstance(coordinates, list):
         return
     if coordinates and isinstance(coordinates[0], (int, float)):
-        yield (coordinates[0], coordinates[1])
+        if len(coordinates) >= 2:  # 畸形单元素 position 不致命（如实跳过）
+            yield (coordinates[0], coordinates[1])
         return
     for child in coordinates:
         yield from _iter_leaf_coords(child)
@@ -460,11 +461,14 @@ class _FieldAccumulator:
         _, mean, std, _ = self.welford.stats()
         if dtype == "number":
             self.temporal = self.temporal or looks_temporal(name, [self.min, self.max])
+        # 缺失率含「键缺席」的行：observe 只在键存在时被调用，
+        # absent = scanned - seen（稀疏 schema 的字段不再显出假低缺失率）。
+        absent = max(scanned_rows - self.seen, 0)
         profile = FieldProfile(
             name=name,
             dtype=dtype,
             null_count=self.null_count,
-            null_rate=(self.null_count / scanned_rows) if scanned_rows else None,
+            null_rate=((self.null_count + absent) / scanned_rows) if scanned_rows else None,
             unique_count=(len(self.unique) if not self.unique_capped else _UNIQUE_SET_CAP)
             if dtype in ("string", "number", "boolean") else None,
             unique_capped=self.unique_capped,
@@ -479,7 +483,33 @@ class _FieldAccumulator:
         return profile
 
 
-_CRS_GEOGRAPHIC_RE = re.compile(r"4326|4490|crs84|wgs\s*84|4269|4610", re.IGNORECASE)
+# 地理/投影判别（§二十七）：只认 CRS 身份证据，不认基准名子串 ——
+# "WGS 84 / UTM zone 50N" 含基准名却是投影系，"+proj=utm +datum=WGS84"
+# 同理。无法判别（无任何 token）→ None：调用方跳过经纬度判界，
+# 绝不默认投影或经纬度。
+_GEOGRAPHIC_TOKEN_RE = re.compile(
+    r"epsg:?(4326|4490|4269|4214|4610)(?!\d)|geogcs|longlat|crs84|gcs_",
+    re.IGNORECASE,
+)
+_PROJECTED_TOKEN_RE = re.compile(
+    r"utm|mercator|lambert|albers|epsg:?(3857|326\d\d|327\d\d|454\d|452\d)(?!\d)",
+    re.IGNORECASE,
+)
+
+
+def classify_crs_kind(crs: str) -> Optional[str]:
+    """CRS 字符串 → "geographic" | "projected" | None（不可判别）。"""
+    token = str(crs or "").strip()
+    if not token:
+        return None
+    is_geo = bool(_GEOGRAPHIC_TOKEN_RE.search(token))
+    is_proj = bool(_PROJECTED_TOKEN_RE.search(token))
+    if is_proj:
+        # 复合命名（"WGS 84 / UTM zone 50N"、proj4 +datum）以投影 token 为准
+        return "projected"
+    if is_geo:
+        return "geographic"
+    return None
 
 
 def profile_features(
@@ -520,9 +550,15 @@ def profile_features(
         if fx == 0.0 and fy == 0.0:
             zero_zero += 1
         if not (-180.0 <= fx <= 180.0 and -90.0 <= fy <= 90.0):
-            # CRS 未声明投影坐标时按经纬度口径判界；投影 CRS（米制）出界正常。
-            if not crs or _CRS_GEOGRAPHIC_RE.search(crs) or "4326" in crs:
+            # 仅在可判别为经纬度系（或 CRS 未声明）时按经纬度口径判界；
+            # 投影 CRS（米制）出界正常；不可判别的 CRS 不做经纬度假设。
+            kind = classify_crs_kind(crs)
+            # 未声明 CRS → 按 GeoJSON/RFC7946 经纬度默认口径判界（出界即
+            # 假 CRS 证据）；声明了但认不出 → 不做任何口径假设。
+            if kind == "geographic" or not str(crs or "").strip():
                 impossible_coords += 1
+        if fx == 0.0 and fy == 0.0:
+            return  # (0,0) 缺失值填充不进 extent（否则 bbox 伸到几内亚湾）
         if fx < minx:
             minx = fx
         if fy < miny:
@@ -700,14 +736,13 @@ def profile_from_field_schema(
             unit_hint=unit_hint_for_field(name),
         )
         fields[name] = fp
-    geom_counts: Dict[str, int] = {}
-    for g in (geometry_types or []):
-        geom_counts[str(g)] = geom_counts.get(str(g), 0) + row_count
     vp = VectorProfileData(
         row_count=row_count,
         scanned_rows=0,
         geometry_types=[str(g) for g in (geometry_types or [])],
-        geometry_type_counts=geom_counts,
+        # 计数不做逐类型拆分（无证据）：descriptor 只给类型存在性，
+        # 编造 "每类型 × row_count" 会与深扫口径冲突（诚实缺省）。
+        geometry_type_counts={},
         fields=fields,
         fields_truncated=not complete,
         temporal_fields=[n for n, f in fields.items() if f.temporal_hint],

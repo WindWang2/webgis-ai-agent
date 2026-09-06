@@ -129,14 +129,17 @@ def classify_change(old: FingerprintSet, new: FingerprintSet) -> ChangeClass:
     相关维为 None 且另一方位有值）→ unknown —— 绝不把「不知道」当成
     「没变」。
     """
+    # crs 证据独立于 content/schema（双方都有 crs 且不同即成立）——
+    # 优先级最高：crs 变更时其余指纹全部失义。
+    if old.crs is not None and new.crs is not None and old.crs != new.crs:
+        return ChangeClass.CRS
+
     if old.content is None and new.content is None and old.schema is None and new.schema is None:
-        # 双方都无实质证据：只有 metadata 可比时才敢下 metadata_only 结论。
+        # 无实质证据：只有 metadata 可比时才敢下 metadata_only 结论。
         if old.metadata is not None and new.metadata is not None and old.metadata != new.metadata:
             return ChangeClass.METADATA_ONLY
         return ChangeClass.UNKNOWN
 
-    if old.crs is not None and new.crs is not None and old.crs != new.crs:
-        return ChangeClass.CRS
 
     schema_changed = (
         old.schema is not None

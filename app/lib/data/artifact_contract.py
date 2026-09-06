@@ -381,11 +381,14 @@ def from_artifact_record(record: Any) -> ArtifactContract:
         else:
             role = vocab.LogicalRole.DERIVED
 
+    record_crs = str(
+        get(r, "crs", "") or (r.get("crs") if isinstance(r, dict) else "") or ""
+    ).strip().upper()
     fingerprint = FingerprintSet(
         content=metadata.get("content_fingerprint") or None,
         schema=metadata.get("schema_fingerprint") or None,
         metadata=metadata.get("metadata_fingerprint") or None,
-        crs=None,
+        crs=record_crs or None,  # CRS 变更独立成类（classify_change 最高优先）
     )
     stable = (
         metadata.get("reuse_fingerprint")

@@ -95,7 +95,7 @@ class PropagationReport:
             "verdict": self.verdict,
             "marked_stale": self.marked,
             "already_stale": self.already_stale,
-            "not_in_ledger": self.missing,
+            "not_in_ledger": self.not_in_ledger,
             "marked_count": len(self.marked),
         }
 
