@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.lib.gis.artifacts import get_artifact_type_registry
 from app.lib.gis.capability_registry import get_capability_registry
@@ -56,6 +56,10 @@ class BackendVariant(BaseModel):
 
     所有变体必须通过同一 conformance 套件；resolver 可按规模/环境在
     变体间选择（tool_candidates 顺序即默认偏好序）。
+
+    V2（Foundation）：``min_features``/``max_features`` 是该变体的适用
+    规模窗口（特征数，None = 无界）。backend_selection 层据此做确定性
+    选择并把决策写入证据块 —— 变体不再是纯 metadata。
     """
 
     id: str                                  # 变体内唯一（如 "numpy_batched"）
@@ -63,11 +67,25 @@ class BackendVariant(BaseModel):
     tool: str = ""                           # 绑定的工具实现（可空 = lib 内部）
     deterministic: bool = True
     notes: str = ""
+    min_features: Optional[int] = None       # 变体适用规模下界（含）
+    max_features: Optional[int] = None       # 变体适用规模上界（含）
 
     @field_validator("notes")
     @classmethod
     def _bounded_notes(cls, v: str) -> str:
         return v[:160]
+
+    @model_validator(mode="after")
+    def _scale_window_consistent(self) -> "BackendVariant":
+        lo, hi = self.min_features, self.max_features
+        if lo is not None and lo < 0:
+            raise ValueError("backend variant min_features must be >= 0")
+        if hi is not None and hi < 1:
+            raise ValueError("backend variant max_features must be >= 1")
+        if lo is not None and hi is not None and lo > hi:
+            raise ValueError(
+                f"backend variant {self.id!r}: min_features {lo} > max_features {hi}")
+        return self
 
 
 class AlgorithmDescriptor(BaseModel):

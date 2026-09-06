@@ -227,6 +227,56 @@ class AccessibilityResult(BaseModel):
     accessibility_layer_geojson: Dict[str, Any] = Field(default_factory=dict)
 
 
+class GravityAccessResult(BaseModel):
+    """Gravity accessibility result (Hansen potential: A_i = Σ S_j^α / d_ij^β)."""
+    model_config = ConfigDict(extra="ignore")
+
+    analysis_type: str = "gravity_access"
+    mass_exponent: float = Field(default=1.0, description="α on facility capacity S_j^α")
+    distance_decay: float = Field(default=2.0, description="β on OD cost d_ij^-β")
+    impedance_field: str = Field(default="travel_time_s", description="OD cost field used as d_ij")
+    cutoff_cost: Optional[float] = Field(default=None, description="Cost cutoff in active impedance units")
+    demand_point_count: int = 0
+    facility_count: int = 0
+    reachable_pair_count: int = 0
+    unreachable_pair_count: int = 0
+    per_demand_metrics: List[Dict[str, Any]] = Field(default_factory=list)
+    summary: Dict[str, Any] = Field(default_factory=dict)
+
+
+class HuffInteractionResult(BaseModel):
+    """Huff spatial interaction result (P_ij = A_j·d_ij^-β / Σ_k A_k·d_ik^-β)."""
+    model_config = ConfigDict(extra="ignore")
+
+    analysis_type: str = "huff_interaction"
+    distance_decay: float = Field(default=2.0, description="β on OD cost d^-β")
+    impedance_field: str = Field(default="travel_time_s", description="OD cost field used as d_ij")
+    cutoff_cost: Optional[float] = Field(default=None, description="Candidate cutoff in active impedance units")
+    demand_point_count: int = 0
+    facility_count: int = 0
+    unreachable_pair_count: int = 0
+    per_demand_metrics: List[Dict[str, Any]] = Field(default_factory=list)
+    facility_metrics: List[Dict[str, Any]] = Field(default_factory=list)
+    summary: Dict[str, Any] = Field(default_factory=dict)
+
+
+class CentralityResult(BaseModel):
+    """Network centrality result (degree / closeness / betweenness / edge_betweenness)."""
+    model_config = ConfigDict(extra="ignore")
+
+    analysis_type: str = "network_centrality"
+    metrics: List[str] = Field(default_factory=list)
+    weight_field: str = "travel_time_s"
+    node_count: int = 0
+    edge_count: int = 0
+    betweenness_mode: str = Field(default="exact", description="exact | sampled | not_computed")
+    sample_k: Optional[int] = None
+    node_records: List[Dict[str, Any]] = Field(default_factory=list)
+    output_rows_total: int = 0
+    output_row_cap: int = 0
+    summary: Dict[str, Any] = Field(default_factory=dict)
+
+
 class NetworkAnalysisResult(BaseModel):
     """Unified network analysis output wrapper."""
     model_config = ConfigDict(extra="ignore")

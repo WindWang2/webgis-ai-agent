@@ -115,6 +115,10 @@ class LLMConfig:
     timeout_s: float = 120.0
 
 
+class ProviderStreamTruncated(RuntimeError):
+    """流式响应在 [DONE]/finish_reason 之前被截断（§35：必须诚实失败）。"""
+
+
 def _build_headers(cfg: LLMConfig) -> dict:
     return {
         "Content-Type": "application/json",
@@ -495,6 +499,8 @@ async def call_llm_stream(
             await _connect_backoff(attempt)
     assert response is not None  # 循环必经 break（成功）或 raise
 
+    saw_done_sentinel = False
+    saw_finish_reason = False
     try:
         async for line in response.aiter_lines():
             line = line.strip()
@@ -502,6 +508,7 @@ async def call_llm_stream(
                 continue
             data_str = line[6:]
             if data_str == "[DONE]":
+                saw_done_sentinel = True
                 break
             try:
                 chunk = json.loads(data_str)
@@ -519,6 +526,8 @@ async def call_llm_stream(
             if not choices:
                 continue
             delta = choices[0].get("delta", {})
+            if choices[0].get("finish_reason"):
+                saw_finish_reason = True
             finish_reason = choices[0].get("finish_reason") or finish_reason
 
             # reasoning delta（显式字段）
@@ -589,6 +598,14 @@ async def call_llm_stream(
         # 手动管理的流式响应：正常/异常/取消路径都把连接归还连接池
         # （等价旧 ``async with client.stream`` 的释放语义）。
         await response.aclose()
+
+    # ADR-0101 Wave 8（§35 诚实 settle）：既无 [DONE] 哨兵又无 finish_reason
+    # 帧 → 流被截断（连接中断/网关裁剪）。此时把残缺内容包装成正常 done 是
+    # 假成功 —— 模型回合会被当作完整回合持久化。显式抛错交给编排层处理。
+    if not (saw_done_sentinel or saw_finish_reason):
+        raise ProviderStreamTruncated(
+            "provider stream ended without [DONE] sentinel and without finish_reason"
+        )
 
     # Assemble final message
     assembled_content = "".join(content_parts)

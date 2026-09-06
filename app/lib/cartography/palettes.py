@@ -14,6 +14,8 @@ COLOR_PALETTES: Dict[str, List[str]] = {
     # ── Diverging（以有意义中点为中心：偏差/阈值/相关性）────────────────
     "RdYlGn": ["#d73027", "#fc8d59", "#fee08b", "#d9ef8b", "#91cf60", "#1a9850"],
     "RdBu": ["#ca0020", "#f4a582", "#f7f7f7", "#92c5de", "#0571b0"],
+    # PuOr：ColorBrewer diverging，色盲安全 —— 正式出版的红绿替代
+    "PuOr": ["#e08214", "#fdb863", "#f7f7f7", "#b2abd2", "#5e3c99"],
     # ── Qualitative（类别/唯一值；上限即 ColorBrewer 定义的最大类数）─────
     "Set1": ["#e41a1c", "#377eb8", "#4daf4a", "#984ea3",
              "#ff7f00", "#ffff33", "#a65628", "#f781bf", "#999999"],

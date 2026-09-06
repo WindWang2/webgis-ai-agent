@@ -493,9 +493,79 @@ class ChatExecutionEngine:
                     user_text, session_id=session_id, declared_domains=declared,
                     turn_id=turn_id,
                 )
+            # ADR-0101 Wave 3: V2 投影后处理 —— 生命周期过滤 + 检索补强 +
+            # 原因/指纹留痕。仅对真实 ToolCatalog 生效（subagent 冻结目录的
+            # 白名单是权威边界，检索绝不越权补工具）。失败 → 既有行为不变。
+            schemas = self._augment_tool_surface(
+                schemas, user_text, declared, turn_id, surface
+            )
             return schemas or None
         all_schemas = self.registry.get_schemas()
         return all_schemas or None
+
+    def _augment_tool_surface(
+        self,
+        schemas: Optional[list],
+        user_text: str,
+        declared_domains: Optional[set],
+        turn_id: Optional[str],
+        surface,
+    ) -> Optional[list]:
+        """经 ToolSurfaceProjector 后处理 catalog 选择结果（异常安全）。"""
+        from app.services.tool_catalog import ToolCatalog as _RealCatalog
+
+        if not isinstance(self.catalog, _RealCatalog) or not schemas:
+            return schemas
+        try:
+            from app.services.tool_surface_v2 import SurfaceRequest, ToolSurfaceProjector
+
+            if getattr(self, "_surface_projector", None) is None:
+                self._surface_projector = ToolSurfaceProjector(
+                    self.registry, self.catalog
+                )
+            proj = self._surface_projector.augment(
+                schemas,
+                SurfaceRequest(
+                    user_message=user_text or "",
+                    declared_domains=declared_domains,
+                    turn_id=turn_id,
+                    surface=surface,
+                ),
+            )
+            if proj.retrieval_added:
+                logger.debug(
+                    "[ToolSurfaceV2] %s retrieval_added=%s",
+                    proj.summary_line(), proj.retrieval_added,
+                )
+            else:
+                logger.debug("[ToolSurfaceV2] %s", proj.summary_line())
+            self.last_surface_projection = proj
+            # ADR-0101 Wave 8：工具面选定事件 → trace（turn 缺席时静默）
+            try:
+                _turn = ""
+                try:
+                    _rt = rt_ctx.current_runtime_context()
+                    _turn = getattr(_rt, "turn_id", "") or "" if _rt else ""
+                except Exception:  # noqa: BLE001
+                    pass
+                if _turn:
+                    from app.lib.runtime.trace import (
+                        EVENT_TOOL_SURFACE_SELECTED,
+                        get_trace_registry,
+                    )
+
+                    get_trace_registry().emit(
+                        _turn, EVENT_TOOL_SURFACE_SELECTED,
+                        tools=len(proj.schemas), bytes=proj.bytes_used,
+                        fingerprint=proj.fingerprint,
+                        retrieval_added=len(proj.retrieval_added),
+                    )
+            except Exception:  # noqa: BLE001
+                pass
+            return proj.schemas
+        except Exception:  # noqa: BLE001 — 投影失败绝不阻断工具选择
+            logger.debug("[ToolSurfaceV2] augment failed; falling back", exc_info=True)
+            return schemas
 
     def _catalog_accepts_surface(self) -> bool:
         """catalog.select_schemas 是否接受 surface 参数（进程内缓存探测）。"""

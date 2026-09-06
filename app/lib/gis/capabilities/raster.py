@@ -110,31 +110,60 @@ CAPABILITIES: List[CapabilityDescriptor] = [
         CapabilityDescriptor(
             id="sar_analysis", name="SAR 时序/极化分析", category="raster",
             domain="raster",
-            description="SAR 时序栈统计、VV/VH 极化比与双时相对数比值（无斑点滤波/无辐射定标的诚实边界）。",
+            description="SAR 时序栈统计（含 CV/鲁棒分位数）、时序合成、VV/VH 极化比与双时相对数比值"
+                        "（滤波/定标为独立能力：sar_speckle_filtering / sar_radiometric_calibration）。",
             input_artifact_types=["raster_surface"],
             output_artifact_types=["raster_surface"],
             purpose_template="SAR 时序/极化分析",
         ),
 
-        # planned：诚实非可执行（无 native 算法实现；sar.speckle_filter /
-        # sar.radiometric_calibration 算法条目同为 planned、零工具候选）。
+        # Foundation V2（A6）：斑点滤波/辐射定标 planned→native（实现 +
+        # 工具候选落地；原 planned 非可执行披露替换为实现级披露）。
         CapabilityDescriptor(
             id="sar_speckle_filtering", name="SAR 斑点滤波", category="raster",
             domain="raster",
-            description="SAR 相干斑点噪声抑制（Lee/Lee-Sigma 家族）——未实现，planned。",
+            description="SAR 相干斑点噪声抑制（Lee 1980 / Refined-Lee 边缘方向 MMSE / Frost 1982；"
+                        "ENL 显式优先、缺省矩估计披露；refined_lee 为 7 子窗近似实现）。",
             input_artifact_types=["raster_surface"],
             output_artifact_types=["raster_surface"],
             purpose_template="SAR 斑点滤波",
-            status="planned",
         ),
 
         CapabilityDescriptor(
             id="sar_radiometric_calibration", name="SAR 辐射定标", category="raster",
             domain="raster",
-            description="DN → σ⁰/γ⁰ 辐射定标——未实现，planned。",
+            description="DN → β⁰/σ⁰/γ⁰ 常数辐射定标（定标常数显式必需；逐像元 LUT 与热噪声去除未实现——披露）。",
             input_artifact_types=["raster_surface"],
             output_artifact_types=["raster_surface"],
             purpose_template="SAR 辐射定标",
-            status="planned",
+        ),
+
+        CapabilityDescriptor(
+            id="sar_texture", name="GLCM 纹理特征", category="raster",
+            domain="raster",
+            description="窗口化 GLCM 纹理属性（Haralick 1973：contrast/homogeneity/entropy 等 9 项；"
+                        "纯 numpy 手工实现，量化 2-98 分位、P+Pᵀ 对称、多方向均值）。",
+            input_artifact_types=["raster_surface"],
+            output_artifact_types=["raster_surface"],
+            purpose_template="GLCM 纹理分析",
+        ),
+
+        CapabilityDescriptor(
+            id="raster_dimensionality_reduction", name="波段降维（PCA）", category="raster",
+            domain="raster",
+            description="多波段栅格 SVD 主成分分析（协方差/相关 PCA、explained variance、载荷与前 k 分量栅格）。",
+            input_artifact_types=["raster_surface"],
+            output_artifact_types=["raster_surface"],
+            purpose_template="波段 PCA 降维",
+        ),
+
+        CapabilityDescriptor(
+            id="tasseled_cap_transformation", name="Tasseled Cap 冠层变换", category="raster",
+            domain="raster",
+            description="传感器系数注册表驱动的亮度/绿度/湿度三轴变换"
+                        "（landsat5_tm=crist_cicone1984、landsat8_oli=baig2014、sentinel2=shi_xu2019；六语义角色显式映射）。",
+            input_artifact_types=["raster_surface"],
+            output_artifact_types=["raster_surface"],
+            purpose_template="Tasseled Cap 变换",
         ),
 ]

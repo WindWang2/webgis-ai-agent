@@ -58,4 +58,43 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             compatible_map_models=["raster_surface"],
             purpose_template="等值线提取",
         ),
+
+        # ── Foundation V2（A5）：水文与地貌量测扩展 ────────────────────
+
+        CapabilityDescriptor(
+            id="terrain_hydrology_advanced", name="高级地形水文", category="raster",
+            domain="raster",
+            description=(
+                "Priority-Flood 填洼（Barnes 2014，epsilon 单调变体）、D∞ 多向流"
+                "（Tarboton 1997 比例分流）、流程长度、河网提取与 Strahler 分级、"
+                "流域形态量测（Strahler 1957）。"),
+            input_artifact_types=["terrain_surface"],
+            output_artifact_types=["raster_surface"],
+            compatible_map_models=["raster_surface"],
+            purpose_template="高级地形水文分析",
+        ),
+
+        CapabilityDescriptor(
+            id="terrain_wetness_indices", name="湿润与侵蚀指数", category="raster",
+            domain="raster",
+            description=(
+                "地形湿润指数 TWI（Beven-Kirkby 1979）、水流功率指数 SPI 与 "
+                "USLE LS 因子（Wischmeier-Smith 1978 / Desmet-Govers 1996）。"),
+            input_artifact_types=["terrain_surface"],
+            output_artifact_types=["raster_surface"],
+            compatible_map_models=["raster_surface"],
+            purpose_template="湿润与侵蚀指数计算",
+        ),
+
+        CapabilityDescriptor(
+            id="terrain_geomorphometry", name="地貌形态分类", category="raster",
+            domain="raster",
+            description=(
+                "地形开放度（Yokoyama 2002）、geomorphons 地貌分类（Jasiewicz "
+                "& Stepinski 2013）、Weiss 双尺度 TPI 地类分级与多方位山体阴影。"),
+            input_artifact_types=["terrain_surface"],
+            output_artifact_types=["raster_surface"],
+            compatible_map_models=["raster_surface"],
+            purpose_template="地貌形态分类",
+        ),
 ]

@@ -20,7 +20,25 @@ from app.services.tool_dispatch_service import (
     normalize_tool_name,
 )
 
+
+def _trace_emit(turn_id: str, kind: str, /, **meta) -> None:
+    """ADR-0101 Wave 8：trace 事件发射（turn 缺席时静默 —— 观测绝不阻断执行）。"""
+    if not turn_id:
+        return
+    try:
+        from app.lib.runtime.trace import get_trace_registry
+
+        get_trace_registry().emit(turn_id, kind, **meta)
+    except Exception:  # noqa: BLE001
+        pass
+
 logger = logging.getLogger(__name__)
+
+try:
+    from app.services.subagent_roles import BudgetExceeded
+except ImportError:  # noqa: BLE001 — 子代理模块缺席时预算闸不存在
+    class BudgetExceeded(Exception):
+        pass
 
 
 @dataclass
@@ -37,6 +55,10 @@ class ToolExecutionResult:
     background_job_ids: list[str] = field(default_factory=list)
     #: 工具是否因取消而中止（区别于普通错误 —— 取消绝不触发 retry，规范 §17）
     cancelled: bool = False
+    #: ADR-0101 Wave 6：canonical 调用签名（无进展检测/replay/trace 共用词汇）
+    call_signature: str = ""
+    #: 模式级无进展原因码（exact_repeat_failure / alias_oscillation / ...）
+    no_progress_reasons: list[str] = field(default_factory=list)
 
 
 class ToolExecutionPipeline:
@@ -103,6 +125,15 @@ class ToolExecutionPipeline:
         # 2. Sentinel check / fallback
         sentinels = executed_tools if executed_tools is not None else set()
 
+        _trace_turn = ""
+        try:
+            _rt = current_runtime_context()
+            if _rt is not None:
+                _trace_turn = getattr(_rt, "turn_id", "") or ""
+        except Exception:  # noqa: BLE001
+            _trace_turn = ""
+        _trace_emit(_trace_turn, "tool_call_proposed", tool=tool_name,
+                    tool_call_id=tool_call_id)
         # 3. Execute tool dispatch inside TaskTracker step context.
         # RUN-02: when the caller already opened a step (and emitted step_start),
         # use it directly instead of opening a second track_step.
@@ -133,10 +164,34 @@ class ToolExecutionPipeline:
         )
 
         async def _dispatch() -> ToolDispatchResult:
+            _trace_emit(_trace_turn, "dispatch_started", tool=tool_name,
+                        tool_call_id=tool_call_id)
             with use_token(cancel_token), use_origin(origin):
                 if self.dispatch_fn is not None:
-                    return await self.dispatch_fn(tc, session_id, sentinels)
-                return await self.dispatch_service.dispatch(tc, session_id, sentinels)
+                    _outcome = await self.dispatch_fn(tc, session_id, sentinels)
+                else:
+                    _outcome = await self.dispatch_service.dispatch(tc, session_id, sentinels)
+            _trace_emit(
+                _trace_turn, "dispatch_completed", tool=tool_name,
+                tool_call_id=tool_call_id,
+                status=_outcome.status,
+                duration_ms=round(elapsed_ms, 1) if (elapsed_ms := time.time() - start_time) else 0,
+            )
+            # 归一化修复证据（registry 经 ContextVar 暴露）→ trace
+            try:
+                from app.tools.argument_normalization import normalization_report_var
+
+                _repairs = normalization_report_var.get()
+                if _repairs:
+                    _trace_emit(
+                        _trace_turn, "tool_args_normalized", tool=tool_name,
+                        tool_call_id=tool_call_id,
+                        repairs=len(_repairs),
+                        kinds=",".join(sorted({r.kind for r in _repairs}))[:120],
+                    )
+            except Exception:  # noqa: BLE001
+                pass
+            return _outcome
 
         def _error_outcome(exc: BaseException) -> ToolDispatchResult:
             err_msg = f"工具执行异常 ({type(exc).__name__}): {exc}"
@@ -170,6 +225,11 @@ class ToolExecutionPipeline:
                 logger.info(f"[ToolPipeline] {tool_name} cancelled by user")
                 cancelled = True
                 outcome = _cancelled_outcome()
+            except BudgetExceeded:
+                # review R1 CRITICAL：子代理预算超限必须上抛到 SubagentDispatcher
+                # 的显式失败语义（budget_exceeded:tools）—— 吞成工具错误会让
+                # 预算治理静默退化为 no-progress 兜底。
+                raise
             except Exception as e:
                 logger.error(f"[ToolPipeline] Dispatch error for {tool_name}: {e}", exc_info=True)
                 outcome = _error_outcome(e)
@@ -196,6 +256,8 @@ class ToolExecutionPipeline:
                     logger.info(f"[ToolPipeline] {tool_name} cancelled by user")
                     cancelled = True
                     outcome = _cancelled_outcome()
+                except BudgetExceeded:
+                    raise
                 except Exception as e:
                     logger.error(f"[ToolPipeline] Dispatch error for {tool_name}: {e}", exc_info=True)
                     outcome = _error_outcome(e)
@@ -241,7 +303,7 @@ class ToolExecutionPipeline:
                     session_id,
                     review_error,
                 )
-        return ToolExecutionResult(
+        result = ToolExecutionResult(
             tool_name=tool_name,
             tool_call_id=tool_call_id,
             raw_result=outcome.raw_result,
@@ -252,3 +314,12 @@ class ToolExecutionPipeline:
             background_job_ids=list(origin.created_job_ids),
             cancelled=cancelled,
         )
+        # ADR-0101 Wave 6：canonical 签名 + 模式级原因码（additive 观测，
+        # 绝不改变成功/失败判定 —— 连败阈值语义保持既有）。
+        try:
+            from app.services.chat.no_progress import canonical_call_signature
+
+            result.call_signature = canonical_call_signature(tool_name, args_dict)
+        except Exception:  # noqa: BLE001
+            result.call_signature = ""
+        return result

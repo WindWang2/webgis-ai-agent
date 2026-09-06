@@ -19,6 +19,7 @@ from typing import get_args
 
 from app.lib.cartography.component_registry import get_component_registry
 from app.lib.cartography.component_renderers import get_component_renderer_registry
+from app.lib.cartography.themes import get_cartographic_theme_registry
 from app.services.gis_harness.components import ComponentType
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -38,6 +39,7 @@ RENDERER_EXEMPT = {
 def build_catalog() -> dict:
     registry = get_component_registry()
     renderers = get_component_renderer_registry()
+    theme_reg = get_cartographic_theme_registry()
     types = sorted(get_args(ComponentType))
     components = []
     for t in types:
@@ -57,10 +59,49 @@ def build_catalog() -> dict:
             "exporterSupport": list(support.exporters) if support else [],
         }
         components.append(entry)
+    # V3（ADR-0101 D3/D4）：additive —— themes/palettes 描述层随目录
+    # 导出（颜色 hex 不入目录：thematic 真值 palettes.py、chrome 真值
+    # 前端 token；这里只有 id 与推导元数据）。
+    palettes = [
+        {
+            "id": p.id,
+            "kind": p.kind,
+            "colorblindSafe": p.colorblind_safe,
+            "colorblindSafeMaxClasses": p.colorblind_safe_max_classes,
+            "printSafe": p.print_safe,
+            "grayLevels": p.gray_levels,
+            "minGrayDelta": p.min_gray_delta,
+        }
+        for p in theme_reg.palettes()
+    ]
+    themes = [
+        {
+            "id": t.id,
+            "profile": t.profile,
+            "outputTargets": list(t.output_targets),
+            "colorblindSafeFirst": t.colorblind_safe_first,
+            "typography": {
+                "titleSizeToken": t.typography.title_size_token,
+                "bodySizeToken": t.typography.body_size_token,
+                "microSizeToken": t.typography.micro_size_token,
+                "titleWeight": t.typography.title_weight,
+                "minChromePx": t.typography.min_chrome_px,
+            },
+            "spacing": {
+                "stackStepPx": t.spacing.stack_step_px,
+                "chromePaddingPx": t.spacing.chrome_padding_px,
+            },
+            "chromeTokenRefs": t.chrome.model_dump(),
+            "paletteRecommendations": t.palettes.model_dump(),
+        }
+        for t in theme_reg.themes()
+    ]
     return {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "exportedFrom": "app/lib/cartography/component_registry.py",
         "componentTypes": components,
+        "palettes": palettes,
+        "themes": themes,
     }
 
 

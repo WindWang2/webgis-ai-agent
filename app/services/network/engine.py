@@ -26,6 +26,9 @@ from app.services.network.models import (
     ServiceArea,
     AccessibilityResult,
     NetworkAnalysisResult,
+    GravityAccessResult,
+    HuffInteractionResult,
+    CentralityResult,
 )
 from app.services.network.graph_builder import NetworkGraphBuilder
 from app.services.network.snapping import PointSnappingService
@@ -35,6 +38,8 @@ from app.services.network.facility import NetworkClosestFacilityService
 from app.services.network.service_area import NetworkServiceAreaService
 from app.services.network.accessibility import NetworkAccessibilityService
 from app.services.network.allocation import NetworkLocationAllocationService
+from app.services.network.interaction import NetworkInteractionService
+from app.services.network.centrality import NetworkCentralityService
 from app.services.network.vrp import NetworkRouteOptimizationService
 
 
@@ -66,6 +71,8 @@ class NetworkGraphEngine:
         self.sa_service = NetworkServiceAreaService(snapper=self.snapper)
         self.acc_service = NetworkAccessibilityService(snapper=self.snapper)
         self.alloc_service = NetworkLocationAllocationService(snapper=self.snapper)
+        self.interaction_service = NetworkInteractionService(snapper=self.snapper)
+        self.centrality_service = NetworkCentralityService()
         self.vrp_service = NetworkRouteOptimizationService(snapper=self.snapper)
 
     def build_network(
@@ -211,8 +218,9 @@ class NetworkGraphEngine:
         cutoff_minutes: float = 15.0,
         method: str = "15min_circle",
         profile: Optional[TravelProfile] = None,
+        decay_zones: int = 3,
     ) -> AccessibilityResult:
-        """Calculates 15-minute life circle accessibility or 2SFCA."""
+        """Calculates 15-minute life circle accessibility, 2SFCA or E2SFCA."""
         if graph is None and network_dataset is not None:
             graph, _ = self.builder.build_graph(network_dataset, profile=profile)
         return self.acc_service.network_accessibility(
@@ -223,6 +231,7 @@ class NetworkGraphEngine:
             cutoff_minutes=cutoff_minutes,
             method=method,
             profile=profile,
+            decay_zones=decay_zones,
         )
 
     def location_allocation(
@@ -248,6 +257,71 @@ class NetworkGraphEngine:
             graph=graph,
             network_dataset=network_dataset,
             profile=profile,
+        )
+
+    def gravity_access(
+        self,
+        demand_points: List[DemandPoint],
+        facilities: List[Facility],
+        network_dataset: Optional[NetworkDataset] = None,
+        graph: Optional[nx.DiGraph] = None,
+        mass_exponent: float = 1.0,
+        distance_decay: float = 2.0,
+        cutoff_cost: Optional[float] = None,
+        profile: Optional[TravelProfile] = None,
+    ) -> GravityAccessResult:
+        """Hansen/Zipf gravity accessibility A_i = Σ S_j^α / d_ij^β over OD costs."""
+        if graph is None and network_dataset is not None:
+            graph, _ = self.builder.build_graph(network_dataset, profile=profile)
+        return self.interaction_service.gravity_accessibility(
+            demand_points=demand_points,
+            facilities=facilities,
+            graph=graph,
+            network_dataset=network_dataset,
+            mass_exponent=mass_exponent,
+            distance_decay=distance_decay,
+            cutoff_cost=cutoff_cost,
+            profile=profile,
+        )
+
+    def huff_interaction(
+        self,
+        demand_points: List[DemandPoint],
+        facilities: List[Facility],
+        network_dataset: Optional[NetworkDataset] = None,
+        graph: Optional[nx.DiGraph] = None,
+        distance_decay: float = 2.0,
+        cutoff_cost: Optional[float] = None,
+        profile: Optional[TravelProfile] = None,
+    ) -> HuffInteractionResult:
+        """Huff interaction probabilities P_ij with per-demand/per-facility disclosures."""
+        if graph is None and network_dataset is not None:
+            graph, _ = self.builder.build_graph(network_dataset, profile=profile)
+        return self.interaction_service.huff_probabilities(
+            demand_points=demand_points,
+            facilities=facilities,
+            graph=graph,
+            network_dataset=network_dataset,
+            distance_decay=distance_decay,
+            cutoff_cost=cutoff_cost,
+            profile=profile,
+        )
+
+    def centrality(
+        self,
+        network_dataset: Optional[NetworkDataset] = None,
+        graph: Optional[nx.DiGraph] = None,
+        metrics: str = "all",
+        weight: str = "travel_time",
+        profile: Optional[TravelProfile] = None,
+    ) -> CentralityResult:
+        """Network centrality (degree/closeness/betweenness/edge_betweenness)."""
+        if graph is None and network_dataset is not None:
+            graph, _ = self.builder.build_graph(network_dataset, profile=profile)
+        return self.centrality_service.network_centrality(
+            graph=graph,
+            metrics=metrics,
+            weight=weight,
         )
 
     def optimize_route(
@@ -675,6 +749,8 @@ class NetworkGraphEngine:
         facilities: List[Any],
         cutoff_minutes: float = 15.0,
         profile: Optional[TravelProfile] = None,
+        method: str = "15min_circle",
+        decay_zones: int = 3,
         session_id: str = "",
     ) -> NetworkAnalysisResult:
         """High level accessibility solver working with raw GeoJSON/dict inputs."""
@@ -712,7 +788,9 @@ class NetworkGraphEngine:
                 network_dataset=net_ds,
                 graph=graph,
                 cutoff_minutes=cutoff_minutes,
+                method=method,
                 profile=prof,
+                decay_zones=decay_zones,
             )
 
             # VNext（Task D）：2SFCA/覆盖法方法学诊断 —— 供给总量、需求总量、
@@ -724,6 +802,8 @@ class NetworkGraphEngine:
                 except (TypeError, ValueError):
                     supply_total += 1.0
             summary: Dict[str, Any] = {
+                "method": method,
+                "decay_zones": int(decay_zones),
                 "catchment_radius_min": float(cutoff_minutes),
                 "demand_total": acc_res.total_demand,
                 "supply_total": round(supply_total, 4),
@@ -751,6 +831,18 @@ class NetworkGraphEngine:
         session_id: str = "",
     ) -> NetworkAnalysisResult:
         """High level location-allocation solver working with raw GeoJSON/dict inputs."""
+        _OBJECTIVE_TO_PROBLEM = {
+            "minimize_cost": "p_median",
+            "maximize_coverage": "max_coverage",
+            # p-center（Foundation V2 A4）：最小化可达需求的最大服务成本。
+            "minimize_max_cost": "p_center",
+        }
+        if objective not in _OBJECTIVE_TO_PROBLEM:
+            raise ValueError(
+                f"未知选址目标 {objective!r}（合法：minimize_cost | maximize_coverage | "
+                f"minimize_max_cost）"
+            )
+
         def _sync_solve():
             prof = profile or TravelProfile()
             graph, net_ds = self._ensure_graph(network, prof)
@@ -762,9 +854,88 @@ class NetworkGraphEngine:
                 candidate_facilities=cand_objs,
                 demand_points=demands,
                 p_count=n_to_choose,
-                problem_type="p_median" if objective == "minimize_cost" else "max_coverage",
+                problem_type=_OBJECTIVE_TO_PROBLEM[objective],
                 network_dataset=net_ds,
                 graph=graph,
+                profile=prof,
+            )
+
+        return await asyncio.to_thread(_sync_solve)
+
+    async def solve_gravity_access(
+        self,
+        network: Union[Dict[str, Any], NetworkDataset, List[Dict[str, Any]]],
+        demand_points: List[Any],
+        facilities: List[Any],
+        mass_exponent: float = 1.0,
+        distance_decay: float = 2.0,
+        cutoff_cost: Optional[float] = None,
+        profile: Optional[TravelProfile] = None,
+        session_id: str = "",
+    ) -> GravityAccessResult:
+        """High level gravity accessibility solver working with raw inputs."""
+        def _sync_solve():
+            prof = profile or TravelProfile()
+            graph, net_ds = self._ensure_graph(network, prof)
+            demands = [self._to_demand(d, i) for i, d in enumerate(demand_points)]
+            fac_objs = [self._to_facility(f, i) for i, f in enumerate(facilities)]
+            return self.gravity_access(
+                demand_points=demands,
+                facilities=fac_objs,
+                network_dataset=net_ds,
+                graph=graph,
+                mass_exponent=mass_exponent,
+                distance_decay=distance_decay,
+                cutoff_cost=cutoff_cost,
+                profile=prof,
+            )
+
+        return await asyncio.to_thread(_sync_solve)
+
+    async def solve_huff_interaction(
+        self,
+        network: Union[Dict[str, Any], NetworkDataset, List[Dict[str, Any]]],
+        demand_points: List[Any],
+        facilities: List[Any],
+        distance_decay: float = 2.0,
+        cutoff_cost: Optional[float] = None,
+        profile: Optional[TravelProfile] = None,
+        session_id: str = "",
+    ) -> HuffInteractionResult:
+        """High level Huff interaction solver working with raw inputs."""
+        def _sync_solve():
+            prof = profile or TravelProfile()
+            graph, net_ds = self._ensure_graph(network, prof)
+            demands = [self._to_demand(d, i) for i, d in enumerate(demand_points)]
+            fac_objs = [self._to_facility(f, i) for i, f in enumerate(facilities)]
+            return self.huff_interaction(
+                demand_points=demands,
+                facilities=fac_objs,
+                network_dataset=net_ds,
+                graph=graph,
+                distance_decay=distance_decay,
+                cutoff_cost=cutoff_cost,
+                profile=prof,
+            )
+
+        return await asyncio.to_thread(_sync_solve)
+
+    async def solve_centrality(
+        self,
+        network: Union[Dict[str, Any], NetworkDataset, List[Dict[str, Any]]],
+        metrics: str = "all",
+        weight: str = "travel_time",
+        profile: Optional[TravelProfile] = None,
+        session_id: str = "",
+    ) -> CentralityResult:
+        """High level network centrality solver working with raw inputs."""
+        def _sync_solve():
+            prof = profile or TravelProfile()
+            graph, _ = self._ensure_graph(network, prof)
+            return self.centrality(
+                graph=graph,
+                metrics=metrics,
+                weight=weight,
                 profile=prof,
             )
 

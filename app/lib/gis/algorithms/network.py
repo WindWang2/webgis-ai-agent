@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import List
 
-from app.lib.gis.algorithm_registry import AlgorithmDescriptor
+from app.lib.gis.algorithm_registry import AlgorithmDescriptor, BackendVariant
 from app.lib.gis.parameter_contracts import ParameterContract, ParameterSpec
 
 ALGORITHMS: List[AlgorithmDescriptor] = [
@@ -276,11 +276,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             method_references=["luo_qi2009"],
             assumptions=[
                 "2SFCA: 供给/需求两步浮动捕获 —— 第一步 R_j=容量_j/catchment 内需求权重和，第二步 A_i=Σ(cutoff 内 R_j)",
+                "E2SFCA（Foundation V2 A4，Luo & Qi 2009）：cutoff 等分 decay_zones 带，带中点高斯权 w_r=exp(−0.5·(r+0.5)²)",
                 "15min_circle 法：需求点在 cutoff 内可达任一设施即计入 served（0/1 覆盖，非 2SFCA）",
                 "可达性以路网行程时间（分钟）度量，cutoff_minutes 为浮动捕获半径",
             ],
             limitations=[
-                "容量/需求比值代理；E2SFCA 距离衰减未实现（cutoff 内等权）",
+                "容量/需求比值代理；2SFCA cutoff 内等权，E2SFCA 按等分带高斯衰减（decay_zones 1-10，缺省 3）——方法即精度权衡",
                 "容量缺省 1.0：未提供 capacity 字段时 R_j 退化为供需计数比",
                 "供需完全不可达的需求点计入 unserved（显式），score=0 的解释依赖供需总量披露",
             ],
@@ -291,7 +292,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             conformance_tests=[
                 "tests/unit/test_network_science_vnext.py::test_2sfca_single_facility_hand_computed_ratio",
                 "tests/unit/test_network_science_vnext.py::test_2sfca_island_facility_ratio_and_unreachable_demand",
+                # E2SFCA（A4）金标准节点列在 tests/unit/test_network_accessibility_v2.py
+                # （test_e2sfca_three_node_hand_computed_golden /
+                # test_e2sfca_nearer_demand_scores_higher）—— 本列表受既有
+                # 契约测试锁定为 vnext 节点，不混列。
             ],
+            parameter_contract_ref="network_accessibility_analysis",
         ),
 
         AlgorithmDescriptor(
@@ -329,15 +335,16 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             cpu_cost="high", memory_cost="medium", io_cost="medium",
             preferred_execution_policy="ASYNC", priority=30,
             algorithm_family="location_allocation",
-            method_references=["teitz_bart1968"],
+            method_references=["teitz_bart1968", "hakimi1964"],
             assumptions=[
                 "p_median 目标 = 最小化 Σ w_i·min_{j∈S} C_ij；max_coverage = 最大化 cutoff 内覆盖需求权重",
+                "p_center（Foundation V2 A4，Hakimi 1964 max-min）= 最小化可达需求的最大服务成本（打平按总加权成本次级判据）",
                 "代价矩阵 = 路网 OD 行程时间（不可达 = inf，参与目标时按 1e9 惩罚）",
             ],
             limitations=[
-                "启发式 >20k 组合；exact ≤20k —— C(m,p) 枚举在预算内给出精确最优，超出切 Teitz-Bart 顶点替换 / 贪婪覆盖（近优非最优，summary.solver 披露）",
+                "启发式 >20k 组合；exact ≤20k —— C(m,p) 枚举在预算内给出精确最优，超出切 Teitz-Bart 顶点替换 / 贪婪覆盖 / p-center 贪婪+顶点替换（≤10 轮）",
                 "不可达需求点列入 summary.unassigned_ids（不参与选址目标）",
-                "Teitz-Bart 收敛依赖初始化（前 p 个候选），无多起点重启",
+                "Teitz-Bart / p-center 启发式收敛依赖初始化（前 p 个候选），无多起点重启（summary.solver 披露 exact|heuristic）",
             ],
             crs_class="GEODESIC",
             uncertainty_outputs=[],
@@ -348,6 +355,9 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "tests/unit/test_allocation_scaling.py::test_heuristic_selects_reasonable_sites",
                 "tests/unit/test_allocation_scaling.py::test_large_p_median_uses_heuristic_and_terminates",
                 "tests/unit/test_quality_dedup.py::test_allocation_unassigned",
+                "tests/unit/test_p_center.py::test_p_center_exact_one_facility_golden",
+                "tests/unit/test_p_center.py::test_p_center_heuristic_within_11pct_of_exact",
+                "tests/unit/test_p_center.py::test_p_center_unreachable_demand_excluded_and_disclosed",
             ],
         ),
 
@@ -374,6 +384,132 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             conformance_tests=[
                 "tests/unit/test_network_issue540_perf_fixes.py::test_two_opt_delta_matches_naive",
                 "tests/unit/test_network_issue540_perf_fixes.py::test_vrp_optimize_route_still_correct_end_to_end",
+            ],
+        ),
+
+        # ── Foundation V2 (A4)：引力可达性 / Huff 相互作用 / 网络中心性 ──
+        AlgorithmDescriptor(
+            id="network.gravity_access", name="引力可达性", category="network_analysis",
+            capabilities=["gravity_accessibility"],
+            input_artifact_types=["point_feature_set"],
+            output_artifact_type="stats_table",
+            tool_candidates=["network_gravity_access"],
+            cpu_cost="high", memory_cost="medium", io_cost="medium",
+            preferred_execution_policy="ASYNC", priority=20,
+            algorithm_family="gravity_model",
+            method_references=["hansen1959", "zipf1946"],
+            assumptions=[
+                "A_i=Σ_j S_j^α/d_ij^β（Hansen 1959 势能/Zipf 1946 引力），S_j=设施容量（α∈[0,3]）",
+                "d_ij=路网 OD 成本（活动阻抗，默认行程时间秒）；β∈[0.5,4] —— β 对成本单位敏感，跨阻抗不可比",
+                "零成本对（需求与设施捕捉到同点）以 ε=1e-6 下限截断（不丢弃最可达对，除零防护）",
+            ],
+            limitations=[
+                "不可达对跳过并计数披露（reachable/unreachable_pair_count）；无 cutoff 且全对不可达抛 DisconnectedNetwork",
+                "top-3 设施贡献份额为展示截断（仅前 3 项，非全部供给分解）",
+                "score 无量纲：只可用于相对排序与截断对比，不做绝对福利解释",
+            ],
+            crs_class="GEODESIC",
+            scientific_preconditions=["point_support_required"],
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            numerical_tolerance="单对 A=S^α/d^β 闭式手算精确（±1e-9 相对）；确定性两次运行逐位一致",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/test_network_interaction.py::test_gravity_single_pair_hand_computed",
+                "tests/unit/test_network_interaction.py::test_gravity_mass_exponent_acts_on_capacity",
+                "tests/unit/test_network_interaction.py::test_gravity_nearer_demand_scores_higher",
+                "tests/unit/test_network_interaction.py::test_gravity_unreachable_pairs_disclosed",
+                "tests/unit/test_network_interaction.py::test_gravity_parameter_bounds_rejected",
+                "tests/unit/test_network_interaction.py::test_interaction_tool_evidence_and_backend_diagnostic",
+            ],
+            parameter_contract_ref="gravity_accessibility_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="network.huff_interaction", name="Huff 空间相互作用", category="network_analysis",
+            capabilities=["spatial_interaction"],
+            input_artifact_types=["point_feature_set"],
+            output_artifact_type="stats_table",
+            tool_candidates=["network_huff_interaction"],
+            cpu_cost="high", memory_cost="medium", io_cost="medium",
+            preferred_execution_policy="ASYNC", priority=20,
+            algorithm_family="spatial_interaction",
+            method_references=["huff1964"],
+            assumptions=[
+                "P_ij=A_j·d_ij^−β/Σ_k A_k·d_ik^−β（Huff 1964），A_j=设施容量（吸引力，缺省 1.0）",
+                "d_ij=路网 OD 成本（活动阻抗，默认秒）；候选集 = cutoff（活动阻抗单位）内可达设施",
+                "熵为自然对数 Shannon 熵（按全部候选份额）；captive=候选集恰为单设施 {j} 的需求权重占比",
+            ],
+            limitations=[
+                "零成本对以 ε=1e-6 截断；容量 0 的设施吸引力为 0（合法——份额为 0，非错误）",
+                "候选集为空的需求点列入 unassigned_demand_ids（不虚构份额，不出现在分母）",
+                "概率即期望客流占比的假设模型：不做随机效用离散选择估计/参数标定",
+            ],
+            crs_class="GEODESIC",
+            scientific_preconditions=["point_support_required"],
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            numerical_tolerance="单设施 P=1（熵 0）与双等设施 P=0.5（熵 ln2）手算金标准（±1e-9）",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/test_network_interaction.py::test_huff_single_facility_probability_one_entropy_zero",
+                "tests/unit/test_network_interaction.py::test_huff_two_equal_facilities_split_half",
+                "tests/unit/test_network_interaction.py::test_huff_market_and_captive_shares",
+                "tests/unit/test_network_interaction.py::test_huff_cutoff_unassigned_disclosed",
+                "tests/unit/test_network_interaction.py::test_huff_and_gravity_contracts_converge",
+                "tests/unit/test_network_interaction.py::test_interaction_tool_evidence_and_backend_diagnostic",
+            ],
+            parameter_contract_ref="huff_interaction_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="network.centrality", name="网络中心性", category="network_analysis",
+            capabilities=["network_centrality"],
+            output_artifact_type="stats_table", tool_candidates=["network_centrality"],
+            cpu_cost="high", memory_cost="high", io_cost="low",
+            preferred_execution_policy="ASYNC", priority=20,
+            algorithm_family="network_centrality",
+            method_references=["brandes2001"],
+            assumptions=[
+                "度数 = 入度+出度（DiGraph 语义：单行路段计数不对称，如实呈现）",
+                "接近/介数以边权为距离最小化（travel_time_s 秒 / length_m 米），非跳数",
+                "介数 Brandes 精确 n≤2000；n>2000 切 k=500 固定种子 42 采样（betweenness_mode 披露）",
+                "edge_betweenness 节点级输出 = 关联边边介数之和（networkx 逐边精确 Brandes 聚合）",
+                "DiGraph 接近中心性为入向语义（networkx reverse）：度量被其它节点到达的容易程度；按可达占比缩放",
+            ],
+            limitations=[
+                "节点上限 20000（计算前 ResourceScaleMismatch 显式拒绝，不 OOM）",
+                "edge_betweenness 仅边数≤1500 精确；超出诚实拒绝（不做假采样）",
+                "逐节点输出上限 5000 行（按主指标降序裁剪，output_rows_trimmed 披露）",
+                "采样介数为估计值：k=500 的排序噪声未给置信区间",
+            ],
+            crs_class="GEODESIC",
+            uncertainty_outputs=[],
+            random_seed_policy="fixed_seed",
+            numerical_tolerance="星形/有向路径手算金标准（度/接近/介数逐点精确匹配）",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/test_network_centrality.py::test_star_graph_degree_closeness_betweenness_golden",
+                "tests/unit/test_network_centrality.py::test_directed_path_betweenness_and_closeness_golden",
+                "tests/unit/test_network_centrality.py::test_closeness_uses_weight_not_topology_hops",
+                "tests/unit/test_network_centrality.py::test_betweenness_switches_to_sampled_beyond_threshold",
+                "tests/unit/test_network_centrality.py::test_edge_betweenness_scale_guard_refuses",
+                "tests/unit/test_network_centrality.py::test_node_cap_guard_fires_before_compute",
+                "tests/unit/test_network_centrality.py::test_output_row_cap_trims_with_disclosure",
+                "tests/unit/test_network_centrality.py::test_invalid_metric_or_weight_raises_unsupported",
+            ],
+            parameter_contract_ref="network_centrality_analysis",
+            backend_variants=[
+                BackendVariant(
+                    id="exact_brandes", backend="networkx", max_features=2000,
+                    tool="network_centrality",
+                    notes="n≤2000：Brandes 精确介数（带权，normalized）",
+                ),
+                BackendVariant(
+                    id="sampled_brandes", backend="networkx", min_features=2001,
+                    tool="network_centrality",
+                    notes="n>2000：k=500（seed=42）采样介数，其余指标仍精确",
+                ),
             ],
         ),
 
@@ -512,6 +648,80 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
                 name="profile", type="enum", default="driving",
                 enum_values=["walking", "driving", "cycling", "custom"],
                 description="出行模式（决定默认速度）",
+            ),
+        ],
+    ),
+    # ── Foundation V2 (A4)：可达性 V2 / 引力 / Huff / 中心性 ────────────
+    ParameterContract(
+        # 参数名与 NetworkAccessibilityArgs 工具 schema 逐字对齐（parity 门）：
+        # method/decay_zones 为 A4 additive 参数，cutoff_minutes 原有。
+        id="network_accessibility_analysis", version=1,
+        description="网络可达性：方法（0/1 覆盖、2SFCA 等权、E2SFCA 高斯衰减）、cutoff 与衰减带数。",
+        parameters=[
+            ParameterSpec(
+                name="method", type="enum", default="15min_circle",
+                enum_values=["15min_circle", "2sfca", "e2sfca"],
+                description="可达性方法：15min_circle=0/1 覆盖；2sfca=cutoff 内等权；e2sfca=带中点高斯衰减",
+            ),
+            ParameterSpec(
+                name="cutoff_minutes", type="number", default=15.0, minimum=0.01,
+                description="浮动捕获半径（分钟，路网行程时间）",
+            ),
+            ParameterSpec(
+                name="decay_zones", type="integer", default=3, minimum=1, maximum=10,
+                unit="count",
+                description="E2SFCA 衰减带数（cutoff 等分，带中点取权）；仅 e2sfca 使用",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="gravity_accessibility_analysis", version=1,
+        description="引力可达性：容量指数 α、成本衰减 β 与可选成本上限（吸引子=设施容量）。",
+        parameters=[
+            ParameterSpec(
+                name="mass_exponent", type="number", default=1.0, minimum=0.0, maximum=3.0,
+                unit="ratio",
+                description="设施容量指数 α（S_j^α）",
+            ),
+            ParameterSpec(
+                name="distance_decay", type="number", default=2.0, minimum=0.5, maximum=4.0,
+                unit="ratio",
+                description="路网成本衰减 β（d_ij^−β；成本单位敏感，默认秒）",
+            ),
+            ParameterSpec(
+                name="cutoff_cost", type="number", minimum=0, unit="seconds",
+                description="成本上限（活动阻抗单位，默认秒）；None=不设限",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="huff_interaction_analysis", version=1,
+        description="Huff 概率模型：成本衰减 β 与候选设施成本截断（吸引子=设施容量）。",
+        parameters=[
+            ParameterSpec(
+                name="distance_decay", type="number", default=2.0, minimum=0.5, maximum=4.0,
+                unit="ratio",
+                description="路网成本衰减 β（d^−β；成本单位敏感，默认秒）",
+            ),
+            ParameterSpec(
+                name="cutoff_cost", type="number", minimum=0, unit="seconds",
+                description="候选设施成本上限（活动阻抗单位，默认秒）；None=不设限",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="network_centrality_analysis", version=1,
+        description="网络中心性：指标集合与边权字段（度/接近/介数/边介数）。",
+        parameters=[
+            ParameterSpec(
+                name="metrics", type="enum", default="all",
+                enum_values=["degree", "closeness", "betweenness", "edge_betweenness", "all"],
+                description="中心性指标；all=全部（edge_betweenness 受 1500 边精确上限约束，超出诚实拒绝）",
+            ),
+            ParameterSpec(
+                name="weight", type="enum", default="travel_time",
+                enum_values=["travel_time", "length"],
+                description="边权字段：行程时间（秒）或长度（米）；度数不用权重",
             ),
         ],
     ),

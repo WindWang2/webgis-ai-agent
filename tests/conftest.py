@@ -57,6 +57,8 @@ _ENV_BASELINE = {
         "LLM_MAX_TOKENS": "16384",
         "LLM_TEMPERATURE": "",
         "LLM_TITLE_MODEL": "",
+        # Settings 默认 None（空串经 field_validator 折回 None = 服务端默认）
+        "LLM_CONTEXT_WINDOW": "",
         "MAPBOX_TOKEN": "",
         "BING_MAP_KEY": "",
         "TENCENT_MAP_KEY": "",

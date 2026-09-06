@@ -95,6 +95,9 @@ class Settings(BaseSettings):
     LLM_TIMEOUT_S: float = 120.0        # 非流式请求超时；流式 read = max(180, 1.5×)
     LLM_MAX_TOKENS: int = 16384         # 执行角色默认输出预算
     LLM_TEMPERATURE: Optional[float] = None  # None = 不发送（用 provider 默认）
+    # ADR-0101/0102：主模型上下文窗（tokens）。None/0 = 未知（预算器按 8k
+    # 保守规划）；按模型精细值可配 MODEL_DESCRIPTORS_FILE 描述符。
+    LLM_CONTEXT_WINDOW: Optional[int] = None
     # 标题/摘要等辅助任务的廉价模型；空回退 LLM_MODEL
     LLM_TITLE_MODEL: str = ""
 
@@ -218,6 +221,15 @@ class Settings(BaseSettings):
         """Optional[float] 的 env 字符串没有 None 形态——模板留空（""）映射回 None，
         与 LLM_TITLE_MODEL / LLM_PLANNER_MODEL 的留空语义对齐。"""
         if v == "":
+            return None
+        return v
+
+    @field_validator("LLM_CONTEXT_WINDOW", mode="before")
+    @classmethod
+    def _empty_context_window_is_none(cls, v):
+        """Optional[int] 同一空串语义（.env.example 留空 = None = 服务端默认/
+        预算器保守 8k）—— 缺这个 validator 时空模板直接让 Settings 解析失败。"""
+        if v == "" or v is None:
             return None
         return v
 

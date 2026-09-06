@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import List
 
-from app.lib.gis.algorithm_registry import AlgorithmDescriptor
+from app.lib.gis.algorithm_registry import AlgorithmDescriptor, BackendVariant
 from app.lib.gis.parameter_contracts import ParameterContract, ParameterSpec
 
 ALGORITHMS: List[AlgorithmDescriptor] = [
@@ -254,6 +254,409 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             cpu_cost="high", memory_cost="medium", io_cost="low",
             preferred_execution_policy="THREAD", priority=20,
         ),
+
+        # ── Foundation V2（A1）：局部 Geary / Join Count / 双变量 Moran /
+        #    地理探测器 / 空间回归族 / 权重敏感性 / MGWR（planned）──────
+        # 距离型统计一律 PROJECTED_REQUIRED（度数上不正确；实现经 to_utm_gdf
+        # 自动投影到局部 UTM，假设中披露）。
+        AlgorithmDescriptor(
+            id="stats.local_geary", name="局部 Geary's C（相似性/相异性）",
+            category="spatial_statistics",
+            capabilities=["local_gearys_c"],
+            input_artifact_types=["admin_aggregate_table", "grid_aggregate"],
+            output_artifact_type="hotspot_result", tool_candidates=["local_geary"],
+            cpu_cost="high", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="THREAD", compatible_map_models=["hotspot_overlay"],
+            priority=10,
+            algorithm_family="spatial_autocorrelation",
+            method_references=["anselin1995", "geary1954", "holm1979",
+                               "benjamini_hochberg1995"],
+            assumptions=[
+                "C_i=Σ_j w_ij(z_i-z_j)²，z 为总体方差标准化（esda.Geary_Local 同式）",
+                "行标准化权重；置换检验固定种子 42、双侧 (count+1)/(perms+1)",
+                "多重校正默认 BH-FDR（可 bonferroni/holm/none）",
+                "地理输入自动投影到局部 UTM 后建权重",
+            ],
+            limitations=[
+                "Local Geary 只判相似/相异，高-低方向配对用 LISA（h3_lisa）",
+                "±1 二值场等离散取值下置换分布退化，p 分辨率受格子限制",
+                "逐格校正后 α=0.05 判定在随机数据下仍有 ~0.05q 假显著期望",
+            ],
+            crs_class="PROJECTED_REQUIRED",
+            scientific_preconditions=[
+                "numeric_field_required", "nonzero_variance_required",
+                "min_numeric_samples:3",
+            ],
+            uncertainty_outputs=["statistical_significance"],
+            random_seed_policy="fixed_seed",
+            numerical_tolerance="C_i 与 esda.Geary_Local（同 Queen 行标准化权重）差 <1e-8",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_local_spatial_stats_v2.py::test_local_geary_checkerboard_golden",
+                "tests/unit/lib/test_local_spatial_stats_v2.py::test_local_geary_matches_esda",
+                "tests/unit/lib/test_local_spatial_stats_v2.py::test_local_geary_clustered_classification_and_correction",
+                "tests/unit/lib/test_local_spatial_stats_v2.py::test_local_geary_adversarial_inputs",
+            ],
+            parameter_contract_ref="local_geary_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="stats.join_count", name="Join Count（二值空间关联）",
+            category="spatial_statistics",
+            capabilities=["join_count_statistics"],
+            input_artifact_types=["admin_aggregate_table"],
+            output_artifact_type="stats_table", tool_candidates=["join_count"],
+            cpu_cost="medium", memory_cost="low", io_cost="low",
+            preferred_execution_policy="THREAD", priority=10,
+            algorithm_family="spatial_autocorrelation",
+            method_references=["cliff_ord1973", "moran1950"],
+            assumptions=[
+                "字段必须 ⊆ {0,1}，含 0 与 1 两个类（违者 UnsupportedMethod）",
+                "二值对称权重；n_BB/n_BW/n_WW 按无序连接计数",
+                "期望/方差用 free sampling（Cliff-Ord 1973）解析式，n≥4",
+                "permutations>0 时附固定种子 42 的置换复核 p",
+            ],
+            limitations=[
+                "free sampling 忽略权重结构细节（只含连接数 J）",
+                "knn 权重是邻接的近似；queen/rook 需要面要素",
+                "小 n 下解析 z 的正态近似偏乐观",
+            ],
+            crs_class="PROJECTED_REQUIRED",
+            scientific_preconditions=["binary_field_required", "min_numeric_samples:4"],
+            uncertainty_outputs=["statistical_significance"],
+            random_seed_policy="fixed_seed",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_local_spatial_stats_v2.py::test_join_count_checkerboard_golden",
+                "tests/unit/lib/test_local_spatial_stats_v2.py::test_join_count_rejects_non_binary",
+            ],
+            parameter_contract_ref="join_count_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="stats.bivariate_moran", name="双变量 Moran's I（x vs W·y）",
+            category="spatial_statistics",
+            capabilities=["bivariate_morans_i"],
+            input_artifact_types=["admin_aggregate_table", "grid_aggregate"],
+            output_artifact_type="stats_table", tool_candidates=["bivariate_moran"],
+            cpu_cost="medium", memory_cost="low", io_cost="low",
+            preferred_execution_policy="THREAD", priority=10,
+            algorithm_family="spatial_autocorrelation",
+            method_references=["wartenberg1985", "moran1950"],
+            assumptions=[
+                "I=(n/S0)·Σ x_i(Wy)_i/(‖x-x̄‖·‖y-ȳ‖)，行标准化权重",
+                "x=y 时与单变量 Moran 严格一致（属性测试钉住）",
+                "置换只打乱 y（固定种子 42，双侧 (count+1)/(perms+1)）",
+                "地理输入自动投影到局部 UTM 后建权重",
+            ],
+            limitations=[
+                "共位相关 ≠ 因果/超前-滞后；方向解读需领域模型支撑",
+                "x 与 y 量纲无关（分子分母同除范数），但受离群值影响",
+                "与 esda 归一化对齐仅在无 island 权重时成立（S0=n）；含 island 发散 n/S0",
+            ],
+            crs_class="PROJECTED_REQUIRED",
+            scientific_preconditions=[
+                "numeric_field_required", "nonzero_variance_required",
+                "min_numeric_samples:3",
+            ],
+            uncertainty_outputs=["statistical_significance"],
+            random_seed_policy="fixed_seed",
+            numerical_tolerance="x=y 时与 moran_i_narrated 的 I 差 <1e-12；与 esda.Moran_BV 差 <1e-9",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_local_spatial_stats_v2.py::test_bivariate_moran_equals_univariate_when_x_is_y",
+                "tests/unit/lib/test_local_spatial_stats_v2.py::test_bivariate_moran_matches_esda",
+            ],
+            parameter_contract_ref="bivariate_moran_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="stats.geodetector", name="地理探测器（因子 q + 交互）",
+            category="spatial_statistics",
+            capabilities=["geographical_detector"],
+            input_artifact_types=["admin_aggregate_table", "grid_aggregate",
+                                  "poi_feature_set", "point_feature_set"],
+            output_artifact_type="stats_table", tool_candidates=["geodetector"],
+            cpu_cost="medium", memory_cost="low", io_cost="low",
+            preferred_execution_policy="THREAD", priority=10,
+            algorithm_family="spatial_stratified_heterogeneity",
+            method_references=["wang2010"],
+            assumptions=[
+                "q=1-Σ N_h σ_h²/(N σ²)（总体方差），q∈[0,1] 完全分层时 =1",
+                "数值分层字段需显式分箱（bins≥2 分位数）；唯一值≤12 按类别",
+                "F 检验解析 p；permutations>0 附固定种子 42 的置换 p 与分位",
+                "交互按 Wang 2010 表分类（q1∩q2 相对 q1+q2 的位置）",
+            ],
+            limitations=[
+                "类别交集是两分层的公共加细，q 加细单调不减——weakened 类只在"
+                "分层被粗化时出现",
+                "q 只度量分层解释力，不是因果证据",
+                "分层过细（>n/2 层）时 q 退化为 1，被显式拒绝",
+            ],
+            crs_class="PROJECTED_REQUIRED",
+            scientific_preconditions=["numeric_field_required", "min_numeric_samples:10"],
+            uncertainty_outputs=["statistical_significance", "monte_carlo_summary"],
+            random_seed_policy="fixed_seed",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_local_spatial_stats_v2.py::test_geodetector_q_and_interaction_classes",
+                "tests/unit/lib/test_local_spatial_stats_v2.py::test_geodetector_adversarial_inputs",
+            ],
+            parameter_contract_ref="geodetector_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="spatial.ols_regression", name="OLS + 空间诊断",
+            category="spatial_regression",
+            capabilities=["spatial_regression"],
+            input_artifact_types=["admin_aggregate_table", "grid_aggregate",
+                                  "poi_feature_set", "point_feature_set"],
+            output_artifact_type="stats_table", tool_candidates=["ols_regression"],
+            cpu_cost="medium", memory_cost="low", io_cost="low",
+            preferred_execution_policy="THREAD", priority=10,
+            algorithm_family="spatial_regression",
+            method_references=["anselin1988", "jarque_bera1980",
+                               "breusch_pagan1979", "moran1950"],
+            assumptions=[
+                "y~X（含截距）；lstsq 求解，se/t/p 由 (X'X)⁻¹σ² 给出",
+                "残差 Moran's I 固定种子 42 置换（双侧 +1）",
+                "LM-lag/LM-error/稳健版与 spreg LMtests 逐式一致（Anselin 1988）",
+                "BP 为 Koenker 学生化（对非正态残差稳健）",
+            ],
+            limitations=[
+                "残差 Moran 显著时只给 SAR/SEM 建议文本，不替用户自动换模型",
+                "n < 2p+2 拒绝（InsufficientSamples）",
+                "VIF 在仅一个解释变量时不可得（诚实留空）",
+            ],
+            crs_class="PROJECTED_REQUIRED",
+            scientific_preconditions=[
+                "numeric_field_required", "nonzero_variance_required",
+                "min_numeric_samples:8",
+            ],
+            uncertainty_outputs=["validation_metrics", "statistical_significance"],
+            random_seed_policy="fixed_seed",
+            numerical_tolerance="精确平面数据系数恢复到 1e-10；LM_err 与手算公式差 <1e-10",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_spatial_regression_v2.py::test_ols_recovers_exact_plane",
+                "tests/unit/lib/test_spatial_regression_v2.py::test_ols_lm_error_matches_hand_formula",
+                "tests/unit/lib/test_spatial_regression_v2.py::test_ols_jb_bp_diagnostics_and_guards",
+            ],
+            parameter_contract_ref="ols_regression_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="spatial.sar_ml", name="空间滞后 ML（SAR）",
+            category="spatial_regression",
+            capabilities=["spatial_regression"],
+            input_artifact_types=["admin_aggregate_table", "grid_aggregate",
+                                  "poi_feature_set", "point_feature_set"],
+            output_artifact_type="stats_table", tool_candidates=["sar_ml_regression"],
+            cpu_cost="high", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="THREAD", priority=20,
+            max_features_hint=4000,
+            algorithm_family="spatial_regression",
+            method_references=["ord1975", "anselin1988"],
+            assumptions=[
+                "y=ρWy+Xβ+ε；log|I-ρW|=Σ ln(1-ρκᵢ)（Ord 1975 特征值法）",
+                "ρ 在平稳域 (1/κ_min,1/κ_max) 内有界 Brent 最大化（确定性）",
+                "LR 检验 vs OLS（df=1）；伪 R²=1-SSE_SAR/SSE_OLS",
+                "β 标准误为给定 ρ̂ 的条件渐近近似（不含 ρ 估计不确定性）",
+            ],
+            limitations=[
+                "n>4000 拒绝（特征值 O(n³)，ResourceScaleMismatch 先于分配）",
+                "仅支持相似对称权重（knn/queen/rook/distance_band 均满足）",
+                "运行时不静默回退 OLS——fallback 声明只供规划层参考",
+            ],
+            crs_class="PROJECTED_REQUIRED",
+            scientific_preconditions=[
+                "numeric_field_required", "nonzero_variance_required",
+                "min_numeric_samples:8",
+            ],
+            uncertainty_outputs=["validation_metrics", "statistical_significance"],
+            random_seed_policy="deterministic",
+            numerical_tolerance="ρ→0 时与 OLS 一致；格网 ρ=0.6 恢复到 ±0.15",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_spatial_regression_v2.py::test_sar_ml_recovers_rho_on_grid",
+                "tests/unit/lib/test_spatial_regression_v2.py::test_sar_ml_scale_guard_and_degenerate_inputs",
+            ],
+            fallback_algorithms=["spatial.ols_regression"],
+            fallback_semantics={"spatial.ols_regression": "approximation"},
+            backend_variants=[
+                BackendVariant(
+                    id="eigen_dense_symmetric", backend="numpy",
+                    max_features=4000,
+                    notes="对称相似变换后稠密 eigvalsh；n≤4000"),
+            ],
+            parameter_contract_ref="sar_ml_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="spatial.sem_ml", name="空间误差 ML（SEM）",
+            category="spatial_regression",
+            capabilities=["spatial_regression"],
+            input_artifact_types=["admin_aggregate_table", "grid_aggregate",
+                                  "poi_feature_set", "point_feature_set"],
+            output_artifact_type="stats_table", tool_candidates=["sem_ml_regression"],
+            cpu_cost="high", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="THREAD", priority=20,
+            max_features_hint=4000,
+            algorithm_family="spatial_regression",
+            method_references=["ord1975", "anselin1988"],
+            assumptions=[
+                "y=Xβ+u，u=λWu+ε；Cy=CXβ+ε 的 GLS 剖面似然（C=I-λW）",
+                "与 SAR 同一特征值机器；λ 有界 Brent 最大化（确定性）",
+                "LR 检验 vs OLS（df=1，Burridge 1980 LM-error 的 ML 对应）",
+            ],
+            limitations=[
+                "n>4000 拒绝（特征值 O(n³)）",
+                "运行时不静默回退 OLS——fallback 声明只供规划层参考",
+            ],
+            crs_class="PROJECTED_REQUIRED",
+            scientific_preconditions=[
+                "numeric_field_required", "nonzero_variance_required",
+                "min_numeric_samples:8",
+            ],
+            uncertainty_outputs=["validation_metrics", "statistical_significance"],
+            random_seed_policy="deterministic",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_spatial_regression_v2.py::test_sem_ml_recovers_lambda",
+                "tests/unit/lib/test_spatial_regression_v2.py::test_sar_ml_scale_guard_and_degenerate_inputs",
+            ],
+            fallback_algorithms=["spatial.ols_regression"],
+            fallback_semantics={"spatial.ols_regression": "approximation"},
+            parameter_contract_ref="sem_ml_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="spatial.slx", name="SLX（空间滞后 X 的 OLS）",
+            category="spatial_regression",
+            capabilities=["spatial_regression"],
+            input_artifact_types=["admin_aggregate_table", "grid_aggregate",
+                                  "poi_feature_set", "point_feature_set"],
+            output_artifact_type="stats_table", tool_candidates=["slx_regression"],
+            cpu_cost="medium", memory_cost="low", io_cost="low",
+            preferred_execution_policy="THREAD", priority=20,
+            algorithm_family="spatial_regression",
+            method_references=["anselin1988", "cliff_ord1973"],
+            assumptions=[
+                "y~[X, WX]；WX 为行标准化权重的空间滞后解释变量",
+                "系数表含 WX 滞后项（邻居溢出的直接估计）",
+                "孤岛观测的 WX 行为 0（披露于 weights 元数据）",
+            ],
+            limitations=[
+                "直接/间接效应分解未做（需 SAR/SDM 类模型的偏导推导）",
+                "参数量翻倍，n<2p+2 时拒绝",
+            ],
+            crs_class="PROJECTED_REQUIRED",
+            scientific_preconditions=[
+                "numeric_field_required", "nonzero_variance_required",
+                "min_numeric_samples:8",
+            ],
+            uncertainty_outputs=["validation_metrics"],
+            random_seed_policy="deterministic",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_spatial_regression_v2.py::test_slx_recovers_plane_with_lagged_terms",
+            ],
+            parameter_contract_ref="slx_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="spatial.gwr", name="地理加权回归（GWR）",
+            category="spatial_regression",
+            capabilities=["gwr"],
+            input_artifact_types=["admin_aggregate_table", "grid_aggregate",
+                                  "poi_feature_set", "point_feature_set"],
+            output_artifact_type="stats_table", tool_candidates=["gwr_regression"],
+            cpu_cost="high", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="THREAD", priority=30,
+            algorithm_family="spatial_regression",
+            method_references=["brunsdon1996", "fotheringham2002"],
+            assumptions=[
+                "自适应 bisquare 核，带宽=最近邻数 k（默认 30，钳制 [5,n/2]）",
+                "bandwidth_selection=cv 时在有界网格上留一 CV（确定性穷举）",
+                "AIC/AICc 用帽矩阵迹 q=tr(S)+1 的高斯形式（常用近似）",
+                "n≤2000 附逐观测系数面；超过只回摘要+披露旗标",
+            ],
+            limitations=[
+                "局部共线性会让局部系数失真（全局 VIF 不代表局部）",
+                "AICc 没有唯一公认公式——比较带宽/模型时保持同一实现",
+                "CV 带宽选择在有界网格上，非连续优化",
+            ],
+            crs_class="PROJECTED_REQUIRED",
+            scientific_preconditions=[
+                "numeric_field_required", "nonzero_variance_required",
+                "min_numeric_samples:8",
+            ],
+            uncertainty_outputs=["validation_metrics", "field_uncertainty",
+                                 "sensitivity_envelope"],
+            random_seed_policy="deterministic",
+            numerical_tolerance="局地 WLS 与手算 bisquare 加权解差 <5e-7（载荷 6 位舍入下限）",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_spatial_regression_v2.py::test_gwr_matches_hand_wls_and_bandwidth_cv",
+                "tests/unit/lib/test_spatial_regression_v2.py::test_gwr_guards_typed_errors",
+            ],
+            parameter_contract_ref="gwr_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="stats.weights_sensitivity", name="权重方案敏感性（Moran's I）",
+            category="spatial_statistics",
+            capabilities=["weights_sensitivity"],
+            input_artifact_types=["admin_aggregate_table", "grid_aggregate",
+                                  "poi_feature_set", "point_feature_set"],
+            output_artifact_type="stats_table", tool_candidates=["weights_sensitivity"],
+            cpu_cost="medium", memory_cost="low", io_cost="low",
+            preferred_execution_policy="THREAD", priority=10,
+            algorithm_family="spatial_autocorrelation",
+            method_references=["moran1950", "anselin1988"],
+            assumptions=[
+                "方案集固定：knn(k)/queen/rook/distance_band(auto 8nn)",
+                "queen/rook 对点输入如实跳过并披露（不做静默替换）",
+                "逐方案 Moran I + 固定种子 42 置换 p；判读多数一致性=稳定性",
+            ],
+            limitations=[
+                "四方案是常见代表性集合，不是穷举权重空间",
+                "稳定性=判读一致比例，不代表 I 的点估计置信区间",
+            ],
+            crs_class="PROJECTED_REQUIRED",
+            scientific_preconditions=[
+                "numeric_field_required", "nonzero_variance_required",
+                "min_numeric_samples:3",
+            ],
+            uncertainty_outputs=["sensitivity_envelope", "statistical_significance"],
+            random_seed_policy="fixed_seed",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_local_spatial_stats_v2.py::test_weights_sensitivity_stability_and_disclosure",
+            ],
+            parameter_contract_ref="weights_sensitivity_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="spatial.mgwr", name="多尺度地理加权回归（MGWR）",
+            category="spatial_regression",
+            capabilities=["gwr"],
+            input_artifact_types=["admin_aggregate_table", "grid_aggregate",
+                                  "poi_feature_set", "point_feature_set"],
+            output_artifact_type="stats_table", tool_candidates=[],
+            runtime_status="planned", priority=40,
+            algorithm_family="spatial_regression",
+            method_references=["fotheringham2002"],
+            assumptions=[
+                "每个解释变量独立带宽的反向拟合（backfitting）",
+            ],
+            limitations=[
+                "MGWR 反向拟合未实现——planned 条目，运行时会诚实拒绝",
+            ],
+            crs_class="PROJECTED_REQUIRED",
+            scientific_preconditions=["numeric_field_required"],
+            random_seed_policy="deterministic",
+        ),
 ]
 
 # ── 参数契约（§12；工具签名与契约参数名一致 —— parity 门校验）────────
@@ -341,6 +744,311 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
                 name="permutations", type="enum", default="99",
                 enum_values=["99", "199", "499", "999"],
                 description="置换次数（固定种子 42）",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="local_geary_analysis", version=1,
+        description="局部 Geary's C_i：权重方案 / k / 距离阈值 / 置换数 / 多重校正。",
+        parameters=[
+            ParameterSpec(
+                name="value_field", type="string", required=True,
+                description="待检验的数值字段名",
+            ),
+            ParameterSpec(
+                name="weights_scheme", type="enum", default="knn",
+                enum_values=["knn", "queen", "rook", "distance_band"],
+                description="空间权重方案；queen/rook 需要面要素",
+            ),
+            ParameterSpec(
+                name="k", type="integer", default=8, minimum=2, maximum=16,
+                unit="count",
+                description="kNN 邻居数（仅 weights_scheme=knn）",
+            ),
+            ParameterSpec(
+                name="distance_band", type="number", default=0, minimum=0,
+                unit="meters",
+                data_dependent_default="distance_band_8nn",
+                description="distance_band 权重阈值（米）；0=按 8 近邻平均距离自动",
+            ),
+            ParameterSpec(
+                name="permutations", type="enum", default="99",
+                enum_values=["99", "199", "499", "999"],
+                description="置换次数（固定种子 42；p 值分辨率 1/(n+1)）",
+            ),
+            ParameterSpec(
+                name="correction", type="enum", default="bh",
+                enum_values=["bh", "bonferroni", "holm", "none"],
+                description="逐格 p 的多重校正方法",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="join_count_analysis", version=1,
+        description="Join Count：二值字段 / 权重方案 / 解析推断 + 可选置换。",
+        parameters=[
+            ParameterSpec(
+                name="binary_field", type="string", required=True,
+                description="二值（0/1）字段名；含其他值会被拒绝",
+            ),
+            ParameterSpec(
+                name="weights_scheme", type="enum", default="knn",
+                enum_values=["knn", "queen", "rook", "distance_band"],
+                description="二值权重方案；queen/rook 需要面要素",
+            ),
+            ParameterSpec(
+                name="k", type="integer", default=8, minimum=2, maximum=16,
+                unit="count",
+                description="kNN 邻居数（仅 weights_scheme=knn）",
+            ),
+            ParameterSpec(
+                name="distance_band", type="number", default=0, minimum=0,
+                unit="meters",
+                data_dependent_default="distance_band_8nn",
+                description="distance_band 权重阈值（米）；0=按 8 近邻平均距离自动",
+            ),
+            ParameterSpec(
+                name="permutations", type="enum", default="0",
+                enum_values=["0", "99", "199", "499", "999"],
+                description="置换复核次数；0=只用 free-sampling 解析 z 检验",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="bivariate_moran_analysis", version=1,
+        description="双变量 Moran's I：x 字段 / 滞后字段 / 权重方案 / 置换数。",
+        parameters=[
+            ParameterSpec(
+                name="value_field", type="string", required=True,
+                description="x 的数值字段名",
+            ),
+            ParameterSpec(
+                name="lag_field", type="string", required=True,
+                description="y 的数值字段名（取其空间滞后 W·y）",
+            ),
+            ParameterSpec(
+                name="weights_scheme", type="enum", default="knn",
+                enum_values=["knn", "queen", "rook", "distance_band"],
+                description="空间权重方案；queen/rook 需要面要素",
+            ),
+            ParameterSpec(
+                name="k", type="integer", default=8, minimum=2, maximum=16,
+                unit="count",
+                description="kNN 邻居数（仅 weights_scheme=knn）",
+            ),
+            ParameterSpec(
+                name="distance_band", type="number", default=0, minimum=0,
+                unit="meters",
+                data_dependent_default="distance_band_8nn",
+                description="distance_band 权重阈值（米）；0=按 8 近邻平均距离自动",
+            ),
+            ParameterSpec(
+                name="permutations", type="enum", default="99",
+                enum_values=["99", "199", "499", "999"],
+                description="置换次数（只打乱 y；固定种子 42）",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="geodetector_analysis", version=1,
+        description="地理探测器：值字段 / 分层字段 / 可选交互字段 / 分箱 / 置换。",
+        parameters=[
+            ParameterSpec(
+                name="value_field", type="string", required=True,
+                description="被解释的数值字段名",
+            ),
+            ParameterSpec(
+                name="strata_field", type="string", required=True,
+                description="分层字段名（类别，或数值+分箱）",
+            ),
+            ParameterSpec(
+                name="interaction_field", type="string", default="",
+                description="第二分层字段（可选）：计算 q(X1∩X2) 并按 Wang 2010 分类",
+            ),
+            ParameterSpec(
+                name="bins", type="integer", default=0, minimum=0, maximum=20,
+                unit="count",
+                description="数值分层字段的分位数分箱数；0=按原值类别（≤12 唯一值）",
+            ),
+            ParameterSpec(
+                name="permutations", type="enum", default="99",
+                enum_values=["0", "99", "199", "499", "999"],
+                description="分层标签置换次数；0=只用 F 检验解析 p",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="ols_regression_analysis", version=1,
+        description="OLS + 空间诊断：目标/解释字段 + 权重方案 + 残差 Moran 置换。",
+        parameters=[
+            ParameterSpec(
+                name="target_field", type="string", required=True,
+                description="因变量 y 的数值字段名",
+            ),
+            ParameterSpec(
+                name="explanatory_fields", type="string", required=True,
+                description="自变量字段名列表（逗号分隔）",
+            ),
+            ParameterSpec(
+                name="weights_scheme", type="enum", default="knn",
+                enum_values=["knn", "queen", "rook", "distance_band"],
+                description="残差 Moran/LM 诊断用的空间权重方案",
+            ),
+            ParameterSpec(
+                name="k", type="integer", default=8, minimum=2, maximum=16,
+                unit="count",
+                description="kNN 邻居数（仅 weights_scheme=knn）",
+            ),
+            ParameterSpec(
+                name="distance_band", type="number", default=0, minimum=0,
+                unit="meters",
+                data_dependent_default="distance_band_8nn",
+                description="distance_band 权重阈值（米）；0=按 8 近邻平均距离自动",
+            ),
+            ParameterSpec(
+                name="permutations", type="enum", default="99",
+                enum_values=["99", "199", "499", "999"],
+                description="残差 Moran's I 的置换次数（固定种子 42）",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="sar_ml_analysis", version=1,
+        description="SAR-ML：目标/解释字段 + 权重方案（特征值 log-det 路径）。",
+        parameters=[
+            ParameterSpec(
+                name="target_field", type="string", required=True,
+                description="因变量 y 的数值字段名",
+            ),
+            ParameterSpec(
+                name="explanatory_fields", type="string", required=True,
+                description="自变量字段名列表（逗号分隔）",
+            ),
+            ParameterSpec(
+                name="weights_scheme", type="enum", default="knn",
+                enum_values=["knn", "queen", "rook", "distance_band"],
+                description="空间权重方案（须相似对称——四种均满足）",
+            ),
+            ParameterSpec(
+                name="k", type="integer", default=8, minimum=2, maximum=16,
+                unit="count",
+                description="kNN 邻居数（仅 weights_scheme=knn）",
+            ),
+            ParameterSpec(
+                name="distance_band", type="number", default=0, minimum=0,
+                unit="meters",
+                data_dependent_default="distance_band_8nn",
+                description="distance_band 权重阈值（米）；0=按 8 近邻平均距离自动",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="sem_ml_analysis", version=1,
+        description="SEM-ML：目标/解释字段 + 权重方案（与 SAR 同一特征值机器）。",
+        parameters=[
+            ParameterSpec(
+                name="target_field", type="string", required=True,
+                description="因变量 y 的数值字段名",
+            ),
+            ParameterSpec(
+                name="explanatory_fields", type="string", required=True,
+                description="自变量字段名列表（逗号分隔）",
+            ),
+            ParameterSpec(
+                name="weights_scheme", type="enum", default="knn",
+                enum_values=["knn", "queen", "rook", "distance_band"],
+                description="空间权重方案（须相似对称——四种均满足）",
+            ),
+            ParameterSpec(
+                name="k", type="integer", default=8, minimum=2, maximum=16,
+                unit="count",
+                description="kNN 邻居数（仅 weights_scheme=knn）",
+            ),
+            ParameterSpec(
+                name="distance_band", type="number", default=0, minimum=0,
+                unit="meters",
+                data_dependent_default="distance_band_8nn",
+                description="distance_band 权重阈值（米）；0=按 8 近邻平均距离自动",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="slx_analysis", version=1,
+        description="SLX：目标/解释字段 + 权重方案（W·X 滞后项进设计阵）。",
+        parameters=[
+            ParameterSpec(
+                name="target_field", type="string", required=True,
+                description="因变量 y 的数值字段名",
+            ),
+            ParameterSpec(
+                name="explanatory_fields", type="string", required=True,
+                description="自变量字段名列表（逗号分隔）",
+            ),
+            ParameterSpec(
+                name="weights_scheme", type="enum", default="knn",
+                enum_values=["knn", "queen", "rook", "distance_band"],
+                description="W·X 滞后的空间权重方案",
+            ),
+            ParameterSpec(
+                name="k", type="integer", default=8, minimum=2, maximum=16,
+                unit="count",
+                description="kNN 邻居数（仅 weights_scheme=knn）",
+            ),
+            ParameterSpec(
+                name="distance_band", type="number", default=0, minimum=0,
+                unit="meters",
+                data_dependent_default="distance_band_8nn",
+                description="distance_band 权重阈值（米）；0=按 8 近邻平均距离自动",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="gwr_analysis", version=1,
+        description="GWR：目标/解释字段 + 自适应 bisquare 带宽（kNN 计数）。",
+        parameters=[
+            ParameterSpec(
+                name="target_field", type="string", required=True,
+                description="因变量 y 的数值字段名",
+            ),
+            ParameterSpec(
+                name="explanatory_fields", type="string", required=True,
+                description="自变量字段名列表（逗号分隔）",
+            ),
+            ParameterSpec(
+                name="bandwidth", type="integer", default=30, minimum=5,
+                maximum=500, unit="count",
+                description="带宽 = 最近邻数（含自身）；运行时钳制到 [5, n/2]",
+            ),
+            ParameterSpec(
+                name="bandwidth_selection", type="enum", default="fixed",
+                enum_values=["fixed", "cv"],
+                description="fixed=用 bandwidth；cv=在有界网格上留一交叉验证选带宽",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="weights_sensitivity_analysis", version=1,
+        description="权重敏感性：值字段 + kNN k + 距离阈值（方案集固定）。",
+        parameters=[
+            ParameterSpec(
+                name="value_field", type="string", required=True,
+                description="待检验的数值字段名",
+            ),
+            ParameterSpec(
+                name="k", type="integer", default=8, minimum=2, maximum=16,
+                unit="count",
+                description="knn 方案的邻居数",
+            ),
+            ParameterSpec(
+                name="distance_band", type="number", default=0, minimum=0,
+                unit="meters",
+                data_dependent_default="distance_band_8nn",
+                description="distance_band 阈值（米）；0=按 8 近邻平均距离自动",
+            ),
+            ParameterSpec(
+                name="permutations", type="enum", default="99",
+                enum_values=["99", "199", "499", "999"],
+                description="逐方案 Moran I 的置换次数（固定种子 42）",
             ),
         ],
     ),

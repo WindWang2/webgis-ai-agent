@@ -1,0 +1,205 @@
+"""Polygon / 统计面表达模型域包（ADR-0101 §B1）。
+
+native：normalized/diverging choropleth、suitability/risk/vulnerability/
+equity/zoning 语义分级面 —— 全部落在「fill + classify + legend 投影」
+既有机制族。
+planned：bivariate、uncertainty choropleth、dasymetric —— 需要双字段色阵 /
+区间字段 / 控制要素数据契约。
+"""
+from __future__ import annotations
+
+from typing import List
+
+from app.lib.cartography.model_library import MapModel
+from app.lib.cartography.model_packs._base import (
+    _GEODA_URL,
+    _QGIS_URL,
+    m,
+)
+
+POLYGON_STATISTICAL_PACK: List[MapModel] = [
+    m(
+        id="normalized_choropleth", name_zh="归一化分级统计图",
+        purpose_zh="比率/密度归一后的分级填色（人均/占比/每 km²），消除面积与人口基数偏差",
+        geometry_kinds=["polygon"], maplibre_layer_type="fill",
+        classification="graduated",
+        color_scheme_kind="sequential", default_palette="Blues",
+        recommended_classifiers=["natural_breaks", "quantiles"],
+        default_class_count=5,
+        aliases=["ratio_choropleth"],
+        accepted_artifact_types=["admin_aggregate_table", "admin_boundary_set"],
+        recommended_components=["legend"],
+        export_compatibility=["png", "pdf", "svg", "csv"],
+        fallback_model_id="administrative_choropleth",
+        qgis_renderer="graduated",
+        pitfalls_zh=[
+            "分子分母必须同源同时窗；比率图例必须带单位（%/人/km²）",
+            "分母过小的区县比率不稳定 —— 极端值先检查分母阈值",
+        ],
+        sources=[_QGIS_URL, _GEODA_URL],
+    ),
+    m(
+        id="diverging_choropleth", name_zh="发散分级统计图",
+        purpose_zh="围绕有意义中点（均值/阈值/零增长）双向发散填色",
+        geometry_kinds=["polygon"], maplibre_layer_type="fill",
+        classification="graduated",
+        color_scheme_kind="diverging", default_palette="RdBu",
+        recommended_classifiers=["std_dev", "natural_breaks"],
+        default_class_count=5,
+        aliases=["diverging_map"],
+        accepted_artifact_types=["admin_aggregate_table", "admin_boundary_set"],
+        recommended_components=["legend"],
+        export_compatibility=["png", "pdf", "svg"],
+        fallback_model_id="administrative_choropleth",
+        qgis_renderer="graduated（diverging 色带）",
+        pitfalls_zh=[
+            "中点必须有语义（0 增长/均值/阈值）；任意中点会让发散色带撒谎",
+            "正式出版用 RdBu（色盲安全），RdYlGn 仅限红绿语义成立的场景",
+        ],
+        sources=[_QGIS_URL],
+    ),
+    m(
+        id="bivariate_choropleth", name_zh="双变量分级统计图",
+        purpose_zh="两个字段的联合分级（3×3 色阵）表达共现/相关",
+        geometry_kinds=["polygon"], maplibre_layer_type="fill",
+        classification="graduated",
+        # 单一 sequential 色带对双变量是错误契约 —— planned 阶段留空，
+        # 待 bivariate 色阵族建立（与 legend/bivariate 前瞻变体互链）
+        color_scheme_kind="none", default_palette="",
+        runtime_status="planned",
+        accepted_artifact_types=["admin_aggregate_table"],
+        qgis_renderer="data-defined override（双字段表达式）",
+        pitfalls_zh=[
+            "planned：paint 投影与图例（3×3 色阵 legend）未实现，不伪装 native；色阵族未建，缺省色带留空",
+            "双变量图读者负荷高 —— 仅在两变量确有交互语义时使用",
+        ],
+        sources=[_QGIS_URL],
+    ),
+    m(
+        id="uncertainty_choropleth", name_zh="不确定性分级统计图",
+        purpose_zh="估计值 + 可靠性双表达（主色 ← 估计，hatch/饱和度 ← 区间宽度）",
+        geometry_kinds=["polygon"], maplibre_layer_type="fill",
+        classification="graduated",
+        color_scheme_kind="sequential", default_palette="Purples",
+        runtime_status="planned",
+        accepted_artifact_types=["admin_aggregate_table"],
+        pitfalls_zh=[
+            "planned：需要区间/方差字段契约与 hatch 填充渲染，本分支未实现",
+        ],
+        sources=[],
+    ),
+    m(
+        id="dasymetric_map", name_zh="分区密度图（dasymetric）",
+        purpose_zh="用控制要素（土地利用/建筑轮廓）重分布面统计，获得更真实密度面",
+        geometry_kinds=["polygon"], maplibre_layer_type="fill",
+        classification="graduated",
+        color_scheme_kind="sequential", default_palette="YlOrRd",
+        runtime_status="planned",
+        accepted_artifact_types=["admin_aggregate_table", "polygon_feature_set"],
+        qgis_renderer="graduated（前置 dasymetric 分区）",
+        pitfalls_zh=[
+            "planned：需要控制层数据契约与重分配算法，本分支未实现",
+        ],
+        sources=[_QGIS_URL],
+    ),
+    m(
+        id="suitability_classes", name_zh="适宜性分级图",
+        purpose_zh="多准则评价后的适宜性等级面（高/中/低适宜），决策支持主表达",
+        geometry_kinds=["polygon"], maplibre_layer_type="fill",
+        classification="graduated",
+        color_scheme_kind="sequential", default_palette="Greens",
+        recommended_classifiers=["natural_breaks", "quantiles"],
+        default_class_count=4,
+        aliases=["suitability_result"],
+        accepted_artifact_types=["admin_aggregate_table", "grid_aggregate",
+                                 "polygon_feature_set"],
+        recommended_components=["legend", "methodology_note"],
+        export_compatibility=["png", "pdf"],
+        fallback_model_id="administrative_choropleth",
+        qgis_renderer="graduated",
+        pitfalls_zh=[
+            "等级是有序语义 —— 用 sequential Greens，禁用定性色",
+            "等级边界来自评价模型 —— 必须随图披露准则与权重（methodology_note）",
+        ],
+        sources=[_QGIS_URL],
+    ),
+    m(
+        id="risk_exposure_classes", name_zh="风险暴露分级图",
+        purpose_zh="危险性 × 暴露量的分级风险面（灾害/环境风险沟通主表达）",
+        geometry_kinds=["polygon"], maplibre_layer_type="fill",
+        classification="graduated",
+        color_scheme_kind="sequential", default_palette="Reds",
+        recommended_classifiers=["natural_breaks", "quantiles"],
+        default_class_count=4,
+        aliases=["risk_classes"],
+        accepted_artifact_types=["admin_aggregate_table", "grid_aggregate",
+                                 "polygon_feature_set"],
+        recommended_components=["legend", "uncertainty_panel"],
+        export_compatibility=["png", "pdf"],
+        fallback_model_id="administrative_choropleth",
+        qgis_renderer="graduated",
+        pitfalls_zh=[
+            "风险等级跨图比较必须固定分级断点；自动分级会让两次评估不可比",
+            "『无数据』不得画成『低风险』—— 空值保持透明并声明",
+        ],
+        sources=[_QGIS_URL],
+    ),
+    m(
+        id="vulnerability_index", name_zh="脆弱性指数图",
+        purpose_zh="复合脆弱性/暴露指数的分级面（社会脆弱性、基础设施脆弱性）",
+        geometry_kinds=["polygon"], maplibre_layer_type="fill",
+        classification="graduated",
+        color_scheme_kind="sequential", default_palette="Oranges",
+        recommended_classifiers=["quantiles", "natural_breaks"],
+        default_class_count=5,
+        accepted_artifact_types=["admin_aggregate_table"],
+        recommended_components=["legend", "methodology_note"],
+        export_compatibility=["png", "pdf"],
+        fallback_model_id="administrative_choropleth",
+        qgis_renderer="graduated",
+        pitfalls_zh=[
+            "指数合成方法（等权/PCA/专家权重）决定等级含义，披露不可省",
+        ],
+        sources=[_QGIS_URL],
+    ),
+    m(
+        id="equity_assessment", name_zh="公平性评估图",
+        purpose_zh="资源配置/服务可达的相对公平偏差（发散、以公平中点为零点）",
+        geometry_kinds=["polygon"], maplibre_layer_type="fill",
+        classification="graduated",
+        # 色盲安全 RdBu 为缺省（RdYlGn 仅限红绿偏好语义明确且受众明确的
+        # 场景显式选用；正式出版可用 PuOr）
+        color_scheme_kind="diverging", default_palette="RdBu",
+        recommended_classifiers=["std_dev", "natural_breaks"],
+        default_class_count=5,
+        aliases=["equity_map"],
+        accepted_artifact_types=["admin_aggregate_table"],
+        recommended_components=["legend", "methodology_note"],
+        export_compatibility=["png", "pdf"],
+        fallback_model_id="diverging_choropleth",
+        qgis_renderer="graduated（diverging 色带）",
+        pitfalls_zh=[
+            "缺分母不能谈公平性 —— 指标必须显式归一（人均/覆盖缺口）",
+            "缺省 RdBu（色盲安全）；红绿语义确有必要的场景才显式换 RdYlGn，正式出版可用 PuOr",
+        ],
+        sources=[_GEODA_URL],
+    ),
+    m(
+        id="zoning_planning", name_zh="区划/规划用地图",
+        purpose_zh="规划地类/区划的类别填色（居住/商业/工业/绿地），大面积柔和色",
+        geometry_kinds=["polygon"], maplibre_layer_type="fill",
+        classification="categorical",
+        color_scheme_kind="qualitative", default_palette="Pastel1",
+        aliases=["zoning_map", "land_use_map"],
+        accepted_artifact_types=["polygon_feature_set", "admin_boundary_set"],
+        recommended_components=["categorical_legend"],
+        export_compatibility=["png", "pdf", "svg"],
+        fallback_model_id="categorical_thematic",
+        qgis_renderer="categorized",
+        pitfalls_zh=[
+            "地类配色宜沿用规划惯例（绿地绿、工业褐）；Pastel1 低饱和，大面积填色互不干扰",
+            "类别数可能很多 —— 图例超限时分组披露，禁止省略图例",
+        ],
+        sources=[_QGIS_URL],
+    ),
+]

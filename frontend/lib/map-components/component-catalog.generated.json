@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "exportedFrom": "app/lib/cartography/component_registry.py",
   "componentTypes": [
     {
@@ -59,7 +59,8 @@
       "variants": [
         "academic",
         "compact",
-        "report"
+        "report",
+        "horizontal"
       ],
       "defaultVariant": "academic",
       "defaultPosition": "bottom-left",
@@ -102,7 +103,9 @@
       "variants": [
         "horizontal",
         "vertical",
-        "slim"
+        "slim",
+        "scientific",
+        "stepped"
       ],
       "defaultVariant": "horizontal",
       "defaultPosition": "bottom-right",
@@ -132,7 +135,11 @@
       "rendererSupport": [
         "interactive"
       ],
-      "exporterSupport": []
+      "exporterSupport": [
+        "png",
+        "pdf",
+        "svg"
+      ]
     },
     {
       "type": "export_layout",
@@ -198,7 +205,8 @@
       "variants": [
         "academic",
         "compact",
-        "report"
+        "report",
+        "horizontal"
       ],
       "defaultVariant": "academic",
       "defaultPosition": "bottom-left",
@@ -219,7 +227,8 @@
       "variants": [
         "minimal",
         "academic",
-        "report"
+        "report",
+        "neatline"
       ],
       "defaultVariant": "minimal",
       "defaultPosition": "none",
@@ -249,7 +258,11 @@
       "rendererSupport": [
         "interactive"
       ],
-      "exporterSupport": []
+      "exporterSupport": [
+        "png",
+        "pdf",
+        "svg"
+      ]
     },
     {
       "type": "north_arrow",
@@ -257,7 +270,8 @@
         "compass_minimal_black",
         "compass_needle",
         "compass_rose",
-        "arrow_simple"
+        "arrow_simple",
+        "monochrome"
       ],
       "defaultVariant": "compass_minimal_black",
       "defaultPosition": "top-right",
@@ -278,7 +292,8 @@
       "variants": [
         "minimal",
         "boxed",
-        "academic"
+        "academic",
+        "dual_unit"
       ],
       "defaultVariant": "minimal",
       "defaultPosition": "bottom-right",
@@ -298,7 +313,8 @@
       "type": "statistics_panel",
       "variants": [
         "default",
-        "compact"
+        "compact",
+        "kpi"
       ],
       "defaultVariant": "default",
       "defaultPosition": "top-left",
@@ -318,7 +334,8 @@
       "type": "subtitle",
       "variants": [
         "default",
-        "academic"
+        "academic",
+        "report"
       ],
       "defaultVariant": "default",
       "defaultPosition": "top-center",
@@ -355,7 +372,9 @@
       "variants": [
         "academic",
         "report",
-        "presentation"
+        "presentation",
+        "minimal",
+        "government"
       ],
       "defaultVariant": "academic",
       "defaultPosition": "top-center",
@@ -385,7 +404,458 @@
       "rendererSupport": [
         "interactive"
       ],
-      "exporterSupport": []
+      "exporterSupport": [
+        "png",
+        "pdf",
+        "svg"
+      ]
+    }
+  ],
+  "palettes": [
+    {
+      "id": "Blues",
+      "kind": "sequential",
+      "colorblindSafe": true,
+      "colorblindSafeMaxClasses": 9,
+      "printSafe": true,
+      "grayLevels": 5,
+      "minGrayDelta": 0.1196
+    },
+    {
+      "id": "Dark2",
+      "kind": "qualitative",
+      "colorblindSafe": true,
+      "colorblindSafeMaxClasses": 3,
+      "printSafe": false,
+      "grayLevels": 4,
+      "minGrayDelta": 0.0178
+    },
+    {
+      "id": "Greens",
+      "kind": "sequential",
+      "colorblindSafe": true,
+      "colorblindSafeMaxClasses": 9,
+      "printSafe": true,
+      "grayLevels": 5,
+      "minGrayDelta": 0.1637
+    },
+    {
+      "id": "Inferno",
+      "kind": "perceptual_uniform",
+      "colorblindSafe": true,
+      "colorblindSafeMaxClasses": 9,
+      "printSafe": false,
+      "grayLevels": 5,
+      "minGrayDelta": 0.0237
+    },
+    {
+      "id": "Magma",
+      "kind": "perceptual_uniform",
+      "colorblindSafe": true,
+      "colorblindSafeMaxClasses": 9,
+      "printSafe": false,
+      "grayLevels": 5,
+      "minGrayDelta": 0.0243
+    },
+    {
+      "id": "Oranges",
+      "kind": "sequential",
+      "colorblindSafe": true,
+      "colorblindSafeMaxClasses": 9,
+      "printSafe": true,
+      "grayLevels": 5,
+      "minGrayDelta": 0.126
+    },
+    {
+      "id": "Pastel1",
+      "kind": "qualitative",
+      "colorblindSafe": false,
+      "colorblindSafeMaxClasses": 0,
+      "printSafe": false,
+      "grayLevels": 5,
+      "minGrayDelta": 0.0258
+    },
+    {
+      "id": "Plasma",
+      "kind": "perceptual_uniform",
+      "colorblindSafe": true,
+      "colorblindSafeMaxClasses": 9,
+      "printSafe": false,
+      "grayLevels": 5,
+      "minGrayDelta": 0.0388
+    },
+    {
+      "id": "PuOr",
+      "kind": "diverging",
+      "colorblindSafe": true,
+      "colorblindSafeMaxClasses": 9,
+      "printSafe": true,
+      "grayLevels": 5,
+      "minGrayDelta": 0.242
+    },
+    {
+      "id": "Purples",
+      "kind": "sequential",
+      "colorblindSafe": true,
+      "colorblindSafeMaxClasses": 9,
+      "printSafe": true,
+      "grayLevels": 5,
+      "minGrayDelta": 0.1215
+    },
+    {
+      "id": "RdBu",
+      "kind": "diverging",
+      "colorblindSafe": true,
+      "colorblindSafeMaxClasses": 9,
+      "printSafe": true,
+      "grayLevels": 3,
+      "minGrayDelta": 0.3509
+    },
+    {
+      "id": "RdYlGn",
+      "kind": "diverging",
+      "colorblindSafe": false,
+      "colorblindSafeMaxClasses": 0,
+      "printSafe": false,
+      "grayLevels": 5,
+      "minGrayDelta": 0.021
+    },
+    {
+      "id": "Reds",
+      "kind": "sequential",
+      "colorblindSafe": true,
+      "colorblindSafeMaxClasses": 9,
+      "printSafe": true,
+      "grayLevels": 5,
+      "minGrayDelta": 0.0915
+    },
+    {
+      "id": "Set1",
+      "kind": "qualitative",
+      "colorblindSafe": false,
+      "colorblindSafeMaxClasses": 0,
+      "printSafe": false,
+      "grayLevels": 4,
+      "minGrayDelta": 0.0188
+    },
+    {
+      "id": "Set2",
+      "kind": "qualitative",
+      "colorblindSafe": true,
+      "colorblindSafeMaxClasses": 3,
+      "printSafe": false,
+      "grayLevels": 4,
+      "minGrayDelta": 0.035
+    },
+    {
+      "id": "Viridis",
+      "kind": "perceptual_uniform",
+      "colorblindSafe": true,
+      "colorblindSafeMaxClasses": 9,
+      "printSafe": true,
+      "grayLevels": 5,
+      "minGrayDelta": 0.0694
+    },
+    {
+      "id": "YlOrRd",
+      "kind": "sequential",
+      "colorblindSafe": true,
+      "colorblindSafeMaxClasses": 9,
+      "printSafe": true,
+      "grayLevels": 6,
+      "minGrayDelta": 0.108
+    },
+    {
+      "id": "classic",
+      "kind": "native_heatmap",
+      "colorblindSafe": false,
+      "colorblindSafeMaxClasses": 0,
+      "printSafe": false,
+      "grayLevels": 0,
+      "minGrayDelta": 0.0
+    },
+    {
+      "id": "magma",
+      "kind": "native_heatmap",
+      "colorblindSafe": true,
+      "colorblindSafeMaxClasses": 0,
+      "printSafe": false,
+      "grayLevels": 0,
+      "minGrayDelta": 0.0
+    },
+    {
+      "id": "thermal",
+      "kind": "native_heatmap",
+      "colorblindSafe": false,
+      "colorblindSafeMaxClasses": 0,
+      "printSafe": false,
+      "grayLevels": 0,
+      "minGrayDelta": 0.0
+    },
+    {
+      "id": "viridis",
+      "kind": "native_heatmap",
+      "colorblindSafe": true,
+      "colorblindSafeMaxClasses": 0,
+      "printSafe": false,
+      "grayLevels": 0,
+      "minGrayDelta": 0.0
+    }
+  ],
+  "themes": [
+    {
+      "id": "cartographic.dark_interactive",
+      "profile": "dark",
+      "outputTargets": [
+        "interactive",
+        "png",
+        "pdf",
+        "svg"
+      ],
+      "colorblindSafeFirst": true,
+      "typography": {
+        "titleSizeToken": "text-title",
+        "bodySizeToken": "text-caption",
+        "microSizeToken": "text-micro",
+        "titleWeight": 600,
+        "minChromePx": 11
+      },
+      "spacing": {
+        "stackStepPx": 36,
+        "chromePaddingPx": 8
+      },
+      "chromeTokenRefs": {
+        "surface": "surface-panel",
+        "surface_raised": "surface-raised",
+        "ink": "text-primary",
+        "ink_muted": "text-secondary",
+        "border": "map-chrome-border",
+        "map_chrome_bg": "map-chrome-bg",
+        "map_chrome_ink": "map-chrome-text",
+        "map_chrome_ink_muted": "map-chrome-text-muted",
+        "map_chrome_border": "map-chrome-border"
+      },
+      "paletteRecommendations": {
+        "sequential": [],
+        "diverging": [
+          "RdBu"
+        ],
+        "qualitative": [
+          "Dark2",
+          "Set2"
+        ],
+        "perceptual_uniform": [
+          "Viridis",
+          "Magma",
+          "Inferno",
+          "Plasma"
+        ]
+      }
+    },
+    {
+      "id": "cartographic.high_contrast",
+      "profile": "high_contrast",
+      "outputTargets": [
+        "interactive",
+        "png",
+        "pdf",
+        "svg"
+      ],
+      "colorblindSafeFirst": true,
+      "typography": {
+        "titleSizeToken": "text-title",
+        "bodySizeToken": "text-caption",
+        "microSizeToken": "text-micro",
+        "titleWeight": 600,
+        "minChromePx": 11
+      },
+      "spacing": {
+        "stackStepPx": 36,
+        "chromePaddingPx": 8
+      },
+      "chromeTokenRefs": {
+        "surface": "surface-panel",
+        "surface_raised": "surface-raised",
+        "ink": "text-primary",
+        "ink_muted": "text-secondary",
+        "border": "map-chrome-border",
+        "map_chrome_bg": "map-chrome-bg",
+        "map_chrome_ink": "map-chrome-text",
+        "map_chrome_ink_muted": "map-chrome-text-muted",
+        "map_chrome_border": "map-chrome-border"
+      },
+      "paletteRecommendations": {
+        "sequential": [
+          "YlOrRd",
+          "Blues"
+        ],
+        "diverging": [
+          "RdBu"
+        ],
+        "qualitative": [
+          "Dark2",
+          "Set2"
+        ],
+        "perceptual_uniform": [
+          "Viridis",
+          "Inferno"
+        ]
+      }
+    },
+    {
+      "id": "cartographic.light_interactive",
+      "profile": "light",
+      "outputTargets": [
+        "interactive",
+        "png",
+        "pdf",
+        "svg"
+      ],
+      "colorblindSafeFirst": false,
+      "typography": {
+        "titleSizeToken": "text-title",
+        "bodySizeToken": "text-caption",
+        "microSizeToken": "text-micro",
+        "titleWeight": 600,
+        "minChromePx": 11
+      },
+      "spacing": {
+        "stackStepPx": 36,
+        "chromePaddingPx": 8
+      },
+      "chromeTokenRefs": {
+        "surface": "surface-panel",
+        "surface_raised": "surface-raised",
+        "ink": "text-primary",
+        "ink_muted": "text-secondary",
+        "border": "map-chrome-border",
+        "map_chrome_bg": "map-chrome-bg",
+        "map_chrome_ink": "map-chrome-text",
+        "map_chrome_ink_muted": "map-chrome-text-muted",
+        "map_chrome_border": "map-chrome-border"
+      },
+      "paletteRecommendations": {
+        "sequential": [
+          "YlOrRd",
+          "Blues",
+          "Greens",
+          "Oranges"
+        ],
+        "diverging": [
+          "RdBu",
+          "RdYlGn"
+        ],
+        "qualitative": [
+          "Set1",
+          "Set2",
+          "Dark2"
+        ],
+        "perceptual_uniform": [
+          "Viridis",
+          "Magma",
+          "Inferno",
+          "Plasma"
+        ]
+      }
+    },
+    {
+      "id": "cartographic.presentation_screen",
+      "profile": "dark",
+      "outputTargets": [
+        "interactive",
+        "png"
+      ],
+      "colorblindSafeFirst": false,
+      "typography": {
+        "titleSizeToken": "text-heading",
+        "bodySizeToken": "text-caption",
+        "microSizeToken": "text-micro",
+        "titleWeight": 700,
+        "minChromePx": 12
+      },
+      "spacing": {
+        "stackStepPx": 40,
+        "chromePaddingPx": 10
+      },
+      "chromeTokenRefs": {
+        "surface": "surface-panel",
+        "surface_raised": "surface-raised",
+        "ink": "text-primary",
+        "ink_muted": "text-secondary",
+        "border": "map-chrome-border",
+        "map_chrome_bg": "map-chrome-bg",
+        "map_chrome_ink": "map-chrome-text",
+        "map_chrome_ink_muted": "map-chrome-text-muted",
+        "map_chrome_border": "map-chrome-border"
+      },
+      "paletteRecommendations": {
+        "sequential": [
+          "YlOrRd",
+          "Blues"
+        ],
+        "diverging": [
+          "RdBu"
+        ],
+        "qualitative": [
+          "Set1",
+          "Dark2"
+        ],
+        "perceptual_uniform": [
+          "Plasma",
+          "Viridis"
+        ]
+      }
+    },
+    {
+      "id": "cartographic.print_paper",
+      "profile": "print",
+      "outputTargets": [
+        "png",
+        "pdf",
+        "svg",
+        "print"
+      ],
+      "colorblindSafeFirst": true,
+      "typography": {
+        "titleSizeToken": "text-title",
+        "bodySizeToken": "text-caption",
+        "microSizeToken": "text-micro",
+        "titleWeight": 700,
+        "minChromePx": 9
+      },
+      "spacing": {
+        "stackStepPx": 34,
+        "chromePaddingPx": 8
+      },
+      "chromeTokenRefs": {
+        "surface": "surface-panel",
+        "surface_raised": "surface-raised",
+        "ink": "text-primary",
+        "ink_muted": "text-secondary",
+        "border": "map-chrome-border",
+        "map_chrome_bg": "map-chrome-bg",
+        "map_chrome_ink": "map-chrome-text",
+        "map_chrome_ink_muted": "map-chrome-text-muted",
+        "map_chrome_border": "map-chrome-border"
+      },
+      "paletteRecommendations": {
+        "sequential": [
+          "YlOrRd",
+          "Blues",
+          "Greens",
+          "Reds",
+          "Oranges",
+          "Purples"
+        ],
+        "diverging": [
+          "RdBu",
+          "PuOr"
+        ],
+        "qualitative": [],
+        "perceptual_uniform": [
+          "Viridis"
+        ]
+      }
     }
   ]
 }

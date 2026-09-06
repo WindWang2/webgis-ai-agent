@@ -225,6 +225,20 @@ def _check_positive_weights_required(profile: Dict[str, Any]) -> PreconditionRes
         rid, "INVALID_METHOD", "权重含负值 —— 该方法要求非负权重")
 
 
+def _check_binary_field_required(profile: Dict[str, Any]) -> PreconditionResult:
+    rid = "binary_field_required"
+    if not _fields_known(profile):
+        return PreconditionResult(rid, "PASS", "fields unknown — deferred")
+    binary = _fact(profile, "binaryFields", list) or []
+    if binary:
+        return PreconditionResult(rid, "PASS", facts_used={"binaryFields": len(binary)})
+    return PreconditionResult(
+        rid, "INSUFFICIENT_DATA",
+        "画像字段已知但无 0/1 二值字段 —— Join Count 类方法需要二值属性",
+        transform_hint="derive a binary field (e.g. above/below threshold)",
+    )
+
+
 def _check_min_numeric_samples(n_min: int, profile: Dict[str, Any]) -> PreconditionResult:
     rid = f"min_numeric_samples:{n_min}"
     count = _int_fact(profile, "numericSampleCount")
@@ -268,6 +282,7 @@ _PRECONDITIONS: Dict[str, Callable[[Dict[str, Any]], PreconditionResult]] = {
     "band_semantics_required": _check_band_semantics_required,
     "point_support_required": _check_point_support_required,
     "positive_weights_required": _check_positive_weights_required,
+    "binary_field_required": _check_binary_field_required,
     "min_numeric_samples:8": _make_min_numeric(8),
     "min_numeric_samples:20": _make_min_numeric(20),
     "min_numeric_samples:30": _make_min_numeric(30),
@@ -290,6 +305,7 @@ PRECONDITION_DESCRIPTIONS: Dict[str, str] = {
     "band_semantics_required": "波段语义角色已标注（拒绝位置猜测）",
     "point_support_required": "几何为点支撑",
     "positive_weights_required": "权重非负（画像已知时）",
+    "binary_field_required": "存在 0/1 二值字段（画像已知时；Join Count 类）",
     "min_numeric_samples:N": "有效数值样本 ≥ N（软警告带）",
 }
 
