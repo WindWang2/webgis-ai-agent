@@ -463,6 +463,7 @@ async def register_tool_artifact(
     input_shapes: Optional[Dict[str, dict]] = None,
     raster_fingerprints: Optional[Dict[str, str]] = None,
     ref_revisions: Optional[Dict[str, int]] = None,
+    inputs: Optional[List[str]] = None,
 ) -> Optional[ArtifactRecord]:
     """dispatch/chart seam 的便捷注册（无 capability 上下文；type 由推断得出）。
 
@@ -475,6 +476,10 @@ async def register_tool_artifact(
     ``ref_revisions``（V3 data foundation）：输入 ref → content_revision
     快照，捕获保形状的属性覆写（形状指纹盲区）；复核见
     analysis_reuse.find_reusable_artifact。
+    ``inputs``（V3 data foundation）：本产物消费的上游 ref（dispatch
+    参数级血缘捕获），写台账血缘边 —— 会话血缘图由此覆盖 dispatch 接缝
+    （审计 Agent C 缺口 #1）；register_artifact 内部有界（≤16），此处
+    先剔除自引用。
     """
     if not ref or not str(ref).startswith("ref:"):
         return None
@@ -508,6 +513,7 @@ async def register_tool_artifact(
         artifact_id=ref,
         artifact_type=infer_artifact_type(ref, result=result),
         producer_tool=tool,
+        inputs=[str(i) for i in (inputs or []) if i and i != ref],
         metadata=metadata,
     )
 

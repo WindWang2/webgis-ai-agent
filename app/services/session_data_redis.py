@@ -229,6 +229,7 @@ class RedisSessionStore(BaseSessionStore):
         """V3: hash of {ref_id -> payload digest}（同内容覆写不 bump revision）。"""
         return f"session:{session_id}:ref_digests"
 
+    @staticmethod
     def _ref_revisions_key(session_id: str) -> str:
         """V5-E: hash of {ref_id -> content_revision} for this session."""
         return f"session:{session_id}:ref_revisions"

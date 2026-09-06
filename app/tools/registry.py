@@ -51,6 +51,31 @@ def tier3_confirmed() -> bool:
     return _allow_tier3_var.get()
 
 
+# V3 data foundation：参数级血缘捕获（ref_lifecycle 之外的只读证据通道）。
+# dispatch 方在调用 registry.dispatch 前开启捕获，结束后读取本次调用
+# 参数实际消费的规范 ref 集合，写入产物账本的 inputs —— 会话血缘图因此
+# 覆盖最大的 dispatch 接缝（审计 Agent C 缺口 #1）。纯增值：不设置时
+# 解引用路径零行为变化。
+_arg_lineage_refs: contextvars.ContextVar[Optional[set]] = contextvars.ContextVar(
+    "tool_arg_lineage_refs", default=None
+)
+
+
+@contextmanager
+def capture_arg_lineage_refs():
+    """Capture canonical input refs consumed by ref resolution in this scope.
+
+    Must wrap the await of dispatch() in the same asyncio task — ContextVar
+    tokens propagate into coroutines but not across create_task boundaries.
+    """
+    sink: set = set()
+    token = _arg_lineage_refs.set(sink)
+    try:
+        yield sink
+    finally:
+        _arg_lineage_refs.reset(token)
+
+
 @contextmanager
 def confirm_tier3():
     """Grant tier-3 dispatch rights for the enclosed (synchronous) scope.
@@ -1612,6 +1637,14 @@ class ToolRegistry:
                     # 全量 GET + json.loads。只读约定：工具不得就地改 payload。
                     data = await session_data_manager.get_shared(session_id, node)
                     if data is not None:
+                        # V3 data foundation：血缘证据捕获 —— 记录本次调用
+                        # 参数级消费的规范 ref（别名归一）。增值旁路：无
+                        # 捕获者时零开销（一次 contextvar.get）。
+                        _lineage = _arg_lineage_refs.get()
+                        if _lineage is not None:
+                            _token = _resolved if str(_resolved).startswith("ref:") else node
+                            if str(_token).startswith("ref:"):
+                                _lineage.add(str(_token))
                         # PERF-F2: the dereferenced payload is OPAQUE — refs
                         # live in the ARGUMENTS, not inside stored data. The
                         # old code recursed into the whole payload (rebuilding

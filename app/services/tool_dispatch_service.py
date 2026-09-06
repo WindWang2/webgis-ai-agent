@@ -42,7 +42,7 @@ from typing import Any, Callable, Dict, Literal, Optional
 from app.services.session_data import session_data_manager
 from app.lib.numpy_json import numpy_json_default as _numpy_json_default
 from app.services.session_data_protocol import is_unavailable_ref
-from app.tools.registry import ToolRegistry
+from app.tools.registry import ToolRegistry, capture_arg_lineage_refs
 from app.utils.security import sanitize_error_msg
 from app.utils.geojson import geojson_bbox
 
@@ -473,7 +473,10 @@ class ToolDispatchService:
                 await self._session_wave_gate.acquire(session_id or "")
                 try:
                     async with _MultiSlotAcquire(self._wave_semaphore, _wave_slots):
-                        result = await self._registry.dispatch(tool_name, tool_args_raw, session_id=session_id)
+                        # V3 data foundation：捕获本调用参数消费的规范 ref
+                        # （血缘证据；下方产物铸造后随登记写入账本边）。
+                        with capture_arg_lineage_refs() as _arg_lineage:
+                            result = await self._registry.dispatch(tool_name, tool_args_raw, session_id=session_id)
                 finally:
                     await self._session_wave_gate.release(session_id or "")
             except OperationCancelled:
@@ -678,6 +681,7 @@ class ToolDispatchService:
                             input_shapes=input_shapes if role == "primary" else None,
                             raster_fingerprints=raster_fps if role == "primary" else None,
                             ref_revisions=ref_revs if role == "primary" else None,
+                            inputs=sorted(_arg_lineage)[:16] if _arg_lineage else None,
                         )
             except Exception:  # noqa: BLE001 — 登记失败不影响产物本身
                 logger.debug(
