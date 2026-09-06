@@ -30,6 +30,7 @@ import threading
 import time
 import tracemalloc
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
@@ -262,10 +263,24 @@ def bench_spatial_join(pair: tuple[int, int]) -> None:
 
 
 def _inject_source(features_by_limit: dict[int, list[dict]]) -> None:
+    """注入假目录源（V4：authz 先于适配器 —— 三件套一起注入）。
+
+    当前 _op_query/_op_source_scan 依次经过 item 解析 → 准入谓词 →
+    查询入口；只注入 query_catalog_fn 会让解析/准入打到真实 DB
+    （'fake' 不存在 → typed fail）。三处注入均为模块级测试桩。
+    """
+    def fake_item_resolver(db, item_id):
+        return SimpleNamespace(id=str(item_id))
+
+    def fake_authorize(db, item, caller):
+        return True
+
     def fake_query(db, item_id, spec_dict):
         n = int((spec_dict or {}).get("limit") or 0)
         return QueryResult(dataset_id=str(item_id), features=features_by_limit[n])
 
+    ops.catalog_item_resolver = fake_item_resolver
+    ops.catalog_authorize_fn = fake_authorize
     ops.query_catalog_fn = fake_query
 
 
@@ -276,7 +291,9 @@ def bench_executor_dag(sizes: tuple[int, int]) -> None:
     _inject_source(features)
 
     def run_once(n: int):
-        engine = GeoExecutionEngine()
+        # retain_outputs=True 是执行器注释里写明的基准逃生门：终态后仍需
+        # 读取 agg 载荷做确定性断言（生产路径保持 False）。
+        engine = GeoExecutionEngine(retain_outputs=True)
         t0 = time.perf_counter()
         run = engine.execute_plan(_dag_plan(n, budget))
         return run, engine.get_node_output(run.run_id, "agg"), time.perf_counter() - t0
@@ -459,8 +476,10 @@ def bench_cancel() -> None:
 
     ops.query_catalog_fn = slow_source
     plan = ExecutionPlan(plan_id="geobench-cancel", nodes=[
+        # dataset_id 与 warm-up 计划不同 → 语义指纹不同 → 绝不命中 warm-up
+        # 的复用缓存（QUERY 是外部源节点，复用域为计划身份；慢源必须真被进入）。
         ExecutionNode(node_id="src", category=NodeCategory.QUERY,
-                      parameters={"dataset_id": "fake", "query": {"limit": 1_000}}),
+                      parameters={"dataset_id": "fake-cancel", "query": {"limit": 1_000}}),
         ExecutionNode(node_id="flt", category=NodeCategory.FILTER, inputs=["src"],
                       parameters={"predicate": {"op": "ge", "field": "v", "value": 5}}),
     ])

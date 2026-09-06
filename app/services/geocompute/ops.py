@@ -93,6 +93,20 @@ def _default_query_catalog_fn(db: Any, item_id: str, query_spec: dict[str, Any])
 #: 模块级注入点（测试用 monkeypatch 替换；生产保持默认）。
 query_catalog_fn: QueryCatalogFn = _default_query_catalog_fn
 
+#: 可注入的目录项解析入口：(db, item_id) -> CatalogItemModel | None。
+#: 生产默认就是 DB 精确查找；注入仅用于测试桩（authz 谓词与查询入口
+#: 不变 —— 准入仍对解析出的 item 执行，绝不因注入而绕过）。
+CatalogItemResolver = Callable[[Any, str], Any]
+
+
+def _default_catalog_item_resolver(db: Any, item_id: str) -> Any:
+    from app.models.data_fabric import CatalogItemModel
+
+    return db.query(CatalogItemModel).filter(CatalogItemModel.id == str(item_id)).first()
+
+
+catalog_item_resolver: CatalogItemResolver = _default_catalog_item_resolver
+
 # ── 目录项准入（SEC 评审 CRITICAL：数据平面内的 catalog authz）──────────────
 #
 # QUERY / SOURCE_SCAN 之前必须先确认目录项对调用者可见 —— 与
@@ -237,11 +251,10 @@ def _op_query(ctx: OperatorContext, node: OperationNodeAny, payloads: dict[str, 
         raise NodeExecutionError("QUERY node requires parameters.dataset_id", node_id=node.node_id)
     query_spec = dict(node.parameters.get("query") or {})
     from app.core.database import SessionLocal
-    from app.models.data_fabric import CatalogItemModel
 
     db = SessionLocal()
     try:
-        item = db.query(CatalogItemModel).filter(CatalogItemModel.id == str(dataset_id)).first()
+        item = catalog_item_resolver(db, str(dataset_id))
         if item is None:
             raise NodeExecutionError(
                 f"catalog item '{dataset_id}' not found", node_id=node.node_id
@@ -252,6 +265,7 @@ def _op_query(ctx: OperatorContext, node: OperationNodeAny, payloads: dict[str, 
         db.close()
     features = list(getattr(result, "features", None) or [])
     _check_row_budget(features, ctx, node)
+    _record_planner_feedback(node, result, len(features))
     metadata: dict[str, Any] = {}
     for attr, key in (("query_plan", "query_plan"), ("query_evidence", "query_evidence")):
         val = getattr(result, "metadata", None)
@@ -260,6 +274,34 @@ def _op_query(ctx: OperatorContext, node: OperationNodeAny, payloads: dict[str, 
     metadata["feature_count"] = len(features)
     metadata["total_matching"] = getattr(result, "total_matching", None)
     return {"features": features, "metadata": metadata}
+
+
+def _record_planner_feedback(node: "ExecutionNode", result: Any, actual_rows: int) -> None:
+    """执行后向 planner 反馈环回写「估计 vs 实际」（ADR-0101 D6）。
+
+    有界、可解释、fail-open：只对成功路径记录（这里只在 _op_query 成功
+    尾部被调）；store 侧只从 outcome=ok 的观测学习。绝不抛出。
+    """
+    try:
+        from app.services.data_fabric.query.feedback import feedback_store
+
+        meta = getattr(result, "metadata", None)
+        plan_meta = meta.get("query_plan") if isinstance(meta, dict) else None
+        if not isinstance(plan_meta, dict):
+            return
+        ds_fp = plan_meta.get("dataset_fingerprint") or plan_meta.get("dataset_id")
+        est = plan_meta.get("estimated_rows")
+        if not ds_fp or est is None:
+            return
+        feedback_store.record(
+            dataset_fingerprint=str(ds_fp),
+            operator_class="query",
+            estimated_rows=int(est),
+            actual_rows=int(actual_rows),
+            outcome="ok",
+        )
+    except Exception:  # noqa: BLE001 - 反馈绝不影响查询路径
+        pass
 
 
 def _op_filter(ctx: OperatorContext, node: "ExecutionNode", payloads: dict[str, NodePayload]) -> NodePayload:
@@ -437,9 +479,28 @@ def _op_raster_window_operation(ctx: OperatorContext, node: "ExecutionNode", pay
             resampling=str(params.get("resampling", "bilinear")),
         )
         out_path = str(result["output_path"])
+    elif op == "windowed_band_index":
+        # ADR-0101 D9（§20）：光谱指数窗口化执行进入 Data Plane 算子层
+        # （科学公式 truth 仍在 rs/band_math；这里只接线执行底座）。
+        from app.lib.geo_analysis.raster_windowed import windowed_band_index
+
+        index_type = str(params.get("index_type", ""))
+        band_map = params.get("band_map") or {}
+        if not index_type or not band_map:
+            raise NodeExecutionError(
+                "windowed_band_index requires parameters.index_type and band_map",
+                node_id=node.node_id,
+            )
+        result = windowed_band_index(
+            str(raster_path), index_type,
+            band_map={str(k): int(v) for k, v in band_map.items()},
+            out_path=params.get("out_path"),
+        )
+        out_path = str(result.get("output_path"))
     else:
         raise UnsupportedOperationError(
-            f"raster_window_operation '{op}' is not wired; wired: raster_calculator|resample",
+            f"raster_window_operation '{op}' is not wired; wired: "
+            "raster_calculator|resample|windowed_band_index",
             details={"node_id": node.node_id, "operation": str(op)},
         )
     import os as _os
@@ -515,6 +576,10 @@ def _op_materialize(ctx: OperatorContext, node: "ExecutionNode", payloads: dict[
     ref_id = run_coro_sync(
         session_data_manager.store(ctx.session_id, data, prefix=prefix)
     )
+    from app.services.geocompute import tracing
+
+    tracing.emit("materialized", run_id=ctx.run_id, node_id=ctx.node_id,
+                 rows=len(list(data)), scope=str(prefix)[:64])
     return {
         "ref_id": ref_id,
         "metadata": {"materialized_rows": len(list(data)), "prefix": prefix},
@@ -564,11 +629,10 @@ def _op_source_scan(ctx: OperatorContext, node: "ExecutionNode", payloads: dict[
     if not dataset_id:
         raise NodeExecutionError("SOURCE_SCAN requires parameters.dataset_id", node_id=node.node_id)
     from app.core.database import SessionLocal
-    from app.models.data_fabric import CatalogItemModel
 
     db = SessionLocal()
     try:
-        item = db.query(CatalogItemModel).filter(CatalogItemModel.id == str(dataset_id)).first()
+        item = catalog_item_resolver(db, str(dataset_id))
         if item is not None:
             _authorize_catalog_for_ctx(ctx, db, item, str(dataset_id))
     finally:

@@ -100,6 +100,32 @@ class DataMaterializationRecord(Base):
     )
 
 
+class DatasetStatisticsRecord(Base):
+    """数据集统计持久化行（advisory，ADR-0101 D6）。
+
+    统计是**性能提示，绝不是正确性真相**：查询结果永不依赖它。行按
+    dataset 指纹 + 采集时间寻址；``expires_at`` 是有界保留（过期行由
+    prune 清理；读取侧也拒绝过期行 —— stale 语义显式）。任何 DB 故障
+    都 fail-open（回退进程内 TTL store / 描述符采集）。
+    """
+
+    __tablename__ = "dataset_statistics"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    dataset_fingerprint = Column(String(64), nullable=False)
+    source_type = Column(String(50), nullable=True)
+    collector = Column(String(32), nullable=False, default="descriptor")
+    confidence = Column(String(16), nullable=False, default="assumption")
+    revision_strength = Column(String(16), nullable=False, default="weak")
+    stats_json = Column(JSON, nullable=False, default=dict)
+    collected_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    expires_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("idx_dataset_stats_fp_collected", "dataset_fingerprint", "collected_at"),
+    )
+
+
 # Aliases for backwards compatibility
 DataSourceModel = DataSource
 CatalogItemModel = DataFabricDataset
@@ -114,4 +140,5 @@ __all__ = [
     "DataSourceModel",
     "CatalogItemModel",
     "MaterializationModel",
+    "DatasetStatisticsRecord",
 ]

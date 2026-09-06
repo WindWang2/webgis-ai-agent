@@ -389,6 +389,17 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
                 "geo": geo_meta,
                 "primary_geometry_column": primary_geom if primary_geom in schema_fields else None,
                 "num_row_groups": pf.metadata.num_row_groups,
+                # ADR-0101 D6：footer 事实进入统计管道 —— collector 显式标注
+                # （V3 声明了 geoparquet_footer 收集器但没有生产者）；列只证明
+                # 存在（null/NDV 未知 = assumption）；footer 是文件内容元数据，
+                # 内容变 → 指纹变 → strong。
+                "stats_collector": "geoparquet_footer",
+                "revision_strength": "strong",
+                "row_count": int(num_rows),
+                "column_statistics": [
+                    {"name": f.get("name"), "confidence": "assumption"}
+                    for f in fields if isinstance(f.get("name"), str)
+                ][:128],
                 "is_demo": False,
             },
         )

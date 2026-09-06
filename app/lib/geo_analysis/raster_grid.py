@@ -190,6 +190,32 @@ def grids_align(
     return True, "identical crs/transform/shape"
 
 
+def pixel_grids_aligned(
+    res_x1: float, res_y1: float, left1: float, top1: float,
+    res_x2: float, res_y2: float, left2: float, top2: float,
+    *, rtol: float = 1e-6,
+) -> bool:
+    """两个窗口网格是否共享同一像元网格（#1002 判定的唯一权威实现）。
+
+    形状相等不充分：分辨率不同或存在亚像元相位偏移时，逐像元比较的是
+    错位采样。对齐 = 分辨率在 ``rtol`` 相对容差内一致，且窗口原点相差
+    近似整数个像元。（ADR-0101 D9：V6 起本判定只存在于 raster_grid ——
+    此前 spatial_tasks 里有一份平行实现。）
+    """
+    if res_x1 <= 0 or res_x2 <= 0 or res_y1 <= 0 or res_y2 <= 0:
+        return False
+    if abs(res_x1 - res_x2) > rtol * max(res_x1, res_x2):
+        return False
+    if abs(res_y1 - res_y2) > rtol * max(res_y1, res_y2):
+        return False
+    phase_x = (left2 - left1) / res_x1
+    phase_y = (top2 - top1) / res_y1
+    return (
+        abs(phase_x - round(phase_x)) <= rtol
+        and abs(phase_y - round(phase_y)) <= rtol
+    )
+
+
 # ── 对齐裁决 ────────────────────────────────────────────────────────
 
 
