@@ -300,6 +300,8 @@ class DatasetProfiler:
                 nd = nodata[b]
                 if nd is not None and isinstance(nd, float) and _math.isnan(nd):
                     # NaN nodata：band != nan 恒真 —— 必须按 isnan 掩膜
+                    import numpy as _np
+
                     valid = band[~_np.isnan(band)]
                 elif nd is not None:
                     valid = band[band != nd]
@@ -307,6 +309,8 @@ class DatasetProfiler:
                     valid = band
                 # 非有限值不进 min/max/mean（NaN/Inf 会毒化全部统计）
                 if valid.size and valid.dtype.kind == "f":
+                    import numpy as _np
+
                     valid = valid[_np.isfinite(valid)]
                 valid_count = int(valid.size)
                 if valid.size:

@@ -66,7 +66,7 @@ class TestSaveAndList:
 class TestVerify:
     async def test_live_refs_pass_missing_refs_reported(self):
         sid = "ws-verify"
-        ref = await _seed_workspace(sid)
+        await _seed_workspace(sid)
         svc = get_workspace_snapshot_service()
         snap = await svc.save_snapshot(sid)
         verification = await svc.verify_snapshot(sid, snap.snapshot_id)
@@ -128,7 +128,7 @@ class TestRestore:
 class TestClone:
     async def test_clone_copies_and_reports_ref_semantics(self):
         src = "ws-clone-src"
-        ref = await _seed_workspace(src)
+        await _seed_workspace(src)
         svc = get_workspace_snapshot_service()
         snap = await svc.save_snapshot(src)
         clone = await svc.clone_snapshot(src, snap.snapshot_id, "ws-clone-dst")
