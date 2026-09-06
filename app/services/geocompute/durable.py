@@ -40,6 +40,25 @@ def _default_session_factory():
 session_factory: Callable[[], Any] = _default_session_factory
 
 
+#: 节点类别 → worker 能力提示（ADR-0101 D10，V4 §25）。
+#: 单一默认队列部署下这些提示是**声明性**的（routing 真值仍是既有
+#: 队列机制，ADR-0101 Deferred：异构 worker 池化后才产生实际路由差异）。
+_CATEGORY_CAPABILITIES: dict[str, list[str]] = {
+    "raster_operation": ["raster", "gdal", "high_memory"],
+    "raster_window_operation": ["raster", "gdal"],
+    "interpolation": ["heavy_cpu"],
+    "spatial_join": ["heavy_cpu"],
+}
+
+_CAPABILITY_ORDER = ["raster", "gdal", "high_memory", "heavy_cpu", "vector", "network_io"]
+
+
+def required_capabilities(node: ExecutionNode) -> list[str]:
+    """节点声明的能力提示（确定性；随 params 进入幂等键 —— 同节点同键）。"""
+    caps = set(_CATEGORY_CAPABILITIES.get(node.category.value, ["vector"]))
+    return sorted(caps, key=_CAPABILITY_ORDER.index)
+
+
 def dispatch_node(
     node: ExecutionNode,
     *,
@@ -52,7 +71,11 @@ def dispatch_node(
     from app.services.jobs.submit import submit_durable_job
 
     node_dict = node.model_dump(mode="json")
-    params = {"node": node_dict, "plan_fingerprint": plan_fingerprint}
+    params = {
+        "node": node_dict,
+        "plan_fingerprint": plan_fingerprint,
+        "capabilities": required_capabilities(node),
+    }
     return submit_durable_job(
         celery_task=run_geocompute_node,
         task_type="geocompute_node",
