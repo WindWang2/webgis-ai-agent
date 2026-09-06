@@ -171,12 +171,12 @@ async def snapshot_input_shapes(
     session_id: str,
     args: Any,
     *,
-    max_refs: int = 4,
+    max_refs: int = 8,
 ) -> Dict[str, dict]:
     """args 中的输入 ref → 当前 descriptor 形状指纹快照（生产时调用）。
 
     只在 analysis_key 已成立（参数已过尺寸闸）后调用；ref 数上限
-    max_refs（分析输入通常 1-3 个），descriptor 探测失败按未知处理
+    max_refs（与 metadata 面上限一致 = 8），descriptor 探测失败按未知处理
     （该 ref 不参与复用复核，不阻塞生产路径）。"""
     from app.services.session_data import session_data_manager
 
@@ -214,6 +214,55 @@ async def snapshot_input_shapes(
     return shapes
 
 
+async def snapshot_ref_revisions(
+    session_id: str,
+    args: Any,
+    *,
+    max_refs: int = 8,
+) -> Dict[str, int]:
+    """V3：args 中的输入 ref → 当前 content_revision 快照（生产时调用）。
+
+    形状指纹的盲区（§审计 D）：属性编辑保形状 → 旧产物被错误命中。
+    revision 计数器捕获**任意覆写**（V5-E 机制），作为形状指纹之外的
+    第二道复核证据。descriptor 缺席 / revision=0（pre-revision 载荷）
+    的 ref 不入表 —— 与形状指纹同一保守语义。
+    """
+    from app.services.session_data import session_data_manager
+
+    refs: List[str] = []
+
+    def _walk(node: Any) -> None:
+        if len(refs) >= max_refs:
+            return
+        if isinstance(node, str):
+            if node.startswith("ref:") and node not in refs:
+                refs.append(node)
+            return
+        if isinstance(node, dict):
+            for v in node.values():
+                _walk(v)
+                if len(refs) >= max_refs:
+                    return
+        elif isinstance(node, list):
+            for v in node:
+                _walk(v)
+                if len(refs) >= max_refs:
+                    return
+
+    _walk(args)
+    revisions: Dict[str, int] = {}
+    for ref in refs:
+        try:
+            desc = await session_data_manager.get_ref_descriptor(session_id, ref)
+        except Exception:  # noqa: BLE001
+            desc = None
+        if isinstance(desc, dict):
+            rev = desc.get("content_revision")
+            if isinstance(rev, int) and rev > 0:
+                revisions[ref] = rev
+    return revisions
+
+
 async def find_reusable_artifact(
     session_id: str,
     *,
@@ -229,9 +278,12 @@ async def find_reusable_artifact(
     命中条件（§29 复用规则逐条落地）：
     - ArtifactRecord status == valid（superseded/stale/expired 一票否决）；
     - metadata.analysis_key == 本调用 key（同算法+同参数+同输入指针）；
+    - metadata.cacheable 不是显式 False（V3 cacheability 声明）；
     - recency ≤ max_age_s（实现升级的兜底失效）；
     - 产物 ref 的 descriptor 仍可探测（store TTL/LRU 驱逐 → miss）；
     - 输入 ref 形状指纹与生产时一致（in-place overwrite 守卫）；
+    - 输入 ref content_revision 与生产时一致（V3：属性编辑保形状的
+      盲区守卫；旧记录无该证据时跳过 —— 向后兼容）；
     - 输入栅格内容指纹与生产时一致（同路径重写守卫，V3；args 给定时
       重算并比对 metadata.input_raster_fps）。
 
@@ -251,6 +303,8 @@ async def find_reusable_artifact(
         and isinstance(r.metadata, dict)
         and r.metadata.get("analysis_key") == analysis_key
         and (ts - r.updated_at) <= max_age_s
+        # V3 cacheability：显式 False 一票否决（未声明的旧记录照旧）。
+        and r.metadata.get("cacheable") is not False
     ]
     if not candidates:
         return None
@@ -264,16 +318,47 @@ async def find_reusable_artifact(
     if not isinstance(out_desc, dict) or out_desc.get("feature_count") is None:
         return None
 
-    # 输入形状复核（§29：输入变 → 不可复用）。
-    if input_shapes:
-        for ref, expected in input_shapes.items():
+    # 输入形状复核（§29：输入变 → 不可复用）+ V3 revision 复核。
+    # revision 复核独立于形状复核：input_shapes 缺席（形状证据收集失败）
+    # 时仍按 recorded revisions 复核有证据的 ref —— 复核缺失按保守 miss
+    # 的方向不因形状证据缺席而整段跳过。
+    recorded_revisions = (
+        rec.metadata.get("input_ref_revisions")
+        if isinstance(rec.metadata, dict)
+        else None
+    )
+    shape_map = input_shapes if isinstance(input_shapes, dict) else {}
+    revision_map = (
+        recorded_revisions if isinstance(recorded_revisions, dict) else {}
+    )
+    review_refs = list(dict.fromkeys(
+        [*shape_map.keys(), *revision_map.keys()]
+    ))[:8]
+    for ref in review_refs:
+        expected = shape_map.get(ref)
+        if expected is not None:
             try:
-                cur = _ref_shape_fingerprint(
-                    await session_data_manager.get_ref_descriptor(session_id, ref)
-                )
+                cur_desc = await session_data_manager.get_ref_descriptor(session_id, ref)
             except Exception:  # noqa: BLE001
                 return None
-            if cur != expected:
+            if _ref_shape_fingerprint(cur_desc) != expected:
+                return None
+        else:
+            try:
+                cur_desc = await session_data_manager.get_ref_descriptor(session_id, ref)
+            except Exception:  # noqa: BLE001
+                return None
+        # V3：形状相同但 revision 前进 = 载荷被覆写（属性编辑保形状的
+        # 盲区）→ miss。旧记录无 input_ref_revisions → 跳过（向后兼容）。
+        if isinstance(cur_desc, dict):
+            recorded_rev = revision_map.get(ref)
+            cur_rev = cur_desc.get("content_revision")
+            if (
+                isinstance(recorded_rev, int)
+                and isinstance(cur_rev, int)
+                and recorded_rev > 0
+                and cur_rev != recorded_rev
+            ):
                 return None
 
     # 输入栅格内容复核（V3 §34：different source content → miss）。生产时

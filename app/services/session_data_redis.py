@@ -1,5 +1,6 @@
 """Redis-backed session data manager - persistent storage with TTL and LRU eviction"""
 import asyncio
+import hashlib
 import json
 import time
 import uuid
@@ -224,6 +225,11 @@ class RedisSessionStore(BaseSessionStore):
         return f"session:{session_id}:refs"
 
     @staticmethod
+    def _ref_digests_key(session_id: str) -> str:
+        """V3: hash of {ref_id -> payload digest}（同内容覆写不 bump revision）。"""
+        return f"session:{session_id}:ref_digests"
+
+    @staticmethod
     def _ref_revisions_key(session_id: str) -> str:
         """V5-E: hash of {ref_id -> content_revision} for this session."""
         return f"session:{session_id}:ref_revisions"
@@ -399,12 +405,33 @@ class RedisSessionStore(BaseSessionStore):
         payload_json = await asyncio.to_thread(
             json.dumps, data, ensure_ascii=False, default=_numpy_json_default
         )
+        # V3 data foundation：同内容覆写不 bump revision —— checkpoint /
+        # rollback / plan 重持久化常常把**字节相同**的载荷写回同一 ref
+        # （Redis get 返回反序列化副本，内存后端的同对象守卫在这里天然
+        # 失效）。无条件 hincrby 会让下游 revision 复核（analysis_reuse）
+        # 对未变化的内容误判 miss → 全量重算。digest 不同或无记录才 bump。
+        payload_digest = await asyncio.to_thread(
+            lambda: hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+        )
+        try:
+            previous_digest = await self._r.hget(
+                self._ref_digests_key(session_id), ref_id
+            )
+        except aioredis.RedisError:
+            previous_digest = None
+        content_changed = previous_digest != payload_digest
         try:
             async with self._r.pipeline() as pipe:
                 pipe.set(data_key, payload_json, ex=DATA_TTL)
                 # V5-E: same ref identity, new content — bump the revision
                 # atomically with the payload write (S7 rollback semantics).
-                pipe.hincrby(self._ref_revisions_key(session_id), ref_id, 1)
+                # V3: only when the payload digest actually changed.
+                if content_changed:
+                    pipe.hincrby(self._ref_revisions_key(session_id), ref_id, 1)
+                    pipe.hset(
+                        self._ref_digests_key(session_id), ref_id, payload_digest
+                    )
+                    pipe.expire(self._ref_digests_key(session_id), STATE_TTL)
                 pipe.expire(self._ref_revisions_key(session_id), STATE_TTL)
                 # D-4: the payload changed, so the cached descriptor (bbox /
                 # feature_count / geometry_types from the OLD payload) is stale.

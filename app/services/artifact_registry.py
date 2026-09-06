@@ -35,7 +35,12 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 logger = logging.getLogger(__name__)
 
 # ── 契约常量 ─────────────────────────────────────────────────────────
-MAX_ARTIFACT_RECORDS = 128  # 会话内记录上限（超出先淘汰 superseded，再按 LRU）
+# 会话内记录上限（超出先淘汰 superseded，再按 LRU）
+MAX_ARTIFACT_RECORDS = 128
+# metadata 键上限：V3（data foundation）在同一账本上追加
+# logical_role / persistence / stale 诊断 / content 指纹等有界键 ——
+# 12 → 24 的翻倍仍是硬预算（每键值都有界），旧记录不足 12 键不受影响。
+MAX_RECORD_METADATA_KEYS = 24
 LEDGER_PREFIX = "artifact-ledger"
 LEDGER_ALIAS = "artifacts"
 
@@ -104,7 +109,7 @@ class ArtifactRecord:
         d = asdict(self)
         d["inputs"] = list(self.inputs)[:16]
         d["metadata"] = {
-            str(k): v for k, v in list(self.metadata.items())[:12]
+            str(k): v for k, v in list(self.metadata.items())[:MAX_RECORD_METADATA_KEYS]
         }
         return d
 
@@ -457,6 +462,8 @@ async def register_tool_artifact(
     analysis_key: Optional[str] = None,
     input_shapes: Optional[Dict[str, dict]] = None,
     raster_fingerprints: Optional[Dict[str, str]] = None,
+    ref_revisions: Optional[Dict[str, int]] = None,
+    inputs: Optional[List[str]] = None,
 ) -> Optional[ArtifactRecord]:
     """dispatch/chart seam 的便捷注册（无 capability 上下文；type 由推断得出）。
 
@@ -466,6 +473,13 @@ async def register_tool_artifact(
     ``raster_fingerprints``（V3，ADR-0089）：输入栅格路径 → 内容指纹
     （grid+降采样样本），复用复核时重算比对 —— 同路径 in-place 重写不再
     错误命中旧产物。
+    ``ref_revisions``（V3 data foundation）：输入 ref → content_revision
+    快照，捕获保形状的属性覆写（形状指纹盲区）；复核见
+    analysis_reuse.find_reusable_artifact。
+    ``inputs``（V3 data foundation）：本产物消费的上游 ref（dispatch
+    参数级血缘捕获），写台账血缘边 —— 会话血缘图由此覆盖 dispatch 接缝
+    （审计 Agent C 缺口 #1）；register_artifact 内部有界（≤16），此处
+    先剔除自引用。
     """
     if not ref or not str(ref).startswith("ref:"):
         return None
@@ -488,11 +502,18 @@ async def register_tool_artifact(
             for k, v in list(raster_fingerprints.items())[:4]
             if isinstance(v, str)
         }
+    if ref_revisions:
+        # 有界：最多 8 个输入 ref × revision 计数器。
+        metadata["input_ref_revisions"] = {
+            str(k)[:96]: int(v) for k, v in list(ref_revisions.items())[:8]
+            if isinstance(v, int) and v > 0
+        }
     return await register_artifact(
         session_id,
         artifact_id=ref,
         artifact_type=infer_artifact_type(ref, result=result),
         producer_tool=tool,
+        inputs=[str(i) for i in (inputs or []) if i and i != ref],
         metadata=metadata,
     )
 
@@ -534,6 +555,58 @@ async def mark_status(session_id: str, artifact_id: str, status: str) -> bool:
             if rec is None:
                 return False
             rec.status = status
+            rec.updated_at = time.time()
+            await _save_records(session_id, records, session_data_manager)
+            return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+async def update_record_metadata(
+    session_id: str,
+    artifact_id: str,
+    *,
+    metadata: Optional[Dict[str, Any]] = None,
+    status: Optional[str] = None,
+) -> bool:
+    """V3 data foundation 的增量记录更新（不复活、不重注册）。
+
+    - ``metadata``：**浅合并**进既有 metadata（同键覆盖）；合并后仍受
+      MAX_RECORD_METADATA_KEYS 硬界（超出按 dict 插入序截断，先到先留）；
+    - ``status``：显式状态转移（stale 标记传播等）；传非法状态值按
+      False 处理（状态集是有限集合，不收自由串）；
+    - 与 mark_status 同锁序同容错：更新失败只影响记录，绝不阻断调用方。
+    """
+    from app.services.distributed_lock import session_lock_registry
+    from app.services.session_data import session_data_manager
+
+    if not session_id or not artifact_id:
+        return False
+    if status is not None and status not in (
+        A_VALID, A_STALE, A_EXPIRED, A_SUPERSEDED, A_FAILED
+    ):
+        return False
+    if metadata is None and status is None:
+        return False
+    try:
+        async with session_lock_registry.lock(session_id, fail_on_degraded=False):
+            records = await _load_records(session_id, session_data_manager)
+            rec = records.get(artifact_id)
+            if rec is None:
+                return False
+            if metadata:
+                new_kv = {
+                    str(k): v for k, v in list(metadata.items())[:MAX_RECORD_METADATA_KEYS]
+                }
+                # 新键插前、旧键补后（同键新值胜）：metadata 满时截断丢弃
+                # 的是旧键 —— 丢陈旧复用证据 = 保守 miss（安全方向）；
+                # 反过来会静默丢 staleness/fingerprint 等新证据（不安全）。
+                merged = dict(new_kv)
+                for k, v in rec.metadata.items():
+                    merged.setdefault(str(k), v)
+                rec.metadata = dict(list(merged.items())[:MAX_RECORD_METADATA_KEYS])
+            if status is not None:
+                rec.status = status
             rec.updated_at = time.time()
             await _save_records(session_id, records, session_data_manager)
             return True
@@ -692,6 +765,34 @@ async def sweep_statuses(
     return result
 
 
+# V3 data foundation（§十四保护规则）：这些持久层是用户/工作空间级资产，
+# 即使处于 GC 态也绝不由孤儿回收删除（plan/execute 双侧同规则 —— 仅在
+# planner 里声明而执行器不执行 = 假保护）。
+_GC_PROTECTED_TIERS = ("workspace", "persistent")
+
+
+def _gc_protection_skip(aid: str, records: Dict[str, ArtifactRecord]) -> Optional[str]:
+    """孤儿回收的额外保护判定（返回保护原因；None = 不保护）。
+
+    - 持久层 workspace/persistent：用户/工作空间资产；
+    - 血缘根保留：仍是任一 ``valid`` 记录上游的记录（删除断链会让
+      replay/resume 失去重建依据）。
+    """
+    rec = records.get(aid)
+    if rec is not None:
+        md = rec.metadata if isinstance(rec.metadata, dict) else {}
+        if str(md.get("persistence_tier") or "") in _GC_PROTECTED_TIERS:
+            return f"persistence_tier={md.get('persistence_tier')}"
+    valid_inputs: set = set()
+    for other in records.values():
+        if other.status == A_VALID:
+            for parent in other.inputs:
+                valid_inputs.add(parent)
+    if aid in valid_inputs:
+        return "retained lineage root (has live downstream)"
+    return None
+
+
 async def collect_orphan_refs(
     session_id: str,
     *,
@@ -702,7 +803,8 @@ async def collect_orphan_refs(
 
     只删 registry 记录为 superseded/stale/expired/failed 且行/spec/组件
     均不引用的 ref —— 活引用（哪怕记录态未刷新）绝不删除。retry/replan
-    产生的新 ref 天然在活集合（行已重绑）。
+    产生的新 ref 天然在活集合（行已重绑）。V3：持久层保护与血缘根
+    保护在**锁内新鲜账本**上复检（与 gc planner 同规则）。
     """
     from app.services.distributed_lock import session_lock_registry
     from app.services.session_data import session_data_manager
@@ -726,6 +828,7 @@ async def collect_orphan_refs(
             aid
             for aid, rec in records.items()
             if rec.status in _TERMINAL_GC_STATUSES and aid not in live
+            and _gc_protection_skip(aid, records) is None
         ]
         if not orphans:
             return []
@@ -744,6 +847,8 @@ async def collect_orphan_refs(
             for aid in orphans:
                 if aid in live_now:
                     continue
+                if _gc_protection_skip(aid, records) is not None:
+                    continue  # V3 保护规则按新鲜账本复检
                 try:
                     if is_raster_ref(aid):
                         # V4：磁盘栅格孤儿 —— unlink PNG（同一活引用复检纪律）。

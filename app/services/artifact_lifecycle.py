@@ -178,7 +178,8 @@ async def sweep_aged_artifacts() -> Dict[str, int]:
     import asyncio
 
     result = {"exports_removed": 0, "report_rows_removed": 0,
-              "orphan_upload_rows_removed": 0, "orphan_upload_dirs_removed": 0}
+              "orphan_upload_rows_removed": 0, "orphan_upload_dirs_removed": 0,
+              "artifact_cache_orphans_removed": 0}
 
     def _sweep_exports() -> None:
         retention = _retention_days(
@@ -287,11 +288,58 @@ async def sweep_aged_artifacts() -> Dict[str, int]:
             result["orphan_upload_rows_removed"] = removed_rows
             result["orphan_upload_dirs_removed"] = removed_dirs
 
+    def _sweep_artifact_cache_dir() -> None:
+        """V3 data foundation 第四族：``data/artifacts`` 磁盘缓存孤儿清扫。
+
+        （audit #D-gap：该目录此前只有写路径字节上限 LRU —— .meta 缺失的
+        .tif、崩溃遗留临时件、超龄条目均无人回收。清扫器在 artifact_cache
+        内定义（与键命名纪律同源），这里只做接线与容错。）
+        """
+        try:
+            from app.lib.artifact_cache import sweep_orphan_disk_artifacts
+
+            result["artifact_cache_orphans_removed"] = sum(
+                sweep_orphan_disk_artifacts().values()
+            )
+        except Exception as e:  # noqa: BLE001 — reclamation must not break delete
+            logger.warning("[artifact-lifecycle] artifact-cache sweep failed: %s", e)
+
+    def _report_promotion_store_usage() -> None:
+        """V3 data foundation：晋升内容库使用量诊断（只报告，不删除）。
+
+        promoted 内容属 workspace/persistent 层 —— §十四的保护对象，
+        不纳入任何自动删除面。此处只暴露规模与最老条目年龄，供容量
+        规划与 PR 诊断使用（audit #D-gap：该目录此前完全不可观测）。
+        """
+        try:
+            from app.services.project_artifact_promotion import content_store_root
+
+            root = content_store_root()
+            if not root.is_dir():
+                return
+            files = 0
+            total = 0
+            oldest = 0.0
+            for p in root.rglob("*.json"):
+                try:
+                    st = p.stat()
+                except OSError:
+                    continue
+                files += 1
+                total += st.st_size
+                oldest = max(oldest, max(time.time() - st.st_mtime, 0.0))
+            result["promotion_store_files"] = files
+            result["promotion_store_bytes"] = total
+            result["promotion_store_oldest_age_s"] = int(oldest)
+        except Exception as e:  # noqa: BLE001 — diagnostics only
+            logger.warning("[artifact-lifecycle] promotion-store report failed: %s", e)
+
     try:
         await asyncio.wait_for(asyncio.to_thread(_sweep_exports), timeout=30.0)
     except Exception as e:  # noqa: BLE001
         logger.warning("[artifact-lifecycle] export sweep failed: %s", e)
-    for step in (_sweep_reports, _sweep_orphan_uploads):
+    for step in (_sweep_reports, _sweep_orphan_uploads, _sweep_artifact_cache_dir,
+                 _report_promotion_store_usage):
         try:
             await asyncio.wait_for(step(), timeout=30.0)
         except Exception as e:  # noqa: BLE001
