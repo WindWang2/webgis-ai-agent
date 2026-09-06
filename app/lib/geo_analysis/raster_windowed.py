@@ -56,11 +56,17 @@ def build_output_profile(
     crs=None,
     transform=None,
     nodata: Optional[float] = None,
+    colorinterp: Optional[List[str]] = None,
 ) -> dict:
     """所有栅格算法共用的输出 GTiff profile。
 
     tiled(256) + LZW：瓦片服务 / 产物检视 / range read 友好（ADR-0089）。
     每个字段都在这里设一次，算法不得再 copy 后各自补漏。
+
+    ``colorinterp``（ADR-0101 D9，V4 §19）：源栅格的颜色解释（red/green/
+    blue/alpha/…）—— 给出则原样保留（波段数必须一致），不给则由
+    rasterio 按波段数默认（单波段 gray / 多波段未定义）。V3 完全不
+    携带颜色解释，多波段产物在渲染端语义丢失 —— V6 修复。
     """
     profile: Dict[str, Any] = {
         "driver": "GTiff",
@@ -77,6 +83,20 @@ def build_output_profile(
     }
     if nodata is not None:
         profile["nodata"] = nodata
+    if colorinterp is not None:
+        if len(colorinterp) != int(count):
+            raise ValueError(
+                f"colorinterp length {len(colorinterp)} != band count {count}")
+        # 成员名在构造期硬校验（评审 MINOR：无效名之前只在 open 期被
+        # 静默吞成 warning —— 输出悄悄丢失颜色解释，正是本特性要修的）。
+        from rasterio.enums import ColorInterp
+
+        bad = [c for c in colorinterp if str(c).lower() not in ColorInterp.__members__]
+        if bad:
+            raise ValueError(
+                f"invalid colorinterp names: {bad}; valid: "
+                f"{sorted(ColorInterp.__members__)}")
+        profile["colorinterp"] = list(colorinterp)
     return profile
 
 
@@ -188,6 +208,10 @@ class WindowedRasterWriter:
         self.overview_resampling = Resampling[overview_resampling]
         self.window_side = window_side or window_side_from_budget()
         self.stats = WindowStats()
+        # ADR-0101 D9（V4 §19）：逐波段统计 —— V3 的 finalize 对 count>1
+        # 的输出重复 band-1 的 vmin/vmax（从未有过多波段写入者触发它）。
+        # V6 起多波段写入按波段累计，finalize 产出真实逐波段区间。
+        self._band_stats: Dict[int, WindowStats] = {}
         self._digest = hashlib.sha256()
         self._seeded = False
         self._finalized: Optional[Dict[str, Any]] = None
@@ -200,7 +224,21 @@ class WindowedRasterWriter:
     def __enter__(self) -> "WindowedRasterWriter":
         self._tmp_ctx = atomic_output(self.out_path)
         tmp_path = self._tmp_ctx.__enter__()
-        self._dst = rasterio.open(tmp_path, "w", **self.profile)
+        open_profile = self.profile
+        colorinterp = open_profile.get("colorinterp")
+        if colorinterp is not None:
+            # colorinterp 不是 GTiff creation option：open 后设置（V6 §19）。
+            open_profile = {k: v for k, v in open_profile.items() if k != "colorinterp"}
+        self._dst = rasterio.open(tmp_path, "w", **open_profile)
+        if colorinterp is not None:
+            try:
+                from rasterio.enums import ColorInterp
+
+                self._dst.colorinterp = [
+                    ColorInterp[str(c).lower()] for c in colorinterp
+                ]
+            except Exception as e:  # noqa: BLE001 — 颜色解释是增值元数据
+                logger.warning("[raster_windowed] colorinterp skipped: %s", e)
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -255,14 +293,35 @@ class WindowedRasterWriter:
             )
             self._seeded = True
         self._digest.update(np.ascontiguousarray(arr).tobytes())
-        self.stats.update(stats_arr if stats_arr is not None else arr, self.profile.get("nodata"))
+        stats_arr_used = stats_arr if stats_arr is not None else arr
+        self.stats.update(stats_arr_used, self.profile.get("nodata"))
+        # 逐波段累计（V6 §19）：count>1 时每波段真实的 min/max/mean。
+        b = self._band_stats.setdefault(band, WindowStats())
+        b.update(stats_arr_used if stats_arr_used.ndim == 2 else stats_arr_used[0],
+                 self.profile.get("nodata"))
 
     # – 产物 –
     def finalize(self) -> Dict[str, Any]:
         """写者已知事实（零重开）。在 writer 退出前调用。"""
         from app.schemas.raster_spec import RasterArtifactDescriptor, RasterBandInfo
 
-        vmin, vmax = self.stats.min_v, self.stats.max_v
+        out_count = int(self.profile.get("count", 1))
+        out_dtype = str(self.profile.get("dtype") or self.grid.dtype)
+        if out_count == 1 or not self._band_stats:
+            vmin, vmax = self.stats.min_v, self.stats.max_v
+            bands = [
+                RasterBandInfo(index=i + 1, dtype=out_dtype, vmin=vmin, vmax=vmax)
+                for i in range(out_count)
+            ]
+        else:
+            bands = []
+            for i in range(out_count):
+                bs = self._band_stats.get(i + 1)
+                if bs is None:
+                    # 某波段从未被写入过：诚实披露（stats 全 None）。
+                    bs = WindowStats()
+                bands.append(RasterBandInfo(
+                    index=i + 1, dtype=out_dtype, vmin=bs.min_v, vmax=bs.max_v))
         descriptor = RasterArtifactDescriptor(
             file_path=self.out_path,
             width=self.grid.width,
@@ -271,12 +330,10 @@ class WindowedRasterWriter:
             bounds=(
                 list(self.grid.bounds) if self.grid.bounds else None
             ),
-            dtype=str(self.profile.get("dtype") or self.grid.dtype),
+            dtype=out_dtype,
             nodata=self.profile.get("nodata"),
-            band_count=int(self.profile.get("count", 1)),
-            bands=[
-                RasterBandInfo(index=1, dtype=str(self.profile.get("dtype")), vmin=vmin, vmax=vmax)
-            ] * int(self.profile.get("count", 1)),
+            band_count=out_count,
+            bands=bands,
             # 诚实披露：overview 建成与否的事实，不是“本应建成”的期望。
             has_overviews=self.overviews_built,
             transform=[float(v) for v in self.grid.transform],
@@ -287,6 +344,9 @@ class WindowedRasterWriter:
         self._finalized = {
             "output_path": self.out_path,
             "stats": self.stats.to_dict(),
+            "band_stats": {
+                band: ws.to_dict() for band, ws in sorted(self._band_stats.items())
+            },
             "descriptor": descriptor,
             "content_fingerprint": self._digest.hexdigest(),
         }

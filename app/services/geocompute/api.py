@@ -14,9 +14,12 @@ from app.services.geocompute.plan import (
     ExecutionNode,
     ExecutionPlan,
     ExecutionPolicyKind,
+    LineageLink,
     NodeCategory,
     NodeReusePolicy,
+    PayloadKind,
     ResourceBudget,
+    ResourceClass,
     ResourceEstimate,
     RetryPolicy,
 )
@@ -55,6 +58,9 @@ def build_plan_from_json(data: dict[str, Any]) -> ExecutionPlan:
                          "hint": "use in_process, or materialize first"},
             )
         retry = raw.get("retry") or {}
+        produces_raw = raw.get("produces")
+        accepts_raw = raw.get("accepts") or []
+        rc_raw = raw.get("resource_class") or {}
         nodes.append(
             ExecutionNode(
                 node_id=str(raw["node_id"]),
@@ -74,6 +80,21 @@ def build_plan_from_json(data: dict[str, Any]) -> ExecutionPlan:
                 cancellable=bool(raw.get("cancellable", True)),
                 locality_hint=raw.get("locality_hint"),
                 description=raw.get("description"),
+                produces=PayloadKind(produces_raw) if produces_raw else None,
+                accepts=[PayloadKind(a) for a in accepts_raw][:8],
+                resource_class=ResourceClass(**rc_raw) if rc_raw else ResourceClass(),
+                deterministic=bool(raw.get("deterministic", True)),
+                upstream_fingerprints={
+                    str(k): str(v)
+                    for k, v in (raw.get("upstream_fingerprints") or {}).items()
+                },
+                lineage_inputs=[
+                    LineageLink(**link) for link in (raw.get("lineage_inputs") or [])
+                ][:16],
+                evidence_schema={
+                    str(k): str(v)
+                    for k, v in (raw.get("evidence_schema") or {}).items()
+                },
             )
         )
     budget_raw = dict(data.get("budget") or {})
@@ -86,10 +107,30 @@ def build_plan_from_json(data: dict[str, Any]) -> ExecutionPlan:
 
 
 #: 生产 governor（评审 S-F7/A-F7：服务端准入不再依赖调用方自报预算）。
-#: session 作用域按稳定哈希挂载；执行作用域由 executor 创建/摘除。
+#: 层级作用域按既有身份真相挂载（ADR-0101 D10）：tenant ← caller.org_id、
+#: project ← 显式 project_id、session ← 稳定哈希派生；执行作用域由
+#: executor 创建/摘除。
 GOVERNOR = ResourceGovernor(
     global_limits=BudgetLimits(max_rows=5_000_000, max_bytes=2 * 1024 * 1024 * 1024)
 )
+
+#: 层级并发槽位上界（有界、服务端红线；不做计费系统）。
+GOVERNOR_TENANT_MAX_CONCURRENCY = 8
+GOVERNOR_PROJECT_MAX_CONCURRENCY = 4
+GOVERNOR_SESSION_MAX_CONCURRENCY = 4
+
+
+def _caller_org_id(caller: Optional[dict[str, Any]]) -> Optional[str]:
+    """caller → org_id（auth 真相；匿名哨兵折叠为 None）。"""
+    if not caller:
+        return None
+    try:
+        from app.core.auth import actor_ids
+
+        _, org_id = actor_ids(caller)
+        return str(org_id) if org_id else None
+    except Exception:  # noqa: BLE001 - 身份解析失败按匿名处理
+        return None
 
 
 def run_plan_sync(
@@ -99,11 +140,14 @@ def run_plan_sync(
     cancel_token: Optional[Any] = None,
     governor: Optional[ResourceGovernor] = None,
     caller: Optional[dict[str, Any]] = None,
+    project_id: Optional[str] = None,
 ):
     """同步执行入口（工具/线程上下文用；REST 走 to_thread 同一函数）。
 
-    默认接入进程级 ``GOVERNOR``：global 上限 + 每 session 子作用域
-    （稳定哈希派生，幂等挂载），执行作用域在 run 内创建并在 finally 摘除。
+    默认接入进程级 ``GOVERNOR``：global 上限 + 层级作用域链
+    ``tenant:{org} → project:{pid} → session:{sid} → execution``（ADR-0101
+    D10 —— tenant/project 仅在既有身份真相存在时挂载；稳定哈希派生，
+    幂等，execution 作用域在 run 内创建并在 finally 摘除）。
 
     ``caller``（auth user dict 或 None）原样穿透到执行器：目录项准入、
     复用键 owner 域与 run 归属都以它为准（SEC：数据平面内 authz 与
@@ -115,9 +159,25 @@ def run_plan_sync(
 
     gov = governor or GOVERNOR
     parent = "global:root"
+    org_id = _caller_org_id(caller)
+    if org_id:
+        parent = gov.ensure_scope(
+            parent, ScopeKind.TENANT, hashlib.sha1(
+                org_id.encode(), usedforsecurity=False).hexdigest()[:12],
+            limits=BudgetLimits(max_concurrency=GOVERNOR_TENANT_MAX_CONCURRENCY),
+        )
+    if project_id:
+        parent = gov.ensure_scope(
+            parent, ScopeKind.PROJECT, hashlib.sha1(
+                str(project_id).encode(), usedforsecurity=False).hexdigest()[:12],
+            limits=BudgetLimits(max_concurrency=GOVERNOR_PROJECT_MAX_CONCURRENCY),
+        )
     if session_id:
         sid = hashlib.sha1(session_id.encode(), usedforsecurity=False).hexdigest()[:12]
-        parent = gov.ensure_scope(parent, ScopeKind.SESSION, sid)
+        parent = gov.ensure_scope(
+            parent, ScopeKind.SESSION, sid,
+            limits=BudgetLimits(max_concurrency=GOVERNOR_SESSION_MAX_CONCURRENCY),
+        )
     from app.services.geocompute.executor import engine
 
     return engine.execute_plan(

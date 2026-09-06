@@ -380,16 +380,11 @@ def _grids_pixel_aligned(a1: np.ndarray, b1, w1, a2: np.ndarray, b2, w2) -> bool
     """
     res_x1, res_y1, left1, top1 = _window_grid(a1, b1, w1)
     res_x2, res_y2, left2, top2 = _window_grid(a2, b2, w2)
-    if abs(res_x1 - res_x2) > 1e-6 * max(res_x1, res_x2):
-        return False
-    if abs(res_y1 - res_y2) > 1e-6 * max(res_y1, res_y2):
-        return False
-    phase_x = (left2 - left1) / res_x1
-    phase_y = (top2 - top1) / res_y1
-    return (
-        abs(phase_x - round(phase_x)) <= 1e-6
-        and abs(phase_y - round(phase_y)) <= 1e-6
-    )
+    # ADR-0101 D9：对齐判定收敛到 raster_grid 权威（消除 V3 遗留的第二份实现）。
+    from app.lib.geo_analysis.raster_grid import pixel_grids_aligned
+
+    return pixel_grids_aligned(res_x1, res_y1, left1, top1,
+                               res_x2, res_y2, left2, top2)
 
 
 def _pixel_change_classification(t1: Dict, t2: Dict, change_threshold: float) -> Optional[Dict]:

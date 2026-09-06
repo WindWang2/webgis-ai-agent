@@ -19,6 +19,7 @@ from typing import Any, Callable, Optional
 
 from app.services.geocompute.errors import (
     DeadlineExceededError,
+    FailureClass,
     NodeExecutionError,
 )
 from app.services.geocompute.plan import ExecutionNode
@@ -39,6 +40,25 @@ def _default_session_factory():
 session_factory: Callable[[], Any] = _default_session_factory
 
 
+#: 节点类别 → worker 能力提示（ADR-0101 D10，V4 §25）。
+#: 单一默认队列部署下这些提示是**声明性**的（routing 真值仍是既有
+#: 队列机制，ADR-0101 Deferred：异构 worker 池化后才产生实际路由差异）。
+_CATEGORY_CAPABILITIES: dict[str, list[str]] = {
+    "raster_operation": ["raster", "gdal", "high_memory"],
+    "raster_window_operation": ["raster", "gdal"],
+    "interpolation": ["heavy_cpu"],
+    "spatial_join": ["heavy_cpu"],
+}
+
+_CAPABILITY_ORDER = ["raster", "gdal", "high_memory", "heavy_cpu", "vector", "network_io"]
+
+
+def required_capabilities(node: ExecutionNode) -> list[str]:
+    """节点声明的能力提示（确定性；随 params 进入幂等键 —— 同节点同键）。"""
+    caps = set(_CATEGORY_CAPABILITIES.get(node.category.value, ["vector"]))
+    return sorted(caps, key=_CAPABILITY_ORDER.index)
+
+
 def dispatch_node(
     node: ExecutionNode,
     *,
@@ -51,7 +71,11 @@ def dispatch_node(
     from app.services.jobs.submit import submit_durable_job
 
     node_dict = node.model_dump(mode="json")
-    params = {"node": node_dict, "plan_fingerprint": plan_fingerprint}
+    params = {
+        "node": node_dict,
+        "plan_fingerprint": plan_fingerprint,
+        "capabilities": required_capabilities(node),
+    }
     return submit_durable_job(
         celery_task=run_geocompute_node,
         task_type="geocompute_node",
@@ -97,10 +121,23 @@ def await_node_job(
             status = job.status
             if status == JobStatus.completed:
                 terminal = {"result_ref": getattr(job, "result_ref", None)}
-            error_message = getattr(job, "error_message", None)
+            # AnalysisTask 存的是 error_trace（redaction 后的单行文本）——
+            # V3 读 error_message 永远为 None，诚实错误文本丢失（V4 修复）。
+            error_message = getattr(job, "error_trace", None)
         if terminal is not None:
             break
-        if status in (JobStatus.failed, JobStatus.stale):
+        if status == JobStatus.stale:
+            # worker 死亡（心跳过期 → stale）：任务体幂等时可安全重派
+            # （幂等键在终态行上已释放，重派会建新行）。分类为 WORKER_LOSS，
+            # 是否真的重试由节点 RetryPolicy 决定（默认 max_attempts=1）。
+            raise NodeExecutionError(
+                error_message or f"durable job {job_id} worker lost (stale)",
+                retry_safe=True,
+                failure_class=FailureClass.WORKER_LOSS,
+                node_id=None,
+                details={"job_id": str(job_id), "job_status": str(status)},
+            )
+        if status == JobStatus.failed:
             raise NodeExecutionError(
                 error_message or f"durable job {job_id} ended {status}",
                 retry_safe=False,
