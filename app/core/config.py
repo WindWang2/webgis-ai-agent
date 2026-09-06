@@ -224,6 +224,15 @@ class Settings(BaseSettings):
             return None
         return v
 
+    @field_validator("LLM_CONTEXT_WINDOW", mode="before")
+    @classmethod
+    def _empty_context_window_is_none(cls, v):
+        """Optional[int] 同一空串语义（.env.example 留空 = None = 服务端默认/
+        预算器保守 8k）—— 缺这个 validator 时空模板直接让 Settings 解析失败。"""
+        if v == "" or v is None:
+            return None
+        return v
+
     @model_validator(mode="after")
     def _ensure_jwt_secret(self) -> "Settings":
         if not self.JWT_SECRET_KEY:
