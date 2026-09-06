@@ -254,6 +254,8 @@ SEED_THEMES: List[CartographicThemeDescriptor] = [
         notes_zh=[
             "暗背景优先感知均匀族（Viridis 系）—— 若必须用 sequential 色带，"
             "应反转使用顺序（高值→低亮度端）并披露",
+            "发散带 RdBu 两端（深红/深蓝）在暗底上端部沉底 —— 暗底发散"
+            "建议提高端部明度或改用 perceptual_uniform 族",
             "深色 chrome token（map-chrome-* dark 分支）",
         ],
     ),

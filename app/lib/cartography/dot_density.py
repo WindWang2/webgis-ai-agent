@@ -8,7 +8,8 @@
 - **诚实披露**：撒点位置是示意性重分布而非真实位置，调用方必须在图例
   披露『Random dot within polygon』；本模块在输出 payload 中内建披露字段；
 - **资源有界**：总点数硬上限（防超大面单元 × 大值的组合爆炸），触顶时
-  按 value 降序截断并披露 ``truncated=true``。
+  按 value 降序截断（大值面优先保点 —— 比例语义从大到小保留）并披露
+  ``truncated=true``。
 """
 from __future__ import annotations
 
@@ -17,7 +18,7 @@ from typing import Any, Dict, List, Tuple
 
 # 总点数上限（资源护栏；触顶即截断并披露，不静默缩放语义）
 MAX_TOTAL_DOTS = 20000
-# 单面最小面积（bbox 对角线比例）——退化面（窄条/零面积）跳过撒点
+# 单面最小面积（bbox 面积）——退化面（窄条/零面积）跳过撒点
 _MIN_POLYGON_AREA_DEG2 = 1e-12
 
 
@@ -34,12 +35,16 @@ def _halton(index: int, base: int) -> float:
 
 
 def dots_for_value(value: float, unit_value: float) -> int:
-    """面单元值 → 撒点数（四舍五入 + 非负护栏）。"""
+    """面单元值 → 撒点数（严格四舍五入，<0.5 点如实为 0）。
+
+    经典点密度惯例（Dent/Slocum）：不足半点的面单元不撒点 —— 强制 ≥1
+    会给小值面系统性超权，破坏比例语义。
+    """
     if unit_value <= 0:
         raise ValueError("unit_value 必须为正（每点代表量）")
     if not math.isfinite(value) or value <= 0:
         return 0
-    return max(1, int(round(value / unit_value)))
+    return int(round(value / unit_value))
 
 
 def generate_dot_density_features(
@@ -73,10 +78,22 @@ def generate_dot_density_features(
     out_features: List[Dict[str, Any]] = []
     truncated = False
     total = 0
+    # 截断语义 = 按值降序保留（大值面优先保点）；tie 用原始索引保持
+    # 确定性。保证 docstring/前置契约『按 value 降序截断』为真。
+    indexed = sorted(
+        ((idx, feat) for idx, feat in enumerate(polygons)),
+        key=lambda pair: -_value_of(pair[1], value_field),
+    )
     # 全局 Halton 索引跨面连续递增 —— 面间不共享采样前缀（避免同相位对齐）
     halton_index = 1
 
-    for feat in polygons:
+    # 截断预算按剩余值比例分摊（巨值面不得独吞上限饿死同量级面）
+    remaining_value_sum = sum(
+        max(0.0, _value_of(f, value_field)) for _, f in indexed
+    )
+    remaining_budget = max_total_dots
+
+    for _, feat in indexed:
         geom = feat.get("geometry") or {}
         props = feat.get("properties") or {}
         raw_val = props.get(value_field)
@@ -85,6 +102,13 @@ def generate_dot_density_features(
         except (TypeError, ValueError):
             continue
         n = dots_for_value(val, unit_value)
+        if n <= 0:
+            continue
+        # 比例截断：该面允许点数 ≤ 剩余预算 ×（自身值 / 剩余值和）
+        v = _value_of(feat, value_field)
+        if remaining_value_sum > 0 and v > 0:
+            allowed = int(math.ceil(remaining_budget * v / remaining_value_sum))
+            n = min(n, max(0, allowed))
         if n <= 0:
             continue
         try:
@@ -126,6 +150,9 @@ def generate_dot_density_features(
                 if total >= max_total_dots:
                     truncated = True
                     break
+        # 面级结算：预算/值和同步扣减
+        remaining_value_sum = max(0.0, remaining_value_sum - max(0.0, _value_of(feat, value_field)))
+        remaining_budget = max(0, max_total_dots - total)
         if truncated:
             break
 
@@ -144,27 +171,34 @@ def generate_dot_density_features(
     }
 
 
-def _shapely_point(x: float, y: float):
-    from shapely.geometry import Point
-    return Point(x, y)
-
-
 def shapely_point(x: float, y: float):
     """模块内快捷（测试也用）。"""
     from shapely.geometry import Point
     return Point(x, y)
 
 
+def _value_of(feat: Dict[str, Any], value_field: str) -> float:
+    """面单元数值（非法/缺失 → -inf，排序时自然沉底）。"""
+    try:
+        v = float((feat.get("properties") or {}).get(value_field))
+    except (TypeError, ValueError):
+        return float("-inf")
+    return v if math.isfinite(v) else float("-inf")
+
+
 def suggest_unit_value(values: List[float], target_max_dots: int = 800) -> float:
-    """按最大面单元值建议 unit_value（使最大面 ≈ target_max_dots 点）。"""
+    """按最大面单元值建议 unit_value（使最大面 ≈ target_max_dots 点）。
+
+    取 1/2/5×10^k 整齐步长（图例可读性优先）。小量级数据（率/占比）时
+    步长 <1 同样成立 —— 无脑返回 1.0 会让每个面恰好 1 点、比例信息归零。
+    """
     positive = [v for v in values if math.isfinite(v) and v > 0]
     if not positive:
         return 1.0
     vmax = max(positive)
-    if vmax <= target_max_dots:
-        return 1.0
-    # 取 1/2/5×10^k 的整齐步长（图例可读性优先）
     raw = vmax / target_max_dots
+    if raw <= 0:
+        return 1.0
     mag = 10 ** math.floor(math.log10(raw))
     for mult in (1.0, 2.0, 5.0, 10.0):
         if raw <= mult * mag:

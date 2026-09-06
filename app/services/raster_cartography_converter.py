@@ -230,11 +230,13 @@ def _render_classified_png(
   if not brk:
     raise ValueError("classified 断点为空（常数场无法分级）")
   n_classes = len(brk) + 1
-  # 离散取色（均匀重采样色带为 n_classes 档，不做插值 —— 分级栅格语义）
-  if len(colors_src) >= n_classes:
-    step = len(colors_src) / n_classes
-    colors = [colors_src[min(int(i * step), len(colors_src) - 1)]
-              for i in range(n_classes)]
+  # 离散取色（端点含括的均匀重采样：n_classes 档跨满整条 ramp，
+  # 不做插值 —— 分级栅格语义；深端不丢色）
+  if n_classes == 1:
+    colors = [colors_src[0]]
+  elif len(colors_src) >= n_classes:
+    step = (len(colors_src) - 1) / (n_classes - 1)
+    colors = [colors_src[round(i * step)] for i in range(n_classes)]
   else:
     colors = list(colors_src[:n_classes]) + [colors_src[-1]] * (
         n_classes - len(colors_src))

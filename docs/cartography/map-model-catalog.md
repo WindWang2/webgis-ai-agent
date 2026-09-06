@@ -12,10 +12,10 @@
 | administrative_choropleth | 行政分级统计图 | polygon | fill | graduated | sequential | YlOrRd | native | — |
 | aggregate_grid | 格网聚合图（H3/渔网） | point | fill | graduated | sequential | YlOrRd | native | — |
 | anomaly_surface | 距平（异常场）图 | raster | raster | graduated | diverging | RdBu | native | change_comparison_map |
-| aspect_direction_map | 坡向八方向图 | raster | raster | categorical | qualitative | Set2 | native | classified_raster |
+| aspect_direction_map | 坡向八方向图 | raster | raster | categorical | qualitative | Set1 | native | classified_raster |
 | before_after_swipe | 前后对比卷帘 | raster | raster | none | none | — | planned | — |
-| bivariate_choropleth | 双变量分级统计图 | polygon | fill | graduated | sequential | BiPurpleOrange | native | normalized_choropleth |
-| bivariate_raster | 双变量栅格图 | raster | raster | graduated | sequential | BiPurpleOrange | native | classified_raster |
+| bivariate_choropleth | 双变量分级统计图 | polygon | fill | graduated | none | BiPurpleOrange | native | normalized_choropleth |
+| bivariate_raster | 双变量栅格图 | raster | raster | graduated | none | BiPurpleOrange | native | classified_raster |
 | cartogram_map | 统计地图变形（cartogram） | polygon | fill | graduated | sequential | YlOrRd | planned | — |
 | categorical_thematic | 分类专题图 | point/polygon/line | fill | categorical | qualitative | Set1 | native | — |
 | categorized_line | 分类线图 | line | line | categorical | qualitative | Dark2 | native | — |
@@ -71,7 +71,7 @@
 | spectral_index_surface | 光谱指数面 | raster | raster | none | perceptual_uniform | Viridis | native | raster_surface |
 | stream_order_map | 河网分级图 | line | line | graduated | sequential | Blues | native | graduated_line |
 | suitability_classes | 适宜性分级图 | polygon | fill | graduated | sequential | Greens | native | administrative_choropleth |
-| suitability_constraint_overlay | 硬约束掩膜叠加 | polygon | fill | categorical | qualitative | Reds | native | proximity_overlay |
+| suitability_constraint_overlay | 硬约束掩膜叠加 | polygon | fill | categorical | qualitative | Set1 | native | proximity_overlay |
 | surface_difference_map | 表面差值图 | raster | raster | graduated | diverging | RdBu | native | change_comparison_map |
 | temporal_comparison_map | 时相对比双专题图 | polygon | fill | graduated | sequential | Blues | native | change_comparison_map |
 | temporal_trend_surface | 时序趋势面 | raster | raster | graduated | diverging | RdBu | native | change_comparison_map |
@@ -80,7 +80,7 @@
 | uncertainty_choropleth | 不确定性分级统计图 | polygon | fill | graduated | sequential | Purples | native | normalized_choropleth |
 | uncertainty_point_symbol | 不确定性点符号 | point | circle | graduated | sequential | Purples | native | graduated_point |
 | uncertainty_surface | 不确定性面 | raster | raster | none | sequential | Purples | native | raster_surface |
-| viewshed_map | 视线域/可视域图 | raster | raster | categorical | qualitative | YlOrRd | native | classified_raster |
+| viewshed_map | 视线域/可视域图 | raster | raster | categorical | qualitative | Set1 | native | classified_raster |
 | visual_heatmap | 视觉热力图 | point | heatmap | none | perceptual_uniform | classic | native | — |
 | voronoi_partition_map | Voronoi 分割图 | polygon | fill | categorical | qualitative | Pastel1 | native | categorical_thematic |
 | vulnerability_index | 脆弱性指数图 | polygon | fill | graduated | sequential | Oranges | native | administrative_choropleth |

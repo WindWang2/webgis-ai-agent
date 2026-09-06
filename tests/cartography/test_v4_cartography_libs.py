@@ -93,6 +93,28 @@ def test_dot_skips_invalid_and_suggests_unit():
     # vmax=5000, target 800 → raw 6.25 → 10
     assert suggest_unit_value([5000]) == 10.0
     assert suggest_unit_value([]) == 1.0
+    # V4 修复：小量级数据（率/占比）步长 <1，不再退化 1.0
+    assert suggest_unit_value([0.1, 0.2, 0.5]) == 0.001
+
+
+def test_dot_small_value_strict_rounding():
+    # <0.5 点的面如实为 0（强制 ≥1 会给小值面系统性超权）
+    feats = [_poly_feat(0.4), _poly_feat(0.6)]
+    out = generate_dot_density_features(feats, value_field="pop", unit_value=1.0)
+    assert out["__dot_density_meta"]["total_dots"] == 1
+
+
+def test_dot_truncation_value_descending_proportional():
+    # 截断按值降序 + 比例分摊：巨值面平分预算，低值面被牺牲（契约语义）
+    feats = []
+    for i, v in enumerate([1, 10**7, 10**7]):
+        feats.append(_poly_feat(v, coords=[
+            (i * 20, 0), (i * 20 + 10, 0), (i * 20 + 10, 10), (i * 20, 10), (i * 20, 0)]))
+    out = generate_dot_density_features(feats, value_field="pop", unit_value=1.0)
+    xs = [f["geometry"]["coordinates"][0] for f in out["features"]]
+    assert not any(x < 15 for x in xs)          # 低值面被牺牲
+    assert sum(15 <= x < 35 for x in xs) > 5000  # 巨值面 1
+    assert sum(x >= 35 for x in xs) > 5000       # 巨值面 2（比例分摊）
 
 
 # ── bivariate ─────────────────────────────────────────────────────────
@@ -131,8 +153,14 @@ def test_bivariate_matrices_registry():
     assert len(bivariate_class_colors("BiTealRose", 3)) == 9
     with pytest.raises(ValueError):
         bivariate_class_colors("no_such_matrix", 3)
+    # V4 修复：n=2 取左上子阵（行/列独立截取），不是前 4 元素平铺截断
+    assert bivariate_class_colors("BiPurpleOrange", 2) == [
+        "#e8e8f0", "#cac2e0", "#f0d9c8", "#cfb0a8"]
+    # BiBlueYellow 因 ΔE00 低于系统可分性阈值被移除（不可复活的库存）
+    with pytest.raises(ValueError):
+        bivariate_class_colors("BiBlueYellow", 3)
     spec = bivariate_legend_spec(
-        "BiBlueYellow", label_a="A", label_b="B",
+        "BiPurpleOrange", label_a="A", label_b="B",
         breaks_a=[1, 2], breaks_b=[3, 4])
     assert spec["type"] == "bivariate"
     assert spec["label_a"] == "A"

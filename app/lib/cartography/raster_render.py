@@ -29,34 +29,39 @@ def hillshade_array(
 ) -> np.ndarray:
     """Horn 法山体阴影（0-255 灰度 float 数组）。
 
-    ``azimuth`` 光源方位角（度，北为 0 顺时针）、``altitude`` 光源高度角
-    （度）。NaN 边界区输出 NaN（渲染为透明，不伪装阴影）。
+    几何：表面法向 n = normalize((-∂z/∂x, -∂z/∂y, 1)) 与光源单位向量
+    l = (cos(alt)·sin(az), cos(alt)·cos(az), sin(alt)) 的点积
+    （Lambert 漫反射；``azimuth`` 自北顺时针，``altitude`` 光源高度角）。
+    平地 shade ≡ sin(alt) —— **与方位角无关**；东坡（∂z/∂x>0）背向
+    西侧光源 → 变暗。NaN 边界区输出 NaN（渲染为透明，不伪装阴影）。
     """
     a = np.asarray(dem, dtype=np.float64)
     if a.ndim != 2:
         raise ValueError("dem 必须是 2D 数组")
     z = np.where(np.isfinite(a), a, np.nan)
-    # Horn 3×3 差分（边界 1 圈不参与，输出 NaN）
+    # Horn 3×3 差分（边界 1 圈不参与，输出 NaN）。窗口 [a b c / d e f /
+    # g h i]，列 +1 = 东、行 +1 = 南（行 0 = 北缘）：
+    #   ∂z/∂x（东向）= ((c+2f+i) − (a+2d+g)) / 8·cell
+    #   ∂z/∂y（北向）= ((a+2b+c) − (g+2h+i)) / 8·cell
+    a_ = z[0:-2, 0:-2]; b_ = z[0:-2, 1:-1]; c_ = z[0:-2, 2:]
+    d_ = z[1:-1, 0:-2];                     f_ = z[1:-1, 2:]
+    g_ = z[2:, 0:-2];   h_ = z[2:, 1:-1];   i_ = z[2:, 2:]
     dz_dx = np.full_like(z, np.nan)
     dz_dy = np.full_like(z, np.nan)
-    dz_dx[1:-1, 1:-1] = (
-        (z[0:-2, 1:-1] + 2 * z[1:-1, 1:-1] + z[2:, 1:-1])
-        - (z[0:-2, 2:] + 2 * z[1:-1, 2:] + z[2:, 2:])
-    ) / (8 * cell_size)
-    # 行方向：y 向下增大（栅格行序）→ 北向为行减小
-    dz_dy[1:-1, 1:-1] = (
-        (z[0:-2, 0:-2] + 2 * z[0:-2, 1:-1] + z[0:-2, 2:])
-        - (z[2:, 0:-2] + 2 * z[2:, 1:-1] + z[2:, 2:])
-    ) / (8 * cell_size)
+    dz_dx[1:-1, 1:-1] = ((c_ + 2 * f_ + i_) - (a_ + 2 * d_ + g_)) / (8 * cell_size)
+    dz_dy[1:-1, 1:-1] = ((a_ + 2 * b_ + c_) - (g_ + 2 * h_ + i_)) / (8 * cell_size)
 
     az = math.radians(azimuth)
     alt = math.radians(altitude)
-    slope = np.arctan(np.sqrt(dz_dx ** 2 + dz_dy ** 2))
-    aspect = np.arctan2(dz_dy, -dz_dx)
-    shade = (
-        np.sin(alt) * np.cos(slope)
-        + np.cos(alt) * np.cos(slope) * np.sin(az - aspect)
-    )
+    # 光源单位向量（x=东, y=北, z=上）
+    lx = math.cos(alt) * math.sin(az)
+    ly = math.cos(alt) * math.cos(az)
+    lz = math.sin(alt)
+    # 表面法向（未归一）＝ (-∂z/∂x, -∂z/∂y, 1)
+    nx = -dz_dx
+    ny = -dz_dy
+    norm = np.sqrt(nx ** 2 + ny ** 2 + 1.0)
+    shade = (nx * lx + ny * ly + lz) / norm
     gray = np.clip(shade, 0.0, 1.0) * 255.0
     gray[~np.isfinite(z)] = np.nan
     return gray
@@ -75,16 +80,6 @@ def classify_array(
         cls[finite & (a > b)] += 1
     idx[finite] = cls[finite]
     return idx
-
-
-def ramp_for_classes(colors: Sequence[str], n_classes: int) -> List[str]:
-    """类别数 → 色阶表（不足循环插值补齐、超出截断；确定性）。"""
-    if not colors:
-        raise ValueError("colors 为空")
-    out: List[str] = []
-    for i in range(n_classes):
-        out.append(colors[i % len(colors)])
-    return out
 
 
 def blend_arrays(
@@ -131,7 +126,6 @@ def equal_interval_breaks(values: np.ndarray, n: int) -> List[float]:
 __all__ = [
     "hillshade_array",
     "classify_array",
-    "ramp_for_classes",
     "blend_arrays",
     "normalize_min_max",
     "equal_interval_breaks",

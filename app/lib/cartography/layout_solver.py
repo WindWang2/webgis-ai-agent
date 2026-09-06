@@ -368,6 +368,7 @@ def solve_layout_v3(
 
         placed = False
         rejected_group = False
+        rejected_avoid = False
         # 请求槽被跳过的原因追踪（最终放置原因的可解释性依据）
         requested_capacity_blocked = False
         for zone in _candidate_zones(p):
@@ -375,6 +376,13 @@ def solve_layout_v3(
                 continue
             if p.type in SINGLETON_TYPES and p.type in singleton_used:
                 break
+            # V3：avoid_zones —— 被避槽位直接跳过（内容占用语义），
+            # 全候选被避时 optional 抑制 / required 保留原位
+            if zone in p.avoid_zones:
+                rejected_avoid = True
+                if zone == p.requested_zone:
+                    requested_capacity_blocked = True
+                continue
             # V3：碰撞组互斥
             if p.collision_group and zone in group_zones.get(p.collision_group, set()):
                 rejected_group = True
@@ -429,6 +437,15 @@ def solve_layout_v3(
                     id=p.id, type=p.type, zone="none", reason="duplicate_singleton"))
                 warnings.append(
                     f"component {p.id} ({p.type}) suppressed: duplicate singleton")
+            elif rejected_avoid and not rejected_group:
+                conflicts.append(LayoutConflict(
+                    component_id=p.id, conflict_type="avoid_zone_exhausted",
+                    detail_zh="全部候选槽位均被 avoid_zones 排除"
+                              "（地图内容/UI 占用语义）",
+                ))
+                warnings.append(
+                    f"component {p.id} ({p.type}) unresolved: all candidate zones "
+                    f"excluded by avoid_zones")
             elif rejected_group and p.collision_group:
                 conflicts.append(LayoutConflict(
                     component_id=p.id, conflict_type="collision_group",

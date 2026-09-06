@@ -66,8 +66,9 @@ POLYGON_STATISTICAL_PACK: List[MapModel] = [
         geometry_kinds=["polygon"], maplibre_layer_type="fill",
         classification="graduated",
         # 双变量色阵是独立语义族（BIVARIATE_MATRICES）：行=变量 B 分级、
-        # 列=变量 A 分级 —— 不是单一 sequential ramp 的错误契约
-        color_scheme_kind="sequential", default_palette="BiPurpleOrange",
+        # 列=变量 A 分级 —— 非单色 ramp，scheme 词表没有 bivariate 时
+        # 如实登记 none，不借 sequential 冒充
+        color_scheme_kind="none", default_palette="BiPurpleOrange",
         recommended_classifiers=["quantiles", "equal_interval"],
         aliases=["bivariate_map"],
         accepted_artifact_types=["admin_aggregate_table", "grid_aggregate",
@@ -322,7 +323,9 @@ POLYGON_STATISTICAL_PACK: List[MapModel] = [
         purpose_zh="MCDA/选址的硬约束排除区（一票否决掩膜）二元叠加表达",
         geometry_kinds=["polygon"], maplibre_layer_type="fill",
         classification="categorical",
-        color_scheme_kind="qualitative", default_palette="Reds",
+        # 二元掩膜 → 定性族（Reds 是顺序带 —— 错配；Set1 含红，否决区
+        # 语义由图例标注）
+        color_scheme_kind="qualitative", default_palette="Set1",
         aliases=["constraint_mask_map", "exclusion_overlay"],
         accepted_artifact_types=["polygon_feature_set", "admin_aggregate_table"],
         recommended_components=["legend", "decision_panel"],

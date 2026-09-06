@@ -38,6 +38,7 @@
 - chrome token 引用：surface=surface-panel, ink=text-primary, chrome-bg=map-chrome-bg
 - 推荐：sequential=[]；diverging=['RdBu']；qualitative=['Dark2', 'Set2']；perceptual=['Viridis', 'Magma', 'Inferno', 'Plasma']
 - 注：暗背景优先感知均匀族（Viridis 系）—— 若必须用 sequential 色带，应反转使用顺序（高值→低亮度端）并披露
+- 注：发散带 RdBu 两端（深红/深蓝）在暗底上端部沉底 —— 暗底发散建议提高端部明度或改用 perceptual_uniform 族
 - 注：深色 chrome token（map-chrome-* dark 分支）
 
 ### cartographic.government（政务报告主题，profile=light）

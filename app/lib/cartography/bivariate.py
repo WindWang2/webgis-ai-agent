@@ -19,7 +19,7 @@ import math
 from typing import Any, Dict, List, Sequence, Tuple
 
 # 双变量色阵（3×3，行=变量 B 低→高，列=变量 A 低→高；行主序 9 色）。
-# 配色结构：沿两轴各自单调（A 轴色相偏移、B 轴亮度递进），中列/中行过渡。
+# 配色结构：行内沿 A 轴亮度递进，列间沿 B 轴色相偏移（两轴各自单调可辨）。
 BIVARIATE_MATRICES: Dict[str, List[str]] = {
     # 紫-橙系：A 轴 紫→黄，B 轴 叠加加深（色盲相对友好、印刷可辨）
     "BiPurpleOrange": [
@@ -33,12 +33,8 @@ BIVARIATE_MATRICES: Dict[str, List[str]] = {
         "#f0d8d8", "#c09aa8", "#905c78",
         "#f8b8c0", "#d87890", "#b83860",
     ],
-    # 蓝黄经典（Beaujo-style，出版常用）
-    "BiBlueYellow": [
-        "#e8e8e8", "#b0c5d8", "#6f9bc4",
-        "#f2e8c8", "#c0c0a0", "#8898b0",
-        "#f8d888", "#d8a860", "#a87c50",
-    ],
+    # 注：曾登记的 BiBlueYellow 因最弱相邻对 ΔE00≈7.5 低于本系统可分性
+    # warn 阈值（10）而移除 —— 不保留自己都判为低可分性的库存。
 }
 
 DEFAULT_BIVARIATE_MATRIX = "BiPurpleOrange"
@@ -166,15 +162,24 @@ def compute_bivariate_classes(
 
 
 def bivariate_class_colors(matrix: str, n: int = 3) -> List[str]:
-    """取 n×n 色阵的行主序颜色表（矩阵按 3×3 存储，n<3 取左上子阵，
-    n=4 需矩阵本身为 16 色 —— 当前库存均为 3×3）。"""
+    """取 n×n 色阵的行主序颜色表。
+
+    库存矩阵按 3×3 行主序存储；n<3 时取**左上 n×n 子阵**（行/列独立
+    截取 —— 保持轴语义：前 n 行 × 前 n 列），不是前 n² 个元素的平铺
+    截断（那会混入越轴颜色，双变量两轴失义）。n=4 需矩阵本身 16 色。
+    """
     colors = BIVARIATE_MATRICES.get(matrix)
     if colors is None:
         raise ValueError(f"未知双变量色阵: {matrix}")
-    expected = n * n
-    if len(colors) < expected:
-        raise ValueError(f"色阵 {matrix} 不足以支撑 n={n}")
-    return colors[:expected]
+    if n > 3:
+        if len(colors) < n * n:
+            raise ValueError(f"色阵 {matrix} 不足以支撑 n={n}")
+        return list(colors[: n * n])
+    sub = []
+    for row in range(n):
+        for col in range(n):
+            sub.append(colors[row * 3 + col])
+    return sub
 
 
 def bivariate_match_expression(

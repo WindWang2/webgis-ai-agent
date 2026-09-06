@@ -323,7 +323,8 @@ RASTER_REMOTE_SENSING_PACK: List[MapModel] = [
         purpose_zh="双波段逐格 3×3 联合分级的栅格色阵（共现/相关空间格局）",
         geometry_kinds=["raster"], maplibre_layer_type="raster",
         classification="graduated",
-        color_scheme_kind="sequential", default_palette="BiPurpleOrange",
+        # 独立色阵族（BIVARIATE_MATRICES）—— scheme 如实 none（同上）
+        color_scheme_kind="none", default_palette="BiPurpleOrange",
         recommended_classifiers=["quantiles", "equal_interval"],
         accepted_artifact_types=["raster_surface", "remote_sensing_index"],
         recommended_components=["legend"],
@@ -366,13 +367,14 @@ RASTER_REMOTE_SENSING_PACK: List[MapModel] = [
         purpose_zh="坡向按 8 方向（N/NE/E…）分类的 categorical 地形图",
         geometry_kinds=["raster"], maplibre_layer_type="raster",
         classification="categorical",
-        color_scheme_kind="qualitative", default_palette="Set2",
+        # 8 方向 + 平地 = 9 类 → Set1（上限 9）；Set2 仅 8 色装不下
+        color_scheme_kind="qualitative", default_palette="Set1",
         accepted_artifact_types=["terrain_surface", "raster_surface"],
         recommended_components=["categorical_legend"],
         export_compatibility=["png", "pdf"],
         fallback_model_id="classified_raster",
         data_preconditions_zh=[
-            "坡向角（0-360°，-1=平地）按 45° 分箱为 8 方向；平地单独类",
+            "坡向角（0-360°，-1=平地）按 45° 分箱为 8 方向；平地单独类置灰",
         ],
         pitfalls_zh=[
             "坡向是环形量 —— 8 方向分类消除了 0°/360° 假断裂（连续色带"
@@ -444,7 +446,9 @@ RASTER_REMOTE_SENSING_PACK: List[MapModel] = [
         purpose_zh="观察点可视区域（可见/不可见二元或可视次数）表达",
         geometry_kinds=["raster"], maplibre_layer_type="raster",
         classification="categorical",
-        color_scheme_kind="qualitative", default_palette="YlOrRd",
+        # 可见/不可见二元 → 定性族（YlOrRd 是顺序带，登记定性却给顺序色
+        # 是契约错配 —— 改 Set1，红=不可见区语义由图例标注）
+        color_scheme_kind="qualitative", default_palette="Set1",
         aliases=["viewshed_analysis_map"],
         accepted_artifact_types=["raster_surface", "terrain_surface"],
         recommended_components=["legend", "methodology_note"],
