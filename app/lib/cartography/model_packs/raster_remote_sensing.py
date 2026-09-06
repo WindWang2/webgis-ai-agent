@@ -36,6 +36,7 @@ RASTER_REMOTE_SENSING_PACK: List[MapModel] = [
             "坡向是环形量 —— 线性色带会在 0°/360° 处制造假断裂，需环形配色（planned）",
             "解析面单位是度/百分比/曲率 —— colorbar 必须带单位",
         ],
+        default_theme="cartographic.terrain",
         sources=[_MAPLIBRE_SPEC_URL, _QGIS_URL],
     ),
     m(
@@ -101,6 +102,7 @@ RASTER_REMOTE_SENSING_PACK: List[MapModel] = [
             "导出像素一致（同源 PNG），但无法随视角实时重算",
             "光源方位角/高度角必须随图披露，否则同一 DEM 可渲染出不同地貌观感",
         ],
+        default_theme="cartographic.terrain",
         sources=[_MAPLIBRE_SPEC_URL],
     ),
     m(
@@ -145,6 +147,7 @@ RASTER_REMOTE_SENSING_PACK: List[MapModel] = [
             "受限于已注册色带库存，以 Oranges 近似经典 hypsometric 多色分层方案",
             "晕渲 α 过高会吞没设色分级语义（α>0.6 时颜色可辨性骤降）",
         ],
+        default_theme="cartographic.terrain",
         sources=[_MAPLIBRE_SPEC_URL],
     ),
     m(
@@ -167,6 +170,7 @@ RASTER_REMOTE_SENSING_PACK: List[MapModel] = [
             "dB 与线性强度混用会让色标失去意义 —— 单位必须随方法论披露",
             "斑噪（speckle）未滤波时会误读为纹理 —— 多视/滤波参数须披露",
         ],
+        default_theme="cartographic.remote_sensing",
         sources=[],
     ),
     m(
@@ -354,6 +358,7 @@ RASTER_REMOTE_SENSING_PACK: List[MapModel] = [
             "合成影像不是专题分析结果 —— 不得直接回答数值问题，只作"
             "背景/目视判读",
         ],
+        default_theme="cartographic.remote_sensing",
         sources=[],
     ),
     m(
@@ -392,6 +397,7 @@ RASTER_REMOTE_SENSING_PACK: List[MapModel] = [
         pitfalls_zh=[
             "地貌分类强烈依赖邻域尺度 —— 尺度参数必须随方法论披露",
         ],
+        default_theme="cartographic.terrain",
         sources=[],
     ),
     m(

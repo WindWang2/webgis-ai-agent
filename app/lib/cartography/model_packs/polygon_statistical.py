@@ -166,6 +166,7 @@ POLYGON_STATISTICAL_PACK: List[MapModel] = [
             "风险等级跨图比较必须固定分级断点；自动分级会让两次评估不可比",
             "『无数据』不得画成『低风险』—— 空值保持透明并声明",
         ],
+        default_theme="cartographic.risk_communication",
         sources=[_QGIS_URL],
     ),
     m(
@@ -247,6 +248,7 @@ POLYGON_STATISTICAL_PACK: List[MapModel] = [
             "两期必须用同一组分级断点 —— 各自自动分级会让对比失效",
             "需要单值变化量语义时改走 change_comparison_map（发散）",
         ],
+        default_theme="cartographic.scientific",
         sources=[_QGIS_URL],
     ),
     m(
@@ -291,6 +293,7 @@ POLYGON_STATISTICAL_PACK: List[MapModel] = [
             "『一致』类必须低饱和底色，混淆类别用高辨识色 —— 反过来会让误差淹没",
             "混淆矩阵热图（heat_matrix）是本模型的必备伴随图表",
         ],
+        default_theme="cartographic.scientific",
         sources=[],
     ),
     m(

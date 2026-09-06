@@ -123,6 +123,7 @@ DECISION_ANALYSIS_PACK: List[MapModel] = [
             "不显著局部系数应置灰/低饱和，不与显著系数争色",
             "局部共线性会产出离谱系数 —— 先查局部 VIF 再解读",
         ],
+        default_theme="cartographic.scientific",
         sources=[],
     ),
     m(
@@ -143,6 +144,7 @@ DECISION_ANALYSIS_PACK: List[MapModel] = [
             "残差空间聚集（Moran's I 显著）说明模型设定有漏 —— 披露中"
             "应建议 GWR/空间滞后模型",
         ],
+        default_theme="cartographic.scientific",
         sources=[],
     ),
     m(

@@ -318,6 +318,115 @@ SEED_THEMES: List[CartographicThemeDescriptor] = [
         ),
         notes_zh=["远距离可读：标题走 heading 级、chrome 最小 12px"],
     ),
+    # ── V4（Design System）：领域主题族 ─────────────────────────────────
+    CartographicThemeDescriptor(
+        id="cartographic.scientific",
+        name_zh="科学分析主题",
+        profile="light",
+        layout_profiles=["academic", "standard", "report"],
+        typography=TypographySpec(title_weight=600, min_chrome_px=10),
+        spacing=SpacingSpec(stack_step_px=36),
+        palettes=PaletteRecommendation(
+            sequential=["YlOrRd", "Blues", "Greens"],
+            diverging=["RdBu", "PuOr"],
+            qualitative=["Set2", "Dark2"],
+            perceptual_uniform=["Viridis", "Magma", "Inferno", "Plasma"],
+        ),
+        colorblind_safe_first=True,
+        notes_zh=[
+            "期刊/报告图：优先感知均匀与色盲安全色带；chrome 极简",
+            "色带语义必须与统计口径一致（发散带以中点为中心）",
+        ],
+    ),
+    CartographicThemeDescriptor(
+        id="cartographic.publication",
+        name_zh="出版印刷主题",
+        profile="print",
+        output_targets=["png", "pdf", "svg", "print"],
+        layout_profiles=["academic", "report"],
+        typography=TypographySpec(title_weight=700, min_chrome_px=9),
+        spacing=SpacingSpec(stack_step_px=32),
+        palettes=PaletteRecommendation(
+            # print profile 校验：推荐清单全部 print_safe（灰度 ΔL 可分级）
+            sequential=["YlOrRd", "Blues", "Greens", "Reds", "Oranges", "Purples"],
+            diverging=["RdBu", "PuOr"],
+            qualitative=[],
+            perceptual_uniform=["Viridis"],
+        ),
+        colorblind_safe_first=True,
+        notes_zh=[
+            "正式出版：灰度安全 + 色盲安全双约束；类别面黑白输出改用"
+            "符号形状/填充图案区分",
+        ],
+    ),
+    CartographicThemeDescriptor(
+        id="cartographic.government",
+        name_zh="政务报告主题",
+        profile="light",
+        layout_profiles=["report", "presentation"],
+        typography=TypographySpec(title_weight=700, min_chrome_px=11),
+        spacing=SpacingSpec(stack_step_px=38, chrome_padding_px=10),
+        palettes=PaletteRecommendation(
+            sequential=["Blues", "YlOrRd", "Greens"],
+            diverging=["RdBu"],
+            qualitative=["Pastel1", "Set2"],
+            perceptual_uniform=["Viridis"],
+        ),
+        notes_zh=[
+            "政务场景：大面积柔和填色（Pastel1）+ 高权重标题；"
+            "地类/区划配色沿用规划惯例",
+        ],
+    ),
+    CartographicThemeDescriptor(
+        id="cartographic.remote_sensing",
+        name_zh="遥感影像主题",
+        profile="dark",
+        layout_profiles=["standard", "dense"],
+        palettes=PaletteRecommendation(
+            sequential=[],
+            diverging=["RdBu"],
+            qualitative=["Dark2"],
+            perceptual_uniform=["Viridis", "Magma", "Inferno", "Plasma"],
+        ),
+        colorblind_safe_first=True,
+        notes_zh=[
+            "暗底影像判读：感知均匀族优先；合成影像不参与专题设色语义",
+        ],
+    ),
+    CartographicThemeDescriptor(
+        id="cartographic.terrain",
+        name_zh="地形表达主题",
+        profile="light",
+        layout_profiles=["standard", "report", "academic"],
+        palettes=PaletteRecommendation(
+            sequential=["Oranges", "YlOrRd", "Greens", "Blues"],
+            diverging=["RdBu"],
+            qualitative=["Dark2"],
+            perceptual_uniform=["Magma", "Viridis"],
+        ),
+        notes_zh=[
+            "地形族：hypsometric 设色以 Oranges 近似；晕渲光源参数必须披露",
+        ],
+    ),
+    CartographicThemeDescriptor(
+        id="cartographic.risk_communication",
+        name_zh="风险沟通主题",
+        profile="light",
+        layout_profiles=["report", "presentation"],
+        palettes=PaletteRecommendation(
+            sequential=["Reds", "YlOrRd", "Oranges"],
+            diverging=["RdBu", "PuOr"],
+            # colorblind_safe_first 校验：Set1 不安全 → Dark2（风险受众广，
+            # 色盲读者占比不可忽略）
+            qualitative=["Dark2", "Set2"],
+            perceptual_uniform=["Inferno"],
+        ),
+        colorblind_safe_first=True,
+        notes_zh=[
+            "风险语义固定：高值=暖色深端；『无数据』不得画成『低风险』",
+            "色盲安全优先（RdBu/PuOr 发散；禁 RdYlGn 表达风险方向）",
+        ],
+    ),
 ]
 
 

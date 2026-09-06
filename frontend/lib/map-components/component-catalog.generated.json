@@ -700,6 +700,56 @@
       }
     },
     {
+      "id": "cartographic.government",
+      "profile": "light",
+      "outputTargets": [
+        "interactive",
+        "png",
+        "pdf",
+        "svg"
+      ],
+      "colorblindSafeFirst": false,
+      "typography": {
+        "titleSizeToken": "text-title",
+        "bodySizeToken": "text-caption",
+        "microSizeToken": "text-micro",
+        "titleWeight": 700,
+        "minChromePx": 11
+      },
+      "spacing": {
+        "stackStepPx": 38,
+        "chromePaddingPx": 10
+      },
+      "chromeTokenRefs": {
+        "surface": "surface-panel",
+        "surface_raised": "surface-raised",
+        "ink": "text-primary",
+        "ink_muted": "text-secondary",
+        "border": "map-chrome-border",
+        "map_chrome_bg": "map-chrome-bg",
+        "map_chrome_ink": "map-chrome-text",
+        "map_chrome_ink_muted": "map-chrome-text-muted",
+        "map_chrome_border": "map-chrome-border"
+      },
+      "paletteRecommendations": {
+        "sequential": [
+          "Blues",
+          "YlOrRd",
+          "Greens"
+        ],
+        "diverging": [
+          "RdBu"
+        ],
+        "qualitative": [
+          "Pastel1",
+          "Set2"
+        ],
+        "perceptual_uniform": [
+          "Viridis"
+        ]
+      }
+    },
+    {
       "id": "cartographic.high_contrast",
       "profile": "high_contrast",
       "outputTargets": [
@@ -900,6 +950,261 @@
         ],
         "qualitative": [],
         "perceptual_uniform": [
+          "Viridis"
+        ]
+      }
+    },
+    {
+      "id": "cartographic.publication",
+      "profile": "print",
+      "outputTargets": [
+        "png",
+        "pdf",
+        "svg",
+        "print"
+      ],
+      "colorblindSafeFirst": true,
+      "typography": {
+        "titleSizeToken": "text-title",
+        "bodySizeToken": "text-caption",
+        "microSizeToken": "text-micro",
+        "titleWeight": 700,
+        "minChromePx": 9
+      },
+      "spacing": {
+        "stackStepPx": 32,
+        "chromePaddingPx": 8
+      },
+      "chromeTokenRefs": {
+        "surface": "surface-panel",
+        "surface_raised": "surface-raised",
+        "ink": "text-primary",
+        "ink_muted": "text-secondary",
+        "border": "map-chrome-border",
+        "map_chrome_bg": "map-chrome-bg",
+        "map_chrome_ink": "map-chrome-text",
+        "map_chrome_ink_muted": "map-chrome-text-muted",
+        "map_chrome_border": "map-chrome-border"
+      },
+      "paletteRecommendations": {
+        "sequential": [
+          "YlOrRd",
+          "Blues",
+          "Greens",
+          "Reds",
+          "Oranges",
+          "Purples"
+        ],
+        "diverging": [
+          "RdBu",
+          "PuOr"
+        ],
+        "qualitative": [],
+        "perceptual_uniform": [
+          "Viridis"
+        ]
+      }
+    },
+    {
+      "id": "cartographic.remote_sensing",
+      "profile": "dark",
+      "outputTargets": [
+        "interactive",
+        "png",
+        "pdf",
+        "svg"
+      ],
+      "colorblindSafeFirst": true,
+      "typography": {
+        "titleSizeToken": "text-title",
+        "bodySizeToken": "text-caption",
+        "microSizeToken": "text-micro",
+        "titleWeight": 600,
+        "minChromePx": 11
+      },
+      "spacing": {
+        "stackStepPx": 36,
+        "chromePaddingPx": 8
+      },
+      "chromeTokenRefs": {
+        "surface": "surface-panel",
+        "surface_raised": "surface-raised",
+        "ink": "text-primary",
+        "ink_muted": "text-secondary",
+        "border": "map-chrome-border",
+        "map_chrome_bg": "map-chrome-bg",
+        "map_chrome_ink": "map-chrome-text",
+        "map_chrome_ink_muted": "map-chrome-text-muted",
+        "map_chrome_border": "map-chrome-border"
+      },
+      "paletteRecommendations": {
+        "sequential": [],
+        "diverging": [
+          "RdBu"
+        ],
+        "qualitative": [
+          "Dark2"
+        ],
+        "perceptual_uniform": [
+          "Viridis",
+          "Magma",
+          "Inferno",
+          "Plasma"
+        ]
+      }
+    },
+    {
+      "id": "cartographic.risk_communication",
+      "profile": "light",
+      "outputTargets": [
+        "interactive",
+        "png",
+        "pdf",
+        "svg"
+      ],
+      "colorblindSafeFirst": true,
+      "typography": {
+        "titleSizeToken": "text-title",
+        "bodySizeToken": "text-caption",
+        "microSizeToken": "text-micro",
+        "titleWeight": 600,
+        "minChromePx": 11
+      },
+      "spacing": {
+        "stackStepPx": 36,
+        "chromePaddingPx": 8
+      },
+      "chromeTokenRefs": {
+        "surface": "surface-panel",
+        "surface_raised": "surface-raised",
+        "ink": "text-primary",
+        "ink_muted": "text-secondary",
+        "border": "map-chrome-border",
+        "map_chrome_bg": "map-chrome-bg",
+        "map_chrome_ink": "map-chrome-text",
+        "map_chrome_ink_muted": "map-chrome-text-muted",
+        "map_chrome_border": "map-chrome-border"
+      },
+      "paletteRecommendations": {
+        "sequential": [
+          "Reds",
+          "YlOrRd",
+          "Oranges"
+        ],
+        "diverging": [
+          "RdBu",
+          "PuOr"
+        ],
+        "qualitative": [
+          "Dark2",
+          "Set2"
+        ],
+        "perceptual_uniform": [
+          "Inferno"
+        ]
+      }
+    },
+    {
+      "id": "cartographic.scientific",
+      "profile": "light",
+      "outputTargets": [
+        "interactive",
+        "png",
+        "pdf",
+        "svg"
+      ],
+      "colorblindSafeFirst": true,
+      "typography": {
+        "titleSizeToken": "text-title",
+        "bodySizeToken": "text-caption",
+        "microSizeToken": "text-micro",
+        "titleWeight": 600,
+        "minChromePx": 10
+      },
+      "spacing": {
+        "stackStepPx": 36,
+        "chromePaddingPx": 8
+      },
+      "chromeTokenRefs": {
+        "surface": "surface-panel",
+        "surface_raised": "surface-raised",
+        "ink": "text-primary",
+        "ink_muted": "text-secondary",
+        "border": "map-chrome-border",
+        "map_chrome_bg": "map-chrome-bg",
+        "map_chrome_ink": "map-chrome-text",
+        "map_chrome_ink_muted": "map-chrome-text-muted",
+        "map_chrome_border": "map-chrome-border"
+      },
+      "paletteRecommendations": {
+        "sequential": [
+          "YlOrRd",
+          "Blues",
+          "Greens"
+        ],
+        "diverging": [
+          "RdBu",
+          "PuOr"
+        ],
+        "qualitative": [
+          "Set2",
+          "Dark2"
+        ],
+        "perceptual_uniform": [
+          "Viridis",
+          "Magma",
+          "Inferno",
+          "Plasma"
+        ]
+      }
+    },
+    {
+      "id": "cartographic.terrain",
+      "profile": "light",
+      "outputTargets": [
+        "interactive",
+        "png",
+        "pdf",
+        "svg"
+      ],
+      "colorblindSafeFirst": false,
+      "typography": {
+        "titleSizeToken": "text-title",
+        "bodySizeToken": "text-caption",
+        "microSizeToken": "text-micro",
+        "titleWeight": 600,
+        "minChromePx": 11
+      },
+      "spacing": {
+        "stackStepPx": 36,
+        "chromePaddingPx": 8
+      },
+      "chromeTokenRefs": {
+        "surface": "surface-panel",
+        "surface_raised": "surface-raised",
+        "ink": "text-primary",
+        "ink_muted": "text-secondary",
+        "border": "map-chrome-border",
+        "map_chrome_bg": "map-chrome-bg",
+        "map_chrome_ink": "map-chrome-text",
+        "map_chrome_ink_muted": "map-chrome-text-muted",
+        "map_chrome_border": "map-chrome-border"
+      },
+      "paletteRecommendations": {
+        "sequential": [
+          "Oranges",
+          "YlOrRd",
+          "Greens",
+          "Blues"
+        ],
+        "diverging": [
+          "RdBu"
+        ],
+        "qualitative": [
+          "Dark2"
+        ],
+        "perceptual_uniform": [
+          "Magma",
           "Viridis"
         ]
       }
