@@ -304,11 +304,42 @@ async def sweep_aged_artifacts() -> Dict[str, int]:
         except Exception as e:  # noqa: BLE001 — reclamation must not break delete
             logger.warning("[artifact-lifecycle] artifact-cache sweep failed: %s", e)
 
+    def _report_promotion_store_usage() -> None:
+        """V3 data foundation：晋升内容库使用量诊断（只报告，不删除）。
+
+        promoted 内容属 workspace/persistent 层 —— §十四的保护对象，
+        不纳入任何自动删除面。此处只暴露规模与最老条目年龄，供容量
+        规划与 PR 诊断使用（audit #D-gap：该目录此前完全不可观测）。
+        """
+        try:
+            from app.services.project_artifact_promotion import content_store_root
+
+            root = content_store_root()
+            if not root.is_dir():
+                return
+            files = 0
+            total = 0
+            oldest = 0.0
+            for p in root.rglob("*.json"):
+                try:
+                    st = p.stat()
+                except OSError:
+                    continue
+                files += 1
+                total += st.st_size
+                oldest = max(oldest, max(time.time() - st.st_mtime, 0.0))
+            result["promotion_store_files"] = files
+            result["promotion_store_bytes"] = total
+            result["promotion_store_oldest_age_s"] = int(oldest)
+        except Exception as e:  # noqa: BLE001 — diagnostics only
+            logger.warning("[artifact-lifecycle] promotion-store report failed: %s", e)
+
     try:
         await asyncio.wait_for(asyncio.to_thread(_sweep_exports), timeout=30.0)
     except Exception as e:  # noqa: BLE001
         logger.warning("[artifact-lifecycle] export sweep failed: %s", e)
-    for step in (_sweep_reports, _sweep_orphan_uploads, _sweep_artifact_cache_dir):
+    for step in (_sweep_reports, _sweep_orphan_uploads, _sweep_artifact_cache_dir,
+                 _report_promotion_store_usage):
         try:
             await asyncio.wait_for(step(), timeout=30.0)
         except Exception as e:  # noqa: BLE001

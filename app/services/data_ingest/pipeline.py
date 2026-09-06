@@ -259,7 +259,8 @@ class IngestPipeline:
             from app.services.session_data import session_data_manager
 
             await session_data_manager.delete_ref(session_id, ref_id)
-        except Exception:  # noqa: BLE001 — 回滚失败只记录（孤儿由 GC 兜底）
+        except Exception:  # noqa: BLE001 — 回滚失败只记录；孤儿 ref 无台账
+            # 记录、GC 不可见，仅随会话 LRU/TTL 逐出（会话级有界，不跨会话泄漏）。
             logger.warning(
                 "[IngestPipeline] rollback failed session=%s ref=%s",
                 session_id, ref_id,

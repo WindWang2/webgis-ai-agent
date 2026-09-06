@@ -595,10 +595,15 @@ async def update_record_metadata(
             if rec is None:
                 return False
             if metadata:
-                merged = dict(rec.metadata)
-                merged.update({
+                new_kv = {
                     str(k): v for k, v in list(metadata.items())[:MAX_RECORD_METADATA_KEYS]
-                })
+                }
+                # 新键插前、旧键补后（同键新值胜）：metadata 满时截断丢弃
+                # 的是旧键 —— 丢陈旧复用证据 = 保守 miss（安全方向）；
+                # 反过来会静默丢 staleness/fingerprint 等新证据（不安全）。
+                merged = dict(new_kv)
+                for k, v in rec.metadata.items():
+                    merged.setdefault(str(k), v)
                 rec.metadata = dict(list(merged.items())[:MAX_RECORD_METADATA_KEYS])
             if status is not None:
                 rec.status = status

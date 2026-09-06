@@ -253,12 +253,23 @@ class WorkspaceSnapshotService:
         return snapshot
 
     async def _enforce_snapshot_cap(self, session_id: str) -> None:
-        """每会话快照数封顶（最旧先删；与 mapspec 20 修订同预算）。"""
+        """每会话快照数封顶（最旧先删；与 mapspec 20 修订同预算）。
+
+        顺带清扫崩溃遗留的 ``*.json.tmp`` 半成品（原子写中断 → replace
+        未发生；超过 1h 的视为垃圾 —— 活跃写入不会那么久）。
+        """
 
         def _cap() -> int:
             d = _snapshots_dir(session_id)
             if not d.is_dir():
                 return 0
+            now = time.time()
+            for tmp in d.glob("*.json.tmp"):
+                try:
+                    if now - tmp.stat().st_mtime > 3600:
+                        tmp.unlink()
+                except OSError:
+                    continue
             files = sorted(d.glob("*.json"), key=lambda p: p.stat().st_mtime)
             overflow = len(files) - _MAX_SNAPSHOTS_PER_SESSION
             for f in files[:max(0, overflow)]:
@@ -268,6 +279,8 @@ class WorkspaceSnapshotService:
                     continue
             return max(0, overflow)
 
+        if not _validate_session_id(session_id):
+            return
         try:
             await asyncio.to_thread(_cap)
         except OSError:
@@ -294,6 +307,8 @@ class WorkspaceSnapshotService:
                 })
             return out
 
+        if not _validate_session_id(session_id):
+            return []
         try:
             return await asyncio.to_thread(_list)
         except OSError:

@@ -44,7 +44,9 @@ _MAX_TEMPORAL_FIELDS = 8
 _ISO_DATE_RE = re.compile(
     r"^\d{4}-\d{2}(-\d{2})?([T ]\d{2}:\d{2}(:\d{2})?([+-]\d{2}:?\d{2}|Z)?)?$"
 )
-_YEAR_ONLY_RE = re.compile(r"^\d{4}$")
+# 四位年份限定 1800–2099：任意 4 位数（如邮编 1001、PIN 2015）不再误判
+# 为年份样本。
+_YEAR_ONLY_RE = re.compile(r"^(?:1[89]|20)\d{2}$")
 _TEMPORAL_NAME_RE = re.compile(
     r"(date|time|year|month|day|datum|acquisition|acquired|observed|captured|拍摄|日期|时间|年份)",
     re.IGNORECASE,
@@ -459,8 +461,8 @@ class _FieldAccumulator:
     def build(self, name: str, scanned_rows: int) -> FieldProfile:
         dtype = _field_type_of(self.types)
         _, mean, std, _ = self.welford.stats()
-        if dtype == "number":
-            self.temporal = self.temporal or looks_temporal(name, [self.min, self.max])
+        # 数值字段不做值级年份启发（高程 2000 / 计数 2015 / ID 2010 会误报
+        # temporal）——数值列只按命名判定（下方 _TEMPORAL_NAME_RE）。
         # 缺失率含「键缺席」的行：observe 只在键存在时被调用，
         # absent = scanned - seen（稀疏 schema 的字段不再显出假低缺失率）。
         absent = max(scanned_rows - self.seen, 0)

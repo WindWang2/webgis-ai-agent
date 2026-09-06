@@ -36,6 +36,9 @@ class QualityIssueCode(str, enum.Enum):
 
     # CRS / 坐标
     CRS_MISSING = "crs_missing"
+    # CRS_SUSPICIOUS 为保留码（词表先行）：「范围 vs 声明 CRS」核查需要
+    # 投影感知的 bbox 判定（pyproj 依赖边界），V3 以 IMPOSSIBLE_COORDINATES
+    # 的地理 CRS 口径覆盖主场景；本码暂无生产者。
     CRS_SUSPICIOUS = "crs_suspicious"
     IMPOSSIBLE_COORDINATES = "impossible_coordinates"
     ZERO_COORDINATES = "zero_coordinates"
