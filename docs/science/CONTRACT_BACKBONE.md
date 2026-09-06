@@ -187,3 +187,16 @@ manifest warnings are the orchestrator's business, not yours).
 - Report at the end: files touched, algorithms/capabilities/contracts/tools
   added, exact test commands + pass counts, any central-file needs (new
   precondition ids, method references, artifact types), limitations.
+
+## 11. Backend selection (Foundation V2)
+
+- 变体窗口字段：`BackendVariant(min_features, max_features)`（可选，
+  声明序即偏好序）；`app/lib/gis/backend_selection.select_backend()`
+  是唯一选择真相 —— 工具侧调用后把 `BackendDecision.to_diagnostic()`
+  追加进证据 diagnostics（变体存在则真实切换实现路径，不存在则如实
+  记录 default path）。
+- 选择是纯函数（声明窗口 + n），确定性可测试；变体间语义同一性由同一
+  conformance 套件保证；规模决策契约见
+  `tests/benchmarks/test_backend_scale_decisions.py`。
+- 目录再生成：`python scripts/gen_science_catalog.py`（字节级投影，
+  parity 测试强制 `docs/science/ALGORITHM_CATALOG.md` 与注册表一致）。

@@ -116,3 +116,44 @@ app/lib/gis/capabilities/{...同构}.py
 - [CONTRACT_BACKBONE.md](CONTRACT_BACKBONE.md) — 域包实现者契约参考
 - [ALGORITHM_CATALOG.md](ALGORITHM_CATALOG.md) — 注册表生成的算法目录
 - [../adr/0099-spatial-science-geoai-platform-vnext.md](../adr/0099-spatial-science-geoai-platform-vnext.md)
+
+## Backend Variant & Scale Policy selection（Foundation V2）
+
+`app/lib/gis/backend_selection.py` 把 `backend_variants` 从纯 metadata 变成
+可解释的运行时选择层：`select_backend(algorithm_id, ScaleProfile(...))`
+按变体声明的规模窗口（`min_features`/`max_features`，声明序即偏好序）做
+**确定性纯函数选择**，返回 `BackendDecision`（变体、规模分层、理由、执行
+策略、运行通道建议），可整体进证据 diagnostics。heavy 路径只**建议**既有
+GeoCompute/通道，不建第二套 runtime；变体失败语义仍归 `fallback_semantics`。
+首个真实双变体：`network.centrality`（exact_brandes ≤2000 节点 /
+sampled_brandes seeded k-sample）；kriging solve backend 显式化
+（`numpy_batched`/`scipy_linalg`，`solve_backend_used` 进 metadata）。
+
+规模守卫沿用「先估算后分配」：V2 新增热点（SAR-ML 特征值、Ripley/G-F-J/
+Knox 对预算、edge betweenness 精确上限、speckle/GLCM/PCA/geomorphons/
+填洼网格上限、GWR 系数面降级上限）全部 `ResourceScaleMismatch` 先拒绝
+或诚实降级，决策契约由 `tests/benchmarks/test_backend_scale_decisions.py`
+锁定。
+
+## Foundation V2 域清单（算法目录为准）
+
+新增能力集中在：空间统计（Local Geary/Join Count/Bivariate Moran/地理
+探测器/OLS 诊断/SAR-ML/SEM/SLX/GWR/权重敏感性）、地统计（Matérn/Wave/
+Cubic 变差函数、各向异性、空间块 CV、TIN、趋势面、回归克里金、模型比选）、
+点格局（G/F/J、pcf、Cross-K、Knox、NNI 显著性、CSR 包络）、网络（E2SFCA、
+p-center、重力/Huff、中心性）、地形水文（填洼、D∞、流长、Strahler、
+地貌测量、TWI/SPI/LS、openness、geomorphons、landform、多方位山影）、
+遥感/SAR（Lee/Refined Lee/Frost、辐射定标 σ⁰/β⁰/γ⁰、GLCM、PCA、
+tasseled-cap、时序 CV/稳健分位/合成）。数量与状态以 `ALGORITHM_CATALOG.md`
+生成投影为准。
+
+## 已知限制（Foundation V2 补充，诚实清单）
+
+- G/F/J 为无边缘校正的原始估计（矩形窗 reduced-sample 未实现），显著性
+  只经固定种子 CSR 包络。
+- GWR 的 AICc 用 tr(S)+1 高斯近似（无唯一公认式，descriptor 披露）；
+  MGWR 保持 planned，无 fake-native。
+- 回归克里金在目标格的协变量经 IDW 近似（`approximate=True`）；
+  `rk_variance` 仅含残差克里金方差（趋势不确定性不传播，显式披露）。
+- SAR 定标仅常数定标系数路径；逐像元 LUT 与热噪声去除未实现。
+- PCA 无流式实现：超 16M 像元诚实拒绝。
