@@ -155,7 +155,7 @@ async def test_component_update_rejects_invalid_chart(registry, clean_session):
         "webgis_component_update",
         {"session_id": clean_session, "component_id": "chart-bad",
          "component_type": "chart_panel", "create": True,
-         "chart": {"type": "rose", "title": "t", "data": [{"name": "a", "value": 1}]}},
+         "chart": {"type": "hologram", "title": "t", "data": [{"name": "a", "value": 1}]}},
         session_id=clean_session,
     )
     assert res["success"] is False

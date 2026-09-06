@@ -302,8 +302,91 @@ function _parseChart(raw: unknown): ChartPanelData | undefined {
   };
 }
 
-// ── V3（ADR-0101 D6）：披露族导出解析（与 live 渲染器同语义）────────────
-// 归一化为「标题 + 文本行」；坏载荷 → undefined（面板缺席，不伪造）。
+// ── V4：table_panel 导出装配（有界快照）────────────────────────────────
+// 绘制面行/列上限；快照外的总量走尾注披露（「…N 行未显示」），不画全量、
+// 更不画空表冒充。取数双通道与 live table-panel 同源（tableRef artifact /
+// layerId 图层属性 / inline table）。
+
+const EXPORT_TABLE_MAX_ROWS = 8;
+const EXPORT_TABLE_MAX_COLUMNS = 6;
+
+/** 行数组（列序对齐）→ 记录；非数组行透传对象。 */
+function _rowToRecord(columns: unknown, row: unknown): Record<string, unknown> {
+  if (!Array.isArray(row)) {
+    return row && typeof row === 'object' ? (row as Record<string, unknown>) : {};
+  }
+  const out: Record<string, unknown> = {};
+  const cols = Array.isArray(columns) ? columns.map(String) : [];
+  for (let i = 0; i < row.length && i < cols.length; i++) out[cols[i]] = row[i];
+  return out;
+}
+
+/** 列推导（live deriveColumns 同式：首 20 行键序、排除 geometry、≤32 列）。 */
+function _deriveColumns(records: Array<Record<string, unknown>>): string[] {
+  const seen: string[] = [];
+  for (const rec of records.slice(0, 20)) {
+    if (!rec || typeof rec !== 'object') continue;
+    for (const key of Object.keys(rec)) {
+      if (!seen.includes(key) && key !== 'geometry') seen.push(key);
+      if (seen.length >= 32) return seen;
+    }
+  }
+  return seen;
+}
+
+/**
+ * 原始表格载荷 → 有界 TablePanelData（宽容规整 + 快照裁剪）。
+ * 无有效行/列 → null（调用方面板缺席，不伪造）。
+ */
+export function buildExportTableData(
+  title: string,
+  payload: unknown,
+  preferredColumns?: string[],
+): TablePanelData | null {
+  let records: Array<Record<string, unknown>>;
+  let payloadColumns: string[] | undefined;
+  if (Array.isArray(payload)) {
+    records = payload as Array<Record<string, unknown>>;
+  } else if (payload && typeof payload === 'object') {
+    const obj = payload as { table?: unknown; columns?: unknown; rows?: unknown };
+    if (Array.isArray(obj.table)) {
+      records = obj.table as Array<Record<string, unknown>>;
+    } else if (obj.table && typeof obj.table === 'object') {
+      const t = obj.table as { columns?: unknown; rows?: unknown };
+      if (!Array.isArray(t.rows)) return null;
+      records = t.rows.map((r) => _rowToRecord(t.columns, r));
+      payloadColumns = Array.isArray(t.columns) ? t.columns.map(String) : undefined;
+    } else if (Array.isArray(obj.rows)) {
+      records = obj.rows as Array<Record<string, unknown>>;
+      payloadColumns = Array.isArray(obj.columns) ? obj.columns.map(String) : undefined;
+    } else {
+      return null;
+    }
+  } else {
+    return null;
+  }
+  records = records.filter(
+    (r): r is Record<string, unknown> => !!r && typeof r === 'object' && !Array.isArray(r),
+  );
+  if (records.length === 0) return null;
+  const fullColumns =
+    preferredColumns && preferredColumns.length
+      ? preferredColumns
+      : payloadColumns && payloadColumns.length
+        ? payloadColumns
+        : _deriveColumns(records);
+  const columns = fullColumns.slice(0, EXPORT_TABLE_MAX_COLUMNS);
+  if (columns.length === 0) return null;
+  return {
+    title,
+    columns,
+    rows: records.slice(0, EXPORT_TABLE_MAX_ROWS),
+    totalCount: records.length,
+    ...(fullColumns.length > columns.length ? { totalColumns: fullColumns.length } : {}),
+  };
+}
+
+
 
 function _parseMethodology(raw: unknown): ExportChromeElement['disclosure'] {
   if (!Array.isArray(raw) || raw.length === 0) return undefined;
