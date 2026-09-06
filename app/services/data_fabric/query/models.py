@@ -268,6 +268,11 @@ class QueryPlan(BaseModel):
     assumptions: List[str] = Field(default_factory=list)
     statistics_confidence: Optional[str] = None
 
+    # ── V4 additive（ADR-0101 D7）：分级下推披露 ──
+    # family → exact | equivalent | coarse | local | unsupported | violation
+    #（violation = planner 推送了 unsupported 族：契约缺陷，parity 测试捕获）。
+    pushdown_classes: Dict[str, str] = Field(default_factory=dict)
+
     def summary_lines(self) -> List[str]:
         """explain 输出（不含 secret/连接信息）。"""
         lines = [

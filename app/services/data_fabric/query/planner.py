@@ -33,6 +33,7 @@ from app.services.data_fabric.query.predicates import (
     bbox_crosses_antimeridian,
     predicate_summary,
 )
+from app.services.data_fabric.query.pushdown import classify_plan_pushdowns
 from app.services.data_fabric.query.selectivity import (
     estimate_group_cardinality,
     estimate_predicate_selectivity,
@@ -406,6 +407,25 @@ def plan_query(
         ),
         warnings=warnings,
         steps=steps,
+        # ADR-0101 D7：分级下推披露（推了什么、以何种精度推的）。
+        pushdown_classes=classify_plan_pushdowns(
+            {
+                "has_filter": spec.filter is not None,
+                "has_spatial": spec.spatial is not None,
+                "has_temporal": spec.temporal is not None,
+                "has_select": spec.select is not None,
+                "has_aggregate": aggregate_requested,
+                "has_sort": bool(spec.order_by),
+                "pushed_filters": bool(pushed_filters),
+                "pushed_spatial": pushed_spatial,
+                "pushed_temporal": pushed_temporal,
+                "pushed_projection": pushed_projection,
+                "pushed_aggregation": pushed_aggregation,
+                "pushed_sort": pushed_sort,
+            },
+            caps,
+            spatial_op=spec.spatial.op if spec.spatial is not None else None,
+        ),
     )
 
     # ---- V3：成本分解 + 有界备选 + 假设标注（additive；不改选中决策）----
