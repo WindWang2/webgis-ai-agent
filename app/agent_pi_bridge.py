@@ -888,6 +888,21 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
 
     details_payload = _slim_pi_details_payload(result)
 
+    # ADR-0103（§九）：GIS-aware 无进展诊断 —— 每次真实 dispatch 后观测
+    # mapspec 指纹与 SessionPlan 进度代数；达到停滞阈值时把 reason codes
+    # 以 no_progress_hints 附进 details（模型可读的诚实诊断），并由调用方
+    # 决策切换 fallback/repair。诊断绝不改变工具结果本身。
+    try:
+        _hints = await _record_gis_progress(
+            session_id, tool_name, arguments,
+            outcome=("ok" if result.status == "ok" else "error"),
+        )
+        if _hints:
+            details_payload = dict(details_payload or {})
+            details_payload["no_progress_hints"] = _hints
+    except Exception:  # noqa: BLE001 — 诊断绝不阻断工具返回
+        logger.debug("[PiBridge] gis progress diagnose failed", exc_info=True)
+
     return PiToolResponse(
         toolCallId=request.toolCallId,
         content=[{"type": "text", "text": result.llm_payload}],
@@ -898,6 +913,81 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
 
 # 每个 session 的已执行工具集合，供重复调用拦截（service 接受外部 set）。
 _session_executed_sets: dict[str, set[tuple[str, str]]] = {}
+
+# ADR-0103：per-session GIS 无进展诊断器（有界；只存代数与签名，无内容）。
+_gis_progress_trackers: dict[str, "GisProgressTracker"] = {}
+_GIS_TRACKER_MAX_SESSIONS = 64
+
+_SIDE_EFFECT_MUTATION = {"state_mutation", "external_side_effect", "destructive", "artifact_creation"}
+_SIDE_EFFECT_READ = {"pure", "deterministic_compute", "cacheable_read"}
+
+
+async def _record_gis_progress(
+    session_id: str,
+    tool_name: str,
+    arguments: dict,
+    *,
+    outcome: str,
+) -> list[str]:
+    """记录一次 dispatch 的进程观测，返回达到阈值的 no-progress reason codes。
+
+    map_epoch = mapspec 指纹（session_data_manager 定向读）；
+    workflow_epoch = SessionPlan capability 进度的内容 hash。
+    任一读取失败按空串处理（该维度本轮不参与停滞判定 —— 诚实缺省）。
+    """
+    from app.services.chat.no_progress import GisProgressTracker
+
+    tracker = _gis_progress_trackers.get(session_id)
+    if tracker is None:
+        if len(_gis_progress_trackers) >= _GIS_TRACKER_MAX_SESSIONS:
+            _gis_progress_trackers.clear()
+        tracker = GisProgressTracker()
+        _gis_progress_trackers[session_id] = tracker
+
+    registry = get_tool_registry()
+    try:
+        side_effect = registry.descriptor(tool_name).side_effect.value
+    except Exception:  # noqa: BLE001
+        side_effect = ""
+    is_mutation = side_effect in _SIDE_EFFECT_MUTATION
+    is_read_only = side_effect in _SIDE_EFFECT_READ
+
+    map_epoch = ""
+    try:
+        from app.services.session_data import session_data_manager
+        fp = await session_data_manager.get_map_spec_fingerprint(session_id)
+        map_epoch = str(fp) if fp else ""
+    except Exception:  # noqa: BLE001
+        map_epoch = ""
+
+    workflow_epoch = ""
+    try:
+        from app.services.session_plan import load_session_plan
+        plan = await load_session_plan(session_id)
+        if plan is not None:
+            rows = tuple(sorted(
+                (r.capability, r.status) for r in (plan.progress or ())
+            ))
+            import hashlib as _hashlib
+            workflow_epoch = _hashlib.sha256(
+                repr(rows).encode("utf-8")
+            ).hexdigest()[:12] if rows else ""
+    except Exception:  # noqa: BLE001
+        workflow_epoch = ""
+
+    reasons = tracker.record_call(
+        tool_name, arguments, outcome,
+        map_epoch=map_epoch,
+        workflow_epoch=workflow_epoch,
+        is_read_only=is_read_only,
+        is_mutation=is_mutation,
+    )
+    if reasons:
+        logger.warning(
+            "[PiBridge] no-progress detected session=%s tool=%s reasons=%s diagnose=%s",
+            session_id, tool_name, reasons, tracker.diagnose(),
+        )
+    return reasons
 
 # F24/V5-B: active-turn registry keyed by SESSION (was: one module-global
 # token slot). A single process can now host multiple concurrent in-flight

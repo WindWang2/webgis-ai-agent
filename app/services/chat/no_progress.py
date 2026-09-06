@@ -154,3 +154,106 @@ class CallPatternTracker:
 
         outcomes = Counter(r.outcome for r in self.records)
         return f"calls={len(self.records)} outcomes={dict(outcomes)}"
+
+
+# ---------------------------------------------------------------------------
+# ADR-0103（§九）：GIS-aware 无进展诊断。
+#
+# 在形态级 reason codes 之上叠加两类**真实状态停滞**观测：
+# - unchanged_map:N   连续 N 次成功调用后 mapspec 指纹纹丝不动（地图没变，
+#   模型还在反复分析/反复要求展示）；
+# - unchanged_workflow:N 连续 N 次成功调用后 SessionPlan capability 进度
+#   停滞（工作流没推进）；
+# - repeated_planning:N 规划签名重复出现（同样的计划被一再重发）。
+# 达到阈值的 reason codes 由调用方用于切换 fallback/repair，而不是继续
+# 烧 tokens。tracker 只存代数与签名，不存内容；同输入必同输出。
+# ---------------------------------------------------------------------------
+
+_PLANNING_HISTORY_MAX = 16
+
+
+@dataclass
+class GisProgressTracker:
+    """map/workflow 代数停滞 + 规划重复的确定性诊断器。"""
+
+    map_stale_threshold: int = 4
+    workflow_stale_threshold: int = 6
+    planning_repeat_threshold: int = 2
+    pattern: CallPatternTracker = field(default_factory=CallPatternTracker)
+
+    _last_map_epoch: Optional[str] = None
+    _map_stale_streak: int = 0
+    _last_workflow_epoch: Optional[str] = None
+    _workflow_stale_streak: int = 0
+    _planning_counts: Dict[str, int] = field(default_factory=OrderedDict)
+
+    def record_call(
+        self,
+        tool_name: str,
+        arguments: Any,
+        outcome: str,
+        *,
+        state_epoch: int = 0,
+        map_epoch: str = "",
+        workflow_epoch: str = "",
+        is_read_only: bool = False,
+        is_mutation: bool = False,
+    ) -> List[str]:
+        reasons = list(self.pattern.record(
+            tool_name, arguments, outcome,
+            state_epoch=state_epoch,
+            is_read_only=is_read_only,
+            is_mutation=is_mutation,
+        ))
+        if outcome != "ok":
+            # 失败调用不推进停滞计数（失败另有 exact_repeat_failure 管辖）
+            return reasons
+
+        if map_epoch:
+            if self._last_map_epoch is None:
+                # 首次观测：基线调用计入停滞窗口（窗口内地图始终未变；
+                # 真正改图的调用必然带来不同指纹 → 立即清零）。
+                self._map_stale_streak = 1
+            elif map_epoch == self._last_map_epoch:
+                self._map_stale_streak += 1
+            else:
+                self._map_stale_streak = 0
+            if self._map_stale_streak >= self.map_stale_threshold:
+                reasons.append(f"unchanged_map:{self._map_stale_streak}")
+            self._last_map_epoch = map_epoch
+
+        if workflow_epoch:
+            if self._last_workflow_epoch is None:
+                self._workflow_stale_streak = 1
+            elif workflow_epoch == self._last_workflow_epoch:
+                self._workflow_stale_streak += 1
+            else:
+                self._workflow_stale_streak = 0
+            if self._workflow_stale_streak >= self.workflow_stale_threshold:
+                reasons.append(f"unchanged_workflow:{self._workflow_stale_streak}")
+            self._last_workflow_epoch = workflow_epoch
+        return reasons
+
+    def record_planning(self, signature: str) -> List[str]:
+        """记录一次规划产出的签名；重复出现达阈值 → repeated_planning:N。"""
+        reasons: List[str] = []
+        count = self._planning_counts.get(signature, 0) + 1
+        self._planning_counts[signature] = count
+        if len(self._planning_counts) > _PLANNING_HISTORY_MAX:
+            # 淘汰最旧（OrderedDict 头部）
+            for key in list(self._planning_counts):
+                self._planning_counts.pop(key, None)
+                if len(self._planning_counts) <= _PLANNING_HISTORY_MAX:
+                    break
+        if count >= self.planning_repeat_threshold:
+            reasons.append(f"repeated_planning:{count}")
+        return reasons
+
+    def diagnose(self) -> str:
+        """一次性诊断摘要（fallback/repair 决策与 trace 用；有界）。"""
+        parts = [self.pattern.reason_summary()]
+        if self._map_stale_streak:
+            parts.append(f"map_stale={self._map_stale_streak}")
+        if self._workflow_stale_streak:
+            parts.append(f"workflow_stale={self._workflow_stale_streak}")
+        return "; ".join(p for p in parts if p)

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import logging
 from dataclasses import dataclass, field
 from typing import Optional, TYPE_CHECKING, Union
@@ -61,6 +62,21 @@ class SubagentResult:
             "reasoning": self.reasoning,
             "error": self.error,
         }
+
+
+# ADR-0103（§九）：递归子代理深度计数（纵深防御；主防线是 spawn_subagent
+# 不进子代理工具面）。深度 ≥2 的嵌套 spawn 诚实失败。
+_subagent_depth: "contextvars.ContextVar[int]" = contextvars.ContextVar("subagent_depth", default=0)
+
+
+@contextlib.contextmanager
+def _raise_subagent_depth():
+    """子代理执行期深度 +1（contextvar —— 只影响本子代理内发起的嵌套 spawn）。"""
+    token = _subagent_depth.set(_subagent_depth.get(0) + 1)
+    try:
+        yield
+    finally:
+        _subagent_depth.reset(token)
 
 
 # ─────────────────────── 工具子集筛选器 ──────────────────────
@@ -169,6 +185,13 @@ class SubagentDispatcher:
         max_rounds: int = 10,
         role: Optional[Union[str, "SubagentRole"]] = None,
     ) -> SubagentResult:
+        _depth = _subagent_depth.get(0)
+        if _depth >= 2:
+            return SubagentResult(
+                success=False,
+                summary="",
+                error="subagent recursion depth limit exceeded (max=2); nested spawn is not allowed",
+            )
         # ADR-0101 Wave 7：角色档（显式策略，无未约束子代理）。角色提供的
         # 域/预算与调用方显式参数取**交集/更严者** —— 角色收紧，调用方不能
         # 经参数越权放宽。
@@ -277,7 +300,7 @@ class SubagentDispatcher:
                 + wrapped_task_text
             )
         try:
-            with use_token(sub_token):
+            with use_token(sub_token), _raise_subagent_depth():
                 chat_task = asyncio.create_task(
                     sub_engine.chat(
                         message=wrapped_task_text,
