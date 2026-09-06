@@ -221,7 +221,10 @@ class SubagentDispatcher:
         except Exception:
             refs_before = set()
 
-        sub_engine = self._build_sub_engine(tool_subset, max_rounds)
+        sub_engine = self._build_sub_engine(
+            tool_subset, max_rounds,
+            model_role=(role_obj.model_role if role_obj is not None else "execution"),
+        )
 
         # §32 层级预算：turn → agent → subagent → tools。工具调用计数经
         # dispatch 实例包装实现（引擎零改动）；墙钟在下方 asyncio.wait 的
@@ -428,7 +431,9 @@ class SubagentDispatcher:
 
     # ─── helpers ────────────────────────────────────────────
 
-    def _build_sub_engine(self, tool_subset: list[dict], max_rounds: int) -> "ChatEngine":
+    def _build_sub_engine(
+        self, tool_subset: list[dict], max_rounds: int, model_role: str = ""
+    ) -> "ChatEngine":
         """造一个轻量 ChatEngine：用同一份 registry，但通过 catalog stub 把
         工具白名单固定为 tool_subset（绕过域关键词匹配）。"""
         from app.services.chat_engine import ChatEngine
@@ -469,6 +474,10 @@ class SubagentDispatcher:
             self.registry,
             tool_catalog=_FrozenCatalog(tool_subset),
             is_subagent_engine=True,
+            # ADR-0103：子代理按角色档案路由模型（subagent_worker /
+            # subagent_reviewer / structured_extraction → model_runtime.roles）；
+            # adhoc 子代理回落 execution 主模型。
+            model_role=model_role,
         )
         engine.max_rounds = max_rounds
         return engine

@@ -330,6 +330,7 @@ class ChatExecutionEngine:
         tool_catalog: Optional["ToolCatalog"] = None,
         *,
         is_subagent_engine: bool = False,
+        model_role: str = "",
     ):
         self.registry = tool_registry
         self.catalog = tool_catalog
@@ -338,6 +339,9 @@ class ChatExecutionEngine:
         # _flush_plan 据此跳过一切计划推进，避免子代理的工具调用把父会话的
         # 活跃计划打勾/改写。
         self.is_subagent_engine = is_subagent_engine
+        # ADR-0103：模型路由角色（SubagentDispatcher 按子代理角色的 model_role
+        # 注入；缺省 "" → _routing_role() 回落 execution）。
+        self.model_role = model_role
         self.base_url = settings.LLM_BASE_URL.rstrip("/")
         self.model = settings.LLM_MODEL
         self.api_key = settings.LLM_API_KEY
@@ -979,13 +983,24 @@ class ChatExecutionEngine:
             # 旧值 64 会让推理模型的 reasoning 耗尽预算、content 为空，回退
             # 取到的 reasoning 前缀直接成了用户可见标题）；只取 content，
             # 不再把思考碎片当标题。
-            from app.services.chat.model_config import ModelRole, resolve_llm_config
-            cfg = resolve_llm_config(ModelRole.TITLE)
+            from app.services.chat.model_routing_bridge import (
+                LatencyTimer,
+                observe_outcome,
+                resolve_routed_config,
+            )
+
             messages = [
                 {"role": "system", "content": "根据用户的首条消息，生成一个简短的对话主题标题。要求：1) 不超过12个字 2) 突出空间分析的核心对象（地名、分析类型等）3) 不要使用引号、书名号或多余的标点。只输出标题文本，不要任何额外内容。"},
                 {"role": "user", "content": first_user_message[:500]},
             ]
-            resp = await call_llm(cfg, messages)
+            cfg, decision = resolve_routed_config("title", messages=messages)
+            timer = LatencyTimer()
+            try:
+                resp = await call_llm(cfg, messages)
+            except Exception as exc:
+                observe_outcome(decision, latency_s=timer.elapsed(), exc=exc)
+                raise
+            observe_outcome(decision, latency_s=timer.elapsed())
             _ev = current_turn_evidence()
             if _ev is not None:
                 _ev.add_llm_usage(resp.get("usage"))
@@ -1016,12 +1031,18 @@ class ChatExecutionEngine:
     def _llm_config(self) -> LLMConfig:
         # audit4 #997: 单一解析点 —— 运行时覆盖（update_config 写入）对引擎、
         # 规划、标题、空间推演一致生效，不再出现同进程两套配置。
-        from app.services.chat.model_config import ModelRole, resolve_llm_config
-        return resolve_llm_config(ModelRole.EXECUTION)
+        # ADR-0103：经路由桥 —— router 在既有主模型之上加能力/健康护栏；
+        # 异常回退 legacy resolve_llm_config（零行为破坏）。
+        from app.services.chat.model_routing_bridge import resolve_routed_config
+
+        cfg, _decision = resolve_routed_config(self._routing_role(), require_tools=True)
+        return cfg
 
     def _planner_llm_config(self) -> LLMConfig:
-        from app.services.chat.model_config import ModelRole, resolve_llm_config
-        return resolve_llm_config(ModelRole.PLANNER)
+        from app.services.chat.model_routing_bridge import resolve_routed_config
+
+        cfg, _decision = resolve_routed_config("planner", require_json=True)
+        return cfg
 
     async def _maybe_plan(self, session_id: str, message: str, messages: list[dict]):
         from app.services.chat.plan_orchestrator import plan_orchestrator
@@ -1133,10 +1154,60 @@ class ChatExecutionEngine:
             logger.warning(f"[chat_execution_engine] 决策日志记录失败: {e}")
 
     async def _call_llm(self, messages: list[dict], tools: Optional[list] = None) -> dict:
-        return await call_llm(self._llm_config(), messages, tools)
+        # ADR-0103：live 模型路由 —— router 只在既有 resolve_llm_config 主模型
+        # 之上加能力/健康护栏与 reason codes；异常回退 legacy（decision=None）。
+        from app.services.chat.model_routing_bridge import (
+            LatencyTimer,
+            observe_outcome,
+            resolve_routed_config,
+        )
+
+        cfg, decision = resolve_routed_config(
+            self._routing_role(),
+            messages=messages,
+            require_tools=bool(tools),
+        )
+        timer = LatencyTimer()
+        try:
+            resp = await call_llm(cfg, messages, tools)
+        except Exception as exc:
+            observe_outcome(decision, latency_s=timer.elapsed(), exc=exc)
+            raise
+        observe_outcome(decision, latency_s=timer.elapsed())
+        return resp
 
     def _call_llm_stream(self, messages: list[dict], tools: Optional[list] = None):
-        return call_llm_stream(self._llm_config(), messages, tools)
+        from app.services.chat.model_routing_bridge import (
+            LatencyTimer,
+            observe_outcome,
+            resolve_routed_config,
+        )
+
+        cfg, decision = resolve_routed_config(
+            self._routing_role(),
+            messages=messages,
+            require_tools=bool(tools),
+        )
+        inner = call_llm_stream(cfg, messages, tools)
+
+        async def _observed_stream():
+            timer = LatencyTimer()
+            failure = None
+            try:
+                async for chunk in inner:
+                    yield chunk
+            except Exception as exc:
+                failure = exc
+                raise
+            finally:
+                # 流中断/截断异常按失败分类入健康表；正常耗尽按成功。
+                observe_outcome(decision, latency_s=timer.elapsed(), exc=failure)
+
+        return _observed_stream()
+
+    def _routing_role(self) -> str:
+        """本引擎实例的路由角色（子代理引擎由 SubagentDispatcher 注入）。"""
+        return getattr(self, "model_role", None) or "execution"
 
     async def _persist_map_state(self, session_id: str, map_state: dict) -> None:
         """F4: persist the turn-start map_state snapshot.

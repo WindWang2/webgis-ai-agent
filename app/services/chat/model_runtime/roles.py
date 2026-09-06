@@ -83,6 +83,55 @@ DEFAULT_ROLE_PROFILES: Dict[str, ModelRoleProfile] = {
         role="structured_extraction", max_output_tokens=2048, require_tools=False,
         require_json=True, temperature=0.0, max_attempts=1,
     ),
+    # ------------------------------------------------------------------
+    # ADR-0103 §六：高 token 子代理时代的角色分层。
+    # 强模型角色（architecture/planner 类与难调试/科学评审）与高吞吐廉价角色
+    # （语料/文档交叉校验/描述符富化/静态分析摘要）。角色只声明**策略**，
+    # 不绑定任何厂商 —— 模型本体由路由器按 preferred_group（operator 可用
+    # MODEL_DESCRIPTORS_FILE 的 fallback_group 划分强弱/快慢池）+ 健康度
+    # 确定性解析；无分组数据时回落 execution 主模型，行为不劣化。
+    # ------------------------------------------------------------------
+    # 强推理：架构 / 规划复审 / 难调试
+    "architecture": ModelRoleProfile(
+        role="architecture", max_output_tokens=8192, require_tools=False,
+        temperature=0.2, timeout_s=240.0, max_attempts=2,
+        preferred_group="strong",
+    ),
+    "debugger": ModelRoleProfile(
+        role="debugger", max_output_tokens=8192, require_tools=True,
+        temperature=0.2, timeout_s=240.0, max_attempts=2,
+        preferred_group="strong",
+    ),
+    "scientific_review": ModelRoleProfile(
+        role="scientific_review", max_output_tokens=4096, require_tools=False,
+        require_json=True, temperature=0.0, max_attempts=1,
+        preferred_group="strong",
+    ),
+    # 高吞吐廉价：语料生成 / 文档交叉校验 / 描述符富化 / 代码阅读 / 静态分析摘要
+    "corpus_worker": ModelRoleProfile(
+        role="corpus_worker", max_output_tokens=4096, require_tools=False,
+        temperature=0.3, timeout_s=120.0, max_attempts=2,
+        preferred_group="cheap",
+    ),
+    "doc_crosscheck": ModelRoleProfile(
+        role="doc_crosscheck", max_output_tokens=2048, require_tools=False,
+        require_json=True, temperature=0.0, max_attempts=1,
+        preferred_group="cheap",
+    ),
+    "descriptor_enrichment": ModelRoleProfile(
+        role="descriptor_enrichment", max_output_tokens=4096, require_tools=False,
+        require_json=True, temperature=0.1, max_attempts=2,
+        preferred_group="cheap",
+    ),
+    "code_worker": ModelRoleProfile(
+        role="code_worker", max_output_tokens=8192, require_tools=False,
+        temperature=0.2, max_attempts=2,
+    ),
+    "static_analysis": ModelRoleProfile(
+        role="static_analysis", max_output_tokens=2048, require_tools=False,
+        require_json=True, temperature=0.0, max_attempts=1,
+        preferred_group="cheap",
+    ),
 }
 
 _lock = threading.Lock()
