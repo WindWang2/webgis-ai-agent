@@ -247,7 +247,8 @@ def dump_native_tools(path: Path) -> Path:
 # 「Changes take effect on the next agent turn」，零 vendor 修改）。
 # ---------------------------------------------------------------------------
 
-#: spawn 超集的 dormant schema 压缩标记（native 7 保持完整 schema）
+#: dormant 工具 schema 保持注册原样（模型可见面由 setActiveTools 治理，
+#: 压缩会偏离 registry 真相 —— 不做）。dormant 标记仅供诊断。
 #: per-turn 动态面开关（默认开；PI_DYNAMIC_TOOL_SURFACE=0 退回冻结 7 工具 + proxy）
 _PI_DYNAMIC_TOOL_SURFACE = os.getenv("PI_DYNAMIC_TOOL_SURFACE", "1") != "0"
 
@@ -288,12 +289,15 @@ def _pi_tool_definition(registry: Any, name: str, *, dormant: bool) -> dict[str,
     if dormant:
         definition["dormant"] = True
     return definition
+    # 注：dormant 不压缩 —— 压缩后的 schema 会在激活时以非注册形态呈现给
+    # 模型，违反「schema 从 registry 现取」的单一真相纪律。
 
 
 def pi_surface_for_spawn(registry: Any) -> dict[str, Any]:
     """spawn dump v2：注册超集 + default active（渐进式动态机制 Phase 3）。
 
-    - ``tools``: 注册超集（native 7 完整 schema + 长 tail 压缩 schema）；
+    - ``tools``: 注册超集（native 7 带 promptSnippet；其余为完整注册 schema
+      + ``dormant`` 标记）；
     - ``default_active``: 冻结 native 面（兼容 Phase 1 行为）。
     扩展注册全部 tools，随后 setActiveTools(default_active)。
     """
@@ -354,8 +358,12 @@ def compute_turn_active_tools(
     active_capabilities: Sequence[str] = (),
     workflow_stage: str = "",
     k_max: int = 30,
+    role: str = "execution",
 ) -> list[str]:
     """per-turn 动态工具面（Phase 3）：SelectionContext → 激活名单。
+
+    ``role`` 透传给 V3 选择器的角色副作用策略（ROLE_SIDE_EFFECT_POLICY）；
+    Pi 主循环固定 execution（不受限），受限子代理/评测方传入对应角色名。
 
     任何失败 → 返回空列表（调用方不注入 marker，扩展保持上轮/default 面）。
     名单恒含 NATIVE_TOOL_NAMES（前门不可失），绝不包含 tier-3。
@@ -368,11 +376,13 @@ def compute_turn_active_tools(
         from app.agent_pi_bridge import get_tool_registry
 
         registry = get_tool_registry()
+
         ctx = ToolSelectionContext(
             user_message=message or "",
             active_capabilities=tuple(active_capabilities),
             workflow_stage=workflow_stage or "",
             k_max=max(k_max, len(NATIVE_TOOL_NAMES)),
+            role=role,
         )
         selection = DynamicToolSurface(registry).select(ctx)
         names = list(dict.fromkeys([*NATIVE_TOOL_NAMES, *selection.names]))
@@ -382,7 +392,8 @@ def compute_turn_active_tools(
                 desc = registry.descriptor(name)
             except KeyError:
                 continue
-            if int(desc.tier) >= 3:
+            # 末道安全双检（review m1）：tier 与生效安全层都查
+            if int(desc.tier) >= 3 or desc.effective_security_tier >= 3:
                 continue
             safe.append(name)
         return safe

@@ -310,6 +310,10 @@ class GisBudgetAdvisor:
         for item in sorted(items, key=lambda i: (i.category.value, -int(i.est_tokens), i.name)):
             section = item.category.name
             cap = plan.category_budgets.get(section)
+            if cap is None:
+                # review R2 minor：组件自带硬上限（如 HISTORY 的 6000 软预算）
+                # 也可作为该组件的判定上限 —— hard_limit_tokens 不再是无消费点。
+                cap = item.hard_limit_tokens
             if cap is None or section in self._UNTOUCHABLE:
                 continue
             used = section_used.get(section, 0)

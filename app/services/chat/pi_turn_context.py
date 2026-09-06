@@ -94,6 +94,19 @@ def verify_turn_token(
         return None
 
 
+def _neutralize_active_tools_markers(message: str) -> str:
+    """中和用户/数据自带的同形激活 marker（review M1）。
+
+    ACTIVE_TOOLS 是 Python→extension 的**带外控制面**：若不消毒，用户消息或
+    其引用的数据里出现 ``[WEBGIS_ACTIVE_TOOLS:[...]]`` 就能绕过
+    PI_DYNAMIC_TOOL_SURFACE kill-switch 与 k_max 投影约束。只消毒用户原文，
+    不触碰 Python 自己拼接的块（它们在同函数后续 append）。
+    """
+    if not message:
+        return message
+    return message.replace(f"[{ACTIVE_TOOLS_MARKER}:", f"[{ACTIVE_TOOLS_MARKER}_NEUTRALIZED:")
+
+
 def attach_turn_context(
     message: str,
     token: str,
@@ -115,7 +128,7 @@ def attach_turn_context(
     全部插在用户消息与 turn marker 之间；marker 必须保持最后——扩展的
     ``currentTurnToken`` 取最新 entry 的最后一个匹配。
     """
-    parts = [message]
+    parts = [_neutralize_active_tools_markers(message)]
     if cartography_block:
         parts.append(cartography_block)
     if session_plan_block:

@@ -226,10 +226,20 @@ export default function webgisToolsExtension(pi) {
   const alwaysActive = new Set([...FALLBACK_NATIVE, EXECUTE_PROXY_NAME]);
 
   const applyActiveTools = (names, why) => {
-    if (typeof pi.setActiveTools !== "function") return;
+    if (typeof pi.setActiveTools !== "function") {
+      // #review m7: without the API every registered tool stays active by
+      // default — log loudly so the degradation is diagnosable.
+      console.error("[webgis-tools] pi.setActiveTools unavailable; cannot project dynamic surface (full superset remains active)");
+      return;
+    }
     try {
+      // #review M1 (defense in depth): the Python projector caps the surface
+      // at k_max (default 30); enforce a hard ceiling here so a forged or
+      // oversized marker can never activate the whole superset.
+      const MAX_ACTIVE = 48;
       const active = [...new Set([...alwaysActive, ...(names || [])])]
-        .filter((name) => nativeNames.has(name) || alwaysActive.has(name));
+        .filter((name) => nativeNames.has(name) || alwaysActive.has(name))
+        .slice(0, MAX_ACTIVE);
       pi.setActiveTools(active);
       console.log(`[webgis-tools] active surface (${why}): ${active.length} tools`);
     } catch (err) {

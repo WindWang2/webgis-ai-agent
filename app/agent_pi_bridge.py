@@ -36,7 +36,7 @@ from pydantic import BaseModel
 
 from app.utils.sse import sse_event, sse_event_type
 from app.services.chat.pi_event_mapper import map_event_to_sse, _extract_text_from_event
-from app.services.chat.pi_native_surface import resolve_pi_tool_call
+from app.services.chat.pi_native_surface import NATIVE_TOOL_NAME_SET, resolve_pi_tool_call
 from app.services.jobs.cancellation import CancellationToken, OperationCancelled, use_token
 from app.services.tool_dispatch_service import ToolDispatchService, normalize_tool_name
 from app.lib.harness.tool_call_event import ToolCallEvent
@@ -446,10 +446,15 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
         raise PiRpcError("Pi tool callback has no verified turn session")
 
     # Unknown bare names reject with discover guidance. ADR-0103: names on the
-    # dynamic registered surface (spawn superset dump == extension registration)
-    # dispatch straight through the shared pipeline — same tier/confirm gates.
+    # dynamic registered surface (spawn dump == extension registration) dispatch
+    # straight through the shared pipeline — same tier/confirm gates. The
+    # classification set is the *registered surface* (model-visible, non-tier-3),
+    # not the full registry: hidden/tier-3 names stay proxy-only or rejected,
+    # matching the extension's registration reality.
     try:
-        _registered = set(registry.list_tools())
+        from app.services.chat.pi_native_surface import registered_surface_names
+
+        _registered = set(registered_surface_names(registry)) | NATIVE_TOOL_NAME_SET
     except Exception:  # noqa: BLE001 — 分类退化为冻结面行为
         _registered = None
     resolved = resolve_pi_tool_call(
@@ -946,6 +951,13 @@ _SIDE_EFFECT_READ = {"pure", "deterministic_compute", "cacheable_read"}
 _RECORD_ARGS_BOUND = 512
 
 
+def _stable_state_epoch(map_epoch: str, workflow_epoch: str) -> int:
+    """(map, workflow) 双维指纹 → 稳定 int 状态代（确定性；跨进程可复现）。"""
+    import hashlib as _h
+
+    return int(_h.sha256(f"{map_epoch}|{workflow_epoch}".encode("utf-8")).hexdigest()[:8], 16)
+
+
 async def _record_gis_progress(
     session_id: str,
     tool_name: str,
@@ -964,7 +976,9 @@ async def _record_gis_progress(
     tracker = _gis_progress_trackers.get(session_id)
     if tracker is None:
         if len(_gis_progress_trackers) >= _GIS_TRACKER_MAX_SESSIONS:
-            _gis_progress_trackers.clear()
+            # review R2 minor：LRU 淘汰最旧会话（整体 clear 会把活跃会话的
+            # 停滞 streak 一起清零，no-progress 检测间歇性失效）。
+            _gis_progress_trackers.pop(next(iter(_gis_progress_trackers)))
         tracker = GisProgressTracker()
         _gis_progress_trackers[session_id] = tracker
 
@@ -1001,6 +1015,11 @@ async def _record_gis_progress(
 
     reasons = tracker.record_call(
         tool_name, arguments, outcome,
+        # review R2 MAJOR：state_epoch 用 (map_epoch, workflow_epoch) 的稳定
+        # 摘要 —— 形态级 reason codes（exact_repeat_failure / repeated_read /
+        # repeated_mutation_no_state_change）据此识别「真实状态已变化」，
+        # 消除假阳性（tracker 的设计前提：state_epoch 由调用方传入）。
+        state_epoch=_stable_state_epoch(map_epoch, workflow_epoch),
         map_epoch=map_epoch,
         workflow_epoch=workflow_epoch,
         is_read_only=is_read_only,

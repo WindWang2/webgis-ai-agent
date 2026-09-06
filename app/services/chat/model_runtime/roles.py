@@ -60,13 +60,18 @@ class ModelRoleProfile:
 #: 输出与之兼容的 LLMConfig）。
 DEFAULT_ROLE_PROFILES: Dict[str, ModelRoleProfile] = {
     "execution": ModelRoleProfile(role="execution", require_tools=True),
+    # review R2 MAJOR：存量四角色（execution/planner/title/spatial）的 profile
+    # **不覆写** operator 配置 —— temperature/max_tokens/timeout 缺省 None，
+    # 路由 resolve_config 落回 resolve_llm_config 的既有值（settings/角色级
+    # 模型/全局采样）。这是「路由开启零行为变化」承诺的执行点；新角色的
+    # 显式数值只对新角色生效，无兼容包袱。
     "planner": ModelRoleProfile(
-        role="planner", max_output_tokens=4096, require_tools=False, require_json=True,
-        temperature=0.2,
+        role="planner", max_output_tokens=None, require_tools=False, require_json=True,
+        temperature=None,
     ),
     "title": ModelRoleProfile(
-        role="title", max_output_tokens=512, require_tools=False, temperature=0.3,
-        timeout_s=30.0, max_attempts=1,
+        role="title", max_output_tokens=512, require_tools=False, temperature=None,
+        timeout_s=None, max_attempts=1,
     ),
     "spatial": ModelRoleProfile(
         role="spatial", max_output_tokens=4096, require_tools=False, require_json=True,
