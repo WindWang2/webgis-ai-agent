@@ -24,9 +24,10 @@ from app.services.gis_harness.component_resolver import ComponentResolver
 
 pytestmark = pytest.mark.cartography
 
-# V3 后仅 table_panel 仍是 interactive-only（产品决策，矩阵 note 说明）；
-# 披露族已落地 canvas 导出（drawChromeDisclosurePanel）。
-PDF_EXPORT_ONLY_TYPES = {"table_panel"}
+# V4 起 table_panel 也落地 canvas 导出（drawChromeTable 有界快照），
+# interactive-only 集合清空；守卫保留 —— 未来新增仅 interactive 组件时
+# 在此登记，防止 pdf 模板 required 槽引用不可导出组件。
+PDF_EXPORT_ONLY_TYPES: set[str] = set()
 
 
 def test_pack_loads_and_seed_intact() -> None:

@@ -296,10 +296,11 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         # 可排序可过滤 + SelectionContext 联动（table↔map↔chart）。数据绑定
         # 双通道：options.tableRef（stats_table/admin_aggregate_table 等
         # artifact ref）或 options.layerId（HUD 图层属性表，MVT 层按需水合）。
-        # 仅 interactive（工作区交互面，非制图产物面）。
-        placement_domain="panel", supported_outputs=["interactive"],
+        # V4：canvas 表格导出落地（drawChromeTable）—— 有界快照（8 行 +
+        # 行列截断披露），导出画有界快照而非交互面复刻。
+        placement_domain="panel", supported_outputs=["interactive", "png", "pdf", "svg"],
         compatible_artifact_types=["stats_table", "admin_aggregate_table", "grid_aggregate", "feature_collection"],
-        renderer_support=["interactive"], exporter_support=[],
+        renderer_support=["interactive"], exporter_support=["png", "pdf", "svg"],
         default_variant="default", variants=["default", "compact", "dense"],
         default_position="bottom-right", allowed_positions=["top-left", "top-right", "bottom-left", "bottom-right", "none"],
         cardinality="multiple", priority=42,

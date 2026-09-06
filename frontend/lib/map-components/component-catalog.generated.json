@@ -401,7 +401,11 @@
       "rendererSupport": [
         "interactive"
       ],
-      "exporterSupport": []
+      "exporterSupport": [
+        "png",
+        "pdf",
+        "svg"
+      ]
     },
     {
       "type": "title",
@@ -1344,5 +1348,67 @@
       "exportLevel": "unsupported",
       "selectionLinkage": false
     }
-  ]
+  ],
+  "chartStates": [
+    "anchored",
+    "collapsed",
+    "docked",
+    "expanded",
+    "floating",
+    "hidden",
+    "visible"
+  ],
+  "chartStateTransitions": [
+    "anchored>collapsed",
+    "anchored>floating",
+    "anchored>hidden",
+    "collapsed>expanded",
+    "collapsed>hidden",
+    "docked>anchored",
+    "docked>collapsed",
+    "docked>floating",
+    "docked>hidden",
+    "expanded>collapsed",
+    "expanded>hidden",
+    "floating>anchored",
+    "floating>collapsed",
+    "floating>docked",
+    "floating>hidden",
+    "hidden>visible",
+    "visible>anchored",
+    "visible>collapsed",
+    "visible>docked",
+    "visible>expanded",
+    "visible>floating"
+  ],
+  "agentChartOperations": {
+    "close": [],
+    "collapse": [
+      "anchored",
+      "docked",
+      "expanded",
+      "floating",
+      "visible"
+    ],
+    "expand": [
+      "collapsed",
+      "visible"
+    ],
+    "filter": [],
+    "highlight": [],
+    "move": [],
+    "pin": [
+      "anchored",
+      "docked",
+      "floating"
+    ],
+    "resize": [
+      "floating"
+    ],
+    "restore": [
+      "hidden"
+    ],
+    "switch_chart_type": [],
+    "switch_field": []
+  }
 }

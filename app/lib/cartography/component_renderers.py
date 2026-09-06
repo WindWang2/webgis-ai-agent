@@ -100,11 +100,13 @@ _SUPPORT_MATRIX: Dict[str, ComponentRendererSupport] = {
     ),
     "table_panel": ComponentRendererSupport(
         component_type="table_panel", renderers=[LIVE_TARGET],
-        exporters=[],
+        exporters=["png", "pdf", "svg"],
         note=(
             "Runtime V4：交互表格面板（虚拟化 + 跨视图 SelectionContext 联动）。"
-            "仅 interactive —— 表格是工作区交互面不是制图产物面，导出画布"
-            "不复刻表格像素（完成度对表格只看在场/绑定语义，不做导出 parity）"
+            "V4 落地 canvas 表格导出（drawChromeTable）：双通道取数与 live 同源"
+            "（tableRef artifact / layerId 图层属性），有界快照（8 行 + 行列"
+            "截断尾注披露）—— 表格是工作区交互面，导出画的是有界快照而非"
+            "交互面复刻"
         ),
     ),
     # ── 仅导出/非 chrome 家族 ──────────────────────────────────────────
