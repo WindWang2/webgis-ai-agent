@@ -29,6 +29,16 @@ from app.lib.geo_raster.reader import RasterReader, RasterReaderError
 
 logger = logging.getLogger(__name__)
 
+from app.lib.geo_raster.remote import (  # noqa: E402 - 模块级绑定便于测试替换
+    RemoteReadSession,
+    remote_read_window,
+    remote_uri,
+)
+
+#: 多波段窗口读的字节预算（与 RasterReader 512MiB 红线同一族）。
+_MULTIBAND_WINDOW_BUDGET_BYTES = 512 * 1024 * 1024
+
+
 @dataclass
 class AlgorithmProfile:
     """What an algorithm needs from the execution runtime."""
@@ -59,11 +69,12 @@ def execute_windowed(
     fn: Callable[[np.ndarray, tuple[int, int, int, int], tuple[int, int, int, int]], np.ndarray],
     *,
     band: int = 1,
+    bands: Optional[tuple[int, ...]] = None,
     window_size: Optional[tuple[int, int]] = None,
     on_progress: Optional[Callable[[int, int], None]] = None,
     dst_dtype: Optional[str] = None,
 ) -> WindowResult:
-    """Run ``fn`` over every window of ``band`` and merge the outputs.
+    """Run ``fn`` over every window and merge the outputs.
 
     ``fn(window_data, core_window, read_window)`` receives the halo-padded
     array, the CORE window tuple (col_off, row_off, width, height) it owns,
@@ -72,13 +83,13 @@ def execute_windowed(
     on the boundary). It must return an array matching the core shape.
     Raises :class:`RasterReaderError` for non-window-safe profiles.
 
-    Band scope: execution is single-band (``band=``) by contract. Multi-band
-    INPUT is available at the read level (``RasterReader.read_window(bands=…)``
-    returns a stacked array) but wiring it through this executor is a
-    documented extension point, NOT a wired capability — it requires an
-    ``fn`` contract for stacked inputs and a merge policy for stacked
-    outputs, and this module will not grow a second, diverging execution
-    path until a real consumer needs one.
+    Band scope (ADR-0101 D9, V6 §19 — now a wired capability):
+    - ``band=N`` (default): single-band read, ``window_data.shape == (h, w)``.
+    - ``bands=(i, j, …)``: stacked multi-band read via the same budgeted
+      path as ``RasterReader.read_window(bands=…)``; ``window_data.shape``
+      is ``(len(bands), h, w)`` and ``fn`` returns ``(h, w)`` (multi-band
+      INPUT, single-band OUTPUT — the index-math shape). ``band`` is
+      ignored when ``bands`` is given.
     """
     if not profile.window_safe:
         raise RasterReaderError(
@@ -86,6 +97,14 @@ def execute_windowed(
         )
     meta = reader.metadata()
     ds = reader._ds()
+    if bands is not None:
+        band_list = [int(b) for b in bands]
+        if not band_list or any(b < 1 or b > meta.count for b in band_list):
+            raise RasterReaderError(
+                f"bands {band_list} out of range 1..{meta.count}"
+            )
+        if len(set(band_list)) != len(band_list):
+            raise RasterReaderError(f"duplicate band indices in {band_list}")
 
     # V3 primitives are the sanctioned loop driver (audit tension #1: V4
     # must not grow a second window runtime): budget-derived side, native
@@ -103,6 +122,11 @@ def execute_windowed(
     n_windows = len(windows)
     done = 0
 
+    # 远端源（http(s):///vsi*）走应用层预算/重试/健康策略（ADR-0101 D9 §22）。
+    remote_session = (
+        RemoteReadSession() if remote_uri(getattr(reader, "uri", None)) else None
+    )
+
     for win in cancellable(windows, every=8):
         col0, row0 = int(win.col_off), int(win.row_off)
         w, h = int(win.width), int(win.height)
@@ -113,7 +137,30 @@ def execute_windowed(
         r_h = min(meta.height, row0 + h + halo) - r_row
         from rasterio.windows import Window
 
-        data = ds.read(band, window=Window(r_col, r_row, r_w, r_h))
+        if bands is not None:
+            # 与 reader.read_window(bands=…) 同口径的字节预算（512MiB 红线）。
+            # 读取物化在**源 dtype**：按各波段源 itemsize 计（评审 MAJOR 修正
+            # —— 之前用 OUT dtype，dst_dtype≠源 dtype 时估计可差 8 倍）。
+            est = 0
+            for b in band_list:
+                src_itemsize = np.dtype(ds.dtypes[b - 1]).itemsize
+                est += r_w * r_h * src_itemsize
+            if est > _MULTIBAND_WINDOW_BUDGET_BYTES:
+                raise RasterReaderError(
+                    f"windowed multi-band read would allocate ~{est} bytes "
+                    f"(budget {_MULTIBAND_WINDOW_BUDGET_BYTES}); reduce window size"
+                )
+        if remote_session is not None:
+            read_target = band_list if bands is not None else band
+            data = remote_read_window(
+                remote_session, reader.uri, ds, read_target,
+                Window(r_col, r_row, r_w, r_h),
+                cancel_token=None,  # 窗口间取消由 cancellable 迭代器承担
+            )
+        elif bands is not None:
+            data = ds.read(band_list, window=Window(r_col, r_row, r_w, r_h))
+        else:
+            data = ds.read(band, window=Window(r_col, r_row, r_w, r_h))
         core_result = fn(data, (col0, row0, w, h), (r_col, r_row, r_w, r_h))
         expected = (h, w)
         if core_result.shape != expected:

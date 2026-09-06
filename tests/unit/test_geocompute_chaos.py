@@ -161,8 +161,11 @@ def test_deadline_expiration_midrun_fails_node_and_bounds_wall_time(monkeypatch)
     run = engine.execute_plan(plan)
 
     ev = run.evidence["slow"]
-    assert ev.status == "failed"
-    assert ev.error_code == "DEADLINE_EXCEEDED"
+    # V4（ADR-0101 D3）：deadline 触发时升级为 run 级取消 —— 在飞节点经
+    # 协作 checkpoint 收敛为 cancelled（与节点自身 DEADLINE_EXCEEDED 竞速，
+    # 两者皆为诚实终态；wall clock 由 escalate 路径严格钉在 deadline）。
+    assert ev.status in {"failed", "cancelled"}
+    assert ev.error_code in {"DEADLINE_EXCEEDED", "CANCELLED", None}
     # Wave-level deadline check precedes ancestor-skip, so the pending
     # descendant is marked cancelled with the deadline reason (never executed).
     child_ev = run.evidence["child"]
@@ -173,7 +176,9 @@ def test_deadline_expiration_midrun_fails_node_and_bounds_wall_time(monkeypatch)
     assert run.status in {ExecutionRunStatus.FAILED, ExecutionRunStatus.CANCELLED}
     assert run.status is not ExecutionRunStatus.COMPLETED
     assert run.wall_time_s is not None and run.wall_time_s < 2.0, "deadline did not bound the run"
-    assert run.wall_time_s >= 0.15, "deadline fired before it expired (too early)"
+    # V4：deadline 升级为 run 级取消后，run 在 deadline 时刻即刻收敛
+    #（不再等操作员自己的 checkpoint 撞线），下界相应放宽（评审后调整）。
+    assert run.wall_time_s >= 0.1, "deadline fired before it expired (too early)"
     assert engine.get_node_output(run.run_id, "child") is None
 
 
@@ -295,7 +300,8 @@ def test_await_node_job_raises_typed_on_stale_swept_job(job_db, monkeypatch):
     """Worker killed mid-node: the job's heartbeat ages out, the real
     ``DurableJobStore.sweep_stale`` flips it to stale, and
     ``durable.await_node_job`` (unit-tested directly with an injected
-    session factory) surfaces a typed non-retryable NodeExecutionError."""
+    session factory) surfaces a typed NodeExecutionError carrying the
+    WORKER_LOSS failure class (ADR-0101 D5)."""
     from app.services.geocompute import durable as durable_mod
     from app.services.geocompute.durable import await_node_job
     from app.services.jobs import DurableJobStore, JobStatus, coerce_status
@@ -320,7 +326,11 @@ def test_await_node_job_raises_typed_on_stale_swept_job(job_db, monkeypatch):
     with pytest.raises(NodeExecutionError) as ei:
         await_node_job(job_id, session_id="sess-a", deadline_ts=None, cancel_token=None)
     assert ei.value.code == "NODE_FAILED"
-    assert ei.value.retry_safe is False
+    # ADR-0101 D5：worker loss 是显式重试类别（WORKER_LOSS）—— 是否真的
+    # 重派由节点 RetryPolicy 决定（默认 max_attempts=1 → 不重试），
+    # 幂等键保证重派不产生第二 job 行。
+    assert ei.value.retry_safe is True
+    assert ei.value.failure_class.value == "worker_loss"
     assert "stale" in str(ei.value)
     assert "stale" in str(ei.value.details.get("job_status", ""))
 

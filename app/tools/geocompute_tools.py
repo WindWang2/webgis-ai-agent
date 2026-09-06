@@ -87,7 +87,24 @@ def register_geocompute_tools(registry: ToolRegistry):
 
         plan = build_plan_from_json({"plan_id": plan_id, "nodes": nodes,
                                      "budget": budget or {}})
-        run = run_plan_sync(plan, session_id=session_id)
+        # 评审 MINOR（安全）：从既有 ToolExecutionContext 身份真相取
+        # caller/project —— tenant/project 并发作用域与 owner 域由此
+        # 生效（无上下文时按匿名隔离，fail-closed）。
+        caller: Optional[dict] = None
+        project_id: Optional[str] = None
+        try:
+            from app.services.provenance.context import get_tool_execution_context
+
+            tc = get_tool_execution_context()
+            if tc is not None:
+                if getattr(tc, "user_id", None):
+                    caller = {"user_id": str(tc.user_id),
+                              "org_id": getattr(tc, "org_id", None)}
+                project_id = getattr(tc, "project_id", None) or None
+        except Exception:  # noqa: BLE001 - 身份增强失败按匿名隔离
+            caller = None
+        run = run_plan_sync(plan, session_id=session_id, caller=caller,
+                            project_id=project_id)
         return {
             "status": run.status.value,
             "run_id": run.run_id,

@@ -54,6 +54,17 @@ async def lifespan(app: FastAPI):
         import logging
         logging.getLogger(__name__).warning(f"[lifespan] init_db skipped: {e}")
 
+    # ADR-0101 D11：跨进程缓存失效广播的**监听**端（best-effort；无
+    # Redis = 进程内模式，直接跳过）。失效权威仍是 ref_lifecycle ——
+    # 错过广播只影响派生缓存的时效，绝不影响正确性。
+    try:
+        from app.services.cache_broadcast import start_listener
+
+        start_listener()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"[lifespan] cache listener skipped: {e}")
+
     registry = ToolRegistry()
     init_tools(registry)
     # v2(Phase 3, audit R1)：启动即编译 Compiled GIS Runtime Manifest 并做
