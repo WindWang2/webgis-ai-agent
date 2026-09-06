@@ -78,6 +78,8 @@ def invalidate_ref_caches(
             from app.services.ref_payload_cache import ref_payload_cache
             ref_payload_cache.invalidate(session_id, ref_id)
         _emit(RefLifecycleEvent.REF_INVALIDATED, session_id, ref_id, reason.value)
+        if reason in (RefInvalidationReason.OVERWRITE, RefInvalidationReason.ROLLBACK):
+            _schedule_staleness_propagation(session_id, ref_id)
         # ADR-0101 D11：向其他进程**通知**本次失效（best-effort，无载荷；
         # 本模块仍是唯一失效权威 —— 通知丢失不影响正确性）。监听路径
         # 传入 publish_broadcast=False 打断「失效→发布→收到→失效」环。
@@ -90,6 +92,43 @@ def invalidate_ref_caches(
                 pass
         count += 1
     return count
+
+
+def _schedule_staleness_propagation(session_id: str, ref_id: str) -> None:
+    """V3 data foundation（§十一）：上游 ref 被覆写/回滚 → 下游产物传播 stale。
+
+    尽力而为：有事件循环才派发（fire-and-forget 任务，失败只记日志）；
+    传播只写账本 metadata（update_record_metadata），不回调本模块 ——
+    无「失效→发布→收到→失效」风暴面。无循环（同步上下文）时跳过，
+    sweep / 显式调用兜底。
+    """
+    try:
+        loop = __import__("asyncio").get_running_loop()
+    except RuntimeError:
+        return
+
+    async def _job() -> None:
+        try:
+            from app.lib.data.fingerprints import ChangeClass
+            from app.services.data_lifecycle.service import get_lifecycle_service
+
+            svc = get_lifecycle_service()
+            change = await svc.detect_source_change(session_id, ref_id)
+            if change is ChangeClass.NONE:
+                return  # 同内容覆写（如同对象重持久化）：无需传播
+            await svc.propagate_staleness(
+                session_id,
+                ref_id,
+                change=change if change is not ChangeClass.UNKNOWN else ChangeClass.CONTENT,
+                reason="ref_overwritten",
+            )
+        except Exception:  # noqa: BLE001 — 传播绝不影响写入路径
+            logger.debug(
+                "[ref_lifecycle] staleness propagation skipped session=%s ref=%s",
+                session_id, ref_id, exc_info=True,
+            )
+
+    loop.create_task(_job())
 
 
 def emit_ref_event(

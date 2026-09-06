@@ -42,7 +42,7 @@ from typing import Any, Callable, Dict, Literal, Optional
 from app.services.session_data import session_data_manager
 from app.lib.numpy_json import numpy_json_default as _numpy_json_default
 from app.services.session_data_protocol import is_unavailable_ref
-from app.tools.registry import ToolRegistry
+from app.tools.registry import ToolRegistry, capture_arg_lineage_refs
 from app.utils.security import sanitize_error_msg
 from app.utils.geojson import geojson_bbox
 
@@ -473,7 +473,10 @@ class ToolDispatchService:
                 await self._session_wave_gate.acquire(session_id or "")
                 try:
                     async with _MultiSlotAcquire(self._wave_semaphore, _wave_slots):
-                        result = await self._registry.dispatch(tool_name, tool_args_raw, session_id=session_id)
+                        # V3 data foundation：捕获本调用参数消费的规范 ref
+                        # （血缘证据；下方产物铸造后随登记写入账本边）。
+                        with capture_arg_lineage_refs() as _arg_lineage:
+                            result = await self._registry.dispatch(tool_name, tool_args_raw, session_id=session_id)
                 finally:
                     await self._session_wave_gate.release(session_id or "")
             except OperationCancelled:
@@ -644,6 +647,16 @@ class ToolDispatchService:
                         raster_fps = snapshot_raster_fingerprints(_parsed) or None
                     except Exception:  # noqa: BLE001 — 指纹是增值记录，绝不阻塞
                         raster_fps = None
+                # V3 data foundation：输入 ref revision 快照（保形状覆写的
+                # 复用盲区守卫；增值记录，失败不阻塞）。
+                ref_revs = None
+                if _parsed is not None:
+                    from app.lib.gis.analysis_reuse import snapshot_ref_revisions
+
+                    try:
+                        ref_revs = await snapshot_ref_revisions(session_id, _parsed) or None
+                    except Exception:  # noqa: BLE001
+                        ref_revs = None
                 # Kriging slice review F1: the uncertainty surface registers
                 # under a SUFFIXED analysis_key — find_reusable_artifact picks
                 # the newest record per key, so an identical-keyed derived
@@ -667,6 +680,8 @@ class ToolDispatchService:
                             analysis_key=key,
                             input_shapes=input_shapes if role == "primary" else None,
                             raster_fingerprints=raster_fps if role == "primary" else None,
+                            ref_revisions=ref_revs if role == "primary" else None,
+                            inputs=sorted(_arg_lineage)[:16] if _arg_lineage else None,
                         )
             except Exception:  # noqa: BLE001 — 登记失败不影响产物本身
                 logger.debug(

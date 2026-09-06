@@ -75,6 +75,9 @@ uv.lock
 
 # Runtime data (exports, reports, uploads generated at runtime)
 data/
+# ...but the source package `app/lib/data` and its tests are code, not runtime data
+!app/lib/data/
+!tests/data/
 
 # Ad-hoc dev scripts / debug artifacts — keep on disk if useful but never commit
 scratch/
