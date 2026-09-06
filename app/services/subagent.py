@@ -173,6 +173,7 @@ class SubagentDispatcher:
         # 域/预算与调用方显式参数取**交集/更严者** —— 角色收紧，调用方不能
         # 经参数越权放宽。
         from app.services.subagent_roles import (
+            BudgetExceeded,
             SubagentBudget,
             SubagentRole as _SubagentRole,
             get_subagent_role,
@@ -364,23 +365,25 @@ class SubagentDispatcher:
                 refs=[],
                 error="budget_exceeded:wall_time",
             )
+        except BudgetExceeded as e:
+            # review R2 BLOCKER 修复：BudgetExceeded 现为 BaseException 派生
+            # （保证穿透引擎/管道的 except Exception 兜底）—— 本处理器必须
+            # 显式捕获，否则预算信号会沿 spawn_subagent → 父管道 → 父波执行
+            # 一路上抛，炸掉整个父 turn。此处是预算信号的终点：诚实失败。
+            logger.warning(
+                "[Subagent] parent=%s tool budget exceeded: %s",
+                self.parent_session_id, e,
+            )
+            return SubagentResult(
+                success=False,
+                summary=f"子代理超过工具预算被终止: {e}",
+                refs=[],
+                error="budget_exceeded:tools",
+            )
         except Exception as e:
             # #685: 非流式诚实 settle 后 chat() 会抛异常（empty / max_rounds / no_progress）
             # 这里统一判失败，不再假成功；summary 保留失败原因以便父循环决策。
             # refs=None（无法可靠计算 after-set）；父循环按无新增 refs 处理。
-            from app.services.subagent_roles import BudgetExceeded as _BudgetExceeded
-
-            if isinstance(e, _BudgetExceeded):
-                logger.warning(
-                    "[Subagent] parent=%s tool budget exceeded: %s",
-                    self.parent_session_id, e,
-                )
-                return SubagentResult(
-                    success=False,
-                    summary=f"子代理超过工具预算被终止: {e}",
-                    refs=[],
-                    error="budget_exceeded:tools",
-                )
             logger.exception("[Subagent] sub-engine failed")
             return SubagentResult(
                 success=False,

@@ -310,19 +310,25 @@ def test_health_mismatch_cleared_by_success():
 
 
 def test_route_degraded_candidates_ordered_after_healthy(routing_stack):
-    """review R1 MAJOR 回归锁：限流/不匹配候选真实排后。"""
-    router, _reg, health = routing_stack
-    _reg.upsert_override(ModelDescriptor(
-        provider_id="webgis", model_id="degraded-model", tool_calling=True,
+    """review R1 MAJOR 回归锁：限流/不匹配候选真实排后（健康优先全序）。"""
+    router, reg, health = routing_stack
+    reg.upsert_override(ModelDescriptor(
+        provider_id="webgis", model_id="healthy-a", tool_calling=True,
         fallback_group="default",
     ))
-    health.record_failure("webgis", "degraded-model", kind="rate_limit")
-    d = router.route(RouteRequest(role="execution", prefer_model="main-model"))
-    # degraded-model 在链中但不早于健康候选（此处链中其余皆健康）
-    assert "degraded-model" not in d.fallback_chain[:0]
+    reg.upsert_override(ModelDescriptor(
+        provider_id="webgis", model_id="degraded-z", tool_calling=True,
+        fallback_group="default",
+    ))
+    health.record_failure("webgis", "degraded-z", kind="rate_limit")
+    d = router.route(RouteRequest(
+        role="execution", prefer_model="main-model",
+    ))
     chain = d.fallback_chain
-    if "degraded-model" in chain:
-        assert chain.index("degraded-model") >= len(chain) - 1
+    assert "healthy-a" in chain and "degraded-z" in chain
+    assert chain.index("healthy-a") < chain.index("degraded-z"), (
+        f"degraded candidate must come after healthy: {chain}"
+    )
 
 
 def test_failure_classification_connect_timeout_is_transport():

@@ -10,6 +10,7 @@ import time
 import pytest
 
 from app.evaluation.reliability_corpus import build_reliability_corpus
+from app.services.subagent_roles import BudgetExceeded
 from app.evaluation.replay import simulate_agent_loop
 from app.tools.argument_normalization import TOOL_NAME_ALIASES
 from app.tools.descriptor import SideEffectClass
@@ -275,3 +276,43 @@ def test_large_registry_fingerprint_invalidation_correct():
     fp1 = reg.registry_fingerprint()
     reg.register(name="late_addition", description="新工具", func=lambda: {"s": True})
     assert reg.registry_fingerprint() != fp1
+
+
+# ---------------------------------------------------------------------------
+# review R2: 直扫器 + 管道预算穿透回归锁
+# ---------------------------------------------------------------------------
+
+def test_nonfinite_scanner_deep_and_incomplete_detection():
+    from app.tools.registry import _find_nonfinite_numbers
+
+    # 深层 NaN（旧 4096 节点静默截断之下）现在可检出
+    # 树规模 ≈ 1 + 5 + 100 + 100 + 5000 + 5000 ≈ 10.4k 次访问：
+    # 高于旧 4096 静默截断点（回归意义），低于 40k 扫描预算（不触发 incomplete）
+    deep = {"a": [
+        {"b": [{"c": [{"d": 0.0} for _ in range(50)]} for _ in range(20)]}
+        for _ in range(5)
+    ]}
+    found, incomplete = _find_nonfinite_numbers(deep)
+    assert found == [] and incomplete is False
+    deep["a"][-1]["b"][-1]["c"][-1]["d"] = float("nan")
+    found2, incomplete2 = _find_nonfinite_numbers(deep)
+    assert found2 and incomplete2 is False
+
+    # 预算耗尽 → incomplete=True（绝不静默宣称干净）
+    huge = {"k{}".format(i): [float(i)] * 10 for i in range(2000)}
+    _, incomplete2 = _find_nonfinite_numbers(huge, max_nodes=100)
+    assert incomplete2 is True
+
+
+@pytest.mark.asyncio
+async def test_pipeline_lets_budget_exceeded_escape(corpus_registry):
+    """review R2 回归锁：管道对 BudgetExceeded 显式再抛（BaseException）。"""
+    from app.services.chat.tool_pipeline import ToolExecutionPipeline
+
+    async def _raise(_tc, _sid, _sent):
+        raise BudgetExceeded("tool_calls 41 > 40")
+
+    pipeline = ToolExecutionPipeline(registry=corpus_registry, dispatch_fn=_raise)
+    tc = {"id": "c1", "function": {"name": "echo", "arguments": "{}"}}
+    with pytest.raises(BudgetExceeded):
+        await pipeline.execute_tool_call(tc, "sess-1", task_id=None)

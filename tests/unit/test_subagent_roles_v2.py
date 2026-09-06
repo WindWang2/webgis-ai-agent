@@ -235,3 +235,57 @@ async def test_wall_clock_budget_enforced():
     )
     assert result.success is False
     assert result.error == "budget_exceeded:wall_time"
+
+
+@pytest.mark.asyncio
+async def test_budget_exceeded_returns_structured_result_end_to_end():
+    """review R2 BLOCKER 回归锁：BudgetExceeded(BaseException) 必须在
+    SubagentDispatcher.run 内被显式处理器接住 → error="budget_exceeded:tools"。
+    此前处理器是 except Exception（对 BaseException 永不命中），预算信号会
+    沿 spawn_subagent → 父管道一路上抛炸掉父 turn。"""
+    from app.services.subagent import SubagentDispatcher
+
+    class _Reg:
+        def all_metadata(self):
+            return {}
+
+        def get_schemas_subset(self, names):
+            return []
+
+        def descriptor(self, name):
+            raise KeyError(name)
+
+    class _Engine:
+        """模拟引擎：LLM 循环里反复调用 dispatch_service.dispatch。"""
+
+        def __init__(self):
+            self.calls = {"n": 0}
+
+            class _Svc:
+                def __init__(self, outer):
+                    self._outer = outer
+
+                async def dispatch(self, tc, session_id, executed_tools=None):
+                    self._outer.calls["n"] += 1
+                    if self._outer.calls["n"] > 3:
+                        raise BudgetExceeded("tool_calls 4 > 3")
+                    return {"status": "ok", "llm_payload": "x"}
+
+            self.dispatch_service = _Svc(self)
+
+        async def chat(self, message, session_id):
+            # 三轮工具调用后预算爆炸
+            for _ in range(5):
+                await self.dispatch_service.dispatch(
+                    {"function": {"name": "t", "arguments": "{}"}}, session_id
+                )
+                await asyncio.sleep(0)
+            return {"content": "done"}
+
+    dispatcher = SubagentDispatcher(_Reg(), "sess-budget")
+    dispatcher._build_sub_engine = lambda subset, rounds: _Engine()
+
+    result = await dispatcher.run(task="预算任务", max_rounds=3)
+    assert result.success is False
+    assert result.error == "budget_exceeded:tools"
+    assert "预算" in result.summary
