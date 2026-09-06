@@ -150,6 +150,9 @@ class ContextAssemblyResult:
     estimated_tokens: int
     history_turns_included: int
     layer_count: int
+    # ADR-0101 Wave 5：模型感知预算度量（可观测；不改变组装/截断行为）。
+    # None = 调用方未提供 context_window（无法规划）；dict = BudgetReport.as_dict()。
+    budget_report: Optional[dict] = None
 
     def to_messages(self) -> List[dict]:
         """Return the raw OpenAI-compatible message dict list."""
@@ -393,11 +396,37 @@ class ChatContextAssembler:
             # 兼容旧调用（测试/benchmark 只传字符数）：ASCII-heavy 近似。
             total_tokens += int(tools_payload_chars / 4) + 1
 
+        # ADR-0101 Wave 5：模型感知预算度量（加观测不加行为 —— 截断权仍在
+        # 既有组件；超预算以 violations 留痕，供 trace/debug bundle 消费）。
+        budget_report: Optional[dict] = None
+        try:
+            from app.core.config import settings as _settings
+            from app.services.chat.context_budget import (
+                measure_assembled_context,
+            )
+
+            _window = getattr(_settings, "LLM_CONTEXT_WINDOW", None)
+            _report = measure_assembled_context(
+                head,
+                tools_payload=tools_payload or "",
+                context_window=_window,
+                max_output_tokens=_settings.LLM_MAX_TOKENS,
+            )
+            budget_report = _report.as_dict()
+            if _report.over_budget:
+                logger.warning(
+                    "[CONTEXT-BUDGET] session=%s over budget: %s",
+                    session_id, _report.violations,
+                )
+        except Exception:  # noqa: BLE001 — 预算度量绝不阻断组装
+            budget_report = None
+
         return ContextAssemblyResult(
             messages=head,
             estimated_tokens=total_tokens,
             history_turns_included=len(history),
             layer_count=layer_count,
+            budget_report=budget_report,
         )
 
 

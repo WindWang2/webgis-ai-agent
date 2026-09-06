@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from contextlib import contextmanager
-from typing import Any, Callable, Literal, Optional, Type, List, Union, get_args, get_origin, Annotated
+from typing import Any, Callable, Literal, Optional, Type, List, Tuple, Union, get_args, get_origin, Annotated
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, create_model, ValidationError
 
 from enum import Enum
@@ -16,6 +16,23 @@ from app.lib.geo_processor.core import GeoAnalysisResult
 
 from app.services.jobs.cancellation import OperationCancelled
 from app.services.llm_result_formatter import is_error_like_result
+from app.tools import argument_normalization as _anorm
+from app.tools.argument_normalization import (
+    TOOL_NAME_ALIASES as _TOOL_NAME_ALIASES,
+    coerce_json_string_lists as _coerce_json_string_lists_pairs,
+    normalize_tool_arguments as _normalize_tool_arguments_pairs,
+    resolve_tool_name as _resolve_tool_name,
+    normalization_report_var,
+)
+from app.tools.descriptor import (
+    SideEffectClass,
+    ToolDescriptor,
+    ToolStatus,
+    descriptor_fingerprint as _descriptor_fingerprint,
+    registry_fingerprint as _registry_fingerprint_fn,
+    schema_fingerprint as _schema_fingerprint_fn,
+    validate_descriptor_fields,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +81,29 @@ _VALID_TOOL_COSTS = ("light", "medium", "heavy")
 # 同步工具并发上限（见 _dispatch_impl 的 to_thread 路径）。GIL 下 CPU-bound
 # 工具超过核数无收益；给足核数余量 + 小缓冲，避免并行工具波互相拖累。
 _TOOL_THREAD_LIMIT = max(4, min(16, (os.cpu_count() or 4) + 4))
-_tool_thread_semaphore = asyncio.Semaphore(_TOOL_THREAD_LIMIT)
+# Wave 6 竞态审计修复：信号量按运行中事件循环惰性创建（LLMHttpClientRegistry
+# 同款 loop-aware 先例）。此前模块级 `asyncio.Semaphore(...)` 在首次 acquire 时
+# 绑定到当时的循环 —— pytest 函数级循环/多循环嵌入场景下，后续循环的每次
+# THREAD 工具执行都抛 "bound to a different event loop"（真实缺陷，竞态测试
+# 捕获）。既有测试 monkeypatch `_tool_thread_semaphore` 注入自定义限额的 seam
+# 保持兼容（见 _get_tool_thread_semaphore）。
+_tool_thread_semaphore: Optional[asyncio.Semaphore] = None
+
+
+def _get_tool_thread_semaphore() -> asyncio.Semaphore:
+    """review R1 INFO：去掉写后不读的 _tool_thread_semaphore_loop 全局 ——
+    绑定判定直接内省 asyncio.Semaphore 的私有 ``_loop``（无该属性的信号量
+    —— 含测试 monkeypatch 注入的新建信号量 —— 视为未绑定，原样复用）。
+    已知权衡：循环轮转后各自循环持独立信号量，全局上限短暂按循环计。"""
+    global _tool_thread_semaphore
+    loop = asyncio.get_running_loop()
+    sem = _tool_thread_semaphore
+    if sem is not None:
+        bound = getattr(sem, "_loop", None)
+        if bound is None or bound is loop:
+            return sem
+    _tool_thread_semaphore = asyncio.Semaphore(_TOOL_THREAD_LIMIT)
+    return _tool_thread_semaphore
 
 # 单次工具执行的墙钟预算（秒）。默认 300s，TOOL_TIMEOUT_S 环境变量可覆盖；
 # 注册时工具声明了 timeout 元数据则优先于此处（见 _dispatch_impl）。注意
@@ -106,279 +145,35 @@ from app.lib.json_size import (  # noqa: F401
 _ALIAS_LOOKUP_MAX_DISTINCT = 1024
 
 
-def _is_list_annotation(annotation: Any) -> bool:
-    """annotation 是否为 list 族（list / list[T] / List[T] / Optional[List[T]]）。"""
-    import typing as _typing
+# ---------------------------------------------------------------------------
+# ADR-0101 Wave 2：参数归一化已下沉 app/tools/argument_normalization.py
+# （声明式规则表 + 修复证据）。此处保留私有兼容别名 —— 既有测试与内部
+# 引用不经改写继续工作；行为契约由声明表逐字迁移并有测试钉住。
+# ---------------------------------------------------------------------------
 
-    ann = annotation
-    # Union 语义（含 Optional）：任一 arm 是 list 族即认。
-    if _typing.get_origin(ann) is Union:
-        return any(_is_list_annotation(a) for a in _typing.get_args(ann))
-    if ann is list or ann is List:
-        return True
-    return _typing.get_origin(ann) is list
+_is_list_annotation = _anorm._is_list_annotation
 
 
-def _coerce_json_string_lists(
-    arguments: dict, model: Type[BaseModel]
-) -> dict:
-    """列表参数的 JSON 字符串宽容解码（2026-08-25 会话：webgis_map_product）。
-
-    LLM 常把本该是数组的参数编码成 JSON 字符串（``"[\"a\",\"b\"]"``）——
-    pydantic 拒以 ``Input should be a valid list``，且模型自愈重试不改形
-    （实测连错 3 轮触发无进展终止）。凡模型字段注解为 list 族、实参是
-    str 且 json.loads 结果确为 list 的，就地解码替换；其余形态不动，
-    留给 pydantic 出原本的校验错误。
-    """
-    coerced = False
-    out = arguments
-    for fname, finfo in model.model_fields.items():
-        if fname not in arguments or not _is_list_annotation(finfo.annotation):
-            continue
-        val = arguments[fname]
-        if not isinstance(val, str) or not val.strip():
-            continue
-        try:
-            parsed = json.loads(val)
-        except (json.JSONDecodeError, ValueError):
-            continue
-        if isinstance(parsed, list):
-            if not coerced:
-                out = dict(arguments)
-                coerced = True
-            out[fname] = parsed
-            logger.debug(
-                "registry: coerced JSON-string list arg %r (%d items)",
-                fname, len(parsed),
-            )
+def _coerce_json_string_lists(arguments: dict, model):
+    """兼容包装：返回归一化后的 dict（修复证据走 ContextVar/trace）。"""
+    out, _repairs = _coerce_json_string_lists_pairs(arguments, model)
     return out
-
-_TOOL_NAME_ALIASES: dict[str, str] = {
-    # 行政边界与政区查询别名
-    "admin_boundary_query": "get_local_admin_boundary",
-    "get_admin_boundary": "get_local_admin_boundary",
-    "query_admin_boundary": "get_local_admin_boundary",
-    "admin_boundary": "get_local_admin_boundary",
-    "admin_query": "get_admin_division",
-    "query_admin_division": "get_admin_division",
-    "get_boundary": "get_local_admin_boundary",
-    "get_child_district": "get_child_districts",
-    "get_local_districts": "get_local_child_districts",
-    "get_districts": "get_child_districts",
-
-    # POI 查询别名
-    "poi_query": "search_poi",
-    "query_poi": "search_poi",
-    "poi_search": "search_poi",
-    "search_pois": "search_poi",
-    "query_osm_pois": "query_osm_poi",
-
-    # 密度/表面分析别名
-    "density_surface": "kde_surface",
-    "density_analysis": "kde_surface",
-    "kernel_density": "kde_surface",
-    "kernel_density_estimation": "kde_surface",
-    "heatmap_analysis": "heatmap_data",
-    "kde_analysis": "kde_surface",
-
-    # 空间聚合别名
-    "admin_aggregation": "spatial_aggregate",
-    "spatial_aggregation": "spatial_aggregate",
-    "admin_aggregate": "spatial_aggregate",
-    "point_aggregation": "spatial_aggregate",
-    "aggregate_points": "spatial_aggregate",
-
-    # 缓冲区别名
-    "buffer": "buffer_analysis",
-    "buffer_layer": "buffer_analysis",
-
-    # 路径/网络分析别名
-    "shortest_path": "network_shortest_path",
-    "route_planning": "plan_route",
-    "isochrone": "isochrone_analysis",
-
-    # 空间叠加/属性
-    "overlay": "overlay_analysis",
-    "spatial_join_layers": "spatial_join",
-    "zonal_statistics": "zonal_stats",
-}
-
-
-def _fold_alias(
-    args: dict, target: str, aliases, model_fields: set, *, list_wrap: bool = False
-) -> None:
-    """target 缺席时把首个在场的别名折叠过去。
-
-    Pi 兼容审查（master 回归修复）：声明字段（= schema 正名或另一真实
-    参数）绝不折叠 —— LLM 按 schema 命名的参数永远优先于别名猜测。旧实现
-    把 webgis_map_product 声明的 ``title`` 改名成不存在的 ``map_title``，
-    pydantic 未知参数门必然拒绝（golden 流程三连挂）。list_wrap=True 时
-    标量包成单元素列表（overlay_refs 语义）。
-    """
-    if target in args:
-        return
-    for alias in aliases:
-        if alias in args:
-            if alias in model_fields:
-                continue
-            val = args.pop(alias)
-            if list_wrap and not isinstance(val, list):
-                val = [val]
-            args[target] = val
-            return
 
 
 def _normalize_tool_arguments(
-    name: str, arguments: dict, model: Optional[Type[BaseModel]] = None
+    name: str, arguments: dict, model=None
 ) -> dict:
-    """归一化常见 LLM 实参字段别名与命名习惯偏差。"""
-    if not isinstance(arguments, dict):
-        return arguments
-
-    # 1. 浅拷贝并归一化 key 风格（例如 kebab-case -> snake_case: radius-px -> radius_px）
-    args: dict[str, Any] = {}
-    for k, v in arguments.items():
-        if isinstance(k, str) and "-" in k and not k.startswith("-"):
-            args[k.replace("-", "_")] = v
-        else:
-            args[k] = v
-
-    model_fields = set(model.model_fields.keys()) if model is not None else set()
-
-    # 2. 通用 GeoJSON / 空间要素引用别名映射
-    # 只要工具接收 geojson 参数，且未直接传 geojson，自动将 geojson_ref / data_ref / source_ref / data 等变体折叠为 geojson
-    GEOJSON_ALIASES = (
-        "geojson_ref",
-        "data_ref",
-        "source_ref",
-        "input_geojson",
-        "points_geojson",
-        "target_geojson",
-        "source_geojson",
-        "layer_data",
-        "points_data",
-        "data",
-        "input_data",
-        "feature_collection",
-        "features",
-        "points",
-        "ref",
-        "ref_id",
-        "layer_ref",
-    )
-    if ("geojson" in model_fields or name in (
-        "heatmap_data", "buffer_analysis", "spatial_stats", "nearest_neighbor",
-        "kde_surface", "kde_contours", "voronoi_polygons", "convex_hull",
-        "multi_ring_buffer", "attribute_filter", "h3_binning", "spatial_cluster",
-        "hotspot_analysis", "moran_i", "create_thematic_map", "isochrone_analysis",
-        "service_area_simple", "point_profile"
-    )) and "geojson" not in args:
-        for alias in GEOJSON_ALIASES:
-            if alias in args:
-                # Pi 兼容审查修复：声明过的字段一律保留 —— 包括 geojson_ref/
-                # data_ref 等保护名（此前例外清单写反：声明的保护名反而会被
-                # 折叠进 geojson，正是注释声称要防止的行为）。LLM 显式按
-                # schema 命名的参数永远优先于别名猜测。
-                if alias in model_fields:
-                    continue
-                args["geojson"] = args.pop(alias)
-                break
-
-    # 3. 空间聚合 (spatial_aggregate)
-    if name == "spatial_aggregate":
-        _fold_alias(args, "points",
-                    ("points_data", "points_ref", "points_geojson", "point_data",
-                     "data", "geojson", "geojson_ref", "ref"), model_fields)
-        _fold_alias(args, "polygons",
-                    ("polygons_data", "polygons_ref", "polygons_geojson", "polygon_data",
-                     "admin_data", "admin_boundary", "boundary_ref", "boundary",
-                     "admin_boundary_ref", "data", "geojson", "geojson_ref", "ref"),
-                    model_fields)
-
-    # 4. POI 搜索 (search_poi, query_local_poi, query_gd_poi, query_poi)
-    if name in ("search_poi", "query_local_poi", "query_gd_poi", "query_poi"):
-        _fold_alias(args, "keyword",
-                    ("keywords", "query", "text", "search_text", "name"), model_fields)
-        if "subtype" in model_fields or name in ("query_local_poi", "query_gd_poi"):
-            _fold_alias(args, "subtype",
-                        ("poi_type", "type", "category", "sub_type", "class_name",
-                         "type_name"), model_fields)
-        if "district" in model_fields or name in ("query_local_poi", "query_gd_poi"):
-            _fold_alias(args, "district",
-                        ("district_name", "city_name", "city", "region", "admin_name",
-                         "address"), model_fields)
-        if "adcode" in model_fields or name in ("query_local_poi", "query_gd_poi"):
-            _fold_alias(args, "adcode",
-                        ("ad_code", "city_code", "district_code", "code"), model_fields)
-
-    # 5. 行政区划查询 (get_local_admin_boundary, get_admin_division, admin_boundary_query)
-    if name in ("get_local_admin_boundary", "get_admin_division", "admin_boundary_query"):
-        target_key = "keywords" if name == "get_admin_division" else "name"
-        _fold_alias(
-            args, target_key,
-            ("admin_name", "city", "district", "district_name", "region", "address",
-             "location", "query", "keywords" if target_key == "name" else "name"),
-            model_fields,
-        )
-        _fold_alias(args, "adcode",
-                    ("ad_code", "city_code", "district_code", "code"), model_fields)
-
-    # 6. 缓冲区分析 (buffer_analysis, multi_ring_buffer)
-    if name == "buffer_analysis":
-        _fold_alias(args, "distance",
-                    ("buffer_distance", "dist", "radius", "buffer_radius"), model_fields)
-        _fold_alias(args, "unit", ("dist_unit", "buffer_unit"), model_fields)
-    elif name == "multi_ring_buffer":
-        _fold_alias(args, "distances",
-                    ("ring_distances", "radii", "distance_list", "distance"),
-                    model_fields, list_wrap=True)
-
-    # 7. 专题图与模板 (create_thematic_map, apply_template)
-    if name in ("create_thematic_map", "apply_template"):
-        _fold_alias(args, "field",
-                    ("classify_field", "field_name", "property", "property_name",
-                     "column", "attribute", "attr"), model_fields)
-        _fold_alias(args, "palette",
-                    ("color_palette", "color_scheme", "colors", "colormap", "color"),
-                    model_fields)
-        _fold_alias(args, "method",
-                    ("classify_method", "classification", "classes_method", "scheme"),
-                    model_fields)
-        if "n_classes" not in args:
-            for alias in ("num_classes", "bins", "k", "class_count", "classes"):
-                if alias in args and alias not in model_fields and isinstance(args[alias], (int, float)):
-                    args["n_classes"] = int(args.pop(alias))
-                    break
-
-    # 8. 地图产品装配 (webgis_map_product) —— 目标必须是真实签名参数
-    #（MapProductArgs：title / primary_ref / overlay_refs；无 map_title、
-    # 无 insight_summary —— master 回归曾把声明的 title 改名成不存在的
-    # map_title、把 summary 折进不存在的 insight_summary，两条都会被
-    # 未知参数门拒绝）。map_title 保留为**入向**别名（旧会话/历史习惯）。
-    if name == "webgis_map_product":
-        _fold_alias(args, "title",
-                    ("map_title", "name", "project_title"), model_fields)
-        _fold_alias(args, "primary_ref",
-                    ("primary_layer", "primary_source", "base_ref", "base_layer",
-                     "main_ref", "ref", "geojson_ref"), model_fields)
-        _fold_alias(args, "overlay_refs",
-                    ("overlays", "overlay_layers", "layers", "other_refs", "sub_refs"),
-                    model_fields, list_wrap=True)
-
-    # 9. 图层增删改 (webgis_layer_upsert, webgis_component_update, webgis_layout_set)
-    if name == "webgis_layer_upsert":
-        _fold_alias(args, "source_data",
-                    ("data", "source_ref", "geojson_ref", "geojson", "ref", "layer_data"),
-                    model_fields)
-
-    return args
+    """兼容包装：返回归一化后的 dict（修复证据丢弃 —— dispatch 路径请用
+    ``_normalize_with_report`` 以保留 trace 证据）。"""
+    out, _repairs = _normalize_tool_arguments_pairs(name, arguments, model)
+    return out
 
 
+def _normalize_with_report(name: str, arguments: dict, model=None):
+    """dispatch 内部入口：归一化并返回 (args, repairs)。"""
+    return _normalize_tool_arguments_pairs(name, arguments, model)
 
 
-# G-1 (phase-E review): TypeAdapter construction costs ~29µs (scalars) up to
-# ~289µs (Annotated[float, Field(ge, le)]) — cache per (model, field) so the
-# oversized-bypass scalar validation stays sub-µs on the hot repeat.
 _TYPEADAPTER_CACHE: dict[tuple[type, str], "TypeAdapter"] = {}
 
 
@@ -485,6 +280,48 @@ def validate_geojson_structure(obj: Any) -> None:
                 validate_geojson_structure(val)
 
 
+# review R1 MAJOR：扫描预算必须**覆盖全部非 oversized 实参树**（oversized 门
+# 本身 ≤ _ESTIMATE_MAX_NODES 节点）—— 此前 4096 节点静默截断会让预算耗尽后的
+# NaN 漏检；且去掉 [:64] 广度截断（截断 = 漏检 = 安全面失效）。
+_NONFINITE_SCAN_MAX_NODES = _ESTIMATE_MAX_NODES * 2
+_NONFINITE_POS = float("inf")
+_NONFINITE_NEG = float("-inf")
+
+
+def _find_nonfinite_numbers(obj: Any, max_nodes: int = _NONFINITE_SCAN_MAX_NODES) -> Tuple[list, bool]:
+    """扫描实参树中的 NaN / ±Infinity。返回 (命中路径至多 5 个, 是否扫描不完整)。
+
+    review R1 MAJOR：**不允许静默截断** —— 预算耗尽时 incomplete=True，调用方
+    拒绝（漏检 = 安全面失效）。默认预算 2× oversized 节点门，覆盖全部非
+    oversized 实参树；无广度截断（截断同样漏检）。
+    """
+    budget = [max_nodes]
+    incomplete = [False]
+    found: list = []
+    import itertools as _itertools
+
+    def _walk(node, path):
+        if len(found) >= 5 or incomplete[0]:
+            return
+        if budget[0] <= 0:
+            incomplete[0] = True
+            return
+        budget[0] -= 1
+        if isinstance(node, float):
+            if node != node or node == _NONFINITE_POS or node == _NONFINITE_NEG:
+                found.append(path or "$")
+            return
+        if isinstance(node, dict):
+            for k, v in _itertools.islice(node.items(), None):
+                _walk(v, f"{path}.{k}" if path else str(k))
+        elif isinstance(node, list):
+            for i, v in _itertools.islice(enumerate(node), None):
+                _walk(v, f"{path}[{i}]")
+
+    _walk(obj, "")
+    return found, incomplete[0]
+
+
 class ToolRegistry:
     def __init__(self):
         self._tools: dict[str, Callable] = {}
@@ -500,6 +337,11 @@ class ToolRegistry:
         #       3 = 仅在 LLM 显式 list_available_tools 后才看见 (rare / heavy)
         # domains: tier 2 工具属于哪些主题，用于关键词触发
         self._metadata: dict[str, dict[str, Any]] = {}
+        # ADR-0101: 描述符/指纹缓存（register / update_args_model 时失效）。
+        self._descriptor_cache: dict[str, ToolDescriptor] = {}
+        self._schema_fp_cache: dict[str, str] = {}
+        self._descriptor_fp_cache: dict[str, str] = {}
+        self._registry_fp: Optional[str] = None
 
     def tool(self, name: str, description: str,
              param_descriptions: Optional[dict[str, str]] = None,
@@ -512,7 +354,7 @@ class ToolRegistry:
              contract_version: int = 1,
              cost: ToolCost = "light",
              **kwargs: Any) -> Callable:
-        """装饰器：注册工具到此 registry 实例"""
+        """装饰器：注册工具到此 registry 实例（描述符扩展字段见 register）。"""
         def decorator(func: Callable):
             self.register(
                 name, description, func,
@@ -529,6 +371,20 @@ class ToolRegistry:
             )
             return func
         return decorator
+
+    # ADR-0101：描述符扩展字段（全部可选，缺省派生；存量工具零改动兼容）。
+    # 未知 kwarg 一律注册期显式失败 —— 此前 **kwargs 静默吞掉拼写错误，
+    # 声明了半天字段实际没生效，是描述符契约最大的隐性漂移源。
+    _DESCRIPTOR_KWARGS = (
+        "status", "summary", "deprecation_of",
+        "side_effect", "requires_credentials",
+        "capabilities", "algorithms", "provider_dependencies", "tags",
+        "output_semantic_type", "produced_refs", "accepts_ref_types",
+        "network", "deterministic", "result_size_policy",
+    )
+    _KNOWN_REGISTER_KWARGS = frozenset(_DESCRIPTOR_KWARGS) | {
+        "parameters", "field_extras",
+    }
 
     def register(self, name: str, description: str, func: Callable,
                  param_descriptions: Optional[dict[str, str]] = None,
@@ -550,7 +406,39 @@ class ToolRegistry:
         ``{"ref_cursor": True}`` / ``{"capture_ref_of": "data"}``），不必为
         声明一个 extra 重建整套 pydantic 模型。显式 args_model 优先（其
         自带 extras 生效，此处忽略）。
+
+        描述符扩展字段（ADR-0101，全部可选）：
+        status / summary / deprecation_of / side_effect / requires_credentials /
+        capabilities / algorithms / provider_dependencies / output_semantic_type /
+        produced_refs / accepts_ref_types / network / deterministic /
+        result_size_policy —— 语义见 app/tools/descriptor.py。
         """
+        unknown = set(kwargs) - self._KNOWN_REGISTER_KWARGS
+        if unknown:
+            raise ValueError(
+                f"工具 {name} 注册时传入了未知的描述符字段: {', '.join(sorted(unknown))}。"
+                f"合法扩展字段: {', '.join(sorted(self._KNOWN_REGISTER_KWARGS))}"
+            )
+        status = str(kwargs.get("status") or ToolStatus.STABLE.value)
+        side_effect = str(kwargs.get("side_effect") or SideEffectClass.UNCLASSIFIED.value)
+        result_size_policy = str(kwargs.get("result_size_policy") or "unknown")
+        deprecation_of = kwargs.get("deprecation_of")
+        summary = str(kwargs.get("summary") or "")
+        desc_errors = validate_descriptor_fields(
+            name=name, status=status, deprecation_of=deprecation_of,
+            side_effect=side_effect, result_size_policy=result_size_policy,
+            summary=summary,
+            capabilities=kwargs.get("capabilities"),
+            algorithms=kwargs.get("algorithms"),
+            produced_refs=kwargs.get("produced_refs"),
+            accepts_ref_types=kwargs.get("accepts_ref_types"),
+            requires_credentials=kwargs.get("requires_credentials"),
+            provider_dependencies=kwargs.get("provider_dependencies"),
+            domains=domains,
+            tags=kwargs.get("tags"),
+        )
+        if desc_errors:
+            raise ValueError("; ".join(desc_errors))
         if name in self._tools and self._tools[name] is not func:
             # #1062: 此前静默覆盖同名工具 —— 两个模块撞名（或 skill 热重建
             # re-register）会无声替换一个活工具。显式告警留痕；显式更新走
@@ -646,6 +534,17 @@ class ToolRegistry:
             raise ValueError(
                 f"工具 {name} 声明了非法 cost={cost!r}，合法值: {', '.join(_VALID_TOOL_COSTS)}"
             )
+
+        def _str_tuple(key: str) -> tuple:
+            val = kwargs.get(key)
+            return tuple(val) if val else ()
+
+        # ADR-0101：描述符字段与 tier/domains 同源存入 _metadata（单一存储，
+        # descriptor() 只是投影构造器）。tier>=3 强制 destructive 副作用类，
+        # 未标注也不许低于 destructive —— 安全分类不允许「忘了标就是纯读」。
+        effective_side_effect = side_effect
+        if int(tier) >= 3 and effective_side_effect != SideEffectClass.DESTRUCTIVE.value:
+            effective_side_effect = SideEffectClass.DESTRUCTIVE.value
         self._metadata[name] = {
             "tier": tier,
             "domains": list(domains or []),
@@ -654,7 +553,45 @@ class ToolRegistry:
             "version": str(version or "1.0"),
             "contract_version": int(contract_version or 1),
             "cost": cost,
+            "status": status,
+            "summary": summary,
+            "deprecation_of": deprecation_of,
+            "side_effect": effective_side_effect,
+            "requires_credentials": list(kwargs.get("requires_credentials") or []),
+            "capabilities": list(kwargs.get("capabilities") or []),
+            "algorithms": list(kwargs.get("algorithms") or []),
+            "provider_dependencies": list(kwargs.get("provider_dependencies") or []),
+            "tags": list(kwargs.get("tags") or []),
+            "output_semantic_type": kwargs.get("output_semantic_type"),
+            "produced_refs": list(kwargs.get("produced_refs") or []),
+            "accepts_ref_types": list(kwargs.get("accepts_ref_types") or []),
+            "network": kwargs.get("network"),
+            "deterministic": kwargs.get("deterministic"),
+            "result_size_policy": result_size_policy,
+            "required_fields": sorted(str(k) for k in (required or [])),
         }
+        # ADR-0101 Wave 6：注册期执行策略审计（warning 级留痕不阻断；
+        # error 级发现由 tests/unit/test_execution_policy_audit.py 对活注册表钉零）。
+        try:
+            from app.tools.policy_audit import audit_registration
+
+            for _f in audit_registration(name, func, policy, cost, timeout):
+                if _f.severity.value == "error":
+                    logger.error("[policy-audit] %s: %s (%s)", _f.tool, _f.detail, _f.code)
+                elif _f.severity.value == "warning":
+                    logger.warning("[policy-audit] %s: %s (%s)", _f.tool, _f.detail, _f.code)
+                else:
+                    logger.info("[policy-audit] %s: %s (%s)", _f.tool, _f.detail, _f.code)
+        except Exception as _audit_exc:  # noqa: BLE001
+            # review R1 minor：审计器自身缺陷不得静默吞掉（审计是 warning 级
+            # 不阻断注册，但审计器坏了必须留痕）。
+            logger.warning("[policy-audit] audit_registration failed for %s: %s",
+                           name, _audit_exc)
+        # 描述符 / 指纹缓存失效（同 schema_size 失效语义）
+        self._descriptor_cache.pop(name, None)
+        self._schema_fp_cache.pop(name, None)
+        self._descriptor_fp_cache.pop(name, None)
+        self._registry_fp = None
 
     @staticmethod
     def _declared_ref_cursor_keys(model: Optional[Type[BaseModel]]) -> set[str]:
@@ -760,6 +697,11 @@ class ToolRegistry:
         for s in self._schemas:
             if s["function"]["name"] == name:
                 s["function"]["parameters"] = new_params
+        # ADR-0101：schema 变更 → 入参指纹/描述符/全库指纹全部失效
+        self._schema_fp_cache.pop(name, None)
+        self._descriptor_cache.pop(name, None)
+        self._descriptor_fp_cache.pop(name, None)
+        self._registry_fp = None
 
     def get_schemas_subset(self, names: set[str]) -> list[dict]:
         """按名称白名单返回 schema 子集；用于 ToolCatalog 分层选择。"""
@@ -811,6 +753,136 @@ class ToolRegistry:
     def all_metadata(self) -> dict[str, dict[str, Any]]:
         """获取全部工具的元数据快照。"""
         return dict(self._metadata)
+
+    # ------------------------------------------------------------------
+    # ADR-0101: ToolDescriptor V2 投影与指纹
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def resolve_name(name: str) -> str:
+        """入向工具名别名折叠为 canonical 名（dispatch 同款语义，公开只读）。"""
+        return _resolve_tool_name(name)
+
+    def aliases_for(self, name: str) -> list[str]:
+        """指向 canonical 工具 ``name`` 的全部入向别名（含自反时排除自身）。"""
+        return sorted(a for a, target in _TOOL_NAME_ALIASES.items() if target == name)
+
+    def descriptor(self, name: str) -> ToolDescriptor:
+        """构造（并缓存）工具描述符 —— 从注册元数据 + schema 派生的只读投影。
+
+        未注册工具 raise KeyError（调用方先用 list_tools/contains 判定）。
+        """
+        canonical = self.resolve_name(name)
+        cached = self._descriptor_cache.get(canonical)
+        if cached is not None:
+            return cached
+        meta = self._metadata.get(canonical)
+        if meta is None:
+            raise KeyError(f"tool {canonical!r} not registered")
+        schema = next(
+            (s for s in self._schemas if s["function"]["name"] == canonical), None
+        )
+        required_fields: tuple[str, ...] = ()
+        if schema is not None:
+            required_fields = tuple(sorted(schema["function"]["parameters"].get("required", [])))
+        try:
+            status = ToolStatus(meta.get("status", ToolStatus.STABLE.value))
+        except ValueError:
+            status = ToolStatus.STABLE
+        try:
+            side_effect = SideEffectClass(meta.get("side_effect", SideEffectClass.UNCLASSIFIED.value))
+        except ValueError:
+            side_effect = SideEffectClass.UNCLASSIFIED
+        desc = ToolDescriptor(
+            name=canonical,
+            description=next(
+                (s["function"]["description"] for s in self._schemas
+                 if s["function"]["name"] == canonical),
+                "",
+            ),
+            summary=str(meta.get("summary") or ""),
+            version=str(meta.get("version", "1.0")),
+            contract_version=int(meta.get("contract_version", 1) or 1),
+            status=status,
+            deprecation_of=meta.get("deprecation_of"),
+            tier=int(meta.get("tier", 1)),
+            domains=tuple(meta.get("domains") or ()),
+            cost=str(meta.get("cost", "light")),
+            execution_policy=(
+                meta["execution_policy"].value
+                if isinstance(meta.get("execution_policy"), ToolExecutionPolicy)
+                else str(meta.get("execution_policy", "thread"))
+            ),
+            timeout=meta.get("timeout"),
+            side_effect=side_effect,
+            requires_credentials=tuple(meta.get("requires_credentials") or ()),
+            capabilities=tuple(meta.get("capabilities") or ()),
+            algorithms=tuple(meta.get("algorithms") or ()),
+            provider_dependencies=tuple(meta.get("provider_dependencies") or ()),
+            tags=tuple(meta.get("tags") or ()),
+            output_semantic_type=meta.get("output_semantic_type"),
+            produced_refs=tuple(meta.get("produced_refs") or ()),
+            accepts_ref_types=tuple(meta.get("accepts_ref_types") or ()),
+            required_fields=required_fields,
+            network=meta.get("network"),
+            deterministic=meta.get("deterministic"),
+            result_size_policy=str(meta.get("result_size_policy", "unknown")),
+            aliases=tuple(self.aliases_for(canonical)),
+        )
+        self._descriptor_cache[canonical] = desc
+        return desc
+
+    def descriptors(self) -> dict[str, ToolDescriptor]:
+        """全部已注册工具的描述符（canonical 名 → 描述符）。"""
+        return {name: self.descriptor(name) for name in self._tools}
+
+    def schema_fingerprint(self, name: str) -> Optional[str]:
+        """工具入参契约指纹（描述变更不敏感）。未注册返回 None。"""
+        canonical = self.resolve_name(name)
+        cached = self._schema_fp_cache.get(canonical)
+        if cached is not None:
+            return cached
+        schema = next(
+            (s for s in self._schemas if s["function"]["name"] == canonical), None
+        )
+        if schema is None:
+            return None
+        fp = _schema_fingerprint_fn(schema)
+        self._schema_fp_cache[canonical] = fp
+        return fp
+
+    def descriptor_fingerprint(self, name: str) -> Optional[str]:
+        """完整描述符指纹（契约字段 + schema 指纹）。未注册返回 None。"""
+        canonical = self.resolve_name(name)
+        cached = self._descriptor_fp_cache.get(canonical)
+        if cached is not None:
+            return cached
+        schema_fp = self.schema_fingerprint(canonical)
+        if schema_fp is None:
+            return None
+        fp = _descriptor_fingerprint(self.descriptor(canonical), schema_fp)
+        self._descriptor_fp_cache[canonical] = fp
+        return fp
+
+    def registry_fingerprint(self) -> str:
+        """全库内容指纹（顺序无关；register/update_args_model 失效）。
+
+        供 Surface 投影缓存、eval catalog 与 replay 兼容性判定做「注册表
+        是否变过」的廉价判定。
+        """
+        if self._registry_fp is None:
+            self._registry_fp = _registry_fingerprint_fn(
+                (name, self.schema_fingerprint(name) or "")
+                for name in self._tools
+            )
+        return self._registry_fp
+
+    def fingerprints(self) -> dict[str, tuple[str, str]]:
+        """全部工具的 (schema_fingerprint, descriptor_fingerprint) 映射。"""
+        return {
+            name: (self.schema_fingerprint(name) or "", self.descriptor_fingerprint(name) or "")
+            for name in self._tools
+        }
 
     async def dispatch(self, name: str, arguments: dict | str, session_id: Optional[str] = None) -> Any:
         """执行工具，包含 Pydantic 校验与透明解引用。
@@ -985,6 +1057,10 @@ class ToolRegistry:
         """执行工具，包含 Pydantic 校验与透明解引用"""
         from app.tools._utils import std_error_response
 
+        # ADR-0101 Wave 2：每次 dispatch 开始先清报告（last-dispatch-wins，
+        # dispatch 返回后调用方可读取本次修复证据 —— trace/pipeline 消费）。
+        normalization_report_var.set(())
+
         # 别名解析：支持常见大模型工具名变体与同义词映射
         real_name = _TOOL_NAME_ALIASES.get(name, name)
         tool_func = self._tools.get(real_name)
@@ -993,6 +1069,14 @@ class ToolRegistry:
         meta = self._metadata.get(real_name, {})
         model = self._models.get(real_name)
         name = real_name
+
+        # ADR-0101：PLANNED = 占位声明、未实现 —— 绝不可执行（别名也不可借道）。
+        if meta.get("status") == ToolStatus.PLANNED.value:
+            return std_error_response(
+                f"工具 {name} 状态为 planned（尚未实现），不可执行",
+                code="TOOL_NOT_EXECUTABLE",
+                error_type="ToolNotExecutable",
+            )
 
         # SEC-F1: the dispatch chokepoint refuses tier-3 tools unless the
         # calling context carried an explicit confirmation (see confirm_tier3).
@@ -1017,7 +1101,9 @@ class ToolRegistry:
                 )
 
         if isinstance(arguments, dict):
-            arguments = _normalize_tool_arguments(name, arguments, model)
+            arguments, _norm_repairs = _normalize_with_report(name, arguments, model)
+        else:
+            _norm_repairs = ()
 
         # 注意：排除某些特殊字段（如 ref_id, layer_ref, layer_id, plan_id），
         # 这些字段本身就是为了接收引用 ID，绝不应被自动解引用为 GeoJSON 数据。
@@ -1176,9 +1262,10 @@ class ToolRegistry:
                     # LLM 常把 list 参数编码成 JSON 字符串（webgis_map_product
                     # 的 layer_ids/overlay_refs 连错 3 轮触发无进展终止）——
                     # 校验前先做宽容解码，解码不了仍走 pydantic 原错误。
-                    arguments = _coerce_json_string_lists(arguments, model)
+                    arguments, _list_repairs = _coerce_json_string_lists_pairs(arguments, model)
                     validated_args = model.model_validate(arguments)
                     arguments = validated_args.model_dump()
+                    _norm_repairs = _norm_repairs + _list_repairs
                 except ValidationError as e:
                     # 构造友好的错误信息，帮助 LLM "自愈"
                     error_msgs = []
@@ -1194,6 +1281,36 @@ class ToolRegistry:
                         error_type="ValidationError",
                         correction_hint=f"Validation Error: {message}. Please check the tool definition and ensure all required parameters are provided with correct types."
                     )
+
+        # ADR-0101 Wave 9（§40 载荷安全）：非有限浮点（NaN/±Infinity）在
+        # JSON 标准里不存在，但 Python json.loads 默认接受 —— 下游
+        # json.dumps(strict)/前端/DB 全会炸，且错误在远离注入点的位置爆发。
+        # 预算化扫描（与 GeoJSON 校验同门：oversized 载荷跳过深扫，交给
+        # 工具自检 —— 大载荷本就走旁路）。
+        if isinstance(arguments, dict):
+            if _args_oversized_now:
+                # oversized 载荷走旁路是既有性能契约 —— 但安全门不因此完全
+                # 失明：仍对 depth-1 标量做廉价扫描（顶级实参最可能是 LLM 注入
+                # 的数值形态）；深层 GeoJSON 数字交给 GeoJSON 规范与工具自检。
+                _nonfinite, _nf_incomplete = _find_nonfinite_numbers(
+                    {k: v for k, v in arguments.items()
+                     if isinstance(v, (int, float))},
+                    max_nodes=4096,
+                )
+            else:
+                _nonfinite, _nf_incomplete = _find_nonfinite_numbers(arguments)
+            if _nf_incomplete:
+                _nonfinite = _nonfinite[:5] + ["<scan incomplete>"]
+            if _nonfinite:
+                return std_error_response(
+                    f"参数含非法数值 NaN/Infinity: {', '.join(_nonfinite[:5])}",
+                    code="VALIDATION_ERROR",
+                    error_type="ValueError",
+                    correction_hint=(
+                        "NaN/Infinity are not valid JSON numbers. Remove or "
+                        "replace them with finite values and retry."
+                    ),
+                )
 
         # GeoJSON 几何结构校验 (BE-AUDIT-08)
         # PERF-F2 + #699 + #677：与上节 Pydantic 旁路同门（_is_args_oversized）。
@@ -1218,6 +1335,9 @@ class ToolRegistry:
                 error_type="ValueError",
                 correction_hint=f"GeoJSON Validation Error: {str(e)}"
             )
+
+        # ADR-0101 Wave 2：归一化修复证据暴露给 trace（dispatch() finally 中复位）。
+        normalization_report_var.set(_norm_repairs)
 
         # 执行函数
         # 探测函数签名，如果需要 session_id 则传入。dispatch 的第三参是 harness
@@ -1381,14 +1501,15 @@ class ToolRegistry:
             res = tool_func(**arguments)
             return res, cache_hit_var.get()
 
-        await _tool_thread_semaphore.acquire()
+        semaphore = _get_tool_thread_semaphore()
+        await semaphore.acquire()
         try:
             thread_task = asyncio.create_task(asyncio.to_thread(_run_sync_with_cache_var))
         except BaseException:
-            _tool_thread_semaphore.release()
+            semaphore.release()
             raise
         # 槽位在线程真实结束时归还（回调在事件循环中执行）
-        thread_task.add_done_callback(lambda _t: _tool_thread_semaphore.release())
+        thread_task.add_done_callback(lambda _t: semaphore.release())
         try:
             result, thread_cache_hit = await asyncio.shield(thread_task)
         except asyncio.CancelledError:

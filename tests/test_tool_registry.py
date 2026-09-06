@@ -83,28 +83,48 @@ def test_optional_params_not_required():
 
 
 def test_tool_decorator_execution_policy_and_kwargs():
+    """ADR-0101 契约变更：注册 kwarg 收紧为显式白名单。
+
+    此前 **kwargs 被静默吞掉（拼写错误的描述符字段无声失效）。V2 起
+    未知 kwarg 注册期显式失败 —— tool_a/tool_b 的 extra_option/custom_param
+    在旧语义下从未生效，这里改为锁定「拼写错误必须显式失败」+ 合法
+    描述符字段照常生效。
+    """
+    import pytest as _pytest
+
     from app.tools.registry import ToolExecutionPolicy
     registry = ToolRegistry()
 
+    with _pytest.raises(ValueError, match="未知的描述符字段"):
+        @registry.tool(
+            name="tool_a",
+            description="Tool A",
+            execution_policy=ToolExecutionPolicy.INLINE,
+            extra_option="foo",
+        )
+        def tool_a(x: int) -> int:
+            return x
+
+    with _pytest.raises(ValueError, match="未知的描述符字段"):
+        @tool(
+            registry,
+            name="tool_b",
+            description="Tool B",
+            execution_policy=ToolExecutionPolicy.ASYNC,
+            custom_param=123,
+        )
+        async def tool_b(y: int) -> int:
+            return y
+
     @registry.tool(
-        name="tool_a",
-        description="Tool A",
+        name="tool_c",
+        description="Tool C",
         execution_policy=ToolExecutionPolicy.INLINE,
-        extra_option="foo",
+        side_effect="pure",
     )
-    def tool_a(x: int) -> int:
+    def tool_c(x: int) -> int:
         return x
 
-    @tool(
-        registry,
-        name="tool_b",
-        description="Tool B",
-        execution_policy=ToolExecutionPolicy.ASYNC,
-        custom_param=123,
-    )
-    async def tool_b(y: int) -> int:
-        return y
-
-    assert registry.metadata("tool_a")["execution_policy"] == ToolExecutionPolicy.INLINE
-    assert registry.metadata("tool_b")["execution_policy"] == ToolExecutionPolicy.ASYNC
+    assert registry.metadata("tool_c")["execution_policy"] == ToolExecutionPolicy.INLINE
+    assert registry.descriptor("tool_c").side_effect.value == "pure"
 

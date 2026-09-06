@@ -30,13 +30,14 @@ import asyncio
 import contextlib
 import logging
 from dataclasses import dataclass, field
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, Union
 
 from app.services.session_data import session_data_manager
 from app.tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
     from app.services.chat_engine import ChatEngine
+    from app.services.subagent_roles import SubagentRole
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,7 @@ def select_tools_for_subagent(
     domains: Optional[list[str]] = None,
     extra_tools: Optional[list[str]] = None,
     exclude_tier3: bool = True,
+    allow_mutation: Optional[bool] = None,
 ) -> list[dict]:
     """根据 domains + 显式工具白名单挑选子代理可见的 schema 子集。
 
@@ -80,10 +82,24 @@ def select_tools_for_subagent(
     - extra_tools 按名字白名单纳入 — 用于强制带上某个具体工具（SEC-F2：
       tier-3 工具仍受 exclude_tier3 约束，父 turn 无可委托的确认）。
     - 子代理永远看不到 spawn_subagent / propose_plan，防止递归与计划嵌套。
+    - ADR-0101 Wave 7 + review R1 MAJOR（fail-closed）：allow_mutation=False
+      采用**allow-list** —— 只保留显式声明为只读类（pure /
+      deterministic_compute / cacheable_read）的工具。UNCLASSIFIED（存量全库
+      默认）意味着「未知」，未知不可入只读面（此前黑名单式剔除对未分类工具
+      是 no-op —— 全库 200+ 工具无一声明，角色权限面形同虚设）。代价：描述符
+      富化完成前，no-mutation 角色的可见工具为空 —— 这是诚实的失败方向
+      （富化是角色带工具的前置条件，见 docs/agent-runtime/tool-descriptor.md）。
     """
+    from app.tools.descriptor import SideEffectClass
+
     domain_set = set(domains or [])
     extra_set = set(extra_tools or [])
     _BLACKLIST_ALWAYS = {"spawn_subagent", "propose_plan", "execute_plan", "get_plan_status"}
+    _READONLY_CLASSES = {
+        SideEffectClass.PURE,
+        SideEffectClass.DETERMINISTIC_COMPUTE,
+        SideEffectClass.CACHEABLE_READ,
+    }
     selected: set[str] = set()
 
     for name, meta in registry.all_metadata().items():
@@ -109,6 +125,12 @@ def select_tools_for_subagent(
             tool_domains = set(meta.get("domains") or [])
             if tool_domains & domain_set:
                 selected.add(name)
+
+    if allow_mutation is False:
+        selected = {
+            name for name in selected
+            if registry.descriptor(name).side_effect in _READONLY_CLASSES
+        }
 
     return registry.get_schemas_subset(selected)
 
@@ -145,17 +167,51 @@ class SubagentDispatcher:
         domains: Optional[list[str]] = None,
         extra_tools: Optional[list[str]] = None,
         max_rounds: int = 10,
+        role: Optional[Union[str, "SubagentRole"]] = None,
     ) -> SubagentResult:
+        # ADR-0101 Wave 7：角色档（显式策略，无未约束子代理）。角色提供的
+        # 域/预算与调用方显式参数取**交集/更严者** —— 角色收紧，调用方不能
+        # 经参数越权放宽。
+        from app.services.subagent_roles import (
+            BudgetExceeded,
+            SubagentBudget,
+            SubagentRole as _SubagentRole,
+            get_subagent_role,
+            wrap_dispatch_with_budget,
+        )
+
+        role_obj: Optional[_SubagentRole]
+        if isinstance(role, _SubagentRole):
+            role_obj = role
+        elif isinstance(role, str):
+            role_obj = get_subagent_role(role)
+        else:
+            role_obj = None
+        if role_obj is not None:
+            if role_obj.allowed_domains:
+                domain_set = set(domains or [])
+                domains = sorted(
+                    domain_set & set(role_obj.allowed_domains)
+                    if domain_set else set(role_obj.allowed_domains)
+                )
+            max_rounds = min(max_rounds, role_obj.max_rounds)
+        allow_mutation = role_obj.allow_mutation if role_obj is not None else None
+
         tool_subset = select_tools_for_subagent(
             self.registry,
             domains=domains,
             extra_tools=extra_tools,
             exclude_tier3=True,
+            allow_mutation=allow_mutation,
         )
+        if role_obj is not None and role_obj.max_tool_calls == 0:
+            tool_subset = []
         tool_names = [s["function"]["name"] for s in tool_subset]
         logger.info(
-            "[Subagent] parent=%s task=%r tools=%d (%s)",
-            self.parent_session_id, task[:80], len(tool_subset),
+            "[Subagent] parent=%s role=%s task=%r tools=%d (%s)",
+            self.parent_session_id,
+            role_obj.name if role_obj else "adhoc",
+            task[:80], len(tool_subset),
             ", ".join(tool_names[:8]) + ("..." if len(tool_names) > 8 else ""),
         )
 
@@ -166,6 +222,30 @@ class SubagentDispatcher:
             refs_before = set()
 
         sub_engine = self._build_sub_engine(tool_subset, max_rounds)
+
+        # §32 层级预算：turn → agent → subagent → tools。工具调用计数经
+        # dispatch 实例包装实现（引擎零改动）；墙钟在下方 asyncio.wait 的
+        # timeout 参数上执行（超时 → budget_exceeded:wall_time 诚实失败）。
+        # 防御：测试桩引擎可能没有 dispatch_service（如 cancellation 单测的
+        # _SubEngine）—— 此时跳过包装（预算只覆盖真实引擎路径）。
+        # review R1 minor：adhoc（无角色）子代理不再静默吃固定 40 次硬预算 ——
+        # 按轮次推导（每轮多工具波余量），行为对齐既有「只有 max_rounds 约束」
+        # 的基线，同时保留失控保护。
+        budget = SubagentBudget(
+            max_tool_calls=role_obj.max_tool_calls if role_obj else max(40, max_rounds * 6),
+            max_heavy_tool_calls=role_obj.max_heavy_tool_calls if role_obj else max(8, max_rounds * 2),
+            max_wall_time_s=role_obj.max_wall_time_s if role_obj else 300.0,
+        )
+        _dispatch_service = getattr(sub_engine, "dispatch_service", None)
+        if _dispatch_service is not None and hasattr(_dispatch_service, "dispatch"):
+            _orig_dispatch = _dispatch_service.dispatch
+
+            async def _budgeted_dispatch(tc, session_id, executed_tools=None):
+                return await wrap_dispatch_with_budget(_orig_dispatch, budget, self.registry)(
+                    tc, session_id, executed_tools
+                )
+
+            _dispatch_service.dispatch = _budgeted_dispatch  # type: ignore[method-assign]
 
         # ADR-0100：子代理取消接线。此前取消只能以「任务已取消」文案形式
         # 从工具层渗回来 —— 引擎循环本身不观察令牌，父 turn 取消后子代理
@@ -185,6 +265,14 @@ class SubagentDispatcher:
             parent_token.link(sub_token)
 
         wrapped_task_text = f"{self.SUB_SYSTEM_PROMPT}\n\n# 子任务\n{task}"
+        if role_obj is not None:
+            wrapped_task_text = (
+                f"[角色] {role_obj.title}\n"
+                f"[纪律] 工具调用上限 {budget.max_tool_calls} 次（重工具 ≤ "
+                f"{budget.max_heavy_tool_calls}）、墙钟 ≤ {budget.max_wall_time_s:.0f}s、"
+                f"{'禁止修改任何会话/地图状态' if not role_obj.allow_mutation else '允许读写会话数据'}。\n\n"
+                + wrapped_task_text
+            )
         try:
             with use_token(sub_token):
                 chat_task = asyncio.create_task(
@@ -195,9 +283,13 @@ class SubagentDispatcher:
                 )
                 cancel_task = asyncio.create_task(sub_token.wait())
                 try:
+                    # review R1 MAJOR：墙钟预算真实执行 —— asyncio.wait 带
+                    # 剩余预算超时（此前只有注释宣称 asyncio.timeout，纯 LLM
+                    # 子代理完全不受墙钟约束，timeout 处理分支是死代码）。
                     done, pending = await asyncio.wait(
                         {chat_task, cancel_task},
                         return_when=asyncio.FIRST_COMPLETED,
+                        timeout=max(0.1, budget.max_wall_time_s),
                     )
                 except BaseException:
                     # review M-C1：派发器自身被硬取消（客户端断开/turn 拆除）
@@ -206,6 +298,23 @@ class SubagentDispatcher:
                     for t in (chat_task, cancel_task):
                         t.cancel()
                     raise
+                if not done:
+                    # 墙钟预算耗尽（wait 超时返回空集）
+                    chat_task.cancel()
+                    cancel_task.cancel()
+                    with contextlib.suppress(BaseException):
+                        await chat_task
+                    budget_used = budget.usage()
+                    logger.warning(
+                        "[Subagent] parent=%s wall-time budget exceeded: %s",
+                        self.parent_session_id, budget_used,
+                    )
+                    return SubagentResult(
+                        success=False,
+                        summary=f"子代理超过墙钟预算（{budget.max_wall_time_s:.0f}s）被终止",
+                        refs=[],
+                        error="budget_exceeded:wall_time",
+                    )
             for t in pending:
                 t.cancel()
             # review m2：被取消的 chat_task 若已带异常完成，必须取回异常
@@ -227,6 +336,15 @@ class SubagentDispatcher:
                     refs=[],
                     error="cancelled",
                 )
+            if sub_token.cancelled and chat_task in done:
+                # chat_task 可能已因工具层取消而异常/失败完成 —— 取其结果按取消语义
+                reason = sub_token.reason or "parent turn cancelled"
+                return SubagentResult(
+                    success=False,
+                    summary=f"子代理已取消: {reason}",
+                    refs=[],
+                    error="cancelled",
+                )
             result = chat_task.result()
         except OperationCancelled:
             return SubagentResult(
@@ -234,6 +352,33 @@ class SubagentDispatcher:
                 summary="子代理已取消",
                 refs=[],
                 error="cancelled",
+            )
+        except asyncio.TimeoutError:
+            budget_used = budget.usage()
+            logger.warning(
+                "[Subagent] parent=%s wall-time budget exceeded: %s",
+                self.parent_session_id, budget_used,
+            )
+            return SubagentResult(
+                success=False,
+                summary=f"子代理超过墙钟预算（{budget.max_wall_time_s:.0f}s）被终止",
+                refs=[],
+                error="budget_exceeded:wall_time",
+            )
+        except BudgetExceeded as e:
+            # review R2 BLOCKER 修复：BudgetExceeded 现为 BaseException 派生
+            # （保证穿透引擎/管道的 except Exception 兜底）—— 本处理器必须
+            # 显式捕获，否则预算信号会沿 spawn_subagent → 父管道 → 父波执行
+            # 一路上抛，炸掉整个父 turn。此处是预算信号的终点：诚实失败。
+            logger.warning(
+                "[Subagent] parent=%s tool budget exceeded: %s",
+                self.parent_session_id, e,
+            )
+            return SubagentResult(
+                success=False,
+                summary=f"子代理超过工具预算被终止: {e}",
+                refs=[],
+                error="budget_exceeded:tools",
             )
         except Exception as e:
             # #685: 非流式诚实 settle 后 chat() 会抛异常（empty / max_rounds / no_progress）

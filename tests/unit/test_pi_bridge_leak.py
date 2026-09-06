@@ -110,9 +110,9 @@ async def test_no_retained_objects_or_memory_growth(monkeypatch):
     monkeypatch.setattr(bridge_mod, "get_tool_registry", lambda: _StubRegistry())
     monkeypatch.setattr(bridge_mod.ToolDispatchService, "dispatch", _fake_dispatch)
 
-    # 预热：会话循环内的首次惰性导入不是泄漏 —— tracemalloc 在导入
-    # 完成后启动，测保留增长而非冷启动导入成本（CI 边缘抖动 ~5KB 的
-    # 根因；与 agent-runtime 分支同一修复）。
+    # 预热：会话循环内的首次惰性导入（scipy/networkx/子模块可达数十 MB）
+    # 不是泄漏 —— tracemalloc 必须在导入完成**之后**启动，测的才是保留
+    # 增长而非冷启动导入成本（CI 边缘抖动的根因；两分支同一修复）。
     for i in range(3):
         await _run_one_session(i, monkeypatch)
     tracemalloc.start()
