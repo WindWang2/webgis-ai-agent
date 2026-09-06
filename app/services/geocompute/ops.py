@@ -576,6 +576,10 @@ def _op_materialize(ctx: OperatorContext, node: "ExecutionNode", payloads: dict[
     ref_id = run_coro_sync(
         session_data_manager.store(ctx.session_id, data, prefix=prefix)
     )
+    from app.services.geocompute import tracing
+
+    tracing.emit("materialized", run_id=ctx.run_id, node_id=ctx.node_id,
+                 rows=len(list(data)), scope=str(prefix)[:64])
     return {
         "ref_id": ref_id,
         "metadata": {"materialized_rows": len(list(data)), "prefix": prefix},

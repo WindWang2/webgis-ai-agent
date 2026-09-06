@@ -764,6 +764,10 @@ class GeoExecutionEngine:
                     deadline_s=(node_deadline - time.monotonic())
                     if node.deadline_s is not None else None,
                 )
+                tracing.emit("node_dispatched", run_id=run.run_id,
+                             node_id=node.node_id, status="running",
+                             job_id=str(ret.get("job_id", "")), policy="durable_job",
+                             category=node.category.value)
                 done = durable.await_node_job(
                     ret["job_id"],
                     session_id=session_id,
