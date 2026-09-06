@@ -1950,7 +1950,7 @@ def join_count_narrated(
                 target="join_count_bw",
                 statistic_name="n_BW join count (free sampling z-test)",
                 statistic_value=n_bw,
-                p_value=stats_bw["p_value"] if stats_bw["p_value"] is not None else 1.0,
+                p_value=stats_bw["p_value"],
                 method="analytic_normal",
                 alternative="two-sided",
             ).to_evidence(),
@@ -1958,7 +1958,7 @@ def join_count_narrated(
                 target="join_count_bb",
                 statistic_name="n_BB join count (free sampling z-test)",
                 statistic_value=n_bb,
-                p_value=stats_bb["p_value"] if stats_bb["p_value"] is not None else 1.0,
+                p_value=stats_bb["p_value"],
                 method="analytic_normal",
                 alternative="two-sided",
             ).to_evidence(),
@@ -1987,7 +1987,7 @@ def join_count_narrated(
         summary += " 解析推断不可用（free-sampling 方差非正）—— 用 permutations 置换推断。"
     if not _analytic_ok and perm_p is not None:
         summary += "（解析方差简并，判别基于置换检验）"
-    else:
+    elif pattern == "random":
         summary += " 与 free-sampling 零假设无显著差异。"
     return GeoAnalysisResult(True, data_out, summary)
 

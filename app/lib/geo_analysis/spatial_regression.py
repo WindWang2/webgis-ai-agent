@@ -200,7 +200,11 @@ def _regression_inputs(
     target_field: str,
     explanatory_fields: Sequence[str],
 ) -> Tuple["gpd.GeoDataFrame", np.ndarray, np.ndarray, List[str]]:
-    """GeoJSON → (UTM gdf, y, X, 字段名) 的公共收敛路径（类型化错误）。"""
+    """GeoJSON → (UTM gdf, y, X, 字段名) 的公共收敛路径（类型化错误）。
+
+    NaN/inf 行静默丢弃会违反仓库披露底线（评审 R2 MINOR-3）—— 丢弃数
+    记入 ``gdf.attrs["rows_dropped_nonfinite"]``，各 narrated 输出转写。
+    """
     res = to_utm_gdf(geojson)
     if res is None or res[0] is None:
         raise NoValidObservations(
@@ -209,6 +213,7 @@ def _regression_inputs(
                             "explanatory fields",
         )
     gdf, _ = res
+    n_input = len(gdf)
     fields = [target_field, *explanatory_fields]
     aligned = _filter_fields_gdf(gdf, fields)
     if aligned is None:
@@ -224,6 +229,7 @@ def _regression_inputs(
             "no features with complete numeric fields",
             correction_hint="check for nulls in the target/explanatory fields",
         )
+    gdf.attrs["rows_dropped_nonfinite"] = int(n_input - len(gdf))
     y = cols[:, 0]
     x_raw = cols[:, 1:]
     names = [str(f) for f in explanatory_fields]
@@ -643,6 +649,7 @@ def ols_regression_narrated(
 
     data_out = {
         "n_features": int(n),
+        "rows_dropped_nonfinite": int(gdf.attrs.get("rows_dropped_nonfinite", 0)),
         "target_field": str(target_field),
         "explanatory_fields": list(names),
         "coefficients": _coef_table(
@@ -744,6 +751,7 @@ def slx_regression_narrated(
     vifs = _vif(x_mat, col_names)
     data_out = {
         "n_features": int(n),
+        "rows_dropped_nonfinite": int(gdf.attrs.get("rows_dropped_nonfinite", 0)),
         "target_field": str(target_field),
         "explanatory_fields": list(names),
         "coefficients": _coef_table(
@@ -845,6 +853,7 @@ def sar_ml_regression_narrated(
 
     data_out = {
         "n_features": int(n),
+        "rows_dropped_nonfinite": int(gdf.attrs.get("rows_dropped_nonfinite", 0)),
         "target_field": str(target_field),
         "rho": round(float(rho), 6),
         "rho_bounds": [round(b, 6) for b in _feasible_interval(kappa)],
@@ -926,6 +935,7 @@ def sem_ml_regression_narrated(
 
     data_out = {
         "n_features": int(n),
+        "rows_dropped_nonfinite": int(gdf.attrs.get("rows_dropped_nonfinite", 0)),
         "target_field": str(target_field),
         "lambda": round(float(lam), 6),
         "lambda_bounds": [round(b, 6) for b in _feasible_interval(kappa)],
@@ -1177,6 +1187,7 @@ def gwr_regression_narrated(
 
     data_out: Dict = {
         "n_features": int(n),
+        "rows_dropped_nonfinite": int(gdf.attrs.get("rows_dropped_nonfinite", 0)),
         "target_field": str(target_field),
         "explanatory_fields": list(names),
         "r_squared": round(float(r2), 6),

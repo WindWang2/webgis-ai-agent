@@ -273,7 +273,7 @@ def stratified_subsample(
 # ── geometric anisotropy (V2, opt-in; identity by default) ──────────────────
 
 def anisotropy_transform(angle_deg: float, ratio: float) -> np.ndarray:
-    """Linear map ``A = diag(1, ratio)·R(θ)`` for geometric anisotropy.
+    """Linear map ``A = diag(1, ratio)·R(−θ)`` for geometric anisotropy.
 
     Isotropic distance in the transformed space equals anisotropic distance
     in the original one: a displacement along the major axis (bearing

@@ -164,14 +164,14 @@ def _k_curve(
     from scipy.spatial import cKDTree
 
     n = len(xy)
-    # 纵深防御（评审 R3 INFO-1）：所有调用方（含 CSR 包络模拟）共用
-    # 同一配对预算估算 —— 正常 CSR 包络点数不会触碰预算，但调用方
-    # 漏估预算时这里兜底先拒绝。
     if tree is None:
-        budget_tree = cKDTree(xy)
+        # 纵深防御（评审 R3 INFO-1）：所有调用方（含 CSR 包络模拟）共用
+        # 同一配对预算估算 —— 正常 CSR 包络点数不会触碰预算，但调用方
+        # 漏估预算时这里兜底先拒绝。
+        tree = cKDTree(xy)
         r_budget = float(r_grid[-1])
         if r_budget > 0:
-            n_pairs_est = int(budget_tree.count_neighbors(budget_tree, r_budget)) - n
+            n_pairs_est = int(tree.count_neighbors(tree, r_budget)) - n
             if n_pairs_est > _MAX_RIPLEY_PAIRS:
                 raise ResourceScaleMismatch(
                     f"K estimator pair budget exceeded: ~{n_pairs_est} pairs "
@@ -179,7 +179,6 @@ def _k_curve(
                     estimated=f"~{n_pairs_est * 16 / 1e9:.2f} GB COO pairs",
                     limit=f"{_MAX_RIPLEY_PAIRS} pairs",
                 )
-    if tree is None:
         tree = cKDTree(xy)
     coo = tree.sparse_distance_matrix(
         tree, max_distance=float(r_grid[-1]), output_type="coo_matrix")
