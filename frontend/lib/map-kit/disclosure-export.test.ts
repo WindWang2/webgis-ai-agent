@@ -189,7 +189,7 @@ describe('drawChromeDisclosurePanel — 画布绘制', () => {
 
   it('colorbar 导出：vertical 布局 / stepped 色阶分派（R2 parity）', async () => {
     const { drawChromeColorbar } = await import('./export-chrome');
-    const { ctx, calls } = mockCtx();
+    const { ctx } = mockCtx();
     const gradArgs: number[] = [];
     (ctx as any).createLinearGradient = (x0: number, y0: number, x1: number, y1: number) => {
       gradArgs.push(x0, y0, x1, y1);

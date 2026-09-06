@@ -28,10 +28,6 @@ function parseHexVars(section: string): Vars {
   return vars;
 }
 
-function extractSection(start: RegExp, cssText: string): string {
-  const m = start.exec(cssText);
-  return m ? cssText.slice(m.index) : '';
-}
 
 /** rgba(a,r,g,b) → 不透明合成近似（按白/黑底混合后计算）。 */
 function toOpaque(color: string, onDark: boolean): string {
