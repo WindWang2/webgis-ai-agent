@@ -85,6 +85,18 @@ def register_spatial_decision_tools(registry: ToolRegistry):
         # 审计修复：async def 工具必须用 ASYNC 策略——THREAD 会在线程里同步调用
         # coroutine 函数并返回未 await 的 coroutine，dispatch 后续 JSON 序列化必挂。
         execution_policy=ToolExecutionPolicy.ASYNC,
+        deterministic=False,  # geocode + RAG 证据链外部依赖
+        network=True,  # TargetAreaResolver geocode provider HTTP
+        latency_class="slow",  # geocode/RAG 往返 + headless runtime 校验
+        memory_class="medium",
+        scale_class="medium",
+        output_semantic_type="report",
+        result_size_policy="inline_small",
+        required_context=("map_state", "ref_cursor"),
+        map_mutations=("add_layer", "map_product"),  # apply_decision_to_mapspec
+        data_mutations=("session_state", "artifact_write"),  # 模拟层游标 + 报告
+        tags=("空间决策", "选址评估", "情景推演", "decision", "报告生成", "mapspec"),
+        failure_modes=("ambiguous_intent", "missing_data", "network_error"),
     )
     async def spatial_decision_v2(
         scenario: str,
@@ -165,6 +177,18 @@ def register_spatial_decision_tools(registry: ToolRegistry):
         args_model=ScenarioCompareArgs,
         # 审计修复：async def 工具必须用 ASYNC 策略（同 spatial_decision_v2）。
         execution_policy=ToolExecutionPolicy.ASYNC,
+        deterministic=False,  # 每方案独立 geocode/RAG 网络往返
+        network=True,
+        latency_class="slow",  # N 方案并行评估 + 对比 + 图层
+        memory_class="medium",
+        scale_class="medium",
+        output_semantic_type="report",
+        result_size_policy="inline_small",
+        required_context=("map_state", "ref_cursor"),
+        map_mutations=("add_layer", "map_product"),  # apply_comparison_to_mapspec
+        data_mutations=("session_state", "artifact_write"),  # 对比层游标 + 报告
+        tags=("方案对比", "多方案", "scenario_compare", "pareto", "决策矩阵", "推荐方案"),
+        failure_modes=("invalid_args", "network_error", "partial_coverage"),
     )
     async def scenario_compare(
         scenarios: List[dict],
@@ -279,6 +303,19 @@ def register_spatial_decision_tools(registry: ToolRegistry):
         domains=["what_if"],
         args_model=SpatialDecisionV3Args,
         execution_policy=ToolExecutionPolicy.ASYNC,
+        side_effect="state_mutation",  # V3 结果 GeoJSON 落 SessionStore + MapSpec 图层
+        deterministic=True,  # 固定 seed=42 蒙特卡洛 + 闭式 MCDA（models_v3.random_seed）
+        network=False,
+        latency_class="medium",
+        memory_class="medium",
+        scale_class="medium",
+        output_semantic_type="stats",
+        result_size_policy="inline_small",
+        required_context=("map_state",),
+        map_mutations=("add_layer", "map_product"),  # apply_v3_decision_to_mapspec
+        data_mutations=("session_state",),  # dec_v3 游标写入 SessionStore
+        tags=("mcda", "topsis", "wsm", "多准则决策", "约束检查", "敏感性分析"),
+        failure_modes=("invalid_args", "empty_result", "memory"),
     )
     async def spatial_decision_v3(
         goal: str,

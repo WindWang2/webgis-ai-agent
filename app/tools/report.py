@@ -127,6 +127,16 @@ def register_report_tools(registry: ToolRegistry):
             },
             "required": [],
         },
+        side_effect="artifact_creation",
+        deterministic=True,
+        latency_class="medium",
+        memory_class="medium",
+        scale_class="medium",
+        tags=("报告", "生成报告", "pdf", "html", "markdown", "分析报告", "导出"),
+        output_semantic_type="report",
+        result_size_policy="inline_small",
+        data_mutations=("artifact_write",),
+        failure_modes=("missing_data",),
     )
     async def generate_analysis_report(
         format: str = "markdown",

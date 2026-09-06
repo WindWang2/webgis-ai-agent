@@ -34,7 +34,20 @@ def register_geocoding_tools(registry: ToolRegistry):
            param_descriptions={
                "query": "完整地名或地址，如 'Beijing'、'Tiananmen Square'、'1600 Pennsylvania Ave'",
                "limit": "返回候选数，默认 5。结果按权威度排序，第 1 个通常最准",
-           })
+           },
+           side_effect="cacheable_read",
+           network=True,
+           deterministic=False,
+           latency_class="fast",
+           memory_class="light",
+           scale_class="small",
+           crs_semantics="wgs84",
+           tags=["地理编码", "geocode", "地名", "地址", "坐标", "nominatim", "经纬度"],
+           output_semantic_type="list",
+           result_size_policy="bounded",
+           failure_modes=["network_error", "rate_limit"],
+           fallback_tool="geocode_cn",
+       )
     async def geocode(query: str, limit: int = 5) -> dict:
         """地理编码：地名 → 坐标"""
         params = {
@@ -83,7 +96,20 @@ def register_geocoding_tools(registry: ToolRegistry):
            param_descriptions={
                "lat": "WGS84 纬度（-90..90）",
                "lon": "WGS84 经度（-180..180）",
-           })
+           },
+           side_effect="cacheable_read",
+           network=True,
+           deterministic=False,
+           latency_class="fast",
+           memory_class="light",
+           scale_class="small",
+           crs_semantics="wgs84",
+           tags=["逆地理编码", "reverse geocode", "坐标反查", "地名", "行政归属", "nominatim"],
+           output_semantic_type="text",
+           result_size_policy="inline_small",
+           failure_modes=["network_error", "rate_limit"],
+           fallback_tool="reverse_geocode_cn",
+       )
     async def reverse_geocode(lat: LatRange, lon: LonRange) -> dict:
         """反向地理编码：坐标 → 地名"""
         url = settings.NOMINATIM_URL.replace("/search", "/reverse")

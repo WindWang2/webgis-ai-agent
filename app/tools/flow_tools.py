@@ -147,6 +147,8 @@ def register_flow_tools(registry: ToolRegistry) -> None:
         args_model=ODFlowEdgesArgs,
         tier=2, domains=["network"],
         tags=["od", "flow", "mobility"],
+        side_effect="deterministic_compute",
+        deterministic=True,
     )
     async def od_flow_edges(
         od_table_ref: str,

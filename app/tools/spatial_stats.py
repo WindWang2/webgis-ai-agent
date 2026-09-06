@@ -100,7 +100,19 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "min_samples": "DBSCAN最小样本数，默认5",
                "value_field": "可选：参与聚类的数值字段名，将作为额外聚类维度（已标准化）",
                "value_weight": "取值维度的显式权重，默认1.0（保守等权）；调大则取值主导，调小则空间主导",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("聚类", "cluster", "dbscan", "kmeans", "分组"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           crs_semantics="auto_project",
+           unit_semantics="meters",
+           failure_modes=("invalid_args", "missing_data"))
     def spatial_cluster(geojson: Any, method: str = "dbscan", n_clusters: int = 5,
                         eps: float = 1000, min_samples: int = 5,
                         value_field: str = "", value_weight: float = 1.0) -> dict:
@@ -120,7 +132,18 @@ def register_spatial_stats_tools(registry: ToolRegistry):
            tier=2, domains=["statistics"],
            param_descriptions={
                "geojson": "输入点要素 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="fast",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("标准离差椭圆", "sde", "方向", "趋势", "directional"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="inline_small",
+           crs_semantics="auto_project",
+           failure_modes=("invalid_args", "missing_data"))
     def standard_deviational_ellipse(geojson: Any) -> dict:
         data = safe_parse_geojson(geojson)
         if not isinstance(data, dict):
@@ -140,7 +163,18 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "k": "kNN 邻居数（仅 knn 方案，默认8，范围2-16）",
                "distance_band": "distance_band 权重的距离阈值（米），0=按8近邻平均距离自动（默认）",
                "permutations": "置换次数：99(默认)/199/499/999，固定种子42",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("空间自相关", "moran", "聚集", "离散", "p值"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="auto_project",
+           failure_modes=("invalid_args", "missing_data"))
     def moran_i(geojson: Any, value_field: str, weights_scheme: str = "knn",
                 k: int = 8, distance_band: float = 0, permutations: int = 99) -> dict:
         data = safe_parse_geojson(geojson)
@@ -206,7 +240,18 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "distance_band": "distance_band 权重的距离阈值（米），0=按8近邻平均距离自动（默认）",
                "permutations": "置换次数：99(默认)/199/499/999，固定种子42",
                "analytic_variance": "是否附加正态假设下的解析方差/z/p（默认 False）",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("空间自相关", "geary", "局部差异", "聚集检验", "p值"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="auto_project",
+           failure_modes=("invalid_args", "missing_data"))
     def geary_c(geojson: Any, value_field: str, weights_scheme: str = "knn",
                 k: int = 8, distance_band: float = 0, permutations: int = 99,
                 analytic_variance: bool = False) -> dict:
@@ -263,7 +308,18 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "value_field": "非负数值字段名（计数/强度语义）",
                "distance_band": "二值权重距离阈值（米），0=按8近邻平均距离自动（默认）",
                "permutations": "置换次数：99(默认)/199/499/999，固定种子42",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("高值聚集", "general g", "getis-ord", "低值聚集", "全局检验"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="auto_project",
+           failure_modes=("invalid_args", "missing_data"))
     def general_g(geojson: Any, value_field: str, distance_band: float = 0,
                   permutations: int = 99) -> dict:
         data = safe_parse_geojson(geojson)
@@ -310,7 +366,19 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "geojson": "输入点要素 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
                "n_steps": "r 网格步数（4-32，默认10）",
                "max_distance_ratio": "r_max = 比例×min(窗宽,窗高)，0.05-0.5（默认0.25）",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("ripley", "k函数", "点格局", "聚集尺度", "point pattern"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="auto_project",
+           unit_semantics="meters",
+           failure_modes=("invalid_args", "missing_data"))
     def ripley_k_analysis(geojson: Any, n_steps: int = 10,
                           max_distance_ratio: float = 0.25) -> dict:
         data = safe_parse_geojson(geojson)
@@ -345,7 +413,18 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "geojson": "输入点要素 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
                "grid_rows": "样方行数（2-10，默认4）",
                "grid_cols": "样方列数（2-10，默认4）",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="fast",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("样方", "卡方", "quadrat", "vmr", "均匀", "点格局"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="auto_project",
+           failure_modes=("invalid_args", "missing_data"))
     def quadrat_analysis(geojson: Any, grid_rows: int = 4, grid_cols: int = 4) -> dict:
         data = safe_parse_geojson(geojson)
         if not isinstance(data, dict):
@@ -384,7 +463,18 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "geojson": "输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
                "value_field": "待分析的数值字段名",
                "distance_band": "空间权重距离阈值（米），0表示自动计算（默认）",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="large",
+           tags=("热点", "冷点", "getis", "gi*", "hotspot", "显著聚集"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           crs_semantics="auto_project",
+           failure_modes=("invalid_args", "missing_data"))
     def hotspot_analysis(geojson: Any, value_field: str, distance_band: float = 0) -> dict:
         res = SpatialAnalyzer.hotspot(geojson, value_field, distance_band=distance_band)
         return res.to_llm_response()
@@ -404,7 +494,19 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "cell_size": "网格单元大小（米），默认500",
                "value_field": "可选：作为权重的数值字段",
                "bounds": "可选：分析范围 [xmin, ymin, xmax, ymax]（WGS84），默认数据范围+10%缓冲",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("核密度", "kde", "密度面", "概率密度", "格网"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           crs_semantics="wgs84",
+           unit_semantics="meters",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     def kde_surface(geojson: Any, bandwidth: float = 0, cell_size: float = 500,
                     value_field: str = "", bounds: Optional[list] = None) -> dict:
         res = SpatialAnalyzer.kde_surface(
@@ -426,7 +528,17 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "bandwidth": "搜索半径（米），0表示自动",
                "mode": "几何模式：'lines' (等值线) 或 'filled_bands' (等值面带，默认)",
                "unit": "物理或统计单位，如 'm', 'people/km²'",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("等值线", "等值面", "kde", "密度面", "contour"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     @cached_tool(ttl=86400)
     def kde_contours(geojson: Any, levels: Any = 8, bandwidth: float = 0, mode: str = "filled_bands", unit: str = "") -> dict:
         res = SpatialAnalyzer.kde_contours(geojson, levels=levels, bandwidth=bandwidth, mode=mode, unit=unit)
@@ -450,7 +562,18 @@ def register_spatial_stats_tools(registry: ToolRegistry):
            param_descriptions={
                "geojson": "输入点要素 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
                "clip_bounds": "可选：裁剪范围 [xmin, ymin, xmax, ymax]（WGS84），默认使用数据范围+10%缓冲",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("泰森多边形", "voronoi", "thiessen", "势力范围", "邻域划分"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           crs_semantics="auto_project",
+           failure_modes=("invalid_args", "missing_data"))
     def voronoi_polygons(geojson: Any, clip_bounds: list = None) -> dict:
         res = SpatialAnalyzer.voronoi_polygons(geojson, clip_bounds=clip_bounds)
         return res.to_llm_response()
@@ -468,7 +591,18 @@ def register_spatial_stats_tools(registry: ToolRegistry):
            param_descriptions={
                "geojson": "输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
                "group_by": "可选属性字段名。若提供，每个唯一值生成一个独立凸包",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="fast",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("凸包", "convex hull", "包络", "范围", "服务范围"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="inline_small",
+           crs_semantics="auto_project",
+           failure_modes=("invalid_args", "missing_data"))
     def convex_hull(geojson: Any, group_by: str = "") -> dict:
         res = SpatialAnalyzer.convex_hull(geojson, group_by=group_by)
         return res.to_llm_response()
@@ -487,7 +621,19 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "geojson": "输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
                "distances": "缓冲距离列表（米），升序，例如 [500, 1000, 1500]",
                "merge_rings": "True=同心环带 (默认)；False=独立同心圆（每个完整覆盖到内圈）",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("多环缓冲", "同心圆", "距离环", "影响圈", "multi ring buffer"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           crs_semantics="auto_project",
+           unit_semantics="meters",
+           failure_modes=("invalid_args", "missing_data"))
     def multi_ring_buffer(geojson: Any, distances: list = None,
                            merge_rings: bool = True) -> dict:
         res = SpatialAnalyzer.multi_ring_buffer(geojson, distances=distances, merge_rings=merge_rings)
@@ -499,7 +645,17 @@ def register_spatial_stats_tools(registry: ToolRegistry):
            param_descriptions={
                "h3_geojson": "带有属性值的H3网格 GeoJSON 数据或引用(ref:xxx)",
                "value_field": "参与LISA分析的数值字段名",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("lisa", "局部自相关", "h3", "热点", "冷点"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           failure_modes=("invalid_args", "missing_data"))
     def h3_lisa(h3_geojson: Any, value_field: str) -> dict:
         res = SpatialAnalyzer.lisa(h3_geojson, value_field)
         return res.to_llm_response()
@@ -513,7 +669,19 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "eps2_temporal_seconds": "时间间隔阈值（秒），默认 3600.0",
                "min_samples": "形成聚类簇所需的最小点数，默认 5",
                "timestamp_field": "包含时间戳信息的属性字段名称，默认 'timestamp'",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("时空聚类", "st-dbscan", "时空", "轨迹聚类", "事件聚类"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           crs_semantics="auto_project",
+           unit_semantics="meters",
+           failure_modes=("invalid_args", "missing_data"))
     def st_dbscan(geojson: Any, eps1_spatial_meters: float = 1000.0,
                   eps2_temporal_seconds: float = 3600.0, min_samples: int = 5,
                   timestamp_field: str = "timestamp") -> dict:
@@ -563,7 +731,18 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "distance_band": "distance_band 权重的距离阈值（米），0=按8近邻平均距离自动（默认）",
                "permutations": "置换次数：99(默认)/199/499/999，固定种子42",
                "correction": "逐格 p 的多重校正：bh(默认)/bonferroni/holm/none",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("局部geary", "局部自相关", "相似聚集", "过渡带", "fdr"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           crs_semantics="auto_project",
+           failure_modes=("invalid_args", "missing_data"))
     def local_geary(geojson: Any, value_field: str, weights_scheme: str = "knn",
                     k: int = 8, distance_band: float = 0, permutations: int = 99,
                     correction: str = "bh") -> dict:
@@ -616,7 +795,18 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "k": "kNN 邻居数（仅 knn 方案，默认8）",
                "distance_band": "distance_band 权重的距离阈值（米），0=自动（默认）",
                "permutations": "置换复核次数：0(默认)=只用解析检验 / 99/199/499/999，固定种子42",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="fast",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("join count", "二元", "邻接", "类别场", "空间检验"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="auto_project",
+           failure_modes=("invalid_args", "missing_data"))
     def join_count(geojson: Any, binary_field: str, weights_scheme: str = "knn",
                    k: int = 8, distance_band: float = 0, permutations: int = 0) -> dict:
         data = safe_parse_geojson(geojson)
@@ -665,7 +855,18 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "k": "kNN 邻居数（仅 knn 方案，默认8）",
                "distance_band": "distance_band 权重的距离阈值（米），0=自动（默认）",
                "permutations": "置换次数（只打乱 y）：99(默认)/199/499/999，固定种子42",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("双变量moran", "共位", "空间滞后", "共变", "bivariate"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="auto_project",
+           failure_modes=("invalid_args", "missing_data"))
     def bivariate_moran(geojson: Any, value_field: str, lag_field: str,
                         weights_scheme: str = "knn", k: int = 8,
                         distance_band: float = 0, permutations: int = 99) -> dict:
@@ -717,7 +918,18 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "interaction_field": "可选：第二分层字段（交互检测 q(X1∩X2)）",
                "bins": "数值分层字段的分位数分箱数（2-20）；0=按原值类别（≤12 唯一值时）",
                "permutations": "分层标签置换次数：99(默认)/199/499/999；0=只用 F 检验",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("地理探测器", "geodetector", "解释力", "因子", "交互检测"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="auto_project",
+           failure_modes=("invalid_args", "missing_data"))
     def geodetector(geojson: Any, value_field: str, strata_field: str,
                     interaction_field: str = "", bins: int = 0,
                     permutations: int = 99) -> dict:
@@ -768,7 +980,18 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "k": "kNN 邻居数（仅 knn 方案，默认8）",
                "distance_band": "distance_band 权重的距离阈值（米），0=自动（默认）",
                "permutations": "残差 Moran's I 置换次数：99(默认)/199/499/999，固定种子42",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("回归", "ols", "最小二乘", "vif", "空间诊断"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="auto_project",
+           failure_modes=("invalid_args", "missing_data"))
     def ols_regression(geojson: Any, target_field: str, explanatory_fields: str,
                        weights_scheme: str = "knn", k: int = 8,
                        distance_band: float = 0, permutations: int = 99) -> dict:
@@ -820,7 +1043,18 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "weights_scheme": "空间权重方案：'knn'(默认) / 'queen' / 'rook'（需面要素）/ 'distance_band'",
                "k": "kNN 邻居数（仅 knn 方案，默认8）",
                "distance_band": "distance_band 权重的距离阈值（米），0=自动（默认）",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="medium",
+           tags=("空间滞后模型", "sar", "ml估计", "空间回归", "lag"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="auto_project",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     def sar_ml_regression(geojson: Any, target_field: str, explanatory_fields: str,
                           weights_scheme: str = "knn", k: int = 8,
                           distance_band: float = 0) -> dict:
@@ -868,7 +1102,18 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "weights_scheme": "空间权重方案：'knn'(默认) / 'queen' / 'rook'（需面要素）/ 'distance_band'",
                "k": "kNN 邻居数（仅 knn 方案，默认8）",
                "distance_band": "distance_band 权重的距离阈值（米），0=自动（默认）",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="medium",
+           tags=("空间误差模型", "sem", "ml估计", "空间回归"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="auto_project",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     def sem_ml_regression(geojson: Any, target_field: str, explanatory_fields: str,
                           weights_scheme: str = "knn", k: int = 8,
                           distance_band: float = 0) -> dict:
@@ -916,7 +1161,18 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "weights_scheme": "W·X 滞后的空间权重方案：'knn'(默认) / 'queen' / 'rook'（需面要素）/ 'distance_band'",
                "k": "kNN 邻居数（仅 knn 方案，默认8）",
                "distance_band": "distance_band 权重的距离阈值（米），0=自动（默认）",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("slx", "空间滞后解释变量", "溢出效应", "空间回归"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="auto_project",
+           failure_modes=("invalid_args", "missing_data"))
     def slx_regression(geojson: Any, target_field: str, explanatory_fields: str,
                        weights_scheme: str = "knn", k: int = 8,
                        distance_band: float = 0) -> dict:
@@ -964,7 +1220,18 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "explanatory_fields": "自变量字段名列表（逗号分隔）",
                "bandwidth": "带宽 = 最近邻数（含自身，默认30，运行时钳制到 [5, n/2]）",
                "bandwidth_selection": "带宽选择：fixed(默认，用 bandwidth) / cv（有界网格留一交叉验证）",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="medium",
+           tags=("gwr", "地理加权回归", "局部r2", "带宽", "空间异质性"),
+           output_semantic_type="stats",
+           result_size_policy="bounded",
+           crs_semantics="auto_project",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     def gwr_regression(geojson: Any, target_field: str, explanatory_fields: str,
                        bandwidth: int = 30, bandwidth_selection: str = "fixed") -> dict:
         data = safe_parse_geojson(geojson)
@@ -1009,7 +1276,18 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "k": "knn 方案的邻居数（默认8）",
                "distance_band": "distance_band 阈值（米），0=按8近邻平均距离自动（默认）",
                "permutations": "逐方案置换次数：99(默认)/199/499/999，固定种子42",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("权重敏感性", "moran", "knn", "queen", "rook", "稳健性"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="auto_project",
+           failure_modes=("invalid_args", "missing_data"))
     def weights_sensitivity(geojson: Any, value_field: str, k: int = 8,
                             distance_band: float = 0, permutations: int = 99) -> dict:
         data = safe_parse_geojson(geojson)

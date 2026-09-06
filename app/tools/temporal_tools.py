@@ -177,6 +177,16 @@ def register_temporal_tools(registry: ToolRegistry):
         domains=["temporal"],
         args_model=TemporalProfileArgs,
         execution_policy=ToolExecutionPolicy.ASYNC,  # audit #827: async solver (honest declaration)
+        side_effect="deterministic_compute",
+        deterministic=True,
+        network=False,
+        latency_class="fast",
+        memory_class="medium",
+        scale_class="medium",
+        output_semantic_type="stats",
+        result_size_policy="inline_small",
+        tags=("时间字段", "时间跨度", "数据探查", "temporal", "profile", "时间分辨率"),
+        failure_modes=("missing_data", "invalid_args"),
     )
     async def temporal_profile(
         dataset: Any,
@@ -197,6 +207,16 @@ def register_temporal_tools(registry: ToolRegistry):
         domains=["temporal"],
         args_model=TemporalFilterArgs,
         execution_policy=ToolExecutionPolicy.ASYNC,  # audit #827: async solver (honest declaration)
+        side_effect="deterministic_compute",
+        deterministic=False,  # relative_window 按 datetime.now 解析（filter.py parse_relative_window）
+        network=False,
+        latency_class="fast",
+        memory_class="medium",
+        scale_class="medium",
+        output_semantic_type="geojson_fc",
+        result_size_policy="bounded",
+        tags=("时间筛选", "时间过滤", "最近7天", "时间窗口", "temporal_filter", "时间段"),
+        failure_modes=("missing_data", "empty_result", "invalid_args"),
     )
     async def temporal_filter(
         dataset: Any,
@@ -232,6 +252,16 @@ def register_temporal_tools(registry: ToolRegistry):
         domains=["temporal"],
         args_model=TemporalAggregateArgs,
         execution_policy=ToolExecutionPolicy.ASYNC,  # audit #827: async solver (honest declaration)
+        side_effect="deterministic_compute",
+        deterministic=True,
+        network=False,
+        latency_class="fast",
+        memory_class="medium",
+        scale_class="medium",
+        output_semantic_type="table",
+        result_size_policy="bounded",
+        tags=("时间聚合", "重采样", "按月统计", "时间粒度", "temporal_aggregate"),
+        failure_modes=("missing_data", "invalid_args", "empty_result"),
     )
     async def temporal_aggregate(
         dataset: Any,
@@ -268,6 +298,16 @@ def register_temporal_tools(registry: ToolRegistry):
         domains=["temporal"],
         args_model=TemporalChangeArgs,
         execution_policy=ToolExecutionPolicy.ASYNC,  # audit #827: async solver (honest declaration)
+        side_effect="deterministic_compute",
+        deterministic=True,
+        network=False,
+        latency_class="medium",
+        memory_class="medium",
+        scale_class="medium",
+        output_semantic_type="stats",
+        result_size_policy="bounded",
+        tags=("多时刻对比", "变化对比", "时间快照", "temporal_change", "属性变化"),
+        failure_modes=("missing_data", "empty_result", "invalid_args"),
     )
     async def temporal_change(
         dataset_t1: Any,
@@ -301,6 +341,16 @@ def register_temporal_tools(registry: ToolRegistry):
         domains=["temporal"],
         args_model=TemporalTrendArgs,
         execution_policy=ToolExecutionPolicy.ASYNC,  # audit #827: async solver (honest declaration)
+        side_effect="deterministic_compute",
+        deterministic=True,
+        network=False,
+        latency_class="fast",
+        memory_class="medium",
+        scale_class="medium",
+        output_semantic_type="stats",
+        result_size_policy="inline_small",
+        tags=("趋势分析", "sen斜率", "mann_kendall", "时间序列", "trend", "显著性检验"),
+        failure_modes=("missing_data", "invalid_args", "empty_result"),
     )
     async def temporal_trend(
         dataset: Any,
@@ -387,6 +437,16 @@ def register_temporal_tools(registry: ToolRegistry):
         domains=["temporal", "statistics"],
         args_model=SpatiotemporalHotspotArgs,
         execution_policy=ToolExecutionPolicy.ASYNC,  # audit #827: async solver; CELERY channel was never implemented
+        deterministic=True,
+        network=False,
+        latency_class="slow",
+        memory_class="medium",
+        scale_class="large",
+        output_semantic_type="geojson_fc",
+        result_size_policy="bounded",
+        unit_semantics="meters",
+        tags=("时空热点", "st-dbscan", "聚类", "热点分析", "spatiotemporal", "事件聚集"),
+        failure_modes=("missing_data", "empty_result", "memory"),
     )
     async def spatiotemporal_hotspot(
         dataset: Any,
@@ -421,6 +481,14 @@ def register_temporal_tools(registry: ToolRegistry):
         tier=3,
         domains=["temporal", "raster"],
         args_model=TemporalRasterArgs,
+        deterministic=True,
+        latency_class="slow",
+        memory_class="heavy",
+        scale_class="large",
+        output_semantic_type="stats",
+        result_size_policy="bounded",
+        tags=("栅格时间序列", "多时相", "遥感", "raster", "变化趋势", "差异分析"),
+        failure_modes=("missing_data", "invalid_args", "memory"),
     )
     async def temporal_raster(
         raster_series: List[Any],
@@ -502,6 +570,16 @@ def register_temporal_science_tools(registry: ToolRegistry):
             "bootstrap_draws": "bootstrap 重排次数（100-1000，默认 200）",
             "seed": "随机种子（默认 42，固定种子策略）",
         },
+        side_effect="deterministic_compute",
+        deterministic=True,
+        network=False,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        output_semantic_type="stats",
+        result_size_policy="inline_small",
+        tags=("变点检测", "cusum", "均值漂移", "变点", "changepoint", "时间序列"),
+        failure_modes=("invalid_args", "empty_result"),
     )
     async def temporal_changepoint(
         values: List[float],

@@ -127,7 +127,19 @@ def register_rs_tools(registry: ToolRegistry):
                "date_from": "起始日期 YYYY-MM-DD",
                "date_to": "结束日期 YYYY-MM-DD",
                "bands": "波段组合：'true-color'(默认) / 'false-color' / 'ndvi'",
-           })
+           },
+           side_effect="cacheable_read",
+           deterministic=False,
+           network=True,
+           latency_class="slow",
+           memory_class="medium",
+           scale_class="large",
+           output_semantic_type="list",
+           result_size_policy="bounded",
+           crs_semantics="wgs84",
+           tags=("sentinel", "卫星影像", "遥感", "影像快视图", "stac", "影像查询"),
+           failure_modes=("network_error", "timeout", "empty_result"),
+           )
     async def fetch_sentinel(bbox: str, date_from: DateStr, date_to: DateStr, bands: str = "true-color") -> dict:
         try:
             parts = parse_bbox(bbox)
@@ -152,7 +164,20 @@ def register_rs_tools(registry: ToolRegistry):
                "bbox": "边界框 [west, south, east, north] WGS84",
                "date_from": "起始日期 YYYY-MM-DD",
                "date_to": "结束日期 YYYY-MM-DD",
-           })
+           },
+           side_effect="cacheable_read",
+           deterministic=False,
+           network=True,
+           latency_class="slow",
+           memory_class="medium",
+           scale_class="large",
+           output_semantic_type="stats",
+           result_size_policy="bounded",
+           crs_semantics="wgs84",
+           unit_semantics="ratio",
+           tags=("ndvi", "植被覆盖", "遥感", "sentinel", "在线计算", "植被指数"),
+           failure_modes=("network_error", "timeout", "empty_result"),
+           )
     async def compute_ndvi(bbox: str, date_from: DateStr, date_to: DateStr) -> dict:
         try:
             parts = parse_bbox(bbox)
@@ -174,7 +199,20 @@ def register_rs_tools(registry: ToolRegistry):
            tier=2, domains=["raster"],
            param_descriptions={
                "bbox": "边界框 [west, south, east, north] WGS84",
-           })
+           },
+           side_effect="cacheable_read",
+           deterministic=False,
+           network=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="large",
+           output_semantic_type="list",
+           result_size_policy="bounded",
+           crs_semantics="wgs84",
+           unit_semantics="meters",
+           tags=("dem", "高程", "地形", "copernicus", "elevation", "数字高程模型"),
+           failure_modes=("network_error", "timeout", "empty_result"),
+           )
     async def fetch_dem(bbox: str) -> dict:
         try:
             parts = parse_bbox(bbox)
@@ -204,7 +242,20 @@ def register_rs_tools(registry: ToolRegistry):
               "bands": "语义角色 → 2D 数组，如 {\"red\": [[...]], \"nir\": [[...]]}（各角色形状一致）",
               "scale_factors": "角色 → 线性定标除数，如 {\"red\": 10000, \"nir\": 10000}（DN→反射率）",
               "nodata_value": "可选标量哨兵值（等于该值的像元视为无效 → NaN）",
-          })
+          },
+          side_effect="deterministic_compute",
+          deterministic=True,
+          network=False,
+          latency_class="medium",
+          memory_class="heavy",
+          scale_class="large",
+          output_semantic_type="stats",
+          result_size_policy="bounded",
+          crs_semantics="crs_agnostic",
+          unit_semantics="ratio",
+          tags=("光谱指数", "ndvi", "ndwi", "evi", "波段运算", "spectral_index"),
+          failure_modes=("invalid_args", "memory"),
+          )
     async def compute_spectral_index(
         index_id: str,
         bands: Dict[str, List[List[float]]],
@@ -283,7 +334,19 @@ def register_rs_tools(registry: ToolRegistry):
               "nodata_value": "可选标量哨兵值（逐切片剔除，剩余有效切片上统计）",
               "include_cv": "是否追加 CV=std/mean（|mean|≤1e-12 → NaN；描述性披露）",
               "percentiles": "逗号分隔分位数（如 '10,50,90'；≤5 个，0-100；空=不计算）",
-          })
+          },
+          side_effect="deterministic_compute",
+          deterministic=True,
+          network=False,
+          latency_class="medium",
+          memory_class="heavy",
+          scale_class="large",
+          output_semantic_type="stats",
+          result_size_policy="bounded",
+          crs_semantics="crs_agnostic",
+          tags=("sar", "时序统计", "时间维聚合", "变异系数", "分位数", "均值合成"),
+          failure_modes=("invalid_args", "memory"),
+          )
     async def sar_temporal_stats(
         stack: List[List[List[float]]],
         product: str = "mean",
@@ -362,7 +425,19 @@ def register_rs_tools(registry: ToolRegistry):
           param_descriptions={
               "vv": "VV 极化 2D 数组",
               "vh": "VH 极化 2D 数组（与 VV 同形状）",
-          })
+          },
+          side_effect="deterministic_compute",
+          deterministic=True,
+          network=False,
+          latency_class="medium",
+          memory_class="heavy",
+          scale_class="large",
+          output_semantic_type="stats",
+          result_size_policy="bounded",
+          crs_semantics="crs_agnostic",
+          tags=("sar", "极化比", "vv", "vh", "植被结构", "后向散射"),
+          failure_modes=("invalid_args", "memory"),
+          )
     async def sar_vh_ratio(vv: List[List[float]], vh: List[List[float]]) -> dict:
         from app.lib.geo_analysis.sar_temporal import vh_ratio as _vh_ratio
 
@@ -423,7 +498,19 @@ def register_rs_tools(registry: ToolRegistry):
               "enl": "等效视数（>0；缺省整图矩估计并披露）",
               "damping": "Frost 阻尼 D（0.5-5，默认 1；仅 frost 使用）",
               "nodata_value": "可选标量哨兵值（该值像元视为无效）",
-          })
+          },
+          side_effect="deterministic_compute",
+          deterministic=True,
+          network=False,
+          latency_class="slow",
+          memory_class="heavy",
+          scale_class="large",
+          output_semantic_type="stats",
+          result_size_policy="bounded",
+          crs_semantics="crs_agnostic",
+          tags=("sar", "斑点滤波", "lee", "frost", "去噪", "speckle"),
+          failure_modes=("invalid_args", "memory"),
+          )
     async def sar_speckle_filter(
         array: List[List[float]],
         filter: str = "lee",
@@ -506,7 +593,19 @@ def register_rs_tools(registry: ToolRegistry):
               "output_product": "sigma0(默认)/beta0/gamma0/all",
               "to_db": "输出 10·log₁₀（强度量纲惯例；默认 false）",
               "nodata_value": "可选标量哨兵值",
-          })
+          },
+          side_effect="deterministic_compute",
+          deterministic=True,
+          network=False,
+          latency_class="medium",
+          memory_class="heavy",
+          scale_class="large",
+          output_semantic_type="stats",
+          result_size_policy="bounded",
+          crs_semantics="crs_agnostic",
+          tags=("sar", "辐射定标", "sigma0", "beta0", "gamma0", "calibration"),
+          failure_modes=("invalid_args", "memory"),
+          )
     async def sar_calibrate(
         array: List[List[float]],
         calibration_constant: float,
@@ -619,7 +718,19 @@ def register_rs_tools(registry: ToolRegistry):
               "directions": "all4(默认)/0/45/90/135",
               "properties": "逗号分隔属性子集或 'all'(默认)",
               "nodata_value": "可选标量哨兵值",
-          })
+          },
+          side_effect="deterministic_compute",
+          deterministic=True,
+          network=False,
+          latency_class="slow",
+          memory_class="heavy",
+          scale_class="large",
+          output_semantic_type="stats",
+          result_size_policy="bounded",
+          crs_semantics="crs_agnostic",
+          tags=("纹理", "glcm", "haralick", "对比度", "sar", "texture"),
+          failure_modes=("invalid_args", "memory"),
+          )
     async def sar_glcm_texture(
         array: List[List[float]],
         window: str = "3",
@@ -704,7 +815,19 @@ def register_rs_tools(registry: ToolRegistry):
               "standardize": "True=相关矩阵 PCA（逐波段 z-score）；默认 False",
               "n_components": "输出分量栅格数 k（≤ n_bands；缺省 = n_bands）",
               "nodata_value": "可选标量哨兵值",
-          })
+          },
+          side_effect="deterministic_compute",
+          deterministic=True,
+          network=False,
+          latency_class="slow",
+          memory_class="heavy",
+          scale_class="large",
+          output_semantic_type="stats",
+          result_size_policy="bounded",
+          crs_semantics="crs_agnostic",
+          tags=("pca", "主成分", "降维", "波段合成", "svd", "去相关"),
+          failure_modes=("invalid_args", "memory"),
+          )
     async def raster_pca(
         bands: List[List[List[float]]],
         standardize: bool = False,
@@ -781,7 +904,19 @@ def register_rs_tools(registry: ToolRegistry):
               "sensor": "landsat5_tm/landsat8_oli/sentinel2",
               "reflectance_domain": "surface/at_satellite(默认；仅披露)",
               "nodata_value": "可选标量哨兵值（任一角色无效 → 三轴全 NaN）",
-          })
+          },
+          side_effect="deterministic_compute",
+          deterministic=True,
+          network=False,
+          latency_class="medium",
+          memory_class="heavy",
+          scale_class="large",
+          output_semantic_type="stats",
+          result_size_policy="bounded",
+          crs_semantics="crs_agnostic",
+          tags=("tasseled_cap", "缨帽变换", "亮度", "绿度", "湿度", "canopy"),
+          failure_modes=("invalid_args", "memory"),
+          )
     async def tasseled_cap(
         bands: Dict[str, List[List[float]]],
         sensor: str,
@@ -852,7 +987,19 @@ def register_rs_tools(registry: ToolRegistry):
               "method": "mean(默认)/median/percentile",
               "percentile": "分位数（0-100；method=percentile 时必需）",
               "nodata_value": "可选标量哨兵值",
-          })
+          },
+          side_effect="deterministic_compute",
+          deterministic=True,
+          network=False,
+          latency_class="slow",
+          memory_class="heavy",
+          scale_class="large",
+          output_semantic_type="stats",
+          result_size_policy="bounded",
+          crs_semantics="crs_agnostic",
+          tags=("sar", "时序合成", "median", "年度合成", "底图", "composite"),
+          failure_modes=("invalid_args", "memory"),
+          )
     async def sar_temporal_composite(
         stack: List[List[List[float]]],
         method: str = "mean",
