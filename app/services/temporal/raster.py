@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 
+from app.lib.cancellation import checkpoint
 from app.services.temporal.models import TemporalRasterResult
 from app.services.temporal.profiler import parse_value_to_instant
 
@@ -365,6 +366,9 @@ class TemporalRasterEngine:
 
         for r in range(row0, row0 + height, bs):
             for c in range(col0, col0 + width, bs):
+                # 协作式取消/deadline 检查点（ADR-0101 D9 §24：长循环必须
+                # 可中断；无 token 绑定时这是廉价 no-op）。
+                checkpoint()
                 w = Window(c, r, min(bs, col0 + width - c), min(bs, row0 + height - r))
                 b1 = src1.read(1, window=w).astype(float)
                 b2 = src2.read(1, window=w).astype(float)
@@ -679,9 +683,34 @@ class TemporalRasterEngine:
         if op in ("all", "difference") and len(selected_slices) >= 2:
             diff = self.raster_difference(selected_slices[0], selected_slices[-1], aoi_geometry)
 
+        # ADR-0101 D9（V6 §21）：结果 metadata 显式披露对齐/时间序事实 ——
+        # 此前 TemporalRasterResult.metadata 从未被填充。
+        # 诚实披露：select_time_slice 只过滤、保持输入顺序（不排序）——
+        # 「first/last slice」是输入序端点，不必然是时间极值（评审 MAJOR）。
+        from datetime import datetime as _dt
+        from datetime import timezone as _tz
+
+        def _ts(item):
+            if not isinstance(item, dict):
+                return None
+            for key in ("timestamp", "time", "datetime", "date"):
+                v = item.get(key)
+                if v is not None:
+                    return str(v)
+            return None
+
         return TemporalRasterResult(
             selected_slices=selected_slices,
             raster_statistics=stats,
             raster_difference=diff,
             raster_trend=trend,
+            metadata={
+                "time_order": "input_order_preserved",
+                "slice_count": len(selected_slices),
+                "first_slice_ts": _ts(selected_slices[0]) if selected_slices else None,
+                "last_slice_ts": _ts(selected_slices[-1]) if selected_slices else None,
+                "alignment_authority": "app.lib.geo_analysis.raster_grid",
+                "nodata_policy": "declared_nodata_and_nan_excluded",
+                "generated_at": _dt.now(_tz.utc).isoformat(),
+            },
         )

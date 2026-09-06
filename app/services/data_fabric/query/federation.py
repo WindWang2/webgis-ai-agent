@@ -19,6 +19,7 @@ max_execution_s / max_join_candidates``。
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -66,9 +67,11 @@ class FederatedPlan:
     estimated_left_rows: Optional[int] = None
     estimated_right_rows: Optional[int] = None
     warnings: List[str] = field(default_factory=list)
+    # ---- V4 additive（ADR-0101 D7）：被拒绝的替代序（EXPLAIN 诚实披露）----
+    rejected_orders: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        out = {
             "kind": self.kind,
             "left": self.left,
             "right": self.right,
@@ -82,6 +85,9 @@ class FederatedPlan:
             "estimated_right_rows": self.estimated_right_rows,
             "warnings": self.warnings,
         }
+        if self.rejected_orders:
+            out["rejected_orders"] = self.rejected_orders
+        return out
 
 
 @dataclass
@@ -619,6 +625,23 @@ class ChainSource:
 
 
 @dataclass
+class ChainSourceStats:
+    """源的统计提示（ADR-0101 D7）：驱动有界序枚举与 join 基数估计。
+
+    全部可缺省 —— 没有统计时行为与 V3 排序逐位一致。
+    """
+
+    estimated_rows: Optional[int] = None
+    column_ndv: Optional[Dict[str, int]] = None  # 列名 → 近似基数
+
+    def ndv(self, column: Optional[str]) -> Optional[int]:
+        if column is None or not self.column_ndv:
+            return None
+        v = self.column_ndv.get(column)
+        return v if isinstance(v, int) and v >= 1 else None
+
+
+@dataclass
 class ChainJoin:
     """累积左侧行与下一个源的连接。语义与两源 plan 一致。
 
@@ -627,6 +650,10 @@ class ChainJoin:
     **再**按 ``group_by_right``（右源字段）分组聚合 —— 与两源
     ``_execute_local`` 的 aggregate_join 流程一致；跳过连接会让 ``right_rows``
     被静默丢弃、分组键全部落空（单一全 None 组）。
+
+    V4（ADR-0101 D7）：``left_source_id``/``right_source_id`` 可选显式寻址
+    —— 全部 join 都给出 id 对时，连接随成本序**一起重排**（序枚举才安全）；
+    缺省保持 V3 位置寻址语义逐位不变。
     """
 
     kind: str                                    # attribute_join | spatial_join | aggregate_join
@@ -635,6 +662,8 @@ class ChainJoin:
     spatial_op: Optional[str] = None             # within | intersects
     group_by_right: Optional[List[str]] = None
     aggregates: Optional[List[Dict[str, Any]]] = None
+    left_source_id: Optional[str] = None
+    right_source_id: Optional[str] = None
 
 
 @dataclass
@@ -645,11 +674,17 @@ class FederatedChainRequest:
     joins: List[ChainJoin] = field(default_factory=list)
     bbox: Optional[List[float]] = None
     limit: int = 10_000
-    order_strategy: str = "cost"                 # cost | given
+    order_strategy: str = "cost"                 # cost | given | cost_stats
     budget: ExecutionBudget = field(
         default_factory=lambda: ExecutionBudget(**FEDERATION_BUDGET.model_dump())
     )
     warnings: List[str] = field(default_factory=list)
+    # ---- V4 additive（ADR-0101 D7）----
+    #: source_id → 统计提示；``order_strategy="cost_stats"`` 时驱动有界
+    #: 序枚举（≤24 候选，绝不指数），无提示时自动回落 V3 排序。
+    stats_hints: Optional[Dict[str, ChainSourceStats]] = None
+    #: 为各源派生最小投影字段（opt-in；输出形状会因此变小）。
+    derive_projection: bool = False
 
 
 def _chain_budget(req: FederatedChainRequest) -> ExecutionBudget:
@@ -666,13 +701,207 @@ def _chain_order_indices(req: FederatedChainRequest) -> List[int]:
     排序实现漂移。
     """
     order = list(range(len(req.sources)))
-    if req.order_strategy == "cost":
+    if req.order_strategy in ("cost", "cost_stats"):
         order.sort(key=lambda i: (
             req.sources[i].estimated_rows is None,
             req.sources[i].estimated_rows or 0,
             i,
         ))
     return order
+
+
+#: 序枚举候选硬上限（N ≤ MAX_FEDERATED_SOURCES=4 → ≤24；结构性有界）。
+MAX_ORDER_CANDIDATES = 24
+
+#: 无统计时的行数占位（保持与 V3「None 视为最大」同一方向）。
+_UNESTIMATED_ROWS = 1_000_000
+
+
+def _chain_join_cardinality(
+    left_est: Optional[int],
+    right_est: Optional[int],
+    ndv_left: Optional[int],
+    ndv_right: Optional[int],
+) -> int:
+    """join 基数估计：|A⋈B| ≈ |A|·|B| / max(ndv_A, ndv_B, 1)。
+
+    两侧 ndv 都未知 → 乘积（与「无信息 = 最坏方向」一致）；有任一侧
+    ndv → 标准除数模型。全部取整上界，绝不输出负数/零。
+    """
+    a = left_est if left_est is not None else _UNESTIMATED_ROWS
+    b = right_est if right_est is not None else _UNESTIMATED_ROWS
+    ndv = max(ndv_left or 1, ndv_right or 1)
+    return max(1, (a * b) // ndv)
+
+
+def _chain_order_cost(
+    order: List[int], req: FederatedChainRequest, id_joins: Dict[str, int]
+) -> int:
+    """左深序的相对成本：Σ 源传输行 + Σ 跳基数（stats 提示可用时）。
+
+    ``id_joins`` 把 ``左source_id→右source_id`` 映射到 join 下标（id 寻址
+    时成本才能跟随源对）；位置寻址的请求只能用传输行 + 行数提示近似。
+    """
+    sources = req.sources
+    stats = req.stats_hints or {}
+    total = sum(
+        (sources[i].estimated_rows if sources[i].estimated_rows is not None
+         else _UNESTIMATED_ROWS)
+        for i in order
+    )
+    acc = sources[order[0]].estimated_rows if sources[order[0]].estimated_rows is not None else _UNESTIMATED_ROWS
+    for pos in range(len(order) - 1):
+        left_id, right_id = sources[order[pos]].source_id, sources[order[pos + 1]].source_id
+        j = id_joins.get(f"{left_id}>{right_id}")
+        if j is None:
+            ndv_l = ndv_r = None
+        else:
+            join = req.joins[j]
+            lst, rst = stats.get(left_id), stats.get(right_id)
+            ndv_l = lst.ndv(join.join_field_left) if lst else None
+            ndv_r = rst.ndv(join.join_field_right) if rst else None
+        right_est = sources[order[pos + 1]].estimated_rows
+        card = _chain_join_cardinality(acc, right_est, ndv_l, ndv_r)
+        total += card
+        acc = card
+    return total
+
+
+def _chain_plan_order(req: FederatedChainRequest) -> tuple:
+    """计划序：``cost_stats`` 时做有界枚举（≤24 候选），否则 V3 排序。
+
+    返回 ``(order, rejected_orders, order_warning)``；``rejected_orders``
+    是按成本升序的落选替代（EXPLAIN 证据，≤3 条）。无统计提示时枚举
+    自动回落 V3 排序 —— 行为与 V3 逐位一致。
+    """
+    id_joins = {
+        f"{j.left_source_id}>{j.right_source_id}": i
+        for i, j in enumerate(req.joins)
+        if j.left_source_id and j.right_source_id
+    }
+    if req.order_strategy != "cost_stats" or not req.stats_hints:
+        return _chain_order_indices(req), [], None
+    import itertools
+
+    n = len(req.sources)
+    # islice 结构性封顶（评审 MINOR：n 上限将来放宽也不会失去界限）。
+    candidates = list(itertools.islice(itertools.permutations(range(n)), MAX_ORDER_CANDIDATES))
+    if not id_joins:
+        # 位置寻址的 join 无法安全跟随重排 —— 诚实回落 V3 排序并披露。
+        warning = (
+            "cost_stats requested but joins are positional; falling back to "
+            "estimated_rows ordering (declare left/right_source_id on joins "
+            "to enable bounded enumeration)"
+        )
+        return _chain_order_indices(req), [], warning
+    # 评审 MAJOR：成本枚举只在**可成链**的排列上选优 —— 否则统计变化会
+    # 让原本可执行的请求突然 typed 失败（最便宜序未必 join-连通）。
+    def _connected(p) -> bool:
+        return all(
+            f"{req.sources[p[i]].source_id}>{req.sources[p[i + 1]].source_id}" in id_joins
+            for i in range(n - 1)
+        )
+
+    connected = [p for p in candidates if _connected(p)]
+    if not connected:
+        # 无任何连通排列 → 保持 V3 排序，由 _map_chain_joins_to_order 给出
+        # typed 失败（诚实、可行动）。
+        return _chain_order_indices(req), [], None
+    scored = sorted(
+        ((_chain_order_cost(list(p), req, id_joins), p) for p in connected),
+        key=lambda t: (t[0], t[1]),
+    )
+    best_cost, best = scored[0]
+    rejected = [
+        {"order": [req.sources[i].source_id for i in p], "cost": c}
+        for c, p in scored[1:4]
+    ]
+    warning = (
+        f"join order chosen by bounded enumeration ({len(scored)} candidates, "
+        f"cost={best_cost}) using stats hints"
+    )
+    return list(best), rejected, warning
+
+
+def _map_chain_joins_to_order(
+    req: FederatedChainRequest, order: List[int], ordered_sources: List[ChainSource]
+) -> List[ChainJoin]:
+    """把 joins 映射到有序链：id 寻址跟随源对重排；位置寻址保持 V3 语义。"""
+    id_joins = {
+        f"{j.left_source_id}>{j.right_source_id}": j
+        for j in req.joins
+        if j.left_source_id and j.right_source_id
+    }
+    if not id_joins:
+        return list(req.joins)  # V3 位置语义（逐位不变）
+    mapped: List[ChainJoin] = []
+    for pos in range(len(ordered_sources) - 1):
+        key = f"{ordered_sources[pos].source_id}>{ordered_sources[pos + 1].source_id}"
+        join = id_joins.get(key)
+        if join is None:
+            raise FederatedQueryError(
+                f"id-addressed joins do not form a chain over the planned order: "
+                f"missing join {key} at hop {pos}; use order_strategy='given' or "
+                "fix the declared source id pairs",
+                details={"hop": pos, "expected": key},
+            )
+        mapped.append(join)
+    return mapped
+
+
+def derive_chain_fields(req: FederatedChainRequest, ordered_sources: List[ChainSource],
+                        ordered_joins: List[ChainJoin]) -> Dict[str, List[str]]:
+    """为各源派生最小必要字段（ADR-0101 D7，opt-in ``derive_projection``）。
+
+    只包含可**证明**需要的字段：两侧连接键、聚合分组/聚合字段、以及
+    下一跳左键（经 F1 提升必须存在于上一跳右属性里）。首源额外保留
+    下一跳左键。空间跳不能裁剪（几何承载不变量 F3），诚实返回空投影
+    （= 不投影）。派生是输出形状变更 —— 由调用方显式 opt-in。
+    """
+    required: Dict[str, set] = {s.source_id: set() for s in ordered_sources}
+    # 评审 CRITICAL：参与空间跳的源**绝不投影** —— 空间连接的右侧行必须
+    # 带几何（spatial_join_local 对无几何右行静默跳过）；仅按属性需求
+    # 推导会在「属性跳后接空间跳」的链里把几何裁没（成功 0 行的静默
+    # 错答）。空间跳两端源整段排除在派生之外（宁可多取，绝不缺几何）。
+    spatial_sources: set = set()
+    for pos, join in enumerate(ordered_joins):
+        if join.kind == "spatial_join":
+            spatial_sources.add(ordered_sources[pos].source_id)
+            spatial_sources.add(ordered_sources[pos + 1].source_id)
+    for pos, join in enumerate(ordered_joins):
+        left_id = ordered_sources[pos].source_id
+        right_id = ordered_sources[pos + 1].source_id
+        if join.kind == "attribute_join":
+            required[left_id].add(join.join_field_left)
+            required[right_id].add(join.join_field_right)
+            # 下一跳左键必须能从本跳右侧属性提升（F1）。
+            if pos + 1 < len(ordered_joins):
+                nxt = ordered_joins[pos + 1]
+                if nxt.kind in ("attribute_join", "aggregate_join") and nxt.join_field_left:
+                    required[right_id].add(nxt.join_field_left)
+        elif join.kind == "aggregate_join":
+            required[left_id].add(join.join_field_left)
+            required[right_id].add(join.join_field_right)
+            required[right_id].update(join.group_by_right or [])
+            for agg in join.aggregates or []:
+                field = agg.get("field")
+                if field:
+                    required[right_id].add(field)
+            if pos + 1 < len(ordered_joins):
+                nxt = ordered_joins[pos + 1]
+                if nxt.kind in ("attribute_join", "aggregate_join") and nxt.join_field_left:
+                    required[right_id].add(nxt.join_field_left)
+        else:  # spatial_join：几何承载不变量，不裁剪
+            required[left_id] = set()
+            required[right_id] = set()
+    out: Dict[str, List[str]] = {}
+    for s in ordered_sources:
+        if s.source_id in spatial_sources:
+            continue  # 空间跳端点：不派生投影（几何不变量优先）
+        fields = sorted(f for f in required.get(s.source_id, set()) if f)
+        if fields and s.fields is None:
+            out[s.source_id] = fields
+    return out
 
 
 def plan_federated_chain(req: FederatedChainRequest) -> List[FederatedPlan]:
@@ -725,9 +954,13 @@ def plan_federated_chain(req: FederatedChainRequest) -> List[FederatedPlan]:
             details={"hint": "reduce limit, add bbox/filters, or aggregate per source"},
         )
 
-    order = _chain_order_indices(req)
+    order, rejected_orders, order_warning = _chain_plan_order(req)
     chain_warnings: List[str] = []
-    if req.order_strategy == "cost":
+    if order_warning:
+        chain_warnings.append(order_warning)
+    elif req.order_strategy == "cost_stats":
+        pass  # 枚举路径的证据已含在 enumeration warning 里，不重复追加
+    if req.order_strategy in ("cost", "cost_stats"):
         if req.sources[order[0]].estimated_rows is None:
             chain_warnings.append(
                 "join order uses given order (no estimated_rows hints available); "
@@ -737,7 +970,7 @@ def plan_federated_chain(req: FederatedChainRequest) -> List[FederatedPlan]:
             chain_warnings.append(
                 "join ordered by estimated_rows hints (cost-based, left-deep)"
             )
-    else:
+    elif req.order_strategy == "given":
         chain_warnings.append(
             "join order uses given order (cost hints ignored); "
             "ordering is an assumption"
@@ -745,16 +978,30 @@ def plan_federated_chain(req: FederatedChainRequest) -> List[FederatedPlan]:
 
     # 按排序重排 sources/joins，join[i] 连接累积行与 sources[i+1]
     ordered_sources = [req.sources[i] for i in order]
+    ordered_joins = _map_chain_joins_to_order(req, order, ordered_sources)
+    derived_fields = (
+        derive_chain_fields(req, ordered_sources, ordered_joins)
+        if req.derive_projection else {}
+    )
+    if derived_fields:
+        chain_warnings.append(
+            "minimal projection derived per source (derive_projection=true): "
+            + json.dumps(derived_fields, ensure_ascii=False, sort_keys=True)
+        )
     plans: List[FederatedPlan] = []
-    for i, join in enumerate(req.joins):
+    for i, join in enumerate(ordered_joins):
         plans.append(FederatedPlan(
             kind=join.kind,
             left={"source_id": ordered_sources[i].source_id,
                   "dataset_id": ordered_sources[i].dataset_id,
-                  "chain_position": i},
+                  "chain_position": i,
+                  **({"fields": derived_fields[ordered_sources[i].source_id]}
+                     if ordered_sources[i].source_id in derived_fields else {})},
             right={"source_id": ordered_sources[i + 1].source_id,
                    "dataset_id": ordered_sources[i + 1].dataset_id,
-                   "chain_position": i + 1},
+                   "chain_position": i + 1,
+                   **({"fields": derived_fields[ordered_sources[i + 1].source_id]}
+                      if ordered_sources[i + 1].source_id in derived_fields else {})},
             join_field_left=join.join_field_left,
             join_field_right=join.join_field_right,
             spatial_op=join.spatial_op,
@@ -763,6 +1010,7 @@ def plan_federated_chain(req: FederatedChainRequest) -> List[FederatedPlan]:
             estimated_left_rows=ordered_sources[i].estimated_rows,
             estimated_right_rows=ordered_sources[i + 1].estimated_rows,
             warnings=chain_warnings if i == 0 else [],
+            rejected_orders=rejected_orders if i == 0 else [],
         ))
     return plans
 
@@ -822,6 +1070,42 @@ def _chain_left_features(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return feats
 
 
+#: 半连接键集上限（超过 → 放弃键过滤，整段右侧行照常进入 join）。
+SEMI_JOIN_MAX_KEYS = 1000
+
+
+def _semi_join_reduce_right(
+    accumulated: List[Dict[str, Any]], right_rows: List[Dict[str, Any]],
+    join: "ChainJoin",
+) -> tuple:
+    """半连接约减（ADR-0101 D7）：右侧行只保留键出现在左侧键集的行。
+
+    等值 join 是内连接 —— 丢掉「键不在左侧键集」的右行不改变结果，
+    但显著缩小哈希索引与候选数（本地化的 semi-join reduction）。返回
+    ``(reduced_right, original_count)``；键集超上限或全 None → 原样
+    返回（诚实放弃，绝不冒语义风险）。
+    """
+    if not accumulated or not right_rows:
+        return right_rows, len(right_rows)
+    field = join.join_field_right
+    if not field:
+        return right_rows, len(right_rows)
+    keys = set()
+    for lrow in accumulated:
+        key = _chain_row_key(lrow, join.join_field_left or field)
+        if key is not None:
+            keys.add(_hashable_key(key))
+        if len(keys) > SEMI_JOIN_MAX_KEYS:
+            return right_rows, len(right_rows)  # 键集过大 → 诚实放弃
+    if not keys:
+        return right_rows, len(right_rows)
+    reduced = [
+        r for r in right_rows
+        if _hashable_key((r.get("properties") or r).get(field)) in keys
+    ]
+    return reduced, len(right_rows)
+
+
 def execute_federated_chain(executor: "FederatedExecutor", req: FederatedChainRequest) -> Dict[str, Any]:
     """执行左深链（每源一次有界拉取；逐跳 join 预算 fail-fast）。
 
@@ -836,6 +1120,13 @@ def execute_federated_chain(executor: "FederatedExecutor", req: FederatedChainRe
       与两源 ``_execute_local`` 流程一致。
     - 空间跳把累积行重建为左要素再入 STRtree，几何取自上一空间跳写入的
       ``__left_geometry__``（F3）；无任何几何可携带时 typed 失败，绝不静默 0 行。
+
+    V4（ADR-0101 D7）：
+    - 首跳同源（同 source_id）且 adapter 支持 ``server_spatial_join`` →
+      服务端快路径；**typed DataFabricError 原样上抛（不回退）**，仅
+      非 typed 异常回退本地并记录 warning —— 与两源路径同一语义。
+    - attribute/aggregate 跳先做半连接右侧行约减（键集有界）。
+    - derive_projection 时按计划的派生字段投影拉取。
     """
     import app.services.data_fabric.query.federation as _self
 
@@ -845,10 +1136,39 @@ def execute_federated_chain(executor: "FederatedExecutor", req: FederatedChainRe
     plans = plan_federated_chain(req)
     # F7：直接消费规划器产出的有序计划（left[0] 起头，right[i] 依次为链上
     # 第 i+1 个源），按 source_id 映射回 ChainSource —— 不再本地重排第二份
-    # 排序逻辑（与 plan_federated_chain 共享同一份 _chain_order_indices）。
+    # 排序逻辑（与 plan_federated_chain 共享同一份 _chain_plan_order）。
     order_ids = [plans[0].left["source_id"]] + [p.right["source_id"] for p in plans]
     by_id = {s.source_id: s for s in req.sources}
     ordered_sources = [by_id[sid] for sid in order_ids]
+    # 有序 joins 从计划重建（计划携带全部 join 语义字段）。
+    ordered_joins = [
+        ChainJoin(
+            kind=p.kind, join_field_left=p.join_field_left,
+            join_field_right=p.join_field_right, spatial_op=p.spatial_op,
+            group_by_right=p.group_by_right, aggregates=p.aggregates,
+        )
+        for p in plans
+    ]
+
+    # 派生投影（opt-in）：计划里带 "fields" 的源，拉取时按其投影。
+    derived_fields: Dict[str, List[str]] = {}
+    for p in plans:
+        for side in (p.left, p.right):
+            if isinstance(side.get("fields"), list):
+                derived_fields[side["source_id"]] = side["fields"]
+
+    def _fetch(src: ChainSource) -> List[Dict[str, Any]]:
+        adapter = executor._adapter_factory(src.source_id)
+        if adapter is None:
+            raise FederatedQueryError(
+                f"chain source '{src.source_id}' is not connected",
+                details={"source_id": src.source_id},
+            )
+        fields = src.fields if src.fields is not None else derived_fields.get(src.source_id)
+        return executor._source_query(
+            adapter, src.dataset_id, _SideView(req, src),
+            src.where, fields=fields, limit=req.limit,
+        )
 
     streaming = StreamingBudget(
         max_rows=req.budget.max_rows,
@@ -857,25 +1177,67 @@ def execute_federated_chain(executor: "FederatedExecutor", req: FederatedChainRe
     )
     per_source_rows: List[int] = []
     adapters: List[Any] = []
-    for src in ordered_sources:
-        adapter = executor._adapter_factory(src.source_id)
-        if adapter is None:
-            raise FederatedQueryError(
-                f"chain source '{src.source_id}' is not connected",
-                details={"source_id": src.source_id},
+    semi_join_stats: List[Dict[str, int]] = []
+    left_adapter0 = executor._adapter_factory(ordered_sources[0].source_id)
+    right_adapter0 = executor._adapter_factory(ordered_sources[1].source_id)
+    first_join = ordered_joins[0]
+    server_side_first_hop = False
+    accumulated: List[Dict[str, Any]] = []
+    if (
+        ordered_sources[0].source_id == ordered_sources[1].source_id
+        and first_join.kind in ("spatial_join", "aggregate_join")
+        and left_adapter0 is not None
+        and hasattr(left_adapter0, "server_spatial_join")
+        and left_adapter0 is right_adapter0
+    ):
+        try:
+            rows = left_adapter0.server_spatial_join(
+                ordered_sources[0].dataset_id,
+                ordered_sources[1].dataset_id,
+                join_op=first_join.spatial_op or "within",
+                group_by_polygon_field=(first_join.group_by_right or [None])[0],
+                limit=req.limit,
             )
-        feats = executor._source_query(
-            adapter, src.dataset_id, _SideView(req, src),
-            src.where, fields=src.fields, limit=req.limit,
-        )
-        per_source_rows.append(len(feats))
-        adapters.append(feats)
+            accumulated = list(rows)
+            per_source_rows = [len(rows), len(rows)]
+            server_side_first_hop = True
+        except DataFabricError:
+            raise
+        except Exception as e:  # noqa: BLE001 - server join 不可用 → 本地回退
+            logger.info("[Federation] chain server-side first hop unavailable, "
+                        "falling back to local: %s", e)
+            plans[0].warnings.append(
+                f"server-side first hop failed ({e}); local execution used")
+    if not server_side_first_hop:
+        for src in ordered_sources:
+            feats = _fetch(src)
+            per_source_rows.append(len(feats))
+            adapters.append(feats)
+        accumulated = adapters[0]
+    else:
+        # 首跳已在服务端完成：占位 [None, None] 保持 adapters[i] 与
+        # ordered_sources[i] 的对齐不变量，仅拉取链上剩余源。
+        adapters = [None, None]
+        for src in ordered_sources[2:]:
+            feats = _fetch(src)
+            per_source_rows.append(len(feats))
+            adapters.append(feats)
 
-    accumulated: List[Dict[str, Any]] = adapters[0]
-    joined_total = 0
-    for i, join in enumerate(req.joins):
-        right_rows = adapters[i + 1]
+    joined_total = len(accumulated) if server_side_first_hop else 0
+    hops = ordered_joins[1:] if server_side_first_hop else ordered_joins
+    hop_offset = 1 if server_side_first_hop else 0
+
+    for i, join in enumerate(hops):
+        src_pos = i + hop_offset
+        right_rows = adapters[src_pos + 1]
         if join.kind == "attribute_join":
+            reduced, original = _semi_join_reduce_right(accumulated, right_rows, join)
+            if reduced is not right_rows:
+                semi_join_stats.append({
+                    "hop": src_pos, "right_rows_before": original,
+                    "right_rows_after": len(reduced),
+                })
+                right_rows = reduced
             # F1：左键经 _chain_row_key 穿透（顶层优先，回退上一跳 __right__）
             accumulated = _self.attribute_join_local(
                 accumulated, right_rows,
@@ -887,9 +1249,9 @@ def execute_federated_chain(executor: "FederatedExecutor", req: FederatedChainRe
         elif join.kind == "spatial_join":
             # F3：累积行重建为左要素（几何来自上一空间跳的 __left_geometry__）
             left_features = _chain_left_features(accumulated)
-            if i > 0 and not any(isinstance(f.get("geometry"), dict) for f in left_features):
+            if src_pos > 0 and not any(isinstance(f.get("geometry"), dict) for f in left_features):
                 raise FederatedQueryError(
-                    f"chain spatial join {i} has no left geometry: the preceding hop "
+                    f"chain spatial join {src_pos} has no left geometry: the preceding hop "
                     "did not carry one",
                     details={"hint": "make the preceding hop a spatial join (it stores "
                                      "__left_geometry__), or reproject/carried geometry "
@@ -902,6 +1264,13 @@ def execute_federated_chain(executor: "FederatedExecutor", req: FederatedChainRe
                 carry_left_geometry=True,
             )
         else:  # aggregate_join
+            reduced, original = _semi_join_reduce_right(accumulated, right_rows, join)
+            if reduced is not right_rows:
+                semi_join_stats.append({
+                    "hop": src_pos, "right_rows_before": original,
+                    "right_rows_after": len(reduced),
+                })
+                right_rows = reduced
             # F2：先连接（右源行进入 __right__），再按右源字段分组聚合 ——
             # 否则 right_rows 被丢弃、分组键全部落空（单一全 None 组）
             joined = _self.attribute_join_local(
@@ -917,20 +1286,20 @@ def execute_federated_chain(executor: "FederatedExecutor", req: FederatedChainRe
         joined_total = len(accumulated)
         if joined_total > req.budget.max_rows:
             raise QueryBudgetExceededError(
-                f"chain join {i} produced {joined_total} rows "
+                f"chain join {src_pos} produced {joined_total} rows "
                 f"(budget {req.budget.max_rows}); fail-fast stops the chain",
                 details={"hint": "filter sources harder, or aggregate before joining",
                          "per_source_rows": per_source_rows},
             )
         # F1：为下一跳提升仅存于 __right__ 的连接键到顶层（原地；左字段优先）
-        if i + 1 < len(req.joins):
-            _chain_lift_next_join_key(accumulated, req.joins[i + 1])
+        if i + 1 < len(hops):
+            _chain_lift_next_join_key(accumulated, hops[i + 1])
 
     final_rows = accumulated[: req.limit]
     rows_fetched = sum(per_source_rows)
-    return {
+    result = {
         "status": "success",
-        "strategy": "left_deep_chain",
+        "strategy": "server_side_first_hop" if server_side_first_hop else "left_deep_chain",
         "order": [s.source_id for s in ordered_sources],
         "rows": final_rows,
         "row_count": len(final_rows),
@@ -946,6 +1315,9 @@ def execute_federated_chain(executor: "FederatedExecutor", req: FederatedChainRe
         "execution_duration_s": round(time.monotonic() - started, 4),
         "warnings": plans[0].warnings,   # F7：planner 收集的 warnings 随计划返回
     }
+    if semi_join_stats:
+        result["semi_join_reduction"] = semi_join_stats
+    return result
 
 
 class _SideView:
