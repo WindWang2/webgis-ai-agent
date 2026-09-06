@@ -123,8 +123,6 @@ def _geometry_to_wkb(geom: Optional[Dict[str, Any]]) -> Optional[bytes]:
         return shapely.to_wkb(shape)
     except VectorCarrierEncodeError:
         raise
-    except VectorCarrierEncodeError:
-        raise
     except Exception as exc:
         raise VectorCarrierEncodeError(
             f"geometry WKB encode failed: {_safe_exc_text(exc)}") from exc

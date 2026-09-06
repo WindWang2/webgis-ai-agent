@@ -370,21 +370,26 @@ class DurableStatisticsStore:
             from app.models.data_fabric import DatasetStatisticsRecord
 
             cutoff = now or datetime.now(timezone.utc).replace(tzinfo=None)
-            with self._session() as db:
-                row = (
-                    self._call_with_timeout(
-                        lambda: db.query(DatasetStatisticsRecord)
+
+            def _query_latest():
+                # 会话在**旁路线程内**创建并关闭（round-2 评审 MAJOR：
+                # 会话在调用线程创建/关闭而查询在池线程执行 = 跨线程
+                # 共用非线程安全的 Session/连接 → 连接池投毒风险）。
+                with self._session() as db:
+                    return (
+                        db.query(DatasetStatisticsRecord)
                         .filter(DatasetStatisticsRecord.dataset_fingerprint == str(dataset_fingerprint))
                         .order_by(DatasetStatisticsRecord.collected_at.desc())
                         .limit(1)
                         .first()
                     )
-                )
-                if row is None:
-                    return None
-                if row.expires_at is not None and row.expires_at < cutoff:
-                    return None  # 显式过期 = 无统计（诚实 stale 语义）
-                return _stats_from_row(row)
+
+            row = self._call_with_timeout(_query_latest)
+            if row is None:
+                return None
+            if row.expires_at is not None and row.expires_at < cutoff:
+                return None  # 显式过期 = 无统计（诚实 stale 语义）
+            return _stats_from_row(row)
         except Exception as exc:  # noqa: BLE001 - advisory 层 fail-open（含超时）
             logger.debug("[statistics] durable load unavailable: %s", exc)
             return None

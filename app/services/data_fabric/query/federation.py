@@ -959,8 +959,8 @@ def plan_federated_chain(req: FederatedChainRequest) -> List[FederatedPlan]:
     if order_warning:
         chain_warnings.append(order_warning)
     elif req.order_strategy == "cost_stats":
-        pass  # 无回落警告 = 枚举路径自带证据（不重复追加 V3/given 文案）
-    if req.order_strategy == "cost":
+        pass  # 枚举路径的证据已含在 enumeration warning 里，不重复追加
+    if req.order_strategy in ("cost", "cost_stats"):
         if req.sources[order[0]].estimated_rows is None:
             chain_warnings.append(
                 "join order uses given order (no estimated_rows hints available); "
@@ -970,7 +970,7 @@ def plan_federated_chain(req: FederatedChainRequest) -> List[FederatedPlan]:
             chain_warnings.append(
                 "join ordered by estimated_rows hints (cost-based, left-deep)"
             )
-    else:
+    elif req.order_strategy == "given":
         chain_warnings.append(
             "join order uses given order (cost hints ignored); "
             "ordering is an assumption"

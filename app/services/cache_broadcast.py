@@ -52,22 +52,30 @@ def _redis_client() -> Optional[Any]:
 
 _client_lock = threading.Lock()
 _cached_client: Optional[Any] = None
-_client_failed = False
+_client_failed_at: Optional[float] = None
+#: Redis 不可用后的重试间隔（评审 MAJOR：永久闩锁 = 特性死亡到进程重启；
+#: 时间性退避让 Redis 恢复后自愈，同时避免每次事件都撞 2s socket 超时）。
+_CLIENT_RETRY_S = 30.0
 
 
 def _client_cached() -> Optional[Any]:
-    """复用 Redis 客户端（评审 MINOR：每事件一次 TCP 握手 → 惰性单例）。"""
-    global _cached_client, _client_failed
+    """复用 Redis 客户端；失败后按 ``_CLIENT_RETRY_S`` 退避重探（自愈）。"""
+    global _cached_client, _client_failed_at
     with _client_lock:
         if _cached_client is not None:
             return _cached_client
-        if _client_failed:
-            return None
+        import time as _time
+
+        if _client_failed_at is not None and (
+            _time.monotonic() - _client_failed_at < _CLIENT_RETRY_S
+        ):
+            return None  # 退避窗口内：诚实跳过（正确性由权威校验兜底）
         client = _redis_client()
         if client is None:
-            _client_failed = True
+            _client_failed_at = _time.monotonic()
             return None
         _cached_client = client
+        _client_failed_at = None
         return client
 
 
@@ -89,10 +97,9 @@ def broadcast_ref_invalidation(
         client.publish(CHANNEL, message)
         return True
     except Exception as exc:  # noqa: BLE001
-        global _cached_client, _client_failed
+        global _cached_client, _client_failed_at
         with _client_lock:
-            _cached_client = None
-            _client_failed = True  # 下次发布重新探测（Redis 恢复后自愈）
+            _cached_client = None  # 丢缓存；退避后重探（Redis 恢复自愈）
         logger.debug("[cache-broadcast] publish failed (harmless): %s", exc)
         return False
 

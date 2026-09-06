@@ -203,12 +203,14 @@ class TestSecurityPropagation:
             def publish(self, channel, message):
                 captured["m"] = message
 
-        orig = cb._redis_client
-        cb._redis_client = lambda: FakeClient()
+        # patch _client_cached（不是 _redis_client）：_client_cached 有
+        # 失败退避缓存，patch 底层可能被缓存短路（round-2 评审发现）。
+        orig = cb._client_cached
+        cb._client_cached = lambda: FakeClient()
         try:
             cb.broadcast_ref_invalidation("s" * 500, "r" * 500, "OVERWRITE")
         finally:
-            cb._redis_client = orig
+            cb._client_cached = orig
         event = json.loads(captured["m"])
         assert len(event["session_id"]) <= 128
         assert len(event["ref_id"]) <= 128

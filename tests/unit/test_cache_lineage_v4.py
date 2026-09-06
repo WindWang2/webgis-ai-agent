@@ -154,10 +154,10 @@ class TestCacheBroadcast:
         import app.services.cache_broadcast as cb
 
         cb._cached_client = None
-        cb._client_failed = False
+        cb._client_failed_at = None
         yield
         cb._cached_client = None
-        cb._client_failed = False
+        cb._client_failed_at = None
 
     def test_no_redis_returns_false_and_never_raises(self, monkeypatch):
         import app.services.cache_broadcast as cb
@@ -185,6 +185,29 @@ class TestCacheBroadcast:
         event = json.loads(published["message"])
         assert set(event) == {"kind", "session_id", "ref_id", "reason", "ts"}
         assert "features" not in published["message"]  # 无载荷
+
+    def test_failed_client_self_heals_after_backoff(self, monkeypatch):
+        """round-2 评审 MAJOR 锁定：Redis 失败不是永久闩锁 —— 退避窗口
+        过后重新探测（Redis 恢复后特性自愈）。"""
+        import time as _time
+
+        import app.services.cache_broadcast as cb
+
+        # 刚失败 → 退避窗口内跳过。
+        cb._cached_client = None
+        cb._client_failed_at = _time.monotonic()
+        assert cb._client_cached() is None
+        # 失败时刻拨回退避窗口之前 → 重新探测并恢复。
+        cb._client_failed_at = _time.monotonic() - (cb._CLIENT_RETRY_S + 1)
+
+        class FakeClient:
+            def publish(self, channel, message):
+                return 1
+
+        monkeypatch.setattr(cb, "_redis_client", lambda: FakeClient())
+        assert cb._client_cached() is not None
+        cb._cached_client = None
+        cb._client_failed_at = None
 
     def test_apply_event_invokes_local_authority(self, monkeypatch):
         """评审 MAJOR 修正锁定：监听端以正确类型调用失效权威

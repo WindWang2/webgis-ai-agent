@@ -176,6 +176,13 @@ class TestBoundedOrderEnumeration:
         assert plans2[0].left["source_id"] == "tiny"
         assert [p.right["source_id"] for p in plans2] == ["mid", "big"]
 
+    def test_cost_stats_enumeration_carries_no_false_warnings(self):
+        """round-2 评审 MAJOR 锁定：枚举成功路径不追加 given-order 文案。"""
+        req = self._req("cost_stats")
+        plans = plan_federated_chain(req)
+        assert not any("cost hints ignored" in w for w in plans[0].warnings)
+        assert not any("given order" in w for w in plans[0].warnings)
+
     def test_positional_joins_with_stats_warn_fallback(self):
         req = self._req("cost_stats", with_ids=False)
         plans = plan_federated_chain(req)
