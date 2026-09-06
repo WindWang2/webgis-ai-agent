@@ -235,7 +235,7 @@ class TestReproducibilityBundle:
 
         node = _filter_node()
         plan, run = self._plan_and_run(node)
-        bundle = build_execution_bundle(plan, run, runtime_manifest_fingerprint="old-rt")
+        build_execution_bundle(plan, run, runtime_manifest_fingerprint="old-rt")
         # 旧 runtime 指纹 vs 当前（None/不同）→ drift 判 stale 或 unknown；
         # 用精确注入验证 stale 路径：
         from app.services.geocompute import reproducibility as rb
@@ -272,7 +272,6 @@ class TestReproducibilityBundle:
         entry = projection[0]
         assert entry["input_lineage"] == [{"ref_id": "ref:geojson-1", "kind": "ref"}]
         assert entry["output_ref"] is None or isinstance(entry["output_ref"], str)
-        text = repr(entry)
         assert "properties" not in entry  # 无原始载荷投影
 
     def test_lineage_projection_covers_whole_chain(self):
