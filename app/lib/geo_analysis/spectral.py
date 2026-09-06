@@ -205,6 +205,26 @@ INDEX_FAMILY: Dict[str, SpectralIndexSpec] = {
             "2.5 · (NIR − Red) / (NIR + 6·Red − 7.5·Blue + 1)",
             (-1.0, 2.5), "huete1988",
         ),
+        SpectralIndexSpec(
+            # EVI2（两波段 EVI，Huete 1997；词表无独立条目 → 引 SAVI/EVI
+            # 谱系 huete1988——与 evi 同出处 id，公式串披露两波段差异）。
+            # 全零波段（nodata 惯例）与 evi 同语义保持 NaN（分母 +1 项
+            # 否则会产伪 0）。Foundation V2 · A6 additive。
+            "evi2", ("red", "nir"),
+            lambda red, nir: np.where(
+                (np.asarray(red, dtype=float) == 0)
+                & (np.asarray(nir, dtype=float) == 0),
+                np.nan,
+                2.5 * _safe_div(
+                    np.asarray(nir, dtype=float) - np.asarray(red, dtype=float),
+                    (np.asarray(nir, dtype=float)
+                     + 2.4 * np.asarray(red, dtype=float) + 1.0),
+                ),
+            ),
+            "EVI2（两波段 EVI，SAVI/EVI 谱系）= 2.5 · (NIR − Red) / "
+            "(NIR + 2.4·Red + 1)",
+            (-1.0, 2.5), "huete1988",
+        ),
     ]
 }
 
