@@ -46,6 +46,7 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.nature_resources": "analysis",
     "app.tools.network_tools": "analysis",
     "app.tools.osm": "data_access",
+    "app.tools.point_pattern_tools": "analysis",        # 点格局/时空交互统计
     "app.tools.plan_mode": "planning",
     "app.tools.project_tools": "debug_internal",        # workflow/audit 基建
     "app.tools.remote_sensing": "data_access",          # fetch_*；指数分析覆盖

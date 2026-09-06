@@ -18,6 +18,17 @@ function formatMeters(m: number): string {
   return m >= 1000 ? `${(m / 1000).toFixed(m % 1000 === 0 ? 0 : 1)} km` : `${m} m`;
 }
 
+// V3（ADR-0101 D3）：dual_unit 变体的英制换算 —— 与公制同一根比例尺条
+// （同 px 宽度），按该段实际代表距离换算 ft/mi，不是独立第二根尺。
+function formatImperial(meters: number): string {
+  const feet = meters * 3.28084;
+  if (feet >= 5280) {
+    const miles = feet / 5280;
+    return `${miles.toFixed(miles >= 10 ? 0 : 1)} mi`;
+  }
+  return `${Math.round(feet)} ft`;
+}
+
 // D7：academic —— 黑白交替分段尺（经典制图比例尺），4 段等分。
 function AcademicSegments({ pixels }: { pixels: number }) {
   const segments = 4;
@@ -37,6 +48,7 @@ function AcademicSegments({ pixels }: { pixels: number }) {
 function ScaleBarRenderer(component: MapSpecComponent, ctx: RendererContext) {
   const { meters, pixels } = computeScale(ctx.zoom, ctx.centerLat);
   // D7：minimal（缺省，现状）| boxed（卡片）| academic（黑白分段）
+  // V3：dual_unit（公制主行 + 英制换算行，同一根比例尺条）
   const variant = resolveVariant(component, 'minimal');
   const width = Math.round(pixels);
   return (
@@ -47,14 +59,19 @@ function ScaleBarRenderer(component: MapSpecComponent, ctx: RendererContext) {
       className={`map-chrome absolute z-30 flex items-center gap-2 text-caption font-medium tabular-nums ${positionClass(component)} ${
         variant === 'boxed' ? 'rounded-chrome px-2.5 py-1.5' : variant === 'academic' ? 'rounded-chrome px-2 py-1' : 'px-2 py-1'
       }`}
-      aria-label={`比例尺 ${formatMeters(meters)}`}
+      aria-label={`比例尺 ${formatMeters(meters)}${variant === 'dual_unit' ? `（${formatImperial(meters)}）` : ''}`}
     >
-      {variant === 'academic' ? (
-        <>
-          <span className="text-micro tabular-nums text-map-chrome-ink-muted">0</span>
-          <AcademicSegments pixels={pixels} />
-          <span className="text-map-chrome-ink">{formatMeters(meters)}</span>
-        </>
+      {variant === 'academic' || variant === 'dual_unit' ? (
+        <div className={variant === 'dual_unit' ? 'flex flex-col gap-0.5' : 'flex items-center gap-2'}>
+          <div className="flex items-center gap-2">
+            <span className="text-micro tabular-nums text-map-chrome-ink-muted">0</span>
+            <AcademicSegments pixels={pixels} />
+            <span className="text-map-chrome-ink">{formatMeters(meters)}</span>
+          </div>
+          {variant === 'dual_unit' ? (
+            <span className="text-micro tabular-nums text-map-chrome-ink-muted">{formatImperial(meters)}</span>
+          ) : null}
+        </div>
       ) : (
         <>
           <div aria-hidden className="border-b-2 border-l-2 border-r-2 border-map-chrome-ink" style={{ width: `${width}px`, height: '5px' }} />

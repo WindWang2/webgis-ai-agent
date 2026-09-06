@@ -74,6 +74,19 @@ function MapBorderRenderer(component: MapSpecComponent) {
     );
   }
 
+  // V3（ADR-0101 D3）：neatline —— 外细实线 + 内虚线（经典地图内图廓）。
+  if (variant === 'neatline') {
+    return (
+      <div data-testid="spec-chrome-map-border" aria-hidden>
+        <div className={common} style={{ ...style, borderWidth: 1 }} />
+        <div
+          className={common}
+          style={{ ...style, inset: inset + 4, borderWidth: 1, borderStyle: 'dashed', opacity: 0.65 }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div
       data-testid="spec-chrome-map-border"

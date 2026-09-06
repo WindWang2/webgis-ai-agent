@@ -1,0 +1,133 @@
+{
+ "digest": {
+  "case": "multi::administrative_choropleth::composition.statistical_map",
+  "components": [
+   {
+    "id": "title",
+    "layerId": "",
+    "position": "top-center",
+    "priority": 10,
+    "templateId": "title/academic",
+    "title": "多层绑定用例",
+    "type": "title",
+    "variant": "academic"
+   },
+   {
+    "id": "legend-main",
+    "layerId": "layer-2020",
+    "position": "bottom-left",
+    "priority": 16,
+    "templateId": "legend/academic",
+    "title": "",
+    "type": "legend",
+    "variant": "academic"
+   },
+   {
+    "id": "legend-secondary",
+    "layerId": "layer-2025",
+    "position": "bottom-left",
+    "priority": 16,
+    "templateId": "legend/academic",
+    "title": "",
+    "type": "legend",
+    "variant": "academic"
+   },
+   {
+    "id": "scale-bar",
+    "layerId": "",
+    "position": "bottom-right",
+    "priority": 20,
+    "templateId": "scale-bar/minimal",
+    "title": "",
+    "type": "scale_bar",
+    "variant": "minimal"
+   },
+   {
+    "id": "north-arrow",
+    "layerId": "",
+    "position": "top-right",
+    "priority": 30,
+    "templateId": "north-arrow/minimal-black",
+    "title": "",
+    "type": "north_arrow",
+    "variant": "compass_minimal_black"
+   },
+   {
+    "id": "attribution",
+    "layerId": "",
+    "position": "bottom-left",
+    "priority": 50,
+    "templateId": "attribution/default",
+    "title": "",
+    "type": "attribution",
+    "variant": "default"
+   },
+   {
+    "id": "map-border",
+    "layerId": "",
+    "position": "none",
+    "priority": 70,
+    "templateId": "frame/minimal",
+    "title": "",
+    "type": "map_border",
+    "variant": "minimal"
+   }
+  ],
+  "kind": "multi",
+  "layout": {
+   "moved": [],
+   "placements": {
+    "attribution": "bottom-left",
+    "legend-main": "bottom-left",
+    "legend-secondary": "bottom-left",
+    "map-border": "none",
+    "north-arrow": "top-right",
+    "scale-bar": "bottom-right",
+    "title": "top-center"
+   },
+   "suppressed": [],
+   "warning_count": 1
+  },
+  "model": "administrative_choropleth",
+  "output": "pdf",
+  "profile": "viewport",
+  "selection": {
+   "component_templates": {
+    "attribution": "attribution/default",
+    "legend": "legend/academic",
+    "map_border": "frame/minimal",
+    "north_arrow": "north-arrow/minimal-black",
+    "scale_bar": "scale-bar/minimal",
+    "title": "title/academic"
+   },
+   "composition_template_id": "composition.statistical_map",
+   "reason_codes": [],
+   "rejected_count": 2,
+   "required_slots": [
+    "attribution",
+    "legend",
+    "north_arrow",
+    "scale_bar",
+    "title"
+   ],
+   "selected": [
+    "attribution",
+    "legend",
+    "map_border",
+    "north_arrow",
+    "scale_bar",
+    "title"
+   ]
+  },
+  "template": "composition.statistical_map",
+  "validation": {
+   "error_codes": [],
+   "ok": true,
+   "warning_codes": [
+    "recommended_slot_missing",
+    "zone_collision"
+   ]
+  }
+ },
+ "sha": "3016eb7bcd64e536"
+}

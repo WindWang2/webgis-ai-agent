@@ -1,7 +1,9 @@
 """
 Network Analyst V2 Tools for ToolRegistry.
 Exposes network_shortest_path, network_od_matrix, network_closest_facility,
-network_service_area, network_accessibility, location_allocation, and optimize_route.
+network_service_area, network_accessibility (15min_circle / 2sfca / e2sfca),
+location_allocation (p_median / max_coverage / p_center), optimize_route,
+network_gravity_access, network_huff_interaction, and network_centrality.
 """
 import logging
 from typing import Any, Dict, List, Literal, Optional
@@ -10,6 +12,7 @@ from pydantic import BaseModel, Field
 from app.tools.registry import ToolRegistry, ToolExecutionPolicy, tool
 from app.tools._utils import trim_features
 from app.lib.gis.algorithm_registry import get_algorithm_registry
+from app.lib.gis.backend_selection import ScaleProfile, select_backend
 from app.lib.gis.parameter_contracts import apply_contract
 from app.lib.gis.scientific_evidence import Diagnostic, build_evidence
 from app.services.network.engine import NetworkGraphEngine
@@ -28,6 +31,23 @@ MAX_OPTIMIZE_STOPS = 200
 # straight into the LLM context. Requests beyond this cap are rejected with an
 # EXPLICIT error (never silently truncated), mirroring MAX_OPTIMIZE_STOPS.
 MAX_OD_MATRIX_PAIRS = 10_000
+
+
+def _backend_diagnostic(algorithm_id: str, feature_count: Optional[int]) -> List[Diagnostic]:
+    """select_backend 决策 → 证据块诊断（Foundation V2 A7/A4；失败不阻塞主结果）。
+
+    未声明 backend_variants 的算法（location_allocation / gravity / huff）
+    这里如实记录「默认工具路径」；network.centrality 声明了 exact/sampled
+    两个变体，决策随节点数真实切换。Diagnostic.value 是数值位 —— 变体名
+    只进 text（point_pattern_tools 同款约定）。
+    """
+    try:
+        decision = select_backend(algorithm_id, ScaleProfile(feature_count=feature_count))
+        raw = decision.to_diagnostic()
+        return [Diagnostic(name=raw["name"], text=raw["text"])]
+    except Exception as exc:  # noqa: BLE001 — 诊断是 best-effort
+        logger.warning("backend_selection diagnostic failed for %s: %s", algorithm_id, exc)
+        return []
 
 
 def _geometry_descriptor(geom: Any, max_features: int = 50) -> Dict[str, Any]:
@@ -286,6 +306,14 @@ class NetworkAccessibilityArgs(BaseModel):
     facilities: List[Any] = Field(..., description="Service facility locations")
     cutoff_minutes: float = Field(15.0, description="Target travel time cutoff in minutes")
     profile: TravelProfileName = Field(default="walking", description="Travel profile: walking, driving, cycling, custom")
+    method: Literal["15min_circle", "2sfca", "e2sfca"] = Field(
+        default="15min_circle",
+        description="Accessibility method: 15min_circle (0/1 coverage), 2sfca (equal weight), e2sfca (Gaussian band decay, Luo & Qi 2009)",
+    )
+    decay_zones: int = Field(
+        default=3,
+        description="E2SFCA equal-width decay bands within the cutoff (1-10, default 3); only used by method=e2sfca",
+    )
 
 
 class LocationAllocationArgs(BaseModel):
@@ -293,8 +321,48 @@ class LocationAllocationArgs(BaseModel):
     candidate_facilities: List[Any] = Field(..., description="Candidate facility locations")
     demand_points: List[Any] = Field(..., description="Demand points or population centers")
     number_to_choose: int = Field(2, description="Number of facilities to select")
-    objective: Literal["minimize_cost", "maximize_coverage"] = Field(default="minimize_cost", description="Objective: minimize_cost or maximize_coverage")
+    objective: Literal["minimize_cost", "maximize_coverage", "minimize_max_cost"] = Field(
+        default="minimize_cost",
+        description="Objective: minimize_cost (p-median), maximize_coverage (MCLP), minimize_max_cost (p-center)",
+    )
     profile: TravelProfileName = Field(default="driving", description="Travel profile")
+
+
+class NetworkGravityAccessArgs(BaseModel):
+    network: Any = Field(..., description="Network GeoJSON dataset, ref ID, or 'osm_road'")
+    demand_points: List[Any] = Field(..., description="Demand points (population / activity centers)")
+    facilities: List[Any] = Field(..., description="Facility locations (capacity = attractiveness)")
+    mass_exponent: float = Field(1.0, description="Capacity exponent alpha in S^alpha (0-3, default 1.0)")
+    distance_decay: float = Field(2.0, description="Network cost decay beta in d^-beta (0.5-4, default 2.0)")
+    cutoff_cost: Optional[float] = Field(
+        default=None,
+        description="Optional cost cutoff (active impedance units, default seconds); pairs beyond it are excluded",
+    )
+    profile: TravelProfileName = Field(default="driving", description="Travel profile")
+
+
+class NetworkHuffInteractionArgs(BaseModel):
+    network: Any = Field(..., description="Network GeoJSON dataset, ref ID, or 'osm_road'")
+    demand_points: List[Any] = Field(..., description="Demand points (consumers)")
+    facilities: List[Any] = Field(..., description="Facility locations (capacity = attractiveness)")
+    distance_decay: float = Field(2.0, description="Network cost decay beta in d^-beta (0.5-4, default 2.0)")
+    cutoff_cost: Optional[float] = Field(
+        default=None,
+        description="Optional candidate cutoff (active impedance units); facilities beyond it leave the choice set",
+    )
+    profile: TravelProfileName = Field(default="driving", description="Travel profile")
+
+
+class NetworkCentralityArgs(BaseModel):
+    network: Any = Field(..., description="Network GeoJSON dataset, ref ID, or 'osm_road'")
+    metrics: Literal["degree", "closeness", "betweenness", "edge_betweenness", "all"] = Field(
+        default="all",
+        description="Centrality metrics; all includes edge_betweenness (exact only up to 1500 edges, honestly refused beyond)",
+    )
+    weight: Literal["travel_time", "length"] = Field(
+        default="travel_time",
+        description="Edge weight field: travel_time (seconds) or length (meters); degree ignores weights",
+    )
 
 
 class OptimizeRouteArgs(BaseModel):
@@ -477,7 +545,8 @@ def register_network_tools(registry: ToolRegistry):
     @tool(
         registry,
         name="network_accessibility",
-        description="评估 15 分钟生活圈空间可达性（如医疗、教育、公园、商业设施服务覆盖率与人口服务分配）。",
+        description="评估 15 分钟生活圈空间可达性（如医疗、教育、公园、商业设施服务覆盖率与人口服务分配）；"
+                    "method=e2sfca 时按 Luo & Qi 2009 高斯衰减带计算增强两步浮动捕获法。",
         tier=2,
         domains=["network"],
         args_model=NetworkAccessibilityArgs,
@@ -489,16 +558,27 @@ def register_network_tools(registry: ToolRegistry):
         facilities: List[Any],
         cutoff_minutes: float = 15.0,
         profile: str = "walking",
+        method: str = "15min_circle",
+        decay_zones: int = 3,
         session_id: str = "",
     ) -> dict:
         try:
+            # Foundation V2 (A4)：方法/衰减带参数契约（枚举 + 1-10 带界），
+            # 收敛后值传引擎 —— schema 层枚举 + 契约范围双保险。
+            params = apply_contract("network_accessibility_analysis", {
+                "method": method,
+                "cutoff_minutes": cutoff_minutes,
+                "decay_zones": decay_zones,
+            })
             travel_profile = TravelProfile(name=profile)
             res = await engine.solve_accessibility(
                 network=network,
                 demand_layer=demand_layer,
                 facilities=facilities,
-                cutoff_minutes=cutoff_minutes,
+                cutoff_minutes=float(params["cutoff_minutes"]),
                 profile=travel_profile,
+                method=str(params["method"]),
+                decay_zones=int(params["decay_zones"]),
                 session_id=session_id,
             )
             out = trim_network_result(res.model_dump())
@@ -508,32 +588,45 @@ def register_network_tools(registry: ToolRegistry):
             descriptor = get_algorithm_registry().get("network.accessibility")
             if descriptor is not None and isinstance(acc_block, dict) and acc_block:
                 summary = out.get("summary") or {}
+                diagnostics = [
+                    Diagnostic(
+                        name="catchment_radius_min",
+                        value=float(acc_block.get("cutoff_minutes", cutoff_minutes)),
+                        unit="minutes",
+                        text="2SFCA/E2SFCA/覆盖法浮动捕获半径（分钟）",
+                    ),
+                    Diagnostic(
+                        name="demand_total",
+                        value=float(acc_block.get("total_demand", 0.0)),
+                        text="需求权重总和（分母显式；零需求不 fabricated 覆盖率）",
+                    ),
+                    Diagnostic(
+                        name="supply_total",
+                        value=float(summary.get("supply_total", 0.0)),
+                        text="设施容量总和（capacity 缺省 1.0/设施）",
+                    ),
+                ]
+                if str(params["method"]) == "e2sfca":
+                    zones = int(params["decay_zones"])
+                    diagnostics.append(Diagnostic(
+                        name="e2sfca_zone_weights",
+                        value=float(zones),
+                        text=(
+                            f"decay_zones={zones}：cutoff 等分带，带中点权 "
+                            f"w_r=exp(-0.5*(r+0.5)^2)（Luo & Qi 2009，d0=cutoff/{zones}）"
+                        ),
+                    ))
                 out["scientific_evidence"] = build_evidence(
                     descriptor,
                     tool="network_accessibility",
                     parameters_applied={
-                        "cutoff_minutes": cutoff_minutes,
+                        "cutoff_minutes": float(params["cutoff_minutes"]),
                         "profile": profile,
+                        "method": str(params["method"]),
+                        "decay_zones": int(params["decay_zones"]),
                     },
                     input_facts={"feature_count": summary.get("demand_point_count")},
-                    diagnostics=[
-                        Diagnostic(
-                            name="catchment_radius_min",
-                            value=float(acc_block.get("cutoff_minutes", cutoff_minutes)),
-                            unit="minutes",
-                            text="2SFCA/覆盖法浮动捕获半径（分钟）",
-                        ),
-                        Diagnostic(
-                            name="demand_total",
-                            value=float(acc_block.get("total_demand", 0.0)),
-                            text="需求权重总和（分母显式；零需求不 fabricated 覆盖率）",
-                        ),
-                        Diagnostic(
-                            name="supply_total",
-                            value=float(summary.get("supply_total", 0.0)),
-                            text="设施容量总和（capacity 缺省 1.0/设施）",
-                        ),
-                    ],
+                    diagnostics=diagnostics,
                 )
             return out
         except Exception as e:
@@ -543,7 +636,8 @@ def register_network_tools(registry: ToolRegistry):
     @tool(
         registry,
         name="location_allocation",
-        description="设施选址优化（Location-Allocation）：从多个候选设施中选取最佳组合（最小化加权通行成本或最大化需求覆盖）。",
+        description="设施选址优化（Location-Allocation）：从多个候选设施中选取最佳组合"
+                    "（最小化加权通行成本 / 最大化需求覆盖 / 最小化最大服务成本 p-center）。",
         tier=3,
         domains=["network"],
         args_model=LocationAllocationArgs,
@@ -569,7 +663,25 @@ def register_network_tools(registry: ToolRegistry):
                 profile=travel_profile,
                 session_id=session_id,
             )
-            return trim_network_result(res.model_dump())
+            out = trim_network_result(res.model_dump())
+            # Foundation V2 (A4/A7)：默认路径 backend 决策如实进证据诊断
+            # （location_allocation 未声明变体 —— 记录 default 而非虚构）。
+            descriptor = get_algorithm_registry().get("network.location_allocation")
+            if descriptor is not None:
+                out["scientific_evidence"] = build_evidence(
+                    descriptor,
+                    tool="location_allocation",
+                    parameters_applied={
+                        "objective": objective,
+                        "number_to_choose": number_to_choose,
+                        "profile": profile,
+                    },
+                    input_facts={"feature_count": len(demand_points)},
+                    diagnostics=_backend_diagnostic(
+                        "network.location_allocation", len(demand_points)
+                    ),
+                )
+            return out
         except Exception as e:
             logger.error(f"[location_allocation] Failed: {e}", exc_info=True)
             return {"type": "error", "message": f"设施选址优化失败: {str(e)}"}
@@ -613,3 +725,192 @@ def register_network_tools(registry: ToolRegistry):
         except Exception as e:
             logger.error(f"[optimize_route] Failed: {e}", exc_info=True)
             return {"type": "error", "message": f"路线巡航优化失败: {str(e)}"}
+
+    @tool(
+        registry,
+        name="network_gravity_access",
+        description="引力可达性（Hansen 势能 / Zipf 引力）：A_i=Σ S_j^α/d_ij^β，d 为真实路网 OD 成本；"
+                    "输出逐需求点得分与 top-3 设施贡献份额，不可达对显式计数。",
+        tier=2,
+        domains=["network"],
+        args_model=NetworkGravityAccessArgs,
+        execution_policy=ToolExecutionPolicy.ASYNC,
+    )
+    async def network_gravity_access(
+        network: Any,
+        demand_points: List[Any],
+        facilities: List[Any],
+        mass_exponent: float = 1.0,
+        distance_decay: float = 2.0,
+        cutoff_cost: Optional[float] = None,
+        profile: str = "driving",
+        session_id: str = "",
+    ) -> dict:
+        try:
+            params = apply_contract("gravity_accessibility_analysis", {
+                "mass_exponent": mass_exponent,
+                "distance_decay": distance_decay,
+                **({"cutoff_cost": cutoff_cost} if cutoff_cost is not None else {}),
+            })
+            res = await engine.solve_gravity_access(
+                network=network,
+                demand_points=demand_points,
+                facilities=facilities,
+                mass_exponent=float(params["mass_exponent"]),
+                distance_decay=float(params["distance_decay"]),
+                cutoff_cost=params.get("cutoff_cost"),
+                profile=TravelProfile(name=profile),
+                session_id=session_id,
+            )
+            out = res.model_dump()
+            descriptor = get_algorithm_registry().get("network.gravity_access")
+            if descriptor is not None:
+                out["scientific_evidence"] = build_evidence(
+                    descriptor,
+                    tool="network_gravity_access",
+                    parameters_applied={
+                        "mass_exponent": float(params["mass_exponent"]),
+                        "distance_decay": float(params["distance_decay"]),
+                        "cutoff_cost": params.get("cutoff_cost"),
+                        "profile": profile,
+                    },
+                    input_facts={"feature_count": res.demand_point_count},
+                    diagnostics=[
+                        *_backend_diagnostic("network.gravity_access", res.demand_point_count),
+                        Diagnostic(
+                            name="reachable_pair_count",
+                            value=float(res.reachable_pair_count),
+                            text="可达需求×设施对（参与势能求和）",
+                        ),
+                        Diagnostic(
+                            name="unreachable_pair_count",
+                            value=float(res.unreachable_pair_count),
+                            text="不可达对（跳过并显式计数，绝不静默丢弃）",
+                        ),
+                    ],
+                )
+            return out
+        except Exception as e:
+            logger.error(f"[network_gravity_access] Failed: {e}", exc_info=True)
+            return {"type": "error", "message": f"引力可达性计算失败: {str(e)}"}
+
+    @tool(
+        registry,
+        name="network_huff_interaction",
+        description="Huff 空间相互作用（概率模型）：P_ij=A_j·d_ij^−β/Σ_k A_k·d_ik^−β，d 为真实路网 OD 成本；"
+                    "输出逐需求 top-3 设施份额+份额熵、逐设施市场份额与专属（captive）份额。",
+        tier=2,
+        domains=["network"],
+        args_model=NetworkHuffInteractionArgs,
+        execution_policy=ToolExecutionPolicy.ASYNC,
+    )
+    async def network_huff_interaction(
+        network: Any,
+        demand_points: List[Any],
+        facilities: List[Any],
+        distance_decay: float = 2.0,
+        cutoff_cost: Optional[float] = None,
+        profile: str = "driving",
+        session_id: str = "",
+    ) -> dict:
+        try:
+            params = apply_contract("huff_interaction_analysis", {
+                "distance_decay": distance_decay,
+                **({"cutoff_cost": cutoff_cost} if cutoff_cost is not None else {}),
+            })
+            res = await engine.solve_huff_interaction(
+                network=network,
+                demand_points=demand_points,
+                facilities=facilities,
+                distance_decay=float(params["distance_decay"]),
+                cutoff_cost=params.get("cutoff_cost"),
+                profile=TravelProfile(name=profile),
+                session_id=session_id,
+            )
+            out = res.model_dump()
+            descriptor = get_algorithm_registry().get("network.huff_interaction")
+            if descriptor is not None:
+                out["scientific_evidence"] = build_evidence(
+                    descriptor,
+                    tool="network_huff_interaction",
+                    parameters_applied={
+                        "distance_decay": float(params["distance_decay"]),
+                        "cutoff_cost": params.get("cutoff_cost"),
+                        "profile": profile,
+                    },
+                    input_facts={"feature_count": res.demand_point_count},
+                    diagnostics=[
+                        *_backend_diagnostic("network.huff_interaction", res.demand_point_count),
+                        Diagnostic(
+                            name="unreachable_pair_count",
+                            value=float(res.unreachable_pair_count),
+                            text="不可达需求×设施对（不进入候选集，显式计数）",
+                        ),
+                        Diagnostic(
+                            name="unassigned_demand_count",
+                            value=float(res.summary.get("unassigned_count", 0)),
+                            text="候选集为空的需求点数（id 列表见 summary）",
+                        ),
+                    ],
+                )
+            return out
+        except Exception as e:
+            logger.error(f"[network_huff_interaction] Failed: {e}", exc_info=True)
+            return {"type": "error", "message": f"Huff 空间相互作用计算失败: {str(e)}"}
+
+    @tool(
+        registry,
+        name="network_centrality",
+        description="网络中心性：度/接近/介数/边介数（带权 Brandes）。节点≤2000 精确、>2000 固定种子采样"
+                    "（结果内 betweenness_mode 披露）；边介数仅 ≤1500 边精确，超出诚实拒绝；节点上限 20000。",
+        tier=2,
+        domains=["network"],
+        args_model=NetworkCentralityArgs,
+        execution_policy=ToolExecutionPolicy.ASYNC,
+    )
+    async def network_centrality(
+        network: Any,
+        metrics: str = "all",
+        weight: str = "travel_time",
+        session_id: str = "",
+    ) -> dict:
+        try:
+            params = apply_contract("network_centrality_analysis", {
+                "metrics": metrics,
+                "weight": weight,
+            })
+            res = await engine.solve_centrality(
+                network=network,
+                metrics=str(params["metrics"]),
+                weight=str(params["weight"]),
+                session_id=session_id,
+            )
+            out = res.model_dump()
+            descriptor = get_algorithm_registry().get("network.centrality")
+            if descriptor is not None:
+                # backend 决策按**节点数**选择（exact_brandes ≤2000 /
+                # sampled_brandes ≥2001）—— 与服务内真实切换同刻度。
+                diagnostics = _backend_diagnostic("network.centrality", res.node_count)
+                diagnostics.append(Diagnostic(
+                    name="betweenness_mode",
+                    value=1.0 if res.betweenness_mode == "sampled" else 0.0,
+                    text=(
+                        f"betweenness_mode={res.betweenness_mode}"
+                        + (f"（k={res.sample_k}, seed=42）" if res.sample_k else "")
+                        + "；node_count=" + str(res.node_count)
+                    ),
+                ))
+                out["scientific_evidence"] = build_evidence(
+                    descriptor,
+                    tool="network_centrality",
+                    parameters_applied={
+                        "metrics": str(params["metrics"]),
+                        "weight": str(params["weight"]),
+                    },
+                    input_facts={"feature_count": res.node_count},
+                    diagnostics=diagnostics,
+                )
+            return out
+        except Exception as e:
+            logger.error(f"[network_centrality] Failed: {e}", exc_info=True)
+            return {"type": "error", "message": f"网络中心性计算失败: {str(e)}"}

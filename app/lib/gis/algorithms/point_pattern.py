@@ -92,6 +92,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         # 既有实现（app/lib/geo_analysis/statistics.calculate_nearest）的
         # 描述符登记 —— 工具 nearest_neighbor 在 app/tools/spatial.py。
+        # Foundation V2 (A3)：Clark-Evans 正态近似 z/p 落地后升级 VALIDATED。
         AlgorithmDescriptor(
             id="point_pattern.nni", name="最近邻指数（NNI）", category="point_pattern",
             capabilities=["point_pattern_analysis"],
@@ -106,18 +107,25 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             assumptions=[
                 "R=观测最近邻均值/CSR 期望（0.5·√(A/N)，A 取 bbox）",
                 "R<0.7 聚集 / >1.3 分散的阈值为经验分档（非检验）",
-                "地理输入自动投影到局部 UTM",
+                "z=(R̄−E)/SE，SE=√((4−π)/(4πNρ))，ρ=N/A（Clark-Evans 1954）",
+                "z 检验为正态近似，双侧 p 经 erfc；地理输入自动投影 UTM",
             ],
             limitations=[
-                "R 阈值无显著性检验（p 值未实现）",
+                "正态近似 p 在小样本/边缘效应下有偏（无蒙特卡洛包络）",
                 "bbox 面积作 CSR 期望，窗形偏离矩形时期望偏",
+                "零面积 bbox（全重合点）下 z 检验不可用（nni_test_note 披露）",
             ],
             crs_class="GEOGRAPHIC_OK",
+            scientific_preconditions=["min_numeric_samples:2"],
+            uncertainty_outputs=["statistical_significance"],
             random_seed_policy="deterministic",
-            scientific_status="EXPERIMENTAL",
+            scientific_status="VALIDATED",
             conformance_tests=[
                 "tests/unit/lib/test_nearest_contract.py::test_nearest_contract_keys",
                 "tests/unit/lib/test_nearest_contract.py::test_nearest_coincident_points_clustered",
+                "tests/unit/lib/test_point_pattern_v2.py::test_nni_uniform_random_not_significant",
+                "tests/unit/lib/test_point_pattern_v2.py::test_nni_clustered_jitter_z_large_negative",
+                "tests/unit/lib/test_point_pattern_v2.py::test_nni_hand_computed_square_grid",
             ],
         ),
 
@@ -150,6 +158,192 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "tests/unit/test_spatial_stats.py::test_spatial_cluster_insufficient_points",
             ],
         ),
+
+        # ── Foundation V2 (A3)：G/F/J、pcf、cross-K、Knox、K 包络 ────────
+
+        AlgorithmDescriptor(
+            id="point_pattern.g_f_j", name="G/F/J 距离函数", category="point_pattern",
+            capabilities=["nearest_neighbor_functions"],
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_type="stats_table",
+            geometry_requirements=["point"],
+            tool_candidates=["g_f_j_analysis"],
+            cpu_cost="medium", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="THREAD", priority=20,
+            algorithm_family="point_pattern_second_order",
+            method_references=["diggle1983", "van_lieshout_baddeley1996", "ripley1976"],
+            assumptions=[
+                "G(r)=最近邻距离 CDF；F(r)=空空间函数（确定性低差异查询格）",
+                "J(r)=(1−G)/(1−F)，CSR 下 J≡1（van Lieshout–Baddeley 1996）",
+                "F 查询格：default_rng(42) 均匀点，n_f=min(4n, 2000)，观测/模拟共用",
+                "包络零假设：同 n、同窗的同质 Poisson（CSR），固定种子 42",
+            ],
+            limitations=[
+                "无边缘校正（矩形窗 Reduced-Sample 未实现）——边界点低估 G/F",
+                "J 在 F(r)→1 时分母退化记 NaN（j_undefined_from 披露）",
+                "p 值来自秩检验（+1 校正），分辨率 1/(envelopes+1)，上限 499",
+            ],
+            crs_class="GEOGRAPHIC_OK",
+            scientific_preconditions=["min_numeric_samples:10", "point_support_required"],
+            uncertainty_outputs=["monte_carlo_summary", "statistical_significance"],
+            random_seed_policy="fixed_seed",
+            numerical_tolerance="CSR fixture 的 G/F 落在固定种子包络内；规则格网 G 低于 CSR 于第一壳层内",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_point_pattern_v2.py::test_gfj_csr_within_fixed_seed_envelope",
+                "tests/unit/lib/test_point_pattern_v2.py::test_gfj_regular_lattice_g_below_csr_first_shell",
+                "tests/unit/lib/test_point_pattern_v2.py::test_gfj_clustered_g_above_csr_and_significant",
+                "tests/unit/lib/test_point_pattern_v2.py::test_gfj_typed_errors_and_scale_guard",
+            ],
+            parameter_contract_ref="g_f_j_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="point_pattern.pcf", name="成对相关函数 g(r)", category="point_pattern",
+            capabilities=["pair_correlation_function"],
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_type="stats_table",
+            geometry_requirements=["point"],
+            tool_candidates=["pcf_analysis"],
+            cpu_cost="medium", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="THREAD", priority=20,
+            algorithm_family="point_pattern_second_order",
+            method_references=["illian2008", "ripley1976"],
+            assumptions=[
+                "g(r)=K′(r)/(2πr)：由各向同性校正 K 的离散导数 + Epanechnikov 平滑",
+                "bandwidth（米）缺省 0=一个 r 步宽（自动值在输出披露）",
+                "CSR 参考 g≡1；g>1 聚集 / g<1 规则",
+                "包络零假设：同质 Poisson（固定种子 42），sup|g−1| 秩检验",
+            ],
+            limitations=[
+                "g 由 K 的离散导数间接估计，r 网格粒度限制分辨率",
+                "Epanechnikov 平滑带宽敏感：小带宽噪声大、大带宽抹平峰值",
+                "O(n²) 成对统计，上限 2 万点（超出诚实拒绝）",
+            ],
+            crs_class="GEOGRAPHIC_OK",
+            scientific_preconditions=["min_numeric_samples:10", "point_support_required"],
+            uncertainty_outputs=["monte_carlo_summary", "statistical_significance"],
+            random_seed_policy="fixed_seed",
+            numerical_tolerance="CSR fixture 的 g(r) 落在固定种子包络内且均值≈1（±0.2）",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_point_pattern_v2.py::test_pcf_csr_near_one_within_band",
+                "tests/unit/lib/test_point_pattern_v2.py::test_pcf_clustered_peak_above_one",
+                "tests/unit/lib/test_point_pattern_v2.py::test_pcf_envelopes_sup_statistic",
+            ],
+            parameter_contract_ref="pcf_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="point_pattern.cross_k", name="双变量交叉 K 函数", category="point_pattern",
+            capabilities=["cross_k_function"],
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_type="stats_table",
+            geometry_requirements=["point"],
+            tool_candidates=["cross_k_analysis"],
+            cpu_cost="medium", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="THREAD", priority=20,
+            algorithm_family="point_pattern_second_order",
+            method_references=["besag1977", "ripley1976"],
+            assumptions=[
+                "K12(r)=A/(n1·n2)·Σ_{i∈1,j∈2} I(d≤r)/w_ij，w_ij 各向同性逐对校正",
+                "随机标记（random labelling）零假设：类型标签在固定位置间置换",
+                "置换从池化成对表重抽（非仅观测跨类对），固定种子 42",
+                "type_field 必须恰有 2 个取值，每类 ≥5 点",
+            ],
+            limitations=[
+                "随机标记只检验『给定位置下的类型关联』，不检验位置格局本身",
+                "p 值来自 max|K12−πr²| 秩（+1 校正），分辨率 1/(permutations+1)",
+                "O(n²) 成对统计，上限 2 万点（超出诚实拒绝）",
+            ],
+            crs_class="GEOGRAPHIC_OK",
+            scientific_preconditions=["min_numeric_samples:10", "point_support_required"],
+            uncertainty_outputs=["monte_carlo_summary", "statistical_significance"],
+            random_seed_policy="fixed_seed",
+            numerical_tolerance="随机标记零假设下 p>0.05；类型空间分离 fixture p<0.05",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_point_pattern_v2.py::test_cross_k_requires_exactly_two_types",
+                "tests/unit/lib/test_point_pattern_v2.py::test_cross_k_random_labelling_null_not_significant",
+                "tests/unit/lib/test_point_pattern_v2.py::test_cross_k_segregation_below_envelope",
+            ],
+            parameter_contract_ref="cross_k_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="spatiotemporal.knox", name="Knox 时空交互检验", category="point_pattern",
+            capabilities=["space_time_interaction"],
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_type="stats_table",
+            geometry_requirements=["point"],
+            tool_candidates=["knox_analysis"],
+            cpu_cost="medium", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="THREAD", priority=20,
+            algorithm_family="space_time_interaction",
+            method_references=["knox1964"],
+            assumptions=[
+                "观测=同时落在 critical_distance（米）与 critical_time（秒）内的点对数",
+                "独立零假设期望 E=2·S·T/(n(n−1))；时间置换（固定种子 42）给单侧 p",
+                "critical_distance=0 → 自动取中位最近邻距离（输出披露）",
+                "时间戳解析与 ST-DBSCAN 同约定（ISO-8601/Epoch，utc）",
+            ],
+            limitations=[
+                "阈值（距离/时间）敏感且结果随阈值变化——建议多阈值对照",
+                "时间置换保边际分布，不校正时空趋势（Mantel 类检验更合适）",
+                "空间邻近对经 query_pairs 稀疏化，预算超限诚实拒绝",
+            ],
+            crs_class="GEOGRAPHIC_OK",
+            scientific_preconditions=["min_numeric_samples:4", "point_support_required"],
+            uncertainty_outputs=["monte_carlo_summary", "statistical_significance"],
+            random_seed_policy="fixed_seed",
+            numerical_tolerance="4 点 2×2 手算例：观测/期望/空间对/时间对精确匹配",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_space_time_interaction.py::test_knox_hand_computed_4point_example",
+                "tests/unit/lib/test_space_time_interaction.py::test_knox_spacetime_clustered_significant",
+                "tests/unit/lib/test_space_time_interaction.py::test_knox_independent_not_significant",
+                "tests/unit/lib/test_space_time_interaction.py::test_knox_insufficient_and_scale_guards",
+                "tests/unit/lib/test_space_time_interaction.py::test_knox_nan_times_dropped_with_disclosure",
+                "tests/unit/lib/test_space_time_interaction.py::test_knox_auto_critical_distance",
+                "tests/unit/lib/test_space_time_interaction.py::test_knox_duplicate_timestamp_ties_disclosed",
+            ],
+            parameter_contract_ref="knox_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="point_pattern.ripley_k_env", name="Ripley's K + CSR 模拟包络",
+            category="point_pattern",
+            capabilities=["point_pattern_analysis"],
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_type="stats_table",
+            geometry_requirements=["point"],
+            tool_candidates=["ripley_k_envelope_analysis"],
+            cpu_cost="medium", memory_cost="high", io_cost="low",
+            preferred_execution_policy="THREAD", priority=20,
+            algorithm_family="point_pattern_second_order",
+            method_references=["ripley1976"],
+            assumptions=[
+                "与 point_pattern.ripley_k 同一估计器（isotropic 边缘校正）",
+                "包络：envelopes 次同 n、同窗同质 Poisson 模拟（固定种子 42）",
+                "逐半径秩双侧 p 值（+1 校正）；观测 K 与包络同估计器可比",
+            ],
+            limitations=[
+                "p 值分辨率 1/(envelopes+1)，上限 499",
+                "模拟重跑 K 估计器：envelopes 大 × n 大时计算量线性放大",
+                "非矩形研究域的边缘校正按外接矩形近似",
+            ],
+            crs_class="GEOGRAPHIC_OK",
+            scientific_preconditions=["min_numeric_samples:10"],
+            uncertainty_outputs=["monte_carlo_summary", "statistical_significance"],
+            random_seed_policy="fixed_seed",
+            numerical_tolerance="CSR fixture 的 K(r) 落在自身固定种子包络内（p>0.05）",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_point_pattern_v2.py::test_ripley_k_envelopes_csr_honest_and_additive_keys",
+                "tests/unit/lib/test_point_pattern_v2.py::test_ripley_k_default_call_unchanged_keys",
+            ],
+            parameter_contract_ref="ripley_k_envelope_analysis",
+        ),
 ]
 
 # ── 参数契约（§12；工具签名与契约参数名一致 —— parity 门校验）────────
@@ -159,8 +353,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
 PARAMETER_CONTRACTS: List[ParameterContract] = [
     ParameterContract(
-        id="ripley_k_analysis", version=1,
-        description="Ripley's K：r 网格步数与最大半径比例。",
+        # v2（Foundation V2 A3）：可选 envelopes（0=关，输出键不变）；
+        # additive —— 旧工具按名取参不受新默认键影响，parity 只查必填参数。
+        id="ripley_k_analysis", version=2,
+        description="Ripley's K：r 网格步数、最大半径比例与可选 CSR 包络。",
         parameters=[
             ParameterSpec(
                 name="n_steps", type="integer", default=10, minimum=4, maximum=32,
@@ -171,6 +367,129 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
                 name="max_distance_ratio", type="number", default=0.25,
                 minimum=0.05, maximum=0.5, unit="ratio",
                 description="r_max = 比例 × min(窗宽,窗高)；上限 0.5（半窗）",
+            ),
+            ParameterSpec(
+                name="envelopes", type="integer", default=0, minimum=0, maximum=499,
+                unit="count",
+                description="CSR 模拟包络次数（固定种子 42）；0=关（输出键不变）",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="g_f_j_analysis", version=1,
+        description="G/F/J 距离函数：r 网格、最大半径比例与 CSR 包络。",
+        parameters=[
+            ParameterSpec(
+                name="n_steps", type="integer", default=10, minimum=4, maximum=32,
+                unit="count",
+                description="r 网格步数（r_max/n_steps 到 r_max 等距）",
+            ),
+            ParameterSpec(
+                name="max_distance_ratio", type="number", default=0.25,
+                minimum=0.05, maximum=0.5, unit="ratio",
+                description="r_max = 比例 × min(窗宽,窗高)；上限 0.5（半窗）",
+            ),
+            ParameterSpec(
+                name="envelopes", type="integer", default=0, minimum=0, maximum=499,
+                unit="count",
+                description="同质 Poisson 模拟包络次数（固定种子 42）；0=关",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="pcf_analysis", version=1,
+        description="成对相关函数 g(r)：r 网格、平滑带宽与 CSR 包络。",
+        parameters=[
+            ParameterSpec(
+                name="n_steps", type="integer", default=10, minimum=4, maximum=32,
+                unit="count",
+                description="r 网格步数（r_max/n_steps 到 r_max 等距）",
+            ),
+            ParameterSpec(
+                name="max_distance_ratio", type="number", default=0.25,
+                minimum=0.05, maximum=0.5, unit="ratio",
+                description="r_max = 比例 × min(窗宽,窗高)；上限 0.5（半窗）",
+            ),
+            ParameterSpec(
+                name="bandwidth", type="number", default=0, minimum=0,
+                unit="meters",
+                description="Epanechnikov 平滑带宽（米，r 单位）；0=自动（一个 r 步宽）",
+            ),
+            ParameterSpec(
+                name="envelopes", type="integer", default=0, minimum=0, maximum=499,
+                unit="count",
+                description="同质 Poisson 模拟包络次数（固定种子 42）；0=关",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="cross_k_analysis", version=1,
+        description="双变量交叉 K：类型字段、r 网格与随机标记置换。",
+        parameters=[
+            ParameterSpec(
+                name="type_field", type="string", required=True,
+                description="类型字段名（必须恰有 2 个不同取值，每类 ≥5 点）",
+            ),
+            ParameterSpec(
+                name="n_steps", type="integer", default=10, minimum=4, maximum=32,
+                unit="count",
+                description="r 网格步数（r_max/n_steps 到 r_max 等距）",
+            ),
+            ParameterSpec(
+                name="max_distance_ratio", type="number", default=0.25,
+                minimum=0.05, maximum=0.5, unit="ratio",
+                description="r_max = 比例 × min(窗宽,窗高)；上限 0.5（半窗）",
+            ),
+            ParameterSpec(
+                name="permutations", type="enum", default="199",
+                enum_values=["99", "199", "499"],
+                description="随机标记置换次数（固定种子 42）",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="knox_analysis", version=1,
+        description="Knox 时空交互：时间字段、空间/时间阈值与时间置换。",
+        parameters=[
+            ParameterSpec(
+                name="time_field", type="string", required=True,
+                description="时间戳字段名（ISO-8601 或 Epoch；NaT 行剔除并披露）",
+            ),
+            ParameterSpec(
+                name="critical_distance", type="number", default=0,
+                minimum=0, unit="meters",
+                description="空间阈值（米）；0=自动取中位最近邻距离（披露）",
+            ),
+            ParameterSpec(
+                name="critical_time", type="number", required=True,
+                minimum=0.001, unit="seconds",
+                description="时间阈值（秒，必须为正）",
+            ),
+            ParameterSpec(
+                name="permutations", type="enum", default="199",
+                enum_values=["99", "199", "499", "999"],
+                description="时间置换次数（固定种子 42）",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="ripley_k_envelope_analysis", version=1,
+        description="Ripley's K + CSR 包络：r 网格、比例与包络次数（≥1）。",
+        parameters=[
+            ParameterSpec(
+                name="n_steps", type="integer", default=10, minimum=4, maximum=32,
+                unit="count",
+                description="r 网格步数（r_max/n_steps 到 r_max 等距）",
+            ),
+            ParameterSpec(
+                name="max_distance_ratio", type="number", default=0.25,
+                minimum=0.05, maximum=0.5, unit="ratio",
+                description="r_max = 比例 × min(窗宽,窗高)；上限 0.5（半窗）",
+            ),
+            ParameterSpec(
+                name="envelopes", type="integer", default=99, minimum=1, maximum=499,
+                unit="count",
+                description="CSR 模拟包络次数（固定种子 42）",
             ),
         ],
     ),

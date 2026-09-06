@@ -162,8 +162,10 @@ def test_statistics_panel_component_factory():
 
 
 def test_valid_variants_from_descriptor_registry():
+    # V3（ADR-0101 D3）：+ monochrome（黑白出版变体，渲染器已落地）
     assert set(valid_variants_for_type("north_arrow")) == {
         "compass_minimal_black", "compass_needle", "compass_rose", "arrow_simple",
+        "monochrome",
     }
     assert "horizontal" in valid_variants_for_type("continuous_colorbar")
 
