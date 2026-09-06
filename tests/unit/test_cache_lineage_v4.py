@@ -198,15 +198,46 @@ class TestCacheBroadcast:
         from app.services.ref_lifecycle import RefInvalidationReason
 
         def fake_invalidate(session_id, ref_ids, reason=RefInvalidationReason.REPLACE,
-                            include_payload_cache=True):
-            called.update({"sid": session_id, "refs": list(ref_ids), "reason": reason})
+                            include_payload_cache=True, publish_broadcast=True):
+            called.update({"sid": session_id, "refs": list(ref_ids), "reason": reason,
+                           "publish_broadcast": publish_broadcast})
 
         monkeypatch.setattr(rl, "invalidate_ref_caches", fake_invalidate)
         cb._apply_event(json.dumps({
             "kind": "ref_invalidation", "session_id": "s", "ref_id": "r",
             "reason": "OVERWRITE"}))
         assert called == {"sid": "s", "refs": ["r"],
-                          "reason": RefInvalidationReason.OVERWRITE}
+                          "reason": RefInvalidationReason.OVERWRITE,
+                          "publish_broadcast": False}
+
+    def test_listen_path_never_republishes(self, monkeypatch):
+        """round-2 评审 CRITICAL 锁定：监听路径失效绝不再发布 —— 否则
+        「失效→发布→收到→失效」构成无限广播风暴。"""
+        import json
+
+        import app.services.cache_broadcast as cb
+
+        publishes = {"n": 0}
+
+        class FakeClient:
+            def publish(self, channel, message):
+                publishes["n"] += 1
+                return 1
+
+        monkeypatch.setattr(cb, "_client_cached", lambda: FakeClient())
+
+        import app.services.ref_lifecycle as rl
+
+        def spy_invalidate(session_id, ref_ids, reason=rl.RefInvalidationReason.REPLACE,
+                           include_payload_cache=True, publish_broadcast=True):
+            # 真实权威逻辑（含发布钩子）在 spy 中按参数执行。
+            assert publish_broadcast is False
+            return 1
+
+        monkeypatch.setattr(rl, "invalidate_ref_caches", spy_invalidate)
+        cb._apply_event(json.dumps({
+            "kind": "ref_invalidation", "session_id": "s", "ref_id": "r"}))
+        assert publishes["n"] == 0  # 监听路径零再发布
         # 非 kind/坏消息：静默忽略（绝不 raise）。
         cb._apply_event("not json")
         cb._apply_event(json.dumps({"kind": "other"}))

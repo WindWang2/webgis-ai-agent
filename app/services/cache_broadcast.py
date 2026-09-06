@@ -120,7 +120,10 @@ def _apply_event(message: str) -> None:
         # 签名是 (session_id, ref_ids: list[str], reason: RefInvalidationReason)
         # —— 评审 MAJOR：此前传 (str, str, str) 会逐字符迭代 ref 且在
         # reason.value 上 AttributeError（被吞）→ 跨进程失效静默失效。
-        invalidate_ref_caches(str(session_id), [str(ref_id)], reason=reason)
+        # publish_broadcast=False：广播监听路径绝不再发布（round-2 评审
+        # CRITICAL —— 否则收到通知→再失效→再发布 = 无限广播风暴）。
+        invalidate_ref_caches(str(session_id), [str(ref_id)], reason=reason,
+                              publish_broadcast=False)
     except Exception as exc:  # noqa: BLE001 - 监听路径永不外溢
         logger.debug("[cache-broadcast] apply failed (harmless): %s", exc)
 

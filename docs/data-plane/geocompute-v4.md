@@ -17,7 +17,7 @@ operational contracts each one upholds.
 | `drift.py` / `replay.py` | Plan staleness verdicts; trace replay invariant validator (test tooling). |
 | `reproducibility.py` | Execution bundle (reproducible / conditionally_reproducible / stale / source_unavailable / non_deterministic) + bounded lineage projection. |
 
-## Query plane (`app/services/data_fabric/query/`)
+## Query plane (`app/services/data_fabric/`)
 
 | Module | Responsibility |
 |---|---|

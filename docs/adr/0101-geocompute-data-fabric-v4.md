@@ -76,11 +76,12 @@ through the existing AnalysisTask runtime — no second job truth.
 
 ### D4 — Checkpoint, partial rerun, descendant invalidation
 
-`invalidation_set`/`descendants_of` are wired into the run loop: completed-node results remain
-checkpointed in the owner-scoped `NodeResultStore`; a rerun validates each checkpoint against the
-node's current `semantic_fingerprint` **and** its declared `upstream_fingerprints`, rejecting
-stale entries as evidence (`checkpoint_verified=false`) rather than silently reusing; changed
-upstream inputs invalidate descendants; unchanged branches reuse. Failed materializations clean
+Descendant invalidation is enforced in the run loop via ancestor-terminal-state skip and
+lazy checkpoint verification: completed-node results remain checkpointed in the owner-scoped
+`NodeResultStore`; a rerun validates each checkpoint against the node's current
+`semantic_fingerprint` **and** its recorded upstream output fingerprints, rejecting stale
+entries as evidence (`checkpoint_verified=false`) rather than silently reusing; changed
+upstream inputs therefore invalidate descendants; unchanged branches reuse. Failed materializations clean
 their temp state (existing atomic-output contract) and never register artifacts.
 
 ### D5 — Honest retry semantics
@@ -117,7 +118,9 @@ disclosure when estimates and reality diverge persistently.
 The `plan_query` signature and "plan = execution" invariant are unchanged. Federation gains, under
 the existing hard cap: semi-join reduction (send keys, not rows), aggregate/projection-before-
 transfer, remote filter/spatial/bbox/temporal prefilter, join-key statistics, and a bounded
-left-deep vs bushy comparison at the capped N (no exponential search). Pushdown becomes a truthful
+cost-ranked enumeration over left-deep source orders at the capped N (islice-capped candidates,
+restricted to join-connected chains; no exponential search, no bushy join-tree search — that
+stays deferred). Pushdown becomes a truthful
 capability model: adapters declare per-predicate-class support as **exact**, **equivalent
 transform**, **coarse prefilter** (e.g. remote bbox → local exact geometry predicate), or
 **unsupported**; the planner never pushes unsupported semantics and EXPLAIN/evidence discloses
@@ -173,7 +176,11 @@ receiving a broadcast (fingerprint/revision validation stays authoritative; miss
 recover safely): ref invalidation publishes, the app lifespan starts the listener, and the listen
 path applies events through `ref_lifecycle` with the authority's own types. Per-key single-flight
 coordination prevents stampede rebuilds in both modes (wired into describe cache rebuilds);
-builder crash/timeout/invalidation-during-build keep the existing race-window guarantees.
+builder crash/timeout/invalidation-during-build keep the existing race-window guarantees. The
+broadcast loop is suppressed at the authority (`publish_broadcast=False` on the listen path —
+receipts never re-publish); the Redis channel is trusted-network: a party with Redis write
+access can churn derived caches only (invalidate ≠ delete; authoritative payloads and
+correctness are untouched).
 
 ### D12 — Lineage, reproducibility, observability
 
@@ -252,6 +259,8 @@ semaphore; no unbounded task creation; broadcast messages bounded and payload-fr
 
 - Zarr adapter; WFS 3 / full CQL2-JSON dialect (carried from V3).
 - Cross-process budget accounting (broadcast invalidation covers caches, not budgets).
+- Query-result cache + HTTP conditional requests (ETag/If-None-Match) for adapter describe
+  paths (documented follow-up in `metadata_cache`).
 - Byte-for-byte reproducibility of remote changing sources (conditional reproducibility only).
 - Multi-process governor aggregation (single-process admission stays the truth per process).
 - Durable-job capability-based routing across heterogeneous workers (hints declared; enforcement

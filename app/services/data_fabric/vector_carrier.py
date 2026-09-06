@@ -78,6 +78,15 @@ def _geo_metadata(crs: Optional[str]) -> Dict[str, Any]:
     return meta
 
 
+def _safe_exc_text(exc: BaseException, limit: int = 200) -> str:
+    """异常文本有界化（评审 MINOR：上游 repr 可能含值内容/换行 ——
+    日志注入与膨胀面）。"""
+    import re as _re
+
+    text = _re.sub(r"[\x00-\x1f\x7f]+", " ", str(exc))
+    return text[:limit]
+
+
 def _features_to_columns(features: List[Dict[str, Any]]) -> Tuple[List[str], Dict[str, List[Any]], List[bytes]]:
     """列式拆解：属性列（稀疏 null 保留）+ geometry WKB 列表。"""
     order: List[str] = []
@@ -114,11 +123,16 @@ def _geometry_to_wkb(geom: Optional[Dict[str, Any]]) -> Optional[bytes]:
         return shapely.to_wkb(shape)
     except VectorCarrierEncodeError:
         raise
+    except VectorCarrierEncodeError:
+        raise
     except Exception as exc:
-        raise VectorCarrierEncodeError(f"geometry WKB encode failed: {exc}") from exc
+        raise VectorCarrierEncodeError(
+            f"geometry WKB encode failed: {_safe_exc_text(exc)}") from exc
 
 
 def _wkb_to_geometry(wkb: Optional[bytes]) -> Optional[Dict[str, Any]]:
+    """Arrow → GeoJSON 几何。WKB 解码失败记 debug 日志后按缺失几何处理
+    （外来 GeoParquet 的容错方向；编码侧失败是 typed 硬错误）。"""
     if not wkb:
         return None
     try:
@@ -128,7 +142,9 @@ def _wkb_to_geometry(wkb: Optional[bytes]) -> Optional[Dict[str, Any]]:
         if shape.is_empty:
             return None
         return json.loads(shapely.to_geojson(shape))
-    except Exception:
+    except Exception as exc:
+        logger.debug("[vector-carrier] WKB decode failed (%s); geometry=None",
+                     _safe_exc_text(exc))
         return None
 
 
@@ -152,7 +168,8 @@ def features_to_arrow(
         except Exception as exc:
             # 评审 MINOR F7：原始 pyarrow 异常 → typed 错误并指名列。
             raise VectorCarrierEncodeError(
-                f"column '{k}' has mixed/unencodable value types: {exc}") from exc
+                f"column '{k}' has mixed/unencodable value types: "
+                f"{_safe_exc_text(exc)}") from exc
     fields = []
     for k, arr in zip(order, arrays):
         fields.append(pa.field(k, arr.type))
