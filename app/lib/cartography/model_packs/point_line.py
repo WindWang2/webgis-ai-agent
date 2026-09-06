@@ -15,7 +15,6 @@ from app.lib.cartography.model_library import MapModel
 from app.lib.cartography.model_packs._base import (
     _DECKGL_URL,
     _GEODA_URL,
-    _KEPLER_URL,
     _MAPLIBRE_SPEC_URL,
     _QGIS_URL,
     m,

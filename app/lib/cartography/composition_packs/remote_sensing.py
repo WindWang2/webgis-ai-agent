@@ -18,7 +18,6 @@ from app.lib.cartography.composition_packs._base import (
     map_border_slot,
     north_arrow_slot,
     scale_bar_slot,
-    stats_slot,
     subtitle_slot,
     title_slot,
 )

@@ -1,7 +1,7 @@
 """composition_packs 共享构造 helper（ADR-0101 D1）。"""
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, List
 
 from app.lib.cartography.composition_templates import (
     ComponentSlot,
