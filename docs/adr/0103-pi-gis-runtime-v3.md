@@ -115,6 +115,14 @@ four structural gaps remained:
 - Backward compatible: the router primary, the frozen native surface and
   the legacy budget semantics are unchanged by default; every new
   surface has an explicit off-switch and an honest failure fallback.
+  Legacy role profiles (execution/planner/title/spatial) deliberately do
+  NOT override operator settings (temperature/max_tokens/timeout stay
+  `None` in the profile so `resolve_llm_config` values flow through);
+  explicit profile numbers only apply to the new roles.
+- The in-band `WEBGIS_ACTIVE_TOOLS` marker is protected: user-supplied
+  occurrences are neutralized before Python attaches its own, and the
+  extension enforces a hard activation ceiling — the kill-switch and the
+  per-turn projection budget cannot be forged from message content.
 - Fingerprints legitimately changed once where descriptors gained
   values — the fingerprint contract itself (same input → same output,
   description-insensitive schema fp) is unchanged and still pinned by
@@ -123,4 +131,8 @@ four structural gaps remained:
   wired in this branch (routing + dispatch); intent/verdict emitters
   land with their respective engine changes. `deterministic` stays
   blank for 9 mixed-path tools. Pi-side health observation is not
-  wired (LLM calls happen inside the Node subprocess).
+  wired (LLM calls happen inside the Node subprocess). Planner-phase
+  LLM calls resolve through the router but their outcomes are not
+  observed into the health table (the planner orchestrator owns the
+  call). Fallback models inherit the primary endpoint (single-gateway
+  assumption; documented in model-runtime docs).

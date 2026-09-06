@@ -43,6 +43,13 @@ def _estimate_context_tokens(messages: Sequence[Dict[str, Any]]) -> int:
             content = m.get("content") if isinstance(m, dict) else None
             if isinstance(content, str):
                 total += _estimate_tokens(content)
+            elif isinstance(content, list):
+                # 多模态/分段结构：文本分段照常估算，非文本段按固定开销计
+                for part in content:
+                    if isinstance(part, dict) and isinstance(part.get("text"), str):
+                        total += _estimate_tokens(part["text"])
+                    else:
+                        total += 16
         return total
     except Exception:  # noqa: BLE001 — 估算失败返回 0（router 视为未知）
         return 0
