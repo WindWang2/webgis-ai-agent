@@ -265,6 +265,7 @@ def _op_query(ctx: OperatorContext, node: OperationNodeAny, payloads: dict[str, 
         db.close()
     features = list(getattr(result, "features", None) or [])
     _check_row_budget(features, ctx, node)
+    _record_planner_feedback(node, result, len(features))
     metadata: dict[str, Any] = {}
     for attr, key in (("query_plan", "query_plan"), ("query_evidence", "query_evidence")):
         val = getattr(result, "metadata", None)
@@ -273,6 +274,34 @@ def _op_query(ctx: OperatorContext, node: OperationNodeAny, payloads: dict[str, 
     metadata["feature_count"] = len(features)
     metadata["total_matching"] = getattr(result, "total_matching", None)
     return {"features": features, "metadata": metadata}
+
+
+def _record_planner_feedback(node: "ExecutionNode", result: Any, actual_rows: int) -> None:
+    """执行后向 planner 反馈环回写「估计 vs 实际」（ADR-0101 D6）。
+
+    有界、可解释、fail-open：只对成功路径记录（这里只在 _op_query 成功
+    尾部被调）；store 侧只从 outcome=ok 的观测学习。绝不抛出。
+    """
+    try:
+        from app.services.data_fabric.query.feedback import feedback_store
+
+        meta = getattr(result, "metadata", None)
+        plan_meta = meta.get("query_plan") if isinstance(meta, dict) else None
+        if not isinstance(plan_meta, dict):
+            return
+        ds_fp = plan_meta.get("dataset_fingerprint") or plan_meta.get("dataset_id")
+        est = plan_meta.get("estimated_rows")
+        if not ds_fp or est is None:
+            return
+        feedback_store.record(
+            dataset_fingerprint=str(ds_fp),
+            operator_class="query",
+            estimated_rows=int(est),
+            actual_rows=int(actual_rows),
+            outcome="ok",
+        )
+    except Exception:  # noqa: BLE001 - 反馈绝不影响查询路径
+        pass
 
 
 def _op_filter(ctx: OperatorContext, node: "ExecutionNode", payloads: dict[str, NodePayload]) -> NodePayload:

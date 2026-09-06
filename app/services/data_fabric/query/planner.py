@@ -18,6 +18,7 @@ from app.services.data_fabric.errors import (
     QueryBudgetExceededError,
 )
 from app.services.data_fabric.query.capabilities import get_capabilities
+from app.services.data_fabric.query.feedback import feedback_store
 from app.services.data_fabric.query.models import (
     AdapterCapabilitiesV2,
     CursorPage,
@@ -271,6 +272,28 @@ def plan_query(
             estimated_rows = min(estimated_rows, groups_est or _AGG_GROUPS_ESTIMATE)
         else:
             estimated_rows = max(1, len(spec.aggregate or [1]))
+    # ---- 有界计划反馈修正（ADR-0101 D6）：可解释、可关闭、样本足够才生效。
+    # 修正只作用于「估计」这个性能提示维度，绝不触碰语义（谓词/投影/下推
+    # 决策在前面的规则阶段已经落定）。
+    feedback_note: Optional[str] = None
+    if estimated_rows is not None:
+        ds_fp = str(
+            dataset_fingerprint
+            or getattr(descriptor, "fingerprint", None)
+            or getattr(descriptor, "id", "")
+            or ""
+        )
+        if ds_fp and query_fp:
+            correction = feedback_store.correction(ds_fp, "query")
+            if correction.basis == "feedback" and correction.factor != 1.0:
+                estimated_rows = max(
+                    1, int(round(estimated_rows * correction.factor)))
+                feedback_note = (
+                    f"row estimate x{correction.factor:.2f} from bounded planner "
+                    f"feedback (samples={correction.samples}"
+                    + (f"; drift={correction.drift}" if correction.drift else "")
+                    + ")"
+                )
     estimated_bytes: Optional[int] = None
     # 页窗口（本查询实际会传输的行上界）：字节估算与预算检查都以此为准——
     # LIMIT 100 的页查询不应因数据集总量巨大而被拒（只看 fetch 窗口）。
@@ -422,6 +445,8 @@ def plan_query(
             "selectivity uses built-in default constants (no column statistics "
             "available); estimates are assumptions, not measurements"
         )
+    if feedback_note:
+        plan.assumptions.append(feedback_note)
     plan.statistics_confidence = stats.confidence if stats is not None else None
     return plan
 
