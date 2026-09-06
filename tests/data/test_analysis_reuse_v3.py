@@ -1,5 +1,4 @@
 """Analysis Reuse V3 —— revision 复核与 cacheability 声明测试。"""
-import pytest
 
 from app.lib.gis.analysis_reuse import (
     compute_analysis_key,

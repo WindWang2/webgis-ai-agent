@@ -1,5 +1,4 @@
 """Data Quality Contract —— 质量诊断测试。"""
-import pytest
 
 from app.lib.data.profile import (
     DatasetProfileV3,
@@ -7,7 +6,6 @@ from app.lib.data.profile import (
     RasterBandStats,
     RasterProfileData,
     profile_features,
-    profile_from_field_schema,
 )
 from app.lib.data.quality import (
     QualityIssue,
@@ -163,7 +161,7 @@ class TestReportHygiene:
 
 
 def test_table_profile_crs_warning():
-    from app.lib.data.profile import TableProfileData, profile_rows
+    from app.lib.data.profile import profile_rows
 
     rows = [{"lng": 116.0, "lat": 39.9, "v": 1} for _ in range(20)]
     tp, q = profile_rows(rows)

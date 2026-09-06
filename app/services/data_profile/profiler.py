@@ -24,12 +24,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.lib.data.profile import (
     DEFAULT_MAX_SCAN_ROWS,
-    PROFILE_VERSION,
     DatasetProfileV3,
     ProfileQuality,
     RasterBandStats,
     RasterProfileData,
-    VectorProfileData,
     profile_features,
     profile_from_field_schema,
 )
@@ -266,7 +264,6 @@ class DatasetProfiler:
     @staticmethod
     def _read_raster_profile(path: str, sample_size: int) -> RasterProfileData:
         import rasterio
-        from rasterio import windows
 
         with rasterio.open(path) as ds:
             crs = str(ds.crs) if ds.crs else ""

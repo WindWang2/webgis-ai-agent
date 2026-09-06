@@ -1,12 +1,9 @@
 """Data Catalog V3 —— 联邦目录测试（§十七/§十八）。"""
 import pytest
 
-from app.lib.data import vocabulary as vocab
 from app.services.artifact_registry import register_artifact
 from app.services.data_catalog.catalog import (
-    CatalogEntry,
     CatalogFilter,
-    DataCatalog,
     _entry_from_fabric_descriptor,
     get_data_catalog,
     reset_data_catalog,
@@ -100,7 +97,6 @@ class TestSessionScope:
     async def test_stale_status_visible(self):
         sid = "cat-stale"
         await _seed(sid)
-        from app.services.artifact_registry import mark_status
         from app.services.data_lifecycle.service import get_lifecycle_service
 
         await get_lifecycle_service().propagate_staleness(sid, "ref:poi", reason="x")
@@ -134,7 +130,7 @@ class TestUploadScope:
             # 本地 sqlite 是持久文件：先清理同 session 旧数据保证幂等
             db.query(UploadRecord).filter(UploadRecord.session_id == sid).delete()
             db.add(UploadRecord(
-                filename=f"uploads/abc123/original.geojson",
+                filename="uploads/abc123/original.geojson",
                 original_name="clusters.geojson",
                 file_type="vector",
                 format="geojson",

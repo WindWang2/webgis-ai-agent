@@ -2,10 +2,8 @@
 import os
 import time
 
-import pytest
 
 from app.lib.artifact_cache import (
-    ARTIFACT_DIR,
     publish_artifact,
     sweep_orphan_disk_artifacts,
 )

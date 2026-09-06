@@ -2,7 +2,6 @@
 import pytest
 
 from app.services.data_profile.profiler import (
-    DatasetProfiler,
     get_dataset_profiler,
     reset_dataset_profiler,
 )

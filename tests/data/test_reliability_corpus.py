@@ -7,7 +7,7 @@ import pytest
 
 from app.lib.data.artifact_contract import from_artifact_record
 from app.lib.data.fingerprints import ChangeClass, FingerprintSet, classify_change
-from app.lib.data.versioning import SourceRevision, compare_revisions
+from app.lib.data.versioning import SourceRevision
 from app.services.artifact_registry import (
     get_artifact,
     list_artifacts,

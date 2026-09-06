@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from app.lib.data import vocabulary as vocab
 from app.lib.data.artifact_contract import ArtifactContract, from_artifact_record

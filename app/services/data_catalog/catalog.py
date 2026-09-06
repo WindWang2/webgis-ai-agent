@@ -24,7 +24,6 @@ DB 来源（uploads / project datasets）是 best-effort：引擎不可用或
 from __future__ import annotations
 
 import logging
-import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -303,7 +302,6 @@ class DataCatalog:
 
     def _load_upload_entries(self, session_id: str) -> Tuple[List[CatalogEntry], str]:
         try:
-            from sqlalchemy import select
 
             from app.models.upload import UploadRecord
             from app.tools._utils import db_session

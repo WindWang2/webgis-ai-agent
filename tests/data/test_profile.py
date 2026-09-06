@@ -1,10 +1,8 @@
 """Dataset Profile V3 —— 有界剖析契约与纯函数剖析器测试。"""
-import math
 
 import pytest
 
 from app.lib.data.profile import (
-    DEFAULT_MAX_SCAN_ROWS,
     DatasetProfileV3,
     ProfileQuality,
     profile_features,

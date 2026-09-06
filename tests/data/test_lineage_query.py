@@ -1,5 +1,4 @@
 """Session Lineage Query —— 统一血缘查询测试（§十）。"""
-import pytest
 
 from app.services.artifact_registry import register_artifact
 from app.services.data_catalog.lineage_query import (
