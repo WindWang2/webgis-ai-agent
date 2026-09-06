@@ -90,6 +90,37 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             purpose_template="访问路线优化",
         ),
 
+        # ── Foundation V2 (A4)：引力可达性 / 空间相互作用 / 网络中心性 ──
+        CapabilityDescriptor(
+            id="gravity_accessibility", name="引力可达性", category="network",
+            domain="network",
+            description="Hansen 势能模型 A_i=Σ S_j^α/d_ij^β：以路网 OD 成本为距离，"
+                        "输出逐需求点可达性得分与 top-3 设施贡献份额。",
+            input_artifact_types=["point_feature_set"],
+            output_artifact_types=["stats_table"],
+            purpose_template="引力可达性分析",
+        ),
+
+        CapabilityDescriptor(
+            id="spatial_interaction", name="空间相互作用", category="network",
+            domain="network",
+            description="Huff 概率模型 P_ij：需求点选择各设施的概率、市场份额、"
+                        "专属（captive）份额与份额熵。",
+            input_artifact_types=["point_feature_set"],
+            output_artifact_types=["stats_table"],
+            purpose_template="空间相互作用分析",
+        ),
+
+        CapabilityDescriptor(
+            id="network_centrality", name="网络中心性", category="network",
+            domain="network",
+            description="路网节点中心性（度/接近/介数/边介数）：精确 Brandes 与"
+                        "固定种子采样两种实现变体，规模护栏先行。",
+            input_artifact_types=[],
+            output_artifact_types=["stats_table"],
+            purpose_template="网络中心性分析",
+        ),
+
         # ── VNext（ADR-0099）：外部服务商网络服务绑定（消除 network_tool_orphan）──
         # 这三个能力是外部 API 客户端语义（高德/百度），不是本地路网分析：
         # deterministic=False（服务商侧实时数据，逐次调用不可复现），

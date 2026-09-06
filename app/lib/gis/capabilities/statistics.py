@@ -77,4 +77,68 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             output_artifact_types=["hotspot_result"],
             purpose_template="时空聚类",
         ),
+
+        # ── Foundation V2（A1）：局部 Geary / Join Count / 双变量 Moran /
+        #    地理探测器 / 空间回归 / 权重敏感性 / GWR ──────────────────
+        CapabilityDescriptor(
+            id="local_gearys_c", name="局部 Geary's C", category="statistics",
+            description="局部相似性/相异性检测（Local Geary's C_i，Anselin 1995；"
+                        "与 LISA 的方向配对互补）。",
+            input_artifact_types=["admin_aggregate_table", "grid_aggregate"],
+            output_artifact_types=["hotspot_result"],
+            compatible_map_models=["hotspot_overlay"],
+            purpose_template="局部 Geary 相似性聚类",
+        ),
+
+        CapabilityDescriptor(
+            id="join_count_statistics", name="Join Count 统计", category="statistics",
+            description="二值场的邻接同异类连接计数检验（Cliff-Ord free sampling）。",
+            input_artifact_types=["admin_aggregate_table"],
+            output_artifact_types=["stats_table"],
+            purpose_template="Join Count 二值空间关联",
+        ),
+
+        CapabilityDescriptor(
+            id="bivariate_morans_i", name="双变量 Moran's I", category="statistics",
+            description="x 与 W·y 的空间共变（Wartenberg 1985；共位相关非因果）。",
+            input_artifact_types=["admin_aggregate_table", "grid_aggregate"],
+            output_artifact_types=["stats_table"],
+            purpose_template="双变量空间共变",
+        ),
+
+        CapabilityDescriptor(
+            id="geographical_detector", name="地理探测器", category="statistics",
+            description="分层解释力 q 统计与双因子交互检测（Wang 2010）。",
+            input_artifact_types=["admin_aggregate_table", "grid_aggregate",
+                                  "poi_feature_set", "point_feature_set"],
+            output_artifact_types=["stats_table"],
+            purpose_template="地理探测器因子/交互检测",
+        ),
+
+        CapabilityDescriptor(
+            id="spatial_regression", name="空间回归", category="statistics",
+            description="OLS+空间诊断 / SLX / SAR-ML / SEM-ML（LM 决策树支撑）。",
+            input_artifact_types=["admin_aggregate_table", "grid_aggregate",
+                                  "poi_feature_set", "point_feature_set"],
+            output_artifact_types=["stats_table"],
+            purpose_template="空间回归建模",
+        ),
+
+        CapabilityDescriptor(
+            id="weights_sensitivity", name="权重敏感性", category="statistics",
+            description="同一统计量在多个空间权重方案下的结论稳定性包络。",
+            input_artifact_types=["admin_aggregate_table", "grid_aggregate",
+                                  "poi_feature_set", "point_feature_set"],
+            output_artifact_types=["stats_table"],
+            purpose_template="权重方案敏感性分析",
+        ),
+
+        CapabilityDescriptor(
+            id="gwr", name="地理加权回归 (GWR)", category="statistics",
+            description="空间非平稳性探测：逐观测局地 WLS（bisquare 自适应核）。",
+            input_artifact_types=["admin_aggregate_table", "grid_aggregate",
+                                  "poi_feature_set", "point_feature_set"],
+            output_artifact_types=["stats_table"],
+            purpose_template="地理加权回归",
+        ),
 ]

@@ -137,7 +137,7 @@ def test_network_tools_profile_and_objective_enums():
         assert _props_of(reg, tool)["profile"]["enum"] == [
             "walking", "driving", "cycling", "custom"]
     assert _props_of(reg, "location_allocation")["objective"]["enum"] == [
-        "minimize_cost", "maximize_coverage"]
+        "minimize_cost", "maximize_coverage", "minimize_max_cost"]  # V2: p-center (Hakimi 1964)
 
 
 def test_change_detection_index_type_enum():

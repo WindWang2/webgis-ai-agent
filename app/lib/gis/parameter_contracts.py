@@ -250,9 +250,12 @@ _SEED_CONTRACTS: List[ParameterContract] = [
         ],
     ),
     ParameterContract(
-        # v2：method 枚举（ordinary/universal）随插值域包 VNext 扩展加入；
-        # version 提升使指纹反映契约面变化（runtime manifest v3）。
-        id="kriging_interpolation", version=2,
+        # v3（插值域 Foundation V2 · A2）：新增可选参数 matern_smoothness /
+        # anisotropy_angle / anisotropy_ratio / cv_scheme / solve_backend ——
+        # 全部带默认值（默认 = 历史行为，零破坏）；version 提升使指纹反映
+        # 契约面变化。variogram_model 枚举保持生产 3+auto 词表不变（matern/
+        # wave/cubic 为库级 fit_variogram 的显式 opt-in 家族）。
+        id="kriging_interpolation", version=3,
         description="克里金插值（OK 默认；UK 线性漂移）：经验半变异函数 + 有界 LS 拟合 + k 邻域系统。",
         parameters=[
             ParameterSpec(
@@ -283,6 +286,31 @@ _SEED_CONTRACTS: List[ParameterContract] = [
                 name="method", type="enum", default="ordinary",
                 enum_values=["ordinary", "universal"],
                 description="ordinary=常均值 OK；universal=线性坐标漂移 UK（残差变异函数）",
+            ),
+            ParameterSpec(
+                name="matern_smoothness", type="number", default=0.5,
+                minimum=0.1, maximum=5.0, unit="ratio",
+                description="Matérn 平滑度 ν（0.1-5.0，默认 0.5）；仅 matern 模型使用",
+            ),
+            ParameterSpec(
+                name="anisotropy_angle", type="number", default=0.0,
+                unit="degrees",
+                description="各向异性主轴方位角（度，逆时针自 +x；默认 0 = 各向同性）",
+            ),
+            ParameterSpec(
+                name="anisotropy_ratio", type="number", default=1.0,
+                minimum=1.0, unit="ratio",
+                description="各向异性长短轴变程比（≥1；默认 1 = 各向同性）",
+            ),
+            ParameterSpec(
+                name="cv_scheme", type="enum", default="index",
+                enum_values=["index", "spatial_block"],
+                description="CV 分折方案：index=索引取模（历史）；spatial_block=确定性网格分块",
+            ),
+            ParameterSpec(
+                name="solve_backend", type="enum", default="auto",
+                enum_values=["auto", "numpy_batched", "scipy_linalg"],
+                description="线性求解后端：auto=批式 numpy+逐行回退（历史）；强制 scipy_linalg=逐行 LU",
             ),
         ],
     ),

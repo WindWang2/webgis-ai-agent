@@ -69,4 +69,49 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             deterministic=True,
             purpose_template="点格局分析",
         ),
+
+        # ── Foundation V2 (A3)：点格局/时空统计扩展能力 ─────────────────
+        CapabilityDescriptor(
+            id="nearest_neighbor_functions", name="最近邻距离函数", category="density",
+            description="G/F/J 距离函数（Diggle 1983 / van Lieshout–Baddeley 1996）——"
+                        "最近邻与空空间分布的 CDF 对比 CSR，配固定种子模拟包络。",
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_types=["stats_table"],
+            geometry_requirements=["point"],
+            deterministic=True,
+            purpose_template="最近邻距离函数分析",
+        ),
+
+        CapabilityDescriptor(
+            id="pair_correlation_function", name="成对相关函数", category="density",
+            description="成对相关函数 g(r)=K′(r)/(2πr)（Illian 2008）——"
+                        "随半径的聚集/规则尺度谱，配固定种子 CSR 包络。",
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_types=["stats_table"],
+            geometry_requirements=["point"],
+            deterministic=True,
+            purpose_template="成对相关函数分析",
+        ),
+
+        CapabilityDescriptor(
+            id="cross_k_function", name="双变量交叉 K 函数", category="density",
+            description="双变量 K12（Besag 1977 随机标记）——两类点间的空间"
+                        "吸引/分离检验（如连锁品牌 vs 竞品共现）。",
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_types=["stats_table"],
+            geometry_requirements=["point"],
+            deterministic=True,
+            purpose_template="双变量点格局分析",
+        ),
+
+        CapabilityDescriptor(
+            id="space_time_interaction", name="时空交互检验", category="density",
+            description="Knox 时空交互检验（1964）——事件在空间与时间上是否"
+                        "同时邻近（如传染病聚集），时间置换 p 值。",
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_types=["stats_table"],
+            geometry_requirements=["point"],
+            deterministic=True,
+            purpose_template="时空交互检验",
+        ),
 ]
