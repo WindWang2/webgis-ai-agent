@@ -12,14 +12,15 @@ evidence。设计约束：
 - durable execution 仍由 SessionPlan / Pi runtime 负责 —— 本模块只编译，
   不执行。
 
-管线（规格 §10）：
+管线（规格 §10；V3 扩展后 13 阶段）：
 
-    1 normalize_intent          7 evaluate_obligations
-    2 resolve_task_family       8 resolve_algorithms
-    3 resolve_scope             9 compute_transformations
-    4 resolve_recipe_candidates 10 resolve_cartography
-    5 resolve_data_roles        11 produce_map_product_plan
-    6 compile_capability_dag    12 produce_completion_contract
+    1 normalize_intent          8 evaluate_obligations
+    2 map_task_ontology (V3)    9 resolve_algorithms
+    3 resolve_task_family      10 compute_transformations
+    4 resolve_scope            11 resolve_cartography
+    5 resolve_recipe_candidates 12 produce_map_product_plan
+    6 resolve_data_roles       13 produce_completion_contract
+    7 compile_capability_dag
 """
 from __future__ import annotations
 
@@ -32,6 +33,7 @@ from app.services.gis_harness.intent import MapRequestIntent, resolve_map_reques
 #: 编译器管线的固定阶段序（测试锁定顺序与数量）。
 COMPILER_STAGES = (
     "normalize_intent",
+    "map_task_ontology",
     "resolve_task_family",
     "resolve_scope",
     "resolve_recipe_candidates",
@@ -74,6 +76,8 @@ class WorkflowCompilation(BaseModel):
     recipe_id: str = ""
     stages: List[WorkflowStageRecord] = Field(default_factory=list)
     intent: Optional[MapRequestIntent] = None
+    # V3：intent → 本体任务的有序匹配（GIS task ontology 映射证据）。
+    ontology_matches: List[Dict[str, Any]] = Field(default_factory=list)
     # plan 为 map_product_plan 阶段的有界 dump（同 SessionPlan chapter 形态）；
     # 保持 dict 以免引入 planner 模型对编译器产物的硬依赖。
     plan: Dict[str, Any] = Field(default_factory=dict)
@@ -92,6 +96,7 @@ class WorkflowCompilation(BaseModel):
             "query": self.query[:200],
             "recipe_id": self.recipe_id,
             "stages": [s.to_bounded_dict() for s in self.stages],
+            "ontology_matches": self.ontology_matches[:6],
             "data_roles": self.data_roles[:16],
             "obligations": self.obligations[:16],
             "capability_dag": self.capability_dag,
@@ -122,7 +127,7 @@ def compile_workflow(
     template_id: str = "",
     min_points_default: int = 10,
 ) -> WorkflowCompilation:
-    """把 query/intent 确定性编译为 WorkflowCompilation（12 阶段）。
+    """把 query/intent 确定性编译为 WorkflowCompilation（13 阶段）。
 
     ``profile``（Spatial Meta Profile / resolver camelCase 形态）在数据到手
     后传入，用于 finalize 与义务评估；规划期可省略（义务按 unknown ≠
@@ -152,6 +157,25 @@ def compile_workflow(
         reason_codes=list(merged.matched_rules[:6]),
         evidence={"confidence": round(merged.confidence, 2),
                   "hint_applied": list(merged.hint_applied[:4])},
+    ))
+
+    # ── 2 map_task_ontology（V3：intent → GIS 任务本体匹配）──────────
+    from app.services.gis_harness.gis_ontology import match_task_ontology
+    onto_matches = match_task_ontology(merged, limit=5)
+    compilation.ontology_matches = [m.to_bounded_dict() for m in onto_matches]
+    stages.append(_stage_record(
+        "map_task_ontology",
+        reason_codes=(
+            [f"planned_task:{m.task_id}" for m in onto_matches
+             if m.semantic_status == "planned"][:_STAGE_REASON_BUDGET]
+        ),
+        evidence={
+            "primary_task": onto_matches[0].task_id if onto_matches else "",
+            "matches": [
+                {"task": m.task_id, "score": round(m.score, 2)}
+                for m in onto_matches[:4]
+            ],
+        },
     ))
 
     # ── 2 resolve_task_family ────────────────────────────────────────

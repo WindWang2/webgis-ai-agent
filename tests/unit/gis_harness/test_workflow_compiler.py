@@ -1,7 +1,8 @@
 """Deterministic Workflow Compiler（C5）与 Completion/Verdict V2（C7）回归锁。
 
 不变式：
-- 12 阶段固定序、同输入同输出（纯函数编译，零 LLM / 零 I/O）；
+- 13 阶段固定序（V3 扩展 map_task_ontology）、同输入同输出（纯函数编译，
+  零 LLM / 零 I/O）；
 - 每阶段有机器可读 reason codes 与有界 evidence；
 - 新任务族路由到 V2 专业 recipe；通用短语仍归 V1 seed（资历层）；
 - workflow 契约的科学/数据硬违反压过 complete 档位（BLOCKED_BY_METHOD /
@@ -24,7 +25,7 @@ class TestCompilerStages:
     def test_fixed_stage_order(self):
         c = compile_workflow("成都小学的分布情况")
         assert [s.stage for s in c.stages] == list(COMPILER_STAGES)
-        assert len(c.stages) == 12
+        assert len(c.stages) == 13
 
     def test_deterministic_same_input_same_output(self):
         c1 = compile_workflow("成都各区小学数量是否均衡", profile=_PROFILE_POINTS)

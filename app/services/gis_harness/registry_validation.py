@@ -51,6 +51,25 @@ def validate_gis_library(
     issues.extend(capabilities.validate())
     issues.extend(algorithms.validate(available_tools=available_tools))
     issues.extend(validate_model_library())
+
+    # ── V3：GIS Task Ontology 引用完整性（capability/artifact/map model
+    #    /data role/task family 全部对账单一事实源）──────────────────────
+    from typing import get_args as _typing_get_args
+
+    from app.services.gis_harness.gis_ontology import get_task_ontology
+    from app.services.gis_harness.intent import TaskType as _TaskType
+    from app.services.gis_harness.workflow_schema import DATA_ROLES as _DATA_ROLES
+
+    issues.extend(
+        f"gis_ontology: {violation}"
+        for violation in get_task_ontology().validate(
+            capability_exists=capabilities.has,
+            artifact_type_exists=artifacts.has,
+            map_model_exists=lambda m: models.resolve(m) is not None,
+            data_role_vocabulary=tuple(_DATA_ROLES),
+            family_vocabulary=_typing_get_args(_TaskType),
+        )
+    )
     # 参数一致性门（§43 parity）：显式传 tool_registry 才做 schema 级
     # 对账（构建注册表是校验专用成本；默认轻量）。
     if tool_registry is not None:
@@ -126,6 +145,12 @@ def validate_gis_library(
                     precondition_exists=precondition_exists,
                 )
             )
+        # V3（GIS Task Ontology）：recipe.ontology_tasks 必须命中本体
+        # 登记表 —— 悬空的本体引用会让 opt-in 路由层静默失效。
+        for task_id in (getattr(recipe, "ontology_tasks", None) or []):
+            from app.services.gis_harness.gis_ontology import get_task_ontology
+            if not get_task_ontology().has(task_id):
+                issues.append(f"recipe {rid}: unknown ontology task {task_id}")
 
     # ── ProductTemplate：recipe / map model / capability / layer_type ──
     for tid in products.all_ids:

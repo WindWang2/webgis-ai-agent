@@ -237,8 +237,14 @@ def run_workflow_contract_case(case: WorkflowContractCase) -> ContractCaseResult
     compilation = compile_workflow(
         case.query, recipe_id=case.recipe_id, profile=case.profile,
     )
-    if len(compilation.stages) != 12:
-        failures.append(f"stages: expected 12, got {len(compilation.stages)}")
+    from app.services.gis_harness.workflow_compiler import COMPILER_STAGES
+    if len(compilation.stages) != len(COMPILER_STAGES):
+        failures.append(
+            f"stages: expected {len(COMPILER_STAGES)}, got {len(compilation.stages)}")
+    # V3：编译阶段序必须与管线契约逐位一致（防阶段静默漂移/换位）。
+    got_stages = [s.stage for s in compilation.stages]
+    if got_stages != list(COMPILER_STAGES):
+        failures.append(f"stage order mismatch: {got_stages}")
 
     plan = compilation.plan
     wc = plan.get("workflow_contract") or {}

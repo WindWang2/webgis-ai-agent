@@ -85,6 +85,11 @@ class CartographyRecipe(BaseModel):
     # 工作流画像：数据角色 / 科学义务 / 完成契约 / 语义回退 / 专业关键词。
     # None = 纯 V1 制图 recipe，选择与规划行为与历史完全一致。
     workflow: Optional[WorkflowProfile] = None
+    # ── V3（GIS Task Ontology）：本 recipe 服务的本体任务 id（opt-in）──
+    # 空 = 不参与本体路由（行为与历史完全一致）；非空时，intent 的本体
+    # 匹配命中其中任一 task → 该候选在本体层前置，全不命中则后置。
+    # id 必须命中 gis_ontology 登记表（registry_validation 编译期校验）。
+    ontology_tasks: List[str] = Field(default_factory=list)
 
 
 class DisabledElement(BaseModel):
@@ -877,27 +882,27 @@ class RecipeRegistry:
     ) -> List[CartographyRecipe]:
         """按 intent 选择候选 recipe（确定性排序）。
 
-        排序键（稳定七元组）：
+        排序键（稳定十一层）：
             1. geometry 期望失配（#781：geometry_expectation=='raster' 时
                非栅格面族候选全部后置——栅格主体绝不推荐 POI 热力族）
-            2. task 精确命中
-            3. **专业关键词命中**（V2/Goal C：recipe.workflow 关键词与
-               query 子串匹配，命中多者优先。无 workflow 的候选该层恒 0
-               ——纯加法层，V1 候选排序不变）
-            4. 显式制图意图（图末尾的 aggregate_grid / proportional_symbol
-               等加法信号）是否命中 recipe.intent_cartography
-            5. cartography_intents 交集多
-            6. 项目验证加成（ADR-0069 / spec 开放问题 3）：本项目
-               recipe_outcome 事实 ACTIVE 的 recipe 前置——同语义信号下
-               优先复用本项目已验证的制图方法。放在 priority 之前：
-               项目证据比静态种子优先级更有资格定序。
-            7. priority 小（同分稳定排序）
+            2. seed 资历（任务已有 V1 seed 服务时 V2 recipe 后置）
+            3. task 精确命中
+            4. V2 通用罚（V2 且无关键词命中则后置）
+            5. 专业关键词命中多者优先（V2/Goal C 倒排路由）
+            6. 显式制图意图（aggregate_grid / proportional_symbol 直命中）
+            7. cartography_intents 交集多
+            8. **V3 本体层**（opt-in）：声明 ontology_tasks 的候选与 intent
+               本体匹配求交——命中前置、全不命中后置；未声明候选恒 0，
+               既有 recipe 排序不受影响
+            9. 项目验证加成（ADR-0069）：project recipe_outcome ACTIVE 前置
+            10. priority 小（同分稳定排序）
+            11. id 字典序兜底
 
         显式信号那一层解决「同一 distribution_overview 任务下，宽口径
         recipe 交集计数把用户明确的形态词请求压掉」的优先级错置；其余
         回归锚（Golden Case A/D/E）保持原有行为。
 
-        ``project_verified`` 为 None（无项目上下文）时第 6 层恒 0，
+        ``project_verified`` 为 None（无项目上下文）时第 9 层恒 0，
         排序与既有行为完全一致——记忆只在本项目内改变起点（决策 1/2）。
         """
         task = getattr(intent, "task", "")
@@ -928,6 +933,14 @@ class RecipeRegistry:
             for t in r.intent_tasks
         }
         scored: List[tuple] = []
+        # V3（GIS Task Ontology）：intent 的本体任务匹配（一次计算，候选
+        # 比对为集合交集）。opt-in：无 ontology_tasks 声明的候选不受影响。
+        ontology_hits: Optional[set] = None
+        if any(r.ontology_tasks for r in self._by_id.values()):
+            from app.services.gis_harness.gis_ontology import match_task_ontology
+            ontology_hits = {
+                m.task_id for m in match_task_ontology(intent, limit=5)
+            }
         for recipe in self._by_id.values():
             task_hit = task in recipe.intent_tasks
             # #781: geometry_expectation=='raster' 时栅格面族（raster_surface）
@@ -953,6 +966,15 @@ class RecipeRegistry:
             seed_seniority = (
                 1 if (recipe.workflow is not None and task in v1_served_tasks) else 0
             )
+            # V3 本体层：声明了 ontology_tasks 的候选，命中 intent 本体匹配
+            # → 前置（罚 0），全不命中 → 后置（罚 1）；未声明的候选恒 0
+            # —— 既有 recipe（不声明）排序完全不变（纯加法层）。
+            if recipe.ontology_tasks and ontology_hits is not None:
+                ontology_penalty = (
+                    0 if ontology_hits & set(recipe.ontology_tasks) else 1
+                )
+            else:
+                ontology_penalty = 0
             score = (
                 geometry_mismatch,
                 seed_seniority,
@@ -963,6 +985,7 @@ class RecipeRegistry:
                     1 if explicit is not None else 0
                 ),
                 -cart_hit,
+                ontology_penalty,
                 0 if recipe.id in verified else 1,
                 recipe.priority, recipe.id,
             )
