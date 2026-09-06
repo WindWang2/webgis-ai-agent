@@ -462,6 +462,7 @@ async def register_tool_artifact(
     analysis_key: Optional[str] = None,
     input_shapes: Optional[Dict[str, dict]] = None,
     raster_fingerprints: Optional[Dict[str, str]] = None,
+    ref_revisions: Optional[Dict[str, int]] = None,
 ) -> Optional[ArtifactRecord]:
     """dispatch/chart seam 的便捷注册（无 capability 上下文；type 由推断得出）。
 
@@ -471,6 +472,9 @@ async def register_tool_artifact(
     ``raster_fingerprints``（V3，ADR-0089）：输入栅格路径 → 内容指纹
     （grid+降采样样本），复用复核时重算比对 —— 同路径 in-place 重写不再
     错误命中旧产物。
+    ``ref_revisions``（V3 data foundation）：输入 ref → content_revision
+    快照，捕获保形状的属性覆写（形状指纹盲区）；复核见
+    analysis_reuse.find_reusable_artifact。
     """
     if not ref or not str(ref).startswith("ref:"):
         return None
@@ -492,6 +496,12 @@ async def register_tool_artifact(
             str(k)[:128]: str(v)[:64]
             for k, v in list(raster_fingerprints.items())[:4]
             if isinstance(v, str)
+        }
+    if ref_revisions:
+        # 有界：最多 8 个输入 ref × revision 计数器。
+        metadata["input_ref_revisions"] = {
+            str(k)[:96]: int(v) for k, v in list(ref_revisions.items())[:8]
+            if isinstance(v, int) and v > 0
         }
     return await register_artifact(
         session_id,

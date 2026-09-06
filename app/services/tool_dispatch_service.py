@@ -644,6 +644,16 @@ class ToolDispatchService:
                         raster_fps = snapshot_raster_fingerprints(_parsed) or None
                     except Exception:  # noqa: BLE001 — 指纹是增值记录，绝不阻塞
                         raster_fps = None
+                # V3 data foundation：输入 ref revision 快照（保形状覆写的
+                # 复用盲区守卫；增值记录，失败不阻塞）。
+                ref_revs = None
+                if _parsed is not None:
+                    from app.lib.gis.analysis_reuse import snapshot_ref_revisions
+
+                    try:
+                        ref_revs = await snapshot_ref_revisions(session_id, _parsed) or None
+                    except Exception:  # noqa: BLE001
+                        ref_revs = None
                 # Kriging slice review F1: the uncertainty surface registers
                 # under a SUFFIXED analysis_key — find_reusable_artifact picks
                 # the newest record per key, so an identical-keyed derived
@@ -667,6 +677,7 @@ class ToolDispatchService:
                             analysis_key=key,
                             input_shapes=input_shapes if role == "primary" else None,
                             raster_fingerprints=raster_fps if role == "primary" else None,
+                            ref_revisions=ref_revs if role == "primary" else None,
                         )
             except Exception:  # noqa: BLE001 — 登记失败不影响产物本身
                 logger.debug(
