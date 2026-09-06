@@ -35,7 +35,12 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 logger = logging.getLogger(__name__)
 
 # ── 契约常量 ─────────────────────────────────────────────────────────
-MAX_ARTIFACT_RECORDS = 128  # 会话内记录上限（超出先淘汰 superseded，再按 LRU）
+# 会话内记录上限（超出先淘汰 superseded，再按 LRU）
+MAX_ARTIFACT_RECORDS = 128
+# metadata 键上限：V3（data foundation）在同一账本上追加
+# logical_role / persistence / stale 诊断 / content 指纹等有界键 ——
+# 12 → 24 的翻倍仍是硬预算（每键值都有界），旧记录不足 12 键不受影响。
+MAX_RECORD_METADATA_KEYS = 24
 LEDGER_PREFIX = "artifact-ledger"
 LEDGER_ALIAS = "artifacts"
 
@@ -104,7 +109,7 @@ class ArtifactRecord:
         d = asdict(self)
         d["inputs"] = list(self.inputs)[:16]
         d["metadata"] = {
-            str(k): v for k, v in list(self.metadata.items())[:12]
+            str(k): v for k, v in list(self.metadata.items())[:MAX_RECORD_METADATA_KEYS]
         }
         return d
 
@@ -534,6 +539,53 @@ async def mark_status(session_id: str, artifact_id: str, status: str) -> bool:
             if rec is None:
                 return False
             rec.status = status
+            rec.updated_at = time.time()
+            await _save_records(session_id, records, session_data_manager)
+            return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+async def update_record_metadata(
+    session_id: str,
+    artifact_id: str,
+    *,
+    metadata: Optional[Dict[str, Any]] = None,
+    status: Optional[str] = None,
+) -> bool:
+    """V3 data foundation 的增量记录更新（不复活、不重注册）。
+
+    - ``metadata``：**浅合并**进既有 metadata（同键覆盖）；合并后仍受
+      MAX_RECORD_METADATA_KEYS 硬界（超出按 dict 插入序截断，先到先留）；
+    - ``status``：显式状态转移（stale 标记传播等）；传非法状态值按
+      False 处理（状态集是有限集合，不收自由串）；
+    - 与 mark_status 同锁序同容错：更新失败只影响记录，绝不阻断调用方。
+    """
+    from app.services.distributed_lock import session_lock_registry
+    from app.services.session_data import session_data_manager
+
+    if not session_id or not artifact_id:
+        return False
+    if status is not None and status not in (
+        A_VALID, A_STALE, A_EXPIRED, A_SUPERSEDED, A_FAILED
+    ):
+        return False
+    if metadata is None and status is None:
+        return False
+    try:
+        async with session_lock_registry.lock(session_id, fail_on_degraded=False):
+            records = await _load_records(session_id, session_data_manager)
+            rec = records.get(artifact_id)
+            if rec is None:
+                return False
+            if metadata:
+                merged = dict(rec.metadata)
+                merged.update({
+                    str(k): v for k, v in list(metadata.items())[:MAX_RECORD_METADATA_KEYS]
+                })
+                rec.metadata = dict(list(merged.items())[:MAX_RECORD_METADATA_KEYS])
+            if status is not None:
+                rec.status = status
             rec.updated_at = time.time()
             await _save_records(session_id, records, session_data_manager)
             return True
