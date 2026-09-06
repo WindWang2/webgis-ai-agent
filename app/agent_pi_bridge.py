@@ -888,6 +888,27 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
 
     details_payload = _slim_pi_details_payload(result)
 
+    # ADR-0103（§十）：证据链 TOOL_CALLS / ARGUMENTS / TOOL_RESULTS /
+    # MAP_MUTATIONS 阶段（有活跃 turn 才记；记录绝不阻断工具返回）。
+    try:
+        from app.lib.runtime.gis_trace import Stage, record_stage
+
+        _chain_turn, _chain_run, _chain_sid = active_turn_correlation(session_id)
+        if _chain_turn:
+            record_stage(_chain_turn, Stage.TOOL_CALLS, tool=tool_name,
+                         call_id=request.toolCallId or "")
+            record_stage(_chain_turn, Stage.ARGUMENTS, tool=tool_name,
+                         args=str(arguments)[:_RECORD_ARGS_BOUND])
+            record_stage(_chain_turn, Stage.TOOL_RESULTS, tool=tool_name,
+                         status=result.status,
+                         latency_ms=int((time.monotonic() - t0) * 1000))
+            if result.map_actions:
+                record_stage(_chain_turn, Stage.MAP_MUTATIONS, tool=tool_name,
+                             actions=[ma.get("action_id", "") for ma in result.map_actions[:8]],
+                             commands=[ma.get("command", "") for ma in result.map_actions[:8]])
+    except Exception:  # noqa: BLE001
+        logger.debug("[PiBridge] gis trace record failed", exc_info=True)
+
     # ADR-0103（§九）：GIS-aware 无进展诊断 —— 每次真实 dispatch 后观测
     # mapspec 指纹与 SessionPlan 进度代数；达到停滞阈值时把 reason codes
     # 以 no_progress_hints 附进 details（模型可读的诚实诊断），并由调用方
@@ -920,6 +941,9 @@ _GIS_TRACKER_MAX_SESSIONS = 64
 
 _SIDE_EFFECT_MUTATION = {"state_mutation", "external_side_effect", "destructive", "artifact_creation"}
 _SIDE_EFFECT_READ = {"pure", "deterministic_compute", "cacheable_read"}
+
+#: 证据链参数记录的字节上限（脱脂由 bound_meta 兜底，这里先钳原始长度）
+_RECORD_ARGS_BOUND = 512
 
 
 async def _record_gis_progress(

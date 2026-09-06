@@ -101,6 +101,23 @@ def _log_reasons(decision: Any) -> None:
             )
     except Exception:  # noqa: BLE001
         pass
+    # ADR-0103 §十：证据链 MODEL_ROUTING 阶段（有当前 runtime turn 才记）。
+    try:
+        from app.lib.runtime.context import current_runtime_context
+        from app.lib.runtime.gis_trace import Stage, record_stage
+
+        _rt = current_runtime_context()
+        _turn = getattr(_rt, "turn_id", "") if _rt else ""
+        if _turn:
+            record_stage(
+                _turn, Stage.MODEL_ROUTING,
+                role=getattr(decision, "role", ""),
+                model=getattr(decision, "model_id", ""),
+                reasons=list(getattr(decision, "reason_codes", ()) or ())[:8],
+                fallback_chain=list(getattr(decision, "fallback_chain", ()) or ())[:8],
+            )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def observe_outcome(

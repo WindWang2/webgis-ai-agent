@@ -266,3 +266,101 @@ def check_trace_invariants(trace: TurnTrace) -> List[str]:
     if settled_count > 1:
         violations.append(f"turn_settled emitted {settled_count} times")
     return violations
+
+
+# ---------------------------------------------------------------------------
+# ADR-0103（§十）：V3 A/B / 回归比较。
+#
+# 全部确定性、零副作用：A/B 是「同输入、两配置、比投影」，绝不在比较中
+# 执行任何工具或 LLM —— 面差集 / 链覆盖度 / 路由决策差异就是产出。
+# ---------------------------------------------------------------------------
+
+@dataclass
+class SurfaceABResult:
+    names_a: List[str]
+    names_b: List[str]
+    only_in_a: List[str]
+    only_in_b: List[str]
+    retriever_a: str
+    retriever_b: str
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "only_in_a": self.only_in_a,
+            "only_in_b": self.only_in_b,
+            "shared": sorted(set(self.names_a) & set(self.names_b)),
+            "retriever_a": self.retriever_a,
+            "retriever_b": self.retriever_b,
+            "delta": len(self.only_in_a) + len(self.only_in_b),
+        }
+
+
+def ab_compare_tool_surface(
+    registry: ToolRegistry,
+    message: str,
+    ctx_overrides_a: Optional[Dict[str, Any]] = None,
+    ctx_overrides_b: Optional[Dict[str, Any]] = None,
+) -> SurfaceABResult:
+    """工具检索 A/B：同一消息 + 两组 SelectionContext 覆盖 → 面差集。"""
+    from app.services.chat.tool_surface_v3 import (
+        DynamicToolSurface,
+        ToolSelectionContext,
+    )
+
+    def _run(overrides: Optional[Dict[str, Any]]) -> Any:
+        kwargs = dict(user_message=message)
+        kwargs.update(overrides or {})
+        sel = DynamicToolSurface(registry).select(ToolSelectionContext(**kwargs))
+        return sel
+
+    a = _run(ctx_overrides_a)
+    b = _run(ctx_overrides_b)
+    return SurfaceABResult(
+        names_a=list(a.names),
+        names_b=list(b.names),
+        only_in_a=sorted(set(a.names) - set(b.names)),
+        only_in_b=sorted(set(b.names) - set(a.names)),
+        retriever_a=a.retriever,
+        retriever_b=b.retriever,
+    )
+
+
+@dataclass
+class ChainComparison:
+    """两条证据链的阶段级对齐比较（workflow regression / A/B 断言面）。"""
+
+    missing_in_b: List[str]
+    missing_in_a: List[str]
+    completeness_a: float
+    completeness_b: float
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "missing_in_b": self.missing_in_b,
+            "missing_in_a": self.missing_in_a,
+            "completeness_a": self.completeness_a,
+            "completeness_b": self.completeness_b,
+        }
+
+
+def compare_chains(chain_a: Any, chain_b: Any) -> ChainComparison:
+    """证据链回归比较：阶段覆盖差集（阶段内容不变式由各评测用例自断言）。"""
+    covered_a = set(chain_a.covered_stages())
+    covered_b = set(chain_b.covered_stages())
+    return ChainComparison(
+        missing_in_b=sorted(covered_a - covered_b),
+        missing_in_a=sorted(covered_b - covered_a),
+        completeness_a=chain_a.completeness(),
+        completeness_b=chain_b.completeness(),
+    )
+
+
+def route_decision_diff(decision_a: Any, decision_b: Any) -> Dict[str, Any]:
+    """模型路由 A/B：决策 dict 的字段级差异（不含健康状态易变维度）。"""
+    a = decision_a.as_dict() if hasattr(decision_a, "as_dict") else dict(decision_a)
+    b = decision_b.as_dict() if hasattr(decision_b, "as_dict") else dict(decision_b)
+    diff: Dict[str, Any] = {}
+    for key in sorted(set(a) | set(b)):
+        if a.get(key) != b.get(key):
+            diff[key] = {"a": a.get(key), "b": b.get(key)}
+    return diff
