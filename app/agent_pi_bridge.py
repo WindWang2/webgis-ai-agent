@@ -445,9 +445,16 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
     if not session_id:
         raise PiRpcError("Pi tool callback has no verified turn session")
 
-    # Unknown bare names reject with discover guidance — the extension only
-    # sends the 7 natives + webgis_execute, so no legitimate call crosses this.
-    resolved = resolve_pi_tool_call(tool_name, arguments, allow_passthrough=False)
+    # Unknown bare names reject with discover guidance. ADR-0103: names on the
+    # dynamic registered surface (spawn superset dump == extension registration)
+    # dispatch straight through the shared pipeline — same tier/confirm gates.
+    try:
+        _registered = set(registry.list_tools())
+    except Exception:  # noqa: BLE001 — 分类退化为冻结面行为
+        _registered = None
+    resolved = resolve_pi_tool_call(
+        tool_name, arguments, allow_passthrough=False, registered_surface=_registered
+    )
     if resolved.kind == "reject":
         return PiToolResponse(
             toolCallId=request.toolCallId,

@@ -277,9 +277,11 @@ class PiRpcClient:
         # and the whole native surface (incl. webgis_map_intent) is unreachable
         # for the process lifetime. A raise here aborts the spawn; the API
         # lifespan catches it and falls back to ChatEngine.
-        from app.services.chat.pi_native_surface import dump_native_tools
+        # ADR-0103: dump is now the v2 dynamic surface (registered superset +
+        # default-active); extension registers all and activates the default.
+        from app.services.chat.pi_native_surface import dump_surface_file
         env["WEBGIS_NATIVE_TOOLS_PATH"] = str(
-            dump_native_tools(PI_AGENT_DIR / "native-tools.json")
+            dump_surface_file(PI_AGENT_DIR / "native-tools.json")
         )
 
         # GIS product: Pi is the host, not a coding agent. Built-in bash/read/
