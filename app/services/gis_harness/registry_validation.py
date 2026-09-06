@@ -152,6 +152,15 @@ def validate_gis_library(
             if not get_task_ontology().has(task_id):
                 issues.append(f"recipe {rid}: unknown ontology task {task_id}")
 
+    # ── V3：Recipe 分层组合（family / composite / scenario）───────────
+    from app.services.gis_harness.workflow_families import (
+        get_workflow_family_registry,
+    )
+    issues.extend(
+        f"workflow_families: {violation}"
+        for violation in get_workflow_family_registry().validate(recipes)
+    )
+
     # ── ProductTemplate：recipe / map model / capability / layer_type ──
     for tid in products.all_ids:
         tpl = products.get(tid)
