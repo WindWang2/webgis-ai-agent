@@ -83,8 +83,24 @@ export type DivergentLegendSpec = {
   unit?: string;
 };
 
+/** V4：双变量色阵图例（后端 bivariate.bivariate_legend_spec 同源）。 */
+export type BivariateLegendSpec = {
+  type: 'bivariate';
+  matrix: string;
+  colors: string[];
+  n: number;
+  label_a: string;
+  label_b: string;
+  breaks_a: number[];
+  breaks_b: number[];
+  class_field?: string;
+  field?: string;
+  title?: string;
+};
+
 export type LegendSpec =
   | GraduatedLegendSpec
   | ContinuousLegendSpec
   | CategoricalLegendSpec
-  | DivergentLegendSpec;
+  | DivergentLegendSpec
+  | BivariateLegendSpec;

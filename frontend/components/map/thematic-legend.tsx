@@ -25,6 +25,19 @@ export const ThematicLegend = React.memo(function ThematicLegend({ spec, onFilte
       return <CategoricalLegend spec={spec} />;
     case 'divergent':
       return <DivergentLegend spec={spec} />;
+    case 'bivariate':
+      // V4：双变量色阵 —— map-components/legends.tsx 的 BivariateMatrix
+      // 是 chrome 组件渲染器；此处 chat 结果卡路径用同一 3×3 网格形态。
+      return (
+        <div className="flex flex-col gap-1">
+          <div className="grid gap-px" style={{ gridTemplateColumns: `repeat(${spec.n}, 16px)` }}>
+            {spec.colors.map((c, i) => (
+              <span key={i} className="h-4 w-4" style={{ background: c }} />
+            ))}
+          </div>
+          <div className="text-xs text-muted">→{spec.label_a} / ↑{spec.label_b}</div>
+        </div>
+      );
     default: {
       const _exhaustive: never = spec;
       void _exhaustive;

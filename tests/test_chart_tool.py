@@ -44,8 +44,32 @@ def test_optional_labels():
 
 def test_invalid_chart_type():
     data = json.dumps([{"name": "A", "value": 1}])
-    result = generate_chart(chart_type="radar", title="T", data=data)
+    # V4：radar 已入 native kind 词表（原 V3 用例）；真正未知的类型仍拒绝
+    result = generate_chart(chart_type="hologram", title="T", data=data)
     assert "error" in result
+
+
+def test_v4_native_chart_kinds_accepted():
+    data = json.dumps([{"name": "A", "value": 1}, {"name": "B", "value": 2}])
+    for kind in ("radar", "donut", "horizontal_bar", "stacked_bar"):
+        result = generate_chart(chart_type=kind, title="T", data=data)
+        assert "error" not in result, f"{kind}: {result}"
+        assert result["chart"]["type"] == kind
+
+
+def test_v4_planned_chart_kind_honest_rejection():
+    data = json.dumps([{"name": "A", "value": 1}])
+    result = generate_chart(chart_type="violin", title="T", data=data)
+    assert "error" in result
+    assert "planned" in result["error"]
+    assert "box_plot" in result["error"]
+
+
+def test_v4_chart_kind_alias_resolved():
+    data = json.dumps([{"name": "A", "value": 1}])
+    result = generate_chart(chart_type="hbar", title="T", data=data)
+    assert "error" not in result
+    assert result["chart"]["type"] == "horizontal_bar"
 
 
 def test_invalid_data_json():

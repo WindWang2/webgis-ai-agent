@@ -29,6 +29,16 @@ vi.mock('recharts', async () => {
     Line: passthrough,
     Pie: passthrough,
     Cell: passthrough,
+    AreaChart: passthrough,
+    Area: passthrough,
+    RadialBarChart: passthrough,
+    RadialBar: passthrough,
+    RadarChart: passthrough,
+    Radar: passthrough,
+    PolarGrid: passthrough,
+    PolarAngleAxis: passthrough,
+    PolarRadiusAxis: passthrough,
+
     Scatter: passthrough,
   };
 });
@@ -42,12 +52,15 @@ describe('ChartCore', () => {
     expect(sawBarData).toEqual([{ name: 'a', value: 1 }]);
   });
 
-  it('未知类型 → null（调用方负责降级卡片）', () => {
+  it('未知类型 → null（调用方负责降级卡片）；V4 radar 已是 native kind', () => {
     const { container } = render(
-      <ChartCore chart={{ type: 'radar' as 'bar', title: 't', data: [] }} />,
+      <ChartCore chart={{ type: 'hologram' as 'bar', title: 't', data: [] }} />,
     );
     expect(container.firstChild).toBeNull();
-    expect(isChartTypeSupported('radar')).toBe(false);
+    expect(isChartTypeSupported('hologram')).toBe(false);
     expect(isChartTypeSupported('bar')).toBe(true);
+    expect(isChartTypeSupported('radar')).toBe(true);
+    // violin planned：live 引擎未实现，词表诚实排除
+    expect(isChartTypeSupported('violin')).toBe(false);
   });
 });

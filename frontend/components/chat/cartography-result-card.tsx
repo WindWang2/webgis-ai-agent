@@ -29,6 +29,8 @@ function summarize(spec: LegendSpec): string {
       return `${spec.field} · ${spec.categories.length} 类`;
     case 'divergent':
       return `${spec.field ?? '指标'} · 发散色带`;
+    case 'bivariate':
+      return `双变量 · ${spec.n}×${spec.n} 色阵`;
   }
 }
 
@@ -40,6 +42,8 @@ function swatches(spec: LegendSpec): string[] {
       return spec.palette_colors;
     case 'categorical':
       return spec.categories.map((c) => c.color);
+    case 'bivariate':
+      return spec.colors;
   }
 }
 

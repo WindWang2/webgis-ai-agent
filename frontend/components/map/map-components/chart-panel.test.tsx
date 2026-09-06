@@ -26,6 +26,16 @@ vi.mock('recharts', async () => {
     Line: passthrough,
     Pie: passthrough,
     Cell: passthrough,
+    AreaChart: passthrough,
+    Area: passthrough,
+    RadialBarChart: passthrough,
+    RadialBar: passthrough,
+    RadarChart: passthrough,
+    Radar: passthrough,
+    PolarGrid: passthrough,
+    PolarAngleAxis: passthrough,
+    PolarRadiusAxis: passthrough,
+
     Scatter: passthrough,
   };
 });
