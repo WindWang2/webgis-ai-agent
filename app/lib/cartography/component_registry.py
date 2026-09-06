@@ -13,6 +13,25 @@ RuntimeStatus = Literal["native", "planned", "unavailable"]
 PlacementDomain = Literal["layer", "overlay", "chrome", "panel", "export", "interaction"]
 Cardinality = Literal["single", "multiple", "zero_or_one"]
 StackBehavior = Literal["exclusive", "stack_vertical", "stack_horizontal", "overlay"]
+# V4：碰撞类 —— 布局求解器按类施加不同的防重叠/压缩策略
+CollisionClass = Literal["chrome", "legend", "panel", "canvas", "none"]
+# V4：响应式行为词表
+ResponsiveBehavior = Literal["none", "collapse", "reflow", "hide"]
+
+
+class ComponentSizeRange(BaseModel):
+    """组件尺寸域（相对画布短边的比例，0-1；布局求解器 V3 消费）。"""
+    min_ratio: float = 0.0
+    max_ratio: float = 1.0
+    aspect: Optional[float] = None   # w/h 建议比；None = 自由
+
+
+class ComponentAccessibility(BaseModel):
+    """可达性元数据（前端 role/aria 与对比度校验消费）。"""
+    role: str = ""
+    label_zh: str = ""
+    keyboard_operable: bool = True
+    contrast_checked: bool = False
 
 
 class MapComponentDescriptor(BaseModel):
@@ -41,6 +60,19 @@ class MapComponentDescriptor(BaseModel):
     schema_version: int = 1
     runtime_status: RuntimeStatus = "native"
     tags: List[str] = Field(default_factory=list)
+    # ── V4（Design System）：组件能力/布局/可达性描述（纯增量）──────────
+    # 状态词表：组件实例的合法状态（chrome/panel 族默认 visible/hidden/
+    # collapsed；浮动图表族由 chart_kinds.CHART_STATES 扩展）。
+    states: List[str] = Field(default_factory=lambda: ["visible", "hidden"])
+    size_range: ComponentSizeRange = Field(default_factory=ComponentSizeRange)
+    # 碰撞类：layout solver V3 与 frontend resolve-layout 的分组防重叠依据
+    collision_class: CollisionClass = "panel"
+    responsive: ResponsiveBehavior = "none"
+    # 交互能力词表（move/resize/pin/collapse/close/switch_variant/
+    # selection_linkage…）：前端按注册的交互实现执行，未注册的不暴露
+    interactions: List[str] = Field(default_factory=list)
+    accessibility: ComponentAccessibility = Field(
+        default_factory=ComponentAccessibility)
 
 
 _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
