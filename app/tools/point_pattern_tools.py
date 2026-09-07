@@ -20,10 +20,13 @@ from app.lib.geo_processor.core import extract_declared_crs, to_utm_gdf
 from app.lib.geo_analysis._vector import extract_centroids
 from app.lib.geo_analysis.point_pattern import (
     cross_k,
+    cross_pair_correlation,
     g_f_j_functions,
     knox_test,
+    mantel_test,
     pcf,
     ripley_k,
+    space_time_k,
 )
 from app.lib.gis.algorithm_registry import get_algorithm_registry
 from app.lib.gis.backend_selection import ScaleProfile, select_backend
@@ -109,13 +112,15 @@ def register_point_pattern_tools(registry: ToolRegistry):
     @tool(registry, name="g_f_j_analysis",
            description="G/F/J 距离函数点格局分析：G(最近邻距离CDF)/F(空空间函数)/J=(1-G)/(1-F)，"
                        "对比 CSR 参考；可选固定种子 CSR 模拟包络（G/F 秩双侧 p 值）。"
-                       "原始估计（无边缘校正，如实披露）；需米制坐标（自动投影UTM）",
+                       "边缘校正可选 none(原始，缺省)/border(内点 reduced-sample)/isotropic(Ohser 加权)；"
+                       "需米制坐标（自动投影UTM）",
            tier=2, domains=["statistics"],
            param_descriptions={
                "geojson": "输入点要素 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
                "n_steps": "r 网格步数（4-32，默认10）",
                "max_distance_ratio": "r_max = 比例×min(窗宽,窗高)，0.05-0.5（默认0.25）",
                "envelopes": "CSR 模拟包络次数（0-499，固定种子42）；0=关（默认，仅描述性输出）",
+               "edge_correction": "边缘校正：none(默认)/border/isotropic；border 要求内点充足",
            },
            side_effect="deterministic_compute",
            deterministic=True,
@@ -131,7 +136,8 @@ def register_point_pattern_tools(registry: ToolRegistry):
            failure_modes=("invalid_args", "empty_result"),
            )
     def g_f_j_analysis(geojson: Any, n_steps: int = 10,
-                       max_distance_ratio: float = 0.25, envelopes: int = 0) -> dict:
+                       max_distance_ratio: float = 0.25, envelopes: int = 0,
+                       edge_correction: str = "none") -> dict:
         data = safe_parse_geojson(geojson)
         if not isinstance(data, dict):
             raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
@@ -139,6 +145,7 @@ def register_point_pattern_tools(registry: ToolRegistry):
             "n_steps": n_steps,
             "max_distance_ratio": max_distance_ratio,
             "envelopes": envelopes,
+            "edge_correction": edge_correction,
         })
         declared_crs = extract_declared_crs(data) or "EPSG:4326"
         xy, _ = _metric_xy(data)
@@ -147,6 +154,7 @@ def register_point_pattern_tools(registry: ToolRegistry):
             n_steps=int(params["n_steps"]),
             max_distance_ratio=float(params["max_distance_ratio"]),
             envelopes=int(params["envelopes"]),
+            edge_correction=str(params["edge_correction"]),
         )
         payload = {"success": True, "summary": result["summary"], "data": result}
         uncertainty = []
@@ -494,6 +502,273 @@ def register_point_pattern_tools(registry: ToolRegistry):
             crs=declared_crs,
             uncertainty=uncertainty,
             diagnostics=_backend_diagnostic("spatiotemporal.knox", int(result.get("n", 0))),
+            seed=seed,
+        )
+        return payload
+
+    # ── Foundation V3：时空 K / Mantel / 双变量 g12 ────────────────────
+
+    def _parse_time_seconds(gdf, params):
+        """声明时间字段优先、常见命名回退（与 knox/st_dbscan 同约定）。"""
+        import pandas as pd
+
+        field = str(params["time_field"]) if "time_field" in params else ""
+        if field and field not in gdf.columns:
+            fallback = [f for f in _TIME_FIELD_FALLBACKS if f in gdf.columns]
+            if not fallback:
+                raise MissingRequiredField(
+                    f"time field '{field}' not found in feature properties",
+                    correction_hint="pass the property holding ISO-8601/epoch timestamps",
+                )
+            field = fallback[0]
+        parsed = pd.to_datetime(gdf[field], errors="coerce", utc=True)
+        valid = parsed.notna().to_numpy()
+        n_dropped = int((~valid).sum())
+        t_seconds = parsed[valid].astype("int64").to_numpy() / 1e9
+        return field, valid, t_seconds, n_dropped
+
+    @tool(registry, name="space_time_k_analysis",
+           description="时空 K 函数 K_st(r,t)（Diggle 1995）：空间-时间二阶聚集强度随尺度的谱，"
+                       "对比独立参考 πr²·2t；时间标签置换 p 值（固定种子42，sup(K−ref) 单侧）。"
+                       "空间各向同性边缘校正、时间边缘未校正（诚实披露）。"
+                       "\n何时用：想知道时空聚集在哪些空间/时间尺度上最强（Knox 只是单一阈值）。"
+                       "\n关键约束：时间戳 ISO-8601/Epoch；≥8 个有效点；需米制坐标（自动投影UTM）",
+           tier=2, domains=["statistics"],
+           param_descriptions={
+               "geojson": "含时间戳的点要素 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
+               "time_field": "时间戳字段名（ISO-8601 字符串或 Epoch 数值；NaT 行剔除并披露）",
+               "n_steps_r": "r 网格步数（4-24，默认8）",
+               "n_steps_t": "t 网格步数（4-24，默认8）",
+               "max_distance_ratio": "r_max = 比例×min(窗宽,窗高)，0.05-0.5（默认0.25）",
+               "permutations": "时间置换次数：0/99/199(默认)/499，固定种子42",
+           })
+    def space_time_k_analysis(geojson: Any, time_field: str,
+                              n_steps_r: int = 8, n_steps_t: int = 8,
+                              max_distance_ratio: float = 0.25,
+                              permutations: str = "199") -> dict:
+        data = safe_parse_geojson(geojson)
+        if not isinstance(data, dict):
+            raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
+        params = apply_contract("space_time_k_analysis", {
+            "n_steps_r": n_steps_r,
+            "n_steps_t": n_steps_t,
+            "max_distance_ratio": max_distance_ratio,
+            "permutations": permutations,
+        })
+        declared_crs = extract_declared_crs(data) or "EPSG:4326"
+        xy, gdf = _metric_xy(data)
+        field, valid, t_seconds, n_dropped = _parse_time_seconds(gdf, {"time_field": time_field})
+
+        result = space_time_k(
+            xy[valid], t_seconds,
+            n_steps_r=int(params["n_steps_r"]),
+            n_steps_t=int(params["n_steps_t"]),
+            max_distance_ratio=float(params["max_distance_ratio"]),
+            permutations=int(params["permutations"]),
+        )
+        result["time_field"] = field
+        payload = {"success": True, "summary": result["summary"], "data": result}
+        uncertainty: list = []
+        seed = None
+        if int(params["permutations"]) > 0:
+            n_perm = int(params["permutations"])
+            seed = 42
+            uncertainty.append(MonteCarloSummary(
+                target="space_time_k_permutation",
+                draws=n_perm, seed=42,
+                quantiles=dict(result.get("perm_sup_quantiles", {})),
+                probability_statements=[
+                    f"时间置换零假设下 sup(K_st−πr²·2t) 的秩分布（{n_perm} 次置换，seed=42）",
+                    f"单侧 greater 秩 p（+1 校正）= {result.get('p_value')}",
+                ],
+            ))
+            uncertainty.append(StatisticalSignificance(
+                target="space_time_k",
+                statistic_name="sup(K_st - pi*r^2*2t)",
+                statistic_value=float(result.get("sup_exceedance", 0)),
+                p_value=result.get("p_value"),
+                method="permutation",
+                permutations=n_perm,
+                alternative="greater",
+            ))
+        _attach_scientific_evidence(
+            payload, "point_pattern.space_time_k", tool="space_time_k_analysis",
+            parameters_applied={
+                "time_field": field,
+                "n_steps_r": int(params["n_steps_r"]),
+                "n_steps_t": int(params["n_steps_t"]),
+                "max_distance_ratio": float(params["max_distance_ratio"]),
+                "permutations": int(params["permutations"]),
+            },
+            feature_count=result.get("n"),
+            crs=declared_crs,
+            uncertainty=uncertainty,
+            diagnostics=_backend_diagnostic("point_pattern.space_time_k", int(result.get("n", 0))),
+            seed=seed,
+        )
+        return payload
+
+    @tool(registry, name="mantel_test_analysis",
+           description="Mantel 时空检验：空间距离矩阵与时间距离矩阵的标准化相关 r；"
+                       "时间标签置换 p 值（固定种子42；greater=聚集方向/two-sided）。"
+                       "\n何时用：整体层面问『离得近的事件在时间上也接近吗』（单一汇总统计）。"
+                       "\n关键约束：n ≤ 2000（密集距离矩阵诚实上限）；"
+                       "对空间自相关敏感（披露于证据块）；需米制坐标（自动投影UTM）",
+           tier=2, domains=["statistics"],
+           param_descriptions={
+               "geojson": "含时间戳的点要素 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
+               "time_field": "时间戳字段名（ISO-8601 字符串或 Epoch 数值；NaT 行剔除并披露）",
+               "permutations": "时间置换次数：0/199/499(默认)/999，固定种子42",
+               "alternative": "greater（默认，时空聚集方向）/ two-sided",
+           })
+    def mantel_test_analysis(geojson: Any, time_field: str,
+                             permutations: str = "499",
+                             alternative: str = "greater") -> dict:
+        data = safe_parse_geojson(geojson)
+        if not isinstance(data, dict):
+            raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
+        params = apply_contract("mantel_analysis", {
+            "permutations": permutations,
+            "alternative": alternative,
+        })
+        declared_crs = extract_declared_crs(data) or "EPSG:4326"
+        xy, gdf = _metric_xy(data)
+        field, valid, t_seconds, n_dropped = _parse_time_seconds(gdf, {"time_field": time_field})
+
+        result = mantel_test(
+            xy[valid], t_seconds,
+            permutations=int(params["permutations"]),
+            alternative=str(params["alternative"]),
+        )
+        result["time_field"] = field
+        payload = {"success": True, "summary": result["summary"], "data": result}
+        uncertainty: list = []
+        seed = None
+        if int(params["permutations"]) > 0:
+            n_perm = int(params["permutations"])
+            seed = 42
+            uncertainty.append(MonteCarloSummary(
+                target="mantel_time_permutation",
+                draws=n_perm, seed=42,
+                quantiles=dict(result.get("perm_r_quantiles", {})),
+                probability_statements=[
+                    f"时间置换零假设下 Mantel r 的秩分布（{n_perm} 次置换，seed=42）",
+                    f"{params['alternative']} 秩 p（+1 校正）= {result.get('p_value')}",
+                ],
+            ))
+            uncertainty.append(StatisticalSignificance(
+                target="mantel_r",
+                statistic_name="standardized mantel r",
+                statistic_value=float(result.get("mantel_r", 0)),
+                p_value=result.get("p_value"),
+                method="permutation",
+                permutations=n_perm,
+                alternative=str(params["alternative"]),
+            ))
+        _attach_scientific_evidence(
+            payload, "point_pattern.mantel", tool="mantel_test_analysis",
+            parameters_applied={
+                "time_field": field,
+                "permutations": int(params["permutations"]),
+                "alternative": str(params["alternative"]),
+            },
+            feature_count=result.get("n"),
+            crs=declared_crs,
+            uncertainty=uncertainty,
+            diagnostics=_backend_diagnostic("point_pattern.mantel", int(result.get("n", 0))),
+            seed=seed,
+        )
+        return payload
+
+    @tool(registry, name="cross_pcf_analysis",
+           description="双变量成对相关函数 g12(r)=K12′(r)/(2πr)：两类点空间吸引/相斥随尺度的谱"
+                       "（cross-K 的导数形式，Epanechnikov 平滑）；随机标记置换包络（固定种子42）。"
+                       "\n何时用：想知道两类设施/物种在哪些半径尺度上共现或分离（g12>1 吸引、<1 相斥）。"
+                       "\n关键约束：类型字段必须恰有 2 个取值且每类 ≥5 点；"
+                       "需米制坐标（自动投影UTM）",
+           tier=2, domains=["statistics"],
+           param_descriptions={
+               "geojson": "含类型字段的点要素 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
+               "type_field": "类型字段名（必须恰有 2 个不同取值，每类 ≥5 点）",
+               "n_steps": "r 网格步数（4-32，默认10）",
+               "max_distance_ratio": "r_max = 比例×min(窗宽,窗高)，0.05-0.5（默认0.25）",
+               "bandwidth": "Epanechnikov 平滑带宽（米）；0=自动（一个 r 步宽，默认）",
+               "permutations": "随机标记置换次数：0/99/199(默认)/499，固定种子42",
+           })
+    def cross_pcf_analysis(geojson: Any, type_field: str, n_steps: int = 10,
+                           max_distance_ratio: float = 0.25,
+                           bandwidth: float = 0,
+                           permutations: str = "199") -> dict:
+        data = safe_parse_geojson(geojson)
+        if not isinstance(data, dict):
+            raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
+        params = apply_contract("cross_pcf_analysis", {
+            "type_field": type_field,
+            "n_steps": n_steps,
+            "max_distance_ratio": max_distance_ratio,
+            "bandwidth": bandwidth,
+            "permutations": permutations,
+        })
+        declared_crs = extract_declared_crs(data) or "EPSG:4326"
+        xy, gdf = _metric_xy(data)
+        field = str(params["type_field"])
+        if field not in gdf.columns:
+            raise MissingRequiredField(
+                f"type field '{field}' not found in feature properties",
+                correction_hint="pass the property holding the binary category",
+            )
+        types = gdf[field].astype(str).to_numpy()
+
+        result = cross_pair_correlation(
+            xy, types,
+            n_steps=int(params["n_steps"]),
+            max_distance_ratio=float(params["max_distance_ratio"]),
+            bandwidth=float(params["bandwidth"]),
+            permutations=int(params["permutations"]),
+        )
+        result["type_field"] = field
+        payload = {"success": True, "summary": result["summary"], "data": result}
+        uncertainty: list = []
+        seed = None
+        if int(params["permutations"]) > 0:
+            n_perm = int(params["permutations"])
+            seed = 42
+            last = -1
+            uncertainty.append(MonteCarloSummary(
+                target="cross_pcf_random_labelling",
+                draws=n_perm, seed=42,
+                quantiles={
+                    "p5": result["envelope_g12_low"][last],
+                    "p50": result["envelope_g12_median"][last],
+                    "p95": result["envelope_g12_high"][last],
+                },
+                probability_statements=[
+                    f"随机标记零假设下 g12(r_max) 的固定种子包络（{n_perm} 次置换，seed=42）",
+                    f"sup|g12−1| 秩 p（+1 校正）= {result.get('p_value')}",
+                ],
+            ))
+            uncertainty.append(StatisticalSignificance(
+                target="cross_pcf",
+                statistic_name="max_r |g12 - 1|",
+                statistic_value=float(result.get("sup_abs_dev", 0)),
+                p_value=result.get("p_value"),
+                method="permutation",
+                permutations=n_perm,
+                alternative="two-sided",
+            ))
+        _attach_scientific_evidence(
+            payload, "point_pattern.cross_pcf", tool="cross_pcf_analysis",
+            parameters_applied={
+                "type_field": field,
+                "n_steps": int(params["n_steps"]),
+                "max_distance_ratio": float(params["max_distance_ratio"]),
+                "bandwidth": float(params["bandwidth"]),
+                "permutations": int(params["permutations"]),
+            },
+            feature_count=result.get("n"),
+            crs=declared_crs,
+            uncertainty=uncertainty,
+            diagnostics=_backend_diagnostic("point_pattern.cross_pcf", int(result.get("n", 0))),
             seed=seed,
         )
         return payload

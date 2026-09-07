@@ -114,4 +114,39 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             deterministic=True,
             purpose_template="时空交互检验",
         ),
+
+        # ── Foundation V3：时空 K / Mantel / 双变量 g12 ─────────────────
+        CapabilityDescriptor(
+            id="space_time_k_function", name="时空 K 函数", category="density",
+            description="时空 K 函数 K_st(r,t)（Diggle 1995）——二阶时空"
+                        "聚集强度随空间/时间尺度的谱（与 Knox 单一阈值检验互补），"
+                        "时间置换包络。",
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_types=["stats_table"],
+            geometry_requirements=["point"],
+            deterministic=True,
+            purpose_template="时空 K 函数分析",
+        ),
+
+        CapabilityDescriptor(
+            id="mantel_test", name="Mantel 时空检验", category="density",
+            description="Mantel 检验（1967）——空间距离矩阵与时间距离矩阵的"
+                        "相关（标准化 Mantel r），时间标签置换 p 值。",
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_types=["stats_table"],
+            geometry_requirements=["point"],
+            deterministic=True,
+            purpose_template="Mantel 时空关联检验",
+        ),
+
+        CapabilityDescriptor(
+            id="cross_pair_correlation", name="双变量成对相关函数 g12", category="density",
+            description="双变量 g12(r)=K12′(r)/(2πr)——两类点空间吸引/相斥"
+                        "随尺度的谱（cross-K 的导数形式），随机标记包络。",
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_types=["stats_table"],
+            geometry_requirements=["point"],
+            deterministic=True,
+            purpose_template="双变量成对相关分析",
+        ),
 ]
