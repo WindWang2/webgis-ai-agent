@@ -2017,7 +2017,8 @@ class PiBridge:
                                             read_stored_map_product,
                                         )
                                         _completion = await maybe_finalize_map_product(
-                                            turn_sid, reason="turn_settled"
+                                            turn_sid, reason="turn_settled",
+                                            final_gate=True,
                                         )
                                         if _completion is not None and _completion.status != "pending":
                                             _spec_snapshot = (None, None)
