@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 
 from app.extensions_platform.diagnostics import DiagnosticCode, has_errors
 from app.extensions_platform.host import ExtensionHost, ExtensionState, HostPolicy

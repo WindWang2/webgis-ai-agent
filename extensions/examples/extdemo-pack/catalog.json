@@ -1,0 +1,28 @@
+{
+  "catalog_id": "extdemo_demo_tile_catalog",
+  "description": "离线示例栅格瓦片目录：扩展 provider 的静态数据来源（绝不发起网络请求）。",
+  "datasets": [
+    {
+      "id": "extdemo_blank_tiles",
+      "title": "ExtDemo Blank Tiles",
+      "description": "示例瓦片图层：纯占位目录条目，仅用于演示 describe/preview 契约。",
+      "srs": "EPSG:3857",
+      "bbox": [-180.0, -85.0, 180.0, 85.0],
+      "min_zoom": 0,
+      "max_zoom": 12,
+      "tile_size": 256,
+      "format": "png"
+    },
+    {
+      "id": "extdemo_grid_lines",
+      "title": "ExtDemo Grid Lines",
+      "description": "示例参考格网图层：同为静态占位条目。",
+      "srs": "EPSG:3857",
+      "bbox": [-180.0, -85.0, 180.0, 85.0],
+      "min_zoom": 2,
+      "max_zoom": 10,
+      "tile_size": 256,
+      "format": "png"
+    }
+  ]
+}

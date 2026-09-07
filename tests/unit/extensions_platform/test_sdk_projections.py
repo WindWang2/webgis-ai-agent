@@ -10,17 +10,14 @@ import pytest
 
 from app.extensions_platform.diagnostics import (
     DiagnosticCode,
-    ExtensionPlatformError,
     has_errors,
 )
-from app.extensions_platform.host import ExtensionHost, ExtensionState, HostPolicy
+from app.extensions_platform.host import ExtensionHost, HostPolicy
 from app.extensions_platform.sdk.algorithm import (
     AlgorithmExtensionSpec,
     NumericalSmokeCase,
     run_authoring_checks,
 )
-from app.extensions_platform.sdk.declarations import CartographyItemSpec
-from app.extensions_platform.sdk.provider import ProviderExtensionSpec
 from app.tools.registry import ToolRegistry
 
 TOOL_MAIN = '''
