@@ -76,6 +76,15 @@ F_LAYER_ORDER = "layer_order_issue"
 F_EXTENT_MISMATCH = "result_outside_viewport"
 F_STALE_OVERLAY = "stale_overlay"
 
+# V4 Wave 7（ADR-0104）completion-time 审计 finding codes：
+# - 地图模型兼容性此前只在组合期（component_resolver）过滤，完成期不
+#   复核 —— 组合被绕过（手工组件/图层改动）时无披露。
+F_MAP_MODEL_MISMATCH = "map_model_mismatch"
+# - 「全透明结果层」的**结构代理**检查：spec 层 paint 不透明度为 0 且
+#   enabled+visible —— 像素级空白画布验证仍是 agent 工具
+#   （heuristic_visual_proxies，不进判定门），本码只做诚实披露。
+F_LAYER_TRANSPARENT = "layer_transparent"
+
 RUNTIME_RENDER_CODES = frozenset({
     F_RENDER_LAYER_MISSING,
     F_RENDER_SOURCE_MISSING,
@@ -186,9 +195,25 @@ def evaluate_completion_contract(
     )
     observed_ok = result.render_status in ("verified", "not_applicable")
     methodology_ok = obligation_codes.issubset(disclosed_codes)
+    # V4 Wave 7（审计 06）：uncertainty 维此前只检测 blocked 义务 ——
+    # 「欠不确定性披露但仅 warning」的义务照样过维。收紧： owed 义务
+    # （warning/degraded/blocked）在场时，章节必须携带正披露证据
+    # ``uncertainty_disclosures``（[{code, text, ...}]，与
+    # methodology_warnings 同型的有界列表）；无义务 = 无所欠 = 过维
+    # （不虚构也不倒退旧会话）。
+    uncertainty_owed = [
+        o for o in obligations
+        if str(o.get("kind")) == "uncertainty"
+        and str(o.get("status")) in ("warning", "degraded", "blocked")
+    ]
+    uncertainty_evidence = [
+        d for d in chapter.get("uncertainty_disclosures") or []
+        if isinstance(d, dict) and (d.get("code") or d.get("text"))
+    ]
     uncertainty_ok = not any(
         str(o.get("kind")) == "uncertainty" and str(o.get("status")) == "blocked"
-        for o in obligations)
+        for o in obligations
+    ) and (not uncertainty_owed or bool(uncertainty_evidence))
 
     dimensions = {
         "data": data_ok,
@@ -205,6 +230,8 @@ def evaluate_completion_contract(
         "data_blockers": data_blockers[:8],
         "blocking_fallbacks": blocking_fallbacks[:8],
         "workflow_present": bool(wf_contract),
+        "uncertainty_owed": len(uncertainty_owed),
+        "uncertainty_disclosed": len(uncertainty_evidence),
     }
 
 
@@ -354,6 +381,10 @@ class MapCompletionResult:
     passes: int = 0
     result_bbox: Optional[List[float]] = None
     summary: str = ""
+    # V4 Wave 7（ADR-0104）：finalize 管线推导的单字产品裁决快照（与
+    # map_product_block["product_verdict"] 同源）—— SSE 载荷的
+    # task_complete 折叠直接消费，避免载荷侧重复推导。空 = 旧路径。
+    product_verdict: str = ""
 
     # ── 派生 ─────────────────────────────────────────────────────────
     @property

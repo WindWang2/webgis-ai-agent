@@ -117,6 +117,144 @@ def __getattr__(name: str):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
+# ── V4（ADR-0104 #4/#6）：插值解析的事实驱动投影 ─────────────────────
+#
+# 审计 gap #5：插值候选散在 5 个 capability（spatial_interpolation /
+# triangulation / regression_kriging / trend_surface / model_selection），
+# 但只有 spatial_interpolation 经文本关键词门可达 —— 点数/度量字段/投影
+# CRS/不确定性需求的**事实**无法把请求从 IDW 移向克里金族。
+#
+# 本投影是纯函数（同输入必同输出），只做两件事，绝不绕硬门：
+#   a) 产出 algorithm_hint —— resolver 的 hinted-promotion 语义（既有）
+#      保证被点名的算法仍须通过全部硬门；文本 hint 与事实冲突时**事实
+#      胜**（drop hint），文本 hint 永不把不合适的方法顶过事实判断；
+#   b) 产出可选 capability 追加（regression_kriging / model_selection）
+#      —— 仅当 spatial_interpolation 已被计划（文本门不放大）且事实支持。
+# 证据缺席（profile None / 事实键不在）→ 空投影 = 旧行为逐位保留。
+_UNCERTAINTY_QUERY_RE = None  # lazily compiled below
+
+
+def _uncertainty_demand(query: str) -> bool:
+    """查询文本是否携带不确定性需求（方差/误差/置信…；纯词面、确定性）。"""
+    import re as _re
+
+    global _UNCERTAINTY_QUERY_RE
+    if _UNCERTAINTY_QUERY_RE is None:
+        _UNCERTAINTY_QUERY_RE = _re.compile(
+            r"(不确定|方差|误差|置信|uncertaint|variance|confidence|error)", _re.I
+        )
+    return bool(_UNCERTAINTY_QUERY_RE.search(query or ""))
+
+
+def _profile_int(profile: Optional[Dict[str, Any]], key: str) -> Optional[int]:
+    v = (profile or {}).get(key)
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    return int(v)
+
+
+def _interpolation_fact_signals(
+    profile: Optional[Dict[str, Any]],
+    *,
+    query: str = "",
+) -> Dict[str, Any]:
+    """resolver profile 事实 → 插值族选择信号（纯函数、确定性、有界）。
+
+    返回 {
+      "ok_family_suitable": bool,     # 克里金族与已知事实一致（无已知冲突）
+      "fact_hint": str,               # "" | "interpolation.kriging"
+      "extra_capabilities": [str],    # 事实支持的可选 capability（≤2）
+      "evidence": {...},              # 有界决策证据（进 plan）
+    }
+
+    判定只用**在场**事实；缺席事实（键不在）一律按 unknown 放行 ——
+    resolver 的硬门（min_features / crs_class / scientific_preconditions）
+    仍是最终裁决，本投影只决定 hint 与可选能力，不虚构证据也不绕门。
+    """
+    out: Dict[str, Any] = {
+        "ok_family_suitable": False,
+        "fact_hint": "",
+        "extra_capabilities": [],
+        "evidence": {},
+    }
+    p = profile if isinstance(profile, dict) else None
+    if not p:
+        return out
+    n = _profile_int(p, "featureCount")
+    ev: Dict[str, Any] = {}
+    suitable = True
+
+    # 1) 点数下限（与 registry min_features=8 同值镜像；未知放行——硬门裁决）
+    if n is not None:
+        ev["featureCount"] = n
+        if n < 8:
+            suitable = False
+            ev["reject"] = "feature_count_below_kriging_floor"
+
+    # 2) 数值度量在场（numericFields 权威空清单 = 证据证明无度量字段）
+    numeric = p.get("numericFields")
+    if isinstance(numeric, list):
+        ev["numeric_field_count"] = len(numeric)
+        if not numeric:
+            suitable = False
+            ev["reject"] = ev.get("reject") or "no_numeric_measure"
+    # 2b) 方差（证据在场且为 0 = 常量场 → 克里金无意义）
+    variance = p.get("valueVariance")
+    if isinstance(variance, (int, float)) and not isinstance(variance, bool):
+        if float(variance) <= 0.0:
+            suitable = False
+            ev["reject"] = ev.get("reject") or "zero_value_variance"
+
+    # 3) CRS 类（geographic = PROJECTED_REQUIRED 硬门必拒 → 事实先行不 hint；
+    #    projected/local/unknown 放行，硬门兜底）
+    crs_class = p.get("crsClass")
+    if crs_class not in ("geographic", "projected", "projected_local_metric"):
+        crs = p.get("crs")
+        if isinstance(crs, str) and crs:
+            try:
+                from app.lib.gis.crs_safety import classify_crs
+
+                crs_class = classify_crs(crs)
+            except Exception:  # noqa: BLE001 — 分类失败按 unknown
+                crs_class = None
+        else:
+            crs_class = None
+    if crs_class:
+        ev["crsClass"] = crs_class
+        if crs_class == "geographic":
+            suitable = False
+            ev["reject"] = ev.get("reject") or "geographic_crs_needs_projection"
+
+    # 4) 重复坐标（深扫证据：去重后 n < 8 → 运行时 MIN_SAMPLES 结构化拒绝，
+    #    审计 gap #9 —— 事实先行把它挡在 hint 层）
+    uniques = _profile_int(p, "uniqueCoordinateCount")
+    if uniques is not None:
+        ev["uniqueCoordinateCount"] = uniques
+        if uniques < 8:
+            suitable = False
+            ev["reject"] = ev.get("reject") or "post_dedup_below_floor"
+
+    # 5) 趋势/各向异性证据（上游无统计 —— 如实缺席，绝不虚构 UK/RK 升级）。
+    out["ok_family_suitable"] = suitable
+    out["evidence"] = ev
+    if suitable:
+        out["fact_hint"] = "interpolation.kriging"
+
+    # 6) 可选 capability 追加（仅 spatial_interpolation 已计划时由调用方
+    #    采纳；协变量事实 → regression_kriging；不确定性需求 → 模型比较）。
+    extras: List[str] = []
+    if suitable and isinstance(numeric, list) and len(numeric) >= 3 \
+            and crs_class in ("projected", "projected_local_metric"):
+        # value + ≥2 协变量（RK 参数契约要求 ≥2 协变量字段）。
+        extras.append("regression_kriging")
+        ev["covariate_candidate"] = True
+    if n is not None and n >= 8 and _uncertainty_demand(query):
+        extras.append("interpolation_model_selection")
+        ev["uncertainty_demand"] = True
+    out["extra_capabilities"] = extras
+    return out
+
+
 def layer_type_for_cartography(cartography: str, default: str = "circle") -> str:
     """制图模型 → MapLibre 图层类型。MapModelRegistry 是唯一权威。"""
     from app.lib.cartography.model_library import get_map_model_registry
@@ -175,6 +313,12 @@ class AlgorithmSelectionRecord(BaseModel):
     rejected: List[str] = []
     fallback_trail: List[Dict[str, Any]] = []
     fallback_candidates: List[str] = []
+    # V4（ADR-0104 #5，additive）：plan-time backend 证据 —— 选中算法的
+    # 实现变体 + 资源分层（resolver 的 select_backend 纯函数投影转录）。
+    backend_variant: str = ""
+    backend: str = ""
+    scale_tier: str = ""
+    runtime_strategy: str = ""
 
 
 class PlannedLayer(BaseModel):
@@ -225,6 +369,10 @@ class MapProductPlan(BaseModel):
     # schema_version/roles/obligations/method_blockers/data_blockers）。
     # None = 纯 V1 recipe（无 workflow 画像），行为与历史一致。
     workflow_contract: Optional[Dict[str, Any]] = None
+    # V4（ADR-0104 #6）：finalize 阶段的插值事实投影（有界 dict：
+    # ok_family_suitable/fact_hint/extra_capabilities/evidence/text_hint/
+    # effective_hint）。空 = 未计划插值或 profile 缺席（行为与历史一致）。
+    algorithm_fact_signals: Dict[str, Any] = Field(default_factory=dict)
 
 
 def _plan_id(query: str, recipe_id: str) -> str:
@@ -324,6 +472,10 @@ class MapProductPlanner:
                 rejected=list(resolution_result.rejected),
                 fallback_trail=[f.model_dump() for f in resolution_result.fallback_trail],
                 fallback_candidates=list(resolution_result.fallback_candidates),
+                backend_variant=resolution_result.backend_variant,
+                backend=resolution_result.backend,
+                scale_tier=resolution_result.scale_tier,
+                runtime_strategy=resolution_result.runtime_strategy,
             )
             selections.append(record)
             # audit #825: 调用方传入注册表可见工具时，解析不到真实工具的
@@ -673,18 +825,49 @@ class MapProductPlanner:
         # 裁决证据，让 evidence 能解释『为什么这个算法没跑』）。
         if profile is not None:
             capabilities = [r.capability for r in finalized.data_requirements]
+            optional_set = {
+                r.capability for r in finalized.data_requirements if r.optional
+            }
             # Review F2（kriging slice）：显式算法 hint 必须与 draft 阶段同源
             # —— finalize 不带 hint 会把「用户点名克里金」的 finalized 证据
             # 静默翻回默认 IDW，与 draft/resolved_tool 矛盾。hint 是
             # intent.query 的纯函数，这里重算零成本。
+            text_hint = _interpolation_query_signals(plan.intent.query)[1]
+            hint = text_hint
+            # V4（ADR-0104 #6）：插值事实投影 —— 事实胜过文本。文本点名的
+            # 克里金与事实冲突（去重后样本不足/常量场/地理 CRS）时不再顶位
+            # （硬门仍最终裁决，这里消除「必拒 + 补偿替补」的证据噪声）；
+            # 事实支持而文本未点名时给 fact hint（被动→证据驱动升级）。
+            fact_signals: Optional[Dict[str, Any]] = None
+            if "spatial_interpolation" in capabilities:
+                fact_signals = _interpolation_fact_signals(
+                    profile, query=plan.intent.query)
+                if text_hint and not fact_signals["ok_family_suitable"]:
+                    hint = ""
+                elif not text_hint and fact_signals["fact_hint"]:
+                    hint = fact_signals["fact_hint"]
+                # 事实支持的可选 capability 追加（≤2；仅当插值已被文本门
+                # 计划 —— 关键词门不放大）。optional 语义：不污染主数据流，
+                # resolver 独立裁决其可行性。
+                for extra in fact_signals["extra_capabilities"]:
+                    if extra not in capabilities:
+                        capabilities.append(extra)
+                        optional_set.add(extra)
             _, _, selections = self._resolve_capabilities(
                 capabilities, plan.intent, profile=profile,
                 available_tools=available_tools,
-                optional_capabilities={
-                    r.capability for r in finalized.data_requirements if r.optional
-                },
-                algorithm_hint=_interpolation_query_signals(plan.intent.query)[1])
+                optional_capabilities=optional_set,
+                algorithm_hint=hint)
             finalized.algorithm_selections = selections
+            if fact_signals is not None:
+                finalized.algorithm_fact_signals = {
+                    "ok_family_suitable": fact_signals["ok_family_suitable"],
+                    "fact_hint": fact_signals["fact_hint"],
+                    "extra_capabilities": list(fact_signals["extra_capabilities"]),
+                    "evidence": fact_signals["evidence"],
+                    "text_hint": text_hint,
+                    "effective_hint": hint,
+                }
 
         disabled_elements = {d.element for d in report.disabled}
         # 主数据几何（点层提升的先决条件——面数据上提升 circle 层是制图空转）

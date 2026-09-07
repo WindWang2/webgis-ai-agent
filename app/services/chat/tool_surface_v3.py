@@ -25,12 +25,12 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, FrozenSet, List, Optional, Sequence, Tuple
+from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
 
 from app.tools.descriptor import SideEffectClass, ToolStatus
 from app.tools.registry import ToolRegistry
 from app.services.chat.schema_compression import compress_schema, schema_bytes
-from app.services.chat.tool_retrieval import RetrievalHit, rank_tools
+from app.services.chat.tool_retrieval import RetrievalHit, rank_tools, v4_retrieval_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,61 @@ _ALGORITHM_HIT_SCORE = 6.0
 _DATA_PROFILE_HIT_SCORE = 4.0
 _PREFERRED_BOOST = 5.0
 _SURFACE_HINT_BOOST = 3.0
+
+# ---------------------------------------------------------------------------
+# V4 rerank（ADR-0104 决策 5）：contract 过滤**之前**的纯确定性重排阶段。
+# 全部信号 additive、有界、逐项可解释（score_components 进选择结果供离线
+# 评测）；rerank 只能调序/补充上下文候选，**绝不授予可见性** —— tier-3 /
+# 生命周期 / 角色策略闸（_contract_filter）原样后置，破坏性确认仍只在
+# dispatch 期（registry._dispatch_impl + 路由/Pi 桥）。
+# Kill switch：GIS_TOOL_RETRIEVAL_V4=0 → 整个阶段跳过，行为与 V3 逐位一致。
+# ---------------------------------------------------------------------------
+_RERANK_PHASE_PREFERRED = 3.0     # workflow phase 的 preferred_tools（既有真相）
+_RERANK_ARTIFACT_MATCH = 2.0      # session 工件语义类型 ↔ 工具 input/accepted 类型
+_RERANK_ARTIFACT_CAP = 4.0
+_RERANK_CRS_MATCH = 0.5
+_RERANK_CRS_AGNOSTIC = 0.25
+_RERANK_CRS_MISMATCH = -1.0
+_RERANK_SCALE_MATCH = 1.0
+_RERANK_SCALE_MISMATCH = -1.0
+_RERANK_BUDGET_HEAVY = -1.0       # 紧字节预算下 slow/heavy 降权
+_RERANK_BUDGET_LIGHT = 0.25
+_RERANK_DETERMINISTIC = 0.25      # 已声明 deterministic=True 的温和偏好
+_RERANK_FAILURE = -2.0            # 会话近期失败降权（只降不剔）
+_RERANK_FAILURE_CAP = -4.0
+_RERANK_FALLBACK_BOOST = 1.5      # 失败工具的 fallback_tool 小幅加分
+_RERANK_CONTINUATION = 2.5        # sticky/续作工具加分
+
+#: 会话信号有界化（payload 永有界）
+_MAX_SESSION_ARTIFACT_TYPES = 32
+_MAX_RECENT_OUTCOMES = 16
+_MAX_CONTINUATION_TOOLS = 16
+_MAX_COMPONENT_TOOLS = 64         # score_components 记录的工具数上限
+_TIGHT_BYTE_BUDGET = 8000         # 低于该值视为紧预算（heavy/slow 降权）
+
+#: session_artifact_types 的限定词条法：除语义类型外，调用方可携带
+#: "crs:<value>" / "scale:<small|medium|large>" 限定词（小写）作为
+#: CRS 兼容性与数据规模证据；缺席 → 对应信号贡献为零。
+_CRS_QUALIFIER_PREFIX = "crs:"
+_SCALE_QUALIFIER_PREFIX = "scale:"
+_SCALE_ORDER = {"small": 0, "medium": 1, "large": 2}
+
+
+def _v4_context_present(ctx: ToolSelectionContext) -> bool:
+    """V4 排序证据门：有上下文证据才启用 V4 排序，否则精确 V3 行为。
+
+    V4 排序的全部增量信号都消费**上下文证据**（workflow phase、字节预算、
+    会话工件/结果/续作信号）。三者全缺席时任何 rerank 分量都只能是凭空
+    编造 —— 此时词法层同样回落 V3 打分（enriched=False），选择结果与
+    V3 逐位一致（golden corpora 集合恒等）。
+    """
+    return bool(
+        ctx.session_artifact_types
+        or ctx.recent_tool_outcomes
+        or ctx.continuation_tools
+        or ctx.workflow_stage
+        or ctx.byte_budget is not None
+    )
 
 #: 角色 → 允许的副作用类（Surface 安全过滤，§十二）。
 #: 未列出的角色 = 全部允许（tier-3 仍被生命周期闸拦住）。
@@ -87,7 +142,16 @@ ROLE_SIDE_EFFECT_POLICY: Dict[str, FrozenSet[str]] = {
 
 @dataclass(frozen=True)
 class ToolSelectionContext:
-    """一次动态面选择的全部上下文输入（全部可选，缺省退化为核心面）。"""
+    """一次动态面选择的全部上下文输入（全部可选，缺省退化为核心面）。
+
+    V4（ADR-0104 决策 5）新增三个可选会话信号字段（尾部追加，构造兼容）：
+    - ``session_artifact_types``：会话工件语义类型（可含 "crs:x"/"scale:y"
+      限定词，见 _CRS_QUALIFIER_PREFIX）；缺席 → 工件/CRS/规模信号为零。
+    - ``recent_tool_outcomes``：近期工具结果 ``{"tool","ok","failure_class"}``
+      （有界 ≤16）；缺席 → 先验失败/续作反馈为零。
+    - ``continuation_tools``：续作/sticky 工具名（有界 ≤16）。
+    字段缺席时 rerank 相应分量为零 —— 行为与 V3 一致。
+    """
 
     user_message: str = ""
     task_type: str = ""                        # analysis | cartography | data_access | report | ...
@@ -100,6 +164,10 @@ class ToolSelectionContext:
     k_min: int = DEFAULT_K_MIN
     k_max: int = DEFAULT_K_MAX
     byte_budget: Optional[int] = None
+    # --- V4 会话信号（可选；rerank 消费，contract 闸不因此放宽）---
+    session_artifact_types: Tuple[str, ...] = ()
+    recent_tool_outcomes: Tuple[Mapping[str, Any], ...] = ()
+    continuation_tools: Tuple[str, ...] = ()
 
 
 @dataclass
@@ -111,6 +179,8 @@ class SurfaceSelection:
     dropped: Dict[str, str] = field(default_factory=dict)
     retriever: str = "lexical"
     selection_trace: Dict[str, Any] = field(default_factory=dict)
+    # V4：每工具 rerank 分量（signal → delta，有界）；V3 模式恒为空。
+    score_components: Dict[str, Dict[str, float]] = field(default_factory=dict)
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -119,6 +189,9 @@ class SurfaceSelection:
             "reasons": {k: list(v) for k, v in self.reasons.items()},
             "dropped": dict(self.dropped),
             "selection_trace": dict(self.selection_trace),
+            "score_components": {
+                k: dict(v) for k, v in self.score_components.items()
+            },
         }
 
 
@@ -183,12 +256,171 @@ class DynamicToolSurface:
         return None
 
     # ------------------------------------------------------------------
+    # V4 rerank：contract 过滤**前**的纯确定性上下文重排（ADR-0104 决策 5）
+    # 全部信号 additive + 有界 + 可解释；kill switch 关闭 → 整段跳过。
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _phase_preferred_tools(stage: str) -> FrozenSet[str]:
+        """workflow phase 的 preferred_tools（gis_harness 既有真相；缺席→空）。"""
+        if not stage:
+            return frozenset()
+        try:
+            from app.services.gis_harness.tool_surface import _PHASE_PREFERRED
+
+            return frozenset(_PHASE_PREFERRED.get(stage, ()))
+        except Exception:  # noqa: BLE001 — 表缺席按零贡献（不虚构）
+            return frozenset()
+
+    def _rerank(
+        self,
+        ctx: ToolSelectionContext,
+        scores: Dict[str, float],
+        selection: SurfaceSelection,
+    ) -> None:
+        """原地调整 scores（base + delta）；分量留痕 selection.score_components。
+
+        rerank 只调序 / 注入上下文候选（continuation / fallback_tool），
+        **绝不授予可见性**：注入候选同样经过后置 _contract_filter 与
+        k_max / 字节预算闸。
+        """
+        components: Dict[str, Dict[str, float]] = {}
+
+        def _add(name: str, signal: str, delta: float) -> None:
+            if delta == 0.0:
+                return
+            scores[name] = scores.get(name, 0.0) + delta
+            comp = components.setdefault(name, {})
+            if len(comp) < 8:
+                comp[signal] = round(comp.get(signal, 0.0) + delta, 4)
+
+        # --- 会话信号有界化 + 限定词解析（crs:/scale:）---
+        artifact_types: List[str] = []
+        crs_hint = ""
+        scale_hint = ""
+        for entry in list(ctx.session_artifact_types)[:_MAX_SESSION_ARTIFACT_TYPES]:
+            e = str(entry).strip().lower()
+            if not e:
+                continue
+            if e.startswith(_CRS_QUALIFIER_PREFIX) and not crs_hint:
+                crs_hint = e[len(_CRS_QUALIFIER_PREFIX):]
+            elif e.startswith(_SCALE_QUALIFIER_PREFIX) and not scale_hint:
+                scale_hint = e[len(_SCALE_QUALIFIER_PREFIX):]
+            else:
+                artifact_types.append(e)
+        artifact_set = set(artifact_types)
+
+        # --- 近期失败（只读消费 tool_metrics 语义；只降不剔）---
+        fail_counts: Dict[str, int] = {}
+        for out in list(ctx.recent_tool_outcomes)[:_MAX_RECENT_OUTCOMES]:
+            try:
+                tool = str(out.get("tool") or "").strip()
+            except AttributeError:
+                continue
+            if not tool:
+                continue
+            fcls = str(out.get("failure_class") or "")
+            if not out.get("ok", True) or fcls in ("no_progress", "suspicious"):
+                fail_counts[tool] = min(fail_counts.get(tool, 0) + 1, 2)
+
+        preferred = self._phase_preferred_tools(ctx.workflow_stage)
+        tight_budget = ctx.byte_budget is not None and int(ctx.byte_budget) <= _TIGHT_BYTE_BUDGET
+
+        # --- 上下文候选注入（仍受 contract filter + k_max 约束）---
+        injected_reason: Dict[str, str] = {}
+        for name in list(ctx.continuation_tools)[:_MAX_CONTINUATION_TOOLS]:
+            n = str(name).strip()
+            if n and n not in scores and n not in injected_reason:
+                try:
+                    self.registry.descriptor(n)
+                except KeyError:
+                    continue
+                scores.setdefault(n, 0.0)
+                injected_reason[n] = "rerank_candidate:continuation"
+        fallback_targets: Dict[str, str] = {}
+        for tool in fail_counts:
+            try:
+                fb = self.registry.descriptor(tool).fallback_tool
+            except KeyError:
+                continue
+            if fb and fb != tool:
+                fallback_targets.setdefault(fb, tool)
+                if fb not in scores and fb not in injected_reason:
+                    try:
+                        self.registry.descriptor(fb)
+                    except KeyError:
+                        continue
+                    scores.setdefault(fb, 0.0)
+                    injected_reason[fb] = f"rerank_candidate:fallback_of:{tool}"
+
+        # --- 逐候选打分量（descriptor 为唯一结构化真相）---
+        for name in list(scores.keys()):
+            try:
+                desc = self.registry.descriptor(name)
+            except KeyError:
+                continue
+            if name in preferred:
+                _add(name, "phase_preferred", _RERANK_PHASE_PREFERRED)
+            if artifact_set:
+                accepted = {str(a).lower() for a in desc.input_artifacts} | {
+                    str(r).lower() for r in desc.accepts_ref_types
+                }
+                hit = artifact_set & accepted
+                if hit:
+                    _add(name, "artifact_type",
+                         min(_RERANK_ARTIFACT_CAP, _RERANK_ARTIFACT_MATCH * len(hit)))
+            crs = str(desc.crs_semantics or "").strip().lower()
+            if crs and crs_hint:
+                if crs == crs_hint:
+                    _add(name, "crs_match", _RERANK_CRS_MATCH)
+                elif crs == "crs_agnostic":
+                    _add(name, "crs_agnostic", _RERANK_CRS_AGNOSTIC)
+                elif crs != "auto_project":
+                    _add(name, "crs_mismatch", _RERANK_CRS_MISMATCH)
+            sc = str(desc.scale_class or "").strip().lower()
+            if sc in _SCALE_ORDER and scale_hint in _SCALE_ORDER:
+                gap = abs(_SCALE_ORDER[sc] - _SCALE_ORDER[scale_hint])
+                if gap == 0:
+                    _add(name, "scale_match", _RERANK_SCALE_MATCH)
+                elif gap >= 2:
+                    _add(name, "scale_mismatch", _RERANK_SCALE_MISMATCH)
+            if tight_budget:
+                heavy = 0.0
+                if str(desc.latency_class or "") == "slow":
+                    heavy += _RERANK_BUDGET_HEAVY
+                if str(desc.memory_class or "") == "heavy":
+                    heavy += _RERANK_BUDGET_HEAVY
+                if heavy:
+                    _add(name, "budget_heavy", heavy)
+                if str(desc.latency_class or "") == "fast":
+                    _add(name, "budget_light", _RERANK_BUDGET_LIGHT)
+            if desc.deterministic is True:
+                _add(name, "deterministic", _RERANK_DETERMINISTIC)
+            if name in fail_counts:
+                _add(name, "prior_failure", _RERANK_FAILURE * fail_counts[name])
+            if name in injected_reason:
+                selection.reasons.setdefault(name, []).append(injected_reason[name])
+            if name in fallback_targets:
+                _add(name, "fallback_boost", _RERANK_FALLBACK_BOOST)
+
+        # --- 留痕（有界 + 确定）：每工具一条 rerank 理由 + 分量表 ---
+        for name in sorted(components)[:_MAX_COMPONENT_TOOLS]:
+            comp = components[name]
+            total = sum(comp.values())
+            selection.reasons.setdefault(name, []).append(
+                f"rerank({','.join(sorted(comp))}|delta={total:+.1f})"
+            )
+        selection.score_components = {n: dict(components[n]) for n in sorted(components)[:_MAX_COMPONENT_TOOLS]}
+
+    # ------------------------------------------------------------------
     # 主选择管线
     # ------------------------------------------------------------------
     def select(self, ctx: ToolSelectionContext) -> SurfaceSelection:
         selection = SurfaceSelection()
         k_max = max(1, int(ctx.k_max))
         k_min = max(0, min(int(ctx.k_min), k_max))
+        # V4 排序证据门：kill switch 开 且 有上下文证据（phase/预算/会话
+        # 信号）才启用 V4 词法增补 + rerank；否则与 V3 逐位一致。
+        v4_ranking = v4_retrieval_enabled() and _v4_context_present(ctx)
 
         # 1) 核心前门（无理由可裁）
         names: List[str] = []
@@ -229,6 +461,7 @@ class DynamicToolSurface:
             try:
                 lexical_hits = rank_tools(
                     self.registry, query, boosts=boosts, top_k=k_max * 3,
+                    enriched=v4_ranking,
                 )
                 for hit in lexical_hits:
                     scores[hit.name] = scores.get(hit.name, 0.0) + hit.score
@@ -272,6 +505,19 @@ class DynamicToolSurface:
                             "data_profile:" + ",".join(sorted(set(desc.domains) & set(ctx.data_profile_domains)))
                         )
 
+        # 6.5) V4 rerank（ADR-0104 决策 5）：contract 过滤**之前**的确定性
+        #      上下文重排（phase/artifact/CRS/规模/预算/确定性/失败反馈/
+        #      续作）。证据门：kill switch 关 或 无任何 V4 上下文证据 →
+        #      整段跳过（选择结果与 V3 逐位一致）。
+        rerank_applied = False
+        if v4_ranking:
+            try:
+                self._rerank(ctx, scores, selection)
+                rerank_applied = True
+            except Exception:  # noqa: BLE001 — rerank 故障退回 V3 序，绝不阻断
+                logger.debug("[ToolSurfaceV3] v4 rerank failed; V3 order served",
+                             exc_info=True)
+
         # 7) contract 过滤 + 排序 + 规模控制
         candidates: List[Tuple[str, float]] = []
         for name, score in scores.items():
@@ -301,6 +547,10 @@ class DynamicToolSurface:
             "lexical_hits": len(lexical_hits),
             "selected": len(names),
         }
+        if rerank_applied:
+            selection.selection_trace["rerank"] = {
+                "tools_with_components": len(selection.score_components),
+            }
         return selection
 
     # ------------------------------------------------------------------

@@ -31,9 +31,7 @@ from .contracts import (
     F_EXTENT_MISMATCH,
     F_LAYER_ORDER,
     F_STALE_OVERLAY,
-    RENDER_ISSUES,
     RENDER_NOT_APPLICABLE,
-    RENDER_STALE,
     RENDER_UNKNOWN,
     RENDER_VERIFIED,
     RESULT_LAYER_ROLES,
@@ -61,12 +59,57 @@ def _bbox_intersects(a: List[float], b: List[float]) -> bool:
         return False
 
 
-def _observation_viewport_bbox(observation: Optional[Dict[str, Any]]) -> Optional[List[float]]:
+def _zoom_viewport_bbox(
+    center: List[float],
+    zoom: float,
+    *,
+    width_px: float = 1024.0,
+    height_px: float = 768.0,
+) -> Optional[List[float]]:
+    """center+zoom → 近似 Web-Mercator bbox（V4 Wave 7 审计 06 缺口）。
+
+    此前 zoom 形态 viewport 被服务端忽略（extent 检查只认 bbox 形态）。
+    换算是**近似**的（真实画布尺寸未知，取 1024×768 惯用值；Web 墨卡托
+    线性化在低纬误差可忽略），只服务于「gross mismatch」判定 ——
+    F_EXTENT_MISMATCH 本就是 warning 级披露，不是硬门。
+    """
+    import math
+
+    try:
+        lng, lat = float(center[0]), float(center[1])
+        z = float(zoom)
+    except (IndexError, TypeError, ValueError):
+        return None
+    if not (-180.0 <= lng <= 180.0 and -85.05 <= lat <= 85.05):
+        return None
+    if not (1.0 <= z <= 22.0):
+        return None
+    n = 256.0 * (2.0 ** z)
+    x = (lng + 180.0) / 360.0 * n
+    lat_rad = math.radians(lat)
+    y = (1.0 - math.asinh(math.tan(lat_rad)) / math.pi) / 2.0 * n
+    half_w, half_h = width_px / 2.0, height_px / 2.0
+    x0, x1, y0, y1 = x - half_w, x + half_w, y - half_h, y + half_h
+
+    def _lng_of(px: float) -> float:
+        return px / n * 360.0 - 180.0
+
+    def _lat_of(px: float) -> float:
+        yn = min(max(px / n, 0.0), 1.0)
+        return math.degrees(math.atan(math.sinh(math.pi * (1.0 - 2.0 * yn))))
+
+    return [_lng_of(x0), _lat_of(y1), _lng_of(x1), _lat_of(y0)]  # [w, s, e, n]
+
+
+def _observation_viewport_bbox(
+    observation: Optional[Dict[str, Any]],
+) -> Optional[List[float]]:
     """render observation 的 viewport → bbox（前端上报形态，缺省 None）。
 
     observation.viewport 形如 {"bbox": [...]} 或 {"center":[lng,lat],
-    "zoom": z}；仅 bbox 形态可确定性判定（zoom→bbox 换算是前端真相，
-    服务端不重复实现）。
+    "zoom": z}。V4 Wave 7：zoom 形态经 ``_zoom_viewport_bbox`` 服务端
+    近似换算（此前直接忽略 → extent 检查对 zoom 形态失明）——近似面
+    在 finding detail 披露，只用于 gross-mismatch 判定。
     """
     if not isinstance(observation, dict):
         return None
@@ -78,7 +121,11 @@ def _observation_viewport_bbox(observation: Optional[Dict[str, Any]]) -> Optiona
         try:
             return [float(x) for x in bbox]
         except (TypeError, ValueError):
-            return None
+            pass
+    center = viewport.get("center")
+    zoom = viewport.get("zoom")
+    if isinstance(center, (list, tuple)) and center and zoom is not None:
+        return _zoom_viewport_bbox([c for c in center], zoom)
     return None
 
 

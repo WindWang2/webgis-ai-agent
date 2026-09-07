@@ -372,8 +372,8 @@ class DatasetProfile(BaseModel):
         vector = getattr(profile, "vector", None)
         raster = getattr(profile, "raster", None)
         table = getattr(profile, "table", None)
-        quality = str(getattr(profile, "profile_quality", "partial"))
-        full_scan = quality in ("complete", "sampled")
+        quality_raw = getattr(profile, "profile_quality", None)
+        quality = str(getattr(quality_raw, "value", quality_raw) or "partial")
 
         fields: Dict[str, str] = {}
         numeric: List[str] = []
@@ -407,6 +407,10 @@ class DatasetProfile(BaseModel):
             scanned_rows = int(getattr(table, "scanned_rows", 0) or 0)
             fields_truncated = bool(getattr(table, "columns_truncated", False))
             temporal_fields = [str(t) for t in (getattr(table, "time_candidates", None) or [])]
+
+        # 时间缺席证据需要「全量口径 + 真实扫描」（descriptor 投影的
+        # scanned_rows==0 不构成证伪 —— 没看过行就不能说没有时间字段）。
+        full_scan = quality in ("complete", "sampled") and scanned_rows > 0
 
         if isinstance(source_fields, dict):
             for name, fp in list(source_fields.items())[:MAX_PROFILE_FIELDS]:
@@ -453,10 +457,15 @@ class DatasetProfile(BaseModel):
                 dtype=str(dtypes[0]) if dtypes else "",
             )
 
-        if has_time := (bool(temporal_fields) or None):
-            obs_count = row_count
+        if temporal_fields:
+            has_time: Optional[bool] = True
+            obs_count: Optional[int] = row_count
+        elif full_scan:
+            # 全量扫描证伪（无任何时间语义字段）——缺席证据成立。
+            has_time = False
+            obs_count = None
         else:
-            has_time = False if full_scan else None
+            has_time = None
             obs_count = None
 
         return cls(

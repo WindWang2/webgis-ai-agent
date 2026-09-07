@@ -73,6 +73,13 @@ def _check_numeric_field_required(profile: Dict[str, Any]) -> PreconditionResult
     rid = "numeric_field_required"
     if not _fields_known(profile):
         return PreconditionResult(rid, "PASS", "fields unknown — deferred")
+    # V4（ADR-0104 #4）：键缺席 = 证据缺席 ≠ 证据证明违反 —— deferred。
+    # 此前「fields 已知但 numericFields 键不在」直接 INSUFFICIENT_DATA，
+    # 而该键在 descriptor 派生画像上从无生产方 → 结构性 false-reject。
+    # 修复后只有**在场且为空**的清单（权威口径，见
+    # DatasetProfile.to_resolver_profile 的权威规则）才构成真缺席拒绝。
+    if "numericFields" not in (profile or {}):
+        return PreconditionResult(rid, "PASS", "numeric fields unknown — deferred")
     numeric = _numeric_fields(profile)
     if numeric:
         return PreconditionResult(rid, "PASS", facts_used={"numericFields": len(numeric)})
@@ -229,6 +236,10 @@ def _check_binary_field_required(profile: Dict[str, Any]) -> PreconditionResult:
     rid = "binary_field_required"
     if not _fields_known(profile):
         return PreconditionResult(rid, "PASS", "fields unknown — deferred")
+    # V4：与 numeric_field_required 同修复 —— binaryFields 键缺席 = 证据
+    # 缺席 → deferred；在场且为空（权威口径）才是真缺席拒绝。
+    if "binaryFields" not in (profile or {}):
+        return PreconditionResult(rid, "PASS", "binary fields unknown — deferred")
     binary = _fact(profile, "binaryFields", list) or []
     if binary:
         return PreconditionResult(rid, "PASS", facts_used={"binaryFields": len(binary)})

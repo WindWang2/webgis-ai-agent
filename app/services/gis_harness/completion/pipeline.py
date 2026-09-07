@@ -66,6 +66,18 @@ def _validate_all(inputs: Dict[str, Any], chapter: Dict[str, Any]) -> List[MapCo
             records=inputs.get("artifact_records"),
         )
     )
+    # V4 Wave 7（ADR-0104）：completion-time 模型兼容/全透明结构代理审计
+    # （warning 级增值披露；validators import 放函数内防环）。
+    try:
+        from .validators.observation import (
+            validate_map_model_compat as _vmmc,
+            validate_layer_visibility_quality as _vlvq,
+        )
+
+        findings.extend(_vmmc(chapter, mapspec))
+        findings.extend(_vlvq(chapter, mapspec))
+    except Exception:  # noqa: BLE001 — 增值审计缺席不阻断终验
+        pass
     return findings[:MAX_FINDINGS]
 
 
@@ -277,6 +289,18 @@ async def run_map_finalization(
             )
         except Exception:  # noqa: BLE001 — 聚合失败诚实留 unknown
             result.final_map_status = "unknown"
+
+    # V4 Wave 7：裁决快照上 result（SSE task_complete 消费；与
+    # map_product_block 的 derive 同源——同一纯函数、同一章节输入）。
+    try:
+        from .contracts import derive_product_verdict
+        result.product_verdict = str(derive_product_verdict(
+            result,
+            [w for w in chapter.get("methodology_warnings") or [] if isinstance(w, dict)],
+            chapter=chapter,
+        ).get("verdict") or "")
+    except Exception:  # noqa: BLE001 — 快照失败留空（旧路径语义）
+        result.product_verdict = ""
 
     logger.info(
         "[MapFinalizer] finalization_pass session=%s status=%s passes=%d repairs=%d",
@@ -656,7 +680,33 @@ async def read_stored_map_product(session_id: str) -> Optional[Dict[str, Any]]:
         "session_id": session_id,
         "status": str(stored.get("status") or STATUS_PENDING),
         "summary": str(stored.get("summary") or "")[:120],
+        # V4 Wave 7（审计 06 建议 4）：任务级「真完成」判定面 —— 观测/
+        # 裁决进入最终完成判定：BLOCKED_* / 渲染未证实的会话不再是
+        # disclosure-only 的 complete。additive 键，旧读者忽略。
+        "task_complete": _is_task_complete(stored),
     }
+
+
+def _is_task_complete(stored: Dict[str, Any]) -> bool:
+    """stored map_product 块 → 任务级完成布尔（纯函数，有界输入）。
+
+    完成 = 产品裁决 ∈ {READY, READY_WITH_WARNINGS} 且最终地图状态 ∈
+    {verified, verified_with_degradation}。needs_repair / pending /
+    BLOCKED_BY_* / failed / unknown 一律不算完成。
+    """
+    from .contracts import (
+        FINAL_MAP_DEGRADED,
+        FINAL_MAP_VERIFIED,
+        VERDICT_READY,
+        VERDICT_READY_WITH_WARNINGS,
+    )
+
+    verdict = str(stored.get("product_verdict") or "")
+    final_status = str(stored.get("final_map_status") or "")
+    return (
+        verdict in (VERDICT_READY, VERDICT_READY_WITH_WARNINGS)
+        and final_status in (FINAL_MAP_VERIFIED, FINAL_MAP_DEGRADED)
+    )
 
 
 def finalization_sse_payload(
@@ -682,6 +732,13 @@ def finalization_sse_payload(
         "issues": [f.to_dict() for f in result.findings[:4]],
         "repairs": list(result.repairs_applied[:4]),
     }
+    # V4 Wave 7：任务级完成布尔 = 裁决 ∈ READY* 且最终地图状态 ∈ verified*
+    # （与 read_stored_map_product 的 task_complete 同一折叠；verdict 来自
+    # finalize 管线的推导快照，载荷侧零重复推导）。
+    payload["task_complete"] = (
+        str(result.product_verdict) in ("READY", "READY_WITH_WARNINGS")
+        and result.final_map_status in ("verified", "verified_with_degradation")
+    )
     if session_id:
         payload["session_id"] = session_id
     if mapspec is not None and result.repairs_applied:

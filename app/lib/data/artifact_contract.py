@@ -421,6 +421,10 @@ def from_artifact_record(record: Any) -> ArtifactContract:
         crs=str(get(r, "crs", "") or (r.get("crs") if isinstance(r, dict) else "") or ""),
         extent=_bound_bbox(get(r, "bbox", None) or (r.get("bbox") if isinstance(r, dict) else None)),
         statistics=statistics,
+        # V4（ADR-0104 #4）：profile link —— registry 写入侧在画像可得时
+        # 落 metadata["profile_ref"]（有界 digest 同 metadata 存储）；本投影
+        # 原样透传，缺席保持 ""（contract 默认，诚实不虚构）。
+        profile_ref=str(metadata.get("profile_ref") or ""),
         lineage=LineageInfo(
             parents=[str(p) for p in inputs],
             parents_truncated=len(inputs) > _MAX_PARENTS,

@@ -106,6 +106,121 @@ def retrieval_metrics(
     )
 
 
+@dataclass
+class SurfaceRetrievalReport:
+    """V4 离线门报告（一次 select/case → 多 k recall + 安全/预算不变式）。"""
+
+    cases: int
+    skipped: int
+    k_max: int
+    recall_at_k: Dict[int, float]
+    precision_at_k_max: float
+    avg_active_tools: float
+    tier3_leak: int                 # tier>=3 / effective_security_tier>=3 入面次数（恒期望 0）
+    avg_schema_bytes: float         # 仅 byte_sample>0 时计算，否则 0.0
+    max_schema_bytes: int
+    budget_violations: int          # project 字节预算违约次数（恒期望 0）
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "cases": self.cases,
+            "skipped": self.skipped,
+            "k_max": self.k_max,
+            "recall_at_k": {str(k): round(v, 4) for k, v in sorted(self.recall_at_k.items())},
+            "precision_at_k_max": round(self.precision_at_k_max, 4),
+            "avg_active_tools": round(self.avg_active_tools, 2),
+            "tier3_leak": self.tier3_leak,
+            "avg_schema_bytes": round(self.avg_schema_bytes, 1),
+            "max_schema_bytes": self.max_schema_bytes,
+            "budget_violations": self.budget_violations,
+        }
+
+
+def surface_retrieval_report(
+    registry: Any,
+    cases: Sequence[Any],
+    *,
+    k_max: int = 30,
+    top_ks: Sequence[int] = (5, 10, 30),
+    byte_sample: int = 0,
+    byte_budget: int = 24576,
+    context_overrides: Optional[Dict[str, Any]] = None,
+) -> SurfaceRetrievalReport:
+    """对任意 ``{query, expected_capabilities}`` 案例序列跑一次 select/case。
+
+    V4 additive helper（ADR-0104 决策 5 离线门）：
+    - recall@k 对 ``top_ks`` 中每个 k ≤ k_max 计算（一次选择，多 k 复用）；
+    - tier3_leak 恒期望 0（选择 + 投影两层都不允许 tier-3 入面）；
+    - ``byte_sample``>0 时对前 N 案例跑 ``project()`` 统计 schema 字节
+      （默认预算 24KB，与 tier-2 既有预算同门）；
+    - ``context_overrides`` 透传进 ToolSelectionContext（会话信号消融/评测）。
+    全程确定性，无 LLM、无时间戳。
+    """
+    from app.services.chat.tool_surface_v3 import DynamicToolSurface, ToolSelectionContext
+
+    surface = DynamicToolSurface(registry)
+    ks = sorted({k for k in top_ks if 0 < k <= k_max})
+    recalls: Dict[int, List[float]] = {k: [] for k in ks}
+    precisions: List[float] = []
+    skipped = 0
+    active_counts: List[int] = []
+    tier3_leak = 0
+    byte_sizes: List[int] = []
+    budget_violations = 0
+
+    for case in cases:
+        caps = tuple(getattr(case, "expected_capabilities", ()) or ())
+        query = getattr(case, "query", "") or ""
+        ctx_kwargs: Dict[str, Any] = {
+            "user_message": query,
+            "active_capabilities": caps,
+            "k_max": k_max,
+        }
+        ctx_kwargs.update(context_overrides or {})
+        sel = surface.select(ToolSelectionContext(**ctx_kwargs))
+        active_counts.append(len(sel.names))
+        for name in sel.names:
+            try:
+                desc = registry.descriptor(name)
+            except KeyError:
+                continue
+            if int(desc.tier) >= 3 or desc.effective_security_tier >= 3:
+                tier3_leak += 1
+        relevant = set(relevant_tools_for_case(registry, caps))
+        if not relevant:
+            skipped += 1
+            continue
+        for k in ks:
+            hit = relevant & set(sel.names[:k])
+            recalls[k].append(len(hit) / len(relevant))
+        hit_max = relevant & set(sel.names)
+        precisions.append(len(hit_max) / len(sel.names) if sel.names else 0.0)
+
+        if byte_sample and len(byte_sizes) < int(byte_sample):
+            out = surface.project(
+                ToolSelectionContext(**{**ctx_kwargs, "byte_budget": byte_budget}),
+            )
+            byte_sizes.append(int(out.get("bytes_used") or 0))
+            if int(out.get("bytes_used") or 0) > byte_budget:
+                budget_violations += 1
+
+    n = len(recalls[ks[0]]) if ks else 0
+    return SurfaceRetrievalReport(
+        cases=n,
+        skipped=skipped,
+        k_max=k_max,
+        recall_at_k={
+            k: (sum(v) / len(v) if v else 0.0) for k, v in recalls.items()
+        },
+        precision_at_k_max=sum(precisions) / len(precisions) if precisions else 0.0,
+        avg_active_tools=sum(active_counts) / len(active_counts) if active_counts else 0.0,
+        tier3_leak=tier3_leak,
+        avg_schema_bytes=sum(byte_sizes) / len(byte_sizes) if byte_sizes else 0.0,
+        max_schema_bytes=max(byte_sizes) if byte_sizes else 0,
+        budget_violations=budget_violations,
+    )
+
+
 # ---------------------------------------------------------------------------
 # 2. Model routing
 # ---------------------------------------------------------------------------
