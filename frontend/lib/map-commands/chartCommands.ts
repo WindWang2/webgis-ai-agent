@@ -189,12 +189,24 @@ export const chartCommands: Record<string, CommandEntry> = {
       const { componentId, categories } = ctx.params as { componentId: string; categories: string[] };
       const comp = findChartComponent(componentId);
       if (!comp) return fail(`chart component not found: ${componentId}`);
+      // Wave 5 断链修复：selection.layer_id 必须是图表**绑定的数据图层**
+      // （options.layerId —— 地图侧按它编译要素过滤），不是组件 id。此前
+      // 硬编码 componentId 使地图过滤永不命中（无同 id 图层）、面板高亮
+      // 也无从谈起。调用方可显式传 layerId 覆盖；都缺省时以 componentId
+      // 兜底（行为与旧版一致，但 agent 正确绑定后即恢复联动）。
+      const explicitLayerId = (ctx.params as { layerId?: unknown }).layerId;
+      const boundLayerId = typeof explicitLayerId === 'string' && explicitLayerId
+        ? explicitLayerId
+        : (typeof (comp as unknown as { options?: { layerId?: unknown } }).options?.layerId === 'string'
+          ? ((comp as unknown as { options: { layerId: string } }).options.layerId)
+          : componentId);
       publishSelection('select', {
         source: 'chart',
-        layer_id: componentId,
+        layer_id: boundLayerId,
+        artifact_ref: componentId,
         selected_categories: categories.slice(0, 20),
       });
-      return ok({ componentId, categories });
+      return ok({ componentId, layerId: boundLayerId, categories });
     },
   },
 

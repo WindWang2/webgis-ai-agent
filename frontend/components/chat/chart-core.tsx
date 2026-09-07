@@ -102,10 +102,19 @@ function tidySeries(chart: ChartData): Record<string, unknown>[] {
   return rows
 }
 
+/** 从 recharts onClick 状态中容错提取类别名（Bar/Pie/RadialBar 形态族）。 */
+function extractClickedName(state: unknown): unknown {
+  const s = state as { payload?: { name?: unknown }; activePayload?: Array<{ payload?: { name?: unknown } }> } | undefined;
+  if (s?.payload?.name != null) return s.payload.name;
+  const first = s?.activePayload?.[0]?.payload?.name;
+  if (first != null) return first;
+  return null;
+}
+
 function barClickHandler(onSelectCategory: ((name: string) => void) | null | undefined) {
   return onSelectCategory
     ? { onClick: (state: unknown) => {
-        const name = (state as { payload?: { name?: unknown } } | undefined)?.payload?.name;
+        const name = extractClickedName(state);
         if (name != null) onSelectCategory(String(name));
       } }
     : {};
@@ -230,7 +239,7 @@ function RenderAreaChart({ chart, height }: RenderProps) {
 }
 
 /** V4：直方图（分箱在数据提交前由后端 classify 完成 —— 与地图分级同断点）。 */
-function RenderHistogramChart({ chart, height }: RenderProps) {
+function RenderHistogramChart({ chart, height, onSelectCategory }: RenderProps) {
   const theme = useHudStore((s) => s.theme);
   return (
     <ResponsiveContainer width="100%" height={height}>
@@ -239,7 +248,8 @@ function RenderHistogramChart({ chart, height }: RenderProps) {
         <XAxis dataKey="name" tick={tickStyle(theme)} label={chart.x_label ? { value: chart.x_label, position: "insideBottom", offset: -5, fill: "#94a3b8", fontSize: 13 } : undefined} />
         <YAxis tick={tickStyle(theme)} />
         <Tooltip {...tooltipStyle(theme)} />
-        <Bar dataKey="value" fill="#0891b2" radius={[1, 1, 0, 0]} />
+        {/* Workbench V4（Wave 5）：bin 是离散类别（区间名），点击发布类别选择。 */}
+        <Bar dataKey="value" fill="#0891b2" radius={[1, 1, 0, 0]} {...barClickHandler(onSelectCategory)} />
       </BarChart>
     </ResponsiveContainer>
   )
@@ -328,11 +338,21 @@ function RenderRadarChart({ chart, height }: RenderProps) {
 }
 
 /** V4：玫瑰图（极区柱 —— RadialBar 近似；角度按值等分）。 */
-function RenderRoseChart({ chart, height }: RenderProps) {
+function RenderRoseChart({ chart, height, onSelectCategory }: RenderProps) {
   const theme = useHudStore((s) => s.theme);
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <RadialBarChart data={chart.data} innerRadius="25%" outerRadius="85%">
+      <RadialBarChart
+        data={chart.data}
+        innerRadius="25%"
+        outerRadius="85%"
+        {...(onSelectCategory
+          ? { onClick: (state: unknown) => {
+              const name = extractClickedName(state);
+              if (name != null) onSelectCategory(String(name));
+            } }
+          : {})}
+      >
         <PolarAngleAxisJsx type="category" dataKey="name" tick={tickStyle(theme)} />
         <RadialBar dataKey="value" background fill="#06b6d4" />
         <Tooltip {...tooltipStyle(theme)} />
@@ -539,11 +559,17 @@ interface ChartCoreProps {
 export function ChartCore({ chart, height = 200, highlightedCategories, onSelectCategory }: ChartCoreProps) {
   const Renderer = CHART_RENDERERS[chart.type]
   if (!Renderer) return null
-  // 类别选择语义只对离散轴图表成立（line/scatter 的 x 是序列/数值域，
+  // 类别选择语义只对离散轴图表成立（line/scatter/area 的 x 是序列/数值域，
   // 点击语义不是类别 —— 如实不支持，不虚构回调）。
-  const categorySelect = chart.type === "bar" || chart.type === "pie"
-    || chart.type === "horizontal_bar" || chart.type === "ranking_list"
-    ? onSelectCategory : null;
+  // Workbench V4（Wave 5）：门禁与后端 chart_kinds 的 selectionLinkage 声明
+  // 对齐 —— donut/grouped_bar/stacked_bar 渲染器本就带回调（此前被此门禁
+  // 拦掉，声明超前于实现）；histogram bin 与 rose 花瓣是离散类别，渲染器
+  // 已补点击。scatter 保持不联（数值轴点击不构成类别语义）。
+  const CATEGORY_SELECT_KINDS: ReadonlySet<string> = new Set([
+    "bar", "pie", "donut", "horizontal_bar", "grouped_bar", "stacked_bar",
+    "ranking_list", "histogram", "rose",
+  ]);
+  const categorySelect = CATEGORY_SELECT_KINDS.has(chart.type) ? onSelectCategory : null;
   return (
     <Renderer
       chart={chart}
