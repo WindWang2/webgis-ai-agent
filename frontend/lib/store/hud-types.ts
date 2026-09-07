@@ -2,6 +2,7 @@ import type { Layer } from '@/lib/types/layer';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
 import type { ExplorerTask } from '@/lib/types/explorer';
 import type { AnalysisResult, LayerDescriptor, StepResultEvent } from '@/lib/results/types';
+import type { WorkbenchSlice } from './slices/workbenchSlice';
 
 export interface SelectedFeatureInfo {
   layerId: string;          // 渲染层 id (含 custom- 前缀)
@@ -129,14 +130,15 @@ export interface SessionSummary {
   tags: string[];
 }
 
-export interface HudState {
+export interface HudState extends WorkbenchSlice {
   /* ─── Layers ─── */
   layers: Layer[];
   layerIntentGeneration: number;
   addLayer: (layer: Layer) => void;
   removeLayer: (id: string) => void;
   toggleLayer: (id: string) => void;
-  updateLayer: (id: string, updates: Partial<Layer>) => void;
+  /** opts.source='server'：服务端回灌 —— 保留认证标签（B3 修复），不当作本地编辑。 */
+  updateLayer: (id: string, updates: Partial<Layer>, opts?: { source?: 'user' | 'server' }) => void;
   reorderLayers: (layers: Layer[]) => void;
   setLayers: (layers: Layer[]) => void;
   clearLayers: () => void;
@@ -359,3 +361,15 @@ export interface PlanProposalPayload {
   steps_preview?: Array<{ id: string; tool: string; purpose?: string; destructive?: boolean }>;
   status: PlanProposalStatus;
 }
+
+/* ─── Workbench V4（Goal C Wave 1）：统一工作区投影 ───
+ * UI projection / transient state（模式 / 选择 / 分组树 / 对比），
+ * 不承载地图语义真相 —— 见 slices/workbenchSlice.ts 模块头注释。 */
+export type {
+  WorkbenchSlice,
+  WorkbenchMode,
+  WorkbenchModeOrigin,
+  LayerGroupEntity,
+  ComparisonState,
+  ComparisonKind,
+} from './slices/workbenchSlice';

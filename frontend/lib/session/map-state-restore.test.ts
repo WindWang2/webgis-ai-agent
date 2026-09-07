@@ -385,4 +385,23 @@ describe('#1078(G-9) syncSpecLayersToStore prunes removed mirror rows', () => {
       useHudStore.getState().layers.filter((l: any) => l._mapspecLayerId === 'ly-x'),
     ).toHaveLength(0);
   });
+
+  it('B1（workbench-v4）：同一事件既 add 又 remove 时，新镜像行不被旧快照修剪吞掉', async () => {
+    const { syncSpecLayersToStore } = await import('@/lib/session/map-state-restore');
+    useHudStore.getState().clearLayers();
+    // 第一轮：spec 只有 ly-old，镜像成行。
+    syncSpecLayersToStore({
+      layers: [{ id: 'ly-old', type: 'circle', source: 's' }], sources: {},
+    }, 'sess-b1');
+    expect(useHudStore.getState().layers.map((l: any) => l.id)).toContain('ly-old');
+    // 第二轮：spec 换成 ly-new（add）且不再含 ly-old（remove）——同一事件。
+    syncSpecLayersToStore({
+      layers: [{ id: 'ly-new', type: 'circle', source: 's' }], sources: {},
+    }, 'sess-b1');
+    const ids = useHudStore.getState().layers.map((l: any) => l.id);
+    // 修复前：keepRows 基于第二轮 add 前的快照（不含刚镜像的 ly-new）→
+    // setLayers 把 ly-new 一并抹掉，直到下一个事件才自愈。
+    expect(ids).toContain('ly-new');
+    expect(ids).not.toContain('ly-old');
+  });
 });

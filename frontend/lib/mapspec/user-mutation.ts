@@ -69,7 +69,9 @@ function applyCommittedMapSpec(
       ) {
         continue;
       }
-      useHudStore.getState().updateLayer(layer.id, pres);
+      // B3（workbench-v4）：这是服务端回灌，不是本地编辑 —— 保留认证标签，
+      // 否则该行永久失去 generation 认证（假「待同步」来源之二）。
+      useHudStore.getState().updateLayer(layer.id, pres, { source: 'server' });
     }
   }
   return true;
@@ -236,7 +238,10 @@ function toastRollback(actionLabel: string, err: unknown): void {
 
 export async function toggleLayerAndCommit(layerId: string): Promise<void> {
   const layer = useHudStore.getState().layers.find((item) => item.id === layerId);
-  const previous = layer?.visible !== false;
+  // B10（workbench-v4）：不存在的行此前仍会以缺省 previous=true 提交
+  // visible:false mutation —— 对服务端未知层发写、且乐观翻转无目标。
+  if (!layer) return;
+  const previous = layer.visible !== false;
   useHudStore.getState().toggleLayer(layerId);
   // 「地图随对话」：用户手动点开的层标记为当前轮 —— 后续同轮 agent 展示
   // 不会把它当旧轮收起（不与用户对抗）。只处理"点开"方向（previous 为

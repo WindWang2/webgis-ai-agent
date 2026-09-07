@@ -108,7 +108,6 @@ function useFilterEvidenceBadges(layers: Layer[]): Record<string, FilterBadgeVie
 
 export function LayersTab() {
   const layers = useHudStore((s) => s.layers);
-  const updateLayer = useHudStore((s) => s.updateLayer);
   const setActiveLeftTab = useHudStore((s) => s.setActiveLeftTab);
   // Workspace V2：状态词表（loading|ready|rendering|hidden|stale|failed|
   // expired）从 MapSpec revision + artifact/ref 状态 + 最新渲染观察派生 ——
@@ -166,12 +165,14 @@ export function LayersTab() {
       const current = layer.opacity ?? 1;
       // Only write when the committed value actually differs — avoids a
       // redundant store update (and reconcile) on grab-without-drag.
+      // B8（workbench-v4）：单一写入 owner —— setLayerOpacityAndCommit 内部
+      // 已做乐观 updateLayer，这里不再预写一次（双重写靠 no-op 门兜底属于
+      // 冗余）。
       if (Math.abs(next - current) > 1e-9) {
-        updateLayer(layer.id, { opacity: next });
         void setLayerOpacityAndCommit(layer.id, next);
       }
     },
-    [opacityDraft, updateLayer]
+    [opacityDraft]
   );
 
   const visibleCount = useMemo(

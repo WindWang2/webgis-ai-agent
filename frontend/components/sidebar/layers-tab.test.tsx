@@ -104,10 +104,11 @@ describe('LayersTab — opacity slider debounce (FE-03)', () => {
     // ...then release the pointer (commit).
     fireEvent.pointerUp(slider);
 
-    // Exactly one store write, carrying the final value (50% = 0.5).
-    expect(updateLayer).toHaveBeenCalledTimes(1);
-    expect(updateLayer).toHaveBeenCalledWith('L1', { opacity: 0.5 });
+    // B8：单一写入 owner —— 组件委托 setLayerOpacityAndCommit（内部做乐观
+    // updateLayer），自身不再预写。断言恰好一次委托、携带最终值（50% = 0.5）。
+    expect(mutationMocks.setLayerOpacityAndCommit).toHaveBeenCalledTimes(1);
     expect(mutationMocks.setLayerOpacityAndCommit).toHaveBeenCalledWith('L1', 0.5);
+    expect(updateLayer).not.toHaveBeenCalled();
   });
 
   it('commits on blur as well (keyboard / focus-loss commit path)', () => {
@@ -118,9 +119,9 @@ describe('LayersTab — opacity slider debounce (FE-03)', () => {
     fireEvent.change(slider, { target: { value: '30' } });
     fireEvent.blur(slider);
 
-    expect(updateLayer).toHaveBeenCalledTimes(1);
-    expect(updateLayer).toHaveBeenCalledWith('L1', { opacity: 0.3 });
+    expect(mutationMocks.setLayerOpacityAndCommit).toHaveBeenCalledTimes(1);
     expect(mutationMocks.setLayerOpacityAndCommit).toHaveBeenCalledWith('L1', 0.3);
+    expect(updateLayer).not.toHaveBeenCalled();
   });
 
   it('does not commit when the value did not change during a drag', () => {
@@ -195,8 +196,9 @@ describe('LayersTab — commitOpacity 不在渲染阶段写 store', () => {
         .map((c) => c.map(String).join(' '))
         .filter((t) => t.includes('Cannot update a component'));
       expect(renderPhaseWrites).toEqual([]);
-      // 提交本身仍然发生（修复不能以丢提交为代价）
-      expect(updateLayer).toHaveBeenCalledWith('L1', { opacity: 0.5 });
+      // 提交本身仍然发生（修复不能以丢提交为代价）—— B8 后写入 owner 是
+      // setLayerOpacityAndCommit（内部乐观 updateLayer）。
+      expect(mutationMocks.setLayerOpacityAndCommit).toHaveBeenCalledWith('L1', 0.5);
     } finally {
       errSpy.mockRestore();
       updateLayer.mockReset();
