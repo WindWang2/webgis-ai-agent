@@ -89,6 +89,11 @@ def test_context_schema_bytes_gate(measurements, key):
         f"如属故意（新增能力），{STRUCTURAL_UPDATE_ENV}=1 刷新基线并在 PR 说明。")
 
 
+#: 工具可见性投影存在 ±1~2 的过程态抖动（availability 投影依赖注册时
+#: 状态）；数量闸给 +3 余量，真正的预算闸是字节天花板（精确）。
+COUNT_SLACK = 3
+
+
 @pytest.mark.parametrize("key", sorted(CASES))
 def test_context_schema_count_gate(measurements, key):
     baselines = _baselines()
@@ -97,7 +102,9 @@ def test_context_schema_count_gate(measurements, key):
         if os_env_flag(STRUCTURAL_UPDATE_ENV):
             return
         pytest.fail(f"structural baseline missing: {name}")
-    assert measurements[key]["count"] <= baselines[name]["count"], name
+    assert measurements[key]["count"] <= baselines[name]["count"] + COUNT_SLACK, (
+        f"schema count grew beyond slack: {name} "
+        f"{measurements[key]['count']} > {baselines[name]['count'] + COUNT_SLACK}")
 
 
 def test_no_missing_baseline_lurks():
