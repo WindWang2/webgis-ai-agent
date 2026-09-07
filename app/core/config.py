@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     # GDAL 块缓存上限（MB）——rasterio_env() 内生效；GDAL 缓存是进程内共享
     # 的，独立于窗口预算可调。
     RASTER_GDAL_CACHE_MAX_MB: int = 64
+    # STAC API 基地址（app/services/rs/stac_client.py 的检索目录）。
+    # 默认 earth-search；自建/私有 STAC 目录经 env 覆盖。
+    STAC_API_URL: str = "https://earth-search.aws.element84.com/v1"
 
     def is_production(self) -> bool:
         """判断是否为生产环境"""
