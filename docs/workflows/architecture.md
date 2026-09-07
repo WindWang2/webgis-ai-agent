@@ -7,32 +7,39 @@ LLM 负责理解语言并给出语义建议；**GIS 方法、资格检查、科�
 
 ```text
 LLM / semantic intent
-  ↓ ① resolve_map_request_intent（intent.py，纯正则词表，双语）
+  ↓ ① resolve_map_request_intent（intent.py，纯正则词表，双语；
+  ↓    V3：尾部保守本体任务升级 —— 专业关键词 + 无 seed 保护的族）
 deterministic task normalization
-  ↓ ② resolve_task_family（24 个任务族：18 个 V1 + 6 个 Workflow V2）
+  ↓ ② map_task_ontology（V3：gis_ontology，46 任务 × 9 域匹配）
 data requirements
   ↓ ③ resolve_data_roles（workflow_schema：15 个数据角色）
 dataset profile
-  ↓  （Spatial Meta Profile / resolver camelCase 事实，零全量扫描）
+  ↓ ④ qualify_data（V3：typed data qualification，四态 + remediation）
 scientific preconditions
-  ↓ ④ evaluate_obligations（workflow_schema → scientific_preconditions，
+  ↓ ⑤ evaluate_obligations（workflow_schema → scientific_preconditions，
   ↓    单一事实源联动，不重复实现科学语义）
+candidate planning
+  ↓ ⑥ plan_candidates（V3：recipe × composite × scenario 多候选 +
+  ↓    九维评分 + 完整 rejected 留痕）
 capability graph
-  ↓ ⑤ compile_capability_dag（plan_graph：依赖推理 + 幂等求值）
+  ↓ ⑦ compile_capability_dag（plan_graph：依赖推理 + 幂等求值）
 algorithm resolution
-  ↓ ⑥ resolve_algorithms（AlgorithmResolver：fallback_trail + cost）
+  ↓ ⑧ resolve_algorithms（AlgorithmResolver：fallback_trail + cost）
 analysis recipe
-  ↓ ⑦ RecipeRegistry.select_candidates（keyword 路由 + seed 资历守卫）
+  ↓    （RecipeRegistry.select_candidates：keyword 路由 + seed 资历守卫
+  ↓    + V3 本体层；规划期已由 ⑥ 消费）
 cartographic model/template requirements
-  ↓ ⑧ resolve_cartography（MapModelRegistry / ProductTemplateRegistry）
+  ↓ ⑨ resolve_cartography（MapModelRegistry / ProductTemplateRegistry）
 Map Product
-  ↓ ⑨ produce_map_product_plan（MapProductPlanner 两阶段 draft/finalize）
+  ↓ ⑩ produce_map_product_plan（MapProductPlanner 两阶段 draft/finalize）
 completion/evidence/verdict
-  ↓ ⑩ produce_completion_contract + derive_product_verdict（V2 七维）
+  ↓ ⑪ produce_completion_contract（含 V3 fallback_tier）
+  ↓    + derive_product_verdict（V2 七维）+ final_map_status（V3）
 ```
 
 入口：`app/services/gis_harness/workflow_compiler.py::compile_workflow`
-（12 阶段确定性管线，零 LLM / 零 I/O，产物 bounded / serializable）。
+（15 阶段确定性管线，零 LLM / 零 I/O，产物 bounded / serializable）。
+V3 全貌见 [semantic-workflow-v3.md](./semantic-workflow-v3.md)。
 
 ## 分层职责（不建第二事实源）
 
@@ -41,7 +48,7 @@ completion/evidence/verdict
 | 意图 | `gis_harness/intent.py` | NL → typed task/scope/subject/derived intents | 不选 recipe、不裁科学资格 |
 | 方法 | `gis_harness/recipes.py` + `recipe_packs/` | 「这类工作流需要什么」的声明式契约 | 不硬编码工具序列、不是 workflow engine |
 | 契约 | `gis_harness/workflow_schema.py` | 数据角色 / 科学义务 / 完成维度 / 语义回退 / 指纹 | 不实现科学检查（委托算法层） |
-| 编排 | `gis_harness/workflow_compiler.py` | 12 阶段确定性编译 | 不执行、不持久（SessionPlan 负责） |
+| 编排 | `gis_harness/workflow_compiler.py` | 15 阶段确定性编译（V3）| 不执行、不持久（SessionPlan 负责） |
 | 裁决 | `gis_harness/completion/contracts.py` | 完成七维 + 单字产品裁决 | 不修复（repairs.py / runtime_repair.py 负责） |
 | 执行 | SessionPlan + Pi runtime | durable execution、工具分派 | 不理解 GIS 语义 |
 
