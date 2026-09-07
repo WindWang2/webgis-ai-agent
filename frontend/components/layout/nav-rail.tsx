@@ -15,7 +15,7 @@
  * 自己的 active tab；agent 经 set_mode 命令切换时 modeOrigin='agent'，
  * rail 显示一键返回控件（不丢用户上下文）。
  */
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   MessageCircle,
   Folder,
@@ -143,6 +143,17 @@ export function NavRail() {
     setWorkbenchMode(target, 'user');
   }, [setWorkbenchMode]);
 
+  // Review R1（a11y MAJOR-2）：模式切换会卸载不在新词表内的 tab —— 若焦点
+  // 在被卸载的 tab 上，activeElement 落到 body。effect 把焦点收回当前
+  // active tab。
+  const prevModeRef = useRef(mode);
+  useEffect(() => {
+    if (prevModeRef.current !== mode) {
+      prevModeRef.current = mode;
+      tabRefs.current.get(activeTab)?.focus();
+    }
+  }, [mode, activeTab]);
+
   const onTablistKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       const currentIndex = visibleTabs.findIndex((t) => isTabActive(t.key));
@@ -176,11 +187,10 @@ export function NavRail() {
       }}
     >
       {/* Workbench V4：模式切换（只改面板组合，不复制地图状态） */}
-      <div
-        role="radiogroup"
-        aria-label="工作台模式"
-        className="flex w-full flex-col items-center gap-1 border-b border-edge-subtle py-2"
-      >
+      {/* Review R1（a11y MINOR-7）：radiogroup 的必需子元素只能是 radio ——
+          agent 回执按钮移出分组容器；roving tabindex + 方向键按 APG radio。 */}
+      <div className="flex w-full flex-col items-center gap-1 border-b border-edge-subtle py-2">
+        <div role="radiogroup" aria-label="工作台模式" className="flex w-full flex-col items-center gap-1">
         {WORKBENCH_MODES.map((m) => {
           const { icon: ModeIcon, label } = MODE_META[m];
           const active = mode === m;
@@ -189,6 +199,7 @@ export function NavRail() {
               key={m}
               role="radio"
               aria-checked={active}
+              tabIndex={active ? 0 : -1}
               aria-label={`${label}模式`}
               title={`${label}模式`}
               data-testid={`mode-${m}`}
@@ -210,6 +221,7 @@ export function NavRail() {
             </button>
           );
         })}
+        </div>
         {modeOrigin === 'agent' && (
           <button
             type="button"

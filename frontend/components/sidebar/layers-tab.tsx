@@ -228,8 +228,10 @@ function GroupHeader({
         <button
           type="button"
           disabled={!isUserGroup}
-          title={isUserGroup ? '双击重命名分组' : semanticGroupLabel(section.name) !== section.name ? undefined : '语义分组（挂载语义，不可重命名）'}
-          onDoubleClick={() => {
+          title={isUserGroup ? '点击重命名分组' : semanticGroupLabel(section.name) !== section.name ? undefined : '语义分组（挂载语义，不可重命名）'}
+          onClick={() => {
+            // Review R1（a11y CRITICAL）：双击独占的键盘不可达（WCAG 2.1.1）
+            // —— 改单击进入重命名（按钮语义下 Enter/Space 同样触发）。
             if (!isUserGroup || !section.id) return;
             setDraftName(section.name);
             setRenaming(true);
@@ -358,7 +360,9 @@ function LayerRow({
         {/* 多选（批量操作选择真相；键盘可达） */}
         <button
           type="button"
-          aria-label={selected ? `取消选择 ${layer.name}` : `选择 ${layer.name}`}
+          role="checkbox"
+          aria-checked={selected}
+          aria-label={`选择 ${layer.name}`}
           onClick={() => toggleLayerSelected(layer.id)}
           className="flex h-control-sm w-control-sm shrink-0 items-center justify-center rounded-xs text-ink-muted hover:text-ink"
         >
@@ -702,9 +706,10 @@ function BatchActionBar({ scopeIds }: { scopeIds: string[] }) {
       </label>
       {confirmingDelete ? (
         <span className="flex items-center gap-1 text-micro text-status-critical">
-          删除 {selectedLayerIds.length} 层？
+          <span role="status">删除 {selectedLayerIds.length} 层？</span>
           <button
             type="button"
+            ref={(el) => el?.focus()}
             className="rounded-xs bg-status-critical-soft px-1.5 py-0.5 font-medium"
             onClick={() => {
               const store = useHudStore.getState();

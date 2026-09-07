@@ -294,6 +294,7 @@ export default function Home() {
           id='map-canvas'
           role='region'
           aria-label='地图画布'
+          tabIndex={-1}
           style={{
             position: 'absolute',
             top: 0,

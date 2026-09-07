@@ -54,16 +54,27 @@ export const styleCommands: Record<string, CommandEntry> = {
         ...(typeof p['method'] === 'string' ? { method: p['method'] as StyleIntent['method'] } : {}),
         ...(typeof p['amount'] === 'number' ? { amount: p['amount'] } : {}),
       };
+      const hud = ctx.getHudState();
       const outcome = await applyStyleIntent(layerId, intent);
+      // Review R1（a11y MAJOR-6）：失败必须可感知 —— failed 只进 ack 不进
+      // 任何 live region；这里补 system message（经 toast live region 播报）。
+      const announce = (msg: string) => {
+        try {
+          hud.setPendingSystemMessage(`[系统通知] ${msg}`);
+        } catch { /* 通知通道不可用不得阻断 */ }
+      };
       if (outcome === 'invalid') {
+        announce(`样式调整未生效：图层 ${layerId} 不存在或不支持该样式意图（需按合约重新构造意图）`);
         return { status: 'failed', error: 'invalid_style_intent' };
       }
       if (outcome === 'locked') {
+        announce(`样式调整未生效：图层 ${layerId} 已被用户锁定`);
         return { status: 'failed', error: 'layer_locked' };
       }
       if (outcome === 'thematic_protected') {
         // Review R1（GIS F3）：分级/连续专题层的色彩编码受保护 —— 色彩意图
         // 必须走 reclassify 通道（后端），flat color 会抹平分级编码。
+        announce(`样式调整未生效：图层 ${layerId} 是分级/连续专题着色，直接改色会破坏分级编码 —— 请走重分类通道`);
         return { status: 'failed', error: 'thematic_color_protected' };
       }
       return { status: 'succeeded', result: { layerId, kind: intent.kind } };

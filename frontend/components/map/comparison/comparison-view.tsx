@@ -335,7 +335,9 @@ export function ComparisonView({
     <div
       ref={containerRef}
       data-testid="comparison-overlay"
-      role="region"
+      // Review R1（a11y MAJOR-4）：role=status —— 进入对比时向 AT 播报
+      // 工作区变化（此前仅可浏览发现）。
+      role="status"
       // Review R1（architecture MAJOR-5）：主视图是未改造的主地图（全部
       // 可见图层在場），「A 与 B 对比」的措辞会误导 —— 如实声明右侧仅显示
       // 副图层族。
@@ -421,19 +423,15 @@ export function ComparisonView({
             {secondaryName ?? '副视图'}
           </span>
           <span aria-hidden className="mx-0.5 h-4 w-px bg-edge-subtle" />
-          <button
-            type="button"
+          {/* Review R1（a11y MINOR-11）：side-by-side 下线后滑动是唯一模式
+              —— 恒按 toggle 对 AT 是「永远解不开的开关」，改为当前态展示。 */}
+          <span
             data-testid="comparison-kind-swipe"
-            aria-pressed={kind === 'swipe'}
-            className={`rounded-pill px-2 py-0.5 text-micro ${
-              kind === 'swipe'
-                ? 'bg-status-accent-soft font-medium text-status-accent'
-                : 'text-ink-secondary hover:bg-surface-hover hover:text-ink'
-            }`}
-            onClick={() => updateComparison?.({ kind: 'swipe' })}
+            aria-current="true"
+            className="rounded-pill bg-status-accent-soft px-2 py-0.5 text-micro font-medium text-status-accent"
           >
             滑动
-          </button>
+          </span>
           {/* Review R1（GIS F2 CRITICAL）：side-by-side 诚实下线 —— 主图
               不动的约束下，双半屏相机使两图层永不覆盖同一地理（左=主图的
               左半、右=副图的右半），无法构成有效对比。词表保留（未来真

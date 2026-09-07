@@ -561,7 +561,7 @@ export function FloatingChrome({
       <div
         data-testid={testId ? `${testId}-title-bar` : 'floating-chrome-title-bar'}
         tabIndex={0}
-        aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight Shift+ArrowUp Shift+ArrowDown Shift+ArrowLeft Shift+ArrowRight Control+ArrowUp Control+ArrowDown Control+ArrowLeft Control+ArrowRight Enter Delete"
+        aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight Shift+ArrowUp Shift+ArrowDown Shift+ArrowLeft Shift+ArrowRight Alt+ArrowUp Alt+ArrowDown Alt+ArrowLeft Alt+ArrowRight Control+ArrowUp Control+ArrowDown Control+ArrowLeft Control+ArrowRight Enter Delete"
         className="flex cursor-grab select-none touch-none items-center justify-between gap-2 border-b border-map-chrome-border px-2 py-1 outline-none focus-visible:ring-1 focus-visible:ring-map-chrome-ink/40 active:cursor-grabbing"
         onKeyDown={onTitleKeyDown}
         onPointerDown={onTitlePointerDown}

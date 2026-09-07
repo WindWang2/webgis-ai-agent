@@ -134,7 +134,9 @@ describe('ComparisonView · 退出', () => {
 });
 
 describe('ComparisonView · kind 切换', () => {
-  it('切到 side-by-side：固定对半裁剪、拖动把手退场', () => {
+  it('side-by-side 已诚实下线：UI 无切换按钮，进入后仍按 50% 裁剪渲染', () => {
+    // Review R1（GIS F2 CRITICAL）：双半屏在「主图不动」约束下两图层永不
+    // 共地理 —— 不构成对比。词表保留（状态机/裁剪语义不变），UI 只暴露滑动。
     const { primaryRef } = harness();
     useHudStore.getState().enterComparison({
       primaryLayerId: 'A',
@@ -147,8 +149,8 @@ describe('ComparisonView · kind 切换', () => {
     expect(screen.getByTestId('comparison-secondary-map').style.clipPath).toBe(
       'inset(0 0 0 50%)',
     );
-    fireEvent.click(screen.getByTestId('comparison-kind-swipe'));
-    expect(useHudStore.getState().comparison.kind).toBe('swipe');
+    // UI 不提供 side-by-side 入口（诚实 UI）。
+    expect(screen.queryByRole('button', { name: '并排' })).toBeNull();
   });
 });
 
