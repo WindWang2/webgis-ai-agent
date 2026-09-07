@@ -439,6 +439,23 @@ class ComponentRegistry:
         """#1076(D-8): 注册代次（静态目录派生缓存的失效键）。"""
         return self._version
 
+    def unregister(self, descriptor_id: str) -> bool:
+        """ADR-0104：扩展 cartography 组件卸载回滚用。清理全部索引
+        （by-id / by-type / by-category）并推进注册代次；目标不存在返回
+        False（幂等）。种子组件从不调用。"""
+        desc = self._by_id.get(descriptor_id)
+        if desc is None:
+            return False
+        del self._by_id[descriptor_id]
+        if self._by_type.get(desc.type) == descriptor_id:
+            self._by_type.pop(desc.type, None)
+        for ids in self._by_category.values():
+            if descriptor_id in ids:
+                ids.remove(descriptor_id)
+        self._by_category = {k: v for k, v in self._by_category.items() if v}
+        self._version += 1
+        return True
+
     def get(self, descriptor_id: str) -> Optional[MapComponentDescriptor]:
         return self._by_id.get(descriptor_id)
 

@@ -115,6 +115,23 @@ class Settings(BaseSettings):
     CHAT_MAX_ROUNDS: int = 60
     TURN_TOTAL_TIMEOUT_S: float = 900.0
 
+    # ── GIS Extension Platform（ADR-0104）────────────────────────────
+    # 默认全关：不配置 EXTENSIONS_DIRS 时启动行为与旧版完全一致。
+    # EXTENSIONS_DIRS: os.pathsep 冒号分隔的扩展根目录列表（<root>/<ext>/manifest.json）。
+    # EXTENSIONS_ALLOW/BLOCK: 逗号分隔的扩展 id 信任白/黑名单（block 优先）。
+    # EXTENSIONS_BUILTIN_IDS: 随仓库发行的受信扩展包 id（逗号分隔）。
+    # EXTENSION_PERMISSION_GRANTS: "id:perm1,perm2;id2:perm3" 形式的授权表。
+    # EXTENSION_FEATURE_FLAGS / EXTENSION_SETTINGS_JSON: 按 extension id 的
+    #   JSON object 覆盖（特性开关 / settings_schema 实例值）。
+    EXTENSIONS_ENABLED: bool = False
+    EXTENSIONS_DIRS: str = ""
+    EXTENSIONS_ALLOW: str = ""
+    EXTENSIONS_BLOCK: str = ""
+    EXTENSIONS_BUILTIN_IDS: str = ""
+    EXTENSION_PERMISSION_GRANTS: str = ""
+    EXTENSION_FEATURE_FLAGS: str = "{}"
+    EXTENSION_SETTINGS_JSON: str = "{}"
+
     # 仓内 vendor/pi 是默认 agent 宿主：API 启动即拉起 bundled RPC 子进程。
     # 测试套件在 conftest 钉 false，避免每个 TestClient 起 Node。
     # 紧急回退 ChatEngine：USE_NEW_AGENT=false。

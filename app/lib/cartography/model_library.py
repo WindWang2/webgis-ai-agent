@@ -521,6 +521,15 @@ class MapModelRegistry:
     def get(self, model_id: str) -> Optional[MapModel]:
         return self._by_id.get(model_id)
 
+    def unregister(self, model_id: str) -> bool:
+        """ADR-0104：扩展 map model 卸载回滚用。移除本体并清掉指向它的
+        别名；目标不存在返回 False（幂等）。种子/域包模型从不调用。"""
+        if model_id not in self._by_id:
+            return False
+        del self._by_id[model_id]
+        self._alias = {a: target for a, target in self._alias.items() if target != model_id}
+        return True
+
     @property
     def all_ids(self) -> List[str]:
         return sorted(self._by_id.keys())

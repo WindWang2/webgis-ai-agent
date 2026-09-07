@@ -229,6 +229,23 @@ class AlgorithmRegistry:
     def get(self, algorithm_id: str) -> Optional[AlgorithmDescriptor]:
         return self._by_id.get(algorithm_id)
 
+    def unregister(self, algorithm_id: str) -> bool:
+        """ADR-0104：扩展卸载回滚用。清理 by-id 与 by-capability 索引并
+        失效全部派生缓存；目标不存在返回 False（幂等）。核心种子算法
+        从不调用——生命周期由 load_builtins 决定。"""
+        if algorithm_id not in self._by_id:
+            return False
+        algo = self._by_id.pop(algorithm_id)
+        for cap in algo.capabilities:
+            candidates = self._by_capability.get(cap)
+            if candidates and algorithm_id in candidates:
+                candidates.remove(algorithm_id)
+                if not candidates:
+                    self._by_capability.pop(cap, None)
+        self._tool_to_capability_cache = None
+        self._tool_to_algorithms_cache = None
+        return True
+
     def has(self, algorithm_id: str) -> bool:
         return algorithm_id in self._by_id
 
