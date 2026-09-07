@@ -326,6 +326,18 @@ class ChatContextAssembler:
 
         head = [sys_msg]
 
+        from app.services.chat.context_policy import policy_enabled
+        _policy_on = policy_enabled()
+        # ADR-0104 #6：head 块登记表（name/category/base_chars），供策略执行器
+        # 把 advisor 的 CONDENSE 建议落到具体块上。与 head 一一对应。
+        # base_chars = messages[0] 原始 system 提示的长度 + 分隔符 —— [环境感知]
+        # 尾部（MAP_STATE）可在 advisor 判超分区时被有界压缩；核心指令不可触碰。
+        head_meta: List[dict] = [{
+            "name": "map_state_env",
+            "category": "MAP_STATE",
+            "base_chars": max(0, len(sys_msg["content"]) - len(env_summary) - 2),
+        }]
+
         from app.services.chat.planner import get_plan
 
         plan = get_plan(session_id)
@@ -333,6 +345,7 @@ class ChatContextAssembler:
             # design-v3 §4：计划块单一渲染来源（plan_orchestrator.render_plan_block）。
             from app.services.chat.plan_orchestrator import render_plan_block
             head.append({"role": "system", "content": render_plan_block(plan)})
+            head_meta.append({"name": "session_plan", "category": "SESSION_PLAN"})
 
         # #788 (F-A-8): the [CARTOGRAPHY_VERDICT] turn-start injection used to
         # be Pi-only (chat route builds it in the _use_pi_bridge() branches),
@@ -348,6 +361,9 @@ class ChatContextAssembler:
             )
             if verdict_block:
                 head.append({"role": "system", "content": verdict_block})
+                head_meta.append(
+                    {"name": "cartography_verdict", "category": "CARTOGRAPHY_METADATA"}
+                )
 
             # ADR-0069 (spec P2): the project's cartographic memory block sits
             # beside the verdict — the verdict is THIS session's corrective
@@ -362,22 +378,65 @@ class ChatContextAssembler:
                     )
                     if memory_block:
                         head.append({"role": "system", "content": memory_block})
+                        head_meta.append(
+                            {"name": "project_memory", "category": "DATA_PROFILE"}
+                        )
                 except Exception as ex:  # noqa: BLE001
                     logger.warning(f"Failed to assemble project memory block: {ex}")
 
         last_ctx = build_last_analysis_context(messages)
         if last_ctx:
             head.append({"role": "system", "content": last_ctx})
+            head_meta.append({"name": "last_analysis", "category": "TRACE_SUMMARIES"})
 
         # audit4 #980: 先折叠当前回合内较早的 tool 结果（仅影响发送视图，
         # 不落库），再按跨轮预算截断 —— min_turns 豁免对轮内增长无效，60 轮
         # 工具循环的回合此前每轮全量重发。
-        foldable = fold_intra_turn_tool_results(messages[1:])
-        history, dropped = truncate_history_by_budget(foldable)
+        #
+        # ADR-0104 #6：策略开启时历史管线升级为 KEEP pin 感知（安全事实永不
+        # 被折叠/丢弃），被丢弃轮次附指纹化确定性摘要（SUMMARIZE）；
+        # GIS_CONTEXT_POLICY=0 时走原路径，逐字节不变。
+        _dropped_messages: List[dict] = []
+        _history_ops_summary: Optional[dict] = None
+        if _policy_on:
+            from app.services.chat.context_policy import run_history_ops
+            _hist = run_history_ops(messages[1:])
+            # run_history_ops 已完成 pin 感知的折叠 + DROP_OLDEST + SUMMARIZE。
+            history = _hist["kept"]
+            dropped = _hist["dropped_turns"]
+            _dropped_messages = _hist["dropped_messages"]
+            _history_ops_summary = {
+                "pinned_messages": _hist["pinned_count"],
+                "folded_results": _hist["folded_count"],
+                "dropped_turns": _hist["dropped_turns"],
+                "summarized": bool(_hist["dropped_turns"] > 0),
+                "ops": _hist["ops"],
+            }
+        else:
+            foldable = fold_intra_turn_tool_results(messages[1:])
+            history, dropped = truncate_history_by_budget(foldable)
         if dropped > 0:
-            head.append({"role": "system", "content": _build_truncation_notice(dropped)})
+            if _policy_on:
+                from app.services.chat.context_policy import (
+                    build_truncation_notice_with_summary,
+                )
+                notice_content = build_truncation_notice_with_summary(
+                    dropped, _dropped_messages
+                )
+            else:
+                notice_content = _build_truncation_notice(dropped)
+            head.append({"role": "system", "content": notice_content})
             logger.info(f"[HISTORY-TRUNC] session={session_id} dropped {dropped} turns")
         head.extend(history)
+        history_start = len(head) - len(history)
+        if _policy_on:
+            # RELOAD_REF tombstone：组装产物引用已逐出 ref 时追加有界诚实提示
+            # （可从持久副本重载 vs 已失效），而非沉默。不占 head_meta（披露
+            # 块不可压缩）。
+            from app.services.chat.context_policy import build_evicted_refs_tombstone
+            tombstone = await build_evicted_refs_tombstone(session_id, head, store)
+            if tombstone:
+                head.append({"role": "system", "content": tombstone})
 
         layers = map_state.get("layers", {}) if isinstance(map_state, dict) else {}
         layer_count = len(layers) if isinstance(layers, dict) else 0
@@ -398,6 +457,8 @@ class ChatContextAssembler:
 
         # ADR-0101 Wave 5：模型感知预算度量（加观测不加行为 —— 截断权仍在
         # 既有组件；超预算以 violations 留痕，供 trace/debug bundle 消费）。
+        # ADR-0104 #6：策略开启时 advisor 的建议在此被真实执行（本模块只是
+        # 编排；建议源仍是 GisBudgetAdvisor，执行器是 context_policy）。
         budget_report: Optional[dict] = None
         try:
             from app.core.config import settings as _settings
@@ -406,15 +467,62 @@ class ChatContextAssembler:
             )
 
             _window = getattr(_settings, "LLM_CONTEXT_WINDOW", None)
+            _max_output = _settings.LLM_MAX_TOKENS
+
+            # ADR-0104 #6：先执行建议（CONDENSE/OFFLOAD_REF 落刀），再对执行后
+            # 的最终产物做权威度量 —— budget_report 如实反映模型实际看到的形态。
+            _policy_report: Optional[dict] = (
+                {"enabled": True, "history_ops": _history_ops_summary}
+                if _history_ops_summary is not None else None
+            )
+            if _policy_on:
+                try:
+                    from app.services.chat.context_budget import (
+                        GisBudgetAdvisor,
+                        plan_budget as _plan_budget,
+                    )
+                    from app.services.chat.context_policy import (
+                        build_policy_items,
+                        execute_advice,
+                    )
+                    from app.services.chat.context.history_compression import (
+                        _estimate_tokens as _est,
+                    )
+
+                    _plan = _plan_budget(
+                        context_window=_window or 0, max_output_tokens=_max_output,
+                    )
+                    _tools_tokens = _est(tools_payload) if tools_payload else 0
+                    _items = build_policy_items(head, head_meta, tools_payload or "")
+                    _advice = GisBudgetAdvisor(_plan).advise(_items)
+                    _exec_report = await execute_advice(
+                        head, head_meta,
+                        advice_actions=_advice.actions,
+                        window_known=_plan.window_known,
+                        usable_tokens=_plan.usable,
+                        session_id=session_id,
+                        store=store,
+                        tools_tokens=_tools_tokens,
+                        history_start=history_start,
+                    )
+                    if _policy_report is None:
+                        _policy_report = {"enabled": True}
+                    _policy_report.update(_exec_report)
+                    _policy_report.setdefault("history_ops", _history_ops_summary)
+                except Exception as ex:  # noqa: BLE001 — 策略执行绝不阻断组装
+                    logger.warning(f"[CONTEXT-POLICY] execution failed: {ex}")
+
             _report = measure_assembled_context(
                 head,
                 tools_payload=tools_payload or "",
                 context_window=_window,
-                max_output_tokens=_settings.LLM_MAX_TOKENS,
+                max_output_tokens=_max_output,
             )
             budget_report = _report.as_dict()
-            # ADR-0103 V2：GIS-aware 处置建议（不落刀 —— 建议进 report，
-            # 执行权仍在历史压缩/schema 投影/ref 卸载管线）。
+            if _policy_report is not None:
+                budget_report["context_policy"] = _policy_report
+            # ADR-0103 V2：GIS-aware 处置建议（执行后的余量 —— 已执行的动作见
+            # budget_report["context_policy"]；策略关闭时保持 V2 原语义）。
             try:
                 from app.services.chat.context_budget import (
                     BudgetItem,
@@ -427,25 +535,29 @@ class ChatContextAssembler:
                     context_window=_window or 0,
                     max_output_tokens=_settings.LLM_MAX_TOKENS,
                 )
-                _items = [
-                    BudgetItem(
-                        category=Category.HISTORY, name="history",
-                        est_tokens=_report.by_category.get("HISTORY", 0),
-                        hard_limit_tokens=6000,
-                    ),
-                    BudgetItem(
-                        category=Category.TOOL_SCHEMAS, name="tool_schemas",
-                        est_tokens=_report.by_category.get("TOOL_SCHEMAS", 0),
-                    ),
-                    BudgetItem(
-                        category=Category.SYSTEM_INSTRUCTIONS, name="system",
-                        est_tokens=_report.by_category.get("SYSTEM_INSTRUCTIONS", 0),
-                    ),
-                    BudgetItem(
-                        category=Category.USER_PROMPT, name="user_final",
-                        est_tokens=_report.by_category.get("USER_PROMPT", 0),
-                    ),
-                ]
+                if _policy_on:
+                    from app.services.chat.context_policy import build_policy_items
+                    _items = build_policy_items(head, head_meta, tools_payload or "")
+                else:
+                    _items = [
+                        BudgetItem(
+                            category=Category.HISTORY, name="history",
+                            est_tokens=_report.by_category.get("HISTORY", 0),
+                            hard_limit_tokens=6000,
+                        ),
+                        BudgetItem(
+                            category=Category.TOOL_SCHEMAS, name="tool_schemas",
+                            est_tokens=_report.by_category.get("TOOL_SCHEMAS", 0),
+                        ),
+                        BudgetItem(
+                            category=Category.SYSTEM_INSTRUCTIONS, name="system",
+                            est_tokens=_report.by_category.get("SYSTEM_INSTRUCTIONS", 0),
+                        ),
+                        BudgetItem(
+                            category=Category.USER_PROMPT, name="user_final",
+                            est_tokens=_report.by_category.get("USER_PROMPT", 0),
+                        ),
+                    ]
                 _advice = GisBudgetAdvisor(_plan).advise(_items)
                 budget_report["gis_advice"] = _advice.as_dict()
             except Exception:  # noqa: BLE001 — 建议绝不阻断组装

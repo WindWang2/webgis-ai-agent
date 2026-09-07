@@ -3,9 +3,15 @@
 V2 闭环（HARNESS-V2）：把 ref cursor 的"解析"从字符串前缀检查升级为真实
 SessionStore 验证：存在 + 归属正确 session + payload 类型匹配。跨 session /
 不存在的 ref 返回 NOT_FOUND / WRONG_SESSION，绝不计为 resolved。
+
+ADR-0104 决策 #6(f)（RELOAD_REF durability）：session 内存 store 的 LRU/字节
+淘汰不再是终点 —— 淘汰时 payload 已 spill 到持久副本（session_data.ref_spill_store）。
+本 resolver 在返回 NOT_FOUND **之前**回退查持久副本（ref→durable），命中则以
+RESOLVED + ``detail="reloaded_from_durable_spill"`` 盖 reload 溯源。
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Any, Optional
@@ -35,6 +41,32 @@ def make_session_store_resolver(session_store: Any):
     tests wire a fakeredis-backed manager or a fake.
     """
 
+    async def _load_durable_spill(session_id: str, ref: str) -> Optional[Any]:
+        """ADR-0104 #6(f)：NOT_FOUND 前的 ref→durable 回退（无副本/故障 → None）。"""
+        try:
+            from app.services.session_data import ref_spill_store
+        except Exception:  # noqa: BLE001 — 回退面自身绝不可抛
+            return None
+        try:
+            return await asyncio.to_thread(ref_spill_store.load, session_id, ref)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("durable spill fallback failed for %s: %s", ref, e)
+            return None
+
+    def _apply_spilled_payload(
+        resolution: RefResolution, expected_type: str, payload: Any,
+    ) -> RefResolution:
+        """把持久副本命中的 payload 类型判定后写回 resolution（RELOAD 溯源）。"""
+        actual_type = _infer_payload_type(payload)
+        if expected_type in _TYPED_PREFIXES and actual_type is not None and actual_type != expected_type:
+            resolution.status = RefResolutionStatus.TYPE_MISMATCH
+            resolution.detail = f"reloaded_from_durable_spill type mismatch: expected {expected_type}, got {actual_type}"
+            return resolution
+        resolution.actual_type = actual_type
+        resolution.status = RefResolutionStatus.RESOLVED
+        resolution.detail = "reloaded_from_durable_spill"
+        return resolution
+
     async def resolve(session_id: str, ref: str) -> RefResolution:
         m = _REF_RE.match(ref or "")
         if not m:
@@ -62,6 +94,10 @@ def make_session_store_resolver(session_store: Any):
         if ref_exists is not None and get_descriptor is not None:
             try:
                 if not await ref_exists(session_id, ref):
+                    # ADR-0104 #6(f)：内存 miss ≠ 终局 —— 先查持久副本再下 NOT_FOUND。
+                    spilled = await _load_durable_spill(session_id, ref)
+                    if spilled is not None:
+                        return _apply_spilled_payload(resolution, expected_type, spilled)
                     resolution.status = RefResolutionStatus.NOT_FOUND
                     resolution.detail = "ref not present in session store"
                     return resolution
@@ -87,6 +123,10 @@ def make_session_store_resolver(session_store: Any):
             return resolution
 
         if payload is None:
+            # ADR-0104 #6(f)：全量路径 miss 同样先查持久副本再下 NOT_FOUND。
+            spilled = await _load_durable_spill(session_id, ref)
+            if spilled is not None:
+                return _apply_spilled_payload(resolution, expected_type, spilled)
             resolution.status = RefResolutionStatus.NOT_FOUND
             resolution.detail = "ref not present in session store"
             return resolution

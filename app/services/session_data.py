@@ -1,9 +1,14 @@
 """会话数据管理器 - 存储大对象并提供游标引用"""
 import asyncio
 import copy
+import hashlib
+import json
 import os
+import shutil
+import time
 import uuid
 import logging
+from pathlib import Path
 from typing import Any, Optional
 from collections import OrderedDict, deque
 from datetime import datetime, timezone
@@ -15,6 +20,198 @@ logger = logging.getLogger(__name__)
 # V3 闭环：每 session 地图动作 ACK 上限（超出按插入序淘汰最旧）。
 # Redis 后端（session_data_redis）同名常量必须保持一致（ADR-0035 协议对齐）。
 MAX_MAP_ACTION_EVENTS = 200
+
+
+# ── ADR-0104 决策 #6(f)：RELOAD_REF 持久化（durable session-side spill）──────
+# 既有 LRU/字节预算淘汰（store() 内 while 循环）会把 payload+alias+descriptor
+# 永久删除 —— 之后模型再引用该 ref 只能得到"引用的 ref/alias 不存在"。淘汰时
+# 先把 payload 落到本会话专属的持久副本（有界、原子写、TTL 对齐会话生命周期），
+# ref_resolver 在 NOT_FOUND 前先回退查这份副本（ref→durable），并盖 reload 溯源。
+#
+# 开关 GIS_REF_SPILL=0 关闭（默认开）；GIS_REF_SPILL_DIR 覆盖落盘根目录；
+# GIS_REF_SPILL_TTL_S / GIS_REF_SPILL_MAX_BYTES 界定 TTL 与每 session 字节上限。
+# 仅内存后端接此钩子（Redis 后端本身已有会话级持久性）。
+
+_REF_SPILL_FALSE_VALUES = {"0", "false", "no", "off"}
+
+#: TTL 默认 24h —— 与会话生命周期对齐的保守上界（clear_session 会主动 purge）。
+REF_SPILL_TTL_S = int(os.getenv("GIS_REF_SPILL_TTL_S", "86400"))
+#: 每 session 持久副本字节上限（超出按 mtime 淘汰最旧）。
+REF_SPILL_MAX_SESSION_BYTES = int(os.getenv("GIS_REF_SPILL_MAX_BYTES", str(32 * 1024 * 1024)))
+#: 单个 payload 落盘上限（更大的 payload 不 spill —— 有界磁盘占用优先）。
+REF_SPILL_MAX_SINGLE_BYTES = int(os.getenv("GIS_REF_SPILL_MAX_SINGLE_BYTES", str(8 * 1024 * 1024)))
+
+
+def ref_spill_enabled() -> bool:
+    return os.getenv("GIS_REF_SPILL", "1").strip().lower() not in _REF_SPILL_FALSE_VALUES
+
+
+class RefSpillStore:
+    """Evicted ref payload 的持久副本库（per-session 隔离、有界、原子写、TTL）。
+
+    - 布局：``<root>/<sha256(session_id)[:24]>/<sha256(ref_id)[:24]>.json``，
+      envelope 为 ``{"ref_id", "spilled_at", "data"}``；session_id/ref_id 不直接
+      出现在路径里（防路径注入）。
+    - 原子写：先写同目录临时文件再 ``os.replace``（同文件系统原子）。
+    - 有界：单 payload ≤ REF_SPILL_MAX_SINGLE_BYTES；每 session 总量 ≤
+      REF_SPILL_MAX_SESSION_BYTES（超出按 mtime 淘汰最旧）。
+    - TTL：读路径惰性过期（mtime 距今超 TTL → 删除并按 miss 处理）；
+      ``purge_session`` 在 clear_session 时主动清目录。
+    - 全部方法为同步磁盘 I/O，调用方（store/evict 热路径）负责 ``to_thread``。
+    - 任何失败都只降级为"无持久副本"（返回 False/None），绝不阻断调用方。
+    """
+
+    def __init__(
+        self,
+        root_dir: Optional[str] = None,
+        *,
+        ttl_s: int = REF_SPILL_TTL_S,
+        max_session_bytes: int = REF_SPILL_MAX_SESSION_BYTES,
+        max_single_bytes: int = REF_SPILL_MAX_SINGLE_BYTES,
+    ) -> None:
+        self._root_override = root_dir
+        self._ttl_s = ttl_s
+        self._max_session_bytes = max_session_bytes
+        self._max_single_bytes = max_single_bytes
+
+    # -- paths ------------------------------------------------------------
+    def root_dir(self) -> Path:
+        if self._root_override:
+            return Path(self._root_override)
+        env_dir = os.getenv("GIS_REF_SPILL_DIR")
+        if env_dir:
+            return Path(env_dir)
+        try:
+            from app.core.config import settings
+            # 默认落 DATA_DIR（与 mapspec/checkpoint 同一部署矩阵契约 #760：
+            # k8s/compose 均挂共享卷；TMP_DIR 在容器层，重启即丢，撑不起
+            # "durable" 语义）。
+            base = getattr(settings, "DATA_DIR", "") or "./data"
+        except Exception:  # noqa: BLE001 — 配置不可用时退到相对 data
+            base = "./data"
+        return Path(base) / "ref_spill"
+
+    @staticmethod
+    def _session_dir_name(session_id: str) -> str:
+        return hashlib.sha256(str(session_id).encode("utf-8")).hexdigest()[:24]
+
+    @staticmethod
+    def _ref_file_name(ref_id: str) -> str:
+        return hashlib.sha256(str(ref_id).encode("utf-8")).hexdigest()[:24] + ".json"
+
+    def _session_dir(self, session_id: str) -> Path:
+        return self.root_dir() / self._session_dir_name(session_id)
+
+    def _ref_path(self, session_id: str, ref_id: str) -> Path:
+        return self._session_dir(session_id) / self._ref_file_name(ref_id)
+
+    # -- core API ----------------------------------------------------------
+    def spill(self, session_id: str, ref_id: str, data: Any) -> bool:
+        """持久化一份 evicted payload。返回 True = 落盘成功。"""
+        if not ref_spill_enabled() or data is None:
+            return False
+        try:
+            envelope = json.dumps(
+                {
+                    "ref_id": str(ref_id),
+                    "spilled_at": datetime.now(timezone.utc).isoformat(),
+                    "data": data,
+                },
+                ensure_ascii=False,
+                default=str,
+            )
+            blob = envelope.encode("utf-8")
+        except Exception as e:  # noqa: BLE001 — 不可序列化的 payload 不 spill
+            logger.debug("ref spill serialize failed for %s: %s", ref_id, e)
+            return False
+        if len(blob) > self._max_single_bytes:
+            return False
+        sdir = self._session_dir(session_id)
+        try:
+            sdir.mkdir(parents=True, exist_ok=True)
+            self._enforce_session_cap(sdir, incoming=len(blob))
+            final = self._ref_path(session_id, ref_id)
+            tmp = final.with_name(final.name + f".tmp{os.getpid()}")
+            tmp.write_bytes(blob)
+            os.replace(tmp, final)
+            return True
+        except Exception as e:  # noqa: BLE001 — spill 永不阻断淘汰主路径
+            logger.debug("ref spill write failed for %s: %s", ref_id, e)
+            return False
+
+    def _enforce_session_cap(self, sdir: Path, incoming: int) -> None:
+        entries = []
+        total = 0
+        for p in sdir.glob("*.json"):
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            entries.append((st.st_mtime, st.st_size, p))
+            total += st.st_size
+        if total + incoming <= self._max_session_bytes:
+            return
+        for _mtime, size, p in sorted(entries):  # 最旧（mtime 最小）先淘汰
+            if total + incoming <= self._max_session_bytes:
+                break
+            try:
+                p.unlink()
+                total -= size
+            except OSError:
+                continue
+
+    def _expired(self, path: Path) -> bool:
+        try:
+            age = time.time() - path.stat().st_mtime
+        except OSError:
+            return True
+        if age <= self._ttl_s:
+            return False
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        return True
+
+    def has(self, session_id: str, ref_id: str) -> bool:
+        """持久副本是否存在（未过期）。"""
+        if not ref_spill_enabled():
+            return False
+        p = self._ref_path(session_id, ref_id)
+        try:
+            if not p.is_file():
+                return False
+        except OSError:
+            return False
+        return not self._expired(p)
+
+    def load(self, session_id: str, ref_id: str) -> Optional[Any]:
+        """读取持久副本 payload；miss/过期/损坏 → None。"""
+        if not ref_spill_enabled():
+            return None
+        p = self._ref_path(session_id, ref_id)
+        try:
+            if not p.is_file() or self._expired(p):
+                return None
+            envelope = json.loads(p.read_bytes().decode("utf-8"))
+        except Exception as e:  # noqa: BLE001 — 损坏副本按 miss 处理（不静默成功）
+            logger.debug("ref spill read failed for %s: %s", ref_id, e)
+            return None
+        if not isinstance(envelope, dict) or "data" not in envelope:
+            return None
+        return envelope["data"]
+
+    def purge_session(self, session_id: str) -> None:
+        """会话生命周期终点：清掉该 session 的全部持久副本。"""
+        try:
+            shutil.rmtree(self._session_dir(session_id), ignore_errors=True)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("ref spill purge failed for %s: %s", session_id, e)
+
+
+#: 进程级单例（内存后端淘汰钩子 / ref_resolver 回退共用）。
+ref_spill_store = RefSpillStore()
+
 
 class MemorySessionStore(BaseSessionStore):
 
@@ -115,7 +312,16 @@ class MemorySessionStore(BaseSessionStore):
         total_bytes = self._session_bytes.get(session_id, 0)
 
         while session_cache and (len(session_cache) >= self.capacity or (total_bytes + _new_size > _max_bytes and total_bytes > 0)):
-            oldest_ref, _ = session_cache.popitem(last=False)
+            # ADR-0104 #6(f)：淘汰前先把 payload 落持久副本（RELOAD_REF 回退的
+            # "durable"半边）。peek→spill→pop；spill 失败绝不阻断淘汰本身。
+            oldest_ref = next(iter(session_cache))
+            evict_data = session_cache.get(oldest_ref)
+            if evict_data is not None:
+                try:
+                    await asyncio.to_thread(ref_spill_store.spill, session_id, oldest_ref, evict_data)
+                except Exception as e:  # noqa: BLE001 — spill 是增值面，失败只降级
+                    logger.debug(f"Session {session_id}: spill {oldest_ref} failed: {e}")
+            session_cache.popitem(last=False)
             total_bytes -= sizes.pop(oldest_ref, 0)
             self._remove_alias_by_ref(session_id, oldest_ref)
             if session_id in self._descriptors:
@@ -583,6 +789,11 @@ class MemorySessionStore(BaseSessionStore):
         self._ref_sizes.pop(session_id, None)
         self._session_bytes.pop(session_id, None)
         self._session_order.pop(session_id, None)
+        # ADR-0104 #6(f)：会话终点同步清持久副本（TTL 的主动半边）。
+        try:
+            ref_spill_store.purge_session(session_id)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Session {session_id}: ref spill purge failed: {e}")
         from app.services.mvt import spatial_index_cache, tile_lru_cache
         spatial_index_cache.invalidate_session(session_id)
         tile_lru_cache.invalidate_session(session_id)

@@ -79,14 +79,21 @@ class BudgetPlan:
     reserved_output: int
     usable: int
     category_budgets: Dict[str, int]
+    # ADR-0104 #6(h)：窗口未知（LLM_CONTEXT_WINDOW 未配置）时 False —— 规划仍按
+    # 保守 8k 走，但度量层不再把"对假想窗口超支"断言为必然违规（window_unknown）。
+    window_known: bool = True
 
     def as_dict(self) -> Dict[str, Any]:
-        return {
+        out = {
             "context_window": self.context_window,
             "reserved_output": self.reserved_output,
             "usable": self.usable,
             "category_budgets": dict(self.category_budgets),
         }
+        # 窗口已知时保持历史 dict 形态（只在不诚实的新情形追加键）。
+        if not self.window_known:
+            out["window_known"] = False
+        return out
 
 
 @dataclass
@@ -114,9 +121,12 @@ class BudgetReport:
     violations: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     by_category: Dict[str, int] = field(default_factory=dict)
+    # ADR-0104 #6(h)：True = 窗口未配置，over_budget 不作数（诚实未知，不再
+    # 把"对保守 8k 假想窗口超支"报告成必然违规）。仅在 True 时进入 as_dict()。
+    window_unknown: bool = False
 
     def as_dict(self) -> Dict[str, Any]:
-        return {
+        out = {
             "total_est_tokens": self.total_est_tokens,
             "usable": self.usable,
             "over_budget": self.over_budget,
@@ -124,6 +134,9 @@ class BudgetReport:
             "warnings": list(self.warnings),
             "by_category": dict(self.by_category),
         }
+        if self.window_unknown:
+            out["window_unknown"] = True
+        return out
 
 
 def plan_budget(
@@ -143,9 +156,14 @@ def plan_budget(
     3. tool schema 类预算 = min(可用 × tool_schema_fraction, 12k)；
     4. 其余类别共享剩余（规划层不细分到每类 —— 度量层按实际用量判定）。
     """
-    if context_window <= 0:
-        # 未知 context window：保守按 8k 窗口规划（宁可误报不漏报）
+    if context_window is None or context_window <= 0:
+        # 未知 context window：保守按 8k 窗口规划（宁可误报不漏报）；
+        # ADR-0104 #6(h)：window_known=False —— 度量层据此降级为 window_unknown，
+        # 不再把对假想窗口的超支断言为必然违规（慢性假 over_budget，audit #6）。
+        window_known = False
         context_window = 8192
+    else:
+        window_known = True
     reserved = max(int(max_output_tokens or 0), int(context_window * output_reserve_fraction))
     reserved = min(reserved, context_window // 2)
     usable = max(0, context_window - reserved)
@@ -163,6 +181,7 @@ def plan_budget(
         reserved_output=reserved,
         usable=usable,
         category_budgets=category_budgets,
+        window_known=window_known,
     )
 
 
@@ -187,6 +206,27 @@ def measure_components(
                 f"over_limit:{item.name}:{est}>{limit}"
             )
     over = total > plan.usable
+    if not plan.window_known:
+        # ADR-0104 #6(h)：窗口未知 → 不把对保守 8k 假想窗口的超支断言为必然
+        # 违规（ Chronic false over_budget）。诚实报告 window_unknown，组件级
+        # over_limit（如 HISTORY 6000 软预算）不受影响——那是与窗口无关的真约束。
+        if over:
+            warnings.append(
+                f"window_unknown:total:{total}>conservative_usable:{plan.usable}"
+            )
+        else:
+            warnings.append(
+                f"window_unknown:context_window_unset;total:{total}/{plan.usable}"
+            )
+        return BudgetReport(
+            total_est_tokens=total,
+            usable=plan.usable,
+            over_budget=False,
+            violations=violations,
+            warnings=warnings,
+            by_category=by_category,
+            window_unknown=True,
+        )
     if over:
         violations.append(f"over_budget:total:{total}>{plan.usable}")
     elif total >= plan.usable * _WARN_FRACTION:
@@ -336,7 +376,11 @@ class GisBudgetAdvisor:
             section_used[section] = used + est + int(est * 0.4)
         total = sum(by_section.values())
         overflow_reason = None
-        if total > plan.usable:
+        if not plan.window_known:
+            # ADR-0104 #6(h)：窗口未知 → 不产出 total>usable 的必然违规断言，
+            # 分区 cap 建议保留（相对比例仍有参考价值），但溢出判定诚实未知。
+            overflow_reason = None
+        elif total > plan.usable:
             overflow_reason = f"total:{total}>{plan.usable}"
         elif total >= plan.usable * _WARN_FRACTION:
             overflow_reason = f"near_budget:{total}/{plan.usable}"
@@ -346,6 +390,7 @@ class GisBudgetAdvisor:
             actions=actions,
             overflow_reason=overflow_reason,
             total_est_tokens=total,
+            window_known=plan.window_known,
         )
 
 
@@ -358,13 +403,15 @@ class GisBudgetAdvice:
     actions: List[Dict[str, Any]]
     overflow_reason: Optional[str]
     total_est_tokens: int
+    # ADR-0104 #6(h)：False = 窗口未配置（规划按保守 8k），overflow_reason 不作数。
+    window_known: bool = True
 
     @property
     def reserved_output(self) -> int:
         return self.plan.reserved_output
 
     def as_dict(self) -> Dict[str, Any]:
-        return {
+        out = {
             "context_window": self.plan.context_window,
             "reserved_output": self.plan.reserved_output,
             "usable": self.plan.usable,
@@ -373,3 +420,6 @@ class GisBudgetAdvice:
             "actions": [dict(a) for a in self.actions],
             "overflow_reason": self.overflow_reason,
         }
+        if not self.window_known:
+            out["window_known"] = False
+        return out
