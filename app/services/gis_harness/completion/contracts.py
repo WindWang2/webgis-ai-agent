@@ -211,15 +211,28 @@ def evaluate_completion_contract(
     owed_codes = {
         str(o.get("warning_code")) for o in uncertainty_owed if o.get("warning_code")
     }
+    owed_ids = {str(o.get("obligation_id")) for o in uncertainty_owed}
     explicit_codes = {
         str(d.get("code") or "")
         for d in chapter.get("uncertainty_disclosures") or []
         if isinstance(d, dict)
     }
     disclosed_warning_codes = {str(w.get("code")) for w in mw if w.get("code")}
-    uncertainty_evidence = bool(owed_codes) and bool(
-        (owed_codes & explicit_codes) or (owed_codes & disclosed_warning_codes)
-    )
+    # re-review LOW：owed 义务可能无 warning_code（schema 允许空串）——
+    # 退化到 obligation_id 匹配（义务联动的 warnings 载荷携带 id）；两者
+    # 皆无机器标识的 owed 义务以「任意显式披露在场」作保守证据。
+    disclosed_ids = {
+        str(w.get("obligation_id") or "")
+        for w in mw if isinstance(w, dict) and w.get("obligation_id")
+    }
+    if owed_codes:
+        uncertainty_evidence = bool(
+            (owed_codes & explicit_codes) or (owed_codes & disclosed_warning_codes)
+            or (owed_ids & disclosed_ids)
+        )
+    else:
+        uncertainty_evidence = bool(explicit_codes) or bool(disclosed_ids)
+    uncertainty_evidence = uncertainty_evidence and bool(uncertainty_owed)
     uncertainty_ok = not any(
         str(o.get("kind")) == "uncertainty" and str(o.get("status")) == "blocked"
         for o in obligations

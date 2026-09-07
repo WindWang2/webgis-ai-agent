@@ -192,6 +192,12 @@ async def simulate_agent_loop(
             report.violations.append(
                 f"step {idx}: expected ok, got error {view.error_code}: {view.message[:80]}"
             )
+        # re-review LOW：expect_outcome="error" 且未指名错误码时同样断言
+        # （否则「缺 ref → 结构化错误」类案例对错误形态零约束）。
+        if step.expect_outcome == "error" and view.ok and step.expect_error_code is None:
+            report.violations.append(
+                f"step {idx}: expected error, got ok"
+            )
 
         # 不变量 c：no-progress 模式联动（工具类别由描述符声明 —— 波 1 语义
         # 分类驱动波 6 模式检测的闭环）

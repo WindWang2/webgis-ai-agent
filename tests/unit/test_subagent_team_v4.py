@@ -643,3 +643,39 @@ async def test_spawn_subagent_parallel_tasks_validation(tool_registry):
         session_id="sess-v4-pv",
     )
     assert res["success"] is False and res["code"] == "VALIDATION_ERROR"
+
+
+# ─── dispatch 边界成员校验（review R2 MAJOR-8 负向测试）──────────────────
+
+def test_allowlist_proxy_rejects_hidden_tools():
+    """白名单外的工具名在 dispatch 边界拒绝（TOOL_NOT_ALLOWLISTED）——
+    注入的子代理 LLM 无法凭确切工具名绕过 schema 可见性限制。"""
+    import app.services.subagent as sub_mod
+
+    class _Inner:
+        calls = []
+
+        def dispatch(self, tool_name, *args, **kwargs):
+            self.calls.append(tool_name)
+            return {"success": True, "tool": tool_name}
+
+        def get_schemas_subset(self, names):
+            return [{"function": {"name": n}} for n in names]
+
+        def anything_else(self):
+            return "delegated"
+
+    inner = _Inner()
+    proxy = sub_mod.AllowlistDispatchRegistry(inner, {"echo"})
+    # 白名单内 → 放行
+    res = proxy.dispatch("echo", {"v": 1})
+    assert res["success"] is True
+    # 白名单外（隐藏变更工具）→ 拒绝，inner.dispatch 未被触达
+    res = proxy.dispatch("wipe_everything", {"confirm": True})
+    assert res["success"] is False
+    assert res["code"] == "TOOL_NOT_ALLOWLISTED"
+    assert inner.calls == ["echo"]
+    # schema 面也收窄到白名单
+    assert [s["function"]["name"] for s in proxy.get_schemas()] == ["echo"]
+    # 其余属性委托真 registry（narrowing-only）
+    assert proxy.anything_else() == "delegated"

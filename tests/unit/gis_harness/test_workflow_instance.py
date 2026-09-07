@@ -583,3 +583,50 @@ async def test_kill_switch_disables_service(clean_session, monkeypatch):
     await _save_plan(clean_session, ch)
     monkeypatch.setenv("GIS_WORKFLOW_INSTANCE", "0")
     assert await maybe_update_workflow_instance(clean_session, reason="t") is None
+
+
+# ── 12. 真实 V2 recipe 对账（review R2 re-review：不得再用无画像 recipe）──
+
+def test_unblock_parity_with_real_v2_recipe():
+    """真实 V2 recipe（admin_feature_audit，subject←poi_query，block）：
+    available 行产生真实解除候选，method/obligations 逐字保留。"""
+    contract = {
+        "recipe_id": "admin_feature_audit",
+        "roles": [
+            {"role": "subject", "status": "unresolved", "required": True,
+             "missing_policy": "block", "capability_hint": "poi_query"},
+        ],
+        "obligations": [{"obligation_id": "obl-1", "kind": "disclosure",
+                         "status": "warning"}],
+        "method_blockers": ["obl-1"],
+        "data_blockers": ["subject"],
+    }
+    ch = _chapter(recipe_id="admin_feature_audit", contract=contract)
+    # 把首行换成 recipe 真实绑定的 capability（subject ← poi_query）
+    ch["data_requirements"][0]["capability"] = "poi_query"
+    # failed 行：无新绑定证据 → None
+    for row in ch["data_requirements"]:
+        if row["capability"] == "poi_query":
+            row["status"] = "failed"
+            row["bound_ref"] = "ref:dead"
+    assert derive_unblock_contract(ch) is None
+
+    # available 行 → 真实候选：subject 解除、method/obligations 原样
+    for row in ch["data_requirements"]:
+        if row["capability"] == "poi_query":
+            row["status"] = "available"
+            row["bound_ref"] = "ref:live"
+    candidate = derive_unblock_contract(ch)
+    assert candidate is not None, "real V2 recipe must produce an unblock candidate"
+    assert candidate["data_blockers"] == []
+    assert candidate["method_blockers"] == ["obl-1"]
+    assert candidate["obligations"] == [{"obligation_id": "obl-1",
+                                         "kind": "disclosure",
+                                         "status": "warning"}]
+    roles = {r["role"]: r for r in candidate["roles"]}
+    assert roles["subject"]["status"] == "bound"
+    assert roles["subject"]["bound_ref"] == "ref:live"
+    # 解除候选驱动科学维裁决（端到端：derive → direction=unblocked）
+    block = _derive(ch, recomputed_contract=candidate)
+    assert block.science.direction == "unblocked"
+    assert block.science.method_blockers == ["obl-1"]

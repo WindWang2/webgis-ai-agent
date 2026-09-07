@@ -494,7 +494,7 @@ def derive_workflow_instance(
     - StateRevision 在状态内容变化时 +1（内容不变则保持——同输入同输出）；
     - 转移记录环形合并（≤MAX_TRANSITIONS）。
 
-    ``recomputed_contract``（可选）是 ``recompute_workflow_contract`` 的
+    ``recomputed_contract``（可选）是 ``derive_unblock_contract`` 的
     输出：提供时科学维比较重算 vs ``science_baseline``（缺省 = 章节当前
     contract）。``science_baseline`` 是比较基准——服务回写 contract 后的
     重派生必须仍对**写前**契约裁决（否则方向被洗成 equal）。

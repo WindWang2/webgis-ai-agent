@@ -28,7 +28,7 @@ E2E 场景 7 个（目标 ≥100）。
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 # ── 人审定的 runtime 情境表（期望码 + 回归可追溯性）─────────────────────
 

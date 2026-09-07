@@ -332,9 +332,12 @@ class DatasetProfile(BaseModel):
         # review R2 MAJOR-4：尊重输入画像的 fields_status —— 非 explicit
         # 来源（截断/未知 schema）不得因「fields 非空」被洗成显式权威
         # schema（下游空列表 = 证伪证据的权威规则会被截断面误触发）。
-        input_status = str(p.get("fields_status") or "")
-        if input_status.lower() != "explicit":
-            input_status = "explicit" if fields else "unknown"
+        # re-review MEDIUM-1 修正：显式 schema 必须**被声明**才成立 ——
+        # 未声明（或声明为 unknown/truncated）一律保持 unknown（即使字段
+        # 列表非空：部分字段 ≠ 权威 schema，空列表在下游 = 证伪证据）。
+        input_status = str(p.get("fields_status") or "").strip().lower()
+        if input_status != "explicit":
+            input_status = "unknown"
         return cls(
             source="spatial_profile",
             feature_count=(

@@ -208,6 +208,37 @@ def select_tools_for_subagent(
 # ─────────────────────────── 派遣器 ──────────────────────────
 
 
+class AllowlistDispatchRegistry:
+    """dispatch 边界成员校验代理（review R2 MAJOR-8）。
+
+    包装真 registry：白名单之外的工具名在 dispatch 边界拒绝（结构化
+    TOOL_NOT_ALLOWLISTED，不执行），其余属性全部委托（narrowing-only）。
+    模块级定义以便直接测试。
+    """
+
+    def __init__(self, inner: Any, allowed: "set[str]") -> None:
+        self._inner = inner
+        self._allowed = allowed
+
+    def dispatch(self, tool_name: str, *args: Any, **kwargs: Any):
+        if tool_name not in self._allowed:
+            return {
+                "success": False,
+                "error": (
+                    f"工具 {tool_name} 不在本子代理的授权工具面内 "
+                    "(subagent tool allowlist)"
+                ),
+                "code": "TOOL_NOT_ALLOWLISTED",
+            }
+        return self._inner.dispatch(tool_name, *args, **kwargs)
+
+    def get_schemas(self, *args: Any, **kwargs: Any):
+        return self._inner.get_schemas_subset(self._allowed)
+
+    def __getattr__(self, item: str):
+        return getattr(self._inner, item)
+
+
 class SubagentDispatcher:
     """对接到主 ChatEngine 之外、按需启动短生命周期子代理的派遣器。
 
@@ -676,31 +707,6 @@ class SubagentDispatcher:
 
         allowed_names = {s["function"]["name"] for s in tool_subset}
 
-        class _AllowlistedRegistry:
-            """dispatch 边界成员校验（narrowing-only：一切委托真 registry）。"""
-
-            def __init__(self, inner, allowed):
-                self._inner = inner
-                self._allowed = allowed
-
-            def dispatch(self, tool_name, *args, **kwargs):
-                if tool_name not in self._allowed:
-                    return {
-                        "success": False,
-                        "error": (
-                            f"工具 {tool_name} 不在本子代理的授权工具面内 "
-                            "(subagent tool allowlist)"
-                        ),
-                        "code": "TOOL_NOT_ALLOWLISTED",
-                    }
-                return self._inner.dispatch(tool_name, *args, **kwargs)
-
-            def get_schemas(self, *args, **kwargs):
-                return self._inner.get_schemas_subset(self._allowed)
-
-            def __getattr__(self, item):
-                return getattr(self._inner, item)
-
         class _FrozenCatalog:
             """只返回 tool_subset 的 catalog stub，禁用粘性 / 关键词匹配。
 
@@ -734,7 +740,7 @@ class SubagentDispatcher:
                 return set()
 
         engine = ChatEngine(
-            _AllowlistedRegistry(self.registry, allowed_names),
+            AllowlistDispatchRegistry(self.registry, allowed_names),
             tool_catalog=_FrozenCatalog(tool_subset),
             is_subagent_engine=True,
         )
