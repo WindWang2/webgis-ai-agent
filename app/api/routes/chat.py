@@ -778,7 +778,8 @@ async def chat_completions(
                     )
 
                     await maybe_finalize_map_product(
-                        pi_session_id, reason="turn_settled"
+                        pi_session_id, reason="turn_settled",
+                        final_gate=True,
                     )
                 except Exception as e:  # noqa: BLE001 — 终验是披露面，不阻断响应
                     logger.warning(

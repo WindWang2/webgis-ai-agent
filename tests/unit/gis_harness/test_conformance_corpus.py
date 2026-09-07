@@ -1,8 +1,9 @@
 """Conformance Corpus（C9）+ Anti-Claim（C10）+ Scenarios（C11）回归锁。
 
 不变式：
-- 语料规模 ≥2500（40 语义族 × 语言 × scope × 句式），确定性生成；
-- 全量 plan-tier 必须零失败（语义身份不变量：同族所有表述同 task/recipe）；
+- 语料规模 ≥20000（59 语义族 × 语言 × 12 scope × 9 句式），确定性生成；
+- 语义身份不变量：同族所有表述同 task/recipe —— 全量 20,088 案例实测
+  ≈20s，直接进默认车道；分层抽样与领域切片作为快速反馈面保留；
 - anti-claim 反声明契约（分母/准则/受体/显著性语义分界）零失败；
 - workflow 契约案例（义务联动/降级/阻断/verdict V2）零失败；
 - 全部 V2 recipe（147）可完整编译（registry 覆盖烟测）；
@@ -27,7 +28,7 @@ from app.evaluation.conformance import (
 @pytest.mark.asyncio
 async def test_corpus_size_and_determinism():
     cases = build_conformance_corpus()
-    assert len(cases) >= 2500, f"conformance corpus must stay >= 2500, got {len(cases)}"
+    assert len(cases) >= 20000, f"conformance corpus must stay >= 20000, got {len(cases)}"
     again = build_conformance_corpus()
     assert [c.id for c in cases] == [c.id for c in again]
     assert [c.query for c in cases] == [c.query for c in again]
@@ -37,7 +38,12 @@ async def test_corpus_size_and_determinism():
 
 @pytest.mark.asyncio
 async def test_corpus_full_run_green():
-    """全量语义一致性：任一失败 = 产品语义回归（task/recipe/能力/警告码）。"""
+    """全量语义一致性（20,088 案例实测 ≈20s，离线零 LLM）。
+
+    review R3：实测远低于此前「数分钟级」估计 —— 移回默认车道（不再挂
+    perf 标记），默认 CI 即锁定全量语义身份。任一失败 = 产品语义回归
+    （task/recipe/能力/警告码）。
+    """
     from app.evaluation.runner import GISBenchmarkRunner
 
     cases = build_conformance_corpus()
@@ -47,12 +53,32 @@ async def test_corpus_full_run_green():
 
 
 @pytest.mark.asyncio
-async def test_corpus_domain_slice_green():
-    """分片运行（CI 友好）：单领域切片同样零失败。"""
+async def test_corpus_stratified_sample_green():
+    """默认车道：确定性分层抽样（每族语言 × scope × 句式各取代表）。
+
+    抽样规则确定性（cases 已按 id 排序，步长切片零随机）——语义身份
+    不变量的抽样面覆盖全部 59 族；全量契约由 perf 标记的完整运行锁定。
+    """
     from app.evaluation.runner import GISBenchmarkRunner
 
-    cases = build_conformance_corpus(domains=["terrain", "hydrology"])
-    assert cases, "terrain/hydrology slice must exist"
+    cases = build_conformance_corpus()
+    sample = cases[::37]           # 20088 / 37 ≈ 543 案例切片
+    assert len(sample) >= 400
+    assert {c.id.split("-")[1] for c in sample} <= {
+        c.id.split("-")[1] for c in cases}
+    results = await GISBenchmarkRunner().run(sample)
+    failed = [(r.case_id, r.failures) for r in results if not r.passed]
+    assert failed == [], f"{len(failed)} regressions in sample: {failed[:5]}"
+
+
+@pytest.mark.asyncio
+async def test_corpus_domain_slice_green():
+    """分片运行（CI 友好）：领域切片同样零失败（V3 扩容族所在片）。"""
+    from app.evaluation.runner import GISBenchmarkRunner
+
+    cases = build_conformance_corpus(
+        domains=["terrain", "hydrology", "network", "statistics"])
+    assert cases, "slice must exist"
     results = await GISBenchmarkRunner().run(cases)
     failed = [r.case_id for r in results if not r.passed]
     assert failed == []
@@ -113,7 +139,7 @@ def test_v2_recipe_compilation_coverage():
                      "fields": {"value": {"type": "number"},
                                 "population": {"type": "number"}}},
         )
-        assert len(compilation.stages) == 12, f"{rid}: stages {len(compilation.stages)}"
+        assert len(compilation.stages) == 15, f"{rid}: stages {len(compilation.stages)}"
         blocked = [s for s in compilation.stages if s.status == "blocked"]
         # 编译blocked 仅允许来自义务阻断（科学诚实），不允许编译器自身失败
         for s in blocked:

@@ -314,9 +314,105 @@ class GISBenchmarkRunner:
             "algorithm_correct": not forbidden_hits and (case.allowed_algorithms is None or ok),
             # None = case declares no honesty contract (not checked ≠ passed)
             "methodology_honesty_ok": honesty_ok,
+            # ── V3 semantic planning metrics（Goal §十二）────────────────
+            # 本体任务匹配（top-1 == 期望本体任务；None = 未声明契约）
+            "ontology_top1_correct": None,
+            # recipe 选择命中（exact 或集合成员；None = 无 recipe 契约）
+            "recipe_selection_correct": (
+                (plan.recipe_id in case.expected_recipes)
+                if case.expected_recipes
+                else (plan.recipe_id == case.expected_recipe)
+                if case.expected_recipe else None
+            ),
+            # 过度分析（false-positive professional）：声明 forbidden 警告码
+            # 的描述性请求不得携带专业义务噪声（None = 未声明）
+            "no_false_professional_analysis": (
+                not (set(case.forbidden_warning_codes) & got_codes)
+                if case.forbidden_warning_codes else None
+            ),
+            # 不必要工具数（resolved 超出期望能力的部分；报告面指标）
+            "unnecessary_tool_count": max(
+                0, len(resolved_set - expected_set - set(case.optional_capabilities))),
+            # 数据资格状态 / 回退层 / 规划确定性（opt-in 契约；None = 未声明）
+            "qualification_states_correct": None,
+            "fallback_tier_correct": None,
+            "planning_deterministic": None,
         }
+        v3_failures, v3_metrics = self._run_v3_contract_tier(case, intent, plan)
+        failures.extend(v3_failures)
+        metrics.update(v3_metrics)
         evidence["metrics"] = metrics
         return evidence, failures
+
+    def _run_v3_contract_tier(
+        self, case: GISBenchmarkCase, intent: Any, plan: Any
+    ) -> Tuple[List[str], Dict[str, Any]]:
+        """V3 语义契约层（全部 opt-in，零声明零开销）。
+
+        - 本体匹配：intent 的本体 top-1 对齐 expected_ontology_task；
+        - 数据资格/回退：带 qualification_profile 走 compile_workflow 复评
+          （qualify_data 四态 + fallback_v3 层裁决）；
+        - 规划确定性：双跑 plan tier 对齐（check_determinism）。
+        """
+        failures: List[str] = []
+        metrics: Dict[str, Any] = {
+            "ontology_top1_correct": None,
+            "qualification_states_correct": None,
+            "fallback_tier_correct": None,
+            "planning_deterministic": None,
+        }
+
+        if case.expected_ontology_task:
+            from app.services.gis_harness.gis_ontology import match_task_ontology
+
+            matches = match_task_ontology(intent, limit=1)
+            top1 = matches[0].task_id if matches else ""
+            metrics["ontology_top1_correct"] = top1 == case.expected_ontology_task
+            if top1 != case.expected_ontology_task:
+                failures.append(
+                    f"ontology: expected top-1 {case.expected_ontology_task}, got {top1!r}"
+                )
+
+        if case.qualification_profile is not None:
+            from app.services.gis_harness.workflow_compiler import compile_workflow
+
+            compilation = compile_workflow(
+                case.query, profile=case.qualification_profile)
+            quals = {q.get("role"): q.get("state")
+                     for q in compilation.data_qualifications}
+            for role, expected_state in case.expected_qualification.items():
+                got = quals.get(role)
+                if got != expected_state:
+                    failures.append(
+                        f"qualification[{role}]: expected {expected_state}, got {got}"
+                    )
+            metrics["qualification_states_correct"] = (
+                all(quals.get(r) == s
+                    for r, s in case.expected_qualification.items())
+                if case.expected_qualification else None
+            )
+            if case.expected_fallback_tier:
+                got_tier = (compilation.fallback_resolution or {}).get("tier")
+                metrics["fallback_tier_correct"] = got_tier == case.expected_fallback_tier
+                if got_tier != case.expected_fallback_tier:
+                    failures.append(
+                        f"fallback tier: expected {case.expected_fallback_tier}, got {got_tier}"
+                    )
+
+        if case.check_determinism:
+            from app.services.gis_harness.planner import MapProductPlanner
+            from app.services.gis_harness.intent import resolve_map_request_intent
+
+            planner2 = MapProductPlanner()
+            intent2 = resolve_map_request_intent(case.query)
+            plan2 = planner2.plan_from_intent(
+                intent2, available_tools=self._tool_names() or None, use_memo=False)
+            dump1 = plan.model_dump(mode="json")
+            dump2 = plan2.model_dump(mode="json")
+            metrics["planning_deterministic"] = dump1 == dump2
+            if dump1 != dump2:
+                failures.append("planning determinism: double run diverged")
+        return failures, metrics
 
     def _check_facet_contract(
         self, plan: Any, expected_facets: List[str]

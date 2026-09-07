@@ -201,6 +201,28 @@ async def run_map_finalization(
     else:
         result.viewport_status = "not_applicable"
 
+    # V3 Final Map Verification（Goal §九）：finalize 前的最终地图状态
+    # 裁决 —— 补齐图层顺序 / 结果越界 / 陈旧覆盖层三组校验缺口。warning
+    # 级增值披露，不改写既有 status 语义（零回归）；裁决在 result.status
+    # 定格后聚合。
+    has_planned_layers = bool(_planned_layers_v3(chapter))
+    v3_findings: List[MapCompletionFinding] = []
+    try:
+        from .map_verification import (
+            aggregate_final_map_status,
+            collect_final_map_findings,
+        )
+        v3_findings = collect_final_map_findings(
+            chapter, inputs["mapspec"],
+            descriptors=inputs.get("descriptors"),
+            result_bbox=result.result_bbox,
+            render_observation=inputs.get("render_observation"),
+        )
+        findings = list(findings) + list(v3_findings)
+    except Exception:  # noqa: BLE001 — V3 校验是增值披露，绝不阻断终验
+        logger.warning("[MapFinalizer] v3 map verification failed session=%s", session_id)
+        has_planned_layers = False
+
     # 状态先于披露截断计算（review 终审 F6）：findings[:MAX_FINDINGS] 只是
     # 披露上界 —— 用全量 findings 判状态，否则 >12 条发现时第 13 条起的
     # error 会被静默丢弃、误判 complete。
@@ -243,11 +265,67 @@ async def run_map_finalization(
         result.status = STATUS_NEEDS_REPAIR
         result.summary = f"{len(still_repairable)} repairable findings remain"
 
+    # V3 最终裁决聚合（result.status 定格后；goal §九）
+    if has_planned_layers:
+        try:
+            from .map_verification import aggregate_final_map_status
+            result.final_map_status = aggregate_final_map_status(
+                has_planned_layers=True,
+                base_status=result.status,
+                render_status=result.render_status,
+                v3_findings=v3_findings,
+            )
+        except Exception:  # noqa: BLE001 — 聚合失败诚实留 unknown
+            result.final_map_status = "unknown"
+
     logger.info(
         "[MapFinalizer] finalization_pass session=%s status=%s passes=%d repairs=%d",
         session_id, result.status, result.passes, len(result.repairs_applied),
     )
     return result
+
+
+def _planned_layers_v3(chapter: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """章节计划图层（V3 final map verification 的 has_planned 判定输入）。"""
+    return [ly for ly in (chapter.get("map_layers") or [])
+            if isinstance(ly, dict) and ly.get("layer_id")]
+
+
+#: READY 裁决集合：final_gate 只对非 READY 会话强制重验。
+_READY_VERDICTS = ("READY", "READY_WITH_WARNINGS")
+
+
+def _dedup_gate_blocks(
+    stored: Any,
+    chapter: Dict[str, Any],
+    revision: int,
+    render_seq: int,
+    *,
+    force: bool = False,
+    final_gate: bool = False,
+) -> bool:
+    """幂等去重门（纯函数；True = 跳过重验）。
+
+    V3 final_gate：已存裁决非 READY（needs_repair / blocked / 缺失——
+    旧块/异常路径）→ turn 收尾强制重验（diagnose → repair → re-observe →
+    re-verify 闭环），未解决会话不得靠幂等门滑过 turn 边界。READY 会话
+    保持幂等跳过（happy path 零开销）。
+    """
+    if force:
+        return False
+    if not isinstance(stored, dict):
+        return False
+    if stored.get("status") not in (
+            STATUS_COMPLETE, STATUS_NEEDS_REPAIR, STATUS_FAILED):
+        return False
+    if final_gate and str(stored.get("product_verdict") or "") not in _READY_VERDICTS:
+        return False
+    return (
+        _stored_checked_revision(stored) == revision
+        and _stored_render_seq(stored) == render_seq
+        and str(stored.get("rows_fingerprint") or "")
+        == _rows_fingerprint(chapter)[:512]
+    )
 
 
 def _rows_fingerprint(chapter: Dict[str, Any]) -> str:
@@ -358,12 +436,19 @@ async def maybe_finalize_map_product(
     *,
     reason: str = "tool_result",
     force: bool = False,
+    final_gate: bool = False,
 ) -> Optional[MapCompletionResult]:
     """Harness 侧触发入口：廉价门 + 终验 + 章节持久化（幂等、有界）。
 
     去重门（review 加固）：章节已有终态 ``map_product``（不止 complete）
     且 checked_revision 与当前 MapSpec revision 一致、行指纹一致 → 跳过。
     行状态/ref 或 spec revision 任一变化都会打破门 → 重验。
+
+    ``final_gate``（V3 Goal §九）：turn 收尾的强制终验门 —— 已存裁决非
+    READY（needs_repair / blocked）时绕过去重门重新诊断（diagnose →
+    repair → re-observe → re-verify 闭环的最后一段）；READY 会话保持幂等
+    跳过（happy path 零开销）。与 ``force`` 的差别：force 无条件重验，
+    final_gate 只对未解决会话强制。
 
     pending 不持久化、不披露 —— 除非章节里已有终态结论（review A-2/B-3：
     重试把行标 failed 后，陈旧的 "final" 投影必须收回，落降级 pending 块；
@@ -407,15 +492,9 @@ async def maybe_finalize_map_product(
     # 旧块无 rows_fingerprint 键 → 首次不跳过，重验一次即自愈补齐。
     # 比较双侧截断（review 终审 F2）：存储侧 [:512]，比较侧同宽 ——
     # 此前存储截断/比较全量，≥8 行章节永不匹配 → 门失效、每触发点重跑。
-    if (
-        not force
-        and isinstance(stored, dict)
-        and stored.get("status")
-        in (STATUS_COMPLETE, STATUS_NEEDS_REPAIR, STATUS_FAILED)
-        and _stored_checked_revision(stored) == revision
-        and _stored_render_seq(stored) == render_seq
-        and str(stored.get("rows_fingerprint") or "")
-        == _rows_fingerprint(chapter)[:512]
+    if _dedup_gate_blocks(
+        stored, chapter, revision, render_seq,
+        force=force, final_gate=final_gate,
     ):
         return None
 
@@ -539,6 +618,7 @@ async def maybe_finalize_map_product(
             session_id, STAGE_FINALIZATION,
             status=result.status,
             render=result.render_status,
+            final_map=result.final_map_status,
             passes=result.passes,
             repairs=len(result.repairs_applied),
         )

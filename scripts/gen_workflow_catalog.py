@@ -40,6 +40,54 @@ def render_catalog() -> str:
     lines.append(f"- 领域包：**{len(registry.domains())}** 个")
     lines.append(f"- Registry 内容指纹：`{registry.content_fingerprint()[:16]}…`")
     lines.append("")
+
+    # ── V3 分层组合总览（family / composite / scenario）───────────────
+    from app.services.gis_harness.workflow_families import (
+        get_workflow_family_registry,
+    )
+    layer = get_workflow_family_registry()
+    lines.append("## V3 分层组合总览")
+    lines.append("")
+    lines.append(f"- Workflow Family（从 registry 派生）：**{layer.family_count}**")
+    lines.append(f"- Composite Recipe（跨族组合）：**{layer.composite_count}**")
+    lines.append(f"- Scenario Template（场景模板）：**{layer.scenario_count}**")
+    lines.append(f"- 分层实体合计：**{registry.count + layer.family_count + layer.composite_count + layer.scenario_count}**"
+                 "（覆盖靠组合生成，不是平铺复制）")
+    lines.append(f"- 分层指纹：`{layer.fingerprint()[:16]}…`")
+    lines.append("")
+
+    lines.append("## Workflow Families（派生投影）")
+    lines.append("")
+    lines.append("> family 是 RecipeRegistry 的确定性投影：按 (domain, workflow_family)"
+                 " 聚簇；V1 seed 自成单成员 family。成员变化 → family 自动变化。")
+    lines.append("")
+    for fam in layer.families:
+        onto = ", ".join(f"`{t}`" for t in fam.ontology_tasks[:4]) or "—"
+        members = ", ".join(f"`{m}`" for m in fam.member_recipe_ids[:4])
+        lines.append(f"- `{fam.family_id}` — 成员 {len(fam.member_recipe_ids)} 个：{members}；"
+                     f"本体任务：{onto}")
+    lines.append("")
+
+    lines.append("## Composite Recipes（组合产品）")
+    lines.append("")
+    for c in layer.composites:
+        support = ", ".join(f"`{s}`" for s in c.supporting_recipe_ids) or "—"
+        trig = ", ".join(f"`{t}`" for t in c.trigger_ontology_tasks[:3]) or "—"
+        lines.append(f"- `{c.composite_id}` — {c.label_zh}：base `{c.base_recipe_id}`"
+                     f" + supporting [{support}]；触发：{trig}")
+        if c.disclosures:
+            lines.append(f"  - 披露：{'；'.join(c.disclosures)}")
+    lines.append("")
+
+    lines.append("## Scenario Templates（场景模板）")
+    lines.append("")
+    for s in layer.scenarios:
+        subjects = "、".join(s.match_subjects[:6]) or "—"
+        candidates = " → ".join(f"`{r}`" for r in s.candidate_recipes[:4]) or "—"
+        lines.append(f"- `{s.scenario_id}` — {s.label_zh}（主体：{subjects}）")
+        lines.append(f"  - 制图候选（数据资格裁决取位）：{candidates}")
+        lines.append(f"  - minimal 兜底：{s.minimal_disclosure}")
+    lines.append("")
     lines.append("## 领域总览")
     lines.append("")
     lines.append("| 领域 | recipe 数 |")

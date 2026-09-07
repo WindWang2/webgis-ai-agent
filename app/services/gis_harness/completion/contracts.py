@@ -69,6 +69,13 @@ F_SEMANTIC_LEGEND_MISMATCH = "semantic_legend_mismatch"
 F_TITLE_MISSING_REPORT = "title_missing_report_product"
 F_CRS_NOT_WGS84 = "crs_not_wgs84"
 
+# V3 final map verification finding codes（map_verification.py 消费）：
+# 图层顺序 / 结果越界 / 陈旧覆盖层 —— 均为 warning 级增值披露（不推翻
+# 既有 status 语义，V3 聚合进 final_map_status）。
+F_LAYER_ORDER = "layer_order_issue"
+F_EXTENT_MISMATCH = "result_outside_viewport"
+F_STALE_OVERLAY = "stale_overlay"
+
 RUNTIME_RENDER_CODES = frozenset({
     F_RENDER_LAYER_MISSING,
     F_RENDER_SOURCE_MISSING,
@@ -82,6 +89,15 @@ RENDER_ISSUES = "issues"                  # 匹配 revision 但结果层/源/必
 RENDER_STALE = "stale"                    # observation revision ≠ 当前 revision
 RENDER_UNKNOWN = "unknown"                # 无观察 / 旧客户端 / pre-revision 观察
 RENDER_NOT_APPLICABLE = "not_applicable"  # 无可观察的产品面
+
+# V3 final map verification 词表（Goal §九）：任何「要求成图」的 workflow
+# 在 finalize 前必须给出最终地图状态裁决 —— verified（全绿）/
+# verified_with_degradation（成图但带披露：stale/unknown 观察、顺序/越界/
+# 陈旧覆盖层警告）/ failed（结果层缺失或渲染缺口）/ unknown（无可验证面）。
+FINAL_MAP_VERIFIED = "verified"
+FINAL_MAP_DEGRADED = "verified_with_degradation"
+FINAL_MAP_FAILED = "failed"
+FINAL_MAP_UNKNOWN = "unknown"
 
 # ── Product Verdict（VNext §14 —— 专业产品裁决词表）────────────────
 # 完成管线之上的**单字产品裁决**：前端/评估/发布门消费的最终状态面。
@@ -331,6 +347,10 @@ class MapCompletionResult:
     # P9 render observation：verified | issues | stale | unknown | not_applicable
     # （render_observation.py 词表；unknown = 无观察/旧客户端，向后兼容披露）
     render_status: str = "unknown"
+    # V3 final map verification（Goal §九）：verified |
+    # verified_with_degradation | failed | unknown —— 最终地图状态裁决，
+    # 由 map_verification.verify_final_map 在 finalize 管线内聚合。
+    final_map_status: str = FINAL_MAP_UNKNOWN
     passes: int = 0
     result_bbox: Optional[List[float]] = None
     summary: str = ""
@@ -354,6 +374,7 @@ class MapCompletionResult:
             "component_status": self.component_status,
             "export_status": self.export_status,
             "render_status": self.render_status,
+            "final_map_status": self.final_map_status,
             "passes": self.passes,
             "result_bbox": self.result_bbox,
             "repairs": list(self.repairs_applied[:MAX_DISCLOSED_REPAIRS]),

@@ -7,7 +7,7 @@
 
 | 层 | 规模 | 判定内容 |
 | --- | --- | --- |
-| Conformance corpus | 3,240 plan-tier 案例（47 族 × 表述变体） | task / recipe / 核心能力 / 警告码的语义身份不变量 |
+| Conformance corpus | **20,088** plan-tier 案例（59 族 × 双语 × 12 scope × 9 句式） | task / recipe / 核心能力 / 警告码的语义身份不变量；V3 追加本体任务匹配 / 数据资格 / 回退层 / 规划确定性（opt-in 契约） |
 | Anti-claim plan cases | 7 | 反声明：无分母/无准则/无受体/噪声不得出现 |
 | Workflow contract cases | 11 | 义务状态 / 角色绑定 / 语义降级 / 阻断 / verdict V2 |
 | Scenario benchmarks | 7 场景（plan+execute+contract 复合） | 代表性端到端走查 |
@@ -20,11 +20,14 @@
 **期望表（family）是人工审定的工件**，输入扩展只改变表述、不改变语义
 身份：
 
-- `ConformanceFamily`（47 个，按 24 个领域包全覆盖）：每族声明
-  expected_task / expected_recipe / expected_capabilities /
+- `ConformanceFamily`（59 个 = V2 基线 47 + V3 扩容 12，按 24 个领域包
+  全覆盖）：每族声明 expected_task / expected_recipe / expected_capabilities /
   expected_warning_codes（+ 显式声明的 alternative_tasks/recipes）；
-- 扩展维度：语言（zh/en）× scope（无/市/区/省/双城）× 句式（直接/口语
-  展示/疑问/报告）= 每族最多 60 案例；
+  V3 追加 `expected_ontology_task`（本体 top-1 匹配锁，仅当匹配无歧义
+  时声明）；
+- 扩展维度：语言（zh/en）× scope（12 个：无/市×7/区/省/省+市/双城）×
+  句式（9 个：直接/口语展示/疑问/报告/请分析/的情况/我想了解/如何/帮忙
+  做一下）—— 全部包装词逐一核实不携带任务语义；
 - id 确定性：`CF-<family>-<lang><i>-<scope>-<utterance>`，构造期去重断言。
 
 **语义不变量**：同族所有表述必须解析到同一产品族。任何失败 = 产品语义
@@ -32,7 +35,7 @@
 
 ## 契约层（WorkflowContractCase）
 
-显式 recipe + 数据画像 → `compile_workflow`（12 阶段）→ 断言：
+显式 recipe + 数据画像 → `compile_workflow`（15 阶段，V3）→ 断言：
 
 - 角色绑定状态（bound / external / degraded / unresolved）；
 - 义务评估状态（satisfied / warning / degraded / blocked）；
@@ -44,15 +47,17 @@
 
 ## 覆盖 sweep
 
-`build_v2_recipe_coverage_sweep()`：全部 147 个 V2 recipe 逐一跑完 12 阶段
+`build_v2_recipe_coverage_sweep()`：全部 147 个 V2 recipe 逐一跑完 15 阶段
 编译（registry 覆盖烟测）；blocked 只允许来自科学义务（诚实阻断），
 不允许编译器自身失败。
 
 ## 运行
 
 ```bash
-# 全量（~10s，离线，零 LLM）
+# 全量（20,088 案例实测 ≈20s，离线零 LLM；review 后移回默认车道）
 pytest tests/unit/gis_harness/test_conformance_corpus.py -q
+
+# 快速反馈面：确定性分层抽样（543 案例 ≈3s）+ 领域切片（同文件内）
 
 # 分片（CI 友好）
 python -c "from app.evaluation.conformance import build_conformance_corpus; \
@@ -60,3 +65,18 @@ python -c "from app.evaluation.conformance import build_conformance_corpus; \
 ```
 
 性能契约：plan-tier ≤ ~5ms/case（无网络、无全量扫描、planner memo 关闭）。
+
+## V3 扩容说明（20088 案例）
+
+- **维度扩展**：scope 5→12（重庆/北京/上海/广州/杭州/深圳/省+市）、
+  句式 4→9（请分析 / 的情况 / 我想了解 / 如何 / 帮忙做一下）—— 每个新
+  包装词经批量核验不改变既有族的语义身份；
+- **新语义族 12 个**：路网中心性、火灾风险、人口暴露、仓储选址、OD
+  矩阵、分类构成、两期对比（卷帘）、SAR 斑点滤波、年际对比、TWI、空间
+  回归、插值不确定性 —— 部分依赖 V3 保守本体任务升级（见
+  [semantic-workflow-v3.md](./semantic-workflow-v3.md)）；
+- **V3 指标契约（opt-in）**：`expected_ontology_task`（本体 top-1 锁）、
+  `qualification_profile` + `expected_qualification`（资格四态复评）、
+  `expected_fallback_tier`（回退层裁决）、`check_determinism`（双跑对齐）；
+- **资源分层**：全量实测 ≈20s，直接进默认车道；分层抽样（每 37 例取 1）
+  与领域切片保留为快速反馈面。

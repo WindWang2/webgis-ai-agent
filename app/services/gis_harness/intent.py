@@ -14,10 +14,14 @@ Recipe 选择、产品规划与 Harness evidence 消费。
 """
 from __future__ import annotations
 
+import logging
+
 import re
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+logger = logging.getLogger(__name__)
 
 # ─── 类型词汇表 ─────────────────────────────────────────────────────────
 
@@ -632,6 +636,27 @@ def _apply_form_signals(
     return "", analysis_intents, cartography_intents
 
 
+def _v1_served_tasks_cached() -> set:
+    """V1 seed 服务的任务族（模块级缓存；registry 重建时自动失效）。
+
+    供本体任务升级的目标族守卫使用。惰性 import 避免 intent ↔ recipes
+    模块环；registry 不可用时返回空集合 = 升级被完全抑制（保守缺省）。
+    """
+    global _V1_SERVED_TASKS_CACHE, _V1_SERVED_TASKS_REG_GEN
+    from app.services.gis_harness import recipes as _recipes_mod
+
+    registry = _recipes_mod.get_recipe_registry()
+    gen = registry.content_fingerprint()
+    if _V1_SERVED_TASKS_REG_GEN != gen or _V1_SERVED_TASKS_CACHE is None:
+        _V1_SERVED_TASKS_CACHE = registry.v1_served_tasks
+        _V1_SERVED_TASKS_REG_GEN = gen
+    return _V1_SERVED_TASKS_CACHE
+
+
+_V1_SERVED_TASKS_CACHE: Optional[set] = None
+_V1_SERVED_TASKS_REG_GEN: str = ""
+
+
 def resolve_map_request_intent(query: str) -> MapRequestIntent:
     """确定性解析自然语言 GIS 请求为 typed intent。
 
@@ -707,6 +732,48 @@ def resolve_map_request_intent(query: str) -> MapRequestIntent:
         confidence += 0.15
     if task == "simple_view":
         confidence = min(confidence, 0.7)
+
+    # V3（GIS Task Ontology）：保守本体任务升级 —— 源任务为通用族（含
+    # 口语包装规则命中的 simple_view）+ query 命中本体专业关键词 + 目标族
+    # 无 V1 seed 保护时，task 升级到专业任务族（「帮我看看路网中心性」
+    # 落 network_route 而非「看一眼」）。专业性规则特异性更高、先行命中
+    # 不受影响；泛表述由 v1_served_tasks 守卫保护永不升级；升级记录进
+    # matched_rules 可审计。
+    if task in ("distribution_overview", "simple_view"):
+        try:
+            from app.services.gis_harness.gis_ontology import escalation_target
+
+            family, onto_task = escalation_target(
+                type("_EscalationProbe", (), {
+                    "task": task, "query": query,
+                })(),
+                v1_served_tasks=_v1_served_tasks_cached(),
+            )
+            if family and onto_task:
+                task = family  # type: ignore[assignment]
+                matched.append(f"ontology_escalation:{onto_task}->{family}")
+                assumptions.append(
+                    f"query 命中本体任务 {onto_task} 的专业关键词："
+                    f"任务族升级为 {family}")
+                confidence = min(confidence + 0.1, 1.0)
+                analysis_intents, cartography_intents, output_intents, measure, group_by = (
+                    _task_specific_intents(task, query)
+                )
+                if _CHART_WORD_RE.search(query) and "chart" not in output_intents:
+                    output_intents = list(dict.fromkeys(output_intents + ["chart"]))
+                signal, analysis_intents, cartography_intents = _apply_form_signals(
+                    query, analysis_intents, cartography_intents)
+                # 升级重算 output_intents 后，重放此前已注入的报告/导出
+                # 信号（review R5：否则「用于报告：…」升级句丢失 export）
+                if report_product:
+                    output_intents = list(dict.fromkeys(output_intents + ["export", "summary"]))
+                if _EXPORT_RE.search(query):
+                    output_intents = list(dict.fromkeys(output_intents + ["export"]))
+        except Exception:  # noqa: BLE001 — 升级失败保守回退，但必须留痕可观测
+            logger.warning(
+                "ontology task escalation failed (kept task=%s) query=%r",
+                task, query[:80], exc_info=True,
+            )
 
     return MapRequestIntent(
         query=query,

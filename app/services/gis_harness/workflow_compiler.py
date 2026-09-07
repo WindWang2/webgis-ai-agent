@@ -12,14 +12,16 @@ evidence。设计约束：
 - durable execution 仍由 SessionPlan / Pi runtime 负责 —— 本模块只编译，
   不执行。
 
-管线（规格 §10）：
+管线（规格 §10；V3 扩展后 15 阶段）：
 
-    1 normalize_intent          7 evaluate_obligations
-    2 resolve_task_family       8 resolve_algorithms
-    3 resolve_scope             9 compute_transformations
-    4 resolve_recipe_candidates 10 resolve_cartography
-    5 resolve_data_roles        11 produce_map_product_plan
-    6 compile_capability_dag    12 produce_completion_contract
+    1 normalize_intent          8  compile_capability_dag
+    2 map_task_ontology (V3)    9  evaluate_obligations
+    3 resolve_task_family      10  resolve_algorithms
+    4 resolve_scope            11  compute_transformations
+    5 resolve_recipe_candidates 12 resolve_cartography
+    6 resolve_data_roles       13  produce_map_product_plan
+    7 qualify_data (V3)        14  produce_completion_contract
+    7b plan_candidates (V3)
 """
 from __future__ import annotations
 
@@ -32,10 +34,13 @@ from app.services.gis_harness.intent import MapRequestIntent, resolve_map_reques
 #: 编译器管线的固定阶段序（测试锁定顺序与数量）。
 COMPILER_STAGES = (
     "normalize_intent",
+    "map_task_ontology",
     "resolve_task_family",
     "resolve_scope",
     "resolve_recipe_candidates",
     "resolve_data_roles",
+    "qualify_data",
+    "plan_candidates",
     "compile_capability_dag",
     "evaluate_obligations",
     "resolve_algorithms",
@@ -74,6 +79,14 @@ class WorkflowCompilation(BaseModel):
     recipe_id: str = ""
     stages: List[WorkflowStageRecord] = Field(default_factory=list)
     intent: Optional[MapRequestIntent] = None
+    # V3：intent → 本体任务的有序匹配（GIS task ontology 映射证据）。
+    ontology_matches: List[Dict[str, Any]] = Field(default_factory=list)
+    # V3：数据角色资格裁决（typed data qualification，per-role 四态+修复）。
+    data_qualifications: List[Dict[str, Any]] = Field(default_factory=list)
+    # V3：多候选规划候选集（selected + rejected + 拒绝理由，可解释 trace）。
+    plan_candidates: Dict[str, Any] = Field(default_factory=dict)
+    # V3：四层回退裁决（preferred/degraded/minimal/blocked + 披露）。
+    fallback_resolution: Dict[str, Any] = Field(default_factory=dict)
     # plan 为 map_product_plan 阶段的有界 dump（同 SessionPlan chapter 形态）；
     # 保持 dict 以免引入 planner 模型对编译器产物的硬依赖。
     plan: Dict[str, Any] = Field(default_factory=dict)
@@ -92,6 +105,10 @@ class WorkflowCompilation(BaseModel):
             "query": self.query[:200],
             "recipe_id": self.recipe_id,
             "stages": [s.to_bounded_dict() for s in self.stages],
+            "ontology_matches": self.ontology_matches[:6],
+            "data_qualifications": self.data_qualifications[:16],
+            "plan_candidates": self.plan_candidates,
+            "fallback_resolution": self.fallback_resolution,
             "data_roles": self.data_roles[:16],
             "obligations": self.obligations[:16],
             "capability_dag": self.capability_dag,
@@ -122,7 +139,7 @@ def compile_workflow(
     template_id: str = "",
     min_points_default: int = 10,
 ) -> WorkflowCompilation:
-    """把 query/intent 确定性编译为 WorkflowCompilation（12 阶段）。
+    """把 query/intent 确定性编译为 WorkflowCompilation（15 阶段）。
 
     ``profile``（Spatial Meta Profile / resolver camelCase 形态）在数据到手
     后传入，用于 finalize 与义务评估；规划期可省略（义务按 unknown ≠
@@ -154,7 +171,26 @@ def compile_workflow(
                   "hint_applied": list(merged.hint_applied[:4])},
     ))
 
-    # ── 2 resolve_task_family ────────────────────────────────────────
+    # ── 2 map_task_ontology（V3：intent → GIS 任务本体匹配）──────────
+    from app.services.gis_harness.gis_ontology import match_task_ontology
+    onto_matches = match_task_ontology(merged, limit=5)
+    compilation.ontology_matches = [m.to_bounded_dict() for m in onto_matches]
+    stages.append(_stage_record(
+        "map_task_ontology",
+        reason_codes=(
+            [f"planned_task:{m.task_id}" for m in onto_matches
+             if m.semantic_status == "planned"][:_STAGE_REASON_BUDGET]
+        ),
+        evidence={
+            "primary_task": onto_matches[0].task_id if onto_matches else "",
+            "matches": [
+                {"task": m.task_id, "score": round(m.score, 2)}
+                for m in onto_matches[:4]
+            ],
+        },
+    ))
+
+    # ── 3 resolve_task_family ────────────────────────────────────────
     task = merged.task
     wf_hint = registry.keyword_hits(merged.query)
     stages.append(_stage_record(
@@ -163,7 +199,7 @@ def compile_workflow(
                   "keyword_signals": [r.id for r in wf_hint[:4]]},
     ))
 
-    # ── 3 resolve_scope ──────────────────────────────────────────────
+    # ── 4 resolve_scope ──────────────────────────────────────────────
     stages.append(_stage_record(
         "resolve_scope",
         evidence={"scope": merged.scope.name or "unresolved",
@@ -172,7 +208,7 @@ def compile_workflow(
                   "geometry_expectation": merged.geometry_expectation},
     ))
 
-    # ── 4 resolve_recipe_candidates ──────────────────────────────────
+    # ── 5 resolve_recipe_candidates ──────────────────────────────────
     candidates = registry.select_candidates(
         merged, project_verified=project_verified)
     selected = registry.get(recipe_id) if recipe_id else (
@@ -194,7 +230,7 @@ def compile_workflow(
                   "candidates": candidate_evidence},
     ))
 
-    # ── 5 resolve_data_roles（阶段 5；finalize 期随 profile 复评）────
+    # ── 6 resolve_data_roles（finalize 期随 profile 复评）────────────
     wf_profile = getattr(selected, "workflow", None)
     role_resolutions = resolve_data_roles(
         selected.id, wf_profile, resolver_profile=profile)
@@ -210,7 +246,100 @@ def compile_workflow(
                   "has_workflow_profile": wf_profile is not None},
     ))
 
-    # ── 11a plan production（先编译 plan，供 6/8/10 消费确定性产物）──
+    # ── 7 qualify_data（V3：per-role 数据资格四态裁决 + 修复声明）────
+    def _run_qualify(wf: Any, resolutions: List[Any]) -> tuple:
+        """资格裁决 + 阶段记录（reroute 改写 recipe 后必须重跑，保证
+        remediation 物化与 fallback 裁决消费的是**当前** recipe 的证据）。"""
+        quals: List[Any] = []
+        if wf is not None and wf.data_roles:
+            from app.services.gis_harness.data_qualification import (
+                qualify_workflow_data_roles,
+            )
+            # 投影/度量类 precondition 在场 → 资格阶段联动
+            # projected_crs_required 检查（委托算法层，单一事实源）。
+            crs_obligation = any(
+                "projected_crs" in (getattr(o, "precondition_id", "") or "")
+                or "local_metric_crs" in (getattr(o, "precondition_id", "") or "")
+                for o in wf.obligations
+            )
+            quals = qualify_workflow_data_roles(
+                wf.data_roles, resolutions,
+                resolver_profile=profile,
+                crs_projection_obligation=crs_obligation,
+            )
+        role_states = {q.role: q.state for q in quals}
+        record = _stage_record(
+            "qualify_data",
+            status="skipped" if not quals else (
+                "blocked"
+                if any(q.state == "blocked" for q in quals)
+                else "ok"),
+            reason_codes=[
+                q.reason_code for q in quals
+                if q.state in ("blocked", "degraded")
+            ][:_STAGE_REASON_BUDGET],
+            evidence={
+                "states": dict(list(role_states.items())[:8]),
+                "remediations": sum(len(q.remediation) for q in quals),
+            },
+        )
+        return quals, role_states, record
+
+    data_qualifications, states, qualify_stage = _run_qualify(
+        wf_profile, role_resolutions)
+    compilation.data_qualifications = [
+        q.to_bounded_dict() for q in data_qualifications
+    ]
+    stages.append(qualify_stage)
+
+    # ── 7b plan_candidates（V3：多候选生成/评分/可解释选择）──────────
+    from app.services.gis_harness.plan_candidates import generate_plan_candidates
+    candidate_set = generate_plan_candidates(
+        merged, profile=profile, available_tools=available_tools)
+    compilation.plan_candidates = candidate_set.to_bounded_dict()
+    selected_candidate = candidate_set.selected
+    # 零漂移改写：仅当语义 top-1 被科学阻断而最优候选可行时，改写计划
+    # 承载 recipe（候选集本身完整保留，供 trace/replay/evaluation）。
+    reroute_note = ""
+    if (candidate_set.rerouted and selected_candidate is not None
+            and not recipe_id):
+        reroute_note = candidate_set.reroute_reason
+        selected = registry.get(selected_candidate.recipe_id) or selected
+        compilation.recipe_id = selected.id
+        wf_profile = getattr(selected, "workflow", None)
+        role_resolutions = resolve_data_roles(
+            selected.id, wf_profile, resolver_profile=profile)
+        compilation.data_roles = [r.to_bounded_dict() for r in role_resolutions]
+        # 陈旧证据守卫：改写后重跑资格裁决（stage 7 记录替换为新 recipe 的
+        # 证据）—— 否则 remediation 物化与 fallback 裁决消费旧 recipe 事实。
+        data_qualifications, states, qualify_stage = _run_qualify(
+            wf_profile, role_resolutions)
+        compilation.data_qualifications = [
+            q.to_bounded_dict() for q in data_qualifications
+        ]
+        stages[:] = [
+            s if s.stage != "qualify_data" else qualify_stage for s in stages
+        ]
+    if selected_candidate is not None and selected_candidate.disclosures:
+        stages.append(_stage_record(
+            "plan_candidates",
+            reason_codes=[],
+            evidence={"selected": selected_candidate.candidate_id,
+                      "scenario_disclosures": list(
+                          selected_candidate.disclosures[:2])},
+        ))
+    else:
+        stages.append(_stage_record(
+            "plan_candidates",
+            reason_codes=([reroute_note] if reroute_note else []),
+            evidence={"selected": candidate_set.selected_id,
+                      "candidate_count": len(candidate_set.candidates),
+                      "rejected": sum(
+                          1 for c in candidate_set.candidates
+                          if c.status == "rejected")},
+        ))
+
+    # ── 7a plan production（先编译 plan，供 8/9/12 消费确定性产物）──
     plan = planner.plan_from_intent(
         merged, template_id=template_id, recipe_id=selected.id,
         available_tools=available_tools, project_verified=project_verified,
@@ -222,7 +351,7 @@ def compile_workflow(
         )
     plan_dump = plan.model_dump(mode="json")
 
-    # ── 6 compile_capability_dag ─────────────────────────────────────
+    # ── 8 compile_capability_dag ─────────────────────────────────────
     try:
         graph = build_plan_graph(plan)
         dag_evidence = {
@@ -246,7 +375,7 @@ def compile_workflow(
         ))
         compilation.capability_dag = {"nodes": [], "error": str(exc)[:160]}
 
-    # ── 7 evaluate_obligations（复用 planner/ finalize 期评估）────────
+    # ── 9 evaluate_obligations（复用 planner/ finalize 期评估）────────
     contract_report = evaluate_workflow_obligations(
         selected.id, wf_profile,
         resolver_profile=profile, role_resolutions=role_resolutions,
@@ -269,7 +398,7 @@ def compile_workflow(
         evidence=obligation_evidence,
     ))
 
-    # ── 8 resolve_algorithms ─────────────────────────────────────────
+    # ── 10 resolve_algorithms ─────────────────────────────────────────
     selections = plan_dump.get("algorithm_selections") or []
     unresolved = [
         s.get("capability") for s in selections if s.get("status") == "unavailable"
@@ -285,7 +414,7 @@ def compile_workflow(
         },
     ))
 
-    # ── 9 compute_transformations ────────────────────────────────────
+    # ── 11 compute_transformations ────────────────────────────────────
     transformations: List[Dict[str, Any]] = []
     for s in selections:
         for t in (s.get("required_transformations") or [])[:2]:
@@ -300,13 +429,27 @@ def compile_workflow(
                 "obligation": obl_ev.get("obligation_id"),
                 "transformation": str(hint_text)[:120],
             })
+    # V3：数据资格的 remediation 物化为显式 transform step（仅收
+    # auto_applicable=True 的操作 —— 有确定性实现；否则留在资格证据中）。
+    for q in data_qualifications:
+        for r in q.remediation:
+            if r.auto_applicable:
+                transformations.append({
+                    "source": "data_qualification",
+                    "role": q.role,
+                    "operation": r.operation,
+                    "target": r.target,
+                    "params": r.params,
+                    "reason_code": r.reason_code,
+                    "disclosure": r.disclosure,
+                })
     compilation.transformations = transformations[:8]
     stages.append(_stage_record(
         "compute_transformations",
         evidence={"count": len(transformations)},
     ))
 
-    # ── 10 resolve_cartography ───────────────────────────────────────
+    # ── 12 resolve_cartography ───────────────────────────────────────
     stages.append(_stage_record(
         "resolve_cartography",
         evidence={
@@ -321,7 +464,7 @@ def compile_workflow(
         },
     ))
 
-    # ── 11 produce_map_product_plan ──────────────────────────────────
+    # ── 13 produce_map_product_plan ──────────────────────────────────
     compilation.plan = {
         k: plan_dump.get(k)
         for k in ("plan_id", "query", "recipe_id", "template_id", "status",
@@ -336,9 +479,34 @@ def compile_workflow(
                   "fallback_count": len(plan_dump.get("fallbacks") or [])},
     ))
 
-    # ── 12 produce_completion_contract ───────────────────────────────
+    # ── 14 produce_completion_contract ───────────────────────────────
     from app.services.gis_harness.workflow_schema import COMPLETION_DIMENSIONS
     wc = plan_dump.get("workflow_contract") or {}
+
+    # V3：四层回退裁决（preferred/degraded/minimal/blocked）。事实来源：
+    # 资格状态 + 义务阻断 + planned 能力 + 本体主任务状态 + 场景 minimal。
+    from app.services.gis_harness.fallback_v3 import resolve_fallback_tier
+    scenario_minimal = ""
+    if selected_candidate is not None and selected_candidate.scenario_id:
+        from app.services.gis_harness.workflow_families import (
+            get_workflow_family_registry,
+        )
+        _scn = get_workflow_family_registry().scenario(
+            selected_candidate.scenario_id)
+        if _scn is not None:
+            scenario_minimal = _scn.minimal_disclosure
+    fallback_res = resolve_fallback_tier(
+        ontology_task_id=(onto_matches[0].task_id if onto_matches else ""),
+        data_states=tuple(states.values()),
+        method_blockers=tuple(contract_report.method_blockers),
+        data_blockers=tuple(contract_report.data_blockers),
+        uses_planned_capability=bool(
+            selected_candidate is not None
+            and selected_candidate.cost.uses_planned_capability),
+        scenario_minimal_disclosure=scenario_minimal,
+    )
+    compilation.fallback_resolution = fallback_res.to_bounded_dict()
+
     dim_states: Dict[str, Optional[bool]] = {}
     for dim in COMPLETION_DIMENSIONS:
         if dim == "data":
@@ -360,6 +528,10 @@ def compile_workflow(
              "blocks_completion": p.blocks_completion}
             for p in (getattr(wf_profile, "fallback_policies", []) or [])[:8]
         ],
+        # V3：回退裁决进入完成契约（finalize/verdict 消费同一份证据）
+        "fallback_tier": fallback_res.tier,
+        "fallback_downgrade_class": fallback_res.downgrade_class,
+        "fallback_disclosures": fallback_res.disclosures[:6],
     }
     blocked_codes = sorted(
         set(contract_report.method_blockers + contract_report.data_blockers))
@@ -367,7 +539,8 @@ def compile_workflow(
         "produce_completion_contract",
         status="blocked" if blocked_codes else "ok",
         reason_codes=blocked_codes[:_STAGE_REASON_BUDGET],
-        evidence={"dimensions_declared": len(COMPLETION_DIMENSIONS)},
+        evidence={"dimensions_declared": len(COMPLETION_DIMENSIONS),
+                  "fallback_tier": fallback_res.tier},
     ))
 
     compilation.reason_codes = [
