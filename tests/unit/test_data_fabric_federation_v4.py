@@ -335,15 +335,20 @@ class TestDerivedProjection:
         assert plans[1].right["fields"] == ["amt", "grp", "kc"]
         assert any("minimal projection derived" in w for w in plans[0].warnings)
 
-    def test_projection_off_by_default(self):
-        req = FederatedChainRequest(
-            sources=[ChainSource("a", "d-a"), ChainSource("b", "d-b")],
-            joins=[ChainJoin(kind="attribute_join", join_field_left="k",
-                             join_field_right="k")],
-        )
-        plans = plan_federated_chain(req)
-        assert "fields" not in plans[0].left
-        assert "fields" not in plans[0].right
+    def test_projection_default_on_with_explicit_opt_out(self):
+        """V5（Wave 9）：derive_projection 默认开启；显式 opt-out 复原输出形状。"""
+        sources = [ChainSource("a", "d-a"), ChainSource("b", "d-b")]
+        joins = [ChainJoin(kind="attribute_join", join_field_left="k",
+                           join_field_right="k")]
+        # 默认（V5 起开启）：计划携带派生投影。
+        plans = plan_federated_chain(FederatedChainRequest(sources=sources, joins=joins))
+        assert plans[0].left.get("fields") == ["k"]
+        assert plans[0].right.get("fields") == ["k"]
+        # 显式 opt-out：无派生投影（V4 行为）。
+        plans_off = plan_federated_chain(FederatedChainRequest(
+            sources=sources, joins=joins, derive_projection=False))
+        assert "fields" not in plans_off[0].left
+        assert "fields" not in plans_off[0].right
 
     def test_execution_passes_derived_fields_to_adapter(self):
         adapters = {

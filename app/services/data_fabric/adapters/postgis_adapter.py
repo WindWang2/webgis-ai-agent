@@ -696,7 +696,24 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             )
             budget = v2.execution
 
-            where_sql, params, spatial_pushed = self._compile_where(v2, meta, descriptor)
+            # V5（Wave 9）：AND 边拆分的执行真相（计划即执行）。
+            from app.services.data_fabric.query.pushdown import (
+                local_predicates_present,
+                resolve_plan_filter_split,
+            )
+
+            remote_filter, local_filter = resolve_plan_filter_split(v2.filter, plan)
+            split_active = local_predicates_present(plan)
+            if split_active and (plan.result_mode == ResultMode.STATISTICS or v2.aggregate):
+                raise InvalidQueryError(
+                    "source declared partial filter pushdown and this query has a "
+                    "local filter remainder; server-side aggregation cannot apply it. "
+                    "Use a fully pushable filter, or materialize + local aggregation.",
+                    details={"hint": "avoid ops declared in filter_ops_local for aggregates"},
+                )
+            where_sql, params, spatial_pushed = self._compile_where(
+                v2, meta, descriptor, filter_override=remote_filter if plan.filter_split else None,
+            )
             if not spatial_pushed and v2.spatial is not None:
                 # plan 如实降级：spatial 未下推 → 本地过滤（hybrid）
                 plan = plan.model_copy(update={
@@ -883,6 +900,15 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                 # 本地过滤后 has_more/next_cursor 基于过滤前 fetch（保守）
                 next_cursor = None
 
+            # V5（Wave 9）：拆分计划的本地余项在取回后精确求值（与 bbox
+            # 本地过滤同一保守口径 —— 页窗口以远端行数为准）。
+            if local_filter is not None:
+                from app.services.data_fabric.query.predicates import evaluate_predicate
+
+                features = [
+                    f for f in features if evaluate_predicate(local_filter, f["properties"])
+                ]
+
             # total_matching：仅第一页计算（count 复用同一 WHERE）
             total_matching: Optional[int] = None
             first_page = (isinstance(page, OffsetPage) and page.offset == 0) or (
@@ -961,12 +987,19 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             },
         )
 
-    def _compile_where(self, v2: QuerySpecV2, meta: _TableMeta, descriptor: DatasetDescriptor):
+    def _compile_where(
+        self, v2: QuerySpecV2, meta: _TableMeta, descriptor: DatasetDescriptor,
+        filter_override=None,
+    ):
         """谓词 → WHERE。返回 (where_sql, params, spatial_pushed)。
 
         P2-1 语义保留：dataset SRID 未知（geometry_columns srid=0/NULL）时，
         空间谓词不能下推（没有源 CRS 可表达 envelope）——返回
         ``spatial_pushed=False``，调用方对有界结果做本地 bbox 过滤并如实记录。
+
+        V5（Wave 9）：``filter_override`` 非空时编译它而非 ``v2.filter``
+        （AND 边拆分的下推半 —— 计划即执行；None + filter_split 在场 =
+        拆分守卫的"整体本地"，where 不含任何过滤子句）。
         """
         clauses: List[str] = []
         params: List[Any] = []
@@ -996,8 +1029,9 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                 clauses.append(sql_s)
                 params.extend(p)
                 spatial_pushed = True
-        if v2.filter is not None:
-            sql_f, p = compile_predicate_sql(v2.filter, allowed_fields=meta.field_names)
+        filter_to_compile = v2.filter if filter_override is None else filter_override
+        if filter_to_compile is not None:
+            sql_f, p = compile_predicate_sql(filter_to_compile, allowed_fields=meta.field_names)
             clauses.append(sql_f)
             params.extend(p)
         if v2.temporal is not None:

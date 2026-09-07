@@ -406,7 +406,13 @@ class STACAdapter(GeospatialDataSourceAdapter):
 
         fp = dataset_fingerprint_service.calculate_descriptor_fingerprint(descriptor)
         caps = get_capabilities("stac")
-        plan = plan_query(v2, descriptor, caps, source_id=self.profile.id, dataset_fingerprint=fp)
+        # V5（Wave 9）：统计收割进计划（item_count 等 → DatasetStatistics；
+        # 无统计时逐位回落历史行为）。
+        from app.services.data_fabric.query.statistics import statistics_for_request
+
+        plan = plan_query(v2, descriptor, caps, source_id=self.profile.id,
+                          dataset_fingerprint=fp,
+                          stats=statistics_for_request(descriptor, fp))
 
         if not self.endpoint:
             return self._query_demo(dataset_id, v2, plan, started, fp, descriptor)
@@ -417,14 +423,15 @@ class STACAdapter(GeospatialDataSourceAdapter):
             )
 
         try:
-            return self._search_remote(dataset_id, v2, plan, started)
+            return self._search_remote(dataset_id, v2, plan, started, fp=fp)
         except DataFabricError:
             raise
         except Exception as e:
             logger.warning(f"STAC remote query failed for '{dataset_id}': {e}")
             raise SourceBadResponseError(f"STAC search failed: {e}") from e
 
-    def _search_remote(self, dataset_id: str, v2: QuerySpecV2, plan, started: float) -> QueryResult:
+    def _search_remote(self, dataset_id: str, v2: QuerySpecV2, plan, started: float,
+                       fp: Optional[str] = None) -> QueryResult:
         safe_url = DataFabricSecurity.validate_url(self.endpoint, allow_private=self.allow_private)
         search_url = urljoin(safe_url + "/", "search")
         page = v2.page
@@ -484,6 +491,13 @@ class STACAdapter(GeospatialDataSourceAdapter):
         elif not isinstance(matched, int):
             matched = None
 
+        # V5：无过滤请求的 numberMatched 是场景总数的诚实观测 → 收割为
+        # 行级统计（advisory；过滤请求的命中数绝不冒充总量）。
+        if matched is not None and v2.filter is None and v2.spatial is None and v2.temporal is None:
+            from app.services.data_fabric.query.statistics import observe_row_count
+
+            observe_row_count("stac", fp, matched)
+
         # links.next → 不透明游标（token 优先，退化为 next URL）
         next_url, next_token = self._extract_next_link(data)
         returned = len(features)
@@ -492,9 +506,14 @@ class STACAdapter(GeospatialDataSourceAdapter):
             truncated = matched > offset + returned
         next_cursor = encode_cursor([next_token or next_url]) if (truncated and (next_token or next_url)) else None
 
-        # 属性谓词本地求值（caps.filter_pushdown=False；页内有界）
-        if v2.filter is not None:
-            features = [f for f in features if evaluate_predicate(v2.filter, f.get("properties") or {})]
+        # 属性谓词本地求值（caps.filter_pushdown=False；页内有界）。
+        # V5：拆分计划时只求值本地余项（历史路径 = 整个 v2.filter，逐位一致）。
+        from app.services.data_fabric.query.pushdown import resolve_plan_filter_split
+
+        stac_remote, stac_local = resolve_plan_filter_split(v2.filter, plan)
+        stac_predicate = stac_local if stac_local is not None else stac_remote
+        if stac_predicate is not None:
+            features = [f for f in features if evaluate_predicate(stac_predicate, f.get("properties") or {})]
             returned = len(features)
         if v2.temporal is not None:
             features = [f for f in features if self._temporal_matches(v2.temporal, f.get("properties") or {})]

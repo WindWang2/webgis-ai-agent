@@ -331,6 +331,16 @@ class GeoExecutionEngine:
         tracing.emit("run_finished", run_id=run_id, plan_fingerprint=plan_fp,
                      status=run.status.value, duration_s=run.wall_time_s,
                      error_code=run.error_code)
+        # V5（audit 06 §6.1 step 2）：终态证据快照（有界 ≤16KB，owner 域隔离）
+        # 尽力落库 —— 进程重启后 get_run 内存未命中时回放，读取不再 404。
+        # fail-open：快照失败绝不倒灌执行结果。
+        try:
+            from app.services.geocompute import run_evidence
+
+            run_evidence.save_snapshot(run, owner_scope)
+        except Exception:  # noqa: BLE001 - 快照是尽力而为的持久化证据
+            tracing.emit("run_snapshot_skipped", run_id=run_id,
+                         status=run.status.value, reason="snapshot_unavailable")
         # 载荷保留上限（并发评审 M3）：run 终态后立即丢弃原始节点输出 ——
         # 证据/摘要已在 run.evidence；复用走字节预算化的 NodeResultStore。
         if not self._retain_outputs:
@@ -356,11 +366,25 @@ class GeoExecutionEngine:
         None（调用方 404，不区分「不存在」与「他人 run」，避免存在性预言机）。
 
         不传 ``owner_scope``（进程内工具/executor 自身路径）保持原有语义。
+
+        V5（audit 06 §6.1 step 2）：内存未命中时回读**终态证据快照**
+        （``run_evidence.load_snapshot``，owner 域校验在读取侧）—— 进程重启
+        后 REST/工具读取不再 404；快照回放以 ``run.source == "snapshot"``
+        诚实标注（只读证据，非活注册表条目）。
         """
         with self._run_lock:
-            if owner_scope is not None and self._run_owners.get(run_id) != owner_scope:
-                return None
-            return self._runs.get(run_id)
+            run = self._runs.get(run_id)
+            if run is not None:
+                if owner_scope is not None and self._run_owners.get(run_id) != owner_scope:
+                    return None
+                return run
+        # 内存未命中 → 快照回放（owner 域校验在 load 侧：他人/未知一样 None）。
+        try:
+            from app.services.geocompute import run_evidence
+
+            return run_evidence.load_snapshot(run_id, owner_scope=owner_scope)
+        except Exception:  # noqa: BLE001 - 回放失败按未命中处理（诚实 404）
+            return None
 
     def get_node_output(self, run_id: str, node_id: str) -> Optional[dict[str, Any]]:
         with self._run_lock:
@@ -554,7 +578,8 @@ class GeoExecutionEngine:
 
         if node.policy.value == "durable_job":
             self._execute_durable(
-                run, node, outputs, ev, session_id=session_id,
+                run, node, outputs, outputs_fp, ev, session_id=session_id,
+                owner_scope=owner_scope,
                 cancel_token=cancel_token, node_deadline=node_deadline,
                 governor=governor, gov_path=gov_path,
             )
@@ -746,9 +771,11 @@ class GeoExecutionEngine:
         run: ExecutionRun,
         node: ExecutionNode,
         outputs: dict[str, dict[str, Any]],
+        outputs_fp: dict[str, str],
         ev: NodeEvidence,
         *,
         session_id: Optional[str],
+        owner_scope: str,
         cancel_token: Optional[CancellationToken],
         node_deadline: float,
         governor: Optional[Any],
@@ -758,8 +785,21 @@ class GeoExecutionEngine:
 
         WORKER_LOSS 类失败按节点 RetryPolicy 有界重派（幂等键保证不产生
         第二 job 行 —— 终态行释放键后重派才建新行，语义即重跑）。
+
+        V5（audit 06 §6.1 step 1/3/5）：
+        - 派发按 ``durable.queue_for_node`` 落 profile 队列（重派同节点 →
+          同队列，retry affinity 无需新状态机）；
+        - **派发前**先查 checkpoint 复用（进程内 store → 跨进程 DB 索引，
+          上游指纹一致 + result_ref 存活才命中）—— 最贵的 durable 节点
+          终于进入复用；
+        - eager（无 Redis）时诚实标注 ``backend_variant="in_process_eager"``。
         """
         started_dj = time.monotonic()
+        if node.reuse == NodeReusePolicy.ALLOW and self._durable_reuse_hit(
+            run, node, outputs, outputs_fp, ev, owner_scope,
+        ):
+            ev.duration_s = round(time.monotonic() - started_dj, 6)
+            return
         attempts_allowed = node.retry.max_attempts
         last_err: Optional[GeoComputeError] = None
         for attempt in range(1, attempts_allowed + 1):
@@ -783,10 +823,15 @@ class GeoExecutionEngine:
                     deadline_s=(node_deadline - time.monotonic())
                     if node.deadline_s is not None else None,
                 )
+                if ret.get("backend_variant"):
+                    # V5 step 5：eager 降级诚实披露（reproducibility honesty）。
+                    ev.backend_variant = str(ret["backend_variant"])
                 tracing.emit("node_dispatched", run_id=run.run_id,
                              node_id=node.node_id, status="running",
                              job_id=str(ret.get("job_id", "")), policy="durable_job",
-                             category=node.category.value)
+                             category=node.category.value,
+                             queue=ret.get("queue"),
+                             backend=ret.get("backend_variant"))
                 done = durable.await_node_job(
                     ret["job_id"],
                     session_id=session_id,
@@ -810,6 +855,11 @@ class GeoExecutionEngine:
                              duration_s=ev.duration_s, job_id=done["job_id"],
                              policy="durable_job")
                 self._governor_charge(governor, gov_path, node, payload)
+                # V5 step 3：完成即记录复用事实（进程内 store + 跨进程索引）。
+                self._record_durable_result(
+                    run, node, outputs, outputs_fp, owner_scope,
+                    session_id=session_id, payload=payload,
+                )
                 return
             except OperationCancelled:
                 ev.status = "cancelled"
@@ -842,6 +892,204 @@ class GeoExecutionEngine:
                      status="failed", error_code=ev.error_code,
                      policy="durable_job",
                      failure_class=(classify_failure(last_err).value if last_err else "invalid_data"))
+
+    # ------------------------------------------- V5 durable reuse helpers
+
+    def _durable_reuse_hit(
+        self,
+        run: ExecutionRun,
+        node: ExecutionNode,
+        outputs: dict[str, dict[str, Any]],
+        outputs_fp: dict[str, str],
+        ev: NodeEvidence,
+        owner_scope: str,
+    ) -> bool:
+        """durable 节点派发前的跨进程 checkpoint 复用（audit 06 §6.1 step 3）。
+
+        两级查找，同一套上游一致性校验：
+          (a) 进程内 NodeResultStore（与 in_process 节点同键空间）；
+          (b) DB 复用索引（geocompute_node_results；fail-open）—— 命中还需
+              ``result_ref`` 经会话存储**存活探测**通过才复用。
+
+        复用被拒时记录类型化原因（``ev.reuse_skipped_reason`` + trace）：
+        ``upstream_changed:<nodes>`` / ``result_ref_unresolvable``。无条目
+        不是「跳过」（没有可复用物），不打证据。
+        """
+        node_fp = node.semantic_fingerprint()
+        reuse_key = graph.checkpoint_reuse_key(node, owner_scope)
+        cached = self._store.get(reuse_key)
+        if cached is not None and _SIZE_KEY in cached:
+            stale = self._checkpoint_stale(node, cached, outputs_fp)
+            if stale is None:
+                payload = {k: v for k, v in cached.items() if not k.startswith("__")}
+                self._accept_durable_reuse(
+                    run, node, outputs, outputs_fp, ev, payload,
+                    source="in_process", out_fp=cached.get(_OUT_FP_KEY),
+                )
+                return True
+            self._note_reuse_skip(
+                ev, f"upstream_changed:{','.join(sorted(stale))}", run, node,
+            )
+
+        try:
+            from app.services.geocompute import reuse_index
+
+            entry = reuse_index.find_result(owner_scope, node_fp)
+        except Exception:  # noqa: BLE001 - 索引不可用 → 未命中（诚实重算）
+            entry = None
+            tracing.emit("node_reuse_skipped", run_id=run.run_id,
+                         node_id=node.node_id, reason="index_unavailable")
+        if entry is None:
+            return False
+
+        recorded = entry.get("upstream_fingerprints") or {}
+        changed = [
+            src for src, fp in recorded.items()
+            if src in outputs_fp and outputs_fp[src] != fp
+        ]
+        if changed:
+            self._note_reuse_skip(
+                ev, f"upstream_changed:{','.join(sorted(changed))}", run, node,
+            )
+            return False
+
+        payload = self._resolve_session_ref(
+            entry.get("session_id"), entry.get("result_ref")
+        )
+        if payload is None:
+            # ref 已被会话回收/失效：移除死条目（有界索引保持诚实），重算。
+            self._note_reuse_skip(ev, "result_ref_unresolvable", run, node)
+            try:
+                from app.services.geocompute import reuse_index
+
+                reuse_index.delete_result(owner_scope, node_fp)
+            except Exception:  # noqa: BLE001 - 卫生删除是尽力而为
+                pass
+            return False
+
+        out_fp = _output_fingerprint(payload)
+        # 回填进程内 store（后续同进程命中走 fast path，带完整校验元数据）。
+        upstream = {
+            **{s: fp for s, fp in recorded.items()},
+            **{s: outputs_fp[s] for s in node.inputs if s in outputs_fp},
+        }
+        self._store.put(reuse_key, {
+            _NODE_FP_KEY: node_fp,
+            _OUT_FP_KEY: out_fp,
+            _UPSTREAM_KEY: upstream,
+            **payload,
+        })
+        self._accept_durable_reuse(
+            run, node, outputs, outputs_fp, ev, payload,
+            source="cross_process_index", out_fp=out_fp,
+        )
+        return True
+
+    def _accept_durable_reuse(
+        self,
+        run: ExecutionRun,
+        node: ExecutionNode,
+        outputs: dict[str, dict[str, Any]],
+        outputs_fp: dict[str, str],
+        ev: NodeEvidence,
+        payload: dict[str, Any],
+        *,
+        source: str,
+        out_fp: Optional[str],
+    ) -> None:
+        """接受复用：写载荷/指纹/证据（浅拷贝防缓存别名腐蚀，同 in_process 路径）。"""
+        outputs[node.node_id] = payload
+        outputs_fp[node.node_id] = out_fp or _output_fingerprint(payload)
+        ev.status = "reused"
+        ev.checkpoint_verified = True
+        ev.reuse_source = source
+        ev.rows_emitted = self._count_rows(payload)
+        ev.output_ref = payload.get("ref_id")
+        tracing.emit("node_reused", run_id=run.run_id, node_id=node.node_id,
+                     status="reused", rows=ev.rows_emitted, checkpoint="verified",
+                     reuse_source=source)
+
+    def _record_durable_result(
+        self,
+        run: ExecutionRun,
+        node: ExecutionNode,
+        outputs: dict[str, dict[str, Any]],
+        outputs_fp: dict[str, str],
+        owner_scope: str,
+        *,
+        session_id: Optional[str],
+        payload: dict[str, Any],
+    ) -> None:
+        """durable 节点完成 → 写两级复用事实（进程内 store + DB 索引）。
+
+        V4 的 durable 分支从不写 NodeResultStore（audit：最贵的节点没有
+        复用）—— 现在与 in_process 节点同键空间同校验；DB 索引让复用跨
+        worker / 跨 restart 成立。ref 缺失（无会话交接）时只写进程内。
+        """
+        node_fp = node.semantic_fingerprint()
+        out_fp = outputs_fp.get(node.node_id) or _output_fingerprint(payload)
+        outputs_fp[node.node_id] = out_fp
+        upstream = {s: outputs_fp[s] for s in node.inputs if s in outputs_fp}
+        try:
+            self._store.put(
+                graph.checkpoint_reuse_key(node, owner_scope),
+                {
+                    _NODE_FP_KEY: node_fp,
+                    _OUT_FP_KEY: out_fp,
+                    _UPSTREAM_KEY: upstream,
+                    **payload,
+                },
+            )
+        except Exception:  # noqa: BLE001 - 复用记录是尽力而为
+            pass
+        ref = payload.get("ref_id")
+        if not ref or not session_id:
+            return
+        try:
+            from app.services.geocompute import reuse_index
+
+            ok = reuse_index.record_result(
+                owner_scope=owner_scope,
+                node_fingerprint=node_fp,
+                result_ref=str(ref),
+                session_id=str(session_id),
+                upstream_fingerprints=upstream,
+            )
+        except Exception:  # noqa: BLE001
+            ok = False
+        if not ok:
+            tracing.emit("node_reuse_record_skipped", run_id=run.run_id,
+                         node_id=node.node_id, reason="index_unavailable")
+
+    def _note_reuse_skip(
+        self, ev: NodeEvidence, reason: str, run: ExecutionRun, node: ExecutionNode,
+    ) -> None:
+        """复用被拒的类型化证据（诚实：原因进 evidence + trace）。"""
+        ev.reuse_skipped_reason = reason
+        ev.checkpoint_verified = False
+        tracing.emit("node_reuse_skipped", run_id=run.run_id,
+                     node_id=node.node_id, reason=reason)
+
+    @staticmethod
+    def _resolve_session_ref(
+        session_id: Optional[str], ref: Optional[str]
+    ) -> Optional[dict[str, Any]]:
+        """把 session ref 解析回节点载荷（与 await_node_job 同一形状）。
+
+        会话存储不可用 / ref 失效 → None（调用方诚实重算）。
+        """
+        if not session_id or not ref:
+            return None
+        try:
+            from app.services.geocompute._async_bridge import run_coro_sync
+            from app.services.session_data import session_data_manager
+
+            stored = run_coro_sync(session_data_manager.get(session_id, ref))
+        except Exception:  # noqa: BLE001 - 会话存储故障 → 探测未命中
+            return None
+        if stored is None:
+            return None
+        return {"ref_id": ref, "features": stored, "metadata": {"via": "durable_reuse"}}
 
     @staticmethod
     def _governor_charge(governor: Any, gov_path: Optional[str],

@@ -204,13 +204,47 @@ async def get_execution_run(
     run_id: str,
     user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """查询 run（强制认证 + 读隔离：他人 run 一律 404，避免存在性预言机）。"""
+    """查询 run（强制认证 + 读隔离：他人 run 一律 404，避免存在性预言机）。
+
+    V5：内存未命中时回读终态证据快照（owner 域校验在引擎读取侧）——
+    进程重启后读取不再 404（快照来源以 ``source="snapshot"`` 诚实标注）。
+    """
     from app.services.geocompute.executor import engine, owner_scope_for
 
     run = engine.get_run(run_id, owner_scope=owner_scope_for(user))
     if run is None:
         raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND"})
     return run.model_dump()
+
+
+@router.post("/plans/runs/{run_id}/cancel", tags=["GeoCompute / 执行平面"])
+async def cancel_execution_run(
+    run_id: str,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """请求取消一个 in-process run（V5，audit 06 §6.1 step 2）。
+
+    与 run 读端点同一 authz 纪律：强制认证 + owner 域读隔离（未知 run 与
+    他人 run 一律 404，不泄漏存在性）。取消经 ``engine.cancel_run``（run 级
+    CancellationToken）：未启动节点立即收敛；在飞节点经各自协作 checkpoint
+    收敛；durable 分支级联写 job 行取消（既有机制，无新状态机）。
+
+    幂等：已终态 / 快照回放的 run 返回 200 且 ``cancelled=false`` 并附当前
+    终态 —— 与 durable job 取消的幂等语义一致。
+    """
+    from app.services.geocompute.executor import engine, owner_scope_for
+
+    owner_scope = owner_scope_for(user)
+    run = engine.get_run(run_id, owner_scope=owner_scope)
+    if run is None:
+        raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND"})
+    cancelled = engine.cancel_run(run_id, reason="cancelled via API")
+    return {
+        "run_id": run_id,
+        "cancelled": bool(cancelled),
+        "status": run.status.value,
+        "source": run.source,
+    }
 
 
 @router.get("/runs/{run_id}/summary", tags=["GeoCompute / 执行平面"])

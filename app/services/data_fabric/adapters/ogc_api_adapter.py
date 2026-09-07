@@ -275,7 +275,16 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
 
         fp = dataset_fingerprint_service.calculate_descriptor_fingerprint(descriptor)
         caps = self._capabilities_v2()
-        plan = plan_query(v2, descriptor, caps, source_id=self.profile.id, dataset_fingerprint=fp)
+        # V5（Wave 9）：统计收割进计划（无统计时逐位回落历史行为）。
+        from app.services.data_fabric.query.statistics import statistics_for_request
+
+        plan = plan_query(v2, descriptor, caps, source_id=self.profile.id,
+                          dataset_fingerprint=fp,
+                          stats=statistics_for_request(descriptor, fp))
+        # V5：拆分计划的执行真相（历史路径 filter_split=None → 行为不变）。
+        from app.services.data_fabric.query.pushdown import resolve_plan_filter_split
+
+        remote_filter, local_filter = resolve_plan_filter_split(v2.filter, plan)
 
         items_url = f"{self.url.rstrip('/')}/collections/{dataset_id}/items"
         params: Dict[str, Any] = {"limit": v2.page.limit}
@@ -339,14 +348,15 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
             else:
                 params["datetime"] = f"{v2.temporal.value}/.."
 
-        # CQL2 filter：仅当 conformance 声明且为 AST 时编译（filter-lang 显式）
-        if v2.filter is not None:
+        # CQL2 filter：仅当 conformance 声明且为 AST 时编译（filter-lang 显式）。
+        # V5：拆分计划只把下推半编译为 CQL2，本地余项取回后求值。
+        if remote_filter is not None:
             if not self._cql2_supported():
                 raise InvalidQueryError(
                     "server does not declare CQL2 conformance; attribute filter "
                     "unsupported for this source"
                 )
-            params["filter"] = compile_predicate_cql2(v2.filter)
+            params["filter"] = compile_predicate_cql2(remote_filter)
             params["filter-lang"] = "cql2-text"
 
         try:
@@ -362,11 +372,27 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
         features = geojson.get("features", []) if isinstance(geojson, dict) else []
         if not isinstance(features, list):
             features = []
+
+        # V5：拆分计划的本地余项在页内精确求值（页窗口以远端行数为准）。
+        if local_filter is not None:
+            from app.services.data_fabric.query.predicates import evaluate_predicate
+
+            features = [
+                f for f in features if evaluate_predicate(local_filter, f.get("properties") or {})
+            ]
+
         matched = geojson.get("numberMatched") if isinstance(geojson, dict) else None
         if isinstance(matched, str) and matched.isdigit():
             matched = int(matched)
         elif not isinstance(matched, int):
             matched = None
+
+        # V5：无过滤请求的 numberMatched 是数据集行数的诚实观测 → 收割为
+        # 行级统计（advisory；过滤请求的命中数绝不冒充总量）。
+        if matched is not None and v2.filter is None and v2.spatial is None and v2.temporal is None:
+            from app.services.data_fabric.query.statistics import observe_row_count
+
+            observe_row_count("ogc_api", fp, matched)
 
         next_url = None
         if isinstance(geojson, dict):

@@ -368,7 +368,16 @@ class WFSAdapter(GeospatialDataSourceAdapter):
 
         fp = dataset_fingerprint_service.calculate_descriptor_fingerprint(descriptor)
         caps = get_capabilities("wfs")
-        plan = plan_query(v2, descriptor, caps, source_id=self.profile.id, dataset_fingerprint=fp)
+        # V5（Wave 9）：统计收割进计划（无统计时逐位回落历史行为）。
+        from app.services.data_fabric.query.statistics import statistics_for_request
+
+        plan = plan_query(v2, descriptor, caps, source_id=self.profile.id,
+                          dataset_fingerprint=fp,
+                          stats=statistics_for_request(descriptor, fp))
+        # V5：拆分计划的执行真相（历史路径 filter_split=None → 行为不变）。
+        from app.services.data_fabric.query.pushdown import resolve_plan_filter_split
+
+        remote_filter, local_filter = resolve_plan_filter_split(v2.filter, plan)
 
         page = v2.page
         limit = page.limit
@@ -427,10 +436,10 @@ class WFSAdapter(GeospatialDataSourceAdapter):
             minx, miny, maxx, maxy = v2.spatial.bbox
             params["BBOX"] = f"{minx},{miny},{maxx},{maxy},{_URN_CRS84 if not self.version.startswith('1.0') else 'EPSG:4326'}"
 
-        # 属性过滤器 → FES XML（POST）
+        # 属性过滤器 → FES XML（POST）。V5：拆分计划只把下推半编译为 FES。
         post_xml: Optional[str] = None
-        if v2.filter is not None:
-            filter_xml = compile_predicate_fes(v2.filter)
+        if remote_filter is not None:
+            filter_xml = compile_predicate_fes(remote_filter)
             if v2.spatial is not None:
                 bbox_xml = compile_bbox_fes(v2.spatial.bbox)
                 filter_xml = f'<ogc:And xmlns:ogc="http://www.opengis.net/ogc">{filter_xml}{bbox_xml}</ogc:And>'
@@ -506,8 +515,23 @@ class WFSAdapter(GeospatialDataSourceAdapter):
         elif not isinstance(total_matched, int):
             total_matched = None
 
+        # V5：无过滤请求的 numberMatched 是数据集行数的诚实观测 → 收割为
+        # 行级统计（advisory；过滤请求的命中数绝不冒充总量）。
+        if total_matched is not None and v2.filter is None and v2.spatial is None and v2.temporal is None:
+            from app.services.data_fabric.query.statistics import observe_row_count
+
+            observe_row_count("wfs", fp, total_matched)
+
         if local_slice is not None:
             features = features[local_slice[0]: local_slice[0] + local_slice[1]]
+
+        # V5：拆分计划的本地余项在页窗口切片后精确求值。
+        if local_filter is not None:
+            from app.services.data_fabric.query.predicates import evaluate_predicate
+
+            features = [
+                f for f in features if evaluate_predicate(local_filter, f.get("properties") or {})
+            ]
         returned = len(features)
         truncated = returned >= limit
         if total_matched is not None:

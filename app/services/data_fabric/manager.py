@@ -665,7 +665,13 @@ class DataFabricManager:
         if caps is None:
             caps = get_capabilities(descriptor.source_type)
         try:
-            plan = plan_query(v2, descriptor, caps, source_id=item.source_id, dataset_fingerprint=fp)
+            # V5（Wave 9）：explain 与执行路径同一统计口径（advisory、
+            # fail-open；无统计时与历史 explain 逐位一致）。
+            from app.services.data_fabric.query.statistics import statistics_for_request
+
+            plan = plan_query(v2, descriptor, caps, source_id=item.source_id,
+                              dataset_fingerprint=fp,
+                              stats=statistics_for_request(descriptor, fp))
         except DataFabricError as e:
             return {
                 "status": "error",
