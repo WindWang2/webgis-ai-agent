@@ -37,6 +37,19 @@ PYTEST = [sys.executable, "-m", "pytest"]
 #: 后端车道默认资源护栏（bounded；不用 -n auto）
 PYTEST_GUARDS = ["--timeout=120", "--timeout-method=thread", "-p", "no:cacheprovider"]
 
+def _perf_lane_files() -> list:
+    """R1 review MINOR：perf 车道清单单一来源化 —— 扫描 perf 标记文件，
+    与 CI 契约测试（test_every_perf_marked_file_is_wired_into_a_lane）
+    同一判定口径，本地与 CI 不漂移。"""
+    files = []
+    for pattern_dir in ("tests/benchmarks", "tests/perf"):
+        for p in sorted((REPO / pattern_dir).glob("test_*.py")):
+            src = p.read_text(encoding="utf-8")
+            if "pytestmark = pytest.mark.perf" in src or "@pytest.mark.perf" in src:
+                files.append(str(p.relative_to(REPO)))
+    return files
+
+
 LANES: dict[str, dict] = {
     "quick": {
         "title": "quick（质量红线 + 漂移 + 生成物一致性）",
@@ -118,19 +131,6 @@ LANES: dict[str, dict] = {
 
 FULL_ORDER = ["quick", "science", "cartography", "data", "security",
               "quality", "backend", "frontend"]  # perf 单独跑（隔离策略 #664）
-
-
-def _perf_lane_files() -> list:
-    """R1 review MINOR：perf 车道清单单一来源化 —— 扫描 perf 标记文件，
-    与 CI 契约测试（test_every_perf_marked_file_is_wired_into_a_lane）
-    同一判定口径，本地与 CI 不漂移。"""
-    files = []
-    for pattern_dir in ("tests/benchmarks", "tests/perf"):
-        for p in sorted((REPO / pattern_dir).glob("test_*.py")):
-            src = p.read_text(encoding="utf-8")
-            if "pytestmark = pytest.mark.perf" in src or "@pytest.mark.perf" in src:
-                files.append(str(p.relative_to(REPO)))
-    return files
 
 
 def _run_lane(lane: str, retry_failed: bool) -> dict:
