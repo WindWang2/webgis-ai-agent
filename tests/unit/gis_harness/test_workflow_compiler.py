@@ -1,7 +1,8 @@
 """Deterministic Workflow Compiler（C5）与 Completion/Verdict V2（C7）回归锁。
 
 不变式：
-- 13 阶段固定序（V3 扩展 map_task_ontology）、同输入同输出（纯函数编译，
+- 15 阶段固定序（V3 扩展 map_task_ontology / qualify_data / plan_candidates）、
+- 同输入同输出（纯函数编译，
   零 LLM / 零 I/O）；
 - 每阶段有机器可读 reason codes 与有界 evidence；
 - 新任务族路由到 V2 专业 recipe；通用短语仍归 V1 seed（资历层）；

@@ -101,36 +101,72 @@ class TestExtentCheck:
 
 
 class TestStaleOverlay:
+    """生产形态：descriptors 以 **ref id** 为键；图层 source 经 MapSpec
+    sources 二跳取得 ref 指针（review M1 键位对齐）。"""
+
+    @staticmethod
+    def _spec_with(stale_ref: bool) -> dict:
+        layers = [{"id": lid, "source": f"src_{lid}"}
+                  for lid in ("ctx_boundary", "result_points", "old_result")]
+        sources = {
+            "src_ctx_boundary": {"id": "src_ctx_boundary", "ref": "ref:ctx"},
+            "src_result_points": {"id": "src_result_points", "ref": "ref:pts"},
+        }
+        if stale_ref:
+            sources["src_old_result"] = {
+                "id": "src_old_result", "ref": "ref:old_result"}
+        return {"layers": layers, "sources": sources}
+
+    def test_evicted_ref_layer_flagged(self):
+        """ref 已不在 ref store（descriptors 无键）→ 死层告警。"""
+        findings = collect_final_map_findings(
+            _chapter(), self._spec_with(stale_ref=True),
+            descriptors={"ref:ctx": {"status": "active"},
+                         "ref:pts": {"status": "active"}})
+        stale = [f for f in findings if f.code == F_STALE_OVERLAY]
+        assert len(stale) == 1
+        assert stale[0].target == "old_result"
+
     def test_superseded_ref_layer_flagged(self):
-        mapspec = _mapspec(["ctx_boundary", "result_points", "old_result"])
         descriptors = {
-            "src_ctx_boundary": {"status": "active"},
-            "src_result_points": {"status": "active"},
-            "src_old_result": {"status": "superseded"},
+            "ref:ctx": {"status": "active"},
+            "ref:pts": {"status": "active"},
+            "ref:old_result": {"status": "superseded"},
         }
         findings = collect_final_map_findings(
-            _chapter(), mapspec, descriptors=descriptors)
+            _chapter(), self._spec_with(stale_ref=True),
+            descriptors=descriptors)
         stale = [f for f in findings if f.code == F_STALE_OVERLAY]
         assert len(stale) == 1
         assert stale[0].target == "old_result"
 
     def test_live_user_layer_never_flagged(self):
         """用户添加的有效图层（ref 存活）零误伤。"""
-        mapspec = _mapspec(["ctx_boundary", "result_points", "user_layer"])
         descriptors = {
-            "src_ctx_boundary": {"status": "active"},
-            "src_result_points": {"status": "active"},
-            "src_user_layer": {"status": "active"},
+            "ref:ctx": {"status": "active"},
+            "ref:pts": {"status": "active"},
+            "ref:old_result": {"status": "active"},
         }
         findings = collect_final_map_findings(
-            _chapter(), mapspec, descriptors=descriptors)
+            _chapter(), self._spec_with(stale_ref=True),
+            descriptors=descriptors)
         assert all(f.code != F_STALE_OVERLAY for f in findings)
 
-    def test_unknown_source_not_flagged(self):
-        """无 descriptor 登记（basemap/xyz）→ 不判死 ref，避免误伤。"""
-        mapspec = _mapspec(["ctx_boundary", "result_points", "basemap_xyz"])
+    def test_no_ref_semantics_not_flagged(self):
+        """无 ref 指针的 basemap/xyz source → 不参与判定。"""
+        mapspec = {"layers": [
+            {"id": "ctx_boundary", "source": "src_ctx"},
+            {"id": "result_points", "source": "src_pts"},
+            {"id": "basemap_xyz", "source": "src_xyz"},
+        ], "sources": {
+            "src_ctx": {"id": "src_ctx", "ref": "ref:ctx"},
+            "src_pts": {"id": "src_pts", "ref": "ref:pts"},
+            "src_xyz": {"id": "src_xyz"},   # 无 ref
+        }}
         findings = collect_final_map_findings(
-            _chapter(), mapspec, descriptors={})
+            _chapter(), mapspec,
+            descriptors={"ref:ctx": {"status": "active"},
+                         "ref:pts": {"status": "active"}})
         assert all(f.code != F_STALE_OVERLAY for f in findings)
 
 
@@ -155,11 +191,12 @@ class TestAggregation:
             render_status=RENDER_STALE, v3_findings=[])
         assert status == FINAL_MAP_DEGRADED
 
-    def test_failed_on_render_issues(self):
+    def test_render_issues_maps_to_degraded_not_failed(self):
+        """P9 语义对齐（review M2）：render issues 可自愈 → degraded。"""
         status = aggregate_final_map_status(
             has_planned_layers=True, base_status=STATUS_COMPLETE,
             render_status=RENDER_ISSUES, v3_findings=[])
-        assert status == FINAL_MAP_FAILED
+        assert status == FINAL_MAP_DEGRADED
 
     def test_failed_on_base_failed(self):
         status = aggregate_final_map_status(
@@ -194,3 +231,46 @@ class TestFinalGate:
 def MapCompletionResultRef():
     from app.services.gis_harness.completion.contracts import MapCompletionResult
     return MapCompletionResult()
+
+
+class TestDedupGate:
+    """final_gate 强制终验门（review R7：两分支单测）。"""
+
+    @staticmethod
+    def _gate(stored, *, force=False, final_gate=False, revision=7):
+        from app.services.gis_harness.completion.pipeline import _dedup_gate_blocks
+        return _dedup_gate_blocks(
+            stored, {"map_layers": []}, revision, 3,
+            force=force, final_gate=final_gate)
+
+    @staticmethod
+    def _stored(verdict="READY", status="complete"):
+        # rows_fingerprint 与空章节（无行）对齐 —— 门比较同宽截断
+        return {"product_verdict": verdict, "status": status,
+                "checked_revision": 7, "render_observation_seq": 3,
+                "rows_fingerprint": ""}
+
+    def test_ready_session_idempotent_skip(self):
+        assert self._gate(self._stored()) is True
+
+    def test_needs_repair_session_forced_by_final_gate(self):
+        stored = self._stored(verdict="NEEDS_REPAIR", status="needs_repair")
+        assert self._gate(stored, final_gate=True) is False
+        # 无 final_gate 时幂等跳过（既有语义）
+        assert self._gate(stored, final_gate=False) is True
+
+    def test_missing_verdict_counts_as_not_ready(self):
+        """verdict 缺失（旧块）→ 非 READY → final_gate 强制重验。"""
+        stored = self._stored(verdict="", status="needs_repair")
+        del stored["product_verdict"]
+        stored["product_verdict"] = ""
+        assert self._gate(stored, final_gate=True) is False
+
+    def test_force_bypasses_gate_unconditionally(self):
+        assert self._gate(self._stored(), force=True) is False
+
+    def test_revision_change_breaks_gate(self):
+        assert self._gate(self._stored(), revision=9) is False
+
+    def test_non_terminal_status_never_skips(self):
+        assert self._gate(self._stored(status="pending")) is False

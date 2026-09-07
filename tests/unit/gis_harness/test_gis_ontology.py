@@ -89,9 +89,12 @@ class TestOntologyIntegrity:
             desc = ontology.get(tid)
             assert desc is not None
             if desc.semantic_status == "planned":
-                assert all(c not in caps or c == "" for c in ()), (
-                    f"{tid}: planned 任务不得声明已注册专有能力冒充 native"
-                )
+                # review R1：此前断言迭代空元组恒真，红线零校验 —— 现在逐
+                # 能力校验 planned 任务不冒充 native。
+                for cap in desc.common_capabilities:
+                    assert cap not in caps, (
+                        f"{tid}: planned 任务声明了已注册能力 {cap}（冒充 native）"
+                    )
             for cap in desc.common_capabilities:
                 assert cap in caps, f"{tid}: native 任务引用未注册能力 {cap}"
 

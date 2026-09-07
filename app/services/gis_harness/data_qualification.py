@@ -31,18 +31,45 @@ QUALIFICATION_STATES = (
     "eligible", "transform_required", "degraded", "blocked", "unknown",
 )
 
-#: 显式修复操作词表（与 SpatialRepairPipeline ops / geocompute 算子同源；
-#: auto_applicable=True 的操作必须已有确定性实现，不得把 planned 当可执行）。
+#: 显式修复操作词表。每个操作的**实现背书**（单一事实源引用，非平行
+#: 词表——经 test_data_qualification 对 CapabilityRegistry 对账）：
+#: - reproject      → spatial_repair_pipeline.crs_transform（pyproj）
+#: - repair_geometry → make_valid / snap_within_tolerance / deduplicate
+#: - normalize      → attribute_type_normalization（str→num / NaN→None）
+#: - derive_field   → capability `geometry_centroid` + geocompute 派生算子
+#: - aggregate      → capability `grid_binning` / `admin_aggregation`
+#: - filter_null    → geocompute FILTER 算子（SQL 三值谓词）
+#: - filter_nodata  → raster_calculator nodata 掩膜（tools/advanced_spatial）
+#: - resample       → capability `raster_resample`
 REMEDIATION_OPS = (
-    "reproject",        # CRS 变换（spatial_repair_pipeline.crs_transform 同源）
-    "repair_geometry",  # make_valid / snap / dedup
-    "derive_field",     # 表达式派生新字段（如由几何求质心/面积）
-    "aggregate",        # 聚合到更高层空间单元
-    "normalize",        # 字段类型/单位归一化
-    "filter_null",      # 空值要素过滤
-    "filter_nodata",    # 栅格 nodata 掩膜过滤
-    "resample",         # 栅格重采样
+    "reproject",
+    "repair_geometry",
+    "derive_field",
+    "aggregate",
+    "normalize",
+    "filter_null",
+    "filter_nodata",
+    "resample",
 )
+
+#: 操作 → 实现背书（``capability:<id>`` = CapabilityRegistry 引用，经
+#: registry 对账；``fn:<module>:<symbol>`` = 确定性修复函数）。执行仍由
+#: CapabilityRegistry / AlgorithmResolver 解析，本模块只声明意图。
+REMEDIATION_OP_BACKING = {
+    "reproject": ("fn:app.services.spatial_repair_pipeline:crs_transform",),
+    "repair_geometry": (
+        "fn:app.services.spatial_repair_pipeline:make_valid",
+        "fn:app.services.spatial_repair_pipeline:snap_within_tolerance",
+        "fn:app.services.spatial_repair_pipeline:deduplicate",
+    ),
+    "derive_field": ("capability:geometry_centroid",),
+    "aggregate": ("capability:grid_binning", "capability:admin_aggregation"),
+    "normalize": (
+        "fn:app.services.spatial_repair_pipeline:attribute_type_normalization",),
+    "filter_null": ("op:geocompute.FILTER",),
+    "filter_nodata": ("fn:app.tools.advanced_spatial:raster_calculator",),
+    "resample": ("capability:raster_resample",),
+}
 
 #: 无需 profile 事实即可给出的修复操作（有确定性实现）。
 _AUTO_FIXABLE_OPS = frozenset({
@@ -52,6 +79,13 @@ _AUTO_FIXABLE_OPS = frozenset({
 
 #: 高空值率阈值：超过则该字段不可靠（degraded 证据）。
 _HIGH_NULL_RATIO = 0.5
+
+#: 分母/时间字段提示词表 —— 引用 workflow_schema 公有词表（单一事实源；
+#: 此前副本曾漂移丢失 "day"/"时期"，review A3）。
+from app.services.gis_harness.workflow_schema import (  # noqa: E402
+    DENOMINATOR_FIELD_HINTS,
+    TIME_FIELD_HINTS,
+)
 
 #: 剖面字段名 → 检查维度的事实键（resolver camelCase 约定，与
 #: spatial_meta_profiler / DatasetProfile.to_resolver_profile 同源）。
@@ -108,7 +142,7 @@ def _has_time_fact(profile: Dict[str, Any]) -> Optional[bool]:
         return obs >= 2
     for name in _field_names(profile):
         low = name.lower()
-        if any(h in low for h in ("time", "date", "year", "month", "时间", "日期", "年份")):
+        if any(h in low for h in TIME_FIELD_HINTS):
             return True
     return None
 
@@ -357,22 +391,28 @@ def qualify_data_role(
 
     # 3) 分母字段的强证据（与 workflow_schema._DENOMINATOR_FIELD_HINTS 同规）
     if req.role == "denominator":
-        names = [n.lower() for n in _field_names(profile)]
-        has_strong = any(
-            any(h in n for h in ("population", "pop_", "人口", "household", "户数"))
-            for n in names
-        )
-        _record(has_strong, _check(
-            "denominator_field", has_strong,
-            hint_fields=[n for n in names[:8]],
-        ))
-        if not has_strong:
-            remediation.append(_remediation(
-                "derive_field", "denominator",
-                reason_code="DENOMINATOR_FIELD_REQUIRED",
-                disclosure="缺少人口/面积等分母字段：不得下人均/率/公平性结论。",
-                auto_applicable=False, confidence=0.2,
+        fields_known = bool(fields)
+        if fields_known:
+            names = [n.lower() for n in _field_names(profile)]
+            has_strong = any(
+                any(h in n for h in DENOMINATOR_FIELD_HINTS) for n in names
+            )
+            _record(has_strong, _check(
+                "denominator_field", has_strong,
+                hint_fields=[n for n in names[:8]],
             ))
+            if not has_strong:
+                remediation.append(_remediation(
+                    "derive_field", "denominator",
+                    reason_code="DENOMINATOR_FIELD_REQUIRED",
+                    disclosure="缺少人口/面积等分母字段：不得下人均/率/公平性结论。",
+                    auto_applicable=False, confidence=0.2,
+                ))
+        else:
+            # 字段事实缺席（栅格/降级画像）：unknown ≠ 不满足 —— 不计失败、
+            # 不降档（review S3 红线）。
+            _record(None, _check(
+                "denominator_field", False, facts="fields_unknown"))
 
     # 4) 空值率（字段级事实）
     if req.role in _MEASURE_ROLES or req.role == "subject":
@@ -382,7 +422,9 @@ def qualify_data_role(
             if isinstance(ratio, (int, float)) and ratio > _HIGH_NULL_RATIO:
                 null_heavy.append(str(name))
         if fields:
-            _record(True, _check(
+            # 实际通过性进入 facts 统计（review S6：恒 True 会让 confidence
+            # 与失败计数失真）
+            _record(not null_heavy, _check(
                 "null_ratio", not null_heavy, null_heavy=null_heavy[:6],
             ))
             if null_heavy:

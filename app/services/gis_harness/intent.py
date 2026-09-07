@@ -14,10 +14,14 @@ Recipe 选择、产品规划与 Harness evidence 消费。
 """
 from __future__ import annotations
 
+import logging
+
 import re
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+logger = logging.getLogger(__name__)
 
 # ─── 类型词汇表 ─────────────────────────────────────────────────────────
 
@@ -759,8 +763,17 @@ def resolve_map_request_intent(query: str) -> MapRequestIntent:
                     output_intents = list(dict.fromkeys(output_intents + ["chart"]))
                 signal, analysis_intents, cartography_intents = _apply_form_signals(
                     query, analysis_intents, cartography_intents)
-        except Exception:  # noqa: BLE001 — 升级失败回退原任务（保守缺省）
-            pass
+                # 升级重算 output_intents 后，重放此前已注入的报告/导出
+                # 信号（review R5：否则「用于报告：…」升级句丢失 export）
+                if report_product:
+                    output_intents = list(dict.fromkeys(output_intents + ["export", "summary"]))
+                if _EXPORT_RE.search(query):
+                    output_intents = list(dict.fromkeys(output_intents + ["export"]))
+        except Exception:  # noqa: BLE001 — 升级失败保守回退，但必须留痕可观测
+            logger.warning(
+                "ontology task escalation failed (kept task=%s) query=%r",
+                task, query[:80], exc_info=True,
+            )
 
     return MapRequestIntent(
         query=query,

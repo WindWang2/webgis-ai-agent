@@ -222,15 +222,17 @@ def _fallback_quality(recipe: Any) -> float:
     return min(1.0, 0.3 + 0.15 * (fb + wf_fb))
 
 
-def _estimate_cost(recipe: Any, resolutions: Dict[str, Any]) -> CostEstimate:
+def _estimate_cost(
+    recipe: Any,
+    unavailable_caps: Tuple[str, ...] = (),
+) -> CostEstimate:
     calls = 1 + len(recipe.preferred_analysis or [])
     heavy_caps = {"spatial_interpolation", "regression_kriging", "gwr",
                   "terrain_hydrology_advanced", "mcda_evaluation"}
     tier = 2 if heavy_caps & set(recipe.preferred_analysis or []) else 1
-    planned = any(
-        getattr(resolutions.get(c), "status", "") == "unavailable"
-        for c in recipe.preferred_analysis or []
-    )
+    # planned 事实来自 _check_tools 的 resolver 裁决（capability:reason
+    # 形态）——空 dict 恒 None 的死代码路径已移除（review A2）。
+    planned = bool(unavailable_caps)
     return CostEstimate(tool_call_estimate=min(calls, 12), latency_tier=tier,
                         uses_planned_capability=planned)
 
@@ -241,7 +243,11 @@ def _check_tools(
     profile: Optional[Dict[str, Any]],
     available_tools: Optional[List[str]],
 ) -> Tuple[Optional[bool], Tuple[str, ...]]:
-    """工具可用性检查（委托 AlgorithmResolver；零 available_tools 时 None）。"""
+    """工具可用性检查（委托 AlgorithmResolver；零 available_tools 时 None）。
+
+    unavailable 形如 ``capability:reason``—— 同时是 planned 事实的单一
+    来源（resolver 裁决该能力链当前不可用 = 只能近似/代理）。
+    """
     if not recipe.preferred_analysis:
         return None, ()
     from app.lib.gis.algorithm_resolver import get_algorithm_resolver
@@ -326,8 +332,7 @@ def _evaluate_candidate(
 
     # ── 评分（§12 维度；确定性）─────────────────────────────────────
     data_fit_state = _worst_state(data_states) if data_states else (
-        "blocked" if data_blockers else (
-            "unknown" if recipe.workflow is not None else "unknown"))
+        "blocked" if data_blockers else "unknown")
     semantic = _semantic_fit(intent, ontology_task_ids, recipe,
                              routing_rank=routing_rank)
     # 本体匹配得分加成（命中本体主任务 +）
@@ -335,7 +340,7 @@ def _evaluate_candidate(
             ontology_task_ids[:1]):
         semantic = min(1.0, semantic + 0.15)
     validity = 1.0 if not method_blockers else 0.0
-    cost = _estimate_cost(recipe, {})
+    cost = _estimate_cost(recipe, unavailable_caps)
     determinism = 0.6 if cost.uses_planned_capability else 1.0
     scores = {
         "semantic_fit": round(semantic, 3),
@@ -508,7 +513,10 @@ def generate_plan_candidates(
         if c.candidate_id != candidate_set.selected_id and c.status == "feasible":
             c.status = "rejected"
             c.rejection_reasons = c.rejection_reasons + ("score_ranked_lower",)
-        elif c.candidate_id == candidate_set.selected_id:
+        elif (c.candidate_id == candidate_set.selected_id
+                and c.status == "feasible"):
+            # 仅 feasible 候选可成为 selected —— 全拒场景的 selected_id
+            # 只是「最优拒绝证据」的指向，不得把拒绝候选翻转为 selected。
             c.status = "selected"
     return candidate_set
 

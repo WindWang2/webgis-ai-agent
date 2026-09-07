@@ -153,12 +153,15 @@ def validate_gis_library(
                 issues.append(f"recipe {rid}: unknown ontology task {task_id}")
 
     # ── V3：Recipe 分层组合（family / composite / scenario）───────────
-    from app.services.gis_harness.workflow_families import (
-        get_workflow_family_registry,
-    )
+    # 用**传入的** recipes registry 现建投影（review A5：单例投影 + 参数
+    # registry 会在测试/隔离场景下误报或漏报）。
+    from app.services.gis_harness.workflow_families import WorkflowFamilyRegistry
+
+    family_layer = WorkflowFamilyRegistry()
+    family_layer.load(recipes)
     issues.extend(
         f"workflow_families: {violation}"
-        for violation in get_workflow_family_registry().validate(recipes)
+        for violation in family_layer.validate(recipes)
     )
 
     # ── ProductTemplate：recipe / map model / capability / layer_type ──

@@ -288,3 +288,29 @@ class TestCompilerQualifyStage:
         stage = c.stage("qualify_data")
         assert stage is not None
         assert stage.status == "blocked"
+
+
+class TestRemediationBacking:
+    """修复操作的实现背书对账（review A4/S4：词表不与实现脱钩）。"""
+
+    def test_capability_backings_registered(self):
+        """capability: 背书必须命中 CapabilityRegistry（单一事实源）。"""
+        from app.lib.gis.capability_registry import get_capability_registry
+        from app.services.gis_harness.data_qualification import (
+            REMEDIATION_OP_BACKING,
+            REMEDIATION_OPS,
+        )
+
+        caps = get_capability_registry().all_ids
+        caps = set(caps() if callable(caps) else caps)
+        # 词表全覆盖：每个操作都有背书声明
+        assert set(REMEDIATION_OP_BACKING.keys()) == set(REMEDIATION_OPS)
+        for op, backings in REMEDIATION_OP_BACKING.items():
+            assert backings, op
+            for b in backings:
+                if b.startswith("capability:"):
+                    assert b.split(":", 1)[1] in caps, (
+                        f"{op}: backing capability {b} 未注册")
+                else:
+                    assert b.startswith(("fn:", "op:")), (
+                        f"{op}: 未知背书形态 {b}")

@@ -355,10 +355,14 @@ def validate_workflow_profile(
 #: 强分母字段提示：仅这些证据能把 denominator 角色升为 bound（review R1-A11：
 #: total/count/bed 等弱提示会把分子字段误判成分母 —— 公平性红线的字段证据
 #: 必须保守；弱提示一律只走义务 warning，永不满足）。
-_DENOMINATOR_FIELD_HINTS = (
+#: V3 转公有：data_qualification 引用同一词表（单一事实源，防止副本
+#: 漂移 —— 此前资格层副本丢失 "day"/"时期"）。
+DENOMINATOR_FIELD_HINTS = (
     "population", "pop_", "人口", "household", "户数",
 )
-_TIME_FIELD_HINTS = ("time", "date", "year", "month", "day", "时间", "日期", "年份", "时期")
+TIME_FIELD_HINTS = ("time", "date", "year", "month", "day", "时间", "日期", "年份", "时期")
+_DENOMINATOR_FIELD_HINTS = DENOMINATOR_FIELD_HINTS
+_TIME_FIELD_HINTS = TIME_FIELD_HINTS
 
 
 def _field_names(profile: Optional[Dict[str, Any]]) -> List[str]:

@@ -106,7 +106,7 @@ def _check_layer_order(
         if ri is None:
             continue
         for cid, ci in context_idx:
-            if ci is not None and ci is not None and ri < ci:
+            if ci is not None and ri < ci:
                 findings.append(MapCompletionFinding(
                     code=F_LAYER_ORDER,
                     severity="warning",
@@ -145,14 +145,29 @@ def _check_stale_overlays(
 ) -> List[MapCompletionFinding]:
     """陈旧覆盖层检测（保守红线：只告警死 ref / superseded ref 图层）。
 
-    判定（确定性）：spec 图层不在当前计划图层内，且其 source ref 满足
-    之一 —— (a) ref 不在 ref store（被 TTL/LRU 驱逐或属上个任务）；
-    (b) descriptor.status ∈ {superseded, expired, stale}。用户添加的
-    有效图层（ref 存活 + 非 superseded）永不误伤。
+    判定（确定性）：非计划图层的 source 经 MapSpec sources 二跳取得
+    ref 指针（descriptors 以 ref id 为键 —— review M1 键位对齐），满足
+    之一即告警：
+    (a) source 声明了 ref 指针但 descriptors 无该 ref（被 TTL/LRU 驱逐
+        或属上个任务 —— 已不可渲染的死层）；
+    (b) descriptor.status ∈ {superseded, expired, stale}。
+    用户添加的有效图层（ref 存活 + 非 superseded）永不误伤；无 ref 语义
+    的 basemap/xyz source 不参与判定。
     """
     findings: List[MapCompletionFinding] = []
     planned_ids = {str(ly.get("layer_id") or "") for ly in _planned_layers(chapter)}
     descriptors = descriptors if isinstance(descriptors, dict) else {}
+    raw_sources = mapspec.get("sources")
+    if isinstance(raw_sources, dict):
+        source_by_id = {
+            str(k): v for k, v in raw_sources.items() if isinstance(v, dict)
+        }
+    else:
+        source_by_id = {
+            str(s.get("id") or ""): s
+            for s in (raw_sources or [])
+            if isinstance(s, dict)
+        }
     for ly in _spec_layers(mapspec):
         lid = str(ly.get("id") or "")
         if not lid or lid in planned_ids:
@@ -160,10 +175,28 @@ def _check_stale_overlays(
         src = str(ly.get("source") or "")
         if not src:
             continue
-        desc = descriptors.get(src)
+        src_def = source_by_id.get(src)
+        if not isinstance(src_def, dict):
+            continue
+        # 二跳：source id → ref 指针（与 validate_layers 的存活校验同源）
+        ref = next(
+            (src_def.get(k) for k in
+             ("ref", "ref_id", "image_ref", "imageRef", "result_ref")
+             if src_def.get(k)),
+            None,
+        )
+        if not ref:
+            continue   # 无 ref 语义（basemap/xyz）——不判定
+        desc = descriptors.get(str(ref))
         if desc is None:
-            # source 无 descriptor：可能 basemap / xyz（无 ref 语义）—— 只
-            # 在 descriptor 字典显式登记过该 source 时才判死 ref，避免误伤
+            # ref 已不在 ref store：死层（上个任务残留 / 已驱逐）
+            findings.append(MapCompletionFinding(
+                code=F_STALE_OVERLAY,
+                severity="warning",
+                target=lid,
+                detail=f"non-planned layer '{lid[:48]}' points to evicted "
+                       "ref (previous task leftover)",
+            ))
             continue
         status = str((desc or {}).get("status") or "")
         if status in ("superseded", "expired", "stale"):
@@ -203,10 +236,15 @@ def aggregate_final_map_status(
     render_status: str,
     v3_findings: List[MapCompletionFinding],
 ) -> str:
-    """最终裁决聚合（确定性；在 result.status 定格后调用）。"""
+    """最终裁决聚合（确定性；在 result.status 定格后调用）。
+
+    P9 语义对齐（review M2）：render issues 属「可经 re-render /
+    re-observation 自愈」的瞬态缺口 —— 不进 failed（否则与
+    needs_repair 的可自愈纪律冲突），归 degraded 等待观察收敛。
+    """
     if not has_planned_layers:
         return FINAL_MAP_UNKNOWN
-    if base_status == STATUS_FAILED or render_status == RENDER_ISSUES:
+    if base_status == STATUS_FAILED:
         return FINAL_MAP_FAILED
     if (base_status == STATUS_COMPLETE
             and render_status in (RENDER_VERIFIED, RENDER_NOT_APPLICABLE)

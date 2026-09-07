@@ -27,8 +27,6 @@ from pydantic import BaseModel, Field
 #: 任务级策略，本模块做运行期事实裁决）。
 FALLBACK_TIERS = ("preferred", "degraded", "minimal", "blocked")
 
-#: 最差数据资格状态 → 是否还能给出近似结果。
-_DEGRADED_STATES = frozenset({"degraded", "transform_required"})
 
 
 class FallbackResolution(BaseModel):

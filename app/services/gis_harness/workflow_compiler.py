@@ -139,7 +139,7 @@ def compile_workflow(
     template_id: str = "",
     min_points_default: int = 10,
 ) -> WorkflowCompilation:
-    """把 query/intent 确定性编译为 WorkflowCompilation（13 阶段）。
+    """把 query/intent 确定性编译为 WorkflowCompilation（15 阶段）。
 
     ``profile``（Spatial Meta Profile / resolver camelCase 形态）在数据到手
     后传入，用于 finalize 与义务评估；规划期可省略（义务按 unknown ≠
@@ -247,43 +247,50 @@ def compile_workflow(
     ))
 
     # ── 7 qualify_data（V3：per-role 数据资格四态裁决 + 修复声明）────
-    data_qualifications: List[Any] = []
-    if wf_profile is not None and wf_profile.data_roles:
-        from app.services.gis_harness.data_qualification import (
-            qualify_workflow_data_roles,
+    def _run_qualify(wf: Any, resolutions: List[Any]) -> tuple:
+        """资格裁决 + 阶段记录（reroute 改写 recipe 后必须重跑，保证
+        remediation 物化与 fallback 裁决消费的是**当前** recipe 的证据）。"""
+        quals: List[Any] = []
+        if wf is not None and wf.data_roles:
+            from app.services.gis_harness.data_qualification import (
+                qualify_workflow_data_roles,
+            )
+            # 投影/度量类 precondition 在场 → 资格阶段联动
+            # projected_crs_required 检查（委托算法层，单一事实源）。
+            crs_obligation = any(
+                "projected_crs" in (getattr(o, "precondition_id", "") or "")
+                or "local_metric_crs" in (getattr(o, "precondition_id", "") or "")
+                for o in wf.obligations
+            )
+            quals = qualify_workflow_data_roles(
+                wf.data_roles, resolutions,
+                resolver_profile=profile,
+                crs_projection_obligation=crs_obligation,
+            )
+        role_states = {q.role: q.state for q in quals}
+        record = _stage_record(
+            "qualify_data",
+            status="skipped" if not quals else (
+                "blocked"
+                if any(q.state == "blocked" for q in quals)
+                else "ok"),
+            reason_codes=[
+                q.reason_code for q in quals
+                if q.state in ("blocked", "degraded")
+            ][:_STAGE_REASON_BUDGET],
+            evidence={
+                "states": dict(list(role_states.items())[:8]),
+                "remediations": sum(len(q.remediation) for q in quals),
+            },
         )
-        # 投影义务存在 → 资格阶段联动 projected_crs_required 检查（委托
-        # 算法层，单一事实源）。
-        crs_obligation = any(
-            getattr(o, "kind", "") == "transformation"
-            or "projected_crs" in (getattr(o, "precondition_id", "") or "")
-            for o in wf_profile.obligations
-        )
-        data_qualifications = qualify_workflow_data_roles(
-            wf_profile.data_roles, role_resolutions,
-            resolver_profile=profile,
-            crs_projection_obligation=crs_obligation,
-        )
+        return quals, role_states, record
+
+    data_qualifications, states, qualify_stage = _run_qualify(
+        wf_profile, role_resolutions)
     compilation.data_qualifications = [
         q.to_bounded_dict() for q in data_qualifications
     ]
-    states = {q.role: q.state for q in data_qualifications}
-    stages.append(_stage_record(
-        "qualify_data",
-        status="skipped" if not data_qualifications else (
-            "blocked"
-            if any(q.state == "blocked" for q in data_qualifications)
-            else "ok"),
-        reason_codes=[
-            q.reason_code for q in data_qualifications
-            if q.state in ("blocked", "degraded")
-        ][:_STAGE_REASON_BUDGET],
-        evidence={
-            "states": dict(list(states.items())[:8]),
-            "remediations": sum(
-                len(q.remediation) for q in data_qualifications),
-        },
-    ))
+    stages.append(qualify_stage)
 
     # ── 7b plan_candidates（V3：多候选生成/评分/可解释选择）──────────
     from app.services.gis_harness.plan_candidates import generate_plan_candidates
@@ -303,6 +310,16 @@ def compile_workflow(
         role_resolutions = resolve_data_roles(
             selected.id, wf_profile, resolver_profile=profile)
         compilation.data_roles = [r.to_bounded_dict() for r in role_resolutions]
+        # 陈旧证据守卫：改写后重跑资格裁决（stage 7 记录替换为新 recipe 的
+        # 证据）—— 否则 remediation 物化与 fallback 裁决消费旧 recipe 事实。
+        data_qualifications, states, qualify_stage = _run_qualify(
+            wf_profile, role_resolutions)
+        compilation.data_qualifications = [
+            q.to_bounded_dict() for q in data_qualifications
+        ]
+        stages[:] = [
+            s if s.stage != "qualify_data" else qualify_stage for s in stages
+        ]
     if selected_candidate is not None and selected_candidate.disclosures:
         stages.append(_stage_record(
             "plan_candidates",

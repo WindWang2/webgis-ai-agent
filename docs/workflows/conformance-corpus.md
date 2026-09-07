@@ -54,12 +54,10 @@
 ## 运行
 
 ```bash
-# 全量（~20s，离线，零 LLM；V3 起挂 perf 标记 —— unfiltered 运行自跳过，
-# 资源红线：20k 全量不进默认门，#664 约定）
-pytest -m perf tests/unit/gis_harness/test_conformance_corpus.py::test_corpus_full_run_green
-
-# 默认车道：确定性分层抽样（543 案例 ≈3s）+ 领域切片
+# 全量（20,088 案例实测 ≈20s，离线零 LLM；review 后移回默认车道）
 pytest tests/unit/gis_harness/test_conformance_corpus.py -q
+
+# 快速反馈面：确定性分层抽样（543 案例 ≈3s）+ 领域切片（同文件内）
 
 # 分片（CI 友好）
 python -c "from app.evaluation.conformance import build_conformance_corpus; \
@@ -80,5 +78,5 @@ python -c "from app.evaluation.conformance import build_conformance_corpus; \
 - **V3 指标契约（opt-in）**：`expected_ontology_task`（本体 top-1 锁）、
   `qualification_profile` + `expected_qualification`（资格四态复评）、
   `expected_fallback_tier`（回退层裁决）、`check_determinism`（双跑对齐）；
-- **资源分层**：默认车道 = 确定性分层抽样（每 37 例取 1）+ 领域切片；
-  全量 = `pytest -m perf` 显式运行。
+- **资源分层**：全量实测 ≈20s，直接进默认车道；分层抽样（每 37 例取 1）
+  与领域切片保留为快速反馈面。

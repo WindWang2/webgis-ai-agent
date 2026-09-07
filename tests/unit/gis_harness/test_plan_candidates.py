@@ -92,14 +92,16 @@ class TestCandidateGeneration:
         prof = {"featureCount": 60, "geometryTypes": ["Point"],
                 "numericFields": ["pm25"],
                 "fields": {"pm25": {"type": "number"}}, "crs": "EPSG:32648"}
-        # available_tools 为空列表 = 无任何工具 → 依赖工具的能力不可用
+        # available_tools 为空列表 = 无任何工具 → 依赖工具链的候选必须
+        # 出现 tools_available=False 且被拒绝（review R8：恒真断言修正）
         s = generate_plan_candidates(it, profile=prof, available_tools=[])
-        states = {c.tools_available for c in s.candidates}
-        assert states <= {True, False, None}
         unavailable = [c for c in s.candidates if c.tools_available is False]
-        if unavailable:
-            assert any("tools_unavailable" in r
-                       for r in unavailable[0].rejection_reasons)
+        assert unavailable, (
+            "empty available_tools must produce at least one "
+            "tools_available=False candidate")
+        for c in unavailable:
+            assert "tools_unavailable" in c.rejection_reasons
+            assert c.status == "rejected"
 
     def test_bounded_serializable(self):
         import json

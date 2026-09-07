@@ -291,6 +291,43 @@ def _planned_layers_v3(chapter: Dict[str, Any]) -> List[Dict[str, Any]]:
             if isinstance(ly, dict) and ly.get("layer_id")]
 
 
+#: READY 裁决集合：final_gate 只对非 READY 会话强制重验。
+_READY_VERDICTS = ("READY", "READY_WITH_WARNINGS")
+
+
+def _dedup_gate_blocks(
+    stored: Any,
+    chapter: Dict[str, Any],
+    revision: int,
+    render_seq: int,
+    *,
+    force: bool = False,
+    final_gate: bool = False,
+) -> bool:
+    """幂等去重门（纯函数；True = 跳过重验）。
+
+    V3 final_gate：已存裁决非 READY（needs_repair / blocked / 缺失——
+    旧块/异常路径）→ turn 收尾强制重验（diagnose → repair → re-observe →
+    re-verify 闭环），未解决会话不得靠幂等门滑过 turn 边界。READY 会话
+    保持幂等跳过（happy path 零开销）。
+    """
+    if force:
+        return False
+    if not isinstance(stored, dict):
+        return False
+    if stored.get("status") not in (
+            STATUS_COMPLETE, STATUS_NEEDS_REPAIR, STATUS_FAILED):
+        return False
+    if final_gate and str(stored.get("product_verdict") or "") not in _READY_VERDICTS:
+        return False
+    return (
+        _stored_checked_revision(stored) == revision
+        and _stored_render_seq(stored) == render_seq
+        and str(stored.get("rows_fingerprint") or "")
+        == _rows_fingerprint(chapter)[:512]
+    )
+
+
 def _rows_fingerprint(chapter: Dict[str, Any]) -> str:
     """行状态指纹（去重门输入）：capability 行的状态/ref 绑定变化即改变。
 
@@ -455,23 +492,9 @@ async def maybe_finalize_map_product(
     # 旧块无 rows_fingerprint 键 → 首次不跳过，重验一次即自愈补齐。
     # 比较双侧截断（review 终审 F2）：存储侧 [:512]，比较侧同宽 ——
     # 此前存储截断/比较全量，≥8 行章节永不匹配 → 门失效、每触发点重跑。
-    # V3 final_gate：已存裁决非 READY → turn 收尾强制重验（diagnose →
-    # repair → re-verify 闭环），未解决会话不得靠幂等门滑过 turn 边界。
-    if (
-        not force
-        and not (
-            final_gate
-            and isinstance(stored, dict)
-            and str(stored.get("product_verdict") or "") not in (
-                "READY", "READY_WITH_WARNINGS", "")
-        )
-        and isinstance(stored, dict)
-        and stored.get("status")
-        in (STATUS_COMPLETE, STATUS_NEEDS_REPAIR, STATUS_FAILED)
-        and _stored_checked_revision(stored) == revision
-        and _stored_render_seq(stored) == render_seq
-        and str(stored.get("rows_fingerprint") or "")
-        == _rows_fingerprint(chapter)[:512]
+    if _dedup_gate_blocks(
+        stored, chapter, revision, render_seq,
+        force=force, final_gate=final_gate,
     ):
         return None
 

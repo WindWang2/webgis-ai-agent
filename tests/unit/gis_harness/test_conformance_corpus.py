@@ -2,9 +2,8 @@
 
 不变式：
 - 语料规模 ≥20000（59 语义族 × 语言 × 12 scope × 9 句式），确定性生成；
-- 语义身份不变量：同族所有表述同 task/recipe —— 全量运行挂 ``perf``
-  标记（unfiltered 运行自跳过，#664），默认车道跑确定性分层抽样 + 领域
-  切片（资源红线：20k 全量 ≈ 数分钟，不得进默认门）；
+- 语义身份不变量：同族所有表述同 task/recipe —— 全量 20,088 案例实测
+  ≈20s，直接进默认车道；分层抽样与领域切片作为快速反馈面保留；
 - anti-claim 反声明契约（分母/准则/受体/显著性语义分界）零失败；
 - workflow 契约案例（义务联动/降级/阻断/verdict V2）零失败；
 - 全部 V2 recipe（147）可完整编译（registry 覆盖烟测）；
@@ -37,13 +36,13 @@ async def test_corpus_size_and_determinism():
     assert len(ids) == len(set(ids))
 
 
-@pytest.mark.perf
 @pytest.mark.asyncio
 async def test_corpus_full_run_green():
-    """全量语义一致性（≈20k 案例，数分钟级）：unfiltered 运行自跳过。
+    """全量语义一致性（20,088 案例实测 ≈20s，离线零 LLM）。
 
-    显式运行：pytest -m perf tests/unit/gis_harness/test_conformance_corpus.py
-    任一失败 = 产品语义回归（task/recipe/能力/警告码）。
+    review R3：实测远低于此前「数分钟级」估计 —— 移回默认车道（不再挂
+    perf 标记），默认 CI 即锁定全量语义身份。任一失败 = 产品语义回归
+    （task/recipe/能力/警告码）。
     """
     from app.evaluation.runner import GISBenchmarkRunner
 
@@ -65,6 +64,8 @@ async def test_corpus_stratified_sample_green():
     cases = build_conformance_corpus()
     sample = cases[::37]           # 20088 / 37 ≈ 543 案例切片
     assert len(sample) >= 400
+    assert {c.id.split("-")[1] for c in sample} <= {
+        c.id.split("-")[1] for c in cases}
     results = await GISBenchmarkRunner().run(sample)
     failed = [(r.case_id, r.failures) for r in results if not r.passed]
     assert failed == [], f"{len(failed)} regressions in sample: {failed[:5]}"

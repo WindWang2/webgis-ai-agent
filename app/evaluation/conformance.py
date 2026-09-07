@@ -501,6 +501,9 @@ CONFORMANCE_FAMILIES: Tuple[ConformanceFamily, ...] = (
     ),
     # ── V3 扩容族（本体任务升级 / 新语义维度锁定，期望为经验核验）──────
     ConformanceFamily(
+        # 已知限制：任务族路由正确（本体升级），但族内暂无 network_centrality
+        # 专属 recipe —— 本族锁定诚实现状（closest_facility 承载），recipe
+        # 补齐时此期望必须显式更新。
         "road-centrality", "network", "路网中心性（本体升级族）",
         ("路网中心性分析", "道路介数中心性计算"),
         (),
@@ -578,6 +581,8 @@ CONFORMANCE_FAMILIES: Tuple[ConformanceFamily, ...] = (
         group="conformance-temporal",
     ),
     ConformanceFamily(
+        # 已知限制：任务族路由正确，族内暂无 terrain_wetness_indices 专属
+        # recipe —— 锁定诚实现状（slope 承载）。
         "twi-index", "hydrology", "地形湿度指数（本体升级族）",
         ("twi指数计算",),
         (),
@@ -586,6 +591,9 @@ CONFORMANCE_FAMILIES: Tuple[ConformanceFamily, ...] = (
         group="conformance-hydrology",
     ),
     ConformanceFamily(
+        # 已知限制：任务族路由正确，族内暂无 GWR 专属 recipe —— 当前由
+        # Gi* recipe 承载且无方法替换披露（语义缺口，见 PR known
+        # limitations）；GWR recipe 补齐时此期望必须显式更新。
         "spatial-regression", "statistics", "空间回归（本体升级族）",
         ("地理加权回归gwr", "空间回归分析"),
         (),
