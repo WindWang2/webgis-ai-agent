@@ -186,7 +186,6 @@ def _noise_covariance_local_diff(stack: np.ndarray, common: np.ndarray) -> Tuple
     噪声样本之和（方差加倍），除 2 还原噪声协方差，使白化空间噪声
     方差=1、SNR=λ−1 语义成立。
     """
-    k = stack.shape[0]
     dh = np.diff(stack, axis=2)
     mask_h = common[:, 1:] & common[:, :-1]
     dv = np.diff(stack, axis=1)
@@ -389,7 +388,6 @@ def ica(
     _require_samples(n_valid, max(8, k + 2), "ICA")
     x = arr[:, common].T                          # (n, k)
 
-    caught: List[warnings.WarningMessage] = []
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         model = FastICA(

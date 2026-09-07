@@ -468,7 +468,6 @@ def test_v3_tools_evidence(flat_tif, bowl_tif, wall_tif, terrain_tools):
 
     # flow_analysis flat_routing: default leaves the pan as interior sinks,
     # epsilon drains it — disclosed in meta and evidence.
-    n = 21
     flow = call["flow_analysis"]
     res_none = flow(str(bowl_tif), "flow_direction")
     assert res_none["success"] is True
