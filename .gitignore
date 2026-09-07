@@ -13,6 +13,11 @@ scripts/
 # 工作流目录生成器（test_workflow_guards 的 catalog 一致性门依赖它）
 !/scripts/gen_workflow_catalog.py
 !/scripts/gen_science_oracles.py
+# Quality Platform 生成器（ADR-0104：manifest / drift report / 场景语料，
+# 对应的字节一致性闸测试 import 它们，必须入库）
+!/scripts/check_tool_descriptor_coverage.py
+!/scripts/gen_quality_manifest.py
+!/scripts/gen_drift_report.py
 webgis-ai-agent/
 
 # 系统与临时文件
