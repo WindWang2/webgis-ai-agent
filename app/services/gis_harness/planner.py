@@ -915,6 +915,23 @@ class MapProductPlanner:
                     "text_hint": text_hint,
                     "effective_hint": hint,
                 }
+                # review R2 MAJOR-5：显式点名算法被事实否决**绝不能静默**
+                # （M2 不变式：近似替代显式请求必须披露）。文本点名但事实
+                # 不支持 ⇒ 方法论警告随 plan 下行（READY 让位于披露）。
+                if text_hint and hint != text_hint:
+                    finalized.methodology_warnings.append({
+                        "pattern": "algorithm_request_substituted",
+                        "code": "EXPLICIT_ALGORITHM_FACT_REJECTED",
+                        "warning_codes": ["EXPLICIT_ALGORITHM_FACT_REJECTED"],
+                        "requested": str(text_hint)[:48],
+                        "effective": str(hint or "default")[:48],
+                        "disclosures": [
+                            f"数据事实不支持点名的 {text_hint}（样本/方差/CRS"
+                            f"证据冲突），已按证据选择 {hint or '默认方法'}；"
+                            "硬门仍可最终拒绝。"
+                        ],
+                        "stage": "finalize",
+                    })
 
         disabled_elements = {d.element for d in report.disabled}
         # 主数据几何（点层提升的先决条件——面数据上提升 circle 层是制图空转）

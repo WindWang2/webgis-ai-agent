@@ -109,6 +109,7 @@ class TestScientificDelegation:
     def test_numeric_measure_role_with_numeric_field(self):
         req = role("measure", capability="", artifacts=(), geometry=())
         profile = {"featureCount": 40, "geometryTypes": ["Point"],
+                   "fields_status": "explicit",
                    "fields": {"value": {"type": "number"}}}
         q = qualify_data_role(req, "bound", resolver_profile=profile)
         checks = {c["check"]: c["passed"] for c in q.checks}
@@ -117,6 +118,7 @@ class TestScientificDelegation:
     def test_numeric_measure_role_without_numeric_field(self):
         req = role("measure", capability="", artifacts=(), geometry=())
         profile = {"featureCount": 40, "geometryTypes": ["Point"],
+                   "fields_status": "explicit",
                    "fields": {"name": {"type": "string"}}}
         q = qualify_data_role(req, "bound", resolver_profile=profile)
         checks = {c["check"]: c["passed"] for c in q.checks}

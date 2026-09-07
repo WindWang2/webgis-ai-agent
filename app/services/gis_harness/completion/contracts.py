@@ -197,23 +197,33 @@ def evaluate_completion_contract(
     methodology_ok = obligation_codes.issubset(disclosed_codes)
     # V4 Wave 7（审计 06）：uncertainty 维此前只检测 blocked 义务 ——
     # 「欠不确定性披露但仅 warning」的义务照样过维。收紧： owed 义务
-    # （warning/degraded/blocked）在场时，章节必须携带正披露证据
-    # ``uncertainty_disclosures``（[{code, text, ...}]，与
-    # methodology_warnings 同型的有界列表）；无义务 = 无所欠 = 过维
-    # （不虚构也不倒退旧会话）。
+    # （warning/degraded/blocked）在场时必须有**匹配 owed 码**的披露证据：
+    # - 显式通道：chapter["uncertainty_disclosures"]（[{code, text}]）；
+    # - 既有披露通道：methodology_warnings 中与 owed 义务 warning_code
+    #   相同的码（planner 义务联动会自动写入 —— review R2 MAJOR-6：
+    #   此前该键无任何生产写者 → 结构性 false-REJECT；且无码匹配校验
+    #   → 证据可伪造。两处一并修复）。
     uncertainty_owed = [
         o for o in obligations
         if str(o.get("kind")) == "uncertainty"
         and str(o.get("status")) in ("warning", "degraded", "blocked")
     ]
-    uncertainty_evidence = [
-        d for d in chapter.get("uncertainty_disclosures") or []
-        if isinstance(d, dict) and (d.get("code") or d.get("text"))
-    ]
+    owed_codes = {
+        str(o.get("warning_code")) for o in uncertainty_owed if o.get("warning_code")
+    }
+    explicit_codes = {
+        str(d.get("code") or "")
+        for d in chapter.get("uncertainty_disclosures") or []
+        if isinstance(d, dict)
+    }
+    disclosed_warning_codes = {str(w.get("code")) for w in mw if w.get("code")}
+    uncertainty_evidence = bool(owed_codes) and bool(
+        (owed_codes & explicit_codes) or (owed_codes & disclosed_warning_codes)
+    )
     uncertainty_ok = not any(
         str(o.get("kind")) == "uncertainty" and str(o.get("status")) == "blocked"
         for o in obligations
-    ) and (not uncertainty_owed or bool(uncertainty_evidence))
+    ) and (not uncertainty_owed or uncertainty_evidence)
 
     dimensions = {
         "data": data_ok,
@@ -231,7 +241,7 @@ def evaluate_completion_contract(
         "blocking_fallbacks": blocking_fallbacks[:8],
         "workflow_present": bool(wf_contract),
         "uncertainty_owed": len(uncertainty_owed),
-        "uncertainty_disclosed": len(uncertainty_evidence),
+        "uncertainty_disclosed": int(uncertainty_evidence),
     }
 
 

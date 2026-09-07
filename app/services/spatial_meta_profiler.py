@@ -251,6 +251,27 @@ def profile_from_descriptor(descriptor: Optional[Dict[str, Any]]) -> Optional[Di
             profile["crsClass"] = classify_crs(crs)
         except Exception:  # noqa: BLE001 — 分类失败按 absent（消费方 own 兜底）
             pass
+        # review R2 MAJOR-3（最小方向）：坐标量级 vs 声明 CRS 的**正矛盾**
+        # 证据 —— 声明地理（度）坐标系而 bbox 坐标超出度范围（|x|>180 或
+        # |y|>90）⇒ 声明被坐标证伪，crsClass 降为 unknown 并留 mismatch
+        # 痕迹（projected_required 门不再对被证伪的声明放行；反向
+        # 「声明投影但坐标在度范围内」不裁决 —— 局部米制小范围系统合法）。
+        try:
+            cls_now = profile.get("crsClass")
+            bbox = profile.get("bbox")
+            if (
+                cls_now == "geographic"
+                and isinstance(bbox, (list, tuple))
+                and len(bbox) == 4
+            ):
+                w, s, e, n = (float(x) for x in bbox)
+                if max(abs(w), abs(e)) > 180.0 or max(abs(s), abs(n)) > 90.0:
+                    profile["crsClass"] = "unknown"
+                    profile["crsReconcile"] = (
+                        "declared_geographic_contradicted_by_coordinates"
+                    )
+        except Exception:  # noqa: BLE001 — 对账是增值证据，绝不阻断
+            pass
     return profile
 
 

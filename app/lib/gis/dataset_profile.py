@@ -329,6 +329,12 @@ class DatasetProfile(BaseModel):
             categorical = [str(x) for x in profile_categorical]
         has_time = p.get("hasTimeField")
         obs = p.get("temporalObservationCount")
+        # review R2 MAJOR-4：尊重输入画像的 fields_status —— 非 explicit
+        # 来源（截断/未知 schema）不得因「fields 非空」被洗成显式权威
+        # schema（下游空列表 = 证伪证据的权威规则会被截断面误触发）。
+        input_status = str(p.get("fields_status") or "")
+        if input_status.lower() != "explicit":
+            input_status = "explicit" if fields else "unknown"
         return cls(
             source="spatial_profile",
             feature_count=(
@@ -351,7 +357,7 @@ class DatasetProfile(BaseModel):
             temporal_observation_count=(
                 int(obs) if isinstance(obs, (int, float)) and not isinstance(obs, bool) else None
             ),
-            fields_status="explicit" if fields else "unknown",
+            fields_status=input_status,
         )
 
     @classmethod
@@ -412,6 +418,11 @@ class DatasetProfile(BaseModel):
         # scanned_rows==0 不构成证伪 —— 没看过行就不能说没有时间字段）。
         full_scan = quality in ("complete", "sampled") and scanned_rows > 0
 
+        # review R2 MAJOR-2：截断 schema 上的方差证据不可作为方法门槛 ——
+        # 截断边界外的变率字段会让 valueVariance=0 → nonzero_variance_
+        # required 误判 INSUFFICIENT_DATA。只有未截断时才产出方差证据。
+        variance_evidence_allowed = not fields_truncated
+
         if isinstance(source_fields, dict):
             for name, fp in list(source_fields.items())[:MAX_PROFILE_FIELDS]:
                 fname = str(name)
@@ -420,7 +431,9 @@ class DatasetProfile(BaseModel):
                 if dtype == "number":
                     numeric.append(fname)
                     std = getattr(fp, "std", None)
-                    if isinstance(std, (int, float)) and not isinstance(std, bool):
+                    if (variance_evidence_allowed
+                            and isinstance(std, (int, float))
+                            and not isinstance(std, bool)):
                         var = float(std) * float(std)
                         if max_variance is None or var > max_variance:
                             max_variance = var

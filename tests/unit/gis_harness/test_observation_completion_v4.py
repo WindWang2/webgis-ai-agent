@@ -185,18 +185,30 @@ def _contract(obligations):
             "method_blockers": [], "data_blockers": []}
 
 
-_OWED = [{"obligation_id": "u1", "kind": "uncertainty", "status": "warning"}]
+_OWED = [{"obligation_id": "u1", "kind": "uncertainty", "status": "warning",
+          "warning_code": "U1"}]
 _BLOCKED = [{"obligation_id": "u1", "kind": "uncertainty", "status": "blocked",
-             "on_violation": "block_method"}]
+             "on_violation": "block_method", "warning_code": "U1"}]
 
 
-def test_uncertainty_owed_requires_evidence():
+def test_uncertainty_owed_requires_matching_evidence():
+    """review R2 MAJOR-6：证据必须匹配 owed 义务码（显式通道或
+    methodology_warnings 通道）；不匹配的码不算证据。"""
     result = _result()
     chapter = {"workflow_contract": _contract(_OWED)}
     dims = evaluate_completion_contract(result, [], chapter)["dimensions"]
     assert dims["uncertainty_disclosure"] is False
+    # 显式通道：码必须命中 owed
+    chapter["uncertainty_disclosures"] = [{"code": "OTHER", "text": "无关"}]
+    assert evaluate_completion_contract(result, [], chapter)["dimensions"][
+        "uncertainty_disclosure"] is False
     chapter["uncertainty_disclosures"] = [{"code": "U1", "text": "方差 95% CI"}]
-    dims = evaluate_completion_contract(result, [], chapter)["dimensions"]
+    assert evaluate_completion_contract(result, [], chapter)["dimensions"][
+        "uncertainty_disclosure"] is True
+    # 既有披露通道：methodology_warnings 同码同样算证据
+    dims = evaluate_completion_contract(
+        result, [{"code": "U1"}], {"workflow_contract": _contract(_OWED)},
+    )["dimensions"]
     assert dims["uncertainty_disclosure"] is True
 
 

@@ -169,11 +169,25 @@ def _check_extent(
     result_bbox: Optional[List[float]],
     observation: Optional[Dict[str, Any]],
 ) -> List[MapCompletionFinding]:
-    """结果 bbox 与观察视口相交性（仅双方事实在场时判定）。"""
+    """结果 bbox 与观察视口相交性（仅双方事实在场且量级同域时判定）。
+
+    review R2 MAJOR-7：viewport 是 Web-Mercator 经纬度域 —— 结果 bbox
+    来自数据自身 CRS（投影数据是米制大坐标）。量级不同域（任一边超过
+    度范围）时相交性判定无意义，系统性 false mismatch 会把每个投影 CRS
+    任务洗成 verified_with_degradation —— 如实跳过（unknown ≠ violation）。
+    """
     if not result_bbox or not isinstance(observation, dict):
         return []
     viewport_bbox = _observation_viewport_bbox(observation)
     if viewport_bbox is None:
+        return []
+    try:
+        out_of_degree_domain = any(
+            abs(float(v)) > 180.0 for v in result_bbox[::2]
+        ) or any(abs(float(v)) > 90.0 for v in result_bbox[1::2])
+    except (TypeError, ValueError):
+        return []
+    if out_of_degree_domain:
         return []
     if _bbox_intersects(result_bbox, viewport_bbox):
         return []

@@ -665,8 +665,41 @@ class SubagentDispatcher:
 
     def _build_sub_engine(self, tool_subset: list[dict], max_rounds: int) -> "ChatEngine":
         """造一个轻量 ChatEngine：用同一份 registry，但通过 catalog stub 把
-        工具白名单固定为 tool_subset（绕过域关键词匹配）。"""
+        工具白名单固定为 tool_subset（绕过域关键词匹配）。
+
+        review R2 MAJOR-8：catalog stub 只限制模型**看到**的工具 —— 被注入
+        的子代理 LLM 仍可直接点名隐藏工具并经共享 registry 执行。这里包一层
+        **dispatch 成员校验代理**：白名单之外的名字在 dispatch 边界拒绝
+        （honest error，不执行），把「只可见」升级为「只可执行」。"""
+
         from app.services.chat_engine import ChatEngine
+
+        allowed_names = {s["function"]["name"] for s in tool_subset}
+
+        class _AllowlistedRegistry:
+            """dispatch 边界成员校验（narrowing-only：一切委托真 registry）。"""
+
+            def __init__(self, inner, allowed):
+                self._inner = inner
+                self._allowed = allowed
+
+            def dispatch(self, tool_name, *args, **kwargs):
+                if tool_name not in self._allowed:
+                    return {
+                        "success": False,
+                        "error": (
+                            f"工具 {tool_name} 不在本子代理的授权工具面内 "
+                            "(subagent tool allowlist)"
+                        ),
+                        "code": "TOOL_NOT_ALLOWLISTED",
+                    }
+                return self._inner.dispatch(tool_name, *args, **kwargs)
+
+            def get_schemas(self, *args, **kwargs):
+                return self._inner.get_schemas_subset(self._allowed)
+
+            def __getattr__(self, item):
+                return getattr(self._inner, item)
 
         class _FrozenCatalog:
             """只返回 tool_subset 的 catalog stub，禁用粘性 / 关键词匹配。
@@ -701,7 +734,7 @@ class SubagentDispatcher:
                 return set()
 
         engine = ChatEngine(
-            self.registry,
+            _AllowlistedRegistry(self.registry, allowed_names),
             tool_catalog=_FrozenCatalog(tool_subset),
             is_subagent_engine=True,
         )

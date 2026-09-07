@@ -657,7 +657,13 @@ def retrim_messages_for_retry(messages: Sequence[dict]) -> Optional[List[dict]]:
     est = sum(_estimate_tokens(m.get("content")) for m in rest)
     target = max(_RETRIM_MIN_BUDGET_TOKENS, est // 2)
     folded = fold_intra_turn_tool_results(rest, keep_recent=_RETRIM_FOLD_KEEP_RECENT)
-    trimmed, dropped = truncate_history_by_budget(folded, budget=target)
+    # review R2 MAJOR-9：重裁是**最极端的压力路径** —— KEEP pin 必须同样
+    # 生效（Tier-3 确认回执/自愈指引不随重试预算消失）。pin 下标在 fold
+    # 之后求值（truncate 的输入坐标系）。
+    folded_list = list(folded)
+    pinned = find_safety_pinned_indexes(folded_list)
+    trimmed, dropped = truncate_history_by_budget(
+        folded_list, budget=target, pinned=pinned or None)
     if dropped <= 0 and folded is rest:
         return None
     if len(trimmed) >= len(rest) and dropped <= 0:
