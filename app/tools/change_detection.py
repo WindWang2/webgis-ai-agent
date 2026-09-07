@@ -57,7 +57,19 @@ def register_change_detection_tools(registry: ToolRegistry):
           # #996: 工具体经 submit_durable_job 内部投递 Celery
           # （run_change_detection.apply_async）——重工具显式标 heavy；
           # 提交路径本身只做 DB 写 + broker 入队，60s 预算绰绰有余。
-          cost="heavy", timeout=60.0)
+          cost="heavy", timeout=60.0,
+          side_effect="artifact_creation",
+          deterministic=False,
+          idempotent=True,  # submit_durable_job 幂等键（idempotent_reuse）
+          latency_class="slow",
+          memory_class="heavy",
+          scale_class="large",
+          output_semantic_type="text",
+          result_size_policy="inline_small",
+          crs_semantics="wgs84",
+          tags=("变化检测", "植被变化", "双时相", "ndvi", "森林砍伐", "change_detection"),
+          failure_modes=("invalid_args", "missing_data"),
+          )
     def detect_vegetation_change(
         bbox: str,
         t1_from: str,
@@ -165,7 +177,19 @@ def register_change_detection_tools(registry: ToolRegistry):
               "t2_bands": "T2 波段（与 T1 完全相同的角色集合与形状）",
               "t1_date": "T1 获取日期 YYYY-MM-DD（可选，进证据块）",
               "t2_date": "T2 获取日期 YYYY-MM-DD（可选，进证据块）",
-          })
+          },
+          side_effect="deterministic_compute",
+          deterministic=True,
+          network=False,
+          latency_class="medium",
+          memory_class="heavy",
+          scale_class="large",
+          output_semantic_type="stats",
+          result_size_policy="bounded",
+          crs_semantics="crs_agnostic",
+          tags=("变化向量分析", "cva", "变化检测", "双时相", "变化幅度", "变化方向"),
+          failure_modes=("invalid_args", "memory"),
+          )
     async def detect_change_cva(
         t1_bands: Dict[str, List[List[float]]],
         t2_bands: Dict[str, List[List[float]]],
@@ -236,7 +260,19 @@ def register_change_detection_tools(registry: ToolRegistry):
               "method": "ratio（默认，a/b） / log_ratio（log(a)−log(b)）",
               "t1_date": "T1 获取日期 YYYY-MM-DD（可选，进证据块）",
               "t2_date": "T2 获取日期 YYYY-MM-DD（可选，进证据块）",
-          })
+          },
+          side_effect="deterministic_compute",
+          deterministic=True,
+          network=False,
+          latency_class="medium",
+          memory_class="heavy",
+          scale_class="large",
+          output_semantic_type="stats",
+          result_size_policy="bounded",
+          crs_semantics="crs_agnostic",
+          tags=("比值变化", "log_ratio", "sar", "后向散射", "双期对比", "变化检测"),
+          failure_modes=("invalid_args", "memory"),
+          )
     async def detect_ratio_change(
         a: List[List[float]],
         b: List[List[float]],

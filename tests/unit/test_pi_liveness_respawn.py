@@ -113,9 +113,9 @@ async def test_ensure_pi_bridge_available_route_integration():
 
 @pytest.mark.asyncio
 async def test_pi_rpc_client_start_refreshes_native_tools_schema_dump(tmp_path, monkeypatch):
-    """PiRpcClient.start() invokes dump_native_tools to refresh schema dump on spawn/respawn."""
+    """PiRpcClient.start() invokes dump_surface_file to refresh schema dump on spawn/respawn."""
     dump_mock = MagicMock(return_value=tmp_path / "native-tools.json")
-    monkeypatch.setattr("app.services.chat.pi_native_surface.dump_native_tools", dump_mock)
+    monkeypatch.setattr("app.services.chat.pi_native_surface.dump_surface_file", dump_mock)
 
     dummy_entry = tmp_path / "rpc-entry.js"
     dummy_entry.write_text("// stub", encoding="utf-8")

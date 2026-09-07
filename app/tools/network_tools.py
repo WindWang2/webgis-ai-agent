@@ -384,6 +384,17 @@ def register_network_tools(registry: ToolRegistry):
         domains=["network"],
         args_model=NetworkShortestPathArgs,
         execution_policy=ToolExecutionPolicy.ASYNC,  # audit #827: async solver (honest declaration)
+        side_effect="deterministic_compute",
+        deterministic=True,
+        network=False,
+        latency_class="medium",
+        memory_class="heavy",
+        scale_class="large",
+        output_semantic_type="stats",
+        result_size_policy="inline_small",
+        crs_semantics="wgs84",
+        tags=("最短路径", "shortest_path", "路网", "导航", "route", "network"),
+        failure_modes=("missing_data", "invalid_args", "empty_result"),
     )
     async def network_shortest_path(
         network: Any,
@@ -426,6 +437,17 @@ def register_network_tools(registry: ToolRegistry):
         domains=["network"],
         args_model=NetworkODMatrixArgs,
         execution_policy=ToolExecutionPolicy.ASYNC,  # audit #827: async solver (honest declaration)
+        side_effect="deterministic_compute",
+        deterministic=True,
+        network=False,
+        latency_class="slow",
+        memory_class="heavy",
+        scale_class="large",
+        output_semantic_type="table",
+        result_size_policy="bounded",
+        crs_semantics="wgs84",
+        tags=("od矩阵", "od_matrix", "成本矩阵", "可达性", "通行时间", "多起点多终点"),
+        failure_modes=("invalid_args", "memory", "empty_result"),
     )
     async def network_od_matrix(
         network: Any,
@@ -476,6 +498,17 @@ def register_network_tools(registry: ToolRegistry):
         domains=["network"],
         args_model=NetworkClosestFacilityArgs,
         execution_policy=ToolExecutionPolicy.ASYNC,  # audit #827: async solver (honest declaration)
+        side_effect="deterministic_compute",
+        deterministic=True,
+        network=False,
+        latency_class="medium",
+        memory_class="heavy",
+        scale_class="large",
+        output_semantic_type="table",
+        result_size_policy="bounded",
+        crs_semantics="wgs84",
+        tags=("最近设施", "closest_facility", "最近医院", "应急救援", "设施分配"),
+        failure_modes=("empty_result", "invalid_args", "missing_data"),
     )
     async def network_closest_facility(
         network: Any,
@@ -510,6 +543,17 @@ def register_network_tools(registry: ToolRegistry):
         domains=["network"],
         args_model=NetworkServiceAreaArgs,
         execution_policy=ToolExecutionPolicy.ASYNC,  # audit #827: async solver (honest declaration)
+        side_effect="deterministic_compute",
+        deterministic=True,
+        network=False,
+        latency_class="slow",
+        memory_class="heavy",
+        scale_class="large",
+        output_semantic_type="geojson_fc",
+        result_size_policy="bounded",
+        crs_semantics="wgs84",
+        tags=("等时圈", "service_area", "服务区", "可达范围", "isochrone", "15分钟生活圈"),
+        failure_modes=("invalid_args", "memory", "empty_result"),
     )
     async def network_service_area(
         network: Any,
@@ -551,6 +595,17 @@ def register_network_tools(registry: ToolRegistry):
         domains=["network"],
         args_model=NetworkAccessibilityArgs,
         execution_policy=ToolExecutionPolicy.ASYNC,  # audit #827: async solver (honest declaration)
+        side_effect="deterministic_compute",
+        deterministic=True,
+        network=False,
+        latency_class="slow",
+        memory_class="heavy",
+        scale_class="large",
+        output_semantic_type="stats",
+        result_size_policy="bounded",
+        crs_semantics="wgs84",
+        tags=("可达性", "accessibility", "15分钟生活圈", "2sfca", "e2sfca", "服务覆盖率", "公共设施"),
+        failure_modes=("empty_result", "missing_data", "invalid_args"),
     )
     async def network_accessibility(
         network: Any,
@@ -642,6 +697,16 @@ def register_network_tools(registry: ToolRegistry):
         domains=["network"],
         args_model=LocationAllocationArgs,
         execution_policy=ToolExecutionPolicy.ASYNC,  # audit #827: async solver; CELERY channel was never implemented
+        deterministic=True,
+        network=False,
+        latency_class="slow",
+        memory_class="heavy",
+        scale_class="large",
+        output_semantic_type="stats",
+        result_size_policy="bounded",
+        crs_semantics="wgs84",
+        tags=("选址", "location_allocation", "设施优化", "p-median", "覆盖最大化", "布局"),
+        failure_modes=("invalid_args", "memory", "empty_result"),
     )
     async def location_allocation(
         network: Any,
@@ -694,6 +759,16 @@ def register_network_tools(registry: ToolRegistry):
         domains=["network"],
         args_model=OptimizeRouteArgs,
         execution_policy=ToolExecutionPolicy.ASYNC,  # audit #827: async solver; CELERY channel was never implemented
+        deterministic=True,
+        network=False,
+        latency_class="slow",
+        memory_class="heavy",
+        scale_class="large",
+        output_semantic_type="stats",
+        result_size_policy="bounded",
+        crs_semantics="wgs84",
+        tags=("路线优化", "配送", "巡检", "vrp", "停靠点顺序", "路径规划"),
+        failure_modes=("invalid_args", "memory", "empty_result"),
     )
     async def optimize_route(
         network: Any,
@@ -735,6 +810,17 @@ def register_network_tools(registry: ToolRegistry):
         domains=["network"],
         args_model=NetworkGravityAccessArgs,
         execution_policy=ToolExecutionPolicy.ASYNC,
+        side_effect="deterministic_compute",
+        deterministic=True,
+        network=False,
+        latency_class="slow",
+        memory_class="heavy",
+        scale_class="large",
+        output_semantic_type="stats",
+        result_size_policy="bounded",
+        crs_semantics="wgs84",
+        tags=("引力可达性", "hansen", "势能", "gravity", "可达性", "设施吸引力"),
+        failure_modes=("empty_result", "invalid_args", "memory"),
     )
     async def network_gravity_access(
         network: Any,
@@ -803,6 +889,17 @@ def register_network_tools(registry: ToolRegistry):
         domains=["network"],
         args_model=NetworkHuffInteractionArgs,
         execution_policy=ToolExecutionPolicy.ASYNC,
+        side_effect="deterministic_compute",
+        deterministic=True,
+        network=False,
+        latency_class="slow",
+        memory_class="heavy",
+        scale_class="large",
+        output_semantic_type="stats",
+        result_size_policy="bounded",
+        crs_semantics="wgs84",
+        tags=("huff", "空间相互作用", "市场份额", "概率模型", "商圈", "消费吸引"),
+        failure_modes=("empty_result", "invalid_args", "memory"),
     )
     async def network_huff_interaction(
         network: Any,
@@ -867,6 +964,17 @@ def register_network_tools(registry: ToolRegistry):
         domains=["network"],
         args_model=NetworkCentralityArgs,
         execution_policy=ToolExecutionPolicy.ASYNC,
+        side_effect="deterministic_compute",
+        deterministic=True,
+        network=False,
+        latency_class="slow",
+        memory_class="heavy",
+        scale_class="large",
+        output_semantic_type="stats",
+        result_size_policy="bounded",
+        crs_semantics="wgs84",
+        tags=("中心性", "centrality", "介数", "betweenness", "路网重要性", "关键路段"),
+        failure_modes=("invalid_args", "partial_coverage", "memory"),
     )
     async def network_centrality(
         network: Any,

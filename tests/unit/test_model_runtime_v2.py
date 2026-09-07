@@ -283,8 +283,13 @@ def test_resolve_config_profile_application(routing_stack, monkeypatch):
     cfg, decision = router.resolve_config(RouteRequest(role="title"))
     assert decision.profile.max_output_tokens == 512
     assert cfg.max_tokens == 512
-    assert cfg.timeout_s == 30.0
-    assert cfg.temperature == 0.3
+    # ADR-0103（review R2 MAJOR）：存量角色的 profile 不覆写 operator 配置 ——
+    # title 的 temperature/timeout 缺省 None → 继承 resolve_llm_config 的
+    # settings 值（LLM_TIMEOUT_S 默认 120、LLM_TEMPERATURE 默认值）。
+    from app.core.config import settings as _s
+
+    assert cfg.timeout_s == _s.LLM_TIMEOUT_S
+    assert cfg.temperature == _s.LLM_TEMPERATURE
 
 
 def test_observe_wires_health(routing_stack):

@@ -74,7 +74,17 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "\n关键约束：zones 是 FeatureCollection (面)；raster_path 必须是后端可访问的本地路径或 ref。"
            ),
            tier=2, domains=["raster"],
-           args_model=ZonalStatsArgs)
+           args_model=ZonalStatsArgs,
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("区域统计", "zonal", "栅格统计", "ndvi", "dem", "分区"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     def zonal_stats(geojson: Any, raster_path: str) -> dict:
         data = safe_parse_geojson(geojson)
         # GIS-682: forward the whole FeatureCollection so a declared `crs`
@@ -93,7 +103,19 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "resolution": "H3 分辨率（6-9），默认 8",
                "power": "距离权重幂次，默认 2（0 < power ≤ 5）",
                "cross_validate": "是否计算 LOOCV 验证指标（默认 true，附加 validation/uncertainty/scientific_evidence 证据块）",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("插值", "idw", "反距离加权", "表面", "连续面"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           crs_semantics="auto_project",
+           unit_semantics="meters",
+           failure_modes=("invalid_args", "missing_data"))
     def idw_interpolation(geojson: Any, value_field: str, resolution: int = 8, power: int = 2, cross_validate: bool = True) -> dict:
         from app.lib.gis.algorithm_registry import get_algorithm_registry
         from app.lib.gis.scientific_evidence import build_evidence
@@ -199,7 +221,19 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "anisotropy_ratio": "各向异性长短轴变程比（≥1，默认 1=各向同性）",
                "cv_scheme": "CV 分折方案: index(默认,索引取模)/spatial_block(确定性网格分块)",
                "solve_backend": "线性求解后端: auto(默认,批式numpy+逐行回退)/numpy_batched/scipy_linalg",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="medium",
+           tags=("克里金", "kriging", "地统计", "插值", "方差", "变异函数"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           crs_semantics="auto_project",
+           unit_semantics="meters",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     def kriging_interpolation(
         geojson: Any,
         value_field: str,
@@ -420,7 +454,19 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "smoothing": "平滑系数 0-10，默认 0（0=精确过样本点）",
                "neighbors": "局部 RBF 邻域样本数 1-64，默认 32",
                "cross_validate": "是否计算 LOOCV 验证指标，默认 true",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="medium",
+           tags=("插值", "rbf", "径向基", "平滑", "表面"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           crs_semantics="auto_project",
+           unit_semantics="meters",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     def rbf_interpolation(
         geojson: Any,
         value_field: str,
@@ -539,7 +585,19 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "resolution": "H3 分辨率（5-9），默认 7",
                "method": "三角网插值方法: linear(默认,C⁰)/clough_tocher(C¹ 三次)",
                "cross_validate": "是否计算 LOOCV 验证指标（有界 500 点），默认 true",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="medium",
+           tags=("tin", "三角网", "delaunay", "插值", "地形"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           crs_semantics="auto_project",
+           unit_semantics="meters",
+           failure_modes=("invalid_args", "missing_data"))
     def tin_interpolation(
         geojson: Any,
         value_field: str,
@@ -648,7 +706,19 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "resolution": "H3 分辨率（5-9），默认 7",
                "order": "多项式阶数: 1(平面,默认)/2(二次)/3(三次)；阶数越高越易振荡(Runge)",
                "cross_validate": "是否计算 LOOCV 验证指标（有界 500 点），默认 true",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("趋势面", "多项式", "ols", "梯度", "trend"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           crs_semantics="auto_project",
+           unit_semantics="meters",
+           failure_modes=("invalid_args", "missing_data"))
     def trend_surface(
         geojson: Any,
         value_field: str,
@@ -761,7 +831,19 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                    "声明的输入 CRS: EPSG:4326(默认)/EPSG:4490/EPSG:3857/UTM(EPSG:326xx|327xx)。"
                    "不支持的 CRS 结构化报错。"
                ),
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="medium",
+           tags=("回归克里金", "regression kriging", "协变量", "残差克里金", "插值"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           crs_semantics="auto_project",
+           unit_semantics="meters",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     def regression_kriging(
         geojson: Any,
         value_field: str,
@@ -910,7 +992,18 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "geojson": "输入点要素集 GeoJSON 或引用(ref:xxx)（Point 几何）",
                "value_field": "用于比较的数值字段名",
                "cv_budget": "总 CV 残差评估预算（默认 2500；超出按固定方法序跳过并披露）",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="medium",
+           tags=("插值", "模型比较", "loocv", "rmse", "选型"),
+           output_semantic_type="table",
+           result_size_policy="bounded",
+           crs_semantics="auto_project",
+           failure_modes=("invalid_args", "missing_data"))
     def interpolation_model_compare(
         geojson: Any,
         value_field: str,
@@ -990,7 +1083,22 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
 
     @tool(registry, name="overlay_analysis",
            description="对两个几何图层进行空间叠加分析（如求交、合并、擦除等），返回结果及其统计信息",
-           args_model=OverlayAnalysisArgs)
+           args_model=OverlayAnalysisArgs,
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("叠加", "相交", "union", "擦除", "overlay", "merge"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           crs_semantics="auto_project",
+           failure_modes=("invalid_args", "missing_data"),
+           examples=("两个图层求交集", "用行政区范围擦除POI图层"),
+           summary=("对两个矢量图层做空间叠加（intersection/union/identity/"
+                    "symmetric_difference/difference），返回叠加结果 FC 与统计。"
+                    "缓冲/裁剪等几何准备后再做本工具，可回答『范围内有什么』类问题。"))
     def overlay_analysis(layer_a: Any, layer_b: Any, how: str = "intersection") -> dict:
         data_a = safe_parse_geojson(layer_a)
         data_b = safe_parse_geojson(layer_b)
@@ -1006,7 +1114,20 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "✅ 用于：要把筛选结果作为新图层用于后续分析 / 导出。"
                "\n❌ 不要用于：只想临时改现有图层的可见要素 — 用 apply_layer_filter。"
            ),
-           args_model=AttributeFilterArgs)
+           args_model=AttributeFilterArgs,
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="fast",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("筛选", "属性过滤", "filter", "query", "子集"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           failure_modes=("invalid_args", "missing_data"),
+           examples=("筛出人口大于1000的区县", "只保留类型是公园的要素"),
+           summary=("按 Pandas 风格表达式（如 'pop > 1000'）从要素集筛出子集 FC。"
+                    "产出可用于后续分析/导出的新图层；只想改现有图层可见要素用 apply_layer_filter。"))
     def attribute_filter(geojson: Any, query: str) -> dict:
         data = safe_parse_geojson(geojson)
         if not isinstance(data, dict):
@@ -1028,7 +1149,22 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "\n关键约束：predicate 取值 intersects/within/contains/touches/crosses；"
                "左右图层 CRS 必须一致（内部自动按 WGS84 处理）。"
            ),
-           args_model=SpatialJoinArgs)
+           args_model=SpatialJoinArgs,
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("空间连接", "spatial join", "属性挂接", "sjoin", "拓扑关系"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           crs_semantics="auto_project",
+           failure_modes=("invalid_args", "missing_data"),
+           examples=("把人口属性挂到行政区上", "给每个POI标注所属街道"),
+           summary=("按拓扑谓词（intersects/within/contains/touches/crosses）把右图层属性"
+                    "附加到左图层要素，做主题图前的属性预处理。只计数不求属性用 "
+                    "spatial_aggregate；空匹配补 NaN 用 join_type='left'。"))
     def spatial_join(left_layer: Any, right_layer: Any, join_type: str = "inner", predicate: str = "intersects") -> dict:
         data_left = safe_parse_geojson(left_layer)
         data_right = safe_parse_geojson(right_layer)
@@ -1048,7 +1184,20 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            param_descriptions={
                "target_layer": "待裁剪的图层（点、线、面）GeoJSON 或引用(ref:xxx)",
                "mask_layer": "裁剪遮罩（通常是一个行政区面）GeoJSON 或引用(ref:xxx)",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="fast",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("裁剪", "clip", "掩膜", "行政区", "范围裁剪"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           failure_modes=("invalid_args", "missing_data"),
+           examples=("用成都市边界裁剪POI图层", "只保留景区范围内的轨迹点"),
+           summary=("仅保留位于遮罩图层（通常是行政边界）范围内的要素，解决『搜索结果超出"
+                    "行政区范围』问题；裁剪结果是精准区域分析的新图层。"))
     def clip_layer(target_layer: Any, mask_layer: Any) -> dict:
         target = safe_parse_geojson(target_layer)
         mask = safe_parse_geojson(mask_layer)
@@ -1073,7 +1222,22 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "numerator_field": "可选：点要素数值字段（按区求和作为分子）；缺省=要素计数",
                "denominator": "denominator_kind=field 时的分母字段名（区面属性，如人口）",
                "denominator_kind": "分母类型：count(默认,纯计数)/field(区字段)/area(区面积密度)",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("空间聚合", "点计数", "分区内数量", "aggregation", "密度"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           crs_semantics="auto_project",
+           failure_modes=("invalid_args", "missing_data"),
+           examples=("统计每个区有多少家咖啡店", "按街道统计POI数量并算每平方公里密度"),
+           summary=("统计落在每个多边形（行政区等）内的点位数量/求和，返回带统计字段的"
+                    "多边形图层。需要率/密度时必须显式给分母（denominator_kind=field/area）。"
+                    "多边形内的栅格统计用 zonal_stats。"))
     def spatial_aggregate(
         points: Any, polygons: Any, count_field: str = "point_count",
         numerator_field: Optional[str] = None,
@@ -1147,7 +1311,17 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
     @tool(registry, name="isochrone_network",
            description="等时线分析（路网模式）：基于路网计算从设施点出发在指定时间内可达的范围。需要输入路网要素。",
            tier=2, domains=["network"],
-           args_model=IsochroneAnalysisArgs)
+           args_model=IsochroneAnalysisArgs,
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("等时线", "isochrone", "可达范围", "路网", "通达时间"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           failure_modes=("invalid_args", "missing_data"))
     def isochrone_network(network_layer: Any, facilities: Any, travel_time: float = 15, mode: str = "walking") -> dict:
         net = safe_parse_geojson(network_layer)
         facs = safe_parse_geojson(facilities)
@@ -1166,7 +1340,17 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "\n关键约束：bounds=[west,south,east,north] WGS84；cell_size 单位米；"
                "大 bbox + 小 cell_size 会爆内存（>10⁶ 格警告）。"
            ),
-           args_model=FishnetGridArgs)
+           args_model=FishnetGridArgs,
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("鱼网", "网格", "fishnet", "六边形", "hexagon", "格网"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           failure_modes=("invalid_args", "memory"))
     def fishnet_grid(bounds: List[float], cell_size: float, type: str = "square") -> dict:
         from app.lib.geo_analysis.aggregation import generate_fishnet
         res = generate_fishnet(bounds, cell_size, type)
@@ -1177,7 +1361,18 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            param_descriptions={
                "geojson": "点要素集 GeoJSON 或引用(ref:xxx)",
                "method": "方法: 'mean_center'(平均中心) 或 'central_feature'(中心要素)",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="fast",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("中心", "平均中心", "中心要素", "mean center"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="inline_small",
+           crs_semantics="auto_project",
+           failure_modes=("invalid_args", "missing_data"))
     def central_feature(geojson: Any, method: str = "mean_center") -> dict:
         data = safe_parse_geojson(geojson)
         if not isinstance(data, dict):
@@ -1201,7 +1396,19 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "travel_time_min": "出行时间（分钟），默认 15",
                "mode": "出行方式: 'walking'(默认, 5km/h), 'cycling'(15km/h), 'driving'(40km/h)",
                "dissolve": "是否合并所有点的服务区，默认 True",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="fast",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("服务区", "等时圈", "可达范围", "行程时间", "service area"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           crs_semantics="auto_project",
+           unit_semantics="meters",
+           failure_modes=("invalid_args", "missing_data"))
     def service_area_simple(geojson: Any, travel_time_min: float = 15, mode: str = "walking", dissolve: bool = True) -> dict:
         speeds = {"walking": 5.0, "cycling": 15.0, "driving": 40.0}
         speed = speeds.get(mode.lower(), 5.0)
@@ -1226,7 +1433,21 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "resolution": "H3分辨率（通常 6 到 9 之间，越大网格越小），例如 8",
                "stat_field": "可选：参与统计的字段名",
                "stat_method": "统计方法，如 'count'（默认）, 'sum', 'mean'",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="fast",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("h3", "网格聚合", "六边形", "计数", "binning"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           failure_modes=("invalid_args", "missing_data"),
+           examples=("把POI聚合到H3网格看数量分布", "按网格统计每个格子内的店铺数"),
+           summary=("把点数据聚合到 H3 六边形网格（count/sum/mean），返回带统计值与 "
+                    "legend_spec 的网格 FC，可做数据驱动渲染，也是 h3_lisa 的前置步骤。"
+                    "快速看趋势用 heatmap_data；连续密度面用 kde_surface。"))
     @cached_tool(ttl=3600)
     def h3_binning(geojson: Any, resolution: int = 8, stat_field: str = None, stat_method: str = 'count') -> dict:
         from app.lib.geo_analysis.aggregation import h3_binning as _h3_binning
@@ -1292,7 +1513,17 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            param_descriptions={
                "geojson": "输入图层 GeoJSON 或引用(ref:xxx)，几何类型应一致（全部 polygon 或全部 line）",
                "field": "可选属性字段名。若提供，按该字段的不同值分组分别融合；不提供则整体融合为单一要素",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("融合", "dissolve", "合并", "相邻", "多边形合并"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           failure_modes=("invalid_args", "missing_data"))
     def dissolve_layer(geojson: Any, field: Optional[str] = None) -> dict:
         from app.lib.geo_processor.geometry import dissolve_smart
         res = dissolve_smart(geojson, field=field)
@@ -1311,7 +1542,18 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            param_descriptions={
                "source_points": "源点要素集 (GeoJSON 或 ref:xxx) — 每个点会找一个最近目标",
                "target_points": "目标点要素集 (GeoJSON 或 ref:xxx) — 候选设施集合",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="fast",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("最近设施", "最近邻匹配", "nearest facility", "双集合", "距离"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           unit_semantics="meters",
+           failure_modes=("invalid_args", "missing_data"))
     def nearest_facility(source_points: Any, target_points: Any) -> dict:
         from app.lib.geo_analysis.network import nearest_neighbor_features
         res = nearest_neighbor_features(source_points, target_points)
@@ -1327,7 +1569,17 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "\n关键约束：scheme 按 min→max 排序，首个匹配 wins；未匹配像素变 nodata。"
            ),
            tier=2, domains=["raster"],
-           args_model=RasterReclassifyArgs)
+           args_model=RasterReclassifyArgs,
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("重分类", "栅格", "reclassify", "分级", "ndvi", "dem"),
+           output_semantic_type="ref",
+           result_size_policy="inline_small",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     def raster_reclassify(raster_path: str, scheme: List[dict], nodata: Optional[float] = None) -> dict:
         res = SpatialAnalyzer.raster_reclassify(raster_path, scheme, nodata)
         return res.to_llm_response()
@@ -1345,7 +1597,17 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "对齐事实进 quality_evidence。"
            ),
            tier=2, domains=["raster"],
-           args_model=RasterCalculatorArgs)
+           args_model=RasterCalculatorArgs,
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("栅格计算", "raster calculator", "ndvi", "像元运算", "差值"),
+           output_semantic_type="ref",
+           result_size_policy="inline_small",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     def raster_calculator(raster_a: str, raster_b: Optional[str] = None, expression: str = "A + B", constant: Optional[float] = None, nodata: Optional[float] = None, resampling: Optional[str] = None) -> dict:
         res = SpatialAnalyzer.raster_calculator(raster_a, raster_b, expression, constant, nodata, resampling)
         return res.to_llm_response()
@@ -1365,7 +1627,17 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "输出二分类变化栅格（1=变化，0=稳定，255=nodata）；分类图输入时"
                "传 resampling=nearest（默认 bilinear 仅适用连续量）。"
            ),
-           tier=2, domains=["raster"])
+           tier=2, domains=["raster"],
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("变化检测", "双时相", "ndvi变化", "raster change", "差异"),
+           output_semantic_type="ref",
+           result_size_policy="inline_small",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     def detect_raster_change(raster_a: str, raster_b: str, method: str = "difference", threshold: Optional[float] = None, band: int = 1, resampling: Optional[str] = None) -> dict:
         res = SpatialAnalyzer.raster_change(raster_a, raster_b, method=method, threshold=threshold, band=band, resampling=resampling)
         return res.to_llm_response()
@@ -1380,7 +1652,17 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "\n关键约束：resampling 可选 bilinear/nearest/cubic/mode/average。"
            ),
            tier=2, domains=["raster"],
-           args_model=RasterResampleArgs)
+           args_model=RasterResampleArgs,
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("重采样", "resample", "分辨率", "投影转换", "栅格"),
+           output_semantic_type="ref",
+           result_size_policy="inline_small",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     def raster_resample(raster_path: str, target_resolution: float, target_crs: Optional[str] = None, resampling: str = "bilinear") -> dict:
         res = SpatialAnalyzer.raster_resample(raster_path, target_resolution, target_crs, resampling)
         return res.to_llm_response()

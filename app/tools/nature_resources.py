@@ -41,7 +41,20 @@ def register_nature_resource_tools(registry: ToolRegistry):
           # #996: 工具体经 submit_durable_job 内部投递 Celery
           # （run_ndvi_analysis.apply_async）——重工具显式标 heavy；提交路径
           # 本身只做 DB 写 + broker 入队，60s 预算绰绰有余。
-          cost="heavy", timeout=60.0)
+          cost="heavy", timeout=60.0,
+          side_effect="artifact_creation",
+          deterministic=True,  # 本地 TIFF 闭式波段运算（worker 内）
+          network=False,
+          idempotent=True,  # submit_durable_job 幂等键（idempotent_reuse）
+          latency_class="slow",
+          memory_class="heavy",
+          scale_class="large",
+          output_semantic_type="text",
+          result_size_policy="inline_small",
+          data_mutations=("artifact_write",),  # 分析产物入库（raster_analysis 记录 + TIFF）
+          tags=("ndvi", "ndwi", "nbr", "evi", "植被指数", "遥感", "tiff", "本地影像"),
+          failure_modes=("invalid_args", "missing_data"),
+          )
     def analyze_vegetation_index(raster_path: str, nir_band: Optional[int] = None, red_band: Optional[int] = None, index_type: Optional[str] = None, green_band: Optional[int] = None, blue_band: Optional[int] = None, swir_band: Optional[int] = None, session_id: Optional[str] = None) -> dict:
         # ADR-0052: 重计算走 durable job —— 返回 job_id 让用户能在任务中心看到进度
         # 并随时取消；幂等键防止双击/重连提交两次同样的分析。
@@ -70,7 +83,17 @@ def register_nature_resource_tools(registry: ToolRegistry):
 
     @tool(registry, name="list_analysis_assets",
           tier=2, domains=["raster"],
-          description='获取当前系统中保存的所有遥感分析产物（如 NDVI、NDWI 结果文件）列表。用于回答用户"我之前生成了什么"或进行资产回顾。')
+          description='获取当前系统中保存的所有遥感分析产物（如 NDVI、NDWI 结果文件）列表。用于回答用户"我之前生成了什么"或进行资产回顾。',
+          side_effect="pure",
+          deterministic=False,
+          network=False,
+          latency_class="fast",
+          memory_class="light",
+          scale_class="small",
+          output_semantic_type="list",
+          result_size_policy="bounded",  # 单会话 top-100
+          tags=("分析资产", "资产列表", "ndvi结果", "历史成果", "遥感产物", "回顾"),
+          failure_modes=("empty_result",))
     def list_analysis_assets(session_id: Optional[str] = None) -> dict:
         from app.models.upload import UploadRecord
 
@@ -122,7 +145,18 @@ def register_nature_resource_tools(registry: ToolRegistry):
               "(3) 用户未明确授权删除 - 不要主动调，特别是 action='delete' 不可逆。"
               "\n关键约束：action ∈ {rename, delete}；rename 必须给 new_name；delete 同时移除磁盘 TIFF。"
               "\n安全：tier=3（destructive）-- 仅在用户明确要求时调用。asset 必须属于当前 session。"
-          ))
+          ),
+          network=False,
+          deterministic=False,
+          latency_class="fast",
+          memory_class="light",
+          scale_class="small",
+          output_semantic_type="text",
+          result_size_policy="inline_small",
+          data_mutations=("artifact_write",),  # 改名 / 删除记录与物理 TIFF
+          tags=("资产管理", "重命名", "删除", "分析产物", "清理"),
+          failure_modes=("invalid_args", "missing_data"),
+          )
     def manage_analysis_asset(asset_id: int, action: str, new_name: Optional[str] = None, session_id: Optional[str] = None) -> dict:
         """审计 S43：之前任何 LLM 上下文都能按顺序整数 asset_id 删除/重命名他人资产。
 

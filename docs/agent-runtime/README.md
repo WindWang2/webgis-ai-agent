@@ -2,6 +2,9 @@
 
 实现分支：`feat/agent-tool-model-runtime-v2` · ADR：[0101](../adr/0101-agent-tool-model-runtime-v2.md) · [0102](../adr/0102-model-provider-runtime-foundation.md)
 
+V3 增量：`feat/pi-gis-runtime-v3` · ADR：[0103](../adr/0103-pi-gis-runtime-v3.md)
+—— 描述符富化与覆盖率 gate / 动态工具面 / live 模型路由 / 证据链与重放。
+
 本平台把既有骨架（ToolRegistry 执行真相 / ToolDispatchService 派发闸 /
 Pi 宿主 / ToolCatalog 分层选择）升级为可观测、可测试、可重放的工具与模型运行时。
 **它不替换 Pi，不建第二注册中心，不复制 GIS 语义真相。**
@@ -11,31 +14,36 @@ Pi / Agent Host
     │
     ├── Model Runtime            app/services/chat/model_runtime/
     │     descriptors / roles / routing / health / provider
+    │     live 路由接线           app/services/chat/model_routing_bridge.py
     │
     ├── Agent Context Runtime    app/services/chat/context_budget.py
     │     context_projections.py
+    │     无进展诊断              app/services/chat/no_progress.py
     │
     └── Tool Platform
           ToolRegistry truth     app/tools/registry.py
-          ToolDescriptor V2      app/tools/descriptor.py
+          ToolDescriptor V2/V3   app/tools/descriptor.py
           参数归一化              app/tools/argument_normalization.py
           结果契约视图            app/lib/runtime/result_contract.py
           ToolSurface 投影        app/services/tool_surface_v2.py
+          动态面 V3               app/services/chat/tool_surface_v3.py
           检索 / 压缩             app/services/chat/tool_retrieval.py
                                  app/services/chat/schema_compression.py
           Trace / Replay          app/lib/runtime/trace.py
                                  app/evaluation/replay.py
+          证据链 V3 / 指标        app/lib/runtime/gis_trace.py
+                                 app/evaluation/runtime_metrics.py
 ```
 
 ## 文档索引
 
 | 主题 | 文档 |
 |---|---|
-| 工具描述符 / 生命周期 / 指纹 | [tool-descriptor.md](tool-descriptor.md) |
-| 工具面投影 / 检索 / 压缩 | [tool-surface.md](tool-surface.md) |
-| 模型运行时 / 角色 / 路由 / 健康 | [model-runtime.md](model-runtime.md) |
+| 工具描述符 / 生命周期 / 指纹 / V3 契约与覆盖率 gate | [tool-descriptor.md](tool-descriptor.md) |
+| 工具面投影 / 检索 / 压缩 / V3 动态面 | [tool-surface.md](tool-surface.md) |
+| 模型运行时 / 角色 / 路由 / 健康 / live 接线 | [model-runtime.md](model-runtime.md) |
 | 上下文预算 / 投影 | [context-runtime.md](context-runtime.md) |
-| Trace / Replay / 语料 | [trace-replay.md](trace-replay.md) |
+| Trace / Replay / 语料 / 证据链 V3 / 指标 | [trace-replay.md](trace-replay.md) |
 | 执行策略审计 / 安全红线 | [security-policy.md](security-policy.md) |
 
 ## 不变式（评审基线）

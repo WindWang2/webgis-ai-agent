@@ -227,7 +227,18 @@ def register_crawler_tools(registry: ToolRegistry):
                "query": "中文或英文搜索语句，可包含地点/时间/限定词，如『成都高新区 2025 新开 星巴克』",
                "limit": "结果条数 1~20，默认 5",
                "provider": "服务商: 'auto'(默认，有 Qianfan token 用百度否则 DDG), 'baidu', 'ddg'",
-           })
+           },
+           side_effect="cacheable_read",
+           deterministic=False,  # 公网实时搜索结果
+           network=True,  # Qianfan aiohttp POST / DDGS 同步 HTTP
+           latency_class="medium",  # 单次搜索 1-5s+（DDG 注释）
+           memory_class="light",
+           scale_class="small",
+           output_semantic_type="list",
+           result_size_policy="bounded",  # limit 1-20 条
+           tags=("网络搜索", "web_search", "新闻", "网页", "最新信息", "盲区"),
+           failure_modes=("network_error", "timeout", "rate_limit"),
+           )
     async def web_search(query: str, limit: int = 5, provider: str = "auto") -> dict:
         if not query.strip():
             return {"error": "query 不能为空"}
@@ -252,7 +263,19 @@ def register_crawler_tools(registry: ToolRegistry):
                "（Sub-Agent 盲区探测器）仅用于中国境外、新闻事件或本地 OSM 没有的最新商业点。"
                "中国境内设施/院校/医院等禁止使用本工具，改 query_local_osm。"
            ),
-           args_model=QueryWebCrawlerArgs)
+           args_model=QueryWebCrawlerArgs,
+           side_effect="cacheable_read",
+           deterministic=False,  # 公网实时搜索结果
+           network=True,  # 本地未命中时 Qianfan/DDG HTTP 兜底
+           latency_class="medium",  # 本地命中 fast；兜底搜索 1-5s+
+           memory_class="light",
+           scale_class="small",
+           output_semantic_type="list",
+           result_size_policy="bounded",  # limit 1-20 条
+           tags=("poi搜索", "境外", "网络poi", "sub-agent", "盲区", "商业点"),
+           failure_modes=("network_error", "timeout", "empty_result"),
+           capabilities=("poi_query",),
+           )
     async def search_and_extract_poi(query: str, limit: int = 5) -> dict:
         from app.services.local_first import try_local_web_poi
 

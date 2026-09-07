@@ -29,6 +29,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import tempfile
 import time
 from typing import Callable, Optional
@@ -235,3 +236,101 @@ def clear_artifact_cache() -> int:
     except OSError:
         pass
     return removed
+
+
+# ── V3 data foundation：孤儿/超龄清扫（audit #D-gap：data/artifacts 此前
+# 只在写路径做字节上限 LRU —— .meta 缺失的 .tif 对 LRU 不可见（永久泄漏）、
+# 崩溃遗留的 mkstemp 临时文件无人清扫、超龄条目永不老化。本函数由
+# artifact_lifecycle.sweep_aged_artifacts 周期调用；只删自己目录族，
+# 每个删除独立容错。〕
+
+_KEY_RE = re.compile(r"^[0-9a-f]{16}$")
+
+
+def _sweep_grace_seconds() -> float:
+    raw = os.environ.get("ARTIFACT_SWEEP_GRACE_S", "")
+    try:
+        return max(float(raw), 0.0)
+    except (TypeError, ValueError):
+        return 3600.0
+
+
+def _disk_retention_seconds() -> float:
+    raw = os.environ.get("ARTIFACT_DISK_RETENTION_DAYS", "")
+    try:
+        days = float(raw)
+    except (TypeError, ValueError):
+        days = 30.0
+    return max(days, 1.0) * 86400.0
+
+
+def sweep_orphan_disk_artifacts(*, now: Optional[float] = None) -> dict:
+    """清扫 data/artifacts 的三类孤儿 + 超龄条目（dry-run 诊断见返回值）。
+
+    - ``temp_leftovers``：不匹配 ``<16hex>.tif/.meta`` 命名的一切文件
+      （publish 崩溃遗留的 mkstemp 临时件）；
+    - ``orphan_tif`` / ``orphan_meta``：配对缺失的半边（对 LRU 记账不可
+      见 / 指向已消失的产物）；
+    - ``aged``：mtime 超过 ARTIFACT_DISK_RETENTION_DAYS 的完整条目
+      （写路径 LRU 只保字节上限，没有时间下限）。
+
+    宽限期：temp/孤儿半边分支跳过 mtime 在 ``ARTIFACT_SWEEP_GRACE_S``
+    （默认 1h）内的新文件 —— publish 在 ``os.replace`` 与 .meta 落盘
+    之间存在毫秒级窗口，.meta 写失败也可能留下刚发布的合法 .tif；
+    刚出生的文件绝不因「暂时配不上对」而被误删。
+    """
+    result = {"temp_leftovers": 0, "orphan_tif": 0, "orphan_meta": 0, "aged": 0}
+    current = time.time() if now is None else now
+    cutoff = current - _disk_retention_seconds()
+    grace_cutoff = current - _sweep_grace_seconds()
+    try:
+        names = os.listdir(ARTIFACT_DIR)
+    except OSError:
+        return result
+    tif_keys: set = set()
+    meta_keys: set = set()
+    for name in names:
+        stem, _, ext = name.rpartition(".")
+        if ext == "tif" and _KEY_RE.match(stem):
+            tif_keys.add(stem)
+        elif ext == "meta" and _KEY_RE.match(stem):
+            meta_keys.add(stem)
+        else:
+            # 非 <16hex>.tif/.meta 命名 = publish 临时件遗留（宽限期内跳过）
+            p = os.path.join(ARTIFACT_DIR, name)
+            try:
+                if os.path.isfile(p) and os.stat(p).st_mtime < grace_cutoff:
+                    os.unlink(p)
+                    result["temp_leftovers"] += 1
+            except OSError:
+                continue
+    for stem in tif_keys - meta_keys:
+        try:
+            if os.stat(_artifact_path(stem)).st_mtime >= grace_cutoff:
+                continue  # 新发布的 .tif：.meta 可能尚未落盘 —— 宽限
+            os.unlink(_artifact_path(stem))
+            result["orphan_tif"] += 1
+        except OSError:
+            continue
+    for stem in meta_keys - tif_keys:
+        try:
+            if os.stat(_meta_path(stem)).st_mtime >= grace_cutoff:
+                continue
+            os.unlink(_meta_path(stem))
+            result["orphan_meta"] += 1
+        except OSError:
+            continue
+    for stem in tif_keys & meta_keys:
+        try:
+            if os.stat(_meta_path(stem)).st_mtime < cutoff:
+                for p in (_artifact_path(stem), _meta_path(stem)):
+                    try:
+                        os.unlink(p)
+                    except OSError:
+                        pass
+                result["aged"] += 1
+        except OSError:
+            continue
+    if any(result.values()):
+        logger.info("[artifact_cache] orphan sweep: %s", result)
+    return result

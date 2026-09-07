@@ -213,6 +213,15 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
       # webgis_layer_remove / webgis_layout_set), avoiding the "demoted =
       # permanently invisible" regression class from #678.
       tier=2, domains=["mapspec"],
+      side_effect="state_mutation",
+      deterministic=False,
+      latency_class="fast",
+      memory_class="light",
+      scale_class="small",
+      tags=("mapspec", "初始化", "制图项目", "intent 文档", "基线配置"),
+      output_semantic_type="text",
+      result_size_policy="inline_small",
+      data_mutations=("session_state",),
   )
   async def webgis_project_init(
       view: Optional[dict] = None,
@@ -233,6 +242,26 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
       description="读取当前会话的 MapSpec 制图 Intent 文档与 MapMeta Profile。",
       args_model=WebgisStateGetArgs,
       tier=1,
+      side_effect="pure",
+      deterministic=False,
+      latency_class="fast",
+      memory_class="light",
+      scale_class="small",
+      tags=("mapspec", "状态查询", "制图文档", "图层清单", "视图"),
+      output_semantic_type="text",
+      result_size_policy="inline_small",
+      summary=(
+          "读取当前会话 MapSpec 制图意图文档（视图、数据源、图层、版面）与 Meta "
+          "Profile。只读，参数为空对象。用于在继续制图操作前确认当前地图规格；"
+          "尚无 MapSpec 时会自动初始化空项目。"
+      ),
+      examples=(
+          "看一下当前地图的制图规格状态",
+          "MapSpec 里现在有哪些图层和数据源",
+      ),
+      anti_examples=(
+          "把视图中心设为北京——那是视角写入，用 webgis_view_set",
+      ),
   )
   async def webgis_state_get(session_id: Optional[str] = None) -> dict:
     if not session_id:
@@ -253,6 +282,29 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
       description="设置或覆盖地图视图参数 (center, zoom, pitch, bearing)，并同步重新编译 runtime map_state。",
       args_model=WebgisViewSetArgs,
       tier=1,
+      side_effect="state_mutation",
+      deterministic=False,
+      latency_class="fast",
+      memory_class="light",
+      scale_class="small",
+      tags=("视图", "缩放", "中心点", "camera", "fly_to", "倾角", "旋转"),
+      output_semantic_type="text",
+      result_size_policy="inline_small",
+      required_context=("map_state",),
+      map_mutations=("camera",),
+      summary=(
+          "设置地图视图（center/zoom/pitch/bearing）：写入 MapSpec 视图并下发 "
+          "fly_to 指令同步 runtime 相机。用于『缩放到某城市』『旋转地图』『加大"
+          "倾角』等视角调整。参数均可选，只传需要变更的字段；下发不代表前端已"
+          "落定，落定以 ACK 为准。"
+      ),
+      examples=(
+          "把地图缩放到成都市，zoom 级别 10",
+          "地图顺时针旋转 45 度，加一点倾角",
+      ),
+      anti_examples=(
+          "添加一个新图层——那是显示变更，用 webgis_layer_upsert",
+      ),
   )
   async def webgis_view_set(
       center: Optional[List[float]] = None,
@@ -299,7 +351,16 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
       registry,
       tier=2, domains=["dataset"], name="webgis_source_profile",
       description="剖析 GeoJSON 数据源生成 Spatial Meta Profile (BBOX, 建议视图, 字段统计, 数值分布)。",
-      args_model=WebgisSourceProfileArgs
+      args_model=WebgisSourceProfileArgs,
+      side_effect="state_mutation",
+      deterministic=True,
+      latency_class="medium",
+      memory_class="medium",
+      scale_class="medium",
+      tags=("数据剖析", "profile", "bbox", "字段统计", "建议视图", "geojson"),
+      output_semantic_type="stats",
+      result_size_policy="inline_small",
+      data_mutations=("session_state",),
   )
   async def webgis_source_profile(
       source_id: str,
@@ -333,6 +394,32 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
       description="创建或更新 MapSpec 图层规范，自动剖析数据源并设置建议视角，且同步编译发布到 runtime map_state。",
       args_model=WebgisLayerUpsertArgs,
       tier=1,
+      side_effect="state_mutation",
+      deterministic=False,
+      latency_class="medium",
+      memory_class="medium",
+      scale_class="medium",
+      tags=("图层", "add layer", "样式", "paint", "显示数据", "制图"),
+      output_semantic_type="text",
+      result_size_policy="inline_small",
+      required_context=("map_state", "cartography_state"),
+      map_mutations=("add_layer", "style_layer", "camera"),
+      data_mutations=("session_state",),
+      failure_modes=("invalid_args", "missing_data"),
+      summary=(
+          "创建或更新 MapSpec 图层（id/source/type/paint/layout），自动剖析数据"
+          "源、推导建议视角并编译发布到 runtime 地图。数据可传内联 GeoJSON 或会"
+          "话 ref:xxx。所有『把数据画到地图上』『改图层颜色/透明度/可见性』的显"
+          "示变更都走本工具。"
+      ),
+      examples=(
+          "把这个 ref 数据画到地图上，用蓝色圆点",
+          "把热力图层的透明度改成 0.6",
+      ),
+      anti_examples=(
+          "删除这个图层——那是移除操作，用 webgis_layer_remove",
+          "成都市人口分布分析——那是空间分析请求，不是图层操作",
+      ),
   )
   async def webgis_layer_upsert(
       layer: Dict[str, Any],
@@ -536,6 +623,17 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
       tier=2, domains=["mapspec"], name="webgis_layer_remove",
       description="从 MapSpec 中移除指定图层并同步从 runtime map_state 擦除。",
       args_model=WebgisLayerRemoveArgs,
+      side_effect="state_mutation",
+      deterministic=False,
+      latency_class="fast",
+      memory_class="light",
+      scale_class="small",
+      tags=("图层", "删除图层", "remove layer", "移除", "mapspec"),
+      output_semantic_type="text",
+      result_size_policy="inline_small",
+      required_context=("map_state", "cartography_state"),
+      map_mutations=("remove_layer",),
+      failure_modes=("invalid_args",),
   )
   async def webgis_layer_remove(
       layer_id: str,
@@ -565,7 +663,18 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
       # webgis_layer_remove).
       tier=2, domains=["mapspec"], name="webgis_layout_set",
       description="设置 MapSpec 版面配置 (图例位置、控件、边距、制图组件列表)。",
-      args_model=WebgisLayoutSetArgs
+      args_model=WebgisLayoutSetArgs,
+      side_effect="state_mutation",
+      deterministic=False,
+      latency_class="fast",
+      memory_class="light",
+      scale_class="small",
+      tags=("版面", "布局", "图例", "图名", "指北针", "比例尺", "组件", "layout"),
+      output_semantic_type="text",
+      result_size_policy="inline_small",
+      required_context=("cartography_state",),
+      map_mutations=("component",),
+      failure_modes=("invalid_args",),
   )
   async def webgis_layout_set(
       legend: Optional[Dict[str, Any]] = None,
@@ -605,7 +714,15 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
       registry,
       tier=2, domains=["report"], name="webgis_validate",
       description="在编译前检验 MapSpec 规范性 (CRS, 字段存在性, stops 严格单调性, view 合理性)。",
-      args_model=WebgisValidateArgs
+      args_model=WebgisValidateArgs,
+      side_effect="pure",
+      deterministic=False,
+      latency_class="fast",
+      memory_class="light",
+      scale_class="small",
+      tags=("校验", "validate", "规范性", "crs", "stops", "编译前检查"),
+      output_semantic_type="text",
+      result_size_policy="inline_small",
   )
   async def webgis_validate(session_id: Optional[str] = None) -> dict:
     if not session_id:
@@ -617,6 +734,17 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
       tier=2, domains=["report"], name="webgis_compile_maplibre",
       description="执行 MapSpec 编译，产出 style.json, index.html 与 compile-report.json。",
       args_model=WebgisCompileMaplibreArgs,
+      side_effect="artifact_creation",
+      deterministic=False,
+      latency_class="medium",
+      memory_class="medium",
+      scale_class="medium",
+      tags=("编译", "compile", "style.json", "maplibre", "发布", "地图产品"),
+      output_semantic_type="report",
+      result_size_policy="inline_small",
+      required_context=("cartography_state",),
+      data_mutations=("artifact_write",),
+      failure_modes=("invalid_args",),
   )
   async def webgis_compile_maplibre(session_id: Optional[str] = None) -> dict:
     if not session_id:
@@ -628,6 +756,16 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
       tier=2, domains=["report"], name="webgis_checkpoint",
       description="创建 MapSpec 快照并具象化落地所引用的全部 ref_id 数据载荷。",
       args_model=WebgisCheckpointArgs,
+      side_effect="state_mutation",
+      deterministic=False,
+      latency_class="medium",
+      memory_class="medium",
+      scale_class="medium",
+      tags=("快照", "checkpoint", "存档", "回滚点", "数据落地"),
+      output_semantic_type="text",
+      result_size_policy="inline_small",
+      required_context=("cartography_state", "ref_cursor"),
+      data_mutations=("session_state", "artifact_write"),
   )
   async def webgis_checkpoint(
       checkpoint_id: Optional[str] = None,
@@ -642,6 +780,18 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
       tier=2, domains=["report"], name="webgis_rollback",
       description="回滚 MapSpec 与 runtime map_state 到指定的快照点。",
       args_model=WebgisRollbackArgs,
+      side_effect="state_mutation",
+      deterministic=False,
+      latency_class="medium",
+      memory_class="medium",
+      scale_class="medium",
+      tags=("回滚", "rollback", "快照恢复", "撤销", "checkpoint"),
+      output_semantic_type="text",
+      result_size_policy="inline_small",
+      required_context=("map_state", "cartography_state"),
+      map_mutations=("add_layer", "remove_layer", "style_layer", "camera"),
+      data_mutations=("session_state",),
+      failure_modes=("invalid_args", "missing_data"),
   )
   async def webgis_rollback(
       checkpoint_id: str,
@@ -655,7 +805,18 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
       registry,
       tier=2, domains=["report"], name="webgis_runtime_validate",
       description="重新编译当前 MapSpec 并在 Headless 环境下进行运行时验收与 5-维度评分 (80% max)。",
-      args_model=WebgisRuntimeValidateArgs
+      args_model=WebgisRuntimeValidateArgs,
+      side_effect="artifact_creation",
+      deterministic=False,
+      latency_class="slow",
+      memory_class="medium",
+      scale_class="medium",
+      tags=("运行时验收", "评分", "headless", "质量检查", "runtime validate"),
+      output_semantic_type="report",
+      result_size_policy="bounded",
+      required_context=("cartography_state",),
+      data_mutations=("artifact_write",),
+      failure_modes=("timeout",),
   )
   async def webgis_runtime_validate(session_id: Optional[str] = None) -> dict:
     from app.services.runtime_validator import runtime_validator
@@ -673,7 +834,29 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
           "webgis_map_intent。本工具参数必须是空对象 {}，且只在地图已发生 "
           "display 变更之后调用。"
       ),
-      args_model=WebgisCartographyStatusArgs
+      args_model=WebgisCartographyStatusArgs,
+      side_effect="pure",
+      deterministic=False,
+      latency_class="fast",
+      memory_class="light",
+      scale_class="small",
+      tags=("制图审查", "验收结论", "收敛", "verdict", "地图状态", "harness"),
+      output_semantic_type="text",
+      result_size_policy="inline_small",
+      summary=(
+          "查询制图 harness 对当前地图状态的服务端验收结论（desired↔runtime 收"
+          "敛判定、失败检查项与修复进度）。只读，参数必须是空对象 {}，且只在地图"
+          "发生 display 变更之后调用。不要传 city/topic/scope/query——分析请求应"
+          "先走 webgis_map_intent。"
+      ),
+      examples=(
+          "刚才的图层修改在前端生效了吗",
+          "看一下当前地图的验收状态和失败项",
+      ),
+      anti_examples=(
+          "成都市的人口密度分布——那是分析请求，应先调 webgis_map_intent",
+          "还没做任何 display 变更就查验收结论",
+      ),
   )
   async def webgis_cartography_status(session_id: Optional[str] = None) -> dict:
     if not session_id:
