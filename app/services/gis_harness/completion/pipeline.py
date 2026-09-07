@@ -41,6 +41,33 @@ from .validators import (
     validate_semantics,
 )
 
+def _emit_finalization_chain(result: MapCompletionResult, *, passes: int = 0) -> None:
+    """终验链发射（阶段 15/16/17；turn 上下文缺席时静默跳过）。"""
+    try:
+        from app.lib.runtime.chain_emitters import emit_chain, emit_chain_once
+        from app.lib.runtime.gis_trace import Stage
+
+        emit_chain_once(
+            Stage.VERIFICATION,
+            status=result.status,
+            render_status=result.render_status,
+            finding_codes=sorted({f.code for f in result.findings})[:8],
+        )
+        if result.repairs_applied:
+            emit_chain(
+                Stage.REPAIR,
+                applied=list(result.repairs_applied[:6]),
+                passes=int(passes),
+            )
+        emit_chain_once(
+            Stage.FINAL_VERDICT,
+            verdict=result.product_verdict,
+            final_map_status=result.final_map_status,
+        )
+    except Exception:  # noqa: BLE001 — 记录面绝不阻断终验
+        pass
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -301,6 +328,10 @@ async def run_map_finalization(
         ).get("verdict") or "")
     except Exception:  # noqa: BLE001 — 快照失败留空（旧路径语义）
         result.product_verdict = ""
+
+    # V4 Wave 8：证据链阶段 15/16/17（VERIFICATION / REPAIR /
+    # FINAL_VERDICT）—— 终验事实入链（turn 上下文缺席时静默跳过）。
+    _emit_finalization_chain(result, passes=result.passes)
 
     logger.info(
         "[MapFinalizer] finalization_pass session=%s status=%s passes=%d repairs=%d",

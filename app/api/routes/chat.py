@@ -1566,6 +1566,23 @@ async def push_cartographic_runtime_observation(
                     status_code=503,
                     detail="Cartographic observation could not be persisted",
                 )
+            # V4 Wave 8（ADR-0104）：证据链阶段 14（MAP_OBSERVATION）——
+            # 服务端盖章后的观察事实入链（turn 上下文由请求中间件/桥绑定；
+            # 缺席时静默跳过）。
+            try:
+                from app.lib.runtime.chain_emitters import emit_chain_once
+                from app.lib.runtime.gis_trace import Stage
+
+                emit_chain_once(
+                    Stage.MAP_OBSERVATION,
+                    sequence=sequence,
+                    mapspec_revision=stamped_revision,
+                    layer_count=len(layers),
+                    component_count=len(observation["components"]),
+                    map_idle=observation["map_idle"],
+                )
+            except Exception:  # noqa: BLE001 — 记录面绝不阻断观察接受
+                pass
             from app.services.cartography_runtime import evaluate_cartographic_session
 
             try:

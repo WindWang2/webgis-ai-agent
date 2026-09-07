@@ -537,6 +537,35 @@ class MapProductPlanner:
                 or self.recipes.default_recipe()
             )
 
+        # V4 Wave 8（ADR-0104）：证据链阶段 1-6 发射（有界、消毒、绝不
+        # 阻断规划；turn 上下文缺席时静默跳过 —— 记录面不伪造链）。
+        try:
+            from app.lib.runtime.chain_emitters import emit_chain, emit_chain_once
+            from app.lib.runtime.gis_trace import Stage
+
+            emit_chain(Stage.USER_INTENT, query=str(intent.query or "")[:200])
+            emit_chain_once(
+                Stage.PARSED_INTENT,
+                task=str(getattr(intent, "task", "") or ""),
+                area=str(getattr(intent, "area", "") or "")[:64],
+            )
+            emit_chain_once(
+                Stage.TASK_ONTOLOGY,
+                task=str(getattr(intent, "task", "") or ""),
+                cartography=str(getattr(intent, "cartography", "") or ""),
+            )
+            emit_chain_once(
+                Stage.CANDIDATE_WORKFLOWS,
+                candidates=[str(getattr(c, "id", "")) for c in (candidates or [])][:8],
+                selected=str(getattr(recipe, "id", "") or ""),
+            )
+            emit_chain_once(
+                Stage.SELECTED_WORKFLOW,
+                recipe_id=str(getattr(recipe, "id", "") or ""),
+            )
+        except Exception:  # noqa: BLE001 — 记录面绝不阻断规划
+            pass
+
         # 模板选择：TemplateSelector 确定性评分（subject/task/outputs/
         # priority）是证据基线；显式 template_id（plan 连续性回放）只在
         # **改写裁决**时覆盖证据。review-B P2：memo 键用裁决结果后，显式
@@ -799,6 +828,24 @@ class MapProductPlanner:
         if recipe is None:
             finalized.status = "finalized"
             return finalized
+
+        # V4 Wave 8：证据链阶段 4（DATA_PROFILE）+ 6（SELECTED_WORKFLOW 的
+        # finalize 复裁决）—— profile 事实摘要有界入链。
+        try:
+            from app.lib.runtime.chain_emitters import emit_chain_once
+            from app.lib.runtime.gis_trace import Stage
+
+            if isinstance(profile, dict):
+                emit_chain_once(
+                    Stage.DATA_PROFILE,
+                    geometry=str(profile.get("geometry") or profile.get("geometryKind") or "")[:32],
+                    feature_count=profile.get("featureCount") or profile.get("feature_count"),
+                    crs=str(profile.get("crs") or "")[:32],
+                    field_count=len(profile.get("fields") or {}),
+                )
+            emit_chain_once(Stage.SELECTED_WORKFLOW, recipe_id=plan.recipe_id, phase="finalize")
+        except Exception:  # noqa: BLE001 — 记录面绝不阻断规划
+            pass
 
         report: EligibilityReport = self.check_recipe_eligibility(
             recipe, profile, min_points_default=min_points_default,

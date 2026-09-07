@@ -438,10 +438,49 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
     tool_name = normalize_tool_name(request.name)
     arguments = dict(request.arguments or {})
     # The HTTP route verifies a signed turn token and writes its immutable sid
+    # here. Direct in-process callers/tests may still supply sessionId.
+    session_id = request.sessionId or ""
+    # V4 Wave 8（ADR-0104）：调度全程绑定 turn RuntimeContext —— 调度面/
+    # planner / registry 内的 18 阶段链发射（emit_chain*）据此解析 turn_id；
+    # 上下文缺席时发射面静默跳过，绝不伪造链。
+    _verified_turn = ""
+    try:
+        _verified_turn = str(getattr(request, "verifiedTurnId", "") or "")
+    except Exception:  # noqa: BLE001
+        _verified_turn = ""
+    if _verified_turn:
+        try:
+            from app.lib.runtime import context as rt_ctx
+
+            _turn_binding = rt_ctx.bind_runtime_context(
+                turn_id=_verified_turn, session_id=session_id,
+            )
+        except Exception:  # noqa: BLE001 — 绑定失败按无上下文降级
+            _turn_binding = None
+    else:
+        _turn_binding = None
+    try:
+        return await _dispatch_tool_bound(request, registry, tool_name, arguments, session_id)
+    finally:
+        if _turn_binding is not None:
+            try:
+                _turn_binding.__exit__(None, None, None)
+            except Exception:  # noqa: BLE001
+                pass
+
+
+async def _dispatch_tool_bound(
+    request: "PiToolRequest",
+    registry,
+    tool_name: str,
+    arguments: dict,
+    session_id: str,
+) -> "PiToolResponse":
+    """dispatch_tool 的主体（turn 上下文已绑定后进入）。"""
+    # The HTTP route verifies a signed turn token and writes its immutable sid
     # here. Direct in-process callers/tests may still supply sessionId. Never
     # fall back to the bridge's mutable active turn: a delayed callback could
     # otherwise mutate the next session.
-    session_id = request.sessionId or ""
     if not session_id:
         raise PiRpcError("Pi tool callback has no verified turn session")
 
@@ -2224,6 +2263,38 @@ class PiBridge:
                                             "[PiBridge] turn-settle finalization failed session=%s",
                                             turn_sid,
                                         )
+                                    # V4 Wave 8（ADR-0104）：证据链阶段
+                                    # 18（USER_OUTPUT）+ 链持久化 —— turn
+                                    # 收尾的输出事实入链并把整链序列化到
+                                    # 会话 JSONL（有界、可关停）。放在
+                                    # finalization 之后：task_complete 取
+                                    # 最终披露值。
+                                    try:
+                                        from app.lib.runtime.chain_emitters import (
+                                            emit_chain_for,
+                                        )
+                                        from app.lib.runtime.gis_trace import (
+                                            Stage as _ChainStage,
+                                        )
+                                        from app.services.gis_harness.trace_store import (
+                                            persist_turn_chain,
+                                        )
+
+                                        emit_chain_for(
+                                            turn_id,
+                                            _ChainStage.USER_OUTPUT,
+                                            final_gate=True,
+                                            task_complete=(
+                                                _turn_map_product.get("task_complete")
+                                                if isinstance(_turn_map_product, dict)
+                                                else False
+                                            ) is True,
+                                        )
+                                        persist_turn_chain(
+                                            turn_id, session_id=turn_sid,
+                                        )
+                                    except Exception:  # noqa: BLE001 — 记录面绝不阻断 settle
+                                        pass
                                 sse = map_event_to_sse(
                                     event,
                                     turn_sid,

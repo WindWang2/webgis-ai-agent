@@ -386,6 +386,19 @@ def compute_turn_active_tools(
         )
         selection = DynamicToolSurface(registry).select(ctx)
         names = list(dict.fromkeys([*NATIVE_TOOL_NAMES, *selection.names]))
+        # V4 Wave 8（ADR-0104）：证据链阶段 7（TOOL_SURFACE）——per-turn
+        # 动态面裁决入链（emit-once：每 turn 一条；上下文缺席静默跳过）。
+        try:
+            from app.lib.runtime.chain_emitters import emit_chain_once
+            from app.lib.runtime.gis_trace import Stage
+
+            emit_chain_once(
+                Stage.TOOL_SURFACE,
+                dynamic_count=len(selection.names),
+                workflow_stage=str(workflow_stage or "")[:48],
+            )
+        except Exception:  # noqa: BLE001 — 记录面绝不阻断 turn
+            pass
         safe: list[str] = []
         for name in names:
             try:

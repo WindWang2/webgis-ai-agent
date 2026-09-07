@@ -351,6 +351,22 @@ class ToolDispatchService:
         tool_name = normalize_tool_name(raw_tool_name)
         tool_args_raw = tc["function"]["arguments"]
 
+        # V4 Wave 8（ADR-0104）：证据链阶段 9/10（TOOL_CALLS / ARGUMENTS）
+        # —— 引擎无关的调度面发射（Pi bridge 侧同阶段经 emit-once 去重）。
+        try:
+            from app.lib.runtime.chain_emitters import emit_chain_once
+            from app.lib.runtime.gis_trace import Stage
+
+            emit_chain_once(Stage.TOOL_CALLS, tool=tool_name)
+            _args_view = tool_args_raw if isinstance(tool_args_raw, (dict, list)) else None
+            emit_chain_once(
+                Stage.ARGUMENTS,
+                tool=tool_name,
+                arg_keys=sorted(_args_view.keys())[:12] if isinstance(_args_view, dict) else [],
+            )
+        except Exception:  # noqa: BLE001 — 记录面绝不阻断调度
+            pass
+
         # 1. 重复调用拦截 (并发安全：check-and-add 在锁内原子完成，否则两条并行
         #    dispatch 都会通过 in 检查后才 add，重复调用逃逸拦截)。
         #    design-v3 §2（R-dedup）：先“占位”保证并发同参互斥，但**失败**的调用
@@ -542,6 +558,19 @@ class ToolDispatchService:
                 "tool_failed",
                 {"tool": tool_name, "code": result.get("code"), "message": error_msg[:200]},
             )
+            # V4 Wave 8：证据链阶段 11（失败路径同样入链）。
+            try:
+                from app.lib.runtime.chain_emitters import emit_chain_once
+                from app.lib.runtime.gis_trace import Stage
+
+                emit_chain_once(
+                    Stage.TOOL_RESULTS,
+                    tool=tool_name,
+                    status="error",
+                    code=str(result.get("code") or "")[:48] or None,
+                )
+            except Exception:  # noqa: BLE001 — 记录面绝不阻断
+                pass
             return ToolDispatchResult(
                 status="error",
                 llm_payload=llm_payload,
@@ -683,6 +712,14 @@ class ToolDispatchService:
                             ref_revisions=ref_revs if role == "primary" else None,
                             inputs=sorted(_arg_lineage)[:16] if _arg_lineage else None,
                         )
+                        # V4 Wave 8：证据链阶段 12（ARTIFACT_CREATION）。
+                        try:
+                            from app.lib.runtime.chain_emitters import emit_chain
+                            from app.lib.runtime.gis_trace import Stage
+
+                            emit_chain(Stage.ARTIFACT_CREATION, ref=minted[:64], tool=tool_name)
+                        except Exception:  # noqa: BLE001 — 记录面绝不阻断
+                            pass
             except Exception:  # noqa: BLE001 — 登记失败不影响产物本身
                 logger.debug(
                     "[ArtifactRegistry] dispatch registration skipped tool=%s",
@@ -851,6 +888,20 @@ class ToolDispatchService:
 
         # P2-9：成功完成 → 标记 completed（后续同参重复走 post-success 文案）。
         self._mark_completed(tool_key, session_id or "")
+
+        # V4 Wave 8：证据链阶段 11（TOOL_RESULTS）—— 引擎无关发射。
+        try:
+            from app.lib.runtime.chain_emitters import emit_chain_once
+            from app.lib.runtime.gis_trace import Stage
+
+            emit_chain_once(
+                Stage.TOOL_RESULTS,
+                tool=tool_name,
+                status="ok",
+                geojson_ref=str(geojson_ref or "")[:64] or None,
+            )
+        except Exception:  # noqa: BLE001 — 记录面绝不阻断
+            pass
 
         return ToolDispatchResult(
             status="ok",
