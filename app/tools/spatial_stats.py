@@ -509,11 +509,29 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                     },
                     feature_count=len(res.data.get("features") or []) or None,
                     crs=extract_declared_crs(geojson) or "EPSG:4326",
+                    uncertainty=_coerce_uncertainty_blocks(res.data),
                     seed=42,
                 )
             return payload
-        return SpatialAnalyzer.hotspot(geojson, params["value_field"],
-                                       distance_band=distance_band).to_llm_response()
+        payload = SpatialAnalyzer.hotspot(geojson, params["value_field"],
+                                          distance_band=distance_band
+                                          ).to_llm_response()
+        # 审计 F-3：normal（默认）路径同样挂科学证据块（实现层 data_out
+        # 已带 StatisticalSignificance uncertainty 块，这里只做通道透传）。
+        if payload.get("success"):
+            data = payload.get("data") or {}
+            _attach_scientific_evidence(
+                payload, "spatial.hotspot.local", tool="hotspot_analysis",
+                parameters_applied={
+                    "value_field": params["value_field"],
+                    "distance_band": float(distance_band or 0),
+                    "significance_method": "normal",
+                },
+                feature_count=len(data.get("features") or []) or None,
+                crs=extract_declared_crs(geojson) or "EPSG:4326",
+                uncertainty=_coerce_uncertainty_blocks(data),
+            )
+        return payload
 
     @tool(registry, name="kde_surface",
            description=(
@@ -717,8 +735,22 @@ def register_spatial_stats_tools(registry: ToolRegistry):
            result_size_policy="ref_offload",
            failure_modes=("invalid_args", "missing_data"))
     def h3_lisa(h3_geojson: Any, value_field: str) -> dict:
+        # 审计 F-3：此前本工具与 st_dbscan 均不挂科学证据块 —— 补齐
+        # _attach_scientific_evidence 通道（seed=42 = esda.Moran_Local 固定
+        # 种子；uncertainty 块由实现层 data_out 提供）。
         res = SpatialAnalyzer.lisa(h3_geojson, value_field)
-        return res.to_llm_response()
+        payload = res.to_llm_response()
+        if res.success:
+            _attach_scientific_evidence(
+                payload, "stats.h3_lisa", tool="h3_lisa",
+                parameters_applied={"value_field": value_field},
+                feature_count=len((res.data or {}).get("features") or [])
+                or None,
+                crs=extract_declared_crs(h3_geojson) or "EPSG:4326",
+                uncertainty=_coerce_uncertainty_blocks(res.data),
+                seed=42,
+            )
+        return payload
 
     @tool(registry, name="st_dbscan",
            description="时空聚类分析（ST-DBSCAN）：结合空间距离(eps1_spatial_meters)和时间间隔(eps2_temporal_seconds)识别时空事件的聚类簇与噪声点。",
@@ -753,7 +785,23 @@ def register_spatial_stats_tools(registry: ToolRegistry):
             min_samples=min_samples,
             timestamp_field=timestamp_field,
         )
-        return res.to_llm_response()
+        payload = res.to_llm_response()
+        # 审计 F-3：st_dbscan 此前无科学元数据 —— 补 evidence 通道
+        # （descriptor 未声明 uncertainty_outputs → 不透传 uncertainty）。
+        if res.success:
+            _attach_scientific_evidence(
+                payload, "stats.st_dbscan", tool="st_dbscan",
+                parameters_applied={
+                    "eps1_spatial_meters": float(eps1_spatial_meters),
+                    "eps2_temporal_seconds": float(eps2_temporal_seconds),
+                    "min_samples": int(min_samples),
+                    "timestamp_field": str(timestamp_field),
+                },
+                feature_count=len((res.data or {}).get("features") or [])
+                or None,
+                crs=extract_declared_crs(data) or "EPSG:4326",
+            )
+        return payload
 
     # ── Foundation V2（A1）工具 ────────────────────────────────────────
     # 模式与上方 VNext 统计工具一致：safe_parse → apply_contract → 实现 →

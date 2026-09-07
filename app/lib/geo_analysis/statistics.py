@@ -984,6 +984,21 @@ def hotspot_narrated(
         data_out["significance_method"] = "permutation"
         data_out["permutations"] = perms_used
 
+    # 审计 F-3：descriptor 声明 statistical_significance —— 证据块真实落
+    # data_out（p 值/置换数/多重校正真实填充；块级统计量取最强局地检验
+    # max|Gi*| 与其 min-p 配对，逐格 p/q 已在 feature properties）。
+    data_out["uncertainty"] = [StatisticalSignificance(
+        target="gi_star_local",
+        statistic_name="Getis-Ord Gi*",
+        statistic_value=float(np.max(np.abs(gi_stars))),
+        p_value=float(np.min(p_vals)),
+        method=("permutation" if p_value_permutation is not None
+                else "analytic_normal"),
+        permutations=(perms_used if p_value_permutation is not None else None),
+        multiple_testing="BH-FDR",
+        alternative="two-sided",
+    ).to_evidence()]
+
     summary = f"Hotspot analysis identified {hot_count} statistically significant hot spots and {cold_count} cold spots."
     if hot_count > 0 or cold_count > 0:
         summary += f" Significant clusters of high/low values were detected using a distance band of {bw:.1f} meters."
@@ -1367,6 +1382,9 @@ def h3_lisa(h3_geojson: dict, value_field: str) -> GeoAnalysisResult:
         p_sim = np.asarray(lisa.p_sim)
         q_arr = np.asarray(lisa.q)
     significant = p_sim < 0.05
+    # 审计 F-3 / §9.4：LISA 逐格置换 p 补 BH-FDR 校正 q（与 Gi* 路径同一
+    # _bh_qvalues 语义）—— evidence 块的 multiple_testing 字段因此真实。
+    q_vals = _bh_qvalues(np.asarray(p_sim, dtype=float))
     cluster_labels = ["HH", "LH", "LL", "HL", "NS"]  # label_codes index 0..4
     label_codes = np.select(
         [significant & (q_arr == 1),
@@ -1393,7 +1411,9 @@ def h3_lisa(h3_geojson: dict, value_field: str) -> GeoAnalysisResult:
     gdf_wgs84 = gdf.to_crs("EPSG:4326")
 
     out_features = _assemble_features(
-        gdf_wgs84, {"lisa_cluster": list(clusters)},
+        gdf_wgs84,
+        {"lisa_cluster": list(clusters),
+         "q_value_fdr": [round(float(v), 6) for v in q_vals]},
     )
 
     summary_parts = []
@@ -1425,6 +1445,18 @@ def h3_lisa(h3_geojson: dict, value_field: str) -> GeoAnalysisResult:
         "cluster_stats": cluster_counts,
         # G-6（#870）：随机零假设下的期望假阳性格数（p_sim<0.05 逐格判定）。
         "expected_false_positives": _lisa_expected_fp,
+        # 审计 F-3：descriptor 声明 statistical_significance —— 证据块真实
+        # 落 data_out（esda.Moran_Local 条件置换、固定 seed=42；块级 p 取
+        # 逐格 p_sim 的最小值，逐格 p/q 在 feature properties）。
+        "uncertainty": [StatisticalSignificance(
+            target="lisa_local",
+            statistic_name="Local Moran's I (LISA)",
+            p_value=float(np.min(p_sim)),
+            method="permutation",
+            permutations=999,
+            multiple_testing="BH-FDR",
+            alternative="two-sided",
+        ).to_evidence()],
     }
     summary += (
         f"（{len(p_sim)} 个格网在 α=0.05 逐格判定下的随机期望假阳性 ≈"
@@ -1873,7 +1905,7 @@ def join_count_narrated(
     n = len(values)
     if n < 4:
         raise InsufficientSamples(
-            f"join count free-sampling variance needs n ≥ 4 (got {n})",
+            f"join count non-free sampling variance needs n ≥ 4 (got {n})",
             correction_hint="add observations",
         )
     uniq = np.unique(values)
@@ -2043,7 +2075,7 @@ def join_count_narrated(
             ).to_evidence(),
             StatisticalSignificance(
                 target="join_count_bb",
-                statistic_name="n_BB join count (free sampling z-test)",
+                statistic_name="n_BB join count (non-free sampling z-test)",
                 statistic_value=n_bb,
                 p_value=stats_bb["p_value"],
                 method="analytic_normal",
@@ -2071,11 +2103,11 @@ def join_count_narrated(
     elif pattern == "positive_spatial_autocorrelation":
         summary += " 同类连接显著偏高 —— 同类聚集（正关联）。"
     elif pattern == "analytic_inference_unavailable":
-        summary += " 解析推断不可用（free-sampling 方差非正）—— 用 permutations 置换推断。"
+        summary += " 解析推断不可用（non-free sampling 方差非正）—— 用 permutations 置换推断。"
     if not _analytic_ok and perm_p is not None:
         summary += "（解析方差简并，判别基于置换检验）"
     elif pattern == "random":
-        summary += " 与 free-sampling 零假设无显著差异。"
+        summary += " 与 non-free sampling 零假设无显著差异。"
     return GeoAnalysisResult(True, data_out, summary)
 
 
@@ -2092,10 +2124,11 @@ def bivariate_join_count_narrated(
     与 :func:`join_count_narrated` 的 0/1 严格二值不同，本方法接受**任意
     恰好取两个值的类别字段**（如 {urban, rural}、{3, 7}）：值按排序映射为
     B（黑，较小值）/ W（白，较大值），在二值对称权重上统计
-    n_BB（同类连接）/ n_BW（异类连接）/ n_WW；期望/方差按 free sampling
-    （Cliff-Ord 1973）解析式，z + 双侧正态 p；``permutations > 0`` 时附加
-    固定种子 42 的置换复核。free-sampling 假设（连接两端点从两类别总体
-    有放回独立抽取，忽略权重结构细节）在 meta 中显式披露。
+    n_BB（同类连接）/ n_BW（异类连接）/ n_WW；期望/方差按 non-free
+    sampling（Cliff-Ord 1973，条件于类别边际的解析矩，与 join_count 同
+    式）计算，z + 双侧正态 p；``permutations > 0`` 时附加固定种子 42 的
+    置换复核。non-free sampling 近似忽略权重结构细节（只含连接数 J），
+    在 meta 中显式披露。
     """
     res = to_utm_gdf(geojson)
     if res is None or res[0] is None:
@@ -2116,7 +2149,8 @@ def bivariate_join_count_narrated(
     n = len(values)
     if n < 4:
         raise InsufficientSamples(
-            f"bivariate join count free-sampling variance needs n ≥ 4 (got {n})",
+            f"bivariate join count non-free sampling variance needs n ≥ 4 "
+            f"(got {n})",
             correction_hint="add observations",
         )
     uniq = np.unique(values)
@@ -2171,10 +2205,12 @@ def bivariate_join_count_narrated(
     n_bw = joins - n_bb - n_ww
 
     def _free_sampling(observed: float, num2: float, num4: float) -> dict:
-        """free-sampling 期望/方差（Cliff-Ord 1973；与 join_count 同式）。
+        """non-free sampling 期望/方差（Cliff-Ord 1973；与 join_count 同式）。
 
         p = num2/(n(n−1))，Var = J·p(1−p) + 2J(J−1)(q − p²)；二阶矩为负时
         解析推断不可用（诚实降级，与 join_count 的 R2 MAJOR-2 语义一致）。
+        （审计 F-2：函数名保留为历史别名，矩公式是 non-free/条件形式，
+        措辞已与 join_count 同步更正。）
         """
         den2 = n * (n - 1.0)
         den4 = den2 * (n - 2.0) * (n - 3.0)
@@ -2264,15 +2300,15 @@ def bivariate_join_count_narrated(
                              "n_bw": stats_bw["p_value"],
                              "n_ww": stats_ww["p_value"]},
         "assumptions_disclosed": [
-            "free sampling：连接端点从两类别总体独立抽取（有放回），"
-            "忽略权重结构细节（Cliff-Ord 1973 近似）",
+            "non-free sampling：期望/方差条件于两类别边际的 Cliff-Ord 1973 "
+            "解析矩（不放回），忽略权重结构细节（只含连接数 J）",
         ],
         "pattern": pattern,
         "weights": wm.metadata(),
         "uncertainty": [
             StatisticalSignificance(
                 target="bivariate_join_count_bw",
-                statistic_name="n_BW join count (two-color free-sampling z-test)",
+                statistic_name="n_BW join count (two-color non-free sampling z-test)",
                 statistic_value=n_bw,
                 p_value=stats_bw["p_value"],
                 method="analytic_normal",
@@ -2280,7 +2316,7 @@ def bivariate_join_count_narrated(
             ).to_evidence(),
             StatisticalSignificance(
                 target="bivariate_join_count_bb",
-                statistic_name="n_BB join count (two-color free-sampling z-test)",
+                statistic_name="n_BB join count (two-color non-free sampling z-test)",
                 statistic_value=n_bb,
                 p_value=stats_bb["p_value"],
                 method="analytic_normal",
@@ -2309,12 +2345,12 @@ def bivariate_join_count_narrated(
     elif pattern == "positive_spatial_autocorrelation":
         summary += " 同类连接显著偏高 —— 两类别各自聚集（正关联）。"
     elif pattern == "analytic_inference_unavailable":
-        summary += " 解析推断不可用（free-sampling 方差非正）—— 用 permutations 置换推断。"
+        summary += " 解析推断不可用（non-free sampling 方差非正）—— 用 permutations 置换推断。"
     if not _analytic_ok and perm_p is not None:
         summary += "（解析方差简并，判别基于置换检验）"
     elif pattern == "random":
-        summary += " 与 free-sampling 零假设无显著差异。"
-    summary += "（free-sampling 假设：端点独立抽取，忽略权重结构细节）"
+        summary += " 与 non-free sampling 零假设无显著差异。"
+    summary += "（non-free sampling 假设：条件于类别边际，忽略权重结构细节）"
     return GeoAnalysisResult(True, data_out, summary)
 
 
@@ -2394,7 +2430,6 @@ def empirical_bayes_rate_smooth(
     idx_v = np.flatnonzero(valid)
     r = counts[idx_v] / pops[idx_v]
     p_v = pops[idx_v]
-    c_v = counts[idx_v]
     nv = len(idx_v)
     if nv < 3:
         raise InsufficientSamples(
@@ -3168,7 +3203,6 @@ def geodetector_ecological_narrated(
     labels2 = _geodetector_labels(
         gdf[strata_field_2].reset_index(drop=True), bins, strata_field_2)
     out = geodetector_ecological(values, labels1, labels2)
-    dominant = {("ssw1", "Y1"), ("ssw2", "Y2")}
     decision_txt = {
         "Y1_significantly_dominant":
             f"'{strata_field_1}' 的 SSW 显著更小 —— 解释力显著占优",

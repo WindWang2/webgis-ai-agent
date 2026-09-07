@@ -104,7 +104,8 @@ def _points_fc(pts):
 def test_bivariate_join_count_hand_fixture():
     """2×2 rook 棋盘（类别 {1, 7}）：4 个无序连接全为异类。
 
-    手算黄金值：n_BB=n_WW=0、n_BW=J=4；free-sampling 期望
+    手算黄金值：n_BB=n_WW=0、n_BW=J=4；non-free sampling 期望（条件于
+    类别边际，审计 F-2 口径同步）
     E[n_BB]=J·b(b−1)/(n(n−1))=4·2/12=2/3、E[n_BW]=4·8/12=8/3。
     颜色映射：排序后较小值 1 → B、较大值 7 → W。
     """
@@ -120,9 +121,10 @@ def test_bivariate_join_count_hand_fixture():
     assert d["expected"]["n_bb"] == pytest.approx(4.0 * 2.0 / 12.0)
     assert d["expected"]["n_bw"] == pytest.approx(4.0 * 8.0 / 12.0)
     assert d["expected"]["n_ww"] == pytest.approx(4.0 * 2.0 / 12.0)
-    # free-sampling 假设显式披露（spec 要求）
-    assert any("free sampling" in a for a in d["assumptions_disclosed"])
-    assert "free-sampling" in res.summary
+    # non-free sampling 假设显式披露（审计 F-2：措辞与实现口径同步）
+    assert any("non-free sampling" in a
+               for a in d["assumptions_disclosed"])
+    assert "non-free sampling" in res.summary
 
 
 def test_bivariate_join_count_expectation_and_permutation_determinism():
@@ -135,7 +137,7 @@ def test_bivariate_join_count_expectation_and_permutation_determinism():
     # J = 2·4·3 = 24 个 rook 无序连接；棋盘 → 全异类。
     assert d["joins"] == 24.0
     assert d["join_counts"] == {"n_bb": 0.0, "n_bw": 24.0, "n_ww": 0.0}
-    # free-sampling 期望：b=w=8、n=16。
+    # non-free sampling 期望（条件于边际）：b=w=8、n=16。
     assert d["expected"]["n_bb"] == pytest.approx(24.0 * 56.0 / 240.0)
     assert d["expected"]["n_bw"] == pytest.approx(24.0 * 128.0 / 240.0)
     # BW 的解析二阶矩在此构型下为正 → z/p 可用且 z 方向正确（异类偏高）。
@@ -542,7 +544,6 @@ async def test_tool_registry_parity_and_new_tools():
 def test_rate_smoothing_rejects_negative_counts():
     """负计数 → 类型化拒绝（V3 review MINOR-2）：MOM 先验均值为负会把
     收缩因子推出率支撑 [0,1]——静默外推是伪造。"""
-    import numpy as np
     import pytest
     from app.lib.gis.scientific_errors import UnsupportedMethod
     from app.lib.geo_analysis.statistics import empirical_bayes_rate_smooth

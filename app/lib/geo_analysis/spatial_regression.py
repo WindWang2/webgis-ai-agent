@@ -1164,6 +1164,89 @@ def _gwr_summarize(values: np.ndarray) -> Dict:
             "max": round(float(v.max()), 6)}
 
 
+def _nan_summarize(values: np.ndarray) -> Dict:
+    """``_gwr_summarize`` 的 NaN 免疫版（局地 SE/t 在奇异位置为 NaN ——
+    如实缺省；全 NaN 时三项为 None 而非编造数值）。"""
+    v = np.asarray(values, dtype=float)
+    finite = v[np.isfinite(v)]
+    if finite.size == 0:
+        return {"min": None, "median": None, "max": None}
+    return {"min": round(float(finite.min()), 6),
+            "median": round(float(np.median(finite)), 6),
+            "max": round(float(finite.max()), 6)}
+
+
+def _gwr_local_inference(
+    coords: np.ndarray, x_mat: np.ndarray, betas: np.ndarray,
+    bandwidth: int, sigma2: float,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """逐观测逐系数的局地标准误与 t 值（审计 A1 / Fotheringham 2002 §2.6）。
+
+    口径（局地 WLS sandwich）：在位置 i，
+        Var(b_i) = σ̂² · A_i⁻¹ B_i A_i⁻¹，
+    A_i = X_nᵀW_iX_n，B_i = X_nᵀW_i²X_n，W_i = diag(bisquare 邻域权)
+    （含自身 w_ii=1，与终拟合 ``_gwr_local_fit`` 同一核尺度/同一近邻表）；
+    σ̂² = 全局 RSS/(n − tr(S))（ENP 自由度，与 AICc 的 q=tr(S)+1 同约定）。
+    t_i = b_i / SE_i。该近似不含带宽选择与核形态的不确定性（descriptor
+    limitations 披露）。局地系统奇异时该行 SE/t 为 NaN（如实缺省）；
+    σ̂²=0（完美拟合）时 SE≡0、t 无定义 → NaN。
+    """
+    from scipy.spatial import cKDTree
+
+    n, p = x_mat.shape
+    k = int(bandwidth)
+    tree = cKDTree(coords)
+    take = min(max(k - 1, 1), n - 1)
+    nn_dist, nn_idx = tree.query(coords, k=min(k + 1, n))
+    nn_idx = np.atleast_2d(nn_idx)
+    nn_dist = np.atleast_2d(nn_dist)
+    se = np.full((n, p), np.nan)
+    for i in range(n):
+        nbr = np.atleast_1d(nn_idx[i])
+        dist = np.atleast_1d(nn_dist[i])
+        keep = nbr != i  # E-4 同源防御：显式剔除自身后稳定排序
+        nbr, dist = nbr[keep], dist[keep]
+        order = np.argsort(dist, kind="stable")[:take]
+        nbr, dist = nbr[order], dist[order]
+        d_max = float(dist[-1]) if nbr.size else 0.0
+        wts = _bisquare(dist, d_max)
+        nbr = np.append(nbr, i)
+        wts = np.append(wts, 1.0)  # 自身 d=0 → bisquare 权重恒 1
+        xn = x_mat[nbr]
+        a_mat = xn.T @ (xn * wts[:, None])
+        b_mat = xn.T @ (xn * (wts * wts)[:, None])
+        try:
+            a_inv = np.linalg.inv(a_mat)
+            cov = sigma2 * (a_inv @ b_mat @ a_inv)
+            se_row = np.sqrt(np.diag(cov))
+        except np.linalg.LinAlgError:
+            continue  # 局地奇异 → 该行 NaN（终拟合阶段已同判拒绝，防御性）
+        if np.all(np.isfinite(se_row)):
+            se[i] = se_row
+    with np.errstate(divide="ignore", invalid="ignore"):
+        t_vals = np.where(se > 0.0, betas / np.where(se > 0.0, se, 1.0),
+                          np.nan)
+    return se, t_vals
+
+
+def _gwr_local_inference_summary(
+    col_names: Sequence[str], se_mat: np.ndarray, t_mat: np.ndarray,
+) -> Dict[str, Dict]:
+    """逐系数局地推断的有界摘要：SE/t 的 min/median/max + |t|>1.96 比例。"""
+    out: Dict[str, Dict] = {}
+    for j, name in enumerate(col_names):
+        t_col = t_mat[:, j]
+        finite_t = t_col[np.isfinite(t_col)]
+        share = (float(np.mean(np.abs(finite_t) > 1.96))
+                 if finite_t.size else 0.0)
+        out[name] = {
+            "se": _nan_summarize(se_mat[:, j]),
+            "t": _nan_summarize(t_col),
+            "share_abs_t_gt_1p96": round(share, 6),
+        }
+    return out
+
+
 def gwr_regression_narrated(
     geojson: dict,
     target_field: str,
@@ -1233,6 +1316,30 @@ def gwr_regression_narrated(
                   if n - q_eff - 1.0 > 0 else 0.0)
     rmse = float(np.sqrt(sse / n))
 
+    # 审计 F-4（P0）：descriptor 无条件声明 sensitivity_envelope，fixed
+    # 路径此前不产出 —— 现以选带宽为中心的确定性粗网格（{k/2, k, 2k} 裁
+    # 剪到 [5, n//2]、去重 ≤3 点）真实计算 ENP/R² 带宽敏感性摘要；完整
+    # CV 网格仍走 bandwidth_selection='cv'。
+    bandwidth_sensitivity: List[Dict] = []
+    if selection == "fixed":
+        for cand in sorted({max(5, k_used // 2), k_used,
+                            min(k_cap, k_used * 2)}):
+            _b, _f, sse_c, tr_c = _gwr_local_fit(
+                coords, y, x_mat, cand, leave_self_out=False)
+            r2_c = 1.0 - sse_c / ss_tot if ss_tot > 0 else 0.0
+            bandwidth_sensitivity.append({
+                "bandwidth": int(cand),
+                "effective_params": round(float(tr_c + 1.0), 6),
+                "r_squared": round(float(r2_c), 6),
+            })
+
+    # 审计 A1（P0）：逐系数局地 SE + t（方法口径见 _gwr_local_inference）。
+    sigma2 = sse / max(n - tr_s, 1.0)
+    se_mat, t_mat = _gwr_local_inference(
+        coords, x_mat, betas, k_used, sigma2)
+    local_inference = _gwr_local_inference_summary(
+        col_names, se_mat, t_mat)
+
     variation: Dict[str, Dict] = {}
     for j, name in enumerate(col_names):
         col = betas[:, j]
@@ -1261,6 +1368,11 @@ def gwr_regression_narrated(
         },
         "local_r2": _gwr_summarize(local_r2),
         "coefficient_variation": variation,
+        "local_inference": local_inference,
+        "local_inference_method": (
+            "局地 WLS sandwich：Var(b_i)=σ̂²·(XᵀW_iX)⁻¹(XᵀW_i²X)(XᵀW_iX)⁻¹，"
+            "σ̂²=RSS/(n−tr(S))；t=b/SE（Fotheringham 2002 §2.6 局部 hat 近似；"
+            "不含带宽选择不确定性；σ̂²=0 或局地奇异时 SE/t 如实 NaN）"),
         "full_coefficient_surfaces": bool(n <= GWR_FULL_SURFACE_MAX_N),
         "uncertainty": [
             ValidationMetrics(
@@ -1283,6 +1395,19 @@ def gwr_regression_narrated(
                 ],
                 sample_count=int(n),
             ).to_evidence(),
+            FieldUncertainty(
+                target="gwr_local_coefficient_se",
+                field_name=", ".join(col_names[:8]),
+                summary=[
+                    UncertaintyMeasure(
+                        measure="standard_error",
+                        value=local_inference[name]["se"]["median"],
+                        method=f"median local sandwich SE of '{name}'",
+                    )
+                    for name in col_names[:8]
+                ],
+                sample_count=int(n),
+            ).to_evidence(),
         ],
     }
     if envelope is not None:
@@ -1294,12 +1419,37 @@ def gwr_regression_narrated(
                 notes="各候选带宽的 CV MSE 见 bandwidth_cv（确定性网格穷举）",
             ).to_evidence())
         data_out["bandwidth_cv"] = cv_scores
+    elif bandwidth_sensitivity:
+        data_out["uncertainty"].append(
+            SensitivityEnvelope(
+                target="gwr_bandwidth",
+                perturbation_scheme=(
+                    f"bandwidth perturbation over deterministic coarse grid "
+                    f"{[pt['bandwidth'] for pt in bandwidth_sensitivity]} "
+                    f"centred on k={k_used} (ENP/R² sensitivity; full grid "
+                    f"via bandwidth_selection='cv')"),
+                tipping_points=[
+                    f"k={pt['bandwidth']}: enp={pt['effective_params']}, "
+                    f"r2={pt['r_squared']}"
+                    for pt in bandwidth_sensitivity
+                ],
+                notes="fixed 路径的带宽敏感性摘要（审计 F-4）：ENP=tr(S)+1，"
+                      "R² 为同带宽全量局地拟合的样本内值；确定性无随机成分",
+            ).to_evidence())
+        data_out["bandwidth_sensitivity"] = bandwidth_sensitivity
     if n <= GWR_FULL_SURFACE_MAX_N:
-        surfaces: Dict[str, List[float]] = {
+        def _r6f(v: float) -> Optional[float]:
+            return round(float(v), 6) if np.isfinite(v) else None
+
+        surfaces: Dict[str, List[Optional[float]]] = {
             name: [round(float(v), 6) for v in betas[:, j]]
             for j, name in enumerate(col_names)
         }
         surfaces["local_r2"] = [round(float(v), 6) for v in local_r2]
+        # 审计 A1：局地 SE/t 逐观测面（与系数面同一 2000 上限；NaN → null）
+        for j, name in enumerate(col_names):
+            surfaces[f"se_{name}"] = [_r6f(v) for v in se_mat[:, j]]
+            surfaces[f"t_{name}"] = [_r6f(v) for v in t_mat[:, j]]
         data_out["surfaces"] = surfaces
     narrative = (
         f"GWR（bisquare 自适应核，带宽={k_used} 最近邻"
@@ -1311,6 +1461,12 @@ def gwr_regression_narrated(
         + ("系数空间变异明显，全局模型掩盖了局部过程。"
            if variation["intercept"]["iqr"] > 1e-9 else
            "系数空间变异可忽略，接近全局 OLS。"))
+    _sig_name = max(col_names,
+                    key=lambda nm: local_inference[nm]["share_abs_t_gt_1p96"])
+    narrative += (
+        f" 逐系数局地推断（σ̂²={sigma2:.4g}）：|t|>1.96 比例最高 "
+        f"{local_inference[_sig_name]['share_abs_t_gt_1p96']:.0%}"
+        f"（{_sig_name}）。")
     if n > GWR_FULL_SURFACE_MAX_N:
         narrative += (
             f" n={n} 超过全系数面上限 {GWR_FULL_SURFACE_MAX_N} —— 仅回摘要。")
@@ -1437,6 +1593,37 @@ def _uni_term_loocv(
     return float(np.sum((resid - x_col * beta_loo) ** 2))
 
 
+def _uni_term_se_factor(
+    x_col: np.ndarray, tab_dist: np.ndarray, tab_idx: np.ndarray,
+    bandwidth: int,
+) -> np.ndarray:
+    """单项（过原点单列）局地 WLS 的 sandwich 对角因子（审计 A1，MGWR 侧）。
+
+    过原点单列 WLS 在位置 i 的协方差：Var(b_i) = σ̂²·Σ_l w_il²x_l²/(Σ_l w_il x_l²)²
+    （含自身 w_ii=1，与 ``_uni_term_fit`` 同一核尺度）。返回逐位置因子
+    f_i；σ̂² 乘子（ENP 自由度的残差方差）由调用方补上。分母退化（全零列
+    + 全零权重）的位置为 NaN —— 如实缺省，不编造。
+    """
+    n = len(x_col)
+    take = int(min(max(int(bandwidth) - 1, 0), tab_dist.shape[1]))
+    x_self2 = x_col * x_col
+    out = np.full(n, np.nan)
+    if take > 0:
+        d = tab_dist[:, :take]
+        nbr = tab_idx[:, :take]
+        d_max = np.maximum(d[:, -1:], 1e-30)
+        w = _bisquare_rows(d, d_max)
+        xn = x_col[nbr]
+        den = (w * xn * xn).sum(axis=1) + x_self2
+        s2 = (w * w * xn * xn).sum(axis=1) + x_self2  # 自身 w=1 → w²=1
+        safe = den > 0
+        out = np.where(safe, s2 / np.where(safe, den * den, 1.0), np.nan)
+    else:
+        safe = x_self2 > 0
+        out = np.where(safe, 1.0 / np.where(safe, x_self2, 1.0), np.nan)
+    return out
+
+
 def _mgwr_bandwidth_grid(n: int, n_terms: int) -> List[int]:
     """逐变量带宽候选网格 [max(p+2, n//20) .. min(n, n//2)]，确定性子采样
     到 ≤20 个候选（整数等距；与 GWR 带宽 CV 同为有界网格穷举，非连续优化）。
@@ -1518,11 +1705,15 @@ def _mgwr_backfitting(
 
     # ENP：逐项帽迹（闭式对角和，终带宽下重算 —— 与残差无关）
     enp_per_term = np.zeros(m)
+    se_factors = np.zeros((m, n))
     for j in range(m):
         r_j = y - (total - y_hat[j])
         _b, _f, hat_diag = _uni_term_fit(
             x_mat[:, j], r_j, tab_dist, tab_idx, int(bandwidths[j]))
         enp_per_term[j] = float(hat_diag.sum())
+        # 审计 A1：逐项局地 SE 因子（σ̂² 乘子在 narrated 层按 ENP 自由度补）
+        se_factors[j] = _uni_term_se_factor(
+            x_mat[:, j], tab_dist, tab_idx, int(bandwidths[j]))
 
     return {
         "betas": betas,                      # (m, n)
@@ -1530,6 +1721,7 @@ def _mgwr_backfitting(
         "bandwidths": bandwidths,            # (m,) 含截距项
         "bandwidth_grid": grid,
         "enp_per_term": enp_per_term,
+        "se_factors": se_factors,            # (m, n) 局地 sandwich 对角因子
         "iterations": iterations,
         "converged": converged,
         "rss_trajectory": rss_trajectory,
@@ -1592,7 +1784,6 @@ def mgwr_regression_narrated(
     )
     betas = result["betas"]                 # (m, n)
     bandwidths = result["bandwidths"]
-    fitted = result["fitted"]
     sse = result["sse"]
     ss_tot = float(((y - y.mean()) ** 2).sum())
     r2 = 1.0 - sse / ss_tot if ss_tot > 0 else 0.0
@@ -1618,6 +1809,17 @@ def mgwr_regression_narrated(
                                - np.percentile(col, 25)), 6),
         }
 
+    # 审计 A1（P0）：逐系数局地 SE + t。MGWR 口径：过原点单列 WLS 的
+    # sandwich 对角 Var(b_i)=σ̂²·Σw²x²/(Σwx²)²；σ̂²=RSS/(n−ENP)（ENP 自由
+    # 度；backfitting 复合算子的自由度交叉项未计入 —— 与 enp_note 同一
+    # 披露）。SE 条件于反向拟合收敛解，不含量化带宽搜索的不确定性。
+    sigma2_m = sse / max(n - enp_total, 1.0) if sse > 0 else 0.0
+    with np.errstate(divide="ignore", invalid="ignore"):
+        se_mat = np.sqrt(sigma2_m * result["se_factors"])
+        t_mat = np.where(se_mat > 0.0,
+                         betas / np.where(se_mat > 0.0, se_mat, 1.0), np.nan)
+    local_inference = _gwr_local_inference_summary(col_names, se_mat, t_mat)
+
     data_out: Dict = {
         "n_features": int(n),
         "rows_dropped_nonfinite": int(gdf.attrs.get("rows_dropped_nonfinite", 0)),
@@ -1642,6 +1844,11 @@ def mgwr_regression_narrated(
         "local_r2": _gwr_summarize(local_r2),
         "local_r2_bandwidth_term": col_names[0],
         "coefficient_variation": variation,
+        "local_inference": local_inference,
+        "local_inference_method": (
+            "过原点单列 WLS sandwich：Var(b_i)=σ̂²·Σw²x²/(Σwx²)²，"
+            "σ̂²=RSS/(n−ENP)（backfitting 自由度交叉项未计入）；t=b/SE；"
+            "条件于反向拟合收敛解，σ̂²=0 或分母退化时如实 NaN"),
         "backfitting": {
             "max_iterations": max_iter,
             "tolerance": tolerance,
@@ -1655,6 +1862,15 @@ def mgwr_regression_narrated(
             for j, name in enumerate(col_names)
         },
         "surfaces_local_r2": [round(float(v), 6) for v in local_r2],
+        # 审计 A1：局地 SE/t 逐观测面（NaN → null，JSON 安全）
+        "surfaces_local_inference": {
+            **{f"se_{name}": [round(float(v), 6) if np.isfinite(v) else None
+                              for v in se_mat[j]]
+               for j, name in enumerate(col_names)},
+            **{f"t_{name}": [round(float(v), 6) if np.isfinite(v) else None
+                             for v in t_mat[j]]
+               for j, name in enumerate(col_names)},
+        },
         "uncertainty": [
             ValidationMetrics(
                 target="mgwr_regression",
@@ -1673,6 +1889,19 @@ def mgwr_regression_narrated(
                         method=f"selected bandwidth (kNN count) of term '{name}'",
                     )
                     for j, name in enumerate(col_names[:8])
+                ],
+                sample_count=int(n),
+            ).to_evidence(),
+            FieldUncertainty(
+                target="mgwr_local_coefficient_se",
+                field_name=", ".join(col_names[:8]),
+                summary=[
+                    UncertaintyMeasure(
+                        measure="standard_error",
+                        value=local_inference[name]["se"]["median"],
+                        method=f"median local sandwich SE of '{name}'",
+                    )
+                    for name in col_names[:8]
                 ],
                 sample_count=int(n),
             ).to_evidence(),
@@ -1702,4 +1931,10 @@ def mgwr_regression_narrated(
     narrative += (
         " 注意：反向拟合收敛到局部最优，不保证全局最优；带宽为有界网格"
         "穷举而非连续优化。")
+    _sig_name = max(col_names,
+                    key=lambda nm: local_inference[nm]["share_abs_t_gt_1p96"])
+    narrative += (
+        f" 逐系数局地推断（σ̂²={sigma2_m:.4g}）：|t|>1.96 比例最高 "
+        f"{local_inference[_sig_name]['share_abs_t_gt_1p96']:.0%}"
+        f"（{_sig_name}）。")
     return GeoAnalysisResult(True, data_out, narrative)

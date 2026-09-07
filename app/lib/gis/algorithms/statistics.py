@@ -92,6 +92,11 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "min_numeric_samples:3",
             ],
             uncertainty_outputs=["statistical_significance"],
+            uncertainty_producer_tests={
+                "statistical_significance":
+                    "tests/unit/lib/test_spatial_stats_v3.py"
+                    "::test_hotspot_uncertainty_evidence_block",
+            },
             random_seed_policy="fixed_seed",
             numerical_tolerance="Gi* 与手算稀疏参考一致（atol 5e-5，既有 conformance）",
             scientific_status="VALIDATED",
@@ -238,6 +243,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "esda.Moran_Local（Queen 邻接、行标准化、seed=42）",
                 "孤岛格网给中性结果（p=1、q=0），保持行对齐（#927）",
                 "输入为带数值字段的 H3 网格（如 h3_binning 产物）",
+                "逐格 p_sim 附 BH-FDR q_value_fdr（审计 F-3 与 Gi* 路径同源）",
             ],
             limitations=[
                 "逐格 p_sim<0.05 在随机数据下期望产出 ~0.05n 假显著（结果内披露期望数）",
@@ -250,6 +256,11 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "min_numeric_samples:3",
             ],
             uncertainty_outputs=["statistical_significance"],
+            uncertainty_producer_tests={
+                "statistical_significance":
+                    "tests/unit/lib/test_statistics_hardening.py"
+                    "::test_h3_lisa_statistical_significance_block",
+            },
             random_seed_policy="fixed_seed",
             scientific_status="VALIDATED",
             conformance_tests=[
@@ -263,7 +274,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             id="stats.h3_hotspot", name="H3 Gi* 热点", category="spatial_statistics",
             capabilities=["getis_ord_gi_star"],
             input_artifact_types=["grid_aggregate", "admin_aggregate_table"],
-            output_artifact_type="hotspot_result", tool_candidates=["h3_lisa"],
+            output_artifact_type="hotspot_result",
+            # 审计 F-1（A2）：tool_candidates 曾指向 h3_lisa —— 那条路径只
+            # 产 LISA 象限标签，不产 Gi* z/p/q_value_fdr，声明与接线错位。
+            # 改指真实 Gi* 实现 hotspot_analysis（H3 网格以格心点输入同一
+            # Gi* 路径，descriptor 宣称的输出因此真实可得）。
+            tool_candidates=["hotspot_analysis"],
             cpu_cost="high", memory_cost="medium", io_cost="low",
             preferred_execution_policy="THREAD", compatible_map_models=["hotspot_overlay"], priority=15,
             algorithm_family="spatial_autocorrelation",
@@ -273,6 +289,8 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "p 值为正态近似（非置换）",
                 "q_value_fdr 为 BH-FDR 校正（G-6/#870）",
                 "距离阈值缺省按 8 近邻平均距离自动（E-7 规则）",
+                "H3 网格以格心为点要素输入 hotspot_analysis 运行（与连续"
+                "点同一 Gi* 实现）",
             ],
             limitations=[
                 "正态近似在小样本/偏态分布下 p 值偏乐观",
@@ -373,17 +391,23 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             assumptions=[
                 "字段必须 ⊆ {0,1}，含 0 与 1 两个类（违者 UnsupportedMethod）",
                 "二值对称权重；n_BB/n_BW/n_WW 按无序连接计数",
-                "期望/方差用 free sampling（Cliff-Ord 1973）解析式，n≥4",
+                "期望/方差用 non-free sampling（Cliff-Ord 1973，条件于类别"
+                "边际的解析矩），n≥4（审计 F-2：与实现口径同步）",
                 "permutations>0 时附固定种子 42 的置换复核 p",
             ],
             limitations=[
-                "free sampling 忽略权重结构细节（只含连接数 J）",
+                "non-free sampling 忽略权重结构细节（只含连接数 J）",
                 "knn 权重是邻接的近似；queen/rook 需要面要素",
                 "小 n 下解析 z 的正态近似偏乐观",
             ],
             crs_class="PROJECTED_REQUIRED",
             scientific_preconditions=["binary_field_required", "min_numeric_samples:4"],
             uncertainty_outputs=["statistical_significance"],
+            uncertainty_producer_tests={
+                "statistical_significance":
+                    "tests/unit/lib/test_local_spatial_stats_v2.py"
+                    "::test_join_count_nonfree_sampling_wording_sync",
+            },
             random_seed_policy="fixed_seed",
             scientific_status="VALIDATED",
             conformance_tests=[
@@ -408,12 +432,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "字段恰好取两个值（任意数值类别，违者 UnsupportedMethod/"
                 "DegenerateData）；按排序映射 B=较小值 / W=较大值",
                 "二值对称权重；n_BB（同类）/n_BW（异类）/n_WW 按无序连接计数",
-                "期望/方差用 free sampling（Cliff-Ord 1973）解析式，n≥4；"
-                "端点独立抽取、忽略权重结构细节（披露于结果）",
+                "期望/方差用 non-free sampling（Cliff-Ord 1973，条件于类别"
+                "边际的解析矩），n≥4；忽略权重结构细节（披露于结果）",
                 "permutations>0 时附固定种子 42 的置换复核 p",
             ],
             limitations=[
-                "free sampling 是零假设近似，不反映真实类别总量约束",
+                "non-free sampling 是零假设近似，不反映真实抽样设计",
                 "knn 权重是邻接的近似；queen/rook 需要面要素",
                 "小 n 下解析 z 的正态近似偏乐观（置换可对照）",
             ],
@@ -725,11 +749,15 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             assumptions=[
                 "自适应 bisquare 核，带宽=最近邻数 k（默认 30，钳制 [5,n/2]）",
                 "bandwidth_selection=cv 时在有界网格上留一 CV（确定性穷举）",
+                "fixed 路径产以 k 为中心的 3 点带宽敏感性摘要（ENP/R²，F-4）",
+                "逐系数局地 SE/t：σ̂²=RSS/(n−tr(S)) 的局地 WLS sandwich"
+                "（Fotheringham 2002 §2.6 局部 hat 近似）",
                 "AIC/AICc 用帽矩阵迹 q=tr(S)+1 的高斯形式（常用近似）",
                 "n≤2000 附逐观测系数面；超过只回摘要+披露旗标",
             ],
             limitations=[
                 "局部共线性会让局部系数失真（全局 VIF 不代表局部）",
+                "局地 SE/t 不含量化带宽选择与核形态的不确定性",
                 "AICc 没有唯一公认公式——比较带宽/模型时保持同一实现",
                 "CV 带宽选择在有界网格上，非连续优化",
             ],
@@ -740,6 +768,14 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ],
             uncertainty_outputs=["validation_metrics", "field_uncertainty",
                                  "sensitivity_envelope"],
+            uncertainty_producer_tests={
+                "field_uncertainty":
+                    "tests/unit/lib/test_gwr_local_inference.py"
+                    "::test_gwr_local_se_field_uncertainty_block",
+                "sensitivity_envelope":
+                    "tests/unit/lib/test_gwr_local_inference.py"
+                    "::test_gwr_fixed_bandwidth_sensitivity_envelope",
+            },
             random_seed_policy="deterministic",
             numerical_tolerance="局地 WLS 与手算 bisquare 加权解差 <5e-7（载荷 6 位舍入下限）",
             scientific_status="VALIDATED",
@@ -804,6 +840,8 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "每个设计列（含截距项）独立带宽的 bisquare kNN 反向拟合",
                 "联合 GWR 解热启动；逐项部分残差 + LOO-CV 带宽搜索（≤20 候选）",
                 "ENP=逐项帽矩阵对角迹之和；AICc 用 q=ENP+1 高斯近似",
+                "逐系数局地 SE/t：过原点单列 WLS sandwich，σ̂²=RSS/(n−ENP)"
+                "（条件于收敛解；自由度交叉项未计入）",
                 "n≤2000 输出逐观测系数面；超过先抛 ResourceScaleMismatch",
             ],
             limitations=[
@@ -811,6 +849,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "带宽为有界网格穷举而非连续优化；等带宽锚在精确可表示表"
                 "面上逐位成立，噪声数据的等带宽解与 GWR 有平滑交互偏差",
                 "局部共线性会让局部系数失真；AICc 无唯一公认公式",
+                "局地 SE/t 不含量化带宽搜索与反向拟合迭代的不确定性",
             ],
             crs_class="PROJECTED_REQUIRED",
             scientific_preconditions=[
@@ -819,6 +858,11 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ],
             uncertainty_outputs=["validation_metrics", "field_uncertainty",
                                  "sensitivity_envelope"],
+            uncertainty_producer_tests={
+                "field_uncertainty":
+                    "tests/unit/lib/test_gwr_local_inference.py"
+                    "::test_mgwr_local_se_field_uncertainty_block",
+            },
             random_seed_policy="deterministic",
             numerical_tolerance="等带宽反向拟合在精确平面上逐位恢复 GWR 解"
                                 "（conformance 锚 rtol 1e-4）",
@@ -1139,7 +1183,7 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
         ],
     ),
     ParameterContract(
-        id="join_count_analysis", version=1,
+        id="join_count_analysis", version=2,
         description="Join Count：二值字段 / 权重方案 / 解析推断 + 可选置换。",
         parameters=[
             ParameterSpec(
@@ -1165,7 +1209,7 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
             ParameterSpec(
                 name="permutations", type="enum", default="0",
                 enum_values=["0", "99", "199", "499", "999"],
-                description="置换复核次数；0=只用 free-sampling 解析 z 检验",
+                description="置换复核次数；0=只用 non-free sampling 解析 z 检验",
             ),
         ],
     ),
@@ -1613,7 +1657,7 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
     ),
     # ── Foundation V3（completeness batch）：双色 Join Count / EB 率平滑 ──
     ParameterContract(
-        id="bivariate_join_count_analysis", version=1,
+        id="bivariate_join_count_analysis", version=2,
         description="双色 Join Count：二类别字段 / 权重方案 / 解析推断 + 可选置换。",
         parameters=[
             ParameterSpec(
@@ -1640,7 +1684,7 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
             ParameterSpec(
                 name="permutations", type="enum", default="0",
                 enum_values=["0", "99", "199", "499", "999"],
-                description="置换复核次数；0=只用 free-sampling 解析 z 检验",
+                description="置换复核次数；0=只用 non-free sampling 解析 z 检验",
             ),
         ],
     ),
