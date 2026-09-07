@@ -25,12 +25,15 @@ class RefDescriptor:
             file_path or path key) servable by the raster tile endpoint.
         estimated_bytes: Rough size estimate (feature-count heuristic; exact
             byte count is not computed to avoid blocking the store() hot path)
-        content_hash: Reserved, always None. Computing a stable hash would
-            require json.dumps + sha256 of the full payload on the store hot
-            path (30 MB → seconds of blocking, defeats V3 off-loop goal).
-            No current consumer needs dedup/cache-key/ETag from this field;
-            if needed later, compute off-loop or lazily. Kept as None for
-            non-breaking schema evolution.
+        content_hash: Opt-in payload digest (Wave 1, audit §7.9). Default OFF
+            (None) — computing a stable hash would require json.dumps + sha256
+            of the full payload on the store hot path (30 MB → seconds of
+            blocking, defeats V3 off-loop goal). When WEBGIS_REF_CONTENT_HASH
+            is enabled, the sha256 of the canonical payload is computed for
+            payloads ≤1MB — still off the event loop (both store backends run
+            compute_descriptor via asyncio.to_thread), so the flag buys content
+            identity at the session tier without blocking. >1MB payloads keep
+            None (honest default, cost gate).
         filterable_fields: Distinct property keys present across features,
             used as tile attribute whitelist for MVT setFilter contract (#668).
             Bounded to 100 distinct keys (sorted, first 100) to keep descriptor
@@ -270,6 +273,39 @@ def is_raster_capable(data) -> bool:
     return isinstance(data, dict) and ("file_path" in data or "path" in data)
 
 
+# ── content_hash opt-in（Wave 1，audit §7.9）──────────────────────────────
+# 环境开关 WEBGIS_REF_CONTENT_HASH（默认关）：开启时对 ≤1MB 载荷计算
+# canonical sha256 写入 RefDescriptor.content_hash —— 会话层内容身份的
+# 小而诚实的一步。默认关时行为与历史逐字节一致（恒 None）。哈希口径复用
+# 既有 canonical 序列化（app/lib/data/fingerprints），保证与晋升/BlobStore
+# 的摘要同源 —— content_fingerprint or payload_digest 由此可收敛到载荷摘要。
+
+_REF_CONTENT_HASH_ENV = "WEBGIS_REF_CONTENT_HASH"
+_REF_CONTENT_HASH_MAX_BYTES = 1024 * 1024
+
+
+def _content_hash_enabled() -> bool:
+    import os
+
+    raw = os.environ.get(_REF_CONTENT_HASH_ENV, "").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+def _opt_in_content_hash(data) -> Optional[str]:
+    """Opt-in canonical sha256（≤1MB）；关闭/超限/不可序列化 → None（诚实）。"""
+    if not _content_hash_enabled():
+        return None
+    try:
+        from app.lib.data.fingerprints import canonical_dumps, sha256_hex
+
+        blob = canonical_dumps(data)
+        if len(blob.encode("utf-8")) > _REF_CONTENT_HASH_MAX_BYTES:
+            return None
+        return sha256_hex(blob)
+    except Exception:  # noqa: BLE001 — 不可序列化/NaN → 诚实缺省 None
+        return None
+
+
 def compute_descriptor(ref_id: str, data) -> RefDescriptor:
     """Compute descriptor from raw data at store time.
     
@@ -339,10 +375,14 @@ def compute_descriptor(ref_id: str, data) -> RefDescriptor:
     else:
         estimated_bytes = estimate_bytes(0)
     
-    # content_hash intentionally omitted from hot-path compute: two full
-    # json.dumps + SHA256 of a 30MB payload block the event loop in store().
-    # Checkpoint already hashes independently for its own dedup.
-    content_hash = None
+    # content_hash: default-off opt-in (Wave 1 §7.9). Omitted from hot-path
+    # compute unless WEBGIS_REF_CONTENT_HASH is enabled — two full json.dumps +
+    # SHA256 of a 30MB payload would block the event loop in store(). Even when
+    # enabled, only payloads ≤1MB are hashed (cost gate; bigger keeps None).
+    # Both store backends run compute_descriptor via asyncio.to_thread, so an
+    # enabled hash is already off-loop. Checkpoint hashes independently for its
+    # own dedup, unchanged.
+    content_hash = _opt_in_content_hash(data)
 
     # #668: attribute whitelist via shared helper (identical to fallback path)
     filterable_fields = collect_filterable_fields(features)

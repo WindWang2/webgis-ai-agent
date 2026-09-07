@@ -286,6 +286,30 @@ class PromoteArtifactsResponse(BaseModel):
     note: str = Field(description="Semantics of the per-artifact statuses for this session-less path")
 
 
+class ArtifactPinRequest(BaseModel):
+    """POST pin body（缺省 body = pin；DELETE 路由 = unpin）。"""
+    pinned: bool = True
+
+
+class ArtifactPinResponse(BaseModel):
+    status: str
+    artifact_id: str
+    revision_no: Optional[int] = None
+    content_sha256: Optional[str] = None
+    pinned: bool = False
+    pinned_at: Optional[str] = None
+
+
+class ArtifactCloneResponse(BaseModel):
+    """Clone-as-pointer：新行指向同一 content_location（零字节复制）。"""
+    status: str
+    artifact_id: str = Field(description="the NEW clone artifact id")
+    source_artifact_id: str
+    name: Optional[str] = None
+    content_location: Optional[str] = None
+    content_sha256: Optional[str] = None
+
+
 class ArtifactResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

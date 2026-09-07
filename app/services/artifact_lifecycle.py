@@ -25,11 +25,12 @@ directory family.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from app.core.config import settings
 
@@ -173,8 +174,224 @@ async def purge_session_artifacts(session_id: str) -> Dict[str, Any]:
     return result
 
 
-async def sweep_aged_artifacts() -> Dict[str, int]:
-    """Periodic age-based sweep across all three artifact families."""
+# ── Promotion store refcount GC（Wave 1，audit §7.8）──────────────────────
+# 此前晋升内容库只报告不删除（无任何保留策略）。现在：blob 可删当且仅当
+# —— 零 artifact_revisions 引用 AND 无任何 Artifact.metadata_json.
+# content_location 指针 AND 未被 pin AND 超出宽限期。保护判定是**单一
+# 函数**（plan/execute 双侧同规则 —— 仅 planner 声明而执行器不执行 =
+# 假保护，同 §十四的 plan/execute 对称纪律）；被任何 revision/Artifact 行
+# 引用的 blob 无论层级绝不删除。
+
+_DEFAULT_PROMOTION_GC_GRACE_HOURS = 168.0  # 7d，与 exports 同量级的保守宽限
+
+
+def _promotion_gc_grace_hours() -> float:
+    return _retention_days(
+        "PROMOTION_STORE_GC_GRACE_HOURS", _DEFAULT_PROMOTION_GC_GRACE_HOURS
+    )
+
+
+def _promotion_blob_protection(
+    key: str,
+    location: str,
+    mtime: float,
+    *,
+    now: float,
+    grace_hours: float,
+    refcounts_by_location: Dict[str, int],
+    refcounts_by_sha: Dict[str, int],
+    artifact_locations: set,
+    pinned_shas: set,
+) -> Optional[str]:
+    """共享保护判定（plan 与 execute 都调用）：返回保护原因；None = 可删。
+
+    前四条是引用保护（与层级无关 —— 被任何 revision/Artifact 行引用的
+    blob 永不删除；pin 是用户显式表态，报告优先级最高）；宽限期只保护
+    "新写入尚未入账"的窗口。
+    """
+    if key in pinned_shas:
+        return "pinned"
+    if refcounts_by_location.get(location, 0) > 0:
+        return "referenced by artifact_revisions"
+    if refcounts_by_sha.get(key, 0) > 0:
+        return "referenced by artifact_revisions (sha)"
+    if location in artifact_locations:
+        return "head pointer (Artifact.metadata_json.content_location)"
+    if mtime > now - grace_hours * 3600.0:
+        return "grace period"
+    return None
+
+
+def _promotion_gc_snapshot(db, locations):
+    """一次 DB 快照：引用计数（按 location 与按 sha 双口径）+ head 指针 + pin。"""
+    from sqlalchemy import func, select
+
+    from app.models.project import ArtifactRevision
+    from app.services.artifact_revisions import (
+        artifact_content_locations,
+        pinned_content_sha256s,
+        referencing_counts,
+    )
+
+    ref_by_loc = referencing_counts(db, locations)
+    sha_rows = db.execute(
+        select(
+            ArtifactRevision.content_sha256, func.count(ArtifactRevision.id)
+        ).group_by(ArtifactRevision.content_sha256)
+    ).all()
+    ref_by_sha = {sha: int(cnt) for sha, cnt in sha_rows}
+    return {
+        "refcounts_by_location": ref_by_loc,
+        "refcounts_by_sha": ref_by_sha,
+        "artifact_locations": set(artifact_content_locations(db)),
+        "pinned_shas": set(pinned_content_sha256s(db)),
+    }
+
+
+def _plan_promotion_store_gc_sync(grace_hours: float, now: float) -> Dict[str, Any]:
+    from app.core.database import SessionLocal
+    from app.services.durable_blob_store import get_filesystem_blob_store
+
+    store = get_filesystem_blob_store()
+    candidates = [(key, path) for key, path in store.iter_blob_files()]
+    locations = []
+    for _key, path in candidates:
+        try:
+            locations.append(str(path.relative_to(store.root)))
+        except ValueError:  # 防御：越界路径不参与（也不会被删）
+            locations.append("")
+    with SessionLocal() as db:
+        snap = _promotion_gc_snapshot(db, locations)
+    deletable = []
+    protected: Dict[str, int] = {}
+    deletable_bytes = 0
+    for (key, path), location in zip(candidates, locations):
+        if not location:
+            continue
+        reason = _promotion_blob_protection(
+            key, location, store.blob_mtime(path),
+            now=now, grace_hours=grace_hours, **snap,
+        )
+        if reason is not None:
+            protected[reason] = protected.get(reason, 0) + 1
+            continue
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+        deletable.append({"key": key, "location": location, "bytes": size})
+        deletable_bytes += size
+    deletable.sort(key=lambda d: d["key"])
+    return {
+        "grace_hours": grace_hours,
+        "now": now,
+        "candidate_blobs": len(candidates),
+        "protected_counts": dict(sorted(protected.items())),
+        "deletable": deletable,
+        "deletable_bytes": deletable_bytes,
+    }
+
+
+def _execute_promotion_store_gc_sync(plan: Dict[str, Any]) -> Dict[str, Any]:
+    from app.core.database import SessionLocal
+    from app.services.durable_blob_store import get_filesystem_blob_store
+
+    store = get_filesystem_blob_store()
+    # 复检与 planner 同一参数（grace/now 取自 plan）：同 DB 状态 ⇒ 同判定。
+    grace_hours = float(plan.get("grace_hours") or _promotion_gc_grace_hours())
+    now = float(plan.get("now") or time.time())
+    planned = [
+        (str(d["key"]), str(d["location"]))
+        for d in (plan.get("deletable") or [])
+    ]
+    locations = [loc for _k, loc in planned]
+    with SessionLocal() as db:
+        snap = _promotion_gc_snapshot(db, locations)
+    deleted = []
+    skipped = []
+    bytes_freed = 0
+    failed = []
+    for key, location in planned:
+        # 执行前以**新鲜 DB 状态 + 同一谓词**复检（plan→execute 之间可能有
+        # 新修订/pin 落地 —— 任何新引用即刻受保护）。
+        path = store.root / location
+        reason = _promotion_blob_protection(
+            key, location, store.blob_mtime(path),
+            now=now, grace_hours=grace_hours, **snap,
+        )
+        if reason is not None:
+            skipped.append({"key": key, "reason": reason})
+            continue
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+        if store.delete_blob(key):
+            deleted.append(key)
+            bytes_freed += size
+        else:
+            failed.append(key)
+    return {
+        "deleted": deleted,
+        "skipped_protected": skipped,
+        "failed": failed,
+        "bytes_freed": bytes_freed,
+    }
+
+
+async def plan_promotion_store_gc(
+    *, grace_hours: Optional[float] = None, now: Optional[float] = None
+) -> Dict[str, Any]:
+    """Dry-run 引用计数清扫计划（只读，不删除任何字节）。
+
+    可删 = 零修订引用 AND 无 head 指针 AND 未 pin AND 超出宽限期
+    （判定细节见共享谓词 ``_promotion_blob_protection``）。sync DB/文件
+    IO 在 worker 线程执行（与既有清扫步骤同纪律）。
+    """
+    return await asyncio.to_thread(
+        _plan_promotion_store_gc_sync,
+        float(grace_hours) if grace_hours is not None else _promotion_gc_grace_hours(),
+        float(now) if now is not None else time.time(),
+    )
+
+
+async def execute_promotion_store_gc(plan: Dict[str, Any]) -> Dict[str, Any]:
+    """执行 dry-run 计划：对计划中的每个 key 以新鲜 DB 状态 + **同一保护
+    谓词**复检后删除。绝不删除被任何 revision/Artifact 行引用的 blob。"""
+    if not isinstance(plan, dict) or not plan.get("deletable"):
+        return {"deleted": [], "skipped_protected": [], "failed": [], "bytes_freed": 0}
+    return await asyncio.to_thread(_execute_promotion_store_gc_sync, plan)
+
+
+async def _sweep_promotion_store() -> Dict[str, Any]:
+    """Wave 1：引用计数清扫替代只报告 pass（plan → execute）。
+
+    Returns a partial result dict merged into the sweep result by the caller
+    (fault-isolated: failures are logged and skipped, never raised).
+    """
+    partial: Dict[str, Any] = {}
+    try:
+        plan = await plan_promotion_store_gc()
+        deleted = 0
+        if plan.get("deletable"):
+            gc = await execute_promotion_store_gc(plan)
+            deleted = len(gc.get("deleted", []))
+            partial["promotion_store_gc_bytes"] = int(gc.get("bytes_freed", 0))
+        partial["promotion_store_gc_deleted"] = deleted
+        partial["promotion_store_gc_protected"] = dict(
+            plan.get("protected_counts") or {}
+        )
+    except Exception as e:  # noqa: BLE001 — reclamation must not break delete
+        logger.warning("[artifact-lifecycle] promotion-store gc failed: %s", e)
+    return partial
+
+
+async def sweep_aged_artifacts() -> Dict[str, Any]:
+    """Periodic age-based sweep across all artifact families.
+
+    Wave 1: 晋升内容库从「只报告」升级为「报告 + 引用计数清扫」
+    （``_sweep_promotion_store``：plan → execute，保护谓词双侧共享）。
+    """
     import asyncio
 
     result = {"exports_removed": 0, "report_rows_removed": 0,
@@ -305,11 +522,11 @@ async def sweep_aged_artifacts() -> Dict[str, int]:
             logger.warning("[artifact-lifecycle] artifact-cache sweep failed: %s", e)
 
     def _report_promotion_store_usage() -> None:
-        """V3 data foundation：晋升内容库使用量诊断（只报告，不删除）。
+        """V3 data foundation：晋升内容库使用量诊断。
 
-        promoted 内容属 workspace/persistent 层 —— §十四的保护对象，
-        不纳入任何自动删除面。此处只暴露规模与最老条目年龄，供容量
-        规划与 PR 诊断使用（audit #D-gap：该目录此前完全不可观测）。
+        promoted 内容属 workspace/persistent 层 —— §十四的保护对象。规模
+        与最老条目年龄仍照常暴露；**删除**由下方引用计数清扫器承担
+        （plan/execute 共享保护谓词，audit #D-gap / §7.8）。
         """
         try:
             from app.services.project_artifact_promotion import content_store_root
@@ -339,9 +556,11 @@ async def sweep_aged_artifacts() -> Dict[str, int]:
     except Exception as e:  # noqa: BLE001
         logger.warning("[artifact-lifecycle] export sweep failed: %s", e)
     for step in (_sweep_reports, _sweep_orphan_uploads, _sweep_artifact_cache_dir,
-                 _report_promotion_store_usage):
+                 _report_promotion_store_usage, _sweep_promotion_store):
         try:
-            await asyncio.wait_for(step(), timeout=30.0)
+            step_result = await asyncio.wait_for(step(), timeout=30.0)
+            if isinstance(step_result, dict):
+                result.update(step_result)
         except Exception as e:  # noqa: BLE001
             logger.warning("[artifact-lifecycle] sweep step failed: %s", e)
     if any(result.values()):

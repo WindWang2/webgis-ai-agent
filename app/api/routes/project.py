@@ -31,6 +31,7 @@ from app.schemas.project_schema import (
     RunReplayRequest, RunResumeRequest,
     WorkflowRerunRequest, MapProductVersionCreate, MapProductVersionResponse,
     MapProductVersionSummary, PromoteArtifactsResponse,
+    ArtifactPinRequest, ArtifactPinResponse, ArtifactCloneResponse,
 )
 from app.schemas.pagination import Page, clamp_pagination
 
@@ -1084,6 +1085,117 @@ def get_artifact_lineage(
     # DATA-01: pass project.id so the traversal filters cross-tenant neighbors.
     graph = LineageService.get_lineage_graph(db=db, artifact_id=artifact_id, project_id=project.id)
     return graph
+
+
+# ── Artifact pin / clone（Wave 1 durable artifact store）──────────────────
+# pin：置 head 修订的 pinned_at —— 被任何修订引用的 blob 本就绝不参与
+# promotion-store GC（引用计数保护）；pin 是用户对"这个内容不许动"的显式
+# 表态，独立于引用计数成立。clone：Clone-as-pointer —— 新 Artifact 行指向
+# 同一 content_location，内容寻址下零字节复制（绝不经 BlobStore 拷贝）。
+# 两者都经 get_project_with_auth 做 tenant/owner 鉴权（与 lineage 路由同款：
+# 先按 id 取行拿 project_id，再做项目级 IDOR 校验，失败一律 404 不泄露存在性）。
+
+
+def _load_artifact_or_404(db: Session, artifact_id: str):
+    from app.models.project import Artifact
+
+    artifact = db.execute(
+        select(Artifact).where(Artifact.id == artifact_id)
+    ).scalar_one_or_none()
+    if not artifact:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    return artifact
+
+
+@router.post("/artifacts/{artifact_id}/pin", response_model=ArtifactPinResponse)
+def pin_artifact_endpoint(
+    artifact_id: str,
+    data: Optional[ArtifactPinRequest] = None,
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Pin the artifact's head revision (exempt from promotion-store GC)."""
+    user_id, org_id = actor_ids(user)
+    artifact = _load_artifact_or_404(db, artifact_id)
+    from app.services.artifact_revisions import pin_artifact
+
+    result = pin_artifact(
+        db,
+        project_id=artifact.project_id,
+        artifact_id=artifact_id,
+        pinned=bool(data.pinned) if data is not None else True,
+        user_id=user_id,
+        org_id=org_id,
+    )
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Artifact, project permission, or promotable revision not found",
+        )
+    return {"status": "ok", **result}
+
+
+@router.delete("/artifacts/{artifact_id}/pin", response_model=ArtifactPinResponse)
+def unpin_artifact_endpoint(
+    artifact_id: str,
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Unpin (clears pinned_at on the head revision)."""
+    user_id, org_id = actor_ids(user)
+    artifact = _load_artifact_or_404(db, artifact_id)
+    from app.services.artifact_revisions import pin_artifact
+
+    result = pin_artifact(
+        db,
+        project_id=artifact.project_id,
+        artifact_id=artifact_id,
+        pinned=False,
+        user_id=user_id,
+        org_id=org_id,
+    )
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Artifact, project permission, or promotable revision not found",
+        )
+    return {"status": "ok", **result}
+
+
+@router.post("/artifacts/{artifact_id}/clone", response_model=ArtifactCloneResponse)
+def clone_artifact_endpoint(
+    artifact_id: str,
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Clone-as-pointer: a NEW artifact row referencing the SAME content
+    location (no bytes copied — content-addressed BlobStore dedup makes the
+    clone free) plus a revision row reusing the same content_sha256."""
+    user_id, org_id = actor_ids(user)
+    artifact = _load_artifact_or_404(db, artifact_id)
+    from app.services.artifact_revisions import clone_artifact
+
+    clone = clone_artifact(
+        db,
+        project_id=artifact.project_id,
+        artifact_id=artifact_id,
+        user_id=user_id,
+        org_id=org_id,
+    )
+    if clone is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Artifact, project permission, or durable content to clone not found",
+        )
+    clone_meta = clone.metadata_json if isinstance(clone.metadata_json, dict) else {}
+    return ArtifactCloneResponse(
+        status="ok",
+        artifact_id=clone.id,
+        source_artifact_id=artifact_id,
+        name=clone.name,
+        content_location=clone_meta.get("content_location"),
+        content_sha256=clone_meta.get("content_payload_sha256"),
+    )
 
 
 # ── 项目制图记忆管理（ADR-0069 / spec 开放问题 2）─────────────────────────

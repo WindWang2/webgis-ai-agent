@@ -263,6 +263,15 @@ class ResourceGovernor:
         with scope.lock:
             return scope.usage.model_copy()
 
+    def limits_for(self, path: str) -> Optional["BudgetLimits"]:
+        """公开只读：精确解析作用域，返回其限额（未知路径 → None）。
+
+        外部设施（如 data_fabric 的 ``batch_size_for``）经此读取限额，
+        不再触达私有 ``_find``（Wave 5：私有 API 耦合的修复）。
+        """
+        scope = self._find(path)
+        return None if scope is None else scope.limits
+
     # ── 内部 ─────────────────────────────────────────────────────────
 
     def _chain(self, path: str) -> List[_Scope]:

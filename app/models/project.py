@@ -284,6 +284,59 @@ class ArtifactLineage(Base):
     workflow_run = relationship("WorkflowRun", foreign_keys=[workflow_run_id], back_populates="lineages", lazy="selectin")
 
 
+class ArtifactRevision(Base):
+    """产物内容版本账本（Wave 1 durable artifact store，append-only）。
+
+    每次晋升物化的内容记为一行不可变修订：content_sha256 是**载荷摘要**
+    （payload digest，主键语义），content_location 指向 BlobStore（唯一
+    内容持久后端）中的 blob。同 (artifact_id, content_sha256) 幂等复用
+    同一行 —— 重晋升不产生重复修订。``Artifact.metadata_json`` 里的
+    content_status/content_location 仍是 head 指针（向后兼容），本表是
+    append-only 的完整历史与 GC 引用计数真相。
+    """
+    __tablename__ = "artifact_revisions"
+
+    id = Column(String(255), primary_key=True, default=lambda: str(uuid.uuid4()))
+    artifact_id = Column(String(255), ForeignKey("artifacts.id", ondelete="CASCADE"), nullable=False)
+    # 同 artifact 内单调递增（1 起）；新修订 = head_revision().revision_no + 1
+    revision_no = Column(Integer, nullable=False, default=1)
+    # 载荷 sha256（= BlobStore 键）；同内容跨 artifact 共享同一 blob
+    content_sha256 = Column(String(64), nullable=False)
+    # BlobStore 内相对位置（如 <shard4>/<sha256>.json / <shard4>/<sha256>.bin）
+    content_location = Column(String(500), nullable=False)
+    # json | binary（有界集合，见 CheckConstraint）
+    content_type = Column(String(20), nullable=False, default="json")
+    byte_size = Column(Integer, nullable=False, default=0)
+    # 产生该内容的 run（可空：REST 重晋升等无 run 上下文路径）。无 FK ——
+    # 修订是持久证据，run 行删除不连带销毁内容历史。
+    workflow_run_id = Column(String(255), nullable=True)
+    # 用户 pin（置为 UTC now；unpin 清空）。pinned 的修订所引用的 blob
+    # 绝不参与 GC（无论引用计数）。
+    pinned_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    # 有界投影（≤16 键约定）：content_fingerprint 等次级索引证据。
+    # DB 列名 "metadata"；属性名 revision_metadata —— `metadata` 是
+    # SQLAlchemy Declarative 保留字（与 Artifact.metadata_json 同款处理）。
+    revision_metadata = Column("metadata", JSON, nullable=True)
+
+    @property
+    def pinned(self) -> bool:
+        return self.pinned_at is not None
+
+    __table_args__ = (
+        # 内容身份幂等：同 artifact 同内容只有一行（重晋升复用，不 bump）。
+        # 唯一组合索引同时服务 artifact 前缀扫描（0020 约定：不建冗余
+        # 左前缀单列索引）。
+        Index("uq_artifact_revision_content", "artifact_id", "content_sha256", unique=True),
+        Index("idx_artifact_revision_sha", "content_sha256"),
+        Index("idx_artifact_revision_run", "workflow_run_id"),
+        CheckConstraint("revision_no >= 1", name="ck_artifact_revision_no_pos"),
+        CheckConstraint(
+            "content_type IN ('json', 'binary')", name="ck_artifact_revision_content_type"
+        ),
+    )
+
+
 class CartoProjectFact(Base):
     """项目级制图事实账本（ADR-0069 / cartographic-quality-rules-and-memory-spec P2）。
 
@@ -413,6 +466,7 @@ __all__ = [
     "WorkflowRevision",
     "WorkflowRun",
     "Artifact",
+    "ArtifactRevision",
     "ArtifactLineage",
     "CartoProjectFact",
     "MapProductVersion",

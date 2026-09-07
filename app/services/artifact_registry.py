@@ -416,7 +416,23 @@ async def register_artifact(
             merged = dict(rec.metadata)
             merged.update(metadata)
             rec.metadata = merged
-        rec.status = A_VALID  # 重注册（重试成功）复活记录
+        # 复活必须先验尸（audit §6.2.1）：expired/failed/superseded 记录
+        # 此前被重注册无条件拉回 valid —— 从不探测载荷的调用方（如
+        # geocompute ARTIFACT_REGISTER 裸 ref_id）能把死载荷标记成 valid。
+        # 现在：终态记录先 probe（统一探测面，raster 走磁盘 stat），命中
+        # 才复活 valid；miss 保持诚实 expired 并把证据写回 metadata/返回值。
+        # 快路径（valid/stale 重注册、新记录）保持无探测（热路径零成本）。
+        if existing is not None and existing.status in (
+            A_EXPIRED, A_FAILED, A_SUPERSEDED,
+        ):
+            revived = await probe_ref(session_id, artifact_id) is not None
+            rec.status = A_VALID if revived else A_EXPIRED
+            if not revived:
+                merged_md = dict(rec.metadata)
+                merged_md["revival_probe"] = "miss"
+                rec.metadata = merged_md  # to_dict 有界截断（≤24 键）兜底
+        else:
+            rec.status = A_VALID  # 重注册（重试成功）/ 新记录 / 快路径
         # 同 capability 换 ref → 旧产物 superseded（replacement 链）
         if producer_capability:
             prev = None

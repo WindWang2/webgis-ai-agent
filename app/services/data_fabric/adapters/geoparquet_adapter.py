@@ -29,6 +29,14 @@ import os
 import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from app.services.data_fabric import vector_carrier
+from app.services.data_fabric.arrow_ops import (
+    ArrowPredicateUnsupported,
+    arrow_aggregate_batches,
+    bbox_filter_expression,
+    build_predicate_expression,
+    covering_bbox_columns,
+)
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.adapters.postgis_adapter import (
     _filter_features_by_bbox,
@@ -37,6 +45,7 @@ from app.services.data_fabric.adapters.postgis_adapter import (
 from app.services.data_fabric.errors import (
     DataFabricError,
     InvalidQueryError,
+    QueryBudgetExceededError,
     SecurityBlockedError,
     SourceBadResponseError,
     SourceUnreachableError,
@@ -430,12 +439,20 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
 
     # ── 查询主路径 ─────────────────────────────────────────────────────
 
-    def query(self, dataset_id: str, query_spec: QuerySpec) -> QueryResult:
+    def query(
+        self,
+        dataset_id: str,
+        query_spec: QuerySpec,
+        *,
+        cancel_token: Optional[Any] = None,
+    ) -> QueryResult:
         """V2: normalize → plan → 有界流式执行。
 
         真实端点读失败抛 typed SourceUnreachableError/SourceBadResponseError
         （审计 C2：绝不以 synthetic fixture 冒充成功）；无端点时进入显式
         demo 模式（is_demo=True）。
+        ``cancel_token``（可选，``app.lib.cancellation.CancellationToken``）
+        在 Arrow fast lane 的每个批次边界协作检查（Wave 5 批边界取消）。
         """
         started = time.monotonic()
         try:
@@ -475,17 +492,29 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
                 metadata=self._metadata(plan, evidence, started, extra={"is_demo": False}),
             )
 
+        from app.lib.cancellation import OperationCancelled
+
+        on_batch = None
+        if cancel_token is not None:
+            from app.services.data_fabric.streaming import batch_checkpoint_hook
+
+            on_batch = batch_checkpoint_hook(cancel_token)
+
         src, closer = self._open_source()  # typed 错误（安全/可达性）
         try:
             try:
                 import pyarrow.parquet as pq  # noqa: F401
                 pf = pq.ParquetFile(src)
-                return self._execute_pyarrow(dataset_id, v2, plan, pf, started, fp, descriptor)
+                return self._execute_pyarrow(
+                    dataset_id, v2, plan, pf, started, fp, descriptor, on_batch=on_batch)
             except ImportError:
                 # pyarrow 不可用 → geopandas 高层 API（其自身依赖 pyarrow，
                 # 仍不可用则如实失败，绝不回落 fixture）。
                 return self._execute_geopandas(dataset_id, v2, plan, started, fp, descriptor, src)
         except DataFabricError:
+            raise
+        except OperationCancelled:
+            # 协作式取消是调用方意志，不是源错误 —— 绝不二次包装。
             raise
         except Exception as e:
             logger.warning(f"GeoParquet file query failed for '{dataset_id}': {e}")
@@ -508,6 +537,8 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
         started: float,
         fp: Optional[str],
         descriptor: DatasetDescriptor,
+        *,
+        on_batch: Optional[Any] = None,
     ) -> QueryResult:
         meta = pf.metadata
         schema_names = list(pf.schema_arrow.names)
@@ -550,8 +581,33 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
             max_vertices=v2.execution.max_vertices,
         )
 
+        # ---- Wave 5：Arrow fast lane 资格判定（属性-only 下推）----
+        fast_lane = self._fast_lane_plan(v2, pf, schema_names, geo_meta, query_bbox)
+
         # ---- STATISTICS：无过滤纯 count → footer num_rows（零扫描）----
         if mode == ResultMode.STATISTICS:
+            pure_count = (
+                v2.filter is None and v2.spatial is None and v2.temporal is None
+                and not v2.group_by
+                and bool(v2.aggregate) and all(a.func == "count" and a.field is None for a in v2.aggregate)
+            )
+            if pure_count:
+                # footer 零扫描短路优先于任何 lane（fast lane 绝不接管它）。
+                return self._statistics_from_stream(
+                    dataset_id, v2, plan, pf, started, fp, descriptor,
+                    columns_arg=_columns_arg(include_geometry=query_bbox is not None),
+                    row_groups=row_groups, pruned=pruned, budget=budget,
+                    footer_num_rows=meta.num_rows,
+                )
+            if fast_lane is not None:
+                attr_expr, bbox_expr, covering_cols = fast_lane
+                fast_columns = _columns_arg(include_geometry=False)
+                fast_columns = self._with_covering_columns(
+                    fast_columns, covering_cols, schema_names)
+                return self._statistics_arrow_lane(
+                    dataset_id, v2, plan, pf, started, fp, descriptor, meta,
+                    row_groups, pruned, budget, attr_expr, bbox_expr,
+                    fast_columns, on_batch)
             return self._statistics_from_stream(
                 dataset_id, v2, plan, pf, started, fp, descriptor,
                 columns_arg=_columns_arg(include_geometry=query_bbox is not None),
@@ -559,7 +615,25 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
                 footer_num_rows=meta.num_rows,
             )
 
-        # ---- SAMPLE / FEATURES / MATERIALIZE ----
+        if fast_lane is not None:
+            attr_expr, bbox_expr, covering_cols = fast_lane
+            # 快车道 bbox 走 covering 列（pa.compute），几何列仅为输出而读。
+            fast_columns = _columns_arg(
+                include_geometry=has_geom and mode in (
+                    ResultMode.FEATURES, ResultMode.SAMPLE, ResultMode.MATERIALIZE))
+            fast_columns = self._with_covering_columns(
+                fast_columns, covering_cols, schema_names)
+            return self._features_arrow_lane(
+                dataset_id, v2, plan, pf, started, fp, descriptor, meta,
+                primary_geom, schema_names, row_groups, pruned, budget,
+                attr_expr, bbox_expr, fast_columns, emit_select, mode,
+                offset=(v2.page.offset if isinstance(v2.page, OffsetPage) else 0),
+                window=(v2.sample.size if (mode == ResultMode.SAMPLE and v2.sample)
+                        else v2.page.limit),
+                on_batch=on_batch,
+            )
+
+        # ---- SAMPLE / FEATURES / MATERIALIZE（dict lane，原样保留）----
         page = v2.page
         offset = page.offset if isinstance(page, OffsetPage) else 0
         window = v2.sample.size if (mode == ResultMode.SAMPLE and v2.sample) else page.limit
@@ -631,6 +705,289 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
                 "num_row_groups": meta.num_row_groups,
                 "row_groups_read": len(row_groups),
                 "row_groups_pruned": pruned,
+                "execution_lane": "dict",
+            }),
+        )
+
+    # ── Wave 5：Arrow fast lane（属性-only 下推）───────────────────────
+
+    def _fast_lane_plan(
+        self,
+        v2: QuerySpecV2,
+        pf: Any,
+        schema_names: List[str],
+        geo_meta: Dict[str, Any],
+        query_bbox: Optional[List[float]],
+    ) -> Optional[Tuple[Any, Any, List[str]]]:
+        """Arrow fast lane 资格判定 → (attr_expr, bbox_expr, covering 列) 或 None。
+
+        属性-only 快车道：过滤谓词全部可在 pa.compute 下**等价**执行
+        （无时间谓词）、空间仅 bbox 且文件带逐行 bbox covering 列、输出
+        为列选择/标量聚合（本 adapter 本就无几何变换算子）。任何不支持的
+        形状 → None（诚实回落 dict lane，绝不做近似下推）。
+        """
+        if not vector_carrier.arrow_available():
+            return None
+        if v2.temporal is not None:
+            return None  # 时间谓词不在 Arrow 等价集内
+        attr_expr = None
+        if v2.filter is not None:
+            try:
+                attr_expr = build_predicate_expression(v2.filter, pf.schema_arrow)
+            except ArrowPredicateUnsupported:
+                return None
+            except Exception:  # noqa: BLE001 - 谓词构建意外失败 → 诚实回落
+                return None
+        bbox_expr = None
+        covering_cols: List[str] = []
+        if query_bbox is not None:
+            covering = covering_bbox_columns(geo_meta)
+            if covering is None:
+                return None
+            schema_set = set(schema_names)
+            if not all(covering[k] in schema_set for k in ("xmin", "ymin", "xmax", "ymax")):
+                return None
+            try:
+                bbox_expr = bbox_filter_expression(covering, query_bbox)
+            except ArrowPredicateUnsupported:
+                return None
+            except ValueError:
+                return None
+            covering_cols = [covering[k] for k in ("xmin", "ymin", "xmax", "ymax")]
+        return (attr_expr, bbox_expr, covering_cols)
+
+    @staticmethod
+    def _with_covering_columns(
+        columns_arg: Optional[List[str]],
+        covering_cols: List[str],
+        schema_names: List[str],
+    ) -> Optional[List[str]]:
+        """covering 列并入读取集（bbox pa.compute 过滤需要它们；None = 全列）。"""
+        if not covering_cols:
+            return columns_arg
+        if columns_arg is None:
+            return None  # 全列读取已包含 covering
+        cols = list(columns_arg)
+        for c in covering_cols:
+            if c in schema_names and c not in cols:
+                cols.append(c)
+        if set(cols) >= set(schema_names):
+            return None
+        return cols
+
+    @staticmethod
+    def _combine_expressions(attr_expr: Any, bbox_expr: Any) -> Any:
+        import pyarrow.compute as pc
+
+        if attr_expr is None:
+            return bbox_expr
+        if bbox_expr is None:
+            return attr_expr
+        # Kleene AND：bbox covering 为 null（缺几何）→ 行丢弃，与 dict lane
+        # 的 `_row_passes`（无几何行不保留）一致。
+        return pc.and_kleene(attr_expr, bbox_expr)
+
+    @staticmethod
+    def _table_to_features(
+        table: Any,
+        primary_geom: Optional[str],
+        emit_select: Optional[Sequence[str]],
+    ) -> List[Dict[str, Any]]:
+        """批边界一次性 Arrow → feature dict 转换（列式 to_pylist 一次，
+        谓词/剪枝已在 pa.compute 完成 —— 流中绝不逐行 to_pylist）。"""
+        names = [c for c in table.column_names if c != primary_geom]
+        num_rows = table.num_rows
+        if primary_geom in table.column_names:
+            geom_col = table.column(primary_geom).to_pylist()
+        else:
+            geom_col = [None] * num_rows
+        pycols = {n: table.column(n).to_pylist() for n in names}
+        out: List[Dict[str, Any]] = []
+        for i in range(num_rows):
+            props = {n: pycols[n][i] for n in names}
+            out.append({
+                "type": "Feature",
+                "geometry": _wkb_to_geojson(geom_col[i]),
+                "properties": GeoParquetAdapter._emit_properties(props, emit_select, primary_geom),
+            })
+        return out
+
+    def _features_arrow_lane(
+        self,
+        dataset_id: str,
+        v2: QuerySpecV2,
+        plan,
+        pf: Any,
+        started: float,
+        fp: Optional[str],
+        descriptor: DatasetDescriptor,
+        meta: Any,
+        primary_geom: str,
+        schema_names: List[str],
+        row_groups: List[int],
+        pruned: int,
+        budget: StreamingBudget,
+        attr_expr: Any,
+        bbox_expr: Any,
+        columns_arg: Optional[List[str]],
+        emit_select: Optional[Sequence[str]],
+        mode: ResultMode,
+        *,
+        offset: int,
+        window: int,
+        on_batch: Optional[Any],
+    ) -> QueryResult:
+        """FEATURES/MATERIALIZE/SAMPLE 快车道：谓词在 pa.compute 上执行，
+        feature dict 只在批边界一次性转换（Wave 5）。"""
+        import pyarrow as pa
+
+        expr = self._combine_expressions(attr_expr, bbox_expr)
+        collected: List[Dict[str, Any]] = []
+        # FEATURES：读到 offset+limit+1（哨兵判定 has_more）即停；
+        # SAMPLE：reservoir 需要尽量多的匹配行 → 受执行预算约束。
+        scan_cap = (
+            max(window, v2.execution.max_rows)
+            if mode == ResultMode.SAMPLE
+            else offset + window + 1
+        )
+
+        batches = pf.iter_batches(batch_size=BATCH_SIZE, columns=columns_arg, row_groups=row_groups or None)
+        for idx, batch in enumerate(batches, start=1):
+            if on_batch is not None:
+                on_batch(idx)  # 批边界取消/deadline 协作点
+            if expr is not None:
+                batch = batch.filter(expr)
+            if batch.num_rows == 0:
+                continue
+            table = pa.Table.from_batches([batch])
+            for feature in self._table_to_features(table, primary_geom, emit_select):
+                budget.add_feature(feature)
+                collected.append(feature)
+                if len(collected) >= scan_cap:
+                    break
+            if len(collected) >= scan_cap:
+                break
+
+        if mode == ResultMode.SAMPLE and v2.sample is not None:
+            collected = deterministic_sample(collected, v2.sample, fp)
+
+        out = collected[offset: offset + window] if mode != ResultMode.SAMPLE else collected
+        truncated = len(collected) > (offset + window) if mode != ResultMode.SAMPLE else False
+        total_matching: Optional[int] = None
+        if not truncated:
+            total_matching = offset + len(out)
+
+        evidence = build_evidence(
+            plan, started_at=started, result_count=len(out),
+            total_matching=total_matching, truncated=truncated,
+            rows_fetched=len(collected), rows_returned=len(out),
+        )
+        non_geom_cols = [c for c in (emit_select or [c for c in schema_names if c != primary_geom])]
+        return QueryResult(
+            dataset_id=dataset_id,
+            features=out,
+            data={"type": "FeatureCollection", "features": out},
+            total_count=len(out),
+            total_matching=total_matching,
+            returned_count=len(out),
+            truncated=truncated,
+            has_more=truncated,
+            result_mode=(
+                "sample" if mode == ResultMode.SAMPLE
+                else ("materialize" if mode == ResultMode.MATERIALIZE else "features")
+            ),
+            execution_time_seconds=round(time.monotonic() - started, 4),
+            schema_info={
+                "columns": non_geom_cols,
+                "dataset_bbox": descriptor.bbox,
+            },
+            metadata=self._metadata(plan, evidence, started, extra={
+                "is_demo": False,
+                "source": "remote",
+                "column_projection": bool(v2.select),
+                "num_rows": meta.num_rows,
+                "num_row_groups": meta.num_row_groups,
+                "row_groups_read": len(row_groups),
+                "row_groups_pruned": pruned,
+                "execution_lane": "arrow",
+            }),
+        )
+
+    def _statistics_arrow_lane(
+        self,
+        dataset_id: str,
+        v2: QuerySpecV2,
+        plan,
+        pf: Any,
+        started: float,
+        fp: Optional[str],
+        descriptor: DatasetDescriptor,
+        meta: Any,
+        row_groups: List[int],
+        pruned: int,
+        budget: StreamingBudget,
+        attr_expr: Any,
+        bbox_expr: Any,
+        columns_arg: Optional[List[str]],
+        on_batch: Optional[Any],
+    ) -> QueryResult:
+        """STATISTICS 快车道：过滤 + 聚合全程 Arrow 列式，聚合语义走统一
+        累加器（``arrow_ops.arrow_aggregate_batches`` —— 与 dict lane 的
+        compute_aggregates 同一真相）。"""
+        expr = self._combine_expressions(attr_expr, bbox_expr)
+        scanned = {"rows": 0}
+
+        def _filtered_batches():
+            for idx, batch in enumerate(
+                pf.iter_batches(batch_size=BATCH_SIZE, columns=columns_arg,
+                                row_groups=row_groups or None),
+                start=1,
+            ):
+                if on_batch is not None:
+                    on_batch(idx)
+                if expr is not None:
+                    batch = batch.filter(expr)
+                if batch.num_rows == 0:
+                    continue
+                scanned["rows"] += batch.num_rows
+                budget.rows = scanned["rows"]
+                budget.bytes += batch.nbytes
+                # 行/字节预算守卫与 dict lane 同阈值（批粒度检查）。
+                if budget.rows > budget.max_rows:
+                    raise QueryBudgetExceededError(
+                        f"row budget exceeded ({budget.max_rows})",
+                        details={"hint": "reduce limit, add filters/bbox, or use aggregation"},
+                    )
+                if budget.bytes > budget.max_bytes:
+                    raise QueryBudgetExceededError(
+                        f"byte budget exceeded ({budget.max_bytes})",
+                        details={"hint": "project fewer fields or narrow the spatial filter"},
+                    )
+                yield batch
+
+        rows = arrow_aggregate_batches(_filtered_batches(), v2.aggregate or [], v2.group_by)
+
+        evidence = build_evidence(
+            plan, started_at=started, result_count=len(rows),
+            total_matching=None,
+            rows_fetched=scanned["rows"], rows_returned=len(rows),
+        )
+        return QueryResult(
+            dataset_id=dataset_id,
+            features=[],
+            data=rows,
+            total_count=len(rows),
+            returned_count=len(rows),
+            payload_type="aggregation",
+            result_mode="statistics",
+            execution_time_seconds=round(time.monotonic() - started, 4),
+            schema_info={"columns": list(rows[0].keys()) if rows else []},
+            metadata=self._metadata(plan, evidence, started, extra={
+                "is_demo": False,
+                "source": "remote",
+                "footer_count_used": False,
+                "row_groups_pruned": pruned,
+                "execution_lane": "arrow",
             }),
         )
 
@@ -694,6 +1051,7 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
                 "source": "remote",
                 "footer_count_used": pure_count,
                 "row_groups_pruned": pruned,
+                "execution_lane": "dict",
             }),
         )
 
@@ -898,6 +1256,7 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
                 "source": "remote",
                 "column_projection": bool(v2.select),
                 "engine": "geopandas-fallback",
+                "execution_lane": "dict",
             }),
         )
 
