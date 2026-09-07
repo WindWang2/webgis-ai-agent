@@ -804,6 +804,19 @@ class RecipeRegistry:
                         caps.add(req.capability_hint)
         return sorted(caps)
 
+    @property
+    def v1_served_tasks(self) -> set:
+        """V1 seed（无 workflow 画像）服务的任务族集合。
+
+        「通用产品族保护」的事实来源：这些任务族里 V2 recipe 受资历层
+        压制；本体任务升级（gis_ontology.escalation_target）不落在这里
+        面的任务族上 —— 专业升级永不越过 seed 保护语义。
+        """
+        return {
+            t for r in self._by_id.values() if r.workflow is None
+            for t in r.intent_tasks
+        }
+
     def content_fingerprint(self) -> str:
         """registry 级内容指纹：per-recipe 指纹的 SHA256（C12）。
 
@@ -928,10 +941,7 @@ class RecipeRegistry:
                         keyword_scores[recipe.id] = keyword_scores.get(recipe.id, 0) + 1
         # V1 seed 服务的任务集合：V2 recipe 与 V1 seed 竞争「同一通用任务」
         # 时才有资历压制；新任务族（无 V1 seed）V2 之间正常路由。
-        v1_served_tasks = {
-            t for r in self._by_id.values() if r.workflow is None
-            for t in r.intent_tasks
-        }
+        v1_served_tasks = self.v1_served_tasks
         scored: List[tuple] = []
         # V3（GIS Task Ontology）：intent 的本体任务匹配（一次计算，候选
         # 比对为集合交集）。opt-in：无 ontology_tasks 声明的候选不受影响。

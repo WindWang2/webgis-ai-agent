@@ -1594,6 +1594,75 @@ def match_task_ontology(intent: Any, *, limit: int = 5) -> List[OntologyMatch]:
     return get_task_ontology().match_intent(intent, limit=limit)
 
 
+# ── 保守任务升级（V3：本体驱动的专业语义入口）────────────────────────────
+
+#: 允许升级的源任务：仅通用兜底族（显式规则命中专业性任务时不参与）。
+_ESCALABLE_SOURCE_TASKS = frozenset({"distribution_overview", "simple_view"})
+
+
+def _keyword_hit_count(keywords: Tuple[str, ...], lowered_query: str) -> int:
+    """关键词命中计数（zh 子串；ASCII 整词，与 RecipeRegistry 同红线）。"""
+    import re as _re
+
+    hits = 0
+    for kw in keywords:
+        k = kw.strip().lower()
+        if not k:
+            continue
+        if k.isascii() and k.isalnum():
+            if _re.search(rf"(?<![a-z]){ _re.escape(k) }(?![a-z])", lowered_query):
+                hits += 1
+        elif k in lowered_query:
+            hits += 1
+    return hits
+
+
+def escalation_target(
+    intent: Any,
+    *,
+    v1_served_tasks: Any,
+) -> Tuple[str, str]:
+    """保守本体任务升级：通用兜底族 → 专业任务族（确定性）。
+
+    红线（与 seed 资历守卫同一语义权威）：
+
+    - 只在源任务为通用兜底族（distribution_overview / simple_view）时考虑
+      —— 显式规则已命中的任务不受影响；
+    - 证据门槛：query 必须命中本体任务的**专业关键词**（非 family 触发，
+      泛表述「分布」永不升级）；
+    - 目标族必须**没有 V1 seed 服务**（不在 v1_served_tasks）—— 专业升级
+      永不越过通用产品族保护（「地表覆盖分布」保持 raster seed 产品族）；
+    - 同分按 task_id 字典序（确定性）。
+
+    返回 (target_family, ontology_task_id)；不升级返回 ("", "")。
+    """
+    task = str(getattr(intent, "task", "") or "")
+    if task not in _ESCALABLE_SOURCE_TASKS:
+        return "", ""
+    query = str(getattr(intent, "query", "") or "").lower()
+    if not query:
+        return "", ""
+    ontology = get_task_ontology()
+    best: Optional[Tuple[int, str, str]] = None   # (-kw_hits, task_id, family)
+    for tid in ontology.all_ids:
+        desc = ontology.get(tid)
+        assert desc is not None
+        kw_hits = (_keyword_hit_count(desc.keywords_zh, query)
+                   + _keyword_hit_count(desc.keywords_en, query))
+        if kw_hits <= 0:
+            continue
+        targets = sorted(set(desc.family_triggers) - {task})
+        family = next((f for f in targets if f not in v1_served_tasks), "")
+        if not family:
+            continue
+        key = (-kw_hits, tid, family)
+        if best is None or key < best:
+            best = key
+    if best is None:
+        return "", ""
+    return best[2], best[1]
+
+
 __all__ = [
     "ONTOLOGY_VERSION",
     "ONTOLOGY_DOMAINS",
@@ -1607,4 +1676,5 @@ __all__ = [
     "get_task_ontology",
     "reset_task_ontology",
     "match_task_ontology",
+    "escalation_target",
 ]
